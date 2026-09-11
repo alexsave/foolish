@@ -3077,6 +3077,168 @@ static void print_lastmove_ex(int np, int kind, int live) {
     exit(1);
 }
 
+// ---------- --chain: N CONSECUTIVE bubbles of ONE real game ----------------
+//
+// Every other mode here seals ONE state. That is enough for a board, and it is
+// NOT enough for a transcript: Messages shows the history above the drawer, so
+// a photograph needs several bubbles that actually follow one another. Sealing
+// several independent searches instead produces a chain no game could play -
+// the deck count jumping about, an attacking queen becoming a covering queen,
+// the defender changing hands between one line and the next. The owner caught
+// exactly that, twice.
+//
+// So: play ONE game with the same random discipline as --endgame, seal an
+// envelope after each of the last `count` moves, and print them oldest first.
+// Each line to stderr names the seat that acted, because the caller has to know
+// whose message it is - ours goes out from our thread and renders on the right,
+// theirs from the other one and renders on the left.
+//
+// Usage: msg_wire_test --chain [n_players] [count] [depth]
+static void print_chain(int np, int count, int depth) {
+    static unsigned char body[1024];
+    static Game scratch;
+    static LegalMoves ml;
+    if (count < 1) count = 1;
+    if (count > 16) count = 16;
+
+    for (uint32_t s = 1; s < 4000; s++) {
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, 20260913u + s * 131u);
+        // TIE THE DEAL TO THE ENVELOPE SEED. The v6 body encodes ACTIONS, not
+        // cards: the decoder re-deals from this seed and replays them. Deal the
+        // game any other way and every action is illegal against the hand the
+        // decoder built, and msg_seal refuses the body (MSG_EBODY) with no
+        // detail to explain itself.
+        game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+        g_rng = 4242u + s;
+        random_strategy_set_seed(g_rng);
+        Game g;
+        memset(&g, 0, sizeof(g));
+        g.num_players = (int8_t)np;
+        for (int i = 0; i < np; i++) {
+            g.players[i].status = PLAYER_STATUS_READY;
+            g.players[i].strategy_key = 0;
+            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
+        }
+        start_game(&g);
+
+        // A NEGATIVE depth anchors the chain to the END of the game instead of
+        // to an absolute move number: -1 means "the last `count` moves, the
+        // last of them the one that ends it".
+        //
+        // It needs a counting pass because a game's length is a property of the
+        // seed, not something a caller can know - and without it a result card
+        // can only ever be photographed over a transcript belonging to some
+        // OTHER game, which is exactly the kind of frame that does not survive
+        // a close look. The count is replayed rather than rewound: the deal is
+        // a function of the seed and both RNGs are re-seeded below, so the
+        // second pass is the same game move for move.
+        int use_depth = depth;
+        if (depth < 0) {
+            Game cg = g;
+            int moves = 0;
+            for (; cg.status == GAME_STATUS_PLAYING && moves < 512; moves++) {
+                if (game_done(&cg) >= 0) break;
+                int cseat = -1, cpick = -1;
+                const int cstart = (int)(rnd() % (uint32_t)np);
+                for (int t = 0; t < np && cseat < 0; t++) {
+                    const int c = (cstart + t) % np;
+                    if (cg.players[c].status != PLAYER_STATUS_IN) continue;
+                    calculate_legal_moves(&cg, c, &ml);
+                    for (int i = 0; i < ml.n; i++)
+                        if (ml.moves[i].type != MOVE_WAIT) { cseat = c; cpick = i; break; }
+                }
+                if (cseat < 0 || cpick < 0) break;
+                AwireAction ca;
+                move_to_awire(&ml.moves[cpick], &ca);
+                bool cok;
+                switch (ca.kind) {
+                    case AWIRE_ATTACK: cok = handle_attack(&cg, cseat, ca.cards, ca.n); break;
+                    case AWIRE_COVER:  cok = handle_cover(&cg, cseat, ca.cards, ca.attacks, ca.n); break;
+                    case AWIRE_PASS:   cok = handle_pass(&cg, cseat, ca.cards, ca.n); break;
+                    case AWIRE_PICKUP: cok = handle_pickup(&cg, cseat); break;
+                    default:           cok = handle_good(&cg, cseat); break;
+                }
+                if (!cok) break;
+            }
+            // Only a game that actually ENDED can be anchored to its end.
+            if (game_done(&cg) < 0 && cg.status == GAME_STATUS_PLAYING) continue;
+            // `moves` is how many were PLAYED, and the last of them is the one
+            // that ends the game, so the window starts `count` before it - not
+            // `count - 1`, which seals five of six and rejects every seed.
+            use_depth = moves - count;
+            if (use_depth < 0) continue;
+            g_rng = 4242u + s;
+            random_strategy_set_seed(g_rng);
+        }
+
+        // Replay buffers: one envelope per kept move, plus the log mark each
+        // was a delta FROM, so every bubble animates only its own move.
+        unsigned char wires[16][ENV_CAP];
+        int lens[16], actors[16], phases[16], kept = 0;
+
+        int step = 0;
+        for (; step < use_depth + count && g.status == GAME_STATUS_PLAYING; step++) {
+            if (game_done(&g) >= 0) break;
+            int seat = -1, pick = -1;
+            const int start = (int)(rnd() % (uint32_t)np);
+            for (int t = 0; t < np && seat < 0; t++) {
+                const int c = (start + t) % np;
+                if (g.players[c].status != PLAYER_STATUS_IN) continue;
+                calculate_legal_moves(&g, c, &ml);
+                for (int i = 0; i < ml.n; i++)
+                    if (ml.moves[i].type != MOVE_WAIT) { seat = c; pick = i; break; }
+            }
+            if (seat < 0 || pick < 0) break;
+
+            const int pre_logs = g.num_logs;
+            AwireAction a;
+            move_to_awire(&ml.moves[pick], &a);
+            bool ok;
+            switch (a.kind) {
+                case AWIRE_ATTACK: ok = handle_attack(&g, seat, a.cards, a.n); break;
+                case AWIRE_COVER:  ok = handle_cover(&g, seat, a.cards, a.attacks, a.n); break;
+                case AWIRE_PASS:   ok = handle_pass(&g, seat, a.cards, a.n); break;
+                case AWIRE_PICKUP: ok = handle_pickup(&g, seat); break;
+                default:           ok = handle_good(&g, seat); break;
+            }
+            if (!ok) break;
+            if (step < use_depth) continue;      // still warming the game up
+
+            MsgEnvelope e;
+            env_init(&e, seed, np);
+            // The phase is READ, not assumed. It used to be pinned to LIVE,
+            // which made the last bubble of a chain that actually ends the game
+            // claim the game was still running - and a result card photographed
+            // over that transcript is a state the thread could not have
+            // reached. A chain that finishes should say so.
+            e.phase = (game_done(&g) >= 0 || g.status != GAME_STATUS_PLAYING)
+                      ? MSG_PHASE_FINISHED : MSG_PHASE_LIVE;
+            e.last_actor_seat = (uint8_t)seat;
+            e.sent_at = (uint16_t)(time(NULL) & 0xffff);
+            if (msg_seal(&e, &g, pre_logs, body, sizeof(body), &scratch) != MSG_EOK) break;
+            const int n = msg_encode(&e, wires[kept], sizeof(wires[kept]));
+            if (n <= 0) break;
+            lens[kept] = n; actors[kept] = seat;
+            phases[kept] = e.phase; kept++;
+            if (kept >= count) break;
+        }
+        if (kept < count) continue;
+
+        fprintf(stderr, "chain: %dp seed#%u depth=%d, %d consecutive bubbles\n",
+                np, s, use_depth, kept);
+        for (int i = 0; i < kept; i++) {
+            fprintf(stderr, "chain[%d]: actor=seat %d (%d bytes)%s\n", i, actors[i],
+                    lens[i], phases[i] == MSG_PHASE_FINISHED ? " FINISHED" : "");
+            for (int b = 0; b < lens[i]; b++) printf("%02x", wires[i][b]);
+            printf("\n");
+        }
+        return;
+    }
+    fprintf(stderr, "no %dp game gave %d consecutive bubbles at depth %d\n", np, count, depth);
+    exit(1);
+}
+
 // `nopass` seals a PODKIDNOY (throw-in) board instead of the default
 // perevodnoy one - the two render differently, so a lane that only ever shot
 // the default has never looked at half the product. `preroll` plays that many
@@ -3192,6 +3354,15 @@ static void print_fatboard(int target, int np, int nopass, int preroll) {
         // (otherwise the capacity waiver lifts the hold for its own good
         // reasons). Fixtures that cannot do both are skipped rather than sealed
         // silently unheld.
+        // FOOLISH_PREV: seal the state as it stands BEFORE the throw-in below,
+        // so a caller can send that bubble first and this one second. They are
+        // then genuinely consecutive - the second is the first plus exactly one
+        // attack - which is what makes a transcript honest: Messages collapses
+        // the older send into a CAPTION LINE describing its last move, and that
+        // line now describes a move this board actually contains. Sending two
+        // independently searched boards produces the same caption and a lie.
+        static Game g_prev;
+        if (getenv("FOOLISH_PREV")) g_prev = g;
         {
             int threw = 0;
             for (int seat = 0; seat < np && !threw; seat++) {
@@ -3209,6 +3380,7 @@ static void print_fatboard(int target, int np, int nopass, int preroll) {
                 if (card_is_none(g.table_battles[i].defense)) uncovered++;
             }
             if (uncovered >= g.players[g.defender].hand_count) continue;
+            if (getenv("FOOLISH_PREV")) g = g_prev;   // hand back the earlier state
         }
 
         // FOOLISH_PLAYABLE: only seal a board the DEFENDER can actually move
@@ -3883,6 +4055,12 @@ int main(int argc, char **argv) {
     if (argc > 2 && !strcmp(argv[1], "--holdcheck")) { print_holdcheck(argv[2]); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--lastdefense")) {
         print_lastdefense(argc > 2 ? atoi(argv[2]) : 2);
+        return 0;
+    }
+    if (argc > 1 && !strcmp(argv[1], "--chain")) {
+        print_chain(argc > 2 ? atoi(argv[2]) : 2,
+                    argc > 3 ? atoi(argv[3]) : 6,
+                    argc > 4 ? atoi(argv[4]) : 12);
         return 0;
     }
     if (argc > 1 && !strcmp(argv[1], "--fatboard")) {

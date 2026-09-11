@@ -1,0 +1,10 @@
+# A SINGLE-APPEARANCE session. The bubble in the transcript is a SNAPSHOT taken
+# when it was sent, in whatever appearance was live then; the drawer under it
+# renders now. So a run that switches appearance mid-session leaves dark bubbles
+# sitting over a light board - which the owner spotted and which happens in no
+# real game. One appearance per session, and the session starts clean.
+T1_hero|fatboard|5 2 pass 5|||||compact|turn
+T1_hero_b|fatboard|5 2 pass 5|||||compact|turn
+T5_select|fatboard|7 2 pass 2|||||compact|select
+T9_gameover|endgame|2|||||compact|turn
+T3_hint|lastmove-live|goodany 2|atk||||compact|good

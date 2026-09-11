@@ -24,6 +24,10 @@
 #                                 is a real chat and not a black void
 #   rig.sh open                   +  ->  Foolish  (the extension, compact)
 #   rig.sh openbubble             tap the newest Foolish bubble in the chat
+#   rig.sh chain NAME [n] [depth] a transcript of REAL consecutive moves:
+#                                 caption / caption / caption / one bubble
+#   rig.sh tapopen [thread]       open it by TAPPING the newest bubble, so the
+#                                 next send shares that message's MSSession
 #   rig.sh clearstage             dismiss a staged bubble left in the compose field
 #   rig.sh expand / collapse      drag the grabber
 #   rig.sh back                   leave the drawer (keeps Messages alive)
@@ -75,7 +79,13 @@ IDB="${FOOLISH_IDB:-idb}"
 OUT="${FOOLISH_OUT:-$HOME/Downloads/foolish-shots}"
 APP_ID=cards.foolish.msg
 EXT_DOM=cards.foolish.msg.MessagesExtension
-DD="${FOOLISH_DD:-/tmp/foolishShootDD}"
+# DerivedData is PER SIMULATOR, which is to say per task (rule 5). One shared
+# DerivedData is the build-side version of sharing a device, and it fails the
+# same silent way: a concurrent agent building a WORKTREE writes its own
+# `ios_api.h` into the shared tree, and every later build here dies with
+# "file has been modified since the module file was built: size changed" -
+# a failure that names a header this checkout never touched.
+DD="${FOOLISH_DD:-/tmp/foolishDD-${FOOLISH_SIM:0:8}}"
 export FOOLISH_SIM FOOLISH_IDB
 
 need_sim() { [ -n "$SIM" ] || { echo "set FOOLISH_SIM (rig.sh newsim prints one)" >&2; exit 2; }; }
@@ -245,6 +255,16 @@ cmd_stage() {
   # loop that stops at the first clear look stops before the sheet exists.
   # Hence: keep looking for a while, and only give up after several quiet
   # passes in a row.
+  # A leftover MODAL survives a relaunch and swallows every later tap - a New
+  # Contact sheet opened by hand once ate an entire four-take batch, whose
+  # frames all came back as the same grey editor. Clear those first, and
+  # confirm any "discard changes" they raise.
+  local m=0
+  while [ $m -lt 3 ]; do
+    tap_ax "Cancel" 2 2>/dev/null || tap_ax "Back" 2 2>/dev/null || break
+    tap_ax "Discard Changes" 2 2>/dev/null || true
+    m=$((m + 1))
+  done
   local quiet=0 i=0
   while [ $i -lt 12 ] && [ $quiet -lt 4 ]; do
     if tap_ax "OK" 3 2>/dev/null || tap_ax "Continue" 3 2>/dev/null; then
@@ -433,6 +453,179 @@ cmd_open_retry() {
 
 # Leave the drawer and come straight back into the thread. Leaving is what
 # kills the appex, and the appex has to die for the next `seed` to be read.
+cmd_chain() {
+  # chain NAME [count] [depth] - photograph a transcript whose bubbles are a
+  # REAL consecutive run of moves.
+  #
+  # `msg_wire_test --chain` plays one game and seals EVERY state along the way,
+  # so bubble N+1 is what bubble N's board became. Invented sequences do not
+  # survive a close look: a deck that counts up, a defender who never changes,
+  # the same move six times. The chain is sent move by move, alternating the
+  # two stub threads so both sides of the conversation are real, and each send
+  # opens the extension by TAPPING the newest bubble so the whole run collapses
+  # into caption lines over a single bubble (trap 6).
+  need_sim
+  local name="${1:?chain NAME}" count="${2:-12}" depth="${3:-14}" np="${4:-2}"
+  local tool="${FOOLISH_TOOL:-$REPO/c/build/msg_wire_test}"
+  [ -x "$tool" ] || { echo "no seeder at $tool - (cd c && make build/msg_wire_test)" >&2; return 1; }
+  local g; g=$(group_dir)
+  local other="${FOOLISH_OTHER_THREAD:-8583}"
+
+  "$tool" --chain "$np" "$count" "$depth" >/tmp/rig_chain.hex 2>/tmp/rig_chain.log || {
+    echo "no chain at depth $depth" >&2; return 1; }
+  local last
+  last=$(grep -o 'actor=seat [0-9]' /tmp/rig_chain.log | tail -1 | awk '{print $2}')
+  # `fixture_name` returns `slots[seat]` (c/tests/msg_wire_test.c), so the list
+  # IS indexed by absolute seat: put "Alex" at the seat we occupy, which is the
+  # one that moves LAST. Settled against the result card, the one unambiguous
+  # reader - it prints "(You)" from `dev.seat` next to the name it resolved for
+  # that seat, so a frame where those two disagree is visible in one look.
+  if [ "$last" = "0" ]; then export FOOLISH_NAMES="Alex,Kate"
+  else export FOOLISH_NAMES="Kate,Alex"; fi
+  "$tool" --chain "$np" "$count" "$depth" >/tmp/rig_chain.hex 2>/tmp/rig_chain.log || return 1
+
+  local HEX=() ACT=()
+  while IFS= read -r l; do HEX+=("$l"); done < /tmp/rig_chain.hex
+  while IFS= read -r l; do ACT+=("$l"); done \
+    < <(grep -o 'actor=seat [0-9]' /tmp/rig_chain.log | awk '{print $2}')
+  [ "${#HEX[@]}" -gt 0 ] || { echo "chain produced no payloads" >&2; return 1; }
+  # We sit in the seat that moves LAST, so the newest bubble is ours and the
+  # board under it is the state our own move produced.
+  local mine="${ACT[$((${#ACT[@]} - 1))]}"
+
+  # Messages keeps its conversations in memory only, so terminating it is how a
+  # shoot starts from an empty transcript rather than on top of the last run.
+  xcrun simctl terminate "$SIM" com.apple.MobileSMS >/dev/null 2>&1 || true
+  sleep 2
+  cmd_stage "${FOOLISH_APPEARANCE:-dark}" >/dev/null 2>&1 \
+    || cmd_stage "${FOOLISH_APPEARANCE:-dark}" >/dev/null 2>&1
+  cmd_stageseed on >/dev/null
+
+  # A previous, FINISHED game in the same thread, when asked for. Two things
+  # come from it. It is what a real thread looks like - people play more than
+  # one game - and it is the only way to make the transcript TALLER than its
+  # viewport, which is the only way to scroll Apple's unknown-sender banner
+  # behind the drawer. Nothing else moves that banner: it is glued under the
+  # newest message, and turning off both unknown-sender filtering prefs leaves
+  # it exactly where it was.
+  local pre="${FOOLISH_CHAIN_PREFACE:-0}" j fool
+  for ((j = 0; j < pre; j++)); do
+    "$tool" --endgame "$np" >/tmp/rig_pre.hex 2>/tmp/rig_pre.log || break
+    fool=$(grep -o 'fool=seat [0-9]' /tmp/rig_pre.log | head -1 | awk '{print $2}')
+    # FOOLISH_NAMES is written from the LOCAL seat outwards, so name[0] is us -
+    # which means a fixture whose fool IS our seat photographs as us losing.
+    # The owner caught exactly that on two earlier game-over frames.
+    # An envelope's join list is written from the SEALING player outwards, so
+    # slot 0 is always the local player whatever the absolute seat number says.
+    # Naming the fool's slot first is therefore what keeps us from photographing
+    # ourselves losing - the owner caught exactly that on two earlier game-over
+    # frames. Re-sealed with the loser named, not merely reported.
+    local prenames="Kate,Alex"
+    [ "$fool" = "0" ] || prenames="Alex,Kate"
+    FOOLISH_NAMES="$prenames" "$tool" --endgame "$np" >/tmp/rig_pre.hex 2>/dev/null
+    tail -1 /tmp/rig_pre.hex > "$g/dev.fatboard"
+    printf '%s' "$mine" > "$g/dev.seat"
+    cmd_back >/dev/null 2>&1 || true
+    cmd_open "$other" >/dev/null 2>&1
+    cmd_turn >/dev/null 2>&1 || echo "  preface $j did not send" >&2
+  done
+
+  local i thread
+  for i in "${!HEX[@]}"; do
+    printf '%s' "${HEX[$i]}" > "$g/dev.fatboard"
+    printf '%s' "$mine" > "$g/dev.seat"
+    # OUR moves are sent FROM the photographed thread. Two things ride on
+    # that, and they were settled with a two-message probe rather than by
+    # reading frames: a message appears in its OWN thread as outgoing (right,
+    # "Delivered") and renders its board; the copy the stub pair mirrors into
+    # the other thread arrives as INCOMING and renders as a PLAIN TEXT LINE
+    # with no board at all - the layout image does not cross. So sending our
+    # own moves from the other thread costs both the side AND the picture,
+    # which is most of what a collapsed frame is.
+    thread="$SHOOT_THREAD"; [ "${ACT[$i]}" = "$mine" ] || thread="$other"
+    # `back` is what kills the appex, and only a dead appex claims the next
+    # seed - see trap 1.
+    cmd_back >/dev/null 2>&1 || true
+    if [ "$i" = "0" ]; then cmd_open "$thread" >/dev/null 2>&1
+    else cmd_tapopen "$thread" >/dev/null 2>&1 || cmd_open "$thread" >/dev/null 2>&1
+    fi
+    cmd_turn >/dev/null 2>&1 || echo "  move $i did not send" >&2
+  done
+  # Staging OFF before the last frame. It is what auto-sends each seeded move,
+  # and left on it also stages a DRAFT the moment the extension is next opened -
+  # a bubble sitting in the compose field over a board that did not produce it.
+  cmd_stageseed off >/dev/null
+  cmd_back >/dev/null 2>&1 || true
+  if [ "${FOOLISH_CHAIN_DRAWER:-1}" = "1" ]; then
+    # The collapsed hero frame: the drawer open over the transcript the chain
+    # just built, showing the SAME state the newest bubble does. Re-seeded
+    # rather than opened by tapping the bubble, because tapping one this device
+    # has no identity in opens the seat-claim screen instead of the board.
+    printf '%s' "${HEX[$((${#HEX[@]} - 1))]}" > "$g/dev.fatboard"
+    printf '%s' "$mine" > "$g/dev.seat"
+    cmd_open "$SHOOT_THREAD" >/dev/null 2>&1 && cmd_collapse >/dev/null 2>&1
+    sleep 2
+    cmd_nudge || true
+  else
+    cmd_enter "$SHOOT_THREAD" >/dev/null 2>&1 || true
+  fi
+  cmd_shot "$name"
+}
+cmd_nudge() {
+  # Scroll the transcript until Apple's unknown-sender banner is behind the
+  # drawer. It is a simulator artifact - there is no iMessage account, so every
+  # thread is unverified - but it lands between the newest bubble and the
+  # drawer, right where a collapsed App Store frame is read.
+  #
+  # It cannot be turned off (both unknown-sender filtering prefs leave it
+  # exactly where it was) and it cannot be scrolled away on its own, because it
+  # is glued under the newest message and a transcript that FITS does not
+  # scroll - it rubber-bands straight back. It moves only when there is more
+  # above it than the viewport holds, which is what `FOOLISH_CHAIN_PREFACE`
+  # buys. So this verifies rather than assumes: it re-measures after every drag
+  # and says so when the transcript would not move.
+  need_sim
+  read -r W H < <(screen)
+  local i sp top
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    sp=$(python3 "$LIB/ui.py" spam | awk '{print $2}')
+    [ "$sp" = "None" ] && { echo "banner clear"; return 0; }
+    top=$(grab_y)
+    if [ "$top" != "None" ] && [ "$sp" -ge "$top" ]; then
+      echo "banner behind the drawer (banner $sp, drawer $top)"; return 0
+    fi
+    # Small steps, and stop at the FIRST clear reading. The banner sits
+    # directly under the newest bubble, so anything more than the minimum puts
+    # that bubble behind the compose bar - which looks like a bug in the app
+    # rather than a scrolled transcript.
+    swipe 0.30 $((W / 2)) $((H * 22 / 100)) $((W / 2)) $((H * 22 / 100 + 55)) 1.3
+  done
+  echo "banner still showing at $sp - the transcript is not tall enough to scroll." >&2
+  echo "  add history with FOOLISH_CHAIN_PREFACE=1" >&2
+  return 1
+}
+cmd_tapopen() {
+  # Open the extension the way a REAL GAME does: by tapping the newest bubble,
+  # not through the `+` menu. Both routes show the same seeded board (the
+  # `dev.fatboard` claim runs before the selectedMessage payload path), but only
+  # this one sets `conversation.selectedMessage` - and a send inherits THAT
+  # message's MSSession, which is the single thing that makes Messages collapse
+  # the earlier bubble into a caption line. Through `+` every send is its own
+  # session, so a chain photographs as a stack of full bubbles. The owner:
+  # "it should be a caption from us, a caption from kate, a bubble from us."
+  need_sim
+  cmd_enter "${1:-$SHOOT_THREAD}" >/dev/null
+  local pt; pt=$(python3 "$LIB/ui.py" lastmsg | sed 's/LASTMSG //')
+  [ "$pt" = "None" ] && { echo "no bubble to tap - send one first" >&2; return 1; }
+  local x y
+  x=$(echo "$pt" | tr -d '(),' | awk '{print $1}')
+  y=$(echo "$pt" | tr -d '(),' | awk '{print $2}')
+  # `lastmsg` reports the tapback/avatar edge; step INWARD to land on the
+  # bubble itself - ours sits on the right, theirs on the left.
+  read -r W H < <(screen)
+  if [ "$x" -gt $((W / 2)) ]; then x=$((x - 60)); else x=$((x + 60)); fi
+  tap "$x" "$y" 5
+}
 cmd_back() {
   need_sim
   front
@@ -912,6 +1105,9 @@ case "${1:-}" in
   session)  shift; cmd_session "$@" ;;
   enter)    shift; cmd_enter "$@" ;;
   open)     shift; cmd_open "$@" ;;
+  tapopen)  shift; cmd_tapopen "$@" ;;
+  nudge)    shift; cmd_nudge "$@" ;;
+  chain)    shift; cmd_chain "$@" ;;
   back)     shift; cmd_back "$@" ;;
   expand)   shift; cmd_expand "$@" ;;
   collapse) shift; cmd_collapse "$@" ;;

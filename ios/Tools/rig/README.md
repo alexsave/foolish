@@ -36,7 +36,7 @@ it is", so a list only names a setting on the line where it changes.
 `seat` is empty for the defender's chair, a number for a specific seat, or `atk`
 for an attacker's.
 
-## The five things that are not obvious
+## The nine things that are not obvious
 
 **1. Do not restart Messages mid-shoot.**
 The simulator's Messages keeps its conversations **in memory**.
@@ -48,11 +48,20 @@ is also what makes a re-seed take, because leaving the drawer kills the appex
 and `claimSeededPayload()` is once per appex process.
 `front` re-*activates* Messages without restarting it, and is safe.
 
-**2. The transcript has two sides, and it is a trick.**
-The runtime ships two stub conversations, and a message sent in one of them
-arrives in the other as an **incoming** message.
-Alternating between the two builds a real back-and-forth in whichever thread
-gets photographed.
+**2. The transcript has two sides, and the mirror runs the other way.**
+The runtime ships two stub conversations, and alternating between them builds a
+real back-and-forth in whichever thread gets photographed.
+The direction is the opposite of the obvious one, and it cost a whole set of
+frames: a message sent in a thread appears **in that same thread as INCOMING**,
+and its outgoing twin lands in the other one.
+So to put our own moves on the RIGHT of the photographed thread, they are sent
+from the OTHER thread.
+Sending them from the photographed one puts every one of them on the left, under
+the opponent's side of the conversation - which reads as the opponent having
+made our moves.
+The unambiguous check is the result card: it prints "(You)" from `dev.seat`
+beside the name it resolved for that seat, so one frame showing "Alex (You)"
+with Alex's captions on the left settles the direction.
 Both sides are still ours, and the bubbles are SMS green, because the simulator
 has no iMessage account - that is the platform's ceiling, not a choice.
 `lib/transcript.py` holds the `sms.db` route that does *not* work; it is kept
@@ -87,13 +96,68 @@ The one exception is the App Group suite (`fmsg.nickname`), which
 one is a direct plist edit, and its key contains a dot, which `plutil` reads as
 a path separator unless escaped.
 
-**5. Never `simctl uninstall`.**
+**5. One simulator per task. Never share one.**
+A batch and a hand-driven experiment on the same device destroy each other, and
+the damage is silent: a modal opened by hand (a New Contact sheet, an
+onboarding card) survives a Messages relaunch, swallows every later tap, and
+the batch keeps going and writes frames. A whole four-take run came back as the
+same grey contact editor. `rig.sh newsim` costs seconds - use one per
+concurrent run, and never touch a device another run is driving. `stage` now
+clears leftover modals first, which helps after the fact but is not a licence
+to share.
+
+**6. A chain of bubbles collapses only if each send TAPS the last one.**
+Messages renders every message of an `MSSession` except the newest as a caption
+LINE, and a send inherits its session from `conversation.selectedMessage` - the
+bubble the sender tapped.
+Opening the extension through the `+` menu leaves `selectedMessage` nil, so
+every send starts its own session and a six-move chain photographs as six full
+bubbles stacked down the screen, which reads as six games at once.
+`tapopen` opens it the way a real game does, by tapping the newest bubble, and
+the same chain then photographs as caption / caption / caption / one bubble.
+Both routes show the same seeded board, because `claimSeededPayload()` runs
+before the `selectedMessage` payload path.
+Messages caps the collapsed lines at three, so a longer chain does not grow the
+stack - it only buys the two-way traffic that clears the Report Spam banner.
+
+**7. Apple's unknown-sender banner cannot be switched off, only scrolled.**
+The simulator has no iMessage account, so every thread is unverified and
+Messages glues two lines of grey text and a "Report Spam" pill under the newest
+message - which in a collapsed frame is exactly between the bubble and the
+drawer.
+Both filtering prefs (`sForceUnknownFilteringCompleted`, `FilterUnknownSenders`)
+leave it precisely where it was, and adding the sender to Contacts does not help
+either: the avatar resolves (Kate Bell is `(555) 564-8583`, John Appleseed is
+`888-555-1212`) and the banner stays.
+It also cannot be scrolled on its own, because a transcript that FITS does not
+scroll - it rubber-bands straight back.
+`FOOLISH_CHAIN_PREFACE=1` plays a previous, FINISHED game into the thread first;
+that is what makes the transcript taller than its viewport, and `nudge` then
+scrolls in small steps until the banner is behind the compose bar.
+Small steps matter: the pill goes behind a full line before the text above it
+does, so a scroll that watched only the pill stopped with "may be spam" still on
+screen and reported success.
+
+**8. DerivedData is per simulator, because worktrees share `/tmp`.**
+A concurrent agent building a *worktree* into the same derived-data path writes
+its own `ios_api.h` there, and every later build in this checkout dies with
+`file ... has been modified since the module file was built: size changed`,
+naming a header this checkout never touched.
+`DD` therefore keys on `FOOLISH_SIM`. This is rule 5 applied to the build.
+
+**9. Never `simctl uninstall`.**
 It destroys the App Group container (`dev.fatboard`, `dev.seat`) *and* the
 appex's Preferences container, and both come back with fresh UUIDs.
 Install over the old build instead.
 `build` does.
 
 ## Smaller ones, each of which produced a wrong frame
+
+- **`FOOLISH_NAMES` IS indexed by absolute seat** - `fixture_name` returns
+  `slots[seat]`. An earlier note here claimed the opposite, on evidence that was
+  really the mirror direction above: our own captions were appearing on the
+  wrong side, and renaming the seats made them *read* right while leaving the
+  sides wrong. Put "Alex" at the seat we occupy and fix the sides separately.
 
 - **A staged bubble must match the board underneath it.**
   Opening the extension onto a lobby stages one, and it then rides along in the

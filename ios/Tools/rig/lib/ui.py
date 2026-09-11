@@ -203,31 +203,24 @@ def last_bubble(a, s):
 
 
 def hand_band(a, s):
-    """(top, bottom) pixel rows of the hand strip - the lowest TALL run of
-    card-coloured rows inside the drawer.
+    """(top, bottom) pixel rows of the hand strip - the LOWEST band of
+    card-carrying rows inside the drawer.
 
     Anchored to the drawer, not to a fraction of the screen. The old form
     scanned a fixed `0.88 * height` band, which was true of one phone with one
-    table and became silently wrong when either changed."""
-    top = drawer_top(a, s)
-    if top is None:
-        return None
-    lo = top * s
-    # 0.30 separates a row of CARDS from a row that merely contains a suit
-    # glyph or a seat badge: the table's battle rows and the hand both clear
-    # it, everything else on the board sits under 0.25.
-    m = card(a)[lo:, :].mean(axis=1)
-    h = a.shape[0]
-    bands = [r for r in runs(np.nonzero(m > 0.30)[0], 8 * s)
-             if len(r) >= 10 * s and lo + int(r[-1]) < h - 10 * s]
-    # The last TALL one that does NOT run to the bottom edge. Both extra
-    # conditions were paid for: the drawer's own bottom edge and the home
-    # indicator clear the colour test for ~30pt, and taking that as the hand
-    # put every card tap 70pt below the cards.
+    table and became silently wrong when either changed.
+
+    It reads its bands from `card_bands`, and that is the fix rather than a
+    tidy-up: this used to run its own full-width `> 0.30` test, and a row's
+    card fraction scales with HOW MANY cards are in it. A three-card hand in a
+    COMPACT drawer scores under 0.30 and vanished, so the lowest band that
+    survived was the table's battle row - and `hand_y` then answered with the
+    TABLE. Every select, hint and drag aimed a hundred points too high, on the
+    one presentation the App Store frames are shot in."""
+    bands = card_bands(a, s)
     if not bands:
         return None
-    b = bands[-1]
-    top_px, bot_px = lo + int(b[0]), lo + int(b[-1])
+    top_px, bot_px = bands[-1]
     # A hand is ONE card tall. When the lowest attack on the table sits within
     # a couple of points of the hand the two runs merge, and a merged band
     # reported the attack as part of the hand - so the rig never offered it as
@@ -313,6 +306,41 @@ def onboarding(a, s):
         return None
     band = runs(rows, 8 * s)[0]
     return int((lo + (band[0] + band[-1]) / 2) / s)
+
+
+def spam_banner(a, s):
+    """The y (points) of Apple's unknown-sender banner, or None.
+
+    The simulator has no iMessage account, so every thread is unverified and
+    Messages glues a banner under the newest message: two lines of grey text
+    and a blue "Report Spam" pill. It cannot be switched off - both
+    `sForceUnknownFilteringCompleted` and `FilterUnknownSenders` leave it
+    exactly where it was - and while a drawer is presented it is not in the
+    accessibility tree either, because the drawer hides the whole transcript
+    from it. So it is found by colour, like our own board.
+
+    Defined as ANY content between the bottom of the newest bubble and the
+    compose bar, rather than as the blue pill. Looking for the pill alone was
+    wrong in the one way that matters for a photograph: the pill scrolls behind
+    the compose bar a full line before the grey text above it does, so the
+    scroll stopped with "may be spam" still on screen and reported success."""
+    h, w = a.shape[0], a.shape[1]
+    top = drawer_top(a, s)
+    # Stop short of the compose bar, which is itself a wide light block sitting
+    # just above the drawer and would otherwise read as the newest bubble.
+    limit = (top - 60) * s if top is not None else h - 120 * s
+    if limit <= 300:
+        return None
+    cov = (a.max(axis=2) > 24)[:, int(w * 0.10):int(w * 0.90)].mean(axis=1)
+    wide = np.nonzero(cov[300:limit] > 0.5)[0]
+    bubble_bottom = (300 + int(wide[-1])) if len(wide) else 300
+    hi, lo = a.max(axis=2), a.min(axis=2)
+    grey = (hi - lo < 30) & (hi > 110) & (hi < 215)
+    counts = grey[:, int(w * 0.10):int(w * 0.90)].sum(axis=1)
+    rows = np.nonzero(counts[bubble_bottom + 1:limit] > w * 0.05)[0]
+    if not len(rows):
+        return None
+    return int((bubble_bottom + 1 + int(rows[0])) / s)
 
 
 def wood_icons(a, s):
@@ -363,162 +391,6 @@ def card_bands(a, s):
             if len(r) >= 10 * s and lo + int(r[-1]) < h - 10 * s]
 
 
-def hand_band(a, s):
-    """(top, bottom) pixel rows of the hand strip - the lowest TALL run of
-    card-coloured rows inside the drawer.
-
-    Anchored to the drawer, not to a fraction of the screen. The old form
-    scanned a fixed `0.88 * height` band, which was true of one phone with one
-    table and became silently wrong when either changed."""
-    top = drawer_top(a, s)
-    if top is None:
-        return None
-    lo = top * s
-    # 0.30 separates a row of CARDS from a row that merely contains a suit
-    # glyph or a seat badge: the table's battle rows and the hand both clear
-    # it, everything else on the board sits under 0.25.
-    m = card(a)[lo:, :].mean(axis=1)
-    h = a.shape[0]
-    bands = [r for r in runs(np.nonzero(m > 0.30)[0], 8 * s)
-             if len(r) >= 10 * s and lo + int(r[-1]) < h - 10 * s]
-    # The last TALL one that does NOT run to the bottom edge. Both extra
-    # conditions were paid for: the drawer's own bottom edge and the home
-    # indicator clear the colour test for ~30pt, and taking that as the hand
-    # put every card tap 70pt below the cards.
-    if not bands:
-        return None
-    b = bands[-1]
-    top_px, bot_px = lo + int(b[0]), lo + int(b[-1])
-    # A hand is ONE card tall. When the lowest attack on the table sits within
-    # a couple of points of the hand the two runs merge, and a merged band
-    # reported the attack as part of the hand - so the rig never offered it as
-    # a cover target and every defender board came back "no legal move".
-    if bot_px - top_px > 85 * s:
-        top_px = bot_px - 78 * s
-    return top_px, bot_px
-
-
-def hand_cards(a, s):
-    """Face-up hand cards -> [x_pt] centres, left to right."""
-    band = hand_band(a, s)
-    if band is None:
-        return []
-    strip = card(a)[band[0]:band[1] + 1, :]
-    cols = np.nonzero(strip.mean(axis=0) > 0.35)[0]
-    w = a.shape[1]
-    # Gap 3pt, not 6: cards in a fanned hand sit about 4pt apart, so a 6pt
-    # tolerance merged a whole four-card hand into ONE run and the rig saw a
-    # single card where there were four.
-    out = [int(np.mean(gp) / s) for gp in runs(cols, 3 * s) if len(gp) > 6 * s]
-    # Drop the drawer's own left and right edges, which are card-pale for a few
-    # columns and would otherwise be tapped as if they were cards.
-    return [x for x in out if 12 < x < int(w / s) - 12]
-
-
-def hand_y(a, s):
-    """A y (points) that lands ON a hand card rather than on its top edge."""
-    band = hand_band(a, s)
-    return None if band is None else int((band[0] + band[1]) / 2 / s)
-
-
-def staged_box(a, s):
-    """Bounding box (points) of a STAGED Foolish bubble sitting in the compose
-    field, or None.
-
-    It is the same table surface as the drawer, so the two are told apart by
-    where they end: the drawer runs to the bottom of the screen and a staged
-    bubble does not. Wanted for its close button, which is inset from the
-    bubble's top-right corner - a staged bubble left in the field puts an
-    unsent draft into every later frame, and one that belongs to a different
-    game than the board underneath makes the frame a lie."""
-    h, w = a.shape[0], a.shape[1]
-    m = surface(a)
-    rows = np.nonzero(m.mean(axis=1) > 0.25)[0]
-    if not len(rows):
-        return None
-    for run in runs(rows, 6 * s):
-        if run[-1] >= h - 12 * s:      # that one is the drawer
-            continue
-        # A staged bubble is a BLOCK. Without a size floor the tallest thing
-        # that passed was the green battery glyph in the status bar (7pt), and
-        # "clear the staged bubble" then tapped Control Center open.
-        if len(run) < 60 * s:
-            continue
-        cols = np.nonzero(m[run[0]:run[-1] + 1, :].mean(axis=0) > 0.25)[0]
-        if len(cols) < 40 * s:
-            continue
-        return (int(cols[0] / s), int(run[0] / s),
-                int(cols[-1] / s), int(run[-1] / s))
-    return None
-
-
-def onboarding(a, s):
-    """The y (points) of the blue action pill on one of Apple's first-run
-    Messages sheets, or None if no sheet is up.
-
-    Both sheets ("Shared with You", "Apple Intelligence in Messages") eat the
-    first tap of a run if they are still there, and their buttons are at
-    DIFFERENT heights - "OK" sits about 87% down, "Continue" about 93%. A rig
-    that tapped a fixed 87% dismissed the first sheet and, on the second,
-    landed on "Edit in Settings" instead: the run then walked into the
-    Settings app and reported "could not open conversation" eleven times.
-    So the pill is measured, not assumed. Our own buttons are wood, never a
-    wide blue pill low on the screen, so there is nothing else to hit."""
-    h, w = a.shape[0], a.shape[1]
-    r, g, b = a[:, :, 0], a[:, :, 1], a[:, :, 2]
-    blue = (b > 150) & (b > r + 60) & (b > g + 40)
-    lo = int(h * 0.72)
-    counts = blue[lo:, :].sum(axis=1)
-    rows = np.nonzero(counts > w * 0.5)[0]
-    if not len(rows):
-        return None
-    band = runs(rows, 8 * s)[0]
-    return int((lo + (band[0] + band[-1]) / 2) / s)
-
-
-def wood_icons(a, s):
-    """The small wooden squares on the board's control row -> [(x_pt, y_pt)].
-
-    `wood_bars` only reports runs at least 120pt wide, which is right for a
-    button but excludes the gear and the book - and asking it for "the lowest
-    bar" then returned whatever wide button happened to be lower on screen,
-    so "open Settings" tapped Add player instead and produced two frames of
-    the wrong surface entirely."""
-    m = wood(a)
-    counts = m.sum(axis=1)
-    rows = [r for r in runs(np.nonzero(counts > 14 * s)[0], 10 * s)
-            if len(r) >= 14 * s]
-    if not rows:
-        return []
-    band = rows[-1]                       # the control row is the lowest one
-    cols = np.nonzero(m[band[0]:band[-1] + 1, :].mean(axis=0) > 0.5)[0]
-    y = int((band[0] + band[-1]) / 2 / s)
-    out = []
-    for gp in runs(cols, 6 * s):
-        wpt = len(gp) / s
-        if 16 <= wpt <= 70:               # a square, not a full-width plank
-            out.append((int(np.mean(gp) / s), y))
-    return out
-
-
-def card_bands(a, s):
-    """Every tall run of card-coloured rows inside the drawer, top to bottom.
-
-    The last one is the hand; the ones above it are the battle rows."""
-    top = drawer_top(a, s)
-    if top is None:
-        return []
-    lo, h = top * s, a.shape[0]
-    # 0.10, not 0.30: a row's card fraction scales with HOW MANY cards are in
-    # it, and a lone uncovered attack is one card across the whole width -
-    # about 0.12. At 0.30 that row was invisible, so the one card the defender
-    # actually had to cover was never offered as a target.
-    m = card(a)[lo:, :].mean(axis=1)
-    return [(lo + int(r[0]), lo + int(r[-1]))
-            for r in runs(np.nonzero(m > 0.10)[0], 8 * s)
-            if len(r) >= 10 * s and lo + int(r[-1]) < h - 10 * s]
-
-
 def table_cards(a, s):
     """Cards on the TABLE -> [(x_pt, y_pt)], top row first.
 
@@ -555,137 +427,58 @@ def table_cards(a, s):
     return out
 
 
-def hand_y(a, s):
-    """A y (points) that lands ON a hand card rather than on its top edge."""
-    band = hand_band(a, s)
-    return None if band is None else int((band[0] + band[1]) / 2 / s)
+def last_message(a, s):
+    """(x_pt, y_pt) of the NEWEST Foolish message in the transcript, either
+    side, located by its app icon.
 
-
-def staged_box(a, s):
-    """Bounding box (points) of a STAGED Foolish bubble sitting in the compose
-    field, or None.
-
-    It is the same table surface as the drawer, so the two are told apart by
-    where they end: the drawer runs to the bottom of the screen and a staged
-    bubble does not. Wanted for its close button, which is inset from the
-    bubble's top-right corner - a staged bubble left in the field puts an
-    unsent draft into every later frame, and one that belongs to a different
-    game than the board underneath makes the frame a lie."""
-    h, w = a.shape[0], a.shape[1]
-    m = surface(a)
-    rows = np.nonzero(m.mean(axis=1) > 0.25)[0]
-    if not len(rows):
-        return None
-    for run in runs(rows, 6 * s):
-        if run[-1] >= h - 12 * s:      # that one is the drawer
-            continue
-        # A staged bubble is a BLOCK. Without a size floor the tallest thing
-        # that passed was the green battery glyph in the status bar (7pt), and
-        # "clear the staged bubble" then tapped Control Center open.
-        if len(run) < 60 * s:
-            continue
-        cols = np.nonzero(m[run[0]:run[-1] + 1, :].mean(axis=0) > 0.25)[0]
-        if len(cols) < 40 * s:
-            continue
-        return (int(cols[0] / s), int(run[0] / s),
-                int(cols[-1] / s), int(run[-1] / s))
-    return None
-
-
-def onboarding(a, s):
-    """The y (points) of the blue action pill on one of Apple's first-run
-    Messages sheets, or None if no sheet is up.
-
-    Both sheets ("Shared with You", "Apple Intelligence in Messages") eat the
-    first tap of a run if they are still there, and their buttons are at
-    DIFFERENT heights - "OK" sits about 87% down, "Continue" about 93%. A rig
-    that tapped a fixed 87% dismissed the first sheet and, on the second,
-    landed on "Edit in Settings" instead: the run then walked into the
-    Settings app and reported "could not open conversation" eleven times.
-    So the pill is measured, not assumed. Our own buttons are wood, never a
-    wide blue pill low on the screen, so there is nothing else to hit."""
-    h, w = a.shape[0], a.shape[1]
-    r, g, b = a[:, :, 0], a[:, :, 1], a[:, :, 2]
-    blue = (b > 150) & (b > r + 60) & (b > g + 40)
-    lo = int(h * 0.72)
-    counts = blue[lo:, :].sum(axis=1)
-    rows = np.nonzero(counts > w * 0.5)[0]
-    if not len(rows):
-        return None
-    band = runs(rows, 8 * s)[0]
-    return int((lo + (band[0] + band[-1]) / 2) / s)
-
-
-def wood_icons(a, s):
-    """The small wooden squares on the board's control row -> [(x_pt, y_pt)].
-
-    `wood_bars` only reports runs at least 120pt wide, which is right for a
-    button but excludes the gear and the book - and asking it for "the lowest
-    bar" then returned whatever wide button happened to be lower on screen,
-    so "open Settings" tapped Add player instead and produced two frames of
-    the wrong surface entirely."""
-    m = wood(a)
-    counts = m.sum(axis=1)
-    rows = [r for r in runs(np.nonzero(counts > 14 * s)[0], 10 * s)
-            if len(r) >= 14 * s]
-    if not rows:
-        return []
-    band = rows[-1]                       # the control row is the lowest one
-    cols = np.nonzero(m[band[0]:band[-1] + 1, :].mean(axis=0) > 0.5)[0]
-    y = int((band[0] + band[-1]) / 2 / s)
-    out = []
-    for gp in runs(cols, 6 * s):
-        wpt = len(gp) / s
-        if 16 <= wpt <= 70:               # a square, not a full-width plank
-            out.append((int(np.mean(gp) / s), y))
-    return out
-
-
-def card_bands(a, s):
-    """Every tall run of card-coloured rows inside the drawer, top to bottom.
-
-    The last one is the hand; the ones above it are the battle rows."""
+    A message collapses into a caption line only when the NEXT send shares its
+    MSSession, and a send shares it only if that message is SELECTED. Selecting
+    just the INCOMING ones collapses only Kate's - our own stay full bubbles,
+    and the transcript ends up with several game cards in it when a real thread
+    has exactly one. So tap the newest message whoever sent it: ours sit on the
+    right, hers on the left."""
     top = drawer_top(a, s)
-    if top is None:
-        return []
-    lo, h = top * s, a.shape[0]
-    # 0.10, not 0.30: a row's card fraction scales with HOW MANY cards are in
-    # it, and a lone uncovered attack is one card across the whole width -
-    # about 0.12. At 0.30 that row was invisible, so the one card the defender
-    # actually had to cover was never offered as a target.
-    m = card(a)[lo:, :].mean(axis=1)
-    return [(lo + int(r[0]), lo + int(r[-1]))
-            for r in runs(np.nonzero(m > 0.10)[0], 8 * s)
-            if len(r) >= 10 * s and lo + int(r[-1]) < h - 10 * s]
+    h, w = a.shape[0], a.shape[1]
+    hi = (top * s) if top is not None else h
+    r, g, b = a[:, :, 0], a[:, :, 1], a[:, :, 2]
+    icon = (r > 110) & (r > g * 1.9) & (r > b * 1.9)
+    band = icon[:hi, :]
+    rows = np.nonzero(band.sum(axis=1) > 6 * s)[0]
+    if not len(rows):
+        return None
+    run = runs(rows, 6 * s)[-1]
+    cols = np.nonzero(band[run[0]:run[-1] + 1, :].sum(axis=0) > 0)[0]
+    if not len(cols):
+        return None
+    return (int(cols.mean() / s), int((run[0] + run[-1]) / 2 / s))
 
 
-def table_cards(a, s):
-    """Cards on the TABLE -> [(x_pt, y_pt)], reading order.
+def last_incoming(a, s):
+    """(x_pt, y_pt) of the NEWEST incoming Foolish message in the transcript,
+    or None - located by its app icon, which is a small strongly-red mark on
+    the LEFT of the conversation.
 
-    Everything in the drawer's card bands except the lowest one, which is the
-    hand. Wanted because a DEFENDER's move is not a button: a card is selected
-    and then dropped on the attack it covers, so the rig has to know where the
-    attacks are."""
-    bands = card_bands(a, s)
-    hand = hand_band(a, s)
-    if not bands or hand is None:
-        return []
-    # Everything above the hand strip, INCLUDING the part of a merged band that
-    # sits above it (see hand_band).
-    spans = [(t, min(b, hand[0] - 1)) for t, b in bands if t < hand[0] - 1]
-    w = a.shape[1]
-    out = []
-    for t, b in spans:
-        strip = card(a)[t:b + 1, :]
-        cols = np.nonzero(strip.mean(axis=0) > 0.30)[0]
-        y = int((t + b) / 2 / s)
-        for gp in runs(cols, 5 * s):
-            if len(gp) < 8 * s:
-                continue
-            x = int(np.mean(gp) / s)
-            if 12 < x < int(w / s) - 12:
-                out.append((x, y))
-    return out
+    Wanted because an incoming message only collapses into a caption line when
+    the NEXT send shares its MSSession, and a send only shares it if that
+    message is SELECTED. Tapping a fixed point hit whichever caption line
+    happened to be there, so the newest one stayed a full pill - which is not
+    what a real thread looks like: the owner's is game-text lines and then one
+    bubble, the sender's own."""
+    top = drawer_top(a, s)
+    h, w = a.shape[0], a.shape[1]
+    lo = 0 if top is None else 0
+    hi = (top * s) if top is not None else h
+    r, g, b = a[:, :, 0], a[:, :, 1], a[:, :, 2]
+    icon = (r > 110) & (r > g * 1.9) & (r > b * 1.9)
+    left = icon[:hi, :int(w * 0.18)]
+    rows = np.nonzero(left.sum(axis=1) > 6 * s)[0]
+    if not len(rows):
+        return None
+    band = runs(rows, 6 * s)[-1]           # the lowest icon is the newest
+    cols = np.nonzero(left[band[0]:band[-1] + 1, :].sum(axis=0) > 0)[0]
+    if not len(cols):
+        return None
+    return (int(cols.mean() / s), int((band[0] + band[-1]) / 2 / s))
 
 
 if __name__ == "__main__":
@@ -710,6 +503,12 @@ if __name__ == "__main__":
         print("HAND_Y", y if y is not None else -1)
     if what in ("top", "all"):
         print("TOP", drawer_top(a, s))
+    if what in ("incoming", "all"):
+        print("INCOMING", last_incoming(a, s))
+    if what in ("spam", "all"):
+        print("SPAM", spam_banner(a, s))
+    if what in ("lastmsg", "all"):
+        print("LASTMSG", last_message(a, s))
     if what in ("staged", "all"):
         print("STAGED", staged_box(a, s))
     if what in ("onboarding", "all"):
