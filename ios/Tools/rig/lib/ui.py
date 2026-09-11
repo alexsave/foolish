@@ -168,6 +168,65 @@ def drawer_top(a, s):
     return int(top / s)
 
 
+def grabber(a, s):
+    """Messages' own grab handle -> (top_pt, bottom_pt), or None.
+
+    The short translucent pill the host draws just inside the drawer's top
+    edge. It is the only landmark on screen that belongs to MESSAGES rather
+    than to us, which is why `host_drawer_top` is built on it - see there.
+
+    Found by colour, in the narrow middle of the screen: the pill is white at
+    low opacity over whatever is behind it, so it reads as a mid luminance
+    (~105) between the table (~36) and any white text (~230). A run of those,
+    a few points tall.
+
+    AND WITH THE TRANSCRIPT'S BLACK ABOVE IT, which is the half that makes this
+    reliable: colour alone finds a SENT Foolish bubble's pale text up in the
+    chat just as happily as the handle, and the first take to run this against
+    a dealt board answered 426 for a drawer whose edge was 567. The drawer's own
+    top edge has nothing but the unlit transcript above it, so a candidate is
+    only the handle if the rows a few points over it are black."""
+    h, w = a.shape[0], a.shape[1]
+    lum = a[:, int(w * 0.47):int(w * 0.53), :].mean(axis=2).mean(axis=1)
+    hit = (lum > 70) & (lum < 170)
+    hit[:int(h * 0.45)] = False               # never the top of the transcript
+    idx = np.nonzero(hit)[0]
+    for run in runs(idx, 1):
+        if not (2 * s <= len(run) <= 9 * s):
+            continue
+        sky = lum[max(0, int(run[0]) - 10 * s):max(1, int(run[0]) - 7 * s)]
+        if len(sky) and sky.mean() < 12:
+            return round(float(run[0]) / s, 1), round(float(run[-1]) / s, 1)
+    return None
+
+
+def host_drawer_top(a, s):
+    """The top edge of the HOST's COMPACT drawer (points), or None.
+
+    `drawer_top` answers where OUR TABLE starts, which is the right question
+    for the board and the wrong one for the drawer, in two ways:
+
+      * a screen of ours with a big dark panel in it splits the felt, and the
+        panel then wins the "last long gap" - the New game screen's black name
+        field reports 739 on a drawer whose real edge is 584;
+      * and it cannot see a 17pt difference in the DRAWER when our content
+        fills whatever it is given, which is exactly the measurement this
+        exists for.
+
+    So this ignores our content entirely and reads Messages' own grab handle,
+    which sits a fixed 5.7pt below the drawer's top edge. Calibrated on two
+    filmed frames of the same lobby at the two heights Messages gives:
+    ~/Downloads/lobby-takes create_fade_before (edge 584.3, pill 590.0-594.7)
+    and create_fade_after2 (edge 568.3, pill 573.3-578.0).
+
+    COMPACT ONLY. An expanded drawer's pill is up near the status bar, above
+    the band this searches, so an expanded drawer answers with whatever pale
+    thing is lowest on our own surface. Ask `drawer_top` whether a drawer is
+    expanded first."""
+    g = grabber(a, s)
+    return None if g is None else round(g[0] - 5.7, 1)
+
+
 def last_bubble(a, s):
     """The NEWEST Foolish bubble sitting in the transcript -> (x_pt, y_pt).
 
@@ -503,6 +562,8 @@ if __name__ == "__main__":
         print("HAND_Y", y if y is not None else -1)
     if what in ("top", "all"):
         print("TOP", drawer_top(a, s))
+    if what in ("hostedge", "all"):
+        print("HOSTEDGE", host_drawer_top(a, s), "PILL", grabber(a, s))
     if what in ("incoming", "all"):
         print("INCOMING", last_incoming(a, s))
     if what in ("spam", "all"):

@@ -36,7 +36,7 @@ it is", so a list only names a setting on the line where it changes.
 `seat` is empty for the defender's chair, a number for a specific seat, or `atk`
 for an attacker's.
 
-## The ten things that are not obvious
+## The eleven things that are not obvious
 
 **1. Do not restart Messages mid-shoot.**
 The simulator's Messages keeps its conversations **in memory**.
@@ -178,6 +178,28 @@ photographing a stale board.
 `rig.sh claimed` prints the receipt by hand.
 No sleeps are involved: a claim either happened in a fresh process or it did
 not, and the answer is a file.
+
+**11. The compact drawer has TWO heights, and Messages' compose field picks
+which.**
+The drawer is 388.7pt tall when Messages' own text field holds no first
+responder and 372pt when it does - the whole input stack drops 17pt with it, and
+our surface just fills whatever it is handed (the extension's own AnimLog reads
+`follow geo=...->340` and `...->323` for the two).
+So on a 6.9" phone the drawer's top edge is 567 or 584, and **nothing in the
+extension chooses**: an `open` taken after a tap anywhere in the compose area
+measures 16pt shorter than an `open` taken after leaving the thread and coming
+back.
+`clearstage` is such a tap - it presses the staged bubble's X - which is why it
+now ends with a `back`.
+This cost a whole investigation.
+Four films of the same create read as "the create path settles at a different
+height on identical code"; all four were really reading the state their
+prologue had left behind, and `create_X_before` / `create_X_before2` prove it -
+their *first* frames, before either take does anything, already sit at 584 and
+567.
+Measure the drawer with `ui.py hostedge` (Messages' own grab handle) rather
+than `top` (the top of OUR felt, which a dark panel of ours splits - the New
+game screen's black name field reports 739 for a drawer whose edge is 584).
 
 ## Smaller ones, each of which produced a wrong frame
 
