@@ -2734,6 +2734,7 @@ static void print_lastdefense(int np) {
 #define LASTMOVE_REFILL_EMPTY 7   // tail logs LOG_DRAW and empties the deck
 #define LASTMOVE_COVER_TRUMP  8   // covers with a TRUMP, bout stays open
 #define LASTMOVE_FINAL        9   // the move that ends the game (arrival)
+#define LASTMOVE_GOOD_ANY    10   // ANY legal good, closing the bout or not
 
 static bool lastmove_apply(Game *g, int seat, const LegalMove *m) {
     switch (m->type) {
@@ -2829,6 +2830,21 @@ static void print_lastmove_ex(int np, int kind, int live) {
                             Game c = g;
                             if (!lastmove_apply(&c, seat, m)) break;
                             want = (c.status == GAME_STATUS_PLAYING && c.num_battles > 0);
+                            break;
+                        }
+                        // `good` above is specifically a good that does NOT
+                        // close the bout, which needs a second attacker - so it
+                        // has no two-player instance at all, and reporting that
+                        // as "2 players cannot say good" is wrong twice over.
+                        // At two players a good is the ORDINARY way a bout ends,
+                        // and it stages like any other move, so the player sees
+                        // their own green check before they send it. This kind
+                        // takes any legal good, closing or not.
+                        case LASTMOVE_GOOD_ANY: {
+                            if (m->type != MOVE_GOOD) break;
+                            Game c = g;
+                            if (!lastmove_apply(&c, seat, m)) break;
+                            want = (c.status == GAME_STATUS_PLAYING);
                             break;
                         }
                         case LASTMOVE_OUT: {
@@ -3715,13 +3731,13 @@ int main(int argc, char **argv) {
     if (argc > 2 && (!strcmp(argv[1], "--lastmove") || !strcmp(argv[1], "--lastmove-live"))) {
         static const char *names[] = { "attack", "cover", "pickup", "pass",
                                         "good", "out", "refill", "refillempty",
-                                        "covertrump", "final" };
+                                        "covertrump", "final", "goodany" };
         int kind = -1;
         for (size_t k = 0; k < sizeof(names) / sizeof(names[0]); k++)
             if (!strcmp(argv[2], names[k])) { kind = (int)k; break; }
         if (kind < 0) {
             fprintf(stderr, "--lastmove: unknown kind '%s' (attack|cover|pickup|pass|"
-                            "good|out|refill|refillempty|covertrump)\n", argv[2]);
+                            "good|goodany|out|refill|refillempty|covertrump|final)\n", argv[2]);
             return 2;
         }
         print_lastmove_ex(argc > 3 ? atoi(argv[3]) : 2, kind,

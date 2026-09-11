@@ -96,10 +96,22 @@ def main():
     # derived from it, so a `SEAT=atk` frame reliably shows an ATTACKER's
     # action bar rather than the defender's.
     dseat = None
+    actor = None
     for l in notes:
         if "defender=seat" in l:
             dseat = int(l.split("defender=seat")[1].split()[0])
+        # `--lastmove`/`--lastmove-live` report the seat that acted (or, for
+        # -live, the one that still has to). There is no defender line there at
+        # all, so without this the seat fell back to 0 and the frame was shot
+        # from a chair with no move to make.
+        if "last_actor=seat" in l:
+            actor = int(l.split("last_actor=seat")[1].split()[0])
+    # Where the player count sits in the argument list is per-mode, and
+    # guessing "the first one" threw on every --lastmove call, whose first
+    # argument is the KIND: "invalid literal for int(): 'good'".
     if mode == "fatboard":
+        n_players = int(rest[1]) if len(rest) > 1 else 2
+    elif mode.startswith("lastmove"):
         n_players = int(rest[1]) if len(rest) > 1 else 2
     elif rest:
         n_players = int(rest[0])
@@ -111,8 +123,10 @@ def main():
         seat = ((dseat + 1) % n_players) if dseat is not None else 1
     elif want != "":
         seat = int(want)
+    elif dseat is not None:
+        seat = dseat
     else:
-        seat = dseat if dseat is not None else 0
+        seat = actor if actor is not None else 0
 
     names = list(CAST)
     names[0], names[seat] = names[seat], names[0]

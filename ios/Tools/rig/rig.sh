@@ -468,6 +468,26 @@ cmd_expand() {
   swipe 0.6 $((W / 2)) $((y + 6)) $((W / 2)) $((H * 16 / 100)) 3
 }
 
+# Collapse and return AT ONCE. Everything with a fuse on it - the Send hint,
+# a toast - is gone by the time the ordinary 3-second settle returns.
+cmd_collapse_fast() {
+  read -r W H < <(screen)
+  local y; y=$(grab_y)
+  [ "$y" = "None" ] && return 1
+  swipe 0.45 $((W / 2)) $(pull_y "$y" "$H") $((W / 2)) $((H * 66 / 100)) 0.9
+}
+
+# Press the board's own action plank - Good for an attacker whose defender has
+# covered everything, Pickup for a defender - and leave it STAGED. The green
+# check a player sees on their own side before they send is a state of the
+# product and was in none of the first two hundred frames.
+cmd_goodtap() {
+  read -r W H < <(screen)
+  local y; y=$(bar_y -1)
+  [ "$y" = "-1" ] && return 1
+  tap $((W * 4 / 5)) "$y" 2.5
+}
+
 cmd_collapse() {
   read -r W H < <(screen)
   local y; y=$(grab_y)
@@ -587,6 +607,18 @@ cmd_play() {
 # on an otherwise covered table is one card across the whole board - under
 # every threshold that excludes the seat badges. Seeding the bubble from the
 # same chain the board came from is the same answer with none of the guessing.
+# Select the leftmost hand card, so the frame carries the selection border.
+cmd_select() {
+  need_sim
+  local x y
+  x=$(python3 "$LIB/ui.py" cards | python3 -c "
+import sys, ast
+c = ast.literal_eval(sys.stdin.read().split('CARDS ')[1]); print(c[0] if c else -1)")
+  y=$(python3 "$LIB/ui.py" hand_y | awk '{print $2}')
+  [ "$x" = "-1" ] || [ "$y" = "-1" ] && return 1
+  tap "$x" "$y" 2
+}
+
 cmd_turn() {
   need_sim
   local top; top=$(grab_y)
@@ -667,7 +699,9 @@ PY
 # A blank `mode` means "do not seed" - for lobby, settings and rules frames,
 # which are reached by tapping rather than by opening a canned chain.
 #
-# `act` is `turn` to PLAY A MOVE AND SEND IT before the frame is taken. That
+# `act` is `turn` (send the staged bubble), `select` (send, then select a
+# hand card so the selection border shows) or `hint` (leave it staged and
+# collapse, which is what puts the Send hint on screen). `turn` is the one that
 # is what makes the transcript honest: the last bubble is then the board that
 # is on screen, rather than a bubble left over from some other game. Without
 # it the drawer and the chat behind it are two unrelated games, which is what
@@ -689,9 +723,26 @@ cmd_batch() {
     # still exited 0 - the list simply stopped, with nothing to say it had.
     cmd_back || { echo "!! $name skipped - could not leave the drawer" >&2; continue; }
     cmd_open_retry || { echo "!! $name skipped - could not open the extension" >&2; continue; }
-    if [ "${act:-}" = "turn" ]; then
-      cmd_turn || { echo "!! $name skipped - no move to send" >&2; continue; }
-    fi
+    case "${act:-}" in
+      # Send the bubble the seeded open staged: the transcript's last bubble
+      # is then the board on screen.
+      turn)   cmd_turn || { echo "!! $name skipped - nothing to send" >&2; continue; } ;;
+      # Send it, then SELECT a hand card - the bright red selection border is
+      # a whole state of the product and was in none of the first 100 frames.
+      select) cmd_turn || { echo "!! $name skipped - nothing to send" >&2; continue; }
+              cmd_select || { echo "!! $name skipped - no hand to select from" >&2; continue; } ;;
+      # Leave it STAGED and collapse, which is what puts the Send hint on
+      # screen. Coherent on its own terms: the move is made and not yet sent,
+      # and the bubble in the field is the board underneath it.
+      # The hint burns a 3-SECOND FUSE (StagedSendHint) and then fades, so the
+      # frame has to be taken inside it. `cmd_collapse` settles for 3s, which
+      # is exactly too long - those frames came back with a staged bubble and
+      # no arrow over it. Collapse fast, shoot at once, verify nothing.
+      hint)   cmd_collapse_fast || { echo "!! $name skipped - no drawer" >&2; continue; } ;;
+      # Tap the board's own action plank (Good / Pickup) and do NOT send, so
+      # the frame carries the move staged and the player's own green check.
+      good)   cmd_goodtap || { echo "!! $name skipped - no action plank" >&2; continue; } ;;
+    esac
     [ "${view:-compact}" = "expanded" ] && cmd_expand
     cmd_shot "$name"
   done < "$list"
@@ -788,6 +839,7 @@ case "${1:-}" in
   back)     shift; cmd_back "$@" ;;
   expand)   shift; cmd_expand "$@" ;;
   collapse) shift; cmd_collapse "$@" ;;
+  goodtap)  shift; cmd_goodtap "$@" ;;
   seed)     shift; cmd_seed "$@" ;;
   unseed)   shift; cmd_unseed "$@" ;;
   prefs)    shift; cmd_prefs "$@" ;;
@@ -807,6 +859,7 @@ case "${1:-}" in
   clearstage) shift; cmd_clearstage "$@" ;;
   play)     shift; cmd_play "$@" ;;
   turn)     shift; cmd_turn "$@" ;;
+  select)   shift; cmd_select "$@" ;;
   tap)      shift; tap "$@" ;;
   swipe)    shift; swipe "$@" ;;
   text)     shift; type_s "$@" ;;

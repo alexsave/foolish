@@ -1,0 +1,23 @@
+34_good/4p|lastmove|good 4||||dark|expanded|turn
+34_good/4p_atk|lastmove|good 4|atk||||expanded|select
+34_good/6p|lastmove|good 6|||||expanded|turn
+34_good/6p_atk|lastmove|good 6|atk||||expanded|select
+34_good/8p|lastmove|good 8|||||expanded|turn
+34_good/8p_atk|lastmove|good 8|atk||||expanded|select
+34_good/4p_light|lastmove|good 4||||light|expanded|turn
+34_good/6p_dark|lastmove|good 6||||dark|expanded|select
+35_lastmove/attack_2p|lastmove|attack 2|||||compact|select
+35_lastmove/attack_4p|lastmove|attack 4|||||expanded|select
+35_lastmove/attack_6p|lastmove|attack 6|||||expanded|select
+35_lastmove/cover_2p|lastmove|cover 2|||||expanded|turn
+35_lastmove/cover_4p|lastmove|cover 4|||||expanded|turn
+35_lastmove/cover_6p|lastmove|cover 6|||||expanded|turn
+35_lastmove/refill_2p|lastmove|refill 2|||||expanded|select
+35_lastmove/refill_4p|lastmove|refill 4|||||expanded|select
+35_lastmove/refill_6p|lastmove|refill 6|||||expanded|select
+35_lastmove/final_2p|lastmove|final 2|||||compact|turn
+35_lastmove/final_4p|lastmove|final 4|||||expanded|turn
+35_lastmove/final_6p|lastmove|final 6|||||expanded|turn
+35_lastmove/cover_2p_hint|lastmove|cover 2|||||compact|hint
+35_lastmove/attack_2p_hint|lastmove|attack 2|||||compact|hint
+99_reset2/x|fatboard|5 2 pass 5||||dark|expanded|turn
