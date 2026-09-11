@@ -2986,13 +2986,63 @@ static void print_chain(int np, int count, int depth) {
         }
         start_game(&g);
 
+        // A NEGATIVE depth anchors the chain to the END of the game instead of
+        // to an absolute move number: -1 means "the last `count` moves, the
+        // last of them the one that ends it".
+        //
+        // It needs a counting pass because a game's length is a property of the
+        // seed, not something a caller can know - and without it a result card
+        // can only ever be photographed over a transcript belonging to some
+        // OTHER game, which is exactly the kind of frame that does not survive
+        // a close look. The count is replayed rather than rewound: the deal is
+        // a function of the seed and both RNGs are re-seeded below, so the
+        // second pass is the same game move for move.
+        int use_depth = depth;
+        if (depth < 0) {
+            Game cg = g;
+            int moves = 0;
+            for (; cg.status == GAME_STATUS_PLAYING && moves < 512; moves++) {
+                if (game_done(&cg) >= 0) break;
+                int cseat = -1, cpick = -1;
+                const int cstart = (int)(rnd() % (uint32_t)np);
+                for (int t = 0; t < np && cseat < 0; t++) {
+                    const int c = (cstart + t) % np;
+                    if (cg.players[c].status != PLAYER_STATUS_IN) continue;
+                    calculate_legal_moves(&cg, c, &ml);
+                    for (int i = 0; i < ml.n; i++)
+                        if (ml.moves[i].type != MOVE_WAIT) { cseat = c; cpick = i; break; }
+                }
+                if (cseat < 0 || cpick < 0) break;
+                AwireAction ca;
+                move_to_awire(&ml.moves[cpick], &ca);
+                bool cok;
+                switch (ca.kind) {
+                    case AWIRE_ATTACK: cok = handle_attack(&cg, cseat, ca.cards, ca.n); break;
+                    case AWIRE_COVER:  cok = handle_cover(&cg, cseat, ca.cards, ca.attacks, ca.n); break;
+                    case AWIRE_PASS:   cok = handle_pass(&cg, cseat, ca.cards, ca.n); break;
+                    case AWIRE_PICKUP: cok = handle_pickup(&cg, cseat); break;
+                    default:           cok = handle_good(&cg, cseat); break;
+                }
+                if (!cok) break;
+            }
+            // Only a game that actually ENDED can be anchored to its end.
+            if (game_done(&cg) < 0 && cg.status == GAME_STATUS_PLAYING) continue;
+            // `moves` is how many were PLAYED, and the last of them is the one
+            // that ends the game, so the window starts `count` before it - not
+            // `count - 1`, which seals five of six and rejects every seed.
+            use_depth = moves - count;
+            if (use_depth < 0) continue;
+            g_rng = 4242u + s;
+            random_strategy_set_seed(g_rng);
+        }
+
         // Replay buffers: one envelope per kept move, plus the log mark each
         // was a delta FROM, so every bubble animates only its own move.
         unsigned char wires[16][ENV_CAP];
-        int lens[16], actors[16], kept = 0;
+        int lens[16], actors[16], phases[16], kept = 0;
 
         int step = 0;
-        for (; step < depth + count && g.status == GAME_STATUS_PLAYING; step++) {
+        for (; step < use_depth + count && g.status == GAME_STATUS_PLAYING; step++) {
             if (game_done(&g) >= 0) break;
             int seat = -1, pick = -1;
             const int start = (int)(rnd() % (uint32_t)np);
@@ -3017,25 +3067,33 @@ static void print_chain(int np, int count, int depth) {
                 default:           ok = handle_good(&g, seat); break;
             }
             if (!ok) break;
-            if (step < depth) continue;          // still warming the game up
+            if (step < use_depth) continue;      // still warming the game up
 
             MsgEnvelope e;
             env_init(&e, seed, np);
-            e.phase = MSG_PHASE_LIVE;
+            // The phase is READ, not assumed. It used to be pinned to LIVE,
+            // which made the last bubble of a chain that actually ends the game
+            // claim the game was still running - and a result card photographed
+            // over that transcript is a state the thread could not have
+            // reached. A chain that finishes should say so.
+            e.phase = (game_done(&g) >= 0 || g.status != GAME_STATUS_PLAYING)
+                      ? MSG_PHASE_FINISHED : MSG_PHASE_LIVE;
             e.last_actor_seat = (uint8_t)seat;
             e.sent_at = (uint16_t)(time(NULL) & 0xffff);
             if (msg_seal(&e, &g, pre_logs, body, sizeof(body), &scratch) != MSG_EOK) break;
             const int n = msg_encode(&e, wires[kept], sizeof(wires[kept]));
             if (n <= 0) break;
-            lens[kept] = n; actors[kept] = seat; kept++;
+            lens[kept] = n; actors[kept] = seat;
+            phases[kept] = e.phase; kept++;
             if (kept >= count) break;
         }
         if (kept < count) continue;
 
         fprintf(stderr, "chain: %dp seed#%u depth=%d, %d consecutive bubbles\n",
-                np, s, depth, kept);
+                np, s, use_depth, kept);
         for (int i = 0; i < kept; i++) {
-            fprintf(stderr, "chain[%d]: actor=seat %d (%d bytes)\n", i, actors[i], lens[i]);
+            fprintf(stderr, "chain[%d]: actor=seat %d (%d bytes)%s\n", i, actors[i],
+                    lens[i], phases[i] == MSG_PHASE_FINISHED ? " FINISHED" : "");
             for (int b = 0; b < lens[i]; b++) printf("%02x", wires[i][b]);
             printf("\n");
         }

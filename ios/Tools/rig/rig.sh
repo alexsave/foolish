@@ -472,10 +472,13 @@ cmd_chain() {
     echo "no chain at depth $depth" >&2; return 1; }
   local last
   last=$(grep -o 'actor=seat [0-9]' /tmp/rig_chain.log | tail -1 | awk '{print $2}')
-  # See the FOOLISH_NAMES note in the README: the list is NOT indexed by
-  # absolute seat, so this mapping is the inverse of the obvious one.
-  if [ "$last" = "0" ]; then export FOOLISH_NAMES="Kate,Alex"
-  else export FOOLISH_NAMES="Alex,Kate"; fi
+  # `fixture_name` returns `slots[seat]` (c/tests/msg_wire_test.c), so the list
+  # IS indexed by absolute seat: put "Alex" at the seat we occupy, which is the
+  # one that moves LAST. Settled against the result card, the one unambiguous
+  # reader - it prints "(You)" from `dev.seat` next to the name it resolved for
+  # that seat, so a frame where those two disagree is visible in one look.
+  if [ "$last" = "0" ]; then export FOOLISH_NAMES="Alex,Kate"
+  else export FOOLISH_NAMES="Kate,Alex"; fi
   "$tool" --chain "$np" "$count" "$depth" >/tmp/rig_chain.hex 2>/tmp/rig_chain.log || return 1
 
   local HEX=() ACT=()
@@ -528,7 +531,14 @@ cmd_chain() {
   for i in "${!HEX[@]}"; do
     printf '%s' "${HEX[$i]}" > "$g/dev.fatboard"
     printf '%s' "$mine" > "$g/dev.seat"
-    thread="$SHOOT_THREAD"; [ "${ACT[$i]}" = "$mine" ] || thread="$other"
+    # OUR moves are sent from the OTHER thread, not this one. The stub pair
+    # mirrors the opposite way round to what you would expect: a message sent
+    # in a thread shows up IN THAT THREAD as incoming, and its outgoing twin
+    # lands in the other one. Sending our own moves from the photographed
+    # thread therefore put every one of them on the LEFT, under the opponent's
+    # side of the conversation. Settled by the result card, which says
+    # "Alex (You)" in the same frame the captions had us on the left.
+    thread="$other"; [ "${ACT[$i]}" = "$mine" ] || thread="$SHOOT_THREAD"
     # `back` is what kills the appex, and only a dead appex claims the next
     # seed - see trap 1.
     cmd_back >/dev/null 2>&1 || true

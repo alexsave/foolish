@@ -48,11 +48,20 @@ is also what makes a re-seed take, because leaving the drawer kills the appex
 and `claimSeededPayload()` is once per appex process.
 `front` re-*activates* Messages without restarting it, and is safe.
 
-**2. The transcript has two sides, and it is a trick.**
-The runtime ships two stub conversations, and a message sent in one of them
-arrives in the other as an **incoming** message.
-Alternating between the two builds a real back-and-forth in whichever thread
-gets photographed.
+**2. The transcript has two sides, and the mirror runs the other way.**
+The runtime ships two stub conversations, and alternating between them builds a
+real back-and-forth in whichever thread gets photographed.
+The direction is the opposite of the obvious one, and it cost a whole set of
+frames: a message sent in a thread appears **in that same thread as INCOMING**,
+and its outgoing twin lands in the other one.
+So to put our own moves on the RIGHT of the photographed thread, they are sent
+from the OTHER thread.
+Sending them from the photographed one puts every one of them on the left, under
+the opponent's side of the conversation - which reads as the opponent having
+made our moves.
+The unambiguous check is the result card: it prints "(You)" from `dev.seat`
+beside the name it resolved for that seat, so one frame showing "Alex (You)"
+with Alex's captions on the left settles the direction.
 Both sides are still ours, and the bubbles are SMS green, because the simulator
 has no iMessage account - that is the platform's ceiling, not a choice.
 `lib/transcript.py` holds the `sms.db` route that does *not* work; it is kept
@@ -144,10 +153,11 @@ Install over the old build instead.
 
 ## Smaller ones, each of which produced a wrong frame
 
-- **`FOOLISH_NAMES` is not indexed by absolute seat.** Written as `Kate,Alex`,
-  the seat-0 mover rendered as *Alex*. Verified on the device; a chain driver
-  that assumes the obvious mapping puts our own moves under the opponent's
-  name, which reads as a game bug rather than a rig one.
+- **`FOOLISH_NAMES` IS indexed by absolute seat** - `fixture_name` returns
+  `slots[seat]`. An earlier note here claimed the opposite, on evidence that was
+  really the mirror direction above: our own captions were appearing on the
+  wrong side, and renaming the seats made them *read* right while leaving the
+  sides wrong. Put "Alex" at the seat we occupy and fix the sides separately.
 
 - **A staged bubble must match the board underneath it.**
   Opening the extension onto a lobby stages one, and it then rides along in the
