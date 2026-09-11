@@ -580,6 +580,14 @@ print(v[0], v[1]) if v else print(-1, -1)")
 cmd_lobbytap() {
   need_sim
   local what="${1:?lobbytap start|leave|join|box}" y x
+  # A NAME THIS DOES NOT KNOW IS NOT A TAP. Without this every unknown word
+  # fell through to "not leave, so the first button" - and the first button on
+  # a lobby is Start playing, so a typo silently DEALT THE GAME. That cost four
+  # takes of a scenario that had already been set up correctly.
+  case "$what" in
+    start|leave|join|box) ;;
+    *) echo "lobbytap: no such control '$what' (start|leave|join|box)" >&2; return 2 ;;
+  esac
   front
   if [ "$what" = "box" ]; then
     read -r x y < <(python3 "$LIB/ui.py" box | python3 -c "
