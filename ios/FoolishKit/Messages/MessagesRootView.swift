@@ -1637,7 +1637,6 @@ private struct GameSurface: View {
                              // The board runs the UNDO a cancel means; this
                              // view only clears its own `surfaceStaged` below.
                              cancelToken: cancelToken,
-                             onDiagnostics: { showDiagnostics = true },
                              onOpenURL: onOpenURL)
                 // 1.0(4) live-receive blink: a received bubble reloads the surface
                 // with a NEW controller. Tying the board's identity to the
@@ -1814,8 +1813,7 @@ private struct GameSurface: View {
     /// opens, so in practice it read as removed.
     private var settingsHelpCorner: some View {
         SettingsHelpSquares(onSettings: { showSettings = true },
-                            onHelp: { showRules = true },
-                            onDiagnostics: { showDiagnostics = true })
+                            onHelp: { showRules = true })
             .padding(.leading, 4)
             .padding(.bottom, 4)
     }

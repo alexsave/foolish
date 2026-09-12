@@ -99,17 +99,18 @@ public struct SettingsHelpSquares: View {
     @ObservedObject private var prefs = FPrefs.shared
     private let onSettings: () -> Void
     private let onHelp: () -> Void
-    private let onDiagnostics: (() -> Void)?
 
-    /// `onDiagnostics` (round 12, owner: "if you hold the settings button for 4
-    /// seconds, it pops up") is the hidden second action on the GEAR - the
-    /// last-message dump, which until now only ever appeared when a bubble
-    /// failed to open. Nil on any surface that has nothing to dump.
-    public init(onSettings: @escaping () -> Void, onHelp: @escaping () -> Void,
-                onDiagnostics: (() -> Void)? = nil) {
+    /// The GEAR used to carry a hidden SECOND action - hold it for four seconds
+    /// and the last-message diagnostic dump appeared (round 12, the owner: "if
+    /// you hold the settings button for 4 seconds, it pops up"). Removed before
+    /// release: a hidden long-press on a shipping control is a thing players
+    /// find by accident and cannot explain, and the dump is still reachable by
+    /// the two routes that exist to show it - a bubble that fails to open, and
+    /// the health alarm. `FSquareButton.onHold` is untouched and still takes an
+    /// optional second action; nothing passes one today.
+    public init(onSettings: @escaping () -> Void, onHelp: @escaping () -> Void) {
         self.onSettings = onSettings
         self.onHelp = onHelp
-        self.onDiagnostics = onDiagnostics
     }
 
     /// How much room a screen that FLOATS this pair in its corner has to keep
@@ -128,7 +129,7 @@ public struct SettingsHelpSquares: View {
         HStack(spacing: FSpace.l) {   // 40 + 16 + 40 = 96 = FActionBar width
             FSquareButton(systemImage: "gearshape.fill", side: 40,
                           accessibility: FStrings.t("ios.settings.title"),
-                          onHold: onDiagnostics, action: onSettings)
+                          action: onSettings)
             FSquareButton(systemImage: "book.fill", side: 40,
                           accessibility: FStrings.t("ios.help"), action: onHelp)
             Spacer(minLength: 0)

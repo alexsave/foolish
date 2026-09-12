@@ -51,7 +51,6 @@ public struct MessageTableView: View {
     /// The dump's fields live on the SURFACE (it owns the payload bytes and the
     /// decode result), so the board only reports the gesture; see
     /// `MessagesRootView.diagnosticPanel`.
-    private let onDiagnostics: () -> Void
     /// Leave the extension for a URL. An app extension has no `UIApplication`,
     /// so the only way out is the host's `extensionContext.open` - which is why
     /// this is a closure from above rather than an `@Environment(\.openURL)`.
@@ -521,7 +520,6 @@ public struct MessageTableView: View {
     public init(controller: MessageTurnController, onSend: @escaping (Data, Bool) async -> Void,
                 onNewGame: @escaping () -> Void = {}, onUnstage: @escaping () -> Void = {},
                 alsoStaged: Bool = false, cancelToken: Int = 0,
-                onDiagnostics: @escaping () -> Void = {},
                 onOpenURL: @escaping (URL) async -> Bool = { _ in false }) {
         self.cancelToken = cancelToken
         self.onOpenURL = onOpenURL
@@ -530,7 +528,6 @@ public struct MessageTableView: View {
         self.onNewGame = onNewGame
         self.onUnstage = onUnstage
         self.alsoStaged = alsoStaged
-        self.onDiagnostics = onDiagnostics
     }
 
     /// NOBODY'S SEAT. Round 21: a spectator watches this board (owner:
@@ -4995,8 +4992,7 @@ public struct MessageTableView: View {
     /// buttons) — Settings and Help are always available while playing.
     private var settingsHelpBar: some View {
         SettingsHelpSquares(onSettings: { showSettings = true },
-                            onHelp: { showRules = true },
-                            onDiagnostics: onDiagnostics)
+                            onHelp: { showRules = true })
     }
 
     private func actionBar(_ view: GameView) -> some View {
