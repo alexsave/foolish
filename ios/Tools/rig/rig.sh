@@ -237,7 +237,8 @@ cmd_build() {
 }
 
 # The stage: a clean status bar, an appearance, and Apple's first-run sheets
-# gone. Two of them ("Shared with You", "Apple Intelligence in Messages")
+# gone. Three of them ("Shared with You", "Apple Intelligence in Messages",
+# and iOS 26's "Check In")
 # appear on a fresh device and each one silently eats the first tap of a run.
 cmd_stage() {
   need_sim
@@ -271,7 +272,16 @@ cmd_stage() {
   done
   local quiet=0 i=0
   while [ $i -lt 12 ] && [ $quiet -lt 4 ]; do
-    if tap_ax "OK" 3 2>/dev/null || tap_ax "Continue" 3 2>/dev/null; then
+    # "Not Now" FIRST, and that order is load-bearing. iOS 26 adds a Check In
+    # sheet whose two buttons are "Continue" and "Not Now" - and there
+    # "Continue" does not dismiss anything, it walks into Check In's setup and
+    # leaves a modal that swallows every later tap. A whole 65-shot batch sat
+    # on it for ten minutes reporting "no 'Foolish' on screen", because the
+    # sheet had eaten the tap on the compose +. Declining is the safe answer to
+    # any first-run sheet during a shoot; "OK"/"Continue" stay for the sheets
+    # that only offer those (Shared with You, Apple Intelligence).
+    if tap_ax "Not Now" 3 2>/dev/null || tap_ax "OK" 3 2>/dev/null \
+       || tap_ax "Continue" 3 2>/dev/null; then
       quiet=0
     else
       quiet=$((quiet + 1))
