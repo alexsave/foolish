@@ -28,7 +28,9 @@
 #                                 caption / caption / caption / one bubble
 #   rig.sh tapopen [thread]       open it by TAPPING the newest bubble, so the
 #                                 next send shares that message's MSSession
-#   rig.sh clearstage             dismiss a staged bubble left in the compose field
+#   rig.sh clearstage             dismiss a staged bubble left in the compose
+#                                 field (then `back`, so the tap it just made
+#                                 does not leave the drawer 16pt short - trap 11)
 #   rig.sh expand / collapse      drag the grabber
 #   rig.sh back                   leave the drawer (keeps Messages alive)
 #
@@ -820,6 +822,14 @@ cmd_clearstage() {
   # Foolish bubble sitting in the transcript is the same felt, so the fallback
   # found one and tapped it - opening the bubble instead of clearing a draft.
   if tap_ax "Remove app from message" 2 2>/dev/null; then
+    # …AND THEN LEAVE THE THREAD, because the tap above was a tap INSIDE THE
+    # COMPOSE AREA and Messages answers one by making its own text field first
+    # responder - which costs the compact drawer 17pt (trap 11). Without this
+    # the next frame is 16pt shorter than the same frame taken any other way,
+    # silently, and a whole investigation has already been spent reading that
+    # difference as a bug in the extension. `back` leaves and re-enters the
+    # thread, which is what drops it.
+    cmd_back >/dev/null 2>&1 || true
     echo "cleared staged bubble"
   else
     echo "nothing staged"
