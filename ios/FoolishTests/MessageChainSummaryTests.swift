@@ -40,11 +40,23 @@ final class MessageChainSummaryTests: XCTestCase {
 
     /// What the generator said each entry IS - `chain[i]: actor=seat N <move>`.
     private struct Expected { let seat: Int; let verb: String; let card: String }
+    /// Copied from the generator's own stderr, NOT typed from a card table:
+    ///
+    ///     chain[0]: actor=seat 0 cover 9S
+    ///     chain[1]: actor=seat 1 attack 10C
+    ///     chain[2]: actor=seat 0 cover 8S
+    ///     chain[3]: actor=seat 1 attack 8C
+    ///
+    /// The first version of this list was typed from a hand-rolled rank table
+    /// that put the ace at 1, so every card came out one rank low and all four
+    /// correct summaries failed. Value 1 is a TWO and the ace is 13 - the table
+    /// in c/src/main_analyse.c - and the way not to get it wrong again is to
+    /// read the generator rather than the deck.
     private static let truth = [
+        Expected(seat: 0, verb: "covers", card: "9 of \u{2660}"),
+        Expected(seat: 1, verb: "attacks", card: "10 of \u{2663}"),
         Expected(seat: 0, verb: "covers", card: "8 of \u{2660}"),
-        Expected(seat: 1, verb: "attacks", card: "9 of \u{2663}"),
-        Expected(seat: 0, verb: "covers", card: "7 of \u{2660}"),
-        Expected(seat: 1, verb: "attacks", card: "7 of \u{2663}"),
+        Expected(seat: 1, verb: "attacks", card: "8 of \u{2663}"),
     ]
 
     private func bytes(_ s: String) -> Data {
