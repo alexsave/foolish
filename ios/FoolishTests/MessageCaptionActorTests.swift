@@ -78,7 +78,18 @@ final class MessageCaptionActorTests: XCTestCase {
             }
             await c.begin()
             if c.view?.isOver == true { break }
-            guard let move = c.legal.first(where: { $0.type != .wait }) else { continue }
+            guard let move = c.legal.first(where: { $0.type != .wait }) else {
+                // A GENESIS this seat cannot move from is the end of this seed,
+                // not a step to retry. `MessageTurnController(genesisSeed:)`
+                // hard-codes `mySeat = 0` (the creator's chair is the only one
+                // that exists yet), so a deal whose first attacker is seat 1
+                // gives seat 0 nothing but `wait` forever and the walk spins
+                // until its step budget runs out with an empty chain. Roughly
+                // half of all deals are like that - the opener is the lowest
+                // trump, which belongs to whichever seat was dealt it.
+                if parent == nil { return [] }
+                continue
+            }
             await c.apply(move)
             guard !c.pending.isEmpty else { continue }
             // A minute ago, so round 16's pickup hold never gates the walk -
@@ -115,9 +126,18 @@ final class MessageCaptionActorTests: XCTestCase {
         var checked = 0
         var wrong: [String] = []
 
-        for salt in UInt8(1)...UInt8(6) {
+        // MORE SALTS THAN NEEDED, and a floor on how many WORKED rather than a
+        // demand that each one does. About half of all deals open from seat 1,
+        // which the creator's device cannot play (see `chain`), so requiring
+        // every seed to yield a chain fails on the deal rather than on the
+        // property - while accepting "some seed worked" would let a walk that
+        // silently stopped building anything pass in silence. Both floors are
+        // asserted.
+        var walked = 0
+        for salt in UInt8(1)...UInt8(16) {
             let bubbles = try await chain(salt: salt, count: 8)
-            XCTAssertGreaterThan(bubbles.count, 4, "seed \(salt) produced no chain to walk")
+            if bubbles.count < 5 { continue }
+            walked += 1
 
             for (i, b) in bubbles.enumerated() {
                 // The composer's own read: ONE decode, and the events, view and
@@ -158,6 +178,7 @@ final class MessageCaptionActorTests: XCTestCase {
             }
         }
 
+        XCTAssertGreaterThan(walked, 3, "too few deals opened from the creator's seat to walk")
         XCTAssertGreaterThan(checked, 25, "the walk did not actually build any chains")
         XCTAssertEqual(wrong, [], "bubbles whose line describes somebody else's move")
     }
@@ -173,8 +194,12 @@ final class MessageCaptionActorTests: XCTestCase {
         var wrong: [String] = []
         var checked = 0
 
-        for salt in UInt8(30)...UInt8(33) {
-            for b in try await chain(salt: salt, count: 8) {
+        var walked = 0
+        for salt in UInt8(30)...UInt8(45) {
+            let bubbles = try await chain(salt: salt, count: 8)
+            if bubbles.count < 5 { continue }
+            walked += 1
+            for b in bubbles {
                 let read = try await MessageKernel.shared.publicRead(payload: b.payload)
                 let text = MessageSummary.line(env: read.env, view: read.view,
                                                events: read.events, leftName: nil)
@@ -191,6 +216,7 @@ final class MessageCaptionActorTests: XCTestCase {
             }
         }
 
+        XCTAssertGreaterThan(walked, 3, "too few deals opened from the creator's seat to walk")
         XCTAssertGreaterThan(checked, 15, "the walk did not actually build any chains")
         XCTAssertEqual(wrong, [], "composer lines that describe somebody else's move")
     }
