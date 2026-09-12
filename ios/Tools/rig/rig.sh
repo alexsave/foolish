@@ -480,16 +480,31 @@ cmd_chain() {
 
   "$tool" --chain "$np" "$count" "$depth" >/tmp/rig_chain.hex 2>/tmp/rig_chain.log || {
     echo "no chain at depth $depth" >&2; return 1; }
-  local last
-  last=$(grep -o 'actor=seat [0-9]' /tmp/rig_chain.log | tail -1 | awk '{print $2}')
+  # TWO SEATS, NAMED ONCE, so the frame cannot disagree with itself.
+  #
+  # `sender` is the seat whose moves are sent FROM the photographed thread, and
+  # a move sent from that thread lands on its LEFT (see the routing note in the
+  # loop) - so `sender` is the OPPONENT. It is the seat that moves LAST, which
+  # is what keeps the newest bubble a full board rather than a bare line.
+  #
+  # `mine` is the other chair: the moves that reach this thread from the other
+  # one, which land on the RIGHT where a reader expects their own messages. It
+  # is the seat the drawer is seeded at and the seat "Alex" is given, and both
+  # come from this one variable so they cannot drift apart - a frame whose
+  # right-hand caption and drawer disagree about who we are is exactly the
+  # defect the owner caught twice.
+  local sender mine
+  sender=$(grep -o 'actor=seat [0-9]' /tmp/rig_chain.log | tail -1 | awk '{print $2}')
+  [ -n "${FOOLISH_SENDER:-}" ] && sender="$FOOLISH_SENDER"
+  mine=$(( (sender + 1) % np ))
+  [ -n "${FOOLISH_MINE:-}" ] && mine="$FOOLISH_MINE"
   # `fixture_name` returns `slots[seat]` (c/tests/msg_wire_test.c), so the list
-  # IS indexed by absolute seat: put "Alex" at the seat we occupy, which is the
-  # one that moves LAST. Settled against the result card, the one unambiguous
-  # reader - it prints "(You)" from `dev.seat` next to the name it resolved for
-  # that seat, so a frame where those two disagree is visible in one look.
+  # IS indexed by absolute seat.
+  local nm=() k
+  for ((k = 0; k < np; k++)); do nm+=("Kate"); done
+  nm[$mine]="Alex"
   if [ -n "${FOOLISH_NAMES_FORCE:-}" ]; then export FOOLISH_NAMES="$FOOLISH_NAMES_FORCE"
-  elif [ "$last" = "0" ]; then export FOOLISH_NAMES="Alex,Kate"
-  else export FOOLISH_NAMES="Kate,Alex"; fi
+  else export FOOLISH_NAMES="$(IFS=,; echo "${nm[*]}")"; fi
   "$tool" --chain "$np" "$count" "$depth" >/tmp/rig_chain.hex 2>/tmp/rig_chain.log || return 1
 
   local HEX=() ACT=()
@@ -497,9 +512,6 @@ cmd_chain() {
   while IFS= read -r l; do ACT+=("$l"); done \
     < <(grep -o 'actor=seat [0-9]' /tmp/rig_chain.log | awk '{print $2}')
   [ "${#HEX[@]}" -gt 0 ] || { echo "chain produced no payloads" >&2; return 1; }
-  # We sit in the seat that moves LAST, so the newest bubble is ours and the
-  # board under it is the state our own move produced.
-  local mine="${ACT[$((${#ACT[@]} - 1))]}"
 
   # Messages keeps its conversations in memory only, so terminating it is how a
   # shoot starts from an empty transcript rather than on top of the last run.
@@ -544,15 +556,22 @@ cmd_chain() {
 
   local i thread route
   for i in "${!HEX[@]}"; do
-    # OUR moves are sent FROM the photographed thread. Two things ride on
-    # that, and they were settled with a two-message probe rather than by
-    # reading frames: a message appears in its OWN thread as outgoing (right,
-    # "Delivered") and renders its board; the copy the stub pair mirrors into
-    # the other thread arrives as INCOMING and renders as a PLAIN TEXT LINE
-    # with no board at all - the layout image does not cross. So sending our
-    # own moves from the other thread costs both the side AND the picture,
-    # which is most of what a collapsed frame is.
-    thread="$SHOOT_THREAD"; [ "${ACT[$i]}" = "$mine" ] || thread="$other"
+    # A move sent FROM the thread we photograph lands on its LEFT, and the copy
+    # that reaches it from the other thread lands on its RIGHT. That is the
+    # inverse of what a note here used to claim, and three shoots were read
+    # against the wrong version. What settles it is a pair of runs differing in
+    # ONE variable: seat 0 routed to the photographed thread landed left, and
+    # then seat 1 routed to the photographed thread landed left. (Photographing
+    # 8583 instead of 888 with the routing swapped to match moved nothing -
+    # that swaps both halves at once and so tests nothing.) The simulator has no
+    # iMessage service: sending to a stub number loops the message back into
+    # that thread as though it had been RECEIVED.
+    #
+    # So `sender` - the seat whose moves go out from the photographed thread -
+    # is the seat that appears on the LEFT, which is the OPPONENT. We sit in the
+    # other chair. Both facts come from one variable below, so they cannot drift
+    # apart again.
+    thread="$SHOOT_THREAD"; [ "${ACT[$i]}" = "$sender" ] || thread="$other"
     # The first send has no bubble to tap yet; every later one opens the way a
     # real game does (trap 6). `seed_open` is what makes the seed STICK: only a
     # dead appex claims the next one, and it checks rather than hopes - see its
