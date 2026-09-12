@@ -179,6 +179,40 @@ photographing a stale board.
 No sleeps are involved: a claim either happened in a fresh process or it did
 not, and the answer is a file.
 
+**12. A chain under FIVE entries photographs a duplicated caption.**
+Messages draws only the **last three** messages of a session as caption lines,
+and the simulator corrupts the summary of the **first two** in the session -
+they come out carrying the NEWEST message's text.
+So whether the defect is in frame is purely a function of chain length: at four
+entries the caption window is indices 1-3 and the corrupted index 1 is visible,
+so the frame shows one caption twice - the same card played twice, which is an
+impossible transcript and exactly the kind of thing the owner catches. At five
+the window is 2-4 and the corrupted pair falls outside it.
+This is deterministic, not a flake: the four-entry chain reproduces the
+identical wrong caption on every run, and `hero_v7` was clean only because it
+happened to be five.
+`chain` refuses fewer than five now (`FOOLISH_CHAIN_SHORT=1` overrides).
+It is the same family as Apple's 2016 report - previous summaries taking the
+newest one's text, simulator only, correct on device
+(<https://developer.apple.com/forums/thread/64452>) - so do not go looking for
+it in the product.
+
+**THE TRANSCRIPT FRAME, in full.** The owner-approved shape is `hero_v7.png`:
+two players, our captions on the RIGHT named Alex, the opponent's on the LEFT
+named Kate, the drawer agreeing with both, no preface pill, banner clear.
+The board is kept SPARSE on purpose - it clutters fast at bubble size - and the
+spec is **two attacks on the table with one covered**.
+Pick the depth by reading the generator rather than by shooting and looking:
+`--chain` prints `atk= cov= hand=` for every entry, so a depth whose LAST entry
+reads `atk=2 cov=1` is the one that produces the specced board.
+
+  FOOLISH_CHAIN_PREFACE=0 rig.sh chain <name> 5 3 2
+
+Verify every frame against `/tmp/rig_chain.log`, which names each entry's real
+move: the caption lines must match it seat for seat and card for card. Do not
+read the cards off a deck table - value 1 is a TWO and the ace is 13, and a
+hand-rolled table cost an afternoon of treating correct summaries as a bug.
+
 **11. The compact drawer has TWO heights, and Messages' compose field picks
 which.**
 The drawer is 388.7pt tall when Messages' own text field holds no first

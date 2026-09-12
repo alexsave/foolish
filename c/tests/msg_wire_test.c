@@ -3176,7 +3176,7 @@ static void print_chain(int np, int count, int depth) {
         // was a delta FROM, so every bubble animates only its own move.
         unsigned char wires[16][ENV_CAP];
         int lens[16], actors[16], phases[16], kept = 0;
-        int kinds[16], ncards[16];
+        int kinds[16], ncards[16], battles[16], covered[16], handn[16];
         Card acards[16][6];
 
         int step = 0;
@@ -3230,6 +3230,11 @@ static void print_chain(int np, int count, int depth) {
             // sentence is the tell that matters, and it is only visible when
             // the expected sentences are written down next to each other.
             kinds[kept] = a.kind; ncards[kept] = a.n;
+            battles[kept] = g.num_battles;
+            covered[kept] = 0;
+            for (int b = 0; b < g.num_battles; b++)
+                if (g.table_battles[b].defense.value > 0) covered[kept]++;
+            handn[kept] = g.players[seat].hand_count;
             for (int c = 0; c < a.n && c < 6; c++) acards[kept][c] = a.cards[c];
             phases[kept] = e.phase; kept++;
             if (kept >= count) break;
@@ -3258,7 +3263,14 @@ static void print_chain(int np, int count, int depth) {
                         acards[i][c].suit >= 0 && acards[i][c].suit < 4
                             ? suitname[acards[i][c].suit] : '?');
             }
-            fprintf(stderr, " (%d bytes)%s\n", lens[i],
+            // THE SHAPE OF THE TABLE, which is what a collapsed frame is
+            // actually composed of. The owner's spec for the transcript shots
+            // is "two attack cards on the table with one covered" - a board
+            // that stays legible at bubble size - and without this the only
+            // way to find a depth that produces one is to shoot a frame and
+            // look at it, which costs minutes per guess.
+            fprintf(stderr, " (%d bytes) atk=%d cov=%d hand=%d%s\n", lens[i],
+                    battles[i], covered[i], handn[i],
                     phases[i] == MSG_PHASE_FINISHED ? " FINISHED" : "");
             for (int b = 0; b < lens[i]; b++) printf("%02x", wires[i][b]);
             printf("\n");

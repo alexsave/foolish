@@ -480,6 +480,21 @@ cmd_chain() {
   # into caption lines over a single bubble (trap 6).
   need_sim
   local name="${1:?chain NAME}" count="${2:-12}" depth="${3:-14}" np="${4:-2}"
+  # FIVE ENTRIES MINIMUM, and it is not a style preference - see trap 12.
+  # Messages draws only the LAST THREE messages of a session as caption lines,
+  # and the simulator corrupts the summary of the first two in the session:
+  # they come out carrying the NEWEST message's text. At four entries the
+  # corrupted index 1 sits inside the three-line window and the frame shows one
+  # caption twice - the same card played twice, which is an impossible
+  # transcript. At five the corrupted pair falls outside the window.
+  # Deterministic, not a flake: the four-entry chain reproduces the identical
+  # wrong caption every run.
+  if [ "$count" -lt 5 ] && [ -z "${FOOLISH_CHAIN_SHORT:-}" ]; then
+    echo "chain: $count entries photographs a DUPLICATED caption - 5 is the" >&2
+    echo "  minimum that keeps the simulator's corrupted pair out of the" >&2
+    echo "  three-line window (trap 12). FOOLISH_CHAIN_SHORT=1 to override." >&2
+    return 1
+  fi
   local tool="${FOOLISH_TOOL:-$REPO/c/build/msg_wire_test}"
   [ -x "$tool" ] || { echo "no seeder at $tool - (cd c && make build/msg_wire_test)" >&2; return 1; }
   # The App Group container, checked once here so a missing install says so
