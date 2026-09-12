@@ -180,6 +180,26 @@ public struct MessagesRootView: View {
 
     /// Round-10d: the box's height while the collapse tween runs; 0 = follow
     /// the model box exactly (every other moment, including manual drags).
+    ///
+    /// AND THE MODEL BOX, COLLAPSED, IS TWO HEIGHTS - BOTH OF THEM THE HOST'S.
+    /// 1.1(69), owner: "Collapsed should be the same height as the keyboard
+    /// height in iMessages, always", against a lobby that settled at a drawer
+    /// top of 584 in one film and 568 in another on the same binary.
+    ///
+    /// Measured on the rig (6.9", 440x956pt, real Messages): Messages gives the
+    /// compact drawer 388.7pt while its OWN compose field holds no first
+    /// responder and 372pt while it does - the whole input stack drops 17pt with
+    /// it, and `geo.size.height` here reads 340 or 323 to match. Create, leave,
+    /// toggle and start all land on 340 from a base that left the thread and
+    /// came back and all four land on 323 from a base that tapped the compose
+    /// field first, so the action is irrelevant and the host's first-responder
+    /// state decides it. Nothing in this target can ask for either: the drawer
+    /// is Messages', the hosting controller is pinned to its edges, no
+    /// `preferredContentSize` is set and no plist key touches the size.
+    ///
+    /// So there is no compact height for this file to get right - only the
+    /// host's, rendered verbatim, which is what `CompactRestHeightTests` pins
+    /// and `ios/Tools/rig/README.md` trap 10 records in full.
     @State private var boxHeight: CGFloat = 0
     /// The clock that moves `boxHeight` through an auto-collapse - a timer
     /// evaluating the host's own curve, not a SwiftUI animation. See

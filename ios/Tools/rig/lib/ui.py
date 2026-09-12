@@ -182,16 +182,23 @@ def grabber(a, s):
 
     AND WITH THE TRANSCRIPT'S BLACK ABOVE IT, which is the half that makes this
     reliable: colour alone finds a SENT Foolish bubble's pale text up in the
-    chat just as happily as the handle, and the first take to run this against
-    a dealt board answered 426 for a drawer whose edge was 567. The drawer's own
+    chat just as happily as the handle, and the first take to run this against a
+    dealt board answered 426 for a drawer whose edge was 567. The drawer's own
     top edge has nothing but the unlit transcript above it, so a candidate is
-    only the handle if the rows a few points over it are black."""
+    only the handle if the rows a few points over it are black.
+
+    SEARCHED BOTTOM UP, for what that STILL let through: a bubble sitting low in
+    the chat has black above it too, and a collapsed board answered 474 for the
+    same 567 drawer. The handle is the lowest such run on the screen, because
+    below it is the drawer and the drawer's inside is felt - it has no black to
+    offer a candidate, in either appearance (a dark-mode card face is ~20, not
+    the transcript's 0)."""
     h, w = a.shape[0], a.shape[1]
     lum = a[:, int(w * 0.47):int(w * 0.53), :].mean(axis=2).mean(axis=1)
     hit = (lum > 70) & (lum < 170)
     hit[:int(h * 0.45)] = False               # never the top of the transcript
     idx = np.nonzero(hit)[0]
-    for run in runs(idx, 1):
+    for run in reversed(runs(idx, 1)):
         if not (2 * s <= len(run) <= 9 * s):
             continue
         sky = lum[max(0, int(run[0]) - 10 * s):max(1, int(run[0]) - 7 * s)]
