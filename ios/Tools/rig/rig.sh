@@ -489,6 +489,17 @@ cmd_chain() {
   # transcript. At five the corrupted pair falls outside the window.
   # Deterministic, not a flake: the four-entry chain reproduces the identical
   # wrong caption every run.
+  # TWO PLAYERS, for anything whose TRANSCRIPT is in frame. A collapsed drawer
+  # shows the thread behind it, and a thread between two people cannot contain a
+  # six-seat board - the owner caught exactly that ("an eight player game in a
+  # one-on-one chat, that's not possible"). Expanded frames may be any seat
+  # count, because the drawer covers the transcript entirely.
+  if [ "$np" -ne 2 ] && [ -z "${FOOLISH_CHAIN_MULTI:-}" ]; then
+    echo "chain: a collapsed frame shows the thread behind it, and a 1:1 thread" >&2
+    echo "  cannot hold a ${np}-player board. Use np=2 (trap 12)." >&2
+    echo "  FOOLISH_CHAIN_MULTI=1 to override." >&2
+    return 1
+  fi
   if [ "$count" -lt 5 ] && [ -z "${FOOLISH_CHAIN_SHORT:-}" ]; then
     echo "chain: $count entries photographs a DUPLICATED caption - 5 is the" >&2
     echo "  minimum that keeps the simulator's corrupted pair out of the" >&2

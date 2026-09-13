@@ -2746,7 +2746,8 @@ private struct GameSurface: View {
         guard let free = (0..<env.nPlayers).first(where: { s in !env.joins.contains { $0.seat == s } }),
               let gid = UInt64(env.gameId) else { return }
         let keepSeat = lobbySeat(env) ?? 0
-        let joins = (env.joins + [MessageJoin(seat: free, name: "Solo \(free + 1)")])
+        let puppet = MessageDevBoard.soloName ?? "Solo \(free + 1)"
+        let joins = (env.joins + [MessageJoin(seat: free, name: puppet)])
             .sorted { $0.seat < $1.seat }
         do {
             _ = try await MessageKernel.shared.decode(payload: lob.payload, viewer: -1)

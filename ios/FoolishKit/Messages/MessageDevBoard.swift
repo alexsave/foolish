@@ -54,6 +54,7 @@ public enum MessageDevBoard {
     private static let flagFile = "dev.fatboard"
     private static let claimFile = "dev.claimed"
     private static let stagedFile = "dev.staged"
+    private static let soloNameFile = "dev.soloname"
     private static let seatFile = "dev.seat"
     private static let replayFile = "dev.replay"
     private static let stageFile = "dev.stage"
@@ -147,6 +148,26 @@ public enum MessageDevBoard {
             .containerURL(forSecurityApplicationGroupIdentifier: appGroup) else { return }
         let s = payload.map { String(format: "%02x", $0) }.joined()
         try? Data(s.utf8).write(to: dir.appendingPathComponent(stagedFile))
+    }
+
+    /// WHAT TO CALL THE PUPPET SEAT that `addSoloSeat` adds.
+    ///
+    /// It was the literal "Solo 2", which is fine for a developer filling a
+    /// lobby and wrong in a photograph: a full lobby is the only way to reach
+    /// the shipping Start/Exit row, so every store frame of a lobby had a
+    /// placeholder name sitting in the roster next to a real one. Reading it
+    /// from the group lets the rig seat "Kate" there and keeps the cast
+    /// consistent with every other frame in the set.
+    ///
+    /// Unset, nothing moves - the caller keeps its own default.
+    public static var soloName: String? {
+        guard let dir = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroup),
+              let raw = try? String(contentsOf: dir.appendingPathComponent(soloNameFile),
+                                    encoding: .utf8)
+        else { return nil }
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
     }
 
     /// Which seat to sit at, or nil to sit at the defender's.

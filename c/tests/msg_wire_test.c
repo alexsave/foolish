@@ -2649,6 +2649,98 @@ static int poses_the_race(const Game *g) {
 // pick up. Nobody says good, so the all-good transition cannot fire either.
 //
 // Usage: msg_wire_test --fatboard [target] [n_players]
+// --passable [np]: a board where the DEFENDER may PASS, with exactly TWO
+// uncovered attacks and nothing covered - the state a screenshot needs to show
+// the drag hint read "Pass".
+//
+// It needs its own search because no existing generator can reach it. The
+// chain playout takes the FIRST non-wait legal move and passes sort after
+// attacks and covers, so 65 chains across 2-4 players contained not one pass;
+// and every `fatboard` state has something covered, which makes passing
+// illegal by rule (a pass requires a table where nothing has been defended).
+// So this plays games out and STOPS the moment a seat is holding a legal pass
+// against the table shape the owner asked for, rather than hoping one turns up.
+static void print_passable(int np) {
+    static unsigned char body[1024];
+    static Game scratch;
+    static LegalMoves ml;
+
+    for (uint32_t s = 1; s < 9000; s++) {
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, 20260914u + s * 137u);
+        game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+        g_rng = 7717u + s;
+        random_strategy_set_seed(g_rng);
+        Game g;
+        memset(&g, 0, sizeof(g));
+        g.num_players = (int8_t)np;
+        for (int i = 0; i < np; i++) {
+            g.players[i].status = PLAYER_STATUS_READY;
+            g.players[i].strategy_key = 0;
+            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
+        }
+        start_game(&g);   // rules 0 = perevodnoy, which is what makes a pass legal
+
+        for (int step = 0; step < 400 && g.status == GAME_STATUS_PLAYING; step++) {
+            if (game_done(&g) >= 0) break;
+
+            // THE TEST, before each move rather than after: is somebody sitting
+            // on a legal pass, with two bare attacks in front of them?
+            if (g.num_battles == 2 &&
+                g.table_battles[0].defense.value <= 0 &&
+                g.table_battles[1].defense.value <= 0 &&
+                g.defender >= 0) {
+                calculate_legal_moves(&g, g.defender, &ml);
+                for (int i = 0; i < ml.n; i++) {
+                    if (ml.moves[i].type != MOVE_PASS) continue;
+                    MsgEnvelope e;
+                    env_init(&e, seed, np);
+                    e.phase = MSG_PHASE_LIVE;
+                    e.last_actor_seat = (uint8_t)g.defender;
+                    if (msg_seal(&e, &g, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK)
+                        break;
+                    unsigned char wire[ENV_CAP];
+                    const int n = msg_encode(&e, wire, sizeof(wire));
+                    if (n <= 0) break;
+                    for (int b = 0; b < n; b++) printf("%02x", wire[b]);
+                    printf("\n");
+                    fprintf(stderr, "passable: np=%d seed#%u defender=seat %d holds %d,"
+                            " 2 bare attacks, turn %d (%d bytes) hands=",
+                            np, s, g.defender, g.players[g.defender].hand_count, e.turn, n);
+                    for (int q = 0; q < np; q++)
+                        fprintf(stderr, "%s%d", q ? "/" : "", g.players[q].hand_count);
+                    fprintf(stderr, "\n");
+                    return;
+                }
+            }
+
+            int seat = -1, pick = -1;
+            const int start = (int)(rnd() % (uint32_t)np);
+            for (int t = 0; t < np && seat < 0; t++) {
+                const int c = (start + t) % np;
+                if (g.players[c].status != PLAYER_STATUS_IN) continue;
+                calculate_legal_moves(&g, c, &ml);
+                for (int i = 0; i < ml.n; i++)
+                    if (ml.moves[i].type != MOVE_WAIT) { seat = c; pick = i; break; }
+            }
+            if (seat < 0 || pick < 0) break;
+            AwireAction a;
+            move_to_awire(&ml.moves[pick], &a);
+            bool ok;
+            switch (a.kind) {
+                case AWIRE_ATTACK: ok = handle_attack(&g, seat, a.cards, a.n); break;
+                case AWIRE_COVER:  ok = handle_cover(&g, seat, a.cards, a.attacks, a.n); break;
+                case AWIRE_PASS:   ok = handle_pass(&g, seat, a.cards, a.n); break;
+                case AWIRE_PICKUP: ok = handle_pickup(&g, seat); break;
+                default:           ok = handle_good(&g, seat); break;
+            }
+            if (!ok) break;
+        }
+    }
+    fprintf(stderr, "no %dp board with a legal pass over two bare attacks\n", np);
+    exit(1);
+}
+
 // --endgame [np]: a FINISHED chain, as one FMSG envelope in hex - the dev board
 // for verifying what "New game" does at the end of a game (the fool's penalty).
 //
@@ -2683,6 +2775,7 @@ static void print_endgame(int np, int passing, int arrival) {
         start_game(&g);
 
         int last_actor = g.first_attacker;
+        int out_order[8], n_out = 0;
         for (int step = 0; step < 400; step++) {
             if (game_done(&g) >= 0 || g.status != GAME_STATUS_PLAYING) break;
             int seat = -1, pick = -1;
@@ -2707,6 +2800,18 @@ static void print_endgame(int np, int passing, int arrival) {
             }
             if (!ok) break;
             last_actor = seat;
+            // WHO WENT OUT, IN ORDER - which is the ranking the result card
+            // prints. Without it the only way to know whether the frame shows
+            // us at #1 or at #7 is to shoot it and read the card, and an 8p
+            // endgame that puts "Alex (You)" second from last is not a
+            // showcase. Recorded here so the cast can be rotated to put our
+            // name wherever the frame needs it.
+            for (int q = 0; q < np; q++) {
+                if (g.players[q].status == PLAYER_STATUS_IN) continue;
+                int already = 0;
+                for (int r = 0; r < n_out; r++) if (out_order[r] == q) already = 1;
+                if (!already) out_order[n_out++] = q;
+            }
         }
         game_settle_status(&g);
         const int fool = game_done(&g);
@@ -2729,9 +2834,12 @@ static void print_endgame(int np, int passing, int arrival) {
 
         for (int i = 0; i < n; i++) printf("%02x", wire[i]);
         printf("\n");
-        fprintf(stderr, "endgame: np=%d %s fool=seat %d turn=%d round=%d (%d bytes) phase=%s\n",
+        fprintf(stderr, "endgame: np=%d %s fool=seat %d turn=%d round=%d (%d bytes) phase=%s",
                 np, passing ? "perevodnoy" : "podkidnoy", fool, e.turn, e.round, n,
                 arrival ? "LIVE(arrival)" : "FINISHED");
+        fprintf(stderr, " rank=");
+        for (int r = 0; r < n_out; r++) fprintf(stderr, "%s%d", r ? "," : "", out_order[r]);
+        fprintf(stderr, "\n");
         return;
     }
     fprintf(stderr, "no %dp endgame found\n", np);
@@ -3176,7 +3284,7 @@ static void print_chain(int np, int count, int depth) {
         // was a delta FROM, so every bubble animates only its own move.
         unsigned char wires[16][ENV_CAP];
         int lens[16], actors[16], phases[16], kept = 0;
-        int kinds[16], ncards[16], battles[16], covered[16], handn[16];
+        int kinds[16], ncards[16], battles[16], covered[16], hands[16][8];
         Card acards[16][6];
 
         int step = 0;
@@ -3234,7 +3342,14 @@ static void print_chain(int np, int count, int depth) {
             covered[kept] = 0;
             for (int b = 0; b < g.num_battles; b++)
                 if (g.table_battles[b].defense.value > 0) covered[kept]++;
-            handn[kept] = g.players[seat].hand_count;
+            // EVERY SEAT'S HAND, not just the actor's. Printing the actor's
+            // alone picked a transcript depth whose last entry looked fine
+            // (hand=4) while OUR seat held nine cards and fanned them thin -
+            // the frame failed the skinny gate after it was shot. The point of
+            // logging this is to choose without shooting, so it has to name
+            // the hand the frame will actually show.
+            for (int q = 0; q < np && q < 8; q++)
+                hands[kept][q] = g.players[q].hand_count;
             for (int c = 0; c < a.n && c < 6; c++) acards[kept][c] = a.cards[c];
             phases[kept] = e.phase; kept++;
             if (kept >= count) break;
@@ -3269,8 +3384,11 @@ static void print_chain(int np, int count, int depth) {
             // that stays legible at bubble size - and without this the only
             // way to find a depth that produces one is to shoot a frame and
             // look at it, which costs minutes per guess.
-            fprintf(stderr, " (%d bytes) atk=%d cov=%d hand=%d%s\n", lens[i],
-                    battles[i], covered[i], handn[i],
+            fprintf(stderr, " (%d bytes) atk=%d cov=%d hands=", lens[i],
+                    battles[i], covered[i]);
+            for (int q = 0; q < np && q < 8; q++)
+                fprintf(stderr, "%s%d", q ? "/" : "", hands[i][q]);
+            fprintf(stderr, "%s\n",
                     phases[i] == MSG_PHASE_FINISHED ? " FINISHED" : "");
             for (int b = 0; b < lens[i]; b++) printf("%02x", wires[i][b]);
             printf("\n");
@@ -4068,6 +4186,10 @@ int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--fixture")) { print_fixtures(); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--fixture4")) { print_fixtures4(); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--fixture5")) { print_fixtures5(); return 0; }
+    if (argc > 1 && !strcmp(argv[1], "--passable")) {
+        print_passable(argc > 2 ? atoi(argv[2]) : 3);
+        return 0;
+    }
     if (argc > 1 && !strcmp(argv[1], "--endgame")) {
         print_endgame(argc > 2 ? atoi(argv[2]) : 3,
                       !(argc > 3 && !strcmp(argv[3], "nopass")), 0);
