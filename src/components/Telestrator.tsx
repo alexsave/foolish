@@ -16,9 +16,6 @@ import React, { useCallback, useEffect, useRef } from 'react';
 
 const STROKE = '#ff1414';
 const STROKE_WIDTH = 5;
-// a soft dark halo keeps the red pen legible over light/themed backgrounds
-const SHADOW = 'rgba(0,0,0,0.55)';
-const SHADOW_BLUR = 3;
 
 export const Telestrator = ({ active }: { active: boolean }) => {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -49,8 +46,10 @@ export const Telestrator = ({ active }: { active: boolean }) => {
         ctx.lineJoin = 'round';
         ctx.strokeStyle = STROKE;
         ctx.lineWidth = STROKE_WIDTH;
-        ctx.shadowColor = SHADOW;
-        ctx.shadowBlur = SHADOW_BLUR;
+        // The pen is absolutely flat: no canvas shadow, so a tap leaves a
+        // plain red disc with no halo under it.
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
         if (prev.width && prev.height) {
             ctx.save();
             ctx.setTransform(1, 0, 0, 1, 0, 0);
