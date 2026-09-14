@@ -25,6 +25,7 @@ says Kate.
 """
 import os
 import plistlib
+import re
 import subprocess
 import sys
 
@@ -97,15 +98,21 @@ def main():
     # action bar rather than the defender's.
     dseat = None
     actor = None
+    # The number is read with a regex, not by splitting on whitespace: the
+    # searcher's lines are prose, and `--goodwait` writes "defender=seat 3, 2
+    # attackers good", whose trailing comma made int() throw.
+    def seat_after(line, key):
+        m = re.search(re.escape(key) + r"\s*(\d+)", line)
+        return int(m.group(1)) if m else None
     for l in notes:
         if "defender=seat" in l:
-            dseat = int(l.split("defender=seat")[1].split()[0])
+            dseat = seat_after(l, "defender=seat")
         # `--lastmove`/`--lastmove-live` report the seat that acted (or, for
         # -live, the one that still has to). There is no defender line there at
         # all, so without this the seat fell back to 0 and the frame was shot
         # from a chair with no move to make.
         if "last_actor=seat" in l:
-            actor = int(l.split("last_actor=seat")[1].split()[0])
+            actor = seat_after(l, "last_actor=seat")
     # Where the player count sits in the argument list is per-mode, and
     # guessing "the first one" threw on every --lastmove call, whose first
     # argument is the KIND: "invalid literal for int(): 'good'".
