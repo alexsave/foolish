@@ -2741,6 +2741,150 @@ static void print_passable(int np) {
     exit(1);
 }
 
+// --goodwait [np]: the table is waiting on US and nobody else. Two attacks,
+// both covered, and every attacker EXCEPT one has said good - that one being
+// the seat the frame is shot from, with a hand small enough to photograph.
+//
+// Like --passable, this needs its own search rather than a filter over an
+// existing one. `fatboard` knows about table density and nothing about
+// good_players_mask, and the chain playout cannot be steered into it: the
+// state is TRANSIENT by construction, because the moment the last attacker
+// says good the bout ends and the table clears. So the test runs BEFORE each
+// move, which is the only window in which it exists.
+static void print_goodwait(int np) {
+    static unsigned char body[1024];
+    static Game scratch;
+    static LegalMoves ml;
+
+    for (uint32_t s = 1; s < 20000; s++) {
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, 20260915u + s * 149u);
+        game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+        g_rng = 3313u + s;
+        random_strategy_set_seed(g_rng);
+        Game g;
+        memset(&g, 0, sizeof(g));
+        g.num_players = (int8_t)np;
+        for (int i = 0; i < np; i++) {
+            g.players[i].status = PLAYER_STATUS_READY;
+            g.players[i].strategy_key = 0;
+            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
+        }
+        start_game(&g);
+
+        for (int step = 0; step < 600 && g.status == GAME_STATUS_PLAYING; step++) {
+            if (game_done(&g) >= 0) break;
+
+            // EVERY SEAT STILL IN. Without this the search happily returned an
+            // "8 player" board with four seats already out (hands 0/8/0/8/0/5/0/1),
+            // which photographs as a half-empty table and is not what an 8p
+            // showcase frame means.
+            int all_in = 1;
+            for (int i = 0; i < np; i++)
+                if (g.players[i].status != PLAYER_STATUS_IN) all_in = 0;
+            if (all_in && g.num_battles == 2 &&
+                g.table_battles[0].defense.value > 0 &&
+                g.table_battles[1].defense.value > 0 &&
+                g.defender >= 0) {
+                int pending = -1, n_pending = 0, worst = 0, n_good = 0;
+                for (int i = 0; i < np; i++) {
+                    if (i == g.defender || g.players[i].status != PLAYER_STATUS_IN) continue;
+                    if (g.players[i].hand_count > worst) worst = g.players[i].hand_count;
+                    if (!(g.good_players_mask & (1u << i))) { pending = i; n_pending++; }
+                    else n_good++;
+                }
+                // Exactly one attacker still to answer, holding a hand that fits
+                // the shoot's rules (2 cards to select from, at most 6 on screen),
+                // and nobody at the table sitting on an absurd pile.
+                // AND THE TWO CARDS WE SELECT MUST BE A LEGAL THROW-IN.
+                // A frame showing two tapped cards is a frame claiming a move
+                // is available: an attacker may only add a card whose VALUE is
+                // already on the table, so a pair of 10s over a table of 5s and
+                // a 9 is a picture of an illegal move. Require a value that is
+                // on the table AND that we hold at least twice, and report it
+                // so the rig can tap those two cards rather than guess.
+                int pair_value = 0;
+                if (n_pending == 1 && pending >= 0) {
+                    for (int b = 0; b < g.num_battles && !pair_value; b++) {
+                        const int vals[2] = { g.table_battles[b].attack.value,
+                                              g.table_battles[b].defense.value };
+                        for (int k = 0; k < 2 && !pair_value; k++) {
+                            if (vals[k] <= 0) continue;
+                            int held = 0;
+                            for (int c = 0; c < g.players[pending].hand_count; c++)
+                                if (g.players[pending].hand[c].value == vals[k]) held++;
+                            if (held >= 2) pair_value = vals[k];
+                        }
+                    }
+                }
+                if (n_pending == 1 && pending >= 0 && pair_value &&
+                    g.players[pending].hand_count >= 2 &&
+                    g.players[pending].hand_count <= 6 && worst <= 7) {
+                    MsgEnvelope e;
+                    env_init(&e, seed, np);
+                    e.phase = MSG_PHASE_LIVE;
+                    e.last_actor_seat = (uint8_t)g.defender;
+                    if (msg_seal(&e, &g, MSG_NO_BASE, body, sizeof(body), &scratch) == MSG_EOK) {
+                        unsigned char wire[ENV_CAP];
+                        const int n = msg_encode(&e, wire, sizeof(wire));
+                        if (n > 0) {
+                            for (int b = 0; b < n; b++) printf("%02x", wire[b]);
+                            printf("\n");
+                            fprintf(stderr, "goodwait: np=%d seed#%u us=seat %d holds %d,"
+                                    " defender=seat %d, %d attackers good, turn %d (%d bytes)"
+                                    " hands=", np, s, pending,
+                                    g.players[pending].hand_count, g.defender,
+                                    n_good, e.turn, n);
+                            for (int q = 0; q < np; q++)
+                                fprintf(stderr, "%s%d", q ? "/" : "", g.players[q].hand_count);
+                            fprintf(stderr, " pair=%s hand=", 
+                                    pair_value >= 1 && pair_value <= 13
+                                        ? (const char *[]){"?","2","3","4","5","6","7","8",
+                                                           "9","10","J","Q","K","A"}[pair_value]
+                                        : "?");
+                            for (int c = 0; c < g.players[pending].hand_count; c++) {
+                                const int v = g.players[pending].hand[c].value;
+                                const int u = g.players[pending].hand[c].suit;
+                                fprintf(stderr, "%s%s%c", c ? "," : "",
+                                        v >= 1 && v <= 13
+                                            ? (const char *[]){"?","2","3","4","5","6","7","8",
+                                                               "9","10","J","Q","K","A"}[v] : "?",
+                                        u >= 0 && u < 4 ? "SHCD"[u] : '?');
+                            }
+                            fprintf(stderr, "\n");
+                            return;
+                        }
+                    }
+                }
+            }
+
+            int seat = -1, pick = -1;
+            const int start = (int)(rnd() % (uint32_t)np);
+            for (int t = 0; t < np && seat < 0; t++) {
+                const int c = (start + t) % np;
+                if (g.players[c].status != PLAYER_STATUS_IN) continue;
+                calculate_legal_moves(&g, c, &ml);
+                for (int i = 0; i < ml.n; i++)
+                    if (ml.moves[i].type != MOVE_WAIT) { seat = c; pick = i; break; }
+            }
+            if (seat < 0 || pick < 0) break;
+            AwireAction a;
+            move_to_awire(&ml.moves[pick], &a);
+            bool ok;
+            switch (a.kind) {
+                case AWIRE_ATTACK: ok = handle_attack(&g, seat, a.cards, a.n); break;
+                case AWIRE_COVER:  ok = handle_cover(&g, seat, a.cards, a.attacks, a.n); break;
+                case AWIRE_PASS:   ok = handle_pass(&g, seat, a.cards, a.n); break;
+                case AWIRE_PICKUP: ok = handle_pickup(&g, seat); break;
+                default:           ok = handle_good(&g, seat); break;
+            }
+            if (!ok) break;
+        }
+    }
+    fprintf(stderr, "no %dp board waiting on exactly one attacker\n", np);
+    exit(1);
+}
+
 // --endgame [np]: a FINISHED chain, as one FMSG envelope in hex - the dev board
 // for verifying what "New game" does at the end of a game (the fool's penalty).
 //
@@ -3285,6 +3429,7 @@ static void print_chain(int np, int count, int depth) {
         unsigned char wires[16][ENV_CAP];
         int lens[16], actors[16], phases[16], kept = 0;
         int kinds[16], ncards[16], battles[16], covered[16], hands[16][8];
+        Card handcards[2][MAX_HAND_SIZE];
         Card acards[16][6];
 
         int step = 0;
@@ -3350,6 +3495,10 @@ static void print_chain(int np, int count, int depth) {
             // the hand the frame will actually show.
             for (int q = 0; q < np && q < 8; q++)
                 hands[kept][q] = g.players[q].hand_count;
+            if (np == 2)
+                for (int q = 0; q < 2; q++)
+                    for (int c = 0; c < g.players[q].hand_count && c < MAX_HAND_SIZE; c++)
+                        handcards[q][c] = g.players[q].hand[c];
             for (int c = 0; c < a.n && c < 6; c++) acards[kept][c] = a.cards[c];
             phases[kept] = e.phase; kept++;
             if (kept >= count) break;
@@ -3388,6 +3537,23 @@ static void print_chain(int np, int count, int depth) {
                     battles[i], covered[i]);
             for (int q = 0; q < np && q < 8; q++)
                 fprintf(stderr, "%s%d", q ? "/" : "", hands[i][q]);
+            // THE ACTUAL CARDS, for 2p and for the last entry only - which is
+            // the one a transcript frame photographs. Counts are not enough to
+            // choose a state by: a four-card hand that happens to be four RED
+            // cards reads as monotonous in the frame, and the only way to know
+            // before shooting is to print the suits.
+            if (np == 2 && i == kept - 1) {
+                for (int q = 0; q < 2; q++) {
+                    fprintf(stderr, " hand%d=", q);
+                    for (int c = 0; c < hands[i][q] && c < MAX_HAND_SIZE; c++) {
+                        const int v = handcards[q][c].value;
+                        fprintf(stderr, "%s%s%c", c ? "," : "",
+                                v >= 1 && v <= 13 ? rankname[v] : "?",
+                                handcards[q][c].suit >= 0 && handcards[q][c].suit < 4
+                                    ? suitname[handcards[q][c].suit] : '?');
+                    }
+                }
+            }
             fprintf(stderr, "%s\n",
                     phases[i] == MSG_PHASE_FINISHED ? " FINISHED" : "");
             for (int b = 0; b < lens[i]; b++) printf("%02x", wires[i][b]);
@@ -4186,6 +4352,10 @@ int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--fixture")) { print_fixtures(); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--fixture4")) { print_fixtures4(); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--fixture5")) { print_fixtures5(); return 0; }
+    if (argc > 1 && !strcmp(argv[1], "--goodwait")) {
+        print_goodwait(argc > 2 ? atoi(argv[2]) : 8);
+        return 0;
+    }
     if (argc > 1 && !strcmp(argv[1], "--passable")) {
         print_passable(argc > 2 ? atoi(argv[2]) : 3);
         return 0;
