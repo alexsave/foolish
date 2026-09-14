@@ -1132,6 +1132,7 @@ int wasm_anim_transport(void) { return anim_transport(); }
 //   then events: n_events x { u8 type, u8 seat(0xFF none), u8 from, u8 to,
 //                             u8 mask, u8 n_cards, n_cards x u8 wire card,
 //                             u8 has_counts, u8 deck, u8 discard,
+//                             (NO flipped trump - see the CARD_NONE below),
 //                             n_players x u8 hand,
 //                             u8 n_battles (0xFE = no board),
 //                             2 x n_battles u8 attack/cover dense ids }
@@ -1204,6 +1205,16 @@ int wasm_anim_build_plan(int n_events, int n_players, int final_deck, int final_
         events[e].has_counts = g_io[p++] ? 1 : 0;
         events[e].deck = g_io[p++];
         events[e].discard = g_io[p++];
+        // THE FLIPPED TRUMP IS NOT ON THIS WIRE, and CARD_NONE is what that
+        // says. The browser draws its own DeckAndFlipped straight off the live
+        // game state and has never asked the plan for the stock's other half;
+        // the iMessage board does (c/ios/ios_api.c, FIO_PLAN_FLIP_AT), which is
+        // where the freeze it belongs to is actually read. Written explicitly
+        // rather than left to whatever the static array held, so `pre.flipped`
+        // over this wire means one definite thing - and the TS bridge
+        // deliberately does not expose it, so nothing can read that one thing
+        // as "the trump is gone".
+        events[e].flipped = CARD_NONE;
         for (int s = 0; s < n_players; s++) ev_hand[e][s] = g_io[p++];
         events[e].hand = ev_hand[e];
         // …and the row that step committed, in the 2-bytes-per-battle layout.
@@ -1240,7 +1251,8 @@ int wasm_anim_build_plan(int n_events, int n_players, int final_deck, int final_
         }
     }
     static AnimPlan plan;
-    int rc = anim_build_plan(events, n_events, n_players, final_deck, final_discard, final_hand, &plan);
+    int rc = anim_build_plan(events, n_events, n_players, final_deck, final_discard,
+                             CARD_NONE, final_hand, &plan);
     if (rc != ANIM_EOK) return rc;
 
     int o = 0;

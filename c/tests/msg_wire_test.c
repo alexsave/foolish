@@ -121,6 +121,44 @@ static int env_hdr_len(uint8_t format) {
     return MSG_HEADER_LEN;
 }
 
+// Seat names for the fixtures. These are display strings only - the wire
+// round-trips any name - but they are what a seeded board SHOWS, so they are
+// also what QA and store photography read off the screen. A cast of ordinary
+// first names beats "Ann0..Ann7": a table of numbered clones hides exactly the
+// defects a name is there to expose (badge overflow, ellipsis, collision with
+// the seat chrome), because every label is the same four characters wide.
+//
+// FOOLISH_NAMES overrides it with a comma-separated list, so a lane that needs
+// a specific seat to carry a specific name - the local player, a longest-legal
+// name at 8 seats - can say so without a rebuild. Short names stay well inside
+// MSG_MAX_NAME (64 bytes) and MSG_MAX_NAME_CHARS (16).
+static const char *fixture_name(int seat) {
+    static char slots[MSG_MAX_JOINS][MSG_MAX_NAME + 1];
+    static int parsed = 0;
+    static const char *fallback[MSG_MAX_JOINS] = {
+        "Alex", "Mira", "Jonas", "Priya", "Tomas", "Nadia", "Felix", "Sana"
+    };
+    if (!parsed) {
+        parsed = 1;
+        const char *env = getenv("FOOLISH_NAMES");
+        for (int i = 0; i < MSG_MAX_JOINS; i++)
+            snprintf(slots[i], sizeof(slots[i]), "%s", fallback[i]);
+        if (env && *env) {
+            int i = 0;
+            const char *p = env;
+            while (*p && i < MSG_MAX_JOINS) {
+                const char *c = strchr(p, ',');
+                size_t n = c ? (size_t)(c - p) : strlen(p);
+                if (n > MSG_MAX_NAME) n = MSG_MAX_NAME;
+                if (n > 0) { memcpy(slots[i], p, n); slots[i][n] = 0; i++; }
+                if (!c) break;
+                p = c + 1;
+            }
+        }
+    }
+    return slots[seat % MSG_MAX_JOINS];
+}
+
 static void env_init(MsgEnvelope *e, const uint8_t *seed, int n_players) {
     msg_envelope_init(e);   // NOT memset: the rematch fields have sentinels
     e->format = MSG_FORMAT_V6;
@@ -134,9 +172,10 @@ static void env_init(MsgEnvelope *e, const uint8_t *seed, int n_players) {
     e->n_joins = n_players;
     for (int i = 0; i < n_players; i++) {
         e->joins[i].seat = (uint8_t)i;
-        e->joins[i].name_len = 4;
-        memcpy(e->joins[i].name, "Ann\0", 4);
-        e->joins[i].name[3] = (char)('0' + i);
+        const char *nm = fixture_name(i);
+        const int len = (int)strlen(nm);
+        e->joins[i].name_len = (uint8_t)len;
+        memcpy(e->joins[i].name, nm, (size_t)len);
     }
 }
 
@@ -500,6 +539,142 @@ static void test_rule_p_started_beats_lobby(void) {
     CHECK(lobby_digest_first > 0,
           "no fixture had the lobby digest sorting first — this run could not "
           "have caught the digest-coin-flip bug");
+}
+
+// 1.1(56) - WHAT AN ARRIVING CHAIN DOES TO AN OPEN LOBBY (msg_surface_delta).
+//
+// The owner: "LOBBY DID NOT UPDATE LIVE! I was in lobby, got a start game text,
+// and it was stuck on lobby!" - and then the shape of the fix: one bubble can
+// carry SEVERAL actions, because `conversation.insert` replaces an unsent draft
+// rather than queueing a second one, so Join + rules + Start go out as one
+// envelope. This is the half that reads the two envelopes; anim_surface_plan
+// (anim_plan_test.c) is the half that lays the answer out as beats.
+//
+// MUTATION-CHECKED. Comparing rosters by COUNT instead of row-by-row makes the
+// same-size swap below read as "nothing changed"; comparing in WIRE order rather
+// than seat order makes the shuffled roster read as a change that never
+// happened; ignoring the SHOWING chain's phase makes every arrival a start.
+static void test_surface_delta(void) {
+    uint8_t seed[MSG_SEED_LEN];
+    seed_fill(seed, 4242u);
+
+    MsgEnvelope lob, arr;
+    MsgSurfaceDelta d;
+
+    // A lobby with one seat, and the same lobby with a second player in it.
+    env_init(&lob, seed, 8);
+    lob.phase = MSG_PHASE_WAITING;
+    lob.n_joins = 1;
+    lob.turn = 0; lob.round = 0; lob.n_actions = 0; lob.actions_len = 0; lob.actions = 0;
+
+    arr = lob;
+    arr.n_joins = 2;
+
+    msg_surface_delta(&lob, &arr, &d);
+    CHECK(d.on_a_lobby == 1, "a WAITING chain on screen IS a lobby");
+    CHECK(d.roster_moved == 1, "somebody sat down");
+    CHECK(d.started == 0, "a lobby arriving on a lobby has not started anything");
+
+    // The SAME bubble, with the game dealt on it - a join and a Start in one
+    // text, which is the report.
+    MsgEnvelope live = arr;
+    live.phase = MSG_PHASE_LIVE;
+    live.n_players = 2;
+    msg_surface_delta(&lob, &live, &d);
+    CHECK(d.started == 1, "the arriving chain is dealt, so the lobby is over");
+    CHECK(d.roster_moved == 1, "and it still carries the join that came with it");
+
+    // A BOARD is not a lobby, whatever arrives on it.
+    msg_surface_delta(&live, &live, &d);
+    CHECK(d.on_a_lobby == 0, "a LIVE chain on screen is a board");
+    CHECK(d.started == 0, "a board was never a lobby, so nothing 'started' on it - "
+                          "this is a fact about BOTH chains, not just the arriving one");
+
+    // THE ROSTER IS COMPARED ROW BY ROW, not by size. Same count, different
+    // people: a device that counted would call this "nothing changed" and never
+    // redraw the names.
+    MsgEnvelope swapped = arr;
+    swapped.joins[1].name[3] = 'Z';
+    msg_surface_delta(&arr, &swapped, &d);
+    CHECK(d.roster_moved == 1, "a seat that changed hands is not the seat that was there");
+
+    // …AND IN SEAT ORDER, not wire order. Nothing on the wire sorts the joins,
+    // and "who joined next" is a fact about seats.
+    MsgEnvelope shuffled = arr;
+    shuffled.joins[0] = arr.joins[1];
+    shuffled.joins[1] = arr.joins[0];
+    msg_surface_delta(&arr, &shuffled, &d);
+    CHECK(d.roster_moved == 0, "the same two people, listed the other way round, "
+                               "are the same roster");
+
+    // A LEAVE compacts the seats below it, so the rosters diverge in the middle
+    // and there is no run of joins to walk.
+    MsgEnvelope three = lob;
+    three.n_joins = 3;
+    MsgEnvelope left = lob;
+    left.n_joins = 2;
+    left.joins[1] = three.joins[2];
+    left.joins[1].seat = 1;
+    msg_surface_delta(&three, &left, &d);
+    CHECK(d.roster_moved == 1, "somebody got up, and that is a roster change too");
+
+    // THE RULES, read through msg_pass_allowed so a format that predates the
+    // rules byte reads as the passing game it always was.
+    MsgEnvelope podk = arr;
+    podk.format = MSG_FORMAT_RULES;
+    podk.variant = 0;
+    MsgEnvelope pass = arr;
+    pass.format = MSG_FORMAT_RULES;
+    pass.variant = MSG_VARIANT_PASS;
+    msg_surface_delta(&pass, &podk, &d);
+    CHECK(d.passing_before == 1 && d.passing_after == 0,
+          "the table turned the transfer off (got %d -> %d)",
+          d.passing_before, d.passing_after);
+    msg_surface_delta(&arr, &podk, &d);
+    CHECK(d.passing_before == 1,
+          "a pre-rules format is the passing game, not 'no rule'");
+
+    // A STALE SURFACE SPANS EVERYTHING SINCE WHAT IT IS SHOWING. The extension
+    // was closed while two texts arrived - somebody joined, then somebody
+    // started - and the one chain that gets adopted differs from the lobby on
+    // screen by BOTH. Owner, asked directly: "OK yeah that's the correct
+    // behavior." One sequence, not a jump and not a bare fade.
+    msg_surface_delta(&lob, &live, &d);
+    CHECK(d.roster_moved == 1 && d.started == 1,
+          "a two-message gap is reported as both actions, not just the newer one");
+
+    // A RE-SEND of the chain already on screen differs by nothing, so nothing
+    // animates. A no-op that played a fade would be very visible.
+    msg_surface_delta(&arr, &arr, &d);
+    CHECK(d.roster_moved == 0 && d.started == 0 && d.passing_before == d.passing_after,
+          "the same chain twice is not a change");
+
+    // …and neither is a NET-ZERO one: the rule toggled off and back on across
+    // two texts while nobody was looking. Two bubbles arrived and the surface
+    // does nothing, because nothing differs.
+    msg_surface_delta(&pass, &pass, &d);
+    CHECK(d.passing_before == d.passing_after, "a rule that came back is not a change");
+
+    // A COLD OPEN PAINTS, three ways, and none of them is a sequence.
+    //
+    // Nothing was on screen: there is no `showing` to hand this at all.
+    msg_surface_delta(0, &arr, &d);
+    CHECK(d.on_a_lobby == 0 && d.started == 0, "a missing side stages nothing");
+    // A DIFFERENT GAME's lobby, tapped while one was showing. A switch, not a
+    // continuation - and caught on the game id, because "something was
+    // showing" is true here and is not the question.
+    MsgEnvelope other = live;
+    other.game_id = lob.game_id + 1;
+    msg_surface_delta(&lob, &other, &d);
+    CHECK(d.on_a_lobby == 0 && d.started == 0 && d.roster_moved == 0,
+          "another game's bubble is a switch, and a switch has no beats");
+    // Re-opening the SAME lobby after the extension was closed is the third,
+    // and it never reaches here: the extension's cold load adopts straight
+    // (GameSurface.load), and only `maybeAdoptIncoming` asks for a plan. Pinned
+    // on the near side instead - the same chain differs by nothing anyway.
+    msg_surface_delta(&lob, &lob, &d);
+    CHECK(d.roster_moved == 0 && d.started == 0,
+          "re-opening the chain you were already showing changes nothing");
 }
 
 // Rule P, rule 3: at an equal (round, turn), the fuller roster wins.
@@ -2474,6 +2649,242 @@ static int poses_the_race(const Game *g) {
 // pick up. Nobody says good, so the all-good transition cannot fire either.
 //
 // Usage: msg_wire_test --fatboard [target] [n_players]
+// --passable [np]: a board where the DEFENDER may PASS, with exactly TWO
+// uncovered attacks and nothing covered - the state a screenshot needs to show
+// the drag hint read "Pass".
+//
+// It needs its own search because no existing generator can reach it. The
+// chain playout takes the FIRST non-wait legal move and passes sort after
+// attacks and covers, so 65 chains across 2-4 players contained not one pass;
+// and every `fatboard` state has something covered, which makes passing
+// illegal by rule (a pass requires a table where nothing has been defended).
+// So this plays games out and STOPS the moment a seat is holding a legal pass
+// against the table shape the owner asked for, rather than hoping one turns up.
+static void print_passable(int np) {
+    static unsigned char body[1024];
+    static Game scratch;
+    static LegalMoves ml;
+
+    for (uint32_t s = 1; s < 9000; s++) {
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, 20260914u + s * 137u);
+        game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+        g_rng = 7717u + s;
+        random_strategy_set_seed(g_rng);
+        Game g;
+        memset(&g, 0, sizeof(g));
+        g.num_players = (int8_t)np;
+        for (int i = 0; i < np; i++) {
+            g.players[i].status = PLAYER_STATUS_READY;
+            g.players[i].strategy_key = 0;
+            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
+        }
+        start_game(&g);   // rules 0 = perevodnoy, which is what makes a pass legal
+
+        for (int step = 0; step < 400 && g.status == GAME_STATUS_PLAYING; step++) {
+            if (game_done(&g) >= 0) break;
+
+            // THE TEST, before each move rather than after: is somebody sitting
+            // on a legal pass, with two bare attacks in front of them?
+            if (g.num_battles == 2 &&
+                g.table_battles[0].defense.value <= 0 &&
+                g.table_battles[1].defense.value <= 0 &&
+                g.defender >= 0) {
+                calculate_legal_moves(&g, g.defender, &ml);
+                for (int i = 0; i < ml.n; i++) {
+                    if (ml.moves[i].type != MOVE_PASS) continue;
+                    MsgEnvelope e;
+                    env_init(&e, seed, np);
+                    e.phase = MSG_PHASE_LIVE;
+                    e.last_actor_seat = (uint8_t)g.defender;
+                    if (msg_seal(&e, &g, MSG_NO_BASE, body, sizeof(body), &scratch) != MSG_EOK)
+                        break;
+                    unsigned char wire[ENV_CAP];
+                    const int n = msg_encode(&e, wire, sizeof(wire));
+                    if (n <= 0) break;
+                    for (int b = 0; b < n; b++) printf("%02x", wire[b]);
+                    printf("\n");
+                    fprintf(stderr, "passable: np=%d seed#%u defender=seat %d holds %d,"
+                            " 2 bare attacks, turn %d (%d bytes) hands=",
+                            np, s, g.defender, g.players[g.defender].hand_count, e.turn, n);
+                    for (int q = 0; q < np; q++)
+                        fprintf(stderr, "%s%d", q ? "/" : "", g.players[q].hand_count);
+                    fprintf(stderr, "\n");
+                    return;
+                }
+            }
+
+            int seat = -1, pick = -1;
+            const int start = (int)(rnd() % (uint32_t)np);
+            for (int t = 0; t < np && seat < 0; t++) {
+                const int c = (start + t) % np;
+                if (g.players[c].status != PLAYER_STATUS_IN) continue;
+                calculate_legal_moves(&g, c, &ml);
+                for (int i = 0; i < ml.n; i++)
+                    if (ml.moves[i].type != MOVE_WAIT) { seat = c; pick = i; break; }
+            }
+            if (seat < 0 || pick < 0) break;
+            AwireAction a;
+            move_to_awire(&ml.moves[pick], &a);
+            bool ok;
+            switch (a.kind) {
+                case AWIRE_ATTACK: ok = handle_attack(&g, seat, a.cards, a.n); break;
+                case AWIRE_COVER:  ok = handle_cover(&g, seat, a.cards, a.attacks, a.n); break;
+                case AWIRE_PASS:   ok = handle_pass(&g, seat, a.cards, a.n); break;
+                case AWIRE_PICKUP: ok = handle_pickup(&g, seat); break;
+                default:           ok = handle_good(&g, seat); break;
+            }
+            if (!ok) break;
+        }
+    }
+    fprintf(stderr, "no %dp board with a legal pass over two bare attacks\n", np);
+    exit(1);
+}
+
+// --goodwait [np]: the table is waiting on US and nobody else. Two attacks,
+// both covered, and every attacker EXCEPT one has said good - that one being
+// the seat the frame is shot from, with a hand small enough to photograph.
+//
+// Like --passable, this needs its own search rather than a filter over an
+// existing one. `fatboard` knows about table density and nothing about
+// good_players_mask, and the chain playout cannot be steered into it: the
+// state is TRANSIENT by construction, because the moment the last attacker
+// says good the bout ends and the table clears. So the test runs BEFORE each
+// move, which is the only window in which it exists.
+static void print_goodwait(int np) {
+    static unsigned char body[1024];
+    static Game scratch;
+    static LegalMoves ml;
+
+    for (uint32_t s = 1; s < 20000; s++) {
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, 20260915u + s * 149u);
+        game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+        g_rng = 3313u + s;
+        random_strategy_set_seed(g_rng);
+        Game g;
+        memset(&g, 0, sizeof(g));
+        g.num_players = (int8_t)np;
+        for (int i = 0; i < np; i++) {
+            g.players[i].status = PLAYER_STATUS_READY;
+            g.players[i].strategy_key = 0;
+            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
+        }
+        start_game(&g);
+
+        for (int step = 0; step < 600 && g.status == GAME_STATUS_PLAYING; step++) {
+            if (game_done(&g) >= 0) break;
+
+            // EVERY SEAT STILL IN. Without this the search happily returned an
+            // "8 player" board with four seats already out (hands 0/8/0/8/0/5/0/1),
+            // which photographs as a half-empty table and is not what an 8p
+            // showcase frame means.
+            int all_in = 1;
+            for (int i = 0; i < np; i++)
+                if (g.players[i].status != PLAYER_STATUS_IN) all_in = 0;
+            if (all_in && g.num_battles == 2 &&
+                g.table_battles[0].defense.value > 0 &&
+                g.table_battles[1].defense.value > 0 &&
+                g.defender >= 0) {
+                int pending = -1, n_pending = 0, worst = 0, n_good = 0;
+                for (int i = 0; i < np; i++) {
+                    if (i == g.defender || g.players[i].status != PLAYER_STATUS_IN) continue;
+                    if (g.players[i].hand_count > worst) worst = g.players[i].hand_count;
+                    if (!(g.good_players_mask & (1u << i))) { pending = i; n_pending++; }
+                    else n_good++;
+                }
+                // Exactly one attacker still to answer, holding a hand that fits
+                // the shoot's rules (2 cards to select from, at most 6 on screen),
+                // and nobody at the table sitting on an absurd pile.
+                // AND THE TWO CARDS WE SELECT MUST BE A LEGAL THROW-IN.
+                // A frame showing two tapped cards is a frame claiming a move
+                // is available: an attacker may only add a card whose VALUE is
+                // already on the table, so a pair of 10s over a table of 5s and
+                // a 9 is a picture of an illegal move. Require a value that is
+                // on the table AND that we hold at least twice, and report it
+                // so the rig can tap those two cards rather than guess.
+                int pair_value = 0;
+                if (n_pending == 1 && pending >= 0) {
+                    for (int b = 0; b < g.num_battles && !pair_value; b++) {
+                        const int vals[2] = { g.table_battles[b].attack.value,
+                                              g.table_battles[b].defense.value };
+                        for (int k = 0; k < 2 && !pair_value; k++) {
+                            if (vals[k] <= 0) continue;
+                            int held = 0;
+                            for (int c = 0; c < g.players[pending].hand_count; c++)
+                                if (g.players[pending].hand[c].value == vals[k]) held++;
+                            if (held >= 2) pair_value = vals[k];
+                        }
+                    }
+                }
+                if (n_pending == 1 && pending >= 0 && pair_value &&
+                    g.players[pending].hand_count >= 2 &&
+                    g.players[pending].hand_count <= 6 && worst <= 7) {
+                    MsgEnvelope e;
+                    env_init(&e, seed, np);
+                    e.phase = MSG_PHASE_LIVE;
+                    e.last_actor_seat = (uint8_t)g.defender;
+                    if (msg_seal(&e, &g, MSG_NO_BASE, body, sizeof(body), &scratch) == MSG_EOK) {
+                        unsigned char wire[ENV_CAP];
+                        const int n = msg_encode(&e, wire, sizeof(wire));
+                        if (n > 0) {
+                            for (int b = 0; b < n; b++) printf("%02x", wire[b]);
+                            printf("\n");
+                            fprintf(stderr, "goodwait: np=%d seed#%u us=seat %d holds %d,"
+                                    " defender=seat %d, %d attackers good, turn %d (%d bytes)"
+                                    " hands=", np, s, pending,
+                                    g.players[pending].hand_count, g.defender,
+                                    n_good, e.turn, n);
+                            for (int q = 0; q < np; q++)
+                                fprintf(stderr, "%s%d", q ? "/" : "", g.players[q].hand_count);
+                            fprintf(stderr, " pair=%s hand=", 
+                                    pair_value >= 1 && pair_value <= 13
+                                        ? (const char *[]){"?","2","3","4","5","6","7","8",
+                                                           "9","10","J","Q","K","A"}[pair_value]
+                                        : "?");
+                            for (int c = 0; c < g.players[pending].hand_count; c++) {
+                                const int v = g.players[pending].hand[c].value;
+                                const int u = g.players[pending].hand[c].suit;
+                                fprintf(stderr, "%s%s%c", c ? "," : "",
+                                        v >= 1 && v <= 13
+                                            ? (const char *[]){"?","2","3","4","5","6","7","8",
+                                                               "9","10","J","Q","K","A"}[v] : "?",
+                                        u >= 0 && u < 4 ? "SHCD"[u] : '?');
+                            }
+                            fprintf(stderr, "\n");
+                            return;
+                        }
+                    }
+                }
+            }
+
+            int seat = -1, pick = -1;
+            const int start = (int)(rnd() % (uint32_t)np);
+            for (int t = 0; t < np && seat < 0; t++) {
+                const int c = (start + t) % np;
+                if (g.players[c].status != PLAYER_STATUS_IN) continue;
+                calculate_legal_moves(&g, c, &ml);
+                for (int i = 0; i < ml.n; i++)
+                    if (ml.moves[i].type != MOVE_WAIT) { seat = c; pick = i; break; }
+            }
+            if (seat < 0 || pick < 0) break;
+            AwireAction a;
+            move_to_awire(&ml.moves[pick], &a);
+            bool ok;
+            switch (a.kind) {
+                case AWIRE_ATTACK: ok = handle_attack(&g, seat, a.cards, a.n); break;
+                case AWIRE_COVER:  ok = handle_cover(&g, seat, a.cards, a.attacks, a.n); break;
+                case AWIRE_PASS:   ok = handle_pass(&g, seat, a.cards, a.n); break;
+                case AWIRE_PICKUP: ok = handle_pickup(&g, seat); break;
+                default:           ok = handle_good(&g, seat); break;
+            }
+            if (!ok) break;
+        }
+    }
+    fprintf(stderr, "no %dp board waiting on exactly one attacker\n", np);
+    exit(1);
+}
+
 // --endgame [np]: a FINISHED chain, as one FMSG envelope in hex - the dev board
 // for verifying what "New game" does at the end of a game (the fool's penalty).
 //
@@ -2508,6 +2919,7 @@ static void print_endgame(int np, int passing, int arrival) {
         start_game(&g);
 
         int last_actor = g.first_attacker;
+        int out_order[8], n_out = 0;
         for (int step = 0; step < 400; step++) {
             if (game_done(&g) >= 0 || g.status != GAME_STATUS_PLAYING) break;
             int seat = -1, pick = -1;
@@ -2532,6 +2944,18 @@ static void print_endgame(int np, int passing, int arrival) {
             }
             if (!ok) break;
             last_actor = seat;
+            // WHO WENT OUT, IN ORDER - which is the ranking the result card
+            // prints. Without it the only way to know whether the frame shows
+            // us at #1 or at #7 is to shoot it and read the card, and an 8p
+            // endgame that puts "Alex (You)" second from last is not a
+            // showcase. Recorded here so the cast can be rotated to put our
+            // name wherever the frame needs it.
+            for (int q = 0; q < np; q++) {
+                if (g.players[q].status == PLAYER_STATUS_IN) continue;
+                int already = 0;
+                for (int r = 0; r < n_out; r++) if (out_order[r] == q) already = 1;
+                if (!already) out_order[n_out++] = q;
+            }
         }
         game_settle_status(&g);
         const int fool = game_done(&g);
@@ -2554,9 +2978,12 @@ static void print_endgame(int np, int passing, int arrival) {
 
         for (int i = 0; i < n; i++) printf("%02x", wire[i]);
         printf("\n");
-        fprintf(stderr, "endgame: np=%d %s fool=seat %d turn=%d round=%d (%d bytes) phase=%s\n",
+        fprintf(stderr, "endgame: np=%d %s fool=seat %d turn=%d round=%d (%d bytes) phase=%s",
                 np, passing ? "perevodnoy" : "podkidnoy", fool, e.turn, e.round, n,
                 arrival ? "LIVE(arrival)" : "FINISHED");
+        fprintf(stderr, " rank=");
+        for (int r = 0; r < n_out; r++) fprintf(stderr, "%s%d", r ? "," : "", out_order[r]);
+        fprintf(stderr, "\n");
         return;
     }
     fprintf(stderr, "no %dp endgame found\n", np);
@@ -2695,6 +3122,7 @@ static void print_lastdefense(int np) {
 #define LASTMOVE_REFILL_EMPTY 7   // tail logs LOG_DRAW and empties the deck
 #define LASTMOVE_COVER_TRUMP  8   // covers with a TRUMP, bout stays open
 #define LASTMOVE_FINAL        9   // the move that ends the game (arrival)
+#define LASTMOVE_GOOD_ANY    10   // ANY legal good, closing the bout or not
 
 static bool lastmove_apply(Game *g, int seat, const LegalMove *m) {
     switch (m->type) {
@@ -2792,6 +3220,21 @@ static void print_lastmove_ex(int np, int kind, int live) {
                             want = (c.status == GAME_STATUS_PLAYING && c.num_battles > 0);
                             break;
                         }
+                        // `good` above is specifically a good that does NOT
+                        // close the bout, which needs a second attacker - so it
+                        // has no two-player instance at all, and reporting that
+                        // as "2 players cannot say good" is wrong twice over.
+                        // At two players a good is the ORDINARY way a bout ends,
+                        // and it stages like any other move, so the player sees
+                        // their own green check before they send it. This kind
+                        // takes any legal good, closing or not.
+                        case LASTMOVE_GOOD_ANY: {
+                            if (m->type != MOVE_GOOD) break;
+                            Game c = g;
+                            if (!lastmove_apply(&c, seat, m)) break;
+                            want = (c.status == GAME_STATUS_PLAYING);
+                            break;
+                        }
                         case LASTMOVE_OUT: {
                             Game c = g;
                             const int before = c.num_logs;
@@ -2886,7 +3329,249 @@ static void print_lastmove_ex(int np, int kind, int live) {
     exit(1);
 }
 
-static void print_fatboard(int target, int np) {
+// ---------- --chain: N CONSECUTIVE bubbles of ONE real game ----------------
+//
+// Every other mode here seals ONE state. That is enough for a board, and it is
+// NOT enough for a transcript: Messages shows the history above the drawer, so
+// a photograph needs several bubbles that actually follow one another. Sealing
+// several independent searches instead produces a chain no game could play -
+// the deck count jumping about, an attacking queen becoming a covering queen,
+// the defender changing hands between one line and the next. The owner caught
+// exactly that, twice.
+//
+// So: play ONE game with the same random discipline as --endgame, seal an
+// envelope after each of the last `count` moves, and print them oldest first.
+// Each line to stderr names the seat that acted, because the caller has to know
+// whose message it is - ours goes out from our thread and renders on the right,
+// theirs from the other one and renders on the left.
+//
+// Usage: msg_wire_test --chain [n_players] [count] [depth]
+static void print_chain(int np, int count, int depth) {
+    static unsigned char body[1024];
+    static Game scratch;
+    static LegalMoves ml;
+    if (count < 1) count = 1;
+    if (count > 16) count = 16;
+
+    for (uint32_t s = 1; s < 4000; s++) {
+        uint8_t seed[MSG_SEED_LEN];
+        seed_fill(seed, 20260913u + s * 131u);
+        // TIE THE DEAL TO THE ENVELOPE SEED. The v6 body encodes ACTIONS, not
+        // cards: the decoder re-deals from this seed and replays them. Deal the
+        // game any other way and every action is illegal against the hand the
+        // decoder built, and msg_seal refuses the body (MSG_EBODY) with no
+        // detail to explain itself.
+        game_set_deal_seed_bytes(seed, MSG_SEED_LEN);
+        g_rng = 4242u + s;
+        random_strategy_set_seed(g_rng);
+        Game g;
+        memset(&g, 0, sizeof(g));
+        g.num_players = (int8_t)np;
+        for (int i = 0; i < np; i++) {
+            g.players[i].status = PLAYER_STATUS_READY;
+            g.players[i].strategy_key = 0;
+            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
+        }
+        start_game(&g);
+
+        // A NEGATIVE depth anchors the chain to the END of the game instead of
+        // to an absolute move number: -1 means "the last `count` moves, the
+        // last of them the one that ends it".
+        //
+        // It needs a counting pass because a game's length is a property of the
+        // seed, not something a caller can know - and without it a result card
+        // can only ever be photographed over a transcript belonging to some
+        // OTHER game, which is exactly the kind of frame that does not survive
+        // a close look. The count is replayed rather than rewound: the deal is
+        // a function of the seed and both RNGs are re-seeded below, so the
+        // second pass is the same game move for move.
+        int use_depth = depth;
+        if (depth < 0) {
+            Game cg = g;
+            int moves = 0;
+            for (; cg.status == GAME_STATUS_PLAYING && moves < 512; moves++) {
+                if (game_done(&cg) >= 0) break;
+                int cseat = -1, cpick = -1;
+                const int cstart = (int)(rnd() % (uint32_t)np);
+                for (int t = 0; t < np && cseat < 0; t++) {
+                    const int c = (cstart + t) % np;
+                    if (cg.players[c].status != PLAYER_STATUS_IN) continue;
+                    calculate_legal_moves(&cg, c, &ml);
+                    for (int i = 0; i < ml.n; i++)
+                        if (ml.moves[i].type != MOVE_WAIT) { cseat = c; cpick = i; break; }
+                }
+                if (cseat < 0 || cpick < 0) break;
+                AwireAction ca;
+                move_to_awire(&ml.moves[cpick], &ca);
+                bool cok;
+                switch (ca.kind) {
+                    case AWIRE_ATTACK: cok = handle_attack(&cg, cseat, ca.cards, ca.n); break;
+                    case AWIRE_COVER:  cok = handle_cover(&cg, cseat, ca.cards, ca.attacks, ca.n); break;
+                    case AWIRE_PASS:   cok = handle_pass(&cg, cseat, ca.cards, ca.n); break;
+                    case AWIRE_PICKUP: cok = handle_pickup(&cg, cseat); break;
+                    default:           cok = handle_good(&cg, cseat); break;
+                }
+                if (!cok) break;
+            }
+            // Only a game that actually ENDED can be anchored to its end.
+            if (game_done(&cg) < 0 && cg.status == GAME_STATUS_PLAYING) continue;
+            // `moves` is how many were PLAYED, and the last of them is the one
+            // that ends the game, so the window starts `count` before it - not
+            // `count - 1`, which seals five of six and rejects every seed.
+            use_depth = moves - count;
+            if (use_depth < 0) continue;
+            g_rng = 4242u + s;
+            random_strategy_set_seed(g_rng);
+        }
+
+        // Replay buffers: one envelope per kept move, plus the log mark each
+        // was a delta FROM, so every bubble animates only its own move.
+        unsigned char wires[16][ENV_CAP];
+        int lens[16], actors[16], phases[16], kept = 0;
+        int kinds[16], ncards[16], battles[16], covered[16], hands[16][8];
+        Card handcards[2][MAX_HAND_SIZE];
+        Card acards[16][6];
+
+        int step = 0;
+        for (; step < use_depth + count && g.status == GAME_STATUS_PLAYING; step++) {
+            if (game_done(&g) >= 0) break;
+            int seat = -1, pick = -1;
+            const int start = (int)(rnd() % (uint32_t)np);
+            for (int t = 0; t < np && seat < 0; t++) {
+                const int c = (start + t) % np;
+                if (g.players[c].status != PLAYER_STATUS_IN) continue;
+                calculate_legal_moves(&g, c, &ml);
+                for (int i = 0; i < ml.n; i++)
+                    if (ml.moves[i].type != MOVE_WAIT) { seat = c; pick = i; break; }
+            }
+            if (seat < 0 || pick < 0) break;
+
+            const int pre_logs = g.num_logs;
+            AwireAction a;
+            move_to_awire(&ml.moves[pick], &a);
+            bool ok;
+            switch (a.kind) {
+                case AWIRE_ATTACK: ok = handle_attack(&g, seat, a.cards, a.n); break;
+                case AWIRE_COVER:  ok = handle_cover(&g, seat, a.cards, a.attacks, a.n); break;
+                case AWIRE_PASS:   ok = handle_pass(&g, seat, a.cards, a.n); break;
+                case AWIRE_PICKUP: ok = handle_pickup(&g, seat); break;
+                default:           ok = handle_good(&g, seat); break;
+            }
+            if (!ok) break;
+            if (step < use_depth) continue;      // still warming the game up
+
+            MsgEnvelope e;
+            env_init(&e, seed, np);
+            // The phase is READ, not assumed. It used to be pinned to LIVE,
+            // which made the last bubble of a chain that actually ends the game
+            // claim the game was still running - and a result card photographed
+            // over that transcript is a state the thread could not have
+            // reached. A chain that finishes should say so.
+            e.phase = (game_done(&g) >= 0 || g.status != GAME_STATUS_PLAYING)
+                      ? MSG_PHASE_FINISHED : MSG_PHASE_LIVE;
+            e.last_actor_seat = (uint8_t)seat;
+            e.sent_at = (uint16_t)(time(NULL) & 0xffff);
+            if (msg_seal(&e, &g, pre_logs, body, sizeof(body), &scratch) != MSG_EOK) break;
+            const int n = msg_encode(&e, wires[kept], sizeof(wires[kept]));
+            if (n <= 0) break;
+            lens[kept] = n; actors[kept] = seat;
+            // WHAT THE ENTRY SAYS HAPPENED, in the log rather than in a reader's
+            // head. A transcript shoot compares the sentence a bubble displays
+            // against "the move the chain made", and until this line that
+            // second half was inferred from an actor number and a guess about
+            // whose turn it was. Two consecutive bubbles displaying the SAME
+            // sentence is the tell that matters, and it is only visible when
+            // the expected sentences are written down next to each other.
+            kinds[kept] = a.kind; ncards[kept] = a.n;
+            battles[kept] = g.num_battles;
+            covered[kept] = 0;
+            for (int b = 0; b < g.num_battles; b++)
+                if (g.table_battles[b].defense.value > 0) covered[kept]++;
+            // EVERY SEAT'S HAND, not just the actor's. Printing the actor's
+            // alone picked a transcript depth whose last entry looked fine
+            // (hand=4) while OUR seat held nine cards and fanned them thin -
+            // the frame failed the skinny gate after it was shot. The point of
+            // logging this is to choose without shooting, so it has to name
+            // the hand the frame will actually show.
+            for (int q = 0; q < np && q < 8; q++)
+                hands[kept][q] = g.players[q].hand_count;
+            if (np == 2)
+                for (int q = 0; q < 2; q++)
+                    for (int c = 0; c < g.players[q].hand_count && c < MAX_HAND_SIZE; c++)
+                        handcards[q][c] = g.players[q].hand[c];
+            for (int c = 0; c < a.n && c < 6; c++) acards[kept][c] = a.cards[c];
+            phases[kept] = e.phase; kept++;
+            if (kept >= count) break;
+        }
+        if (kept < count) continue;
+
+        fprintf(stderr, "chain: %dp seed#%u depth=%d, %d consecutive bubbles\n",
+                np, s, use_depth, kept);
+        for (int i = 0; i < kept; i++) {
+            static const char *kindname[] = { "attack", "cover", "pass", "pickup", "good" };
+            // The repo's own table (c/src/main_analyse.c, main_eval.c,
+            // octogen_strategy.c all carry it): value 1 is a TWO, and the ace
+            // is 13. A hand-rolled "1 is an ace" version of this printed every
+            // card one rank low, and a shoot spent an afternoon treating the
+            // product's correct sentences as a bug because they disagreed with
+            // it. Copy the table, do not re-derive it.
+            static const char rankname[14][3] = { "?", "2", "3", "4", "5", "6", "7", "8",
+                                                  "9", "10", "J", "Q", "K", "A" };
+            static const char suitname[4] = { 'S', 'H', 'C', 'D' };
+            fprintf(stderr, "chain[%d]: actor=seat %d %s", i, actors[i],
+                    kinds[i] >= 0 && kinds[i] <= 4 ? kindname[kinds[i]] : "?");
+            for (int c = 0; c < ncards[i] && c < 6; c++) {
+                const int v = acards[i][c].value;
+                fprintf(stderr, " %s%c",
+                        v >= 1 && v <= 13 ? rankname[v] : "?",
+                        acards[i][c].suit >= 0 && acards[i][c].suit < 4
+                            ? suitname[acards[i][c].suit] : '?');
+            }
+            // THE SHAPE OF THE TABLE, which is what a collapsed frame is
+            // actually composed of. The owner's spec for the transcript shots
+            // is "two attack cards on the table with one covered" - a board
+            // that stays legible at bubble size - and without this the only
+            // way to find a depth that produces one is to shoot a frame and
+            // look at it, which costs minutes per guess.
+            fprintf(stderr, " (%d bytes) atk=%d cov=%d hands=", lens[i],
+                    battles[i], covered[i]);
+            for (int q = 0; q < np && q < 8; q++)
+                fprintf(stderr, "%s%d", q ? "/" : "", hands[i][q]);
+            // THE ACTUAL CARDS, for 2p and for the last entry only - which is
+            // the one a transcript frame photographs. Counts are not enough to
+            // choose a state by: a four-card hand that happens to be four RED
+            // cards reads as monotonous in the frame, and the only way to know
+            // before shooting is to print the suits.
+            if (np == 2 && i == kept - 1) {
+                for (int q = 0; q < 2; q++) {
+                    fprintf(stderr, " hand%d=", q);
+                    for (int c = 0; c < hands[i][q] && c < MAX_HAND_SIZE; c++) {
+                        const int v = handcards[q][c].value;
+                        fprintf(stderr, "%s%s%c", c ? "," : "",
+                                v >= 1 && v <= 13 ? rankname[v] : "?",
+                                handcards[q][c].suit >= 0 && handcards[q][c].suit < 4
+                                    ? suitname[handcards[q][c].suit] : '?');
+                    }
+                }
+            }
+            fprintf(stderr, "%s\n",
+                    phases[i] == MSG_PHASE_FINISHED ? " FINISHED" : "");
+            for (int b = 0; b < lens[i]; b++) printf("%02x", wires[i][b]);
+            printf("\n");
+        }
+        return;
+    }
+    fprintf(stderr, "no %dp game gave %d consecutive bubbles at depth %d\n", np, count, depth);
+    exit(1);
+}
+
+// `nopass` seals a PODKIDNOY (throw-in) board instead of the default
+// perevodnoy one - the two render differently, so a lane that only ever shot
+// the default has never looked at half the product. `preroll` plays that many
+// whole bouts of random legal play FIRST, which is the only way to reach the
+// states a freshly dealt table cannot show: a drained deck, a player already
+// out, a hand big enough to wrap. Both default to the old behaviour (0, 0).
+static void print_fatboard(int target, int np, int nopass, int preroll) {
     static unsigned char body[1024];
     static Game scratch;
     static LegalMoves ml;
@@ -2898,12 +3583,48 @@ static void print_fatboard(int target, int np) {
         Game g;
         memset(&g, 0, sizeof(g));
         g.num_players = (int8_t)np;
+        if (nopass) g.rules |= GAME_RULE_NO_PASS;
         for (int i = 0; i < np; i++) {
             g.players[i].status = PLAYER_STATUS_READY;
             g.players[i].strategy_key = 0;
             snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
         }
         start_game(&g);
+
+        // Play `preroll` whole bouts of random legal play before the table
+        // search, so the board that gets sealed is a mid- or late-game one.
+        g_rng = 7777u + s;
+        if (preroll > 0) {
+            int bouts = 0;
+            for (int step = 0; step < 800 && bouts < preroll; step++) {
+                if (g.status != GAME_STATUS_PLAYING || game_done(&g) >= 0) break;
+                int seat = -1, pick = -1;
+                const int start = (int)(rnd() % (uint32_t)np);
+                for (int t = 0; t < np && seat < 0; t++) {
+                    const int c = (start + t) % np;
+                    if (g.players[c].status != PLAYER_STATUS_IN) continue;
+                    calculate_legal_moves(&g, c, &ml);
+                    for (int i = 0; i < ml.n; i++)
+                        if (ml.moves[i].type != MOVE_WAIT) { seat = c; pick = i; break; }
+                }
+                if (seat < 0 || pick < 0) break;
+                AwireAction a;
+                move_to_awire(&ml.moves[pick], &a);
+                const int battles_before = g.num_battles;
+                bool ok;
+                switch (a.kind) {
+                    case AWIRE_ATTACK: ok = handle_attack(&g, seat, a.cards, a.n); break;
+                    case AWIRE_COVER:  ok = handle_cover(&g, seat, a.cards, a.attacks, a.n); break;
+                    case AWIRE_PASS:   ok = handle_pass(&g, seat, a.cards, a.n); break;
+                    case AWIRE_PICKUP: ok = handle_pickup(&g, seat); break;
+                    default:           ok = handle_good(&g, seat); break;
+                }
+                if (!ok) break;
+                // A bout closes exactly when the table empties (msg_wire.c:439).
+                if (battles_before > 0 && g.num_battles == 0) bouts++;
+            }
+            if (g.status != GAME_STATUS_PLAYING || game_done(&g) >= 0) continue;
+        }
 
         // Attack first, cover when stuck. Single-card attacks only, so the table
         // grows one slot at a time and lands ON the target instead of stepping
@@ -2959,6 +3680,15 @@ static void print_fatboard(int target, int np) {
         // (otherwise the capacity waiver lifts the hold for its own good
         // reasons). Fixtures that cannot do both are skipped rather than sealed
         // silently unheld.
+        // FOOLISH_PREV: seal the state as it stands BEFORE the throw-in below,
+        // so a caller can send that bubble first and this one second. They are
+        // then genuinely consecutive - the second is the first plus exactly one
+        // attack - which is what makes a transcript honest: Messages collapses
+        // the older send into a CAPTION LINE describing its last move, and that
+        // line now describes a move this board actually contains. Sending two
+        // independently searched boards produces the same caption and a lie.
+        static Game g_prev;
+        if (getenv("FOOLISH_PREV")) g_prev = g;
         {
             int threw = 0;
             for (int seat = 0; seat < np && !threw; seat++) {
@@ -2976,6 +3706,22 @@ static void print_fatboard(int target, int np) {
                 if (card_is_none(g.table_battles[i].defense)) uncovered++;
             }
             if (uncovered >= g.players[g.defender].hand_count) continue;
+            if (getenv("FOOLISH_PREV")) g = g_prev;   // hand back the earlier state
+        }
+
+        // FOOLISH_PLAYABLE: only seal a board the DEFENDER can actually move
+        // on. A photograph wants the state to be one somebody is about to act
+        // in, and a screenshot rig that drives the real UI needs a legal move
+        // to exist before it can make one - the search above is free to stop on
+        // a table where every uncovered attack beats every card in the
+        // defender's hand, and the only move left there is a pickup, which
+        // empties the table and the photograph with it.
+        if (getenv("FOOLISH_PLAYABLE")) {
+            calculate_legal_moves(&g, g.defender, &ml);
+            int can_cover = 0;
+            for (int i = 0; i < ml.n; i++)
+                if (ml.moves[i].type == MOVE_COVER) { can_cover = 1; break; }
+            if (!can_cover) continue;
         }
 
         MsgEnvelope e;
@@ -3002,10 +3748,17 @@ static void print_fatboard(int target, int np) {
         fprintf(stderr, "fatboard: last log %d, hold %ds\n",
                 g.num_logs ? g.logs[g.num_logs - 1].log_type : -1,
                 msg_pickup_hold_remaining(&g, g.defender, e.sent_at, e.sent_at));
+        // The DISCARD count is reported because a photograph wants one: a
+        // board with an empty discard reads as the very first bout of a game,
+        // and `preroll` alone does not guarantee otherwise - a bout that ends
+        // in a PICKUP puts its cards in a hand, not on the discard pile.
         fprintf(stderr, "fatboard: %dp seed#%u  %d cards on table (%d covered), "
-                        "defender=seat %d holds %d, turn %d round %d, %d bytes\n",
+                        "defender=seat %d holds %d, turn %d round %d, deck %d, "
+                        "discard %d, %s, %d bytes\n",
                 np, s, on_table, covered, g.defender,
-                g.players[g.defender].hand_count, e.turn, e.round, n);
+                g.players[g.defender].hand_count, e.turn, e.round,
+                g.deck_count, g.discard_pile_length,
+                nopass ? "podkidnoy" : "perevodnoy", n);
         for (int i = 0; i < n; i++) printf("%02x", wire[i]);
         printf("\n");
         return;
@@ -3599,6 +4352,14 @@ int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--fixture")) { print_fixtures(); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--fixture4")) { print_fixtures4(); return 0; }
     if (argc > 1 && !strcmp(argv[1], "--fixture5")) { print_fixtures5(); return 0; }
+    if (argc > 1 && !strcmp(argv[1], "--goodwait")) {
+        print_goodwait(argc > 2 ? atoi(argv[2]) : 8);
+        return 0;
+    }
+    if (argc > 1 && !strcmp(argv[1], "--passable")) {
+        print_passable(argc > 2 ? atoi(argv[2]) : 3);
+        return 0;
+    }
     if (argc > 1 && !strcmp(argv[1], "--endgame")) {
         print_endgame(argc > 2 ? atoi(argv[2]) : 3,
                       !(argc > 3 && !strcmp(argv[3], "nopass")), 0);
@@ -3612,13 +4373,13 @@ int main(int argc, char **argv) {
     if (argc > 2 && (!strcmp(argv[1], "--lastmove") || !strcmp(argv[1], "--lastmove-live"))) {
         static const char *names[] = { "attack", "cover", "pickup", "pass",
                                         "good", "out", "refill", "refillempty",
-                                        "covertrump", "final" };
+                                        "covertrump", "final", "goodany" };
         int kind = -1;
         for (size_t k = 0; k < sizeof(names) / sizeof(names[0]); k++)
             if (!strcmp(argv[2], names[k])) { kind = (int)k; break; }
         if (kind < 0) {
             fprintf(stderr, "--lastmove: unknown kind '%s' (attack|cover|pickup|pass|"
-                            "good|out|refill|refillempty|covertrump)\n", argv[2]);
+                            "good|goodany|out|refill|refillempty|covertrump|final)\n", argv[2]);
             return 2;
         }
         print_lastmove_ex(argc > 3 ? atoi(argv[3]) : 2, kind,
@@ -3630,8 +4391,16 @@ int main(int argc, char **argv) {
         print_lastdefense(argc > 2 ? atoi(argv[2]) : 2);
         return 0;
     }
+    if (argc > 1 && !strcmp(argv[1], "--chain")) {
+        print_chain(argc > 2 ? atoi(argv[2]) : 2,
+                    argc > 3 ? atoi(argv[3]) : 6,
+                    argc > 4 ? atoi(argv[4]) : 12);
+        return 0;
+    }
     if (argc > 1 && !strcmp(argv[1], "--fatboard")) {
-        print_fatboard(argc > 2 ? atoi(argv[2]) : 10, argc > 3 ? atoi(argv[3]) : 2);
+        print_fatboard(argc > 2 ? atoi(argv[2]) : 10, argc > 3 ? atoi(argv[3]) : 2,
+                       argc > 4 && !strcmp(argv[4], "nopass"),
+                       argc > 5 ? atoi(argv[5]) : 0);
         return 0;
     }
     if (argc > 1 && !strcmp(argv[1], "--twocover")) {
@@ -3650,6 +4419,7 @@ int main(int argc, char **argv) {
     test_rule_p_started_beats_lobby();
     test_rule_p_fuller_start_wins();
     test_rule_p_child_beats_parent();
+    test_surface_delta();
     test_tamper();
     test_hostile_body();
     test_pickup_hold();

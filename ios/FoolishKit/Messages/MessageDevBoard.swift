@@ -52,8 +52,12 @@ import Foundation
 public enum MessageDevBoard {
     private static let appGroup = "group.cards.foolish.msg"
     private static let flagFile = "dev.fatboard"
+    private static let claimFile = "dev.claimed"
+    private static let stagedFile = "dev.staged"
+    private static let soloNameFile = "dev.soloname"
     private static let seatFile = "dev.seat"
     private static let replayFile = "dev.replay"
+    private static let stageFile = "dev.stage"
     private static let slowmoFile = "dev.slowmo"
     private static let rulerFile = "dev.ruler"
     private static let collapseFile = "dev.collapse"
@@ -65,12 +69,21 @@ public enum MessageDevBoard {
     /// anyone having to agree on a base32 alphabet or a padding rule; the C side
     /// prints it and this reads it, and there is no third opinion.
     public static var seededPayload: Data? {
+        guard let raw = seededHex else { return nil }
+        return hex(raw)
+    }
+
+    /// The flag file's contents, trimmed - the exact string the rig wrote.
+    /// Split out of `seededPayload` so the claim receipt below can echo the
+    /// SAME characters back, rather than a re-encoding of the bytes that a
+    /// shell comparison would then have to agree with about case.
+    private static var seededHex: String? {
         guard let dir = FileManager.default
             .containerURL(forSecurityApplicationGroupIdentifier: appGroup),
               let raw = try? String(contentsOf: dir.appendingPathComponent(flagFile),
                                     encoding: .utf8)
         else { return nil }
-        return hex(raw.trimmingCharacters(in: .whitespacesAndNewlines))
+        return raw.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// ONCE PER PROCESS. The seed answers "what does the extension open ONTO",
@@ -81,12 +94,81 @@ public enum MessageDevBoard {
     ///
     /// Per PROCESS, not per file: `msgrig.sh reopen` kills Messages precisely so
     /// the seeded state can be opened cold again, and that still works.
+    ///
+    /// AND IT LEAVES A RECEIPT (`dev.claimed`), which is not bookkeeping - it is
+    /// the only way a driver can know this happened at all.
+    ///
+    /// "Once per process" is a promise about a process the rig does not own.
+    /// `rig.sh chain` re-seeds between every send and relies on leaving the
+    /// thread to kill the appex, because only a DEAD appex claims the next
+    /// seed; when that does not take, the extension re-opens on the seed it
+    /// already claimed and stages THAT - so every bubble in the transcript is
+    /// one move behind, silently, and each frame still looks individually
+    /// plausible (a defender does not change within a bout, so even the caption
+    /// row reads correctly). A whole chain shoot was read three times as a
+    /// caption bug on that evidence.
+    ///
+    /// The receipt turns it into a fact the driver can check before it presses
+    /// Send: the hex actually claimed, by the process that claimed it. The rig
+    /// deletes the file, seeds, re-opens, and refuses to send until this says
+    /// the seed it asked for. Written best-effort - a failed write costs the
+    /// rig a retry, never a frame.
     public static func claimSeededPayload() -> Data? {
-        guard !claimed, let p = seededPayload else { return nil }
+        guard !claimed, let raw = seededHex, let p = hex(raw) else { return nil }
         claimed = true
+        if let dir = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroup) {
+            try? Data(raw.utf8).write(to: dir.appendingPathComponent(claimFile))
+        }
         return p
     }
     private static var claimed = false
+
+    /// THE SECOND RECEIPT: the payload that actually reached the input field.
+    ///
+    /// A claim receipt only says what the extension OPENED onto. What Send
+    /// transmits is whatever `stage()` last inserted, and those are separated
+    /// by the whole expanded tail - a settle wait, a collapse, a transition -
+    /// which is over a second. A driver that presses Send as soon as a Send
+    /// button exists therefore transmits the PREVIOUS bubble, every time, and
+    /// the transcript comes out one move behind with a correct claim receipt
+    /// beside it. That is the lag that was filed as a caption bug three times;
+    /// closing the claim half of it was not enough, because the claim lands
+    /// early and the insert lands late.
+    ///
+    /// So `stage()` says so. The rig deletes this, seeds, opens, and waits for
+    /// THIS to name the payload it asked for before it presses anything. No
+    /// sleep can stand in for it: the tail's length depends on the animation
+    /// the seeded state happens to play.
+    ///
+    /// Best-effort, like the claim receipt: a failed write costs the rig a
+    /// wait, never a frame.
+    public static func noteStaged(_ payload: Data) {
+        guard let dir = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroup) else { return }
+        let s = payload.map { String(format: "%02x", $0) }.joined()
+        try? Data(s.utf8).write(to: dir.appendingPathComponent(stagedFile))
+    }
+
+    /// WHAT TO CALL THE PUPPET SEAT that `addSoloSeat` adds.
+    ///
+    /// It was the literal "Solo 2", which is fine for a developer filling a
+    /// lobby and wrong in a photograph: a full lobby is the only way to reach
+    /// the shipping Start/Exit row, so every store frame of a lobby had a
+    /// placeholder name sitting in the roster next to a real one. Reading it
+    /// from the group lets the rig seat "Kate" there and keeps the cast
+    /// consistent with every other frame in the set.
+    ///
+    /// Unset, nothing moves - the caller keeps its own default.
+    public static var soloName: String? {
+        guard let dir = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroup),
+              let raw = try? String(contentsOf: dir.appendingPathComponent(soloNameFile),
+                                    encoding: .utf8)
+        else { return nil }
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
+    }
 
     /// Which seat to sit at, or nil to sit at the defender's.
     ///
@@ -115,6 +197,25 @@ public enum MessageDevBoard {
     /// presence of `dev.replay` turns it back on for a run that means to film it.
     ///
     /// A file, like every other flag here, for the reasons in the header note.
+    /// Should a seeded open ALSO STAGE the chain it opened, as a bubble?
+    ///
+    /// For store photography. Every frame is a drawer over a chat, and a
+    /// transcript whose last bubble belongs to some other game makes the frame
+    /// a lie - the owner's words on seeing one: "they show impossible
+    /// sequences ... a start game bubble, then a start game bubble, and then
+    /// the view shows a game very much halfway through". Staging the seeded
+    /// chain and sending it puts THIS board in the transcript, so the bubble
+    /// above the drawer is the move that produced what is under it.
+    ///
+    /// Nothing else changes: it is the ordinary stage path, with the ordinary
+    /// bubble, and the human still presses Send.
+    public static var seededStages: Bool {
+        guard let dir = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroup)
+        else { return false }
+        return FileManager.default.fileExists(atPath: dir.appendingPathComponent(stageFile).path)
+    }
+
     public static var seededReplays: Bool {
         guard let dir = FileManager.default
             .containerURL(forSecurityApplicationGroupIdentifier: appGroup)

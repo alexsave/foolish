@@ -13,6 +13,26 @@ public struct FDeckWell: View {
     /// light board's near-black ink disappears into a dark weave.
     @Environment(\.colorScheme) private var scheme
     public let deckCount: Int
+    /// THE TRUMP SLOT, IN TWO PARTS AND THREE STATES. `hasFlipped` is "the
+    /// flipped trump still EXISTS"; `flipped` is "and here it is, in the well".
+    /// The pair therefore says one of three things, and the body draws a
+    /// different thing for each:
+    ///
+    ///   hasFlipped, flipped = card   the trump is under the stock -> draw it
+    ///   hasFlipped, flipped = nil    it has left the stock and is IN THE AIR
+    ///                                -> draw nothing; the flight layer has it
+    ///   !hasFlipped                  it landed somewhere -> the bare glyph
+    ///
+    /// The middle state is the one 1.1(55) needed and the pair could not say.
+    /// The count and the trump do not change hands at the same MOMENT: a stock
+    /// releases its cards at DEPARTURE (a card in the air is no longer in the
+    /// pile, so the badge drops and the pile thins as it leaves), but the bare
+    /// glyph means "there is no trump card anywhere any more" and can only be
+    /// true once the card has LANDED. Drawing the glyph while the card is still
+    /// flying renders the same card twice - once as itself, once as its own
+    /// absence. Owner, 1.1(55): "if there still is a flipped card on board,
+    /// don't show Trump indicator yet! Only after flipped is gone do you show
+    /// it."
     public let flipped: Card?
     public let hasFlipped: Bool
     public let trumpSuit: Suit?
@@ -28,7 +48,78 @@ public struct FDeckWell: View {
 
     // The badge counts the flipped card too (web badgeTotal = deck + flipped).
     private var badgeTotal: Int { deckCount + ((hasFlipped && flipped != nil) ? 1 : 0) }
-    private var stackLayers: Int { min(max(deckCount, 0), 6) }
+    private var stackLayers: Int { Self.layers(for: deckCount) }
+
+    /// THE LEAN: how far each card above the bottom one steps left and up.
+    /// Named rather than inlined because `maxLayers`' bound is derived FROM
+    /// them - a change here changes how many layers fit, and the test that
+    /// pins the ceiling reads these two so it cannot go on agreeing.
+    static let leanX: CGFloat = 1
+    static let leanY: CGFloat = 2
+
+    /// THE HIGHEST THE PILE MAY LEAN, and the geometry that decides it.
+    ///
+    /// The stack's bottom card is pinned at the shared inset and every card
+    /// above it steps 1pt left and 2pt up (see `deckStack`), so layer `i` puts
+    /// its own top-left corner at (16 - i, 22 - 2i) measured from the BOARD's
+    /// top-left corner - 8pt of board padding plus this well's own 8pt inset,
+    /// 14pt of board padding plus the same 8 going down. The board surface is a
+    /// rounded rectangle of radius 30 (measured off a rendered frame, twice,
+    /// exactly), so near that corner the space runs out along an arc centred at
+    /// (30, 30). A card's own corner is rounded too (`FCard.radius`, 4.6pt at
+    /// this size), so the card fits while the centre of ITS corner - at
+    /// (20.6 - i, 26.6 - 2i) - stays within 30 - 4.6 = 25.4pt of (30, 30):
+    ///
+    ///     i = 5  ->  19.7pt   (what shipped: 5.7pt of slack)
+    ///     i = 6  ->  21.8pt   (3.6pt)
+    ///     i = 7  ->  23.9pt   (1.5pt)
+    ///     i = 8  ->  26.1pt   OVER - the top card's corner crosses the board's
+    ///
+    /// So eight layers is the ceiling, and it is a ceiling on the PICTURE, not
+    /// on the count: `layers(for:)` maps the count onto it.
+    static let maxLayers = 8
+
+    /// HOW MANY CARD BACKS A STOCK OF `n` DRAWS.
+    ///
+    /// It used to be `min(n, 6)`, which is a straight line for the last six
+    /// cards of the game and a flat line for every card before them. A 2-player
+    /// deal leaves 23 in the stock, so the pile drew six leaning cards from 23
+    /// down to 6 and only then began to shrink - the whole game at one
+    /// thickness. The owner, 1.1(55): "the deck visual does not change as it
+    /// deals? seems to be an identical amount of cards diagonally spaced no
+    /// matter what the number says. the 'height' of the deck should correspond
+    /// to the number of cards in the deck".
+    ///
+    /// Eight layers cannot resolve twenty-three cards, so the curve spends them
+    /// where they are read:
+    ///
+    ///   * 0...6 EXACTLY, one layer per card. This is the endgame, and the end
+    ///     of the game is the moment a player counts: one card must look like
+    ///     one card, two like two. (Six is a full hand - "can everyone still
+    ///     refill?" is a question about small numbers.)
+    ///   * 7...11 -> 7, 12 and up -> 8. Nobody counts fifteen leaning cards;
+    ///     what a deep stock has to say is "thick", and what it must never do
+    ///     is contradict the badge, which it cannot - the pile is an
+    ///     approximation of a number, never a different number.
+    ///
+    /// Monotonic by construction, so the pile can only ever thin as the deck
+    /// drains. Nine distinct thicknesses over a game where there used to be
+    /// two. Which counts share one:
+    ///
+    ///     n      0  1  2  3  4  5  6  7..11  12+
+    ///     layers 0  1  2  3  4  5  6    7     8
+    ///
+    /// THE PICTURE IS DRIVEN BY THE SAME HELD COUNT THE BADGE IS. `deckCount`
+    /// is whatever `MessageTableView.shownDeckCount` says - the count-freeze
+    /// while a sequence opens, then each step's own board as its cards LEAVE
+    /// the stock - so the two renderings of one number step down together and
+    /// cannot disagree by a frame. (`FSeatBadge` learned the same lesson one
+    /// component over: a badge reading 11 over six visible card backs.)
+    static func layers(for n: Int) -> Int {
+        let deck = max(n, 0)
+        if deck <= 6 { return deck }
+        return deck <= 11 ? 7 : maxLayers
+    }
 
     /// Every state anchors to the SAME top-leading inset (note 14: equal left/top
     /// distance from the board's edges), instead of the old centred layout that
@@ -114,8 +205,34 @@ public struct FDeckWell: View {
         return CGPoint(x: ink.minX, y: asked.ascender - ink.maxY)
     }
 
+    #if DEBUG
+    /// WHAT THE WELL IS ACTUALLY DRAWING, on every paint that changes it.
+    ///
+    /// The pixels cannot answer this at the one instant that matters. A dealt
+    /// card is spawned ON TOP of the stock (correctly - that is where it comes
+    /// from), so it covers the badge in exactly the frames where the badge and
+    /// the pile have to be shown agreeing with each other. Rather than move the
+    /// card or thin the well to suit the instrument, the well says out loud what
+    /// it drew, and the frames corroborate it a few frames later once the flight
+    /// has cleared. (The one time this repo instrumented the other way round it
+    /// built a rig oracle whose baseline hid the defect it existed to catch.)
+    ///
+    /// `badge` is the number on the chip, `layers` the number of leaning card
+    /// backs under it, `flipped` the trump identity the well is drawing beneath
+    /// the stock (or `-`). Deduped, so a run of identical paints is one line.
+    private static var lastTrace = ""
+    private func trace() {
+        let line = "deckwell deck=\(deckCount) badge=\(badgeTotal) layers=\(stackLayers)"
+            + " flipped=" + (hasFlipped ? (flipped?.identity ?? "in-flight") : "-")
+        if line != Self.lastTrace { Self.lastTrace = line; AnimLog.say(line) }
+    }
+    #endif
+
     public var body: some View {
         ZStack(alignment: .topLeading) {
+            #if DEBUG
+            let _ = trace()
+            #endif
             // The flipped trump: tucked under the stack (peeking out below) when
             // the stock is still there, or — once the stock is drawn out — the
             // sole piece of content, flush at the same inset as everything else.
@@ -132,6 +249,12 @@ public struct FDeckWell: View {
             // relative to the top left corner throughout the game." Nothing
             // about where the flipped card LIVES depends on how many cards are
             // left above it, so nothing here reads deckCount any more.
+            //
+            // …and it draws NOTHING while the trump is in the air (hasFlipped
+            // with no card - see the type doc). That is not a fallthrough: the
+            // card exists, the flight layer is carrying it, and the well must
+            // neither hold a second copy of it nor put up the bare glyph that
+            // means it is gone.
             if hasFlipped, let flipped {
                 FCard(card: flipped, trump: true, size: CGSize(width: cardW, height: cardH))
                     .offset(x: Self.flippedOrigin.x, y: Self.flippedOrigin.y)
@@ -139,8 +262,22 @@ public struct FDeckWell: View {
             }
 
             if deckCount > 0 {
-                deckStack.zIndex(1)
+                deckStack
+                    // A LAYER LEAVES THE WAY A CARD LEAVES: in one frame.
+                    // Cards on this board never fade, and a leaning back that
+                    // dissolved as the count ticked would be the one that did.
+                    // The layer count only ever changes on the beat a real card
+                    // leaves the stock (`shownDeckCount`), so there is nothing
+                    // to interpolate towards - and this keeps whatever
+                    // transaction happens to be in flight from inventing one.
+                    .animation(nil, value: stackLayers)
+                    .zIndex(1)
             } else if !hasFlipped, let trumpSuit {
+                // Stock and flip both gone, and GONE MEANS LANDED - `hasFlipped`
+                // is held until the trump's flight arrives, so this branch can
+                // never draw underneath a trump that is still crossing the
+                // board. See the type doc on `flipped`.
+                //
                 // Stock and flip both gone — the bare suit glyph is now the
                 // ONLY trump indicator left on the board (round-5 m1: "bare
                 // glyph can be bigger" — at the old 44pt it was the sliver-of-
@@ -201,8 +338,8 @@ public struct FDeckWell: View {
                     // rotationNudge un-does the rotation's size swap so i=0 (no
                     // further stagger) lands its rotated top-left exactly on
                     // (inset, inset); i>0 then leans up-left from that fixed card.
-                    .offset(x: inset + rotationNudge - CGFloat(i),
-                            y: inset - rotationNudge - CGFloat(i * 2))
+                    .offset(x: inset + rotationNudge - CGFloat(i) * Self.leanX,
+                            y: inset - rotationNudge - CGFloat(i) * Self.leanY)
             }
             // Badge: centred over the BOTTOM card's own rotated footprint — a
             // `stackVisualWidth`×`cardW` (66×46) box flush at the same

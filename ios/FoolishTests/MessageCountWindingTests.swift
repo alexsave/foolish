@@ -110,6 +110,48 @@ final class MessageCountWindingTests: XCTestCase {
         }
     }
 
+    /// MUTATION-CHECKED against the fix, each on its own:
+    ///   `AnimPlan.Counts.flipped` decoded from `finalView` instead of the
+    ///     wire (the shipped 1.1(55) behaviour restored)        -> 12 failures
+    ///   `adopt_counts` (c/src/anim_plan.c) stops copying it    -> 12 failures
+    ///   the freeze's flipped byte read one over, into the row  -> 12 failures
+    ///
+    /// …AND SO IS THE TRUMP UNDER THE DECK. The deck count froze and the
+    /// flipped card did not: a bout-ending `good` whose refill reaches past the
+    /// stock deals the trump out, so the board that move commits has none - and
+    /// a well holding the pile at four while reading the trump off that board
+    /// drew four cards standing on nothing. The owner, 1.1(55): "if the flipped
+    /// card would've been animated in the resulting animation, it DOES NOT SHOW
+    /// at first in the pile BEFORE the deal animations play. The deck shows,
+    /// but not the flipped card."
+    ///
+    /// Only the bubbles where the trump actually MOVES can fail this, so the
+    /// count at the bottom asserts the sweep found some - a green run over a
+    /// stream that never dealt a trump is evidence of nothing, which is the
+    /// trap `myplay` and `coverend` each fell into in the rig.
+    func testTheFreezeAlsoCarriesTheFlippedTrump() async throws {
+        func trump(_ v: GameView) -> Card? {
+            guard v.hasFlipped, let f = v.flipped, !f.isHidden else { return nil }
+            return f
+        }
+        var dealtOut = 0, bubbles = 0
+        for players in [2, 3, 4] {
+            try await sweepBubbles(players: players, games: 4) { before, events, after, label in
+                guard !events.isEmpty else { return }
+                bubbles += 1
+                let pre = AnimPlan(events, finalView: after).pre
+                XCTAssertEqual(pre.flipped?.identity, trump(before)?.identity,
+                               "\(label): freeze trump \(pre.flipped?.identity ?? "-"), "
+                               + "board had \(trump(before)?.identity ?? "-"), "
+                               + "after \(trump(after)?.identity ?? "-") (pre deck \(pre.deck))")
+                if trump(before) != nil, trump(after) == nil { dealtOut += 1 }
+            }
+        }
+        XCTAssertGreaterThan(bubbles, 50, "the sweep must actually have run")
+        XCTAssertGreaterThan(dealtOut, 0,
+                             "no bubble dealt the trump out - this would pass against the bug")
+    }
+
     /// THE FREEZE IS THE PRE-MOVE BOARD. Not "close to it", not "right for
     /// the seats that moved": the same deck, the same discard, the same count in
     /// every hand. This is the number every badge shows for the first frame of

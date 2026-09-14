@@ -633,8 +633,7 @@ private struct ExtensionStage: View {
         HostedStage {
             MessagesRootView(
                 payloadURL: model.payloadURL,
-                style: model.presentation,
-                senderIsLocal: model.senderIsLocal,
+                    senderIsLocal: model.senderIsLocal,
                 startNewGame: model.startNewGame,
                 // The SEND path, threaded exactly as the extension threads it
                 // from didStartSending (HarnessModel.deliver). Absent until
@@ -698,8 +697,8 @@ private struct ExtensionStage: View {
         // hosting view's model height to the target in one step and animates
         // only the visible frame (the round-10 frame-by-frame film). The
         // production fix for the resulting jump lives INSIDE MessagesRootView
-        // (its `stageHeight` smoothing tweens through a big height step), so
-        // keeping the snap here is what exercises that code the way the
+        // and `CollapseTween`, which tweens the box through a big height step,
+        // so keeping the snap here is what exercises that code the way the
         // device does. Round-4's original worry - the tween re-flying a
         // just-played card - is settled: the round-6 continuous
         // collapseFraction made the transit layout the owner-approved look

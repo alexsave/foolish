@@ -441,6 +441,117 @@ final class HarnessFlowTests: XCTestCase {
         XCTAssertEqual(m.payloadURL, MessageEnvelope.link(payload: hers))
     }
 
+    // MARK: the text that lands while the extension is not active (1.1(56))
+
+    /// A LOBBY, AND A START THAT ARRIVES WHILE NOBODY IS LISTENING.
+    ///
+    /// The owner, on "I was in lobby, got a start game text, and it was stuck on
+    /// lobby": the likeliest real route to a stuck lobby is not a message that
+    /// never comes, it is one that comes while the extension is not active,
+    /// followed by an activation that does not re-read. Messages calls
+    /// `didReceive` only on an ACTIVE extension, so there are four lifecycles
+    /// and they do NOT all end in the same place.
+    ///
+    /// THE HOST HALF, deliberately: what the surface is HANDED (`payloadURL`,
+    /// `incomingToken`). The surface's own correctness is
+    /// FoolishTests/SurfacePlanTests' job, and no amount of it can save a
+    /// surface that is handed nothing.
+    private func lobbyAndStart(_ m: HarnessModel, gid: UInt64)
+        async throws -> (lobby: Data, start: Data) {
+        let k = MessageKernel.shared
+        try await k.newGame(seed: Data(repeating: 23, count: 32), players: 8)
+        let alone = [MessageJoin(seat: 0, name: "Alex")]
+        let both = [MessageJoin(seat: 0, name: "Alex"), MessageJoin(seat: 1, name: "Vera")]
+        let lobby = try await k.seal(phase: 0, lastActorSeat: 0, gameId: gid,
+                                     parent8: Data(repeating: 0, count: 8), joins: alone)
+        await m.stage(lobby, seat: 0)
+        m.deliver()
+        // Vera joins and starts in ONE text - `conversation.insert` replaces an
+        // unsent draft, so both actions leave on one envelope.
+        let env = try await MessageEnvelope.decode(payload: lobby, viewer: -1)
+        let start = try await k.startFromLobby(
+            lobbyPayload: lobby, gameId: gid, actingSeat: 1,
+            parent8: MessageTurnController.firstEight(hex: env.digest), joins: both)
+        return (lobby, start)
+    }
+
+    /// A: the appex was still loaded and `didReceive` fired with the drawer
+    /// shut. The surface is told, exactly as it would have been on screen.
+    func testAStartThatArrivesWhileAwayStillReachesTheSurface() async throws {
+        let m = HarnessModel(count: 2)
+        let (_, start) = try await lobbyAndStart(m, gid: 8801)
+        let token = m.incomingToken
+        m.arriveWhileAway(start, senderIndex: 1, notifies: true)
+        XCTAssertEqual(m.incomingURL, MessageEnvelope.link(payload: start))
+        XCTAssertGreaterThan(m.incomingToken, token,
+                             "didReceive fired, so the surface is told - drawer open or not")
+        m.becomeActive(selecting: nil)
+        XCTAssertEqual(m.incomingURL, MessageEnvelope.link(payload: start),
+                       "and waking up does not take it away again")
+    }
+
+    /// B: `didReceive` never fired, and the human taps the bubble that arrived.
+    /// The only door left is `willBecomeActive` -> present, and it opens: the
+    /// selection moves, so `payloadURL` moves, so the surface reloads onto the
+    /// started chain. A COLD OPEN, and per the owner's ruling it must PAINT
+    /// rather than animate - which is exactly what a `payloadURL` change gets
+    /// (the plan is only ever consulted on the arrival path).
+    func testWakingOnTheNewBubbleRepointsTheSurface() async throws {
+        let m = HarnessModel(count: 2)
+        let (lobby, start) = try await lobbyAndStart(m, gid: 8802)
+        XCTAssertEqual(m.payloadURL, MessageEnvelope.link(payload: lobby))
+        let token = m.incomingToken
+        m.arriveWhileAway(start, senderIndex: 1, notifies: false)
+        m.becomeActive(selecting: m.latest)
+        XCTAssertEqual(m.payloadURL, MessageEnvelope.link(payload: start),
+                       "the surface is repointed at the chain that arrived")
+        XCTAssertEqual(m.incomingToken, token,
+                       "…and NOT as an arrival: nobody watched this happen, so it paints")
+    }
+
+    /// B-OLD: `didReceive` never fired AND the human comes back to the bubble
+    /// they were already on. THE OWNER'S BUG, and it reproduces here: the
+    /// surface is handed the same URL and no token, so nothing in it can move.
+    ///
+    /// It is pinned as the CURRENT behaviour rather than as a wrong one, because
+    /// `MSConversation` exposes exactly one message - `selectedMessage` - and in
+    /// this lifecycle that message is the lobby. The extension cannot read the
+    /// newer bubble; there is no API that returns it. What it CAN do is say so,
+    /// and does not: a stale BOARD gets the round-20 "Open newest" bar off
+    /// `MessageGameStore.latestChain`, and a stale LOBBY gets nothing - it keeps
+    /// offering Start for a game that has already been dealt. That is the gap
+    /// this test exists to hold still, and when the lobby grows that bar this
+    /// assertion is what will have to change.
+    func testWakingOnTheOldBubbleLeavesTheLobbyExactlyWhereItWas() async throws {
+        let m = HarnessModel(count: 2)
+        let (lobby, start) = try await lobbyAndStart(m, gid: 8803)
+        let before = m.payloadURL
+        let token = m.incomingToken
+        m.arriveWhileAway(start, senderIndex: 1, notifies: false)
+        m.becomeActive(selecting: nil)
+        XCTAssertEqual(m.payloadURL, before, "the selection did not move, so neither did the URL")
+        XCTAssertEqual(m.payloadURL, MessageEnvelope.link(payload: lobby))
+        XCTAssertEqual(m.incomingToken, token, "and no arrival was ever threaded on")
+    }
+
+    /// C: the drawer collapses, the chain lands, the drawer expands. A style
+    /// change deliberately does NOT re-present (MessagesViewController.
+    /// willTransition - re-presenting mid-resize is the "display rearranges
+    /// right before the collapse" jump), so this asks whether the arrival
+    /// survives a resize on its own. It does: the token is what carries it, and
+    /// a resize does not touch the token.
+    func testAnArrivalSurvivesAStyleChange() async throws {
+        let m = HarnessModel(count: 2)
+        let (_, start) = try await lobbyAndStart(m, gid: 8804)
+        let key = m.viewKey
+        m.togglePresentation()
+        m.arriveWhileAway(start, senderIndex: 1, notifies: true)
+        m.togglePresentation()
+        XCTAssertEqual(m.incomingURL, MessageEnvelope.link(payload: start))
+        XCTAssertEqual(m.viewKey, key,
+                       "a resize must not rebuild the surface - that is what would drop it")
+    }
+
     /// NEWEST bubble when they open the extension — the owner's screenshot had
     /// Boris looking at a three-name lobby while the thread's last bubble was a
     /// started five-player game ("there is a game currently in play, with the

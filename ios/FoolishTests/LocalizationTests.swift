@@ -1,4 +1,4 @@
-// ROUND 30 — EVERY LANGUAGE SAYS EVERYTHING.
+// ROUND 30 - EVERY LANGUAGE SAYS EVERYTHING.
 //
 // FStrings falls back to English and then to the key itself, so a missing
 // translation does not crash: it renders as `ios.msg.replaylink` on the results
@@ -161,11 +161,78 @@ final class LocalizationTests: XCTestCase {
             (.ru, ["kk-KZ", "ru-RU"], "Kazakh first, Russian second"),
             (.en, ["is-IS", "fo-FO"], "nothing we carry: English is the floor"),
             (.de, ["gsw-CH", "de-CH"], "Swiss German first, German second"),
+            // THE FOUR THAT ARE NOT THEIR OWN NAME. Each of these would resolve
+            // to English if `match` were a plain rawValue lookup, and each is a
+            // real tag a real phone hands back.
+            (.no, ["nb-NO"], "Bokmal: what a Norwegian phone actually says"),
+            (.no, ["nn-NO"], "Nynorsk lands on the same Bokmal table"),
+            (.he, ["iw-IL"], "Hebrew's pre-1989 subtag, still stored on old devices"),
+            (.id, ["in-ID"], "Indonesian's pre-1989 subtag"),
+            (.he, ["he-IL"], "…and the modern spelling too"),
+            (.th, ["th-TH"], "Thai"),
+            (.ar, ["ar-EG"], "Arabic, any region"),
+            (.no, ["nn", "nb"], "either Norwegian written form, in either order"),
+            // The ORDER is the whole point, and this pair had it backwards: a
+            // phone that lists Bokmal first prefers NORWEGIAN, which we now
+            // carry, so it stops there. "Prefers Swedish" is the other order.
+            (.no, ["nb-NO", "sv-SE"], "Bokmal first, and we carry it: it stops there"),
+            (.sv, ["sv-SE", "nb-NO"], "…and a Norwegian who prefers Swedish gets Swedish"),
         ]
         for c in cases {
             XCTAssertEqual(FStrings.match(c.preferred), c.want,
                            "\(c.preferred) should resolve to \(c.want): \(c.why)")
         }
+    }
+
+    /// THE BOARD DOES NOT MIRROR, and this is the test that says so out loud.
+    ///
+    /// `MessageTableView` pins its layout direction to left-to-right for every
+    /// language (see the comment there: the table places seats and cards with
+    /// `.position`/`.offset`, which SwiftUI does not mirror, alongside paddings
+    /// that it does, so a flipped board comes out half-flipped). That pin is one
+    /// line and easy to delete while tidying; this fails when it goes, and names
+    /// the two languages that would be wrong the moment it does.
+    ///
+    /// It is deliberately NOT an assertion that RTL is unsupported. Arabic and
+    /// Hebrew ship, their text mirrors, and only the geometry is held.
+    func testTheBoardIsPinnedLeftToRight() {
+        let rtl = AppLanguage.allCases.filter(\.isRTL)
+        XCTAssertEqual(Set(rtl), [.he, .ar], "the RTL set changed - re-read MessageTableView's pin")
+
+        let board = MessageTableView.layoutDirection
+        XCTAssertEqual(board, .leftToRight,
+                       "the board must not mirror; \(rtl) would render half-flipped")
+    }
+
+    /// THE DEFENDER DRAWS TOO, and the rulebook has to say so.
+    ///
+    /// `refill_player_hands` runs on the pickup path (c/src/game.c, the call
+    /// after the defender takes the table), and it walks the seats skipping the
+    /// defender and then draws for them LAST, always. So "only the attackers
+    /// draw" is false - it merely looks true, because a defender who has just
+    /// taken the table is usually holding more than six and draws nothing.
+    ///
+    /// The English rulebook said "Attacker players then also draw", two native
+    /// reviewers read that as an exclusion, and the claim reached eleven
+    /// languages before a third reviewer checked the kernel instead of the
+    /// prose. This pins the corrected shape so it cannot drift back: every
+    /// language's round.b must mention the defender drawing last.
+    func testTheRoundRuleDoesNotExcludeTheDefender() {
+        let was = FStrings.override
+        defer { FStrings.override = was }
+        var silent: [String] = []
+        for lang in AppLanguage.allCases {
+            FStrings.override = lang
+            let body = FStrings.t("ios.rules.round.b")
+            XCTAssertFalse(body.isEmpty, "\(lang) has no round.b")
+            // The defender is named in the drawing order in every language; a
+            // rewrite that drops them is what this is here to catch.
+            let defender = FStrings.t("ios.rules.defender")
+            let stem = String(defender.prefix(max(3, defender.count - 2))).lowercased()
+            if !body.lowercased().contains(stem) { silent.append("\(lang)") }
+        }
+        XCTAssertTrue(silent.isEmpty,
+                      "round.b never mentions the defender in: \(silent.joined(separator: ", "))")
     }
 
     /// A tag must never match on its REGION or its SCRIPT. `en-ID` is English in
@@ -256,6 +323,13 @@ final class LocalizationTests: XCTestCase {
         .it: ["offline"],
         .pl: ["offline"],
         .id: ["offline"],
+        .nl: ["offline", "replays", "ios.lobby"],
+        .sv: ["offline", "ios.lobby"],
+        // "Send" is the Danish and Norwegian imperative, spelled exactly as the
+        // English. Nothing to translate.
+        .da: ["offline", "ios.lobby", "ios.msg.sendhint"],
+        .no: ["offline", "ios.lobby", "ios.msg.sendhint"],
+        .cs: ["offline"],
     ]
 
     /// Every key the table is expected to carry. Listed rather than reflected

@@ -48,14 +48,28 @@ public struct AnimPlan: Equatable, Sendable {
         /// carried through: a caller choosing between two tables must not treat
         /// the second as a table.
         public let battlesPaired: Bool
+        /// THE FLIPPED TRUMP THE WELL OPENS ON - the stock's other half, and
+        /// the field this type shipped without for as long as it shipped
+        /// without the row.
+        ///
+        /// `nil` means the trump has been dealt out on this board, not "the
+        /// kernel could not say": a plan always has an answer, and the degraded
+        /// `frozen(at:)` path answers with the view's own. Carrying the CARD
+        /// rather than a flag is deliberate - once the trump is drawn the
+        /// kernel keeps a stale card in the slot and the wire writes a
+        /// placeholder over it, so a caller told only "there was one" would
+        /// draw a wrong face. See c/src/anim_plan.h, AnimCounts.
+        public let flipped: Card?
 
         public init(deck: Int, discard: Int, hand: [Int: Int],
-                    battles: [BattleView] = [], battlesPaired: Bool = false) {
+                    battles: [BattleView] = [], battlesPaired: Bool = false,
+                    flipped: Card? = nil) {
             self.deck = deck
             self.discard = discard
             self.hand = hand
             self.battles = battles
             self.battlesPaired = battlesPaired
+            self.flipped = flipped
         }
     }
 
@@ -111,7 +125,8 @@ public struct AnimPlan: Equatable, Sendable {
         var input: [UInt8] = [UInt8(FIO_PLAN_VERSION), UInt8(np),
                               UInt8(min(events.count, 255)),
                               UInt8(clamping: finalView.deckCount),
-                              UInt8(clamping: finalView.discardCount)]
+                              UInt8(clamping: finalView.discardCount),
+                              Self.denseId(of: finalView)]
         input.reserveCapacity(events.count * (12 + np + 2 * 6) + 5 + np)
         for s in 0..<np { input.append(UInt8(clamping: finalHand[s] ?? 0)) }
         for ev in events.prefix(255) {
@@ -130,6 +145,9 @@ public struct AnimPlan: Equatable, Sendable {
             input.append(board == nil ? 0 : 1)
             input.append(UInt8(clamping: board?.deckCount ?? 0))
             input.append(UInt8(clamping: board?.discardCount ?? 0))
+            // …AND THE TRUMP UNDER THE DECK, which is as much a part of "the
+            // board this event committed" as the deck count above it.
+            input.append(board.map(Self.denseId) ?? UInt8(FIO_PLAN_NO_FLIP))
             let bySeat = board.map(Self.handBySeat)
             for s in 0..<np { input.append(UInt8(clamping: bySeat?[s] ?? 0)) }
             input.append(contentsOf: ids.prefix(ev.cards.count))
@@ -167,8 +185,10 @@ public struct AnimPlan: Equatable, Sendable {
         }
         let preHand = Self.seatDict(b, at: 10, seats: np)
         let paired: Bool = b[rowAt + 1] != 0
+        let flip = b[Int(FIO_PLAN_FLIP_AT)]
         self.pre = Counts(deck: Int(b[8]), discard: Int(b[9]), hand: preHand,
-                          battles: preRow, battlesPaired: paired)
+                          battles: preRow, battlesPaired: paired,
+                          flipped: flip < 52 ? Self.card(flip) : nil)
 
         var built: [Step] = []
         built.reserveCapacity(count)
@@ -213,8 +233,24 @@ public struct AnimPlan: Equatable, Sendable {
 
     /// Nothing to animate: the board sits at the state it already settled on.
     private static func frozen(at v: GameView) -> AnimPlan {
-        AnimPlan(pre: Counts(deck: v.deckCount, discard: v.discardCount, hand: handBySeat(v)),
+        AnimPlan(pre: Counts(deck: v.deckCount, discard: v.discardCount,
+                             hand: handBySeat(v), flipped: trump(of: v)),
                  steps: [], veil: [], totalMs: 0)
+    }
+
+    /// A board's flipped trump, or nil once it has been dealt out. `hasFlipped`
+    /// is the gate and `flipped` alone is not: after the draw the kernel keeps a
+    /// stale card in the slot, and the state wire writes a canonical placeholder
+    /// over it rather than that card (c/src/view.c).
+    private static func trump(of v: GameView) -> Card? {
+        guard v.hasFlipped, let f = v.flipped, !f.isHidden else { return nil }
+        return f
+    }
+
+    private static func denseId(of v: GameView) -> UInt8 {
+        guard let f = trump(of: v), f.s >= 0, f.s < 4, f.v >= 1, f.v <= 13
+        else { return UInt8(FIO_PLAN_NO_FLIP) }
+        return UInt8(f.s * 13 + (f.v - 1))
     }
 
     private static func card(_ id: UInt8) -> Card {
