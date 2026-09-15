@@ -33,8 +33,9 @@
 #                                 does not leave the drawer 16pt short - trap 11)
 #   rig.sh expand / collapse      drag the grabber
 #   rig.sh back                   leave the drawer, and re-enter the thread
-#   rig.sh leave                  leave the thread and STOP (kills the appex,
-#                                 which is what makes the next seed readable)
+#   rig.sh leave                  leave the thread and STOP
+#   rig.sh killappex              end the appex directly, which is what makes
+#                                 the next seed readable - no navigation at all
 #
 #   ---- state ----------------------------------------------------------
 #   rig.sh lobby N                a LOBBY with N seats filled (DEBUG button)
@@ -96,7 +97,16 @@ export FOOLISH_SIM FOOLISH_IDB
 
 need_sim() { [ -n "$SIM" ] || { echo "set FOOLISH_SIM (rig.sh newsim prints one)" >&2; exit 2; }; }
 
-tap()   { need_sim; "$IDB" ui tap --udid "$SIM" "$1" "$2" >/dev/null 2>&1; sleep "${3:-1}"; }
+# A TAP WITH A DURATION, because an instantaneous one is not always a tap.
+#
+# `idb ui tap` with no duration injects a touch down and up in the same instant,
+# and some UIKit controls never see it. Messages' compose "+" is one: a bare tap
+# on its exact centre does nothing at all - no menu, no state change, nothing in
+# the tree - while the identical coordinates with `--duration 0.12` open the app
+# menu every time. It had looked like the + was "missing" or the keyboard was
+# eating the tap; it was neither, and both theories cost a while to rule out.
+# 0.12s is comfortably above the threshold and far below a long-press.
+tap()   { need_sim; "$IDB" ui tap --udid "$SIM" --duration 0.12 "$1" "$2" >/dev/null 2>&1; sleep "${3:-1}"; }
 swipe() { need_sim; "$IDB" ui swipe --udid "$SIM" --duration "$1" "$2" "$3" "$4" "$5" >/dev/null 2>&1; sleep "${6:-1}"; }
 type_s(){ need_sim; "$IDB" ui text --udid "$SIM" "$1" >/dev/null 2>&1; sleep "${2:-1}"; }
 
@@ -185,6 +195,38 @@ poll() {
 # SCREENSHOT (`ui.py hand_y` / `cards` / `table`), so an early return had it
 # measuring a moving target and tapping where a card no longer was.
 # Two consecutive equal readings is the cheap, honest test for "stopped".
+# KILL THE APPEX, which is the only thing leaving the thread was ever for.
+#
+# `claimSeededPayload()` is once per appex PROCESS, and the rig's whole
+# leave-and-come-back dance existed to end that process, because leaving the
+# thread is what ends it. But the appex is an ORDINARY HOST PROCESS - the
+# simulator runs it on this Mac - so it can just be killed: instant, verifiable,
+# and it needs no navigation, no row probe and no re-entry.
+#
+# Measured, same seed, same device:
+#   kill  + open   7.4s, claimed
+#   leave + open  20.3s, and it did not always claim
+#
+# SCOPED TO THIS SIMULATOR by the device UDID in the process path. Rule 5 says
+# one simulator per task; a bare `pkill -f FoolishMessages` would reach across
+# to another agent's device and kill its appex mid-frame.
+# NB the `|| true`. Under `set -o pipefail` a `pgrep` that matches nothing makes
+# the whole pipeline return 1, so "the appex is already dead" - the ordinary
+# case, and a SUCCESS - came back as a failure. `kill_appex` propagated it, and
+# `seed_open`'s `|| continue` then skipped the seed and the open entirely: three
+# silent retries that never tried anything, reported as "the extension never
+# claimed its seed".
+appex_pid()  { pgrep -f "Devices/$SIM/.*FoolishMessages\.appex" 2>/dev/null | head -1 || true; }
+appex_gone() { [ -z "$(appex_pid)" ]; }
+kill_appex() {
+  local p; p=$(appex_pid || true)
+  [ -z "$p" ] && return 0
+  kill "$p" 2>/dev/null || true
+  poll 20 0.1 appex_gone && return 0
+  kill -9 "$p" 2>/dev/null || true
+  poll 20 0.1 appex_gone
+}
+
 drawer_up()     { [ "$(grab_y)" != "None" ]; }
 drawer_settled() {
   local a b
@@ -307,7 +349,9 @@ cmd_stage() {
   xcrun simctl status_bar "$SIM" override --time "9:41" --batteryState charged \
       --batteryLevel 100 --cellularBars 4 --wifiBars 3 --dataNetwork wifi
   xcrun simctl ui "$SIM" appearance "$appear" >/dev/null
-  xcrun simctl launch "$SIM" com.apple.MobileSMS >/dev/null; sleep 6
+  # Poll for Messages rather than guessing six seconds at its launch.
+  xcrun simctl launch "$SIM" com.apple.MobileSMS >/dev/null
+  poll 40 0.15 python3 "$LIB/ax.py" screen || true
   read -r W H < <(screen)
   # Dismiss whatever onboarding is up: both sheets put their button on the
   # bottom eighth, centred. Tapping there twice is harmless once they are gone
@@ -346,7 +390,12 @@ cmd_stage() {
       quiet=0
     else
       quiet=$((quiet + 1))
-      sleep 2
+      # 0.6s, not 2s. Four quiet passes at two seconds is eight seconds spent
+      # proving a sheet is absent, on every run, and on an already-staged device
+      # none is ever coming. The twelve-iteration budget is unchanged, so a
+      # sheet that appears late is still caught - it is the cost of being WRONG
+      # about one that never appears that drops.
+      sleep 0.6
     fi
     i=$((i + 1))
   done
@@ -428,8 +477,18 @@ cmd_enter() {
     poll 16 0.25 not_in_thread || true
     i=$((i + 1))
   done
+  # TRY THE ROW THIS THREAD WAS LAST FOUND ON, FIRST.
+  #
+  # The list orders by RECENCY, so the conversation just sent to is row 1 - and
+  # a rig that always probes row 1 first therefore opens the WRONG thread on
+  # roughly every other call, sees the wrong header, and backs out. That is the
+  # "opens Kate Bell and closes it immediately" the owner watched it do twice in
+  # one run, and it costs a tap, a poll and a back-out each time.
+  # The rig already knows the answer: it found this thread somewhere last time.
+  local ycache="${FOOLISH_WORK:-/tmp/foolishrig}/rowy.$SIM.${want:-any}"
+  local yfirst=""; [ -s "$ycache" ] && yfirst=$(cat "$ycache")
   local y
-  for y in $((H * 24 / 100)) $((H * 20 / 100)) $((H * 15 / 100)) $((H * 28 / 100)) $((H * 32 / 100)); do
+  for y in $yfirst $((H * 24 / 100)) $((H * 20 / 100)) $((H * 15 / 100)) $((H * 28 / 100)) $((H * 32 / 100)); do
     # Poll for A THREAD, then decide ONCE which one it is.
     #
     # Polling `here_is` directly reads well and is a trap: when the row under
@@ -440,7 +499,10 @@ cmd_enter() {
     # that is actually pending; the identity is settled the moment it lands.
     tap $((W / 2)) "$y" 0.3
     poll 10 0.2 in_thread || true
-    here_is "$want" && return 0
+    if here_is "$want"; then
+      mkdir -p "$(dirname "$ycache")"; printf '%s' "$y" > "$ycache"
+      return 0
+    fi
     in_thread && { tap_ax "Messages" 0.3 && poll 16 0.25 not_in_thread || true; }
   done
   echo "could not open conversation '${want:-any}'" >&2
@@ -515,12 +577,25 @@ cmd_session() {
 cmd_open() {
   need_sim
   cmd_enter "${1:-$SHOOT_THREAD}" >/dev/null
-  # The menu is up when Messages puts its dismissal target on screen. NOT
-  # "Foolish": that one is below the fold on a stock device and only the swipe
-  # loop underneath can reach it, so polling for it here waits out the whole
-  # budget for something that cannot have happened yet.
-  tap_ax "add" 0.3
-  poll 16 0.25 ax "dismiss popup" || true
+  # THE FIRST "+" MAY BE EATEN BY THE KEYBOARD.
+  #
+  # `session` types into the compose field and leaves a keyboard up, and while
+  # one is up the first tap anywhere dismisses it instead of doing what it was
+  # aimed at - so the menu never opens and `Foolish` is looked for on a screen
+  # that has no menu on it. Leaving the thread used to dismiss the keyboard as a
+  # side effect, which is the only reason this never showed before the appex
+  # started being killed in place rather than walked away from.
+  #
+  # So ask whether the menu actually came, and tap again if it did not. The menu
+  # is up when Messages puts its dismissal target on screen - NOT when "Foolish"
+  # is visible, which is below the fold on a stock device and only the swipe
+  # loop underneath can reach.
+  local m=0
+  while [ $m -lt 3 ]; do
+    tap_ax "add" 0.3
+    poll 12 0.25 ax "dismiss popup" && break
+    m=$((m + 1))
+  done
   read -r W H < <(screen)
   local i=0
   while [ $i -lt 5 ]; do
@@ -843,16 +918,18 @@ seed_open() {
   fi
   for try in 1 2 3; do
     rm -f "$g/dev.claimed" "$g/dev.staged"
-    # LEAVE FIRST, THEN WRITE, and the order is load-bearing on a RIG_RESEED
-    # build: a live appex adopts a new `dev.fatboard` the moment it appears, and
-    # `openSeededBoard` STAGES when `dev.stage` is set - so seeding before the
-    # leave has the outgoing surface stage a bubble nobody asked it for, and the
-    # send that follows transmits that instead. Harmless without the flag, and
-    # correct with it.
-    # NOT swallowed. `back` returning 1 means the appex is still alive, which is
-    # exactly the condition that produces the lag; it used to be `|| true`.
-    if ! cmd_leave >/dev/null 2>&1; then
-      echo "  seed: could not leave the thread (try $try) - appex still alive" >&2
+    # KILL FIRST, THEN WRITE. Killing is what makes the next seed readable, and
+    # it replaces `cmd_leave` outright: no drawer to put away, no thread to
+    # leave, no conversation row to guess at. `cmd_enter` below still navigates
+    # when the MOVE is going to the other thread, which is a transcript
+    # requirement rather than a seeding one.
+    #
+    # The order matters on a RIG_RESEED build: a live appex adopts a new
+    # `dev.fatboard` the moment it appears and `openSeededBoard` stages when
+    # `dev.stage` is set, so seeding before the kill has the outgoing surface
+    # stage a bubble nobody asked for.
+    if ! kill_appex; then
+      echo "  seed: the appex would not die (try $try)" >&2
       continue
     fi
     printf '%s' "$hex"  > "$g/dev.fatboard"
@@ -1360,7 +1437,7 @@ cmd_batch() {
     # One bad frame must not end the run. `set -e` applies inside this loop, so
     # an un-guarded failure here killed a 41-shot batch after its FIRST line and
     # still exited 0 - the list simply stopped, with nothing to say it had.
-    cmd_leave || { echo "!! $name skipped - could not leave the drawer" >&2; continue; }
+    kill_appex || { echo "!! $name skipped - the appex would not die" >&2; continue; }
     cmd_open_retry || { echo "!! $name skipped - could not open the extension" >&2; continue; }
     # …and it opened onto THIS seed, not the one before it (trap 10). `back`
     # returning 0 says the thread was left, not that the appex died; only the
@@ -1368,7 +1445,7 @@ cmd_batch() {
     # of the previous state is worse than a missing one, because it looks fine.
     if [ -n "${mode:-}" ] && ! claim_ok; then
       echo "   $name: stale seed, re-opening" >&2
-      cmd_leave && cmd_open_retry || true
+      kill_appex && cmd_open_retry || true
       claim_ok || { echo "!! $name skipped - the extension never claimed its seed" >&2; continue; }
     fi
     fi
@@ -1490,6 +1567,7 @@ case "${1:-}" in
   chain)    shift; cmd_chain "$@" ;;
   back)     shift; cmd_back "$@" ;;
   leave)    shift; cmd_leave "$@" ;;
+  killappex) shift; kill_appex "$@" ;;
   expand)   shift; cmd_expand "$@" ;;
   collapse) shift; cmd_collapse "$@" ;;
   goodtap)  shift; cmd_goodtap "$@" ;;
