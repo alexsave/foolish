@@ -147,10 +147,51 @@ ax() { python3 "$LIB/ax.py" find "$1" --exact; }
 front() {
   need_sim
   xcrun simctl launch "$SIM" com.apple.MobileSMS >/dev/null 2>&1 || true
-  sleep 2
+  # `ax.py screen` exits non-zero on an EMPTY tree, which is precisely
+  # "Messages has not answered yet" - so that is the predicate, not two seconds.
+  poll 16 0.2 python3 "$LIB/ax.py" screen || true
 }
 
 in_thread() { ax "add" >/dev/null 2>&1; }
+
+# WAIT FOR A PREDICATE, not for a guess.
+#
+# Every fixed sleep in this file is somebody's estimate of the worst case of an
+# animation, and it is paid in full on every run whether or not the animation
+# took that long. Where the rig already has a way to ASK whether the thing
+# happened - `here_is`, `in_thread`, the drawer's own top edge, the claim
+# receipt - polling that is both faster and MORE correct: a slow machine gets
+# more time rather than a wrong frame, and a fast one stops waiting.
+#
+# The sleeps that stay are the ones with no predicate behind them: a fuse the
+# product burns (StagedSendHint's 3s), and the settle after a drag that only
+# the owner's eye can judge.
+#   poll <tries> <interval> <cmd...>
+poll() {
+  local tries="$1" iv="$2"; shift 2
+  local i=0
+  while [ "$i" -lt "$tries" ]; do
+    "$@" >/dev/null 2>&1 && return 0
+    sleep "$iv"; i=$((i + 1))
+  done
+  return 1
+}
+# Our own surface has ARRIVED - not merely begun to appear.
+#
+# `grab_y` finds our felt the moment the presentation starts sliding, which is
+# several hundred milliseconds before the board is where it will end up. That
+# distinction did not exist while the opens ended in a flat `sleep 7`, and the
+# first thing it broke was `cmd_play`: it reads the hand and the table off a
+# SCREENSHOT (`ui.py hand_y` / `cards` / `table`), so an early return had it
+# measuring a moving target and tapping where a card no longer was.
+# Two consecutive equal readings is the cheap, honest test for "stopped".
+drawer_up()     { [ "$(grab_y)" != "None" ]; }
+drawer_settled() {
+  local a b
+  a=$(grab_y); [ "$a" = "None" ] && return 1
+  b=$(grab_y); [ "$a" = "$b" ]
+}
+not_in_thread() { ! in_thread; }
 
 # In a thread whose header matches `$1` (empty = any thread). The header is a
 # Button carrying the remote address, which is the only stable way to tell the
@@ -375,12 +416,25 @@ cmd_enter() {
   fi
   # Leave whatever thread we are in, so the row probe has a list to probe.
   local i=0
-  while [ $i -lt 3 ] && in_thread; do tap_ax "Messages" 2 || break; i=$((i + 1)); done
+  while [ $i -lt 3 ] && in_thread; do
+    tap_ax "Messages" 0.3 || break
+    poll 16 0.25 not_in_thread || true
+    i=$((i + 1))
+  done
   local y
   for y in $((H * 24 / 100)) $((H * 20 / 100)) $((H * 15 / 100)) $((H * 28 / 100)) $((H * 32 / 100)); do
-    tap $((W / 2)) "$y" 2.5
+    # Poll for A THREAD, then decide ONCE which one it is.
+    #
+    # Polling `here_is` directly reads well and is a trap: when the row under
+    # this y is the WRONG conversation the predicate can never come true, so
+    # every miss burns the entire budget before the next candidate is tried -
+    # which made `session` (it alternates threads, so it misses constantly)
+    # SLOWER than the fixed 2.5s sleep it replaced. `in_thread` is the part
+    # that is actually pending; the identity is settled the moment it lands.
+    tap $((W / 2)) "$y" 0.3
+    poll 10 0.2 in_thread || true
     here_is "$want" && return 0
-    in_thread && { tap_ax "Messages" 2 || true; }
+    in_thread && { tap_ax "Messages" 0.3 && poll 16 0.25 not_in_thread || true; }
   done
   echo "could not open conversation '${want:-any}'" >&2
   return 1
@@ -454,11 +508,22 @@ cmd_session() {
 cmd_open() {
   need_sim
   cmd_enter "${1:-$SHOOT_THREAD}" >/dev/null
-  tap_ax "add" 2.5
+  # The menu is up when Messages puts its dismissal target on screen. NOT
+  # "Foolish": that one is below the fold on a stock device and only the swipe
+  # loop underneath can reach it, so polling for it here waits out the whole
+  # budget for something that cannot have happened yet.
+  tap_ax "add" 0.3
+  poll 16 0.25 ax "dismiss popup" || true
   read -r W H < <(screen)
   local i=0
   while [ $i -lt 5 ]; do
-    if tap_ax "Foolish" 7; then return 0; fi
+    if tap_ax "Foolish" 0.4; then
+      # Seven seconds was an estimate of a cold appex launch. The drawer's own
+      # top edge says when it really happened, and `seed_open` polls the claim
+      # receipt after this, so a slow open is absorbed rather than mis-read.
+      poll 30 0.2 drawer_settled || true
+      return 0
+    fi
     swipe 0.5 $((W * 2 / 5)) $((H * 89 / 100)) $((W * 2 / 5)) $((H * 55 / 100)) 1.5
     i=$((i + 1))
   done
@@ -715,7 +780,8 @@ cmd_tapopen() {
   # bubble itself - ours sits on the right, theirs on the left.
   read -r W H < <(screen)
   if [ "$x" -gt $((W / 2)) ]; then x=$((x - 60)); else x=$((x + 60)); fi
-  tap "$x" "$y" 5
+  tap "$x" "$y" 0.4
+  poll 30 0.2 drawer_settled || true
 }
 # SEED THE BOARD, OPEN IT, AND PROVE THE EXTENSION OPENED ONTO *THAT* SEED.
 #
@@ -758,8 +824,17 @@ seed_open() {
       open) cmd_open "$thread" >/dev/null 2>&1 ;;
       *)    cmd_tapopen "$thread" >/dev/null 2>&1 || cmd_open "$thread" >/dev/null 2>&1 ;;
     esac
-    got=$(cat "$g/dev.claimed" 2>/dev/null || true)
-    [ "$got" = "$hex" ] && return 0
+    # POLL the receipt rather than peeking once. The claim is written as the
+    # extension opens, and the opens above now return the moment the drawer is
+    # up instead of after a flat seven seconds - so the receipt can land a beat
+    # later. This is the safety net that makes those short waits safe: a claim
+    # that is coming is waited for, and one that is not still fails in a second.
+    got=""
+    for _ in 1 2 3 4 5 6 7 8; do
+      got=$(cat "$g/dev.claimed" 2>/dev/null || true)
+      [ "$got" = "$hex" ] && return 0
+      sleep 0.25
+    done
     if [ -z "$got" ]; then
       echo "  seed: the extension claimed nothing (try $try) - it re-opened a live appex" >&2
     else
@@ -838,7 +913,8 @@ cmd_leave() {
   local i=0 inside=1
   while [ $i -lt 3 ]; do
     if ! in_thread; then inside=0; break; fi
-    tap_ax "Messages" 2.5 || break
+    tap_ax "Messages" 0.3 || break
+    poll 16 0.25 not_in_thread || true
     i=$((i + 1))
   done
   # `inside` is the loop's OWN last reading. The guard below used to re-ask the
