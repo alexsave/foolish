@@ -60,6 +60,9 @@
 #   rig.sh burst LABEL N          N screenshots as fast as they come
 #   rig.sh film NAME SECS [CMD..] record, keeping every composited frame
 #   rig.sh sheet NAME [ARGS]      contact sheets from a take or a directory
+#   rig.sh tween NAME [--edge E] -- CMD...
+#                                 film CMD, measure the drawer edge in every
+#                                 composited frame, print the tween numerically
 #   rig.sh probe                  screen size + what the colour finder sees
 #   rig.sh flight | mem | log     the extension's own diagnostics
 #
@@ -345,7 +348,7 @@ cmd_build() {
   # only because `claimSeededPayload()` is once per process. Two gates, not one:
   # this compile-time flag, and the `dev.reseed` file at runtime.
   local cond="DEBUG"
-  [ -n "${FOOLISH_RESEED:-}" ] && cond="DEBUG RIG_RESEED"
+  [ -n "${FOOLISH_RESEED:-}" ] && cond="$cond RIG_RESEED"
   xcodebuild -project "$REPO/ios/Foolish.xcodeproj" -scheme FoolishMessagesApp \
     -configuration Debug -destination "platform=iOS Simulator,id=$SIM" \
     -derivedDataPath "$DD" SWIFT_ACTIVE_COMPILATION_CONDITIONS="$cond" build | tail -3
@@ -1095,7 +1098,14 @@ cmd_expand() {
   read -r W H < <(screen)
   local y; y=$(grab_y)
   [ "$y" = "None" ] && { echo "no drawer on screen" >&2; return 1; }
-  swipe 0.6 $((W / 2)) $((y + 6)) $((W / 2)) $((H * 16 / 100)) 3
+  # Settle on the drawer's own edge, like `collapse` does. This was the last
+  # flat 3s in the file, and it is paid on every single tween measurement:
+  # a seeded board opens COMPACT (only the new-game and name-gate paths ask for
+  # expanded), so measuring an auto-collapse means dragging it open first, every
+  # time. Owner: "because you constantly have to drag it to expand, that will
+  # make this slow to measure".
+  swipe 0.6 $((W / 2)) $((y + 6)) $((W / 2)) $((H * 16 / 100)) 0.2
+  settle_reset; poll 40 0.15 drawer_settled || true
 }
 
 # Collapse and return AT ONCE. Everything with a fuse on it - the Send hint,
@@ -1566,6 +1576,7 @@ cmd_film() {
   "$@"
   sleep "$secs"
   kill -INT $rec 2>/dev/null || true; sleep 4
+  tp "stop recorder" "$ph"; ph=$(date +%s.%N)
   ffmpeg -v error -i "$d/take.mp4" -fps_mode passthrough "$d/f%05d.png" 2>"$d/ffmpeg.err" || {
     cat "$d/ffmpeg.err" >&2; return 1; }
   # The image2 muxer complains "non monotonically increasing dts" once per
@@ -1579,6 +1590,64 @@ cmd_film() {
 }
 
 cmd_sheet() { python3 "$LIB/sheet.py" "$@"; }
+
+# MEASURE A TWEEN, end to end, as fast as the animation actually is.
+#
+# `film` is built for watching: a 3s lead, a fixed tail you have to guess at,
+# and a 4s wait for the recorder. For MEASURING one short transition that is
+# almost all dead time - a collapse is ~0.5s inside a 22s round trip. Every one
+# of those waits has something to ask instead:
+#   the recorder is running when its file exists
+#   the animation is over when the drawer's own edge stops moving
+#   the movie is finished when it stops growing
+# and then `lib/tween.py` reads the edge out of every composited frame and
+# prints it against that frame's own presentation time, so two builds can be
+# diffed instead of described. That last part is what was missing: the collapse
+# was read BY EYE off `dev.ruler` overlays on a contact sheet.
+#
+#   rig.sh tween NAME [--edge felt|host] -- CMD...
+cmd_tween() {
+  need_sim
+  local name="${1:-tween}"; shift || true
+  [ "${1:-}" = "--" ] && shift
+  local t0; t0=$(date +%s.%N)
+  tp() { printf '  %-26s %6.2fs\n' "$1" "$(echo "$(date +%s.%N) - $2" | bc)" >&2; }
+  local ph; ph="$t0"
+  local d="$OUT/film/$name"
+  rm -rf "$d"; mkdir -p "$d"
+  xcrun simctl io "$SIM" recordVideo --codec h264 --force "$d/take.mp4" >/dev/null 2>&1 &
+  local rec=$!
+  # A FIXED LEAD, and it has to be. `simctl io recordVideo` writes nothing until
+  # it is stopped, so there is no file to poll and no readiness to ask about -
+  # polling for one reported "the recorder never started" on a recorder that was
+  # running perfectly. One second buys the lead AND a beat of still frames, so
+  # the tween has a floor to be measured against.
+  sleep 1.0
+  tp "lead" "$ph"; ph=$(date +%s.%N)
+  "$@" >&2
+  tp "the action" "$ph"; ph=$(date +%s.%N)
+  settle_reset; poll 60 0.1 drawer_settled || true
+  sleep 0.5                      # and a beat after, so it has a ceiling
+  tp "settle + tail" "$ph"; ph=$(date +%s.%N)
+  kill -INT $rec 2>/dev/null || true
+  # The movie is finished when it stops growing. `film` waits 4s for this.
+  local a b i=0
+  while [ $i -lt 60 ]; do
+    a=$(stat -f%z "$d/take.mp4" 2>/dev/null || echo 0); sleep 0.15
+    b=$(stat -f%z "$d/take.mp4" 2>/dev/null || echo 0)
+    [ "$a" = "$b" ] && [ "$a" != 0 ] && break
+    i=$((i + 1))
+  done
+  tp "stop recorder" "$ph"; ph=$(date +%s.%N)
+  ffmpeg -v error -i "$d/take.mp4" -fps_mode passthrough "$d/f%05d.png" 2>"$d/ffmpeg.err" || {
+    cat "$d/ffmpeg.err" >&2; return 1; }
+  ffprobe -v error -select_streams v:0 -show_entries frame=pts_time -of csv=p=0 \
+          "$d/take.mp4" | tr -d ',' > "$d/times.txt"
+  tp "extract frames" "$ph"; ph=$(date +%s.%N)
+  python3 "$LIB/tween.py" "$d" --csv "$d/edge.csv" --quiet
+  tp "measure" "$ph"; tp "TOTAL" "$t0"
+  echo "$d/edge.csv"
+}
 
 # The extension's own diagnostics, which live in the App Group beside the dev
 # flags. `flight` is the always-compiled FlightRecorder (on a device it is
@@ -1640,6 +1709,7 @@ case "${1:-}" in
   burst)    shift; cmd_burst "$@" ;;
   film)     shift; cmd_film "$@" ;;
   sheet)    shift; cmd_sheet "$@" ;;
+  tween)    shift; cmd_tween "$@" ;;
   probe)    shift; cmd_probe "$@" ;;
   flight)   shift; cmd_flight "$@" ;;
   mem)      shift; cmd_mem "$@" ;;
