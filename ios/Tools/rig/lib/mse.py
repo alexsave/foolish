@@ -45,19 +45,29 @@ GRID = 1.0 / 60.0     # the display's own rate; takes are filmed at it
 
 
 def load(path):
-    """One take: (t, bot) with t=0 at the last still frame before motion."""
-    ts, bots, hs = [], [], []
+    """One take: (t, bot, n_offscreen) with t=0 at the last still frame."""
+    ts, bots, hs, nobot = [], [], [], 0
     with open(path) as fh:
         head = fh.readline().strip().split(",")
         it, ib, ih = head.index("offset"), head.index("bot_pt"), head.index("h_pt")
+        io = head.index("offscreen") if "offscreen" in head else None
         for line in fh:
             f = line.rstrip("\n").split(",")
             if not f[ib]:
+                # A frame with a TOP but no bottom is the box drawn taller than
+                # the screen - the bottom edge and the hand cut off. It must be
+                # counted, not skipped: dropping it turns the worst frames into
+                # no frames, and a change that causes MORE of them scores as an
+                # improvement. Takes filmed before tween.py flagged these have
+                # no column, so anything unreadable counts.
+                if io is None or f[io].strip() == "1" or not f[3]:
+                    nobot += 1
                 continue
             ts.append(float(f[it])); bots.append(float(f[ib])); hs.append(float(f[ih]))
     if len(ts) < 4:
         return None
     t = np.array(ts); b = np.array(bots); h = np.array(hs)
+    load.offscreen = getattr(load, "offscreen", 0) + nobot
     # Motion starts on the first frame whose HEIGHT differs from the still lead.
     # Height, not bottom: the bottom edge's first move is small enough to be a
     # rounding step, while the top edge travels 500pt and cannot be mistaken.
@@ -95,6 +105,7 @@ def main():
     paths = []
     for p in a.csv:
         paths += sorted(glob.glob(p)) if any(c in p for c in "*?[") else [p]
+    load.offscreen = 0
     takes, kept = [], []
     for p in paths:
         r = load(p)
@@ -138,6 +149,10 @@ def main():
     peak_i = int(np.argmax(mean_e))
     name = a.label or os.path.basename(os.path.dirname(kept[0]))
     print("takes    %d" % len(takes))
+    if load.offscreen:
+        print("!! CUT OFF: %d frame(s) across these takes had no measurable bottom "
+              "edge - the box was drawn taller than the screen and the hand on its "
+              "edge was cut off. That is a DEFECT, not missing data." % load.offscreen)
     print("band     %.1f .. %.1f pt (pinned)   derived from these takes: %.1f .. %.1f"
           % (a.lo, a.hi, d_lo, d_hi))
     print("rest     %.1f pt      final  %.1f pt      net %+.1f"
@@ -159,7 +174,7 @@ def main():
         json.dump({"name": name, "takes": len(takes), "mse": mse,
                    "mean_of_take_mse": mean_of_mse, "peak_pt": float(mean_e[peak_i]),
                    "peak_ms": float(g[peak_i] * 1000),
-                   "judder": jud, "judder_max": jmax, "rest": rest, "final": final,
+                   "judder": jud, "judder_max": jmax, "offscreen": load.offscreen, "rest": rest, "final": final,
                    "lo": a.lo, "hi": a.hi,
                    "curve": [[float(x), float(y)] for x, y in zip(g, mean_e)],
                    "bottom": [[float(x), float(y)] for x, y in zip(g, B.mean(axis=0))]},

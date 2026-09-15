@@ -80,6 +80,14 @@ def read_frame(p):
 
     top, topm = verify(np.nonzero((cr > 140) & (cg < 90) & (cb < 90))[0], "r")
     bot, _ = verify(np.nonzero((cg > 140) & (cr < 90) & (cb < 90))[0][::-1], "g")
+    # A TOP BUT NO BOTTOM IS NOT A MISSING FRAME - it is the box grown TALLER
+    # THAN THE SCREEN, with its bottom edge and the hand on it pushed off the
+    # bottom. That is the one failure the collapse's `hostLead` exists to
+    # prevent, so it must be reported rather than quietly dropped: scored as a
+    # missing frame it reads as an IMPROVEMENT, because the frames that go
+    # wrong are exactly the ones that stop being counted.
+    if top is not None and bot is None:
+        return {"offscreen": True, "top_pt": round(top / s, 1)}
     if top is None or bot is None:
         return None
     out = {"top_pt": round(top / s, 1), "bot_pt": round(bot / s, 1),
@@ -136,7 +144,8 @@ def main():
     for i, m in enumerate(ms):
         t = times[i] if i < len(times) else (times[-1] if times else i / 60.0)
         rows.append((i + 1, t, m))
-    seen = [r for r in rows if r[2]]
+    off = [r for r in rows if r[2] and r[2].get("offscreen")]
+    seen = [r for r in rows if r[2] and not r[2].get("offscreen")]
     if not seen:
         print("NO RULER IN ANY FRAME - is `rig.sh ruler on` set, and is this a DEBUG build?",
               file=sys.stderr)
@@ -145,15 +154,20 @@ def main():
     t0 = seen[0][1]
     if a.csv:
         with open(a.csv, "w") as fh:
-            fh.write("frame,t,offset,top_pt,bot_pt,h_pt,pitch_pt,clock_ms\n")
+            fh.write("frame,t,offset,top_pt,bot_pt,h_pt,pitch_pt,clock_ms,offscreen\n")
             for n, t, m in rows:
                 m = m or {}
-                fh.write("%d,%.4f,%.4f,%s,%s,%s,%s,%s\n" % (
+                fh.write("%d,%.4f,%.4f,%s,%s,%s,%s,%s,%s\n" % (
                     n, t, t - t0, m.get("top_pt", ""), m.get("bot_pt", ""),
-                    m.get("h_pt", ""), m.get("pitch_pt", ""), m.get("clock_ms", m.get("clock", ""))))
+                    m.get("h_pt", ""), m.get("pitch_pt", ""),
+                    m.get("clock_ms", m.get("clock", "")),
+                    "1" if m.get("offscreen") else ""))
     if not a.quiet:
         print("%-5s %8s %9s %9s %9s %7s  %s" % ("f", "+off", "top", "bot", "height", "pitch", "clock"))
         for n, t, m in rows:
+            if m and m.get("offscreen"):
+                print("%-5d %8.3f %9.1f   BOTTOM EDGE OFF SCREEN" % (n, t - t0, m["top_pt"]))
+                continue
             if not m:
                 print("%-5d %8.3f   (no ruler)" % (n, t - t0)); continue
             print("%-5d %8.3f %9.1f %9.1f %9.1f %7s  %s"
@@ -181,6 +195,9 @@ def main():
     cl = [(i, m.get("clock"), m["h_pt"]) for i, (_, _, m) in enumerate(seen)]
     stale = sum(1 for i in range(1, len(cl))
                 if cl[i][1] is not None and cl[i][1] == cl[i - 1][1] and cl[i][2] != cl[i - 1][2])
+    if off:
+        print("!! OFF SCREEN: %d frame(s) drew the box taller than the screen - "
+              "its bottom edge, and the hand on it, were cut off." % len(off))
     print("stale    %d frame(s) where the clock repeated while the box moved" % stale)
     # DID IT FINISH? The window is trimmed at both ends, so the one thing worth
     # asserting is that the box was still moving when we started looking and had
