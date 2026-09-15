@@ -32,7 +32,9 @@
 #                                 field (then `back`, so the tap it just made
 #                                 does not leave the drawer 16pt short - trap 11)
 #   rig.sh expand / collapse      drag the grabber
-#   rig.sh back                   leave the drawer (keeps Messages alive)
+#   rig.sh back                   leave the drawer, and re-enter the thread
+#   rig.sh leave                  leave the thread and STOP (kills the appex,
+#                                 which is what makes the next seed readable)
 #
 #   ---- state ----------------------------------------------------------
 #   rig.sh lobby N                a LOBBY with N seats filled (DEBUG button)
@@ -655,7 +657,7 @@ cmd_chain() {
     cmd_nudge || true
   else
     # No drawer in this frame: put it away and photograph the transcript alone.
-    cmd_back >/dev/null 2>&1 || true
+    cmd_leave >/dev/null 2>&1 || true
     cmd_enter "$SHOOT_THREAD" >/dev/null 2>&1 || true
   fi
   cmd_shot "$name"
@@ -748,7 +750,7 @@ seed_open() {
     printf '%s' "$seat" > "$g/dev.seat"
     # NOT swallowed. `back` returning 1 means the appex is still alive, which is
     # exactly the condition that produces the lag; it used to be `|| true`.
-    if ! cmd_back >/dev/null 2>&1; then
+    if ! cmd_leave >/dev/null 2>&1; then
       echo "  seed: could not leave the thread (try $try) - appex still alive" >&2
       continue
     fi
@@ -808,7 +810,18 @@ cmd_claimed() {
   cat "$g/dev.claimed" 2>/dev/null && echo || echo "nothing claimed yet"
 }
 
-cmd_back() {
+# LEAVE the thread, and stop there.
+#
+# Leaving is the part with a reason: it kills the appex, and
+# `claimSeededPayload()` is once per appex PROCESS, so a re-seed is only read
+# after the thread has been left. Coming BACK is a separate want, and most
+# callers do not have it - `seed_open` routes to either thread next, `batch`
+# and `lobby` call `open`, and `chain`'s no-drawer branch called `cmd_enter`
+# on the very next line. They were all paying for a thread to be opened and
+# then immediately closed again: on a chain that alternates threads it is a
+# whole enter cycle per move, tapping a conversation row to land somewhere the
+# next call walks straight back out of.
+cmd_leave() {
   need_sim
   front
   read -r W H < <(screen)
@@ -835,6 +848,13 @@ cmd_back() {
     echo "could not leave the thread - the next seed will not be read" >&2
     return 1
   fi
+}
+
+# Leave, and come back into the shoot thread. For callers that genuinely want
+# to END there: `clearstage` (whose tap made Messages' own field first
+# responder, costing the compact drawer 17pt - trap 11) and the `back` verb.
+cmd_back() {
+  cmd_leave || return 1
   cmd_enter "$SHOOT_THREAD" >/dev/null
 }
 
@@ -924,7 +944,7 @@ print(b[${1:-0}][0] if b else -1)"
 cmd_lobby() {
   local seats="${1:-2}" i=1 y
   cmd_unseed >/dev/null
-  cmd_back
+  cmd_leave
   cmd_open
   read -r W H < <(screen)
   y=$(bar_y 0); [ "$y" != "-1" ] && tap $((W / 2)) "$y" 3.5      # New game
@@ -1202,7 +1222,7 @@ cmd_batch() {
     # One bad frame must not end the run. `set -e` applies inside this loop, so
     # an un-guarded failure here killed a 41-shot batch after its FIRST line and
     # still exited 0 - the list simply stopped, with nothing to say it had.
-    cmd_back || { echo "!! $name skipped - could not leave the drawer" >&2; continue; }
+    cmd_leave || { echo "!! $name skipped - could not leave the drawer" >&2; continue; }
     cmd_open_retry || { echo "!! $name skipped - could not open the extension" >&2; continue; }
     # …and it opened onto THIS seed, not the one before it (trap 10). `back`
     # returning 0 says the thread was left, not that the appex died; only the
@@ -1210,7 +1230,7 @@ cmd_batch() {
     # of the previous state is worse than a missing one, because it looks fine.
     if [ -n "${mode:-}" ] && ! claim_ok; then
       echo "   $name: stale seed, re-opening" >&2
-      cmd_back && cmd_open_retry || true
+      cmd_leave && cmd_open_retry || true
       claim_ok || { echo "!! $name skipped - the extension never claimed its seed" >&2; continue; }
     fi
     case "${act:-}" in
@@ -1330,6 +1350,7 @@ case "${1:-}" in
   nudge)    shift; cmd_nudge "$@" ;;
   chain)    shift; cmd_chain "$@" ;;
   back)     shift; cmd_back "$@" ;;
+  leave)    shift; cmd_leave "$@" ;;
   expand)   shift; cmd_expand "$@" ;;
   collapse) shift; cmd_collapse "$@" ;;
   goodtap)  shift; cmd_goodtap "$@" ;;
