@@ -1648,14 +1648,15 @@ cmd_tween() {
   # A FIXED LEAD, and it has to be. `simctl io recordVideo` writes nothing until
   # it is stopped, so there is no file to poll and no readiness to ask about -
   # polling for one reported "the recorder never started" on a recorder that was
-  # running perfectly. One second buys the lead AND a beat of still frames, so
-  # the tween has a floor to be measured against.
-  sleep 1.0
+  # running perfectly. It buys the lead AND a beat of still frames, so the tween
+  # has a floor to be measured against; the extraction window below then throws
+  # most of that beat away again, so it only has to be long enough to be sure.
+  sleep "${FOOLISH_TWEEN_LEAD:-0.5}"
   tp "lead" "$ph"; ph=$(date +%s.%N)
   "$@" >&2
   tp "the action" "$ph"; ph=$(date +%s.%N)
   settle_reset; poll 60 0.1 drawer_settled || true
-  sleep 0.5                      # and a beat after, so it has a ceiling
+  sleep 0.25                     # and a beat after, so it has a ceiling
   tp "settle + tail" "$ph"; ph=$(date +%s.%N)
   kill -INT $rec 2>/dev/null || true
   # The movie is finished when it stops growing. `film` waits 4s for this.
@@ -1671,10 +1672,11 @@ cmd_tween() {
   # for LOOKING at. The decode is the whole cost of measuring: ffmpeg writes
   # these 4.5x faster and PIL reads them 12x faster (3.4ms against 40.8ms). They
   # are ~11MB each, which is why they are deleted the moment the CSV exists.
-  # SKIP THE STILL LEAD. Measured across takes, the box does not start moving
-  # until ~2.5s in: the recorder's own lead, then the tap, then the product's
-  # deliberate pause before it collapses (250ms + waitForSettle + 500ms). That
-  # is ~41% of every take decoded, measured and deleted for nothing. Owner:
+  # SKIP THE STILL LEAD. Measured across takes, the box starts moving at the
+  # lead plus ~1.5s - the tap, then the product's deliberate pause before it
+  # collapses (250ms + waitForSettle + 500ms). With a 0.5s lead that is ~2.0s,
+  # so 1.3s keeps a ~0.7s buffer in front of it and still drops the frames that
+  # were being decoded, measured and deleted for nothing. Owner:
   # "run it a few times to determine around what frame the motion starts, and
   # start filming like a safe buffer before the average start frame."
   #
@@ -1689,6 +1691,14 @@ cmd_tween() {
   # 14-cell CLOCK, which is what catches frames the app never drew. The bars
   # themselves are full width, so any slice contains them.
   #
+  # AND STOP BEFORE THE STILL TAIL. The recorder keeps running while the settle
+  # poll confirms the drawer has stopped - two screenshots an attempt, so about
+  # a second after the box itself finished - and that second was 46% of the
+  # extracted frames, all of them reading the same settled height. 2.2s from the
+  # window's start covers the ~0.7s of lead buffer and the ~1.3s tween with room
+  # to spare, and `tween.py` says whether the last frames agree, which is how a
+  # window that stopped too EARLY announces itself.
+  #
   # 544px, and the number is measured rather than guessed: the box's left inset
   # is 14px, the band strip runs to 68, and the clock's fourteenth cell ends at
   # 518. That is the FLOOR, not a preference - the clock is most-significant
@@ -1697,7 +1707,8 @@ cmd_tween() {
   # silently stops working while everything else still reads fine.
   # 544 of 1320 is 41% of the frame: ffmpeg moves that much less, and so does
   # the reader.
-  ffmpeg -v error -ss "${FOOLISH_TWEEN_SS:-1.8}" -i "$d/take.mp4" \
+  ffmpeg -v error -ss "${FOOLISH_TWEEN_SS:-1.3}" -i "$d/take.mp4" \
+         -t "${FOOLISH_TWEEN_T:-2.2}" \
          -vf "crop=${FOOLISH_TWEEN_CROP:-544}:ih:0:0" \
          -fps_mode passthrough "$d/f%05d.ppm" 2>"$d/ffmpeg.err" || {
     cat "$d/ffmpeg.err" >&2; return 1; }
@@ -1710,8 +1721,10 @@ cmd_tween() {
   # answer is a small CSV; leaving them fills a disk one measurement at a time.
   # The movie stays, so a take can be re-measured without re-shooting it.
   local kept; kept=$(ls "$d"/f*.ppm 2>/dev/null | wc -l | tr -d ' ')
-  rm -f "$d"/f*.ppm
-  tp "clean ($kept frames)" "$ph"
+  # IN THE BACKGROUND. The CSV is written, so the answer is already out; there
+  # is no reason for the caller to wait on unlink(2) for a few hundred files.
+  ( rm -f "$d"/f*.ppm ) &
+  tp "clean ($kept frames, backgrounded)" "$ph"
   tp "TOTAL" "$t0"
   echo "$d/edge.csv"
 }

@@ -182,6 +182,23 @@ def main():
     stale = sum(1 for i in range(1, len(cl))
                 if cl[i][1] is not None and cl[i][1] == cl[i - 1][1] and cl[i][2] != cl[i - 1][2])
     print("stale    %d frame(s) where the clock repeated while the box moved" % stale)
+    # DID IT FINISH? The window is trimmed at both ends, so the one thing worth
+    # asserting is that the box was still moving when we started looking and had
+    # stopped by the time we stopped. A tail that does not agree means the
+    # window closed mid-tween - raise FOOLISH_TWEEN_T.
+    tailv = hs[-8:]
+    if len(hs) > 8 and len(set(tailv)) > 1:
+        print("!! the last frames DISAGREE (%s) - the window closed mid-tween."
+              % ", ".join("%.1f" % v for v in sorted(set(tailv))), file=sys.stderr)
+        print("   raise FOOLISH_TWEEN_T; the movie still holds the whole take.",
+              file=sys.stderr)
+    else:
+        n_tail = 0
+        for v in reversed(hs):
+            if v != hs[-1]:
+                break
+            n_tail += 1
+        print("settled  yes, and held for %d frame(s) at the end" % n_tail)
     ps = [m["pitch_pt"] for _, _, m in seen if m["pitch_pt"]]
     if ps:
         want = 2 * BAND
