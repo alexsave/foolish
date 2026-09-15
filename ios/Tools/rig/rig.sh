@@ -148,6 +148,10 @@ screen() {
 # smallest match - so a loose lookup for the compose field reliably tapped
 # BACK OUT OF THE THREAD, five times in a row, reporting nothing wrong.
 ax() { python3 "$LIB/ax.py" find "$1" --exact; }
+# The FIRST of several labels that is on screen, from ONE tree. A pass that asks
+# three separate times is three dumps of the same unchanged screen, and the
+# first-run sheet hunt does exactly that on every quiet pass of every run.
+ax_first() { python3 "$LIB/ax.py" first "$@"; }
 
 # `idb ui describe-all` answers with the LAST FOREGROUND app's tree even when
 # something else is on screen, so a stale tree looks exactly like a live one
@@ -397,8 +401,11 @@ cmd_stage() {
     # sheet had eaten the tap on the compose +. Declining is the safe answer to
     # any first-run sheet during a shoot; "OK"/"Continue" stay for the sheets
     # that only offer those (Shared with You, Apple Intelligence).
-    if tap_ax "Not Now" 3 2>/dev/null || tap_ax "OK" 3 2>/dev/null \
-       || tap_ax "Continue" 3 2>/dev/null; then
+    # One tree, asked for all three at once. Order still matters and is
+    # preserved inside `ax.py first`: "Not Now" before "Continue", because iOS
+    # 26's Check In sheet offers both and "Continue" walks INTO its setup.
+    if pt=$(ax_first "Not Now" "OK" "Continue" 2>/dev/null); then
+      tap $(echo "$pt" | awk '{print $1, $2}') 3
       quiet=0
     else
       quiet=$((quiet + 1))
