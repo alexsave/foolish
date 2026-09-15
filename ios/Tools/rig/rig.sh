@@ -228,12 +228,24 @@ kill_appex() {
 }
 
 drawer_up()     { [ "$(grab_y)" != "None" ]; }
+# Two grabs, taken together. Carrying the previous CALL's reading instead halves
+# the screenshots and was tried: it cost the keeper 4.9s -> 26.5s, because
+# readings half a second apart straddle more of the presentation than a pair
+# taken back to back, so "settled" kept coming back false. Cheaper per attempt,
+# many more attempts. Left as it was.
+settle_reset()  { :; }
 drawer_settled() {
   local a b
   a=$(grab_y); [ "$a" = "None" ] && return 1
   b=$(grab_y); [ "$a" = "$b" ]
 }
 not_in_thread() { ! in_thread; }
+# THE SEND HAS GONE THROUGH. Messages only shows a Send button while the compose
+# field holds something, so its DISAPPEARANCE is the completion signal - which
+# is what the flat 4s after every Send was standing in for, five times a run.
+sent_done()  { ! ax "Send" >/dev/null 2>&1; }
+# Something is typed: Messages offers Send only once there is text.
+has_send()   { ax "Send" >/dev/null 2>&1; }
 
 # In a thread whose header matches `$1` (empty = any thread). The header is a
 # Button carrying the remote address, which is the only stable way to tell the
@@ -534,9 +546,19 @@ OTHER_THREAD="${FOOLISH_OTHER_THREAD:-8583}"    # the one that "sends" to it
 
 say() {  # say <thread-substring> <text>
   cmd_enter "$1" >/dev/null || return 1
-  tap_ax "Message" 1.5 || return 1
-  type_s "$2" 1.5
-  tap_ax "Send" 2.5
+  # MEASURED, NOT ASSUMED, and two of the three obvious predicates are wrong:
+  #   `ax "return"` is not in the tree at all, even with the field focused, so
+  #   "wait for a keyboard" never came true and burned its whole budget;
+  #   and `Send` is shown whenever ANYTHING is sendable, including a staged
+  #   Foolish bubble, so "wait for Send to go away" is not "the text went".
+  # Only the middle one survives: Messages offers Send once there is text.
+  tap_ax "Message" 0.6 || return 1
+  type_s "$2" 0.2
+  poll 20 0.2 has_send || true
+  # Sound HERE specifically: `session` runs before any seeding, so the only
+  # thing Messages can have to send is the text just typed.
+  tap_ax "Send" 0.3 || return 1
+  poll 40 0.2 sent_done || true
 }
 
 cmd_session() {
@@ -603,7 +625,7 @@ cmd_open() {
       # Seven seconds was an estimate of a cold appex launch. The drawer's own
       # top edge says when it really happened, and `seed_open` polls the claim
       # receipt after this, so a slow open is absorbed rather than mis-read.
-      poll 30 0.2 drawer_settled || true
+      settle_reset; poll 30 0.2 drawer_settled || true
       return 0
     fi
     swipe 0.5 $((W * 2 / 5)) $((H * 89 / 100)) $((W * 2 / 5)) $((H * 55 / 100)) 1.5
@@ -862,8 +884,8 @@ cmd_tapopen() {
   # bubble itself - ours sits on the right, theirs on the left.
   read -r W H < <(screen)
   if [ "$x" -gt $((W / 2)) ]; then x=$((x - 60)); else x=$((x + 60)); fi
-  tap "$x" "$y" 0.4
-  poll 30 0.2 drawer_settled || true
+  tap "$x" "$y" 0.3
+  settle_reset; poll 30 0.2 drawer_settled || true
 }
 # SEED THE BOARD, OPEN IT, AND PROVE THE EXTENSION OPENED ONTO *THAT* SEED.
 #
@@ -1290,7 +1312,18 @@ cmd_turn() {
   if [ "$top" != "None" ] && [ "$top" -lt $((H / 3)) ]; then
     swipe 0.6 $((W / 2)) $(pull_y "$top" "$H") $((W / 2)) $((H * 66 / 100)) 3
   fi
-  tap_ax "Send" 4 || { echo "nothing staged - is stageseed on?" >&2; return 1; }
+  tap_ax "Send" 0.3 || { echo "nothing staged - is stageseed on?" >&2; return 1; }
+  # Four seconds, five times a run, for an event that announces itself. The
+  # owner, watching: "seems to be a small pause right before sending".
+  poll 40 0.2 sent_done || true
+  # …AND THEN LET THE BUBBLE LAND. The Send button goes the moment Messages
+  # accepts the text, which is BEFORE the bubble is in the transcript - and the
+  # next move opens the extension by finding the newest bubble's icon
+  # (`ui.py lastmsg`). Returning on `sent_done` alone moved the cost rather than
+  # removing it: the moves dropped ~4s each and the frame that tapped the fresh
+  # bubble went 4.9s -> 25.9s. Owner, watching: "hell of a wait before you make
+  # the final move".
+  sleep 0.8
 }
 
 # --------------------------------------------------------------- state ----
