@@ -23,8 +23,21 @@ mark(){ printf '  %-26s %6.2fs\n' "$1" "$(echo "$(now) - $2" | bc)"; }
 t=$(now)
 xcrun simctl terminate "$FOOLISH_SIM" com.apple.MobileSMS >/dev/null 2>&1
 rm -f "$G/dev.stage" "$G/dev.staged" "$G/dev.claimed"      # nothing pre-staged
-$RIG stage dark >/dev/null 2>&1
-mark "relaunch + stage" $t
+# RELAUNCH, AND ONLY STAGE IF THAT IS NOT ENOUGH.
+#
+# A full `stage` sets a 9:41 status bar, an appearance, and hunts Apple's
+# first-run sheets - none of which a MEASUREMENT cares about, and the sheets
+# appear once in a simulator's life. What this loop actually needs is Messages
+# running and a thread it can enter, so try exactly that and fall back to the
+# real thing when it fails. `enter` VERIFIES it reached the thread (`here_is`),
+# so a sheet swallowing the tap surfaces here as a failure rather than as a
+# quietly wrong take.
+xcrun simctl launch "$FOOLISH_SIM" com.apple.MobileSMS >/dev/null 2>&1
+if ! $RIG enter >/dev/null 2>&1; then
+  echo "  (thread would not open - falling back to a full stage)"
+  $RIG stage dark >/dev/null 2>&1
+fi
+mark "relaunch + enter" $t
 
 t=$(now)
 $REPO/c/build/msg_wire_test --goodwait 2 >/tmp/gw.hex 2>/dev/null

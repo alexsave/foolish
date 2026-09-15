@@ -629,16 +629,30 @@ cmd_open() {
     m=$((m + 1))
   done
   read -r W H < <(screen)
+  # FOOLISH IS BELOW THE FOLD, and on a given device it always will be - the
+  # app menu's order does not shuffle between runs. The loop below therefore
+  # opened with a `tap_ax "Foolish"` that could not succeed, every single time:
+  # a describe-all spent proving something this rig already knew. Remember it,
+  # and scroll first when we have learned it.
+  local mscroll="${FOOLISH_WORK:-/tmp/foolishrig}/menuscroll.$SIM"
+  if [ -s "$mscroll" ]; then
+    swipe 0.5 $((W * 2 / 5)) $((H * 89 / 100)) $((W * 2 / 5)) $((H * 55 / 100)) 0.15
+    poll 20 0.15 ax "Foolish" || true
+  fi
   local i=0
   while [ $i -lt 5 ]; do
     if tap_ax "Foolish" 0.4; then
+      [ -s "$mscroll" ] || { mkdir -p "$(dirname "$mscroll")"; printf '%s' "$i" > "$mscroll"; }
       # Seven seconds was an estimate of a cold appex launch. The drawer's own
       # top edge says when it really happened, and `seed_open` polls the claim
       # receipt after this, so a slow open is absorbed rather than mis-read.
       poll 30 0.15 drawer_up || true
       return 0
     fi
-    swipe 0.5 $((W * 2 / 5)) $((H * 89 / 100)) $((W * 2 / 5)) $((H * 55 / 100)) 1.5
+    # The menu is scrolled when the thing we are after is on it - 1.5s was a
+    # guess at an inertial scroll that usually settles far sooner.
+    swipe 0.5 $((W * 2 / 5)) $((H * 89 / 100)) $((W * 2 / 5)) $((H * 55 / 100)) 0.15
+    poll 20 0.15 ax "Foolish" || true
     i=$((i + 1))
   done
   echo "Foolish is not in the app menu - is the extension installed?" >&2
@@ -1134,7 +1148,12 @@ cmd_goodtap() {
   read -r W H < <(screen)
   local y; y=$(bar_y -1)
   [ "$y" = "-1" ] && return 1
-  tap $((W * 4 / 5)) "$y" 2.5
+  tap $((W * 4 / 5)) "$y" 0.3
+  # The plank STAGES a move, and Messages offers Send the moment something is
+  # staged - so that is the signal, not 2.5 seconds. This is also the thing the
+  # auto-collapse is triggered by, so returning on it rather than before it is
+  # what lets a film of that transition start tight.
+  poll 40 0.15 has_send || true
 }
 
 cmd_collapse() {
