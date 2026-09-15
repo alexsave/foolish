@@ -1104,6 +1104,15 @@ cmd_expand() {
   # expanded), so measuring an auto-collapse means dragging it open first, every
   # time. Owner: "because you constantly have to drag it to expand, that will
   # make this slow to measure".
+  # A FLICK, not a haul. 0.12s reaches the same detent as 0.6s - the host takes
+  # the gesture's velocity, not its duration - and it is what a human actually
+  # does. Owner: "what if it was just a flick? that's what I do in the real app".
+  # 0.6s, NOT a flick. A flick was tried on the owner's own instinct ("that's
+  # what I do in the real app") and it is SLOWER end to end - 2.87s against
+  # 2.40s over three samples each - because the gesture's momentum leaves the
+  # drawer settling after it lands, and the settle poll pays for that for longer
+  # than the quicker swipe saved. The host takes velocity, so both reach the
+  # same detent; only the settling differs.
   swipe 0.6 $((W / 2)) $((y + 6)) $((W / 2)) $((H * 16 / 100)) 0.2
   settle_reset; poll 40 0.15 drawer_settled || true
 }
@@ -1643,7 +1652,35 @@ cmd_tween() {
   # for LOOKING at. The decode is the whole cost of measuring: ffmpeg writes
   # these 4.5x faster and PIL reads them 12x faster (3.4ms against 40.8ms). They
   # are ~11MB each, which is why they are deleted the moment the CSV exists.
-  ffmpeg -v error -i "$d/take.mp4" -fps_mode passthrough "$d/f%05d.ppm" 2>"$d/ffmpeg.err" || {
+  # SKIP THE STILL LEAD. Measured across takes, the box does not start moving
+  # until ~2.5s in: the recorder's own lead, then the tap, then the product's
+  # deliberate pause before it collapses (250ms + waitForSettle + 500ms). That
+  # is ~41% of every take decoded, measured and deleted for nothing. Owner:
+  # "run it a few times to determine around what frame the motion starts, and
+  # start filming like a safe buffer before the average start frame."
+  #
+  # The MOVIE still holds everything, so this is only which part is looked at -
+  # and `tween.py` says so if the first frame it sees is already moving, which
+  # is the one way this can be wrong.
+  # AND ONLY A SLICE OF EACH FRAME. Owner: "what if instead of taking a shot of
+  # the entire screen, we took a thin slice of the centre? full height, but only
+  # -50 to +50 of the centre." Right in principle - but the slice has to start
+  # at x=0, not at the centre, because two of the three things read here live at
+  # the box's LEADING edge: the 10pt band strip (the scale check) and the
+  # 14-cell CLOCK, which is what catches frames the app never drew. The bars
+  # themselves are full width, so any slice contains them.
+  #
+  # 544px, and the number is measured rather than guessed: the box's left inset
+  # is 14px, the band strip runs to 68, and the clock's fourteenth cell ends at
+  # 518. That is the FLOOR, not a preference - the clock is most-significant
+  # first, so its LOW bits are the last cells, and those are the ones that
+  # change between consecutive frames. Crop below 518 and stale-frame detection
+  # silently stops working while everything else still reads fine.
+  # 544 of 1320 is 41% of the frame: ffmpeg moves that much less, and so does
+  # the reader.
+  ffmpeg -v error -ss "${FOOLISH_TWEEN_SS:-1.8}" -i "$d/take.mp4" \
+         -vf "crop=${FOOLISH_TWEEN_CROP:-544}:ih:0:0" \
+         -fps_mode passthrough "$d/f%05d.ppm" 2>"$d/ffmpeg.err" || {
     cat "$d/ffmpeg.err" >&2; return 1; }
   ffprobe -v error -select_streams v:0 -show_entries frame=pts_time -of csv=p=0 \
           "$d/take.mp4" | tr -d ',' > "$d/times.txt"

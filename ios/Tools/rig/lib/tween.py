@@ -58,7 +58,10 @@ def read_frame(p):
     """
     a = np.asarray(Image.open(p).convert("RGB"))
     h, w = a.shape[0], a.shape[1]
-    s = 3 if w >= 1000 else 2
+    # Scale from the HEIGHT. The frames are CROPPED to a narrow left-hand slice
+    # (cmd_tween), so width no longer says what device this is; height is
+    # untouched by that crop.
+    s = 3 if h >= 2000 else 2
     col = a[:, w // 2, :].astype(np.int16)
     cr, cg, cb = col[:, 0], col[:, 1], col[:, 2]
 
@@ -69,6 +72,8 @@ def read_frame(p):
             r_, g_, b_ = row[:, 0], row[:, 1], row[:, 2]
             m = ((r_ > 140) & (g_ < 90) & (b_ < 90)) if chan == "r" \
                 else ((g_ > 140) & (r_ < 90) & (b_ < 90))
+            # 0.55 of the CROP, not of the screen - the bars span the whole
+            # frame either way, and a card's suit glyph still cannot.
             if m.mean() > 0.55:
                 return int(y), m
         return None, None
@@ -116,6 +121,11 @@ def main():
         print("no frames in %s" % a.take, file=sys.stderr); sys.exit(1)
     tp = os.path.join(a.take, "times.txt")
     times = [float(l) for l in open(tp)] if os.path.exists(tp) else []
+    # `ffprobe` timed the WHOLE movie while the frames may be a window of it
+    # (cmd_tween skips the still lead), so align from the END - the last frame
+    # is the last frame either way.
+    if len(times) > len(frames):
+        times = times[len(times) - len(frames):]
 
     # A take is hundreds of full-resolution PNGs and the decode is the whole
     # cost, so decode them in parallel - it is the one part of this that is
@@ -152,6 +162,14 @@ def main():
                      m.get("clock", "-")))
 
     hs = [m["h_pt"] for _, _, m in seen]
+    # THE ONE WAY THE WINDOW CAN BE WRONG: if the very first frame is already
+    # moving, the extraction started too late and the beginning of the tween is
+    # simply not in these frames. The movie still has it - lower FOOLISH_TWEEN_SS.
+    if len(hs) > 2 and hs[0] != hs[1]:
+        print("!! the first frame is ALREADY MOVING - the window starts too late.",
+              file=sys.stderr)
+        print("   lower FOOLISH_TWEEN_SS (the movie still holds the whole take).",
+              file=sys.stderr)
     mv = [i for i in range(1, len(hs)) if hs[i] != hs[i - 1]]
     print("\nframes   %d (%d with a ruler)" % (len(rows), len(seen)))
     print("height   %.1f -> %.1f pt" % (hs[0], hs[-1]))
