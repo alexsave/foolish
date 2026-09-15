@@ -48,49 +48,58 @@ def runs(idx, gap=2):
 
 
 def read_frame(p):
-    a = np.asarray(Image.open(p).convert("RGB")).astype(int)
+    """The box's two edges, the band pitch and the clock, from one frame.
+
+    CENTRE COLUMN FIRST, then verify the row. The two bars that matter are FULL
+    WIDTH, so a row that does not match at the centre cannot be one of them -
+    and one column is ~1.6ms against ~18ms for a whole-frame mask. The verify
+    step is what keeps it honest: a card's red suit glyph sits in that column
+    too, and only a real bar covers most of the width.
+    """
+    a = np.asarray(Image.open(p).convert("RGB"))
     h, w = a.shape[0], a.shape[1]
     s = 3 if w >= 1000 else 2
-    r, g, b = a[:, :, 0], a[:, :, 1], a[:, :, 2]
-    # Tolerant, because h264 4:2:0 will not hand back a pure primary. The
-    # palette was chosen so that a CHANNEL TEST still separates them.
-    red = (r > 140) & (g < 90) & (b < 90)
-    grn = (g > 140) & (r < 90) & (b < 90)
-    rr, gg = runs(rows_of(red, w)), runs(rows_of(grn, w))
-    if not rr or not gg:
+    col = a[:, w // 2, :].astype(np.int16)
+    cr, cg, cb = col[:, 0], col[:, 1], col[:, 2]
+
+    def verify(ys, chan):
+        """First candidate row that is really a full-width bar."""
+        for y in ys:
+            row = a[int(y)].astype(np.int16)
+            r_, g_, b_ = row[:, 0], row[:, 1], row[:, 2]
+            m = ((r_ > 140) & (g_ < 90) & (b_ < 90)) if chan == "r" \
+                else ((g_ > 140) & (r_ < 90) & (b_ < 90))
+            if m.mean() > 0.55:
+                return int(y), m
+        return None, None
+
+    top, topm = verify(np.nonzero((cr > 140) & (cg < 90) & (cb < 90))[0], "r")
+    bot, _ = verify(np.nonzero((cg > 140) & (cr < 90) & (cb < 90))[0][::-1], "g")
+    if top is None or bot is None:
         return None
-    top, bot = int(rr[0][0]), int(gg[-1][-1])
-    # The box's own left edge, from the full-width top bar. The banded strip is
-    # 18pt from THERE; slicing from the screen's edge measures board content and
-    # reports a pitch that is not the ruler's.
-    xs_ = np.nonzero(red[top:top + max(1, int(EDGE * s)), :].sum(axis=0) > 0)[0]
-    bx = int(xs_[0]) if len(xs_) else 0
     out = {"top_pt": round(top / s, 1), "bot_pt": round(bot / s, 1),
            "h_pt": round((bot - top) / s, 1)}
-    # Band pitch, off the 18pt strip at the box's leading edge: the y centres of
-    # the cyan/magenta runs should sit BAND apart.
-    # CYAN ONLY. The bands alternate cyan/magenta and are ADJACENT, so a mask of
-    # both merges the whole strip into one run and the "pitch" that comes back
-    # is an artefact - it read 44pt on a 10pt ruler and called every frame
-    # scaled. One colour appears every OTHER band, so the expected spacing is
-    # 2 x BAND.
-    cy = (g > 130) & (b > 130) & (r < 90)
-    strip = slice(bx, bx + int(18 * s))
-    ys = sorted(int(np.mean(x)) for x in runs(rows_of(cy[:, strip], 18 * s, 0.5)))
+    # The box's own left edge, off the bar we just verified.
+    xs_ = np.nonzero(topm)[0]
+    bx = int(xs_[0]) if len(xs_) else 0
+    # Band pitch, from a NARROW vertical strip at the box's leading edge - cyan
+    # only, because the bands alternate cyan/magenta and are adjacent, so a mask
+    # of both merges the strip into one run.
+    strip = a[:, bx:bx + int(18 * s), :].astype(np.int16)
+    sr, sg, sb = strip[:, :, 0], strip[:, :, 1], strip[:, :, 2]
+    cyan = ((sg > 130) & (sb > 130) & (sr < 90)).mean(axis=1) > 0.5
+    ys = sorted(int(np.mean(x)) for x in runs(np.nonzero(cyan)[0]))
     out["pitch_pt"] = round(float(np.median(np.diff(ys))) / s, 2) if len(ys) > 2 else None
     # The clock: 14 cells under the top bar, from the box's leading edge.
-    if len(xs_):
-        x0 = bx
-        cy_ = top + int((EDGE + CELL / 2) * s)
-        if 0 <= cy_ < h:
-            bits = ""
-            for i in range(BITS):
-                cx = x0 + int((i + 0.5) * CELL * s)
-                if cx >= w:
-                    bits = ""; break
-                px = a[cy_, max(0, cx - 2):cx + 3].mean()
-                bits += "1" if px > 128 else "0"
-            out["clock"] = int(bits, 2) if len(bits) == BITS else None
+    cyr = top + int((EDGE + CELL / 2) * s)
+    if 0 <= cyr < h:
+        bits = ""
+        for i in range(BITS):
+            cx = bx + int((i + 0.5) * CELL * s)
+            if cx >= w:
+                bits = ""; break
+            bits += "1" if a[cyr, max(0, cx - 2):cx + 3].mean() > 128 else "0"
+        out["clock"] = int(bits, 2) if len(bits) == BITS else None
     return out
 
 
@@ -98,7 +107,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("take"); ap.add_argument("--csv"); ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
-    frames = sorted(glob.glob(os.path.join(a.take, "f*.png")))
+    # PPM, because the decode is the cost. ffmpeg writes raw frames 4.5x faster
+    # than PNG and PIL reads them 12x faster (3.4ms against 40.8ms) - the frames
+    # are big on disk and are deleted once the CSV exists.
+    frames = sorted(glob.glob(os.path.join(a.take, "f*.ppm"))) \
+        or sorted(glob.glob(os.path.join(a.take, "f*.png")))
     if not frames:
         print("no frames in %s" % a.take, file=sys.stderr); sys.exit(1)
     tp = os.path.join(a.take, "times.txt")

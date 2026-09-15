@@ -1639,13 +1639,24 @@ cmd_tween() {
     i=$((i + 1))
   done
   tp "stop recorder" "$ph"; ph=$(date +%s.%N)
-  ffmpeg -v error -i "$d/take.mp4" -fps_mode passthrough "$d/f%05d.png" 2>"$d/ffmpeg.err" || {
+  # RAW frames, not PNG, and only here - `film` keeps PNGs because its takes are
+  # for LOOKING at. The decode is the whole cost of measuring: ffmpeg writes
+  # these 4.5x faster and PIL reads them 12x faster (3.4ms against 40.8ms). They
+  # are ~11MB each, which is why they are deleted the moment the CSV exists.
+  ffmpeg -v error -i "$d/take.mp4" -fps_mode passthrough "$d/f%05d.ppm" 2>"$d/ffmpeg.err" || {
     cat "$d/ffmpeg.err" >&2; return 1; }
   ffprobe -v error -select_streams v:0 -show_entries frame=pts_time -of csv=p=0 \
           "$d/take.mp4" | tr -d ',' > "$d/times.txt"
   tp "extract frames" "$ph"; ph=$(date +%s.%N)
   python3 "$LIB/tween.py" "$d" --csv "$d/edge.csv" --quiet
-  tp "measure" "$ph"; tp "TOTAL" "$t0"
+  tp "measure" "$ph"
+  # CLEAN UP, as part of the run. A take is gigabytes of raw frames and the
+  # answer is a small CSV; leaving them fills a disk one measurement at a time.
+  # The movie stays, so a take can be re-measured without re-shooting it.
+  local kept; kept=$(ls "$d"/f*.ppm 2>/dev/null | wc -l | tr -d ' ')
+  rm -f "$d"/f*.ppm
+  tp "clean ($kept frames)" "$ph"
+  tp "TOTAL" "$t0"
   echo "$d/edge.csv"
 }
 
