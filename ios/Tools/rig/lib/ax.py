@@ -55,6 +55,23 @@ if __name__ == "__main__":
             sys.exit(1)
         f = app[0]["frame"]
         print(f"{f['width']:.0f} {f['height']:.0f}")
+    elif cmd == "here":
+        # `in_thread` AND the thread's identity, from ONE tree. The thread's
+        # header is a Button carrying the remote address; "add" (the compose +)
+        # is what proves a thread is open at all. Same answers as the two calls
+        # this replaces, same exact-vs-substring rules: "add" exact, the header
+        # a substring, matched on the printed line the way `dump | grep Button`
+        # did.
+        t = tree()
+        if not any((el.get("AXLabel") or "") == "add" for el in t):
+            sys.exit(1)
+        want = sys.argv[2] if len(sys.argv) > 2 else ""
+        if not want:
+            sys.exit(0)
+        w = want.lower()
+        sys.exit(0 if any(w in (el.get("AXLabel") or "").lower()
+                          and "Button" in el.get("type", "")
+                          for el in t) else 1)
     elif cmd == "find":
         pt = find(sys.argv[2], exact="--exact" in sys.argv)
         if pt is None:

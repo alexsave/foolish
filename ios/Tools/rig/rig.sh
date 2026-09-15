@@ -100,7 +100,17 @@ type_s(){ need_sim; "$IDB" ui text --udid "$SIM" "$1" >/dev/null 2>&1; sleep "${
 
 # The screen in POINTS, from the accessibility tree's root - the one thing
 # that reports points on every device without a lookup table.
-screen() { need_sim; python3 "$LIB/ax.py" screen; }
+# Cached per simulator: a device's point size cannot change inside a run, and
+# this was being answered by a full `describe-all` 28 times in a single chain.
+# Keyed on the UDID and kept in FOOLISH_WORK, so it survives the one-command-
+# per-process shape the rig is driven with. `rig.sh probe` re-reads it.
+SCRCACHE="${FOOLISH_WORK:-/tmp/foolishrig}/screen.$SIM"
+screen() {
+  need_sim
+  [ -s "$SCRCACHE" ] && { cat "$SCRCACHE"; return; }
+  mkdir -p "$(dirname "$SCRCACHE")"
+  python3 "$LIB/ax.py" screen | tee "$SCRCACHE"
+}
 
 # Messages' OWN chrome is found BY ACCESSIBILITY LABEL, not by a coordinate
 # table. This was the rig's biggest single source of drift: every earlier
@@ -145,9 +155,10 @@ in_thread() { ax "add" >/dev/null 2>&1; }
 # two stub conversations apart - the LIST reorders by recency, so "row 1" is
 # not a thread, it is a coin flip.
 here_is() {
-  in_thread || return 1
-  [ -z "${1:-}" ] && return 0
-  python3 "$LIB/ax.py" dump "$1" | grep -q Button
+  # ONE tree, not two. This used to call `in_thread` (a describe-all) and then
+  # `ax.py dump` (another describe-all) against the same unchanged screen -
+  # and `here_is` is the single most-called predicate in the rig.
+  python3 "$LIB/ax.py" here "${1:-}"
 }
 
 # The drawer's own top edge, found by colour - "None" when no drawer is up.
@@ -811,12 +822,16 @@ cmd_back() {
   # and `claimSeededPayload()` is once per appex process - so a `back` that
   # merely collapses the drawer leaves the NEXT open showing the PREVIOUS
   # seed's board, with the new one never read. Verified, not assumed.
-  local i=0
-  while [ $i -lt 3 ] && in_thread; do
+  local i=0 inside=1
+  while [ $i -lt 3 ]; do
+    if ! in_thread; then inside=0; break; fi
     tap_ax "Messages" 2.5 || break
     i=$((i + 1))
   done
-  if in_thread; then
+  # `inside` is the loop's OWN last reading. The guard below used to re-ask the
+  # identical question with nothing in between, which on the common path (we
+  # left, and the loop proved it) is a describe-all for an answer already held.
+  if [ "$inside" = 1 ] && in_thread; then
     echo "could not leave the thread - the next seed will not be read" >&2
     return 1
   fi
