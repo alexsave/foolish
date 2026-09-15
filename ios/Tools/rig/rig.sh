@@ -486,7 +486,7 @@ cmd_enter() {
   local i=0
   while [ $i -lt 3 ] && in_thread; do
     tap_ax "Messages" 0.3 || break
-    poll 16 0.25 not_in_thread || true
+    poll 16 0.15 not_in_thread || true
     i=$((i + 1))
   done
   # TRY THE ROW THIS THREAD WAS LAST FOUND ON, FIRST.
@@ -510,12 +510,12 @@ cmd_enter() {
     # SLOWER than the fixed 2.5s sleep it replaced. `in_thread` is the part
     # that is actually pending; the identity is settled the moment it lands.
     tap $((W / 2)) "$y" 0.3
-    poll 10 0.2 in_thread || true
+    poll 12 0.15 in_thread || true
     if here_is "$want"; then
       mkdir -p "$(dirname "$ycache")"; printf '%s' "$y" > "$ycache"
       return 0
     fi
-    in_thread && { tap_ax "Messages" 0.3 && poll 16 0.25 not_in_thread || true; }
+    in_thread && { tap_ax "Messages" 0.3 && poll 16 0.15 not_in_thread || true; }
   done
   echo "could not open conversation '${want:-any}'" >&2
   return 1
@@ -625,7 +625,7 @@ cmd_open() {
       # Seven seconds was an estimate of a cold appex launch. The drawer's own
       # top edge says when it really happened, and `seed_open` polls the claim
       # receipt after this, so a slow open is absorbed rather than mis-read.
-      settle_reset; poll 30 0.2 drawer_settled || true
+      poll 30 0.15 drawer_up || true
       return 0
     fi
     swipe 0.5 $((W * 2 / 5)) $((H * 89 / 100)) $((W * 2 / 5)) $((H * 55 / 100)) 1.5
@@ -885,7 +885,13 @@ cmd_tapopen() {
   read -r W H < <(screen)
   if [ "$x" -gt $((W / 2)) ]; then x=$((x - 60)); else x=$((x + 60)); fi
   tap "$x" "$y" 0.3
-  settle_reset; poll 30 0.2 drawer_settled || true
+  # UP, not STILL. What gates the next step is the CLAIM RECEIPT, which
+  # `seed_open` polls from a file and which does not care where the board has
+  # got to on screen. Waiting for the presentation to stop moving costs two
+  # screenshots per attempt and buys nothing here - it is only a coordinate
+  # READER that needs a stationary board, so that wait now lives in `cmd_play`,
+  # beside the thing that needs it.
+  poll 30 0.15 drawer_up || true
 }
 # SEED THE BOARD, OPEN IT, AND PROVE THE EXTENSION OPENED ONTO *THAT* SEED.
 #
@@ -1053,7 +1059,7 @@ cmd_leave() {
   while [ $i -lt 3 ]; do
     if ! in_thread; then inside=0; break; fi
     tap_ax "Messages" 0.3 || break
-    poll 16 0.25 not_in_thread || true
+    poll 16 0.15 not_in_thread || true
     i=$((i + 1))
   done
   # `inside` is the loop's OWN last reading. The guard below used to re-ask the
@@ -1109,7 +1115,11 @@ cmd_collapse() {
   read -r W H < <(screen)
   local y; y=$(grab_y)
   [ "$y" = "None" ] && { echo "no drawer on screen" >&2; return 1; }
-  swipe 0.6 $((W / 2)) $(pull_y "$y" "$H") $((W / 2)) $((H * 66 / 100)) 3
+  # The drag is 0.6s and the settle was a flat 3s on top of it. The drawer's own
+  # top edge says when it has stopped moving, which is the same question asked
+  # of the thing itself.
+  swipe 0.6 $((W / 2)) $(pull_y "$y" "$H") $((W / 2)) $((H * 66 / 100)) 0.2
+  settle_reset; poll 30 0.2 drawer_settled || true
 }
 
 # Dismiss a STAGED Foolish bubble sitting in the compose field. Merely opening
@@ -1256,6 +1266,11 @@ print(-1 if not sp else (sp[-1][0] if which == 'leave' else sp[0][0]))")
 # attempted; for a photograph, one card is a move.
 cmd_play() {
   need_sim
+  # THE BOARD MUST HAVE STOPPED. Everything below is read off a SCREENSHOT, so a
+  # presentation still sliding is measured wrong and every tap derived from it
+  # misses. The opens used to carry this wait for everyone; it belongs here,
+  # with the only caller that needs it.
+  settle_reset; poll 30 0.2 drawer_settled || true
   local before after newy x y t tx ty
   before=$(python3 "$LIB/ui.py" bars)
   y=$(python3 "$LIB/ui.py" hand_y | awk '{print $2}')
