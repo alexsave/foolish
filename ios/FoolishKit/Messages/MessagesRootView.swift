@@ -788,6 +788,9 @@ private struct GameSurface: View {
                       FlightRecorder.isAlarming(p) else { return }
                 healthAlarm = p
             }
+            #if RIG_RESEED
+            .task { await watchForReseed() }
+            #endif
     }
 
     /// The banner. One line, at the top, tappable - and gone for good once it
@@ -2104,6 +2107,35 @@ private struct GameSurface: View {
     }
 
     #if DEBUG || SOLO_TESTING
+#if RIG_RESEED
+    /// DEV ONLY (`dev.reseed`): let a LIVE appex pick up a new seed.
+    ///
+    /// Inert unless the flag file exists - the guard is read once, so a DEBUG
+    /// run without it never starts a loop and never touches the filesystem
+    /// again. Release has neither: the whole block is `#if DEBUG`.
+    ///
+    /// Why it exists: `claimSeededPayload()` is once per process, and the only
+    /// thing that ends an appex process is leaving the thread. So a rig that
+    /// wants the next board has to leave, blind-probe a conversation row to get
+    /// back in, and re-open - about ten seconds of simulator driving for what
+    /// is really a file write. This watches the flag instead.
+    ///
+    /// `openSeededBoard()` is self-sufficient (it clears setup and lobby,
+    /// stages if `dev.stage`, and seats the board), so re-entering it is the
+    /// whole of the reload. Under `.task` it is cancelled with the surface, so
+    /// it cannot outlive what it is driving.
+    private func watchForReseed() async {
+        guard MessageDevBoard.reseeds else { return }
+        AnimLog.say("dev.reseed: watching for a new seed")
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            if Task.isCancelled { return }
+            guard MessageDevBoard.hasUnclaimedReseed else { continue }
+            _ = await openSeededBoard()
+        }
+    }
+#endif
+
     /// DEV ONLY (`dev.fatboard`): open a canned chain directly, as its defender.
     /// Returns true when it took over the surface, so `load()` stops.
     ///

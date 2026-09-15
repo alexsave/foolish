@@ -281,9 +281,16 @@ cmd_build() {
   (cd "$REPO" && git checkout -- $(cd "$REPO" && git ls-files -- '*.entitlements'))
   local name; name=$(xcrun simctl list devices | grep "$SIM" | sed 's/ (.*//;s/^ *//')
   # DEBUG, not Release: `dev.fatboard` seeding is #if DEBUG.
+  # RIG_RESEED is OPT-IN and off by default, so the ordinary build is the
+  # ordinary build. With it, a LIVE appex re-reads `dev.fatboard` when the file
+  # changes, which lets a driver skip the leave/probe/re-open cycle that exists
+  # only because `claimSeededPayload()` is once per process. Two gates, not one:
+  # this compile-time flag, and the `dev.reseed` file at runtime.
+  local cond="DEBUG"
+  [ -n "${FOOLISH_RESEED:-}" ] && cond="DEBUG RIG_RESEED"
   xcodebuild -project "$REPO/ios/Foolish.xcodeproj" -scheme FoolishMessagesApp \
     -configuration Debug -destination "platform=iOS Simulator,id=$SIM" \
-    -derivedDataPath "$DD" build | tail -3
+    -derivedDataPath "$DD" SWIFT_ACTIVE_COMPILATION_CONDITIONS="$cond" build | tail -3
   # Install OVER the old build. `simctl uninstall` destroys the App Group and
   # the appex's Preferences container, and both come back with fresh UUIDs.
   xcrun simctl install "$SIM" "$DD/Build/Products/Debug-iphonesimulator/FoolishMessagesApp.app"
@@ -810,16 +817,46 @@ seed_open() {
   local hex="$1" seat="$2" thread="$3" route="${4:-tapopen}"
   local g; g=$(group_dir)
   local try got
-  for try in 1 2 3; do
+  # THE FAST PATH, and the shape of what it can and cannot do.
+  #
+  # With a RIG_RESEED build and `dev.reseed` set, a LIVE appex adopts a new
+  # `dev.fatboard` where it stands - so a re-seed onto the SAME thread is a file
+  # write and a receipt, about a third of a second, instead of leave + blind row
+  # probe + re-open, about ten seconds.
+  #
+  # It cannot help a re-seed that CHANGES thread, and that is not a limitation
+  # of the flag - it is what a two-sided transcript costs. A move sent from a
+  # thread lands in that thread as incoming, so alternating sides means actually
+  # being in the other conversation, and getting there leaves this one, which
+  # kills the appex anyway. `chain` alternates every move; `batch` never does.
+  local lt="${FOOLISH_WORK:-/tmp/foolishrig}/lastthread.$SIM"
+  if [ -f "$g/dev.reseed" ] && [ "$(cat "$lt" 2>/dev/null)" = "$thread" ] && drawer_up; then
     rm -f "$g/dev.claimed" "$g/dev.staged"
     printf '%s' "$hex"  > "$g/dev.fatboard"
     printf '%s' "$seat" > "$g/dev.seat"
+    for try in $(seq 1 40); do
+      got=$(cat "$g/dev.claimed" 2>/dev/null || true)
+      [ "$got" = "$hex" ] && return 0
+      sleep 0.1
+    done
+    echo "  seed: dev.reseed set but the appex never adopted it - falling back" >&2
+  fi
+  for try in 1 2 3; do
+    rm -f "$g/dev.claimed" "$g/dev.staged"
+    # LEAVE FIRST, THEN WRITE, and the order is load-bearing on a RIG_RESEED
+    # build: a live appex adopts a new `dev.fatboard` the moment it appears, and
+    # `openSeededBoard` STAGES when `dev.stage` is set - so seeding before the
+    # leave has the outgoing surface stage a bubble nobody asked it for, and the
+    # send that follows transmits that instead. Harmless without the flag, and
+    # correct with it.
     # NOT swallowed. `back` returning 1 means the appex is still alive, which is
     # exactly the condition that produces the lag; it used to be `|| true`.
     if ! cmd_leave >/dev/null 2>&1; then
       echo "  seed: could not leave the thread (try $try) - appex still alive" >&2
       continue
     fi
+    printf '%s' "$hex"  > "$g/dev.fatboard"
+    printf '%s' "$seat" > "$g/dev.seat"
     case "$route" in
       open) cmd_open "$thread" >/dev/null 2>&1 ;;
       *)    cmd_tapopen "$thread" >/dev/null 2>&1 || cmd_open "$thread" >/dev/null 2>&1 ;;
@@ -832,7 +869,10 @@ seed_open() {
     got=""
     for _ in 1 2 3 4 5 6 7 8; do
       got=$(cat "$g/dev.claimed" 2>/dev/null || true)
-      [ "$got" = "$hex" ] && return 0
+      if [ "$got" = "$hex" ]; then
+        mkdir -p "$(dirname "$lt")"; printf '%s' "$thread" > "$lt"
+        return 0
+      fi
       sleep 0.25
     done
     if [ -z "$got" ]; then
@@ -1243,6 +1283,14 @@ cmd_ruler() {
 # `dev.stage`: make a seeded open ALSO stage its own chain as a bubble, so a
 # frame's last bubble is the board underneath it. On for every gameplay frame
 # whose transcript is visible.
+# `dev.reseed`: the RUNTIME half of RIG_RESEED. Both are needed - a build
+# without the flag ignores this file entirely.
+cmd_reseed() {
+  local g; g=$(group_dir)
+  if [ "${1:-on}" = "off" ]; then rm -f "$g/dev.reseed"; echo "reseed off"
+  else : > "$g/dev.reseed"; echo "reseed on (needs a FOOLISH_RESEED=1 build)"; fi
+}
+
 cmd_stageseed() {
   local g; g=$(group_dir)
   if [ "${1:-on}" = "off" ]; then rm -f "$g/dev.stage"; echo "stageseed off"
@@ -1295,6 +1343,20 @@ cmd_batch() {
       SEAT="${seat:-}" cmd_seed $mode $args | tail -1
     fi
     cmd_prefs "${table:-}" "${lang:-}" "${appear:-}" >/dev/null
+    # RESEED FAST PATH (RIG_RESEED build + `dev.reseed`). `cmd_seed` has just
+    # written the new board, and a live appex adopts it where it stands - so a
+    # frame that follows one whose drawer is still up needs no leave, no blind
+    # row probe and no re-open. `claim_ok` is the same receipt the slow path
+    # checks, so nothing is taken on trust.
+    #
+    # It applies to a NARROW case and that is inherent: the drawer has to still
+    # be up, so any frame whose `act` SENT its bubble (turn / select) dismissed
+    # the surface and pays the full cycle. Frames that only stage - `hint`,
+    # `good` - chain.
+    if [ -n "${mode:-}" ] && [ -f "$(group_dir)/dev.reseed" ] && drawer_up \
+       && poll 40 0.1 claim_ok; then
+      :
+    else
     # One bad frame must not end the run. `set -e` applies inside this loop, so
     # an un-guarded failure here killed a 41-shot batch after its FIRST line and
     # still exited 0 - the list simply stopped, with nothing to say it had.
@@ -1308,6 +1370,7 @@ cmd_batch() {
       echo "   $name: stale seed, re-opening" >&2
       cmd_leave && cmd_open_retry || true
       claim_ok || { echo "!! $name skipped - the extension never claimed its seed" >&2; continue; }
+    fi
     fi
     case "${act:-}" in
       # Send the bubble the seeded open staged: the transcript's last bubble
@@ -1438,6 +1501,7 @@ case "${1:-}" in
   deal)     shift; cmd_deal "$@" ;;
   ruler)    shift; cmd_ruler "$@" ;;
   stageseed) shift; cmd_stageseed "$@" ;;
+  reseed)   shift; cmd_reseed "$@" ;;
   shot)     shift; cmd_shot "$@" ;;
   batch)    shift; cmd_batch "$@" ;;
   burst)    shift; cmd_burst "$@" ;;
