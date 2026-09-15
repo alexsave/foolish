@@ -40,21 +40,34 @@ printf '%s' "$H" > "$G/dev.fatboard"; printf '0' > "$G/dev.seat"
 mark "setup (once)" $t
 
 # ---- and then just keep going ---------------------------------------------
-# The plank, tapped WITHOUT waiting for a Send that is not coming.
-undotap() {
+# RESET: expand, then undo, and do not wait on the undo.
+#
+# Owner: "hit undo then immediately start dragging, then wait for both to
+# settle." The second half of that is right and is what this does - the undo tap
+# is fired and NOT waited on, because the next thing that happens is `goodtap`,
+# which polls for Messages to offer Send and therefore absorbs whatever is left
+# of the undo.
+#
+# The first half - undoing on the COMPACT board so no drag is needed first - is
+# faster and is WRONG, which took a run to see: it lands the collapse at 327.0pt
+# instead of 294.3, every time, waited-on or not. A tap down there is in
+# Messages' own compose region, and that costs the drawer height (trap 11 is the
+# 17pt version of this; this is about twice that). It does not fail, it MEASURES
+# SOMETHING ELSE - so the drag stays in front of the undo.
+reset_board() {
   local W H y
+  "$RIG" expand >/dev/null 2>&1
   read -r W H < <(python3 "$REPO/ios/Tools/rig/lib/ax.py" screen)
   y=$(python3 "$REPO/ios/Tools/rig/lib/ui.py" bars | python3 -c "
 import sys, ast
 b = ast.literal_eval(sys.stdin.read().split('BARS ')[1]); print(b[-1][0] if b else -1)")
   [ "$y" = "-1" ] && return 1
-  "$RIG" tap $((W * 4 / 5)) "$y" 0.6 >/dev/null 2>&1
+  "$RIG" tap $((W * 4 / 5)) "$y" 0 >/dev/null 2>&1
 }
 
 for i in $(seq 1 "$N"); do
   t=$(now)
-  "$RIG" expand >/dev/null 2>&1
-  [ "$i" -gt 1 ] && undotap          # the first pass has nothing staged yet
+  if [ "$i" -gt 1 ]; then reset_board; else "$RIG" expand >/dev/null 2>&1; fi
   e=$(echo "$(now) - $t" | bc)
   out=$("$RIG" tween "${NAME}_$i" -- "$RIG" goodtap 2>&1)
   tw=$(echo "$out" | grep -E '^tween ' | sed 's/^ *//')
