@@ -25,6 +25,6 @@ for v in "$@"; do
   rm -rf "$FOOLISH_OUT/film/${tag}_"*
   "$HERE/tween_loop.sh" "$N" "$tag" 2>&1 | grep -E 'tween|NO MOTION|WHOLE'
   python3 "$REPO/ios/Tools/rig/lib/mse.py" "$FOOLISH_OUT/film/${tag}_"*/edge.csv \
-    --label "$tag" --json "$FOOLISH_OUT/$tag.json" 2>&1 | grep -E 'MSE|judder|peak|rest'
+    --label "$tag" --json "$FOOLISH_OUT/$tag.json" 2>&1 | grep -E 'MSE|judder|peak|rest|CUT OFF'
 done
 rm -f "$G/dev.collapse"
