@@ -779,10 +779,72 @@ public struct MessageTableView: View {
         // an overlay is sized to the padded frame and the ZStack to that frame
         // minus the padding.
         .overlay {
-            if let v = controller.view {
-                hand(v, reserveNoSlot: handSlotDeferred)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)
+            if let view = controller.view {
+                ZStack {
+                actionBar(view)
+                    // A CONSTANT, always-present, fixed-size container (owner:
+                    // "the action column CONTAINER could be a constant always
+                    // present fixed size view... just reserve enough height for
+                    // two"): the column's own geometry then never changes as
+                    // pills come and go, so it has nothing to interpolate and
+                    // behaves like the settings squares. Two pills is the
+                    // deepest the board can ever show - a defender holding a
+                    // selection that is both a legal cover and a legal pass -
+                    // so 40 + 8 + 40 = 88, bottom-anchored, and a second pill
+                    // grows upward into reserved space instead of moving the
+                    // first one.
+                    .frame(width: 128, height: 88, alignment: .bottomTrailing)
+                    // Round-10g, and the ONLY change to a collapse the owner
+                    // otherwise signed off on ("make it like that but JUST fix
+                    // the undo button"): the pill must not be INTERPOLATED.
+                    // This column is the one piece of chrome whose CONTENT
+                    // changes at the staging frame (Attack -> Undo), and a
+                    // newly-inserted pill had its position animated by whatever
+                    // transaction was in flight - the collapse's own
+                    // `withAnimation`. Measured off the film: Undo appeared
+                    // ~295pt above its slot and flew down over ~7 frames while
+                    // the settings squares - a CONSTANT view, nothing to insert
+                    // - sat still. `.animation(nil, value:)` cannot stop that
+                    // (it only covers changes driven by `controller.view`) and
+                    // FActionBar's own `.transaction` sits BELOW the placement,
+                    // so it cannot either.
+                    //
+                    // IT WRAPS THE FIXED-SIZE CONTAINER, NOT THE PLACEMENT.
+                    // Round 36: it used to sit outermost, above the `lift`
+                    // padding, and a `.transaction` nils the animation of
+                    // EVERYTHING it passes down - including the board-level
+                    // padding that carries the chrome up when the hand grows a
+                    // second row. That made this one column the only piece of
+                    // chrome that could not honour the owner's "at least make
+                    // it slide smoothly instead of jumping" (see `buttonLift`'s
+                    // mirror), because the slide was being nulled on its way in.
+                    // Confined to the 128x88 container it still covers
+                    // everything it was added for - the pill's insertion and its
+                    // position WITHIN the column, which is the whole of the
+                    // 1.0(10g) film - and nothing it was not.
+                    //
+                    // KEEP IT. It is vector 2 of the three in
+                    // `doesNotRideTheBoardSpring`'s doc, not a weaker spelling
+                    // of the `.doesNotRideTheBoardSpring` just below it.
+                    .transaction { $0.animation = nil }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .padding(.trailing, 4).padding(.bottom, statusMarkLift + 4)
+                    .doesNotRideTheBoardSpring(controller.view)
+
+                undoSlot
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .padding(.trailing, 20).padding(.bottom, statusMarkLift + 4)
+                    .doesNotRideTheBoardSpring(controller.view)
+
+                settingsHelpBar
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                    .padding(.leading, 4).padding(.bottom, statusMarkLift + 4)
+                    .doesNotRideTheBoardSpring(controller.view)
+
+                    hand(view, reserveNoSlot: handSlotDeferred)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                }
+                .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)
             }
         }
         // Above the cards: a role changing hands IS the thing being read at that
@@ -1364,55 +1426,21 @@ public struct MessageTableView: View {
 
                 // Action buttons float bottom-right, above the hand (web absolute
                 // bottom:90/right:20). They only appear when a flag enables them.
-                actionBar(view)
-                    // A CONSTANT, always-present, fixed-size container (owner:
-                    // "the action column CONTAINER could be a constant always
-                    // present fixed size view... just reserve enough height for
-                    // two"): the column's own geometry then never changes as
-                    // pills come and go, so it has nothing to interpolate and
-                    // behaves like the settings squares. Two pills is the
-                    // deepest the board can ever show - a defender holding a
-                    // selection that is both a legal cover and a legal pass -
-                    // so 40 + 8 + 40 = 88, bottom-anchored, and a second pill
-                    // grows upward into reserved space instead of moving the
-                    // first one.
-                    .frame(width: 128, height: 88, alignment: .bottomTrailing)
-                    // Round-10g, and the ONLY change to a collapse the owner
-                    // otherwise signed off on ("make it like that but JUST fix
-                    // the undo button"): the pill must not be INTERPOLATED.
-                    // This column is the one piece of chrome whose CONTENT
-                    // changes at the staging frame (Attack -> Undo), and a
-                    // newly-inserted pill had its position animated by whatever
-                    // transaction was in flight - the collapse's own
-                    // `withAnimation`. Measured off the film: Undo appeared
-                    // ~295pt above its slot and flew down over ~7 frames while
-                    // the settings squares - a CONSTANT view, nothing to insert
-                    // - sat still. `.animation(nil, value:)` cannot stop that
-                    // (it only covers changes driven by `controller.view`) and
-                    // FActionBar's own `.transaction` sits BELOW the placement,
-                    // so it cannot either.
-                    //
-                    // IT WRAPS THE FIXED-SIZE CONTAINER, NOT THE PLACEMENT.
-                    // Round 36: it used to sit outermost, above the `lift`
-                    // padding, and a `.transaction` nils the animation of
-                    // EVERYTHING it passes down - including the board-level
-                    // padding that carries the chrome up when the hand grows a
-                    // second row. That made this one column the only piece of
-                    // chrome that could not honour the owner's "at least make
-                    // it slide smoothly instead of jumping" (see `buttonLift`'s
-                    // mirror), because the slide was being nulled on its way in.
-                    // Confined to the 128x88 container it still covers
-                    // everything it was added for - the pill's insertion and its
-                    // position WITHIN the column, which is the whole of the
-                    // 1.0(10g) film - and nothing it was not.
-                    //
-                    // KEEP IT. It is vector 2 of the three in
-                    // `doesNotRideTheBoardSpring`'s doc, not a weaker spelling
-                    // of the `.doesNotRideTheBoardSpring` just below it.
-                    .transaction { $0.animation = nil }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                    .padding(.trailing, 4).padding(.bottom, lift + 4)
-                    .doesNotRideTheBoardSpring(controller.view)
+                // THE ACTION PILLS, UNDO AND THE SETTINGS SQUARES ARE NOT
+                // DRAWN HERE ANY MORE - they moved into the overlay beside my
+                // hand. Owner, round 47: "the other player fans are BELOW our
+                // cards but ABOVE the buttons. Looks strange."
+                //
+                // They were after the opponent ring in this stack and therefore
+                // above it, which is what the board does when it draws itself.
+                // Under the collapse's slide the ring's seats are each hosted in
+                // a UIHostingController of their own (CollapseLayer), and a
+                // hosted view is a real UIView whose compositing does not take
+                // its order from this ZStack - so the badges came out over the
+                // buttons and under my cards, which is the one order nobody
+                // asked for. Promoted to sit with the hand they are above both,
+                // and the cards, the pills and the squares share a level. They
+                // never collide, so sharing one is free.
 
                 // 1.0(4): Settings + Rulebook squares, MIRRORING the action
                 // column on the LEFT. Same 40pt height as the action pills,
@@ -1424,15 +1452,7 @@ public struct MessageTableView: View {
                 // ALWAYS visible - the old collapse fade hid them in the compact
                 // drawer, which is where most play happens, so in practice the
                 // pair read as removed. The board spring never floats them.
-                undoSlot
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                    .padding(.trailing, 20).padding(.bottom, lift + 4)
-                    .doesNotRideTheBoardSpring(controller.view)
 
-                settingsHelpBar
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                    .padding(.leading, 4).padding(.bottom, lift + 4)
-                    .doesNotRideTheBoardSpring(controller.view)
 
                 // MY HAND IS NOT DRAWN HERE ANY MORE - see the overlay beside
                 // `selfRoleIndicator`. It hugged the bottom in this ZStack, which
