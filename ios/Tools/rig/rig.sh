@@ -1604,6 +1604,11 @@ cmd_film() {
   "$@"
   sleep "$secs"
   kill -INT $rec 2>/dev/null || true; sleep 4
+  # `tp` and `ph` are tween's; borrowed here without being defined, so under
+  # `set -u` every film died right after the recorder stopped, with the movie
+  # written and no frames extracted. Timed the same way now.
+  local ph; ph=$(date +%s.%N)
+  tp() { printf '  %-26s %6.2fs\n' "$1" "$(echo "$(date +%s.%N) - $2" | bc)" >&2; }
   tp "stop recorder" "$ph"; ph=$(date +%s.%N)
   ffmpeg -v error -i "$d/take.mp4" -fps_mode passthrough "$d/f%05d.png" 2>"$d/ffmpeg.err" || {
     cat "$d/ffmpeg.err" >&2; return 1; }
