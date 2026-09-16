@@ -32,7 +32,7 @@ xcrun simctl terminate "$FOOLISH_SIM" com.apple.MobileSMS >/dev/null 2>&1
 rm -f "$G/dev.stage" "$G/dev.staged" "$G/dev.claimed"
 xcrun simctl launch "$FOOLISH_SIM" com.apple.MobileSMS >/dev/null 2>&1
 "$RIG" enter >/dev/null 2>&1 || "$RIG" stage dark >/dev/null 2>&1
-"$REPO/c/build/msg_wire_test" --goodwait 2 >/tmp/tl.hex 2>/dev/null
+"$REPO/c/build/msg_wire_test" --goodwait ${FOOLISH_SEATS:-2} >/tmp/tl.hex 2>/dev/null
 H=$(tail -1 /tmp/tl.hex | tr -d '[:space:]')
 "$RIG" killappex >/dev/null 2>&1
 printf '%s' "$H" > "$G/dev.fatboard"; printf '0' > "$G/dev.seat"
