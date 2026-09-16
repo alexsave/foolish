@@ -13,7 +13,11 @@ public struct FActionBar: View {
     /// table surface still comes from FTextures.
     @ObservedObject private var prefs = FPrefs.shared
     /// Shared fixed width for every wooden action button (equal-width column).
-    private static let w: CGFloat = 96
+    private static let w: CGFloat = pillWidth
+    /// Every action pill's width, Undo's included - see `ActionPillSlot`.
+    public static let pillWidth: CGFloat = 96
+    /// The column's inner trailing inset: its `.padding(.horizontal, FSpace.m)`.
+    public static let innerInset: CGFloat = FSpace.m
     public let canAttack: Bool     // attacker: the selection is a legal attack
     public let canCover: Bool      // defender: the selection can cover some uncovered attack
     public let canPass: Bool       // defender: the selection is a legal pass/transfer
@@ -69,7 +73,7 @@ public struct FActionBar: View {
                 if canUndo   { FButton(FStrings.t("ios.msg.undo"), kind: .wood, compact: true, fixedWidth: Self.w, action: onUndo).transition(.identity) }
             }
         }
-        .padding(.horizontal, FSpace.m)
+        .padding(.horizontal, Self.innerInset)
         // Buttons SNAP in and out - no fade, no reflow (owner: "buttons should
         // not move / never float"). The chrome cross-fade this used to carry
         // (`.animation(FMotion.chrome, value: canPickup/canUndo/...)`) was the
@@ -82,5 +86,61 @@ public struct FActionBar: View {
         // it. Dropping it entirely is the fix: a button that turns off just
         // disappears, and the one replacing it is simply there.
         .transaction { $0.animation = nil }
+    }
+}
+
+
+/// WHERE AN ACTION PILL SITS, whatever word is on it.
+///
+/// Owner, round 47: "the position of the action button when it is Pickup is
+/// slightly off from the position of the action button when it is Undo...
+/// Button should be fixed position and fixed width, only changing text." And:
+/// "distance from left edge of screen and left edge of setting gear button
+/// should be equal to distance from right edge of action button and right edge
+/// of screen."
+///
+/// Measured before touching anything, on the simulator (440pt wide, 8 seats,
+/// expanded, the same board before and after a Pickup): Pickup sat at
+/// 320-416pt, 24.0pt from the right edge; Undo at 316-412pt, 28.0pt; the gear
+/// 24.0pt from the left. The owner's build-70 recording agrees on a real phone
+/// (Attack and Good 311-405, Undo 307-401). Same width, same row, Undo 4pt left.
+///
+/// The cause is round 10g. It hoisted Undo out of FActionBar into its own
+/// always-present slot so it would stop flying in from 280pt above, and placed
+/// that slot with `.padding(.trailing, 20)` - while the pills it replaced sit at
+/// 4 outer + FSpace.m (12) inner = 16, a number the comment directly above that
+/// line spells out. The settings squares mirror the pills exactly (4 outer +
+/// FSpace.m inner on the leading side), so aligning Undo fixes both of the
+/// owner's rules at once: one inset for every pill, and the same inset as the
+/// gear. Both placements now read it from here instead of typing a number.
+public enum ActionPillSlot {
+    /// Undo lands where every other pill does. ON; `pill.aligned=0` in the DEBUG
+    /// `dev.flags` file restores round 10g's inset for comparison.
+    public static let alignedByDefault = true
+
+    /// The column's outer inset inside the board, on the trailing side for the
+    /// pills and on the leading side for the settings squares.
+    public static let outerInset: CGFloat = 4
+
+    /// Where every pill's trailing edge sits, from the board's content edge.
+    public static var pillTrailing: CGFloat { outerInset + FActionBar.innerInset }
+
+    /// Round 10g's inset for the Undo slot - 4pt wider than the column it was
+    /// hoisted out of. Kept only for the flag-off path.
+    static let legacyUndoTrailing: CGFloat = 20
+
+    /// The trailing padding the Undo slot applies to its 96pt pill.
+    public static func undoTrailing(aligned: Bool) -> CGFloat {
+        aligned ? pillTrailing : legacyUndoTrailing
+    }
+
+    /// The live value: the shipping default in Release; in DEBUG, whatever
+    /// `dev.flags` says, and the shipping default when it says nothing.
+    public static var aligned: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("pill.aligned", shipping: alignedByDefault)
+        #else
+        return alignedByDefault
+        #endif
     }
 }

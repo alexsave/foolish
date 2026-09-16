@@ -834,17 +834,20 @@ public struct MessageTableView: View {
                     // of the `.doesNotRideTheBoardSpring` just below it.
                     .transaction { $0.animation = nil }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                    .padding(.trailing, 4).padding(.bottom, statusMarkLift + 4)
+                    .padding(.trailing, ActionPillSlot.outerInset).padding(.bottom, statusMarkLift + 4)
                     .doesNotRideTheBoardSpring(controller.view)
 
                 undoSlot
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                    .padding(.trailing, 20).padding(.bottom, statusMarkLift + 4)
+                    // The SAME inset as every other pill - see ActionPillSlot for
+                    // the 4pt round 10g put here and the owner's measurement.
+                    .padding(.trailing, ActionPillSlot.undoTrailing(aligned: ActionPillSlot.aligned))
+                    .padding(.bottom, statusMarkLift + 4)
                     .doesNotRideTheBoardSpring(controller.view)
 
                 settingsHelpBar
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                    .padding(.leading, 4).padding(.bottom, statusMarkLift + 4)
+                    .padding(.leading, ActionPillSlot.outerInset).padding(.bottom, statusMarkLift + 4)
                     .doesNotRideTheBoardSpring(controller.view)
 
                     hand(view, reserveNoSlot: handSlotDeferred)
@@ -5246,10 +5249,10 @@ public struct MessageTableView: View {
                 // door to forget.
                 FButton(FStrings.t("ios.msg.undo"), kind: .wood,
                         enabled: !controller.conflictRetracting, compact: true,
-                        fixedWidth: 96, action: undoAction)
+                        fixedWidth: FActionBar.pillWidth, action: undoAction)
             }
         }
-        .frame(width: 96, height: 40)
+        .frame(width: FActionBar.pillWidth, height: 40)
     }
 
     /// - `crop` (round-5 M5b, made continuous in round-6): how much of each hand

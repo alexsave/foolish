@@ -134,6 +134,6 @@ public struct SettingsHelpSquares: View {
                           accessibility: FStrings.t("ios.help"), action: onHelp)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, FSpace.m)   // same inner inset as FActionBar
+        .padding(.horizontal, FActionBar.innerInset)   // the SAME inner inset as the pills, by construction - see ActionPillSlot
     }
 }

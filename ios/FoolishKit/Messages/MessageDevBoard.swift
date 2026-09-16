@@ -62,6 +62,7 @@ public enum MessageDevBoard {
     private static let rulerFile = "dev.ruler"
     private static let collapseFile = "dev.collapse"
     private static let boardFile = "dev.board"
+    private static let flagsFile = "dev.flags"
 #if RIG_RESEED
     private static let reseedFile = "dev.reseed"
 #endif
@@ -407,5 +408,43 @@ public enum MessageDevBoard {
         default: return nil
         }
     }
+
+    /// A FEATURE FLAG's value in a debug build: `dev.flags` if it names the key,
+    /// the SHIPPING value otherwise.
+    ///
+    /// Owner rule, 2026-09-16: "Require all new changes (and their tests) to be
+    /// flag guarded." The model is the collapse slide, and so is the trap this
+    /// exists to close: the slide had a Release constant and, separately, a
+    /// DEBUG knob whose default was its own hardcoded `false` - flip one and a
+    /// debug install silently runs a different product from a release one. Here
+    /// the debug value cannot drift, because with no file it IS the shipping
+    /// value, passed in by the caller.
+    ///
+    /// `dev.flags` holds `key=0|1` pairs separated by spaces or newlines, in the
+    /// App Group beside the other dev files: `printf 'pill.aligned=0' >
+    /// "$(rig.sh group)/dev.flags"`. Read ONCE per appex process, like
+    /// `collapseKnobs`, so a change takes effect on the next open.
+    public static func flag(_ key: String, shipping: Bool) -> Bool {
+        devFlags[key] ?? shipping
+    }
+
+    private static let devFlags: [String: Bool] = {
+        guard let dir = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroup),
+              let raw = try? String(contentsOf: dir.appendingPathComponent(flagsFile),
+                                    encoding: .utf8)
+        else { return [:] }
+        var out: [String: Bool] = [:]
+        for pair in raw.split(whereSeparator: { $0 == " " || $0 == "\n" }) {
+            let kv = pair.split(separator: "=", maxSplits: 1)
+            guard kv.count == 2 else { continue }
+            switch kv[1] {
+            case "1", "true", "on": out[String(kv[0])] = true
+            case "0", "false", "off": out[String(kv[0])] = false
+            default: continue
+            }
+        }
+        return out
+    }()
 }
 #endif
