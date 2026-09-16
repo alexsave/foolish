@@ -61,7 +61,6 @@ public enum MessageDevBoard {
     private static let slowmoFile = "dev.slowmo"
     private static let rulerFile = "dev.ruler"
     private static let collapseFile = "dev.collapse"
-    private static let boardFile = "dev.board"
     private static let flagsFile = "dev.flags"
 #if RIG_RESEED
     private static let reseedFile = "dev.reseed"
@@ -346,39 +345,6 @@ public enum MessageDevBoard {
             case "hz": k.hz = v
             case "resp": k.response = v
             case "slide": k.slide = v != 0
-            default: break
-            }
-        }
-        return k
-    }()
-
-    /// THE BOARD'S SWITCHES, so old and new can be shot on ONE build:
-    /// `tags=0` in `dev.board` puts the bubble back on the live board's ring
-    /// of full badges (PublicBoardLayout.tagsByDefault), `tightmarks=0` puts
-    /// the role marks back at their old distance from the fans
-    /// (FSeatBadge.tightMarksByDefault). Any subset, space separated.
-    ///
-    /// Both default to the SHIPPING value, off the same constant Release
-    /// reads, for the reason `CollapseKnobs.slide` does: a literal here is
-    /// how a product flip leaves every debug install and every rig take on
-    /// the other path. Read ONCE, like the collapse knobs.
-    public struct BoardKnobs {
-        public var tags = PublicBoardLayout.tagsByDefault
-        public var tightMarks = FSeatBadge.tightMarksByDefault
-    }
-    public static let boardKnobs: BoardKnobs = {
-        var k = BoardKnobs()
-        guard let dir = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroup),
-              let raw = try? String(contentsOf: dir.appendingPathComponent(boardFile),
-                                    encoding: .utf8)
-        else { return k }
-        for pair in raw.split(whereSeparator: { $0 == " " || $0 == "\n" }) {
-            let kv = pair.split(separator: "=", maxSplits: 1)
-            guard kv.count == 2, let v = Double(kv[1]) else { continue }
-            switch kv[0] {
-            case "tags": k.tags = v != 0
-            case "tightmarks": k.tightMarks = v != 0
             default: break
             }
         }

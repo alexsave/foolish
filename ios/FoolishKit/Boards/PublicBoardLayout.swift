@@ -32,18 +32,18 @@ enum PublicBoardLayout {
     /// file) or the live board's ring of full badges (`ringPoint`). ON: the
     /// tags are what the owner is reviewing, and a feature behind an OFF flag
     /// is never actually looked at (build 70 shipped the collapse that way and
-    /// bounced on a real device). The DEBUG knob `tags=0` in `dev.board`
-    /// selects the ring on the rig, so both pictures come off one build;
-    /// `MessageDevBoard.BoardKnobs` reads its default from HERE, so a debug
-    /// install and a release one cannot disagree about which board is the
-    /// product.
+    /// bounced on a real device). `tags=0` in the DEBUG `dev.flags` file
+    /// selects the ring on the rig, so both pictures come off one build; with
+    /// nothing in the file the debug switch IS this value, so a debug install
+    /// and a release one cannot disagree about which board is the product.
     public static let tagsByDefault = true
 
-    /// The path THIS build draws: the knob file in DEBUG, the constant in
-    /// Release - the same shape as MessagesRootView's `collapseKnobs`.
+    /// The path THIS build draws: `tags=0` in the DEBUG `dev.flags` file selects
+    /// the ring for comparison, and with nothing in the file it is the shipping
+    /// value - see `MessageDevBoard.flag(_:shipping:)`. Release reads the constant.
     static var tagsOn: Bool {
         #if DEBUG || SOLO_TESTING
-        return MessageDevBoard.boardKnobs.tags
+        return MessageDevBoard.flag("tags", shipping: tagsByDefault)
         #else
         return tagsByDefault
         #endif

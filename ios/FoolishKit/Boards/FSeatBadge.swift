@@ -103,15 +103,15 @@ public struct FSeatBadge: View {
     /// seat, and lowers my own mark (MessageTableView's `selfRoleIndicator`)
     /// by the same 6 toward my hand, so the two nudges are one number.
     ///
-    /// The DEBUG knob `tightmarks=0` in `dev.board` selects the old distance
-    /// on the rig; `MessageDevBoard.BoardKnobs` reads its default from HERE.
+    /// The DEBUG `tightmarks=0` in `dev.flags` selects the old distance on the
+    /// rig; with nothing in the file the switch is this value.
     public static let tightMarksByDefault = true
 
-    /// The distance THIS build draws: the knob file in DEBUG, the constant in
-    /// Release - the same shape as MessagesRootView's `collapseKnobs`.
+    /// The distance THIS build draws: `dev.flags` in DEBUG, the constant in
+    /// Release - see `MessageDevBoard.flag(_:shipping:)`.
     static var tightMarksOn: Bool {
         #if DEBUG || SOLO_TESTING
-        return MessageDevBoard.boardKnobs.tightMarks
+        return MessageDevBoard.flag("tightmarks", shipping: tightMarksByDefault)
         #else
         return tightMarksByDefault
         #endif

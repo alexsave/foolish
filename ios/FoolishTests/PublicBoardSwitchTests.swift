@@ -26,16 +26,41 @@ final class PublicBoardSwitchTests: XCTestCase {
     }
 
     #if DEBUG || SOLO_TESTING
-    /// A debug install with no `dev.board` file draws what the product
-    /// draws. MUTANT: a literal `true`/`false` in BoardKnobs fails this the
-    /// moment it disagrees with the constant it should be reading.
+    /// A debug install with no `dev.flags` entry draws what the product
+    /// draws: with nothing in the file, the switch IS the shipping value.
+    /// MUTANT: either consumer reading a literal instead of the shipping
+    /// constant fails this the moment the two disagree.
     func testADebugBuildDefaultsToTheShippingBoard() {
-        XCTAssertEqual(MessageDevBoard.BoardKnobs().tags, PublicBoardLayout.tagsByDefault,
+        XCTAssertEqual(PublicBoardLayout.tagsOn, PublicBoardLayout.tagsByDefault,
                        "a debug install must draw the board the product ships")
-        XCTAssertEqual(MessageDevBoard.BoardKnobs().tightMarks, FSeatBadge.tightMarksByDefault,
+        XCTAssertEqual(FSeatBadge.tightMarksOn, FSeatBadge.tightMarksByDefault,
                        "a debug install must space the marks as the product does")
     }
     #endif
+
+    /// ONE flags file for every switch. The bubble's two switches were built on
+    /// their own `dev.board` file and `BoardKnobs` struct in the same hours the
+    /// action pill added the general `dev.flags` / `MessageDevBoard.flag(_:
+    /// shipping:)`. Two mechanisms for one job means a rig recipe that writes
+    /// the wrong file and silently changes nothing, so the board reads the
+    /// shared one and the private one is gone.
+    /// MUTANT: bring back `BoardKnobs`, or read `tags` any other way.
+    func testTheBoardSwitchesReadTheOneFlagsFile() throws {
+        let kit = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("FoolishKit")
+        func read(_ path: String) throws -> String {
+            try String(contentsOf: kit.appendingPathComponent(path), encoding: .utf8)
+        }
+        let dev = try read("Messages/MessageDevBoard.swift")
+        XCTAssertFalse(dev.contains("BoardKnobs"), "a second knob mechanism is back")
+        XCTAssertFalse(dev.contains("\"dev.board\""), "a second flags file is back")
+        XCTAssertTrue(try read("Boards/PublicBoardLayout.swift")
+                        .contains("MessageDevBoard.flag(\"tags\", shipping: tagsByDefault)"),
+                      "the tags switch must read the shared flags file")
+        XCTAssertTrue(try read("Boards/FSeatBadge.swift")
+                        .contains("MessageDevBoard.flag(\"tightmarks\", shipping: tightMarksByDefault)"),
+                      "the tight-marks switch must read the shared flags file")
+    }
 
     /// The ring the knob falls back to IS the live board's: a 35% ellipse,
     /// seat 0 at the bottom, seat 1 to its left. MUTANT: 0.35 -> 0.42 fails
