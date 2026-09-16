@@ -430,6 +430,14 @@ public final class BoardAnimator: ObservableObject {
     }
 
     public func play(_ steps: [FlightStep]) async {
+        #if DEBUG || SOLO_TESTING
+        // WHERE every flight goes, in the recorder: the one question a film
+        // cannot answer about a card that lands somewhere surprising.
+        for st in steps { for fl in st {
+            FlightRecorder.note("fly", "\(fl.id) from=(\(Int(fl.from.midX)),\(Int(fl.from.midY))) "
+                                + "to=(\(Int(fl.to.midX)),\(Int(fl.to.midY)))")
+        } }
+        #endif
         for step in steps where !step.isEmpty {
             isAnimating = true
             flights = step
