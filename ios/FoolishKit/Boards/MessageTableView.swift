@@ -1211,6 +1211,29 @@ public struct MessageTableView: View {
             // Until the first mirror lands (-1) they read `handHeight` directly, so a
             // fresh board places them correctly on the very first paint.
             let lift = buttonLift < 0 ? handHeight : buttonLift
+            // HOW MUCH OF THE SLIDE A VIEW TAKES BACK OFF ITSELF.
+            //
+            // The collapse's layer animation pushes the whole board down so the
+            // box's BOTTOM edge never moves (CollapseSlide). Everything anchored
+            // to that edge - the hand, the pills - wants all of it and is left
+            // alone. Everything else has to undo it, and NOT by the same amount:
+            // a view sitting a fraction `f` down the box moves `1 - f` of what
+            // the box's top edge moves, so that is what it takes back.
+            //
+            //   f = 0    deck, discard    the whole slide
+            //   f = 0.5  the battle       half of it
+            //   f = 1    the hand         none
+            //
+            // Subtracting the whole slide from all of them is what sent the
+            // table cards off the top of the screen and back - measured, the
+            // blue bar on the cards scored a jerk of 73,121 against the hand's
+            // 19, and at the flip it sat at 510 - 535 = -25pt, i.e. above the
+            // phone. The deck and the discard were the only ones that looked
+            // right, and only because f = 0 is the case the old code happened
+            // to be correct for.
+            // A closure and not a `func`: a ViewBuilder block takes bindings,
+            // not declarations.
+            let unslide: (CGFloat) -> CGFloat = { -collapseSlide * (1 - $0) }
             ZStack {
                 // Battles — dead centre of the board (web: absolute, both axes).
                 //
@@ -1232,7 +1255,7 @@ public struct MessageTableView: View {
                     // they are supposed to be reporting.
                     .collapseMark(.table)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .offset(y: -collapseSlide)
+                    .offset(y: unslide(0.5))
 
                 // Opponent ring — each seat placed by trig on a 35% ellipse. The
                 // local player is visual-index 0 (bottom edge) and is drawn as the
@@ -1250,7 +1273,10 @@ public struct MessageTableView: View {
                         .collapseMark(p.seat == view.players.first(where: {
                             $0.seat != controller.mySeat })?.seat ? .opponent : nil)
                         .position(ringPoint(seat: p.seat, n: view.players.count, in: geo.size))
-                        .offset(y: -collapseSlide)
+                        .offset(y: unslide(geo.size.height > 0
+                            ? ringPoint(seat: p.seat, n: view.players.count,
+                                        in: geo.size).y / geo.size.height
+                            : 0))
                 }
 
                 // Deck top-left, discard top-right — pinned to the corners and OUT
