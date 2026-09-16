@@ -85,6 +85,18 @@ for col, label in BARS:
         if m.sum() < 5:
             continue
         w, tw, cl = y[m], t[m], clamped[m]
+        # A DROPPED SAMPLE IS A GAP, NOT A STEP. The marker bars are occluded
+        # from time to time - at four seats and at eight the ring puts a badge
+        # on the same row as the battle cards and the yellow bar paints over the
+        # magenta one - and those frames leave the series entirely. Diffing
+        # across the hole then reads as one enormous move that nothing on screen
+        # made: at eight players it inflated the table's roughness to 6171 while
+        # the samples either side of every gap ran 563, 695, 725, 747, 751, 753,
+        # 754, monotonic, no reversals. So a step whose two ends are further
+        # apart in TIME than a frame and a half is not a step.
+        if len(tw) > 3:
+            dt = np.diff(tw)
+            cl = cl | np.concatenate([[False], dt > 1.5 * float(np.median(dt))])
         ok1 = ~(cl[1:] | cl[:-1])                       # a step with both ends real
         d1 = np.diff(w)
         jerks.append(float((d1[ok1] ** 2).sum()))
