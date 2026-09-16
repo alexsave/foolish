@@ -152,10 +152,21 @@ public enum CollapseTween {
     /// against a late frame, and this path has no late frames. What is left is
     /// the fit between our spring and the host's, which is smooth whatever it
     /// is - an error in it moves the edge, it does not shake it.
-    /// Whether a shipping build takes the slide. Off while it is being filmed
-    /// against the driver on the rig - the DEBUG `slide=` knob turns it on, so
-    /// both paths are one build apart and can be scored against each other.
-    public static let slideByDefault = false
+    /// Whether a build takes the slide. ON, from build 71.
+    ///
+    /// It shipped OFF in 70, and that was the wrong call for the wrong reason.
+    /// The gate on turning it on was "check drag-to-play, a bout-ending sweep
+    /// and the end screen by hand first" - and those checks need a real device,
+    /// which needs a build with this on. 70 went to the owner's phone on the old
+    /// timer path and bounced exactly as the rig said it would: filmed at 60fps,
+    /// the Undo pill sat at 770.7pt, dropped +22pt on the first collapse frame,
+    /// jumped -20pt on the next and settled at 768.7 - a 42pt swing in 33ms.
+    ///
+    /// The DEBUG `slide=0` knob still selects the old driver, so both paths stay
+    /// one file-write apart on the rig. `MessageDevBoard.CollapseKnobs` reads its
+    /// default from HERE, so a debug install and a release one cannot disagree
+    /// about which path is the product.
+    public static let slideByDefault = true
 
     public static let slideDuration: Double = 0.6
 
