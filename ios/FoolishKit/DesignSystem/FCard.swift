@@ -28,10 +28,19 @@ public struct FCard: View {
     public var trump: Bool          // kept for API; web marks trump at the deck, not per card
     public var backSeed: UInt64
     public var size: CGSize
+    /// Draw the full face - corner indices and the centre glyph - however
+    /// narrow the card is, instead of the thin fallback under 40pt. The face
+    /// is proportional to the width throughout (glyphs at 0.62w and 0.40w,
+    /// the index inset at 0.08w, the radius at 0.1w), so a 28pt card with
+    /// this on IS the 46pt card scaled down: what the public board wants for
+    /// a card it has sized to fit a thumbnail. Owner, on the thin face turning
+    /// up there: "It should be a normal card just scaled down." Off, the
+    /// hand fan and the live board draw as they always have.
+    public var fullFace: Bool
 
     public init(card: Card?, selected: Bool = false, disabled: Bool = false,
                 dragging: Bool = false, trump: Bool = false, backSeed: UInt64 = 1,
-                size: CGSize = CGSize(width: 50, height: 70)) {
+                size: CGSize = CGSize(width: 50, height: 70), fullFace: Bool = false) {
         self.card = card
         self.selected = selected
         self.disabled = disabled
@@ -39,6 +48,7 @@ public struct FCard: View {
         self.trump = trump
         self.backSeed = backSeed
         self.size = size
+        self.fullFace = fullFace
     }
 
     // Web tokens (variables.css): white face, red #dc2626 / black suits, black
@@ -146,7 +156,7 @@ public struct FCard: View {
     private var ink: Ink { scheme == .dark ? .dark : .light }
 
     private var radius: CGFloat { min(5, size.width * 0.1) }
-    private var thin: Bool { size.width < 40 }   // web thin-card fallback (<40px wide)
+    private var thin: Bool { !fullFace && size.width < 40 }   // web thin-card fallback (<40px wide)
 
     public var body: some View {
         Group {

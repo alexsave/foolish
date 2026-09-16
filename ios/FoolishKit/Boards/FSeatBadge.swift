@@ -57,13 +57,17 @@ public struct FSeatBadge: View {
     /// why this is a scale and not a frame: one player going out must not move
     /// every other seat on the ring.
     public let collapsed: Bool
+    /// The role row sits `markTightening` closer to the fan (see
+    /// `tightMarksByDefault`). Defaulted to what THIS build ships or is
+    /// knobbed to, and a parameter so a test can draw both.
+    public let tightMarks: Bool
 
     public init(name: String, handCount: Int, isDefender: Bool = false,
                 isAttacker: Bool = false, saidGood: Bool = false,
                 thinking: Bool = false, isOut: Bool = false, onLight: Bool = false,
                 seat: Int? = nil, opensBout: Bool = false,
                 markDeparting: Bool = false, markArriving: Bool = false,
-                collapsed: Bool = false) {
+                collapsed: Bool = false, tightMarks: Bool? = nil) {
         self.name = name
         self.handCount = handCount
         self.isDefender = isDefender
@@ -77,7 +81,56 @@ public struct FSeatBadge: View {
         self.markDeparting = markDeparting
         self.markArriving = markArriving
         self.collapsed = collapsed
+        // nil, not `Self.tightMarksOn`, as the default: a public init cannot
+        // name an internal symbol in a default argument.
+        self.tightMarks = tightMarks ?? Self.tightMarksOn
     }
+
+    /// THE MARKS SIT CLOSER TO THE FANS. ON, from this build.
+    ///
+    /// Owner, reviewing the bubble's seat tags (where the mark is 2pt from
+    /// the card): "even in the normal game I think we could reduce the
+    /// distance between card fans and the status indicators", and then with
+    /// two marked-up frames: an opponent's sword with an arrow UP at her
+    /// fan, and my own shield over my hand with an arrow DOWN at my cards -
+    /// "slightly bring the status icons UP for other player card fans ...
+    /// bring our own slightly DOWN". Slightly, both ways.
+    ///
+    /// On the live board the role row hung `FSpace.xs` below a fan box that
+    /// already carried 2pt of slack, and the mark is centred in a 40pt row
+    /// sized for the sword - so a shield's ink stood 9.5pt off the backs, a
+    /// sword's tip about 13. `markTightening` takes 6 of that from every
+    /// seat, and lowers my own mark (MessageTableView's `selfRoleIndicator`)
+    /// by the same 6 toward my hand, so the two nudges are one number.
+    ///
+    /// The DEBUG `tightmarks=0` in `dev.flags` selects the old distance on the
+    /// rig; with nothing in the file the switch is this value.
+    public static let tightMarksByDefault = true
+
+    /// The distance THIS build draws: `dev.flags` in DEBUG, the constant in
+    /// Release - see `MessageDevBoard.flag(_:shipping:)`.
+    static var tightMarksOn: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("tightmarks", shipping: tightMarksByDefault)
+        #else
+        return tightMarksByDefault
+        #endif
+    }
+
+    /// How much closer a tight mark sits, in points, for every mark on the
+    /// board: the opponents' rows go up by it, my own mark comes down by it.
+    static let markTightening: CGFloat = 6
+
+    /// The role row's gap below the fan box: `FSpace.xs`, as it was, or that
+    /// less `markTightening` - negative, so the row rides up into the box's
+    /// own 2pt of slack, which at the mark's centred size still leaves a
+    /// shield's ink 3.5pt off the backs and a sword's tip about 7.
+    static func fanMarkGap(tight: Bool) -> CGFloat { FSpace.xs - (tight ? markTightening : 0) }
+
+    /// My own mark's lift over my hand: 6 as it was, or that less
+    /// `markTightening` - zero, the coin's box resting on the hand's top
+    /// line, its ink still 3.5pt clear of my cards.
+    static func selfMarkLift(tight: Bool) -> CGFloat { 6 - (tight ? markTightening : 0) }
 
     // Mini back geometry (web CardsVisual: 25pt wide, spread 10pt/card, count
     // centred).
@@ -176,7 +229,10 @@ public struct FSeatBadge: View {
             // THE BADGE - the hand and the mark - is the thing that turns.
             // Grouped so ONE scale covers both and the name above it is not in
             // the gesture at all (round 41).
-            VStack(spacing: FSpace.xs) {
+            // The gap between the fan and the row is `fanMarkGap`, applied as
+            // padding on the row rather than as this stack's spacing, because
+            // the tight gap is negative and a stack's spacing cannot be.
+            VStack(spacing: 0) {
                 ZStack {
                     miniFan
                     if handCount > 0 {
@@ -222,6 +278,7 @@ public struct FSeatBadge: View {
                 })
     
                 roleRow
+                    .padding(.top, Self.fanMarkGap(tight: tightMarks))
             }
             // ROUND 28: edge-on when this seat is out. A scale, so the seat keeps
             // the width it reserved on the ring and nobody else moves; anchored
@@ -335,10 +392,8 @@ public struct FSeatBadge: View {
     /// mutually exclusive in every state the engine can produce, which is what
     /// lets them be one coin with three faces (FRoleMotion).
     var mark: RoleMarkKind? {
-        if saidGood { return .check }
-        if isDefender { return .shield }
-        if isAttacker { return opensBout ? .leadSword : .sword }
-        return nil
+        RoleMarkKind.worn(saidGood: saidGood, isDefender: isDefender,
+                          isAttacker: isAttacker, opensBout: opensBout)
     }
 
     private var roleRow: some View {

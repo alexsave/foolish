@@ -749,7 +749,13 @@ public struct MessageTableView: View {
             if let v = controller.view {
                 selfRoleIndicator(v)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .padding(.bottom, statusMarkLift + 6)
+                    // The 6pt over the hand became `selfMarkLift`, which is
+                    // `markTightening` less when the marks are tight
+                    // (FSeatBadge): the owner's "bring our own slightly
+                    // DOWN", by the same amount the seats' marks come up.
+                    // `statusMarkLift` itself is untouched - it is the pills'
+                    // line too.
+                    .padding(.bottom, statusMarkLift + FSeatBadge.selfMarkLift(tight: FSeatBadge.tightMarksOn))
                     // Round-7's rule, carried over with the view.
                     .doesNotRideTheBoardSpring(controller.view)
                     .allowsHitTesting(false)

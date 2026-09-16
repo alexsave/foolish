@@ -1,15 +1,15 @@
 // MessageBoardView — a READ-ONLY render of a decoded GameView, for the iMessage
 // extension's expanded bubble (and, later, the 300×195 snapshot). It draws only
-// what a GameView carries — opponents are card-backs by count, the viewer's own
-// hand shows if present — so it is PUBLIC-safe by construction (the snapshot
-// appears on lock screens). It reuses the app's board grammar (FSeatBadge /
-// FBattleGrid / FDeckWell) so a message looks like the game, not a second UI.
+// what a GameView carries — every seat is a card back with its count, and a
+// spectator view carries no hand at all — so it is PUBLIC-safe by construction
+// (the snapshot appears on lock screens). It reuses the app's board grammar
+// (FSeatTag is FSeatBadge seen from further away / FBattleGrid / FDeckWell) so
+// a message looks like the game, not a second UI.
 //
 // No interaction, no rules: the board comes from the kernel (fio_msg_decode →
 // fio_state_packed → MaskedView), this only lays it out. The interactive turn UI
 // (tap-to-attack, cover, Send) is a later milestone on top of the same GameView.
 import SwiftUI
-import Foundation   // sin/cos for the ring placement
 
 public struct MessageBoardView: View {
     /// Re-render on a settings change (see FPrefs). This is the BUBBLE board -
@@ -19,12 +19,20 @@ public struct MessageBoardView: View {
     @ObservedObject private var prefs = FPrefs.shared
     private let view: GameView
     private let names: [Int: String]
+    /// Seat tags at stations (`tagsBoard`) or the live board's ring of full
+    /// badges (`ringBoard`) - PublicBoardLayout.tagsByDefault. Defaulted to
+    /// what THIS build ships or is knobbed to, and a parameter so a test can
+    /// draw both.
+    private let tags: Bool
 
     /// `names` maps seat → display name (from the FMSG `joins`); absent seats
     /// fall back to a neutral "Seat N".
-    public init(view: GameView, names: [Int: String] = [:]) {
+    public init(view: GameView, names: [Int: String] = [:], tags: Bool? = nil) {
         self.view = view
         self.names = names
+        // nil, not `PublicBoardLayout.tagsOn`, as the default: a public init
+        // cannot name an internal symbol in a default argument.
+        self.tags = tags ?? PublicBoardLayout.tagsOn
     }
 
     private func name(_ seat: Int) -> String { names[seat] ?? "Seat \(seat + 1)" }
@@ -72,57 +80,25 @@ public struct MessageBoardView: View {
 
     public var body: some View {
         // Same grammar as the live board (MessageTableView): deck pinned top-left,
-        // discard top-right, seats ringed on a 35% ellipse, battles dead-centre -
-        // just no self hand (this is the PUBLIC spectator snapshot). Absolute
-        // placement so the corners never push the centred pieces.
+        // discard top-right, seats round the edge, battles dead-centre - just no
+        // self hand (this is the PUBLIC spectator snapshot). Absolute placement
+        // so the corners never push the centred pieces.
+        //
+        // NOT the live board's ring, though. This board is a THUMBNAIL - the
+        // 300x195 bubble is its whole reason to exist - and at eight seats the
+        // live board's full badges on a 35% ellipse did not fit it: the top
+        // seat's name was clipped off the picture, the fans lay over the
+        // battle cards, and the marks piled up along the bottom edge. Every
+        // position and every size below comes from PublicBoardLayout, which
+        // places compact seat tags (FSeatTag) at fixed stations round the
+        // edge and shrinks the corners and the battles only as far as those
+        // tags require - so a two-player bubble is drawn exactly as it was,
+        // and an eight-player one is drawn at all.
         GeometryReader { geo in
-            ZStack {
-                if !view.battles.isEmpty {
-                    FBattleGrid(battles: view.battles, trumpSuit: view.trumpSuit)
-                }
-
-                // Every seat ringed (no self to omit in the public view; seat is
-                // the visual index, so seat 0 sits bottom-centre).
-                ForEach(view.players) { p in
-                    FSeatBadge(name: name(p.seat),
-                               handCount: p.handCount,
-                               isDefender: p.seat == view.defender,
-                               isAttacker: showsSword(seat: p.seat, isOut: p.isOut, view),
-                               saidGood: view.hasSaidGood(p.seat),
-                               isOut: p.isOut)   // wool bubble → bone text + shadow (like the board)
-                        .position(ringPoint(seat: p.seat, n: view.players.count, in: geo.size))
-                }
-
-                FDeckWell(deckCount: view.deckCount, flipped: view.flipped,
-                          hasFlipped: view.hasFlipped, trumpSuit: view.trumpSuit)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                // Note 10 (same fix as MessageTableView, this being the same
-                // FDeckWell/FDiscardPile pair, just this view's public/spectator
-                // rendering of it): -3 puts the discard's own centre on the
-                // draw deck's bottom-card centre — see MessageTableView's
-                // discard placement for the full derivation.
-                discardPile
-                    .offset(y: -3)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-
-                if view.isOver {
-                    // Round-5 M10 sweep: this was full-opacity bone text with NO
-                    // shadow at all, sitting straight on the wool — the finding's
-                    // "no fixed-opacity foreground can survive it" applies even
-                    // without a reduced-opacity color; the missing half of the
-                    // known fix (real shadow) was missing here too. Round-6 #17:
-                    // this is plain text on the wool weave (no wood behind it),
-                    // so it takes `onTableText` (Tokens.swift) - thick black ink,
-                    // not the bone-on-dark-shadow combo, which is wood's half of
-                    // the pairing (MessageTableView's plank uses that one).
-                    Text(view.gameOver >= 0
-                        ? FStrings.t("ios.msg.isfool", ["name": name(view.gameOver)])
-                        : FStrings.t("game_over"))
-                        .font(.subheadline)
-                        .onTableText()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                        .padding(.bottom, 6)
-                }
+            if tags {
+                tagsBoard(geo.size)
+            } else {
+                ringBoard(geo.size)
             }
         }
         // Round-7 #4: the 8pt inset lives OUTSIDE the GeometryReader, not on the
@@ -138,16 +114,124 @@ public struct MessageBoardView: View {
         .padding(8)
     }
 
-    /// Seat centre on the 35% ellipse (web PlayerRing). Public snapshot has no
-    /// "self", so the seat index is the visual index (seat 0 at bottom-centre).
-    private func ringPoint(seat: Int, n: Int, in size: CGSize) -> CGPoint {
-        let rad = 2 * Double.pi * Double(seat) / Double(max(n, 1))
-        let x = (-sin(rad) * 0.35 + 0.5) * size.width
-        let y = ( cos(rad) * 0.35 + 0.5) * size.height
-        return CGPoint(x: x, y: y)
+    /// THE TAGS: PublicBoardLayout's stations, with the corners and the
+    /// battles at the size the tags leave room for. Every piece is SIZED to
+    /// its scale rather than transformed, so a card on this board carries
+    /// FCard's 1pt edge exactly as a card on the live board does.
+    private func tagsBoard(_ size: CGSize) -> some View {
+        let n = view.players.count
+        let corner = PublicBoardLayout.cornerScale(n: n, in: size)
+        let grid = PublicBoardLayout.gridScale(n: n, pairs: view.battles.count, in: size)
+        return ZStack {
+            if !view.battles.isEmpty {
+                FBattleGrid(battles: view.battles, trumpSuit: view.trumpSuit, scale: grid)
+            }
+
+            // ONE count size for the well, the pile and every seat tag
+            // (owner: "the fan card and discard card and deal card count
+            // numbers should be same font size in the bubble preview").
+            FDeckWell(deckCount: view.deckCount, flipped: view.flipped,
+                      hasFlipped: view.hasFlipped, trumpSuit: view.trumpSuit, scale: corner,
+                      countSize: FSeatTag.countSize)
+                // A smaller well is the same well seen from further away -
+                // its bottom card and flipped trump keep the top-left origins
+                // FDeckWell pins (round 4 note 6), scaled, not shifted...
+                // ...except that it slides out from under the balloon's app
+                // icon as it shrinks (PublicBoardLayout.deckSlide): Messages
+                // draws that roundel over this corner, and a small well's
+                // count sat exactly under it.
+                .offset(x: PublicBoardLayout.deckSlide(scale: corner).x,
+                        y: PublicBoardLayout.deckSlide(scale: corner).y)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            // Note 10 (same fix as MessageTableView, this being the same
+            // FDeckWell/FDiscardPile pair, just this view's public/spectator
+            // rendering of it): -3 puts the discard's own centre on the
+            // draw deck's bottom-card centre — see MessageTableView's
+            // discard placement for the full derivation.
+            FDiscardPile(count: view.discardCount, scale: corner, countSize: FSeatTag.countSize)
+                .offset(y: PublicBoardLayout.discardLift)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+
+                // Every seat at its station (no self to omit in the public
+                // view; seat 0 sits bottom-centre, the rest clockwise). LAST in
+                // the stack: at the scale floors a dense table can still run
+                // a card corner under a tag, and the name, the count and the
+                // mark are the facts that must stay on top.
+            ForEach(view.players) { p in
+                FSeatTag(name: name(p.seat),
+                         handCount: p.handCount,
+                         mark: RoleMarkKind.worn(
+                            saidGood: view.hasSaidGood(p.seat),
+                            isDefender: p.seat == view.defender,
+                            isAttacker: showsSword(seat: p.seat, isOut: p.isOut, view),
+                            // Round 20's tinted lead sword, exactly as the
+                            // live board wears it (MessageTableView's
+                            // badge): the seat that opens the bout.
+                            opensBout: p.seat == view.firstAttacker),
+                         isOut: p.isOut)
+                    .position(PublicBoardLayout.seatPoint(seat: p.seat, n: n, in: size))
+            }
+
+            if view.isOver {
+                // CENTRED, where the battles were: a finished game has an
+                // empty table and a seat tag at the bottom edge, and this
+                // line used to sit on that seat's badge. Ink as `ringBoard`'s.
+                gameOverLine
+            }
+        }
     }
 
-    private var discardPile: some View {
-        FDiscardPile(count: view.discardCount)
+    /// THE RING, as this board drew before the tags (PublicBoardLayout
+    /// .tagsByDefault, `tags=0`): every seat a full FSeatBadge on the 35%
+    /// ellipse, the corners and the battles at the live board's size. Kept
+    /// whole and unchanged so the knob selects the old picture, not an
+    /// approximation of it.
+    private func ringBoard(_ size: CGSize) -> some View {
+        ZStack {
+            if !view.battles.isEmpty {
+                FBattleGrid(battles: view.battles, trumpSuit: view.trumpSuit)
+            }
+
+            // Every seat ringed (no self to omit in the public view; seat is
+            // the visual index, so seat 0 sits bottom-centre).
+            ForEach(view.players) { p in
+                FSeatBadge(name: name(p.seat),
+                           handCount: p.handCount,
+                           isDefender: p.seat == view.defender,
+                           isAttacker: showsSword(seat: p.seat, isOut: p.isOut, view),
+                           saidGood: view.hasSaidGood(p.seat),
+                           isOut: p.isOut)   // wool bubble → bone text + shadow (like the board)
+                    .position(PublicBoardLayout.ringPoint(seat: p.seat, n: view.players.count, in: size))
+            }
+
+            FDeckWell(deckCount: view.deckCount, flipped: view.flipped,
+                      hasFlipped: view.hasFlipped, trumpSuit: view.trumpSuit)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            FDiscardPile(count: view.discardCount)
+                .offset(y: PublicBoardLayout.discardLift)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+
+            if view.isOver {
+                gameOverLine
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .padding(.bottom, 6)
+            }
+        }
+    }
+
+    /// Round-5 M10 sweep: this was full-opacity bone text with NO shadow at
+    /// all, sitting straight on the wool — the finding's "no fixed-opacity
+    /// foreground can survive it" applies even without a reduced-opacity
+    /// color; the missing half of the known fix (real shadow) was missing here
+    /// too. Round-6 #17: this is plain text on the wool weave (no wood behind
+    /// it), so it takes `onTableText` (Tokens.swift) - thick black ink, not
+    /// the bone-on-dark-shadow combo, which is wood's half of the pairing
+    /// (MessageTableView's plank uses that one).
+    private var gameOverLine: some View {
+        Text(view.gameOver >= 0
+            ? FStrings.t("ios.msg.isfool", ["name": name(view.gameOver)])
+            : FStrings.t("game_over"))
+            .font(.subheadline)
+            .onTableText()
     }
 }

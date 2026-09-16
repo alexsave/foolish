@@ -81,6 +81,21 @@ public enum RoleMarkKind: Equatable, Sendable {
         case .check:  return FRoleMark.check
         }
     }
+
+    /// THE mark a seat wears, from the facts a view carries about it. Never
+    /// two: the kernel rejects a defender's `good` (game.c handle_good), and
+    /// `showsSword` stands the sword down for a seat that has said it - so
+    /// shield, sword and check are mutually exclusive in every state the
+    /// engine can produce, which is what lets them be one coin with three
+    /// faces. One function, so the live board's badge (FSeatBadge.mark) and
+    /// the public board's tag (FSeatTag) cannot rank the facts differently.
+    static func worn(saidGood: Bool, isDefender: Bool, isAttacker: Bool,
+                     opensBout: Bool) -> RoleMarkKind? {
+        if saidGood { return .check }
+        if isDefender { return .shield }
+        if isAttacker { return opensBout ? .leadSword : .sword }
+        return nil
+    }
 }
 
 /// One role mark, drawn. The ONE place the kind→view mapping lives, so a badge,
@@ -91,18 +106,26 @@ public enum RoleMarkKind: Equatable, Sendable {
 // (see RulesView.swift for the measurement).
 struct RoleMarkView: View {
     public let kind: RoleMarkKind
-    public init(_ kind: RoleMarkKind) { self.kind = kind }
+    /// Every mark at this fraction of its FRoleMark size. 1 everywhere a seat
+    /// is played at; the public board's seat tags draw them at 0.55
+    /// (FSeatTag.markScale). One knob rather than three sizes, so the family
+    /// shrinks together and a shield can never come out bigger than its sword.
+    public let scale: CGFloat
+    public init(_ kind: RoleMarkKind, scale: CGFloat = 1) {
+        self.kind = kind
+        self.scale = scale
+    }
     public var body: some View {
         switch kind {
-        case .shield: FShield(size: FRoleMark.shield)
-        case .sword:  FSword(size: FRoleMark.sword)
+        case .shield: FShield(size: FRoleMark.shield * scale)
+        case .sword:  FSword(size: FRoleMark.sword * scale)
         // ROUND 20 ("maybe make the first attacker sword have a slight dark red
         // tint to make it a bit special"): the SAME sword, drawn by the same
         // path, with the fill tinted. Not a second glyph - the seat that opens
         // the bout is wearing the same object as everyone else, and a different
         // shape would say it was a different role.
-        case .leadSword: FSword(size: FRoleMark.sword, fill: FRoleInk.lead)
-        case .check:  FCheck(size: FRoleMark.check)
+        case .leadSword: FSword(size: FRoleMark.sword * scale, fill: FRoleInk.lead)
+        case .check:  FCheck(size: FRoleMark.check * scale)
         }
     }
 }
