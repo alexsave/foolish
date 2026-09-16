@@ -80,18 +80,52 @@ def read_frame(p):
 
     top, topm = verify(np.nonzero((cr > 140) & (cg < 90) & (cb < 90))[0], "r")
     bot, _ = verify(np.nonzero((cg > 140) & (cr < 90) & (cb < 90))[0][::-1], "g")
-    # A TOP BUT NO BOTTOM IS NOT A MISSING FRAME - it is the box grown TALLER
-    # THAN THE SCREEN, with its bottom edge and the hand on it pushed off the
-    # bottom. That is the one failure the collapse's `hostLead` exists to
-    # prevent, so it must be reported rather than quietly dropped: scored as a
-    # missing frame it reads as an IMPROVEMENT, because the frames that go
-    # wrong are exactly the ones that stop being counted.
-    if top is not None and bot is None:
-        return {"offscreen": True, "top_pt": round(top / s, 1)}
-    if top is None or bot is None:
+    # ONE BAR MISSING MEANS TWO DIFFERENT THINGS AND ONLY ONE OF THEM IS A BUG.
+    #
+    #   no BOTTOM bar - the box was drawn taller than the screen and its bottom
+    #   edge, with the hand on it, went off below. That is the failure the
+    #   collapse's `hostLead` exists to prevent, and scoring it as a missing
+    #   frame reads it as an improvement, because the frames that go wrong are
+    #   exactly the ones that stop being counted.
+    #
+    #   no TOP bar - the box's top went off above. Under the slide
+    #   (CollapseTween.slideDuration) that is the DESIGN: the box is held at its
+    #   expanded height and translated up, so its top leaves the screen and the
+    #   drawer clips it. Nothing is cut off that anyone can see, and the bottom
+    #   edge - the only one under judgement - is right there in the frame.
+    #
+    # So report whichever bars are there, say which is missing, and leave height
+    # empty when it cannot be known rather than dropping the frame.
+    # OFF THE FRAME IS A POSITION, NOT A GAP. Owner's rule: a bar that has left
+    # the screen is scored at the edge it left by - red at 0, green at the
+    # phone's full height - rather than dropped. Dropping was actively
+    # misleading: the frames where a bar leaves the screen are the worst frames
+    # there are, and a metric that skips them rewards the changes that cause
+    # them. Clamping also keeps every frame in the series, so the frame-to-frame
+    # jerk score has no holes to diff across - a hole reads as one enormous step
+    # that is really just a missing sample.
+    #
+    # The two flags stay, because WHICH bar left still matters: no green is the
+    # hand cut off below the screen, the one failure the collapse's `hostLead`
+    # exists to prevent; no red is the box top above the screen, which under the
+    # slide is the design and is clipped by the drawer.
+    if top is None and bot is None:
         return None
-    out = {"top_pt": round(top / s, 1), "bot_pt": round(bot / s, 1),
-           "h_pt": round((bot - top) / s, 1)}
+    screen_pt = h / s
+    out = {}
+    if top is None:
+        out["topoff"] = True
+        out["top_pt"] = 0.0
+    if bot is None:
+        out["offscreen"] = True
+        out["bot_pt"] = round(screen_pt, 1)
+    if bot is not None:
+        out["bot_pt"] = round(bot / s, 1)
+    if top is None:
+        out["h_pt"] = round(out["bot_pt"], 1)
+        return out
+    out["top_pt"] = round(top / s, 1)
+    out["h_pt"] = round(out["bot_pt"] - out["top_pt"], 1)
     # The box's own left edge, off the bar we just verified.
     xs_ = np.nonzero(topm)[0]
     bx = int(xs_[0]) if len(xs_) else 0
@@ -145,7 +179,8 @@ def main():
         t = times[i] if i < len(times) else (times[-1] if times else i / 60.0)
         rows.append((i + 1, t, m))
     off = [r for r in rows if r[2] and r[2].get("offscreen")]
-    seen = [r for r in rows if r[2] and not r[2].get("offscreen")]
+    topoff = [r for r in rows if r[2] and r[2].get("topoff")]
+    seen = [r for r in rows if r[2] and "h_pt" in r[2]]
     if not seen:
         print("NO RULER IN ANY FRAME - is `rig.sh ruler on` set, and is this a DEBUG build?",
               file=sys.stderr)
@@ -154,19 +189,24 @@ def main():
     t0 = seen[0][1]
     if a.csv:
         with open(a.csv, "w") as fh:
-            fh.write("frame,t,offset,top_pt,bot_pt,h_pt,pitch_pt,clock_ms,offscreen\n")
+            fh.write("frame,t,offset,top_pt,bot_pt,h_pt,pitch_pt,clock_ms,offscreen,topoff\n")
             for n, t, m in rows:
                 m = m or {}
-                fh.write("%d,%.4f,%.4f,%s,%s,%s,%s,%s,%s\n" % (
+                fh.write("%d,%.4f,%.4f,%s,%s,%s,%s,%s,%s,%s\n" % (
                     n, t, t - t0, m.get("top_pt", ""), m.get("bot_pt", ""),
                     m.get("h_pt", ""), m.get("pitch_pt", ""),
                     m.get("clock_ms", m.get("clock", "")),
-                    "1" if m.get("offscreen") else ""))
+                    "1" if m.get("offscreen") else "",
+                    "1" if m.get("topoff") else ""))
     if not a.quiet:
         print("%-5s %8s %9s %9s %9s %7s  %s" % ("f", "+off", "top", "bot", "height", "pitch", "clock"))
         for n, t, m in rows:
             if m and m.get("offscreen"):
                 print("%-5d %8.3f %9.1f   BOTTOM EDGE OFF SCREEN" % (n, t - t0, m["top_pt"]))
+                continue
+            if m and m.get("topoff"):
+                print("%-5d %8.3f %9s %9.1f   (top above the screen)"
+                      % (n, t - t0, "-", m["bot_pt"]))
                 continue
             if not m:
                 print("%-5d %8.3f   (no ruler)" % (n, t - t0)); continue
@@ -195,6 +235,9 @@ def main():
     cl = [(i, m.get("clock"), m["h_pt"]) for i, (_, _, m) in enumerate(seen)]
     stale = sum(1 for i in range(1, len(cl))
                 if cl[i][1] is not None and cl[i][1] == cl[i - 1][1] and cl[i][2] != cl[i - 1][2])
+    if topoff:
+        print("top off   %d frame(s) had the box top above the screen (the slide "
+              "does this by design; the drawer clips it)" % len(topoff))
     if off:
         print("!! OFF SCREEN: %d frame(s) drew the box taller than the screen - "
               "its bottom edge, and the hand on it, were cut off." % len(off))

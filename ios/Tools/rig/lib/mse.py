@@ -45,43 +45,67 @@ GRID = 1.0 / 60.0     # the display's own rate; takes are filmed at it
 
 
 def load(path):
-    """One take: (t, bot, n_offscreen) with t=0 at the last still frame."""
-    ts, bots, hs, nobot = [], [], [], 0
+    """One take: (t, bot) with t=0 at the last still frame before motion."""
+    ts, bots, tops, clamped, nobot = [], [], [], [], 0
+    anchor = []          # what says "this frame is moving" - see below
     with open(path) as fh:
         head = fh.readline().strip().split(",")
         it, ib, ih = head.index("offset"), head.index("bot_pt"), head.index("h_pt")
+        itp = head.index("top_pt")
         io = head.index("offscreen") if "offscreen" in head else None
+        ioff = io if io is not None else 0
+        itoff = head.index("topoff") if "topoff" in head else None
         for line in fh:
             f = line.rstrip("\n").split(",")
+            # A frame with a TOP but no BOTTOM is the box drawn taller than the
+            # screen - the bottom edge and the hand on it cut off. It must be
+            # counted, not skipped: dropping it turns the worst frames into no
+            # frames, and a change that causes MORE of them scores as an
+            # improvement. A frame with a BOTTOM but no top is the opposite and
+            # is not a defect at all (the slide puts the box top above the
+            # screen on purpose), so it is scored normally.
             if not f[ib]:
-                # A frame with a TOP but no bottom is the box drawn taller than
-                # the screen - the bottom edge and the hand cut off. It must be
-                # counted, not skipped: dropping it turns the worst frames into
-                # no frames, and a change that causes MORE of them scores as an
-                # improvement. Takes filmed before tween.py flagged these have
-                # no column, so anything unreadable counts.
-                if io is None or f[io].strip() == "1" or not f[3]:
+                if (io is not None and f[io].strip() == "1") or (io is None and not f[ib]):
                     nobot += 1
                 continue
-            ts.append(float(f[it])); bots.append(float(f[ib])); hs.append(float(f[ih]))
+            ts.append(float(f[it])); bots.append(float(f[ib]))
+            tops.append(float(f[itp]) if f[itp] else float("nan"))
+            # A CLAMPED SAMPLE IS A POSITION, NOT A STEP. Off-frame bars are
+            # scored at the edge they left by (tween.py), which is right for
+            # "where was it" and wrong for "how far did it move since last
+            # frame": the bar slides off gradually and the clamp is what makes
+            # that look instant. Filmed, 2 clamped frames out of 173 invented
+            # two ~300pt steps worth 208k of a 222k jerk score whose every real
+            # step summed to about 14k. So jerk skips any step with a clamped
+            # end, and says how many it skipped.
+            clamped.append(f[ioff].strip() == "1" or
+                           (itoff is not None and f[itoff].strip() == "1"))
+            # THE MOTION ANCHOR IS THE TOP EDGE, not the height. Height needs
+            # both bars, and the slide deliberately loses the top one partway
+            # through - anchoring on height there finds the motion starting late
+            # or not at all. The top edge travels 500pt in both designs and is
+            # present at the start of both, which is all the anchor needs.
+            anchor.append(float(f[itp]) if f[itp] else
+                          (float(f[ih]) if f[ih] else float(f[ib])))
     if len(ts) < 4:
         return None
-    t = np.array(ts); b = np.array(bots); h = np.array(hs)
-    load.offscreen = getattr(load, "offscreen", 0) + nobot
-    # Motion starts on the first frame whose HEIGHT differs from the still lead.
-    # Height, not bottom: the bottom edge's first move is small enough to be a
-    # rounding step, while the top edge travels 500pt and cannot be mistaken.
-    mv = np.nonzero(h != h[0])[0]
+    t = np.array(ts); b = np.array(bots); a_ = np.array(anchor)
+    load.tops = getattr(load, "tops", []) + [(np.array(ts), np.array(tops),
+                                              np.array(clamped))]
+    mv = np.nonzero(a_ != a_[0])[0]
     if not len(mv):
         return None
     t0 = t[mv[0] - 1] if mv[0] else t[0]
-    return t - t0, b
+    load.offscreen = getattr(load, "offscreen", 0) + nobot
+    load.tops[-1] = (load.tops[-1][0] - t0, load.tops[-1][1], load.tops[-1][2])
+    load.clamped = getattr(load, "clamped", 0) + int(np.sum(clamped))
+    return t - t0, b, np.array(clamped)
 
 
 def grid_of(takes, span):
     g = np.arange(0.0, span + GRID / 2, GRID)
     out = []
-    for t, b in takes:
+    for t, b, _c in takes:
         # Hold the last known value past the end of a short take rather than
         # extrapolating: the edge really is parked there.
         out.append(np.interp(g, t, b, left=b[0], right=b[-1]))
@@ -106,6 +130,8 @@ def main():
     for p in a.csv:
         paths += sorted(glob.glob(p)) if any(c in p for c in "*?[") else [p]
     load.offscreen = 0
+    load.clamped = 0
+    load.tops = []
     takes, kept = [], []
     for p in paths:
         r = load(p)
@@ -139,12 +165,35 @@ def main():
     # alternation IS at that rate, so resampling to 60 would alias exactly the
     # thing being counted.
     jd = []
-    for t, b in takes:
+    for t, b, _c in takes:
         w = b[(t >= 0) & (t <= a.span)]
         if len(w) > 2:
             jd.append(np.abs(np.diff(w)))
     jud = float(np.mean([x.mean() for x in jd])) if jd else 0.0
     jmax = float(max(x.max() for x in jd)) if jd else 0.0
+
+    # JERK: the owner's second measure - every frame-to-frame step of a bar,
+    # squared, summed. It asks a different question from the MSE above. The MSE
+    # asks "was the edge where it belongs"; this asks "did it get there in one
+    # motion", and a sum of squares is the right shape for that because it is
+    # dominated by the big steps - one 30pt lurch costs as much as nine 10pt
+    # ones. A bar that must travel 500pt cannot score zero, so it is only
+    # comparable BETWEEN designs whose bars travel the same distance, which
+    # every collapse on one device does.
+    def jerk(series):
+        out, skipped = [], 0
+        for tt, yy, cl in series:
+            m = (tt >= 0) & (tt <= a.span)
+            w, c = yy[m], cl[m]
+            if len(w) < 3:
+                continue
+            d = np.diff(w)
+            keep = ~(c[1:] | c[:-1]) & ~np.isnan(d)
+            skipped += int((~keep).sum())
+            out.append(float((d[keep] ** 2).sum()))
+        return (float(np.mean(out)) if out else float("nan")), skipped
+    jerk_g, skip_g = jerk([(t_, b_, c_) for t_, b_, c_ in takes])
+    jerk_r, skip_r = jerk(load.tops)
 
     peak_i = int(np.argmax(mean_e))
     name = a.label or os.path.basename(os.path.dirname(kept[0]))
@@ -166,6 +215,10 @@ def main():
     print("  spread %.1f   (mean of each take's own MSE; a gap here means the "
           "takes disagree)" % mean_of_mse)
     print("  worst  %.1f   best %.1f" % (per_take.max(), per_take.min()))
+    print("jerk     green %.0f   red %.0f   <- sum of squared frame-to-frame "
+          "steps, per take%s" % (jerk_g, jerk_r,
+          "" if not (skip_g + skip_r) else
+          "  (%d step(s) skipped at an off-frame bar)" % (skip_g + skip_r)))
     print("judder   %.2f pt mean frame-to-frame move of the bottom edge "
           "(max %.1f) - phase-blind, so it sees what the mean cancels"
           % (jud, jmax))
@@ -174,7 +227,8 @@ def main():
         json.dump({"name": name, "takes": len(takes), "mse": mse,
                    "mean_of_take_mse": mean_of_mse, "peak_pt": float(mean_e[peak_i]),
                    "peak_ms": float(g[peak_i] * 1000),
-                   "judder": jud, "judder_max": jmax, "offscreen": load.offscreen, "rest": rest, "final": final,
+                   "judder": jud, "judder_max": jmax, "offscreen": load.offscreen,
+                   "jerk_green": jerk_g, "jerk_red": jerk_r, "rest": rest, "final": final,
                    "lo": a.lo, "hi": a.hi,
                    "curve": [[float(x), float(y)] for x, y in zip(g, mean_e)],
                    "bottom": [[float(x), float(y)] for x, y in zip(g, B.mean(axis=0))]},

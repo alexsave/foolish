@@ -319,6 +319,10 @@ public enum MessageDevBoard {
         public var lead = CollapseTween.hostLead
         public var hz = CollapseTween.driveHz
         public var response = CollapseTween.hostResponse
+        /// Carry the collapse on the layer instead of on the timer - see
+        /// `CollapseTween.slideDuration`. A knob so both paths can be filmed
+        /// on one build and scored against each other.
+        public var slide = false
     }
     public static let collapseKnobs: CollapseKnobs = {
         var k = CollapseKnobs()
@@ -334,6 +338,7 @@ public enum MessageDevBoard {
             case "lead": k.lead = v
             case "hz": k.hz = v
             case "resp": k.response = v
+            case "slide": k.slide = v != 0
             default: break
             }
         }

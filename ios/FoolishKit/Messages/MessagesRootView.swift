@@ -85,6 +85,13 @@ public struct MessagesRootView: View {
     let chatIsDM: Bool
     let chatPlayers: Int
     let requestExpand: () -> Void
+    /// THE SLIDE (see `CollapseTween.slideDuration`): hand the collapse to the
+    /// layer. Called with the box's travel and how long it takes; the second
+    /// closure takes it back off again. Closures rather than a plumbed layer
+    /// because the layer belongs to the hosting controller and this is the view
+    /// inside it - the same shape, and for the same reason, as `requestExpand`.
+    let slideCollapse: (CGFloat, Double) -> Void
+    let endSlide: () -> Void
     /// Is the HOST's sheet expanded, right now? A live read of
     /// `MSMessagesAppViewController.presentationStyle`, not the `style` prop -
     /// see `NameFieldAutofocus`, the only thing that asks.
@@ -138,6 +145,8 @@ public struct MessagesRootView: View {
                 incomingURL: URL? = nil, incomingToken: Int = 0, cancelToken: Int = 0,
                 collapseSignal: CollapseSignal = CollapseSignal(),
                 requestExpand: @escaping () -> Void,
+                slideCollapse: @escaping (CGFloat, Double) -> Void = { _, _ in },
+                endSlide: @escaping () -> Void = {},
                 hostIsExpanded: @escaping () -> Bool = { false },
                 onNewGame: @escaping () -> Void,
                 onFreshChain: @escaping () -> Void = {},
@@ -152,6 +161,7 @@ public struct MessagesRootView: View {
         self.incomingURL = incomingURL; self.incomingToken = incomingToken
         self.cancelToken = cancelToken; self.collapseSignal = collapseSignal
         self.requestExpand = requestExpand; self.hostIsExpanded = hostIsExpanded
+        self.slideCollapse = slideCollapse; self.endSlide = endSlide
         self.onNewGame = onNewGame
         self.onFreshChain = onFreshChain; self.onAnnounceLeave = onAnnounceLeave
         self.onSend = onSend
@@ -206,6 +216,17 @@ public struct MessagesRootView: View {
     /// CollapseTween's file note for the three filmed reasons. `@State` so it
     /// survives the body re-evaluations its own ticks cause.
     @State private var driver = CollapseDriver()
+    /// The slide's own release, so a second collapse cannot be released by the
+    /// first one's timer - the driver has `stop()` for the same job.
+    @State private var slideRelease: Task<Void, Never>?
+    /// How much wool to draw above the sliding box: the drawer is still its
+    /// expanded height while the compact box is parked at the bottom of it, and
+    /// everything between the two has to be table rather than the host's flat
+    /// fallback colour. Zero when no slide is running.
+    @State private var slideWool: CGFloat = 0
+    /// What the layer animation currently has the board pushed down by, so the
+    /// red group can offset itself back up by it - see CollapseSlide.
+    @State private var slideOffset: CGFloat = 0
     /// The previous geometry height, to spot the collapse flip's down-snap.
     @State private var lastGeoHeight: CGFloat = 0
     /// Where the collapse tween is currently headed. Meaningless unless
@@ -321,12 +342,13 @@ public struct MessagesRootView: View {
     /// purpose - CollapseTweenTests reads the first 1200 characters of that case
     /// looking for the release, so anything added inside it can push the release
     /// out of the window and fail a test that is about something else entirely.
-    private static var collapseKnobs: (lead: Double, hz: Double, response: Double) {
+    private static var collapseKnobs: (lead: Double, hz: Double, response: Double, slide: Bool) {
         #if DEBUG || SOLO_TESTING
         let k = MessageDevBoard.collapseKnobs
-        return (k.lead, k.hz, k.response)
+        return (k.lead, k.hz, k.response, k.slide)
         #else
-        return (CollapseTween.hostLead, CollapseTween.driveHz, CollapseTween.hostResponse)
+        return (CollapseTween.hostLead, CollapseTween.driveHz, CollapseTween.hostResponse,
+                CollapseTween.slideByDefault)
         #endif
     }
 
@@ -349,6 +371,46 @@ public struct MessagesRootView: View {
             // The host's own curve on a clock, not a SwiftUI animation (why:
             // CollapseTween's note). Animations off: the tick IS the animation.
             let k = Self.collapseKnobs
+            // THE SLIDE: pin the box and let the layer carry the motion, so the
+            // frames we never render are still in the right place. Releases
+            // through the same re-measure nudge as the driver does.
+            if k.slide {
+                // THE DESTINATION, laid out once and moved - not the origin,
+                // held and slid away. See `CollapseTween.slideOffsets`.
+                boxHeight = to
+                slideWool = from
+                slideOffset = from - to
+                slideCollapse(from - to, CollapseTween.slideDuration)
+                // The same curve again, in ordinary SwiftUI state, for the red
+                // group to cancel itself back out with - CollapseSlide says why
+                // that one is allowed to be a frame late.
+                driver.start(from: from - to, to: 0, lead: 0, hz: k.hz,
+                             response: k.response, duration: CollapseTween.slideDuration,
+                             tick: { v in
+                                 var tx = Transaction()
+                                 tx.disablesAnimations = true
+                                 withTransaction(tx) { slideOffset = v }
+                             }, onDone: {})
+                slideRelease?.cancel()
+                slideRelease = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds:
+                        UInt64(CollapseTween.slideDuration * 1_000_000_000))
+                    guard !Task.isCancelled else { return }
+                    collapsing = false
+                    CollapseTween.isTweening = false
+                    // ONE TURN, both of them. The box rectangle is identical
+                    // either way round - expanded height translated up by its own
+                    // travel is the compact height in place - so what changes here
+                    // is the content inside it, not where it is. Split across two
+                    // turns it is a 535pt jump for one frame.
+                    driver.stop()
+                    slideOffset = 0
+                    endSlide()
+                    slideWool = 0
+                    await handBackToModel()
+                }
+                return
+            }
             driver.start(from: from, to: to, lead: k.lead, hz: k.hz, response: k.response,
                          tick: { h in
                              var tx = Transaction()
@@ -370,6 +432,13 @@ public struct MessagesRootView: View {
             break
         case .follow:
             driver.stop()
+            // A manual drag mid-collapse takes the box back, and it has to take
+            // the layer back with it - a translation left running would slide a
+            // box the grabber is now placing by hand.
+            slideRelease?.cancel(); slideRelease = nil
+            endSlide()
+            slideWool = 0
+            slideOffset = 0
             boxHeight = 0
         }
     }
@@ -444,8 +513,9 @@ public struct MessagesRootView: View {
                 // rest the box is the model and this is a no-op.
                 .background(alignment: .top) {
                     TableBackground()
-                        .frame(height: (boxHeight > 0 ? boxHeight : geo.size.height)
-                                       + (collapsing ? CollapseTween.woolOverhang : 0))
+                        .frame(height: max(slideWool,
+                                           (boxHeight > 0 ? boxHeight : geo.size.height)
+                                           + (collapsing ? CollapseTween.woolOverhang : 0)))
                 }
                 // The debug ruler (`dev.ruler`, DEBUG only, otherwise an
                 // EmptyView) - on the SIZED BOX, so a filmed frame reports
@@ -466,6 +536,7 @@ public struct MessagesRootView: View {
                 // view's own GeometryReader reports its own box, and a name
                 // field's box is 34pt tall whatever the drawer is doing.
                 .environment(\.surfaceHeight, geo.size.height)
+                .environment(\.collapseSlide, slideOffset)
                 .environment(\.hostIsExpanded, hostIsExpanded)
                 // The host is about to request .compact - see `follow`.
                 // Round-10d: the host arms us and requests .compact in the

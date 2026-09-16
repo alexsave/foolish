@@ -64,6 +64,10 @@ public struct MessageTableView: View {
     // Drag-to-play state (frames published by FBattleGrid/FHandFan in `boardSpace`).
     @State private var battleFrames: [Int: CGRect] = [:]
     @State private var handFrame: CGRect = .zero
+    /// The collapse's layer slide, to be taken back OFF the red group - see
+    /// CollapseSlide. Zero whenever no auto-collapse is running, so every one
+    /// of the offsets below is `.offset(y: 0)` at every other moment.
+    @Environment(\.collapseSlide) private var collapseSlide
     @State private var dragCard: Card?
     /// notes 33/34: the drag's live point in `boardSpace`, kept (FHandFan
     /// already delivers it on every `onDragChanged`, previously discarded)
@@ -1221,6 +1225,7 @@ public struct MessageTableView: View {
                 // centre deliberately, not by omission.
                 battlesArea(view)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .offset(y: -collapseSlide)
 
                 // Opponent ring — each seat placed by trig on a 35% ellipse. The
                 // local player is visual-index 0 (bottom edge) and is drawn as the
@@ -1228,6 +1233,7 @@ public struct MessageTableView: View {
                 ForEach(view.players.filter { $0.seat != controller.mySeat }) { p in
                     opponentSeat(p, view)
                         .position(ringPoint(seat: p.seat, n: view.players.count, in: geo.size))
+                        .offset(y: -collapseSlide)
                 }
 
                 // Deck top-left, discard top-right — pinned to the corners and OUT
@@ -1243,6 +1249,7 @@ public struct MessageTableView: View {
                     // small symmetric inset (note 14), so no per-call-site
                     // compensation offset is needed here anymore.
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .offset(y: -collapseSlide)
                 // Note 10: the discard pile shares the draw deck's y-baseline —
                 // the centre of the deck's BOTTOM card (FDeckWell's fixed
                 // anchor, see its type doc) must land on the centre of the
@@ -1261,6 +1268,7 @@ public struct MessageTableView: View {
                 FDiscardPile(count: shownDiscardCount(view))
                     .offset(y: -3)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .offset(y: -collapseSlide)
 
                 // NO SELF ROLE INDICATOR HERE. It used to be the next child of
                 // this ZStack, at `lift + 6`; round 41 ("a status icon is always
