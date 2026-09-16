@@ -45,6 +45,31 @@ public struct MessageBoardView: View {
         return view.battles.isEmpty ? seat == view.firstAttacker : true
     }
 
+    // WHY A CHECK IS RARE IN THE BUBBLE, and why that is not a bug.
+    //
+    // Round 47, owner: "why do only swords and shields show up in the bubble
+    // preview. We should see checkboxes as well."
+    //
+    // Nothing here is missing. `goodMask` survives the wire into the view
+    // (MaskedView), this passes it as `saidGood`, and `FSeatBadge.mark` returns
+    // `.check` for it ahead of every other mark. What is rare is the STATE.
+    //
+    // A bubble is baked from the board AFTER the move it carries, and
+    // `good_players_mask` is cleared by two of the moves that can be in one:
+    // every attack resets it (game.c:760, a new card on the table reopens the
+    // question) and the end of a bout clears it with the table (game.c:863).
+    // Saying good is the only thing that SETS it. So in a two-player game the
+    // lone attacker's good always ends the bout and clears the mask on the same
+    // move, and the picture is a table where nobody has said good - correctly.
+    //
+    // It shows from three seats up, where one attacker can say good while
+    // another has not: the bout does not end, the mask stands, and that seat
+    // wears its check in the bubble. Filmed on the live board at eight seats.
+    //
+    // So a bubble that shows a check for a two-player good would have to depict
+    // the state BEFORE the settlement it is announcing, which is a different
+    // picture from the one every other bubble draws.
+
     public var body: some View {
         // Same grammar as the live board (MessageTableView): deck pinned top-left,
         // discard top-right, seats ringed on a 35% ellipse, battles dead-centre -
