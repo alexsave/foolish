@@ -133,6 +133,16 @@ final class BubbleBoardTests: XCTestCase {
         XCTAssertEqual(PublicBoardLayout.cornerScale(n: 8, in: bubble), PublicBoardLayout.scaleFloor,
                        accuracy: 0.001, "eight seats: the floor")
         XCTAssertEqual(PublicBoardLayout.cornerScale(n: 2, in: drawer), 1)
+        // The owner asked for a bigger trump indicator. Three seats put two
+        // tags on the top row, spread so the corners keep 67pt (the discard
+        // pile's width is what stops at 0.85); four seats have side seats
+        // below the middle (`sideY`), so the well is held only by its
+        // height, and at 0.9 its flipped card is still wide enough for
+        // FCard's full face and the short peek (FDeckWell.peek), so the
+        // whole well fits above them. The first cut had every count from
+        // three up at the 0.6 floor.
+        XCTAssertEqual(PublicBoardLayout.cornerScale(n: 3, in: bubble), 0.85, accuracy: 0.001)
+        XCTAssertEqual(PublicBoardLayout.cornerScale(n: 4, in: bubble), 0.9, accuracy: 0.001)
     }
 
     /// The deck's COUNT is never under the balloon's app icon, at any count.
@@ -288,9 +298,13 @@ final class BubbleBoardTests: XCTestCase {
     // MARK: Pixels
 
     /// Bone name ink (FColor.textPrimary 0xEDE9DF), with a little room for
-    /// the antialiased edge.
+    /// the antialiased edge - and NOT the count chip's pure white: bone is
+    /// warm, its red 14 above its blue, and white is neither. A first cut
+    /// took white too, and with the ring selected (`tags=0`) the old badge's
+    /// fan put a white "6" in the band where the top seat's name should be,
+    /// so the test that exists to notice the name was missing did not.
     private static func isBone(_ r: UInt8, _ g: UInt8, _ b: UInt8) -> Bool {
-        r > 215 && g > 210 && b > 195 && r >= b
+        r > 205 && g > 200 && b > 175 && Int(r) - Int(b) >= 8 && Int(r) - Int(b) <= 40
     }
     /// The count chip's white digits.
     private static func isWhite(_ r: UInt8, _ g: UInt8, _ b: UInt8) -> Bool {

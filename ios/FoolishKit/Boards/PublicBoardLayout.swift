@@ -13,22 +13,62 @@
 // --twocover 8, September 2026). Nothing was wrong with any one piece; there
 // was no arrangement of full-size pieces that fit.
 //
-// So the public board places SEAT TAGS (FSeatTag, 58x40: a name over one
+// So the public board places SEAT TAGS (FSeatTag, 62x40: a name over one
 // landscape card back carrying the count, the role mark beside it) at fixed
 // STATIONS round the table's edge, and shrinks the two corner pieces and the
 // battle cluster only as far as those tags require. Everything is derived
 // from the sizes the components themselves publish, so a component that grows
 // a point moves the arithmetic with it rather than silently overlapping.
+//
+// The ring is still here (`ringPoint`), one switch away (`tagsByDefault`).
 
 import CoreGraphics
 import Foundation
 
 enum PublicBoardLayout {
+    // MARK: The switch
+
+    /// Whether the public board draws seat TAGS at stations (the rest of this
+    /// file) or the live board's ring of full badges (`ringPoint`). ON: the
+    /// tags are what the owner is reviewing, and a feature behind an OFF flag
+    /// is never actually looked at (build 70 shipped the collapse that way and
+    /// bounced on a real device). The DEBUG knob `tags=0` in `dev.board`
+    /// selects the ring on the rig, so both pictures come off one build;
+    /// `MessageDevBoard.BoardKnobs` reads its default from HERE, so a debug
+    /// install and a release one cannot disagree about which board is the
+    /// product.
+    public static let tagsByDefault = true
+
+    /// The path THIS build draws: the knob file in DEBUG, the constant in
+    /// Release - the same shape as MessagesRootView's `collapseKnobs`.
+    static var tagsOn: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.boardKnobs.tags
+        #else
+        return tagsByDefault
+        #endif
+    }
+
+    /// The live board's ring, as this board drew it before the tags: a seat's
+    /// centre on a 35% ellipse (web PlayerRing), seat 0 at the bottom, the
+    /// rest clockwise. The twin of MessageTableView.ringPoint's spectator
+    /// case at its expanded height. Kept whole so the knob can select it.
+    static func ringPoint(seat: Int, n: Int, in size: CGSize) -> CGPoint {
+        let rad = 2 * Double.pi * Double(seat) / Double(max(n, 1))
+        return CGPoint(x: (-sin(rad) * 0.35 + 0.5) * size.width,
+                       y: ( cos(rad) * 0.35 + 0.5) * size.height)
+    }
+
+    // MARK: Stations
+
     /// The eight places a seat can sit, clockwise from the bottom - the order a
     /// turn comes round the table in, and the same direction the live board's
     /// ring runs (seat 1 is to the LEFT of seat 0).
     enum Station: Int, CaseIterable {
         case bottom = 0, bottomLeft, left, topLeft, top, topRight, right, bottomRight
+
+        var inTopRow: Bool { self == .topLeft || self == .top || self == .topRight }
+        var inBottomRow: Bool { self == .bottomLeft || self == .bottom || self == .bottomRight }
     }
 
     /// Which station each seat takes at a table of `n`. Seat 0 is always the
@@ -46,38 +86,54 @@ enum PublicBoardLayout {
     }
 
     /// One seat tag's footprint (FSeatTag draws inside exactly this box): the
-    /// card, 2pt, and the mark box, under a name no wider than that.
-    static let tagSize = CGSize(width: 58, height: 40)
+    /// card (36), 2pt, and the mark box (24), under a name no wider than that.
+    static let tagSize = CGSize(width: 62, height: 40)
 
-    /// How far the outer tags of a top or bottom row sit from the centre line.
-    /// 62 leaves 4pt between neighbouring 58pt tags and 51pt in each corner,
-    /// which is what the corner pieces need at `scaleFloor`: the discard pile
-    /// is 78 x 0.6 = 46.8 wide, and the deck well 74 x 0.6 = 44.4 plus the
-    /// 6pt it slides right to clear the balloon's icon (`deckSlide`). Two
-    /// earlier values were wrong by a point or two each - 66 on the deck's
-    /// number alone put the discard 1.8pt under the top-right tag - and it
-    /// was the geometry test, not the picture, that said so.
-    static let rowSpread: CGFloat = 62
+    /// How far the outer tags of a top or bottom row sit from the centre
+    /// line, by how many tags share the row.
+    ///
+    /// THREE (six and eight seats): 64, which is 2pt between neighbouring
+    /// 62pt tags and 47pt in each corner - what the corner pieces need at
+    /// `scaleFloor`: the discard pile is 78 x 0.6 = 46.8 wide, the deck well
+    /// 74 x 0.6 = 44.4. Two earlier values were wrong by a point or two each
+    /// (66 put the discard 1.8pt under the top-right tag) and it was the
+    /// geometry test, not the picture, that said so.
+    ///
+    /// TWO (three, five and seven seats): 44, which leaves 26pt between the
+    /// pair and 67pt in each corner, so the deck well can stay at 0.85 when
+    /// nothing else holds it down.
+    static func rowSpread(tagsInRow: Int) -> CGFloat { tagsInRow >= 3 ? 64 : 44 }
 
-    static func seatPoint(station: Station, in size: CGSize) -> CGPoint {
-        let cx = size.width / 2, cy = size.height / 2
+    /// Where the side stations sit, as a fraction of the height: below the
+    /// middle, so the corner pieces above them get 91pt of the 179 instead of
+    /// 69.5 - which is what lets a four-seat bubble keep its well at 0.7 with
+    /// the thin flipped card peeking far enough to show its rank
+    /// (FDeckWell.peek). The seat still reads as the side of the table, and
+    /// its tag ends 7pt above the bottom row.
+    static let sideY: CGFloat = 0.62
+
+    static func seatPoint(station: Station, topRow: Int, bottomRow: Int, in size: CGSize) -> CGPoint {
+        let cx = size.width / 2
         let hw = tagSize.width / 2, hh = tagSize.height / 2
+        let top = rowSpread(tagsInRow: topRow), bottom = rowSpread(tagsInRow: bottomRow)
         switch station {
         case .bottom:      return CGPoint(x: cx, y: size.height - hh)
-        case .bottomLeft:  return CGPoint(x: cx - rowSpread, y: size.height - hh)
-        case .left:        return CGPoint(x: hw, y: cy)
-        case .topLeft:     return CGPoint(x: cx - rowSpread, y: hh)
+        case .bottomLeft:  return CGPoint(x: cx - bottom, y: size.height - hh)
+        case .left:        return CGPoint(x: hw, y: size.height * sideY)
+        case .topLeft:     return CGPoint(x: cx - top, y: hh)
         case .top:         return CGPoint(x: cx, y: hh)
-        case .topRight:    return CGPoint(x: cx + rowSpread, y: hh)
-        case .right:       return CGPoint(x: size.width - hw, y: cy)
-        case .bottomRight: return CGPoint(x: cx + rowSpread, y: size.height - hh)
+        case .topRight:    return CGPoint(x: cx + top, y: hh)
+        case .right:       return CGPoint(x: size.width - hw, y: size.height * sideY)
+        case .bottomRight: return CGPoint(x: cx + bottom, y: size.height - hh)
         }
     }
 
     static func seatPoint(seat: Int, n: Int, in size: CGSize) -> CGPoint {
         let list = stations(n: n)
         let station = seat >= 0 && seat < list.count ? list[seat] : .bottom
-        return seatPoint(station: station, in: size)
+        return seatPoint(station: station,
+                         topRow: list.filter(\.inTopRow).count,
+                         bottomRow: list.filter(\.inBottomRow).count, in: size)
     }
 
     static func seatRect(seat: Int, n: Int, in size: CGSize) -> CGRect {
@@ -108,21 +164,24 @@ enum PublicBoardLayout {
     static let balloonIconCentre = CGPoint(x: 11, y: 11)
     static let balloonIconRadius: CGFloat = 14
 
-    /// How far the deck well slides, right and down, at `scale`: nothing at
-    /// full size, (6, 12) at the floor - enough to carry the count out from
-    /// under the balloon's icon (`deckCountCentre`) and no more, because the
-    /// top-left seat tag starts 51pt in and the left one 69.5pt down.
+    /// How far the deck well slides DOWN at `scale`: nothing at full size,
+    /// 14pt at the floor - the least that carries the count out from under
+    /// the balloon's icon (`deckCountCentre`, 21.6pt from its centre against
+    /// the 21 the test demands), so the well's bottom stays clear of the
+    /// side seats at `sideY`. Straight down and not diagonally, because the
+    /// width is the scarce direction: the corner beside a three-tag row is
+    /// 47pt and the well at the floor is 44.4 of it.
     static func deckSlide(scale: CGFloat) -> CGPoint {
-        CGPoint(x: 15 * (1 - scale), y: 30 * (1 - scale))
+        CGPoint(x: 0, y: 35 * (1 - scale))
     }
 
-    /// The deck well's ink at `scale`, scaled about the board's top-left
-    /// corner (where FDeckWell anchors every state) and then slid.
+    /// The deck well's ink at `scale` (FDeckWell.inkFootprint, which is not a
+    /// constant times the scale: a thin flipped card peeks out further),
+    /// anchored at the board's top-left corner and then slid.
     static func deckRect(scale: CGFloat) -> CGRect {
         let slide = deckSlide(scale: scale)
-        return CGRect(x: slide.x, y: slide.y,
-                      width: FDeckWell.inkFootprint.width * scale,
-                      height: FDeckWell.inkFootprint.height * scale)
+        let ink = FDeckWell.inkFootprint(scale: scale)
+        return CGRect(x: slide.x, y: slide.y, width: ink.width, height: ink.height)
     }
 
     /// Where the deck's count chip lands at `scale`, for the icon check.

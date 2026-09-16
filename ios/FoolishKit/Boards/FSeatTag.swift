@@ -35,16 +35,19 @@ struct FSeatTag: View {
 
     /// The whole tag, and the box PublicBoardLayout reserves for it.
     static let size = PublicBoardLayout.tagSize
-    /// The one card back, portrait before it is laid on its side: 24x34 is
+    /// The one card back, portrait before it is laid on its side: 25x36 is
     /// the deck well's 46x66 at just over half, and lands the count chip's
-    /// 13pt digits on a 34pt-wide face with air either side of "12".
-    static let cardSize = CGSize(width: 24, height: 34)
-    /// The marks at 0.55 of FRoleMark - sword 22, shield 18, check 14 - so
-    /// the row stays one line tall and, with the card and 2pt, exactly
-    /// `PublicBoardLayout.tagSize.width`. (0.6 was the first cut; the 4pt it
-    /// cost the corners was what the deck well needed to clear the balloon's
-    /// icon - see PublicBoardLayout.deckSlide.)
-    static let markScale: CGFloat = 0.55
+    /// 15pt digits - the size the live board's badge draws them at - on a
+    /// 36pt-wide face with air either side of "12". (24x34 with 13pt digits
+    /// was the first cut; the owner asked for bigger counts and badges, and
+    /// this is as big as three tags across the top of an eight-seat bubble
+    /// leave room for beside the corner pieces - PublicBoardLayout.rowSpread.)
+    static let cardSize = CGSize(width: 25, height: 36)
+    static let countFont = Font.system(size: 15, weight: .bold)
+    /// The marks at 0.6 of FRoleMark - sword 24, shield 20, check 16 - so the
+    /// row stays one line tall and, with the card and 2pt, exactly
+    /// `PublicBoardLayout.tagSize.width`.
+    static let markScale: CGFloat = 0.6
     static let markBox: CGFloat = FRoleMark.rowHeight * markScale
 
     var body: some View {
@@ -66,7 +69,7 @@ struct FSeatTag: View {
                     if handCount > 0 {
                         FCard(card: nil, backSeed: 7, size: Self.cardSize)
                             .rotationEffect(.degrees(90))
-                        FCountChip("\(handCount)", font: .system(size: 13, weight: .bold))
+                        FCountChip("\(handCount)", font: Self.countFont)
                     }
                 }
                 // The rotated card's visual box; `rotationEffect` leaves the

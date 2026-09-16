@@ -39,10 +39,19 @@ public struct FBattleGrid: View {
     /// board, MessageBoardView, the snapshot tests) tilts a covered pair exactly
     /// as before.
     public let flyingNow: Set<String>
+    /// Every dimension - the cards, the slot, both gaps - at this fraction of
+    /// the live board's. 1 on the live board. The public board
+    /// (MessageBoardView) fits a cluster into the room its seat tags leave by
+    /// SIZING the grid, not by transforming it: a `.scaleEffect` thins
+    /// FCard's 1pt edge with everything else, and at 0.55 the owner saw it -
+    /// "card edges look too thin, keep them whatever they are in the game".
+    /// Given a size, FCard draws its edge at `restWidth` like any card.
+    public let scale: CGFloat
 
     public init(battles: [BattleView], trumpSuit: Suit?, coverable: Set<Int> = [],
                 onTapBattle: @escaping (Int) -> Void = { _ in }, namespace: Namespace.ID? = nil,
-                hidden: Set<String> = [], showGhostSlot: Bool = false, flyingNow: Set<String> = []) {
+                hidden: Set<String> = [], showGhostSlot: Bool = false, flyingNow: Set<String> = [],
+                scale: CGFloat = 1) {
         self.battles = battles
         self.trumpSuit = trumpSuit
         self.coverable = coverable
@@ -51,10 +60,11 @@ public struct FBattleGrid: View {
         self.hidden = hidden
         self.showGhostSlot = showGhostSlot
         self.flyingNow = flyingNow
+        self.scale = scale
     }
 
-    private let cardSize = CGSize(width: 50, height: 70)   // web card 50x70
-    private let slot = FBattleGrid.slotSize
+    private var cardSize: CGSize { CGSize(width: 50 * scale, height: 70 * scale) }   // web card 50x70
+    private var slot: CGSize { CGSize(width: Self.slotSize.width * scale, height: Self.slotSize.height * scale) }
     /// One pair's slot (web 60x80, +room to rotate). Static so
     /// `naturalSize(pairs:)` can be asked without a grid to ask.
     static let slotSize = CGSize(width: 62, height: 84)
@@ -76,7 +86,7 @@ public struct FBattleGrid: View {
     /// replay flight (MessageTableView) can rotate a cover ghost INTO exactly
     /// this angle mid-flight (round-6 bug 1) rather than hard-coding a second copy.
     public static let coverAngle: Double = 11.25
-    private let gap = FBattleGrid.columnGap
+    private var gap: CGFloat { Self.columnGap * scale }
     static let columnGap: CGFloat = 10
     // Round-5 M5 ("maybe we do rows of 3 instead of 4?"): deliberately NOT web
     // parity any more. The web's ~4-across assumes its own wider board; this
@@ -98,7 +108,7 @@ public struct FBattleGrid: View {
         // real battle would, wrapping to a new row exactly like a real one would.
         let total = battles.count + (showGhostSlot ? 1 : 0)
         let rows = stride(from: 0, to: total, by: perRow).map { Array($0..<min($0 + perRow, total)) }
-        VStack(spacing: Self.rowGap) {
+        VStack(spacing: Self.rowGap * scale) {
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                 HStack(spacing: gap) {
                     ForEach(row, id: \.self) { idx in

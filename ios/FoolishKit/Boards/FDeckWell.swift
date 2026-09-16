@@ -37,13 +37,24 @@ public struct FDeckWell: View {
     public let hasFlipped: Bool
     public let trumpSuit: Suit?
     public var backSeed: UInt64
+    /// The well at a fraction of the live board's size: the cards, the inset,
+    /// the peek, the bare glyph and the frame all scale together, so the
+    /// picture is the same well seen from further away - but SIZED, not
+    /// transformed, so every card keeps FCard's 1pt edge (see
+    /// FBattleGrid.scale). 1 on the live board; the public board asks for
+    /// what its seat tags leave room for (PublicBoardLayout.cornerScale). The
+    /// two anchors below (`flippedOrigin`, `bottomCardOrigin`) are the
+    /// scale-1 values and scale with everything else.
+    public let scale: CGFloat
 
-    public init(deckCount: Int, flipped: Card?, hasFlipped: Bool, trumpSuit: Suit?, backSeed: UInt64 = 42) {
+    public init(deckCount: Int, flipped: Card?, hasFlipped: Bool, trumpSuit: Suit?, backSeed: UInt64 = 42,
+                scale: CGFloat = 1) {
         self.deckCount = deckCount
         self.flipped = flipped
         self.hasFlipped = hasFlipped
         self.trumpSuit = trumpSuit
         self.backSeed = backSeed
+        self.scale = scale
     }
 
     // The badge counts the flipped card too (web badgeTotal = deck + flipped).
@@ -124,7 +135,7 @@ public struct FDeckWell: View {
     /// Every state anchors to the SAME top-leading inset (note 14: equal left/top
     /// distance from the board's edges), instead of the old centred layout that
     /// needed a per-call-site magic offset tuned only for the stacked state.
-    private let inset: CGFloat = FSpace.s
+    private var inset: CGFloat { FSpace.s * scale }
     /// How far the flipped trump peeks out below the stack when both are showing
     /// (the old centred layout's `offset(y: 34)`, now relative to the shared
     /// top-leading anchor instead of the container's centre). Tuned so roughly a
@@ -133,10 +144,23 @@ public struct FDeckWell: View {
     /// rotated bottom card reaches down to `inset + cardW` (owner review,
     /// batch 11/note 1): overlap = (inset + cardW) - (inset + peek) =
     /// cardW - peek, so peek=20 hides cardW-20=26pt (~39%) of the flipped card.
-    private let peek: CGFloat = 20
+    private var peek: CGFloat { Self.peek(scale: scale) }
+
+    /// The peek at `scale`: the 20pt above, scaled, while the flipped card is
+    /// wide enough for FCard's full face - whose bottom-right index shows the
+    /// rank however much of the top is tucked away. Under 40pt wide FCard
+    /// draws its THIN face instead, a rank over a suit in the centre, and a
+    /// 40%-tucked thin card shows the suit and hides the rank (the first
+    /// eight-seat bubble showed a bare spade where the K of spades was). So a
+    /// thin flipped card leaves only 4pt under the stock: the rank's ink
+    /// starts just below that.
+    static func peek(scale: CGFloat) -> CGFloat {
+        let width = 46 * scale
+        return width < 40 ? width - 4 : 20 * scale
+    }
     /// One stock card, portrait, before it is laid landscape in the stack.
-    private let cardW: CGFloat = 46
-    private let cardH: CGFloat = 66
+    private var cardW: CGFloat { 46 * scale }
+    private var cardH: CGFloat { 66 * scale }
     /// `deckStack`'s cards are rotated 90°, so a `cardW`×`cardH` portrait box
     /// reads as `cardH`×`cardW` landscape on screen. `.rotationEffect` pivots on
     /// the view's own centre WITHOUT changing its reported (pre-rotation) layout
@@ -167,13 +191,16 @@ public struct FDeckWell: View {
     /// The bare trump mark's glyph size (round-5 m1 raised it from 44).
     static let markSize: CGFloat = 60
 
-    /// The INK this well puts on the board, measured from the top-left corner
-    /// it anchors to: the landscape stock's far edge (inset + the 66 a card is
-    /// tall, laid on its side) and the flipped card's bottom edge (its origin
-    /// plus the same 66 upright). Not the 92x108 frame, which carries slack
-    /// the bare glyph never uses. PublicBoardLayout keeps the seat tags out
-    /// of this box.
-    static let inkFootprint = CGSize(width: FSpace.s + 66, height: flippedOrigin.y + 66)
+    /// The INK this well puts on the board at `scale`, measured from the
+    /// top-left corner it anchors to: the landscape stock's far edge (inset +
+    /// the 66 a card is tall, laid on its side) and the flipped card's bottom
+    /// edge (inset + `peek` + the same 66 upright). Not the 92x108 frame,
+    /// which carries slack the bare glyph never uses. PublicBoardLayout keeps
+    /// the seat tags out of this box. A function of the scale and not a
+    /// constant times it, because a thin flipped card peeks out further.
+    static func inkFootprint(scale: CGFloat) -> CGSize {
+        CGSize(width: (FSpace.s + 66) * scale, height: FSpace.s * scale + peek(scale: scale) + 66 * scale)
+    }
 
     /// Where the count chip sits: centred on the bottom card's landscape
     /// footprint (66 x 46 at `bottomCardOrigin`), give or take the pixel per
@@ -271,7 +298,9 @@ public struct FDeckWell: View {
             // means it is gone.
             if hasFlipped, let flipped {
                 FCard(card: flipped, trump: true, size: CGSize(width: cardW, height: cardH))
-                    .offset(x: Self.flippedOrigin.x, y: Self.flippedOrigin.y)
+                    // `flippedOrigin` is inset + peek at scale 1; at any other
+                    // scale the peek is its own rule (`peek(scale:)`).
+                    .offset(x: Self.flippedOrigin.x * scale, y: inset + peek)
                     .zIndex(0)
             }
 
@@ -308,9 +337,9 @@ public struct FDeckWell: View {
                 // cards under it read as two different suits ("upper right trump
                 // suit icon should match shape of card suits icon"). Same size
                 // as before; only the face changes.
-                let ink = Self.markInkOrigin(trumpSuit)
+                let ink = Self.markInkOrigin(trumpSuit, size: Self.markSize * scale)
                 Text(trumpSuit.glyph)
-                    .font(.custom("Georgia", size: Self.markSize).weight(.bold))
+                    .font(.custom("Georgia", size: Self.markSize * scale).weight(.bold))
                     .foregroundColor(FColor.suitColor(trumpSuit, scheme: scheme))
                     .shadow(color: .black.opacity(0.6), radius: 2, x: 0, y: 1)
                     // Round 16: inset the glyph's INK, not its text box - see
@@ -319,7 +348,7 @@ public struct FDeckWell: View {
                     .offset(x: inset - ink.x, y: inset - ink.y)
             }
         }
-        .frame(width: 92, height: 108, alignment: .topLeading)
+        .frame(width: 92 * scale, height: 108 * scale, alignment: .topLeading)
         // Publish the deck's rect so draw flights (deck→hand) have a source.
         .background(GeometryReader { g in
             Color.clear.preference(key: DeckFrameKey.self, value: g.frame(in: .named(boardSpace)))
@@ -368,8 +397,12 @@ public struct FDeckWell: View {
             // red card backs — a white digit on saturated red reads as an iOS
             // unread badge for what is neutral count info. `FCountChip` backs
             // it with a near-black fill + the card backs' subdued edge red.
+            // The count shrinks less than the cards under it (13pt at the
+            // public board's floor, where 17 x 0.6 would be 10): it is the
+            // number the whole well exists to show, and the owner asked for
+            // the counts on the bubble to be bigger, not the pile.
             ZStack {
-                FCountChip("\(badgeTotal)", font: .system(size: 17, weight: .bold))
+                FCountChip("\(badgeTotal)", font: .system(size: max(13, 17 * scale), weight: .bold))
             }
             .frame(width: stackVisualWidth, height: cardW)
             .offset(x: inset, y: inset - CGFloat(stackLayers))

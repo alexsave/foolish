@@ -10,18 +10,25 @@ import SwiftUI
 // (see RulesView.swift for the measurement).
 struct FDiscardPile: View {
     public let count: Int
-    public init(count: Int) { self.count = count }
+    /// The pile at a fraction of the live board's size - the cards and the
+    /// box, so FCard keeps its 1pt edge (see FBattleGrid.scale). The count
+    /// shrinks less than the cards: it is the one thing this pile has to say.
+    public let scale: CGFloat
+    public init(count: Int, scale: CGFloat = 1) {
+        self.count = count
+        self.scale = scale
+    }
 
-    /// The pile's box: a 44x62 back laid landscape and jittered up to 20
-    /// degrees, with room for the jitter. PublicBoardLayout keeps the seat
-    /// tags out of it.
+    /// The pile's box at scale 1: a 44x62 back laid landscape and jittered
+    /// up to 20 degrees, with room for the jitter. PublicBoardLayout keeps
+    /// the seat tags out of it.
     static let footprint = CGSize(width: 78, height: 68)
 
     public var body: some View {
         let layers = min(max(count, 1), 5)
         ZStack {
             ForEach(0..<layers, id: \.self) { i in
-                FCard(card: nil, backSeed: UInt64(3 + i), size: CGSize(width: 44, height: 62))
+                FCard(card: nil, backSeed: UInt64(3 + i), size: CGSize(width: 44 * scale, height: 62 * scale))
                     // Landscape base (matches the deck stack's leaning backs), with
                     // the existing deterministic ±20° per-layer jitter on top.
                     .rotationEffect(.degrees(90 + rotation(i)))
@@ -29,11 +36,11 @@ struct FDiscardPile: View {
             // Round-5 m9: matches FDeckWell/FSeatBadge — a near-black chip
             // with the card backs' subdued edge red instead of a bare
             // white-on-red numeral reading as an iOS unread badge.
-            FCountChip("\(count)", font: .system(size: 15, weight: .bold))
+            FCountChip("\(count)", font: .system(size: max(13, 15 * scale), weight: .bold))
         }
         // Landscape footprint (44×62 rotated ~90°) is wider than tall — swap the
         // old portrait 68×78 buffer accordingly.
-        .frame(width: Self.footprint.width, height: Self.footprint.height)
+        .frame(width: Self.footprint.width * scale, height: Self.footprint.height * scale)
         .accessibilityElement(children: .ignore)
         // Round-5 m2: was a hard-coded English literal.
         .accessibilityLabel(FStrings.t("ios.a11y.discard", ["n": "\(count)"]))
