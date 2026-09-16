@@ -79,9 +79,9 @@
 // BEHIND THE SAME KNOB AS THE SLIDE. The wrapper is inert - it renders its
 // content in place, in the main tree - unless `MessagesRootView` puts a
 // `CollapseLayers` bus in the environment, and it does that only when the
-// slide is on (`slide=1` in the DEBUG `dev.collapse` knob, or
-// `CollapseTween.slideByDefault`). A shipping build with the default off has
-// no nested hosts at all.
+// slide is on - `CollapseTween.slideByDefault`, which is true from build 71,
+// or `slide=` in the DEBUG `dev.collapse` knob. With the slide off (`slide=0`)
+// there are no nested hosts at all.
 
 import SwiftUI
 
