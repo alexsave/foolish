@@ -148,18 +148,21 @@ final class BubbleBoardTests: XCTestCase {
     /// The deck's COUNT is never under the balloon's app icon, at any count.
     /// Messages paints that roundel over the bubble's top-left corner, and
     /// the first eight-seat frame shot on the simulator had a deck well whose
-    /// "4" was entirely behind it. The chip's digits reach about 7pt from
-    /// their centre at the floor, so the centre must clear the icon's edge
-    /// by that much.
+    /// "4" was entirely behind it. The chip's digits reach `countReach` from
+    /// their centre - the half-diagonal of a two-digit count at the bubble's
+    /// one count size - so the centre must clear the icon's edge by that.
+    /// (Was a flat 7pt for 13pt digits; at 15pt the reach is 10.5, and this
+    /// went red until the well slid further.)
     func testDeckCountClearsTheBalloonIcon() {
         for n in 2...8 {
             let s = PublicBoardLayout.cornerScale(n: n, in: bubble)
             let c = PublicBoardLayout.deckCountCentre(scale: s)
             let d = hypot(c.x - PublicBoardLayout.balloonIconCentre.x,
                           c.y - PublicBoardLayout.balloonIconCentre.y)
-            XCTAssertGreaterThan(d, PublicBoardLayout.balloonIconRadius + 7,
+            XCTAssertGreaterThan(d, PublicBoardLayout.balloonIconRadius + PublicBoardLayout.countReach,
                                  "deck count at \(n) seats (scale \(s)) sits under the balloon icon: \(c)")
         }
+        XCTAssertGreaterThanOrEqual(PublicBoardLayout.countReach, 10, "two 15pt digits reach past 10pt")
         // The slide is what buys it: without it the count at the floor would
         // be inside the roundel.
         XCTAssertEqual(PublicBoardLayout.deckSlide(scale: 1), .zero, "a full-size well does not move")
@@ -280,7 +283,10 @@ final class BubbleBoardTests: XCTestCase {
             ("3p_2atk_1cov_good", publicBoardFixture(players: 3, battles: 2, covered: 1, defender: 1, goodSeats: [2])),
             ("4p_2atk_1cov", publicBoardFixture(players: 4, battles: 2, covered: 1, defender: 2)),
             ("4p_4atk_3cov_good", publicBoardFixture(players: 4, battles: 4, covered: 3, defender: 0, goodSeats: [1])),
+            ("5p_2atk_1cov_good", publicBoardFixture(players: 5, battles: 2, covered: 1, defender: 2, goodSeats: [3])),
+            ("6p_2atk_1cov_good", publicBoardFixture(players: 6, battles: 2, covered: 1, defender: 3, goodSeats: [1])),
             ("6p_3atk_3cov_good", publicBoardFixture(players: 6, battles: 3, covered: 3, defender: 3, goodSeats: [1, 4])),
+            ("7p_2atk_1cov_good", publicBoardFixture(players: 7, battles: 2, covered: 1, defender: 4, goodSeats: [2, 5])),
             ("8p_2atk_2cov_good", publicBoardFixture(players: 8, battles: 2, covered: 2, defender: 1, goodSeats: [2])),
             ("8p_4atk_2cov_good", publicBoardFixture(players: 8, battles: 4, covered: 2, defender: 4, goodSeats: [2, 5, 6])),
             ("8p_6atk_6cov_out", publicBoardFixture(players: 8, battles: 6, covered: 6, defender: 6, goodSeats: [0, 1], deck: 0, out: [3])),

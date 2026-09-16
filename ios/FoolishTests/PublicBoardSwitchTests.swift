@@ -112,25 +112,141 @@ final class PublicBoardSwitchTests: XCTestCase {
                        "the role row rides up into the fan box by the nudge (\(loose) -> \(tight))")
     }
 
-    /// A small well tucks its flipped trump LESS. Under 40pt wide FCard draws
-    /// its thin face - rank over suit, centred - and a card tucked 40% under
-    /// the stock showed a bare spade where the K of spades was (the first
-    /// eight-seat frame). A thin flipped card leaves 4pt under the stock; a
-    /// full-face one keeps the 20pt peek, scaled. The well's ink follows.
-    /// MUTANT: `peek(scale:)` returning `20 * scale` for every width fails
-    /// the first line.
-    func testAThinFlippedTrumpPeeksOutToShowItsRank() {
-        let thinWidth = 46 * PublicBoardLayout.scaleFloor
-        XCTAssertLessThan(thinWidth, 40, "the floor's flipped card is a thin card")
-        XCTAssertEqual(thinWidth - FDeckWell.peek(scale: PublicBoardLayout.scaleFloor), 4, accuracy: 0.001,
-                       "4pt of a thin flipped card under the stock, no more")
+    /// A SCALED CARD ON THE PUBLIC BOARD IS A NORMAL CARD, JUST SMALLER.
+    ///
+    /// Owner, on pass 2: "I don't like that you used a skinny card for the
+    /// flipped. It should be a normal card just scaled down." Laying the
+    /// pieces out at their size (the edge fix) had pushed every card under
+    /// 40pt wide onto FCard's THIN face - a rank over one pip, centred, no
+    /// corner indices - which is a different card, not a smaller one. The
+    /// full face is proportional to the width throughout, so drawn at 28pt
+    /// it IS the 46pt card scaled, and its edge is still `restWidth`.
+    ///
+    /// The tell is a corner index: the full face has its rank in the corners
+    /// and the thin face has nothing in a card's outer fifth. For the well's
+    /// flipped trump, tucked under the stock, the visible index is the
+    /// bottom-right one; for an upright battle card the top-left. Both must
+    /// show ink. Written before the fix and RED on the pass-2 code (the thin
+    /// face), which is the mutant for this change. (A first cut of the
+    /// flipped check looked at the top-left corner over the card's whole
+    /// height and stayed green: the stock's fern backs overlapping the
+    /// card's top counted as ink.)
+    @MainActor
+    func testAScaledBubbleCardWearsTheFullFace() throws {
+        let floor = PublicBoardLayout.scaleFloor
+        // The flipped trump in a well at the floor: its card is 46 x floor
+        // wide, at (flippedOrigin.x x floor, inset + peek) in the well, and
+        // the stock's bottom card (46 x floor tall, laid landscape) covers
+        // its top down to inset + 46 x floor.
+        let well = FDeckWell(deckCount: 12, flipped: Card(s: 1, v: 12), hasFlipped: true,
+                             trumpSuit: .hearts, scale: floor)
+        let wellImage = try XCTUnwrap(Self.render(well.frame(width: 92 * floor, height: 108 * floor)))
+        let flipped = CGRect(x: FDeckWell.flippedOrigin.x * floor, y: FSpace.s * floor + FDeckWell.peek(scale: floor),
+                             width: 46 * floor, height: 66 * floor)
+        let stockBottom = FSpace.s * floor + 46 * floor
+        let trailingCorner = CGRect(x: flipped.maxX - flipped.width * 0.22, y: max(flipped.midY, stockBottom + 1),
+                                    width: flipped.width * 0.22 - 1.5, height: 0)
+            .union(CGRect(x: flipped.maxX - 1.5, y: flipped.maxY - 1.5, width: 0, height: 0))
+        XCTAssertGreaterThan(Self.ink(in: trailingCorner, of: wellImage), 15,
+                             "the flipped trump's rank is in its bottom-right corner: a full face, scaled")
+
+        // A battle card at the two-row cluster scale (27.5 x 38.5): one
+        // uncovered attack, bottom-aligned in its slot, upright.
+        let scale: CGFloat = 0.55
+        let grid = FBattleGrid(battles: [BattleView(attack: Card(s: 0, v: 7), defense: nil)],
+                               trumpSuit: nil, scale: scale)
+        let slot = CGSize(width: FBattleGrid.slotSize.width * scale, height: FBattleGrid.slotSize.height * scale)
+        let gridImage = try XCTUnwrap(Self.render(grid.frame(width: slot.width, height: slot.height)))
+        let card = CGRect(x: (slot.width - 50 * scale) / 2, y: slot.height - 70 * scale,
+                          width: 50 * scale, height: 70 * scale)
+        let leadingCorner = CGRect(x: card.minX + 1.5, y: card.minY + 1.5,
+                                   width: card.width * 0.22 - 1.5, height: card.height / 2)
+        XCTAssertGreaterThan(Self.ink(in: leadingCorner, of: gridImage), 15,
+                             "a battle card's rank is in its top-left corner: a full face, scaled")
         XCTAssertEqual(FDeckWell.peek(scale: 1), 20, "the live board's peek is untouched")
-        XCTAssertEqual(FDeckWell.peek(scale: 0.9), 18, accuracy: 0.001, "a 41pt card still wears the full face")
-        let ink = FDeckWell.inkFootprint(scale: 1)
-        XCTAssertEqual(ink.width, 74, accuracy: 0.001)
-        XCTAssertEqual(ink.height, 94, accuracy: 0.001, "inset + peek + a card")
-        XCTAssertEqual(FDeckWell.inkFootprint(scale: PublicBoardLayout.scaleFloor).height,
-                       FSpace.s * 0.6 + FDeckWell.peek(scale: 0.6) + 66 * 0.6, accuracy: 0.001)
+    }
+
+    /// ONE COUNT SIZE ON THE BUBBLE. Owner: "The fan card and discard card
+    /// and deal card count numbers should be same font size in the bubble
+    /// preview." Measured off the real 8-seat bubble: the digit height of
+    /// seat 0's count on its tag, of the deck well's count and of the
+    /// discard pile's count agree within a point. RED on pass 2, where the
+    /// tag drew 15pt and the two piles floored at 13.
+    @MainActor
+    func testTheBubbleCountsShareOneSize() throws {
+        let view = publicBoardFixture(players: 8, battles: 2, covered: 2, defender: 1, deck: 12, discard: 6)
+        let img = try XCTUnwrap(BubbleSnapshot.render(publicView: view, names: bubbleNames(8)))
+        let board = CGSize(width: BubbleSnapshot.size.width - 16, height: BubbleSnapshot.size.height - 16)
+        let inset: CGFloat = 8
+        let s = PublicBoardLayout.cornerScale(n: 8, in: board)
+        let tag = PublicBoardLayout.seatRect(seat: 0, n: 8, in: board).offsetBy(dx: inset, dy: inset)
+        let tagCard = CGRect(x: tag.minX, y: tag.minY + 15, width: FSeatTag.cardSize.height, height: tag.height - 15)
+        // A 12-card stock is a full one (8 layers), so the chip is at the
+        // top of its ride, where `deckCountCentre` models it.
+        let deckC = PublicBoardLayout.deckCountCentre(scale: s)
+        let deck = CGRect(x: deckC.x + inset - 14, y: deckC.y + inset - 9, width: 28, height: 18)
+        let pileC = CGPoint(x: board.width - FDiscardPile.footprint.width * s / 2 + inset,
+                            y: PublicBoardLayout.discardLift + FDiscardPile.footprint.height * s / 2 + inset)
+        let pile = CGRect(x: pileC.x - 14, y: pileC.y - 7, width: 28, height: 14)
+        let heights = [tagCard, deck, pile].map { Self.whiteRowExtent(in: $0, of: img) }
+        XCTAssertGreaterThan(heights.min() ?? 0, 6, "digits were found in all three places: \(heights)")
+        XCTAssertEqual(heights.max()! - heights.min()!, 0, accuracy: 1.0,
+                       "tag, deck and discard counts are one size (digit heights \(heights) pt)")
+    }
+
+    /// Render a view at 2x on a plain white ground, light scheme.
+    @MainActor
+    private static func render<V: View>(_ view: V) -> UIImage? {
+        let r = ImageRenderer(content: view.background(Color.white).environment(\.colorScheme, .light))
+        r.scale = 2
+        return r.uiImage
+    }
+
+    private static func pixels(_ image: UIImage) -> (bytes: [UInt8], w: Int, h: Int, scale: CGFloat)? {
+        guard let cg = image.cgImage else { return nil }
+        let w = cg.width, h = cg.height
+        var bytes = [UInt8](repeating: 0, count: w * h * 4)
+        guard let ctx = CGContext(data: &bytes, width: w, height: h, bitsPerComponent: 8,
+                                  bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return (bytes, w, h, CGFloat(w) / image.size.width)
+    }
+
+    /// Ink (anything that is not the white face) inside `rect`, in points.
+    private static func ink(in rect: CGRect, of image: UIImage) -> Int {
+        guard let p = pixels(image) else { return 0 }
+        let x0 = max(0, Int(rect.minX * p.scale)), x1 = min(p.w, Int(rect.maxX * p.scale))
+        let y0 = max(0, Int(rect.minY * p.scale)), y1 = min(p.h, Int(rect.maxY * p.scale))
+        guard x1 > x0, y1 > y0 else { return 0 }
+        var n = 0
+        for y in y0..<y1 {
+            for x in x0..<x1 {
+                let i = (y * p.w + x) * 4
+                if p.bytes[i] < 200 || p.bytes[i + 1] < 200 || p.bytes[i + 2] < 200 { n += 1 }
+            }
+        }
+        return n
+    }
+
+    /// The height, in points, of the band of rows inside `rect` that hold
+    /// any pure white pixel - a count chip's digits on a red-and-black back.
+    private static func whiteRowExtent(in rect: CGRect, of image: UIImage) -> CGFloat {
+        guard let p = pixels(image) else { return 0 }
+        let x0 = max(0, Int(rect.minX * p.scale)), x1 = min(p.w, Int(rect.maxX * p.scale))
+        let y0 = max(0, Int(rect.minY * p.scale)), y1 = min(p.h, Int(rect.maxY * p.scale))
+        guard x1 > x0, y1 > y0 else { return 0 }
+        var first = -1, last = -1
+        for y in y0..<y1 {
+            var any = false
+            for x in x0..<x1 {
+                let i = (y * p.w + x) * 4
+                if p.bytes[i] > 235 && p.bytes[i + 1] > 235 && p.bytes[i + 2] > 235 { any = true; break }
+            }
+            if any { if first < 0 { first = y }; last = y }
+        }
+        return first < 0 ? 0 : CGFloat(last - first + 1) / p.scale
     }
 
     // MARK: Sized, not transformed

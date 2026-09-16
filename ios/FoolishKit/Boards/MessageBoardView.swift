@@ -127,8 +127,12 @@ public struct MessageBoardView: View {
                 FBattleGrid(battles: view.battles, trumpSuit: view.trumpSuit, scale: grid)
             }
 
+            // ONE count size for the well, the pile and every seat tag
+            // (owner: "the fan card and discard card and deal card count
+            // numbers should be same font size in the bubble preview").
             FDeckWell(deckCount: view.deckCount, flipped: view.flipped,
-                      hasFlipped: view.hasFlipped, trumpSuit: view.trumpSuit, scale: corner)
+                      hasFlipped: view.hasFlipped, trumpSuit: view.trumpSuit, scale: corner,
+                      countSize: FSeatTag.countSize)
                 // A smaller well is the same well seen from further away -
                 // its bottom card and flipped trump keep the top-left origins
                 // FDeckWell pins (round 4 note 6), scaled, not shifted...
@@ -144,7 +148,7 @@ public struct MessageBoardView: View {
             // rendering of it): -3 puts the discard's own centre on the
             // draw deck's bottom-card centre — see MessageTableView's
             // discard placement for the full derivation.
-            FDiscardPile(count: view.discardCount, scale: corner)
+            FDiscardPile(count: view.discardCount, scale: corner, countSize: FSeatTag.countSize)
                 .offset(y: PublicBoardLayout.discardLift)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 

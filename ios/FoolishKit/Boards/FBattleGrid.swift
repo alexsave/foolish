@@ -266,9 +266,12 @@ public struct FBattleGrid: View {
         // 0.22s easeOut that only fired after the cover had already landed.
         let coverTilted = Self.coverTilted(defense: battle.defense, hidden: hidden, flyingNow: flyingNow)
         return ZStack(alignment: .bottom) {
+            // `fullFace`: a scaled battle card is a normal card, smaller -
+            // never FCard's thin fallback (which is a different card). No
+            // effect at scale 1, where the card is 50 wide anyway.
             FCard(card: battle.attack,
                   trump: trumpSuit != nil && battle.attack.suit == trumpSuit,
-                  size: cardSize)
+                  size: cardSize, fullFace: true)
                 // Cover-target highlight, drawn ON the card so it stays centred on
                 // it (an uncovered attack is upright, so a plain inset ring lines
                 // up exactly - the old slot-level ring floated above the card).
@@ -302,7 +305,7 @@ public struct FBattleGrid: View {
             if let defense = battle.defense {
                 FCard(card: defense,
                       trump: trumpSuit != nil && defense.suit == trumpSuit,
-                      size: cardSize)
+                      size: cardSize, fullFace: true)
                     .opacity(hidden.contains(defense.identity) ? 0 : 1)
                     .animation(nil, value: hidden.contains(defense.identity))   // snap the veil — see the attack card
                     .rotationEffect(.degrees(Self.coverAngle), anchor: .bottom)   // laid across (§5.4)

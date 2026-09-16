@@ -43,7 +43,8 @@ struct FSeatTag: View {
     /// this is as big as three tags across the top of an eight-seat bubble
     /// leave room for beside the corner pieces - PublicBoardLayout.rowSpread.)
     static let cardSize = CGSize(width: 25, height: 36)
-    static let countFont = Font.system(size: 15, weight: .bold)
+    static let countSize: CGFloat = 15
+    static let countFont = Font.system(size: countSize, weight: .bold)
     /// The marks at 0.6 of FRoleMark - sword 24, shield 20, check 16 - so the
     /// row stays one line tall and, with the card and 2pt, exactly
     /// `PublicBoardLayout.tagSize.width`.

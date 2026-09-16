@@ -106,10 +106,9 @@ enum PublicBoardLayout {
 
     /// Where the side stations sit, as a fraction of the height: below the
     /// middle, so the corner pieces above them get 91pt of the 179 instead of
-    /// 69.5 - which is what lets a four-seat bubble keep its well at 0.7 with
-    /// the thin flipped card peeking far enough to show its rank
-    /// (FDeckWell.peek). The seat still reads as the side of the table, and
-    /// its tag ends 7pt above the bottom row.
+    /// 69.5 - which is what lets a four-seat bubble keep its well at 0.9. The
+    /// seat still reads as the side of the table, and its tag ends 7pt above
+    /// the bottom row.
     static let sideY: CGFloat = 0.62
 
     static func seatPoint(station: Station, topRow: Int, bottomRow: Int, in size: CGSize) -> CGPoint {
@@ -164,15 +163,22 @@ enum PublicBoardLayout {
     static let balloonIconCentre = CGPoint(x: 11, y: 11)
     static let balloonIconRadius: CGFloat = 14
 
+    /// How far a two-digit count reaches from its centre: the half-diagonal
+    /// of "13" at the bubble's count size (a bold digit is about 0.6em wide
+    /// and 0.72em tall). What the deck's count must keep between its centre
+    /// and the roundel's edge.
+    static var countReach: CGFloat { hypot(0.6 * FSeatTag.countSize, 0.36 * FSeatTag.countSize) }
+
     /// How far the deck well slides DOWN at `scale`: nothing at full size,
-    /// 14pt at the floor - the least that carries the count out from under
-    /// the balloon's icon (`deckCountCentre`, 21.6pt from its centre against
-    /// the 21 the test demands), so the well's bottom stays clear of the
-    /// side seats at `sideY`. Straight down and not diagonally, because the
-    /// width is the scarce direction: the corner beside a three-tag row is
-    /// 47pt and the well at the floor is 44.4 of it.
+    /// 18pt at the floor - the least that carries a full stock's count (the
+    /// highest it rides, `FDeckWell.countCentre(scale:)`) out from under the
+    /// balloon's icon by `countReach` (24.9pt from its centre against the
+    /// 24.5 the test demands), so the well's bottom stays clear of the side
+    /// seats at `sideY`. Straight down and not diagonally, because the width
+    /// is the scarce direction: the corner beside a three-tag row is 47pt and
+    /// the well at the floor is 44.4 of it.
     static func deckSlide(scale: CGFloat) -> CGPoint {
-        CGPoint(x: 0, y: 35 * (1 - scale))
+        CGPoint(x: 0, y: 45 * (1 - scale))
     }
 
     /// The deck well's ink at `scale` (FDeckWell.inkFootprint, which is not a
@@ -184,11 +190,12 @@ enum PublicBoardLayout {
         return CGRect(x: slide.x, y: slide.y, width: ink.width, height: ink.height)
     }
 
-    /// Where the deck's count chip lands at `scale`, for the icon check.
+    /// Where the deck's count chip lands at `scale` with a FULL stock - the
+    /// highest it ever sits, which is the case the icon check must hold for.
     static func deckCountCentre(scale: CGFloat) -> CGPoint {
         let slide = deckSlide(scale: scale)
-        return CGPoint(x: FDeckWell.countCentre.x * scale + slide.x,
-                       y: FDeckWell.countCentre.y * scale + slide.y)
+        let c = FDeckWell.countCentre(scale: scale)
+        return CGPoint(x: c.x + slide.x, y: c.y + slide.y)
     }
 
     /// The discard pile's box, scaled about the top-right corner; the -3 is

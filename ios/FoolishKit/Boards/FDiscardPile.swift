@@ -11,12 +11,16 @@ import SwiftUI
 struct FDiscardPile: View {
     public let count: Int
     /// The pile at a fraction of the live board's size - the cards and the
-    /// box, so FCard keeps its 1pt edge (see FBattleGrid.scale). The count
-    /// shrinks less than the cards: it is the one thing this pile has to say.
+    /// box, so FCard keeps its 1pt edge (see FBattleGrid.scale).
     public let scale: CGFloat
-    public init(count: Int, scale: CGFloat = 1) {
+    /// The count's point size, when the caller has one: the public board
+    /// gives its three counts ONE size (FSeatTag.countSize). nil is the live
+    /// board's 15, scaled.
+    public let countSize: CGFloat?
+    public init(count: Int, scale: CGFloat = 1, countSize: CGFloat? = nil) {
         self.count = count
         self.scale = scale
+        self.countSize = countSize
     }
 
     /// The pile's box at scale 1: a 44x62 back laid landscape and jittered
@@ -36,7 +40,7 @@ struct FDiscardPile: View {
             // Round-5 m9: matches FDeckWell/FSeatBadge — a near-black chip
             // with the card backs' subdued edge red instead of a bare
             // white-on-red numeral reading as an iOS unread badge.
-            FCountChip("\(count)", font: .system(size: max(13, 15 * scale), weight: .bold))
+            FCountChip("\(count)", font: .system(size: countSize ?? 15 * scale, weight: .bold))
         }
         // Landscape footprint (44×62 rotated ~90°) is wider than tall — swap the
         // old portrait 68×78 buffer accordingly.
