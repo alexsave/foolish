@@ -322,7 +322,12 @@ public enum MessageDevBoard {
         /// Carry the collapse on the layer instead of on the timer - see
         /// `CollapseTween.slideDuration`. A knob so both paths can be filmed
         /// on one build and scored against each other.
-        public var slide = false
+        ///
+        /// Defaults to the SHIPPING value, not to a literal. It was a hardcoded
+        /// `false` beside a `slideByDefault` that controls only Release, which
+        /// meant flipping the product on would have left every debug install and
+        /// every rig take without a knob file quietly measuring the old path.
+        public var slide = CollapseTween.slideByDefault
     }
     public static let collapseKnobs: CollapseKnobs = {
         var k = CollapseKnobs()

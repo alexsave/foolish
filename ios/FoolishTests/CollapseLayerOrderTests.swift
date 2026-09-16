@@ -88,3 +88,28 @@ final class CollapseLayerOrderTests: XCTestCase {
         }
     }
 }
+
+/// The collapse the product ships is the slide, and debug builds agree with it.
+///
+/// Build 70 went to a real device with the slide off, and bounced. Two switches
+/// decide the path: `CollapseTween.slideByDefault` for Release, and
+/// `MessageDevBoard.CollapseKnobs.slide` for DEBUG when no `dev.collapse` file
+/// says otherwise. The second was a hardcoded `false`, so turning the product on
+/// would have left every debug install and rig take on the old path.
+///
+/// MUTANTS: `slideByDefault = false` fails the first assertion; a literal
+/// `slide = false` in CollapseKnobs fails the second.
+final class CollapseShipsTheSlideTests: XCTestCase {
+    func testTheShippingCollapseIsTheSlide() {
+        XCTAssertTrue(CollapseTween.slideByDefault,
+                      "build 70 shipped the old timer path and it bounced on a real device")
+    }
+
+    #if DEBUG || SOLO_TESTING
+    func testADebugBuildDefaultsToTheShippingPath() {
+        XCTAssertEqual(MessageDevBoard.CollapseKnobs().slide, CollapseTween.slideByDefault,
+                       "a debug install with no dev.collapse file must run the path the "
+                       + "product ships, or every rig take measures the wrong collapse")
+    }
+    #endif
+}
