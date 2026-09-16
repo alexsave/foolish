@@ -761,6 +761,30 @@ public struct MessageTableView: View {
                     .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)
             }
         }
+        // MY OWN CARDS, ON TOP OF THE MARK. Owner, round 47: "the badge should
+        // be above FLYING CARDS, but just below OUR SELF cards."
+        //
+        // The mark was promoted above the flight layer in round 41 so a card in
+        // the air could not hide it, and that half stands. What did not is where
+        // my hand sat: inside the board's ZStack it was under BOTH, so a mark
+        // 6pt above the fan drew over my own cards. Promoting the hand to an
+        // overlay after the mark is the whole change - flights, then the mark,
+        // then the hand.
+        //
+        // It costs nothing in geometry: `HandFrameKey` publishes
+        // `frame(in: .named(boardSpace))` and `.coordinateSpace(name: boardSpace)`
+        // is applied BELOW every one of these overlays, so the hand is still
+        // inside that space and every drop target reads exactly what it read
+        // before. The padding is re-applied for the same reason the mark's is -
+        // an overlay is sized to the padded frame and the ZStack to that frame
+        // minus the padding.
+        .overlay {
+            if let v = controller.view {
+                hand(v, reserveNoSlot: handSlotDeferred)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .padding(.horizontal, 8).padding(.top, 14).padding(.bottom, 4)
+            }
+        }
         // Above the cards: a role changing hands IS the thing being read at that
         // moment (it happens after the sweep and the deal, when nothing else is
         // moving), and a shield disappearing behind a badge would read as a
@@ -1410,10 +1434,11 @@ public struct MessageTableView: View {
                     .padding(.leading, 4).padding(.bottom, lift + 4)
                     .doesNotRideTheBoardSpring(controller.view)
 
-                // My hand hugs the bottom (web: bottom max(10, safe-area)); the
-                // outer .padding(12) is the safe-area inset that keeps it unclipped.
-                hand(view, reserveNoSlot: deferredSlots)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                // MY HAND IS NOT DRAWN HERE ANY MORE - see the overlay beside
+                // `selfRoleIndicator`. It hugged the bottom in this ZStack, which
+                // put it under the flight layer and therefore under the status
+                // mark as well, and the owner's order is flying cards, then the
+                // mark, then my own cards on top.
 
                 // note 33 / round-4 note 4 / round-5 finding 5: the verb hint
                 // used to ride above the FINGER on both axes, then above the
