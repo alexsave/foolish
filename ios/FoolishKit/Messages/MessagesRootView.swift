@@ -90,7 +90,7 @@ public struct MessagesRootView: View {
     /// closure takes it back off again. Closures rather than a plumbed layer
     /// because the layer belongs to the hosting controller and this is the view
     /// inside it - the same shape, and for the same reason, as `requestExpand`.
-    let slideCollapse: (CGFloat, Double) -> Void
+    let slideCollapse: (CGFloat, Double, Double) -> Void
     let endSlide: () -> Void
     /// Is the HOST's sheet expanded, right now? A live read of
     /// `MSMessagesAppViewController.presentationStyle`, not the `style` prop -
@@ -145,7 +145,7 @@ public struct MessagesRootView: View {
                 incomingURL: URL? = nil, incomingToken: Int = 0, cancelToken: Int = 0,
                 collapseSignal: CollapseSignal = CollapseSignal(),
                 requestExpand: @escaping () -> Void,
-                slideCollapse: @escaping (CGFloat, Double) -> Void = { _, _ in },
+                slideCollapse: @escaping (CGFloat, Double, Double) -> Void = { _, _, _ in },
                 endSlide: @escaping () -> Void = {},
                 hostIsExpanded: @escaping () -> Bool = { false },
                 onNewGame: @escaping () -> Void,
@@ -427,11 +427,18 @@ public struct MessagesRootView: View {
         // slid away.
         boxHeight = to
         slideTravel = from - to
-        slideCollapse(from - to, CollapseTween.slideDuration)
+        // THE KNOB REACHES THE CURVE, which it did not. Both halves of the
+        // slide called `slideOffsets` without a response, so both always ran on
+        // the 0.338 constant while `dev.collapse`'s `resp=` moved only the old
+        // driver - i.e. the one path still in use could not be swept at all,
+        // and the figure it runs on was fitted against a different mechanism.
+        let response = Self.collapseKnobs.response
+        slideCollapse(from - to, CollapseTween.slideDuration, response)
         // And the table group's layers, in the SAME turn, so every keyframe set
         // is committed in one transaction and the first composited frame
         // already has both motions in it.
-        layers.begin(travel: from - to, duration: CollapseTween.slideDuration)
+        layers.begin(travel: from - to, duration: CollapseTween.slideDuration,
+                     response: response)
         slideRelease?.cancel()
         slideRelease = Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(CollapseTween.slideDuration * 1_000_000_000))

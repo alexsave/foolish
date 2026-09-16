@@ -145,6 +145,7 @@ public final class CollapseLayers {
     private struct Run {
         let travel: CGFloat
         let duration: Double
+        let response: Double
         let began: CFTimeInterval
     }
 
@@ -178,8 +179,10 @@ public final class CollapseLayers {
     /// The collapse has flipped: the hosting layer is about to be pushed down
     /// by `travel` and eased to zero over `duration` on the host's curve. Give
     /// every registered layer its own share of the opposite motion.
-    public func begin(travel: CGFloat, duration: Double) {
-        let r = Run(travel: travel, duration: duration, began: CACurrentMediaTime())
+    public func begin(travel: CGFloat, duration: Double,
+                      response: Double = CollapseTween.hostResponse) {
+        let r = Run(travel: travel, duration: duration, response: response,
+                    began: CACurrentMediaTime())
         run = r
         sweep()
         for e in entries.values {
@@ -209,7 +212,8 @@ public final class CollapseLayers {
         // The hosting layer's own keyframes, one for one, each turned into
         // this view's share. A view at fraction 1 takes the whole of the push
         // and needs nothing.
-        let values = CollapseTween.slideOffsets(travel: r.travel, duration: r.duration)
+        let values = CollapseTween.slideOffsets(travel: r.travel, duration: r.duration,
+                                                response: r.response)
             .map { ride.offset(push: $0) }
         guard values.contains(where: { abs($0) > 0.0005 }) else { return }
         let a = CAKeyframeAnimation(keyPath: "transform.translation.y")

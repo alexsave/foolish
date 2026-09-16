@@ -788,8 +788,9 @@ final class MessagesViewController: MSMessagesAppViewController {
             cancelToken: cancelToken,
             collapseSignal: collapseSignal,
             requestExpand: { [weak self] in self?.requestNameEntryExpand() },
-            slideCollapse: { [weak self] travel, duration in
-                self?.slideCollapse(travel: travel, duration: duration)
+            slideCollapse: { [weak self] travel, duration, response in
+                self?.slideCollapse(travel: travel, duration: duration,
+                                    response: response)
             },
             endSlide: { [weak self] in self?.endCollapseSlide() },
             // A LIVE read, deliberately: the name-field autofocus asks this at
@@ -1138,11 +1139,13 @@ final class MessagesViewController: MSMessagesAppViewController {
     private static let slideKey = "cards.foolish.collapse.slide"
 
     /// Slide the board up by `travel` over `duration`, on the host's own curve.
-    func slideCollapse(travel: CGFloat, duration: Double) {
+    func slideCollapse(travel: CGFloat, duration: Double,
+                       response: Double = CollapseTween.hostResponse) {
         guard let layer = host?.view.layer, travel > 1 else { return }
         layer.removeAnimation(forKey: Self.slideKey)
         let a = CAKeyframeAnimation(keyPath: "transform.translation.y")
-        a.values = CollapseTween.slideOffsets(travel: travel, duration: duration)
+        a.values = CollapseTween.slideOffsets(travel: travel, duration: duration,
+                                              response: response)
         a.duration = duration
         a.calculationMode = .linear
         // HELD AT THE END, not removed. The box only becomes the compact one
