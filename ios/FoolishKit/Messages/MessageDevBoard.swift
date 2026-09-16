@@ -61,6 +61,9 @@ public enum MessageDevBoard {
     private static let slowmoFile = "dev.slowmo"
     private static let rulerFile = "dev.ruler"
     private static let collapseFile = "dev.collapse"
+#if RIG_RESEED
+    private static let reseedFile = "dev.reseed"
+#endif
 
     /// The seeded chain, or nil when the flag file is absent - which is the
     /// normal case, including every ordinary DEBUG run.
@@ -114,8 +117,17 @@ public enum MessageDevBoard {
     /// the seed it asked for. Written best-effort - a failed write costs the
     /// rig a retry, never a frame.
     public static func claimSeededPayload() -> Data? {
-        guard !claimed, let raw = seededHex, let p = hex(raw) else { return nil }
+        guard let raw = seededHex, let p = hex(raw) else { return nil }
+        // ONCE PER PROCESS. The RIG_RESEED build relaxes it to once per
+        // DISTINCT payload; without that flag this compiles to `guard !claimed`
+        // exactly as before.
+#if RIG_RESEED
+        guard !claimed || (reseeds && raw != claimedHex) else { return nil }
+#else
+        guard !claimed else { return nil }
+#endif
         claimed = true
+        claimedHex = raw
         if let dir = FileManager.default
             .containerURL(forSecurityApplicationGroupIdentifier: appGroup) {
             try? Data(raw.utf8).write(to: dir.appendingPathComponent(claimFile))
@@ -123,6 +135,44 @@ public enum MessageDevBoard {
         return p
     }
     private static var claimed = false
+    private static var claimedHex: String?
+
+#if RIG_RESEED
+    /// `dev.reseed`: LET A LIVE APPEX READ A NEW SEED.
+    ///
+    /// Off unless the file exists, which is the whole point. "Once per process"
+    /// above is a real rule with a real reason - a second reading would throw
+    /// away whatever the run did next and re-open the seeded state over the top
+    /// of it - and it stays the default for every ordinary DEBUG run.
+    ///
+    /// What it costs the rig is the other half: the ONLY way to make the next
+    /// seed readable is to kill the appex, and the only way to do that is to
+    /// leave the thread - so every seeded frame pays a leave, a blind
+    /// conversation-row probe, and a re-open, for a state change that is a file
+    /// write. With this set, a driver writes `dev.fatboard` and the surface
+    /// picks it up where it stands.
+    ///
+    /// It is keyed on the CONTENTS, not on a touch: re-reading the same hex is
+    /// still refused, so the ordinary "opened onto a seed, then the run did
+    /// something" case cannot be clobbered by a stray re-read. Only a payload
+    /// this process has genuinely not claimed re-arms it.
+    ///
+    /// Never in Release: this whole type is `#if DEBUG || SOLO_TESTING`.
+    public static var reseeds: Bool {
+        guard let dir = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroup)
+        else { return false }
+        return FileManager.default.fileExists(atPath: dir.appendingPathComponent(reseedFile).path)
+    }
+
+    /// True when `dev.reseed` is on and the flag file names a payload this
+    /// process has not opened onto. The watcher in MessagesRootView polls this;
+    /// with the flag absent it is always false, so the watcher never arms.
+    public static var hasUnclaimedReseed: Bool {
+        guard reseeds, let raw = seededHex else { return false }
+        return raw != claimedHex
+    }
+#endif
 
     /// THE SECOND RECEIPT: the payload that actually reached the input field.
     ///
@@ -269,6 +319,10 @@ public enum MessageDevBoard {
         public var lead = CollapseTween.hostLead
         public var hz = CollapseTween.driveHz
         public var response = CollapseTween.hostResponse
+        /// Carry the collapse on the layer instead of on the timer - see
+        /// `CollapseTween.slideDuration`. A knob so both paths can be filmed
+        /// on one build and scored against each other.
+        public var slide = false
     }
     public static let collapseKnobs: CollapseKnobs = {
         var k = CollapseKnobs()
@@ -284,6 +338,7 @@ public enum MessageDevBoard {
             case "lead": k.lead = v
             case "hz": k.hz = v
             case "resp": k.response = v
+            case "slide": k.slide = v != 0
             default: break
             }
         }

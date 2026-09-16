@@ -788,6 +788,11 @@ final class MessagesViewController: MSMessagesAppViewController {
             cancelToken: cancelToken,
             collapseSignal: collapseSignal,
             requestExpand: { [weak self] in self?.requestNameEntryExpand() },
+            slideCollapse: { [weak self] travel, duration, response in
+                self?.slideCollapse(travel: travel, duration: duration,
+                                    response: response)
+            },
+            endSlide: { [weak self] in self?.endCollapseSlide() },
             // A LIVE read, deliberately: the name-field autofocus asks this at
             // the moment a resize lands, and the answer has to be where the
             // sheet is THEN. See NameFieldAutofocus.
@@ -1115,6 +1120,52 @@ final class MessagesViewController: MSMessagesAppViewController {
                            green: CGFloat((hex >> 8) & 0xFF) / 255.0,
                            blue: CGFloat(hex & 0xFF) / 255.0, alpha: 1)
         }
+    }
+
+    // MARK: The collapse, carried on the layer
+    //
+    // `CollapseTween.slideDuration` has the measurement behind this. The short
+    // of it: the host moves our view perfectly smoothly at the composite rate,
+    // and every bit of the auto-collapse's judder is our own height arriving a
+    // render late - which it must, because SwiftUI renders at 60Hz while the
+    // render server composites at 86-94Hz. So the slide pins the box at its
+    // expanded height and moves the CONTENT instead, on a keyframe animation
+    // the render server evaluates on every frame it composites, ours or not.
+    //
+    // The animation goes on the hosting view's own layer, NOT on this view
+    // controller's: the host is animating this one's position, and the two
+    // motions have to compose rather than fight. `transform.translation.y` and
+    // `position` are separate properties, so they do.
+    private static let slideKey = "cards.foolish.collapse.slide"
+
+    /// Slide the board up by `travel` over `duration`, on the host's own curve.
+    func slideCollapse(travel: CGFloat, duration: Double,
+                       response: Double = CollapseTween.hostResponse) {
+        guard let layer = host?.view.layer, travel > 1 else { return }
+        layer.removeAnimation(forKey: Self.slideKey)
+        let a = CAKeyframeAnimation(keyPath: "transform.translation.y")
+        a.values = CollapseTween.slideOffsets(travel: travel, duration: duration,
+                                              response: response)
+        a.duration = duration
+        a.calculationMode = .linear
+        // HELD AT THE END, not removed. The box only becomes the compact one
+        // when the release runs; until then the expanded box translated up by
+        // its own travel IS the compact box, and letting the animation snap back
+        // to zero first would drop the board `travel` points for a frame.
+        a.fillMode = .forwards
+        a.isRemovedOnCompletion = false
+        layer.add(a, forKey: Self.slideKey)
+    }
+
+    /// Take the translation off, for the release or for a drag that interrupts.
+    /// Actions disabled: an implicit animation on the way out is the same
+    /// one-frame drop the fill above exists to prevent.
+    func endCollapseSlide() {
+        guard let layer = host?.view.layer else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.removeAnimation(forKey: Self.slideKey)
+        CATransaction.commit()
     }
 
     private func setRoot(_ root: MessagesRootView) {

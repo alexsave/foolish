@@ -32,7 +32,10 @@
 #                                 field (then `back`, so the tap it just made
 #                                 does not leave the drawer 16pt short - trap 11)
 #   rig.sh expand / collapse      drag the grabber
-#   rig.sh back                   leave the drawer (keeps Messages alive)
+#   rig.sh back                   leave the drawer, and re-enter the thread
+#   rig.sh leave                  leave the thread and STOP
+#   rig.sh killappex              end the appex directly, which is what makes
+#                                 the next seed readable - no navigation at all
 #
 #   ---- state ----------------------------------------------------------
 #   rig.sh lobby N                a LOBBY with N seats filled (DEBUG button)
@@ -57,6 +60,9 @@
 #   rig.sh burst LABEL N          N screenshots as fast as they come
 #   rig.sh film NAME SECS [CMD..] record, keeping every composited frame
 #   rig.sh sheet NAME [ARGS]      contact sheets from a take or a directory
+#   rig.sh tween NAME [--edge E] -- CMD...
+#                                 film CMD, measure the drawer edge in every
+#                                 composited frame, print the tween numerically
 #   rig.sh probe                  screen size + what the colour finder sees
 #   rig.sh flight | mem | log     the extension's own diagnostics
 #
@@ -94,13 +100,32 @@ export FOOLISH_SIM FOOLISH_IDB
 
 need_sim() { [ -n "$SIM" ] || { echo "set FOOLISH_SIM (rig.sh newsim prints one)" >&2; exit 2; }; }
 
-tap()   { need_sim; "$IDB" ui tap --udid "$SIM" "$1" "$2" >/dev/null 2>&1; sleep "${3:-1}"; }
+# A TAP WITH A DURATION, because an instantaneous one is not always a tap.
+#
+# `idb ui tap` with no duration injects a touch down and up in the same instant,
+# and some UIKit controls never see it. Messages' compose "+" is one: a bare tap
+# on its exact centre does nothing at all - no menu, no state change, nothing in
+# the tree - while the identical coordinates with `--duration 0.12` open the app
+# menu every time. It had looked like the + was "missing" or the keyboard was
+# eating the tap; it was neither, and both theories cost a while to rule out.
+# 0.12s is comfortably above the threshold and far below a long-press.
+tap()   { need_sim; "$IDB" ui tap --udid "$SIM" --duration 0.12 "$1" "$2" >/dev/null 2>&1; sleep "${3:-1}"; }
 swipe() { need_sim; "$IDB" ui swipe --udid "$SIM" --duration "$1" "$2" "$3" "$4" "$5" >/dev/null 2>&1; sleep "${6:-1}"; }
 type_s(){ need_sim; "$IDB" ui text --udid "$SIM" "$1" >/dev/null 2>&1; sleep "${2:-1}"; }
 
 # The screen in POINTS, from the accessibility tree's root - the one thing
 # that reports points on every device without a lookup table.
-screen() { need_sim; python3 "$LIB/ax.py" screen; }
+# Cached per simulator: a device's point size cannot change inside a run, and
+# this was being answered by a full `describe-all` 28 times in a single chain.
+# Keyed on the UDID and kept in FOOLISH_WORK, so it survives the one-command-
+# per-process shape the rig is driven with. `rig.sh probe` re-reads it.
+SCRCACHE="${FOOLISH_WORK:-/tmp/foolishrig}/screen.$SIM"
+screen() {
+  need_sim
+  [ -s "$SCRCACHE" ] && { cat "$SCRCACHE"; return; }
+  mkdir -p "$(dirname "$SCRCACHE")"
+  python3 "$LIB/ax.py" screen | tee "$SCRCACHE"
+}
 
 # Messages' OWN chrome is found BY ACCESSIBILITY LABEL, not by a coordinate
 # table. This was the rig's biggest single source of drift: every earlier
@@ -126,6 +151,10 @@ screen() { need_sim; python3 "$LIB/ax.py" screen; }
 # smallest match - so a loose lookup for the compose field reliably tapped
 # BACK OUT OF THE THREAD, five times in a row, reporting nothing wrong.
 ax() { python3 "$LIB/ax.py" find "$1" --exact; }
+# The FIRST of several labels that is on screen, from ONE tree. A pass that asks
+# three separate times is three dumps of the same unchanged screen, and the
+# first-run sheet hunt does exactly that on every quiet pass of every run.
+ax_first() { python3 "$LIB/ax.py" first "$@"; }
 
 # `idb ui describe-all` answers with the LAST FOREGROUND app's tree even when
 # something else is on screen, so a stale tree looks exactly like a live one
@@ -135,19 +164,105 @@ ax() { python3 "$LIB/ax.py" find "$1" --exact; }
 front() {
   need_sim
   xcrun simctl launch "$SIM" com.apple.MobileSMS >/dev/null 2>&1 || true
-  sleep 2
+  # `ax.py screen` exits non-zero on an EMPTY tree, which is precisely
+  # "Messages has not answered yet" - so that is the predicate, not two seconds.
+  poll 16 0.2 python3 "$LIB/ax.py" screen || true
 }
 
 in_thread() { ax "add" >/dev/null 2>&1; }
+
+# WAIT FOR A PREDICATE, not for a guess.
+#
+# Every fixed sleep in this file is somebody's estimate of the worst case of an
+# animation, and it is paid in full on every run whether or not the animation
+# took that long. Where the rig already has a way to ASK whether the thing
+# happened - `here_is`, `in_thread`, the drawer's own top edge, the claim
+# receipt - polling that is both faster and MORE correct: a slow machine gets
+# more time rather than a wrong frame, and a fast one stops waiting.
+#
+# The sleeps that stay are the ones with no predicate behind them: a fuse the
+# product burns (StagedSendHint's 3s), and the settle after a drag that only
+# the owner's eye can judge.
+#   poll <tries> <interval> <cmd...>
+poll() {
+  local tries="$1" iv="$2"; shift 2
+  local i=0
+  while [ "$i" -lt "$tries" ]; do
+    "$@" >/dev/null 2>&1 && return 0
+    sleep "$iv"; i=$((i + 1))
+  done
+  return 1
+}
+# Our own surface has ARRIVED - not merely begun to appear.
+#
+# `grab_y` finds our felt the moment the presentation starts sliding, which is
+# several hundred milliseconds before the board is where it will end up. That
+# distinction did not exist while the opens ended in a flat `sleep 7`, and the
+# first thing it broke was `cmd_play`: it reads the hand and the table off a
+# SCREENSHOT (`ui.py hand_y` / `cards` / `table`), so an early return had it
+# measuring a moving target and tapping where a card no longer was.
+# Two consecutive equal readings is the cheap, honest test for "stopped".
+# KILL THE APPEX, which is the only thing leaving the thread was ever for.
+#
+# `claimSeededPayload()` is once per appex PROCESS, and the rig's whole
+# leave-and-come-back dance existed to end that process, because leaving the
+# thread is what ends it. But the appex is an ORDINARY HOST PROCESS - the
+# simulator runs it on this Mac - so it can just be killed: instant, verifiable,
+# and it needs no navigation, no row probe and no re-entry.
+#
+# Measured, same seed, same device:
+#   kill  + open   7.4s, claimed
+#   leave + open  20.3s, and it did not always claim
+#
+# SCOPED TO THIS SIMULATOR by the device UDID in the process path. Rule 5 says
+# one simulator per task; a bare `pkill -f FoolishMessages` would reach across
+# to another agent's device and kill its appex mid-frame.
+# NB the `|| true`. Under `set -o pipefail` a `pgrep` that matches nothing makes
+# the whole pipeline return 1, so "the appex is already dead" - the ordinary
+# case, and a SUCCESS - came back as a failure. `kill_appex` propagated it, and
+# `seed_open`'s `|| continue` then skipped the seed and the open entirely: three
+# silent retries that never tried anything, reported as "the extension never
+# claimed its seed".
+appex_pid()  { pgrep -f "Devices/$SIM/.*FoolishMessages\.appex" 2>/dev/null | head -1 || true; }
+appex_gone() { [ -z "$(appex_pid)" ]; }
+kill_appex() {
+  local p; p=$(appex_pid || true)
+  [ -z "$p" ] && return 0
+  kill "$p" 2>/dev/null || true
+  poll 20 0.1 appex_gone && return 0
+  kill -9 "$p" 2>/dev/null || true
+  poll 20 0.1 appex_gone
+}
+
+drawer_up()     { [ "$(grab_y)" != "None" ]; }
+# Two grabs, taken together. Carrying the previous CALL's reading instead halves
+# the screenshots and was tried: it cost the keeper 4.9s -> 26.5s, because
+# readings half a second apart straddle more of the presentation than a pair
+# taken back to back, so "settled" kept coming back false. Cheaper per attempt,
+# many more attempts. Left as it was.
+settle_reset()  { :; }
+drawer_settled() {
+  local a b
+  a=$(grab_y); [ "$a" = "None" ] && return 1
+  b=$(grab_y); [ "$a" = "$b" ]
+}
+not_in_thread() { ! in_thread; }
+# THE SEND HAS GONE THROUGH. Messages only shows a Send button while the compose
+# field holds something, so its DISAPPEARANCE is the completion signal - which
+# is what the flat 4s after every Send was standing in for, five times a run.
+sent_done()  { ! ax "Send" >/dev/null 2>&1; }
+# Something is typed: Messages offers Send only once there is text.
+has_send()   { ax "Send" >/dev/null 2>&1; }
 
 # In a thread whose header matches `$1` (empty = any thread). The header is a
 # Button carrying the remote address, which is the only stable way to tell the
 # two stub conversations apart - the LIST reorders by recency, so "row 1" is
 # not a thread, it is a coin flip.
 here_is() {
-  in_thread || return 1
-  [ -z "${1:-}" ] && return 0
-  python3 "$LIB/ax.py" dump "$1" | grep -q Button
+  # ONE tree, not two. This used to call `in_thread` (a describe-all) and then
+  # `ax.py dump` (another describe-all) against the same unchanged screen -
+  # and `here_is` is the single most-called predicate in the rig.
+  python3 "$LIB/ax.py" here "${1:-}"
 }
 
 # The drawer's own top edge, found by colour - "None" when no drawer is up.
@@ -227,9 +342,16 @@ cmd_build() {
   (cd "$REPO" && git checkout -- $(cd "$REPO" && git ls-files -- '*.entitlements'))
   local name; name=$(xcrun simctl list devices | grep "$SIM" | sed 's/ (.*//;s/^ *//')
   # DEBUG, not Release: `dev.fatboard` seeding is #if DEBUG.
+  # RIG_RESEED is OPT-IN and off by default, so the ordinary build is the
+  # ordinary build. With it, a LIVE appex re-reads `dev.fatboard` when the file
+  # changes, which lets a driver skip the leave/probe/re-open cycle that exists
+  # only because `claimSeededPayload()` is once per process. Two gates, not one:
+  # this compile-time flag, and the `dev.reseed` file at runtime.
+  local cond="DEBUG"
+  [ -n "${FOOLISH_RESEED:-}" ] && cond="$cond RIG_RESEED"
   xcodebuild -project "$REPO/ios/Foolish.xcodeproj" -scheme FoolishMessagesApp \
     -configuration Debug -destination "platform=iOS Simulator,id=$SIM" \
-    -derivedDataPath "$DD" build | tail -3
+    -derivedDataPath "$DD" SWIFT_ACTIVE_COMPILATION_CONDITIONS="$cond" build | tail -3
   # Install OVER the old build. `simctl uninstall` destroys the App Group and
   # the appex's Preferences container, and both come back with fresh UUIDs.
   xcrun simctl install "$SIM" "$DD/Build/Products/Debug-iphonesimulator/FoolishMessagesApp.app"
@@ -246,7 +368,9 @@ cmd_stage() {
   xcrun simctl status_bar "$SIM" override --time "9:41" --batteryState charged \
       --batteryLevel 100 --cellularBars 4 --wifiBars 3 --dataNetwork wifi
   xcrun simctl ui "$SIM" appearance "$appear" >/dev/null
-  xcrun simctl launch "$SIM" com.apple.MobileSMS >/dev/null; sleep 6
+  # Poll for Messages rather than guessing six seconds at its launch.
+  xcrun simctl launch "$SIM" com.apple.MobileSMS >/dev/null
+  poll 40 0.15 python3 "$LIB/ax.py" screen || true
   read -r W H < <(screen)
   # Dismiss whatever onboarding is up: both sheets put their button on the
   # bottom eighth, centred. Tapping there twice is harmless once they are gone
@@ -280,12 +404,20 @@ cmd_stage() {
     # sheet had eaten the tap on the compose +. Declining is the safe answer to
     # any first-run sheet during a shoot; "OK"/"Continue" stay for the sheets
     # that only offer those (Shared with You, Apple Intelligence).
-    if tap_ax "Not Now" 3 2>/dev/null || tap_ax "OK" 3 2>/dev/null \
-       || tap_ax "Continue" 3 2>/dev/null; then
+    # One tree, asked for all three at once. Order still matters and is
+    # preserved inside `ax.py first`: "Not Now" before "Continue", because iOS
+    # 26's Check In sheet offers both and "Continue" walks INTO its setup.
+    if pt=$(ax_first "Not Now" "OK" "Continue" 2>/dev/null); then
+      tap $(echo "$pt" | awk '{print $1, $2}') 3
       quiet=0
     else
       quiet=$((quiet + 1))
-      sleep 2
+      # 0.6s, not 2s. Four quiet passes at two seconds is eight seconds spent
+      # proving a sheet is absent, on every run, and on an already-staged device
+      # none is ever coming. The twelve-iteration budget is unchanged, so a
+      # sheet that appears late is still caught - it is the cost of being WRONG
+      # about one that never appears that drops.
+      sleep 0.6
     fi
     i=$((i + 1))
   done
@@ -362,12 +494,38 @@ cmd_enter() {
   fi
   # Leave whatever thread we are in, so the row probe has a list to probe.
   local i=0
-  while [ $i -lt 3 ] && in_thread; do tap_ax "Messages" 2 || break; i=$((i + 1)); done
+  while [ $i -lt 3 ] && in_thread; do
+    tap_ax "Messages" 0.3 || break
+    poll 16 0.15 not_in_thread || true
+    i=$((i + 1))
+  done
+  # TRY THE ROW THIS THREAD WAS LAST FOUND ON, FIRST.
+  #
+  # The list orders by RECENCY, so the conversation just sent to is row 1 - and
+  # a rig that always probes row 1 first therefore opens the WRONG thread on
+  # roughly every other call, sees the wrong header, and backs out. That is the
+  # "opens Kate Bell and closes it immediately" the owner watched it do twice in
+  # one run, and it costs a tap, a poll and a back-out each time.
+  # The rig already knows the answer: it found this thread somewhere last time.
+  local ycache="${FOOLISH_WORK:-/tmp/foolishrig}/rowy.$SIM.${want:-any}"
+  local yfirst=""; [ -s "$ycache" ] && yfirst=$(cat "$ycache")
   local y
-  for y in $((H * 24 / 100)) $((H * 20 / 100)) $((H * 15 / 100)) $((H * 28 / 100)) $((H * 32 / 100)); do
-    tap $((W / 2)) "$y" 2.5
-    here_is "$want" && return 0
-    in_thread && { tap_ax "Messages" 2 || true; }
+  for y in $yfirst $((H * 24 / 100)) $((H * 20 / 100)) $((H * 15 / 100)) $((H * 28 / 100)) $((H * 32 / 100)); do
+    # Poll for A THREAD, then decide ONCE which one it is.
+    #
+    # Polling `here_is` directly reads well and is a trap: when the row under
+    # this y is the WRONG conversation the predicate can never come true, so
+    # every miss burns the entire budget before the next candidate is tried -
+    # which made `session` (it alternates threads, so it misses constantly)
+    # SLOWER than the fixed 2.5s sleep it replaced. `in_thread` is the part
+    # that is actually pending; the identity is settled the moment it lands.
+    tap $((W / 2)) "$y" 0.3
+    poll 12 0.15 in_thread || true
+    if here_is "$want"; then
+      mkdir -p "$(dirname "$ycache")"; printf '%s' "$y" > "$ycache"
+      return 0
+    fi
+    in_thread && { tap_ax "Messages" 0.3 && poll 16 0.15 not_in_thread || true; }
   done
   echo "could not open conversation '${want:-any}'" >&2
   return 1
@@ -398,9 +556,19 @@ OTHER_THREAD="${FOOLISH_OTHER_THREAD:-8583}"    # the one that "sends" to it
 
 say() {  # say <thread-substring> <text>
   cmd_enter "$1" >/dev/null || return 1
-  tap_ax "Message" 1.5 || return 1
-  type_s "$2" 1.5
-  tap_ax "Send" 2.5
+  # MEASURED, NOT ASSUMED, and two of the three obvious predicates are wrong:
+  #   `ax "return"` is not in the tree at all, even with the field focused, so
+  #   "wait for a keyboard" never came true and burned its whole budget;
+  #   and `Send` is shown whenever ANYTHING is sendable, including a staged
+  #   Foolish bubble, so "wait for Send to go away" is not "the text went".
+  # Only the middle one survives: Messages offers Send once there is text.
+  tap_ax "Message" 0.6 || return 1
+  type_s "$2" 0.2
+  poll 20 0.2 has_send || true
+  # Sound HERE specifically: `session` runs before any seeding, so the only
+  # thing Messages can have to send is the text just typed.
+  tap_ax "Send" 0.3 || return 1
+  poll 40 0.2 sent_done || true
 }
 
 cmd_session() {
@@ -441,12 +609,50 @@ cmd_session() {
 cmd_open() {
   need_sim
   cmd_enter "${1:-$SHOOT_THREAD}" >/dev/null
-  tap_ax "add" 2.5
+  # THE FIRST "+" MAY BE EATEN BY THE KEYBOARD.
+  #
+  # `session` types into the compose field and leaves a keyboard up, and while
+  # one is up the first tap anywhere dismisses it instead of doing what it was
+  # aimed at - so the menu never opens and `Foolish` is looked for on a screen
+  # that has no menu on it. Leaving the thread used to dismiss the keyboard as a
+  # side effect, which is the only reason this never showed before the appex
+  # started being killed in place rather than walked away from.
+  #
+  # So ask whether the menu actually came, and tap again if it did not. The menu
+  # is up when Messages puts its dismissal target on screen - NOT when "Foolish"
+  # is visible, which is below the fold on a stock device and only the swipe
+  # loop underneath can reach.
+  local m=0
+  while [ $m -lt 3 ]; do
+    tap_ax "add" 0.3
+    poll 12 0.25 ax "dismiss popup" && break
+    m=$((m + 1))
+  done
   read -r W H < <(screen)
+  # FOOLISH IS BELOW THE FOLD, and on a given device it always will be - the
+  # app menu's order does not shuffle between runs. The loop below therefore
+  # opened with a `tap_ax "Foolish"` that could not succeed, every single time:
+  # a describe-all spent proving something this rig already knew. Remember it,
+  # and scroll first when we have learned it.
+  local mscroll="${FOOLISH_WORK:-/tmp/foolishrig}/menuscroll.$SIM"
+  if [ -s "$mscroll" ]; then
+    swipe 0.5 $((W * 2 / 5)) $((H * 89 / 100)) $((W * 2 / 5)) $((H * 55 / 100)) 0.15
+    poll 20 0.15 ax "Foolish" || true
+  fi
   local i=0
   while [ $i -lt 5 ]; do
-    if tap_ax "Foolish" 7; then return 0; fi
-    swipe 0.5 $((W * 2 / 5)) $((H * 89 / 100)) $((W * 2 / 5)) $((H * 55 / 100)) 1.5
+    if tap_ax "Foolish" 0.4; then
+      [ -s "$mscroll" ] || { mkdir -p "$(dirname "$mscroll")"; printf '%s' "$i" > "$mscroll"; }
+      # Seven seconds was an estimate of a cold appex launch. The drawer's own
+      # top edge says when it really happened, and `seed_open` polls the claim
+      # receipt after this, so a slow open is absorbed rather than mis-read.
+      poll 30 0.15 drawer_up || true
+      return 0
+    fi
+    # The menu is scrolled when the thing we are after is on it - 1.5s was a
+    # guess at an inertial scroll that usually settles far sooner.
+    swipe 0.5 $((W * 2 / 5)) $((H * 89 / 100)) $((W * 2 / 5)) $((H * 55 / 100)) 0.15
+    poll 20 0.15 ax "Foolish" || true
     i=$((i + 1))
   done
   echo "Foolish is not in the app menu - is the extension installed?" >&2
@@ -644,7 +850,7 @@ cmd_chain() {
     cmd_nudge || true
   else
     # No drawer in this frame: put it away and photograph the transcript alone.
-    cmd_back >/dev/null 2>&1 || true
+    cmd_leave >/dev/null 2>&1 || true
     cmd_enter "$SHOOT_THREAD" >/dev/null 2>&1 || true
   fi
   cmd_shot "$name"
@@ -702,7 +908,14 @@ cmd_tapopen() {
   # bubble itself - ours sits on the right, theirs on the left.
   read -r W H < <(screen)
   if [ "$x" -gt $((W / 2)) ]; then x=$((x - 60)); else x=$((x + 60)); fi
-  tap "$x" "$y" 5
+  tap "$x" "$y" 0.3
+  # UP, not STILL. What gates the next step is the CLAIM RECEIPT, which
+  # `seed_open` polls from a file and which does not care where the board has
+  # got to on screen. Waiting for the presentation to stop moving costs two
+  # screenshots per attempt and buys nothing here - it is only a coordinate
+  # READER that needs a stationary board, so that wait now lives in `cmd_play`,
+  # beside the thing that needs it.
+  poll 30 0.15 drawer_up || true
 }
 # SEED THE BOARD, OPEN IT, AND PROVE THE EXTENSION OPENED ONTO *THAT* SEED.
 #
@@ -731,22 +944,66 @@ seed_open() {
   local hex="$1" seat="$2" thread="$3" route="${4:-tapopen}"
   local g; g=$(group_dir)
   local try got
-  for try in 1 2 3; do
+  # THE FAST PATH, and the shape of what it can and cannot do.
+  #
+  # With a RIG_RESEED build and `dev.reseed` set, a LIVE appex adopts a new
+  # `dev.fatboard` where it stands - so a re-seed onto the SAME thread is a file
+  # write and a receipt, about a third of a second, instead of leave + blind row
+  # probe + re-open, about ten seconds.
+  #
+  # It cannot help a re-seed that CHANGES thread, and that is not a limitation
+  # of the flag - it is what a two-sided transcript costs. A move sent from a
+  # thread lands in that thread as incoming, so alternating sides means actually
+  # being in the other conversation, and getting there leaves this one, which
+  # kills the appex anyway. `chain` alternates every move; `batch` never does.
+  local lt="${FOOLISH_WORK:-/tmp/foolishrig}/lastthread.$SIM"
+  if [ -f "$g/dev.reseed" ] && [ "$(cat "$lt" 2>/dev/null)" = "$thread" ] && drawer_up; then
     rm -f "$g/dev.claimed" "$g/dev.staged"
     printf '%s' "$hex"  > "$g/dev.fatboard"
     printf '%s' "$seat" > "$g/dev.seat"
-    # NOT swallowed. `back` returning 1 means the appex is still alive, which is
-    # exactly the condition that produces the lag; it used to be `|| true`.
-    if ! cmd_back >/dev/null 2>&1; then
-      echo "  seed: could not leave the thread (try $try) - appex still alive" >&2
+    for try in $(seq 1 40); do
+      got=$(cat "$g/dev.claimed" 2>/dev/null || true)
+      [ "$got" = "$hex" ] && return 0
+      sleep 0.1
+    done
+    echo "  seed: dev.reseed set but the appex never adopted it - falling back" >&2
+  fi
+  for try in 1 2 3; do
+    rm -f "$g/dev.claimed" "$g/dev.staged"
+    # KILL FIRST, THEN WRITE. Killing is what makes the next seed readable, and
+    # it replaces `cmd_leave` outright: no drawer to put away, no thread to
+    # leave, no conversation row to guess at. `cmd_enter` below still navigates
+    # when the MOVE is going to the other thread, which is a transcript
+    # requirement rather than a seeding one.
+    #
+    # The order matters on a RIG_RESEED build: a live appex adopts a new
+    # `dev.fatboard` the moment it appears and `openSeededBoard` stages when
+    # `dev.stage` is set, so seeding before the kill has the outgoing surface
+    # stage a bubble nobody asked for.
+    if ! kill_appex; then
+      echo "  seed: the appex would not die (try $try)" >&2
       continue
     fi
+    printf '%s' "$hex"  > "$g/dev.fatboard"
+    printf '%s' "$seat" > "$g/dev.seat"
     case "$route" in
       open) cmd_open "$thread" >/dev/null 2>&1 ;;
       *)    cmd_tapopen "$thread" >/dev/null 2>&1 || cmd_open "$thread" >/dev/null 2>&1 ;;
     esac
-    got=$(cat "$g/dev.claimed" 2>/dev/null || true)
-    [ "$got" = "$hex" ] && return 0
+    # POLL the receipt rather than peeking once. The claim is written as the
+    # extension opens, and the opens above now return the moment the drawer is
+    # up instead of after a flat seven seconds - so the receipt can land a beat
+    # later. This is the safety net that makes those short waits safe: a claim
+    # that is coming is waited for, and one that is not still fails in a second.
+    got=""
+    for _ in 1 2 3 4 5 6 7 8; do
+      got=$(cat "$g/dev.claimed" 2>/dev/null || true)
+      if [ "$got" = "$hex" ]; then
+        mkdir -p "$(dirname "$lt")"; printf '%s' "$thread" > "$lt"
+        return 0
+      fi
+      sleep 0.25
+    done
     if [ -z "$got" ]; then
       echo "  seed: the extension claimed nothing (try $try) - it re-opened a live appex" >&2
     else
@@ -797,7 +1054,18 @@ cmd_claimed() {
   cat "$g/dev.claimed" 2>/dev/null && echo || echo "nothing claimed yet"
 }
 
-cmd_back() {
+# LEAVE the thread, and stop there.
+#
+# Leaving is the part with a reason: it kills the appex, and
+# `claimSeededPayload()` is once per appex PROCESS, so a re-seed is only read
+# after the thread has been left. Coming BACK is a separate want, and most
+# callers do not have it - `seed_open` routes to either thread next, `batch`
+# and `lobby` call `open`, and `chain`'s no-drawer branch called `cmd_enter`
+# on the very next line. They were all paying for a thread to be opened and
+# then immediately closed again: on a chain that alternates threads it is a
+# whole enter cycle per move, tapping a conversation row to land somewhere the
+# next call walks straight back out of.
+cmd_leave() {
   need_sim
   front
   read -r W H < <(screen)
@@ -811,15 +1079,27 @@ cmd_back() {
   # and `claimSeededPayload()` is once per appex process - so a `back` that
   # merely collapses the drawer leaves the NEXT open showing the PREVIOUS
   # seed's board, with the new one never read. Verified, not assumed.
-  local i=0
-  while [ $i -lt 3 ] && in_thread; do
-    tap_ax "Messages" 2.5 || break
+  local i=0 inside=1
+  while [ $i -lt 3 ]; do
+    if ! in_thread; then inside=0; break; fi
+    tap_ax "Messages" 0.3 || break
+    poll 16 0.15 not_in_thread || true
     i=$((i + 1))
   done
-  if in_thread; then
+  # `inside` is the loop's OWN last reading. The guard below used to re-ask the
+  # identical question with nothing in between, which on the common path (we
+  # left, and the loop proved it) is a describe-all for an answer already held.
+  if [ "$inside" = 1 ] && in_thread; then
     echo "could not leave the thread - the next seed will not be read" >&2
     return 1
   fi
+}
+
+# Leave, and come back into the shoot thread. For callers that genuinely want
+# to END there: `clearstage` (whose tap made Messages' own field first
+# responder, costing the compact drawer 17pt - trap 11) and the `back` verb.
+cmd_back() {
+  cmd_leave || return 1
   cmd_enter "$SHOOT_THREAD" >/dev/null
 }
 
@@ -832,7 +1112,23 @@ cmd_expand() {
   read -r W H < <(screen)
   local y; y=$(grab_y)
   [ "$y" = "None" ] && { echo "no drawer on screen" >&2; return 1; }
-  swipe 0.6 $((W / 2)) $((y + 6)) $((W / 2)) $((H * 16 / 100)) 3
+  # Settle on the drawer's own edge, like `collapse` does. This was the last
+  # flat 3s in the file, and it is paid on every single tween measurement:
+  # a seeded board opens COMPACT (only the new-game and name-gate paths ask for
+  # expanded), so measuring an auto-collapse means dragging it open first, every
+  # time. Owner: "because you constantly have to drag it to expand, that will
+  # make this slow to measure".
+  # A FLICK, not a haul. 0.12s reaches the same detent as 0.6s - the host takes
+  # the gesture's velocity, not its duration - and it is what a human actually
+  # does. Owner: "what if it was just a flick? that's what I do in the real app".
+  # 0.6s, NOT a flick. A flick was tried on the owner's own instinct ("that's
+  # what I do in the real app") and it is SLOWER end to end - 2.87s against
+  # 2.40s over three samples each - because the gesture's momentum leaves the
+  # drawer settling after it lands, and the settle poll pays for that for longer
+  # than the quicker swipe saved. The host takes velocity, so both reach the
+  # same detent; only the settling differs.
+  swipe 0.6 $((W / 2)) $((y + 6)) $((W / 2)) $((H * 16 / 100)) 0.2
+  settle_reset; poll 40 0.15 drawer_settled || true
 }
 
 # Collapse and return AT ONCE. Everything with a fuse on it - the Send hint,
@@ -852,14 +1148,23 @@ cmd_goodtap() {
   read -r W H < <(screen)
   local y; y=$(bar_y -1)
   [ "$y" = "-1" ] && return 1
-  tap $((W * 4 / 5)) "$y" 2.5
+  tap $((W * 4 / 5)) "$y" 0.3
+  # The plank STAGES a move, and Messages offers Send the moment something is
+  # staged - so that is the signal, not 2.5 seconds. This is also the thing the
+  # auto-collapse is triggered by, so returning on it rather than before it is
+  # what lets a film of that transition start tight.
+  poll 40 0.15 has_send || true
 }
 
 cmd_collapse() {
   read -r W H < <(screen)
   local y; y=$(grab_y)
   [ "$y" = "None" ] && { echo "no drawer on screen" >&2; return 1; }
-  swipe 0.6 $((W / 2)) $(pull_y "$y" "$H") $((W / 2)) $((H * 66 / 100)) 3
+  # The drag is 0.6s and the settle was a flat 3s on top of it. The drawer's own
+  # top edge says when it has stopped moving, which is the same question asked
+  # of the thing itself.
+  swipe 0.6 $((W / 2)) $(pull_y "$y" "$H") $((W / 2)) $((H * 66 / 100)) 0.2
+  settle_reset; poll 30 0.2 drawer_settled || true
 }
 
 # Dismiss a STAGED Foolish bubble sitting in the compose field. Merely opening
@@ -909,7 +1214,7 @@ print(b[${1:-0}][0] if b else -1)"
 cmd_lobby() {
   local seats="${1:-2}" i=1 y
   cmd_unseed >/dev/null
-  cmd_back
+  cmd_leave
   cmd_open
   read -r W H < <(screen)
   y=$(bar_y 0); [ "$y" != "-1" ] && tap $((W / 2)) "$y" 3.5      # New game
@@ -1006,6 +1311,11 @@ print(-1 if not sp else (sp[-1][0] if which == 'leave' else sp[0][0]))")
 # attempted; for a photograph, one card is a move.
 cmd_play() {
   need_sim
+  # THE BOARD MUST HAVE STOPPED. Everything below is read off a SCREENSHOT, so a
+  # presentation still sliding is measured wrong and every tap derived from it
+  # misses. The opens used to carry this wait for everyone; it belongs here,
+  # with the only caller that needs it.
+  settle_reset; poll 30 0.2 drawer_settled || true
   local before after newy x y t tx ty
   before=$(python3 "$LIB/ui.py" bars)
   y=$(python3 "$LIB/ui.py" hand_y | awk '{print $2}')
@@ -1062,7 +1372,18 @@ cmd_turn() {
   if [ "$top" != "None" ] && [ "$top" -lt $((H / 3)) ]; then
     swipe 0.6 $((W / 2)) $(pull_y "$top" "$H") $((W / 2)) $((H * 66 / 100)) 3
   fi
-  tap_ax "Send" 4 || { echo "nothing staged - is stageseed on?" >&2; return 1; }
+  tap_ax "Send" 0.3 || { echo "nothing staged - is stageseed on?" >&2; return 1; }
+  # Four seconds, five times a run, for an event that announces itself. The
+  # owner, watching: "seems to be a small pause right before sending".
+  poll 40 0.2 sent_done || true
+  # …AND THEN LET THE BUBBLE LAND. The Send button goes the moment Messages
+  # accepts the text, which is BEFORE the bubble is in the transcript - and the
+  # next move opens the extension by finding the newest bubble's icon
+  # (`ui.py lastmsg`). Returning on `sent_done` alone moved the cost rather than
+  # removing it: the moves dropped ~4s each and the frame that tapped the fresh
+  # bubble went 4.9s -> 25.9s. Owner, watching: "hell of a wait before you make
+  # the final move".
+  sleep 0.8
 }
 
 # --------------------------------------------------------------- state ----
@@ -1132,6 +1453,14 @@ cmd_ruler() {
 # `dev.stage`: make a seeded open ALSO stage its own chain as a bubble, so a
 # frame's last bubble is the board underneath it. On for every gameplay frame
 # whose transcript is visible.
+# `dev.reseed`: the RUNTIME half of RIG_RESEED. Both are needed - a build
+# without the flag ignores this file entirely.
+cmd_reseed() {
+  local g; g=$(group_dir)
+  if [ "${1:-on}" = "off" ]; then rm -f "$g/dev.reseed"; echo "reseed off"
+  else : > "$g/dev.reseed"; echo "reseed on (needs a FOOLISH_RESEED=1 build)"; fi
+}
+
 cmd_stageseed() {
   local g; g=$(group_dir)
   if [ "${1:-on}" = "off" ]; then rm -f "$g/dev.stage"; echo "stageseed off"
@@ -1184,10 +1513,24 @@ cmd_batch() {
       SEAT="${seat:-}" cmd_seed $mode $args | tail -1
     fi
     cmd_prefs "${table:-}" "${lang:-}" "${appear:-}" >/dev/null
+    # RESEED FAST PATH (RIG_RESEED build + `dev.reseed`). `cmd_seed` has just
+    # written the new board, and a live appex adopts it where it stands - so a
+    # frame that follows one whose drawer is still up needs no leave, no blind
+    # row probe and no re-open. `claim_ok` is the same receipt the slow path
+    # checks, so nothing is taken on trust.
+    #
+    # It applies to a NARROW case and that is inherent: the drawer has to still
+    # be up, so any frame whose `act` SENT its bubble (turn / select) dismissed
+    # the surface and pays the full cycle. Frames that only stage - `hint`,
+    # `good` - chain.
+    if [ -n "${mode:-}" ] && [ -f "$(group_dir)/dev.reseed" ] && drawer_up \
+       && poll 40 0.1 claim_ok; then
+      :
+    else
     # One bad frame must not end the run. `set -e` applies inside this loop, so
     # an un-guarded failure here killed a 41-shot batch after its FIRST line and
     # still exited 0 - the list simply stopped, with nothing to say it had.
-    cmd_back || { echo "!! $name skipped - could not leave the drawer" >&2; continue; }
+    kill_appex || { echo "!! $name skipped - the appex would not die" >&2; continue; }
     cmd_open_retry || { echo "!! $name skipped - could not open the extension" >&2; continue; }
     # …and it opened onto THIS seed, not the one before it (trap 10). `back`
     # returning 0 says the thread was left, not that the appex died; only the
@@ -1195,8 +1538,9 @@ cmd_batch() {
     # of the previous state is worse than a missing one, because it looks fine.
     if [ -n "${mode:-}" ] && ! claim_ok; then
       echo "   $name: stale seed, re-opening" >&2
-      cmd_back && cmd_open_retry || true
+      kill_appex && cmd_open_retry || true
       claim_ok || { echo "!! $name skipped - the extension never claimed its seed" >&2; continue; }
+    fi
     fi
     case "${act:-}" in
       # Send the bubble the seeded open staged: the transcript's last bubble
@@ -1260,6 +1604,12 @@ cmd_film() {
   "$@"
   sleep "$secs"
   kill -INT $rec 2>/dev/null || true; sleep 4
+  # `tp` and `ph` are tween's; borrowed here without being defined, so under
+  # `set -u` every film died right after the recorder stopped, with the movie
+  # written and no frames extracted. Timed the same way now.
+  local ph; ph=$(date +%s.%N)
+  tp() { printf '  %-26s %6.2fs\n' "$1" "$(echo "$(date +%s.%N) - $2" | bc)" >&2; }
+  tp "stop recorder" "$ph"; ph=$(date +%s.%N)
   ffmpeg -v error -i "$d/take.mp4" -fps_mode passthrough "$d/f%05d.png" 2>"$d/ffmpeg.err" || {
     cat "$d/ffmpeg.err" >&2; return 1; }
   # The image2 muxer complains "non monotonically increasing dts" once per
@@ -1273,6 +1623,116 @@ cmd_film() {
 }
 
 cmd_sheet() { python3 "$LIB/sheet.py" "$@"; }
+
+# MEASURE A TWEEN, end to end, as fast as the animation actually is.
+#
+# `film` is built for watching: a 3s lead, a fixed tail you have to guess at,
+# and a 4s wait for the recorder. For MEASURING one short transition that is
+# almost all dead time - a collapse is ~0.5s inside a 22s round trip. Every one
+# of those waits has something to ask instead:
+#   the recorder is running when its file exists
+#   the animation is over when the drawer's own edge stops moving
+#   the movie is finished when it stops growing
+# and then `lib/tween.py` reads the edge out of every composited frame and
+# prints it against that frame's own presentation time, so two builds can be
+# diffed instead of described. That last part is what was missing: the collapse
+# was read BY EYE off `dev.ruler` overlays on a contact sheet.
+#
+#   rig.sh tween NAME [--edge felt|host] -- CMD...
+cmd_tween() {
+  need_sim
+  local name="${1:-tween}"; shift || true
+  [ "${1:-}" = "--" ] && shift
+  local t0; t0=$(date +%s.%N)
+  tp() { printf '  %-26s %6.2fs\n' "$1" "$(echo "$(date +%s.%N) - $2" | bc)" >&2; }
+  local ph; ph="$t0"
+  local d="$OUT/film/$name"
+  rm -rf "$d"; mkdir -p "$d"
+  xcrun simctl io "$SIM" recordVideo --codec h264 --force "$d/take.mp4" >/dev/null 2>&1 &
+  local rec=$!
+  # A FIXED LEAD, and it has to be. `simctl io recordVideo` writes nothing until
+  # it is stopped, so there is no file to poll and no readiness to ask about -
+  # polling for one reported "the recorder never started" on a recorder that was
+  # running perfectly. It buys the lead AND a beat of still frames, so the tween
+  # has a floor to be measured against; the extraction window below then throws
+  # most of that beat away again, so it only has to be long enough to be sure.
+  sleep "${FOOLISH_TWEEN_LEAD:-0.5}"
+  tp "lead" "$ph"; ph=$(date +%s.%N)
+  "$@" >&2
+  tp "the action" "$ph"; ph=$(date +%s.%N)
+  settle_reset; poll 60 0.1 drawer_settled || true
+  sleep 0.25                     # and a beat after, so it has a ceiling
+  tp "settle + tail" "$ph"; ph=$(date +%s.%N)
+  kill -INT $rec 2>/dev/null || true
+  # The movie is finished when it stops growing. `film` waits 4s for this.
+  local a b i=0
+  while [ $i -lt 60 ]; do
+    a=$(stat -f%z "$d/take.mp4" 2>/dev/null || echo 0); sleep 0.15
+    b=$(stat -f%z "$d/take.mp4" 2>/dev/null || echo 0)
+    [ "$a" = "$b" ] && [ "$a" != 0 ] && break
+    i=$((i + 1))
+  done
+  tp "stop recorder" "$ph"; ph=$(date +%s.%N)
+  # RAW frames, not PNG, and only here - `film` keeps PNGs because its takes are
+  # for LOOKING at. The decode is the whole cost of measuring: ffmpeg writes
+  # these 4.5x faster and PIL reads them 12x faster (3.4ms against 40.8ms). They
+  # are ~11MB each, which is why they are deleted the moment the CSV exists.
+  # SKIP THE STILL LEAD. Measured across takes, the box starts moving at the
+  # lead plus ~1.5s - the tap, then the product's deliberate pause before it
+  # collapses (250ms + waitForSettle + 500ms). With a 0.5s lead that is ~2.0s,
+  # so 1.3s keeps a ~0.7s buffer in front of it and still drops the frames that
+  # were being decoded, measured and deleted for nothing. Owner:
+  # "run it a few times to determine around what frame the motion starts, and
+  # start filming like a safe buffer before the average start frame."
+  #
+  # The MOVIE still holds everything, so this is only which part is looked at -
+  # and `tween.py` says so if the first frame it sees is already moving, which
+  # is the one way this can be wrong.
+  # AND ONLY A SLICE OF EACH FRAME. Owner: "what if instead of taking a shot of
+  # the entire screen, we took a thin slice of the centre? full height, but only
+  # -50 to +50 of the centre." Right in principle - but the slice has to start
+  # at x=0, not at the centre, because two of the three things read here live at
+  # the box's LEADING edge: the 10pt band strip (the scale check) and the
+  # 14-cell CLOCK, which is what catches frames the app never drew. The bars
+  # themselves are full width, so any slice contains them.
+  #
+  # AND STOP BEFORE THE STILL TAIL. The recorder keeps running while the settle
+  # poll confirms the drawer has stopped - two screenshots an attempt, so about
+  # a second after the box itself finished - and that second was 46% of the
+  # extracted frames, all of them reading the same settled height. 2.2s from the
+  # window's start covers the ~0.7s of lead buffer and the ~1.3s tween with room
+  # to spare, and `tween.py` says whether the last frames agree, which is how a
+  # window that stopped too EARLY announces itself.
+  #
+  # 544px, and the number is measured rather than guessed: the box's left inset
+  # is 14px, the band strip runs to 68, and the clock's fourteenth cell ends at
+  # 518. That is the FLOOR, not a preference - the clock is most-significant
+  # first, so its LOW bits are the last cells, and those are the ones that
+  # change between consecutive frames. Crop below 518 and stale-frame detection
+  # silently stops working while everything else still reads fine.
+  # 544 of 1320 is 41% of the frame: ffmpeg moves that much less, and so does
+  # the reader.
+  ffmpeg -v error -ss "${FOOLISH_TWEEN_SS:-1.3}" -i "$d/take.mp4" \
+         -t "${FOOLISH_TWEEN_T:-2.2}" \
+         -vf "crop=${FOOLISH_TWEEN_CROP:-544}:ih:0:0" \
+         -fps_mode passthrough "$d/f%05d.ppm" 2>"$d/ffmpeg.err" || {
+    cat "$d/ffmpeg.err" >&2; return 1; }
+  ffprobe -v error -select_streams v:0 -show_entries frame=pts_time -of csv=p=0 \
+          "$d/take.mp4" | tr -d ',' > "$d/times.txt"
+  tp "extract frames" "$ph"; ph=$(date +%s.%N)
+  python3 "$LIB/tween.py" "$d" --csv "$d/edge.csv" --quiet
+  tp "measure" "$ph"
+  # CLEAN UP, as part of the run. A take is gigabytes of raw frames and the
+  # answer is a small CSV; leaving them fills a disk one measurement at a time.
+  # The movie stays, so a take can be re-measured without re-shooting it.
+  local kept; kept=$(ls "$d"/f*.ppm 2>/dev/null | wc -l | tr -d ' ')
+  # IN THE BACKGROUND. The CSV is written, so the answer is already out; there
+  # is no reason for the caller to wait on unlink(2) for a few hundred files.
+  ( rm -f "$d"/f*.ppm ) &
+  tp "clean ($kept frames, backgrounded)" "$ph"
+  tp "TOTAL" "$t0"
+  echo "$d/edge.csv"
+}
 
 # The extension's own diagnostics, which live in the App Group beside the dev
 # flags. `flight` is the always-compiled FlightRecorder (on a device it is
@@ -1315,6 +1775,8 @@ case "${1:-}" in
   nudge)    shift; cmd_nudge "$@" ;;
   chain)    shift; cmd_chain "$@" ;;
   back)     shift; cmd_back "$@" ;;
+  leave)    shift; cmd_leave "$@" ;;
+  killappex) shift; kill_appex "$@" ;;
   expand)   shift; cmd_expand "$@" ;;
   collapse) shift; cmd_collapse "$@" ;;
   goodtap)  shift; cmd_goodtap "$@" ;;
@@ -1326,11 +1788,13 @@ case "${1:-}" in
   deal)     shift; cmd_deal "$@" ;;
   ruler)    shift; cmd_ruler "$@" ;;
   stageseed) shift; cmd_stageseed "$@" ;;
+  reseed)   shift; cmd_reseed "$@" ;;
   shot)     shift; cmd_shot "$@" ;;
   batch)    shift; cmd_batch "$@" ;;
   burst)    shift; cmd_burst "$@" ;;
   film)     shift; cmd_film "$@" ;;
   sheet)    shift; cmd_sheet "$@" ;;
+  tween)    shift; cmd_tween "$@" ;;
   probe)    shift; cmd_probe "$@" ;;
   flight)   shift; cmd_flight "$@" ;;
   mem)      shift; cmd_mem "$@" ;;

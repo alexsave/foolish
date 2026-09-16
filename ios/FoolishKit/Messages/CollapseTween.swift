@@ -76,15 +76,114 @@ public enum CollapseTween {
     /// clock so its renders land in phase with the drawer.
     ///
     /// MEASURED, not tuned: 5ms centres the box on the drawer (fresh frames
-    /// +2ms behind, the re-composited frame between them 6ms ahead). Ten is
-    /// chosen on purpose, because a dropped frame at peak velocity leaves the
-    /// box one extra frame too tall and its bottom edge off the screen - the
-    /// one thing the owner rules out entirely. Five extra milliseconds is a
-    /// 15pt margin against that, paid as 15pt of hand-above-the-edge on the
-    /// frames we do draw. Filmed: at 3ms a dropped frame put the bar off
-    /// screen twice; at 5ms the margin was 14pt; at 20ms the hand rode 68pt
-    /// high.
-    public static let hostLead: Double = 0.010
+    /// +2ms behind, the re-composited frame between them 6ms ahead). The lead
+    /// is a MARGIN, and what it is a margin against is a frame we did not draw:
+    /// the box is top-glued to the drawer's descending edge, so on a skipped
+    /// frame the drawer has moved on and our height has not, and the box comes
+    /// out one skipped interval of drawer travel TOO TALL - bottom edge, and
+    /// the hand sitting on it, cut off below the screen. The lead buys that
+    /// back by keeping the box deliberately short on the frames we do draw.
+    ///
+    /// So the price is paid on every frame and the insurance is claimed on a
+    /// few, and 10ms was overpaying. Twenty auto-collapses per point on a
+    /// 6.9" sim, scored by how far the bottom edge strays from the two places
+    /// it is allowed to rest (`ios/Tools/rig/lib/mse.py`, and the cut-off
+    /// column is the frames where the hand went off the bottom):
+    ///
+    ///     lead    MSE    peak out of band    frames with the hand cut off
+    ///     10ms   3371           23.5pt            0   <- was here
+    ///      6ms   1297           15.1pt            0   <- is here
+    ///      4ms    737           10.0pt            2
+    ///      2ms    369            9.7pt            2
+    ///      0ms    464           10.6pt            9
+    ///
+    /// 6ms is the smallest lead that still cut nothing off in 20 collapses,
+    /// and it is 2.6x better than 10ms on the measure. Below it the trade
+    /// inverts: the excursion does not get smaller, it re-CENTRES - the band
+    /// is ~30pt peak-to-peak at every lead - and the half that moves below the
+    /// drawer is the half that clips the hand.
+    ///
+    /// The 30pt itself is not tunable here. It is the gap between the app's
+    /// ~62Hz render and the host's 86-94Hz composite (`ios/Tools/rig/lib/
+    /// rate.py`), times the drawer's peak velocity. `driveHz` at 60/90/120/240
+    /// does not move it - the driver is not what is late, the render is - and
+    /// `CADisableMinimumFrameDurationOnPhone` in the extension's Info.plist
+    /// left the render rate at 61.8Hz, so it was not added. Closing that gap
+    /// means the render server interpolating the height itself rather than
+    /// this timer writing state between its frames, which is a different
+    /// design, not a different constant.
+    ///
+    /// Earlier filming behind this number: at 3ms a dropped frame put the bar
+    /// off screen twice; at 5ms the margin was 14pt; at 20ms the hand rode
+    /// 68pt high. `hostResponse` was swept at the same time and 0.338 is
+    /// already the optimum, bracketed hard - 0.300 scores 14109 and 0.380
+    /// cuts the hand off on 19 frames.
+    public static let hostLead: Double = 0.006
+
+    /// THE SLIDE: the same motion, carried by Core Animation instead of by a
+    /// timer writing SwiftUI state.
+    ///
+    /// Why there are two paths at all. The box's bottom edge is the drawer's
+    /// position plus our height. Filmed with our height held CONSTANT through a
+    /// whole transition, that edge runs 420.0, 450.3, 479.7, 509.3, 540.3,
+    /// 571.7, 605.3 - monotonic, not one reversal: the host moves our view
+    /// perfectly smoothly, at the composite rate, and every bit of the collapse's
+    /// judder is our own height arriving late. It has to arrive late. The
+    /// driver's own trace shows its 8.33ms timer being serviced in 8.33ms (143
+    /// ticks in 1.2s, longest gap 13ms), so the main thread is not busy - SwiftUI
+    /// simply renders on a 60Hz display link while the render server composites
+    /// the host's drawer at 86-94Hz, and a third of the frames on screen are
+    /// ours from one render ago under a drawer that has moved on.
+    ///
+    /// So the slide stops trying to win that race. The box is pinned at its
+    /// EXPANDED height for the whole collapse - one layout, no per-frame state,
+    /// nothing to be late with - and the content is translated up the host's own
+    /// curve by a keyframe animation on the layer. The render server evaluates
+    /// that every frame it composites, including the ones we did not draw, so
+    /// the two motions cancel at the composite rate rather than at ours.
+    ///
+    /// The translation is the BOX's travel (`from - to`), not the drawer's
+    /// (which is 6.7pt less on a 6.9" phone). The difference is deliberate and
+    /// is the whole of the edge's allowed movement: translating by the box's
+    /// travel walks the bottom edge from its resting 921.7 to its settled 915.0
+    /// along the spring, which is exactly the band it is permitted to be in.
+    ///
+    /// No `hostLead` here, and that is the point of it: the lead is a margin
+    /// against a late frame, and this path has no late frames. What is left is
+    /// the fit between our spring and the host's, which is smooth whatever it
+    /// is - an error in it moves the edge, it does not shake it.
+    /// Whether a shipping build takes the slide. Off while it is being filmed
+    /// against the driver on the rig - the DEBUG `slide=` knob turns it on, so
+    /// both paths are one build apart and can be scored against each other.
+    public static let slideByDefault = false
+
+    public static let slideDuration: Double = 0.6
+
+    /// Sampled positions for the slide's keyframe animation: `steps + 1` values
+    /// running from `+travel` down to 0 along the host's spring. Dense enough
+    /// that the linear interpolation between them is far below a pixel, which is
+    /// what lets this be a keyframe animation rather than a timing function
+    /// nothing expresses.
+    ///
+    /// DOWN TO ZERO, not up from it, and the sign is the whole design. The box
+    /// is laid out at its COMPACT size for the entire collapse - the real one,
+    /// the hand and the toolbar exactly where they will rest - and pushed DOWN
+    /// by what is left of the drawer's travel so that its bottom edge starts at
+    /// the expanded resting place and stays there. The first version did the
+    /// opposite: held the EXPANDED layout and slid it up. The geometry was
+    /// perfect and the content was wrong for 700ms, because the compact board is
+    /// not a crop of the expanded one - what rode up was the expanded board's
+    /// bottom strip, which is empty table, and the real board arrived in a pop
+    /// at the end. Laying out the destination and moving it is the same trick
+    /// every good transition uses, and it costs nothing extra: one layout, held.
+    public static func slideOffsets(travel: CGFloat, steps: Int = 120,
+                                    duration: Double = slideDuration,
+                                    response: Double = hostResponse) -> [CGFloat] {
+        (0...steps).map { i in
+            let t = duration * Double(i) / Double(steps)
+            return travel * CGFloat(1 - hostProgress(at: t, response: response))
+        }
+    }
 
     /// How often the driver evaluates the curve, in Hz. Twice the frame rate:
     /// see point 3 above. A tick that lands between two renders costs one

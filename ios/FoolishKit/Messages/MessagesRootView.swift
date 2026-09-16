@@ -85,6 +85,13 @@ public struct MessagesRootView: View {
     let chatIsDM: Bool
     let chatPlayers: Int
     let requestExpand: () -> Void
+    /// THE SLIDE (see `CollapseTween.slideDuration`): hand the collapse to the
+    /// layer. Called with the box's travel and how long it takes; the second
+    /// closure takes it back off again. Closures rather than a plumbed layer
+    /// because the layer belongs to the hosting controller and this is the view
+    /// inside it - the same shape, and for the same reason, as `requestExpand`.
+    let slideCollapse: (CGFloat, Double, Double) -> Void
+    let endSlide: () -> Void
     /// Is the HOST's sheet expanded, right now? A live read of
     /// `MSMessagesAppViewController.presentationStyle`, not the `style` prop -
     /// see `NameFieldAutofocus`, the only thing that asks.
@@ -138,6 +145,8 @@ public struct MessagesRootView: View {
                 incomingURL: URL? = nil, incomingToken: Int = 0, cancelToken: Int = 0,
                 collapseSignal: CollapseSignal = CollapseSignal(),
                 requestExpand: @escaping () -> Void,
+                slideCollapse: @escaping (CGFloat, Double, Double) -> Void = { _, _, _ in },
+                endSlide: @escaping () -> Void = {},
                 hostIsExpanded: @escaping () -> Bool = { false },
                 onNewGame: @escaping () -> Void,
                 onFreshChain: @escaping () -> Void = {},
@@ -152,6 +161,7 @@ public struct MessagesRootView: View {
         self.incomingURL = incomingURL; self.incomingToken = incomingToken
         self.cancelToken = cancelToken; self.collapseSignal = collapseSignal
         self.requestExpand = requestExpand; self.hostIsExpanded = hostIsExpanded
+        self.slideCollapse = slideCollapse; self.endSlide = endSlide
         self.onNewGame = onNewGame
         self.onFreshChain = onFreshChain; self.onAnnounceLeave = onAnnounceLeave
         self.onSend = onSend
@@ -206,6 +216,25 @@ public struct MessagesRootView: View {
     /// CollapseTween's file note for the three filmed reasons. `@State` so it
     /// survives the body re-evaluations its own ticks cause.
     @State private var driver = CollapseDriver()
+    /// The slide's own release, so a second collapse cannot be released by the
+    /// first one's timer - the driver has `stop()` for the same job.
+    @State private var slideRelease: Task<Void, Never>?
+    /// The whole of the slide's travel while one runs, zero otherwise. Only the
+    /// wool reads it, and a CONSTANT is all the wool needs: bottom-anchored to
+    /// the box's fixed bottom edge and this much taller, its top sits at the
+    /// drawer's top edge on the flip and above it for the rest of the run,
+    /// where the drawer clips it. The per-frame value this used to be was a
+    /// timer writing state at 60Hz for the table group to cancel the slide
+    /// with, a frame late; the table group rides `CollapseLayers` now.
+    @State private var slideTravel: CGFloat = 0
+    /// The slide as the BACKGROUND sees it - the same number, named apart so the
+    /// wool's dependency on it is legible where it is used.
+    private var collapseSlideNow: CGFloat { slideTravel }
+    /// Every view riding the collapse on a layer of its own - the table cards,
+    /// deck, discard, opponent ring - and the run they share. Started in the
+    /// same runloop turn as the hosting layer's keyframes, so both land in one
+    /// transaction. See CollapseLayer.
+    @State private var layers = CollapseLayers()
     /// The previous geometry height, to spot the collapse flip's down-snap.
     @State private var lastGeoHeight: CGFloat = 0
     /// Where the collapse tween is currently headed. Meaningless unless
@@ -321,12 +350,13 @@ public struct MessagesRootView: View {
     /// purpose - CollapseTweenTests reads the first 1200 characters of that case
     /// looking for the release, so anything added inside it can push the release
     /// out of the window and fail a test that is about something else entirely.
-    private static var collapseKnobs: (lead: Double, hz: Double, response: Double) {
+    private static var collapseKnobs: (lead: Double, hz: Double, response: Double, slide: Bool) {
         #if DEBUG || SOLO_TESTING
         let k = MessageDevBoard.collapseKnobs
-        return (k.lead, k.hz, k.response)
+        return (k.lead, k.hz, k.response, k.slide)
         #else
-        return (CollapseTween.hostLead, CollapseTween.driveHz, CollapseTween.hostResponse)
+        return (CollapseTween.hostLead, CollapseTween.driveHz, CollapseTween.hostResponse,
+                CollapseTween.slideByDefault)
         #endif
     }
 
@@ -349,6 +379,10 @@ public struct MessagesRootView: View {
             // The host's own curve on a clock, not a SwiftUI animation (why:
             // CollapseTween's note). Animations off: the tick IS the animation.
             let k = Self.collapseKnobs
+            // THE SLIDE: pin the box and let the layers carry the motion, so
+            // the frames we never render are still in the right place. It
+            // releases through the same re-measure nudge as the driver does.
+            if k.slide { startSlide(from: from, to: to); return }
             driver.start(from: from, to: to, lead: k.lead, hz: k.hz, response: k.response,
                          tick: { h in
                              var tx = Transaction()
@@ -369,8 +403,57 @@ public struct MessagesRootView: View {
         case .hold:
             break
         case .follow:
-            driver.stop()
+            // The release first (CompactRestHeightTests reads it here): the
+            // box goes back to the host's own height...
             boxHeight = 0
+            driver.stop()
+            // ...and a manual drag mid-collapse has to take the layers back
+            // with it - a translation left running would slide a box the
+            // grabber is now placing by hand.
+            slideRelease?.cancel(); slideRelease = nil
+            endSlide()
+            layers.end()
+            slideTravel = 0
+        }
+    }
+
+    /// The slide: the box laid out at its DESTINATION and pushed down by the
+    /// drawer's remaining travel on the hosting layer, with the table group's
+    /// own layers taking their share back - both evaluated by the render
+    /// server on every frame it composites. See `CollapseTween.slideOffsets`
+    /// for the hosting layer's half and `CollapseLayer` for the table's.
+    private func startSlide(from: CGFloat, to: CGFloat) {
+        // THE DESTINATION, laid out once and moved - not the origin, held and
+        // slid away.
+        boxHeight = to
+        slideTravel = from - to
+        // THE KNOB REACHES THE CURVE, which it did not. Both halves of the
+        // slide called `slideOffsets` without a response, so both always ran on
+        // the 0.338 constant while `dev.collapse`'s `resp=` moved only the old
+        // driver - i.e. the one path still in use could not be swept at all,
+        // and the figure it runs on was fitted against a different mechanism.
+        let response = Self.collapseKnobs.response
+        slideCollapse(from - to, CollapseTween.slideDuration, response)
+        // And the table group's layers, in the SAME turn, so every keyframe set
+        // is committed in one transaction and the first composited frame
+        // already has both motions in it.
+        layers.begin(travel: from - to, duration: CollapseTween.slideDuration,
+                     response: response)
+        slideRelease?.cancel()
+        slideRelease = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(CollapseTween.slideDuration * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            collapsing = false
+            CollapseTween.isTweening = false
+            // ONE TURN, all of them. The box rectangle is identical either way
+            // round - expanded height translated up by its own travel is the
+            // compact height in place - so what changes here is the content
+            // inside it, not where it is. Split across two turns it is a 535pt
+            // jump for one frame.
+            slideTravel = 0
+            endSlide()
+            layers.end()
+            await handBackToModel()
         }
     }
 
@@ -442,9 +525,28 @@ public struct MessagesRootView: View {
                 // this surface nobody can see move. Top-aligned so the
                 // overhang is at the bottom, where the drawer clips it. At
                 // rest the box is the model and this is a no-op.
-                .background(alignment: .top) {
+                // THE TEXTURE IS PINNED TO THE BOTTOM AND UNCOVERED FROM THE TOP.
+                //
+                // Owner, round 47: "think of it that the ENTIRE texture is
+                // visible in the expanded view, and only the bottom half is
+                // visible in the collapsed view. But it never like moves like
+                // that." It did not: top-anchored, the wool's own origin rode
+                // whatever the box was doing, so during a slide it dropped with
+                // the box, got cropped when the drawer arrived, and then shifted
+                // again when the box was handed back - three movements of a
+                // surface that should never move at all.
+                //
+                // Bottom-anchored it cannot. Its bottom edge is the box's bottom
+                // edge, which under the slide is the one line on screen that is
+                // fixed, and its height is the box the TABLE thinks it is in - so
+                // the texture stays put and the drawer simply stops covering more
+                // of it. The overhang stays for the reason it was added: a box
+                // kept deliberately short would otherwise show the host's flat
+                // fallback colour under the hand rather than wool.
+                .background(alignment: .bottom) {
                     TableBackground()
                         .frame(height: (boxHeight > 0 ? boxHeight : geo.size.height)
+                                       + collapseSlideNow
                                        + (collapsing ? CollapseTween.woolOverhang : 0))
                 }
                 // The debug ruler (`dev.ruler`, DEBUG only, otherwise an
@@ -466,6 +568,10 @@ public struct MessagesRootView: View {
                 // view's own GeometryReader reports its own box, and a name
                 // field's box is 34pt tall whatever the drawer is doing.
                 .environment(\.surfaceHeight, geo.size.height)
+                // The bus the table group's layers ride, and only when the
+                // slide is on: with nothing here `collapseLayer` renders its
+                // view in place and a shipping board has no nested hosts.
+                .environment(\.collapseLayers, Self.collapseKnobs.slide ? layers : nil)
                 .environment(\.hostIsExpanded, hostIsExpanded)
                 // The host is about to request .compact - see `follow`.
                 // Round-10d: the host arms us and requests .compact in the
@@ -788,6 +894,9 @@ private struct GameSurface: View {
                       FlightRecorder.isAlarming(p) else { return }
                 healthAlarm = p
             }
+            #if RIG_RESEED
+            .task { await watchForReseed() }
+            #endif
     }
 
     /// The banner. One line, at the top, tappable - and gone for good once it
@@ -2104,6 +2213,35 @@ private struct GameSurface: View {
     }
 
     #if DEBUG || SOLO_TESTING
+#if RIG_RESEED
+    /// DEV ONLY (`dev.reseed`): let a LIVE appex pick up a new seed.
+    ///
+    /// Inert unless the flag file exists - the guard is read once, so a DEBUG
+    /// run without it never starts a loop and never touches the filesystem
+    /// again. Release has neither: the whole block is `#if DEBUG`.
+    ///
+    /// Why it exists: `claimSeededPayload()` is once per process, and the only
+    /// thing that ends an appex process is leaving the thread. So a rig that
+    /// wants the next board has to leave, blind-probe a conversation row to get
+    /// back in, and re-open - about ten seconds of simulator driving for what
+    /// is really a file write. This watches the flag instead.
+    ///
+    /// `openSeededBoard()` is self-sufficient (it clears setup and lobby,
+    /// stages if `dev.stage`, and seats the board), so re-entering it is the
+    /// whole of the reload. Under `.task` it is cancelled with the surface, so
+    /// it cannot outlive what it is driving.
+    private func watchForReseed() async {
+        guard MessageDevBoard.reseeds else { return }
+        AnimLog.say("dev.reseed: watching for a new seed")
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            if Task.isCancelled { return }
+            guard MessageDevBoard.hasUnclaimedReseed else { continue }
+            _ = await openSeededBoard()
+        }
+    }
+#endif
+
     /// DEV ONLY (`dev.fatboard`): open a canned chain directly, as its defender.
     /// Returns true when it took over the surface, so `load()` stops.
     ///

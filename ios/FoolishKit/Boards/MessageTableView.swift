@@ -1207,6 +1207,34 @@ public struct MessageTableView: View {
             // Until the first mirror lands (-1) they read `handHeight` directly, so a
             // fresh board places them correctly on the very first paint.
             let lift = buttonLift < 0 ? handHeight : buttonLift
+            // HOW MUCH OF THE SLIDE A VIEW TAKES BACK OFF ITSELF.
+            //
+            // The collapse's layer animation pushes the whole board down so the
+            // box's BOTTOM edge never moves (CollapseLayer's file note has the
+            // measurements). Everything anchored to that edge - the hand, the
+            // pills - wants all of it and is left alone. Everything else has to
+            // undo it, and NOT by the same amount: a view sitting a fraction
+            // `f` down the box moves `1 - f` of what the box's top edge moves,
+            // so that is what it takes back.
+            //
+            //   f = 0    deck, discard    the whole slide
+            //   f = 0.5  the battle       half of it
+            //   f = 1    the hand         none
+            //
+            // Subtracting the whole slide from all of them is what sent the
+            // table cards off the top of the screen and back - measured, the
+            // blue bar on the cards scored a jerk of 73,121 against the hand's
+            // 19, and at the flip it sat at 510 - 535 = -25pt, i.e. above the
+            // phone. The deck and the discard were the only ones that looked
+            // right, and only because f = 0 is the case the old code happened
+            // to be correct for.
+            //
+            // And it is taken back ON A LAYER, not as an offset. As a SwiftUI
+            // offset it was a smooth value minus a frame-stale one, and the
+            // table cards scored a jerk of 4420 against the hand's 26 - the
+            // judder had moved, not gone. `collapseLayer` hosts each of these
+            // views on a layer of its own that carries its share of the motion
+            // at the composite rate, beside the hosting layer's.
             ZStack {
                 // Battles — dead centre of the board (web: absolute, both axes).
                 //
@@ -1220,13 +1248,43 @@ public struct MessageTableView: View {
                 // "an iPhone SE is so small, collision is fine". Left dead
                 // centre deliberately, not by omission.
                 battlesArea(view)
+                    // BEFORE the fill, not after. `.frame(maxWidth:.infinity)`
+                    // and `.position()` both expand a view to the whole box, so
+                    // a mark applied after either one centres on the BOX - which
+                    // put this bar and the opponent's on the same line, with one
+                    // painted over the other, and neither of them on the cards
+                    // they are supposed to be reporting.
+                    .collapseMark(.table)
+                    // Also before the fill: the layer is the grid's own box, and
+                    // the frames it relays are the grid's cards.
+                    .collapseLayer(fraction: 0.5,
+                                   relaying: [BattleFramesKey.self, BattleCardFramesKey.self])
+                    .collapseMarkLift()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 // Opponent ring — each seat placed by trig on a 35% ellipse. The
                 // local player is visual-index 0 (bottom edge) and is drawn as the
                 // hand, so it is skipped here.
                 ForEach(view.players.filter { $0.seat != controller.mySeat }) { p in
+                    // ONE bar, on the first opponent only: two of them in the
+                    // same colour would be two candidate rows and the reader
+                    // takes the first, so a second would silently decide which
+                    // seat is being measured.
+                    // ONE bar, on the first opponent only: two of them in the
+                    // same colour would be two candidate rows and the reader
+                    // takes the first, so a second would silently decide which
+                    // seat is being measured.
                     opponentSeat(p, view)
+                        .collapseMark(p.seat == view.players.first(where: {
+                            $0.seat != controller.mySeat })?.seat ? .opponent : nil)
+                        // The ring's OWN rule, not a fraction of it: the radius
+                        // opens as the box shrinks, and the layer walks that.
+                        .collapseLayer(ride: .path(rest: geo.size.height) { h in
+                                           ringPoint(seat: p.seat, n: view.players.count,
+                                                     in: CGSize(width: geo.size.width, height: h)).y
+                                       },
+                                       relaying: [SeatFramesKey.self, RoleMarkFramesKey.self])
+                        .collapseMarkLift()
                         .position(ringPoint(seat: p.seat, n: view.players.count, in: geo.size))
                 }
 
@@ -1239,6 +1297,7 @@ public struct MessageTableView: View {
                 let trump = shownTrumpSlot(view)
                 FDeckWell(deckCount: shownDeckCount(view), flipped: trump.card,
                           hasFlipped: trump.exists, trumpSuit: view.trumpSuit)
+                    .collapseLayer(fraction: 0, relaying: [DeckFrameKey.self])
                     // FDeckWell now anchors its own content top-leading with a
                     // small symmetric inset (note 14), so no per-call-site
                     // compensation offset is needed here anymore.
@@ -1259,6 +1318,7 @@ public struct MessageTableView: View {
                 // than the corner-pinned `.frame(alignment:)` used here — neither
                 // touches the other.)
                 FDiscardPile(count: shownDiscardCount(view))
+                    .collapseLayer(fraction: 0, relaying: [DiscardFrameKey.self])
                     .offset(y: -3)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 

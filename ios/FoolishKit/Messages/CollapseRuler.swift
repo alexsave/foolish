@@ -46,6 +46,25 @@ public struct CollapseRuler: View {
     /// reads as an edge rather than as a band.
     public static let edge: CGFloat = 4
 
+    /// THE RED BAR MARKS THE DRAWER'S TOP EDGE, NOT THE RAW BOX.
+    ///
+    /// Under the slide the two stopped being the same thing. The box is laid out
+    /// compact and pushed down by a layer animation so its BOTTOM edge - and the
+    /// hand and buttons on it - never move; the table cards, deck, discard and
+    /// opponent ring then take that push back off themselves, so they keep
+    /// riding the drawer's descending top edge exactly as they always did (see
+    /// CollapseLayer). A red bar drawn on the box's own top would therefore mark
+    /// a line nothing is drawn at, and it would report a 524pt teleport at the
+    /// flip that no pixel on screen performs - measured, and it was 274,576 of a
+    /// 274,594 jerk score whose every other frame summed to 18.
+    ///
+    /// So the top assembly - the bar, the bands counted from it and the clock -
+    /// rides a collapse layer at fraction 0, the deck's and the discard's share:
+    /// the whole of the slide taken back, at the composite rate. The red bar
+    /// is then the drawer's own top edge as the render server placed it in that
+    /// frame, which makes it the reference every other bar is judged against.
+    /// (It used to carry the SwiftUI-rate cancellation the table group had,
+    /// which measured the plumbing's staleness rather than the drawer.)
     public init() {}
 
     public var body: some View {
@@ -53,25 +72,34 @@ public struct CollapseRuler: View {
             GeometryReader { geo in
                 let n = max(1, Int((geo.size.height / Self.band).rounded(.up)))
                 ZStack(alignment: .topLeading) {
-                    // The banded strip, counted from the BOX TOP: band 0 is red,
-                    // every tenth band (100pt) is yellow, the rest alternate.
-                    // Bands are placed absolutely rather than stacked so a
-                    // partial last band is simply clipped by the box.
-                    ForEach(0..<n, id: \.self) { i in
-                        Self.colour(i)
-                            .frame(width: Self.strip, height: Self.band)
-                            .offset(y: CGFloat(i) * Self.band)
+                    // The top assembly, on the drawer's edge (see `init`).
+                    ZStack(alignment: .topLeading) {
+                        // The banded strip, counted from the BOX TOP: band 0 is
+                        // red, every tenth band (100pt) is yellow, the rest
+                        // alternate. Bands are placed absolutely rather than
+                        // stacked so a partial last band is simply clipped by
+                        // the box.
+                        ForEach(0..<n, id: \.self) { i in
+                            Self.colour(i)
+                                .frame(width: Self.strip, height: Self.band)
+                                .offset(y: CGFloat(i) * Self.band)
+                        }
+                        // The top edge, full width: red = the drawer's top.
+                        Self.pure(1, 0, 0)
+                            .frame(width: geo.size.width, height: Self.edge)
+                        // The clock, immediately under the top bar.
+                        CollapseClock()
+                            .offset(y: Self.edge)
                     }
-                    // The two edges, full width: these are what a frame is read
-                    // for. Red = the top of our box, green = the bottom.
-                    Self.pure(1, 0, 0)
-                        .frame(width: geo.size.width, height: Self.edge)
+                    .frame(width: geo.size.width, height: geo.size.height,
+                           alignment: .topLeading)
+                    .collapseLayer(fraction: 0)
+                    // The bottom edge: green = the bottom of the box, which is
+                    // where the hand and the buttons sit. On the main tree, so
+                    // it takes the whole of the hosting layer's push, as they do.
                     Self.pure(0, 1, 0)
                         .frame(width: geo.size.width, height: Self.edge)
                         .offset(y: geo.size.height - Self.edge)
-                    // The clock, immediately under the top bar.
-                    CollapseClock()
-                        .offset(y: Self.edge)
                 }
                 .frame(width: geo.size.width, height: geo.size.height,
                        alignment: .topLeading)
@@ -85,6 +113,42 @@ public struct CollapseRuler: View {
         if i == 0 { return pure(1, 0, 0) }              // the box top itself
         if i % 10 == 0 { return pure(1, 1, 0) }         // every 100pt
         return i % 2 == 0 ? pure(0, 1, 1) : pure(1, 0, 1)
+    }
+
+    /// WHAT ELSE IS WORTH A LINE OF ITS OWN.
+    ///
+    /// The two edge bars measure the BOX. That was enough while everything on
+    /// the board was rigid inside it, and it stopped being enough the moment the
+    /// collapse started treating two groups differently: the box's top is no
+    /// longer a line anything is drawn at, and "did the table cards move
+    /// smoothly" cannot be answered from it. Owner, round 47: "if you need to
+    /// add more horizontal colored lines for them, please do so."
+    ///
+    /// So these are pinned to the VIEWS, not to the box - an overlay wider than
+    /// its parent, centred on it, so the bar is full width and sits exactly on
+    /// the thing it is reporting. An overlay and not a preference on purpose: a
+    /// preference is delivered a layout pass later, which would measure the
+    /// plumbing rather than the card, and lag is the whole question here.
+    public enum Mark: Hashable {
+        /// The table cards' centre line.
+        case table
+        /// One opponent's card view - the first, so there is only ever one bar.
+        case opponent
+
+        var colour: Color {
+            switch self {
+            // MAGENTA, NOT BLUE, and the file note above already said so: the
+            // palette is "pure magenta / cyan / yellow / red / green" because
+            // those are the saturated colours that survive h264 4:2:0. Pure blue
+            // has a luma of 29 - nearly black - and a 4pt line of it came back
+            // in 0 of 164 filmed frames while the yellow bar beside it read
+            // perfectly in all 164. Cyan would survive too, but the band strip's
+            // pitch check scans for cyan, and a full-width cyan bar crossing it
+            // would read as an extra band.
+            case .table: return CollapseRuler.pure(1, 0, 1)      // magenta
+            case .opponent: return CollapseRuler.pure(1, 1, 0)   // yellow
+            }
+        }
     }
 
     /// A LITERAL sRGB colour, never `Color.red` and friends: the system colours
@@ -146,11 +210,127 @@ struct CollapseClock: View {
     }
 }
 
+/// Where a marker bar wants to be, carried UP the tree as an anchor.
+///
+/// An anchor preference and not an overlay on the view itself, because an
+/// overlay is drawn at its parent's place in the stack and the parents here are
+/// drawn before the deck and the discard - so the bars came out underneath them
+/// (owner: "increase z index of the horizontal lines as much as you can").
+/// An anchor preference is resolved in the SAME layout pass by
+/// `overlayPreferenceValue`, unlike `onPreferenceChange`, which lands a pass
+/// later - and a bar that reports where its view was last frame is exactly the
+/// measurement error this is here to find.
+public struct CollapseMarkKey: PreferenceKey {
+    public static let defaultValue: [CollapseRuler.Mark: Anchor<CGPoint>] = [:]
+    public static func reduce(value: inout [CollapseRuler.Mark: Anchor<CGPoint>],
+                              nextValue: () -> [CollapseRuler.Mark: Anchor<CGPoint>]) {
+        value.merge(nextValue()) { a, _ in a }
+    }
+}
+
+public extension View {
+    /// A full-width bar through this view's centre. Nil asks for none, which is
+    /// how a list of seats marks only its first.
+    ///
+    /// AN OVERLAY ON THE VIEW, and it went the long way round to get back here.
+    /// Anchor preferences resolve in the same layout pass and draw above
+    /// everything, which is exactly what was wanted - but the table's bar never
+    /// appeared at all through that route while the opponent's did, and a
+    /// measurement instrument that silently reports nothing is worse than one
+    /// drawn in the wrong order. An overlay is the boring version: it cannot
+    /// miss, because it IS the view's own geometry, and the stacking is fixed
+    /// instead by `.zIndex` at the call site.
+    @ViewBuilder
+    func collapseMark(_ mark: CollapseRuler.Mark?) -> some View {
+        if let mark {
+            overlay {
+                if MessageDevBoard.rulerOn {
+                    mark.colour
+                        .frame(width: 4000, height: CollapseRuler.edge)
+                        .allowsHitTesting(false)
+                }
+            }
+            // ABOVE THE DECK AND THE DISCARD, which are drawn after these two in
+            // the board's stack and were covering the bars. Only ever raised
+            // when the ruler is on, so a shipping board stacks as it always did.
+            .zIndex(MessageDevBoard.rulerOn ? 50 : 0)
+        } else {
+            self
+        }
+    }
+
+    /// The same lift, for the collapse LAYER a marked view is hosted on: the
+    /// mark's own `zIndex` orders it inside that host, where it has no
+    /// siblings, and it is the host that has to come out above the deck.
+    func collapseMarkLift() -> some View {
+        zIndex(MessageDevBoard.rulerOn ? 50 : 0)
+    }
+}
+
+/// The marker bars, drawn LAST so nothing on the board is in front of them.
+///
+/// They began as overlays on the views they report, which put each bar at
+/// exactly the right height and also underneath the deck and the discard - the
+/// two things drawn after them in the board's ZStack (owner: "increase z index
+/// of the horizontal lines as much as you can, currently they are behind the
+/// deck and discard"). Raising those views instead would have reordered the
+/// board itself, and reading the positions back through a preference would have
+/// delivered them a layout pass late, which is the one thing a lag measurement
+/// must not do.
+///
+/// So the caller passes the y values, computed from the same expressions that
+/// place the views - the same arithmetic in the same pass - and this draws them
+/// on top of everything.
+public struct CollapseMarks: View {
+    private let table: CGFloat?
+    private let opponent: CGFloat?
+
+    public init(table: CGFloat?, opponent: CGFloat?) {
+        self.table = table; self.opponent = opponent
+    }
+
+    public var body: some View {
+        if MessageDevBoard.rulerOn {
+            ZStack(alignment: .topLeading) {
+                if let table {
+                    CollapseRuler.Mark.table.colour
+                        .frame(height: CollapseRuler.edge)
+                        .offset(y: table - CollapseRuler.edge / 2)
+                }
+                if let opponent {
+                    CollapseRuler.Mark.opponent.colour
+                        .frame(height: CollapseRuler.edge)
+                        .offset(y: opponent - CollapseRuler.edge / 2)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .allowsHitTesting(false)
+        }
+    }
+}
+
 #else
 
 /// Release builds have no ruler; the call site stays unconditional.
 public struct CollapseRuler: View {
     public init() {}
+    public var body: some View { EmptyView() }
+    public enum Mark: Hashable { case table, opponent }
+}
+
+public struct CollapseMarkKey: PreferenceKey {
+    public static let defaultValue: [CollapseRuler.Mark: Anchor<CGPoint>] = [:]
+    public static func reduce(value: inout [CollapseRuler.Mark: Anchor<CGPoint>],
+                              nextValue: () -> [CollapseRuler.Mark: Anchor<CGPoint>]) {}
+}
+
+public extension View {
+    func collapseMark(_ mark: CollapseRuler.Mark?) -> some View { self }
+    func collapseMarkLift() -> some View { self }
+}
+
+public struct CollapseMarks: View {
+    public init(table: CGFloat?, opponent: CGFloat?) {}
     public var body: some View { EmptyView() }
 }
 
