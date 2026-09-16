@@ -167,6 +167,20 @@ public struct FDeckWell: View {
     /// The bare trump mark's glyph size (round-5 m1 raised it from 44).
     static let markSize: CGFloat = 60
 
+    /// The INK this well puts on the board, measured from the top-left corner
+    /// it anchors to: the landscape stock's far edge (inset + the 66 a card is
+    /// tall, laid on its side) and the flipped card's bottom edge (its origin
+    /// plus the same 66 upright). Not the 92x108 frame, which carries slack
+    /// the bare glyph never uses. PublicBoardLayout keeps the seat tags out
+    /// of this box.
+    static let inkFootprint = CGSize(width: FSpace.s + 66, height: flippedOrigin.y + 66)
+
+    /// Where the count chip sits: centred on the bottom card's landscape
+    /// footprint (66 x 46 at `bottomCardOrigin`), give or take the pixel per
+    /// layer it rides up by. PublicBoardLayout keeps this out from under the
+    /// balloon's app icon.
+    static let countCentre = CGPoint(x: bottomCardOrigin.x + 66 / 2, y: bottomCardOrigin.y + 46 / 2)
+
     /// Where `suit`'s INK begins inside its own text box, at `size`.
     ///
     /// Round 16 ("the trump indicator is a bit low; the distance from top and

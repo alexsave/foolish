@@ -12,6 +12,11 @@ struct FDiscardPile: View {
     public let count: Int
     public init(count: Int) { self.count = count }
 
+    /// The pile's box: a 44x62 back laid landscape and jittered up to 20
+    /// degrees, with room for the jitter. PublicBoardLayout keeps the seat
+    /// tags out of it.
+    static let footprint = CGSize(width: 78, height: 68)
+
     public var body: some View {
         let layers = min(max(count, 1), 5)
         ZStack {
@@ -28,7 +33,7 @@ struct FDiscardPile: View {
         }
         // Landscape footprint (44×62 rotated ~90°) is wider than tall — swap the
         // old portrait 68×78 buffer accordingly.
-        .frame(width: 78, height: 68)
+        .frame(width: Self.footprint.width, height: Self.footprint.height)
         .accessibilityElement(children: .ignore)
         // Round-5 m2: was a hard-coded English literal.
         .accessibilityLabel(FStrings.t("ios.a11y.discard", ["n": "\(count)"]))

@@ -335,10 +335,8 @@ public struct FSeatBadge: View {
     /// mutually exclusive in every state the engine can produce, which is what
     /// lets them be one coin with three faces (FRoleMotion).
     var mark: RoleMarkKind? {
-        if saidGood { return .check }
-        if isDefender { return .shield }
-        if isAttacker { return opensBout ? .leadSword : .sword }
-        return nil
+        RoleMarkKind.worn(saidGood: saidGood, isDefender: isDefender,
+                          isAttacker: isAttacker, opensBout: opensBout)
     }
 
     private var roleRow: some View {

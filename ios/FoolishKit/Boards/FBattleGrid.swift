@@ -54,18 +54,37 @@ public struct FBattleGrid: View {
     }
 
     private let cardSize = CGSize(width: 50, height: 70)   // web card 50x70
-    private let slot = CGSize(width: 62, height: 84)       // web 60x80 (+room to rotate)
+    private let slot = FBattleGrid.slotSize
+    /// One pair's slot (web 60x80, +room to rotate). Static so
+    /// `naturalSize(pairs:)` can be asked without a grid to ask.
+    static let slotSize = CGSize(width: 62, height: 84)
+    /// Between rows of pairs.
+    static let rowGap: CGFloat = 12
+
+    /// The size a cluster of `pairs` battles lays out at, before any scaling -
+    /// `perRow` across, the rest wrapping. What PublicBoardLayout fits into
+    /// the room the seats leave, so the bubble's battle cards shrink exactly
+    /// as far as they must and no further.
+    static func naturalSize(pairs: Int) -> CGSize {
+        guard pairs > 0 else { return .zero }
+        let cols = min(pairs, columns)
+        let rows = (pairs + columns - 1) / columns
+        return CGSize(width: CGFloat(cols) * slotSize.width + CGFloat(cols - 1) * columnGap,
+                      height: CGFloat(rows) * slotSize.height + CGFloat(rows - 1) * rowGap)
+    }
     /// The laid-across tilt (web PI/16). Public + static so a bout-end / open
     /// replay flight (MessageTableView) can rotate a cover ghost INTO exactly
     /// this angle mid-flight (round-6 bug 1) rather than hard-coding a second copy.
     public static let coverAngle: Double = 11.25
-    private let gap: CGFloat = 10
+    private let gap = FBattleGrid.columnGap
+    static let columnGap: CGFloat = 10
     // Round-5 M5 ("maybe we do rows of 3 instead of 4?"): deliberately NOT web
     // parity any more. The web's ~4-across assumes its own wider board; this
     // extension's stage is narrower (M5's own finding: at 6-8 players the
     // table drew straight through the seat names and badges), and 3 across is
     // what keeps a battle pair clear of the seat ring at every player count.
-    private let perRow = 3
+    private let perRow = FBattleGrid.columns
+    static let columns = 3
 
     public var body: some View {
         // CENTERED wrapped rows (web flex-wrap + justify-center). A LazyVGrid left-
@@ -79,7 +98,7 @@ public struct FBattleGrid: View {
         // real battle would, wrapping to a new row exactly like a real one would.
         let total = battles.count + (showGhostSlot ? 1 : 0)
         let rows = stride(from: 0, to: total, by: perRow).map { Array($0..<min($0 + perRow, total)) }
-        VStack(spacing: 12) {
+        VStack(spacing: Self.rowGap) {
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                 HStack(spacing: gap) {
                     ForEach(row, id: \.self) { idx in
