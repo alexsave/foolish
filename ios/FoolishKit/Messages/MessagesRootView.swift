@@ -219,14 +219,12 @@ public struct MessagesRootView: View {
     /// The slide's own release, so a second collapse cannot be released by the
     /// first one's timer - the driver has `stop()` for the same job.
     @State private var slideRelease: Task<Void, Never>?
-    /// How much wool to draw above the sliding box: the drawer is still its
-    /// expanded height while the compact box is parked at the bottom of it, and
-    /// everything between the two has to be table rather than the host's flat
-    /// fallback colour. Zero when no slide is running.
-    @State private var slideWool: CGFloat = 0
     /// What the layer animation currently has the board pushed down by, so the
     /// red group can offset itself back up by it - see CollapseSlide.
     @State private var slideOffset: CGFloat = 0
+    /// The slide as the BACKGROUND sees it - the same number, named apart so the
+    /// wool's dependency on it is legible where it is used.
+    private var collapseSlideNow: CGFloat { slideOffset }
     /// The previous geometry height, to spot the collapse flip's down-snap.
     @State private var lastGeoHeight: CGFloat = 0
     /// Where the collapse tween is currently headed. Meaningless unless
@@ -378,7 +376,6 @@ public struct MessagesRootView: View {
                 // THE DESTINATION, laid out once and moved - not the origin,
                 // held and slid away. See `CollapseTween.slideOffsets`.
                 boxHeight = to
-                slideWool = from
                 slideOffset = from - to
                 slideCollapse(from - to, CollapseTween.slideDuration)
                 // The same curve again, in ordinary SwiftUI state, for the red
@@ -406,7 +403,6 @@ public struct MessagesRootView: View {
                     driver.stop()
                     slideOffset = 0
                     endSlide()
-                    slideWool = 0
                     await handBackToModel()
                 }
                 return
@@ -437,7 +433,6 @@ public struct MessagesRootView: View {
             // box the grabber is now placing by hand.
             slideRelease?.cancel(); slideRelease = nil
             endSlide()
-            slideWool = 0
             slideOffset = 0
             boxHeight = 0
         }
@@ -511,11 +506,29 @@ public struct MessagesRootView: View {
                 // this surface nobody can see move. Top-aligned so the
                 // overhang is at the bottom, where the drawer clips it. At
                 // rest the box is the model and this is a no-op.
-                .background(alignment: .top) {
+                // THE TEXTURE IS PINNED TO THE BOTTOM AND UNCOVERED FROM THE TOP.
+                //
+                // Owner, round 47: "think of it that the ENTIRE texture is
+                // visible in the expanded view, and only the bottom half is
+                // visible in the collapsed view. But it never like moves like
+                // that." It did not: top-anchored, the wool's own origin rode
+                // whatever the box was doing, so during a slide it dropped with
+                // the box, got cropped when the drawer arrived, and then shifted
+                // again when the box was handed back - three movements of a
+                // surface that should never move at all.
+                //
+                // Bottom-anchored it cannot. Its bottom edge is the box's bottom
+                // edge, which under the slide is the one line on screen that is
+                // fixed, and its height is the box the TABLE thinks it is in - so
+                // the texture stays put and the drawer simply stops covering more
+                // of it. The overhang stays for the reason it was added: a box
+                // kept deliberately short would otherwise show the host's flat
+                // fallback colour under the hand rather than wool.
+                .background(alignment: .bottom) {
                     TableBackground()
-                        .frame(height: max(slideWool,
-                                           (boxHeight > 0 ? boxHeight : geo.size.height)
-                                           + (collapsing ? CollapseTween.woolOverhang : 0)))
+                        .frame(height: (boxHeight > 0 ? boxHeight : geo.size.height)
+                                       + collapseSlideNow
+                                       + (collapsing ? CollapseTween.woolOverhang : 0))
                 }
                 // The debug ruler (`dev.ruler`, DEBUG only, otherwise an
                 // EmptyView) - on the SIZED BOX, so a filmed frame reports

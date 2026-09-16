@@ -1224,6 +1224,13 @@ public struct MessageTableView: View {
                 // "an iPhone SE is so small, collision is fine". Left dead
                 // centre deliberately, not by omission.
                 battlesArea(view)
+                    // BEFORE the fill, not after. `.frame(maxWidth:.infinity)`
+                    // and `.position()` both expand a view to the whole box, so
+                    // a mark applied after either one centres on the BOX - which
+                    // put this bar and the opponent's on the same line, with one
+                    // painted over the other, and neither of them on the cards
+                    // they are supposed to be reporting.
+                    .collapseMark(.table)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .offset(y: -collapseSlide)
 
@@ -1231,7 +1238,17 @@ public struct MessageTableView: View {
                 // local player is visual-index 0 (bottom edge) and is drawn as the
                 // hand, so it is skipped here.
                 ForEach(view.players.filter { $0.seat != controller.mySeat }) { p in
+                    // ONE bar, on the first opponent only: two of them in the
+                    // same colour would be two candidate rows and the reader
+                    // takes the first, so a second would silently decide which
+                    // seat is being measured.
+                    // ONE bar, on the first opponent only: two of them in the
+                    // same colour would be two candidate rows and the reader
+                    // takes the first, so a second would silently decide which
+                    // seat is being measured.
                     opponentSeat(p, view)
+                        .collapseMark(p.seat == view.players.first(where: {
+                            $0.seat != controller.mySeat })?.seat ? .opponent : nil)
                         .position(ringPoint(seat: p.seat, n: view.players.count, in: geo.size))
                         .offset(y: -collapseSlide)
                 }

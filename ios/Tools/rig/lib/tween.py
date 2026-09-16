@@ -70,8 +70,14 @@ def read_frame(p):
         for y in ys:
             row = a[int(y)].astype(np.int16)
             r_, g_, b_ = row[:, 0], row[:, 1], row[:, 2]
-            m = ((r_ > 140) & (g_ < 90) & (b_ < 90)) if chan == "r" \
-                else ((g_ > 140) & (r_ < 90) & (b_ < 90))
+            if chan == "r":
+                m = (r_ > 140) & (g_ < 90) & (b_ < 90)
+            elif chan == "g":
+                m = (g_ > 140) & (r_ < 90) & (b_ < 90)
+            elif chan == "m":                        # magenta - the table mark
+                m = (r_ > 140) & (b_ > 140) & (g_ < 90)
+            else:                                    # yellow
+                m = (r_ > 140) & (g_ > 140) & (b_ < 90)
             # 0.55 of the CROP, not of the screen - the bars span the whole
             # frame either way, and a card's suit glyph still cannot.
             if m.mean() > 0.55:
@@ -109,10 +115,21 @@ def read_frame(p):
     # hand cut off below the screen, the one failure the collapse's `hostLead`
     # exists to prevent; no red is the box top above the screen, which under the
     # slide is the design and is clipped by the drawer.
+    # The two MARKER bars, pinned to the views rather than to the box: blue
+    # through the table cards' centre, yellow through the first opponent's. They
+    # are the only way to answer "did the table move smoothly" now that the box's
+    # own top is not a line anything is drawn at. Absent on an older take and on
+    # any frame where the view is off screen, so both are optional throughout.
+    tab, _ = verify(np.nonzero((cr > 140) & (cb > 140) & (cg < 90))[0], "m")
+    opp, _ = verify(np.nonzero((cr > 140) & (cg > 140) & (cb < 90))[0], "y")
     if top is None and bot is None:
         return None
     screen_pt = h / s
     out = {}
+    if tab is not None:
+        out["table_pt"] = round(tab / s, 1)
+    if opp is not None:
+        out["opp_pt"] = round(opp / s, 1)
     if top is None:
         out["topoff"] = True
         out["top_pt"] = 0.0
@@ -189,15 +206,17 @@ def main():
     t0 = seen[0][1]
     if a.csv:
         with open(a.csv, "w") as fh:
-            fh.write("frame,t,offset,top_pt,bot_pt,h_pt,pitch_pt,clock_ms,offscreen,topoff\n")
+            fh.write("frame,t,offset,top_pt,bot_pt,h_pt,pitch_pt,clock_ms,offscreen,topoff,"
+                     "table_pt,opp_pt\n")
             for n, t, m in rows:
                 m = m or {}
-                fh.write("%d,%.4f,%.4f,%s,%s,%s,%s,%s,%s,%s\n" % (
+                fh.write("%d,%.4f,%.4f,%s,%s,%s,%s,%s,%s,%s" % (
                     n, t, t - t0, m.get("top_pt", ""), m.get("bot_pt", ""),
                     m.get("h_pt", ""), m.get("pitch_pt", ""),
                     m.get("clock_ms", m.get("clock", "")),
                     "1" if m.get("offscreen") else "",
-                    "1" if m.get("topoff") else ""))
+                    "1" if m.get("topoff") else "") + ",%s,%s\n" % (
+                    m.get("table_pt", ""), m.get("opp_pt", "")))
     if not a.quiet:
         print("%-5s %8s %9s %9s %9s %7s  %s" % ("f", "+off", "top", "bot", "height", "pitch", "clock"))
         for n, t, m in rows:
