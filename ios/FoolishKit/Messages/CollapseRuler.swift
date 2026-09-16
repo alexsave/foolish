@@ -46,23 +46,25 @@ public struct CollapseRuler: View {
     /// reads as an edge rather than as a band.
     public static let edge: CGFloat = 4
 
-    /// THE RED BAR MARKS THE TABLE GROUP, NOT THE RAW BOX.
+    /// THE RED BAR MARKS THE DRAWER'S TOP EDGE, NOT THE RAW BOX.
     ///
     /// Under the slide the two stopped being the same thing. The box is laid out
     /// compact and pushed down by a layer animation so its BOTTOM edge - and the
     /// hand and buttons on it - never move; the table cards, deck, discard and
     /// opponent ring then take that push back off themselves, so they keep
     /// riding the drawer's descending top edge exactly as they always did (see
-    /// CollapseSlide). A red bar drawn on the box's own top would therefore mark
+    /// CollapseLayer). A red bar drawn on the box's own top would therefore mark
     /// a line nothing is drawn at, and it would report a 524pt teleport at the
     /// flip that no pixel on screen performs - measured, and it was 274,576 of a
     /// 274,594 jerk score whose every other frame summed to 18.
     ///
     /// So the top assembly - the bar, the bands counted from it and the clock -
-    /// carries the same offset the table group does, and the film reads where
-    /// the board actually is.
-    @Environment(\.collapseSlide) private var collapseSlide
-
+    /// rides a collapse layer at fraction 0, the deck's and the discard's share:
+    /// the whole of the slide taken back, at the composite rate. The red bar
+    /// is then the drawer's own top edge as the render server placed it in that
+    /// frame, which makes it the reference every other bar is judged against.
+    /// (It used to carry the SwiftUI-rate cancellation the table group had,
+    /// which measured the plumbing's staleness rather than the drawer.)
     public init() {}
 
     public var body: some View {
@@ -70,28 +72,34 @@ public struct CollapseRuler: View {
             GeometryReader { geo in
                 let n = max(1, Int((geo.size.height / Self.band).rounded(.up)))
                 ZStack(alignment: .topLeading) {
-                    // The banded strip, counted from the BOX TOP: band 0 is red,
-                    // every tenth band (100pt) is yellow, the rest alternate.
-                    // Bands are placed absolutely rather than stacked so a
-                    // partial last band is simply clipped by the box.
-                    ForEach(0..<n, id: \.self) { i in
-                        Self.colour(i)
-                            .frame(width: Self.strip, height: Self.band)
-                            .offset(y: CGFloat(i) * Self.band - collapseSlide)
+                    // The top assembly, on the drawer's edge (see `init`).
+                    ZStack(alignment: .topLeading) {
+                        // The banded strip, counted from the BOX TOP: band 0 is
+                        // red, every tenth band (100pt) is yellow, the rest
+                        // alternate. Bands are placed absolutely rather than
+                        // stacked so a partial last band is simply clipped by
+                        // the box.
+                        ForEach(0..<n, id: \.self) { i in
+                            Self.colour(i)
+                                .frame(width: Self.strip, height: Self.band)
+                                .offset(y: CGFloat(i) * Self.band)
+                        }
+                        // The top edge, full width: red = the drawer's top.
+                        Self.pure(1, 0, 0)
+                            .frame(width: geo.size.width, height: Self.edge)
+                        // The clock, immediately under the top bar.
+                        CollapseClock()
+                            .offset(y: Self.edge)
                     }
-                    // The two edges, full width: these are what a frame is read
-                    // for. Red = where the TABLE GROUP's top is (see the note on
-                    // `collapseSlide`), green = the bottom of the box, which is
-                    // where the hand and the buttons sit.
-                    Self.pure(1, 0, 0)
-                        .frame(width: geo.size.width, height: Self.edge)
-                        .offset(y: -collapseSlide)
+                    .frame(width: geo.size.width, height: geo.size.height,
+                           alignment: .topLeading)
+                    .collapseLayer(fraction: 0)
+                    // The bottom edge: green = the bottom of the box, which is
+                    // where the hand and the buttons sit. On the main tree, so
+                    // it takes the whole of the hosting layer's push, as they do.
                     Self.pure(0, 1, 0)
                         .frame(width: geo.size.width, height: Self.edge)
                         .offset(y: geo.size.height - Self.edge)
-                    // The clock, immediately under the top bar.
-                    CollapseClock()
-                        .offset(y: Self.edge - collapseSlide)
                 }
                 .frame(width: geo.size.width, height: geo.size.height,
                        alignment: .topLeading)
@@ -250,6 +258,13 @@ public extension View {
             self
         }
     }
+
+    /// The same lift, for the collapse LAYER a marked view is hosted on: the
+    /// mark's own `zIndex` orders it inside that host, where it has no
+    /// siblings, and it is the host that has to come out above the deck.
+    func collapseMarkLift() -> some View {
+        zIndex(MessageDevBoard.rulerOn ? 50 : 0)
+    }
 }
 
 /// The marker bars, drawn LAST so nothing on the board is in front of them.
@@ -311,6 +326,7 @@ public struct CollapseMarkKey: PreferenceKey {
 
 public extension View {
     func collapseMark(_ mark: CollapseRuler.Mark?) -> some View { self }
+    func collapseMarkLift() -> some View { self }
 }
 
 public struct CollapseMarks: View {

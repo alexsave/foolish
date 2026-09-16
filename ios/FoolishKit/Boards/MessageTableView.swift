@@ -64,10 +64,6 @@ public struct MessageTableView: View {
     // Drag-to-play state (frames published by FBattleGrid/FHandFan in `boardSpace`).
     @State private var battleFrames: [Int: CGRect] = [:]
     @State private var handFrame: CGRect = .zero
-    /// The collapse's layer slide, to be taken back OFF the red group - see
-    /// CollapseSlide. Zero whenever no auto-collapse is running, so every one
-    /// of the offsets below is `.offset(y: 0)` at every other moment.
-    @Environment(\.collapseSlide) private var collapseSlide
     @State private var dragCard: Card?
     /// notes 33/34: the drag's live point in `boardSpace`, kept (FHandFan
     /// already delivers it on every `onDragChanged`, previously discarded)
@@ -1214,11 +1210,12 @@ public struct MessageTableView: View {
             // HOW MUCH OF THE SLIDE A VIEW TAKES BACK OFF ITSELF.
             //
             // The collapse's layer animation pushes the whole board down so the
-            // box's BOTTOM edge never moves (CollapseSlide). Everything anchored
-            // to that edge - the hand, the pills - wants all of it and is left
-            // alone. Everything else has to undo it, and NOT by the same amount:
-            // a view sitting a fraction `f` down the box moves `1 - f` of what
-            // the box's top edge moves, so that is what it takes back.
+            // box's BOTTOM edge never moves (CollapseLayer's file note has the
+            // measurements). Everything anchored to that edge - the hand, the
+            // pills - wants all of it and is left alone. Everything else has to
+            // undo it, and NOT by the same amount: a view sitting a fraction
+            // `f` down the box moves `1 - f` of what the box's top edge moves,
+            // so that is what it takes back.
             //
             //   f = 0    deck, discard    the whole slide
             //   f = 0.5  the battle       half of it
@@ -1231,9 +1228,13 @@ public struct MessageTableView: View {
             // phone. The deck and the discard were the only ones that looked
             // right, and only because f = 0 is the case the old code happened
             // to be correct for.
-            // A closure and not a `func`: a ViewBuilder block takes bindings,
-            // not declarations.
-            let unslide: (CGFloat) -> CGFloat = { -collapseSlide * (1 - $0) }
+            //
+            // And it is taken back ON A LAYER, not as an offset. As a SwiftUI
+            // offset it was a smooth value minus a frame-stale one, and the
+            // table cards scored a jerk of 4420 against the hand's 26 - the
+            // judder had moved, not gone. `collapseLayer` hosts each of these
+            // views on a layer of its own that carries its share of the motion
+            // at the composite rate, beside the hosting layer's.
             ZStack {
                 // Battles — dead centre of the board (web: absolute, both axes).
                 //
@@ -1254,8 +1255,12 @@ public struct MessageTableView: View {
                     // painted over the other, and neither of them on the cards
                     // they are supposed to be reporting.
                     .collapseMark(.table)
+                    // Also before the fill: the layer is the grid's own box, and
+                    // the frames it relays are the grid's cards.
+                    .collapseLayer(fraction: 0.5,
+                                   relaying: [BattleFramesKey.self, BattleCardFramesKey.self])
+                    .collapseMarkLift()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .offset(y: unslide(0.5))
 
                 // Opponent ring — each seat placed by trig on a 35% ellipse. The
                 // local player is visual-index 0 (bottom edge) and is drawn as the
@@ -1272,11 +1277,15 @@ public struct MessageTableView: View {
                     opponentSeat(p, view)
                         .collapseMark(p.seat == view.players.first(where: {
                             $0.seat != controller.mySeat })?.seat ? .opponent : nil)
+                        // The ring's OWN rule, not a fraction of it: the radius
+                        // opens as the box shrinks, and the layer walks that.
+                        .collapseLayer(ride: .path(rest: geo.size.height) { h in
+                                           ringPoint(seat: p.seat, n: view.players.count,
+                                                     in: CGSize(width: geo.size.width, height: h)).y
+                                       },
+                                       relaying: [SeatFramesKey.self, RoleMarkFramesKey.self])
+                        .collapseMarkLift()
                         .position(ringPoint(seat: p.seat, n: view.players.count, in: geo.size))
-                        .offset(y: unslide(geo.size.height > 0
-                            ? ringPoint(seat: p.seat, n: view.players.count,
-                                        in: geo.size).y / geo.size.height
-                            : 0))
                 }
 
                 // Deck top-left, discard top-right — pinned to the corners and OUT
@@ -1288,11 +1297,11 @@ public struct MessageTableView: View {
                 let trump = shownTrumpSlot(view)
                 FDeckWell(deckCount: shownDeckCount(view), flipped: trump.card,
                           hasFlipped: trump.exists, trumpSuit: view.trumpSuit)
+                    .collapseLayer(fraction: 0, relaying: [DeckFrameKey.self])
                     // FDeckWell now anchors its own content top-leading with a
                     // small symmetric inset (note 14), so no per-call-site
                     // compensation offset is needed here anymore.
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .offset(y: -collapseSlide)
                 // Note 10: the discard pile shares the draw deck's y-baseline —
                 // the centre of the deck's BOTTOM card (FDeckWell's fixed
                 // anchor, see its type doc) must land on the centre of the
@@ -1309,9 +1318,9 @@ public struct MessageTableView: View {
                 // than the corner-pinned `.frame(alignment:)` used here — neither
                 // touches the other.)
                 FDiscardPile(count: shownDiscardCount(view))
+                    .collapseLayer(fraction: 0, relaying: [DiscardFrameKey.self])
                     .offset(y: -3)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                    .offset(y: -collapseSlide)
 
                 // NO SELF ROLE INDICATOR HERE. It used to be the next child of
                 // this ZStack, at `lift + 6`; round 41 ("a status icon is always

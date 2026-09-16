@@ -219,12 +219,22 @@ public struct MessagesRootView: View {
     /// The slide's own release, so a second collapse cannot be released by the
     /// first one's timer - the driver has `stop()` for the same job.
     @State private var slideRelease: Task<Void, Never>?
-    /// What the layer animation currently has the board pushed down by, so the
-    /// red group can offset itself back up by it - see CollapseSlide.
-    @State private var slideOffset: CGFloat = 0
+    /// The whole of the slide's travel while one runs, zero otherwise. Only the
+    /// wool reads it, and a CONSTANT is all the wool needs: bottom-anchored to
+    /// the box's fixed bottom edge and this much taller, its top sits at the
+    /// drawer's top edge on the flip and above it for the rest of the run,
+    /// where the drawer clips it. The per-frame value this used to be was a
+    /// timer writing state at 60Hz for the table group to cancel the slide
+    /// with, a frame late; the table group rides `CollapseLayers` now.
+    @State private var slideTravel: CGFloat = 0
     /// The slide as the BACKGROUND sees it - the same number, named apart so the
     /// wool's dependency on it is legible where it is used.
-    private var collapseSlideNow: CGFloat { slideOffset }
+    private var collapseSlideNow: CGFloat { slideTravel }
+    /// Every view riding the collapse on a layer of its own - the table cards,
+    /// deck, discard, opponent ring - and the run they share. Started in the
+    /// same runloop turn as the hosting layer's keyframes, so both land in one
+    /// transaction. See CollapseLayer.
+    @State private var layers = CollapseLayers()
     /// The previous geometry height, to spot the collapse flip's down-snap.
     @State private var lastGeoHeight: CGFloat = 0
     /// Where the collapse tween is currently headed. Meaningless unless
@@ -369,44 +379,10 @@ public struct MessagesRootView: View {
             // The host's own curve on a clock, not a SwiftUI animation (why:
             // CollapseTween's note). Animations off: the tick IS the animation.
             let k = Self.collapseKnobs
-            // THE SLIDE: pin the box and let the layer carry the motion, so the
-            // frames we never render are still in the right place. Releases
-            // through the same re-measure nudge as the driver does.
-            if k.slide {
-                // THE DESTINATION, laid out once and moved - not the origin,
-                // held and slid away. See `CollapseTween.slideOffsets`.
-                boxHeight = to
-                slideOffset = from - to
-                slideCollapse(from - to, CollapseTween.slideDuration)
-                // The same curve again, in ordinary SwiftUI state, for the red
-                // group to cancel itself back out with - CollapseSlide says why
-                // that one is allowed to be a frame late.
-                driver.start(from: from - to, to: 0, lead: 0, hz: k.hz,
-                             response: k.response, duration: CollapseTween.slideDuration,
-                             tick: { v in
-                                 var tx = Transaction()
-                                 tx.disablesAnimations = true
-                                 withTransaction(tx) { slideOffset = v }
-                             }, onDone: {})
-                slideRelease?.cancel()
-                slideRelease = Task { @MainActor in
-                    try? await Task.sleep(nanoseconds:
-                        UInt64(CollapseTween.slideDuration * 1_000_000_000))
-                    guard !Task.isCancelled else { return }
-                    collapsing = false
-                    CollapseTween.isTweening = false
-                    // ONE TURN, both of them. The box rectangle is identical
-                    // either way round - expanded height translated up by its own
-                    // travel is the compact height in place - so what changes here
-                    // is the content inside it, not where it is. Split across two
-                    // turns it is a 535pt jump for one frame.
-                    driver.stop()
-                    slideOffset = 0
-                    endSlide()
-                    await handBackToModel()
-                }
-                return
-            }
+            // THE SLIDE: pin the box and let the layers carry the motion, so
+            // the frames we never render are still in the right place. It
+            // releases through the same re-measure nudge as the driver does.
+            if k.slide { startSlide(from: from, to: to); return }
             driver.start(from: from, to: to, lead: k.lead, hz: k.hz, response: k.response,
                          tick: { h in
                              var tx = Transaction()
@@ -427,14 +403,50 @@ public struct MessagesRootView: View {
         case .hold:
             break
         case .follow:
+            // The release first (CompactRestHeightTests reads it here): the
+            // box goes back to the host's own height...
+            boxHeight = 0
             driver.stop()
-            // A manual drag mid-collapse takes the box back, and it has to take
-            // the layer back with it - a translation left running would slide a
-            // box the grabber is now placing by hand.
+            // ...and a manual drag mid-collapse has to take the layers back
+            // with it - a translation left running would slide a box the
+            // grabber is now placing by hand.
             slideRelease?.cancel(); slideRelease = nil
             endSlide()
-            slideOffset = 0
-            boxHeight = 0
+            layers.end()
+            slideTravel = 0
+        }
+    }
+
+    /// The slide: the box laid out at its DESTINATION and pushed down by the
+    /// drawer's remaining travel on the hosting layer, with the table group's
+    /// own layers taking their share back - both evaluated by the render
+    /// server on every frame it composites. See `CollapseTween.slideOffsets`
+    /// for the hosting layer's half and `CollapseLayer` for the table's.
+    private func startSlide(from: CGFloat, to: CGFloat) {
+        // THE DESTINATION, laid out once and moved - not the origin, held and
+        // slid away.
+        boxHeight = to
+        slideTravel = from - to
+        slideCollapse(from - to, CollapseTween.slideDuration)
+        // And the table group's layers, in the SAME turn, so every keyframe set
+        // is committed in one transaction and the first composited frame
+        // already has both motions in it.
+        layers.begin(travel: from - to, duration: CollapseTween.slideDuration)
+        slideRelease?.cancel()
+        slideRelease = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(CollapseTween.slideDuration * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            collapsing = false
+            CollapseTween.isTweening = false
+            // ONE TURN, all of them. The box rectangle is identical either way
+            // round - expanded height translated up by its own travel is the
+            // compact height in place - so what changes here is the content
+            // inside it, not where it is. Split across two turns it is a 535pt
+            // jump for one frame.
+            slideTravel = 0
+            endSlide()
+            layers.end()
+            await handBackToModel()
         }
     }
 
@@ -549,7 +561,10 @@ public struct MessagesRootView: View {
                 // view's own GeometryReader reports its own box, and a name
                 // field's box is 34pt tall whatever the drawer is doing.
                 .environment(\.surfaceHeight, geo.size.height)
-                .environment(\.collapseSlide, slideOffset)
+                // The bus the table group's layers ride, and only when the
+                // slide is on: with nothing here `collapseLayer` renders its
+                // view in place and a shipping board has no nested hosts.
+                .environment(\.collapseLayers, Self.collapseKnobs.slide ? layers : nil)
                 .environment(\.hostIsExpanded, hostIsExpanded)
                 // The host is about to request .compact - see `follow`.
                 // Round-10d: the host arms us and requests .compact in the
