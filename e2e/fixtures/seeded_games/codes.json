@@ -1,0 +1,22 @@
+{
+  "2:7": {
+    "np": 2,
+    "seed": 7,
+    "code": "38ec146b42b4ca029bc88ea6aede81eb272d529c088216a0d5bc9e9cef6fca73ba"
+  },
+  "3:41": {
+    "np": 3,
+    "seed": 41,
+    "code": "0262007d80b158e29090fc70ac6baca2145e6795c0558b0ca3c5458bba"
+  },
+  "4:42": {
+    "np": 4,
+    "seed": 42,
+    "code": "0fe967aaab65e54a616518c5e9ca375ff1eb24423c824489c0e82e77e709761a"
+  },
+  "8:43": {
+    "np": 8,
+    "seed": 43,
+    "code": "724301f0a5e872015ea51f8301d7c0525fd5fc39e6ae5f219bebfe3ac2e0af38895dc84075c92b8c01572d922d38801c1e76bfe268b4095ba6ed5a"
+  }
+}

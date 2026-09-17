@@ -3,8 +3,8 @@
  * =============================================================================
  * Drives the REAL src/oracle Mode B objects (OracleMtSession + the C
  * accumulator in public/oracle-mt.wasm.gz) over node:worker_threads, against
- * games played here rather than frozen replay codes (helpers/seeded_game.ts -
- * a frozen code is only readable by the kernel that cut it).
+ * the finished game frozen in helpers/seeded_codes.ts, whose decisions the
+ * fixtures below pin by step index (a kernel that no longer reads it throws there).
  *
  * What each test is FOR, since a threaded suite can go green for the wrong
  * reason more easily than most:
@@ -38,7 +38,7 @@ import { OracleAccumulator } from '../src/oracle/accumulator.ts';
 import { OracleJob } from '../src/oracle/types.ts';
 import { ORACLE_MT_ENV, oracleSeedBase } from '../src/oracle/oracleMtSession.ts';
 import { openMtRig } from './helpers/oracle_mt_node.ts';
-import { playSeededV6 } from './helpers/seeded_game.ts';
+import { seededCode } from './helpers/seeded_codes.ts';
 
 const ORACLE_BYTES = gunzip(new Uint8Array(readFileSync('public/oracle.wasm.gz')));
 
@@ -61,9 +61,8 @@ async function jobAt(np: number, seed: number, idx: number): Promise<OracleJob> 
     const key = `${np}:${seed}`;
     let hit = gameCache.get(key);
     if (!hit) {
-        const played = await playSeededV6(np, seed);
-        assert.ok(played, 'the seeded game finished');
-        hit = { code: played!.code, frames: buildReplayFrames(played!.code, 'g', null) };
+        const code = seededCode(np, seed);
+        hit = { code, frames: buildReplayFrames(code, 'g', null) };
         gameCache.set(key, hit);
     }
     const job = buildOracleJob(hit.frames, hit.code, idx, true, `mt-${np}-${seed}-${idx}`);

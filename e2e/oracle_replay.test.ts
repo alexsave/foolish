@@ -6,7 +6,8 @@
  * reconstruction (defender/goods/elimination), batching, the memory toggle, the
  * exact endgame regime, and the env-reload hook.
  *
- * The replays are now PLAYED here (helpers/seeded_game.ts) rather than frozen as
+ * The replays are PLAYED here (a table of `handwritten` bots on the C Table,
+ * helpers/bot_table.ts playBotTable) rather than frozen as
  * base32 constants, and they are v6 rather than v5. Two reasons, both learned
  * the hard way:
  *
@@ -29,7 +30,7 @@ import { buildReplayFrames } from '../src/replay/frames.ts';
 import { buildOracleJob, findDecisionIndex } from '../src/oracle/replayOracleInput.ts';
 import { OracleInstance } from '../src/oracle/oracleBridge.ts';
 import { OracleAccumulator } from '../src/oracle/accumulator.ts';
-import { playSeededV6 } from './helpers/seeded_game.ts';
+import { playBotTable, seedBytes } from './helpers/bot_table.ts';
 
 const ORACLE_BYTES = gunzip(new Uint8Array(readFileSync('public/oracle.wasm.gz')));
 const ENV_BASE = { OG_KEEP1: '26', OG_KEEP2: '26', OG_W2: '1', OG_W3: '0', OG_EXPLAIN_SOLVE_BUDGET: '2000000' };
@@ -44,10 +45,9 @@ const cache = new Map<string, Fixture>();
 async function fixture(label: string, np: number, s: number): Promise<Fixture> {
     const hit = cache.get(label);
     if (hit) return hit;
-    const played = await playSeededV6(np, s);
-    assert.ok(played, `${label}: the seeded game finished`);
-    const frames = buildReplayFrames(played!.code, 'g', null);
-    const f = { code: played!.code, frames, id: label };
+    const played = playBotTable(Array(np).fill('handwritten'), seedBytes(np, s));
+    const frames = buildReplayFrames(played.code, 'g', null);
+    const f = { code: played.code, frames, id: label };
     cache.set(label, f);
     return f;
 }
