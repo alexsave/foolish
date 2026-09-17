@@ -21,7 +21,7 @@
 
 import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
 import { tableCodeName, type ServerTable, type TableDrive } from '../../sdk/ts/table/server_table.ts';
-import { fixture, fixtureTable } from './table_fixture.ts';
+import { fixture, fixtureExports, fixtureTable } from './table_fixture.ts';
 
 /** The 32-byte deal seed of test game `s` at `np` seats (the one e2e/helpers/seeded_game.ts used). */
 export const seedBytes = (np: number, s: number): Uint8Array =>
@@ -133,6 +133,37 @@ export function replayCodeOf(row: BotTableRow, seed: Uint8Array, opts: BotTableO
     const code = table.replayCode(seed, row.log);
     if (typeof code === 'number') throw refused('replay code', code);
     return code;
+}
+
+/** One action of a bot cycle: the seat, MOVE_*, and its cards as { suit, value } (covers name their attacks). */
+export interface DrivenMove {
+    seat: number;
+    type: number;
+    cards: { suit: number; value: number }[];
+    attacks: { suit: number; value: number }[];
+}
+
+/**
+ * The actions the last cycle on the FIXTURES' table applied (table_bot_drive's
+ * BotDriveOut), read through the generated accessors. Only for the default
+ * table: another instance's drive lives in its own memory.
+ */
+export function lastDriveMoves(): DrivenMove[] {
+    const ex = fixtureExports() as unknown as { memory: WebAssembly.Memory; wasm_table_drive_ptr(): number };
+    const m = L.memOf(ex.memory.buffer);
+    const d = ex.wasm_table_drive_ptr();
+    const card = (p: number) => ({ suit: L.Card_get_suit(m, p), value: L.Card_get_value(m, p) });
+    return Array.from({ length: L.BotDriveOut_get_n(m, d) }, (_, i) => {
+        const a = L.BotDriveOut_actions_at(d, i);
+        const mv = L.BotDriveAction_move_at(a);
+        const n = L.LegalMove_get_n_cards(m, mv);
+        const type = L.LegalMove_get_type(m, mv);
+        return {
+            seat: L.BotDriveAction_get_seat(m, a), type,
+            cards: Array.from({ length: n }, (_, j) => card(L.LegalMove_cards_at(mv, j))),
+            attacks: type === L.MOVE_COVER ? Array.from({ length: n }, (_, j) => card(L.LegalMove_attack_cards_at(mv, j))) : [],
+        };
+    });
 }
 
 export interface PlayedBotTable extends BotTableRow {

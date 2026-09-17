@@ -1,106 +1,91 @@
-// Ad-hoc rules.wasm cover-enumeration stack canary (R4,
-// docs/RULES_GUARDS_WASM_MEMORY_PLAN.md; NOT part of the suite — no .test.ts).
-// The rules twin of e2e/stack_canary.mts: paints the rules shadow stack, drives
-// worst-case cover + attack-combination enumeration through the production
-// kernelLegalMoves marshal, and reports the high-water. Never loads bots
-// (engine() stays rules.wasm). Run:
+// Ad-hoc legal-move enumeration stack canary (R4,
+// docs/RULES_GUARDS_WASM_MEMORY_PLAN.md; NOT part of the suite - no .test.ts).
+// The enumeration twin of e2e/stack_canary.mts: paints the shadow stack, drives
+// worst-case cover and attack-combination enumeration, and reports the
+// high-water. It used to run on rules.wasm through the TS Game marshal; every
+// host now enumerates in bots.wasm (the server's table, the web's client slot),
+// so it measures bots.wasm's 22 KiB stack, on boards the kernel itself sealed
+// (e2e/helpers/table_fixture.ts: every board here is one game_validate accepts,
+// so the sweep is bounded by what a real row can hold) through the kernel's own
+// enumerator (wasm_legal_moves). Run:
 //   TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx e2e/rules_stack_canary.mts
-// Last measured worst: 14.3 KiB (cover nb=8) — 32 KiB stack is 2.23x that.
-// Set STACK to the shipped -z stack-size before re-measuring.
-import { kernelLegalMoves } from '../sdk/ts/wasm/engine.ts';
-import { Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, Card, Battle } from '../server/api/core/types.ts';
+// The rules.wasm measurement was 14.3 KiB (cover nb=8), against a 32 KiB stack.
+import { fixture, fixtureExports, fixtureTable, PLAYING, OUT } from './helpers/table_fixture.ts';
+import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 
-const STACK = 32768;
-const seen: WebAssembly.Memory[] = [];
-const RealInstance = WebAssembly.Instance;
-(WebAssembly as any).Instance = function (mod: WebAssembly.Module, imports?: WebAssembly.Imports) {
-  const inst = new RealInstance(mod, imports);
-  const m = (inst.exports as any).memory;
-  if (m instanceof WebAssembly.Memory) seen.push(m);
-  return inst;
-} as any;
-(WebAssembly as any).Instance.prototype = RealInstance.prototype;
+const STACK = Number(process.env.STACK_SIZE ?? 22528);   // bots -z stack-size (Makefile WASM_BOT_LDFLAGS)
+const RANKS = '23456789TJQKA';
+const SUITS = 'cdhs';
+const card = (suit: number, rank: number) => `${RANKS[rank]}${SUITS[suit]}`;
 
-const card = (suit: number, value: number): Card => ({ suit, value });
-const mkPlayer = (i: number, hand: Card[]): PrivatePlayer => ({
-  player_id: `p${i}`, name: `P${i}`, status: PLAYER_STATUS.IN, is_ai: false,
-  hand, awaiting_attack: false, hand_length: hand.length, strategy_key: 'human' as any,
-});
+// Six seats: the 52-card deck, so a defender can hold as many cards as a game can.
+const SEATS = Array.from({ length: 6 }, (_, i) => ({ id: `p${i}`, name: `P${i}` }));
 
-// Build a state: `nb` uncovered battles (attacks all value 6, distinct-ish),
-// defender holds a big hand of high cards + trumps that can cover many.
-function heavyGame(nb: number, defHand: number): Game {
-  const battles: Battle[] = [];
-  for (let i = 0; i < nb; i++) battles.push({ attack: card(i % 4, 6), defense: null });
-  // Defender hand: lots of 7..13 across suits (cover the 6s same-suit) + trumps.
-  const hand: Card[] = [];
-  for (let v = 7; v <= 13 && hand.length < defHand; v++)
-    for (let s = 0; s < 4 && hand.length < defHand; s++) hand.push(card(s, v));
-  // pad with trump (suit 0) aces if room
-  while (hand.length < defHand) hand.push(card(0, 14 - (hand.length % 3)));
-  const players = [
-    mkPlayer(0, [card(1, 6), card(2, 6), card(3, 6)]), // attacker
-    mkPlayer(1, hand),                                   // defender (seat 1)
-  ];
-  return {
-    players, deck: [], logs: [], id: 'h', name: 'h', status: GAME_STATUS.PLAYING,
-    deck_length: 0, discard_pile_length: 0, flipped: card(0, 5), power_suit: 0,
-    first_attacker: 0, defender: 1, table_battles: battles, elimination_order: [],
-    good_timestamp: null, good_players: [],
-  } as Game;
+/** Loads a sealed 6-seat board; seats 2..5 are out, seat 0 attacks, seat 1 defends. */
+function load(hands: string[][], battles: string[], trump: string): boolean {
+    let b = fixture().seats(SEATS).status(PLAYING).attacker(0).defender(1).trump(trump).table(...battles)
+        .eliminated(2, 3, 4, 5);
+    for (let s = 2; s < 6; s++) b = b.seatStatus(s, OUT);
+    hands.forEach((h, s) => { b = b.hand(s, h.join(' ')); });
+    try {
+        const fx = b.build();
+        return fixtureTable().load(fx.state, fx.roster) === L.TABLE_OK;
+    } catch {
+        return false;   // a board no game can hold: not part of the sweep
+    }
 }
 
-// Force instantiation + capture memory.
-kernelLegalMoves(heavyGame(1, 6), 'p1');
-const mem = seen.sort((a, b) => b.buffer.byteLength - a.buffer.byteLength)[0];
-if (!mem) { console.error('no rules memory captured'); process.exit(1); }
-console.log('rules mem pages:', mem.buffer.byteLength / 65536);
-
-const paint = () => new Uint8Array(mem.buffer).fill(0xA5, 64, STACK - 64);
+const ex = fixtureExports();
+fixtureTable();   // instantiate
+const paint = () => new Uint8Array(ex.memory.buffer).fill(0xA5, 64, STACK - 64);
 const scan = () => {
-  const u = new Uint8Array(mem.buffer);
-  let low = 64;
-  while (low < STACK - 64 && u[low] === 0xA5) low++;
-  return STACK - low; // high-water bytes
+    const u = new Uint8Array(ex.memory.buffer);
+    let low = 64;
+    while (low < STACK - 64 && u[low] === 0xA5) low++;
+    return STACK - low;   // high-water bytes
 };
 
-// First-attack / attack-continuation enumeration (combinations_attack): a big
-// same-value attacker hand drives the deepest attack recursion.
-function attackGame(handSize: number, nbCovered: number): Game {
-  const battles: Battle[] = [];
-  for (let i = 0; i < nbCovered; i++) battles.push({ attack: card(0, 9), defense: card(1, 9) });
-  const hand: Card[] = [];
-  for (let i = 0; i < handSize; i++) hand.push(card(i % 4, 9)); // all value 9 → wide combos
-  const players = [
-    mkPlayer(0, hand),                                   // attacker (seat 0)
-    mkPlayer(1, [card(0, 10), card(1, 10), card(2, 10)]),
-  ];
-  return {
-    players, deck: [], logs: [], id: 'a', name: 'a', status: GAME_STATUS.PLAYING,
-    deck_length: 0, discard_pile_length: 0, flipped: card(0, 5), power_suit: 0,
-    first_attacker: 0, defender: 1, table_battles: battles, elimination_order: [],
-    good_timestamp: null, good_players: [],
-  } as Game;
+let worst = 0, worstDesc = '', boards = 0, refused = 0;
+paint();
+
+// Cover sweep: `nb` uncovered low attacks (distinct cards), the defender holding
+// up to `dh` higher cards across every suit, the trump the last spade.
+for (const nb of [1, 2, 3, 4, 5, 6, 7, 8]) {
+    const attacks = Array.from({ length: nb }, (_, i) => card(i % 3, Math.floor(i / 3)));
+    for (const dh of [6, 12, 18, 24, 30, 36, 40]) {
+        const hand: string[] = [];
+        for (let r = 12; r >= 0 && hand.length < dh; r--) {
+            for (let s = 0; s < 4 && hand.length < dh; s++) {
+                const c = card(s, r);
+                if (!attacks.includes(c) && c !== 'Ks' && c !== '2s') hand.push(c);
+            }
+        }
+        if (!load([['2s'], hand], attacks, 'Ks')) { refused++; continue; }
+        ex.wasm_legal_moves(1);
+        boards++;
+    }
+    const hw = scan();
+    if (hw > worst) { worst = hw; worstDesc = `cover nb=${nb}`; }
 }
 
-let worst = 0, worstDesc = '';
-paint();
-// Cover sweep (durak rarely exceeds ~6 uncovered battles; go to 8 for margin).
-for (const nb of [1, 2, 3, 4, 5, 6, 7, 8]) {
-  for (const dh of [6, 12, 18, 24, 36, 48, 60]) {
-    try { kernelLegalMoves(heavyGame(nb, dh), 'p1'); } catch { /* ignore */ }
-  }
-  const hw = scan();
-  if (hw > worst) { worst = hw; worstDesc = `cover nb=${nb}`; }
+// Attack-combination sweep (first attack and throw-ins): a wide attacker hand of
+// every value, with `nc` covered battles on the table naming values it holds.
+for (const hs of [6, 12, 18, 24, 30, 36, 40]) {
+    for (const nc of [0, 1, 2, 3, 4]) {
+        const battles = Array.from({ length: nc }, (_, i) => `${card(3, i)}/${card(3, i + 6)}`);
+        const used = new Set(battles.flatMap((b) => b.split('/')).concat(['As', '3c']));
+        const hand: string[] = [];
+        for (let r = 0; r < 13 && hand.length < hs; r++) {
+            for (let s = 0; s < 3 && hand.length < hs; s++) if (!used.has(card(s, r))) hand.push(card(s, r));
+        }
+        if (!load([hand, ['3c']], battles, 'As')) { refused++; continue; }
+        ex.wasm_legal_moves(0);
+        boards++;
+    }
+    const hw = scan();
+    if (hw > worst) { worst = hw; worstDesc = `attack hs=${hs}`; }
 }
-// Attack-combination sweep (first attack + continuations, wide same-value hand).
-for (const hs of [6, 12, 18, 24, 36, 48, 60]) {
-  for (const nc of [0, 1, 2, 3, 4]) {
-    try { kernelLegalMoves(attackGame(hs, nc), 'p0'); } catch { /* ignore */ }
-  }
-  const hw = scan();
-  if (hw > worst) { worst = hw; worstDesc = `attack hs=${hs}`; }
-}
-console.log(`cover-enum stack high-water: ${worst} B (${(worst / 1024).toFixed(1)} KiB) at ${worstDesc}`);
-console.log(`stack=${STACK} (${STACK / 1024} KiB); headroom = ${((STACK - worst) / 1024).toFixed(1)} KiB; ratio = ${(STACK / worst).toFixed(2)}x`);
-console.log(`32KiB stack would be ${(32768 / worst).toFixed(2)}x the measured worst`);
+
+console.log(`boards enumerated: ${boards} (${refused} refused by the kernel as boards no game can hold)`);
+console.log(`enumeration stack high-water: ${worst} B (${(worst / 1024).toFixed(1)} KiB) at ${worstDesc}`);
+console.log(`stack=${STACK} (${(STACK / 1024).toFixed(1)} KiB); headroom = ${((STACK - worst) / 1024).toFixed(1)} KiB; ratio = ${(STACK / worst).toFixed(2)}x`);
