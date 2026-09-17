@@ -1221,6 +1221,18 @@ int anim_shown_table_rows(const unsigned char *live, int n_live,
     return anim_shown_table(n_live, n_sweep, n_pending, out_sweeping);
 }
 
+int anim_pass_slot_shown(int previewing, int dragging, int seen_this_drag,
+                         int over_dead_pair, int held_at, int n_battles, int rules) {
+    if (previewing) return 1;
+    // Crossing a pair mid-drag: the drop there is a cover the kernel refuses, not
+    // a change of mind - keep the slot the finger is on its way to.
+    if ((rules & ANIM_PASS_STICKY) && dragging && seen_this_drag && over_dead_pair) return 1;
+    // Released, and the kernel has not published the pair yet: the slot IS where
+    // it is going. Once the table has grown the pair stands in the same place.
+    if ((rules & ANIM_PASS_HOLD) && !dragging && held_at >= 0 && n_battles <= held_at) return 1;
+    return 0;
+}
+
 int anim_finish_rows(const unsigned char *elimination, int n_elim,
                      int game_over, int n_players, int my_seat,
                      AnimFinishRow *out, int cap) {

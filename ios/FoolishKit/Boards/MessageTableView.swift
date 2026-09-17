@@ -78,6 +78,12 @@ public struct MessageTableView: View {
     /// played card flies FROM. nil whenever no drag is active (set and cleared
     /// alongside `dragPoint`, in `onDragChanged`/`onDragEnded`).
     @State private var dragCardCenter: CGPoint?
+    /// A pass preview was shown at some point in the drag under way - so the
+    /// finger crossing a pair is on its way to the slot. See `PassSlot`.
+    @State private var passSeenThisDrag = false
+    /// The table's pair count when a PASS was released, until the play is
+    /// over - the slot stays until the pair that fills it has landed.
+    @State private var passHeldAt: Int?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // Round-8: this board has NO card-flight matchedGeometry namespace (unlike the
     // offline TableView, where matchedGeometry IS the primary flight). Here the
@@ -2282,7 +2288,7 @@ public struct MessageTableView: View {
         #endif
         // note 34: a pass preview shows the ghost slot instead of a cover highlight.
         // Never while sweeping (the cards are leaving, not a drop target).
-        let passPreview = sweeping ? false : isPassPreview(view)
+        let passPreview = sweeping ? false : passSlotShown(view)
         return Group {
             if !shown.isEmpty {
                 FBattleGrid(battles: shown, trumpSuit: view.trumpSuit,
@@ -2356,6 +2362,24 @@ public struct MessageTableView: View {
     private func isPassPreview(_ view: GameView) -> Bool {
         guard let preview = dragPreview(view) else { return false }
         return preview.target == .table && preview.move.type == .pass
+    }
+
+    /// Whether the table shows the pass preview's empty slot - the kernel's
+    /// answer (`anim_pass_slot_shown`), which keeps it through a crossing and a
+    /// release. See `PassSlot`.
+    private func passSlotShown(_ view: GameView) -> Bool {
+        PassSlotWire.shown(previewing: isPassPreview(view), dragging: dragCard != nil,
+                           seenThisDrag: passSeenThisDrag, overDeadPair: isOverDeadPair(view),
+                           heldAt: passHeldAt, battles: view.battles.count,
+                           hold: PassSlot.hold, sticky: PassSlot.sticky)
+    }
+
+    /// The finger is over a pair the dragged card can make no legal move onto.
+    private func isOverDeadPair(_ view: GameView) -> Bool {
+        guard let card = dragCard, let point = dragPoint else { return false }
+        let target = BoardDrop.target(at: point, battles: battleFrames, handFrame: handDropFrame)
+        guard case .battle = target else { return false }
+        return probe(view, playCards(for: card, view), target).move == nil
     }
 
     /// note 33: what a release would do, localized — "Attack" / "Cover" /
@@ -3938,6 +3962,7 @@ public struct MessageTableView: View {
                         guard let to = self.handLandingSlot(c, laidOut: laid)
                                 ?? (lastChance ? self.handApproxLanding() : nil) else { return nil }
                         flights.append(Flight(id: "undo-\(c.identity)", card: c, from: from, to: to,
+                                              fromAngle: UndoFlightSource.keepsTilt ? UndoFlightSource.tilt(for: c, in: old.battles) : 0,
                                               revert: isConflict))
                     }
                     // The same turn `playStep` gives these to the animator: the
@@ -5104,8 +5129,10 @@ public struct MessageTableView: View {
     /// every change — kept now (previously discarded at the call site) so the
     /// verb hint / ghost-slot preview can resolve the same drop target live.
     private func onDragChanged(_ card: Card, at point: CGPoint) {
+        if dragCard == nil { passSeenThisDrag = false; passHeldAt = nil }
         dragCard = card
         dragPoint = point
+        if !passSeenThisDrag, let view = controller.view, isPassPreview(view) { passSeenThisDrag = true }
     }
 
     private func onDragEnded(_ card: Card, at point: CGPoint, _ view: GameView) {
@@ -5119,6 +5146,8 @@ public struct MessageTableView: View {
         // finger is wherever you grabbed the card, which is not where the card
         // is. Falls back to the finger only if no card centre was ever reported.
         let releaseCentre = dragCardCenter ?? point
+        // Read while the drag still exists: a pass let go of holds its slot.
+        let passing = isPassPreview(view)
         dragCard = nil
         dragPoint = nil
         dragCardCenter = nil
@@ -5130,6 +5159,7 @@ public struct MessageTableView: View {
         // sprung the card home to its slot, which is the right animation for a
         // drag that played nothing.
         if target == .hand { return }
+        if passing, target == .table { passHeldAt = view.battles.count }
         playAt(target, playCards(for: card, view), view, released: (card, releaseCentre))
     }
 
@@ -5427,6 +5457,7 @@ public struct MessageTableView: View {
             if !applied { releaseLivePlayVeil() }
             await stageNow()
             playInFlight = false
+            passHeldAt = nil
         }
     }
 
@@ -5445,6 +5476,7 @@ public struct MessageTableView: View {
     /// handler and the second did not exist, which is the leak. Safe to call
     /// twice - it is keyed off the ledger, which it clears.
     private func releaseLivePlayVeil() {
+        passHeldAt = nil   // a refused pass has no pair coming to fill its slot
         // My own hand veil goes back unconditionally: `play` raised it
         // unconditionally too (it is not behind `freezeCounts`' guard), it names
         // only MY cards, and the one other place that touches it

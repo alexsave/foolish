@@ -580,6 +580,11 @@ int fio_shown_table(int n_live, int n_sweep, int n_pending, int *out_sweeping);
 // anim_shown_table_rows.
 int fio_shown_table_rows(const uint8_t *live, int n_live, const uint8_t *sweep, int n_sweep,
                          int n_pending, int hold_leaving, int *out_sweeping);
+// Whether the pass preview's empty slot shows - see anim_pass_slot_shown.
+#define FIO_PASS_HOLD   1
+#define FIO_PASS_STICKY 2
+int fio_pass_slot_shown(int previewing, int dragging, int seen_this_drag,
+                        int over_dead_pair, int held_at, int n_battles, int rules);
 
 // The end screen's order: rank 1 is the first player out, the fool takes the
 // last place. `elimination` is first-out first and excludes the fool;

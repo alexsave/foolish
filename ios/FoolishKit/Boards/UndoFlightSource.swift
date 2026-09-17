@@ -32,6 +32,33 @@ public enum UndoFlightSource {
         return CGRect(x: slot.midX - 25, y: slot.maxY - 70, width: 50, height: 70)
     }
 
+    /// THE TILT THE CARD WAS DRAWN AT, which its flight home starts from.
+    ///
+    /// Owner, filming the Undo of a bout-ending cover: "the cover card that flies
+    /// in/out IMMEDIATELY rotates to straight, then flies back. It shouldn't. The
+    /// attack card it was covering correctly gradually rotates back to straight.
+    /// But the cover card should rotate as it flies back." The undo's flight was
+    /// built with no `fromAngle`, so the ghost appeared upright on a card that
+    /// had been lying across its attack. A cover lies at +coverAngle, the attack
+    /// under one at -coverAngle, an uncovered attack upright - as FBattleGrid
+    /// draws them and as the bout-end sweep already flies them.
+    public static func tilt(for card: Card, in battles: [BattleView]) -> Double {
+        guard let b = battles.first(where: { $0.attack == card || $0.defense == card }) else { return 0 }
+        if b.defense == card { return FBattleGrid.coverAngle }
+        return b.defense != nil ? -FBattleGrid.coverAngle : 0
+    }
+
+    /// Ships on. `undo.keeptilt=0` in `dev.flags` puts back the upright start.
+    public static let keepsTiltByDefault = true
+
+    public static var keepsTilt: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("undo.keeptilt", shipping: keepsTiltByDefault)
+        #else
+        return keepsTiltByDefault
+        #endif
+    }
+
     /// Ships on. `undo.ownslot=0` in `dev.flags` puts back the any-slot lookup.
     public static let ownSlotByDefault = true
 

@@ -121,6 +121,18 @@ public struct PreBoutTable: Equatable, Sendable {
 // covered pair drops off the table mid-sweep. The rule is
 // c/src/anim_plan.c's anim_table_* / anim_covered_sweep_accepts /
 // anim_shown_table now, so it means one thing.
+/// The pass preview's empty slot - the kernel's `anim_pass_slot_shown`.
+public enum PassSlotWire {
+    public static func shown(previewing: Bool, dragging: Bool, seenThisDrag: Bool,
+                             overDeadPair: Bool, heldAt: Int?, battles: Int,
+                             hold: Bool, sticky: Bool) -> Bool {
+        let rules = (hold ? FIO_PASS_HOLD : 0) | (sticky ? FIO_PASS_STICKY : 0)
+        return fio_pass_slot_shown(previewing ? 1 : 0, dragging ? 1 : 0, seenThisDrag ? 1 : 0,
+                                   overDeadPair ? 1 : 0, Int32(heldAt ?? -1), Int32(battles),
+                                   Int32(rules)) == 1
+    }
+}
+
 public extension PreBoutTable {
 
     /// The identities a battle table holds - each attack, and its cover where it

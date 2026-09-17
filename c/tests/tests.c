@@ -5885,6 +5885,30 @@ static void test_board_the_table_under_the_sweep(void) {
         CHECK(anim_shown_table_rows(NULL, 0, three, 3, 0, 1, &sweeping) == ANIM_SHOWN_SWEEP
               && sweeping == 1, "an emptied table is the plain sweep, as before");
     }
+
+    // THE PASS PREVIEW'S SLOT (anim_pass_slot_shown). Filmed: yellow's pair at
+    // x 251 slid to 216 as the slot opened, back to 241 as the finger crossed
+    // the cyan pair, to 227, and on release snapped to 235 before sliding to
+    // its final 215 - three reversals for one pass.
+    {
+        const int both = ANIM_PASS_HOLD | ANIM_PASS_STICKY;
+        CHECK(anim_pass_slot_shown(1, 1, 1, 0, -1, 2, both) == 1, "a pass preview opens the slot");
+        CHECK(anim_pass_slot_shown(0, 1, 0, 0, -1, 2, both) == 0, "no preview yet, no slot");
+        CHECK(anim_pass_slot_shown(0, 1, 1, 1, -1, 2, both) == 1,
+              "crossing a pair the card cannot go on keeps the slot open");
+        CHECK(anim_pass_slot_shown(0, 1, 1, 1, -1, 2, ANIM_PASS_HOLD) == 0,
+              "without STICKY it closes as before (the flag's other state)");
+        CHECK(anim_pass_slot_shown(0, 1, 1, 0, -1, 2, both) == 0,
+              "back over the hand (or any legal other drop) closes it");
+        CHECK(anim_pass_slot_shown(0, 0, 0, 0, 2, 2, both) == 1,
+              "released: the slot stays until the table has the new pair");
+        CHECK(anim_pass_slot_shown(0, 0, 0, 0, 2, 3, both) == 0,
+              "the pair has landed: it takes the slot's place");
+        CHECK(anim_pass_slot_shown(0, 0, 0, 0, 2, 2, ANIM_PASS_STICKY) == 0,
+              "without HOLD the slot closes on release, as before");
+        CHECK(anim_pass_slot_shown(0, 0, 1, 1, -1, 2, both) == 0,
+              "no drag and no held release: never a slot");
+    }
 }
 
 static void test_board_finish_rows_rank_first_out_to_the_fool(void) {
