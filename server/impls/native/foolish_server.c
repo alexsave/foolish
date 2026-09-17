@@ -152,6 +152,10 @@ typedef struct {
     char owner[ID_LEN + 1];
     Roster roster;
     bool seat_ready[MAX_PLAYERS];             // lobby "hit ready" — host state; kind (human/bot) lives in the kernel's strategy_key
+    // The secret base every bot decision's streams are seeded from
+    // (bot_drive_seed_decision), derived from the deal seed at each deal and
+    // persisted with the game, so a bot's move is a function of this game alone.
+    uint32_t rng_base;
     // Per-game lock (T2a). Guards EVERYTHING below this point plus the
     // `game` and lobby-roster fields above: this slot's whole game state,
     // once it is reachable via g_game_ht. See the "Locking" block below
@@ -410,13 +414,15 @@ static void game_mark_dirty(GameSlot *s) {
 //   next ROSTER_BYTES bytes              roster_encode(&roster), the kernel's
 //                                        durable roster encoding (roster.h)
 //   next MAX_PLAYERS bytes               seat_ready[] (1 byte each, 0/1)
+//   next 4 bytes                         rng_base, uint32 LE (the bots' seeding base)
 // Worst case: 3 + 690 (state_put's documented worst case — see
-// VIEW_CACHE_CAP above) + 13*2 + 1227 + 8 = 1954 bytes.
+// VIEW_CACHE_CAP above) + 13*2 + 1227 + 8 + 4 = 1958 bytes.
 // PERSIST_GAME_BLOB_CAP gives margin, same discipline as VIEW_CACHE_CAP.
 // Version 2: the roster replaced version 1's seat_user[]/seat_name[] arrays,
-// so a version 1 row is refused rather than misread.
+// so a version 1 row is refused rather than misread. Version 3: rng_base, so a
+// recovered game's bots keep seeding from the base its deal chose.
 // --------------------------------------------------------------------------
-#define PERSIST_GAME_BLOB_VERSION 2
+#define PERSIST_GAME_BLOB_VERSION 3
 #define PERSIST_GAME_BLOB_CAP 2048
 
 // Returns bytes written, or -1 if it wouldn't fit in `cap` (never happens at
@@ -425,7 +431,7 @@ static void game_mark_dirty(GameSlot *s) {
 static int serialize_slot(const GameSlot *s, unsigned char *buf, int cap) {
     unsigned char state[1 + 65536];   // state_put's own documented cap (h_state uses the same 65536)
     int state_len = state_put(&s->game, VIEW_UNMASKED, state);
-    int need = 1 + 2 + state_len + (ID_LEN + 1) * 2 + ROSTER_BYTES + MAX_PLAYERS;
+    int need = 1 + 2 + state_len + (ID_LEN + 1) * 2 + ROSTER_BYTES + MAX_PLAYERS + 4;
     if (state_len < 0 || need > cap) return -1;
     unsigned char *q = buf;
     *q++ = PERSIST_GAME_BLOB_VERSION;
@@ -437,6 +443,7 @@ static int serialize_slot(const GameSlot *s, unsigned char *buf, int cap) {
     if (roster_encode(&s->roster, q, ROSTER_BYTES) != ROSTER_BYTES) return -1;
     q += ROSTER_BYTES;
     for (int i = 0; i < MAX_PLAYERS; i++) *q++ = (unsigned char)(s->seat_ready[i] ? 1 : 0);
+    for (int i = 0; i < 4; i++) *q++ = (unsigned char)(s->rng_base >> (8 * i));
     return (int)(q - buf);
 }
 
@@ -452,7 +459,7 @@ static bool deserialize_slot(GameSlot *s, const unsigned char *buf, int len) {
     if (len < 3 || buf[0] != PERSIST_GAME_BLOB_VERSION) return false;
     const unsigned char *q = buf + 1;
     int state_len = q[0] | (q[1] << 8); q += 2;
-    int fixed_tail = (ID_LEN + 1) * 2 + ROSTER_BYTES + MAX_PLAYERS;
+    int fixed_tail = (ID_LEN + 1) * 2 + ROSTER_BYTES + MAX_PLAYERS + 4;
     if (state_len < 0 || state_len > 65536 || 3 + state_len + fixed_tail > len) return false;
     // Exact inverse of state_put(.., VIEW_UNMASKED, ..), and refused whole if
     // the kernel could not have produced the state (game.h game_validate).
@@ -466,6 +473,8 @@ static bool deserialize_slot(GameSlot *s, const unsigned char *buf, int len) {
     if (s->roster.n != s->game.num_players) return false;
     q += ROSTER_BYTES;
     for (int i = 0; i < MAX_PLAYERS; i++) s->seat_ready[i] = (*q++ != 0);
+    s->rng_base = (uint32_t)q[0] | ((uint32_t)q[1] << 8) | ((uint32_t)q[2] << 16) | ((uint32_t)q[3] << 24);
+    q += 4;
     s->used = true;
     return true;
 }
@@ -524,6 +533,7 @@ static void persist_self_test(void) {
     a.game.num_battles = 1;
     a.game.table_battles[0].attack.suit = 1; a.game.table_battles[0].attack.value = 9;
     a.game.table_battles[0].defense = CARD_NONE;
+    a.rng_base = 0xA1B2C3D4u;
     for (int i = 0; i < 3; i++) {
         const bool bot = i == 2;
         char id[16], name[16];
@@ -549,6 +559,7 @@ static void persist_self_test(void) {
     if (!deserialize_slot(&b, blob1, n1)) {
         fprintf(stderr, "persist self-test: FAIL (deserialize_slot rejected a round-trip blob)\n"); exit(1);
     }
+    if (b.rng_base != a.rng_base) { fprintf(stderr, "persist self-test: FAIL (rng_base not restored)\n"); exit(1); }
     int n2 = serialize_slot(&b, blob2, sizeof blob2);
     if (n2 != n1 || memcmp(blob1, blob2, (size_t)n1) != 0) {
         fprintf(stderr, "persist self-test: FAIL (serialize->deserialize->serialize not byte-identical, "
@@ -1001,6 +1012,25 @@ static void thread_disable_cancellation(void) {
     pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 }
 
+// Per-decision seeding (bot_drive.h bot_drive_seed_decision), the Table's policy:
+// the strategy and draw streams are seeded from the board in front of each
+// decision and the game's own base, so a bot's move is a function of its game and
+// never of what this thread ran before (the Monte-Carlo rollouts of robusta,
+// firecracker and gunpowder, cordite's and octogen's worlds and the random bot all
+// read those streams). The hook is process-wide and installed once in main,
+// before any thread starts; the base is per thread, set by bot_cycle.
+static _Thread_local uint32_t t_bot_rng_base;
+static void bot_seed_hook(const Game *g, int seat, int phase) {
+    (void)seat;
+    bot_drive_seed_decision(g, t_bot_rng_base, phase);
+}
+
+// One bot cycle of `g`: bot_drive under this host's per-decision seeding.
+static void bot_cycle(Game *g, uint32_t rng_base, BotDriveOut *drv) {
+    t_bot_rng_base = rng_base;
+    bot_drive(g, game_human_mask(g), BOT_DRIVE_MAX_ACTIONS, 0, 0, drv);
+}
+
 static void *bot_thread(void *arg) {
     thread_disable_cancellation();
     GameSlot *s = arg;
@@ -1012,7 +1042,7 @@ static void *bot_thread(void *arg) {
         // scratch state is now _Thread_local, so this game's bot_thread
         // never shares it with another game's — s->lock (already held for
         // this whole cycle) is the only serialization this needs.
-        bot_drive(&s->game, hmask, BOT_DRIVE_MAX_ACTIONS, 0, 0, &drv);   // ONE cycle, then returns
+        bot_cycle(&s->game, s->rng_base, &drv);   // ONE cycle, then returns
         // A bot's move (or the game ending) changes the board exactly like a
         // human's /action does — the /ws state cache must not stay stale
         // just because no HTTP handler touched this slot this time.
@@ -1539,6 +1569,7 @@ static void h_meta(Req *r, Conn *conn) {
             // game_seat_and_deal's apply/refill path is too — s->lock
             // (already held here) is the only serialization this needs.
             game_set_deal_seed_bytes(seed, 32);
+            s->rng_base = bot_drive_seed_base(seed, 32);
             // Seats were wired in the lobby (strategy_key per seat), so pass NULL:
             // the kernel owns marking them + the deal (+ g->status = PLAYING).
             game_seat_and_deal(g, NULL, g->num_players);
@@ -1632,7 +1663,7 @@ static void h_action(Req *r, Conn *conn) {
 }
 
 static void h_state(Req *r, Conn *conn) {
-    char gid[ID_LEN + 1] = {0}; int seat = 0;
+    char gid[ID_LEN + 1] = {0}; int seat = VIEW_SPECTATOR;
     // query: game_id=..&seat=..
     const char *gp = strstr(r->query, "game_id=");
     if (gp) { gp += 8; int i = 0; while (gp[i] && gp[i] != '&' && i < ID_LEN) { gid[i] = gp[i]; i++; } gid[i] = 0; }
@@ -1647,8 +1678,23 @@ static void h_state(Req *r, Conn *conn) {
     pthread_mutex_lock(&g_registry_lock);
     GameSlot *s = game_by_id(gid);
     if (!s) { pthread_mutex_unlock(&g_registry_lock); respond(conn, 404, "{\"error\":\"no game\"}"); return; }
+    // A seat's view holds that seat's hand: only the account seated there may read
+    // it, the same rule /ws's handshake applies. It used to be served to anyone
+    // who named the seat (and seat 0 to a request naming none), so any client
+    // could read every hand of any game. The spectator view is public.
+    char user_id[ID_LEN + 1] = {0};
+    if (seat >= 0) {
+        User *u = user_by_token(r->token);
+        if (!u) { pthread_mutex_unlock(&g_registry_lock); respond(conn, 401, "{\"error\":\"unauthorized\"}"); return; }
+        snprintf(user_id, sizeof user_id, "%s", u->user_id);
+    }
     pthread_mutex_lock(&s->lock);
     pthread_mutex_unlock(&g_registry_lock);
+    if (seat >= 0 && (seat >= s->game.num_players || seat_of(s, user_id) != seat)) {
+        pthread_mutex_unlock(&s->lock);
+        respond(conn, 403, "{\"error\":\"not your seat\"}");
+        return;
+    }
 
     // The kernel renders the masked, per-seat view as the PACKED wire (view.c
     // state_put) — no JSON. The client decodes it with its own kernel-wire
@@ -3250,6 +3296,54 @@ static void *game_reaper_thread(void *arg) {
 static int   make_listener(int port, bool reuseport);   // defined just after main()
 static void *acceptor_main(void *arg);                  // defined just after main()
 
+// --self-test-bot-seeding: a bot cycle is a function of the game and its base,
+// not of what this thread ran before. Every linked roster brain plays 3-seat games
+// of itself; each cycle runs twice from the same board, once after a fixed RNG
+// state and once after other RNG states and another game's cycle, and both runs
+// must leave the same board and apply the same actions. The Monte-Carlo brains'
+// rollout policies draw from the draw stream, which is what a missing seed shows.
+static int run_bot_seeding_self_test(void) {
+    static Game base_game, x, y, other;
+    static unsigned char bx[65536], by[65536];
+    int n_roster = 0, failed = 0, brains = 0;
+    const BotRosterEntry *roster = bot_roster(&n_roster);
+    for (int e = 0; e < n_roster; e++) {
+        if (!bot_roster_linked(e)) continue;
+        brains++;
+        int8_t keys[3] = { (int8_t)roster[e].strat, (int8_t)roster[e].strat, (int8_t)roster[e].strat };
+        unsigned char seed[32];
+        for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(e * 37 + i * 11 + 5);
+        memset(&base_game, 0, sizeof base_game);
+        game_set_deal_seed_bytes(seed, 32);
+        game_seat_and_deal(&base_game, keys, 3);
+        const uint32_t rng_base = bot_drive_seed_base(seed, 32);
+        int cycles = 0, same = 1;
+        for (int step = 0; step < 300 && base_game.status == GAME_STATUS_PLAYING; step++) {
+            BotDriveOut dx, dy, dother;
+            memcpy(&x, &base_game, sizeof x);
+            memcpy(&y, &base_game, sizeof y);
+            game_rng_set(0x13579BDFu);
+            random_strategy_set_seed(0x2468ACE0u);
+            bot_cycle(&x, rng_base, &dx);
+            game_rng_set(0xC0FFEE11u + (uint32_t)step);
+            random_strategy_set_seed(0xBADC0DEu ^ (uint32_t)step);
+            memcpy(&other, &base_game, sizeof other);
+            bot_cycle(&other, rng_base ^ 0x5A5A5A5Au, &dother);
+            bot_cycle(&y, rng_base, &dy);
+            const int lx = state_put(&x, VIEW_UNMASKED, bx), ly = state_put(&y, VIEW_UNMASKED, by);
+            if (dx.n != dy.n || lx != ly || memcmp(bx, by, (size_t)lx) != 0) same = 0;
+            if (dx.n <= 0) break;
+            memcpy(&base_game, &x, sizeof base_game);
+            cycles++;
+        }
+        fprintf(stderr, "bot seeding self-test: %-18s %3d cycles, %s\n", roster[e].key, cycles,
+                same ? "independent of the thread's history" : "DEPENDS ON THE THREAD'S HISTORY");
+        if (!same || cycles < 3) failed++;
+    }
+    fprintf(stderr, "bot seeding self-test: %s (%d brains)\n", failed ? "FAIL" : "OK", brains);
+    return failed ? 1 : 0;
+}
+
 int main(int argc, char **argv) {
     thread_disable_cancellation();   // main is acceptor[0]; runs the accept() loop — same cancel-bracket tax, see thread_disable_cancellation
     int port = 8099;
@@ -3269,7 +3363,9 @@ int main(int argc, char **argv) {
     bool want_tls = false;
     const char *cert_path = NULL, *key_path = NULL;
     int bench_fanout = 0;
+    bot_drive_pre_action_hook = bot_seed_hook;   // before any thread, and before the self-tests
     for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--self-test-bot-seeding")) return run_bot_seeding_self_test();
         if (!strncmp(argv[i], "--bench-fanout=", 15)) { bench_fanout = atoi(argv[i] + 15); continue; }
         if (!strncmp(argv[i], "--max-conns=", 12)) { g_max_conns = atoi(argv[i] + 12); continue; }
         if (!strncmp(argv[i], "--accept-threads=", 17)) {

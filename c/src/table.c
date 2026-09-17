@@ -675,9 +675,7 @@ int table_seat_of(const Table *t, const char *id, int id_len) {
 }
 
 int table_set_deal_seed(Table *t, const char *seed_hex, int len) {
-    uint32_t h = 2166136261u;
-    for (int i = 0; i < len; i++) h = (h ^ (uint8_t)seed_hex[i]) * 16777619u;
-    t->rng_base = len > 0 ? h : 0u;
+    t->rng_base = bot_drive_seed_base((const uint8_t *)seed_hex, len);
     return TABLE_OK;
 }
 
@@ -755,13 +753,8 @@ static _Thread_local uint32_t t_drive_base;
 void (*table_choose_observer)(const Game *g, int seat) = 0;
 
 static void table_drive_seed(const Game *g, int seat, int phase) {
-    if (phase == BOT_DRIVE_PHASE_CHOOSE) {
-        if (table_choose_observer) table_choose_observer(g, seat);
-        random_strategy_set_seed(game_state_seed(g, t_drive_base, GAME_SEED_SALT_STRATEGY));
-        game_rng_set(game_state_seed(g, t_drive_base, GAME_SEED_SALT_SEARCH));
-    } else {
-        game_rng_set(game_state_seed(g, t_drive_base, GAME_SEED_SALT_DRAW));
-    }
+    if (phase == BOT_DRIVE_PHASE_CHOOSE && table_choose_observer) table_choose_observer(g, seat);
+    bot_drive_seed_decision(g, t_drive_base, phase);
 }
 
 int table_bot_drive(Table *t, const uint8_t *prefs, int prefs_len, int max_actions, BotDriveOut *out) {

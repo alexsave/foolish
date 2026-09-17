@@ -128,7 +128,7 @@ POST /auth/signup {username}            -> {token, user_id}     (also /auth/sign
 POST /create               (Bearer)     -> {game_id}            creator takes seat 0
 POST /meta {type,game_id[,strategy]}    (Bearer)   type: join | add-bot | start | continue
 POST /action?game_id=..  <awire bytes>  (Bearer)   applies, then runs the bots
-GET  /state?game_id=..&seat=..          -> the kernel's masked view (packed)
+GET  /state?game_id=..&seat=..  (Bearer, your own seat; no seat or seat=-1: the public spectator view) -> the kernel's masked view (packed)
 GET  /status?game_id=..                 -> 0 waiting / 1 playing / 2 over
 GET  /health
 GET  /stats  -> {live_connections, max_connections, games, games_live, games_reclaimed, free_slots, users, moves_applied, bot_decisions, octogen_decisions}

@@ -153,6 +153,22 @@ static int classify(int move_type, const BoardMark *before, const Game *after) {
 
 void (*bot_drive_pre_action_hook)(const Game *g, int seat, int phase) = 0;
 
+void bot_drive_seed_decision(const Game *g, uint32_t base, int phase) {
+    if (phase == BOT_DRIVE_PHASE_CHOOSE) {
+        random_strategy_set_seed(game_state_seed(g, base, GAME_SEED_SALT_STRATEGY));
+        game_rng_set(game_state_seed(g, base, GAME_SEED_SALT_SEARCH));
+    } else {
+        game_rng_set(game_state_seed(g, base, GAME_SEED_SALT_DRAW));
+    }
+}
+
+uint32_t bot_drive_seed_base(const uint8_t *seed, int len) {
+    if (!seed || len <= 0) return 0u;
+    uint32_t h = 2166136261u;
+    for (int i = 0; i < len; i++) h = (h ^ seed[i]) * 16777619u;
+    return h;
+}
+
 // Choose with the snapshot hook OFF.
 //
 // A strategy's deliberation is not the board. The Monte-Carlo bots search by

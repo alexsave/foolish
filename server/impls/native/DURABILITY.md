@@ -129,6 +129,7 @@ next ID_LEN+1 bytes                  id
 next ID_LEN+1 bytes                  owner
 next ROSTER_BYTES (1227) bytes       roster_encode(&roster), the kernel's durable roster (c/src/roster.h)
 next MAX_PLAYERS bytes               seat_ready[]  (1 byte each, 0/1)
+next 4 bytes                         rng_base, uint32 LE (the bots' per-decision seeding base)
 ```
 
 The `Game` itself is serialized with the kernel's own existing, exact
@@ -138,8 +139,8 @@ server for `/state`/`/ws`) — plus the lobby/identity fields that codec
 deliberately never carries (`game.h`: identity lives with the host, never
 in the state blob). Worst case: 3 + 690 (`state_put`'s own documented
 worst case — see `VIEW_CACHE_CAP`'s comment in `foolish_server.c`) + 13×2 +
-1227 + 8 = **1954 bytes** (blob version 2; version 1 rows carried fixed `seat_user[]`/`seat_name[]` arrays and are refused). `PERSIST_GAME_BLOB_CAP` (2048) gives
-margin, the same discipline `VIEW_CACHE_CAP` uses. The roster is fixed width, so a row is 1,264 bytes plus its state; the state part is
+1227 + 8 + 4 = **1958 bytes** (blob version 3, which added `rng_base`; version 2 rows had no base and version 1 rows carried fixed `seat_user[]`/`seat_name[]` arrays, and both are refused). `PERSIST_GAME_BLOB_CAP` (2048) gives
+margin, the same discipline `VIEW_CACHE_CAP` uses. The roster is fixed width, so a row is 1,268 bytes plus its state; the state part is
 small (the crash test output below, from version 1, shows dealt games at
 30-70 bytes of state).
 

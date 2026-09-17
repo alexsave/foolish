@@ -148,4 +148,16 @@ uint32_t bot_drive_eligible_mask(const Game *g, uint32_t human_mask);
 // why this must default to NULL. Same shape as engine_snap_hook (game.h).
 extern void (*bot_drive_pre_action_hook)(const Game *g, int seat, int phase);
 
+// The per-decision seeding every server host installs through that hook, so the
+// policy has one definition: at CHOOSE the strategy stream and the draw stream
+// (under its search salt), at APPLY the draw stream, each from game_state_seed of
+// the board in front of the decision and the host's secret `base`. The Table
+// (table.c) and the native server (server/impls/native) call it; the wasm bridge's
+// resident drive seeds the same streams from its own base.
+void bot_drive_seed_decision(const Game *g, uint32_t base, int phase);
+
+// A host's secret base from its deal seed (FNV-1a over the bytes; the Table hashes
+// the seed's hex text, the native server its 32 raw bytes). 0 for no seed.
+uint32_t bot_drive_seed_base(const uint8_t *seed, int len);
+
 #endif
