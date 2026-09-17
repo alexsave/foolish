@@ -1433,3 +1433,8 @@ iOS links the C natively, so Swift already sees C structs through the bridging h
    Value-type snapshots for SwiftUI (`Sendable` structs copied out of the slot, matching the resident-slot rule), `String` from `char[N]` plus its length, bounded arrays from an array plus its count that refuse a bad count, C enums as constants, and a layout-hash check so a stale xcframework fails loudly instead of reading wrong offsets (build caps differ per build).
 3. Keep `npm run test:swift-parity` as the gate while each file switches, then retire the parts whose only subject was the hand-written reader, per the owner's rule on parity tests.
 4. Pays off with Phase 9: iMessage's beats come from generated Swift and the web's from generated TS, both over the same C structs, so a change to `AnimBeat` updates both by rerunning one script.
+
+### Test cadence for Phases 9 and 10 (owner, 2026-09-17)
+
+No full `npm run test:e2e` inside Phases 9 or 10: each step runs only the targeted e2e files it touches, plus the C suites, structgen suites, wasm freshness, tsc, typecheck, test:mem and swift-parity.
+The integrator runs the full suite ONCE after Phase 10, together with test:validate and check:determinism, before the branch is handed over.
