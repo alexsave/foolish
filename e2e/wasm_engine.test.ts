@@ -1,144 +1,118 @@
-// The C rules kernel (c/src/game.c + legal.c, compiled to WASM) is the
-// single source of truth for gameplay; the TS modules in _shared delegate to
-// it. This file guards the seams of that arrangement:
+// The C rules kernel (c/src/game.c + legal.c, compiled to WASM) is the single
+// source of truth for gameplay, and every server operation runs it through the C
+// Table (c/src/table.h). This file guards the table's end of that:
 //
 //   1. the kernel obeys THE deck-size rule (2..5 players -> 36 cards,
 //      6+ -> 52), settled once for every deployment (see c/src/card.h);
-//   2. full random games through the kernel conserve cards and end with a
+//   2. full random games through the table conserve cards and end with a
 //      single fool at every player count;
-//   3. the few thin TS projections kept for the client's synchronous use
-//      (canCover, game_done, get_next_player_index, shouldBotActCore) never
-//      drift from their kernel counterparts;
-//   4. hostile inputs still reject with the production error messages.
+//   3. hostile moves are refused with the engine's reason and never mutate the
+//      stored game.
 //
-// Pure kernel test — needs no Postgres.
+// The thin TS projections this file once held against the kernel (canCover,
+// game_done, get_next_player_index, shouldBotActCore) are deleted with the TS
+// game shape (plan Q11): the web asks the kernel directly (client_render_rules,
+// client_guards, unambiguous_cover), so there is no second answer to compare.
+//
+// Pure kernel test - needs no Postgres.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { game_done, canCover, get_next_player_index, cloneGame } from '../server/api/common/common_utils.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
-import { handleAttack } from '../server/api/common/actions/attack.ts';
-import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
-import {
-  shouldBotActCore, processBotAction,
-} from '../server/api/common/pure_bot_actions.ts';
-import {
-  kernelGameDone, kernelShouldAct, kernelNextPlayer, kernelCanCover,
-} from '../sdk/ts/wasm/engine.ts';
-import {
-  Game, PrivatePlayer, Card, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
-} from '../server/api/core/types.ts';
+import * as L from '../sdk/ts/gen/game_layout.bots.ts';
+import { encodeAction, AWIRE_KIND } from '../sdk/ts/wire/awire.ts';
+import { fixtureTable, reasonOf } from './helpers/table_fixture.ts';
+import { residentBoard, type BoardState, type PlayCard } from './helpers/table_play.ts';
+import { botCycle, dealBotTable, seedBytes, type BotTableRow } from './helpers/bot_table.ts';
+import { dealTable } from './helpers/kernel_board.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
-const mkPlayer = (i: number): PrivatePlayer => ({
-  player_id: `p${i}`, name: `P${i}`, status: PLAYER_STATUS.READY, is_ai: true,
-  hand: [], awaiting_attack: false, hand_length: 0, strategy_key: STRATEGY_KEY.RANDOM,
-});
-const mkGame = (np: number): Game => ({
-  players: Array.from({ length: np }, (_, i) => mkPlayer(i)),
-  deck: [], logs: [], id: 'wasmtest', name: 'wasmtest', status: GAME_STATUS.PLAYING,
-  deck_length: 0, discard_pile_length: 0, flipped: null, power_suit: 0,
-  first_attacker: 0, defender: 0, table_battles: [], elimination_order: [],
-  good_timestamp: null, good_players: [],
-});
+const boardOf = (row: BotTableRow): BoardState => {
+  assert.equal(fixtureTable().load(row.state, row.roster), L.TABLE_OK, 'the row loads');
+  return residentBoard(row.gameId, row.state, row.roster);
+};
 
-const countCards = (g: Game): number =>
-  g.deck.length + (g.flipped ? 1 : 0) + g.discard_pile_length
-  + g.players.reduce((a, p) => a + p.hand.length, 0)
-  + g.table_battles.reduce((a, b) => a + 1 + (b.defense ? 1 : 0), 0);
+const countCards = (b: BoardState): number =>
+  b.deckCount + (b.trump ? 1 : 0) + b.discard
+  + b.seats.reduce((a, s) => a + s.hand.length, 0)
+  + b.battles.reduce((a, x) => a + 1 + (x.defense ? 1 : 0), 0);
+
+// Aces are value 13 in the kernel's card numbering (card.h).
+const ACE = 13;
 
 test('kernel deals the settled deck size at every player count (6+ -> 52)', () => {
   for (let np = 2; np <= 8; np++) {
-    const g = mkGame(np);
-    start_game(g);
-    const expected = np >= 6 ? 52 : 36;
-    assert.equal(countCards(g), expected, `${np}p deals ${expected} cards`);
-    assert.ok(g.flipped === null || g.flipped.value !== 13, 'flipped trump is never an Ace');
+    for (let s = 0; s < 4; s++) {
+      const b = boardOf(dealBotTable(Array(np).fill('random'), seedBytes(np, 900 + s)));
+      const expected = np >= 6 ? 52 : 36;
+      assert.equal(b.status, L.GAME_STATUS_PLAYING, `${np}p is dealt`);
+      assert.equal(countCards(b), expected, `${np}p deals ${expected} cards`);
+      assert.ok(b.trump === null || b.trump.value !== ACE, 'flipped trump is never an Ace');
+    }
   }
 });
 
-test('kernel-driven random games conserve cards and end with one fool (2..8p)', async () => {
-  // Card conservation is the invariant asserted on EVERY move of every game
-  // below — the load-bearing kernel check. Termination is not a kernel property
-  // under RANDOM play: ~0.25% of random games reach a legal but non-terminating
-  // cycle (empty deck, three-ish players left whose hands can never cover one
-  // another, so random defenders keep picking up and the same cards recirculate
-  // forever without a discard or an elimination). That is a property of random
-  // move choice, not the engine — heuristic bots and humans always make progress
-  // — so a finishing game is drawn by RETRY, not by an ever-larger move cap
-  // (finishing games never exceed ~900 moves; a livelock never finishes at all).
-  const CAP = 3000;          // >3x the worst finishing game; a livelock caps here
-  const ATTEMPTS = 12;       // 0.0025^12 ≈ never all livelock
+test('kernel-driven random games conserve cards and end with one fool (2..8p)', () => {
+  // Card conservation is the invariant asserted on EVERY committed state of every
+  // game below. Termination is not a kernel property under RANDOM play: a small
+  // share of random games reach a legal but non-terminating cycle (empty deck,
+  // hands that can never cover one another, random defenders picking up forever).
+  // That is random move choice, not the engine, so a finishing game is drawn by
+  // RETRY, not by an ever-larger move cap.
+  const CAP = 3000;
+  const ATTEMPTS = 12;
   for (let np = 2; np <= 8; np++) {
     let finished = false;
     for (let attempt = 0; attempt < ATTEMPTS && !finished; attempt++) {
-      const g = mkGame(np);
-      start_game(g);
-      const total = countCards(g);
-      let guard = 0;
-      while (game_done(g) === null && ++guard < CAP) {
-        const actor = g.players.find((p, i) =>
-          shouldBotActCore(g, p, i) && calculateLegalMoves(g, p.player_id).length > 0);
-        if (!actor) break;
-        assert.ok(await processBotAction(g, actor), 'eligible actor acts');
-        assert.equal(countCards(g), total, 'card conservation');
+      let row = dealBotTable(Array(np).fill('random'), seedBytes(np, attempt * 131 + 7));
+      const total = countCards(boardOf(row));
+      for (let step = 0; step < CAP && row.status === L.GAME_STATUS_PLAYING; step++) {
+        const c = botCycle(row, { maxActions: 1 });
+        assert.ok(c.drive.n > 0, `${np}p: a bot moves while the game is playing`);
+        row = c.row;
+        assert.equal(countCards(boardOf(row)), total, `${np}p: card conservation at version ${row.version}`);
       }
-      if (game_done(g) !== null) {
+      if (row.status === L.GAME_STATUS_GAME_OVER) {
         finished = true;
-        assert.equal(g.elimination_order.length, np - 1, 'everyone but the fool got out');
+        const b = boardOf(row);
+        assert.equal(b.eliminated.length, np - 1, 'everyone but the fool got out');
+        assert.ok(row.fool >= 0 && !b.eliminated.includes(row.fool), 'the fool is the one seat not out');
       }
     }
     assert.ok(finished, `${np}p random game finishes within ${ATTEMPTS} deals`);
   }
 });
 
-test('the retained TS projections match the kernel on live states', async () => {
-  for (let np = 2; np <= 6; np++) {
-    const g = mkGame(np);
-    start_game(g);
-    let guard = 0;
-    while (game_done(g) === null && ++guard < 400) {
-      assert.equal(game_done(g), kernelGameDone(g), 'game_done parity');
-      for (let i = 0; i < np; i++) {
-        assert.equal(
-          shouldBotActCore(g, g.players[i], i),
-          kernelShouldAct(g, g.players[i].player_id),
-          `shouldBotAct parity seat ${i}`,
-        );
-        if (g.players[i].status === PLAYER_STATUS.IN) {
-          assert.equal(get_next_player_index(g, i), kernelNextPlayer(g, i), 'next-player parity');
-        }
-      }
-      const actor = g.players.find((p, i) =>
-        shouldBotActCore(g, p, i) && calculateLegalMoves(g, p.player_id).length > 0);
-      if (!actor) break;
-      await processBotAction(g, actor);
-    }
-  }
-
-  // canCover over the full card cross-product
-  for (let ps = 0; ps < 4; ps++) {
-    for (let as = 0; as < 4; as++) for (let av = 1; av <= 13; av++) {
-      for (let ds = 0; ds < 4; ds++) for (let dv = 1; dv <= 13; dv++) {
-        const a: Card = { suit: as, value: av }, d: Card = { suit: ds, value: dv };
-        assert.equal(canCover(a, d, ps), kernelCanCover(a, d, ps), 'canCover parity');
-      }
-    }
-  }
-});
-
-test('hostile inputs reject with the production messages', () => {
-  const g = mkGame(3);
-  start_game(g);
-  const attacker = g.players[g.first_attacker];
-  const notMine: Card = g.players[(g.first_attacker + 2) % 3].hand[0];
-  assert.throws(() => handleAttack(g, attacker.player_id, [notMine]), /not in/i, 'forged card');
+test('hostile moves are refused with the engine reason and never mutate the game', () => {
+  const seats = [0, 1, 2].map((i) => ({ id: `h${i}`, name: `H${i}` }));
+  const row = dealTable(seats, seedBytes(3, 4242));
+  const b = boardOf(row);
+  const fa = b.firstAttacker;
+  const attacker = b.seats[fa];
+  const notMine: PlayCard = b.seats[(fa + 2) % 3].hand[0];
   const mine = attacker.hand[0];
-  assert.throws(() => handleAttack(g, attacker.player_id, [{ ...mine }, { ...mine }]), /duplicate/i, 'duplicate');
-  assert.throws(() => handleAttack(g, 'ghost', [mine]), /not found in game/i, 'non-member');
-  assert.throws(() => handleAttack(g, attacker.player_id, 'junk' as unknown as Card[]), /must be an array/i, 'malformed payload');
-  const before = cloneGame(g);
-  try { handleAttack(g, attacker.player_id, [notMine]); } catch { /* expected */ }
-  assert.deepEqual(g.table_battles, before.table_battles, 'rejection never mutates');
+  const table = fixtureTable();
+
+  const attempt = (actorId: string, wire: Uint8Array) => {
+    assert.equal(table.load(row.state, row.roster), L.TABLE_OK);
+    const rc = table.act(actorId, wire, null, 0);
+    const detail = rc === L.TABLE_REJECTED ? table.reject() : 0;
+    const p = table.commit(row.gameId, row.version + 1, 0);
+    assert.ok(typeof p !== 'number');
+    assert.equal(Buffer.from(p.state).toString('hex'), Buffer.from(row.state).toString('hex'),
+      `a refused move (${reasonOf(rc, ['TABLE_'])}) left the stored game untouched`);
+    return { rc, detail };
+  };
+  const rejected = (what: string, got: { rc: number; detail: number }, reason: number) => {
+    assert.equal(got.rc, L.TABLE_REJECTED, `${what}: rejected, got ${reasonOf(got.rc, ['TABLE_'])}`);
+    assert.equal(got.detail, reason, `${what}: ${reasonOf(reason, ['ENGINE_REJECT_'])}, got ${reasonOf(got.detail, ['ENGINE_REJECT_'])}`);
+  };
+
+  rejected('forged card', attempt(attacker.id, encodeAction({ kind: 'attack', cards: [notMine] })), L.ENGINE_REJECT_NOT_IN_HAND);
+  rejected('duplicate', attempt(attacker.id, encodeAction({ kind: 'attack', cards: [mine, { ...mine }] })), L.ENGINE_REJECT_DUPLICATES);
+  assert.equal(attempt('ghost', encodeAction({ kind: 'attack', cards: [mine] })).rc, L.TABLE_E_NOT_SEATED, 'non-member');
+  assert.equal(attempt(attacker.id, Uint8Array.from([AWIRE_KIND.attack, 0xee])).rc, L.TABLE_E_WIRE, 'malformed payload');
+  // And the move itself is legal: the refusals above are about what they changed.
+  assert.equal(table.load(row.state, row.roster), L.TABLE_OK);
+  assert.equal(table.act(attacker.id, encodeAction({ kind: 'attack', cards: [mine] }), null, 0), L.TABLE_APPLIED, 'the honest attack applies');
 });

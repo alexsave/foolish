@@ -1,120 +1,76 @@
-// Regression guard for the resident-state marshal cache (engine.ts residentFor).
+// Regression guard for the resident game slot: a load replaces it wholesale.
 //
-// wasmChooseMove marshals the game and marks it "resident" so the action that
-// immediately follows can skip re-marshaling. marshalGame decides to skip on
-// OBJECT IDENTITY. The bot loop reuses ONE game object across decisions and can
-// mutate it out-of-band (state reload on a CAS conflict, round-transition
-// refill, passive-action bundling), so a later choose used to skip the marshal
-// and decide against STALE kernel state — most damagingly a since-emptied deck
-// still reading as alive, which gates off the exact endgame solver and throws
-// forced wins (see fix: readers always marshal fresh).
+// The bot loop runs every cycle on ONE bots.wasm instance whose resident Game is
+// the table: it loads a row, drives, commits, and the next cycle (the same game
+// after a CAS conflict, or another game entirely) loads over whatever the last
+// one left. The TS bridge this file was written for once skipped a marshal on
+// object identity and let a later decision read STALE kernel state - most
+// damagingly a since-emptied deck still reading as alive, which gates off the
+// exact endgame solver and throws forced wins. That bridge is gone; the property
+// it broke is the kernel's now: nothing a previous table left behind (its board,
+// its session log, its bots' memory, its draw streams) may reach a decision on
+// the table loaded after it.
 //
-// Oracle: a state READ through a reused-then-mutated game object must produce
-// the SAME move as the same state read through a fresh object. Both use the
-// same wasm + same fixed seed, so any divergence is pure state-plumbing.
-// This test FAILS on the pre-fix bridge and PASSES once readers marshal fresh.
+// Oracle: the same stored row, loaded and driven on an instance that just played
+// a DIFFERENT board, must commit byte-identical products to the row loaded and
+// driven on a second private instance. Any divergence is resident-slot leakage.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { STRAT, wasmChooseMoveDirect, __setBotSeedSource } from '../sdk/ts/wasm/bots.ts';
-import { Card, PLAYER_STATUS, GAME_STATUS } from '../server/api/core/types.ts';
+import * as L from '../sdk/ts/gen/game_layout.bots.ts';
+import { createServerTable, type ServerTable } from '../sdk/ts/table/server_table.ts';
+import { fixtureTable, type TableFixture } from './helpers/table_fixture.ts';
+import { lcg, randomPlayingBoard, type Rnd } from './helpers/kernel_board.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 
-// Deterministic PRNG so failures reproduce from the seed.
-function lcg(seed: number) {
-  let s = seed >>> 0;
-  return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+const hex = (b: Uint8Array | null) => (b ? Buffer.from(b).toString('hex') : '-');
+const SEED_HEX = '5a'.repeat(32);
+
+/** One bot cycle on `table` exactly as the server runs it, and what it commits. */
+function drive(table: ServerTable, fx: TableFixture, gameId: string): string {
+  assert.equal(table.load(fx.state, fx.roster), L.TABLE_OK, 'the row loads');
+  assert.equal(table.setDealSeed(SEED_HEX), L.TABLE_OK);
+  const d = table.botDrive(null, 1);
+  assert.ok(typeof d !== 'number', `the drive runs (${d})`);
+  if (d.n === 0) return 'no-move';
+  const p = table.commit(gameId, 2, 1_700_000_000_000);
+  assert.ok(typeof p !== 'number', `commit products (${p})`);
+  return `seats=${d.seats.join(',')} stop=${d.stop} state=${hex(p.state)} logs=${hex(p.logs)} spectator=${hex(p.spectator)}`;
 }
 
-const idCard = (id: number): Card => ({ suit: Math.floor(id / 13), value: (id % 13) + 1 });
-const mkP = (i: number, hand: Card[], status: string, awaiting: boolean, strat: string) =>
-  ({ player_id: `p${i}`, name: `p${i}`, status, is_ai: true, hand, awaiting_attack: awaiting,
-     hand_length: hand.length, strategy_key: strat } as any);
-
-// A random, structurally-valid state: acting seat is the first attacker on an
-// empty table (so it always has legal attacks), plus a random deck / flipped
-// trump / OUT players — exercising the marshalled deck & flip fields.
-function randState(rnd: () => number, strat: string): any {
-  const ri = (n: number) => Math.floor(rnd() * n);
-  const np = 2 + ri(5);
-  const large = np >= 6;
-  const cards: number[] = [];
-  for (let s = 0; s < 4; s++) for (let v = large ? 1 : 5; v <= 13; v++) cards.push(s * 13 + (v - 1));
-  for (let i = cards.length - 1; i > 0; i--) { const j = ri(i + 1); [cards[i], cards[j]] = [cards[j], cards[i]]; }
-  let k = 0;
-  const players: any[] = [];
-  const inSeats: number[] = [];
-  for (let i = 0; i < np; i++) {
-    const out = i > 0 && rnd() < 0.25;
-    const hn = out ? 0 : 1 + ri(6);
-    const hand = out ? [] : cards.slice(k, k + hn).map(idCard);
-    k += hn;
-    players.push(mkP(i, hand, out ? PLAYER_STATUS.OUT : PLAYER_STATUS.IN, false, strat));
-    if (!out) inSeats.push(i);
+function board(rnd: Rnd, brain: string): TableFixture {
+  for (;;) {
+    const fx = randomPlayingBoard(rnd, () => brain);
+    if (fx) return fx;
   }
-  if (inSeats.length < 2) return null;
-  const attacker = inSeats[0];
-  const defender = inSeats[1];
-  players[attacker].awaiting_attack = true;
-  const rest = cards.slice(k);
-  const flipped = rnd() < 0.5 && rest.length ? idCard(rest.shift()!) : null;
-  const deck = rest.slice(0, ri(Math.min(rest.length, 8) + 1)).map(idCard);
-  const suit = ri(4);
-  return {
-    id: 'g' + ri(1e9), status: GAME_STATUS.PLAYING, players,
-    // The trump suit IS the face-up card's suit (the kernel refuses otherwise).
-    power_suit: flipped ? flipped.suit : suit,
-    first_attacker: attacker, defender, discard_pile_length: ri(40),
-    flipped, deck, good_players: [], good_timestamp: null, table_battles: [],
-    elimination_order: [], logs: [],
-  };
 }
 
-const env = (strat: number) => strat === STRAT.cordite
-  ? { CD_BUDGET: 'prod', CD_RACE: '1', CD_RACE_C: '75' } : {};
-const wantLogs = (strat: number) => strat === STRAT.cordite;
-
-function choose(g: any, strat: number): any {
-  const actor = g.players.find((p: any) => p.awaiting_attack)?.player_id;
-  return wasmChooseMoveDirect(g, actor, strat, { env: env(strat), logs: wantLogs(strat) });
-}
-const clone = (g: any) => structuredClone(g);
-const cid = (c: any) => (c == null ? 'x' : `${c.suit},${c.value}`);
-const moveKey = (m: any) => (m == null ? 'NULL'
-  : `${m.type}|${(m.cards || []).map(cid).sort().join(' ')}|${(m.attack_cards || []).map(cid).sort().join(' ')}`);
-
-// Prime the shared wasm instance's resident cache with a DIFFERENT state on the
-// SAME object reference, then mutate that object to `target` and choose — the
-// exact bot-loop hazard (object reused + mutated out-of-band between decisions).
-function chooseViaReusedObject(target: any, strat: number, rnd: () => number): any {
-  const G = clone(randState(rnd, strat === STRAT.cordite ? 'cordite' : 'handwritten') || target);
-  choose(G, strat);                 // sets residentFor = G, kernel holds G's (stale) state
-  Object.assign(G, clone(target));  // out-of-band mutation to the target state
-  return choose(G, strat);          // pre-fix: skips marshal -> decides on stale state
-}
-
-function runDifferential(name: string, strat: number, N: number, seed: number) {
-  __setBotSeedSource(() => 0x9e3779b9); // fixed strategy RNG -> identical across fresh/reused
+function runDifferential(brain: string, N: number, seed: number) {
   const rnd = lcg(seed);
+  const reused = fixtureTable();
+  const fresh = createServerTable();
   let checked = 0;
   for (let i = 0; i < N; i++) {
-    const st = randState(rnd, strat === STRAT.cordite ? 'cordite' : 'handwritten');
-    if (!st) continue;
-    const expected = choose(clone(st), strat);
-    if (expected == null) continue;
-    const actual = chooseViaReusedObject(st, strat, rnd);
+    const target = board(rnd, brain);
+    const prior = board(rnd, brain);
+    const expected = drive(fresh, target, 'g');
+    if (expected === 'no-move') continue;
+    // The hazard: the reused instance just played another board, left its log and
+    // its bots' search state resident, then loads the target row.
+    drive(reused, prior, 'other');
+    const actual = drive(reused, target, 'g');
     checked++;
-    assert.equal(moveKey(actual), moveKey(expected),
-      `${name}: reused-object choose diverged from fresh-object choose\n  state=${JSON.stringify(st)}`);
+    assert.equal(actual, expected,
+      `${brain}: a table loaded after another board decided differently from a fresh instance (case ${i}, seed ${seed})`);
   }
-  assert.ok(checked > N * 0.5, `${name}: too few comparable states (${checked}/${N})`);
+  assert.ok(checked > N * 0.5, `${brain}: too few comparable boards (${checked}/${N})`);
 }
 
-test('marshal: reused game object does not serve stale state to handwritten', () => {
-  runDifferential('handwritten', STRAT.handwritten, 1500, 12345);
+test('resident slot: a load leaves nothing of the last table to handwritten', () => {
+  runDifferential('handwritten', 600, 12345);
 });
 
-test('marshal: reused game object does not serve stale state to cordite', () => {
-  runDifferential('cordite', STRAT.cordite, 250, 6789);
+test('resident slot: a load leaves nothing of the last table to cordite', () => {
+  runDifferential('cordite', 250, 6789);
 });
