@@ -1,44 +1,41 @@
-const ROOT = '/Users/alex/Dev/foolish';
-const { urlToGame } = await import(`${ROOT}/server/api/common/replay/codec.ts`);
-const { decodeReplay } = await import(`${ROOT}/server/api/common/replay/decode.ts`);
-const extras = await import(`${ROOT}/server/api/common/replay/extras.ts`);
+// Print a replay share link's decoded log stream, move by move, with the seat
+// names and move gaps its extras carry. The kernel decodes it (the test build's
+// record reader, e2e/helpers/replay_decode.ts).
+//
+//   node --import tsx scripts/decode_replay.mjs "<replay link or code>" [first event]
+import { ensureBotsAsync } from '../sdk/ts/wasm/bots.ts';
+import { decodeReplayLink } from '../e2e/helpers/replay_decode.ts';
+import * as G from '../sdk/ts/gen/game_layout.bots.ts';
 
-const url = process.argv[2];
-const d = decodeReplay(urlToGame(url));
+const link = process.argv[2];
+if (!link) { console.error('usage: node --import tsx scripts/decode_replay.mjs <replay link or code> [first event]'); process.exit(2); }
+await ensureBotsAsync();
+const d = decodeReplayLink(link);
+const s = d.summary;
 
-const SUITS = ['♠','♥','♣','♦'];
-const VALS = {1:'2',2:'3',3:'4',4:'5',5:'6',6:'7',7:'8',8:'9',9:'10',10:'J',11:'Q',12:'K',13:'A'};
-const c = (card) => !card || card.suit < 0 ? '??' : (VALS[card.value]||card.value) + SUITS[card.suit];
-const pairs = (cp) => (cp||[]).map(p => p.target ? `${c(p.primary)}→on→${c(p.target)}` : c(p.primary)).join(' ');
+const LOG = {};
+for (const [k, v] of Object.entries(G)) if (k.startsWith('LOG_')) LOG[v] = k.slice(4).toLowerCase();
+const MOVES = new Set([G.LOG_ATTACK, G.LOG_COVER, G.LOG_PASS, G.LOG_PICKUP]);
+const SUITS = ['♠', '♥', '♣', '♦'];
+const VALS = { 1: '2', 2: '3', 3: '4', 4: '5', 5: '6', 6: '7', 7: '8', 8: '9', 9: '10', 10: 'J', 11: 'Q', 12: 'K', 13: 'A' };
+const c = (card) => (!card || card.suit < 0 ? '??' : (VALS[card.value] ?? card.value) + SUITS[card.suit]);
+const pairs = (ps) => ps.map((p) => (p.target ? `${c(p.primary)}→on→${c(p.target)}` : c(p.primary))).join(' ');
+const nm = (seat) => (seat < 0 ? '   --   ' : `${seat}:${d.names?.[seat] ?? `seat${seat}`}`);
 
-// names + per-move timing gaps from the -extras suffix
-let names = null, gaps = null;
-try {
-  const code = url.replace(/^.*FOOLISH\.CARDS\//i,'');
-  const parts = extras.splitReplayCode(code);
-  if (parts.extras) {
-    const moveCount = d.logs.filter(l=>['attack','cover','pass','pickup'].includes(l.log_type)).length;
-    const ex = extras.decodeExtras(parts.extras, d.playerCount, moveCount);
-    names = ex.names; gaps = ex.gaps || ex.moveGaps || null;
-    console.log('EXTRAS KEYS:', Object.keys(ex));
-  }
-} catch(e){ console.log('extras:', e.message); }
-
-const nm = (s) => s==null ? '   --   ' : `${s}:${names && names[s] ? names[s] : 'seat'+s}`;
-
-console.log(`\n${d.playerCount} players · trump ${c(d.trumpCard)} (suit ${d.powerSuit}) · first attacker seat ${d.firstAttacker}`);
-console.log(`names: ${names ? names.map((n,i)=>i+':'+n).join('  ') : '(none)'}`);
-console.log(`elimination order (seats, first out first): ${d.eliminationOrder.join(' ')}`);
-console.log(`FOOL (loser) = seat ${d.fool} = ${nm(d.fool)}`);
+console.log(`\n${s.numPlayers} players · trump ${c(s.trump)} (suit ${s.powerSuit}) · first attacker seat ${s.firstAttacker} · format ${s.version}`);
+console.log(`names: ${d.names ? d.names.map((n, i) => `${i}:${n}`).join('  ') : '(none)'}`);
+console.log(`elimination order (seats, first out first): ${s.elimination.join(' ')}`);
+console.log(`FOOL (loser) = seat ${s.fool} = ${nm(s.fool)}`);
 console.log(`total events: ${d.logs.length}\n`);
 
 const start = Number(process.argv[3] || 0);
 let i = 0, mv = 0;
 for (const l of d.logs) {
-  const isMove = ['attack','cover','pass','pickup'].includes(l.log_type);
+  const isMove = MOVES.has(l.type);
   if (i++ >= start) {
-    const t = gaps && isMove && gaps[mv]!=null ? ` (+${(gaps[mv]/1000).toFixed(1)}s)` : '';
-    console.log(`#${String(i).padStart(3)} ${l.log_type.padEnd(16)} ${nm(l.seat).padEnd(14)} ${pairs(l.card_pairs)}${t}`);
+    const gap = d.moveGaps && isMove ? d.moveGaps[mv] : undefined;
+    const t = gap != null ? ` (+${gap.toFixed(1)}s)` : '';
+    console.log(`#${String(i).padStart(3)} ${String(LOG[l.type]).padEnd(16)} ${nm(l.seat).padEnd(14)} ${pairs(l.pairs)}${t}`);
   }
   if (isMove) mv++;
 }
