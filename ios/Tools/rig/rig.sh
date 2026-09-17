@@ -41,6 +41,8 @@
 #   rig.sh lobby N                a LOBBY with N seats filled (DEBUG button)
 #   rig.sh lobbytap WHICH         start | leave | join | box (the rules checkbox)
 #   rig.sh play                   select a LEGAL card and press the plank
+#   rig.sh throwin [select]       throw a card in (the plank RELABELS, so
+#                                 `play` cannot find it); --goodwait has one
 #   rig.sh turn                   play a move AND send it, so the transcript's
 #                                 last bubble is the board now on screen
 #   rig.sh seed MODE ARGS...      dev.fatboard via c/build/msg_wire_test
@@ -1344,6 +1346,57 @@ cmd_play() {
   return 1
 }
 
+# THROW IN: select a card the table will take and press the plank.
+#
+# `play` cannot do this. It knows a card is legal when a NEW plank appears, and
+# an attacker who can throw in already has one - "Good" - which a legal card
+# only RELABELS to "Attack". So this asks the plank itself: select a card, and
+# a legal throw-in changes the plank's pixels; an illegal one leaves them alone
+# and is tapped again to deselect. The fan sorts its cards, so the searcher's
+# hand order says nothing about which card on screen that is.
+#
+#   rig.sh throwin [select]   `select` stops with the card chosen, unpressed
+#                             (so a caller can start a camera first), and
+#                             prints the plank's x y
+# `--goodwait` is the board that always has one.
+cmd_throwin() {
+  need_sim
+  settle_reset; poll 30 0.2 drawer_settled || true
+  local y py px found="" x good
+  read -r W H < <(screen)
+  y=$(python3 "$LIB/ui.py" hand_y | awk '{print $2}')
+  py=$(python3 "$LIB/ui.py" bars | python3 -c "
+import sys, ast
+b = ast.literal_eval(sys.stdin.read().split('BARS ')[1]); print(b[-1][0] if b else -1)")
+  px=$((W * 4 / 5))
+  { [ "$y" = "-1" ] || [ "$py" = "-1" ]; } && { echo "no hand or no plank on screen" >&2; return 1; }
+  good=$(plank_hash "$px" "$py")
+  for x in $(python3 "$LIB/ui.py" cards | sed 's/CARDS //' | tr -d '[],'); do
+    tap "$x" "$y" 1.0
+    if [ "$(plank_hash "$px" "$py")" != "$good" ]; then found=$x; break; fi
+    tap "$x" "$y" 0.8
+  done
+  [ -n "$found" ] || { echo "no legal throw-in in hand" >&2; return 1; }
+  if [ "${1:-}" = "select" ]; then echo "$px $py"; return 0; fi
+  tap "$px" "$py" 0.5
+  echo "threw in: the card at x=$found"
+}
+
+# The plank's pixels as one hash - only its word changes between states.
+plank_hash() {
+  local f="${FOOLISH_WORK:-/tmp/foolishrig}/plank.$SIM.png"
+  mkdir -p "$(dirname "$f")"
+  xcrun simctl io "$SIM" screenshot "$f" >/dev/null 2>&1
+  python3 - "$f" "$1" "$2" <<'PY'
+import sys, hashlib
+from PIL import Image
+im = Image.open(sys.argv[1]); s = 3 if im.height >= 2000 else 2
+x, y = int(sys.argv[2]) * s, int(sys.argv[3]) * s
+crop = im.convert("L").crop((x - 60 * s, y - 14 * s, x + 60 * s, y + 14 * s)).point(lambda v: v // 64)
+print(hashlib.md5(crop.tobytes()).hexdigest())
+PY
+}
+
 # SEND what the seeded open staged, so the transcript's last bubble is the
 # board on screen. Requires `stageseed on`.
 #
@@ -1776,6 +1829,7 @@ case "${1:-}" in
   collapse) shift; cmd_collapse "$@" ;;
   goodtap)  shift; cmd_goodtap "$@" ;;
   seed)     shift; cmd_seed "$@" ;;
+  throwin)  shift; cmd_throwin "$@" ;;
   unseed)   shift; cmd_unseed "$@" ;;
   claimed)  shift; cmd_claimed "$@" ;;
   prefs)    shift; cmd_prefs "$@" ;;

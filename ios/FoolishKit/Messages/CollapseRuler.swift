@@ -151,6 +151,17 @@ public struct CollapseRuler: View {
         }
     }
 
+    /// Pair `i`'s square: cyan, yellow, green, repeating. The reader tells
+    /// repeated colours apart by position.
+    static func tableSquareColour(_ i: Int) -> Color {
+        switch i % 3 {
+        case 0: return pure(0, 1, 1)
+        case 1: return pure(1, 1, 0)
+        default: return pure(0, 1, 0)
+        }
+    }
+    static let squareSide: CGFloat = 12
+
     /// A LITERAL sRGB colour, never `Color.red` and friends: the system colours
     /// are dynamic (red is 255,59,48 in light and 255,69,58 in dark) and the
     /// whole point of this palette is that a frame can be classified by channel
@@ -259,6 +270,31 @@ public extension View {
         }
     }
 
+    /// A small square at the centre of a table pair's slot, in a colour
+    /// per pair, so a filmed take can say where every pair was in every frame
+    /// (`ios/Tools/rig/lib/tablesquares.py`). The horizontal bars cannot: a
+    /// throw-in re-centres the row SIDEWAYS, and a bar through the table's
+    /// centre does not move at all while both pairs jump 36pt left.
+    ///
+    /// On the SLOT, not on a card: the cards tilt as a cover lands, the slot
+    /// does not, so this moves only when the layout does. Centre-centre, so on
+    /// a single row the table's magenta bar runs straight through it and the
+    /// reader joins the two halves back up. Cyan, yellow and pure green, never
+    /// magenta: a magenta square would melt into that bar.
+    /// Nil asks for none (a pair whose attack card is not on the table yet).
+    @ViewBuilder
+    func tableSquare(_ index: Int?) -> some View {
+        if let index, MessageDevBoard.rulerOn {
+            overlay(alignment: .center) {
+                CollapseRuler.tableSquareColour(index)
+                    .frame(width: CollapseRuler.squareSide, height: CollapseRuler.squareSide)
+                    .allowsHitTesting(false)
+            }
+        } else {
+            self
+        }
+    }
+
     /// The same lift, for the collapse LAYER a marked view is hosted on: the
     /// mark's own `zIndex` orders it inside that host, where it has no
     /// siblings, and it is the host that has to come out above the deck.
@@ -327,6 +363,7 @@ public struct CollapseMarkKey: PreferenceKey {
 public extension View {
     func collapseMark(_ mark: CollapseRuler.Mark?) -> some View { self }
     func collapseMarkLift() -> some View { self }
+    func tableSquare(_ index: Int?) -> some View { self }
 }
 
 public struct CollapseMarks: View {

@@ -432,7 +432,10 @@ final class VeilOutsTests: XCTestCase {
                       "the trace must read the same value the grid does")
         XCTAssertTrue(src.contains("hidden: grid.hidden,\n"),
                       "…which is the grid's own argument")
-        XCTAssertTrue(src.contains("flyingNow: grid.flyingNow)"))
+        // The grid's own call: `flyingNow` is followed by the DEBUG squares and
+        // the throw-in slide flag, so it no longer closes the argument list.
+        XCTAssertTrue(src.contains("flyingNow: grid.flyingNow,\n"
+                                  + "                            marks: true,"))
     }
 
     // MARK: 7 - the one IN that collapsed: `sweepTableIds`

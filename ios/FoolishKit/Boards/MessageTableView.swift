@@ -2297,7 +2297,9 @@ public struct MessageTableView: View {
                             // rotating. Everything else a sweep flies is leaving,
                             // with nothing left to tilt onto - hence the empty
                             // set this used to pass unconditionally.
-                            flyingNow: grid.flyingNow)
+                            flyingNow: grid.flyingNow,
+                            marks: true,
+                            slides: FBattleGrid.slidesLive)
             } else {
                 // Empty table: render nothing (web parity). A "no battle" label
                 // just tells the player what they can already see (owner's call).
