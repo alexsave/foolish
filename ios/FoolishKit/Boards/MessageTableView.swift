@@ -790,7 +790,11 @@ public struct MessageTableView: View {
         .overlay {
             if let view = controller.view {
                 ZStack {
-                actionBar(view)
+                // Redrawn on a short timer: whether the board is still is read
+                // from statics nothing publishes (see `boardStill` in actionBar).
+                TimelineView(.periodic(from: .now, by: 0.1)) { _ in
+                    actionBar(view)
+                }
                     // A CONSTANT, always-present, fixed-size container (owner:
                     // "the action column CONTAINER could be a constant always
                     // present fixed size view... just reserve enough height for
@@ -5140,7 +5144,9 @@ public struct MessageTableView: View {
         let defending = view.defender == controller.mySeat
         // Play buttons only while I can act and have NOT staged; once staged, the
         // only control is Undo (the extension has dropped the user at Messages' Send).
-        let acting = controller.iCanAct && !controller.canSend && !playInFlight
+        let boardStill = !ActionPillSlot.waitsForStill
+            || UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty)
+        let acting = controller.iCanAct && !controller.canSend && !playInFlight && boardStill
         // ONE kernel answer for every enable-state below, so no two of them can
         // describe different menus.
         let bar = probe(view, cards, .table)
@@ -5182,7 +5188,8 @@ public struct MessageTableView: View {
             // read-only board would keep offering Take.
             canPickup: defending && !view.battles.isEmpty && cards.isEmpty
                 && !(view.me?.isOut ?? false) && !controller.canSend
-                && controller.pickupHold == 0 && !controller.superseded,
+                && controller.pickupHold == 0 && !controller.superseded
+                && !playInFlight && boardStill,
             canDone: acting && bar.canSayGood && cards.isEmpty,
             canUndo: false,   // the board draws its own - see `undoSlot`
             onAttack: { playAt(.table, cards, view) },

@@ -122,6 +122,21 @@ public enum ActionPillSlot {
     /// `dev.flags` puts the flash back.
     public static let holdsWhilePlayingByDefault = true
 
+    /// NO PLAY BUTTON WHILE THE BOARD MOVES - an undo's flight included, which
+    /// is where it showed: undoing a pickup put Pickup back on the plank in the
+    /// frame the undo published, with the card still in the air. The same still
+    /// board Undo waits for (UndoGate). Ships on; `actions.waitstill=0` in
+    /// `dev.flags` puts the buttons back during animations.
+    public static let waitsForStillByDefault = true
+
+    public static var waitsForStill: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("actions.waitstill", shipping: waitsForStillByDefault)
+        #else
+        return waitsForStillByDefault
+        #endif
+    }
+
     public static var holdsWhilePlaying: Bool {
         #if DEBUG || SOLO_TESTING
         return MessageDevBoard.flag("actions.holdwhileplaying", shipping: holdsWhilePlayingByDefault)

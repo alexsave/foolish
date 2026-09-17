@@ -95,6 +95,30 @@ final class UndoGateTests: XCTestCase {
         XCTAssertTrue(ActionPillSlot.holdsWhilePlayingByDefault)
     }
 
+    /// NOR WHILE AN UNDO FLIES. Filmed undoing a pickup: Pickup was back on the
+    /// plank in the very frame the undo published, with the card still flying
+    /// from the hand to the table. Every play button now waits for the same
+    /// still board Undo does, redrawn on the same short timer (the sequence
+    /// hold is let go after the animator's last publish, so nothing observed
+    /// would redraw the column when it ends).
+    /// MUTANTS: `acting` not reading `boardStill`; the column not redrawn on
+    /// the timer; the flag shipping off.
+    func testNoPlayButtonWhileAnUndoFlies() throws {
+        XCTAssertTrue(ActionPillSlot.waitsForStillByDefault)
+        let board = try source("FoolishKit/Boards/MessageTableView.swift")
+        XCTAssertTrue(board.contains("let acting = controller.iCanAct && !controller.canSend && !playInFlight && boardStill"),
+                      "a play button shows while the board is still moving")
+        XCTAssertTrue(board.contains("TimelineView(.periodic(from: .now, by: 0.1)) { _ in\n                    actionBar(view)"),
+                      "the play column is not redrawn when the board comes to rest")
+        // Take is the one pill NOT gated on `acting` (it deliberately does not
+        // read the kernel's menu), so the hold and the wait have to be spelled
+        // out on it - filmed: Pickup back on the plank through a pickup undo's
+        // whole flight, and (owner) "the label... changed for a single frame
+        // after you hit pickup".
+        XCTAssertTrue(board.contains("&& controller.pickupHold == 0 && !controller.superseded\n                && !playInFlight && boardStill,"),
+                      "Take shows during a play in flight or an animation")
+    }
+
     /// Hidden, not dimmed - and it ships that way.
     /// MUTANTS: `hidesByDefault = false`; the pill drawn whatever the gate says.
     func testThePillIsNotShownWhileRefused() throws {
