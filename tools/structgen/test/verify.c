@@ -62,3 +62,20 @@ AnimPlan *plan_fill(void) {
     plan.steps[3].hand[2] = -123456;
     return &plan;
 }
+
+// --snapshot (gen/snap.ts): a record C filled, for the snapshot reader.
+#include "snap.h"
+static Snap snap;
+Snap *snap_fill(int n_pairs, int n_items, int n_text) {
+    static const char text[8] = { 'a', (char)0xc3, (char)0xa9, 'z', 'y', 'x', 'w', 'v' };
+    snap.n_pairs = (int8_t)n_pairs; snap.n_items = (uint8_t)n_items; snap.n_text = (uint16_t)n_text;
+    snap.flag = 1; snap.w = -12345; snap.u = 0xF0000001u; snap.big = -9876543210LL; snap.d = 0.625;
+    snap.bits = 6; snap.sbits = -9;
+    for (int i = 0; i < 4; i++) { snap.pairs[i].a.s = (int8_t)(i - 1); snap.pairs[i].a.v = (int8_t)(i + 10); snap.pairs[i].b.s = -2; snap.pairs[i].b.v = -2; }
+    for (int i = 0; i < 3; i++) { snap.items[i].len = (uint8_t)(i + 1); for (int j = 0; j < 6; j++) snap.items[i].text[j] = (char)('p' + i + j); snap.items[i].score = (int16_t)(100 * i - 150); }
+    for (int i = 0; i < 8; i++) snap.text[i] = text[i];
+    snap.cstr[0] = 'h'; snap.cstr[1] = 'i'; snap.cstr[2] = 0; snap.cstr[3] = 'X';
+    snap.nums[0] = 7; snap.nums[1] = -8; snap.nums[2] = 9;
+    snap.card.s = 3; snap.card.v = 13;
+    return &snap;
+}

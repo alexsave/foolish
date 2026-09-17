@@ -159,6 +159,27 @@ int state_get(Game *g, const unsigned char *p, int masked) {
     return clamped ? GAME_INVALID_COUNT : GAME_VALID;
 }
 
+int state_measure(const unsigned char *p, int len) {
+    // status, num_players, power_suit, first_attacker, defender, u16 discard,
+    // has_flipped, flipped, u32 good mask, has_good_timestamp, then u16 deck_count.
+    if (!p || len < 16) return -1;
+    const int np = (int8_t)p[1];
+    const int deck = (int16_t)(p[14] | (p[15] << 8));
+    if (np < 0 || np > MAX_PLAYERS || deck < 0 || deck > MAX_DECK) return -1;
+    int q = 16 + deck;
+    if (q + 1 > len || p[q] > MAX_BATTLES) return -1;
+    q += 1 + 2 * p[q];
+    for (int i = 0; i < np; i++) {
+        if (q + 3 > len) return -1;
+        const int hand = (int8_t)p[q + 2];
+        if (hand < 0 || hand > MAX_HAND_SIZE) return -1;
+        q += 3 + hand;
+    }
+    if (q + 1 > len || p[q] > MAX_PLAYERS) return -1;
+    q += 1 + p[q];
+    return q > len ? -1 : q;
+}
+
 int state_import(Game *g, const unsigned char *p, int masked) {
     // Decode in place over a saved copy of the state part of `g` (everything
     // ahead of the log array, which is all state_get writes and game_validate

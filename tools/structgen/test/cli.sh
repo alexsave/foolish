@@ -23,6 +23,15 @@ expect_fail "two --build in one run"       "one --build per run"            "${b
 expect_fail "root that is not a record"    "not a struct or union"          --cwd "$here/test" --header kinds.h --root KEnum --build wasm= --ts "$tmp/o.ts"
 expect_fail "header that does not compile" "compile error"                  --cwd "$here/test" --header missing.h --root Kinds --build wasm= --ts "$tmp/o.ts"
 expect_fail "colliding generated names"     "emitted twice"                  --cwd "$here/test" --header collide.h --root Collide --build wasm= --ts "$tmp/o.ts"
+snap=(--cwd "$here/test" --header snap.h --root Snap --root SMatrix --root SWithUnion --build wasm= --ts "$tmp/o.ts")
+expect_fail "--snapshot of an unreached record" "no such record"            "${snap[@]}" --snapshot Nope
+expect_fail "--snapshot of a 2-D array"     "2 array dimensions"             "${snap[@]}" --snapshot SMatrix
+expect_fail "--snapshot of a union"         "is a union"                     "${snap[@]}" --snapshot SWithUnion
+expect_fail "--snapshot-only with none"     "without a --snapshot"           "${snap[@]}" --snapshot-only
+expect_fail "--count without its shape"     "TYPE.field=count_field"         "${snap[@]}" --snapshot Snap --count Snap.pairs
+expect_fail "--count of a non-array"        "not a one-dimensional array"    "${snap[@]}" --snapshot Snap --count Snap.w=n_pairs
+expect_fail "--count by a non-integer"      "is not an integer field"        "${snap[@]}" --snapshot Snap --count Snap.pairs=d
+expect_fail "--count on no snapshot"        "is not in any snapshot"         "${snap[@]}" --snapshot SPair --count SItem.text=len
 "$SG" "${base[@]}" --print-hash > "$tmp/hash" && grep -qE '^0x[0-9a-f]{8}$' "$tmp/hash" && echo "ok   --print-hash prints the hash" || { echo "FAIL --print-hash"; fails=$((fails + 1)); }
 "$SG" "${base[@]}" --hash-ts "$tmp/hash.ts" --print-hash > "$tmp/hash2" \
   && [ "$(grep -c . "$tmp/hash.ts")" = 3 ] && grep -qx "export const LAYOUT_HASH = $(cat "$tmp/hash2");" "$tmp/hash.ts" \

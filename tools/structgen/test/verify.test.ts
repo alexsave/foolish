@@ -7,6 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as K from '../gen/kinds.ts';
+import * as S from '../gen/snap.ts';
 import * as A from '../../../sdk/ts/gen/anim.bots.ts';
 
 const wasm = readFileSync(new URL('../gen/verify.wasm', import.meta.url));
@@ -87,6 +88,31 @@ test('anim_plan.h: values C wrote read back through nested generated accessors',
 test('--const: enum constants and integer #defines carry the values C compiled', () => {
     assert.deepEqual([K.K_NEG, K.K_POS, K.KFLAG_LOW, K.KFLAG_HIGH, K.KFLAG_NEG],
         [0, 1, 2, 3, 4].map(i => Number(ex.const_at(i))));
+});
+
+test('--snapshot: a plain object of what C wrote, arrays cut to their counts, strings by count or NUL', () => {
+    const s = S.readSnap(m, ex.snap_fill(2, 3, 3));
+    assert.deepEqual(s, {
+        flag: true, w: -12345, u: 0xF0000001, big: -9876543210n, d: 0.625, bits: 6, sbits: -9,
+        pairs: [{ a: { s: -1, v: 10 }, b: { s: -2, v: -2 } }, { a: { s: 0, v: 11 }, b: { s: -2, v: -2 } }],
+        items: [{ text: 'p', score: -150 }, { text: 'qr', score: -50 }, { text: 'rst', score: 50 }],
+        text: `a${String.fromCharCode(0xe9)}`, cstr: 'hi', nums: [7, -8, 9], card: { s: 3, v: 13 },
+    }, 'the counts are not copied: they are the arrays\' lengths');
+});
+
+test('--snapshot: the copy holds no view of wasm memory', () => {
+    const s = S.readSnap(m, ex.snap_fill(4, 1, 8));
+    ex.snap_fill(0, 0, 0);
+    assert.equal(s.pairs.length, 4);
+    assert.equal(s.items[0].text, 'p');
+    assert.equal(s.text.length, 7, 'eight bytes of UTF-8, seven characters');
+});
+
+test('--snapshot: a count outside its array throws rather than reading past it', () => {
+    assert.throws(() => S.readSnap(m, ex.snap_fill(5, 0, 0)), /Snap\.pairs: count 5 is outside 0\.\.4/);
+    assert.throws(() => S.readSnap(m, ex.snap_fill(-1, 0, 0)), /Snap\.pairs: count -1 is outside 0\.\.4/);
+    assert.throws(() => S.readSnap(m, ex.snap_fill(0, 4, 0)), /Snap\.items: count 4 is outside 0\.\.3/);
+    assert.throws(() => S.readSnap(m, ex.snap_fill(0, 0, 9)), /Snap\.text: count 9 is outside 0\.\.8/);
 });
 
 test('char[N]: UTF-8, NUL-terminated, at most N-1 bytes; the setter throws rather than truncate', () => {

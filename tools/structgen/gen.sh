@@ -52,8 +52,18 @@ fi
 "$SG" --cwd "$root/c" --header anim_plan.h --header legal.h --build "bots=$BOTS" \
   --root AnimPlan --root AnimBeats --root AnimEvent --root LegalMoves --ts "$prod/anim.bots.ts"
 
-# Genericity fixture (test/verify.test.ts).
+# The web client's reader of its slot (c/src/client_table.h): snapshot readers
+# only, no accessor over the struct (specs/view_layout.args).
+set -f
+# shellcheck disable=SC2207
+VIEW=(--cwd "$root/c" $(spec view_layout))
+set +f
+"$SG" "${VIEW[@]}" --build "bots=$BOTS" --ts "$prod/view_layout.bots.ts"
+
+# Genericity fixtures (test/verify.test.ts).
 "$SG" --cwd "$here/test" --header kinds.h --root Kinds --build wasm= --const K_ --const KFLAG_ --ts "$fixtures/kinds.ts"
+"$SG" --cwd "$here/test" --header snap.h --root Snap --build wasm= --snapshot Snap --snapshot-only \
+  --count Snap.pairs=n_pairs --count Snap.items=n_items --count Snap.text=n_text --count SItem.text=len --ts "$fixtures/snap.ts"
 
 if [ "$check" = 1 ]; then
   stale=0

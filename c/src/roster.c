@@ -248,6 +248,11 @@ static void tw_blob(TW *w, int wide, const char *b, int n) {
 
 int roster_trailer_write(const Roster *r, const char *game_id, int gid_len, int status,
                          uint32_t good_mask, uint8_t *out, int cap) {
+    return roster_trailer_write_ai(r, game_id, gid_len, status, good_mask, roster_bot_mask(r), out, cap);
+}
+
+int roster_trailer_write_ai(const Roster *r, const char *game_id, int gid_len, int status,
+                            uint32_t good_mask, uint32_t ai_mask, uint8_t *out, int cap) {
     const int v = roster_validate(r);
     if (v != ROSTER_OK) return v;
     if (gid_len < 0 || gid_len > ROSTER_GAME_ID_MAX || (gid_len > 0 && !game_id)) return ROSTER_E_GAME_ID;
@@ -268,7 +273,7 @@ int roster_trailer_write(const Roster *r, const char *game_id, int gid_len, int 
     }
     for (int s = 0; s < r->n; s++) {
         tw_blob(&w, 1, r->seats[s].id, r->seats[s].id_len);
-        tw_u8(&w, r->seats[s].brain_len > 0);
+        tw_u8(&w, (int)((ai_mask >> s) & 1u));
         n_good += (good_mask >> s) & 1u;
     }
     tw_u8(&w, n_good);

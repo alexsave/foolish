@@ -38,6 +38,13 @@ int state_put(const Game *g, int viewer, unsigned char *out);
 // marshaled from the host's own PersonalGame.
 int state_get(Game *g, const unsigned char *p, int masked);
 
+// The exact byte length of the state_put payload at p, reading no byte at or
+// past p + len, or -1: a count past its capacity (a player count, the deck, the
+// battles, a hand, the eliminations) or a payload that runs off the end. For a
+// reader of bytes off the network, which state_get (it trusts its caller for the
+// length) must never see unmeasured.
+int state_measure(const unsigned char *p, int len);
+
 // THE import: decode the layout and adopt it into `g` only if it is valid
 // (game.h game_validate). Returns GAME_VALID, or a negative GAME_INVALID_*
 // reason with `g` left exactly as it was. Every path that takes a state from

@@ -24,6 +24,7 @@
 #include "../src/analyse.h"
 #include "../src/roster.h"
 #include "../src/table.h"
+#include "../src/client_table.h"
 #include "../wasm/wire.h"
 #include <stdio.h>
 #include <sys/mman.h>
@@ -8422,6 +8423,263 @@ static void test_table_replay_code_and_extras(void) {
     CHECK(table_replay_extras(&tb, tb_log, tb_log_len, tb_code, 3) == TABLE_E_CAP, "a small buffer is refused");
 }
 
+/* ---------------------- the client slot (src/client_table.h) -------------------- */
+
+static ClientSlot ct_slot;
+static ClientTable ct;
+static uint8_t ct_env[1 << 14], ct_env2[1 << 14], ct_push[1 << 16], ct_id[4096], ct_raw[4096];
+static TableView ct_view;
+
+// An envelope composed around a raw masked state (view.c state_put bytes): the
+// header, the view blob, the roster trailer of `r` - so a test can doctor any part.
+static int ct_envelope(const uint8_t *state, int slen, int seat, const Roster *r, uint8_t *out) {
+    out[0] = 1; out[1] = (uint8_t)((seat >= 0 ? 1 : 0) | 2); out[2] = seat >= 0 ? (uint8_t)seat : 0xFF;
+    out[3] = 9; out[4] = 0; out[5] = 0; out[6] = 0; out[7] = 0; out[8] = 0;
+    const int vl = 2 + slen;
+    out[9] = (uint8_t)vl; out[10] = (uint8_t)(vl >> 8);
+    out[11] = VIEW_FORMAT_VERSION; out[12] = out[2];
+    memcpy(out + 13, state, (size_t)slen);
+    const int tl = roster_trailer_write(r, "g-7", 3, GAME_STATUS_PLAYING, 0, out + 11 + vl, 4096);
+    return 11 + vl + tl;
+}
+
+// The view a board and roster must read as, for `viewer`.
+static int ct_view_is(const TableView *v, const Game *g, const Roster *r, int viewer) {
+    int ok = v->status == g->status && v->num_players == g->num_players && v->power_suit == g->power_suit
+          && v->first_attacker == g->first_attacker && v->defender == g->defender && v->num_battles == g->num_battles
+          && v->deck_count == g->deck_count && v->discard_pile_length == g->discard_pile_length
+          && v->has_flipped == g->has_flipped && (!g->has_flipped || card_eq(v->flipped, g->flipped))
+          && v->good_mask == g->good_players_mask && v->num_eliminated == g->num_eliminated && v->my_seat == viewer;
+    for (int i = 0; ok && i < g->num_battles; i++)
+        ok = card_eq(v->battles[i].attack, g->table_battles[i].attack) && card_eq(v->battles[i].defense, g->table_battles[i].defense);
+    for (int i = 0; ok && i < g->num_eliminated; i++) ok = v->elimination[i] == g->elimination_order[i];
+    for (int s = 0; ok && s < g->num_players; s++) {
+        const ViewSeat *vs = &v->seats[s];
+        ok = vs->status == g->players[s].status && vs->hand_count == g->players[s].hand_count
+          && vs->awaiting_attack == (s == viewer && g->players[s].awaiting_attack)
+          && vs->is_ai == (r->seats[s].brain_len > 0) && vs->id_len == r->seats[s].id_len
+          && memcmp(vs->id, r->seats[s].id, vs->id_len) == 0 && vs->name_len == r->seats[s].name_len
+          && memcmp(vs->name, r->seats[s].name, vs->name_len) == 0;
+    }
+    if (ok && viewer >= 0) {
+        ok = v->my_hand_count == g->players[viewer].hand_count;
+        for (int i = 0; ok && i < v->my_hand_count; i++) ok = card_eq(v->my_hand[i], g->players[viewer].hand[i]);
+    }
+    return ok && (viewer >= 0 || v->my_hand_count == 0) && v->title_len == r->title_len && memcmp(v->title, r->title, r->title_len) == 0;
+}
+
+static void test_client_adopts_envelopes(void) {
+    tb_fixture(3, 1u << 2, 131);
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the table loads");
+    uint8_t w[8];
+    char fa[8];
+    snprintf(fa, sizeof(fa), "id-%d", tb_game.first_attacker);
+    CHECK(table_act(&tb, fa, (int)strlen(fa), w, tb_attack_wire(&tb_game, w), -1, 0) == TABLE_APPLIED, "a card is on the table");
+    client_init(&ct, &ct_slot);
+    for (int viewer = -1; viewer < 3; viewer++) {
+        const int n = table_envelope(&tb, RS("g-7"), viewer, 42, ct_env, sizeof(ct_env));
+        const int rc = client_adopt_envelope(&ct, ct_env, n);
+        if (rc != CLIENT_OK) fprintf(stderr, "  adopt(viewer %d): %d\n", viewer, rc);
+        CHECK(rc == CLIENT_OK && ct_view_is(&ct.view, &tb_game, &tb.r, viewer) && ct.view.version == 42
+              && ct.view.gid_len == 3 && memcmp(ct.view.game_id, "g-7", 3) == 0 && ct.view.fool == -1,
+              "an envelope reads as its viewer's board, seats, title, game id and version");
+    }
+    const int idn = client_identity(&ct, ct_id, sizeof(ct_id));
+    Roster back;
+    char gid[ROSTER_GAME_ID_MAX + 1];
+    int gl, st, used;
+    uint32_t ai;
+    CHECK(idn > 0 && roster_trailer_read(&back, gid, &gl, &st, &ai, ct_id, idn, &used) == ROSTER_OK && used == idn
+          && back.n == 3 && ai == (1u << 2) && gl == 3, "the identity it keeps is the table's roster trailer");
+
+    // Refused, never clamped.
+    const int slen = state_put(&tb_game, 0, ct_raw);
+    int n = ct_envelope(ct_raw, slen, 0, &tb.r, ct_env);
+    CHECK(client_adopt_envelope(&ct, ct_env, n) == CLIENT_OK, "the composed envelope reads (the control)");
+    for (int cut = 1; cut < 40; cut++) {
+        const int rc = client_adopt_envelope(&ct, ct_env, n - cut);
+        if (rc >= 0) { fprintf(stderr, "  a %d-byte-short envelope read\n", cut); CHECK(0, "a truncated trailer is refused"); break; }
+    }
+    CHECK(client_adopt_envelope(&ct, ct_env, 11 + 2 + slen) == CLIENT_E_TRAILER, "no trailer is refused");
+    memcpy(ct_env2, ct_env, (size_t)n); ct_env2[1] = 1;
+    CHECK(client_adopt_envelope(&ct, ct_env2, 11 + 2 + slen) == CLIENT_E_FORMAT, "an envelope that announces no trailer is refused");
+    memcpy(ct_env2, ct_env, (size_t)n); ct_env2[1] |= 4;
+    CHECK(client_adopt_envelope(&ct, ct_env2, n) == CLIENT_E_FORMAT, "an unknown flag is refused");
+    memcpy(ct_env2, ct_env, (size_t)n); ct_env2[n] = 0;
+    CHECK(client_adopt_envelope(&ct, ct_env2, n + 1) == CLIENT_E_TRAILER, "a byte after the trailer is refused");
+    memcpy(ct_env2, ct_env, (size_t)n); ct_env2[12] = 1;
+    CHECK(client_adopt_envelope(&ct, ct_env2, n) == CLIENT_E_FORMAT, "a view blob for another viewer is refused");
+    memcpy(ct_env2, ct_env, (size_t)n); ct_env2[2] = 5;
+    CHECK(client_adopt_envelope(&ct, ct_env2, n) < 0, "a seat the board does not have is refused");
+    // A card byte that is not a card, in the battle on the table.
+    int battles_at = 16 + tb_game.deck_count;
+    CHECK(ct_raw[battles_at] == 1, "the doctored blob has its one battle where the test expects");
+    memcpy(ct_raw + 4000 - slen, ct_raw, 0);
+    uint8_t doctored[4096];
+    memcpy(doctored, ct_raw, (size_t)slen);
+    doctored[battles_at + 1] = 0x80;
+    n = ct_envelope(doctored, slen, 0, &tb.r, ct_env2);
+    CHECK(client_adopt_envelope(&ct, ct_env2, n) == CLIENT_E_STATE && ct.detail == GAME_INVALID_CARD,
+          "a card byte 0x80 is refused, not clamped onto a card");
+    // A count over its capacity, with bytes enough behind it to be read.
+    memcpy(doctored, ct_raw, (size_t)battles_at);
+    doctored[battles_at] = MAX_BATTLES + 1;
+    for (int i = 0; i < 2 * (MAX_BATTLES + 1); i++) doctored[battles_at + 1 + i] = (uint8_t)(i % 52);
+    const int tail = slen - battles_at - 3;
+    memcpy(doctored + battles_at + 1 + 2 * (MAX_BATTLES + 1), ct_raw + battles_at + 3, (size_t)tail);
+    n = ct_envelope(doctored, battles_at + 1 + 2 * (MAX_BATTLES + 1) + tail, 0, &tb.r, ct_env2);
+    CHECK(client_adopt_envelope(&ct, ct_env2, n) == CLIENT_E_STATE, "a battle count over its capacity is refused");
+    // A roster that seats someone the board does not.
+    Roster two = tb.r;
+    two.n = 2;
+    n = ct_envelope(ct_raw, slen, 0, &two, ct_env2);
+    CHECK(client_adopt_envelope(&ct, ct_env2, n) == CLIENT_E_MISMATCH, "a roster of another seat count is refused");
+}
+
+// Every push of a whole game, for every viewer, through the client: each opens,
+// every step reads, and the final board is the envelope's.
+static void test_client_reads_every_push_of_a_game(void) {
+    tb_fixture(3, 1u << 1, 137);
+    table_init(&tb, &tb_game, &tb_snaps);
+    client_init(&ct, &ct_slot);
+    TableCommit c;
+    int pushes = 0, steps = 0, all_ok = 1, finals_ok = 1, ended = 0, as2_ok = 1;
+    for (int guard = 0; guard < 5000 && !ended; guard++) {
+        if (table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) != TABLE_OK) { all_ok = 0; break; }
+        int seat = -1;
+        for (int s = 0; s < 3 && seat < 0; s++) if (should_bot_act(&tb_game, s)) seat = s;
+        if (seat < 0) break;
+        calculate_legal_moves(&tb_game, seat, &tb_moves);
+        const LegalMove *m = &tb_moves.moves[handwritten_strategy_choose(&tb_game, seat, &tb_moves, 0)];
+        AwireAction a;
+        memset(&a, 0, sizeof(a));
+        a.kind = m->type; a.n = m->n_cards;
+        for (int i = 0; i < m->n_cards; i++) { a.cards[i] = m->cards[i]; a.attacks[i] = m->attack_cards[i]; }
+        const int wl = awire_encode(&a, tb_buf, sizeof(tb_buf));
+        char id[8];
+        snprintf(id, sizeof(id), "id-%d", seat);
+        if (table_act(&tb, id, (int)strlen(id), tb_buf, wl, -1, 0) != TABLE_APPLIED) { all_ok = 0; break; }
+        ended = tb.ended;
+        for (int viewer = -1; viewer < 3; viewer++) {
+            if (viewer == 1) continue;   // the bot seat has no push
+            const int en = table_envelope(&tb, RS("g"), viewer, 5, ct_env, sizeof(ct_env));
+            if (client_adopt_envelope(&ct, ct_env, en) != CLIENT_OK) { all_ok = 0; break; }
+            memcpy(&ct_view, &ct.view, sizeof(TableView));
+            const int idn = client_identity(&ct, ct_id, sizeof(ct_id));
+            const int pl = table_push(&tb, RS("g"), viewer, ct_push, sizeof(ct_push));
+            int rc = client_push_open(&ct, ct_push, pl, 1, ct_id, idn, 5), k = 0;
+            while (rc == CLIENT_OK && (k = client_push_next(&ct)) == 1) steps++;
+            if (rc != CLIENT_OK || k != 0 || client_push_final(&ct) != CLIENT_OK) {
+                if (all_ok) fprintf(stderr, "  push for viewer %d at move %d: open %d, next %d, detail %d\n", viewer, guard, rc, k, ct.detail);
+                all_ok = 0;
+                continue;
+            }
+            pushes++;
+            finals_ok &= memcmp(&ct_view, &ct.view, sizeof(TableView)) == 0;
+            // The same sequence as an as2 payload: no flags byte.
+            rc = client_push_open(&ct, ct_push, pl - 1, 0, ct_id, idn, 5);
+            while (rc == CLIENT_OK && (k = client_push_next(&ct)) == 1) { }
+            as2_ok &= rc == CLIENT_OK && k == 0 && client_push_final(&ct) == CLIENT_OK && memcmp(&ct_view, &ct.view, sizeof(TableView)) == 0;
+        }
+        if (table_commit_products(&tb, RS("g"), 5, 0, &c, tb_arena, sizeof(tb_arena)) < 0) { all_ok = 0; break; }
+        memcpy(tb_state, tb_arena + c.state.off, (size_t)c.state.len);
+        tb_state_len = c.state.len;
+    }
+    CHECK(ended && pushes > 100 && steps > pushes, "a whole game's pushes were read");
+    CHECK(all_ok, "every push opens and every step's board is one the kernel accepts");
+    CHECK(finals_ok, "a push's final board is exactly the view its envelope gives");
+    CHECK(as2_ok, "the as2 form of every push reads the same");
+    CHECK(ct.view.status == GAME_STATUS_GAME_OVER && ct.view.fool >= 0 && ct.view.fool == c.fool, "the last view names the fool");
+}
+
+static void test_client_push_steps_and_refusals(void) {
+    tb_fixture(3, 1u << 2, 139);
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+    client_init(&ct, &ct_slot);
+    CHECK(client_push_next(&ct) == CLIENT_E_ORDER && client_push_final(&ct) == CLIENT_E_ORDER, "nothing is read before a push opens");
+    const int en = table_envelope(&tb, RS("g-7"), 0, 3, ct_env, sizeof(ct_env));
+    client_adopt_envelope(&ct, ct_env, en);
+    const int idn = client_identity(&ct, ct_id, sizeof(ct_id));
+    uint8_t w[8];
+    const int fa = tb_game.first_attacker;
+    char fa_id[8];
+    snprintf(fa_id, sizeof(fa_id), "id-%d", fa);
+    const int wl = tb_attack_wire(&tb_game, w);
+    const Card played = card_from_wire_state(w[2]);
+    table_act(&tb, fa_id, (int)strlen(fa_id), w, wl, -1, 0);
+    int pl = table_push(&tb, RS("g-7"), 0, ct_push, sizeof(ct_push));
+    CHECK(client_push_open(&ct, ct_push, pl, 1, ct_id, idn, 4) == CLIENT_OK && client_push_next(&ct) == 1
+          && ct.event.type == EVW_T_ATTACK_PASS && ct.event.seat == fa && ct.event.msg == EVW_MSG_ATTACKED
+          && ct.event.from == EVW_LOC_HAND && ct.event.to == EVW_LOC_TABLE && ct.event.battle == -1 && !ct.event.has_target
+          && ct.event.n_cards == 1 && card_eq(ct.event.cards[0], played), "the attack step: its type, seat, route and card");
+    CHECK(ct.view.num_battles == 1 && card_eq(ct.view.battles[0].attack, played) && ct.view.my_seat == 0 && ct.view.version == 4
+          && ct.view.seats[2].is_ai && ct.view.title_len == tb.r.title_len, "and its board, with the table's identity");
+    CHECK(client_push_next(&ct) == 0 && client_push_final(&ct) == CLIENT_OK && client_push_next(&ct) == CLIENT_E_ORDER,
+          "one step, the final board, and the push is closed");
+    CHECK(client_push_open(&ct, ct_push, pl, 1, 0, 0, 4) == CLIENT_OK && client_push_next(&ct) == 1
+          && ct.view.seats[0].id_len == 0 && ct.view.title_len == 0, "a push with no identity names no one");
+    client_push_final(&ct);
+
+    // A defender's cover: a target and a battle.
+    char def_id[8];
+    snprintf(def_id, sizeof(def_id), "id-%d", tb_game.defender);
+    calculate_legal_moves(&tb_game, tb_game.defender, &tb_moves);
+    int cover = -1;
+    for (int i = 0; i < tb_moves.n && cover < 0; i++) if (tb_moves.moves[i].type == MOVE_COVER) cover = i;
+    if (cover >= 0) {
+        AwireAction a;
+        memset(&a, 0, sizeof(a));
+        a.kind = MOVE_COVER; a.n = 1; a.cards[0] = tb_moves.moves[cover].cards[0]; a.attacks[0] = tb_moves.moves[cover].attack_cards[0];
+        const int cl = awire_encode(&a, tb_buf, sizeof(tb_buf));
+        CHECK(table_act(&tb, def_id, (int)strlen(def_id), tb_buf, cl, -1, 0) == TABLE_APPLIED, "the defender covers");
+        pl = table_push(&tb, RS("g-7"), -1, ct_push, sizeof(ct_push));
+        CHECK(client_push_open(&ct, ct_push, pl, 1, ct_id, idn, 5) == CLIENT_OK && client_push_next(&ct) == 1
+              && ct.event.type == EVW_T_COVER && ct.event.has_target && card_eq(ct.event.target, played) && ct.event.battle == 0
+              && ct.view.my_seat == -1 && ct.view.my_hand_count == 0, "the cover step names its target and battle");
+        client_push_final(&ct);
+    }
+
+    // Refusals.
+    pl = table_push(&tb, RS("g-7"), 0, ct_push, sizeof(ct_push));
+    CHECK(client_push_open(&ct, ct_push, pl, 1, ct_id, idn, 5) == CLIENT_OK, "the control opens");
+    client_push_final(&ct);
+    CHECK(client_push_open(&ct, ct_push, pl - 1, 1, ct_id, idn, 5) == CLIENT_E_PUSH, "an as3 push without its flags byte is refused");
+    CHECK(client_push_open(&ct, ct_push, pl, 0, ct_id, idn, 5) == CLIENT_E_PUSH, "an as2 push with a byte after its sequence is refused");
+    ct_push[pl - 1] = 2;
+    CHECK(client_push_open(&ct, ct_push, pl, 1, ct_id, idn, 5) == CLIENT_E_PUSH, "an unknown flag is refused");
+    ct_push[pl - 1] = 0;
+    for (int cut = 2; cut < pl; cut += 7)
+        if (client_push_open(&ct, ct_push, pl - cut, 1, ct_id, idn, 5) >= 0) { CHECK(0, "a truncated push is refused"); break; }
+    // The first event's first card byte (header 4, event head 7).
+    const uint8_t keep = ct_push[4 + 7];
+    ct_push[4 + 7] = 0x80;
+    CHECK(client_push_open(&ct, ct_push, pl, 1, ct_id, idn, 5) == CLIENT_E_PUSH, "an event card byte that is not a card is refused");
+    ct_push[4 + 7] = keep;
+    CHECK(client_identity_begin(&ct, RS("g-7"), RS("T")) == CLIENT_OK && client_identity_seat(&ct, RS("a"), RS("A"), 0) == CLIENT_OK
+          && client_identity_seat(&ct, RS("b"), RS("B"), 1) == CLIENT_OK, "an identity of two seats builds");
+    int two = client_identity(&ct, ct_id, sizeof(ct_id));
+    CHECK(two > 0 && client_push_open(&ct, ct_push, pl, 1, ct_id, two, 5) == CLIENT_E_MISMATCH,
+          "a push against the identity of a table with other seats is refused");
+    CHECK(client_identity_seat(&ct, RS("c"), RS("Цэ"), 0) == CLIENT_OK && (two = client_identity(&ct, ct_id, sizeof(ct_id))) > 0
+          && client_push_open(&ct, ct_push, pl, 1, ct_id, two, 5) == CLIENT_OK && client_push_next(&ct) == 1
+          && ct.view.seats[1].is_ai && ct.view.seats[2].name_len == 4 && ct.view.gid_len == 3, "and one of three decodes it");
+    client_push_final(&ct);
+    CHECK(client_identity_seat(&ct, RS("a"), RS("again"), 0) < 0, "an identity refuses a duplicate seat");
+    ct_id[0] = 9;
+    CHECK(client_push_open(&ct, ct_push, pl, 1, ct_id, two, 5) == CLIENT_E_IDENTITY, "identity bytes that do not read are refused");
+
+    // A roster-carrying push is its own identity.
+    tb_lobby();
+    CHECK(table_join(&tb, RS("d"), RS("Dora")) == TABLE_OK, "a join");
+    pl = table_push(&tb, RS("g-9"), 0, ct_push, sizeof(ct_push));
+    CHECK(client_push_open(&ct, ct_push, pl, 1, 0, 0, 1) == CLIENT_OK && client_push_next(&ct) == 1 && client_push_final(&ct) == CLIENT_OK
+          && ct.view.num_players == 4 && ct.view.seats[3].name_len == 4 && memcmp(ct.view.seats[3].name, "Dora", 4) == 0
+          && ct.view.gid_len == 3 && memcmp(ct.view.game_id, "g-9", 3) == 0, "a join's push names the new seat without an identity");
+    CHECK(client_identity(&ct, ct_id, sizeof(ct_id)) > 0, "and becomes the identity kept");
+}
+
 int main(void) {
     test_state_import_rejects_invalid_values();
     test_state_import_refuses_a_lobby_with_cards();
@@ -8617,6 +8875,9 @@ int main(void) {
     test_table_bot_drive_cycle();
     test_table_drive_prefs();
     test_table_replay_code_and_extras();
+    test_client_adopts_envelopes();
+    test_client_reads_every_push_of_a_game();
+    test_client_push_steps_and_refusals();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;

@@ -156,6 +156,12 @@ int      roster_name_trim(const char *utf8, int len);
 int      roster_trailer_write(const Roster *r, const char *game_id, int gid_len, int status,
                               uint32_t good_mask, uint8_t *out, int cap);
 
+// The same trailer with the AI seats named by a mask rather than by brains (a
+// client's roster, read from a trailer, has none). roster_trailer_write is this
+// with roster_bot_mask(r).
+int      roster_trailer_write_ai(const Roster *r, const char *game_id, int gid_len, int status,
+                                 uint32_t good_mask, uint32_t ai_mask, uint8_t *out, int cap);
+
 // Reads a trailer at p. game_id must hold ROSTER_GAME_ID_MAX + 1 bytes. The
 // trailer carries is_ai, not a brain, so the seats come back with no brain and
 // the AI seats in *ai_mask. The good ids and the timestamp are checked for

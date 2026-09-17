@@ -19,6 +19,7 @@
 //   - Versions, epochs and clocks cross as doubles: a JS number, no BigInt, and
 //     exact for every integer a version or a millisecond clock reaches.
 #include "../src/table.h"
+#include "../src/client_table.h"
 #include <string.h>
 
 extern Game *wasm_game_ptr_internal(void);
@@ -342,4 +343,61 @@ int wasm_card_list_parse(int len, int cap, int battles) {
     memcpy(wasm_io_ptr(), cards, (size_t)n);
     if (battles) memcpy(wasm_io_ptr() + n, covers, (size_t)n);
     return n;
+}
+
+// ---- the web client's slot (src/client_table.h) ---------------------------------
+//
+// The browser's reader of every envelope and push. Its board is a slot of its
+// own, not the resident game an FMSG decode or a replay adopts, so neither can
+// clobber what a player's screen was built from. The host reads the view and
+// the event through sdk/ts/gen/view_layout.bots.ts snapshots.
+
+static ClientSlot  g_client_slot;
+static ClientTable g_client;
+static int         g_client_ready;
+
+static ClientTable *client(void) {
+    if (!g_client_ready) {
+        client_init(&g_client, &g_client_slot);
+        g_client_ready = 1;
+    }
+    return &g_client;
+}
+
+TableView *wasm_client_view_ptr(void)  { return &client()->view; }
+PushEvent *wasm_client_event_ptr(void) { return &client()->event; }
+int wasm_client_detail(void) { return client()->detail; }
+
+// io = [envelope]
+int wasm_client_adopt_envelope(int len) {
+    const unsigned char *io = inputs(len);
+    if (!io || len < 0) return CLIENT_E_FORMAT;
+    return client_adopt_envelope(client(), io, len);
+}
+
+// io = [push][identity]. The push must stay in the IO buffer until push_final.
+int wasm_client_push_open(int len, int identity_len, int as3, double version) {
+    const unsigned char *io = inputs(len + identity_len);
+    if (!io || len < 0 || identity_len < 0) return CLIENT_E_PUSH;
+    return client_push_open(client(), io, len, as3, io + len, identity_len, u32_of(version));
+}
+
+int wasm_client_push_next(void)  { return client_push_next(client()); }
+int wasm_client_push_final(void) { return client_push_final(client()); }
+
+// -> io = the identity to keep (0 bytes: none).
+int wasm_client_identity(void) { return client_identity(client(), wasm_io_ptr(), wasm_io_cap()); }
+
+// io = [game id][title]
+int wasm_client_identity_begin(int gid_len, int title_len) {
+    const unsigned char *io = inputs(gid_len + title_len);
+    if (!io || gid_len < 0 || title_len < 0) return CLIENT_E_IDENTITY;
+    return client_identity_begin(client(), (const char *)io, gid_len, (const char *)io + gid_len, title_len);
+}
+
+// io = [id][name]
+int wasm_client_identity_seat(int id_len, int name_len, int is_ai) {
+    const unsigned char *io = inputs(id_len + name_len);
+    if (!io || id_len < 0 || name_len < 0) return CLIENT_E_IDENTITY;
+    return client_identity_seat(client(), (const char *)io, id_len, (const char *)io + id_len, name_len, is_ai);
 }
