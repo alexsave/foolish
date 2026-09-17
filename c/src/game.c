@@ -360,6 +360,43 @@ int game_lobby_ready(Game *g, int seat) {
     return 1;
 }
 
+int game_lobby_unseat(Game *g, int seat) {
+    if (!g || g->status != GAME_STATUS_WAITING || seat < 0 || seat >= g->num_players) return 0;
+    for (int i = seat; i + 1 < g->num_players; i++) g->players[i] = g->players[i + 1];
+    g->num_players--;
+    memset(&g->players[g->num_players], 0, sizeof(Player));
+    return 1;
+}
+
+int game_lobby_reorder(Game *g, const int8_t *perm, int n) {
+    Player old[MAX_PLAYERS];
+    unsigned seen = 0;
+    if (!g || !perm || g->status != GAME_STATUS_WAITING || n != g->num_players || n < 0 || n > MAX_PLAYERS) return 0;
+    for (int i = 0; i < n; i++) {
+        if (perm[i] < 0 || perm[i] >= n || (seen & (1u << perm[i]))) return 0;
+        seen |= 1u << perm[i];
+    }
+    for (int i = 0; i < n; i++) old[i] = g->players[i];
+    for (int i = 0; i < n; i++) g->players[i] = old[perm[i]];
+    return 1;
+}
+
+int game_rearrange_hand(Game *g, int seat, const unsigned char *idx, int n) {
+    if (!g || seat < 0 || seat >= g->num_players) return 0;
+    Player *pl = &g->players[seat];
+    if (n != pl->hand_count || n < 0 || n > MAX_HAND_SIZE || (n > 0 && !idx)) return 0;
+    unsigned char seen[MAX_HAND_SIZE];
+    Card out[MAX_HAND_SIZE];
+    for (int i = 0; i < n; i++) seen[i] = 0;
+    for (int i = 0; i < n; i++) {
+        if (idx[i] >= (unsigned char)n || seen[idx[i]]) return 0;
+        seen[idx[i]] = 1;
+        out[i] = pl->hand[idx[i]];
+    }
+    for (int i = 0; i < n; i++) pl->hand[i] = out[i];
+    return 1;
+}
+
 int game_lobby_can_deal(const Game *g) {
     if (!g || g->status != GAME_STATUS_WAITING) return 0;
     if (g->num_players < 2) return 0;

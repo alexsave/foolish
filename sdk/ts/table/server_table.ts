@@ -46,7 +46,21 @@ export interface TableExports {
     wasm_table_action_response(result: number, reject: number, version: number): number;
     wasm_table_rankings(): number;
     wasm_elo_deltas(n: number): number;
+    wasm_table_create(idLen: number, nameLen: number): number;
+    wasm_table_join(idLen: number, nameLen: number): number;
+    wasm_table_leave(idLen: number, targetLen: number): number;
+    wasm_table_add_bot(idLen: number, botLen: number, nickLen: number, brainLen: number): number;
+    wasm_table_remove_bot(idLen: number, botLen: number): number;
+    wasm_table_ready(idLen: number): number;
+    wasm_table_reseat(idLen: number, idsLen: number): number;
+    wasm_table_retitle(idLen: number, titleLen: number): number;
+    wasm_table_continue(idLen: number): number;
+    wasm_table_rearrange_hand(idLen: number, n: number): number;
+    wasm_table_redact(idLen: number, nameLen: number): number;
 }
+
+/** A deal seed: the bytes the host draws from crypto for a lobby edit that may deal. */
+export const TABLE_DEAL_SEED_BYTES = 32;
 
 /** A decoded action request: the game id, the action wire, and the intent version when the request carried one. */
 export interface TableActionRequest {
@@ -144,6 +158,68 @@ export class ServerTable {
     act(actorId: string, wire: Uint8Array, intent: number | null, roundEpoch: number): number {
         const [i, w] = this.put(enc.encode(actorId), wire);
         return this.ex.wasm_table_act(i, w, intent ?? -1, roundEpoch);
+    }
+
+    // ---- lobby edits (table.h): each returns TABLE_OK / TABLE_EMPTY / TABLE_MOOT, or a refusal ----
+
+    /** table_create: a new lobby with the creator seated. */
+    create(actorId: string, name: string): number {
+        return this.ex.wasm_table_create(...this.put(enc.encode(actorId), enc.encode(name)) as [number, number]);
+    }
+
+    join(actorId: string, name: string): number {
+        return this.ex.wasm_table_join(...this.put(enc.encode(actorId), enc.encode(name)) as [number, number]);
+    }
+
+    /** A human leaves, or a seated player removes another human. */
+    leave(actorId: string, targetId: string): number {
+        return this.ex.wasm_table_leave(...this.put(enc.encode(actorId), enc.encode(targetId)) as [number, number]);
+    }
+
+    /** `dealSeed`: TABLE_DEAL_SEED_BYTES from crypto, used if the bot makes every seat ready. */
+    addBot(actorId: string, botId: string, nickname: string, brain: string, dealSeed: Uint8Array): number {
+        if (dealSeed.length !== TABLE_DEAL_SEED_BYTES) throw new RangeError('table: a deal seed is 32 bytes');
+        const [a, b, n, k] = this.put(enc.encode(actorId), enc.encode(botId), enc.encode(nickname), enc.encode(brain), dealSeed);
+        return this.ex.wasm_table_add_bot(a, b, n, k);
+    }
+
+    removeBot(actorId: string, botId: string): number {
+        return this.ex.wasm_table_remove_bot(...this.put(enc.encode(actorId), enc.encode(botId)) as [number, number]);
+    }
+
+    /** `dealSeed`: TABLE_DEAL_SEED_BYTES from crypto, used if every seat is now ready. */
+    ready(actorId: string, dealSeed: Uint8Array): number {
+        if (dealSeed.length !== TABLE_DEAL_SEED_BYTES) throw new RangeError('table: a deal seed is 32 bytes');
+        const [a] = this.put(enc.encode(actorId), dealSeed);
+        return this.ex.wasm_table_ready(a);
+    }
+
+    /** The new seat order, as the seated ids. */
+    reseat(actorId: string, ids: string[]): number {
+        const parts = ids.map((id) => enc.encode(id));
+        if (parts.some((p) => p.length > 255)) return L.TABLE_E_WIRE;
+        const list = new Uint8Array(parts.reduce((n, p) => n + 1 + p.length, 0));
+        let at = 0;
+        for (const p of parts) { list[at++] = p.length; list.set(p, at); at += p.length; }
+        return this.ex.wasm_table_reseat(...this.put(enc.encode(actorId), list) as [number, number]);
+    }
+
+    retitle(actorId: string, title: string): number {
+        return this.ex.wasm_table_retitle(...this.put(enc.encode(actorId), enc.encode(title)) as [number, number]);
+    }
+
+    continueGame(actorId: string): number {
+        return this.ex.wasm_table_continue(...this.put(enc.encode(actorId)) as [number]);
+    }
+
+    /** New card i is old card indices[i], of the actor's own hand. */
+    rearrangeHand(actorId: string, indices: number[]): number {
+        if (!indices.every((i) => Number.isInteger(i) && i >= 0 && i <= 255)) return L.TABLE_E_WIRE;
+        return this.ex.wasm_table_rearrange_hand(...this.put(enc.encode(actorId), Uint8Array.from(indices)) as [number, number]);
+    }
+
+    redact(userId: string, name: string): number {
+        return this.ex.wasm_table_redact(...this.put(enc.encode(userId), enc.encode(name)) as [number, number]);
     }
 
     /** The ENGINE_REJECT_* behind the last TABLE_REJECTED. */

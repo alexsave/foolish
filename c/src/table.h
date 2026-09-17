@@ -36,7 +36,7 @@
 #define TABLE_OK              0
 #define TABLE_APPLIED         0
 #define TABLE_REJECTED        1   // the kernel refused the move; Table.reject holds the ENGINE_REJECT_*
-#define TABLE_MOOT            2   // the game is already over, so the move is a no-op
+#define TABLE_MOOT            2   // a no-op: a move on a game already over, a ready on a game already dealt
 #define TABLE_STALE_ROUND     3   // the move was composed before the current round began
 #define TABLE_EMPTY           4   // the last seat left the lobby: the host deletes the row
 #define TABLE_E_STATE_VERSION (-101)  // the state blob's format byte is not one this kernel reads
@@ -49,6 +49,7 @@
 #define TABLE_E_WIRE          (-108)  // the action wire or request is malformed
 #define TABLE_E_CAP           (-109)  // an output buffer is too small
 #define TABLE_E_NOT_LOADED    (-110)  // no table has been loaded
+#define TABLE_E_NOT_OVER      (-111)  // continue on a game that has not ended
 
 // The response code for a stale-round refusal. It sits above the kernel's
 // ENGINE_REJECT_* space so a client can tell a rules rejection from a server
@@ -151,6 +152,46 @@ bool table_needs_bots(const Table *t);
 // A bot that could act now uses the session log (a belief brain), so the host
 // must hydrate it before driving.
 bool table_bots_need_logs(const Table *t);
+
+// ---- lobby edits (docs/C_GAME_SHAPE_MIGRATION.md Q9) --------------------------
+//
+// The lobby policy: every edit needs a SEATED actor, except join. A seated
+// player may remove another human (the web's "remove player"); bots are added
+// and removed as bots; a hand is only ever rearranged by its own seat. Each edit
+// that changes what a viewer sees marks the table for one MAGIC_TRANSITION push
+// on the committed board, and marks the roster changed when it changed.
+// Refusals from the Roster come back as TABLE_E_ROSTER with the ROSTER_E_* in
+// Table.detail: a full table (E_FULL), a duplicate join (E_DUPLICATE), a bad
+// title (E_TITLE), a reseat that is not a permutation (E_PERM).
+//
+// A deal seed is FOOLISH_SEED_LEN bytes the host draws from crypto; the edits
+// that can deal (ready, add-bot) take one whether or not they deal.
+
+// A new lobby with the creator in seat 0, titled "<name>'s Game" (the name cut
+// on a scalar boundary if the title would pass ROSTER_TITLE_MAX).
+int table_create(Table *t, const char *actor_id, int id_len, const char *name, int name_len);
+int table_join(Table *t, const char *actor_id, int id_len, const char *name, int name_len);
+// Removes the human `target_id` (the actor themself, or another human). The
+// last seat leaving returns TABLE_EMPTY; the host deletes the row.
+int table_leave(Table *t, const char *actor_id, int id_len, const char *target_id, int target_len);
+// Seats a bot READY; deals when that makes every seat ready.
+int table_add_bot(Table *t, const char *actor_id, int id_len, const char *bot_id, int bot_len,
+                  const char *nick, int nick_len, const char *brain, int brain_len, const uint8_t *deal_seed);
+int table_remove_bot(Table *t, const char *actor_id, int id_len, const char *bot_id, int bot_len);
+// Readies the actor; deals when game_lobby_can_deal. TABLE_MOOT once dealt.
+int table_ready(Table *t, const char *actor_id, int id_len, const uint8_t *deal_seed);
+// The new seat order as the seated ids: n x { u8 len, id bytes }.
+int table_reseat(Table *t, const char *actor_id, int id_len, const uint8_t *ids, int ids_len);
+// The lobby's title rule: at most 50 characters as the web counts them (UTF-16
+// code units, before trimming), then trimmed of JavaScript whitespace, not empty.
+int table_retitle(Table *t, const char *actor_id, int id_len, const char *title, int title_len);
+// A finished game back to its lobby (game_reset_to_lobby with the roster's bots).
+int table_continue(Table *t, const char *actor_id, int id_len);
+// The actor's own hand: new card i is old card idx[i]. TABLE_E_WIRE when idx is
+// not a permutation of the hand. No push: nobody else can see a hand's order.
+int table_rearrange_hand(Table *t, const char *actor_id, int id_len, const uint8_t *idx, int n);
+// Account deletion: the seat holding user_id is renamed.
+int table_redact(Table *t, const char *user_id, int id_len, const char *name, int name_len);
 
 // ---- products ----------------------------------------------------------------
 

@@ -7551,6 +7551,281 @@ static void test_elo_deltas(void) {
     CHECK(elo_deltas(even2, range, 2, out) == TABLE_E_WIRE, "a seat past n is refused");
 }
 
+// ---- lobby edits ----
+
+static uint8_t tb_seed[FOOLISH_SEED_LEN];
+
+static void tb_seed_fill(int k) { for (int i = 0; i < FOOLISH_SEED_LEN; i++) tb_seed[i] = (uint8_t)(i * 13 + k); }
+
+// tb <- a lobby created by "a" (Alice), joined by "b" (Bob) and "c" (Cleo).
+static void tb_lobby(void) {
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_create(&tb, RS("a"), RS("Alice"));
+    table_join(&tb, RS("b"), RS("Bob"));
+    table_join(&tb, RS("c"), RS("Cleo"));
+}
+
+static int tb_same_table(const Table *x, const Game *before_g, const Roster *before_r) {
+    return memcmp(&x->r, before_r, sizeof(Roster)) == 0 && memcmp(x->g, before_g, offsetof(Game, logs)) == 0;
+}
+
+static Roster tb_r_before;
+#define TB_SNAPSHOT() do { memcpy(&tb_before, &tb_game, offsetof(Game, logs)); tb_r_before = tb.r; } while (0)
+#define TB_REFUSED(expr, want, msg) do { \
+        TB_SNAPSHOT(); const int rc_ = (expr); \
+        if (rc_ != (want)) fprintf(stderr, "  %s: got %d, want %d\n", msg, rc_, want); \
+        CHECK(rc_ == (want), msg); \
+        CHECK(tb_same_table(&tb, &tb_before, &tb_r_before), msg); } while (0)
+
+static void test_table_create_and_join(void) {
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(table_join(&tb, RS("b"), RS("Bob")) == TABLE_E_NOT_LOADED, "no join before a table exists");
+    CHECK(table_create(&tb, RS("a"), RS("Alice")) == TABLE_OK && tb.loaded, "create seats the creator");
+    CHECK(tb.r.n == 1 && tb_game.num_players == 1 && tb_game.status == GAME_STATUS_WAITING
+          && tb_game.players[0].status == PLAYER_STATUS_IDLE, "one IDLE seat in a WAITING game");
+    CHECK(tb.r.title_len == 12 && memcmp(tb.r.title, "Alice's Game", 12) == 0, "titled after the creator");
+    TableCommit c;
+    CHECK(table_commit_products(&tb, RS("g"), 0, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && c.n_events == 0
+          && c.views[0].len > 0 && c.logs.len == 0, "a new table commits a view and announces nothing");
+    {
+        static Game g2;
+        static TableSnaps s2;
+        Table t2;
+        char big[256];
+        for (int i = 0; i < 64; i++) memcpy(big + i * 4, "\xf0\x9f\xa4\xa1", 4);
+        table_init(&t2, &g2, &s2);
+        CHECK(table_create(&t2, RS("z"), big, 256) == TABLE_OK && t2.r.title_len == 192 + 7
+              && memcmp(t2.r.title + 192, "'s Game", 7) == 0,
+              "a long name is cut on a scalar boundary to keep the title under its cap");
+        CHECK(t2.r.seats[0].name_len == 64, "and the seat name is trimmed like every roster name");
+    }
+
+    CHECK(table_join(&tb, RS("b"), RS("Bob")) == TABLE_OK && tb.r.n == 2 && tb_game.num_players == 2
+          && tb_game.players[1].status == PLAYER_STATUS_IDLE && tb.roster_changed && tb.lobby_event,
+          "a join seats an IDLE human and changes the roster");
+    CHECK(table_commit_products(&tb, RS("g"), 1, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && c.n_events == 1
+          && c.roster_changed, "a join is one announced event");
+    const int pl = table_push(&tb, RS("g"), 0, tb_buf, sizeof(tb_buf));
+    int seq, flags, block;
+    Roster pushed;
+    char gid[ROSTER_GAME_ID_MAX + 1];
+    int gl, st, used;
+    uint32_t ai;
+    CHECK(pl > 0 && evwire_as3_split(tb_buf, pl, &seq, &flags, &block) == 0 && flags == EVW_AS3_ROSTER
+          && roster_trailer_read(&pushed, gid, &gl, &st, &ai, tb_buf + block, pl - block, &used) == ROSTER_OK
+          && block + used == pl && pushed.n == 2, "the join's push carries the new roster");
+    TB_REFUSED(table_join(&tb, RS("b"), RS("Bob again")), TABLE_E_ROSTER, "a duplicate join is refused");
+    CHECK(tb.detail == ROSTER_E_DUPLICATE, "as a duplicate");
+    for (int i = 2; i < MAX_PLAYERS; i++) {
+        char id[8];
+        snprintf(id, sizeof(id), "p%d", i);
+        table_join(&tb, id, (int)strlen(id), RS("P"));
+    }
+    CHECK(tb.r.n == MAX_PLAYERS && tb_game.num_players == MAX_PLAYERS, "the table fills");
+    TB_REFUSED(table_join(&tb, RS("p9"), RS("Late")), TABLE_E_ROSTER, "a join to a full table is refused");
+    CHECK(tb.detail == ROSTER_E_FULL, "as full");
+
+    tb_fixture(2, 0, 61);
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+    TB_REFUSED(table_join(&tb, RS("late"), RS("Late")), TABLE_E_NOT_WAITING, "no join once dealt");
+}
+
+static void test_table_leave_and_bots(void) {
+    tb_seed_fill(1);
+    tb_lobby();
+    TB_REFUSED(table_leave(&tb, RS("stranger"), RS("b")), TABLE_E_NOT_SEATED, "a stranger cannot remove a player");
+    TB_REFUSED(table_leave(&tb, RS("a"), RS("nobody")), TABLE_E_NOT_SEATED, "an unseated target is refused");
+    TB_REFUSED(table_add_bot(&tb, RS("stranger"), RS("bot-1"), RS("Rando"), RS("random"), tb_seed),
+               TABLE_E_NOT_SEATED, "a stranger cannot add a bot");
+    TB_REFUSED(table_add_bot(&tb, RS("a"), RS("bot-1"), RS("Rando"), RS("nope"), tb_seed),
+               TABLE_E_UNKNOWN_BRAIN, "a brain no build has is refused");
+    TB_REFUSED(table_add_bot(&tb, RS("a"), RS("bot-1"), RS("Rando"), "", 0, tb_seed),
+               TABLE_E_UNKNOWN_BRAIN, "a bot needs a brain");
+    CHECK(table_add_bot(&tb, RS("a"), RS("bot-1"), RS("Rando"), RS("random"), tb_seed) == TABLE_OK
+          && tb.r.n == 4 && tb_game.players[3].status == PLAYER_STATUS_READY
+          && tb_game.players[3].strategy_key == bot_roster_at(bot_roster_find("random"))->strat
+          && !tb.dealt_now, "a bot sits down READY with its brain's kind, and nothing deals yet");
+    TB_REFUSED(table_leave(&tb, RS("a"), RS("bot-1")), TABLE_E_FORBIDDEN, "a bot is not removed as a leaving player");
+    TB_REFUSED(table_remove_bot(&tb, RS("a"), RS("b")), TABLE_E_NOT_SEATED, "a human is not removed as a bot");
+    TB_REFUSED(table_remove_bot(&tb, RS("stranger"), RS("bot-1")), TABLE_E_NOT_SEATED, "a stranger cannot remove a bot");
+
+    // a kicks b: the seats above move down, statuses with them
+    table_ready(&tb, RS("c"), tb_seed);
+    CHECK(table_leave(&tb, RS("a"), RS("b")) == TABLE_OK && tb.r.n == 3 && tb_game.num_players == 3
+          && roster_seat_of(&tb.r, RS("c")) == 1 && tb_game.players[1].status == PLAYER_STATUS_READY
+          && tb_game.players[2].status == PLAYER_STATUS_READY && roster_seat_of(&tb.r, RS("bot-1")) == 2,
+          "removing another human compacts both halves of the table");
+    CHECK(table_remove_bot(&tb, RS("c"), RS("bot-1")) == TABLE_OK && tb.r.n == 2 && tb_game.num_players == 2,
+          "a seated player removes a bot");
+    CHECK(table_leave(&tb, RS("c"), RS("c")) == TABLE_OK && tb.r.n == 1, "a player leaves");
+    CHECK(table_leave(&tb, RS("a"), RS("a")) == TABLE_EMPTY && tb.r.n == 0 && tb_game.num_players == 0,
+          "the last seat leaving empties the table");
+
+    // a bot that makes every seat ready deals, with the roster change on the push
+    tb_lobby();
+    table_ready(&tb, RS("a"), tb_seed);
+    table_ready(&tb, RS("b"), tb_seed);
+    table_ready(&tb, RS("c"), tb_seed);
+    CHECK(tb_game.status == GAME_STATUS_PLAYING, "three ready humans deal");
+    tb_lobby();
+    table_ready(&tb, RS("a"), tb_seed);
+    table_ready(&tb, RS("b"), tb_seed);
+    CHECK(tb_game.status == GAME_STATUS_WAITING, "one human not ready: no deal");
+    TB_REFUSED(table_add_bot(&tb, RS("a"), RS("b"), RS("Twin"), RS("random"), tb_seed), TABLE_E_ROSTER,
+               "a bot with a seated id is refused");
+    CHECK(tb.detail == ROSTER_E_DUPLICATE, "as a duplicate");
+    for (int i = 0; i < MAX_PLAYERS - 3; i++) {
+        char id[8];
+        snprintf(id, sizeof(id), "bot-%d", i);
+        table_add_bot(&tb, RS("a"), id, (int)strlen(id), RS("Bot"), RS("random"), tb_seed);
+    }
+    TB_REFUSED(table_add_bot(&tb, RS("a"), RS("bot-9"), RS("Bot"), RS("random"), tb_seed), TABLE_E_ROSTER,
+               "a bot for a full table is refused");
+    CHECK(tb.detail == ROSTER_E_FULL, "as full");
+}
+
+static void test_table_ready_deals(void) {
+    tb_seed_fill(7);
+    tb_lobby();
+    TB_REFUSED(table_ready(&tb, RS("stranger"), tb_seed), TABLE_E_NOT_SEATED, "a stranger cannot ready");
+    CHECK(table_ready(&tb, RS("a"), tb_seed) == TABLE_OK && tb_game.players[0].status == PLAYER_STATUS_READY
+          && tb.lobby_event && !tb.roster_changed && !tb.dealt_now, "a ready is announced and deals nothing yet");
+    CHECK(table_ready(&tb, RS("a"), tb_seed) == TABLE_OK && tb.lobby_event, "readying twice is still announced");
+    CHECK(table_add_bot(&tb, RS("b"), RS("bot-1"), RS("Rando"), RS("random"), tb_seed) == TABLE_OK && !tb.dealt_now,
+          "a bot with humans unready deals nothing");
+    table_ready(&tb, RS("b"), tb_seed);
+    const int deal_was = game_deal_seed_active();
+    CHECK(table_ready(&tb, RS("c"), tb_seed) == TABLE_OK && tb.dealt_now && !tb.lobby_event
+          && tb_game.status == GAME_STATUS_PLAYING && tb_game.deterministic_deck, "the last ready deals from the seed");
+    CHECK(game_deal_seed_active() == deal_was, "the deal puts the deal RNG back");
+    TableCommit c;
+    CHECK(table_commit_products(&tb, RS("g"), 5, 42, &c, tb_arena, sizeof(tb_arena)) > 0 && c.dealt_now && c.logs_reset
+          && !c.closed_round && c.logs.len > 0 && tb_arena[c.logs.off + 6] == LOG_GAME_START
+          && c.n_events == 4 + 1 + 1 + 1 + 1, "the deal commits a fresh session log and every deal event");
+    const uint8_t dealt_len = (uint8_t)c.state.len;
+    memcpy(tb_state2, tb_arena + c.state.off, (size_t)c.state.len);
+    CHECK(table_ready(&tb, RS("a"), tb_seed) == TABLE_MOOT && tb_game.status == GAME_STATUS_PLAYING,
+          "a ready after the deal is a no-op");
+
+    // the same seed deals the same board
+    tb_lobby();
+    table_ready(&tb, RS("a"), tb_seed);
+    table_add_bot(&tb, RS("b"), RS("bot-1"), RS("Rando"), RS("random"), tb_seed);
+    table_ready(&tb, RS("b"), tb_seed);
+    table_ready(&tb, RS("c"), tb_seed);
+    CHECK(table_commit_products(&tb, RS("g"), 5, 42, &c, tb_arena, sizeof(tb_arena)) > 0 && c.state.len == dealt_len
+          && memcmp(tb_arena + c.state.off, tb_state2, dealt_len) == 0, "one seed, one deal");
+
+    // a bot that completes the table deals, and its push carries the roster
+    tb_lobby();
+    table_ready(&tb, RS("a"), tb_seed);
+    table_ready(&tb, RS("b"), tb_seed);
+    table_leave(&tb, RS("a"), RS("c"));
+    CHECK(tb_game.status == GAME_STATUS_WAITING, "a leave never deals, even one that leaves every seat ready");
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_create(&tb, RS("a"), RS("Alice"));
+    table_ready(&tb, RS("a"), tb_seed);
+    CHECK(tb_game.status == GAME_STATUS_WAITING, "one ready seat does not deal");
+    CHECK(table_add_bot(&tb, RS("a"), RS("bot-1"), RS("Rando"), RS("random"), tb_seed) == TABLE_OK && tb.dealt_now
+          && tb.roster_changed && tb_game.status == GAME_STATUS_PLAYING, "a bot that makes every seat ready deals");
+    const int pl = table_push(&tb, RS("g"), 0, tb_buf, sizeof(tb_buf));
+    int seq, flags, block;
+    CHECK(pl > 0 && evwire_as3_split(tb_buf, pl, &seq, &flags, &block) == 0 && flags == EVW_AS3_ROSTER,
+          "and the deal's push carries the roster the bot changed");
+}
+
+static void test_table_reseat_retitle_continue(void) {
+    tb_seed_fill(3);
+    tb_lobby();
+    table_ready(&tb, RS("b"), tb_seed);
+    const uint8_t order[] = { 1, 'c', 1, 'a', 1, 'b' };
+    TB_REFUSED(table_reseat(&tb, RS("stranger"), order, sizeof(order)), TABLE_E_NOT_SEATED, "a stranger cannot reseat");
+    const uint8_t dup[] = { 1, 'c', 1, 'a', 1, 'a' }, unknown[] = { 1, 'c', 1, 'a', 1, 'z' }, shorter[] = { 1, 'c', 1, 'a' };
+    const uint8_t longer[] = { 1, 'c', 1, 'a', 1, 'b', 1, 'b' }, cut[] = { 1, 'c', 1, 'a', 3, 'b' };
+    TB_REFUSED(table_reseat(&tb, RS("a"), dup, sizeof(dup)), TABLE_E_ROSTER, "a reseat naming a seat twice is refused");
+    CHECK(tb.detail == ROSTER_E_PERM, "as not a permutation");
+    TB_REFUSED(table_reseat(&tb, RS("a"), unknown, sizeof(unknown)), TABLE_E_ROSTER, "a reseat naming a stranger is refused");
+    TB_REFUSED(table_reseat(&tb, RS("a"), shorter, sizeof(shorter)), TABLE_E_ROSTER, "a reseat leaving a seat out is refused");
+    TB_REFUSED(table_reseat(&tb, RS("a"), longer, sizeof(longer)), TABLE_E_ROSTER, "a reseat with a seat too many is refused");
+    TB_REFUSED(table_reseat(&tb, RS("a"), cut, sizeof(cut)), TABLE_E_ROSTER, "a cut id list is refused");
+    CHECK(table_reseat(&tb, RS("a"), order, sizeof(order)) == TABLE_OK && roster_seat_of(&tb.r, RS("c")) == 0
+          && roster_seat_of(&tb.r, RS("b")) == 2 && tb_game.players[2].status == PLAYER_STATUS_READY
+          && tb_game.players[0].status == PLAYER_STATUS_IDLE && tb.roster_changed, "a reseat moves ids and statuses together");
+
+    // retitle: 50 characters as the web counts them, trimmed, not empty
+    char t51[52];
+    memset(t51, 'x', 51);
+    TB_REFUSED(table_retitle(&tb, RS("a"), t51, 51), TABLE_E_ROSTER, "a 51-character title is refused");
+    CHECK(tb.detail == ROSTER_E_TITLE, "as a title");
+    char emoji[4 * 26];
+    for (int i = 0; i < 26; i++) memcpy(emoji + 4 * i, "\xf0\x9f\x8e\xb4", 4);
+    TB_REFUSED(table_retitle(&tb, RS("a"), emoji, 4 * 26), TABLE_E_ROSTER, "26 emoji are 52 UTF-16 units: refused");
+    CHECK(table_retitle(&tb, RS("a"), emoji, 4 * 25) == TABLE_OK && tb.r.title_len == 100, "25 emoji are 50: allowed");
+    TB_REFUSED(table_retitle(&tb, RS("a"), RS(" \t\xe3\x80\x80 ")), TABLE_E_ROSTER, "a title of whitespace is refused");
+    TB_REFUSED(table_retitle(&tb, RS("stranger"), RS("Mine")), TABLE_E_NOT_SEATED, "a stranger cannot retitle");
+    CHECK(table_retitle(&tb, RS("b"), RS("\xc2\xa0 Durak night \xe2\x80\xa8\n")) == TABLE_OK
+          && tb.r.title_len == 11 && memcmp(tb.r.title, "Durak night", 11) == 0, "a title is trimmed like String.trim");
+    memset(t51, 'x', 50);
+    CHECK(table_retitle(&tb, RS("b"), t51, 50) == TABLE_OK, "exactly 50 characters is allowed");
+
+    // continue: only from a finished game
+    TB_REFUSED(table_continue(&tb, RS("a")), TABLE_E_NOT_OVER, "continue on a lobby is refused");
+    unsigned char seed[FOOLISH_SEED_LEN];
+    CHECK(rs_play_seeded(&tb_src, 3, 777, seed), "a game plays out");
+    game_set_seed(1);
+    tb_src.status = GAME_STATUS_GAME_OVER;
+    CHECK(tb_src.deterministic_deck, "the seeded game draws from its deterministic deck");
+    for (int i = 0; i < 3; i++) tb_src.players[i].status = i == 2 ? PLAYER_STATUS_READY : PLAYER_STATUS_IDLE;
+    tb_state_len = tb_blob(&tb_src, tb_state);
+    tb_roster_for(3, 1u << 2, "random", tb_roster);
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the finished row loads");
+    TB_REFUSED(table_continue(&tb, RS("stranger")), TABLE_E_NOT_SEATED, "a stranger cannot continue");
+    CHECK(table_continue(&tb, RS("id-1")) == TABLE_OK && tb_game.status == GAME_STATUS_WAITING
+          && tb_game.players[2].status == PLAYER_STATUS_READY && tb_game.players[0].status == PLAYER_STATUS_IDLE
+          && tb_game.deck_count == 0 && tb.lobby_event && !tb.roster_changed, "continue resets to the lobby, bots READY");
+    CHECK(!tb_game.deterministic_deck, "a lobby blob carries no deterministic-deck flag");
+    TableCommit c;
+    CHECK(table_commit_products(&tb, RS("g"), 9, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && c.n_events == 1
+          && table_load(&tb, tb_arena + c.state.off, c.state.len, tb_roster, ROSTER_BYTES) == TABLE_OK,
+          "the lobby it commits is one a table loads");
+
+    tb_fixture(2, 0, 71);
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+    TB_REFUSED(table_continue(&tb, RS("id-0")), TABLE_E_NOT_OVER, "continue on a running game is refused");
+}
+
+static void test_table_rearrange_and_redact(void) {
+    tb_fixture(2, 0, 81);
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+    const int n = tb_game.players[1].hand_count;
+    uint8_t idx[MAX_HAND_SIZE];
+    for (int i = 0; i < n; i++) idx[i] = (uint8_t)i;
+    idx[1] = 0;
+    TB_REFUSED(table_rearrange_hand(&tb, RS("id-1"), idx, n), TABLE_E_WIRE, "duplicate indices are refused");
+    TB_REFUSED(table_rearrange_hand(&tb, RS("id-1"), idx, n - 1), TABLE_E_WIRE, "too few indices are refused");
+    for (int i = 0; i < n; i++) idx[i] = (uint8_t)i;
+    idx[0] = (uint8_t)n;
+    TB_REFUSED(table_rearrange_hand(&tb, RS("id-1"), idx, n), TABLE_E_WIRE, "an index past the hand is refused");
+    TB_REFUSED(table_rearrange_hand(&tb, RS("stranger"), idx, n), TABLE_E_NOT_SEATED, "a stranger has no hand");
+    for (int i = 0; i < n; i++) idx[i] = (uint8_t)(n - 1 - i);
+    const Card first = tb_game.players[1].hand[0], last = tb_game.players[1].hand[n - 1];
+    const Card other = tb_game.players[0].hand[0];
+    CHECK(table_rearrange_hand(&tb, RS("id-1"), idx, n) == TABLE_OK && card_eq(tb_game.players[1].hand[0], last)
+          && card_eq(tb_game.players[1].hand[n - 1], first) && card_eq(tb_game.players[0].hand[0], other),
+          "the actor's own hand is reversed, no other");
+    TableCommit c;
+    CHECK(table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && c.n_events == 0
+          && c.logs.len == 0, "a rearrange announces nothing and logs nothing");
+
+    CHECK(table_redact(&tb, RS("id-0"), RS("Deleted player")) == TABLE_OK && tb.roster_changed
+          && tb.r.seats[0].name_len == 14 && roster_seat_of(&tb.r, RS("id-0")) == 0, "redact renames the seat");
+    TB_REFUSED(table_redact(&tb, RS("nobody"), RS("Deleted player")), TABLE_E_NOT_SEATED, "redact of an unseated id is refused");
+}
+
 int main(void) {
     test_state_import_rejects_invalid_values();
     test_state_import_refuses_a_lobby_with_cards();
@@ -7729,6 +8004,11 @@ int main(void) {
     test_table_request_and_response();
     test_evwire_as3_split();
     test_elo_deltas();
+    test_table_create_and_join();
+    test_table_leave_and_bots();
+    test_table_ready_deals();
+    test_table_reseat_retitle_continue();
+    test_table_rearrange_and_redact();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;

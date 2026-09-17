@@ -324,6 +324,235 @@ int table_commit_products(const Table *t, const char *game_id, int gid_len, uint
     return at;
 }
 
+// ---------- lobby edits (Phase 3.ii) ----------------------------------------------
+
+// The seat of a seated actor, after the one check every lobby edit but a join
+// makes (Q9): the actor must be at the table.
+static int actor_seat(const Table *t, const char *actor_id, int id_len) {
+    return roster_seat_of(&t->r, actor_id, id_len);
+}
+
+static int roster_refusal(Table *t, int rc) {
+    t->detail = rc;
+    return TABLE_E_ROSTER;
+}
+
+// A lobby edit the pushes announce: one MAGIC_TRANSITION on the committed board.
+static void lobby_edit(Table *t, int roster_changed) {
+    scope_open(t, -1);
+    t->lobby_event = true;
+    t->roster_changed = roster_changed != 0;
+}
+
+// Deals the lobby from `seed` (FOOLISH_SEED_LEN bytes), capturing the deal's
+// hook snapshots. The deal RNG is put back afterwards: its wide mode is read by
+// every draw on this thread, so a deal must not leave it on for the next table.
+static void deal(Table *t, const uint8_t *seed) {
+    unsigned char saved[GAME_DEAL_RNG_STATE_MAX];
+    game_deal_rng_get(saved);
+    game_set_deal_seed_bytes(seed, FOOLISH_SEED_LEN);
+    void (*const prev)(const Game *, int, int) = engine_snap_hook;
+    t_capture = t->snaps;
+    engine_snap_hook = table_snap;
+    start_game(t->g);
+    engine_snap_hook = prev;
+    t_capture = 0;
+    game_deal_rng_set(saved);
+    t->dealt_now = true;
+    t->lobby_event = false;   // the deal's own events announce it
+}
+
+int table_create(Table *t, const char *actor_id, int id_len, const char *name, int name_len) {
+    static const char suffix[] = "'s Game";
+    const int suffix_len = (int)sizeof(suffix) - 1;
+    Roster r;
+    char title[ROSTER_TITLE_MAX];
+    memset(&r, 0, sizeof(r));
+    int rc = roster_seat_add(&r, actor_id, id_len, name, name_len, "", 0);
+    if (rc < 0) return roster_refusal(t, rc);
+    // The title is the creator's name, whole scalars only, then "'s Game".
+    int keep = name_len < ROSTER_TITLE_MAX - suffix_len ? name_len : ROSTER_TITLE_MAX - suffix_len;
+    while (keep > 0 && keep < name_len && ((uint8_t)name[keep] & 0xc0) == 0x80) keep--;
+    memcpy(title, name, (size_t)keep);
+    memcpy(title + keep, suffix, (size_t)suffix_len);
+    if ((rc = roster_set_title(&r, title, keep + suffix_len)) != ROSTER_OK) return roster_refusal(t, rc);
+
+    Game *g = t->g;
+    memset(g, 0, offsetof(Game, logs));
+    g->num_logs = 0;
+    game_lobby_seat(g, STRATEGY_KEY_HUMAN);
+    t->r = r;
+    t->loaded = true;
+    lobby_edit(t, 1);
+    t->lobby_event = false;   // nobody is watching a table that did not exist
+    return TABLE_OK;
+}
+
+int table_join(Table *t, const char *actor_id, int id_len, const char *name, int name_len) {
+    if (!t->loaded) return TABLE_E_NOT_LOADED;
+    if (t->g->status != GAME_STATUS_WAITING) return TABLE_E_NOT_WAITING;
+    const int rc = roster_seat_add(&t->r, actor_id, id_len, name, name_len, "", 0);
+    if (rc < 0) return roster_refusal(t, rc);
+    game_lobby_seat(t->g, STRATEGY_KEY_HUMAN);
+    lobby_edit(t, 1);
+    return TABLE_OK;
+}
+
+// Removes a seat from both halves of the table.
+static int unseat(Table *t, int seat) {
+    roster_seat_remove(&t->r, seat);
+    game_lobby_unseat(t->g, seat);
+    if (t->r.n == 0) return TABLE_EMPTY;
+    lobby_edit(t, 1);
+    return TABLE_OK;
+}
+
+int table_leave(Table *t, const char *actor_id, int id_len, const char *target_id, int target_len) {
+    if (!t->loaded) return TABLE_E_NOT_LOADED;
+    if (actor_seat(t, actor_id, id_len) < 0) return TABLE_E_NOT_SEATED;
+    if (t->g->status != GAME_STATUS_WAITING) return TABLE_E_NOT_WAITING;
+    const int seat = roster_seat_of(&t->r, target_id, target_len);
+    if (seat < 0) return TABLE_E_NOT_SEATED;
+    // A bot is removed as a bot (table_remove_bot), never as a player leaving.
+    if (t->r.seats[seat].brain_len > 0) return TABLE_E_FORBIDDEN;
+    return unseat(t, seat);
+}
+
+int table_add_bot(Table *t, const char *actor_id, int id_len, const char *bot_id, int bot_len,
+                  const char *nick, int nick_len, const char *brain, int brain_len, const uint8_t *deal_seed) {
+    if (!t->loaded) return TABLE_E_NOT_LOADED;
+    if (actor_seat(t, actor_id, id_len) < 0) return TABLE_E_NOT_SEATED;
+    if (t->g->status != GAME_STATUS_WAITING) return TABLE_E_NOT_WAITING;
+    char key[ROSTER_BRAIN_MAX + 1];
+    if (brain_len <= 0 || brain_len > ROSTER_BRAIN_MAX) return TABLE_E_UNKNOWN_BRAIN;
+    memcpy(key, brain, (size_t)brain_len);
+    key[brain_len] = 0;
+    const int idx = bot_roster_find(key);
+    if (idx < 0 || !bot_roster_linked(idx)) return TABLE_E_UNKNOWN_BRAIN;
+    const int rc = roster_seat_add(&t->r, bot_id, bot_len, nick, nick_len, brain, brain_len);
+    if (rc < 0) return roster_refusal(t, rc);
+    game_lobby_seat(t->g, bot_roster_at(idx)->strat);
+    lobby_edit(t, 1);
+    if (game_lobby_can_deal(t->g)) deal(t, deal_seed);
+    return TABLE_OK;
+}
+
+int table_remove_bot(Table *t, const char *actor_id, int id_len, const char *bot_id, int bot_len) {
+    if (!t->loaded) return TABLE_E_NOT_LOADED;
+    if (actor_seat(t, actor_id, id_len) < 0) return TABLE_E_NOT_SEATED;
+    if (t->g->status != GAME_STATUS_WAITING) return TABLE_E_NOT_WAITING;
+    const int seat = roster_seat_of(&t->r, bot_id, bot_len);
+    if (seat < 0 || t->r.seats[seat].brain_len == 0) return TABLE_E_NOT_SEATED;
+    return unseat(t, seat);
+}
+
+int table_ready(Table *t, const char *actor_id, int id_len, const uint8_t *deal_seed) {
+    if (!t->loaded) return TABLE_E_NOT_LOADED;
+    const int seat = actor_seat(t, actor_id, id_len);
+    if (seat < 0) return TABLE_E_NOT_SEATED;
+    // Readying a game that is already dealt changes nothing: a late second tap.
+    if (t->g->status != GAME_STATUS_WAITING) return TABLE_MOOT;
+    game_lobby_ready(t->g, seat);
+    lobby_edit(t, 0);
+    if (game_lobby_can_deal(t->g)) deal(t, deal_seed);
+    return TABLE_OK;
+}
+
+int table_reseat(Table *t, const char *actor_id, int id_len, const uint8_t *ids, int ids_len) {
+    if (!t->loaded) return TABLE_E_NOT_LOADED;
+    if (actor_seat(t, actor_id, id_len) < 0) return TABLE_E_NOT_SEATED;
+    if (t->g->status != GAME_STATUS_WAITING) return TABLE_E_NOT_WAITING;
+    int8_t perm[MAX_PLAYERS];
+    int n = 0, at = 0;
+    while (at < ids_len) {
+        const int len = ids[at];
+        if (n >= MAX_PLAYERS || at + 1 + len > ids_len) return roster_refusal(t, ROSTER_E_PERM);
+        const int seat = roster_seat_of(&t->r, (const char *)ids + at + 1, len);
+        if (seat < 0) return roster_refusal(t, ROSTER_E_PERM);
+        perm[n++] = (int8_t)seat;
+        at += 1 + len;
+    }
+    const int rc = roster_reorder(&t->r, perm, n);
+    if (rc != ROSTER_OK) return roster_refusal(t, rc);
+    game_lobby_reorder(t->g, perm, n);
+    lobby_edit(t, 1);
+    return TABLE_OK;
+}
+
+// JavaScript's String.prototype.trim whitespace, as UTF-8 (ECMA-262 WhiteSpace
+// and LineTerminator): the length of the whitespace scalar at p, or 0.
+static int js_space(const uint8_t *p, int n) {
+    if (n >= 1 && ((p[0] >= 0x09 && p[0] <= 0x0d) || p[0] == 0x20)) return 1;
+    if (n >= 2 && p[0] == 0xc2 && p[1] == 0xa0) return 2;                               // U+00A0
+    if (n >= 3 && p[0] == 0xe1 && p[1] == 0x9a && p[2] == 0x80) return 3;               // U+1680
+    if (n >= 3 && p[0] == 0xe2 && p[1] == 0x80 && ((p[2] >= 0x80 && p[2] <= 0x8a)       // U+2000-200A
+        || p[2] == 0xa8 || p[2] == 0xa9 || p[2] == 0xaf)) return 3;                      // U+2028, 2029, 202F
+    if (n >= 3 && p[0] == 0xe2 && p[1] == 0x81 && p[2] == 0x9f) return 3;               // U+205F
+    if (n >= 3 && p[0] == 0xe3 && p[1] == 0x80 && p[2] == 0x80) return 3;               // U+3000
+    if (n >= 3 && p[0] == 0xef && p[1] == 0xbb && p[2] == 0xbf) return 3;               // U+FEFF
+    return 0;
+}
+
+// The title rule the lobby has always kept: at most 50 characters as the web
+// counts them (UTF-16 code units, before trimming), and not empty once trimmed.
+int table_retitle(Table *t, const char *actor_id, int id_len, const char *title, int title_len) {
+    if (!t->loaded) return TABLE_E_NOT_LOADED;
+    if (actor_seat(t, actor_id, id_len) < 0) return TABLE_E_NOT_SEATED;
+    if (t->g->status != GAME_STATUS_WAITING) return TABLE_E_NOT_WAITING;
+    const uint8_t *p = (const uint8_t *)title;
+    if (title_len < 0 || (title_len > 0 && !p)) return roster_refusal(t, ROSTER_E_TITLE);
+    int units = 0;
+    for (int i = 0; i < title_len; i++) {
+        if ((p[i] & 0xc0) != 0x80) units += p[i] >= 0xf0 ? 2 : 1;
+    }
+    if (units > 50) return roster_refusal(t, ROSTER_E_TITLE);
+    int lo = 0, hi = title_len, k;
+    while (lo < hi && (k = js_space(p + lo, hi - lo)) > 0) lo += k;
+    for (int moved = 1; moved && hi > lo; ) {
+        moved = 0;
+        for (int w = 3; w >= 1; w--) {
+            if (hi - w >= lo && js_space(p + hi - w, w) == w) { hi -= w; moved = 1; break; }
+        }
+    }
+    if (hi == lo) return roster_refusal(t, ROSTER_E_TITLE);
+    const int rc = roster_set_title(&t->r, title + lo, hi - lo);
+    if (rc != ROSTER_OK) return roster_refusal(t, rc);
+    lobby_edit(t, 1);
+    return TABLE_OK;
+}
+
+int table_continue(Table *t, const char *actor_id, int id_len) {
+    if (!t->loaded) return TABLE_E_NOT_LOADED;
+    if (actor_seat(t, actor_id, id_len) < 0) return TABLE_E_NOT_SEATED;
+    if (t->g->status != GAME_STATUS_GAME_OVER) return TABLE_E_NOT_OVER;
+    game_reset_to_lobby(t->g, roster_bot_mask(&t->r));
+    // A lobby has no deck to draw from, so its blob says so: the flag byte of every
+    // lobby blob is 0, as the expand migration writes it (plan 3.4), and the next
+    // deal sets it again.
+    t->g->deterministic_deck = false;
+    lobby_edit(t, 0);
+    return TABLE_OK;
+}
+
+int table_rearrange_hand(Table *t, const char *actor_id, int id_len, const uint8_t *idx, int n) {
+    if (!t->loaded) return TABLE_E_NOT_LOADED;
+    const int seat = actor_seat(t, actor_id, id_len);
+    if (seat < 0) return TABLE_E_NOT_SEATED;
+    scope_open(t, seat);
+    if (!game_rearrange_hand(t->g, seat, idx, n)) return TABLE_E_WIRE;
+    return TABLE_OK;
+}
+
+int table_redact(Table *t, const char *user_id, int id_len, const char *name, int name_len) {
+    if (!t->loaded) return TABLE_E_NOT_LOADED;
+    const int rc = roster_redact(&t->r, user_id, id_len, name, name_len);
+    if (rc == ROSTER_E_SEAT) return TABLE_E_NOT_SEATED;
+    if (rc < 0) return roster_refusal(t, rc);
+    scope_open(t, -1);
+    t->roster_changed = true;
+    return TABLE_OK;
+}
+
 // ---------- the end of a game -----------------------------------------------------
 
 // The one seat the elimination order does not name. A finished game's seats

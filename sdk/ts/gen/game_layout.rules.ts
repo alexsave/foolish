@@ -46,6 +46,7 @@ export const TABLE_E_FORBIDDEN = -107;
 export const TABLE_E_WIRE = -108;
 export const TABLE_E_CAP = -109;
 export const TABLE_E_NOT_LOADED = -110;
+export const TABLE_E_NOT_OVER = -111;
 export const TABLE_REJECT_STALE_ROUND = 100;
 export const TABLE_STATE_FORMAT = 2;
 export const TABLE_REQ_FORMAT_V1 = 1;

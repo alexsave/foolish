@@ -81,6 +81,93 @@ int wasm_table_act(int id_len, int wire_len, double intent, double round_epoch) 
                      intent < 0 ? -1 : (int64_t)intent, (int64_t)round_epoch);
 }
 
+// ---- lobby edits: io = [actor id][the edit's own inputs, back to back] ----
+
+// Inputs longer than the IO buffer are refused before anything reads them.
+static const unsigned char *inputs(int total) {
+    return total < 0 || total > wasm_io_cap() ? 0 : wasm_io_ptr();
+}
+
+// io = [actor id][name]
+int wasm_table_create(int id_len, int name_len) {
+    const unsigned char *io = inputs(id_len + name_len);
+    if (!io || id_len < 0 || name_len < 0) return TABLE_E_WIRE;
+    return table_create(table(), (const char *)io, id_len, (const char *)io + id_len, name_len);
+}
+
+// io = [actor id][name]
+int wasm_table_join(int id_len, int name_len) {
+    const unsigned char *io = inputs(id_len + name_len);
+    if (!io || id_len < 0 || name_len < 0) return TABLE_E_WIRE;
+    return table_join(table(), (const char *)io, id_len, (const char *)io + id_len, name_len);
+}
+
+// io = [actor id][target id]
+int wasm_table_leave(int id_len, int target_len) {
+    const unsigned char *io = inputs(id_len + target_len);
+    if (!io || id_len < 0 || target_len < 0) return TABLE_E_WIRE;
+    return table_leave(table(), (const char *)io, id_len, (const char *)io + id_len, target_len);
+}
+
+// io = [actor id][bot id][nickname][brain key][deal seed, FOOLISH_SEED_LEN]
+int wasm_table_add_bot(int id_len, int bot_len, int nick_len, int brain_len) {
+    const int seed_at = id_len + bot_len + nick_len + brain_len;
+    const unsigned char *io = inputs(seed_at + FOOLISH_SEED_LEN);
+    if (!io || id_len < 0 || bot_len < 0 || nick_len < 0 || brain_len < 0) return TABLE_E_WIRE;
+    const char *c = (const char *)io;
+    return table_add_bot(table(), c, id_len, c + id_len, bot_len, c + id_len + bot_len, nick_len,
+                         c + id_len + bot_len + nick_len, brain_len, io + seed_at);
+}
+
+// io = [actor id][bot id]
+int wasm_table_remove_bot(int id_len, int bot_len) {
+    const unsigned char *io = inputs(id_len + bot_len);
+    if (!io || id_len < 0 || bot_len < 0) return TABLE_E_WIRE;
+    return table_remove_bot(table(), (const char *)io, id_len, (const char *)io + id_len, bot_len);
+}
+
+// io = [actor id][deal seed, FOOLISH_SEED_LEN]
+int wasm_table_ready(int id_len) {
+    const unsigned char *io = inputs(id_len + FOOLISH_SEED_LEN);
+    if (!io || id_len < 0) return TABLE_E_WIRE;
+    return table_ready(table(), (const char *)io, id_len, io + id_len);
+}
+
+// io = [actor id][n x { u8 len, id }]
+int wasm_table_reseat(int id_len, int ids_len) {
+    const unsigned char *io = inputs(id_len + ids_len);
+    if (!io || id_len < 0 || ids_len < 0) return TABLE_E_WIRE;
+    return table_reseat(table(), (const char *)io, id_len, io + id_len, ids_len);
+}
+
+// io = [actor id][title]
+int wasm_table_retitle(int id_len, int title_len) {
+    const unsigned char *io = inputs(id_len + title_len);
+    if (!io || id_len < 0 || title_len < 0) return TABLE_E_WIRE;
+    return table_retitle(table(), (const char *)io, id_len, (const char *)io + id_len, title_len);
+}
+
+// io = [actor id]
+int wasm_table_continue(int id_len) {
+    const unsigned char *io = inputs(id_len);
+    if (!io || id_len < 0) return TABLE_E_WIRE;
+    return table_continue(table(), (const char *)io, id_len);
+}
+
+// io = [actor id][n hand indices, one byte each]
+int wasm_table_rearrange_hand(int id_len, int n) {
+    const unsigned char *io = inputs(id_len + n);
+    if (!io || id_len < 0 || n < 0) return TABLE_E_WIRE;
+    return table_rearrange_hand(table(), (const char *)io, id_len, io + id_len, n);
+}
+
+// io = [user id][replacement name]
+int wasm_table_redact(int id_len, int name_len) {
+    const unsigned char *io = inputs(id_len + name_len);
+    if (!io || id_len < 0 || name_len < 0) return TABLE_E_WIRE;
+    return table_redact(table(), (const char *)io, id_len, (const char *)io + id_len, name_len);
+}
+
 int wasm_table_needs_bots(void) { return table_needs_bots(table()) ? 1 : 0; }
 int wasm_table_bots_need_logs(void) { return table_bots_need_logs(table()) ? 1 : 0; }
 

@@ -443,6 +443,21 @@ int game_lobby_ready(Game *g, int seat);
 // single one does not have to rely on.
 int game_lobby_can_deal(const Game *g);
 
+// Unseat one player from a WAITING game: the seats above move down one, as the
+// table's roster does (roster_seat_remove). Returns 1, or 0 for a game that is
+// not WAITING or a seat out of range (nothing changed).
+int game_lobby_unseat(Game *g, int seat);
+
+// Reseat a WAITING game: new seat i is old seat perm[i]. n must be the seat
+// count and perm a permutation of it. Returns 1, or 0 with nothing changed.
+int game_lobby_reorder(Game *g, const int8_t *perm, int n);
+
+// Reorder a seat's own hand: new card i is old card idx[i]. The permutation
+// check is load-bearing - n must equal the hand count and each index be used
+// exactly once, or a hostile request mints duplicate cards. Returns 1, or 0
+// with nothing changed.
+int game_rearrange_hand(Game *g, int seat, const unsigned char *idx, int n);
+
 // Seat `n` players and DEAL, in one kernel call — the whole "go from a lobby to a
 // dealt board" the hosts used to hand-roll. Sets the seat count; if
 // `strategy_keys` is non-NULL, writes each seat's kind (STRATEGY_KEY_HUMAN, or a

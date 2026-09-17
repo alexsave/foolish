@@ -641,20 +641,7 @@ int wasm_events_serialize(int viewer, int actor, int append_final_transition) {
 // EXACTLY once — otherwise a hostile payload mints duplicate cards. Returns
 // 1 applied, 0 invalid (state untouched).
 int wasm_rearrange_hand(int seat, int n) {
-    if (seat < 0 || seat >= g_game.num_players) return 0;
-    Player *pl = &g_game.players[seat];
-    if (n != pl->hand_count || n < 0 || n > MAX_HAND_SIZE) return 0;
-    unsigned char seen[MAX_HAND_SIZE];
-    Card out[MAX_HAND_SIZE];
-    for (int i = 0; i < n; i++) seen[i] = 0;
-    for (int i = 0; i < n; i++) {
-        const unsigned char idx = g_in_raw_a[i];
-        if (idx >= (unsigned char)n || seen[idx]) return 0;
-        seen[idx] = 1;
-        out[i] = pl->hand[idx];
-    }
-    for (int i = 0; i < n; i++) pl->hand[i] = out[i];
-    return 1;
+    return game_rearrange_hand(&g_game, seat, g_in_raw_a, n);
 }
 
 // ---------- queries ----------------------------------------------------------

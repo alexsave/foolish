@@ -21,7 +21,9 @@
  * (e2e/fixtures/pre_table, the rows the hosted database holds) played on with
  * legal moves and hostile requests to its end, and fresh deals driven by the
  * adversarial generator of e2e/fuzz.test.ts (e2e/helpers/fuzz_moves.ts). Every
- * lobby row of the fixture is compared at load.
+ * lobby row of the fixture is compared at load, then joined, readied and dealt;
+ * and a scripted lobby goes from create through every lobby edit, a deal, a
+ * played game, continue, and out to an empty table (e2e meta handlers, in memory).
  *
  * Asserted per step: the outcome class (applied / rejected with the same kernel
  * reason / moot / not seated / malformed wire) and the response body; for an
@@ -38,7 +40,20 @@
  *       null timestamp, and a separate assertion proves the unnormalized TS
  *       trailer differs from C's in exactly those two things: same ids, names,
  *       bot flags, title, status and the same SET of good players.
- *   Q7  Lobby-op message prose and the r/m push extras (Phase 3.ii).
+ *   Q7  A lobby edit's push: TS sent MAGIC_TRANSITION events with message prose
+ *       (and r/m JSON extras). C sends the same events with EVW_MSG_NONE and, for
+ *       an edit that changed the roster, the new roster in the as3 trailer block.
+ *       The TS events are encoded with their prose removed; the C trailer is held
+ *       to encodePackedRoster's bytes for the committed roster.
+ *   Q9  Two lobby edits TS applies are refused by the C Table's policy: an
+ *       `exit` whose player_id names a BOT (bots leave only as bots), and a
+ *       `rearrange-players` naming one player twice (TS seats that player twice).
+ *       Each is driven explicitly and asserted applied by TS, refused by C.
+ *   ready-after-deal: TS commits an unchanged game with no events; C answers
+ *       TABLE_MOOT and commits nothing.
+ *   Lobby state blob: TS writes none for a WAITING row (commit_game clears it);
+ *       C writes the lobby blob the expand migration backfills, held to
+ *       serializeGameState of the TS lobby.
  * ========================================================================== */
 
 import './harness.ts';
@@ -51,25 +66,28 @@ import { loadCompleteGame } from '../server/impls/supabase/functions/_shared/ada
 import { buildPlayerViewRows, buildSpectatorView } from '../server/api/common/player_views.ts';
 import { start_game_packed } from '../server/api/common/game_lifecycle.ts';
 import { calculateGameRankings } from '../server/api/common/finish_order.ts';
-import { calculateEloChange } from '../server/api/common/common_utils.ts';
+import { calculateEloChange, cloneGame } from '../server/api/common/common_utils.ts';
+import { handleMetaAction } from '../server/impls/supabase/functions/_shared/adapter/meta_actions.ts';
+import { MAX_PLAYERS } from '../server/api/core/constants.ts';
+import { encodeEventWire } from '../sdk/ts/wire/evwire.ts';
 import {
-    runPackedAction, materializeKernelGame, serializeGameState, kernelLegalMoves,
+    runPackedAction, materializeKernelGame, serializeGameState, kernelLegalMoves, kernelFinalizeWin,
     __setDealSeedOverride, __setEngineClock,
 } from '../sdk/ts/wasm/engine.ts';
 import { kernelBotRoster, wasmBotEligibleMask } from '../sdk/ts/wasm/bots.ts';
 import { logsFromKernelExport, logwireHexClosesRound } from '../sdk/ts/wire/logwire.ts';
 import { bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
-import { decodePackedRoster } from '../sdk/ts/wire/roster.ts';
+import { decodePackedRoster, encodePackedRoster } from '../sdk/ts/wire/roster.ts';
 import {
     AWIRE_KIND, encodeAction, encodeActionRequest, encodeActionResponse, decodeActionRequest,
     ACTION_STATUS, REJECT_STALE_ROUND, wireCard,
 } from '../sdk/ts/wire/awire.ts';
 import { bytesToHex, hexToBytes } from '../server/api/common/replay/codec.ts';
-import { Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, STRATEGY_KEY } from '../server/api/core/types.ts';
+import { AnimationEvent, Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, STRATEGY_KEY } from '../server/api/core/types.ts';
 import { createServerTable, TableProducts } from '../sdk/ts/table/server_table.ts';
 import {
     GAME_INVALID_LOBBY_CARDS, GAME_STATUS_GAME_OVER, GAME_STATUS_PLAYING, GAME_STATUS_WAITING,
-    TABLE_APPLIED, TABLE_E_NOT_SEATED, TABLE_E_WIRE, TABLE_MOOT, TABLE_OK, TABLE_REJECTED, TABLE_STALE_ROUND,
+    TABLE_APPLIED, TABLE_E_NOT_SEATED, TABLE_E_WIRE, TABLE_EMPTY, TABLE_MOOT, TABLE_OK, TABLE_REJECTED, TABLE_STALE_ROUND,
 } from '../sdk/ts/gen/game_layout.bots.ts';
 import { cRosterEncode } from './helpers/roster_kernel.ts';
 import { FuzzReq, fuzzGenerators, fuzzRng } from './helpers/fuzz_moves.ts';
@@ -329,7 +347,7 @@ function fuzzWire(req: FuzzReq): Uint8Array {
     }
 }
 
-async function drive(label: string, ts: TsRow, c: CRow, steps: number, seed: number): Promise<void> {
+async function drive(label: string, ts: TsRow, c: CRow, steps: number, seed: number): Promise<{ ts: TsRow; c: CRow }> {
     counts.games++;
     const rng = fuzzRng(seed);
     const gens = fuzzGenerators(rng, uuid);
@@ -349,9 +367,183 @@ async function drive(label: string, ts: TsRow, c: CRow, steps: number, seed: num
             // One more request after the end: moot on both sides.
             const again = await step(`${label} after the end`, ts, c, ts.players[0].player_id, Uint8Array.of(AWIRE_KIND.pickup, 0));
             assert.ok(again.ended, `${label}: a move after the end is moot`);
-            return;
+            return { ts, c };
         }
     }
+    return { ts, c };
+}
+
+// ---- lobby edits (Phase 3.ii) ---------------------------------------------------
+
+/** A lobby as today's TS pipeline holds it between requests. */
+interface TsLobby { game: Game; version: number }
+
+const BOT_ROWS = [
+    { id: '00000000-0000-4000-8000-0000000b0001', nickname: 'Rando ♠', strategy_key: 'random' },
+    { id: '00000000-0000-4000-8000-0000000b0002', nickname: 'Кордит', strategy_key: 'cordite' },
+    { id: '00000000-0000-4000-8000-0000000b0003', nickname: 'Hand', strategy_key: 'handwritten' },
+];
+const botRow = (id: string) => BOT_ROWS.find((b) => b.id === id)!;
+const DEAL_SEED = Uint8Array.from({ length: 32 }, (_, i) => (i * 37 + 11) & 0xff);
+
+type MetaBody = { type: string; [k: string]: unknown };
+
+// The seat list of the roster the TS row stands for, as the C roster encoder takes it.
+const seatsOf = (g: Game): Seat[] =>
+    g.players.map((p) => ({ player_id: p.player_id, name: p.name, is_ai: p.is_ai, strategy_key: p.strategy_key as string }));
+
+// Q7: the TS lobby events without their prose, which the C push does not carry.
+const proseless = (events: AnimationEvent[]) => events.map((e) => ({ ...e, message: undefined }));
+
+// The roster a push announces, as the TS trailer encoder writes it (Q1-normalized).
+function tsTrailer(g: Game): Uint8Array {
+    const n = q1Normalized(g);
+    return encodePackedRoster({
+        id: g.id, name: g.name, status: g.status,
+        players: g.players.map((p) => ({ player_id: p.player_id, name: p.name, is_ai: p.is_ai })),
+        good_players: n.good_players, good_timestamp: null,
+    });
+}
+
+// The one edit, through the C Table: TABLE_* result.
+function cMeta(userId: string, userName: string, body: MetaBody): number {
+    const s = (k: string) => String(body[k] ?? '');
+    switch (body.type) {
+        case 'join': return table.join(userId, userName);
+        case 'start': return table.ready(userId, DEAL_SEED);
+        case 'add-bot': {
+            const b = botRow(s('bot_id'));
+            return table.addBot(userId, b.id, b.nickname, b.strategy_key, DEAL_SEED);
+        }
+        case 'exit': return body.bot_id ? table.removeBot(userId, s('bot_id')) : table.leave(userId, body.player_id ? s('player_id') : userId);
+        case 'continue': return table.continueGame(userId);
+        case 'rearrange-players': return table.reseat(userId, body.new_order as string[]);
+        case 'update-name': return table.retitle(userId, s('new_name'));
+        case 'rearrange-hand': return table.rearrangeHand(userId, body.card_indices as number[]);
+        default: throw new Error(`no C edit for ${body.type}`);
+    }
+}
+
+// What today's meta path does to a loaded game (executeWithGameLock minus its
+// load and commit): the handler, then the products commitGame and the broadcast
+// would write.
+async function tsMeta(row: TsLobby, userId: string, userName: string, body: MetaBody) {
+    // cloneGame copies the board but not the two fields loadCompleteGame restores from
+    // the row (the blob's deterministic-deck flag, the deal seed), so carry them.
+    const game = { ...cloneGame(row.game), deterministic_deck: row.game.deterministic_deck, game_seed: row.game.game_seed };
+    const realNow = Date.now;
+    Date.now = () => NOW;
+    __setDealSeedOverride(DEAL_SEED);
+    let result;
+    try {
+        result = await handleMetaAction({
+            user: { id: userId, user_metadata: { username: userName } } as never, user_name: userName,
+            body: { game_id: game.id, ...body }, game, reqId: 'parity',
+            botsPrefetch: Promise.resolve({ data: BOT_ROWS, error: null }),
+        });
+    } catch (e) {
+        return { kind: 'refused' as const, error: String((e as Error).message) };
+    } finally {
+        Date.now = realNow;
+        __setDealSeedOverride(null);
+    }
+    if (result.deleted) return { kind: 'deleted' as const };
+    const g = result.game;
+    const packed = result.packed;
+    if (!packed) kernelFinalizeWin(g);
+    const state = packed ? hexToBytes(packed.stateHex) : serializeGameState(g);
+    const version = row.version + 1;
+    const stateHex = packed ? packed.stateHex : (g.status === GAME_STATUS.WAITING ? null : bytesToHex(state));
+    const views = await tsViews(g, stateHex, version);
+    let pushes: Map<number, Uint8Array> = new Map();
+    let nEvents = 0;
+    if (packed) {
+        pushes = packed.events;
+        nEvents = packed.nEvents;
+    } else if (result.events.length > 0) {
+        nEvents = result.events.length;
+        g.players.forEach((p, seat) => { if (!p.is_ai) pushes.set(seat, encodeEventWire(proseless(result.events), g, seat, -1)); });
+        pushes.set(-1, encodeEventWire(proseless(result.events), g, -1, -1));
+    }
+    return {
+        kind: 'ok' as const, next: { game: g, version } as TsLobby, state,
+        logs: packed?.logsHex ? hexToBytes(packed.logsHex) : null, views, pushes, nEvents,
+    };
+}
+
+const ROSTER_EDITS = new Set(['join', 'add-bot', 'exit', 'rearrange-players', 'update-name']);
+const lobbyCounts = { edits: 0, applied: 0, refused: 0, deleted: 0, moot: 0, deals: 0, envelopes: 0, pushes: 0 };
+
+async function lobbyStep(label: string, ts: TsLobby, c: CRow, userId: string, userName: string, body: MetaBody,
+                         expect?: 'q9-bot-as-player' | 'q9-reseat-permutation'): Promise<{ ts: TsLobby; c: CRow; empty: boolean }> {
+    lobbyCounts.edits++;
+    const t = await tsMeta(ts, userId, userName, body);
+    assert.equal(table.load(c.state, c.roster), TABLE_OK, `${label}: the C row loads`);
+    const rc = cMeta(userId, userName, body);
+
+    if (expect) {
+        // Q9, decided: a lobby edit TS applies that the C Table refuses by policy.
+        assert.equal(t.kind, 'ok', `${label}: TS applies it`);
+        assert.ok(rc < 0, `${label}: C refuses it (${rc})`);
+        if (expect === 'q9-reseat-permutation') {
+            const ids = (t as { next: TsLobby }).next.game.players.map((p) => p.player_id);
+            assert.notEqual(new Set(ids).size, ids.length, `${label}: TS seated one player twice`);
+        }
+        lobbyCounts.refused++;
+        return { ts, c, empty: false };
+    }
+    if (t.kind === 'refused') {
+        assert.ok(rc < 0, `${label}: TS refused (${t.error}), C must too (got ${rc})`);
+        lobbyCounts.refused++;
+        return { ts, c, empty: false };
+    }
+    if (t.kind === 'deleted') {
+        assert.equal(rc, TABLE_EMPTY, `${label}: the last seat left`);
+        lobbyCounts.deleted++;
+        return { ts, c, empty: true };
+    }
+    if (body.type === 'start' && ts.game.status !== GAME_STATUS.WAITING) {
+        // A ready on a dealt game: TS commits an unchanged game, C calls it a no-op.
+        assert.equal(rc, TABLE_MOOT, `${label}: a ready after the deal is moot`);
+        assert.equal(t.nEvents, 0, `${label}: and TS announced nothing either`);
+        lobbyCounts.moot++;
+        return { ts, c, empty: false };
+    }
+    assert.equal(rc, TABLE_OK, `${label}: TS applied it, C must too (got ${rc}, detail ${table.detail()})`);
+    lobbyCounts.applied++;
+    const p = table.commit(ts.game.id, t.next.version, NOW);
+    assert.ok(typeof p !== 'number', `${label}: commit products (${p})`);
+    const g = t.next.game;
+    assert.equal(hex(p.state), hex(t.state), `${label}: state blob`);
+    assert.equal(hex(p.roster), hex(rosterBytes(g.name, seatsOf(g))), `${label}: roster blob`);
+    assert.equal(p.logs ? hex(p.logs) : null, t.logs ? hex(t.logs) : null, `${label}: session-log records`);
+    assert.equal(p.status, STATUS_INT[g.status], `${label}: status`);
+    assert.equal(p.dealtNow, g.status === GAME_STATUS.PLAYING && ts.game.status === GAME_STATUS.WAITING, `${label}: dealt_now`);
+    if (p.dealtNow) { assert.ok(p.logsReset && !p.closedRound, `${label}: a deal restarts the session log`); lobbyCounts.deals++; }
+    assert.equal(p.needsBots, tsNeedsBots(g), `${label}: needs_bots`);
+    assert.equal(p.nEvents, t.nEvents, `${label}: event count`);
+    assert.equal(p.rosterChanged, ROSTER_EDITS.has(body.type), `${label}: roster_changed`);
+    assertViews(label, { id: g.id, game: g }, p, t.views);
+    lobbyCounts.envelopes += g.players.filter((pl) => !pl.is_ai).length + 1;
+    for (const [viewer, as2] of t.pushes) {
+        const as3 = table.push(g.id, viewer);
+        assert.ok(as3 instanceof Uint8Array, `${label}: push for viewer ${viewer} (${as3})`);
+        assert.equal(hex(as3.subarray(0, as2.length)), hex(as2), `${label}: viewer ${viewer} as2 bytes`);
+        const flags = as3[as2.length];
+        assert.equal(flags, p.rosterChanged ? 1 : 0, `${label}: viewer ${viewer} as3 flags`);
+        assert.equal(hex(as3.subarray(as2.length + 1)), p.rosterChanged ? hex(tsTrailer(g)) : '',
+            `${label}: viewer ${viewer} as3 roster trailer`);
+        lobbyCounts.pushes++;
+    }
+    return { ts: t.next, c: { state: p.state, roster: p.roster }, empty: false };
+}
+
+// A dealt lobby, handed to the move chain.
+function toTsRow(l: TsLobby, state: Uint8Array): TsRow {
+    return {
+        id: l.game.id, title: l.game.name, version: l.version, status: l.game.status, state,
+        players: seatsOf(l.game), good_players: l.game.good_players, good_timestamp: l.game.good_timestamp, game: l.game,
+    };
 }
 
 // ---- the fixture ----------------------------------------------------------------
@@ -461,6 +653,119 @@ if (!process.env.VALIDATION_ONLY) {
         assert.ok(d('applied') > 100 && d('rejected') > 20 && d('notSeated') > 5 && d('wire') > 5,
             `the fuzz reached every outcome class (${JSON.stringify(Object.fromEntries(Object.keys(counts).map((key) => [key, d(key as keyof typeof counts)])))})`);
         console.error(`[table_parity] ${JSON.stringify(counts)}`);
+    });
+
+    test('lobby edits, from create through a deal, a played game, continue and an empty table', async () => {
+        const [A, B, C, X] = [uuid(), uuid(), uuid(), uuid()];
+        const [BOT1, BOT2] = [BOT_ROWS[0].id, BOT_ROWS[1].id];
+        const gid = 'tplobby';
+
+        // create (create/index.ts): the creator's lobby, version 0.
+        const created: Game = {
+            id: gid, name: `Дмитрий's Game`, deck: [], deck_length: 0, discard_pile_length: 0, flipped: null,
+            players: [{ player_id: A, name: 'Дмитрий', status: PLAYER_STATUS.IDLE, is_ai: false, hand: [], hand_length: 0,
+                awaiting_attack: false, strategy_key: STRATEGY_KEY.HUMAN }],
+            status: GAME_STATUS.WAITING, power_suit: 0, first_attacker: 0, defender: 0, table_battles: [],
+            elimination_order: [], good_timestamp: null, good_players: [], logs: [],
+        };
+        assert.equal(table.create(A, 'Дмитрий'), TABLE_OK, 'C creates the lobby');
+        const p0 = table.commit(gid, 0, NOW);
+        assert.ok(typeof p0 !== 'number');
+        assert.equal(hex(p0.state), hex(serializeGameState(created)), 'create: the lobby blob');
+        assert.equal(hex(p0.roster), hex(rosterBytes(created.name, seatsOf(created))), 'create: the roster');
+        assertViews('create', { id: gid, game: created }, p0, await tsViews(created, null, 0));
+        assert.equal(p0.nEvents, 0, 'create announces nothing');
+
+        let ts: TsLobby = { game: created, version: 0 };
+        let c: CRow = { state: p0.state, roster: p0.roster };
+        const name: Record<string, string> = { [A]: 'Дмитрий', [B]: 'Zoë 🃏', [C]: 'q'.repeat(70), [X]: 'Stranger' };
+        const run = async (label: string, who: string, body: MetaBody, expect?: 'q9-bot-as-player' | 'q9-reseat-permutation') => {
+            const r = await lobbyStep(label, ts, c, who, name[who], body, expect);
+            ts = r.ts; c = r.c;
+            return r;
+        };
+        const reversed = (who: string) => {
+            const n = ts.game.players.find((p) => p.player_id === who)!.hand.length;
+            return Array.from({ length: n }, (_, i) => n - 1 - i);
+        };
+
+        await run('stranger adds a bot', X, { type: 'add-bot', bot_id: BOT1 });
+        await run('B joins', B, { type: 'join' });
+        await run('B joins twice', B, { type: 'join' });
+        await run('C joins with a name past the byte budget', C, { type: 'join' });
+        await run('A adds a bot', A, { type: 'add-bot', bot_id: BOT1 });
+        await run('A adds the same bot again', A, { type: 'add-bot', bot_id: BOT1 });
+        await run('B retitles', B, { type: 'update-name', new_name: '  Ночная игра 🎴  ' });
+        await run('B retitles past 50 characters', B, { type: 'update-name', new_name: 'x'.repeat(51) });
+        await run('B retitles to whitespace', B, { type: 'update-name', new_name: ' \t ' });
+        await run('a stranger retitles', X, { type: 'update-name', new_name: 'Mine' });
+        await run('Q9: A removes the bot as if it were a player', A, { type: 'exit', player_id: BOT1 }, 'q9-bot-as-player');
+        await run('Q9: A reseats one player twice', A, { type: 'rearrange-players', new_order: [A, A, B, C] }, 'q9-reseat-permutation');
+        await run('C reseats', C, { type: 'rearrange-players', new_order: [C, BOT1, A, B] });
+        await run('a stranger reseats', X, { type: 'rearrange-players', new_order: [A, B, C, BOT1] });
+        await run('A readies', A, { type: 'start' });
+        await run('A kicks B', A, { type: 'exit', player_id: B });
+        await run('a stranger kicks A', X, { type: 'exit', player_id: A });
+        await run('C removes the bot', C, { type: 'exit', bot_id: BOT1 });
+        await run('C removes a human as a bot', C, { type: 'exit', bot_id: A });
+        await run('A adds another bot', A, { type: 'add-bot', bot_id: BOT2 });
+        await run('C continues a lobby', C, { type: 'continue' });
+        await run('a stranger readies', X, { type: 'start' });
+        await run('C rearranges an empty hand', C, { type: 'rearrange-hand', card_indices: [] });
+        await run('C readies: the deal', C, { type: 'start' });
+        assert.equal(ts.game.status, GAME_STATUS.PLAYING, 'the lobby dealt');
+        await run('C readies again', C, { type: 'start' });
+        await run('A rearranges a duplicate', A, { type: 'rearrange-hand', card_indices: reversed(A).map(() => 0) });
+        await run('A rearranges their hand', A, { type: 'rearrange-hand', card_indices: reversed(A) });
+        await run('a stranger joins a dealt game', X, { type: 'join' });
+        await run('A continues a running game', A, { type: 'continue' });
+
+        const played = await drive('lobby game', toTsRow(ts, c.state), c, FIXTURE_STEPS, 0x10bb);
+        assert.equal(played.ts.status, GAME_STATUS.GAME_OVER, 'the dealt lobby played to its end');
+        ts = { game: played.ts.game, version: played.ts.version };
+        c = played.c;
+        await run('a stranger continues', X, { type: 'continue' });
+        await run('C continues', C, { type: 'continue' });
+        await run('A continues twice', A, { type: 'continue' });
+        await run('A removes the bot', A, { type: 'exit', bot_id: BOT2 });
+        await run('A leaves', A, { type: 'exit' });
+        const last = await run('C leaves last', C, { type: 'exit' });
+        assert.ok(last.empty, 'the table emptied');
+    });
+
+    test('a bot that makes every seat ready deals, and the fixture lobbies deal', async () => {
+        const [A, Y] = [uuid(), uuid()];
+        const g: Game = {
+            id: 'tpbotdeal', name: `Ann's Game`, deck: [], deck_length: 0, discard_pile_length: 0, flipped: null,
+            players: [{ player_id: A, name: 'Ann', status: PLAYER_STATUS.IDLE, is_ai: false, hand: [], hand_length: 0,
+                awaiting_attack: false, strategy_key: STRATEGY_KEY.HUMAN }],
+            status: GAME_STATUS.WAITING, power_suit: 0, first_attacker: 0, defender: 0, table_battles: [],
+            elimination_order: [], good_timestamp: null, good_players: [], logs: [],
+        };
+        assert.equal(table.create(A, 'Ann'), TABLE_OK);
+        const p0 = table.commit(g.id, 0, NOW) as TableProducts;
+        let r = await lobbyStep('Ann readies alone', { game: g, version: 0 }, { state: p0.state, roster: p0.roster }, A, 'Ann', { type: 'start' });
+        r = await lobbyStep('Ann adds a bot: the deal', r.ts, r.c, A, 'Ann', { type: 'add-bot', bot_id: BOT_ROWS[2].id });
+        assert.equal(r.ts.game.status, GAME_STATUS.PLAYING, 'the bot dealt');
+
+        const { rows } = await pgPool.query(`SELECT id, name, state FROM games WHERE status = 'waiting' ORDER BY id`);
+        for (const row of rows) {
+            const game = await loadCompleteGame(row.id);
+            let ts: TsLobby = { game, version: 1 };
+            let c: CRow = { state: serializeGameState(game), roster: rosterBytes(row.name, seatsOf(game)) };
+            const step = async (label: string, who: string, who_name: string, body: MetaBody) => {
+                const s = await lobbyStep(`${row.id} ${label}`, ts, c, who, who_name, body);
+                ts = s.ts; c = s.c;
+            };
+            if (ts.game.players.length < MAX_PLAYERS) await step('Yuki joins', Y, 'ゆき', { type: 'join' });
+            for (const p of [...ts.game.players]) {
+                if (!p.is_ai && ts.game.status === GAME_STATUS.WAITING) await step(`${p.name} readies`, p.player_id, p.name, { type: 'start' });
+            }
+            assert.equal(ts.game.status, GAME_STATUS.PLAYING, `${row.id}: the fixture lobby dealt`);
+        }
+        console.error(`[table_parity lobby] ${JSON.stringify(lobbyCounts)}`);
+        assert.ok(lobbyCounts.deals >= 6 && lobbyCounts.refused >= 15 && lobbyCounts.moot >= 1 && lobbyCounts.deleted === 1,
+            `every lobby outcome was reached (${JSON.stringify(lobbyCounts)})`);
     });
 
     test('the action request and response codecs are the TS ones, byte for byte', () => {

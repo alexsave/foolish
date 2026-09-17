@@ -40,7 +40,7 @@ export function fuzzGenerators(r: FuzzRng, uuid: () => string): ((g: Game) => Fu
         return (atks.length ? pick(atks) : g.players[0]).player_id;
     };
     return [
-        // 1) DUPLICATE identical card in one attack — the object-identity dedup hole.
+        // 1) DUPLICATE identical card in one attack - the object-identity dedup hole.
         (g) => { const c = someHandCard(g) ?? garbageCard(); return { type: 'attack', player_id: g.players[g.first_attacker].player_id, cards: [{ ...c }, { ...c }] }; },
         // 2) duplicate identical cover card
         (g) => { const c = someHandCard(g) ?? garbageCard(); const a = g.table_battles[0]?.attack ?? garbageCard(); return { type: 'cover', player_id: g.players[g.defender].player_id, cover_cards: [{ ...c }, { ...c }], attack_cards: [{ ...a }, { ...a }] }; },
@@ -72,7 +72,7 @@ export function fuzzGenerators(r: FuzzRng, uuid: () => string): ((g: Game) => Fu
         (g) => ({ type: 'attack', player_id: attackerId(g), cards: [{ suit: '0' as any, value: '5' as any }, { suit: {} as any, value: [] as any }] }),
         // 16) injection-ish strings in player_id / type (parameterized queries must shrug)
         (g) => ({ type: pick(["attack'; DROP TABLE games;--", '__proto__', 'constructor']) as any, player_id: pick(["1' OR '1'='1", "'; DELETE FROM player_hands; --", '../../etc/passwd']) }),
-        // 17) bounded-large payload (DoS attempt — must stay bounded, not hang/OOM)
+        // 17) bounded-large payload (DoS attempt - must stay bounded, not hang/OOM)
         (g) => ({ type: 'attack', player_id: g.players[g.first_attacker].player_id, cards: Array(300).fill(0).map(() => ({ ...(someHandCard(g) ?? garbageCard()) })) }),
         // 18) null / missing required fields
         (g) => ({ type: pick(['attack', 'cover', 'pass']), player_id: pick([null, undefined, '']) as any, cards: null, cover_cards: null, attack_cards: null }),
