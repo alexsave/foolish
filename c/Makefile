@@ -223,7 +223,8 @@ IOS_CAPS   := -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_MOVE_CARDS=28 \
 IOS_CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c \
                 src/replay_steps.c src/replay_extras.c src/view.c src/awire.c \
                 src/evwire.c src/sha256.c src/msg_wire.c src/msg_expand.c \
-                src/anim_plan.c src/roster.c src/card.c ios/ios_api.c
+                src/anim_plan.c src/roster.c src/card.c src/client_table.c \
+                ios/ios_api.c
 IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC),$(CORE_SRC)) ios/ios_bots_api.c
 
 # Everything, for the host-side smoke/golden binaries that want one link line.
@@ -238,6 +239,7 @@ IOS_CFLAGS := -O2 -Isrc -Iios/include -Iios/include-bots/CFoolishBots $(IOS_CAPS
 
 # $(1)=target-triple  $(2)=sdk name  $(3)=output dir  $(4)=lib name  $(5)=sources
 define IOS_BUILD_SLICE
+	@rm -rf $(3)/obj-$(4)
 	@mkdir -p $(3)/obj-$(4)
 	@for s in $(5); do \
 	  o=$(3)/obj-$(4)/$$(basename $$s .c).o; \
@@ -294,6 +296,13 @@ ios-lib: build/layout/ios.hash
 #   2. core + bots still share ONE resident game (ios/one_game_check.c)
 # (1) is the one that keeps octogen out of the iMessage bundle. (2) is what
 # would break silently if the split were done carelessly.
+#
+# THE OBJECT DIRECTORIES ARE EMPTIED FIRST, here and in IOS_BUILD_SLICE, because
+# both archives are made by globbing *.o: a source that MOVES from one list to
+# the other leaves its old object behind in the directory it left, the glob
+# picks it up, and the two archives then define the same symbols twice. Moving
+# client_table.c into the core list is exactly that, and "ld: 16 duplicate
+# symbols" is what it says when nothing sweeps.
 # `ar` on a Mac is not necessarily Apple's: a homebrew binutils on PATH writes a
 # GNU-format archive that ld(1) refuses ("archive member '/' not a mach-o
 # file"). Apple's libtool writes what its linker reads, and is what ios-lib
@@ -302,6 +311,7 @@ IOS_ARCHIVE := $(if $(filter Darwin,$(shell uname -s)),libtool -static -o,ar rcs
 
 .PHONY: ios-archives
 ios-archives:
+	@rm -rf build/ios-a/core build/ios-a/bots
 	@mkdir -p build/ios-a/core build/ios-a/bots
 	@for s in $(IOS_CORE_SRC); do \
 	  $(CC) $(IOS_CFLAGS) -c $$s -o build/ios-a/core/$$(basename $$s .c).o || exit 1; done

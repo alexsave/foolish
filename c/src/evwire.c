@@ -368,6 +368,26 @@ int evwire_frames_settlement_cut(const unsigned char *frames, int len) {
     return c.cut;
 }
 
+int evwire_frames(const unsigned char *frames, int len, int *off, int *flen, int cap) {
+    if (len == 0) return 0;
+    if (!frames || len < 0 || cap < 0) return EVW_EBADARG;
+    int p = 0, n = 0;
+    while (p < len) {
+        if (p + 2 > len) return EVW_EPARSE;
+        const int f = frames[p] | (frames[p + 1] << 8);
+        p += 2;
+        if (f <= 0 || p + f > len) return EVW_EPARSE;
+        if (off || flen) {
+            if (n >= cap) return EVW_ECAP;
+            if (off) off[n] = p;
+            if (flen) flen[n] = f;
+        }
+        n++;
+        p += f;
+    }
+    return n;
+}
+
 int evwire_as3_split(const unsigned char *buf, int len, int *seq_len, int *flags, int *block_off) {
     const unsigned char *fin = 0;
     int fin_len = 0;

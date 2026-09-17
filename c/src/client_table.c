@@ -165,6 +165,19 @@ int client_adopt_board(ClientTable *c, const Game *g, int viewer) {
     return CLIENT_OK;
 }
 
+int client_adopt_state(ClientTable *c, const uint8_t *p, int len, int viewer) {
+    c->open = false;
+    c->detail = 0;
+    if (!p || len < 0 || viewer >= MAX_PLAYERS) return CLIENT_E_FORMAT;
+    const int rc = board_import(c, p, len);
+    if (rc != CLIENT_OK) return rc;
+    if (viewer >= c->g->num_players) return CLIENT_E_MISMATCH;
+    c->has_roster = false;
+    c->version = 0;
+    view_fill(c, viewer < 0 ? -1 : viewer, c->g->status);
+    return CLIENT_OK;
+}
+
 // ---------- the push --------------------------------------------------------------
 
 typedef struct {

@@ -117,17 +117,65 @@ int fio_passing_allowed(void);
 int fio_has_game(void);
 
 // ---------- observation ----------------------------------------------------
+//
+// A BOARD AS ONE VIEWER SEES IT, read by the kernel's own client slot
+// (c/src/client_table.h) and copied out through the generated snapshot readers
+// (sdk/swift/gen, readTableView). It is the same reader the web uses, which is
+// the point: the masked wire is walked ONCE, in C.
+//
+// Each of these adopts into the one slot and leaves the view at fio_view_ptr;
+// read it before the next call. CLIENT_OK (0) or a negative CLIENT_E_*, with
+// fio_view_detail carrying the GAME_INVALID_* / ROSTER_E_* underneath. A
+// refused call leaves a view that must not be read.
 
-// (Server packed-view blobs decode to a GameView in pure Swift via MaskedView,
-// and their legal moves come through the PACKED fio_legal_from_packed.)
+// The view the last adopt filled (client_table.h TableView). Never NULL; before
+// the first adopt it reads as an empty board.
+const void *fio_view_ptr(void);
+// Why the last adopt refused, when it did (GAME_INVALID_* or ROSTER_E_*).
+int fio_view_detail(void);
 
-// The kernel wire Swift decodes directly (MaskedView / MoveWire).
+// The RESIDENT game as `viewer` sees it (-1 a spectator) - the board the app
+// draws between moves. No bytes: the kernel masks its own game and reads it
+// back, so nothing crosses the boundary at all.
+int fio_view_of_resident(int viewer);
+
+// A masked board off the wire (view.c state_put, no envelope header) as
+// `viewer` sees it: an animation step's own snapshot, or a board a host was
+// handed. Refused rather than clamped if it does not read whole.
+int fio_view_of_state(const uint8_t *buf, int len, int viewer);
+
+// A server response envelope (table.h table_envelope: the create response and
+// the player_views.view column), roster trailer and all. The view's seats,
+// title and game id are the trailer's, so the names come with the board.
+int fio_view_of_envelope(const uint8_t *buf, int len);
+
+// ---------- one animation sequence, step by step ----------------------------
+//
+// An evwire sequence (one frame of fio_replay_last_events_packed with its u16
+// length stripped) walked by the kernel's own reader, so no host walks those
+// bytes itself. Open it, then call next until it answers 0, reading the step at
+// fio_push_event_ptr and its board at fio_view_ptr after each 1; then final,
+// for the board the sequence committed.
+//
+// The whole sequence is checked at open - every event and every board - so one
+// that opens reads to its end. `buf` must outlive the walk: the kernel reads
+// the bytes where they are. CLIENT_OK / a negative CLIENT_E_*.
+int fio_push_open(const uint8_t *buf, int len);
+int fio_push_next(void);     // 1 a step, 0 done, negative a refusal
+int fio_push_final(void);
+const void *fio_push_event_ptr(void);   // client_table.h PushEvent
+
+// The kernel wire Swift decodes directly (MoveWire).
 // fio_state_packed: the resident masked view (view.c state_put).
 // fio_legal_packed / fio_legal_from_packed: legal moves (wasm_export_moves
 // layout) from the resident game or a server packed view.
 int fio_state_packed(int viewer, char *out, int cap);
 int fio_legal_packed(int seat, char *out, int cap);
 int fio_legal_from_packed(const uint8_t *buf, int len, int seat, char *out, int cap);
+// …and for `seat` on the board the SLOT holds, so a host that has adopted an
+// envelope does not also have to keep its bytes and slice the blob back out of
+// them. Ask it in the same call as the adopt: there is one slot.
+int fio_legal_from_view(int seat, char *out, int cap);
 
 // ---------- what a gesture on a board means --------------------------------
 //
@@ -720,6 +768,14 @@ int fio_evw_is_settlement(int type);
 // would get subtly wrong on its own. Everything from the cut onward is withheld
 // until Send (see fio_evw_is_settlement for what is being withheld and why).
 int fio_evw_frames_settlement_cut(const unsigned char *frames, int len);
+
+// WHERE THE FRAMES ARE in that stream: off[i] and len[i] per frame, in play
+// order, so a host hands one sequence at a time to fio_push_open without
+// knowing that the container is a u16 length prefix. Returns the count, or a
+// negative EVW_E*; both arrays may be NULL to count alone, which is the form
+// "how many STEPS does this stream hold" takes (a step emits any number of
+// events, including none, so steps are frames and never events).
+int fio_evw_frames(const unsigned char *frames, int len, int *off, int *flen, int cap);
 
 // Where the moves THIS DEVICE has staged begin, as an atom count on the
 // resident game - the `atoms_before` a board passes to

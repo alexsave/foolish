@@ -211,6 +211,21 @@ int evwire_read(const unsigned char *buf, int len,
 // that is not whole. See evw_is_settlement for what is being cut and why.
 int evwire_frames_settlement_cut(const unsigned char *frames, int len);
 
+// WHERE THE FRAMES ARE in that stream: `off[i]` and `len[i]` for each, in play
+// order, so a host can hand one sequence at a time to a reader without knowing
+// that the container is a u16 length prefix.
+//
+// Counting frames is not counting events, and the difference is a rule: a step
+// emits any number of events, including none (a good that does not close the
+// bout), so a caller asking "how far back does this stream reach" must count
+// frames. That is why this is here rather than left to each host's own walk.
+//
+// Returns the frame count (0 for an empty stream), EVW_ECAP when there are more
+// than `cap` of them, or EVW_EPARSE for a stream that is not whole. `off` and
+// `len` may be NULL to count only.
+#define EVW_ECAP -3
+int evwire_frames(const unsigned char *frames, int len, int *off, int *flen, int cap);
+
 // ---------- as3: the push payload ------------------------------------------
 //
 // What a realtime push carries (the `b` of {t:'as3', s, v, b}). It is the

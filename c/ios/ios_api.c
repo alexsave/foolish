@@ -20,6 +20,7 @@
 #include "msg_wire.h"
 #include "msg_expand.h"
 #include "anim_plan.h"
+#include "client_table.h"
 #include "awire.h"
 #include "sha256.h"
 
@@ -171,11 +172,93 @@ int fio_state_packed(int viewer, char *out, int cap) {
     return state_put(&g_game, viewer, (unsigned char *)out);
 }
 
+// ---------- the client's slot: a board as one viewer sees it ----------------
+//
+// The same reader the web uses (client_table.h), which is the point: a board
+// off the wire is read ONCE, in C, and both hosts copy the result out through
+// generated snapshot readers. MaskedView.swift used to walk state_put's bytes
+// in Swift beside the C that writes them, and derive the game-over rule of its
+// own accord while it was there.
+//
+// ONE SLOT, like everything else in this file: a host adopts, reads the
+// snapshot at fio_view_ptr, and is done with it before anything else touches
+// the kernel (the Swift side serializes every call onto one actor). It costs
+// 4.5 KB of BSS at the iOS caps, which is a Game's logs being somewhere else.
+static ClientTable g_client;
+static ClientSlot  g_client_slot;
+static int         g_client_ready = 0;
+
+static ClientTable *client(void) {
+    if (!g_client_ready) { client_init(&g_client, &g_client_slot); g_client_ready = 1; }
+    return &g_client;
+}
+
+const void *fio_view_ptr(void) { return &client()->view; }
+
+int fio_view_detail(void) { return client()->detail; }
+
+int fio_view_of_resident(int viewer) {
+    if (!g_has_game) return FIO_ENOGAME;
+    return client_adopt_board(client(), &g_game, viewer);
+}
+
+int fio_view_of_state(const uint8_t *buf, int len, int viewer) {
+    if (!buf || len < 0) return FIO_EBADARG;
+    return client_adopt_state(client(), buf, len, viewer);
+}
+
+int fio_view_of_envelope(const uint8_t *buf, int len) {
+    if (!buf || len < 0) return FIO_EBADARG;
+    return client_adopt_envelope(client(), buf, len);
+}
+
+// ---------- one animation sequence, step by step -----------------------------
+//
+// An evwire sequence (one frame of fio_replay_last_events_packed, its u16
+// length already stripped) walked by the kernel's own reader. EvWire.swift used
+// to walk it in Swift - the header, each event's seven fixed bytes, its cards,
+// its optional target and battle, and the u16 snapshot behind them - beside the
+// C that writes those bytes.
+//
+// The whole sequence is checked at OPEN, every event and every board, so a
+// sequence that opens reads to its end. `bytes` must outlive the walk: the
+// kernel reads them where they are.
+int fio_push_open(const uint8_t *buf, int len) {
+    if (!buf || len < 0) return FIO_EBADARG;
+    // as2 (a bare sequence), no identity: an animation frame names no one, and
+    // its seats' names are the caller's to merge as they always were.
+    return client_push_open(client(), buf, len, 0, 0, 0, 0);
+}
+
+// The next step into the event at fio_push_event_ptr and its board into the
+// view: 1, 0 when every step has been read, or a negative CLIENT_E_*.
+int fio_push_next(void) { return client_push_next(client()); }
+
+// The board the sequence COMMITTED (its trailer), into the view, and the walk
+// is closed. Not the last event's board: a step with no events still commits
+// one, which is exactly the case (a bare good) where a client most needs it.
+int fio_push_final(void) { return client_push_final(client()); }
+
+// The step the last fio_push_next read (client_table.h PushEvent).
+const void *fio_push_event_ptr(void) { return &client()->event; }
+
 // The resident game's legal moves for `seat`, packed.
 int fio_legal_packed(int seat, char *out, int cap) {
     if (!g_has_game) return FIO_ENOGAME;
     if (seat < 0 || seat >= g_game.num_players) return FIO_EBADARG;
     return emit_legal_packed(&g_game, seat, out, cap);
+}
+
+// Legal moves for `seat` on THE BOARD THE SLOT HOLDS - the one the last adopt
+// filled. A host that has adopted an envelope has the board in the kernel
+// already; without this it would have to keep the envelope's bytes as well,
+// slice the inner blob back out of them by offset, and hand them down again.
+// Ask it in the same call as the adopt: the slot is one slot.
+int fio_legal_from_view(int seat, char *out, int cap) {
+    const ClientTable *c = client();
+    if (c->g->num_players < 2) return FIO_ENOGAME;
+    if (seat < 0 || seat >= c->g->num_players) return FIO_EBADARG;
+    return emit_legal_packed(c->g, seat, out, cap);
 }
 
 // Legal moves for `seat` computed from a SERVER packed masked view, packed out.
@@ -1267,6 +1350,14 @@ int fio_evw_is_settlement(int type) { return evw_is_settlement(type); }
 // this is one line so it stays that way.
 int fio_evw_frames_settlement_cut(const unsigned char *frames, int len) {
     return evwire_frames_settlement_cut(frames, len);
+}
+
+// WHERE THE FRAMES ARE in that same stream, so a host hands one sequence at a
+// time to fio_push_open without knowing that the container is a u16 length
+// prefix. Writes off[i]/len[i] per frame and returns the count (or a negative
+// EVW_E*), and counts alone when both are NULL.
+int fio_evw_frames(const unsigned char *frames, int len, int *off, int *flen, int cap) {
+    return evwire_frames(frames, len, off, flen, cap);
 }
 
 // Where THIS DEVICE's own staged run starts in the resident game's atom stream

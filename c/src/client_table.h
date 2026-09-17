@@ -204,6 +204,15 @@ int client_adopt_envelope(ClientTable *c, const uint8_t *p, int len);
 // and read back like any board off the wire. The view names no one.
 int client_adopt_board(ClientTable *c, const Game *g, int viewer);
 
+// A masked board off the wire (view.c state_put, WITHOUT the two-byte format
+// and viewer header an envelope puts in front of it) as `viewer` sees it. The
+// same read client_adopt_envelope makes of the blob inside an envelope, for the
+// callers that hold one on its own: an animation step's own snapshot, or the
+// board a host asked the kernel to serialize (evwire.h, ios_api.h). Measured
+// whole and judged, so a payload that does not read whole is refused; the view
+// names no one.
+int client_adopt_state(ClientTable *c, const uint8_t *p, int len, int viewer);
+
 // Opens a push for iteration. `as3`: the payload carries the flags byte and
 // maybe a roster trailer (evwire.h); otherwise it is an as2 sequence alone, or
 // the as3 push whole (a server since Phase 4b labels its as3 pushes as2 until

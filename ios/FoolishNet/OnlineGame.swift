@@ -40,7 +40,7 @@ public final class OnlineGame: ObservableObject, GameSession {
 
     /// Quick-match seeds `initial` from the `create` response; join/spectate pass
     /// nil and learn everything from the first `player_views` row.
-    public init(userId: UUID, gameId: String, spectator: Bool = false, initial: DecodedGame? = nil) {
+    public init(userId: UUID, gameId: String, spectator: Bool = false, initial: AdoptedEnvelope? = nil) {
         self.userId = userId
         self.gameId = gameId
         self.spectator = spectator
@@ -67,15 +67,16 @@ public final class OnlineGame: ObservableObject, GameSession {
             guard decoded.gameId == gameId else { return }
             apply(decoded)
             if !spectator {
-                let packed = (try? await engine.legalFromPackedData(decoded.stateBytes,
-                                                                    seat: decoded.seat)) ?? MoveWire.emptyMenu
-                humanLegalPacked = packed
-                humanLegal = MoveWire.decode(packed)
+                // The menu came off the SAME adopt as the board: the kernel has
+                // one client slot, so asking for it afterwards would be asking
+                // about whatever had been adopted since.
+                humanLegalPacked = decoded.legalPacked
+                humanLegal = MoveWire.decode(decoded.legalPacked)
             }
         }
     }
 
-    private func apply(_ decoded: DecodedGame) {
+    private func apply(_ decoded: AdoptedEnvelope) {
         view = decoded.view
         seat = decoded.seat
         intentVersion = UInt32(max(0, decoded.version))

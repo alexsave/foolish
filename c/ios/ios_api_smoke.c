@@ -15,6 +15,7 @@
 #include "evwire.h"   // the packed event reader - see smoke_walk_frames
 #include "msg_wire.h" // MsgHeader: the envelope's header, read where it lies
 #include "view.h"
+#include "client_table.h"  // PushEvent: the step a push walk hands back
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -94,12 +95,22 @@ static Game g_smoke_board;
 // state_get's masked decode turns WIRE_CARD_HIDDEN into the {0,1} placeholder.
 static int smoke_is_masked_card(Card c) { return c.suit == 0 && c.value == 1; }
 
-typedef struct { int viewer; int n; int bad; int real_seen; } SmokeEvCtx;
+// What the evwire walk saw, so the SAME frames can be stepped through the entry
+// points Swift uses and the two readings diffed (smoke_push_frames).
+#define SMOKE_MAX_EVENTS 2048
+typedef struct { int n; int type[SMOKE_MAX_EVENTS], seat[SMOKE_MAX_EVENTS], n_cards[SMOKE_MAX_EVENTS]; } SmokeSeen;
+typedef struct { int viewer; int n; int bad; int real_seen; SmokeSeen seen; } SmokeEvCtx;
 
 static void smoke_ev_sink(void *ctx, int index, const EvwRead *ev) {
     SmokeEvCtx *c = (SmokeEvCtx *)ctx;
     (void)index;
     c->n++;
+    if (c->seen.n < SMOKE_MAX_EVENTS) {
+        const int i = c->seen.n++;
+        c->seen.type[i] = ev->type;
+        c->seen.seat[i] = ev->seat;
+        c->seen.n_cards[i] = ev->n_cards;
+    }
     if (!ev->snap || ev->snap_len <= 0) {
         printf("FAIL packed events: an event carried no per-step board\n");
         c->bad = 1;
@@ -129,9 +140,61 @@ static void smoke_ev_sink(void *ctx, int index, const EvwRead *ev) {
     }
 }
 
+// THE SAME FRAMES THROUGH THE ENTRY POINTS SWIFT USES (fio_evw_frames +
+// fio_push_open/next/final, the kernel's client slot). EvWire.swift used to walk
+// these bytes itself; now it steps them through here, and the only thing that
+// says the two walks agree is a test that runs both over the same stream.
+//
+// Returns the flattened event count, or -1 with a message.
+static int smoke_push_frames(const unsigned char *frames, int len, int viewer,
+                             const SmokeSeen *want) {
+    static int off[1024], flen[1024];
+    const int nf = fio_evw_frames(frames, len, off, flen, 1024);
+    if (nf < 0) { printf("FAIL push walk: fio_evw_frames refused a stream evwire read (%d)\n", nf); return -1; }
+    int seen = 0;
+    for (int f = 0; f < nf; f++) {
+        if (fio_push_open(frames + off[f], flen[f]) != 0) {
+            printf("FAIL push walk: frame %d would not open\n", f);
+            return -1;
+        }
+        int rc;
+        while ((rc = fio_push_next()) == 1) {
+            const PushEvent *e = (const PushEvent *)fio_push_event_ptr();
+            const TableView *v = (const TableView *)fio_view_ptr();
+            if (seen >= want->n) { printf("FAIL push walk: more events than evwire read\n"); return -1; }
+            if (e->type != want->type[seen] || e->seat != want->seat[seen] ||
+                e->n_cards != want->n_cards[seen]) {
+                printf("FAIL push walk: event %d is (%d,%d,%d), evwire read (%d,%d,%d)\n",
+                       seen, e->type, e->seat, e->n_cards,
+                       want->type[seen], want->seat[seen], want->n_cards[seen]);
+                return -1;
+            }
+            // …and the step's own board came with it, masked for this viewer.
+            if (v->my_seat != viewer || v->num_players < 2) {
+                printf("FAIL push walk: event %d board is for seat %d, not %d\n", seen, v->my_seat, viewer);
+                return -1;
+            }
+            seen++;
+        }
+        if (rc != 0) { printf("FAIL push walk: frame %d stepped to %d\n", f, rc); return -1; }
+        if (fio_push_final() != 0) { printf("FAIL push walk: frame %d has no committed board\n", f); return -1; }
+        const TableView *v = (const TableView *)fio_view_ptr();
+        if (v->num_players < 2) { printf("FAIL push walk: frame %d committed no board\n", f); return -1; }
+    }
+    if (seen != want->n) {
+        printf("FAIL push walk: %d events, evwire read %d\n", seen, want->n);
+        return -1;
+    }
+    return seen;
+}
+
 static int smoke_walk_frames(const unsigned char *frames, int len, int viewer,
                              int *real_seen_out) {
-    SmokeEvCtx c = { viewer, 0, 0, 0 };
+    // Static: a whole game's stream is thousands of events, and this records
+    // every one of them to diff the two readers against each other.
+    static SmokeEvCtx c;
+    memset(&c, 0, sizeof c);
+    c.viewer = viewer;
     int q = 0;
     while (q + 2 <= len) {
         const int flen = frames[q] | (frames[q + 1] << 8);
@@ -154,6 +217,7 @@ static int smoke_walk_frames(const unsigned char *frames, int len, int viewer,
         q += flen;
     }
     if (real_seen_out) *real_seen_out = c.real_seen;
+    if (smoke_push_frames(frames, len, viewer, &c.seen) != c.n) return -1;
     return c.n;
 }
 

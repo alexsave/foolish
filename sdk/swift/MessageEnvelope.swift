@@ -290,12 +290,12 @@ public actor MessageKernel {
     }
 
     /// The masked board the last `decode` left resident, for `viewer` (or -1 for
-    /// the public/spectator view the bubble snapshot needs). Same packed wire the
-    /// app reads — decoded in this actor so it never races EngineC on the shared
-    /// static Game. Returns nil if no game is resident or the buffer won't fit.
+    /// the public/spectator view the bubble snapshot needs). Read in this actor
+    /// so it never races EngineC on the shared static Game, and read by the
+    /// kernel's own client slot, so no bytes cross to be walked here. nil if no
+    /// game is resident.
     public func residentView(viewer: Int) -> GameView? {
-        guard let data = packedCall({ fio_state_packed(Int32(viewer), $0, $1) }) else { return nil }
-        return MaskedView.decode(data, viewer: viewer)
+        MaskedView.resident(viewer: viewer)
     }
 
     /// The legal moves for `seat` on the resident game (kernel-computed), as the
@@ -948,7 +948,8 @@ public actor MessageKernel {
     /// them reshaping; 5 and 5 now, and those 5 are a pickup the test build's
     /// MAX_LOG_PAIRS under-names rather than a missing prior).
     ///
-    /// The board itself comes from the extra frame's TRAILER (EvWire.finalState),
+    /// The board itself comes from the extra frame's TRAILER
+    /// (EvWire.firstFrameFinalState),
     /// which is the state that step COMMITTED - defined even for a step that
     /// emitted no events, where there is no snapshot to read at all.
     ///
@@ -971,10 +972,9 @@ public actor MessageKernel {
         guard atomsBefore >= 1,
               let earlier = lastMovePacked(viewer: viewer, atomsBefore: atomsBefore - 1)
         else { return (events, nil) }
-        let mine = packed.map { EvWire.frames($0).count } ?? 0
-        let back = EvWire.frames(earlier)
-        guard back.count == mine + 1, let first = back.first else { return (events, nil) }
-        return (events, EvWire.finalState(first))
+        let mine = packed.map(EvWire.frameCount) ?? 0
+        guard EvWire.frameCount(earlier) == mine + 1 else { return (events, nil) }
+        return (events, EvWire.firstFrameFinalState(earlier))
     }
 
     /// Rule P (§7.2). <0 `a` wins, >0 `b`, 0 the same chain. Delivery order is
