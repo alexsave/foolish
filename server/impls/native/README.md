@@ -142,7 +142,7 @@ when the server was started with `--tls` (see "TLS", above, and
 TLS-wrapped socket.
 
 The `foolish_server_quic` build (Stage 7) additionally serves `GET /health`
-and `GET /state` over HTTP/3, and a WebTransport session at
+and `GET /state` over HTTP/3 (a seat's view needs `token=` of its owner, as TCP `/state` needs the Bearer header; the spectator view is public), and a WebTransport session at
 `CONNECT /wt?token=..&game_id=..&seat=..` (`:protocol=webtransport`) that
 pushes the seat's masked view as a QUIC DATAGRAM and applies inbound move
 DATAGRAMs — the same push-only model as `/ws`, onto the same game. See

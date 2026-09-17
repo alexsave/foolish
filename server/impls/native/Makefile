@@ -125,17 +125,18 @@ sem_fuzz_asan: sem_fuzz.c $(KERNEL_SRC)
 #   git clone --recursive https://github.com/cloudflare/quiche && \
 #     cd quiche && cargo build --release --features ffi
 #   make foolish_server_quic QUICHE_DIR=/path/to/quiche-ffi
-# (-ldl is quiche's only extra system dep beyond -lm -lpthread from LDFLAGS.)
+# -ldl, and -lstdc++ after libquiche.a: the BoringSSL quiche bundles is C++ now
+# (its ssl/ objects reference the C++ runtime), and the link failed without it.
 QUICHE_DIR ?= ./quiche
 QUIC_SRC   := quic_wt.c
 foolish_server_quic: foolish_server.c $(QUIC_SRC) $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC) | require-linux
 	$(CC) $(CFLAGS) -DFOOLISH_QUIC -DFOOLISH_NO_OPENSSL -I$(QUICHE_DIR)/include \
-	  $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(QUICHE_DIR)/lib/libquiche.a -ldl
+	  $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(QUICHE_DIR)/lib/libquiche.a -ldl -lstdc++
 
 # wt_client: the WebTransport smoke-test client (quic_test.sh drives it). Pure
 # quiche client — no kernel, no server sources. Same QUICHE_DIR as above.
 wt_client: wt_client.c
-	$(CC) $(CFLAGS) -I$(QUICHE_DIR)/include $^ -o $@ -lpthread -ldl -lm $(QUICHE_DIR)/lib/libquiche.a
+	$(CC) $(CFLAGS) -I$(QUICHE_DIR)/include $^ -o $@ -lpthread -ldl -lm $(QUICHE_DIR)/lib/libquiche.a -lstdc++
 
 clean:
 	rm -f foolish_server foolish_hammer foolish_server_prof foolish_server_quic wt_client

@@ -1687,6 +1687,40 @@ static void h_action(Req *r, Conn *conn) {
     respond(conn, ok ? 200 : 400, out);
 }
 
+// One seat's masked view (or VIEW_SPECTATOR's) of a game, for every transport
+// that serves it (HTTP GET /state, HTTP/3 /state through game_bridge.h). A seat's
+// view holds that seat's hand, so only the account seated there may read it: the
+// same rule /ws's handshake and gb_apply_move apply. It used to be served to anyone
+// who named the seat (and seat 0 to a request naming none), over TCP and QUIC
+// alike, so any client could read every hand of any game. The spectator view is
+// public. The trusted VIEW_UNMASKED (-2) is never served. `out` must hold 65536
+// bytes. Returns the bytes written, or a SEAT_VIEW_* refusal.
+#define SEAT_VIEW_BAD_SEAT     (-1)
+#define SEAT_VIEW_NO_GAME      (-2)
+#define SEAT_VIEW_UNAUTHORIZED (-3)
+#define SEAT_VIEW_NOT_YOURS    (-4)
+static int seat_view_for(const char *gid, int seat, const char *token, unsigned char *out) {
+    if (seat < VIEW_SPECTATOR) return SEAT_VIEW_BAD_SEAT;
+    pthread_mutex_lock(&g_registry_lock);
+    GameSlot *s = game_by_id(gid);
+    if (!s) { pthread_mutex_unlock(&g_registry_lock); return SEAT_VIEW_NO_GAME; }
+    char user_id[ID_LEN + 1] = {0};
+    if (seat >= 0) {
+        User *u = user_by_token(token);
+        if (!u) { pthread_mutex_unlock(&g_registry_lock); return SEAT_VIEW_UNAUTHORIZED; }
+        snprintf(user_id, sizeof user_id, "%s", u->user_id);
+    }
+    pthread_mutex_lock(&s->lock);
+    pthread_mutex_unlock(&g_registry_lock);
+    if (seat >= 0 && (seat >= s->game.num_players || seat_of(s, user_id) != seat)) {
+        pthread_mutex_unlock(&s->lock);
+        return SEAT_VIEW_NOT_YOURS;
+    }
+    const int n = state_put(&s->game, seat, out);
+    pthread_mutex_unlock(&s->lock);
+    return n;
+}
+
 static void h_state(Req *r, Conn *conn) {
     char gid[ID_LEN + 1] = {0}; int seat = VIEW_SPECTATOR;
     // query: game_id=..&seat=..
@@ -1698,29 +1732,6 @@ static void h_state(Req *r, Conn *conn) {
     // The only public views are VIEW_SPECTATOR (-1, all hands masked) and a
     // concrete seat (0..num_players-1); reject anything below spectator so the
     // seat= sentinel can't be spoofed into a full-state disclosure.
-    if (seat < VIEW_SPECTATOR) { respond(conn, 400, "{\"error\":\"bad seat\"}"); return; }
-
-    pthread_mutex_lock(&g_registry_lock);
-    GameSlot *s = game_by_id(gid);
-    if (!s) { pthread_mutex_unlock(&g_registry_lock); respond(conn, 404, "{\"error\":\"no game\"}"); return; }
-    // A seat's view holds that seat's hand: only the account seated there may read
-    // it, the same rule /ws's handshake applies. It used to be served to anyone
-    // who named the seat (and seat 0 to a request naming none), so any client
-    // could read every hand of any game. The spectator view is public.
-    char user_id[ID_LEN + 1] = {0};
-    if (seat >= 0) {
-        User *u = user_by_token(r->token);
-        if (!u) { pthread_mutex_unlock(&g_registry_lock); respond(conn, 401, "{\"error\":\"unauthorized\"}"); return; }
-        snprintf(user_id, sizeof user_id, "%s", u->user_id);
-    }
-    pthread_mutex_lock(&s->lock);
-    pthread_mutex_unlock(&g_registry_lock);
-    if (seat >= 0 && (seat >= s->game.num_players || seat_of(s, user_id) != seat)) {
-        pthread_mutex_unlock(&s->lock);
-        respond(conn, 403, "{\"error\":\"not your seat\"}");
-        return;
-    }
-
     // The kernel renders the masked, per-seat view as the PACKED wire (view.c
     // state_put) — no JSON. The client decodes it with its own kernel-wire
     // reader (Swift MaskedView / the web's TS reader). Kernel-to-kernel.
@@ -1728,9 +1739,14 @@ static void h_state(Req *r, Conn *conn) {
     // concurrently, and a shared buffer would let two /state requests
     // corrupt each other's bytes.
     unsigned char buf[65536];
-    int n = state_put(&s->game, seat, buf);
-    pthread_mutex_unlock(&s->lock);
-    respond_bin(conn, 200, buf, n);
+    const int n = seat_view_for(gid, seat, r->token, buf);
+    if (n >= 0) { respond_bin(conn, 200, buf, n); return; }
+    switch (n) {
+        case SEAT_VIEW_BAD_SEAT:     respond(conn, 400, "{\"error\":\"bad seat\"}"); return;
+        case SEAT_VIEW_NO_GAME:      respond(conn, 404, "{\"error\":\"no game\"}"); return;
+        case SEAT_VIEW_UNAUTHORIZED: respond(conn, 401, "{\"error\":\"unauthorized\"}"); return;
+        default:                     respond(conn, 403, "{\"error\":\"not your seat\"}"); return;
+    }
 }
 
 // A plain status int (0 waiting / 1 playing / 2 over), for smoke tests that used
@@ -2092,17 +2108,10 @@ static int ws_service_message(GameSlot *s, int seat, bool spectator, int cache_i
 // the one authoritative in-memory game; no game logic is duplicated here.
 // --------------------------------------------------------------------------
 
-int gb_state_for(const char *game_id, int seat, unsigned char *out, int cap) {
-    if (seat < VIEW_SPECTATOR) return -1;   // never the trusted VIEW_UNMASKED — same guard as h_state
+int gb_state_for(const char *game_id, int seat, const char *token, unsigned char *out, int cap) {
     if (cap < 65536) return -1;   // require state_put's documented worst-case room (same 65536 buffer h_state uses)
-    pthread_mutex_lock(&g_registry_lock);
-    GameSlot *s = game_by_id(game_id);
-    if (!s) { pthread_mutex_unlock(&g_registry_lock); return -1; }
-    pthread_mutex_lock(&s->lock);
-    pthread_mutex_unlock(&g_registry_lock);
-    int n = state_put(&s->game, seat, out);
-    pthread_mutex_unlock(&s->lock);
-    return n;
+    const int n = seat_view_for(game_id, seat, token, out);   // HTTP /state's own rule, owner check included
+    return n < 0 ? -1 : n;
 }
 
 int gb_apply_move(const char *game_id, const char *token, int seat,

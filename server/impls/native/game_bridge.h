@@ -10,13 +10,13 @@
 
 #include <stdbool.h>
 
-// Serialize the masked view of `game_id` for `seat` into out[0..cap).
-// Unauthenticated, exactly like HTTP GET /state: the view is already masked
-// per seat. `seat` follows /state semantics — VIEW_SPECTATOR (-1) or a concrete
-// seat (0..num_players-1); the trusted VIEW_UNMASKED (-2) sentinel is rejected.
-// Returns the number of bytes written (>= 0), or -1 if the game doesn't exist,
-// the seat is invalid, or `cap` is too small.
-int gb_state_for(const char *game_id, int seat, unsigned char *out, int cap);
+// Serialize the masked view of `game_id` for `seat` into out[0..cap), under
+// HTTP GET /state's rule: VIEW_SPECTATOR (-1) is public, a concrete seat
+// (0..num_players-1) needs `token` to own that seat (its view holds its hand),
+// and the trusted VIEW_UNMASKED (-2) sentinel is rejected. Returns the number of
+// bytes written (>= 0), or -1 if the game doesn't exist, the seat is invalid or
+// not the token's, or `cap` is too small.
+int gb_state_for(const char *game_id, int seat, const char *token, unsigned char *out, int cap);
 
 // Apply a move from a SEATED client and return that seat's fresh masked view.
 // `token` must own `seat` in `game_id` — the identical Bearer-token + seat
