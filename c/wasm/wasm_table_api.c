@@ -382,6 +382,11 @@ int wasm_client_push_open(int len, int identity_len, int as3, double version) {
     return client_push_open(client(), io, len, as3, io + len, identity_len, u32_of(version));
 }
 
+// The resident game (what an FMSG decode adopted) as `viewer` sees it.
+int wasm_client_adopt_resident(int viewer) {
+    return client_adopt_board(client(), wasm_game_ptr_internal(), viewer);
+}
+
 int wasm_client_push_next(void)  { return client_push_next(client()); }
 int wasm_client_push_final(void) { return client_push_final(client()); }
 

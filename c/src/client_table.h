@@ -121,6 +121,11 @@ void client_init(ClientTable *c, ClientSlot *slot);
 // and title are the trailer's, which becomes the identity.
 int client_adopt_envelope(ClientTable *c, const uint8_t *p, int len);
 
+// A board the module already holds - the game an FMSG decode adopted (the
+// iMessage /m/ page) - as `viewer` (a seat, or -1) sees it, masked by state_put
+// and read back like any board off the wire. The view names no one.
+int client_adopt_board(ClientTable *c, const Game *g, int viewer);
+
 // Opens a push for iteration. `as3`: the payload carries the flags byte and
 // maybe a roster trailer (evwire.h); otherwise it is an as2 sequence alone.
 // The roster comes from the push when it carries one, else from `identity`

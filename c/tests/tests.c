@@ -8695,6 +8695,15 @@ static void test_client_push_steps_and_refusals(void) {
           && ct.view.num_players == 4 && ct.view.seats[3].name_len == 4 && memcmp(ct.view.seats[3].name, "Dora", 4) == 0
           && ct.view.gid_len == 3 && memcmp(ct.view.game_id, "g-9", 3) == 0, "a join's push names the new seat without an identity");
     CHECK(client_identity(&ct, ct_id, sizeof(ct_id)) > 0, "and becomes the identity kept");
+
+    // A board the module holds, read as a viewer sees it.
+    tb_fixture(3, 0, 141);
+    CHECK(client_adopt_board(&ct, &tb_src, -1) == CLIENT_OK && ct.view.my_seat == -1 && ct.view.my_hand_count == 0
+          && ct.view.num_players == 3 && ct.view.seats[1].hand_count == tb_src.players[1].hand_count
+          && ct.view.seats[0].id_len == 0 && ct.view.deck_count == tb_src.deck_count, "a held board, as a spectator sees it, naming no one");
+    CHECK(client_adopt_board(&ct, &tb_src, 2) == CLIENT_OK && ct.view.my_hand_count == tb_src.players[2].hand_count
+          && card_eq(ct.view.my_hand[0], tb_src.players[2].hand[0]), "and as a seat sees it");
+    CHECK(client_adopt_board(&ct, &tb_src, 3) == CLIENT_E_MISMATCH, "a viewer the board does not seat is refused");
 }
 
 int main(void) {
