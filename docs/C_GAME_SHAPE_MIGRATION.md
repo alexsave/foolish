@@ -891,6 +891,39 @@ After Phases 4b and 5a are both deployed.
 - Must pass: e2e, S1.
 - Deploy point: functions, then web.
 
+#### Phase 5b as built
+
+- `table_io.ts` `broadcastPushes` sends `{t:'as3', s, v, b}` to each human seat's `gu-{game}-{user}` topic and to `game-{game}`.
+  `b` is unchanged: it has been the kernel's as3 push since Phase 4b (the as2 sequence, one flags byte, the roster block when the operation changed who sits where).
+  The Q7 `r` and `m` extras were already gone in 4b, so the payload has exactly the four keys.
+- Nothing on the web changed in this phase.
+  `AnimationContext.tsx` already read `t:'as3'` with the as3 flag (Phase 5a), and its `as2` branch stays until the owner's follow-up deletes it one day after 5b's functions are live (Q14); that follow-up also drops the `m.r` JSON roster read beside it, which no server sends since 4b.
+- iOS reads no `animation_events` broadcast (`ios/FoolishNet/GameFeed.swift`), so the label is web-only.
+- `e2e/push_as3.test.ts`, red first on the `as2` label: a host client holding the one-seat lobby (its kept identity is deliberately the stale pre-join roster) reads the join's push exactly as `AnimationContext.tsx` does, with the as3 flag taken from `t`, and gets the joiner under their name from the push itself.
+  It also reads that push with no identity at all, and reads the next push (the joiner getting ready, flags byte 0, no roster block) with the roster kept from the join push.
+- `packed_action.test.ts` and S1's payload scan (`checkEventPayload`) now require `t === 'as3'`.
+  Mutation checks, each restored with `git checkout`: the label put back to `as2` turns `push_as3` and all three S1 payload tests red.
+- Deploy: functions only, and only once both 4b's functions and 5a's web are live (an older web ignores an unknown `t` and still gets `player_views` row pushes, 5.3).
+  Then, one day later, the owner's web follow-up for Q14.
+
+#### The realtime channel policy fix, carried onto this branch
+
+Branch `worktree-agent-a8178b8d0577a47ee` (off `a844b2a1`) fixed the private channel policies; its four commits are on this branch as `c55756d3`, `5baee853`, `30909657` plus `c50a11f7` (one commit split in two), and `40794b11`, followed by `e6ecb911` and `cbadfefa`.
+
+- `20260917120000_realtime_channel_exact_topics.sql`: the `gu-` SELECT policy compared `split_part(topic, '-', 3)` with `auth.uid()::text`, and a user id is a hyphenated UUID, so every `gu-` join was refused, the owner's included (fail-closed, not a leak).
+  It and the `chat:` policy now rebuild the exact topic from the caller's `player_hands` row: `topic = 'gu-' || ph.game_id || '-' || auth.uid()::text` and `topic = 'chat:' || ph.game_id`.
+  `player_hands (game_id, player_id)` is still the membership table after 4c, which touched no membership table, and `commit_table` and `create_table` keep writing it.
+- `20260917130000_drop_user_realtime_policies.sql`: drops the three `user-{email local part}` policies (nothing joins that topic; the receive policy let two addresses with the same local part read each other's, and any signed-in user could send to any `user-` topic).
+- Both migrations sort before `20260917140000_table_expand.sql` and touch only `realtime.messages` policies, so `db_migration_grants` replays the full history in order unchanged and the seed-versus-migrations parity for `public` still holds; `realtime_channel_auth.test.ts` holds the realtime policy set from a frozen copy of the legacy hosted set through both migrations to exactly `seed.sql`'s.
+  The `pre_table` fixtures and the expand and contract tests are unaffected (35 of 35 with them).
+- The web: `RealtimeAnimationFeed.tsx` refetches after a first subscribe that followed refused joins (Realtime has no catch-up), and joins `gu-` only while `games[id].self` is the signed-in user; `joinGame` applies the join response so the joiner's seat reaches client state.
+  The branch's `useServerGameSeat` hook in `ServerContext.tsx` was not carried: the feed reads the seat from `useServer()`.
+- Tests adapted to this branch: `realtime_channel_auth` seeds with `seedTable`, `realtime_feed_seating` builds its envelopes with `table_envelope` (the TS view builders are gone since 4b).
+  S1's todo "a player can join their OWN gu- topic" is now a real test for the creator and a joiner, red with `seed.sql`'s `gu-` policy put back to the `split_part` comparison.
+- Deploy note: the two timestamps sort before 4a's.
+  If `20260917140000_table_expand.sql` (or anything later) is applied on hosted before these two, `supabase db push` (`deploy.yml`) refuses them as out of order; push them once with `--include-all`, or land them before 4a.
+  Read the hosted policies first (5.1).
+
 ### Phase 6a: components render snapshots
 
 After Phase 5a.
@@ -973,6 +1006,14 @@ Strictly sequential: P3 before anything that loads a table; P4a deployed before 
   **Mitigation**: masking stays in `state_put` (unchanged); `table_commit_products` and `table_push` take the viewer from the roster seat, never from TS; S1 scans `player_views`, `spectator_views`, responses and `as3` pushes after every phase; `table_parity` asserts byte equality with today's masked outputs before cutover.
 - **Risk**: the client-side module exposes a full-state reader.
   **Mitigation**: `TableView` has no deck and one hand by construction; S2 pins the import allowlist (Phase 5a).
+- **Risk**: hosted's realtime channel policies differ from git.
+  The policies on `realtime.messages` were never created by a migration before `20260917120000` (only `seed.sql` and a hand-applied hosted copy), and the fix branch found that `seed.sql`'s `gu-` policy refused every owner, yet live web play worked, so hosted likely carries a different `gu-` policy, possibly a looser one, or RLS on a different partition.
+  **Mitigation**: before applying `20260917120000` and `20260917130000`, the owner runs these read-only queries on hosted and compares them with `seed.sql`; the migrations `DROP POLICY IF EXISTS` and recreate by name, so a hosted policy under another name would survive them and needs its own drop.
+  ```sql
+  SELECT policyname, permissive, roles, cmd, qual, with_check FROM pg_policies WHERE schemaname='realtime' AND tablename='messages';
+  SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class WHERE relnamespace='realtime'::regnamespace AND relname LIKE 'messages%';
+  ```
+  Expected after both migrations: RLS enabled on `messages` and its partitions, and exactly the `seed.sql` set (the exact-topic `gu-` and `chat:` SELECT policies, `game-` for authenticated, and the service-role INSERT policies), with no `user-` policy and no client INSERT policy.
 - **Risk**: `game_seed` leaks through a new path (it seeds `g_rng_base`, `wasm_api.c:268-279`).
   **Mitigation**: `game_seed` is never an input to any `table_*` product; it is passed only to `set_rng_base` and the replay encoder; S1 greps payloads for the 64-hex seed.
 
@@ -1101,6 +1142,7 @@ Nothing in this plan blocks it, and the parity tests keep the Swift readers hone
 
 **Q14. How long to keep `as2` decoding on the web?**
 Recommendation: one day after Phase 5b is deployed, then delete, following the envelope-trailer precedent (`view.ts:130-146`).
+As built: Phase 5b left the `as2` branch in `AnimationContext.tsx`; the owner's follow-up deletes it (with the `m.r` read) one day after 5b's functions are live.
 
 **Q15. `offlinefun/localtest` TS harnesses.**
 Recommendation: delete the ones that construct a `Game` in Phase 8.
