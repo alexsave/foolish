@@ -1398,3 +1398,38 @@ They are rules and byte layouts; TS keeps passing `round_epoch` from the row.
 **Q18. Should the durable blob or the roster carry `Game.rules` (podkidnoy) for online games?**
 Recommendation: no, not in this migration.
 Online play is classic only today and `state_put` never carried the byte; adding a variant to online play is a product change with its own codec bump.
+
+## 7. Next phases (owner-approved 2026-09-17, after the Phase 8 cleanup)
+
+### Phase 9: the web takes its animation timing and ordering from the kernel
+
+Owner: "keep the kernel as is [import-free] but let React use the timing and ordering it provides instead of whatever we do right now".
+
+React keeps only rendering: the DOM, CSS transitions, the frame loop, screen coordinates.
+The kernel provides what happens, in what order, with what durations, and the board at each step.
+
+Starting point already in C (`c/src/anim_plan.h`): plan building with `duration_ms` and `start_ms` per step, the count-freeze and the veil, the timing policy (`ANIM_TIME_MS`, `anim_step_duration_ms`), the optimistic policy (`anim_should_drop_stale`, `anim_stale_optimistic_on_table`, the revert/keep/clear decision, the dedup key), the conflict model, and the beats model lifted from iMessage (`AnimBeat`, `AnimBeats`, `AnimSurfacePlan`).
+`sdk/ts/gen/anim.bots.ts` already generates readers for `AnimPlan`, `AnimPlanStep`, `AnimBeat`, `AnimBeats`, `AnimCounts`.
+
+Steps:
+
+1. Audit, written down before any change: what `anim_plan.h` covers versus what `src/contexts/AnimationContext.tsx` decides today.
+   Specifically: optimistic TIMING (when a predicted flight starts, its duration, how a confirming push replaces it mid-flight) as opposed to optimistic policy; the refusal return flight; the resync path; the rematch reset; and hand ORDER (`mergeReplayHandOrder` in `ReplayScreen.tsx`, which is the divergence the iMessage work found).
+2. Add the gaps to C, and re-export the plan and beats builders (`wasm_anim_build_plan` was deleted as dead code when the web's bridge went).
+   The web needs a RE-ASKABLE call, not just a plan up front: a pull per frame (`client_anim_advance(now_ms)` returning the current step plus the next deadline) so a push landing mid-flight is answered by the next call instead of by cancelling a timer chain.
+   No new wasm imports: the host supplies the clock as an argument, the kernel stays import-free.
+3. React switches to generated snapshots of the plan and beats, deleting the serial `setTimeout` queue (its own TODO calls it an anti-pattern), the `ANIMATION_TIME = 500` constant, every `type === 'attack_pass' | 'cover' | 'pickup'` branch, and `optimisticPassState` (the kernel's dedup key and optimistic policy answer what it guesses).
+4. Split the two big TSX files, which should be much smaller by then: `ReplayScreen.tsx` (829 code lines) into icons, inline cards, step messages, revealed hands, a playback hook, an oracle hook, the stage and the screen shell, with `mergeReplayHandOrder` going to C in step 2; then `AnimationContext.tsx`.
+5. Gate: all 19 animation traces and 16 DOM goldens re-recorded only where the kernel's timing intentionally differs, each diff justified; filmed before/after in Chrome at normal speed (never slow-mo); the web bundle measured.
+
+### Phase 10: generated Swift bindings, and Swift off the wire formats
+
+About 1,250 code lines of Swift know byte layouts today and are kept in step with C by hand: `MessageEnvelope.swift` (382), `AnimPlanWire.swift` (167), `SurfacePlan.swift` (92), `PlayWire.swift` (89), `EvWire.swift` (88), `PackedAction.swift` (84), `MaskedView.swift` (67), `DecodedReplay.swift` (66), `MoveWire.swift` (65), `PackedGame.swift` (65), `RosterWire.swift` (51), `BotDriveWire.swift` (34).
+
+iOS links the C natively, so Swift already sees C structs through the bridging header. That splits the work:
+
+1. Delete what should not exist: point Swift at the C decoders (the envelope, masked view, roster and event wires) as the web did with `client_adopt_envelope`, so the variable-length parsing goes away without generating anything (Q13's `fio_envelope_decode`).
+2. Add `--swift` to `tools/structgen`: one more emitter over the same clang-derived model, for the structs that remain (`TableView`, `AnimPlan`, `AnimBeat`, `AnimSurfacePlan`, `BotDriveOut`).
+   Value-type snapshots for SwiftUI (`Sendable` structs copied out of the slot, matching the resident-slot rule), `String` from `char[N]` plus its length, bounded arrays from an array plus its count that refuse a bad count, C enums as constants, and a layout-hash check so a stale xcframework fails loudly instead of reading wrong offsets (build caps differ per build).
+3. Keep `npm run test:swift-parity` as the gate while each file switches, then retire the parts whose only subject was the hand-written reader, per the owner's rule on parity tests.
+4. Pays off with Phase 9: iMessage's beats come from generated Swift and the web's from generated TS, both over the same C structs, so a change to `AnimBeat` updates both by rerunning one script.
