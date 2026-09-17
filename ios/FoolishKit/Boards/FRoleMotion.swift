@@ -315,6 +315,99 @@ public enum RoleGesture: Equatable, Sendable {
     }
 }
 
+/// HOW A COIN KEEPS TIME - the switches for two fixes to `FRoleCoin`.
+///
+/// Owner, filming a pass and its Undo: the new attacker's sword "seems to pop
+/// in too early rather than rotating in, thus briefly being shown under the
+/// shield" - "sword should rotate in by the way"; and on an 8-seat Undo the
+/// swords did not turn back to checks: "It definitely does not go to width
+/// zero." Measured off the film, a check came up at 30 of its 34px in the
+/// first frame that showed it, with no collapse before it.
+///
+/// Both are one fault. The coin's gestures ran on the wall clock from the
+/// moment the mark changed - `withAnimation` for the collapse and a Task
+/// sleeping half a flip for the swap - and the collapsed board does not draw
+/// for a beat after a heavy update (a pass, an Undo). A 110ms rotate-in fits
+/// inside that beat entirely, so what reached the screen was its end.
+/// See RoleCoinRotateInTests, which stalls the main thread to make that beat.
+public struct RoleCoinMotion: Equatable, Sendable {
+    /// Time every gesture from the first frame that DRAWS it (a TimelineView
+    /// clock), so a board that is slow to draw delays the gesture instead of
+    /// eating it. `roles.fromframe=0` in `dev.flags` puts back the wall clock.
+    public var fromFirstFrame: Bool
+    /// A pass's previous defender waits for the shield to clear the seat before
+    /// the sword turns in. `roles.passdelay=0` puts back the sword starting
+    /// underneath the departing shield.
+    public var passDelay: Bool
+
+    public init(fromFirstFrame: Bool, passDelay: Bool) {
+        self.fromFirstFrame = fromFirstFrame; self.passDelay = passDelay
+    }
+
+    public static let shipping = RoleCoinMotion(fromFirstFrame: true, passDelay: true)
+
+    /// The shipping values in Release; in DEBUG, whatever `dev.flags` says.
+    public static var live: RoleCoinMotion {
+        #if DEBUG || SOLO_TESTING
+        return RoleCoinMotion(fromFirstFrame: MessageDevBoard.flag("roles.fromframe", shipping: shipping.fromFirstFrame),
+                              passDelay: MessageDevBoard.flag("roles.passdelay", shipping: shipping.passDelay))
+        #else
+        return shipping
+        #endif
+    }
+
+    /// How far into the shield's flight the sword starts turning in. The ghost
+    /// is scaled up and right over the seat at take-off; a third of the way along
+    /// its arc it has cleared a 32pt badge row at every seat distance.
+    public static var passSwordDelay: Double { roleFlightTime / 3 }
+}
+
+/// ONE GESTURE OF A COIN, as a function of the time since it was first drawn:
+/// the face it shows and its width. `from` turns away (collapse, then a beat
+/// edge-on - round 30's settle), `to` comes round; either may be nil (a half
+/// flip), and `delay` holds the old face first (a seat making way for a mark in
+/// flight, a pass's sword waiting for the shield to leave).
+struct RoleCoinPhase: Equatable {
+    let id: Int
+    let from: RoleMarkKind?
+    let to: RoleMarkKind?
+    let delay: Double
+
+    var total: Double { delay + (from != nil ? roleFlipHalf : 0) + (to != nil ? roleFlipHalf : 0) }
+
+    func frame(at elapsed: Double) -> (face: RoleMarkKind?, scale: CGFloat) {
+        var t = elapsed - delay
+        if t < 0 { return (from, 1) }
+        if let from {
+            if t < roleFlipCollapse {
+                let u = t / roleFlipCollapse
+                return (from, max(0.001, 1 - u * u))                 // ease in
+            }
+            if t < roleFlipHalf { return (from, 0.001) }            // edge-on
+            t -= roleFlipHalf
+        }
+        guard let to else { return (nil, 1) }
+        if t < roleFlipHalf {
+            let u = t / roleFlipHalf
+            return (to, max(0.001, 1 - (1 - u) * (1 - u)))          // ease out
+        }
+        return (to, 1)
+    }
+}
+
+/// When a phase was first drawn. A reference, written from inside the
+/// TimelineView's content: that closure runs exactly when a frame is drawn,
+/// which is the one moment the gesture may start counting from.
+final class RoleCoinClock {
+    private var id = -1
+    private(set) var start: Date?
+    func start(for phase: Int, at date: Date) -> Date {
+        if phase != id || start == nil { id = phase; start = date }
+        return start ?? date
+    }
+    func started(_ phase: Int) -> Date? { phase == id ? start : nil }
+}
+
 /// A seat's role mark, with the motion between one mark and the next.
 ///
 /// Holds its OWN displayed mark rather than rendering `kind` directly, because
@@ -335,6 +428,8 @@ public struct FRoleCoin: View {
     /// the ghost lands (`RoleFlightsLayer` is what the eye is following, so the
     /// hand-over must be a swap, not a second animation).
     public let arriving: Bool
+    /// How a mark arrives - see `RoleCoinMotion`.
+    public let motion: RoleCoinMotion
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var shown: RoleMarkKind?
@@ -355,6 +450,10 @@ public struct FRoleCoin: View {
     /// depend on (the board sets the roles and the flying seats in the same
     /// tick, so a per-property reaction would see half a hand-off).
     @State private var last: Input
+    /// The gesture playing on the frame clock (`motion.fromFirstFrame`), and
+    /// when it was first drawn. `shown` is the face at rest.
+    @State private var phase: RoleCoinPhase?
+    @State private var clock = RoleCoinClock()
 
     private struct Input: Equatable {
         var kind: RoleMarkKind?
@@ -365,18 +464,37 @@ public struct FRoleCoin: View {
         var target: RoleMarkKind? { arriving ? nil : kind }
     }
 
-    public init(kind: RoleMarkKind?, departing: Bool = false, arriving: Bool = false) {
+    public init(kind: RoleMarkKind?, departing: Bool = false, arriving: Bool = false,
+                motion: RoleCoinMotion = .live) {
         self.kind = kind
         self.departing = departing
         self.arriving = arriving
+        self.motion = motion
         let seed = Input(kind: kind, departing: departing, arriving: arriving)
         _shown = State(initialValue: seed.departing ? nil : seed.target)
         _last = State(initialValue: seed)
     }
 
     public var body: some View {
+        Group {
+            if motion.fromFirstFrame {
+                TimelineView(.animation(paused: phase == nil)) { ctx in
+                    let f = drawn(at: ctx.date)
+                    face(f.face).scaleEffect(x: f.scale, y: 1, anchor: .center)
+                }
+            } else {
+                face(shown).scaleEffect(x: flip, y: 1, anchor: .center)
+            }
+        }
+        .onChange(of: Input(kind: kind, departing: departing, arriving: arriving)) { now in
+            advance(to: now)
+        }
+        .task(id: phase?.id) { await finishPhase() }
+    }
+
+    private func face(_ k: RoleMarkKind?) -> some View {
         ZStack {
-            if let k = shown { RoleMarkView(k) }
+            if let k { RoleMarkView(k) }
         }
         // A CONSTANT box, always present, whether or not this seat wears a mark:
         // the row then has nothing to re-lay-out when a mark arrives or leaves
@@ -384,14 +502,39 @@ public struct FRoleCoin: View {
         // - it always has a frame to publish, so a flight can take off from a
         // seat that is not currently wearing anything.
         .frame(width: FRoleMark.rowHeight, height: FRoleMark.rowHeight)
-        .scaleEffect(x: flip, y: 1, anchor: .center)
-        .onChange(of: Input(kind: kind, departing: departing, arriving: arriving)) { now in
-            advance(to: now)
+    }
+
+    /// The face and width on the frame being drawn now.
+    private func drawn(at date: Date) -> (face: RoleMarkKind?, scale: CGFloat) {
+        guard let p = phase else { return (shown, 1) }
+        return p.frame(at: date.timeIntervalSince(clock.start(for: p.id, at: date)))
+    }
+
+    /// Stand the gesture's last face up once it has played IN FULL, counted from
+    /// the frame that first drew it - never from when it was asked for.
+    private func finishPhase() async {
+        guard let p = phase else { return }
+        var start = clock.started(p.id)
+        while start == nil {
+            try? await Task.sleep(nanoseconds: 8_000_000)
+            if Task.isCancelled { return }
+            start = clock.started(p.id)
         }
+        let left = p.total - Date().timeIntervalSince(start ?? Date())
+        if left > 0 { try? await Task.sleep(nanoseconds: UInt64(left * 1_000_000_000)) }
+        guard !Task.isCancelled, phase?.id == p.id else { return }
+        shown = p.to
+        phase = nil
+    }
+
+    /// Start a gesture on the frame clock.
+    private func play(from: RoleMarkKind?, to: RoleMarkKind?, delay: Double = 0) {
+        gesture += 1
+        phase = RoleCoinPhase(id: gesture, from: from, to: to, delay: delay)
     }
 
     /// At rest showing `shown`: no half-played gesture, and none waiting to start.
-    private var settled: Bool { flip == 1 && !waiting }
+    private var settled: Bool { motion.fromFirstFrame ? phase == nil : (flip == 1 && !waiting) }
 
     /// Claim whatever gesture is in flight, so an older task cannot wake up and
     /// blank a mark this call has decided to keep.
@@ -404,6 +547,7 @@ public struct FRoleCoin: View {
     private func advance(to now: Input) {
         let was = last
         last = now
+        if motion.fromFirstFrame { return advanceOnFrames(was: was, now: now) }
         guard !reduceMotion else {
             _ = claim()
             shown = now.departing ? nil : now.target
@@ -479,6 +623,50 @@ public struct FRoleCoin: View {
             if let t = now.target { rotateIn(t, mine) }
         case .none:
             break
+        }
+    }
+
+    /// `advance`, for the frame clock: the same rules, each gesture a phase.
+    private func advanceOnFrames(was: Input, now: Input) {
+        guard !reduceMotion else {
+            gesture += 1; phase = nil
+            shown = now.departing ? nil : now.target
+            return
+        }
+        // THE GHOST TOOK IT: blank at once; a pass's previous defender turns a
+        // sword in once the shield has left the seat.
+        if now.departing && !was.departing {
+            gesture += 1; phase = nil
+            shown = nil
+            if let t = now.target {
+                play(from: nil, to: t, delay: motion.passDelay ? RoleCoinMotion.passSwordDelay : 0)
+            }
+            return
+        }
+        // THE GHOST LANDED: the real mark stands up in the same frame.
+        if was.arriving && !now.arriving {
+            gesture += 1; phase = nil
+            shown = now.departing ? nil : now.target
+            return
+        }
+        // SOMETHING IS ON ITS WAY HERE: turn away as it touches down.
+        if now.arriving && !was.arriving {
+            let wearing = phase?.to ?? shown
+            gesture += 1; phase = nil
+            shown = wearing
+            if wearing != nil { play(from: wearing, to: nil, delay: roleMakeWayDelay) }
+            return
+        }
+        let resting = phase?.from ?? shown
+        switch RoleGesture.resolve(shown: resting, next: now.target, settled: settled) {
+        case .none:
+            break
+        case .restore:
+            gesture += 1; phase = nil
+            shown = now.target
+        case .flip, .rotateOut, .rotateIn:
+            shown = resting
+            play(from: resting, to: now.target)
         }
     }
 
