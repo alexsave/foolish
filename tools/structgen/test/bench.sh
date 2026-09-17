@@ -10,8 +10,10 @@ out="$here/build/bench"
 REPS="${REPS:-3}"
 mkdir -p "$out"
 cd "$root"
-# The bundle moves the module out of test/, so it is told where the kernel is.
-export BENCH_WASM="$root/sdk/ts/wasm/bots.wasm.gz"
+# The test build (the shipped objects, plus the resident deal the bench starts
+# from). The bundle moves the module out of test/, so it is told where it is.
+make -s -C "$root/c" WASM_CC="${WASM_CC:-/opt/homebrew/opt/llvm/bin/clang}" wasm-bots-test >/dev/null
+export BENCH_WASM="$root/c/build/bots_test.wasm"
 node_modules/.bin/esbuild "$here/test/bench.ts" --bundle --minify --format=esm --platform=node \
   --outfile="$out/bench.min.mjs" --log-level=error
 res="$out/bench.tsv"; : > "$res"

@@ -30,7 +30,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The `wasm` and `wasm-guards` targets embed through wasm/embed.mjs.
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -59,7 +58,7 @@ jobs:
       - name: Build every wasm target the Makefile declares
         # Enumerated, never hardcoded: a target added later is covered the day it
         # lands. Every module's rule is a top-level `wasm…:` target in c/Makefile
-        # (wasm, wasm-guards, wasm-bots, wasm-oracle, wasm-oracle-mt today).
+        # (wasm-msg, wasm-bots, wasm-bots-test, wasm-oracle, wasm-oracle-mt today).
         run: |
           set -u
           targets=$(grep -oE '^wasm[A-Za-z0-9_-]*:' c/Makefile | tr -d ':' | sort -u)

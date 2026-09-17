@@ -20,10 +20,11 @@ TS handlers captured animation snapshots — a NULL no-op for native builds.
 **The bots here are ALSO the production bots.** `make wasm-bots` compiles the
 kernel plus every `*_strategy.c` plus a choose-move bridge
 (`wasm/wasm_bots_api.c`) into `bots.wasm`
-(`sdk/ts/wasm/bots_wasm.ts`, dispatched by `sdk/ts/wasm/bots.ts`). The
-production bot names map to exact C mirrors of the retired TS strategies —
-`e2e/bot_parity.test.ts` proves move-for-move equality against the frozen TS
-oracles. Two bots exist in a `_prod` variant (`espresso_prod`,
+(`sdk/ts/wasm/bots.wasm.gz`; the server's C Table drives them through
+`sdk/ts/table/server_table.ts`). The production bot names began as exact C
+mirrors of TS strategies; the TS strategies and their move-for-move parity
+suite are retired (docs/C_GAME_SHAPE_MIGRATION.md Phase 8), and the C is the
+only implementation. Two bots exist in a `_prod` variant (`espresso_prod`,
 `handwritten_prod`): the un-suffixed arena versions drifted slightly from
 the TS originals and are frozen because cordite's rollout policy (and its
 `cordite_sim.c` bitboard mirror) was tuned against them. `CD_BUDGET=prod|max`
@@ -51,8 +52,8 @@ Bots (weakest → strongest):
 - `fulminate` — cordite + in-game per-seat opponent profiling (skews each
   profiled seat's rollout policy toward its best-fit archetype).
 - Production TS mirrors: `simple_heuristic`, `champion`, `ultimate_champion`,
-  `hacker`, `espresso_prod`, `handwritten_prod` — exact move-for-move ports
-  of the (now retired) TS bots, verified by `e2e/bot_parity.test.ts`.
+  `hacker`, `espresso_prod`, `handwritten_prod` — ported move for move from
+  the retired TS bots; the TS originals and their parity suite are gone.
 
 Each strategy uses its own deterministic LCG (seeded per game) so a given
 seed reproduces the same play run-to-run.

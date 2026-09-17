@@ -90,7 +90,7 @@ case "${1:---hash}" in
     cat > "$STAMP" <<EOF
 # The wasm source set the committed artifacts were last built from.
 #
-# Written by the wasm make targets (make -C c wasm wasm-guards wasm-bots
+# Written by the wasm make targets (make -C c wasm-bots
 # wasm-oracle wasm-oracle-mt), read by scripts/check_wasm_freshness.sh. It is
 # how a rebuild that changes no shipped byte still proves it happened - see the
 # header of scripts/wasm_stamp.sh.

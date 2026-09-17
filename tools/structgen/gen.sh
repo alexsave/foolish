@@ -25,7 +25,6 @@ make -s -C "$here" build/structgen
 SG="$here/build/structgen"
 flags() { make -s -C "$root/c" -f Makefile -f "$here/print.mk" "sg-print-$1"; }
 spec() { grep -v '^[[:space:]]*#' "$here/specs/$1.args"; }
-RULES="$(flags WASM_RULES_CFLAGS)"
 BOTS="$(flags WASM_BOT_CFLAGS)"
 prod="$root/sdk/ts/gen"
 fixtures="$here/gen"
@@ -42,13 +41,7 @@ set -f   # the spec is split on whitespace, never globbed
 # shellcheck disable=SC2207
 GAME=(--cwd "$root/c" $(spec game_layout))
 set +f
-"$SG" "${GAME[@]}" --build "rules=$RULES" --ts "$prod/game_layout.rules.ts" --hash-ts "$prod/layout_hash.rules.ts"
 "$SG" "${GAME[@]}" --build "bots=$BOTS" --ts "$prod/game_layout.bots.ts" --hash-ts "$prod/layout_hash.bots.ts"
-if [ "$(sed -n 3p "$prod/layout_hash.rules.ts")" = "$(sed -n 3p "$prod/layout_hash.bots.ts")" ]; then
-  echo "gen: rules and bots Game layouts are identical ($(sed -n 3p "$prod/layout_hash.bots.ts"))"
-else
-  echo "gen: rules and bots Game layouts DIFFER - each host must load the module matching its wasm"
-fi
 "$SG" --cwd "$root/c" --header anim_plan.h --header legal.h --build "bots=$BOTS" \
   --root AnimPlan --root AnimBeats --root AnimEvent --root LegalMoves --ts "$prod/anim.bots.ts"
 

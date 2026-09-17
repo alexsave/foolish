@@ -2,8 +2,10 @@
 //   * every emitted accessor shape in isolation, plus candidate shapes
 //     (alt_accessors.ts) the generator could emit instead;
 //   * a pointer followed by the generated checked X_f_deref_at vs a raw u32 read.
-// It runs on the shipped kernel: bots.wasm (sdk/ts/wasm/bots.wasm.gz) and its own
-// generated module (sdk/ts/gen/game_layout.bots.ts), over a Game the kernel dealt.
+// It runs on the bots kernel's test build (c/build/bots_test.wasm: the shipped
+// module's objects and exports plus the test-only ones, among them the resident
+// deal this bench starts from) and its generated module
+// (sdk/ts/gen/game_layout.bots.ts), over a Game the kernel dealt.
 // The hand-written byte-wire marshal it once raced is gone with the TS game shape
 // (docs/C_GAME_SHAPE_MIGRATION.md Phase 8); e2e/bench_decode_packed.ts measures
 // the envelope read that replaced it.
@@ -27,8 +29,9 @@ interface Kernel {
     wasm_init(): void; wasm_set_seed(s: number): void; wasm_start_game(): number;
     wasm_game_ptr_internal(): number; wasm_table_roster_ptr(): number;
 }
-const wasmPath = process.env.BENCH_WASM ?? new URL('../../../sdk/ts/wasm/bots.wasm.gz', import.meta.url);
-const ex = new WebAssembly.Instance(new WebAssembly.Module(gunzipSync(readFileSync(wasmPath))), {}).exports as unknown as Kernel;
+const wasmPath = process.env.BENCH_WASM ?? new URL('../../../c/build/bots_test.wasm', import.meta.url);
+const wasmBytes = readFileSync(wasmPath);
+const ex = new WebAssembly.Instance(new WebAssembly.Module(String(wasmPath).endsWith('.gz') ? gunzipSync(wasmBytes) : wasmBytes), {}).exports as unknown as Kernel;
 const N = Number(process.env.BENCH_N ?? 200000), RUNS = Number(process.env.BENCH_RUNS ?? 7);
 const MODE = process.env.BENCH_MODE ?? 'unknown';
 const m: Mem = memOf(ex.memory.buffer), mx = A.memXOf(ex.memory.buffer);

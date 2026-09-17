@@ -11,14 +11,7 @@
 #include "awire.h"
 #include <string.h>
 
-// The wide, reproducible deal (ChaCha) lives ONLY in builds that actually deal:
-// the rules kernel (server deal + replay) and native tools/tests. The client
-// guards module never deals — its optimistic draws are placeholder cards and it
-// never learns the seed — so it is compiled with -DDEAL_RNG_DISABLED and never
-// links deal_rng. See the Makefile guards flags.
-#ifndef DEAL_RNG_DISABLED
 #include "deal_rng.h"
-#endif
 
 // ---------- RNG (two independent LCGs, same recurrence as TS) ----------
 //
@@ -38,7 +31,6 @@ static _Thread_local uint32_t g_rand_seed = 1;
 // (the C suite, the e2e seedSource hooks, in-flight legacy games) is unchanged.
 // game_set_seed() always turns it off.
 static _Thread_local int g_deal_wide = 0;
-#ifndef DEAL_RNG_DISABLED
 static _Thread_local DealRng g_deal_rng;
 
 // Fisher-Yates over the whole deck, driven by the ChaCha stream. Called once at
@@ -66,7 +58,6 @@ static void deal_shuffle(Game *g) {
         Card t = g->deck[i]; g->deck[i] = g->deck[j]; g->deck[j] = t;
     }
 }
-#endif
 
 // Random index in [0, n) for a DECK DRAW. Deterministic mode pops the top of the
 // pre-shuffled deck (0); legacy consumes one game_random() and clamps, byte-for-
@@ -87,9 +78,7 @@ static int draw_index(const Game *g, int n) {
 // when nobody holds a trump). Deterministic mode draws it, unbiased, from the
 // same ChaCha stream (so it too is reproducible); legacy uses the LCG.
 static int deal_index(int n) {
-#ifndef DEAL_RNG_DISABLED
     if (g_deal_wide) return (n <= 1) ? 0 : (int)deal_rng_bounded(&g_deal_rng, (uint32_t)n);
-#endif
     int idx = (int)(game_random() * n);
     if (idx < 0) idx = 0;
     if (idx >= n) idx = n - 1;
@@ -112,15 +101,11 @@ void game_set_seed(uint32_t s) {
     g_deal_wide = 0;   // revert the deal to the legacy 32-bit LCG path
 }
 
-#ifndef DEAL_RNG_DISABLED
 void game_set_deal_seed_bytes(const uint8_t *seed, int len) {
     if (!seed || len < FOOLISH_SEED_LEN) return;  // too little entropy: leave wide mode off
     deal_rng_seed(&g_deal_rng, seed);
     g_deal_wide = 1;                 // start_game will shuffle; draws then pop
 }
-#else
-void game_set_deal_seed_bytes(const uint8_t *seed, int len) { (void)seed; (void)len; }
-#endif
 
 int game_deal_seed_active(void) { return g_deal_wide; }
 
@@ -130,18 +115,14 @@ int game_deal_seed_active(void) { return g_deal_wide; }
 void game_deal_rng_get(unsigned char *out) {
     memset(out, 0, GAME_DEAL_RNG_STATE_MAX);
     out[0] = (unsigned char)g_deal_wide;
-#ifndef DEAL_RNG_DISABLED
     _Static_assert(1 + sizeof(DealRng) <= GAME_DEAL_RNG_STATE_MAX,
                    "GAME_DEAL_RNG_STATE_MAX too small for the wide flag + DealRng");
     memcpy(out + 1, &g_deal_rng, sizeof g_deal_rng);
-#endif
 }
 
 void game_deal_rng_set(const unsigned char *in) {
     g_deal_wide = in[0];
-#ifndef DEAL_RNG_DISABLED
     memcpy(&g_deal_rng, in + 1, sizeof g_deal_rng);
-#endif
 }
 uint32_t game_random_u32(void) {
     g_seed = g_seed * 1664525u + 1013904223u;
@@ -417,29 +398,6 @@ void game_seat_and_deal(Game *g, const int8_t *strategy_keys, int n) {
 
 // ---------- Logs -------------------------------------------------------
 
-#ifdef GUARDS_VALIDATE_ONLY
-// GUARDS_VALIDATE_ONLY: guards.wasm is a MOVE VALIDATOR. It dry-runs the real
-// handle_* on a throwaway clone and reads ONLY the reject code — the animation
-// logs those handlers emit (and the end-of-round stock refill, see
-// refill_player_hands below) are always discarded (guards exports no log/state
-// reader, and legality never reads g->logs / num_pairs; verified by the greps
-// behind e2e/client_guards + e2e/wasm_kernel_fuzz). Compile the whole log-append
-// path down to no-ops so the validator carries none of it. A single static sink
-// backs callers that write log fields directly (e.g. LOG_DEFENDER_CHANGE's
-// dc->defender_index); those writes are inert. _Thread_local for the same
-// reason as the drop-branch `scratch` below (Stage 5) — this build is
-// guards.wasm-only (single-threaded, and c/Makefile neutralizes the
-// qualifier there anyway) so it is moot in practice, but keeping the
-// qualifier here means the file has ONE rule ("kernel-mutated statics are
-// thread-local"), not a guards-only exception to remember.
-static _Thread_local GameLog g_log_sink;
-static GameLog *log_alloc(Game *g, int log_type, int player_idx) {
-    (void)g; (void)log_type; (void)player_idx;
-    return &g_log_sink;
-}
-static void log_add_card(GameLog *l, Card c) { (void)l; (void)c; }
-static void log_add_pair(GameLog *l, Card primary, Card target) { (void)l; (void)primary; (void)target; }
-#else
 
 static GameLog *log_alloc(Game *g, int log_type, int player_idx) {
     bool drop;
@@ -459,10 +417,9 @@ static GameLog *log_alloc(Game *g, int log_type, int player_idx) {
     }
     if (drop) {
         // _Thread_local (Stage 5): this IS live on the server's concurrent
-        // play path (a log-cap overflow during a real game), unlike the
-        // GUARDS_VALIDATE_ONLY sink above — two games' handle_* calls
-        // overflowing in the same instant would otherwise tear one shared
-        // GameLog between threads.
+        // play path (a log-cap overflow during a real game) - two games'
+        // handle_* calls overflowing in the same instant would otherwise tear
+        // one shared GameLog between threads.
         static _Thread_local GameLog scratch;
         memset(&scratch, 0, sizeof(scratch));
         scratch.log_type = log_type;
@@ -491,7 +448,6 @@ static void log_add_pair(GameLog *l, Card primary, Card target) {
     p->primary = primary;
     p->target = target;
 }
-#endif  // GUARDS_NO_LOG
 
 // ---------- Hand ops ---------------------------------------------------
 
@@ -695,12 +651,10 @@ void start_game(Game *g) {
     // from the durable blob, not the thread-local) keep popping the pre-shuffled
     // deck. Legacy deals leave it false and draw at random, exactly as before.
     g->deterministic_deck = g_deal_wide ? true : false;
-#ifndef DEAL_RNG_DISABLED
     // Seed-dealt game: shuffle the whole deck once from the ChaCha stream, then
     // every draw below (and every mid-game refill) pops the top — the full deal
     // and game are reproducible from the seed.
     if (g_deal_wide) deal_shuffle(g);
-#endif
     start_game_dealt(g);
 }
 
@@ -772,15 +726,6 @@ static bool no_cards_left(const Game *g) {
     return g->deck_count == 0 && !g->has_flipped;
 }
 
-#ifdef GUARDS_VALIDATE_ONLY
-// Validate-only build: the stock refill runs only in a move's COMMIT phase,
-// AFTER every reject check has passed — no reject code depends on the cards it
-// draws, and guards discards the post-move state. No-op it so the whole draw
-// path (draw_card, refill_deck) dead-code-eliminates out of the validator.
-// (handle_* still runs full mutation, so cover's mid-apply re-check and pass's
-// post-mutation PASS_OVERFLOW reject stay byte-for-byte identical to the server.)
-static void refill_player_hands(Game *g) { (void)g; }
-#else
 // One seat's turn at the talon: draw to six, log it as one DRAW, and drop a
 // seat that came out of it with nothing while the stock still had cards for
 // someone else. The OUT check sits AFTER the hook on purpose - TS pushed the
@@ -834,7 +779,6 @@ static void refill_player_hands(Game *g) {
     // Last, always.
     draw_up_to_six(g, defender);
 }
-#endif  // GUARDS_VALIDATE_ONLY
 
 // ---------- Action: attack --------------------------------------------
 

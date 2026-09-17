@@ -41,8 +41,6 @@ BASE="${1:-origin/main}"
 # The artifacts, and the make target that rebuilds each. Kept here rather than
 # derived because a .gz is not mentioned by a variable the Makefile exports.
 ARTIFACTS=(
-  "sdk/ts/wasm/rules_wasm.ts|make -C c wasm"
-  "sdk/ts/wasm/guards_wasm.ts|make -C c wasm-guards"
   "sdk/ts/wasm/bots.wasm.gz|make -C c wasm-bots"
   "public/oracle.wasm.gz|make -C c wasm-oracle"
   "public/oracle-mt.wasm.gz|make -C c wasm-oracle-mt"
@@ -50,9 +48,7 @@ ARTIFACTS=(
   # (LAYOUT_HASH). They move only when the Game layout does, so commit order says
   # nothing about them: the report shows them as content-checked, and they are in
   # the stamped set (scripts/wasm_stamp.sh), which is what the gate below reads.
-  "sdk/ts/gen/game_layout.rules.ts|make -C c wasm"
   "sdk/ts/gen/game_layout.bots.ts|make -C c wasm-bots"
-  "sdk/ts/gen/layout_hash.rules.ts|make -C c wasm"
   "sdk/ts/gen/layout_hash.bots.ts|make -C c wasm-bots"
 )
 
@@ -168,7 +164,7 @@ fi
 # of the sources IN THIS TREE, so a stamp written before the last C edit fails
 # just as a stale artifact would - and now fails even if an artifact did move.
 if [ ! -f "$STAMP" ]; then
-  echo "::error::$STAMP is missing - run: make -C c wasm wasm-guards wasm-bots wasm-oracle wasm-oracle-mt" >&2
+  echo "::error::$STAMP is missing - run: make -C c wasm-bots wasm-oracle wasm-oracle-mt" >&2
   exit 1
 fi
 want=$(scripts/wasm_stamp.sh --hash)
@@ -190,7 +186,7 @@ the last build - whether or not an artifact is in this diff. Rebuild and commit
 the result (a Mac needs WASM_CC=/opt/homebrew/opt/llvm/bin/clang; plain clang
 there cannot target wasm32):
 
-  make -C c wasm wasm-guards wasm-bots wasm-oracle wasm-oracle-mt
+  make -C c wasm-bots wasm-oracle wasm-oracle-mt
 
 If a rebuild genuinely is not wanted in this PR, say so in the PR body and add
 the paths you changed to the deliberate-exceptions list at the top of this
