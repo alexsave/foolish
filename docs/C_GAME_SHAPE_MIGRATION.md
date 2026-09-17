@@ -494,8 +494,8 @@ Timings are wall clock on a machine shared with other agents' builds and tests, 
 
 | Gate | Tool (exact command) | Baseline (code at 5e32ed8a) | Rule |
 |---|---|---|---|
-| bots.wasm.gz | `node scripts/collect_metrics.mjs` (`size.bots`) | 65,307 B gz (154,343 B raw) | Phases 2-4: at most +4,096 B cumulative; Phase 8: below baseline + 2,048 B |
-| rules embed | same (`size.rules`); file size `wc -c sdk/ts/wasm/rules_wasm.ts` | 15,024 B gz embedded (34,654 B raw); `rules_wasm.ts` 20,567 B | not larger until deleted (Phase 8) |
+| bots.wasm.gz | `node scripts/collect_metrics.mjs` (`size.bots`) | 65,307 B gz (154,343 B raw) | Owner priority is C over TS, then size: bots.wasm.gz may grow as TS moves into C (Phase 2 roster +1,932 B, Phase 1 hash +26 B, accepted). Every phase records its delta. The binding end-state rule is total shipped bytes (web bundle gz + edge embeds) below baseline at Phase 8 |
+| rules embed | same (`size.rules`); file size `wc -c sdk/ts/wasm/rules_wasm.ts` | 15,024 B gz embedded (34,654 B raw); `rules_wasm.ts` 20,567 B | record every delta until deleted in Phase 8 (Phase 1 layout hash +32 B, accepted) |
 | guards embed | same (`size.guards`); `wc -c sdk/ts/wasm/guards_wasm.ts` | 3,525 B gz embedded (7,550 B raw); `guards_wasm.ts` 5,236 B | not larger until removed from the web (Phase 6b) |
 | oracle / oracle-mt gz | same (`size.oracle`, `size["oracle-mt"]`, from `public/*.wasm.gz`) | 69,999 / 71,168 B gz | at most +512 B each |
 | web bundle gz | `node scripts/measure_web_bundle.mjs` (first-load JS: `rootMainFiles` + the route's `entryJSFiles`, gzip -9) | `/` 274,363 B, `/[game_id]` 325,260 B, union 330,504 B gz (1,074,794 B raw, 17 chunks); identical over 4 builds | no phase may grow it more than 1,024 B; Phase 8 must end below baseline |
