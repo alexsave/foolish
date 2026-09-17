@@ -73,7 +73,7 @@ export function registerPassValidation(): void {
     test('pass parity: legal pass when the seat after the defender is eliminated (the reported bug)', () => {
         const g = makeGame(1, [
             { status: 'in', hand: [c(0, 5), c(1, 6), c(2, 9), c(3, 10), c(0, 11)] }, // P0 real next defender, 5 cards
-            { status: 'in', hand: [c(0, 8), c(1, 12), c(2, 13), c(3, 14)] },          // P1 defender, holds an 8
+            { status: 'in', hand: [c(0, 8), c(1, 12), c(2, 13), c(3, 13)] },          // P1 defender, holds an 8
             { status: 'out', hand: [] },                                              // P2 eliminated
         ], [{ attack: c(3, 8), defense: null }, { attack: c(2, 8), defense: null }]);
         expectParity('out-seat-after-defender', g, 1, [c(0, 8)], true);
@@ -82,7 +82,7 @@ export function registerPassValidation(): void {
     test('pass parity: blocked when the real next defender (past an out seat) lacks room', () => {
         const g = makeGame(1, [
             { status: 'in', hand: [c(0, 5), c(1, 6)] },                       // P0 real next defender, only 2 cards
-            { status: 'in', hand: [c(0, 8), c(1, 12), c(2, 13), c(3, 14)] },  // P1 defender
+            { status: 'in', hand: [c(0, 8), c(1, 12), c(2, 13), c(3, 13)] },  // P1 defender
             { status: 'out', hand: [] },                                      // P2 eliminated
         ], [{ attack: c(3, 8), defense: null }, { attack: c(2, 8), defense: null }]); // 2 + 1 = 3 > 2
         expectParity('out-seat-real-next-too-small', g, 1, [c(0, 8)], false);
@@ -102,7 +102,7 @@ export function registerPassValidation(): void {
             { status: 'in', hand: [c(0, 7), c(1, 7), c(2, 13)] },             // P0 defender, two 7s
             { status: 'in', hand: [c(0, 5)] },                               // P1 next defender, 1 card
             { status: 'in', hand: [c(0, 11), c(2, 11)] },                     // P2
-        ], [{ attack: c(1, 7), defense: null }, { attack: c(2, 7), defense: null }]); // 2 + 1 = 3 > 1
+        ], [{ attack: c(3, 7), defense: null }, { attack: c(2, 7), defense: null }]); // 2 + 1 = 3 > 1
         expectParity('ordinary-blocked', g, 0, [c(0, 7)], false);
     });
 

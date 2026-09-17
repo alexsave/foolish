@@ -215,6 +215,91 @@ void game_settle_status(Game *g) {
         g->status = GAME_STATUS_GAME_OVER;
 }
 
+// Is `c` a card of a deck whose lowest value is `min_value`?
+static bool card_in_deck(Card c, int min_value) {
+    return c.suit >= 0 && c.suit < NUM_SUITS && c.value >= min_value && c.value <= ACE_VALUE;
+}
+
+// Mark card `c` seen; false if it already was. Only called on in-deck cards,
+// so the id is 0..51.
+static bool card_first_sighting(uint64_t *seen, Card c) {
+    const uint64_t bit = 1ull << card_to_id(c);
+    if (*seen & bit) return false;
+    *seen |= bit;
+    return true;
+}
+
+int game_validate(const Game *g, int flags) {
+    const bool masked = (flags & GAME_VALIDATE_MASKED) != 0;
+    const int np = g->num_players;
+
+    if (g->status < GAME_STATUS_WAITING || g->status > GAME_STATUS_GAME_OVER)
+        return GAME_INVALID_STATUS;
+    if (g->deck_count < 0 || g->deck_count > MAX_DECK
+        || g->num_battles < 0 || g->num_battles > MAX_BATTLES)
+        return GAME_INVALID_COUNT;
+    for (int i = 0; i < np && i < MAX_PLAYERS; i++)
+        if (g->players[i].hand_count < 0 || g->players[i].hand_count > MAX_HAND_SIZE)
+            return GAME_INVALID_COUNT;
+    // A lobby may hold any number of seats while it fills; a dealt game needs two.
+    if (np < 0 || np > MAX_PLAYERS || (g->status != GAME_STATUS_WAITING && np < 2))
+        return GAME_INVALID_NUM_PLAYERS;
+    for (int i = 0; i < np; i++)
+        if (g->players[i].status < PLAYER_STATUS_IDLE || g->players[i].status > PLAYER_STATUS_OUT)
+            return GAME_INVALID_PLAYER_STATUS;
+    if (g->power_suit < 0 || g->power_suit >= NUM_SUITS)
+        return GAME_INVALID_POWER_SUIT;
+    // An empty lobby has no seat to point at; its seat fields rest at 0.
+    const int seats = np > 0 ? np : 1;
+    if (g->first_attacker < 0 || g->first_attacker >= seats
+        || g->defender < 0 || g->defender >= seats)
+        return GAME_INVALID_SEAT;
+
+    if (g->num_eliminated < 0 || g->num_eliminated > np) return GAME_INVALID_ELIMINATION;
+    {
+        unsigned out = 0;
+        for (int i = 0; i < g->num_eliminated; i++) {
+            const int s = g->elimination_order[i];
+            if (s < 0 || s >= np || (out & (1u << s))) return GAME_INVALID_ELIMINATION;
+            out |= 1u << s;
+        }
+    }
+    if ((g->good_players_mask >> np) != 0) return GAME_INVALID_GOOD_MASK;
+
+    // Cards. Face-up cards (the table, the trump) are checked against this
+    // game's deck and against each other in every view. The deck and the hands
+    // are too, unless the state is a masked view - there they hold placeholders,
+    // so all that can be asked is that each is some card.
+    const int min_value = min_value_for(np);
+    uint64_t seen = 0;
+    if (g->has_flipped) {
+        if (!card_in_deck(g->flipped, min_value)) return GAME_INVALID_CARD;
+        if (g->flipped.suit != g->power_suit) return GAME_INVALID_FLIPPED;
+        card_first_sighting(&seen, g->flipped);
+    }
+    for (int i = 0; i < g->num_battles; i++) {
+        const Battle *b = &g->table_battles[i];
+        if (!card_in_deck(b->attack, min_value)) return GAME_INVALID_CARD;
+        if (!card_first_sighting(&seen, b->attack)) return GAME_INVALID_DUPLICATE_CARD;
+        if (card_is_none(b->defense)) continue;
+        if (!card_in_deck(b->defense, min_value)) return GAME_INVALID_CARD;
+        if (!card_first_sighting(&seen, b->defense)) return GAME_INVALID_DUPLICATE_CARD;
+    }
+    const int hidden_min = masked ? 1 : min_value;
+    for (int i = 0; i < g->deck_count; i++) {
+        if (!card_in_deck(g->deck[i], hidden_min)) return GAME_INVALID_CARD;
+        if (!masked && !card_first_sighting(&seen, g->deck[i])) return GAME_INVALID_DUPLICATE_CARD;
+    }
+    for (int p = 0; p < np; p++) {
+        const Player *pl = &g->players[p];
+        for (int j = 0; j < pl->hand_count; j++) {
+            if (!card_in_deck(pl->hand[j], hidden_min)) return GAME_INVALID_CARD;
+            if (!masked && !card_first_sighting(&seen, pl->hand[j])) return GAME_INVALID_DUPLICATE_CARD;
+        }
+    }
+    return GAME_VALID;
+}
+
 uint32_t game_human_mask(const Game *g) {
     if (!g) return 0;
     uint32_t m = 0;

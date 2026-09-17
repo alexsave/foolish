@@ -440,7 +440,7 @@ static int serialize_slot(const GameSlot *s, unsigned char *buf, int cap) {
 // contract h_create's fresh-slot memset follows) — this never touches
 // s->lock/s->cond/s->bot_running/s->version/s->view_cache* (runtime-only
 // fields the caller (re-)initializes separately; see game_persist_load /
-// h_create). Rejects (returns false, touches nothing) on a version mismatch
+// h_create). Rejects (returns false) on a version mismatch, a state the kernel refuses,
 // or a length too short for its own encoded state_len — defense in depth
 // against a corrupted DB row, never trusts `len` blindly (same posture
 // state_get's own bounds-clamping takes against a hostile/corrupt blob).
@@ -450,7 +450,9 @@ static bool deserialize_slot(GameSlot *s, const unsigned char *buf, int len) {
     int state_len = q[0] | (q[1] << 8); q += 2;
     int fixed_tail = (ID_LEN + 1) * 2 + MAX_PLAYERS * (ID_LEN + 1) + MAX_PLAYERS * 24 + MAX_PLAYERS;
     if (state_len < 0 || state_len > 65536 || 3 + state_len + fixed_tail > len) return false;
-    state_get(&s->game, q, /*masked=*/0);   // exact inverse of state_put(.., VIEW_UNMASKED, ..)
+    // Exact inverse of state_put(.., VIEW_UNMASKED, ..), and refused whole if
+    // the kernel could not have produced the state (game.h game_validate).
+    if (state_import(&s->game, q, /*masked=*/0) != GAME_VALID) return false;
     q += state_len;
     memcpy(s->id, q, ID_LEN + 1); s->id[ID_LEN] = 0; q += ID_LEN + 1;
     memcpy(s->owner, q, ID_LEN + 1); s->owner[ID_LEN] = 0; q += ID_LEN + 1;

@@ -34,7 +34,7 @@ interface GuardsExports {
   wasm_io_ptr(): number;
   wasm_cards_a_ptr(): number;
   wasm_cards_b_ptr(): number;
-  wasm_import_state(): void;
+  wasm_import_state(): number;
   wasm_validate_attack(seat: number, n: number): number;
   wasm_validate_cover(seat: number, n: number): number;
   wasm_validate_pass(seat: number, n: number): number;
@@ -53,6 +53,10 @@ interface GuardsExports {
 let ex: GuardsExports | null = null;
 let loading: Promise<void> | null = null;
 let residentFor: PersonalGame | null = null;
+// The kernel's verdict on residentFor's import: 0 accepted, else the negative
+// GAME_INVALID_* reason (c/src/game.h game_validate). A refused state is never
+// adopted, so no gate may run against whatever the kernel still holds.
+let residentVerdict = 0;
 // Held from first take until an instantiation SUCCEEDS, so a sync fallback can
 // still run after an async attempt decoded the (take-once) embed.
 let pendingBytes: Uint8Array | null = null;
@@ -127,7 +131,8 @@ function bytes(): Uint8Array { return new Uint8Array(ex!.memory.buffer); }
 // -------------------------------------------------------------------------
 // Marshal a PersonalGame into the kernel's resident state. Skips the write
 // when the same game object is already resident (the render pass fires many
-// gates against one game). Returns the seat index of `self`.
+// gates against one game). Returns the kernel's verdict: 0 when the state was
+// adopted, else the negative GAME_INVALID_* reason it was refused for.
 // -------------------------------------------------------------------------
 function seatOfSelf(g: PersonalGame): number {
   const id = g.self?.player_id;
@@ -135,8 +140,8 @@ function seatOfSelf(g: PersonalGame): number {
   return s < 0 ? 0 : s;
 }
 
-function marshal(g: PersonalGame): void {
-  if (residentFor === g) return;
+function marshal(g: PersonalGame): number {
+  if (residentFor === g) return residentVerdict;
   const buf = bytes();
   let q = ex!.wasm_io_ptr();
   const selfSeat = seatOfSelf(g);
@@ -189,8 +194,15 @@ function marshal(g: PersonalGame): void {
     buf[q++] = s & 0xff;
   }
 
-  ex!.wasm_import_state();
+  residentVerdict = ex!.wasm_import_state();
   residentFor = g;
+  return residentVerdict;
+}
+
+// For the readers that have no "illegal" answer to fall back on.
+function marshalOrThrow(g: PersonalGame): void {
+  const verdict = marshal(g);
+  if (verdict < 0) throw new Error(`Invalid game state: refused by the kernel (reason ${verdict})`);
 }
 
 function writeCards(ptr: number, cards: Card[]): void {
@@ -219,7 +231,7 @@ function ensure(): GuardsExports {
 export function canAttack(g: PersonalGame, cards: Card[]): boolean {
   const e = ensure();
   if (cards.length === 0) return false;
-  marshal(g);
+  if (marshal(g) < 0) return false;
   writeCards(e.wasm_cards_a_ptr(), cards);
   return e.wasm_validate_attack(seatOfSelf(g), cards.length) === REJECT_NONE;
 }
@@ -227,7 +239,7 @@ export function canAttack(g: PersonalGame, cards: Card[]): boolean {
 export function canPass(g: PersonalGame, cards: Card[]): boolean {
   const e = ensure();
   if (cards.length === 0) return false;
-  marshal(g);
+  if (marshal(g) < 0) return false;
   writeCards(e.wasm_cards_a_ptr(), cards);
   return e.wasm_validate_pass(seatOfSelf(g), cards.length) === REJECT_NONE;
 }
@@ -235,7 +247,7 @@ export function canPass(g: PersonalGame, cards: Card[]): boolean {
 export function canCover(g: PersonalGame, coverCards: Card[], attackCards: Card[]): boolean {
   const e = ensure();
   if (coverCards.length === 0 || coverCards.length !== attackCards.length) return false;
-  marshal(g);
+  if (marshal(g) < 0) return false;
   writeCards(e.wasm_cards_a_ptr(), coverCards);
   writeCards(e.wasm_cards_b_ptr(), attackCards);
   return e.wasm_validate_cover(seatOfSelf(g), coverCards.length) === REJECT_NONE;
@@ -243,7 +255,7 @@ export function canCover(g: PersonalGame, coverCards: Card[], attackCards: Card[
 
 export function canPickup(g: PersonalGame): boolean {
   const e = ensure();
-  marshal(g);
+  if (marshal(g) < 0) return false;
   return e.wasm_validate_pickup(seatOfSelf(g)) === REJECT_NONE;
 }
 
@@ -254,13 +266,13 @@ export function canCoverPair(attack: Card, defense: Card, powerSuit: number): bo
 
 export function nextPlayerIndex(g: PersonalGame, current: number): number {
   const e = ensure();
-  marshal(g);
+  marshalOrThrow(g);
   return e.wasm_next_player(current);
 }
 
 export function gameDone(g: PersonalGame): number {
   const e = ensure();
-  marshal(g);
+  marshalOrThrow(g);
   return e.wasm_game_done(); // seat index of the loser, or -1
 }
 
@@ -271,7 +283,8 @@ export function gameDone(g: PersonalGame): number {
 // decodes the exact bytes the server kernel will apply.
 // -------------------------------------------------------------------------
 
-// 0 = legal; else the ENGINE_REJECT_* code, or -1 for a malformed wire.
+// 0 = legal; else the ENGINE_REJECT_* code, -1 for a malformed wire, or the
+// negative GAME_INVALID_* code if the kernel refused the game state itself.
 // guards.wasm is VALIDATE-ONLY: production optimistic apply is the pure-TS
 // overlay (src/state/optimisticOverlay.ts + clientReconcile.ts), not the
 // kernel. To move the client's optimistic apply onto the kernel, re-export
@@ -279,7 +292,8 @@ export function gameDone(g: PersonalGame): number {
 // applyMove helper removed alongside this note.
 export function validateActionWire(g: PersonalGame, wire: Uint8Array): number {
   const e = ensure();
-  marshal(g);
+  const verdict = marshal(g);
+  if (verdict < 0) return verdict;
   bytes().set(wire, e.wasm_cards_a_ptr());
   return e.wasm_validate_action(seatOfSelf(g), wire.length);
 }

@@ -59,7 +59,7 @@ export interface MtExports {
     memory: WebAssembly.Memory;
     wasm_init(): void;
     wasm_io_ptr(): number;
-    wasm_import_state(): void;
+    wasm_import_state(masked: number): number;
     wasm_import_strategy_keys(): void;
     wasm_import_logs(): void;
     wasm_clearenv(): void;
@@ -162,7 +162,8 @@ export class OracleMtSession {
         if (!ex) throw new Error('oracle-mt session not loaded');
 
         __setResident(null);
-        __marshalGame(ex as never, job.gameBlob as unknown as Game);
+        // masked: every seat but the acting one holds placeholder cards.
+        __marshalGame(ex as never, job.gameBlob as unknown as Game, true);
         {
             const buf = __mem(ex as never); const q = ex.wasm_io_ptr();
             for (let i = 0; i < job.numPlayers; i++) buf[q + i] = 0xff;

@@ -47,7 +47,7 @@ interface EngineExports {
     wasm_io_cap(): number;
     wasm_cards_a_ptr(): number;
     wasm_cards_b_ptr(): number;
-    wasm_import_state(): void;
+    wasm_import_state(masked: number): number;
     wasm_set_deterministic_deck(on: number): void;
     wasm_seed_rng_deterministic(): void;
     wasm_set_strategy_seed_deterministic(): void;
@@ -338,7 +338,65 @@ function goodPlayersFromMask(mask: number, game: Game, preGood: string[], actorI
     return out;
 }
 
-function marshalGame(ex: EngineExports, game: Game): void {
+// What marshalGame writes for a value the JS Game holds but the byte layout has
+// no word for - a status string outside the enum, a player id that is not
+// seated, a card that is not a card. Each is a value the kernel REFUSES
+// (game.h game_validate), so the import fails with the kernel's reason instead
+// of the marshal quietly turning it into something plausible: an unknown
+// status used to become WAITING/IDLE, an unseated eliminated id became seat -1,
+// an unseated good id was dropped, and {99,99} was clamped onto the ace of
+// diamonds. None of these is a check - the kernel judges; the marshal only
+// declines to invent a value.
+const STATUS_UNKNOWN = 0xff;      // i8 -1: no GAME_STATUS_* / PLAYER_STATUS_*
+const SEAT_NOT_SEATED = 0x7f;     // i8 127: past any table
+const GOOD_NOT_SEATED = 1 << 31;  // good bit 31: past any table
+const WIRE_NOT_A_CARD = 0xfd;     // not 0..51, not hidden, not none
+
+// A state card: its id if the object IS a card, else WIRE_NOT_A_CARD.
+function wireStateCardExact(c: Card): number {
+    const s = c.suit, v = c.value;
+    return Number.isInteger(s) && Number.isInteger(v) && s >= 0 && s <= 3 && v >= 1 && v <= 13
+        ? s * 13 + (v - 1)
+        : WIRE_NOT_A_CARD;
+}
+
+// Why the kernel refused an imported state. Mirrors GAME_INVALID_* in
+// c/src/game.h (game_validate); the kernel decides, this only words it.
+const STATE_INVALID: Record<number, string> = {
+    [-1]: 'a count exceeds its capacity',
+    [-2]: 'game status out of range',
+    [-3]: 'too few players for a dealt game',
+    [-4]: 'player status out of range',
+    [-5]: 'power suit out of range',
+    [-6]: 'first attacker or defender is not a seat at the table',
+    [-7]: 'elimination order names a seat that is not at the table, or names one twice',
+    [-8]: 'good players name a seat that is not at the table',
+    [-9]: 'a card that is not a card of this deck',
+    [-10]: 'duplicate card',
+    [-11]: 'the face-up trump is not of the power suit',
+};
+function stateRejectionError(reason: number, gameId: string | undefined): Error {
+    const what = STATE_INVALID[reason] ?? 'refused';
+    return new Error(`Invalid game state: ${what} (game ${gameId ?? '?'}, kernel reason ${reason})`);
+}
+
+// Load a durable blob into the kernel, or throw: unreadable (unknown format
+// version) or refused (game_validate). Either way nothing was adopted.
+function loadStateBlob(ex: EngineExports, blob: Uint8Array, gameId?: string): void {
+    mem(ex).set(blob, ex.wasm_io_ptr());
+    const r = ex.wasm_state_deserialize(blob.length);
+    if (r === 0) {
+        throw new Error(
+            `Unreadable game state blob${gameId ? ` for ${gameId}` : ''}: format version ` +
+            `${blob[0]}, kernel reads ${ex.wasm_state_format_version()}`);
+    }
+    if (r < 0) throw stateRejectionError(r, gameId);
+}
+
+// `masked`: the game is one seat's knowledge, with placeholder cards for the
+// deck and the hands that seat cannot see (the replay oracle). The kernel then
+// judges everything but those placeholders' identities (wasm_import_state).
+function marshalGame(ex: EngineExports, game: Game, masked = false): void {
     if (residentFor === game && ex === exportsCache) {
         residentFor = null;
         return;
@@ -346,7 +404,7 @@ function marshalGame(ex: EngineExports, game: Game): void {
     residentFor = null;
     const buf = mem(ex);
     let q = ex.wasm_io_ptr();
-    buf[q++] = G_STATUS_TO_INT[game.status] ?? 0;
+    buf[q++] = G_STATUS_TO_INT[game.status] ?? STATUS_UNKNOWN;
     buf[q++] = game.players.length;
     buf[q++] = game.power_suit & 0xff;
     buf[q++] = game.first_attacker & 0xff;
@@ -354,11 +412,11 @@ function marshalGame(ex: EngineExports, game: Game): void {
     buf[q++] = game.discard_pile_length & 0xff;
     buf[q++] = (game.discard_pile_length >> 8) & 0xff;
     buf[q++] = game.flipped ? 1 : 0;
-    buf[q++] = game.flipped ? wireStateCard(game.flipped) : 0;
+    buf[q++] = game.flipped ? wireStateCardExact(game.flipped) : 0;
     let mask = 0;
     for (const pid of game.good_players ?? []) {
         const s = game.players.findIndex(p => p.player_id === pid);
-        if (s >= 0) mask |= 1 << s;
+        mask |= s >= 0 ? 1 << s : GOOD_NOT_SEATED;
     }
     buf[q++] = mask & 0xff;
     buf[q++] = (mask >> 8) & 0xff;
@@ -367,24 +425,27 @@ function marshalGame(ex: EngineExports, game: Game): void {
     buf[q++] = game.good_timestamp !== null && game.good_timestamp !== undefined ? 1 : 0;
     buf[q++] = game.deck.length & 0xff;
     buf[q++] = (game.deck.length >> 8) & 0xff;
-    for (const c of game.deck) buf[q++] = wireStateCard(c);
+    for (const c of game.deck) buf[q++] = wireStateCardExact(c);
     buf[q++] = game.table_battles.length;
     for (const b of game.table_battles) {
-        buf[q++] = wireStateCard(b.attack);
-        buf[q++] = b.defense ? wireStateCard(b.defense) : WIRE_NONE;
+        buf[q++] = wireStateCardExact(b.attack);
+        buf[q++] = b.defense ? wireStateCardExact(b.defense) : WIRE_NONE;
     }
     for (const p of game.players) {
-        buf[q++] = P_STATUS_TO_INT[p.status] ?? 0;
+        buf[q++] = P_STATUS_TO_INT[p.status] ?? STATUS_UNKNOWN;
         buf[q++] = p.awaiting_attack ? 1 : 0;
         buf[q++] = p.hand.length;
-        for (const c of p.hand) buf[q++] = wireStateCard(c);
+        for (const c of p.hand) buf[q++] = wireStateCardExact(c);
     }
     buf[q++] = game.elimination_order.length;
     for (const pid of game.elimination_order) {
         const s = game.players.findIndex(p => p.player_id === pid);
-        buf[q++] = s & 0xff;
+        buf[q++] = s >= 0 ? s : SEAT_NOT_SEATED;
     }
-    ex.wasm_import_state();
+    // The kernel judges the state before adopting it; on a refusal the game
+    // resident before this call is still resident, and nothing below runs.
+    const verdict = ex.wasm_import_state(masked ? 1 : 0);
+    if (verdict < 0) throw stateRejectionError(verdict, game.id);
     // SEAT KINDS, every marshal, right behind the state. game_human_mask reads
     // them, so once they are here the kernel can answer "which seats may I
     // drive" - and no host has to build an is_ai mask in order to ask.
@@ -617,12 +678,7 @@ export function serializeGameState(game: Game): Uint8Array {
 export function deserializeGameState(bytes: Uint8Array, roster: RosterTemplate): Game {
     const ex = engine();
     const base = ex.wasm_io_ptr();
-    mem(ex).set(bytes, base);
-    if (!ex.wasm_state_deserialize(bytes.length)) {
-        throw new Error(
-            `Unreadable game state blob for ${roster.id}: format version ` +
-            `${bytes[0]}, kernel reads ${ex.wasm_state_format_version()}`);
-    }
+    loadStateBlob(ex, bytes, roster.id);
     // g_game now holds the loaded state, but no TS Game object owns it yet.
     residentFor = null;
     ex.wasm_export_state();
@@ -742,10 +798,7 @@ export function runPackedAction(
     aiMask: number, humanSeats: number[],
 ): PackedRunOk | PackedRunReject {
     const ex = engine();
-    mem(ex).set(blob, ex.wasm_io_ptr());
-    if (!ex.wasm_state_deserialize(blob.length)) {
-        throw new Error(`Unreadable game state blob: format version ${blob[0]}, kernel reads ${ex.wasm_state_format_version()}`);
-    }
+    loadStateBlob(ex, blob);
     residentFor = null;
     return packedActionCore(ex, seat, wire, aiMask, humanSeats);
 }
@@ -928,10 +981,7 @@ export function applyKernelStateToGame(game: Game, post: KernelState, actorId: s
 export function serializeViewBlob(blob: Uint8Array, viewerSeat: number): Uint8Array {
     const ex = engine();
     const base = ex.wasm_io_ptr();
-    mem(ex).set(blob, base);
-    if (!ex.wasm_state_deserialize(blob.length)) {
-        throw new Error(`Unreadable game state blob: format version ${blob[0]}, kernel reads ${ex.wasm_state_format_version()}`);
-    }
+    loadStateBlob(ex, blob);
     residentFor = null;
     const len = ex.wasm_view_serialize(viewerSeat);
     return mem(ex).slice(base, base + len);
@@ -948,10 +998,7 @@ export function serializeViewBlob(blob: Uint8Array, viewerSeat: number): Uint8Ar
 export function serializeViewBlobs(blob: Uint8Array, viewerSeats: number[]): Map<number, Uint8Array> {
     const ex = engine();
     const base = ex.wasm_io_ptr();
-    mem(ex).set(blob, base);
-    if (!ex.wasm_state_deserialize(blob.length)) {
-        throw new Error(`Unreadable game state blob: format version ${blob[0]}, kernel reads ${ex.wasm_state_format_version()}`);
-    }
+    loadStateBlob(ex, blob);
     residentFor = null;
     const out = new Map<number, Uint8Array>();
     for (const seat of viewerSeats) {

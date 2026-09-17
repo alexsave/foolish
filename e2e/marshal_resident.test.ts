@@ -60,8 +60,11 @@ function randState(rnd: () => number, strat: string): any {
   const rest = cards.slice(k);
   const flipped = rnd() < 0.5 && rest.length ? idCard(rest.shift()!) : null;
   const deck = rest.slice(0, ri(Math.min(rest.length, 8) + 1)).map(idCard);
+  const suit = ri(4);
   return {
-    id: 'g' + ri(1e9), status: GAME_STATUS.PLAYING, players, power_suit: ri(4),
+    id: 'g' + ri(1e9), status: GAME_STATUS.PLAYING, players,
+    // The trump suit IS the face-up card's suit (the kernel refuses otherwise).
+    power_suit: flipped ? flipped.suit : suit,
     first_attacker: attacker, defender, discard_pile_length: ri(40),
     flipped, deck, good_players: [], good_timestamp: null, table_battles: [],
     elimination_order: [], logs: [],

@@ -132,7 +132,7 @@ if (!process.env.VALIDATION_ONLY) {
         const finishedCommon = {
             id: 'g1', name: 'G1', status: GAME_STATUS.GAME_OVER,
             discard_pile_length: 7, flipped: { suit: 1, value: 9 },
-            power_suit: 2, first_attacker: 1, defender: 0,
+            power_suit: 1, first_attacker: 1, defender: 0,
             table_battles: [{ attack: { suit: 0, value: 5 }, defense: null }],
             elimination_order: ['h1'], good_timestamp: 123, good_players: ['h1'], version: 41,
         };

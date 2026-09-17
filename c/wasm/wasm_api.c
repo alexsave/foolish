@@ -229,25 +229,34 @@ static int put_state(const Game *g, unsigned char *p) {
     return state_put(g, VIEW_UNMASKED, p);
 }
 
-static void get_state(Game *g, const unsigned char *p) {
-    state_get(g, p, 0);
-}
-
-// TS -> C: parse the IO buffer into the working game. The ephemeral IO format
+// TS -> C: parse the IO buffer into the working game - if the kernel accepts
+// it. Returns GAME_VALID (0), or a negative GAME_INVALID_* reason (game.h
+// game_validate) with the working game left exactly as it was: a host never
+// gets to install a state the kernel could not have produced.
+//
+// `masked` is the host saying what it is handing over. 0: a whole game, every
+// card real (the server's own Game). 1: one seat's knowledge, with placeholder
+// cards standing in for the deck and the hands it cannot see (the replay
+// oracle's deliberation state) - their identities are then not judged, and
+// everything face-up still is. A host that omits the argument gets 0.
+//
+// The ephemeral IO format
 // carries no deterministic_deck flag (only the durable blob does), so reset it:
 // a fresh deal has start_game set it, and a legacy game draws at random. This
 // also stops a reused engine instance inheriting a prior game's flag. The
 // caller re-asserts the flag right after (wasm_set_deterministic_deck) for a
 // seed-dealt game — otherwise the bot path (which imports rather than
 // deserializes) would draw at random mid-game and diverge from the deal seed.
-void wasm_import_state(void) {
-    get_state(&g_game, g_io);
+int wasm_import_state(int masked) {
+    const int r = state_import(&g_game, g_io, masked ? 1 : 0);
+    if (r != GAME_VALID) return r;
     g_game.deterministic_deck = false;
     // A game swapped in wholesale is not the one the last FMSG decode adopted,
     // so its log count says nothing about whether that chain has moved. Forget
     // the mark (see g_msg_base_logs); a seal then behaves exactly as it did
     // before the mark existed.
     g_msg_base_logs = -1;
+    return GAME_VALID;
 }
 
 // Re-assert the deterministic-deck flag after wasm_import_state. Seed-dealt
@@ -362,12 +371,15 @@ int wasm_state_serialize(void) {
 
 // Load a durable blob (already written into g_io) back into the working game.
 // Returns 1 on success, 0 if the leading version byte is one this kernel does
-// not understand (caller must treat as unreadable, never as an empty game).
+// not understand (caller must treat as unreadable, never as an empty game), or
+// a negative GAME_INVALID_* reason if the state inside is one the kernel
+// refuses (game.h game_validate) - the working game is then left as it was.
 int wasm_state_deserialize(int len) {
     if (len < 2) return 0;
     if (g_io[0] != STATE_FORMAT_VERSION) return 0;
+    const int r = state_import(&g_game, g_io + 2, 0);
+    if (r != GAME_VALID) return r;
     g_game.deterministic_deck = g_io[1] != 0;
-    get_state(&g_game, g_io + 2);
     return 1;
 }
 

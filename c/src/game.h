@@ -350,6 +350,38 @@ extern _Thread_local void (*engine_snap_hook)(const Game *g, int tag, int aux);
 // engine_snap_hook comment above for the wasm/single-thread transparency note.
 extern _Thread_local int engine_last_reject;
 
+// ---------- Imported-state validation -----------------------------------
+//
+// A Game that crosses a trust boundary - the transient IO marshal from a host,
+// a durable blob out of a database row, a server view decoded on a client - is
+// checked HERE, once, before the kernel adopts it. The decoder (view.c
+// state_get) clamps COUNTS so it can never corrupt memory; this checks VALUES:
+// that every status, seat index, card and mask is one the kernel could itself
+// have produced. Hosts do not repeat these checks; they surface the code.
+//
+// Returns GAME_VALID (0) or one negative GAME_INVALID_* reason. The numbers are
+// the wire to every host's message table (sdk/ts/wasm/engine.ts
+// STATE_INVALID) - append, never renumber.
+#define GAME_VALID                     0
+#define GAME_INVALID_COUNT            (-1)  // a count on the wire exceeded its capacity
+#define GAME_INVALID_STATUS           (-2)  // Game.status is not a GAME_STATUS_*
+#define GAME_INVALID_NUM_PLAYERS      (-3)  // too few seats for a dealt game
+#define GAME_INVALID_PLAYER_STATUS    (-4)  // a Player.status is not a PLAYER_STATUS_*
+#define GAME_INVALID_POWER_SUIT       (-5)  // power_suit is not a suit
+#define GAME_INVALID_SEAT             (-6)  // first_attacker/defender is not a seat
+#define GAME_INVALID_ELIMINATION      (-7)  // elimination order: bad seat, repeat, or too long
+#define GAME_INVALID_GOOD_MASK        (-8)  // a good bit for a seat that does not exist
+#define GAME_INVALID_CARD             (-9)  // a card that is not a card of this game's deck
+#define GAME_INVALID_DUPLICATE_CARD   (-10) // one card in two places
+#define GAME_INVALID_FLIPPED          (-11) // the face-up trump is not of the power suit
+
+// game_validate flag: `g` came from a MASKED view (view.c state_get masked=1),
+// so the deck and the hands hold placeholders rather than real cards. Their
+// identities are then not checked; everything face-up still is.
+#define GAME_VALIDATE_MASKED 1
+
+int game_validate(const Game *g, int flags);
+
 // ---------- Helpers -----------------------------------------------------
 
 bool can_cover(Card attack, Card defense, int power_suit);

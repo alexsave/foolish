@@ -16,7 +16,7 @@ interface OracleExports {
     memory: WebAssembly.Memory;
     wasm_init(): void;
     wasm_io_ptr(): number;
-    wasm_import_state(): void;
+    wasm_import_state(masked: number): number;
     wasm_import_strategy_keys(): void;
     wasm_import_logs(): void;
     wasm_clearenv(): void;
@@ -75,7 +75,8 @@ export class OracleInstance {
 
         // 2. fresh marshal every batch — never consume a stale resident mark.
         __setResident(null);
-        __marshalGame(ex as never, blob as unknown as Game);
+        // masked: every seat but the acting one holds placeholder cards.
+        __marshalGame(ex as never, blob as unknown as Game, true);
 
         // 3. strategy keys: one i8 -1 per seat. Inert for this module (no
         //    espresso_prod), but the call reads num_players bytes unconditionally.

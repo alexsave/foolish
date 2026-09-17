@@ -136,7 +136,7 @@ export function registerAttackValidation(): void {
 
     test('attack: forged card, identical-duplicate, and non-member attacks are all rejected', () => {
         const hand = [card(0, 10), card(1, 10), card(2, 12)];
-        const g = mkGame([player('atk', hand.slice()), player('def', [card(3, 14)])], 1);
+        const g = mkGame([player('atk', hand.slice()), player('def', [card(3, 13)])], 1);
         // forged card not in hand
         assert.throws(() => handleAttack(g, 'atk', [card(3, 9)]), /not in/i, 'forged card');
         // the object-identity duplicate hole: [X, X] must be rejected, never duplicated

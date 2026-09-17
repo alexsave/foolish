@@ -28,12 +28,21 @@
 // Returns bytes written.
 int state_put(const Game *g, int viewer, unsigned char *out);
 
-// Parse the layout back into g. masked=0 reproduces the legacy get_state
-// exactly (hostile bytes clamp to real cards; defense-in-depth count clamps).
-// masked=1 additionally decodes WIRE_CARD_HIDDEN state cards to the {0,1}
-// placeholder — the same placeholder the browser marshal always used for
-// redacted cards, so a client importing a masked view gets a kernel state
-// byte-identical to one marshaled from the host's own PersonalGame.
-void state_get(Game *g, const unsigned char *p, int masked);
+// Parse the layout back into g, WITHOUT judging it - an import goes through
+// state_import below. Counts clamp to their array capacity (memory safety on a
+// hostile buffer) and a clamp is reported as GAME_INVALID_COUNT; a card byte
+// that is not a card decodes to the {-1,-1} not-a-card. masked=1 additionally
+// decodes WIRE_CARD_HIDDEN deck and hand cards to the {0,1} placeholder - the
+// same placeholder the browser marshal always used for redacted cards, so a
+// client importing a masked view gets a kernel state byte-identical to one
+// marshaled from the host's own PersonalGame.
+int state_get(Game *g, const unsigned char *p, int masked);
+
+// THE import: decode the layout and adopt it into `g` only if it is valid
+// (game.h game_validate). Returns GAME_VALID, or a negative GAME_INVALID_*
+// reason with `g` left exactly as it was. Every path that takes a state from
+// outside the kernel - the transient IO marshal, the durable blob, a masked
+// view on a client - goes through this rather than state_get.
+int state_import(Game *g, const unsigned char *p, int masked);
 
 #endif

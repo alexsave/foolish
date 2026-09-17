@@ -187,18 +187,24 @@ test('a masked view does not depend on the hands it is masking', () => {
             const before = serializeViewBlob(serializeGameState(game), viewer);
 
             // Rewrite every hand the viewer may NOT see, keeping the counts
-            // (a count is public and legitimately in the blob).
+            // (a count is public and legitimately in the blob). The new cards
+            // are the same cards moved around - every hidden hand plus the
+            // deck (masked in every view), rotated by one - so the state is
+            // still a game the kernel accepts: no card twice, none outside it.
             const saved = game.players.map((p) => p.hand.slice());
+            const savedDeck = game.deck.slice();
+            const pool = [...game.players.flatMap((p, i) => (i === viewer ? [] : p.hand)), ...game.deck];
+            pool.push(pool.shift()!);
+            let at = 0;
             game.players.forEach((p, i) => {
                 if (i === viewer) return;
-                p.hand = p.hand.map((c, j) => ({
-                    // A different identity, still inside the card space.
-                    suit: (c.suit + 1 + j) % 4,
-                    value: ((c.value + 5 + j) % 13) + 1,
-                }));
+                p.hand = pool.slice(at, at + p.hand.length);
+                at += p.hand.length;
             });
+            game.deck = pool.slice(at);
             const after = serializeViewBlob(serializeGameState(game), viewer);
             game.players.forEach((p, i) => { p.hand = saved[i]; });
+            game.deck = savedDeck;
 
             assert.deepEqual([...after], [...before],
                 `game ${g} viewer ${viewer}: the view changed when a hidden hand changed`);

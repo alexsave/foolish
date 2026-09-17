@@ -24,7 +24,7 @@ void *memcpy(void *dst, const void *src, size_t n) { __builtin_memcpy(dst, src, 
 void *memset(void *dst, int c, size_t n) { __builtin_memset(dst, c, n); return dst; }
 
 // ---------- shared buffers ----------------------------------------------
-// g_io holds the game state the TS bridge marshals in (get_state reads it,
+// g_io holds the game state the TS bridge marshals in (state_import reads it,
 // clamping every count to Game capacity). This is a VALIDATE-ONLY build: no
 // state/log/snapshot export is in the linker export list, and at MAX_LOGS=1 even
 // a revived log export is a few bytes — so the widest live write is the state
@@ -92,11 +92,12 @@ static int put_state(const Game *g, unsigned char *p) {
     return state_put(g, VIEW_UNMASKED, p);
 }
 
-static void get_state(Game *g, const unsigned char *p) {
-    state_get(g, p, 0);
-}
-
-void wasm_import_state(void) { get_state(&g_game, g_io); }
+// The browser marshals its PersonalGame with placeholder cards for everything
+// it cannot see (the deck, the other hands), so its import is validated as a
+// masked view: statuses, seats, masks and every face-up card are checked, the
+// placeholders' identities are not. Returns GAME_VALID (0) or a negative
+// GAME_INVALID_* reason with the resident game left as it was.
+int wasm_import_state(void) { return state_import(&g_game, g_io, 1); }
 int  wasm_export_state(void) { return put_state(&g_game, g_io); }
 
 // Import a server-produced MASKED view blob ([VIEW_FORMAT_VERSION | viewer |
@@ -104,12 +105,13 @@ int  wasm_export_state(void) { return put_state(&g_game, g_io); }
 // hidden cards decode to the same {0,1} placeholder the JS marshal always
 // wrote for redacted cards, so gates behave identically either way. Returns
 // 1 on success, 0 on an unknown version byte (caller must treat the blob as
-// unreadable, never as an empty game).
+// unreadable, never as an empty game), or a negative GAME_INVALID_* reason if
+// the kernel refuses the state (the resident game is then left as it was).
 int wasm_import_view(int len) {
     if (len < 2) return 0;
     if (g_io[0] != VIEW_FORMAT_VERSION) return 0;
-    state_get(&g_game, g_io + 2, 1);
-    return 1;
+    const int r = state_import(&g_game, g_io + 2, 1);
+    return r != GAME_VALID ? r : 1;
 }
 
 // ---------- logs (for optimistic-apply animation events) --------------------

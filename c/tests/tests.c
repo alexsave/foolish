@@ -3188,6 +3188,179 @@ static void test_replay_refuses_every_retired_version(void) {
 
 /* ---------------- A6: reset to lobby is one transform -------------------- */
 
+// ---------- state_import: the kernel refuses a state it could not produce ----
+//
+// Every host hands the kernel a Game as bytes (the transient IO marshal, the
+// durable blob, a masked view). The decoder clamps counts so it cannot corrupt
+// memory, but a VALUE the kernel could never have produced - a status of 7, a
+// defender seat past the table, an eliminated seat that does not exist, a card
+// byte that is no card, one card in two hands - used to be adopted as it came
+// and then played on. state_import must refuse each, name why, and leave the
+// destination game untouched.
+
+#define SV_PREFIX offsetof(Game, logs)
+
+typedef struct { int deck0, battles, players[MAX_PLAYERS], elim; } SvOffsets;
+
+// Byte offsets into a state_put buffer, walked the way state_get reads it.
+static void sv_offsets(const unsigned char *b, SvOffsets *o) {
+    int q = 14;
+    const int dc = b[q] | (b[q + 1] << 8);
+    q += 2;
+    o->deck0 = q;
+    q += dc;
+    o->battles = q;
+    q += 1 + 2 * b[q];
+    for (int i = 0; i < b[1] && i < MAX_PLAYERS; i++) {
+        o->players[i] = q;              // [status][awaiting][count][cards...]
+        q += 3 + b[q + 2];
+    }
+    o->elim = q;                        // [num_eliminated][seats...]
+}
+
+static Game sv_src, sv_dst, sv_before, sv_tmp;
+static unsigned char sv_buf[8192], sv_m[8192];
+
+// Import `buf` into sv_dst (which holds some other valid game) and check the
+// verdict. A refusal must leave every byte of sv_dst's state as it was.
+static void sv_expect(const unsigned char *buf, int masked, int want, const char *msg) {
+    memcpy(&sv_before, &sv_dst, SV_PREFIX);
+    const int r = state_import(&sv_dst, buf, masked);
+    if (r != want) fprintf(stderr, "  state_import(%s): got %d, want %d\n", msg, r, want);
+    CHECK(r == want, msg);
+    if (want != GAME_VALID)
+        CHECK(memcmp(&sv_before, &sv_dst, SV_PREFIX) == 0, msg);
+}
+
+// A 4-seat game mid-bout: dealt, trump face up, one attack on the table.
+static void sv_fixture(Game *g) {
+    game_set_seed(77);
+    random_strategy_set_seed(77);
+    memset(g, 0, sizeof(*g));
+    g->num_players = 4;
+    for (int i = 0; i < 4; i++) g->players[i].status = PLAYER_STATUS_READY;
+    start_game(g);
+    const int fa = g->first_attacker;
+    Card c = g->players[fa].hand[0];
+    handle_attack(g, fa, &c, 1);
+}
+
+static void sv_mutate_expect(const SvOffsets *o, int at, unsigned char byte, int want, const char *msg) {
+    (void)o;
+    memcpy(sv_m, sv_buf, sizeof sv_buf);
+    sv_m[at] = byte;
+    sv_expect(sv_m, 0, want, msg);
+}
+
+static void test_state_import_rejects_invalid_values(void) {
+    unsigned char seed[FOOLISH_SEED_LEN];
+    // The destination holds a finished 3-seat game, so "nothing adopted" is
+    // checked against a state that differs from every source below.
+    CHECK(rs_play_seeded(&sv_dst, 3, 4242, seed), "destination game plays out");
+
+    sv_fixture(&sv_src);
+    CHECK(sv_src.num_battles == 1 && sv_src.has_flipped, "fixture is mid-bout with a trump up");
+    memset(sv_buf, 0, sizeof sv_buf);
+    const int len = state_put(&sv_src, VIEW_UNMASKED, sv_buf);
+    SvOffsets o;
+    sv_offsets(sv_buf, &o);
+    CHECK(o.elim == len - 1, "offset walk agrees with state_put");
+
+    // ---- valid states are adopted ----
+    sv_expect(sv_buf, 0, GAME_VALID, "a dealt mid-bout game imports");
+    {
+        static unsigned char back[8192];
+        CHECK(state_put(&sv_dst, VIEW_UNMASKED, back) == len && memcmp(back, sv_buf, (size_t)len) == 0,
+              "the imported game is the one that was exported");
+    }
+    memset(sv_m, 0, sizeof sv_m);
+    state_put(&sv_src, 0, sv_m);
+    sv_expect(sv_m, 1, GAME_VALID, "seat 0's masked view imports as masked");
+    memcpy(&sv_tmp, &sv_src, sizeof sv_tmp);
+    game_reset_to_lobby(&sv_tmp, 0);
+    memset(sv_m, 0, sizeof sv_m);
+    state_put(&sv_tmp, VIEW_UNMASKED, sv_m);
+    sv_expect(sv_m, 0, GAME_VALID, "a lobby imports");
+    CHECK(rs_play_seeded(&sv_tmp, 6, 99, seed), "6-seat game plays out");
+    memset(sv_m, 0, sizeof sv_m);
+    state_put(&sv_tmp, VIEW_UNMASKED, sv_m);
+    sv_expect(sv_m, 0, GAME_VALID, "a finished 52-card game imports");
+
+    // ---- statuses ----
+    sv_mutate_expect(&o, 0, 3, GAME_INVALID_STATUS, "game status 3");
+    sv_mutate_expect(&o, 0, 0xFF, GAME_INVALID_STATUS, "game status -1");
+    sv_mutate_expect(&o, o.players[2], 4, GAME_INVALID_PLAYER_STATUS, "player status 4");
+
+    // ---- suit and seats ----
+    sv_mutate_expect(&o, 2, 4, GAME_INVALID_POWER_SUIT, "power suit 4");
+    sv_mutate_expect(&o, 2, 0xFF, GAME_INVALID_POWER_SUIT, "power suit -1");
+    sv_mutate_expect(&o, 4, 4, GAME_INVALID_SEAT, "defender == num_players");
+    sv_mutate_expect(&o, 3, 0xFF, GAME_INVALID_SEAT, "first attacker -1");
+    sv_mutate_expect(&o, 3, 7, GAME_INVALID_SEAT, "first attacker past the table");
+
+    // ---- elimination order (the buffer is zero past `len`, so a longer list reads zeros) ----
+    memcpy(sv_m, sv_buf, sizeof sv_buf);
+    sv_m[o.elim] = 1; sv_m[o.elim + 1] = 4;
+    sv_expect(sv_m, 0, GAME_INVALID_ELIMINATION, "eliminated seat == num_players");
+    memcpy(sv_m, sv_buf, sizeof sv_buf);
+    sv_m[o.elim] = 1; sv_m[o.elim + 1] = 0xFF;
+    sv_expect(sv_m, 0, GAME_INVALID_ELIMINATION, "eliminated seat -1");
+    memcpy(sv_m, sv_buf, sizeof sv_buf);
+    sv_m[o.elim] = 2; sv_m[o.elim + 1] = 1; sv_m[o.elim + 2] = 1;
+    sv_expect(sv_m, 0, GAME_INVALID_ELIMINATION, "a seat eliminated twice");
+    memcpy(sv_m, sv_buf, sizeof sv_buf);
+    sv_m[o.elim] = 5;
+    for (int i = 0; i < 5; i++) sv_m[o.elim + 1 + i] = (unsigned char)(i % 4);
+    sv_expect(sv_m, 0, GAME_INVALID_ELIMINATION, "more eliminated than seated");
+
+    // ---- good mask ----
+    sv_mutate_expect(&o, 9, 1u << 4, GAME_INVALID_GOOD_MASK, "good bit for seat 4 of 4");
+    sv_mutate_expect(&o, 12, 0x80, GAME_INVALID_GOOD_MASK, "good bit 31");
+
+    // ---- cards ----
+    sv_mutate_expect(&o, o.deck0, 52, GAME_INVALID_CARD, "deck byte 52");
+    sv_mutate_expect(&o, o.deck0, 0xFE, GAME_INVALID_CARD, "hidden card in an unmasked deck");
+    sv_mutate_expect(&o, o.deck0, 0, GAME_INVALID_CARD, "a card below the 36-card deck");
+    sv_mutate_expect(&o, o.players[1] + 3, 0xFF, GAME_INVALID_CARD, "no-card in a hand");
+    sv_mutate_expect(&o, o.battles + 1, 0xFF, GAME_INVALID_CARD, "no-card as an attack");
+    sv_mutate_expect(&o, o.battles + 2, 0xC0, GAME_INVALID_CARD, "byte 0xC0 as a defense");
+    sv_mutate_expect(&o, 8, 0xFF, GAME_INVALID_CARD, "no-card as the face-up trump");
+    sv_mutate_expect(&o, 2, (unsigned char)((sv_src.power_suit + 1) % 4), GAME_INVALID_FLIPPED,
+                     "trump suit disagrees with the face-up card");
+    sv_mutate_expect(&o, o.players[1] + 3, sv_buf[o.players[0] + 3], GAME_INVALID_DUPLICATE_CARD,
+                     "one card in two hands");
+    sv_mutate_expect(&o, o.deck0, sv_buf[8], GAME_INVALID_DUPLICATE_CARD,
+                     "the face-up trump also in the deck");
+    sv_mutate_expect(&o, o.players[0] + 3, sv_buf[o.battles + 1], GAME_INVALID_DUPLICATE_CARD,
+                     "a card both on the table and in a hand");
+
+    // ---- counts past capacity are refused, not silently clamped ----
+    sv_mutate_expect(&o, 1, MAX_PLAYERS + 1, GAME_INVALID_COUNT, "num_players 9");
+    memcpy(sv_m, sv_buf, sizeof sv_buf);
+    sv_m[14] = (unsigned char)(MAX_DECK + 1); sv_m[15] = 0;
+    sv_expect(sv_m, 0, GAME_INVALID_COUNT, "deck_count past MAX_DECK");
+    sv_mutate_expect(&o, o.players[0] + 2, MAX_HAND_SIZE + 1, GAME_INVALID_COUNT, "hand past MAX_HAND_SIZE");
+
+    // ---- too few seats for a dealt game ----
+    memcpy(&sv_tmp, &sv_src, sizeof sv_tmp);
+    sv_tmp.num_players = 1;
+    sv_tmp.first_attacker = 0;
+    sv_tmp.defender = 0;
+    memset(sv_m, 0, sizeof sv_m);
+    state_put(&sv_tmp, VIEW_UNMASKED, sv_m);
+    sv_expect(sv_m, 0, GAME_INVALID_NUM_PLAYERS, "a one-seat game in play");
+
+    // ---- a masked view still has its face-up cards checked ----
+    memset(sv_m, 0, sizeof sv_m);
+    state_put(&sv_src, 0, sv_m);
+    {
+        SvOffsets mo;
+        sv_offsets(sv_m, &mo);
+        sv_m[mo.battles + 1] = 0xFE;
+        sv_expect(sv_m, 1, GAME_INVALID_CARD, "a hidden attack card in a masked view");
+    }
+}
+
 static void test_reset_to_lobby(void) {
     Game g;
     unsigned char seed[FOOLISH_SEED_LEN];
@@ -6561,6 +6734,7 @@ static void test_analyse_packed_on_a_generated_game(void) {
 }
 
 int main(void) {
+    test_state_import_rejects_invalid_values();
     test_reset_to_lobby();
     test_replay_steps_rebuilds_the_played_game();
     test_replay_steps_mid_game_cut_conserves_the_deck();

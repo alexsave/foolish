@@ -29,7 +29,7 @@ const end = Date.now() + seconds * 1000;
 while (Date.now() < end) {
     for (let k = 0; k < 8; k++) {                     // batch the clock check
         seed = (seed * 1103515245 + 12345) >>> 0;
-        mem().set(stateBytes, ex.wasm_io_ptr()); ex.wasm_import_state();
+        mem().set(stateBytes, ex.wasm_io_ptr()); ex.wasm_import_state(1); // masked, as oracleBridge marshals it
         { const buf = mem(); const q = ex.wasm_io_ptr(); for (let i = 0; i < numPlayers; i++) buf[q + i] = 0xff; ex.wasm_import_strategy_keys(); }
         if (memoryOn && logsWire.length > 2) { mem().set(logsWire, ex.wasm_io_ptr()); ex.wasm_import_logs(); }
         ex.wasm_set_strategy_seed(seed >>> 0);

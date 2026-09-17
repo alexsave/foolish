@@ -8,7 +8,8 @@ import { Card } from '@api/core/types.ts';
 
 /* --------------------------- the analysis job ---------------------------- */
 
-/** A Game-shaped object __marshalGame (engine.ts) accepts. Only the fields
+/** A Game-shaped object __marshalGame (engine.ts) accepts, marshaled MASKED
+ *  (the placeholders below are not judged as card identities). Only the fields
  *  marshalGame reads are present; good/elimination are player_id STRINGS
  *  ('seat-N') — numeric seats fail silently in __marshalGame (§8.4). */
 export interface OracleGameState {
