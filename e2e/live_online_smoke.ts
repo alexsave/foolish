@@ -126,7 +126,11 @@ async function main(): Promise<void> {
         if (r.version < lastVersion) throw new Error(`the version went back: ${lastVersion} -> ${r.version}`);
         if (r.status !== 'playing') break;
         const mine = legalMoves(r.board, (s) => humans.has(s.id));
-        const playable = mine.filter((m) => m.kind !== 'good' || mine.length === 1);
+        // Prefer a real move over Good, but say Good when it is all the humans
+        // have: two attackers each holding only Good is a stall otherwise, since
+        // the bot defender waits on them.
+        const notGood = mine.filter((m) => m.kind !== 'good');
+        const playable = notGood.length > 0 ? notGood : mine;
         if (playable.length === 0) {
             // Only the bot can move: the loop was scheduled by the last human
             // move; nudge it the way a spectator's client does if it stalls.
