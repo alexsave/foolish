@@ -409,11 +409,10 @@ export async function commitProducts(
  * The kernel's per-viewer pushes to each human seat's private topic and the
  * spectator topic, in one batched realtime POST.
  *
- * `b` is the kernel's push (evwire.h as3: the as2 sequence, a flags byte, the
- * new roster when the operation changed it). The envelope says `as2` until the
- * web reading as3 is deployed (Phase 5b switches `t`): a client that reads as2
- * reads the sequence prefix, which is byte for byte what it always received,
- * and drops a lobby push whose roster it does not hold by refetching.
+ * `{t:'as3', s, v, b}`: `b` is the kernel's push (evwire.h as3: the as2
+ * sequence, a flags byte, the new roster when the operation changed it), so a
+ * push that changes who sits where names the seats itself. The web reads as3
+ * since Phase 5a; before Phase 5b the same bytes went out labelled `as2`.
  */
 export async function broadcastPushes(
     gameId: string, version: number, seats: TableSeat[],
@@ -422,7 +421,7 @@ export async function broadcastPushes(
     const messages: BroadcastMessage[] = pushes.map(({ viewer, bytes }) => ({
         topic: viewer >= 0 ? `gu-${gameId}-${seats[viewer].id}` : `game-${gameId}`,
         event: 'animation_events',
-        payload: { t: 'as2', s: crypto.randomUUID(), v: version, b: bytesToBase64(bytes) },
+        payload: { t: 'as3', s: crypto.randomUUID(), v: version, b: bytesToBase64(bytes) },
     }));
     await broadcastMessages(messages, reqId);
 }

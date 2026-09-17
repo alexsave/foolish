@@ -129,7 +129,7 @@ test('packed pipeline: legal awire moves apply, bump the version, rewrite the bl
             assert.ok(chans.has(`game-${gameId}`), 'spectator payload');
             for (const f of fresh) {
                 assert.deepEqual(Object.keys(f.payload).sort(), ['b', 's', 't', 'v'], 'exactly {t,s,v,b}: no r / m extras (Q7)');
-                assert.equal(f.payload.t, 'as2', 'packed payload tag');
+                assert.equal(f.payload.t, 'as3', 'packed payload tag');
                 assert.equal(typeof f.payload.s, 'string', 'sequence id');
                 assert.equal(f.payload.v, out.version, 'payload.v is the committed version');
                 const bytes = base64ToBytes(f.payload.b);
@@ -332,7 +332,7 @@ test('human moves and the bot loop interleave: same payload shape, strictly incr
     const perChannel = new Map<string, number[]>();
     for (const e of evts) {
         assert.deepEqual(Object.keys(e.payload).sort(), ['b', 's', 't', 'v'], 'exactly {t,s,v,b}');
-        assert.equal(e.payload.t, 'as2', 'payload tag');
+        assert.equal(e.payload.t, 'as3', 'payload tag');
         assert.equal(typeof e.payload.s, 'string', 'sequence id');
         assert.equal(typeof e.payload.v, 'number', 'numeric version');
         assert.equal(typeof e.payload.b, 'string', 'base64 event wire');

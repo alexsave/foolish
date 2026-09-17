@@ -322,6 +322,8 @@ function checkEventPayload(t: Table, payload: Record<string, unknown>, v: Viewer
     t.counts.streams++;
     // The JSON envelope carries the kernel's bytes and nothing else (plan Q7: no r / m extras).
     assert.deepEqual(Object.keys(payload).sort(), ['b', 's', 't', 'v'], `${what}: envelope keys`);
+    // Phase 5b: labelled for what it is, so the client reads the roster block from the push itself.
+    assert.equal(payload.t, 'as3', `${what}: an as3 push`);
 
     const b = base64ToBytes(payload.b as string);
     const walked = walkEvwire(b, what);
