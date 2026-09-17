@@ -69,16 +69,15 @@ import { __clearGameCache } from '../server/impls/supabase/functions/_shared/ada
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { loadWasmGz } from '../sdk/ts/wasm/wasm_asset.ts';
 import { encodeActionRequest, wireCard } from '../sdk/ts/wire/awire.ts';
-import { decodeEnvelope, readPush } from './helpers/client_read.ts';
+import { readEnvelopeView, readPushSequence } from './helpers/client_read.ts';
 import { cRosterTrailerRead } from './helpers/roster_kernel.ts';
 import { clientTable } from '../sdk/ts/table/client_table.ts';
-import { decodeLogs } from '../sdk/ts/wire/logwire.ts';
 import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { fixtureTable } from './helpers/table_fixture.ts';
 import { legalMoves, readTable, rebuild, type BoardState, type PlayCard } from './helpers/table_play.ts';
 import { suiteRng } from './helpers/rng.ts';
-import { ANIMATION_EVENT_TYPE, LOG_TYPE, PersonalGame } from '../server/api/core/types.ts';
+import { isCard } from '../src/state/view.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 
@@ -187,20 +186,39 @@ async function truthOf(t: Table): Promise<Truth> {
     return { status: row.statusColumn, board: dealt ? row : null, row, seatOf, version: row.version };
 }
 
+// The session log (games.logs_packed), walked record by record like the pushes
+// below: [u48 ms][u8 type][u8 seat][u8 defender][u8 n_pairs][n_pairs x (primary,
+// target)] wire card bytes. Walked here, not decoded by a reader under test: the
+// set of cards that have been public is this suite's ground truth. The record
+// types are c/src/game.h's LOG_* numbers.
+const LOG_PICKUP = 4, LOG_DISCARD = 6, LOG_DRAW = 9;
+function sessionLogRecords(log: Uint8Array, what: string): { type: number; cards: number[] }[] {
+    const out: { type: number; cards: number[] }[] = [];
+    let q = 0;
+    while (q < log.length) {
+        assert.ok(q + 10 <= log.length, `${what}: a session log record is truncated`);
+        const type = log[q + 6], nPairs = log[q + 9];
+        assert.ok(q + 10 + 2 * nPairs <= log.length, `${what}: a session log record's pairs are truncated`);
+        out.push({ type, cards: [...log.subarray(q + 10, q + 10 + 2 * nPairs)] });
+        q += 10 + 2 * nPairs;
+    }
+    return out;
+}
+
+async function sessionLogs(gameId: string): Promise<Uint8Array[]> {
+    const { rows } = await pgPool.query(
+        `SELECT logs FROM e2e_log_archive WHERE game_id=$1
+         UNION ALL SELECT logs_packed FROM games WHERE id=$1 AND logs_packed IS NOT NULL`, [gameId]);
+    return rows.filter((r) => r.logs).map((r) => hexToBytes(r.logs));
+}
+
 // Every card a committed session log has named face up, except DRAW records
 // (a draw is a private event; its only public card is the trump, added apart).
 async function refreshEverPublic(t: Table): Promise<void> {
-    const { rows } = await pgPool.query(
-        `SELECT logs FROM e2e_log_archive WHERE game_id=$1
-         UNION ALL SELECT logs_packed FROM games WHERE id=$1 AND logs_packed IS NOT NULL`, [t.gameId]);
-    for (const r of rows) {
-        if (!r.logs) continue;
-        for (const log of decodeLogs(hexToBytes(r.logs), t.gameId, [])) {
-            if (log.log_type === LOG_TYPE.DRAW) continue;
-            for (const p of log.card_pairs) {
-                if (p.primary && p.primary.suit >= 0) t.everPublic.add(id(p.primary));
-                if (p.target && p.target.suit >= 0) t.everPublic.add(id(p.target));
-            }
+    for (const log of await sessionLogs(t.gameId)) {
+        for (const r of sessionLogRecords(log, `${t.gameId} session log`)) {
+            if (r.type === LOG_DRAW) continue;
+            for (const c of r.cards) if (c !== HIDDEN && c !== NONE) t.everPublic.add(c);
         }
     }
 }
@@ -237,9 +255,9 @@ const cardsOf = (b: BoardState | null, seat: number) => (b && seat >= 0 ? b.seat
 
 function checkViewEnvelope(t: Table, bytes: Uint8Array, v: Viewer, seat: number, pre: Truth, post: Truth, what: string) {
     t.counts.views++;
-    const d = decodeEnvelope(bytes);
+    const d = readEnvelopeView(bytes);
     assert.ok(d, `${what}: the view envelope decodes`);
-    assert.equal(d!.seat, seat, `${what}: the envelope is ${viewerName(v)}'s own (seat ${seat})`);
+    assert.equal(d!.mySeat, seat, `${what}: the envelope is ${viewerName(v)}'s own (seat ${seat})`);
 
     // 2. byte accounting: [9-byte header][u16 view_len][view blob][packed roster], nothing else.
     const viewLen = bytes[9] | (bytes[10] << 8);
@@ -262,24 +280,23 @@ function checkViewEnvelope(t: Table, bytes: Uint8Array, v: Viewer, seat: number,
     }
 
     // 1. decode: exactly the viewer's own hand, the public board, nothing more.
-    const g = d!.game;
-    const self = (g as PersonalGame).self;
+    const g = d!;
     const truth = post.board;
-    if (seat < 0) assert.equal(self, undefined, `${what}: a spectator view has no self`);
+    if (seat < 0) assert.deepEqual(g.myHand, [], `${what}: a spectator view holds no hand`);
     if (!truth) {
-        assert.equal(g.deck_length, 0, `${what}: a lobby has no deck`);
-        assert.equal(g.table_battles.length, 0, `${what}: a lobby has no table`);
-        assert.ok(!self || self.hand.length === 0, `${what}: a lobby hand is empty`);
+        assert.equal(g.deckCount, 0, `${what}: a lobby has no deck`);
+        assert.equal(g.battles.length, 0, `${what}: a lobby has no table`);
+        assert.equal(g.myHand.length, 0, `${what}: a lobby hand is empty`);
         return;
     }
     if (seat >= 0) {
-        assert.deepEqual(self!.hand.map(id), cardsOf(truth, seat), `${what}: own hand is the real hand`);
-        t.counts.ownCards += self!.hand.length;
+        assert.deepEqual(g.myHand.map(id), cardsOf(truth, seat), `${what}: own hand is the real hand`);
+        t.counts.ownCards += g.myHand.length;
     }
-    g.players.forEach((p, i) => assert.equal(p.hand_length, truth.seats[i].hand.length, `${what}: seat ${i} hand count`));
-    assert.equal(g.deck_length, truth.deck.length, `${what}: deck count`);
-    assert.deepEqual(g.flipped, truth.trump, `${what}: face-up trump`);
-    assert.deepEqual(g.table_battles, truth.battles, `${what}: table`);
+    g.seats.forEach((p, i) => assert.equal(p.handCount, truth.seats[i].hand.length, `${what}: seat ${i} hand count`));
+    assert.equal(g.deckCount, truth.deck.length, `${what}: deck count`);
+    assert.deepEqual(g.hasFlipped ? g.flipped : null, truth.trump, `${what}: face-up trump`);
+    assert.deepEqual(g.battles.map((b) => ({ attack: b.attack, defense: isCard(b.defense) ? b.defense : null })), truth.battles, `${what}: table`);
 }
 
 // Walk an evwire stream to its last byte, handing back each board and each
@@ -339,7 +356,7 @@ function checkEventPayload(t: Table, payload: Record<string, unknown>, v: Viewer
         t.counts.rosterBlocks++;
     }
     if (t.trumpId !== null) may.add(t.trumpId);
-    const decoded = readPush(b, roster, { now: () => 0 });
+    const decoded = readPushSequence(b, roster);
     assert.ok(decoded, `${what}: the client decodes the stream`);
     assert.equal(decoded!.events.length, walked.events.length, `${what}: decoder and walk agree on the event count`);
     for (const [i, e] of walked.events.entries()) {
@@ -350,8 +367,8 @@ function checkEventPayload(t: Table, payload: Record<string, unknown>, v: Viewer
             assert.ok(may.has(c), `${what} event ${i} (${de.type}): names card ${c}, which ${viewerName(v)} may not know`);
             t.counts.namedCards++;
         }
-        const drawSeat = de.player_id === undefined ? -1 : roster.players.findIndex(p => p.player_id === de.player_id);
-        if ((de.type === ANIMATION_EVENT_TYPE.DEAL || de.type === ANIMATION_EVENT_TYPE.REFILL) && drawSeat !== seat) {
+        const drawSeat = de.seat ?? -1;
+        if ((de.type === 'deal' || de.type === 'refill') && drawSeat !== seat) {
             for (const c of e.cards) {
                 assert.ok(c === HIDDEN || c === t.trumpId, `${what} event ${i}: seat ${drawSeat}'s ${de.type} names card ${c} to ${viewerName(v)}`);
             }
@@ -547,9 +564,9 @@ async function playTable(nHumans: number, nBots: number, dealSeed: number): Prom
     // create - the response is the creator's first payload
     const noActors = () => [];
     const created = await runCaptured({ label: 'create', requester: humans[0], run: () => postJson('create', humans[0].tok, {}), actors: noActors, pinDeck: false });
-    const d = decodeEnvelope(created.response!.bytes);
+    const d = readEnvelopeView(created.response!.bytes);
     assert.ok(d, 'create answered with a view');
-    t.gameId = d!.game.id;
+    t.gameId = d!.gameId;
     await holdBotLease(t.gameId); // bots act only in explicit bot steps
     const lobbyTruth = await truthOf(t);
     await checkAllViewers(t, created, lobbyTruth, lobbyTruth, `${t.gameId} create`);
@@ -605,17 +622,15 @@ async function playTable(nHumans: number, nBots: number, dealSeed: number): Prom
 }
 
 function assertExercised(t: Table, label: string) {
-    const kinds = new Set<string>();
+    const kinds = new Set<number>();
     return (async () => {
-        const { rows } = await pgPool.query(
-            `SELECT logs FROM e2e_log_archive WHERE game_id=$1 UNION ALL SELECT logs_packed FROM games WHERE id=$1`, [t.gameId]);
-        for (const r of rows) if (r.logs) for (const l of decodeLogs(hexToBytes(r.logs), t.gameId, [])) kinds.add(l.log_type);
+        for (const log of await sessionLogs(t.gameId)) for (const r of sessionLogRecords(log, label)) kinds.add(r.type);
         const c = t.counts;
         const { rows: st } = await pgPool.query('SELECT status FROM games WHERE id=$1', [t.gameId]);
         assert.equal(st[0].status, 'game_over', `${label}: played to the end, so the final payloads were checked too`);
-        assert.ok(kinds.has(LOG_TYPE.PICKUP), `${label}: the game included a pickup (${[...kinds]})`);
-        assert.ok(kinds.has(LOG_TYPE.DISCARD), `${label}: the game included a discard (${[...kinds]})`);
-        assert.ok(kinds.has(LOG_TYPE.DRAW), `${label}: the game included draws`);
+        assert.ok(kinds.has(LOG_PICKUP), `${label}: the game included a pickup (${[...kinds]})`);
+        assert.ok(kinds.has(LOG_DISCARD), `${label}: the game included a discard (${[...kinds]})`);
+        assert.ok(kinds.has(LOG_DRAW), `${label}: the game included draws`);
         assert.ok(c.humanSteps >= 10, `${label}: humans acted (${c.humanSteps})`);
         assert.ok(c.ownCards > 50, `${label}: own hands were really compared (${c.ownCards} cards)`);
         assert.ok(c.otherDraws > 0, `${label}: another seat's draws reached a viewer (${c.otherDraws})`);
@@ -687,7 +702,7 @@ async function channelFixture() {
     const a = await human('rt-a'), b = await human('rt-b'), spectator = await human('rt-spec');
     const created = await postJson('create', a.tok, {});
     await settle();
-    const gameId = decodeEnvelope(created.bytes)!.game.id;
+    const gameId = readEnvelopeView(created.bytes)!.gameId;
     assert.equal((await postJson('meta', b.tok, { type: 'join', game_id: gameId })).status, 200, 'b joins');
     await settle();
     await pgPool.query(`INSERT INTO realtime.messages(topic, extension) SELECT 'x', 'broadcast' WHERE NOT EXISTS (SELECT 1 FROM realtime.messages)`);
