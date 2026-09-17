@@ -4,9 +4,8 @@
  * docs/C_GAME_SHAPE_MIGRATION.md 2.7 and 2.8. This file held the C Table's bot
  * cycle and game end byte for byte against the TS path they replaced
  * (wasmBotDrive over a JS Game, verifyRoundTripV6FromGame, encodeExtrasBytes).
- * That TS path is deleted with the TS game shape; its last byte-for-byte record is
- * table_parity's goldens (e2e/fixtures/table_parity/golden.json, recorded from
- * the TS pipeline). What stays here is what the cycle must be on its own terms,
+ * That TS path is deleted with the TS game shape, and so is the migration parity
+ * that recorded it (plan Phase 8). What stays here is what the cycle must be on its own terms,
  * on seeded deals of 2 to 5 seats with belief and non-belief brains, one human
  * seat whose moves go through table_act, and a bots-only table:
  *

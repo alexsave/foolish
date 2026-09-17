@@ -4,7 +4,11 @@
 // decodeAction now exists as the ORACLE this file fuzzes the encoder against.
 // It must still mirror awire_decode's strictness exactly - null (never a throw,
 // never a partial parse) on any malformed buffer - because that strictness is
-// what makes it a usable oracle. Pure TS — needs no Postgres and no wasm.
+// what makes it a usable oracle. The last test holds the client's request and
+// the stale-round response to the server's own codec, the C Table's
+// (table_request_decode, table_action_response), over the shipped bots.wasm:
+// the TS encoder and the C decoder both ship, so they must agree byte for byte.
+// Needs no Postgres.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,7 +17,10 @@ import {
     AWIRE_KIND, AWIRE_MAX_CARDS, AwireKindName, AwireMove,
     ACTION_REQ_FORMAT, ACTION_REQ_FORMAT_V1,
     decodeAction, encodeAction, encodeActionRequest, decodeActionRequest,
+    encodeActionResponse, ACTION_STATUS, REJECT_STALE_ROUND,
 } from '../sdk/ts/wire/awire.ts';
+import { createServerTable } from '../sdk/ts/table/server_table.ts';
+import { TABLE_STALE_ROUND } from '../sdk/ts/gen/game_layout.bots.ts';
 
 type Card = NonNullable<AwireMove['cards']>[number];
 
@@ -181,4 +188,29 @@ test('awire request envelope: malformed/truncated buffers decode to null (never 
     assert.equal(decodeActionRequest(new Uint8Array([ACTION_REQ_FORMAT, 2, 65, 66, 0, 0, 0, 0])), null, 'v2 missing wire');
     // v1 with a gid but no wire.
     assert.equal(decodeActionRequest(new Uint8Array([ACTION_REQ_FORMAT_V1, 2, 65, 66])), null, 'v1 missing wire');
+});
+
+test('the client\'s request is what the server\'s C codec reads, and its stale-round response is the client\'s bytes', () => {
+    const table = createServerTable();
+    const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
+    const wires = [Uint8Array.of(3, 0), Uint8Array.of(0, 1, 7), Uint8Array.of(1, 2, 8, 9, 10, 11)];
+    for (const gid of ['a', 'd79ae3', 'x'.repeat(64)]) {
+        for (const wire of wires) {
+            for (const intent of [undefined, 0, 5, 0x7fffffff, 0xffffffff]) {
+                const body = encodeActionRequest(gid, wire, intent);
+                const c = table.requestDecode(body);
+                assert.ok(typeof c !== 'number', `${gid}/${hex(wire)}/${intent}: the server decodes it (${c})`);
+                assert.deepEqual({ gameId: c.gameId, wire: hex(c.wire), intent: c.intent },
+                    { gameId: gid, wire: hex(wire), intent: intent ?? null }, `${gid}/${hex(wire)}/${intent}`);
+            }
+        }
+    }
+    for (const bad of [Uint8Array.of(), Uint8Array.of(1), Uint8Array.of(2, 1, 0x67, 1, 0, 0), Uint8Array.of(9, 0, 3, 0)]) {
+        assert.equal(decodeActionRequest(bad), null, `the client's reader refuses ${hex(bad)}`);
+        assert.equal(typeof table.requestDecode(bad), 'number', `the server refuses ${hex(bad)}`);
+    }
+    for (const version of [0, 1, 256, 0x01020304, 0x7fffffff]) {
+        assert.equal(hex(table.actionResponse(TABLE_STALE_ROUND, 0, version)),
+            hex(encodeActionResponse(ACTION_STATUS.REJECTED, REJECT_STALE_ROUND, version)), `stale round at ${version}`);
+    }
 });

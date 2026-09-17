@@ -20,9 +20,8 @@
 // game with no blob). Both TS row readers are gone: every envelope a client is
 // served, list or single game, is the kernel's table_envelope / commit product.
 // Now covered by case 4 below (a lobby and a finished board, every seat and a
-// spectator), and by e2e/table_parity.test.ts ("every pre-migration row: the C
-// Table loads it and writes the envelopes today's builders write") for the rows
-// the hosted database holds.
+// spectator), and by e2e/table_expand_migration.test.ts for the rows the hosted
+// database holds.
 
 import './harness.ts';
 import { test, before, beforeEach, after } from 'node:test';

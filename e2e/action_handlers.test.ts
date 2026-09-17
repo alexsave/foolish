@@ -9,7 +9,7 @@
 // server runs is table_act on the loaded row (sdk/ts/table/server_table.ts), so
 // the same cases are asked of it here, on boards the kernel built and sealed
 // (e2e/helpers/table_fixture.ts). The per-viewer streams are held by
-// e2e/table_parity.test.ts and e2e/push_as3.test.ts.
+// e2e/push_as3.test.ts and S1 (e2e/security_hidden_info.test.ts).
 //
 // Pure kernel test - needs no Postgres.
 import { test } from 'node:test';
