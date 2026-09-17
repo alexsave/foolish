@@ -471,6 +471,11 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }, {
             onSuccess: (game) => {
                 setGameId(game.id);
+                // The response is the joiner's own seated view. Apply it: the
+                // gu- animation stream is joined only once client state shows
+                // the seat (RealtimeAnimationFeed), and the join's own
+                // broadcast went out before this user could receive it.
+                setGames(prev => ({ ...prev, [game.id]: mergeGameData(game.id, { ...game, self: (game as PersonalGame).self ?? null } as PersonalGame, prev) }));
                 // Remove from spectator mode when joining
                 setSpectatorGames(prev => {
                     const newSet = new Set(prev);
