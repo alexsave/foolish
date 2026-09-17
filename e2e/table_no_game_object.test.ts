@@ -30,9 +30,9 @@ const TYPES = join(REPO, 'server/api/core/types.ts');
 const GAME_SHAPE = ['Game', 'PublicGame', 'PersonalGame', 'PrivatePlayer'];
 
 // The TS twins of the kernel's game that the server stopped using.
+// Only files that still exist: a deleted twin cannot be reached, and its entry
+// goes with it (the last test below holds the list to that).
 const RETIRED = [
-    'server/api/common/player_views.ts',
-    'server/api/common/packed_game.ts',
     'server/api/common/game_lifecycle.ts',
     'server/api/common/pure_bot_actions.ts',
     'server/api/common/bot_strategy.ts',
@@ -44,7 +44,6 @@ const RETIRED = [
     'sdk/ts/wire/roster.ts',
     'sdk/ts/wire/evwire.ts',
     'sdk/ts/wire/logwire.ts',
-    'sdk/ts/wire/packed_read.ts',
 ];
 
 const entries = readdirSync(FUNCTIONS)
@@ -134,4 +133,11 @@ test('no module the server loads is one of the TS twins Phase 4b retired', () =>
         .filter((f) => RETIRED.some((r) => (r.endsWith('/') ? f.startsWith(r) : f === r)))
         .map((f) => `${f} (reached from ${g.get(join(REPO, f))})`);
     assert.deepEqual(reached, [], `\n${reached.join('\n')}\n`);
+});
+
+test('the retired list names only files that still exist', () => {
+    // An entry for a deleted file guards nothing and reads as if the twin were
+    // still around; when a twin is deleted, its entry is deleted with it.
+    const gone = RETIRED.filter((r) => !existsSync(join(REPO, r)));
+    assert.deepEqual(gone, [], `deleted, so drop them from RETIRED: ${gone.join(', ')}`);
 });
