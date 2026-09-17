@@ -42,6 +42,27 @@
 //                 of the wrong length - throws a RangeError rather than truncate.
 // --snapshot-only the module holds the snapshot readers and the constants, not the
 //                 per-field accessors.
+//
+// Pointers are read, never written. In wasm32 a pointer is a u32 offset into
+// linear memory, so following one means reading that u32 and using it as the
+// pointee's `p`. The TS never produces a pointer C will dereference.
+//   accessors     `T *f` emits T_f_at (the address of the pointer itself) and
+//                 X_f_ptr(m, p): the address it holds, 0 for NULL. When T is a
+//                 record or a scalar, also X_f_deref_at(m, p, i): the address of
+//                 element i, after checking the pointer is not NULL and element i
+//                 lies inside wasm memory (a RangeError otherwise). void *, a
+//                 function pointer, an incomplete type or a pointer to a pointer
+//                 get the address getter only. There is never a setter, and a
+//                 record only a pointer reaches gets its accessors like any other.
+//   --snapshot    a pointer field is refused unless it has --count X.f=c; with
+//                 one, the snapshot follows it and copies c elements (a char
+//                 pointee becomes c bytes of UTF-8). NULL with a nonzero count, or
+//                 elements past the end of memory, throw a RangeError; NULL with a
+//                 count of 0 is an empty array.
+//   --writer      a record that reaches a pointer field is refused.
+//   layout hash   a pointer field hashes as a pointer, with its pointee's size and
+//                 kind, and a record pointee's own fields (a cycle back to a record
+//                 on the path hashes as how far back it points).
 #include <clang-c/Index.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -104,7 +125,12 @@ typedef struct {
 typedef struct {
     char *key, *name, *expr;
     long size;
-    char kind;           // scalars: i u b f (records: 0)
+    char kind;           // scalars: i u b f, p = a pointer (records: 0)
+    int pointee;         // a pointer: the record or scalar it points to, -1 if nothing to follow (void, a function, ...)
+    int pointee_done;    // a pointer: pointee resolved
+    CXType ptr_decl;     // a pointer: the declared type of the first field that reached it,
+    int ptr_nd;          //   its array levels,
+    char *ptr_rec, *ptr_field, *ptr_expr;   //   and that field's record, name and C expression (NULL: no field did)
     int record, charlike, is_union;
     int snap;            // --snapshot: 1 once reached from a snapshot root
     int writer;          // --writer: 1 once reached from a writer root
@@ -120,7 +146,8 @@ static char kind_of(CXType t) {
     case CXType_Bool: return 'b';
     case CXType_Float: case CXType_Double: case CXType_LongDouble: return 'f';
     case CXType_Char_U: case CXType_UChar: case CXType_UShort: case CXType_UInt: case CXType_ULong:
-    case CXType_ULongLong: case CXType_UInt128: case CXType_Pointer: case CXType_BlockPointer: return 'u';
+    case CXType_ULongLong: case CXType_UInt128: return 'u';
+    case CXType_Pointer: case CXType_BlockPointer: return 'p';
     case CXType_Enum:    // an enum is stored as its underlying integer type
         return kind_of(clang_getCanonicalType(clang_getEnumDeclIntegerType(clang_getTypeDeclaration(t))));
     default: return 'i';
@@ -129,8 +156,10 @@ static char kind_of(CXType t) {
 
 // `key` is the canonical type's spelling, used ONLY to recognise the same type
 // reached twice within this run. It is never emitted and never hashed: libclang
-// renders a canonical type differently across LLVM versions.
+// renders a canonical type differently across LLVM versions. Qualifiers are
+// not part of it: `const Card *` points at the same Card as a Card field.
 static int want(CXType t, const char *name, const char *expr) {
+    t = clang_getUnqualifiedType(t);
     char *key = str(clang_getTypeSpelling(t));
     for (int i = 0; i < nrecs; i++) if (!strcmp(recs[i].key, key)) { free(key); return i; }
     GROW(recs, nrecs, caprecs);
@@ -143,6 +172,7 @@ static int want(CXType t, const char *name, const char *expr) {
     r->record = t.kind == CXType_Record;
     r->is_union = r->record && clang_getCursorKind(clang_getTypeDeclaration(t)) == CXCursor_UnionDecl;
     if (!r->record) r->kind = kind_of(t);
+    r->pointee = -1;
     r->charlike = t.kind == CXType_Char_S || t.kind == CXType_Char_U;   // plain char; int8_t/uint8_t arrays are bytes
     return nrecs++;
 }
@@ -174,6 +204,41 @@ static char *declared_name(CXType t, int nd) {
         }
         return NULL;
     }
+}
+
+// The pointee of a pointer field as the header declares it (sugar kept, so
+// declared_name can name it). `t` is the field's declared type with its `nd`
+// array levels still on; typedefs of the pointer or array type are looked through.
+static CXType sugared_pointee(CXType t, int nd) {
+    for (;;) {
+        if (t.kind == CXType_Elaborated) { t = clang_Type_getNamedType(t); continue; }
+        if (t.kind == CXType_Attributed) { t = clang_Type_getModifiedType(t); continue; }
+        if (t.kind == CXType_Typedef) { t = clang_getTypedefDeclUnderlyingType(clang_getTypeDeclaration(t)); continue; }
+        if (nd > 0 && t.kind == CXType_ConstantArray) { t = clang_getArrayElementType(t); nd--; continue; }
+        if (t.kind == CXType_Pointer) return clang_getPointeeType(t);
+        return clang_getPointeeType(clang_getCanonicalType(t));
+    }
+}
+
+// Resolves what pointer `pi` points to: a record or a scalar with a size, or
+// nothing to follow (pointee -1). Runs after every record embedded in the roots
+// has been walked, so a pointer never reorders the records a module emits.
+// Returns whether it reached a type not seen before.
+static int resolve_pointee(int pi) {
+    Rec *p = &recs[pi];
+    if (p->pointee_done || !p->ptr_rec) return 0;   // a pointer no field declares (a pointee of a pointer) is not followed
+    p->pointee_done = 1;
+    CXType pt = clang_getCanonicalType(clang_getPointeeType(p->t));
+    int followable = pt.kind == CXType_Record || pt.kind == CXType_Enum || (pt.kind > CXType_Void && pt.kind <= CXType_LastBuiltin);
+    if (!followable || clang_Type_getSizeOf(pt) <= 0) return 0;   // void, a function, an array, a pointer, an incomplete type
+    char *id = declared_name(sugared_pointee(p->ptr_decl, p->ptr_nd), 0);
+    Buf name = {0}, pexpr = {0};
+    if (id && is_ident(id)) bprintf(&name, "%s", id); else bprintf(&name, "%s_%s", p->ptr_rec, p->ptr_field);
+    bprintf(&pexpr, "*(%s)", p->ptr_expr);
+    int before = nrecs, t = want(pt, name.s, pexpr.s);   // may move recs: p is stale from here
+    recs[pi].pointee = t;
+    free(id); free(name.s); free(pexpr.s);
+    return nrecs != before;
 }
 
 typedef struct { int rec; long long base; } Walk;
@@ -208,6 +273,11 @@ static enum CXVisitorResult on_field(CXCursor c, CXClientData d) {
         bprintf(&expr, "(%s).%s", recs[w->rec].expr, f.name);
         for (int i = 0; i < f.nd; i++) bprintf(&expr, "[0]");
         f.type = want(ft, name.s, expr.s);
+        Rec *pr = &recs[f.type];
+        if (pr->kind == 'p' && !pr->ptr_rec) {   // followed later (resolve_pointee), as this field declares it
+            pr->ptr_decl = clang_getCursorType(c); pr->ptr_nd = f.nd;
+            pr->ptr_rec = xstrdup(recs[w->rec].name); pr->ptr_field = xstrdup(f.name); pr->ptr_expr = xstrdup(expr.s);
+        }
         free(id); free(name.s); free(expr.s);
     }
     Rec *r = &recs[w->rec];
@@ -423,6 +493,22 @@ static void emit_record(Buf *ts, Rec *r, int *strings) {
             bprintf(ts, scalar_access(t->kind, t->size, 1, &vt), addr.s);
             bprintf(ts, "; };\n");
         }
+        if (t->kind == 'p') {   // an address to read and follow, never to write
+            bprintf(ts, "export const %s_%s_ptr = (m: Mem, p: number%s) => m.dv.getUint32(%s, true);\n", r->name, f->name, idxs.s, addr.s);
+            if (t->pointee >= 0) {
+                long es = recs[t->pointee].size;
+                char end[64], el[64];
+                if (es == 1) { snprintf(end, sizeof end, "a + i + 1"); snprintf(el, sizeof el, "a + i"); }
+                else { snprintf(end, sizeof end, "a + (i + 1) * %ld", es); snprintf(el, sizeof el, "a + i * %ld", es); }
+                bprintf(ts, "export const %s_%s_deref_at = (m: Mem, p: number%s, i: number) => {\n"
+                            "    const a = m.dv.getUint32(%s, true);\n"
+                            "    if (a === 0) throw new RangeError('%s.%s: NULL');\n"
+                            "    if (!(i >= 0) || %s > m.u8.byteLength) throw new RangeError(`%s.%s: element ${i} at ${a} is outside wasm memory (${m.u8.byteLength} bytes)`);\n"
+                            "    return %s;\n"
+                            "};\n",
+                    r->name, f->name, idxs.s, addr.s, r->name, f->name, end, r->name, f->name, el);
+            }
+        }
         if (t->charlike && f->nd == 1) {   // char[N]: a NUL-terminated UTF-8 string of at most N-1 bytes
             *strings |= STR_ACCESSORS;
             bprintf(ts, "export const %s_get_%s_str = (m: Mem, p: number) => cstrGet(m, %s, %ld);\n", r->name, f->name, at(f->off), f->dims[0]);
@@ -475,6 +561,19 @@ static void snap_mark(int ri) {
         Field *f = &r->f[j];
         if (f->width || is_count_field(r->name, f->name)) continue;
         Rec *t = &recs[f->type];
+        if (t->kind == 'p') {
+            if (f->nd) die("--snapshot: %s.%s is an array of pointers; a snapshot follows one pointer by its --count", r->name, f->name);
+            if (!count_for(r->name, f->name))
+                die("--snapshot: %s.%s is a pointer; give --count %s.%s=<count field> to copy what it points to", r->name, f->name, r->name, f->name);
+            if (t->pointee < 0)
+                die("--snapshot: %s.%s points to nothing a snapshot can copy (void, a function, an incomplete type or a pointer)", r->name, f->name);
+            const char *vt;
+            Rec *e = &recs[t->pointee];
+            if (!e->record && !scalar_access(e->kind, e->size, 0, &vt))
+                die("--snapshot: %s.%s points to a scalar of %ld bytes, which has no reader", r->name, f->name, e->size);
+            if (e->record) snap_mark(t->pointee);
+            continue;
+        }
         if (f->nd > 1) die("--snapshot: %s.%s has %d array dimensions; a snapshot copies one", r->name, f->name, f->nd);
         if (t->record) snap_mark(f->type);
     }
@@ -500,8 +599,10 @@ static void emit_snapshot(Buf *ts, Rec *r, int *strings) {
         if (f->width) type = f->kind == 'b' ? "boolean" : "number";
         else {
             Rec *t = &recs[f->type];
-            if (t->charlike && f->nd == 1) type = "string";
-            else if (f->nd == 1) { static char arr[160]; snprintf(arr, sizeof arr, "readonly %s[]", snap_elem_type(t)); type = arr; }
+            int ptr = t->kind == 'p';
+            if (ptr) t = &recs[t->pointee];   // a counted pointer copies like a counted array of its pointee
+            if (t->charlike && (f->nd == 1 || ptr)) type = "string";
+            else if (f->nd == 1 || ptr) { static char arr[160]; snprintf(arr, sizeof arr, "readonly %s[]", snap_elem_type(t)); type = arr; }
             else type = snap_elem_type(t);
         }
         bprintf(ts, " readonly %s: %s;", camel(f->name), type);
@@ -516,20 +617,36 @@ static void emit_snapshot(Buf *ts, Rec *r, int *strings) {
         const char *vt, *rd = scalar_access(recs[cf->type].kind, recs[cf->type].size, 0, &vt);
         bprintf(ts, "    const n_%s = ", f->name);
         bprintf(ts, rd, at(cf->off));
+        Rec *t = &recs[f->type];
+        if (t->kind == 'p') {   // the pointer, checked against its count before anything is read through it
+            long es = recs[t->pointee].size;
+            char bytes[160];
+            if (es == 1) snprintf(bytes, sizeof bytes, "n_%s", f->name); else snprintf(bytes, sizeof bytes, "n_%s * %ld", f->name, es);
+            bprintf(ts, ";\n    const a_%s = m.dv.getUint32(%s, true);\n    if (n_%s !== 0) {\n", f->name, at(f->off), f->name);
+            bprintf(ts, "        if (a_%s === 0) throw new RangeError(`%s.%s: NULL with a count of ${n_%s}`);\n", f->name, r->name, f->name, f->name);
+            bprintf(ts, "        if (!(n_%s > 0) || a_%s + %s > m.u8.byteLength) throw new RangeError(`%s.%s: ${n_%s} elements at ${a_%s} are outside wasm memory (${m.u8.byteLength} bytes)`);\n    }\n",
+                    f->name, f->name, bytes, r->name, f->name, f->name, f->name);
+            continue;
+        }
         bprintf(ts, ";\n    if (!(n_%s >= 0 && n_%s <= %ld)) throw new RangeError(`%s.%s: count ${n_%s} is outside 0..%ld`);\n",
                 f->name, f->name, f->dims[0], r->name, f->name, f->name, f->dims[0]);
     }
     for (int j = 0; j < r->nf; j++) {
         Field *f = &r->f[j];
-        if (f->width || f->nd != 1 || is_count_field(r->name, f->name)) continue;
+        if (f->width || is_count_field(r->name, f->name)) continue;
         Rec *t = &recs[f->type];
+        int ptr = t->kind == 'p';
+        if (!ptr && f->nd != 1) continue;
+        char base[160];
+        if (ptr) { snprintf(base, sizeof base, "a_%s", f->name); t = &recs[t->pointee]; }
+        else snprintf(base, sizeof base, "%s", at(f->off));
         if (t->charlike) continue;
         char n[160];
         if (count_for(r->name, f->name)) snprintf(n, sizeof n, "n_%s", f->name); else snprintf(n, sizeof n, "%ld", f->dims[0]);
         bprintf(ts, "    const %s: %s[] = new Array(%s);\n", camel(f->name), snap_elem_type(t), n);
         bprintf(ts, "    for (let i = 0; i < %s; i++) %s[i] = ", n, camel(f->name));
-        char a[96];
-        if (t->size == 1) snprintf(a, sizeof a, "%s + i", at(f->off)); else snprintf(a, sizeof a, "%s + i * %ld", at(f->off), t->size);
+        char a[256];
+        if (t->size == 1) snprintf(a, sizeof a, "%s + i", base); else snprintf(a, sizeof a, "%s + i * %ld", base, t->size);
         if (t->record) bprintf(ts, "read%s(m, %s);\n", t->name, a);
         else { const char *vt; bprintf(ts, scalar_access(t->kind, t->size, 0, &vt), a); bprintf(ts, ";\n"); }
     }
@@ -564,7 +681,10 @@ static void emit_snapshot(Buf *ts, Rec *r, int *strings) {
             continue;
         }
         Rec *t = &recs[f->type];
-        if (t->charlike && f->nd == 1) {
+        if (t->kind == 'p') {   // counted (snap_mark): copied above, or a counted string
+            if (recs[t->pointee].charlike) { *strings |= STR_UTF8_GET; bprintf(ts, "utf8Get(m, a_%s, n_%s)", f->name, f->name); }
+            else bprintf(ts, "%s", camel(f->name));
+        } else if (t->charlike && f->nd == 1) {
             if (count_for(r->name, f->name)) { *strings |= STR_UTF8_GET; bprintf(ts, "utf8Get(m, %s, n_%s)", at(f->off), f->name); }
             else { *strings |= STR_CSTR_GET; bprintf(ts, "cstrGet(m, %s, %ld)", at(f->off), f->dims[0]); }
         } else if (f->nd == 1) {
@@ -588,7 +708,10 @@ static void writer_mark(int ri) {
     r->writer = 1;
     for (int j = 0; j < r->nf; j++) {
         Field *f = &r->f[j];
-        if (f->width || is_count_field(r->name, f->name)) continue;
+        if (f->width) continue;
+        if (recs[f->type].kind == 'p')
+            die("--writer: %s.%s is a pointer; a writer never writes an address C would follow", r->name, f->name);
+        if (is_count_field(r->name, f->name)) continue;
         if (recs[f->type].record) writer_mark(f->type);
     }
 }
@@ -706,6 +829,7 @@ static void emit_writer(Buf *ts, Rec *r, int *strings) {
 // alone, and libclang's rendering of a type, which differs between LLVM
 // versions, can never reach it. tools/structgen/test/hash.sh pins both halves.
 static unsigned layout_hash = 2166136261u;
+static int hash_path[256], hash_depth;   // the records on the path being hashed, for a pointer cycle
 static void hput(const char *fmt, ...) {
     char line[1024];
     va_list ap; va_start(ap, fmt);
@@ -717,6 +841,8 @@ static void hput(const char *fmt, ...) {
 static void hash_record(int ri, const char *path) {
     Rec *r = &recs[ri];
     Spec *s = spec_for(r->name);
+    if (hash_depth == 256) die("%s: records nested too deep to hash", path);
+    hash_path[hash_depth++] = ri;
     if (!s || spec_has(s, "SIZE") || r->size == 1 || r->size == 2 || r->size == 4) hput("%s size %ld", path, r->size);
     for (int j = 0; j < r->nf; j++) {
         Field *f = &r->f[j];
@@ -724,6 +850,19 @@ static void hash_record(int ri, const char *path) {
         Rec *t = &recs[f->type];
         char dims[128] = "";
         for (int k = 0; k < f->nd; k++) snprintf(dims + strlen(dims), sizeof dims - strlen(dims), "[%ld]", f->dims[k]);
+        if (t->kind == 'p') {   // pointer-ness, then the pointee by size and kind, and a record pointee's own layout
+            if (t->pointee < 0) { hput("%s.%s off %ld%s elem %ld p -> none", path, f->name, f->off, dims, t->size); continue; }
+            Rec *e = &recs[t->pointee];
+            hput("%s.%s off %ld%s elem %ld p -> %ld %c%s", path, f->name, f->off, dims, t->size, e->size, e->record ? 'r' : e->kind, e->charlike ? " char" : "");
+            if (!e->record) continue;
+            int back = 0;
+            for (int k = hash_depth - 1; k >= 0 && !back; k--) if (hash_path[k] == t->pointee) back = hash_depth - k;
+            Buf child = {0};
+            bprintf(&child, "%s.%s*", path, f->name);
+            if (back) hput("%s back %d", child.s, back); else hash_record(t->pointee, child.s);
+            free(child.s);
+            continue;
+        }
         hput("%s.%s off %ld%s elem %ld %c%s", path, f->name, f->off, dims, t->size, t->record ? 'r' : t->kind, t->charlike ? " char" : "");
         if (t->record) {
             Buf child = {0};
@@ -732,6 +871,7 @@ static void hash_record(int ri, const char *path) {
             free(child.s);
         }
     }
+    hash_depth--;
 }
 
 static int cmp_str(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
@@ -847,9 +987,15 @@ int main(int argc, char **argv) {
         for (int j = 0; j < nconsts; j++) hit |= consts[j].prefix == i;
         if (!hit) die("--const %s matches no enum constant or #define", prefixes[i]);
     }
-    for (int i = 0; i < nrecs; i++) if (recs[i].record) {
-        Walk w = { i, 0 };
-        clang_Type_visitFields(recs[i].t, on_field, &w);
+    // Every record the roots embed, then what their pointers reach, and so on
+    // until a pass reaches nothing new.
+    for (int walked = 0, more = 1; more; ) {
+        for (; walked < nrecs; walked++) if (recs[walked].record) {
+            Walk w = { walked, 0 };
+            clang_Type_visitFields(recs[walked].t, on_field, &w);
+        }
+        more = 0;
+        for (int i = 0; i < nrecs; i++) if (recs[i].kind == 'p') more |= resolve_pointee(i);
     }
     for (int i = 0; i < nspecs; i++) {
         Spec *s = &specs[i];
@@ -867,8 +1013,10 @@ int main(int argc, char **argv) {
         for (int j = 0; j < nrecs; j++) if (recs[j].record && !strcmp(recs[j].name, c->type)) r = &recs[j];
         if (!r) die("--count %s.%s: no such record reached from the roots", c->type, c->field);
         Field *f = field_named(r, c->field), *cf = field_named(r, c->count);
-        if (!f || f->width || f->nd != 1) die("--count %s.%s: not a one-dimensional array field", c->type, c->field);
-        if (!cf || cf->width || cf->nd || recs[cf->type].record || recs[cf->type].kind == 'f' || recs[cf->type].size > 4)
+        if (!f || f->width || (recs[f->type].kind == 'p' ? f->nd != 0 : f->nd != 1))
+            die("--count %s.%s: not a one-dimensional array field or a pointer", c->type, c->field);
+        if (!cf) die("--count %s.%s=%s: %s has no field named %s", c->type, c->field, c->count, c->type, c->count);
+        if (cf->width || cf->nd || recs[cf->type].record || recs[cf->type].kind == 'f' || recs[cf->type].kind == 'p' || recs[cf->type].size > 4)
             die("--count %s.%s=%s: the count is not an integer field of %s", c->type, c->field, c->count, c->type);
     }
     for (int i = 0; i < nsnaps; i++) {

@@ -48,8 +48,13 @@ export const AnimEvent_to_at = (p: number) => p + 12;
 export const AnimEvent_get_to = (m: Mem, p: number) => m.dv.getInt32(p + 12, true);
 export const AnimEvent_set_to = (m: Mem, p: number, v: number) => { m.dv.setInt32(p + 12, v, true); };
 export const AnimEvent_cards_at = (p: number) => p + 16;
-export const AnimEvent_get_cards = (m: Mem, p: number) => m.dv.getUint32(p + 16, true);
-export const AnimEvent_set_cards = (m: Mem, p: number, v: number) => { m.dv.setUint32(p + 16, v, true); };
+export const AnimEvent_cards_ptr = (m: Mem, p: number) => m.dv.getUint32(p + 16, true);
+export const AnimEvent_cards_deref_at = (m: Mem, p: number, i: number) => {
+    const a = m.dv.getUint32(p + 16, true);
+    if (a === 0) throw new RangeError('AnimEvent.cards: NULL');
+    if (!(i >= 0) || a + i + 1 > m.u8.byteLength) throw new RangeError(`AnimEvent.cards: element ${i} at ${a} is outside wasm memory (${m.u8.byteLength} bytes)`);
+    return a + i;
+};
 export const AnimEvent_n_cards_at = (p: number) => p + 20;
 export const AnimEvent_get_n_cards = (m: Mem, p: number) => m.dv.getInt32(p + 20, true);
 export const AnimEvent_set_n_cards = (m: Mem, p: number, v: number) => { m.dv.setInt32(p + 20, v, true); };

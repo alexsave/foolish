@@ -29,7 +29,7 @@ export const KFLAG_LOW = 3;
 export const KFLAG_HIGH = 1073741824;
 export const KFLAG_NEG = -1073741829;
 // Kinds
-export const Kinds_SIZE = 152;
+export const Kinds_SIZE = 176;
 export const Kinds_tag_at = (p: number) => p;
 export const Kinds_get_tag = (m: Mem, p: number) => m.i8[p];
 export const Kinds_set_tag = (m: Mem, p: number, v: number) => { m.i8[p] = v; };
@@ -52,8 +52,13 @@ export const Kinds_p_at = (p: number) => p + 44;
 export const Kinds_get_p = (m: Mem, p: number) => m.dv.getUint32(p + 44, true);
 export const Kinds_set_p = (m: Mem, p: number, v: number) => { m.dv.setUint32(p + 44, v, true); };
 export const Kinds_name_at = (p: number) => p + 48;
-export const Kinds_get_name = (m: Mem, p: number) => m.dv.getUint32(p + 48, true);
-export const Kinds_set_name = (m: Mem, p: number, v: number) => { m.dv.setUint32(p + 48, v, true); };
+export const Kinds_name_ptr = (m: Mem, p: number) => m.dv.getUint32(p + 48, true);
+export const Kinds_name_deref_at = (m: Mem, p: number, i: number) => {
+    const a = m.dv.getUint32(p + 48, true);
+    if (a === 0) throw new RangeError('Kinds.name: NULL');
+    if (!(i >= 0) || a + i + 1 > m.u8.byteLength) throw new RangeError(`Kinds.name: element ${i} at ${a} is outside wasm memory (${m.u8.byteLength} bytes)`);
+    return a + i;
+};
 export const Kinds_cards_at = (p: number, i0: number, i1: number) => p + 52 + i1 + i0 * 2;
 export const Kinds_cards_LEN = 3;
 export const Kinds_cards_LEN1 = 2;
@@ -92,6 +97,36 @@ export const Kinds_i32_at = (p: number) => p + 140;
 export const Kinds_get_i32 = (m: Mem, p: number) => m.dv.getInt32(p + 140, true);
 export const Kinds_set_i32 = (m: Mem, p: number, v: number) => { m.dv.setInt32(p + 140, v, true); };
 export const Kinds_packed_at = (p: number) => p + 144;
+export const Kinds_hand_at = (p: number) => p + 148;
+export const Kinds_hand_ptr = (m: Mem, p: number) => m.dv.getUint32(p + 148, true);
+export const Kinds_hand_deref_at = (m: Mem, p: number, i: number) => {
+    const a = m.dv.getUint32(p + 148, true);
+    if (a === 0) throw new RangeError('Kinds.hand: NULL');
+    if (!(i >= 0) || a + i + 1 > m.u8.byteLength) throw new RangeError(`Kinds.hand: element ${i} at ${a} is outside wasm memory (${m.u8.byteLength} bytes)`);
+    return a + i;
+};
+export const Kinds_vals_at = (p: number) => p + 152;
+export const Kinds_vals_ptr = (m: Mem, p: number) => m.dv.getUint32(p + 152, true);
+export const Kinds_vals_deref_at = (m: Mem, p: number, i: number) => {
+    const a = m.dv.getUint32(p + 152, true);
+    if (a === 0) throw new RangeError('Kinds.vals: NULL');
+    if (!(i >= 0) || a + (i + 1) * 2 > m.u8.byteLength) throw new RangeError(`Kinds.vals: element ${i} at ${a} is outside wasm memory (${m.u8.byteLength} bytes)`);
+    return a + i * 2;
+};
+export const Kinds_opaque_at = (p: number) => p + 156;
+export const Kinds_opaque_ptr = (m: Mem, p: number) => m.dv.getUint32(p + 156, true);
+export const Kinds_fn_at = (p: number) => p + 160;
+export const Kinds_fn_ptr = (m: Mem, p: number) => m.dv.getUint32(p + 160, true);
+export const Kinds_handle_at = (p: number) => p + 164;
+export const Kinds_handle_ptr = (m: Mem, p: number) => m.dv.getUint32(p + 164, true);
+export const Kinds_list_at = (p: number) => p + 168;
+export const Kinds_list_ptr = (m: Mem, p: number) => m.dv.getUint32(p + 168, true);
+export const Kinds_list_deref_at = (m: Mem, p: number, i: number) => {
+    const a = m.dv.getUint32(p + 168, true);
+    if (a === 0) throw new RangeError('Kinds.list: NULL');
+    if (!(i >= 0) || a + (i + 1) * 8 > m.u8.byteLength) throw new RangeError(`Kinds.list: element ${i} at ${a} is outside wasm memory (${m.u8.byteLength} bytes)`);
+    return a + i * 8;
+};
 // KCard
 export const KCard_SIZE = 1;
 export const KCard_raw_get = (m: Mem, p: number) => m.u8[p];
@@ -152,3 +187,16 @@ export const KPacked_get_on = (m: Mem, p: number) => ((m.u8[p + 2] << 24) >>> 31
 export const KPacked_set_on = (m: Mem, p: number, v: boolean) => { m.u8[p + 2] = (m.u8[p + 2] & -129) | ((+v << 7) & 128); };
 export const KPacked_get_top = (m: Mem, p: number) => (m.u8[p + 3] << 24) >>> 24;
 export const KPacked_set_top = (m: Mem, p: number, v: number) => { m.u8[p + 3] = (m.u8[p + 3] & -256) | ((v << 0) & 255); };
+// KNode
+export const KNode_SIZE = 8;
+export const KNode_v_at = (p: number) => p;
+export const KNode_get_v = (m: Mem, p: number) => m.dv.getInt32(p, true);
+export const KNode_set_v = (m: Mem, p: number, v: number) => { m.dv.setInt32(p, v, true); };
+export const KNode_next_at = (p: number) => p + 4;
+export const KNode_next_ptr = (m: Mem, p: number) => m.dv.getUint32(p + 4, true);
+export const KNode_next_deref_at = (m: Mem, p: number, i: number) => {
+    const a = m.dv.getUint32(p + 4, true);
+    if (a === 0) throw new RangeError('KNode.next: NULL');
+    if (!(i >= 0) || a + (i + 1) * 8 > m.u8.byteLength) throw new RangeError(`KNode.next: element ${i} at ${a} is outside wasm memory (${m.u8.byteLength} bytes)`);
+    return a + i * 8;
+};

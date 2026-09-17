@@ -10,7 +10,7 @@ fails=0
 expect_fail() { # description pattern args...
     local what="$1" pat="$2"; shift 2
     local err; err="$("$SG" "$@" 2>&1 >/dev/null)"; local rc=$?
-    if [ $rc -ne 0 ] && printf '%s' "$err" | grep -q "$pat"; then echo "ok   $what"
+    if [ $rc -ne 0 ] && printf '%s' "$err" | grep -qF -- "$pat"; then echo "ok   $what"
     else echo "FAIL $what (rc=$rc): $err"; fails=$((fails + 1)); fi
 }
 expect_fail "missing requested field"      "no field named nope"            "${base[@]}" --fields Kinds=tag,nope
@@ -33,6 +33,11 @@ expect_fail "--count of a non-array"        "not a one-dimensional array"    "${
 expect_fail "--count by a non-integer"      "is not an integer field"        "${snap[@]}" --snapshot Snap --count Snap.pairs=d
 expect_fail "--count on no snapshot"        "is not in any snapshot"         "${snap[@]}" --snapshot SPair --count SItem.text=len
 expect_fail "--writer of no snapshot"       "not a --snapshot"               "${snap[@]}" --snapshot SPair --writer Snap
+ptr=(--cwd "$here/test" --header snap.h --root SPtr --build wasm= --ts "$tmp/o.ts")
+ptr_counts=(--count SPtr.vals=n_vals --count SPtr.items=n_items --count SPtr.name=name_len --count SPtr.none=n_none)
+expect_fail "--snapshot of an uncounted pointer" "SPtr.vals is a pointer; give --count SPtr.vals=" "${ptr[@]}" --snapshot SPtr
+expect_fail "--writer reaching a pointer"   "--writer: SPtr.vals is a pointer" "${ptr[@]}" --snapshot SPtr "${ptr_counts[@]}" --writer SPtr
+expect_fail "--count naming no field"       "SPtr has no field named nope"   "${ptr[@]}" --snapshot SPtr --count SPtr.vals=nope
 "$SG" "${base[@]}" --print-hash > "$tmp/hash" && grep -qE '^0x[0-9a-f]{8}$' "$tmp/hash" && echo "ok   --print-hash prints the hash" || { echo "FAIL --print-hash"; fails=$((fails + 1)); }
 "$SG" "${base[@]}" --hash-ts "$tmp/hash.ts" --print-hash > "$tmp/hash2" \
   && [ "$(grep -c . "$tmp/hash.ts")" = 3 ] && grep -qx "export const LAYOUT_HASH = $(cat "$tmp/hash2");" "$tmp/hash.ts" \

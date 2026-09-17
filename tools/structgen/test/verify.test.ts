@@ -23,7 +23,7 @@ test('kinds: generated getters read what C initialized', () => {
     assert.equal(K.Kinds_get_d(m, p), -2.25);
     assert.equal(K.Kinds_get_e(m, p), -1);
     assert.equal(K.Kinds_get_p(m, p), 1);
-    assert.equal(K.Kinds_get_name(m, p), 0x1234);
+    assert.equal(K.Kinds_name_ptr(m, p), 0x1234);
     const card = (i: number, j: number) => { const c = K.Kinds_cards_at(p, i, j); return [K.KCard_get_s(m, c), K.KCard_get_v(m, c)]; };
     assert.deepEqual([card(0, 0), card(0, 1), card(1, 0), card(1, 1), card(2, 0), card(2, 1)],
         [[-1, -1], [3, 13], [0, 1], [2, 7], [-4, 15], [1, -16]]);
@@ -61,6 +61,67 @@ test('kinds: generated setters write what C reads back', () => {
     assert.deepEqual([K.KPacked_unpack_lo(r), K.KPacked_unpack_mid(r), K.KPacked_unpack_on(r), K.KPacked_unpack_top(r)], [4000, -1000, true, 200]);
     K.KPacked_raw_set(m, kp, K.KPacked_pack(1, -1024, false, 255));
     assert.equal(ex.k_check(), 0, `C saw wrong fields, bitmask ${ex.k_check().toString(2)}`);
+});
+
+test('pointers: an address getter, 0 for NULL, and never a setter', () => {
+    const p = ex.k_ptr();
+    ex.k_ptrs_fill();
+    const exported = Object.keys(K);
+    assert.deepEqual(exported.filter(k => /^Kinds_(get|set)_(name|hand|vals|opaque|fn|handle|list)$/.test(k)), [],
+        'a pointer field is not a plain u32: no getter or setter');
+    assert.deepEqual(exported.filter(k => /^KNode_(get|set)_next$/.test(k)), []);
+    assert.equal(K.Kinds_hand_ptr(m, p), ex.k_hand_addr());
+    assert.equal(K.Kinds_vals_ptr(m, p), ex.k_vals_addr());
+    assert.equal(K.Kinds_opaque_ptr(m, p), 0x5678);
+    assert.equal(K.Kinds_fn_ptr(m, p), ex.k_fn_addr());
+    assert.equal(K.Kinds_handle_ptr(m, p), 0);
+    assert.equal(K.Kinds_list_ptr(m, p), ex.k_node_addr(0));
+    assert.deepEqual(exported.filter(k => /_deref_at$/.test(k)).sort(),
+        ['KNode_next_deref_at', 'Kinds_hand_deref_at', 'Kinds_list_deref_at', 'Kinds_name_deref_at', 'Kinds_vals_deref_at'],
+        'void *, a function pointer and an incomplete pointee have nothing to follow');
+});
+
+test('pointers: deref_at gives element addresses that read what C wrote', () => {
+    const p = ex.k_ptr();
+    ex.k_ptrs_fill();
+    const cards = [0, 1, 2].map(i => { const c = K.Kinds_hand_deref_at(m, p, i); return [K.KCard_get_s(m, c), K.KCard_get_v(m, c)]; });
+    assert.deepEqual(cards, [[1, 6], [-2, 11], [3, -7]]);
+    assert.equal(K.Kinds_hand_deref_at(m, p, 2), ex.k_hand_addr() + 2 * K.KCard_SIZE);
+    assert.deepEqual([0, 1, 2, 3].map(i => m.dv.getInt16(K.Kinds_vals_deref_at(m, p, i), true)), [-1, 2, -30000, 4]);
+    const n0 = K.Kinds_list_deref_at(m, p, 0);
+    assert.equal(K.KNode_get_v(m, n0), 41);
+    const n1 = K.KNode_next_deref_at(m, n0, 0);
+    assert.equal(n1, ex.k_node_addr(1));
+    assert.equal(K.KNode_get_v(m, n1), -42);
+    assert.equal(K.KNode_next_ptr(m, n1), 0);
+    assert.throws(() => K.KNode_next_deref_at(m, n1, 0), (e: Error) => e instanceof RangeError && /KNode\.next: NULL/.test(e.message));
+});
+
+test('pointers: deref_at throws on NULL, a negative index, and past the end of memory', () => {
+    const p = ex.k_ptr();
+    ex.k_ptrs_fill();
+    assert.throws(() => K.Kinds_vals_deref_at(m, p, -1), (e: Error) => e instanceof RangeError && /Kinds\.vals: element -1/.test(e.message));
+    ex.k_vals_null();
+    assert.throws(() => K.Kinds_vals_deref_at(m, p, 0), (e: Error) => e instanceof RangeError && /Kinds\.vals: NULL/.test(e.message));
+    const end = ex.k_vals_at_end();
+    assert.equal(end + 3, ex.mem_bytes());
+    assert.equal(K.Kinds_vals_deref_at(m, p, 0), end, 'element 0 ends one byte before the end of memory');
+    assert.throws(() => K.Kinds_vals_deref_at(m, p, 1), (e: Error) => e instanceof RangeError && /Kinds\.vals: element 1 at \d+ is outside wasm memory/.test(e.message));
+    ex.k_ptrs_fill();
+});
+
+test('--snapshot: a counted pointer is followed and copied; NULL with a count, or past memory, throws', () => {
+    ex.snap_fill(2, 3, 3);
+    const s = S.readSPtr(m, ex.sptr_fill(0));
+    assert.deepEqual(s, {
+        vals: [5, -6, 7], items: [{ text: 'p', score: -150 }, { text: 'qr', score: -50 }],
+        name: `h${String.fromCharCode(0xe9)}llo`, none: [], tail: -77,
+    });
+    ex.snap_fill(0, 0, 0);
+    assert.deepEqual(s.items[1], { text: 'qr', score: -50 }, 'the copy holds no view of wasm memory');
+    assert.throws(() => S.readSPtr(m, ex.sptr_fill(1)), (e: Error) => e instanceof RangeError && /SPtr\.vals: NULL with a count of 3/.test(e.message));
+    assert.throws(() => S.readSPtr(m, ex.sptr_fill(2)), (e: Error) => e instanceof RangeError && /SPtr\.vals: 3 elements at \d+ are outside wasm memory/.test(e.message));
+    assert.equal(Object.keys(S).some(k => /^writeSPtr$/.test(k)), false);
 });
 
 test('anim_plan.h / legal.h: generated addresses equal compiler offsetof', () => {

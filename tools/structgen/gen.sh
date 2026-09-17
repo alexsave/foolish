@@ -70,8 +70,9 @@ set +f
 
 # Genericity fixtures (test/verify.test.ts).
 "$SG" --cwd "$here/test" --header kinds.h --root Kinds --build wasm= --const K_ --const KFLAG_ --ts "$fixtures/kinds.ts"
-"$SG" --cwd "$here/test" --header snap.h --root Snap --build wasm= --snapshot Snap --snapshot-only \
-  --count Snap.pairs=n_pairs --count Snap.items=n_items --count Snap.text=n_text --count SItem.text=len --writer Snap --ts "$fixtures/snap.ts"
+"$SG" --cwd "$here/test" --header snap.h --root Snap --root SPtr --build wasm= --snapshot Snap --snapshot SPtr --snapshot-only \
+  --count Snap.pairs=n_pairs --count Snap.items=n_items --count Snap.text=n_text --count SItem.text=len --writer Snap \
+  --count SPtr.vals=n_vals --count SPtr.items=n_items --count SPtr.name=name_len --count SPtr.none=n_none --ts "$fixtures/snap.ts"
 
 if [ "$check" = 1 ]; then
   stale=0

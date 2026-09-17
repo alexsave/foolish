@@ -16,6 +16,26 @@ static Kinds k = {
 };
 Kinds *k_ptr(void) { return &k; }
 
+// Pointer fields: what they point at, and where, as C sees it.
+static KCard hand_cards[3] = { { 1, 6 }, { -2, 11 }, { 3, -7 } };
+static int16_t vals[4] = { -1, 2, -30000, 4 };
+static struct KNode nodes[2];
+static void k_fn(void) {}
+void k_ptrs_fill(void) {
+    k.hand = hand_cards; k.vals = vals; k.opaque = (void *)0x5678; k.fn = k_fn; k.handle = 0;
+    nodes[0].v = 41; nodes[0].next = &nodes[1];
+    nodes[1].v = -42; nodes[1].next = 0;
+    k.list = &nodes[0];
+}
+unsigned k_hand_addr(void) { return (unsigned)(uintptr_t)hand_cards; }
+unsigned k_vals_addr(void) { return (unsigned)(uintptr_t)vals; }
+unsigned k_fn_addr(void) { return (unsigned)(uintptr_t)k_fn; }
+unsigned k_node_addr(int i) { return (unsigned)(uintptr_t)&nodes[i]; }
+void k_vals_null(void) { k.vals = 0; }
+// vals points three bytes before the end of memory: element 0 fits, element 1 does not.
+unsigned k_vals_at_end(void) { k.vals = (int16_t *)(uintptr_t)(__builtin_wasm_memory_size(0) * 65536 - 3); return (unsigned)(uintptr_t)k.vals; }
+unsigned mem_bytes(void) { return (unsigned)(__builtin_wasm_memory_size(0) * 65536); }
+
 // After TS wrote the "second" values, report each mismatching field as a bit.
 int k_check(void) {
     int bad = 0, b = 0;
@@ -78,6 +98,21 @@ Snap *snap_fill(int n_pairs, int n_items, int n_text) {
     snap.nums[0] = 7; snap.nums[1] = -8; snap.nums[2] = 9;
     snap.card.s = 3; snap.card.v = 13;
     return &snap;
+}
+
+// --snapshot with pointers (gen/snap.ts readSPtr): mode 0 is a good record,
+// 1 a NULL vals with a nonzero count, 2 a vals running past the end of memory.
+static SPtr sptr;
+static const int16_t sptr_vals[3] = { 5, -6, 7 };
+SPtr *sptr_fill(int mode) {
+    sptr.vals = sptr_vals; sptr.n_vals = 3;
+    sptr.items = snap.items; sptr.n_items = 2;
+    sptr.name = "h\xc3\xa9llo!"; sptr.name_len = 6;   // not the '!': a counted string is exactly its bytes
+    sptr.none = 0; sptr.n_none = 0;
+    sptr.tail = -77;
+    if (mode == 1) sptr.vals = 0;
+    if (mode == 2) sptr.vals = (const int16_t *)(uintptr_t)(__builtin_wasm_memory_size(0) * 65536 - 4);
+    return &sptr;
 }
 
 // --writer (gen/snap.ts writeSnap): a second record, filled with junk, that the
