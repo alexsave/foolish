@@ -159,6 +159,9 @@ public struct MessageTableView: View {
     /// both places); the table copy must stay VISIBLE until its own flight, which
     /// only this set governs.
     @State private var sweptFlownIds: Set<String> = []
+    /// A move of mine is between the tap and the kernel's answer - see
+    /// `ActionPillSlot.holdsWhilePlaying`.
+    @State private var playInFlight = false
     /// ROUND 20: cards that are ON the pre-bout grid but have NOT ARRIVED YET -
     /// the mirror image of `sweptFlownIds`, hidden for the same reason at the
     /// other end of the sequence.
@@ -5130,7 +5133,7 @@ public struct MessageTableView: View {
         let defending = view.defender == controller.mySeat
         // Play buttons only while I can act and have NOT staged; once staged, the
         // only control is Undo (the extension has dropped the user at Messages' Send).
-        let acting = controller.iCanAct && !controller.canSend
+        let acting = controller.iCanAct && !controller.canSend && !playInFlight
         // ONE kernel answer for every enable-state below, so no two of them can
         // describe different menus.
         let bar = probe(view, cards, .table)
@@ -5259,14 +5262,22 @@ public struct MessageTableView: View {
                 // timer while it is up, and `undoPillTapped` asks again at the
                 // tap in case one lands between two redraws.
                 TimelineView(.periodic(from: .now, by: 0.1)) { _ in
-                    undoPill
+                    let still = UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty)
+                    if UndoGate.hides {
+                        // Shown enabled, or not shown - never dimmed.
+                        if !controller.conflictRetracting && still {
+                            undoPill(enabled: true)
+                        }
+                    } else {
+                        undoPill(enabled: !controller.conflictRetracting && still)
+                    }
                 }
             }
         }
         .frame(width: FActionBar.pillWidth, height: 40)
     }
 
-    private var undoPill: some View {
+    private func undoPill(enabled: Bool) -> some View {
         // NOT WHILE A RETRACTION IS IN FLIGHT (the audit's U8). Every
         // other door into the controller asks first - `cancelStage` and
         // `apply` both check RETRACTING before anything else - and this
@@ -5277,14 +5288,14 @@ public struct MessageTableView: View {
         // during that then." A control that cannot be pressed has no
         // door to forget.
         FButton(FStrings.t("ios.msg.undo"), kind: .wood,
-                enabled: !controller.conflictRetracting && UndoGate.acceptsNow, compact: true,
+                enabled: enabled, compact: true,
                 fixedWidth: FActionBar.pillWidth, action: undoPillTapped)
     }
 
     /// The Undo pill's tap: refused while the board moves (UndoGate), then the
     /// same `undoAction` the bubble's X runs - which does NOT ask the gate.
     private func undoPillTapped() {
-        guard UndoGate.acceptsNow else {
+        guard UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty) else {
             AnimLog.say("undo refused: the board is still moving")
             return
         }
@@ -5339,6 +5350,9 @@ public struct MessageTableView: View {
         // said why, and a "move not allowed" toast on top of it would read as a
         // rule about the move rather than about the bubble.
         guard !controller.superseded else { releaseLivePlayVeil(); return }
+        // In the same turn as the selection clearing - otherwise that paint
+        // shows the bar for an attacker with nothing selected: "Good".
+        playInFlight = ActionPillSlot.holdsWhilePlaying
         selection.removeAll()
         // The veil, live half (round-4 note 5). Both of these are the state as
         // it is RIGHT NOW, captured before `apply` can publish a new view —
@@ -5384,6 +5398,7 @@ public struct MessageTableView: View {
             let applied = await controller.apply(move)
             if !applied { releaseLivePlayVeil() }
             await stageNow()
+            playInFlight = false
         }
     }
 

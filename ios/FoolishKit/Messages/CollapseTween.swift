@@ -284,6 +284,14 @@ public enum CollapseTween {
     /// as `isTweening` beside it, and for the same reason.
     @MainActor public static var isPresenting = false
 
+    /// IS A STAGED MOVE STILL ON ITS WAY TO THE COMPACT DRAWER? Set by the
+    /// extension's `stage` from the moment it takes the expanded path until the
+    /// collapse transition has settled - the rest before the collapse included,
+    /// which is a stretch where nothing moves and every other "is it moving"
+    /// answer says no. Read by `UndoGate`, so Undo does not flash up in that
+    /// rest (owner: "you dim the undo button mulitple times").
+    @MainActor public static var isAutoCollapsing = false
+
     /// Heights under this are the compact strip; an expanded board is far
     /// taller. The transition reports both, and only the compact ones say
     /// anything about where the collapse is going.

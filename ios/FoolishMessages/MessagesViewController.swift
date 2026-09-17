@@ -993,6 +993,11 @@ final class MessagesViewController: MSMessagesAppViewController {
         // `waitForSettle()` for however long the real sequence takes (a plain
         // attack/cover has no sequence at all, so this returns almost at
         // once); THEN a rest so the settled result reads, not a flicker.
+        // UNDO STAYS OUT OF SIGHT FOR ALL OF THIS - the flight, the rest, the
+        // collapse (CollapseTween.isAutoCollapsing, read by UndoGate). Cleared
+        // on every way out, guard-returns included.
+        CollapseTween.isAutoCollapsing = true
+        defer { CollapseTween.isAutoCollapsing = false }
         try? await Task.sleep(nanoseconds: 250_000_000)
         await BoardAnimator.waitForSettle()
         try? await Task.sleep(nanoseconds: 500_000_000)
