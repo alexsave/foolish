@@ -5,8 +5,8 @@
  *
  * The tutorial is a real 3-player game played by the real engine and frozen as a
  * replay code. It has to be a particular KIND of real game: one where the
- * learner (seat 0) personally performs every move the tutorial teaches — lead,
- * throw in, cover, trump-cover, pass, pick up, say good — and where the table
+ * learner (seat 0) personally performs every move the tutorial teaches - lead,
+ * throw in, cover, trump-cover, pass, pick up, say good - and where the table
  * shows the rest: a bout closing, refills, the stock running out, a player going
  * out, and a fool who is not the learner.
  *
@@ -14,8 +14,8 @@
  * the elements have to co-occur naturally, because the game is played by the
  * engine, not scripted.
  *
- * It scores the REPLAY'S STEPS — what the tutorial will actually walk the
- * learner through — and not the played game's log stream, which is a different
+ * It scores the REPLAY'S STEPS - what the tutorial will actually walk the
+ * learner through - and not the played game's log stream, which is a different
  * thing and lies about exactly the elements that matter. Two of them, concretely:
  *
  *   - The log stream records a `good` for every attacker at every bout end. The
@@ -23,38 +23,36 @@
  *     bout is folded into a seat-less round end (replay.c apply_round_end emits
  *     seat -1, because the transition belongs to all of them). So a game whose
  *     logs are full of the learner's goods can be one where the learner is never
- *     once asked to say good — which is what the first cut of this file picked.
+ *     once asked to say good - which is what the first cut of this file picked.
  *
  *   - `game.first_attacker` is the CURRENT attacker of a finished game, not the
  *     opening one. Reading it here reported "the learner leads" about a game
  *     that opens on seat 1.
  *
  * The predecessor of this file was lost, and the tutorial's code was left as a
- * base32 constant nobody could regenerate — which matters more than it sounds,
+ * base32 constant nobody could regenerate - which matters more than it sounds,
  * because a replay code is only readable by the kernel that cut it (the coder's
  * probability model IS the legal-move menu, so any menu change renumbers every
  * choice and orphans the code). When that happens, this is the way back in.
  * ========================================================================== */
 
-import { PLAYER_STATUS } from '../server/api/core/types.ts';
-import { playSeededV6 } from '../e2e/helpers/seeded_game.ts';
-import { base32Encode, bytesToBigint } from '../server/api/common/replay/codec.ts';
-import { decodeReplay } from '../server/api/common/replay/decode.ts';
+import { kernelB32Encode, replaySummary } from '../sdk/ts/wasm/bots.ts';
+import { playBotTable, seedBytes } from '../e2e/helpers/bot_table.ts';
 import { buildReplayFrames, REPLAY_STEP, ReplayFrame } from '../src/replay/frames.ts';
 import { TUTORIAL_NAMES } from '../src/components/tutorialGame.ts';
+import { PLAYER_STATUS } from '../src/state/view.ts';
 
 const LEARNER = 0;
-const SELF_ID = 'seat-0';
 
 /* Mirrors Tutorial.tsx: a bout-closing good is seat-less, so the learner's own
- * good is recognised from the board — they were in, not defending, and had not
+ * good is recognised from the board - they were in, not defending, and had not
  * spoken, so the good the table waits on is theirs. */
 const learnerOwesGood = (prev: ReplayFrame | undefined): boolean => {
     if (!prev) return false;
-    const me = prev.game.players[LEARNER];
+    const me = prev.game.seats[LEARNER];
     return !!me && me.status !== PLAYER_STATUS.OUT
         && prev.game.defender !== LEARNER
-        && !prev.game.good_players.includes(SELF_ID);
+        && ((prev.game.goodMask >>> LEARNER) & 1) === 0;
 };
 
 interface Elements {
@@ -91,7 +89,7 @@ function elementsOf(frames: ReplayFrame[], trump: number, firstAttacker: number,
             case REPLAY_STEP.ATTACK:
                 if (mine) {
                     e.attack = true;
-                    if (prev && prev.game.table_battles.length > 0) e.throwIn = true;
+                    if (prev && prev.game.battles.length > 0) e.throwIn = true;
                 }
                 break;
             case REPLAY_STEP.COVER:
@@ -112,7 +110,7 @@ function elementsOf(frames: ReplayFrame[], trump: number, firstAttacker: number,
         }
         if (f.seq.events.some((ev) => ev.type === 'refill')) e.draw = true;
         if (f.seq.events.some((ev) => ev.type === 'out')) e.someoneOut = true;
-        if (f.game.deck_length === 0 && f.game.flipped === null) e.deckEmpty = true;
+        if (f.game.deckCount === 0 && !f.game.hasFlipped) e.deckEmpty = true;
     });
     return e;
 }
@@ -127,17 +125,20 @@ async function main() {
     let complete = 0;
 
     for (let s = 0; s < SEEDS; s++) {
-        const played = await playSeededV6(3, s);
-        if (!played) continue;
+        let played: { code: Uint8Array };
         let frames: ReplayFrame[];
-        let decoded;
+        let summary;
         try {
-            decoded = await decodeReplay(bytesToBigint(played.code));
+            // A real 3-player game, dealt from the seed and played by the kernel's
+            // own bot cycle on a C Table, cut by the finalize path's encoder.
+            played = playBotTable(['handwritten', 'handwritten', 'handwritten'], seedBytes(3, s));
+            summary = replaySummary(played.code);
+            if (!summary) continue;
             frames = buildReplayFrames(played.code, 'tutorial', TUTORIAL_NAMES, { viewer: LEARNER });
         } catch {
-            continue;   // a code the tutorial could not replay is no use to it
+            continue;   // a game that did not finish, or a code the tutorial could not replay, is no use to it
         }
-        const e = elementsOf(frames, decoded.powerSuit, decoded.firstAttacker, decoded.fool);
+        const e = elementsOf(frames, summary.powerSuit, summary.firstAttacker, summary.fool);
         const sc = score(e);
         if (sc === REQUIRED.length) complete++;
         if (!best || sc > score(best.e)
@@ -155,10 +156,10 @@ async function main() {
         || (f.kind === REPLAY_STEP.ROUND_END && learnerOwesGood(best!.frames[i - 1]))).length;
 
     console.log(`searched ${SEEDS} seeds; ${complete} taught every element`);
-    console.log(`best: seed ${best.s} — ${score(best.e)}/${REQUIRED.length} elements, ${best.frames.length} steps`);
+    console.log(`best: seed ${best.s} - ${score(best.e)}/${REQUIRED.length} elements, ${best.frames.length} steps`);
     if (missing.length) console.log(`MISSING: ${missing.join(', ')}`);
     console.log(`the learner acts on ${learnerSteps} steps`);
-    console.log(`\ncode: ${base32Encode(best.code)}`);
+    console.log(`\ncode: ${kernelB32Encode(best.code)}`);
 }
 
 main();
