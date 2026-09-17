@@ -523,7 +523,9 @@ export const Lobby = () => {
             
             <div className="lobby__players">
                 {localPlayerOrder.map((player: PublicPlayer, index: number) => {
-                    const showExitButton = game.status === GAME_STATUS.WAITING;
+                    // Leaving and kicking are for people seated at the lobby (the
+                    // server refuses anyone else); a spectator gets the join button.
+                    const showExitButton = game.status === GAME_STATUS.WAITING && !!game.self;
                     const showRemoveBotButton = !!(player.is_ai && game.status === GAME_STATUS.WAITING && game.self);
                     const showXButton = showExitButton || showRemoveBotButton;
 

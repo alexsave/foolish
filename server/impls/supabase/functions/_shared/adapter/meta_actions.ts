@@ -72,6 +72,11 @@ function handleStart({ user, game }: ExecutionParams): Result {
 export async function handleAddBot({ body, game, user, botsPrefetch }: ExecutionParams): Promise<Result> {
     const { game_id, bot_id } = body;
 
+    // Only somebody seated at this lobby may fill it. Without this any signed-in
+    // user who knew a game id could add bots to it - and, when every seat was
+    // already ready, deal somebody else's game.
+    verify_player_in_game(game, user.id);
+
     if (game.status !== GAME_STATUS.WAITING) {
         throw new Error(`Game ${game_id} is not waiting for players`);
     }
@@ -140,6 +145,11 @@ export async function handleAddBot({ body, game, user, botsPrefetch }: Execution
 export async function handleExit({ user, body, game }: ExecutionParams): Promise<Result> {
     const user_id = user.id;
     let { bot_id, player_id } = body;
+
+    // The caller must be seated. Removing a bot or kicking another player is a
+    // lobby feature for the people AT the lobby; the checks below only ask
+    // whether the TARGET is seated, which let any signed-in user empty any lobby.
+    verify_player_in_game(game, user_id);
 
     if (game.status !== GAME_STATUS.WAITING) {
         throw new Error(`Game ${game.id} is not in the lobby`);
