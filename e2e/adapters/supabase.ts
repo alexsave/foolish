@@ -65,13 +65,41 @@ const poolMax = Number(process.env.E2E_PG_POOL_MAX || WIDE_POOLS[suiteSlug] || 8
 
 const pool = new Pool({ ...pgAdminConfig, database: suiteDatabase, max: poolMax });
 
+// pg-pool's end() resolves as soon as it has CALLED client.end() on its idle
+// clients - not when their connections are closed. client.end() only queues the
+// Terminate message; the backend is still alive, and still attached to this
+// file's database, for a moment afterwards. The harness's teardown drops that
+// database next, WITH (FORCE), which SIGTERMs any backend still there. A backend
+// that takes the signal before it reads Terminate answers with
+// `FATAL 57P01 terminating connection due to administrator command`, the ended
+// client still carries the pool's idle error listener, the pool re-emits it with
+// no 'error' listener, and node:test reports an uncaughtException "generated
+// asynchronous activity after the test ended" against whichever test opened that
+// client - a red file whose tests all passed. The wider the pool and the busier
+// the machine, the likelier: concurrent_games (24 clients) in the full run.
+//
+// So "the pool is closed" means every client's connection is closed: track each
+// client the pool opens until pg reports its connection ended, and resolve end()
+// only once none is left. e2e/pool_teardown.test.ts pins it.
+const openClients = new Set<unknown>();
+let allClosed: (() => void) | null = null;
+pool.on('connect', (client) => {
+    openClients.add(client);
+    client.once('end', () => { openClients.delete(client); if (openClients.size === 0) allClosed?.(); });
+});
+const endPool = pool.end.bind(pool);
+async function closePoolDrained(): Promise<void> {
+    const closed = new Promise<void>((resolve) => { allClosed = resolve; });
+    await endPool();
+    if (openClients.size > 0) await closed;
+}
+
 // pg's Pool.end() rejects when called twice, and the suite lifecycle now ends the
 // pool from the harness (the same hook that drops the database) while ~20 suites
 // still end it themselves in their own after(). Fold repeat calls onto the first
 // promise so hook ordering can't turn cleanup into a spurious red.
-const closePoolOnce = pool.end.bind(pool);
 let poolClosing: Promise<void> | null = null;
-(pool as unknown as { end: () => Promise<void> }).end = () => (poolClosing ??= closePoolOnce());
+(pool as unknown as { end: () => Promise<void> }).end = () => (poolClosing ??= closePoolDrained());
 
 export const e2ePool = pool;
 
