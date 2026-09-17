@@ -163,13 +163,13 @@ def steps(samples):
 
 
 NEAR_S = 0.040            # two samples this close are neighbouring frames
-GAP_SPEED = 250.0         # pt/s: across a longer gap, faster than this is a jump
+GAP_SPEED = 400.0         # pt/s: across a longer gap, faster than this is a jump
 
 
 SPIKE = 2.5              # a jump is this many times the steps either side of it
 
 
-def is_jump(dist, dt, jump_pt, before=0.0, after=0.0):
+def is_jump(dist, dt, jump_pt, before=0.0, after=0.0, frames=1):
     """A jump is a STEP THAT STANDS OUT, not a fast one.
 
     Distance alone flagged every collapse: the table rides the drawer down at
@@ -187,7 +187,7 @@ def is_jump(dist, dt, jump_pt, before=0.0, after=0.0):
     """
     if dist <= jump_pt:
         return False
-    if dt <= NEAR_S:
+    if frames <= 2 and dt <= NEAR_S:          # neighbours: at most one repeat between
         return dist > SPIKE * max(before, after)
     return dist / max(dt, 1e-6) > GAP_SPEED
 
@@ -215,9 +215,15 @@ def handoff_gaps(seen, boxed, times):
     while i < len(seen):
         if boxed[i] and boxed[i - 1] and table(seen[i]) < table(seen[i - 1]) and not orange(seen[i]):
             j = i
+            back = False
             while j < len(seen) and not orange(seen[j]) and times[j] - times[i - 1] < 1.0:
+                # COVERED, NOT GONE: a dragged card passing over a pair hides its
+                # square, and the square comes back before anything flies.
+                if boxed[j] and table(seen[j]) >= table(seen[i - 1]):
+                    back = True
+                    break
                 j += 1
-            if j < len(seen) and orange(seen[j]):
+            if not back and j < len(seen) and orange(seen[j]):
                 gap = times[j] - times[i - 1]
                 if gap > HANDOFF_S:
                     out.append((times[i - 1], gap))
@@ -295,11 +301,13 @@ def main():
     for tr in sorted(tracks, key=lambda t: t["samples"][0][2]):
         st = steps(without_repeats(tr["samples"]))
         mags = [(dx * dx + dy * dy) ** 0.5 for _, _, dx, dy, _ in st]
-        near = [m if dt <= NEAR_S else 0.0 for (_, _, _, _, dt), m in zip(st, mags)]
+        near = [m if (f1 - f0 <= 2 and dt <= NEAR_S) else 0.0
+                for (f0, f1, _, _, dt), m in zip(st, mags)]
         big = [(f0, f1, m) for k, ((f0, f1, _, _, dt), m) in enumerate(zip(st, mags))
                if is_jump(m, dt, a.jump,
                           before=near[k - 1] if k > 0 else 0.0,
-                          after=near[k + 1] if k + 1 < len(near) else 0.0)]
+                          after=near[k + 1] if k + 1 < len(near) else 0.0,
+                          frames=f1 - f0)]
         # A flying card is SUPPOSED to cover ground fast; its square is kept for
         # plotting (the CSV) and never scored as a jump.
         if tr["colour"] == sq.FLIGHT:
