@@ -1045,6 +1045,35 @@ int anim_covered_sweep_accepts(int paired,
 #define ANIM_SHOWN_SWEEP     1
 #define ANIM_SHOWN_PENDING   2
 int anim_shown_table(int n_live, int n_sweep, int n_pending, int *out_sweeping);
+// The same choice, given the rows. With `hold_leaving` set, a sweep that holds
+// every card of a non-empty live table AND at least one more is cards on their
+// way OFF a table that stays (an undone throw-in or cover, a retraction), and
+// the sweep is drawn - as a sweep, so each card is hidden by its own flight
+// rather than by the live veil. `hold_leaving` 0 is `anim_shown_table`.
+int anim_shown_table_rows(const unsigned char *live, int n_live,
+                          const unsigned char *sweep, int n_sweep,
+                          int n_pending, int hold_leaving, int *out_sweeping);
+
+// THE PASS PREVIEW'S EMPTY SLOT. While a card is dragged to pass, the table
+// opens the slot it will land in and the pairs slide aside for it. Owner, on
+// the pass: "the worst". Filmed, the pairs moved three times for one pass:
+//   - the finger crossing a pair turns the drop into a cover the kernel refuses,
+//     the preview goes, the slot closes and the pairs slide back - then open
+//     again the moment the finger is past it (ANIM_PASS_STICKY keeps the slot
+//     for the rest of that drag instead);
+//   - the finger lifts, the drag state goes, the slot closes and the pairs head
+//     back to the two-pair centre - until the kernel publishes the pair a beat
+//     later and they turn round (ANIM_PASS_HOLD keeps the slot from the release
+//     until the table has the new pair, which then takes the slot's place with
+//     nothing moving).
+// `previewing`: a pass preview right now. `seen_this_drag`: one was shown
+// earlier in this drag. `over_dead_pair`: the finger is over a pair it can
+// make no legal move onto. `held_at`: the table's pair count when a pass was
+// released, or negative for none. Returns 1 to show the slot.
+#define ANIM_PASS_HOLD   1
+#define ANIM_PASS_STICKY 2
+int anim_pass_slot_shown(int previewing, int dragging, int seen_this_drag,
+                         int over_dead_pair, int held_at, int n_battles, int rules);
 
 // ---- the end screen ----
 

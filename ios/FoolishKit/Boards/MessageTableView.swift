@@ -78,6 +78,12 @@ public struct MessageTableView: View {
     /// played card flies FROM. nil whenever no drag is active (set and cleared
     /// alongside `dragPoint`, in `onDragChanged`/`onDragEnded`).
     @State private var dragCardCenter: CGPoint?
+    /// A pass preview was shown at some point in the drag under way - so the
+    /// finger crossing a pair is on its way to the slot. See `PassSlot`.
+    @State private var passSeenThisDrag = false
+    /// The table's pair count when a PASS was released, until the play is
+    /// over - the slot stays until the pair that fills it has landed.
+    @State private var passHeldAt: Int?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // Round-8: this board has NO card-flight matchedGeometry namespace (unlike the
     // offline TableView, where matchedGeometry IS the primary flight). Here the
@@ -159,6 +165,9 @@ public struct MessageTableView: View {
     /// both places); the table copy must stay VISIBLE until its own flight, which
     /// only this set governs.
     @State private var sweptFlownIds: Set<String> = []
+    /// A move of mine is between the tap and the kernel's answer - see
+    /// `ActionPillSlot.holdsWhilePlaying`.
+    @State private var playInFlight = false
     /// ROUND 20: cards that are ON the pre-bout grid but have NOT ARRIVED YET -
     /// the mirror image of `sweptFlownIds`, hidden for the same reason at the
     /// other end of the sequence.
@@ -787,7 +796,11 @@ public struct MessageTableView: View {
         .overlay {
             if let view = controller.view {
                 ZStack {
-                actionBar(view)
+                // Redrawn on a short timer: whether the board is still is read
+                // from statics nothing publishes (see `boardStill` in actionBar).
+                TimelineView(.periodic(from: .now, by: 0.1)) { _ in
+                    actionBar(view)
+                }
                     // A CONSTANT, always-present, fixed-size container (owner:
                     // "the action column CONTAINER could be a constant always
                     // present fixed size view... just reserve enough height for
@@ -2275,7 +2288,7 @@ public struct MessageTableView: View {
         #endif
         // note 34: a pass preview shows the ghost slot instead of a cover highlight.
         // Never while sweeping (the cards are leaving, not a drop target).
-        let passPreview = sweeping ? false : isPassPreview(view)
+        let passPreview = sweeping ? false : passSlotShown(view)
         return Group {
             if !shown.isEmpty {
                 FBattleGrid(battles: shown, trumpSuit: view.trumpSuit,
@@ -2297,7 +2310,10 @@ public struct MessageTableView: View {
                             // rotating. Everything else a sweep flies is leaving,
                             // with nothing left to tilt onto - hence the empty
                             // set this used to pass unconditionally.
-                            flyingNow: grid.flyingNow)
+                            flyingNow: grid.flyingNow,
+                            marks: true,
+                            slides: FBattleGrid.slidesLive,
+                            slidesPreview: FBattleGrid.slidesPreviewLive)
             } else {
                 // Empty table: render nothing (web parity). A "no battle" label
                 // just tells the player what they can already see (owner's call).
@@ -2346,6 +2362,24 @@ public struct MessageTableView: View {
     private func isPassPreview(_ view: GameView) -> Bool {
         guard let preview = dragPreview(view) else { return false }
         return preview.target == .table && preview.move.type == .pass
+    }
+
+    /// Whether the table shows the pass preview's empty slot - the kernel's
+    /// answer (`anim_pass_slot_shown`), which keeps it through a crossing and a
+    /// release. See `PassSlot`.
+    private func passSlotShown(_ view: GameView) -> Bool {
+        PassSlotWire.shown(previewing: isPassPreview(view), dragging: dragCard != nil,
+                           seenThisDrag: passSeenThisDrag, overDeadPair: isOverDeadPair(view),
+                           heldAt: passHeldAt, battles: view.battles.count,
+                           hold: PassSlot.hold, sticky: PassSlot.sticky)
+    }
+
+    /// The finger is over a pair the dragged card can make no legal move onto.
+    private func isOverDeadPair(_ view: GameView) -> Bool {
+        guard let card = dragCard, let point = dragPoint else { return false }
+        let target = BoardDrop.target(at: point, battles: battleFrames, handFrame: handDropFrame)
+        guard case .battle = target else { return false }
+        return probe(view, playCards(for: card, view), target).move == nil
     }
 
     /// note 33: what a release would do, localized — "Attack" / "Cover" /
@@ -3534,6 +3568,10 @@ public struct MessageTableView: View {
         let flights = Self.roleFlights(from: old, to: target, pads: roleMarkFrames)
         AnimLog.say("roles d\(old.defender) fa\(old.firstAttacker) -> d\(target.defender) fa\(target.firstAttacker) pads=\(roleMarkFrames.keys.sorted()) flying=\(flights.count)")
         guard !flights.isEmpty else { return false }
+        // THE HAND-OFF BEGINS NOW, in the same update as the roles that sent the
+        // mark flying - not a hop later, which let the receiving badge start an
+        // ordinary flip to the mark still in the air (two shields).
+        if RoleCoinMotion.live.syncFlightSeats { beginRoleFlights(flights) }
         Task { await runRoleFlights(flights) }
         return true
     }
@@ -3615,15 +3653,31 @@ public struct MessageTableView: View {
     /// Carry the marks across, then hand the badges back their own copies. The
     /// endpoints are blank for the duration, so there is exactly one of each
     /// mark on screen at every instant of the hand-off.
+    /// THE WHOLE HAND-OFF, IN ONE UPDATE: the ghost that carries the mark, and
+    /// the seats it leaves and lands on.
+    ///
+    /// These three cannot be split across two updates in either order. Blanking
+    /// the departing seat first leaves the board with NO shield on it for a
+    /// paint (owner, on the frame he caught at the release: "THERE SHOULD ALWAYS
+    /// BE EXACTLY ONE SHIELD... it seems to blink out for a single frame when we
+    /// release the card that was dragged"); marking the seats after the roles
+    /// have published lets the receiving badge flip to the mark that is still in
+    /// the air (two shields). Idempotent - `runRoleFlights` calls it again for
+    /// the flag's other state.
     @MainActor
-    private func runRoleFlights(_ f: [RoleFlight]) async {
+    private func beginRoleFlights(_ f: [RoleFlight]) {
         roleFlightToken += 1
-        let mine = roleFlightToken
-        AnimLog.say("role flight [\(f.map { "\($0.kind):\($0.fromSeat)->\($0.toSeat)" }.joined(separator: " "))]")
         roleDepartingSeats = Set(f.map(\.fromSeat))
         roleArrivingSeats = Set(f.map(\.toSeat))
         roleFlights = f
         roleProgress = 0
+    }
+
+    @MainActor
+    private func runRoleFlights(_ f: [RoleFlight]) async {
+        AnimLog.say("role flight [\(f.map { "\($0.kind):\($0.fromSeat)->\($0.toSeat)" }.joined(separator: " "))]")
+        if roleFlights.map(\.id) != f.map(\.id) { beginRoleFlights(f) }
+        let mine = roleFlightToken
         // One paint at the take-off pad before the tween starts - the same beat
         // BoardAnimator.play gives a card, and for the same reason: an animation
         // that starts in the frame its view is created in has nothing to
@@ -3855,6 +3909,11 @@ public struct MessageTableView: View {
             + "[\(ids.sorted().joined(separator: ","))] fly=[\(flyIds.sorted().joined(separator: ","))]")
         // Veil the returning cards in the hand AND defer their fan slots - the hand
         // opens for each only as its flight arrives (the mirror of the play's veil).
+        // THE TABLE AS IT WAS, taken NOW. The undo has already published the new
+        // board, and its re-laid-out table replaces these frames within a pass -
+        // before the Task below has waited its beat. See UndoFlightSource.
+        let fromCardFrames = lastBattleCardFrames
+        let fromSlotFrames = lastBattleFrames
         animator.preHide(ids)
         let veiledAt = animator.veilEpoch          // round 40 - see playBoutEnd
         // Keep the pre-undo table rendered so each card flies FROM where it sat,
@@ -3897,14 +3956,20 @@ public struct MessageTableView: View {
                 withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
                     self.animator.openSlots(flyIds)
                 }
-                // Lift the table copies: snap them hidden (no fade) as the flight starts.
-                self.sweptFlownIds.formUnion(flyIds)
+                // Lift the table copies: snap them hidden (no fade) as the flight
+                // starts. With the kernel's hold the held table itself is let go
+                // in the builder below, in the turn the flight is handed over;
+                // hiding them HERE hid them for as long as `playStep` polled.
+                if !UndoFlightSource.holdsLeaving { self.sweptFlownIds.formUnion(flyIds) }
                 await playStep { lastChance in
                     let laid = self.laidOutHandNow(new)
                     var flights: [Flight] = []
                     for c in flying {
-                        guard let from = self.lastBattleCardFrames[c.identity]
-                                ?? self.lastBattleFrames.values.first else { continue }
+                        let ownSlot = UndoFlightSource.ownSlot
+                        guard let from = UndoFlightSource.rect(for: c, in: old.battles,
+                                cardFrames: ownSlot ? fromCardFrames : self.lastBattleCardFrames,
+                                slotFrames: ownSlot ? fromSlotFrames : self.lastBattleFrames,
+                                ownSlotOnly: ownSlot) else { continue }
                         // NOT `handLanding`, and the difference is deliberate.
                         // These cards are coming BACK into the hand, so the fan
                         // has not laid them out yet and `handCardFrames` cannot
@@ -3917,8 +3982,12 @@ public struct MessageTableView: View {
                         guard let to = self.handLandingSlot(c, laidOut: laid)
                                 ?? (lastChance ? self.handApproxLanding() : nil) else { return nil }
                         flights.append(Flight(id: "undo-\(c.identity)", card: c, from: from, to: to,
+                                              fromAngle: UndoFlightSource.keepsTilt ? UndoFlightSource.tilt(for: c, in: old.battles) : 0,
                                               revert: isConflict))
                     }
+                    // The same turn `playStep` gives these to the animator: the
+                    // table lets go of the cards as their ghosts appear.
+                    if UndoFlightSource.holdsLeaving, !flights.isEmpty { self.dropSweep() }
                     return flights.isEmpty ? (lastChance ? [] : nil) : flights
                 }
             }
@@ -3996,6 +4065,11 @@ public struct MessageTableView: View {
         // change that put them there - the ghost is the only copy in motion.
         animator.preHide(ids)
         let veiledAt = animator.veilEpoch          // round 40 - see playBoutEnd
+        // THE LEAVING CARDS STAY IN THE HAND until their flights exist - the
+        // hand-side twin of the table hold (UndoReleaseHandHoldTests). The undo
+        // has already taken them out of the kernel hand, and the fan draws a
+        // held-back card even though it is veiled for the table.
+        if UndoFlightSource.holdsLeaving { handHoldback = targets.map(\.0); handHoldbackAt = veiledAt }
         let mySeq = claimAnimSequence()
         #if DEBUG
         if isConflict { Self.redRevertFlights += flyIds.count }
@@ -4032,6 +4106,11 @@ public struct MessageTableView: View {
                                               from: from, to: to,
                                               angle: covering ? FBattleGrid.coverAngle : 0,
                                               revert: isConflict))
+                    }
+                    // Let the fan go of them in the turn the animator gets their flights.
+                    if UndoFlightSource.holdsLeaving, !flights.isEmpty {
+                        let flying = Set(flights.compactMap { $0.card?.identity })
+                        self.handHoldback.removeAll { flying.contains($0.identity) }
                     }
                     return flights.isEmpty ? (lastChance ? [] : nil) : flights
                 }
@@ -4449,7 +4528,7 @@ public struct MessageTableView: View {
     static func gridRow(live: [BattleView], held: [BattleView]?,
                         sweep: [BattleView], pending: [BattleView])
         -> (shown: [BattleView], sweeping: Bool) {
-        PreBoutTable.shownTable(live: held ?? live, sweep: sweep, pending: pending)
+        PreBoutTable.shownTable(live: held ?? live, sweep: sweep, pending: pending, holdLeaving: UndoFlightSource.holdsLeaving)
     }
 
     /// note 4: an approximate source rect for a pickup/discard flight replayed
@@ -5070,8 +5149,10 @@ public struct MessageTableView: View {
     /// every change — kept now (previously discarded at the call site) so the
     /// verb hint / ghost-slot preview can resolve the same drop target live.
     private func onDragChanged(_ card: Card, at point: CGPoint) {
+        if dragCard == nil { passSeenThisDrag = false; passHeldAt = nil }
         dragCard = card
         dragPoint = point
+        if !passSeenThisDrag, let view = controller.view, isPassPreview(view) { passSeenThisDrag = true }
     }
 
     private func onDragEnded(_ card: Card, at point: CGPoint, _ view: GameView) {
@@ -5085,6 +5166,8 @@ public struct MessageTableView: View {
         // finger is wherever you grabbed the card, which is not where the card
         // is. Falls back to the finger only if no card centre was ever reported.
         let releaseCentre = dragCardCenter ?? point
+        // Read while the drag still exists: a pass let go of holds its slot.
+        let passing = isPassPreview(view)
         dragCard = nil
         dragPoint = nil
         dragCardCenter = nil
@@ -5096,6 +5179,7 @@ public struct MessageTableView: View {
         // sprung the card home to its slot, which is the right animation for a
         // drag that played nothing.
         if target == .hand { return }
+        if passing, target == .table { passHeldAt = view.battles.count }
         playAt(target, playCards(for: card, view), view, released: (card, releaseCentre))
     }
 
@@ -5114,7 +5198,9 @@ public struct MessageTableView: View {
         let defending = view.defender == controller.mySeat
         // Play buttons only while I can act and have NOT staged; once staged, the
         // only control is Undo (the extension has dropped the user at Messages' Send).
-        let acting = controller.iCanAct && !controller.canSend
+        let boardStill = !ActionPillSlot.waitsForStill
+            || UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty)
+        let acting = controller.iCanAct && !controller.canSend && !playInFlight && boardStill
         // ONE kernel answer for every enable-state below, so no two of them can
         // describe different menus.
         let bar = probe(view, cards, .table)
@@ -5156,7 +5242,8 @@ public struct MessageTableView: View {
             // read-only board would keep offering Take.
             canPickup: defending && !view.battles.isEmpty && cards.isEmpty
                 && !(view.me?.isOut ?? false) && !controller.canSend
-                && controller.pickupHold == 0 && !controller.superseded,
+                && controller.pickupHold == 0 && !controller.superseded
+                && !playInFlight && boardStill,
             canDone: acting && bar.canSayGood && cards.isEmpty,
             canUndo: false,   // the board draws its own - see `undoSlot`
             onAttack: { playAt(.table, cards, view) },
@@ -5178,6 +5265,14 @@ public struct MessageTableView: View {
     /// move can then no longer be sent. A genesis with no move left is not
     /// sealable, so there we can only retract our own bookkeeping (`onUnstage`).
     private func undoAction() {
+        // HOLD THE TABLE BEFORE THE UNDO PUBLISHES - `play`'s rule for a move that
+        // empties the table, for the same reason: the onChange that sets the sweep
+        // fires a paint too late. Undoing a first attack painted an empty table in
+        // between, its collapse layer sized to nothing, and the card came back at
+        // the bottom of the drawer for two frames (UndoHoldsTableTests). An undo
+        // that moves no table card drops the sweep again in the onChange
+        // (`clearSweep`), and a sweep identical to the live table is not held.
+        if UndoFlightSource.holdsLeaving, let table = controller.view?.battles, !table.isEmpty { setSweep(table) }
         Task {
             await controller.undo()
             if controller.canStage { await stageNow() }
@@ -5238,21 +5333,51 @@ public struct MessageTableView: View {
     private var undoSlot: some View {
         ZStack {
             if controller.canSend {
-                // NOT WHILE A RETRACTION IS IN FLIGHT (the audit's U8). Every
-                // other door into the controller asks first - `cancelStage` and
-                // `apply` both check RETRACTING before anything else - and this
-                // one did not, so a tap during the conflict peek ran `undo`,
-                // found nothing to take back, and then RE-STAGED the very chain
-                // being retracted. Disabled rather than guarded inside the
-                // action, on the owner's call: "let's disable the undo button
-                // during that then." A control that cannot be pressed has no
-                // door to forget.
-                FButton(FStrings.t("ios.msg.undo"), kind: .wood,
-                        enabled: !controller.conflictRetracting, compact: true,
-                        fixedWidth: FActionBar.pillWidth, action: undoAction)
+                // …AND NOT WHILE THE BOARD MOVES (UndoGate). The gate reads
+                // statics nothing publishes, so the pill is redrawn on a short
+                // timer while it is up, and `undoPillTapped` asks again at the
+                // tap in case one lands between two redraws.
+                TimelineView(.periodic(from: .now, by: 0.1)) { _ in
+                    // …and not while my play is still being staged: a Good flies
+                    // nothing, and the move is sealed before the collapse begins.
+                    let still = UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty) && !playInFlight
+                    if UndoGate.hides {
+                        // Shown enabled, or not shown - never dimmed.
+                        if !controller.conflictRetracting && still {
+                            undoPill(enabled: true)
+                        }
+                    } else {
+                        undoPill(enabled: !controller.conflictRetracting && still)
+                    }
+                }
             }
         }
         .frame(width: FActionBar.pillWidth, height: 40)
+    }
+
+    private func undoPill(enabled: Bool) -> some View {
+        // NOT WHILE A RETRACTION IS IN FLIGHT (the audit's U8). Every
+        // other door into the controller asks first - `cancelStage` and
+        // `apply` both check RETRACTING before anything else - and this
+        // one did not, so a tap during the conflict peek ran `undo`,
+        // found nothing to take back, and then RE-STAGED the very chain
+        // being retracted. Disabled rather than guarded inside the
+        // action, on the owner's call: "let's disable the undo button
+        // during that then." A control that cannot be pressed has no
+        // door to forget.
+        FButton(FStrings.t("ios.msg.undo"), kind: .wood,
+                enabled: enabled, compact: true,
+                fixedWidth: FActionBar.pillWidth, action: undoPillTapped)
+    }
+
+    /// The Undo pill's tap: refused while the board moves (UndoGate), then the
+    /// same `undoAction` the bubble's X runs - which does NOT ask the gate.
+    private func undoPillTapped() {
+        guard UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty), !playInFlight else {
+            AnimLog.say("undo refused: the board is still moving")
+            return
+        }
+        undoAction()
     }
 
     /// - `crop` (round-5 M5b, made continuous in round-6): how much of each hand
@@ -5303,6 +5428,9 @@ public struct MessageTableView: View {
         // said why, and a "move not allowed" toast on top of it would read as a
         // rule about the move rather than about the bubble.
         guard !controller.superseded else { releaseLivePlayVeil(); return }
+        // In the same turn as the selection clearing - otherwise that paint
+        // shows the bar for an attacker with nothing selected: "Good".
+        playInFlight = ActionPillSlot.holdsWhilePlaying
         selection.removeAll()
         // The veil, live half (round-4 note 5). Both of these are the state as
         // it is RIGHT NOW, captured before `apply` can publish a new view —
@@ -5348,6 +5476,8 @@ public struct MessageTableView: View {
             let applied = await controller.apply(move)
             if !applied { releaseLivePlayVeil() }
             await stageNow()
+            playInFlight = false
+            passHeldAt = nil
         }
     }
 
@@ -5366,6 +5496,7 @@ public struct MessageTableView: View {
     /// handler and the second did not exist, which is the leak. Safe to call
     /// twice - it is keyed off the ledger, which it clears.
     private func releaseLivePlayVeil() {
+        passHeldAt = nil   // a refused pass has no pair coming to fill its slot
         // My own hand veil goes back unconditionally: `play` raised it
         // unconditionally too (it is not behind `freezeCounts`' guard), it names
         // only MY cards, and the one other place that touches it

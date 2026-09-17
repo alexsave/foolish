@@ -28,9 +28,11 @@
 #                                 caption / caption / caption / one bubble
 #   rig.sh tapopen [thread]       open it by TAPPING the newest bubble, so the
 #                                 next send shares that message's MSSession
-#   rig.sh clearstage             dismiss a staged bubble left in the compose
+#   rig.sh clearstage [stay]      dismiss a staged bubble left in the compose
 #                                 field (then `back`, so the tap it just made
-#                                 does not leave the drawer 16pt short - trap 11)
+#                                 does not leave the drawer 16pt short - trap 11;
+#                                 `stay` skips the back, for a caller that kills
+#                                 the appex next and measures in drawer terms)
 #   rig.sh expand / collapse      drag the grabber
 #   rig.sh back                   leave the drawer, and re-enter the thread
 #   rig.sh leave                  leave the thread and STOP
@@ -41,6 +43,9 @@
 #   rig.sh lobby N                a LOBBY with N seats filled (DEBUG button)
 #   rig.sh lobbytap WHICH         start | leave | join | box (the rules checkbox)
 #   rig.sh play                   select a LEGAL card and press the plank
+#   rig.sh throwin [select]       throw a card in (the plank RELABELS, so
+#                                 `play` cannot find it); --goodwait has one
+#   rig.sh cover                  cover an attack, proven by the plank changing
 #   rig.sh turn                   play a move AND send it, so the transcript's
 #                                 last bubble is the board now on screen
 #   rig.sh seed MODE ARGS...      dev.fatboard via c/build/msg_wire_test
@@ -1181,7 +1186,12 @@ cmd_clearstage() {
   # There was a colour fallback here and it was worse than nothing: a SENT
   # Foolish bubble sitting in the transcript is the same felt, so the fallback
   # found one and tapped it - opening the bubble instead of clearing a draft.
+  local stay="${1:-}"
   if tap_ax "Remove app from message" 2 2>/dev/null; then
+    # `stay`: the caller kills the appex and re-opens in place, and reads
+    # positions relative to the drawer, so the 16pt does not matter to it - and
+    # leaving and re-entering the thread was most of a reel scenario's setup.
+    [ "$stay" = stay ] && { echo "cleared staged bubble (stayed)"; return 0; }
     # …AND THEN LEAVE THE THREAD, because the tap above was a tap INSIDE THE
     # COMPOSE AREA and Messages answers one by making its own text field first
     # responder - which costs the compact drawer 17pt (trap 11). Without this
@@ -1342,6 +1352,100 @@ cmd_play() {
   done
   echo "no legal one-card move in hand" >&2
   return 1
+}
+
+# THROW IN: select a card the table will take and press the plank.
+#
+# `play` cannot do this. It knows a card is legal when a NEW plank appears, and
+# an attacker who can throw in already has one - "Good" - which a legal card
+# only RELABELS to "Attack". So this asks the plank itself: select a card, and
+# a legal throw-in changes the plank's pixels; an illegal one leaves them alone
+# and is tapped again to deselect. The fan sorts its cards, so the searcher's
+# hand order says nothing about which card on screen that is.
+#
+#   rig.sh throwin [select]   `select` stops with the card chosen, unpressed
+#                             (so a caller can start a camera first), and
+#                             prints the plank's x y
+# `--goodwait` is the board that always has one.
+cmd_throwin() {
+  need_sim
+  settle_reset; poll 30 0.2 drawer_settled || true
+  local y py px found="" x good
+  read -r W H < <(screen)
+  y=$(python3 "$LIB/ui.py" hand_y | awk '{print $2}')
+  py=$(python3 "$LIB/ui.py" bars | python3 -c "
+import sys, ast
+b = ast.literal_eval(sys.stdin.read().split('BARS ')[1]); print(b[-1][0] if b else -1)")
+  px=$((W * 4 / 5))
+  { [ "$y" = "-1" ] || [ "$py" = "-1" ]; } && { echo "no hand or no plank on screen" >&2; return 1; }
+  good=$(plank_hash "$px" "$py")
+  for x in $(python3 "$LIB/ui.py" cards | sed 's/CARDS //' | tr -d '[],'); do
+    tap "$x" "$y" 1.0
+    if [ "$(plank_hash "$px" "$py")" != "$good" ]; then found=$x; break; fi
+    tap "$x" "$y" 0.8
+  done
+  [ -n "$found" ] || { echo "no legal throw-in in hand" >&2; return 1; }
+  if [ "${1:-}" = "select" ]; then echo "$px $py"; return 0; fi
+  tap "$px" "$py" 0.5
+  echo "threw in: the card at x=$found"
+}
+
+# COVER an attack: select a card, tap an attack on the table, and stop at the
+# first pairing after which the card has left the hand. Not `play`, which takes
+# Messages offering Send as its proof - and after an Undo the bubble stays
+# staged, so Send is already there before any move.
+cmd_cover() {
+  need_sim
+  settle_reset; poll 30 0.2 drawer_settled || true
+  local y x tx ty
+  read -r W H < <(screen)
+  y=$(python3 "$LIB/ui.py" hand_y | awk '{print $2}')
+  [ "$y" = "-1" ] && { echo "no hand on screen" >&2; return 1; }
+  # PROVEN BY THE HAND, not by a plank. Undo is deliberately kept out of sight
+  # until the flight and any collapse are over (UndoGate), so "a plank
+  # appeared" is seconds late or absent; the covering card leaves the fan in
+  # the turn the move is played.
+  local n0; n0=$(python3 "$LIB/ui.py" cards | python3 -c "
+import sys, ast; print(len(ast.literal_eval(sys.stdin.read().split('CARDS ')[1])))")
+  staged() {
+    local i=0 n
+    while [ $i -lt 8 ]; do
+      n=$(python3 "$LIB/ui.py" cards | python3 -c "
+import sys, ast; print(len(ast.literal_eval(sys.stdin.read().split('CARDS ')[1])))")
+      [ "$n" -lt "$n0" ] && return 0
+      sleep 0.15; i=$((i + 1))
+    done
+    return 1
+  }
+  local table; table=$(python3 "$LIB/ui.py" table | sed 's/TABLE //' | tr -d '[]()' | tr ',' ' ')
+  for x in $(python3 "$LIB/ui.py" cards | sed 's/CARDS //' | tr -d '[],'); do
+    set -- $table
+    while [ $# -ge 2 ]; do
+      tx=$1; ty=$2; shift 2
+      tap "$x" "$y" 0.8
+      tap "$tx" "$ty" 1.2
+      if staged; then
+        echo "covered: card at x=$x onto $tx,$ty"; return 0
+      fi
+    done
+  done
+  echo "no legal cover" >&2
+  return 1
+}
+
+# The plank's pixels as one hash - only its word changes between states.
+plank_hash() {
+  local f="${FOOLISH_WORK:-/tmp/foolishrig}/plank.$SIM.png"
+  mkdir -p "$(dirname "$f")"
+  xcrun simctl io "$SIM" screenshot "$f" >/dev/null 2>&1
+  python3 - "$f" "$1" "$2" <<'PY'
+import sys, hashlib
+from PIL import Image
+im = Image.open(sys.argv[1]); s = 3 if im.height >= 2000 else 2
+x, y = int(sys.argv[2]) * s, int(sys.argv[3]) * s
+crop = im.convert("L").crop((x - 60 * s, y - 14 * s, x + 60 * s, y + 14 * s)).point(lambda v: v // 64)
+print(hashlib.md5(crop.tobytes()).hexdigest())
+PY
 }
 
 # SEND what the seeded open staged, so the transcript's last bubble is the
@@ -1712,8 +1816,12 @@ cmd_tween() {
   # silently stops working while everything else still reads fine.
   # 544 of 1320 is 41% of the frame: ffmpeg moves that much less, and so does
   # the reader.
+  #
+  # …AND NOW THE WHOLE WIDTH AGAIN. The table's and the opponent's marks became
+  # squares on the views themselves (lib/squares.py), and those sit wherever the
+  # cards do - well right of 544px. The crop stays a knob.
   "$LIB/window.sh" "$d/take.mp4" "$d" "${FOOLISH_TWEEN_SS:-1.3}" \
-                   "${FOOLISH_TWEEN_T:-2.2}" "${FOOLISH_TWEEN_CROP:-544}" || return 1
+                   "${FOOLISH_TWEEN_T:-2.2}" "${FOOLISH_TWEEN_CROP:-iw}" || return 1
   tp "extract frames" "$ph"; ph=$(date +%s.%N)
   python3 "$LIB/tween.py" "$d" --csv "$d/edge.csv" --quiet
   tp "measure" "$ph"
@@ -1776,6 +1884,8 @@ case "${1:-}" in
   collapse) shift; cmd_collapse "$@" ;;
   goodtap)  shift; cmd_goodtap "$@" ;;
   seed)     shift; cmd_seed "$@" ;;
+  throwin)  shift; cmd_throwin "$@" ;;
+  cover)    shift; cmd_cover "$@" ;;
   unseed)   shift; cmd_unseed "$@" ;;
   claimed)  shift; cmd_claimed "$@" ;;
   prefs)    shift; cmd_prefs "$@" ;;

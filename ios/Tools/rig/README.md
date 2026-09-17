@@ -268,6 +268,50 @@ game screen's black name field reports 739 for a drawer whose edge is 584).
   silently does nothing.
 - **`local a=$1 b=$((a*2))` does not work in bash** - every word on a `local`
   line is expanded before any of them is assigned.
+- **Stop `recordVideo` with SIGINT, always.** A recorder killed any other way
+  leaves the simulator answering "Host recording is already in progress" until it
+  is rebooted. Scripts that record trap EXIT and send INT.
+- **`ui.py`'s hand and table finders are tuned to the COMPACT drawer.** Expanded,
+  with one card in hand, `hand_y` returned the opponent's fan (101pt) and a cover
+  tap raised "That move isn't allowed." `lib/board.py` reads the hand off the
+  ruler's green bar and the table off the pairs' squares, in either presentation.
+- **Prove a move by the flight log, not by the screen.** Undo is hidden until the
+  animations and the collapse are over, so "a plank appeared" is late or absent,
+  and a SELECTED card lifts out of the hand finder's band, so "one card fewer"
+  reads true for a tap that played nothing. The flight log line is
+  `12.00 fly 45.5 ^45.6 place-3-11 from=... to=...` - the id comes after two
+  memory columns.
+- **Unit tests on the rig's simulator read the rig's dev files.** The test host
+  shares the App Group, so `dev.ruler` (and any other `dev.*`) reaches the views
+  the tests render: MemoryProfileTests went red 2 runs in 3 with the ruler on and
+  green 3 in 3 with it off. Set the ruler aside for a test run, or test on
+  another simulator.
+- **The animation reel.** `shots/anim_reel.sh` films every move and its Undo in
+  one take (throw in, bout-ending Good, first attack, cover, pickup, pass by drag,
+  the cover that ends the bout, 8 seats, compact) plus replayed arrivals, and
+  `lib/tablesquares.py` reports every jump of a table pair and every card that
+  left the table before its flight existed, named by scenario.
+  Local only, never CI; run it now and then. Positions are measured inside the
+  drawer (from its red top bar), because Messages' own drawer slide moves the
+  whole table and is not ours. `FOOLISH_FLAGS='table.slide=0'` is how the reel
+  was shown to bite: it reports exactly the six throw-in and undo moments.
+  `ONLY='pass|8p'` plays just the matching scenarios. Every card in my hand now
+  carries a BLUE square too, so a dragged card can be followed from the fan;
+  `lib/squareplot.py REEL "label" out.png --offset S` draws every square's x and
+  y over one scenario - the picture that showed the pass pairs reversing three
+  times, which the 12pt jump rule never flags.
+- **A reel board is set up in place.** `clearstage stay` removes the Undo's
+  draft without leaving the thread, and the appex is killed and reopened
+  through the + menu - leaving and re-entering was ~5s a scenario, and waiting
+  for a plank on a board that never gets one (an attacker's empty table) burned
+  its whole ~14s ceiling.
+- **Where a pass is dropped decides what it looks like.** A drop 110pt above the
+  table landed the card at the top centre and flew it DOWN into its slot; a
+  person drops it on the slot, and the reel now does (a smooth `--delta 6` drag).
+- **A mark's width is not the log's.** The log said every coin flipped on an
+  8-seat Undo; the film said the check came up at 30 of 34px with no collapse.
+  Measure a badge's ink per frame (white sword, green check) before believing a
+  gesture played.
 - **A window's frames need the window's times.** `tween` measures a slice of
   the movie, and lining the whole movie's timestamps up with it from the end put
   every frame ~315ms late and stretched a 0.77s collapse to 1.0s. `lib/window.sh`

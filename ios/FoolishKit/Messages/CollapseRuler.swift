@@ -115,41 +115,49 @@ public struct CollapseRuler: View {
         return i % 2 == 0 ? pure(0, 1, 1) : pure(1, 0, 1)
     }
 
-    /// WHAT ELSE IS WORTH A LINE OF ITS OWN.
+    /// WHAT ELSE IS MARKED, AND WHY AS SQUARES.
     ///
-    /// The two edge bars measure the BOX. That was enough while everything on
-    /// the board was rigid inside it, and it stopped being enough the moment the
-    /// collapse started treating two groups differently: the box's top is no
-    /// longer a line anything is drawn at, and "did the table cards move
-    /// smoothly" cannot be answered from it. Owner, round 47: "if you need to
-    /// add more horizontal colored lines for them, please do so."
+    /// The two edge bars measure the BOX. That stopped being enough the moment
+    /// the collapse started treating two groups differently, so round 47 added
+    /// a full-width bar through the table cards and one through the first
+    /// opponent. Then the table got squares of its own (`tableSquare`), and the
+    /// bar ran straight through every one of them. Owner: "I think the lines are
+    /// messing with the squares. Have one or the other not both. Or maybe turn
+    /// the lines into squares themselves."
     ///
-    /// So these are pinned to the VIEWS, not to the box - an overlay wider than
-    /// its parent, centred on it, so the bar is full width and sits exactly on
-    /// the thing it is reporting. An overlay and not a preference on purpose: a
-    /// preference is delivered a layout pass later, which would measure the
-    /// plumbing rather than the card, and lag is the whole question here.
+    /// So both marks are squares now. The table is marked by its pairs' squares
+    /// alone - `.table` draws nothing, it only lifts the layer - and the first
+    /// opponent carries one MAGENTA square at its centre: the one colour the
+    /// table's squares never use, now that no magenta bar is left to collide
+    /// with. `tween.py` reads the table's line off the pairs' squares and the
+    /// opponent's off this one.
+    ///
+    /// An overlay and not a preference on purpose: a preference is delivered a
+    /// layout pass later, which would measure the plumbing rather than the card,
+    /// and lag is the whole question here.
     public enum Mark: Hashable {
-        /// The table cards' centre line.
+        /// The table cards: marked by the pairs' own squares.
         case table
-        /// One opponent's card view - the first, so there is only ever one bar.
+        /// One opponent's card view - the first, so there is only ever one.
         case opponent
+    }
 
-        var colour: Color {
-            switch self {
-            // MAGENTA, NOT BLUE, and the file note above already said so: the
-            // palette is "pure magenta / cyan / yellow / red / green" because
-            // those are the saturated colours that survive h264 4:2:0. Pure blue
-            // has a luma of 29 - nearly black - and a 4pt line of it came back
-            // in 0 of 164 filmed frames while the yellow bar beside it read
-            // perfectly in all 164. Cyan would survive too, but the band strip's
-            // pitch check scans for cyan, and a full-width cyan bar crossing it
-            // would read as an extra band.
-            case .table: return CollapseRuler.pure(1, 0, 1)      // magenta
-            case .opponent: return CollapseRuler.pure(1, 1, 0)   // yellow
-            }
+    /// Pair `i`'s square: cyan, yellow, green, repeating. The reader tells
+    /// repeated colours apart by position.
+    static func tableSquareColour(_ i: Int) -> Color {
+        switch i % 3 {
+        case 0: return pure(0, 1, 1)
+        case 1: return pure(1, 1, 0)
+        default: return pure(0, 1, 0)
         }
     }
+    static let squareSide: CGFloat = 12
+    /// The first opponent's square. Magenta: no table pair is ever magenta.
+    static let opponentSquareColour = pure(1, 0, 1)
+    /// A flying card's square. See `flightSquare`.
+    static let flightSquareColour = pure(1, 0.5, 0)
+    /// A card in MY HAND. See `handSquare`.
+    static let handSquareColour = pure(0, 0, 1)
 
     /// A LITERAL sRGB colour, never `Color.red` and friends: the system colours
     /// are dynamic (red is 255,59,48 in light and 255,69,58 in dark) and the
@@ -229,8 +237,10 @@ public struct CollapseMarkKey: PreferenceKey {
 }
 
 public extension View {
-    /// A full-width bar through this view's centre. Nil asks for none, which is
-    /// how a list of seats marks only its first.
+    /// A mark on this view: a magenta square at the centre of the first
+    /// opponent; nothing extra for the table, whose pairs carry their own
+    /// squares. Nil asks for none, which is how a list of seats marks only its
+    /// first.
     ///
     /// AN OVERLAY ON THE VIEW, and it went the long way round to get back here.
     /// Anchor preferences resolve in the same layout pass and draw above
@@ -244,16 +254,84 @@ public extension View {
     func collapseMark(_ mark: CollapseRuler.Mark?) -> some View {
         if let mark {
             overlay {
-                if MessageDevBoard.rulerOn {
-                    mark.colour
-                        .frame(width: 4000, height: CollapseRuler.edge)
+                if MessageDevBoard.rulerOn && mark == .opponent {
+                    CollapseRuler.opponentSquareColour
+                        .frame(width: CollapseRuler.squareSide, height: CollapseRuler.squareSide)
                         .allowsHitTesting(false)
+                        .zIndex(1_000)   // owner: "the little squares should have high z indexes"
                 }
             }
             // ABOVE THE DECK AND THE DISCARD, which are drawn after these two in
-            // the board's stack and were covering the bars. Only ever raised
+            // the board's stack and were covering the marks. Only ever raised
             // when the ruler is on, so a shipping board stacks as it always did.
             .zIndex(MessageDevBoard.rulerOn ? 50 : 0)
+        } else {
+            self
+        }
+    }
+
+    /// A small square at the centre of a table pair's slot, in a colour
+    /// per pair, so a filmed take can say where every pair was in every frame
+    /// (`ios/Tools/rig/lib/tablesquares.py`). The horizontal bars cannot: a
+    /// throw-in re-centres the row SIDEWAYS, and a bar through the table's
+    /// centre does not move at all while both pairs jump 36pt left.
+    ///
+    /// On the SLOT, not on a card: the cards tilt as a cover lands, the slot
+    /// does not, so this moves only when the layout does. Centre-centre. Cyan,
+    /// yellow and pure green, never magenta, which is the opponent's square.
+    /// Nil asks for none (a pair whose attack card is not on the table yet).
+    @ViewBuilder
+    func tableSquare(_ index: Int?) -> some View {
+        if let index, MessageDevBoard.rulerOn {
+            overlay(alignment: .center) {
+                CollapseRuler.tableSquareColour(index)
+                    .frame(width: CollapseRuler.squareSide, height: CollapseRuler.squareSide)
+                    .allowsHitTesting(false)
+                    .zIndex(1_000)   // owner: "the little squares should have high z indexes"
+            }
+        } else {
+            self
+        }
+    }
+
+    /// An ORANGE square at the centre of every flying card - the ghost the
+    /// overlay flies - so a filmed take can follow a card through the air as
+    /// well as on the table. Owner, on an undo whose card "jumps from its
+    /// position on the table to the center of the table, then animates back to
+    /// your hand": "show a graph of the x and y position of that card... Use
+    /// the squares". A table pair's square is on its SLOT and goes when the card
+    /// lifts off; this one is on the card that leaves.
+    ///
+    /// Orange, not white: the ruler's clock strip is 12pt white cells, and an
+    /// isolated one is a white 12pt square.
+    @ViewBuilder
+    func flightSquare() -> some View {
+        if MessageDevBoard.rulerOn {
+            overlay(alignment: .center) {
+                CollapseRuler.flightSquareColour
+                    .frame(width: CollapseRuler.squareSide, height: CollapseRuler.squareSide)
+                    .allowsHitTesting(false)
+                    .zIndex(1_000)   // owner: "the little squares should have high z indexes"
+            }
+        } else {
+            self
+        }
+    }
+
+    /// A BLUE square at the centre of every card in my hand, riding the card
+    /// through a drag. Owner, on a pass that looked "as if it's using collapsed
+    /// geometry on the expanded board": "put a square on the card that is
+    /// passed even while it's in our hand". Applied BEFORE the drag offset, so
+    /// the square is where the card is drawn, not where its slot is.
+    @ViewBuilder
+    func handSquare() -> some View {
+        if MessageDevBoard.rulerOn {
+            overlay(alignment: .center) {
+                CollapseRuler.handSquareColour
+                    .frame(width: CollapseRuler.squareSide, height: CollapseRuler.squareSide)
+                    .allowsHitTesting(false)
+                    .zIndex(1_000)   // owner: "the little squares should have high z indexes"
+            }
         } else {
             self
         }
@@ -264,48 +342,6 @@ public extension View {
     /// siblings, and it is the host that has to come out above the deck.
     func collapseMarkLift() -> some View {
         zIndex(MessageDevBoard.rulerOn ? 50 : 0)
-    }
-}
-
-/// The marker bars, drawn LAST so nothing on the board is in front of them.
-///
-/// They began as overlays on the views they report, which put each bar at
-/// exactly the right height and also underneath the deck and the discard - the
-/// two things drawn after them in the board's ZStack (owner: "increase z index
-/// of the horizontal lines as much as you can, currently they are behind the
-/// deck and discard"). Raising those views instead would have reordered the
-/// board itself, and reading the positions back through a preference would have
-/// delivered them a layout pass late, which is the one thing a lag measurement
-/// must not do.
-///
-/// So the caller passes the y values, computed from the same expressions that
-/// place the views - the same arithmetic in the same pass - and this draws them
-/// on top of everything.
-public struct CollapseMarks: View {
-    private let table: CGFloat?
-    private let opponent: CGFloat?
-
-    public init(table: CGFloat?, opponent: CGFloat?) {
-        self.table = table; self.opponent = opponent
-    }
-
-    public var body: some View {
-        if MessageDevBoard.rulerOn {
-            ZStack(alignment: .topLeading) {
-                if let table {
-                    CollapseRuler.Mark.table.colour
-                        .frame(height: CollapseRuler.edge)
-                        .offset(y: table - CollapseRuler.edge / 2)
-                }
-                if let opponent {
-                    CollapseRuler.Mark.opponent.colour
-                        .frame(height: CollapseRuler.edge)
-                        .offset(y: opponent - CollapseRuler.edge / 2)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .allowsHitTesting(false)
-        }
     }
 }
 
@@ -327,11 +363,10 @@ public struct CollapseMarkKey: PreferenceKey {
 public extension View {
     func collapseMark(_ mark: CollapseRuler.Mark?) -> some View { self }
     func collapseMarkLift() -> some View { self }
+    func tableSquare(_ index: Int?) -> some View { self }
+    func flightSquare() -> some View { self }
+    func handSquare() -> some View { self }
 }
 
-public struct CollapseMarks: View {
-    public init(table: CGFloat?, opponent: CGFloat?) {}
-    public var body: some View { EmptyView() }
-}
 
 #endif

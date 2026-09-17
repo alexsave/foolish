@@ -801,6 +801,7 @@ public struct FHandFan: View {
                                        value: [card.identity: g.frame(in: .named(boardSpace))])
             })
             .contentShape(Rectangle())
+            .handSquare()
             .offset(dragId == card.identity
                     ? CGSize(width: dragOffset.width - reorderShift.width,
                              height: dragOffset.height - reorderShift.height)

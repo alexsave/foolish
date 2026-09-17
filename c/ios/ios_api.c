@@ -824,6 +824,19 @@ int fio_shown_table(int n_live, int n_sweep, int n_pending, int *out_sweeping) {
     return anim_shown_table(n_live, n_sweep, n_pending, out_sweeping);
 }
 
+int fio_shown_table_rows(const uint8_t *live, int n_live, const uint8_t *sweep, int n_sweep,
+                         int n_pending, int hold_leaving, int *out_sweeping) {
+    const int rc = anim_shown_table_rows(live, n_live, sweep, n_sweep, n_pending,
+                                         hold_leaving, out_sweeping);
+    return rc < ANIM_SHOWN_NONE ? FIO_EBADARG : rc;
+}
+
+int fio_pass_slot_shown(int previewing, int dragging, int seen_this_drag,
+                        int over_dead_pair, int held_at, int n_battles, int rules) {
+    return anim_pass_slot_shown(previewing, dragging, seen_this_drag, over_dead_pair,
+                                held_at, n_battles, rules);
+}
+
 int fio_finish_rows(const uint8_t *elimination, int n_elim, int game_over,
                     int n_players, int my_seat, char *out, int cap) {
     if (!out) return FIO_EBADARG;

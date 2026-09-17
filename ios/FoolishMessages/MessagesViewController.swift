@@ -865,6 +865,12 @@ final class MessagesViewController: MSMessagesAppViewController {
     @MainActor
     private func stage(payload: Data, mySeat: Int, fromUndo: Bool = false) async {
         guard let conversation = activeConversation else { return }
+        // UNDO STAYS OUT OF SIGHT FOR ALL OF WHAT FOLLOWS - the picture being
+        // baked, the rest, the collapse (CollapseTween.autoCollapses, read by
+        // UndoGate). From the first line, and released on every way out.
+        let collapsing = !fromUndo && presentationStyle == .expanded
+        if collapsing { CollapseTween.autoCollapses += 1 }
+        defer { if collapsing { CollapseTween.autoCollapses -= 1 } }
         // NEWEST STAGE WINS, and the losers stop where they stand.
         //
         // This function is re-entrant and its expanded tail is over a second

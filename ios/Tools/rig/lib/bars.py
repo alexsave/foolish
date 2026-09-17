@@ -38,8 +38,8 @@ step it ends, as mse.py already does for the bottom edge.
 import argparse, csv, glob, math
 import numpy as np
 
-BARS = [("bot_pt", "green   hand + buttons"), ("table_pt", "magenta table cards"),
-        ("opp_pt", "yellow  opponent view"), ("top_pt", "red     drawer top")]
+BARS = [("bot_pt", "green   hand + buttons"), ("table_pt", "squares table cards"),
+        ("opp_pt", "magenta opponent view"), ("top_pt", "red     drawer top")]
 HOST_RESPONSE = 0.338     # CollapseTween.hostResponse
 
 

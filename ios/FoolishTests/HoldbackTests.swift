@@ -438,6 +438,11 @@ final class HoldbackTests: XCTestCase {
             "self.handHoldback.removeAll { left.contains($0.identity) }",
             "guard !handHoldback.isEmpty else { return }",
             "handHoldback = []",
+            // Undoing a PICKUP lets its leaving cards go, as a group, in the turn
+            // their flights start - the stream's fly-time `removeAll` shape
+            // (UndoReleaseHandHoldTests). Its arming stamps `handHoldbackAt` on
+            // the same line, which the filter above already counts as a write.
+            "self.handHoldback.removeAll { flying.contains($0.identity) }",
         ]
         XCTAssertEqual(mentions.count, allowed.count,
                        "a mention was added or removed: \(mentions)")

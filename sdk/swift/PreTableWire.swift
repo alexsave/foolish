@@ -121,6 +121,18 @@ public struct PreBoutTable: Equatable, Sendable {
 // covered pair drops off the table mid-sweep. The rule is
 // c/src/anim_plan.c's anim_table_* / anim_covered_sweep_accepts /
 // anim_shown_table now, so it means one thing.
+/// The pass preview's empty slot - the kernel's `anim_pass_slot_shown`.
+public enum PassSlotWire {
+    public static func shown(previewing: Bool, dragging: Bool, seenThisDrag: Bool,
+                             overDeadPair: Bool, heldAt: Int?, battles: Int,
+                             hold: Bool, sticky: Bool) -> Bool {
+        let rules = (hold ? FIO_PASS_HOLD : 0) | (sticky ? FIO_PASS_STICKY : 0)
+        return fio_pass_slot_shown(previewing ? 1 : 0, dragging ? 1 : 0, seenThisDrag ? 1 : 0,
+                                   overDeadPair ? 1 : 0, Int32(heldAt ?? -1), Int32(battles),
+                                   Int32(rules)) == 1
+    }
+}
+
 public extension PreBoutTable {
 
     /// The identities a battle table holds - each attack, and its cover where it
@@ -168,6 +180,27 @@ public extension PreBoutTable {
     /// captured synchronously, and the pre-bout table of an open replay this
     /// board has not started (which exists only because an arrival publishes its
     /// view a paint before anything sets the sweep).
+    static func shownTable(live: [BattleView], sweep: [BattleView],
+                           pending: [BattleView], holdLeaving: Bool) -> (shown: [BattleView], sweeping: Bool) {
+        // The same three sources, given as ROWS, so the kernel can see a card
+        // leaving a table that stays (anim_shown_table_rows) - see
+        // UndoHoldsTableTests for the undo that lost its card for 90ms.
+        var sweeping: Int32 = 0
+        let l = wire(live), w = wire(sweep)
+        let which = l.withUnsafeBufferPointer { lp in
+            w.withUnsafeBufferPointer { wp in
+                fio_shown_table_rows(lp.baseAddress, Int32(live.count), wp.baseAddress, Int32(sweep.count),
+                                     Int32(pending.count), holdLeaving ? 1 : 0, &sweeping)
+            }
+        }
+        switch which {
+        case FIO_SHOWN_LIVE:    return (live, sweeping != 0)
+        case FIO_SHOWN_SWEEP:   return (sweep, sweeping != 0)
+        case FIO_SHOWN_PENDING: return (pending, sweeping != 0)
+        default:                return ([], false)
+        }
+    }
+
     static func shownTable(live: [BattleView], sweep: [BattleView],
                            pending: [BattleView]) -> (shown: [BattleView], sweeping: Bool) {
         var sweeping: Int32 = 0

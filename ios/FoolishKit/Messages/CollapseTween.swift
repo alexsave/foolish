@@ -284,6 +284,16 @@ public enum CollapseTween {
     /// as `isTweening` beside it, and for the same reason.
     @MainActor public static var isPresenting = false
 
+    /// IS A STAGED MOVE STILL ON ITS WAY TO THE COMPACT DRAWER? The extension's
+    /// `stage` counts itself in from its FIRST line - before the bubble picture
+    /// is baked - to the end of the collapse transition; `UndoGate` reads it so
+    /// Undo does not flash up in that stretch (owner: "you dim the undo button
+    /// mulitple times"; filmed on a bout-ending Good, ~100ms of Undo while the
+    /// picture was being baked). A COUNT, not a flag: `stage` is re-entrant,
+    /// and an older run finishing must not uncover a newer run's collapse.
+    @MainActor public static var autoCollapses = 0
+    @MainActor public static var isAutoCollapsing: Bool { autoCollapses > 0 }
+
     /// Heights under this are the compact strip; an expanded board is far
     /// taller. The transition reports both, and only the compact ones say
     /// anything about where the collapse is going.

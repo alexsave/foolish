@@ -114,6 +114,37 @@ public struct FActionBar: View {
 /// owner's rules at once: one inset for every pill, and the same inset as the
 /// gear. Both placements now read it from here instead of typing a number.
 public enum ActionPillSlot {
+    /// NO PLAY BUTTON BETWEEN THE TAP AND THE STAGE. Owner: "we hit it as
+    /// attack, it disapares without changing to 'good'... then eventually come
+    /// back as 'undo'". `play` clears the selection at once and applies in a
+    /// Task, and for that one paint an attacker with no selection and nothing
+    /// staged was offered Good. Ships on; `actions.holdwhileplaying=0` in
+    /// `dev.flags` puts the flash back.
+    public static let holdsWhilePlayingByDefault = true
+
+    /// NO PLAY BUTTON WHILE THE BOARD MOVES - an undo's flight included, which
+    /// is where it showed: undoing a pickup put Pickup back on the plank in the
+    /// frame the undo published, with the card still in the air. The same still
+    /// board Undo waits for (UndoGate). Ships on; `actions.waitstill=0` in
+    /// `dev.flags` puts the buttons back during animations.
+    public static let waitsForStillByDefault = true
+
+    public static var waitsForStill: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("actions.waitstill", shipping: waitsForStillByDefault)
+        #else
+        return waitsForStillByDefault
+        #endif
+    }
+
+    public static var holdsWhilePlaying: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("actions.holdwhileplaying", shipping: holdsWhilePlayingByDefault)
+        #else
+        return holdsWhilePlayingByDefault
+        #endif
+    }
+
     /// Undo lands where every other pill does. ON; `pill.aligned=0` in the DEBUG
     /// `dev.flags` file restores round 10g's inset for comparison.
     public static let alignedByDefault = true

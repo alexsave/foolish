@@ -5853,6 +5853,62 @@ static void test_board_the_table_under_the_sweep(void) {
     CHECK(anim_shown_table(0, 0, 0, &sweeping) == ANIM_SHOWN_NONE && sweeping == 0,
           "and an empty board is empty, not sweeping");
     CHECK(anim_shown_table(1, 0, 0, NULL) == ANIM_SHOWN_LIVE, "a NULL out is not a crash");
+
+    // CARDS LEAVING A TABLE THAT STAYS. Owner, on build 72: throw in, let it
+    // collapse, Undo - "the card still briefly disappears". Undoing a throw-in
+    // keeps the sweep (the table before the undo: A/Q, Q/10 and the ace) while
+    // the live table is the two pairs without it, and by the counts alone the
+    // live table won - so the ace was gone for ~90ms before its flight home
+    // appeared. With `hold_leaving`, a sweep that holds every live card AND
+    // more is cards on their way off a table that stays, and it is the sweep
+    // that is drawn until the board lets it go.
+    {
+        const unsigned char two[4]   = { 12, 23,  36, 21 };            // A/Q, Q/10
+        const unsigned char three[6] = { 12, 23,  36, 21,  25, ANIM_TABLE_NONE };  // + the ace
+        const unsigned char other[6] = { 1, ANIM_TABLE_NONE,  2, ANIM_TABLE_NONE,
+                                         3, ANIM_TABLE_NONE };          // next bout's cards
+        sweeping = -1;
+        CHECK(anim_shown_table_rows(two, 2, three, 3, 0, 1, &sweeping) == ANIM_SHOWN_SWEEP
+              && sweeping == 1,
+              "a card leaving a table that stays is still drawn where it sat");
+        CHECK(anim_shown_table_rows(two, 2, three, 3, 0, 0, &sweeping) == ANIM_SHOWN_LIVE
+              && sweeping == 0,
+              "without the hold the rule is the old one (the flag's other state)");
+        CHECK(anim_shown_table_rows(two, 2, other, 3, 0, 1, &sweeping) == ANIM_SHOWN_LIVE,
+              "a sweep of OTHER cards (the last bout) never covers a new table");
+        CHECK(anim_shown_table_rows(two, 2, two, 2, 0, 1, &sweeping) == ANIM_SHOWN_LIVE,
+              "the same table twice is nothing leaving - the live veil stays in charge");
+        CHECK(anim_shown_table_rows(three, 3, two, 2, 0, 1, &sweeping) == ANIM_SHOWN_LIVE,
+              "cards ARRIVING is not a hold");
+        CHECK(anim_shown_table_rows(two, 2, three, 3, 4, 1, &sweeping) == ANIM_SHOWN_PENDING,
+              "an unstarted replay's row still outranks everything");
+        CHECK(anim_shown_table_rows(NULL, 0, three, 3, 0, 1, &sweeping) == ANIM_SHOWN_SWEEP
+              && sweeping == 1, "an emptied table is the plain sweep, as before");
+    }
+
+    // THE PASS PREVIEW'S SLOT (anim_pass_slot_shown). Filmed: yellow's pair at
+    // x 251 slid to 216 as the slot opened, back to 241 as the finger crossed
+    // the cyan pair, to 227, and on release snapped to 235 before sliding to
+    // its final 215 - three reversals for one pass.
+    {
+        const int both = ANIM_PASS_HOLD | ANIM_PASS_STICKY;
+        CHECK(anim_pass_slot_shown(1, 1, 1, 0, -1, 2, both) == 1, "a pass preview opens the slot");
+        CHECK(anim_pass_slot_shown(0, 1, 0, 0, -1, 2, both) == 0, "no preview yet, no slot");
+        CHECK(anim_pass_slot_shown(0, 1, 1, 1, -1, 2, both) == 1,
+              "crossing a pair the card cannot go on keeps the slot open");
+        CHECK(anim_pass_slot_shown(0, 1, 1, 1, -1, 2, ANIM_PASS_HOLD) == 0,
+              "without STICKY it closes as before (the flag's other state)");
+        CHECK(anim_pass_slot_shown(0, 1, 1, 0, -1, 2, both) == 0,
+              "back over the hand (or any legal other drop) closes it");
+        CHECK(anim_pass_slot_shown(0, 0, 0, 0, 2, 2, both) == 1,
+              "released: the slot stays until the table has the new pair");
+        CHECK(anim_pass_slot_shown(0, 0, 0, 0, 2, 3, both) == 0,
+              "the pair has landed: it takes the slot's place");
+        CHECK(anim_pass_slot_shown(0, 0, 0, 0, 2, 2, ANIM_PASS_STICKY) == 0,
+              "without HOLD the slot closes on release, as before");
+        CHECK(anim_pass_slot_shown(0, 0, 1, 1, -1, 2, both) == 0,
+              "no drag and no held release: never a slot");
+    }
 }
 
 static void test_board_finish_rows_rank_first_out_to_the_fool(void) {

@@ -498,6 +498,7 @@ public struct FlyingCardsLayer: View {
                         RoundedRectangle(cornerRadius: 5)
                             .strokeBorder(FlyingCardsLayer.revertRed, lineWidth: f.revert ? 2 : 0)
                     )
+                    .flightSquare()
                     // Bug 1: rotate INTO the final table angle over the flight,
                     // about the bottom edge (the same pivot FBattleGrid tilts a
                     // laid-across card about), so a cover flies in already

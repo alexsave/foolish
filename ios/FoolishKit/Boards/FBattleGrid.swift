@@ -47,11 +47,23 @@ public struct FBattleGrid: View {
     /// "card edges look too thin, keep them whatever they are in the game".
     /// Given a size, FCard draws its edge at `restWidth` like any card.
     public let scale: CGFloat
+    /// DEBUG instrumentation only: a coloured square on each pair, so a filmed
+    /// take can track every pair's slot frame by frame (`tablesquares.py`).
+    /// The LIVE table asks for it; a bubble's grid never does, so the
+    /// transcript above a compact drawer carries no squares to confuse it.
+    public let marks: Bool
+    /// Whether a change to the pairs on the table SLIDES the ones already down
+    /// to where they are going. See `slideByDefault`.
+    public let slides: Bool
+    /// Whether the pass-preview slot coming and going SLIDES the row. See
+    /// `slidePreviewByDefault`.
+    public let slidesPreview: Bool
 
     public init(battles: [BattleView], trumpSuit: Suit?, coverable: Set<Int> = [],
                 onTapBattle: @escaping (Int) -> Void = { _ in }, namespace: Namespace.ID? = nil,
                 hidden: Set<String> = [], showGhostSlot: Bool = false, flyingNow: Set<String> = [],
-                scale: CGFloat = 1) {
+                scale: CGFloat = 1, marks: Bool = false, slides: Bool = false,
+                slidesPreview: Bool = false) {
         self.battles = battles
         self.trumpSuit = trumpSuit
         self.coverable = coverable
@@ -61,6 +73,58 @@ public struct FBattleGrid: View {
         self.showGhostSlot = showGhostSlot
         self.flyingNow = flyingNow
         self.scale = scale
+        self.marks = marks
+        self.slides = slides
+        self.slidesPreview = slidesPreview
+    }
+
+    /// A THROW-IN SLIDES THE TABLE; IT NEVER JUMPS IT.
+    ///
+    /// Owner, on build 71: "when I throw in, sometimes the cards on the table
+    /// jump to the position that they're gonna be in instead of smoothly
+    /// transitioning." Every row here is centred, so appending a pair moves
+    /// every pair already down - 36pt left on a two-pair row, filmed on the Pro
+    /// Max - and the board appends it (veiled, its card still in the air) with
+    /// no animation around the change, so the row re-centred in one 14ms frame
+    /// and the card flew in ~190ms later. A fourth pair wraps to a new row and
+    /// moves the first row UP instead, which is the "sometimes": sideways on
+    /// some throw-ins, vertically on others.
+    ///
+    /// So a change to WHICH ATTACKS are down re-lays the grid over a flight's
+    /// own duration and curve. Keyed on the attacks and nothing else: a cover
+    /// changes only a defence and has its own tilt animation; the veil snaps
+    /// (`.animation(nil, value: hidden...)`, which wins inside the pair); and
+    /// the pass-preview ghost slot comes and goes on its own transaction. A
+    /// flight aims at the slot's published frame, which is where the slot is
+    /// GOING, so the card lands where the slide ends.
+    ///
+    /// Ships on. `table.slide=0` in `dev.flags` puts back the jump.
+    public static let slideByDefault = true
+
+    /// THE PASS PREVIEW SLIDES THE ROW TOO. Filmed dragging a card to pass: the
+    /// dashed preview slot is a cell of the same centred row, so when it
+    /// appeared both pairs jumped 36pt in one frame, and back again as the card
+    /// crossed a pair - four jumps in one drag. Keyed on the slot alone, and
+    /// half a flight long: it follows a finger, not a card in the air. Ships on;
+    /// `table.slidepreview=0` in `dev.flags` puts the jump back.
+    public static let slidePreviewByDefault = true
+
+    public static var slidesPreviewLive: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("table.slidepreview", shipping: slidePreviewByDefault)
+        #else
+        return slidePreviewByDefault
+        #endif
+    }
+
+    /// The live value: the shipping default in Release; in DEBUG, whatever
+    /// `dev.flags` says, and the shipping default when it says nothing.
+    public static var slidesLive: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("table.slide", shipping: slideByDefault)
+        #else
+        return slideByDefault
+        #endif
     }
 
     private var cardSize: CGSize { CGSize(width: 50 * scale, height: 70 * scale) }   // web card 50x70
@@ -146,6 +210,10 @@ public struct FBattleGrid: View {
                 .transition(.identity)
             }
         }
+        .animation(slidesPreview ? .timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime / 2) : nil,
+                   value: showGhostSlot)
+        .animation(slides ? .timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime) : nil,
+                   value: battles.map(\.attack.identity))
     }
 
     // A CARD NEVER FADES. NOT ONCE, NOT ANYWHERE.
@@ -318,6 +386,7 @@ public struct FBattleGrid: View {
             }
         }
         .frame(width: slot.width, height: slot.height, alignment: .bottom)
+        .tableSquare(marks && !hidden.contains(battle.attack.identity) ? index : nil)
         // Publish this slot's frame so a drag can hit-test the drop against it.
         .background(GeometryReader { g in
             Color.clear.preference(key: BattleFramesKey.self,
