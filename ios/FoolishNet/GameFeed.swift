@@ -40,6 +40,12 @@ public final class GameFeed {
     }
 
     /// Spectator feed: `spectator_views` rows for this game (channel `game-<id>`).
+    ///
+    /// Likely never fires: only `player_views` is added to the
+    /// `supabase_realtime` publication (migrations/20260708160000_player_views.sql:52,
+    /// seed.sql:385), and a postgres_changes subscription on an unpublished
+    /// table receives no rows. Deferred by the owner - publish
+    /// `spectator_views` before relying on this feed.
     public func subscribePublic(gameId: String) async {
         await subscribeTable("game-\(gameId)", table: "spectator_views", filter: .eq("game_id", value: gameId))
     }
