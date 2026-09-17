@@ -39,7 +39,7 @@ interface Cycle { n: number; seats: number[]; stop: number; delay: number; bytes
 function cycleOn(table: ServerTable, row: BotTableRow, seedHex: string, prefs: Uint8Array | null): Cycle | null {
     assert.equal(table.load(row.state, row.roster), L.TABLE_OK, `${row.gameId}: the row loads`);
     assert.equal(table.setDealSeed(seedHex), L.TABLE_OK);
-    if (table.botsNeedLogs()) assert.ok(table.importSessionLog(row.log) >= 0, `${row.gameId}: the session log imports`);
+    assert.ok(table.setSessionLog(row.log) >= 0, `${row.gameId}: the session log is handed over`);
     const d = table.botDrive(prefs);
     assert.ok(typeof d !== 'number', `${row.gameId}: the drive runs (${d})`);
     if (d.n === 0) return null;
@@ -140,7 +140,9 @@ function playAll(table: ServerTable, tally: boolean): string[] {
         assert.equal(decoded.moveGaps?.length, sum.moves, `${label}: the extras time every move`);
         // A session log or a seed that is not this game's does not encode it.
         assert.equal(table.load(row.state, row.roster), L.TABLE_OK);
-        assert.equal(typeof table.replayCode(seed, row.log.slice(0, row.log.length >> 1)), 'number', `${label}: half the log is refused`);
+        // Cut mid-record, not at a halfway point: half a log can land on a record
+        // boundary, and a whole prefix of a session encodes and verifies against itself.
+        assert.equal(typeof table.replayCode(seed, row.log.slice(0, row.log.length - 1)), 'number', `${label}: a log cut mid-record is refused`);
         assert.equal(table.load(row.state, row.roster), L.TABLE_OK);
         assert.equal(typeof table.replayCode(Uint8Array.from(seed, (b) => b ^ 1), row.log), 'number', `${label}: another deal seed is refused`);
         transcript.push(`${label} end ${hex(code)} ${hex(extras)}`);

@@ -1,20 +1,22 @@
 // The bot loop (docs/C_GAME_SHAPE_MIGRATION.md 2.7): one leased drive segment
 // for one game, cycle by cycle.
 //
-// Each cycle is two kernel sections around the one read the kernel cannot do:
-//   A  load the table; the kernel says whether a bot has work and whether the
-//      bot about to choose reads the session log (a belief brain)
-//   -- await the session log (games.logs_packed), only when it does
-//   B  load the table again (never trust the slot across the await), hand it the
-//      deal seed and the session log, drive one cycle (table_bot_drive), copy out
-//      every product, the pushes, the wait it is worth and the moves to offer a
-//      retry
-// then the version-fenced commit, the end of the game when the cycle ended it,
-// the broadcast, and the wait. What stays here is what the kernel cannot do: the
-// lease, the CAS commit, the broadcast, the CPU budget and the sleep.
+// Each cycle is one read and one kernel section: load the row WITH its session
+// log, hand the table the row, the deal seed and the log, drive one cycle
+// (table_bot_drive), copy out every product, the pushes, the wait it is worth
+// and the moves to offer a retry; then the version-fenced commit, the end of the
+// game when the cycle ended it, the broadcast, and the wait. What stays here is
+// what the kernel cannot do: the lease, the CAS commit, the broadcast, the CPU
+// budget and the sleep.
+//
+// The log rides along on the row's SELECT because EVERY cycle needs its length:
+// it is the progress term of each bot decision's seed (c/src/bot_drive.h), which
+// is what stops an all-random table looping on a board it has already played.
+// The kernel reads the records onto the board only for a brain that consults
+// them (table_set_session_log).
 
 import { serverTable, tableCodeName, type TableProducts, type TableSeat } from '@sdk/ts/table/server_table.ts';
-import { broadcastPushes, columnHexToBytes, commitProducts, loadRow } from './table_io.ts';
+import { broadcastPushes, commitProducts, loadRow } from './table_io.ts';
 import { supabaseClient } from './utils.ts';
 
 const lazy = <T>(load: () => Promise<T>): (() => Promise<T>) => {
@@ -95,10 +97,6 @@ export const lockedBotLoop = async (gameId: string): Promise<void> => {
     const cpu: CpuAcct = { computeMs: 0, cycles: 0, maxMs: 0 };
     const started = Date.now();
     try {
-        // Bots-only tables have no concurrent writer under the lease, so the
-        // session log this segment read once stays exactly logs_packed if the
-        // segment appends what it commits.
-        let resident: Uint8Array | null = null;
         for (let cycle = 0; ; cycle++) {
             if (cycle > 0) {
                 if (Date.now() - started > WALL_CEILING_MS) return;
@@ -108,9 +106,8 @@ export const lockedBotLoop = async (gameId: string): Promise<void> => {
                 }
                 if (!(await renewBotLease(gameId, lease))) return;
             }
-            const next = await runCycle(gameId, cycle, cpu, resident);
+            const next = await runCycle(gameId, cycle, cpu);
             if (!next) return;
-            resident = next.resident;
             if (next.delayMs > 0) await new Promise((r) => setTimeout(r, next.delayMs));
         }
     } finally {
@@ -123,7 +120,7 @@ export const lockedBotLoop = async (gameId: string): Promise<void> => {
  * (e2e/bench_bot_e2e.ts): exactly the work a cycle does, with nothing around it.
  */
 export async function __botCycle(gameId: string): Promise<void> {
-    await runCycle(gameId, 0, { computeMs: 0, cycles: 0, maxMs: 0 }, null);
+    await runCycle(gameId, 0, { computeMs: 0, cycles: 0, maxMs: 0 });
 }
 
 const refusal = (gameId: string, what: string, rc: number) =>
@@ -131,8 +128,8 @@ const refusal = (gameId: string, what: string, rc: number) =>
 
 /** One cycle, committed. Null when nothing was driven (no bot work, or the game ended). */
 async function runCycle(
-    gameId: string, cycle: number, cpu: CpuAcct, resident: Uint8Array | null,
-): Promise<{ delayMs: number; resident: Uint8Array | null } | null> {
+    gameId: string, cycle: number, cpu: CpuAcct,
+): Promise<{ delayMs: number } | null> {
     const reqId = `bot-${cycle}-${gameId.substring(0, 6)}`;
     const table = await serverTable();
     // The moves an attempt that lost the CAS already chose, offered back: the
@@ -141,31 +138,18 @@ async function runCycle(
     let prefs: Uint8Array | null = null;
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        const row = await loadRow(gameId, false);
+        // The session log rides along on this SELECT: every cycle needs its
+        // length, whatever the seated brains read (c/src/bot_drive.h).
+        const row = await loadRow(gameId, false, true);
 
-        // ---- kernel section A ----
+        // ---- the kernel section: nothing below awaits until it ends ----
         let rc = table.load(row.state, row.roster);
         if (rc < 0) throw refusal(gameId, 'load', rc);
-        const needsBots = table.needsBots();
-        const needsLogs = table.botsNeedLogs();
-        const botsOnly = table.seats().every((s) => s.brain !== '');
-        // ---- end of section A ----
-        if (!needsBots) return null;
-
-        let sessionLog: Uint8Array | null = null;
-        if (needsLogs) {
-            sessionLog = botsOnly && resident ? resident : await readSessionLog(gameId);
-        }
-
-        // ---- kernel section B ----
-        rc = table.load(row.state, row.roster);
-        if (rc < 0) throw refusal(gameId, 'load', rc);
+        if (!table.needsBots()) return null;
         rc = table.setDealSeed(row.gameSeed);
         if (rc < 0) throw refusal(gameId, 'deal seed', rc);
-        if (sessionLog) {
-            rc = table.importSessionLog(sessionLog);
-            if (rc < 0) throw refusal(gameId, 'session log', rc);
-        }
+        rc = table.setSessionLog(row.log ?? new Uint8Array(0));
+        if (rc < 0) throw refusal(gameId, 'session log', rc);
         const t0 = Date.now();
         const drive = table.botDrive(prefs);
         const driveMs = Date.now() - t0;
@@ -189,7 +173,7 @@ async function runCycle(
             delayMs = table.cycleDelayMs();
             prefs = table.drivePrefs();
         }
-        // ---- end of section B ----
+        // ---- end of the kernel section ----
 
         cpu.computeMs += driveMs;
         cpu.cycles += 1;
@@ -210,32 +194,7 @@ async function runCycle(
                 .catch((err) => console.error(`[${reqId}] broadcast failed:`, err));
         }
         if (products.ended) return null;
-
-        // The session log carried forward: what this segment read, plus what it
-        // just appended - exactly logs_packed when nobody else writes.
-        const nextResident = botsOnly && sessionLog
-            ? (products.logs ? concat(sessionLog, products.logs) : sessionLog)
-            : null;
-        return { delayMs, resident: nextResident };
+        return { delayMs };
     }
     throw new Error(`Could not commit game ${gameId} after ${MAX_ATTEMPTS} attempts - write contention`);
-}
-
-async function readSessionLog(gameId: string): Promise<Uint8Array | null> {
-    try {
-        const { data } = await supabaseClient.from('games').select('logs_packed').eq('id', gameId).single();
-        // An empty log reads as '\\x' (BYTEA through PostgREST): no records.
-        const log = data?.logs_packed ? columnHexToBytes(data.logs_packed) : null;
-        return log && log.length > 0 ? log : null;
-    } catch (e) {
-        console.error(`[BELIEF] session log read failed for ${gameId}:`, e);
-        return null;
-    }
-}
-
-function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
-    const out = new Uint8Array(a.length + b.length);
-    out.set(a, 0);
-    out.set(b, a.length);
-    return out;
 }

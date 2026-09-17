@@ -199,11 +199,11 @@ int wasm_table_set_deal_seed(int len) {
     return rc;
 }
 
-// io = [games.logs_packed bytes] -> records loaded.
-int wasm_table_import_session_log(int len) {
+// io = [games.logs_packed bytes] -> records the log holds.
+int wasm_table_set_session_log(int len) {
     const unsigned char *io = inputs(len);
     if (!io || len < 0) return TABLE_E_WIRE;
-    return table_import_session_log(table(), io, len);
+    return table_set_session_log(table(), io, len);
 }
 
 // io = [prefs blob from wasm_table_drive_prefs, or nothing] -> actions applied;

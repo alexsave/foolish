@@ -10,7 +10,7 @@
  *   - a COVER event's target card and battle index agree - the two adjacent
  *     optional bytes a reader could take in either order;
  *   - the stream DECODES, and the board it decodes to mirrors the committed state;
- *   - the session log the commits append reads back whole (table_import_session_log)
+ *   - the session log the commits append reads back whole (table_set_session_log)
  *     and, at the game end, encodes a verified replay code (table_replay_code);
  *   - an illegal wire is rejected.
  *
@@ -128,7 +128,7 @@ test('every packed stream is leak-free, decodable, and mirrors the committed sta
 
       // The session log the commits append is one the kernel reads back whole.
       assert.equal(table.load(row.state, row.roster), L.TABLE_OK);
-      assert.ok(table.importSessionLog(row.log) > 0, 'the session log reads back');
+      assert.ok(table.setSessionLog(row.log) > 0, 'the session log reads back');
 
       const b = boardOf(row);
       for (const { viewer, bytes } of pushes) {

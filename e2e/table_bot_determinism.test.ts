@@ -16,6 +16,14 @@
  * stored row is driven on two instances: a fresh one, and one that plays an
  * unrelated table's bot cycle before every row it is handed. Both must apply the
  * same actions and commit the same state, session-log records and push.
+ *
+ * The other half of the same policy: a decision seeded from the board ALONE
+ * repeats itself on a board the game has already played, so a table whose
+ * remaining players are all `random` bots could return to an exact earlier board
+ * and loop there forever - about one game in 40 at 4 to 7 seats, holding
+ * `needs_bots` true for good. The seed folds in the game's PROGRESS (the session
+ * log's length, c/src/bot_drive.h), which only grows, so the second test here
+ * plays the same all-random sweep those loops were found in and every game ends.
  * ========================================================================== */
 
 import { test } from 'node:test';
@@ -36,7 +44,7 @@ const hex = (b: Uint8Array | null) => (b ? Buffer.from(b).toString('hex') : '-')
 function cycleBytes(table: ServerTable, row: BotTableRow): string {
     assert.equal(table.load(row.state, row.roster), L.TABLE_OK);
     assert.equal(table.setDealSeed(row.seedHex), L.TABLE_OK);
-    if (table.botsNeedLogs() && row.log.length > 0) assert.ok(table.importSessionLog(row.log) >= 0);
+    assert.ok(table.setSessionLog(row.log) >= 0);
     const d = table.botDrive(null);
     assert.ok(typeof d !== 'number', `the drive runs (${d})`);
     if (d.n === 0) return 'idle';
@@ -76,4 +84,37 @@ test('every brain chooses the same cycle on a fresh module and on one with anoth
     console.error(`[table_bot_determinism] ${compared} rows compared across ${BRAINS.length} brains`);
     assert.deepEqual(diverged, [], 'a stored row drives the same on every module');
     assert.ok(compared >= BRAINS.length * 10, `the games had cycles to compare (${compared})`);
+});
+
+// The sweep the loops were found in (docs/C_GAME_SHAPE_MIGRATION.md, Phase 8 final
+// pass part 3): 40 seeds per seat count, every seat a `random` bot. seedBytes(4, 5)
+// is the 4-seat game that looped with a 12-cycle period from cycle 105.
+const SWEEP_SEATS = [4, 5, 6, 7];
+const SWEEP_SEEDS = 40;
+// Comfortably above the longest of these games (503 cycles over 2 to 8 seats), and
+// far below a loop, which never ends at all.
+const CYCLE_CEILING = 800;
+
+test('an all-random table always ends: no board can repeat its own move forever', () => {
+    const table = createServerTable();
+    const unfinished: string[] = [];
+    let longest = 0, played = 0;
+    for (const np of SWEEP_SEATS) {
+        for (let s = 1; s <= SWEEP_SEEDS; s++) {
+            const gameId = `rnd-${np}-${s}`;
+            let row = dealBotTable(Array.from({ length: np }, () => 'random'), seedBytes(np, s), { table, gameId });
+            let cycles = 0;
+            for (; cycles < CYCLE_CEILING && row.status === L.GAME_STATUS_PLAYING; cycles++) {
+                const c = botCycle(row, { table });
+                assert.ok(c.drive.n > 0, `${gameId}: a playing table always has a bot move`);
+                row = c.row;
+            }
+            played++;
+            if (cycles > longest) longest = cycles;
+            if (row.status === L.GAME_STATUS_PLAYING) unfinished.push(`${gameId} (still playing after ${cycles} cycles)`);
+        }
+    }
+    console.error(`[table_bot_determinism] ${played} all-random games, longest ${longest} cycles`);
+    assert.deepEqual(unfinished, [], `every all-random table ends within ${CYCLE_CEILING} cycles`);
+    assert.ok(longest < CYCLE_CEILING, `the ceiling is a ceiling, not the answer (longest ${longest})`);
 });

@@ -153,7 +153,13 @@ static int classify(int move_type, const BoardMark *before, const Game *after) {
 
 void (*bot_drive_pre_action_hook)(const Game *g, int seat, int phase) = 0;
 
-void bot_drive_seed_decision(const Game *g, uint32_t base, int phase) {
+void bot_drive_seed_decision(const Game *g, uint32_t base, uint32_t log_offset, int phase) {
+    // The progress term, folded into the secret base so it reaches every salt's
+    // stream through the one mix game_state_seed already avalanches (its final
+    // xorshift-multiply chain), and so a host with no base still gets a seed
+    // that moves. Knuth's multiplicative constant spreads +1 across all 32 bits.
+    const uint32_t progress = log_offset + (uint32_t)g->num_logs;
+    base ^= progress * 2654435761u;
     if (phase == BOT_DRIVE_PHASE_CHOOSE) {
         random_strategy_set_seed(game_state_seed(g, base, GAME_SEED_SALT_STRATEGY));
         game_rng_set(game_state_seed(g, base, GAME_SEED_SALT_SEARCH));

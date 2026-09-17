@@ -97,10 +97,10 @@ export function botCycle(row: BotTableRow, opts: BotTableOptions & { maxActions?
     if (rc < 0) throw refused('load', rc);
     rc = table.setDealSeed(row.seedHex);
     if (rc < 0) throw refused('deal seed', rc);
-    if (table.botsNeedLogs() && row.log.length > 0) {
-        rc = table.importSessionLog(row.log);
-        if (rc < 0) throw refused('session log', rc);
-    }
+    // Always, as the server's cycle does: the log's length is the progress term
+    // of every bot decision's seed (c/src/bot_drive.h).
+    rc = table.setSessionLog(row.log);
+    if (rc < 0) throw refused('session log', rc);
     const t0 = performance.now();
     const drive = table.botDrive(null, opts.maxActions ?? 0);
     const ms = performance.now() - t0;

@@ -127,6 +127,7 @@ typedef struct {
     Card        pre_flip;
     int8_t      actor;          // the acting seat, -1 for none
     int32_t     log_start;      // the operation's first log record
+    int32_t     log_len;        // records the ROW's session log holds (table_set_session_log), loaded or not
     // The preferred moves the last table_bot_drive was offered (BotDrivePref).
     int8_t      n_prefs;
     BotDrivePref prefs[MAX_PLAYERS];
@@ -263,25 +264,31 @@ int table_push(const Table *t, const char *game_id, int gid_len, int viewer, uin
 
 // ---- the bot cycle (docs/C_GAME_SHAPE_MIGRATION.md 2.7) ------------------------
 //
-// One cycle as a server runs it, after table_load: the deal seed, the session
-// log when a belief bot is eligible (table_bots_need_logs), then the drive. The
-// cycle is ONE table operation, so table_commit_products and table_push after it
-// carry exactly what the cycle wrote: its records (never the imported session
-// beneath them), its events, the acting seat, and the finalize when it ended the
-// game.
+// One cycle as a server runs it, after table_load: the deal seed, the row's
+// session log, then the drive. The cycle is ONE table operation, so
+// table_commit_products and table_push after it carry exactly what the cycle
+// wrote: its records (never the session beneath them), its events, the acting
+// seat, and the finalize when it ended the game.
 
 // The game's deal seed (games.game_seed) as its hex text: the secret base every
 // mid-game draw and every bot decision is seeded from (game.h game_state_seed).
 // FNV-1a 32 over the characters, 0 for none. Call after table_load.
 int table_set_deal_seed(Table *t, const char *seed_hex, int len);
 
-// Loads the session log (games.logs_packed: per record a u48 LE ms timestamp,
-// then the log_record_put layout) into the board, for the belief bots and the
-// replay encoder, and starts the next operation's records above it. A record
+// Hands the table the row's session log (games.logs_packed: per record a u48 LE
+// ms timestamp, then the log_record_put layout). A bot cycle ALWAYS calls it: the
+// log's length is the game's progress, which seeds every bot decision
+// (bot_drive.h bot_drive_seed_decision), so a table that returns to an exact
+// earlier board still draws a fresh number.
+//
+// The RECORDS are read onto the board only for a brain that reads them
+// (table_bots_need_logs) - otherwise a long game would spend its MAX_LOGS
+// capacity on a session nothing consults and drop its own new records. A record
 // with more pairs than MAX_LOG_PAIRS keeps its first MAX_LOG_PAIRS; records past
-// MAX_LOGS are dropped; a truncated tail ends the log. Returns the records
-// loaded, or TABLE_E_WIRE for an unknown record type.
-int table_import_session_log(Table *t, const uint8_t *log, int len);
+// MAX_LOGS are dropped; a truncated tail ends the log. Returns the records the
+// log holds (whether or not they were read onto the board), or TABLE_E_WIRE for
+// an unknown record type.
+int table_set_session_log(Table *t, const uint8_t *log, int len);
 
 // Drives the bot seats for one cycle (bot_drive.h), seeded per decision from the
 // table's deal seed, with every seat the roster names human left to its player.
@@ -307,7 +314,7 @@ int table_cycle_delay_ms(const Table *t, const BotDriveOut *drv);
 // ---- the end of a game -------------------------------------------------------
 
 // The finished table's v6 replay code, from its 32-byte deal seed and its
-// session log (the layout table_import_session_log reads, which it calls), and
+// session log (the layout table_set_session_log reads, which it counts), and
 // then THE ROUND-TRIP GATE: the code is decoded again (into `scratch`) and every
 // ATTACK, COVER, PASS and PICKUP of the log's last GAME_START session must come
 // back with the same seat and card pairs. Returns the code's length, a negative

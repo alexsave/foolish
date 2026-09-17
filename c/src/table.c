@@ -120,6 +120,9 @@ int table_load(Table *t, const uint8_t *state, int state_len, const uint8_t *ros
     for (int s = 0; s < r.n; s++) t->g->players[s].strategy_key = kinds[s];
     t->r = r;
     scope_open(t, -1);
+    // The state blob carries no session log, so until the host hands one over
+    // (table_set_session_log) the row's log is what the board holds: nothing.
+    t->log_len = t->g->num_logs;
     t->loaded = true;
     return TABLE_OK;
 }
@@ -432,6 +435,7 @@ int table_create(Table *t, const char *actor_id, int id_len, const char *name, i
     g->num_logs = 0;
     game_lobby_seat(g, STRATEGY_KEY_HUMAN);
     t->r = r;
+    t->log_len = 0;
     t->loaded = true;
     lobby_edit(t, 1);
     t->lobby_event = false;   // nobody is watching a table that did not exist
@@ -700,12 +704,22 @@ static int64_t log_record_ms(const uint8_t *rec) {
     return ms;
 }
 
-int table_import_session_log(Table *t, const uint8_t *log, int len) {
-    if (!t->loaded) return TABLE_E_NOT_LOADED;
+// The log's records, counted whole (never capped): the game's progress.
+// TABLE_E_WIRE for an unknown record type, a truncated tail simply ends it.
+static int log_count(const uint8_t *log, int len) {
+    int n = 0, k;
+    for (int at = 0; (k = log_record_at(log, len, at)) != 0; at += k) {
+        if (k < 0) return k;
+        n++;
+    }
+    return n;
+}
+
+// Reads the log's records onto the board, and starts the next operation's
+// records above them. Returns the records read (MAX_LOGS at most).
+static int log_read(Table *t, const uint8_t *log, int len) {
     Game *g = t->g;
     int n = 0, k;
-    for (int at = 0; (k = log_record_at(log, len, at)) != 0; at += k)
-        if (k < 0) return k;
     for (int at = 0; n < MAX_LOGS && (k = log_record_at(log, len, at)) > 0; at += k) {
         const uint8_t *r = log + at + 6;
         GameLog *l = &g->logs[n++];
@@ -720,6 +734,15 @@ int table_import_session_log(Table *t, const uint8_t *log, int len) {
     }
     g->num_logs = n;
     t->log_start = n;
+    return n;
+}
+
+int table_set_session_log(Table *t, const uint8_t *log, int len) {
+    if (!t->loaded) return TABLE_E_NOT_LOADED;
+    const int n = log_count(log, len);
+    if (n < 0) return n;
+    t->log_len = n;
+    if (table_bots_need_logs(t)) log_read(t, log, len);
     return n;
 }
 
@@ -756,11 +779,14 @@ static int prefs_decode(Table *t, const uint8_t *p, int len) {
 // gunpowder) draw from it, and would otherwise read whatever this module last
 // left there, so a CAS retry on another isolate could choose another move.
 static _Thread_local uint32_t t_drive_base;
+// The row's session-log records that are NOT on the board: zero when a belief
+// brain had them read in, the whole log when nobody reads it (bot_drive.h).
+static _Thread_local uint32_t t_drive_log_offset;
 void (*table_choose_observer)(const Game *g, int seat) = 0;
 
 static void table_drive_seed(const Game *g, int seat, int phase) {
     if (phase == BOT_DRIVE_PHASE_CHOOSE && table_choose_observer) table_choose_observer(g, seat);
-    bot_drive_seed_decision(g, t_drive_base, phase);
+    bot_drive_seed_decision(g, t_drive_base, t_drive_log_offset, phase);
 }
 
 int table_bot_drive(Table *t, const uint8_t *prefs, int prefs_len, int max_actions, BotDriveOut *out) {
@@ -776,6 +802,7 @@ int table_bot_drive(Table *t, const uint8_t *prefs, int prefs_len, int max_actio
     t_capture = t->snaps;
     engine_snap_hook = table_snap;
     t_drive_base = t->rng_base;
+    t_drive_log_offset = (uint32_t)(t->log_len - t->log_start);
     bot_drive_pre_action_hook = table_drive_seed;
     const int n = bot_drive(t->g, game_human_mask(t->g), max_actions, n_prefs ? t->prefs : 0, n_prefs, out);
     bot_drive_pre_action_hook = prev_seed;
@@ -887,8 +914,9 @@ int table_replay_code(Table *t, const uint8_t *seed, int seed_len, const uint8_t
                       uint8_t *out, int cap, uint8_t *scratch, int scratch_cap) {
     if (!t->loaded) return TABLE_E_NOT_LOADED;
     if (log_len < 0 || (log_len > 0 && !log) || log_whole(log, log_len) != 0) return TABLE_E_WIRE;
-    const int imported = table_import_session_log(t, log, log_len);
-    if (imported < 0) return imported;
+    // The encoder replays the whole session, so its records are read onto the
+    // board whatever the seated brains read.
+    log_read(t, log, log_len);
     const int n = replay_encode_v6_from_game(t->g, seed, seed_len, 1 << 30, out, cap);
     if (n < 0) return n;
     const int dn = replay_decode(out, n, scratch, scratch_cap);

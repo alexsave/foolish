@@ -207,16 +207,13 @@ export class MemTable {
 
     /**
      * One bot cycle (table_bot_drive), committed when it applied anything. The
-     * session log is imported when a belief bot is about to choose, as the bot
-     * loop does; `log` overrides the row's (an empty log, to take the memory away).
+     * row's session log is handed over as the bot loop hands it over; `log`
+     * overrides it (an empty log, to take the memory away).
      */
     drive(maxActions = 0, log?: Uint8Array): { drive: TableDrive; products: TableProducts | null } {
         this.load();
         const table = fixtureTable();
-        if (table.botsNeedLogs()) {
-            const l = log ?? this.log;
-            if (l.length > 0) must('session log', table.importSessionLog(l));
-        }
+        must('session log', table.setSessionLog(log ?? this.log));
         const d = table.botDrive(null, maxActions);
         if (typeof d === 'number') throw new Error(`table_mem: bot drive refused (${d})`);
         return { drive: d, products: d.n > 0 ? this.commit() : null };

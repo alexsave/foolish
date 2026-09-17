@@ -1047,7 +1047,9 @@ static void thread_disable_cancellation(void) {
 static _Thread_local uint32_t t_bot_rng_base;
 static void bot_seed_hook(const Game *g, int seat, int phase) {
     (void)seat;
-    bot_drive_seed_decision(g, t_bot_rng_base, phase);
+    // Log offset 0: this server keeps one resident Game per slot, so g->logs IS
+    // the whole session and g->num_logs is the progress term by itself.
+    bot_drive_seed_decision(g, t_bot_rng_base, 0u, phase);
 }
 
 // One bot cycle of `g`: bot_drive under this host's per-decision seeding.

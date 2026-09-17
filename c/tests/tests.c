@@ -8179,11 +8179,13 @@ static void tb_bot_table(const char *brain, int seed) {
     tb_log_len = c.logs.len;
 }
 
-// The row as the bot loop loads it: the blob, the deal seed, and the session log when asked.
+// The row as the bot loop loads it: the blob, the deal seed, and the session log
+// when asked (the loop always hands it over; `with_log` 0 is for the cases below
+// that ask what a table does without it).
 static int tb_reload(int with_log) {
     if (table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) != TABLE_OK) return -999;
     table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
-    return with_log ? table_import_session_log(&tb, tb_log, tb_log_len) : 0;
+    return with_log ? table_set_session_log(&tb, tb_log, tb_log_len) : 0;
 }
 
 // Commits the last operation: the row moves on and its records join the session log.
@@ -8212,17 +8214,13 @@ static int tb_human_move(void) {
     return table_act(&tb, RS("h"), tb_buf, wl, -1, 0) == TABLE_APPLIED;
 }
 
-// The wasm bridge's per-decision seeding (wasm_bots_api.c drive_seed_hook over
-// wasm_api.c state_fnv), restated for a Game that is not the table's.
+// The wasm bridge's per-decision seeding (wasm_bots_api.c drive_seed_hook), for a
+// Game that is not the table's: the same kernel policy over the bridge's own base,
+// and log offset 0 because its resident game holds the whole session log.
 static uint32_t tb_hook_base;
 static void tb_bridge_seed(const Game *g, int seat, int phase) {
     (void)seat;
-    if (phase == BOT_DRIVE_PHASE_CHOOSE) {
-        random_strategy_set_seed(game_state_seed(g, tb_hook_base, GAME_SEED_SALT_STRATEGY));
-        game_rng_set(game_state_seed(g, tb_hook_base, GAME_SEED_SALT_SEARCH));
-    } else {
-        game_rng_set(game_state_seed(g, tb_hook_base, GAME_SEED_SALT_DRAW));
-    }
+    bot_drive_seed_decision(g, tb_hook_base, 0u, phase);
 }
 
 static int tb_record_bytes(const Game *g, int from) {
@@ -8240,7 +8238,8 @@ static void test_table_deal_seed_and_session_log(void) {
     int records = 0;
     for (int q = 0; q + 10 <= tb_log_len; q += 10 + 2 * tb_log[q + 9]) records++;
     CHECK(records >= 1 && tb_log[6] == LOG_GAME_START, "the deal wrote a session log that opens with GAME_START");
-    CHECK(tb_reload(1) == records && tb_game.num_logs == records && tb.log_start == records,
+    CHECK(tb_reload(1) == records && tb_game.num_logs == records && tb.log_start == records
+          && tb.log_len == records,
           "every record loads, and the next operation's records start above them");
     int same = 1;
     for (int i = 0, q = 0; i < records; i++, q += 10 + 2 * tb_log[q + 9]) {
@@ -8256,23 +8255,25 @@ static void test_table_deal_seed_and_session_log(void) {
     CHECK(table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && c.logs.len == 0,
           "an imported session log is not a product");
 
-    CHECK(tb_reload(0) == 0 && table_import_session_log(&tb, tb_log, tb_log_len - 1) == records - 1,
+    CHECK(tb_reload(0) == 0 && tb.log_len == 0, "a table that was handed no log has no session beneath it");
+    CHECK(table_set_session_log(&tb, tb_log, tb_log_len - 1) == records - 1,
           "a truncated tail ends the log");
     memcpy(tb_log2, tb_log, (size_t)tb_log_len);
     tb_log2[6] = LOG_DRAW + 1;
-    CHECK(table_import_session_log(&tb, tb_log2, tb_log_len) == TABLE_E_WIRE, "an unknown record type is refused");
+    CHECK(table_set_session_log(&tb, tb_log2, tb_log_len) == TABLE_E_WIRE, "an unknown record type is refused");
     memset(tb_log2, 0, 10 + 2 * 70);
     tb_log2[6] = LOG_PICKUP; tb_log2[7] = 0; tb_log2[8] = 0xFF; tb_log2[9] = 70;
     for (int j = 0; j < 70; j++) { tb_log2[10 + 2 * j] = (uint8_t)(j % 52); tb_log2[11 + 2 * j] = 0xFF; }
-    CHECK(table_import_session_log(&tb, tb_log2, 10 + 2 * 70) == 1 && tb_game.logs[0].num_pairs == MAX_LOG_PAIRS,
+    CHECK(table_set_session_log(&tb, tb_log2, 10 + 2 * 70) == 1 && tb_game.logs[0].num_pairs == MAX_LOG_PAIRS,
           "a record keeps its first MAX_LOG_PAIRS pairs");
     memset(tb_log2, 0, sizeof(tb_log2));
     for (int i = 0; i < MAX_LOGS + 50; i++) { tb_log2[10 * i + 6] = LOG_GOOD; tb_log2[10 * i + 7] = 1; tb_log2[10 * i + 8] = 0xFF; }
-    CHECK(table_import_session_log(&tb, tb_log2, 10 * (MAX_LOGS + 50)) == MAX_LOGS && tb_game.num_logs == MAX_LOGS,
-          "records past MAX_LOGS are dropped");
+    CHECK(table_set_session_log(&tb, tb_log2, 10 * (MAX_LOGS + 50)) == MAX_LOGS + 50
+          && tb_game.num_logs == MAX_LOGS && tb.log_len == MAX_LOGS + 50,
+          "records past MAX_LOGS are not read onto the board, but they are still counted");
     Table unloaded;
     table_init(&unloaded, &tb_src, &tb_snaps);
-    CHECK(table_import_session_log(&unloaded, tb_log, tb_log_len) == TABLE_E_NOT_LOADED, "an unloaded table imports nothing");
+    CHECK(table_set_session_log(&unloaded, tb_log, tb_log_len) == TABLE_E_NOT_LOADED, "an unloaded table takes no log");
 }
 
 static void test_table_bot_drive_cycle(void) {
@@ -8290,7 +8291,8 @@ static void test_table_bot_drive_cycle(void) {
             continue;
         }
         const int logs = table_bots_need_logs(&tb);
-        const int imported = logs ? table_import_session_log(&tb, tb_log, tb_log_len) : 0;
+        table_set_session_log(&tb, tb_log, tb_log_len);
+        const int imported = logs ? tb_game.num_logs : 0;
         memcpy(&tb_ref, &tb_game, sizeof(Game));
         const int n = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
         if (n <= 0) break;
@@ -8472,11 +8474,9 @@ static void test_table_bot_drive_ignores_instance_history(void) {
                 if (!tb_human_move() || tb_commit_row(1700000001000LL + step, &c) < 0) break;
                 continue;
             }
-            const int logs = table_bots_need_logs(&tb);
-
             game_rng_set(0x13579BDFu);
             random_strategy_set_seed(0x2468ACE0u);
-            tb_reload(logs);
+            tb_reload(1);
             const int na = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
             const int la = na > 0 ? tb_cycle_bytes(na, a) : na;
 
@@ -8486,7 +8486,7 @@ static void test_table_bot_drive_ignores_instance_history(void) {
             table_load(&other, other_state, other_len, other_roster, ROSTER_BYTES);
             table_set_deal_seed(&other, "5eed", 4);
             table_bot_drive(&other, 0, 0, 0, &tb_drv2);
-            tb_reload(logs);
+            tb_reload(1);
             const int nb = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
             const int lb = nb > 0 ? tb_cycle_bytes(nb, b) : nb;
 
@@ -8501,6 +8501,64 @@ static void test_table_bot_drive_ignores_instance_history(void) {
         CHECK(drives >= 10, "the brain drove a game's cycles");
         CHECK(same, "a bot cycle is the same on a module with another history (see the brain above)");
     }
+}
+
+// A bot decision is seeded from the board AND the game's progress, which is the
+// length of the row's session log (bot_drive.h bot_drive_seed_decision).
+//
+// The board alone is not enough: a table of `random` bots can return to an exact
+// earlier board, and a decision that is a function of the board alone then repeats
+// the move, and the board, forever (measured: about one game in 40 at 4 to 7
+// seats). So the SAME board with a SHORTER log must be able to draw differently -
+// while the same STORED ROW, log included, still drives the same cycle on any table.
+static void test_table_bot_drive_progress_seeds_the_decision(void) {
+    static Game row_game;
+    static TableSnaps row_snaps;
+    static BotDriveOut drv_a;
+    Table row_table;
+    tb_bot_table("random", 5);
+    int drives = 0, moved = 0, replays = 0, same_row = 1, shorter = 0;
+    for (int step = 0; step < 200 && drives < 40; step++) {
+        TableCommit c;
+        if (tb_reload(1) < 0 || tb_game.status != GAME_STATUS_PLAYING) break;
+        if (bot_drive_eligible_mask(&tb_game, game_human_mask(&tb_game)) == 0) {
+            if (!tb_human_move() || tb_commit_row(1700000003000LL + step * 1000, &c) < 0) break;
+            continue;
+        }
+
+        // The row as it stands.
+        const int na = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
+        if (na <= 0) break;
+        memcpy(&drv_a, &tb_drv, sizeof(drv_a));
+
+        // The same board, one session-log record shorter: only the progress moved.
+        int last = 0;
+        for (int q = 0; q + 10 <= tb_log_len; q += 10 + 2 * tb_log[q + 9]) last = q;
+        if (last > 0 && tb_reload(0) == 0) {
+            table_set_session_log(&tb, tb_log, last);
+            const int nb = table_bot_drive(&tb, 0, 0, 0, &tb_drv2);
+            shorter++;
+            if (nb != na || memcmp(tb_drv2.actions, drv_a.actions, sizeof(BotDriveAction) * (size_t)na) != 0) moved++;
+        }
+
+        // The same stored row on another table: the same cycle, action for action.
+        table_init(&row_table, &row_game, &row_snaps);
+        if (table_load(&row_table, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK) {
+            table_set_deal_seed(&row_table, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
+            table_set_session_log(&row_table, tb_log, tb_log_len);
+            const int nc = table_bot_drive(&row_table, 0, 0, 0, &tb_drv2);
+            replays++;
+            if (nc != na || memcmp(tb_drv2.actions, drv_a.actions, sizeof(BotDriveAction) * (size_t)na) != 0) same_row = 0;
+        }
+
+        // Carry the row on with the cycle the row itself drove.
+        if (tb_reload(1) < 0 || table_bot_drive(&tb, 0, 0, 0, &tb_drv) <= 0) break;
+        if (tb_commit_row(1700000003000LL + step * 1000, &c) < 0) break;
+        drives++;
+    }
+    CHECK(drives >= 20 && replays >= 20 && shorter >= 20, "the game had cycles to compare");
+    CHECK(same_row, "the same stored row drives the same cycle on any table");
+    CHECK(moved >= drives / 4, "a board at a different session-log length draws differently");
 }
 
 // The TS producer's times (extras.ts moveTimesFromLogs) over a session log, in args layout.
@@ -8543,7 +8601,7 @@ static void test_table_replay_code_and_extras(void) {
     int over = 0;
     for (int step = 0; step < 6000 && !over; step++) {
         const int64_t now = 1700000002000LL + step * 1731 + (step % 5) * 250;
-        if (tb_reload(0) != 0 || tb_game.status != GAME_STATUS_PLAYING) break;
+        if (tb_reload(1) < 0 || tb_game.status != GAME_STATUS_PLAYING) break;
         if (bot_drive_eligible_mask(&tb_game, game_human_mask(&tb_game)) == 0) {
             if (!tb_human_move()) break;
         } else if (table_bot_drive(&tb, 0, 0, 0, &tb_drv) <= 0) {
@@ -9768,6 +9826,7 @@ int main(void) {
     test_table_bot_drive_cycle();
     test_table_drive_prefs();
     test_table_bot_drive_ignores_instance_history();
+    test_table_bot_drive_progress_seeds_the_decision();
     test_table_replay_code_and_extras();
     test_client_adopts_envelopes();
     test_client_reads_every_push_of_a_game();

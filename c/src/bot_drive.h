@@ -151,10 +151,27 @@ extern void (*bot_drive_pre_action_hook)(const Game *g, int seat, int phase);
 // The per-decision seeding every server host installs through that hook, so the
 // policy has one definition: at CHOOSE the strategy stream and the draw stream
 // (under its search salt), at APPLY the draw stream, each from game_state_seed of
-// the board in front of the decision and the host's secret `base`. The Table
-// (table.c) and the native server (server/impls/native) call it; the wasm bridge's
-// resident drive seeds the same streams from its own base.
-void bot_drive_seed_decision(const Game *g, uint32_t base, int phase);
+// the board in front of the decision, the host's secret `base` and the game's
+// PROGRESS. The Table (table.c), the native server (server/impls/native) and the
+// wasm bridge's resident drive all call it.
+//
+// PROGRESS is the length of the game's session log at the decision: the records
+// the board already holds (g->num_logs) plus `log_offset`, the records the row's
+// log holds BELOW g->logs[0] for a host that did not load them (the Table loads
+// them only for a brain that reads them). 0 when `g` holds the whole log.
+//
+// Why the board alone is not enough. Every other term of the seed is the public
+// board, so two decisions on the SAME board draw the same numbers — and a table
+// whose remaining players are all `random` bots can return to an exact earlier
+// board, which then repeats its move, and the board, forever. Measured over 40
+// seeds per seat count at 2 to 8 seats, one game each at 4, 5, 6 and 7 seats
+// looped that way (period 12 to 15 cycles, from cycle 105 to 156), about 1 game
+// in 40 at those seat counts; in production such a table holds `needs_bots`
+// forever. The session log only grows, so folding its length in makes a repeated
+// board draw a fresh number and the loop cannot close. It keeps the decision a
+// pure function of the STORED ROW — state, roster and log — so every instance
+// that loads that row still chooses the same move.
+void bot_drive_seed_decision(const Game *g, uint32_t base, uint32_t log_offset, int phase);
 
 // A host's secret base from its deal seed (FNV-1a over the bytes; the Table hashes
 // the seed's hex text, the native server its 32 raw bytes). 0 for no seed.

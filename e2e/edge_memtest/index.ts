@@ -125,7 +125,7 @@ serve(async (req: Request) => {
             let rc = table.load(row.state, row.roster);
             if (rc < 0) throw refusal('load', rc);
             if ((rc = table.setDealSeed(seedHex)) < 0) throw refusal('deal seed', rc);
-            if (table.botsNeedLogs() && row.log.length > 0 && (rc = table.importSessionLog(row.log)) < 0) throw refusal('session log', rc);
+            if ((rc = table.setSessionLog(row.log)) < 0) throw refusal('session log', rc);
             if (moves < 6) console.log(`[memtest] before cycle at move ${moves} ${mem()}`);
             const d = table.botDrive(null);
             if (typeof d === 'number') throw refusal('bot drive', d);

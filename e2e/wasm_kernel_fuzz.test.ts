@@ -12,7 +12,7 @@
 // Every game reaches the kernel through the C Table now, so this knocks on the
 // table's doors with bytes rather than on the retired JS Game marshal: stored
 // state and roster blobs (table_load), action wires (table_act), session logs
-// (table_import_session_log) and the bot cycle over kernel-sealed boards
+// (table_set_session_log) and the bot cycle over kernel-sealed boards
 // (table_bot_drive), plus the client slot's envelope and push readers. A refusal
 // code is an acceptable answer; a wasm trap or a hang is not. Pure kernel test -
 // no Postgres.
@@ -120,7 +120,7 @@ test('the bot cycle survives hostile session logs on sealed boards (1<<card_id /
       const table = fixtureTable();
       assert.equal(table.load(fx.state, fx.roster), L.TABLE_OK, 'a sealed board loads');
       table.setDealSeed('cd'.repeat(32));
-      if (table.importSessionLog(log) >= 0) imported++;
+      if (table.setSessionLog(log) >= 0) imported++;
       const d = table.botDrive(null, 1);
       if (typeof d !== 'number') drives++;
     }, 5000);

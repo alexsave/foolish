@@ -5,7 +5,7 @@
 // without it, so these bots chose blind in production and played as if they had
 // no memory (see the octogen investigation). The server bot loop now hands the
 // kernel the stored log (games.logs_packed) whenever the kernel says a belief bot
-// is about to choose (table_bots_need_logs, then table_import_session_log).
+// is about to choose (table_bots_need_logs, then table_set_session_log).
 //
 // This test pins the kernel half, WITHOUT a database: on the C Table, from the
 // same row, the same deal seed and the same position, octogen's decision with the

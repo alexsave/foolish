@@ -475,15 +475,12 @@ int wasm_belief_probe_dump(void) {
 // which seeds itself from the table's deal seed rather than through this bridge.
 void wasm_belief_probe_observe_internal(const Game *g, int seat) { probe_capture(g, seat); }
 
+// One policy, the kernel's (bot_drive.h bot_drive_seed_decision), over this
+// bridge's own base. Log offset 0: g_game is resident, so it holds the whole
+// session log the host imported.
 static void drive_seed_hook(const Game *g, int seat, int phase) {
-    if (phase == BOT_DRIVE_PHASE_CHOOSE) {
-        probe_capture(g, seat);
-        wasm_set_strategy_seed_deterministic();
-        // The search's draw stream too (table.c table_drive_seed has the why).
-        game_rng_set(game_state_seed(g, wasm_rng_base_internal(), GAME_SEED_SALT_SEARCH));
-    } else {
-        wasm_seed_rng_deterministic();
-    }
+    if (phase == BOT_DRIVE_PHASE_CHOOSE) probe_capture(g, seat);
+    bot_drive_seed_decision(g, wasm_rng_base_internal(), 0u, phase);
 }
 
 int wasm_bot_drive(int human_mask, int max_actions, int n_pref) {

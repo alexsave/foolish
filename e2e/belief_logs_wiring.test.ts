@@ -21,11 +21,10 @@
 //     instance the loop's drive runs on. A spy here could only prove the bytes
 //     were HANDED OVER, never that the importer spliced them into the board
 //     octogen read - and that gap is where "octogen chose blind" lived.
-//   - THE FED BYTES stay observed here, because the resident log's arithmetic
-//     (read once, then concat-and-carry across cycles of a bots-only table) is
-//     this side's job, not the kernel's. They are captured at the table calls
-//     the loop makes (ServerTable.importSessionLog, then botDrive), on exactly
-//     the cycles the kernel said a belief bot was about to choose.
+//   - THE FED BYTES stay observed here, because reading logs_packed off the row
+//     is this side's job, not the kernel's. They are captured at the table calls
+//     the loop makes (ServerTable.setSessionLog, then botDrive), on exactly the
+//     cycles the kernel said a belief bot was about to choose.
 
 import './harness.ts'; // sets Deno globals BEFORE any server module loads
 import { test, before, beforeEach, after } from 'node:test';
@@ -59,21 +58,21 @@ const fed: string[] = [];
 const SEGMENT_CYCLES = 16;
 
 // Watch the table calls the loop makes, without touching production code: the
-// session log it hands the kernel (importSessionLog) and, at each drive, whether
-// the kernel said a belief bot was about to choose. A load starts a cycle's
-// section with nothing imported, so a belief cycle that imported nothing records
-// an empty buffer and fails the non-empty check below.
+// session log it hands the kernel (setSessionLog) and, at each drive, whether the
+// kernel said a belief bot was about to choose. A load starts a cycle's section
+// with nothing handed over, so a belief cycle that was given nothing records an
+// empty buffer and fails the non-empty check below.
 function watchTable(): void {
   const proto = ServerTable.prototype as unknown as {
-    load: (...a: unknown[]) => number; importSessionLog: (log: Uint8Array) => number; botDrive: (...a: unknown[]) => unknown;
+    load: (...a: unknown[]) => number; setSessionLog: (log: Uint8Array) => number; botDrive: (...a: unknown[]) => unknown;
     botsNeedLogs: () => boolean;
   };
-  let imported = '';
-  const load = proto.load, importLog = proto.importSessionLog, drive = proto.botDrive;
-  proto.load = function (this: unknown, ...a: unknown[]) { imported = ''; return load.apply(this, a); };
-  proto.importSessionLog = function (this: unknown, log: Uint8Array) { imported = bytesToBareHex(log).toLowerCase(); return importLog.call(this, log); };
+  let handed = '';
+  const load = proto.load, setLog = proto.setSessionLog, drive = proto.botDrive;
+  proto.load = function (this: unknown, ...a: unknown[]) { handed = ''; return load.apply(this, a); };
+  proto.setSessionLog = function (this: unknown, log: Uint8Array) { handed = bytesToBareHex(log).toLowerCase(); return setLog.call(this, log); };
   proto.botDrive = function (this: { botsNeedLogs: () => boolean }, ...a: unknown[]) {
-    if (this.botsNeedLogs()) fed.push(imported);
+    if (this.botsNeedLogs()) fed.push(handed);
     return drive.apply(this, a);
   };
 }
@@ -119,7 +118,7 @@ async function persistedLogCount(gameId: string): Promise<number> {
   if (!t.logsPacked) return 0;
   const table = await serverTable();
   if (table.load(t.state, t.roster) < 0) return -1;
-  return table.importSessionLog(Buffer.from(t.logsPacked.replace(/^\\x/, ''), 'hex'));
+  return table.setSessionLog(Buffer.from(t.logsPacked.replace(/^\\x/, ''), 'hex'));
 }
 
 test('the server bot loop feeds octogen the whole session log (not an empty one)', async () => {

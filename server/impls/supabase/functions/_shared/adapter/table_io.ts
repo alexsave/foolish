@@ -133,6 +133,8 @@ export interface TableRow {
     state: Uint8Array;
     roster: Uint8Array;
     gameSeed: string | null;
+    /** games.logs_packed, when the caller asked for it (a bot cycle does); null otherwise. */
+    log: Uint8Array | null;
     /** The row came from this isolate's cache, not a fresh SELECT. */
     cached: boolean;
 }
@@ -142,21 +144,28 @@ export class GameNotFound extends Error {
     constructor(gameId: string) { super(`Game ${gameId} not found`); this.name = 'GameNotFound'; }
 }
 
-/** Loads a row: this isolate's cache when allowed and warm, else a SELECT. */
-export async function loadRow(gameId: string, allowCache = true): Promise<TableRow> {
-    const hit = allowCache ? getCachedRow(gameId) : undefined;
+/**
+ * Loads a row: this isolate's cache when allowed and warm, else a SELECT.
+ *
+ * Only what an operation reads: logs_packed grows all session, so a move's row
+ * leaves it behind. `withLog` asks for it, and a bot cycle does - the log's
+ * length seeds every bot decision (c/src/bot_drive.h), so the cycle needs it on
+ * every table, not only one whose brains read the records. It rides along on the
+ * SELECT the cycle already makes rather than costing a second round trip, and a
+ * cached row never carries it.
+ */
+export async function loadRow(gameId: string, allowCache = true, withLog = false): Promise<TableRow> {
+    const hit = allowCache && !withLog ? getCachedRow(gameId) : undefined;
     if (hit) {
         return {
             gameId, version: hit.version, roundEpoch: hit.roundEpoch,
             state: hit.state, roster: hit.roster,
-            gameSeed: hit.gameSeed, cached: true,
+            gameSeed: hit.gameSeed, log: null, cached: true,
         };
     }
-    // Only what an operation reads: logs_packed in particular grows all session
-    // and never rides along.
     const { data, error } = await supabaseClient
         .from('games')
-        .select('id, version, round_epoch, state, roster, game_seed')
+        .select(withLog ? 'id, version, round_epoch, state, roster, game_seed, logs_packed' : 'id, version, round_epoch, state, roster, game_seed')
         .eq('id', gameId).single();
     if (error || !data) throw new GameNotFound(gameId);
     if (!data.state || !data.roster) throw new Error(`Game ${gameId} has no state or roster blob`);
@@ -168,6 +177,8 @@ export async function loadRow(gameId: string, allowCache = true): Promise<TableR
         state: columnHexToBytes(data.state),
         roster: columnHexToBytes(data.roster),
         gameSeed: data.game_seed ?? null,
+        // An empty log reads as '\\x' (BYTEA through PostgREST): no records.
+        log: withLog ? columnHexToBytes(data.logs_packed ?? '') : null,
         cached: false,
     };
 }

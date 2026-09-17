@@ -59,7 +59,7 @@ export interface TableExports {
     wasm_table_redact(idLen: number, nameLen: number): number;
     wasm_table_seat_of(idLen: number): number;
     wasm_table_set_deal_seed(len: number): number;
-    wasm_table_import_session_log(len: number): number;
+    wasm_table_set_session_log(len: number): number;
     wasm_table_bot_drive(prefsLen: number, maxActions: number): number;
     wasm_table_drive_ptr(): number;
     wasm_table_drive_prefs(): number;
@@ -267,10 +267,15 @@ export class ServerTable {
         return this.ex.wasm_table_set_deal_seed(n);
     }
 
-    /** table_import_session_log: the stored session log (games.logs_packed bytes). Records loaded, or a refusal. */
-    importSessionLog(log: Uint8Array): number {
+    /**
+     * table_set_session_log: the row's stored session log (games.logs_packed bytes).
+     * A bot cycle ALWAYS hands it over - its length is the progress every bot decision
+     * is seeded from - and the kernel reads the records onto the board only for a brain
+     * that consults them. Records the log holds, or a refusal.
+     */
+    setSessionLog(log: Uint8Array): number {
         const [n] = this.put(log);
-        return this.ex.wasm_table_import_session_log(n);
+        return this.ex.wasm_table_set_session_log(n);
     }
 
     /** table_bot_drive, offered `prefs` (a drivePrefs() blob of a failed attempt, or null). A TableDrive, or a refusal. */
