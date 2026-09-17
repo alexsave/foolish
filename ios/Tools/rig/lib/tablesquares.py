@@ -51,7 +51,7 @@ def reading(a):
     """
     box = tween.read_array(a)
     if not box or box.get("topoff") or "top_pt" not in box:
-        return [], None
+        return None, None
     top, left = box["top_pt"], box.get("left_pt", 0.0)
     return ([(n, round(x - left, 2), round(y - top, 2)) for n, x, y in sq.squares_in(a)],
             box.get("clock"))
@@ -133,6 +133,24 @@ def track(frames_seen, times, link_pt=80.0):
     return tracks
 
 
+REPEAT_S = 0.012         # a frame this soon after the last, in the same place, is a repeat
+
+
+def without_repeats(samples):
+    """Drop a sample that is a REPEAT of the one before: the recorder writes
+    some composited frames twice, ~5ms apart, with nothing moved. Left in, a
+    repeat is a zero step beside a real one, and the real one reads as a
+    spike (a collapse filmed 581, 581, 609 - two steps of 0 and 28 where the
+    card moved 14 and 14)."""
+    out = []
+    for smp in samples:
+        if out and smp[1] - out[-1][1] < REPEAT_S and abs(smp[2] - out[-1][2]) < 0.5 \
+                and abs(smp[3] - out[-1][3]) < 0.5:
+            continue
+        out.append(smp)
+    return out
+
+
 def steps(samples):
     """Every move between two samples of one pair: (from, to, dx, dy, dt).
 
@@ -148,19 +166,64 @@ NEAR_S = 0.040            # two samples this close are neighbouring frames
 GAP_SPEED = 250.0         # pt/s: across a longer gap, faster than this is a jump
 
 
-def is_jump(dist, dt, jump_pt):
-    """A jump is DISTANCE between neighbouring frames, SPEED across a gap.
+SPIKE = 2.5              # a jump is this many times the steps either side of it
 
-    Speed alone does not work: the recorder writes frames 3ms apart, and a
-    2pt step of a perfectly smooth slide is 700pt/s over 3ms. Distance alone
-    does not work either: the thrown card flies over a pair's square, and the
-    first sample after 92ms under it was 7.8pt on - 85pt/s, a slide. A 35pt
-    jump hidden for the same 92ms is 380pt/s. (Hidden for 200ms it would be
-    175 and pass - the limit of what a covered square can say.)
+
+def is_jump(dist, dt, jump_pt, before=0.0, after=0.0):
+    """A jump is a STEP THAT STANDS OUT, not a fast one.
+
+    Distance alone flagged every collapse: the table rides the drawer down at
+    up to ~27pt a frame, smoothly - 17, 13, 12, 10 - and a threshold cannot
+    tell that from the throw-in's 35pt between two frames of stillness. What
+    tells them apart is the neighbours: a slide's steps are like the ones
+    either side of it, a jump's are not. So a step over `jump_pt` between
+    neighbouring frames is a jump only when it is SPIKE times the larger of
+    the steps before and after it.
+
+    Across a gap (the square covered by a flying card) there are no
+    neighbours to compare, so speed decides: the first sample after 92ms
+    under the ace was 7.8pt on (85pt/s, a slide), a 35pt jump hidden for the
+    same 92ms is 380pt/s.
     """
     if dist <= jump_pt:
         return False
-    return dt <= NEAR_S or dist / max(dt, 1e-6) > GAP_SPEED
+    if dt <= NEAR_S:
+        return dist > SPIKE * max(before, after)
+    return dist / max(dt, 1e-6) > GAP_SPEED
+
+
+HANDOFF_S = 0.040        # two frames: a flight may appear a frame after its card goes
+
+
+def handoff_gaps(seen, boxed, times):
+    """Every table card that left the table before its flight existed.
+
+    A card leaves the table only by flying (a sweep, a pickup, an undo), and a
+    flying card carries an ORANGE square. So a frame whose table squares drop
+    by one or more, with no orange square in it, starts a gap that lasts until
+    one appears. Filmed bugs this catches: an undone throw-in gone 108ms before
+    its flight home (the live table won over the sweep), and an undone first
+    attack drawn at the bottom of the drawer for two frames (87ms) - the square
+    cut off by the screen edge, so no square at all. A frame with no drawer to
+    measure against (opening, collapsing) is not a disappearance.
+    Returns [(time the card was last seen, gap seconds)].
+    """
+    out = []
+    table = lambda q: sum(1 for n, _, _ in q if n in sq.TABLE)
+    orange = lambda q: any(n == sq.FLIGHT for n, _, _ in q)
+    i = 1
+    while i < len(seen):
+        if boxed[i] and boxed[i - 1] and table(seen[i]) < table(seen[i - 1]) and not orange(seen[i]):
+            j = i
+            while j < len(seen) and not orange(seen[j]) and times[j] - times[i - 1] < 1.0:
+                j += 1
+            if j < len(seen) and orange(seen[j]):
+                gap = times[j] - times[i - 1]
+                if gap > HANDOFF_S:
+                    out.append((times[i - 1], gap))
+            i = j
+        i += 1
+    return out
 
 
 def load_marks(path):
@@ -204,7 +267,8 @@ def main():
         with Pool() as pool:
             seen = pool.map(read_frame, frames, chunksize=8)
     clocks = [c for _, c in seen]
-    seen = [q for q, _ in seen]
+    boxed = [q is not None for q, _ in seen]
+    seen = [q or [] for q, _ in seen]
     marks, rec0 = load_marks(a.marks) if a.marks else ([], None)
     t0 = times[0] if times else 0.0
     if marks and rec0 is not None:
@@ -219,6 +283,7 @@ def main():
             for i, s in enumerate(seen):
                 for name, x, y in s:
                     fh.write("%d,%.4f,%s,%.2f,%.2f\n" % (i + 1, times[i], name, x, y))
+    gaps = handoff_gaps(seen, boxed, times)
     tracks = [t for t in track(seen, times) if len(t["samples"]) >= 3]
     if not tracks:
         print("NO TABLE SQUARES IN ANY FRAME - is `rig.sh ruler on` set, and is "
@@ -228,10 +293,13 @@ def main():
     print("%-8s %6s %8s %8s %9s %9s  %s" % ("pair", "frames", "x from", "x to",
                                             "max step", "sum sq", "jumps"))
     for tr in sorted(tracks, key=lambda t: t["samples"][0][2]):
-        st = steps(tr["samples"])
+        st = steps(without_repeats(tr["samples"]))
         mags = [(dx * dx + dy * dy) ** 0.5 for _, _, dx, dy, _ in st]
-        big = [(f0, f1, m) for (f0, f1, _, _, dt), m in zip(st, mags)
-               if is_jump(m, dt, a.jump)]
+        near = [m if dt <= NEAR_S else 0.0 for (_, _, _, _, dt), m in zip(st, mags)]
+        big = [(f0, f1, m) for k, ((f0, f1, _, _, dt), m) in enumerate(zip(st, mags))
+               if is_jump(m, dt, a.jump,
+                          before=near[k - 1] if k > 0 else 0.0,
+                          after=near[k + 1] if k + 1 < len(near) else 0.0)]
         # A flying card is SUPPOSED to cover ground fast; its square is kept for
         # plotting (the CSV) and never scored as a jump.
         if tr["colour"] == sq.FLIGHT:
@@ -247,9 +315,13 @@ def main():
             tr["colour"], len(sm), sm[0][2], sm[-1][2], max(mags) if mags else 0.0,
             sum(m * m for m in mags),
             ", ".join("f%d->f%d %.1fpt" % (f0 + 1, f1 + 1, m) for f0, f1, m in big) or "-"))
-    if jumps:
-        print("\nJUMP: %d step(s) over %.0fpt - a table pair moved without sliding"
-              % (jumps, a.jump))
+    for tg, gap in gaps:
+        t = tg - t0
+        anomalies.append((t, "t=%6.2fs  %-22s card left the table %.0fms before its flight "
+                          "existed" % (t, scene_at(marks, t), 1000 * gap)))
+    if anomalies:
+        print("\nANOMALIES: %d jump(s) over %.0fpt, %d card(s) gone before their flight"
+              % (jumps, a.jump, len(gaps)))
         for _, line in sorted(anomalies):
             print("  " + line)
         sys.exit(1)
