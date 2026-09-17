@@ -339,18 +339,36 @@ public struct RoleCoinMotion: Equatable, Sendable {
     /// the sword turns in. `roles.passdelay=0` puts back the sword starting
     /// underneath the departing shield.
     public var passDelay: Bool
+    /// The board marks the flying seats in the SAME update as the roles that
+    /// sent the mark on its way. `roles.marksync=0` in `dev.flags` puts back the
+    /// hop (the seats were marked a beat later, so the receiving badge began an
+    /// ordinary flip to the mark that was still in the air).
+    public var syncFlightSeats: Bool
+    /// The coin turns like a COIN: its width is the cosine of an angle swept at
+    /// a steady rate, so the mark is widest face-on, fastest through edge-on and
+    /// opens back out the same way - owner: "it should be like a cosine wave
+    /// shape, right?". The old curve eased IN, which spent the first half of the
+    /// collapse near full width and the rest of it in two frames: the owner's
+    /// "the swords basically just blinked out of existence". `roles.cointurn=0`
+    /// in `dev.flags` puts the easing back.
+    public var coinTurn: Bool
 
-    public init(fromFirstFrame: Bool, passDelay: Bool) {
+    public init(fromFirstFrame: Bool, passDelay: Bool, syncFlightSeats: Bool = true,
+                coinTurn: Bool = true) {
         self.fromFirstFrame = fromFirstFrame; self.passDelay = passDelay
+        self.syncFlightSeats = syncFlightSeats; self.coinTurn = coinTurn
     }
 
-    public static let shipping = RoleCoinMotion(fromFirstFrame: true, passDelay: true)
+    public static let shipping = RoleCoinMotion(fromFirstFrame: true, passDelay: true,
+                                                syncFlightSeats: true, coinTurn: true)
 
     /// The shipping values in Release; in DEBUG, whatever `dev.flags` says.
     public static var live: RoleCoinMotion {
         #if DEBUG || SOLO_TESTING
         return RoleCoinMotion(fromFirstFrame: MessageDevBoard.flag("roles.fromframe", shipping: shipping.fromFirstFrame),
-                              passDelay: MessageDevBoard.flag("roles.passdelay", shipping: shipping.passDelay))
+                              passDelay: MessageDevBoard.flag("roles.passdelay", shipping: shipping.passDelay),
+                              syncFlightSeats: MessageDevBoard.flag("roles.marksync", shipping: shipping.syncFlightSeats),
+                              coinTurn: MessageDevBoard.flag("roles.cointurn", shipping: shipping.coinTurn))
         #else
         return shipping
         #endif
@@ -372,6 +390,8 @@ struct RoleCoinPhase: Equatable {
     let from: RoleMarkKind?
     let to: RoleMarkKind?
     let delay: Double
+    /// The width is a cosine of a steadily swept angle (`RoleCoinMotion.coinTurn`).
+    var coin: Bool = true
 
     var total: Double { delay + (from != nil ? roleFlipHalf : 0) + (to != nil ? roleFlipHalf : 0) }
 
@@ -381,7 +401,8 @@ struct RoleCoinPhase: Equatable {
         if let from {
             if t < roleFlipCollapse {
                 let u = t / roleFlipCollapse
-                return (from, max(0.001, 1 - u * u))                 // ease in
+                // A coin turning at a steady rate: its width is cos of the angle.
+                return (from, max(0.001, coin ? cos(u * .pi / 2) : 1 - u * u))
             }
             if t < roleFlipHalf { return (from, 0.001) }            // edge-on
             t -= roleFlipHalf
@@ -389,23 +410,43 @@ struct RoleCoinPhase: Equatable {
         guard let to else { return (nil, 1) }
         if t < roleFlipHalf {
             let u = t / roleFlipHalf
-            return (to, max(0.001, 1 - (1 - u) * (1 - u)))          // ease out
+            return (to, max(0.001, coin ? sin(u * .pi / 2) : 1 - (1 - u) * (1 - u)))
         }
         return (to, 1)
     }
 }
 
-/// When a phase was first drawn. A reference, written from inside the
-/// TimelineView's content: that closure runs exactly when a frame is drawn,
-/// which is the one moment the gesture may start counting from.
+/// A GESTURE'S OWN CLOCK, advanced by the frames that DRAW it.
+///
+/// Written from inside the TimelineView's content, which runs exactly when a
+/// frame is drawn. Wall time is not enough: the collapsed board stops drawing
+/// for a beat after a heavy update, and a gesture that keeps counting through
+/// that beat skips most of itself. Owner, measuring an 8-seat Undo: the sword
+/// held 35px, then went 35 -> 10 -> 0 in two frames - "NO JUMPS IN ROTATION!"
+/// So a gap between two drawn frames is worth at most `cap` - ONE frame at
+/// 60Hz, because the board drops frames through this beat and two frames' worth
+/// of turn in one step is itself a jump (35 -> 22 -> 19 -> 3 measured with the
+/// cap at two). A slow board stretches the turn instead of eating it.
 final class RoleCoinClock {
+    static let cap = 1.0 / 60.0
     private var id = -1
-    private(set) var start: Date?
-    func start(for phase: Int, at date: Date) -> Date {
-        if phase != id || start == nil { id = phase; start = date }
-        return start ?? date
+    private var last: Date?
+    private(set) var elapsed: Double = 0
+    private(set) var started = false
+
+    /// The gesture's own elapsed time, given the frame being drawn now.
+    func tick(_ phase: Int, at date: Date) -> Double {
+        if phase != id {
+            id = phase; last = date; elapsed = 0; started = true
+            return 0
+        }
+        if let l = last { elapsed += min(max(0, date.timeIntervalSince(l)), Self.cap) }
+        last = date
+        return elapsed
     }
-    func started(_ phase: Int) -> Date? { phase == id ? start : nil }
+
+    /// How far a phase has got, for the task that stands its last face up.
+    func elapsed(_ phase: Int) -> Double? { phase == id ? elapsed : nil }
 }
 
 /// A seat's role mark, with the motion between one mark and the next.
@@ -507,21 +548,20 @@ public struct FRoleCoin: View {
     /// The face and width on the frame being drawn now.
     private func drawn(at date: Date) -> (face: RoleMarkKind?, scale: CGFloat) {
         guard let p = phase else { return (shown, 1) }
-        return p.frame(at: date.timeIntervalSince(clock.start(for: p.id, at: date)))
+        return p.frame(at: clock.tick(p.id, at: date))
     }
 
     /// Stand the gesture's last face up once it has played IN FULL, counted from
     /// the frame that first drew it - never from when it was asked for.
     private func finishPhase() async {
         guard let p = phase else { return }
-        var start = clock.started(p.id)
-        while start == nil {
+        // Poll the gesture's OWN clock: it only moves on frames that drew it, so
+        // a board that pauses stretches the turn rather than cutting it short.
+        while true {
             try? await Task.sleep(nanoseconds: 8_000_000)
-            if Task.isCancelled { return }
-            start = clock.started(p.id)
+            if Task.isCancelled || phase?.id != p.id { return }
+            if let e = clock.elapsed(p.id), e >= p.total { break }
         }
-        let left = p.total - Date().timeIntervalSince(start ?? Date())
-        if left > 0 { try? await Task.sleep(nanoseconds: UInt64(left * 1_000_000_000)) }
         guard !Task.isCancelled, phase?.id == p.id else { return }
         shown = p.to
         phase = nil
@@ -530,7 +570,7 @@ public struct FRoleCoin: View {
     /// Start a gesture on the frame clock.
     private func play(from: RoleMarkKind?, to: RoleMarkKind?, delay: Double = 0) {
         gesture += 1
-        phase = RoleCoinPhase(id: gesture, from: from, to: to, delay: delay)
+        phase = RoleCoinPhase(id: gesture, from: from, to: to, delay: delay, coin: motion.coinTurn)
     }
 
     /// At rest showing `shown`: no half-played gesture, and none waiting to start.
@@ -651,7 +691,15 @@ public struct FRoleCoin: View {
         }
         // SOMETHING IS ON ITS WAY HERE: turn away as it touches down.
         if now.arriving && !was.arriving {
-            let wearing = phase?.to ?? shown
+            // THE MARK IT IS WEARING, not the one a half-played gesture was
+            // heading to. The board publishes the new roles a beat before it
+            // plans the hand-off, so this seat has usually just STARTED a flip
+            // to the very mark that is now flying to it - and turning that away
+            // would first stand it up. Owner, watching a pass: "at one point
+            // there are two shields. Wtf" - and "there should NEVER be more than
+            // one shield". So a flip heading for the arriving mark is taken back
+            // to the face it came from.
+            let wearing = phase.map { $0.to == now.kind ? $0.from : $0.to } ?? shown
             gesture += 1; phase = nil
             shown = wearing
             if wearing != nil { play(from: wearing, to: nil, delay: roleMakeWayDelay) }

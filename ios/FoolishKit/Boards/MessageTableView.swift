@@ -3568,6 +3568,10 @@ public struct MessageTableView: View {
         let flights = Self.roleFlights(from: old, to: target, pads: roleMarkFrames)
         AnimLog.say("roles d\(old.defender) fa\(old.firstAttacker) -> d\(target.defender) fa\(target.firstAttacker) pads=\(roleMarkFrames.keys.sorted()) flying=\(flights.count)")
         guard !flights.isEmpty else { return false }
+        // THE HAND-OFF BEGINS NOW, in the same update as the roles that sent the
+        // mark flying - not a hop later, which let the receiving badge start an
+        // ordinary flip to the mark still in the air (two shields).
+        if RoleCoinMotion.live.syncFlightSeats { beginRoleFlights(flights) }
         Task { await runRoleFlights(flights) }
         return true
     }
@@ -3649,15 +3653,31 @@ public struct MessageTableView: View {
     /// Carry the marks across, then hand the badges back their own copies. The
     /// endpoints are blank for the duration, so there is exactly one of each
     /// mark on screen at every instant of the hand-off.
+    /// THE WHOLE HAND-OFF, IN ONE UPDATE: the ghost that carries the mark, and
+    /// the seats it leaves and lands on.
+    ///
+    /// These three cannot be split across two updates in either order. Blanking
+    /// the departing seat first leaves the board with NO shield on it for a
+    /// paint (owner, on the frame he caught at the release: "THERE SHOULD ALWAYS
+    /// BE EXACTLY ONE SHIELD... it seems to blink out for a single frame when we
+    /// release the card that was dragged"); marking the seats after the roles
+    /// have published lets the receiving badge flip to the mark that is still in
+    /// the air (two shields). Idempotent - `runRoleFlights` calls it again for
+    /// the flag's other state.
     @MainActor
-    private func runRoleFlights(_ f: [RoleFlight]) async {
+    private func beginRoleFlights(_ f: [RoleFlight]) {
         roleFlightToken += 1
-        let mine = roleFlightToken
-        AnimLog.say("role flight [\(f.map { "\($0.kind):\($0.fromSeat)->\($0.toSeat)" }.joined(separator: " "))]")
         roleDepartingSeats = Set(f.map(\.fromSeat))
         roleArrivingSeats = Set(f.map(\.toSeat))
         roleFlights = f
         roleProgress = 0
+    }
+
+    @MainActor
+    private func runRoleFlights(_ f: [RoleFlight]) async {
+        AnimLog.say("role flight [\(f.map { "\($0.kind):\($0.fromSeat)->\($0.toSeat)" }.joined(separator: " "))]")
+        if roleFlights.map(\.id) != f.map(\.id) { beginRoleFlights(f) }
+        let mine = roleFlightToken
         // One paint at the take-off pad before the tween starts - the same beat
         // BoardAnimator.play gives a card, and for the same reason: an animation
         // that starts in the frame its view is created in has nothing to
