@@ -35,6 +35,9 @@ import { createOracleController, IOracleController } from '../oracle/oracleContr
 import { buildOracleJob, findDecisionIndex } from '../oracle/replayOracleInput';
 import { OracleSnapshot } from '../oracle/types';
 
+/** The key a replay's boards are held under (ReplayServerProvider, the frames' game id). */
+const REPLAY_KEY = 'replay';
+
 /**
  * Self-contained replay viewer: WWW.FOOLISH.CARDS/<base32> — the path segment
  * IS the entire game (decoded client-side, no auth, no database row).
@@ -517,6 +520,7 @@ interface StageProps {
     code: Uint8Array;
     frames: ReplayFrame[];
     reverses: (AnimationSequenceMessage | null)[];
+    /** The link's id: it seeds the Oracle's decision ids. */
     gameId: string;
     names: string[] | null;
     times: (number | null)[];
@@ -627,10 +631,10 @@ const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times }: Sta
             resetAnimations();
             const target = Math.max(0, Math.min(i, lastIdx));
             // The step's own board, straight from the kernel — no rebuild.
-            updateGameState(gameId, frames[target].game);
+            updateGameState(REPLAY_KEY, frames[target].game);
             setStepIdx(target);
         },
-        [frames, gameId, lastIdx, resetAnimations, updateGameState],
+        [frames, lastIdx, resetAnimations, updateGameState],
     );
 
     const stepBack = useCallback(() => {
@@ -950,7 +954,7 @@ const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times }: Sta
     );
 };
 
-const buildReplayData = async (code: string, gameId: string) => {
+const buildReplayData = async (code: string) => {
     const { moves, extras: extrasCode } = splitReplayCode(code);
     const bytes = bigintToBytes(bytesToBigint(kernelB32Decode(moves)));
     await ensureBotsAsync();
@@ -975,7 +979,7 @@ const buildReplayData = async (code: string, gameId: string) => {
     const fool = summary.fool >= 0 ? summary.fool : null;
     // The game, replayed by the engine: one frame per step, each the board the
     // engine really committed and the events it really produced.
-    const frames = buildReplayFrames(bytes, gameId, names, { fool });
+    const frames = buildReplayFrames(bytes, REPLAY_KEY, names, { fool });
     const reverses = buildReverseFrames(frames);
     const initial = preDealGame(frames[0]);
     const times = stepTimes(frames, extras.startTime, extras.moveGaps);
@@ -988,6 +992,10 @@ export const ReplayScreen = ({ code }: { code: string }) => {
     const [mounted, setMounted] = useState(false);
     useEffect(() => setMounted(true), []);
 
+    // The link names the replay (the Oracle seeds its decisions by it); the store
+    // holds its boards under a short key of its own, as the tutorial's does. A
+    // board's game id is a table's, and a share link - its moves and its extras -
+    // is longer than a table's id may be: the kernel's board writer refuses it.
     const gameId = code.toLowerCase();
 
     // Async: the replay runs in bots.wasm, which the browser must compile
@@ -997,14 +1005,14 @@ export const ReplayScreen = ({ code }: { code: string }) => {
         if (!mounted) return;
         let cancelled = false;
         setResult(undefined); // a code change must not keep showing the old replay
-        buildReplayData(code, gameId)
+        buildReplayData(code)
             .then((r) => { if (!cancelled) setResult(r); })
             .catch((e) => {
                 console.error('Replay decode failed:', e);
                 if (!cancelled) setResult(null);
             });
         return () => { cancelled = true; };
-    }, [code, gameId, mounted]);
+    }, [code, mounted]);
 
     if (!mounted || result === undefined) {
         return null;
@@ -1027,7 +1035,7 @@ export const ReplayScreen = ({ code }: { code: string }) => {
     return (
         <div data-game-container className="game-container">
             <WoolBackgroundLayer />
-            <ReplayServerProvider gameId={gameId} initialGame={result.initial}>
+            <ReplayServerProvider gameId={REPLAY_KEY} initialGame={result.initial}>
                 <FernFractalProvider>
                     <AnimationProvider>
                         <GameProvider>

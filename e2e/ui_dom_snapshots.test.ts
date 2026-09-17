@@ -33,6 +33,9 @@ import { encodeAction } from '../sdk/ts/wire/awire.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
+// A replay's clock and the history's dates are drawn in local time: pin the zone so a
+// golden reads the same on every machine.
+process.env.TZ = 'UTC';
 
 const GOLDEN_DIR = new URL('./fixtures/ui_dom/', import.meta.url);
 const UPDATE = process.env.UPDATE_UI_GOLDENS === '1';
@@ -46,6 +49,7 @@ for (const k of ['window', 'document', 'HTMLElement', 'HTMLCanvasElement', 'Node
 }
 try { Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true }); } catch { /* ok */ }
 g.IS_REACT_ACT_ENVIRONMENT = true;
+g.self ??= dom.window;   // next/link reads it (the invalid-replay page links home)
 g.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
 dom.window.matchMedia ??= ((q: string) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} })) as any;
 g.matchMedia = dom.window.matchMedia;
@@ -459,3 +463,30 @@ test('a replay, three bouts in, hands revealed', async () => {
 });
 
 void IDLE;
+
+// A shared replay with its extras: the seats named, the clock shown, and the last
+// step's closing line naming the fool. A real share link is longer than a table id
+// may be (the moves and the extras), and from Phase 6a until Phase 7 such a link
+// rendered "invalid replay": the replay's boards carried the link as their game id,
+// and the kernel's board writer refuses an id past its capacity. So this golden
+// could not be recorded on the code before; it was recorded with the fix and read
+// frame by frame (the named seats, the fool's closing line, the last board).
+test('a replay with names, at its last step', async () => {
+    const { TUTORIAL_MOVES_CODE } = await import('../src/components/tutorialGame.ts');
+    const { replaySummary, kernelB32Decode } = await import('../sdk/ts/wasm/bots.ts');
+    const { encodeExtras, joinReplayCode } = await import('../server/api/common/replay/extras.ts');
+    await (await import('../sdk/ts/wasm/bots.ts')).ensureBotsAsync();
+    const summary = replaySummary(kernelB32Decode(TUTORIAL_MOVES_CODE));
+    assert.ok(summary, 'the code has a summary');
+    const times = Array.from({ length: summary!.moves + 1 }, (_, k) => 1_780_000_000 + k * 9);
+    const code = joinReplayCode(TUTORIAL_MOVES_CODE, encodeExtras(['Ada', 'Boris', 'Cy'], times));
+    assert.ok(code.length > 64, `a share link longer than a table id (${code.length} characters)`);
+    await screen('replay_named_end', 93, () => {}, () => replayPage(code), async (host, wait) => {
+        assert.ok(host.querySelector('button[title="Next bout"]'), `the replay renders: ${host.textContent?.slice(0, 120)}`);
+        for (let i = 0; i < 40; i++) {
+            const next = host.querySelector('button[title="Next bout"]');
+            if (!next) break;
+            await click(host, 'button[title="Next bout"]', wait);
+        }
+    });
+});
