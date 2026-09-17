@@ -1480,3 +1480,24 @@ iOS links the C natively, so Swift already sees C structs through the bridging h
 
 No full `npm run test:e2e` inside Phases 9 or 10: each step runs only the targeted e2e files it touches, plus the C suites, structgen suites, wasm freshness, tsc, typecheck, test:mem and swift-parity.
 The integrator runs the full suite ONCE after Phase 10, together with test:validate and check:determinism, before the branch is handed over.
+
+### Phase 11: update the doctrine document (owner-approved 2026-09-17)
+
+`docs/ARCHITECTURE_AS_A_PATTERN.md` (391 lines, last substantive write 1b272382 "docs: generalize the WASM architecture into a reusable pattern", then only moved by the A10 refactors) generalizes this repo's split into C and everything else, for reuse in other repos.
+This migration went considerably further than the version that document describes, so it is now behind in several concrete ways.
+Rewrite it against what the repo actually does, keeping its three-part shape (the pattern; how to build an app this way; the performance playbook) and its "written for someone who has never seen Durak" rule.
+
+What must land in it, each with the evidence from this branch:
+
+1. **The kernel owns the SHAPE, not just the rules.** The document still describes TS as "a thin marshaling bridge" around shared rules. The end state is stronger: no TypeScript type declares the domain's shape, no hand-written TS or Swift knows a byte layout, and the host keeps only HTTP, auth, DB calls, realtime, timers and rendering. Cite `e2e/no_ts_game_shape.test.ts` and `e2e/table_no_game_object.test.ts` as the mechanism that keeps it true.
+2. **Generated bindings as the replacement for hand-written marshalling.** `tools/structgen` (libclang, one C file): per-build layout modules, snapshot readers and writers, string helpers, generated constants, a layout hash the module carries so a mismatched pair refuses to run, and `gen.sh --check` in CI. Include the measured comparison against the alternatives (Component Model / jco: about 15x the glue, 13x slower calls, a required allocator; Emscripten embind: a runtime, an allocator, libc) and the conclusion that the nearest relative is `bindgen`, not `emcc`.
+3. **The import-free kernel as a deliberate property**, with the pros and cons written out: one instantiation shape across five hosts, no host can hand the kernel anything, determinism is structural; against that, no callbacks, no host clock, everything the kernel needs ships in it, and pull-based APIs instead of timers (Phase 9's per-frame animation call is the worked example).
+4. **The data-plane rule**: fixed-size value structs cross the boundary; variable-length wires stay entirely in C; pointers may be read, never written, from the host (structgen refuses a pointer in a writer).
+5. **Expand / switch / contract for the durable store**, as three owner deploys, with the kernel's blobs plus scalars the SQL filters on, and the measured result of taking JSON out (commit payload -60 percent, latency unchanged, so bytes not encoding were the win).
+6. **What the discipline actually catches**, as the honest argument for the pattern: this migration surfaced an anon-callable `commit_game`, a forged-row path into other players' ELO, non-members editing lobbies, 15 full-state readers reachable from the web bundle, two unauthenticated per-seat endpoints in the native server, a realtime policy that refused everyone, three animation double-draw bugs, and two bot determinism bugs. Name the test seams that found each (payload noninterference, static bundle boundary, seat-from-auth, frame-by-frame traces, two-instance determinism).
+7. **Test doctrine**, generalized: red-first by assertion, mutation-check anything written after the code, retire a parity test once its second implementation is gone (keep cross-language parity while two implementations still ship), and prefer one gate that cannot be forgotten (a layout hash, a freshness check, a static import boundary) over a convention.
+8. **The fit spectrum and taxes sections**, refreshed with what this migration actually cost: wasm grew (65,307 -> about 77 KB gz) while the shipped web bundle fell (330,504 -> about 301,700 B gz), and the owner's priority order (C over TS first, then speed and size, both measured every phase).
+
+Keep it honest about what did NOT move: rendering, scheduling, HTTP/auth/DB, and the deliberate independent wire walks in the security test.
+Cross-reference `docs/C_GAME_SHAPE_MIGRATION.md`, `docs/KERNEL_LIFT_BRIEF.md` and `docs/C_CORE_CONSOLIDATION.md` rather than repeating them.
+No code changes in this phase; docs only, so its gate is a read-through plus the repo's markdown conventions (one sentence per line, no em dashes).
