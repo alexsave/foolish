@@ -87,7 +87,12 @@ function compareProducts(label: string, row: Row, p: Exclude<ReturnType<ServerTa
             { viewerSeat: old.viewerSeat, ...withoutProse({ events: old.events }), game: old.game }, `${label}: viewer ${viewer} push`);
         counts.pushes++;
         counts.events += read.steps.length;
-        // The as2 form of a move's push (servers before Phase 5b: the sequence alone) reads the same with the
+        // What a server since Phase 4b sends until Phase 5b: these very bytes, labelled as2.
+        const labelled = clientTable().readPush(as3, { as3: false, gameId: row.gid });
+        assert.ok(labelled, `${label}: viewer ${viewer} as3 bytes labelled as2 read (${JSON.stringify(clientTable().lastRefusal())})`);
+        assert.deepEqual(pushToSequence(labelled, { now: NOW }), mine, `${label}: viewer ${viewer} as3 bytes labelled as2`);
+        counts.pushes++;
+        // The as2 form of a move's push (servers before Phase 4b: the sequence alone) reads the same with the
         // kept identity. A roster change's push carries its roster after the flags byte, so it has no such form.
         if (p.rosterChanged) continue;
         const as2 = clientTable().readPush(as3.subarray(0, as3.length - 1), { as3: false, gameId: row.gid });

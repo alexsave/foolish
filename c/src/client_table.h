@@ -128,7 +128,9 @@ int client_adopt_envelope(ClientTable *c, const uint8_t *p, int len);
 int client_adopt_board(ClientTable *c, const Game *g, int viewer);
 
 // Opens a push for iteration. `as3`: the payload carries the flags byte and
-// maybe a roster trailer (evwire.h); otherwise it is an as2 sequence alone.
+// maybe a roster trailer (evwire.h); otherwise it is an as2 sequence alone, or
+// the as3 push whole (a server since Phase 4b labels its as3 pushes as2 until
+// Phase 5b), and then the bytes after the sequence must be exactly an as3 block.
 // The roster comes from the push when it carries one, else from `identity`
 // (bytes client_identity wrote, len 0 for none). `version` is the realtime
 // message's committed version. The whole push is checked here, every event and

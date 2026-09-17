@@ -8685,7 +8685,12 @@ static void test_client_push_steps_and_refusals(void) {
     CHECK(client_push_open(&ct, ct_push, pl, 1, ct_id, idn, 5) == CLIENT_OK, "the control opens");
     client_push_final(&ct);
     CHECK(client_push_open(&ct, ct_push, pl - 1, 1, ct_id, idn, 5) == CLIENT_E_PUSH, "an as3 push without its flags byte is refused");
-    CHECK(client_push_open(&ct, ct_push, pl, 0, ct_id, idn, 5) == CLIENT_E_PUSH, "an as2 push with a byte after its sequence is refused");
+    CHECK(client_push_open(&ct, ct_push, pl, 0, ct_id, idn, 5) == CLIENT_OK,
+          "an as3 push labelled as2 (a server since Phase 4b, before 5b) reads");
+    client_push_final(&ct);
+    ct_push[pl - 1] = 0x40;
+    CHECK(client_push_open(&ct, ct_push, pl, 0, ct_id, idn, 5) == CLIENT_E_PUSH, "an as2 push with bytes after its sequence that are no as3 block is refused");
+    ct_push[pl - 1] = 0;
     ct_push[pl - 1] = 2;
     CHECK(client_push_open(&ct, ct_push, pl, 1, ct_id, idn, 5) == CLIENT_E_PUSH, "an unknown flag is refused");
     ct_push[pl - 1] = 0;
@@ -8716,6 +8721,8 @@ static void test_client_push_steps_and_refusals(void) {
     tb_lobby();
     CHECK(table_join(&tb, RS("d"), RS("Dora")) == TABLE_OK, "a join");
     pl = table_push(&tb, RS("g-9"), 0, ct_push, sizeof(ct_push));
+    CHECK(client_push_open(&ct, ct_push, pl, 0, 0, 0, 1) == CLIENT_OK && client_push_next(&ct) == 1 && client_push_final(&ct) == CLIENT_OK
+          && ct.view.num_players == 4 && ct.view.seats[3].name_len == 4, "labelled as2, a join's push still names the new seat");
     CHECK(client_push_open(&ct, ct_push, pl, 1, 0, 0, 1) == CLIENT_OK && client_push_next(&ct) == 1 && client_push_final(&ct) == CLIENT_OK
           && ct.view.num_players == 4 && ct.view.seats[3].name_len == 4 && memcmp(ct.view.seats[3].name, "Dora", 4) == 0
           && ct.view.gid_len == 3 && memcmp(ct.view.game_id, "g-9", 3) == 0, "a join's push names the new seat without an identity");

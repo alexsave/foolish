@@ -190,7 +190,17 @@ int client_push_open(ClientTable *c, const uint8_t *p, int len, int as3,
     int seq = len, flags = 0, block = 0, rc, status = 0;
     c->identity_at = -1;
     c->has_roster = false;
-    if (as3 && evwire_as3_split(p, len, &seq, &flags, &block) != 0) return CLIENT_E_PUSH;
+    if (as3) {
+        if (evwire_as3_split(p, len, &seq, &flags, &block) != 0) return CLIENT_E_PUSH;
+    } else {
+        // An as2 payload is the sequence alone - or the whole as3 push, which a
+        // server since Phase 4b sends labelled as2 until Phase 5b: then the bytes
+        // after the sequence must be exactly an as3 block, and are read as one.
+        const unsigned char *end = 0;
+        int end_len = 0;
+        if (evwire_read(p, len, 0, &end, &end_len, 0, 0) < 0) return CLIENT_E_PUSH;
+        if ((int)(end - p) + end_len != len && evwire_as3_split(p, len, &seq, &flags, &block) != 0) return CLIENT_E_PUSH;
+    }
     const int named = (flags & EVW_AS3_ROSTER) || identity_len > 0;
     if (flags & EVW_AS3_ROSTER) {
         if ((rc = identity_read(c, p + block, len - block, &status, CLIENT_E_TRAILER)) != CLIENT_OK) return rc;
