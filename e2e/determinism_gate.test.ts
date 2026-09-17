@@ -17,13 +17,15 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 
-// @ts-expect-error - plain .mjs, no types, deliberately runnable by bare node.
+// A plain .mjs, deliberately runnable by bare node; allowJs types it from its JS.
 import { scan, RULES, ALLOW } from '../scripts/check_determinism.mjs';
+
+type AllowEntry = (typeof ALLOW)[number];
 
 type Files = Record<string, string>;
 
 /** Write a fixture tree and scan it with no allowlist unless one is given. */
-function scanFixture(files: Files, allow: unknown[] = []): string[] {
+function scanFixture(files: Files, allow: AllowEntry[] = []): string[] {
     const root = mkdtempSync(join(tmpdir(), 'detgate-'));
     try {
         for (const [rel, src] of Object.entries(files)) {
@@ -37,7 +39,7 @@ function scanFixture(files: Files, allow: unknown[] = []): string[] {
     }
 }
 
-const red = (files: Files, allow: unknown[] = []) => scanFixture(files, allow);
+const red = (files: Files, allow: AllowEntry[] = []) => scanFixture(files, allow);
 
 test('the gate goes red on every kind of draw it claims to catch', () => {
     const cases: [string, Files][] = [

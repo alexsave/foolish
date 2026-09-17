@@ -4,7 +4,7 @@
  * =============================================================================
  * The invariant, in the owner's words: the only true nondeterministic
  * randomness should be when we seed a live game. That is ONE crypto draw, at
- * the deal (injectDealSeed, sdk/ts/wasm/engine.ts). Mid-game engine randomness
+ * the deal (drawDealSeed, server/impls/supabase/functions/_shared/adapter/table_io.ts). Mid-game engine randomness
  * and bot decisions are both reseeded from that deal seed, so a whole game
  * replays from it, and a test that pins the seed pins the game.
  *
@@ -127,28 +127,6 @@ export const ALLOW = [
             + 'see "Queued: the iOS lobby needs the bot picker" in docs/KERNEL_LIFT_BRIEF.md.',
     },
     {
-        rule: 'random-bytes',
-        file: 'sdk/ts/wasm/engine.ts',
-        calls: 1,
-        // THE draw. Everything in this file exists to protect this one line.
-        reason:
-            'THE one entropic draw in the system: the 32-byte deal seed, once per live '
-            + 'game, in injectDealSeed. The seed is saved to games.game_seed, so the game '
-            + 'replays from it; tests pin it with __setDealSeedOverride.',
-    },
-    {
-        rule: 'random-uuid',
-        file: 'server/api/common/common_utils.ts',
-        calls: 1,
-        // createId(). Note the caveat - it is worth someone's attention, but it
-        // is a width problem, not a determinism problem.
-        reason:
-            'createId(): the game id, which is also the code a player shares to join, so '
-            + 'it must be unguessable. Part of "seeding a live game", not a defect. '
-            + 'CAVEAT: it is randomUUID().slice(0, 6) - 24 bits, which collides at a few '
-            + 'thousand live games. Widen it; do not derive it.',
-    },
-    {
         rule: 'random-uuid',
         file: 'server/impls/supabase/functions/_shared/adapter/utils.ts',
         calls: 1,
@@ -199,11 +177,12 @@ export const ALLOW = [
     {
         rule: 'clock',
         file: 'e2e/wasm_kernel_fuzz.test.ts',
-        calls: 4,
+        calls: 2,
+        // One guard, survives(): the start read and the elapsed read beside it.
         reason:
-            'Two hang guards over malformed kernel input (2s and 3s ceilings on work that '
-            + 'takes milliseconds). The clock is what "did not hang" means. The margin is '
-            + 'three orders of magnitude, so machine speed cannot flip the verdict.',
+            'One hang guard over malformed kernel input (a 2s ceiling on work that takes '
+            + 'milliseconds). The clock is what "did not hang" means. The margin is three '
+            + 'orders of magnitude, so machine speed cannot flip the verdict.',
     },
     {
         rule: 'clock',
@@ -266,8 +245,10 @@ function* walk(dir) {
  * Run every rule over `roots` under `root`. Returns the problems as strings -
  * empty means the gate passes. Exported so e2e/determinism_gate.test.ts can
  * point it at fixtures and watch it go red.
+ *
+ * @param {{ root: string, roots?: string[], rules?: typeof RULES, allow?: typeof ALLOW }} options
  */
-export function scan({ root, roots = ROOTS, rules = RULES, allow = ALLOW } = {}) {
+export function scan({ root, roots = ROOTS, rules = RULES, allow = ALLOW }) {
     // (rule id -> (relative path -> line numbers))
     const hits = new Map(rules.map((r) => [r.id, new Map()]));
 
@@ -334,8 +315,8 @@ if (process.argv[1] && fileURLToPath(new URL(`file://${process.argv[1]}`)).endsW
         process.stderr.write(
             'determinism gate failed.\n\n'
             + 'The invariant: the only true nondeterministic draw in the system is the one\n'
-            + 'that seeds a live game - 32 crypto bytes at the deal (injectDealSeed in\n'
-            + 'sdk/ts/wasm/engine.ts). Mid-game engine randomness and bot decisions are both\n'
+            + 'that seeds a live game - 32 crypto bytes at the deal (drawDealSeed in\n'
+            + 'server/impls/supabase/functions/_shared/adapter/table_io.ts). Mid-game engine randomness and bot decisions are both\n'
             + 'reseeded from that deal seed, so a whole game replays from it. Entropy in\n'
             + 'e2e/, sdk/ or server/ breaks that, and a clock read that decides a test\n'
             + 'verdict breaks it from the outside.\n\n'

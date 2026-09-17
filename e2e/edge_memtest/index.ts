@@ -9,7 +9,11 @@
 // its deal seed, import the session log when a belief bot is about to choose,
 // table_bot_drive, commit the products), to reproduce the production "Memory
 // limit exceeded" kills under the real edge runtime via
-// `supabase functions serve`. Query: ?keys=cordite,octogen&games=1
+// `supabase functions serve`. Query: ?keys=cordite,octogen&games=1&seed=1
+//
+// The deals are a function of `seed` (default 1), never of crypto: a memory
+// kill this reproduces must reproduce again from the same URL, and the one
+// entropic draw in the system is the live deal (scripts/check_determinism.mjs).
 //
 // A key this build cannot dispatch is a 400, never a game. The whole point of
 // this diagnostic is to measure a NAMED bot under the edge budget, and an
@@ -60,10 +64,17 @@ function dealLobby(table: ServerTable, keys: string[], seed: Uint8Array): { prod
 const concat = (a: Uint8Array, b: Uint8Array) => { const o = new Uint8Array(a.length + b.length); o.set(a); o.set(b, a.length); return o; };
 const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 
+/** Game `gi`'s 32-byte deal seed under run seed `base`: an LCG stream, so a URL replays its games. */
+function dealSeed(base: number, gi: number): Uint8Array {
+    let s = (Math.imul(base >>> 0, 2654435761) + gi) >>> 0;
+    return Uint8Array.from({ length: 32 }, () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s >>> 24; });
+}
+
 serve(async (req: Request) => {
     const url = new URL(req.url);
     const keys = (url.searchParams.get('keys') ?? 'cordite,octogen').split(',');
     const games = Number(url.searchParams.get('games') ?? '1');
+    const runSeed = Number(url.searchParams.get('seed') ?? '1');
     const t0 = Date.now();
     const out: Record<string, unknown>[] = [];
 
@@ -92,7 +103,7 @@ serve(async (req: Request) => {
 
     // Identity, before anything is measured: the table refuses a key this build
     // does not link, and a refused key is the caller's bug, answered with a 400.
-    const seed = crypto.getRandomValues(new Uint8Array(32));
+    const seed = dealSeed(runSeed, 0);
     const probe = dealLobby(table, keys, seed);
     if ('unknown' in probe) {
         console.log(`[memtest] unknown bot key(s): ${probe.unknown.join(', ')}`);
@@ -104,7 +115,7 @@ serve(async (req: Request) => {
 
     const maxMoves = Number(url.searchParams.get('maxmoves') ?? '1000000');
     for (let gi = 0; gi < games; gi++) {
-        const gameSeed = gi === 0 ? seed : crypto.getRandomValues(new Uint8Array(32));
+        const gameSeed = gi === 0 ? seed : dealSeed(runSeed, gi);
         const dealt = gi === 0 ? probe : dealLobby(table, keys, gameSeed);
         if (!('products' in dealt)) throw new Error('[memtest] the lobby changed between games');
         let row = { state: dealt.products.state, roster: dealt.products.roster, log: dealt.products.logs ?? new Uint8Array(0), version: 1 };
