@@ -30,8 +30,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { decodeReplay } from '../server/api/common/replay/decode.ts';
-import { bytesToBigint } from '../server/api/common/replay/codec.ts';
 import { gunzip } from '../sdk/ts/wasm/gunzip.ts';
 import { buildReplayFrames } from '../src/replay/frames.ts';
 import { buildOracleJob } from '../src/oracle/replayOracleInput.ts';
@@ -56,7 +54,7 @@ const ORACLE_BYTES = gunzip(new Uint8Array(readFileSync('public/oracle.wasm.gz')
 const FIX_MC = { np: 2, seed: 7, idx: 39 };
 const FIX_EXACT = { np: 2, seed: 7, idx: 49 };
 
-type Played = { decoded: Awaited<ReturnType<typeof decodeReplay>>; frames: ReturnType<typeof buildReplayFrames> };
+type Played = { code: Uint8Array; frames: ReturnType<typeof buildReplayFrames> };
 const gameCache = new Map<string, Played>();
 
 async function jobAt(np: number, seed: number, idx: number): Promise<OracleJob> {
@@ -65,11 +63,10 @@ async function jobAt(np: number, seed: number, idx: number): Promise<OracleJob> 
     if (!hit) {
         const played = await playSeededV6(np, seed);
         assert.ok(played, 'the seeded game finished');
-        const decoded = await decodeReplay(bytesToBigint(played!.code));
-        hit = { decoded, frames: buildReplayFrames(played!.code, 'g', null, { fool: decoded.fool }) };
+        hit = { code: played!.code, frames: buildReplayFrames(played!.code, 'g', null) };
         gameCache.set(key, hit);
     }
-    const job = buildOracleJob(hit.frames, hit.decoded, idx, true, `mt-${np}-${seed}-${idx}`);
+    const job = buildOracleJob(hit.frames, hit.code, idx, true, `mt-${np}-${seed}-${idx}`);
     assert.ok(job, `step ${idx} of the ${np}p seed-${seed} game is a decision`);
     return job!;
 }
@@ -94,7 +91,7 @@ async function modeA(job: OracleJob, minN: number, batchCap: number) {
     const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey });
     let batches = 0;
     for (let b = 0; b < batchCap; b++) {
-        const r = inst.analyzeOnce(job.gameBlob, job.seat, job.logsWire, job.memoryOn, 1009 + b * 7919);
+        const r = inst.analyzeOnce(job, 1009 + b * 7919);
         if (!('record' in r)) continue;
         acc.add(r.record);
         batches++;

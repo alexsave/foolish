@@ -2,8 +2,8 @@
  * Infinite Oracle - Mode B session (docs/INFINITE_ORACLE_DESIGN.md §8b)
  * =============================================================================
  * Everything Mode B does that is NOT "spawn a thread": compile oracle-mt.wasm
- * over ONE shared WebAssembly.Memory, marshal the job into the shared resident
- * game exactly once, hand out per-thread bootstrap arguments, arm a generation,
+ * over ONE shared WebAssembly.Memory, import the job's position into the shared
+ * resident game exactly once, hand out per-thread bootstrap arguments, arm a generation,
  * and read the C accumulator back as OracleCandidate rows.
  *
  * It is deliberately host-agnostic - it never mentions Worker. The browser
@@ -13,8 +13,7 @@
  * hand-copied bootstrap sequences and they had already drifted apart).
  * ========================================================================== */
 
-import { Game } from '@api/core/types.ts';
-import { __marshalGame, __mem, __setResident } from '@sdk/ts/wasm/engine.ts';
+import { memOf, readOgMtCandidates } from '@sdk/ts/gen/oracle_layout.oracle_mt.ts';
 import {
     OracleJob, OracleCandidate, OracleVerdict,
     oracleCardToken, canonicalMoveKey, ORACLE_TRUMP_KEEP,
@@ -81,6 +80,7 @@ export interface MtExports {
     wasm_mt_sumfp(i: number): number;
     wasm_mt_nsim(i: number): number;
     wasm_mt_forced(i: number): number;
+    /** The published candidate table's address (OgMtCandidates), 0 until published. */
     wasm_mt_candidates(): number;
     wasm_mt_solver(): number;
     wasm_mt_verdict(i: number): number;
@@ -143,8 +143,7 @@ export class OracleMtSession {
         this.memory = new WebAssembly.Memory({ initial, maximum: 2048, shared: true });
         const inst = await WebAssembly.instantiate(mod, { env: { memory: this.memory } });
         // A shared-memory module IMPORTS its memory, so exports carry no
-        // `memory` - the engine.ts marshal helpers read ex.memory.buffer, so
-        // attach it.
+        // `memory`; attach it.
         this.ex = { ...(inst.exports as unknown as MtExports), memory: this.memory };
         this.ex.wasm_init();
         this.moduleBytes = bytes;
@@ -161,21 +160,23 @@ export class OracleMtSession {
         const ex = this.ex;
         if (!ex) throw new Error('oracle-mt session not loaded');
 
-        __setResident(null);
-        // masked: every seat but the acting one holds placeholder cards.
-        __marshalGame(ex as never, job.gameBlob as unknown as Game, true);
+        // The board as the acting seat saw it, every card it could not see hidden:
+        // the kernel's bytes (OracleJob.state), judged by the import.
+        const bytes = () => new Uint8Array(this.memory!.buffer);
+        bytes().set(job.state, ex.wasm_io_ptr());
+        if (ex.wasm_import_state(1) < 0) throw new Error('oracle-mt: the position was refused');
         {
-            const buf = __mem(ex as never); const q = ex.wasm_io_ptr();
+            const buf = bytes(); const q = ex.wasm_io_ptr();
             for (let i = 0; i < job.numPlayers; i++) buf[q + i] = 0xff;
             ex.wasm_import_strategy_keys();
         }
         if (job.memoryOn && job.logsWire.length > 2) {
-            __mem(ex as never).set(job.logsWire, ex.wasm_io_ptr());
+            bytes().set(job.logsWire, ex.wasm_io_ptr());
             ex.wasm_import_logs();
         }
         ex.wasm_clearenv();
         for (const [k, v] of Object.entries(env)) {
-            const buf = __mem(ex as never); let q = ex.wasm_io_ptr();
+            const buf = bytes(); let q = ex.wasm_io_ptr();
             for (let i = 0; i < k.length; i++) buf[q++] = k.charCodeAt(i) & 0xff; buf[q++] = 0;
             for (let i = 0; i < v.length; i++) buf[q++] = v.charCodeAt(i) & 0xff; buf[q++] = 0;
             ex.wasm_setenv_from_io();
@@ -251,20 +252,17 @@ export class OracleMtSession {
     readCandidates(job: OracleJob, exact: boolean): OracleCandidate[] {
         const ex = this.ex;
         if (!ex) return [];
-        const trump = job.gameBlob.power_suit;
-        const n = ex.wasm_mt_candidates();       // writes descriptors into io, returns count
-        if (n <= 0) return [];
-        const buf = __mem(ex as never);
-        let p = ex.wasm_io_ptr();
+        const trump = job.powerSuit;
+        const at = ex.wasm_mt_candidates();      // the published table's copy, 0 until published
+        if (at <= 0) return [];
+        const table = readOgMtCandidates(memOf(this.memory!.buffer), at).cand;
         const chosen = ex.wasm_mt_chosen();
-        const decode = (b: number) => oracleCardToken({ suit: b >> 4, value: b & 0xf }, trump);
         const out: OracleCandidate[] = [];
-        for (let i = 0; i < n; i++) {
-            const type = MOVE_TYPE[buf[p++]] ?? '?';
-            const nc = buf[p++]; const cards: string[] = [];
-            for (let k = 0; k < nc; k++) cards.push(decode(buf[p++]));
-            const nt = buf[p++]; const target: string[] = [];
-            for (let k = 0; k < nt; k++) target.push(decode(buf[p++]));
+        for (let i = 0; i < table.length; i++) {
+            const d = table[i];
+            const type = MOVE_TYPE[d.type] ?? '?';
+            const cards = d.cards.map((c) => oracleCardToken(c, trump));
+            const target = d.targets.map((c) => oracleCardToken(c, trump));
             const key = canonicalMoveKey(type, cards, target);
             const nsim = ex.wasm_mt_nsim(i);
             const mean = nsim > 0 ? ex.wasm_mt_sumfp(i) / nsim : null;

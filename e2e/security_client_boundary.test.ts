@@ -61,16 +61,22 @@ export const CLIENT_BOUNDARY = {
         // the server bot drive (sdk/ts/wasm/bots.ts), which exports post-state blobs
         'wasmBotDrive',
     ],
-    /** Modules the client must reach: it reads the wire through the kernel's client slot. */
+    /** Modules the client must reach: it reads the wire through the kernel's client slot, and the Oracle's
+     *  Mode B candidate table through its generated reader (Phase 7). */
     requiredModules: [
         /(^|\/)sdk\/ts\/gen\/view_layout\.bots\.ts$/,
         /(^|\/)sdk\/ts\/table\/client_table\.ts$/,
+        /(^|\/)sdk\/ts\/gen\/oracle_layout\.oracle_mt\.ts$/,
     ],
     /** The TypeScript wire readers the client slot replaced (Phase 5a), and the client rules and boards it replaced (Phase 6b), by name. */
     retiredReaders: ['decodePackedGame', 'viewToGame', 'decodeEventWire', 'kernelViewFromPacked', 'kernelEventsFromPacked', 'decodePackedRoster',
-        'initClientGuards', 'guardsReady', 'resetToLobby', 'applyOverlayEntries', 'isHandPermutation'],
+        'initClientGuards', 'guardsReady', 'resetToLobby', 'applyOverlayEntries', 'isHandPermutation',
+        // the Oracle's TS position and memory builders: the kernel writes both (Phase 7)
+        'encodeLogsWire', 'moveLogIndices'],
     /** Modules the client slot replaced: the second kernel the web used to load for its move gates (guards.wasm) (Phase 6b). */
-    retiredModules: [/(^|\/)sdk\/ts\/wasm\/guards_wasm\.ts$/, /(^|\/)src\/wasm\/clientGuards\.ts$/],
+    retiredModules: [/(^|\/)sdk\/ts\/wasm\/guards_wasm\.ts$/, /(^|\/)src\/wasm\/clientGuards\.ts$/,
+        // the Oracle's TS log wire encoder: the kernel writes the Oracle's memory (Phase 7)
+        /(^|\/)src\/oracle\/logsWire\.ts$/],
     /** Kernel exports that serialize the resident game unmasked. */
     deniedWasmExports: ['wasm_export_state', 'wasm_state_serialize', 'wasm_state_deserialize',
         // the C Table: loads a durable blob, and writes it back out in a commit

@@ -32,11 +32,10 @@ import {
 import { shouldBotActCore, processBotAction } from '../server/api/common/pure_bot_actions.ts';
 import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
 import { decodeReplay } from '../server/api/common/replay/decode.ts';
-import { kernelReplayEncodeV6FromGame } from '../sdk/ts/wasm/bots.ts';
+import { kernelReplayEncodeV6FromGame, replayStepCount, replayStepLogs } from '../sdk/ts/wasm/bots.ts';
 import { bytesToBigint } from '../server/api/common/replay/codec.ts';
 import { __setDealSeedOverride, __LOG_TYPE_TO_INT } from '../sdk/ts/wasm/engine.ts';
 import { buildReplayFrames } from '../src/replay/frames.ts';
-import { encodeLogsWire } from '../src/oracle/logsWire.ts';
 
 if (!process.env.E2E_VERBOSE) {
   console.log = () => {}; console.warn = () => {}; console.error = () => {}; console.info = () => {};
@@ -105,7 +104,7 @@ const v6Of = (game: Game) =>
 
 test('v6 belief wire DRAW-masks — no drawn-card identity leaks to the Oracle', async () => {
   const drawInt = __LOG_TYPE_TO_INT.get(LOG_TYPE.DRAW)!;
-  let realDraws = 0, leaked = 0, checked = 0;
+  let realDraws = 0, leaked = 0, checked = 0, memoryDraws = 0;
   for (let np = 2; np <= 4; np++) {
     for (let gi = 0; gi < GAMES_PER_PC; gi++) {
       const game = await playSeeded(np, gi);
@@ -114,17 +113,22 @@ test('v6 belief wire DRAW-masks — no drawn-card identity leaks to the Oracle',
       for (const l of dec.logs)                        // sanity: v6 draws ARE real
         if (l.log_type === LOG_TYPE.DRAW) for (const p of l.card_pairs) if (p.primary.suit >= 0) realDraws++;
 
-      const wire = encodeLogsWire(dec.logs);           // the memory-on belief feed
+      // The memory-on belief feed the Oracle imports, as the kernel writes it: the
+      // log before the game's last move, the longest memory the code has.
+      const code = kernelReplayEncodeV6FromGame(game, hexToBytes(game.game_seed!));
+      let wire: Uint8Array | null = null;
+      for (let step = replayStepCount(code) - 1; step >= 1 && !wire; step--) wire = replayStepLogs(code, step);
+      assert.ok(wire, 'the game has a move with a memory');
       let pos = 0; const rd = () => wire[pos++];
       const n = rd() | (rd() << 8);
       for (let i = 0; i < n; i++) {
         const type = rd(); rd(); rd(); const npair = rd();
-        for (let j = 0; j < npair; j++) { const prim = rd(); rd(); if (type === drawInt && prim !== 0xFE) leaked++; }
+        for (let j = 0; j < npair; j++) { const prim = rd(); rd(); if (type === drawInt) { memoryDraws++; if (prim !== 0xFE) leaked++; } }
       }
       checked++;
     }
   }
-  assert.ok(checked > 0 && realDraws > 0, 'exercised v6 replays with real draws');
+  assert.ok(checked > 0 && realDraws > 0 && memoryDraws > 0, 'exercised v6 replays with real draws in their memory');
   assert.equal(leaked, 0, `${leaked} drawn-card identities leaked into the belief wire`);
 });
 

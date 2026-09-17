@@ -516,6 +516,8 @@ const IconOracle = () => (
 
 interface StageProps {
     decoded: DecodedReplay;
+    /** The replay code the frames were built from: the Oracle's position is read off it. */
+    code: Uint8Array;
     frames: ReplayFrame[];
     reverses: (AnimationSequenceMessage | null)[];
     gameId: string;
@@ -523,7 +525,7 @@ interface StageProps {
     times: (number | null)[];
 }
 
-const ReplayStage = ({ decoded, frames, reverses, gameId, names, times }: StageProps) => {
+const ReplayStage = ({ decoded, code, frames, reverses, gameId, names, times }: StageProps) => {
     usePreventScroll();
     const { updateGameState } = useServerActions();
     const { isAnimating, resetAnimations } = useAnimation();
@@ -570,11 +572,11 @@ const ReplayStage = ({ decoded, frames, reverses, gameId, names, times }: StageP
         if (!oracleOpen) return;
         const ctrl = getOracle();
         if (playing || isAnimating) { ctrl.stopCurrent(); return; }
-        const job = buildOracleJob(frames, decoded, stepIdx, oracleMemory, gameId);
+        const job = buildOracleJob(frames, code, stepIdx, oracleMemory, gameId);
         if (!job) { setOracleSnap(null); return; }
         void ctrl.start(job);
         return () => ctrl.stopCurrent();
-    }, [oracleOpen, stepIdx, isAnimating, playing, oracleMemory, decoded, frames, gameId, getOracle]);
+    }, [oracleOpen, stepIdx, isAnimating, playing, oracleMemory, code, frames, gameId, getOracle]);
     useEffect(() => () => { oracleRef.current?.dispose(); oracleRef.current = null; }, []);
 
     // publish one step's sequence into the feed; a fresh sequence_id (and a
@@ -931,7 +933,7 @@ const ReplayStage = ({ decoded, frames, reverses, gameId, names, times }: StageP
                     snapshot={oracleSnap}
                     onClose={() => setOracleOpen(false)}
                     onToggleMemory={() => setOracleMemory((m) => !m)}
-                    onRetry={() => { const j = buildOracleJob(frames, decoded, stepIdx, oracleMemory, gameId); if (j) void getOracle().start(j); }}
+                    onRetry={() => { const j = buildOracleJob(frames, code, stepIdx, oracleMemory, gameId); if (j) void getOracle().start(j); }}
                 />
             )}
 
@@ -979,11 +981,12 @@ const buildReplayData = async (code: string, gameId: string) => {
     const names = extras.names;
     // The game, replayed by the engine: one frame per step, each the board the
     // engine really committed and the events it really produced.
-    const frames = buildReplayFrames(bigintToBytes(x), gameId, names, { fool: decoded.fool });
+    const bytes = bigintToBytes(x);
+    const frames = buildReplayFrames(bytes, gameId, names, { fool: decoded.fool });
     const reverses = buildReverseFrames(frames);
     const initial = preDealGame(frames[0]);
     const times = stepTimes(frames, extras.startTime, extras.moveGaps);
-    return { decoded, frames, reverses, initial, names, times };
+    return { decoded, code: bytes, frames, reverses, initial, names, times };
 };
 
 export const ReplayScreen = ({ code }: { code: string }) => {
@@ -1038,6 +1041,7 @@ export const ReplayScreen = ({ code }: { code: string }) => {
                             <DragProvider>
                                 <ReplayStage
                                     decoded={result.decoded}
+                                    code={result.code}
                                     frames={result.frames}
                                     reverses={result.reverses}
                                     gameId={gameId}

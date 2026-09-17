@@ -1,7 +1,7 @@
 /* =============================================================================
  * Infinite Oracle — headless suite (docs/INFINITE_ORACLE_DESIGN.md §12.2)
  * Loads the committed public/oracle.wasm.gz and drives the REAL src/oracle
- * modules (logsWire, replayOracleInput, accumulator) + the OracleInstance
+ * modules (replayOracleInput, accumulator) + the OracleInstance
  * bridge against three replays. No Postgres, no browser. Validates the hardest
  * reconstruction (defender/goods/elimination), batching, the memory toggle, the
  * exact endgame regime, and the env-reload hook.
@@ -24,8 +24,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { decodeReplay } from '../server/api/common/replay/decode.ts';
-import { bytesToBigint } from '../server/api/common/replay/codec.ts';
 import { gunzip } from '../sdk/ts/wasm/gunzip.ts';
 import { buildReplayFrames } from '../src/replay/frames.ts';
 import { buildOracleJob, findDecisionIndex } from '../src/oracle/replayOracleInput.ts';
@@ -40,7 +38,7 @@ const ENV_BASE = { OG_KEEP1: '26', OG_KEEP2: '26', OG_W2: '1', OG_W3: '0', OG_EX
 // 4-player middle, and a full 8-way table (52-card deck, most eliminations).
 const SHAPES: [string, number, number][] = [['3p', 3, 41], ['4p', 4, 42], ['8p', 8, 43]];
 
-interface Fixture { decoded: Awaited<ReturnType<typeof decodeReplay>>; frames: ReturnType<typeof buildReplayFrames>; id: string }
+interface Fixture { code: Uint8Array; frames: ReturnType<typeof buildReplayFrames>; id: string }
 const cache = new Map<string, Fixture>();
 
 async function fixture(label: string, np: number, s: number): Promise<Fixture> {
@@ -48,9 +46,8 @@ async function fixture(label: string, np: number, s: number): Promise<Fixture> {
     if (hit) return hit;
     const played = await playSeededV6(np, s);
     assert.ok(played, `${label}: the seeded game finished`);
-    const decoded = await decodeReplay(bytesToBigint(played!.code));
-    const frames = buildReplayFrames(played!.code, 'g', null, { fool: decoded.fool });
-    const f = { decoded, frames, id: label };
+    const frames = buildReplayFrames(played!.code, 'g', null);
+    const f = { code: played!.code, frames, id: label };
     cache.set(label, f);
     return f;
 }
@@ -60,20 +57,20 @@ async function freshInstance() {
     return inst;
 }
 
-test('§12.2-1 reconstruction: every decision marshals to a well-formed deliberation', async () => {
+test('§12.2-1 reconstruction: every decision imports to a well-formed deliberation', async () => {
     const inst = await freshInstance();
     let decisions = 0;
     for (const [label, np, seed] of SHAPES) {
-        const { decoded, frames, id } = await fixture(label, np, seed);
+        const { code, frames, id } = await fixture(label, np, seed);
         const seen = new Set<number>();
         for (let idx = 0; idx < frames.length; idx++) {
             const j = findDecisionIndex(frames, idx);
             if (j == null || seen.has(j)) continue;
             seen.add(j);
-            const job = buildOracleJob(frames, decoded, idx, true, id);
+            const job = buildOracleJob(frames, code, idx, true, id);
             assert.ok(job, `job at step ${idx} of ${id}`);
             inst.writeEnv({ ...ENV_BASE, OG_W1: '8' });
-            const r = inst.analyzeOnce(job!.gameBlob, job!.seat, job!.logsWire, true, 0x51 + j);
+            const r = inst.analyzeOnce(job!, 0x51 + j);
             assert.ok('record' in r, `dump parsed at j=${j} (${id})`);
             const rec = (r as { record: any }).record;
             assert.equal(rec.seat, job!.seat, 'dumped seat matches acting seat');
@@ -95,16 +92,16 @@ test('§12.2-1 reconstruction: every decision marshals to a well-formed delibera
 
 test('§12.2-2 batching: keys stable, n increases, worlds vary across seeds', async () => {
     const inst = await freshInstance();
-    const { decoded, frames, id } = await fixture('4p', 4, 42);
+    const { code, frames, id } = await fixture('4p', 4, 42);
     const idx = Math.floor(frames.length * 0.4);
-    const job = buildOracleJob(frames, decoded, idx, true, id)!;
+    const job = buildOracleJob(frames, code, idx, true, id)!;
     assert.ok(job);
     const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey });
     inst.writeEnv({ ...ENV_BASE, OG_W1: '24' });
     let prevKeys = '';
     const means: number[] = [];
     for (let b = 0; b < 5; b++) {
-        const r = inst.analyzeOnce(job.gameBlob, job.seat, job.logsWire, true, 1009 + b * 7919);
+        const r = inst.analyzeOnce(job, 1009 + b * 7919);
         assert.ok('record' in r);
         const rec = (r as { record: any }).record;
         const keys = rec.candidates.map((c: any) => `${c.type}|${c.cards.join()}`).sort().join(';');
@@ -126,18 +123,18 @@ test('§12.2-2 batching: keys stable, n increases, worlds vary across seeds', as
 
 test('§12.2-4 memory toggle: ON proves an endgame verdict that OFF cannot', async () => {
     const inst = await freshInstance();
-    const { decoded, frames, id } = await fixture('3p', 3, 41);
+    const { code, frames, id } = await fixture('3p', 3, 41);
     // find a late heads-up decision where memory ON reaches the exact solver
     let found = false;
     for (let idx = frames.length - 1; idx >= frames.length - 12 && !found; idx--) {
         const j = findDecisionIndex(frames, idx);
         if (j == null || j !== idx) continue;
         const run = (memoryOn: boolean) => {
-            const job = buildOracleJob(frames, decoded, idx, memoryOn, id)!;
+            const job = buildOracleJob(frames, code, idx, memoryOn, id)!;
             const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey });
             inst.writeEnv({ ...ENV_BASE, OG_W1: '16' });
             for (let b = 0; b < 2; b++) {
-                const r = inst.analyzeOnce(job.gameBlob, job.seat, job.logsWire, memoryOn, 31 + b);
+                const r = inst.analyzeOnce(job, 31 + b);
                 if ('record' in r) acc.add((r as any).record);
             }
             return acc.hasWinLoss();
@@ -154,14 +151,14 @@ test('§12.2-4 memory toggle: ON proves an endgame verdict that OFF cannot', asy
 
 test('§12.2-5 exact regime: a proven win/loss verdict appears near the end', async () => {
     const inst = await freshInstance();
-    const { decoded, frames, id } = await fixture('3p', 3, 41);
+    const { code, frames, id } = await fixture('3p', 3, 41);
     let sawExact = false;
     for (let idx = frames.length - 1; idx >= frames.length - 8; idx--) {
         const j = findDecisionIndex(frames, idx);
         if (j == null || j !== idx) continue;
-        const job = buildOracleJob(frames, decoded, idx, true, id)!;
+        const job = buildOracleJob(frames, code, idx, true, id)!;
         inst.writeEnv({ ...ENV_BASE, OG_W1: '8' });
-        const r = inst.analyzeOnce(job.gameBlob, job.seat, job.logsWire, true, 77);
+        const r = inst.analyzeOnce(job, 77);
         if (!('record' in r)) continue;
         const rec = (r as any).record;
         if (rec.solver?.applied && rec.candidates.some((c: any) => c.verdict === 'win' || c.verdict === 'loss')) {
@@ -175,12 +172,12 @@ test('§12.2-5 exact regime: a proven win/loss verdict appears near the end', as
 
 test('§12.2-6 env reload: raising OG_W1 grows nsim between batches', async () => {
     const inst = await freshInstance();
-    const { decoded, frames, id } = await fixture('4p', 4, 42);
+    const { code, frames, id } = await fixture('4p', 4, 42);
     const idx = Math.floor(frames.length * 0.4);
-    const job = buildOracleJob(frames, decoded, idx, true, id)!;
+    const job = buildOracleJob(frames, code, idx, true, id)!;
     const nsimAt = (w1: string) => {
         inst.writeEnv({ ...ENV_BASE, OG_W1: w1 });
-        const r = inst.analyzeOnce(job.gameBlob, job.seat, job.logsWire, true, 5);
+        const r = inst.analyzeOnce(job, 5);
         const rec = (r as any).record;
         return Math.max(...rec.candidates.map((c: any) => c.nsim || 0));
     };

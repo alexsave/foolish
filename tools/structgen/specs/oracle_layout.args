@@ -1,0 +1,9 @@
+# structgen arguments for sdk/ts/gen/oracle_layout.oracle_mt.ts: the Infinite
+# Oracle's Mode B reader of the candidate table oracle-mt.wasm publishes
+# (c/src/oracle_mt.h OgMtCandidates). A snapshot reader only, like the client's
+# view readers. Read by tools/structgen/gen.sh with --cwd c/ and the oracle-mt
+# build's own flags (the header is compiled only under FOOLISH_ORACLE_MT).
+# Lines starting with # are dropped; everything else is split on whitespace.
+--header oracle_mt.h --root OgMtCandidates
+--snapshot OgMtCandidates --snapshot-only
+--count OgMtCandidates.cand=n --count OgMtCand.cards=n_cards --count OgMtCand.targets=n_targets

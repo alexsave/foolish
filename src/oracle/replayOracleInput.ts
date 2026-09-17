@@ -1,29 +1,22 @@
 /* =============================================================================
- * Infinite Oracle — the paused decision, as an OracleJob (§5.1, §8.4)
+ * Infinite Oracle - the paused decision, as an OracleJob (§5.1, §8.4)
  * =============================================================================
- * Builds the marshal-shaped pre-move state, the recorded-move key, and the
- * memory-ON log wire.
+ * The position and the memory are the kernel's: the board the acting seat
+ * decided on, masked as that seat saw it, and the public log before the move,
+ * both written by bots.wasm from the replay code itself
+ * (c/src/replay_steps.h replay_steps_board_v6, replay_steps_memory_v6) and
+ * handed to oracle.wasm unchanged. This file finds the decision under the
+ * cursor and names the recorded move; it reads no byte of either.
  *
- * The position used to be the replay pipeline's RETRODICTED one — exact at game
- * end, a consistent public guess before it. It is now the position the engine
- * actually replayed, hands and all (src/replay/frames.ts), so the Oracle
- * deliberates over what was really on the table. §5.2's approximation is gone,
- * and `approx` with it.
- *
- * The Oracle still does NOT get to see everyone's cards: it reasons from the
- * acting seat's view, so the other seats stay count-only placeholders. Handing
- * it the exact hands we now hold would not be a better analysis, it would be a
- * different game — one where the bot cheats.
+ * The Oracle does NOT get to see everyone's cards: it reasons from the acting
+ * seat's view, so every card that seat could not see is hidden. Handing it the
+ * exact hands a replay holds would not be a better analysis, it would be a
+ * different game - one where the bot cheats.
  * ========================================================================== */
 
-import { Card, LOG_TYPE, LogType, GAME_STATUS, PLAYER_STATUS } from '@api/core/types.ts';
-import { DecodedReplay, SeatLog } from '@api/common/replay/core.ts';
+import { replayStepLogs, replayStepMaskedState } from '@sdk/ts/wasm/bots.ts';
 import { ReplayFrame, REPLAY_STEP } from '../replay/frames';
-import { covered, PLAYER_STATUS as VIEW_PLAYER_STATUS } from '../state/view';
-import { encodeLogsWire } from './logsWire';
-import {
-    OracleJob, OracleGameState, oracleCardToken, canonicalMoveKey,
-} from './types';
+import { OracleJob, oracleCardToken, canonicalMoveKey } from './types';
 
 // The decisions octogen actually deliberates (derived steps excluded).
 const ORACLE_DECISION_KINDS: ReadonlySet<number> = new Set([
@@ -31,8 +24,7 @@ const ORACLE_DECISION_KINDS: ReadonlySet<number> = new Set([
     REPLAY_STEP.PICKUP, REPLAY_STEP.GOOD,
 ]);
 
-// A step's kind -> the dump's move-type string (og_ex OG_EX_MTYPE), and the log
-// type the same move appears as in the decoder's stream.
+// A step's kind -> the dump's move-type string (og_ex OG_EX_MTYPE).
 const KIND_TO_MTYPE: Record<number, string> = {
     [REPLAY_STEP.ATTACK]: 'attack',
     [REPLAY_STEP.COVER]: 'cover',
@@ -41,17 +33,6 @@ const KIND_TO_MTYPE: Record<number, string> = {
     [REPLAY_STEP.GOOD]: 'good',
 };
 
-const KIND_TO_LOG: Record<number, LogType> = {
-    [REPLAY_STEP.ATTACK]: LOG_TYPE.ATTACK,
-    [REPLAY_STEP.COVER]: LOG_TYPE.COVER,
-    [REPLAY_STEP.PASS]: LOG_TYPE.PASS,
-    [REPLAY_STEP.PICKUP]: LOG_TYPE.PICKUP,
-};
-
-const MOVE_LOGS: ReadonlySet<LogType> = new Set([
-    LOG_TYPE.ATTACK, LOG_TYPE.COVER, LOG_TYPE.PASS, LOG_TYPE.PICKUP,
-]);
-
 /** The decision step under the cursor: the nearest decision at or before the
  *  paused step. Returns null when none exists (Oracle button disabled). */
 export function findDecisionIndex(frames: ReplayFrame[], stepIdx: number): number | null {
@@ -59,37 +40,6 @@ export function findDecisionIndex(frames: ReplayFrame[], stepIdx: number): numbe
         if (frames[j].seat !== null && ORACLE_DECISION_KINDS.has(frames[j].kind)) return j;
     }
     return null;
-}
-
-/* -----------------------------------------------------------------------------
- * Pairing the two streams
- * -----------------------------------------------------------------------------
- * The Oracle's memory is the PUBLIC log history before the move, and that lives
- * in the decoder's log stream — which is not the kernel's step stream. They are
- * two orderings of one game and they do not line up record-for-record: a 3p game
- * that logs 92 records when PLAYED decodes to 79, because v6 keeps only a
- * trailing good and the rest are reconstructed, and draws group differently.
- *
- * What they do agree on is the moves. Every attack/cover/pass/pickup is one step
- * and one log, in the same order, so pairing them in sequence is exact. This
- * pairs them once and CHECKS each pair (same move, same seat) rather than
- * trusting the count: if the two streams ever drift, the Oracle refuses to
- * analyse a position instead of quietly analysing the wrong one.
- * -------------------------------------------------------------------------- */
-function moveLogIndices(frames: ReplayFrame[], logs: SeatLog[]): (number | null)[] {
-    const out: (number | null)[] = new Array(frames.length).fill(null);
-    let li = 0;
-    for (let i = 0; i < frames.length; i++) {
-        const want = KIND_TO_LOG[frames[i].kind];
-        if (!want) continue;
-        while (li < logs.length && !MOVE_LOGS.has(logs[li].log_type)) li++;
-        if (li >= logs.length) return out;
-        const log = logs[li];
-        // Same move by the same seat, or the pairing is not a pairing.
-        out[i] = (log.log_type === want && log.seat === frames[i].seat) ? li : null;
-        li++;
-    }
-    return out;
 }
 
 /** Canonical key + human label of a recorded move. */
@@ -109,90 +59,43 @@ function recordedMove(frame: ReplayFrame, trump: number): { key: string; label: 
 
 /**
  * Assemble the analysis job for the decision under the cursor, or null when no
- * decision exists at/before it. `code` seeds the decisionId (§5.1).
+ * decision exists at/before it, or the kernel cannot vouch for its memory (a
+ * good, or a move whose log record does not pair with it). `code` is the replay
+ * code the frames were built from; `gameId` seeds the decisionId (§5.1).
  */
 export function buildOracleJob(
     frames: ReplayFrame[],
-    decoded: DecodedReplay,
+    code: Uint8Array,
     stepIdx: number,
     memoryOn: boolean,
-    code: string,
+    gameId: string,
 ): OracleJob | null {
     const j = findDecisionIndex(frames, stepIdx);
     if (j == null || j < 1) return null;          // step 0 is the deal; j >= 1
     const move = frames[j];
-    const pre = frames[j - 1];                    // the pre-move state
+    const pre = frames[j - 1].game;               // the board the move was made on
     const seat = move.seat;
-    if (seat == null || !pre) return null;
+    if (seat == null) return null;
 
-    const trump = decoded.powerSuit;
-    const n = pre.game.seats.length;
-    // The board's seats as the marshal-shaped state names them (Phase 7 builds
-    // this input in the kernel instead: wasm_replay_step_masked_state).
-    const seatId = (s: number) => `seat-${s}`;
-    const seatsOfMask = (mask: number) => Array.from({ length: n }, (_, s) => s).filter((s) => ((mask >>> s) & 1) !== 0);
+    const state = replayStepMaskedState(code, j, seat);
+    if (!state) return null;
+    const logsWire = memoryOn ? replayStepLogs(code, j) : new Uint8Array(0);
+    if (!logsWire) return null;
 
-    // The acting seat's real hand — what it was actually holding when it chose.
-    const hand = pre.game.replay_hands[seat] ?? [];
-    if (hand.some((c) => c === null)) return null; // v6 never leaves a hole; refuse if it somehow does
-    const actingHand = hand.map((c) => ({ ...(c as Card) }));
-
-    const rec = recordedMove(move, trump);
-
-    const players: OracleGameState['players'] = pre.game.seats.map((p, s) => ({
-        player_id: seatId(s),
-        status: p.status === VIEW_PLAYER_STATUS.OUT ? PLAYER_STATUS.OUT : PLAYER_STATUS.IN,
-        name: p.name,
-        is_ai: false,
-        hand_length: p.handCount,
-        awaiting_attack: false,                   // inert (§8.4)
-        // The acting seat's real hand; every other seat count-only, so the
-        // deliberation stays inside one player's knowledge.
-        hand: s === seat ? actingHand
-                         : Array.from({ length: p.handCount }, () => ({ suit: 0, value: 5 })),
-    }));
-
-    const gameBlob: OracleGameState = {
-        id: `oracle:${code}:${j}`,
-        status: GAME_STATUS.PLAYING,
-        power_suit: trump,
-        first_attacker: pre.game.firstAttacker,
-        defender: pre.game.defender,
-        discard_pile_length: pre.game.discardPileLength,
-        flipped: pre.game.hasFlipped ? { ...pre.game.flipped } : null,
-        good_players: seatsOfMask(pre.game.goodMask).map(seatId),
-        good_timestamp: null,
-        deck: Array.from({ length: pre.game.deckCount }, () => ({ suit: 0, value: 5 })),
-        table_battles: pre.game.battles.map((b) => ({
-            attack: { ...b.attack },
-            defense: covered(b) ? { ...b.defense } : null,
-        })),
-        elimination_order: pre.game.elimination.map(seatId),
-        deterministic_deck: false,
-        players,
-    };
-
-    // Memory: the public log history before this move. A move the two streams
-    // cannot be paired on gets no memory rather than the wrong memory.
-    let logsWire: OracleJob['logsWire'] = new Uint8Array(0);
-    if (memoryOn) {
-        const li = moveLogIndices(frames, decoded.logs)[j];
-        if (li == null) return null;
-        logsWire = encodeLogsWire(decoded.logs.slice(0, li));
-    }
-
+    const rec = recordedMove(move, pre.powerSuit);
     return {
-        decisionId: `${code}:${j}:${memoryOn ? 1 : 0}`,
+        decisionId: `${gameId}:${j}:${memoryOn ? 1 : 0}`,
         seat,
         memoryOn,
-        gameBlob,
+        state,
         logsWire,
+        powerSuit: pre.powerSuit,
         recordedKey: rec.key,
         recordedLabel: rec.label,
-        numPlayers: n,
-        deckAlive: pre.game.deckCount > 0 || pre.game.hasFlipped,
-        // The position is the engine's own now, never a guess (see the header).
+        numPlayers: pre.seats.length,
+        deckAlive: pre.deckCount > 0 || pre.hasFlipped,
+        // The position is the engine's own, never a guess (see the header).
         approx: false,
-        eliminations: pre.game.elimination.length,
+        eliminations: pre.elimination.length,
     };
 }

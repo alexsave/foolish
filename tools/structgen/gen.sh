@@ -60,6 +60,14 @@ VIEW=(--cwd "$root/c" $(spec view_layout))
 set +f
 "$SG" "${VIEW[@]}" --build "bots=$BOTS" --ts "$prod/view_layout.bots.ts"
 
+# The Oracle's Mode B candidate table (c/src/oracle_mt.h), read back from
+# oracle-mt.wasm (specs/oracle_layout.args).
+set -f
+# shellcheck disable=SC2207
+ORACLE=(--cwd "$root/c" $(spec oracle_layout))
+set +f
+"$SG" "${ORACLE[@]}" --build "oracle_mt=$(flags WASM_ORACLE_MT_CFLAGS)" --ts "$prod/oracle_layout.oracle_mt.ts"
+
 # Genericity fixtures (test/verify.test.ts).
 "$SG" --cwd "$here/test" --header kinds.h --root Kinds --build wasm= --const K_ --const KFLAG_ --ts "$fixtures/kinds.ts"
 "$SG" --cwd "$here/test" --header snap.h --root Snap --build wasm= --snapshot Snap --snapshot-only \
