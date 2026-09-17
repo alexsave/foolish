@@ -1496,6 +1496,78 @@ iOS already reaches the same C through `fio_anim_plan` and `fio_anim_beats`.
 
 The two behavioural diffs the gate will have to answer for are already known and written down in the audit: the 25 ms gap, and the reversal order replacing the four insertion branches.
 
+#### Phase 9 as built, part 2: the frame loop, the reversal and the splits (commits `d673f42f`, `400e41eb`, `342622e8`, `f35505f9`, `5ec3511f`)
+
+**Step 3 is done except for two deletions, named at the end of this section.**
+
+`wasm_anim_build_plan`, `wasm_anim_plan_at` and `wasm_anim_build_beats` cross to the browser, with `AnimFrame` joining the structgen roots so no TypeScript knows a byte offset.
+The three structs are read WHERE THEY LIE, like `wasm_legal_moves_ptr`: a plan is 11,752 bytes and a frame loop that marshalled it whole once per frame would spend more time copying than animating.
+Two sentinels carry "no seat" and "this step has no board of its own"; a GOOD MASK cannot use the same one, because eight players all wearing the mark IS 0xFF, so `ANIM_NO_MASK` crosses as its own flag byte.
+
+`AnimationContext`'s serial `setTimeout` chain is gone.
+One `requestAnimationFrame` loop asks the kernel where the run stands at `performance.now()`, commits what has landed, draws what is flying, and schedules nothing.
+The run is APPENDED TO, never spliced: a step opens at `i * (duration + gap)`, a pure function of its index, so appending to a run in flight leaves every earlier step's timing where it was, which is what lets an arrival be answered by the next call.
+A frame the browser skipped lands every step it skipped in that one frame, so a hidden tab comes back to the board it should be holding rather than replaying the sequence one flight at a time.
+
+The second timer is gone with it.
+The board a predicted move leaves rode its OWN `ANIMATION_TIME` `setTimeout` in `ServerContext`, in a different file from the flight it was meant to follow, coupled to it by nothing but the two reading one constant.
+It is one of the kernel's steps now and commits when that step lands, from the board on screen at that moment, still gated on the move not having been refused since.
+
+`ANIMATION_TIME` is no longer a number TypeScript keeps.
+`ANIM_TIME_MS`, `ANIM_GAP_MS`, `ANIM_STEP_NONE`, `ANIM_NEVER`, `ANIM_CONFLICT_*` and the `ANIM_EVT_*`/`ANIM_LOC_*` codes are generated from `anim_plan.h`; the overlay writes its CSS transition with the kernel's duration for the step on screen, and `RECONCILE_GRACE_MS` derives from the kernel's flight rather than from a TS copy of it.
+
+**The reversal replaced the four insertion branches, and the kernel grew the one entry that made it possible.**
+`anim_conflict_reversal` refuses a SERVER transport, because learning doom from silence is a thing only a total order can do - but "last group first, and a group nothing reverts is dropped" is a fact about a reversal, not about how its doom was learned.
+So the order splits out as `anim_reversal_order`, taking verdicts the caller has already asked `anim_conflict_verdict` for, and `anim_conflict_reversal` delegates to it.
+
+**The audit was wrong about which diff was largest, and the gate says so.**
+It called the reversal "the single largest behavioural diff the gate will have to justify"; all 21 traces pass unchanged across it, because in every recorded case the branch's anchor event was event 0, so `slice(0, 0)` was empty and all four branches already produced "reverts first".
+The ordering is pinned by the kernel's own tests instead.
+
+**The gate.**
+
+| | Before | After |
+| --- | --- | --- |
+| Animation traces | 21 | 21, 19 re-recorded, 2 unchanged |
+| DOM goldens | 16 | 16, none re-recorded |
+| `bots.wasm.gz` | 77,422 B | 80,549 B |
+| Web bundle (union, gz) | 302,165 B | 304,806 B |
+| `AnimationContext.tsx` | 1,748 lines | 1,619 |
+| `ReplayScreen.tsx` | 1,018 lines | 605 |
+
+The wasm grew because `anim_build_plan` and `anim_build_beats` were dead-stripped while nothing called them.
+
+Every trace diff is one of three, checked frame by frame against dumps of both sides:
+
+1. A landing is observed at the first animation frame at or after it (500 to 512, 1025 to 1040, and so on).
+   The loop paints on frames; no browser ever painted between two.
+2. ONE EXTRA FRAME per step boundary, twenty of them: the kernel's 25 ms gap, which the web ran at zero by starting the next flight in the same commit the previous one landed in.
+3. ONE FEWER FRAME at every landing of a predicted move, ten of them: the two independent timers used to fire in two commits, so for one frame the board had already advanced while the card was still drawn in flight and veiled at both ends of it.
+   One plan and one clock make that frame unrepresentable.
+
+**Step 4 is done for the parts the kernel made possible.**
+`ReplayScreen.tsx` gave up its icons, its inline cards, its step messages, its revealed hands and its speed dial; `AnimationContext.tsx` gave up the frame loop, as `src/state/useAnimationRun.ts`.
+Both splits are separate commits from the behaviour changes, and the goldens passing unchanged is what proves they were pure.
+The replay's playback hook, its oracle hook and its stage are still inside `ReplayScreen.tsx`.
+
+**What step 3 still owes, and why it was not plowed through.**
+
+`optimisticPassState` and three of its four reconciliation sites are still there.
+The fourth - the per-step commit that re-imposed the guess on every landing board unconditionally, which is the one that made it a TIMING decision rather than a state decision - is gone with the timer chain.
+The three that remain are the early pass-conflict branch, the board editor inside `keep`, and the completion callback, and all three ask the same question: what is the shield's position on a board my pending pass has not been confirmed on?
+
+The audit's answer is that `client_optimistic_apply` already computes exactly that board, so the guess is a cached copy of something the kernel will recompute.
+Acting on that means keeping the pending pass's action wire and re-asking the kernel per board rather than keeping two seat numbers - a smaller and better-shaped piece of state.
+It is also the exact class of change that produced the card-out / card-home-in-red / card-out-again stutter this file's animation sections are mostly about, and the three sites disagree about whether to trust the guess or the server.
+That is a spec-shape question with an owner-visible answer, so it is written down here rather than guessed at.
+
+The remaining `type === '...'` tests in the file are all in that same optimistic-conflict path, or in the construction of a revert's board - none of them is a timing or ordering decision any more.
+The JSON-string dedup map (`createCardEventString`) is the other half of the same knot: `anim_event_key` replaces it, and the two are best cut together.
+
+**Step 5's films are not done.**
+The before/after films in headless Chrome need a driver this repo does not have (no Puppeteer, no Playwright, no `chromedriver`), so filming means either adding a dev dependency or driving Chrome's DevTools protocol by hand.
+The frame-by-frame evidence in the table above comes from the trace harness instead, which records every frame the page drew at the exact virtual millisecond it drew it - a stricter record than a film, and the reason the harness exists.
+
 ### Phase 10: generated Swift bindings, and Swift off the wire formats
 
 About 1,250 code lines of Swift know byte layouts today and are kept in step with C by hand: `MessageEnvelope.swift` (382), `AnimPlanWire.swift` (167), `SurfacePlan.swift` (92), `PlayWire.swift` (89), `EvWire.swift` (88), `PackedAction.swift` (84), `MaskedView.swift` (67), `DecodedReplay.swift` (66), `MoveWire.swift` (65), `PackedGame.swift` (65), `RosterWire.swift` (51), `BotDriveWire.swift` (34).

@@ -202,6 +202,12 @@ C already answers, and the web only has to start asking:
 - the hand's laid-out order (`anim_hand_laid_out`), once it can express a face-down slot;
 - the lobby-and-back surface plan (`anim_surface_plan`) for the rematch.
 
+**WHAT CAME OF THIS (Phase 9 steps 2 and 3, 2026-09-17).**
+Every row above that says "C answers it" now has the web asking, except `optimisticPassState`'s three surviving reconciliation sites and the JSON-string dedup map, which are written up as the remainder in `docs/C_GAME_SHAPE_MIGRATION.md` "Phase 9 as built, part 2".
+Two rows came out differently from the way this file guessed.
+Section 9's four insertion branches were called "the single largest behavioural diff the gate will have to justify"; replacing them with the kernel's reversal moved no frame of any recorded trace, because in every one of them the branch's anchor event was event 0 and all four already produced "reverts first".
+Section 2's claim that "the FIRST step's board is on screen from frame zero" was overstated for the badges: the web already committed a step's board only as its flight landed, and what it really lacked was ONE landing - the board a predicted move leaves rode a second timer in another file, and for one frame the board had advanced while the card was still in the air.
+
 C needs new entries for:
 
 1. **A re-askable per-frame call.** Given `now_ms` and the live board plus whatever is pending, return the current step or beat and the next deadline, so a push landing mid-flight is answered by the next call and not by editing a timer chain. This is the one structural addition; everything else is plumbing.
