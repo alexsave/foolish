@@ -80,6 +80,7 @@ typedef struct {
 } Rec;
 static Rec *recs;
 static int nrecs, caprecs;
+static int root_rec[MAXN];   // --root i -> its record
 
 static char kind_of(CXType t) {
     switch (t.kind) {
@@ -93,6 +94,9 @@ static char kind_of(CXType t) {
     }
 }
 
+// `key` is the canonical type's spelling, used ONLY to recognise the same type
+// reached twice within this run. It is never emitted and never hashed: libclang
+// renders a canonical type differently across LLVM versions.
 static int want(CXType t, const char *name, const char *expr) {
     char *key = str(clang_getTypeSpelling(t));
     for (int i = 0; i < nrecs; i++) if (!strcmp(recs[i].key, key)) { free(key); return i; }
@@ -113,6 +117,29 @@ static int is_ident(const char *s) {
     if (!(*s == '_' || (*s >= 'A' && *s <= 'Z') || (*s >= 'a' && *s <= 'z'))) return 0;
     for (; *s; s++) if (!(*s == '_' || (*s >= '0' && *s <= '9') || (*s >= 'A' && *s <= 'Z') || (*s >= 'a' && *s <= 'z'))) return 0;
     return 1;
+}
+
+// The name the HEADER gives a field's element type: the typedef or struct/union
+// tag exactly as declared, or NULL for an unnamed record. This, not a rendering
+// of the type, names the generated accessors (Card_get_suit): declared names are
+// what the header author wrote, so every libclang reports them alike.
+// `t` is the field's declared (sugared) type with its `nd` array levels still on.
+static char *declared_name(CXType t, int nd) {
+    for (;;) {
+        if (t.kind == CXType_Elaborated) { t = clang_Type_getNamedType(t); continue; }
+        if (nd > 0) {   // an array level, possibly behind a typedef of the array type
+            if (t.kind == CXType_Typedef) { t = clang_getTypedefDeclUnderlyingType(clang_getTypeDeclaration(t)); continue; }
+            if (t.kind != CXType_ConstantArray) return NULL;
+            t = clang_getArrayElementType(t); nd--;
+            continue;
+        }
+        if (t.kind == CXType_Typedef) return str(clang_getCursorSpelling(clang_getTypeDeclaration(t)));
+        if (t.kind == CXType_Record || t.kind == CXType_Enum) {
+            CXCursor d = clang_getTypeDeclaration(t);
+            return clang_Cursor_isAnonymous(d) ? NULL : str(clang_getCursorSpelling(d));
+        }
+        return NULL;
+    }
 }
 
 typedef struct { int rec; long long base; } Walk;
@@ -141,15 +168,13 @@ static enum CXVisitorResult on_field(CXCursor c, CXClientData d) {
         }
         if (ft.kind == CXType_IncompleteArray || ft.kind == CXType_VariableArray)
             die("%s.%s: arrays without a constant size are not supported", recs[w->rec].name, f.name);
-        char *sp = str(clang_getTypeSpelling(ft));
-        const char *id = sp;
-        if (!strncmp(id, "struct ", 7)) id += 7; else if (!strncmp(id, "union ", 6)) id += 6; else if (!strncmp(id, "enum ", 5)) id += 5;
+        char *id = declared_name(clang_getCursorType(c), f.nd);
         Buf name = {0}, expr = {0};
-        if (is_ident(id)) bprintf(&name, "%s", id); else bprintf(&name, "%s_%s", recs[w->rec].name, f.name);
+        if (id && is_ident(id)) bprintf(&name, "%s", id); else bprintf(&name, "%s_%s", recs[w->rec].name, f.name);
         bprintf(&expr, "(%s).%s", recs[w->rec].expr, f.name);
         for (int i = 0; i < f.nd; i++) bprintf(&expr, "[0]");
         f.type = want(ft, name.s, expr.s);
-        free(sp); free(name.s); free(expr.s);
+        free(id); free(name.s); free(expr.s);
     }
     Rec *r = &recs[w->rec];
     GROW(r->f, r->nf, r->capf);
@@ -202,6 +227,7 @@ static enum CXChildVisitResult on_decl(CXCursor c, CXCursor parent, CXClientData
             bprintf(&expr, "*(%s *)0", roots[i]);
             int r = want(t, roots[i], expr.s);
             if (!recs[r].record) die("root %s is not a struct or union", roots[i]);
+            root_rec[i] = r;
             free(expr.s);
         }
         free(name);
@@ -367,6 +393,47 @@ static void emit_record(Buf *ts, Rec *r, int *strings) {
     }
 }
 
+// ---- the layout hash -------------------------------------------------------------
+// FNV-1a over the LAYOUT facts the emitted TS relies on, and nothing else:
+//   every emitted field, walked from each --root along its field path
+//   ("Game.players.hand.suit"): byte offset, bit range and bit kind, or array
+//   dims, element size, element kind (i u b f, r = record) and char-ness;
+//   each record SIZE the module emits (requested, or its raw_get/raw_set);
+//   each --const constant's name and value, in emission order.
+// Paths are made of --root names (the caller's) and field names (the header's);
+// record and typedef names are NOT in it. Renaming a typedef renames the
+// generated accessors (a TS compile error at every user) but leaves the hash
+// alone, and libclang's rendering of a type, which differs between LLVM
+// versions, can never reach it. tools/structgen/test/hash.sh pins both halves.
+static unsigned layout_hash = 2166136261u;
+static void hput(const char *fmt, ...) {
+    char line[1024];
+    va_list ap; va_start(ap, fmt);
+    int k = vsnprintf(line, sizeof line, fmt, ap);
+    va_end(ap);
+    if (k < 0 || (size_t)k >= sizeof line) die("hash line too long");
+    for (int i = 0; i <= k; i++) layout_hash = (layout_hash ^ (unsigned char)(i < k ? line[i] : '\n')) * 16777619u;
+}
+static void hash_record(int ri, const char *path) {
+    Rec *r = &recs[ri];
+    Spec *s = spec_for(r->name);
+    if (!s || spec_has(s, "SIZE") || r->size == 1 || r->size == 2 || r->size == 4) hput("%s size %ld", path, r->size);
+    for (int j = 0; j < r->nf; j++) {
+        Field *f = &r->f[j];
+        if (f->width) { hput("%s.%s off %ld bits %d+%d %c", path, f->name, f->off, f->lo, f->width, f->kind); continue; }
+        Rec *t = &recs[f->type];
+        char dims[128] = "";
+        for (int k = 0; k < f->nd; k++) snprintf(dims + strlen(dims), sizeof dims - strlen(dims), "[%ld]", f->dims[k]);
+        hput("%s.%s off %ld%s elem %ld %c%s", path, f->name, f->off, dims, t->size, t->record ? 'r' : t->kind, t->charlike ? " char" : "");
+        if (t->record) {
+            Buf child = {0};
+            bprintf(&child, "%s.%s", path, f->name);
+            hash_record(f->type, child.s);
+            free(child.s);
+        }
+    }
+}
+
 static int cmp_str(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
 static void check_unique_exports(const Buf *ts) {   // generated names are joined with '_' and could collide
     char **names = NULL; int n = 0, cap = 0;
@@ -462,18 +529,21 @@ int main(int argc, char **argv) {
         for (int j = 0; j < s->n; j++) if (!s->seen[j]) die("--fields %s: no field named %s", s->type, s->names[j]);
     }
 
-    // ---- the hashed body: every fact the TS relies on ------------------------
+    // ---- the module body, and the layout hash beside it -----------------------
     Buf ts = {0};
     int strings = 0;
     if (nconsts) bprintf(&ts, "// constants\n");
     for (int p = 0; p < nprefixes; p++)
         for (int m = 1; m >= 0; m--)
             for (int j = 0; j < nconsts; j++)
-                if (consts[j].prefix == p && consts[j].macro == m) bprintf(&ts, "export const %s = %lld;\n", consts[j].name, consts[j].value);
+                if (consts[j].prefix == p && consts[j].macro == m) {
+                    bprintf(&ts, "export const %s = %lld;\n", consts[j].name, consts[j].value);
+                    hput("const %s %lld", consts[j].name, consts[j].value);
+                }
     for (int i = 0; i < nrecs; i++) if (recs[i].record) emit_record(&ts, &recs[i], &strings);
     check_unique_exports(&ts);
-    unsigned hash = 2166136261u;   // FNV-1a
-    for (size_t i = 0; i < ts.n; i++) hash = (hash ^ (unsigned char)ts.s[i]) * 16777619u;
+    for (int i = 0; i < nroots; i++) hash_record(root_rec[i], roots[i]);
+    unsigned hash = layout_hash;
 
     if (out_ts) {
         FILE *fp = fopen(out_ts, "w");

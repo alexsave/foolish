@@ -1,0 +1,11 @@
+# structgen arguments for sdk/ts/gen/game_layout.<build>.ts, and for the
+# SG_LAYOUT_HASH c/Makefile bakes into each wasm module (wasm_layout_hash).
+# Read by tools/structgen/gen.sh and c/Makefile, both with --cwd c/ and the
+# build's own flags, so the module and the wasm hash come from ONE argument list.
+# Lines starting with # are dropped; everything else is split on whitespace.
+#
+# The resident Game prefix the TS marshal reads and writes.
+--header game.h --root Game
+--fields Game=status,num_players,power_suit,first_attacker,defender,num_battles,deck_count,discard_pile_length,has_flipped,deterministic_deck,flipped,deck,table_battles,players,elimination_order,num_eliminated,good_players_mask,has_good_timestamp
+--fields Player=status,hand_count,awaiting_attack,strategy_key,hand
+--const GAME_STATUS_ --const PLAYER_STATUS_

@@ -1,13 +1,13 @@
 // Generator genericity check: accessors generated from kinds.h (every field kind)
 // and from the real anim_plan.h / legal.h, checked against a wasm32 module whose
 // C code reads, writes and offsetof()s the same structs (test/verify.c).
-// Build first: bash tools/structgen/gen.sh (writes gen/*.ts and gen/verify.wasm).
+// Build first: bash tools/structgen/gen.sh (writes gen/kinds.ts, gen/verify.wasm and sdk/ts/gen/*.ts).
 // Run: node --import tsx --test tools/structgen/test/verify.test.ts
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as K from '../gen/kinds.ts';
-import * as A from '../gen/anim.ts';
+import * as A from '../../../sdk/ts/gen/anim.bots.ts';
 
 const wasm = readFileSync(new URL('../gen/verify.wasm', import.meta.url));
 const ex = new WebAssembly.Instance(new WebAssembly.Module(wasm), {}).exports as Record<string, any>;
