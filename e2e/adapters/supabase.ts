@@ -6,7 +6,7 @@
 // bot-lease plpgsql. PostgREST + Realtime are replaced by direct SQL and an
 // in-process broadcast recorder; everything else is the genuine article.
 
-import { Pool } from 'pg';
+import { Pool, types as pgTypes } from 'pg';
 import { basename } from 'path';
 
 // ---- One Postgres DATABASE per test file ---------------------------------
@@ -70,7 +70,17 @@ const poolMax = Number(process.env.E2E_PG_POOL_MAX || WIDE_POOLS[suiteSlug] || 8
 // timestamps are TIMESTAMP (no zone) stamped by now(), and the server compares
 // them with ISO instants (the bot heartbeat's staleness window): under a local
 // time zone those two clocks disagree by the zone's offset.
-const pool = new Pool({ ...pgAdminConfig, database: suiteDatabase, max: poolMax, options: '-c TimeZone=UTC' });
+//
+// BYTEA reads come back as PostgREST sends them: the '\x'-hex text Postgres
+// writes, not a Buffer. The server parses exactly what hosted hands it, and a
+// test that reads a blob column through the pool sees the same text a client
+// would.
+const BYTEA_OID = 17;
+const pgTypesAsPostgrest = {
+    getTypeParser: ((oid: number, format?: string) =>
+        oid === BYTEA_OID ? (v: string) => v : pgTypes.getTypeParser(oid, format as 'text')) as typeof pgTypes.getTypeParser,
+};
+const pool = new Pool({ ...pgAdminConfig, database: suiteDatabase, max: poolMax, options: '-c TimeZone=UTC', types: pgTypesAsPostgrest });
 
 // pg-pool's end() resolves as soon as it has CALLED client.end() on its idle
 // clients - not when their connections are closed. client.end() only queues the
@@ -118,6 +128,15 @@ const PK: Record<string, string> = {
 };
 
 type Result = { data: any; error: any };
+
+// E2E_DB_RTT_MS: every shimmed PostgREST request waits this long (half before,
+// half after), a stand-in for hosted's edge-to-database round trip in the
+// latency benches. 0 (the default) adds nothing.
+const dbRtt = Number(process.env.E2E_DB_RTT_MS || 0);
+const rttHalf = (): Promise<void> | null => (dbRtt ? new Promise((r) => setTimeout(r, dbRtt / 2)) : null);
+
+/** JSON body bytes PostgREST would receive, per RPC name: the benches' payload measure. */
+export const rpcBodyBytes = new Map<string, { calls: number; bytes: number }>();
 const ok = (data: any): Result => ({ data, error: null });
 
 // Build the nested object loadCompleteGame expects from its PostgREST embed:
@@ -182,6 +201,11 @@ class QueryBuilder implements PromiseLike<Result> {
     }
 
     private async run(): Promise<Result> {
+        await rttHalf();
+        try { return await this.runQuery(); } finally { await rttHalf(); }
+    }
+
+    private async runQuery(): Promise<Result> {
         // loadCompleteGame's embedded games select
         if (this.table === 'games' && this.op === 'select' && this.selectCols.includes('(')) {
             const id = this.filters.find((f) => f.col === 'id')?.val;
@@ -292,6 +316,22 @@ globalThis.fetch = (async (input: any, init?: any): Promise<Response> => {
 
 // The array-typed parameter names of a function, read from the catalog once per name.
 const arrayParamCache = new Map<string, Promise<Set<string>>>();
+
+// Whether a function returns one composite row (OUT parameters or a row type),
+// which PostgREST answers as a JSON object with a key per column.
+const compositeCache = new Map<string, Promise<boolean>>();
+function returnsComposite(fn: string): Promise<boolean> {
+    let got = compositeCache.get(fn);
+    if (!got) {
+        got = pool.query(
+            `SELECT bool_or(NOT p.proretset AND (t.typtype = 'c' OR p.prorettype = 'record'::regtype)) AS composite
+             FROM pg_proc p JOIN pg_type t ON t.oid = p.prorettype WHERE p.proname = $1`, [fn])
+            .then((r) => r.rows[0]?.composite === true)
+            .catch(() => false);
+        compositeCache.set(fn, got);
+    }
+    return got;
+}
 function arrayParams(fn: string): Promise<Set<string>> {
     let got = arrayParamCache.get(fn);
     if (!got) {
@@ -308,6 +348,11 @@ function arrayParams(fn: string): Promise<Set<string>> {
 export const createClient = (_url?: string, _key?: string) => ({
     from: (table: string) => new QueryBuilder(table),
     rpc: async (name: string, params: Record<string, any> = {}): Promise<Result> => {
+        const stat = rpcBodyBytes.get(name) ?? { calls: 0, bytes: 0 };
+        stat.calls++;
+        stat.bytes += Buffer.byteLength(JSON.stringify(params));
+        rpcBodyBytes.set(name, stat);
+        await rttHalf();
         try {
             const keys = Object.keys(params);
             // Named-argument call, like PostgREST: defaulted params may be
@@ -323,9 +368,13 @@ export const createClient = (_url?: string, _key?: string) => ({
                 if (Array.isArray(v) && arrays.has(k)) return v;
                 return v !== null && typeof v === 'object' ? JSON.stringify(v) : v;
             });
+            if (await returnsComposite(name)) {
+                const r = await pool.query(`SELECT * FROM ${name}(${placeholders})`, vals);
+                return ok(r.rows[0] ?? null);
+            }
             const r = await pool.query(`SELECT ${name}(${placeholders}) AS result`, vals);
             return ok(r.rows[0]?.result ?? null);
-        } catch (error) { return { data: null, error }; }
+        } catch (error) { return { data: null, error }; } finally { await rttHalf(); }
     },
     channel: (name: string, _cfg?: any) => new Channel(name),
     // GoTrue's admin API, as far as delete-account reaches it: deleting the user

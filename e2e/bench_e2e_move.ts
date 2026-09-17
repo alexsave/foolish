@@ -7,10 +7,13 @@
 //   E2E_DB_PREFIX=c03m BENCH_E2E_MOVES=300 TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx e2e/bench_e2e_move.ts
 //
 // The "packed" line is the gate in docs/C_GAME_SHAPE_MIGRATION.md 4.0 (action
-// latency, human move). Before Phase 4b the same line measured the TS pipeline
+// latency, human move). E2E_DB_RTT_MS=<ms> adds that round trip to every
+// database request (the hosted-like variant); the commit_table line is the JSON
+// body PostgREST would receive per commit. Before Phase 4b the same line measured the TS pipeline
 // (runPackedAction + commit_game); the label is kept so the numbers line up.
 import './harness.ts';
 import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
+import { rpcBodyBytes } from './adapters/supabase.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { legalMoves, mustReadTable } from './helpers/table_play.ts';
 import { runAction, runMeta, seedLobby } from './helpers/table_server.ts';
@@ -65,10 +68,13 @@ async function run(): Promise<{ moves: number; ns: bigint; samples: number[] }> 
     await run(); // warm pass
     await resetDb();
     seed = 0xabcd;
+    rpcBodyBytes.clear();
     const { moves, ns, samples } = await run();
     const us = Number(ns) / 1000 / moves;
     samples.sort((a, b) => a - b);
     const pick = (q: number) => samples[Math.min(samples.length - 1, Math.floor(q * samples.length))] ?? 0;
-    say(`  packed ${(us / 1000).toFixed(2).padStart(7)} ms/move mean   p50 ${pick(0.5).toFixed(2)} ms   p95 ${pick(0.95).toFixed(2)} ms   (${moves} moves)`);
+    say(`  packed ${(us / 1000).toFixed(2).padStart(7)} ms/move mean   p50 ${pick(0.5).toFixed(2)} ms   p95 ${pick(0.95).toFixed(2)} ms   (${moves} moves, rtt ${process.env.E2E_DB_RTT_MS || 0} ms)`);
+    const commits = rpcBodyBytes.get('commit_table');
+    if (commits) say(`  commit_table body ${Math.round(commits.bytes / commits.calls)} B/commit mean over ${commits.calls} commits (the deals included)`);
     await pgPool.end();
 })();
