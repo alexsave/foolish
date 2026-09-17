@@ -4062,7 +4062,10 @@ public struct MessageTableView: View {
                                               revert: isConflict))
                     }
                     // Let the fan go of them in the turn the animator gets their flights.
-                    if UndoFlightSource.holdsLeaving, !flights.isEmpty { self.handHoldback = [] }
+                    if UndoFlightSource.holdsLeaving, !flights.isEmpty {
+                        let flying = Set(flights.compactMap { $0.card?.identity })
+                        self.handHoldback.removeAll { flying.contains($0.identity) }
+                    }
                     return flights.isEmpty ? (lastChance ? [] : nil) : flights
                 }
             }

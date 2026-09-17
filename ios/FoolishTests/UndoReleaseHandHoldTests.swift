@@ -41,7 +41,7 @@ final class UndoReleaseHandHoldTests: XCTestCase {
         let task = try XCTUnwrap(body.range(of: "Task {"))
         XCTAssertLessThan(arm.lowerBound, task.lowerBound, "held only after the undo has painted")
         let step = try XCTUnwrap(body.range(of: "await playStep {"))
-        let release = try XCTUnwrap(body.range(of: "if UndoFlightSource.holdsLeaving, !flights.isEmpty { self.handHoldback = [] }"),
+        let release = try XCTUnwrap(body.range(of: "self.handHoldback.removeAll { flying.contains($0.identity) }"),
                                     "the hold is never let go as the flight starts")
         XCTAssertGreaterThan(release.lowerBound, step.lowerBound, "let go before the flight exists")
     }

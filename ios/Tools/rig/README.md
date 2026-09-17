@@ -268,6 +268,11 @@ game screen's black name field reports 739 for a drawer whose edge is 584).
   silently does nothing.
 - **`local a=$1 b=$((a*2))` does not work in bash** - every word on a `local`
   line is expanded before any of them is assigned.
+- **Unit tests on the rig's simulator read the rig's dev files.** The test host
+  shares the App Group, so `dev.ruler` (and any other `dev.*`) reaches the views
+  the tests render: MemoryProfileTests went red 2 runs in 3 with the ruler on and
+  green 3 in 3 with it off. Set the ruler aside for a test run, or test on
+  another simulator.
 - **The animation reel.** `shots/anim_reel.sh` films ten table scenarios in one
   take (throw-ins and undos at 2 and 8 seats, replayed arrivals) and
   `lib/tablesquares.py` reports every jump of a table pair, named by scenario.
