@@ -706,12 +706,14 @@ test('realtime: nobody but its owner can join a gu- topic; anon cannot join game
     assert.equal(await canJoin('authenticated', spectator.id, `game-${gameId}`), true, 'a signed-in spectator can join the game- topic');
 });
 
-// KNOWN DEFECT, fail-closed: seed.sql's gu- policy compares
-// split_part(topic, '-', 3) with auth.uid()::text, and a user id is a hyphenated
-// UUID, so the third '-' field is only its first 8 hex digits and never equals
-// it. Nobody - the owner included - is authorized for a gu- channel. Kept
-// visible as a todo rather than asserted away; it is not a leak.
-test('realtime: a player can join their OWN gu- topic', { todo: 'seed.sql gu- policy splits a hyphenated UUID; owner is refused too' }, async () => {
-    const { a, gameId, canJoin } = await channelFixture();
+// The owner half of the matrix above. seed.sql's gu- policy used to compare
+// split_part(topic, '-', 3) with auth.uid()::text; a user id is a hyphenated
+// UUID, so that field is only its first 8 hex digits and every gu- join was
+// refused, the owner's included (fail-closed, not a leak). The policy now
+// rebuilds the exact topic from the player_hands row
+// (migrations/20260917120000_realtime_channel_exact_topics.sql).
+test('realtime: a seated player can join their OWN gu- topic', async () => {
+    const { a, b, gameId, canJoin } = await channelFixture();
     assert.equal(await canJoin('authenticated', a.id, `gu-${gameId}-${a.id}`), true, 'A can join A\'s own gu- topic');
+    assert.equal(await canJoin('authenticated', b.id, `gu-${gameId}-${b.id}`), true, 'B, who joined the lobby, can join B\'s own gu- topic');
 });
