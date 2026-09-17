@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { useParams } from 'next/navigation';
-import supabase from '../backend/Connector';
 import { useAuth } from '../contexts/AuthContext';
 import { useServer } from '../contexts/ServerContext';
 import { animationFeed } from './animationFeed';
+import { holdPrivateChannel } from './privateChannel';
 
 /**
  * The LIVE game's producer for the animation feed: subscribes to the per-user
@@ -21,7 +21,8 @@ export const RealtimeAnimationFeed = () => {
     const url_game_id = useParams<{ game_id: string }>().game_id?.toLowerCase();
     // Only a seated player has a gu- stream. Realtime admits the private join
     // only for a member of the game, so a spectator's join is refused every
-    // time; spectators get the game-<id> stream from ServerContext instead.
+    // time (and each refusal stalls the whole socket, see privateChannel.ts);
+    // spectators get the game-<id> stream from ServerContext instead.
     // The board the signed-in user holds names their seat (mySeat, -1 for a
     // spectator). A boolean: this renders on every state change, but the
     // subscription effect re-runs only when the seat itself comes or goes.
@@ -32,167 +33,33 @@ export const RealtimeAnimationFeed = () => {
     const loadGameRef = useRef(loadGame);
     loadGameRef.current = loadGame;
 
-    // Store channel reference for proper cleanup
-    const gameUserChannelRef = useRef<any>(null);
-
-    // Simple retry interval for animation channel
-    const animationChannelRetryInterval = useRef(500); // Start with 0.5 seconds
-    const MAX_RETRY_INTERVAL = 5000; // Cap at 5 seconds
-
     useEffect(() => {
         if (!user_id || !url_game_id || !seated) {
             return;
         }
-
-        // Track if this effect instance is still mounted
-        let isMounted = true;
-        let isSubscribing = false;
-        let hasEverConnected = false;
-        // A join that did not get through (refused, timed out, closed, threw).
-        // Realtime refuses this private channel until the user is a member of
-        // the game - opening a game you are joining, or one whose create is
-        // still persisting - and has no catch-up, so whatever was broadcast in
-        // that window is gone just as it is across a reconnect.
-        let missedWindow = false;
-        let retryTimeoutId: NodeJS.Timeout | null = null;
-
-        const subscribeToGameAnimations = async () => {
-            // Prevent multiple simultaneous subscription attempts
-            if (isSubscribing || !isMounted) {
-                return;
-            }
-
-            isSubscribing = true;
-
-            try {
-                // Clean up any existing channel first
-                if (gameUserChannelRef.current) {
-                    await supabase.removeChannel(gameUserChannelRef.current);
-                    gameUserChannelRef.current = null;
-                }
-
-                // Check if we're still mounted after async operation
-                if (!isMounted) {
-                    isSubscribing = false;
-                    return;
-                }
-
-                // Ensure we have proper auth before subscribing
-                await supabase.realtime.setAuth();
-
-                if (!isMounted) {
-                    isSubscribing = false;
-                    return;
-                }
-
-                // Subscribe to personalized game-user channel for game updates
-                const gameUserChannel = supabase.channel(`gu-${url_game_id}-${user_id}`, {
-                    config: { private: true }
+        // A join can be refused while the membership row is not yet visible to
+        // Realtime (opening a game you are joining, or one whose create is still
+        // persisting); holdPrivateChannel removes a refused channel and rejoins.
+        return holdPrivateChannel(`gu-${url_game_id}-${user_id}`, {
+            bind: (channel) => {
+                channel.on('broadcast', { event: 'animation_events' }, (payload) => {
+                    // Attach the game id this channel is subscribed for: the
+                    // packed envelope ({t:'as3', s, v, b}) carries no JS game
+                    // state, so the consumer needs it to pick the decode roster.
+                    animationFeed.publish({ ...payload.payload, game_id: url_game_id });
                 });
-
-                // Store the channel reference
-                gameUserChannelRef.current = gameUserChannel;
-
-                gameUserChannel
-                    .on('broadcast', { event: 'animation_events' }, (payload) => {
-                        // Attach the game id this channel is subscribed for: the
-                        // packed envelope ({t:'as2', s, v, b}) carries no JS game
-                        // state, so the consumer needs it to pick the decode
-                        // roster. Harmless on any legacy-shaped payload.
-                        animationFeed.publish({ ...payload.payload, game_id: url_game_id });
-                    })
-                    .subscribe((status, err) => {
-                        if (status === 'SUBSCRIBED') {
-                            animationChannelRetryInterval.current = 500; // Reset retry interval on success
-                            isSubscribing = false;
-                            const mustResync = hasEverConnected || missedWindow;
-                            hasEverConnected = true;
-                            missedWindow = false;
-                            // Broadcasts sent while we were not subscribed are lost -
-                            // realtime has no catch-up. After a RE-subscribe, or a
-                            // first subscribe that followed refused joins, refetch
-                            // authoritative state so the client can't be left showing a
-                            // stale / mixed-bout table.
-                            if (mustResync && url_game_id) {
-                                loadGameRef.current(url_game_id).catch(console.error);
-                            }
-                        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-                            // Only retry on actual errors, not on CLOSED
-                            console.log('connection error: ' + status + ', retrying in ', animationChannelRetryInterval.current, 'ms');
-                            isSubscribing = false;
-                            missedWindow = true;
-
-                            if (!isMounted) {
-                                return;
-                            }
-
-                            retryTimeoutId = setTimeout(() => {
-                                if (isMounted) {
-                                    subscribeToGameAnimations().catch(console.error);
-                                }
-                            }, animationChannelRetryInterval.current);
-                        } else if (status === 'CLOSED') {
-                            // Channel closed - only log if we had a successful connection
-                            if (hasEverConnected) {
-                            } else {
-                                console.log('channel closed before connecting, retrying in', animationChannelRetryInterval.current, 'ms');
-                                isSubscribing = false;
-                                missedWindow = true;
-
-                                if (!isMounted) {
-                                    return;
-                                }
-
-                                retryTimeoutId = setTimeout(() => {
-                                    if (isMounted) {
-                                        subscribeToGameAnimations().catch(console.error);
-                                    }
-                                }, animationChannelRetryInterval.current);
-                            }
-                        }
-                    });
-            } catch (error) {
-                console.error('Error setting up game animation subscription:', error);
-                isSubscribing = false;
-                missedWindow = true;
-
-                if (!isMounted) {
-                    return;
-                }
-
-                retryTimeoutId = setTimeout(() => {
-                    if (isMounted) {
-                        subscribeToGameAnimations().catch(console.error);
-                        // Double the interval but cap at MAX_RETRY_INTERVAL
-                        animationChannelRetryInterval.current = Math.min(animationChannelRetryInterval.current * 2, MAX_RETRY_INTERVAL);
-                    }
-                }, animationChannelRetryInterval.current);
-            }
-        };
-
-        subscribeToGameAnimations();
-
-        // Cleanup function
-        return () => {
-            isMounted = false;
-
-            // Clear any pending retry
-            if (retryTimeoutId) {
-                clearTimeout(retryTimeoutId);
-            }
-
-            if (gameUserChannelRef.current) {
-                const channelToRemove = gameUserChannelRef.current;
-                gameUserChannelRef.current = null;
-
-                // Remove immediately, no timeout
-                supabase.removeChannel(channelToRemove).catch(error => {
-                    // Ignore cleanup errors - channel might already be closed
-                    console.debug('Channel cleanup error (expected if WebSocket closed):', error);
-                });
-            }
-        };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+            },
+            onJoined: (missed) => {
+                // Broadcasts sent while we were not subscribed are lost - realtime
+                // has no catch-up. After a rejoin, or a first join that followed
+                // refused joins, refetch authoritative state so the client can't
+                // be left showing a stale / mixed-bout table.
+                if (missed) loadGameRef.current(url_game_id).catch(console.error);
+            },
+            onFailed: (status, _err, retryInMs) => {
+                console.log(`animation channel ${status}, retrying in ${retryInMs}ms`);
+            },
+        });
     }, [user_id, url_game_id, seated]);
 
     return null;

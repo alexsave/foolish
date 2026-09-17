@@ -6,6 +6,7 @@ import { MAX_PLAYERS } from '@api/core/constants.ts';
 import { ANIMATION_TIME } from '../constants/constants';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { animationFeed } from '../state/animationFeed';
+import { holdPrivateChannel } from '../state/privateChannel';
 import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand, mergeTableBattles } from '../state/clientReconcile';
 import { keepPending, lobbyBoard, optimisticBoard, rearrangedBoard } from '../state/clientBoards';
 import { ACTION_STATUS, REJECT_STALE_ROUND, decodeActionResponse, encodeAction, encodeActionRequest } from '@sdk/ts/wire/awire.ts';
@@ -142,12 +143,13 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // Track ongoing getUserGames call to prevent duplicates
     const getUserGamesPromise = useRef<Promise<void> | null>(null);
 
-    // Simple reconnection state
-    const chatChannelRetryInterval = useRef(500); // Start with 0.5 seconds
-    // Handle for the pending reconnect timer so we can cancel it on teardown
-    // and avoid leaked retries re-subscribing to games the user has left.
-    const chatChannelRetryTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const MAX_RETRY_INTERVAL = 5000; // Cap at 5 seconds
+    // The chat: channel held for a seated game (holdPrivateChannel), and how to
+    // leave it: on teardown, and when the seat is given up.
+    const chatHoldRef = useRef<{ gameId: string; stop: () => void } | null>(null);
+    const stopChat = () => {
+        chatHoldRef.current?.stop();
+        chatHoldRef.current = null;
+    };
 
     useEffect(() => {
         if (url_game_id) {
@@ -193,12 +195,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
 
         // cleanup realtime subscriptions
         return () => {
-            // Cancel any pending reconnect timer so it doesn't re-subscribe to a
-            // game we're navigating away from (which churns the shared socket).
-            if (chatChannelRetryTimeout.current) {
-                clearTimeout(chatChannelRetryTimeout.current);
-                chatChannelRetryTimeout.current = null;
-            }
+            // Leave the chat: channel and cancel its pending rejoin, so it doesn't
+            // re-subscribe to a game we're navigating away from.
+            stopChat();
             // Remove subscriptions one channel at a time instead of removeAllChannels().
             // removeAllChannels() calls socket.disconnect() unconditionally, force-closing
             // the websocket (close code 1005) on every game switch — that 1005 then fans
@@ -206,13 +205,13 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             // Per-channel removeChannel() instead routes through realtime-js's deferred
             // disconnect (disconnectOnEmptyChannelsAfterMs), which is cancelled as soon as
             // the next game subscribes, so the socket is never bounced during a fast switch.
-            // ONLY this context's channels (chat:… and the spectator game-…): the
+            // ONLY this context's spectator game-… channel (chat:… is left above): the
             // gu-… animation channel is owned and torn down by RealtimeAnimationFeed —
             // removing it here raced its own cleanup/reconnect handling. The pv-…
             // dashboard-cache channel is user-scoped (not game-scoped) and owned by
             // its own effect below, so it must survive game navigation too.
             supabase.getChannels().forEach((channel) => {
-                if (channel.topic.includes('gu-') || channel.topic.includes('pv-')) return;
+                if (channel.topic.includes('gu-') || channel.topic.includes('pv-') || channel.topic.includes('chat:')) return;
                 supabase.removeChannel(channel);
             });
         };
@@ -226,61 +225,23 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // socket load — its only events were `private_message` (sender commented out
     // server-side) and `HAND_REARRANGED` (handler was a no-op).
 
+    // A seated player's chat stream. chat:{game} admits only a member of the
+    // game, so this is never asked for a spectator: a refused private join
+    // stalls every channel on the shared socket (src/state/privateChannel.ts).
     const subscribeToChatMessages = async (gameId: string) => {
-        try {
-            // Ensure we have proper auth before subscribing
-            await supabase.realtime.setAuth();
-
-            // Subscribe to chat messages for this game
-            const chatChannel = supabase.channel(`chat:${gameId}`, {
-                config: { private: true }
-            });
-
-            chatChannel
-                .on('broadcast', { event: 'INSERT' }, (payload) => {
+        if (chatHoldRef.current?.gameId === gameId) return;
+        stopChat();
+        const stop = holdPrivateChannel(`chat:${gameId}`, {
+            bind: (channel) => {
+                channel.on('broadcast', { event: 'INSERT' }, (payload) => {
                     handleChatMessage(payload.payload);
-                })
-                .subscribe((status, err) => {
-                    if (status === 'SUBSCRIBED') {
-                        chatChannelRetryInterval.current = 500; // Reset retry interval on success
-                        if (chatChannelRetryTimeout.current) {
-                            clearTimeout(chatChannelRetryTimeout.current);
-                            chatChannelRetryTimeout.current = null;
-                        }
-                    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-                        // Ignore errors for a game we've left: when navigating away the
-                        // shared socket is torn down and every channel reports an error;
-                        // retrying would re-subscribe to the abandoned game.
-                        if (gameIdRef.current !== gameId) {
-                            return;
-                        }
-                        if (err) {
-                            console.error(`Chat channel ${status}:`, err);
-                        }
-                        if (chatChannelRetryTimeout.current) {
-                            clearTimeout(chatChannelRetryTimeout.current);
-                        }
-                        chatChannelRetryTimeout.current = setTimeout(() => {
-                            subscribeToChatMessages(gameId).catch(console.error);
-                            // Double the interval but cap at MAX_RETRY_INTERVAL
-                            chatChannelRetryInterval.current = Math.min(chatChannelRetryInterval.current * 2, MAX_RETRY_INTERVAL);
-                        }, chatChannelRetryInterval.current);
-                    }
                 });
-        } catch (error) {
-            if (gameIdRef.current !== gameId) {
-                return;
-            }
-            console.error('Error subscribing to chat channel:', error);
-            if (chatChannelRetryTimeout.current) {
-                clearTimeout(chatChannelRetryTimeout.current);
-            }
-            chatChannelRetryTimeout.current = setTimeout(() => {
-                subscribeToChatMessages(gameId).catch(console.error);
-                // Double the interval but cap at MAX_RETRY_INTERVAL
-                chatChannelRetryInterval.current = Math.min(chatChannelRetryInterval.current * 2, MAX_RETRY_INTERVAL);
-            }, chatChannelRetryInterval.current);
-        }
+            },
+            onFailed: (status, err, retryInMs) => {
+                console.error(`Chat channel ${status}, retrying in ${retryInMs}ms:`, err);
+            },
+        });
+        chatHoldRef.current = { gameId, stop };
     };
 
     // mergeHandOrder / reconcileHandMemory / displayedHand / mergeTableBattles all
@@ -517,6 +478,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 // If user removed themselves (not a bot), mark as spectating and switch channels
                 if (!botId) {
                     setSpectatorGames(prev => new Set(prev).add(gameId));
+                    // The seat is gone, and with it the chat: membership.
+                    if (!playerId || playerId === userIdRef.current) stopChat();
 
                     // Clean up old game-user channel and switch to game channel for spectators
                     const oldChannelName = `gu-${gameId}-${userIdRef.current}`;
@@ -696,8 +659,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                         ? console.log('Connected to game channel:', `game-${gameId}`)
                         : console.error('Game channel error:', err));
 
-                // Subscribe to chat messages for spectators too
-                subscribeToChatMessages(gameId).catch(console.error);
+                // No chat: for a spectator. Its policy admits members only, and
+                // a refused join stalls the game- stream on the same socket.
             });
         }
     }
