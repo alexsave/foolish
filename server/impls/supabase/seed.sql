@@ -16,6 +16,7 @@ DROP FUNCTION IF EXISTS update_updated_at_column() CASCADE;
 -- Drop tables in reverse dependency order (this will automatically drop all policies and triggers)
 DROP TABLE IF EXISTS spectator_views CASCADE;
 DROP TABLE IF EXISTS player_views CASCADE;
+DROP TABLE IF EXISTS game_snapshots CASCADE;  -- `supabase start` applies the migrations first, which create it
 DROP TABLE IF EXISTS chat_messages CASCADE;
 DROP TABLE IF EXISTS bot_hands CASCADE;
 DROP TABLE IF EXISTS player_hands CASCADE;

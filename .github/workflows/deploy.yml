@@ -31,7 +31,7 @@ on:
       # is anchored at the repo root, so after the move it matched NOTHING and
       # pushes silently stopped triggering deploys — the server went stale.
       - 'server/impls/supabase/**'
-      # The functions resolve @sdk/ and @api/ (functions/import_map.json) and
+      # The functions resolve @sdk/ and @api/ (functions/<name>/deno.json) and
       # import real code through them: the wire codecs and the wasm bindings out
       # of sdk/ts, and the whole host-neutral game layer out of server/api. That
       # code is COMPILED INTO the deployed functions, so a change to it is a
