@@ -1835,7 +1835,10 @@ static void h_metrics(Req *r, Conn *conn) {
         "# TYPE foolish_octogen_decisions_total counter\nfoolish_octogen_decisions_total %lu\n"
         "# TYPE foolish_rate_limited_total counter\nfoolish_rate_limited_total %lu\n",
         conns, g_max_conns, live_games, freeslots, users, mv, rc, bd, od, rl);
-    if (n < 0) n = 0; if (n > (int)sizeof out) n = (int)sizeof out;
+    // One clamp per line: two `if`s sharing a line read as a guard and its
+    // body (-Wmisleading-indentation).
+    if (n < 0) n = 0;
+    if (n > (int)sizeof out) n = (int)sizeof out;
     respond_text(conn, 200, out, n);
 }
 

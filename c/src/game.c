@@ -112,7 +112,10 @@ int game_deal_seed_active(void) { return g_deal_wide; }
 // Deal-RNG save/restore (see game.h). Layout is private to this file: byte 0 is
 // the wide flag, the rest is the ChaCha state. Nothing persists or ships it, so
 // it needs no wire discipline — only enough room, which the assert pins.
-void game_deal_rng_get(unsigned char *out) {
+// The array declarators match game.h's: a pointer parameter against an array
+// declaration is -Warray-parameter, and the declaration is the one that says
+// how much room the caller owes.
+void game_deal_rng_get(unsigned char out[GAME_DEAL_RNG_STATE_MAX]) {
     memset(out, 0, GAME_DEAL_RNG_STATE_MAX);
     out[0] = (unsigned char)g_deal_wide;
     _Static_assert(1 + sizeof(DealRng) <= GAME_DEAL_RNG_STATE_MAX,
@@ -120,7 +123,7 @@ void game_deal_rng_get(unsigned char *out) {
     memcpy(out + 1, &g_deal_rng, sizeof g_deal_rng);
 }
 
-void game_deal_rng_set(const unsigned char *in) {
+void game_deal_rng_set(const unsigned char in[GAME_DEAL_RNG_STATE_MAX]) {
     g_deal_wide = in[0];
     memcpy(&g_deal_rng, in + 1, sizeof g_deal_rng);
 }
@@ -215,9 +218,12 @@ void game_settle_status(Game *g) {
         g->status = GAME_STATUS_GAME_OVER;
 }
 
-// Is `c` a card of a deck whose lowest value is `min_value`?
+// Is `c` a card of a deck whose lowest value is `min_value`? The comparisons
+// are card.h's now: a 3-bit signed suit cannot reach NUM_SUITS, so gcc was
+// answering one of them itself (-Wtype-limits) and the assert beside
+// card_in_range holds it instead.
 static bool card_in_deck(Card c, int min_value) {
-    return c.suit >= 0 && c.suit < NUM_SUITS && c.value >= min_value && c.value <= ACE_VALUE;
+    return card_in_range(c, min_value, ACE_VALUE);
 }
 
 // Mark card `c` seen; false if it already was. Only called on in-deck cards,

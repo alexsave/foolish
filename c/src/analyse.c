@@ -985,7 +985,10 @@ static inline int an_clamp16(double v) {
     return (int)(v >= 0 ? v + 0.5 : v - 0.5);
 }
 static inline unsigned an_prob16(double v) {
-    if (v < 0) v = 0; if (v > 1) v = 1;
+    // One clamp per line: two `if`s sharing a line read as a guard and its body
+    // to gcc's -Wmisleading-indentation, and to anyone skimming.
+    if (v < 0) v = 0;
+    if (v > 1) v = 1;
     return (unsigned)(v * 10000.0 + 0.5);
 }
 

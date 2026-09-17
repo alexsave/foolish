@@ -183,7 +183,11 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
     // wasm32; the alternative was static scratch, and msg.wasm's linear memory
     // is pinned to the page.
     {
-        AnimPreEvent pre_evs[ANIM_MAX_STEPS];
+        // ZEROED WHOLE, not up to n_events. Only the first n_events entries
+        // are ever read, but the array crosses into anim_pre_stream_table as
+        // one object and gcc says so (-Wmaybe-uninitialized); an array a rule
+        // walks should not have an undefined tail for anyone to be right about.
+        AnimPreEvent pre_evs[ANIM_MAX_STEPS] = {0};
         unsigned char sweep_ids[ANIM_MAX_CARDS];
         int n_sweep_ids = 0, sweep_at = -1;
         for (int i = 0; i < n_events; i++) {

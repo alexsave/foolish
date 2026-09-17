@@ -48,6 +48,25 @@ static inline bool card_eq(Card a, Card b) {
     return a.suit == b.suit && a.value == b.value;
 }
 
+// IS THIS A CARD OF A DECK whose values run min_value..max_value? Three files
+// asked this with four comparisons each, and on a Linux gcc build two of them
+// were answered by the compiler rather than at runtime: `suit` is a 3-bit
+// SIGNED field, so it cannot reach NUM_SUITS, and `value` is a 5-bit signed
+// field, so it cannot reach 16 ("comparison is always true due to limited
+// range of data type", -Wtype-limits).
+//
+// The bounds are real requirements, so they are not deleted - they move to
+// where they actually hold. The suit's ceiling is the field's width, pinned by
+// the assert below, which stops compiling if the field ever widens instead of
+// quietly letting a suit nobody has through. The value's is a RUNTIME argument
+// here, which is what it always was (ACE_VALUE is 13 and the field reaches 15,
+// so that comparison was never a tautology).
+_Static_assert(NUM_SUITS > 3, "a 3-bit signed suit cannot exceed 3: if NUM_SUITS ever fits the field, "
+                              "card_in_range needs its upper comparison back");
+static inline bool card_in_range(Card c, int min_value, int max_value) {
+    return c.suit >= 0 && c.value >= min_value && c.value <= max_value;
+}
+
 // Card <-> dense id (0..51): id = suit*13 + (value-1). The replay codec's
 // alphabets and the wire card byte are both this numbering.
 static inline Card card_of_id(int id) {

@@ -179,8 +179,9 @@ static void ep_update_discard_memory(const Game *g) {
         for (int j = 0; j < g->logs[i].num_pairs; j++) {
             Card p = g->logs[i].pairs[j].primary;
             // TS: `if (pair.primary)` — hidden/absent primaries are {-1,-1}.
-            if (p.suit >= 0 && p.suit < NUM_SUITS
-                && p.value >= 0 && p.value < EP_VAL_SLOTS) {
+            // card.h's test: the suit's and the value's ceilings are the
+            // bitfield's, which gcc was proving for us (-Wtype-limits).
+            if (card_in_range(p, 0, EP_VAL_SLOTS - 1)) {
                 ep_seen_mem[p.suit][p.value] = true;
             }
         }

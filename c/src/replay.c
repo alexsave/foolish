@@ -1548,6 +1548,17 @@ static DealSlot g_deal_slot;
 // trump. Passing the whole stock rather than only the cards this game went on
 // to draw is what the TS producer did too, and costs nothing: run_replay_v6
 // pops reveals as draws happen and never reads the tail.
+// THE SLOT IS DELIBERATELY SHORTER THAN A Game, which is the whole point of it
+// (see DEAL_SLOT_BYTES above): a full Game is ~130 KB of logs this deal never
+// reads. gcc sees the cast reach past the array it really is and says so
+// ("array subscript 'Game[0]' is partly outside array bounds of 'DealSlot[1]'",
+// -Warray-bounds). It is right about the bytes and wrong about the intent, so
+// the warning is off for THIS FUNCTION ONLY - not for the file, and not by
+// growing the slot back to a Game.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
 static int deal_reveals_from_seed(const unsigned char *seed, int seed_len, int n,
                                   unsigned char *reveals, int *out_nr, int *out_trump) {
     Game *d = (Game *)g_deal_slot.bytes;
@@ -1591,6 +1602,9 @@ static int deal_reveals_from_seed(const unsigned char *seed, int seed_len, int n
     *out_nr = nr;
     return 0;
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 int replay_encode_v6_from_game(const Game *g, const unsigned char *seed, int seed_len,
                                int max_atoms, unsigned char *out, int out_cap) {

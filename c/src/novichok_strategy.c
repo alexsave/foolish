@@ -1018,7 +1018,10 @@ static int nv_peek_trial(const Game *g_in, int my_idx, const LegalMove *root_m,
         if (n_e == 0) break;
         for (int i = n_e - 1; i > 0; i--) {   // the harness shuffle, verbatim
             int j = (int)(game_random() * (i + 1));
-            if (j < 0) j = 0; if (j > i) j = i;
+            // One clamp per line (-Wmisleading-indentation): two `if`s on one line
+            // read as a guard and its body.
+            if (j < 0) j = 0;
+            if (j > i) j = i;
             int t = elig[i]; elig[i] = elig[j]; elig[j] = t;
         }
         bool acted = false;

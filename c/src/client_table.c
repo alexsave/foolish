@@ -622,7 +622,9 @@ static int uncovered(const TableView *v) {
 // A card as the conflict rule names it: its dense id, or ANIM_CARD_NONE for a
 // back or no card at all.
 static int conflict_id(Card c) {
-    return c.suit >= 0 && c.suit < NUM_SUITS && c.value >= 1 && c.value <= ACE_VALUE ? card_to_id(c) : ANIM_CARD_NONE;
+    // card.h's range test: the suit's upper bound is the bitfield's, which gcc
+    // was answering itself (-Wtype-limits).
+    return card_in_range(c, 1, ACE_VALUE) ? card_to_id(c) : ANIM_CARD_NONE;
 }
 
 int client_conflict_verdicts(const TableView *open, const TableView *final, const ClientConflict *q, ConflictVerdicts *out) {
