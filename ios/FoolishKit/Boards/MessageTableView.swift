@@ -3857,6 +3857,11 @@ public struct MessageTableView: View {
             + "[\(ids.sorted().joined(separator: ","))] fly=[\(flyIds.sorted().joined(separator: ","))]")
         // Veil the returning cards in the hand AND defer their fan slots - the hand
         // opens for each only as its flight arrives (the mirror of the play's veil).
+        // THE TABLE AS IT WAS, taken NOW. The undo has already published the new
+        // board, and its re-laid-out table replaces these frames within a pass -
+        // before the Task below has waited its beat. See UndoFlightSource.
+        let fromCardFrames = lastBattleCardFrames
+        let fromSlotFrames = lastBattleFrames
         animator.preHide(ids)
         let veiledAt = animator.veilEpoch          // round 40 - see playBoutEnd
         // Keep the pre-undo table rendered so each card flies FROM where it sat,
@@ -3905,8 +3910,11 @@ public struct MessageTableView: View {
                     let laid = self.laidOutHandNow(new)
                     var flights: [Flight] = []
                     for c in flying {
-                        guard let from = self.lastBattleCardFrames[c.identity]
-                                ?? self.lastBattleFrames.values.first else { continue }
+                        let ownSlot = UndoFlightSource.ownSlot
+                        guard let from = UndoFlightSource.rect(for: c, in: old.battles,
+                                cardFrames: ownSlot ? fromCardFrames : self.lastBattleCardFrames,
+                                slotFrames: ownSlot ? fromSlotFrames : self.lastBattleFrames,
+                                ownSlotOnly: ownSlot) else { continue }
                         // NOT `handLanding`, and the difference is deliberate.
                         // These cards are coming BACK into the hand, so the fan
                         // has not laid them out yet and `handCardFrames` cannot
@@ -5240,21 +5248,41 @@ public struct MessageTableView: View {
     private var undoSlot: some View {
         ZStack {
             if controller.canSend {
-                // NOT WHILE A RETRACTION IS IN FLIGHT (the audit's U8). Every
-                // other door into the controller asks first - `cancelStage` and
-                // `apply` both check RETRACTING before anything else - and this
-                // one did not, so a tap during the conflict peek ran `undo`,
-                // found nothing to take back, and then RE-STAGED the very chain
-                // being retracted. Disabled rather than guarded inside the
-                // action, on the owner's call: "let's disable the undo button
-                // during that then." A control that cannot be pressed has no
-                // door to forget.
-                FButton(FStrings.t("ios.msg.undo"), kind: .wood,
-                        enabled: !controller.conflictRetracting, compact: true,
-                        fixedWidth: FActionBar.pillWidth, action: undoAction)
+                // …AND NOT WHILE THE BOARD MOVES (UndoGate). The gate reads
+                // statics nothing publishes, so the pill is redrawn on a short
+                // timer while it is up, and `undoPillTapped` asks again at the
+                // tap in case one lands between two redraws.
+                TimelineView(.periodic(from: .now, by: 0.1)) { _ in
+                    undoPill
+                }
             }
         }
         .frame(width: FActionBar.pillWidth, height: 40)
+    }
+
+    private var undoPill: some View {
+        // NOT WHILE A RETRACTION IS IN FLIGHT (the audit's U8). Every
+        // other door into the controller asks first - `cancelStage` and
+        // `apply` both check RETRACTING before anything else - and this
+        // one did not, so a tap during the conflict peek ran `undo`,
+        // found nothing to take back, and then RE-STAGED the very chain
+        // being retracted. Disabled rather than guarded inside the
+        // action, on the owner's call: "let's disable the undo button
+        // during that then." A control that cannot be pressed has no
+        // door to forget.
+        FButton(FStrings.t("ios.msg.undo"), kind: .wood,
+                enabled: !controller.conflictRetracting && UndoGate.acceptsNow, compact: true,
+                fixedWidth: FActionBar.pillWidth, action: undoPillTapped)
+    }
+
+    /// The Undo pill's tap: refused while the board moves (UndoGate), then the
+    /// same `undoAction` the bubble's X runs - which does NOT ask the gate.
+    private func undoPillTapped() {
+        guard UndoGate.acceptsNow else {
+            AnimLog.say("undo refused: the board is still moving")
+            return
+        }
+        undoAction()
     }
 
     /// - `crop` (round-5 M5b, made continuous in round-6): how much of each hand

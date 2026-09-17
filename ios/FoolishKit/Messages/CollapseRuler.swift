@@ -154,6 +154,8 @@ public struct CollapseRuler: View {
     static let squareSide: CGFloat = 12
     /// The first opponent's square. Magenta: no table pair is ever magenta.
     static let opponentSquareColour = pure(1, 0, 1)
+    /// A flying card's square. See `flightSquare`.
+    static let flightSquareColour = pure(1, 0.5, 0)
 
     /// A LITERAL sRGB colour, never `Color.red` and friends: the system colours
     /// are dynamic (red is 255,59,48 in light and 255,69,58 in dark) and the
@@ -288,6 +290,29 @@ public extension View {
         }
     }
 
+    /// An ORANGE square at the centre of every flying card - the ghost the
+    /// overlay flies - so a filmed take can follow a card through the air as
+    /// well as on the table. Owner, on an undo whose card "jumps from its
+    /// position on the table to the center of the table, then animates back to
+    /// your hand": "show a graph of the x and y position of that card... Use
+    /// the squares". A table pair's square is on its SLOT and goes when the card
+    /// lifts off; this one is on the card that leaves.
+    ///
+    /// Orange, not white: the ruler's clock strip is 12pt white cells, and an
+    /// isolated one is a white 12pt square.
+    @ViewBuilder
+    func flightSquare() -> some View {
+        if MessageDevBoard.rulerOn {
+            overlay(alignment: .center) {
+                CollapseRuler.flightSquareColour
+                    .frame(width: CollapseRuler.squareSide, height: CollapseRuler.squareSide)
+                    .allowsHitTesting(false)
+            }
+        } else {
+            self
+        }
+    }
+
     /// The same lift, for the collapse LAYER a marked view is hosted on: the
     /// mark's own `zIndex` orders it inside that host, where it has no
     /// siblings, and it is the host that has to come out above the deck.
@@ -315,6 +340,7 @@ public extension View {
     func collapseMark(_ mark: CollapseRuler.Mark?) -> some View { self }
     func collapseMarkLift() -> some View { self }
     func tableSquare(_ index: Int?) -> some View { self }
+    func flightSquare() -> some View { self }
 }
 
 

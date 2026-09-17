@@ -232,6 +232,10 @@ def main():
         mags = [(dx * dx + dy * dy) ** 0.5 for _, _, dx, dy, _ in st]
         big = [(f0, f1, m) for (f0, f1, _, _, dt), m in zip(st, mags)
                if is_jump(m, dt, a.jump)]
+        # A flying card is SUPPOSED to cover ground fast; its square is kept for
+        # plotting (the CSV) and never scored as a jump.
+        if tr["colour"] == sq.FLIGHT:
+            big = []
         jumps += len(big)
         for f0, f1, m in big:
             t = times[f1] - t0
