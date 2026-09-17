@@ -33,6 +33,8 @@ from multiprocessing import Pool
 import numpy as np
 from PIL import Image
 
+import squares as sq
+
 BAND, CELL, BITS, EDGE = 10.0, 12.0, 14, 4.0
 
 
@@ -76,12 +78,9 @@ def read_array(a):
             r_, g_, b_ = row[:, 0], row[:, 1], row[:, 2]
             if chan == "r":
                 m = (r_ > 140) & (g_ < 90) & (b_ < 90)
-            elif chan == "g":
+            else:
                 m = (g_ > 140) & (r_ < 90) & (b_ < 90)
-            elif chan == "m":                        # magenta - the table mark
-                m = (r_ > 140) & (b_ > 140) & (g_ < 90)
-            else:                                    # yellow
-                m = (r_ > 140) & (g_ > 140) & (b_ < 90)
+
             # 0.55 of the CROP, not of the screen - the bars span the whole
             # frame either way, and a card's suit glyph still cannot.
             if m.mean() > 0.55:
@@ -119,21 +118,24 @@ def read_array(a):
     # hand cut off below the screen, the one failure the collapse's `hostLead`
     # exists to prevent; no red is the box top above the screen, which under the
     # slide is the design and is clipped by the drawer.
-    # The two MARKER bars, pinned to the views rather than to the box: blue
-    # through the table cards' centre, yellow through the first opponent's. They
-    # are the only way to answer "did the table move smoothly" now that the box's
-    # own top is not a line anything is drawn at. Absent on an older take and on
-    # any frame where the view is off screen, so both are optional throughout.
-    tab, _ = verify(np.nonzero((cr > 140) & (cb > 140) & (cg < 90))[0], "m")
-    opp, _ = verify(np.nonzero((cr > 140) & (cg > 140) & (cb < 90))[0], "y")
+    # The two MARKS, pinned to the views rather than to the box: the table's
+    # line is the mean height of its pairs' squares (on one row, their shared
+    # centre; on two, the middle of the group), the opponent's is the magenta
+    # square on the first opponent. They were full-width magenta and yellow
+    # bars until the bars ran through the pairs' squares - see squares.py.
+    # Absent on any frame where the view is off screen or covered, so both are
+    # optional throughout.
+    found = sq.squares_in(a)
+    tys = [y for n, _, y in found if n in sq.TABLE]
+    oys = [y for n, _, y in found if n == sq.OPPONENT]
     if top is None and bot is None:
         return None
     screen_pt = h / s
     out = {}
-    if tab is not None:
-        out["table_pt"] = round(tab / s, 1)
-    if opp is not None:
-        out["opp_pt"] = round(opp / s, 1)
+    if tys:
+        out["table_pt"] = round(float(np.mean(tys)), 1)
+    if oys:
+        out["opp_pt"] = round(oys[0], 1)
     if top is None:
         out["topoff"] = True
         out["top_pt"] = 0.0
@@ -150,6 +152,7 @@ def read_array(a):
     # The box's own left edge, off the bar we just verified.
     xs_ = np.nonzero(topm)[0]
     bx = int(xs_[0]) if len(xs_) else 0
+    out["left_pt"] = round(bx / s, 1)
     # Band pitch, from a NARROW vertical strip at the box's leading edge - cyan
     # only, because the bands alternate cyan/magenta and are adjacent, so a mask
     # of both merges the strip into one run.

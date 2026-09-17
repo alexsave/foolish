@@ -43,6 +43,7 @@
 #   rig.sh play                   select a LEGAL card and press the plank
 #   rig.sh throwin [select]       throw a card in (the plank RELABELS, so
 #                                 `play` cannot find it); --goodwait has one
+#   rig.sh cover                  cover an attack, proven by the plank changing
 #   rig.sh turn                   play a move AND send it, so the transcript's
 #                                 last bubble is the board now on screen
 #   rig.sh seed MODE ARGS...      dev.fatboard via c/build/msg_wire_test
@@ -1382,6 +1383,35 @@ b = ast.literal_eval(sys.stdin.read().split('BARS ')[1]); print(b[-1][0] if b el
   echo "threw in: the card at x=$found"
 }
 
+# COVER an attack: select a card, tap an attack on the table, and stop at the
+# first pairing that changes the plank ("Pickup" becomes "Undo" when the cover
+# stages). Not `play`, which takes Messages offering Send as its proof - and after
+# an Undo the bubble stays staged, so Send is already there before any move.
+cmd_cover() {
+  need_sim
+  settle_reset; poll 30 0.2 drawer_settled || true
+  local y py px x tx ty before
+  read -r W H < <(screen)
+  y=$(python3 "$LIB/ui.py" hand_y | awk '{print $2}')
+  py=$(bar_y -1); px=$((W * 4 / 5))
+  { [ "$y" = "-1" ] || [ "$py" = "-1" ]; } && { echo "no hand or no plank on screen" >&2; return 1; }
+  before=$(plank_hash "$px" "$py")
+  local table; table=$(python3 "$LIB/ui.py" table | sed 's/TABLE //' | tr -d '[]()' | tr ',' ' ')
+  for x in $(python3 "$LIB/ui.py" cards | sed 's/CARDS //' | tr -d '[],'); do
+    set -- $table
+    while [ $# -ge 2 ]; do
+      tx=$1; ty=$2; shift 2
+      tap "$x" "$y" 0.8
+      tap "$tx" "$ty" 1.2
+      if [ "$(plank_hash "$px" "$py")" != "$before" ]; then
+        echo "covered: card at x=$x onto $tx,$ty"; return 0
+      fi
+    done
+  done
+  echo "no legal cover" >&2
+  return 1
+}
+
 # The plank's pixels as one hash - only its word changes between states.
 plank_hash() {
   local f="${FOOLISH_WORK:-/tmp/foolishrig}/plank.$SIM.png"
@@ -1765,8 +1795,12 @@ cmd_tween() {
   # silently stops working while everything else still reads fine.
   # 544 of 1320 is 41% of the frame: ffmpeg moves that much less, and so does
   # the reader.
+  #
+  # …AND NOW THE WHOLE WIDTH AGAIN. The table's and the opponent's marks became
+  # squares on the views themselves (lib/squares.py), and those sit wherever the
+  # cards do - well right of 544px. The crop stays a knob.
   "$LIB/window.sh" "$d/take.mp4" "$d" "${FOOLISH_TWEEN_SS:-1.3}" \
-                   "${FOOLISH_TWEEN_T:-2.2}" "${FOOLISH_TWEEN_CROP:-544}" || return 1
+                   "${FOOLISH_TWEEN_T:-2.2}" "${FOOLISH_TWEEN_CROP:-iw}" || return 1
   tp "extract frames" "$ph"; ph=$(date +%s.%N)
   python3 "$LIB/tween.py" "$d" --csv "$d/edge.csv" --quiet
   tp "measure" "$ph"
@@ -1830,6 +1864,7 @@ case "${1:-}" in
   goodtap)  shift; cmd_goodtap "$@" ;;
   seed)     shift; cmd_seed "$@" ;;
   throwin)  shift; cmd_throwin "$@" ;;
+  cover)    shift; cmd_cover "$@" ;;
   unseed)   shift; cmd_unseed "$@" ;;
   claimed)  shift; cmd_claimed "$@" ;;
   prefs)    shift; cmd_prefs "$@" ;;

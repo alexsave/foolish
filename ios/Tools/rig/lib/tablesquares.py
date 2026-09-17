@@ -5,7 +5,7 @@
 
 The live table draws a coloured square at the centre of each pair's slot when
 `dev.ruler` is on (`View.tableSquare`, CollapseRuler.swift): cyan, yellow, green,
-repeating. The horizontal ruler bars cannot see a throw-in - it re-centres the
+repeating; `lib/squares.py` finds them. The horizontal ruler bars cannot see a throw-in - it re-centres the
 row SIDEWAYS, and a bar through the table's centre does not move while both
 pairs slide 36pt left. These squares move exactly when the layout does.
 
@@ -13,12 +13,6 @@ Reads the frames and `times.txt` that `lib/window.sh` writes. Prints one line
 per pair and exits 1 when any pair jumped (see `is_jump`): further than
 `--jump` points between neighbouring frames, or too fast across a gap. Exits 2 when there is nothing to
 judge (no squares at all - is the ruler on, is this a DEBUG build?).
-
-THE MAGENTA BAR RUNS THROUGH THE SQUARES. On a single row the table's centre
-line is the pairs' centre line, so each square comes out as two halves with a
-4pt magenta stripe between them. The halves are joined by a vertical dilation
-before labelling, and the square is measured on its RAW pixels, whose outer
-edges are the square's own - so the centre is exact either way.
 
 A SQUARE THAT IS PARTLY COVERED IS NOT A POSITION. A flying card passes over
 the table; a square it clips has the wrong centre, so any shape that is not
@@ -29,134 +23,57 @@ import argparse, glob, os, sys
 from multiprocessing import Pool
 import numpy as np
 from PIL import Image
-from scipy import ndimage
 
 import tween
 
-SIDE_PT = 12.0            # CollapseRuler.squareSide
-BAR_PT = 4.0              # CollapseRuler.edge - the magenta bar's thickness
-# The ruler's band strip down the left edge is cyan/magenta/yellow cells of
-# about this size; nothing on the table comes near it.
-STRIP_PX = 80
-
-
-# 30px at 3x (10pt), under the square's 36px, so a grid point always lands
-# inside a WHOLE square. Owner: "if the squares are 36 pixels you might as well
-# use 30 pixel strides."
-#
-# A square the magenta bar runs through is not whole: it is two 12px halves
-# with the 12px bar between them, and a 30px grid can step over all three. So
-# the rows immediately above and below the bar are scanned as well - every
-# square the bar cuts has a half on both of them.
-STRIDE_PT = 10.0
-
-
-def colour_of(px):
-    """Which square colour an (r, g, b) pixel is, or None."""
-    r, g, b = (int(v) for v in px)
-    hi, lo = 140, 90
-    if g > hi and b > hi and r < lo:
-        return "cyan"
-    if r > hi and g > hi and b < lo:
-        return "yellow"
-    if g > hi and r < lo and b < lo:
-        return "green"
-    return None
-
-
-def mask(win, name):
-    r, g, b = (win[:, :, i].astype(np.int16) for i in range(3))
-    hi, lo = 140, 90
-    if name == "cyan":
-        return (g > hi) & (b > hi) & (r < lo)
-    if name == "yellow":
-        return (r > hi) & (g > hi) & (b < lo)
-    return (g > hi) & (r < lo) & (b < lo)
-
-
-def bar_edges(a, s):
-    """The rows just outside the magenta bar, found down two columns (one of
-    them may be under a flying card)."""
-    h, w = a.shape[0], a.shape[1]
-    out = set()
-    for x in (w // 2, w - 40):
-        col = a[:, x, :].astype(np.int16)
-        ys = np.nonzero((col[:, 0] > 140) & (col[:, 2] > 140) & (col[:, 1] < 90))[0]
-        for run in np.split(ys, np.nonzero(np.diff(ys) > 2)[0] + 1) if len(ys) else []:
-            if abs(len(run) - BAR_PT * s) <= 3:
-                out.update((int(run[0]) - 3, int(run[-1]) + 3))
-    return {y for y in out if 0 <= y < h}
-
+import squares as sq
 
 def read_frame(p):
     return reading(np.asarray(Image.open(p).convert("RGB")))
 
 
 def reading(a):
-    """One frame: its squares, with y measured from the BOX'S TOP EDGE.
+    """One frame: (its squares measured INSIDE THE DRAWER, the ruler's clock).
 
     IN THE DRAWER, NOT ON THE SCREEN. The first reel reported 30 "jumps", every
-    one of them vertical and every one while a board was opening: Messages
-    slides the drawer up, carrying the whole table with it, 24pt then 19 then
-    16 a frame. That is the host's presentation, not our layout, and a table
-    that jumps inside a moving drawer still moves relative to the drawer's own
-    top bar (tween.py's red bar). A frame without that bar has no box to
-    measure against, so its squares are not a position.
+    one vertical and every one while a board was opening: Messages slides the
+    drawer up, carrying the whole table with it, 24pt then 19 then 16 a frame.
+    The second reported 8 more, every one SIDEWAYS and every one while the rig
+    left the thread: Messages slides the whole conversation, drawer and all, off
+    to the right. Both are the host's presentation, not our layout. So y is
+    measured from the drawer's red top bar and x from that bar's left end, and a
+    table that jumps inside a moving drawer still moves against both. A frame
+    without the bar has no drawer to measure against, so its squares are not a
+    position.
+
+    The clock is the ruler's ms-mod-16384 strip, which places this frame on the
+    device's own clock - see `clock_offset`.
     """
     box = tween.read_array(a)
     if not box or box.get("topoff") or "top_pt" not in box:
-        return []
-    top = box["top_pt"]
-    return [(n, x, round(y - top, 2)) for n, x, y in squares_in(a)]
+        return [], None
+    top, left = box["top_pt"], box.get("left_pt", 0.0)
+    return ([(n, round(x - left, 2), round(y - top, 2)) for n, x, y in sq.squares_in(a)],
+            box.get("clock"))
 
 
-def squares_in(a):
-    """Every whole square in one frame, as (colour, x_pt, y_pt).
+def clock_offset(rec0, times, clocks):
+    """Seconds from the recorder being STARTED to the movie's first frame.
 
-    A GRID, NOT A SCAN. Owner: "scan strides of 20 px in a grid" - and then
-    "you might as well use 30 pixel strides" for a 36px square. The grid is
-    classified in one vectorised pass; only the neighbourhood of a hit is then
-    looked at closely.
+    The reel's marks are wall-clock seconds from starting the recorder, and the
+    movie's clock starts at its first frame - about four seconds later on this
+    Mac, which filed the first reel's anomalies under the scenario BEFORE the one
+    they happened in. The ruler draws the device's milliseconds mod 16384 on
+    every frame, so each readable frame says what the wall clock was: the
+    offset is the one delay that makes (start + t + delay) land on that value.
+    The median over every readable frame shrugs off a misread cell.
     """
-    h, w = a.shape[0], a.shape[1]
-    s = 3 if h >= 2000 else 2
-    side = SIDE_PT * s
-    reach = int(2 * side)
-    stride = int(round(STRIDE_PT * s))
-    ys_ = np.array(sorted(set(range(stride // 2, h, stride)) | bar_edges(a, s)))
-    xs_ = np.arange(STRIP_PX, w, stride)
-    grid = a[ys_][:, xs_]
-    hits = []
-    for name in ("cyan", "yellow", "green"):
-        gy, gx = np.nonzero(mask(grid, name))
-        hits += [(name, int(xs_[j]), int(ys_[i])) for i, j in zip(gy, gx)]
-    out, done = [], []
-    for name, x, y in hits:
-        if any(n == name and x0 <= x <= x1 and y0 <= y <= y1 for n, x0, y0, x1, y1 in done):
+    ds = []
+    for t, c in zip(times, clocks):
+        if c is None:
             continue
-        wx0, wy0 = max(STRIP_PX, x - reach), max(0, y - reach)
-        win = a[wy0:min(h, y + reach), wx0:min(w, x + reach)]
-        m = mask(win, name)
-        # Join the halves across the magenta bar (plus a pixel of h264 blur).
-        joined = ndimage.binary_dilation(
-            m, structure=np.ones((int(BAR_PT * s) + 3, 1), dtype=bool))
-        lab, _ = ndimage.label(joined)
-        k = lab[y - wy0, x - wx0]
-        if k == 0:
-            continue
-        ys, xs = np.nonzero(m & (lab == k))
-        x0, x1, y0, y1 = xs.min() + wx0, xs.max() + wx0, ys.min() + wy0, ys.max() + wy0
-        done.append((name, x0, y0, x1, y1))
-        bw, bh = x1 - x0 + 1, y1 - y0 + 1
-        # Square-sized and square-shaped, or it is something else (a bar, a
-        # glyph, a square half under a flying card, one cut by the window).
-        if not (0.75 * side <= bw <= 1.25 * side and 0.75 * side <= bh <= 1.25 * side):
-            continue
-        # Most of the box is the colour: the bar may take 4pt of 12.
-        if len(xs) < 0.45 * side * side:
-            continue
-        out.append((name, round((x0 + x1) / 2.0 / s, 2), round((y0 + y1) / 2.0 / s, 2)))
-    return out
+        ds.append((c - (rec0 * 1000.0 + t * 1000.0)) % 16384)
+    return float(np.median(ds)) / 1000.0 if ds else None
 
 
 def from_movie(movie):
@@ -247,13 +164,16 @@ def is_jump(dist, dt, jump_pt):
 
 
 def load_marks(path):
-    """`seconds name` per line: when each scenario of a reel began."""
-    out = []
+    """`seconds name` per line: when each scenario of a reel began, in seconds
+    from starting the recorder; a `rec0 EPOCH` line says when that was."""
+    out, rec0 = [], None
     for line in open(path):
         t, _, name = line.strip().partition(" ")
-        if t:
+        if t == "rec0":
+            rec0 = float(name)
+        elif t:
             out.append((float(t), name))
-    return sorted(out)
+    return sorted(out), rec0
 
 
 def scene_at(marks, t):
@@ -283,11 +203,19 @@ def main():
         times = tween.frame_times(a.take, len(frames))
         with Pool() as pool:
             seen = pool.map(read_frame, frames, chunksize=8)
-    marks = load_marks(a.marks) if a.marks else []
+    clocks = [c for _, c in seen]
+    seen = [q for q, _ in seen]
+    marks, rec0 = load_marks(a.marks) if a.marks else ([], None)
     t0 = times[0] if times else 0.0
+    if marks and rec0 is not None:
+        d = clock_offset(rec0, times, clocks)
+        if d is not None:
+            print("marks aligned by the ruler clock: the movie starts %.2fs after the "
+                  "recorder did" % d)
+            marks = [(mt - d, mn) for mt, mn in marks]
     if a.csv:
         with open(a.csv, "w") as fh:
-            fh.write("frame,t,colour,x_pt,y_in_box_pt\n")
+            fh.write("frame,t,colour,x_in_box_pt,y_in_box_pt\n")
             for i, s in enumerate(seen):
                 for name, x, y in s:
                     fh.write("%d,%.4f,%s,%.2f,%.2f\n" % (i + 1, times[i], name, x, y))
