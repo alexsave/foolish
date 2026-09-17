@@ -2,8 +2,11 @@
 //
 // Every wasm module built by c/Makefile exports wasm_layout_hash(): the
 // tools/structgen hash of the Game layout under that build's flags. The module
-// generated from the same headers and flags (sdk/ts/gen/game_layout.<build>.ts)
-// carries the same number as LAYOUT_HASH. A host checks the two once per
+// generated from the same headers and flags (sdk/ts/gen/layout_hash.<build>.ts)
+// carries the same number as LAYOUT_HASH. It is its own module, never the
+// accessors in game_layout.<build>.ts: the browser runs this check too, and the
+// client bundle must not reach a reader of the unmasked Game
+// (e2e/security_client_boundary.test.ts). A host checks the two once per
 // instance, before the first kernel call, so a module built from different C
 // than the generated accessors fails at load with a message, instead of reading
 // every field from the wrong offset. One export call per instance; it costs
@@ -32,7 +35,7 @@ export function assertLayoutHash(
     if (got !== want) {
         throw new Error(`${module} was built for Game layout ${hex(got)}, but ${generatedPath} ` +
             `describes ${hex(want)}: the module and the generated accessors come from different C headers. ` +
-            `Rebuild the module (make -C c wasm wasm-bots, which also rewrites sdk/ts/gen/game_layout.*.ts) ` +
+            `Rebuild the module (make -C c wasm wasm-bots, which also rewrites sdk/ts/gen/{game_layout,layout_hash}.*.ts) ` +
             `and commit both, or run tools/structgen/gen.sh if only the generated module is stale.`);
     }
 }

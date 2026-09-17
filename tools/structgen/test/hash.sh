@@ -2,7 +2,7 @@
 # The layout hash is a fact about LAYOUT, not about how libclang spells a type.
 #
 # c/Makefile bakes `structgen --print-hash` into every wasm module
-# (wasm_layout_hash) and the generated TS carries the same number as
+# (wasm_layout_hash) and the generated TS (--hash-ts) carries the same number as
 # LAYOUT_HASH; the hosts refuse a module whose hash differs. CI runs structgen
 # on Linux's libclang, the Mac on Homebrew's, and the two can render one type
 # differently (typedef sugar, "struct X" vs "X", unnamed-record spellings), so

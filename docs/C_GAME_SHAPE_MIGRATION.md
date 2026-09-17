@@ -67,7 +67,7 @@ Around it, TS still builds a JS `Game` (`server/api/core/types.ts:106-160`) from
 3. A seat is resolved in C from the auth user id (`roster_seat_of`), never in TS.
 4. Every per-viewer byte a client can receive (response envelope, `player_views.view`, `spectator_views.view`, realtime push) is written by C in one synchronous kernel section.
 5. TS never reads a kernel slot across an `await`: every kernel section is load, operate, copy products out, all synchronous (the rule from `engine.ts` "Packed wire pipeline" and the resident-slot memory note).
-6. `src/` can reach only the client-side generated module (`view_layout.*.ts`), never `game_layout.*.ts` and never a full-state reader (the S2 test).
+6. `src/` can reach only the client-side generated modules (`view_layout.*.ts`, and `layout_hash.*.ts`, which holds nothing but the layout hash), never `game_layout.*.ts` and never a full-state reader (the S2 test).
 
 ### 2.3 Data flow: server action (a human move)
 
@@ -373,12 +373,13 @@ Replaces: `sdk/ts/wire/packed_read.ts` (all), `decodePackedGame` and `viewToGame
 | Module | structgen roots | Who may import | Why |
 |---|---|---|---|
 | `sdk/ts/gen/game_layout.bots.ts` | `Game` (fixture fields), `Roster`, `RosterSeat`, `TableCommit`, `Span`, consts `GAME_STATUS_`, `PLAYER_STATUS_`, `TABLE_`, `ENGINE_REJECT_`, `GAME_INVALID_` | `server/**`, `sdk/ts/table/server_table.ts`, `e2e/**` | full state, including the deck: server and tests only |
+| `sdk/ts/gen/layout_hash.<build>.ts` | none: only `LAYOUT_HASH` for the `Game` layout (`structgen --hash-ts`) | `sdk/ts/wasm/bots.ts`, `engine.ts`, `e2e/**` | the load-time layout check runs in the browser too, so the hash cannot live in the accessor module |
 | `sdk/ts/gen/view_layout.bots.ts` | `TableView`, `PushEvent`, `Card`, `Battle`, consts `GAME_STATUS_`, `PLAYER_STATUS_`, `EVW_`, `ANIM_` | `src/**`, `sdk/ts/table/client_table.ts` | a masked view has no hidden card to leak |
 | `sdk/ts/gen/anim.bots.ts` | `AnimPlan`, `AnimBeats`, `AnimEvent`, `LegalMoves` (already generated as `tools/structgen/gen/anim.ts`) | `src/**`, `server/**` | legal menus and plans |
 | `sdk/ts/gen/oracle_layout.oracle_mt.ts` | the candidate readback struct in `c/src/oracle_mt.h` | `src/oracle/**` | replaces the shifts at `oracleMtSession.ts:260-268` |
 
 `sdk/ts/table/server_table.ts` and `sdk/ts/table/client_table.ts` are the only hand-written TS over these modules: each is a thin, synchronous call-and-copy wrapper with no field knowledge beyond names the generator emitted.
-S2 is extended so the allowlist for `src/` is exactly `view_layout.*.ts` and `anim.*.ts`; `game_layout.*.ts` and `sdk/ts/table/server_table.ts` stay unreachable from `src/`.
+S2 is extended so the allowlist for `src/` is exactly `view_layout.*.ts`, `anim.*.ts` and `layout_hash.*.ts`; `game_layout.*.ts` and `sdk/ts/table/server_table.ts` stay unreachable from `src/`.
 
 structgen needs one addition: `--snapshot T` with `--count T.field=count_field`, emitting `export interface T_Snap` plus `readT(m, p): Readonly<T_Snap>` that materializes a frozen plain object with arrays cut to their counts.
 React state holds only these snapshots, never a pointer.
@@ -540,7 +541,7 @@ Tests that document today's `exit` and `add-bot` caller checks exactly as they a
 
 Parallel with Phases 0 and 2 (disjoint files).
 
-- Scope: `c/Makefile` (a `structgen` prerequisite per wasm build: `-DSG_LAYOUT_HASH=$(shell tools/structgen/build/structgen ... --print-hash)` for bots, rules, oracle, oracle-mt), `c/wasm/wasm_api.c` and `wasm_oracle_mt.c` (`uint32_t wasm_layout_hash(void) { return SG_LAYOUT_HASH; }`), `tools/structgen/gen.sh` (write to `sdk/ts/gen/`, add the `--snapshot` / `--count` modes), `tools/structgen/structgen.c` (hash from field path, offset, size, kind and bit range only, never from type spellings), `sdk/ts/wasm/bots.ts` and `engine.ts` (compare `wasm_layout_hash()` to the imported `LAYOUT_HASH` at instantiate and throw on mismatch), `.github/workflows/wasm.yml` (new `structgen` job), `scripts/wasm_stamp.sh` (the generated modules count as wasm outputs).
+- Scope: `c/Makefile` (a `structgen` prerequisite per wasm build: `-DSG_LAYOUT_HASH=$(shell tools/structgen/build/structgen ... --print-hash)` for bots, rules, oracle, oracle-mt), `c/wasm/wasm_api.c` and `wasm_oracle_mt.c` (`uint32_t wasm_layout_hash(void) { return SG_LAYOUT_HASH; }`), `tools/structgen/gen.sh` (write to `sdk/ts/gen/`, add the `--snapshot` / `--count` modes), `tools/structgen/structgen.c` (hash from field path, offset, size, kind and bit range only, never from type spellings), `sdk/ts/wasm/bots.ts` and `engine.ts` (compare `wasm_layout_hash()` to the `LAYOUT_HASH` imported from `sdk/ts/gen/layout_hash.<build>.ts`, never from the accessors, at instantiate and throw on mismatch), `.github/workflows/wasm.yml` (new `structgen` job), `scripts/wasm_stamp.sh` (the generated modules count as wasm outputs).
 - libclang decision (Q12): the CI job installs LLVM 22 from apt.llvm.org (`llvm.sh 22`, `libclang-22-dev`) so `gen.sh --check` runs the same libclang the Mac does; the spelling-independent hash is the second line of defence.
 - Deletes: `tools/structgen/gen/game_layout.rules.ts` once the server stops loading rules.wasm is Phase 8's; here only the output directory moves.
 - Red-first tests: `e2e/layout_hash.test.ts` (loading bots.wasm against a doctored `LAYOUT_HASH` throws); a structgen test that two runs with a typedef renamed but an identical layout produce the same hash; mutation of one field in `game.h` makes `gen.sh --check` exit 1.

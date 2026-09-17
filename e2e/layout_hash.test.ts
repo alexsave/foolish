@@ -2,7 +2,7 @@
 // come from the same C headers, or the host refuses the module at load.
 //
 // c/Makefile bakes tools/structgen's layout hash into every wasm module
-// (wasm_layout_hash); sdk/ts/gen/game_layout.<build>.ts carries the same number
+// (wasm_layout_hash); sdk/ts/gen/layout_hash.<build>.ts carries the same number
 // as LAYOUT_HASH; engine.ts (rules.wasm) and bots.ts (bots.wasm) compare the two
 // once per instance, before wasm_init (sdk/ts/wasm/layout_hash.ts).
 //
@@ -19,8 +19,8 @@ import { gunzip } from '../sdk/ts/wasm/gunzip.ts';
 import { __overrideLayoutHash, assertLayoutHash } from '../sdk/ts/wasm/layout_hash.ts';
 import { stateFormatVersion } from '../sdk/ts/wasm/engine.ts';
 import { __ensureBots, kernelBotRoster } from '../sdk/ts/wasm/bots.ts';
-import { LAYOUT_HASH as RULES_LAYOUT_HASH } from '../sdk/ts/gen/game_layout.rules.ts';
-import { LAYOUT_HASH as BOTS_LAYOUT_HASH } from '../sdk/ts/gen/game_layout.bots.ts';
+import { LAYOUT_HASH as RULES_LAYOUT_HASH } from '../sdk/ts/gen/layout_hash.rules.ts';
+import { LAYOUT_HASH as BOTS_LAYOUT_HASH } from '../sdk/ts/gen/layout_hash.bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; }
 
@@ -34,7 +34,7 @@ test('rules.wasm: a doctored LAYOUT_HASH refuses the module at load; the real on
     try {
         assert.throws(() => stateFormatVersion(), (e: Error) => {
             assert.match(e.message, /rules\.wasm/);
-            assert.match(e.message, /sdk\/ts\/gen\/game_layout\.rules\.ts/);
+            assert.match(e.message, /sdk\/ts\/gen\/layout_hash\.rules\.ts/);
             assert.ok(e.message.includes(hex(RULES_LAYOUT_HASH)), `names the module's hash: ${e.message}`);
             assert.ok(e.message.includes(hex(doctored(RULES_LAYOUT_HASH))), `names the expected hash: ${e.message}`);
             return true;
@@ -50,7 +50,7 @@ test('bots.wasm: a doctored LAYOUT_HASH refuses the module at load; the real one
     try {
         assert.throws(() => __ensureBots(), (e: Error) => {
             assert.match(e.message, /bots\.wasm/);
-            assert.match(e.message, /sdk\/ts\/gen\/game_layout\.bots\.ts/);
+            assert.match(e.message, /sdk\/ts\/gen\/layout_hash\.bots\.ts/);
             assert.ok(e.message.includes(hex(BOTS_LAYOUT_HASH)), `names the module's hash: ${e.message}`);
             return true;
         });
@@ -62,7 +62,7 @@ test('bots.wasm: a doctored LAYOUT_HASH refuses the module at load; the real one
 });
 
 test('a module that exports no wasm_layout_hash (built before the handshake) is refused', () => {
-    assert.throws(() => assertLayoutHash('old.wasm', {}, BOTS_LAYOUT_HASH, 'sdk/ts/gen/game_layout.bots.ts'),
+    assert.throws(() => assertLayoutHash('old.wasm', {}, BOTS_LAYOUT_HASH, 'sdk/ts/gen/layout_hash.bots.ts'),
         /old\.wasm exports no wasm_layout_hash/);
 });
 
@@ -71,7 +71,7 @@ test('a module that exports no wasm_layout_hash (built before the handshake) is 
 // (c/Makefile computes their hash separately); no TS reads their Game through
 // generated accessors yet, so they are held to the bots layout they share today.
 // If this fails because an oracle flag really moved the Game layout, generate a
-// game_layout.<build>.ts for that module rather than loosening the assertion.
+// game_layout.<build>.ts and layout_hash.<build>.ts for that module rather than loosening the assertion.
 test('every shipped module reports the layout of the generated module it is read with', () => {
     const bytes = (path: string) => gunzip(new Uint8Array(readFileSync(path)));
     const plain = (path: string) =>

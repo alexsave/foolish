@@ -32,7 +32,7 @@ import { takeRULES_WASM_B64 } from './rules_wasm.ts';
 // DecompressionStream), and needs no npm/import-map on the Deno edge.
 import { gunzip } from './gunzip.ts';
 import { derivedUuid } from '../wire/detid.ts';
-import { LAYOUT_HASH as RULES_LAYOUT_HASH } from '../gen/game_layout.rules.ts';
+import { LAYOUT_HASH as RULES_LAYOUT_HASH } from '../gen/layout_hash.rules.ts';
 import { assertLayoutHash } from './layout_hash.ts';
 
 // ---------------------------------------------------------------------------
@@ -152,7 +152,7 @@ function engine(): EngineExports {
     const module = new WebAssembly.Module(rulesWasmBytes() as BufferSource);
     const instance = new WebAssembly.Instance(module, {});
     const ex = instance.exports as unknown as EngineExports;
-    assertLayoutHash('rules.wasm', ex, RULES_LAYOUT_HASH, 'sdk/ts/gen/game_layout.rules.ts');
+    assertLayoutHash('rules.wasm', ex, RULES_LAYOUT_HASH, 'sdk/ts/gen/layout_hash.rules.ts');
     ex.wasm_init();
     exportsCache = ex;
     pendingWasmBytes = null;
@@ -182,7 +182,7 @@ export function ensureEngineAsync(): Promise<void> {
                 // hold resident state the bot loop is about to consume).
                 if (exportsCache) return;
                 const ex = instance.exports as unknown as EngineExports;
-                assertLayoutHash('rules.wasm', ex, RULES_LAYOUT_HASH, 'sdk/ts/gen/game_layout.rules.ts');
+                assertLayoutHash('rules.wasm', ex, RULES_LAYOUT_HASH, 'sdk/ts/gen/layout_hash.rules.ts');
                 ex.wasm_init();
                 exportsCache = ex;
                 memView = new Uint8Array(0);

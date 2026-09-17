@@ -52,6 +52,8 @@ ARTIFACTS=(
   # the stamped set (scripts/wasm_stamp.sh), which is what the gate below reads.
   "sdk/ts/gen/game_layout.rules.ts|make -C c wasm"
   "sdk/ts/gen/game_layout.bots.ts|make -C c wasm-bots"
+  "sdk/ts/gen/layout_hash.rules.ts|make -C c wasm"
+  "sdk/ts/gen/layout_hash.bots.ts|make -C c wasm-bots"
 )
 
 # The sources, read out of the Makefile's own WASM_*_SRC lists - not a second

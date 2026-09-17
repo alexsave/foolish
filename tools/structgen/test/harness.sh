@@ -4,6 +4,7 @@
 #                  legacy_marshal.ts was copied from (a844b2a1, the byte wire that
 #                  shipped), so the comparison does not move under later kernel work.
 #   game_layout.ts generated accessors for that Game under the bots.wasm flags
+#   layout_hash.ts its LAYOUT_HASH
 #   kernel.wasm    test/kernel.c + the HEAD state codec, compiled with the same
 #                  flags and -DSG_LAYOUT_HASH from structgen --print-hash
 set -euo pipefail
@@ -20,7 +21,7 @@ GEN=(--cwd "$out/head/c" --header game.h --root Game --build "bots=$FLAGS"
      --fields "Game=status,num_players,power_suit,first_attacker,defender,num_battles,deck_count,discard_pile_length,has_flipped,deterministic_deck,flipped,deck,table_battles,players,elimination_order,num_eliminated,good_players_mask,has_good_timestamp,logs"
      --fields "Player=status,hand_count,awaiting_attack,strategy_key,hand,name"
      --const GAME_STATUS_ --const PLAYER_STATUS_)
-"$here/build/structgen" "${GEN[@]}" --ts "$out/game_layout.ts"
+"$here/build/structgen" "${GEN[@]}" --ts "$out/game_layout.ts" --hash-ts "$out/layout_hash.ts"
 HASH="$("$here/build/structgen" "${GEN[@]}" --print-hash)"
 
 cd "$out/head/c"

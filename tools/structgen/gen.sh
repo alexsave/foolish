@@ -2,15 +2,18 @@
 # Regenerate every structgen output with the libclang tool, one run per build.
 # Layout flags come from c/Makefile itself, so a -D cap change there is picked up.
 #
-#   sdk/ts/gen/             the modules production TS imports (and the
-#                           LAYOUT_HASH each wasm module is checked against)
+#   sdk/ts/gen/             the modules production TS imports: accessors, and
+#                           layout_hash.<build>.ts, the LAYOUT_HASH each wasm
+#                           module is checked against (its own module, so the
+#                           browser can check it without importing a reader of
+#                           the unmasked Game - e2e/security_client_boundary)
 #   tools/structgen/gen/    the generator's own genericity fixtures
 #
 #   gen.sh           write both
 #   gen.sh --check   regenerate into a temp dir and fail if either is stale (the
 #                    freshness gate, in the style of scripts/check_wasm_freshness.sh)
 #
-# game_layout.<build>.ts is ALSO written by the wasm make targets (c/Makefile,
+# game_layout.<build>.ts and layout_hash.<build>.ts are ALSO written by the wasm make targets (c/Makefile,
 # "Layout hash"), from the same specs/game_layout.args and the same flags, so
 # `make -C c wasm-bots` after a header edit leaves the module and the wasm in
 # agreement. This script is the full regeneration and the CI check.
@@ -39,10 +42,10 @@ set -f   # the spec is split on whitespace, never globbed
 # shellcheck disable=SC2207
 GAME=(--cwd "$root/c" $(spec game_layout))
 set +f
-"$SG" "${GAME[@]}" --build "rules=$RULES" --ts "$prod/game_layout.rules.ts"
-"$SG" "${GAME[@]}" --build "bots=$BOTS" --ts "$prod/game_layout.bots.ts"
-if [ "$(sed -n 3p "$prod/game_layout.rules.ts")" = "$(sed -n 3p "$prod/game_layout.bots.ts")" ]; then
-  echo "gen: rules and bots Game layouts are identical ($(sed -n 3p "$prod/game_layout.bots.ts"))"
+"$SG" "${GAME[@]}" --build "rules=$RULES" --ts "$prod/game_layout.rules.ts" --hash-ts "$prod/layout_hash.rules.ts"
+"$SG" "${GAME[@]}" --build "bots=$BOTS" --ts "$prod/game_layout.bots.ts" --hash-ts "$prod/layout_hash.bots.ts"
+if [ "$(sed -n 3p "$prod/layout_hash.rules.ts")" = "$(sed -n 3p "$prod/layout_hash.bots.ts")" ]; then
+  echo "gen: rules and bots Game layouts are identical ($(sed -n 3p "$prod/layout_hash.bots.ts"))"
 else
   echo "gen: rules and bots Game layouts DIFFER - each host must load the module matching its wasm"
 fi

@@ -8,7 +8,8 @@
 # AnimEvent/LegalMoves: 4 files, 38,438 bytes); a deliberately broken bit
 # position in the C tool turned it red. structgen.c has since changed its output
 # on purpose, so a diff here is EXPECTED and each hunk should be one of:
-#   header "// build:" and LAYOUT_HASH; enum fields typed by the enum's real
+#   header "// build:" and no LAYOUT_HASH (structgen.c writes it to --hash-ts
+#   instead; the prototype has no such flag); enum fields typed by the enum's real
 #   integer type (unsigned enums read with getUint32); "p" for "p + 0" and
 #   "+ i0" for "+ i0 * 1"; raw_get/raw_set on 1/2/4-byte records; pack/unpack on
 #   all-bitfield records; char[N] _str helpers; 2-byte bitfield windows

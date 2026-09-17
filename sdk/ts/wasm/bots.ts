@@ -17,7 +17,7 @@
 import { Card, Battle, Game } from '@api/core/types.ts';
 import { LegalMove } from '@api/core/bot_interfaces.ts';
 import { loadWasmGz, loadWasmGzAsync } from './wasm_asset.ts';
-import { LAYOUT_HASH as BOTS_LAYOUT_HASH } from '../gen/game_layout.bots.ts';
+import { LAYOUT_HASH as BOTS_LAYOUT_HASH } from '../gen/layout_hash.bots.ts';
 import { assertLayoutHash } from './layout_hash.ts';
 import {
     KernelState, KernelSequence, kernelViewFromPacked, kernelEventsFromPacked,
@@ -251,7 +251,7 @@ function bots(): BotsExports {
     const module = new WebAssembly.Module(loadWasmGz('bots') as BufferSource);
     const instance = new WebAssembly.Instance(module, {});
     const ex = instance.exports as unknown as BotsExports;
-    assertLayoutHash('bots.wasm', ex, BOTS_LAYOUT_HASH, 'sdk/ts/gen/game_layout.bots.ts');
+    assertLayoutHash('bots.wasm', ex, BOTS_LAYOUT_HASH, 'sdk/ts/gen/layout_hash.bots.ts');
     ex.wasm_init();
     // THE TRANSPORT, said once (anim_plan.h). Every host that reaches the
     // kernel through this module is the server shape: a card's confirmation is

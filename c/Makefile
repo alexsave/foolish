@@ -625,14 +625,16 @@ WASM_API_EXPORTS := \
 # --- Layout hash (tools/structgen) ------------------------------------------
 # Every module linking wasm_api.c exports wasm_layout_hash(): the structgen hash
 # of the Game layout (tools/structgen/specs/game_layout.args) under THAT build's
-# flags, passed in as -DSG_LAYOUT_HASH. sdk/ts/gen/game_layout.<build>.ts carries
-# the same number as LAYOUT_HASH, and bots.ts / engine.ts refuse to run a module
+# flags, passed in as -DSG_LAYOUT_HASH. sdk/ts/gen/layout_hash.<build>.ts carries
+# the same number as LAYOUT_HASH (a module of its own, beside the accessors in
+# game_layout.<build>.ts, so the browser checks it without importing a reader of
+# the unmasked Game), and bots.ts / engine.ts refuse to run a module
 # whose hash differs - a stale wasm or a stale generated module is a load-time
 # error instead of a wrong read.
 #
 # build/layout/<build>.hash is regenerated on EVERY make that needs it (FORCE)
 # but rewritten only when its content changes, and the bots/rules rules also
-# refresh sdk/ts/gen/game_layout.<build>.ts the same way, so a header edit
+# refresh sdk/ts/gen/{game_layout,layout_hash}.<build>.ts the same way, so a header edit
 # followed by `make wasm-bots` leaves module and wasm in agreement.
 #
 # The same-second trap: make compares whole-second mtimes, so a header edit
@@ -655,11 +657,15 @@ SG_GAME_ARGS    = $(shell grep -v '^[[:space:]]*\#' $(SG_GAME_SPEC))
 $(STRUCTGEN): $(STRUCTGEN_DIR)/structgen.c $(STRUCTGEN_DIR)/Makefile
 	$(MAKE) -C $(STRUCTGEN_DIR) build/structgen
 
-# $(call sg_hash,<build name>,<cflags>,<generated TS module, or empty>)
+# $(call sg_hash,<build name>,<cflags>,<ts stem, or empty>): with a stem, also
+# writes ../sdk/ts/gen/game_layout.<stem>.ts and ../sdk/ts/gen/layout_hash.<stem>.ts.
+sg_gen  = ../sdk/ts/gen
+sg_sync = && { cmp -s $(1) $(2) || { cp $(1) $(2); echo "layout: wrote $(2)"; }; } && rm -f $(1)
 sg_hash = @mkdir -p build/layout && \
-  $(STRUCTGEN) --cwd . $(SG_GAME_ARGS) --build '$(1)=$(strip $(2))' --print-hash $(if $(3),--ts $@.ts) > $@.new && \
+  $(STRUCTGEN) --cwd . $(SG_GAME_ARGS) --build '$(1)=$(strip $(2))' --print-hash \
+    $(if $(3),--ts $@.ts --hash-ts $@.hash.ts) > $@.new && \
   { cmp -s $@.new $@ || { echo "layout $(1): $$(cat $@ 2>/dev/null || echo none) -> $$(cat $@.new)"; mv $@.new $@; }; } && \
-  rm -f $@.new $(if $(3),&& { cmp -s $@.ts $(3) || { cp $@.ts $(3); echo "layout $(1): wrote $(3)"; }; } && rm -f $@.ts)
+  rm -f $@.new $(if $(3),$(call sg_sync,$@.ts,$(sg_gen)/game_layout.$(3).ts) $(call sg_sync,$@.hash.ts,$(sg_gen)/layout_hash.$(3).ts))
 
 # $(call sg_settle,<build name>,<object dir>,<wasm file target>): run before the
 # sub-make that builds <wasm file target>, after build/layout/<build>.hash.
@@ -668,9 +674,9 @@ sg_settle = @cmp -s $(2)/.layout build/layout/$(1).hash || { \
   rm -rf $(2) $(3) && mkdir -p $(2) && cp build/layout/$(1).hash $(2)/.layout; }
 
 build/layout/rules.hash: $(STRUCTGEN) FORCE
-	$(call sg_hash,rules,$(WASM_RULES_CFLAGS),../sdk/ts/gen/game_layout.rules.ts)
+	$(call sg_hash,rules,$(WASM_RULES_CFLAGS),rules)
 build/layout/bots.hash: $(STRUCTGEN) FORCE
-	$(call sg_hash,bots,$(WASM_BOT_CFLAGS),../sdk/ts/gen/game_layout.bots.ts)
+	$(call sg_hash,bots,$(WASM_BOT_CFLAGS),bots)
 build/layout/bots-explain.hash: $(STRUCTGEN) FORCE
 	$(call sg_hash,bots_explain,$(WASM_BOT_CFLAGS) -DOG_EXPLAIN_BUILD,)
 build/layout/msg.hash: $(STRUCTGEN) FORCE

@@ -3,7 +3,7 @@
 // structgen emitted. No byte offset or width is spelled here; what remains is
 // the semantic mapping (status strings, player ids -> seats, card canonicalisation).
 import {
-    type Mem, memOf, LAYOUT_HASH,
+    type Mem, memOf,
     GAME_STATUS_WAITING, GAME_STATUS_PLAYING, GAME_STATUS_GAME_OVER,
     PLAYER_STATUS_IDLE, PLAYER_STATUS_READY, PLAYER_STATUS_IN, PLAYER_STATUS_OUT,
     Game_set_status, Game_set_num_players, Game_set_power_suit, Game_set_first_attacker, Game_set_defender,
@@ -19,6 +19,7 @@ import {
     Player_get_status, Player_get_awaiting_attack, Player_get_hand_count,
     Card_raw_get, Card_raw_set, Card_pack, Card_unpack_suit, Card_unpack_value,
 } from '../build/harness/game_layout.ts';
+import { LAYOUT_HASH } from '../build/harness/layout_hash.ts';
 import { type Card, type AnyGame, type Kernel, type KernelState, CARD_POOL, HIDDEN_CARD, wireStateCard } from './legacy_marshal.ts';
 
 const G_TO: Record<string, number> = { waiting: GAME_STATUS_WAITING, playing: GAME_STATUS_PLAYING, game_over: GAME_STATUS_GAME_OVER };

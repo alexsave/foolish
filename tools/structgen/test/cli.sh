@@ -24,4 +24,8 @@ expect_fail "root that is not a record"    "not a struct or union"          --cw
 expect_fail "header that does not compile" "compile error"                  --cwd "$here/test" --header missing.h --root Kinds --build wasm= --ts "$tmp/o.ts"
 expect_fail "colliding generated names"     "emitted twice"                  --cwd "$here/test" --header collide.h --root Collide --build wasm= --ts "$tmp/o.ts"
 "$SG" "${base[@]}" --print-hash > "$tmp/hash" && grep -qE '^0x[0-9a-f]{8}$' "$tmp/hash" && echo "ok   --print-hash prints the hash" || { echo "FAIL --print-hash"; fails=$((fails + 1)); }
+"$SG" "${base[@]}" --hash-ts "$tmp/hash.ts" --print-hash > "$tmp/hash2" \
+  && [ "$(grep -c . "$tmp/hash.ts")" = 3 ] && grep -qx "export const LAYOUT_HASH = $(cat "$tmp/hash2");" "$tmp/hash.ts" \
+  && ! grep -q LAYOUT_HASH "$tmp/out.ts" \
+  && echo "ok   --hash-ts writes the hash alone, and --ts leaves it out" || { echo "FAIL --hash-ts"; fails=$((fails + 1)); }
 [ $fails -eq 0 ] && echo "cli: all pass" || { echo "cli: $fails failed"; exit 1; }

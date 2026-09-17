@@ -55,16 +55,17 @@ sha() {  # one file -> bare hex, on both a Mac and CI's Linux
 # "Layout hash"):
 #   * tools/structgen/structgen.c and specs/*.args decide SG_LAYOUT_HASH, which
 #     is compiled into every module - a new hash rule is a new module.
-#   * sdk/ts/gen/game_layout.*.ts are written by the same make targets and are
-#     what the hosts check each module against (LAYOUT_HASH). They count as wasm
-#     outputs: hashing their text here means a module regenerated without a wasm
-#     rebuild, or hand-edited, no longer matches the stamp. Unlike the .wasm
+#   * sdk/ts/gen/game_layout.*.ts and layout_hash.*.ts are written by the same
+#     make targets; layout_hash.*.ts is what the hosts check each module against
+#     (LAYOUT_HASH). They count as wasm outputs: hashing their text here means a
+#     module regenerated without a wasm rebuild, or hand-edited, no longer
+#     matches the stamp. Unlike the .wasm
 #     bytes this text is toolchain-independent (the hash is spelling-free and CI
 #     pins LLVM 22 for gen.sh --check), so it is safe to stamp.
 sources() {
   make -C c -s print-wasm-src | tr ' ' '\n' | sed '/^$/d' | sed 's|^|c/|'
   ls c/src/*.h c/wasm/include/* 2>/dev/null || true
-  ls tools/structgen/structgen.c tools/structgen/specs/*.args sdk/ts/gen/game_layout.*.ts
+  ls tools/structgen/structgen.c tools/structgen/specs/*.args sdk/ts/gen/game_layout.*.ts sdk/ts/gen/layout_hash.*.ts
 }
 
 # The hash covers the source CONTENTS plus the c/Makefile lines that decide what
