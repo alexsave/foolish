@@ -109,9 +109,6 @@ jobs:
       WASM_CC: /usr/lib/llvm-22/bin/clang
     steps:
       - uses: actions/checkout@v4
-        with:
-          # test/harness.sh archives the kernel at a pinned older commit.
-          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -142,14 +139,12 @@ jobs:
           bash tools/structgen/test/cli.sh
           bash tools/structgen/test/hash.sh
 
-      - name: Accessors against wasm32 C (verify) and the legacy marshal (parity)
-        # gen.sh without --check also builds test/verify.c into gen/verify.wasm;
-        # harness.sh builds the parity kernel. Both need wasm-ld (lld-22).
+      - name: Accessors against wasm32 C (verify)
+        # gen.sh without --check also builds test/verify.c into gen/verify.wasm,
+        # which needs wasm-ld (lld-22).
         run: |
           bash tools/structgen/gen.sh
-          bash tools/structgen/test/harness.sh
-          TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx --test \
-            tools/structgen/test/verify.test.ts tools/structgen/test/parity.test.ts
+          TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx --test tools/structgen/test/verify.test.ts
 
   freshness:
     runs-on: ubuntu-latest

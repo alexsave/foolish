@@ -8,7 +8,6 @@
 // test input shape, and everything C writes comes back as opaque bytes.
 
 import { loadWasmGz } from '../../sdk/ts/wasm/wasm_asset.ts';
-import type { PackedRoster } from '../../sdk/ts/wire/roster.ts';
 
 // ROSTER_* (c/src/roster.h).
 export const ROSTER_BYTES = 1227;
@@ -102,6 +101,16 @@ export function cRosterTrailerRead(trailer: Uint8Array):
         gid: new TextDecoder().decode(b.subarray(8, 8 + gidLen)),
         durable: b.slice(8 + gidLen),
     };
+}
+
+/** The roster island the retired TS encoder (sdk/ts/wire/roster.ts) took. */
+export interface PackedRoster {
+    id: string;
+    name: string;
+    status: string;
+    players: { player_id: string; name: string; is_ai: boolean }[];
+    good_players: string[];
+    good_timestamp: number | null;
 }
 
 /**

@@ -6,14 +6,14 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 root="$(cd "$here/../.." && pwd)"
-out="$here/build/harness"
+out="$here/build/bench"
 REPS="${REPS:-3}"
-[ -f "$out/kernel.wasm" ] || bash "$here/test/harness.sh"
+mkdir -p "$out"
 cd "$root"
-[ -f "$out/state.json" ] || TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx "$here/test/bench_state.ts" "$out/state.json"
+# The bundle moves the module out of test/, so it is told where the kernel is.
+export BENCH_WASM="$root/sdk/ts/wasm/bots.wasm.gz"
 node_modules/.bin/esbuild "$here/test/bench.ts" --bundle --minify --format=esm --platform=node \
   --outfile="$out/bench.min.mjs" --log-level=error
-export BENCH_DIR="$out"
 res="$out/bench.tsv"; : > "$res"
 n="$(BENCH_LIST=1 node --no-warnings "$here/test/bench.ts" | wc -l | tr -d ' ')"
 for ((rep = 0; rep < REPS; rep++)); do

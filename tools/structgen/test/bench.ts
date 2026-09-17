@@ -1,33 +1,48 @@
 // Generated-accessor performance gate. Prints ns/op (median of RUNS x N calls):
-//   * the realistic loop: marshal a mid-game 4-player Game into the kernel and
-//     read it back, hand-written byte wire (legacy_marshal.ts, HEAD verbatim)
-//     vs generated in-place accessors (game_marshal.ts);
 //   * every emitted accessor shape in isolation, plus candidate shapes
 //     (alt_accessors.ts) the generator could emit instead;
 //   * a pointer followed by the generated checked X_f_deref_at vs a raw u32 read.
+// It runs on the shipped kernel: bots.wasm (sdk/ts/wasm/bots.wasm.gz) and its own
+// generated module (sdk/ts/gen/game_layout.bots.ts), over a Game the kernel dealt.
+// The hand-written byte-wire marshal it once raced is gone with the TS game shape
+// (docs/C_GAME_SHAPE_MIGRATION.md Phase 8); e2e/bench_decode_packed.ts measures
+// the envelope read that replaced it.
 // Plain TS with explicit .ts imports: runs under tsx, bundled, and on node's own
 // type stripping. See test/bench.sh for all three.
 import { readFileSync } from 'node:fs';
-import * as L from '../build/harness/game_layout.ts';
+import { gunzipSync } from 'node:zlib';
+import * as L from '../../../sdk/ts/gen/game_layout.bots.ts';
 import {
-    type Mem, memOf, Game_get_status, Game_set_status, Game_get_deck_count, Game_set_deck_count,
-    Game_get_good_players_mask, Game_set_good_players_mask, Game_players_at, Player_hand_at,
+    type Mem, memOf, Game_get_status, Game_set_status, Game_get_deck_count, Game_set_deck_count, Game_set_num_players,
+    Game_get_good_players_mask, Game_set_good_players_mask, Game_players_at, Player_hand_at, Player_set_status,
     Game_get_elimination_order, Game_set_elimination_order, Card_get_suit, Card_set_suit, Card_get_value, Card_set_value,
-    Card_raw_get, Card_raw_set, Card_pack, Player_get_name_str, Player_set_name_str,
-} from '../build/harness/game_layout.ts';
-import { type Kernel, legacyMarshal, legacyParse } from './legacy_marshal.ts';
-import { marshal, readState } from './game_marshal.ts';
+    Card_raw_get, Card_raw_set, Card_pack, Roster_seats_at, RosterSeat_get_name_str, RosterSeat_set_name_str,
+    GAME_STATUS_WAITING, PLAYER_STATUS_READY,
+} from '../../../sdk/ts/gen/game_layout.bots.ts';
 import * as A from './alt_accessors.ts';
 import * as Anim from '../../../sdk/ts/gen/anim.bots.ts';
 
-const here = process.env.BENCH_DIR ? new URL(`file://${process.env.BENCH_DIR}/`) : new URL('../build/harness/', import.meta.url);
-const ex = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(new URL('kernel.wasm', here))), {}).exports as unknown as Kernel;
-const game = JSON.parse(readFileSync(process.env.BENCH_STATE ?? new URL('state.json', here), 'utf8'));
+interface Kernel {
+    memory: WebAssembly.Memory;
+    wasm_init(): void; wasm_set_seed(s: number): void; wasm_start_game(): number;
+    wasm_game_ptr_internal(): number; wasm_table_roster_ptr(): number;
+}
+const wasmPath = process.env.BENCH_WASM ?? new URL('../../../sdk/ts/wasm/bots.wasm.gz', import.meta.url);
+const ex = new WebAssembly.Instance(new WebAssembly.Module(gunzipSync(readFileSync(wasmPath))), {}).exports as unknown as Kernel;
 const N = Number(process.env.BENCH_N ?? 200000), RUNS = Number(process.env.BENCH_RUNS ?? 7);
 const MODE = process.env.BENCH_MODE ?? 'unknown';
 const m: Mem = memOf(ex.memory.buffer), mx = A.memXOf(ex.memory.buffer);
-const g = ex.k_game(), pl = Game_players_at(g, 1);
+const g = ex.wasm_game_ptr_internal(), pl = Game_players_at(g, 1);
+const seat = Roster_seats_at(ex.wasm_table_roster_ptr(), 1);
 let sink = 0, obj: unknown = null;
+
+// A 4-player game the kernel dealt, so the rows read and write a real board.
+ex.wasm_init();
+ex.wasm_set_seed(0x5eed);
+Game_set_status(m, g, GAME_STATUS_WAITING);
+Game_set_num_players(m, g, 4);
+for (let i = 0; i < 4; i++) Player_set_status(m, Game_players_at(g, i), PLAYER_STATUS_READY);
+ex.wasm_start_game();
 
 function median(fn: () => void): number {
     for (let i = 0; i < 20000; i++) fn();
@@ -50,15 +65,8 @@ const row = (name: string, fn: () => void) => {
     if (ONLY < 0 || ONLY === i) rows.push([name, median(fn)]);
 };
 
-marshal(ex, game);
 const handBytes = new Uint8Array(64).map((_, i) => Card_pack(i % 4, (i % 13) + 1));
 let k = 0;
-// ---- the realistic loop ----------------------------------------------------------
-row('marshal: hand-written wire + state_get', () => legacyMarshal(ex, game));
-row('marshal: generated in place + adopt', () => marshal(ex, game));
-marshal(ex, game);
-row('parse: state_put + hand-written parse', () => { obj = legacyParse(ex); });
-row('parse: generated readState', () => { obj = readState(ex, g); });
 // ---- shapes in isolation -----------------------------------------------------------
 row('i8 get+set (Game.status)', () => { Game_set_status(m, g, (k++) & 1); sink += Game_get_status(m, g); });
 row('i8 get+set via namespace import', () => { L.Game_set_status(m, g, (k++) & 1); sink += L.Game_get_status(m, g); });
@@ -74,7 +82,7 @@ row('nested _at address (players[i].hand[j])', () => { sink += Player_hand_at(Ga
 row('array element get+set (elimination_order)', () => { Game_set_elimination_order(m, g, (k++) & 7, 3); sink += Game_get_elimination_order(m, g, 2); });
 row('hand of 8 cards: 8x raw_set', () => { for (let j = 0; j < 8; j++) Card_raw_set(m, Player_hand_at(pl, j), handBytes[j]); });
 row('hand of 8 cards: one u8.set [alt]', () => { A.hand_set_bytes(mx, pl, handBytes, 8); });
-row('string set+get (Player.name, 10 chars)', () => { Player_set_name_str(m, pl, 'Player 123'); obj = Player_get_name_str(m, pl); });
+row('string set+get (RosterSeat.name, 10 chars)', () => { RosterSeat_set_name_str(m, seat, 'Player 123'); obj = RosterSeat_get_name_str(m, seat); });
 // ---- pointers: the checked follow against a raw u32 read ------------------------------
 // An AnimEvent (sdk/ts/gen/anim.bots.ts) at the top of the kernel's memory, which
 // nothing else writes, whose `const Card *cards` points at 8 cards just below it.
