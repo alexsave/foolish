@@ -30,6 +30,7 @@ import { parseBeliefProbe } from '../sdk/ts/wasm/bots.ts';
 import { serverTable } from '../sdk/ts/table/server_table.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
+import { supabaseClient } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
 import { legalMoves, mustReadTable, type PlayCard } from './helpers/table_play.ts';
 import { driveBots, runAction, runMeta, seedLobby } from './helpers/table_server.ts';
 import { ACTION_STATUS } from '../sdk/ts/wire/awire.ts';
@@ -40,9 +41,8 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 const cid = (c: PlayCard) => `${c.suit}:${c.value}`;
 
 // Bot pacing collapsed, as e2e/helpers/edge.ts does it: the loop's 3 s wait
-// between cycles with a human IN is a presentation delay, and the human cannot
-// move while the loop holds the lease, so waiting it out tests nothing (it cost
-// ~80 s a run).
+// between cycles with a human IN is a presentation delay (it cost ~80 s a run).
+// The human's chance to move mid-segment is made explicit below instead.
 const realSetTimeout = globalThis.setTimeout;
 (globalThis as { setTimeout: unknown }).setTimeout = ((fn: (...a: unknown[]) => void, ms?: number, ...args: unknown[]) =>
   realSetTimeout(fn, (ms ?? 0) >= 250 && (ms ?? 0) <= 5000 ? 0 : ms, ...args)) as unknown as typeof setTimeout;
@@ -73,6 +73,39 @@ test('human+octogen: octogen always sees the human\'s committed moves (resident 
   // and a snapshot of humanCards at that instant (what it MUST already contain).
   const captures: { belief: Set<string>; expected: Set<string> }[] = [];
 
+  // A human moves WHILE the loop holds its segment, the way a real player does
+  // during the loop's wait between cycles: at every lease renewal (the seam
+  // between two cycles) the searches so far are recorded against the human
+  // cards committed so far, then the human makes a move if one is legal. A loop
+  // that reused its resident log across that move would feed the next search a
+  // log without it.
+  const table = await serverTable();
+  const record = () => {
+    const dump = table.__beliefProbeDump();
+    for (const r of parseBeliefProbe(dump.bytes, dump.n).filter((x) => x.seat === OCTO_SEAT)) {
+      captures.push({ belief: r.cards, expected: new Set(humanCards) });
+    }
+    table.__beliefProbeReset();
+  };
+  let midSegmentMoves = 0;
+  const client = supabaseClient as unknown as { rpc: (name: string, params?: Record<string, unknown>) => Promise<unknown> };
+  const rpc = client.rpc;
+  client.rpc = async (name, params) => {
+    if (name === 'renew_bot_lease') {
+      record();
+      const t = await mustReadTable(gameId);
+      const moves = t.status === L.GAME_STATUS_PLAYING ? legalMoves(t, (s) => s.id === humanId).filter((m) => m.kind !== 'good') : [];
+      if (moves.length > 0) {
+        const pm = moves[midSegmentMoves % moves.length];
+        if ((await runAction(gameId, humanId, pm)).status === ACTION_STATUS.APPLIED) {
+          for (const c of pm.cards) humanCards.add(cid(c));
+          midSegmentMoves++;
+        }
+      }
+    }
+    return rpc.call(client, name, params);
+  };
+
   let guard = 0;
   for (let t = await mustReadTable(gameId); t.status === L.GAME_STATUS_PLAYING && ++guard < 60; t = await mustReadTable(gameId)) {
     // A human move to make? (the kernel's enumerator never lists 'wait'.)
@@ -84,17 +117,13 @@ test('human+octogen: octogen always sees the human\'s committed moves (resident 
       for (const c of pm.cards) humanCards.add(cid(c));
     } else {
       // Octogen's turn - the REAL bot loop (a human is seated, so a fresh log
-      // read every belief cycle). Arm per drive segment rather than once for the
-      // game: the probe's ring is bounded, and the human cannot move while the
-      // loop holds the lease, so every search this records belongs to the
-      // humanCards snapshot below.
-      const table = await serverTable();
+      // read every belief cycle). Armed per drive segment, and recorded at each
+      // cycle seam above and at the segment's end here.
+      const before = captures.length;
       table.__beliefProbeReset();
       await driveBots(gameId);
-      const dump = table.__beliefProbeDump();
-      const searches = parseBeliefProbe(dump.bytes, dump.n).filter((r) => r.seat === OCTO_SEAT);
-      for (const r of searches) captures.push({ belief: r.cards, expected: new Set(humanCards) });
-      if (searches.length === 0) break; // bot couldn't act -> avoid spinning
+      record();
+      if (captures.length === before) break; // bot couldn't act -> avoid spinning
     }
   }
 
@@ -112,6 +141,8 @@ test('human+octogen: octogen always sees the human\'s committed moves (resident 
     }
     if (cap.expected.size > 0) checkedWithHumanCards++;
   }
-  process.stdout.write(`[human-freshness] octogen decisions=${captures.length} (with prior human cards: ${checkedWithHumanCards}) humanCards=${humanCards.size}\n`);
+  process.stdout.write(`[human-freshness] octogen decisions=${captures.length} (with prior human cards: ${checkedWithHumanCards}) humanCards=${humanCards.size} midSegmentMoves=${midSegmentMoves}\n`);
   assert.ok(checkedWithHumanCards > 0, 'no octogen decision followed a human move - did not actually test freshness');
+  assert.ok(midSegmentMoves > 0, 'the human never moved inside a bot-loop segment - the resident log was never put to the test');
+  client.rpc = rpc;
 });

@@ -11,7 +11,7 @@ import './harness.ts';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, pgPool, uuid } from './harness.ts';
-import { postJson, settle } from './helpers/edge.ts';
+import { postJson, settle, tokenFor } from './helpers/edge.ts';
 import { fixture, GAME_OVER, PLAYING, READY } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';
 
@@ -89,4 +89,28 @@ test('SCAN dispatches the stalled playing games with a bot IN, and nothing else'
     assert.equal(res.status, 200, JSON.stringify(res.json));
     assert.deepEqual(dispatched, [rows.botIn], 'exactly the stalled game with a bot IN');
     assert.deepEqual(res.json, { scanned: 1, dispatched: 1 });
+});
+
+// The other way a stalled table gets its bots moving: any signed-in client's
+// `bump`. It commits nothing itself and wakes the loop exactly when the kernel
+// says a bot has work.
+test('a bump wakes the bot loop when a bot has work, and does nothing when none does', async () => {
+    const h = uuid(), s = uuid(), bot = uuid();
+    const stranger = await tokenFor(s, 'stranger');
+    const botTurn = `bt${uuid().slice(0, 5)}`;
+    // The bot attacks first: it has work.
+    await seedTable(botTurn, fixture().seats([{ id: bot, name: 'Bolt', brain: 'random' }, { id: h, name: 'Hana' }])
+        .status(PLAYING).attacker(0).defender(1).hand(0, '6h 7h').hand(1, '8s 9s').deck('Th Jh').trump('Qc').build());
+    const humans = `hb${uuid().slice(0, 5)}`;
+    await seedTable(humans, fixture().seats([{ id: h, name: 'Hana' }, { id: s, name: 'Stan' }])
+        .status(PLAYING).hand(0, '6h 7h').hand(1, '8s 9s').deck('Th Jh').trump('Qc').build());
+    const versionOf = async (g: string) => Number((await pgPool.query('SELECT version FROM games WHERE id = $1', [g])).rows[0].version);
+
+    for (const g of [botTurn, humans]) {
+        const res = await postJson('action', stranger, { type: 'bump', game_id: g });
+        assert.equal(res.status, 200, `${g}: bump answers (${JSON.stringify(res.json)})`);
+    }
+    await settle();
+    assert.ok(await versionOf(botTurn) > 0, 'the bot moved after the bump');
+    assert.equal(await versionOf(humans), 0, 'a table with no bot work is left alone');
 });
