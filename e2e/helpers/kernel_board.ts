@@ -38,11 +38,11 @@ const text = (cards: PlayCard[]) => cards.map(cardText).join(' ');
 
 /**
  * A random PLAYING board of 2 to 6 seats: the first attacker leads on an empty
- * table, some seats are out, a random stock and maybe a face-up trump, every
- * card from one deck. Seats are `brain(seat)` bots (default: all humans).
+ * table (or, with `battles`, a few attacks, some covered), some seats are out,
+ * a random stock and maybe a face-up trump, every card from one deck. Seats are `brain(seat)` bots (default: all humans).
  * Returns null when the kernel refuses the board.
  */
-export function randomPlayingBoard(rnd: Rnd, brain: (seat: number) => string = () => ''): TableFixture | null {
+export function randomPlayingBoard(rnd: Rnd, brain: (seat: number) => string = () => '', opts: { battles?: boolean } = {}): TableFixture | null {
     const ri = (n: number) => Math.floor(rnd() * n);
     const np = 2 + ri(5);
     const cards = deckFor(np);
@@ -61,12 +61,18 @@ export function randomPlayingBoard(rnd: Rnd, brain: (seat: number) => string = (
     if (inSeats.length < 2) return null;
     const rest = cards.slice(k);
     const flipped = rnd() < 0.5 && rest.length > 0 ? rest.shift()! : null;
+    // With `battles`, a few attacks on the table, some covered by an arbitrary card.
+    const battles: string[] = [];
+    for (let i = opts.battles ? ri(4) : 0; i > 0 && rest.length > 1; i--) {
+        const attack = rest.shift()!;
+        battles.push(rnd() < 0.4 ? `${cardText(attack)}/${cardText(rest.shift()!)}` : cardText(attack));
+    }
     const deck = rest.slice(0, ri(Math.min(rest.length, 8) + 1));
     const discard = rest.length - deck.length;
     const seats: FixtureSeat[] = Array.from({ length: np }, (_, i) => ({ id: `seat-${i}`, name: `P${i + 1}`, brain: brain(i) }));
     let f = fixture().title('fuzz').seats(seats).status(L.GAME_STATUS_PLAYING)
         .attacker(inSeats[0]).defender(inSeats[1]).awaiting(inSeats[0])
-        .deck(text(deck)).discard(discard).eliminated(...out).deterministic(true);
+        .table(...battles).deck(text(deck)).discard(discard).eliminated(...out).deterministic(true);
     f = flipped ? f.trump(cardText(flipped)) : f.powerSuit(ri(4));
     hands.forEach((h, i) => { f = f.hand(i, text(h)).seatStatus(i, out.includes(i) ? OUT : IN); });
     try {
