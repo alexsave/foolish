@@ -1384,28 +1384,31 @@ b = ast.literal_eval(sys.stdin.read().split('BARS ')[1]); print(b[-1][0] if b el
 }
 
 # COVER an attack: select a card, tap an attack on the table, and stop at the
-# first pairing that changes the plank ("Pickup" becomes "Undo" when the cover
-# stages). Not `play`, which takes Messages offering Send as its proof - and after
-# an Undo the bubble stays staged, so Send is already there before any move.
+# first pairing after which the card has left the hand. Not `play`, which takes
+# Messages offering Send as its proof - and after an Undo the bubble stays
+# staged, so Send is already there before any move.
 cmd_cover() {
   need_sim
   settle_reset; poll 30 0.2 drawer_settled || true
-  local y py px x tx ty before bars0
+  local y x tx ty
   read -r W H < <(screen)
   y=$(python3 "$LIB/ui.py" hand_y | awk '{print $2}')
-  py=$(bar_y -1); px=$((W * 4 / 5))
   [ "$y" = "-1" ] && { echo "no hand on screen" >&2; return 1; }
-  # A defender whose Pickup is still held back (deliberately, for a few seconds
-  # after a board arrives) proves the cover by a plank APPEARING - Undo -
-  # instead of the existing one relabelling.
-  bars0=$(python3 "$LIB/ui.py" bars)
-  [ "$py" != "-1" ] && before=$(plank_hash "$px" "$py")
+  # PROVEN BY THE HAND, not by a plank. Undo is deliberately kept out of sight
+  # until the flight and any collapse are over (UndoGate), so "a plank
+  # appeared" is seconds late or absent; the covering card leaves the fan in
+  # the turn the move is played.
+  local n0; n0=$(python3 "$LIB/ui.py" cards | python3 -c "
+import sys, ast; print(len(ast.literal_eval(sys.stdin.read().split('CARDS ')[1])))")
   staged() {
-    if [ "$py" = "-1" ]; then
-      [ "$(python3 "$LIB/newbar.py" "$bars0" "$(python3 "$LIB/ui.py" bars)")" != "-1" ]
-    else
-      [ "$(plank_hash "$px" "$py")" != "$before" ]
-    fi
+    local i=0 n
+    while [ $i -lt 8 ]; do
+      n=$(python3 "$LIB/ui.py" cards | python3 -c "
+import sys, ast; print(len(ast.literal_eval(sys.stdin.read().split('CARDS ')[1])))")
+      [ "$n" -lt "$n0" ] && return 0
+      sleep 0.15; i=$((i + 1))
+    done
+    return 1
   }
   local table; table=$(python3 "$LIB/ui.py" table | sed 's/TABLE //' | tr -d '[]()' | tr ',' ' ')
   for x in $(python3 "$LIB/ui.py" cards | sed 's/CARDS //' | tr -d '[],'); do

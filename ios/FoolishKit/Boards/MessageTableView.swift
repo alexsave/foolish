@@ -4015,6 +4015,11 @@ public struct MessageTableView: View {
         // change that put them there - the ghost is the only copy in motion.
         animator.preHide(ids)
         let veiledAt = animator.veilEpoch          // round 40 - see playBoutEnd
+        // THE LEAVING CARDS STAY IN THE HAND until their flights exist - the
+        // hand-side twin of the table hold (UndoReleaseHandHoldTests). The undo
+        // has already taken them out of the kernel hand, and the fan draws a
+        // held-back card even though it is veiled for the table.
+        if UndoFlightSource.holdsLeaving { handHoldback = targets.map(\.0); handHoldbackAt = veiledAt }
         let mySeq = claimAnimSequence()
         #if DEBUG
         if isConflict { Self.redRevertFlights += flyIds.count }
@@ -4052,6 +4057,8 @@ public struct MessageTableView: View {
                                               angle: covering ? FBattleGrid.coverAngle : 0,
                                               revert: isConflict))
                     }
+                    // Let the fan go of them in the turn the animator gets their flights.
+                    if UndoFlightSource.holdsLeaving, !flights.isEmpty { self.handHoldback = [] }
                     return flights.isEmpty ? (lastChance ? [] : nil) : flights
                 }
             }
