@@ -1,172 +1,154 @@
-// The action-handler modules (actions/attack|cover|pass|pickup|good.ts) are
-// thin wrappers over the C rules kernel. The e2e suite drives them through the
-// combined handleX() path via dispatch, so the standalone validateX()/
-// executeX()/executeRoundTransition() exports the client and server also import
-// — plus the payload-shape guards (not-playing, empty, size-mismatch) and the
-// game-over short-circuits — went unexercised.
+// The moves on the C Table: what table_act does with each kind of move on a
+// deterministic mid-round board, and that it does nothing to a finished game or
+// to a board it refuses.
 //
-// This file constructs deterministic mid-round states and calls those exports
-// directly. Pure kernel test — needs no Postgres.
-
-// NOTE: these assert STATE, not events. The handlers no longer synthesize a JS
-// AnimationEvent stream - the kernel serializes its own per-viewer streams and
-// production broadcasts those bytes - so what is left to check here is that the
-// handler applies the move to the Game and is a no-op on a finished one. The
-// stream itself is covered by e2e/packed_wire_stream.test.ts.
+// This file used to call the TS action-handler modules (actions/attack|cover|
+// pass|pickup|good.ts: validateX, executeX, executeRoundTransition) on a
+// TypeScript Game. Those were thin wrappers over the kernel and are gone with the
+// TS game shape (docs/C_GAME_SHAPE_MIGRATION.md Phase 8); the move path the
+// server runs is table_act on the loaded row (sdk/ts/table/server_table.ts), so
+// the same cases are asked of it here, on boards the kernel built and sealed
+// (e2e/helpers/table_fixture.ts). The per-viewer streams are held by
+// e2e/table_parity.test.ts and e2e/push_as3.test.ts.
+//
+// Pure kernel test - needs no Postgres.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-  Game, PrivatePlayer, Card, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
-} from '../server/api/core/types.ts';
-import { validateAttack, executeAttack } from '../server/api/common/actions/attack.ts';
-import { validateCover, executeCover } from '../server/api/common/actions/cover.ts';
-import { validatePass, executePass } from '../server/api/common/actions/pass.ts';
-import { validatePickup } from '../server/api/common/actions/pickup.ts';
-import { executeRoundTransition } from '../server/api/common/actions/good.ts';
+import * as L from '../sdk/ts/gen/game_layout.bots.ts';
+import { encodeAction } from '../sdk/ts/wire/awire.ts';
+import { boardFixture, MemTable, residentBoard, type MemCard, type BoardSpec } from './helpers/table_mem.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
-const C = (suit: number, value: number): Card => ({ suit, value });
+const C = (suit: number, value: number): MemCard => ({ suit, value });
 
-const mkPlayer = (i: number, hand: Card[]): PrivatePlayer => ({
-  player_id: `p${i}`, name: `P${i}`, status: PLAYER_STATUS.IN, is_ai: true,
-  hand, awaiting_attack: false, hand_length: hand.length,
-  strategy_key: STRATEGY_KEY.RANDOM,
-});
+// A playing 2-player board, diamonds trump, seat 0 attacks and seat 1 defends.
+const base = (p0: MemCard[], p1: MemCard[], table: BoardSpec['table'] = [], status: number = L.GAME_STATUS_PLAYING): MemTable =>
+  MemTable.of(boardFixture({ hands: [p0, p1], table, powerSuit: L.SUIT_DIAMONDS, attacker: 0, defender: 1, status }));
 
-// Playing 2-player game, diamonds trump, seat 0 attacks / seat 1 defends.
-const baseGame = (p0: Card[], p1: Card[], table: Game['table_battles'] = []): Game => ({
-  players: [mkPlayer(0, p0), mkPlayer(1, p1)],
-  deck: [], logs: [], id: 'ah', name: 'ah', status: GAME_STATUS.PLAYING,
-  deck_length: 0, discard_pile_length: 0, flipped: null, power_suit: 3,
-  first_attacker: 0, defender: 1, table_battles: table,
-  elimination_order: [], good_timestamp: null, good_players: [],
-});
+const uncovered = (t: MemTable) => t.board().battles.filter((b) => b.defense === null).length;
 
-const clone = (g: Game): Game => structuredClone(g);
-const uncovered = (g: Game) => g.table_battles.filter(b => b.defense === null).length;
+/** The move is refused (or moot) for `reject`, and the loaded board is exactly as it was loaded. */
+function refusedWith(t: MemTable, seat: number, wire: Uint8Array, rc: number, reject: number | null, label: string): void {
+  const before = t.board();
+  const r = t.probe(seat, wire);
+  assert.equal(r.rc, rc, `${label}: table_act result`);
+  if (reject !== null) assert.equal(r.reject, reject, `${label}: the kernel's reason`);
+  assert.deepEqual(residentBoard(), before, `${label}: nothing moved`);
+}
 
 // ---- attack -----------------------------------------------------------------
 
-test('validateAttack: accepts a legal first attack, rejects empty/malformed', () => {
-  const g = baseGame([C(0, 5), C(0, 6), C(1, 7)], [C(2, 8), C(2, 9)]);
-  assert.doesNotThrow(() => validateAttack(g, 'p0', [C(0, 5)]), 'a legal opener validates');
-  assert.throws(() => validateAttack(g, 'p0', []), /no cards/i, 'empty rejected');
-  assert.throws(
-    () => validateAttack(g, 'p0', 'junk' as unknown as Card[]),
-    /must be an array/i, 'malformed payload rejected',
-  );
-  // validation never mutates.
-  assert.equal(g.table_battles.length, 0, 'validate leaves the table empty');
+test('attack: a legal first attack applies; an empty or malformed one is refused and moves nothing', () => {
+  const t = base([C(0, 5), C(0, 6), C(1, 7)], [C(2, 8), C(2, 9)]);
+  assert.equal(t.probe(0, encodeAction({ kind: 'attack', cards: [C(0, 5)] })).rc, L.TABLE_APPLIED, 'a legal opener applies');
+  refusedWith(t, 0, encodeAction({ kind: 'attack', cards: [] }), L.TABLE_REJECTED, L.ENGINE_REJECT_EMPTY, 'an empty attack');
+  refusedWith(t, 0, Uint8Array.of(0, 2, 7), L.TABLE_E_WIRE, null, 'a truncated attack wire');
+  assert.equal(t.board().battles.length, 0, 'the row still has an empty table');
 });
 
-test('executeAttack: applies on a live game, is a no-op once the game is over', () => {
-  const g = baseGame([C(0, 5), C(0, 6), C(1, 7)], [C(2, 8), C(2, 9)]);
-  executeAttack(g, 'p0', [C(0, 5)]);
-  assert.equal(g.table_battles.length, 1, 'the attack card lands on the table');
-  assert.equal(g.table_battles[0].attack.value, 5, 'correct card on the table');
+test('attack: lands on a live game, is moot once the game is over', () => {
+  const t = base([C(0, 5), C(0, 6), C(1, 7)], [C(2, 8), C(2, 9)]);
+  const r = t.act(0, encodeAction({ kind: 'attack', cards: [C(0, 5)] }));
+  assert.equal(r.rc, L.TABLE_APPLIED);
+  const b = t.board();
+  assert.equal(b.battles.length, 1, 'the attack card lands on the table');
+  assert.deepEqual(b.battles[0].attack, C(0, 5), 'the card played is the card on the table');
+  assert.equal(b.seats[0].hand.length, 2, 'and it left the hand');
 
-  const over = baseGame([C(0, 5), C(0, 6)], [C(2, 8), C(2, 9)]);
-  over.status = GAME_STATUS.GAME_OVER;
-  const before = clone(over);
-  assert.deepEqual(executeAttack(over, 'p0', [C(0, 5)]), [], 'no events on a finished game');
-  assert.deepEqual(over.table_battles, before.table_battles, 'finished game is untouched');
+  const over = base([C(0, 5), C(0, 6)], [C(2, 8), C(2, 9)], [], L.GAME_STATUS_GAME_OVER);
+  refusedWith(over, 0, encodeAction({ kind: 'attack', cards: [C(0, 5)] }), L.TABLE_MOOT, null, 'an attack on a finished game');
 });
 
 // ---- cover ------------------------------------------------------------------
 
-// One uncovered 7♠ on the table; defender holds 9♠ (covers) plus a spare.
-const coverState = () => baseGame(
+// One uncovered 7 of spades on the table; the defender holds the 9 of spades (covers) plus a spare.
+const coverState = (status: number = L.GAME_STATUS_PLAYING) => base(
   [C(0, 5), C(0, 6), C(0, 8), C(0, 10), C(0, 11), C(0, 12)],
   [C(0, 9), C(2, 7)],
   [{ attack: C(0, 7), defense: null }],
+  status,
 );
 
-test('validateCover: accepts a legal cover, enforces playing-state and paired shapes', () => {
-  const g = coverState();
-  assert.doesNotThrow(() => validateCover(g, 'p1', [C(0, 9)], [C(0, 7)]), 'a legal cover validates');
-
-  assert.throws(
-    () => validateCover(g, 'p1', [C(0, 9), C(2, 7)], [C(0, 7)]),
-    /different sizes/i, 'cover/attack length mismatch rejected',
-  );
-
-  const waiting = coverState();
-  waiting.status = GAME_STATUS.WAITING;
-  assert.throws(
-    () => validateCover(waiting, 'p1', [C(0, 9)], [C(0, 7)]),
-    /not in playing state/i, 'cover on a non-playing game rejected',
-  );
+test('cover: a legal cover applies; a card that cannot cover is refused; the wire pairs every cover with its attack', () => {
+  const t = coverState();
+  assert.equal(t.probe(1, encodeAction({ kind: 'cover', cards: [C(0, 9)], attack_cards: [C(0, 7)] })).rc, L.TABLE_APPLIED,
+    'a legal cover applies');
+  refusedWith(t, 1, encodeAction({ kind: 'cover', cards: [C(2, 7)], attack_cards: [C(0, 7)] }),
+    L.TABLE_REJECTED, L.ENGINE_REJECT_CANNOT_COVER, 'an off-suit 7 over the 7 of spades');
+  assert.throws(() => encodeAction({ kind: 'cover', cards: [C(0, 9), C(2, 7)], attack_cards: [C(0, 7)] }), /mismatched/,
+    'covers and attacks of different sizes have no wire');
 });
 
-test('executeCover: covers on a live game, is a no-op once the game is over', () => {
-  const g = coverState();
-  executeCover(g, 'p1', [C(0, 9)], [C(0, 7)]);
-  assert.equal(uncovered(g), 0, 'the attack is now covered');
+test('cover: covers on a live game, is moot once the game is over', () => {
+  const t = coverState();
+  assert.equal(t.act(1, encodeAction({ kind: 'cover', cards: [C(0, 9)], attack_cards: [C(0, 7)] })).rc, L.TABLE_APPLIED);
+  assert.equal(uncovered(t), 0, 'the attack is now covered');
 
-  const over = coverState();
-  over.status = GAME_STATUS.GAME_OVER;
-  assert.deepEqual(executeCover(over, 'p1', [C(0, 9)], [C(0, 7)]), [], 'no events on a finished game');
-  assert.equal(uncovered(over), 1, 'finished game left uncovered');
+  const over = coverState(L.GAME_STATUS_GAME_OVER);
+  refusedWith(over, 1, encodeAction({ kind: 'cover', cards: [C(0, 9)], attack_cards: [C(0, 7)] }), L.TABLE_MOOT, null, 'a cover on a finished game');
+  assert.equal(uncovered(over), 1, 'the finished game is left uncovered');
 });
 
 // ---- pass -------------------------------------------------------------------
 
-// One uncovered 7♠; defender holds a 7 to transfer; next seat has capacity.
-const passState = () => baseGame(
+// One uncovered 7 of spades; the defender holds a 7 to pass; the next seat has room.
+const passState = (status: number = L.GAME_STATUS_PLAYING) => base(
   [C(0, 5), C(0, 6), C(0, 8), C(0, 9), C(0, 10), C(0, 11)],
   [C(2, 7)],
   [{ attack: C(0, 7), defense: null }],
+  status,
 );
 
-test('validatePass: accepts a legal transfer, enforces playing-state and non-empty', () => {
-  const g = passState();
-  assert.doesNotThrow(() => validatePass(g, 'p1', [C(2, 7)]), 'a legal pass validates');
-
-  const waiting = passState();
-  waiting.status = GAME_STATUS.WAITING;
-  assert.throws(() => validatePass(waiting, 'p1', [C(2, 7)]), /not in playing state/i, 'pass on a non-playing game rejected');
-  assert.throws(() => validatePass(g, 'p1', []), /no cards/i, 'empty pass rejected');
+test('pass: a legal pass applies; an empty pass is refused', () => {
+  const t = passState();
+  assert.equal(t.probe(1, encodeAction({ kind: 'pass', cards: [C(2, 7)] })).rc, L.TABLE_APPLIED, 'a legal pass applies');
+  refusedWith(t, 1, encodeAction({ kind: 'pass', cards: [] }), L.TABLE_REJECTED, L.ENGINE_REJECT_EMPTY, 'an empty pass');
 });
 
-test('executePass: transfers on a live game, is a no-op once the game is over', () => {
-  const g = passState();
-  executePass(g, 'p1', [C(2, 7)]);
-  assert.equal(g.defender, 0, 'the pass hands the defence to the next seat');
+test('pass: hands the defence on in a live game, is moot once the game is over', () => {
+  const t = passState();
+  assert.equal(t.act(1, encodeAction({ kind: 'pass', cards: [C(2, 7)] })).rc, L.TABLE_APPLIED);
+  assert.equal(t.board().defender, 0, 'the pass hands the defence to the next seat');
 
-  const over = passState();
-  over.status = GAME_STATUS.GAME_OVER;
-  assert.deepEqual(executePass(over, 'p1', [C(2, 7)]), [], 'no events on a finished game');
-  assert.equal(over.defender, 1, 'finished game keeps its defender');
+  const over = passState(L.GAME_STATUS_GAME_OVER);
+  refusedWith(over, 1, encodeAction({ kind: 'pass', cards: [C(2, 7)] }), L.TABLE_MOOT, null, 'a pass on a finished game');
+  assert.equal(over.board().defender, 1, 'the finished game keeps its defender');
 });
 
 // ---- pickup -----------------------------------------------------------------
 
-test('validatePickup: accepts a defender scooping a non-empty table', () => {
-  const g = baseGame(
+test('pickup: the defender takes a non-empty table; an attacker may not', () => {
+  const t = base(
     [C(0, 5), C(0, 6), C(0, 8), C(0, 10), C(0, 11), C(0, 12)],
     [C(2, 7)],
     [{ attack: C(0, 7), defense: null }],
   );
-  assert.doesNotThrow(() => validatePickup(g, 'p1'), 'a legal pickup validates');
-  assert.throws(() => validatePickup(g, 'p0'), /./, 'a non-defender pickup is rejected');
+  refusedWith(t, 0, encodeAction({ kind: 'pickup' }), L.TABLE_REJECTED, L.ENGINE_REJECT_NOT_DEFENDER, 'a pickup by the attacker');
+  const r = t.act(1, encodeAction({ kind: 'pickup' }));
+  assert.equal(r.rc, L.TABLE_APPLIED, 'the defender takes the table');
+  const b = t.board();
+  assert.equal(b.battles.length, 0, 'the table is empty');
+  assert.ok(b.seats[1].hand.some((c) => c.suit === 0 && c.value === 7), 'and the attack is in the defender\'s hand');
 });
 
-// ---- round transition (good.ts standalone export) ---------------------------
+// ---- the round's end --------------------------------------------------------
 
-test('executeRoundTransition: discards a covered table, is a no-op once the game is over', () => {
-  const g = baseGame(
+test('good: a covered table is discarded when the attacker says good, and is moot once the game is over', () => {
+  const covered = (status: number = L.GAME_STATUS_PLAYING) => base(
     [C(0, 5), C(0, 6), C(0, 8), C(0, 10), C(0, 11), C(0, 12)],
     [C(2, 8), C(2, 9), C(2, 10), C(2, 11), C(2, 12), C(1, 5)],
-    [{ attack: C(0, 7), defense: C(0, 9) }],   // fully covered
+    [{ attack: C(0, 7), defense: C(0, 9) }],
+    status,
   );
-  executeRoundTransition(g, 'test');
-  assert.equal(g.table_battles.length, 0, 'the covered table is discarded');
-  assert.equal(g.discard_pile_length, 2, 'both cards go to the discard pile');
+  const t = covered();
+  assert.equal(t.act(0, encodeAction({ kind: 'good' })).rc, L.TABLE_APPLIED);
+  const b = t.board();
+  assert.equal(b.battles.length, 0, 'the covered table is discarded');
+  assert.equal(b.discard, 2, 'both cards go to the discard pile');
 
-  const over = baseGame([C(0, 5)], [C(2, 8)], [{ attack: C(0, 7), defense: C(0, 9) }]);
-  over.status = GAME_STATUS.GAME_OVER;
-  executeRoundTransition(over, 'test');
-  assert.equal(over.table_battles.length, 1, 'finished game keeps its table');
+  const over = covered(L.GAME_STATUS_GAME_OVER);
+  refusedWith(over, 0, encodeAction({ kind: 'good' }), L.TABLE_MOOT, null, 'a good on a finished game');
+  assert.equal(over.board().battles.length, 1, 'the finished game keeps its table');
 });

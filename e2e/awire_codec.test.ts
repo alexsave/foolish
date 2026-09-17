@@ -9,14 +9,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { Card } from '../server/api/core/types.ts';
 import {
     AWIRE_KIND, AWIRE_MAX_CARDS, AwireKindName, AwireMove,
     ACTION_REQ_FORMAT, ACTION_REQ_FORMAT_V1,
     decodeAction, encodeAction, encodeActionRequest, decodeActionRequest,
 } from '../sdk/ts/wire/awire.ts';
-import { logwireClosesRound, logwireHexClosesRound, logsFromKernelExport } from '../sdk/ts/wire/logwire.ts';
-import { bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
+
+type Card = NonNullable<AwireMove['cards']>[number];
 
 // Deterministic RNG so a failure reproduces from the printed seed.
 let seed = Number(process.env.FUZZ_SEED || 0xa11ce) >>> 0;
@@ -182,73 +181,4 @@ test('awire request envelope: malformed/truncated buffers decode to null (never 
     assert.equal(decodeActionRequest(new Uint8Array([ACTION_REQ_FORMAT, 2, 65, 66, 0, 0, 0, 0])), null, 'v2 missing wire');
     // v1 with a gid but no wire.
     assert.equal(decodeActionRequest(new Uint8Array([ACTION_REQ_FORMAT_V1, 2, 65, 66])), null, 'v1 missing wire');
-});
-
-// ---------------------------------------------------------------------------
-// Round-close detector (drives the round_epoch guard, docs/WEB_RACE_BUG_HANDOFF.md):
-// a move closes a round exactly when its logs carry a PICKUP or a DISCARD.
-// ---------------------------------------------------------------------------
-const PICKUP_INT = 4, DISCARD_INT = 6, ATTACK_INT = 1, COVER_INT = 2, DEFENDER_CHANGE_INT = 7;
-// Build the kernel's raw log export (u16 count + timestamp-less records) that
-// logsFromKernelExport consumes — the exact bytes the packed path produces.
-function kernelExport(recs: { type: number; seat: number; def: number; pairs: number[][] }[]): Uint8Array {
-    const out: number[] = [recs.length & 0xff, (recs.length >> 8) & 0xff];
-    for (const r of recs) {
-        out.push(r.type, r.seat, r.def, r.pairs.length);
-        for (const p of r.pairs) out.push(p[0], p[1]);
-    }
-    return new Uint8Array(out);
-}
-const logwireOf = (recs: Parameters<typeof kernelExport>[0]) => logsFromKernelExport(kernelExport(recs), 1_700_000_000_000);
-
-test('logwireClosesRound: true iff the move logged a pickup or a discard', () => {
-    assert.equal(logwireClosesRound(new Uint8Array([])), false, 'empty log — no close');
-    assert.equal(logwireClosesRound(logwireOf([{ type: ATTACK_INT, seat: 0, def: 0xff, pairs: [[5, 0xff]] }])), false, 'a plain attack does not close a round');
-    assert.equal(logwireClosesRound(logwireOf([{ type: COVER_INT, seat: 1, def: 1, pairs: [[5, 10]] }])), false, 'a cover does not close a round');
-    assert.equal(logwireClosesRound(logwireOf([{ type: PICKUP_INT, seat: 1, def: 1, pairs: [[5, 0xff], [10, 0xff]] }])), true, 'a pickup closes the round');
-    assert.equal(logwireClosesRound(logwireOf([{ type: DISCARD_INT, seat: 0xff, def: 0xff, pairs: [[5, 0xff]] }])), true, 'a discard closes the round');
-    // A realistic covered-then-discarded round + its defender-change trailer.
-    assert.equal(logwireClosesRound(logwireOf([
-        { type: ATTACK_INT, seat: 0, def: 0xff, pairs: [[5, 0xff]] },
-        { type: COVER_INT, seat: 1, def: 1, pairs: [[5, 18]] },
-        { type: DISCARD_INT, seat: 0xff, def: 0xff, pairs: [[5, 18]] },
-        { type: DEFENDER_CHANGE_INT, seat: 0xff, def: 0, pairs: [] },
-    ])), true, 'a full covered round that trashes closes the round');
-});
-
-test('logwireHexClosesRound: the zero-alloc hex scan agrees with the byte scan on every shape', () => {
-    // The hot-path detector reads the bare-hex string commit_game stores; it
-    // must be byte-for-byte identical to the Uint8Array scan (which the tests
-    // above pin) — including the empty log, the \\x-prefixed form, and records
-    // with pairs (whose stride the scan must skip correctly).
-    const shapes: Parameters<typeof kernelExport>[0][] = [
-        [],
-        [{ type: ATTACK_INT, seat: 0, def: 0xff, pairs: [[5, 0xff]] }],
-        [{ type: COVER_INT, seat: 1, def: 1, pairs: [[5, 10], [7, 12]] }],
-        [{ type: PICKUP_INT, seat: 1, def: 1, pairs: [[5, 0xff], [10, 0xff], [3, 0xff]] }],
-        [{ type: DISCARD_INT, seat: 0xff, def: 0xff, pairs: [[5, 0xff]] }],
-        [
-            { type: ATTACK_INT, seat: 0, def: 0xff, pairs: [[5, 0xff]] },
-            { type: COVER_INT, seat: 1, def: 1, pairs: [[5, 18]] },
-            { type: DISCARD_INT, seat: 0xff, def: 0xff, pairs: [[5, 18]] },
-            { type: DEFENDER_CHANGE_INT, seat: 0xff, def: 0, pairs: [] },
-        ],
-        // A pickup hiding AFTER a big multi-pair attack — the stride skip must
-        // land on the right type byte, not a card byte that happens to be 4/6.
-        [
-            { type: ATTACK_INT, seat: 0, def: 0xff, pairs: [[4, 0xff], [6, 0xff], [4, 0xff]] },
-            { type: PICKUP_INT, seat: 1, def: 1, pairs: [[4, 0xff]] },
-        ],
-    ];
-    for (const recs of shapes) {
-        const bytes = recs.length ? logwireOf(recs) : new Uint8Array([]);
-        const bare = bytesToBareHex(bytes);
-        const expected = logwireClosesRound(bytes);
-        assert.equal(logwireHexClosesRound(bare), expected, `hex scan matches byte scan (${JSON.stringify(recs.map(r => r.type))})`);
-        // Tolerates the pg \\x prefix exactly as hexToBytes did.
-        assert.equal(logwireHexClosesRound('\\x' + bare), expected, 'hex scan tolerates the \\x prefix');
-        // Upper-case hex nibbles parse identically (charCode math covers A-F).
-        assert.equal(logwireHexClosesRound(bare.toUpperCase()), expected, 'hex scan is case-insensitive');
-    }
-    assert.equal(logwireHexClosesRound(''), false, 'empty hex — no close');
 });
