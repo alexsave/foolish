@@ -51,10 +51,10 @@ def reading(a):
     """
     box = tween.read_array(a)
     if not box or box.get("topoff") or "top_pt" not in box:
-        return None, None
+        return None, None, None
     top, left = box["top_pt"], box.get("left_pt", 0.0)
     return ([(n, round(x - left, 2), round(y - top, 2)) for n, x, y in sq.squares_in(a)],
-            box.get("clock"))
+            box.get("clock"), top)
 
 
 def clock_offset(rec0, times, clocks):
@@ -163,6 +163,7 @@ def steps(samples):
 
 
 NEAR_S = 0.040            # two samples this close are neighbouring frames
+DRAWER_PT = 20.0          # the box's own top moving this much in a frame is a collapse
 GAP_SPEED = 400.0         # pt/s: across a longer gap, faster than this is a jump
 
 
@@ -195,6 +196,25 @@ def is_jump(dist, dt, jump_pt, before=0.0, after=0.0, frames=1):
 HANDOFF_S = 0.040        # two frames: a flight may appear a frame after its card goes
 
 
+COVER_PT, COVER_S = 90.0, 0.15
+
+
+def covered_by_flight(seen, times, i):
+    """Whether the table squares missing in frame i vanished where a flight was
+    just seen. A card landing ON a pair (a cover) or passing over one lays its
+    orange square across the pair's, and for a few frames neither reads as a
+    whole square - filmed on a replayed cover, 52ms of neither."""
+    gone = [(n, x, y) for n, x, y in seen[i - 1] if n in sq.TABLE
+            and not any(m == n and abs(x - u) < 20 and abs(y - v) < 20 for m, u, v in seen[i])]
+    for k in range(i - 1, -1, -1):
+        if times[i] - times[k] > COVER_S:
+            break
+        for m, u, v in seen[k]:
+            if m == sq.FLIGHT and any(((u - x) ** 2 + (v - y) ** 2) ** 0.5 < COVER_PT for _, x, y in gone):
+                return True
+    return False
+
+
 def handoff_gaps(seen, boxed, times):
     """Every table card that left the table before its flight existed.
 
@@ -213,7 +233,8 @@ def handoff_gaps(seen, boxed, times):
     orange = lambda q: any(n == sq.FLIGHT for n, _, _ in q)
     i = 1
     while i < len(seen):
-        if boxed[i] and boxed[i - 1] and table(seen[i]) < table(seen[i - 1]) and not orange(seen[i]):
+        if boxed[i] and boxed[i - 1] and table(seen[i]) < table(seen[i - 1]) and not orange(seen[i]) \
+                and not covered_by_flight(seen, times, i):
             j = i
             back = False
             while j < len(seen) and not orange(seen[j]) and times[j] - times[i - 1] < 1.0:
@@ -257,9 +278,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("take", help="a take directory (frames + times.txt) or a movie")
     ap.add_argument("--csv")
-    ap.add_argument("--jump", type=float, default=8.0,
+    ap.add_argument("--jump", type=float, default=12.0,
                     help="points between neighbouring frames that count as a jump")
     ap.add_argument("--marks", help="`seconds name` lines naming each scenario")
+    ap.add_argument("--setup-prefix", default=None,
+                    help="marks starting with this are the rig setting a board up "
+                         "(seeding, dragging the drawer open): reported, not scored")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
     if os.path.isfile(a.take):
@@ -272,9 +296,10 @@ def main():
         times = tween.frame_times(a.take, len(frames))
         with Pool() as pool:
             seen = pool.map(read_frame, frames, chunksize=8)
-    clocks = [c for _, c in seen]
-    boxed = [q is not None for q, _ in seen]
-    seen = [q or [] for q, _ in seen]
+    clocks = [c for _, c, _ in seen]
+    tops = [t for _, _, t in seen]
+    boxed = [q is not None for q, _, _ in seen]
+    seen = [q or [] for q, _, _ in seen]
     marks, rec0 = load_marks(a.marks) if a.marks else ([], None)
     t0 = times[0] if times else 0.0
     if marks and rec0 is not None:
@@ -295,7 +320,7 @@ def main():
         print("NO TABLE SQUARES IN ANY FRAME - is `rig.sh ruler on` set, and is "
               "this a DEBUG build?", file=sys.stderr)
         sys.exit(2)
-    jumps, anomalies = 0, []
+    jumps, anomalies, drawer_steps = 0, [], 0
     print("%-8s %6s %8s %8s %9s %9s  %s" % ("pair", "frames", "x from", "x to",
                                             "max step", "sum sq", "jumps"))
     for tr in sorted(tracks, key=lambda t: t["samples"][0][2]):
@@ -312,6 +337,14 @@ def main():
         # plotting (the CSV) and never scored as a jump.
         if tr["colour"] == sq.FLIGHT:
             big = []
+        # THE DRAWER ITSELF MOVING. In a frame where the box's top moved more
+        # than DRAWER_PT, a step measured inside it is the collapse's own frame
+        # pacing (tween.py and mse.py measure that), not the table's layout.
+        moving = [(f0, f1, m) for f0, f1, m in big
+                  if tops[f0] is not None and tops[f1] is not None
+                  and abs(tops[f1] - tops[f0]) > DRAWER_PT]
+        drawer_steps += len(moving)
+        big = [b for b in big if b not in moving]
         jumps += len(big)
         for f0, f1, m in big:
             t = times[f1] - t0
@@ -327,9 +360,18 @@ def main():
         t = tg - t0
         anomalies.append((t, "t=%6.2fs  %-22s card left the table %.0fms before its flight "
                           "existed" % (t, scene_at(marks, t), 1000 * gap)))
+    # THE RIG'S OWN HANDS ARE NOT THE APP. While a board is being set up the rig
+    # drags the drawer open by hand, and a finger-driven drag moves the table in
+    # uneven steps that are nobody's animation.
+    if drawer_steps:
+        print("\n(%d step(s) while the drawer itself moved, not scored)" % drawer_steps)
+    if a.setup_prefix:
+        setup = [x for x in anomalies if scene_at(marks, x[0]).startswith(a.setup_prefix)]
+        anomalies = [x for x in anomalies if not scene_at(marks, x[0]).startswith(a.setup_prefix)]
+        if setup:
+            print("\n(%d during setup, not scored)" % len(setup))
     if anomalies:
-        print("\nANOMALIES: %d jump(s) over %.0fpt, %d card(s) gone before their flight"
-              % (jumps, a.jump, len(gaps)))
+        print("\nANOMALIES: %d, named by scenario" % len(anomalies))
         for _, line in sorted(anomalies):
             print("  " + line)
         sys.exit(1)

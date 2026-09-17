@@ -1,32 +1,34 @@
 #!/bin/bash
-# anim_reel.sh - many animation scenarios in ONE film, every table pair checked.
+# anim_reel.sh - every move and its Undo, in ONE film, every table card checked.
 #
 #   FOOLISH_SIM=<udid> [FOOLISH_FLAGS='key=0 ...'] ios/Tools/rig/shots/anim_reel.sh [NAME]
 #
 # LOCAL ONLY, NEVER CI: a booted simulator, a DEBUG build (`rig.sh build`) and
-# Messages. Meant to be run by hand now and then - weekly, say - to catch a
-# table animation regressing. Exit 0 clean, 1 anomalies, 2 nothing measured.
+# Messages. Run it by hand after any table or flight change, and now and then.
+# Exit 0 clean, 1 anomalies, 2 a scenario could not be played.
 #
 # Owner: "instead of one rig test per game, just run a bunch of different
 # animation scenarios in a single film and film that. Check box positions for
-# any jumps and report anomalies." Under `dev.ruler` the live table draws a
-# coloured square at the centre of every pair (CollapseRuler `tableSquare`);
-# `lib/tablesquares.py` reads the movie straight off a pipe and reports every
-# jump with the scenario it happened in, from `marks.txt`.
+# any jumps and report anomalies" - then "vary the moves, not just throw in but
+# bout ending stuff", and "no big jumps like this".
 #
-# The scenarios, in order - owner: "vary the moves, not just throw in but bout
-# ending stuff". Every live move is undone again, which is its own animation.
-#   2p attacker   throw in; GOOD that ends the bout (sweep + deal)   --goodwait 2
-#   2p defender   cover that leaves the bout open; PICKUP             --fatboard 4 2
-#   2p defender   the cover that ENDS the bout                        --lastdefense 2
-#   8p attacker   throw in; GOOD that ends the bout                   --goodwait 8
-#   replayed arrivals, each opened fresh (REPLAY=1, --lastmove <kind> 2):
-#                 attack, cover, trump cover, pickup, good, refill, a player
-#                 going out, and the move that ends the game
+# Under `dev.ruler` every table pair carries a coloured square at its centre and
+# every flying card an ORANGE one. `lib/tablesquares.py` reads the movie off a
+# pipe and reports, named by scenario:
+#   - a JUMP: a table pair's step that stands out from the steps either side;
+#   - a card GONE BEFORE ITS FLIGHT: a table card that left the table while no
+#     flight existed yet (the undo bugs of 2026-09-17: 108ms and 87ms).
 #
-# The marks are wall-clock seconds from the moment the recorder was started,
-# and the movie's clock starts at its first frame, ~4s later. tablesquares.py
-# lines the two up exactly off the ruler's clock strip (`clock_offset`).
+# The scenarios - each a live move from the EXPANDED drawer (so it auto-collapses)
+# and then its Undo, the exact reverse:
+#   throw in, bout-ending Good, first attack, cover, pickup, pass (by drag),
+#   the cover that ends the bout, an 8-seat throw-in, and two from the COMPACT
+#   drawer; then replayed arrivals of an attack, a cover, a trump cover, a pickup,
+#   a good and a refill.
+#
+# WAITING IS POLLING. Every wait asks for the thing itself - the hand drawn, the
+# plank back (Undo only shows once the flight and the collapse are over), a new
+# line in the extension's flight log - with a ceiling, never a guessed sleep.
 set -uo pipefail
 : "${FOOLISH_SIM:?set FOOLISH_SIM}"
 export FOOLISH_OUT="${FOOLISH_OUT:-$HOME/Downloads/foolish-shots}"
@@ -37,10 +39,12 @@ G=$("$RIG" group)
 D="$FOOLISH_OUT/film/$NAME"; rm -rf "$D"; mkdir -p "$D"
 now() { date +%s.%N; }
 say() { printf '  %s\n' "$*" >&2; }
+bad=0
+miss() { say "!! $1"; echo "$1" >> "$D/missed.txt"; bad=1; }
 
 # ---- a clean Messages -----------------------------------------------------
-# Relaunched, because a running Messages keeps the extension's bundle path from
-# before the last build (throwin_slide.sh has the whole story).
+# Relaunched: a running Messages keeps the extension's bundle path from before
+# the last build (throwin_slide.sh has the whole story).
 "$RIG" ruler on >/dev/null
 rm -f "$G/dev.stage" "$G/dev.staged" "$G/dev.claimed" "$G/dev.flags"
 # FOOLISH_FLAGS='table.slide=0' runs the reel against a flag's other state -
@@ -50,47 +54,125 @@ xcrun simctl terminate "$FOOLISH_SIM" com.apple.MobileSMS >/dev/null 2>&1
 xcrun simctl launch "$FOOLISH_SIM" com.apple.MobileSMS >/dev/null 2>&1
 "$RIG" enter >/dev/null 2>&1 || { echo "could not enter a conversation" >&2; exit 2; }
 "$RIG" clearstage >/dev/null 2>&1 || true
+read -r W H < <(python3 "$LIB/ax.py" screen)
 
-bad=0
-miss() { say "!! $1"; echo "$1" >> "$D/missed.txt"; bad=1; }
+# ---- reading the board ----------------------------------------------------
+plank_y() { python3 "$LIB/ui.py" bars | python3 -c "
+import sys, ast
+b = ast.literal_eval(sys.stdin.read().split('BARS ')[1]); print(b[-1][0] if b else -1)"; }
+wait_plank()    { local i=0; while [ $i -lt "${1:-60}" ]; do [ "$(plank_y)" != "-1" ] && return 0; i=$((i + 1)); done; return 1; }
+wait_no_plank() { local i=0; while [ $i -lt "${1:-20}" ]; do [ "$(plank_y)" = "-1" ] && return 0; i=$((i + 1)); done; return 1; }
+shot()  { xcrun simctl io "$FOOLISH_SIM" screenshot "$D/now.png" >/dev/null 2>&1; }
+# A flight-log line is `12.00 fly 45.5 ^45.6 place-3-11 from=... to=...`: the id
+# comes after two memory columns.
+flights() { local n; n=$(grep -cE " fly [0-9.]+ \^[0-9.]+ ($1)-" "$G/flight.log" 2>/dev/null); echo "${n:-0}"; }
+# Poll until the flight log has more `$1` flights than `$2`.
+wait_flight() { local i=0; while [ $i -lt "${3:-40}" ]; do [ "$(flights "$1")" -gt "$2" ] && return 0; i=$((i + 1)); sleep 0.1; done; return 1; }
 
-# Open onto a seed. `seat` is where we sit; empty lets seed.py choose. The last
-# board's move is still STAGED in the compose field - an Undo leaves the
-# pre-move board there - so it is cleared first: a draft from another game
-# riding along over this one is a frame nobody could produce.
-reopen() {   # reopen SEAT MODE ARGS...
+# ---- the board ------------------------------------------------------------
+# A clean board: the last one's staged bubble cleared (an Undo leaves the
+# pre-move board in the compose field), the seed claimed, the hand drawn, the
+# plank given its chance (a defender's Pickup is held back on purpose after a
+# board arrives), and the drawer expanded unless COMPACT is set.
+open_board() {   # open_board SEAT MODE ARGS...
   local seat="$1"; shift
   "$RIG" clearstage >/dev/null 2>&1 || true
   if [ -n "$seat" ]; then SEAT="$seat" "$RIG" seed "$@" >/dev/null
   else "$RIG" seed "$@" >/dev/null; fi
   "$RIG" killappex >/dev/null 2>&1
   "$RIG" open >/dev/null 2>&1
-  # …AND WAIT FOR THE BOARD. `open` returns when the drawer is up, and a cold
-  # extension can take several seconds more to draw into it: the second reel
-  # tried its covers on a black drawer and reported "no legal cover" for boards
-  # that had one.
-  # The HAND, where there is one: a seat that is out, and a finished game, have
-  # none - so this gives up quietly after 30s rather than calling it a miss.
   local i=0
   while [ $i -lt 60 ]; do
     [ "$(python3 "$LIB/ui.py" hand_y | awk '{print $2}')" != "-1" ] && break
-    sleep 0.5; i=$((i + 1))
+    i=$((i + 1))
   done
-  # And the PLANK. A defender's Pickup is held back ON PURPOSE for a few seconds
-  # after a board arrives (owner: "the pickup delay is on purpose") - so wait
-  # for it rather than read its absence as "no move here".
-  i=0
-  while [ $i -lt 12 ]; do
-    [ "$(python3 "$LIB/ui.py" bars)" != "BARS []" ] && return 0
-    sleep 0.5; i=$((i + 1))
-  done
+  wait_plank 20 || true
+  [ -z "${COMPACT:-}" ] && "$RIG" expand >/dev/null 2>&1
+  return 0
 }
 
-# The seat that still has to answer on a --goodwait board: the one that can
-# throw in. The searcher names it ("us=seat N").
 goodwait_seat() {
   "$REPO/c/build/msg_wire_test" --goodwait "$1" 2>&1 >/dev/null \
     | sed -n 's/.*us=seat \([0-9]*\).*/\1/p' | head -1
+}
+
+# ---- the moves ------------------------------------------------------------
+# Each returns 0 once the move is really played - proved by the extension's
+# own flight log, not by a plank or a hand count (a selected card lifts out of
+# the hand finder's band; Undo is hidden until the animations are over).
+move() {   # move ACTION
+  local n0 px py hy xs x tgt tx ty k
+  n0=$(flights "place|coverland")
+  case "$1" in
+    throwin)
+      read -r px py < <("$RIG" throwin select) || return 1
+      "$RIG" tap "$px" "$py" 0 >/dev/null 2>&1
+      wait_flight "place|coverland" "$n0" ;;
+    good|pickup)
+      wait_plank 40 || return 1
+      "$RIG" tap $((W * 4 / 5)) "$(plank_y)" 0 >/dev/null 2>&1
+      [ "$1" = pickup ] && { wait_flight "openpick|pick" 0 || true; }
+      wait_no_plank 20 ;;
+    attack)
+      # An empty table has no plank until a card is selected.
+      shot; read -r hy xs < <(python3 "$LIB/board.py" hand "$D/now.png")
+      for x in $xs; do
+        "$RIG" tap "$x" "$hy" 0.4 >/dev/null 2>&1
+        if [ "$(plank_y)" != "-1" ]; then
+          "$RIG" tap $((W * 4 / 5)) "$(plank_y)" 0 >/dev/null 2>&1
+          wait_flight "place" "$n0" && return 0
+        fi
+        "$RIG" tap "$x" "$hy" 0.3 >/dev/null 2>&1
+      done
+      return 1 ;;
+    cover)
+      shot; read -r hy xs < <(python3 "$LIB/board.py" hand "$D/now.png")
+      tgt=$(python3 "$LIB/board.py" table "$D/now.png")
+      for x in $xs; do
+        set -- $tgt
+        while [ $# -ge 2 ]; do
+          tx=$1; ty=$2; shift 2
+          "$RIG" tap "$x" "$hy" 0.4 >/dev/null 2>&1
+          "$RIG" tap "$tx" "$ty" 0 >/dev/null 2>&1
+          wait_flight "place|coverland" "$n0" 20 && return 0
+          "$RIG" tap "$x" "$hy" 0.3 >/dev/null 2>&1      # deselect before the next try
+        done
+      done
+      return 1 ;;
+    pass)
+      # The card of the attacked rank dropped on OPEN felt. A card that can
+      # cover resolves onto the nearest attack instead: a flight to an existing
+      # slot is undone and the next card tried.
+      for k in 0 1 2 3 4 5 6 7; do
+        shot; read -r hy xs < <(python3 "$LIB/board.py" hand "$D/now.png")
+        tgt=$(python3 "$LIB/board.py" table "$D/now.png")
+        set -- $xs; [ $# -le $k ] && return 1; shift $k; x=$1
+        ty=$(echo $tgt | awk '{m=9999; for (i=2;i<=NF;i+=2) if ($i<m) m=$i; print (m==9999 ? 400 : m-110)}')
+        n0=$(flights "place")
+        idb ui swipe --udid "$FOOLISH_SIM" --duration 0.5 "$x" "$hy" $((W / 2)) "$ty" >/dev/null 2>&1
+        wait_flight "place" "$n0" 30 || continue
+        px=$(grep -E " fly [0-9.]+ \^[0-9.]+ place-" "$G/flight.log" | tail -1 | sed -n 's/.*to=(\([0-9]*\),.*/\1/p')
+        if ! echo "$tgt" | awk -v p="$px" '{for (i=1;i<=NF;i+=2) if ((p-$i)^2 < 400) f=1} END {exit f?0:1}'; then
+          return 0
+        fi
+        undo >/dev/null 2>&1
+        [ -z "${COMPACT:-}" ] && "$RIG" expand >/dev/null 2>&1
+      done
+      return 1 ;;
+  esac
+}
+
+# Undo, once it is offered, and wait for its flight (if any) to be under way.
+undo() {
+  local n0 y
+  wait_no_plank 20 || true
+  wait_plank 80 || return 1
+  n0=$(flights "undo|undorelease")
+  y=$(plank_y)
+  "$RIG" tap $((W * 4 / 5)) "$y" 0 >/dev/null 2>&1
+  wait_flight "undo|undorelease" "$n0" 25 || true
+  wait_no_plank 10 || true
+  return 0
 }
 
 # ---- roll -----------------------------------------------------------------
@@ -98,59 +180,45 @@ REC0=$(now)
 printf 'rec0 %s\n' "$REC0" > "$D/marks.txt"    # tablesquares.py aligns marks to the film by it
 xcrun simctl io "$FOOLISH_SIM" recordVideo --codec h264 --force "$D/take.mp4" >/dev/null 2>&1 &
 rec=$!
+# ALWAYS stop the recorder with SIGINT: a recorder killed any other way leaves
+# the simulator "Host recording is already in progress" until it is rebooted.
+trap 'kill -INT $rec 2>/dev/null' EXIT
 mark() { printf '%.2f %s\n' "$(echo "$(now) - $REC0" | bc)" "$1" >> "$D/marks.txt"; say "$1"; }
 
-# The action plank: the lowest wooden bar, at the column every pill shares.
-plank() {   # plank LABEL [SETTLE]
-  local W H y
-  read -r W H < <(python3 "$LIB/ax.py" screen)
-  y=$(python3 "$LIB/ui.py" bars | python3 -c "
-import sys, ast
-b = ast.literal_eval(sys.stdin.read().split('BARS ')[1]); print(b[-1][0] if b else -1)")
-  [ "$y" = "-1" ] && { miss "$1: no plank"; return 1; }
-  mark "$1"
-  "$RIG" tap $((W * 4 / 5)) "$y" "${2:-2.6}" >/dev/null 2>&1
+scenario() {   # scenario LABEL SEAT ACTION MODE ARGS...
+  local label="$1" seat="$2" action="$3"; shift 3
+  mark "open: $label"
+  open_board "$seat" "$@"
+  mark "$label"
+  move "$action" || { miss "$label: the move could not be played"; return; }
+  mark "undo $label"
+  undo || miss "$label: Undo never came back"
 }
-
-throwin() {   # throwin LABEL
-  local px py
-  read -r px py < <("$RIG" throwin select) || { miss "$1: no throw-in found"; return 1; }
-  mark "$1";  "$RIG" tap "$px" "$py" 1.8 >/dev/null 2>&1
-}
-
-cover() {     # cover LABEL - the cover stages as the plank changes, so mark first
-  mark "$1"
-  "$RIG" cover >/dev/null 2>&1 || { miss "$1: no legal cover"; return 1; }
-  sleep 2.6
-}
-
-# ---- the scenarios --------------------------------------------------------
-# Live moves, each undone - an undo is its own animation (the exact reverse).
-mark "open: 2p attacker (goodwait)";  reopen 0 goodwait 2
-throwin "2p throw in" && plank "2p undo throw-in"
-plank "2p GOOD - ends the bout (sweep + deal)" 3.4 && plank "2p undo good" 3.4
-
-mark "open: 2p defender (fatboard)";  reopen "" fatboard 4 2
-cover "2p cover (bout stays open)" && plank "2p undo cover"
-plank "2p PICKUP" 3.4 && plank "2p undo pickup" 3.4
-
-mark "open: 2p last defence";  reopen "" lastdefense 2
-cover "2p COVER that ends the bout" && sleep 1.2 && plank "2p undo bout-ending cover" 3.4
 
 s8=$(goodwait_seat 8)
-mark "open: 8p attacker (goodwait)";  reopen "${s8:-0}" goodwait 8
-throwin "8p throw in" && plank "8p undo throw-in"
-plank "8p GOOD - ends the bout" 3.4 && plank "8p undo good" 3.4
+scenario "2p throw in"                0     throwin goodwait 2
+scenario "2p Good (bout ends)"        0     good    goodwait 2
+scenario "2p first attack"            0     attack  lastmove-live attack 2
+scenario "2p cover"                   1     cover   lastmove-live cover 2
+scenario "2p pickup"                  1     pickup  lastmove-live pickup 2
+scenario "2p pass (drag)"             ""    pass    passable 2
+scenario "2p cover ending the bout"   ""    cover   lastdefense 2
+scenario "8p throw in"                "${s8:-0}" throwin goodwait 8
+COMPACT=1 scenario "compact throw in"      0     throwin goodwait 2
+COMPACT=1 scenario "compact first attack"  0     attack  lastmove-live attack 2
 
 # Replayed arrivals: someone else's move, played back as the board opens.
-for kind in attack cover covertrump pickup goodany refill out final; do
-  mark "open: replay $kind"
-  REPLAY=1 reopen "" lastmove "$kind" 2
+for kind in attack cover covertrump pickup goodany refill; do
+  # NOT "open:" - the replay IS the animation under test, and it plays while the
+  # board opens.
   mark "replay $kind"
-  sleep 3.2
+  REPLAY=1 COMPACT=1 open_board "" lastmove "$kind" 2
+  wait_flight "open|openpick|opendraw|opendiscard" 0 40 || true
+  wait_plank 20 || true
 done
 
 kill -INT $rec 2>/dev/null || true
+trap - EXIT
 i=0
 while [ $i -lt 80 ]; do
   a=$(stat -f%z "$D/take.mp4" 2>/dev/null || echo 0); sleep 0.2
@@ -161,7 +229,8 @@ done
 "$RIG" clearstage >/dev/null 2>&1 || true
 
 # ---- read it --------------------------------------------------------------
-python3 "$LIB/tablesquares.py" "$D/take.mp4" --marks "$D/marks.txt" --csv "$D/squares.csv"
+python3 "$LIB/tablesquares.py" "$D/take.mp4" --marks "$D/marks.txt" --csv "$D/squares.csv" \
+        --setup-prefix "open:"
 rc=$?
 rm -f "$G/dev.flags"
 echo "$D"
