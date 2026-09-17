@@ -866,20 +866,6 @@ export const commitGame = async (
 // REALTIME BROADCAST UTILITIES
 // =============================================================================
 
-// private message to specific user
-export const broadcastToGameUser = async (game: Game, messageType: string, baseMessage: any, user_id: string): Promise<void> => {
-    const { personalViewOf } = await playerViewsMod();
-    await broadcastMessages([{
-        topic: `gu-${game.id}-${user_id}`,
-        event: messageType,
-        payload: {
-            ...baseMessage,
-            game: await personalViewOf(game, user_id)
-        }
-    }]);
-}
-
-
 // Functions moved to common_utils.ts
 
 // check_win_sync lived here: game_done, then GAME_OVER and the seat parking,

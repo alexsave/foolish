@@ -6,8 +6,8 @@
 // only the packaging is consolidated. Each handler mutates params.game and returns
 // {game, events}; executeWithGameLock (via wrap400) does the commit.
 
-import { ExecutionParams, broadcastToGameUser, PackedPayloadExtra } from './utils.ts';
-import { ANIMATION_EVENT_TYPE, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, SERVER_EVENT_TYPE, AnimationEvent, Game } from '@api/core/types.ts';
+import { ExecutionParams, PackedPayloadExtra } from './utils.ts';
+import { ANIMATION_EVENT_TYPE, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, AnimationEvent, Game } from '@api/core/types.ts';
 import { cloneGame, verify_player_in_game } from '@api/common/common_utils.ts';
 import { packedProducts, start_game_packed } from '@api/common/game_lifecycle.ts';
 import { MAX_PLAYERS } from '@api/core/constants.ts';
@@ -257,7 +257,7 @@ function handleJoin({ user, user_name, body, game }: ExecutionParams): Result {
 }
 
 // ---- rearrange hand --------------------------------------------------------
-function handleRearrangeHand({ user, user_name, game, body }: ExecutionParams): Result {
+function handleRearrangeHand({ user, game, body }: ExecutionParams): Result {
     // Reorder the caller's hand. For a dealt game the permutation validation
     // — the load-bearing uniqueness check that prevents minting duplicate
     // cards via repeated indices — runs INSIDE the kernel
@@ -288,12 +288,7 @@ function handleRearrangeHand({ user, user_name, game, body }: ExecutionParams): 
         applyRearrangeHand(game, user.id, body.card_indices);
     }
 
-    // Targeted broadcast only to the caller (their hand order is private); the
-    // committed game itself is broadcast by executeWithGameLock.
-    broadcastToGameUser(game, SERVER_EVENT_TYPE.HAND_REARRANGED, {
-        message: `${user_name} rearranged their hand`
-    }, user.id);
-
+    // The committed game itself is broadcast by executeWithGameLock.
     return { game, events: [], packed };
 }
 

@@ -69,7 +69,6 @@ interface BotsExports extends EngineExports {
     // policy the web pure modules (src/state/*) delegate to. bots-only.
     wasm_anim_should_drop_stale(hasLast: number, last: number, hasIncoming: number, incoming: number): number;
     wasm_anim_stale_optimistic(nOpt: number, nTable: number, nNamed: number): number;
-    wasm_anim_build_plan(nEvents: number, nPlayers: number, finalDeck: number, finalDiscard: number): number;
     wasm_anim_finish_rows(nElim: number, gameOver: number, nPlayers: number, mySeat: number): number;
     wasm_anim_conflict_verdicts(pendingAttacks: number, defenderHand: number,
                                 finalUncovered: number): number;
@@ -1481,7 +1480,6 @@ export const ANIM_EVT: Record<string, number> = {
 export const ANIM_LOC: Record<string, number> = {
     deck: 0, hand: 1, table: 2, discard: 3, flipped: 4,
 };
-const ANIM_LOC_NONE = 0xff;
 
 /** The event-type string -> ANIM_EVT_* code (0 for an unknown/None type). */
 export function animEventTypeCode(type: string | undefined): number {
@@ -1632,114 +1630,3 @@ export function animConflictVerdicts(
     return verdicts;
 }
 
-// One built plan step (mirrors AnimPlanStep).
-export interface AnimPlanStep {
-    type: number; seat: number; from: number; to: number; nCards: number;
-    durationMs: number; startMs: number; deck: number; discard: number;
-    inFlightFromDeck: number; inFlightToFlipped: number; hand: number[];
-}
-export interface AnimPlan {
-    nSteps: number; nPlayers: number;
-    /** The board the display opens on. `row` is the BATTLE ROW as it stood
-     *  before this stream - the pair per battle, `null` for an uncovered
-     *  attack - and it is the half of the freeze that used to be missing: the
-     *  three counts froze and the row did not, so a replayed pass drew its
-     *  table already rearranged on the first painted frame. Empty for "no row",
-     *  where a caller lays out the live table exactly as it did before. */
-    pre: { deck: number; discard: number; hand: number[];
-           row: { attack: Card; cover: Card | null }[]; rowPaired: boolean };
-    totalMs: number; veilIds: number[]; steps: AnimPlanStep[];
-}
-
-/** anim_build_plan, in C: a decoded viewer sequence -> the timed plan (count-
- *  freeze + veil + durations). `events[].seat` may be null for a seat-less event.
- *
- *  EVERY EVENT CARRIES THE BOARD IT COMMITTED (`counts`, from its own evwire
- *  game_state). That is not optional detail: the freeze is one undo off the
- *  FIRST event's board, and a caller that omits the boards gets the fallback -
- *  the walk back over every event, which reads the deck one card high whenever
- *  the flipped trump was drawn. See c/src/anim_plan.h. */
-export function animBuildPlan(
-    events: {
-        type: number; seat: number | null; from: number; to: number; mask: boolean; cards: Card[];
-        counts?: { deck: number; discard: number; hand: number[] } | null;
-        /** The battle row this event's own board carried. Omit it and the plan
-         *  has no pre-move row to hand back - see AnimPlan.pre.row. */
-        table?: { attack: Card; cover: Card | null }[] | null;
-    }[],
-    nPlayers: number, finalDeck: number, finalDiscard: number, finalHand: number[],
-): AnimPlan {
-    const ex = bots();
-    if (events.length > 128) throw new Error('anim: plan exceeds ABI cap');
-    const buf = __mem(ex);
-    const base = ex.wasm_io_ptr();
-    let p = base;
-    for (let s = 0; s < nPlayers; s++) buf[p++] = finalHand[s] & 0xff;
-    for (const e of events) {
-        buf[p++] = e.type & 0xff;
-        buf[p++] = e.seat === null ? ANIM_LOC_NONE : (e.seat & 0xff);
-        buf[p++] = e.from & 0xff;
-        buf[p++] = e.to & 0xff;
-        buf[p++] = e.mask ? 1 : 0;
-        buf[p++] = e.cards.length & 0xff;
-        for (const c of e.cards) buf[p++] = __wireStateCard(c);
-        buf[p++] = e.counts ? 1 : 0;
-        buf[p++] = (e.counts?.deck ?? 0) & 0xff;
-        buf[p++] = (e.counts?.discard ?? 0) & 0xff;
-        for (let s = 0; s < nPlayers; s++) buf[p++] = (e.counts?.hand[s] ?? 0) & 0xff;
-        // …and the ROW that event committed. 0xFE is "no board", which is also
-        // what a row carrying a card this viewer cannot name has to cross as: a
-        // row that cannot be described honestly is not described at all.
-        const row = e.table ?? null;
-        if (!row || row.length > 32) {
-            buf[p++] = ANIM_TABLE_NONE;
-        } else {
-            buf[p++] = row.length & 0xff;
-            for (const b of row) {
-                buf[p++] = __wireStateCard(b.attack);
-                buf[p++] = b.cover ? __wireStateCard(b.cover) : ANIM_TABLE_NONE;
-            }
-        }
-    }
-    const len = ex.wasm_anim_build_plan(events.length, nPlayers, finalDeck, finalDiscard);
-    if (len < 0) throw new Error(`anim_build_plan error ${len}`);
-    const out = __mem(ex);
-    let q = ex.wasm_io_ptr();
-    const rd16 = () => { const v = out[q] | (out[q + 1] << 8); q += 2; return v; };
-    // Wall time and step offsets are wide: a full-length stream runs past 65535 ms.
-    const rd32 = () => {
-        const v = (out[q] | (out[q + 1] << 8) | (out[q + 2] << 16) | (out[q + 3] << 24)) >>> 0;
-        q += 4; return v;
-    };
-    const nSteps = out[q++];
-    const np = out[q++];
-    const preDeck = rd16(), preDiscard = rd16();
-    const preHand: number[] = [];
-    for (let s = 0; s < np; s++) preHand.push(rd16());
-    const totalMs = rd32();
-    const nVeil = out[q++];
-    const veilIds: number[] = [];
-    for (let i = 0; i < nVeil; i++) veilIds.push(out[q++]);
-    const nRow = out[q++];
-    const rowPaired = out[q++] !== 0;
-    const preRow: { attack: Card; cover: Card | null }[] = [];
-    for (let i = 0; i < nRow; i++) {
-        const a = out[q++], c = out[q++];
-        preRow.push({ attack: __cardFromWire(a),
-                      cover: c === ANIM_TABLE_NONE ? null : __cardFromWire(c) });
-    }
-    const steps: AnimPlanStep[] = [];
-    for (let i = 0; i < nSteps; i++) {
-        const type = out[q++], seat = out[q++], from = out[q++], to = out[q++], nCards = out[q++];
-        const durationMs = rd16(), startMs = rd32(), deck = rd16(), discard = rd16();
-        const inFlightFromDeck = out[q++], inFlightToFlipped = out[q++];
-        const hand: number[] = [];
-        for (let s = 0; s < np; s++) hand.push(rd16());
-        steps.push({ type, seat: seat === 0xff ? -1 : seat, from, to, nCards,
-                     durationMs, startMs, deck, discard, inFlightFromDeck, inFlightToFlipped, hand });
-    }
-    return { nSteps, nPlayers: np,
-             pre: { deck: preDeck, discard: preDiscard, hand: preHand,
-                    row: preRow, rowPaired },
-             totalMs, veilIds, steps };
-}

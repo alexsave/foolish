@@ -191,10 +191,11 @@ animation-quality tests (see the mapping below), wired into `c/Makefile`
 (`build/anim_plan_test`, and into `make difftests`).
 
 **Web (wasm).** `c/wasm/wasm_api.c` exports `wasm_anim_should_drop_stale`,
-`wasm_anim_stale_optimistic`, `wasm_anim_resolve`, `wasm_anim_build_plan`
+`wasm_anim_stale_optimistic`, `wasm_anim_resolve`
 (bots-only — the web loads `bots.wasm` at boot). `sdk/ts/wasm/bots.ts` bridges
-them (`animShouldDropStale`, `animStaleOptimisticOnTable`, `animResolveUnconfirmed`,
-`animBuildPlan`). The `src/state/*` modules now **delegate** to these; the React
+them (`animShouldDropStale`, `animStaleOptimisticOnTable`, `animResolveUnconfirmed`).
+The web plan bridge (`wasm_anim_build_plan` / `animBuildPlan`) had no caller and
+was removed; `anim_build_plan` itself is read by iOS through `fio_anim_plan_packed`. The `src/state/*` modules now **delegate** to these; the React
 layer keeps only rendering + React state mechanics.
 
 **iOS.** `c/ios/ios_api.c` exports `fio_anim_plan_packed(in, len, out, cap)` -
@@ -241,7 +242,7 @@ What did **not** move this pass, and why it is safe to leave:
 - **The React queue itself** (`processAnimationQueue`, the `setState`/`setTimeout`
   chain, `animatingCards`, `inFlightFromDeck` state) is rendering — it *drives*
   the plan's timings but is not the policy. It should be re-expressed as a driver
-  over `animBuildPlan`'s output; today it still computes its own `ANIMATION_TIME`
+  over `anim_build_plan`'s output (which would need a web bridge again); today it still computes its own `ANIMATION_TIME`
   loop. The pacing NUMBERS it uses are now the C constants' twins.
 - **Optimistic-event synthesis** — `AnimationContext`'s `attack`/`pass`/`pickup`/
   `cover`/`good` build predicted `ClientAnimationEvent`s, register them in
