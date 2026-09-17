@@ -65,7 +65,7 @@ const nowMs = () => Number(process.hrtime.bigint()) / 1e6;
 // server bot loop runs. Resolved in main() (no top-level await under tsx's CJS).
 let loadSessionLogBytes: ((id: string) => Promise<Uint8Array | null>) | null = null;
 
-async function benchStrategy(strategy: string): Promise<{ strategy: string; n: number; mean: number; p50: number; p90: number; max: number; beliefHydrated: boolean }> {
+async function benchStrategy(strategy: string): Promise<{ strategy: string; n: number; mean: number; p50: number; p90: number; p95: number; max: number; beliefHydrated: boolean }> {
   await resetDb();
   const gameId = `be${uuid().slice(0, 5)}`;
   const pids = [uuid(), uuid()];
@@ -122,7 +122,7 @@ async function benchStrategy(strategy: string): Promise<{ strategy: string; n: n
   samples.sort((a, b) => a - b);
   const mean = samples.reduce((x, y) => x + y, 0) / (samples.length || 1);
   const pick = (q: number) => samples[Math.min(samples.length - 1, Math.floor(q * samples.length))] ?? 0;
-  return { strategy, n: samples.length, mean, p50: pick(0.5), p90: pick(0.9), max: samples[samples.length - 1] ?? 0, beliefHydrated };
+  return { strategy, n: samples.length, mean, p50: pick(0.5), p90: pick(0.9), p95: pick(0.95), max: samples[samples.length - 1] ?? 0, beliefHydrated };
 }
 
 async function main() {
@@ -155,7 +155,7 @@ async function main() {
   say(`thinking-bot E2E latency vs real Postgres (load → belief → kernel choose → apply → commit), ${MOVES} decisions/bot`);
   say(`belief hydrated: ${results.some(r => r.beliefHydrated) ? 'yes' : 'no (blind — no loadSessionLogBytes on this tree)'}`);
   for (const r of results) {
-    say(`  ${r.strategy.padEnd(10)} n=${String(r.n).padStart(3)}  mean ${r.mean.toFixed(1).padStart(6)}ms   p50 ${r.p50.toFixed(1).padStart(6)}ms   p90 ${r.p90.toFixed(1).padStart(6)}ms   max ${r.max.toFixed(0)}ms`);
+    say(`  ${r.strategy.padEnd(10)} n=${String(r.n).padStart(3)}  mean ${r.mean.toFixed(1).padStart(6)}ms   p50 ${r.p50.toFixed(1).padStart(6)}ms   p90 ${r.p90.toFixed(1).padStart(6)}ms   p95 ${r.p95.toFixed(1).padStart(6)}ms   max ${r.max.toFixed(0)}ms`);
   }
   say(`wasm memory: bots=${memory.botsWasmMB}MB kernel=${memory.kernelWasmMB}MB`);
   await pgPool.end();

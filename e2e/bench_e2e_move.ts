@@ -37,8 +37,9 @@ async function freshGame(): Promise<{ gameId: string; pids: string[] }> {
 }
 
 type Mode = 'legacy' | 'packed';
-async function run(mode: Mode): Promise<{ moves: number; ns: bigint }> {
+async function run(mode: Mode): Promise<{ moves: number; ns: bigint; samples: number[] }> {
   let moves = 0; let ns = 0n;
+  const samples: number[] = []; // per-move ms, for the percentiles
   while (moves < MOVES) {
     const { gameId } = await freshGame();
     for (let mv = 0; mv < 400 && moves < MOVES; mv++) {
@@ -71,12 +72,14 @@ async function run(mode: Mode): Promise<{ moves: number; ns: bigint }> {
             return { game, events };
           }, 'bench', true);
         }
-        ns += process.hrtime.bigint() - t0;
+        const dt = process.hrtime.bigint() - t0;
+        ns += dt;
+        samples.push(Number(dt) / 1e6);
         moves++;
       } catch { /* rare menu/handler edge — skip uncounted */ }
     }
   }
-  return { moves, ns };
+  return { moves, ns, samples };
 }
 
 (async () => {
@@ -88,9 +91,11 @@ async function run(mode: Mode): Promise<{ moves: number; ns: bigint }> {
     await run(mode); // warmup? full run is cheap enough at 300; do a short warm pass
     await resetDb();
     seed = 0xabcd;
-    const { moves, ns } = await run(mode);
+    const { moves, ns, samples } = await run(mode);
     const us = Number(ns) / 1000 / moves;
-    say(`  ${mode.padEnd(6)} ${(us / 1000).toFixed(2).padStart(7)} ms/move   (${moves} moves)`);
+    samples.sort((a, b) => a - b);
+    const pick = (q: number) => samples[Math.min(samples.length - 1, Math.floor(q * samples.length))] ?? 0;
+    say(`  ${mode.padEnd(6)} ${(us / 1000).toFixed(2).padStart(7)} ms/move mean   p50 ${pick(0.5).toFixed(2)} ms   p95 ${pick(0.95).toFixed(2)} ms   (${moves} moves)`);
   }
   await pgPool.end();
 })();
