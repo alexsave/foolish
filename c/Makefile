@@ -54,7 +54,7 @@ CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.
             src/torpex_value.c src/novichok_strategy.c \
             src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
             src/sha256.c src/msg_wire.c src/msg_expand.c src/anim_plan.c \
-            src/analyse.c
+            src/analyse.c src/roster.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
 .PHONY: all clean tests print-core print-wasm-src
@@ -223,7 +223,7 @@ IOS_CAPS   := -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_MOVE_CARDS=28 \
 IOS_CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c \
                 src/replay_steps.c src/replay_extras.c src/view.c src/awire.c \
                 src/evwire.c src/sha256.c src/msg_wire.c src/msg_expand.c \
-                src/anim_plan.c ios/ios_api.c
+                src/anim_plan.c src/roster.c ios/ios_api.c
 IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC),$(CORE_SRC)) ios/ios_bots_api.c
 
 # Everything, for the host-side smoke/golden binaries that want one link line.
@@ -666,6 +666,16 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport \
   -Wl,--export=wasm_belief_probe_reset -Wl,--export=wasm_belief_probe_dump
 
+# The C Roster (src/roster.h), bots.wasm ONLY: not part of WASM_BOTS_API_EXPORTS,
+# because the oracle modules link that list and have no use for a roster, and an
+# unexported roster.o is dropped whole by the linker. Test-only for now: the
+# parity gates (e2e/roster_c_parity.test.ts, e2e/packed_roster_wire.test.ts) hold
+# the C writer byte-identical to the TS one until the server switches over
+# (docs/C_GAME_SHAPE_MIGRATION.md Phase 2, 4b).
+WASM_ROSTER_EXPORTS := \
+  -Wl,--export=wasm_roster_encode -Wl,--export=wasm_roster_decode \
+  -Wl,--export=wasm_roster_trailer_write -Wl,--export=wasm_roster_trailer_read
+
 # The rules module's move buffer only feeds the exported menu — production
 # validation is direct rule-checking, and production menus/bot enumeration
 # run on the adopted bots instance (engine slot adoption, see engine.ts).
@@ -1035,7 +1045,7 @@ WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_st
                 src/simple_heuristic_strategy.c \
                 src/handwritten_prod_strategy.c \
                 src/octogen_strategy.c \
-                src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
+                src/bot_knobs.c src/bot_roster.c src/bot_drive.c src/roster.c \
                 wasm/wasm_api.c wasm/wasm_bots_api.c wasm/wasm_msg_api.c
 
 # PER-FILE opt (a mix one clang invocation can't express): the profiled hot MC
@@ -1117,7 +1127,7 @@ build/botobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
 build/bots.wasm: $(WASM_BOT_OBJ)
 	@mkdir -p build
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
-	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_BOT_OBJ) -o $@
+	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_ROSTER_EXPORTS) $(WASM_BOT_OBJ) -o $@
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),$@)
 
 # bots-explain.wasm: byte-for-byte the SAME octogen as bots.wasm (same sources,
@@ -1135,7 +1145,7 @@ bots-wasm-explain:
 	  $(WASM_CC) $(WASM_BOT_CFLAGS) -DOG_EXPLAIN_BUILD $$opt -c $$src -o build/botexplain/$$base.o || exit 1; \
 	done
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
-	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
+	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_ROSTER_EXPORTS) \
 	          -Wl,--export=wasm_og_explain_ptr -Wl,--export=wasm_og_explain_len -Wl,--export=wasm_og_explain_reset \
 	          build/botexplain/*.o -o build/bots-explain.wasm
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),build/bots-explain.wasm)
@@ -1154,7 +1164,7 @@ bots-wasm-explain:
 build/named/bots.named.wasm: $(WASM_BOT_OBJ)
 	@mkdir -p build/named
 	$(WASM_CC) --target=wasm32 -nostdlib $(filter-out -Wl$(comma)--strip-all,$(WASM_BOT_LDFLAGS)) \
-	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_BOT_OBJ) -o $@
+	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_ROSTER_EXPORTS) $(WASM_BOT_OBJ) -o $@
 	$(if $(strip $(WASM_BOTS_POSTOPT)),$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) $(WASM_BOTS_POSTOPT) --debuginfo $@ -o $@,:)
 
 # bots.wasm ships as ONE gzip STATIC ASSET (config.toml static_files + deploy

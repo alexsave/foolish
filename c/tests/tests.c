@@ -22,6 +22,7 @@
 #include "../src/anim_plan.h"
 #include "../src/cordite_sim.h"
 #include "../src/analyse.h"
+#include "../src/roster.h"
 #include "../wasm/wire.h"
 #include <stdio.h>
 #include <sys/mman.h>
@@ -6733,6 +6734,367 @@ static void test_analyse_packed_on_a_generated_game(void) {
     }
 }
 
+/* ---------------------------------------------------------------------------
+ * Roster (c/src/roster.h): the table's identity beside the board.
+ * ------------------------------------------------------------------------- */
+
+#define RS(s) (s), (int)strlen(s)
+
+// Two seats: a human and a bot, under a title.
+static void roster_fixture(Roster *r) {
+    memset(r, 0, sizeof(*r));
+    roster_set_title(r, RS("Sveta's Game"));
+    roster_seat_add(r, RS("p-0"), RS("Sveta"), RS(""));
+    roster_seat_add(r, RS("p-1"), RS("Бот"), RS("cordite"));
+}
+
+// A roster at every cap: 8 seats, 36-byte ids, 64-byte names, 23-byte brains
+// and a 200-byte title.
+static void roster_full_fixture(Roster *r) {
+    char id[ROSTER_ID_MAX + 1], name[ROSTER_NAME_MAX + 1], brain[ROSTER_BRAIN_MAX + 1], title[ROSTER_TITLE_MAX + 1];
+    memset(r, 0, sizeof(*r));
+    memset(title, 'T', ROSTER_TITLE_MAX); title[ROSTER_TITLE_MAX] = 0;
+    roster_set_title(r, title, ROSTER_TITLE_MAX);
+    for (int s = 0; s < MAX_PLAYERS; s++) {
+        snprintf(id, sizeof(id), "00000000-0000-4000-8000-00000000000%d", s);
+        memset(name, 'a' + s, ROSTER_NAME_MAX); name[ROSTER_NAME_MAX] = 0;
+        memset(brain, 'k', ROSTER_BRAIN_MAX); brain[ROSTER_BRAIN_MAX] = 0;
+        roster_seat_add(r, id, ROSTER_ID_MAX, name, ROSTER_NAME_MAX, brain, (s & 1) ? ROSTER_BRAIN_MAX : 0);
+    }
+}
+
+static int roster_equal(const Roster *a, const Roster *b) {
+    if (a->n != b->n || a->title_len != b->title_len) return 0;
+    if (memcmp(a->title, b->title, a->title_len) != 0) return 0;
+    for (int s = 0; s < a->n; s++) {
+        const RosterSeat *x = &a->seats[s], *y = &b->seats[s];
+        if (x->id_len != y->id_len || x->name_len != y->name_len || x->brain_len != y->brain_len) return 0;
+        if (memcmp(x->id, y->id, x->id_len) || memcmp(x->name, y->name, x->name_len)
+            || memcmp(x->brain, y->brain, x->brain_len)) return 0;
+    }
+    return 1;
+}
+
+static void test_roster_round_trip(void) {
+    Roster r, back;
+    uint8_t buf[ROSTER_BYTES], again[ROSTER_BYTES];
+
+    roster_fixture(&r);
+    CHECK(r.n == 2, "the fixture seated two");
+    CHECK(roster_encode(&r, buf, sizeof(buf)) == ROSTER_BYTES, "encode writes exactly ROSTER_BYTES");
+    CHECK(buf[0] == ROSTER_FORMAT_VERSION && buf[1] == 2 && buf[2] == 12, "header: version, n, title_len");
+    CHECK(memcmp(buf + 3, "Sveta's Game", 12) == 0 && buf[3 + 12] == 0, "title bytes, zero padded");
+    CHECK(buf[203] == 3 && memcmp(buf + 204, "p-0", 3) == 0, "seat 0 id at 203");
+    CHECK(buf[203 + 37] == 5 && memcmp(buf + 203 + 38, "Sveta", 5) == 0, "seat 0 name at +37");
+    CHECK(buf[203 + 102] == 0, "seat 0 is human (brain_len 0)");
+    CHECK(buf[203 + 128 + 102] == 7 && memcmp(buf + 203 + 128 + 103, "cordite", 7) == 0, "seat 1 brain at +102");
+    int zero_tail = 1;
+    for (int i = 203 + 2 * 128; i < ROSTER_BYTES; i++) if (buf[i]) zero_tail = 0;
+    CHECK(zero_tail, "unused seat records are all zero");
+    CHECK(roster_decode(&back, buf, ROSTER_BYTES) == ROSTER_OK, "the encoding decodes");
+    CHECK(roster_equal(&r, &back), "decode gives back every field");
+    CHECK(roster_encode(&back, again, sizeof(again)) == ROSTER_BYTES && memcmp(buf, again, ROSTER_BYTES) == 0,
+          "decode -> encode is the identity");
+    CHECK(roster_encode(&r, buf, ROSTER_BYTES - 1) == ROSTER_E_CAP, "a small buffer is refused");
+
+    roster_full_fixture(&r);
+    CHECK(r.n == MAX_PLAYERS && r.title_len == ROSTER_TITLE_MAX, "the full fixture is at every cap");
+    CHECK(roster_encode(&r, buf, sizeof(buf)) == ROSTER_BYTES, "a roster at every cap encodes");
+    CHECK(roster_decode(&back, buf, ROSTER_BYTES) == ROSTER_OK && roster_equal(&r, &back),
+          "a roster at every cap round-trips");
+
+    memset(&r, 0, sizeof(r));
+    CHECK(roster_encode(&r, buf, sizeof(buf)) == ROSTER_BYTES && roster_decode(&back, buf, ROSTER_BYTES) == ROSTER_OK
+          && back.n == 0, "an empty roster round-trips");
+}
+
+static void test_roster_decode_refuses_each_malformed_field(void) {
+    Roster r, back;
+    uint8_t good[ROSTER_BYTES + 1], b[ROSTER_BYTES + 1];
+    roster_fixture(&r);
+    roster_encode(&r, good, ROSTER_BYTES);
+    good[ROSTER_BYTES] = 0;
+    const int s0 = 203, s1 = 203 + 128;
+
+#define MUTATE(expect, msg, ...) do { memcpy(b, good, sizeof(b)); __VA_ARGS__; \
+        CHECK(roster_decode(&back, b, ROSTER_BYTES) == (expect), msg); } while (0)
+
+    CHECK(roster_decode(&back, good, ROSTER_BYTES - 1) == ROSTER_E_LENGTH, "one byte short is refused");
+    CHECK(roster_decode(&back, good, ROSTER_BYTES + 1) == ROSTER_E_LENGTH, "one byte long is refused");
+    CHECK(roster_decode(&back, good, 0) == ROSTER_E_LENGTH, "nothing is refused");
+    MUTATE(ROSTER_E_VERSION, "an unknown version is refused", b[0] = 2);
+    MUTATE(ROSTER_E_VERSION, "version 0 is refused", b[0] = 0);
+    MUTATE(ROSTER_E_COUNT, "n over MAX_PLAYERS is refused", b[1] = MAX_PLAYERS + 1);
+    MUTATE(ROSTER_E_COUNT, "a negative n is refused", b[1] = 0xff);
+    MUTATE(ROSTER_E_TITLE, "a title over 200 bytes is refused", b[2] = ROSTER_TITLE_MAX + 1);
+    MUTATE(ROSTER_E_TITLE, "a title that is not UTF-8 is refused", b[3] = 0xff);
+    MUTATE(ROSTER_E_ID, "an id over 36 bytes is refused", b[s0] = ROSTER_ID_MAX + 1);
+    MUTATE(ROSTER_E_ID, "an empty id is refused", b[s0] = 0; memset(b + s0 + 1, 0, 3));
+    MUTATE(ROSTER_E_ID, "a NUL inside an id is refused", b[s0 + 2] = 0);
+    MUTATE(ROSTER_E_NAME, "a name over 64 bytes is refused", b[s0 + 37] = ROSTER_NAME_MAX + 1);
+    MUTATE(ROSTER_E_NAME, "a stray 0xff in a name is refused", b[s0 + 38] = 0xff);
+    MUTATE(ROSTER_E_NAME, "an overlong encoding is refused", b[s0 + 38] = 0xc0; b[s0 + 39] = 0x80);
+    MUTATE(ROSTER_E_NAME, "a UTF-16 surrogate is refused", b[s0 + 38] = 0xed; b[s0 + 39] = 0xa0; b[s0 + 40] = 0x80);
+    MUTATE(ROSTER_E_NAME, "a code point past U+10FFFF is refused",
+           b[s0 + 38] = 0xf4; b[s0 + 39] = 0x90; b[s0 + 40] = 0x80; b[s0 + 41] = 0x80);
+    MUTATE(ROSTER_E_NAME, "a name cut mid-sequence is refused", b[s1 + 37] = 5);   // "Бот" is 6 bytes
+    MUTATE(ROSTER_E_NAME, "a lone continuation byte is refused", b[s0 + 38] = 0x80);
+    MUTATE(ROSTER_E_BRAIN, "a brain over 23 bytes is refused", b[s1 + 102] = ROSTER_BRAIN_MAX + 1);
+    MUTATE(ROSTER_E_BRAIN, "a brain that is not printable ASCII is refused", b[s1 + 103] = ' ');
+    MUTATE(ROSTER_E_DUPLICATE, "two seats with one id are refused", b[s1 + 3] = '0');
+    MUTATE(ROSTER_E_PADDING, "a byte past the title is refused", b[3 + 12] = 'x');
+    MUTATE(ROSTER_E_PADDING, "a byte past an id is refused", b[s0 + 1 + 3] = 'x');
+    MUTATE(ROSTER_E_PADDING, "a byte past a name is refused", b[s0 + 38 + 5] = 'x');
+    MUTATE(ROSTER_E_PADDING, "a byte past a brain is refused", b[s1 + 103 + 7] = 'x');
+    MUTATE(ROSTER_E_PADDING, "a reserved byte is refused", b[s0 + 126] = 1);
+    MUTATE(ROSTER_E_PADDING, "an unused seat record that is not empty is refused", b[203 + 5 * 128 + 50] = 1);
+    MUTATE(ROSTER_OK, "the unmutated bytes still decode", (void)0);
+#undef MUTATE
+
+    // A Roster built in memory is held to the same rules as one decoded.
+    roster_fixture(&r);
+    r.seats[1].id_len = 3; memcpy(r.seats[1].id, "p-0", 3);
+    CHECK(roster_validate(&r) == ROSTER_E_DUPLICATE, "validate finds a duplicate id");
+    CHECK(roster_encode(&r, b, ROSTER_BYTES) == ROSTER_E_DUPLICATE, "encode refuses an invalid roster");
+    roster_fixture(&r); r.n = MAX_PLAYERS + 1;
+    CHECK(roster_validate(&r) == ROSTER_E_COUNT, "validate refuses n over MAX_PLAYERS");
+    roster_fixture(&r); r.n = -1;
+    CHECK(roster_validate(&r) == ROSTER_E_COUNT, "validate refuses a negative n");
+}
+
+static void test_roster_seat_of_is_exact(void) {
+    Roster r;
+    roster_fixture(&r);
+    const char *uuid = "0b5f3a52-7c1e-4d2b-9a8e-3f1c2d4e5f60";
+    CHECK(roster_seat_add(&r, uuid, 36, RS("Uuid"), RS("")) == 2, "a UUID seat is added at 2");
+    CHECK(roster_seat_of(&r, RS("p-0")) == 0, "seat_of finds seat 0");
+    CHECK(roster_seat_of(&r, RS("p-1")) == 1, "seat_of finds seat 1");
+    CHECK(roster_seat_of(&r, uuid, 36) == 2, "seat_of finds a UUID");
+    CHECK(roster_seat_of(&r, RS("p-")) == -1, "a prefix of a seated id misses");
+    CHECK(roster_seat_of(&r, uuid, 35) == -1, "a UUID less its last byte misses");
+    CHECK(roster_seat_of(&r, uuid, 8) == -1, "a UUID's first group misses");
+    CHECK(roster_seat_of(&r, RS("p-00")) == -1, "a seated id plus a byte misses");
+    CHECK(roster_seat_of(&r, RS("P-0")) == -1, "case matters");
+    CHECK(roster_seat_of(&r, "", 0) == -1, "the empty id misses");
+    CHECK(roster_seat_of(&r, RS("nobody")) == -1, "an unseated id misses");
+    CHECK(roster_seat_of(&r, "p-0", -1) == -1, "a negative length misses");
+    r.n = 1;
+    CHECK(roster_seat_of(&r, RS("p-1")) == -1, "a record past n is not a seat");
+}
+
+static void test_roster_ops(void) {
+    Roster r, before;
+    char id[8];
+
+    memset(&r, 0, sizeof(r));
+    for (int s = 0; s < MAX_PLAYERS; s++) {
+        snprintf(id, sizeof(id), "id-%d", s);
+        CHECK(roster_seat_add(&r, id, (int)strlen(id), RS("n"), s == 3 ? "random" : "", s == 3 ? 6 : 0) == s,
+              "add returns the new seat");
+    }
+    CHECK(r.n == MAX_PLAYERS, "eight seats");
+    CHECK(roster_bot_mask(&r) == (1u << 3), "the bot mask is the seats with a brain");
+    before = r;
+    CHECK(roster_seat_add(&r, RS("id-9"), RS("n"), RS("")) == ROSTER_E_FULL, "a ninth seat is refused");
+    CHECK(roster_seat_add(&r, RS("id-2"), RS("n"), RS("")) == ROSTER_E_DUPLICATE, "a seated id is refused");
+    CHECK(memcmp(&r, &before, sizeof(r)) == 0, "a refused add leaves the roster untouched");
+
+    roster_fixture(&r);
+    before = r;
+    CHECK(roster_seat_add(&r, RS("p-0"), RS("Again"), RS("")) == ROSTER_E_DUPLICATE, "a duplicate join is refused");
+    CHECK(roster_seat_add(&r, "", 0, RS("x"), RS("")) == ROSTER_E_ID, "an empty id is refused");
+    CHECK(roster_seat_add(&r, RS("0123456789012345678901234567890123456"), RS("x"), RS("")) == ROSTER_E_ID,
+          "a 37-byte id is refused");
+    CHECK(roster_seat_add(&r, RS("p-2"), "\xff\xfe", 2, RS("")) == ROSTER_E_NAME, "a name that is not UTF-8 is refused");
+    CHECK(roster_seat_add(&r, RS("p-2"), RS("x"), RS("012345678901234567890123")) == ROSTER_E_BRAIN,
+          "a 24-byte brain is refused");
+    CHECK(roster_seat_add(&r, RS("p-2"), RS("x"), RS("cor dite")) == ROSTER_E_BRAIN, "a brain with a space is refused");
+    CHECK(memcmp(&r, &before, sizeof(r)) == 0, "every refused add left the roster untouched");
+    CHECK(roster_seat_add(&r, RS("p-2"), RS(""), RS("")) == 2, "an empty name is a name");
+
+    // An over-long name is trimmed on the way in, like every envelope trims it.
+    const char *clowns = "🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡";
+    CHECK(roster_seat_add(&r, RS("p-3"), RS(clowns), RS("")) == 3 && r.seats[3].name_len == 64
+          && memcmp(r.seats[3].name, clowns, 64) == 0, "an 80-byte name is stored as its 64-byte scalar prefix");
+
+    // remove compacts the seats above
+    CHECK(roster_seat_remove(&r, 1) == ROSTER_OK && r.n == 3, "remove drops one seat");
+    CHECK(roster_seat_of(&r, RS("p-1")) == -1 && roster_seat_of(&r, RS("p-2")) == 1
+          && roster_seat_of(&r, RS("p-3")) == 2, "the seats above moved down");
+    CHECK(roster_bot_mask(&r) == 0, "the removed seat took its brain with it");
+    before = r;
+    CHECK(roster_seat_remove(&r, 3) == ROSTER_E_SEAT && roster_seat_remove(&r, -1) == ROSTER_E_SEAT,
+          "remove refuses a seat out of range");
+    CHECK(memcmp(&r, &before, sizeof(r)) == 0, "a refused remove leaves the roster untouched");
+    uint8_t enc[ROSTER_BYTES];
+    CHECK(roster_encode(&r, enc, sizeof(enc)) == ROSTER_BYTES && enc[203 + 3 * 128] == 0,
+          "the vacated record encodes as zero");
+    CHECK(roster_seat_remove(&r, 2) == ROSTER_OK && roster_seat_remove(&r, 1) == ROSTER_OK
+          && roster_seat_remove(&r, 0) == ROSTER_OK && r.n == 0, "remove down to empty");
+    CHECK(roster_seat_remove(&r, 0) == ROSTER_E_SEAT, "remove from an empty roster is refused");
+
+    // reorder: new seat i is old seat perm[i]
+    memset(&r, 0, sizeof(r));
+    roster_seat_add(&r, RS("a"), RS("A"), RS(""));
+    roster_seat_add(&r, RS("b"), RS("B"), RS("random"));
+    roster_seat_add(&r, RS("c"), RS("C"), RS(""));
+    const int8_t perm[3] = { 2, 0, 1 };
+    CHECK(roster_reorder(&r, perm, 3) == ROSTER_OK, "a permutation reorders");
+    CHECK(roster_seat_of(&r, RS("c")) == 0 && roster_seat_of(&r, RS("a")) == 1 && roster_seat_of(&r, RS("b")) == 2,
+          "new seat i is old seat perm[i]");
+    CHECK(r.seats[2].name[0] == 'B' && roster_bot_mask(&r) == (1u << 2), "names and brains travel with their ids");
+    before = r;
+    const int8_t dup[3] = { 0, 0, 1 }, out_of_range[3] = { 0, 1, 3 }, negative[3] = { 0, 1, -1 };
+    CHECK(roster_reorder(&r, dup, 3) == ROSTER_E_PERM, "a repeated seat is not a permutation");
+    CHECK(roster_reorder(&r, out_of_range, 3) == ROSTER_E_PERM, "a seat past n is not a permutation");
+    CHECK(roster_reorder(&r, negative, 3) == ROSTER_E_PERM, "a negative seat is not a permutation");
+    CHECK(roster_reorder(&r, perm, 2) == ROSTER_E_PERM, "a permutation of the wrong length is refused");
+    CHECK(memcmp(&r, &before, sizeof(r)) == 0, "a refused reorder leaves the roster untouched");
+
+    // retitle
+    char title[ROSTER_TITLE_MAX + 2];
+    memset(title, 'x', sizeof(title));
+    CHECK(roster_set_title(&r, RS("Игра Володи")) == ROSTER_OK && r.title_len == strlen("Игра Володи")
+          && memcmp(r.title, "Игра Володи", r.title_len) == 0, "retitle stores the bytes");
+    CHECK(roster_set_title(&r, title, ROSTER_TITLE_MAX) == ROSTER_OK && r.title_len == ROSTER_TITLE_MAX,
+          "a 200-byte title is allowed");
+    before = r;
+    CHECK(roster_set_title(&r, title, ROSTER_TITLE_MAX + 1) == ROSTER_E_TITLE, "a 201-byte title is refused");
+    CHECK(roster_set_title(&r, "\xc3", 1) == ROSTER_E_TITLE, "a title that is not UTF-8 is refused");
+    CHECK(memcmp(&r, &before, sizeof(r)) == 0, "a refused retitle leaves the roster untouched");
+    CHECK(roster_set_title(&r, "", 0) == ROSTER_OK && r.title_len == 0, "an empty title is allowed");
+
+    // redact
+    CHECK(roster_redact(&r, RS("b"), RS("Deleted player")) == 2, "redact returns the seat");
+    CHECK(r.seats[2].name_len == 14 && memcmp(r.seats[2].name, "Deleted player", 14) == 0
+          && roster_seat_of(&r, RS("b")) == 2 && r.seats[2].brain_len == 6, "redact renames and keeps the rest");
+    before = r;
+    CHECK(roster_redact(&r, RS("zz"), RS("Deleted player")) == ROSTER_E_SEAT, "redact of an unseated id is refused");
+    CHECK(roster_redact(&r, RS("b"), "\xff", 1) == ROSTER_E_NAME, "redact to a name that is not UTF-8 is refused");
+    CHECK(memcmp(&r, &before, sizeof(r)) == 0, "a refused redact leaves the roster untouched");
+}
+
+// The corpus e2e/packed_roster_wire.test.ts trims, with the byte lengths
+// roster.ts rosterNameBytes gives each (computed there, pinned here).
+static void test_roster_name_trim_matches_the_ts_and_swift_rule(void) {
+    static const struct { const char *name; int want; } corpus[] = {
+        { "🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡", 64 },                  // 80 B
+        { "ВладимирВладимирВладимирВладимирВладимирВладимирВладимирВладимирВладимир", 64 }, // 144 B
+        { "A👍🏽👍🏽👍🏽👍🏽👍🏽👍🏽👍🏽👍🏽", 61 },                             // 65 B, cut inside a cluster
+        { "さくらさくらさくらさくらさくらさくらさくらさくら", 63 },               // 72 B
+        { "x🇺🇦🇺🇦🇺🇦🇺🇦🇺🇦🇺🇦🇺🇦🇺🇦🇺🇦", 61 },                             // 73 B
+        { "Sveta", 5 }, { "", 0 }, { "Пётр", 8 },
+        { "a\"b\\c", 5 }, { "line\nbreak", 10 },
+    };
+    for (size_t i = 0; i < sizeof(corpus) / sizeof(corpus[0]); i++) {
+        CHECK(roster_name_trim(corpus[i].name, (int)strlen(corpus[i].name)) == corpus[i].want,
+              "trim matches rosterNameBytes on the corpus");
+    }
+    // '👍🏽'.repeat(n) for n = 1..25: 8 B per cluster until the budget.
+    char thumbs[25 * 8 + 1];
+    for (int n = 1; n <= 25; n++) {
+        thumbs[0] = 0;
+        for (int k = 0; k < n; k++) strcat(thumbs, "👍🏽");
+        const int want = n * 8 < ROSTER_NAME_MAX ? n * 8 : ROSTER_NAME_MAX;
+        CHECK(roster_name_trim(thumbs, (int)strlen(thumbs)) == want, "thumbs trim like rosterNameBytes");
+    }
+    // Exactly 64 bytes is kept whole; 65 ASCII bytes lose one.
+    char ascii[66];
+    memset(ascii, 'q', 65); ascii[65] = 0;
+    CHECK(roster_name_trim(ascii, 64) == 64 && roster_name_trim(ascii, 65) == 64, "ASCII trims at 64");
+    CHECK(roster_name_trim(ascii, 0) == 0 && roster_name_trim(ascii, -3) == 0, "nothing trims to nothing");
+}
+
+static const uint8_t ROSTER_TRAILER_GOLDEN[] = {
+    // encodePackedRoster({ id: 'game-1', name: "Sveta's Game", status: 'playing',
+    //   players: [{p-0, Sveta, false}, {p-1, Бот, true}], good_players: ['p-1'],
+    //   good_timestamp: null }), from sdk/ts/wire/roster.ts
+    0x01,0x06,0x00,0x67,0x61,0x6d,0x65,0x2d,0x31,0x0c,0x00,0x53,0x76,0x65,0x74,0x61,0x27,0x73,0x20,0x47,
+    0x61,0x6d,0x65,0x01,0x02,0x00,0x05,0x53,0x76,0x65,0x74,0x61,0x01,0x06,0xd0,0x91,0xd0,0xbe,0xd1,0x82,
+    0x03,0x00,0x70,0x2d,0x30,0x00,0x03,0x00,0x70,0x2d,0x31,0x01,0x01,0x03,0x00,0x70,0x2d,0x31,0x00,
+};
+
+static void test_roster_trailer(void) {
+    Roster r, back;
+    uint8_t out[ROSTER_TRAILER_MAX + 16];
+    const int golden_len = (int)sizeof(ROSTER_TRAILER_GOLDEN);
+    roster_fixture(&r);
+
+    CHECK(roster_trailer_write(&r, RS("game-1"), 1, 1u << 1, out, sizeof(out)) == golden_len
+          && memcmp(out, ROSTER_TRAILER_GOLDEN, golden_len) == 0, "the trailer is encodePackedRoster's bytes");
+    int small_ok = 1;
+    for (int cap = 0; cap < golden_len; cap++)
+        if (roster_trailer_write(&r, RS("game-1"), 1, 2, out, cap) != ROSTER_E_CAP) small_ok = 0;
+    CHECK(small_ok, "every buffer smaller than the trailer is refused");
+    CHECK(roster_trailer_write(&r, RS("game-1"), 3, 0, out, sizeof(out)) == ROSTER_E_STATUS, "status 3 is refused");
+    CHECK(roster_trailer_write(&r, RS("game-1"), -1, 0, out, sizeof(out)) == ROSTER_E_STATUS, "status -1 is refused");
+    CHECK(roster_trailer_write(&r, RS("game-1"), 1, 1u << 2, out, sizeof(out)) == ROSTER_E_GOOD,
+          "a good bit past the seats is refused");
+    char gid[ROSTER_GAME_ID_MAX + 1];
+    memset(gid, 'g', sizeof(gid));
+    CHECK(roster_trailer_write(&r, gid, ROSTER_GAME_ID_MAX + 1, 0, 0, out, sizeof(out)) == ROSTER_E_GAME_ID,
+          "a game id over its cap is refused");
+    Roster bad = r; bad.seats[1].id_len = 0;
+    CHECK(roster_trailer_write(&bad, RS("game-1"), 0, 0, out, sizeof(out)) == ROSTER_E_ID,
+          "an invalid roster writes no trailer");
+
+    Roster full;
+    roster_full_fixture(&full);
+    CHECK(roster_trailer_write(&full, gid, ROSTER_GAME_ID_MAX, 2, 0xff, out, sizeof(out)) == ROSTER_TRAILER_MAX,
+          "a trailer at every cap is ROSTER_TRAILER_MAX");
+
+    // read
+    char got_gid[ROSTER_GAME_ID_MAX + 1];
+    int got_gid_len = -1, status = -1, consumed = -1;
+    uint32_t ai = 0xdead;
+    uint8_t in[sizeof(ROSTER_TRAILER_GOLDEN) + 16];
+    memcpy(in, ROSTER_TRAILER_GOLDEN, golden_len);
+    in[golden_len] = 0x77;   // a byte after the trailer is not the trailer's
+    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, in, golden_len + 1, &consumed) == ROSTER_OK,
+          "the golden trailer reads");
+    CHECK(consumed == golden_len, "the reader stops at the end of the trailer");
+    CHECK(got_gid_len == 6 && memcmp(got_gid, "game-1", 6) == 0 && status == 1 && ai == (1u << 1),
+          "game id, status and the AI seats come back");
+    Roster want = r;
+    want.seats[1].brain_len = 0; memset(want.seats[1].brain, 0, sizeof(want.seats[1].brain));
+    CHECK(roster_equal(&back, &want), "ids, names and title come back; the brain does not ride a trailer");
+
+    int short_ok = 1;
+    for (int cut = 0; cut < golden_len; cut++)
+        if (roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, in, cut, &consumed) >= 0) short_ok = 0;
+    CHECK(short_ok, "every truncation of the trailer is refused");
+    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, in, 12, &consumed) == ROSTER_E_SHORT,
+          "a cut trailer is E_SHORT");
+
+#define TMUTATE(expect, msg, ...) do { memcpy(in, ROSTER_TRAILER_GOLDEN, golden_len); __VA_ARGS__; \
+        CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, in, golden_len, &consumed) == (expect), msg); } while (0)
+    TMUTATE(ROSTER_E_VERSION, "an unknown trailer version is refused", in[0] = 2);
+    TMUTATE(ROSTER_E_STATUS, "a trailer status over 2 is refused", in[23] = 3);
+    TMUTATE(ROSTER_E_COUNT, "a trailer seat count over 8 is refused", in[24] = 9);
+    TMUTATE(ROSTER_E_SEAT, "a names block out of seat order is refused", in[25] = 1);
+    TMUTATE(ROSTER_E_NAME, "a trailer name that is not UTF-8 is refused", in[27] = 0xff);
+    TMUTATE(ROSTER_E_FLAG, "an is_ai byte of 2 is refused", in[45] = 2);
+    TMUTATE(ROSTER_E_DUPLICATE, "a trailer with a duplicate id is refused", in[50] = '0');
+    TMUTATE(ROSTER_E_FLAG, "a has_ts byte of 2 is refused", in[58] = 2);
+#undef TMUTATE
+    // A timestamp written by an older TS server is shape-checked and skipped.
+    memcpy(in, ROSTER_TRAILER_GOLDEN, golden_len);
+    in[golden_len - 1] = 1;
+    memset(in + golden_len, 0x42, 8);
+    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, in, golden_len + 8, &consumed) == ROSTER_OK
+          && consumed == golden_len + 8, "a trailer with a timestamp reads past it");
+    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, in, golden_len + 7, &consumed) == ROSTER_E_SHORT,
+          "a cut timestamp is refused");
+
+    // write -> read round trip at every cap
+    int n = roster_trailer_write(&full, gid, ROSTER_GAME_ID_MAX, 2, 0x81, out, sizeof(out));
+    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, out, n, &consumed) == ROSTER_OK
+          && consumed == n && got_gid_len == ROSTER_GAME_ID_MAX && status == 2 && ai == 0xaa,
+          "a full trailer reads back");
+    for (int s = 0; s < MAX_PLAYERS; s++) { full.seats[s].brain_len = 0; }
+    CHECK(roster_equal(&back, &full), "a full trailer keeps every id and name");
+}
+
 int main(void) {
     test_state_import_rejects_invalid_values();
     test_reset_to_lobby();
@@ -6896,6 +7258,12 @@ int main(void) {
     test_analyse_verdict_rule();
     test_analyse_belief_holds_on_played_games();
     test_analyse_packed_on_a_generated_game();
+    test_roster_round_trip();
+    test_roster_decode_refuses_each_malformed_field();
+    test_roster_seat_of_is_exact();
+    test_roster_ops();
+    test_roster_name_trim_matches_the_ts_and_swift_rule();
+    test_roster_trailer();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;

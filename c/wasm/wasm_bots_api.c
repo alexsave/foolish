@@ -555,3 +555,93 @@ int wasm_replay_step_index(int code_len) {
                                  wasm_io_ptr(), wasm_io_cap());
 }
 
+// ---------- the C Roster (src/roster.h), test-only exports ------------------
+//
+// Linked into bots.wasm only (WASM_ROSTER_EXPORTS in the Makefile). They exist
+// so e2e can hold roster.c byte-identical to the TS encoder it replaces
+// (e2e/roster_c_parity.test.ts) and feed the real Swift decoder C-written
+// trailers (e2e/packed_roster_wire.test.ts). Phase 3's wasm_table_* exports
+// supersede them.
+//
+// Every call reads its input from the IO buffer and writes its answer back
+// there. A roster crosses in one test-only SPEC layout:
+//   u8 n, u8 title_len, title,
+//   n x { u16 id_len, id, u16 name_len, name, u8 brain_len, brain }
+// u16 lengths on id and name so a test can send an over-long one and see the
+// kernel trim (a name) or refuse (an id). All little-endian.
+#include "roster.h"
+
+static Roster g_roster;
+
+static int rd_u16le(const unsigned char *p) { return p[0] | (p[1] << 8); }
+
+// SPEC in -> roster_set_title + roster_seat_add per seat -> ROSTER_BYTES in io.
+// Returns ROSTER_BYTES, or the first ROSTER_E_* a call refused with (-100 for
+// a spec that runs off its own end).
+int wasm_roster_encode(int in_len) {
+    const unsigned char *in = wasm_io_ptr();
+    int at = 2, rc;
+    if (in_len < 2 || in_len > wasm_io_cap()) return -100;
+    memset(&g_roster, 0, sizeof(g_roster));
+    const int n = in[0], tl = in[1];
+    if (at + tl > in_len) return -100;
+    if ((rc = roster_set_title(&g_roster, (const char *)in + at, tl)) != ROSTER_OK) return rc;
+    at += tl;
+    for (int s = 0; s < n; s++) {
+        if (at + 2 > in_len) return -100;
+        const int il = rd_u16le(in + at); at += 2;
+        const int id_at = at; at += il;
+        if (at + 2 > in_len) return -100;
+        const int nl = rd_u16le(in + at); at += 2;
+        const int name_at = at; at += nl;
+        if (at + 1 > in_len) return -100;
+        const int bl = in[at++];
+        const int brain_at = at; at += bl;
+        if (at > in_len) return -100;
+        rc = roster_seat_add(&g_roster, (const char *)in + id_at, il, (const char *)in + name_at, nl,
+                             (const char *)in + brain_at, bl);
+        if (rc < 0) return rc;
+    }
+    return roster_encode(&g_roster, wasm_io_ptr(), wasm_io_cap());
+}
+
+// ROSTER_BYTES in io -> roster_decode -> roster_encode back into io, so a test
+// asserts decode is lossless without reading the layout itself. Returns
+// ROSTER_BYTES or the ROSTER_E_* refusal.
+int wasm_roster_decode(int len) {
+    const int rc = roster_decode(&g_roster, wasm_io_ptr(), len);
+    if (rc != ROSTER_OK) return rc;
+    return roster_encode(&g_roster, wasm_io_ptr(), wasm_io_cap());
+}
+
+// io = ROSTER_BYTES durable roster, then gid_len bytes of game id -> the
+// envelope trailer in io. Returns its length or the ROSTER_E_* refusal.
+int wasm_roster_trailer_write(int roster_len, int gid_len, int status, unsigned int good_mask) {
+    char gid[ROSTER_GAME_ID_MAX + 1];
+    const unsigned char *io = wasm_io_ptr();
+    if (gid_len < 0 || gid_len > ROSTER_GAME_ID_MAX || roster_len < 0) return ROSTER_E_GAME_ID;
+    int rc = roster_decode(&g_roster, io, roster_len);
+    if (rc != ROSTER_OK) return rc;
+    memcpy(gid, io + roster_len, (size_t)gid_len);
+    return roster_trailer_write(&g_roster, gid, gid_len, status, good_mask, wasm_io_ptr(), wasm_io_cap());
+}
+
+// A trailer in io -> roster_trailer_read -> io =
+//   u8 status, u32 ai_mask, u16 consumed, u8 gid_len, gid, ROSTER_BYTES roster.
+// Returns that answer's length or the ROSTER_E_* refusal.
+int wasm_roster_trailer_read(int len) {
+    char gid[ROSTER_GAME_ID_MAX + 1];
+    int gid_len = 0, status = 0, consumed = 0;
+    uint32_t ai = 0;
+    const int rc = roster_trailer_read(&g_roster, gid, &gid_len, &status, &ai, wasm_io_ptr(), len, &consumed);
+    if (rc != ROSTER_OK) return rc;
+    unsigned char *out = wasm_io_ptr();
+    int at = 0;
+    out[at++] = (unsigned char)status;
+    for (int i = 0; i < 4; i++) out[at++] = (unsigned char)(ai >> (8 * i));
+    out[at++] = (unsigned char)(consumed & 0xff); out[at++] = (unsigned char)(consumed >> 8);
+    out[at++] = (unsigned char)gid_len;
+    memcpy(out + at, gid, (size_t)gid_len); at += gid_len;
+    const int wrote = roster_encode(&g_roster, out + at, wasm_io_cap() - at);
+    return wrote < 0 ? wrote : at + wrote;
+}
