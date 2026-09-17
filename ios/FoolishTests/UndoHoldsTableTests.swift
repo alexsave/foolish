@@ -80,4 +80,25 @@ final class UndoHoldsTableTests: XCTestCase {
         XCTAssertTrue(body.contains("if !UndoFlightSource.holdsLeaving { self.sweptFlownIds.formUnion(flyIds) }"),
                       "the card is still hidden before the flight is built")
     }
+
+    /// THE TABLE IS HELD BEFORE THE UNDO PUBLISHES, not a paint after. Filmed
+    /// undoing a FIRST attack: the 8 of hearts jumped from its slot to the
+    /// bottom of the drawer for two frames (7.757, 7.810) before its flight
+    /// appeared back on the table. The trace's last grid line before the undo
+    /// was `cells=0`: the undo's view (an empty table) was painted before
+    /// `flyUndoReturn` set the sweep, so the grid drew nothing, its collapse
+    /// layer's host sized to nothing, and the sweep came back into a host a
+    /// paint out of date. `play` captures the table synchronously before
+    /// `apply` for the same reason ("the onChange that re-sets this fires a
+    /// paint too late"); Undo now does the same before `controller.undo()`.
+    /// MUTANTS: the sweep set after the undo; never set.
+    func testUndoHoldsTheTableBeforeTheUndoPublishes() throws {
+        let board = try source("FoolishKit/Boards/MessageTableView.swift")
+        let start = try XCTUnwrap(board.range(of: "private func undoAction() {"))
+        let body = String(board[start.upperBound...].prefix(2500))
+        let hold = try XCTUnwrap(body.range(of: "if UndoFlightSource.holdsLeaving, let table = controller.view?.battles, !table.isEmpty { setSweep(table) }"),
+                                 "Undo does not hold the table before it publishes")
+        let undo = try XCTUnwrap(body.range(of: "await controller.undo()"))
+        XCTAssertLessThan(hold.lowerBound, undo.lowerBound, "the table is held a paint too late")
+    }
 }

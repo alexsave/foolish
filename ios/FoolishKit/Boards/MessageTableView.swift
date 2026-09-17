@@ -5211,6 +5211,14 @@ public struct MessageTableView: View {
     /// move can then no longer be sent. A genesis with no move left is not
     /// sealable, so there we can only retract our own bookkeeping (`onUnstage`).
     private func undoAction() {
+        // HOLD THE TABLE BEFORE THE UNDO PUBLISHES - `play`'s rule for a move that
+        // empties the table, for the same reason: the onChange that sets the sweep
+        // fires a paint too late. Undoing a first attack painted an empty table in
+        // between, its collapse layer sized to nothing, and the card came back at
+        // the bottom of the drawer for two frames (UndoHoldsTableTests). An undo
+        // that moves no table card drops the sweep again in the onChange
+        // (`clearSweep`), and a sweep identical to the live table is not held.
+        if UndoFlightSource.holdsLeaving, let table = controller.view?.battles, !table.isEmpty { setSweep(table) }
         Task {
             await controller.undo()
             if controller.canStage { await stageNow() }
