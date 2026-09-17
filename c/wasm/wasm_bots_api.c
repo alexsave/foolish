@@ -389,9 +389,9 @@ static int g_drive_log_start;
 
 int wasm_bot_drive_log_start(void) { return g_drive_log_start; }
 
-// Re-seed from the CURRENT board at each phase, exactly where the
-// one-move-per-call path does: the strategy LCG as a decision starts
-// (wasmChooseMove) and the draw LCG as the move is applied (packedActionCore).
+// Re-seed from the CURRENT board at each phase, as table.c table_drive_seed
+// does: the strategy LCG and the search's draw LCG as a decision starts, and the
+// draw LCG as the move is applied.
 // This is the whole per-decision seeding policy, and it lives here rather than
 // in the TS bridge: the caller only ever hands the kernel the secret it cannot
 // derive (wasm_set_rng_base from the deal seed), and the kernel decides what
@@ -401,6 +401,7 @@ int wasm_bot_drive_log_start(void) { return g_drive_log_start; }
 // decision seeds off the state in front of it.
 extern void wasm_set_strategy_seed_deterministic(void);
 extern void wasm_seed_rng_deterministic(void);
+extern uint32_t wasm_rng_base_internal(void);
 
 // ---------- belief probe (observability) ----------------------------------
 //
@@ -478,6 +479,8 @@ static void drive_seed_hook(const Game *g, int seat, int phase) {
     if (phase == BOT_DRIVE_PHASE_CHOOSE) {
         probe_capture(g, seat);
         wasm_set_strategy_seed_deterministic();
+        // The search's draw stream too (table.c table_drive_seed has the why).
+        game_rng_set(game_state_seed(g, wasm_rng_base_internal(), GAME_SEED_SALT_SEARCH));
     } else {
         wasm_seed_rng_deterministic();
     }

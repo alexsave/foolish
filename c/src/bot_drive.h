@@ -123,10 +123,14 @@ uint32_t bot_drive_eligible_mask(const Game *g, uint32_t human_mask);
 // Called at each phase of each seat's action, if installed. NULL by default.
 //
 // For hosts that re-seed their RNG per decision. The server does: the strategy
-// LCG is seeded from state_fnv before every choose and the mid-game draw LCG
-// before every apply (wasm_api.c), so both streams are a pure function of the
-// secret deal seed and the public board — reproducible to the server, and
-// unpredictable to everyone else. A cycle drives several seats per call, so
+// LCG and the draw LCG (under its search salt) are seeded from state_fnv before
+// every choose, and the draw LCG again before every apply (table.c
+// table_drive_seed, game.h GAME_SEED_SALT_*), so every stream is a pure function
+// of the secret deal seed and the public board — reproducible to the server,
+// unpredictable to everyone else, and blind to what the module ran before (the
+// Monte-Carlo rollouts of robusta and firecracker draw from the draw stream, so
+// leaving it unseeded made a decision depend on the module's history). A cycle
+// drives several seats per call, so
 // without this the seeding would happen once per CYCLE instead of once per
 // DECISION, and bundling would silently change how bots play:
 //
@@ -134,11 +138,9 @@ uint32_t bot_drive_eligible_mask(const Game *g, uint32_t human_mask);
 //     stream (`random` and `handwritten_prod` call random_strategy_random; the
 //     Monte-Carlo bots only read the state via random_strategy_rng_get);
 //   * the two phases are SEPARATE because a strategy's search consumes the draw
-//     stream (its rollouts refill scratch games), so a host that re-seeds the
-//     draw LCG before the choose would both feed the search a value the
-//     single-move path never gave it and leave the real refill drawing from
-//     whatever the search consumed. Both were caught by
-//     e2e/bot_drive_parity.test.ts as a changed bot move.
+//     stream (its rollouts refill scratch games), so a host that seeded the draw
+//     LCG only before the choose would leave the real refill drawing from
+//     whatever the search consumed.
 //
 // It is a hook rather than a bot_drive() argument because the derivation is
 // host property: g_rng_base is a server-only secret the phone and the native

@@ -8158,8 +8158,12 @@ static int tb_human_move(void) {
 static uint32_t tb_hook_base;
 static void tb_bridge_seed(const Game *g, int seat, int phase) {
     (void)seat;
-    if (phase == BOT_DRIVE_PHASE_CHOOSE) random_strategy_set_seed(game_state_seed(g, tb_hook_base, 0x9E3779B9u));
-    else game_rng_set(game_state_seed(g, tb_hook_base, 0u));
+    if (phase == BOT_DRIVE_PHASE_CHOOSE) {
+        random_strategy_set_seed(game_state_seed(g, tb_hook_base, GAME_SEED_SALT_STRATEGY));
+        game_rng_set(game_state_seed(g, tb_hook_base, GAME_SEED_SALT_SEARCH));
+    } else {
+        game_rng_set(game_state_seed(g, tb_hook_base, GAME_SEED_SALT_DRAW));
+    }
 }
 
 static int tb_record_bytes(const Game *g, int from) {
@@ -8357,6 +8361,86 @@ static void test_table_drive_prefs(void) {
         CHECK(bl == 3 + 1 + 3 + 2, "an attack's blob entry carries its cards, a cover's its cards and the ones they cover");
         CHECK(table_bot_drive(&tb, blob, bl, 0, &tb_drv) >= 0 && tb.n_prefs == 2
               && card_eq(tb.prefs[1].move.attack_cards[0], card_of_id(5)), "and the drive reads both back");
+    }
+}
+
+// A committed cycle's bytes: the actions (pacing, then seat, type and cards), then the state blob, the cycle's
+// session-log records and the human's and the spectator's pushes. Returns the length.
+static int tb_cycle_bytes(int n, uint8_t *out) {
+    TableCommit c;
+    int w = 0;
+    for (int i = 0; i < n; i++) out[w++] = tb_drv.actions[i].pacing_class;
+    tb.n_prefs = 0;   // no offered moves: the blob is the cycle's own actions (seat, type, cards)
+    const int pl = table_drive_prefs(&tb, &tb_drv, out + w, 4096);
+    if (pl < 0) return -1;
+    w += pl;
+    if (table_commit_products(&tb, RS("g"), 2, 1700000009000LL, &c, tb_arena, sizeof(tb_arena)) < 0) return -1;
+    memcpy(out + w, tb_arena + c.state.off, (size_t)c.state.len); w += c.state.len;
+    memcpy(out + w, tb_arena + c.logs.off, (size_t)c.logs.len); w += c.logs.len;
+    for (int v = 0; v >= -1; v--) {
+        const int pl = table_push(&tb, RS("g"), v, out + w, 1 << 15);
+        if (pl < 0) return -1;
+        w += pl;
+    }
+    return w;
+}
+
+// A stored row's bot cycle is a function of the row and its deal seed, never of
+// what the module ran before: a CAS retry on another edge isolate, or a cold one,
+// must choose what this one chose. Every roster brain, at each of a game's first 40 cycles:
+// once on a module whose RNG streams hold one value, once after a different
+// value and an unrelated robusta cycle on another table.
+static void test_table_bot_drive_ignores_instance_history(void) {
+    static uint8_t other_state[8192], other_roster[ROSTER_BYTES], a[1 << 17], b[1 << 17];
+    static Game other_game;
+    static TableSnaps other_snaps;
+    Table other;
+    tb_fixture(4, 15u, 57);
+    tb_roster_for(4, 15u, "robusta", other_roster);
+    const int other_len = tb_state_len;
+    memcpy(other_state, tb_state, (size_t)other_len);
+
+    int n_roster = 0;
+    const BotRosterEntry *roster = bot_roster(&n_roster);
+    for (int e = 0; e < n_roster; e++) {
+        const char *brain = roster[e].key;
+        tb_bot_table(brain, 40 + e);
+        int drives = 0, same = 1, first_diff = -1;
+        for (int step = 0; step < 400 && drives < 40; step++) {
+            TableCommit c;
+            if (tb_reload(0) != 0 || tb_game.status != GAME_STATUS_PLAYING) break;
+            if (bot_drive_eligible_mask(&tb_game, game_human_mask(&tb_game)) == 0) {
+                if (!tb_human_move() || tb_commit_row(1700000001000LL + step, &c) < 0) break;
+                continue;
+            }
+            const int logs = table_bots_need_logs(&tb);
+
+            game_rng_set(0x13579BDFu);
+            random_strategy_set_seed(0x2468ACE0u);
+            tb_reload(logs);
+            const int na = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
+            const int la = na > 0 ? tb_cycle_bytes(na, a) : na;
+
+            game_rng_set(0xC0FFEE11u + (uint32_t)step);
+            random_strategy_set_seed(0xBADC0DEu ^ (uint32_t)step);
+            table_init(&other, &other_game, &other_snaps);
+            table_load(&other, other_state, other_len, other_roster, ROSTER_BYTES);
+            table_set_deal_seed(&other, "5eed", 4);
+            table_bot_drive(&other, 0, 0, 0, &tb_drv2);
+            tb_reload(logs);
+            const int nb = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
+            const int lb = nb > 0 ? tb_cycle_bytes(nb, b) : nb;
+
+            if (na <= 0 || nb != na || la != lb || la < 0 || memcmp(a, b, (size_t)la) != 0) {
+                if (same) first_diff = step;
+                same = 0;
+            }
+            if (na <= 0 || tb_commit_row(1700000001000LL + step, &c) < 0) break;
+            drives++;
+        }
+        if (!same) fprintf(stderr, "  %s: the cycle at step %d depends on the module's history\n", brain, first_diff);
+        CHECK(drives >= 10, "the brain drove a game's cycles");
+        CHECK(same, "a bot cycle is the same on a module with another history (see the brain above)");
     }
 }
 
@@ -9623,6 +9707,7 @@ int main(void) {
     test_table_deal_seed_and_session_log();
     test_table_bot_drive_cycle();
     test_table_drive_prefs();
+    test_table_bot_drive_ignores_instance_history();
     test_table_replay_code_and_extras();
     test_client_adopts_envelopes();
     test_client_reads_every_push_of_a_game();

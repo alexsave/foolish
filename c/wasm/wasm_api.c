@@ -310,7 +310,7 @@ static uint32_t state_fnv(uint32_t salt) {
 // (legacy random deals, bot tie-breaks) reproducible — the whole game replays
 // from the deal seed alone. Seed-dealt games pop the pre-shuffled deck and
 // never consume this, but it costs nothing and covers the legacy path too.
-void wasm_seed_rng_deterministic(void) { game_rng_set(state_fnv(0u)); }
+void wasm_seed_rng_deterministic(void) { game_rng_set(state_fnv(GAME_SEED_SALT_DRAW)); }
 
 // Seed the STRATEGY LCG (random_strategy_random, consumed by the Monte-Carlo
 // bots' rollout opponent models) deterministically from state, replacing the
@@ -319,13 +319,13 @@ void wasm_seed_rng_deterministic(void) { game_rng_set(state_fnv(0u)); }
 // stream, so a fresh Math.random each decision meant a different choice from
 // identical state. A distinct salt keeps it decorrelated from the draw stream.
 void wasm_set_strategy_seed_deterministic(void) {
-    random_strategy_set_seed(state_fnv(0x9E3779B9u));
+    random_strategy_set_seed(state_fnv(GAME_SEED_SALT_STRATEGY));
 }
 
 // Debug/analysis hook: the strategy seed that would be chosen for the CURRENT
 // marshaled state. Lets a harness confirm the seed varies per decision (public
 // board changes) yet reproduces across a replay. Behavior-neutral.
-uint32_t wasm_strategy_seed_probe(void) { return state_fnv(0x9E3779B9u); }
+uint32_t wasm_strategy_seed_probe(void) { return state_fnv(GAME_SEED_SALT_STRATEGY); }
 
 // C -> TS: serialize the working game into the IO buffer; returns length.
 int wasm_export_state(void) { return put_state(&g_game, g_io); }

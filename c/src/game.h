@@ -281,6 +281,15 @@ uint32_t random_strategy_rng_get(void);
 // decision, unpredictable without `base`. Never 0.
 uint32_t game_state_seed(const Game *g, uint32_t base, uint32_t salt);
 
+// The salt of each stream a host seeds from game_state_seed, distinct so no two
+// streams start from the same value on the same board: the draw stream
+// (game_random) as a move applies, the strategy stream (random_strategy_random)
+// as a bot decision starts, and the draw stream again as that decision's search
+// starts, so its rollouts read nothing a module's earlier work left behind.
+#define GAME_SEED_SALT_DRAW      0u
+#define GAME_SEED_SALT_STRATEGY  0x9E3779B9u
+#define GAME_SEED_SALT_SEARCH    0x85EBCA6Bu
+
 // ---------- Engine observation hooks ------------------------------------
 //
 // Optional callback fired at exactly the points where the production TS

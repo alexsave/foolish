@@ -149,7 +149,7 @@ int table_act(Table *t, const char *actor_id, int id_len, const uint8_t *awire, 
     scope_open(t, seat);
     // Mid-game draws are seeded from the board, never from a clock, so the game
     // replays from its deal seed (wasm_api.c wasm_seed_rng_deterministic).
-    game_rng_set(game_state_seed(g, t->rng_base, 0u));
+    game_rng_set(game_state_seed(g, t->rng_base, GAME_SEED_SALT_DRAW));
     void (*const prev)(const Game *, int, int) = engine_snap_hook;
     t_capture = t->snaps;
     engine_snap_hook = table_snap;
@@ -744,18 +744,23 @@ static int prefs_decode(Table *t, const uint8_t *p, int len) {
 }
 
 // The drive's per-decision seeding (bot_drive.h bot_drive_pre_action_hook): the
-// strategy stream as a decision starts and the draw stream as its move applies,
-// both from the board in front of it and the table's secret base - what the wasm
-// bridge's drive does with its own resident game.
+// strategy stream and the draw stream as a decision starts, and the draw stream
+// again as its move applies, all from the board in front of it and the table's
+// secret base - what the wasm bridge's drive does with its own resident game.
+// Seeding the draw stream before the choose is what makes a decision a function
+// of the row: the Monte-Carlo brains' rollout policies (robusta, firecracker,
+// gunpowder) draw from it, and would otherwise read whatever this module last
+// left there, so a CAS retry on another isolate could choose another move.
 static _Thread_local uint32_t t_drive_base;
 void (*table_choose_observer)(const Game *g, int seat) = 0;
 
 static void table_drive_seed(const Game *g, int seat, int phase) {
     if (phase == BOT_DRIVE_PHASE_CHOOSE) {
         if (table_choose_observer) table_choose_observer(g, seat);
-        random_strategy_set_seed(game_state_seed(g, t_drive_base, 0x9E3779B9u));
+        random_strategy_set_seed(game_state_seed(g, t_drive_base, GAME_SEED_SALT_STRATEGY));
+        game_rng_set(game_state_seed(g, t_drive_base, GAME_SEED_SALT_SEARCH));
     } else {
-        game_rng_set(game_state_seed(g, t_drive_base, 0u));
+        game_rng_set(game_state_seed(g, t_drive_base, GAME_SEED_SALT_DRAW));
     }
 }
 

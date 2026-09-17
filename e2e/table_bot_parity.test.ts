@@ -74,9 +74,9 @@ const GAMES: (string | null)[][] = [
 
 /**
  * Every game played to its end and encoded on `table`, and what each step
- * committed. robusta and firecracker sample the draw stream the module's last
- * apply left, so a cycle is a function of the row AND the module's history: the
- * two instances compared below run exactly the same operations in the same order.
+ * committed. A cycle is a function of the row and its deal seed alone
+ * (table_bot_determinism.test.ts holds that against a module with another
+ * history); the second instance below replays the whole sequence end to end.
  */
 function playAll(table: ServerTable, tally: boolean): string[] {
     const transcript: string[] = [];
@@ -155,7 +155,7 @@ test('bot cycles, CAS retries and the game end on the C Table', () => {
     // The same operations on a second private instance commit the same bytes, step by step.
     const twin = playAll(createServerTable(), false);
     assert.equal(twin.length, played.length, 'the twin took as many steps');
-    for (let i = 0; i < played.length; i++) assert.equal(twin[i], played[i], `step ${i}: a cycle is a function of the row and the module's history`);
+    for (let i = 0; i < played.length; i++) assert.equal(twin[i], played[i], `step ${i}: a cycle is a function of the row and its deal seed`);
     console.error(`[table_bot_parity] ${JSON.stringify(counts)}`);
     assert.ok(counts.logged > 0 && counts.retries > 0 && counts.humanMoves > 0 && counts.codes === GAMES.length,
         `every path was exercised (${JSON.stringify(counts)})`);
