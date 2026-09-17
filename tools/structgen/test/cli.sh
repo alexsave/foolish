@@ -38,6 +38,8 @@ ptr_counts=(--count SPtr.vals=n_vals --count SPtr.items=n_items --count SPtr.nam
 expect_fail "--snapshot of an uncounted pointer" "SPtr.vals is a pointer; give --count SPtr.vals=" "${ptr[@]}" --snapshot SPtr
 expect_fail "--writer reaching a pointer"   "--writer: SPtr.vals is a pointer" "${ptr[@]}" --snapshot SPtr "${ptr_counts[@]}" --writer SPtr
 expect_fail "--count naming no field"       "SPtr has no field named nope"   "${ptr[@]}" --snapshot SPtr --count SPtr.vals=nope
+expect_fail "--swift with no snapshot"      "--swift without a --snapshot"   "${base[@]}" --swift "$tmp/o.swift"
+expect_fail "nothing to write at all"       "nothing to do"                  --cwd "$here/test" --header kinds.h --root Kinds --build wasm=
 "$SG" "${base[@]}" --print-hash > "$tmp/hash" && grep -qE '^0x[0-9a-f]{8}$' "$tmp/hash" && echo "ok   --print-hash prints the hash" || { echo "FAIL --print-hash"; fails=$((fails + 1)); }
 "$SG" "${base[@]}" --hash-ts "$tmp/hash.ts" --print-hash > "$tmp/hash2" \
   && [ "$(grep -c . "$tmp/hash.ts")" = 3 ] && grep -qx "export const LAYOUT_HASH = $(cat "$tmp/hash2");" "$tmp/hash.ts" \
