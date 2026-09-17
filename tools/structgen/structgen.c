@@ -96,7 +96,14 @@ static void bprintf(Buf *b, const char *fmt, ...) {
         if (!(b->s = realloc(b->s, b->cap))) die("out of memory");
     }
 }
-static char *xstrdup(const char *s) { char *d = strdup(s); if (!d) die("out of memory"); return d; }
+// Not strdup: under -std=c11 glibc does not declare it, and an implicit int
+// return truncates the pointer on a 64-bit Linux host.
+static char *xstrdup(const char *s) {
+    size_t n = strlen(s) + 1;
+    char *d = malloc(n);
+    if (!d) die("out of memory");
+    return memcpy(d, s, n);
+}
 static char *str(CXString cs) { char *d = xstrdup(clang_getCString(cs)); clang_disposeString(cs); return d; }
 #define GROW(arr, n, cap) do { if ((n) == (cap) && !((arr) = realloc((arr), sizeof *(arr) * ((cap) = (cap) * 2 + 16)))) die("out of memory"); } while (0)
 
