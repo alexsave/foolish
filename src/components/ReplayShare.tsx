@@ -187,12 +187,13 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ gameId }) => {
             >
                 {view?.hasExtras && (
                     <label
-                        className="text-shadow"
                         style={{
                             display: 'flex',
                             alignItems: 'center',
                             gap: '0.4rem',
                             color: 'var(--color-text-primary)',
+                            textShadow: 'var(--text-shadow-label)',
+                            fontWeight: 600,
                             fontSize: '0.8rem',
                             cursor: 'pointer',
                             userSelect: 'none',
@@ -209,13 +210,13 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ gameId }) => {
 
                 {view && (
                     <span
-                        className="text-shadow"
                         onClick={handleCopy}
                         style={{
                             color: 'var(--color-text-primary)',
+                            textShadow: 'var(--text-shadow-label)',
+                            fontWeight: 600,
                             fontSize: '0.75rem',
                             cursor: 'pointer',
-                            opacity: 0.8,
                         }}
                     >
                         {copied ? <Text id="copied" /> : <Text id="copy_code" />}

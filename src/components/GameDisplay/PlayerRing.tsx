@@ -181,6 +181,10 @@ export const PlayerRing = () => {
                             margin: 0,
                             fontSize: '12px',
                             color: 'var(--color-text-primary)',
+                            textShadow: 'var(--text-shadow-label)',
+                            // One line, centred on the seat even when wider than it:
+                            // a wrapped second line fell under the seat's mini hand.
+                            whiteSpace: 'nowrap',
                             textAlign: 'center',
                             height: '30px',
                             display: 'flex',
