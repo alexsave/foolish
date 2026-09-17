@@ -11,7 +11,7 @@
 //      for the auth id's seat): TABLE_APPLIED == legal, TABLE_REJECTED == illegal
 //   3. CLIENT       - canPass from src/utils/gameValidation.ts (the UI button gate),
 //      over the board (TableView) the client reads from the server's envelope bytes
-//      (decodeEnvelope, the web's reader): the stored player_views row for a human defender
+//      (readEnvelopeView, the web's reader): the stored player_views row for a human defender
 // The invariant: all three must agree for the defender's own hand. A disagreement
 // is the "I could pass legally but the client gave me no option" bug (or its dual).
 //
@@ -27,7 +27,6 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { Card } from '../server/api/core/types.ts';
 import type { TableView } from '../sdk/ts/table/client_table.ts';
 import { canPass as clientCanPass } from '../src/utils/gameValidation.ts';
 import { readEnvelopeView as readEnvelope } from './helpers/client_read.ts';
@@ -40,6 +39,8 @@ import { runAction, runMeta, seedLobby } from './helpers/table_server.ts';
 import { suiteRng } from './helpers/rng.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
+
+type Card = PlayCard;
 
 const cardKey = (c: Card) => `${c.suit}:${c.value}`;
 const setKey = (cards: Card[]) => cards.map(cardKey).sort().join('|');
@@ -80,7 +81,7 @@ function decodeEnvelope(bytes: Uint8Array): TableView {
 export function registerPassValidation(): void {
     const c = (suit: number, value: number): Card => ({ suit, value });
     interface PlayerSpec { status: 'in' | 'out'; hand: Card[] }
-    const text = (cards: Card[]) => cards.map((x) => cardText(x as PlayCard)).join(' ');
+    const text = (cards: Card[]) => cards.map((x) => cardText(x)).join(' ');
 
     // A PLAYING board built and sealed by the kernel. The deck is out, so the
     // discard pile holds every card not in a hand or on the table.
