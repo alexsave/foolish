@@ -46,7 +46,7 @@ const EXPOSED_SECDEF = `
 `;
 
 const STATE_RPCS = [
-    'commit_game', 'create_game',
+    'commit_game', 'create_game', 'commit_table', 'create_table',
     'try_acquire_bot_lease', 'release_bot_lease', 'renew_bot_lease',
 ];
 

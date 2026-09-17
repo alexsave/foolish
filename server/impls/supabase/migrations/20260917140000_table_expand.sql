@@ -1,0 +1,601 @@
+-- EXPAND: every games row carries the kernel's two durable blobs, while today's
+-- server keeps working unchanged (docs/C_GAME_SHAPE_MIGRATION.md 3.4, Phase 4a).
+--
+-- The C game shape migration moves a games row to exactly `state` (the kernel's
+-- durable board, unchanged v02) plus `roster` (the kernel's durable roster,
+-- c/src/roster.h, ROSTER_FORMAT_VERSION 1, fixed 1227 bytes) plus the scalars the
+-- kernel computes for SQL. It ships in three deploys so that no running edge
+-- function ever meets a schema it cannot read:
+--
+--   4a expand   (this file)  add the columns, convert every row, keep them in step
+--   4b switch   (functions)  the server reads and writes state + roster through C
+--   4c contract (migration)  drop the JSONB columns and everything below marked legacy
+--
+-- WHAT THIS DOES
+--
+-- 1. games gains `roster` (\x-hex TEXT like `state`), `needs_bots` (the bot scan's
+--    predicate as a column) and `writer_gen` (1 = today's JSONB writers own the
+--    row, 2 = the kernel writers of 4b own it).
+-- 2. Every existing row is converted in SQL, not in C (Q3): the roster from
+--    `players` and `name`, and for every WAITING row a lobby `state` from
+--    `players`. That also repairs the WAITING rows that still carry a finished
+--    session's blob, which the kernel now refuses (GAME_INVALID_LOBBY_CARDS),
+--    and a lobby's JSONB board is emptied (goods, trump, discard, table,
+--    elimination) because today's server marshals it into that same kernel.
+--    The conversion REFUSES what the kernel would refuse (an id over 36 bytes, a
+--    name over 64 bytes, a title over 200 bytes, more than 8 seats, a bot seat
+--    with no bots row) so a bad row fails this migration instead of loading as
+--    garbage later. e2e/table_expand_migration.test.ts decodes every converted
+--    row with the real C decoder and compares the envelopes C writes from it
+--    with the ones today's server cached.
+-- 3. A trigger keeps `roster`, `needs_bots` and the lobby `state` in step on
+--    every write a legacy writer makes (commit_game, create_game, delete_account,
+--    or any hand-run UPDATE of the JSONB roster). A trigger rather than edits to
+--    each function because it is the one place every legacy write passes, and it
+--    also catches a commit_game call that started under the old function body
+--    and lands after this migration.
+-- 4. commit_game refuses a row the kernel writers already own (writer_gen = 2),
+--    so an in-flight old request that lost a CAS race to new code fails that one
+--    request instead of overwriting the roster from stale JSON.
+-- 5. commit_table and create_table, the kernel writers 4b calls. No caller yet.
+-- 6. The bot scan's partial index on needs_bots.
+--
+-- Nothing a client can reach changes: the new columns are not in the games
+-- column grant, and every function here is service_role only.
+
+-- ---------------------------------------------------------------------------
+-- 1. Columns
+-- ---------------------------------------------------------------------------
+ALTER TABLE games
+  ADD COLUMN roster     TEXT,
+  ADD COLUMN needs_bots BOOLEAN  NOT NULL DEFAULT FALSE,
+  ADD COLUMN writer_gen SMALLINT NOT NULL DEFAULT 1;
+
+COMMENT ON COLUMN games.roster IS
+  'The kernel''s durable roster (c/src/roster.h, format 1, 1227 bytes) as \x-hex: each seat''s id, name and bot brain, and the table title. SENSITIVE like state (server-only, not in the column grant).';
+COMMENT ON COLUMN games.needs_bots IS
+  'PLAYING and a bot seat is still IN (the kernel''s table_needs_bots): the bot heartbeat''s scan predicate.';
+COMMENT ON COLUMN games.writer_gen IS
+  'Bridge-only, dropped by the contract migration. 1: the JSONB writers own this row and a trigger derives roster/needs_bots/lobby state from players. 2: the kernel writers (commit_table/create_table) own it and commit_game refuses it.';
+
+-- ---------------------------------------------------------------------------
+-- 2. The legacy conversion. Duplicates the byte layout of c/src/roster.h and of
+--    view.c state_put for a lobby, once, for this bridge (Q3). Dropped in 4c.
+-- ---------------------------------------------------------------------------
+
+-- The longest prefix of whole UTF-8 scalars that fits p_max bytes: roster.c
+-- roster_name_trim. The byte AT the budget is either the lead byte of the scalar
+-- that would cross it (cut there) or inside that scalar (back off to its lead).
+CREATE FUNCTION legacy_utf8_cut(p BYTEA, p_max INT)
+RETURNS BYTEA
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path = public
+AS $$
+DECLARE
+  k INT := p_max;
+BEGIN
+  IF length(p) <= p_max THEN
+    RETURN p;
+  END IF;
+  WHILE k > 0 AND (get_byte(p, k) & 192) = 128 LOOP
+    k := k - 1;
+  END LOOP;
+  RETURN substring(p FROM 1 FOR k);
+END;
+$$;
+
+-- One durable field: a length byte, the bytes, zero padding to p_cap.
+CREATE FUNCTION legacy_roster_field(p BYTEA, p_cap INT, p_what TEXT)
+RETURNS BYTEA
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path = public
+AS $$
+BEGIN
+  IF length(p) > p_cap THEN
+    RAISE EXCEPTION 'legacy roster: % is % bytes, over the kernel''s cap of %', p_what, length(p), p_cap
+      USING ERRCODE = 'string_data_right_truncation';
+  END IF;
+  RETURN set_byte('\x00'::bytea, 0, length(p)) || p || decode(repeat('00', p_cap - length(p)), 'hex');
+END;
+$$;
+
+-- The durable roster (c/src/roster.h) of a JSONB players array and a title:
+--
+--   0    1        format = 1
+--   1    1        n seats (0..8)
+--   2    1+200    title: length byte, bytes, zero padded
+--   203  8 x 128  seats, unused ones all zero:
+--                   +0   1+36  id
+--                   +37  1+64  name (UTF-8)
+--                   +102 1+23  brain: bots.strategy_key for an is_ai seat, empty for a human
+--                   +126 2     reserved, zero
+--
+-- Refuses, never clamps, unless p_trim: then a name over 64 bytes and a title
+-- over 200 bytes are cut on a scalar boundary exactly as the kernel's own
+-- writers cut them (roster_seat_add, table_create). Only the live trigger
+-- trims, so a new long username can still join during the bridge; the backfill
+-- of rows that already exist does not.
+CREATE FUNCTION legacy_roster_hex(p_players JSONB, p_title TEXT, p_trim BOOLEAN DEFAULT FALSE)
+RETURNS TEXT
+LANGUAGE plpgsql
+STABLE
+SET search_path = public
+AS $$
+DECLARE
+  c_suffix CONSTANT BYTEA := convert_to('''s Game', 'UTF8');
+  v_title BYTEA := convert_to(COALESCE(p_title, ''), 'UTF8');
+  v_n     INT;
+  v_out   BYTEA;
+  v_seat  JSONB;
+  v_id    TEXT;
+  v_name  BYTEA;
+  v_brain TEXT;
+  v_ids   TEXT[] := '{}';
+BEGIN
+  IF jsonb_typeof(p_players) IS DISTINCT FROM 'array' THEN
+    RAISE EXCEPTION 'legacy roster: players is not a JSON array' USING ERRCODE = 'data_exception';
+  END IF;
+  v_n := jsonb_array_length(p_players);
+  IF v_n > 8 THEN
+    RAISE EXCEPTION 'legacy roster: % seats, over the kernel''s 8', v_n USING ERRCODE = 'data_exception';
+  END IF;
+
+  IF p_trim AND length(v_title) > 200 THEN
+    -- table_create's rule: the creator's name cut to fit, then "'s Game".
+    IF substring(v_title FROM length(v_title) - length(c_suffix) + 1) = c_suffix THEN
+      v_title := legacy_utf8_cut(substring(v_title FROM 1 FOR length(v_title) - length(c_suffix)),
+                                 200 - length(c_suffix)) || c_suffix;
+    ELSE
+      v_title := legacy_utf8_cut(v_title, 200);
+    END IF;
+  END IF;
+
+  v_out := '\x01'::bytea || set_byte('\x00'::bytea, 0, v_n) || legacy_roster_field(v_title, 200, 'the title');
+
+  FOR v_seat IN SELECT e FROM jsonb_array_elements(p_players) WITH ORDINALITY AS t(e, k) ORDER BY k LOOP
+    v_id := v_seat->>'player_id';
+    IF v_id IS NULL OR v_id = '' THEN
+      RAISE EXCEPTION 'legacy roster: a seat has no player_id' USING ERRCODE = 'data_exception';
+    END IF;
+    IF v_id = ANY(v_ids) THEN
+      RAISE EXCEPTION 'legacy roster: player % is seated twice', v_id USING ERRCODE = 'data_exception';
+    END IF;
+    v_ids := v_ids || v_id;
+    IF jsonb_typeof(v_seat->'name') IS DISTINCT FROM 'string' THEN
+      RAISE EXCEPTION 'legacy roster: seat % has no name', v_id USING ERRCODE = 'data_exception';
+    END IF;
+    v_name := convert_to(v_seat->>'name', 'UTF8');
+    IF p_trim THEN
+      v_name := legacy_utf8_cut(v_name, 64);
+    END IF;
+
+    IF jsonb_typeof(v_seat->'is_ai') IS DISTINCT FROM 'boolean' THEN
+      RAISE EXCEPTION 'legacy roster: seat % has no is_ai flag', v_id USING ERRCODE = 'data_exception';
+    ELSIF (v_seat->>'is_ai')::boolean THEN
+      SELECT b.strategy_key INTO v_brain FROM bots b WHERE b.id::text = v_id;
+      -- A brain is 1..23 bytes of printable ASCII (roster.c brain_ok). Whether
+      -- this build links it is table_load's question (Q16), not SQL's.
+      IF v_brain IS NULL OR v_brain !~ '^[!-~]{1,23}$' THEN
+        RAISE EXCEPTION 'legacy roster: bot seat % has no bots row with a valid strategy_key (%)', v_id, v_brain
+          USING ERRCODE = 'data_exception';
+      END IF;
+    ELSE
+      v_brain := '';
+    END IF;
+
+    v_out := v_out
+      || legacy_roster_field(convert_to(v_id, 'UTF8'), 36, format('seat %s''s id', v_id))
+      || legacy_roster_field(v_name, 64, format('seat %s''s name', v_id))
+      || legacy_roster_field(convert_to(v_brain, 'UTF8'), 23, format('seat %s''s brain', v_id))
+      || '\x0000'::bytea;
+  END LOOP;
+
+  v_out := v_out || decode(repeat('00', 128 * (8 - v_n)), 'hex');
+  IF length(v_out) <> 1227 THEN
+    RAISE EXCEPTION 'legacy roster: encoded % bytes, not 1227', length(v_out);
+  END IF;
+  RETURN E'\\x' || encode(v_out, 'hex');
+END;
+$$;
+
+-- The durable state blob of a lobby with these seats: [format 02][deterministic
+-- deck 00] then view.c state_put, whose every count is zero in a lobby, so the
+-- offsets are fixed:
+--
+--   status 00, n, power_suit 00, first_attacker 00, defender 00, discard 0000,
+--   has_flipped 00, flip FE, good mask 00000000, has_ts 00, deck 0000, battles 00,
+--   n x {status (idle 00, ready 01, in 02, out 03), awaiting 00, hand 00},
+--   eliminated 00
+--
+-- No goods, no timestamp, no cards: GAME_INVALID_LOBBY_CARDS refuses any of them
+-- in WAITING, so whatever a JSONB row still says about them is not carried.
+CREATE FUNCTION legacy_lobby_state_hex(p_players JSONB)
+RETURNS TEXT
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path = public
+AS $$
+DECLARE
+  v_n     INT;
+  v_seats  BYTEA := '\x'::bytea;
+  v_seat   JSONB;
+  v_status INT;
+BEGIN
+  IF jsonb_typeof(p_players) IS DISTINCT FROM 'array' THEN
+    RAISE EXCEPTION 'legacy lobby state: players is not a JSON array' USING ERRCODE = 'data_exception';
+  END IF;
+  v_n := jsonb_array_length(p_players);
+  IF v_n > 8 THEN
+    RAISE EXCEPTION 'legacy lobby state: % seats, over the kernel''s 8', v_n USING ERRCODE = 'data_exception';
+  END IF;
+  FOR v_seat IN SELECT e FROM jsonb_array_elements(p_players) WITH ORDINALITY AS t(e, k) ORDER BY k LOOP
+    v_status := array_position(ARRAY['idle', 'ready', 'in', 'out'], v_seat->>'status');
+    IF v_status IS NULL THEN
+      RAISE EXCEPTION 'legacy lobby state: seat % has status %', v_seat->>'player_id', v_seat->>'status'
+        USING ERRCODE = 'data_exception';
+    END IF;
+    v_seats := v_seats || set_byte('\x000000'::bytea, 0, v_status - 1);
+  END LOOP;
+  RETURN E'\\x' || encode(
+    '\x020000'::bytea || set_byte('\x00'::bytea, 0, v_n)
+      || '\x0000000000' || '\x00fe' || '\x00000000' || '\x00' || '\x0000' || '\x00'
+      || v_seats || '\x00'::bytea,
+    'hex');
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- 3. Keep a legacy-owned row's blobs in step with its JSONB roster
+-- ---------------------------------------------------------------------------
+-- Fires on every INSERT, and on every UPDATE that sets players, name or status
+-- (commit_game sets all three on every commit; the lease RPCs set none). A row
+-- the kernel writers own (writer_gen 2) is theirs: nothing is derived.
+CREATE FUNCTION legacy_games_bridge()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  IF NEW.writer_gen <> 1 THEN
+    RETURN NEW;
+  END IF;
+  NEW.roster := legacy_roster_hex(NEW.players, NEW.name, TRUE);
+  NEW.needs_bots := NEW.status = 'playing' AND NEW.players @> '[{"is_ai": true, "status": "in"}]';
+  -- Every row has both blobs, a lobby included. commit_game still writes NULL
+  -- for a WAITING commit (so a finished session's blob never survives into the
+  -- lobby); the lobby blob replaces it here. The JSONB board of a lobby is
+  -- emptied the way game_reset_to_lobby empties the kernel's: today's server
+  -- marshals it into the kernel for every lobby view, and the kernel refuses a
+  -- lobby holding goods, a trump, a discard pile, a table or an elimination.
+  IF NEW.status = 'waiting' THEN
+    NEW.state := legacy_lobby_state_hex(NEW.players);
+    NEW.deck_length := 0;
+    NEW.discard_pile_length := 0;
+    NEW.flipped := NULL;
+    NEW.power_suit := 0;
+    NEW.first_attacker := 0;
+    NEW.defender := 0;
+    NEW.table_battles := '[]';
+    NEW.elimination_order := '[]';
+    NEW.good_players := '[]';
+    NEW.good_timestamp := NULL;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER games_legacy_bridge
+  BEFORE INSERT OR UPDATE OF players, name, status ON games
+  FOR EACH ROW
+  EXECUTE FUNCTION legacy_games_bridge();
+
+-- ---------------------------------------------------------------------------
+-- 4. Convert every existing row
+-- ---------------------------------------------------------------------------
+-- After the trigger, so a legacy commit that lands while this runs derives its
+-- own blobs. updated_at is left alone: the bot heartbeat scans a window of it,
+-- and stamping every row now would make every abandoned game look live.
+-- `version` is left alone too: nothing a client or a CAS holds changes meaning.
+ALTER TABLE games DISABLE TRIGGER update_games_updated_at;
+
+UPDATE games SET
+  roster     = legacy_roster_hex(players, name),
+  needs_bots = status = 'playing' AND players @> '[{"is_ai": true, "status": "in"}]',
+  state      = CASE WHEN status = 'waiting' THEN legacy_lobby_state_hex(players) ELSE state END;
+
+-- A lobby's JSONB board, emptied as the bridge trigger empties it (see there):
+-- rows continued before handleContinue cleared goods still hold them, and
+-- today's server marshals them into a kernel that refuses them.
+UPDATE games SET
+  deck_length = 0, discard_pile_length = 0, flipped = NULL, power_suit = 0, first_attacker = 0, defender = 0,
+  table_battles = '[]', elimination_order = '[]', good_players = '[]', good_timestamp = NULL
+WHERE status = 'waiting';
+
+ALTER TABLE games ENABLE TRIGGER update_games_updated_at;
+
+-- ---------------------------------------------------------------------------
+-- 5. commit_game refuses a row the kernel writers own
+-- ---------------------------------------------------------------------------
+-- The shipped body (20260906120000) with one change: the version fence also
+-- requires writer_gen = 1, and a miss on a writer_gen 2 row is an error rather
+-- than a conflict (a conflict would reload JSONB the kernel writers no longer
+-- keep, and retry forever). Same signature, so CREATE OR REPLACE keeps its grants.
+CREATE OR REPLACE FUNCTION commit_game(
+  p_game_id          TEXT,
+  p_expected_version BIGINT,
+  p_game             JSONB,
+  p_seats            JSONB   DEFAULT NULL,
+  p_bot_seats        JSONB   DEFAULT NULL,
+  p_state            TEXT    DEFAULT NULL,
+  p_logs_packed      TEXT    DEFAULT NULL,
+  p_logs_reset       BOOLEAN DEFAULT FALSE,
+  p_game_seed        TEXT    DEFAULT NULL,
+  p_views            JSONB   DEFAULT NULL,
+  p_spectator        TEXT    DEFAULT NULL,
+  p_closed_round     BOOLEAN DEFAULT FALSE
+) RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_new_version BIGINT;
+  v_round_epoch BIGINT;
+  g games%ROWTYPE;
+BEGIN
+  g := jsonb_populate_record(NULL::games, p_game);
+
+  UPDATE games SET
+    name = g.name, deck_length = g.deck_length, discard_pile_length = g.discard_pile_length,
+    flipped = g.flipped, players = g.players, status = g.status, power_suit = g.power_suit,
+    first_attacker = g.first_attacker, defender = g.defender, table_battles = g.table_battles,
+    elimination_order = g.elimination_order, good_timestamp = g.good_timestamp,
+    good_players = g.good_players,
+    -- A WAITING commit never keeps a finished session's blob; the bridge
+    -- trigger writes the lobby blob from g.players in its place.
+    state = CASE WHEN g.status = 'waiting' THEN NULL ELSE COALESCE(p_state, state) END,
+    game_seed = CASE WHEN g.status = 'waiting' THEN NULL ELSE COALESCE(p_game_seed, game_seed) END,
+    logs_packed = CASE
+      WHEN p_logs_reset THEN COALESCE(p_logs_packed, '')
+      WHEN g.status = 'waiting' THEN ''
+      ELSE COALESCE(logs_packed, '') || COALESCE(p_logs_packed, '')
+    END,
+    round_epoch = CASE
+      WHEN p_logs_reset OR g.status = 'waiting' THEN 0
+      WHEN p_closed_round THEN version + 1
+      ELSE round_epoch
+    END,
+    updated_at = now(), version = version + 1
+  WHERE id = p_game_id AND version = p_expected_version AND writer_gen = 1
+  RETURNING version, round_epoch INTO v_new_version, v_round_epoch;
+
+  IF NOT FOUND THEN
+    IF EXISTS (SELECT 1 FROM games WHERE id = p_game_id AND writer_gen <> 1) THEN
+      RAISE EXCEPTION 'commit_game: game % is owned by the table writers (writer_gen 2); reload it through them', p_game_id
+        USING ERRCODE = 'object_not_in_prerequisite_state';
+    END IF;
+    RETURN jsonb_build_object('status', 'conflict');
+  END IF;
+
+  IF p_seats IS NOT NULL THEN
+    INSERT INTO player_hands (game_id, player_id)
+    SELECT p_game_id, s::uuid FROM jsonb_array_elements_text(p_seats) AS s
+    ON CONFLICT (game_id, player_id) DO UPDATE SET updated_at = now();
+  END IF;
+
+  IF p_bot_seats IS NOT NULL THEN
+    IF jsonb_array_length(p_bot_seats) > 0 THEN
+      INSERT INTO bot_hands (game_id, bot_id)
+      SELECT p_game_id, b::uuid FROM jsonb_array_elements_text(p_bot_seats) AS b
+      ON CONFLICT (game_id, bot_id) DO UPDATE SET updated_at = now();
+    END IF;
+
+    DELETE FROM bot_hands
+    WHERE game_id = p_game_id
+      AND bot_id NOT IN (
+        SELECT b::uuid FROM jsonb_array_elements_text(p_bot_seats) AS b
+      );
+  END IF;
+
+  IF p_views IS NOT NULL THEN
+    INSERT INTO player_views (game_id, player_id, view, version, status, updated_at)
+    SELECT p_game_id, (v->>'player_id')::uuid, v->>'view', v_new_version, v->>'status', now()
+    FROM jsonb_array_elements(p_views) AS v
+    ON CONFLICT (game_id, player_id) DO UPDATE
+      SET view = EXCLUDED.view, version = EXCLUDED.version,
+          status = EXCLUDED.status, updated_at = now();
+
+    DELETE FROM player_views
+    WHERE game_id = p_game_id
+      AND player_id NOT IN (
+        SELECT (v->>'player_id')::uuid FROM jsonb_array_elements(p_views) AS v
+      );
+  END IF;
+
+  IF p_spectator IS NOT NULL THEN
+    INSERT INTO spectator_views (game_id, view, version, status, updated_at)
+    VALUES (p_game_id, p_spectator, v_new_version, g.status, now())
+    ON CONFLICT (game_id) DO UPDATE
+      SET view = EXCLUDED.view, version = EXCLUDED.version,
+          status = EXCLUDED.status, updated_at = now();
+  END IF;
+
+  RETURN jsonb_build_object('status', 'ok', 'version', v_new_version, 'round_epoch', v_round_epoch);
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- 6. The kernel writers (3.3). Called from Phase 4b on.
+-- ---------------------------------------------------------------------------
+-- Every product comes from one table_commit_products call: the state and roster
+-- blobs, the status as GAME_STATUS_* (0 waiting, 1 playing, 2 game_over, the
+-- enum's order), needs_bots, the log records, the views. The rules are
+-- commit_game's (CAS on version, log append or reset, round_epoch, membership,
+-- view cache), and a lobby commit's human list also prunes the humans who left,
+-- in the same transaction as the roster that no longer seats them.
+CREATE FUNCTION commit_table(
+  p_game_id          TEXT,
+  p_expected_version BIGINT,
+  p_state            TEXT,
+  p_roster           TEXT,
+  p_status           SMALLINT,
+  p_needs_bots       BOOLEAN,
+  p_seats            TEXT[]  DEFAULT NULL,  -- human member ids; NULL leaves player_hands untouched (a dealt commit cannot change the roster)
+  p_bot_seats        TEXT[]  DEFAULT NULL,  -- bot member ids; NULL leaves bot_hands untouched
+  p_logs_packed      TEXT    DEFAULT NULL,  -- this operation's log records (bare hex), appended under the version fence
+  p_logs_reset       BOOLEAN DEFAULT FALSE, -- the operation dealt: replace the session log instead of appending
+  p_game_seed        TEXT    DEFAULT NULL,  -- deal seed (hex); NULL keeps the stored one
+  p_views            JSONB   DEFAULT NULL,  -- [{player_id, view, status}] per human seat; NULL leaves player_views untouched
+  p_spectator        TEXT    DEFAULT NULL,  -- the spectator envelope (bare hex); NULL leaves spectator_views untouched
+  p_closed_round     BOOLEAN DEFAULT FALSE  -- the operation closed a round: stamp round_epoch with the new version
+) RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_status      game_status := (enum_range(NULL::game_status))[p_status + 1];
+  v_new_version BIGINT;
+  v_round_epoch BIGINT;
+BEGIN
+  IF p_state IS NULL OR p_roster IS NULL OR p_needs_bots IS NULL THEN
+    RAISE EXCEPTION 'commit_table: state, roster and needs_bots are required' USING ERRCODE = 'null_value_not_allowed';
+  END IF;
+  IF v_status IS NULL THEN
+    RAISE EXCEPTION 'commit_table: % is not a GAME_STATUS', p_status USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  UPDATE games SET
+    status = v_status, state = p_state, roster = p_roster, needs_bots = p_needs_bots, writer_gen = 2,
+    game_seed = CASE WHEN v_status = 'waiting' THEN NULL ELSE COALESCE(p_game_seed, game_seed) END,
+    logs_packed = CASE
+      WHEN p_logs_reset THEN COALESCE(p_logs_packed, '')
+      WHEN v_status = 'waiting' THEN ''
+      ELSE COALESCE(logs_packed, '') || COALESCE(p_logs_packed, '')
+    END,
+    round_epoch = CASE
+      WHEN p_logs_reset OR v_status = 'waiting' THEN 0
+      WHEN p_closed_round THEN version + 1
+      ELSE round_epoch
+    END,
+    updated_at = now(), version = version + 1
+  WHERE id = p_game_id AND version = p_expected_version
+  RETURNING version, round_epoch INTO v_new_version, v_round_epoch;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('status', 'conflict');
+  END IF;
+
+  IF p_seats IS NOT NULL THEN
+    INSERT INTO player_hands (game_id, player_id)
+    SELECT p_game_id, s::uuid FROM unnest(p_seats) AS s
+    ON CONFLICT (game_id, player_id) DO UPDATE SET updated_at = now();
+    DELETE FROM player_hands
+    WHERE game_id = p_game_id AND player_id <> ALL (p_seats::uuid[]);
+  END IF;
+
+  IF p_bot_seats IS NOT NULL THEN
+    INSERT INTO bot_hands (game_id, bot_id)
+    SELECT p_game_id, b::uuid FROM unnest(p_bot_seats) AS b
+    ON CONFLICT (game_id, bot_id) DO UPDATE SET updated_at = now();
+    DELETE FROM bot_hands
+    WHERE game_id = p_game_id AND bot_id <> ALL (p_bot_seats::uuid[]);
+  END IF;
+
+  IF p_views IS NOT NULL THEN
+    INSERT INTO player_views (game_id, player_id, view, version, status, updated_at)
+    SELECT p_game_id, (v->>'player_id')::uuid, v->>'view', v_new_version, v->>'status', now()
+    FROM jsonb_array_elements(p_views) AS v
+    ON CONFLICT (game_id, player_id) DO UPDATE
+      SET view = EXCLUDED.view, version = EXCLUDED.version,
+          status = EXCLUDED.status, updated_at = now();
+    DELETE FROM player_views
+    WHERE game_id = p_game_id
+      AND player_id NOT IN (SELECT (v->>'player_id')::uuid FROM jsonb_array_elements(p_views) AS v);
+  END IF;
+
+  IF p_spectator IS NOT NULL THEN
+    INSERT INTO spectator_views (game_id, view, version, status, updated_at)
+    VALUES (p_game_id, p_spectator, v_new_version, v_status::text, now())
+    ON CONFLICT (game_id) DO UPDATE
+      SET view = EXCLUDED.view, version = EXCLUDED.version,
+          status = EXCLUDED.status, updated_at = now();
+  END IF;
+
+  RETURN jsonb_build_object('status', 'ok', 'version', v_new_version, 'round_epoch', v_round_epoch);
+END;
+$$;
+
+-- A new lobby from table_create's products, owned by the kernel writers.
+CREATE FUNCTION create_table(
+  p_game_id   TEXT,
+  p_player_id UUID,
+  p_state     TEXT,
+  p_roster    TEXT,
+  p_views     JSONB DEFAULT NULL,  -- the creator's envelope row(s); version 0
+  p_spectator TEXT  DEFAULT NULL   -- the spectator envelope (bare hex); version 0
+) RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF p_state IS NULL OR p_roster IS NULL THEN
+    RAISE EXCEPTION 'create_table: state and roster are required' USING ERRCODE = 'null_value_not_allowed';
+  END IF;
+
+  INSERT INTO games (id, status, state, roster, needs_bots, writer_gen)
+    VALUES (p_game_id, 'waiting', p_state, p_roster, FALSE, 2);
+
+  INSERT INTO player_hands (game_id, player_id)
+    VALUES (p_game_id, p_player_id);
+
+  IF p_views IS NOT NULL THEN
+    INSERT INTO player_views (game_id, player_id, view, version, status, updated_at)
+    SELECT p_game_id, (v->>'player_id')::uuid, v->>'view', 0, v->>'status', now()
+    FROM jsonb_array_elements(p_views) AS v
+    ON CONFLICT (game_id, player_id) DO UPDATE
+      SET view = EXCLUDED.view, version = EXCLUDED.version,
+          status = EXCLUDED.status, updated_at = now();
+  END IF;
+
+  IF p_spectator IS NOT NULL THEN
+    INSERT INTO spectator_views (game_id, view, version, status, updated_at)
+    VALUES (p_game_id, p_spectator, 0, 'waiting', now())
+    ON CONFLICT (game_id) DO UPDATE
+      SET view = EXCLUDED.view, version = EXCLUDED.version,
+          status = EXCLUDED.status, updated_at = now();
+  END IF;
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- 7. The bot scan's index
+-- ---------------------------------------------------------------------------
+CREATE INDEX idx_games_bot_scan ON games(updated_at) WHERE needs_bots;
+
+-- ---------------------------------------------------------------------------
+-- 8. Grants: service_role only
+-- ---------------------------------------------------------------------------
+-- commit_table and create_table are new SECURITY DEFINER functions, so they
+-- arrive with EXECUTE for PUBLIC, anon and authenticated (20260917000000 says
+-- why that matters). The legacy helpers are not definers, but no client has a
+-- reason to call them either.
+DO $$
+DECLARE
+  fn regprocedure;
+BEGIN
+  FOR fn IN
+    SELECT p.oid::regprocedure
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+      AND p.prorettype <> 'trigger'::regtype
+      AND (p.prosecdef OR p.proname LIKE 'legacy\_%')
+  LOOP
+    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC, anon, authenticated;', fn);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO service_role;', fn);
+  END LOOP;
+END $$;

@@ -128,6 +128,26 @@ const WRITE_POLICIES = `
   ORDER BY 1
 `;
 
+// The games table and the functions that write it, as the database holds them:
+// columns with their types, nullability and defaults, indexes, triggers, and
+// each writer's definition with comments and whitespace folded away (seed.sql
+// explains more than a migration does; the code must be the same).
+const GAMES_SHAPE = `
+  SELECT 'column ' || column_name || ' ' || data_type || ' ' || is_nullable || ' ' || coalesce(column_default, '') AS item
+  FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'games'
+  UNION ALL
+  SELECT 'index ' || indexdef FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'games'
+  UNION ALL
+  SELECT 'trigger ' || pg_get_triggerdef(oid) FROM pg_trigger WHERE tgrelid = 'public.games'::regclass AND NOT tgisinternal
+  UNION ALL
+  SELECT 'function ' || p.oid::regprocedure::text || ' ' || md5(regexp_replace(regexp_replace(
+           pg_get_functiondef(p.oid), '--[^\\n]*', '', 'g'), '\\s+', ' ', 'g'))
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+    AND (p.proname IN ('commit_game', 'create_game', 'commit_table', 'create_table') OR p.proname LIKE 'legacy\\_%')
+  ORDER BY 1
+`;
+
 type Exposure = { fn: string; who: string };
 type Posture = { exposed: string[]; writes: string[]; writePolicies: string[] };
 
@@ -171,6 +191,7 @@ const MEMBER = '00000000-0000-4000-8000-0000000be4be';
 const VICTIM_GAME = 'victim-game';
 
 let hostedPosture: Posture | null = null;
+let hostedGamesShape: string[] | null = null;
 
 export function registerMigrationGrantsValidation(): void {
     describe('hosted schema: the frozen pre-20260807120000 schema plus every later migration', () => {
@@ -198,6 +219,7 @@ export function registerMigrationGrantsValidation(): void {
                 for (const k of now) if (!openedBy.has(k)) openedBy.set(k, m);
                 for (const k of [...openedBy.keys()]) if (!now.has(k)) openedBy.delete(k);
             }
+            hostedGamesShape = (await pgPool.query(GAMES_SHAPE)).rows.map((r) => r.item);
 
             await pgPool.query(
                 `INSERT INTO games (id, name, players, status) VALUES ($1, 'victim', '[]'::jsonb, 'waiting')`,
@@ -336,6 +358,16 @@ export function registerMigrationGrantsValidation(): void {
             assert.deepEqual(p.exposed, [], `exposed: ${p.exposed.join(', ')}`);
             const unexpected = p.writes.filter((w) => !(w in INTENDED_CLIENT_WRITES));
             assert.deepEqual(unexpected, [], `unexpected client writes: ${unexpected.join(', ')}`);
+        });
+
+        test('seed.sql and the migrations build the same games table and games writers', async () => {
+            // A fresh database (seed.sql) and the hosted one (the migrations) run the
+            // same edge functions, so a column, trigger or writer that differs
+            // between them is a server that passes locally and breaks on deploy.
+            assert.ok(hostedGamesShape, 'the hosted suite must run first');
+            const seedShape = (await pgPool.query(GAMES_SHAPE)).rows.map((r) => r.item);
+            assert.ok(seedShape.some((i) => i.startsWith('function commit_table(')), 'the comparison sees the table writers');
+            assert.deepEqual(seedShape, hostedGamesShape);
         });
 
         test('seed.sql and the migrations end in the same security posture', async () => {

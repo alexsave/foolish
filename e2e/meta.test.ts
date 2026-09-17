@@ -279,12 +279,14 @@ if (!process.env.VALIDATION_ONLY) {
         assert.equal(finished.rows[0].status, 'game_over', `game played to completion (seed=${rng.seed})`);
         assert.ok(finished.rows[0].state, `finished game carries a blob (seed=${rng.seed})`);
 
-        // Continue: the reset commit must CLEAR the blob (state = NULL on a
-        // WAITING transition), or everything below regresses.
+        // Continue: the reset commit must REPLACE the finished blob (with the
+        // lobby blob of the seats, on a WAITING transition), or everything below regresses.
         await runMeta(gameId, h1, { type: 'continue', game_id: gameId });
-        const reset = await pgPool.query('SELECT status, state, logs_packed FROM games WHERE id=$1', [gameId]);
+        const reset = await pgPool.query(
+            'SELECT status, state, legacy_lobby_state_hex(players) AS lobby, logs_packed FROM games WHERE id=$1', [gameId]);
         assert.equal(reset.rows[0].status, 'waiting', 'reset to lobby');
-        assert.equal(reset.rows[0].state, null, 'stale blob cleared on the WAITING transition');
+        assert.notEqual(reset.rows[0].state, finished.rows[0].state, 'stale blob replaced on the WAITING transition');
+        assert.equal(reset.rows[0].state, reset.rows[0].lobby, 'the lobby blob of the seats');
         const lobbyG = await loadCompleteGame(gameId);
         assert.ok(lobbyG.players.every(p => p.hand.length === 0), 'no hands survive into the lobby');
 

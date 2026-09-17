@@ -650,6 +650,69 @@ After Phase 2 (roster format frozen) and Phase 3 (`table_load` for the test); pa
 - Must pass: e2e (the old server code must stay fully green on the expanded schema), `npm run test:validate`, 0.1's grant tests.
 - Deploy point: the owner applies 4a to hosted; nothing else changes behavior.
 
+#### Phase 4a as built
+
+Migration `20260917140000_table_expand.sql` is 3.4 steps 1-7 with these differences, each for the reason given.
+
+- Step 5 is a trigger, not edits to `commit_game` and `create_game`.
+  `games_legacy_bridge` (BEFORE INSERT, or UPDATE OF `players`, `name`, `status`) derives `roster`, `needs_bots` and, for WAITING, the lobby `state` whenever `writer_gen = 1`.
+  It is the one place every legacy write passes: `commit_game`, `create_game`, `delete_account`'s name redaction (so the roster is redacted too), hand-run SQL, and a `commit_game` call that started under the old function body and lands after the migration.
+  The lease RPCs set none of those columns, so they never fire it.
+- `commit_game` keeps its body except the fence: its UPDATE also requires `writer_gen = 1`, and a miss on a `writer_gen = 2` row RAISEs (SQLSTATE 55000) instead of answering `conflict`, which would reload stale JSONB and retry.
+  It still writes NULL `state` for WAITING; the trigger replaces it with the lobby blob, so every legacy lobby row now carries one.
+- `legacy_roster_hex(players, title, p_trim DEFAULT FALSE)`.
+  The backfill is strict (RAISE on an id over 36 bytes, a name over 64, a title over 200, more than 8 seats, duplicate ids, a bot seat without a `bots` row or with a key that is not 1-23 printable ASCII bytes).
+  The trigger passes `p_trim`: a name over 64 bytes is cut on a scalar boundary like `roster_seat_add`, and a title over 200 bytes like `table_create`, so a user with a long username can still create or join between 4a and 4b.
+  `legacy_lobby_state_hex` also RAISEs on a seat status that is not idle, ready, in or out.
+- For a WAITING row the backfill and the trigger also empty the JSONB board (`deck_length`, `discard_pile_length`, `flipped`, `power_suit`, `first_attacker`, `defender`, `table_battles`, `elimination_order`, `good_players`, `good_timestamp`), as `game_reset_to_lobby` empties the kernel's.
+  Today's server marshals a lobby's JSONB into the kernel for every lobby view, and a row continued before `handleContinue` cleared goods would otherwise be refused with `GAME_INVALID_LOBBY_CARDS` by any bots.wasm carrying Phase 3 (the test drives exactly that row through `join`, red without this).
+- The backfill disables `update_games_updated_at` for its UPDATEs: stamping every row would make every abandoned game look live to the heartbeat's `updated_at` window. `version` is untouched too.
+- `commit_table` also prunes `player_hands` to `p_seats` on a lobby commit (the humans who left), in the same transaction as the roster that stopped seating them, so 4b's `table_leave` needs no separate delete.
+  `create_table` inserts with `writer_gen = 2`; `name` and `players` keep their defaults.
+- The lockdown loop also revokes the non-definer `legacy_*` helpers from the client roles.
+- `seed.sql` reaches the same end state, and it now also defines `delete_account` (20260714120000), which it had been missing.
+  `e2e/db_migration_grants.test.ts` asserts that seed.sql and the migrations build the same `games` columns, indexes, triggers and writer functions.
+- Existing e2e pins that said a WAITING row has `state = NULL` (`waiting_stale_blob.test.ts`, `meta.test.ts`) now say it holds the lobby blob of its seats and never the finished one.
+
+The test holds the SQL to C on every captured row: the roster column is `roster_encode`'s bytes for the same JSONB, `table_load` accepts every row, C writes every stored state blob back unchanged, and `table_envelope` reproduces all 12 cached player views and 8 spectator views.
+Q1 is compared by rewriting C's trailing goods block into the legacy form; the one captured game with a good said has a single good and no timestamp, where the forms coincide, so the divergence itself stays covered by `table_parity.test.ts`.
+Q6: the stale-blob row's old blob loads as a valid GAME_OVER board under a WAITING column (the divergence), the same board read as a lobby is `GAME_INVALID_LOBBY_CARDS`, and after the backfill blob and column agree on every row.
+
+Hosted pre-checks, read-only, before applying 4a (each should return no rows):
+
+```sql
+-- names, ids or titles over the kernel's caps, or more than 8 seats
+SELECT g.id, g.name, p->>'player_id' AS player, octet_length(p->>'name') AS name_bytes
+FROM games g, jsonb_array_elements(g.players) p
+WHERE octet_length(p->>'name') > 64 OR octet_length(p->>'player_id') > 36
+   OR octet_length(g.name) > 200 OR jsonb_array_length(g.players) > 8;
+
+-- duplicate seats, and seats with no id, no name or no is_ai flag
+SELECT g.id FROM games g, jsonb_array_elements(g.players) p
+GROUP BY g.id HAVING count(DISTINCT p->>'player_id') <> count(*)
+UNION ALL
+SELECT g.id FROM games g, jsonb_array_elements(g.players) p
+WHERE coalesce(p->>'player_id', '') = '' OR jsonb_typeof(p->'name') <> 'string'
+   OR jsonb_typeof(p->'is_ai') <> 'boolean' OR p->>'status' NOT IN ('idle', 'ready', 'in', 'out');
+
+-- bot seats without a usable bots row
+SELECT g.id, p->>'player_id' AS bot FROM games g, jsonb_array_elements(g.players) p
+LEFT JOIN bots b ON b.id::text = p->>'player_id'
+WHERE (p->>'is_ai')::boolean AND (b.id IS NULL OR b.strategy_key !~ '^[!-~]{1,23}$');
+
+-- dealt rows with no blob, or a blob whose seat count is not the roster's (table_load refuses both)
+SELECT id, status FROM games
+WHERE status <> 'waiting' AND (state IS NULL OR get_byte(decode(substr(state, 3), 'hex'), 3) <> jsonb_array_length(players));
+
+-- the trigger the backfill pauses exists under this name
+SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'games'::regclass AND tgname = 'update_games_updated_at');
+```
+
+The bot brains in use must all be linked in the bots.wasm 4b deploys (Q16): `SELECT DISTINCT b.strategy_key FROM games g, jsonb_array_elements(g.players) p JOIN bots b ON b.id::text = p->>'player_id' WHERE (p->>'is_ai')::boolean;` against `c/src/bot_roster.c`.
+
+Deploy order: 4a must be on hosted before any bots.wasm carrying `GAME_INVALID_LOBBY_CARDS` (Phase 3) is deployed with today's server, because today's server marshals a WAITING row's JSONB board into the kernel and the new kernel refuses one holding goods or cards; after 4a every lobby row's JSONB board and blob are empty.
+The count of rows 4a repairs that way: `SELECT count(*) FROM games WHERE status = 'waiting' AND (good_players <> '[]' OR good_timestamp IS NOT NULL OR discard_pile_length <> 0 OR flipped IS NOT NULL OR table_battles <> '[]' OR elimination_order <> '[]' OR state IS NOT NULL);`.
+
 ### Phase 4b: server cutover
 
 After Phases 3, 3c, 4a (and 4a deployed before 4b's functions are).

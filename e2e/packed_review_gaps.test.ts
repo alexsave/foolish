@@ -238,7 +238,7 @@ if (!process.env.VALIDATION_ONLY) {
   // (the build-loop N+1 that cost ~150ms/game). Prove that reconstruction is
   // equivalent to the loadCompleteGame path it replaces, for BOTH a lobby and a
   // finished game, so the list a client sees is unchanged.
-  test('gameViewFromRow(row) personalizes identically to loadCompleteGame (waiting + finished, no blob)', async () => {
+  test('gameViewFromRow(row) personalizes identically to loadCompleteGame (a lobby, and a finished game with no blob)', async () => {
     // The exact columns get_my_games selects.
     const cols = 'id,name,status,version,state,players,good_players,good_timestamp,' +
       'discard_pile_length,flipped,power_suit,first_attacker,defender,table_battles,elimination_order';
@@ -267,7 +267,15 @@ if (!process.env.VALIDATION_ONLY) {
     for (const [gameId, wantStatus] of [[lobbyId, GAME_STATUS.WAITING], [overId, GAME_STATUS.GAME_OVER]] as const) {
       const row = (await pgPool.query(`SELECT ${cols} FROM games WHERE id=$1`, [gameId])).rows[0];
       assert.equal(row.status, wantStatus, `${gameId} has expected status`);
-      assert.equal(row.state, null, `${gameId} has no blob → row-view path`);
+      // A lobby row carries the lobby blob of its seats (the games_legacy_bridge
+      // trigger, migration 20260917140000), which a WAITING read never uses; the
+      // finished row has none. Either way the read takes the row-view path.
+      if (wantStatus === GAME_STATUS.WAITING) {
+        assert.equal(row.state, (await pgPool.query('SELECT legacy_lobby_state_hex(players) AS h FROM games WHERE id=$1', [gameId])).rows[0].h,
+          `${gameId}: a lobby holds only the lobby blob of its seats`);
+      } else {
+        assert.equal(row.state, null, `${gameId} has no blob → row-view path`);
+      }
 
       const viaLoad = await loadCompleteGame(gameId);
       for (const viewer of [h1, h2, 'spectator-not-in-game']) {

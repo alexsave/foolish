@@ -10,8 +10,11 @@
 // The rule is enforced in FIVE places today, each on its own, so each has its
 // own test here:
 //
-//   1. SQL commit_game          - a WAITING commit writes state = NULL, even
-//                                 when the caller hands it a blob
+//   1. SQL commit_game          - a WAITING commit never keeps the finished
+//                                 blob, even when the caller hands it one; the
+//                                 games_legacy_bridge trigger (migration
+//                                 20260917140000) writes the lobby blob of the
+//                                 JSONB seats in its place
 //   2. loadCompleteGame         - (adapter/utils.ts) a WAITING row assembles
 //                                 from the membership rows, never the blob
 //   3. buildPlayerViewRows      - (player_views.ts) a WAITING game's cached
@@ -95,23 +98,26 @@ if (!process.env.VALIDATION_ONLY) {
     before(async () => { await applySchema(); });
     beforeEach(async () => { await resetDb(); });
 
-    test('commit_game: continue clears the finished blob, seed and session log', async () => {
+    test('commit_game: continue replaces the finished blob and clears the seed and session log', async () => {
         const { gameId } = await finishedThenContinued();
-        const { rows } = await pgPool.query('SELECT status, state, game_seed, logs_packed FROM games WHERE id=$1', [gameId]);
+        const { rows } = await pgPool.query(
+            'SELECT status, state, legacy_lobby_state_hex(players) AS lobby, game_seed, logs_packed FROM games WHERE id=$1', [gameId]);
         assert.equal(rows[0].status, 'waiting');
-        assert.equal(rows[0].state, null, 'no blob survives into the lobby');
+        assert.equal(rows[0].state, rows[0].lobby, 'no finished blob survives into the lobby: the lobby blob of its seats does');
         assert.equal(rows[0].game_seed, null, 'no deal seed survives into the lobby');
         assert.equal(rows[0].logs_packed, '', 'no session log survives into the lobby');
     });
 
-    test('commit_game: a WAITING commit handed a blob still persists none', async () => {
+    test('commit_game: a WAITING commit handed a blob persists only the lobby blob of its seats', async () => {
         const { gameId, staleState } = await finishedThenContinued();
         const lobby = await loadCompleteGame(gameId);
         const res = await commitGame(lobby, lobby.version, staleState);
         assert.equal(res.status, 'ok', 'the lobby commit lands');
-        const { rows } = await pgPool.query('SELECT status, state FROM games WHERE id=$1', [gameId]);
+        const { rows } = await pgPool.query(
+            'SELECT status, state, legacy_lobby_state_hex(players) AS lobby FROM games WHERE id=$1', [gameId]);
         assert.equal(rows[0].status, 'waiting');
-        assert.equal(rows[0].state, null, 'commit_game refused to persist a blob for a WAITING game');
+        assert.notEqual(rows[0].state, staleState, 'commit_game refused to persist the handed blob for a WAITING game');
+        assert.equal(rows[0].state, rows[0].lobby, 'the row holds the lobby blob of its seats');
     });
 
     test('loadCompleteGame: a WAITING row that still carries a blob loads as a lobby', async () => {
