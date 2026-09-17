@@ -24,7 +24,7 @@ import { bytesToBigint } from '../server/api/common/replay/codec.ts';
 import { kernelB32Decode, replaySummary } from '../sdk/ts/wasm/bots.ts';
 import assert from 'node:assert/strict';
 
-import { codeToGame, bigintToBytes } from '../server/api/common/replay/codec.ts';
+import { bigintToBytes } from '../server/api/common/replay/codec.ts';
 import { buildReplayFrames, REPLAY_STEP, ReplayFrame } from '../src/replay/frames.ts';
 import { TUTORIAL_MOVES_CODE, TUTORIAL_NAMES } from '../src/components/tutorialGame.ts';
 import { PLAYER_STATUS } from '../src/state/view.ts';
@@ -53,10 +53,11 @@ const isLearnerStep = (frames: ReplayFrame[], i: number): boolean => {
     if (i < 0 || i >= frames.length) return false;
     const f = frames[i];
     if (f.kind === REPLAY_STEP.ROUND_END) return learnerOwesGood(frames[i - 1]);
-    return f.seat === LEARNER && [
+    const moves: readonly number[] = [
         REPLAY_STEP.ATTACK, REPLAY_STEP.COVER, REPLAY_STEP.PASS,
         REPLAY_STEP.PICKUP, REPLAY_STEP.GOOD,
-    ].includes(f.kind);
+    ];
+    return f.seat === LEARNER && moves.includes(f.kind);
 };
 
 // Read the way Tutorial.tsx reads it: the kernel's summary of the code, and the
@@ -156,8 +157,9 @@ test('walking the tutorial the way a learner does reaches the end', async () => 
             const f = frames[next];
             const kind = f.kind === REPLAY_STEP.ROUND_END ? REPLAY_STEP.GOOD : f.kind;
             // Every learner step maps to a button the tutorial can highlight.
-            assert.ok([REPLAY_STEP.ATTACK, REPLAY_STEP.PASS, REPLAY_STEP.PICKUP,
-                       REPLAY_STEP.GOOD, REPLAY_STEP.COVER].includes(kind),
+            const askable: readonly number[] = [REPLAY_STEP.ATTACK, REPLAY_STEP.PASS, REPLAY_STEP.PICKUP,
+                       REPLAY_STEP.GOOD, REPLAY_STEP.COVER];
+            assert.ok(askable.includes(kind),
                 `step ${next} (kind ${f.kind}) is a move the learner can be asked for`);
             if (kind === REPLAY_STEP.ATTACK || kind === REPLAY_STEP.PASS || kind === REPLAY_STEP.COVER) {
                 assert.ok(f.cards.length > 0, `step ${next} highlights the cards to play`);
