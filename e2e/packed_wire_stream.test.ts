@@ -1,24 +1,21 @@
 /* =============================================================================
  * The packed pipeline's own guarantees: no leaks, and a stream that decodes.
  * =============================================================================
- * This file used to assert the C pipeline was BYTE-IDENTICAL to a TypeScript
- * one (handleX -> AnimationEvents -> the evwire TS encoder). That TypeScript
- * pipeline no longer exists: production runs every move through the kernel and
- * broadcasts the kernel's own per-viewer streams, so there is no second
- * implementation left to compare against and the parity half of this file went
- * with it.
- *
- * What was NOT about parity stays, because it is about the kernel's output on
- * its own terms:
+ * Every move runs through the C Table (table_act) and the server broadcasts the
+ * kernel's own per-viewer pushes (table_push). There is no second implementation
+ * to compare against, so this asserts the kernel's output on its own terms:
  *   - the PERSONALIZATION invariant: a viewer's stream never carries another
  *     player's hand identities, and DEAL/REFILL identities reach only the
- *     receiving seat (assertNoLeaks, on the raw bytes);
+ *     receiving seat (assertNoLeaks, through the client's reader);
  *   - a COVER event's target card and battle index agree - the two adjacent
  *     optional bytes a reader could take in either order;
- *   - the stream DECODES, and the game it decodes to mirrors the committed
- *     state;
- *   - the kernel's masked log export decodes to the right GameLog shapes;
+ *   - the stream DECODES, and the board it decodes to mirrors the committed state;
+ *   - the session log the commits append reads back whole (table_import_session_log)
+ *     and, at the game end, encodes a verified replay code (table_replay_code);
  *   - an illegal wire is rejected.
+ *
+ * The TS log decoder this file also used (logwire decodeLogs) is retired with the
+ * TS game shape: the log is read by the kernel only.
  *
  * Pure kernel test - needs no Postgres (runs under VALIDATION_ONLY too).
  * ========================================================================== */
@@ -26,53 +23,28 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-  Game, Card, AnimationEvent, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
-  ANIMATION_EVENT_TYPE, PrivatePlayer,
-} from '../server/api/core/types.ts';
-import {
-  serializeGameState, runPackedAction, kernelLegalMoves, kernelShouldAct, applyKernelStateToGame,
-  __setKernelSeedSource,
-} from '../sdk/ts/wasm/engine.ts';
-import { start_game_packed } from '../server/api/common/game_lifecycle.ts';
-import { encodeAction, AwireKindName } from '../sdk/ts/wire/awire.ts';
-import { readPush } from './helpers/client_read.ts';
+import * as L from '../sdk/ts/gen/game_layout.bots.ts';
+import { encodeAction } from '../sdk/ts/wire/awire.ts';
 import { clientTable } from '../sdk/ts/table/client_table.ts';
 import { EVW_T_COVER, EVW_T_DEAL, EVW_T_REFILL } from '../sdk/ts/gen/view_layout.bots.ts';
-import { logsFromKernelExport, decodeLogs } from '../sdk/ts/wire/logwire.ts';
+import { fixtureTable } from './helpers/table_fixture.ts';
+import { legalMoves, residentBoard, type BoardState } from './helpers/table_play.ts';
+import { dealTable, lcg } from './helpers/kernel_board.ts';
+import { seedBytes, type BotTableRow } from './helpers/bot_table.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
 // Deterministic RNG (same LCG as the fuzz suite) so failures reproduce.
-let seed = Number(process.env.FUZZ_SEED || 0xbadc0de5) >>> 0;
-const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 0x100000000; };
+const rnd = lcg(Number(process.env.FUZZ_SEED || 0xbadc0de5));
 const ri = (n: number) => Math.floor(rnd() * n);
 
-// Both pipelines reseed the kernel once per action through this source;
-// pinning one value per move makes their draws identical.
-let moveSeed = 1;
-__setKernelSeedSource(() => moveSeed);
+// Humans at even seats, bots at odd ones.
+const seatsFor = (np: number) => Array.from({ length: np }, (_, i) => ({ id: `player-${i}`, name: `P${i}`, brain: i % 2 === 1 ? 'random' : '' }));
 
-const mkPlayer = (i: number, isAi: boolean): PrivatePlayer => ({
-  player_id: `player-${i}`, name: `P${i}`, status: PLAYER_STATUS.READY,
-  is_ai: isAi, hand: [], awaiting_attack: false, hand_length: 0,
-  strategy_key: isAi ? STRATEGY_KEY.RANDOM : STRATEGY_KEY.HUMAN,
-});
-
-const mkLobby = (numPlayers: number): Game => ({
-  id: 'parity', name: 'parity', status: GAME_STATUS.WAITING,
-  players: Array.from({ length: numPlayers }, (_, i) => mkPlayer(i, i % 2 === 1)),
-  deck: [], deck_length: 0, discard_pile_length: 0, flipped: null,
-  power_suit: 0, first_attacker: 0, defender: 0, table_battles: [],
-  elimination_order: [], good_timestamp: null, good_players: [], logs: [],
-});
-
-type Handler = (g: Game, pid: string) => AnimationEvent[];
-
-// The check_win_sync + game-end event append executeWithGameLock performs
-// after a winning handler (mirrored here so the JS-path stream includes the
-// final MAGIC_TRANSITION the packed path emits via append_final_transition).
-
+function boardOf(row: BotTableRow): BoardState {
+  assert.equal(fixtureTable().load(row.state, row.roster), L.TABLE_OK, 'the row loads');
+  return residentBoard(row.gameId, row.state, row.roster);
+}
 
 // Personalization scan: every step of a viewer's stream shows no hand but the
 // viewer's own, and DEAL/REFILL card identities reach only the receiving seat.
@@ -81,9 +53,9 @@ type Handler = (g: Game, pid: string) => AnimationEvent[];
 // round: it inspects what a CLIENT can see, and a view the slot reads holds the
 // viewer's own hand and every other seat as a count only - no other hand is there
 // to be read.
-function assertNoLeaks(bytes: Uint8Array, viewer: number, numPlayers: number): number {
+function assertNoLeaks(bytes: Uint8Array, viewer: number) {
   assert.equal(bytes[0], 1, 'evwire format version');
-  const read = clientTable().readPush(bytes, { as3: false, identity: 'none' });
+  const read = clientTable().readPush(bytes, { as3: true, identity: 'none' });
   assert.ok(read, 'the stream reads');
   assert.equal(read.final.mySeat, viewer, 'the stream is addressed to this viewer');
 
@@ -123,76 +95,59 @@ function assertNoLeaks(bytes: Uint8Array, viewer: number, numPlayers: number): n
   }
   ownHandOnly(read.final, 'trailer');
   assert.equal(checked, read.steps.length, 'every event was scanned');
-  assert.ok(numPlayers >= 2);
-  return covers;
+  return { covers, final: read.final };
 }
 
 test('every packed stream is leak-free, decodable, and mirrors the committed state', () => {
   const GAMES = Number(process.env.PARITY_GAMES || 24);
-  let moves = 0, ends = 0, coversChecked = 0;
+  const table = fixtureTable();
+  let moves = 0, ends = 0, coversChecked = 0, codes = 0;
 
   for (let g = 0; g < GAMES; g++) {
-    const numPlayers = 2 + (g % 4); // 2..5 players (36-card deck) - plus 6 below
-    const game = mkLobby(g % 7 === 6 ? 6 : numPlayers);
-    moveSeed = (g * 7919 + 13) >>> 0;
-    start_game_packed(game);
-    game.status = GAME_STATUS.PLAYING;
+    const np = g % 7 === 6 ? 6 : 2 + (g % 4); // 2..5 players (36-card deck), and 6
+    let row = dealTable(seatsFor(np), seedBytes(np, g * 7919 + 13), { gameId: 'parity' });
+    const humanSeats = seatsFor(np).flatMap((s, i) => (s.brain ? [] : [i]));
 
-    const aiMask = game.players.reduce((m, p, i) => (p.is_ai ? m | (1 << i) : m), 0);
-    const humanSeats = game.players.map((_, i) => i).filter(i => !game.players[i].is_ai);
-    const roster = {
-      id: game.id, name: game.name,
-      players: game.players.map(p => ({ player_id: p.player_id, name: p.name, is_ai: p.is_ai })),
-    };
-
-    for (let mv = 0; mv < 600 && game.status === GAME_STATUS.PLAYING; mv++) {
-      const eligible = game.players.filter(p => kernelShouldAct(game, p.player_id));
-      if (eligible.length === 0) break;
-      const actor = eligible[ri(eligible.length)];
-      const menu = kernelLegalMoves(game, actor.player_id).filter(m => m.type !== 'wait');
-      if (menu.length === 0) continue;
+    for (let mv = 0; mv < 600 && row.status === L.GAME_STATUS_PLAYING; mv++) {
+      const menu = legalMoves(boardOf(row));
+      if (menu.length === 0) break;
       const m = menu[ri(menu.length)];
-      const kind = m.type as AwireKindName;
-      const seat = game.players.findIndex(p => p.player_id === actor.player_id);
 
-      moveSeed = (moveSeed * 48271 + mv + 1) >>> 0;
+      assert.equal(table.load(row.state, row.roster), L.TABLE_OK);
+      assert.equal(table.setDealSeed(row.seedHex), L.TABLE_OK);
+      assert.equal(table.act(m.playerId, m.wire, null, 0), L.TABLE_APPLIED, `the packed path applied (${m.kind})`);
+      const p = table.commit(row.gameId, row.version + 1, 1_700_000_000_000 + mv);
+      assert.ok(typeof p !== 'number', `commit products (${p})`);
+      const pushes = [...humanSeats, -1].map((viewer) => {
+        const bytes = table.push(row.gameId, viewer);
+        assert.ok(bytes instanceof Uint8Array, `push for viewer ${viewer} (${bytes})`);
+        return { viewer, bytes };
+      });
+      const log = p.logs === null ? row.log : p.logsReset ? p.logs : new Uint8Array(Buffer.concat([row.log, p.logs]));
+      row = { ...row, version: row.version + 1, state: p.state, roster: p.roster, log, status: p.status, fool: p.fool };
 
-      const wire = encodeAction({ kind, cards: m.cards, attack_cards: m.attack_cards });
-      const run = runPackedAction(serializeGameState(game), seat, wire, aiMask, humanSeats);
-      assert.ok(run.ok, `packed path applied (${kind})`);
-      if (!run.ok) continue;
+      // The session log the commits append is one the kernel reads back whole.
+      assert.equal(table.load(row.state, row.roster), L.TABLE_OK);
+      assert.ok(table.importSessionLog(row.log) > 0, 'the session log reads back');
 
-      // The kernel's masked log export decodes to the right GameLog shapes -
-      // DRAW identities stay hidden.
-      const FIXED_TS = 1_700_000_000_000;
-      const cLogBytes = logsFromKernelExport(run.logsWire, FIXED_TS);
-      const decodedLogs = decodeLogs(cLogBytes, game.id, game.players);
-      for (const dl of decodedLogs) {
-        assert.ok(typeof dl.log_type === 'string' && dl.log_type.length > 0, 'log type decodes');
-        for (const pair of dl.card_pairs) {
-          assert.ok(pair.primary, 'a decoded pair names a primary card');
-        }
-      }
-
-      // Advance the JS mirror to the kernel's post state, so the next move is
-      // enumerated against the board the kernel just produced.
-      applyKernelStateToGame(game, run.post, actor.player_id);
-
-      for (const viewer of [...humanSeats, -1]) {
-        const cBytes = run.events.get(viewer)!;
-        coversChecked += assertNoLeaks(cBytes, viewer, game.players.length);
-
-        const decoded = readPush(cBytes, roster, { now: () => 4242 });
-        assert.ok(decoded, 'stream decodes');
-        // The decoded final game mirrors the committed public state.
-        assert.equal(decoded!.game.status, game.status, 'status');
-        assert.equal(decoded!.game.deck_length, game.deck.length, 'deck length');
-        assert.equal(decoded!.game.discard_pile_length, game.discard_pile_length, 'discard length');
-        // The goods said, in seat order (the order they were said is not on the wire, plan Q1).
-        assert.deepEqual([...decoded!.game.good_players].sort(), [...game.good_players].sort(), 'goods said');
+      const b = boardOf(row);
+      for (const { viewer, bytes } of pushes) {
+        const { covers, final } = assertNoLeaks(bytes, viewer);
+        coversChecked += covers;
+        // The decoded final board mirrors the committed public state.
+        assert.equal(final.status, b.status, 'status');
+        assert.equal(final.deckCount, b.deckCount, 'deck length');
+        assert.equal(final.discardPileLength, b.discard, 'discard length');
+        assert.equal(final.goodMask, b.goodMask, 'goods said');
       }
       moves++;
-      if (run.ended) { ends++; break; }
+      if (p.ended) {
+        ends++;
+        assert.equal(table.load(row.state, row.roster), L.TABLE_OK);
+        const code = table.replayCode(seedBytes(np, g * 7919 + 13), row.log);
+        assert.ok(code instanceof Uint8Array, `the finished game's session log encodes a verified replay code (${code})`);
+        codes++;
+      }
     }
   }
 
@@ -200,20 +155,16 @@ test('every packed stream is leak-free, decodable, and mirrors the committed sta
   // A cover is the only event with both trailer bytes, so the check above is
   // only worth anything if covers actually happened.
   assert.ok(coversChecked > 100, `enough covers cross-checked (${coversChecked})`);
+  assert.ok(codes > 0, `some games ended and encoded (${codes})`);
   console.error(`[packed-wire] moves=${moves} ends=${ends} covers=${coversChecked}`);
 
   // An illegal wire is rejected: the defender may not attack.
   {
-    const game = mkLobby(3);
-    moveSeed = 99;
-    start_game_packed(game);
-    game.status = GAME_STATUS.PLAYING;
-    const defender = game.defender;
-    const aiMask = game.players.reduce((m, p, i) => (p.is_ai ? m | (1 << i) : m), 0);
-    const humanSeats = game.players.map((_, i) => i).filter(i => !game.players[i].is_ai);
-    const card = game.players[defender].hand[0];
-    const wire = encodeAction({ kind: 'attack', cards: [card] });
-    const run = runPackedAction(serializeGameState(game), defender, wire, aiMask, humanSeats);
-    assert.equal(run.ok, false, 'the defender attacking is rejected by the kernel');
+    const row = dealTable(seatsFor(3), seedBytes(3, 99), { gameId: 'parity' });
+    const b = boardOf(row);
+    const defender = b.seats[b.defender];
+    assert.equal(table.load(row.state, row.roster), L.TABLE_OK);
+    const rc = table.act(defender.id, encodeAction({ kind: 'attack', cards: [defender.hand[0]] }), null, 0);
+    assert.equal(rc, L.TABLE_REJECTED, 'the defender attacking is rejected by the kernel');
   }
 });
