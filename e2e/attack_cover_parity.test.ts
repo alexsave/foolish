@@ -1,51 +1,41 @@
 /* =============================================================================
- * Attack + cover legality — client vs kernel parity fuzz
+ * Attack + cover legality - client vs kernel parity fuzz
  * =============================================================================
  * The pass_parity suite polices canPass; this file extends the same pattern
- * to the other two hand-rolled client validators:
+ * to the other two client validators:
  *
- *   SERVER — actions/attack.ts validateAttack, actions/cover.ts validateCover
- *            (both kernel-backed; throw == illegal)
- *   CLIENT — canAttack / validateAttack / canCoverCards / validateCover
- *            (src/utils/gameValidation.ts — the UI button / optimistic gates)
+ *   SERVER - table_act on the row (the move path's own operation; applied ==
+ *            legal)
+ *   CLIENT - canAttack / validateAttack / canCoverCards / validateCover
+ *            (src/utils/gameValidation.ts - the UI button / optimistic gates),
+ *            on the board the seat's envelope reads to
  *
  * Invariants asserted on random kernel-played game states:
  *   1. ATTACK: for candidate sets from the acting player's own hand (unique,
- *      non-defender — the preconditions every UI caller establishes), the
+ *      non-defender - the preconditions every UI caller establishes), the
  *      client and the kernel must agree exactly. This includes the
  *      first-attacker restriction on an empty table (the old client showed a
  *      live Attack button to every non-defender).
  *   2. COVER (button): whenever canCoverCards says yes, the mapping the
  *      client would submit (findUnambiguousCover) must be kernel-legal.
- *      The reverse is deliberately NOT asserted — an ambiguous cover is
+ *      The reverse is deliberately NOT asserted - an ambiguous cover is
  *      hidden by design even though some mapping would be legal.
  *   3. COVER (optimistic gate): the throwing validateCover must agree with
  *      the kernel on defender-owned mappings, in both directions.
  *
- * Pure in-memory (no Postgres): games are driven by the real engine via
- * processBotAction, exactly like replay_codec.test.ts.
+ * Pure in-memory (no Postgres). Phase 8 (docs/C_GAME_SHAPE_MIGRATION.md) moved
+ * it off the TypeScript Game: the SERVER is the C Table's table_act on the row
+ * (e2e/helpers/table_mem.ts), the CLIENT gates read the seat's envelope as the
+ * web does, and games are dealt from a seed and advanced by the kernel's bot
+ * cycle, one action at a time.
  * ========================================================================== */
 
 import { test } from 'node:test';
-import { gameToView } from './helpers/view_game.ts';
-import type { TableView } from '../sdk/ts/table/client_table.ts';
 import assert from 'node:assert/strict';
 
-import { game_done, personalize_game } from '../server/api/common/common_utils.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
-import {
-  Card,
-  Game,
-  GAME_STATUS,
-  PLAYER_STATUS,
-  PersonalGame,
-  PrivatePlayer,
-  StrategyKey,
-} from '../server/api/core/types.ts';
-import { shouldBotActCore, processBotAction } from '../server/api/common/pure_bot_actions.ts';
-import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
-import { validateAttack as serverValidateAttack } from '../server/api/common/actions/attack.ts';
-import { validateCover as serverValidateCover } from '../server/api/common/actions/cover.ts';
+import * as L from '../sdk/ts/gen/game_layout.bots.ts';
+import type { TableView, ViewCard as Card } from '../sdk/ts/table/client_table.ts';
+import { encodeAction } from '../sdk/ts/wire/awire.ts';
 import {
   canAttack as clientCanAttack,
   validateAttack as clientValidateAttack,
@@ -53,16 +43,15 @@ import {
   validateCover as clientValidateCover,
 } from '../src/utils/gameValidation.ts';
 import { kernelUnambiguousCover } from '../sdk/ts/wasm/bots.ts';
-import { __setDealSeedOverride } from '../sdk/ts/wasm/engine.ts';
+import { MemTable, type MemBoard } from './helpers/table_mem.ts';
 import { suiteRng } from './helpers/rng.ts';
 
-// Seeded end to end: the deal AND the order eligible bots act in both come from
-// this stream, so a red run replays exactly. Same trial count as before; to
-// widen the search, sweep the seed rather than unpinning it.
+// Seeded end to end: the deals come from this stream, and the bots' decisions
+// from the deal seed, so a red run replays exactly. To widen the search, sweep
+// the seed.
 const rng = suiteRng('attack_cover_parity');
 const dealSeed = (): Uint8Array => Uint8Array.from({ length: 32 }, () => rng.int(256));
 
-// The engine logs play-by-play; keep the reporter readable.
 if (!process.env.E2E_VERBOSE) {
   console.log = () => {};
   console.warn = () => {};
@@ -71,45 +60,18 @@ if (!process.env.E2E_VERBOSE) {
 }
 
 const GAMES_PER_PC = Number(process.env.PARITY_GAMES_PER_PC ?? 8);
-const MAX_ACTIONS = 100000;
+const MAX_ACTIONS = 3000;
 const cardKey = (c: Card) => `${c.suit}:${c.value}`;
+const tableText = (b: MemBoard) => b.battles.map((x) => `${cardKey(x.attack)}${x.defense ? '/' + cardKey(x.defense) : ''}`).join(' ');
 
-const mkPlayer = (i: number, strategy: StrategyKey): PrivatePlayer => ({
-  player_id: `bot_${i}`,
-  name: `Bot ${i}`,
-  status: PLAYER_STATUS.READY,
-  is_ai: true,
-  hand: [],
-  awaiting_attack: false,
-  hand_length: 0,
-  strategy_key: strategy,
-});
-
-const mkGame = (np: number, strategy: StrategyKey): Game => ({
-  players: Array.from({ length: np }, (_, i) => mkPlayer(i, strategy)),
-  deck: [],
-  logs: [],
-  id: 'g',
-  name: 'g',
-  status: GAME_STATUS.PLAYING,
-  deck_length: 0,
-  discard_pile_length: 0,
-  flipped: null,
-  power_suit: 0,
-  first_attacker: 0,
-  defender: 0,
-  table_battles: [],
-  elimination_order: [],
-  good_timestamp: null,
-  good_players: [],
-});
-
-function serverAllowsAttack(game: Game, pid: string, cards: Card[]): boolean {
-  try { serverValidateAttack(game, pid, cards); return true; } catch { return false; }
+function serverAllows(t: MemTable, seat: number, wire: Uint8Array): boolean {
+  const { rc } = t.probe(seat, wire);
+  assert.ok(rc === L.TABLE_APPLIED || rc === L.TABLE_REJECTED, `a move is applied or rejected, got ${rc}`);
+  return rc === L.TABLE_APPLIED;
 }
-function serverAllowsCover(game: Game, pid: string, covers: Card[], attacks: Card[]): boolean {
-  try { serverValidateCover(game, pid, covers, attacks); return true; } catch { return false; }
-}
+const serverAllowsAttack = (t: MemTable, seat: number, cards: Card[]) => serverAllows(t, seat, encodeAction({ kind: 'attack', cards }));
+const serverAllowsCover = (t: MemTable, seat: number, covers: Card[], attacks: Card[]) =>
+  serverAllows(t, seat, encodeAction({ kind: 'cover', cards: covers, attack_cards: attacks }));
 function clientAllowsAttackOptimistic(personal: TableView, cards: Card[]): boolean {
   try { clientValidateAttack(personal, cards); return true; } catch { return false; }
 }
@@ -136,11 +98,11 @@ function candidateAttackSets(hand: Card[]): Card[][] {
   return out;
 }
 
-// Random-ish but deterministic per (state, i) mapping candidates for the
-// optimistic-cover gate: pair each of up to 2 hand cards with each uncovered
-// attack (legal and illegal pairs both matter — the gates must AGREE).
-function candidateCoverMappings(hand: Card[], game: Game): { covers: Card[]; attacks: Card[] }[] {
-  const uncovered = game.table_battles.filter((b) => !b.defense).map((b) => b.attack);
+// Deterministic mapping candidates for the optimistic-cover gate: pair each of
+// up to 2 hand cards with each uncovered attack (legal and illegal pairs both
+// matter - the gates must AGREE).
+function candidateCoverMappings(hand: Card[], b: MemBoard): { covers: Card[]; attacks: Card[] }[] {
+  const uncovered = b.battles.filter((x) => !x.defense).map((x) => x.attack);
   const out: { covers: Card[]; attacks: Card[] }[] = [];
   for (const h of hand.slice(0, 2)) {
     for (const a of uncovered) out.push({ covers: [h], attacks: [a] });
@@ -153,48 +115,46 @@ function candidateCoverMappings(hand: Card[], game: Game): { covers: Card[]; att
   return out;
 }
 
-async function playAndCheck(np: number, strategy: StrategyKey, stats: { states: number; attacks: number; covers: number }): Promise<boolean> {
-  const game = mkGame(np, strategy);
-  __setDealSeedOverride(dealSeed());
-  try { start_game(game); } finally { __setDealSeedOverride(null); }
-  let actions = 0;
-  while (game_done(game) === null) {
-    if (++actions > MAX_ACTIONS) return false;
+function playAndCheck(np: number, brain: string, stats: { states: number; attacks: number; covers: number }): boolean {
+  const t = MemTable.deal(Array.from({ length: np }, (_, i) => ({ id: `bot_${i}`, name: `Bot ${i}`, brain })), dealSeed(), 'acp');
+  for (let actions = 0; ; actions++) {
+    const game = t.board();
+    if (game.status !== L.GAME_STATUS_PLAYING) return true;
+    if (actions > MAX_ACTIONS) return false;
 
     // ---- parity checks on the CURRENT state --------------------------------
     stats.states++;
-    for (let seat = 0; seat < game.players.length; seat++) {
-      const p = game.players[seat];
-      if (p.status !== PLAYER_STATUS.IN) continue;
-      const personal = gameToView(personalize_game(game, p.player_id) as PersonalGame);
+    for (let seat = 0; seat < game.seats.length; seat++) {
+      const p = game.seats[seat];
+      if (p.status !== L.PLAYER_STATUS_IN) continue;
+      const personal = t.view(seat);
 
       if (seat !== game.defender) {
         // 1. ATTACK: exact agreement (candidates satisfy the callers'
         //    preconditions: own hand, unique, non-defender)
         for (const cards of candidateAttackSets(p.hand)) {
-          const server = serverAllowsAttack(game, p.player_id, cards);
+          const server = serverAllowsAttack(t, seat, cards);
           const button = clientCanAttack(personal, cards);
           const optimistic = clientAllowsAttackOptimistic(personal, cards);
           stats.attacks++;
-          const detail = `seat=${seat} first_attacker=${game.first_attacker} defender=${game.defender} `
-            + `table=[${game.table_battles.map((b) => `${cardKey(b.attack)}${b.defense ? '/' + cardKey(b.defense) : ''}`).join(' ')}] `
-            + `cards=[${cards.map(cardKey).join(',')}] seed=${rng.seed}`;
+          const detail = `seat=${seat} first_attacker=${game.firstAttacker} defender=${game.defender} `
+            + `table=[${tableText(game)}] cards=[${cards.map(cardKey).join(',')}] seed=${rng.seed}`;
           assert.equal(button, server, `canAttack !== kernel: ${detail}`);
           assert.equal(optimistic, server, `validateAttack !== kernel: ${detail}`);
         }
       } else {
         // 2. COVER button: offered => kernel-legal
-        const uncovered = game.table_battles.filter((b) => !b.defense);
+        const uncovered = game.battles.filter((b) => !b.defense);
         if (uncovered.length > 0 && p.hand.length > 0) {
           const selections: Card[][] = p.hand.map((c) => [c]);
           if (p.hand.length >= 2) selections.push([p.hand[0], p.hand[1]]);
           for (const sel of selections) {
             if (!clientCanCoverCards(personal, sel)) continue;
-            const mapping = kernelUnambiguousCover(sel, game.table_battles, game.power_suit);
+            const mapping = kernelUnambiguousCover(sel, game.battles, game.powerSuit);
             assert.ok(mapping, `canCoverCards true but no unambiguous mapping (seed=${rng.seed})`);
             stats.covers++;
             assert.ok(
-              serverAllowsCover(game, p.player_id, mapping!.coverCards, mapping!.attackCards),
+              serverAllowsCover(t, seat, mapping!.coverCards, mapping!.attackCards),
               `client offers a cover the kernel rejects (seed=${rng.seed}): `
               + `covers=[${mapping!.coverCards.map(cardKey).join(',')}] `
               + `attacks=[${mapping!.attackCards.map(cardKey).join(',')}]`,
@@ -202,47 +162,31 @@ async function playAndCheck(np: number, strategy: StrategyKey, stats: { states: 
           }
           // 3. COVER optimistic gate: exact agreement on explicit mappings
           for (const m of candidateCoverMappings(p.hand, game)) {
-            const server = serverAllowsCover(game, p.player_id, m.covers, m.attacks);
+            const server = serverAllowsCover(t, seat, m.covers, m.attacks);
             const optimistic = clientAllowsCoverOptimistic(personal, m.covers, m.attacks);
             stats.covers++;
             assert.equal(
               optimistic, server,
               `validateCover !== kernel (seed=${rng.seed}): covers=[${m.covers.map(cardKey).join(',')}] `
-              + `attacks=[${m.attacks.map(cardKey).join(',')}] `
-              + `table=[${game.table_battles.map((b) => `${cardKey(b.attack)}${b.defense ? '/' + cardKey(b.defense) : ''}`).join(' ')}]`,
+              + `attacks=[${m.attacks.map(cardKey).join(',')}] table=[${tableText(game)}]`,
             );
           }
         }
       }
     }
 
-    // ---- advance the game with the real engine -----------------------------
-    const eligible: PrivatePlayer[] = [];
-    for (let i = 0; i < game.players.length; i++) {
-      const p = game.players[i];
-      if (shouldBotActCore(game, p, i) && calculateLegalMoves(game, p.player_id).length > 0) {
-        eligible.push(p);
-      }
-    }
-    if (eligible.length === 0) return false;
-    const order = rng.shuffle([...eligible]);
-    let acted = false;
-    for (const p of order) {
-      if (await processBotAction(game, p)) { acted = true; break; }
-    }
-    if (!acted) return false;
+    // ---- advance the game: one action of the kernel's bot cycle -------------
+    if (t.drive(1).drive.n === 0) return false;
   }
-  return true;
 }
 
 if (!process.env.VALIDATION_ONLY) {
-  test(`attack/cover parity fuzz: client gates agree with the kernel (${GAMES_PER_PC}/player-count, 2..5 players)`, async () => {
+  test(`attack/cover parity fuzz: client gates agree with the kernel (${GAMES_PER_PC}/player-count, 2..5 players)`, () => {
     const stats = { states: 0, attacks: 0, covers: 0 };
     let played = 0;
     for (let np = 2; np <= 5; np++) {
       for (let g = 0; g < GAMES_PER_PC; g++) {
-        const strategy = (g % 2 === 0 ? 'random' : 'handwritten') as StrategyKey;
-        if (await playAndCheck(np, strategy, stats)) played++;
+        if (playAndCheck(np, g % 2 === 0 ? 'random' : 'handwritten', stats)) played++;
       }
     }
     // eslint-disable-next-line no-console

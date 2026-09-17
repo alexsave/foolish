@@ -1,115 +1,60 @@
-// Regression guard for the belief-bot session-log wiring.
+// Regression guard for the belief-bot session log: the log is LOAD-BEARING.
 //
-// The belief/memory bots (octogen, semtex, cordite, fulminate, espresso) deduce
-// hidden cards from the current session log. The server hot-path loader
-// (loadCompleteGame) deliberately leaves game.logs EMPTY, so for a long window
-// these bots ran blind in production — importLogs marshaled zero records and the
-// bots played as if they had no memory (see the octogen investigation). The fix
-// carries the session log in a dedicated read-only field, game.belief_logs,
-// which the bot loop hydrates from games.logs_packed before the kernel chooses.
+// The belief/memory bots (octogen, cordite, blackpowder, ...) deduce hidden cards
+// from the current session log. For a long window the server loaded state
+// without it, so these bots chose blind in production and played as if they had
+// no memory (see the octogen investigation). The server bot loop now hands the
+// kernel the stored log (games.logs_packed) whenever the kernel says a belief bot
+// is about to choose (table_bots_need_logs, then table_import_session_log).
 //
-// This test pins that contract, WITHOUT a database, at the kernel boundary:
-//   1. belief_logs is honored IDENTICALLY to game.logs (the field the offline
-//      harnesses populate) — same kernel, same seed, same position ⇒ same move.
-//   2. the session log is LOAD-BEARING — octogen changes its move on a
-//      meaningful fraction of positions when the log is present vs empty. If the
-//      log were being ignored again (the regression), this count would be 0.
+// This test pins the kernel half, WITHOUT a database: on the C Table, from the
+// same row, the same deal seed and the same position, octogen's decision with the
+// session log differs from its decision with an empty log on a meaningful
+// fraction of positions. If the imported log were being ignored again (the
+// regression), that count would be 0. The wiring half - that the real bot loop
+// reads and hands over the whole log, and that octogen saw it - is
+// e2e/belief_logs_wiring.test.ts.
+//
+// Phase 8 (docs/C_GAME_SHAPE_MIGRATION.md) moved this off the TypeScript Game
+// (belief_logs vs game.logs through wasmChooseMoveDirect): the log is now the
+// durable session log the bot cycle imports (e2e/helpers/bot_table.ts), and a
+// decision is the state blob the cycle committed.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { game_done } from '../server/api/common/common_utils.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
-import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
-import { shouldBotActCore, executeBotMove } from '../server/api/common/pure_bot_actions.ts';
-import { STRAT, wasmChooseMoveDirect, __setBotSeedSource } from '../sdk/ts/wasm/bots.ts';
-import { __setKernelSeedSource } from '../sdk/ts/wasm/engine.ts';
-import {
-  Game, PrivatePlayer, GameLog, PLAYER_STATUS, GAME_STATUS,
-} from '../server/api/core/types.ts';
+import * as L from '../sdk/ts/gen/game_layout.bots.ts';
+import { fixtureTable } from './helpers/table_fixture.ts';
+import { botCycle, dealBotTable, seedBytes } from './helpers/bot_table.ts';
+import { hexOf } from './helpers/table_mem.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
-const mkLcgU32 = (seed: number) => {
-  let s = (seed >>> 0) || 1;
-  return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s; };
-};
-const mkPlayer = (i: number): PrivatePlayer => ({
-  player_id: `p${i}`, name: `octogen${i}`, status: PLAYER_STATUS.READY, is_ai: true,
-  hand: [], awaiting_attack: false, hand_length: 0, strategy_key: 'octogen',
-});
-const mkGame = (np: number, gi: number): Game => ({
-  players: Array.from({ length: np }, (_, i) => mkPlayer(i)),
-  deck: [], logs: [], id: `belief-${np}-${gi}`, name: 'belief', status: GAME_STATUS.PLAYING,
-  deck_length: 0, discard_pile_length: 0, flipped: null, power_suit: 0,
-  first_attacker: 0, defender: 0, table_battles: [], elimination_order: [],
-  good_timestamp: null, good_players: [],
-});
-const move = (g: Game, seat: number, strat: number, seed: number) => {
-  __setBotSeedSource(() => seed);
-  const m = wasmChooseMoveDirect(g, g.players[seat].player_id, strat);
-  __setBotSeedSource(null);
-  return JSON.stringify(m);
-};
+const NO_LOG = new Uint8Array(0);
 
-test('belief_logs is honored like game.logs AND is load-bearing for octogen', () => {
-  const metaSeed = mkLcgU32(0xB3113F);
-  __setKernelSeedSource(mkLcgU32(0xC0FFEE));
-  let compared = 0, fieldMismatch = 0, beliefChangedMove = 0;
-  try {
-    for (const np of [2, 3, 4]) {
-      for (let gi = 0; gi < 6; gi++) {
-        const g = mkGame(np, gi);
-        start_game(g);
-        let guard = 0;
-        while (game_done(g) === null && ++guard < 3000) {
-          let advanced = false;
-          for (let i = 0; i < g.players.length; i++) {
-            const p = g.players[i];
-            if (p.status !== PLAYER_STATUS.IN || !shouldBotActCore(g, p, i)) continue;
-            const legal = calculateLegalMoves(g, p.player_id);
-            if (legal.length === 0) continue;
-
-            // game.logs holds the real accumulated session (executeBotMove
-            // appends via addLog). Snapshot it as the "belief input".
-            const sessionLog: GameLog[] = g.logs.slice();
-            const seed = metaSeed();
-
-            // (1) belief_logs == game.logs: move via belief_logs (logs cleared)
-            // must equal move via game.logs (belief_logs unset).
-            g.belief_logs = sessionLog; g.logs = [];
-            const viaBelief = move(g, i, STRAT.octogen, seed);
-            g.belief_logs = undefined; g.logs = sessionLog;
-            const viaGameLogs = move(g, i, STRAT.octogen, seed);
-            if (viaBelief !== viaGameLogs) fieldMismatch++;
-
-            // (2) load-bearing: with the log vs with an empty log.
-            g.belief_logs = []; g.logs = [];
-            const viaEmpty = move(g, i, STRAT.octogen, seed);
-            if (viaGameLogs !== viaEmpty) beliefChangedMove++;
-
-            g.belief_logs = undefined; g.logs = sessionLog; // restore for play
-            compared++;
-
-            if (!advanced) {
-              let mv = legal.find(m => JSON.stringify(m) === viaGameLogs) ?? legal[0];
-              if (mv.type === 'wait') mv = legal.find(m => m.type !== 'wait') ?? mv;
-              if (executeBotMove(g, p, mv) !== false) advanced = true;
-            }
-          }
-          if (!advanced) break;
+test('the session log is load-bearing for octogen', () => {
+  let compared = 0, beliefChangedMove = 0;
+  for (const np of [2, 3, 4]) {
+    for (let gi = 0; gi < 6; gi++) {
+      let row = dealBotTable(Array.from({ length: np }, () => 'octogen'), seedBytes(np, 0xbe11 + gi), { gameId: `belief-${np}-${gi}` });
+      for (let guard = 0; guard < 3000 && row.status === L.GAME_STATUS_PLAYING; guard++) {
+        const table = fixtureTable();
+        assert.equal(table.load(row.state, row.roster), L.TABLE_OK);
+        const withLog = botCycle(row, { maxActions: 1 });
+        if (withLog.drive.n === 0) break;
+        if (table.load(row.state, row.roster) === L.TABLE_OK && table.botsNeedLogs() && row.log.length > 0) {
+          // The same cycle from the same row, with the memory taken away.
+          const blind = botCycle({ ...row, log: NO_LOG }, { maxActions: 1 });
+          if (hexOf(blind.row.state) !== hexOf(withLog.row.state)) beliefChangedMove++;
+          compared++;
         }
+        row = withLog.row;
       }
     }
-  } finally {
-    __setBotSeedSource(null);
-    __setKernelSeedSource(null);
   }
 
-  console.error(`[belief_logs] compared=${compared} fieldMismatch=${fieldMismatch} beliefChangedMove=${beliefChangedMove}`);
+  console.error(`[belief_logs] compared=${compared} beliefChangedMove=${beliefChangedMove}`);
   assert.ok(compared > 500, `exercised ${compared} decisions`);
-  // (1) belief_logs must be a drop-in for game.logs — every position identical.
-  assert.equal(fieldMismatch, 0, `belief_logs diverged from game.logs on ${fieldMismatch}/${compared} positions`);
-  // (2) if the log were ignored (the regression), this would be exactly 0.
+  // If the log were ignored (the regression), this would be exactly 0.
   assert.ok(beliefChangedMove > 0,
-    `session log never changed octogen's move (${beliefChangedMove}/${compared}) — belief input is being ignored`);
+    `session log never changed octogen's move (${beliefChangedMove}/${compared}) - belief input is being ignored`);
 });

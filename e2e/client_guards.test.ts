@@ -8,76 +8,64 @@
 // across random games, and measures call cost and memory flatness. The C twin
 // is c/tests test_client_validate_is_the_engine.
 //
-// Pure kernel test - needs no Postgres.
+// Pure kernel test - needs no Postgres. Phase 8 (docs/C_GAME_SHAPE_MIGRATION.md)
+// moved it off the TypeScript Game: the authority is the C Table's table_act on
+// the row, the client's board is the seat's envelope as the web reads it, and
+// games are dealt from a seed and advanced by the kernel's bot cycle
+// (e2e/helpers/table_mem.ts).
 
 import { test } from 'node:test';
-import { gameToView } from './helpers/view_game.ts';
-import type { TableView } from '../sdk/ts/table/client_table.ts';
 import assert from 'node:assert/strict';
 
+import * as L from '../sdk/ts/gen/game_layout.bots.ts';
+import type { TableView, ViewCard as Card } from '../sdk/ts/table/client_table.ts';
 import { canAttack, canPass, canPickup, canCoverPair, validateCover } from '../src/utils/gameValidation.ts';
-import { __clientKernelExports } from '../sdk/ts/wasm/bots.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
-import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
-import { shouldBotActCore, processBotAction } from '../server/api/common/pure_bot_actions.ts';
-import {
-  personalize_game, game_done, canCover as tsCanCover,
-} from '../server/api/common/common_utils.ts';
-import {
-  kernelValidateAttack, kernelValidatePass, kernelValidateCover, kernelValidatePickup, kernelCanCover,
-} from '../sdk/ts/wasm/engine.ts';
-import {
-  Game, PersonalGame, PrivatePlayer, Card, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
-} from '../server/api/core/types.ts';
+import { __clientKernelExports, kernelUnambiguousCover } from '../sdk/ts/wasm/bots.ts';
+import { encodeAction, type AwireMove } from '../sdk/ts/wire/awire.ts';
+import { MemTable, residentMoves } from './helpers/table_mem.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
-const mkPlayer = (i: number): PrivatePlayer => ({
-  player_id: `p${i}`, name: `P${i}`, status: PLAYER_STATUS.READY, is_ai: true,
-  hand: [], awaiting_attack: false, hand_length: 0, strategy_key: STRATEGY_KEY.RANDOM,
-});
-const mkGame = (np: number): Game => ({
-  players: Array.from({ length: np }, (_, i) => mkPlayer(i)),
-  deck: [], logs: [], id: 'cg', name: 'cg', status: GAME_STATUS.PLAYING,
-  deck_length: 0, discard_pile_length: 0, flipped: null, power_suit: 0,
-  first_attacker: 0, defender: 0, table_battles: [], elimination_order: [],
-  good_timestamp: null, good_players: [],
-});
-const personalFor = (g: Game, seat: number): TableView => gameToView(
-  personalize_game(g, g.players[seat].player_id) as PersonalGame);
+const seedOf = (np: number) => Uint8Array.from({ length: 32 }, (_, i) => (i * 17 + np * 5 + 3) & 0xff);
+const deal = (np: number): MemTable =>
+  MemTable.deal(Array.from({ length: np }, (_, i) => ({ id: `p${i}`, name: `P${i}`, brain: 'random' })), seedOf(np), 'cg');
 
-// Server-kernel oracle: validate throws on an illegal move.
-const legal = (fn: () => void): boolean => { try { fn(); return true; } catch { return false; } };
-const canCover = (view: TableView, covers: Card[], attacks: Card[]): boolean => legal(() => validateCover(view, covers, attacks));
+// Server-kernel oracle: the table applies a legal move and refuses an illegal one.
+const legal = (t: MemTable, seat: number, move: AwireMove): boolean => {
+  const { rc } = t.probe(seat, encodeAction(move));
+  assert.ok(rc === L.TABLE_APPLIED || rc === L.TABLE_REJECTED, `a move is applied or rejected, got ${rc}`);
+  return rc === L.TABLE_APPLIED;
+};
+const canCover = (view: TableView, covers: Card[], attacks: Card[]): boolean => {
+  try { validateCover(view, covers, attacks); return true; } catch { return false; }
+};
 
-test('client gates == authoritative kernel across random games (2..6 players)', async () => {
+test('client gates == authoritative kernel across random games (2..6 players)', () => {
   let legalChecks = 0, illegalChecks = 0;
 
   for (let np = 2; np <= 6; np++) {
-    const g = mkGame(np);
-    start_game(g);
+    const t = deal(np);
     let guard = 0;
-    while (game_done(g) === null && ++guard < 300) {
+    while (++guard < 300) {
+      const g = t.board();
+      if (g.status !== L.GAME_STATUS_PLAYING) break;
       for (let seat = 0; seat < np; seat++) {
-        const p = g.players[seat];
-        if (p.status !== PLAYER_STATUS.IN) continue;
-        const pg = personalFor(g, seat);
+        const p = g.seats[seat];
+        if (p.status !== L.PLAYER_STATUS_IN) continue;
+        const pg = t.view(seat);
+        t.load();
+        const moves = residentMoves(seat);
 
         // Every enumerated legal move must be accepted by the client gate too.
-        for (const m of calculateLegalMoves(g, p.player_id)) {
-          if (m.type === 'attack') {
-            assert.equal(canAttack(pg, m.cards!), legal(() => kernelValidateAttack(g, p.player_id, m.cards!)),
-              'attack gate parity'); legalChecks++;
-          } else if (m.type === 'pass') {
-            assert.equal(canPass(pg, m.cards!), legal(() => kernelValidatePass(g, p.player_id, m.cards!)),
-              'pass gate parity'); legalChecks++;
-          } else if (m.type === 'cover') {
-            assert.equal(canCover(pg, m.cards!, m.attack_cards!),
-              legal(() => kernelValidateCover(g, p.player_id, m.cards!, m.attack_cards!)),
-              'cover gate parity'); legalChecks++;
-          } else if (m.type === 'pickup') {
-            assert.equal(canPickup(pg), legal(() => kernelValidatePickup(g, p.player_id)),
-              'pickup gate parity'); legalChecks++;
+        for (const m of moves) {
+          if (m.kind === 'attack') {
+            assert.equal(canAttack(pg, m.cards), legal(t, seat, m), 'attack gate parity'); legalChecks++;
+          } else if (m.kind === 'pass') {
+            assert.equal(canPass(pg, m.cards), legal(t, seat, m), 'pass gate parity'); legalChecks++;
+          } else if (m.kind === 'cover') {
+            assert.equal(canCover(pg, m.cards, m.attack_cards!), legal(t, seat, m), 'cover gate parity'); legalChecks++;
+          } else if (m.kind === 'pickup') {
+            assert.equal(canPickup(pg), legal(t, seat, m), 'pickup gate parity'); legalChecks++;
           }
         }
 
@@ -85,21 +73,19 @@ test('client gates == authoritative kernel across random games (2..6 players)', 
         // pass, and a card the seat does not hold (an opponent's). Both engines
         // must agree on each.
         for (const card of p.hand) {
-          assert.equal(canAttack(pg, [card]), legal(() => kernelValidateAttack(g, p.player_id, [card])), 'lone attack parity');
-          assert.equal(canPass(pg, [card]), legal(() => kernelValidatePass(g, p.player_id, [card])), 'lone pass parity');
+          assert.equal(canAttack(pg, [card]), legal(t, seat, { kind: 'attack', cards: [card] }), 'lone attack parity');
+          assert.equal(canPass(pg, [card]), legal(t, seat, { kind: 'pass', cards: [card] }), 'lone pass parity');
           illegalChecks += 2;
         }
-        const foreign = g.players[(seat + 1) % np].hand[0];
+        const foreign = g.seats[(seat + 1) % np].hand[0];
         if (foreign) {
-          assert.equal(canAttack(pg, [foreign]), legal(() => kernelValidateAttack(g, p.player_id, [foreign])),
+          assert.equal(canAttack(pg, [foreign]), legal(t, seat, { kind: 'attack', cards: [foreign] }),
             'foreign-card attack parity'); illegalChecks++;
         }
-        assert.equal(canPickup(pg), legal(() => kernelValidatePickup(g, p.player_id)), 'pickup parity');
+        assert.equal(canPickup(pg), legal(t, seat, { kind: 'pickup' }), 'pickup parity');
       }
 
-      const actor = g.players.find((pp, i) => shouldBotActCore(g, pp, i) && calculateLegalMoves(g, pp.player_id).length > 0);
-      if (!actor) break;
-      await processBotAction(g, actor);
+      if (t.drive(1).drive.n === 0) break;
     }
   }
 
@@ -108,25 +94,27 @@ test('client gates == authoritative kernel across random games (2..6 players)', 
   console.error(`[client-guards] legal=${legalChecks} other=${illegalChecks}`);
 });
 
-test('canCoverPair matches the kernel and the old TS primitive over the full card cross-product', () => {
+test("canCoverPair is the cover rule, and the kernel's cover resolver agrees, over the full card cross-product", () => {
   for (let ps = 0; ps < 4; ps++) {
     for (let as = 0; as < 4; as++) for (let av = 1; av <= 13; av++) {
       for (let ds = 0; ds < 4; ds++) for (let dv = 1; dv <= 13; dv++) {
         const a: Card = { suit: as, value: av }, d: Card = { suit: ds, value: dv };
         const got = canCoverPair(a, d, ps);
-        assert.equal(got, kernelCanCover(a, d, ps), 'kernel parity');
-        assert.equal(got, tsCanCover(a, d, ps), 'ex-TS primitive parity');
+        // The rule, stated: a higher card of the attack's suit, or any trump over a non-trump.
+        const rule = (ds === as && dv > av) || (ds === ps && as !== ps);
+        assert.equal(got, rule, `the cover rule: ${dv}/${ds} over ${av}/${as}, trump ${ps}`);
+        const resolver = kernelUnambiguousCover([d], [{ attack: a, defense: null }], ps) !== null;
+        assert.equal(got, resolver, "the kernel's cover resolver agrees");
       }
     }
   }
 });
 
 test('perf + mem: gates are fast and the module memory is flat (no leak)', () => {
-  // A representative mid-round state: first attacker with an opener available.
-  const g = mkGame(4);
-  start_game(g);
-  const seat = g.first_attacker;
-  const pg = personalFor(g, seat);
+  // A representative opening: the first attacker with an opener available.
+  const t = deal(4);
+  const seat = t.board().firstAttacker;
+  const pg = t.view(seat);
   const card = pg.myHand[0];
   const memory = (__clientKernelExports() as unknown as { memory: WebAssembly.Memory }).memory;
 
