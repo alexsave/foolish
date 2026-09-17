@@ -60,10 +60,11 @@ interface Rows {
     elo: { user_id: string; elo_rating: number; previous_elo: number }[];
     botElo: { id: string; elo_rating: number; previous_elo: number }[];
     bots: { id: string; nickname: string; strategy_key: string }[];
+    snapshots: { id: string; player_ids: string[]; moves: string; extras: string | null; created_at: string }[];
 }
 let rows: Rows = emptyRows();
 function emptyRows(): Rows {
-    return { playerViews: new Map(), spectatorViews: new Map(), dashboard: [], elo: [], botElo: [], bots: [] };
+    return { playerViews: new Map(), spectatorViews: new Map(), dashboard: [], elo: [], botElo: [], bots: [], snapshots: [] };
 }
 
 /** A PostgREST chain: every filter returns the chain; awaiting it (or a terminal) answers from `rows`. */
@@ -78,7 +79,7 @@ function query(table: string) {
         else if (table === 'chat_messages') data = [];
         else if (table === 'user_elo_ratings') data = rows.elo;
         else if (table === 'bots') data = filters.in ? rows.botElo : rows.bots;
-        else if (table === 'game_snapshots') return { data: null, error: { message: 'no snapshot in this harness' } };
+        else if (table === 'game_snapshots') data = rows.snapshots;
         return { data, error: null };
     };
     const chain: any = {
@@ -205,6 +206,23 @@ async function click(host: HTMLElement, selector: string, wait: (ms: number) => 
     assert.ok(el, `nothing matches ${selector}`);
     el.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     await wait(30);
+}
+
+async function historyPage(): Promise<any> {
+    const React = (await import('react')).default;
+    const h = React.createElement;
+    const { LocalizationProvider } = await import('../src/contexts/LocalizationContext.tsx');
+    const { ThemeProvider } = await import('../src/contexts/ThemeContext.tsx');
+    const { StyleProvider } = await import('../src/contexts/StyleContext.tsx');
+    const { TextureProvider } = await import('../src/components/TexturedSurface.tsx');
+    const { AuthContext } = await import('../src/contexts/AuthContext.tsx');
+    const { MatchHistory } = await import('../src/components/MatchHistory.tsx');
+    const { ensureBotsAsync } = await import('../sdk/ts/wasm/bots.ts');
+    await ensureBotsAsync();
+    routeGameId = '';
+    const auth = { user_id: ME, username: 'Me', loading: false, setRedirectAfterLogin: () => {} };
+    return h(LocalizationProvider, null, h(ThemeProvider, null, h(StyleProvider, null, h(TextureProvider, null,
+        h(AuthContext.Provider, { value: auth as any }, h(MatchHistory))))));
 }
 
 async function tutorialPage(start: boolean): Promise<any> {
@@ -386,6 +404,36 @@ test('the dashboard', async () => {
     await screen('dashboard', 71, () => {
         rows.dashboard = [envelope('dash1', twoSeatBout(), 0), envelope('dash2', lobby, 0), envelope('dash3', eightSeats(), 0)];
     }, () => gamePage('', ME));
+});
+
+// The match history reads each finished game's code: its seats, its fool, the
+// order the others went out, and the moves its extras time (the names). Recorded
+// on the code before Phase 7, which read them through the TS replay decoder.
+test('the match history', async () => {
+    const { playSeededV6 } = await import('./helpers/seeded_game.ts');
+    const { replaySummary } = await import('../sdk/ts/wasm/bots.ts');
+    const { encodeExtrasBytes } = await import('../server/api/common/replay/extras.ts');
+    const games: { np: number; seed: number; me: number; names: string[] | null }[] = [
+        { np: 3, seed: 41, me: 1, names: ['Ada', 'Me', '%Cordite'] },
+        { np: 4, seed: 42, me: 0, names: null },
+        { np: 2, seed: 7, me: 1, names: ['Boris', 'Me'] },
+        { np: 8, seed: 43, me: 5, names: ['A', 'B', 'C', 'D', 'E', 'Me', 'G', 'H'] },
+    ];
+    const snapshots: Rows['snapshots'] = [];
+    for (const [i, x] of games.entries()) {
+        const played = await playSeededV6(x.np, x.seed);
+        assert.ok(played, `${x.np}p seed ${x.seed} finished`);
+        const summary = replaySummary(played!.code);
+        assert.ok(summary, 'the code has a summary');
+        const times = Array.from({ length: summary!.moves + 1 }, (_, k) => 1_780_000_000 + k * (7 + i));
+        const extras = x.names ? hex(encodeExtrasBytes(x.names, times)) : null;
+        const ids = Array.from({ length: x.np }, (_, s) => (s === x.me ? ME : `u-other-${i}-${s}`));
+        snapshots.push({ id: `snap-${i}`, player_ids: ids, moves: hex(played!.code), extras, created_at: `2026-09-1${i}T12:00:00` });
+    }
+    await screen('match_history', 72, () => {
+        rows.snapshots = snapshots;
+        rows.elo = [{ user_id: ME, elo_rating: 1234, previous_elo: 1200 }];
+    }, () => historyPage());
 });
 
 test('the tutorial, first screen', async () => {
