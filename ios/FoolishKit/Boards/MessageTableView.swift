@@ -2306,7 +2306,8 @@ public struct MessageTableView: View {
                             // set this used to pass unconditionally.
                             flyingNow: grid.flyingNow,
                             marks: true,
-                            slides: FBattleGrid.slidesLive)
+                            slides: FBattleGrid.slidesLive,
+                            slidesPreview: FBattleGrid.slidesPreviewLive)
             } else {
                 // Empty table: render nothing (web parity). A "no battle" label
                 // just tells the player what they can already see (owner's call).

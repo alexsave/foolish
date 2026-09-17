@@ -24,6 +24,7 @@ final class TableThrowInSlideTests: XCTestCase {
     private final class Table: ObservableObject {
         @Published var battles: [BattleView]
         @Published var hidden: Set<String> = []
+        @Published var ghost = false
         init(_ battles: [BattleView]) { self.battles = battles }
     }
 
@@ -32,7 +33,7 @@ final class TableThrowInSlideTests: XCTestCase {
         let slides: Bool
         var body: some View {
             FBattleGrid(battles: table.battles, trumpSuit: nil, hidden: table.hidden,
-                        slides: slides)
+                        showGhostSlot: table.ghost, slides: slides, slidesPreview: slides)
                 .frame(width: Self.size.width, height: Self.size.height)
                 .background(Color.white)
         }
@@ -125,6 +126,31 @@ final class TableThrowInSlideTests: XCTestCase {
             + "a jump, not a slide (samples: \(seen.map { Int($0) }))")
     }
 
+    /// THE PASS PREVIEW SLIDES TOO. Filmed dragging a card to pass: the dashed
+    /// preview slot appeared and both pairs jumped 36pt in one frame, then back
+    /// as the card crossed a pair (the slot goes while a cover target is under
+    /// the finger), four times in one drag. The slot is a cell of the same
+    /// centred row, so it moves the pairs exactly as a throw-in does.
+    /// MUTANT: the preview's animation removed.
+    func testThePassPreviewSlotSlidesThePairs() throws {
+        let table = Table(Self.down)
+        let window = try window(table, slides: true)
+        defer { window.isHidden = true }
+        let before = try XCTUnwrap(Self.leftEdge(window), "the table drew nothing")
+        table.ghost = true
+        var seen: [CGFloat] = []
+        let end = Date().addingTimeInterval(flightTime + 0.4)
+        while Date() < end {
+            RunLoop.current.run(until: Date().addingTimeInterval(1.0 / 60))
+            if let x = Self.leftEdge(window) { seen.append(x) }
+        }
+        let after = try XCTUnwrap(seen.last)
+        XCTAssertLessThan(after, before - 20, "the preview slot did not re-centre the row")
+        let between = Set(seen.filter { $0 < before - 1 && $0 > after + 1 }.map { Int($0) })
+        XCTAssertGreaterThanOrEqual(between.count, 3,
+            "the pairs jumped \(before) -> \(after)pt when the pass preview appeared (samples: \(seen.map { Int($0) }))")
+    }
+
     /// The flag's OTHER state is build 71's jump, kept for comparison - and a
     /// flag whose two states draw the same thing is not a flag.
     /// MUTANT: the animation applied whatever `slides` says.
@@ -149,5 +175,8 @@ final class TableThrowInSlideTests: XCTestCase {
             .appendingPathComponent("FoolishKit/Boards/MessageTableView.swift"), encoding: .utf8)
         XCTAssertTrue(board.contains("slides: FBattleGrid.slidesLive"),
                       "the live table no longer reads the table.slide flag")
+        XCTAssertTrue(FBattleGrid.slidePreviewByDefault)
+        XCTAssertTrue(board.contains("slidesPreview: FBattleGrid.slidesPreviewLive"),
+                      "the live table no longer reads the table.slidepreview flag")
     }
 }

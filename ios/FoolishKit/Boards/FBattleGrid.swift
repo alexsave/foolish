@@ -55,11 +55,15 @@ public struct FBattleGrid: View {
     /// Whether a change to the pairs on the table SLIDES the ones already down
     /// to where they are going. See `slideByDefault`.
     public let slides: Bool
+    /// Whether the pass-preview slot coming and going SLIDES the row. See
+    /// `slidePreviewByDefault`.
+    public let slidesPreview: Bool
 
     public init(battles: [BattleView], trumpSuit: Suit?, coverable: Set<Int> = [],
                 onTapBattle: @escaping (Int) -> Void = { _ in }, namespace: Namespace.ID? = nil,
                 hidden: Set<String> = [], showGhostSlot: Bool = false, flyingNow: Set<String> = [],
-                scale: CGFloat = 1, marks: Bool = false, slides: Bool = false) {
+                scale: CGFloat = 1, marks: Bool = false, slides: Bool = false,
+                slidesPreview: Bool = false) {
         self.battles = battles
         self.trumpSuit = trumpSuit
         self.coverable = coverable
@@ -71,6 +75,7 @@ public struct FBattleGrid: View {
         self.scale = scale
         self.marks = marks
         self.slides = slides
+        self.slidesPreview = slidesPreview
     }
 
     /// A THROW-IN SLIDES THE TABLE; IT NEVER JUMPS IT.
@@ -95,6 +100,22 @@ public struct FBattleGrid: View {
     ///
     /// Ships on. `table.slide=0` in `dev.flags` puts back the jump.
     public static let slideByDefault = true
+
+    /// THE PASS PREVIEW SLIDES THE ROW TOO. Filmed dragging a card to pass: the
+    /// dashed preview slot is a cell of the same centred row, so when it
+    /// appeared both pairs jumped 36pt in one frame, and back again as the card
+    /// crossed a pair - four jumps in one drag. Keyed on the slot alone, and
+    /// half a flight long: it follows a finger, not a card in the air. Ships on;
+    /// `table.slidepreview=0` in `dev.flags` puts the jump back.
+    public static let slidePreviewByDefault = true
+
+    public static var slidesPreviewLive: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("table.slidepreview", shipping: slidePreviewByDefault)
+        #else
+        return slidePreviewByDefault
+        #endif
+    }
 
     /// The live value: the shipping default in Release; in DEBUG, whatever
     /// `dev.flags` says, and the shipping default when it says nothing.
@@ -189,6 +210,8 @@ public struct FBattleGrid: View {
                 .transition(.identity)
             }
         }
+        .animation(slidesPreview ? .timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime / 2) : nil,
+                   value: showGhostSlot)
         .animation(slides ? .timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime) : nil,
                    value: battles.map(\.attack.identity))
     }
