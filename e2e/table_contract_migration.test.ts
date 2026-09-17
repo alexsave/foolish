@@ -267,6 +267,12 @@ if (!process.env.VALIDATION_ONLY) {
         const joined = (await pgPool.query(`SELECT ${STORED_COLS} FROM games WHERE id = $1`, [id])).rows[0] as Stored;
         assert.deepEqual(await cachedViews(id), envelopesOf(joined), 'the join\'s cached views are the envelopes of the stored row');
         assert.deepEqual(table.seats().map((s) => s.id), [ALICE, joiner]);
+        // The next commit leaves the roster alone and sends none: the stored one stays.
+        const same = table.commit(id, Number(joined.version) + 1, 0) as TableProducts;
+        assert.equal(same.rosterChanged, false);
+        assert.equal((await commitTableSql(id, Number(joined.version), same, table.seats())).committed, true);
+        assert.equal((await pgPool.query('SELECT roster FROM games WHERE id = $1', [id])).rows[0].roster, joined.roster,
+            'a NULL roster keeps the stored one on the contracted table');
 
         // A new table.
         assert.equal(table.create(joiner, 'Zoë 🃏'), TABLE_OK);
