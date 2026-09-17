@@ -144,12 +144,24 @@ const GAMES_SHAPE = `
            pg_get_functiondef(p.oid), '--[^\\n]*', '', 'g'), '\\s+', ' ', 'g'))
   FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname = 'public'
-    AND (p.proname IN ('commit_game', 'create_game', 'commit_table', 'create_table') OR p.proname LIKE 'legacy\\_%')
+    AND (p.proname IN ('commit_game', 'create_game', 'commit_table', 'create_table', 'delete_account') OR p.proname LIKE 'legacy\\_%')
+  ORDER BY 1
+`;
+
+// Every privilege a client role holds on games, SELECT included, at table level
+// or on any column (docs/C_GAME_SHAPE_MIGRATION.md 3.3).
+const GAMES_CLIENT_PRIVILEGES = `
+  SELECT r.role || ' ' || p.priv AS grant
+  FROM (VALUES ('anon'), ('authenticated')) AS r(role)
+  CROSS JOIN (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) AS p(priv)
+  WHERE CASE WHEN p.priv IN ('SELECT', 'INSERT', 'UPDATE', 'REFERENCES')
+             THEN has_any_column_privilege(r.role, 'public.games', p.priv)
+             ELSE has_table_privilege(r.role, 'public.games', p.priv) END
   ORDER BY 1
 `;
 
 type Exposure = { fn: string; who: string };
-type Posture = { exposed: string[]; writes: string[]; writePolicies: string[] };
+type Posture = { exposed: string[]; writes: string[]; writePolicies: string[]; gamesPrivileges: string[] };
 
 async function exposedRpcs(): Promise<Exposure[]> {
     const { rows } = await pgPool.query(EXPOSED_SECDEF);
@@ -162,7 +174,8 @@ async function posture(): Promise<Posture> {
     const exposed = (await exposedRpcs()).map((e) => `${e.fn} [${e.who}]`);
     const writes = (await pgPool.query(CLIENT_WRITES)).rows.map((r) => r.grant);
     const writePolicies = (await pgPool.query(WRITE_POLICIES)).rows.map((r) => r.policy);
-    return { exposed, writes, writePolicies };
+    const gamesPrivileges = (await pgPool.query(GAMES_CLIENT_PRIVILEGES)).rows.map((r) => r.grant);
+    return { exposed, writes, writePolicies, gamesPrivileges };
 }
 
 function replayedMigrations(): string[] {
@@ -222,7 +235,7 @@ export function registerMigrationGrantsValidation(): void {
             hostedGamesShape = (await pgPool.query(GAMES_SHAPE)).rows.map((r) => r.item);
 
             await pgPool.query(
-                `INSERT INTO games (id, name, players, status) VALUES ($1, 'victim', '[]'::jsonb, 'waiting')`,
+                `INSERT INTO games (id, status, state, roster) VALUES ($1, 'waiting', '\\x00', '\\x00')`,
                 [VICTIM_GAME],
             );
             await pgPool.query(`INSERT INTO auth.users (id) VALUES ($1), ($2)`, [MEMBER, ATTACKER]);
@@ -252,16 +265,31 @@ export function registerMigrationGrantsValidation(): void {
             );
         });
 
-        test('anon cannot execute commit_game, as POST /rest/v1/rpc/commit_game would', async () => {
+        test('anon cannot execute commit_table, as POST /rest/v1/rpc/commit_table would', async () => {
             await asClient('anon', null, async (c) => {
                 await assert.rejects(
                     // A game id that matches nothing: if EXECUTE is granted this returns
                     // {"status":"conflict"} and touches no row.
-                    c.query(`SELECT commit_game('no-such-game', 0, '{}'::jsonb)`),
+                    c.query(`SELECT commit_table('no-such-game', 0, '\\x00', '\\x00', 0::smallint, FALSE)`),
                     (e: { code?: string }) => e.code === '42501',
-                    'anon executed commit_game, the RPC that rewrites any game',
+                    'anon executed commit_table, the RPC that rewrites any game',
                 );
             });
+        });
+
+        test('the contract migration left no legacy writer: commit_game, create_game and the bridge are gone', async () => {
+            // Phase 4c (20260918120000_table_contract.sql). A function that does not
+            // exist cannot be reopened by a later grant.
+            const { rows } = await pgPool.query(
+                `SELECT p.oid::regprocedure::text AS fn FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                 WHERE n.nspname = 'public' AND (p.proname IN ('commit_game', 'create_game') OR p.proname LIKE 'legacy\\_%')`);
+            assert.deepEqual(rows.map((r) => r.fn), []);
+        });
+
+        test('neither client role holds any privilege on games, SELECT included, under the platform defaults', () => {
+            // Supabase's default privileges grant ALL on every table; the contract
+            // migration takes every one back. No client reads games (3.3).
+            assert.deepEqual(hostedPosture!.gamesPrivileges, []);
         });
 
         test('no client role holds a write privilege on a public table, beyond the intended ones', () => {
@@ -283,9 +311,9 @@ export function registerMigrationGrantsValidation(): void {
             await asClient('authenticated', ATTACKER, async (c) => {
                 await assert.rejects(
                     c.query(
-                        `INSERT INTO games (id, name, players, status, state)
-                         VALUES ('forged', 'forged', $1::jsonb, 'playing', 'deadbeef')`,
-                        [JSON.stringify([{ player_id: ATTACKER, name: 'a', status: 'in', is_ai: false }])],
+                        `INSERT INTO games (id, status, state, roster)
+                         VALUES ('forged', 'playing', '\\xdeadbeef', $1)`,
+                        [`\\x01${ATTACKER}`],
                     ),
                     (e: { code?: string }) => e.code === '42501',
                     'authenticated inserted a games row directly',
@@ -293,7 +321,7 @@ export function registerMigrationGrantsValidation(): void {
             });
             await asClient('anon', null, async (c) => {
                 await assert.rejects(
-                    c.query(`INSERT INTO games (id, name) VALUES ('forged-anon', 'forged')`),
+                    c.query(`INSERT INTO games (id, state, roster) VALUES ('forged-anon', '\\x00', '\\x00')`),
                     (e: { code?: string }) => e.code === '42501',
                 );
             });

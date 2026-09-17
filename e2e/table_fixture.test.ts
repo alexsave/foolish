@@ -173,13 +173,12 @@ test('seedTable: the stored row is the fixture, with the kernel status, needs_bo
         .build();
     await seedTable(gameId, fx, { version: 5 });
 
-    const row = (await pgPool.query('SELECT status, state, roster, needs_bots, writer_gen, version FROM games WHERE id = $1', [gameId])).rows[0];
+    const row = (await pgPool.query('SELECT status, state, roster, needs_bots, version FROM games WHERE id = $1', [gameId])).rows[0];
     const hex = (b: Uint8Array) => `\\x${Buffer.from(b).toString('hex')}`;
     assert.equal(row.status, 'playing');
     assert.equal(row.state, hex(fx.state), 'games.state is the fixture blob');
     assert.equal(row.roster, hex(fx.roster), 'games.roster is the fixture roster');
     assert.equal(row.needs_bots, true, 'the kernel says a bot is IN');
-    assert.equal(row.writer_gen, 2, 'owned by the kernel writers, so the legacy bridge derived nothing');
     assert.equal(Number(row.version), 5);
 
     const humans = (await pgPool.query('SELECT player_id FROM player_hands WHERE game_id = $1 ORDER BY player_id', [gameId])).rows.map((r) => r.player_id);
