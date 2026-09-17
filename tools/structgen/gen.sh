@@ -13,6 +13,20 @@
 #   gen.sh --check   regenerate into a temp dir and fail if either is stale (the
 #                    freshness gate, in the style of scripts/check_wasm_freshness.sh)
 #
+# build/verify.wasm is a BUILD OUTPUT, so it lives with the generator's own
+# binary and is not committed. It is a wasm32 link of test/verify.c whose bytes
+# are the toolchain's, so a macOS homebrew clang and CI's clang-22 on Linux
+# write two different modules from the same source. It USED to sit in gen/ and
+# be committed, with `diff -x verify.wasm` excusing it from the freshness check
+# for exactly that reason - and the exclusion is what let it rot: it was last
+# written at 05192715 and still held the layouts anim_plan.h had before 546565fe
+# grew AnimPlan, while `gen.sh --check` reported everything fresh. It is built
+# on demand now (test/verify.test.ts reads it, CI runs this script before the
+# test), and two checks keep that true: --check refuses a tracked build output
+# under gen/, and the link is run twice and compared, so a source that stops
+# building reproducibly (a __DATE__, a path, an uninitialised pad) fails here
+# rather than turning up as a mystery diff.
+#
 # game_layout.<build>.ts and layout_hash.<build>.ts are ALSO written by the wasm make targets (c/Makefile,
 # "Layout hash"), from the same specs/game_layout.args and the same flags, so
 # `make -C c wasm-bots` after a header edit leaves the module and the wasm in
@@ -80,10 +94,36 @@ set +f
 if [ "$check" = 1 ]; then
   stale=0
   diff -r "$root/sdk/ts/gen" "$prod" || stale=1
-  diff -r -x verify.wasm "$here/gen" "$fixtures" || stale=1
+  # No exclusions: a generated file the diff does not look at is a generated
+  # file nothing keeps fresh. gen/ holds generated MODULES only; the wasm the
+  # verify test reads is a build output and lives in build/.
+  diff -r "$here/gen" "$fixtures" || stale=1
+  # A build output tracked in the repo goes stale the moment its source changes
+  # and nobody reruns the build. Everything under gen/ the repo knows about must
+  # be a generated MODULE the diff above compares.
+  tracked_junk="$(GIT_OPTIONAL_LOCKS=0 git -C "$root" ls-files "tools/structgen/gen" | grep -v '\.ts$' || true)"
+  if [ -n "$tracked_junk" ]; then
+    echo "gen: a build output is committed under tools/structgen/gen - remove it from the repo:"
+    echo "$tracked_junk"
+    stale=1
+  fi
   if [ "$stale" = 0 ]; then echo "gen: fresh"; else echo "gen: STALE - run tools/structgen/gen.sh"; exit 1; fi
   exit 0
 fi
-"$CLANG" --target=wasm32 -nostdlib -ffreestanding -O1 -I"$here/test" -I"$root/c/src" -isystem "$root/c/wasm/include" \
-  -D_Thread_local= -DMAX_LOG_PAIRS=64 -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
-  -Wl,--no-entry -Wl,--export-all "$here/test/verify.c" -o "$fixtures/verify.wasm"
+verify_link() {
+  "$CLANG" --target=wasm32 -nostdlib -ffreestanding -O1 -I"$here/test" -I"$root/c/src" -isystem "$root/c/wasm/include" \
+    -D_Thread_local= -DMAX_LOG_PAIRS=64 -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
+    -Wl,--no-entry -Wl,--export-all "$here/test/verify.c" -o "$1"
+}
+mkdir -p "$here/build"
+verify_link "$here/build/verify.wasm"
+# The same source, linked again: the module the test reads has to be a function
+# of verify.c and the headers it includes, and of nothing else.
+twin="$(mktemp -t verify.XXXXXX).wasm"
+verify_link "$twin"
+if ! cmp -s "$here/build/verify.wasm" "$twin"; then
+  echo "gen: verify.wasm does not build reproducibly - two links of the same source differ"
+  rm -f "$twin"
+  exit 1
+fi
+rm -f "$twin"

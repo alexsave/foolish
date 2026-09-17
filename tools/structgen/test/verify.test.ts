@@ -1,7 +1,10 @@
 // Generator genericity check: accessors generated from kinds.h (every field kind)
 // and from the real anim_plan.h / legal.h, checked against a wasm32 module whose
 // C code reads, writes and offsetof()s the same structs (test/verify.c).
-// Build first: bash tools/structgen/gen.sh (writes gen/kinds.ts, gen/verify.wasm and sdk/ts/gen/*.ts).
+// Build first: bash tools/structgen/gen.sh (writes gen/kinds.ts, gen/snap.ts,
+// sdk/ts/gen/*.ts and the wasm below). The wasm is a build output, not a
+// committed fixture: its bytes are whichever clang linked it, so it is made on
+// demand and lives in build/ with the generator's own binary.
 // Run: node --import tsx --test tools/structgen/test/verify.test.ts
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,7 +13,13 @@ import * as K from '../gen/kinds.ts';
 import * as S from '../gen/snap.ts';
 import * as A from '../../../sdk/ts/gen/anim.bots.ts';
 
-const wasm = readFileSync(new URL('../gen/verify.wasm', import.meta.url));
+const wasmAt = new URL('../build/verify.wasm', import.meta.url);
+let wasm: Buffer;
+try {
+    wasm = readFileSync(wasmAt);
+} catch {
+    throw new Error(`structgen: no ${wasmAt.pathname} - build it with \`bash tools/structgen/gen.sh\``);
+}
 const ex = new WebAssembly.Instance(new WebAssembly.Module(wasm), {}).exports as Record<string, any>;
 const m = K.memOf(ex.memory.buffer);
 
