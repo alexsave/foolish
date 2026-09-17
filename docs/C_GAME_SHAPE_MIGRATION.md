@@ -1783,3 +1783,18 @@ What must land in it, each with the evidence from this branch:
 Keep it honest about what did NOT move: rendering, scheduling, HTTP/auth/DB, and the deliberate independent wire walks in the security test.
 Cross-reference `docs/C_GAME_SHAPE_MIGRATION.md`, `docs/KERNEL_LIFT_BRIEF.md` and `docs/C_CORE_CONSOLIDATION.md` rather than repeating them.
 No code changes in this phase; docs only, so its gate is a read-through plus the repo's markdown conventions (one sentence per line, no em dashes).
+
+### Final step: rebase onto main, replayed slowly (owner, 2026-09-17)
+
+The owner chose a REBASE replay over a single merge, deliberately, so every commit is re-applied and nothing is silently swallowed by one big conflict resolution.
+At the time of writing `origin/main` is 27 commits ahead of this branch's point (a844b2a1): 41 files, about 3,143 insertions, including kernel C and a NEW hand-written Swift wire file (`sdk/swift/PreTableWire.swift`) of exactly the kind Phase 10 deleted.
+
+How to do it:
+
+1. Tag the pre-rebase head (`pre-rebase-c-game-shape`) and keep the old branch ref, so the replay can always be abandoned.
+2. `git config rerere.enabled true` before starting: the same conflict recurs across our commits, and rerere replays the resolution.
+3. Replay in PHASE-SIZED batches, not all at once: `git rebase --onto` one phase boundary at a time, running that phase's own gates before starting the next (C suites, structgen, wasm freshness, both typechecks, the targeted e2e files that phase owns).
+4. Artifact conflicts (wasm `.gz`, `WASM_STAMP`, generated TS/Swift) are never resolved by picking a side: take either, then REGENERATE and rebuild, and let `gen.sh --check` and `check_wasm_freshness.sh` decide.
+5. A file main changed that this branch DELETED is the dangerous case, and the rule is: stay deleted, port the INTENT of main's change onto the kernel path, and record each one in a table (file, what main changed, where it landed here). `PreTableWire.swift` is the known example: it gets the Phase 10 treatment (read through the kernel or a generated binding), not a hand-written revival.
+6. Anything new on main that declares the TS game shape or packs bytes by hand must land on the C types instead; `e2e/no_ts_game_shape.test.ts` and `e2e/table_no_game_object.test.ts` fail loudly if it does not.
+7. After the replay: rebuild every wasm artifact once, run the full gate set, and run the single full `npm run test:e2e` on the REBASED tree (it is the tree that ships, so the one full run belongs here rather than before the rebase).
