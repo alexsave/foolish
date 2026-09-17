@@ -1390,12 +1390,23 @@ b = ast.literal_eval(sys.stdin.read().split('BARS ')[1]); print(b[-1][0] if b el
 cmd_cover() {
   need_sim
   settle_reset; poll 30 0.2 drawer_settled || true
-  local y py px x tx ty before
+  local y py px x tx ty before bars0
   read -r W H < <(screen)
   y=$(python3 "$LIB/ui.py" hand_y | awk '{print $2}')
   py=$(bar_y -1); px=$((W * 4 / 5))
-  { [ "$y" = "-1" ] || [ "$py" = "-1" ]; } && { echo "no hand or no plank on screen" >&2; return 1; }
-  before=$(plank_hash "$px" "$py")
+  [ "$y" = "-1" ] && { echo "no hand on screen" >&2; return 1; }
+  # A defender whose Pickup is still held back (deliberately, for a few seconds
+  # after a board arrives) proves the cover by a plank APPEARING - Undo -
+  # instead of the existing one relabelling.
+  bars0=$(python3 "$LIB/ui.py" bars)
+  [ "$py" != "-1" ] && before=$(plank_hash "$px" "$py")
+  staged() {
+    if [ "$py" = "-1" ]; then
+      [ "$(python3 "$LIB/newbar.py" "$bars0" "$(python3 "$LIB/ui.py" bars)")" != "-1" ]
+    else
+      [ "$(plank_hash "$px" "$py")" != "$before" ]
+    fi
+  }
   local table; table=$(python3 "$LIB/ui.py" table | sed 's/TABLE //' | tr -d '[]()' | tr ',' ' ')
   for x in $(python3 "$LIB/ui.py" cards | sed 's/CARDS //' | tr -d '[],'); do
     set -- $table
@@ -1403,7 +1414,7 @@ cmd_cover() {
       tx=$1; ty=$2; shift 2
       tap "$x" "$y" 0.8
       tap "$tx" "$ty" 1.2
-      if [ "$(plank_hash "$px" "$py")" != "$before" ]; then
+      if staged; then
         echo "covered: card at x=$x onto $tx,$ty"; return 0
       fi
     done

@@ -69,12 +69,21 @@ reopen() {   # reopen SEAT MODE ARGS...
   # extension can take several seconds more to draw into it: the second reel
   # tried its covers on a black drawer and reported "no legal cover" for boards
   # that had one.
+  # The HAND, where there is one: a seat that is out, and a finished game, have
+  # none - so this gives up quietly after 30s rather than calling it a miss.
   local i=0
   while [ $i -lt 60 ]; do
-    [ "$(python3 "$LIB/ui.py" hand_y | awk '{print $2}')" != "-1" ] && return 0
+    [ "$(python3 "$LIB/ui.py" hand_y | awk '{print $2}')" != "-1" ] && break
     sleep 0.5; i=$((i + 1))
   done
-  miss "board never drew after: seed $*"
+  # And the PLANK. A defender's Pickup is held back ON PURPOSE for a few seconds
+  # after a board arrives (owner: "the pickup delay is on purpose") - so wait
+  # for it rather than read its absence as "no move here".
+  i=0
+  while [ $i -lt 12 ]; do
+    [ "$(python3 "$LIB/ui.py" bars)" != "BARS []" ] && return 0
+    sleep 0.5; i=$((i + 1))
+  done
 }
 
 # The seat that still has to answer on a --goodwait board: the one that can
