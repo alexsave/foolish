@@ -51,6 +51,7 @@ import {
     GAME_INVALID_LOBBY_CARDS, GAME_STATUS_GAME_OVER, GAME_STATUS_PLAYING, GAME_STATUS_WAITING, TABLE_OK,
 } from '../sdk/ts/gen/game_layout.bots.ts';
 import { cRosterEncode } from './helpers/roster_kernel.ts';
+import { commitTableSql, createTableSql } from './helpers/table_rpc.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
@@ -63,7 +64,6 @@ const table = createServerTable();
 const enc = new TextEncoder();
 const bytes = (hex: string) => Uint8Array.from(Buffer.from(hex.startsWith('\\x') ? hex.slice(2) : hex, 'hex'));
 const hexOf = (b: Uint8Array) => Buffer.from(b).toString('hex');
-const STATUS_TEXT = ['waiting', 'playing', 'game_over'];
 const STATUS_INT: Record<string, number> = {
     waiting: GAME_STATUS_WAITING, playing: GAME_STATUS_PLAYING, game_over: GAME_STATUS_GAME_OVER,
 };
@@ -492,16 +492,17 @@ if (!process.env.VALIDATION_ONLY) {
         const created = 'kt0001';
         assert.equal(table.create(ALICE, 'alice'), TABLE_OK);
         const c0 = table.commit(created, 0, 0) as TableProducts;
-        await pgPool.query('SELECT create_table($1, $2, $3, $4, $5, $6)', [
-            created, ALICE, `\\x${hexOf(c0.state)}`, `\\x${hexOf(c0.roster)}`,
-            JSON.stringify([{ player_id: ALICE, view: hexOf(c0.views[0]!), status: 'waiting' }]), hexOf(c0.spectator),
-        ]);
+        await createTableSql(created, ALICE, c0);
         let r = await rowOf(created);
         assert.equal(r.writer_gen, 2);
         assert.equal(r.status, 'waiting');
         assert.equal(r.players.length, 0, 'the bridge derived nothing for a kernel-owned row');
+        assert.equal(r.roster, `\\x${hexOf(c0.roster)}`, 'the base64 roster is stored as the column\'s \\x-hex text');
         loadRow(r);
         assert.deepEqual(table.seats(), [{ id: ALICE, name: 'alice', brain: '' }]);
+        const createdViews = await pgPool.query('SELECT player_id::text, view, version, status FROM player_views WHERE game_id = $1', [created]);
+        assert.deepEqual(createdViews.rows, [{ player_id: ALICE, view: hexOf(c0.views[0]!), version: '0', status: 'waiting' }],
+            'the creator\'s envelope is stored as the bare hex the legacy writers store');
 
         // commit_table over a row today's writers own: the JSONB lobby, joined in C.
         const id = idOf('lobby_3_seat_bots');
@@ -511,33 +512,47 @@ if (!process.env.VALIDATION_ONLY) {
         const next = Number(legacy.version) + 1;
         const p = table.commit(id, next, 0) as TableProducts;
         const seats = table.seats();
-        const commit = (version: number) => pgPool.query(
-            'SELECT commit_table($1, $2, $3, $4, $5, $6, $7, $8, NULL, FALSE, NULL, $9, $10) AS res', [
-                id, version, `\\x${hexOf(p.state)}`, `\\x${hexOf(p.roster)}`, p.status, p.needsBots,
-                seats.filter((s) => !s.brain).map((s) => s.id), seats.filter((s) => s.brain).map((s) => s.id),
-                JSON.stringify(seats.flatMap((s, i) => (p.views[i] ? [{ player_id: s.id, view: hexOf(p.views[i]!), status: STATUS_TEXT[p.status] }] : []))),
-                hexOf(p.spectator),
-            ]);
-        assert.deepEqual((await commit(next + 5)).rows[0].res, { status: 'conflict' }, 'the version fence');
-        assert.deepEqual((await commit(Number(legacy.version))).rows[0].res, { status: 'ok', version: next, round_epoch: 0 });
+        assert.deepEqual(await commitTableSql(id, next + 5, p, seats), { committed: false, new_version: null, new_round_epoch: null },
+            'the version fence');
+        assert.deepEqual(await commitTableSql(id, Number(legacy.version), p, seats),
+            { committed: true, new_version: String(next), new_round_epoch: '0' });
         r = await rowOf(id);
         assert.equal(r.writer_gen, 2);
         assert.equal(r.roster, `\\x${hexOf(p.roster)}`);
+        assert.equal(r.state, `\\x${hexOf(p.state)}`);
         assert.deepEqual(r.players, legacy.players, 'commit_table leaves the JSONB alone');
         const members = await pgPool.query('SELECT player_id::text FROM player_hands WHERE game_id = $1 ORDER BY 1', [id]);
         assert.deepEqual(members.rows.map((m) => m.player_id), [ALICE, DMITRY].sort());
+        const views = await pgPool.query('SELECT player_id::text, view, status FROM player_views WHERE game_id = $1 ORDER BY 1', [id]);
+        assert.deepEqual(views.rows, seats.flatMap((s, i) => (p.views[i] ? [{ player_id: s.id, view: hexOf(p.views[i]!), status: 'waiting' }] : []))
+            .sort((a, b) => a.player_id.localeCompare(b.player_id)), 'one view row per human seat, the parallel arrays paired in order');
+
+        // The next operation leaves the roster alone: a NULL roster keeps the stored bytes.
+        loadRow(r);
+        const unchanged = table.commit(id, next + 1, 0) as TableProducts;
+        assert.equal(unchanged.rosterChanged, false);
+        assert.equal((await commitTableSql(id, next, unchanged, seats)).committed, true);
+        assert.equal((await rowOf(id)).roster, r.roster, 'a NULL roster keeps the stored one');
+
+        // Mismatched view arrays are refused, nothing written.
+        await assert.rejects(pgPool.query(
+            `SELECT * FROM commit_table(p_game_id => $1, p_expected_version => $2, p_state => $3, p_status => 0::smallint, p_needs_bots => FALSE,
+                                        p_view_players => $4::uuid[], p_views => $5::text[])`,
+            [id, next + 1, Buffer.from(p.state).toString('base64'), [ALICE, DMITRY], [Buffer.from(p.views[0] ?? p.spectator).toString('base64')]]),
+            /one envelope per player/);
 
         // The in-flight old request: the pre-4b handler reloaded the JSONB and committed. Refused, row untouched.
         const T = 'the kernel writers take a row over, and a legacy commit_game on it is refused';
         await assert.rejects(legacyCommit(T, id), /owned by the table writers \(writer_gen 2\)/);   // an update-name
         await assert.rejects(legacyCommit(T, id), /writer_gen 2/);   // a commit at the new version
         const after = await rowOf(id);
-        assert.equal(after.version, r.version);
+        assert.equal(after.version, String(next + 1));
         assert.equal(after.roster, r.roster);
         assert.equal(after.name, r.name);
 
         // A NULL blob is refused outright.
-        await assert.rejects(pgPool.query(`SELECT commit_table($1, $2, NULL, $3, 0::smallint, FALSE)`, [id, next, r.roster]),
-            /state, roster and needs_bots are required/);
+        await assert.rejects(pgPool.query(
+            `SELECT * FROM commit_table(p_game_id => $1, p_expected_version => $2, p_state => NULL, p_status => 0::smallint, p_needs_bots => FALSE)`,
+            [id, next + 1]), /state and needs_bots are required/);
     });
 }

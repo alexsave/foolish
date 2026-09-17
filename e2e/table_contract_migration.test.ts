@@ -38,6 +38,7 @@ import type { PoolClient } from 'pg';
 import { applyPlatformShim, pgPool } from './harness.ts';
 import { createServerTable, type TableProducts } from '../sdk/ts/table/server_table.ts';
 import { TABLE_OK } from '../sdk/ts/gen/game_layout.bots.ts';
+import { commitTableSql, createTableSql } from './helpers/table_rpc.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
@@ -56,7 +57,6 @@ function contractSql(): string {
 const table = createServerTable();
 const bytes = (hex: string) => Uint8Array.from(Buffer.from(hex.startsWith('\\x') ? hex.slice(2) : hex, 'hex'));
 const hexOf = (b: Uint8Array) => Buffer.from(b).toString('hex');
-const STATUS_TEXT = ['waiting', 'playing', 'game_over'];
 
 const rowsSql = readFileSync(join(FIXTURE, 'rows.sql'), 'utf8');
 const scenarios = new Map<string, string>();
@@ -120,20 +120,6 @@ async function inRolledBackTx<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> 
     }
 }
 
-/** A kernel commit the way 4b's commitProducts makes it: the products of `p` for the loaded `seats`. */
-async function commitTable(gameId: string, expected: number, p: TableProducts, seats: { id: string; brain: string }[]) {
-    const lobby = p.status === 0;
-    const res = await pgPool.query(
-        'SELECT commit_table($1, $2, $3, $4, $5, $6, $7, $8, NULL, FALSE, NULL, $9, $10) AS res', [
-            gameId, expected, `\\x${hexOf(p.state)}`, `\\x${hexOf(p.roster)}`, p.status, p.needsBots,
-            lobby ? seats.filter((s) => !s.brain).map((s) => s.id) : null,
-            lobby ? seats.filter((s) => s.brain).map((s) => s.id) : null,
-            JSON.stringify(seats.flatMap((s, i) => (p.views[i] ? [{ player_id: s.id, view: hexOf(p.views[i]!), status: STATUS_TEXT[p.status] }] : []))),
-            hexOf(p.spectator),
-        ]);
-    return res.rows[0].res;
-}
-
 if (!process.env.VALIDATION_ONLY) {
     let before4c: Stored[] = [];
     const envelopesBefore = new Map<string, Map<string, string>>();
@@ -165,20 +151,23 @@ if (!process.env.VALIDATION_ONLY) {
         assert.equal(table.load(bytes(lobby.state), bytes(lobby.roster)), TABLE_OK);
         assert.equal(table.join(ALICE, 'alice'), TABLE_OK);
         let p = table.commit(takenOver, Number(lobby.version) + 1, 0) as TableProducts;
-        assert.deepEqual(await commitTable(takenOver, Number(lobby.version), p, table.seats()),
-            { status: 'ok', version: Number(lobby.version) + 1, round_epoch: 0 });
+        assert.ok(p.rosterChanged, 'a join changes the roster, so the commit carries it');
+        assert.deepEqual(await commitTableSql(takenOver, Number(lobby.version), p, table.seats()),
+            { committed: true, new_version: String(Number(lobby.version) + 1), new_round_epoch: '0' });
+        assert.equal((await pgPool.query('SELECT roster FROM games WHERE id = $1', [takenOver])).rows[0].roster, `\\x${hexOf(p.roster)}`,
+            'the roster the commit carried is stored, as the column\'s \\x-hex text');
 
         const dealt = (await pgPool.query(`SELECT ${STORED_COLS} FROM games WHERE id = $1`, [dealtCommitted])).rows[0] as Stored;
         assert.equal(table.load(bytes(dealt.state), bytes(dealt.roster)), TABLE_OK);
         p = table.commit(dealtCommitted, Number(dealt.version) + 1, 0) as TableProducts;
-        assert.equal((await commitTable(dealtCommitted, Number(dealt.version), p, table.seats())).status, 'ok');
+        assert.equal(p.rosterChanged, false, 'a dealt commit leaves the roster alone');
+        assert.equal((await commitTableSql(dealtCommitted, Number(dealt.version), p, table.seats())).committed, true);
+        assert.equal((await pgPool.query('SELECT roster FROM games WHERE id = $1', [dealtCommitted])).rows[0].roster, dealt.roster,
+            'a NULL roster keeps the stored one, byte for byte');
 
         assert.equal(table.create(ALICE, 'alice'), TABLE_OK);
         p = table.commit(created, 0, 0) as TableProducts;
-        await pgPool.query('SELECT create_table($1, $2, $3, $4, $5, $6)', [
-            created, ALICE, `\\x${hexOf(p.state)}`, `\\x${hexOf(p.roster)}`,
-            JSON.stringify([{ player_id: ALICE, view: hexOf(p.views[0]!), status: 'waiting' }]), hexOf(p.spectator),
-        ]);
+        await createTableSql(created, ALICE, p);
 
         const gens = (await pgPool.query('SELECT id, writer_gen FROM games WHERE writer_gen = 2 ORDER BY id')).rows.map((r) => r.id);
         assert.deepEqual(gens, [takenOver, dealtCommitted, created].sort(), 'exactly those rows are the kernel writers\'');
@@ -274,7 +263,7 @@ if (!process.env.VALIDATION_ONLY) {
         const joiner = '5566ca51-b3f7-4277-b366-000000000003';
         assert.equal(table.join(joiner, 'Zoë 🃏'), TABLE_OK);
         const p = table.commit(id, Number(r.version) + 1, 0) as TableProducts;
-        assert.equal((await commitTable(id, Number(r.version), p, table.seats())).status, 'ok');
+        assert.equal((await commitTableSql(id, Number(r.version), p, table.seats())).committed, true);
         const joined = (await pgPool.query(`SELECT ${STORED_COLS} FROM games WHERE id = $1`, [id])).rows[0] as Stored;
         assert.deepEqual(await cachedViews(id), envelopesOf(joined), 'the join\'s cached views are the envelopes of the stored row');
         assert.deepEqual(table.seats().map((s) => s.id), [ALICE, joiner]);
@@ -282,7 +271,7 @@ if (!process.env.VALIDATION_ONLY) {
         // A new table.
         assert.equal(table.create(joiner, 'Zoë 🃏'), TABLE_OK);
         const c = table.commit('kc0002', 0, 0) as TableProducts;
-        await pgPool.query('SELECT create_table($1, $2, $3, $4)', ['kc0002', joiner, `\\x${hexOf(c.state)}`, `\\x${hexOf(c.roster)}`]);
+        await createTableSql('kc0002', joiner, c, pgPool, false);
         const made = (await pgPool.query(`SELECT ${STORED_COLS} FROM games WHERE id = 'kc0002'`)).rows[0] as Stored;
         assert.equal(made.status, 'waiting');
         envelopesOf(made);

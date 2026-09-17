@@ -662,7 +662,7 @@ before(async () => {
         GRANT SELECT ON public.player_hands TO authenticated;
         -- Test-only: keep every session log the game ever committed, so the set of
         -- cards that have been public survives the end-of-game log wipe.
-        CREATE TABLE e2e_log_archive (game_id TEXT, logs TEXT);
+        CREATE TABLE e2e_log_archive (game_id TEXT, logs BYTEA);
         CREATE FUNCTION e2e_archive_logs() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
           IF COALESCE(OLD.logs_packed, '') <> '' AND NEW.logs_packed IS DISTINCT FROM OLD.logs_packed THEN
             INSERT INTO e2e_log_archive VALUES (OLD.id, OLD.logs_packed);

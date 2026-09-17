@@ -224,7 +224,9 @@ async function runCycle(
 async function readSessionLog(gameId: string): Promise<Uint8Array | null> {
     try {
         const { data } = await supabaseClient.from('games').select('logs_packed').eq('id', gameId).single();
-        return data?.logs_packed ? columnHexToBytes(data.logs_packed) : null;
+        // An empty log reads as '\\x' (BYTEA through PostgREST): no records.
+        const log = data?.logs_packed ? columnHexToBytes(data.logs_packed) : null;
+        return log && log.length > 0 ? log : null;
     } catch (e) {
         console.error(`[BELIEF] session log read failed for ${gameId}:`, e);
         return null;

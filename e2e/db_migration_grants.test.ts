@@ -129,14 +129,20 @@ const WRITE_POLICIES = `
 `;
 
 // The games table and the functions that write it, as the database holds them:
-// columns with their types, nullability and defaults, indexes, triggers, and
+// columns with their types, nullability and defaults (of games and of the
+// tables its writers fill with blobs), indexes, triggers, the snapshot read
+// policy, and
 // each writer's definition with comments and whitespace folded away (seed.sql
 // explains more than a migration does; the code must be the same).
 const GAMES_SHAPE = `
-  SELECT 'column ' || column_name || ' ' || data_type || ' ' || is_nullable || ' ' || coalesce(column_default, '') AS item
-  FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'games'
+  SELECT 'column ' || table_name || '.' || column_name || ' ' || data_type || ' ' || udt_name || ' ' || is_nullable || ' ' || coalesce(column_default, '') AS item
+  FROM information_schema.columns
+  WHERE table_schema = 'public' AND table_name IN ('games', 'player_views', 'spectator_views', 'game_snapshots')
   UNION ALL
-  SELECT 'index ' || indexdef FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'games'
+  SELECT 'index ' || indexdef FROM pg_indexes WHERE schemaname = 'public' AND tablename IN ('games', 'game_snapshots')
+  UNION ALL
+  SELECT 'policy ' || tablename || ' ' || policyname || ' ' || cmd || ' ' || coalesce(qual, '') || ' ' || coalesce(with_check, '')
+  FROM pg_policies WHERE schemaname = 'public' AND tablename = 'game_snapshots'
   UNION ALL
   SELECT 'trigger ' || pg_get_triggerdef(oid) FROM pg_trigger WHERE tgrelid = 'public.games'::regclass AND NOT tgisinternal
   UNION ALL
@@ -269,8 +275,8 @@ export function registerMigrationGrantsValidation(): void {
             await asClient('anon', null, async (c) => {
                 await assert.rejects(
                     // A game id that matches nothing: if EXECUTE is granted this returns
-                    // {"status":"conflict"} and touches no row.
-                    c.query(`SELECT commit_table('no-such-game', 0, '\\x00', '\\x00', 0::smallint, FALSE)`),
+                    // committed = false and touches no row.
+                    c.query(`SELECT * FROM commit_table(p_game_id => 'no-such-game', p_expected_version => 0, p_state => 'AA==', p_status => 0::smallint, p_needs_bots => FALSE)`),
                     (e: { code?: string }) => e.code === '42501',
                     'anon executed commit_table, the RPC that rewrites any game',
                 );
@@ -313,7 +319,7 @@ export function registerMigrationGrantsValidation(): void {
                     c.query(
                         `INSERT INTO games (id, status, state, roster)
                          VALUES ('forged', 'playing', '\\xdeadbeef', $1)`,
-                        [`\\x01${ATTACKER}`],
+                        [`\\x01${Buffer.from(ATTACKER).toString('hex')}`],
                     ),
                     (e: { code?: string }) => e.code === '42501',
                     'authenticated inserted a games row directly',

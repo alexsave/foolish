@@ -1,8 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { corsHeaders, handleCors } from "@shared/adapter/cors.ts";
 import { getAuthenticatedUser } from "@shared/adapter/auth.ts";
-import { gameStatusLabel, serverTable, tableCodeName } from "@sdk/ts/table/server_table.ts";
-import { bytesToBareHex } from "@sdk/ts/wire/bytes.ts";
+import { serverTable, tableCodeName } from "@sdk/ts/table/server_table.ts";
+import { base64 } from "@shared/adapter/table_io.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
@@ -52,10 +52,10 @@ serve(async (req: Request): Promise<Response> => {
             const { error } = await supabaseClient.rpc('create_table', {
                 p_game_id: gameId,
                 p_player_id: user.id,
-                p_state: `\\x${bytesToBareHex(p.state)}`,
-                p_roster: `\\x${bytesToBareHex(p.roster)}`,
-                p_views: [{ player_id: user.id, view: bytesToBareHex(mine), status: gameStatusLabel(p.status) }],
-                p_spectator: bytesToBareHex(p.spectator),
+                p_state: base64(p.state),
+                p_roster: base64(p.roster),
+                p_view: base64(mine),
+                p_spectator: base64(p.spectator),
             });
             if (!error) {
                 return new Response(mine as unknown as BodyInit, {

@@ -163,6 +163,25 @@ async function loadGamesEmbed(id: string): Promise<Result> {
 
 interface Filter { col: string; op: 'eq' | 'in' | 'lt' | 'gt'; val: any }
 
+// The array-typed columns of a table, read from the catalog once per table.
+// PostgREST binds a JSON array to an array column (game_snapshots.player_ids
+// UUID[]) and anything else structured as JSON; pg does the same when handed a
+// JS array or a JSON string.
+const arrayColumnCache = new Map<string, Promise<Set<string>>>();
+function arrayColumns(table: string): Promise<Set<string>> {
+    let got = arrayColumnCache.get(table);
+    if (!got) {
+        got = pool.query(
+            `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND data_type = 'ARRAY'`, [table])
+            .then((r) => new Set(r.rows.map((row: { column_name: string }) => row.column_name)))
+            .catch(() => new Set<string>());
+        arrayColumnCache.set(table, got);
+    }
+    return got;
+}
+const bindValue = (arrays: Set<string>, col: string, v: any): any =>
+    (Array.isArray(v) && arrays.has(col)) ? v : (v !== null && typeof v === 'object' ? JSON.stringify(v) : v);
+
 class QueryBuilder implements PromiseLike<Result> {
     private filters: Filter[] = [];
     private selectCols = '*';
@@ -230,12 +249,12 @@ class QueryBuilder implements PromiseLike<Result> {
                 const r = await pool.query(sql, params);
                 return ok(r.rows);
             }
+            const arrays = await arrayColumns(this.table);
             if (this.op === 'update') {
                 const params: any[] = [];
                 const row = this.rows[0] ?? {};
                 const sets = Object.keys(row).map((col) => {
-                    const v = row[col];
-                    params.push(v !== null && typeof v === 'object' ? JSON.stringify(v) : v);
+                    params.push(bindValue(arrays, col, row[col]));
                     return `${col} = $${params.length}`;
                 });
                 if (sets.length === 0) return ok([]);
@@ -248,8 +267,7 @@ class QueryBuilder implements PromiseLike<Result> {
             const cols = Array.from(new Set(this.rows.flatMap((row) => Object.keys(row))));
             const params: any[] = [];
             const valuesSql = this.rows.map((row) => '(' + cols.map((col) => {
-                const v = row[col];
-                params.push(v !== null && typeof v === 'object' ? JSON.stringify(v) : v);
+                params.push(bindValue(arrays, col, row[col]));
                 return `$${params.length}`;
             }).join(',') + ')').join(',');
             let sql = `INSERT INTO ${this.table} (${cols.join(',')}) VALUES ${valuesSql}`;

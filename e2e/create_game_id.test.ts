@@ -72,7 +72,7 @@ test('create: a new id that collides with a stored game is drawn again, and the 
     assert.equal(res.status, 200, JSON.stringify(res.json));
 
     // The response is the creator's view of a row that exists and seats them.
-    const stored = await pgPool.query('SELECT game_id FROM player_views WHERE player_id = $1 AND view = $2', [creator, hex(res.bytes)]);
+    const stored = await pgPool.query('SELECT game_id FROM player_views WHERE player_id = $1 AND view = $2', [creator, `\\x${hex(res.bytes)}`]);
     assert.deepEqual(stored.rows.map((r) => r.game_id), [FREE], 'the envelope create answered is the creator\'s stored view of the game it stored');
     const t = await mustReadTable(FREE);
     assert.deepEqual(t.seats.map((s) => s.id), [creator], 'the stored game seats the creator');

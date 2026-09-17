@@ -215,8 +215,8 @@ if (!process.env.VALIDATION_ONLY) {
         assert.equal(table.create(creator, 'Creator'), L.TABLE_OK);
         const p = table.commit(gameId, 0, 0);
         assert.ok(typeof p !== 'number');
-        const hex = (b: Uint8Array) => `\\x${Buffer.from(b).toString('hex')}`;
-        await pgPool.query('SELECT create_table($1,$2,$3,$4)', [gameId, creator, hex(p.state), hex(p.roster)]);
+        const b64 = (b: Uint8Array) => Buffer.from(b).toString('base64');
+        await pgPool.query('SELECT create_table($1,$2,$3,$4)', [gameId, creator, b64(p.state), b64(p.roster)]);
 
         const t = await mustReadTable(gameId);
         assert.equal(t.statusColumn, 'waiting', 'waiting lobby');

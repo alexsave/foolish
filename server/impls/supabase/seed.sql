@@ -61,11 +61,11 @@ CREATE TYPE game_status AS ENUM (
 CREATE TABLE games (
   id TEXT PRIMARY KEY,
   status game_status NOT NULL DEFAULT 'waiting', -- the blob's status, written from the kernel on every commit (Q6): for SQL filters and player_views.status
-  state TEXT NOT NULL, -- the kernel's durable board (\x-hex, c/src/table.h, v02): every hand and the deck order, a lobby included
-  roster TEXT NOT NULL, -- the kernel's durable roster (\x-hex, c/src/roster.h, format 1, 1227 bytes): each seat's id, name and bot brain, and the table title
+  state BYTEA NOT NULL, -- the kernel's durable board (c/src/table.h, v02): every hand and the deck order, a lobby included
+  roster BYTEA NOT NULL, -- the kernel's durable roster (c/src/roster.h, format 1, 1227 bytes): each seat's id, name and bot brain, and the table title
   needs_bots BOOLEAN NOT NULL DEFAULT FALSE, -- PLAYING and a bot seat is still IN (the kernel's table_needs_bots): the bot heartbeat's scan predicate.
   game_seed TEXT, -- 64 hex chars = the 32-byte deal seed the deck was ChaCha-shuffled from. Regenerates the deal for audit/replay. NULL in a lobby.
-  logs_packed TEXT, -- packed session log stream (BARE hex, no \\x prefix, appended by plain concat): kernel log records + u48 timestamps, DRAW identities pre-masked. Read by the bot loop and the replay snapshot, retired once the snapshot is stored.
+  logs_packed BYTEA, -- the session log: kernel log records + u48 timestamps, DRAW identities pre-masked, appended by commit_table. Read by the bot loop and the replay snapshot; empty in a lobby and once the snapshot is stored.
   version BIGINT NOT NULL DEFAULT 0, -- optimistic-concurrency token (commit_table's version fence)
   round_epoch BIGINT NOT NULL DEFAULT 0, -- the `version` at which the CURRENT round began, stamped by commit_table's p_closed_round (pickup/discard). The kernel's stale-round guard refuses a move whose intent version predates it (TABLE_STALE_ROUND). 0 = round 1 / never closed.
   bot_lease_token UUID,              -- bot-loop lease holder token (replaces bot_locks)
@@ -159,7 +159,7 @@ CREATE TABLE bot_hands (
 CREATE TABLE game_snapshots (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   game_id TEXT REFERENCES games(id) ON DELETE SET NULL,
-  player_ids JSONB NOT NULL DEFAULT '[]'::jsonb, -- player ids in seat order
+  player_ids UUID[] NOT NULL DEFAULT '{}', -- player ids in seat order
   moves BYTEA NOT NULL,
   extras BYTEA,
   created_at TIMESTAMP DEFAULT NOW()
@@ -179,7 +179,7 @@ CREATE TABLE game_snapshots (
 CREATE TABLE player_views (
   game_id    TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
   player_id  UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  view       TEXT NOT NULL,            -- MASKED packed view envelope (bare hex), decodable by decodePackedGame
+  view       BYTEA NOT NULL,           -- MASKED packed view envelope (PostgREST and realtime send it as '\x'-hex text)
   version    BIGINT NOT NULL,          -- mirrors games.version (optimistic token); client drops stale/reordered
   status     TEXT NOT NULL,            -- denormalized game_status for cheap list filtering/rendering
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -197,7 +197,7 @@ CREATE TABLE player_views (
 -- fence, alongside the per-player rows.
 CREATE TABLE spectator_views (
   game_id    TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
-  view       TEXT NOT NULL,            -- fully-masked packed spectator envelope (bare hex), decodable by decodePackedGame
+  view       BYTEA NOT NULL,           -- fully-masked packed spectator envelope ('\x'-hex text to a client)
   version    BIGINT NOT NULL,          -- mirrors games.version
   status     TEXT NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -333,7 +333,7 @@ CREATE POLICY "Service role can insert snapshots" ON game_snapshots
 CREATE POLICY "Participants can read snapshots" ON game_snapshots
   FOR SELECT USING (
     (select auth.role()) = 'service_role'
-    OR player_ids ? (select auth.uid())::text
+    OR player_ids @> ARRAY[(select auth.uid())]
   );
 
 -- Player views: read ONLY your own rows; the blob is already masked for its
@@ -532,46 +532,54 @@ CREATE TRIGGER enforce_username_not_bot
 -- enum's order), needs_bots, the log records, the views. CAS on version, log
 -- append or reset, round_epoch, membership, view cache; a lobby commit's human
 -- list also prunes the humans who left, in the same transaction as the roster
--- that no longer seats them.
+-- that no longer seats them. The blobs arrive base64 (a third fewer PostgREST
+-- body bytes than hex, measured at the same latency) and are stored as bytes;
+-- the views are parallel arrays; a NULL roster keeps the stored one; the result
+-- is the OUT columns. Mirrors migration 20260918130000_table_bytea.sql.
 CREATE OR REPLACE FUNCTION commit_table(
   p_game_id          TEXT,
   p_expected_version BIGINT,
-  p_state            TEXT,
-  p_roster           TEXT,
-  p_status           SMALLINT,
+  p_state            TEXT,                  -- base64: the kernel's state blob
+  p_status           SMALLINT,              -- GAME_STATUS_*: 0 waiting, 1 playing, 2 game_over (the enum's order)
   p_needs_bots       BOOLEAN,
-  p_seats            TEXT[]  DEFAULT NULL,  -- human member ids; NULL leaves player_hands untouched (a dealt commit cannot change the roster)
-  p_bot_seats        TEXT[]  DEFAULT NULL,  -- bot member ids; NULL leaves bot_hands untouched
-  p_logs_packed      TEXT    DEFAULT NULL,  -- this operation's log records (bare hex), appended under the version fence
+  p_roster           TEXT    DEFAULT NULL,  -- base64: the durable roster; NULL keeps the stored one (the operation left it alone)
+  p_seats            UUID[]  DEFAULT NULL,  -- human member ids; NULL leaves player_hands untouched
+  p_bot_seats        UUID[]  DEFAULT NULL,  -- bot member ids; NULL leaves bot_hands untouched
+  p_logs_packed      TEXT    DEFAULT NULL,  -- base64: this operation's log records, appended under the version fence
   p_logs_reset       BOOLEAN DEFAULT FALSE, -- the operation dealt: replace the session log instead of appending
-  p_game_seed        TEXT    DEFAULT NULL,  -- deal seed (hex); NULL keeps the stored one
-  p_views            JSONB   DEFAULT NULL,  -- [{player_id, view, status}] per human seat; NULL leaves player_views untouched
-  p_spectator        TEXT    DEFAULT NULL,  -- the spectator envelope (bare hex); NULL leaves spectator_views untouched
-  p_closed_round     BOOLEAN DEFAULT FALSE  -- the operation closed a round: stamp round_epoch with the new version
-) RETURNS JSONB
+  p_game_seed        TEXT    DEFAULT NULL,  -- deal seed (64 hex characters); NULL keeps the stored one
+  p_view_players     UUID[]  DEFAULT NULL,  -- the human seats' ids, parallel to p_views; NULL leaves player_views untouched
+  p_views            TEXT[]  DEFAULT NULL,  -- base64: each seat's envelope, parallel to p_view_players
+  p_spectator        TEXT    DEFAULT NULL,  -- base64: the spectator envelope; NULL leaves spectator_views untouched
+  p_closed_round     BOOLEAN DEFAULT FALSE, -- the operation closed a round: stamp round_epoch with the new version
+  OUT committed       BOOLEAN,              -- FALSE: the version fence refused (another writer committed first)
+  OUT new_version     BIGINT,
+  OUT new_round_epoch BIGINT
+)
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  v_status      game_status := (enum_range(NULL::game_status))[p_status + 1];
-  v_new_version BIGINT;
-  v_round_epoch BIGINT;
+  v_status game_status := (enum_range(NULL::game_status))[p_status + 1];
 BEGIN
-  IF p_state IS NULL OR p_roster IS NULL OR p_needs_bots IS NULL THEN
-    RAISE EXCEPTION 'commit_table: state, roster and needs_bots are required' USING ERRCODE = 'null_value_not_allowed';
+  IF p_state IS NULL OR p_needs_bots IS NULL THEN
+    RAISE EXCEPTION 'commit_table: state and needs_bots are required' USING ERRCODE = 'null_value_not_allowed';
   END IF;
   IF v_status IS NULL THEN
     RAISE EXCEPTION 'commit_table: % is not a GAME_STATUS', p_status USING ERRCODE = 'invalid_parameter_value';
   END IF;
+  IF (p_view_players IS NULL) <> (p_views IS NULL) OR cardinality(p_view_players) <> cardinality(p_views) THEN
+    RAISE EXCEPTION 'commit_table: p_view_players and p_views go together, one envelope per player' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
 
   UPDATE games SET
-    status = v_status, state = p_state, roster = p_roster, needs_bots = p_needs_bots,
+    status = v_status, state = decode(p_state, 'base64'), roster = COALESCE(decode(p_roster, 'base64'), roster), needs_bots = p_needs_bots,
     game_seed = CASE WHEN v_status = 'waiting' THEN NULL ELSE COALESCE(p_game_seed, game_seed) END,
     logs_packed = CASE
-      WHEN p_logs_reset THEN COALESCE(p_logs_packed, '')
-      WHEN v_status = 'waiting' THEN ''
-      ELSE COALESCE(logs_packed, '') || COALESCE(p_logs_packed, '')
+      WHEN p_logs_reset THEN COALESCE(decode(p_logs_packed, 'base64'), ''::bytea)
+      WHEN v_status = 'waiting' THEN ''::bytea
+      ELSE COALESCE(logs_packed, ''::bytea) || COALESCE(decode(p_logs_packed, 'base64'), ''::bytea)
     END,
     round_epoch = CASE
       WHEN p_logs_reset OR v_status = 'waiting' THEN 0
@@ -580,49 +588,47 @@ BEGIN
     END,
     updated_at = now(), version = version + 1
   WHERE id = p_game_id AND version = p_expected_version
-  RETURNING version, round_epoch INTO v_new_version, v_round_epoch;
+  RETURNING version, round_epoch INTO new_version, new_round_epoch;
 
-  IF NOT FOUND THEN
-    RETURN jsonb_build_object('status', 'conflict');
+  committed := FOUND;
+  IF NOT committed THEN
+    RETURN;
   END IF;
 
   IF p_seats IS NOT NULL THEN
     INSERT INTO player_hands (game_id, player_id)
-    SELECT p_game_id, s::uuid FROM unnest(p_seats) AS s
+    SELECT p_game_id, s FROM unnest(p_seats) AS s
     ON CONFLICT (game_id, player_id) DO UPDATE SET updated_at = now();
     DELETE FROM player_hands
-    WHERE game_id = p_game_id AND player_id <> ALL (p_seats::uuid[]);
+    WHERE game_id = p_game_id AND player_id <> ALL (p_seats);
   END IF;
 
   IF p_bot_seats IS NOT NULL THEN
     INSERT INTO bot_hands (game_id, bot_id)
-    SELECT p_game_id, b::uuid FROM unnest(p_bot_seats) AS b
+    SELECT p_game_id, b FROM unnest(p_bot_seats) AS b
     ON CONFLICT (game_id, bot_id) DO UPDATE SET updated_at = now();
     DELETE FROM bot_hands
-    WHERE game_id = p_game_id AND bot_id <> ALL (p_bot_seats::uuid[]);
+    WHERE game_id = p_game_id AND bot_id <> ALL (p_bot_seats);
   END IF;
 
   IF p_views IS NOT NULL THEN
     INSERT INTO player_views (game_id, player_id, view, version, status, updated_at)
-    SELECT p_game_id, (v->>'player_id')::uuid, v->>'view', v_new_version, v->>'status', now()
-    FROM jsonb_array_elements(p_views) AS v
+    SELECT p_game_id, v.player_id, decode(v.view, 'base64'), new_version, v_status::text, now()
+    FROM unnest(p_view_players, p_views) AS v(player_id, view)
     ON CONFLICT (game_id, player_id) DO UPDATE
       SET view = EXCLUDED.view, version = EXCLUDED.version,
           status = EXCLUDED.status, updated_at = now();
     DELETE FROM player_views
-    WHERE game_id = p_game_id
-      AND player_id NOT IN (SELECT (v->>'player_id')::uuid FROM jsonb_array_elements(p_views) AS v);
+    WHERE game_id = p_game_id AND player_id <> ALL (p_view_players);
   END IF;
 
   IF p_spectator IS NOT NULL THEN
     INSERT INTO spectator_views (game_id, view, version, status, updated_at)
-    VALUES (p_game_id, p_spectator, v_new_version, v_status::text, now())
+    VALUES (p_game_id, decode(p_spectator, 'base64'), new_version, v_status::text, now())
     ON CONFLICT (game_id) DO UPDATE
       SET view = EXCLUDED.view, version = EXCLUDED.version,
           status = EXCLUDED.status, updated_at = now();
   END IF;
-
-  RETURN jsonb_build_object('status', 'ok', 'version', v_new_version, 'round_epoch', v_round_epoch);
 END;
 $$;
 
@@ -631,10 +637,10 @@ $$;
 CREATE OR REPLACE FUNCTION create_table(
   p_game_id   TEXT,
   p_player_id UUID,
-  p_state     TEXT,
-  p_roster    TEXT,
-  p_views     JSONB DEFAULT NULL,  -- the creator's envelope row(s); version 0
-  p_spectator TEXT  DEFAULT NULL   -- the spectator envelope (bare hex); version 0
+  p_state     TEXT,               -- base64: the lobby's state blob
+  p_roster    TEXT,               -- base64: the durable roster, the creator seated
+  p_view      TEXT DEFAULT NULL,  -- base64: the creator's envelope; version 0
+  p_spectator TEXT DEFAULT NULL   -- base64: the spectator envelope; version 0
 ) RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -646,15 +652,14 @@ BEGIN
   END IF;
 
   INSERT INTO games (id, status, state, roster, needs_bots)
-    VALUES (p_game_id, 'waiting', p_state, p_roster, FALSE);
+    VALUES (p_game_id, 'waiting', decode(p_state, 'base64'), decode(p_roster, 'base64'), FALSE);
 
   INSERT INTO player_hands (game_id, player_id)
     VALUES (p_game_id, p_player_id);
 
-  IF p_views IS NOT NULL THEN
+  IF p_view IS NOT NULL THEN
     INSERT INTO player_views (game_id, player_id, view, version, status, updated_at)
-    SELECT p_game_id, (v->>'player_id')::uuid, v->>'view', 0, v->>'status', now()
-    FROM jsonb_array_elements(p_views) AS v
+    VALUES (p_game_id, p_player_id, decode(p_view, 'base64'), 0, 'waiting', now())
     ON CONFLICT (game_id, player_id) DO UPDATE
       SET view = EXCLUDED.view, version = EXCLUDED.version,
           status = EXCLUDED.status, updated_at = now();
@@ -662,7 +667,7 @@ BEGIN
 
   IF p_spectator IS NOT NULL THEN
     INSERT INTO spectator_views (game_id, view, version, status, updated_at)
-    VALUES (p_game_id, p_spectator, 0, 'waiting', now())
+    VALUES (p_game_id, decode(p_spectator, 'base64'), 0, 'waiting', now())
     ON CONFLICT (game_id) DO UPDATE
       SET view = EXCLUDED.view, version = EXCLUDED.version,
           status = EXCLUDED.status, updated_at = now();

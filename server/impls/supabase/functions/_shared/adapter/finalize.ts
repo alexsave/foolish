@@ -45,8 +45,8 @@ async function writeReplaySnapshot(
             .from('games').select('logs_packed, game_seed').eq('id', gameId).single();
         if (error) throw error;
         if (!data?.game_seed) throw new Error('no deal seed: nothing to encode a replay from');
-        if (!data?.logs_packed) throw new Error('no session log: nothing to encode a replay from');
-        const log = columnHexToBytes(data.logs_packed);
+        const log = data?.logs_packed ? columnHexToBytes(data.logs_packed) : new Uint8Array(0);
+        if (log.length === 0) throw new Error('no session log: nothing to encode a replay from');
         const seed = columnHexToBytes(data.game_seed);
 
         // ---- kernel section: the extras, then the verified code ----
