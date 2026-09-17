@@ -2,18 +2,43 @@
 // build: wasm; roots: Snap
 export interface Mem { u8: Uint8Array; i8: Int8Array; dv: DataView }
 export const memOf = (b: ArrayBuffer): Mem => ({ u8: new Uint8Array(b), i8: new Int8Array(b), dv: new DataView(b) });
-const utf8Dec = /* @__PURE__ */ new TextDecoder();
+const utf8Enc = /* @__PURE__ */ new TextEncoder(), utf8Dec = /* @__PURE__ */ new TextDecoder();
 const cstrGet = (m: Mem, a: number, n: number) => {
     let s = '', e = a;
     for (const end = a + n; e < end; e++) { const c = m.u8[e]; if (c === 0) return s; if (c > 127) break; s += String.fromCharCode(c); }
     while (e < a + n && m.u8[e] !== 0) e++;
     return e === a + n && s.length === n ? s : utf8Dec.decode(m.u8.subarray(a, e));
 };
+const cstrSet = (m: Mem, a: number, n: number, s: string, what: string) => {
+    let i = 0;
+    const len = s.length;
+    if (len < n) while (i < len) { const c = s.charCodeAt(i); if (c === 0 || c > 127) break; i++; }
+    if (i === len && len < n) { for (let j = 0; j < len; j++) m.u8[a + j] = s.charCodeAt(j); }
+    else {
+        const b = utf8Enc.encode(s);
+        if (b.length > n - 1) throw new RangeError(`${what}: ${b.length} UTF-8 bytes do not fit in ${n - 1}`);
+        if (b.includes(0)) throw new RangeError(`${what}: contains a NUL`);
+        m.u8.set(b, a); i = b.length;
+    }
+    for (let j = i; j < n; j++) m.u8[a + j] = 0;
+};
 const utf8Get = (m: Mem, a: number, n: number) => {
     if (n > 16) return utf8Dec.decode(m.u8.subarray(a, a + n));   // past a few bytes the decoder wins
     let s = '';
     for (let i = 0; i < n; i++) { const c = m.u8[a + i]; if (c > 127) return utf8Dec.decode(m.u8.subarray(a, a + n)); s += String.fromCharCode(c); }
     return s;
+};
+const utf8Set = (m: Mem, a: number, n: number, s: string, what: string) => {
+    let i = 0;
+    const len = s.length;
+    while (i < len && i < n && s.charCodeAt(i) < 128) { m.u8[a + i] = s.charCodeAt(i); i++; }
+    if (i < len) {
+        const b = utf8Enc.encode(s);
+        if (b.length > n) throw new RangeError(`${what}: ${b.length} UTF-8 bytes do not fit in ${n}`);
+        m.u8.set(b, a); i = b.length;
+    }
+    if (i < n) m.u8[a + i] = 0;
+    return i;
 };
 // Snap snapshot
 export interface Snap_Snap { readonly flag: boolean; readonly w: number; readonly u: number; readonly big: bigint; readonly d: number; readonly bits: number; readonly sbits: number; readonly pairs: readonly SPair_Snap[]; readonly items: readonly SItem_Snap[]; readonly text: string; readonly cstr: string; readonly nums: readonly number[]; readonly card: KCard_Snap; }
@@ -49,4 +74,37 @@ export interface KCard_Snap { readonly s: number; readonly v: number; }
 export const readKCard = (m: Mem, p: number): KCard_Snap => {
     const raw = m.u8[p];
     return { s: (raw << 29) >> 29, v: (raw << 24) >> 27 };
+};
+export const writeSnap = (m: Mem, p: number, s: Snap_Snap): void => {
+    m.u8[p + 4] = s.flag ? 1 : 0;
+    m.dv.setInt16(p + 6, s.w, true);
+    m.dv.setUint32(p + 8, s.u, true);
+    m.dv.setBigInt64(p + 16, s.big, true);
+    m.dv.setFloat64(p + 24, s.d, true);
+    m.u8[p + 32] = (m.u8[p + 32] & -8) | ((s.bits << 0) & 7);
+    m.u8[p + 32] = (m.u8[p + 32] & -249) | ((s.sbits << 3) & 248);
+    const n_pairs = s.pairs.length;
+    if (n_pairs > 4) throw new RangeError(`Snap.pairs: ${n_pairs} elements do not fit in 4`);
+    m.i8[p] = n_pairs;
+    for (let i = 0; i < n_pairs; i++) writeSPair(m, p + 33 + i * 2, s.pairs[i]);
+    const n_items = s.items.length;
+    if (n_items > 3) throw new RangeError(`Snap.items: ${n_items} elements do not fit in 3`);
+    m.u8[p + 1] = n_items;
+    for (let i = 0; i < n_items; i++) writeSItem(m, p + 42 + i * 10, s.items[i]);
+    m.dv.setUint16(p + 2, utf8Set(m, p + 72, 8, s.text, 'Snap.text'), true);
+    cstrSet(m, p + 80, 6, s.cstr, 'Snap.cstr');
+    if (s.nums.length !== 3) throw new RangeError(`Snap.nums: ${s.nums.length} elements, not 3`);
+    for (let i = 0; i < 3; i++) m.dv.setInt16(p + 86 + i * 2, s.nums[i], true);
+    writeKCard(m, p + 92, s.card);
+};
+export const writeSPair = (m: Mem, p: number, s: SPair_Snap): void => {
+    writeKCard(m, p, s.a);
+    writeKCard(m, p + 1, s.b);
+};
+export const writeSItem = (m: Mem, p: number, s: SItem_Snap): void => {
+    m.u8[p] = utf8Set(m, p + 1, 6, s.text, 'SItem.text');
+    m.dv.setInt16(p + 8, s.score, true);
+};
+export const writeKCard = (m: Mem, p: number, s: KCard_Snap): void => {
+    m.u8[p] = (((s.s << 0) & 7) | ((s.v << 3) & 248));
 };

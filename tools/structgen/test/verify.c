@@ -79,3 +79,29 @@ Snap *snap_fill(int n_pairs, int n_items, int n_text) {
     snap.card.s = 3; snap.card.v = 13;
     return &snap;
 }
+
+// --writer (gen/snap.ts writeSnap): a second record, filled with junk, that the
+// generated writer writes; snap_written_equals() then compares it with `snap`
+// the way C reads a Snap - every array only to its count, strings by count or NUL.
+static Snap written;
+Snap *snap_scratch(void) {
+    for (unsigned i = 0; i < sizeof written; i++) ((unsigned char *)&written)[i] = (unsigned char)(0xA5 ^ i);
+    return &written;
+}
+static int card_eq_k(KCard a, KCard b) { return a.s == b.s && a.v == b.v; }
+int snap_written_equals(void) {
+    const Snap *a = &snap, *b = &written;
+    if (a->n_pairs != b->n_pairs || a->n_items != b->n_items || a->n_text != b->n_text) return 0;
+    if (a->flag != b->flag || a->w != b->w || a->u != b->u || a->big != b->big || a->d != b->d) return 0;
+    if (a->bits != b->bits || a->sbits != b->sbits) return 0;
+    for (int i = 0; i < a->n_pairs; i++)
+        if (!card_eq_k(a->pairs[i].a, b->pairs[i].a) || !card_eq_k(a->pairs[i].b, b->pairs[i].b)) return 0;
+    for (int i = 0; i < a->n_items; i++) {
+        if (a->items[i].len != b->items[i].len || a->items[i].score != b->items[i].score) return 0;
+        for (int j = 0; j < a->items[i].len; j++) if (a->items[i].text[j] != b->items[i].text[j]) return 0;
+    }
+    for (int i = 0; i < a->n_text; i++) if (a->text[i] != b->text[i]) return 0;
+    for (int i = 0; i < 6; i++) { if (a->cstr[i] != b->cstr[i]) return 0; if (!a->cstr[i]) break; }
+    for (int i = 0; i < 3; i++) if (a->nums[i] != b->nums[i]) return 0;
+    return card_eq_k(a->card, b->card);
+}

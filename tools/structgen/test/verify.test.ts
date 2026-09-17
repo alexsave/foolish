@@ -115,6 +115,28 @@ test('--snapshot: a count outside its array throws rather than reading past it',
     assert.throws(() => S.readSnap(m, ex.snap_fill(0, 0, 9)), /Snap\.text: count 9 is outside 0\.\.8/);
 });
 
+test('--writer: C reads back what the writer wrote, arrays to their counts, strings by count or NUL', () => {
+    for (const [pairs, items, text] of [[2, 3, 3], [0, 0, 0], [4, 1, 8]]) {
+        const s = S.readSnap(m, ex.snap_fill(pairs, items, text));
+        const q = ex.snap_scratch();
+        S.writeSnap(m, q, s);
+        assert.equal(ex.snap_written_equals(), 1, `C sees the same Snap (${pairs}, ${items}, ${text})`);
+        assert.deepEqual(S.readSnap(m, q), s, 'and it reads back as the snapshot written');
+    }
+});
+
+test('--writer: a value that does not fit throws rather than truncate', () => {
+    const s = S.readSnap(m, ex.snap_fill(2, 3, 3));
+    const q = ex.snap_scratch();
+    const pair = s.pairs[0];
+    assert.throws(() => S.writeSnap(m, q, { ...s, pairs: [pair, pair, pair, pair, pair] }), /Snap\.pairs: 5 elements do not fit in 4/);
+    assert.throws(() => S.writeSnap(m, q, { ...s, text: 'abcdefghi' }), /Snap\.text: 9 UTF-8 bytes do not fit in 8/);
+    assert.throws(() => S.writeSnap(m, q, { ...s, text: `abcdefg${String.fromCharCode(0xe9)}` }), /Snap\.text: 9 UTF-8 bytes do not fit in 8/);
+    assert.throws(() => S.writeSnap(m, q, { ...s, nums: [1, 2] }), /Snap\.nums: 2 elements, not 3/);
+    assert.throws(() => S.writeSnap(m, q, { ...s, items: [{ text: 'sevenss', score: 1 }] }), /SItem\.text: 7 UTF-8 bytes do not fit in 6/);
+    assert.throws(() => S.writeSnap(m, q, { ...s, cstr: 'sixsix' }), /Snap\.cstr: 6 UTF-8 bytes do not fit in 5/);
+});
+
 test('char[N]: UTF-8, NUL-terminated, at most N-1 bytes; the setter throws rather than truncate', () => {
     const p = ex.k_ptr();
     const bytes = () => [0, 1, 2, 3, 4].map(i => ex.k_text_byte(i));

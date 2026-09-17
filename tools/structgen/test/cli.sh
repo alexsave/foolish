@@ -32,6 +32,7 @@ expect_fail "--count without its shape"     "TYPE.field=count_field"         "${
 expect_fail "--count of a non-array"        "not a one-dimensional array"    "${snap[@]}" --snapshot Snap --count Snap.w=n_pairs
 expect_fail "--count by a non-integer"      "is not an integer field"        "${snap[@]}" --snapshot Snap --count Snap.pairs=d
 expect_fail "--count on no snapshot"        "is not in any snapshot"         "${snap[@]}" --snapshot SPair --count SItem.text=len
+expect_fail "--writer of no snapshot"       "not a --snapshot"               "${snap[@]}" --snapshot SPair --writer Snap
 "$SG" "${base[@]}" --print-hash > "$tmp/hash" && grep -qE '^0x[0-9a-f]{8}$' "$tmp/hash" && echo "ok   --print-hash prints the hash" || { echo "FAIL --print-hash"; fails=$((fails + 1)); }
 "$SG" "${base[@]}" --hash-ts "$tmp/hash.ts" --print-hash > "$tmp/hash2" \
   && [ "$(grep -c . "$tmp/hash.ts")" = 3 ] && grep -qx "export const LAYOUT_HASH = $(cat "$tmp/hash2");" "$tmp/hash.ts" \
