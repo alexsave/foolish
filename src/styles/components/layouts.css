@@ -764,12 +764,15 @@
 
 .result-card__name--current {
   color: var(--color-success);
+  /* my row's green reads on the wood only with the label shadow under it */
+  text-shadow: var(--text-shadow-label);
 }
 
 .result-card__you {
   color: var(--color-success);
   font-size: 0.75rem;
-  font-weight: normal;
+  font-weight: 600;
+  text-shadow: var(--text-shadow-label);
 }
 
 .result-card__elo {
