@@ -110,6 +110,16 @@ export const ROSTER_E_GAME_ID = -15;
 export const ROSTER_E_SHORT = -16;
 export const ROSTER_E_GOOD = -17;
 export const ROSTER_E_FLAG = -18;
+export const CARD_PARSE_E_EMPTY = -1;
+export const CARD_PARSE_E_RANK = -2;
+export const CARD_PARSE_E_SUIT = -3;
+export const CARD_PARSE_E_SYNTAX = -4;
+export const CARD_PARSE_E_CAP = -5;
+export const SUIT_SPADES = 0;
+export const SUIT_HEARTS = 1;
+export const SUIT_CLUBS = 2;
+export const SUIT_DIAMONDS = 3;
+export const ROSTER_BYTES = 1227;
 // Game
 export const Game_status_at = (p: number) => p;
 export const Game_get_status = (m: Mem, p: number) => m.i8[p];

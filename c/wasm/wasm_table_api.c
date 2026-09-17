@@ -207,3 +207,61 @@ int wasm_table_rankings(void) {
 int wasm_elo_deltas(int n) {
     return elo_deltas(g_table_elo.ratings, g_table_elo.order, n, g_table_elo.deltas);
 }
+
+// ---- test fixtures (e2e/helpers/table_fixture.ts) -----------------------------
+//
+// Test-only, like wasm_roster_*: a fixture composes a board field by field
+// through the generated Game setters on the resident game, seats a roster
+// here, and seals both into a row the kernel has already loaded (table_seal).
+// Card text is read by card.h's parser, never by the host.
+
+static Roster g_fixture_roster;
+
+// A zeroed resident game (no face-up trump) and an empty roster; the table
+// holds nothing loaded. -> the Game the host's setters write.
+Game *wasm_fixture_begin(void) {
+    Game *g = wasm_game_ptr_internal();
+    memset(g, 0, sizeof(*g));
+    g->flipped = CARD_NONE;
+    memset(&g_fixture_roster, 0, sizeof(g_fixture_roster));
+    table()->loaded = false;
+    return g;
+}
+
+// io = [title]. ROSTER_OK or ROSTER_E_*.
+int wasm_fixture_title(int len) {
+    const unsigned char *io = inputs(len);
+    if (!io) return ROSTER_E_TITLE;
+    return roster_set_title(&g_fixture_roster, (const char *)io, len);
+}
+
+// io = [id][name][brain key, empty for a human]. The seat, or ROSTER_E_*.
+int wasm_fixture_seat(int id_len, int name_len, int brain_len) {
+    const unsigned char *io = inputs(id_len + name_len + brain_len);
+    if (!io || id_len < 0 || name_len < 0 || brain_len < 0) return ROSTER_E_ID;
+    const char *c = (const char *)io;
+    return roster_seat_add(&g_fixture_roster, c, id_len, c + id_len, name_len, c + id_len + name_len, brain_len);
+}
+
+// -> io = [state blob][durable roster]. The state blob's length, or the refusal
+// (table.h table_seal; wasm_table_detail after TABLE_E_ROSTER).
+int wasm_fixture_seal(void) {
+    Table *t = table();
+    return table_seal(t, t->g, &g_fixture_roster, wasm_io_ptr(), wasm_io_cap());
+}
+
+// io = card text -> io = n Cards, one byte each, then (battles != 0) their n
+// covers. At most `cap` items (the host passes the array it fills). n, or
+// CARD_PARSE_E_*.
+#define FIXTURE_CARDS_MAX 128
+int wasm_card_list_parse(int len, int cap, int battles) {
+    static Card cards[FIXTURE_CARDS_MAX], covers[FIXTURE_CARDS_MAX];
+    const unsigned char *io = inputs(len);
+    if (!io) return CARD_PARSE_E_CAP;
+    if (cap < 0 || cap > FIXTURE_CARDS_MAX) cap = FIXTURE_CARDS_MAX;
+    const int n = card_list_parse((const char *)io, len, cards, battles ? covers : 0, cap);
+    if (n <= 0) return n;
+    memcpy(wasm_io_ptr(), cards, (size_t)n);
+    if (battles) memcpy(wasm_io_ptr() + n, covers, (size_t)n);
+    return n;
+}

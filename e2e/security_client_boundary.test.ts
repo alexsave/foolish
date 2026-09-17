@@ -41,6 +41,8 @@ export const CLIENT_BOUNDARY = {
         // The server's C Table wrapper: loads a durable blob and hands out a
         // commit's products, the unmasked state blob among them.
         /(^|\/)sdk\/ts\/table\/server_table\.ts$/,
+        // C-backed test fixtures: compose and seal unmasked boards, write rows.
+        /(^|\/)e2e\/helpers\/table_(fixture|db)\.ts$/,
     ],
     /** Functions that read or write an unmasked kernel game, by name. */
     deniedSymbols: [
@@ -57,7 +59,9 @@ export const CLIENT_BOUNDARY = {
     /** Kernel exports that serialize the resident game unmasked. */
     deniedWasmExports: ['wasm_export_state', 'wasm_state_serialize', 'wasm_state_deserialize',
         // the C Table: loads a durable blob, and writes it back out in a commit
-        'wasm_table_load', 'wasm_table_commit_products'],
+        'wasm_table_load', 'wasm_table_commit_products',
+        // the test fixtures: a composed board sealed into an unmasked state blob
+        'wasm_fixture_seal'],
 };
 
 // Node built-ins the shared sdk modules reach only behind a runtime check.
@@ -170,6 +174,12 @@ test('canary: a client module importing the server table wrapper is caught by th
     const r = await scanClientBoundary({ stdin: `import { createServerTable } from './sdk/ts/table/server_table.ts'; console.log(createServerTable);` });
     assert.ok(r.modules.includes('sdk/ts/table/server_table.ts'), `module rule saw server_table.ts:${explain(r)}`);
     assert.ok(r.wasmExports.some(s => s.name === 'wasm_table_commit_products'), `and the unmasked commit export:${explain(r)}`);
+});
+
+test('canary: a client module importing the C-backed test fixtures is caught by the module rule', async () => {
+    const r = await scanClientBoundary({ stdin: `import { fixture } from './e2e/helpers/table_fixture.ts'; console.log(fixture);` });
+    assert.ok(r.modules.includes('e2e/helpers/table_fixture.ts'), `module rule saw table_fixture.ts:${explain(r)}`);
+    assert.ok(r.wasmExports.some(s => s.name === 'wasm_fixture_seal'), `and the seal export:${explain(r)}`);
 });
 
 test('canary: a client module calling the durable blob reader is caught by the symbol rule', async () => {

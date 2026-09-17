@@ -6827,6 +6827,98 @@ static int roster_equal(const Roster *a, const Roster *b) {
     return 1;
 }
 
+// Card notation (card.h), the reader test fixtures build boards with
+// (e2e/helpers/table_fixture.ts, Phase 3c).
+static bool card_is(Card c, int suit, int value) { return c.suit == suit && c.value == value; }
+#define PARSE1(str, c) card_parse((str), (int)strlen(str), (c))
+
+static void test_card_parse_valid(void) {
+    Card c = CARD_NONE;
+    CHECK(PARSE1("6h", &c) == 0 && card_is(c, SUIT_HEARTS, 5), "6h is the six of hearts (value 5)");
+    CHECK(PARSE1("2s", &c) == 0 && card_is(c, SUIT_SPADES, 1), "2s is value 1, the full deck's lowest");
+    CHECK(PARSE1("9c", &c) == 0 && card_is(c, SUIT_CLUBS, 8), "9c");
+    CHECK(PARSE1("10d", &c) == 0 && card_is(c, SUIT_DIAMONDS, 9), "10d is value 9");
+    CHECK(PARSE1("Td", &c) == 0 && card_is(c, SUIT_DIAMONDS, 9), "T is 10");
+    CHECK(PARSE1("Js", &c) == 0 && card_is(c, SUIT_SPADES, 10), "J is value 10");
+    CHECK(PARSE1("Qs", &c) == 0 && card_is(c, SUIT_SPADES, 11), "Q is value 11");
+    CHECK(PARSE1("Kh", &c) == 0 && card_is(c, SUIT_HEARTS, 12), "K is value 12");
+    CHECK(PARSE1("Ac", &c) == 0 && card_is(c, SUIT_CLUBS, ACE_VALUE), "A is ACE_VALUE");
+    int all = 1;
+    static const char *ranks[] = { "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A" };
+    static const char suits[] = "shcd";
+    for (int s = 0; s < 4; s++)
+        for (int r = 0; r < 13; r++) {
+            char buf[4];
+            int n = snprintf(buf, sizeof(buf), "%s%c", ranks[r], suits[s]);
+            Card x = CARD_NONE;
+            if (card_parse(buf, n, &x) != 0 || card_to_id(x) != s * 13 + r) all = 0;
+        }
+    CHECK(all, "every rank of every suit reads as its dense id, in suit order s h c d");
+    // The length is the string: bytes past it are never read.
+    CHECK(card_parse("6hXYZ", 2, &c) == 0 && card_is(c, SUIT_HEARTS, 5), "len bounds the read");
+}
+
+static void test_card_parse_case(void) {
+    Card a = CARD_NONE, b = CARD_NONE;
+    CHECK(PARSE1("qs", &a) == 0 && PARSE1("QS", &b) == 0 && card_eq(a, b) && card_is(a, SUIT_SPADES, 11),
+          "rank and suit letters read in either case");
+    CHECK(PARSE1("aH", &a) == 0 && card_is(a, SUIT_HEARTS, ACE_VALUE), "mixed case");
+    CHECK(PARSE1("tD", &a) == 0 && card_is(a, SUIT_DIAMONDS, 9), "t is 10 as well");
+}
+
+static void test_card_parse_whitespace(void) {
+    Card c = CARD_NONE;
+    CHECK(PARSE1("  7c\t", &c) == 0 && card_is(c, SUIT_CLUBS, 6), "whitespace around one card is ignored");
+    CHECK(PARSE1("\n8d\r\n", &c) == 0 && card_is(c, SUIT_DIAMONDS, 7), "newlines are whitespace");
+    CHECK(PARSE1("7 c", &c) == CARD_PARSE_E_SUIT, "no space inside a card");
+    CHECK(PARSE1("1 0h", &c) == CARD_PARSE_E_RANK, "no space inside 10");
+    CHECK(PARSE1("6h 7h", &c) == CARD_PARSE_E_SYNTAX, "one card, not two");
+
+    Card out[8], cov[8];
+    const char *l = " 6h,7h\tQs \n";
+    CHECK(card_list_parse(l, (int)strlen(l), out, NULL, 8) == 3
+          && card_is(out[0], SUIT_HEARTS, 5) && card_is(out[1], SUIT_HEARTS, 6) && card_is(out[2], SUIT_SPADES, 11),
+          "a list splits on whitespace and commas, in order");
+    CHECK(card_list_parse("", 0, out, NULL, 8) == 0, "an empty list is no cards");
+    CHECK(card_list_parse(" \t, ", 4, out, NULL, 8) == 0, "only separators is no cards");
+    const char *b = "7c/8c  9d";
+    CHECK(card_list_parse(b, (int)strlen(b), out, cov, 8) == 2
+          && card_is(out[0], SUIT_CLUBS, 6) && card_is(cov[0], SUIT_CLUBS, 7)
+          && card_is(out[1], SUIT_DIAMONDS, 8) && card_is_none(cov[1]),
+          "a battle list: attack/cover, and a lone attack has CARD_NONE for its cover");
+    CHECK(card_list_parse("7c / 8c", 7, out, cov, 8) == CARD_PARSE_E_EMPTY, "no space around the '/'");
+}
+
+static void test_card_parse_invalid(void) {
+    Card c = CARD_NONE, out[4], cov[4];
+    CHECK(PARSE1("", &c) == CARD_PARSE_E_EMPTY, "empty");
+    CHECK(PARSE1("   ", &c) == CARD_PARSE_E_EMPTY, "only whitespace");
+    CHECK(PARSE1("1h", &c) == CARD_PARSE_E_RANK, "1 is not a rank");
+    CHECK(PARSE1("0h", &c) == CARD_PARSE_E_RANK, "0 is not a rank");
+    CHECK(PARSE1("11h", &c) == CARD_PARSE_E_RANK, "11 is not a rank");
+    CHECK(PARSE1("Xh", &c) == CARD_PARSE_E_RANK, "X is not a rank");
+    CHECK(PARSE1("h6", &c) == CARD_PARSE_E_RANK, "suit first is refused");
+    CHECK(PARSE1("6", &c) == CARD_PARSE_E_SUIT, "a rank with no suit");
+    CHECK(PARSE1("6x", &c) == CARD_PARSE_E_SUIT, "x is not a suit");
+    CHECK(PARSE1("10", &c) == CARD_PARSE_E_SUIT, "10 with no suit");
+    CHECK(PARSE1("6hh", &c) == CARD_PARSE_E_SYNTAX, "junk after the suit");
+    CHECK(PARSE1("6h/7h", &c) == CARD_PARSE_E_SYNTAX, "a pair is not one card");
+    CHECK(card_parse("6h", -1, &c) == CARD_PARSE_E_EMPTY, "a negative length reads nothing");
+    CHECK(card_parse(NULL, 0, &c) == CARD_PARSE_E_EMPTY, "no string");
+    c = card_of_id(7);
+    CHECK(PARSE1("6x", &c) < 0 && card_to_id(c) == 7, "a refusal leaves *out untouched");
+
+    CHECK(card_list_parse("6h 7x", 5, out, NULL, 4) == CARD_PARSE_E_SUIT, "one bad card refuses the list");
+    CHECK(card_list_parse("6h7h", 4, out, NULL, 4) == CARD_PARSE_E_SYNTAX, "cards need a separator");
+    CHECK(card_list_parse("6h/7h", 5, out, NULL, 4) == CARD_PARSE_E_SYNTAX, "a '/' outside a battle list");
+    CHECK(card_list_parse("/7h", 3, out, cov, 4) == CARD_PARSE_E_EMPTY, "a battle with no attack");
+    CHECK(card_list_parse("6h/", 3, out, cov, 4) == CARD_PARSE_E_EMPTY, "a battle with a '/' and no cover");
+    CHECK(card_list_parse("6h/7h/8h", 8, out, cov, 4) == CARD_PARSE_E_SYNTAX, "a battle is at most two cards");
+    CHECK(card_list_parse("6h 7h 8h", 8, out, NULL, 2) == CARD_PARSE_E_CAP, "more cards than the output holds");
+    CHECK(card_list_parse("6h 7h", 5, out, NULL, 2) == 2, "exactly the output's capacity fits");
+}
+#undef PARSE1
+
 // A seat's identity lives in the Roster beside the Game, not in Player
 // (docs/C_GAME_SHAPE_MIGRATION.md 2.9, Phase 3b). The Monte-Carlo searchers
 // copy offsetof(Game, logs) bytes per node, so every byte of Player is paid
@@ -7269,6 +7361,67 @@ static void test_table_load(void) {
     tb_roster_for(3, 1u << 2, "random", tb_roster);
     CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "a lobby row loads");
     CHECK(!tb_game.deterministic_deck && tb_game.status == GAME_STATUS_WAITING, "a lobby row is a lobby");
+}
+
+// table_seal: a board a fixture composed field by field comes back as a row
+// the kernel has already loaded, or as the refusal that row would get
+// (e2e/helpers/table_fixture.ts, Phase 3c).
+static void test_table_seal(void) {
+    Roster r;
+    tb_fixture(3, 1u << 2, 21);
+    CHECK(roster_decode(&r, tb_roster, ROSTER_BYTES) == ROSTER_OK, "the fixture roster decodes");
+    table_init(&tb, &tb_game, &tb_snaps);
+
+    int n = table_seal(&tb, &tb_src, &r, tb_buf, (int)sizeof(tb_buf));
+    CHECK(n == tb_state_len && memcmp(tb_buf, tb_state, (size_t)n) == 0, "the state blob is the board's durable blob");
+    CHECK(memcmp(tb_buf + n, tb_roster, ROSTER_BYTES) == 0, "the durable roster follows it");
+    CHECK(tb.loaded && tb_same_board(&tb_game, &tb_src) && tb.r.n == 3, "and the table holds the loaded row");
+
+    // The table's own board may be the one sealed.
+    memcpy(&tb_game, &tb_src, offsetof(Game, logs));
+    n = table_seal(&tb, &tb_game, &r, tb_buf, (int)sizeof(tb_buf));
+    CHECK(n == tb_state_len && memcmp(tb_buf, tb_state, (size_t)n) == 0 && tb.loaded, "sealing t->g in place");
+
+#define SEAL_REFUSES(want, msg, cap) do { \
+        const int rc_ = table_seal(&tb, &tb_src, &r, tb_buf, (cap)); \
+        if (rc_ != (want)) fprintf(stderr, "  table_seal(%s): got %d, want %d\n", msg, rc_, want); \
+        CHECK(rc_ == (want) && !tb.loaded, msg); } while (0)
+    SEAL_REFUSES(TABLE_E_CAP, "an output too small for any row", 64);
+
+    tb_src.status = GAME_STATUS_WAITING;
+    SEAL_REFUSES(GAME_INVALID_LOBBY_CARDS, "a lobby holding cards", (int)sizeof(tb_buf));
+    tb_src.status = GAME_STATUS_PLAYING;
+
+    tb_src.players[1].hand[0] = tb_src.players[0].hand[0];
+    SEAL_REFUSES(GAME_INVALID_DUPLICATE_CARD, "one card in two hands", (int)sizeof(tb_buf));
+    tb_fixture(3, 1u << 2, 21);
+
+    const int16_t deck = tb_src.deck_count;
+    tb_src.deck_count = MAX_DECK + 1;
+    SEAL_REFUSES(GAME_INVALID_COUNT, "a deck past its array is refused before it is walked", (int)sizeof(tb_buf));
+    tb_src.deck_count = deck;
+    tb_src.players[2].hand_count = -1;
+    SEAL_REFUSES(GAME_INVALID_COUNT, "a negative hand count", (int)sizeof(tb_buf));
+    tb_fixture(3, 1u << 2, 21);
+    tb_src.num_eliminated = MAX_PLAYERS + 1;
+    SEAL_REFUSES(GAME_INVALID_ELIMINATION, "an elimination order past its array", (int)sizeof(tb_buf));
+    tb_fixture(3, 1u << 2, 21);
+    tb_src.num_players = MAX_PLAYERS + 1;
+    SEAL_REFUSES(GAME_INVALID_NUM_PLAYERS, "more seats than a table has", (int)sizeof(tb_buf));
+    tb_fixture(3, 1u << 2, 21);
+
+    tb_src.num_players = 2;
+    SEAL_REFUSES(TABLE_E_MISMATCH, "a board with fewer seats than the roster", (int)sizeof(tb_buf));
+    tb_src.num_players = 3;
+
+    r.seats[1].id_len = 0;
+    SEAL_REFUSES(TABLE_E_ROSTER, "a roster that does not encode", (int)sizeof(tb_buf));
+    CHECK(tb.detail == ROSTER_E_ID, "with the roster's reason");
+    roster_decode(&r, tb_roster, ROSTER_BYTES);
+    memcpy(r.seats[2].brain, "nope", 5);
+    r.seats[2].brain_len = 4;
+    SEAL_REFUSES(TABLE_E_UNKNOWN_BRAIN, "a bot seat with a brain this build lacks", (int)sizeof(tb_buf));
+#undef SEAL_REFUSES
 }
 
 static void test_table_act_resolves_the_seat_from_the_actor_id(void) {
@@ -7996,6 +8149,10 @@ int main(void) {
     test_analyse_verdict_rule();
     test_analyse_belief_holds_on_played_games();
     test_analyse_packed_on_a_generated_game();
+    test_card_parse_valid();
+    test_card_parse_case();
+    test_card_parse_whitespace();
+    test_card_parse_invalid();
     test_player_carries_no_identity();
     test_roster_round_trip();
     test_roster_decode_refuses_each_malformed_field();
@@ -8004,6 +8161,7 @@ int main(void) {
     test_roster_name_trim_matches_the_ts_and_swift_rule();
     test_roster_trailer();
     test_table_load();
+    test_table_seal();
     test_table_act_resolves_the_seat_from_the_actor_id();
     test_table_act_moot_and_stale_round();
     test_table_commit_products();

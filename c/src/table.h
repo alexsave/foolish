@@ -193,6 +193,18 @@ int table_rearrange_hand(Table *t, const char *actor_id, int id_len, const uint8
 // Account deletion: the seat holding user_id is renamed.
 int table_redact(Table *t, const char *user_id, int id_len, const char *name, int name_len);
 
+// ---- fixtures ------------------------------------------------------------------
+
+// A board and a roster a test composed field by field, checked exactly as a
+// stored row is. Writes [state blob][durable roster] into `out` and loads them
+// into `t` with table_load, so what a fixture hands back is a row the kernel has
+// already accepted. `g` may be the table's own board (t->g): it is serialized
+// before the load adopts anything. Returns the state blob's length (the roster
+// follows it, ROSTER_BYTES long), or the refusal: TABLE_E_ROSTER with the
+// ROSTER_E_* in t->detail for a roster that does not encode, TABLE_E_CAP, or
+// whatever table_load says of the row.
+int table_seal(Table *t, const Game *g, const Roster *r, uint8_t *out, int cap);
+
 // ---- products ----------------------------------------------------------------
 
 typedef struct { int32_t off, len; } Span;

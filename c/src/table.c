@@ -195,6 +195,27 @@ static int put_state_blob(const Game *g, uint8_t *out) {
 
 // A bound on one state_put, for reserving space before writing it.
 #define TABLE_STATE_MAX (2 + 24 + MAX_DECK + 2 * MAX_BATTLES + MAX_PLAYERS * (3 + MAX_HAND_SIZE) + 1 + MAX_PLAYERS)
+
+// ---------- fixtures --------------------------------------------------------------
+
+int table_seal(Table *t, const Game *g, const Roster *r, uint8_t *out, int cap) {
+    t->loaded = false;
+    t->detail = 0;
+    if (cap < TABLE_STATE_MAX + ROSTER_BYTES) return TABLE_E_CAP;
+    // state_put walks the counts of a board nothing has judged yet: refuse one
+    // past its array here, with the code the import would give it.
+    if (g->num_players < 0 || g->num_players > MAX_PLAYERS) return GAME_INVALID_NUM_PLAYERS;
+    if (g->deck_count < 0 || g->deck_count > MAX_DECK || g->num_battles < 0 || g->num_battles > MAX_BATTLES)
+        return GAME_INVALID_COUNT;
+    if (g->num_eliminated < 0 || g->num_eliminated > MAX_PLAYERS) return GAME_INVALID_ELIMINATION;
+    for (int i = 0; i < g->num_players; i++)
+        if (g->players[i].hand_count < 0 || g->players[i].hand_count > MAX_HAND_SIZE) return GAME_INVALID_COUNT;
+    const int state_len = put_state_blob(g, out);
+    const int rc = roster_encode(r, out + state_len, cap - state_len);
+    if (rc < 0) { t->detail = rc; return TABLE_E_ROSTER; }
+    const int loaded = table_load(t, out, state_len, out + state_len, rc);
+    return loaded == TABLE_OK ? state_len : loaded;
+}
 // A bound on one session-log record with its timestamp.
 #define TABLE_LOG_MAX   (6 + 4 + 2 * MAX_LOG_PAIRS)
 

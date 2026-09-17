@@ -80,4 +80,35 @@ static inline bool card_has_value(const bool *marks, int value) {
 #define CARD_NONE ((Card){ .suit = -2, .value = -2 })
 static inline bool card_is_none(Card c) { return c.suit == -2 && c.value == -2; }
 
+// ---------- Card notation ------------------------------------------------
+//
+// The one reader of a card written as text, for test fixtures and tools
+// (e2e/helpers/table_fixture.ts reaches it through bots.wasm; no host keeps a
+// parser of its own). A card is a rank then a suit, with no space between:
+//
+//   rank   2 3 4 5 6 7 8 9, 10 or T, J, Q, K, A
+//   suit   s (spades), h (hearts), c (clubs), d (diamonds)
+//
+// Letters in either case: "6h", "10s", "Td", "QC", "as". The Card it reads is
+// this file's numbering (rank 2 is value 1, A is ACE_VALUE). Whether the card
+// belongs to a game's deck is the game's question (game_validate), not this one.
+//
+// A list is cards separated by whitespace or commas, and may be empty. In a
+// list of battles each item is an attack, or an attack and its cover joined by
+// '/': "7c/8c 9d". Nothing is ever skipped or guessed: the first thing that is
+// not a card refuses the whole string.
+#define CARD_PARSE_E_EMPTY  (-1)  // no card where one was expected (an empty string, "/8c", "7c/")
+#define CARD_PARSE_E_RANK   (-2)  // the token does not start with a rank
+#define CARD_PARSE_E_SUIT   (-3)  // the rank is not followed by a suit
+#define CARD_PARSE_E_SYNTAX (-4)  // something after the suit: "6hh", a '/' outside a battle list
+#define CARD_PARSE_E_CAP    (-5)  // more cards than the output holds
+
+// Exactly one card; whitespace around it is ignored. 0, or CARD_PARSE_E_*.
+int card_parse(const char *s, int len, Card *out);
+
+// A list: the number of cards (items) written to out, or CARD_PARSE_E_*. With
+// covers non-NULL it is a battle list, and covers[i] is item i's cover, or
+// CARD_NONE when it has none; with covers NULL a '/' is refused.
+int card_list_parse(const char *s, int len, Card *out, Card *covers, int cap);
+
 #endif

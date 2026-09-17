@@ -16,3 +16,7 @@
 # same hash, so a module and these readers cannot disagree about any of it.
 --header table.h --root Roster --root TableCommit --root TableRequest --root TableElo
 --const TABLE_ --const ENGINE_REJECT_ --const GAME_INVALID_ --const ROSTER_E_
+#
+# Test fixtures (e2e/helpers/table_fixture.ts): card notation refusals and suit
+# numbers (card.h), and the durable roster's length a sealed row carries.
+--const CARD_PARSE_E_ --const SUIT_ --const ROSTER_BYTES
