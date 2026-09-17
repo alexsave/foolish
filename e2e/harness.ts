@@ -68,15 +68,24 @@ let ownsDatabase = false;
 // run left behind, and WITH (FORCE) terminates its orphaned backends instead of
 // failing on them. This is why a stale namespace is inert rather than poisonous.
 export async function applySchema(): Promise<void> {
+    await applyPlatformShim();
+    const seed = readFileSync(join(process.cwd(), 'server', 'impls', 'supabase', 'seed.sql'), 'utf8');
+    await pool.query(seed);
+}
+
+/**
+ * A fresh database for this file with only the Supabase platform shim, no app
+ * schema. For a suite that must build the schema some other way than seed.sql
+ * (e2e/db_migration_grants.test.ts replays the migrations the hosted project
+ * receives). Recreates the database, so calling it again starts over.
+ */
+export async function applyPlatformShim(): Promise<void> {
     await onAdmin(`DROP DATABASE IF EXISTS ${suiteDatabase} WITH (FORCE)`);
     await onAdmin(`CREATE DATABASE ${suiteDatabase}`);
     ownsDatabase = true;
 
     const shim = readFileSync(join(process.cwd(), 'e2e', 'schema.sql'), 'utf8');
     await pool.query(shim);
-
-    const seed = readFileSync(join(process.cwd(), 'server', 'impls', 'supabase', 'seed.sql'), 'utf8');
-    await pool.query(seed);
 }
 
 // Release: close the pool, then drop the file's database. Best-effort by design:

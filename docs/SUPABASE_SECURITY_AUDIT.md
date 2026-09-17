@@ -180,6 +180,14 @@ user can set on a directly-inserted row.
 **Proposed fix.** Drop the client INSERT policy and route all creation through
 the `create_game` RPC (the app already does this via the `create` function).
 
+**Status: fixed** by migration `20260917000000_relock_rpcs_and_games_writes.sql`.
+The policy is gone and every client write privilege on every public table is
+revoked, except the chat INSERT.
+The same migration relocks `commit_game`, which migration `20260906120000` had
+reopened to anon by dropping and recreating it.
+`e2e/db_migration_grants.test.ts` replays the migrations over the hosted schema to
+hold both.
+
 ---
 
 ### 🟡 Finding 5 — Realtime `user-` channels keyed by email prefix (item 02)
