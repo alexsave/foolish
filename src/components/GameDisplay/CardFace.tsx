@@ -137,6 +137,13 @@ export const CardFace = ({ card, onClick, style = {}, owner, isAnimationOverlay 
 
     const mergedStyle = { ...defaultStyle, ...style, ...animationStyle };
 
+    // "10" is two glyphs in an index 12px wide, centred: at 20px Georgia it spills
+    // over the card's left border (and its rotated copy over the right). Drawn a
+    // little tighter and nudged in, it clears the border by about 1px at every width.
+    const tenStyle: React.CSSProperties | undefined = valueSymbol === '10'
+        ? { letterSpacing: '-0.08em', marginLeft: '3px' }
+        : undefined;
+
     if (isThinCard) {
         return <div
             ref={cardRef}
@@ -161,7 +168,7 @@ export const CardFace = ({ card, onClick, style = {}, owner, isAnimationOverlay 
                 left: '4px',
                 top: '4px',
             }}>
-                <div>{valueSymbol}</div>
+                <div key={valueSymbol} style={tenStyle}>{valueSymbol}</div>
                 <div>{renderSuit(14)}</div>
             </div>
 
@@ -172,7 +179,7 @@ export const CardFace = ({ card, onClick, style = {}, owner, isAnimationOverlay 
                 right: '4px',
                 transform: 'rotate(180deg)',
             }}>
-                <div>{valueSymbol}</div>
+                <div key={valueSymbol} style={tenStyle}>{valueSymbol}</div>
                 <div>{renderSuit(14)}</div>
             </div>
 
