@@ -300,6 +300,11 @@ function section(table: ServerTable, row: TableRow, op: TableOp, dealSeed: Uint8
         // A stored row the kernel refuses: never silently repaired or played on.
         throw new Error(`Game ${op.gameId} does not load: ${tableCodeName(loaded, ['TABLE_E_', 'GAME_INVALID_'])} (detail ${table.detail()})`);
     }
+    // The base every mid-game draw is seeded from is this game's deal seed. The
+    // module keeps one base per instance and table_load starts from it, so a warm
+    // isolate would otherwise draw from the last game it served.
+    const seeded = table.setDealSeed(row.gameSeed);
+    if (seeded < 0) throw new Error(`Game ${op.gameId}: deal seed refused (${tableCodeName(seeded, ['TABLE_E_'])})`);
     const rc = op.run({ table, row, dealSeed });
     if (rc < 0) return { ...none, rc, detail: table.detail() };
     const reject = rc === L.TABLE_REJECTED ? table.reject() : 0;
