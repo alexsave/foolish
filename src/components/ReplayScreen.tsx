@@ -20,7 +20,7 @@ import { Telestrator } from './Telestrator';
 import { usePreventScroll } from '../hooks/usePreventScroll';
 import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed';
 import { bigintToBytes, bytesToBigint } from '@api/common/replay/codec.ts';
-import { ensureBotsAsync, kernelB32Decode, replaySummary } from '@sdk/ts/wasm/bots.ts';
+import { animHandLaidOut, ensureBotsAsync, kernelB32Decode, replaySummary } from '@sdk/ts/wasm/bots.ts';
 import {
     buildReplayFrames,
     buildReverseFrames,
@@ -241,53 +241,6 @@ const FoolMessage = ({ fool, names }: { fool: number | null; names: string[] | n
         </span>
     );
 
-/* Stable per-card key for the prefer-local-order reconciliation. Known cards
- * are identified by suit+value; face-down (null) slots are indistinguishable,
- * so they collapse onto a single bucket and are matched positionally by the
- * merge below. */
-const handCardKey = (c: Card | null) => (c ? `${c.suit}-${c.value}` : 'hidden');
-
-/* Mirror of ServerContext.mergeHandOrder, generalised to the replay's
- * (Card | null)[] hands: keep the viewer's preferred ordering for cards that
- * still exist, append cards that appeared since, and drop ones that left -
- * so a local rearrangement survives scrubbing/stepping the way the live
- * game's local hand order survives server updates. Face-down slots are
- * reconciled by count (they carry no identity). */
-const mergeReplayHandOrder = (
-    preferred: (Card | null)[],
-    current: (Card | null)[],
-): (Card | null)[] => {
-    if (preferred.length === 0) return current;
-
-    // Remaining counts of each card identity in the current hand.
-    const remaining = new Map<string, number>();
-    for (const c of current) {
-        const k = handCardKey(c);
-        remaining.set(k, (remaining.get(k) ?? 0) + 1);
-    }
-
-    const result: (Card | null)[] = [];
-    // Preserved cards keep their preferred positions...
-    for (const c of preferred) {
-        const k = handCardKey(c);
-        const left = remaining.get(k) ?? 0;
-        if (left > 0) {
-            result.push(c);
-            remaining.set(k, left - 1);
-        }
-    }
-    // ...then anything new (by surviving count) appends at the end.
-    for (const c of current) {
-        const k = handCardKey(c);
-        const left = remaining.get(k) ?? 0;
-        if (left > 0) {
-            result.push(c);
-            remaining.set(k, left - 1);
-        }
-    }
-    return result;
-};
-
 /**
  * Reveal-hands overlay: every player's current hand face-up, positioned on
  * the same ellipse as PlayerRing (with the same viewer rotation: the replay
@@ -304,7 +257,12 @@ const mergeReplayHandOrder = (
  * in a replay, so nothing is committed anywhere; we only keep a per-seat
  * "prefer local order" overlay (localOrders) that the render prefers, falling
  * back to the underlying replay_hands order and reconciling against the
- * current hand as the replay is scrubbed (see mergeReplayHandOrder). Cards are
+ * current hand as the replay is scrubbed. THE RECONCILIATION IS THE KERNEL'S
+ * (anim_plan.h anim_hand_laid_out_masked, through animHandLaidOut): the web
+ * used to carry three implementations of "what order is a hand drawn in" - this
+ * screen's, which reconciled face-down slots by count, and the live game's two,
+ * which could not hold a face-down slot at all - so one rearrangement could come
+ * out two different ways depending on which screen was drawing it. Cards are
  * NOT selectable or playable on the replay screen - only reordering.
  */
 const RevealedHands = () => {
@@ -323,7 +281,7 @@ const RevealedHands = () => {
     const displayHands = useMemo(() => {
         if (!game || !game.replay_hands) return null;
         return game.replay_hands.map((hand, index) =>
-            mergeReplayHandOrder(localOrders[index] ?? [], hand),
+            animHandLaidOut(hand, localOrders[index] ?? []),
         );
     }, [game, localOrders]);
 

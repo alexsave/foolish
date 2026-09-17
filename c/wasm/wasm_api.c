@@ -1038,6 +1038,40 @@ int wasm_anim_conflict_verdicts(int pending_attacks, int defender_hand,
     return n_motions;
 }
 
+// THE HAND'S ORDER (anim_plan.h anim_hand_laid_out_masked): the array a fan is
+// actually given, backs and all.
+//
+// THREE IMPLEMENTATIONS OF THIS SHIPPED ON THE WEB and one in C, which is the
+// hand-order divergence the iMessage work found: a replay reconciled its
+// face-down slots by COUNT and the live hand reconciled by KEY, so the same
+// rearrangement could come out two different ways depending on which screen was
+// drawing it. One door, so they cannot.
+//
+// g_io in:
+//   [0 .. n_cards)              the hand, in kernel order: dense ids, or
+//                               ANIM_TABLE_UNKNOWN for a slot the caller
+//                               cannot name (a replay's face-down card)
+//   [n_cards .. +n_order)       the viewer's preferred order, same alphabet
+// g_io out (overwrites): the laid-out array, one byte per slot.
+// `deferred_lo`/`deferred_hi` are the deferred-card bitset's two halves, because
+// a wasm export's arguments are 32 bits wide and the set is 52.
+// Returns the count written, or a negative ANIM_E*.
+int wasm_anim_hand_laid_out(int n_cards, int n_order,
+                            unsigned deferred_lo, unsigned deferred_hi) {
+    if (n_cards < 0 || n_order < 0) return ANIM_EBADARG;
+    if (n_cards > MAX_HAND_SIZE || n_order > MAX_HAND_SIZE) return ANIM_ECAP;
+    unsigned char hand[MAX_HAND_SIZE], order[MAX_HAND_SIZE], out[MAX_HAND_SIZE];
+    for (int i = 0; i < n_cards; i++) hand[i] = g_io[i];
+    for (int i = 0; i < n_order; i++) order[i] = g_io[n_cards + i];
+    const uint64_t deferred = ((uint64_t)deferred_hi << 32) | (uint64_t)deferred_lo;
+    const int n = anim_hand_laid_out_masked(hand, n_cards, deferred,
+                                            n_order ? order : 0, n_order,
+                                            out, MAX_HAND_SIZE);
+    if (n < 0) return n;
+    for (int i = 0; i < n; i++) g_io[i] = out[i];
+    return n;
+}
+
 // THE TRANSPORT (anim_plan.h), said once by the host. Every wasm host is the
 // server shape - a browser, an edge function, a test harness driving either -
 // but the kernel will not assume that, so bots.ts states it at module init.

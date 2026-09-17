@@ -3,23 +3,23 @@
 export interface Mem { u8: Uint8Array; i8: Int8Array; dv: DataView }
 export const memOf = (b: ArrayBuffer): Mem => ({ u8: new Uint8Array(b), i8: new Int8Array(b), dv: new DataView(b) });
 // AnimPlan
-export const AnimPlan_SIZE = 10212;
+export const AnimPlan_SIZE = 11752;
 export const AnimPlan_n_steps_at = (p: number) => p;
 export const AnimPlan_get_n_steps = (m: Mem, p: number) => m.dv.getInt32(p, true);
 export const AnimPlan_set_n_steps = (m: Mem, p: number, v: number) => { m.dv.setInt32(p, v, true); };
-export const AnimPlan_steps_at = (p: number, i0: number) => p + 4 + i0 * 76;
+export const AnimPlan_steps_at = (p: number, i0: number) => p + 8 + i0 * 88;
 export const AnimPlan_steps_LEN = 128;
-export const AnimPlan_pre_at = (p: number) => p + 9732;
-export const AnimPlan_total_ms_at = (p: number) => p + 10044;
-export const AnimPlan_get_total_ms = (m: Mem, p: number) => m.dv.getInt32(p + 10044, true);
-export const AnimPlan_set_total_ms = (m: Mem, p: number, v: number) => { m.dv.setInt32(p + 10044, v, true); };
-export const AnimPlan_n_veil_at = (p: number) => p + 10048;
-export const AnimPlan_get_n_veil = (m: Mem, p: number) => m.dv.getInt32(p + 10048, true);
-export const AnimPlan_set_n_veil = (m: Mem, p: number, v: number) => { m.dv.setInt32(p + 10048, v, true); };
-export const AnimPlan_veil_ids_at = (p: number, i0: number) => p + 10052 + i0;
+export const AnimPlan_pre_at = (p: number) => p + 11272;
+export const AnimPlan_total_ms_at = (p: number) => p + 11584;
+export const AnimPlan_get_total_ms = (m: Mem, p: number) => m.dv.getInt32(p + 11584, true);
+export const AnimPlan_set_total_ms = (m: Mem, p: number, v: number) => { m.dv.setInt32(p + 11584, v, true); };
+export const AnimPlan_n_veil_at = (p: number) => p + 11588;
+export const AnimPlan_get_n_veil = (m: Mem, p: number) => m.dv.getInt32(p + 11588, true);
+export const AnimPlan_set_n_veil = (m: Mem, p: number, v: number) => { m.dv.setInt32(p + 11588, v, true); };
+export const AnimPlan_veil_ids_at = (p: number, i0: number) => p + 11592 + i0;
 export const AnimPlan_veil_ids_LEN = 160;
-export const AnimPlan_get_veil_ids = (m: Mem, p: number, i0: number) => m.u8[p + 10052 + i0];
-export const AnimPlan_set_veil_ids = (m: Mem, p: number, i0: number, v: number) => { m.u8[p + 10052 + i0] = v; };
+export const AnimPlan_get_veil_ids = (m: Mem, p: number, i0: number) => m.u8[p + 11592 + i0];
+export const AnimPlan_set_veil_ids = (m: Mem, p: number, i0: number, v: number) => { m.u8[p + 11592 + i0] = v; };
 // AnimBeats
 export const AnimBeats_SIZE = 6168;
 export const AnimBeats_n_beats_at = (p: number) => p;
@@ -69,7 +69,7 @@ export const LegalMoves_set_n = (m: Mem, p: number, v: number) => { m.dv.setInt3
 export const LegalMoves_moves_at = (p: number, i0: number) => p + 4 + i0 * 58;
 export const LegalMoves_moves_LEN = 4096;
 // AnimPlanStep
-export const AnimPlanStep_SIZE = 76;
+export const AnimPlanStep_SIZE = 88;
 export const AnimPlanStep_type_at = (p: number) => p;
 export const AnimPlanStep_get_type = (m: Mem, p: number) => m.dv.getInt32(p, true);
 export const AnimPlanStep_set_type = (m: Mem, p: number, v: number) => { m.dv.setInt32(p, v, true); };
@@ -107,6 +107,9 @@ export const AnimPlanStep_set_in_flight_from_deck = (m: Mem, p: number, v: numbe
 export const AnimPlanStep_in_flight_to_flipped_at = (p: number) => p + 72;
 export const AnimPlanStep_get_in_flight_to_flipped = (m: Mem, p: number) => m.dv.getInt32(p + 72, true);
 export const AnimPlanStep_set_in_flight_to_flipped = (m: Mem, p: number, v: number) => { m.dv.setInt32(p + 72, v, true); };
+export const AnimPlanStep_reveals_at = (p: number) => p + 80;
+export const AnimPlanStep_get_reveals = (m: Mem, p: number) => m.dv.getBigUint64(p + 80, true);
+export const AnimPlanStep_set_reveals = (m: Mem, p: number, v: bigint) => { m.dv.setBigUint64(p + 80, v, true); };
 // AnimCounts
 export const AnimCounts_SIZE = 312;
 export const AnimCounts_deck_at = (p: number) => p;

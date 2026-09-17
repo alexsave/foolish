@@ -1045,6 +1045,198 @@ static void test_lobby_scenarios(void) {
 
 #undef X
 
+// ======================================================================
+// 8. the plan, RE-ASKED (anim_plan_at)
+// ======================================================================
+//
+// THE POINT OF THE ENTRY, and why a plan alone was not enough. A host with a
+// frame loop does not want a chain of timers it has to cancel and rebuild when
+// something arrives; it wants to ask, every frame, "where does this stand at
+// now_ms", and be told by the one rule. Everything the web kept in React state
+// while its setTimeout chain walked - which step is flying, which board to
+// commit, which badges to show, which cards are still veiled - is an answer
+// here, so a push landing mid-flight is answered by the NEXT call.
+//
+// The clock is an ARGUMENT. The kernel calls nothing (anim_plan.h's
+// import-free rule), so `now_ms` is measured from the sequence's start and the
+// host owns the origin.
+static void test_plan_sampled_per_frame(void) {
+    // The same three-step sequence test_plan_building builds: DISCARD, then
+    // seat 0's REFILL of two real cards (ids 4 and 32), then seat 1's masked
+    // REFILL. Steps start at 0, 525, 1050; each flies for 500.
+    Card refill0[] = { C(0, 5), C(2, 7) };
+    Card refill1[] = { C(-1, -1), C(-1, -1) };
+    AnimPlanEvent ev[3];
+    memset(ev, 0, sizeof(ev));
+    ev[0].type = ANIM_EVT_DISCARD; ev[0].seat = ANIM_SEAT_NONE; ev[0].from = ANIM_LOC_TABLE; ev[0].to = ANIM_LOC_DISCARD; ev[0].n_cards = 4;
+    ev[1].type = ANIM_EVT_REFILL;  ev[1].seat = 0; ev[1].from = ANIM_LOC_DECK; ev[1].to = ANIM_LOC_HAND; ev[1].cards = refill0; ev[1].n_cards = 2;
+    ev[2].type = ANIM_EVT_REFILL;  ev[2].seat = 1; ev[2].from = ANIM_LOC_DECK; ev[2].to = ANIM_LOC_HAND; ev[2].cards = refill1; ev[2].n_cards = 2; ev[2].mask_cards = 1;
+    int final_hand[2] = { 6, 6 };
+    AnimPlan plan;
+    CHECK(anim_build_plan(ev, 3, 2, 20, 8, CARD_NONE, final_hand, &plan) == ANIM_EOK, "the plan builds");
+
+    // THE PER-STEP REVEAL SET, which the whole-sequence veil_ids cannot answer:
+    // "is this card still veiled at now_ms" needs to know WHICH step lifts it.
+    CHECK(plan.steps[0].reveals == 0, "the discard step reveals nothing");
+    CHECK(plan.steps[1].reveals == ((uint64_t)1 << 4 | (uint64_t)1 << 32),
+          "the real refill reveals ids 4 and 32");
+    CHECK(plan.steps[2].reveals == 0, "a masked refill reveals nothing");
+
+    // ...AND IT REVEALS NOTHING EVEN WHEN IT CARRIES IDENTITIES. The wire's own
+    // masked backs are {-1,-1} and have no dense id, so the veil's range check
+    // answers for them by accident; `mask_cards` is what answers when a caller
+    // hands over real cards it has told us not to trust.
+    {
+        Card real_but_masked[] = { C(1, 4), C(3, 9) };
+        AnimPlanEvent m = ev[2];
+        m.cards = real_but_masked;
+        AnimPlan mp;
+        CHECK(anim_build_plan(&m, 1, 2, 20, 8, CARD_NONE, final_hand, &mp) == ANIM_EOK,
+              "the masked-with-identities plan builds");
+        CHECK(mp.steps[0].reveals == 0 && mp.n_veil == 0,
+              "a step flagged masked veils and reveals nothing it names (got %llu / %d)",
+              (unsigned long long)mp.steps[0].reveals, mp.n_veil);
+    }
+
+    AnimFrame f;
+    // FRAME ZERO. Step 0's flight is playing, nothing has landed, and the
+    // badges are the FREEZE - the board before the move, not the first step's.
+    CHECK(anim_plan_at(&plan, 0, &f) == ANIM_EOK, "frame 0 samples");
+    CHECK(f.step == 0 && f.elapsed_ms == 0, "step 0 is flying at 0 (got %d/%d)", f.step, f.elapsed_ms);
+    CHECK(f.landed == 0 && f.done == 0, "nothing has landed at 0");
+    CHECK(f.next_ms == ANIM_TIME_MS, "the next answer is step 0 landing (got %d)", f.next_ms);
+    CHECK(f.deck == 24 && f.discard == 4 && f.hand[0] == 4 && f.hand[1] == 4,
+          "frame 0 shows the freeze (got deck %d discard %d)", f.deck, f.discard);
+    CHECK(f.veiled == ((uint64_t)1 << 4 | (uint64_t)1 << 32), "both real refill cards are veiled at 0");
+    CHECK(f.in_flight_from_deck == 0, "the discard step takes nothing out of the deck");
+
+    // ONE MILLISECOND BEFORE THE LANDING the answer has not changed yet.
+    CHECK(anim_plan_at(&plan, ANIM_TIME_MS - 1, &f) == ANIM_EOK
+          && f.step == 0 && f.landed == 0 && f.next_ms == ANIM_TIME_MS,
+          "the step is still flying at TIME-1");
+
+    // THE LANDING ITSELF. Step 0 has landed, so its own board is what shows;
+    // the gap before step 1 is a moment with NO step playing, which the board
+    // needs to know so it does not keep drawing a flight that finished.
+    CHECK(anim_plan_at(&plan, ANIM_TIME_MS, &f) == ANIM_EOK, "the landing samples");
+    CHECK(f.landed == 1, "step 0 has landed (got %d)", f.landed);
+    CHECK(f.step == ANIM_STEP_NONE && f.elapsed_ms == 0, "the gap plays no step (got %d)", f.step);
+    CHECK(f.next_ms == ANIM_TIME_MS + ANIM_GAP_MS, "the next answer is step 1 starting (got %d)", f.next_ms);
+    CHECK(f.discard == 8 && f.deck == 24, "the landing shows step 0's own board (got %d/%d)", f.deck, f.discard);
+
+    // STEP 1, in flight: its cards have LEFT the deck, which is what the badge
+    // must show, and they are still veiled because the flight has not landed.
+    CHECK(anim_plan_at(&plan, ANIM_TIME_MS + ANIM_GAP_MS, &f) == ANIM_EOK, "step 1 samples");
+    CHECK(f.step == 1 && f.elapsed_ms == 0 && f.landed == 1, "step 1 starts after the gap");
+    CHECK(f.in_flight_from_deck == 2 && f.in_flight_to_flipped == 0, "two cards are out of the deck");
+    CHECK(f.veiled == ((uint64_t)1 << 4 | (uint64_t)1 << 32), "step 1's cards are veiled while they fly");
+
+    // ...AND WHEN IT LANDS the veil lifts for exactly the cards it carried.
+    CHECK(anim_plan_at(&plan, plan.steps[1].start_ms + ANIM_TIME_MS, &f) == ANIM_EOK
+          && f.landed == 2 && f.veiled == 0,
+          "step 1 landing lifts its own veil (got landed %d veiled %llu)",
+          f.landed, (unsigned long long)f.veiled);
+
+    // THE END, and past it. A sequence that is over says so and names no next
+    // deadline, so a caller can stop asking; asking anyway is not an error.
+    CHECK(anim_plan_at(&plan, plan.total_ms, &f) == ANIM_EOK, "the end samples");
+    CHECK(f.done == 1 && f.landed == 3 && f.step == ANIM_STEP_NONE, "the sequence is done at total_ms");
+    CHECK(f.next_ms == ANIM_NEVER, "a finished sequence names no deadline (got %d)", f.next_ms);
+    CHECK(f.deck == 20 && f.hand[1] == 6, "the end shows the last step's board");
+    AnimFrame later;
+    CHECK(anim_plan_at(&plan, plan.total_ms + 1000000, &later) == ANIM_EOK
+          && later.done == 1 && later.landed == 3 && later.next_ms == ANIM_NEVER,
+          "far past the end is the same answer, not an error");
+
+    // AN EMPTY SEQUENCE is done before it starts, which is what makes a caller
+    // that always samples safe on a push that animated nothing.
+    AnimPlan none;
+    CHECK(anim_build_plan(NULL, 0, 2, 20, 8, CARD_NONE, final_hand, &none) == ANIM_EOK, "the empty plan builds");
+    CHECK(anim_plan_at(&none, 0, &f) == ANIM_EOK && f.done == 1 && f.landed == 0
+          && f.step == ANIM_STEP_NONE && f.next_ms == ANIM_NEVER,
+          "an empty sequence is done at 0");
+
+    // Bounds. A clock before the sequence began is a caller bug, not a frame.
+    CHECK(anim_plan_at(NULL, 0, &f) == ANIM_EBADARG, "no plan, no frame");
+    CHECK(anim_plan_at(&plan, 0, NULL) == ANIM_EBADARG, "no output, no frame");
+    CHECK(anim_plan_at(&plan, -1, &f) == ANIM_EBADARG, "a clock before the start is refused");
+}
+
+// ======================================================================
+// 9. the hand's order WITH FACE-DOWN SLOTS (anim_hand_laid_out_masked)
+// ======================================================================
+//
+// THE DIVERGENCE THIS CLOSES. Three implementations of "what order is a hand
+// drawn in" shipped on the web: mergeReplayHandOrder (ReplayScreen.tsx)
+// reconciled face-down slots BY COUNT, displayedHand (clientReconcile.ts)
+// reconciled BY KEY and could not express a face-down slot at all, and
+// anim_hand_laid_out took dense ids only. So the same rearrangement scrubbed
+// through a replay and played live produced two different arrays.
+//
+// One rule, and the slot a caller cannot NAME is ANIM_TABLE_UNKNOWN - the
+// sentinel anim_plan.h already reserves for exactly this ("a card that is
+// there and has no dense id"), kept off the deck by a static assert.
+static void test_hand_order_with_hidden_slots(void) {
+    const unsigned char U = ANIM_TABLE_UNKNOWN;
+    unsigned char out[64];
+
+    // A replay's revealed hand: two known cards and two face-down slots, in the
+    // order the kernel hands them over.
+    const unsigned char hand[] = { 10, U, 3, U };
+    // What the viewer dragged it into: one known card, a face-down slot, the
+    // other known card. It names ONE of the two backs.
+    const unsigned char order[] = { 3, U, 10 };
+    int n = anim_hand_laid_out_masked(hand, 4, 0, order, 3, out, (int)sizeof out);
+    CHECK(n == 4, "every slot is laid out (got %d)", n);
+    CHECK(out[0] == 3 && out[1] == U && out[2] == 10 && out[3] == U,
+          "the preferred order holds and the unnamed back appends (got %d %d %d %d)",
+          out[0], out[1], out[2], out[3]);
+
+    // MORE BACKS IN THE ORDER THAN IN THE HAND: the extras fall out, because a
+    // face-down slot has no identity to be stale about and the only thing that
+    // can reconcile it is the COUNT. A hand of one back drawn as three is the
+    // replay glitch this rule exists to make unrepresentable.
+    const unsigned char one_back[] = { 7, U };
+    const unsigned char greedy[] = { U, U, U, 7 };
+    n = anim_hand_laid_out_masked(one_back, 2, 0, greedy, 4, out, (int)sizeof out);
+    CHECK(n == 2 && out[0] == U && out[1] == 7,
+          "one back is drawn once whatever the order asks for (got %d: %d %d)", n, out[0], out[1]);
+
+    // A STALE KNOWN ID still drops out by construction, exactly as the
+    // dense-id rule does: `order` is a grow-only memory of where cards sat.
+    const unsigned char left[] = { U, 3 };
+    n = anim_hand_laid_out_masked(left, 2, 0, order, 3, out, (int)sizeof out);
+    CHECK(n == 2 && out[0] == 3 && out[1] == U,
+          "a card that left the hand is not drawn (got %d: %d %d)", n, out[0], out[1]);
+
+    // A DEFERRED card reserves no slot, and `order` must not place it either.
+    n = anim_hand_laid_out_masked(hand, 4, (uint64_t)1 << 3, order, 3, out, (int)sizeof out);
+    CHECK(n == 3 && out[0] == U && out[1] == 10 && out[2] == U,
+          "a deferred card is laid out nowhere (got %d: %d %d %d)", n, out[0], out[1], out[2]);
+
+    // NO ORDER AT ALL is the kernel's own order, backs included.
+    n = anim_hand_laid_out_masked(hand, 4, 0, NULL, 0, out, (int)sizeof out);
+    CHECK(n == 4 && out[0] == 10 && out[1] == U && out[2] == 3 && out[3] == U,
+          "with no preference the kernel's order stands (got %d)", n);
+
+    // The dense-id entry is the same rule with no backs in it, so the two can
+    // never disagree about a hand that has none.
+    unsigned char plain[64];
+    const unsigned char known[] = { 10, 3 };
+    const unsigned char pref[] = { 3, 10 };
+    const int a = anim_hand_laid_out(known, 2, 0, pref, 2, plain, (int)sizeof plain);
+    const int b = anim_hand_laid_out_masked(known, 2, 0, pref, 2, out, (int)sizeof out);
+    CHECK(a == b && a == 2 && plain[0] == out[0] && plain[1] == out[1],
+          "a hand with no backs gets one answer from both entries");
+
+    // Bounds.
+    CHECK(anim_hand_laid_out_masked(hand, 4, 0, order, 3, NULL, 4) == ANIM_EBADARG, "no output, no layout");
+    CHECK(anim_hand_laid_out_masked(NULL, 4, 0, order, 3, out, 4) == ANIM_EBADARG, "no hand, no layout");
+    CHECK(anim_hand_laid_out_masked(hand, -1, 0, order, 3, out, 4) == ANIM_EBADARG, "a negative hand is not a hand");
+    CHECK(anim_hand_laid_out_masked(hand, 4, 0, NULL, 3, out, 4) == ANIM_EBADARG, "a promised order must be handed over");
+    CHECK(anim_hand_laid_out_masked(hand, 4, 0, order, 3, out, 3) == ANIM_ECAP, "a layout that does not fit is refused");
+}
+
 int main(void) {
     printf("anim_plan_test\n");
     test_optimistic_animation();
@@ -1055,6 +1247,8 @@ int main(void) {
     test_plan_freezes_the_flipped_trump();
     test_surface_plan();
     test_lobby_scenarios();
+    test_plan_sampled_per_frame();
+    test_hand_order_with_hidden_slots();
     if (g_fails == 0) printf("anim_plan_test: OK\n");
     else              printf("anim_plan_test: %d FAILURES\n", g_fails);
     return g_fails ? 1 : 0;

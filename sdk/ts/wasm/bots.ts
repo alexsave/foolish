@@ -171,6 +171,7 @@ interface BotsExports extends EngineExports {
     wasm_anim_should_drop_stale(hasLast: number, last: number, hasIncoming: number, incoming: number): number;
     wasm_anim_stale_optimistic(nOpt: number, nTable: number, nNamed: number): number;
     wasm_anim_finish_rows(nElim: number, gameOver: number, nPlayers: number, mySeat: number): number;
+    wasm_anim_hand_laid_out(nCards: number, nOrder: number, deferredLo: number, deferredHi: number): number;
     wasm_anim_conflict_verdicts(pendingAttacks: number, defenderHand: number,
                                 finalUncovered: number): number;
     wasm_anim_set_transport(transport: number): number;
@@ -1022,6 +1023,50 @@ export function animFinishRows(
         rows.push({ place: out[ob + i * 3], seat: out[ob + i * 3 + 1], isYou: out[ob + i * 3 + 2] !== 0 });
     }
     return rows;
+}
+
+// A slot holding a card the caller cannot NAME (anim_plan.h
+// ANIM_TABLE_UNKNOWN): a replay's face-down hand card. Not an empty cell, which
+// is ANIM_TABLE_NONE below.
+const ANIM_TABLE_UNKNOWN = 0xff;
+
+/**
+ * THE ORDER A HAND IS DRAWN IN, in C (anim_plan.h anim_hand_laid_out_masked).
+ *
+ * `cards` is the hand as the kernel hands it over and `order` the viewer's
+ * preferred arrangement, both of them plain cards with `null` for a slot the
+ * caller cannot name. Cards the order no longer holds drop out, cards it never
+ * knew append in kernel order, and a face-down slot is reconciled by COUNT,
+ * because it has no identity to be stale about.
+ *
+ * ONE DOOR. The web had three of these - mergeReplayHandOrder by count,
+ * mergeHandOrder by key set, reconcileHandMemory/displayedHand by key - so one
+ * rearrangement scrubbed through a replay and played live could come out two
+ * different ways. Asserted natively (c/tests/anim_plan_test.c
+ * test_hand_order_with_hidden_slots).
+ */
+export function animHandLaidOut(
+    cards: readonly (Card | null)[], order: readonly (Card | null)[], deferred = 0n,
+): (Card | null)[] {
+    if (cards.length > 36 || order.length > 36) throw new Error('anim: hand exceeds ABI cap');
+    const ex = bots();
+    const buf = mem(ex);
+    const base = ex.wasm_io_ptr();
+    let p = base;
+    for (const c of cards) buf[p++] = c ? wireStateCard(c) : ANIM_TABLE_UNKNOWN;
+    for (const c of order) buf[p++] = c ? wireStateCard(c) : ANIM_TABLE_UNKNOWN;
+    const n = ex.wasm_anim_hand_laid_out(
+        cards.length, order.length,
+        Number(deferred & 0xffffffffn), Number((deferred >> 32n) & 0xffffffffn));
+    if (n < 0) throw new Error(`anim_hand_laid_out error ${n}`);
+    const out = mem(ex);
+    const ob = ex.wasm_io_ptr();
+    const laid: (Card | null)[] = [];
+    for (let i = 0; i < n; i++) {
+        const b = out[ob + i];
+        laid.push(b === ANIM_TABLE_UNKNOWN ? null : cardFromWire(b));
+    }
+    return laid;
 }
 
 // legal.h/anim_plan.h spell "no card here" the same byte.
