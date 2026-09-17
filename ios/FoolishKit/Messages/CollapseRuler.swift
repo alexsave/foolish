@@ -156,6 +156,8 @@ public struct CollapseRuler: View {
     static let opponentSquareColour = pure(1, 0, 1)
     /// A flying card's square. See `flightSquare`.
     static let flightSquareColour = pure(1, 0.5, 0)
+    /// A card in MY HAND. See `handSquare`.
+    static let handSquareColour = pure(0, 0, 1)
 
     /// A LITERAL sRGB colour, never `Color.red` and friends: the system colours
     /// are dynamic (red is 255,59,48 in light and 255,69,58 in dark) and the
@@ -316,6 +318,25 @@ public extension View {
         }
     }
 
+    /// A BLUE square at the centre of every card in my hand, riding the card
+    /// through a drag. Owner, on a pass that looked "as if it's using collapsed
+    /// geometry on the expanded board": "put a square on the card that is
+    /// passed even while it's in our hand". Applied BEFORE the drag offset, so
+    /// the square is where the card is drawn, not where its slot is.
+    @ViewBuilder
+    func handSquare() -> some View {
+        if MessageDevBoard.rulerOn {
+            overlay(alignment: .center) {
+                CollapseRuler.handSquareColour
+                    .frame(width: CollapseRuler.squareSide, height: CollapseRuler.squareSide)
+                    .allowsHitTesting(false)
+                    .zIndex(1_000)   // owner: "the little squares should have high z indexes"
+            }
+        } else {
+            self
+        }
+    }
+
     /// The same lift, for the collapse LAYER a marked view is hosted on: the
     /// mark's own `zIndex` orders it inside that host, where it has no
     /// siblings, and it is the host that has to come out above the deck.
@@ -344,6 +365,7 @@ public extension View {
     func collapseMarkLift() -> some View { self }
     func tableSquare(_ index: Int?) -> some View { self }
     func flightSquare() -> some View { self }
+    func handSquare() -> some View { self }
 }
 
 

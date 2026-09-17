@@ -335,7 +335,8 @@ def main():
                           frames=f1 - f0)]
         # A flying card is SUPPOSED to cover ground fast; its square is kept for
         # plotting (the CSV) and never scored as a jump.
-        if tr["colour"] == sq.FLIGHT:
+        # Nor is a HAND card's: selecting one lifts it and a drag is a finger.
+        if tr["colour"] in (sq.FLIGHT, sq.HAND):
             big = []
         # THE DRAWER ITSELF MOVING. In a frame where the box's top moved more
         # than DRAWER_PT, a step measured inside it is the collapse's own frame

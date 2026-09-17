@@ -28,9 +28,11 @@
 #                                 caption / caption / caption / one bubble
 #   rig.sh tapopen [thread]       open it by TAPPING the newest bubble, so the
 #                                 next send shares that message's MSSession
-#   rig.sh clearstage             dismiss a staged bubble left in the compose
+#   rig.sh clearstage [stay]      dismiss a staged bubble left in the compose
 #                                 field (then `back`, so the tap it just made
-#                                 does not leave the drawer 16pt short - trap 11)
+#                                 does not leave the drawer 16pt short - trap 11;
+#                                 `stay` skips the back, for a caller that kills
+#                                 the appex next and measures in drawer terms)
 #   rig.sh expand / collapse      drag the grabber
 #   rig.sh back                   leave the drawer, and re-enter the thread
 #   rig.sh leave                  leave the thread and STOP
@@ -1184,7 +1186,12 @@ cmd_clearstage() {
   # There was a colour fallback here and it was worse than nothing: a SENT
   # Foolish bubble sitting in the transcript is the same felt, so the fallback
   # found one and tapped it - opening the bubble instead of clearing a draft.
+  local stay="${1:-}"
   if tap_ax "Remove app from message" 2 2>/dev/null; then
+    # `stay`: the caller kills the appex and re-opens in place, and reads
+    # positions relative to the drawer, so the 16pt does not matter to it - and
+    # leaving and re-entering the thread was most of a reel scenario's setup.
+    [ "$stay" = stay ] && { echo "cleared staged bubble (stayed)"; return 0; }
     # …AND THEN LEAVE THE THREAD, because the tap above was a tap INSIDE THE
     # COMPOSE AREA and Messages answers one by making its own text field first
     # responder - which costs the compact drawer 17pt (trap 11). Without this

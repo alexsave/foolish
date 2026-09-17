@@ -295,6 +295,23 @@ game screen's black name field reports 739 for a drawer whose edge is 584).
   drawer (from its red top bar), because Messages' own drawer slide moves the
   whole table and is not ours. `FOOLISH_FLAGS='table.slide=0'` is how the reel
   was shown to bite: it reports exactly the six throw-in and undo moments.
+  `ONLY='pass|8p'` plays just the matching scenarios. Every card in my hand now
+  carries a BLUE square too, so a dragged card can be followed from the fan;
+  `lib/squareplot.py REEL "label" out.png --offset S` draws every square's x and
+  y over one scenario - the picture that showed the pass pairs reversing three
+  times, which the 12pt jump rule never flags.
+- **A reel board is set up in place.** `clearstage stay` removes the Undo's
+  draft without leaving the thread, and the appex is killed and reopened
+  through the + menu - leaving and re-entering was ~5s a scenario, and waiting
+  for a plank on a board that never gets one (an attacker's empty table) burned
+  its whole ~14s ceiling.
+- **Where a pass is dropped decides what it looks like.** A drop 110pt above the
+  table landed the card at the top centre and flew it DOWN into its slot; a
+  person drops it on the slot, and the reel now does (a smooth `--delta 6` drag).
+- **A mark's width is not the log's.** The log said every coin flipped on an
+  8-seat Undo; the film said the check came up at 30 of 34px with no collapse.
+  Measure a badge's ink per frame (white sword, green check) before believing a
+  gesture played.
 - **A window's frames need the window's times.** `tween` measures a slice of
   the movie, and lining the whole movie's timestamps up with it from the end put
   every frame ~315ms late and stretched a 0.77s collapse to 1.0s. `lib/window.sh`

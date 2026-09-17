@@ -6,6 +6,7 @@ Under `dev.ruler` the live board draws 12pt squares (CollapseRuler.swift):
     cyan / yellow / green   the centre of each table pair, by pair index mod 3
     magenta                 the centre of the first opponent's card view
     orange                  the centre of every FLYING card (the overlay's ghost)
+    blue                    the centre of every card in MY HAND, dragged ones included
 
 They replaced two full-width bars (magenta through the table, yellow through the
 opponent) that ran straight through the pairs' squares. Owner: "I think the
@@ -29,6 +30,7 @@ STRIP_PX = 80
 TABLE = ("cyan", "yellow", "green")
 OPPONENT = "magenta"
 FLIGHT = "orange"
+HAND = "blue"
 
 
 def mask(win, name):
@@ -40,6 +42,8 @@ def mask(win, name):
         return (r > hi) & (g > hi) & (b < lo)
     if name == "green":
         return (g > hi) & (r < lo) & (b < lo)
+    if name == "blue":
+        return (b > 200) & (r < 60) & (g < 60)
     if name == "orange":
         return (r > 200) & (g > 90) & (g < 170) & (b < 70)
     return (r > hi) & (b > hi) & (g < lo)            # magenta
@@ -58,7 +62,7 @@ def squares_in(a):
         return []
     grid = a[ys_][:, xs_]
     hits = []
-    for name in TABLE + (OPPONENT, FLIGHT):
+    for name in TABLE + (OPPONENT, FLIGHT, HAND):
         gy, gx = np.nonzero(mask(grid, name))
         hits += [(name, int(xs_[j]), int(ys_[i])) for i, j in zip(gy, gx)]
     out, done = [], []

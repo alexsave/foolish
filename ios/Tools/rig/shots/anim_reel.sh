@@ -1,7 +1,10 @@
 #!/bin/bash
 # anim_reel.sh - every move and its Undo, in ONE film, every table card checked.
 #
-#   FOOLISH_SIM=<udid> [FOOLISH_FLAGS='key=0 ...'] ios/Tools/rig/shots/anim_reel.sh [NAME]
+#   FOOLISH_SIM=<udid> [FOOLISH_FLAGS='key=0 ...'] [ONLY='regex'] ios/Tools/rig/shots/anim_reel.sh [NAME]
+#
+# ONLY='pass|8p' plays just the scenarios whose label matches (the replayed
+# arrivals match as "replay <kind>") - to watch or re-film one again.
 #
 # LOCAL ONLY, NEVER CI: a booted simulator, a DEBUG build (`rig.sh build`) and
 # Messages. Run it by hand after any table or flight change, and now and then.
@@ -71,12 +74,17 @@ wait_flight() { local i=0; while [ $i -lt "${3:-40}" ]; do [ "$(flights "$1")" -
 
 # ---- the board ------------------------------------------------------------
 # A clean board: the last one's staged bubble cleared (an Undo leaves the
-# pre-move board in the compose field), the seed claimed, the hand drawn, the
-# plank given its chance (a defender's Pickup is held back on purpose after a
-# board arrives), and the drawer expanded unless COMPACT is set.
+# pre-move board in the compose field), the seed claimed, the hand drawn, and
+# the drawer expanded unless COMPACT is set.
+#
+# FAST: the draft is removed IN PLACE and the appex killed - never a leave and
+# re-enter of the thread (`clearstage` without `stay` does that, ~5s a board).
+# No wait for a plank here either: an attacker's empty table never gets one, so
+# that wait burned its whole ceiling (~14s) on half the boards. A move that
+# needs the plank waits for it itself - the defender's held-back Pickup included.
 open_board() {   # open_board SEAT MODE ARGS...
   local seat="$1"; shift
-  "$RIG" clearstage >/dev/null 2>&1 || true
+  "$RIG" clearstage stay >/dev/null 2>&1 || true
   if [ -n "$seat" ]; then SEAT="$seat" "$RIG" seed "$@" >/dev/null
   else "$RIG" seed "$@" >/dev/null; fi
   "$RIG" killappex >/dev/null 2>&1
@@ -86,7 +94,6 @@ open_board() {   # open_board SEAT MODE ARGS...
     [ "$(python3 "$LIB/ui.py" hand_y | awk '{print $2}')" != "-1" ] && break
     i=$((i + 1))
   done
-  wait_plank 20 || true
   [ -z "${COMPACT:-}" ] && "$RIG" expand >/dev/null 2>&1
   return 0
 }
@@ -147,9 +154,37 @@ move() {   # move ACTION
         shot; read -r hy xs < <(python3 "$LIB/board.py" hand "$D/now.png")
         tgt=$(python3 "$LIB/board.py" table "$D/now.png")
         set -- $xs; [ $# -le $k ] && return 1; shift $k; x=$1
-        ty=$(echo $tgt | awk '{m=9999; for (i=2;i<=NF;i+=2) if ($i<m) m=$i; print (m==9999 ? 400 : m-110)}')
+        # WHERE A PERSON DROPS IT: on the slot the preview opens, just right of
+        # the last pair, level with the table - not 110pt above the table, which
+        # made the card land at the top centre and fly DOWN into its slot (owner:
+        # "why does it overshoot the table?"). And a SMOOTH drag: 6px touch
+        # steps over 0.8s, not idb's default of ~38pt a step, which read as the
+        # card jumping out of the hand.
+        read -r tx ty < <(echo $tgt | awk '{mx=-1; my=400; for (i=1;i<NF;i+=2) if ($i>mx) {mx=$i; my=$(i+1)}; print (mx<0 ? 220 : mx+48), my}')
         n0=$(flights "place")
-        idb ui swipe --udid "$FOOLISH_SIM" --duration 0.5 "$x" "$hy" $((W / 2)) "$ty" >/dev/null 2>&1
+        idb ui swipe --udid "$FOOLISH_SIM" --duration 0.8 --delta 6 "$x" "$hy" "$tx" "$ty" >/dev/null 2>&1
+        wait_flight "place" "$n0" 30 || continue
+        px=$(grep -E " fly [0-9.]+ \^[0-9.]+ place-" "$G/flight.log" | tail -1 | sed -n 's/.*to=(\([0-9]*\),.*/\1/p')
+        if ! echo "$tgt" | awk -v p="$px" '{for (i=1;i<=NF;i+=2) if ((p-$i)^2 < 400) f=1} END {exit f?0:1}'; then
+          return 0
+        fi
+        undo >/dev/null 2>&1
+        [ -z "${COMPACT:-}" ] && "$RIG" expand >/dev/null 2>&1
+      done
+      return 1 ;;
+    passbutton)
+      # The Pass BUTTON: select one card, and the plank that comes up (Take
+      # goes while anything is selected) is the play for it. A flight to a new
+      # slot is the pass; to an existing pair it was a Cover - undone, and the
+      # next card tried.
+      for k in 0 1 2 3 4 5 6 7; do
+        shot; read -r hy xs < <(python3 "$LIB/board.py" hand "$D/now.png")
+        tgt=$(python3 "$LIB/board.py" table "$D/now.png")
+        set -- $xs; [ $# -le $k ] && return 1; shift $k; x=$1
+        "$RIG" tap "$x" "$hy" 0.4 >/dev/null 2>&1
+        if [ "$(plank_y)" = "-1" ]; then "$RIG" tap "$x" "$hy" 0.3 >/dev/null 2>&1; continue; fi
+        n0=$(flights "place")
+        "$RIG" tap $((W * 4 / 5)) "$(plank_y)" 0 >/dev/null 2>&1
         wait_flight "place" "$n0" 30 || continue
         px=$(grep -E " fly [0-9.]+ \^[0-9.]+ place-" "$G/flight.log" | tail -1 | sed -n 's/.*to=(\([0-9]*\),.*/\1/p')
         if ! echo "$tgt" | awk -v p="$px" '{for (i=1;i<=NF;i+=2) if ((p-$i)^2 < 400) f=1} END {exit f?0:1}'; then
@@ -187,6 +222,7 @@ mark() { printf '%.2f %s\n' "$(echo "$(now) - $REC0" | bc)" "$1" >> "$D/marks.tx
 
 scenario() {   # scenario LABEL SEAT ACTION MODE ARGS...
   local label="$1" seat="$2" action="$3"; shift 3
+  [ -n "${ONLY:-}" ] && ! [[ "$label" =~ $ONLY ]] && return
   mark "open: $label"
   open_board "$seat" "$@"
   mark "$label"
@@ -202,6 +238,7 @@ scenario "2p first attack"            0     attack  lastmove-live attack 2
 scenario "2p cover"                   1     cover   lastmove-live cover 2
 scenario "2p pickup"                  1     pickup  lastmove-live pickup 2
 scenario "2p pass (drag)"             ""    pass    passable 2
+scenario "2p pass (button)"           ""    passbutton passable 2
 scenario "2p cover ending the bout"   ""    cover   lastdefense 2
 scenario "8p throw in"                "${s8:-0}" throwin goodwait 8
 COMPACT=1 scenario "compact throw in"      0     throwin goodwait 2
@@ -209,6 +246,7 @@ COMPACT=1 scenario "compact first attack"  0     attack  lastmove-live attack 2
 
 # Replayed arrivals: someone else's move, played back as the board opens.
 for kind in attack cover covertrump pickup goodany refill; do
+  [ -n "${ONLY:-}" ] && ! [[ "replay $kind" =~ $ONLY ]] && continue
   # NOT "open:" - the replay IS the animation under test, and it plays while the
   # board opens.
   mark "replay $kind"
