@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import supabase from '../backend/Connector';
 import { useAuth } from '../contexts/AuthContext';
-import { useServerActions } from '../contexts/ServerContext';
+import { useServer } from '../contexts/ServerContext';
 import { animationFeed } from './animationFeed';
 
 /**
@@ -17,8 +17,15 @@ import { animationFeed } from './animationFeed';
  */
 export const RealtimeAnimationFeed = () => {
     const { user_id } = useAuth();
-    const { loadGame } = useServerActions();
+    const { loadGame, games } = useServer();
     const url_game_id = useParams<{ game_id: string }>().game_id?.toLowerCase();
+    // Only a seated player has a gu- stream. Realtime admits the private join
+    // only for a member of the game, so a spectator's join is refused every
+    // time; spectators get the game-<id> stream from ServerContext instead.
+    // A boolean: this renders on every state change, but the subscription
+    // effect re-runs only when the seat itself comes or goes.
+    const self = url_game_id ? games[url_game_id]?.self : undefined;
+    const seated = !!user_id && self?.player_id === user_id;
 
     // Keep loadGame reachable from inside the subscription callback without
     // re-running the effect when its identity changes.
@@ -33,7 +40,7 @@ export const RealtimeAnimationFeed = () => {
     const MAX_RETRY_INTERVAL = 5000; // Cap at 5 seconds
 
     useEffect(() => {
-        if (!user_id || !url_game_id) {
+        if (!user_id || !url_game_id || !seated) {
             return;
         }
 
@@ -186,7 +193,7 @@ export const RealtimeAnimationFeed = () => {
             }
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [user_id, url_game_id]);
+    }, [user_id, url_game_id, seated]);
 
     return null;
 };

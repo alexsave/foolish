@@ -61,7 +61,12 @@ const supabaseMock = {
 mock.module('next/navigation', { namedExports: { useParams: () => ({ game_id: GAME_ID }) } });
 mock.module('../src/contexts/AuthContext.tsx', { namedExports: { useAuth: () => ({ user_id: USER_ID }) } });
 mock.module('../src/contexts/ServerContext.tsx', { namedExports: {
-    useServerActions: () => ({ loadGame: async (id: string) => { loadGameCalls.push(id); return { game_id: id }; } }),
+    // Seated: these tests are about a seat's join lifecycle, not who may join
+    // (e2e/realtime_feed_seating.test.ts covers that against the real provider).
+    useServer: () => ({
+        loadGame: async (id: string) => { loadGameCalls.push(id); return { game_id: id }; },
+        games: { [GAME_ID]: { self: { player_id: USER_ID } } },
+    }),
 } });
 mock.module('../src/backend/Connector.ts', { defaultExport: supabaseMock });
 
