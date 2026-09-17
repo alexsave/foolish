@@ -3,7 +3,8 @@
 //     read it back, hand-written byte wire (legacy_marshal.ts, HEAD verbatim)
 //     vs generated in-place accessors (game_marshal.ts);
 //   * every emitted accessor shape in isolation, plus candidate shapes
-//     (alt_accessors.ts) the generator could emit instead.
+//     (alt_accessors.ts) the generator could emit instead;
+//   * a pointer followed by the generated checked X_f_deref_at vs a raw u32 read.
 // Plain TS with explicit .ts imports: runs under tsx, bundled, and on node's own
 // type stripping. See test/bench.sh for all three.
 import { readFileSync } from 'node:fs';
@@ -17,6 +18,7 @@ import {
 import { type Kernel, legacyMarshal, legacyParse } from './legacy_marshal.ts';
 import { marshal, readState } from './game_marshal.ts';
 import * as A from './alt_accessors.ts';
+import * as Anim from '../../../sdk/ts/gen/anim.bots.ts';
 
 const here = process.env.BENCH_DIR ? new URL(`file://${process.env.BENCH_DIR}/`) : new URL('../build/harness/', import.meta.url);
 const ex = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(new URL('kernel.wasm', here))), {}).exports as unknown as Kernel;
@@ -73,6 +75,17 @@ row('array element get+set (elimination_order)', () => { Game_set_elimination_or
 row('hand of 8 cards: 8x raw_set', () => { for (let j = 0; j < 8; j++) Card_raw_set(m, Player_hand_at(pl, j), handBytes[j]); });
 row('hand of 8 cards: one u8.set [alt]', () => { A.hand_set_bytes(mx, pl, handBytes, 8); });
 row('string set+get (Player.name, 10 chars)', () => { Player_set_name_str(m, pl, 'Player 123'); obj = Player_get_name_str(m, pl); });
+// ---- pointers: the checked follow against a raw u32 read ------------------------------
+// An AnimEvent (sdk/ts/gen/anim.bots.ts) at the top of the kernel's memory, which
+// nothing else writes, whose `const Card *cards` points at 8 cards just below it.
+const ev = ex.memory.buffer.byteLength - 64, evCards = ev - 8;
+m.dv.setUint32(ev + 16, evCards, true);
+for (let j = 0; j < 8; j++) Card_raw_set(m, evCards + j, handBytes[j]);
+row('pointer: raw u32 read + i [baseline]', () => { sink += m.dv.getUint32(ev + 16, true) + ((k++) & 7); });
+row('pointer: _ptr + i', () => { sink += Anim.AnimEvent_cards_ptr(m, ev) + ((k++) & 7); });
+row('pointer: _deref_at (NULL + bounds check)', () => { sink += Anim.AnimEvent_cards_deref_at(m, ev, (k++) & 7); });
+row('pointer: raw u32 read + i, Card_raw_get [baseline]', () => { sink += Card_raw_get(m, m.dv.getUint32(ev + 16, true) + ((k++) & 7)); });
+row('pointer: _deref_at, Card_raw_get', () => { sink += Card_raw_get(m, Anim.AnimEvent_cards_deref_at(m, ev, (k++) & 7)); });
 void sink; void obj;
 
 for (const [name, ns] of rows) process.stdout.write(`${MODE}\t${name}\t${ns.toFixed(1)}\n`);
