@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import supabase from '../backend/Connector';
-import { PersonalGame, PublicGame } from '@api/core/types.ts';
 import { Text } from './Text';
 import { hexToBytes } from '@api/common/replay/codec.ts';
 import { kernelB32Encode, kernelReplayLink, REPLAY_LINK } from '@sdk/ts/wasm/bots.ts';
@@ -25,10 +24,10 @@ import { useTexture, getTextureStyle } from './TexturedSurface';
  */
 
 interface ReplayShareProps {
-    game: PersonalGame | PublicGame;
+    gameId: string;
 }
 
-export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
+export const ReplayShare: React.FC<ReplayShareProps> = ({ gameId }) => {
     const [snapshot, setSnapshot] = useState<{ moves: Uint8Array; extras: Uint8Array | null } | null>(null);
     const [failed, setFailed] = useState(false);
     const [copied, setCopied] = useState(false);
@@ -53,7 +52,7 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
                 const { data, error } = await supabase
                     .from('game_snapshots')
                     .select('moves, extras')
-                    .eq('game_id', game.id)
+                    .eq('game_id', gameId)
                     .order('created_at', { ascending: false })
                     .limit(1);
                 if (error) throw error;
@@ -73,7 +72,7 @@ export const ReplayShare: React.FC<ReplayShareProps> = ({ game }) => {
         return () => {
             cancelled = true;
         };
-    }, [game.id]);
+    }, [gameId]);
 
     const view = useMemo(() => {
         if (!snapshot) return null;

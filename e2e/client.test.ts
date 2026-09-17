@@ -12,11 +12,13 @@ import {
     displayedHand, reconcileHandMemory, mergeTableBattles, shouldDropStaleSequence, applyOverlayEntries, cardKey,
     reorderHand, isHandPermutation,
 } from '../src/state/clientReconcile';
+import * as V from '../sdk/ts/gen/view_layout.bots.ts';
 
 type C = { suit: number; value: number };
 const c = (s: number, v: number): C => ({ suit: s, value: v });
 const keys = (cards: C[]) => cards.map(cardKey);
 type B = { attack: C; defense: C | null };
+const NONE: C = { suit: V.CARD_NONE_SUIT, value: V.CARD_NONE_VALUE };
 
 export function registerClientValidation(): void {
     // ---- hand order (crazy swaps / duplicates / in-hand+on-table) --------------
@@ -93,16 +95,22 @@ export function registerClientValidation(): void {
 
     // ---- optimistic overlay (resync no-vanish) ---------------------------------
     test('applyOverlayEntries re-applies unconfirmed optimistic cards onto a resync (no vanish)', () => {
+        // The board the web holds (TableView): battles with the kernel's no-card
+        // for an uncovered defense, the viewer's hand, the viewer's seat.
+        const board = (battles: B[], hand: C[]): any => ({ battles: battles.map((b) => ({ attack: b.attack, defense: b.defense ?? NONE })), myHand: hand, mySeat: 0 });
         const myAttack = c(3, 7);
-        const game: any = { table_battles: [] as B[], self: { hand: [myAttack, c(0, 5)] } };
-        applyOverlayEntries(game, [{ card: myAttack }]);
-        assert.ok(game.table_battles.some((b: B) => cardKey(b.attack) === cardKey(myAttack)), 'optimistic attack preserved');
-        assert.ok(!game.self.hand.some((x: C) => cardKey(x) === cardKey(myAttack)), 'and removed from hand');
+        const game = board([], [myAttack, c(0, 5)]);
+        const after = applyOverlayEntries(game, [{ card: myAttack }]);
+        assert.ok(after.battles.some((b) => cardKey(b.attack) === cardKey(myAttack)), 'optimistic attack preserved');
+        assert.ok(!after.myHand.some((x: C) => cardKey(x) === cardKey(myAttack)), 'and removed from hand');
+        assert.equal(game.battles.length, 0, 'the held board is not changed in place');
 
         const atk = c(1, 5), cov = c(0, 9);
-        const game2: any = { table_battles: [{ attack: atk, defense: null }] as B[], self: { hand: [cov] } };
-        applyOverlayEntries(game2, [{ card: cov, target: atk }]);
-        assert.equal(cardKey(game2.table_battles[0].defense), cardKey(cov), 'optimistic cover preserved');
+        const game2 = board([{ attack: atk, defense: null }], [cov]);
+        const after2 = applyOverlayEntries(game2, [{ card: cov, target: atk }]);
+        assert.equal(cardKey(after2.battles[0].defense), cardKey(cov), 'optimistic cover preserved');
+        assert.equal(applyOverlayEntries({ ...game2, mySeat: -1 }, [{ card: cov, target: atk }]).battles[0].defense, NONE,
+            'a spectator has nothing optimistic to re-apply');
     });
 
     // ---- drag-rearrange bounds safety (regression: prod "undefined is not an

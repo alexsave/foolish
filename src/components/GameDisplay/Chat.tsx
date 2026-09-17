@@ -5,7 +5,7 @@ import { SovietIcon } from '../SovietIcon';
 
 export const Chat = () => {
     const server = useServer();
-    const { game, sendMessage, chatMessages } = server;
+    const { view, sendMessage, chatMessages } = server;
     const { t } = useLocalization();
     const [message, setMessage] = useState('');
     const [isExpanded, setIsExpanded] = useState(false);
@@ -103,7 +103,7 @@ export const Chat = () => {
         setIsExpanded(!isExpanded);
     };
 
-    if (!game || !game.self) {
+    if (!view || view.mySeat < 0) {
         return null;
     }
 

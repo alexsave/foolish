@@ -27,6 +27,8 @@
  * ========================================================================== */
 
 import { test } from 'node:test';
+import { gameToView } from './helpers/view_game.ts';
+import type { TableView } from '../sdk/ts/table/client_table.ts';
 import assert from 'node:assert/strict';
 
 import { game_done, personalize_game } from '../server/api/common/common_utils.ts';
@@ -108,10 +110,10 @@ function serverAllowsAttack(game: Game, pid: string, cards: Card[]): boolean {
 function serverAllowsCover(game: Game, pid: string, covers: Card[], attacks: Card[]): boolean {
   try { serverValidateCover(game, pid, covers, attacks); return true; } catch { return false; }
 }
-function clientAllowsAttackOptimistic(personal: PersonalGame, cards: Card[]): boolean {
+function clientAllowsAttackOptimistic(personal: TableView, cards: Card[]): boolean {
   try { clientValidateAttack(personal, cards); return true; } catch { return false; }
 }
-function clientAllowsCoverOptimistic(personal: PersonalGame, covers: Card[], attacks: Card[]): boolean {
+function clientAllowsCoverOptimistic(personal: TableView, covers: Card[], attacks: Card[]): boolean {
   try { clientValidateCover(personal, covers, attacks); return true; } catch { return false; }
 }
 
@@ -164,7 +166,7 @@ async function playAndCheck(np: number, strategy: StrategyKey, stats: { states: 
     for (let seat = 0; seat < game.players.length; seat++) {
       const p = game.players[seat];
       if (p.status !== PLAYER_STATUS.IN) continue;
-      const personal = personalize_game(game, p.player_id) as PersonalGame;
+      const personal = gameToView(personalize_game(game, p.player_id) as PersonalGame);
 
       if (seat !== game.defender) {
         // 1. ATTACK: exact agreement (candidates satisfy the callers'

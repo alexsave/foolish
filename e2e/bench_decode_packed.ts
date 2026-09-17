@@ -1,10 +1,11 @@
 // Microbench: the web's read of one packed game envelope.
 //
-//   adopt + snapshot   Phase 5a: the kernel's client slot reads the envelope
+//   adopt + snapshot   the kernel's client slot reads the envelope
 //                      (c/src/client_table.c) and the generated reader copies the
-//                      TableView out (sdk/ts/gen/view_layout.bots.ts)
-//   decodeEnvelope     the same plus the transitional PersonalGame mapping
-//                      (src/state/snapshotToGame.ts) - what the web runs today
+//                      TableView out (sdk/ts/gen/view_layout.bots.ts) - what the
+//                      web runs since Phase 6a
+//   decodeEnvelope     the same plus the PersonalGame mapping the web ran in
+//                      Phase 5a (now e2e/helpers/view_game.ts, for comparison)
 //
 // It is the "marshal / decode" gate in docs/C_GAME_SHAPE_MIGRATION.md 4.0: the C
 // read plus snapshot must be no slower than the retired TS reader, decodePackedGame
@@ -19,7 +20,7 @@
 //   BENCH_ITERS=20000 BENCH_RUNS=9 BENCH_JSON=1 ...
 
 import { clientTable } from '@sdk/ts/table/client_table.ts';
-import { decodeEnvelope } from '../src/state/snapshotToGame.ts';
+import { decodeEnvelope } from './helpers/view_game.ts';
 import { deserializeGameState, kernelLegalMoves } from '@sdk/ts/wasm/engine.ts';
 import { wasmBotEligibleMask } from '@sdk/ts/wasm/bots.ts';
 import { encodeAction, AWIRE_KIND } from '@sdk/ts/wire/awire.ts';

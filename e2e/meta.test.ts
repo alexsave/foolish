@@ -14,6 +14,7 @@ import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { GAME_STATUS, PLAYER_STATUS } from '../server/api/core/types.ts';
 import { resetToLobby } from '../src/state/clientReconcile.ts';
+import { gameToView } from './helpers/view_game.ts';
 import { fixture, fixtureTable, GAME_OVER, IN, OUT } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';
 import { checkCardConservation, mustReadTable, readTable, residentBoard } from './helpers/table_play.ts';
@@ -134,29 +135,31 @@ if (!process.env.VALIDATION_ONLY) {
         assert.equal(table.continueGame('h1'), L.TABLE_OK, 'the server resets it');
         const server = residentBoard('g1', fx.state, fx.roster);
 
-        const client = resetToLobby(clientGame);
-        assert.equal(client.status, GAME_STATUS.WAITING);
+        // The client holds the finished game as a board (TableView), as the web does.
+        const clientView = gameToView(clientGame);
+        const client = resetToLobby(clientView);
+        assert.equal(client.status, L.GAME_STATUS_WAITING);
         assert.equal(server.status, L.GAME_STATUS_WAITING, 'status matches');
-        const PLAYER_INT: Record<string, number> = { idle: L.PLAYER_STATUS_IDLE, ready: L.PLAYER_STATUS_READY, in: L.PLAYER_STATUS_IN, out: L.PLAYER_STATUS_OUT };
-        for (let i = 0; i < client.players.length; i++) {
-            assert.equal(PLAYER_INT[client.players[i].status], server.seats[i].status, `player ${i} status matches server`);
-            assert.equal(client.players[i].hand_length, 0, `player ${i} hand cleared`);
+        for (let i = 0; i < client.seats.length; i++) {
+            assert.equal(client.seats[i].status, server.seats[i].status, `player ${i} status matches server`);
+            assert.equal(client.seats[i].handCount, 0, `player ${i} hand cleared`);
             assert.equal(server.seats[i].hand.length, 0, `seat ${i} hand cleared`);
         }
-        for (const [f, s] of [['discard_pile_length', 'discard'], ['power_suit', 'powerSuit'], ['first_attacker', 'firstAttacker'], ['defender', 'defender']] as const) {
+        assert.deepEqual(client.myHand, [], 'the viewer\'s hand cleared');
+        for (const [f, s] of [['discardPileLength', 'discard'], ['powerSuit', 'powerSuit'], ['firstAttacker', 'firstAttacker'], ['defender', 'defender']] as const) {
             assert.equal((client as any)[f], (server as any)[s], `${f} matches server`);
         }
-        assert.equal(client.flipped, null);
+        assert.equal(client.hasFlipped, false);
         assert.equal(server.trump, null);
-        assert.deepEqual(client.table_battles, []);
+        assert.deepEqual(client.battles, []);
         assert.deepEqual(server.battles, []);
-        assert.deepEqual(client.elimination_order, []);
+        assert.deepEqual(client.elimination, []);
         assert.deepEqual(server.eliminated, []);
-        assert.deepEqual(client.good_players, [], 'client clears the goods');
+        assert.equal(client.goodMask, 0, 'client clears the goods');
         assert.equal(server.goodMask, 0, 'the server clears the goods');
-        assert.equal(client.good_timestamp, null, 'client clears the good timestamp');
+        assert.equal(client.hasGoodTimestamp, false, 'client clears the good timestamp');
         assert.equal(client.version, 41, 'version preserved for the reorder gate');
-        assert.equal(clientGame.status, GAME_STATUS.GAME_OVER, 'input not mutated (rollback needs it)');
+        assert.equal(clientView.status, L.GAME_STATUS_GAME_OVER, 'input not mutated (rollback needs it)');
     });
 
     test('meta:continue - resets a finished game back to the lobby', async () => {

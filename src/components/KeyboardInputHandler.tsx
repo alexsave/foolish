@@ -1,5 +1,4 @@
 import { useEffect, useCallback } from 'react';
-import { Card } from '@api/core/types.ts';
 import { useServer } from '../contexts/ServerContext';
 import { useAnimation } from '../contexts/AnimationContext';
 import { useGame } from '../contexts/GameContext';
@@ -7,10 +6,11 @@ import { useAuth } from '../contexts/AuthContext';
 import { canCoverPair } from '../wasm/clientGuards';
 import { canPass } from '../utils/gameValidation';
 import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
+import { covered, kernelTable, type ViewCard as Card } from '../state/view';
 
 export const KeyboardInputHandler = () => {
     const { user_id } = useAuth();
-    const { game, localHandOrder } = useServer();
+    const { view: game, localHandOrder } = useServer();
     const { attack, pass, cover, pickup, good } = useAnimation();
     const { selectedCards, setSelectedCards, handleCardSelection } = useGame();
 
@@ -64,9 +64,9 @@ export const KeyboardInputHandler = () => {
         try {
             if (selectedCards.length === 1) {
                 // Single card cover - find which attack it can cover
-                const uncoveredBattles = game.table_battles.filter(battle => !battle.defense);
-                const validTargets = uncoveredBattles.filter(battle => 
-                    canCoverPair(battle.attack, selectedCards[0], game.power_suit)
+                const uncoveredBattles = game.battles.filter(battle => !covered(battle));
+                const validTargets = uncoveredBattles.filter(battle =>
+                    canCoverPair(battle.attack, selectedCards[0], game.powerSuit)
                 );
                 
                 if (validTargets.length === 1) {
@@ -79,7 +79,7 @@ export const KeyboardInputHandler = () => {
             } else {
                 // Multi-card cover - check if unambiguous
                 const unambiguousCover = game
-                    ? kernelUnambiguousCover(selectedCards, game.table_battles, game.power_suit)
+                    ? kernelUnambiguousCover(selectedCards, kernelTable(game.battles), game.powerSuit)
                     : null;
                 if (unambiguousCover) {
                     await cover(unambiguousCover.coverCards, unambiguousCover.attackCards);
@@ -169,8 +169,7 @@ export const KeyboardInputHandler = () => {
             }
 
             // Action keys
-            const self_index = game.players.findIndex((player) => player.player_id === user_id);
-            const isDefending = game.defender === self_index;
+            const isDefending = game.defender === game.mySeat;
             
             // Space or A for attack, Space or C for cover (mutually exclusive)
             if ((key === ' ' || key === 'a') && !isDefending) {

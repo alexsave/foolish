@@ -1,21 +1,22 @@
-// snapshotToGame.ts - TRANSITIONAL: a TableView snapshot as today's PersonalGame.
+// view_game.ts - TEST ONLY: a TableView snapshot as the PersonalGame shape, and back.
 //
-// The web reads every envelope and push through the kernel now
-// (sdk/ts/table/client_table.ts over c/src/client_table.c). The components still
-// read the PersonalGame shape field by field, so this one file maps a snapshot
-// onto it, exactly as the retired TS decoder (sdk/ts/wire/view.ts viewToGame and
-// evwire.ts decodeEventWire) built it - with two differences the migration
-// decided (docs/C_GAME_SHAPE_MIGRATION.md Q1, Q7): good_players are in seat
-// order, and events carry no message prose, which no component rendered.
+// The web renders the kernel's TableView snapshots (src/state/view.ts) since
+// docs/C_GAME_SHAPE_MIGRATION.md Phase 6a. Tests written against the old
+// PersonalGame shape - most of them server tests asserting on what a player is
+// served - still read a board field by field that way, so the mapping the web
+// used to carry (src/state/snapshotToGame.ts) lives here for them, exactly as it
+// was: the retired TS decoder's shape, with good_players in seat order and no
+// event message prose (Q1, Q7). `gameToView` is its inverse, for the tests that
+// hand a PersonalGame literal to code that now takes a board.
 //
-// It knows names, not bytes: every value comes out of a generated snapshot.
-// Deleted in Phase 6a, when components read the snapshots themselves.
+// It knows names, not bytes: every value comes out of, or goes into, a generated
+// snapshot shape. Retired with the TS game shape in Phase 8.
 
 import {
     ANIMATION_EVENT_TYPE, Card, GAME_STATUS, PersonalGame, PLAYER_STATUS, PrivatePlayer, PublicGame, PublicPlayer,
-} from '@api/core/types.ts';
-import * as V from '@sdk/ts/gen/view_layout.bots.ts';
-import { clientTable, PushEvent, PushRead, TableView, ViewCard } from '@sdk/ts/table/client_table.ts';
+} from '../../server/api/core/types.ts';
+import * as V from '../../sdk/ts/gen/view_layout.bots.ts';
+import { clientTable, PushEvent, PushRead, TableView, ViewCard } from '../../sdk/ts/table/client_table.ts';
 
 const G_STATUS = [GAME_STATUS.WAITING, GAME_STATUS.PLAYING, GAME_STATUS.GAME_OVER] as const;
 const P_STATUS = [PLAYER_STATUS.IDLE, PLAYER_STATUS.READY, PLAYER_STATUS.IN, PLAYER_STATUS.OUT] as const;
@@ -133,5 +134,55 @@ export function pushToSequence(read: PushRead, opts: SnapshotOptions = {}): {
         viewerSeat: read.final.mySeat,
         events: read.steps.map((s) => eventOf(s.event, s.view, opts)),
         game: snapshotToGame(read.final, opts),
+    };
+}
+
+const G_CODE: Record<string, number> = {
+    [GAME_STATUS.WAITING]: V.GAME_STATUS_WAITING, [GAME_STATUS.PLAYING]: V.GAME_STATUS_PLAYING, [GAME_STATUS.GAME_OVER]: V.GAME_STATUS_GAME_OVER,
+};
+const P_CODE: Record<string, number> = {
+    [PLAYER_STATUS.IDLE]: V.PLAYER_STATUS_IDLE, [PLAYER_STATUS.READY]: V.PLAYER_STATUS_READY,
+    [PLAYER_STATUS.IN]: V.PLAYER_STATUS_IN, [PLAYER_STATUS.OUT]: V.PLAYER_STATUS_OUT,
+};
+const NONE: ViewCard = { suit: V.CARD_NONE_SUIT, value: V.CARD_NONE_VALUE };
+
+/**
+ * A PersonalGame (or a spectator's PublicGame) as the board the web holds: the
+ * inverse of snapshotToGame, for tests that hand a game literal to code that
+ * takes a TableView. The viewer's seat is the seat `self` names (-1 without one).
+ */
+export function gameToView(g: PersonalGame | PublicGame): TableView {
+    const self = (g as PersonalGame).self ?? null;
+    const seatOf = (id: string) => g.players.findIndex((p) => p.player_id === id);
+    const mySeat = self ? seatOf(self.player_id) : -1;
+    let goodMask = 0;
+    for (const id of g.good_players ?? []) { const s = seatOf(id); if (s >= 0) goodMask |= 1 << s; }
+    return {
+        status: G_CODE[g.status] ?? V.GAME_STATUS_WAITING,
+        powerSuit: g.power_suit,
+        firstAttacker: g.first_attacker,
+        defender: g.defender,
+        mySeat,
+        fool: -1,
+        deckCount: g.deck_length ?? 0,
+        discardPileLength: g.discard_pile_length ?? 0,
+        hasFlipped: !!g.flipped,
+        hasGoodTimestamp: g.good_timestamp != null,
+        flipped: g.flipped ? { suit: g.flipped.suit, value: g.flipped.value } : NONE,
+        goodMask: goodMask >>> 0,
+        version: g.version ?? 0,
+        battles: (g.table_battles ?? []).map((b) => ({ attack: b.attack, defense: b.defense ?? NONE })),
+        seats: g.players.map((p, s) => ({
+            status: P_CODE[p.status] ?? V.PLAYER_STATUS_IDLE,
+            handCount: p.hand_length ?? 0,
+            awaitingAttack: s === mySeat && !!self?.awaiting_attack,
+            isAi: !!p.is_ai,
+            id: p.player_id,
+            name: p.name ?? '',
+        })),
+        myHand: self?.hand ?? [],
+        elimination: (g.elimination_order ?? []).map(seatOf).filter((s) => s >= 0),
+        gameId: g.id ?? '',
+        title: g.name ?? '',
     };
 }

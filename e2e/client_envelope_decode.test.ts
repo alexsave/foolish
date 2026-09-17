@@ -4,8 +4,10 @@
  * docs/C_GAME_SHAPE_MIGRATION.md Phase 5a. The web client stops reading the
  * wire in TypeScript (sdk/ts/wire/packed_read.ts behind decodePackedGame and
  * decodeEventWire) and reads it through the kernel's client slot
- * (c/src/client_table.c, sdk/ts/table/client_table.ts), mapped onto today's
- * PersonalGame by src/state/snapshotToGame.ts. Two things are held here:
+ * (c/src/client_table.c, sdk/ts/table/client_table.ts). The reads are compared
+ * in the PersonalGame shape (e2e/helpers/view_game.ts, the mapping the web ran
+ * until Phase 6a moved its components onto the TableView snapshots). Two things
+ * are held here:
  *
  *   1. EQUALITY. For every envelope and every push a server writes while tables
  *      are created, joined, filled with bots, dealt, played to their end by humans
@@ -30,7 +32,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { personalize_game } from '../server/api/common/common_utils.ts';
 import { PersonalGame } from '../server/api/core/types.ts';
-import { decodeEnvelope, pushToSequence } from '../src/state/snapshotToGame.ts';
+import { decodeEnvelope, pushToSequence } from './helpers/view_game.ts';
 import { clientTable } from '../sdk/ts/table/client_table.ts';
 import { deserializeGameState, kernelLegalMoves } from '../sdk/ts/wasm/engine.ts';
 import { wasmBotEligibleMask } from '../sdk/ts/wasm/bots.ts';

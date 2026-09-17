@@ -19,7 +19,7 @@
 // every gate the client asks. (Optimistic draws from the deck are likewise
 // placeholders; the authoritative server broadcast supplies the real cards.)
 
-import { Card, PersonalGame, PublicPlayer, GAME_STATUS, PLAYER_STATUS } from '@api/core/types.ts';
+import { isCard, type TableView, type ViewCard as Card } from '../state/view';
 import { takeGUARDS_WASM_B64 } from '@sdk/ts/wasm/guards_wasm.ts';
 // guards embed is gzip+base64 (embed.mjs --gzip); a vendored sync pure-JS
 // gunzip inflates it in the browser and keeps the sync instantiate path.
@@ -52,7 +52,7 @@ interface GuardsExports {
 
 let ex: GuardsExports | null = null;
 let loading: Promise<void> | null = null;
-let residentFor: PersonalGame | null = null;
+let residentFor: TableView | null = null;
 // The kernel's verdict on residentFor's import: 0 accepted, else the negative
 // GAME_INVALID_* reason (c/src/game.h game_validate). A refused state is never
 // adopted, so no gate may run against whatever the kernel still holds.
@@ -61,16 +61,10 @@ let residentVerdict = 0;
 // still run after an async attempt decoded the (take-once) embed.
 let pendingBytes: Uint8Array | null = null;
 
-const G_STATUS: Record<string, number> = {
-  [GAME_STATUS.WAITING]: 0, [GAME_STATUS.PLAYING]: 1, [GAME_STATUS.GAME_OVER]: 2,
-};
-const P_STATUS: Record<string, number> = {
-  [PLAYER_STATUS.IDLE]: 0, [PLAYER_STATUS.READY]: 1, [PLAYER_STATUS.IN]: 2, [PLAYER_STATUS.OUT]: 3,
-};
-
 const i8 = (x: number) => (x << 24) >> 24;
 // 1-byte wire card, mirrors c/wasm/wire.h + engine.ts wireStateCard.
 function wireCard(c: Card): number {
+  if (!isCard(c)) return WIRE_NONE;
   let s = i8(c.suit & 0xff), v = i8(c.value & 0xff);
   if (s === -1 && v === -1) return 0xfe;
   if (s < 0) s = 0; else if (s > 3) s = 3;
@@ -129,70 +123,62 @@ function decodeB64(b64: string): Uint8Array {
 function bytes(): Uint8Array { return new Uint8Array(ex!.memory.buffer); }
 
 // -------------------------------------------------------------------------
-// Marshal a PersonalGame into the kernel's resident state. Skips the write
-// when the same game object is already resident (the render pass fires many
-// gates against one game). Returns the kernel's verdict: 0 when the state was
-// adopted, else the negative GAME_INVALID_* reason it was refused for.
+// Marshal a board (the kernel's TableView snapshot, as the client holds it)
+// into guards.wasm's resident state. Skips the write when the same board object
+// is already resident (the render pass fires many gates against one board).
+// Returns the kernel's verdict: 0 when the state was adopted, else the negative
+// GAME_INVALID_* reason it was refused for. Phase 6b retires this marshal: the
+// gates run on the client slot itself (client_validate).
 // -------------------------------------------------------------------------
-function seatOfSelf(g: PersonalGame): number {
-  const id = g.self?.player_id;
-  const s = g.players.findIndex((p) => p.player_id === id);
-  return s < 0 ? 0 : s;
+// The seat a gate asks about: the viewer's, or seat 0 for a spectator (who asks nothing that matters).
+function seatOfSelf(g: TableView): number {
+  return g.mySeat < 0 ? 0 : g.mySeat;
 }
 
-function marshal(g: PersonalGame): number {
+function marshal(g: TableView): number {
   if (residentFor === g) return residentVerdict;
   const buf = bytes();
   let q = ex!.wasm_io_ptr();
-  const selfSeat = seatOfSelf(g);
 
-  buf[q++] = G_STATUS[g.status] ?? 0;
-  buf[q++] = g.players.length;
-  buf[q++] = g.power_suit & 0xff;
-  buf[q++] = g.first_attacker & 0xff;
+  buf[q++] = g.status & 0xff;
+  buf[q++] = g.seats.length;
+  buf[q++] = g.powerSuit & 0xff;
+  buf[q++] = g.firstAttacker & 0xff;
   buf[q++] = g.defender & 0xff;
-  buf[q++] = g.discard_pile_length & 0xff;
-  buf[q++] = (g.discard_pile_length >> 8) & 0xff;
-  buf[q++] = g.flipped ? 1 : 0;
-  buf[q++] = g.flipped ? wireCard(g.flipped) : 0;
-  let mask = 0;
-  for (const pid of g.good_players ?? []) {
-    const s = g.players.findIndex((p) => p.player_id === pid);
-    if (s >= 0) mask |= 1 << s;
-  }
+  buf[q++] = g.discardPileLength & 0xff;
+  buf[q++] = (g.discardPileLength >> 8) & 0xff;
+  buf[q++] = g.hasFlipped ? 1 : 0;
+  buf[q++] = g.hasFlipped ? wireCard(g.flipped) : 0;
+  const mask = g.goodMask;
   buf[q++] = mask & 0xff; buf[q++] = (mask >> 8) & 0xff;
-  buf[q++] = (mask >> 16) & 0xff; buf[q++] = (mask >> 24) & 0xff;
-  buf[q++] = g.good_timestamp != null ? 1 : 0;
+  buf[q++] = (mask >> 16) & 0xff; buf[q++] = (mask >>> 24) & 0xff;
+  buf[q++] = g.hasGoodTimestamp ? 1 : 0;
   // Deck: only the COUNT is authoritative to the client; cards are placeholders.
-  const deckLen = g.deck_length ?? 0;
+  const deckLen = g.deckCount;
   buf[q++] = deckLen & 0xff; buf[q++] = (deckLen >> 8) & 0xff;
   for (let i = 0; i < deckLen; i++) buf[q++] = PLACEHOLDER;
-  buf[q++] = g.table_battles.length;
-  for (const b of g.table_battles) {
+  buf[q++] = g.battles.length;
+  for (const b of g.battles) {
     buf[q++] = wireCard(b.attack);
-    buf[q++] = b.defense ? wireCard(b.defense) : WIRE_NONE;
+    buf[q++] = wireCard(b.defense);
   }
-  for (let s = 0; s < g.players.length; s++) {
-    const p = g.players[s] as PublicPlayer;
-    buf[q++] = P_STATUS[p.status] ?? 0;
-    buf[q++] = (p as any).awaiting_attack ? 1 : 0;
+  for (let s = 0; s < g.seats.length; s++) {
+    const p = g.seats[s];
+    buf[q++] = p.status & 0xff;
+    buf[q++] = p.awaitingAttack ? 1 : 0;
     // The written hand_count MUST equal the number of cards we actually write,
-    // or the wire desyncs. For self we write its real hand; for opponents we
-    // write hand_length placeholders (they read by count only). In a live game
-    // self.hand.length === self.hand_length; they can differ only in synthetic
-    // fixtures, where the real cards win.
-    const selfHand = (s === selfSeat && g.self?.hand) ? g.self.hand : null;
-    const count = selfHand ? selfHand.length : (p.hand_length ?? 0);
+    // or the wire desyncs. For the viewer's seat we write its real hand; for
+    // opponents we write hand-count placeholders (they read by count only). A
+    // board the client changed optimistically holds the viewer's hand in
+    // myHand before the seat's count catches up, and the real cards win.
+    const selfHand = s === g.mySeat ? g.myHand : null;
+    const count = selfHand ? selfHand.length : p.handCount;
     buf[q++] = count & 0xff;
     if (selfHand) for (const c of selfHand) buf[q++] = wireCard(c);
     else for (let i = 0; i < count; i++) buf[q++] = PLACEHOLDER; // redacted opponent
   }
-  const elim = g.elimination_order ?? [];
-  buf[q++] = elim.length;
-  for (const pid of elim) {
-    const s = g.players.findIndex((p) => p.player_id === pid);
-    buf[q++] = s & 0xff;
-  }
+  buf[q++] = g.elimination.length;
+  for (const s of g.elimination) buf[q++] = s & 0xff;
 
   residentVerdict = ex!.wasm_import_state();
   residentFor = g;
@@ -200,12 +186,12 @@ function marshal(g: PersonalGame): number {
 }
 
 // For the readers that have no "illegal" answer to fall back on.
-function marshalOrThrow(g: PersonalGame): void {
+function marshalOrThrow(g: TableView): void {
   const verdict = marshal(g);
   if (verdict < 0) throw new Error(`Invalid game state: refused by the kernel (reason ${verdict})`);
 }
 
-function writeCards(ptr: number, cards: Card[]): void {
+function writeCards(ptr: number, cards: readonly Card[]): void {
   const buf = bytes();
   for (let i = 0; i < cards.length; i++) buf[ptr + i] = wireCard(cards[i]);
 }
@@ -228,7 +214,7 @@ function ensure(): GuardsExports {
 // UI gates (synchronous once loaded). Return true when the move is LEGAL by
 // the authoritative rules — the exact question the button/drag code asks.
 // -------------------------------------------------------------------------
-export function canAttack(g: PersonalGame, cards: Card[]): boolean {
+export function canAttack(g: TableView, cards: readonly Card[]): boolean {
   const e = ensure();
   if (cards.length === 0) return false;
   if (marshal(g) < 0) return false;
@@ -236,7 +222,7 @@ export function canAttack(g: PersonalGame, cards: Card[]): boolean {
   return e.wasm_validate_attack(seatOfSelf(g), cards.length) === REJECT_NONE;
 }
 
-export function canPass(g: PersonalGame, cards: Card[]): boolean {
+export function canPass(g: TableView, cards: readonly Card[]): boolean {
   const e = ensure();
   if (cards.length === 0) return false;
   if (marshal(g) < 0) return false;
@@ -244,7 +230,7 @@ export function canPass(g: PersonalGame, cards: Card[]): boolean {
   return e.wasm_validate_pass(seatOfSelf(g), cards.length) === REJECT_NONE;
 }
 
-export function canCover(g: PersonalGame, coverCards: Card[], attackCards: Card[]): boolean {
+export function canCover(g: TableView, coverCards: readonly Card[], attackCards: readonly Card[]): boolean {
   const e = ensure();
   if (coverCards.length === 0 || coverCards.length !== attackCards.length) return false;
   if (marshal(g) < 0) return false;
@@ -253,7 +239,7 @@ export function canCover(g: PersonalGame, coverCards: Card[], attackCards: Card[
   return e.wasm_validate_cover(seatOfSelf(g), coverCards.length) === REJECT_NONE;
 }
 
-export function canPickup(g: PersonalGame): boolean {
+export function canPickup(g: TableView): boolean {
   const e = ensure();
   if (marshal(g) < 0) return false;
   return e.wasm_validate_pickup(seatOfSelf(g)) === REJECT_NONE;
@@ -264,13 +250,13 @@ export function canCoverPair(attack: Card, defense: Card, powerSuit: number): bo
   return ensure().wasm_can_cover(attack.suit, attack.value, defense.suit, defense.value, powerSuit) === 1;
 }
 
-export function nextPlayerIndex(g: PersonalGame, current: number): number {
+export function nextPlayerIndex(g: TableView, current: number): number {
   const e = ensure();
   marshalOrThrow(g);
   return e.wasm_next_player(current);
 }
 
-export function gameDone(g: PersonalGame): number {
+export function gameDone(g: TableView): number {
   const e = ensure();
   marshalOrThrow(g);
   return e.wasm_game_done(); // seat index of the loser, or -1
@@ -290,7 +276,7 @@ export function gameDone(g: PersonalGame): number {
 // kernel. To move the client's optimistic apply onto the kernel, re-export
 // wasm_attack..pickup + wasm_export_state in the Makefile and restore the
 // applyMove helper removed alongside this note.
-export function validateActionWire(g: PersonalGame, wire: Uint8Array): number {
+export function validateActionWire(g: TableView, wire: Uint8Array): number {
   const e = ensure();
   const verdict = marshal(g);
   if (verdict < 0) return verdict;

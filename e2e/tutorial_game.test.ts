@@ -28,7 +28,7 @@ import { codeToGame, bigintToBytes } from '../server/api/common/replay/codec.ts'
 import { decodeReplay } from '../server/api/common/replay/decode.ts';
 import { buildReplayFrames, REPLAY_STEP, ReplayFrame } from '../src/replay/frames.ts';
 import { TUTORIAL_MOVES_CODE, TUTORIAL_NAMES } from '../src/components/tutorialGame.ts';
-import { PLAYER_STATUS } from '../server/api/core/types.ts';
+import { PLAYER_STATUS } from '../src/state/view.ts';
 import { FORMAT_VERSION_V6 } from '../server/api/common/replay/core.ts';
 
 if (!process.env.E2E_VERBOSE) {
@@ -45,10 +45,10 @@ const SELF_ID = 'seat-0';
 // learner's own closing good arrives as a seat-less ROUND_END.
 const learnerOwesGood = (prev: ReplayFrame | undefined): boolean => {
     if (!prev) return false;
-    const me = prev.game.players[LEARNER];
+    const me = prev.game.seats[LEARNER];
     return !!me && me.status !== PLAYER_STATUS.OUT
         && prev.game.defender !== LEARNER
-        && !prev.game.good_players.includes(SELF_ID);
+        && ((prev.game.goodMask >>> LEARNER) & 1) === 0;
 };
 
 const isLearnerStep = (frames: ReplayFrame[], i: number): boolean => {
@@ -88,10 +88,11 @@ test('the learner sees their own hand and nobody else\'s', async () => {
     // would for a real player there. If this ever showed the whole table the
     // tutorial would be teaching from a cheat.
     for (const f of frames) {
-        assert.ok(f.game.self, 'the learner has a self');
-        assert.equal(f.game.self.hand.length, f.game.players[LEARNER].hand_length,
+        assert.equal(f.game.mySeat, LEARNER, 'the learner has a seat');
+        assert.equal(f.game.seats[LEARNER].id, SELF_ID, 'the seat the tutorial signs in as');
+        assert.equal(f.game.myHand.length, f.game.seats[LEARNER].handCount,
             'the learner holds their real hand');
-        for (const c of f.game.self.hand) {
+        for (const c of f.game.myHand) {
             assert.ok(c.suit >= 0 && c.value >= 0, 'the learner\'s own cards are face-up');
         }
     }
@@ -112,7 +113,7 @@ test('the tutorial teaches every element it narrates', async () => {
     // ...including a throw-in (an attack onto a table that is not empty)...
     const threwIn = frames.some((f, i) =>
         f.kind === REPLAY_STEP.ATTACK && f.seat === LEARNER
-        && i > 0 && frames[i - 1].game.table_battles.length > 0);
+        && i > 0 && frames[i - 1].game.battles.length > 0);
     assert.ok(threwIn, 'the learner throws in');
 
     // ...and a trump cover, the one the beat calls out by name.
@@ -134,7 +135,7 @@ test('the tutorial teaches every element it narrates', async () => {
     assert.ok(kinds(REPLAY_STEP.ROUND_END).length > 0, 'a bout closes and the table is binned');
     assert.ok(frames.some((f) => f.seq.events.some((e) => e.type === 'refill')), 'players draw');
     assert.ok(frames.some((f) => f.seq.events.some((e) => e.type === 'out')), 'a player goes out');
-    assert.ok(frames.some((f) => f.game.deck_length === 0 && f.game.flipped === null),
+    assert.ok(frames.some((f) => f.game.deckCount === 0 && !f.game.hasFlipped),
         'the stock runs out');
 });
 

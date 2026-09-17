@@ -2,7 +2,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Card, PLAYER_STATUS } from '@api/core/types.ts';
+import { PLAYER_STATUS, type TableView, type ViewCard as Card } from '../state/view';
 import { TexturedSurface } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { AuthContext } from '../contexts/AuthContext';
@@ -47,28 +47,29 @@ const LEARNER_KINDS: number[] = [
  * is theirs to give. */
 const learnerOwesGood = (prev: ReplayFrame | undefined): boolean => {
     if (!prev) return false;
-    const me = prev.game.players[LEARNER_SEAT];
+    const me = prev.game.seats[LEARNER_SEAT];
     return !!me
         && me.status !== PLAYER_STATUS.OUT
         && prev.game.defender !== LEARNER_SEAT
-        && !prev.game.good_players.includes(SELF_ID);
+        && ((prev.game.goodMask >>> LEARNER_SEAT) & 1) === 0;
 };
 
 /* The learner's hand, in a stable display order. The frames are built for seat 0
- * (buildReplayFrames viewer), so `self` is already the kernel's own masked view —
- * the same one a real player in that seat is served. All this adds is the sort:
+ * (buildReplayFrames viewer), so the board's own hand is already the kernel's
+ * masked view - the same one a real player in that seat is served, the seat's id
+ * the auth id the tutorial signs in with (SELF_ID). All this adds is the sort:
  * trumps last, then by value, so the hand does not reshuffle itself under the
  * learner as they play. */
-function sortedSelf(state: ReplayGameState, powerSuit: number) {
-    const hand = [...(state.self?.hand ?? [])];
+function sortedHand(state: TableView, powerSuit: number): Card[] {
+    const hand = [...state.myHand];
     hand.sort((a, b) => {
         const ta = a.suit === powerSuit ? 1 : 0, tb = b.suit === powerSuit ? 1 : 0;
         return ta - tb || a.value - b.value || a.suit - b.suit;
     });
-    return { ...state.self, player_id: SELF_ID, is_ai: false, hand, strategy_key: 'human' };
+    return hand;
 }
-const mkWithSelf = (powerSuit: number) => <T extends ReplayGameState>(state: T): T =>
-    (!state || !state.players ? state : ({ ...state, self: sortedSelf(state, powerSuit) } as T));
+const mkWithSelf = (powerSuit: number) => <T extends TableView>(state: T): T =>
+    (!state || !state.seats ? state : ({ ...state, myHand: sortedHand(state, powerSuit) } as T));
 
 /* ----------------------------- concept beats ------------------------------- */
 interface Beat { at: number; key: TutKey; extra?: TutKey; name?: string; }
@@ -100,7 +101,7 @@ function buildBeats(frames: ReplayFrame[], decoded: DecodedReplay, names: string
         const prev = frames[i - 1];
         switch (f.kind) {
             case REPLAY_STEP.ATTACK:
-                if (prev && prev.game.table_battles.length > 0 && once('throwIn'))
+                if (prev && prev.game.battles.length > 0 && once('throwIn'))
                     beats.push({ at: i, key: 'throw_in', extra: 'capacity' });
                 break;
             case REPLAY_STEP.COVER: {
@@ -125,10 +126,10 @@ function buildBeats(frames: ReplayFrame[], decoded: DecodedReplay, names: string
         if (has(f, 'refill') && once('draw')) beats.push({ at: i, key: 'draw' });
         if (has(f, 'out') && once('out')) {
             const outEv = f.seq.events.find((e) => e.type === 'out');
-            const seat = frames[i].game.players.findIndex((p) => p.player_id === outEv?.player_id);
+            const seat = frames[i].game.seats.findIndex((p) => p.id === outEv?.player_id);
             beats.push({ at: i, key: 'out', name: names[seat >= 0 ? seat : 0] });
         }
-        if (f.game.deck_length === 0 && f.game.flipped === null && once('deckEmpty'))
+        if (f.game.deckCount === 0 && !f.game.hasFlipped && once('deckEmpty'))
             beats.push({ at: i, key: 'deck_empty' });
         if (i === frames.length - 1) beats.push({ at: i, key: 'fool', name: names[decoded.fool] });
     }
@@ -169,7 +170,7 @@ interface PlaybackProps {
 }
 
 const TutorialPlayback = ({ decoded, frames, names, onExit }: PlaybackProps) => {
-    const { updateGameState, game } = useServer();
+    const { updateGameState, view: game } = useServer();
     const real = useAnimation();
     const { isAnimating } = real;
     const { language } = useLocalization();

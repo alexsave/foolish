@@ -10,7 +10,7 @@
 //   2. SERVER       - the C Table's table_act (the operation the move path runs
 //      for the auth id's seat): TABLE_APPLIED == legal, TABLE_REJECTED == illegal
 //   3. CLIENT       - canPass from src/utils/gameValidation.ts (the UI button gate),
-//      over the PersonalGame the client decodes from the server's envelope bytes
+//      over the board (TableView) the client reads from the server's envelope bytes
 //      (decodeEnvelope, the web's reader): the stored player_views row for a human defender
 // The invariant: all three must agree for the defender's own hand. A disagreement
 // is the "I could pass legally but the client gave me no option" bug (or its dual).
@@ -27,9 +27,10 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { Card, PersonalGame } from '../server/api/core/types.ts';
+import { Card } from '../server/api/core/types.ts';
+import type { TableView } from '../sdk/ts/table/client_table.ts';
 import { canPass as clientCanPass } from '../src/utils/gameValidation.ts';
-import { decodeEnvelope as readEnvelope } from './helpers/client_read.ts';
+import { readEnvelopeView as readEnvelope } from './helpers/client_read.ts';
 import { encodeAction } from '../sdk/ts/wire/awire.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
@@ -58,7 +59,7 @@ function serverAllowsPass(b: BoardState, seat: number, cards: Card[]): boolean {
 }
 
 /** The envelope the server writes for `seat` at `version`, as the client decodes it. */
-function clientGame(b: BoardState, seat: number, version: number): PersonalGame {
+function clientGame(b: BoardState, seat: number, version: number): TableView {
     const table = fixtureTable();
     assert.equal(table.load(b.state, b.roster), L.TABLE_OK, 'the board loads');
     const env = table.envelope(b.gameId, seat, version);
@@ -66,10 +67,10 @@ function clientGame(b: BoardState, seat: number, version: number): PersonalGame 
     return decodeEnvelope(env);
 }
 
-function decodeEnvelope(bytes: Uint8Array): PersonalGame {
+function decodeEnvelope(bytes: Uint8Array): TableView {
     const d = readEnvelope(bytes);
     assert.ok(d, 'the client decodes the envelope');
-    return d.game as PersonalGame;
+    return d;
 }
 
 // ===========================================================================
@@ -225,7 +226,7 @@ if (!process.env.VALIDATION_ONLY) {
                 // The client's game: the player_views row the server committed for a
                 // human defender (what the client reads), the same envelope in memory
                 // for the bot seat (which has no client and no row).
-                let personal: PersonalGame;
+                let personal: TableView;
                 const row = defender.brain ? null : (await pgPool.query(
                     'SELECT view, version FROM player_views WHERE game_id=$1 AND player_id=$2', [gameId, defender.id])).rows[0];
                 if (row) {

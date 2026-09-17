@@ -31,7 +31,7 @@ import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { resolveUnconfirmedAttackCovers } from '../src/state/optimisticConflicts';
 import { getTableCards, getCardKey } from '../src/utils/animationUtils';
-import { readPush } from './helpers/client_read.ts';
+import { readPushSequence } from './helpers/client_read.ts';
 import type { ReadRoster as ViewRoster } from './helpers/client_read.ts';
 import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
 
@@ -47,14 +47,13 @@ const rosterOf = (gameId: string, seats: { id: string; name: string; brain: stri
 
 // The broadcasts the given player's client would have received, newest last -
 // the kernel's push bytes decoded with the REAL client decoder (it reads the as2
-// sequence and ignores the as3 tail) into the {events, game} shape the animation
-// pipeline consumes. preGood/prevGoodTs are dummies: these tests only look at
-// events/cards/tables, never at good_players order or good_timestamp.
+// sequence and ignores the as3 tail) into the {events, game} boards the animation
+// pipeline consumes (src/state/pushSequence.ts).
 function streamFor(gameId: string, playerId: string, roster: ViewRoster) {
     const chan = `gu-${gameId}-${playerId}`;
     return broadcastLog
         .filter((b) => b.channel === chan && b.event === 'animation_events')
-        .map((b) => readPush(base64ToBytes(b.payload.b), roster, { preGood: [], prevGoodTs: null })!);
+        .map((b) => readPushSequence(base64ToBytes(b.payload.b), roster)!);
 }
 
 // AnimationContext's inputs to the decision, pulled out of a raw broadcast exactly

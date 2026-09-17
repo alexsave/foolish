@@ -1,4 +1,4 @@
-import { Card } from '@api/core/types.ts';
+import type { ViewCard as Card } from './view';
 import { animStaleOptimisticOnTable } from '@sdk/ts/wasm/bots.ts';
 
 interface AnimEvent {

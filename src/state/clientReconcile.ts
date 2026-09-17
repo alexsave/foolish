@@ -3,43 +3,42 @@
 // needed). The components import from here; the e2e suite imports from here. There
 // is no second copy.
 
-import { Card, PersonalGame, Battle, GAME_STATUS, PLAYER_STATUS } from '@api/core/types.ts';
 import { animShouldDropStale } from '@sdk/ts/wasm/bots.ts';
+import { GAME_STATUS, NO_CARD, PLAYER_STATUS, covered, sameCard, type TableView, type ViewCard } from './view';
+
+type Card = ViewCard;
 
 export const cardKey = (c: Card): string => `${c.suit}-${c.value}`;
 
 // The lobby a finished game resets to on "continue" / "proceed to lobby". This
-// is the CLIENT MIRROR of the server's handleContinue reset
-// (_shared/meta_actions.ts): status → waiting, each player IDLE (human) / READY
-// (bot) with an empty hand, and every volatile round field cleared. Used to
-// transition the win screen to the lobby OPTIMISTICALLY (before the meta
-// round-trip); the authoritative reset that follows must match this byte-for-byte
-// on the public fields or the user sees a snap. Kept here, pure and unit-tested,
-// so it can't silently drift from the server. Returns a NEW game (no mutation).
-export const resetToLobby = (game: PersonalGame): PersonalGame => {
-    const resetStatus = (is_ai: boolean) => is_ai ? PLAYER_STATUS.READY : PLAYER_STATUS.IDLE;
-    return {
-        ...game,
-        status: GAME_STATUS.WAITING,
-        players: game.players.map(p => ({ ...p, status: resetStatus(p.is_ai), hand_length: 0 })),
-        self: game.self
-            ? { ...game.self, status: resetStatus(game.self.is_ai), hand: [], hand_length: 0, awaiting_attack: false }
-            : game.self,
-        deck_length: 0,
-        discard_pile_length: 0,
-        flipped: null,
-        power_suit: 0,
-        first_attacker: 0,
-        defender: 0,
-        table_battles: [],
-        elimination_order: [],
-        good_timestamp: null,
-        good_players: [],
-        // Keep game.version: the authoritative reset broadcasts at a HIGHER
-        // version, so the animation feed's reorder gate still accepts it.
-    };
-};
-const cardComp = (a: Card, b: Card): boolean => a.suit === b.suit && a.value === b.value;
+// is the CLIENT MIRROR of the server's reset (table_continue): status → waiting,
+// each seat IDLE (human) / READY (bot) with an empty hand, and every volatile
+// round field cleared. Used to transition the win screen to the lobby
+// OPTIMISTICALLY (before the meta round-trip); the authoritative reset that
+// follows must match this on the public fields or the user sees a snap
+// (e2e/meta.test.ts holds the two together). Returns a NEW board (no mutation).
+// Phase 6b moves optimistic boards into the kernel (client_optimistic_apply).
+export const resetToLobby = (view: TableView): TableView => ({
+    ...view,
+    status: GAME_STATUS.WAITING,
+    seats: view.seats.map((s) => ({ ...s, status: s.isAi ? PLAYER_STATUS.READY : PLAYER_STATUS.IDLE, handCount: 0, awaitingAttack: false })),
+    myHand: [],
+    deckCount: 0,
+    discardPileLength: 0,
+    hasFlipped: false,
+    flipped: NO_CARD,
+    powerSuit: 0,
+    firstAttacker: 0,
+    defender: 0,
+    fool: -1,
+    battles: [],
+    elimination: [],
+    hasGoodTimestamp: false,
+    goodMask: 0,
+    // Keep the version: the authoritative reset broadcasts at a HIGHER
+    // version, so the animation feed's reorder gate still accepts it.
+});
+const cardComp = sameCard;
 
 // ---- Live broadcast ordering gate -----------------------------------------
 // Broadcasts are fired un-awaited over per-call channels, so under realtime
@@ -67,15 +66,15 @@ export const shouldDropStaleSequence = (lastAppliedVersion: number | null, incom
 // only a null-coalesce over Battle[] objects the C side never needs to see. It
 // stays here deliberately; the animation-core DECISIONS (the gate above, the
 // optimistic resolver, the plan) all delegate to C.
-export const mergeTableBattles = (existingBattles: Battle[] | undefined, incomingBattles: Battle[] | undefined): Battle[] => {
+export const mergeTableBattles = <B>(existingBattles: readonly B[] | undefined, incomingBattles: readonly B[] | undefined): readonly B[] => {
     return incomingBattles ?? existingBattles ?? [];
 };
 
 // ---- Hand reconciliation ---------------------------------------------------
 // Legacy order-preserving merge (kept for game.self.hand). Appends new cards at
 // the end; superseded for the RENDERED hand by reconcileHandMemory + displayedHand.
-export const mergeHandOrder = (oldHand: Card[], newHand: Card[]): Card[] => {
-    if (!oldHand || !newHand) return newHand || [];
+export const mergeHandOrder = (oldHand: readonly Card[], newHand: readonly Card[]): Card[] => {
+    if (!oldHand || !newHand) return [...(newHand || [])];
     const oldKeys = new Set(oldHand.map(cardKey));
     const newKeys = new Set(newHand.map(cardKey));
     const preserved = oldHand.filter((c) => newKeys.has(cardKey(c)));
@@ -92,7 +91,7 @@ export const mergeHandOrder = (oldHand: Card[], newHand: Card[]): Card[] => {
 // (evaluating 'e.suit')"). Any out-of-range / degenerate move returns the input
 // array unchanged (referential identity signals "no-op" to the caller), so a
 // hole can never be created.
-export const reorderHand = (order: Card[], fromIndex: number, toIndex: number): Card[] => {
+export const reorderHand = (order: readonly Card[], fromIndex: number, toIndex: number): readonly Card[] => {
     // Number.isInteger rejects NaN (parseInt on a missing/garbled data-card-index)
     // and floats — NaN would slip past `< 0` / `>= length` (both false for NaN).
     if (!order
@@ -127,7 +126,7 @@ export const isHandPermutation = (cardIndices: number[], handLength: number): bo
 // Sticky arrangement memory: keeps every known card's slot and only grows with
 // genuinely-new cards, so a card removed optimistically and then rejected keeps
 // its slot instead of jumping to the end.
-export const reconcileHandMemory = (memory: Card[], authHand: Card[]): Card[] => {
+export const reconcileHandMemory = (memory: readonly Card[], authHand: readonly Card[]): Card[] => {
     const seen = new Set<string>();
     const dedupMem = (memory || []).filter((c) => { const k = cardKey(c); if (seen.has(k)) return false; seen.add(k); return true; });
     const additions = (authHand || []).filter((c) => !seen.has(cardKey(c)));
@@ -137,7 +136,7 @@ export const reconcileHandMemory = (memory: Card[], authHand: Card[]): Card[] =>
 // The rendered hand: the authoritative hand, deduplicated and ordered by the
 // memory. A card not in the authoritative hand (played, or on the table) is never
 // shown; duplicates are impossible by construction.
-export const displayedHand = (memory: Card[], authHand: Card[]): Card[] => {
+export const displayedHand = (memory: readonly Card[], authHand: readonly Card[]): Card[] => {
     const byKey = new Map((authHand || []).map((c) => [cardKey(c), c] as const));
     const used = new Set<string>();
     const out: Card[] = [];
@@ -150,19 +149,22 @@ export const displayedHand = (memory: Card[], authHand: Card[]): Card[] => {
 export interface OverlayEntry { card: Card; target?: Card | null }
 
 // Re-apply the local player's unconfirmed optimistic cards onto an
-// authoritatively-loaded game, so a reconnect resync doesn't momentarily drop a
-// just-played card. Idempotent.
-export const applyOverlayEntries = (g: PersonalGame, entries: OverlayEntry[]): void => {
-    if (!entries || entries.length === 0 || !g.self) return;
+// authoritatively-loaded board, so a reconnect resync doesn't momentarily drop a
+// just-played card. Idempotent; returns the board itself when there is nothing
+// to apply (a spectator's, or no pending card).
+export const applyOverlayEntries = (v: TableView, entries: OverlayEntry[]): TableView => {
+    if (!entries || entries.length === 0 || v.mySeat < 0) return v;
+    const battles = v.battles.map((b) => ({ ...b }));
+    let hand: readonly Card[] = v.myHand;
     for (const e of entries) {
         if (e.target) {
-            const battle = g.table_battles.find((b) => cardComp(b.attack, e.target!) && b.defense === null);
+            const battle = battles.find((b) => cardComp(b.attack, e.target!) && !covered(b));
             if (battle) battle.defense = e.card;
         } else {
-            const present = g.table_battles.some((b) =>
-                cardComp(b.attack, e.card) || (b.defense !== null && cardComp(b.defense, e.card)));
-            if (!present) g.table_battles.push({ attack: e.card, defense: null });
+            const present = battles.some((b) => cardComp(b.attack, e.card) || (covered(b) && cardComp(b.defense, e.card)));
+            if (!present) battles.push({ attack: e.card, defense: NO_CARD });
         }
-        if (g.self.hand) g.self.hand = g.self.hand.filter((c) => !cardComp(c, e.card));
+        hand = hand.filter((c) => !cardComp(c, e.card));
     }
+    return { ...v, battles, myHand: hand };
 };

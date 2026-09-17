@@ -1,19 +1,17 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Card, PersonalGame } from '@api/core/types.ts';
 import { useServer } from './ServerContext';
 import { useAnimation } from './AnimationContext';
-import { useAuth } from './AuthContext';
 import { useGame } from './GameContext';
 import { canCoverPair } from '../wasm/clientGuards';
 import { reorderHand } from '../state/clientReconcile';
 import { canAttack, canPass as canPassValidation } from '../utils/gameValidation';
 import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
+import { covered, kernelTable, type TableView, type ViewCard as Card } from '../state/view';
 
 const DragContext = createContext<DragContextType | null>(null);
 
 export const DragProvider = ({ children }: { children: React.ReactNode }) => {
-    const { user_id } = useAuth();
-    const game: PersonalGame = useServer().game as PersonalGame;
+    const game = useServer().view as TableView;
     const { rearrangeHand, localHandOrder, setLocalHandOrder } = useServer();
     const { attack, pass, cover } = useAnimation();
 
@@ -56,8 +54,7 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
             return { type: 'rearrange' as const };
         }
 
-        const self_index = game.players.findIndex((player) => player.player_id === user_id);
-        const isDefending = game.defender === self_index;
+        const isDefending = game.defender === game.mySeat;
 
         if (isDefending) {
             const tableCardUnderCursor = getTableCardUnderCursor(x, y);
@@ -71,19 +68,19 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
             // Use all selected cards if the dragged card is selected, otherwise just the dragged card
             const cardsToUse = isDraggedCardSelected && selectedCards.length > 0 ? selectedCards : [draggedCard];
 
-            if (tableCardUnderCursor && !tableCardUnderCursor.defense) {
+            if (tableCardUnderCursor && !covered(tableCardUnderCursor)) {
                 // Dragging to an uncovered attack card
                 if (cardsToUse.length === 1) {
                     // Single card cover — only if it actually beats the
                     // target (the kernel rejects CANNOT_COVER; without this
                     // check an illegal drop fired a doomed request)
-                    if (!canCoverPair(tableCardUnderCursor.attack, cardsToUse[0], game.power_suit)) {
+                    if (!canCoverPair(tableCardUnderCursor.attack, cardsToUse[0], game.powerSuit)) {
                         return { type: 'invalid' as const };
                     }
                     return { type: 'cover' as const, targetCard: tableCardUnderCursor.attack };
                 } else {
                     // Multi-card cover - check if unambiguous
-                    const unambiguousCover = kernelUnambiguousCover(cardsToUse, game.table_battles, game.power_suit);
+                    const unambiguousCover = kernelUnambiguousCover(cardsToUse, kernelTable(game.battles), game.powerSuit);
                     if (unambiguousCover) {
                         return { type: 'multicover' as const, coverCards: unambiguousCover.coverCards, attackCards: unambiguousCover.attackCards };
                     } else {
@@ -94,9 +91,9 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
                 // Can't pass and in empty space
                 if (cardsToUse.length === 1) {
                     // Single card - check which uncovered attacks this card can actually cover
-                    const uncoveredBattles = game.table_battles.filter(battle => !battle.defense);
-                    const validTargets = uncoveredBattles.filter(battle => 
-                        canCoverPair(battle.attack, cardsToUse[0], game.power_suit)
+                    const uncoveredBattles = game.battles.filter(battle => !covered(battle));
+                    const validTargets = uncoveredBattles.filter(battle =>
+                        canCoverPair(battle.attack, cardsToUse[0], game.powerSuit)
                     );
                     
                     if (validTargets.length === 1) {
@@ -107,7 +104,7 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
                     }
                 } else {
                     // Multi-card cover - check if unambiguous
-                    const unambiguousCover = kernelUnambiguousCover(cardsToUse, game.table_battles, game.power_suit);
+                    const unambiguousCover = kernelUnambiguousCover(cardsToUse, kernelTable(game.battles), game.powerSuit);
                     if (unambiguousCover) {
                         return { type: 'multicover' as const, coverCards: unambiguousCover.coverCards, attackCards: unambiguousCover.attackCards };
                     } else {
@@ -143,7 +140,7 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
         const battleCardElement = elements.find(el => el.getAttribute('data-battle-index') !== null);
         if (battleCardElement) {
             const battleIndex = parseInt(battleCardElement.getAttribute('data-battle-index')!);
-            return game.table_battles[battleIndex];
+            return game.battles[battleIndex];
         }
         return null;
     };
@@ -357,14 +354,14 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const rearrangeCardTimerRef = useRef<NodeJS.Timeout | null>(null);
-    const scheduleCardRearrangeUpdate = (newOrder: Card[]) => {
+    const scheduleCardRearrangeUpdate = (newOrder: readonly Card[]) => {
         // Cancel existing timer
         if (rearrangeCardTimerRef.current) {
             clearTimeout(rearrangeCardTimerRef.current);
         }
 
         // Create indices array based on original order
-        const originalHand = game.self.hand || [];
+        const originalHand = game.myHand;
         const indices = newOrder.map(newCard =>
             originalHand.findIndex(origCard =>
                 origCard.value === newCard.value && origCard.suit === newCard.suit
@@ -373,7 +370,7 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
 
         // Set new 6-second timer
         rearrangeCardTimerRef.current = setTimeout(() => {
-            rearrangeHand(game.id!, indices).catch(error => {
+            rearrangeHand(game.gameId, indices).catch(error => {
                 console.error('Failed to rearrange hand:', error);
                 // Revert to original order on error
                 setLocalHandOrder(originalHand);

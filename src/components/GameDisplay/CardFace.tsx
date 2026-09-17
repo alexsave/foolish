@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Card } from '@api/core/types.ts';
+import type { ViewCard as Card } from '../../state/view';
 import { CardBack } from './CardBack';
 import { VALUE_MAP } from '../../utils/cards';
 import { HEARTS, DIAMONDS } from '@api/core/constants.ts';

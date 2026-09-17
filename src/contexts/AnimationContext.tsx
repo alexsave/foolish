@@ -1,6 +1,4 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
-import { Card, Game, PublicGame } from '@api/core/types.ts';
-import { shouldBotActCore } from '@api/common/common_utils.ts';
 import { useServer, useServerActions } from './ServerContext';
 import { useAuth } from './AuthContext';
 import { useParams } from 'next/navigation';
@@ -9,7 +7,8 @@ import { ANIMATION_TIME } from '../constants/constants';
 import { validateActionWire, nextDefenderIndex } from '../utils/gameValidation';
 import { encodeAction } from '@sdk/ts/wire/awire.ts';
 import { clientTable } from '@sdk/ts/table/client_table.ts';
-import { pushToSequence } from '../state/snapshotToGame';
+import { pushToSequence } from '../state/pushSequence';
+import { NO_CARD, covered, kernelTable, rulesOf, type TableView, type ViewCard } from '../state/view';
 import { base64ToBytes } from '@sdk/ts/wire/bytes.ts';
 import { getTableCards, cardsIntersection, getCardKeyPlayerId, createCardEventString, getCardKey } from '../utils/animationUtils';
 import { animationFeed } from '../state/animationFeed';
@@ -26,26 +25,30 @@ export { ANIMATION_TIME } from '../constants/constants';
 // Bot bump timeout - 20 seconds of no animations (currently unused)
 // const BOT_BUMP_TIMEOUT = 20000;
 
-//message type (currently unused)
-// interface PayLoad {
-//     type: 'animation_sequence';
-//     sequence_id: string;
-//     timestamp: number;
-//     events: PublicAnimationEvent;
-//     game: PublicGame;
-// }
+type Card = ViewCard;
+
+// A board this pipeline changes in place before it commits it: the incoming
+// push's own snapshots (fresh objects per read, or a replay's structured
+// clone), never a board already in the store. Phase 6b moves these changes
+// into the kernel's client slot (client_optimistic_apply).
+type Draft<T> = { -readonly [K in keyof T]: T[K] extends readonly (infer U)[] ? Draft<U>[] : T[K] extends object ? Draft<T[K]> : T[K] };
+const draft = (v: TableView): Draft<TableView> => v as Draft<TableView>;
+
+// The player id of the board's own seat (the roster's id for it), if the board has one.
+const selfIdOf = (v: TableView | null | undefined): string | undefined =>
+    v && v.mySeat >= 0 ? v.seats[v.mySeat]?.id : undefined;
 
 interface ClientAnimationEvent  {
     type: 'magic_transition' | 'deal' | 'flipped' | 'defender_move' | 'attack_pass' | 'cover' | 'pickup' | 'discard' | 'out' | 'refill' | 'cards_to_trash' | 'revert';
     player_id?: string;
-    cards?: Card[];
+    cards?: readonly Card[];
     from_location?: 'deck' | 'hand' | 'table' | 'discard';
     to_location?: 'deck' | 'hand' | 'table' | 'discard' | 'flipped';
     target_card?: Card;
-    target_cards?: Card[]; // For multi-card cover animations
+    target_cards?: readonly Card[]; // For multi-card cover animations
     battle_index?: number;
     message?: string;
-    game_state?: Game; // intermediate game state after this event
+    game_state?: TableView; // the board after this event
     is_revert?: boolean; // CLIENT-ONLY: flag for reverted optimistic animations
 }
 
@@ -103,33 +106,27 @@ const eventsSignature = (events: any[]): string =>
                 e.battle_index ?? '',
                 (e.cards ?? []).map((c: Card) => `${c.suit}-${c.value}`).join(','),
                 // cheap state discriminators (no deep serialization)
-                gs?.deck_length ?? '',
-                gs?.table_battles?.length ?? '',
-                gs?.self?.hand?.length ?? '',
+                gs?.deckCount ?? '',
+                gs?.battles.length ?? '',
+                gs && gs.mySeat >= 0 ? gs.myHand.length : '',
             ].join('|');
         })
         .join(';');
 
-// Check if any bot can possibly move in the current game state. Turn
-// eligibility lives in ONE place — shouldBotActCore, the kernel-parity-
-// policed mirror of should_bot_act (a hand-rolled copy here used to count
-// a said-good attacker as movable while uncovered attacks remained, keeping
-// the poll-bump timer firing for nobody). shouldBotActCore only reads
-// fields PublicGame/PublicPlayer carry, hence the casts.
-const canBotMove = (game: PublicGame | undefined): boolean => {
-    if (!game || !game.players || game.players.length === 0) {
-        return false;
-    }
-    return game.players.some((player, i) =>
-        player.is_ai === true && shouldBotActCore(game as never, player as never, i));
-};
+// Check if any bot can possibly move on the current board. Turn eligibility
+// lives in ONE place - the kernel's should_bot_act rule, asked of the board
+// (ViewRules.bot_to_move; a hand-rolled copy here used to count a said-good
+// attacker as movable while uncovered attacks remained, keeping the poll-bump
+// timer firing for nobody).
+const canBotMove = (view: TableView | undefined): boolean =>
+    !!view && view.seats.length > 0 && rulesOf(view).botToMove;
 
 export const AnimationProvider = ({ children }: { children: React.ReactNode }) => {
     // Actions come from the stable actions context (identity never changes);
     // only the state this provider genuinely needs comes from the state context.
     const serverActions = useServerActions();
     const { updateGameState } = serverActions;
-    const { games, game_id } = useServer();
+    const { views: games, game_id } = useServer();
     const { user_id } = useAuth();
     const url_game_id = useParams<{ game_id: string }>().game_id?.toLowerCase();
 
@@ -246,7 +243,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         // Check if there are any AI players in the game
         const currentGame = games[url_game_id];
-        const hasAIPlayers = currentGame?.players?.some(player => player.is_ai) || false;
+        const hasAIPlayers = currentGame?.seats.some(seat => seat.isAi) || false;
 
         // Only start timer if there are AI players
         if (!hasAIPlayers) {
@@ -289,7 +286,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         };
     // Re-run when game data loads or players change (bot might be added)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [url_game_id, url_game_id ? games[url_game_id]?.players?.length : 0]);
+    }, [url_game_id, url_game_id ? games[url_game_id]?.seats.length : 0]);
 
     // Clear OLD optimistic animations every 5 seconds (older than 30 seconds)
     useEffect(() => {
@@ -347,8 +344,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             return { revertEvents, passIsInvalid };
         }
 
-        const serverState = lastEventWithState.game_state;
-        const myPlayerId = serverState.self?.player_id || user_id;
+        const serverState: TableView = lastEventWithState.game_state;
+        const myPlayerId = selfIdOf(serverState) || user_id || undefined;
 
         // Check if server's final state already includes my optimistic cards
         // If so, they were accepted! Don't revert.
@@ -424,15 +421,15 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         const serverAttackPasses = message.events.filter((evt: any) => evt.type === 'attack_pass');
 
         // Count uncovered attacks on server's table (before pass)
-        const serverTableBattles = serverState?.table_battles || [];
-        const serverUncoveredAttacks = serverTableBattles.filter((b: any) => !b.defense).length;
+        const serverTableBattles = serverState?.battles || [];
+        const serverUncoveredAttacks = serverTableBattles.filter((b) => !covered(b)).length;
 
         // ====== CHECK FOR OPTIMISTIC PASS CONFLICTS EARLY ======
         // Do this BEFORE merging, so invalid pass cards don't get baked into states
         if (optimisticPassState.current && message.events.length > 0 && serverAttackPasses.length > 0) {
             const nextDefenderId = optimisticPassState.current.defender;
-            const finalGameState = message.game || serverState;
-            const nextDefenderHandSize = finalGameState?.players?.[nextDefenderId]?.hand_length ?? 0;
+            const finalGameState: TableView = message.game || serverState;
+            const nextDefenderHandSize = finalGameState?.seats[nextDefenderId]?.handCount ?? 0;
 
             // My still-pending pass cards.
             const passCards: Card[] = [];
@@ -456,8 +453,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 passCards.map((card) => ({ card, dest: ANIM_DEST.table })),
                 {
                     events: conflictEvents(message.events),
-                    openTable: serverState?.table_battles ?? [],
-                    myHand: serverState?.self?.hand ?? [],
+                    openTable: kernelTable(serverState?.battles ?? []),
+                    myHand: [...(serverState?.myHand ?? [])],
                     defenderHand: nextDefenderHandSize,
                     finalUncovered: serverUncoveredAttacks,
                 }).revert;
@@ -513,14 +510,14 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             serverDefenderBefore !== serverDefenderAfter;
 
         if (myOptimisticAttackCovers.length > 0 && defenderChanged && serverAttackPasses[0]) {
-            const finalGameState = message.game || serverState;
+            const finalGameState: TableView = message.game || serverState;
             const newDefenderId = serverDefenderAfter; // After pass
 
             // Check 1: Did the pass make the attacker become the defender?
             if (newDefenderId !== undefined) {
                 // Find my player index
-                const myPlayerIndex = finalGameState?.players?.findIndex((p: any) =>
-                    p.player_id === myPlayerId
+                const myPlayerIndex = finalGameState?.seats.findIndex((s) =>
+                    s.id === myPlayerId
                 );
 
                 if (myPlayerIndex === newDefenderId) {
@@ -537,7 +534,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             // inline version reverted the WHOLE set on a capacity failure, so a
             // card the broadcast itself showed on the table flew home red.
             if (myOptimisticAttackCovers.length > 0 && newDefenderId !== undefined) {
-                const newDefenderHandSize = finalGameState?.players?.[newDefenderId]?.hand_length ?? 0;
+                const newDefenderHandSize = finalGameState?.seats[newDefenderId]?.handCount ?? 0;
 
                 const doomed = resolveConflictMotions(
                     myOptimisticAttackCovers.map((card) => ({
@@ -547,8 +544,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     })),
                     {
                         events: conflictEvents(message.events),
-                        openTable: serverState?.table_battles ?? [],
-                        myHand: serverState?.self?.hand ?? [],
+                        openTable: kernelTable(serverState?.battles ?? []),
+                        myHand: [...(serverState?.myHand ?? [])],
                         defenderHand: newDefenderHandSize,
                         finalUncovered: serverUncoveredAttacks,
                     }).revert;
@@ -588,8 +585,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 myOptimisticPickups.map((card) => ({ card, dest: ANIM_DEST.hand })),
                 {
                     events: conflictEvents(message.events),
-                    openTable: serverState?.table_battles ?? [],
-                    myHand: serverState?.self?.hand ?? [],
+                    openTable: kernelTable(serverState?.battles ?? []),
+                    myHand: [...(serverState?.myHand ?? [])],
                     defenderHand: 0,
                     finalUncovered: serverUncoveredAttacks,
                     pendingAttacks: 0,
@@ -678,10 +675,10 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
             if (cardsToMerge.length > 0) {
                     // Get my player ID
-                    const myPlayerId = serverState.self?.player_id || user_id;
+                    const myPlayerId = selfIdOf(serverState) || user_id || undefined;
 
-                    // Merge optimistic cards into ALL game states (events + final)
-                    const statesToMerge = [
+                    // Merge optimistic cards into ALL boards (events + final)
+                    const statesToMerge: TableView[] = [
                         ...message.events.map((evt: any) => evt.game_state).filter(Boolean),
                         message.game
                     ].filter(Boolean);
@@ -691,65 +688,50 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                         evt.type === 'attack_pass' && evt.player_id === user_id
                     );
 
-                    statesToMerge.forEach((state: any, stateIdx: number) => {
-                        if (state && state.table_battles) {
-                            // FIRST: Preserve optimistic pass state if present AND this message contains our pass
-                            // Otherwise, trust the server's game state (which is correct for other players' passes)
-                            if (optimisticPassState.current && hasUserPass) {
-                                state.defender = optimisticPassState.current.defender;
-                                state.first_attacker = optimisticPassState.current.first_attacker;
-                            }
+                    statesToMerge.forEach((board) => {
+                        const state = draft(board);
+                        // FIRST: Preserve optimistic pass state if present AND this message contains our pass
+                        // Otherwise, trust the server's game state (which is correct for other players' passes)
+                        if (optimisticPassState.current && hasUserPass) {
+                            state.defender = optimisticPassState.current.defender;
+                            state.firstAttacker = optimisticPassState.current.first_attacker;
+                        }
 
-                            cardsToMerge.forEach((optCard: Card) => {
-                                const alreadyPresent = state.table_battles.some((b: any) =>
-                                    (b.attack.suit === optCard.suit && b.attack.value === optCard.value) ||
-                                    (b.defense && b.defense.suit === optCard.suit && b.defense.value === optCard.value)
-                                );
-                                if (!alreadyPresent) {
-                                    const cardKey = getCardKey(optCard);
-                                    const positionInfo = optimisticCardPositions.current.get(cardKey);
+                        cardsToMerge.forEach((optCard: Card) => {
+                            const alreadyPresent = state.battles.some((b) =>
+                                (b.attack.suit === optCard.suit && b.attack.value === optCard.value) ||
+                                (covered(b) && b.defense.suit === optCard.suit && b.defense.value === optCard.value)
+                            );
+                            if (!alreadyPresent) {
+                                const cardKey = getCardKey(optCard);
+                                const positionInfo = optimisticCardPositions.current.get(cardKey);
 
-                                    // Check if this is a cover (has target_card info)
-                                    if (positionInfo?.target_card) {
-                                        // This is a cover - add as defense to the correct battle
-                                        const targetCard = positionInfo.target_card;
-                                        const battleIdx = state.table_battles.findIndex((b: any) =>
-                                            b.attack.suit === targetCard.suit && b.attack.value === targetCard.value
-                                        );
-                                        if (battleIdx >= 0 && !state.table_battles[battleIdx].defense) {
-                                            state.table_battles[battleIdx].defense = optCard;
-                                        }
-                                    } else {
-                                        // This is an attack - add as new battle
-                                        state.table_battles.push({
-                                            attack: optCard,
-                                            defense: null
-                                        });
-                                    }
-                                }
-
-                                // CRITICAL: Also remove this card from my hand in this state!
-                                // Find my player in this state
-                                if (state.self?.player_id === myPlayerId && state.self.hand) {
-                                    state.self.hand = state.self.hand.filter((c: Card) =>
-                                        !(c.suit === optCard.suit && c.value === optCard.value)
+                                // Check if this is a cover (has target_card info)
+                                if (positionInfo?.target_card) {
+                                    // This is a cover - add as defense to the correct battle
+                                    const targetCard = positionInfo.target_card;
+                                    const battleIdx = state.battles.findIndex((b) =>
+                                        b.attack.suit === targetCard.suit && b.attack.value === targetCard.value
                                     );
-                                }
-
-                                // Also check players array
-                                if (state.players) {
-                                    state.players.forEach((p: any, idx: number) => {
-                                        if (p.player_id === myPlayerId && p.hand) {
-                                            p.hand = p.hand.filter((c: Card) =>
-                                                !(c.suit === optCard.suit && c.value === optCard.value)
-                                            );
-                                            // Update hand_length too
-                                            p.hand_length = p.hand.length;
-                                        }
+                                    if (battleIdx >= 0 && !covered(state.battles[battleIdx])) {
+                                        state.battles[battleIdx].defense = optCard;
+                                    }
+                                } else {
+                                    // This is an attack - add as new battle
+                                    state.battles.push({
+                                        attack: optCard,
+                                        defense: NO_CARD
                                     });
                                 }
-                            });
-                        }
+                            }
+
+                            // CRITICAL: Also remove this card from my hand in this state!
+                            if (selfIdOf(state) === myPlayerId) {
+                                state.myHand = state.myHand.filter((c: Card) =>
+                                    !(c.suit === optCard.suit && c.value === optCard.value)
+                                );
+                            }
+                        });
                     });
                 }
         }
@@ -779,10 +761,10 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     };
 
     // Packed broadcast envelope {t:'as2' | 'as3', s, v, b, game_id, r?} -> the
-    // legacy sequence shape (docs/PACKED_WIRE_CUTOVER.md). This is the client's
-    // render-boundary read for live broadcasts: the kernel reads the bytes
-    // (sdk/ts/table/client_table.ts), src/state/snapshotToGame.ts maps them onto
-    // today's events and games, and the EXISTING pipeline (version gate, dedup,
+    // sequence this pipeline plays (docs/PACKED_WIRE_CUTOVER.md). This is the
+    // client's render-boundary read for live broadcasts: the kernel reads the
+    // bytes (sdk/ts/table/client_table.ts) into boards, src/state/pushSequence.ts
+    // names each step's event, and the EXISTING pipeline (version gate, dedup,
     // optimistic-conflict resolution) runs unchanged on the result.
     //
     // Who sits where: an as3 push that changed the roster carries it. Otherwise
@@ -803,7 +785,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             })));
             if (built) identity = built;
         }
-        const g = gid ? gamesRef.current[gid] : undefined;
         let read = null;
         try {
             read = table.readPush(base64ToBytes(m.b), { as3: m.t === 'as3', gameId: gid, version, identity });
@@ -819,7 +800,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             refetchForEnvelope(gid, version);
             return null;
         }
-        const decoded = pushToSequence(read, { prevGoodTs: g?.good_timestamp ?? null });
+        const decoded = pushToSequence(read);
         return {
             type: 'animation_sequence',
             sequence_id: m.s,
@@ -863,11 +844,11 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             // make their own confirming event look un-optimistic and animate a
             // second time (the double-play bug). message.game is the pristine
             // server state here (resolveOptimisticConflicts hasn't injected yet).
-            if (message.game?.table_battles && optimisticAnimations.current.size > 0) {
+            if (message.game?.battles && optimisticAnimations.current.size > 0) {
                 const tableCards: Card[] = [];
-                for (const b of message.game.table_battles) {
-                    if (b?.attack) tableCards.push(b.attack);
-                    if (b?.defense) tableCards.push(b.defense);
+                for (const b of message.game.battles as readonly { attack: Card; defense: Card }[]) {
+                    tableCards.push(b.attack);
+                    if (covered(b)) tableCards.push(b.defense);
                 }
                 for (const key of staleOptimisticKeysOnTable(optimisticAnimations.current.keys(), tableCards, message.events)) {
                     optimisticAnimations.current.delete(key);
@@ -879,7 +860,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         }
 
         // Store the game ID for use during animations
-        currentGameIdRef.current = message.game.id;
+        currentGameIdRef.current = message.game.gameId;
 
         // Check for duplicate sequence_id FIRST (before checking optimistic events)
         const sequenceId = message.sequence_id;
@@ -942,7 +923,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         // If ALL events were optimistic, just update state and return
         if (nonOptimisticEvents.length === 0) {
             if (message.game) {
-                updateGameState(message.game.id, message.game);
+                updateGameState(message.game.gameId, message.game);
             }
             return;
         }
@@ -983,14 +964,14 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 // Check if server confirmed optimistic pass
                 const serverConfirmedPass =
                     message.game.defender === optimisticPassState.current.defender &&
-                    message.game.first_attacker === optimisticPassState.current.first_attacker;
+                    message.game.firstAttacker === optimisticPassState.current.first_attacker;
 
                 if (serverConfirmedPass) {
                     optimisticPassState.current = null;
                 } else {
                     // Server didn't confirm - use optimistic state (our pass might have been rejected or modified)
-                    message.game.defender = optimisticPassState.current.defender;
-                    message.game.first_attacker = optimisticPassState.current.first_attacker;
+                    draft(message.game).defender = optimisticPassState.current.defender;
+                    draft(message.game).firstAttacker = optimisticPassState.current.first_attacker;
                 }
             } else if (optimisticPassState.current && !hasUserPass) {
                 // This message doesn't contain our pass, so clear stale optimistic state
@@ -998,7 +979,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 optimisticPassState.current = null;
             }
 
-            updateGameState(message.game.id, message.game);
+            updateGameState(message.game.gameId, message.game);
         };
         remainingSequenceEventsRef.current = message.events.length + revertEvents.length;
 
@@ -1024,22 +1005,19 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         const pickupEvent = message.events.find((evt: any) => evt.type === 'pickup' || evt.type === 'cards_to_trash');
         const magicTransitionEvent = message.events.find((evt: any) => evt.type === 'magic_transition');
 
-        let baseState;
+        let baseState: TableView | null;
         if (hasPickupRevertsForState) {
             // For pickup reverts, we need state with cards on table
             if (magicTransitionEvent?.game_state) {
                 // Use magic_transition state (has cards on table before good)
                 baseState = magicTransitionEvent.game_state;
             } else if (pickupEvent?.cards) {
-                // Reconstruct state with cards on table (before pickup)
-                baseState = serverStateForRevert ? structuredClone(serverStateForRevert) : null;
-                if (baseState && pickupEvent.cards) {
-                    // Put the cards back on the table as uncovered attacks
-                    baseState.table_battles = pickupEvent.cards.map((card: Card) => ({
-                        attack: card,
-                        defense: null
-                    }));
-                }
+                // Reconstruct state with cards on table (before pickup): the
+                // cards back on the table as uncovered attacks
+                baseState = serverStateForRevert ? {
+                    ...structuredClone(serverStateForRevert as TableView),
+                    battles: pickupEvent.cards.map((card: Card) => ({ attack: card, defense: NO_CARD })),
+                } : null;
             } else {
                 baseState = serverStateForRevert;
             }
@@ -1047,7 +1025,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             baseState = serverStateForRevert;
         }
 
-        const stateWithOptimistic = baseState ? structuredClone(baseState) : null;
+        const stateWithOptimistic = baseState ? draft(structuredClone(baseState)) : null;
 
         // Check if we have pass reverts - they need original defender value
         const hasPassReverts = revertEvents.some(rev =>
@@ -1058,7 +1036,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         if (hasPassReverts && stateWithOptimistic && serverStateForRevert) {
             // For pass reverts, use the SERVER's defender value (original before pass)
             stateWithOptimistic.defender = serverStateForRevert.defender;
-            stateWithOptimistic.first_attacker = serverStateForRevert.first_attacker;
+            stateWithOptimistic.firstAttacker = serverStateForRevert.firstAttacker;
         }
 
         if (stateWithOptimistic) {
@@ -1084,9 +1062,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             if (hasPickupRevertsForClean) {
                 // PICKUP REVERT SCENARIO (hand → table): 
                 // State should show reverted cards on table, but NOT server attack cards that will animate
-                stateWithOptimistic.table_battles = (stateWithOptimistic.table_battles || []).filter((b: any) => {
+                stateWithOptimistic.battles = stateWithOptimistic.battles.filter((b) => {
                     const attackKey = getCardKey(b.attack);
-                    const defenseKey = b.defense ? getCardKey(b.defense) : null;
+                    const defenseKey = covered(b) ? getCardKey(b.defense) : null;
 
                     // Remove server attack cards that will animate (they shouldn't appear yet)
                     const removeAttack = serverAttackCards.has(attackKey);
@@ -1097,9 +1075,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             } else if (hasPickupEventForClean && hasAttackReverts) {
                 // ATTACK REVERT + PICKUP SCENARIO: Only remove reverting cards, keep everything else
                 // (Cards to be picked up need to stay on table for pickup animation)
-                stateWithOptimistic.table_battles = (stateWithOptimistic.table_battles || []).filter((b: any) => {
+                stateWithOptimistic.battles = stateWithOptimistic.battles.filter((b) => {
                     const attackKey = getCardKey(b.attack);
-                    const defenseKey = b.defense ? getCardKey(b.defense) : null;
+                    const defenseKey = covered(b) ? getCardKey(b.defense) : null;
 
                     // Only remove reverting cards
                     const removeAttack = revertCardKeys.has(attackKey);
@@ -1109,9 +1087,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 });
             } else {
                 // ATTACK CONFLICT SCENARIO: Remove both reverting AND valid attacks that will animate
-                stateWithOptimistic.table_battles = (stateWithOptimistic.table_battles || []).filter((b: any) => {
+                stateWithOptimistic.battles = stateWithOptimistic.battles.filter((b) => {
                     const attackKey = getCardKey(b.attack);
-                    const defenseKey = b.defense ? getCardKey(b.defense) : null;
+                    const defenseKey = covered(b) ? getCardKey(b.defense) : null;
 
                     // Remove reverting cards OR cards that will animate
                     const removeAttack = revertCardKeys.has(attackKey) || serverAttackCards.has(attackKey);
@@ -1122,29 +1100,28 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             }
 
             // For pass reverts (table → hand), add cards back to player's hand
-            if (hasPassReverts && stateWithOptimistic.self) {
+            if (hasPassReverts && stateWithOptimistic.mySeat >= 0) {
                 const passRevertCards = revertEvents
                     .filter(rev => rev.to_location === 'hand')
                     .flatMap(rev => rev.cards || []);
 
                 if (passRevertCards.length > 0) {
                     // Add cards back to hand
-                    stateWithOptimistic.self.hand = stateWithOptimistic.self.hand || [];
                     passRevertCards.forEach((card: Card) => {
                         // Only add if not already in hand
-                        const alreadyInHand = stateWithOptimistic.self.hand.some((c: Card) =>
+                        const alreadyInHand = stateWithOptimistic.myHand.some((c: Card) =>
                             c.suit === card.suit && c.value === card.value
                         );
                         if (!alreadyInHand) {
-                            stateWithOptimistic.self.hand.push(card);
+                            stateWithOptimistic.myHand.push(card);
                         }
                     });
                 }
             }
         }
 
-        revertEvents.forEach((revertEvent, idx) => {
-            revertEvent.game_state = stateWithOptimistic as any;
+        revertEvents.forEach((revertEvent) => {
+            revertEvent.game_state = (stateWithOptimistic ?? undefined) as TableView | undefined;
         });
 
         // Find the first attack event from server (the valid attack)
@@ -1240,8 +1217,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         // Check if this animation is from a bot player
         if (nextAnimation.player_id && url_game_id) {
             const currentGame = games[url_game_id];
-            const player = currentGame?.players?.find(p => p.player_id === nextAnimation.player_id);
-            if (player?.is_ai) {
+            const seat = currentGame?.seats.find(s => s.id === nextAnimation.player_id);
+            if (seat?.isAi) {
                 // This is a bot move - set the flag
                 hasBotMovedRef.current = true;
             }
@@ -1290,8 +1267,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
                 // If we have an optimistic pass, preserve defender/first_attacker
                 if (optimisticPassState.current) {
-                    nextAnimation.game_state.defender = optimisticPassState.current.defender;
-                    nextAnimation.game_state.first_attacker = optimisticPassState.current.first_attacker;
+                    draft(nextAnimation.game_state).defender = optimisticPassState.current.defender;
+                    draft(nextAnimation.game_state).firstAttacker = optimisticPassState.current.first_attacker;
                 }
 
                 updateGameState(currentGameIdRef.current, nextAnimation.game_state);
@@ -1454,7 +1431,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             valid = false;
         }
         if (valid) {
-            triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', game.self?.player_id);
+            triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', selfIdOf(game));
         }
 
         // 3. Await the server's verdict (revert-on-rejection below).
@@ -1471,7 +1448,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 const wasAlreadyReverted = !optimisticCardPositions.current.has(cardKey);
 
                 // Also check if optimistic animation was cleared (conflict detection clears it)
-                const attackCardEventString = createCardEventString('attack_pass', card, 'hand', 'table', game.self?.player_id);
+                const attackCardEventString = createCardEventString('attack_pass', card, 'hand', 'table', selfIdOf(game));
                 const optimisticAnimationCleared = !optimisticAnimations.current.has(attackCardEventString);
 
                 if (isCurrentlyReverting || wasAlreadyReverted || optimisticAnimationCleared) {
@@ -1489,7 +1466,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     cards: [card],
                     from_location: fromLocation as any,
                     to_location: 'hand',
-                    player_id: game.self?.player_id,
+                    player_id: selfIdOf(game),
                     is_revert: true,
                     message: 'Attack rejected by server'
                 };
@@ -1497,7 +1474,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 queueAnimation(revertEvent);
 
                 // Clear from optimistic tracking
-                const fallbackCardEventString = createCardEventString('attack_pass', card, 'hand', 'table', game.self?.player_id);
+                const fallbackCardEventString = createCardEventString('attack_pass', card, 'hand', 'table', selfIdOf(game));
                 optimisticAnimations.current.delete(fallbackCardEventString);
             });
 
@@ -1528,7 +1505,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         }
         if (valid) {
             // Trigger optimistic animation - single animation with all cards going to their spots
-            triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', game.self?.player_id);
+            triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', selfIdOf(game));
 
             // Track optimistic pass state (defender will change to next player).
             // Pass moves defender to the next IN-PLAY player (skipping eliminated
@@ -1536,7 +1513,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             // does NOT change during a pass (only changes on new round).
             optimisticPassState.current = {
                 defender: nextDefenderIndex(game),
-                first_attacker: game.first_attacker  // Unchanged
+                first_attacker: game.firstAttacker  // Unchanged
             };
         }
 
@@ -1549,7 +1526,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
             // Check if conflict detection already handled these cards
             const cardsNeedingRevert = cards.filter(card => {
-                const cardEventString = createCardEventString('attack_pass', card, 'hand', 'table', game.self?.player_id);
+                const cardEventString = createCardEventString('attack_pass', card, 'hand', 'table', selfIdOf(game));
                 return optimisticAnimations.current.has(cardEventString);
             });
 
@@ -1569,12 +1546,12 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                         cards: [card],
                         from_location: fromLocation as any,
                         to_location: 'hand',
-                        player_id: game.self?.player_id,
+                        player_id: selfIdOf(game),
                         is_revert: true,
                         message: 'Pass rejected by server'
                     });
 
-                    optimisticAnimations.current.delete(createCardEventString('attack_pass', card, 'hand', 'table', game.self?.player_id));
+                    optimisticAnimations.current.delete(createCardEventString('attack_pass', card, 'hand', 'table', selfIdOf(game)));
                 });
             }
             throw error;
@@ -1604,7 +1581,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             valid = false;
         }
         if (valid) {
-            triggerOptimisticAnimation('pickup', allTableCards, 'table', 'hand', game.self?.player_id);
+            triggerOptimisticAnimation('pickup', allTableCards, 'table', 'hand', selfIdOf(game));
         }
 
         // 3. Await the server's verdict (revert-on-rejection below).
@@ -1614,7 +1591,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             // Server rejected the pickup
             // Check if conflict detection already handled reverts
             const stillTracking = allTableCards.filter(card => {
-                const cardEventString = createCardEventString('pickup', card, 'table', 'hand', game.self?.player_id);
+                const cardEventString = createCardEventString('pickup', card, 'table', 'hand', selfIdOf(game));
                 return optimisticAnimations.current.has(cardEventString);
             });
 
@@ -1636,12 +1613,12 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     cards: [card],
                     from_location: fromLocation as any,
                     to_location: toLocation as any,
-                    player_id: game.self?.player_id,
+                    player_id: selfIdOf(game),
                     is_revert: true,
                     message: 'Pickup rejected by server'
                 });
 
-                optimisticAnimations.current.delete(createCardEventString('pickup', card, 'table', 'hand', game.self?.player_id));
+                optimisticAnimations.current.delete(createCardEventString('pickup', card, 'table', 'hand', selfIdOf(game)));
             });
             throw error;
         }
@@ -1680,7 +1657,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 target_cards: attackCards, // Pass the target attack cards for each cover card
                 from_location: 'hand',
                 to_location: 'table',
-                player_id: game.self?.player_id,
+                player_id: selfIdOf(game),
                 message: 'Optimistic cover animation'
             };
 
@@ -1691,18 +1668,18 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 const cardKey = getCardKey(coverCard);
 
                 // Find battle index for this attack
-                const battleIndex = game.table_battles.findIndex(b =>
+                const battleIndex = game.battles.findIndex(b =>
                     b.attack.suit === attackCard.suit && b.attack.value === attackCard.value
                 );
 
                 // Track for conflict detection
-                const cardEventString = createCardEventString('cover', coverCard, 'hand', 'table', game.self?.player_id);
+                const cardEventString = createCardEventString('cover', coverCard, 'hand', 'table', selfIdOf(game));
                 optimisticAnimations.current.set(cardEventString, timestamp);
 
                 // Track visual position with target card info for animations
                 const positionInfo: any = {
                     location: 'table',
-                    playerId: game.self?.player_id || '',
+                    playerId: selfIdOf(game) || '',
                     target_card: attackCard,
                     battle_index: battleIndex
                 };
@@ -1731,12 +1708,12 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     cards: [card],
                     from_location: fromLocation as any,
                     to_location: 'hand',
-                    player_id: game.self?.player_id,
+                    player_id: selfIdOf(game),
                     is_revert: true,
                     message: 'Cover rejected by server'
                 });
 
-                optimisticAnimations.current.delete(createCardEventString('cover', card, 'hand', 'table', game.self?.player_id));
+                optimisticAnimations.current.delete(createCardEventString('cover', card, 'hand', 'table', selfIdOf(game)));
             });
             throw error;
         }

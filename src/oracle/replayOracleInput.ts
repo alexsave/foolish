@@ -19,6 +19,7 @@
 import { Card, LOG_TYPE, LogType, GAME_STATUS, PLAYER_STATUS } from '@api/core/types.ts';
 import { DecodedReplay, SeatLog } from '@api/common/replay/core.ts';
 import { ReplayFrame, REPLAY_STEP } from '../replay/frames';
+import { covered, PLAYER_STATUS as VIEW_PLAYER_STATUS } from '../state/view';
 import { encodeLogsWire } from './logsWire';
 import {
     OracleJob, OracleGameState, oracleCardToken, canonicalMoveKey,
@@ -125,7 +126,11 @@ export function buildOracleJob(
     if (seat == null || !pre) return null;
 
     const trump = decoded.powerSuit;
-    const n = pre.game.players.length;
+    const n = pre.game.seats.length;
+    // The board's seats as the marshal-shaped state names them (Phase 7 builds
+    // this input in the kernel instead: wasm_replay_step_masked_state).
+    const seatId = (s: number) => `seat-${s}`;
+    const seatsOfMask = (mask: number) => Array.from({ length: n }, (_, s) => s).filter((s) => ((mask >>> s) & 1) !== 0);
 
     // The acting seat's real hand — what it was actually holding when it chose.
     const hand = pre.game.replay_hands[seat] ?? [];
@@ -134,35 +139,35 @@ export function buildOracleJob(
 
     const rec = recordedMove(move, trump);
 
-    const players: OracleGameState['players'] = pre.game.players.map((p, s) => ({
-        player_id: `seat-${s}`,
-        status: p.status === PLAYER_STATUS.OUT ? PLAYER_STATUS.OUT : PLAYER_STATUS.IN,
+    const players: OracleGameState['players'] = pre.game.seats.map((p, s) => ({
+        player_id: seatId(s),
+        status: p.status === VIEW_PLAYER_STATUS.OUT ? PLAYER_STATUS.OUT : PLAYER_STATUS.IN,
         name: p.name,
         is_ai: false,
-        hand_length: p.hand_length,
+        hand_length: p.handCount,
         awaiting_attack: false,                   // inert (§8.4)
         // The acting seat's real hand; every other seat count-only, so the
         // deliberation stays inside one player's knowledge.
         hand: s === seat ? actingHand
-                         : Array.from({ length: p.hand_length }, () => ({ suit: 0, value: 5 })),
+                         : Array.from({ length: p.handCount }, () => ({ suit: 0, value: 5 })),
     }));
 
     const gameBlob: OracleGameState = {
         id: `oracle:${code}:${j}`,
         status: GAME_STATUS.PLAYING,
         power_suit: trump,
-        first_attacker: pre.game.first_attacker,
+        first_attacker: pre.game.firstAttacker,
         defender: pre.game.defender,
-        discard_pile_length: pre.game.discard_pile_length,
-        flipped: pre.game.flipped ? { ...pre.game.flipped } : null,
-        good_players: [...pre.game.good_players],
+        discard_pile_length: pre.game.discardPileLength,
+        flipped: pre.game.hasFlipped ? { ...pre.game.flipped } : null,
+        good_players: seatsOfMask(pre.game.goodMask).map(seatId),
         good_timestamp: null,
-        deck: Array.from({ length: pre.game.deck_length }, () => ({ suit: 0, value: 5 })),
-        table_battles: pre.game.table_battles.map((b) => ({
+        deck: Array.from({ length: pre.game.deckCount }, () => ({ suit: 0, value: 5 })),
+        table_battles: pre.game.battles.map((b) => ({
             attack: { ...b.attack },
-            defense: b.defense ? { ...b.defense } : null,
+            defense: covered(b) ? { ...b.defense } : null,
         })),
-        elimination_order: [...pre.game.elimination_order],
+        elimination_order: pre.game.elimination.map(seatId),
         deterministic_deck: false,
         players,
     };
@@ -185,9 +190,9 @@ export function buildOracleJob(
         recordedKey: rec.key,
         recordedLabel: rec.label,
         numPlayers: n,
-        deckAlive: pre.game.deck_length > 0 || pre.game.flipped !== null,
+        deckAlive: pre.game.deckCount > 0 || pre.game.hasFlipped,
         // The position is the engine's own now, never a guess (see the header).
         approx: false,
-        eliminations: pre.game.elimination_order.length,
+        eliminations: pre.game.elimination.length,
     };
 }

@@ -10,6 +10,8 @@
 // Pure kernel test — needs no Postgres.
 
 import { test, before } from 'node:test';
+import { gameToView } from './helpers/view_game.ts';
+import type { TableView } from '../sdk/ts/table/client_table.ts';
 import assert from 'node:assert/strict';
 
 import {
@@ -43,8 +45,8 @@ const mkGame = (np: number): Game => ({
   first_attacker: 0, defender: 0, table_battles: [], elimination_order: [],
   good_timestamp: null, good_players: [],
 });
-const personalFor = (g: Game, seat: number): PersonalGame =>
-  personalize_game(g, g.players[seat].player_id) as PersonalGame;
+const personalFor = (g: Game, seat: number): TableView => gameToView(
+  personalize_game(g, g.players[seat].player_id) as PersonalGame);
 
 // Server-kernel oracle: validate throws on an illegal move.
 const legal = (fn: () => void): boolean => { try { fn(); return true; } catch { return false; } };
@@ -130,7 +132,7 @@ test('perf + mem: gates are fast and the module memory is flat (no leak)', () =>
   start_game(g);
   const seat = g.first_attacker;
   const pg = personalFor(g, seat);
-  const card = pg.self.hand[0];
+  const card = pg.myHand[0];
 
   const memBefore = guardsMemBytes();
 

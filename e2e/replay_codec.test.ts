@@ -54,6 +54,7 @@ import {
   moveTimesFromLogs,
 } from '../server/api/common/replay/extras.ts';
 import { buildReplayFrames, REPLAY_STEP } from '../src/replay/frames';
+import * as V from '../sdk/ts/gen/view_layout.bots.ts';
 
 // A pasted link as the moves bigint: the kernel strips and refuses
 // (replay_link_parse), the kernel decodes (replay_b32_decode). Composed here
@@ -277,11 +278,11 @@ async function roundTripGame(game: Game, np: number, where: string): Promise<boo
   const frames = buildReplayFrames(enc.bytes, 'g', null, { fool: dec.fool });
   assert.ok(frames.length > 1, 'the code replays to steps');
   const lastFrame = frames[frames.length - 1];
-  lastFrame.game.players.forEach((p, s) => {
+  lastFrame.game.seats.forEach((p, s) => {
     // The engine's own out-flags: at game end everyone but the fool is out,
     // including the seats emptied by a refill, which log nothing.
-    assert.equal(p.status === PLAYER_STATUS.OUT, s !== dec.fool, `out-flag mismatch at seat ${s}`);
-    assert.equal(p.hand_length, game.players[s].hand.length, `seat ${s} ends on its real hand size`);
+    assert.equal(p.status === V.PLAYER_STATUS_OUT, s !== dec.fool, `out-flag mismatch at seat ${s}`);
+    assert.equal(p.handCount, game.players[s].hand.length, `seat ${s} ends on its real hand size`);
   });
 
   // extras (names + per-move timing) round-trip
@@ -329,11 +330,11 @@ async function roundTripGame(game: Game, np: number, where: string): Promise<boo
   for (let s = 1; s < frames.length; s++) {
     if (
       frames[s].kind === REPLAY_STEP.ATTACK &&
-      frames[s - 1].game.table_battles.length === 0 &&
-      frames[s].seat !== frames[s - 1].game.first_attacker
+      frames[s - 1].game.battles.length === 0 &&
+      frames[s].seat !== frames[s - 1].game.firstAttacker
     ) {
       throw new Error(
-        `firstAttacker drift at step ${s}: P${frames[s].seat} opened, board says P${frames[s - 1].game.first_attacker}`,
+        `firstAttacker drift at step ${s}: P${frames[s].seat} opened, board says P${frames[s - 1].game.firstAttacker}`,
       );
     }
   }

@@ -4,9 +4,10 @@
  * The kernel rebuilds the real Game a v6 code describes, replays it through the
  * real engine, and hands back the SAME packed evwire frames a live game sends —
  * one per step (the deal, then one per action). This module pulls them, reads
- * them with the client's LIVE reader (the kernel's client slot, through
- * src/state/snapshotToGame.ts), and shapes the handful of things a scrubber
- * needs on top: what each step is, and what each seat held.
+ * them with the client's LIVE reader (the kernel's client slot, into TableView
+ * boards named by the replay's own seats, src/state/pushSequence.ts naming each
+ * step's event), and shapes the handful of things a scrubber needs on top: what
+ * each step is, and what each seat held.
  *
  * What used to be here instead: a TS fold over the decoded log stream that
  * rebuilt every board itself and RETRODICTED the hidden cards — assigning each
@@ -31,21 +32,21 @@
  *     arithmetic decode is the cost and it is tiny.
  * ========================================================================== */
 
-import { Card, PersonalGame, PLAYER_STATUS, PrivatePlayer, PublicGame } from '@api/core/types.ts';
 import { deckSizeFor } from '@api/core/constants.ts';
 import {
     replayEventFrames, replayStepIndex, REPLAY_STEP, ReplayStepInfo,
 } from '@sdk/ts/wasm/bots.ts';
 import { clientTable } from '@sdk/ts/table/client_table.ts';
 import { AnimationSequenceMessage, FeedAnimationEvent } from '../state/animationFeed';
-import { pushToSequence, SnapshotEvent, SnapshotOptions } from '../state/snapshotToGame';
+import { pushToSequence, type ViewEvent } from '../state/pushSequence';
+import { NO_CARD, type TableView, type ViewCard as Card } from '../state/view';
 
 export { REPLAY_STEP } from '@sdk/ts/wasm/bots.ts';
 
-/** PersonalGame plus every seat's exact hand, for the reveal-hands overlay. */
-export interface ReplayGameState extends PersonalGame {
-    replay_hands: (Card | null)[][];
-}
+/** A step's board plus every seat's exact hand, for the reveal-hands overlay. */
+export type ReplayGameState = TableView & {
+    readonly replay_hands: (Card | null)[][];
+};
 
 export interface ReplayFrame {
     /** REPLAY_STEP.* — what the kernel says this step played. */
@@ -64,20 +65,6 @@ export interface ReplayFrame {
     game: ReplayGameState;
 }
 
-/* The replay viewer is never a player: they hold no cards and act on nothing.
- * The display components want a `self`, so give them an inert one — the same
- * seat-less spectator PlayerRing already lays the table out for (self_index -1). */
-const REPLAY_VIEWER: PrivatePlayer = {
-    player_id: 'replay-viewer',
-    name: '',
-    status: PLAYER_STATUS.IDLE,
-    hand_length: 0,
-    is_ai: false,
-    hand: [],
-    awaiting_attack: false,
-    strategy_key: 'human',
-};
-
 /* The event a step's status line describes. A step's frame carries the action
  * AND everything it caused (a cover that ends a bout brings the discard and the
  * refills with it, exactly as live play does), so the kernel's kind picks which
@@ -92,11 +79,29 @@ const NARRATED_EVENT: Record<number, string> = {
     // GOOD moves no cards — nothing to narrate but the seat.
 };
 
-/* A replay's frames name no one: their seats are `seat-N`, named from the
- * extras (or P1, P2...), and the board is the game id's with no title. */
-const readFrame = (bytes: Uint8Array, opts: SnapshotOptions) => {
-    const read = clientTable().readPush(bytes, { as3: false, identity: 'none' });
-    return read ? pushToSequence(read, opts) : null;
+/* A replay's frames name no one on the wire: the seats are named here, by the
+ * table identity the kernel builds from the extras' names (or P1, P2...), with
+ * player ids `seat-N`. Each board then carries the replay's own game id, which
+ * is the code itself and longer than a table's id may be, so it is set on the
+ * board after the read. A name the kernel refuses (too long for a roster name)
+ * is set on the board the same way instead. Phase 7 retires the `seat-N` ids. */
+interface Naming { identity: Uint8Array | null; ids: string[]; names: string[]; gameId: string }
+
+const named = (v: TableView, naming: Naming): TableView => ({
+    ...v,
+    gameId: naming.gameId,
+    seats: naming.identity ? v.seats : v.seats.map((s, i) => ({ ...s, id: naming.ids[i] ?? `seat-${i}`, name: naming.names[i] ?? '' })),
+});
+
+const readFrame = (bytes: Uint8Array, naming: Naming | null) => {
+    const read = clientTable().readPush(bytes, { as3: false, identity: naming?.identity ?? 'none' });
+    if (!read) return null;
+    if (!naming) return pushToSequence(read);
+    const seq = pushToSequence({
+        steps: read.steps.map((s) => ({ event: s.event, view: named(s.view, naming) })),
+        final: named(read.final, naming),
+    });
+    return seq;
 };
 
 export interface ReplayFramesOpts {
@@ -127,10 +132,13 @@ export function buildReplayFrames(
 
     // Player count comes from the frames, not from a header we would have to
     // trust separately: read step 0 once, then name the seats it has.
-    const seats: SnapshotOptions = { ...CTX, names: names ?? [], gameId, title: '' };
-    const probe = readFrame(main[0], seats);
+    const probe = readFrame(main[0], null);
     if (!probe) throw new Error('replay: the opening frame did not decode');
-    const n = probe.game.players.length;
+    const n = probe.game.seats.length;
+    const ids = Array.from({ length: n }, (_, s) => `seat-${s}`);
+    const seatNames = ids.map((_, s) => names?.[s] || `P${s + 1}`);
+    const identity = clientTable().identityFromSeats('replay', '', ids.map((id, s) => ({ id, name: seatNames[s], isAi: false })));
+    const seats: Naming = { identity, ids, names: seatNames, gameId };
 
     // One replay per seat, read for that seat's own hand. This is the reveal
     // eye's whole source of truth — see the header.
@@ -141,25 +149,23 @@ export function buildReplayFrames(
         if (!seq) throw new Error(`replay: step ${i} did not decode`);
 
         const hands: (Card | null)[][] = perSeat.map((frames, s) => {
-            const own = readFrame(frames[i], seats);
-            const self = (own?.game as PersonalGame | undefined)?.self;
+            const own = readFrame(frames[i], null);
             // A seat's own frame always reveals its own hand; fall back to backs
             // rather than crash if a future masking change ever breaks that.
-            return self ? self.hand.map((c) => ({ ...c }) as Card | null)
-                        : Array.from({ length: seq.game.players[s]?.hand_length ?? 0 }, () => null);
+            return own && own.game.mySeat === s ? own.game.myHand.map((c) => ({ ...c }) as Card | null)
+                        : Array.from({ length: seq.game.seats[s]?.handCount ?? 0 }, () => null);
         });
 
         const info = index[i];
         const atEnd = i === main.length - 1;
+        // A spectator holds nothing and acts on nothing (mySeat -1); a seated
+        // viewer's hand is the kernel's own, masked exactly as it would be live.
         const game: ReplayGameState = {
-            ...(seq.game as PublicGame),
-            players: seq.game.players.map((p, s) => ({
+            ...seq.game,
+            seats: seq.game.seats.map((p, s) => ({
                 ...p,
                 name: `${p.name}${atEnd && fool === s ? ' 🃏' : ''}`,
             })),
-            // A spectator holds nothing and acts on nothing; a seated viewer's
-            // `self` is the kernel's own, masked exactly as it would be live.
-            self: (seq.game as PersonalGame).self ?? REPLAY_VIEWER,
             replay_hands: hands,
         };
 
@@ -184,10 +190,6 @@ export function buildReplayFrames(
     });
 }
 
-/* A replay has no live good-order or good-clock to carry forward — the mask in
- * each frame is the whole truth, and every step is decoded from scratch. */
-const CTX = { prevGoodTs: null, now: () => 0 };
-
 /**
  * The state the opening deal animates OUT of: a full face-down stock, empty
  * hands, nothing flipped. The board before the first frame lands — the lobby
@@ -196,11 +198,12 @@ const CTX = { prevGoodTs: null, now: () => 0 };
 export function preDealGame(first: ReplayFrame): ReplayGameState {
     return {
         ...first.game,
-        deck_length: deckSizeFor(first.game.players.length),
-        flipped: null,
-        table_battles: [],
-        players: first.game.players.map((p) => ({ ...p, hand_length: 0 })),
-        replay_hands: first.game.players.map(() => []),
+        deckCount: deckSizeFor(first.game.seats.length),
+        hasFlipped: false,
+        flipped: NO_CARD,
+        battles: [],
+        seats: first.game.seats.map((p) => ({ ...p, handCount: 0 })),
+        replay_hands: first.game.seats.map(() => []),
     };
 }
 
@@ -226,7 +229,7 @@ export function buildReverseFrames(frames: ReplayFrame[]): (AnimationSequenceMes
         const prev = frames[i - 1].game;
         // The action is the frame's first event; the ones after it are what the
         // action caused, and they land back on `prev` for free by being dropped.
-        const fe = frames[i].seq.events[0] as SnapshotEvent & FeedAnimationEvent;
+        const fe = frames[i].seq.events[0] as ViewEvent & FeedAnimationEvent;
         let event: FeedAnimationEvent;
 
         switch (fe.type) {

@@ -13,7 +13,7 @@
  * ========================================================================== */
 
 import React, { useMemo } from 'react';
-import { Card } from '@api/core/types.ts';
+import type { ViewCard as Card } from '../state/view';
 import { useLocalization } from '../contexts/LocalizationContext';
 import { SegmentText } from './SegmentDisplay';
 import {

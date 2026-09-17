@@ -44,7 +44,6 @@
  * ========================================================================== */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Card, PersonalGame } from '@api/core/types.ts';
 import { useServer } from '../../contexts/ServerContext';
 import { useAnimation } from '../../contexts/AnimationContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -52,6 +51,7 @@ import { useGame } from '../../contexts/GameContext';
 import { canCoverPair } from '../../wasm/clientGuards';
 import { canAttack, canPass, canCoverCards } from '../../utils/gameValidation';
 import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
+import { covered, kernelTable, rulesOf, type TableView, type ViewCard as Card } from '../../state/view';
 
 type CoverTarget = { kind: 'cover'; attack: Card; battleIndex: number };
 type Target = CoverTarget | { kind: 'pass' };
@@ -79,13 +79,12 @@ const isTypingTarget = () => {
 };
 
 export const KeyboardPlayMode = () => {
-    const { game: rawGame, localHandOrder, setLocalHandOrder } = useServer();
-    const game = rawGame as PersonalGame | null;
+    const { view: game, localHandOrder, setLocalHandOrder } = useServer();
     const { attack, cover, pass, pickup, good } = useAnimation();
     const { user_id } = useAuth();
     const { selectedCards, setSelectedCards, handleCardSelection, setActionPressed } = useGame();
 
-    const hand: Card[] = localHandOrder && localHandOrder.length ? localHandOrder : (game?.self?.hand ?? []);
+    const hand: readonly Card[] = localHandOrder && localHandOrder.length ? localHandOrder : (game?.myHand ?? []);
 
     const [selIdx, setSelIdx] = useState<number | null>(null);
     const [target, setTarget] = useState<{ targets: Target[]; idx: number } | null>(null);
@@ -142,9 +141,9 @@ export const KeyboardPlayMode = () => {
             if (k === 'Shift') {
                 if (e.ctrlKey || e.altKey || e.metaKey) return;
                 const s = ref.current;
-                const g: PersonalGame | null = s.game;
-                if (!g || !g.self) return;
-                const h: Card[] = s.hand;
+                const g: TableView | null = s.game;
+                if (!g || g.mySeat < 0) return;
+                const h: readonly Card[] = s.hand;
                 const sel: number | null = s.selIdx;
                 if (sel == null || !h[sel] || s.target) return;
                 e.preventDefault();
@@ -161,9 +160,9 @@ export const KeyboardPlayMode = () => {
             if (e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && (k === 'ArrowLeft' || k === 'ArrowRight')) {
                 e.preventDefault();
                 const s = ref.current;
-                const g: PersonalGame | null = s.game;
-                if (!g || !g.self) return;
-                const h: Card[] = s.hand;
+                const g: TableView | null = s.game;
+                if (!g || g.mySeat < 0) return;
+                const h: readonly Card[] = s.hand;
                 if (!h.length) return;
                 if (s.target) return; // not while in the cover/pass sub-mode
                 const sel: number | null = s.selIdx;
@@ -182,7 +181,7 @@ export const KeyboardPlayMode = () => {
             if (e.metaKey && !e.ctrlKey && !e.altKey && (k === 'ArrowLeft' || k === 'ArrowRight')) {
                 e.preventDefault();
                 const s = ref.current;
-                const h: Card[] = s.hand;
+                const h: readonly Card[] = s.hand;
                 const sel: number | null = s.selIdx;
                 if (sel == null || !h[sel]) return;
                 const to = k === 'ArrowLeft' ? sel - 1 : sel + 1;
@@ -199,12 +198,11 @@ export const KeyboardPlayMode = () => {
             if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
 
             const s = ref.current;
-            const g: PersonalGame | null = s.game;
-            if (!g || !g.self) return;
-            const meIdx = g.players.findIndex((p: any) => p.player_id === s.user_id);
-            if (meIdx < 0) return;
+            const g: TableView | null = s.game;
+            if (!g || g.mySeat < 0) return;
+            const meIdx = g.mySeat;
             const isDefender = g.defender === meIdx;
-            const h: Card[] = s.hand;
+            const h: readonly Card[] = s.hand;
             const cur: { targets: Target[]; idx: number } | null = s.target;
             const sel: number | null = s.selIdx;
 
@@ -232,8 +230,8 @@ export const KeyboardPlayMode = () => {
                 // Down picks up (defender) / goods (attacker) without needing a
                 // cursor first — neither move depends on a selected card.
                 if (k === 'ArrowDown') {
-                    if (isDefender) { if ((g.table_battles?.length ?? 0) > 0) s.fire('pickup', s.pickup()); }
-                    else { if (tableFullyCovered(g) && !alreadyGood(g, s.user_id)) s.fire('good', s.good()); }
+                    if (isDefender) { if (g.battles.length > 0) s.fire('pickup', s.pickup()); }
+                    else { if (rulesOf(g).canSayGood) s.fire('good', s.good()); }
                     return;
                 }
                 if (k === 'ArrowLeft' || k === 'ArrowRight') { if (h.length) setSelIdx(0); }
@@ -248,8 +246,8 @@ export const KeyboardPlayMode = () => {
             if (!card) return;
 
             if (k === 'ArrowDown') {
-                if (isDefender) { if ((g.table_battles?.length ?? 0) > 0) s.fire('pickup', s.pickup()); }
-                else { if (tableFullyCovered(g) && !alreadyGood(g, s.user_id)) s.fire('good', s.good()); }
+                if (isDefender) { if (g.battles.length > 0) s.fire('pickup', s.pickup()); }
+                else { if (rulesOf(g).canSayGood) s.fire('good', s.good()); }
                 return;
             }
 
@@ -269,7 +267,7 @@ export const KeyboardPlayMode = () => {
                     }
                     // defender: cover via the unambiguous mapping, else pass.
                     if (canCoverCards(g, selected)) {
-                        const mapping = kernelUnambiguousCover(selected, g.table_battles || [], g.power_suit);
+                        const mapping = kernelUnambiguousCover(selected, kernelTable(g.battles), g.powerSuit);
                         if (mapping) {
                             s.fire('cover', s.cover(mapping.coverCards, mapping.attackCards), true);
                             return;
@@ -287,9 +285,9 @@ export const KeyboardPlayMode = () => {
                     return;
                 }
                 // defender: decide cover vs pass vs target-selection
-                const coverable: CoverTarget[] = (g.table_battles || [])
+                const coverable: CoverTarget[] = g.battles
                     .map((b, i) => ({ b, i }))
-                    .filter(({ b }) => !b.defense && canCoverPair(b.attack, card, g.power_suit))
+                    .filter(({ b }) => !covered(b) && canCoverPair(b.attack, card, g.powerSuit))
                     .map(({ b, i }) => ({ kind: 'cover', attack: b.attack, battleIndex: i }));
                 const passOK = canPass(g, [card]);
 
@@ -348,7 +346,7 @@ export const KeyboardPlayMode = () => {
         return () => cancelAnimationFrame(raf);
     }, [selIdx, target, hand, user_id]);
 
-    if (!game?.self) return null;
+    if (!game || game.mySeat < 0) return null;
 
     const selCard = selIdx != null ? hand[selIdx] : null;
     const targetT = target ? target.targets[target.idx] : null;
@@ -432,15 +430,9 @@ export const KeyboardPlayMode = () => {
 // Cover->attack mapping resolution lives in ONE place — the kernel
 // (kernelUnambiguousCover -> legal.c unambiguous_cover). The local copy that
 // used to sit here, and the TS coverCombinations.ts that replaced it, are both
-// gone (A7/F9): one resolver for web/phone/watch/iMessage.
+// gone (A7/F9): one resolver for web/phone/watch/iMessage. Whether Good may be
+// said is the kernel's too (client_view_rules can_say_good).
 
-function tableFullyCovered(g: PersonalGame): boolean {
-    const b = g.table_battles || [];
-    return b.length > 0 && b.every((x) => x.defense);
-}
-function alreadyGood(g: PersonalGame, myId?: string | null): boolean {
-    return !!myId && (g.good_players ?? []).includes(myId);
-}
 // the "empty space" the pass arrow points at: just right of the table battles
 function passPoint(): { x: number; y: number } {
     const cells = Array.from(document.querySelectorAll('[data-location="table"]'));

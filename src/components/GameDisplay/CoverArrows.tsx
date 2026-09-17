@@ -1,21 +1,21 @@
-import { PersonalGame } from "@api/core/types.ts";
 import { useGame } from "../../contexts/GameContext";
 import { useServer } from "../../contexts/ServerContext";
+import type { TableView } from "../../state/view";
 
 export const CoverArrows = () => {
-    const { game: rawGame, localHandOrder } = useServer();
-    const game: PersonalGame = rawGame as PersonalGame;
+    const { view, localHandOrder } = useServer();
+    const game = view as TableView;
     // Position arrows against the SAME order the hand is rendered in
-    // (localHandOrder / displayedHand), not the authoritative game.self.hand order,
+    // (localHandOrder / displayedHand), not the board's own myHand order,
     // so the arrow's tail lands on the actual on-screen covering card.
-    const hand = (localHandOrder && localHandOrder.length ? localHandOrder : game?.self?.hand) ?? [];
+    const hand = (localHandOrder && localHandOrder.length ? localHandOrder : game?.myHand) ?? [];
 
     const { coverMap } = useGame();
 
     return <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 500 }}>
         {Array.from(coverMap.entries()).map(([coveringCard, coveredCard], index) => {
-            // Skip if spectator (no self)
-            if (!game.self) return null;
+            // Skip if spectator (no seat)
+            if (game.mySeat < 0) return null;
 
             // Find the position of the covering card (in the rendered hand order)
             const handCardIndex = hand.findIndex(card =>
@@ -23,7 +23,7 @@ export const CoverArrows = () => {
             );
 
             // Find the position of the covered card (on table)
-            const tableCardIndex = game.table_battles.findIndex(battle =>
+            const tableCardIndex = game.battles.findIndex(battle =>
                 battle.attack.value === coveredCard.value && battle.attack.suit === coveredCard.suit
             );
 
@@ -37,7 +37,7 @@ export const CoverArrows = () => {
 
             // Table cards are in the center
             const tableX = window.innerWidth / 2;
-            const tableY = window.innerHeight / 2 + (tableCardIndex * 80) - (game.table_battles.length * 40);
+            const tableY = window.innerHeight / 2 + (tableCardIndex * 80) - (game.battles.length * 40);
 
             return <g key={`arrow-${index}`}>
                 {/* Arrow line */}

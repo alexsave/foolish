@@ -14,8 +14,8 @@
 // re-appears on the table" flicker players see when they play a card at almost the
 // same moment as another player, or when a defender picks the card up immediately.
 
-import { Card } from '@api/core/types.ts';
 import { getCardKey } from '../utils/animationUtils';
+import { covered, type TableView, type ViewCard as Card } from './view';
 import {
     animConflictVerdicts, animEventTypeCode, ANIM_DEST,
     AnimConflictInputs, AnimConflictMotion, AnimConflictVerdict,
@@ -36,14 +36,13 @@ export interface AttackCoverResolution {
     clear: Card[];
 }
 
-interface AnimEvent { type?: string; cards?: Card[] }
-interface GameStateLike { defender?: number; players?: { hand_length?: number }[]; table_battles?: { defense?: unknown }[] }
+interface AnimEvent { type?: string; cards?: readonly Card[] }
 
 /**
  * @param myOptimisticAttackCovers the local player's pending optimistic attack/cover cards
  * @param serverTableCards         the authoritative table cards this broadcast shows
  * @param events                   the broadcast's animation events
- * @param finalGameState           the broadcast's final personalized game state (message.game || serverState)
+ * @param finalGameState           the broadcast's final board as this viewer sees it (message.game || serverState)
  * @param myOptimisticCoverKeys    getCardKey()s of the pending cards that are COVERS —
  *                                 the defender-capacity rule applies only to attacks
  *                                 (a cover is the defender's own play and has no
@@ -54,7 +53,7 @@ export function resolveUnconfirmedAttackCovers(
     myOptimisticAttackCovers: Card[],
     serverTableCards: Card[],
     events: AnimEvent[],
-    finalGameState: GameStateLike | null | undefined,
+    finalGameState: TableView | null | undefined,
     myOptimisticCoverKeys?: Set<string>,
 ): AttackCoverResolution {
     // The DECISION is the C animation core's (anim_plan.h anim_conflict_verdict),
@@ -69,9 +68,9 @@ export function resolveUnconfirmedAttackCovers(
     // Defender scalars, exactly as the old inline capacity check read them:
     // an undefined defender yields a 0 hand size.
     const defenderHand = finalGameState?.defender !== undefined
-        ? (finalGameState.players?.[finalGameState.defender]?.hand_length ?? 0)
+        ? (finalGameState.seats[finalGameState.defender]?.handCount ?? 0)
         : 0;
-    const finalUncovered = finalGameState?.table_battles?.filter((b) => !b.defense).length ?? 0;
+    const finalUncovered = finalGameState?.battles.filter((b) => !covered(b)).length ?? 0;
 
     const r = resolveConflictMotions(
         myOptimisticAttackCovers.map((card) => ({
@@ -93,7 +92,7 @@ export function resolveUnconfirmedAttackCovers(
 /** The app's animation events as the kernel reads them: a type code and the
  *  cards. Which of them SWEEP is the kernel's call, not this file's. */
 export const conflictEvents = (events: AnimEvent[]): AnimConflictInputs['events'] =>
-    events.map((e) => ({ type: animEventTypeCode(e.type), cards: e.cards ?? [] }));
+    events.map((e) => ({ type: animEventTypeCode(e.type), cards: [...(e.cards ?? [])] }));
 
 /**
  * THE CONFLICT VERDICT for a set of motions, straight from the kernel

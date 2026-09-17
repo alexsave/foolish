@@ -18,6 +18,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PersonalGame, PublicPlayer, PrivatePlayer, Card, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY } from '../server/api/core/types.ts';
 import { canPass, nextDefenderIndex } from '../src/utils/gameValidation.ts';
+import { gameToView } from './helpers/view_game.ts';
 
 interface Spec { status: 'in' | 'out'; hand_length: number }
 const c = (suit: number, value: number): Card => ({ suit, value });
@@ -56,13 +57,13 @@ export function registerClientRulesValidation(): void {
         const g = makeGame(1, [{ status: 'in', hand_length: 5 }, { status: 'in', hand_length: 4 }, { status: 'out', hand_length: 0 }], []);
         const naive = (g.defender + 1) % g.players.length; // the pre-fix computation
         assert.equal(naive, 2, 'sanity: the naive formula lands on the eliminated seat');
-        assert.equal(nextDefenderIndex(g), 0, 'fixed: skips the out seat to the next in-play player');
-        assert.notEqual(nextDefenderIndex(g), naive, 'the fix diverges from the buggy naive formula here');
+        assert.equal(nextDefenderIndex(gameToView(g)), 0, 'fixed: skips the out seat to the next in-play player');
+        assert.notEqual(nextDefenderIndex(gameToView(g)), naive, 'the fix diverges from the buggy naive formula here');
     });
 
     test('nextDefenderIndex matches naive rotation when nobody is eliminated', () => {
         const g = makeGame(0, [{ status: 'in', hand_length: 5 }, { status: 'in', hand_length: 5 }, { status: 'in', hand_length: 5 }], []);
-        assert.equal(nextDefenderIndex(g), 1);
+        assert.equal(nextDefenderIndex(gameToView(g)), 1);
     });
 
     // ---- Finding 2: KeyboardInputHandler local canPass (now shared canPass) --
@@ -75,14 +76,14 @@ export function registerClientRulesValidation(): void {
         // The deleted keyboard logic WOULD have offered this illegal pass...
         assert.equal(oldKeyboardCanPass(g, [c(0, 7)]), true, 'documents the bug: old keyboard logic allowed it');
         // ...the shared canPass the keyboard now uses correctly rejects it.
-        assert.equal(canPass(g, [c(0, 7)]), false, '2 on table + 1 passed = 3 > next defender hand of 1');
+        assert.equal(canPass(gameToView(g), [c(0, 7)]), false, '2 on table + 1 passed = 3 > next defender hand of 1');
     });
 
     test('canPass is TRUE for a legal pass the keyboard should offer', () => {
         const g = makeGame(0,
             [{ status: 'in', hand_length: 3 }, { status: 'in', hand_length: 4 }, { status: 'in', hand_length: 5 }],
             [{ attack: c(1, 7), defense: null }], [c(0, 7)]);
-        assert.equal(canPass(g, [c(0, 7)]), true);
+        assert.equal(canPass(gameToView(g), [c(0, 7)]), true);
     });
 
     test('canPass over an eliminated next seat checks the REAL next defender', () => {
@@ -90,7 +91,7 @@ export function registerClientRulesValidation(): void {
         const g = makeGame(1,
             [{ status: 'in', hand_length: 5 }, { status: 'in', hand_length: 4 }, { status: 'out', hand_length: 0 }],
             [{ attack: c(3, 8), defense: null }, { attack: c(2, 8), defense: null }], [c(0, 8)]);
-        assert.equal(canPass(g, [c(0, 8)]), true, 'must look past the out seat to seat 0 (room for 3)');
+        assert.equal(canPass(gameToView(g), [c(0, 8)]), true, 'must look past the out seat to seat 0 (room for 3)');
     });
 }
 

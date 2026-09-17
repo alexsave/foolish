@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Card } from '@api/core/types.ts';
+import type { ViewCard as Card } from '../state/view';
 import { Text } from './Text';
 import { SovietIcon } from './SovietIcon';
 import { TexturedSurface } from './TexturedSurface';
@@ -308,7 +308,7 @@ const mergeReplayHandOrder = (
  * NOT selectable or playable on the replay screen — only reordering.
  */
 const RevealedHands = () => {
-    const game = useServer().game as ReplayGameState | null;
+    const game = useServer().view as ReplayGameState | null;
 
     // Prefer-local-order overlay, keyed by seat index. Each entry is the
     // viewer's preferred ordering of that seat's hand; the render reconciles it
@@ -377,7 +377,7 @@ const RevealedHands = () => {
     );
 
     if (!game || !game.replay_hands || !displayHands) return null;
-    const n = game.players.length;
+    const n = game.seats.length;
 
     return (
         <>
@@ -650,7 +650,7 @@ const ReplayStage = ({ decoded, frames, reverses, gameId, names, times }: StageP
     const boutStarts = useMemo(() => {
         const starts: number[] = [];
         for (let i = 0; i < frames.length; i++) {
-            const opensEmpty = i === 0 || frames[i - 1].game.table_battles.length === 0;
+            const opensEmpty = i === 0 || frames[i - 1].game.battles.length === 0;
             if (frames[i].kind === REPLAY_STEP.ATTACK && opensEmpty) starts.push(i);
         }
         return starts;

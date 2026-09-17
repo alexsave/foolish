@@ -35,7 +35,7 @@ import { legalMoves, residentBoard, type BoardState, type PlayCard } from './hel
 import { runMeta, seedLobby } from './helpers/table_server.ts';
 import { suiteRng } from './helpers/rng.ts';
 import { encodeAction, decodeAction, encodeActionRequest, decodeActionRequest, encodeActionResponse, decodeActionResponse, ACTION_STATUS } from '../sdk/ts/wire/awire.ts';
-import { decodeEnvelope } from './helpers/client_read.ts';
+import { decodeEnvelope, readEnvelopeView } from './helpers/client_read.ts';
 import { validateActionWire, initClientGuards } from '../src/wasm/clientGuards.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
@@ -83,6 +83,16 @@ function served(gameId: string, fx: TableFixture, seat: number, version: number)
   const decoded = decodeEnvelope(env);
   assert.ok(decoded, 'the envelope decodes');
   return decoded!;
+}
+
+/** The same envelope as the board the web holds (what the guards gate reads). */
+function servedView(gameId: string, fx: TableFixture, seat: number, version: number) {
+  assert.equal(fixtureTable().load(fx.state, fx.roster), L.TABLE_OK, 'table loads');
+  const env = fixtureTable().envelope(gameId, seat, version);
+  if (typeof env === 'number') throw new Error(`envelope refused (${env})`);
+  const view = readEnvelopeView(env);
+  assert.ok(view, 'the envelope reads');
+  return view!;
 }
 
 // ---- 2. binary HTTP envelopes (DB-free) -------------------------------------
@@ -141,7 +151,7 @@ test('validateActionWire: legal enumerated moves gate 0, illegal reject, malform
       const actors = [...new Set(moves.map((m) => m.seat))];
       if (actors.length === 0) break;
       const seat = actors[ri(actors.length)];
-      const personal = served(gameId, fx, seat, 1).game as PersonalGame;
+      const personal = servedView(gameId, fx, seat, 1);
       const menu = moves.filter((m) => m.seat === seat);
       for (const m of menu.slice(0, 6)) {
         assert.equal(validateActionWire(personal, m.wire), 0,

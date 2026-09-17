@@ -1,4 +1,3 @@
-import { PersonalGame } from '@api/core/types.ts';
 import { useServer } from '../contexts/ServerContext';
 import { usePreventScroll } from '../hooks/usePreventScroll';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
@@ -11,8 +10,7 @@ import { GameBoard } from './GameBoard';
 // AnimationProvider + RealtimeAnimationFeed, GameProvider, DragProvider) is
 // supplied higher up by ProtectedRoute.
 export const GameDisplay = () => {
-    const { game, staleRoundNotice } = useServer();
-    const g = game as PersonalGame;
+    const { view, staleRoundNotice } = useServer();
 
     usePreventScroll();
 
@@ -35,7 +33,7 @@ export const GameDisplay = () => {
                 interactive
                 showChat
                 showKeyboard
-                title={g?.name}
+                title={view?.title}
                 chrome={<BackButton />}
             />
         </div>

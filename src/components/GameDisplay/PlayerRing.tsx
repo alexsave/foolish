@@ -1,6 +1,5 @@
-import { PersonalGame, PublicPlayer } from "@api/core/types.ts";
-import { useAuth } from "../../contexts/AuthContext";
 import { useServer } from "../../contexts/ServerContext";
+import { rulesOf, type TableView, type ViewSeat } from "../../state/view";
 import { useFernFractal } from "../../utils/fernFractal";
 import { useStyles } from "../../contexts/StyleContext";
 import { useState, useEffect, useRef } from "react";
@@ -13,21 +12,21 @@ const MiniSovietCardBack = () => (
     <SovietCardBack style={{ position: 'absolute', top: 0, left: 0 }} />
 );
 
-const CardsVisual = ({ player, selfHandLength, isSelf }: { player: PublicPlayer, selfHandLength?: number, isSelf: boolean }) => {
+const CardsVisual = ({ player, selfHandLength, isSelf }: { player: ViewSeat, selfHandLength?: number, isSelf: boolean }) => {
     const styles = useStyles();
     const { fernPattern } = useFernFractal();
 
     const hasPattern = styles.miniCard.usePattern && !!fernPattern;
     const cardWidth = 25;
     const cardHeight = cardWidth * 1.4;
-    const displayHandLength = selfHandLength !== undefined ? selfHandLength : player.hand_length;
+    const displayHandLength = selfHandLength !== undefined ? selfHandLength : player.handCount;
 
     // Mark this container as the deal/refill destination for *other* players only.
     // Self's real hand is rendered by ActionButtons with the same data-* attrs;
     // tagging this mini-hand too would let querySelector pick the wrong target.
     const handAttrs = isSelf
         ? {}
-        : { 'data-location': 'hand', 'data-player-id': player.player_id };
+        : { 'data-location': 'hand', 'data-player-id': player.id };
 
     return (
         <div style={{
@@ -61,7 +60,7 @@ const CardsVisual = ({ player, selfHandLength, isSelf }: { player: PublicPlayer,
                 };
 
                 return (
-                    <div key={`player-${player.player_id}-card-${cardIndex}`} style={style}>
+                    <div key={`player-${player.id}-card-${cardIndex}`} style={style}>
                         {styles.miniCard.useSvgCardBack && <MiniSovietCardBack />}
                     </div>
                 );
@@ -88,11 +87,13 @@ const CardsVisual = ({ player, selfHandLength, isSelf }: { player: PublicPlayer,
 };
 
 export const PlayerRing = () => {
-    const game: PersonalGame = useServer().game as PersonalGame;
+    const game = useServer().view as TableView;
     const { chatMessages } = useServer();
-    const { user_id } = useAuth();
     const styles = useStyles();
-    const self_index = game.players.findIndex(p => p.player_id === user_id);
+    const self_index = game.mySeat;
+    // The sword's seat is the kernel's (client_view_rules): the next bout's lead,
+    // on an empty table, once the deal has turned the trump.
+    const swordSeat = rulesOf(game).firstAttackerBadge;
 
     const [chatBubbles, setChatBubbles] = useState<{ [playerId: string]: { message: string; timestamp: number } }>({});
     const lastMessageIdRef = useRef<number | null>(null);
@@ -135,15 +136,15 @@ export const PlayerRing = () => {
 
     return (
         <>
-            {game.players.map((player, index) => {
-                const visual_index = (index - self_index + game.players.length) % game.players.length;
-                const radians = 2 * Math.PI * visual_index / game.players.length;
+            {game.seats.map((player, index) => {
+                const visual_index = (index - self_index + game.seats.length) % game.seats.length;
+                const radians = 2 * Math.PI * visual_index / game.seats.length;
                 const x = ((-1 * Math.sin(radians) * 35) + 50) + '%';
                 const y = ((Math.cos(radians) * 35) + 50) + '%';
-                const bubble = chatBubbles[player.player_id];
+                const bubble = chatBubbles[player.id];
 
                 return (
-                    <div key={player.player_id} style={{
+                    <div key={player.id} style={{
                         position: 'absolute',
                         top: y,
                         left: x,
@@ -157,12 +158,10 @@ export const PlayerRing = () => {
                         {/* TODO(ios-parity): iMessage board shifts the defender shield
                             the moment a pass is staged (before defender_move lands) —
                             that immediacy feels good; consider mirroring. (This ring
-                            only derives the first-attacker sword above; the web
-                            defender shield itself is derived from game.defender in
+                            only draws the first-attacker sword above; the web
+                            defender shield itself is the kernel's defender badge in
                             DefenderShield.tsx, rendered as a sibling in GameBoard.) */}
-                        {index === game.first_attacker &&
-                            game.table_battles.length === 0 &&
-                            !(game.deck_length > 0 && game.flipped === null) ? (
+                        {index === swordSeat ? (
                             <div style={{
                                 fontSize: '16px',
                                 height: '20px',
@@ -200,8 +199,8 @@ export const PlayerRing = () => {
                         {/* Always render so DEAL/REFILL animations have a destination element to target, even when hand_length === 0 */}
                         <CardsVisual
                             player={player}
-                            selfHandLength={player.player_id === user_id ? game.self?.hand.length : undefined}
-                            isSelf={player.player_id === user_id}
+                            selfHandLength={index === self_index ? game.myHand.length : undefined}
+                            isSelf={index === self_index}
                         />
                     </div>
                 );

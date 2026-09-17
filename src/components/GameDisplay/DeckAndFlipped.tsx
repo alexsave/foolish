@@ -1,26 +1,26 @@
-import { PersonalGame } from "@api/core/types.ts";
 import { CardBack } from "./CardBack";
 import { CardFace } from "./CardFace";
 import { useServer } from "../../contexts/ServerContext";
 import { useAnimation } from "../../contexts/AnimationContext";
 import { SuitIcon } from "../SovietIcon";
+import { rulesOf, type TableView } from "../../state/view";
 
 export const DeckAndFlipped = () => {
-    const game: PersonalGame = useServer().game as PersonalGame;
+    const game = useServer().view as TableView;
     const { inFlightFromDeck, inFlightToFlipped } = useAnimation();
 
-    // Cards mid-flight FROM the deck pile drive the visible pile size.
-    // Cards mid-flight TO the flipped slot are still in the deck system, so
-    // they count toward the badge total even though they've left the pile.
-    const displayedDeckLength = Math.max(0, game.deck_length - inFlightFromDeck);
-    const badgeTotal = displayedDeckLength + (game.flipped ? 1 : 0) + inFlightToFlipped;
-
-    const showDeckPile = displayedDeckLength > 0;
-    // Reserve the flipped slot during gameplay and the FLIPPED animation so
-    // findElementByLocation('flipped') resolves correctly. Drop it at end-game
-    // so the SuitIcon can take its place.
-    const showFlippedSlot = showDeckPile || game.flipped !== null || inFlightToFlipped > 0;
-    const showSuitIcon = !showDeckPile && !game.flipped && inFlightToFlipped === 0;
+    // What the stock shows is the kernel's (client_view_rules): cards mid-flight
+    // FROM the deck pile have left the visible pile, and cards mid-flight TO the
+    // flipped slot are still in the deck system, so they count toward the badge
+    // total. The flipped slot is reserved during gameplay and the FLIPPED
+    // animation so findElementByLocation('flipped') resolves correctly, and gives
+    // way to the SuitIcon at end-game.
+    const rules = rulesOf(game, inFlightFromDeck, inFlightToFlipped);
+    const displayedDeckLength = rules.deckPile;
+    const badgeTotal = rules.deckBadge;
+    const showDeckPile = rules.showDeckPile;
+    const showFlippedSlot = rules.showFlippedSlot;
+    const showSuitIcon = rules.showTrumpIcon;
 
     // paddingTop = (height - CardBack height) / 2 = (240 - 70) / 2 — pins the
     // deck pile to the spot it would occupy when centered alone, so the deck
@@ -56,7 +56,7 @@ export const DeckAndFlipped = () => {
                     zIndex: 0,
                 }}
             >
-                {game.flipped && <CardFace card={game.flipped} playerId="flipped" />}
+                {game.hasFlipped && <CardFace card={game.flipped} playerId="flipped" />}
             </div>
         )}
         {/* Trump indicator appears when deck and flipped card are gone */}
@@ -66,7 +66,7 @@ export const DeckAndFlipped = () => {
                 alignItems: 'center',
                 justifyContent: 'center'
             }}>
-                <SuitIcon suit={game.power_suit} size={64} />
+                <SuitIcon suit={game.powerSuit} size={64} />
             </div>
         )}
     </div>

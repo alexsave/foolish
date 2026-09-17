@@ -5,11 +5,11 @@ import { Lobby } from './Lobby';
 import { GameDisplay } from './GameDisplay';
 import { WinScreen } from './WinScreen';
 import { GameLoadingPlaceholder } from './GameLoadingPlaceholder';
-import { GAME_STATUS } from '@api/core/types.ts';
+import { GAME_STATUS } from '../state/view';
 import { initClientGuards, guardsReady } from '../wasm/clientGuards';
 
 export const GameView = () => {
-    const { game, gameLoadError } = useServer();
+    const { view: game, gameLoadError } = useServer();
     const urlGameId = useParams<{ game_id: string }>().game_id?.toLowerCase() || null;
     const router = useRouter();
 

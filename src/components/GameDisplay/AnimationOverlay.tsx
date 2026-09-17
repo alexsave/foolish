@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
-import { Card } from '@api/core/types.ts';
 import { ANIMATION_TIME, useAnimation } from '../../contexts/AnimationContext';
+import { covered, type ViewCard as Card } from '../../state/view';
 import { CardFace } from './CardFace';
 import { CardBack } from './CardBack';
 import { useServer } from '../../contexts/ServerContext';
@@ -40,7 +40,7 @@ interface AnimatedCard {
 export const AnimationOverlay = () => {
     const [animatedCards, setAnimatedCards] = useState<AnimatedCard[]>([]);
     const { currentAnimation, isAnimating } = useAnimation();
-    const { game } = useServer();
+    const { view: game } = useServer();
     const overlayRef = useRef<HTMLDivElement>(null);
 
     // Invalidate the table-slot geometry cache on resize (Stage 9). The cache key
@@ -104,11 +104,11 @@ export const AnimationOverlay = () => {
     };
 
     // Helper function to create invisible placeholders and measure their positions
-    const measurePlaceholderPositions = (type: string, cards: Card[], player_id?: string): Map<string, { x: number; y: number }> => {
+    const measurePlaceholderPositions = (type: string, cards: readonly Card[], player_id?: string): Map<string, { x: number; y: number }> => {
         const positions = new Map<string, { x: number; y: number }>();
-        
+
         if (type === 'attack_pass') {
-            const currentBattleCount = game?.table_battles?.length || 0;
+            const currentBattleCount = game?.battles.length || 0;
             // After this attack lands the table has currentBattleCount + cards.length
             // slots; each new card targets the slot at (currentBattleCount + index).
             const totalSlots = currentBattleCount + cards.length;
@@ -358,10 +358,10 @@ export const AnimationOverlay = () => {
                                 targetAttackCard = target_cards[index];
                             } 
                             // Otherwise, use the game state and cover logic to determine the target
-                            else if (game?.table_battles) {
+                            else if (game?.battles) {
                                 // Find uncovered attack cards that this cover card can cover
-                                const uncoveredBattles = game.table_battles.filter(battle => !battle.defense);
-                                const powerSuit = game.power_suit;
+                                const uncoveredBattles = game.battles.filter(battle => !covered(battle));
+                                const powerSuit = game.powerSuit;
                                 
                                 // Find the first uncovered attack card that this cover card can cover
                                 // and hasn't already been targeted by another cover card in this animation
@@ -407,7 +407,7 @@ export const AnimationOverlay = () => {
                                 endPos = measuredPos;
                             } else {
                                 // Fallback to finding existing drop zones or general table position
-                                const currentBattleCount = game?.table_battles?.length || 0;
+                                const currentBattleCount = game?.battles.length || 0;
                                 const targetBattleIndex = currentBattleCount + index;
                                 
                                 destinationElement = findElementByLocation('table', undefined, undefined, undefined, targetBattleIndex);

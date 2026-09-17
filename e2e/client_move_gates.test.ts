@@ -12,6 +12,8 @@
 // Pure client logic — needs no Postgres and no DOM.
 
 import { test } from 'node:test';
+import { gameToView } from './helpers/view_game.ts';
+import type { TableView } from '../sdk/ts/table/client_table.ts';
 import assert from 'node:assert/strict';
 
 import {
@@ -34,11 +36,11 @@ const mkGame = (
   handLens: number[],
   table: PersonalGame['table_battles'],
   opts: { defenderHand?: number; selfSeat?: number; selfHand?: Card[] } = {},
-): PersonalGame => {
+): TableView => {
   const { defenderHand = 6, selfSeat = 0, selfHand = [] } = opts;
   const players = handLens.map((n, i) => P(i, i === 1 ? defenderHand : n));
   const base = players[selfSeat];
-  return {
+  return gameToView({
     id: 'g', name: 'g', deck_length: 0, discard_pile_length: 0, flipped: null,
     players, status: GAME_STATUS.PLAYING, power_suit: 3, first_attacker: 0, defender: 1,
     table_battles: table, elimination_order: [], good_timestamp: null, good_players: [],
@@ -46,7 +48,7 @@ const mkGame = (
       player_id: base.player_id, name: base.name, status: PLAYER_STATUS.IN, is_ai: false,
       hand: selfHand, awaiting_attack: false, hand_length: selfHand.length, strategy_key: STRATEGY_KEY.HUMAN,
     },
-  };
+  });
 };
 
 // ---- canAttack --------------------------------------------------------------

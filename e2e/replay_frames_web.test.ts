@@ -29,6 +29,7 @@ import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
 import { kernelReplayEncodeV6FromGame } from '../sdk/ts/wasm/bots.ts';
 import { __setDealSeedOverride } from '../sdk/ts/wasm/engine.ts';
 import { deckSizeFor } from '../server/api/core/constants.ts';
+import { covered } from '../src/state/view.ts';
 import {
     buildReplayFrames, buildReverseFrames, preDealGame, stepTimes, REPLAY_STEP,
 } from '../src/replay/frames.ts';
@@ -103,12 +104,12 @@ test('every step of a web replay is a board the engine really played', async () 
         // The closing board is the board the engine finished on. Not "a board
         // consistent with" it — the same one.
         const last = frames[frames.length - 1].game;
-        assert.equal(last.discard_pile_length, game.discard_pile_length,
+        assert.equal(last.discardPileLength, game.discard_pile_length,
             `${np}p: ends on the played discard count`);
-        assert.equal(last.deck_length, 0, `${np}p: a finished game drained its stock`);
-        assert.equal(last.players.length, np, `${np}p: every seat came back`);
+        assert.equal(last.deckCount, 0, `${np}p: a finished game drained its stock`);
+        assert.equal(last.seats.length, np, `${np}p: every seat came back`);
         for (let s = 0; s < np; s++) {
-            assert.equal(last.players[s].hand_length, game.players[s].hand.length,
+            assert.equal(last.seats[s].handCount, game.players[s].hand.length,
                 `${np}p: seat ${s} ends holding what it really held`);
         }
 
@@ -116,11 +117,11 @@ test('every step of a web replay is a board the engine really played', async () 
         // discard is the whole deck, always. A desynced replay fails here.
         const deckSize = deckSizeFor(np);
         frames.forEach((f, i) => {
-            const inHands = f.game.players.reduce((sum, p) => sum + p.hand_length, 0);
-            const onTable = f.game.table_battles.reduce(
-                (sum, b) => sum + 1 + (b.defense ? 1 : 0), 0);
-            const total = inHands + onTable + f.game.deck_length
-                + (f.game.flipped ? 1 : 0) + f.game.discard_pile_length;
+            const inHands = f.game.seats.reduce((sum, p) => sum + p.handCount, 0);
+            const onTable = f.game.battles.reduce(
+                (sum, b) => sum + 1 + (covered(b) ? 1 : 0), 0);
+            const total = inHands + onTable + f.game.deckCount
+                + (f.game.hasFlipped ? 1 : 0) + f.game.discardPileLength;
             assert.equal(total, deckSize, `${np}p step ${i}: ${total} cards accounted for`);
         });
     }
@@ -152,7 +153,7 @@ test('the reveal eye shows the hand a seat REALLY held, not a guess', async () =
         // which is what catches a per-seat replay drifting out of step order.
         frames.forEach((f, i) => {
             f.game.replay_hands.forEach((h, s) => {
-                assert.equal(h.length, f.game.players[s].hand_length,
+                assert.equal(h.length, f.game.seats[s].handCount,
                     `${np}p step ${i}: seat ${s}'s revealed hand matches its count`);
             });
         });
@@ -233,10 +234,10 @@ test('the deal animates out of an empty table, and the clock tracks the moves', 
     const frames = buildReplayFrames(played.code, 'g', null);
 
     const pre = preDealGame(frames[0]);
-    assert.equal(pre.deck_length, deckSizeFor(3), 'the stock starts whole');
-    assert.equal(pre.flipped, null, 'nothing is flipped yet');
-    assert.deepEqual(pre.players.map(p => p.hand_length), [0, 0, 0], 'no one has been dealt to');
-    assert.equal(pre.table_battles.length, 0, 'the table is empty');
+    assert.equal(pre.deckCount, deckSizeFor(3), 'the stock starts whole');
+    assert.equal(pre.hasFlipped, false, 'nothing is flipped yet');
+    assert.deepEqual(pre.seats.map(p => p.handCount), [0, 0, 0], 'no one has been dealt to');
+    assert.equal(pre.battles.length, 0, 'the table is empty');
 
     // One recorded gap per attack/cover/pass/pickup — the exact set of step
     // kinds the clock advances on. If those ever drift apart the timestamps slide

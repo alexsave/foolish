@@ -1,4 +1,3 @@
-import { Card, PersonalGame, PLAYER_STATUS } from "@api/core/types.ts";
 import { useAuth } from "../../contexts/AuthContext";
 import { useServer } from "../../contexts/ServerContext";
 import { useAnimation } from "../../contexts/AnimationContext";
@@ -13,6 +12,7 @@ import { kernelUnambiguousCover } from "@sdk/ts/wasm/bots.ts";
 import { canAttack, canPass, canCoverCards, canPickup } from "../../utils/gameValidation";
 import { useStyles } from "../../contexts/StyleContext";
 import { useTutorialHint } from "../../contexts/TutorialHintContext";
+import { PLAYER_STATUS, covered, kernelTable, rulesOf } from "../../state/view";
 
 // Green glow used by the tutorial to point at the card/button to use next.
 const TUT_GLOW = '0 0 0 3px #2fcf63, 0 0 16px 3px rgba(47,207,99,0.85)';
@@ -45,13 +45,13 @@ const ActionButton: React.FC<ActionButtonProps> = ({ seed, onClick, children }) 
 };
 
 const CardDiv = ({ user_id }: { user_id: string }) => {
-    const { game, localHandOrder } = useServer() as { game: PersonalGame, localHandOrder: Card[] };
+    const { view: game, localHandOrder } = useServer();
     const { selectedCards } = useGame();
     const { draggedCardIndex, isDraggingForGameAction, startCardDrag, isActuallyDragging } = useDrag();
     const styles = useStyles();
     const hint = useTutorialHint();
 
-    if (!game || !game.self) {
+    if (!game || game.mySeat < 0) {
         return <p style={{ color: 'var(--color-text-primary)', fontSize: '18px' }}><Text id="spectating" /></p>;
     }
 
@@ -133,25 +133,23 @@ const Glow = ({ on, children }: { on: boolean; children: React.ReactNode }) => (
 
 export const ActionButtons = () => {
     const { user_id } = useAuth();
-    const { game } = useServer() as { game: PersonalGame };
+    const { view: game } = useServer();
     const { pickup, good, attack, pass, cover } = useAnimation();
     const { selectedCards, setSelectedCards, pressedActions, setActionPressed } = useGame();
     const hint = useTutorialHint();
 
-    const self_index = game?.players.findIndex((player) => player.player_id === user_id) ?? -1;
+    const self_index = game?.mySeat ?? -1;
     const isDefending = game && self_index !== -1 ? game.defender === self_index : false;
 
     // raw "this button is relevant" predicates, ignoring the optimistic pressed
     // flag. The rendered button additionally requires !pressedActions[name], so a
     // press (click OR keyboard) hides it immediately until the server catches up.
+    // Whether Good is offered is the kernel's (client_view_rules).
     //
     // TODO(ios-parity): iMessage board hides Take while cards are selected
     // (defender) and Good while cards are selected (attacker); consider matching
     // here.
-    const rawGood = !!(!isDefending &&
-        (game?.table_battles.length ?? 0) > 0 &&
-        (game?.table_battles.every(battle => battle.defense) ?? false) &&
-        !(game?.good_players?.includes(user_id ?? '') ?? false));
+    const rawGood = !!game && rulesOf(game).canSayGood;
     const rawAttack = !!(game && !isDefending && canAttack(game, selectedCards));
     const rawPass = !!(game && isDefending && canPass(game, selectedCards));
     const rawCover = !!(game && isDefending && canCoverCards(game, selectedCards));
@@ -176,11 +174,11 @@ export const ActionButtons = () => {
         }
     }, [rawGood, rawAttack, rawPass, rawCover, rawPickup, pressedActions, setActionPressed]);
 
-    if (!game || !game.self) {
+    if (!game || game.mySeat < 0) {
         return <div></div>;
     }
 
-    const isOut = game.self.status === PLAYER_STATUS.OUT;
+    const isOut = game.seats[game.mySeat].status === PLAYER_STATUS.OUT;
     if (isOut) {
         return <div></div>;
     }
@@ -206,11 +204,11 @@ export const ActionButtons = () => {
     };
 
     const handleCoverClick = () => {
-        const uncoveredBattles = game.table_battles.filter(battle => !battle.defense);
+        const uncoveredBattles = game.battles.filter(battle => !covered(battle));
 
         if (selectedCards.length === 1) {
             const validTarget = uncoveredBattles.find(battle =>
-                canCoverPair(battle.attack, selectedCards[0], game.power_suit)
+                canCoverPair(battle.attack, selectedCards[0], game.powerSuit)
             );
             if (validTarget) {
                 setActionPressed('cover', true);
@@ -224,7 +222,7 @@ export const ActionButtons = () => {
         } else {
             // Use the shared cover resolver (same as DragContext/KeyboardInputHandler)
             // instead of re-implementing the permutation search inline.
-            const mapping = kernelUnambiguousCover(selectedCards, game.table_battles, game.power_suit);
+            const mapping = kernelUnambiguousCover(selectedCards, kernelTable(game.battles), game.powerSuit);
             if (mapping) {
                 setActionPressed('cover', true);
                 cover(mapping.coverCards, mapping.attackCards).then(() => {
@@ -244,7 +242,7 @@ export const ActionButtons = () => {
             data-touch-interactive
             style={{ display: 'flex', flexDirection: 'column', position: 'absolute', bottom: 'max(10px, env(safe-area-inset-bottom))', left: '0px', right: '0px', justifyContent: 'end', alignItems: 'center', height: '200px' }}
         >
-            {game && game.self && (
+            {game && game.mySeat >= 0 && (
                 <div 
                     data-touch-interactive
                     style={{

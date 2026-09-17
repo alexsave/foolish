@@ -28,9 +28,6 @@ g.getComputedStyle = dom.window.getComputedStyle;
 g.MouseEvent = dom.window.MouseEvent;
 g.IS_REACT_ACT_ENVIRONMENT = true;
 
-const GAME_STATUS = { WAITING: 'waiting', PLAYING: 'playing', GAME_OVER: 'game_over' };
-const PLAYER_STATUS = { IDLE: 'idle', READY: 'ready', IN: 'in' };
-const STRATEGY_KEY = { HUMAN: 'human' };
 
 // Roster the picker fetches, newest first. Real bot ids on every row.
 const ROSTER = [
@@ -56,12 +53,13 @@ const supabaseMock = {
     }),
 };
 
+// The board the lobby renders (a TableView snapshot): one human seated, the viewer.
 const GAME = {
-    name: 'G', status: GAME_STATUS.WAITING, self: { player_id: 'h1' },
-    players: [{ player_id: 'h1', name: 'Me', status: PLAYER_STATUS.IDLE, is_ai: false, hand_length: 0 }],
+    gameId: 'abcde', title: 'G', status: 0, mySeat: 0,
+    seats: [{ id: 'h1', name: 'Me', status: 0, isAi: false, handCount: 0, awaitingAttack: false }],
 };
 const SERVER = {
-    game: GAME,
+    view: GAME,
     updateGameName: () => Promise.resolve(),
     rearrangePlayer: () => Promise.resolve(),
     addBot: (_gameId: string, botId?: string) => { addBotCalls.push(botId); return Promise.resolve({ game_id: _gameId }); },
@@ -88,10 +86,8 @@ mock.module('../src/components/Text.tsx', { namedExports: { Text: () => null } }
 mock.module('../src/contexts/LocalizationContext.tsx', { namedExports: { useLocalization: () => ({ t: (id: string, v?: any) => (v?.name ? `Add ${v.name}` : id) }) } });
 mock.module('../src/components/SovietIcon.tsx', { namedExports: { SovietIcon: () => null } });
 mock.module('../src/contexts/StyleContext.tsx', { namedExports: { useStyles: () => ({ texture: { useWoodTexture: false } }) } });
-// Lobby.tsx imports these from @api/core (it used to be @shared, whose alias
-// now points at a path with no types.ts — mock.module on an unresolvable
-// specifier throws ERR_MODULE_NOT_FOUND and killed the whole file at load).
-mock.module('@api/core/types.ts', { namedExports: { PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, PublicPlayer: {} } });
+// Lobby.tsx reads the board's statuses from src/state/view.ts (the kernel's
+// generated constants), which it loads for real, as the page does.
 mock.module('@api/core/constants.ts', { namedExports: { MAX_PLAYERS: 6 } });
 
 test('lobby: clicking Add Bot before the roster loads adds a SPECIFIC bot, not a random one', async () => {
