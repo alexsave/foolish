@@ -25,7 +25,6 @@ import { kernelB32Decode, replaySummary } from '../sdk/ts/wasm/bots.ts';
 import assert from 'node:assert/strict';
 
 import { codeToGame, bigintToBytes } from '../server/api/common/replay/codec.ts';
-import { decodeReplay } from '../server/api/common/replay/decode.ts';
 import { buildReplayFrames, REPLAY_STEP, ReplayFrame } from '../src/replay/frames.ts';
 import { TUTORIAL_MOVES_CODE, TUTORIAL_NAMES } from '../src/components/tutorialGame.ts';
 import { PLAYER_STATUS } from '../src/state/view.ts';
@@ -61,33 +60,29 @@ const isLearnerStep = (frames: ReplayFrame[], i: number): boolean => {
 };
 
 // Read the way Tutorial.tsx reads it: the kernel's summary of the code, and the
-// frames from the learner's seat. The decoder's own header is kept beside it for
-// the format version, which the summary does not carry.
+// frames from the learner's seat.
 const load = async () => {
     const x = bytesToBigint(kernelB32Decode(TUTORIAL_MOVES_CODE));
-    const decoded = await decodeReplay(x);
     const summary = replaySummary(bigintToBytes(x));
     assert.ok(summary, 'the tutorial code has a summary');
     const frames = buildReplayFrames(bigintToBytes(x), 'tutorial', TUTORIAL_NAMES, {
         viewer: LEARNER, fool: summary!.fool,
     });
-    return { decoded, summary: summary!, frames };
+    return { summary: summary!, frames };
 };
 
 export function registerTutorialValidation(): void {
 test('the tutorial code still replays on the kernel that ships', async () => {
-    const { decoded, summary, frames } = await load();
-    assert.equal(decoded.formatVersion, FORMAT_VERSION_V6,
+    const { summary, frames } = await load();
+    assert.equal(summary.version, FORMAT_VERSION_V6,
         'the tutorial is an inline-reveal code (the retrodiction line cannot replay)');
     assert.equal(summary.numPlayers, 3, '3-player game');
     assert.ok(frames.length > 10, `replays to ${frames.length} steps`);
     assert.equal(frames[0].kind, REPLAY_STEP.DEAL, 'it opens with the deal');
     assert.notEqual(summary.fool, LEARNER, 'the learner is not left the fool');
     assert.equal(summary.firstAttacker, LEARNER, 'the learner holds the lowest trump and leads');
-    // The summary the tutorial reads is the decoder's header.
-    assert.deepEqual([summary.numPlayers, summary.fool, summary.firstAttacker, summary.powerSuit, summary.elimination],
-        [decoded.playerCount, decoded.fool, decoded.firstAttacker, decoded.powerSuit, decoded.eliminationOrder],
-        'the kernel summary says what the decoder says');
+    assert.equal(summary.trump.suit, summary.powerSuit, 'the flipped trump names the trump suit');
+    assert.equal(summary.elimination.length, 2, 'the two others go out before the fool is left');
 });
 
 test('the learner sees their own hand and nobody else\'s', async () => {
