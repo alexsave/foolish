@@ -5,7 +5,11 @@
 //   E2E_PG* set + TSX_TSCONFIG_PATH=e2e/tsconfig.json node scripts/collect_metrics.mjs
 //
 // Metrics:
-//   size   — the three wasm modules (rules/guards embedded b64, bots.wasm.gz), raw + gzip bytes
+//   size   — the three wasm modules (rules/guards embedded b64, bots.wasm.gz), raw + gzip bytes,
+//            plus the replay oracle's two committed modules (public/oracle.wasm.gz,
+//            public/oracle-mt.wasm.gz)
+//   webBundle — first-load JS of `/` and `/[game_id]`, gzip bytes, from a real
+//            `next build` (scripts/measure_web_bundle.mjs)
 //   linearMemory — each module's DECLARED linear memory (initial pages/bytes + pinned flag)
 //   speed  — engine throughput (games/sec, actions/sec) from e2e/bench_engine.ts
 //   memory — peak bots/kernel wasm linear memory (MB) after the MC bots ran
@@ -14,6 +18,7 @@
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 
 const WASM = 'sdk/ts/wasm';
 const tsxEnv = { ...process.env, TSX_TSCONFIG_PATH: 'e2e/tsconfig.json' };
@@ -78,7 +83,22 @@ function size() {
       rules: embeddedSize('rules_wasm.ts'),
       guards: embeddedSize('guards_wasm.ts'),
       bots: gzFileSize(`${WASM}/bots.wasm.gz`),
+      // The oracle modules are served from public/ rather than embedded; a
+      // checkout that predates one reports null for it rather than failing.
+      oracle: existsSync('public/oracle.wasm.gz') ? gzFileSize('public/oracle.wasm.gz') : null,
+      'oracle-mt': existsSync('public/oracle-mt.wasm.gz') ? gzFileSize('public/oracle-mt.wasm.gz') : null,
     };
+  } catch (e) { return { error: String(e.message || e) }; }
+}
+
+// ---- web bundle: first-load JS of the main routes ----
+// A real `next build`, so this is the slowest metric after the e2e bench. The
+// module is imported from the collector's own directory: metrics.yml copies it
+// into the base checkout alongside this file.
+async function webBundle() {
+  try {
+    const { measureWebBundle } = await import(new URL('./measure_web_bundle.mjs', import.meta.url).href);
+    return measureWebBundle();
   } catch (e) { return { error: String(e.message || e) }; }
 }
 
@@ -162,5 +182,6 @@ const metrics = {
   speed: speed(),
   memory: em.memory ?? { error: em.error ?? 'no memory' },
   e2e: em.e2e ?? { error: em.error ?? 'no e2e' },
+  webBundle: await webBundle(),
 };
 process.stdout.write(JSON.stringify(metrics, null, 2) + '\n');

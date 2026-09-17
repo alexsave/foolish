@@ -94,6 +94,7 @@ jobs:
           mkdir -p base/scripts
           cp pr/scripts/collect_metrics.mjs base/scripts/collect_metrics.mjs
           cp pr/scripts/render_metrics.cjs  base/scripts/render_metrics.cjs
+          cp pr/scripts/measure_web_bundle.mjs base/scripts/measure_web_bundle.mjs
           cp pr/e2e/bench_bot_e2e.ts        base/e2e/bench_bot_e2e.ts
 
       - name: Install deps (head)
