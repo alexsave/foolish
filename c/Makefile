@@ -736,9 +736,9 @@ WASM_BOTS_API_EXPORTS := \
 
 # The C Roster (src/roster.h), in the TEST build only (WASM_TEST_EXPORTS below):
 # e2e/helpers/roster_kernel.ts drives the durable encoding and the envelope
-# trailer through these directly (e2e/roster_c_parity.test.ts,
-# e2e/packed_roster_wire.test.ts). Production reaches the roster through the
-# table exports, never through these.
+# trailer through these directly (e2e/packed_roster_wire.test.ts feeds the Swift
+# decoder C-written trailers). Production reaches the roster through the table
+# exports, never through these.
 WASM_ROSTER_EXPORTS := \
   -Wl,--export=wasm_roster_encode -Wl,--export=wasm_roster_decode \
   -Wl,--export=wasm_roster_trailer_write -Wl,--export=wasm_roster_trailer_read

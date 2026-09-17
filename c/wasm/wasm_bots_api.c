@@ -611,11 +611,10 @@ int wasm_replay_decoded_next(void) {
 
 // ---------- the C Roster (src/roster.h), test-only exports ------------------
 //
-// Linked into bots.wasm only (WASM_ROSTER_EXPORTS in the Makefile). They exist
-// so e2e can hold roster.c byte-identical to the TS encoder it replaces
-// (e2e/roster_c_parity.test.ts) and feed the real Swift decoder C-written
-// trailers (e2e/packed_roster_wire.test.ts). Phase 3's wasm_table_* exports
-// supersede them.
+// Exported only from the test build (WASM_ROSTER_EXPORTS, part of
+// WASM_TEST_EXPORTS in the Makefile). They let e2e drive roster.c directly and
+// feed the real Swift decoder C-written trailers (e2e/packed_roster_wire.test.ts);
+// production reaches the roster through the wasm_table_* exports.
 //
 // Every call reads its input from the IO buffer and writes its answer back
 // there. A roster crosses in one test-only SPEC layout:

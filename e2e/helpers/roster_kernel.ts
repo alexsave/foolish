@@ -1,20 +1,13 @@
-// roster_kernel.ts - the C Roster (c/src/roster.h) as the parity tests drive it.
+// roster_kernel.ts - the C Roster (c/src/roster.h) as tests drive it directly.
 //
-// A PRIVATE bots.wasm instance, so these calls share no kernel slot with any
-// other test in the same process, over the test-only wasm_roster_* exports
-// (c/wasm/wasm_bots_api.c). Shared by e2e/roster_c_parity.test.ts and the Swift
-// half of e2e/packed_roster_wire.test.ts, so both hold the same C writer to the
-// same bytes. Knows no roster byte layout: the SPEC below is the exports' own
+// A PRIVATE instance of the test build (e2e/helpers/bots_test_wasm.ts), so these
+// calls share no kernel slot with any other test in the same process, over the
+// test-only wasm_roster_* exports (c/wasm/wasm_bots_api.c). Used by the Swift half
+// of e2e/packed_roster_wire.test.ts, the hidden-information scan and the expand
+// migration test. Knows no roster byte layout: the SPEC below is the exports' own
 // test input shape, and everything C writes comes back as opaque bytes.
 
 import { botsTestWasm } from './bots_test_wasm.ts';
-
-// ROSTER_* (c/src/roster.h).
-export const ROSTER_BYTES = 1227;
-export const ROSTER_E_ID = -4;
-export const ROSTER_E_FULL = -9;
-export const ROSTER_E_PADDING = -13;
-export const ROSTER_STATUS_NAMES = ['waiting', 'playing', 'game_over'];
 
 interface RosterExports {
     memory: WebAssembly.Memory;
@@ -67,13 +60,6 @@ export function cRosterEncode(title: string, seats: RosterSeatSpec[]): Uint8Arra
     return n < 0 ? n : get(n);
 }
 
-/** roster_decode then roster_encode: the same bytes when decode is lossless, or the refusal. */
-export function cRosterDecodeReencode(durable: Uint8Array): Uint8Array | number {
-    put(durable);
-    const n = kernel().wasm_roster_decode(durable.length);
-    return n < 0 ? n : get(n);
-}
-
 /** roster_trailer_write for a table: the envelope trailer bytes, or the refusal. */
 export function cRosterTrailer(t: RosterTable): Uint8Array | number {
     const durable = cRosterEncode(t.title, t.seats);
@@ -100,28 +86,5 @@ export function cRosterTrailerRead(trailer: Uint8Array):
         status: b[0], aiMask: dv.getUint32(1, true), consumed: dv.getUint16(5, true),
         gid: new TextDecoder().decode(b.subarray(8, 8 + gidLen)),
         durable: b.slice(8 + gidLen),
-    };
-}
-
-/** The roster island the retired TS encoder (sdk/ts/wire/roster.ts) took. */
-export interface PackedRoster {
-    id: string;
-    name: string;
-    status: string;
-    players: { player_id: string; name: string; is_ai: boolean }[];
-    good_players: string[];
-    good_timestamp: number | null;
-}
-
-/**
- * The PackedRoster the TS encoder needs to write the SAME trailer C writes:
- * is_ai from the brain, good ids in seat order from the mask, no timestamp.
- */
-export function tsRosterFor(t: RosterTable): PackedRoster {
-    return {
-        id: t.gid, name: t.title, status: ROSTER_STATUS_NAMES[t.status],
-        players: t.seats.map(s => ({ player_id: s.id, name: s.name, is_ai: s.brain !== '' })),
-        good_players: t.seats.filter((_, i) => (t.goodMask >> i) & 1).map(s => s.id),
-        good_timestamp: null,
     };
 }
