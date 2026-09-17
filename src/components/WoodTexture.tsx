@@ -88,11 +88,14 @@ async function generateWoodPixelData(width: number, height: number): Promise<Pix
   
   for (let i = 0; i < 576; i++) {
     D(i / 60);
-    if (i > 0 && i % 200 === 0) {
+    // Every 24 columns (about 50 ms), not 200 (about 450 ms): a longer run of
+    // this loop holds up the page's thread, and with it the wool worker's
+    // start and its answer, so the background stayed flat behind the buttons.
+    if (i > 0 && i % 24 === 0) {
       await new Promise(resolve => setTimeout(resolve, 0));
     }
   }
-  
+
   return pixelsToPointArrays(pixelColors, width, height);
 }
 
@@ -180,7 +183,7 @@ const generateWoodTextureFallback = async (width: number = 1920, height: number 
   
   for (let i = 0; i < 576; i++) {
     D(i / 60);
-    if (i > 0 && i % 200 === 0) {
+    if (i > 0 && i % 24 === 0) {
       await new Promise(resolve => setTimeout(resolve, 0));
     }
   }
