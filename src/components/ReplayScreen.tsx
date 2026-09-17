@@ -40,18 +40,18 @@ import { OracleSnapshot } from '../oracle/types';
 const REPLAY_KEY = 'replay';
 
 /**
- * Self-contained replay viewer: WWW.FOOLISH.CARDS/<base32> — the path segment
+ * Self-contained replay viewer: WWW.FOOLISH.CARDS/<base32> - the path segment
  * IS the entire game (decoded client-side, no auth, no database row).
  *
  * It IS the real game UI: the same display components, driven by the same
  * AnimationProvider, fed the same animation-sequence messages a live game
- * receives — just published into src/state/animationFeed from the decoded
+ * receives - just published into src/state/animationFeed from the decoded
  * integer instead of a supabase channel. Stepping forward plays the event
  * with its full animation; seeking commits the target state directly.
  */
 
 /* Miniature cards rendered through the REAL CardFace/CardBack (native
- * 50×70 px, shrunk with a CSS transform) so they match the table exactly —
+ * 50×70 px, shrunk with a CSS transform) so they match the table exactly -
  * corner indices, center pip, theme styling, Soviet suit icons and all.
  * These render inside the replay's provider tree, which CardFace/CardBack
  * need (animation, styles, fern pattern). */
@@ -107,7 +107,7 @@ const seatName = (seat: number, names?: (string | null)[] | null) =>
     botDisplayName(names?.[seat] || `P${seat + 1}`);
 
 /* Playback speeds. 'AUTO' is the condensed default: recorded gaps clamped to
- * short beats. The ×N stops replay the RECORDED timing divided by N — at 1× a
+ * short beats. The ×N stops replay the RECORDED timing divided by N - at 1× a
  * three-day sulk between moves really takes three days (the countdown keeps
  * the screen honest), and for simulation games with nanosecond gaps the same
  * dial generates SLOW-MOTION stops (mult < 1) instead. Stops are derived from
@@ -165,7 +165,7 @@ const fmtDuration = (ms: number): string => {
 /* What just happened, in the viewer's language. The kind comes from the kernel
  * (frames.ts) rather than from the frame's events, because on the wire an attack
  * and a pass are one event type told apart only by a reconstructed English
- * sentence — and this line is localized, so that sentence is no use here anyway.
+ * sentence - and this line is localized, so that sentence is no use here anyway.
  *
  * A step is one ACTION, and its frame carries everything that action caused, so
  * a cover that ends a bout narrates as the cover; the discard and refills it
@@ -224,7 +224,7 @@ const StepMessage = ({ frame, names }: {
         case REPLAY_STEP.ROUND_END:
             return (
                 <span>
-                    ✓ <Text id="good" /> — {frame.count} <Text id="discarded" />
+                    ✓ <Text id="good" /> - {frame.count} <Text id="discarded" />
                 </span>
             );
         default:
@@ -249,7 +249,7 @@ const handCardKey = (c: Card | null) => (c ? `${c.suit}-${c.value}` : 'hidden');
 
 /* Mirror of ServerContext.mergeHandOrder, generalised to the replay's
  * (Card | null)[] hands: keep the viewer's preferred ordering for cards that
- * still exist, append cards that appeared since, and drop ones that left —
+ * still exist, append cards that appeared since, and drop ones that left -
  * so a local rearrangement survives scrubbing/stepping the way the live
  * game's local hand order survives server updates. Face-down slots are
  * reconciled by count (they carry no identity). */
@@ -293,19 +293,19 @@ const mergeReplayHandOrder = (
  * the same ellipse as PlayerRing (with the same viewer rotation: the replay
  * viewer is never a player, so self_index is -1 there and here). Cards are
  * the real CardFace/CardBack rendered at native 50×70 and scaled to 80%, so
- * they keep full card proportions — corner indices and center pip — instead
+ * they keep full card proportions - corner indices and center pip - instead
  * of the squished thin layout. Two centered rows per hand. Identities come
- * from replay_hands — retroactive knowledge of every card that ever
+ * from replay_hands - retroactive knowledge of every card that ever
  * surfaces; cards that never get played stay face-down.
  *
  * Every hand here is drag-to-rearrangeable: the viewer can reorder the cards
  * within ANY player's hand exactly like reordering their own hand in the live
- * game. This is purely cosmetic and entirely client-side — there is no server
+ * game. This is purely cosmetic and entirely client-side - there is no server
  * in a replay, so nothing is committed anywhere; we only keep a per-seat
  * "prefer local order" overlay (localOrders) that the render prefers, falling
  * back to the underlying replay_hands order and reconciling against the
  * current hand as the replay is scrubbed (see mergeReplayHandOrder). Cards are
- * NOT selectable or playable on the replay screen — only reordering.
+ * NOT selectable or playable on the replay screen - only reordering.
  */
 const RevealedHands = () => {
     const game = useServer().view as ReplayGameState | null;
@@ -317,7 +317,7 @@ const RevealedHands = () => {
 
     // Active drag (STATE, not a ref, so the held card can render faded in place
     // exactly like the live hand): which seat's hand and which displayed slot is
-    // being dragged. Reorder-only — no selection, no play, no cross-seat moves.
+    // being dragged. Reorder-only - no selection, no play, no cross-seat moves.
     const [drag, setDrag] = useState<{ seat: number; index: number } | null>(null);
 
     const displayHands = useMemo(() => {
@@ -328,7 +328,7 @@ const RevealedHands = () => {
     }, [game, localOrders]);
 
     // While a card is held, hovering another slot in the SAME seat swaps the two
-    // — the live hand's real-time swap-on-hover (elementsFromPoint + data-*
+    // - the live hand's real-time swap-on-hover (elementsFromPoint + data-*
     // indices). elementsFromPoint finds the slot under the cursor in EITHER
     // wrapped row, so dragging across rows just works; the seat filter keeps a
     // drag confined to one player's hand. The effect re-subscribes on every swap
@@ -414,7 +414,7 @@ const RevealedHands = () => {
                                 <div
                                     // stable per-card key (like the live hand's
                                     // value+suit key) so React MOVES the node on a
-                                    // swap instead of repainting content in place —
+                                    // swap instead of repainting content in place -
                                     // that's what makes the reorder read cleanly.
                                     key={c ? `${c.suit}-${c.value}` : `back-${i}`}
                                     data-replay-seat={index}
@@ -447,7 +447,7 @@ const RevealedHands = () => {
     );
 };
 
-/* Flat VHS-deck transport glyphs — geometric, single-colour (currentColor),
+/* Flat VHS-deck transport glyphs - geometric, single-colour (currentColor),
  * no strokes or gradients. A "bar at the point" turns the plain play/rewind
  * triangle into a step glyph; doubled triangles are the bout-skip glyphs. */
 const Glyph = ({ children }: { children: React.ReactNode }) => (
@@ -498,14 +498,14 @@ const IconEye = () => (
         <circle cx={12} cy={12} r={2} />
     </Glyph>
 );
-/* Telestrator pen — a simple diagonal marker; the active state tints the
+/* Telestrator pen - a simple diagonal marker; the active state tints the
    whole knob amber like the other transport toggles. */
 const IconPen = () => (
     <Glyph>
         <path d="M16.5 3.5a2 2 0 0 1 2.8 2.8L8.7 16.9 4 18.5l1.6-4.7L16.5 3.5Z" />
     </Glyph>
 );
-/* Oracle — a crystal ball on its stand; active state tints the knob amber. */
+/* Oracle - a crystal ball on its stand; active state tints the knob amber. */
 const IconOracle = () => (
     <Glyph>
         <circle cx={12} cy={10} r={6} />
@@ -583,7 +583,7 @@ const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times }: Sta
 
     // publish one step's sequence into the feed; a fresh sequence_id (and a
     // deep copy) lets the same step replay after scrubbing back. Plain
-    // counter + Math.random — crypto.randomUUID needs a secure context and
+    // counter + Math.random - crypto.randomUUID needs a secure context and
     // breaks LAN dev on iOS (http://192.168.x.x).
     const publishSeq = useRef(0);
     const publishStep = useCallback(
@@ -631,7 +631,7 @@ const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times }: Sta
             setWaitTarget(null);
             resetAnimations();
             const target = Math.max(0, Math.min(i, lastIdx));
-            // The step's own board, straight from the kernel — no rebuild.
+            // The step's own board, straight from the kernel - no rebuild.
             updateGameState(REPLAY_KEY, frames[target].game);
             setStepIdx(target);
         },
@@ -687,8 +687,8 @@ const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times }: Sta
     }, []);
 
     // autoplay scheduling: once the previous event's animation lands, pick the
-    // delay before the next move — condensed beats by default, or the recorded
-    // gap divided by the dial speed in realtime modes — and arm a wall-clock
+    // delay before the next move - condensed beats by default, or the recorded
+    // gap divided by the dial speed in realtime modes - and arm a wall-clock
     // target. The ticker below fires it; this survives day-long waits.
     useEffect(() => {
         if (!playing || isAnimating || waitTarget !== null) return;
@@ -807,7 +807,7 @@ const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times }: Sta
             <Telestrator active={drawing} />
 
             {/* status bar, top-centre: move counter, timestamp, and what just
-                happened — the readouts a VHS deck shows on its front display. */}
+                happened - the readouts a VHS deck shows on its front display. */}
             <div
                 style={{
                     position: 'absolute',
@@ -869,14 +869,14 @@ const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times }: Sta
                 >
                     {/* The last step is a real move, not a synthetic end marker,
                         so the closing line rides alongside it rather than
-                        replacing it — the move that ended the game is worth
+                        replacing it - the move that ended the game is worth
                         reading too. */}
                     {stepIdx >= 0 && <StepMessage frame={frame} names={names} />}
                     {stepIdx === lastIdx && <FoolMessage fool={fool} names={names} />}
                 </div>
             </div>
 
-            {/* transport controls, bottom-right corner — knobs float directly on
+            {/* transport controls, bottom-right corner - knobs float directly on
                 the felt, no backing panel */}
             <div
                 style={{
@@ -928,7 +928,7 @@ const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times }: Sta
                 </div>
             </div>
 
-            {/* Infinite Oracle panel — right-anchored, mounted in the board
+            {/* Infinite Oracle panel - right-anchored, mounted in the board
                 chrome so its mini-cards render inside the replay provider tree */}
             {oracleOpen && (
                 <OracleOverlay
@@ -939,7 +939,7 @@ const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times }: Sta
                 />
             )}
 
-            {/* home button — the same little wood square as the in-game back
+            {/* home button - the same little wood square as the in-game back
                 button (btn-icon), positioned top-left by its own CSS */}
             <TexturedSurface
                 as="button"

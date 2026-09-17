@@ -16,8 +16,8 @@ import { bigintToBytes, bytesToBigint, hexToBytes } from '@api/common/replay/cod
 /**
  * Match history: every finished game the signed-in user played, straight from
  * game_snapshots (RLS returns exactly the rows whose player_ids contain this
- * uid — no extra filter needed). Each row's binary snapshot IS the game, so
- * everything shown — seats, names, who was the fool, your placement — is
+ * uid - no extra filter needed). Each row's binary snapshot IS the game, so
+ * everything shown - seats, names, who was the fool, your placement - is
  * read client-side by the kernel the replay screen uses, and the
  * "watch" link is the same self-contained base32 URL ReplayShare builds.
  * Before this screen, a replay was only reachable from the WinScreen moment;
@@ -28,7 +28,7 @@ const PAGE_SIZE = 50;
 
 interface HistoryEntry {
     id: string;
-    code: string;           // base32 moves[-extras] — the replay URL path
+    code: string;           // base32 moves[-extras] - the replay URL path
     createdAt: Date;
     playerCount: number;
     names: string[];        // seat order, '%'-prefixed for bots
@@ -96,7 +96,7 @@ export const MatchHistory: React.FC = () => {
 
                     const row = rows[i];
                     // A snapshot that fails to decode (corrupt / future format)
-                    // shouldn't take the whole screen down — skip it.
+                    // shouldn't take the whole screen down - skip it.
                     try {
                         const playerIds = (row.player_ids as string[]) ?? [];
                         const mySeat = playerIds.indexOf(user_id);
@@ -197,7 +197,7 @@ export const MatchHistory: React.FC = () => {
                         />
                         <div className="flex flex-1 items-center" style={{ justifyContent: 'space-around', gap: '0.5rem' }}>
                             {[
-                                { label: 'rating' as const, value: elo ? String(elo.rating) : '—' },
+                                { label: 'rating' as const, value: elo ? String(elo.rating) : '-' },
                                 { label: 'games_label' as const, value: String(stats.games) },
                                 { label: 'survival_rate' as const, value: `${stats.survival}%` },
                                 { label: 'times_fool' as const, value: String(stats.fools) },

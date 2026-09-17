@@ -1,5 +1,5 @@
 /* =============================================================================
- * Infinite Oracle — the replay overlay panel (docs/INFINITE_ORACLE_DESIGN.md §9)
+ * Infinite Oracle - the replay overlay panel (docs/INFINITE_ORACLE_DESIGN.md §9)
  * Right-anchored panel mounted through GameBoard's chrome slot. Shows octogen's
  * read of every option at the paused decision: candidate rows with relative
  * bars, expected-finish ± SE, a chess.com-style classification chip, and the
@@ -36,11 +36,11 @@ function tokenToCard(token: string): Card | null {
     if (suit < 0 || value == null) return null;
     return { suit, value };
 }
-// The whole move — attacking cards, an optional "→" and the covered/target
-// cards, or the bare move type for card-less moves (pass/pickup/good/wait) —
+// The whole move - attacking cards, an optional "→" and the covered/target
+// cards, or the bare move type for card-less moves (pass/pickup/good/wait) -
 // as one string for a single fixed-width segment display per row. Suits are
 // the ♠♥♣♦ characters SegmentText renders as small icons (see SuitGlyph in
-// SegmentDisplay.tsx) rather than letters — still one array element each,
+// SegmentDisplay.tsx) rather than letters - still one array element each,
 // so the fixed-length budget and blank padding are unaffected. Also tracks
 // which indices are red-suit (♥/♦) so the display can tint just those.
 function moveTitleText(c: OracleCandidate): { text: string; redAt: Set<number> } {
@@ -59,7 +59,7 @@ function moveTitleText(c: OracleCandidate): { text: string; redAt: Set<number> }
     return { text, redAt };
 }
 // Fixed character budget for the move-title strip: worst realistic case is
-// three attacking tens covering three cards — 3×"10S" (9) + "→" (1) +
+// three attacking tens covering three cards - 3×"10S" (9) + "→" (1) +
 // 3×"XS" (6) = 16.
 const MOVE_TITLE_LEN = 16;
 const SUIT_RED = '#E8674F';
@@ -100,7 +100,7 @@ interface Props {
     onRetry: () => void;
 }
 
-// Filled "hardware label" chip — mimics the amber/colored solid indicator
+// Filled "hardware label" chip - mimics the amber/colored solid indicator
 // tags stenciled onto old car-stereo faceplates (e.g. "PLAYED", "WIN").
 // Unlit segments read as embossed dark strokes against the solid fill.
 const SolidChip = ({ bg, fg = '#fff', text }: { bg: string; fg?: string; text: string }) => (
@@ -111,10 +111,10 @@ const SolidChip = ({ bg, fg = '#fff', text }: { bg: string; fg?: string; text: s
     </span>
 );
 
-// Outline "LCD segment" chip — dark display glass with glowing colored text,
+// Outline "LCD segment" chip - dark display glass with glowing colored text,
 // like the small backlit labels (MONO / TRCL / SEEK) on the reference units.
 // `width`, when given, fixes the chip's footprint (and centers its text) so
-// a column of these — e.g. the classification tag on every candidate row —
+// a column of these - e.g. the classification tag on every candidate row -
 // lines up instead of jittering with "BEST" vs "INACCURACY".
 const LedChip = ({ color, text, width }: { color: string; text: string; width?: number }) => (
     <span style={{
@@ -129,15 +129,15 @@ const LedChip = ({ color, text, width }: { color: string; text: string; width?: 
 
 // "EF 5.60 ±0.08" as one fixed-length segment array (like the move title).
 // EF and its error are always exactly "D.DD" (single digit, two decimals),
-// and the error is never omitted, so the format — not just the footprint —
+// and the error is never omitted, so the format - not just the footprint -
 // is fixed: "EF " (3) + "D.DD" (4) + " ±" (2) + "D.DD" (4) = 13.
 const EF_TITLE_LEN = 13;
 
 // Fixed footprint for the classification chip (best/excellent/.../blunder)
-// — sized to the longest label, "INACCURACY".
+// - sized to the longest label, "INACCURACY".
 const CLASS_CHIP_W = 80;
 
-// Segmented LED bargraph — a row of discrete lit/unlit blocks standing in for
+// Segmented LED bargraph - a row of discrete lit/unlit blocks standing in for
 // a plain progress bar, echoing the graphic-equalizer displays in the refs.
 const EQ_SEGMENTS = 20;
 function EqBar({ pct, color }: { pct: number; color: string }) {
@@ -165,7 +165,7 @@ function McRow({ c, best, worst, bestAdj, t }: {
     t: (id: any, p?: any) => string;
 }) {
     // Bar, sort, classification and the displayed number ALL key off the true
-    // expected finish (mean) — the 0.04/trump tie-break tax never distorts what
+    // expected finish (mean) - the 0.04/trump tie-break tax never distorts what
     // the user sees, so the bars always agree with the EF numbers.
     const eff = c.mean;
     const scored = eff != null;
@@ -177,7 +177,7 @@ function McRow({ c, best, worst, bestAdj, t }: {
     const cls = scored ? oracleClassify(delta) : null;
     const barColor = isBest ? CLASS_COLOR.best : (cls ? CLASS_COLOR[cls] : '#8a8a92');
     // EF and its error are always exactly "D.DD" and never omitted.
-    const efText = scored ? `EF ${eff!.toFixed(2)} ±${c.se.toFixed(2)}` : (c.pruned ? '—' : '…');
+    const efText = scored ? `EF ${eff!.toFixed(2)} ±${c.se.toFixed(2)}` : (c.pruned ? '-' : '…');
 
     const { text: title, redAt } = moveTitleText(c);
 
@@ -246,7 +246,7 @@ function VerdictRow({ c, t }: {
     );
 }
 
-// Corner rivet — the tiny mounting screws visible on every reference unit.
+// Corner rivet - the tiny mounting screws visible on every reference unit.
 const Rivet = ({ style }: { style: React.CSSProperties }) => (
     <div style={{
         position: 'absolute', width: 4, height: 4, borderRadius: '50%',
@@ -315,7 +315,7 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry }: Pr
             <Rivet style={{ bottom: 4, left: 4 }} />
             <Rivet style={{ bottom: 4, right: 4 }} />
 
-            {/* header — dark LCD readout strip */}
+            {/* header - dark LCD readout strip */}
             <div style={{
                 position: 'relative', padding: '5px 12px 7px',
                 borderBottom: '1px solid rgba(255,255,255,0.09)',
@@ -386,7 +386,7 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry }: Pr
                         {!s.recordedPresent && s.status !== 'forced' && (
                             <div style={{ padding: '6px 7px', fontSize: '0.64rem', fontStyle: 'italic', ...ledText('rgba(210,210,216,0.6)') }}
                                 title={t('oracle_pruned_tip')}>
-                                <span style={{ textTransform: 'capitalize' }}>{s.recordedLabel}</span> — {t('oracle_pruned')}
+                                <span style={{ textTransform: 'capitalize' }}>{s.recordedLabel}</span> - {t('oracle_pruned')}
                             </div>
                         )}
                         {/* footnotes */}
