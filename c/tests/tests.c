@@ -8287,6 +8287,23 @@ static void test_table_drive_prefs(void) {
     }
     CHECK(found, "a cycle whose moves another seed would have chosen differently");
     CHECK(bridge_same, "every cycle chose what the wasm bridge's drive chooses");
+    // A blob of an attack (whose attack cards are nothing) and a cover reads back.
+    {
+        BotDriveOut two;
+        uint8_t blob[64];
+        memset(&two, 0, sizeof(two));
+        two.n = 2;
+        two.actions[0].seat = 0; two.actions[0].move.type = MOVE_ATTACK; two.actions[0].move.n_cards = 1;
+        two.actions[0].move.cards[0] = card_of_id(5);
+        two.actions[1].seat = 1; two.actions[1].move.type = MOVE_COVER; two.actions[1].move.n_cards = 1;
+        two.actions[1].move.cards[0] = card_of_id(6); two.actions[1].move.attack_cards[0] = card_of_id(5);
+        table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+        tb.n_prefs = 0;
+        const int bl = table_drive_prefs(&tb, &two, blob, sizeof(blob));
+        CHECK(bl == 3 + 1 + 3 + 2, "an attack's blob entry carries its cards, a cover's its cards and the ones they cover");
+        CHECK(table_bot_drive(&tb, blob, bl, 0, &tb_drv) >= 0 && tb.n_prefs == 2
+              && card_eq(tb.prefs[1].move.attack_cards[0], card_of_id(5)), "and the drive reads both back");
+    }
 }
 
 // The TS producer's times (extras.ts moveTimesFromLogs) over a session log, in args layout.

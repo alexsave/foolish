@@ -719,24 +719,26 @@ int table_import_session_log(Table *t, const uint8_t *log, int len) {
     return n;
 }
 
-// Preferred moves: n x { u8 seat, u8 type, u8 n_cards, n_cards wire cards, n_cards wire attack cards }.
+// Preferred moves: n x { u8 seat, u8 type, u8 n_cards, n_cards wire cards, and
+// for a cover its n_cards attack cards } (bot_drive.c compares nothing else).
 static int prefs_decode(Table *t, const uint8_t *p, int len) {
     int n = 0, at = 0;
     while (at < len) {
         if (n >= MAX_PLAYERS || at + 3 > len) return TABLE_E_WIRE;
-        const int k = p[at + 2];
-        if (k > MAX_MOVE_CARDS || at + 3 + 2 * k > len) return TABLE_E_WIRE;
+        const int k = p[at + 2], cover = p[at + 1] == MOVE_COVER;
+        const int span = 3 + (cover ? 2 : 1) * k;
+        if (k > MAX_MOVE_CARDS || at + span > len) return TABLE_E_WIRE;
+        for (int c = 3; c < span; c++) if (p[at + c] > 51) return TABLE_E_WIRE;
         BotDrivePref *pr = &t->prefs[n++];
         memset(pr, 0, sizeof(*pr));
         pr->seat = (int8_t)p[at];
         pr->move.type = (int8_t)p[at + 1];
         pr->move.n_cards = (int8_t)k;
-        for (int c = 0; c < 2 * k; c++) if (p[at + 3 + c] > 51) return TABLE_E_WIRE;
         for (int c = 0; c < k; c++) {
             pr->move.cards[c] = card_of_id(p[at + 3 + c]);
-            pr->move.attack_cards[c] = card_of_id(p[at + 3 + k + c]);
+            if (cover) pr->move.attack_cards[c] = card_of_id(p[at + 3 + k + c]);
         }
-        at += 3 + 2 * k;
+        at += span;
     }
     return n;
 }
@@ -784,16 +786,16 @@ int table_bot_drive(Table *t, const uint8_t *prefs, int prefs_len, int max_actio
 }
 
 static int pref_put(const BotDrivePref *p, uint8_t *out, int at, int cap) {
-    const int k = p->move.n_cards;
-    if (at + 3 + 2 * k > cap) return TABLE_E_CAP;
+    const int k = p->move.n_cards, cover = p->move.type == MOVE_COVER;
+    if (at + 3 + (cover ? 2 : 1) * k > cap) return TABLE_E_CAP;
     out[at] = (uint8_t)p->seat;
     out[at + 1] = (uint8_t)p->move.type;
     out[at + 2] = (uint8_t)k;
     for (int c = 0; c < k; c++) {
         out[at + 3 + c] = wire_from_card(p->move.cards[c]);
-        out[at + 3 + k + c] = wire_from_card(p->move.attack_cards[c]);
+        if (cover) out[at + 3 + k + c] = wire_from_card(p->move.attack_cards[c]);
     }
-    return at + 3 + 2 * k;
+    return at + 3 + (cover ? 2 : 1) * k;
 }
 
 int table_drive_prefs(const Table *t, const BotDriveOut *drv, uint8_t *out, int cap) {
