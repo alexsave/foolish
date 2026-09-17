@@ -41,6 +41,12 @@ export const RealtimeAnimationFeed = () => {
         let isMounted = true;
         let isSubscribing = false;
         let hasEverConnected = false;
+        // A join that did not get through (refused, timed out, closed, threw).
+        // Realtime refuses this private channel until the user is a member of
+        // the game - opening a game you are joining, or one whose create is
+        // still persisting - and has no catch-up, so whatever was broadcast in
+        // that window is gone just as it is across a reconnect.
+        let missedWindow = false;
         let retryTimeoutId: NodeJS.Timeout | null = null;
 
         const subscribeToGameAnimations = async () => {
@@ -92,19 +98,22 @@ export const RealtimeAnimationFeed = () => {
                         if (status === 'SUBSCRIBED') {
                             animationChannelRetryInterval.current = 500; // Reset retry interval on success
                             isSubscribing = false;
-                            const wasReconnect = hasEverConnected;
+                            const mustResync = hasEverConnected || missedWindow;
                             hasEverConnected = true;
-                            // Broadcasts sent while we were disconnected are lost —
-                            // realtime has no catch-up. After a RE-subscribe, refetch
+                            missedWindow = false;
+                            // Broadcasts sent while we were not subscribed are lost -
+                            // realtime has no catch-up. After a RE-subscribe, or a
+                            // first subscribe that followed refused joins, refetch
                             // authoritative state so the client can't be left showing a
                             // stale / mixed-bout table.
-                            if (wasReconnect && url_game_id) {
+                            if (mustResync && url_game_id) {
                                 loadGameRef.current(url_game_id).catch(console.error);
                             }
                         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
                             // Only retry on actual errors, not on CLOSED
                             console.log('connection error: ' + status + ', retrying in ', animationChannelRetryInterval.current, 'ms');
                             isSubscribing = false;
+                            missedWindow = true;
 
                             if (!isMounted) {
                                 return;
@@ -121,6 +130,7 @@ export const RealtimeAnimationFeed = () => {
                             } else {
                                 console.log('channel closed before connecting, retrying in', animationChannelRetryInterval.current, 'ms');
                                 isSubscribing = false;
+                                missedWindow = true;
 
                                 if (!isMounted) {
                                     return;
@@ -137,6 +147,7 @@ export const RealtimeAnimationFeed = () => {
             } catch (error) {
                 console.error('Error setting up game animation subscription:', error);
                 isSubscribing = false;
+                missedWindow = true;
 
                 if (!isMounted) {
                     return;
