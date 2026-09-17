@@ -50,8 +50,8 @@ function envelopeView(table: ServerTable, row: BotTableRow, viewer: number): Tab
     return view;
 }
 
-/** A seeded bots-only game, played to its end by the kernel, with its pushes, closing boards and v6 code. */
-export function playRecorded(brains: string[], seed: Uint8Array, opts: BotTableOptions = {}): RecordedGame {
+/** A seeded bots-only game played to its end by the kernel, with its pushes and closing boards, not yet encoded. */
+export function recordBotTable(brains: string[], seed: Uint8Array, opts: BotTableOptions = {}): Omit<RecordedGame, 'code'> {
     const table = opts.table ?? fixtureTable();
     let row = dealBotTable(brains, seed, { ...opts, table });
     const events = spectatorPush(table, row);
@@ -68,7 +68,13 @@ export function playRecorded(brains: string[], seed: Uint8Array, opts: BotTableO
     if (rc < 0) throw new Error(`replay_play: the final state does not load (${rc})`);
     const seatViews = brains.map((_, s) => envelopeView(table, row, s));
     const spectatorView = envelopeView(table, row, -1);
-    return { ...row, seed, code: replayCodeOf(row, seed, { table }), actions, events, seatViews, spectatorView };
+    return { ...row, seed, actions, events, seatViews, spectatorView };
+}
+
+/** A seeded bots-only game, played to its end by the kernel, with its pushes, closing boards and v6 code. */
+export function playRecorded(brains: string[], seed: Uint8Array, opts: BotTableOptions = {}): RecordedGame {
+    const played = recordBotTable(brains, seed, opts);
+    return { ...played, code: replayCodeOf(played, seed, { table: opts.table ?? fixtureTable() }) };
 }
 
 /** The moves a game's pushes show, by kind: one ATTACK_PASS event per attack or pass, told apart by its message. */
