@@ -76,9 +76,13 @@ static inline bool card_has_value(const bool *marks, int value) {
 
 // "No card" sentinel: replaces the has_defense/has_target booleans (an
 // uncovered battle stores CARD_NONE as its defense; a single-card log pair
-// stores CARD_NONE as its target). Distinct from the -1/-1 hidden card.
-#define CARD_NONE ((Card){ .suit = -2, .value = -2 })
-static inline bool card_is_none(Card c) { return c.suit == -2 && c.value == -2; }
+// stores CARD_NONE as its target). Distinct from the -1/-1 hidden card. Its two
+// fields are named so a host holding a copied-out card can tell the sentinel by
+// name (sdk/ts/gen/view_layout.bots.ts), never by a number of its own.
+#define CARD_NONE_SUIT  (-2)
+#define CARD_NONE_VALUE (-2)
+#define CARD_NONE ((Card){ .suit = CARD_NONE_SUIT, .value = CARD_NONE_VALUE })
+static inline bool card_is_none(Card c) { return c.suit == CARD_NONE_SUIT && c.value == CARD_NONE_VALUE; }
 
 // ---------- Card notation ------------------------------------------------
 //

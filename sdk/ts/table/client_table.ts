@@ -22,6 +22,8 @@ export type TableView = V.TableView_Snap;
 export type PushEvent = V.PushEvent_Snap;
 export type ViewSeat = V.ViewSeat_Snap;
 export type ViewCard = V.Card_Snap;
+export type ViewBattle = V.Battle_Snap;
+export type ViewRules = V.ViewRules_Snap;
 
 /** One step of a push: what moved, and the board it left. */
 export interface PushStep { event: PushEvent; view: TableView }
@@ -46,6 +48,9 @@ export interface ClientExports {
     wasm_client_identity_at(): number;
     wasm_client_identity_begin(gidLen: number, titleLen: number): number;
     wasm_client_identity_seat(idLen: number, nameLen: number, isAi: number): number;
+    wasm_client_rules_view_ptr(): number;
+    wasm_client_rules_ptr(): number;
+    wasm_client_view_rules(fromDeck: number, toFlipped: number): number;
 }
 
 /** A seat of an identity built from parts (a roster that arrived as JSON). */
@@ -162,6 +167,28 @@ export class ClientTable {
     identity(gameId: string): Uint8Array | undefined {
         return this.identities.get(gameId);
     }
+
+    /**
+     * What `view` shows that is a rule of the game (c/src/client_table.h ViewRules):
+     * the sword and shield seats, the viewer's Good, and the stock while
+     * `fromDeck` cards fly out of it, `toFlipped` of them to the trump's slot. Any
+     * board a screen holds, the slot's or one the host changed. A view is a value,
+     * so the answer is kept per view object and flight.
+     */
+    rules(view: TableView, fromDeck = 0, toFlipped = 0): ViewRules {
+        const key = fromDeck * 65536 + toFlipped;
+        let byFlight = this.ruled.get(view);
+        const hit = byFlight?.get(key);
+        if (hit) return hit;
+        V.writeTableView(this.m(), this.ex.wasm_client_rules_view_ptr(), view);
+        const rc = this.ex.wasm_client_view_rules(fromDeck, toFlipped);
+        if (rc !== V.CLIENT_OK) throw new Error(`client view rules: the view was refused (${rc})`);
+        const r = V.readViewRules(this.m(), this.ex.wasm_client_rules_ptr());
+        if (!byFlight) this.ruled.set(view, byFlight = new Map());
+        byFlight.set(key, r);
+        return r;
+    }
+    private readonly ruled = new WeakMap<TableView, Map<number, ViewRules>>();
 }
 
 let shared: ClientTable | null = null;

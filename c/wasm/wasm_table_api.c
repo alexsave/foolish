@@ -368,6 +368,18 @@ TableView *wasm_client_view_ptr(void)  { return &client()->view; }
 PushEvent *wasm_client_event_ptr(void) { return &client()->event; }
 int wasm_client_detail(void) { return client()->detail; }
 
+// The display rules of a board the host holds (client_view_rules): the host
+// writes the view at wasm_client_rules_view_ptr through the generated writer,
+// then reads the rules at wasm_client_rules_ptr. Separate from the slot's view,
+// so asking about a changed board never disturbs what the slot last read.
+static TableView g_rules_view;
+static ViewRules g_rules;
+TableView *wasm_client_rules_view_ptr(void) { return &g_rules_view; }
+ViewRules *wasm_client_rules_ptr(void)      { return &g_rules; }
+int wasm_client_view_rules(int from_deck, int to_flipped) {
+    return client_view_rules(&g_rules_view, from_deck, to_flipped, &g_rules);
+}
+
 // io = [envelope]
 int wasm_client_adopt_envelope(int len) {
     const unsigned char *io = inputs(len);

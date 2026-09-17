@@ -308,3 +308,38 @@ int client_identity_seat(ClientTable *c, const char *id, int id_len, const char 
     if (is_ai) c->ai_mask |= 1u << s;
     return CLIENT_OK;
 }
+
+// ---------- what a board shows ------------------------------------------------------
+
+int client_view_rules(const TableView *v, int from_deck, int to_flipped, ViewRules *out) {
+    const int n = v->num_players;
+    if (n < 0 || n > MAX_PLAYERS || v->num_battles < 0 || v->num_battles > MAX_BATTLES
+        || v->my_seat < -1 || v->my_seat >= n || from_deck < 0 || to_flipped < 0) return CLIENT_E_FORMAT;
+    memset(out, 0, sizeof(*out));
+
+    // The deal lays the stock out before it turns the trump: until then nobody
+    // leads or defends anything yet.
+    const bool dealt = !(v->deck_count > 0 && !v->has_flipped);
+    out->first_attacker_badge = (int8_t)(dealt && v->num_battles == 0 && v->first_attacker >= 0 && v->first_attacker < n
+                                         ? v->first_attacker : -1);
+    out->defender_badge = (int8_t)(dealt && v->defender >= 0 && v->defender < n ? v->defender : -1);
+
+    // Good is handle_good's to allow (a playing game, a seat still in, not the
+    // defender, not said already), and it is offered once the bout could close
+    // on it: every attack on the table covered.
+    const int me = v->my_seat;
+    bool covered = v->num_battles > 0;
+    for (int i = 0; covered && i < v->num_battles; i++) covered = !card_is_none(v->battles[i].defense);
+    out->can_say_good = me >= 0 && v->status == GAME_STATUS_PLAYING && v->seats[me].status == PLAYER_STATUS_IN
+        && me != v->defender && !((v->good_mask >> me) & 1u) && covered;
+
+    // The stock: what is flying out of it has left the pile, and a card on its
+    // way to the trump's slot is still the stock's, so it stays on the count.
+    const int pile = v->deck_count - from_deck;
+    out->deck_pile = (int16_t)(pile > 0 ? pile : 0);
+    out->deck_badge = (int16_t)(out->deck_pile + (v->has_flipped ? 1 : 0) + to_flipped);
+    out->show_deck_pile = out->deck_pile > 0;
+    out->show_flipped_slot = out->show_deck_pile || v->has_flipped || to_flipped > 0;
+    out->show_trump_icon = !out->show_deck_pile && !v->has_flipped && to_flipped == 0;
+    return CLIENT_OK;
+}

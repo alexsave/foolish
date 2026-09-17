@@ -779,7 +779,9 @@ WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_client_adopt_resident -Wl,--export=wasm_client_identity_at \
   -Wl,--export=wasm_client_push_open -Wl,--export=wasm_client_push_next \
   -Wl,--export=wasm_client_push_final -Wl,--export=wasm_client_identity \
-  -Wl,--export=wasm_client_identity_begin -Wl,--export=wasm_client_identity_seat
+  -Wl,--export=wasm_client_identity_begin -Wl,--export=wasm_client_identity_seat \
+  -Wl,--export=wasm_client_rules_view_ptr -Wl,--export=wasm_client_rules_ptr \
+  -Wl,--export=wasm_client_view_rules
 
 # C-backed test fixtures (wasm/wasm_table_api.c, e2e/helpers/table_fixture.ts),
 # bots.wasm ONLY, test-only like WASM_ROSTER_EXPORTS: a test composes a board

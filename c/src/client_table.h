@@ -93,6 +93,21 @@ typedef struct {
     Card    cards[MAX_HAND_SIZE];         // a card dealt or drawn to another seat is {-1, -1}
 } PushEvent;
 
+// What a board shows that is a rule of the game rather than a field of it: the
+// seats the sword and the shield mark, whether the viewer is offered Good, and
+// what the stock shows while cards fly out of it. A screen draws these instead
+// of deciding them (docs/C_GAME_SHAPE_MIGRATION.md Phase 6a).
+typedef struct {
+    int8_t  first_attacker_badge;  // the seat that leads the next bout, marked on an empty table once dealt; -1 none
+    int8_t  defender_badge;        // the defending seat, marked once dealt; -1 none
+    bool    can_say_good;          // the viewer may say Good and the bout could close on it
+    bool    show_deck_pile;        // the stock has cards left to draw on screen
+    bool    show_flipped_slot;     // the trump's slot, kept while a card is on its way into it
+    bool    show_trump_icon;       // stock and trump are gone: the power suit stands in their place
+    int16_t deck_pile;             // cards drawn in the stock pile
+    int16_t deck_badge;            // the count on the pile: the stock, the trump, and cards in flight to the trump
+} ViewRules;
+
 typedef struct {
     Game     *g;          // the slot: a masked board, prefix storage (offsetof(Game, logs))
     Roster    r;
@@ -162,5 +177,14 @@ int client_identity_at(const ClientTable *c);
 // it. Names are trimmed like every roster name.
 int client_identity_begin(ClientTable *c, const char *gid, int gid_len, const char *title, int title_len);
 int client_identity_seat(ClientTable *c, const char *id, int id_len, const char *name, int name_len, int is_ai);
+
+// The display rules of a view (ViewRules). The view is any board a screen holds,
+// not only the slot's: one a host changed (an optimistic move, a board between
+// two animation steps, a replay's board before its deal), written back through
+// the generated writer. `from_deck` cards are in flight out of the stock, and
+// `to_flipped` of them are on their way to the trump's slot. CLIENT_OK, or
+// CLIENT_E_FORMAT for a view that is not one: a count past its capacity, a
+// viewer that is not a seat, a negative flight.
+int client_view_rules(const TableView *v, int from_deck, int to_flipped, ViewRules *out);
 
 #endif
