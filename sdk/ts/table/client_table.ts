@@ -43,6 +43,7 @@ export interface ClientExports {
     wasm_client_push_next(): number;
     wasm_client_push_final(): number;
     wasm_client_identity(): number;
+    wasm_client_identity_at(): number;
     wasm_client_identity_begin(gidLen: number, titleLen: number): number;
     wasm_client_identity_seat(idLen: number, nameLen: number, isAi: number): number;
 }
@@ -83,12 +84,10 @@ export class ClientTable {
         return null;
     }
 
-    private keepIdentity(gameId: string): void {
-        if (!gameId) return;
-        const n = this.ex.wasm_client_identity();
-        if (n <= 0) return;
-        const at = this.ex.wasm_io_ptr();
-        this.identities.set(gameId, this.m().u8.slice(at, at + n));
+    /** Keeps the identity the last read took from its input: the roster trailer, already in those bytes. */
+    private keepIdentity(gameId: string, input: Uint8Array): void {
+        const at = this.ex.wasm_client_identity_at();
+        if (gameId && at >= 0) this.identities.set(gameId, input.slice(at));
     }
 
     /** The CLIENT_E_* of the last refusal, and the kernel's detail behind it. */
@@ -102,7 +101,7 @@ export class ClientTable {
         const rc = this.ex.wasm_client_adopt_envelope(bytes.length);
         if (rc !== V.CLIENT_OK) return this.refused(rc);
         const view = V.readTableView(this.m(), this.ex.wasm_client_view_ptr());
-        this.keepIdentity(view.gameId);
+        this.keepIdentity(view.gameId, bytes);
         return view;
     }
 
@@ -136,7 +135,7 @@ export class ClientTable {
         rc = this.ex.wasm_client_push_final();
         if (rc !== V.CLIENT_OK) return this.refused(rc);
         const final = V.readTableView(m, viewAt);
-        this.keepIdentity(final.gameId);
+        this.keepIdentity(final.gameId, bytes);
         return { steps, final };
     }
 
@@ -151,8 +150,12 @@ export class ClientTable {
             if (!this.put(id, name)) return this.refused(V.CLIENT_E_IDENTITY);
             if ((rc = this.ex.wasm_client_identity_seat(id.length, name.length, s.isAi ? 1 : 0)) !== V.CLIENT_OK) return this.refused(rc);
         }
-        this.keepIdentity(gameId);
-        return this.identities.get(gameId) ?? null;
+        const n = this.ex.wasm_client_identity();
+        if (n <= 0) return this.refused(n);
+        const at = this.ex.wasm_io_ptr();
+        const identity = this.m().u8.slice(at, at + n);
+        this.identities.set(gameId, identity);
+        return identity;
     }
 
     /** The identity kept for a game, if any. */

@@ -32,7 +32,7 @@ static void put_text(char *dst, uint8_t *dst_len, const char *src, int len) {
 static void view_fill(ClientTable *c, int viewer, int status) {
     const Game *g = c->g;
     TableView *v = &c->view;
-    memset(v, 0, sizeof(*v));
+    // Only what the counts cover is ever read, so nothing past them is cleared.
     v->status = (int8_t)status;
     v->num_players = g->num_players;
     v->power_suit = g->power_suit;
@@ -56,55 +56,50 @@ static void view_fill(ClientTable *c, int viewer, int status) {
         vs->status = g->players[s].status;
         vs->hand_count = g->players[s].hand_count;
         vs->awaiting_attack = s == viewer && g->players[s].awaiting_attack;
-        if (!c->has_roster) continue;
-        vs->is_ai = ((c->ai_mask >> s) & 1u) != 0;
-        put_text(vs->id, &vs->id_len, c->r.seats[s].id, c->r.seats[s].id_len);
-        put_text(vs->name, &vs->name_len, c->r.seats[s].name, c->r.seats[s].name_len);
+        vs->is_ai = c->has_roster && ((c->ai_mask >> s) & 1u) != 0;
+        if (c->has_roster) {
+            put_text(vs->id, &vs->id_len, c->r.seats[s].id, c->r.seats[s].id_len);
+            put_text(vs->name, &vs->name_len, c->r.seats[s].name, c->r.seats[s].name_len);
+        } else {
+            put_text(vs->id, &vs->id_len, "", 0);
+            put_text(vs->name, &vs->name_len, "", 0);
+        }
     }
-    if (viewer >= 0) {
-        v->my_hand_count = g->players[viewer].hand_count;
-        memcpy(v->my_hand, g->players[viewer].hand, (size_t)v->my_hand_count);
-    }
+    v->my_hand_count = viewer >= 0 ? g->players[viewer].hand_count : 0;
+    if (viewer >= 0) memcpy(v->my_hand, g->players[viewer].hand, (size_t)v->my_hand_count);
     if (c->has_roster) {
         put_text(v->game_id, &v->gid_len, c->gid, c->gid_len);
         put_text(v->title, &v->title_len, c->r.title, c->r.title_len);
+    } else {
+        put_text(v->game_id, &v->gid_len, "", 0);
+        put_text(v->title, &v->title_len, "", 0);
     }
 }
 
-// A masked board off the wire into the slot: measured whole, then imported
-// (game_validate). CLIENT_OK, or CLIENT_E_STATE with the reason in detail.
+// A masked board off the wire into the slot: measured whole, then read and
+// judged exactly as state_import does (state_get, game_validate). The slot is not
+// saved and put back on a refusal, as state_import would: after a refusal it is
+// not read, and every read here would pay the copy.
 static int board_import(ClientTable *c, const uint8_t *p, int len) {
     if (state_measure(p, len) != len) { c->detail = GAME_INVALID_COUNT; return CLIENT_E_STATE; }
-    const int v = state_import(c->g, p, 1);
+    int v = state_get(c->g, p, 1);
+    if (v == GAME_VALID) v = game_validate(c->g, GAME_VALIDATE_MASKED);
     if (v != GAME_VALID) { c->detail = v; return CLIENT_E_STATE; }
     return CLIENT_OK;
 }
 
-// A table's identity as a roster trailer carries it.
-typedef struct {
-    Roster   r;
-    uint32_t ai;
-    int      status, gid_len;
-    char     gid[ROSTER_GAME_ID_MAX + 1];
-} Identity;
-
-// A roster trailer that must fill exactly `len` bytes. CLIENT_OK, or `refusal`
-// with the ROSTER_E_* in detail.
-static int identity_read(ClientTable *c, Identity *id, const uint8_t *p, int len, int refusal) {
-    int used = 0;
-    const int rc = roster_trailer_read(&id->r, id->gid, &id->gid_len, &id->status, &id->ai, p, len, &used);
+// A roster trailer that must fill exactly `len` bytes, read straight into the
+// slot's roster (a refused read leaves the slot naming no one). CLIENT_OK, or
+// `refusal` with the ROSTER_E_* in detail.
+static int identity_read(ClientTable *c, const uint8_t *p, int len, int *status, int refusal) {
+    int used = 0, gl = 0;
+    c->has_roster = false;
+    const int rc = roster_trailer_read(&c->r, c->gid, &gl, status, &c->ai_mask, p, len, &used);
     if (rc != ROSTER_OK) { c->detail = rc; return refusal; }
     if (used != len) { c->detail = ROSTER_E_PADDING; return refusal; }
+    c->gid_len = (uint8_t)gl;
+    c->gid[gl] = 0;
     return CLIENT_OK;
-}
-
-static void identity_adopt(ClientTable *c, const Identity *id) {
-    c->r = id->r;
-    c->ai_mask = id->ai;
-    memcpy(c->gid, id->gid, (size_t)id->gid_len);
-    c->gid[id->gid_len] = 0;
-    c->gid_len = (uint8_t)id->gid_len;
-    c->has_roster = true;
 }
 
 // ---------- the envelope --------------------------------------------------------
@@ -132,14 +127,14 @@ int client_adopt_envelope(ClientTable *c, const uint8_t *p, int len) {
     const int trailer = q + view_len;
     if (trailer >= len) return CLIENT_E_TRAILER;
 
-    // The identity is kept only from an envelope that reads whole.
-    Identity id;
-    int rc;
-    if ((rc = identity_read(c, &id, p + trailer, len - trailer, CLIENT_E_TRAILER)) != CLIENT_OK) return rc;
+    // The slot names the table only once the envelope has read whole.
+    int rc, status = 0;
+    c->identity_at = -1;
+    if ((rc = identity_read(c, p + trailer, len - trailer, &status, CLIENT_E_TRAILER)) != CLIENT_OK) return rc;
     if ((rc = board_import(c, p + q + 2, view_len - 2)) != CLIENT_OK) return rc;
-    if (c->g->num_players < 1 || id.r.n != c->g->num_players || seat >= c->g->num_players) return CLIENT_E_MISMATCH;
-    identity_adopt(c, &id);
-    const int status = id.status;
+    if (c->g->num_players < 1 || c->r.n != c->g->num_players || seat >= c->g->num_players) return CLIENT_E_MISMATCH;
+    c->has_roster = true;
+    c->identity_at = trailer;
     c->version = (uint32_t)p[3] | ((uint32_t)p[4] << 8) | ((uint32_t)p[5] << 16) | ((uint32_t)p[6] << 24);
     view_fill(c, seat, status);
     return CLIENT_OK;
@@ -192,14 +187,15 @@ int client_push_open(ClientTable *c, const uint8_t *p, int len, int as3,
     c->open = false;
     c->detail = 0;
     if (!p || len < 4) return CLIENT_E_PUSH;
-    int seq = len, flags = 0, block = 0, rc;
-    Identity id;
+    int seq = len, flags = 0, block = 0, rc, status = 0;
+    c->identity_at = -1;
+    c->has_roster = false;
     if (as3 && evwire_as3_split(p, len, &seq, &flags, &block) != 0) return CLIENT_E_PUSH;
     const int named = (flags & EVW_AS3_ROSTER) || identity_len > 0;
     if (flags & EVW_AS3_ROSTER) {
-        if ((rc = identity_read(c, &id, p + block, len - block, CLIENT_E_TRAILER)) != CLIENT_OK) return rc;
+        if ((rc = identity_read(c, p + block, len - block, &status, CLIENT_E_TRAILER)) != CLIENT_OK) return rc;
     } else if (identity_len > 0) {
-        if ((rc = identity_read(c, &id, identity, identity_len, CLIENT_E_IDENTITY)) != CLIENT_OK) return rc;
+        if ((rc = identity_read(c, identity, identity_len, &status, CLIENT_E_IDENTITY)) != CLIENT_OK) return rc;
     }
 
     EvwHeader h;
@@ -210,10 +206,10 @@ int client_push_open(ClientTable *c, const uint8_t *p, int len, int as3,
     if (n < 0 || !k.ok || (int)(fin - p) + fin_len != seq) return CLIENT_E_PUSH;
     const int seats = board_seats(fin, fin_len);
     if (seats < 1 || (k.n_seats >= 0 && seats != k.n_seats)) return CLIENT_E_PUSH;
-    if ((named && id.r.n != seats) || h.viewer >= seats) return CLIENT_E_MISMATCH;
+    if ((named && c->r.n != seats) || h.viewer >= seats) return CLIENT_E_MISMATCH;
 
-    if (named) identity_adopt(c, &id);
-    else c->has_roster = false;
+    c->has_roster = named;
+    if (flags & EVW_AS3_ROSTER) c->identity_at = block;
     c->push = p;
     c->final = fin;
     c->final_len = fin_len;
@@ -277,6 +273,8 @@ int client_identity(const ClientTable *c, uint8_t *out, int cap) {
     return n == ROSTER_E_CAP ? CLIENT_E_CAP : n < 0 ? CLIENT_E_IDENTITY : n;
 }
 
+int client_identity_at(const ClientTable *c) { return c->identity_at; }
+
 int client_identity_begin(ClientTable *c, const char *gid, int gid_len, const char *title, int title_len) {
     Roster r;
     memset(&r, 0, sizeof(r));
@@ -289,6 +287,7 @@ int client_identity_begin(ClientTable *c, const char *gid, int gid_len, const ch
     c->gid[gid_len] = 0;
     c->gid_len = (uint8_t)gid_len;
     c->has_roster = true;
+    c->identity_at = -1;
     return CLIENT_OK;
 }
 

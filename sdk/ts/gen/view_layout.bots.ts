@@ -4,6 +4,7 @@ export interface Mem { u8: Uint8Array; i8: Int8Array; dv: DataView }
 export const memOf = (b: ArrayBuffer): Mem => ({ u8: new Uint8Array(b), i8: new Int8Array(b), dv: new DataView(b) });
 const utf8Dec = /* @__PURE__ */ new TextDecoder();
 const utf8Get = (m: Mem, a: number, n: number) => {
+    if (n > 16) return utf8Dec.decode(m.u8.subarray(a, a + n));   // past a few bytes the decoder wins
     let s = '';
     for (let i = 0; i < n; i++) { const c = m.u8[a + i]; if (c > 127) return utf8Dec.decode(m.u8.subarray(a, a + n)); s += String.fromCharCode(c); }
     return s;
@@ -91,7 +92,8 @@ export const readPushEvent = (m: Mem, p: number): PushEvent_Snap => {
 // Card snapshot
 export interface Card_Snap { readonly suit: number; readonly value: number; }
 export const readCard = (m: Mem, p: number): Card_Snap => {
-    return { suit: (m.u8[p] << 29) >> 29, value: (m.u8[p] << 24) >> 27 };
+    const raw = m.u8[p];
+    return { suit: (raw << 29) >> 29, value: (raw << 24) >> 27 };
 };
 // Battle snapshot
 export interface Battle_Snap { readonly attack: Card_Snap; readonly defense: Card_Snap; }

@@ -390,6 +390,8 @@ int wasm_client_adopt_resident(int viewer) {
 int wasm_client_push_next(void)  { return client_push_next(client()); }
 int wasm_client_push_final(void) { return client_push_final(client()); }
 
+int wasm_client_identity_at(void) { return client_identity_at(client()); }
+
 // -> io = the identity to keep (0 bytes: none).
 int wasm_client_identity(void) { return client_identity(client(), wasm_io_ptr(), wasm_io_cap()); }
 

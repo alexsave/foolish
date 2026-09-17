@@ -524,12 +524,27 @@ static void emit_snapshot(Buf *ts, Rec *r, int *strings) {
         if (t->record) bprintf(ts, "read%s(m, %s);\n", t->name, a);
         else { const char *vt; bprintf(ts, scalar_access(t->kind, t->size, 0, &vt), a); bprintf(ts, ";\n"); }
     }
+    // A record of bitfields that fits one integer is read once and unpacked.
+    int packed = r->nf > 0 && (r->size == 1 || r->size == 2 || r->size == 4);
+    for (int j = 0; j < r->nf; j++) packed &= r->f[j].width > 0;
+    if (packed) {
+        const char *vt;
+        bprintf(ts, "    const raw = ");
+        bprintf(ts, scalar_access('u', r->size, 0, &vt), "p");
+        bprintf(ts, ";\n");
+    }
     bprintf(ts, "    return {");
     for (int j = 0, first = 1; j < r->nf; j++) {
         Field *f = &r->f[j];
         if (is_count_field(r->name, f->name)) continue;
         bprintf(ts, "%s%s: ", first ? " " : ", ", camel(f->name));
         first = 0;
+        if (packed) {
+            const int pos = (int)f->off * 8 + f->lo;
+            bprintf(ts, "%s(raw << %d) %s %d%s", f->kind == 'b' ? "(" : "", 32 - pos - f->width,
+                    f->kind == 'i' ? ">>" : ">>>", 32 - f->width, f->kind == 'b' ? ") !== 0" : "");
+            continue;
+        }
         if (f->width) {
             int bytes = (f->lo + f->width + 7) / 8;
             if (bytes == 3) bytes = 4;
@@ -793,6 +808,7 @@ int main(int argc, char **argv) {
             "};\n", fp);
         if (strings & STR_UTF8_GET) fputs(   // exactly n bytes of UTF-8 (a counted char array)
             "const utf8Get = (m: Mem, a: number, n: number) => {\n"
+            "    if (n > 16) return utf8Dec.decode(m.u8.subarray(a, a + n));   // past a few bytes the decoder wins\n"
             "    let s = '';\n"
             "    for (let i = 0; i < n; i++) { const c = m.u8[a + i]; if (c > 127) return utf8Dec.decode(m.u8.subarray(a, a + n)); s += String.fromCharCode(c); }\n"
             "    return s;\n"

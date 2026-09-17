@@ -10,6 +10,7 @@ const cstrGet = (m: Mem, a: number, n: number) => {
     return e === a + n && s.length === n ? s : utf8Dec.decode(m.u8.subarray(a, e));
 };
 const utf8Get = (m: Mem, a: number, n: number) => {
+    if (n > 16) return utf8Dec.decode(m.u8.subarray(a, a + n));   // past a few bytes the decoder wins
     let s = '';
     for (let i = 0; i < n; i++) { const c = m.u8[a + i]; if (c > 127) return utf8Dec.decode(m.u8.subarray(a, a + n)); s += String.fromCharCode(c); }
     return s;
@@ -46,5 +47,6 @@ export const readSItem = (m: Mem, p: number): SItem_Snap => {
 // KCard snapshot
 export interface KCard_Snap { readonly s: number; readonly v: number; }
 export const readKCard = (m: Mem, p: number): KCard_Snap => {
-    return { s: (m.u8[p] << 29) >> 29, v: (m.u8[p] << 24) >> 27 };
+    const raw = m.u8[p];
+    return { s: (raw << 29) >> 29, v: (raw << 24) >> 27 };
 };

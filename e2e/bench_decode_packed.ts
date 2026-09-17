@@ -1,109 +1,89 @@
-// Microbench: the web's decode of one packed game envelope, today's
-// decodePackedGame (sdk/ts/wire/view.ts): the envelope header, the packed
-// roster trailer, the masked view blob read in TypeScript
-// (sdk/ts/wire/packed_read.ts) and the viewToGame materialization into a
-// PersonalGame / PublicGame.
+// Microbench: the web's read of one packed game envelope.
 //
-// It is the baseline for the "marshal / decode" gate in
-// docs/C_GAME_SHAPE_MIGRATION.md 4.0: the C decode plus snapshot that replaces
-// it must be no slower.
+//   decodePackedGame   the retired TS reader (sdk/ts/wire/view.ts over
+//                      packed_read.ts): header, roster trailer, masked board, and
+//                      the viewToGame materialization into a PersonalGame
+//   adopt + snapshot   Phase 5a: the kernel's client slot reads the envelope
+//                      (c/src/client_table.c) and the generated reader copies the
+//                      TableView out (sdk/ts/gen/view_layout.bots.ts)
+//   decodeEnvelope     the same plus the transitional PersonalGame mapping
+//                      (src/state/snapshotToGame.ts) - what the web runs today
 //
-// The envelopes are real ones. A seeded game is dealt and played by the
-// handwritten bot until the table holds a battle, then the C Table (table_envelope,
-// the writer behind player_views, the create response and a realtime push since
-// Phase 4b) writes one envelope for seat 0 and one for a spectator. Cases: 2p, 4p and 8p player
-// views, and the 4p spectator view.
+// It is the "marshal / decode" gate in docs/C_GAME_SHAPE_MIGRATION.md 4.0: the C
+// read plus snapshot must be no slower than decodePackedGame.
+//
+// The envelopes are real ones, written by the C Table: a table of one human and
+// handwritten bots is dealt from a pinned seed and played (bots by their cycle,
+// the human by its first legal move) until a battle is on the table after a few
+// actions. Cases: 2p, 4p and 8p seat-0 views, and the 4p spectator view.
 //
 //   TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx e2e/bench_decode_packed.ts
 //   BENCH_ITERS=20000 BENCH_RUNS=9 BENCH_JSON=1 ...
-//
-// Prints ns/op per case: the median of BENCH_RUNS timed runs of BENCH_ITERS
-// decodes each, after a warmup, plus the min and max run.
 
-import { start_game } from '@api/common/game_lifecycle.ts';
-import { game_done } from '@api/common/common_utils.ts';
-import { Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, StrategyKey } from '@api/core/types.ts';
-import { shouldBotActCore, processBotAction } from '@api/common/pure_bot_actions.ts';
-import { calculateLegalMoves } from '@api/common/bot_strategy.ts';
-import { __setDealSeedOverride, serializeGameState } from '@sdk/ts/wasm/engine.ts';
-import { createServerTable } from '@sdk/ts/table/server_table.ts';
-import { cRosterEncode } from './helpers/roster_kernel.ts';
 import { decodePackedGame } from '@sdk/ts/wire/view.ts';
-import { seedBytes } from './helpers/seeded_game.ts';
+import { clientTable } from '@sdk/ts/table/client_table.ts';
+import { decodeEnvelope } from '../src/state/snapshotToGame.ts';
+import { deserializeGameState, kernelLegalMoves } from '@sdk/ts/wasm/engine.ts';
+import { wasmBotEligibleMask } from '@sdk/ts/wasm/bots.ts';
+import { encodeAction, AWIRE_KIND } from '@sdk/ts/wire/awire.ts';
+import { GAME_STATUS } from '@api/core/types.ts';
+import { createServerTable } from '@sdk/ts/table/server_table.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 const out = (s: string) => process.stdout.write(`${s}\n`);
 
 const ITERS = Number(process.env.BENCH_ITERS || 20000);
 const RUNS = Number(process.env.BENCH_RUNS || 9);
-
-// A pinned clock for viewToGame's good-timer math, so the decode does the same
-// work every iteration.
 const NOW = () => 1_760_000_000_000;
 
-// Deal a seeded game and let the handwritten bot play until a battle is on the
-// table after at least `minActions` actions: a mid-bout board with hands, a
-// deck, a trump and a table, which is what a client decodes most of the time.
-async function midBout(np: number, minActions: number): Promise<Game> {
-    const game = {
-        id: `bench${np}`, name: `Bench ${np}p`, status: GAME_STATUS.PLAYING,
-        players: Array.from({ length: np }, (_, i): PrivatePlayer => ({
-            player_id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
-            name: `Player ${i + 1}`, status: PLAYER_STATUS.READY, is_ai: true, hand: [],
-            awaiting_attack: false, hand_length: 0, strategy_key: 'handwritten' as StrategyKey,
-        })),
-        deck: [], logs: [], deck_length: 0, discard_pile_length: 0, flipped: null, power_suit: 0,
-        first_attacker: 0, defender: 0, table_battles: [], elimination_order: [],
-        good_timestamp: null, good_players: [], version: 42,
-    } as unknown as Game;
-    __setDealSeedOverride(seedBytes(np, 7));
-    try {
-        start_game(game);
-        let actions = 0;
-        while (game_done(game) === null && actions < 5000) {
-            if (actions >= minActions && game.table_battles.length > 0) break;
-            let acted = false;
-            for (let i = 0; i < game.players.length && !acted; i++) {
-                const p = game.players[i];
-                if (!shouldBotActCore(game, p, i)) continue;
-                if (calculateLegalMoves(game, p.player_id).length === 0) continue;
-                acted = Boolean(await processBotAction(game, p));
-            }
-            if (!acted) break;
-            actions++;
-        }
-        if (game.table_battles.length === 0) throw new Error(`${np}p: no mid-bout board after ${actions} actions`);
-    } finally {
-        __setDealSeedOverride(null);
-    }
-    // The envelope names the viewer against the roster, so a human seat 0.
-    game.players[0].is_ai = false;
-    return game;
-}
-
-// The envelope the server writes for `viewer` (a seat, or -1) of this board.
 const table = createServerTable();
-function envelopeOf(game: Game, viewer: number): Uint8Array {
-    const roster = cRosterEncode(game.name, game.players.map((p) => ({ id: p.player_id, name: p.name, brain: p.is_ai ? String(p.strategy_key) : '' })));
-    if (typeof roster === 'number') throw new Error(`roster refused (${roster})`);
-    const rc = table.load(serializeGameState(game), roster);
-    if (rc < 0) throw new Error(`the board does not load (${rc})`);
-    const e = table.envelope(game.id, viewer, Number(game.version ?? 0));
-    if (typeof e === 'number') throw new Error(`envelope refused (${e})`);
-    return e;
+const sx = (table as unknown as { ex: { memory: WebAssembly.Memory; wasm_io_ptr(): number; wasm_table_set_deal_seed(n: number): number; wasm_table_bot_drive(p: number, m: number): number } }).ex;
+
+// A mid-bout board of `np` seats: seat 0 human, the rest handwritten bots.
+function midBout(np: number, minActions: number): { seat: Uint8Array; spectator: Uint8Array } {
+    const human = '00000000-0000-4000-8000-000000000000';
+    const seed = Uint8Array.from({ length: 32 }, (_, i) => (i * 7 + np) & 0xff);
+    table.create(human, 'Player 1');
+    let p = table.commit(`bench${np}`, 1, 0);
+    if (typeof p === 'number') throw new Error(`create: ${p}`);
+    for (let b = 1; b < np; b++) {
+        table.load(p.state, p.roster);
+        table.addBot(human, `b0000000-0000-4000-8000-00000000000${b}`, `Player ${b + 1}`, 'handwritten', seed);
+        p = table.commit(`bench${np}`, 1, 0) as Exclude<typeof p, number>;
+    }
+    table.load(p.state, p.roster);
+    table.ready(human, seed);
+    p = table.commit(`bench${np}`, 42, 0) as Exclude<typeof p, number>;
+    for (let actions = 0; actions < 5000; actions++) {
+        table.load(p.state, p.roster);
+        const seats = table.seats();
+        const game = deserializeGameState(p.state, {
+            id: `bench${np}`, name: '', deck_length: 0, good_players: seats.map((s) => s.id), good_timestamp: 1,
+            players: seats.map((s) => ({ player_id: s.id, name: s.name, is_ai: s.brain !== '', strategy_key: s.brain || 'human' })),
+        });
+        if (game.status !== GAME_STATUS.PLAYING) throw new Error(`${np}p: the game ended before a mid-bout board`);
+        if (actions >= minActions && game.table_battles.length > 0) break;
+        table.load(p.state, p.roster);
+        if (wasmBotEligibleMask(game) !== 0) {
+            const hex = new TextEncoder().encode('00'.repeat(32));
+            new Uint8Array(sx.memory.buffer).set(hex, sx.wasm_io_ptr());
+            sx.wasm_table_set_deal_seed(hex.length);
+            if (sx.wasm_table_bot_drive(0, 0) <= 0) throw new Error('a bot cycle applied nothing');
+        } else {
+            const moves = kernelLegalMoves(game, human).filter((m) => m.type !== 'wait' && m.type !== 'pickup');
+            const m = moves[0] ?? kernelLegalMoves(game, human)[0];
+            table.act(human, encodeAction({ kind: m.type as keyof typeof AWIRE_KIND, cards: m.cards, attack_cards: m.attack_cards }), null, 0);
+        }
+        p = table.commit(`bench${np}`, 42, 0) as Exclude<typeof p, number>;
+    }
+    return { seat: p.views[0]!, spectator: p.spectator };
 }
 
 const median = (a: number[]) => { const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 
-function time(buf: Uint8Array): { median: number; min: number; max: number } {
+function time(read: () => number): { median: number; min: number; max: number } {
     let sink = 0;
-    const once = () => {
-        for (let i = 0; i < ITERS; i++) {
-            const d = decodePackedGame(buf, NOW);
-            if (!d) throw new Error('envelope did not decode');
-            sink += d.game.players.length;
-        }
-    };
+    const once = () => { for (let i = 0; i < ITERS; i++) sink += read(); };
     for (let w = 0; w < 3; w++) once();
     const perOp: number[] = [];
     for (let r = 0; r < RUNS; r++) {
@@ -115,30 +95,34 @@ function time(buf: Uint8Array): { median: number; min: number; max: number } {
     return { median: median(perOp), min: Math.min(...perOp), max: Math.max(...perOp) };
 }
 
-// tsx loads e2e files as CommonJS, which has no top-level await.
-async function main(): Promise<void> {
-    const games = { 2: await midBout(2, 6), 4: await midBout(4, 10), 8: await midBout(8, 14) };
-    const cases: { name: string; buf: Uint8Array }[] = [
-        { name: '2p player', buf: envelopeOf(games[2], 0) },
-        { name: '4p player', buf: envelopeOf(games[4], 0) },
-        { name: '8p player', buf: envelopeOf(games[8], 0) },
-        { name: '4p spectator', buf: envelopeOf(games[4], -1) },
+function main(): void {
+    const b2 = midBout(2, 6), b4 = midBout(4, 10), b8 = midBout(8, 14);
+    const cases = [
+        { name: '2p player', buf: b2.seat }, { name: '4p player', buf: b4.seat },
+        { name: '8p player', buf: b8.seat }, { name: '4p spectator', buf: b4.spectator },
     ];
-
-    const results = cases.map(({ name, buf }) => {
-        const d = decodePackedGame(buf, NOW)!;
-        if (name.endsWith('spectator') ? d.seat !== -1 : d.seat !== 0) throw new Error(`${name}: decoded seat ${d.seat}`);
-        return { name, bytes: buf.length, ...time(buf) };
-    });
-
+    const client = clientTable();
+    const readers: Record<string, (buf: Uint8Array) => number> = {
+        decodePackedGame: (buf) => decodePackedGame(buf, NOW)!.game.players.length,
+        'adopt + snapshot': (buf) => client.adoptEnvelope(buf)!.seats.length,
+        decodeEnvelope: (buf) => decodeEnvelope(buf, NOW)!.game.players.length,
+    };
+    const results = cases.map(({ name, buf }) => ({
+        name, bytes: buf.length,
+        ...Object.fromEntries(Object.entries(readers).map(([reader, read]) => [reader, time(() => read(buf))])),
+    }));
     if (process.env.BENCH_JSON) {
-        out(JSON.stringify({ iters: ITERS, runs: RUNS, decodePackedGame: results }));
-    } else {
-        out(`decodePackedGame bench: ${ITERS} decodes x ${RUNS} runs per case (ns/op, median [min..max])`);
-        for (const r of results) {
-            out(`  ${r.name.padEnd(13)} ${String(r.bytes).padStart(4)} B  ${r.median.toFixed(0).padStart(7)} ns/op  [${r.min.toFixed(0)}..${r.max.toFixed(0)}]`);
-        }
+        out(JSON.stringify({ iters: ITERS, runs: RUNS, results }));
+        return;
+    }
+    out(`envelope read bench: ${ITERS} reads x ${RUNS} runs per case (ns/op, median [min..max])`);
+    for (const r of results) {
+        const cols = Object.keys(readers).map((k) => {
+            const t = (r as unknown as Record<string, { median: number; min: number; max: number }>)[k];
+            return `${k} ${t.median.toFixed(0)} [${t.min.toFixed(0)}..${t.max.toFixed(0)}]`;
+        });
+        out(`  ${r.name.padEnd(13)} ${String(r.bytes).padStart(4)} B  ${cols.join('   ')}`);
     }
 }
 
-main().catch((e) => { process.stderr.write(`${e?.stack ?? e}\n`); process.exit(1); });
+main();

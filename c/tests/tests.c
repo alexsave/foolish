@@ -8509,6 +8509,13 @@ static void test_client_adopts_envelopes(void) {
     uint32_t ai;
     CHECK(idn > 0 && roster_trailer_read(&back, gid, &gl, &st, &ai, ct_id, idn, &used) == ROSTER_OK && used == idn
           && back.n == 3 && ai == (1u << 2) && gl == 3, "the identity it keeps is the table's roster trailer");
+    {
+        const int n = table_envelope(&tb, RS("g-7"), 1, 42, ct_env, sizeof(ct_env));
+        const int at = (client_adopt_envelope(&ct, ct_env, n), client_identity_at(&ct));
+        CHECK(at == 11 + (ct_env[9] | (ct_env[10] << 8)), "and it sits in the envelope, from the trailer to the end");
+        CHECK(roster_trailer_read(&back, gid, &gl, &st, &ai, ct_env + at, n - at, &used) == ROSTER_OK && used == n - at,
+              "which reads as the same identity");
+    }
 
     // Refused, never clamped.
     const int slen = state_put(&tb_game, 0, ct_raw);
@@ -8556,6 +8563,21 @@ static void test_client_adopts_envelopes(void) {
 
 // Every push of a whole game, for every viewer, through the client: each opens,
 // every step reads, and the final board is the envelope's.
+// Two views read the same: every field and every counted element.
+static int ct_same_view(const TableView *a, const TableView *b) {
+    if (memcmp(a, b, offsetof(TableView, battles)) != 0) return 0;
+    if (memcmp(a->battles, b->battles, sizeof(Battle) * (size_t)a->num_battles) != 0) return 0;
+    for (int s = 0; s < a->num_players; s++) {
+        const ViewSeat *x = &a->seats[s], *y = &b->seats[s];
+        if (x->status != y->status || x->hand_count != y->hand_count || x->awaiting_attack != y->awaiting_attack
+            || x->is_ai != y->is_ai || x->id_len != y->id_len || x->name_len != y->name_len
+            || memcmp(x->id, y->id, x->id_len) != 0 || memcmp(x->name, y->name, x->name_len) != 0) return 0;
+    }
+    return memcmp(a->my_hand, b->my_hand, (size_t)a->my_hand_count) == 0
+        && memcmp(a->elimination, b->elimination, (size_t)a->num_eliminated) == 0
+        && memcmp(a->game_id, b->game_id, a->gid_len) == 0 && memcmp(a->title, b->title, a->title_len) == 0;
+}
+
 static void test_client_reads_every_push_of_a_game(void) {
     tb_fixture(3, 1u << 1, 137);
     table_init(&tb, &tb_game, &tb_snaps);
@@ -8593,11 +8615,11 @@ static void test_client_reads_every_push_of_a_game(void) {
                 continue;
             }
             pushes++;
-            finals_ok &= memcmp(&ct_view, &ct.view, sizeof(TableView)) == 0;
+            finals_ok &= ct_same_view(&ct_view, &ct.view);
             // The same sequence as an as2 payload: no flags byte.
             rc = client_push_open(&ct, ct_push, pl - 1, 0, ct_id, idn, 5);
             while (rc == CLIENT_OK && (k = client_push_next(&ct)) == 1) { }
-            as2_ok &= rc == CLIENT_OK && k == 0 && client_push_final(&ct) == CLIENT_OK && memcmp(&ct_view, &ct.view, sizeof(TableView)) == 0;
+            as2_ok &= rc == CLIENT_OK && k == 0 && client_push_final(&ct) == CLIENT_OK && ct_same_view(&ct_view, &ct.view);
         }
         if (table_commit_products(&tb, RS("g"), 5, 0, &c, tb_arena, sizeof(tb_arena)) < 0) { all_ok = 0; break; }
         memcpy(tb_state, tb_arena + c.state.off, (size_t)c.state.len);
@@ -8679,11 +8701,14 @@ static void test_client_push_steps_and_refusals(void) {
     int two = client_identity(&ct, ct_id, sizeof(ct_id));
     CHECK(two > 0 && client_push_open(&ct, ct_push, pl, 1, ct_id, two, 5) == CLIENT_E_MISMATCH,
           "a push against the identity of a table with other seats is refused");
-    CHECK(client_identity_seat(&ct, RS("c"), RS("Цэ"), 0) == CLIENT_OK && (two = client_identity(&ct, ct_id, sizeof(ct_id))) > 0
+    CHECK(client_identity_begin(&ct, RS("g-7"), RS("T")) == CLIENT_OK && client_identity_seat(&ct, RS("a"), RS("A"), 0) == CLIENT_OK
+          && client_identity_seat(&ct, RS("b"), RS("B"), 1) == CLIENT_OK
+          && client_identity_seat(&ct, RS("c"), RS("Цэ"), 0) == CLIENT_OK && (two = client_identity(&ct, ct_id, sizeof(ct_id))) > 0
           && client_push_open(&ct, ct_push, pl, 1, ct_id, two, 5) == CLIENT_OK && client_push_next(&ct) == 1
           && ct.view.seats[1].is_ai && ct.view.seats[2].name_len == 4 && ct.view.gid_len == 3, "and one of three decodes it");
     client_push_final(&ct);
-    CHECK(client_identity_seat(&ct, RS("a"), RS("again"), 0) < 0, "an identity refuses a duplicate seat");
+    CHECK(client_identity_begin(&ct, RS("g-7"), RS("T")) == CLIENT_OK && client_identity_seat(&ct, RS("a"), RS("A"), 0) == CLIENT_OK
+          && client_identity_seat(&ct, RS("a"), RS("again"), 0) < 0, "an identity refuses a duplicate seat");
     ct_id[0] = 9;
     CHECK(client_push_open(&ct, ct_push, pl, 1, ct_id, two, 5) == CLIENT_E_IDENTITY, "identity bytes that do not read are refused");
 

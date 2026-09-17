@@ -776,7 +776,7 @@ WASM_TABLE_EXPORTS := \
 WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_client_view_ptr -Wl,--export=wasm_client_event_ptr \
   -Wl,--export=wasm_client_detail -Wl,--export=wasm_client_adopt_envelope \
-  -Wl,--export=wasm_client_adopt_resident \
+  -Wl,--export=wasm_client_adopt_resident -Wl,--export=wasm_client_identity_at \
   -Wl,--export=wasm_client_push_open -Wl,--export=wasm_client_push_next \
   -Wl,--export=wasm_client_push_final -Wl,--export=wasm_client_identity \
   -Wl,--export=wasm_client_identity_begin -Wl,--export=wasm_client_identity_seat

@@ -28,6 +28,10 @@ static int utf8_valid(const char *str, int n) {
     const uint8_t *s = (const uint8_t *)str;
     int i = 0;
     while (i < n) {
+        // ASCII eight bytes at a time: names, ids and titles are mostly ASCII.
+        uint64_t w;
+        while (i + 8 <= n && (memcpy(&w, s + i, 8), (w & 0x8080808080808080ull) == 0)) i += 8;
+        if (i >= n) break;
         const uint8_t c = s[i];
         int k;
         uint8_t lo = 0x80, hi = 0xbf;
@@ -45,14 +49,22 @@ static int utf8_valid(const char *str, int n) {
 
 // A byte walk, not memcmp: the wasm builds have no libc and ship only
 // memcpy/memset (c/wasm/include/string.h).
+// From the end: ids that differ tend to differ last (a UUID's variant and node,
+// a bot id's counter), so two seats' ids part company in the first byte looked at.
 static int bytes_eq(const char *a, const char *b, int n) {
-    for (int i = 0; i < n; i++) if (a[i] != b[i]) return 0;
+    for (int i = n - 1; i >= 0; i--) if (a[i] != b[i]) return 0;
     return 1;
 }
 
 static int id_ok(const char *id, int len) {
     if (!id || len <= 0 || len > ROSTER_ID_MAX) return 0;
-    for (int i = 0; i < len; i++) if (id[i] == 0) return 0;
+    // No NUL: in a word, a zero byte is one whose (b - 1) sets the top bit b does not.
+    int i = 0;
+    for (uint64_t w; i + 8 <= len; i += 8) {
+        memcpy(&w, id + i, 8);
+        if ((w - 0x0101010101010101ull) & ~w & 0x8080808080808080ull) return 0;
+    }
+    for (; i < len; i++) if (id[i] == 0) return 0;
     return utf8_valid(id, len);
 }
 

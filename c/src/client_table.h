@@ -108,6 +108,7 @@ typedef struct {
     const uint8_t *final;
     int32_t   final_len, at, index, n_events, viewer, n_seats;
     uint32_t  version;
+    int32_t   identity_at;  // where in the last read input its roster trailer began, -1 for none
     bool      open;
 } ClientTable;
 
@@ -146,6 +147,12 @@ int client_push_final(ClientTable *c);
 // The identity to keep for this table (the roster trailer layout): its length,
 // 0 when the slot holds no roster, or CLIENT_E_CAP.
 int client_identity(const ClientTable *c, uint8_t *out, int cap);
+
+// Where the identity to keep already is: the offset of the roster trailer in the
+// envelope or push the last read took its roster from, to the end of that input
+// (the bytes client_identity would write, give or take the goods and status it
+// does not read). -1 when the roster did not come from the input read.
+int client_identity_at(const ClientTable *c);
 
 // Identity from parts, for a push whose roster arrived as JSON beside it (the
 // as2 lobby broadcasts of servers before Phase 5b): a table id and title, then
