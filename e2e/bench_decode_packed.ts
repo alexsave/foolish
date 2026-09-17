@@ -4,12 +4,12 @@
 //                      (c/src/client_table.c) and the generated reader copies the
 //                      TableView out (sdk/ts/gen/view_layout.bots.ts) - what the
 //                      web runs since Phase 6a
-//   decodeEnvelope     the same plus the PersonalGame mapping the web ran in
-//                      Phase 5a (now e2e/helpers/view_game.ts, for comparison)
 //
 // It is the "marshal / decode" gate in docs/C_GAME_SHAPE_MIGRATION.md 4.0: the C
 // read plus snapshot must be no slower than the retired TS reader, decodePackedGame
 // (measured side by side before it was deleted; the numbers are in that table).
+// The decodeEnvelope column (the Phase 5a PersonalGame mapping) is gone with the
+// TS game shape in Phase 8.
 //
 // The envelopes are real ones, written by the C Table: a table of one human and
 // handwritten bots is dealt from a pinned seed and played (bots by their cycle,
@@ -20,22 +20,17 @@
 //   BENCH_ITERS=20000 BENCH_RUNS=9 BENCH_JSON=1 ...
 
 import { clientTable } from '@sdk/ts/table/client_table.ts';
-import { decodeEnvelope } from './helpers/view_game.ts';
-import { deserializeGameState, kernelLegalMoves } from '@sdk/ts/wasm/engine.ts';
-import { wasmBotEligibleMask } from '@sdk/ts/wasm/bots.ts';
-import { encodeAction, AWIRE_KIND } from '@sdk/ts/wire/awire.ts';
-import { GAME_STATUS } from '@api/core/types.ts';
-import { createServerTable } from '@sdk/ts/table/server_table.ts';
+import * as L from '@sdk/ts/gen/game_layout.bots.ts';
+import { fixtureTable } from './helpers/table_fixture.ts';
+import { residentBoard, residentMoves } from './helpers/table_mem.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 const out = (s: string) => process.stdout.write(`${s}\n`);
 
 const ITERS = Number(process.env.BENCH_ITERS || 20000);
 const RUNS = Number(process.env.BENCH_RUNS || 9);
-const NOW = () => 1_760_000_000_000;
 
-const table = createServerTable();
-const sx = (table as unknown as { ex: { memory: WebAssembly.Memory; wasm_io_ptr(): number; wasm_table_set_deal_seed(n: number): number; wasm_table_bot_drive(p: number, m: number): number } }).ex;
+const table = fixtureTable();
 
 // A mid-bout board of `np` seats: seat 0 human, the rest handwritten bots.
 function midBout(np: number, minActions: number): { seat: Uint8Array; spectator: Uint8Array } {
@@ -54,23 +49,23 @@ function midBout(np: number, minActions: number): { seat: Uint8Array; spectator:
     p = table.commit(`bench${np}`, 42, 0) as Exclude<typeof p, number>;
     for (let actions = 0; actions < 5000; actions++) {
         table.load(p.state, p.roster);
-        const seats = table.seats();
-        const game = deserializeGameState(p.state, {
-            id: `bench${np}`, name: '', deck_length: 0, good_players: seats.map((s) => s.id), good_timestamp: 1,
-            players: seats.map((s) => ({ player_id: s.id, name: s.name, is_ai: s.brain !== '', strategy_key: s.brain || 'human' })),
-        });
-        if (game.status !== GAME_STATUS.PLAYING) throw new Error(`${np}p: the game ended before a mid-bout board`);
-        if (actions >= minActions && game.table_battles.length > 0) break;
-        table.load(p.state, p.roster);
-        if (wasmBotEligibleMask(game) !== 0) {
-            const hex = new TextEncoder().encode('00'.repeat(32));
-            new Uint8Array(sx.memory.buffer).set(hex, sx.wasm_io_ptr());
-            sx.wasm_table_set_deal_seed(hex.length);
-            if (sx.wasm_table_bot_drive(0, 0) <= 0) throw new Error('a bot cycle applied nothing');
-        } else {
-            const moves = kernelLegalMoves(game, human).filter((m) => m.type !== 'wait' && m.type !== 'pickup');
-            const m = moves[0] ?? kernelLegalMoves(game, human)[0];
-            table.act(human, encodeAction({ kind: m.type as keyof typeof AWIRE_KIND, cards: m.cards, attack_cards: m.attack_cards }), null, 0);
+        const board = residentBoard();
+        if (board.status !== L.GAME_STATUS_PLAYING) throw new Error(`${np}p: the game ended before a mid-bout board`);
+        if (actions >= minActions && board.battles.length > 0) break;
+        // A bot seat still in may have no move yet: the drive applies nothing, and the human moves.
+        let drove = false;
+        if (table.needsBots()) {
+            table.setDealSeed('00'.repeat(32));
+            const d = table.botDrive(null);
+            if (typeof d === 'number') throw new Error(`a bot cycle was refused (${d})`);
+            drove = d.n > 0;
+        }
+        if (!drove) {
+            table.load(p.state, p.roster);
+            const all = residentMoves(0);
+            const m = all.find((x) => x.kind !== 'pickup') ?? all[0];
+            if (!m) throw new Error(`${np}p: neither a bot nor the human has a move`);
+            table.act(human, m.wire, null, 0);
         }
         p = table.commit(`bench${np}`, 42, 0) as Exclude<typeof p, number>;
     }
@@ -102,7 +97,6 @@ function main(): void {
     const client = clientTable();
     const readers: Record<string, (buf: Uint8Array) => number> = {
         'adopt + snapshot': (buf) => client.adoptEnvelope(buf)!.seats.length,
-        decodeEnvelope: (buf) => decodeEnvelope(buf, NOW)!.game.players.length,
     };
     const results = cases.map(({ name, buf }) => ({
         name, bytes: buf.length,
