@@ -44,7 +44,7 @@ export const CardFace = ({ card, onClick, style = {}, owner, isAnimationOverlay 
     // Defense in depth: never crash the whole Game Page on a missing card. A
     // null/undefined slot should be impossible now that the hand reorder is
     // bounds-safe (see reorderHand / DragContext), but if one ever reaches here
-    // — a sparse-array hole, a stale render — degrade to a face-down instead of
+    // - a sparse-array hole, a stale render - degrade to a face-down instead of
     // dereferencing `card.suit` on undefined (prod: "undefined is not an object
     // (evaluating 'e.suit')").
     if (!card) {
@@ -111,9 +111,12 @@ export const CardFace = ({ card, onClick, style = {}, owner, isAnimationOverlay 
     const animationStyle: React.CSSProperties = {};
 
     if (animationState.isAnimating && !isAnimationOverlay) {
-        // Hide the original card since the AnimationOverlay is showing the animated version
-        // But don't hide cards that are being rendered inside the AnimationOverlay itself
-        animationStyle.opacity = 0;
+        // A flight carries this card (AnimationOverlay draws it), so the place it
+        // left or is landing on does not show it too. Hidden at once and shown at
+        // once: `visibility` with no transition, applied over the caller's style so
+        // a hand card's own opacity and transition cannot show it through the flight.
+        animationStyle.visibility = 'hidden';
+        animationStyle.transition = 'none';
         animationStyle.pointerEvents = 'none';
     }
 
@@ -132,7 +135,7 @@ export const CardFace = ({ card, onClick, style = {}, owner, isAnimationOverlay 
         WebkitTouchCallout: 'none',
     } as React.CSSProperties;
 
-    const mergedStyle = { ...defaultStyle, ...animationStyle, ...style };
+    const mergedStyle = { ...defaultStyle, ...style, ...animationStyle };
 
     if (isThinCard) {
         return <div

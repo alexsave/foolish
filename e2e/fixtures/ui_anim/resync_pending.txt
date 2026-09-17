@@ -1,7 +1,6 @@
-0 657b878e56426bbb5a82dfd9 mounted
-0 65aef8fb7be93f805eddba24 tap attack 6s
-50 517344e58eb6bce78dd63917 timer@50
-75 447d440b9621a978a55928fe timer@75
-500 818a021cfcba74fe97b1a3f3 timer@500
-550 39572d43a9facec3faac75db timer@550
-1000 fb7b4447a3f31cc380dcd14d push: my attack
+0 f43d729d9cf46ba31e898f2a mounted
+0 a11cb873b60b15dfd9525a5a tap attack 6s
+25 e87ef4339156cd748d9abe16 timer@25
+500 3a808b69afaf42e921f7209c timer@500
+500 901691a869973564cb8d7813 timer@500
+1000 7ef2e6fe3d6499b311a83ebf push: my attack

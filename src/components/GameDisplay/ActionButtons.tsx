@@ -109,7 +109,10 @@ const CardDiv = () => {
                             justifyContent: 'center',
                             alignItems: 'center',
                             opacity: (isDragging && !isDraggingForAction) ? 0.3 : 1,
-                            transition: 'all 0.1s ease',
+                            // visibility switches at once: a card a flight carries is hidden
+                            // here (CardFace), and a transition's first frame would still hide
+                            // it after the flight has landed.
+                            transition: 'all 0.1s ease, visibility 0s',
                             transform: isHinted ? 'translateY(-10px)' : undefined,
                             cursor: 'move',
                             userSelect: 'none',
@@ -184,11 +187,14 @@ export const ActionButtons = () => {
         return <div></div>;
     }
 
+    // A move spends the selection when it is sent: its cards leave the hand, and a
+    // refused card comes home unselected. Clearing it when the server answers
+    // instead left a refused card selected (the next pick mixed with it and the
+    // Attack button vanished) and wiped a pick made while the move was on its way.
     const handleAttackClick = () => {
         setActionPressed('attack', true);
-        attack(selectedCards).then(() => {
-            setSelectedCards([]);
-        }).catch((e) => {
+        setSelectedCards([]);
+        attack(selectedCards).catch((e) => {
             console.error('Attack failed:', e.message);
             setActionPressed('attack', false);
         });
@@ -196,9 +202,8 @@ export const ActionButtons = () => {
 
     const handlePassClick = () => {
         setActionPressed('pass', true);
-        pass(selectedCards).then(() => {
-            setSelectedCards([]);
-        }).catch((e) => {
+        setSelectedCards([]);
+        pass(selectedCards).catch((e) => {
             console.error('Pass failed:', e.message);
             setActionPressed('pass', false);
         });
@@ -213,9 +218,8 @@ export const ActionButtons = () => {
             );
             if (validTarget) {
                 setActionPressed('cover', true);
-                cover([selectedCards[0]], [validTarget.attack]).then(() => {
-                    setSelectedCards([]);
-                }).catch((e) => {
+                setSelectedCards([]);
+                cover([selectedCards[0]], [validTarget.attack]).catch((e) => {
                     console.error('Cover failed:', e.message);
                     setActionPressed('cover', false);
                 });
@@ -226,9 +230,8 @@ export const ActionButtons = () => {
             const mapping = kernelUnambiguousCover(selectedCards, game.battles, game.powerSuit);
             if (mapping) {
                 setActionPressed('cover', true);
-                cover(mapping.coverCards, mapping.attackCards).then(() => {
-                    setSelectedCards([]);
-                }).catch((e) => {
+                setSelectedCards([]);
+                cover(mapping.coverCards, mapping.attackCards).catch((e) => {
                     console.error('Multi-card cover failed:', e.message);
                     setActionPressed('cover', false);
                 });

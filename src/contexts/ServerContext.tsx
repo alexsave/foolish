@@ -3,7 +3,7 @@ import supabase from '../backend/Connector';
 import { useParams } from 'next/navigation';
 import { useAuth } from './AuthContext';
 import { MAX_PLAYERS } from '@api/core/constants.ts';
-import { ANIMATION_TIME } from '../constants/constants';
+import { ANIMATION_TIME, RECONCILE_GRACE_MS } from '../constants/constants';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { animationFeed } from '../state/animationFeed';
 import { holdPrivateChannel } from '../state/privateChannel';
@@ -42,7 +42,7 @@ const applyOptimisticOverlay = (v: TableView): TableView => {
 };
 
 // Split contexts: actions are all useCallback([])-stable so this provider's
-// value NEVER changes identity — components that only dispatch (buttons, drag
+// value NEVER changes identity - components that only dispatch (buttons, drag
 // handlers, feeds) subscribe via useServerActions() and stop re-rendering on
 // every games/chat state change. State lives in its own context; useServer()
 // merges both for backward compatibility (and re-renders on state changes,
@@ -51,7 +51,7 @@ const ServerActionsContext = createContext<ServerActionsType | null>(null);
 const ServerStateContext = createContext<ServerStateType | null>(null);
 
 // (The old `handsQuery` PostgREST projection is gone: the client no longer
-// reads player_hands/games directly — it reads its own already-masked packed
+// reads player_hands/games directly - it reads its own already-masked packed
 // view straight from the player_views / spectator_views caches (a plain indexed
 // RLS SELECT), with no edge round-trip. See docs/PLAYER_VIEWS.md.)
 
@@ -99,8 +99,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     const [game_id, setGameId] = useState<string | null>(null);
 
     // The active game. The route param is the source of truth whenever it is
-    // present — it is what AnimationContext, the broadcast version gate and
-    // RealtimeAnimationFeed all key off — so actions must target it too, or a
+    // present - it is what AnimationContext, the broadcast version gate and
+    // RealtimeAnimationFeed all key off - so actions must target it too, or a
     // move fired mid-navigation goes to the previously-selected game. The state
     // value only bridges flows that happen before navigation (create/join from
     // the dashboard).
@@ -200,13 +200,13 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             stopChat();
             // Remove subscriptions one channel at a time instead of removeAllChannels().
             // removeAllChannels() calls socket.disconnect() unconditionally, force-closing
-            // the websocket (close code 1005) on every game switch — that 1005 then fans
+            // the websocket (close code 1005) on every game switch - that 1005 then fans
             // out as a CHANNEL_ERROR to the channels being created for the next game.
             // Per-channel removeChannel() instead routes through realtime-js's deferred
             // disconnect (disconnectOnEmptyChannelsAfterMs), which is cancelled as soon as
             // the next game subscribes, so the socket is never bounced during a fast switch.
             // ONLY this context's spectator game-… channel (chat:… is left above): the
-            // gu-… animation channel is owned and torn down by RealtimeAnimationFeed —
+            // gu-… animation channel is owned and torn down by RealtimeAnimationFeed -
             // removing it here raced its own cleanup/reconnect handling. The pv-…
             // dashboard-cache channel is user-scoped (not game-scoped) and owned by
             // its own effect below, so it must survive game navigation too.
@@ -222,7 +222,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // NOTE: there is deliberately no gu-<game>-<user> subscription here. That
     // personalized channel is owned by RealtimeAnimationFeed (the animation
     // pipeline); a second subscription from this context was pure duplicate
-    // socket load — its only events were `private_message` (sender commented out
+    // socket load - its only events were `private_message` (sender commented out
     // server-side) and `HAND_REARRANGED` (handler was a no-op).
 
     // A seated player's chat stream. chat:{game} admits only a member of the
@@ -284,7 +284,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // Dashboard live updates (docs/PLAYER_VIEWS.md): subscribe to THIS user's own
     // player_views rows (RLS-enforced) and push each committed masked snapshot
     // straight into `games`. This is the list-level counterpart of
-    // RealtimeAnimationFeed's per-game animation stream — full snapshots instead
+    // RealtimeAnimationFeed's per-game animation stream - full snapshots instead
     // of event deltas, with no bespoke server fan-out. User-scoped (keyed on
     // user_id only), so it survives game navigation; the pv- channel is excluded
     // from the per-navigation channel teardown above. Best-effort: if the
@@ -306,7 +306,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 // subscription keeps every OTHER game in the dashboard live.
                 if (v.gameId === urlGameIdRef.current) return;
                 setGames(prev => ({ ...prev, [v.gameId]: mergeGameData(v.gameId, v, prev) }));
-            } catch { /* unreadable snapshot — ignore; the next fetch resyncs */ }
+            } catch { /* unreadable snapshot - ignore; the next fetch resyncs */ }
         };
 
         const pgChanges = { schema: 'public', table: 'player_views', filter: `player_id=eq.${user_id}` } as const;
@@ -314,7 +314,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // setAuth() hands Realtime the caller's JWT so postgres_changes applies
         // player_views' RLS per row. NOT a `private` broadcast channel: for
         // postgres_changes the source table's RLS is the gate (the row filter
-        // below is enforced server-side), not a realtime.messages topic policy —
+        // below is enforced server-side), not a realtime.messages topic policy -
         // marking it private would make the channel demand a 'pv-…' broadcast
         // policy that doesn't exist and fail to subscribe.
         supabase.realtime.setAuth().then(() => {
@@ -325,8 +325,8 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 .on('postgres_changes', { event: 'INSERT', ...pgChanges }, (p: any) => applyRow(p.new))
                 .on('postgres_changes', { event: 'UPDATE', ...pgChanges }, (p: any) => applyRow(p.new))
                 .on('postgres_changes', { event: 'DELETE', ...pgChanges }, (p: any) => {
-                    // The old row carries only the replica-identity (PK) columns —
-                    // game_id + player_id — which is all we need to drop it.
+                    // The old row carries only the replica-identity (PK) columns -
+                    // game_id + player_id - which is all we need to drop it.
                     const gid = p.old?.game_id;
                     if (!gid) return;
                     setGames(prev => {
@@ -388,7 +388,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const createGame = useCallback(async (): Promise<{ game_id: string }> => {
-        // create now returns the caller's PACKED view buffer (like get_game) —
+        // create now returns the caller's PACKED view buffer (like get_game) -
         // decode it with the shared codec, the same path loadGame uses. There is
         // no JSON body to fall back to any more - the server has one answer. The
         // server persists the game to the DB in the background AFTER responding,
@@ -449,7 +449,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     }, []);
 
     // start / add-bot / exit / continue are one consolidated `meta` endpoint
-    // (dispatched on `type`) — fewer functions, faster deploys.
+    // (dispatched on `type`) - fewer functions, faster deploys.
     const startGame = useCallback((gameId: string): Promise<{ game_id: string }> => {
         return invokeGameFunctions('meta', {
             type: 'start',
@@ -529,10 +529,10 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     }, []);
 
     // Fast path for the game screen (docs/PLAYER_VIEWS.md): a PLAYER reads their
-    // own already-masked view straight from player_views — a plain indexed RLS
+    // own already-masked view straight from player_views - a plain indexed RLS
     // SELECT, no edge round-trip. RLS scopes it to the caller, and the
     // (game_id, player_id) PK means at most one row. Returns null for a spectator
-    // (no row), a cache miss (game predating the cache), or any failure — the
+    // (no row), a cache miss (game predating the cache), or any failure - the
     // caller then falls back to spectator_views (the shared masked view).
     const loadGameFromCache = async (gameId: string): Promise<TableView | null> => {
         try {
@@ -550,7 +550,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     // Spectator fast path (docs/PLAYER_VIEWS.md): a NON-participant reads the
-    // shared, fully-masked (seat -1) view straight from spectator_views — a plain
+    // shared, fully-masked (seat -1) view straight from spectator_views - a plain
     // indexed RLS SELECT, no edge round-trip, replacing the get_game spectate
     // path. Readable by any authenticated user (the row carries no hidden state),
     // one row per game. Returns null on a miss/failure; the board's seat is
@@ -648,7 +648,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 // (broadcastPackedEventBuffers / broadcastAnimationEvents), built
                 // by the same WASM/event-wire encoder the players' gu-<id>-<user>
                 // streams use. Republish it into animationFeed exactly like
-                // RealtimeAnimationFeed does for players — the packed envelope
+                // RealtimeAnimationFeed does for players - the packed envelope
                 // ({t:'as2',s,v,b}) carries no JS state, so attach the game id so
                 // the consumer can pick the decode roster.
                 gameChannel
@@ -925,7 +925,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
 
         // The dashboard list is a plain indexed RLS SELECT straight from the
-        // player_views cache (docs/PLAYER_VIEWS.md) — no edge function, no cold
+        // player_views cache (docs/PLAYER_VIEWS.md) - no edge function, no cold
         // start, no per-viewer masking on read (rows are masked at write time).
         // Each row's `view` is the caller's packed single-game envelope, read
         // here through the kernel's client slot (readEnvelope). player_views is
@@ -959,7 +959,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // Optimistic transition: reset the finished game to its lobby state LOCALLY
         // right now, so the win screen swaps to the lobby instantly instead of
         // waiting out the meta round-trip (the WinScreen→Lobby swap is purely
-        // status-driven — WinScreen renders null once status !== GAME_OVER). The
+        // status-driven - WinScreen renders null once status !== GAME_OVER). The
         // server `continue` runs in the background; its authoritative reset (the
         // MAGIC_TRANSITION broadcast + response) reconciles with this - the kernel
         // makes both (game_reset_to_lobby), so there's no visible snap. On failure we
@@ -970,7 +970,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             setGames(cur => ({ ...cur, [gameId]: optimistic }));
 
             invokeGameFunctions('meta', { type: 'continue', game_id: gameId }).catch(err => {
-                console.error('continue failed — rolling back to the finished game:', err);
+                console.error('continue failed - rolling back to the finished game:', err);
                 setGames(cur => (cur[gameId] === optimistic ? { ...cur, [gameId]: prev } : cur));
             });
             return Promise.resolve({ game_id: gameId });
@@ -1026,10 +1026,30 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // bytes - the exact buffer the kernel validated - wrapped in the binary
     // request envelope. functions-js only passes a body through with
     // Content-Type: application/octet-stream when it is a Blob or an
-    // ArrayBuffer (a Uint8Array would be JSON.stringified — see
+    // ArrayBuffer (a Uint8Array would be JSON.stringified - see
     // @supabase/functions-js FunctionsClient.invoke), so the envelope rides in
     // a Blob; octet-stream responses come back as a Blob too.
     // 'bump' and all meta ops stay JSON via invokeGameFunctions.
+    // After a refused (or moot) move whose answer names a newer version than the
+    // page has applied, the page is behind the server: the pushes that would have
+    // told it are late or lost. Give a late push RECONCILE_GRACE_MS to arrive and
+    // animate as usual; if the page is still behind then, load the game, so a lost
+    // push leaves the board stale for about a second instead of until the next move.
+    const reconcileTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+    const reconcileAfter = (gameId: string, serverVersion: number) => {
+        const seen = authoritativeVersion(gameId);
+        if (seen !== undefined && serverVersion <= seen) return;
+        const timers = reconcileTimers.current;
+        const prior = timers.get(gameId);
+        if (prior) clearTimeout(prior);
+        timers.set(gameId, setTimeout(() => {
+            timers.delete(gameId);
+            const now = authoritativeVersion(gameId);
+            if (now !== undefined && now >= serverVersion) return;
+            loadGame(gameId).catch(() => { /* the next push or resubscribe resync catches up */ });
+        }, RECONCILE_GRACE_MS));
+    };
+
     const invokePackedAction = async (gameId: string, wire: Uint8Array): Promise<{ game_id: string }> => {
         // Stamp the move with the version the client composed it against, so the
         // server's round-boundary guard can reject it if a round closed in the
@@ -1052,16 +1072,20 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         if (!resp) {
             throw new Error('Invalid response from action: unreadable packed response');
         }
+        // A move that did not apply was judged against a game newer than the one
+        // on screen: catch up with it (reconcileAfter), whether or not its pushes
+        // ever arrive.
+        if (resp.status !== ACTION_STATUS.APPLIED) reconcileAfter(gameId, resp.version);
         if (resp.status === ACTION_STATUS.REJECTED) {
             // A stale-round reject is the one rejection the user should SEE: the
             // move was kernel-legal, just aimed at a round that closed first, so
             // surface the localized notice (the revert already fired off the
             // pickup broadcast). Every other reject stays console-only diagnostics
-            // — callers revert the optimistic state either way.
+            // - callers revert the optimistic state either way.
             if (resp.rejectCode === REJECT_STALE_ROUND) showStaleRoundNotice();
             throw new Error(rejectMessage(resp.rejectCode));
         }
-        // APPLIED — or MOOT (the move lost the end-game race, a no-op): both
+        // APPLIED - or MOOT (the move lost the end-game race, a no-op): both
         // resolve as success, mirroring the old JSON path's data.id check.
         return { game_id: gameId };
     };
@@ -1132,7 +1156,7 @@ interface ServerActionsType {
     // The optional `applyOptimistic` thunk gates the deferred optimistic local-state
     // patch: callers fire the request before validating, then have the patch apply
     // only if validation passed (evaluated at ANIMATION_TIME). Defaults to always-on.
-    // The optional `wire` is the move's awire buffer (encodeAction) — passed by
+    // The optional `wire` is the move's awire buffer (encodeAction) - passed by
     // callers that already validated those bytes so the POST body is bit-identical;
     // encoded on the spot when absent.
     attack: (cards: Card[], applyOptimistic?: () => boolean, wire?: Uint8Array) => Promise<{ game_id: string }>;
@@ -1169,7 +1193,7 @@ interface ServerStateType {
 
 type ServerContextType = ServerActionsType & ServerStateType;
 
-/** Actions only — the value is referentially stable for the provider's whole
+/** Actions only - the value is referentially stable for the provider's whole
  *  lifetime, so consumers that only dispatch never re-render on state churn. */
 export const useServerActions = (): ServerActionsType => {
     const context = useContext(ServerActionsContext);
@@ -1191,7 +1215,7 @@ export const useServer = (): ServerContextType => {
 
 // Provider for the replay screen: holds a local games map and serves it
 // through the same context the live display components AND AnimationProvider
-// read. updateGameState really updates (plain replacement — no optimistic
+// read. updateGameState really updates (plain replacement - no optimistic
 // merging here), which is what lets the real animation pipeline drive the
 // replay: each synthesized event commits its game_state snapshot exactly
 // like a live broadcast would. Every server method is inert.

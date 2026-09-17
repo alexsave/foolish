@@ -36,6 +36,23 @@ type Card = ViewCard;
 const seatOf = (v: TableView | null | undefined): number | undefined =>
     v && v.mySeat >= 0 ? v.mySeat : undefined;
 
+// The places a flight's card is drawn at while it flies, by the owner key the
+// page's CardFace names them with (src/components/GameDisplay/CardFace.tsx): a
+// seat's hand, the table, the flipped slot. The card is hidden at the place it
+// leaves AND the place it lands on - a confirmation or a board committed before
+// the flight lands shows it there already - so the flight is the one card the
+// page draws. A card leaving the deck may be the flipped trump, which the stock
+// shows under the deck.
+const flightPlaces = (from: string | undefined, to: string | undefined, seat: number | undefined): (number | string)[] => {
+    const places: (number | string)[] = [];
+    for (const loc of [from, to]) {
+        if (loc === 'hand' && seat !== undefined) places.push(seat);
+        else if (loc === 'table' || loc === 'flipped') places.push(loc);
+    }
+    if (from === 'deck') places.push('flipped');
+    return places.filter((p, i) => places.indexOf(p) === i);
+};
+
 interface ClientAnimationEvent  {
     type: 'magic_transition' | 'deal' | 'flipped' | 'defender_move' | 'attack_pass' | 'cover' | 'pickup' | 'discard' | 'out' | 'refill' | 'cards_to_trash' | 'revert';
     seat?: number;   // the acting seat
@@ -56,7 +73,7 @@ interface AnimationContextType {
     // Cards currently flying from the deck pile. Drives the visible pile size.
     // Drops BEFORE the animation starts and resets when the snapshot commits.
     inFlightFromDeck: number;
-    // Subset of inFlightFromDeck that's headed to the flipped slot — these
+    // Subset of inFlightFromDeck that's headed to the flipped slot - these
     // are still "in the deck system" so they count toward the badge total.
     inFlightToFlipped: number;
     // `owner`: the seat whose cards these are, or a place's own key ('table', 'flipped').
@@ -86,12 +103,12 @@ export const AnimationContext = createContext<AnimationContextType | null>(null)
 
 // Compact content fingerprint of a sequence's events, for backup dedup (the
 // primary key is sequence_id). The old code did JSON.stringify(events), which
-// serialized each event's entire embedded `game_state` — the heaviest part of the
-// payload — on every received message just to compare it. This signature captures
+// serialized each event's entire embedded `game_state` - the heaviest part of the
+// payload - on every received message just to compare it. This signature captures
 // the move-defining fields (type, player, from/to, cards, battle index) PLUS a few
 // O(1) scalars off game_state (deck size, table size, own hand size) so two
-// same-shaped-but-distinct sequences — e.g. two single-card refills at different
-// deck sizes — still hash differently, the way the full stringify did, at a tiny
+// same-shaped-but-distinct sequences - e.g. two single-card refills at different
+// deck sizes - still hash differently, the way the full stringify did, at a tiny
 // fraction of the cost.
 const eventsSignature = (events: any[]): string =>
     events
@@ -135,11 +152,6 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     const [inFlightFromDeck, setInFlightFromDeck] = useState(0);
     const [inFlightToFlipped, setInFlightToFlipped] = useState(0);
 
-    // Keep refs in sync with state
-    useEffect(() => {
-        animationQueueRef.current = animationQueue;
-    }, [animationQueue]);
-
     const [animatingCards, setAnimatingCards] = useState<Map<string, {
         animationType: string;
         progress: number;
@@ -149,7 +161,16 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     }>>(new Map());
 
     const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+    // The queue itself. The state is its copy for rendering (it starts the queue);
+    // the ref is read and changed synchronously, so a flight that lands can start
+    // the next one in the same commit and an event queued before a render is never
+    // missed.
     const animationQueueRef = useRef<ClientAnimationEvent[]>([]);
+    const enqueue = (events: ClientAnimationEvent[]) => {
+        if (events.length === 0) return;
+        animationQueueRef.current = [...animationQueueRef.current, ...events];
+        setAnimationQueue(animationQueueRef.current);
+    };
     const pendingCompletionCallbackRef = useRef<(() => void) | null>(null);
     const remainingSequenceEventsRef = useRef<number>(0);
 
@@ -205,7 +226,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // Highest committed games.version we've applied from a live broadcast. Live
     // sequences are fired un-awaited by the server over per-call channels, so under
     // realtime latency they can arrive out of order; we drop any whose version is
-    // <= this one (strictly superseded — each sequence carries the full resulting
+    // <= this one (strictly superseded - each sequence carries the full resulting
     // state). null until the first versioned sequence; reset when the game changes.
     const lastAppliedVersionRef = useRef<number | null>(null);
     const gateGameRef = useRef<string | undefined>(undefined);
@@ -353,7 +374,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         // Find MY optimistic cards (attacks, covers, pickups)
         const myOptimisticAttackCovers: Card[] = [];
-        // Which of those are COVERS — the defender-capacity revert rule only
+        // Which of those are COVERS - the defender-capacity revert rule only
         // applies to attacks (see optimisticConflicts.ts).
         const myOptimisticCoverKeys = new Set<string>();
         const myOptimisticPickups: Card[] = [];
@@ -605,7 +626,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             // Server didn't include our optimistic cards yet. Decide per card whether
             // each was genuinely never accepted (revert to hand) or is simply not yet
             // confirmed on THIS (possibly concurrent / pre-our-commit) broadcast and
-            // should be kept (merged) — see optimisticConflicts.ts. This is the same
+            // should be kept (merged) - see optimisticConflicts.ts. This is the same
             // decision the deployed client and the e2e suite both exercise.
             const { revert: cardsToRevert, merge: cardsToMerge, clear: cardsToClear } = resolveUnconfirmedAttackCovers(
                 myOptimisticAttackCovers,
@@ -616,7 +637,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             );
 
             // Cards that were accepted then swept off the table by this broadcast's
-            // own pickup/trash: drop their optimistic tracking with NO revert — the
+            // own pickup/trash: drop their optimistic tracking with NO revert - the
             // clear event animates them off the table (was the "someone picked up my
             // card and it flew back to my hand" flicker).
             cardsToClear.forEach((card: Card) => {
@@ -691,7 +712,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // Packed envelopes we can't decode (unknown game, corrupt bytes, roster
     // desync): refetch the authoritative state once instead of dropping
     // silently forever. The refetch re-checks the landed version against the
-    // broadcast's — a load that was already in flight when the broadcast
+    // broadcast's - a load that was already in flight when the broadcast
     // committed can return an OLDER state (its read predates the commit), so
     // one more load is chained in that case.
     const packedRefetchInFlight = useRef<Set<string>>(new Set());
@@ -781,7 +802,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 return;
             }
             lastAppliedVersionRef.current = incomingVersion;
-            // A live broadcast is the freshest authoritative version — feed the
+            // A live broadcast is the freshest authoritative version - feed the
             // move-stamping store so the next tap carries the current round.
             noteAuthoritativeVersion(gateGameRef.current, incomingVersion);
 
@@ -789,7 +810,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             // confirms are on the table BUT whose confirming broadcast was
             // dropped by the version gate (i.e. NOT named by this broadcast's
             // own events). Cards this broadcast DOES name are deliberately left
-            // for the per-event dedup below — releasing them here first would
+            // for the per-event dedup below - releasing them here first would
             // make their own confirming event look un-optimistic and animate a
             // second time (the double-play bug). message.game is the pristine
             // server state here (resolveOptimisticConflicts hasn't injected yet).
@@ -933,7 +954,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         if (revertEvents.length === 0) {
             // Queue all events from the sequence
-            setAnimationQueue(prev => [...prev, ...message.events]);
+            enqueue(message.events);
             return;
         }
 
@@ -1061,7 +1082,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 ...restEvents       // Then magic_transition + cards_to_trash
             ];
 
-            setAnimationQueue(prev => [...prev, ...queueOrder]);
+            enqueue(queueOrder);
         } else if (firstAttackIndex >= 0) {
             // Queue reverts IMMEDIATELY before the valid attack for parallel visual effect
             const eventsBeforeAttack = message.events.slice(0, firstAttackIndex);
@@ -1073,7 +1094,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 ...restEvents       // Valid attack animates right after (looks parallel)
             ];
 
-            setAnimationQueue(prev => [...prev, ...queueOrder]);
+            enqueue(queueOrder);
         } else if (firstPickupIndex >= 0) {
             // Queue reverts before the pickup so card goes back to hand first
             const eventsBeforePickup = message.events.slice(0, firstPickupIndex);
@@ -1085,16 +1106,16 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 ...restEvents       // Then pickup animates
             ];
 
-            setAnimationQueue(prev => [...prev, ...queueOrder]);
+            enqueue(queueOrder);
         } else {
-            setAnimationQueue(prev => [...prev, ...revertEvents, ...message.events]);
+            enqueue([...revertEvents, ...message.events]);
         }
     };
 
 
     // TODO(redo properly): this serial setTimeout-driven event queue is a React
     // workaround for the lack of a shared-element transition. It should be replaced
-    // with a proper animation model (the way the iOS client does it — GPU-driven
+    // with a proper animation model (the way the iOS client does it - GPU-driven
     // matchedGeometry-style flights + structured sequencing, no setTimeout chain).
     // Process the animation queue
     const processAnimationQueue = useCallback(() => {
@@ -1121,6 +1142,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         }
 
         const nextAnimation = animationQueueRef.current[0];
+        animationQueueRef.current = animationQueueRef.current.slice(1);
 
         // Check if this animation is from a bot player
         if (nextAnimation.seat !== undefined && url_game_id) {
@@ -1133,7 +1155,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         }
 
         setCurrentAnimation(nextAnimation);
-        setAnimationQueue(prev => prev.slice(1));
+        setAnimationQueue(animationQueueRef.current);
         setIsAnimating(true);
 
         // Drop the deck's displayed count NOW (in the same render as currentAnimation
@@ -1148,13 +1170,15 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             setInFlightToFlipped(0);
         }
 
-        // Start tracking cards in this animation (simplified - CSS handles the actual animation)
+        // The cards in flight, hidden at the places the flight leaves and lands on
+        // (flightPlaces) until it lands.
+        const places = flightPlaces(nextAnimation.from_location, nextAnimation.to_location, nextAnimation.seat);
         if (nextAnimation.cards && nextAnimation.cards.length > 0) {
             setAnimatingCards(prev => {
                 const newAnimatingCards = new Map(prev);
 
-                nextAnimation.cards!.forEach(card => {
-                    const cardKey = getCardKeyOwner(card, nextAnimation.seat);
+                nextAnimation.cards!.forEach(card => places.forEach(place => {
+                    const cardKey = getCardKeyOwner(card, place);
                     newAnimatingCards.set(cardKey, {
                         animationType: nextAnimation.type,
                         progress: 1, // Always 1 - CSS transitions handle the animation
@@ -1162,7 +1186,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                         toLocation: nextAnimation.to_location || null,
                         startTime: Date.now()
                     });
-                });
+                }));
 
                 return newAnimatingCards;
             });
@@ -1194,10 +1218,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             if (nextAnimation.cards) {
                 setAnimatingCards(prev => {
                     const updated = new Map(prev);
-                    nextAnimation.cards!.forEach(card => {
-                        const cardKey = getCardKeyOwner(card, nextAnimation.seat);
-                        updated.delete(cardKey);
-                    });
+                    nextAnimation.cards!.forEach(card => places.forEach(place => {
+                        updated.delete(getCardKeyOwner(card, place));
+                    }));
                     return updated;
                 });
 
@@ -1216,33 +1239,25 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 remainingSequenceEventsRef.current--;
             }
 
-            // Inter-event gap. This is NOT pure dead air — it's coupled to the
-            // AnimationOverlay's per-event lifecycle, which ends by scheduling a "clear
-            // overlay" timeout. If the previous event's clear fires AFTER the next event
-            // has created its cards, it wipes them mid-flight (cards teleport; multi-card
-            // deals lose every card after the first). With the overlay clearing at
-            // ANIMATION_TIME (see AnimationOverlay), the safety margin before the next
-            // event's cards are created is (gap + ANIMATION_TIME) − (overlay clear) and
-            // works out to ~gap ms, so this 25ms keeps a real (if small) margin. The two
-            // constants are a matched pair — don't lower one without the other.
-            setTimeout(processAnimationQueue, 25);
+            // The next flight starts in this same commit: the board this one landed
+            // on, its card shown where it landed, and the next flight's cards
+            // (AnimationOverlay builds them before the browser paints) are one frame,
+            // so no card is ever drawn in two places or in none between two events.
+            processAnimationQueueRef.current();
         }, ANIMATION_TIME);
     }, [updateGameState, url_game_id, games]);
+    const processAnimationQueueRef = useRef(processAnimationQueue);
+    processAnimationQueueRef.current = processAnimationQueue;
 
     // Start processing queue when items are added and no animation is running
     useEffect(() => {
-        if (animationQueue.length > 0 && !isAnimating) {
+        if (animationQueueRef.current.length > 0 && !isAnimating) {
             processAnimationQueue();
         }
     }, [animationQueue, isAnimating, processAnimationQueue]);
 
     // Queue a single animation
-    const queueAnimation = (event: ClientAnimationEvent) => {
-        setAnimationQueue(prev => {
-            const newQueue = [...prev, event];
-            return newQueue;
-        });
-    };
+    const queueAnimation = (event: ClientAnimationEvent) => enqueue([event]);
 
     // Get animation state for a specific card
     const getCardAnimationState = (card: Card, owner?: number | string) => {
@@ -1339,7 +1354,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         // validates below is what travels as the binary POST body.
         const wire = encodeAction({ kind: 'attack', cards });
 
-        // 1. Send the request BEFORE validating — the server is authoritative and
+        // 1. Send the request BEFORE validating - the server is authoritative and
         //    rejects illegal moves, so we don't block the round-trip on local
         //    validation. `valid` is captured by the server method's deferred
         //    optimistic patch (applied only if still valid) and gates the optimistic
@@ -1401,9 +1416,11 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
                 queueAnimation(revertEvent);
 
-                // Clear from optimistic tracking
+                // Clear from optimistic tracking: a refused card is pending nowhere,
+                // so a resync (optimisticOverlay) does not lay it again.
                 const fallbackCardEventString = createCardEventString('attack_pass', card, 'hand', 'table', seatOf(game));
                 optimisticAnimations.current.delete(fallbackCardEventString);
+                optimisticCardPositions.current.delete(cardKey);
             });
 
             throw error;
@@ -1491,6 +1508,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     });
 
                     optimisticAnimations.current.delete(createCardEventString('attack_pass', card, 'hand', 'table', seatOf(game)));
+                    optimisticCardPositions.current.delete(cardKey);
                 });
             }
             throw error;
@@ -1564,6 +1582,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 });
 
                 optimisticAnimations.current.delete(createCardEventString('pickup', card, 'table', 'hand', seatOf(game)));
+                optimisticCardPositions.current.delete(cardKey);
             });
             throw error;
         }
@@ -1578,7 +1597,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         // One awire buffer for the gate + the POST body (see attack). A
         // mismatched cover/attack pairing throws here (a client bug, not a
-        // race) — the caller sees a rejected promise, same as a server reject.
+        // race) - the caller sees a rejected promise, same as a server reject.
         const wire = encodeAction({ kind: 'cover', cards: coverCards, attack_cards: attackCards });
 
         // 1. Send the request BEFORE validating (server is authoritative; see attack).
@@ -1663,6 +1682,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 });
 
                 optimisticAnimations.current.delete(createCardEventString('cover', card, 'hand', 'table', seatOf(game)));
+                optimisticCardPositions.current.delete(cardKey);
             });
             throw error;
         }

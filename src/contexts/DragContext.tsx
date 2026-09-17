@@ -70,7 +70,7 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
             if (tableCardUnderCursor && !covered(tableCardUnderCursor)) {
                 // Dragging to an uncovered attack card
                 if (cardsToUse.length === 1) {
-                    // Single card cover — only if it actually beats the
+                    // Single card cover - only if it actually beats the
                     // target (the kernel rejects CANNOT_COVER; without this
                     // check an illegal drop fired a doomed request)
                     if (!canCoverPair(tableCardUnderCursor.attack, cardsToUse[0], game.powerSuit)) {
@@ -298,35 +298,32 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
             // Use all selected cards if the dragged card is selected, otherwise just the dragged card
             const cardsToUse = isDraggedCardSelected && selectedCards.length > 0 ? selectedCards : [draggedCard];
 
+            // A move spends the selection when it is sent, refused or not (see ActionButtons).
+            const sends = action.type === 'attack' || action.type === 'pass'
+                || (action.type === 'cover' && !!action.targetCard)
+                || (action.type === 'multicover' && !!action.coverCards && !!action.attackCards);
+            if (sends) setSelectedCards([]);
             if (action.type === 'attack') {
-                attack(cardsToUse).then(() => {
-                    setSelectedCards([]); // Clear selection after successful action
-                }).catch((e) => {
+                attack(cardsToUse).catch((e) => {
                     console.error('Attack failed:', e.message);
                 });
 
             } else if (action.type === 'cover' && action.targetCard) {
                 // Single card cover
                 const cardToUse = cardsToUse[0];
-                cover([cardToUse], [action.targetCard]).then(() => {
-                    setSelectedCards([]); // Clear selection after successful action
-                }).catch((e) => {
+                cover([cardToUse], [action.targetCard]).catch((e) => {
                     console.error('Cover failed:', e.message);
                 });
 
             } else if (action.type === 'multicover' && action.coverCards && action.attackCards) {
                 // Multi-card cover with unambiguous mapping
-                cover(action.coverCards, action.attackCards).then(() => {
-                    setSelectedCards([]); // Clear selection after successful action
-                }).catch((e) => {
+                cover(action.coverCards, action.attackCards).catch((e) => {
                     console.error('Multi-card cover failed:', e.message);
                 });
 
             } else if (action.type === 'pass') {
 
-                pass(cardsToUse).then(() => {
-                    setSelectedCards([]); // Clear selection after successful action
-                }).catch((e) => {
+                pass(cardsToUse).catch((e) => {
                     console.error('Pass failed:', e.message);
                 });
             }

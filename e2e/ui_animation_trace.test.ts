@@ -31,10 +31,13 @@
  *     siblings): a flight that looks up a different element starts or ends
  *     somewhere else, and the overlay's inline position says so.
  *
- * Two things hold on every case whatever the golden says: no board the store
+ * Three things hold on every case whatever the golden says: no board the store
  * holds shows a card twice (on the table, either side of a battle, and in my
- * hand), and once every push has been delivered the store's board is the one
- * the server holds for me - the page settles on the truth.
+ * hand); no frame of the page draws a card twice (a flight and the place it left
+ * or lands on, say), and a card a case tracks is drawn exactly once on every
+ * frame; and once every push has been delivered the store's board is the one
+ * the server holds for me - the page settles on the truth, a lost push after a
+ * refusal included.
  *
  * A frame is the page's HTML and the store it was drawn from; the golden holds
  * each distinct frame's time and hash. UPDATE_UI_ANIM=1 rewrites the goldens; UI_ANIM_DUMP=<dir> writes every
@@ -307,10 +310,38 @@ const settled = (view: any) => ({
     seats: view.seats.map((x: any) => [x.status, x.handCount]),
 });
 
+// The card faces the page shows, as their printed corner ("8\u2665"): every CardFace on
+// the table, in a hand, on the flipped slot or in flight, unless it or a parent is
+// hidden. A card may be in one place at a time - a flight carries the card, so the
+// place it left and the place it is going to must not also show it.
+const CARD_FACE_TEXT = /^(10|[2-9JQKA])([\u2660\u2665\u2663\u2666])/u;
+function visibleFaces(host: HTMLElement): string[] {
+    const out: string[] = [];
+    for (const el of Array.from(host.querySelectorAll<HTMLElement>('div'))) {
+        if (!el.style.fontFamily.startsWith('Georgia')) continue;
+        let hidden = false;
+        for (let e: HTMLElement | null = el; e && e !== host; e = e.parentElement) {
+            if (e.style.visibility === 'hidden' || e.style.opacity === '0' || e.style.display === 'none') { hidden = true; break; }
+        }
+        if (hidden) continue;
+        const m = CARD_FACE_TEXT.exec(el.textContent ?? '');
+        if (m) out.push(m[1] + m[2]);
+    }
+    return out;
+}
+// The kernel's notation ("6s") as the page prints it ("6\u2660").
+const printed = (card: string) => `${card[0] === 'T' ? '10' : card[0]}${'\u2660\u2665\u2663\u2666'['shcd'.indexOf(card[1])]}`;
+
 class Stage {
     frames: Frame[] = [];
     /** Boards the store held that showed a card twice. */
     doubled: string[] = [];
+    /** Frames whose page showed a card twice: in flight and where it left or lands, say. */
+    shownTwice: string[] = [];
+    /** Cards that must show exactly once on every frame from `tracking` on, and the frames that did not. */
+    tracked: string[] = [];
+    lostOrDoubled: string[] = [];
+    track(...cards: string[]): void { this.tracked = cards.map(printed); }
     host!: HTMLElement;
     root: any;
     act!: (fn: () => unknown) => Promise<void>;
@@ -371,6 +402,13 @@ class Stage {
             const cards = shown(view);
             const twice = cards.filter((c, i) => cards.indexOf(c) !== i);
             if (twice.length > 0) this.doubled.push(`${clock}ms (${label}): ${twice.join(' ')}`);
+        }
+        const faces = visibleFaces(this.host);
+        const twiceOnPage = faces.filter((c, i) => faces.indexOf(c) !== i);
+        if (twiceOnPage.length > 0) this.shownTwice.push(`${clock}ms (${label}): ${twiceOnPage.join(' ')}`);
+        for (const c of this.tracked) {
+            const n = faces.filter((f) => f === c).length;
+            if (n !== 1) this.lostOrDoubled.push(`${clock}ms (${label}): ${c} shown ${n} times`);
         }
         const last = this.frames[this.frames.length - 1];
         if (!last || last.html !== html) this.frames.push({ t: clock, label, html });
@@ -499,7 +537,9 @@ async function play(name: string, seed: number, gid: string, board: TableFixture
         await stage.advance(6000);
         assert.equal(pending.length, 0, `${name}: every request was answered`);
         assert.deepEqual(stage.doubled, [], `${name}: a board showed a card twice`);
-        if ((server.outbox.get(ME) ?? []).length === 0 && !server.lost) {
+        assert.deepEqual(stage.shownTwice, [], `${name}: the page showed a card twice`);
+        assert.deepEqual(stage.lostOrDoubled, [], `${name}: a tracked card was not on the page exactly once`);
+        if ((server.outbox.get(ME) ?? []).length === 0) {
             const mine = clientTable().adoptEnvelope(server.envelope(ME))!;
             assert.deepEqual(settled(JSON.parse(probe.store).view), settled(mine), `${name}: the page settles on the server's board`);
         }
@@ -521,11 +561,42 @@ const three = () => fixture().title('Three of us').seats([seat(ANNA, 'Anna'), se
 const threeMeFirst = () => fixture().title('Three of us').seats([seat(ME, 'Me'), seat(ANNA, 'Anna'), seat(BORIS, 'Boris')])
     .status(PLAYING).deterministic().trump('Kc').deck('7s 8s 9s Ts');
 
+// The cards in flight on the overlay: where each is drawn, its scale, and whether it is a refusal's red return.
+const flights = (host: HTMLElement) => Array.from(host.querySelectorAll<HTMLElement>('div'))
+    .filter((d) => d.style.position === 'fixed' && d.style.zIndex === '10000')
+    .flatMap((o) => Array.from(o.children) as HTMLElement[])
+    .map((c) => ({
+        left: parseFloat(c.style.left), top: parseFloat(c.style.top),
+        scale: parseFloat(/scale\(([0-9.]+)\)/.exec(c.style.transform)?.[1] ?? 'NaN'),
+        red: c.innerHTML.includes('rgb(255, 150, 150)'),
+    }));
+
+// The page's own controls: a tap on a hand card (DragContext's tap is a press and a
+// release inside 150 ms) and the Attack button.
+const handCard = (host: HTMLElement, card: string) => {
+    const c = cards(card)[0];
+    const el = host.querySelector<HTMLElement>(`[data-location="hand"][data-card="${c.suit}-${c.value}"]`);
+    assert.ok(el, `${card} is in my hand`);
+    return el;
+};
+const selectedInHand = (host: HTMLElement): string[] =>
+    Array.from(host.querySelectorAll<HTMLElement>('[data-location="hand"][data-card]'))
+        .filter((el) => el.style.border.includes('rgb(255, 0, 0)') || el.style.border.includes(' red'))
+        .map((el) => el.getAttribute('data-card')!);
+const attackButton = (host: HTMLElement): HTMLElement | null =>
+    Array.from(host.querySelectorAll<HTMLElement>('.btn-action-text')).find((el) => el.textContent === 'Attack') ?? null;
+async function tapCard(s: Stage, card: string): Promise<void> {
+    await s.step(`tap ${card}`, () => { handCard(s.host, card).dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true })); });
+    await s.advance(40);
+    await s.step(`release ${card}`, () => { dom.window.document.dispatchEvent(new dom.window.MouseEvent('mouseup', { bubbles: true })); });
+}
+
 // ---- the cases ------------------------------------------------------------------------------
 
 test('attack: my card flies to the table, the server confirms it', async () => {
     const board = two(0).hand(0, '6s 6h Qd Ad 9c Tc').hand(1, '7h 8h 9h Th Jh Qh').attacker(0).defender(1).build();
     await play('attack', 101, 'an-attack', board, async (s) => {
+        s.track('6s');
         await s.step('tap attack 6s', () => tap(probe.anim.attack(cards('6s'))));
         await s.advance(120);
         await answer(s, 'server applies');
@@ -537,6 +608,7 @@ test('attack: my card flies to the table, the server confirms it', async () => {
 test('cover: my card covers the attack, the server confirms it', async () => {
     const board = two(1).hand(0, '9c Tc Jd Qd').hand(1, '8h 7d Ad Js Qs Ks').table('6h').attacker(0).defender(1).build();
     await play('cover', 102, 'a-cover', board, async (s) => {
+        s.track('8h', '6h');
         await s.step('tap cover 8h on 6h', () => tap(probe.anim.cover(cards('8h'), cards('6h'))));
         await s.advance(150);
         await answer(s, 'server applies');
@@ -548,6 +620,7 @@ test('cover: my card covers the attack, the server confirms it', async () => {
 test('pass: I hand the attack on with a card of its rank', async () => {
     const board = three().hand(0, '9c Tc Jd Qd').hand(1, '7d 8d Ad').hand(2, '6s Js Qs Ks As').table('7h').attacker(0).defender(1).build();
     await play('pass', 103, 'a-pass', board, async (s) => {
+        s.track('7d', '7h');
         await s.step('tap pass 7d', () => tap(probe.anim.pass(cards('7d'))));
         await s.advance(600);
         await answer(s, 'server applies');
@@ -559,6 +632,7 @@ test('pass: I hand the attack on with a card of its rank', async () => {
 test('pickup: I take the table', async () => {
     const board = two(1).hand(0, '9c Tc Jd').hand(1, 'Js Qs Ks').table('6h/8h', '6d').attacker(0).defender(1).build();
     await play('pickup', 104, 'a-pickup', board, async (s) => {
+        s.track('6h', '8h', '6d');
         await s.step('tap pickup', () => tap(probe.anim.pickup()));
         await s.advance(200);
         await answer(s, 'server applies');
@@ -599,6 +673,7 @@ test('a rejected move, the refusal first: the defender took the table before my 
     const board = threeMeFirst().hand(0, '6s Tc Jd').hand(1, 'Js Qs Ks As').hand(2, '9d Qd 6d').table('6h')
         .attacker(0).defender(1).build();
     await play('rejected_refusal_first', 107, 'a-reject-1', board, async (s, srv) => {
+        s.track('6s');
         await s.step('Anna picks up on the server', () => { srv.act(ANNA, encodeAction({ kind: 'pickup' })); });
         await s.step('tap attack 6s', () => tap(probe.anim.attack(cards('6s'))));
         await s.advance(150);
@@ -612,15 +687,27 @@ test('a rejected move whose push never arrives: the card goes home and stays the
     const board = threeMeFirst().hand(0, '6s Tc Jd').hand(1, 'Js Qs Ks As').hand(2, '9d Qd 6d').table('6h')
         .attacker(0).defender(1).build();
     await play('rejected_push_lost', 118, 'a-reject-lost', board, async (s, srv) => {
+        s.track('6s');
         await s.step('Anna picks up on the server', () => { srv.act(ANNA, encodeAction({ kind: 'pickup' })); });
         srv.lose(ME);   // the pickup's push to me is lost
         await s.step('tap attack 6s', () => tap(probe.anim.attack(cards('6s'))));
-        await s.advance(150);
+        await s.advance(25);
+        const landing = flights(s.host);
+        assert.equal(landing.length, 1, 'the six flies to the table');
+        await s.advance(125);
         await answer(s, 'server rejects mine');
+        await s.advance(350);
+        // The flight has landed on a table that will never show the six: it flies home from where it landed...
+        assert.deepEqual(flights(s.host), [{ ...landing[0], scale: 1.8, red: true }], 'the return flight starts where and as the six landed');
+        await s.advance(25);
+        // ... to its own place in my hand, which kept it (hidden) all along.
+        const home = handCard(s.host, '6s').getBoundingClientRect();
+        assert.deepEqual(flights(s.host), [{ left: home.left + home.width / 2 - 35, top: home.top + home.height / 2 - 45, scale: 1.8, red: true }],
+            'and lands on its own place in my hand');
         await s.advance(2500);
         const view = JSON.parse(probe.store).view;
         assert.ok(view.myHand.some((c: any) => c.suit === 0 && c.value === 5), 'the refused card is back in my hand');
-        assert.equal(view.battles.length, 1, 'and not on the table: the table is the one I last saw');
+        assert.equal(view.battles.length, 0, 'and the page has caught up with the pickup it never heard about: a refusal reconciles');
     });
 });
 
@@ -628,6 +715,7 @@ test('a rejected move refused after my card has landed, its push never arriving:
     const board = threeMeFirst().hand(0, '6s Tc Jd').hand(1, 'Js Qs Ks As').hand(2, '9d Qd 6d').table('6h')
         .attacker(0).defender(1).build();
     await play('rejected_late_push_lost', 119, 'a-reject-late', board, async (s, srv) => {
+        s.track('6s');
         await s.step('Anna picks up on the server', () => { srv.act(ANNA, encodeAction({ kind: 'pickup' })); });
         srv.lose(ME);   // the pickup's push to me is lost
         await s.step('tap attack 6s', () => tap(probe.anim.attack(cards('6s'))));
@@ -636,7 +724,35 @@ test('a rejected move refused after my card has landed, its push never arriving:
         await s.advance(2500);
         const view = JSON.parse(probe.store).view;
         assert.ok(view.myHand.some((c: any) => c.suit === 0 && c.value === 5), 'the refused card is back in my hand');
-        assert.equal(view.battles.length, 1, 'and not on the table: the table is the one I last saw');
+        assert.equal(view.battles.length, 0, 'and the page has caught up with the pickup it never heard about: a refusal reconciles');
+    });
+});
+
+test('a refused card comes home unselected: the next pick is a pick of its own, and Attack is offered for it', async () => {
+    const board = two(0).hand(0, '6s 6c Qd Ad').hand(1, '7h 8h 9h Th').table('6h').attacker(0).defender(1).build();
+    await play('refused_selection', 120, 'a-refused-pick', board, async (s, srv) => {
+        await tapCard(s, '6s');
+        assert.deepEqual(selectedInHand(s.host), ['0-5'], 'the tap selects the six');
+        const attack = attackButton(s.host);
+        assert.ok(attack, 'Attack is offered for the six');
+        await s.step('click Attack', () => { attack!.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })); });
+        await s.advance(200);
+        // The server refuses the throw-in as aimed at a round that closed first.
+        const req = pending.shift();
+        assert.ok(req && req.kind === 'action', 'the attack was sent');
+        await s.step('server refuses mine: stale round', async () => {
+            const decoded = fixtureTable().requestDecode(new Uint8Array(await (req!.body as Blob).arrayBuffer()));
+            assert.ok(typeof decoded !== 'number', 'the request decodes');
+            const r = srv.op(ME, (t) => t.act(ME, decoded.wire, 0, 1));
+            assert.equal(r.rc, L.TABLE_STALE_ROUND, 'the server refuses it as stale');
+            const response = fixtureTable().actionResponse(r.rc, r.reject, srv.version);
+            req!.resolve({ data: response.buffer.slice(response.byteOffset, response.byteOffset + response.byteLength), error: null });
+        });
+        await s.advance(1500);
+        assert.deepEqual(selectedInHand(s.host), [], 'the refused six came home unselected');
+        await tapCard(s, '6c');
+        assert.deepEqual(selectedInHand(s.host), ['2-5'], 'the next tap selects only its own card');
+        assert.ok(attackButton(s.host), 'and Attack is offered for it');
     });
 });
 
@@ -644,6 +760,7 @@ test('a rejected move, the push first: the pickup lands before the refusal', asy
     const board = threeMeFirst().hand(0, '6s Tc Jd').hand(1, 'Js Qs Ks As').hand(2, '9d Qd 6d').table('6h')
         .attacker(0).defender(1).build();
     await play('rejected_push_first', 108, 'a-reject-2', board, async (s, srv) => {
+        s.track('6s');
         await s.step('Anna picks up on the server', () => { srv.act(ANNA, encodeAction({ kind: 'pickup' })); });
         await s.step('tap attack 6s', () => tap(probe.anim.attack(cards('6s'))));
         await s.advance(150);

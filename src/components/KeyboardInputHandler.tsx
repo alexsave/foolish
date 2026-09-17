@@ -40,8 +40,8 @@ export const KeyboardInputHandler = () => {
     // (kernelUnambiguousCover -> legal.c unambiguous_cover), shared by every
     // input path and every host (A7/F9).
     //
-    // Pass legality uses the SHARED canPass (src/utils/gameValidation.ts) — the
-    // same predicate the buttons/drag use — so the keyboard path can't diverge.
+    // Pass legality uses the SHARED canPass (src/utils/gameValidation.ts) - the
+    // same predicate the buttons/drag use - so the keyboard path can't diverge.
     // The previous local copy omitted the next-player capacity check AND the
     // eliminated-seat skip, so it offered passes the server would reject.
 
@@ -49,9 +49,10 @@ export const KeyboardInputHandler = () => {
     const handleAttack = useCallback(async () => {
         if (!game || selectedCards.length === 0) return;
 
+        // A move spends the selection when it is sent, refused or not (see ActionButtons).
         try {
+            setSelectedCards([]);
             await attack(selectedCards);
-            setSelectedCards([]); // Clear selection after successful action
         } catch (error) {
             console.error('Attack failed:', error);
         }
@@ -70,8 +71,8 @@ export const KeyboardInputHandler = () => {
                 
                 if (validTargets.length === 1) {
                     // Card can only cover one specific attack - allow cover action
+                    setSelectedCards([]);
                     await cover([selectedCards[0]], [validTargets[0].attack]);
-                    setSelectedCards([]); // Clear selection after successful action
                 } else {
                     console.error('Cover is ambiguous or invalid');
                 }
@@ -81,8 +82,8 @@ export const KeyboardInputHandler = () => {
                     ? kernelUnambiguousCover(selectedCards, game.battles, game.powerSuit)
                     : null;
                 if (unambiguousCover) {
+                    setSelectedCards([]);
                     await cover(unambiguousCover.coverCards, unambiguousCover.attackCards);
-                    setSelectedCards([]); // Clear selection after successful action
                 } else {
                     console.error('Multi-card cover is ambiguous or invalid');
                 }
@@ -98,8 +99,8 @@ export const KeyboardInputHandler = () => {
 
         try {
             if (canPass(game, selectedCards)) {
+                setSelectedCards([]);
                 await pass(selectedCards);
-                setSelectedCards([]); // Clear selection after successful action
             } else {
                 console.error('Pass is not valid');
             }
@@ -112,8 +113,8 @@ export const KeyboardInputHandler = () => {
         if (!game) return;
 
         try {
+            setSelectedCards([]);
             await pickup();
-            setSelectedCards([]); // Clear selection after successful action
         } catch (error) {
             console.error('Pickup failed:', error);
         }
@@ -123,8 +124,8 @@ export const KeyboardInputHandler = () => {
         if (!game) return;
 
         try {
+            setSelectedCards([]);
             await good();
-            setSelectedCards([]); // Clear selection after successful action
         } catch (error) {
             console.error('Good failed:', error);
         }

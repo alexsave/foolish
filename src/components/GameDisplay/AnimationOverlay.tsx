@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useLayoutEffect, useState, useRef } from 'react';
 import { ANIMATION_TIME, useAnimation } from '../../contexts/AnimationContext';
 import { covered, seatKey, type ViewCard as Card } from '../../state/view';
 import { CardFace } from './CardFace';
@@ -9,7 +9,7 @@ import { useServer } from '../../contexts/ServerContext';
 import { canCoverPair } from '../../utils/gameValidation';
 
 // Table-slot geometry cache (Stage 9). The on-table battle layout is a function of
-// only (how many battle slots there are, the viewport size) — the 4th slot in a
+// only (how many battle slots there are, the viewport size) - the 4th slot in a
 // 4-slot table sits in the same place as the 4th slot in any other 4-slot table, so
 // once measured we never need to re-measure that (count, index) at that viewport.
 // This lets us skip the expensive measure path below (create placeholders → force a
@@ -23,6 +23,11 @@ const tableSlotPositionCache = new Map<string, { x: number; y: number }>();
 const tableSlotKey = (totalSlots: number, slotIndex: number): string =>
     `${window.innerWidth}x${window.innerHeight}|${totalSlots}|${slotIndex}`;
 
+// Where each card's last flight to the table landed, by card. A card whose move the
+// server refused lands on the table in flight only - no board ever lays it - so its
+// return flight starts from the spot the outbound flight left it at.
+const tableLandings = new Map<string, { x: number; y: number }>();
+
 interface AnimatedCard {
     id: string;
     card: Card;
@@ -34,6 +39,8 @@ interface AnimatedCard {
     isSanitizedRefill?: boolean;
     cardCount?: number;
     isRevert?: boolean; // Flag for reverted optimistic animations
+    flight: object; // the event this card flies for
+    fromLanding?: boolean; // starts where an earlier flight landed, at that flight's landing scale
 }
 
 export const AnimationOverlay = () => {
@@ -74,9 +81,10 @@ export const AnimationOverlay = () => {
                 }
             }
             
-            // If we have specific card coordinates, try to find that card
+            // If we have specific card coordinates, try to find that card ON THE TABLE
+            // (the same card in a hand is not where a table flight starts or ends)
             if (cardSuit !== undefined && cardValue !== undefined) {
-                const cardSelector = `[data-card="${cardSuit}-${cardValue}"]`;
+                const cardSelector = `[data-location="table"] [data-card="${cardSuit}-${cardValue}"]`;
                 const cardElement = document.querySelector(cardSelector) as HTMLElement | null;
                 if (cardElement) {
                     return cardElement;
@@ -126,7 +134,7 @@ export const AnimationOverlay = () => {
             }
 
             // Find the table battles container. The container itself is tagged
-            // (data-table-container) so this also works when the table is EMPTY —
+            // (data-table-container) so this also works when the table is EMPTY -
             // an opponent's first attack of a bout used to find no
             // [data-location="table"] child at all and fall back to a generic
             // center position instead of the real first slot.
@@ -188,10 +196,10 @@ export const AnimationOverlay = () => {
 
     // Measure where cards ENTERING the local player's hand will actually land.
     // The rendered hand appends new cards at the END (displayedHand), but the
-    // old targeting picked querySelector's FIRST hand-card match — so drawn
+    // old targeting picked querySelector's FIRST hand-card match - so drawn
     // cards flew toward the leftmost card instead of their landing slot. Same
     // placeholder trick as the table slots: append invisible flex items with a
-    // real card's flex geometry, reflow, measure, remove — the measured spots
+    // real card's flex geometry, reflow, measure, remove - the measured spots
     // include the squeeze the incoming cards cause. Returns [] for players
     // without a per-card hand in the DOM (opponents' mini-hands).
     const measureHandSlotPositions = (count: number, playerId?: string): { x: number; y: number }[] => {
@@ -241,8 +249,14 @@ export const AnimationOverlay = () => {
         }
     };
 
-    useEffect(() => {
+    // Built in a layout effect, before the browser paints the commit that started
+    // the flight: that commit hides the card where it stands (CardFace), and the
+    // flight must show it in the same frame. The flight lives exactly as long as its
+    // event: the commit that lands it (AnimationContext) takes it off the overlay in
+    // the frame the board shows the card where it landed.
+    useLayoutEffect(() => {
         if (!currentAnimation || !isAnimating) {
+            setAnimatedCards((prev) => (prev.length === 0 ? prev : []));
             return;
         }
 
@@ -256,21 +270,16 @@ export const AnimationOverlay = () => {
         const eventBoard = currentAnimation.game_state ?? game;
         const player_id = seat === undefined ? undefined : seatKey(eventBoard, seat);
 
-        // Handle magic_transition separately since it doesn't have cards
-        if (type === 'magic_transition') {
-            return; // Magic transitions are just messages, no visual animation needed
-        }
-        
-        // All other animation types need cards
-        if (!cards || cards.length === 0) {
+        // Magic transitions are just messages, and every other type needs cards
+        if (type === 'magic_transition' || !cards || cards.length === 0) {
+            setAnimatedCards((prev) => (prev.length === 0 ? prev : []));
             return;
         }
 
         // Check if cards are sanitized (refill from other players)
         const isSanitized = cards.every(card => card.suit === -1 && card.value === -1);
 
-        // Small delay to ensure DOM is ready
-        setTimeout(() => {
+        {
             // Measure placeholder positions for precise targeting
             const measuredPositions = measurePlaceholderPositions(type, cards, player_id);
             
@@ -296,7 +305,8 @@ export const AnimationOverlay = () => {
                     playerId: player_id,
                     isSanitizedRefill: true,
                     cardCount: cards.length,
-                    isRevert: is_revert
+                    isRevert: is_revert,
+                    flight: currentAnimation,
                 };
 
                 setAnimatedCards([newAnimatedCard]);
@@ -304,7 +314,7 @@ export const AnimationOverlay = () => {
                 // Render individual CardFaces for normal cards
                 const newAnimatedCards: AnimatedCard[] = [];
 
-                // Cards entering the local hand land at its END — measure those
+                // Cards entering the local hand land at its END - measure those
                 // slots once for the whole batch (deal/refill/pickup).
                 const handSlots = to_location === 'hand'
                     ? measureHandSlotPositions(cards.length, player_id)
@@ -318,16 +328,21 @@ export const AnimationOverlay = () => {
                     let sourceElement: HTMLElement | null = null;
                     let startPos: { x: number; y: number };
                     
+                    let remembered: { x: number; y: number } | undefined;
                     if (from_location === 'hand') {
                         sourceElement = findElementByLocation('hand', player_id, card.suit, card.value);
                     } else if (from_location === 'deck') {
                         sourceElement = findElementByLocation('deck');
                     } else if (from_location === 'table') {
-                        sourceElement = findElementByLocation('table', undefined, card.suit, card.value);
+                        sourceElement = document.querySelector(`[data-location="table"] [data-card="${card.suit}-${card.value}"]`) as HTMLElement | null;
+                        remembered = sourceElement ? undefined : tableLandings.get(`${card.suit}-${card.value}`);
+                        if (!sourceElement && !remembered) sourceElement = findElementByLocation('table', undefined, card.suit, card.value);
                     }
 
                     if (sourceElement) {
                         startPos = getElementPosition(sourceElement);
+                    } else if (remembered) {
+                        startPos = { ...remembered };
                     } else {
                         startPos = getFallbackPosition(from_location || 'hand', player_id);
                     }
@@ -403,10 +418,15 @@ export const AnimationOverlay = () => {
                                 }
                             }
                         } else if (type === 'attack_pass') {
-                            // For attack/pass, use measured placeholder positions for precision
+                            // For attack/pass, use measured placeholder positions for precision,
+                            // unless the board already shows the card (a confirmation that
+                            // beat its flight): then that card is where it lands.
                             const measuredPos = measuredPositions.get(`${index}`);
-                            
-                            if (measuredPos) {
+                            const standing = document.querySelector(`[data-location="table"] [data-card="${card.suit}-${card.value}"]`) as HTMLElement | null;
+
+                            if (standing) {
+                                endPos = getElementPosition(standing);
+                            } else if (measuredPos) {
                                 // Use the precisely measured position from invisible placeholder
                                 endPos = measuredPos;
                             } else {
@@ -434,10 +454,18 @@ export const AnimationOverlay = () => {
                     } else {
                         // Handle all other destination types
                         if (to_location === 'hand') {
-                            // Precisely measured landing slot for the local hand;
-                            // opponents' mini-hands fall through to their container.
+                            // The card's own place when the hand already holds it (a
+                            // refused card never left the board's hand; a board committed
+                            // before the flight shows it there), else the precisely
+                            // measured landing slot for the local hand; opponents'
+                            // mini-hands fall through to their container.
+                            const own = player_id
+                                ? document.querySelector(`[data-location="hand"][data-player-id="${player_id}"][data-card="${card.suit}-${card.value}"]`) as HTMLElement | null
+                                : null;
                             const slot = handSlots[index];
-                            if (slot) {
+                            if (own) {
+                                endPos = getElementPosition(own);
+                            } else if (slot) {
                                 endPos = slot;
                             } else {
                                 destinationElement = findElementByLocation('hand', player_id);
@@ -457,7 +485,7 @@ export const AnimationOverlay = () => {
 
                     // Small offset so simultaneous cards into the same UNMEASURED
                     // area don't fully overlap; measured targets (table slots, hand
-                    // slots) are exact — offsetting them would re-introduce drift.
+                    // slots) are exact - offsetting them would re-introduce drift.
                     const preciselyMeasured = (to_location === 'hand' && handSlots[index] !== undefined) ||
                         (type === 'attack_pass' && measuredPositions.get(`${index}`) !== undefined);
                     if (!preciselyMeasured) {
@@ -466,7 +494,10 @@ export const AnimationOverlay = () => {
                         endPos.y += stackOffset;
                     }
 
+                    if (to_location === 'table') tableLandings.set(`${card.suit}-${card.value}`, { ...endPos });
+
                     newAnimatedCards.push({
+                        fromLanding: !sourceElement && !!remembered,
                         id: `${card.suit}-${card.value}-${player_id}-${Date.now()}-${index}`,
                         card,
                         startPosition: startPos,
@@ -474,39 +505,26 @@ export const AnimationOverlay = () => {
                         progress: 0,
                         animationType: type,
                         playerId: player_id,
-                        isRevert: is_revert
+                        isRevert: is_revert,
+                        flight: currentAnimation,
                     });
                 });
 
                 setAnimatedCards(newAnimatedCards);
             }
 
-            // Use CSS transitions - much smoother than manual animation
-            // Set progress to 1 after a short delay to trigger the CSS transition. This
-            // delay must still cross a browser paint (so the start frame renders before
-            // the transition begins) but is kept tight so the per-event lifecycle fits
-            // the queue's reduced inter-event gap (see below / AnimationContext).
-            setTimeout(() => {
-                setAnimatedCards(prev =>
-                    prev.map(animatedCard => ({
-                        ...animatedCard,
-                        progress: 1 // This triggers the CSS transition
-                    }))
-                );
-            }, 25);
+        }
 
-            // Clear the overlay at ANIMATION_TIME. The AnimationContext queue advances
-            // every ANIMATION_TIME + 25ms, and this clear is what would otherwise wipe
-            // the NEXT event's freshly-created cards if it fired too late: clearing at
-            // ANIMATION_TIME (rather than ANIMATION_TIME + 50) keeps it ~25ms ahead of
-            // the next event's card creation. The visible glide is trimmed by only the
-            // ~25ms transition-trigger delay above (the underlying card is already
-            // committed at its destination by then), so the trim isn't noticeable.
-            // These timings are matched to the queue gap — change them together.
-            setTimeout(() => {
-                setAnimatedCards([]);
-            }, ANIMATION_TIME);
-        }, 50); // Small delay to ensure DOM is ready (measurement reads committed state)
+        // Use CSS transitions - much smoother than manual animation. Progress goes to 1
+        // after a short delay that crosses a browser paint, so the start frame renders
+        // before the transition begins; only this flight's cards move.
+        const flight = currentAnimation;
+        const begin = setTimeout(() => {
+            setAnimatedCards(prev => prev.map(animatedCard => (animatedCard.flight === flight
+                ? { ...animatedCard, progress: 1 } // This triggers the CSS transition
+                : animatedCard)));
+        }, 25);
+        return () => clearTimeout(begin);
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentAnimation, isAnimating]);
@@ -532,7 +550,7 @@ export const AnimationOverlay = () => {
             } as React.CSSProperties}
         >
             {animatedCards.map(animatedCard => {
-                const { startPosition, endPosition, progress, card, id, isSanitizedRefill, cardCount, isRevert } = animatedCard;
+                const { startPosition, endPosition, progress, card, id, isSanitizedRefill, cardCount, isRevert, fromLanding } = animatedCard;
                 
                 // Use actual position based on progress (CSS will animate the transition)
                 const currentX = progress === 0 
@@ -549,7 +567,9 @@ export const AnimationOverlay = () => {
                             position: 'absolute',
                             left: currentX - 35, // Half card width
                             top: currentY - 45,  // Half card height
-                            transform: `scale(${1.5 + progress * 0.3})`, // Scale up during animation
+                            // Scale up during animation; a card taking off from where a flight
+                            // left it starts at the size that flight landed at
+                            transform: `scale(${progress === 0 && fromLanding ? 1.8 : 1.5 + progress * 0.3})`,
                             opacity: 1,
                             userSelect: 'none',
                             WebkitUserSelect: 'none',
