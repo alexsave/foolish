@@ -44,7 +44,10 @@ const BOTS = (process.env.BENCH_BOTS || 'octogen,cordite,blackpowder,firecracker
 // it imports must exist on both sides of the comparison. A helper added in the
 // same PR does not, and the import failure takes the whole base measurement
 // with it — every base cell reports n/a while the job stays green.
-const UNKNOWN_BOTS = BOTS.filter(k => !BOT_STRATEGIES.has(k));
+// Only get() and keys(): BOT_STRATEGIES was a Map and is now a Map-shaped
+// facade over the kernel roster (bot_strategy.ts) with no has(), and calling
+// has() threw before a single move was timed.
+const UNKNOWN_BOTS = BOTS.filter(k => BOT_STRATEGIES.get(k) === undefined);
 if (UNKNOWN_BOTS.length > 0) {
     throw new Error(`BENCH_BOTS names ${UNKNOWN_BOTS.join(', ')}, which the bot registry cannot `
         + `dispatch — they would be benched as 'random' under their own names. `
