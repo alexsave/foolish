@@ -45,4 +45,15 @@ int state_get(Game *g, const unsigned char *p, int masked);
 // view on a client - goes through this rather than state_get.
 int state_import(Game *g, const unsigned char *p, int masked);
 
+// One kernel log record in the export layout the session log is built from:
+//   u8 log_type, u8 player seat (0xFF system), u8 defender_index (0xFF none),
+//   u8 num_pairs, num_pairs x (u8 primary, u8 target)   wire cards
+// With `mask_draws`, THE DRAW-PRIVACY RULE: a drawn card's identity is written
+// as WIRE_CARD_HIDDEN, except the face-up trump when it was drawn by this action
+// (`pre_has_flip` and the game no longer has one, `pre_flip` being the trump
+// that was up before the action began) - that draw is public. Returns bytes
+// written (4 + 2 x num_pairs; the caller sizes the buffer).
+int log_record_put(const GameLog *l, int mask_draws, int pre_has_flip, Card pre_flip,
+                   int has_flipped_now, unsigned char *out);
+
 #endif

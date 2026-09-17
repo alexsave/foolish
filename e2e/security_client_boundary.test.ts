@@ -38,6 +38,9 @@ export const CLIENT_BOUNDARY = {
     deniedModules: [
         // tools/structgen output: raw accessors over the kernel's Game struct.
         /(^|\/)game_layout\.[^/]*$/,
+        // The server's C Table wrapper: loads a durable blob and hands out a
+        // commit's products, the unmasked state blob among them.
+        /(^|\/)sdk\/ts\/table\/server_table\.ts$/,
     ],
     /** Functions that read or write an unmasked kernel game, by name. */
     deniedSymbols: [
@@ -52,7 +55,9 @@ export const CLIENT_BOUNDARY = {
         'wasmBotDrive',
     ],
     /** Kernel exports that serialize the resident game unmasked. */
-    deniedWasmExports: ['wasm_export_state', 'wasm_state_serialize', 'wasm_state_deserialize'],
+    deniedWasmExports: ['wasm_export_state', 'wasm_state_serialize', 'wasm_state_deserialize',
+        // the C Table: loads a durable blob, and writes it back out in a commit
+        'wasm_table_load', 'wasm_table_commit_products'],
 };
 
 // Node built-ins the shared sdk modules reach only behind a runtime check.
@@ -156,6 +161,15 @@ test('canary: a client module importing the structgen Game accessors is caught b
     assert.ok(layout, 'the generated Game accessors exist');
     const r = await scanClientBoundary({ stdin: `import { Game_get_status } from './${layout}'; console.log(Game_get_status);` });
     assert.ok(r.modules.includes(layout), `module rule saw ${layout}:${explain(r)}`);
+});
+
+test('canary: a client module importing the server table wrapper is caught by the module rule', async () => {
+    // sdk/ts/table/server_table.ts hands out the unmasked state blob (a commit's
+    // products). It must be denied by name, not only because it happens to import
+    // the Game accessors today.
+    const r = await scanClientBoundary({ stdin: `import { createServerTable } from './sdk/ts/table/server_table.ts'; console.log(createServerTable);` });
+    assert.ok(r.modules.includes('sdk/ts/table/server_table.ts'), `module rule saw server_table.ts:${explain(r)}`);
+    assert.ok(r.wasmExports.some(s => s.name === 'wasm_table_commit_products'), `and the unmasked commit export:${explain(r)}`);
 });
 
 test('canary: a client module calling the durable blob reader is caught by the symbol rule', async () => {

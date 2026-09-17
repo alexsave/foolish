@@ -172,3 +172,21 @@ int state_import(Game *g, const unsigned char *p, int masked) {
     if (r != GAME_VALID) memcpy(g, saved, sizeof saved);
     return r;
 }
+
+int log_record_put(const GameLog *l, int mask_draws, int pre_has_flip, Card pre_flip,
+                   int has_flipped_now, unsigned char *out) {
+    const int flip_drawn = pre_has_flip && !has_flipped_now;
+    const int hide = mask_draws && l->log_type == LOG_DRAW;
+    unsigned char *q = out;
+    *q++ = (unsigned char)l->log_type;
+    *q++ = (unsigned char)l->player_idx;
+    *q++ = (unsigned char)l->defender_index;
+    *q++ = (unsigned char)l->num_pairs;
+    for (int j = 0; j < l->num_pairs; j++) {
+        const LogPair *pr = &l->pairs[j];
+        *q++ = (hide && !(flip_drawn && card_eq(pr->primary, pre_flip)))
+            ? (unsigned char)WIRE_CARD_HIDDEN : wire_from_card(pr->primary);
+        *q++ = wire_from_card(pr->target);
+    }
+    return (int)(q - out);
+}

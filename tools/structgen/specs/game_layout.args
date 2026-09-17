@@ -9,3 +9,10 @@
 --fields Game=status,num_players,power_suit,first_attacker,defender,num_battles,deck_count,discard_pile_length,has_flipped,deterministic_deck,flipped,deck,table_battles,players,elimination_order,num_eliminated,good_players_mask,has_good_timestamp
 --fields Player=status,hand_count,awaiting_attack,strategy_key,hand
 --const GAME_STATUS_ --const PLAYER_STATUS_
+#
+# The C Table (c/src/table.h): what the server reads back from bots.wasm - the
+# loaded roster, a commit's spans and scalars, a decoded action request, the
+# finish order and rating changes - and the result codes it maps. Part of the
+# same hash, so a module and these readers cannot disagree about any of it.
+--header table.h --root Roster --root TableCommit --root TableRequest --root TableElo
+--const TABLE_ --const ENGINE_REJECT_ --const GAME_INVALID_ --const ROSTER_E_

@@ -277,6 +277,10 @@ void wasm_set_deterministic_deck(int on) { g_game.deterministic_deck = on != 0; 
 // no deal seed (legacy) — live games always set it (see wasm_set_rng_base).
 static uint32_t g_rng_base = 0u;
 void wasm_set_rng_base(uint32_t base) { g_rng_base = base; }
+// For sibling bridge units (wasm_table_api.c): the base the table seeds its
+// mid-game draws from, so a table action draws exactly what wasm_apply_action
+// after wasm_seed_rng_deterministic does.
+uint32_t wasm_rng_base_internal(void) { return g_rng_base; }
 
 // Per-decision RNG seed for the Monte-Carlo bots' world sampling (salt
 // 0x9E3779B9) and the mid-game deal RNG (salt 0). It folds the SECRET
@@ -296,20 +300,7 @@ void wasm_set_rng_base(uint32_t base) { g_rng_base = base; }
 // Unpredictability still rests entirely on the secret seed — the public terms
 // are known to everyone, but without g_rng_base they can't yield the stream.
 static uint32_t state_fnv(uint32_t salt) {
-    uint32_t h = 2166136261u ^ (salt * 2654435761u) ^ g_rng_base;
-#define MIX(b) do { h = (h ^ (uint32_t)(unsigned char)(b)) * 16777619u; } while (0)
-    MIX(g_game.defender); MIX(g_game.first_attacker); MIX(g_game.power_suit);
-    MIX(g_game.deck_count); MIX((unsigned)g_game.deck_count >> 8);
-    MIX(g_game.discard_pile_length); MIX((unsigned)g_game.discard_pile_length >> 8);
-    for (int p = 0; p < g_game.num_players; p++) MIX(g_game.players[p].hand_count);
-    MIX(g_game.num_battles);
-    for (int i = 0; i < g_game.num_battles; i++) {
-        MIX(g_game.table_battles[i].attack.suit);  MIX(g_game.table_battles[i].attack.value);
-        MIX(g_game.table_battles[i].defense.suit); MIX(g_game.table_battles[i].defense.value);
-    }
-#undef MIX
-    h ^= h >> 16; h *= 0x85EBCA6Bu; h ^= h >> 13; h *= 0xC2B2AE35u; h ^= h >> 16;
-    return h ? h : 1;
+    return game_state_seed(&g_game, g_rng_base, salt);
 }
 
 // Seed the mid-game LCG (game_random) deterministically from the CURRENT game
@@ -413,33 +404,18 @@ static int g_pre_has_flip;
 // only for the bot drive, whose belief bots need the SESSION log resident
 // while they choose — see wasm_export_logs_masked_from.
 static int export_logs(int mask_draws, int start) {
-    // The DRAW-privacy rule (the TS appendLogs convention, now kernel-side):
-    // drawn-card identities are hidden EXCEPT the flipped trump, whose draw
-    // is public. "The flip was drawn during this action" is the pre-action
-    // has_flipped (captured by begin_action) going false.
-    const int flip_drawn = g_pre_has_flip && !g_game.has_flipped;
+    // The DRAW-privacy rule (the TS appendLogs convention, now kernel-side) is
+    // view.c log_record_put's: drawn-card identities are hidden EXCEPT the
+    // flipped trump, whose draw is public. "The flip was drawn during this
+    // action" is the pre-action has_flipped (captured by begin_action) going false.
     if (start < 0 || start > g_game.num_logs) start = 0;
     const int n = g_game.num_logs - start;
     unsigned char *q = g_io;
     *q++ = (unsigned char)(n & 0xff);
     *q++ = (unsigned char)((n >> 8) & 0xff);
-    for (int i = start; i < g_game.num_logs; i++) {
-        const GameLog *l = &g_game.logs[i];
-        const int hide = mask_draws && l->log_type == LOG_DRAW;
-        *q++ = (unsigned char)l->log_type;
-        *q++ = (unsigned char)l->player_idx;
-        *q++ = (unsigned char)l->defender_index;
-        *q++ = (unsigned char)l->num_pairs;
-        for (int j = 0; j < l->num_pairs; j++) {
-            const LogPair *pr = &l->pairs[j];
-            if (hide && !(flip_drawn && card_eq(pr->primary, g_pre_flip))) {
-                *q++ = (unsigned char)WIRE_CARD_HIDDEN;
-            } else {
-                *q++ = wire_from_card(pr->primary);
-            }
-            *q++ = wire_from_card(pr->target);
-        }
-    }
+    for (int i = start; i < g_game.num_logs; i++)
+        q += log_record_put(&g_game.logs[i], mask_draws, g_pre_has_flip, g_pre_flip,
+                            g_game.has_flipped, q);
     return (int)(q - g_io);
 }
 

@@ -367,3 +367,20 @@ int evwire_frames_settlement_cut(const unsigned char *frames, int len) {
     }
     return c.cut;
 }
+
+int evwire_as3_split(const unsigned char *buf, int len, int *seq_len, int *flags, int *block_off) {
+    const unsigned char *fin = 0;
+    int fin_len = 0;
+    const int n = evwire_read(buf, len, 0, &fin, &fin_len, 0, 0);
+    if (n < 0) return EVW_EPARSE;
+    const int seq = (int)(fin - buf) + fin_len;
+    if (seq >= len) return EVW_EPARSE;                    // no flags byte
+    const int f = buf[seq];
+    if (f & ~EVW_AS3_ROSTER) return EVW_EPARSE;
+    if (!(f & EVW_AS3_ROSTER) && seq + 1 != len) return EVW_EPARSE;
+    if ((f & EVW_AS3_ROSTER) && seq + 1 >= len) return EVW_EPARSE;
+    if (seq_len) *seq_len = seq;
+    if (flags) *flags = f;
+    if (block_off) *block_off = seq + 1;
+    return 0;
+}

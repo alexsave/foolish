@@ -160,6 +160,25 @@ void     game_rng_set(uint32_t s) {
 void random_strategy_set_seed(uint32_t s) {
     g_rand_seed = s ? s : 1;
 }
+
+// See game.h. Moved here from wasm_api.c (state_fnv) so the table layer and the
+// wasm bridge seed from one definition; the byte order of the mix is unchanged.
+uint32_t game_state_seed(const Game *g, uint32_t base, uint32_t salt) {
+    uint32_t h = 2166136261u ^ (salt * 2654435761u) ^ base;
+#define MIX(b) do { h = (h ^ (uint32_t)(unsigned char)(b)) * 16777619u; } while (0)
+    MIX(g->defender); MIX(g->first_attacker); MIX(g->power_suit);
+    MIX(g->deck_count); MIX((unsigned)g->deck_count >> 8);
+    MIX(g->discard_pile_length); MIX((unsigned)g->discard_pile_length >> 8);
+    for (int p = 0; p < g->num_players; p++) MIX(g->players[p].hand_count);
+    MIX(g->num_battles);
+    for (int i = 0; i < g->num_battles; i++) {
+        MIX(g->table_battles[i].attack.suit);  MIX(g->table_battles[i].attack.value);
+        MIX(g->table_battles[i].defense.suit); MIX(g->table_battles[i].defense.value);
+    }
+#undef MIX
+    h ^= h >> 16; h *= 0x85EBCA6Bu; h ^= h >> 13; h *= 0xC2B2AE35u; h ^= h >> 16;
+    return h ? h : 1;
+}
 // Current strategy-LCG state, WITHOUT advancing it. Live (wasm) this is reseeded
 // per bot decision from state_fnv (which folds in the SERVER-ONLY g_rng_base),
 // so it carries the secret; the Monte-Carlo bots mix it into their world seed so
@@ -244,6 +263,17 @@ int game_validate(const Game *g, int flags) {
     // A lobby may hold any number of seats while it fills; a dealt game needs two.
     if (np < 0 || np > MAX_PLAYERS || (g->status != GAME_STATUS_WAITING && np < 2))
         return GAME_INVALID_NUM_PLAYERS;
+    // A lobby is seats and nothing else: no card in any place a card can sit,
+    // and none of the facts a round leaves behind. A row that carries a
+    // finished session's board under a WAITING status is refused here, once,
+    // rather than guarded against by every host that loads one.
+    if (g->status == GAME_STATUS_WAITING) {
+        bool held = g->deck_count != 0 || g->num_battles != 0 || g->has_flipped
+                 || g->discard_pile_length != 0 || g->num_eliminated != 0
+                 || g->good_players_mask != 0 || g->has_good_timestamp;
+        for (int i = 0; i < np; i++) held = held || g->players[i].hand_count != 0;
+        if (held) return GAME_INVALID_LOBBY_CARDS;
+    }
     for (int i = 0; i < np; i++)
         if (g->players[i].status < PLAYER_STATUS_IDLE || g->players[i].status > PLAYER_STATUS_OUT)
             return GAME_INVALID_PLAYER_STATUS;

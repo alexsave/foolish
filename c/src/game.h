@@ -273,6 +273,13 @@ void     random_strategy_set_seed(uint32_t s);
 double   random_strategy_random(void);
 uint32_t random_strategy_rng_get(void);
 
+// A 32-bit RNG seed from `base` (the SERVER-ONLY secret derived from
+// games.game_seed, 0 when a game has none), a per-use `salt`, and the PUBLIC,
+// replay-recoverable board: positions, deck/discard sizes, each seat's hand
+// COUNT and the table. Reproducible from a shared replay, different every
+// decision, unpredictable without `base`. Never 0.
+uint32_t game_state_seed(const Game *g, uint32_t base, uint32_t salt);
+
 // ---------- Engine observation hooks ------------------------------------
 //
 // Optional callback fired at exactly the points where the production TS
@@ -374,6 +381,7 @@ extern _Thread_local int engine_last_reject;
 #define GAME_INVALID_CARD             (-9)  // a card that is not a card of this game's deck
 #define GAME_INVALID_DUPLICATE_CARD   (-10) // one card in two places
 #define GAME_INVALID_FLIPPED          (-11) // the face-up trump is not of the power suit
+#define GAME_INVALID_LOBBY_CARDS      (-12) // a WAITING game holds a card, a battle, a flip, an out or a good
 
 // game_validate flag: `g` came from a MASKED view (view.c state_get masked=1),
 // so the deck and the hands hold placeholders rather than real cards. Their

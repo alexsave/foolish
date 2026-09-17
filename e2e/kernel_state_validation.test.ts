@@ -172,6 +172,26 @@ test('a durable blob with a deck byte that is no card is refused on the view pat
   assert.throws(() => serializeViewBlob(blob, 0), INVALID(/card/i));
 });
 
+test('a durable blob that holds cards under a WAITING status is refused, on every blob path', () => {
+  // The damaged row e2e/waiting_stale_blob.test.ts pins in TS: a finished or
+  // dealt session's board with the status put back to WAITING. The kernel refuses
+  // it by its own reason (game.h GAME_INVALID_LOBBY_CARDS), so no loader has to
+  // remember not to trust it.
+  const g = dealt();
+  const { seat, card } = openingAttack(g);
+  const blob = serializeGameState(g);
+  blob[BLOB.status] = 0;
+  const LOBBY_CARDS = (e: unknown) => INVALID(/kernel reason -12\)/)(e);
+  assert.throws(() => deserializeGameState(blob, rosterOf(g)), LOBBY_CARDS);
+  assert.throws(() => serializeViewBlob(blob, -1), LOBBY_CARDS);
+  assert.throws(() => runPackedAction(blob, seat, encodeAction({ kind: 'attack', cards: [card] }), 0, [0, 1, 2, 3]),
+    LOBBY_CARDS);
+  // And the clean lobby the same seats reset to still loads.
+  kernelResetToLobby(g);
+  const lobby = serializeGameState(g);
+  assert.doesNotThrow(() => deserializeGameState(lobby, rosterOf(g)));
+});
+
 test('a refused durable blob leaves the previously loaded game resident', () => {
   // Build both blobs first: a deal runs the kernel, so it would replace the resident.
   const good = serializeGameState(dealt());
