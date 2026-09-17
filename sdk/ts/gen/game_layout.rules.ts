@@ -386,7 +386,7 @@ export const PushEvent_target_at = (p: number) => p + 8;
 export const PushEvent_cards_at = (p: number, i0: number) => p + 9 + i0;
 export const PushEvent_cards_LEN = 64;
 // ViewRules
-export const ViewRules_SIZE = 10;
+export const ViewRules_SIZE = 12;
 export const ViewRules_first_attacker_badge_at = (p: number) => p;
 export const ViewRules_get_first_attacker_badge = (m: Mem, p: number) => m.i8[p];
 export const ViewRules_set_first_attacker_badge = (m: Mem, p: number, v: number) => { m.i8[p] = v; };
@@ -405,12 +405,15 @@ export const ViewRules_set_show_flipped_slot = (m: Mem, p: number, v: boolean) =
 export const ViewRules_show_trump_icon_at = (p: number) => p + 5;
 export const ViewRules_get_show_trump_icon = (m: Mem, p: number) => m.u8[p + 5] !== 0;
 export const ViewRules_set_show_trump_icon = (m: Mem, p: number, v: boolean) => { m.u8[p + 5] = v ? 1 : 0; };
-export const ViewRules_deck_pile_at = (p: number) => p + 6;
-export const ViewRules_get_deck_pile = (m: Mem, p: number) => m.dv.getInt16(p + 6, true);
-export const ViewRules_set_deck_pile = (m: Mem, p: number, v: number) => { m.dv.setInt16(p + 6, v, true); };
-export const ViewRules_deck_badge_at = (p: number) => p + 8;
-export const ViewRules_get_deck_badge = (m: Mem, p: number) => m.dv.getInt16(p + 8, true);
-export const ViewRules_set_deck_badge = (m: Mem, p: number, v: number) => { m.dv.setInt16(p + 8, v, true); };
+export const ViewRules_bot_to_move_at = (p: number) => p + 6;
+export const ViewRules_get_bot_to_move = (m: Mem, p: number) => m.u8[p + 6] !== 0;
+export const ViewRules_set_bot_to_move = (m: Mem, p: number, v: boolean) => { m.u8[p + 6] = v ? 1 : 0; };
+export const ViewRules_deck_pile_at = (p: number) => p + 8;
+export const ViewRules_get_deck_pile = (m: Mem, p: number) => m.dv.getInt16(p + 8, true);
+export const ViewRules_set_deck_pile = (m: Mem, p: number, v: number) => { m.dv.setInt16(p + 8, v, true); };
+export const ViewRules_deck_badge_at = (p: number) => p + 10;
+export const ViewRules_get_deck_badge = (m: Mem, p: number) => m.dv.getInt16(p + 10, true);
+export const ViewRules_set_deck_badge = (m: Mem, p: number, v: number) => { m.dv.setInt16(p + 10, v, true); };
 // BotDriveOut
 export const BotDriveOut_SIZE = 552;
 export const BotDriveOut_actions_at = (p: number, i0: number) => p + i0 * 60;

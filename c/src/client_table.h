@@ -104,6 +104,7 @@ typedef struct {
     bool    show_deck_pile;        // the stock has cards left to draw on screen
     bool    show_flipped_slot;     // the trump's slot, kept while a card is on its way into it
     bool    show_trump_icon;       // stock and trump are gone: the power suit stands in their place
+    bool    bot_to_move;           // a bot seat may act (should_bot_act's rule): a stalled bot loop is worth a nudge
     int16_t deck_pile;             // cards drawn in the stock pile
     int16_t deck_badge;            // the count on the pile: the stock, the trump, and cards in flight to the trump
 } ViewRules;

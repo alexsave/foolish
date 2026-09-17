@@ -104,9 +104,9 @@ export const readPushEvent = (m: Mem, p: number): PushEvent_Snap => {
     return { type: m.i8[p], seat: m.i8[p + 1], msg: m.i8[p + 2], from: m.i8[p + 3], to: m.i8[p + 4], battle: m.i8[p + 5], hasTarget: m.u8[p + 7] !== 0, target: readCard(m, p + 8), cards: cards };
 };
 // ViewRules snapshot
-export interface ViewRules_Snap { readonly firstAttackerBadge: number; readonly defenderBadge: number; readonly canSayGood: boolean; readonly showDeckPile: boolean; readonly showFlippedSlot: boolean; readonly showTrumpIcon: boolean; readonly deckPile: number; readonly deckBadge: number; }
+export interface ViewRules_Snap { readonly firstAttackerBadge: number; readonly defenderBadge: number; readonly canSayGood: boolean; readonly showDeckPile: boolean; readonly showFlippedSlot: boolean; readonly showTrumpIcon: boolean; readonly botToMove: boolean; readonly deckPile: number; readonly deckBadge: number; }
 export const readViewRules = (m: Mem, p: number): ViewRules_Snap => {
-    return { firstAttackerBadge: m.i8[p], defenderBadge: m.i8[p + 1], canSayGood: m.u8[p + 2] !== 0, showDeckPile: m.u8[p + 3] !== 0, showFlippedSlot: m.u8[p + 4] !== 0, showTrumpIcon: m.u8[p + 5] !== 0, deckPile: m.dv.getInt16(p + 6, true), deckBadge: m.dv.getInt16(p + 8, true) };
+    return { firstAttackerBadge: m.i8[p], defenderBadge: m.i8[p + 1], canSayGood: m.u8[p + 2] !== 0, showDeckPile: m.u8[p + 3] !== 0, showFlippedSlot: m.u8[p + 4] !== 0, showTrumpIcon: m.u8[p + 5] !== 0, botToMove: m.u8[p + 6] !== 0, deckPile: m.dv.getInt16(p + 8, true), deckBadge: m.dv.getInt16(p + 10, true) };
 };
 // Card snapshot
 export interface Card_Snap { readonly suit: number; readonly value: number; }

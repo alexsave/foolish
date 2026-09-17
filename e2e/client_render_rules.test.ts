@@ -96,6 +96,22 @@ test('the stock: cards in flight leave the pile, and those bound for the trump s
     assert.deepEqual(pick(0, 0, { ...v, deckCount: 0, hasFlipped: false }), [0, 0, false, false, true], 'stock and trump gone: the power suit');
 });
 
+test('a bot to move: the bump the web sends a stalled bot loop waits for a bot whose turn it is (should_bot_act)', () => {
+    const t = clientTable();
+    const withBot = (opts: { good?: number[]; table?: string[] }) => fixture()
+        .seats([seats[0], seats[1], { id: 'b-cat', name: 'Cat', brain: 'random' }]).status(PLAYING).trump('Kc')
+        .deck('6s 7s 8s 9s Ts Js Qs Ks As 6d 7d 8d').hand(0, '6h Ah').hand(1, 'Qh Td').hand(2, 'Jd Qd Kd')
+        .table(...(opts.table ?? ['7h/9h'])).attacker(0).defender(1).good(...(opts.good ?? [])).build();
+    assert.equal(t.rules(viewOf(bout(), 0)).botToMove, false, 'no bot at the table');
+    const v = viewOf(withBot({}), 0);
+    assert.equal(v.seats[2].isAi, true, 'the roster names Cat a bot');
+    assert.equal(t.rules(v).botToMove, true, 'a bot attacker that has not said good may throw in');
+    assert.equal(t.rules(viewOf(withBot({ good: [2] }), 0)).botToMove, false, 'not once it has said good');
+    assert.equal(t.rules({ ...v, battles: [], firstAttacker: 2 }).botToMove, true, 'a bot leading an empty table');
+    assert.equal(t.rules({ ...v, battles: [] }).botToMove, false, 'a human leading an empty table');
+    assert.equal(t.rules({ ...v, status: V.GAME_STATUS_GAME_OVER }).botToMove, false, 'a finished game');
+});
+
 test('a view that is not one is refused, never answered', () => {
     const t = clientTable();
     const v = viewOf(bout(), 0);

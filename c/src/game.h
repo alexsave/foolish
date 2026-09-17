@@ -547,6 +547,19 @@ bool handle_good(Game *g, int player_idx);
 
 bool should_bot_act(const Game *g, int bot_idx);
 
+// The turn rule should_bot_act applies, over only the facts it reads, so a board
+// that is not a Game (client_table.h TableView) is asked the same question: a
+// playing seat that is in may act on an empty table only as the first attacker,
+// as the defender only while an attack is uncovered, and as an attacker until it
+// has said good.
+static inline bool turn_may_act(int game_status, int seat_status, int seat, int num_battles, bool all_covered,
+                                int first_attacker, int defender, uint32_t good_mask) {
+    if (game_status != GAME_STATUS_PLAYING || seat_status != PLAYER_STATUS_IN) return false;
+    if (num_battles == 0) return seat == first_attacker;
+    if (seat == defender) return !all_covered;
+    return !(good_mask & (1u << seat));
+}
+
 // Public entries for the two round-lifecycle phases the TS server also
 // exposed standalone (executeRoundTransition / refillPlayerHandsWithEvents).
 void engine_run_round_transition(Game *g);

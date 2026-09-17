@@ -333,6 +333,10 @@ int client_view_rules(const TableView *v, int from_deck, int to_flipped, ViewRul
     out->can_say_good = me >= 0 && v->status == GAME_STATUS_PLAYING && v->seats[me].status == PLAYER_STATUS_IN
         && me != v->defender && !((v->good_mask >> me) & 1u) && covered;
 
+    for (int s = 0; s < n && !out->bot_to_move; s++)
+        out->bot_to_move = v->seats[s].is_ai && turn_may_act(v->status, v->seats[s].status, s, v->num_battles, covered,
+                                                             v->first_attacker, v->defender, v->good_mask);
+
     // The stock: what is flying out of it has left the pile, and a card on its
     // way to the trump's slot is still the stock's, so it stays on the count.
     const int pile = v->deck_count - from_deck;

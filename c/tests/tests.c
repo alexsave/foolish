@@ -8817,6 +8817,32 @@ static void test_client_view_rules(void) {
     CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.deck_badge == 0 && r.show_trump_icon && !r.show_flipped_slot,
           "stock and trump gone: the power suit");
 
+    // A bot to move: should_bot_act's rule, for any seat the roster marks a bot.
+    cvr_board(&v, 0);
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "no bot seats, no bot to move");
+    v.seats[2].is_ai = true;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.bot_to_move, "a bot attacker that has not said good may throw in");
+    v.good_mask = 1u << 2;
+    v.seats[1].is_ai = true;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.bot_to_move,
+          "not once it said good, and a bot defender over a covered table waits");
+    v.battles[1] = (Battle){ .attack = { .suit = SUIT_DIAMONDS, .value = 6 }, .defense = CARD_NONE };
+    v.num_battles = 2;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.bot_to_move, "a bot defender with an attack to answer");
+    cvr_board(&v, 0);
+    v.seats[0].is_ai = true;
+    v.num_battles = 0;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.bot_to_move, "a bot first attacker on an empty table");
+    v.first_attacker = 2;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "not when a human leads");
+    cvr_board(&v, 0);
+    v.seats[2].is_ai = true;
+    v.seats[2].status = PLAYER_STATUS_OUT;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "a bot that is out never moves");
+    v.seats[2].status = PLAYER_STATUS_IN;
+    v.status = GAME_STATUS_GAME_OVER;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "nor on a finished game");
+
     // Refusals: a view that is not one.
     cvr_board(&v, 0);
     v.num_players = MAX_PLAYERS + 1;

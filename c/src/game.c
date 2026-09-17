@@ -1257,15 +1257,12 @@ void engine_run_refill(Game *g) { refill_player_hands(g); }
 bool should_bot_act(const Game *g, int bot_idx) {
     if (g->status != GAME_STATUS_PLAYING) return false;
     if (g->players[bot_idx].status != PLAYER_STATUS_IN) return false;
-    bool first_attack = (g->num_battles == 0);
-    bool is_def = (bot_idx == g->defender);
     bool all_covered = (g->num_battles > 0);
     for (int i = 0; i < g->num_battles; i++) {
         if (!!card_is_none(g->table_battles[i].defense)) { all_covered = false; break; }
     }
-    if (first_attack) return bot_idx == g->first_attacker;
-    if (is_def) return !all_covered;
-    return !(g->good_players_mask & (1u << bot_idx));
+    return turn_may_act(g->status, g->players[bot_idx].status, bot_idx, g->num_battles, all_covered,
+                        g->first_attacker, g->defender, g->good_players_mask);
 }
 
 // ---------- Clone -----------------------------------------------------
