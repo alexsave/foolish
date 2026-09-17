@@ -128,7 +128,11 @@ jobs:
           "$WASM_CC" --version | head -1
 
       - name: Build structgen
-        run: make -C tools/structgen build/structgen
+        # -Werror: gcc 13 here only warns on an undeclared function and assumes it
+        # returns int. structgen once called strdup, which glibc does not declare
+        # under -std=c11, and every copied pointer was cut to 32 bits: the tool
+        # segfaulted on its first run and only this job's Linux saw it.
+        run: make -C tools/structgen build/structgen CFLAGS="-O2 -std=c11 -Wall -Wextra -Werror"
 
       - name: Generated modules are fresh
         run: bash tools/structgen/gen.sh --check
