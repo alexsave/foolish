@@ -1080,6 +1080,129 @@ int wasm_anim_hand_laid_out(int n_cards, int n_order,
 int wasm_anim_set_transport(int transport) { return anim_set_transport(transport); }
 int wasm_anim_transport(void) { return anim_transport(); }
 
+// ---------- the plan, the frame and the beats ---------------------------------
+//
+// THE THREE ENTRIES A HOST WITH A FRAME LOOP NEEDS, and the reason they cross
+// here and not earlier: wasm_anim_build_plan was DELETED in 0cda5e85 for being
+// a bridge with no caller, so the builders wait for the consumer that asks them
+// (docs/C_GAME_SHAPE_MIGRATION.md Phase 9). iOS reaches the same C natively
+// through fio_anim_plan / fio_anim_beats.
+//
+// THE STRUCTS ARE READ WHERE THEY LIE, like wasm_legal_moves_ptr: a plan is
+// 11,752 bytes and a host that copied it through g_io once per frame would
+// spend more time marshalling than animating. The caller reads them through the
+// generated accessors (sdk/ts/gen/anim.bots.ts), which is also why AnimFrame is
+// a structgen root: no TypeScript may know a byte offset.
+static AnimPlan  g_anim_plan;
+static AnimFrame g_anim_frame;
+static AnimBeats g_anim_beats;
+
+void *wasm_anim_plan_ptr(void)  { return &g_anim_plan; }
+void *wasm_anim_frame_ptr(void) { return &g_anim_frame; }
+void *wasm_anim_beats_ptr(void) { return &g_anim_beats; }
+
+// "no seat" / "this event carries no board", on the wire. A seat is 0..7 and a
+// battle count at most MAX_BATTLES, so 0xFF names neither. A GOOD MASK is the
+// one field this sentinel could not serve: eight players all wearing the mark
+// is 0xFF, so ANIM_NO_MASK crosses as its own flag byte rather than as a value
+// no mask may take.
+#define ANIM_W_NONE 0xFFu
+
+// THE PLAN (anim_plan.h anim_build_plan). g_io in, per event:
+//   u8 type (ANIM_EVT_*), u8 seat (ANIM_W_NONE for none),
+//   u8 from, u8 to (ANIM_LOC_*; ANIM_LOC_NONE is already 0xFF),
+//   u8 mask_cards, u8 n_cards, n_cards x u8 wire card,
+//   u8 has_counts, and when it is 1: u8 deck, u8 discard, u8 flipped (wire
+//     card), n_players x u8 hand,
+//   u8 n_battles (ANIM_W_NONE for "no board of its own"), then 2 x that u8.
+// Then, once: n_players x u8 the FINAL hand.
+// Scalars: the final board's deck, discard and flipped (a wire card).
+// The answer is left in g_anim_plan for the caller to read where it lies.
+// Returns ANIM_EOK, or a negative ANIM_E*.
+int wasm_anim_build_plan(int n_events, int n_players,
+                         int final_deck, int final_discard, int final_flipped) {
+    if (n_events < 0 || n_players < 0 || n_players > MAX_PLAYERS) return ANIM_EBADARG;
+    if (n_events > ANIM_MAX_STEPS) return ANIM_ECAP;
+    static AnimPlanEvent events[ANIM_MAX_STEPS];
+    static Card cpool[ANIM_MAX_CARD_POOL];
+    static int  hpool[ANIM_MAX_STEPS * MAX_PLAYERS];
+    static unsigned char bpool[ANIM_MAX_STEPS * 2 * MAX_BATTLES];
+    int nc_pool = 0, nh_pool = 0, nb_pool = 0, p = 0;
+    for (int e = 0; e < n_events; e++) {
+        AnimPlanEvent *ev = &events[e];
+        ev->type = g_io[p++];
+        const unsigned char seat = g_io[p++];
+        ev->seat = (seat == ANIM_W_NONE) ? ANIM_SEAT_NONE : (int)seat;
+        ev->from = g_io[p++];
+        ev->to   = g_io[p++];
+        ev->mask_cards = g_io[p++] ? 1 : 0;
+        const int nc = g_io[p++];
+        if (nc > ANIM_MAX_CARDS || nc_pool + nc > (int)(sizeof cpool / sizeof cpool[0])) return ANIM_ECAP;
+        ev->cards = nc ? &cpool[nc_pool] : 0;
+        ev->n_cards = nc;
+        for (int k = 0; k < nc; k++) cpool[nc_pool++] = card_from_wire_pair(g_io[p++]);
+        ev->has_counts = g_io[p++] ? 1 : 0;
+        ev->deck = ev->discard = 0;
+        ev->flipped = CARD_NONE;
+        ev->hand = 0;
+        if (ev->has_counts) {
+            ev->deck = g_io[p++];
+            ev->discard = g_io[p++];
+            ev->flipped = card_from_wire_pair(g_io[p++]);
+            if (nh_pool + n_players > (int)(sizeof hpool / sizeof hpool[0])) return ANIM_ECAP;
+            ev->hand = &hpool[nh_pool];
+            for (int s = 0; s < n_players; s++) hpool[nh_pool++] = g_io[p++];
+        }
+        const unsigned char nb = g_io[p++];
+        if (nb == ANIM_W_NONE) { ev->n_battles = ANIM_NO_BOARD; ev->battles = 0; continue; }
+        if (nb > MAX_BATTLES || nb_pool + 2 * nb > (int)sizeof bpool) return ANIM_ECAP;
+        ev->n_battles = nb;
+        ev->battles = &bpool[nb_pool];
+        for (int k = 0; k < 2 * nb; k++) bpool[nb_pool++] = g_io[p++];
+    }
+    int final_hand[MAX_PLAYERS];
+    for (int s = 0; s < n_players; s++) final_hand[s] = g_io[p++];
+    return anim_build_plan(events, n_events, n_players, final_deck, final_discard,
+                           card_from_wire_pair((unsigned char)(final_flipped & 0xff)),
+                           final_hand, &g_anim_plan);
+}
+
+// WHERE THE PLAN STANDS AT now_ms (anim_plan.h anim_plan_at), measured from the
+// sequence's start. The clock is an argument: the kernel imports nothing, so
+// the host owns the origin and re-asks every frame. The answer lands in
+// g_anim_frame. Returns ANIM_EOK or a negative ANIM_E*.
+int wasm_anim_plan_at(int now_ms) {
+    return anim_plan_at(&g_anim_plan, now_ms, &g_anim_frame);
+}
+
+// THE BEATS (anim_plan.h anim_build_beats). g_io in, per event:
+//   u8 type, u8 seat (ANIM_W_NONE for none), u8 mask_cards,
+//   u8 has_good_mask, u8 good_mask, u8 n_cards, n_cards x u8 wire card.
+// The answer is left in g_anim_beats. Returns the beat count, or a negative ANIM_E*.
+int wasm_anim_build_beats(int n_events) {
+    if (n_events < 0) return ANIM_EBADARG;
+    if (n_events > ANIM_MAX_BEATS) return ANIM_ECAP;
+    static AnimBeatEvent events[ANIM_MAX_BEATS];
+    static Card cpool[ANIM_MAX_CARD_POOL];
+    int nc_pool = 0, p = 0;
+    for (int e = 0; e < n_events; e++) {
+        AnimBeatEvent *ev = &events[e];
+        ev->type = g_io[p++];
+        const unsigned char seat = g_io[p++];
+        ev->seat = (seat == ANIM_W_NONE) ? ANIM_SEAT_NONE : (int)seat;
+        ev->mask_cards = g_io[p++] ? 1 : 0;
+        const int has_gm = g_io[p++];
+        const unsigned char gm = g_io[p++];
+        ev->good_mask = has_gm ? (int)gm : ANIM_NO_MASK;
+        const int nc = g_io[p++];
+        if (nc > ANIM_MAX_CARDS || nc_pool + nc > (int)(sizeof cpool / sizeof cpool[0])) return ANIM_ECAP;
+        ev->cards = nc ? &cpool[nc_pool] : 0;
+        ev->n_cards = nc;
+        for (int k = 0; k < nc; k++) cpool[nc_pool++] = card_from_wire_pair(g_io[p++]);
+    }
+    return anim_build_beats(events, n_events, &g_anim_beats);
+}
+
 // THE FINISH ORDER (anim_plan.h anim_finish_rows), for the end screen. g_io in:
 //   [0 .. n_elim)  the elimination seats, first out first.
 // Scalars: game_over is the fool's seat (negative while the game runs),

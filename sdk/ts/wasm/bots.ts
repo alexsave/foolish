@@ -176,6 +176,14 @@ interface BotsExports extends EngineExports {
                                 finalUncovered: number): number;
     wasm_anim_set_transport(transport: number): number;
     wasm_anim_transport(): number;
+    // The plan, the frame and the beats: the structs are read where they lie.
+    wasm_anim_plan_ptr(): number;
+    wasm_anim_frame_ptr(): number;
+    wasm_anim_beats_ptr(): number;
+    wasm_anim_build_plan(nEvents: number, nPlayers: number, finalDeck: number,
+                         finalDiscard: number, finalFlipped: number): number;
+    wasm_anim_plan_at(nowMs: number): number;
+    wasm_anim_build_beats(nEvents: number): number;
 }
 
 // ANIM_TRANSPORT_* (c/src/anim_plan.h).
@@ -1154,5 +1162,244 @@ export function animConflictVerdicts(
     const verdicts: AnimConflictVerdict[] = [];
     for (let i = 0; i < n; i++) verdicts.push(ANIM_CONFLICT[out[ob + i]]);
     return verdicts;
+}
+
+// ---------------------------------------------------------------------------
+// The plan, the frame and the beats (anim_plan.h)
+// ---------------------------------------------------------------------------
+// WHAT A HOST WITH A FRAME LOOP ASKS. `animBuildPlan` turns a decoded viewer
+// sequence into the kernel's timed plan - durations, start offsets, the
+// count-freeze and the veil - and `animPlanAt` samples it at a clock the host
+// owns, so a push landing mid-flight is answered by the next call instead of by
+// editing the queue a timer chain is walking.
+//
+// The structs are read WHERE THEY LIE, through the generated accessors, and
+// only the scalars a caller actually uses are copied out: a plan is 11,752
+// bytes and a frame loop that marshalled it whole once per frame would spend
+// more time copying than animating.
+
+/** ANIM_STEP_NONE: no step is playing at this instant (a gap, or the end). */
+export const ANIM_STEP_NONE = -1;
+/** ANIM_NEVER: the answer will not change again (AnimFrame.nextMs). */
+export const ANIM_NEVER = -1;
+
+/** One decoded event as the plan sees it (anim_plan.h AnimPlanEvent). */
+export interface AnimPlanEventIn {
+    type: number;                   // ANIM_EVT_*
+    seat?: number;                  // the acting seat; absent for none
+    from?: number; to?: number;     // ANIM_LOC_*
+    cards?: readonly Card[];
+    maskCards?: boolean;            // viewer-masked backs: no identity, no veil
+    /** THIS step's own board, when the wire carried one. */
+    counts?: { deck: number; discard: number; flipped: Card | null; hand: readonly number[] };
+    /** The row that board held, 2 bytes per battle (attack, then its cover or ANIM_TABLE_NONE). */
+    battles?: readonly number[];
+}
+
+/** The count-freeze (anim_plan.h AnimCounts): the board the display holds until a step lands. */
+export interface AnimCountsSnap {
+    deck: number; discard: number; hand: number[]; nPlayers: number;
+    nBattles: number; battles: number[]; paired: boolean; flipped: Card | null;
+}
+
+/** One planned step (anim_plan.h AnimPlanStep). */
+export interface AnimPlanStepSnap {
+    type: number; seat: number; from: number; to: number; nCards: number;
+    durationMs: number; startMs: number;
+    deck: number; discard: number; hand: number[];
+    inFlightFromDeck: number; inFlightToFlipped: number;
+    reveals: bigint;
+}
+
+/** The plan (anim_plan.h AnimPlan). */
+export interface AnimPlanSnap {
+    nSteps: number; totalMs: number; pre: AnimCountsSnap;
+    veilIds: number[]; steps: AnimPlanStepSnap[];
+}
+
+/** Where the plan stands at a moment (anim_plan.h AnimFrame). */
+export interface AnimFrameSnap {
+    step: number; elapsedMs: number; landed: number; nextMs: number; done: boolean;
+    deck: number; discard: number; hand: number[]; nPlayers: number; flipped: Card | null;
+    inFlightFromDeck: number; inFlightToFlipped: number;
+    veiled: bigint;
+}
+
+/** One event as the beat rules see it (anim_plan.h AnimBeatEvent). */
+export interface AnimBeatEventIn {
+    type: number; seat?: number; cards?: readonly Card[]; maskCards?: boolean;
+    /** good_players_mask of THIS step's own board; absent for a step with none. */
+    goodMask?: number;
+}
+
+/** One beat (anim_plan.h AnimBeat). */
+export interface AnimBeatSnap {
+    first: number; nEvents: number; type: number; seat: number; flags: number;
+    outsMask: number; attackPassSeats: number; placedIds: bigint; goodMask: number;
+}
+
+/** The beats of a stream (anim_plan.h AnimBeats). */
+export interface AnimBeatsSnap { beats: AnimBeatSnap[]; placedIds: bigint; firstGoodMask: number }
+
+/** THE TIMED PLAN for a decoded viewer sequence (anim_plan.h anim_build_plan).
+ *  `final` is the board the host already holds; the plan freezes the DISPLAY
+ *  back to the pre-sequence values and reveals forward one step at a time. */
+export function animBuildPlan(
+    events: readonly AnimPlanEventIn[], nPlayers: number,
+    final: { deck: number; discard: number; flipped: Card | null; hand: readonly number[] },
+): AnimPlanSnap {
+    const ex = bots();
+    const buf = mem(ex);
+    let p = ex.wasm_io_ptr();
+    for (const e of events) {
+        buf[p++] = e.type & 0xff;
+        buf[p++] = e.seat === undefined || e.seat < 0 ? ANIM_W_NONE : e.seat & 0xff;
+        buf[p++] = e.from === undefined ? ANIM_LOC_NONE : e.from & 0xff;
+        buf[p++] = e.to === undefined ? ANIM_LOC_NONE : e.to & 0xff;
+        buf[p++] = e.maskCards ? 1 : 0;
+        const cards = e.cards ?? [];
+        buf[p++] = cards.length & 0xff;
+        for (const c of cards) buf[p++] = wireStateCard(c);
+        buf[p++] = e.counts ? 1 : 0;
+        if (e.counts) {
+            buf[p++] = e.counts.deck & 0xff;
+            buf[p++] = e.counts.discard & 0xff;
+            buf[p++] = wireLogCard(e.counts.flipped);
+            for (let s = 0; s < nPlayers; s++) buf[p++] = (e.counts.hand[s] ?? 0) & 0xff;
+        }
+        if (e.battles === undefined) { buf[p++] = ANIM_W_NONE; continue; }
+        buf[p++] = (e.battles.length >> 1) & 0xff;
+        for (const b of e.battles) buf[p++] = b & 0xff;
+    }
+    for (let s = 0; s < nPlayers; s++) buf[p++] = (final.hand[s] ?? 0) & 0xff;
+    const rc = ex.wasm_anim_build_plan(events.length, nPlayers, final.deck, final.discard,
+                                       wireLogCard(final.flipped));
+    if (rc < 0) throw new Error(`anim_build_plan error ${rc}`);
+    return readPlan(ex);
+}
+
+/** WHERE THE LAST-BUILT PLAN STANDS at `nowMs` from its start (anim_plan_at). */
+export function animPlanAt(nowMs: number): AnimFrameSnap {
+    const ex = bots();
+    const rc = ex.wasm_anim_plan_at(Math.max(0, Math.round(nowMs)));
+    if (rc < 0) throw new Error(`anim_plan_at error ${rc}`);
+    const m = animMemOf(ex.memory.buffer);
+    const at = ex.wasm_anim_frame_ptr();
+    const nPlayers = A.AnimFrame_get_n_players(m, at);
+    const hand: number[] = [];
+    for (let s = 0; s < nPlayers; s++) hand.push(A.AnimFrame_get_hand(m, at, s));
+    return {
+        step: A.AnimFrame_get_step(m, at),
+        elapsedMs: A.AnimFrame_get_elapsed_ms(m, at),
+        landed: A.AnimFrame_get_landed(m, at),
+        nextMs: A.AnimFrame_get_next_ms(m, at),
+        done: A.AnimFrame_get_done(m, at) !== 0,
+        deck: A.AnimFrame_get_deck(m, at),
+        discard: A.AnimFrame_get_discard(m, at),
+        hand, nPlayers,
+        flipped: readAnimCard(m, A.AnimFrame_flipped_at(at)),
+        inFlightFromDeck: A.AnimFrame_get_in_flight_from_deck(m, at),
+        inFlightToFlipped: A.AnimFrame_get_in_flight_to_flipped(m, at),
+        veiled: A.AnimFrame_get_veiled(m, at),
+    };
+}
+
+/** THE BEATS a stream plays in (anim_plan.h anim_build_beats). */
+export function animBuildBeats(events: readonly AnimBeatEventIn[]): AnimBeatsSnap {
+    const ex = bots();
+    const buf = mem(ex);
+    let p = ex.wasm_io_ptr();
+    for (const e of events) {
+        buf[p++] = e.type & 0xff;
+        buf[p++] = e.seat === undefined || e.seat < 0 ? ANIM_W_NONE : e.seat & 0xff;
+        buf[p++] = e.maskCards ? 1 : 0;
+        buf[p++] = e.goodMask === undefined ? 0 : 1;
+        buf[p++] = (e.goodMask ?? 0) & 0xff;
+        const cards = e.cards ?? [];
+        buf[p++] = cards.length & 0xff;
+        for (const c of cards) buf[p++] = wireStateCard(c);
+    }
+    const n = ex.wasm_anim_build_beats(events.length);
+    if (n < 0) throw new Error(`anim_build_beats error ${n}`);
+    const m = animMemOf(ex.memory.buffer);
+    const at = ex.wasm_anim_beats_ptr();
+    const beats: AnimBeatSnap[] = [];
+    for (let i = 0; i < n; i++) {
+        const b = A.AnimBeats_beats_at(at, i);
+        beats.push({
+            first: A.AnimBeat_get_first(m, b),
+            nEvents: A.AnimBeat_get_n_events(m, b),
+            type: A.AnimBeat_get_type(m, b),
+            seat: A.AnimBeat_get_seat(m, b),
+            flags: A.AnimBeat_get_flags(m, b),
+            outsMask: A.AnimBeat_get_outs_mask(m, b),
+            attackPassSeats: A.AnimBeat_get_attack_pass_seats(m, b),
+            placedIds: A.AnimBeat_get_placed_ids(m, b),
+            goodMask: A.AnimBeat_get_good_mask(m, b),
+        });
+    }
+    return {
+        beats,
+        placedIds: A.AnimBeats_get_placed_ids(m, at),
+        firstGoodMask: A.AnimBeats_get_first_good_mask(m, at),
+    };
+}
+
+// "no seat" on the wire in, mirroring wasm_api.c's ANIM_W_NONE; ANIM_LOC_NONE
+// is the kernel's own 0xFF.
+const ANIM_W_NONE = 0xff;
+const ANIM_LOC_NONE = 0xff;
+
+// A Card inside a kernel struct is a packed byte, not the wire's dense id.
+// CARD_NONE is what the kernel writes for "no flipped trump left".
+function readAnimCard(m: ReturnType<typeof animMemOf>, at: number): Card | null {
+    const suit = A.Card_get_suit(m, at), value = A.Card_get_value(m, at);
+    return suit < 0 || value < 1 ? null : { suit, value };
+}
+
+function readPlan(ex: BotsExports): AnimPlanSnap {
+    const m = animMemOf(ex.memory.buffer);
+    const at = ex.wasm_anim_plan_ptr();
+    const nSteps = A.AnimPlan_get_n_steps(m, at);
+    const preAt = A.AnimPlan_pre_at(at);
+    const nPlayers = A.AnimCounts_get_n_players(m, preAt);
+    const preHand: number[] = [];
+    for (let s = 0; s < nPlayers; s++) preHand.push(A.AnimCounts_get_hand(m, preAt, s));
+    const nBattles = A.AnimCounts_get_n_battles(m, preAt);
+    const battles: number[] = [];
+    for (let i = 0; i < 2 * nBattles; i++) battles.push(A.AnimCounts_get_battles(m, preAt, i));
+    const steps: AnimPlanStepSnap[] = [];
+    for (let i = 0; i < nSteps; i++) {
+        const s = A.AnimPlan_steps_at(at, i);
+        const hand: number[] = [];
+        for (let k = 0; k < nPlayers; k++) hand.push(A.AnimPlanStep_get_hand(m, s, k));
+        steps.push({
+            type: A.AnimPlanStep_get_type(m, s),
+            seat: A.AnimPlanStep_get_seat(m, s),
+            from: A.AnimPlanStep_get_from(m, s),
+            to: A.AnimPlanStep_get_to(m, s),
+            nCards: A.AnimPlanStep_get_n_cards(m, s),
+            durationMs: A.AnimPlanStep_get_duration_ms(m, s),
+            startMs: A.AnimPlanStep_get_start_ms(m, s),
+            deck: A.AnimPlanStep_get_deck(m, s),
+            discard: A.AnimPlanStep_get_discard(m, s),
+            hand,
+            inFlightFromDeck: A.AnimPlanStep_get_in_flight_from_deck(m, s),
+            inFlightToFlipped: A.AnimPlanStep_get_in_flight_to_flipped(m, s),
+            reveals: A.AnimPlanStep_get_reveals(m, s),
+        });
+    }
+    const nVeil = A.AnimPlan_get_n_veil(m, at);
+    const veilIds: number[] = [];
+    for (let i = 0; i < nVeil; i++) veilIds.push(A.AnimPlan_get_veil_ids(m, at, i));
+    return {
+        nSteps, totalMs: A.AnimPlan_get_total_ms(m, at), steps, veilIds,
+        pre: {
+            deck: A.AnimCounts_get_deck(m, preAt), discard: A.AnimCounts_get_discard(m, preAt),
+            hand: preHand, nPlayers, nBattles, battles,
+            paired: A.AnimCounts_get_paired(m, preAt) !== 0,
+            flipped: readAnimCard(m, A.AnimCounts_flipped_at(preAt)),
+        },
+    };
 }
 

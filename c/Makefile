@@ -730,6 +730,8 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_anim_finish_rows -Wl,--export=wasm_anim_hand_laid_out \
   -Wl,--export=wasm_anim_conflict_verdicts \
   -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport \
+  -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr -Wl,--export=wasm_anim_beats_ptr \
+  -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_plan_at -Wl,--export=wasm_anim_build_beats \
   -Wl,--export=wasm_belief_probe_reset -Wl,--export=wasm_belief_probe_dump -Wl,--export=wasm_belief_probe_ptr
 
 # The C Roster (src/roster.h), in the TEST build only (WASM_TEST_EXPORTS below):
@@ -918,7 +920,9 @@ WASM_MSG_EXPORTS := \
   -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
   -Wl,--export=wasm_anim_finish_rows -Wl,--export=wasm_anim_hand_laid_out \
   -Wl,--export=wasm_anim_conflict_verdicts \
-  -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport
+  -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport \
+  -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr -Wl,--export=wasm_anim_beats_ptr \
+  -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_plan_at -Wl,--export=wasm_anim_build_beats
 
 # The rules API, minus the one export that would drag a replay DECODER in.
 # (wasm_replay_decode is declared in wasm_api.c, which this target shares with
