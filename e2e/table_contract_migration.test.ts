@@ -289,10 +289,11 @@ if (!process.env.VALIDATION_ONLY) {
 
         // delete_account: the name is redacted by the edge function through table_redact
         // and commit_table (Q8); the SQL only clears the leaderboard copy.
-        const gamesBefore = await storedRows();
+        const everyColumn = async () => (await pgPool.query('SELECT * FROM games ORDER BY id')).rows;
+        const gamesBefore = await everyColumn();
         await pgPool.query('INSERT INTO user_elo_ratings (user_id, username) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username', [joiner, 'Zoë 🃏']);
         await pgPool.query('SELECT delete_account($1)', [joiner]);
-        assert.deepEqual(await storedRows(), gamesBefore, 'no games row changed');
+        assert.deepEqual(await everyColumn(), gamesBefore, 'no games row was written (not even updated_at)');
         assert.deepEqual((await pgPool.query('SELECT username FROM user_elo_ratings WHERE user_id = $1', [joiner])).rows, [{ username: null }]);
     });
 }
