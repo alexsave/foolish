@@ -7695,7 +7695,9 @@ static void test_table_ready_deals(void) {
     CHECK(table_add_bot(&tb, RS("b"), RS("bot-1"), RS("Rando"), RS("random"), tb_seed) == TABLE_OK && !tb.dealt_now,
           "a bot with humans unready deals nothing");
     table_ready(&tb, RS("b"), tb_seed);
+    game_set_seed(1);   // wide deal mode off, whatever an earlier deal on this thread left
     const int deal_was = game_deal_seed_active();
+    CHECK(deal_was == 0, "wide deal mode is off before the deal");
     CHECK(table_ready(&tb, RS("c"), tb_seed) == TABLE_OK && tb.dealt_now && !tb.lobby_event
           && tb_game.status == GAME_STATUS_PLAYING && tb_game.deterministic_deck, "the last ready deals from the seed");
     CHECK(game_deal_seed_active() == deal_was, "the deal puts the deal RNG back");
