@@ -190,8 +190,8 @@ async function truthOf(t: Table): Promise<Truth> {
 // below: [u48 ms][u8 type][u8 seat][u8 defender][u8 n_pairs][n_pairs x (primary,
 // target)] wire card bytes. Walked here, not decoded by a reader under test: the
 // set of cards that have been public is this suite's ground truth. The record
-// types are c/src/game.h's LOG_* numbers.
-const LOG_PICKUP = 4, LOG_DISCARD = 6, LOG_DRAW = 9;
+// types are c/src/game.h's LOG_* numbers, from the generated module.
+const { LOG_PICKUP, LOG_DISCARD, LOG_DRAW } = L;
 function sessionLogRecords(log: Uint8Array, what: string): { type: number; cards: number[] }[] {
     const out: { type: number; cards: number[] }[] = [];
     let q = 0;
