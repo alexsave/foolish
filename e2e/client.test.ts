@@ -19,7 +19,7 @@ import * as V from '../sdk/ts/gen/view_layout.bots.ts';
 
 type C = { suit: number; value: number };
 const c = (s: number, v: number): C => ({ suit: s, value: v });
-const keys = (cards: C[]) => cards.map(cardKey);
+const keys = (cards: readonly C[]) => cards.map(cardKey);
 type B = { attack: C; defense: C | null };
 const NONE: C = { suit: V.CARD_NONE_SUIT, value: V.CARD_NONE_VALUE };
 
@@ -85,7 +85,7 @@ export function registerClientValidation(): void {
         { version: 3, finalTable: [{ attack: c(2, 8), defense: null }] as B[] },     // bout B, new attack
     ];
     const replay = (order: typeof boutStream, gated: boolean) => {
-        let table: B[] = []; let last: number | null = null;
+        let table: readonly B[] = []; let last: number | null = null;
         for (const b of order) {
             if (gated && shouldDropStaleSequence(last, b.version)) continue;
             table = mergeTableBattles(table, b.finalTable);
@@ -93,7 +93,7 @@ export function registerClientValidation(): void {
         }
         return table;
     };
-    const tkeys = (bs: B[]) => bs.flatMap((b) => (b.defense ? [cardKey(b.attack), cardKey(b.defense)] : [cardKey(b.attack)])).sort();
+    const tkeys = (bs: readonly B[]) => bs.flatMap((b) => (b.defense ? [cardKey(b.attack), cardKey(b.defense)] : [cardKey(b.attack)])).sort();
 
     test('reordering: the version gate lands the client on the newest bout (not a stale one)', () => {
         // adversarial: newest (v3) arrives first, then the older v1 and the clear v2.

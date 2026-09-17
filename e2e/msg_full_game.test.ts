@@ -38,7 +38,7 @@ const PRIORITY = ['cover', 'attack', 'good', 'pass', 'pickup'];
 const CAP = 3000;
 
 test('a full 2p game plays to a fool through the FMSG send/accept leg, and no public bubble ever leaks a hand', () => {
-    let bubble = hex(START_2P);
+    let bubble: Uint8Array = hex(START_2P);
     let steps = 0, sealBytesMax = 0, fool = -1;
 
     for (; steps < CAP; steps++) {
@@ -92,7 +92,7 @@ test('a full 2p game plays to a fool through the FMSG send/accept leg, and no pu
 // test that drives a real fixture to a fool and checks that a working replay code
 // comes out of the envelope's own decoded seed. Kept for that.
 test('a FINISHED envelope\'s own seed derives a real replay code — the /m/ page funnel (batch 6 item B)', () => {
-    let bubble = hex(START_2P);
+    let bubble: Uint8Array = hex(START_2P);
     let finishedEnv: ReturnType<typeof kernelMsgDecode> | null = null;
 
     for (let steps = 0; steps < CAP; steps++) {

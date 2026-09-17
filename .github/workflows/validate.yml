@@ -67,5 +67,11 @@ jobs:
       - name: Determinism gate (no Math.random in the game path)
         run: npm run check:determinism
 
+      # Both TypeScript projects: the web (tsconfig.json) and every e2e suite,
+      # helper and script with the server and SDK modules they reach
+      # (e2e/tsconfig.json). Needs no database.
+      - name: Type-check (web and e2e)
+        run: npm run typecheck
+
       - name: Run validation suite (handpicked regression scenarios)
         run: npm run test:validate

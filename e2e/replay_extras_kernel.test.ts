@@ -62,7 +62,6 @@ import {
   encodeExtras, encodeExtrasBytes, encodeExtrasFromGaps, decodeExtras,
   splitReplayCode, joinReplayCode,
 } from '../server/api/common/replay/extras.ts';
-import { codeToGame } from '../server/api/common/replay/codec.ts';
 import { kernelReplayExtrasEncode, kernelReplayExtrasDecode, kernelReplayLink, ensureBotsAsync, kernelB32Encode, kernelB32Decode } from '../sdk/ts/wasm/bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
