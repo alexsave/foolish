@@ -1394,6 +1394,20 @@ int main(int argc, char **argv) {
         if (found < 0) die("--writer %s: not a --snapshot (a writer writes the snapshot type back)", writers[i]);
         writer_mark(found);
     }
+    // TWO ARRAYS CANNOT SHARE ONE COUNT IN A WRITER. A reader is happy to read
+    // both from the same number; a writer writes that number once per array, so
+    // the LAST one silently decides it - and an empty second array (an awire
+    // cover's attack list on a move that is not a cover) would write a count of
+    // zero over a real one. Refused here rather than emitted, because the bug it
+    // makes is a payload that is correctly formed and wrong.
+    for (int i = 0; i < ncounts; i++)
+        for (int j = i + 1; j < ncounts; j++) {
+            if (strcmp(counts[i].type, counts[j].type) || strcmp(counts[i].count, counts[j].count)) continue;
+            for (int r = 0; r < nrecs; r++)
+                if (recs[r].writer && !strcmp(recs[r].name, counts[i].type))
+                    die("--writer %s: %s.%s and %s.%s share the count %s, and a writer writes it once per array",
+                        counts[i].type, counts[i].type, counts[i].field, counts[j].type, counts[j].field, counts[i].count);
+        }
     for (int i = 0; i < ncounts; i++) {
         int used = 0;
         for (int j = 0; j < nrecs; j++) used |= recs[j].snap && !strcmp(recs[j].name, counts[i].type);

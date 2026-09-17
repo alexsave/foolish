@@ -42,6 +42,14 @@
 --fields LegalMove=type,n_cards,cards,attack_cards
 --count BotDriveOut.actions=n --count LegalMove.cards=n_cards --count LegalMove.attack_cards=n_cards
 #
+# NOT HERE, AND THE REASON IS WORTH KEEPING: awire.h's AwireAction, the move a
+# client sends. It would let Swift stop writing that four-byte frame itself, but
+# its two arrays (`cards` and, for a cover, `attacks`) share ONE count field, and
+# a generated writer writes the count once per array - so an attack, whose
+# attacks list is empty, would write n and then overwrite it with 0. structgen
+# refuses that pairing now rather than emitting it (see --writer), and the
+# crossing that would be worth building is a narrower one than this struct.
+#
 # The table's identity (roster.h), for the seats of a lobby the board has not
 # dealt yet.
 --root Roster

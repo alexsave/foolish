@@ -1652,6 +1652,112 @@ iOS links the C natively, so Swift already sees C structs through the bridging h
 3. Keep `npm run test:swift-parity` as the gate while each file switches, then retire the parts whose only subject was the hand-written reader, per the owner's rule on parity tests.
 4. Pays off with Phase 9: iMessage's beats come from generated Swift and the web's from generated TS, both over the same C structs, so a change to `AnimBeat` updates both by rerunning one script.
 
+#### Phase 10 as built: the bindings are generated and the phone is off the wire formats (commits `f335fbf6`, `000a09bd`, `9dcc26a1`, `16964b8a`)
+
+**Step 1 and step 3 did most of the work, and step 2 made them cheap.**
+
+About 1,250 code lines of Swift knew a byte layout when this phase opened.
+They are 800 now, and 773 of what replaced them is generated from the C declarations.
+
+| file | before | after | what happened |
+| --- | --- | --- | --- |
+| `MessageEnvelope.swift` | 382 | 363 | the 60-line reader of a packed FMSG blob became `readMsgHeader(fio_msg_header_ptr())`; the rest is URLs, base32 and seal plumbing |
+| `AnimPlanWire.swift` | 167 | 140 | the plan's output half is `readAnimPlan`; the stream it asks about still travels down packed |
+| `BeatWire.swift` | 143 | 129 | the beats' output half is `readAnimBeats`; same input rule |
+| `SurfacePlan.swift` | 92 | 76 | the int32-word block is `readAnimSurfacePlan` |
+| `PlayWire.swift` | 89 | 89 | stayed: see below |
+| `EvWire.swift` | 88 | 66 | the frame walk is `client_push_open/next/final`, the framing is `evwire_frames` |
+| `PackedAction.swift` | 84 | 84 | stayed: see below |
+| `MaskedView.swift` | 67 | 46 | the `state_put` byte loop is the client slot; the file is the TableView-to-GameView adapter |
+| `DecodedReplay.swift` | 66 | 66 | stayed: see below |
+| `MoveWire.swift` | 65 | 65 | stayed: see below |
+| `PackedGame.swift` | 65 | 26 | the envelope header, the roster and the name merge are `client_adopt_envelope`; what is left is a Postgres column's hex |
+| `RosterWire.swift` | 51 | 40 | the reader went with EnvelopeRoster; the WRITER stays, and is what the parity test still gates |
+| `BotDriveWire.swift` | 34 | 18 | `readBotDriveOut` |
+| `EnvelopeRoster.swift` | 60 | 0 | deleted |
+| `KernelLayout.swift` | 0 | 21 | new: the gate below |
+| `sdk/swift/gen/kernel.ios.swift` | 0 | 773 | generated |
+
+**Four files stayed, and the reason is the same one in each case: the bytes are a form something TRAVELS in, not a struct anybody holds.**
+
+`MoveWire` reads the legal menu, which a board is handed and passes on unread to `play_probe` from a SwiftUI body; the kernel's own `LegalMoves` is 240 KB at the iOS caps, so copying one per render to read six moves out of it is the wrong shape.
+`PlayWire` asks about that menu and gets a 12-byte answer back.
+`PackedAction` is the SERVER's HTTP request and response envelope rather than a kernel struct.
+`DecodedReplay` reads the replay decoder's record stream, which is a variable-length walk the kernel has no fixed struct for.
+Each is a candidate for a later pass; none of them is a layout stated twice today, which is the property that mattered.
+
+**`AwireAction` was tried and rejected, and the generator is stricter for it.**
+Letting Swift fill the kernel's own action struct through a generated writer would take the move frame out of `MoveWire` and `PackedAction` at once.
+It cannot: `cards` and `attacks` share one count field, and a generated writer writes that count once per array, so an attack (whose attack list is empty) would write its real count and then overwrite it with zero.
+A reader is happy with the pairing and a writer is not, so `structgen` refuses it now (`--writer`, with a `cli.sh` case) instead of emitting a payload that is correctly formed and wrong.
+
+**Step 2: `--swift`, one more emitter over the same clang-derived model.**
+
+A Swift host LINKS the kernel, so there is no linear memory to index and no `Mem`: a reader takes the address of the C struct itself and copies the record out into a `Sendable` value type, so nothing Swift holds points into storage the kernel writes next.
+That is the same rule as the TS snapshots and as the resident-slot discipline the app already keeps.
+Everything else is shared with the TS emitter: which records are copied, which arrays are counted, which counts are refused, and the layout hash.
+Integers widen to `Int` as the TS side widens to `number`, a `char[N]` becomes a `String`, a field named after a Swift keyword is emitted in backticks, and a bad count THROWS rather than returns nil, so the refusal names the field and the value.
+`--target` picks the triple libclang parses for, because a native host reads the layout its own compiler makes: the same roots hash to `0x2c3f0c6d` for wasm32 and `0xfeacf389` for `arm64-apple-ios15.0`, and a run that ignored that difference would have been generating a plausible lie.
+
+The generated module is 856 lines (41 KB) for 11 roots and the 9 records they reach, including about 200 constants.
+
+**The layout hash, because the library is prebuilt.**
+The web checks its hash at instantiate; there is no instantiate here, and the kernel is an xcframework built by a separate command.
+A header edit with no `make ios-lib` - or the reverse - would leave every generated offset plausible and wrong, with nothing to say so at compile time.
+So `make ios-lib` bakes the hash of these structs into the library (`-DSG_LAYOUT_HASH`, `fio_layout_hash`) and `KernelLayout.verified` compares the two before the first call into the engine.
+All three iOS slices are generated and compared, so one stamped hash cannot be right on two architectures and wrong on the third.
+It traps rather than degrades: a wrong offset returns other fields' bytes, and every rule downstream is then computed from them.
+
+**The generic tests are `tools/structgen/test/swift.sh`**, the twin of `verify.test.ts`: C compiled from the same headers fills the fixture through its own field names, Swift reads it through the generated readers, and the two agreeing is the statement that every emitted offset is the offset `offsetof` would give - checked against the real headers rather than a copy.
+It covers every field kind, the counts, the strings, the pointers a count follows, the writers and every refusal, plus `sizeof` per record against the compiler's own.
+It went red by assertion first: 34 failures against readers that returned zeros.
+
+**What moved into C on the way, beyond the offsets.**
+
+- Which seat is the fool. `MaskedView` derived it from the seat statuses; `TableView.fool` is `game_done`'s answer.
+- That a server envelope's roster status outranks the board's copy of it. `PackedGame` applied that rule after decoding; `client_adopt_envelope` applies it while reading.
+- Counting the frames of an animation stream. A step emits any number of events, including none, so "how far back does this stream reach" counts frames and never events: `evwire_frames`.
+- The envelope's rules byte. `fio_msg_passing` resolves the variant against the format, which is the thing no host should know.
+
+**One adopt, one call.** `EngineC.adoptEnvelope` returns the board, the table's identity and the seat's legal menu together.
+The old shape asked for the menu in a second actor hop, with the envelope's bytes carried along to feed it, and the kernel has ONE client slot: everything held across an await is something another caller can move underneath you (see `resealFromBase`, and the resident-slot rule this file's animation sections keep returning to).
+
+**The parity test lost its decoder half.**
+`e2e/packed_roster_wire.test.ts` compiled the real Swift trailer decoder and diffed its reading against the web's.
+That decoder is gone, so a parity test over one implementation would only prove it agrees with itself.
+The WRITER half stays, because its second implementation still ships: `RosterWire.encode` writes the names block for an FMSG seal and the C Roster writes the same block inside the envelope's trailer, and the trim rule is the part with judgement in it.
+Six tests, zero skipped, still green.
+
+**The C tests read structs now too.**
+`ios_api_smoke` walked the same packed blocks by offset - a third statement of each layout, and a test that walks a wire nobody else reads passes against a wire nobody else reads.
+It also gained a differential: every frame of a whole game is walked BOTH ways, through `evwire_read` and through the `fio_push_*` entries Swift uses, and diffed event by event.
+That test found `EVW_ECAP` on its first run (a game's stream really is more frames than a small array holds) and went red on an `n_cards` mutation.
+`msg_flow_sim`'s roster offset - which had been WRONG once already, 54 where the field had moved to 64, so every roster it read was ten bytes of somebody else's fields - is a struct field now, and an offset nobody states cannot be wrong.
+
+**Sizes and gates.**
+
+| | before | after |
+| --- | --- | --- |
+| hand-written Swift that knows a layout | 1,310 code lines | 800 |
+| generated Swift | 0 | 773 (856 with its comments) |
+| `bots.wasm.gz` | 80,640 B | 80,913 B |
+| `libfoolish.a`, the core the extension links | 227,072 B | 246,136 B |
+| `libfoolishbots.a`, the ladder | 505,264 B | 488,224 B |
+| swift-parity | 9 tests | 6, none skipped |
+
+The two archives move together and almost cancel: `client_table.c` left the bots
+archive for the core one, where the iMessage extension can reach it, and what is
+left over is about 2 KB of new entry points across both.
+The slot itself is 4.5 KB of BSS at these caps, which is a Game with its logs
+somewhere else.
+
+**What is NOT verified, and by what.**
+`make ios-smoke`, `ios-goldens` (no diff), `ios-archives`, `difftests`, `msg-flow-sim`, the structgen suites, `gen.sh --check`, `test:mem`, `typecheck`, `test:swift-parity`, the architecture lint and the msg / client / replay e2e files all pass.
+The shipping scheme `FoolishMessagesApp` builds and the whole `Foolish` test target COMPILES (`build-for-testing`).
+Nothing ran the 513 XCTest cases or the app itself: that needs a simulator, which this session had no way to drive.
+So the iMessage board's animation timing, the lobby's beats and the online table are proved here by the C tests, by the compile and by the structs being the same ones the web already reads - and not by a device.
+`ios/scripts/mac_tests.sh` is the run that would close that gap.
+
 ### Test cadence for Phases 9 and 10 (owner, 2026-09-17)
 
 No full `npm run test:e2e` inside Phases 9 or 10: each step runs only the targeted e2e files it touches, plus the C suites, structgen suites, wasm freshness, tsc, typecheck, test:mem and swift-parity.
