@@ -1568,6 +1568,78 @@ The JSON-string dedup map (`createCardEventString`) is the other half of the sam
 The before/after films in headless Chrome need a driver this repo does not have (no Puppeteer, no Playwright, no `chromedriver`), so filming means either adding a dev dependency or driving Chrome's DevTools protocol by hand.
 The frame-by-frame evidence in the table above comes from the trace harness instead, which records every frame the page drew at the exact virtual millisecond it drew it - a stricter record than a film, and the reason the harness exists.
 
+#### Phase 9 as built, part 3: the last two guesses, the rest of the split and the films (commits `e0ffe2bf`, `020bc1af`, `9c546ae8`)
+
+**Step 3 is finished: nothing in the animation path guesses any more.**
+
+`optimisticPassState`'s three surviving sites all asked one question - where does the shield stand on a board my pending pass has not been confirmed on - and all three answered it from two seat numbers cached at the moment of the tap.
+Each had its own opinion about a cache that disagreed with the board it was imposed on: the early conflict branch judged cards against the cached seat, `keep` imposed the cache only when the arriving message happened to carry an event of the local seat, and the completion callback compared the server's board with the cache and overrode the SERVER when they differed.
+
+They keep the PASS now - the action wire that was sent - and re-ask `client_optimistic_apply` per board.
+The kernel answers the whole question from a rule it already had: a board whose table already shows the pass's cards is left exactly as the server wrote it ("a move none of whose cards is new has already happened, so a pass hands the shield on no further", `c/src/client_table.c`), and a board that does not show them gets the shield handed on.
+So no site prefers the guess or the server; the kernel says which a board is, per board, every time it is asked.
+The pass is pending exactly while the optimistic map still holds one of its cards, which every path that resolves a prediction already maintains, so the clearing discipline that kept going wrong is gone rather than rewritten.
+
+The JSON-string dedup map went with it.
+`anim_event_key` crosses as `wasm_anim_event_key`, as a DOUBLE: the key packs six bytes, so every value it can take is exact in one, and the browser gets a plain `Map` key with no BigInt and no string.
+A C test walks every event type, location, seat, suit and value and holds each key both under 2^48 and through a double round trip.
+The map holds what was predicted under each key, so no caller reads a key - which is what the JSON string existed for, and it was a byte layout TypeScript knew.
+`createCardEventString` is deleted; `src/utils/animationUtils.ts` is 11 lines.
+
+**Two new trace cases, and what they showed.**
+
+| case | before | after |
+| --- | --- | --- |
+| a pass whose confirmation is late | the shield goes 1, 2, 1, 2 - out to the next seat, home again on a throw-in composed without the pass, out once more when the late confirmation lands | 1, 2 |
+| a pass refused after its flight landed | 1, 2, 1 | 1, 2, 1, and the trace is byte-identical |
+
+The first is a repro, red by assertion on the pre-change code.
+Its one differing frame is `t=1262`, the frame the concurrent throw-in commits into: the board there was `table 7h 7c 7d` with `defender=1`, the local seat's own pass card lying on the table under the local seat's own shield, held for 288 ms until the confirmation snapped it back.
+Frame count, frame times and every other frame are identical across the change.
+The second is a guard, not a repro, and is recorded as such.
+
+All 21 previously recorded traces pass unchanged, and no DOM golden moved.
+
+**Step 4 is finished.**
+`ReplayScreen.tsx` is 140 lines - the code, the providers and the failure page.
+The transport is `src/replay/usePlayback.ts`, the Oracle's panel is `src/replay/useOracle.ts`, and the board with its readouts and knobs is `src/components/replay/ReplayStage.tsx`.
+A pure move, committed on its own, with the three replay DOM goldens passing unchanged as the proof.
+
+**Step 5's films are done, for the cases a film can show.**
+
+Headless Chrome is launched as a process and driven over its own DevTools protocol - `Page.startScreencast` hands back a frame only when the page changed, each with the moment it was composited, and ffmpeg's concat demuxer holds every frame for exactly the time it was on screen.
+No browser dependency was added.
+Three takes of the same replay, before (`b05e3751`) and after, at about 33 frames a second: the deal with attacks, passes and covers including two multi-card attacks; an attack with a seven-card pickup, a three-card attack and a nine-card pickup; and a pass, a pickup, a good with its discard sweep and the closing board.
+The motion timelines agree run for run, which is the point - Phase 9 moved the decisions, not the look - and where they differ, the before film shows a one-frame stillness at a step boundary that the after film plays as one continuous motion.
+
+Two things a film cannot show, and where the evidence is instead:
+the 25 ms gap is below one frame at 33 fps, and the live-only races (a throw-in during a pending move, a rejected move, a resync, a rematch) need a race staged to the millisecond.
+Both are what `e2e/ui_animation_trace.test.ts` exists for: it drives the same page tree against the same C table on a virtual clock, and holds every frame the page drew to a recorded golden.
+
+Two things found on the way, neither caused by this phase:
+
+- **The app does not boot under `next dev` in headless Chrome.** `KernelGate` waits on `ensureBotsAsync()`, the module is never requested, and the whole page stays on its wool background with no error in the console. `next build` + `next start` boots normally, which is what the films use.
+- **`Input.dispatchKeyEvent` never returns** against this page in headless Chrome, so the takes dispatch a synthetic `KeyboardEvent` on the window instead, which is what the replay screen listens for.
+
+**Sizes.**
+
+| | part 2 | part 3 |
+| --- | --- | --- |
+| `bots.wasm.gz` | 80,549 B | 80,640 B |
+| Web bundle (union, gz) | 304,806 B | 304,866 B |
+| `AnimationContext.tsx` | 1,619 lines | 1,631 |
+| `ReplayScreen.tsx` | 605 lines | 140 |
+| Animation traces | 21 | 23, none of the 21 re-recorded |
+| DOM goldens | 16 | 16, none re-recorded |
+
+**`tools/structgen/gen/verify.wasm` stopped being committed**, which is a separate finding from the same pass.
+It was reported as non-reproducible; it is not.
+Two links of the same source on one machine are byte-identical, and what differed was the COMMITTED copy - last written at `05192715`, against headers that have moved since, so every data address in the module had shifted by 12 bytes.
+`gen.sh --check` never said so because it excluded the file from its own freshness diff (`diff -r -x verify.wasm`), on the grounds that a macOS clang and CI's clang-22 write different bytes.
+The exclusion was the bug: an artifact nothing compares is an artifact nothing keeps fresh, and this one rotted inside one phase.
+The link moves to `tools/structgen/build/`, already ignored, and is made on demand - CI has always run `gen.sh` before the verify test.
+`--check` now diffs `gen/` with no exclusions and refuses a tracked file under it that is not a generated module, and `gen.sh` links `verify.c` twice and compares.
+
 ### Phase 10: generated Swift bindings, and Swift off the wire formats
 
 About 1,250 code lines of Swift know byte layouts today and are kept in step with C by hand: `MessageEnvelope.swift` (382), `AnimPlanWire.swift` (167), `SurfacePlan.swift` (92), `PlayWire.swift` (89), `EvWire.swift` (88), `PackedAction.swift` (84), `MaskedView.swift` (67), `DecodedReplay.swift` (66), `MoveWire.swift` (65), `PackedGame.swift` (65), `RosterWire.swift` (51), `BotDriveWire.swift` (34).

@@ -202,8 +202,10 @@ C already answers, and the web only has to start asking:
 - the hand's laid-out order (`anim_hand_laid_out`), once it can express a face-down slot;
 - the lobby-and-back surface plan (`anim_surface_plan`) for the rematch.
 
-**WHAT CAME OF THIS (Phase 9 steps 2 and 3, 2026-09-17).**
-Every row above that says "C answers it" now has the web asking, except `optimisticPassState`'s three surviving reconciliation sites and the JSON-string dedup map, which are written up as the remainder in `docs/C_GAME_SHAPE_MIGRATION.md` "Phase 9 as built, part 2".
+**WHAT CAME OF THIS (Phase 9 steps 2 to 5, 2026-09-17).**
+Every row above that says "C answers it" now has the web asking, with no exceptions: `optimisticPassState`'s three surviving reconciliation sites and the JSON-string dedup map went in part 3 (`docs/C_GAME_SHAPE_MIGRATION.md` "Phase 9 as built, part 3").
+Section 5's four sites are one site now: the web keeps the pending pass's ACTION WIRE and re-asks `client_optimistic_apply` per board, and the kernel's own idempotence - a board whose table already shows the pass's cards is left as the server wrote it - is what decides between the guess and the server, so no TypeScript encodes a preference.
+The dedup key of section 5's last paragraph is `anim_event_key`, reached through `wasm_anim_event_key`; `createCardEventString` is deleted.
 Two rows came out differently from the way this file guessed.
 Section 9's four insertion branches were called "the single largest behavioural diff the gate will have to justify"; replacing them with the kernel's reversal moved no frame of any recorded trace, because in every one of them the branch's anchor event was event 0 and all four already produced "reverts first".
 Section 2's claim that "the FIRST step's board is on screen from frame zero" was overstated for the badges: the web already committed a step's board only as its flight landed, and what it really lacked was ONE landing - the board a predicted move leaves rode a second timer in another file, and for one frame the board had advanced while the card was still in the air.
