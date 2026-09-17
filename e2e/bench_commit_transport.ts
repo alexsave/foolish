@@ -21,13 +21,21 @@
 // for the edge-to-database round trip on hosted.
 
 import { execFileSync } from 'node:child_process';
-import { randomBytes, randomUUID } from 'node:crypto';
 import { Client } from 'pg';
+import { derivedUuid } from '../sdk/ts/wire/detid.ts';
+import { suiteRng } from './helpers/rng.ts';
 
 const ROUNDS = Number(process.env.BENCH_ROUNDS || 20);
 const PER_ROUND = Number(process.env.BENCH_PER_ROUND || 50);
 const RTT = Number(process.env.BENCH_RTT_MS || 0);
 const say = (s: string) => process.stdout.write(`${s}\n`);
+
+// The blob bytes and seat ids are drawn from the suite seed: their values change
+// nothing measured, and a bench is reproducible like any e2e file.
+const rng = suiteRng('commit_transport');
+let idSeq = 0;
+const seededBytes = (n: number): Uint8Array => Uint8Array.from({ length: n }, () => rng.int(256));
+const seededUuid = (): string => derivedUuid(`commit_transport:${rng.seed}`, idSeq++);
 
 const env: Record<string, string> = Object.fromEntries(
     execFileSync('supabase', ['status', '-o', 'env', '--workdir', 'server/impls'], { cwd: process.cwd(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
@@ -71,9 +79,9 @@ const b64 = (b: Uint8Array) => Buffer.from(b).toString('base64');
 const sizes = { state: 110, logs: 40, spectator: 280, view: 300, seats: 4 };
 
 function payload(kind: 'hex' | 'bytea' | 'base64', id: string): object {
-    const state = randomBytes(sizes.state), logs = randomBytes(sizes.logs), spectator = randomBytes(sizes.spectator);
-    const players = Array.from({ length: sizes.seats }, () => randomUUID());
-    const views = players.map(() => randomBytes(sizes.view));
+    const state = seededBytes(sizes.state), logs = seededBytes(sizes.logs), spectator = seededBytes(sizes.spectator);
+    const players = Array.from({ length: sizes.seats }, () => seededUuid());
+    const views = players.map(() => seededBytes(sizes.view));
     if (kind === 'hex') {
         return { p_id: id, p_state: `\\x${hex(state)}`, p_logs: hex(logs), p_spectator: hex(spectator),
             p_views: players.map((p, i) => ({ player_id: p, view: hex(views[i]), status: 'playing' })) };

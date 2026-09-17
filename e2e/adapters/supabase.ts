@@ -380,6 +380,11 @@ export const createClient = (_url?: string, _key?: string) => ({
     // GoTrue's admin API, as far as delete-account reaches it: deleting the user
     // row cascades exactly what the hosted auth delete cascades.
     auth: {
+        // GoTrue verifying a token (auth.ts's fallback when local verification
+        // fails): there is no GoTrue here and no token it issued, so it refuses,
+        // as GoTrue refuses a token it cannot verify.
+        getUser: async (_token?: string): Promise<{ data: { user: User | null }; error: { message: string } | null }> =>
+            ({ data: { user: null }, error: { message: 'invalid JWT: no GoTrue in the e2e shim' } }),
         admin: {
             deleteUser: async (id: string): Promise<{ data: unknown; error: any }> => {
                 try {
@@ -392,6 +397,16 @@ export const createClient = (_url?: string, _key?: string) => ({
     removeChannel: async (_ch: any) => 'ok',
 });
 
-export type User = { id: string; user_metadata: { username: string }; email?: string };
+/** supabase-js's User, as far as the server builds or reads one. */
+export type User = {
+    id: string;
+    aud: string;
+    role?: string;
+    email?: string;
+    phone?: string;
+    app_metadata: { [key: string]: any };
+    user_metadata: { [key: string]: any };
+    created_at: string;
+};
 
 export const closePool = () => pool.end();
