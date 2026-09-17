@@ -76,7 +76,9 @@ export const CLIENT_BOUNDARY = {
     /** Modules the client slot replaced: the second kernel the web used to load for its move gates (guards.wasm) (Phase 6b). */
     retiredModules: [/(^|\/)sdk\/ts\/wasm\/guards_wasm\.ts$/, /(^|\/)src\/wasm\/clientGuards\.ts$/,
         // the Oracle's TS log wire encoder: the kernel writes the Oracle's memory (Phase 7)
-        /(^|\/)src\/oracle\/logsWire\.ts$/],
+        /(^|\/)src\/oracle\/logsWire\.ts$/,
+        // the TS replay decoder over rules.wasm: the web reads a code through bots.wasm's summary and frames (Phase 7)
+        /(^|\/)server\/api\/common\/replay\/decode(_kernel)?\.ts$/],
     /** Kernel exports that serialize the resident game unmasked. */
     deniedWasmExports: ['wasm_export_state', 'wasm_state_serialize', 'wasm_state_deserialize',
         // the C Table: loads a durable blob, and writes it back out in a commit

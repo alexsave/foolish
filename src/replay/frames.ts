@@ -32,14 +32,14 @@
  *     arithmetic decode is the cost and it is tiny.
  * ========================================================================== */
 
-import { deckSizeFor } from '@api/core/constants.ts';
 import {
     replayEventFrames, replayStepIndex, REPLAY_STEP, ReplayStepInfo,
 } from '@sdk/ts/wasm/bots.ts';
 import { clientTable } from '@sdk/ts/table/client_table.ts';
 import { AnimationSequenceMessage, FeedAnimationEvent } from '../state/animationFeed';
+import { undealtBoard } from '../state/clientBoards';
 import { pushToSequence, type ViewEvent } from '../state/pushSequence';
-import { NO_CARD, type TableView, type ViewCard as Card } from '../state/view';
+import { type TableView, type ViewCard as Card } from '../state/view';
 
 export { REPLAY_STEP } from '@sdk/ts/wasm/bots.ts';
 
@@ -79,29 +79,29 @@ const NARRATED_EVENT: Record<number, string> = {
     // GOOD moves no cards — nothing to narrate but the seat.
 };
 
-/* A replay's frames name no one on the wire: the seats are named here, by the
- * table identity the kernel builds from the extras' names (or P1, P2...), with
- * player ids `seat-N`. Each board then carries the replay's own game id, which
- * is the code itself and longer than a table's id may be, so it is set on the
- * board after the read. A name the kernel refuses (too long for a roster name)
- * is set on the board the same way instead. Phase 7 retires the `seat-N` ids. */
-interface Naming { identity: Uint8Array | null; ids: string[]; names: string[]; gameId: string }
+/* A replay's frames name no one on the wire, and a replay has no one signed in:
+ * a code carries no player ids at all. So a frame is read with no identity, and
+ * its seats keep the kernel's empty ids - the page names a seat by its index
+ * (state/view.ts seatKey) - and take the names the code's extras give them (or
+ * P1, P2...). The board carries the replay's own id, the code itself, which is
+ * longer than a table's id may be. Both are the host's display strings, set on
+ * the snapshot after the read; no field of the game is. */
+interface Naming { names: string[]; gameId: string }
 
 const named = (v: TableView, naming: Naming): TableView => ({
     ...v,
     gameId: naming.gameId,
-    seats: naming.identity ? v.seats : v.seats.map((s, i) => ({ ...s, id: naming.ids[i] ?? `seat-${i}`, name: naming.names[i] ?? '' })),
+    seats: v.seats.map((s, i) => ({ ...s, name: naming.names[i] ?? '' })),
 });
 
 const readFrame = (bytes: Uint8Array, naming: Naming | null) => {
-    const read = clientTable().readPush(bytes, { as3: false, identity: naming?.identity ?? 'none' });
+    const read = clientTable().readPush(bytes, { as3: false, identity: 'none' });
     if (!read) return null;
     if (!naming) return pushToSequence(read);
-    const seq = pushToSequence({
+    return pushToSequence({
         steps: read.steps.map((s) => ({ event: s.event, view: named(s.view, naming) })),
         final: named(read.final, naming),
     });
-    return seq;
 };
 
 export interface ReplayFramesOpts {
@@ -135,10 +135,7 @@ export function buildReplayFrames(
     const probe = readFrame(main[0], null);
     if (!probe) throw new Error('replay: the opening frame did not decode');
     const n = probe.game.seats.length;
-    const ids = Array.from({ length: n }, (_, s) => `seat-${s}`);
-    const seatNames = ids.map((_, s) => names?.[s] || `P${s + 1}`);
-    const identity = clientTable().identityFromSeats('replay', '', ids.map((id, s) => ({ id, name: seatNames[s], isAi: false })));
-    const seats: Naming = { identity, ids, names: seatNames, gameId };
+    const seats: Naming = { names: Array.from({ length: n }, (_, s) => names?.[s] || `P${s + 1}`), gameId };
 
     // One replay per seat, read for that seat's own hand. This is the reveal
     // eye's whole source of truth — see the header.
@@ -191,20 +188,15 @@ export function buildReplayFrames(
 }
 
 /**
- * The state the opening deal animates OUT of: a full face-down stock, empty
- * hands, nothing flipped. The board before the first frame lands — the lobby
- * shape a live client sits in while waiting to be dealt to.
+ * The board the opening deal animates onto: the whole stock face down, no trump
+ * turned, an empty table and no card in any hand - the watching seat's own
+ * included, though its first frame already shows the hand it was dealt. The
+ * kernel makes it from the first frame's board (client_board_edit UNDEAL).
  */
 export function preDealGame(first: ReplayFrame): ReplayGameState {
-    return {
-        ...first.game,
-        deckCount: deckSizeFor(first.game.seats.length),
-        hasFlipped: false,
-        flipped: NO_CARD,
-        battles: [],
-        seats: first.game.seats.map((p) => ({ ...p, handCount: 0 })),
-        replay_hands: first.game.seats.map(() => []),
-    };
+    const board = undealtBoard(first.game);
+    if (!board) throw new Error('replay: the board before the deal was refused');
+    return { ...board, replay_hands: first.game.seats.map(() => []) };
 }
 
 /* =============================================================================

@@ -21,7 +21,7 @@
 
 import { test } from 'node:test';
 import { bytesToBigint } from '../server/api/common/replay/codec.ts';
-import { kernelB32Decode } from '../sdk/ts/wasm/bots.ts';
+import { kernelB32Decode, replaySummary } from '../sdk/ts/wasm/bots.ts';
 import assert from 'node:assert/strict';
 
 import { codeToGame, bigintToBytes } from '../server/api/common/replay/codec.ts';
@@ -38,7 +38,6 @@ if (!process.env.E2E_VERBOSE) {
 }
 
 const LEARNER = 0;
-const SELF_ID = 'seat-0';
 
 // Mirrors Tutorial.tsx's learnerOwesGood — a good that CLOSES a bout is not
 // attributed to anyone (v6 records the round ending, not who ended it), so the
@@ -61,25 +60,34 @@ const isLearnerStep = (frames: ReplayFrame[], i: number): boolean => {
     ].includes(f.kind);
 };
 
+// Read the way Tutorial.tsx reads it: the kernel's summary of the code, and the
+// frames from the learner's seat. The decoder's own header is kept beside it for
+// the format version, which the summary does not carry.
 const load = async () => {
     const x = bytesToBigint(kernelB32Decode(TUTORIAL_MOVES_CODE));
     const decoded = await decodeReplay(x);
+    const summary = replaySummary(bigintToBytes(x));
+    assert.ok(summary, 'the tutorial code has a summary');
     const frames = buildReplayFrames(bigintToBytes(x), 'tutorial', TUTORIAL_NAMES, {
-        viewer: LEARNER, fool: decoded.fool,
+        viewer: LEARNER, fool: summary!.fool,
     });
-    return { decoded, frames };
+    return { decoded, summary: summary!, frames };
 };
 
 export function registerTutorialValidation(): void {
 test('the tutorial code still replays on the kernel that ships', async () => {
-    const { decoded, frames } = await load();
+    const { decoded, summary, frames } = await load();
     assert.equal(decoded.formatVersion, FORMAT_VERSION_V6,
         'the tutorial is an inline-reveal code (the retrodiction line cannot replay)');
-    assert.equal(decoded.playerCount, 3, '3-player game');
+    assert.equal(summary.numPlayers, 3, '3-player game');
     assert.ok(frames.length > 10, `replays to ${frames.length} steps`);
     assert.equal(frames[0].kind, REPLAY_STEP.DEAL, 'it opens with the deal');
-    assert.notEqual(decoded.fool, LEARNER, 'the learner is not left the fool');
-    assert.equal(decoded.firstAttacker, LEARNER, 'the learner holds the lowest trump and leads');
+    assert.notEqual(summary.fool, LEARNER, 'the learner is not left the fool');
+    assert.equal(summary.firstAttacker, LEARNER, 'the learner holds the lowest trump and leads');
+    // The summary the tutorial reads is the decoder's header.
+    assert.deepEqual([summary.numPlayers, summary.fool, summary.firstAttacker, summary.powerSuit, summary.elimination],
+        [decoded.playerCount, decoded.fool, decoded.firstAttacker, decoded.powerSuit, decoded.eliminationOrder],
+        'the kernel summary says what the decoder says');
 });
 
 test('the learner sees their own hand and nobody else\'s', async () => {
@@ -89,7 +97,7 @@ test('the learner sees their own hand and nobody else\'s', async () => {
     // tutorial would be teaching from a cheat.
     for (const f of frames) {
         assert.equal(f.game.mySeat, LEARNER, 'the learner has a seat');
-        assert.equal(f.game.seats[LEARNER].id, SELF_ID, 'the seat the tutorial signs in as');
+        assert.equal(f.game.seats[LEARNER].id, '', 'the learner\'s seat is nobody\'s account: the board says whose hand it is');
         assert.equal(f.game.myHand.length, f.game.seats[LEARNER].handCount,
             'the learner holds their real hand');
         for (const c of f.game.myHand) {
@@ -99,10 +107,10 @@ test('the learner sees their own hand and nobody else\'s', async () => {
 });
 
 test('the tutorial teaches every element it narrates', async () => {
-    const { decoded, frames } = await load();
+    const { summary, frames } = await load();
     const kinds = (k: number) => frames.filter((f) => f.kind === k);
     const learner = (k: number) => frames.filter((f) => f.kind === k && f.seat === LEARNER);
-    const ps = decoded.powerSuit;
+    const ps = summary.powerSuit;
 
     // The learner performs each move the tutorial prompts for...
     assert.ok(learner(REPLAY_STEP.ATTACK).length > 0, 'the learner attacks');

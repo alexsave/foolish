@@ -11,7 +11,7 @@ import { kernelUnambiguousCover } from "@sdk/ts/wasm/bots.ts";
 import { canAttack, canPass, canCoverCards, canCoverPair, canPickup } from "../../utils/gameValidation";
 import { useStyles } from "../../contexts/StyleContext";
 import { useTutorialHint } from "../../contexts/TutorialHintContext";
-import { PLAYER_STATUS, covered, rulesOf } from "../../state/view";
+import { PLAYER_STATUS, covered, rulesOf, seatKey } from "../../state/view";
 
 // Green glow used by the tutorial to point at the card/button to use next.
 const TUT_GLOW = '0 0 0 3px #2fcf63, 0 0 16px 3px rgba(47,207,99,0.85)';
@@ -43,7 +43,7 @@ const ActionButton: React.FC<ActionButtonProps> = ({ seed, onClick, children }) 
     );
 };
 
-const CardDiv = ({ user_id }: { user_id: string }) => {
+const CardDiv = () => {
     const { view: game, localHandOrder } = useServer();
     const { selectedCards } = useGame();
     const { draggedCardIndex, isDraggingForGameAction, startCardDrag, isActuallyDragging } = useDrag();
@@ -53,12 +53,14 @@ const CardDiv = ({ user_id }: { user_id: string }) => {
     if (!game || game.mySeat < 0) {
         return <p style={{ color: 'var(--color-text-primary)', fontSize: '18px' }}><Text id="spectating" /></p>;
     }
+    // The page's name for my hand, which flights and the keyboard find it by.
+    const handKey = seatKey(game, game.mySeat);
 
     return (
         <div 
             data-touch-interactive
             data-hand-container
-            data-player-id={user_id}
+            data-player-id={handKey}
             style={{
                 display: 'flex',
                 flexDirection: 'row',
@@ -90,7 +92,7 @@ const CardDiv = ({ user_id }: { user_id: string }) => {
                         key={'' + card.value + card.suit}
                         data-card-index={index}
                         data-location="hand"
-                        data-player-id={user_id}
+                        data-player-id={handKey}
                         data-card={`${card.suit}-${card.value}`}
                         draggable={true}
                         onMouseDown={(e) => startCardDrag(e, index)}
@@ -322,7 +324,8 @@ export const ActionButtons = () => {
                 </div>
             )}
 
-            {user_id && <CardDiv user_id={user_id} />}
+            {/* a signed-in watcher is told they are watching; a seat holds a hand, signed in or not (the tutorial) */}
+            {(user_id || (game && game.mySeat >= 0)) && <CardDiv />}
         </div>
     );
 };

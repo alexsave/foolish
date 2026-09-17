@@ -19,10 +19,7 @@ import { Telestrator } from './Telestrator';
 import { usePreventScroll } from '../hooks/usePreventScroll';
 import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed';
 import { bigintToBytes, bytesToBigint } from '@api/common/replay/codec.ts';
-import { kernelB32Decode } from '@sdk/ts/wasm/bots.ts';
-import { decodeReplay } from '@api/common/replay/decode.ts';
-import { DecodedReplay } from '@api/common/replay/core.ts';
-import { ensureBotsAsync } from '@sdk/ts/wasm/bots.ts';
+import { ensureBotsAsync, kernelB32Decode, replaySummary } from '@sdk/ts/wasm/bots.ts';
 import {
     buildReplayFrames,
     buildReverseFrames,
@@ -33,7 +30,6 @@ import {
     REPLAY_STEP,
 } from '../replay/frames';
 import { splitReplayCode, decodeExtras, ReplayExtras } from '@api/common/replay/extras.ts';
-import { INFO_TYPES } from '@api/common/replay/core.ts';
 import { OracleOverlay } from './OracleOverlay';
 import { createOracleController, IOracleController } from '../oracle/oracleControllerFactory';
 import { buildOracleJob, findDecisionIndex } from '../oracle/replayOracleInput';
@@ -515,7 +511,8 @@ const IconOracle = () => (
 );
 
 interface StageProps {
-    decoded: DecodedReplay;
+    /** The fool's seat, or null for a code cut before the game ended. */
+    fool: number | null;
     /** The replay code the frames were built from: the Oracle's position is read off it. */
     code: Uint8Array;
     frames: ReplayFrame[];
@@ -525,7 +522,7 @@ interface StageProps {
     times: (number | null)[];
 }
 
-const ReplayStage = ({ decoded, code, frames, reverses, gameId, names, times }: StageProps) => {
+const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times }: StageProps) => {
     usePreventScroll();
     const { updateGameState } = useServerActions();
     const { isAnimating, resetAnimations } = useAnimation();
@@ -870,7 +867,7 @@ const ReplayStage = ({ decoded, code, frames, reverses, gameId, names, times }: 
                         replacing it — the move that ended the game is worth
                         reading too. */}
                     {stepIdx >= 0 && <StepMessage frame={frame} names={names} />}
-                    {stepIdx === lastIdx && <FoolMessage fool={decoded.fool} names={names} />}
+                    {stepIdx === lastIdx && <FoolMessage fool={fool} names={names} />}
                 </div>
             </div>
 
@@ -955,38 +952,34 @@ const ReplayStage = ({ decoded, code, frames, reverses, gameId, names, times }: 
 
 const buildReplayData = async (code: string, gameId: string) => {
     const { moves, extras: extrasCode } = splitReplayCode(code);
-    const x = bytesToBigint(kernelB32Decode(moves));
+    const bytes = bigintToBytes(bytesToBigint(kernelB32Decode(moves)));
     await ensureBotsAsync();
 
-    // The kernel's own decode, for the two things the frames don't carry: who
-    // the fool was, and the public log stream the Oracle reasons from. Not a
-    // projection — it is one wasm call into the same replay.c the frames come
-    // from.
-    const decoded = await decodeReplay(x);
+    // The code at a glance, from the kernel: the seats, the fool, and how many
+    // moves the extras time. A code that does not decode is not a replay.
+    const summary = replaySummary(bytes);
+    if (!summary) throw new Error('replay: the code does not decode');
 
     // extras (names + timing) are decoration: a malformed blob never
     // breaks the replay itself
     let extras: ReplayExtras = { names: null, startTime: null, moveGaps: null };
     if (extrasCode) {
         try {
-            const moveCount = decoded.logs.filter((l) =>
-                INFO_TYPES.includes(l.log_type),
-            ).length;
-            extras = decodeExtras(extrasCode, decoded.playerCount, moveCount);
+            extras = decodeExtras(extrasCode, summary.numPlayers, summary.moves);
         } catch (e) {
             console.error('Replay extras ignored:', e);
         }
     }
 
     const names = extras.names;
+    const fool = summary.fool >= 0 ? summary.fool : null;
     // The game, replayed by the engine: one frame per step, each the board the
     // engine really committed and the events it really produced.
-    const bytes = bigintToBytes(x);
-    const frames = buildReplayFrames(bytes, gameId, names, { fool: decoded.fool });
+    const frames = buildReplayFrames(bytes, gameId, names, { fool });
     const reverses = buildReverseFrames(frames);
     const initial = preDealGame(frames[0]);
     const times = stepTimes(frames, extras.startTime, extras.moveGaps);
-    return { decoded, code: bytes, frames, reverses, initial, names, times };
+    return { fool, code: bytes, frames, reverses, initial, names, times };
 };
 
 export const ReplayScreen = ({ code }: { code: string }) => {
@@ -997,8 +990,8 @@ export const ReplayScreen = ({ code }: { code: string }) => {
 
     const gameId = code.toLowerCase();
 
-    // Async: decodeReplay runs in the rules kernel, which the browser must
-    // compile asynchronously. undefined = still decoding, null = failed.
+    // Async: the replay runs in bots.wasm, which the browser must compile
+    // asynchronously. undefined = still decoding, null = failed.
     const [result, setResult] = useState<Awaited<ReturnType<typeof buildReplayData>> | null | undefined>(undefined);
     useEffect(() => {
         if (!mounted) return;
@@ -1040,7 +1033,7 @@ export const ReplayScreen = ({ code }: { code: string }) => {
                         <GameProvider>
                             <DragProvider>
                                 <ReplayStage
-                                    decoded={result.decoded}
+                                    fool={result.fool}
                                     code={result.code}
                                     frames={result.frames}
                                     reverses={result.reverses}

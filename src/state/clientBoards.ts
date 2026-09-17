@@ -3,7 +3,7 @@
 // A screen holds boards no server wrote: a move the player made before the
 // server confirms it, a push's boards with the player's pending cards kept on
 // them, the board a card flies home to, the rematch's lobby before its reset
-// arrives. The kernel makes every one of them from a board the screen holds
+// arrives, the board a replay's deal lands on. The kernel makes every one of them from a board the screen holds
 // (c/src/client_table.h client_optimistic_apply, client_board_edit,
 // client_rearrange_hand), through the client slot's generated writer and reader
 // (sdk/ts/table/client_table.ts). This file only names the edits; it decides
@@ -47,6 +47,10 @@ export const returnedToHand = (view: TableView, cards: readonly ViewCard[]): Tab
 /** The board with a refused move's cards off the table and back in my hand. */
 export const withdrawn = (view: TableView, cards: readonly ViewCard[]): TableView | null =>
     clientTable().edit(view, edit(V.CLIENT_EDIT_WITHDRAW, cards));
+
+/** The board a deal lands on (a replay's, the tutorial's): the whole stock, nothing dealt. */
+export const undealtBoard = (view: TableView): TableView | null =>
+    clientTable().edit(view, edit(V.CLIENT_EDIT_UNDEAL));
 
 /** The rematch's lobby, before the server's reset arrives. */
 export const lobbyBoard = (view: TableView): TableView | null =>

@@ -770,3 +770,82 @@ test('a hand rearrange', async () => {
         await answer(s, 'server applies');
     });
 });
+
+// ---- the tutorial ------------------------------------------------------------------
+// The tutorial replays a frozen game from the learner's seat and waits for the
+// learner's own moves. Its first seconds are held to two invariants on EVERY React
+// commit (a Profiler reports each one, so a board shown for a single frame is
+// caught, not only the frames a timer leaves behind):
+//   - the deal lands on an empty hand: no commit shows a card in the learner's
+//     hand while the stock still shows the whole deck;
+//   - the move hint waits for the board it points at: no commit shows the hint
+//     before the deal it follows has started to fly.
+test('the tutorial: the deal lands on an empty hand, and the move hint waits for the deal', async () => {
+    const React = (await import('react')).default;
+    const { act } = await import('react');
+    const { createRoot } = await import('react-dom/client');
+    const h = React.createElement;
+    const { LocalizationProvider } = await import('../src/contexts/LocalizationContext.tsx');
+    const { ThemeProvider } = await import('../src/contexts/ThemeContext.tsx');
+    const { StyleProvider } = await import('../src/contexts/StyleContext.tsx');
+    const { TextureProvider } = await import('../src/components/TexturedSurface.tsx');
+    const { Tutorial } = await import('../src/components/Tutorial.tsx');
+    const { ensureBotsAsync } = await import('../sdk/ts/wasm/bots.ts');
+    await ensureBotsAsync();
+    routeGameId = '';
+    seedRandom(211);
+    installClock();
+
+    const host = dom.window.document.createElement('div');
+    dom.window.document.body.appendChild(host);
+    interface Commit { t: number; hand: number; fullStock: boolean; hinted: boolean; flying: number }
+    const commits: Commit[] = [];
+    const record = () => {
+        const html = host.innerHTML;
+        const overlay = Array.from(host.querySelectorAll('div')).find((d) => d.style.position === 'fixed' && d.style.zIndex === '10000');
+        const state = host.querySelector('[data-testid="tut-state"]');
+        commits.push({
+            t: clock,
+            hand: host.querySelectorAll('[data-hand-container] [data-location="hand"][data-card]').length,
+            fullStock: html.includes('>36<'),
+            hinted: !!state && state.getAttribute('data-action') !== '' || html.includes('tut-move') || html.includes('rgb(47, 207, 99)'),
+            flying: overlay ? overlay.children.length : 0,
+        });
+    };
+    const root = createRoot(host);
+    const doAct = async (fn: () => unknown) => { await act(async () => { await fn(); }); };
+    const settle = async () => { for (let i = 0; i < 8; i++) await doAct(() => new Promise<void>((r) => setImmediate(r))); };
+    try {
+        await doAct(() => root.render(h(React.Profiler, { id: 'tutorial', onRender: record },
+            h(LocalizationProvider, null, h(ThemeProvider, null, h(StyleProvider, null, h(TextureProvider, null, h(Tutorial))))))));
+        await settle();
+        const start = host.querySelector('[data-testid="tut-start"]');
+        assert.ok(start, 'the intro card offers a start');
+        await doAct(() => { start!.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true })); });
+        await settle();
+        // Past the deal and the lead's first prompt: fire every timer due, one at a time.
+        for (let end = clock + 6000; ;) {
+            let next: Timer | null = null;
+            for (const t of timers.values()) if (t.due <= end && (!next || t.due < next.due || (t.due === next.due && t.id < next.id))) next = t;
+            if (!next) break;
+            clock = next.due;
+            if (next.every > 0) next.due += next.every; else timers.delete(next.id);
+            const fire = next;
+            await doAct(() => { fire.fn(...fire.args); });
+            await settle();
+        }
+    } finally {
+        await doAct(() => { root.unmount(); });
+        host.remove();
+        removeClock();
+    }
+
+    assert.ok(commits.some((c) => c.hand === 6), 'the learner is dealt a hand');
+    assert.ok(commits.some((c) => c.hinted), 'the learner is prompted for the lead');
+    const early = commits.filter((c) => c.hand > 0 && c.fullStock);
+    assert.deepEqual(early.map((c) => `${c.t}ms: ${c.hand} cards`), [], 'no commit shows a card in the learner\'s hand before the deal leaves the stock');
+    const firstFlight = commits.findIndex((c) => c.flying > 0);
+    const firstHint = commits.findIndex((c) => c.hinted);
+    assert.ok(firstFlight >= 0, 'the deal flies');
+    assert.ok(firstHint > firstFlight, `the hint first shows at commit ${firstHint} (${commits[firstHint]?.t}ms), after the deal starts to fly at commit ${firstFlight} (${commits[firstFlight]?.t}ms)`);
+});

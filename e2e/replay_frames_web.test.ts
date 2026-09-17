@@ -13,7 +13,11 @@
  *      retrodicted this and could be confidently wrong;
  *   3. the status line's kinds come from the kernel and match the real game,
  *      passes included;
- *   4. cards are conserved at every step, which is what a desync looks like.
+ *   4. cards are conserved at every step, which is what a desync looks like;
+ *   5. the board before the deal is the kernel's (client_board_edit UNDEAL): the
+ *      whole stock, and no card in anyone's hand, the watching seat's included;
+ *   6. a replay's seats are named by the code's extras, and carry no invented
+ *      player id (Phase 7: the boards are snapshots of the replay's own frames).
  * ========================================================================== */
 
 import { test } from 'node:test';
@@ -28,7 +32,6 @@ import { shouldBotActCore, processBotAction } from '../server/api/common/pure_bo
 import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
 import { kernelReplayEncodeV6FromGame } from '../sdk/ts/wasm/bots.ts';
 import { __setDealSeedOverride } from '../sdk/ts/wasm/engine.ts';
-import { deckSizeFor } from '../server/api/core/constants.ts';
 import { covered } from '../src/state/view.ts';
 import {
     buildReplayFrames, buildReverseFrames, preDealGame, stepTimes, REPLAY_STEP,
@@ -114,8 +117,10 @@ test('every step of a web replay is a board the engine really played', async () 
         }
 
         // Cards are conserved at EVERY step: hands + table + stock + flip +
-        // discard is the whole deck, always. A desynced replay fails here.
-        const deckSize = deckSizeFor(np);
+        // discard is the whole deck, always. A desynced replay fails here. The
+        // whole deck is the stock the deal was dealt from.
+        const deckSize = preDealGame(frames[0]).deckCount;
+        assert.equal(deckSize, np >= 6 ? 52 : 36, `${np}p: the deck the seat count plays with`);
         frames.forEach((f, i) => {
             const inHands = f.game.seats.reduce((sum, p) => sum + p.handCount, 0);
             const onTable = f.game.battles.reduce(
@@ -234,7 +239,9 @@ test('the deal animates out of an empty table, and the clock tracks the moves', 
     const frames = buildReplayFrames(played.code, 'g', null);
 
     const pre = preDealGame(frames[0]);
-    assert.equal(pre.deckCount, deckSizeFor(3), 'the stock starts whole');
+    const dealt = frames[0].game;
+    assert.equal(pre.deckCount, dealt.deckCount + (dealt.hasFlipped ? 1 : 0) + dealt.seats.reduce((n, p) => n + p.handCount, 0),
+        'the stock starts whole: every card the deal handed out is still in it');
     assert.equal(pre.hasFlipped, false, 'nothing is flipped yet');
     assert.deepEqual(pre.seats.map(p => p.handCount), [0, 0, 0], 'no one has been dealt to');
     assert.equal(pre.battles.length, 0, 'the table is empty');
@@ -252,4 +259,41 @@ test('the deal animates out of an empty table, and the clock tracks the moves', 
 
     assert.deepEqual(stepTimes(frames, null, null), frames.map(() => null),
         'no timing data, no timestamps');
+});
+
+test('before the deal lands, nobody holds a card - the watching seat included', async () => {
+    // A replay watched from a seat (the tutorial's learner) is masked for that
+    // seat, so its first frame already shows that seat's dealt hand. The board
+    // the deal animates onto must not: the cards have not been dealt yet.
+    const played = await playSeeded(3, 504);
+    assert.ok(played);
+    if (!played) return;
+    for (const viewer of [-1, 0, 2]) {
+        const frames = buildReplayFrames(played.code, 'g', null, { viewer });
+        assert.equal(frames[0].game.mySeat, viewer, `the frames are watched from ${viewer}`);
+        const pre = preDealGame(frames[0]);
+        assert.deepEqual(pre.myHand, [], `viewer ${viewer}: my hand is empty before the deal`);
+        assert.deepEqual(pre.seats.map((p) => p.handCount), [0, 0, 0], `viewer ${viewer}: every hand is empty`);
+        assert.equal(pre.mySeat, viewer, `viewer ${viewer}: still watched from the same seat`);
+        assert.deepEqual(pre.replay_hands, [[], [], []], `viewer ${viewer}: the reveal eye shows no hand either`);
+    }
+});
+
+test('a replay\'s seats are named by its extras, and carry no invented player id', async () => {
+    const played = await playSeeded(3, 505);
+    assert.ok(played);
+    if (!played) return;
+    const named = buildReplayFrames(played.code, 'g', ['Ada', null, 'Cy']);
+    const plain = buildReplayFrames(played.code, 'g', null, { fool: 1 });
+    for (const [frames, names] of [[named, ['Ada', 'P2', 'Cy']], [plain, ['P1', 'P2', 'P3']]] as const) {
+        for (const f of [frames[0], frames[frames.length >> 1]]) {
+            assert.deepEqual(f.game.seats.map((s) => s.id), ['', '', ''], 'no seat has a player id');
+            assert.deepEqual(f.game.seats.map((s) => s.name), names, 'the seats are named by the extras, or P1, P2...');
+            assert.equal(f.game.gameId, 'g', 'the board is the replay\'s');
+            for (const e of f.seq.events) {
+                const board = (e as { game_state?: typeof f.game }).game_state;
+                if (board) assert.deepEqual(board.seats.map((s) => s.id), ['', '', ''], 'nor on an event\'s board');
+            }
+        }
+    }
 });

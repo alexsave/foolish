@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { ANIMATION_TIME, useAnimation } from '../../contexts/AnimationContext';
-import { covered, type ViewCard as Card } from '../../state/view';
+import { covered, seatKey, type ViewCard as Card } from '../../state/view';
 import { CardFace } from './CardFace';
 import { CardBack } from './CardBack';
 import { useServer } from '../../contexts/ServerContext';
@@ -254,7 +254,7 @@ export const AnimationOverlay = () => {
         // event's own board gives its seat, or the board on screen's for a flight
         // that carries none (a move of mine, a revert).
         const eventBoard = currentAnimation.game_state ?? game;
-        const player_id = seat === undefined ? undefined : (eventBoard?.seats[seat]?.id || `seat-${seat}`);
+        const player_id = seat === undefined ? undefined : seatKey(eventBoard, seat);
 
         // Handle magic_transition separately since it doesn't have cards
         if (type === 'magic_transition') {

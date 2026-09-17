@@ -3,9 +3,9 @@
  * =============================================================================
  * A second input path alongside taps/drag and the letter/number shortcuts in
  * KeyboardInputHandler. It depends only on the shared read surface (useServer
- * for the game + hand, useAnimation for the action methods, useAuth for "me")
+ * for the game + hand and my seat, useAnimation for the action methods)
  * and on the data-attributes the render pieces already expose:
- *   - hand cards:    [data-location="hand"][data-player-id=<me>][data-card="s-v"]
+ *   - hand cards:    [data-location="hand"][data-player-id=<my seatKey>][data-card="s-v"]
  *   - table attacks: [data-battle-index=i]
  * so it needs no changes to ActionButtons / TableBattles — it draws its own
  * overlay (a red cursor underline + a cover/pass arrow). Mounted by GameBoard
@@ -46,11 +46,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useServer } from '../../contexts/ServerContext';
 import { useAnimation } from '../../contexts/AnimationContext';
-import { useAuth } from '../../contexts/AuthContext';
 import { useGame } from '../../contexts/GameContext';
 import { canAttack, canPass, canCoverCards, canCoverPair } from '../../utils/gameValidation';
 import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
-import { covered, rulesOf, type TableView, type ViewCard as Card } from '../../state/view';
+import { covered, rulesOf, seatKey, type TableView, type ViewCard as Card } from '../../state/view';
 
 type CoverTarget = { kind: 'cover'; attack: Card; battleIndex: number };
 type Target = CoverTarget | { kind: 'pass' };
@@ -80,10 +79,11 @@ const isTypingTarget = () => {
 export const KeyboardPlayMode = () => {
     const { view: game, localHandOrder, setLocalHandOrder } = useServer();
     const { attack, cover, pass, pickup, good } = useAnimation();
-    const { user_id } = useAuth();
     const { selectedCards, setSelectedCards, handleCardSelection, setActionPressed } = useGame();
 
     const hand: readonly Card[] = localHandOrder && localHandOrder.length ? localHandOrder : (game?.myHand ?? []);
+    // The page's name for my hand (ActionButtons draws it under the same name).
+    const handKey = game ? seatKey(game, game.mySeat) : '';
 
     const [selIdx, setSelIdx] = useState<number | null>(null);
     const [target, setTarget] = useState<{ targets: Target[]; idx: number } | null>(null);
@@ -120,7 +120,7 @@ export const KeyboardPlayMode = () => {
     }, [afterMove, setActionPressed, setSelectedCards]);
 
     ref.current = {
-        game, hand, user_id, selIdx, target,
+        game, hand, selIdx, target,
         attack, cover, pass, pickup, good, fire,
         selectedCards, setSelectedCards, handleCardSelection,
         setLocalHandOrder,
@@ -323,7 +323,7 @@ export const KeyboardPlayMode = () => {
         const tick = () => {
             const card = selIdx != null ? hand[selIdx] : null;
             const selRect = card
-                ? rectOf(document.querySelector(`[data-location="hand"][data-player-id="${user_id}"][data-card="${cardKey(card)}"]`))
+                ? rectOf(document.querySelector(`[data-location="hand"][data-player-id="${handKey}"][data-card="${cardKey(card)}"]`))
                 : null;
 
             let arrowTo: Rect | { point: { x: number; y: number } } | null = null;
@@ -343,7 +343,7 @@ export const KeyboardPlayMode = () => {
         };
         raf = requestAnimationFrame(tick);
         return () => cancelAnimationFrame(raf);
-    }, [selIdx, target, hand, user_id]);
+    }, [selIdx, target, hand, handKey]);
 
     if (!game || game.mySeat < 0) return null;
 

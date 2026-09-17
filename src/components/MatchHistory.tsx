@@ -9,27 +9,22 @@ import { Text } from './Text';
 import { SovietIcon, RankIcon } from './SovietIcon';
 import { useTexture, getTextureStyle, seedFromString, flipFromString } from './TexturedSurface';
 import { botDisplayName, isBotName } from '../common/botName';
-import { decodeReplay } from '@api/common/replay/decode.ts';
-import { ensureBotsAsync } from '@sdk/ts/wasm/bots.ts';
+import { ensureBotsAsync, kernelB32Encode, replaySummary } from '@sdk/ts/wasm/bots.ts';
 import { decodeExtras, joinReplayCode } from '@api/common/replay/extras.ts';
-import { INFO_TYPES } from '@api/common/replay/core.ts';
-import { bytesToBigint, hexToBytes } from '@api/common/replay/codec.ts';
-import { kernelB32Encode } from '@sdk/ts/wasm/bots.ts';
+import { bigintToBytes, bytesToBigint, hexToBytes } from '@api/common/replay/codec.ts';
 
 /**
  * Match history: every finished game the signed-in user played, straight from
  * game_snapshots (RLS returns exactly the rows whose player_ids contain this
  * uid — no extra filter needed). Each row's binary snapshot IS the game, so
  * everything shown — seats, names, who was the fool, your placement — is
- * decoded client-side with the same codec the replay screen uses, and the
+ * read client-side by the kernel the replay screen uses, and the
  * "watch" link is the same self-contained base32 URL ReplayShare builds.
  * Before this screen, a replay was only reachable from the WinScreen moment;
  * lose the URL and the game was gone.
  */
 
 const PAGE_SIZE = 50;
-
-const INFO_SET = new Set(INFO_TYPES);
 
 interface HistoryEntry {
     id: string;
@@ -92,7 +87,7 @@ export const MatchHistory: React.FC = () => {
                 await ensureBotsAsync();
                 const decoded: HistoryEntry[] = [];
                 for (let i = 0; i < rows.length; i++) {
-                    // decodeReplay re-simulates the whole game; yield to the
+                    // the summary decodes the whole code; yield to the
                     // event loop periodically so a full page of long games
                     // can't freeze input on slow devices.
                     if (i > 0 && i % 10 === 0)
@@ -112,15 +107,14 @@ export const MatchHistory: React.FC = () => {
                         const extrasCode = extrasBytes && extrasBytes.length > 0
                             ? kernelB32Encode(extrasBytes)
                             : null;
-                        const d = await decodeReplay(bytesToBigint(movesBytes));
+                        const d = replaySummary(bigintToBytes(bytesToBigint(movesBytes)));
+                        if (!d) throw new Error('the snapshot does not decode');
 
                         let names: string[] | null = null;
                         let durationSec: number | null = null;
                         if (extrasCode) {
                             try {
-                                let moveCount = 0;
-                                for (const l of d.logs) if (INFO_SET.has(l.log_type)) moveCount++;
-                                const extras = decodeExtras(extrasCode, d.playerCount, moveCount);
+                                const extras = decodeExtras(extrasCode, d.numPlayers, d.moves);
                                 names = extras.names;
                                 if (extras.moveGaps && extras.moveGaps.length > 0)
                                     durationSec = extras.moveGaps.reduce((a, b) => a + b, 0);
@@ -129,16 +123,16 @@ export const MatchHistory: React.FC = () => {
                             }
                         }
 
-                        // The fool is never in eliminationOrder (see DecodedReplay),
+                        // The fool is never in the elimination order (ReplaySummary),
                         // so the fallback IS the fool's last place.
-                        const rankIndex = d.eliminationOrder.indexOf(mySeat);
-                        const myRank = rankIndex >= 0 ? rankIndex + 1 : d.playerCount;
+                        const rankIndex = d.elimination.indexOf(mySeat);
+                        const myRank = rankIndex >= 0 ? rankIndex + 1 : d.numPlayers;
 
                         decoded.push({
                             id: row.id as string,
                             code: joinReplayCode(kernelB32Encode(movesBytes), extrasCode),
                             createdAt: parseUtcTimestamp(row.created_at as string),
-                            playerCount: d.playerCount,
+                            playerCount: d.numPlayers,
                             names: names ?? playerIds.map((_, seat) => `#${seat + 1}`),
                             mySeat,
                             myRank,

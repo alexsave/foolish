@@ -31,6 +31,14 @@ export const sameCard = (a: ViewCard, b: ViewCard): boolean => a.suit === b.suit
 /** What `view` shows that is a rule of the game, with `fromDeck` cards in flight out of the stock, `toFlipped` of them to the trump slot. */
 export const rulesOf = (view: TableView, fromDeck = 0, toFlipped = 0): ViewRules => clientTable().rules(view, fromDeck, toFlipped);
 
+/**
+ * The name the page gives a seat's hand and ring (data-player-id, React keys): the
+ * seat's player id, or, for a seat nobody is signed in as (a replay's, the
+ * tutorial's), its index. A name for the DOM, not an identity.
+ */
+export const seatKey = (view: TableView | null | undefined, seat: number): string =>
+    view?.seats[seat]?.id || `seat-${seat}`;
+
 /** Every card on the table, attacks before their covers. */
 export const tableCards = (view: TableView): ViewCard[] =>
     view.battles.flatMap((b) => (covered(b) ? [b.attack, b.defense] : [b.attack]));

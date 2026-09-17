@@ -1,5 +1,5 @@
 import { useServer } from "../../contexts/ServerContext";
-import { rulesOf, type TableView, type ViewSeat } from "../../state/view";
+import { rulesOf, seatKey, type TableView, type ViewSeat } from "../../state/view";
 import { useFernFractal } from "../../utils/fernFractal";
 import { useStyles } from "../../contexts/StyleContext";
 import { useState, useEffect, useRef } from "react";
@@ -12,7 +12,7 @@ const MiniSovietCardBack = () => (
     <SovietCardBack style={{ position: 'absolute', top: 0, left: 0 }} />
 );
 
-const CardsVisual = ({ player, selfHandLength, isSelf }: { player: ViewSeat, selfHandLength?: number, isSelf: boolean }) => {
+const CardsVisual = ({ player, handKey, selfHandLength, isSelf }: { player: ViewSeat, handKey: string, selfHandLength?: number, isSelf: boolean }) => {
     const styles = useStyles();
     const { fernPattern } = useFernFractal();
 
@@ -26,7 +26,7 @@ const CardsVisual = ({ player, selfHandLength, isSelf }: { player: ViewSeat, sel
     // tagging this mini-hand too would let querySelector pick the wrong target.
     const handAttrs = isSelf
         ? {}
-        : { 'data-location': 'hand', 'data-player-id': player.id };
+        : { 'data-location': 'hand', 'data-player-id': handKey };
 
     return (
         <div style={{
@@ -60,7 +60,7 @@ const CardsVisual = ({ player, selfHandLength, isSelf }: { player: ViewSeat, sel
                 };
 
                 return (
-                    <div key={`player-${player.id}-card-${cardIndex}`} style={style}>
+                    <div key={`player-${handKey}-card-${cardIndex}`} style={style}>
                         {styles.miniCard.useSvgCardBack && <MiniSovietCardBack />}
                     </div>
                 );
@@ -141,10 +141,11 @@ export const PlayerRing = () => {
                 const radians = 2 * Math.PI * visual_index / game.seats.length;
                 const x = ((-1 * Math.sin(radians) * 35) + 50) + '%';
                 const y = ((Math.cos(radians) * 35) + 50) + '%';
-                const bubble = chatBubbles[player.id];
+                const key = seatKey(game, index);
+                const bubble = chatBubbles[key];
 
                 return (
-                    <div key={player.id} style={{
+                    <div key={key} style={{
                         position: 'absolute',
                         top: y,
                         left: x,
@@ -199,6 +200,7 @@ export const PlayerRing = () => {
                         {/* Always render so DEAL/REFILL animations have a destination element to target, even when hand_length === 0 */}
                         <CardsVisual
                             player={player}
+                            handKey={key}
                             selfHandLength={index === self_index ? game.myHand.length : undefined}
                             isSelf={index === self_index}
                         />
