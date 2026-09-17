@@ -44,6 +44,10 @@ export const lifted = (view: TableView, cards: readonly ViewCard[]): TableView |
 export const returnedToHand = (view: TableView, cards: readonly ViewCard[]): TableView | null =>
     clientTable().edit(view, edit(V.CLIENT_EDIT_RETURN, cards));
 
+/** The board with a refused move's cards off the table and back in my hand. */
+export const withdrawn = (view: TableView, cards: readonly ViewCard[]): TableView | null =>
+    clientTable().edit(view, edit(V.CLIENT_EDIT_WITHDRAW, cards));
+
 /** The rematch's lobby, before the server's reset arrives. */
 export const lobbyBoard = (view: TableView): TableView | null =>
     clientTable().edit(view, edit(V.CLIENT_EDIT_LOBBY));

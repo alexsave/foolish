@@ -118,6 +118,7 @@ typedef struct {
 #define CLIENT_EDIT_LIFT   4  // every battle holding one of `cards` leaves the table
 #define CLIENT_EDIT_RETURN 5  // `cards` back into my hand, each that is not there already
 #define CLIENT_EDIT_LOBBY  6  // the rematch's lobby (game_reset_to_lobby), before its reset arrives
+#define CLIENT_EDIT_WITHDRAW 7  // a refused move's cards off the table and back in my hand
 
 typedef struct {
     int8_t  op;              // CLIENT_EDIT_*
@@ -282,6 +283,10 @@ int client_validate(ClientTable *c, const TableView *v, const uint8_t *awire, in
 //     twice) - unless the refill after it could put a seat out (another seat in
 //     play holds no card), which would move them somewhere the board cannot know.
 //   good: nothing moves.
+// A move the board already shows - its confirmation, or a push that kept its
+// cards, landed first - leaves the board as it is: a card the table holds is not
+// laid twice, a pass with no card to lay hands the shield on no further, and a
+// pickup of an empty table moves no turn.
 // CLIENT_OK, CLIENT_E_MOVE, CLIENT_E_FORMAT for a view that is not one,
 // CLIENT_E_STATE when the rotation's board is refused (detail: GAME_INVALID_*),
 // CLIENT_E_CAP for a table or a hand past its capacity.
@@ -297,6 +302,8 @@ int client_optimistic_apply(ClientTable *c, TableView *v, const uint8_t *awire, 
 //   LIFT    every battle whose attack or cover is one of `cards` leaves the table.
 //   RETURN  each of `cards` not in a seated viewer's hand is appended to it.
 //   LOBBY   game_reset_to_lobby, the seats the roster marks bots coming back ready.
+//   WITHDRAW each of `cards` leaves the table - an attack with its battle, a cover
+//           from over its attack - and is in a seated viewer's hand once.
 // CLIENT_OK, CLIENT_E_FORMAT for a view or an edit that is not one, CLIENT_E_STATE
 // when the lobby's board is refused (detail: GAME_INVALID_*), CLIENT_E_CAP.
 int client_board_edit(ClientTable *c, TableView *v, const BoardEdit *e);

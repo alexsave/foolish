@@ -452,14 +452,21 @@ int client_optimistic_apply(ClientTable *c, TableView *v, const uint8_t *awire, 
     switch (a.kind) {
         case AWIRE_ATTACK:
         case AWIRE_PASS: {
+            // A card the table already shows was laid by this move's confirmation, or
+            // kept there by a push, and is not laid twice; a move none of whose cards
+            // is new has already happened, so a pass hands the shield on no further.
+            Card fresh[AWIRE_MAX_CARDS];
+            int n = 0;
+            for (int i = 0; i < a.n; i++) if (!card_on_table(v, a.cards[i])) fresh[n++] = a.cards[i];
+            if (n == 0) return CLIENT_OK;
             int defender = v->defender;
             if (a.kind == AWIRE_PASS) {
                 const int valid = board_game(c, v);
                 if (valid != GAME_VALID) { c->detail = valid; return CLIENT_E_STATE; }
                 defender = get_next_player_index(rules_game(c), v->defender);
             }
-            if (v->num_battles + a.n > MAX_BATTLES) return CLIENT_E_CAP;
-            for (int i = 0; i < a.n; i++) v->battles[v->num_battles++] = (Battle){ .attack = a.cards[i], .defense = CARD_NONE };
+            if (v->num_battles + n > MAX_BATTLES) return CLIENT_E_CAP;
+            for (int i = 0; i < n; i++) v->battles[v->num_battles++] = (Battle){ .attack = fresh[i], .defense = CARD_NONE };
             hand_without(v, a.cards, a.n);
             v->defender = (int8_t)defender;
             return CLIENT_OK;
@@ -471,6 +478,7 @@ int client_optimistic_apply(ClientTable *c, TableView *v, const uint8_t *awire, 
             hand_without(v, a.cards, a.n);
             return CLIENT_OK;
         case AWIRE_PICKUP: {
+            if (v->num_battles == 0) return CLIENT_OK;   // the table is taken already: the turn has moved
             int table = 0;
             for (int b = 0; b < v->num_battles; b++) table += card_is_none(v->battles[b].defense) ? 1 : 2;
             if (v->my_hand_count + table > MAX_HAND_SIZE) return CLIENT_E_CAP;
@@ -550,6 +558,25 @@ int client_board_edit(ClientTable *c, TableView *v, const BoardEdit *e) {
                 if (held) continue;
                 if (v->my_hand_count >= MAX_HAND_SIZE) return CLIENT_E_CAP;
                 v->my_hand[v->my_hand_count++] = e->cards[i];
+            }
+            return CLIENT_OK;
+        case CLIENT_EDIT_WITHDRAW:
+            if (v->my_seat < 0) return CLIENT_OK;   // a spectator makes no move to withdraw
+            for (int i = 0; i < n; i++) {
+                const Card card = e->cards[i];
+                int kept = 0;
+                for (int b = 0; b < v->num_battles; b++) {
+                    Battle bt = v->battles[b];
+                    if (card_eq(bt.attack, card)) continue;                                   // an attack takes its battle
+                    if (!card_is_none(bt.defense) && card_eq(bt.defense, card)) bt.defense = CARD_NONE;   // a cover uncovers
+                    v->battles[kept++] = bt;
+                }
+                v->num_battles = (int8_t)kept;
+                int held = 0;
+                for (int h = 0; h < v->my_hand_count && !held; h++) held = card_eq(v->my_hand[h], card);
+                if (held) continue;
+                if (v->my_hand_count >= MAX_HAND_SIZE) return CLIENT_E_CAP;
+                v->my_hand[v->my_hand_count++] = card;
             }
             return CLIENT_OK;
         case CLIENT_EDIT_LOBBY: {

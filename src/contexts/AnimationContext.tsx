@@ -9,7 +9,7 @@ import { encodeAction } from '@sdk/ts/wire/awire.ts';
 import { clientTable } from '@sdk/ts/table/client_table.ts';
 import { pushToSequence } from '../state/pushSequence';
 import { covered, rulesOf, type TableView, type ViewCard } from '../state/view';
-import { keepPending, lifted, optimisticBoard, returnedToHand, tableOf, turnedBoard } from '../state/clientBoards';
+import { keepPending, lifted, optimisticBoard, returnedToHand, tableOf, turnedBoard, withdrawn } from '../state/clientBoards';
 import { base64ToBytes } from '@sdk/ts/wire/bytes.ts';
 import { getTableCards, cardsIntersection, getCardKeyOwner, createCardEventString, getCardKey } from '../utils/animationUtils';
 import { animationFeed } from '../state/animationFeed';
@@ -1171,7 +1171,10 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         // Animation duration: use ANIMATION_TIME constant for consistency
         timeoutRef.current = setTimeout(() => {
             // UPDATE THE GAME STATE WITH THE INTERMEDIATE STATE AFTER ANIMATION COMPLETES
-            if (nextAnimation.game_state && currentGameIdRef.current) {
+            // The game: the last push's, or - for a refused move's board before any
+            // push has played - the board's own.
+            const commitGameId = currentGameIdRef.current ?? nextAnimation.game_state?.gameId;
+            if (nextAnimation.game_state && commitGameId) {
                 let board = nextAnimation.game_state;
 
                 // If we have an optimistic pass, preserve defender/first_attacker
@@ -1179,7 +1182,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     board = turnedBoard(board, optimisticPassState.current.first_attacker, optimisticPassState.current.defender) ?? board;
                 }
 
-                updateGameState(currentGameIdRef.current, board);
+                updateGameState(commitGameId, board);
             }
 
             // Cards have landed; game.deck_length now reflects the reduction, so
@@ -1308,8 +1311,21 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // TIMING FLOW:
     // 1. User action validates in AnimationContext (instant rejection if invalid)
     // 2. Optimistic animation triggers immediately (instant feedback)
-    // 3. ServerContext does optimistic game state updates after ANIMATION_TIME (UI consistency)  
+    // 3. ServerContext puts the board the move leaves on screen after ANIMATION_TIME,
+    //    unless the server has refused a card-laying move by then: its cards fly
+    //    home from a table that does not show them. (The kernel leaves a board that
+    //    already shows the move as it is: a confirmation that landed first.)
     // 4. Server response with intermediate states provides final truth
+
+    // The board a refused move's cards fly home to. While no push has moved the
+    // game on - the board on screen is still the version the move was made on - it
+    // is that board with the move undone; once a push has, the server's board is on
+    // its way through the queue and nothing is made here.
+    const refusedBoard = (tap: TableView, undo: (held: TableView) => TableView | null): TableView | undefined => {
+        const held = currentGameRef.current;
+        if (!held || held.version !== tap.version) return undefined;
+        return undo(held) ?? undefined;
+    };
 
     // Game action methods that handle optimistic animations + server calls
     const attack = async (cards: Card[]): Promise<{ game_id: string }> => {
@@ -1328,8 +1344,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         //    validation. `valid` is captured by the server method's deferred
         //    optimistic patch (applied only if still valid) and gates the optimistic
         //    animation below.
-        let valid = true;
-        const serverPromise = serverActions.attack(cards, () => valid, wire);
+        let valid = true, refused = false;
+        const serverPromise = serverActions.attack(cards, () => valid && !refused, wire);
 
         // 2. Validate the SAME wire bytes locally; only add optimistic feedback
         //    if the move is legal.
@@ -1347,6 +1363,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             return await serverPromise;
         } catch (error) {
             // Server rejected the attack - but check if we already reverted due to conflict detection
+            refused = true;
+            // The cards land back in my hand, off the table the move may already stand on.
+            const homeBoard = refusedBoard(game, (held) => withdrawn(held, cards));
 
             cards.forEach(card => {
                 const cardKey = getCardKey(card);
@@ -1376,7 +1395,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     to_location: 'hand',
                     seat: seatOf(game),
                     is_revert: true,
-                    message: 'Attack rejected by server'
+                    message: 'Attack rejected by server',
+                    game_state: homeBoard
                 };
 
                 queueAnimation(revertEvent);
@@ -1401,8 +1421,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         const wire = encodeAction({ kind: 'pass', cards });
 
         // 1. Send the request BEFORE validating (server is authoritative; see attack).
-        let valid = true;
-        const serverPromise = serverActions.pass(cards, () => valid, wire);
+        let valid = true, refused = false;
+        const serverPromise = serverActions.pass(cards, () => valid && !refused, wire);
 
         // 2. Validate the same wire bytes locally; only add optimistic feedback
         //    if the move is legal.
@@ -1434,7 +1454,13 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             return await serverPromise;
         } catch (error) {
             // Server rejected the pass - clear optimistic pass state and create revert animation (if not already handled)
+            refused = true;
             optimisticPassState.current = null;
+            // The cards land back in my hand, and the lead and the shield are as they were.
+            const homeBoard = refusedBoard(game, (held) => {
+                const back = withdrawn(held, cards);
+                return back && turnedBoard(back, game.firstAttacker, game.defender);
+            });
 
             // Check if conflict detection already handled these cards
             const cardsNeedingRevert = cards.filter(card => {
@@ -1460,7 +1486,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                         to_location: 'hand',
                         seat: seatOf(game),
                         is_revert: true,
-                        message: 'Pass rejected by server'
+                        message: 'Pass rejected by server',
+                        game_state: homeBoard
                     });
 
                     optimisticAnimations.current.delete(createCardEventString('attack_pass', card, 'hand', 'table', seatOf(game)));
@@ -1482,6 +1509,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         const wire = encodeAction({ kind: 'pickup' });
 
         // 1. Send the request BEFORE validating (server is authoritative; see attack).
+        //    A refused pickup still takes the table into the hand once its flight
+        //    lands: the cards' return flight starts from the hand, which hides them
+        //    while they fly, and the refusal's board puts the table back.
         let valid = true;
         const serverPromise = serverActions.pickup(() => valid, wire);
 
@@ -1510,6 +1540,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             if (stillTracking.length === 0) {
                 throw error;
             }
+            // The table goes back to the board the pickup was made on, as long as no push has moved the game on.
+            const homeBoard = refusedBoard(game, () => game);
 
             allTableCards.forEach(card => {
                 const cardKey = getCardKey(card);
@@ -1527,7 +1559,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     to_location: toLocation as any,
                     seat: seatOf(game),
                     is_revert: true,
-                    message: 'Pickup rejected by server'
+                    message: 'Pickup rejected by server',
+                    game_state: homeBoard
                 });
 
                 optimisticAnimations.current.delete(createCardEventString('pickup', card, 'table', 'hand', seatOf(game)));
@@ -1549,8 +1582,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         const wire = encodeAction({ kind: 'cover', cards: coverCards, attack_cards: attackCards });
 
         // 1. Send the request BEFORE validating (server is authoritative; see attack).
-        let valid = true;
-        const serverPromise = serverActions.cover(coverCards, attackCards, () => valid, wire);
+        let valid = true, refused = false;
+        const serverPromise = serverActions.cover(coverCards, attackCards, () => valid && !refused, wire);
 
         // 2. Validate the same wire bytes locally; only add optimistic feedback
         //    if the move is legal.
@@ -1607,6 +1640,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             return await serverPromise;
         } catch (error) {
             // Server rejected the cover - create revert animation
+            refused = true;
+            // The covers land back in my hand, and their attacks stand uncovered.
+            const homeBoard = refusedBoard(game, (held) => withdrawn(held, coverCards));
             coverCards.forEach(card => {
                 const cardKey = getCardKey(card);
                 if (revertingCards.current.has(cardKey)) return;
@@ -1622,7 +1658,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                     to_location: 'hand',
                     seat: seatOf(game),
                     is_revert: true,
-                    message: 'Cover rejected by server'
+                    message: 'Cover rejected by server',
+                    game_state: homeBoard
                 });
 
                 optimisticAnimations.current.delete(createCardEventString('cover', card, 'hand', 'table', seatOf(game)));

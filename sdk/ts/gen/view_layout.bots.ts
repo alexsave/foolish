@@ -74,6 +74,7 @@ export const CLIENT_EDIT_TABLE = 3;
 export const CLIENT_EDIT_LIFT = 4;
 export const CLIENT_EDIT_RETURN = 5;
 export const CLIENT_EDIT_LOBBY = 6;
+export const CLIENT_EDIT_WITHDRAW = 7;
 export const CLIENT_CONFLICT_MAX_EVENTS = 128;
 export const CLIENT_CONFLICT_MAX_MOTIONS = 64;
 export const CARD_NONE_SUIT = -2;

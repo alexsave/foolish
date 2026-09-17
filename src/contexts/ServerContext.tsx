@@ -1104,7 +1104,13 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     const updateGameState = useCallback((gameId: string, view: TableView) => {
-        setGames(prev => ({ ...prev, [gameId]: mergeGameData(gameId, view, prev) }));
+        // The animation queue commits each sequence's boards as its flights land,
+        // and a push whose events were all mine commits at once. So an older push
+        // still playing out can land after a newer one: its board never replaces
+        // the newer version the store already holds.
+        setGames(prev => (prev[gameId] && view.version < prev[gameId].version
+            ? prev
+            : { ...prev, [gameId]: mergeGameData(gameId, view, prev) }));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 

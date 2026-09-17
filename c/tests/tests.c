@@ -9082,6 +9082,33 @@ static void test_client_optimistic_apply(void) {
           "a pickup takes the table, attack before cover, and leaves a turn the refill could change alone");
 
     CHECK(client_optimistic_apply(&ct, &cb_view, (const uint8_t *)"\x07\x00", 2) == CLIENT_E_MOVE, "a wire that is not a move is refused");
+
+    // A move whose board already shows it - its confirmation, or a push that kept it,
+    // landed first - leaves that board as it is.
+    cvr_board(&cb_view, 0);
+    cb_view.num_battles = 0;
+    cb_view.my_hand_count = 2;
+    cb_view.my_hand[0] = c7s; cb_view.my_hand[1] = c9h;
+    client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_ATTACK, &c7s, 0, 1, w));
+    cb_view2 = cb_view;
+    CHECK(client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_ATTACK, &c7s, 0, 1, w)) == CLIENT_OK
+          && memcmp(&cb_view, &cb_view2, sizeof(TableView)) == 0, "an attack the table already shows is not laid twice");
+    cvr_board(&cb_view, 1);
+    cb_view.battles[0].defense = CARD_NONE;
+    cb_view.num_players = 4;
+    cb_view.seats[3].status = PLAYER_STATUS_IN;
+    cb_view.seats[3].hand_count = 4;
+    cb_view.my_hand_count = 1;
+    cb_view.my_hand[0] = c7s;
+    client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_PASS, &c7s, 0, 1, w));
+    cb_view2 = cb_view;
+    CHECK(cb_view.defender == 2 && client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_PASS, &c7s, 0, 1, w)) == CLIENT_OK
+          && memcmp(&cb_view, &cb_view2, sizeof(TableView)) == 0, "a pass the table already shows does not hand the shield on again");
+    cvr_board(&cb_view, 1);
+    cb_view.num_battles = 0;
+    cb_view2 = cb_view;
+    CHECK(client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_PICKUP, 0, 0, 0, w)) == CLIENT_OK
+          && memcmp(&cb_view, &cb_view2, sizeof(TableView)) == 0, "a pickup of a table already taken moves no turn");
     cvr_board(&cb_view, 0);
     cb_view.num_battles = MAX_BATTLES;
     CHECK(client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_ATTACK, &c7s, 0, 1, w)) == CLIENT_E_FORMAT
@@ -9193,6 +9220,23 @@ static void test_client_board_edits(void) {
           "a return adds the cards the hand does not hold, after it");
     e.op = 42;
     CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_E_FORMAT, "an edit that is not one is refused");
+
+    // WITHDRAW: a refused move's cards leave the table - an attack with its battle, a
+    // cover from over its attack - and are in my hand once each.
+    cvr_board(&cb_view, 1);
+    cb_view.battles[1] = (Battle){ .attack = c7s, .defense = CARD_NONE };
+    cb_view.num_battles = 2;
+    cb_view.my_hand_count = 1;
+    cb_view.my_hand[0] = cKs;
+    memset(&e, 0, sizeof(e));
+    e.op = CLIENT_EDIT_WITHDRAW; e.n_cards = 3; e.cards[0] = cover9h; e.cards[1] = c7s; e.cards[2] = cKs;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && cb_view.num_battles == 1 && card_eq(cb_view.battles[0].attack, attack7h)
+          && card_is_none(cb_view.battles[0].defense) && cb_view.my_hand_count == 3 && card_eq(cb_view.my_hand[0], cKs)
+          && card_eq(cb_view.my_hand[1], cover9h) && card_eq(cb_view.my_hand[2], c7s),
+          "a withdrawn cover uncovers its attack, a withdrawn attack takes its battle, and each is in my hand once");
+    cvr_board(&cb_view, -1);
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && cb_view.num_battles == 1 && card_eq(cb_view.battles[0].defense, cover9h),
+          "a spectator withdraws nothing");
 
     // LOBBY: the board the server's reset (table_continue) gives, before it arrives.
     tb_fixture(3, 1u << 2, 151);

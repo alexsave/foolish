@@ -8,7 +8,9 @@
  * AnimationProvider, RealtimeAnimationFeed, GameDisplay and AnimationOverlay -
  * against a server that is the C Table itself, and holds every frame the page
  * drew, at the virtual millisecond it drew it, to the frames recorded from the
- * code before the phase (e2e/fixtures/ui_anim/*.txt).
+ * code before the phase (e2e/fixtures/ui_anim/*.txt). The goldens of the cases
+ * that showed the bugs the invariants below found were re-recorded with their
+ * fix, and every other frame is still the code before the phase's.
  *
  * The cases are the plan's browser list - an attack, a cover, a pass, a pickup,
  * a good, a throw-in while a move is pending, a rejected move - plus the races
@@ -29,8 +31,13 @@
  *     siblings): a flight that looks up a different element starts or ends
  *     somewhere else, and the overlay's inline position says so.
  *
- * A frame is the page's HTML; the golden holds each distinct frame's time and
- * hash. UPDATE_UI_ANIM=1 rewrites the goldens; UI_ANIM_DUMP=<dir> writes every
+ * Two things hold on every case whatever the golden says: no board the store
+ * holds shows a card twice (on the table, either side of a battle, and in my
+ * hand), and once every push has been delivered the store's board is the one
+ * the server holds for me - the page settles on the truth.
+ *
+ * A frame is the page's HTML and the store it was drawn from; the golden holds
+ * each distinct frame's time and hash. UPDATE_UI_ANIM=1 rewrites the goldens; UI_ANIM_DUMP=<dir> writes every
  * frame's HTML for a diff when a case fails.
  * ========================================================================== */
 
@@ -43,6 +50,8 @@ import { JSDOM } from 'jsdom';
 import { fixture, fixtureTable, PLAYING, GAME_OVER, IN, OUT, type FixtureSeat, type TableFixture } from './helpers/table_fixture.ts';
 import { encodeAction } from '../sdk/ts/wire/awire.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
+import { clientTable } from '../sdk/ts/table/client_table.ts';
+import * as V from '../sdk/ts/gen/view_layout.bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; console.debug = () => {}; }
 
@@ -93,6 +102,10 @@ class Server {
     roster: Uint8Array;
     version: number;
     readonly outbox = new Map<string, Push[]>();   // user id -> pushes not yet delivered
+    /** A push to me was lost: the page cannot settle on the server's board. */
+    lost = false;
+
+    lose(userId: string): void { this.take(userId); this.lost = true; }
     private n = 0;
 
     constructor(readonly gid: string, board: TableFixture, version = 10) {
@@ -281,8 +294,23 @@ const probe: Probe = { anim: null, actions: null, store: '' };
 
 interface Frame { t: number; label: string; html: string }
 
+// The cards a board shows me, as keys: both sides of every battle, then my hand.
+const shown = (view: any): string[] => [
+    ...view.battles.flatMap((b: any) => (b.defense.suit === V.CARD_NONE_SUIT && b.defense.value === V.CARD_NONE_VALUE ? [b.attack] : [b.attack, b.defense])),
+    ...view.myHand,
+].map((c: any) => `${c.suit}/${c.value}`);
+
+// What a board says about the game, for comparing the page's with the server's.
+const settled = (view: any) => ({
+    status: view.status, firstAttacker: view.firstAttacker, defender: view.defender,
+    battles: view.battles, hand: [...view.myHand].map((c: any) => `${c.suit}/${c.value}`).sort(),
+    seats: view.seats.map((x: any) => [x.status, x.handCount]),
+});
+
 class Stage {
     frames: Frame[] = [];
+    /** Boards the store held that showed a card twice. */
+    doubled: string[] = [];
     host!: HTMLElement;
     root: any;
     act!: (fn: () => unknown) => Promise<void>;
@@ -338,6 +366,12 @@ class Stage {
         // The page, and the store it was drawn from: a board the store holds is part of the frame
         // even where the DOM does not show it (a hand order before the arrangement memory reads it).
         const html = this.host.innerHTML + '\n<!-- store -->\n' + probe.store;
+        const view = probe.store ? JSON.parse(probe.store).view : null;
+        if (view) {
+            const cards = shown(view);
+            const twice = cards.filter((c, i) => cards.indexOf(c) !== i);
+            if (twice.length > 0) this.doubled.push(`${clock}ms (${label}): ${twice.join(' ')}`);
+        }
         const last = this.frames[this.frames.length - 1];
         if (!last || last.html !== html) this.frames.push({ t: clock, label, html });
     }
@@ -422,15 +456,19 @@ async function deliver(stage: Stage, label: string, push?: Push): Promise<void> 
     await stage.step(label, () => handler.cb({ payload: { t: 'as3', s: p.seq, v: p.version, b: b64(p.bytes) } }));
 }
 
+const traceText = (frames: Frame[]): string =>
+    frames.map((f) => `${f.t} ${createHash('sha256').update(f.html).digest('hex').slice(0, 24)} ${f.label}`).join('\n') + '\n';
+
+function dumpFrames(name: string, frames: Frame[]): void {
+    if (!DUMP) return;
+    const dir = join(DUMP, name);
+    mkdirSync(dir, { recursive: true });
+    frames.forEach((f, i) => writeFileSync(join(dir, `${String(i).padStart(3, '0')}_${f.t}.html`), f.html));
+    writeFileSync(join(dir, 'trace.txt'), traceText(frames));
+}
+
 function holdToGolden(name: string, frames: Frame[]): void {
-    const lines = frames.map((f) => `${f.t} ${createHash('sha256').update(f.html).digest('hex').slice(0, 24)} ${f.label}`);
-    const text = lines.join('\n') + '\n';
-    if (DUMP) {
-        const dir = join(DUMP, name);
-        mkdirSync(dir, { recursive: true });
-        frames.forEach((f, i) => writeFileSync(join(dir, `${String(i).padStart(3, '0')}_${f.t}.html`), f.html));
-        writeFileSync(join(dir, 'trace.txt'), text);
-    }
+    const text = traceText(frames);
     assert.ok(frames.length >= 2, `${name}: the page drew frames (${frames.length})`);
     const file = new URL(`${name}.txt`, GOLDEN_DIR);
     if (UPDATE) {
@@ -460,10 +498,16 @@ async function play(name: string, seed: number, gid: string, board: TableFixture
         await script(stage, server);
         await stage.advance(6000);
         assert.equal(pending.length, 0, `${name}: every request was answered`);
+        assert.deepEqual(stage.doubled, [], `${name}: a board showed a card twice`);
+        if ((server.outbox.get(ME) ?? []).length === 0 && !server.lost) {
+            const mine = clientTable().adoptEnvelope(server.envelope(ME))!;
+            assert.deepEqual(settled(JSON.parse(probe.store).view), settled(mine), `${name}: the page settles on the server's board`);
+        }
     } finally {
         await stage.unmount();
         removeClock();
         server = null;
+        dumpFrames(name, stage.frames);
     }
     holdToGolden(name, stage.frames);
 }
@@ -561,6 +605,38 @@ test('a rejected move, the refusal first: the defender took the table before my 
         await answer(s, 'server rejects mine');
         await s.advance(250);
         await deliver(s, 'push: Anna\'s pickup');
+    });
+});
+
+test('a rejected move whose push never arrives: the card goes home and stays there', async () => {
+    const board = threeMeFirst().hand(0, '6s Tc Jd').hand(1, 'Js Qs Ks As').hand(2, '9d Qd 6d').table('6h')
+        .attacker(0).defender(1).build();
+    await play('rejected_push_lost', 118, 'a-reject-lost', board, async (s, srv) => {
+        await s.step('Anna picks up on the server', () => { srv.act(ANNA, encodeAction({ kind: 'pickup' })); });
+        srv.lose(ME);   // the pickup's push to me is lost
+        await s.step('tap attack 6s', () => tap(probe.anim.attack(cards('6s'))));
+        await s.advance(150);
+        await answer(s, 'server rejects mine');
+        await s.advance(2500);
+        const view = JSON.parse(probe.store).view;
+        assert.ok(view.myHand.some((c: any) => c.suit === 0 && c.value === 5), 'the refused card is back in my hand');
+        assert.equal(view.battles.length, 1, 'and not on the table: the table is the one I last saw');
+    });
+});
+
+test('a rejected move refused after my card has landed, its push never arriving: the card goes home and stays there', async () => {
+    const board = threeMeFirst().hand(0, '6s Tc Jd').hand(1, 'Js Qs Ks As').hand(2, '9d Qd 6d').table('6h')
+        .attacker(0).defender(1).build();
+    await play('rejected_late_push_lost', 119, 'a-reject-late', board, async (s, srv) => {
+        await s.step('Anna picks up on the server', () => { srv.act(ANNA, encodeAction({ kind: 'pickup' })); });
+        srv.lose(ME);   // the pickup's push to me is lost
+        await s.step('tap attack 6s', () => tap(probe.anim.attack(cards('6s'))));
+        await s.advance(900);
+        await answer(s, 'server rejects mine');
+        await s.advance(2500);
+        const view = JSON.parse(probe.store).view;
+        assert.ok(view.myHand.some((c: any) => c.suit === 0 && c.value === 5), 'the refused card is back in my hand');
+        assert.equal(view.battles.length, 1, 'and not on the table: the table is the one I last saw');
     });
 });
 
