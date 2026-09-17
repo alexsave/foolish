@@ -268,6 +268,13 @@ game screen's black name field reports 739 for a drawer whose edge is 584).
   silently does nothing.
 - **`local a=$1 b=$((a*2))` does not work in bash** - every word on a `local`
   line is expanded before any of them is assigned.
+- **The animation reel.** `shots/anim_reel.sh` films ten table scenarios in one
+  take (throw-ins and undos at 2 and 8 seats, replayed arrivals) and
+  `lib/tablesquares.py` reports every jump of a table pair, named by scenario.
+  Local only, never CI; run it now and then. Positions are measured inside the
+  drawer (from its red top bar), because Messages' own drawer slide moves the
+  whole table and is not ours. `FOOLISH_FLAGS='table.slide=0'` is how the reel
+  was shown to bite: it reports exactly the six throw-in and undo moments.
 - **A window's frames need the window's times.** `tween` measures a slice of
   the movie, and lining the whole movie's timestamps up with it from the end put
   every frame ~315ms late and stretched a 0.77s collapse to 1.0s. `lib/window.sh`

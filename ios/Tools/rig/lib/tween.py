@@ -56,7 +56,11 @@ def read_frame(p):
     step is what keeps it honest: a card's red suit glyph sits in that column
     too, and only a real bar covers most of the width.
     """
-    a = np.asarray(Image.open(p).convert("RGB"))
+    return read_array(np.asarray(Image.open(p).convert("RGB")))
+
+
+def read_array(a):
+    """`read_frame` for a frame already in memory (tablesquares.py's pipe)."""
     h, w = a.shape[0], a.shape[1]
     # Scale from the HEIGHT. The frames are CROPPED to a narrow left-hand slice
     # (cmd_tween), so width no longer says what device this is; height is
