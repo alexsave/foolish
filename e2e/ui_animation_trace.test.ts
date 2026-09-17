@@ -249,6 +249,18 @@ const realRandom = Math.random;
 const realSetTimeout = globalThis.setTimeout, realClearTimeout = globalThis.clearTimeout;
 const realSetInterval = globalThis.setInterval, realClearInterval = globalThis.clearInterval;
 const realDateNow = Date.now;
+// The animation pipeline is a requestAnimationFrame loop over performance.now()
+// now (docs/C_GAME_SHAPE_MIGRATION.md Phase 9), so both are part of the clock
+// this file controls. A real rAF would fire on the machine's paint schedule and
+// a real performance.now would read the wall, and a frame taken then is a frame
+// a slow machine happened to hit - which is exactly what this harness exists
+// not to record.
+const realRaf = globalThis.requestAnimationFrame, realCancelRaf = globalThis.cancelAnimationFrame;
+const realPerfNow = globalThis.performance.now.bind(globalThis.performance);
+// A 60 Hz display, as a virtual interval. Every landing the kernel plans is
+// therefore observed at the first frame at or after it, which is what a browser
+// does too: nothing is painted between two frames.
+const FRAME_MS = 16;
 interface Timer { id: number; due: number; fn: (...a: unknown[]) => void; args: unknown[]; every: number }
 let clock = 0;
 let timerSeq = 0;
@@ -269,12 +281,17 @@ function installClock(): void {
         return id;
     };
     g.clearInterval = (id: number) => { timers.delete(id); };
+    g.requestAnimationFrame = (fn: (t: number) => void) => g.setTimeout(() => fn(clock), FRAME_MS);
+    g.cancelAnimationFrame = (id: number) => { timers.delete(id); };
     Date.now = () => 1_700_000_000_000 + clock;
+    globalThis.performance.now = () => clock;
 }
 function removeClock(): void {
     g.setTimeout = realSetTimeout; g.clearTimeout = realClearTimeout;
     g.setInterval = realSetInterval; g.clearInterval = realClearInterval;
+    g.requestAnimationFrame = realRaf; g.cancelAnimationFrame = realCancelRaf;
     Date.now = realDateNow;
+    globalThis.performance.now = realPerfNow;
 }
 after(() => { Math.random = realRandom; removeClock(); });
 
@@ -696,7 +713,9 @@ test('a rejected move whose push never arrives: the card goes home and stays the
         assert.equal(landing.length, 1, 'the six flies to the table');
         await s.advance(125);
         await answer(s, 'server rejects mine');
-        await s.advance(350);
+        // The six lands at 500 and the return flight opens one kernel GAP later
+        // (anim_plan.h ANIM_GAP_MS), on the first animation frame at or after it.
+        await s.advance(378);
         // The flight has landed on a table that will never show the six: it flies home from where it landed...
         assert.deepEqual(flights(s.host), [{ ...landing[0], scale: 1.8, red: true }], 'the return flight starts where and as the six landed');
         await s.advance(25);

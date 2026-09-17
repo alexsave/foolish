@@ -961,14 +961,19 @@ export function replayStepLogs(code: Uint8Array, step: number): Uint8Array | nul
 // (providers.tsx awaits ensureBotsAsync), and bots() is synchronous on the
 // server, so these calls are safe synchronously in both.
 
-// ANIM_EVT_* — mirrors anim_plan.h (which mirrors ANIMATION_EVENT_TYPE / EVW_T_*).
+// The pipeline's event-type and location NAMES, against the kernel's codes. The
+// numbers are generated from anim_plan.h (sdk/ts/gen/anim.bots.ts); only the
+// spelling of each name is TypeScript's, because the wire the web decodes from
+// (src/state/pushSequence.ts) speaks strings.
 export const ANIM_EVT: Record<string, number> = {
-    magic_transition: 0, deal: 1, flipped: 2, defender_move: 3, attack_pass: 4,
-    cover: 5, pickup: 6, discard: 7, out: 8, refill: 9, cards_to_trash: 10, revert: 11,
+    magic_transition: A.ANIM_EVT_MAGIC_TRANSITION, deal: A.ANIM_EVT_DEAL, flipped: A.ANIM_EVT_FLIPPED,
+    defender_move: A.ANIM_EVT_DEFENDER_MOVE, attack_pass: A.ANIM_EVT_ATTACK_PASS, cover: A.ANIM_EVT_COVER,
+    pickup: A.ANIM_EVT_PICKUP, discard: A.ANIM_EVT_DISCARD, out: A.ANIM_EVT_OUT, refill: A.ANIM_EVT_REFILL,
+    cards_to_trash: A.ANIM_EVT_CARDS_TO_TRASH, revert: A.ANIM_EVT_REVERT,
 };
-// ANIM_LOC_* — mirrors anim_plan.h.
 export const ANIM_LOC: Record<string, number> = {
-    deck: 0, hand: 1, table: 2, discard: 3, flipped: 4,
+    deck: A.ANIM_LOC_DECK, hand: A.ANIM_LOC_HAND, table: A.ANIM_LOC_TABLE,
+    discard: A.ANIM_LOC_DISCARD, flipped: A.ANIM_LOC_FLIPPED,
 };
 
 /** The event-type string -> ANIM_EVT_* code (0 for an unknown/None type). */
@@ -1178,10 +1183,14 @@ export function animConflictVerdicts(
 // bytes and a frame loop that marshalled it whole once per frame would spend
 // more time copying than animating.
 
-/** ANIM_STEP_NONE: no step is playing at this instant (a gap, or the end). */
-export const ANIM_STEP_NONE = -1;
-/** ANIM_NEVER: the answer will not change again (AnimFrame.nextMs). */
-export const ANIM_NEVER = -1;
+// The timing policy and the two frame sentinels, generated from anim_plan.h:
+// ANIM_STEP_NONE ("no step is playing at this instant"), ANIM_NEVER ("the
+// answer will not change again"), and the duration and gap every step is paced
+// by. Re-exported here so a caller of this bridge needs one import, not two.
+export const ANIM_STEP_NONE = A.ANIM_STEP_NONE;
+export const ANIM_NEVER = A.ANIM_NEVER;
+export const ANIM_TIME_MS = A.ANIM_TIME_MS;
+export const ANIM_GAP_MS = A.ANIM_GAP_MS;
 
 /** One decoded event as the plan sees it (anim_plan.h AnimPlanEvent). */
 export interface AnimPlanEventIn {
@@ -1345,10 +1354,9 @@ export function animBuildBeats(events: readonly AnimBeatEventIn[]): AnimBeatsSna
     };
 }
 
-// "no seat" on the wire in, mirroring wasm_api.c's ANIM_W_NONE; ANIM_LOC_NONE
-// is the kernel's own 0xFF.
+// "no seat" on the wire in, mirroring wasm_api.c's ANIM_W_NONE.
 const ANIM_W_NONE = 0xff;
-const ANIM_LOC_NONE = 0xff;
+const ANIM_LOC_NONE = A.ANIM_LOC_NONE;
 
 // A Card inside a kernel struct is a packed byte, not the wire's dense id.
 // CARD_NONE is what the kernel writes for "no flipped trump left".

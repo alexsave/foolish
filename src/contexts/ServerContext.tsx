@@ -3,12 +3,12 @@ import supabase from '../backend/Connector';
 import { useParams } from 'next/navigation';
 import { useAuth } from './AuthContext';
 import { MAX_PLAYERS } from '@api/core/constants.ts';
-import { ANIMATION_TIME, RECONCILE_GRACE_MS } from '../constants/constants';
+import { RECONCILE_GRACE_MS } from '../constants/constants';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { animationFeed } from '../state/animationFeed';
 import { holdPrivateChannel } from '../state/privateChannel';
 import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand, mergeTableBattles } from '../state/clientReconcile';
-import { keepPending, lobbyBoard, optimisticBoard, rearrangedBoard } from '../state/clientBoards';
+import { keepPending, lobbyBoard, rearrangedBoard } from '../state/clientBoards';
 import { ACTION_STATUS, REJECT_STALE_ROUND, decodeActionResponse, encodeAction, encodeActionRequest } from '@sdk/ts/wire/awire.ts';
 import { clientTable } from '@sdk/ts/table/client_table.ts';
 import { GAME_STATUS, type TableView, type ViewCard } from '../state/view';
@@ -693,47 +693,33 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // the packed awire buffer: the caller-supplied bytes (already validated against
     // the kernel) or a fresh encode for direct callers.
     //
-    // The board the move leaves stands on screen once its flight lands
-    // (ANIMATION_TIME) - but only if the caller's validation, evaluated then, agrees
-    // the move was legal: an invalid move gets no optimistic state to roll back. The
-    // kernel makes that board (clientBoards.optimisticBoard: the table, the hand, a
-    // pass's shield, a pickup's rotation) from the board held at that moment, inside
-    // the updater: a broadcast can commit fresher state in that window, and deriving
-    // from the render-time `games` closure would write that stale table and hand
-    // back over it. The hand order derives from myHand (the displayedHand selector).
-    //
-    // The game is captured ONCE at tap time, so the deferred board applies to the
-    // same game the request went to even if the user navigates during the animation.
-    const playMove = (move: Uint8Array, applyOptimistic: () => boolean): Promise<{ game_id: string }> => {
-        const gid = activeGameIdRef.current!;
-        const promise = invokePackedAction(gid, move);
-        setTimeout(() => {
-            if (!applyOptimistic()) return;
-            setGames(prev => {
-                const board = prev[gid] ? optimisticBoard(prev[gid], move) : null;
-                return board ? { ...prev, [gid]: board } : prev;
-            });
-        }, ANIMATION_TIME);
-        return promise;
-    };
+    // THE BOARD THE MOVE LEAVES IS NOT THIS FILE'S ANY MORE. It used to land here
+    // on a SECOND ANIMATION_TIME timer, in a different file from the flight it was
+    // meant to follow and coupled to it by nothing but the two reading the same
+    // constant: if the queue was busy the board arrived while some other card was
+    // still in the air. The prediction is one of the kernel's steps now, and its
+    // board commits when that step lands (AnimationContext, ClientAnimationEvent
+    // commit_board / commit_if) - one clock, one plan, one landing.
+    const playMove = (move: Uint8Array): Promise<{ game_id: string }> =>
+        invokePackedAction(activeGameIdRef.current!, move);
 
-    const attack = useCallback((cards: Card[], applyOptimistic: () => boolean = () => true, wire?: Uint8Array): Promise<{ game_id: string }> => {
-        return playMove(wire ?? encodeAction({ kind: 'attack', cards }), applyOptimistic);
+    const attack = useCallback((cards: Card[], wire?: Uint8Array): Promise<{ game_id: string }> => {
+        return playMove(wire ?? encodeAction({ kind: 'attack', cards }));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const pass = useCallback((cards: Card[], applyOptimistic: () => boolean = () => true, wire?: Uint8Array): Promise<{ game_id: string }> => {
-        return playMove(wire ?? encodeAction({ kind: 'pass', cards }), applyOptimistic);
+    const pass = useCallback((cards: Card[], wire?: Uint8Array): Promise<{ game_id: string }> => {
+        return playMove(wire ?? encodeAction({ kind: 'pass', cards }));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const pickup = useCallback((applyOptimistic: () => boolean = () => true, wire?: Uint8Array): Promise<{ game_id: string }> => {
-        return playMove(wire ?? encodeAction({ kind: 'pickup' }), applyOptimistic);
+    const pickup = useCallback((wire?: Uint8Array): Promise<{ game_id: string }> => {
+        return playMove(wire ?? encodeAction({ kind: 'pickup' }));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const cover = useCallback((coverCards: Card[], attackCards: Card[], applyOptimistic: () => boolean = () => true, wire?: Uint8Array): Promise<{ game_id: string }> => {
-        return playMove(wire ?? encodeAction({ kind: 'cover', cards: coverCards, attack_cards: attackCards }), applyOptimistic);
+    const cover = useCallback((coverCards: Card[], attackCards: Card[], wire?: Uint8Array): Promise<{ game_id: string }> => {
+        return playMove(wire ?? encodeAction({ kind: 'cover', cards: coverCards, attack_cards: attackCards }));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -1147,16 +1133,16 @@ interface ServerActionsType {
     startGame: (gameId: string) => Promise<{ game_id: string }>;
     addBot: (gameId: string, botId?: string) => Promise<{ game_id: string }>;
     exitGame: (gameId: string, botId?: string, playerId?: string) => Promise<{ game_id: string }>;
-    // The optional `applyOptimistic` thunk gates the deferred optimistic local-state
-    // patch: callers fire the request before validating, then have the patch apply
-    // only if validation passed (evaluated at ANIMATION_TIME). Defaults to always-on.
+    // A move goes to the server and nothing else happens here: the board it
+    // leaves rides its own flight in the animation pipeline, so there is no
+    // second timer and no validity thunk to gate one.
     // The optional `wire` is the move's awire buffer (encodeAction) - passed by
     // callers that already validated those bytes so the POST body is bit-identical;
     // encoded on the spot when absent.
-    attack: (cards: Card[], applyOptimistic?: () => boolean, wire?: Uint8Array) => Promise<{ game_id: string }>;
-    pass: (cards: Card[], applyOptimistic?: () => boolean, wire?: Uint8Array) => Promise<{ game_id: string }>;
-    pickup: (applyOptimistic?: () => boolean, wire?: Uint8Array) => Promise<{ game_id: string }>;
-    cover: (coverCards: Card[], attackCards: Card[], applyOptimistic?: () => boolean, wire?: Uint8Array) => Promise<{ game_id: string }>;
+    attack: (cards: Card[], wire?: Uint8Array) => Promise<{ game_id: string }>;
+    pass: (cards: Card[], wire?: Uint8Array) => Promise<{ game_id: string }>;
+    pickup: (wire?: Uint8Array) => Promise<{ game_id: string }>;
+    cover: (coverCards: Card[], attackCards: Card[], wire?: Uint8Array) => Promise<{ game_id: string }>;
     good: () => Promise<{ game_id: string }>;
     sendMessage: (message: string) => Promise<void>;
     getUserGames: () => Promise<void>;

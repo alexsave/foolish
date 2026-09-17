@@ -2,6 +2,29 @@
 // build: bots; roots: AnimPlan, AnimFrame, AnimBeats, AnimEvent, LegalMoves
 export interface Mem { u8: Uint8Array; i8: Int8Array; dv: DataView }
 export const memOf = (b: ArrayBuffer): Mem => ({ u8: new Uint8Array(b), i8: new Int8Array(b), dv: new DataView(b) });
+// constants
+export const ANIM_TIME_MS = 500;
+export const ANIM_GAP_MS = 25;
+export const ANIM_STEP_NONE = -1;
+export const ANIM_NEVER = -1;
+export const ANIM_EVT_MAGIC_TRANSITION = 0;
+export const ANIM_EVT_DEAL = 1;
+export const ANIM_EVT_FLIPPED = 2;
+export const ANIM_EVT_DEFENDER_MOVE = 3;
+export const ANIM_EVT_ATTACK_PASS = 4;
+export const ANIM_EVT_COVER = 5;
+export const ANIM_EVT_PICKUP = 6;
+export const ANIM_EVT_DISCARD = 7;
+export const ANIM_EVT_OUT = 8;
+export const ANIM_EVT_REFILL = 9;
+export const ANIM_EVT_CARDS_TO_TRASH = 10;
+export const ANIM_EVT_REVERT = 11;
+export const ANIM_LOC_DECK = 0;
+export const ANIM_LOC_HAND = 1;
+export const ANIM_LOC_TABLE = 2;
+export const ANIM_LOC_DISCARD = 3;
+export const ANIM_LOC_FLIPPED = 4;
+export const ANIM_LOC_NONE = 255;
 // AnimPlan
 export const AnimPlan_SIZE = 11752;
 export const AnimPlan_n_steps_at = (p: number) => p;

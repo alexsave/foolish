@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useState, useRef } from 'react';
-import { ANIMATION_TIME, useAnimation } from '../../contexts/AnimationContext';
+import { useAnimation } from '../../contexts/AnimationContext';
 import { covered, seatKey, type ViewCard as Card } from '../../state/view';
 import { CardFace } from './CardFace';
 import { CardBack } from './CardBack';
@@ -45,7 +45,10 @@ interface AnimatedCard {
 
 export const AnimationOverlay = () => {
     const [animatedCards, setAnimatedCards] = useState<AnimatedCard[]>([]);
-    const { currentAnimation, isAnimating } = useAnimation();
+    // `flightMs` is the kernel's duration for the step on screen (its plan's
+    // AnimPlanStep.duration_ms), not a constant this file keeps: the curve and
+    // the interpolation are rendering, the length of the flight is not.
+    const { currentAnimation, isAnimating, flightMs } = useAnimation();
     const { view: game } = useServer();
     const overlayRef = useRef<HTMLDivElement>(null);
 
@@ -577,7 +580,7 @@ export const AnimationOverlay = () => {
                             // CSS transitions for smooth animation
                             transition: progress === 0 
                                 ? 'none' // No transition for initial position
-                                : `left ${ANIMATION_TIME}ms cubic-bezier(0.25, 0.46, 0.45, 0.94), top ${ANIMATION_TIME}ms cubic-bezier(0.25, 0.46, 0.45, 0.94), transform ${ANIMATION_TIME}ms ease-out`
+                                : `left ${flightMs}ms cubic-bezier(0.25, 0.46, 0.45, 0.94), top ${flightMs}ms cubic-bezier(0.25, 0.46, 0.45, 0.94), transform ${flightMs}ms ease-out`
                         } as React.CSSProperties}
                     >
                         {isSanitizedRefill ? (

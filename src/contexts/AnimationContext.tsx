@@ -3,7 +3,6 @@ import { useServer, useServerActions } from './ServerContext';
 import { useAuth } from './AuthContext';
 import { useParams } from 'next/navigation';
 import supabase from '../backend/Connector';
-import { ANIMATION_TIME } from '../constants/constants';
 import { validateActionWire } from '../utils/gameValidation';
 import { encodeAction } from '@sdk/ts/wire/awire.ts';
 import { clientTable } from '@sdk/ts/table/client_table.ts';
@@ -18,9 +17,8 @@ import { resolveUnconfirmedAttackCovers, resolveConflictMotions, CONFLICT_DEST }
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { shouldDropStaleSequence } from '../state/clientReconcile';
 import { noteAuthoritativeVersion } from '../state/authoritativeVersion';
-
-// Animation timing constant
-export { ANIMATION_TIME } from '../constants/constants';
+import { frameAt, planFor } from '../state/animPlan';
+import { ANIM_STEP_NONE } from '@sdk/ts/wasm/bots.ts';
 
 // Bot bump timeout - 20 seconds of no animations (currently unused)
 // const BOT_BUMP_TIMEOUT = 20000;
@@ -65,11 +63,26 @@ interface ClientAnimationEvent  {
     message?: string;
     game_state?: TableView; // the board after this event
     is_revert?: boolean; // CLIENT-ONLY: flag for reverted optimistic animations
+    // CLIENT-ONLY: whether this step's board is still worth committing when its
+    // flight lands. A predicted move's board rides its own flight (there is no
+    // second timer for it any more), and a refusal that arrives mid-flight must
+    // stop it landing - otherwise the board appears and the revert takes it away
+    // one frame later. Only a prediction carries one; a push's board is truth.
+    commit_if?: () => boolean;
+    // CLIENT-ONLY: a board this step only knows at its LANDING. A prediction's
+    // board is the kernel's edit of whatever is on screen when its flight lands,
+    // not of what was on screen when the card was tapped: a broadcast can commit
+    // fresher state inside that window, and a board derived at tap time would
+    // write the stale table and hand back over it.
+    commit_board?: () => TableView | null;
 }
 
 interface AnimationContextType {
     isAnimating: boolean;
     currentAnimation: ClientAnimationEvent | null;
+    /** How long the flight on screen lasts, from the kernel's plan: the number
+     *  the overlay's CSS transition is written with. 0 when nothing is flying. */
+    flightMs: number;
     // Cards currently flying from the deck pile. Drives the visible pile size.
     // Drops BEFORE the animation starts and resets when the snapshot commits.
     inFlightFromDeck: number;
@@ -148,7 +161,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
     const [isAnimating, setIsAnimating] = useState(false);
     const [currentAnimation, setCurrentAnimation] = useState<ClientAnimationEvent | null>(null);
-    const [animationQueue, setAnimationQueue] = useState<ClientAnimationEvent[]>([]);
+    const [flightMs, setFlightMs] = useState(0);
     const [inFlightFromDeck, setInFlightFromDeck] = useState(0);
     const [inFlightToFlipped, setInFlightToFlipped] = useState(0);
 
@@ -160,17 +173,27 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         startTime: number;
     }>>(new Map());
 
-    const timeoutRef = useRef<NodeJS.Timeout | null>(null);
-    // The queue itself. The state is its copy for rendering (it starts the queue);
-    // the ref is read and changed synchronously, so a flight that lands can start
-    // the next one in the same commit and an event queued before a render is never
-    // missed.
-    const animationQueueRef = useRef<ClientAnimationEvent[]>([]);
-    const enqueue = (events: ClientAnimationEvent[]) => {
-        if (events.length === 0) return;
-        animationQueueRef.current = [...animationQueueRef.current, ...events];
-        setAnimationQueue(animationQueueRef.current);
-    };
+    // ---- THE RUN, and the one loop that plays it ----------------------------
+    //
+    // The kernel holds the timing (c/src/anim_plan.h): given the run's steps it
+    // builds a plan, and given a clock it answers where that plan stands. React
+    // asks once per animation frame, does what the answer says - commit what has
+    // landed, draw what is flying - and schedules nothing of its own.
+    //
+    // THE RUN IS APPENDED TO, NEVER SPLICED. A step opens at i x (duration +
+    // gap), a pure function of its index, so appending to a run in flight leaves
+    // every earlier step's timing exactly where it was. That is what lets an
+    // arrival be answered by the NEXT call instead of by editing the chain a
+    // timer is walking, which is what the four insertion branches here were.
+    const runRef = useRef<ClientAnimationEvent[]>([]);
+    // performance.now() when step 0 opened, or null when nothing is running. A
+    // MONOTONIC clock, deliberately: a wall-clock jump mid-flight would land
+    // every remaining step of the run at once.
+    const originRef = useRef<number | null>(null);
+    // How many of the run's steps have had their board committed. The kernel's
+    // AnimFrame.landed is the truth; this is how far React has caught up to it.
+    const landedRef = useRef(0);
+    const frameHandleRef = useRef<number | null>(null);
     const pendingCompletionCallbackRef = useRef<(() => void) | null>(null);
     const remainingSequenceEventsRef = useRef<number>(0);
 
@@ -1113,148 +1136,146 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     };
 
 
-    // TODO(redo properly): this serial setTimeout-driven event queue is a React
-    // workaround for the lack of a shared-element transition. It should be replaced
-    // with a proper animation model (the way the iOS client does it - GPU-driven
-    // matchedGeometry-style flights + structured sequencing, no setTimeout chain).
-    // Process the animation queue
-    const processAnimationQueue = useCallback(() => {
-        if (animationQueueRef.current.length === 0) {
-            setIsAnimating(false);
-            setCurrentAnimation(null);
-            setInFlightFromDeck(0);
-            setInFlightToFlipped(0);
-
-            // Clear processed event content when queue is empty (allows future legitimate duplicates)
-            if (processedEventContent.current.size > 0) {
-                processedEventContent.current.clear();
-            }
-
-            // Check if we have a pending completion callback and we've finished the sequence
-            if (pendingCompletionCallbackRef.current && remainingSequenceEventsRef.current === 0) {
-                const callback = pendingCompletionCallbackRef.current;
-                pendingCompletionCallbackRef.current = null;
-                remainingSequenceEventsRef.current = 0;
-                callback();
-            }
-
-            return;
-        }
-
-        const nextAnimation = animationQueueRef.current[0];
-        animationQueueRef.current = animationQueueRef.current.slice(1);
-
-        // Check if this animation is from a bot player
-        if (nextAnimation.seat !== undefined && url_game_id) {
-            const currentGame = games[url_game_id];
-            const seat = currentGame?.seats[nextAnimation.seat];
-            if (seat?.isAi) {
-                // This is a bot move - set the flag
-                hasBotMovedRef.current = true;
-            }
-        }
-
-        setCurrentAnimation(nextAnimation);
-        setAnimationQueue(animationQueueRef.current);
-        setIsAnimating(true);
-
-        // Drop the deck's displayed count NOW (in the same render as currentAnimation
-        // becomes visible) so the deck shrinks in lockstep with the cards leaving.
-        // Cards bound for the flipped slot stay in the deck system (they don't
-        // affect the badge total), so we track them separately.
-        if (nextAnimation.from_location === 'deck' && nextAnimation.cards && nextAnimation.cards.length > 0) {
-            setInFlightFromDeck(nextAnimation.cards.length);
-            setInFlightToFlipped(nextAnimation.to_location === 'flipped' ? nextAnimation.cards.length : 0);
-        } else {
-            setInFlightFromDeck(0);
-            setInFlightToFlipped(0);
-        }
-
-        // The cards in flight, hidden at the places the flight leaves and lands on
-        // (flightPlaces) until it lands.
-        const places = flightPlaces(nextAnimation.from_location, nextAnimation.to_location, nextAnimation.seat);
-        if (nextAnimation.cards && nextAnimation.cards.length > 0) {
-            setAnimatingCards(prev => {
-                const newAnimatingCards = new Map(prev);
-
-                nextAnimation.cards!.forEach(card => places.forEach(place => {
-                    const cardKey = getCardKeyOwner(card, place);
-                    newAnimatingCards.set(cardKey, {
-                        animationType: nextAnimation.type,
-                        progress: 1, // Always 1 - CSS transitions handle the animation
-                        fromLocation: nextAnimation.from_location || null,
-                        toLocation: nextAnimation.to_location || null,
-                        startTime: Date.now()
-                    });
-                }));
-
-                return newAnimatingCards;
-            });
-        }
-
-        // Animation duration: use ANIMATION_TIME constant for consistency
-        timeoutRef.current = setTimeout(() => {
-            // UPDATE THE GAME STATE WITH THE INTERMEDIATE STATE AFTER ANIMATION COMPLETES
-            // The game: the last push's, or - for a refused move's board before any
-            // push has played - the board's own.
-            const commitGameId = currentGameIdRef.current ?? nextAnimation.game_state?.gameId;
-            if (nextAnimation.game_state && commitGameId) {
-                let board = nextAnimation.game_state;
-
-                // If we have an optimistic pass, preserve defender/first_attacker
-                if (optimisticPassState.current) {
-                    board = turnedBoard(board, optimisticPassState.current.first_attacker, optimisticPassState.current.defender) ?? board;
-                }
-
-                updateGameState(commitGameId, board);
-            }
-
-            // Cards have landed; game.deck_length now reflects the reduction, so
-            // clear the in-flight counts to avoid double-counting during the gap.
-            setInFlightFromDeck(0);
-            setInFlightToFlipped(0);
-
-            // Remove cards from animating state
-            if (nextAnimation.cards) {
-                setAnimatingCards(prev => {
-                    const updated = new Map(prev);
-                    nextAnimation.cards!.forEach(card => places.forEach(place => {
-                        updated.delete(getCardKeyOwner(card, place));
-                    }));
-                    return updated;
+    // The cards a step has in the air, keyed by the place the page draws each of
+    // them at. Rendering, and the one part of the veil that is: the kernel's veil
+    // is per identity (c/src/anim_plan.h), the page's is per PLACE, because a
+    // flight has to be hidden where it left AND where it lands or the card is on
+    // screen twice.
+    const veilOf = (step: ClientAnimationEvent | null): Map<string, {
+        animationType: string; progress: number; fromLocation: string | null;
+        toLocation: string | null; startTime: number;
+    }> => {
+        const veil = new Map<string, {
+            animationType: string; progress: number; fromLocation: string | null;
+            toLocation: string | null; startTime: number;
+        }>();
+        if (!step?.cards || step.cards.length === 0) return veil;
+        const places = flightPlaces(step.from_location, step.to_location, step.seat);
+        for (const card of step.cards) {
+            for (const place of places) {
+                veil.set(getCardKeyOwner(card, place), {
+                    animationType: step.type,
+                    progress: 1, // Always 1 - CSS transitions handle the animation
+                    fromLocation: step.from_location || null,
+                    toLocation: step.to_location || null,
+                    startTime: Date.now(),
                 });
-
-                // If this was a revert animation, clear the reverting and position tracking
-                if (nextAnimation.type === 'revert') {
-                    nextAnimation.cards.forEach(card => {
-                        const cardKey = getCardKey(card);
-                        revertingCards.current.delete(cardKey);
-                        optimisticCardPositions.current.delete(cardKey);
-                    });
-                }
             }
-
-            // Decrement remaining sequence events count if we're tracking a sequence
-            if (pendingCompletionCallbackRef.current && remainingSequenceEventsRef.current > 0) {
-                remainingSequenceEventsRef.current--;
-            }
-
-            // The next flight starts in this same commit: the board this one landed
-            // on, its card shown where it landed, and the next flight's cards
-            // (AnimationOverlay builds them before the browser paints) are one frame,
-            // so no card is ever drawn in two places or in none between two events.
-            processAnimationQueueRef.current();
-        }, ANIMATION_TIME);
-    }, [updateGameState, url_game_id, games]);
-    const processAnimationQueueRef = useRef(processAnimationQueue);
-    processAnimationQueueRef.current = processAnimationQueue;
-
-    // Start processing queue when items are added and no animation is running
-    useEffect(() => {
-        if (animationQueueRef.current.length > 0 && !isAnimating) {
-            processAnimationQueue();
         }
-    }, [animationQueue, isAnimating, processAnimationQueue]);
+        return veil;
+    };
+
+    // One step has landed: its board is the truth now, and whatever the flight
+    // was tracking is released.
+    const landStep = (step: ClientAnimationEvent) => {
+        const board = step.commit_board ? step.commit_board() : step.game_state;
+        const commitGameId = currentGameIdRef.current ?? board?.gameId;
+        if (board && commitGameId && (step.commit_if?.() ?? true)) {
+            updateGameState(commitGameId, board);
+        }
+        if (step.type === 'revert' && step.cards) {
+            for (const card of step.cards) {
+                const cardKey = getCardKey(card);
+                revertingCards.current.delete(cardKey);
+                optimisticCardPositions.current.delete(cardKey);
+            }
+        }
+        if (pendingCompletionCallbackRef.current && remainingSequenceEventsRef.current > 0) {
+            remainingSequenceEventsRef.current--;
+        }
+    };
+
+    // The run is over: nothing is flying, nothing is veiled, and the sequence's
+    // completion callback (the final board) fires.
+    const endRun = () => {
+        runRef.current = [];
+        originRef.current = null;
+        landedRef.current = 0;
+        setCurrentAnimation(null);
+        setFlightMs(0);
+        setIsAnimating(false);
+        setInFlightFromDeck(0);
+        setInFlightToFlipped(0);
+        setAnimatingCards((prev) => (prev.size === 0 ? prev : new Map()));
+        // Allows future legitimate duplicates of a sequence already played.
+        if (processedEventContent.current.size > 0) processedEventContent.current.clear();
+        if (pendingCompletionCallbackRef.current && remainingSequenceEventsRef.current === 0) {
+            const callback = pendingCompletionCallbackRef.current;
+            pendingCompletionCallbackRef.current = null;
+            callback();
+        }
+    };
+
+    // ONE FRAME. Ask the kernel where the run stands, then do what it says.
+    //
+    // THE PLAN IS REBUILT EVERY FRAME, on purpose. It is a pure function of the
+    // run (the same steps give the same plan), the kernel keeps exactly one, and
+    // a plan built once and sampled later is a plan some other screen may have
+    // replaced. Rebuilding is also what makes an arrival free: the next frame
+    // plans the longer run and answers about it.
+    //
+    // A FRAME THE BROWSER SKIPPED lands every step it skipped, in order, in that
+    // one frame - a hidden tab comes back to the board it should be holding
+    // rather than replaying the whole sequence one flight at a time.
+    const tickRef = useRef<() => void>(() => {});
+    const tick = () => {
+        frameHandleRef.current = null;
+        const origin = originRef.current;
+        if (origin === null) return;
+        const run = runRef.current;
+        const plan = planFor(run, currentGameRef.current);
+        const frame = frameAt(performance.now() - origin);
+
+        while (landedRef.current < frame.landed && landedRef.current < run.length) {
+            landStep(run[landedRef.current++]);
+        }
+
+        const flying = frame.step === ANIM_STEP_NONE ? null : run[frame.step] ?? null;
+        setCurrentAnimation((prev) => (prev === flying ? prev : flying));
+        setFlightMs(frame.step === ANIM_STEP_NONE ? 0 : plan.steps[frame.step]?.durationMs ?? 0);
+        // The stock shrinks as cards LEAVE it, not as they land, and a card bound
+        // for the trump's slot never leaves it at all: both numbers are the
+        // kernel's, per step (AnimPlanStep.in_flight_from_deck / _to_flipped).
+        setInFlightFromDeck(frame.inFlightFromDeck);
+        setInFlightToFlipped(frame.inFlightToFlipped);
+        setAnimatingCards((prev) => {
+            const next = veilOf(flying);
+            if (prev.size === next.size && [...next.keys()].every((k) => prev.has(k))) return prev;
+            return next;
+        });
+
+        if (frame.done && landedRef.current >= run.length) { endRun(); return; }
+        frameHandleRef.current = requestAnimationFrame(() => tickRef.current());
+    };
+    tickRef.current = tick;
+
+    // A bot's move is a move: the bump timer only nudges a table nobody moved.
+    const noteBotSteps = (events: ClientAnimationEvent[]) => {
+        if (!url_game_id) return;
+        const seats = games[url_game_id]?.seats;
+        if (!seats) return;
+        if (events.some((e) => e.seat !== undefined && seats[e.seat]?.isAi)) {
+            hasBotMovedRef.current = true;
+        }
+    };
+
+    // Add steps to the run, starting it if nothing is playing. A step queued
+    // while a run is in flight simply extends it; the kernel's plan gives it the
+    // next slot and the earlier steps keep the timing they already had.
+    const enqueue = (events: ClientAnimationEvent[]) => {
+        if (events.length === 0) return;
+        noteBotSteps(events);
+        runRef.current = [...runRef.current, ...events];
+        if (originRef.current !== null) return;
+        originRef.current = performance.now();
+        landedRef.current = 0;
+        setIsAnimating(true);
+        // The first frame is asked for NOW rather than on the next paint: a
+        // caller that queued a step and then read `currentAnimation` in the same
+        // commit sees the flight it started, exactly as the queue's first
+        // setTimeout(0)-equivalent used to give it.
+        tick();
+    };
 
     // Queue a single animation
     const queueAnimation = (event: ClientAnimationEvent) => enqueue([event]);
@@ -1283,8 +1304,21 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         };
     };
 
+    // THE BOARD A PREDICTED MOVE LEAVES, made by the kernel from whatever is on
+    // screen at the moment the prediction's flight lands (clientBoards.optimisticBoard:
+    // the table, the hand, a pass's shield, a pickup's rotation). It used to be a
+    // second ANIMATION_TIME timer in ServerContext, coupled to this flight by
+    // nothing but the two files reading the same constant.
+    const predictedLanding = (wire: Uint8Array, still: () => boolean) => ({
+        commit_board: () => {
+            const held = currentGameRef.current;
+            return held ? optimisticBoard(held, wire) : null;
+        },
+        commit_if: still,
+    });
+
     // Helper function to trigger optimistic animation and track it
-    const triggerOptimisticAnimation = (animationType: string, cards: Card[], fromLocation: string, toLocation: string, seat?: number, targetCard?: Card, battleIndex?: number) => {
+    const triggerOptimisticAnimation = (animationType: string, cards: Card[], fromLocation: string, toLocation: string, seat?: number, targetCard?: Card, battleIndex?: number, landing?: { commit_board: () => TableView | null; commit_if: () => boolean }) => {
         const animationEvent: ClientAnimationEvent = {
             type: animationType as any,
             cards: cards,
@@ -1293,7 +1327,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             seat,
             target_card: targetCard,
             battle_index: battleIndex,
-            message: `Optimistic ${animationType} animation`
+            message: `Optimistic ${animationType} animation`,
+            ...landing,
         };
 
         // Track EACH CARD individually to avoid duplicates from server
@@ -1360,7 +1395,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         //    optimistic patch (applied only if still valid) and gates the optimistic
         //    animation below.
         let valid = true, refused = false;
-        const serverPromise = serverActions.attack(cards, () => valid && !refused, wire);
+        const serverPromise = serverActions.attack(cards, wire);
 
         // 2. Validate the SAME wire bytes locally; only add optimistic feedback
         //    if the move is legal.
@@ -1370,7 +1405,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             valid = false;
         }
         if (valid) {
-            triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', seatOf(game));
+            triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', seatOf(game), undefined, undefined,
+                predictedLanding(wire, () => valid && !refused));
         }
 
         // 3. Await the server's verdict (revert-on-rejection below).
@@ -1439,7 +1475,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         // 1. Send the request BEFORE validating (server is authoritative; see attack).
         let valid = true, refused = false;
-        const serverPromise = serverActions.pass(cards, () => valid && !refused, wire);
+        const serverPromise = serverActions.pass(cards, wire);
 
         // 2. Validate the same wire bytes locally; only add optimistic feedback
         //    if the move is legal.
@@ -1450,7 +1486,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         }
         if (valid) {
             // Trigger optimistic animation - single animation with all cards going to their spots
-            triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', seatOf(game));
+            triggerOptimisticAnimation('attack_pass', cards, 'hand', 'table', seatOf(game), undefined, undefined,
+                predictedLanding(wire, () => valid && !refused));
 
             // Track optimistic pass state (defender will change to next player).
             // Pass moves defender to the next IN-PLAY player (skipping eliminated
@@ -1531,7 +1568,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         //    lands: the cards' return flight starts from the hand, which hides them
         //    while they fly, and the refusal's board puts the table back.
         let valid = true;
-        const serverPromise = serverActions.pickup(() => valid, wire);
+        const serverPromise = serverActions.pickup(wire);
 
         // 2. Validate the same wire bytes locally; only add optimistic feedback
         //    if the move is legal.
@@ -1541,7 +1578,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             valid = false;
         }
         if (valid) {
-            triggerOptimisticAnimation('pickup', allTableCards, 'table', 'hand', seatOf(game));
+            triggerOptimisticAnimation('pickup', allTableCards, 'table', 'hand', seatOf(game), undefined, undefined,
+                predictedLanding(wire, () => valid));
         }
 
         // 3. Await the server's verdict (revert-on-rejection below).
@@ -1602,7 +1640,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         // 1. Send the request BEFORE validating (server is authoritative; see attack).
         let valid = true, refused = false;
-        const serverPromise = serverActions.cover(coverCards, attackCards, () => valid && !refused, wire);
+        const serverPromise = serverActions.cover(coverCards, attackCards, wire);
 
         // 2. Validate the same wire bytes locally; only add optimistic feedback
         //    if the move is legal.
@@ -1622,7 +1660,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 from_location: 'hand',
                 to_location: 'table',
                 seat: seatOf(game),
-                message: 'Optimistic cover animation'
+                message: 'Optimistic cover animation',
+                ...predictedLanding(wire, () => valid && !refused),
             };
 
             // Track EACH CARD individually with its target attack card
@@ -1690,11 +1729,12 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
     const good = async (): Promise<{ game_id: string }> => await serverActions.good();
 
-    // Cleanup timeouts on unmount
+    // Drop the frame loop and the bump timer on unmount.
     useEffect(() => {
         return () => {
-            if (timeoutRef.current) {
-                clearTimeout(timeoutRef.current);
+            if (frameHandleRef.current !== null) {
+                cancelAnimationFrame(frameHandleRef.current);
+                frameHandleRef.current = null;
             }
             if (botBumpTimerRef.current) {
                 clearInterval(botBumpTimerRef.current);
@@ -1703,16 +1743,18 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     }, []);
 
     const resetAnimations = useCallback(() => {
-        if (timeoutRef.current) {
-            clearTimeout(timeoutRef.current);
-            timeoutRef.current = null;
+        if (frameHandleRef.current !== null) {
+            cancelAnimationFrame(frameHandleRef.current);
+            frameHandleRef.current = null;
         }
         pendingCompletionCallbackRef.current = null;
         remainingSequenceEventsRef.current = 0;
-        animationQueueRef.current = [];
+        runRef.current = [];
+        originRef.current = null;
+        landedRef.current = 0;
         processedEventContent.current.clear();
-        setAnimationQueue([]);
         setCurrentAnimation(null);
+        setFlightMs(0);
         setIsAnimating(false);
         setInFlightFromDeck(0);
         setInFlightToFlipped(0);
@@ -1723,6 +1765,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         <AnimationContext.Provider value={{
             isAnimating,
             currentAnimation,
+            flightMs,
             inFlightFromDeck,
             inFlightToFlipped,
             getCardAnimationState,
