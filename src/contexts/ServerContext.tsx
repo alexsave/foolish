@@ -151,6 +151,38 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         chatHoldRef.current = null;
     };
 
+    // The spectator's game-{id} stream, by game id: the channel object itself, never
+    // a lookup by topic (realtime-js names a channel 'realtime:game-{id}', so a
+    // lookup by the bare topic found nothing and a join left the stream behind).
+    const spectatorChannels = useRef<Map<string, ReturnType<typeof supabase.channel>>>(new Map());
+    const watchGame = (gameId: string) => {
+        if (spectatorChannels.current.has(gameId)) return;
+        const gameChannel = supabase.channel(`game-${gameId}`, { config: { private: true } });
+        spectatorChannels.current.set(gameId, gameChannel);
+        // Spectators get LIVE game updates too: the server broadcasts the
+        // fully-masked (seat -1) animation stream to this game-<id> topic, built by
+        // the same encoder the players' gu-<id>-<user> streams use. Republish it into
+        // animationFeed exactly like RealtimeAnimationFeed does for players - the
+        // packed envelope carries no JS state, so attach the game id so the consumer
+        // can pick the decode roster.
+        supabase.realtime.setAuth().then(() => {
+            if (spectatorChannels.current.get(gameId) !== gameChannel) return;
+            gameChannel
+                .on('broadcast', { event: 'animation_events' }, (payload) => {
+                    animationFeed.publish({ ...payload.payload, game_id: gameId });
+                })
+                .subscribe((status, err) => status === 'SUBSCRIBED'
+                    ? console.log('Connected to game channel:', `game-${gameId}`)
+                    : console.error('Game channel error:', err));
+        });
+    };
+    const unwatchGame = (gameId: string) => {
+        const gameChannel = spectatorChannels.current.get(gameId);
+        if (!gameChannel) return;
+        spectatorChannels.current.delete(gameId);
+        supabase.removeChannel(gameChannel);
+    };
+
     useEffect(() => {
         if (url_game_id) {
             gameIdRef.current = url_game_id;
@@ -214,6 +246,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 if (channel.topic.includes('gu-') || channel.topic.includes('pv-') || channel.topic.includes('chat:')) return;
                 supabase.removeChannel(channel);
             });
+            spectatorChannels.current.clear();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user_id, url_game_id]);
@@ -431,13 +464,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                     return newSet;
                 });
 
-                // Clean up old game channel (for spectators) and switch to game-user channel
-                const oldChannelName = `game-${gameId}`;
-                const channels = supabase.getChannels();
-                const oldChannel = channels.find(channel => channel.topic === oldChannelName);
-                if (oldChannel) {
-                    supabase.removeChannel(oldChannel);
-                }
+                // Leave the spectator stream: the seat's own gu- stream
+                // (RealtimeAnimationFeed) carries the game from here.
+                unwatchGame(gameId);
 
                 // Subscribe to the game's chat (the gu- animation channel is
                 // owned by RealtimeAnimationFeed)
@@ -474,32 +503,17 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             bot_id: botId,
             player_id: playerId
         }, {
-            onSuccess: () => {
-                // If user removed themselves (not a bot), mark as spectating and switch channels
-                if (!botId) {
+            onSuccess: (view) => {
+                // If I gave up my own seat (not a bot's, not another player's),
+                // I am watching now. The gu- stream is RealtimeAnimationFeed's to
+                // leave once the board shows no seat; the chat: membership is gone.
+                if (!botId && (!playerId || playerId === userIdRef.current)) {
                     setSpectatorGames(prev => new Set(prev).add(gameId));
-                    // The seat is gone, and with it the chat: membership.
-                    if (!playerId || playerId === userIdRef.current) stopChat();
-
-                    // Clean up old game-user channel and switch to game channel for spectators
-                    const oldChannelName = `gu-${gameId}-${userIdRef.current}`;
-                    const channels = supabase.getChannels();
-                    const oldChannel = channels.find(channel => channel.topic === oldChannelName);
-                    if (oldChannel) {
-                        supabase.removeChannel(oldChannel);
-                    }
-
-                    // Subscribe to game channel for spectators
-                    supabase.realtime.setAuth().then(() => {
-                        const gameChannel = supabase.channel(`game-${gameId}`, {
-                            config: { private: true }
-                        });
-                        // Spectators currently don't need to listen to any events
-                        // All game state is included in animation events
-                        gameChannel.subscribe((status, err) => status === 'SUBSCRIBED'
-                            ? console.log('Connected to game channel:', `game-${gameId}`)
-                            : console.error('Game channel error:', err));
-                    });
+                    // The answer is my view without the seat: apply it, as a join
+                    // applies its own, so the page and the feed see the seat gone now.
+                    setGames(prev => ({ ...prev, [view.gameId]: mergeGameData(view.gameId, view, prev) }));
+                    stopChat();
+                    watchGame(gameId);
                 }
             }
         })
@@ -638,30 +652,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             // Auto-join only if not intentionally spectating
             joinGame(gameId).catch(console.error);
         } else {
-            // Subscribe as spectator
-            supabase.realtime.setAuth().then(() => {
-                const gameChannel = supabase.channel(`game-${gameId}`, {
-                    config: { private: true }
-                });
-                // Spectators get LIVE game updates too: the server broadcasts the
-                // fully-masked (seat -1) animation stream to this game-<id> topic
-                // (broadcastPackedEventBuffers / broadcastAnimationEvents), built
-                // by the same WASM/event-wire encoder the players' gu-<id>-<user>
-                // streams use. Republish it into animationFeed exactly like
-                // RealtimeAnimationFeed does for players - the packed envelope
-                // ({t:'as2',s,v,b}) carries no JS state, so attach the game id so
-                // the consumer can pick the decode roster.
-                gameChannel
-                    .on('broadcast', { event: 'animation_events' }, (payload) => {
-                        animationFeed.publish({ ...payload.payload, game_id: gameId });
-                    })
-                    .subscribe((status, err) => status === 'SUBSCRIBED'
-                        ? console.log('Connected to game channel:', `game-${gameId}`)
-                        : console.error('Game channel error:', err));
-
-                // No chat: for a spectator. Its policy admits members only, and
-                // a refused join stalls the game- stream on the same socket.
-            });
+            // Subscribe as spectator. No chat: for a spectator: its policy admits
+            // members only, and a refused join stalls the game- stream on the same socket.
+            watchGame(gameId);
         }
     }
 
