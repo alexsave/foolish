@@ -17,8 +17,8 @@ import { resolveUnconfirmedAttackCovers, resolveConflictMotions, CONFLICT_DEST }
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { shouldDropStaleSequence } from '../state/clientReconcile';
 import { noteAuthoritativeVersion } from '../state/authoritativeVersion';
-import { frameAt, planFor } from '../state/animPlan';
-import { ANIM_CONFLICT_REVERT, ANIM_STEP_NONE, animReversalOrder } from '@sdk/ts/wasm/bots.ts';
+import { ANIM_CONFLICT_REVERT, animReversalOrder } from '@sdk/ts/wasm/bots.ts';
+import { useAnimationRun } from '../state/useAnimationRun';
 
 // Bot bump timeout - 20 seconds of no animations (currently unused)
 // const BOT_BUMP_TIMEOUT = 20000;
@@ -159,41 +159,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     const { user_id } = useAuth();
     const url_game_id = useParams<{ game_id: string }>().game_id?.toLowerCase();
 
-    const [isAnimating, setIsAnimating] = useState(false);
-    const [currentAnimation, setCurrentAnimation] = useState<ClientAnimationEvent | null>(null);
-    const [flightMs, setFlightMs] = useState(0);
-    const [inFlightFromDeck, setInFlightFromDeck] = useState(0);
-    const [inFlightToFlipped, setInFlightToFlipped] = useState(0);
-
-    const [animatingCards, setAnimatingCards] = useState<Map<string, {
-        animationType: string;
-        progress: number;
-        fromLocation: string | null;
-        toLocation: string | null;
-        startTime: number;
-    }>>(new Map());
-
-    // ---- THE RUN, and the one loop that plays it ----------------------------
-    //
-    // The kernel holds the timing (c/src/anim_plan.h): given the run's steps it
-    // builds a plan, and given a clock it answers where that plan stands. React
-    // asks once per animation frame, does what the answer says - commit what has
-    // landed, draw what is flying - and schedules nothing of its own.
-    //
-    // THE RUN IS APPENDED TO, NEVER SPLICED. A step opens at i x (duration +
-    // gap), a pure function of its index, so appending to a run in flight leaves
-    // every earlier step's timing exactly where it was. That is what lets an
-    // arrival be answered by the NEXT call instead of by editing the chain a
-    // timer is walking, which is what the four insertion branches here were.
-    const runRef = useRef<ClientAnimationEvent[]>([]);
-    // performance.now() when step 0 opened, or null when nothing is running. A
-    // MONOTONIC clock, deliberately: a wall-clock jump mid-flight would land
-    // every remaining step of the run at once.
-    const originRef = useRef<number | null>(null);
-    // How many of the run's steps have had their board committed. The kernel's
-    // AnimFrame.landed is the truth; this is how far React has caught up to it.
-    const landedRef = useRef(0);
-    const frameHandleRef = useRef<number | null>(null);
+    // The animation state the page renders from comes from the frame loop
+    // (useAnimationRun, below): the kernel holds the timing, so nothing about a
+    // run is state this file declares.
     const pendingCompletionCallbackRef = useRef<(() => void) | null>(null);
     const remainingSequenceEventsRef = useRef<number>(0);
 
@@ -1101,146 +1069,57 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     };
 
 
-    // The cards a step has in the air, keyed by the place the page draws each of
-    // them at. Rendering, and the one part of the veil that is: the kernel's veil
-    // is per identity (c/src/anim_plan.h), the page's is per PLACE, because a
-    // flight has to be hidden where it left AND where it lands or the card is on
-    // screen twice.
-    const veilOf = (step: ClientAnimationEvent | null): Map<string, {
-        animationType: string; progress: number; fromLocation: string | null;
-        toLocation: string | null; startTime: number;
-    }> => {
-        const veil = new Map<string, {
-            animationType: string; progress: number; fromLocation: string | null;
-            toLocation: string | null; startTime: number;
-        }>();
-        if (!step?.cards || step.cards.length === 0) return veil;
-        const places = flightPlaces(step.from_location, step.to_location, step.seat);
-        for (const card of step.cards) {
-            for (const place of places) {
-                veil.set(getCardKeyOwner(card, place), {
-                    animationType: step.type,
-                    progress: 1, // Always 1 - CSS transitions handle the animation
-                    fromLocation: step.from_location || null,
-                    toLocation: step.to_location || null,
-                    startTime: Date.now(),
-                });
+    // ONE FRAME LOOP, and the kernel answers it (src/state/useAnimationRun.ts).
+    // What is left here is what a landing MEANS - which board it commits, what
+    // tracking it releases, when a sequence's final board is the truth - because
+    // that is about the game, and the loop is about time.
+    const {
+        isAnimating, currentAnimation, flightMs, inFlightFromDeck, inFlightToFlipped,
+        animatingCards, enqueue, reset: resetRun,
+    } = useAnimationRun<ClientAnimationEvent>({
+        board: () => currentGameRef.current,
+        placesOf: (step) => flightPlaces(step.from_location, step.to_location, step.seat),
+        keyOf: (card, place) => getCardKeyOwner(card, place),
+        onLanded: (step) => {
+            // A PREDICTION'S BOARD IS MADE AT ITS LANDING, from whatever is on
+            // screen then - a broadcast can commit fresher state inside the
+            // flight, and a board derived at tap time would write the stale
+            // table and hand back over it.
+            const board = step.commit_board ? step.commit_board() : step.game_state;
+            const commitGameId = currentGameIdRef.current ?? board?.gameId;
+            if (board && commitGameId && (step.commit_if?.() ?? true)) {
+                updateGameState(commitGameId, board);
             }
-        }
-        return veil;
-    };
-
-    // One step has landed: its board is the truth now, and whatever the flight
-    // was tracking is released.
-    const landStep = (step: ClientAnimationEvent) => {
-        const board = step.commit_board ? step.commit_board() : step.game_state;
-        const commitGameId = currentGameIdRef.current ?? board?.gameId;
-        if (board && commitGameId && (step.commit_if?.() ?? true)) {
-            updateGameState(commitGameId, board);
-        }
-        if (step.type === 'revert' && step.cards) {
-            for (const card of step.cards) {
-                const cardKey = getCardKey(card);
-                revertingCards.current.delete(cardKey);
-                optimisticCardPositions.current.delete(cardKey);
+            if (step.type === 'revert' && step.cards) {
+                for (const card of step.cards) {
+                    const cardKey = getCardKey(card);
+                    revertingCards.current.delete(cardKey);
+                    optimisticCardPositions.current.delete(cardKey);
+                }
             }
-        }
-        if (pendingCompletionCallbackRef.current && remainingSequenceEventsRef.current > 0) {
-            remainingSequenceEventsRef.current--;
-        }
-    };
-
-    // The run is over: nothing is flying, nothing is veiled, and the sequence's
-    // completion callback (the final board) fires.
-    const endRun = () => {
-        runRef.current = [];
-        originRef.current = null;
-        landedRef.current = 0;
-        setCurrentAnimation(null);
-        setFlightMs(0);
-        setIsAnimating(false);
-        setInFlightFromDeck(0);
-        setInFlightToFlipped(0);
-        setAnimatingCards((prev) => (prev.size === 0 ? prev : new Map()));
-        // Allows future legitimate duplicates of a sequence already played.
-        if (processedEventContent.current.size > 0) processedEventContent.current.clear();
-        if (pendingCompletionCallbackRef.current && remainingSequenceEventsRef.current === 0) {
-            const callback = pendingCompletionCallbackRef.current;
-            pendingCompletionCallbackRef.current = null;
-            callback();
-        }
-    };
-
-    // ONE FRAME. Ask the kernel where the run stands, then do what it says.
-    //
-    // THE PLAN IS REBUILT EVERY FRAME, on purpose. It is a pure function of the
-    // run (the same steps give the same plan), the kernel keeps exactly one, and
-    // a plan built once and sampled later is a plan some other screen may have
-    // replaced. Rebuilding is also what makes an arrival free: the next frame
-    // plans the longer run and answers about it.
-    //
-    // A FRAME THE BROWSER SKIPPED lands every step it skipped, in order, in that
-    // one frame - a hidden tab comes back to the board it should be holding
-    // rather than replaying the whole sequence one flight at a time.
-    const tickRef = useRef<() => void>(() => {});
-    const tick = () => {
-        frameHandleRef.current = null;
-        const origin = originRef.current;
-        if (origin === null) return;
-        const run = runRef.current;
-        const plan = planFor(run, currentGameRef.current);
-        const frame = frameAt(performance.now() - origin);
-
-        while (landedRef.current < frame.landed && landedRef.current < run.length) {
-            landStep(run[landedRef.current++]);
-        }
-
-        const flying = frame.step === ANIM_STEP_NONE ? null : run[frame.step] ?? null;
-        setCurrentAnimation((prev) => (prev === flying ? prev : flying));
-        setFlightMs(frame.step === ANIM_STEP_NONE ? 0 : plan.steps[frame.step]?.durationMs ?? 0);
-        // The stock shrinks as cards LEAVE it, not as they land, and a card bound
-        // for the trump's slot never leaves it at all: both numbers are the
-        // kernel's, per step (AnimPlanStep.in_flight_from_deck / _to_flipped).
-        setInFlightFromDeck(frame.inFlightFromDeck);
-        setInFlightToFlipped(frame.inFlightToFlipped);
-        setAnimatingCards((prev) => {
-            const next = veilOf(flying);
-            if (prev.size === next.size && [...next.keys()].every((k) => prev.has(k))) return prev;
-            return next;
-        });
-
-        if (frame.done && landedRef.current >= run.length) { endRun(); return; }
-        frameHandleRef.current = requestAnimationFrame(() => tickRef.current());
-    };
-    tickRef.current = tick;
-
-    // A bot's move is a move: the bump timer only nudges a table nobody moved.
-    const noteBotSteps = (events: ClientAnimationEvent[]) => {
-        if (!url_game_id) return;
-        const seats = games[url_game_id]?.seats;
-        if (!seats) return;
-        if (events.some((e) => e.seat !== undefined && seats[e.seat]?.isAi)) {
-            hasBotMovedRef.current = true;
-        }
-    };
-
-    // Add steps to the run, starting it if nothing is playing. A step queued
-    // while a run is in flight simply extends it; the kernel's plan gives it the
-    // next slot and the earlier steps keep the timing they already had.
-    const enqueue = (events: ClientAnimationEvent[]) => {
-        if (events.length === 0) return;
-        noteBotSteps(events);
-        runRef.current = [...runRef.current, ...events];
-        if (originRef.current !== null) return;
-        originRef.current = performance.now();
-        landedRef.current = 0;
-        setIsAnimating(true);
-        // The first frame is asked for NOW rather than on the next paint: a
-        // caller that queued a step and then read `currentAnimation` in the same
-        // commit sees the flight it started, exactly as the queue's first
-        // setTimeout(0)-equivalent used to give it.
-        tick();
-    };
+            if (pendingCompletionCallbackRef.current && remainingSequenceEventsRef.current > 0) {
+                remainingSequenceEventsRef.current--;
+            }
+        },
+        onIdle: () => {
+            // Allows future legitimate duplicates of a sequence already played.
+            if (processedEventContent.current.size > 0) processedEventContent.current.clear();
+            if (pendingCompletionCallbackRef.current && remainingSequenceEventsRef.current === 0) {
+                const callback = pendingCompletionCallbackRef.current;
+                pendingCompletionCallbackRef.current = null;
+                callback();
+            }
+        },
+        // A bot's move is a move: the bump timer only nudges a table nobody moved.
+        onQueued: (steps) => {
+            if (!url_game_id) return;
+            const seats = games[url_game_id]?.seats;
+            if (!seats) return;
+            if (steps.some((e) => e.seat !== undefined && seats[e.seat]?.isAi)) {
+                hasBotMovedRef.current = true;
+            }
+        },
+    });
 
     // Queue a single animation
     const queueAnimation = (event: ClientAnimationEvent) => enqueue([event]);
@@ -1694,13 +1573,9 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
     const good = async (): Promise<{ game_id: string }> => await serverActions.good();
 
-    // Drop the frame loop and the bump timer on unmount.
+    // The frame loop drops itself on unmount; the bump timer is this file's.
     useEffect(() => {
         return () => {
-            if (frameHandleRef.current !== null) {
-                cancelAnimationFrame(frameHandleRef.current);
-                frameHandleRef.current = null;
-            }
             if (botBumpTimerRef.current) {
                 clearInterval(botBumpTimerRef.current);
             }
@@ -1708,22 +1583,11 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     }, []);
 
     const resetAnimations = useCallback(() => {
-        if (frameHandleRef.current !== null) {
-            cancelAnimationFrame(frameHandleRef.current);
-            frameHandleRef.current = null;
-        }
         pendingCompletionCallbackRef.current = null;
         remainingSequenceEventsRef.current = 0;
-        runRef.current = [];
-        originRef.current = null;
-        landedRef.current = 0;
         processedEventContent.current.clear();
-        setCurrentAnimation(null);
-        setFlightMs(0);
-        setIsAnimating(false);
-        setInFlightFromDeck(0);
-        setInFlightToFlipped(0);
-        setAnimatingCards(new Map());
+        resetRun();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     return (
