@@ -1,9 +1,10 @@
 /* =============================================================================
  * Optimistic-animation dedup regression test (the "card animates twice" bug)
  * =============================================================================
- * Exercises the REAL client helpers: the same createCardEventString the
- * AnimationContext uses to key optimistic animations, and the real
- * staleOptimisticKeysOnTable the version-gate uses to release them.
+ * Exercises the REAL client helpers: the same kernel dedup key the
+ * AnimationContext keys optimistic animations by (anim_plan.h anim_event_key,
+ * through animEventKey), and the real staleOptimisticKeysOnTable the version
+ * gate uses to release them.
  *
  * The bug: when you play a card, the optimistic animation plays, then the
  * server's confirming broadcast plays it AGAIN. Cause — the version gate
@@ -24,7 +25,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { ViewCard as Card } from '../src/state/view';
-import { createCardEventString, getCardKey, getTableCards } from '../src/utils/animationUtils';
+import { getCardKey, getTableCards } from '../src/utils/animationUtils';
+import { animEventKey } from '../sdk/ts/wasm/bots.ts';
 import { staleOptimisticKeysOnTable } from '../src/state/optimisticAnimation';
 import { optimisticBoard } from '../src/state/clientBoards';
 import { clientTable } from '../sdk/ts/table/client_table.ts';
@@ -36,8 +38,12 @@ import { readPushSequence } from './helpers/client_read.ts';
 const SELF = 0;   // my seat
 const card: Card = { suit: 1, value: 9 };
 
-// How AnimationContext keys an optimistic attack: ('attack_pass', card, hand->table, self)
-const optimisticAttackKey = createCardEventString('attack_pass', card, 'hand', 'table', SELF);
+// How AnimationContext keys an optimistic attack: ('attack_pass', card, hand->table, self).
+// The key is the KERNEL's, so it is a number and has no fields to read back; a
+// caller that wants the card keeps the card, which is what the pending map does.
+const optimisticAttackKey = animEventKey('attack_pass', card, 'hand', 'table', SELF);
+/** The pending map's shape: the kernel's key, and what was predicted under it. */
+const pending = (key: number, c: Card): [number, { card: Card }][] => [[key, { card: c }]];
 
 // The server's confirming attack broadcast (the as3 push table_act's commit writes).
 const serverAttackEvent = {
@@ -53,14 +59,14 @@ const tableCardsAfter: Card[] = [card];
 
 export function registerOptimisticValidation(): void {
     test('version gate does NOT release an optimistic card the same broadcast confirms (no double-play)', () => {
-        const release = staleOptimisticKeysOnTable([optimisticAttackKey], tableCardsAfter, [serverAttackEvent]);
+        const release = staleOptimisticKeysOnTable(pending(optimisticAttackKey, card), tableCardsAfter, [serverAttackEvent]);
         assert.deepEqual(release, [], 'must not pre-release a card named by this broadcast — the dedup handles it');
 
         // …and because it was NOT released, the per-event dedup still recognises it
         // (this is the exact match AnimationContext does), so the server event is
         // skipped instead of animating a second time.
         const optimisticKeys = new Set([optimisticAttackKey]);
-        const serverKey = createCardEventString(
+        const serverKey = animEventKey(
             serverAttackEvent.type,
             serverAttackEvent.cards[0],
             serverAttackEvent.from_location,
@@ -74,15 +80,17 @@ export function registerOptimisticValidation(): void {
         // A later-versioned broadcast that does NOT name our card (its own confirming
         // broadcast was reordered/dropped by the gate) still shows it on the table.
         const unrelatedEvent = { type: 'cover', cards: [{ suit: 2, value: 10 }], from_location: 'hand', to_location: 'table' };
-        const release = staleOptimisticKeysOnTable([optimisticAttackKey], tableCardsAfter, [unrelatedEvent]);
+        const release = staleOptimisticKeysOnTable(pending(optimisticAttackKey, card), tableCardsAfter, [unrelatedEvent]);
         assert.deepEqual(release, [optimisticAttackKey], 'must release the lingering optimistic entry (dropped-broadcast safety net)');
     });
 
     test('version gate leaves optimistic cards that are not yet on the authoritative table', () => {
-        const release = staleOptimisticKeysOnTable([optimisticAttackKey], [], []);
+        const release = staleOptimisticKeysOnTable(pending(optimisticAttackKey, card), [], []);
         assert.deepEqual(release, [], 'nothing on table yet — keep the optimistic entry');
-        // sanity: the key really is for our card
-        assert.equal(getCardKey(JSON.parse(optimisticAttackKey).card), getCardKey(card));
+        // sanity: a key is five fields packed, so a different card keys differently
+        assert.notEqual(animEventKey('attack_pass', { suit: 2, value: 9 }, 'hand', 'table', SELF), optimisticAttackKey);
+        // …and the key crosses as a plain number, exact: no BigInt, no string.
+        assert.ok(Number.isSafeInteger(optimisticAttackKey), 'the kernel key is an exact JS integer');
     });
 
     test('the kernel\'s optimistic board and the server\'s confirming push key my card alike (no double-play)', () => {
@@ -100,7 +108,7 @@ export function registerOptimisticValidation(): void {
         const wire = encodeAction({ kind: 'attack', cards: [mine] });
         const optimistic = optimisticBoard(held, wire)!;
         assert.ok(optimistic && getTableCards(optimistic).some((c) => getCardKey(c) === getCardKey(mine)), 'the card stands on the optimistic board');
-        const key = createCardEventString('attack_pass', mine, 'hand', 'table', optimistic.mySeat);
+        const key = animEventKey('attack_pass', mine, 'hand', 'table', optimistic.mySeat);
 
         // The server applies it and pushes Rival its confirmation.
         assert.equal(table.act('u-rival', wire, null, 0), L.TABLE_APPLIED, 'the attack applies');
@@ -111,9 +119,9 @@ export function registerOptimisticValidation(): void {
         const seq = readPushSequence(push, { id: 'g-anim', name: '', players: seats.map((s) => ({ player_id: s.id, name: s.name, is_ai: false })) })!;
         const confirming = seq.events.find((e) => e.type === 'attack_pass')!;
         assert.equal(confirming.seat, optimistic.mySeat, 'the push names the seat the tap keyed');
-        assert.equal(createCardEventString(confirming.type, confirming.cards![0], confirming.from_location!, confirming.to_location!, confirming.seat), key,
+        assert.equal(animEventKey(confirming.type, confirming.cards![0], confirming.from_location!, confirming.to_location!, confirming.seat), key,
             'so the confirmation matches the optimistic key and is not animated again');
-        assert.deepEqual(staleOptimisticKeysOnTable([key], getTableCards(seq.game), seq.events.map((e) => ({ ...e }))), [],
+        assert.deepEqual(staleOptimisticKeysOnTable(pending(key, mine), getTableCards(seq.game), seq.events.map((e) => ({ ...e }))), [],
             'and the version gate leaves it for that dedup');
         assert.deepEqual(seq.game.battles, optimistic.battles, 'the confirmed table is the optimistic one');
     });

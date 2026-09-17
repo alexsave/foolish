@@ -320,6 +320,11 @@ const shown = (view: any): string[] => [
     ...view.myHand,
 ].map((c: any) => `${c.suit}/${c.value}`);
 
+// A board's table, in the kernel's own notation ("7d"), both sides of every battle.
+const tableNotation = (view: any): string[] =>
+    view.battles.flatMap((b: any) => (b.defense.suit === V.CARD_NONE_SUIT && b.defense.value === V.CARD_NONE_VALUE ? [b.attack] : [b.attack, b.defense]))
+        .map((c: any) => `${'23456789TJQKA'[c.value - 1] ?? '?'}${'shcd'[c.suit] ?? '?'}`);
+
 // What a board says about the game, for comparing the page's with the server's.
 const settled = (view: any) => ({
     status: view.status, firstAttacker: view.firstAttacker, defender: view.defender,
@@ -358,6 +363,16 @@ class Stage {
     /** Cards that must show exactly once on every frame from `tracking` on, and the frames that did not. */
     tracked: string[] = [];
     lostOrDoubled: string[] = [];
+    /** The seat the shield stood on at each frame, repeats collapsed. A pass is a
+     *  card going out AND the shield going on, so the shield's own out-home-out is
+     *  the stutter class the pass cases are about: this list is longer than the
+     *  moves that moved it. */
+    shield: number[] = [];
+    /** Every distinct board the store held, in the two terms a pass is about: the
+     *  shield's seat and the cards on the table. A pass's card standing on the
+     *  table under my own shield is a board no game ever reaches, and it is what a
+     *  cached shield produced. */
+    boards: { t: number; defender: number; table: string[] }[] = [];
     track(...cards: string[]): void { this.tracked = cards.map(printed); }
     host!: HTMLElement;
     root: any;
@@ -419,6 +434,14 @@ class Stage {
             const cards = shown(view);
             const twice = cards.filter((c, i) => cards.indexOf(c) !== i);
             if (twice.length > 0) this.doubled.push(`${clock}ms (${label}): ${twice.join(' ')}`);
+            if (typeof view.defender === 'number' && this.shield[this.shield.length - 1] !== view.defender) {
+                this.shield.push(view.defender);
+            }
+            const table = tableNotation(view);
+            const board = this.boards[this.boards.length - 1];
+            if (!board || board.defender !== view.defender || board.table.join(' ') !== table.join(' ')) {
+                this.boards.push({ t: clock, defender: view.defender, table });
+            }
         }
         const faces = visibleFaces(this.host);
         const twiceOnPage = faces.filter((c, i) => faces.indexOf(c) !== i);
@@ -856,6 +879,57 @@ test('a throw-in lands while my pass is pending, and the pass still stands', asy
         await answer(s, 'server applies mine');
         await s.advance(700);
         await deliver(s, 'push: my pass');
+    });
+});
+
+// A PASS IS A CARD GOING OUT AND THE SHIELD GOING ON, so a pass has the
+// out-home-out stutter twice over: the card can fly home and out again, and so
+// can the shield. The two cases below are the shield's, and they are the ones
+// the pass's pending state was for. Where a board my pass has not been
+// confirmed on is asked of the KERNEL (client_optimistic_apply), a board that
+// already shows the pass's cards comes back as the server wrote it and one that
+// does not gets the shield handed on, so there is no board on which the page can
+// show my pass's card on the table with the shield still on me.
+test('a pass whose confirmation is late: the shield moves on once and stays', async () => {
+    const board = three().hand(0, '7c Tc Jd Qd').hand(1, '7d 8d Ad').hand(2, 'Js Qs Ks As').table('7h').attacker(0).defender(1).build();
+    await play('pass_confirmation_late', 121, 'a-pass-late', board, async (s, srv) => {
+        s.track('7d');
+        await s.step('tap pass 7d', () => tap(probe.anim.pass(cards('7d'))));
+        // The prediction LANDS first, which is what makes this case different from
+        // the throw-in one below it: the shield is already on Boris on screen when
+        // the push composed without my pass arrives over it.
+        await s.advance(700);
+        await s.step('Anna throws in 7c on the server, before my pass reaches it', () => { srv.act(ANNA, encodeAction({ kind: 'attack', cards: cards('7c') })); });
+        await s.advance(50);
+        await deliver(s, 'push: Anna\'s throw-in, composed without my pass');
+        await s.advance(700);
+        await answer(s, 'server applies mine');
+        await s.advance(100);
+        await deliver(s, 'push: my pass, late');
+        await s.advance(1200);
+        assert.deepEqual(s.shield, [1, 2], 'the shield moved on when my pass landed and never came back');
+        assert.deepEqual(s.boards.filter((b) => b.defender === 1 && b.table.includes('7d')), [],
+            'and no board showed my pass\'s card on the table under my own shield');
+    });
+});
+
+test('a pass refused after its flight landed: the shield goes home once', async () => {
+    const board = three().hand(0, '7c Tc Jd Qd').hand(1, '7d 8d Ad').hand(2, 'Js Qs').table('7h').attacker(0).defender(1).build();
+    await play('pass_refused_after_landing', 122, 'a-pass-refused', board, async (s, srv) => {
+        s.track('7d');
+        await s.step('tap pass 7d', () => tap(probe.anim.pass(cards('7d'))));
+        await s.advance(700);
+        // Anna fills the table, so the seat my pass hands the shield to cannot
+        // hold it: the server refuses a move whose flight has already landed.
+        await s.step('Anna throws in 7c on the server', () => { srv.act(ANNA, encodeAction({ kind: 'attack', cards: cards('7c') })); });
+        await s.advance(50);
+        await answer(s, 'server rejects mine');
+        await s.advance(1500);
+        await deliver(s, 'push: Anna\'s throw-in');
+        await s.advance(1200);
+        assert.deepEqual(s.shield, [1, 2, 1], 'out with the pass, home with the refusal, and no further');
+        assert.deepEqual(s.boards.filter((b) => b.defender === 1 && b.table.includes('7d')), [],
+            'and no board showed my pass\'s card on the table under my own shield');
     });
 });
 

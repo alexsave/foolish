@@ -727,6 +727,7 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
   -Wl,--export=wasm_msg_pickup_hold \
   -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
+  -Wl,--export=wasm_anim_event_key \
   -Wl,--export=wasm_anim_finish_rows -Wl,--export=wasm_anim_hand_laid_out \
   -Wl,--export=wasm_anim_conflict_verdicts \
   -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport \
@@ -919,6 +920,7 @@ WASM_MSG_EXPORTS := \
   -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
   -Wl,--export=wasm_msg_pickup_hold \
   -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
+  -Wl,--export=wasm_anim_event_key \
   -Wl,--export=wasm_anim_finish_rows -Wl,--export=wasm_anim_hand_laid_out \
   -Wl,--export=wasm_anim_conflict_verdicts \
   -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport \

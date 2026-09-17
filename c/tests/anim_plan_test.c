@@ -78,6 +78,34 @@ static void test_optimistic_animation(void) {
               "a different type must key differently");
     }
 
+    // --- the key crosses to the browser as a DOUBLE (wasm_anim_event_key), so
+    //     it is a plain Map key there and no host packs the fields itself. That
+    //     only works while every key the kernel can make is exact in a double:
+    //     six bytes, bits 0..47, well inside a double's 53. Walk the whole range
+    //     of every field - every event type, every location including the NONE
+    //     sentinel, every seat a byte can name, every suit and value - and hold
+    //     each key both to the 2^48 ceiling and to the round trip through a
+    //     double, which is what the browser actually receives. ---
+    {
+        const int locs[] = { ANIM_LOC_DECK, ANIM_LOC_HAND, ANIM_LOC_TABLE, ANIM_LOC_DISCARD,
+                             ANIM_LOC_FLIPPED, ANIM_LOC_NONE };
+        int checked = 0, bad_ceiling = 0, bad_round_trip = 0;
+        for (int type = 0; type <= ANIM_EVT_REVERT; type++)
+            for (int fi = 0; fi < (int)(sizeof locs / sizeof locs[0]); fi++)
+                for (int ti = 0; ti < (int)(sizeof locs / sizeof locs[0]); ti++)
+                    for (int seat = -1; seat < 8; seat++)
+                        for (int suit = -1; suit < 4; suit++)
+                            for (int value = -1; value <= 13; value++) {
+                                const uint64_t k = anim_event_key(type, C(suit, value), locs[fi], locs[ti], seat);
+                                if (k >= (1ull << 48)) bad_ceiling++;
+                                if ((uint64_t)(double)k != k) bad_round_trip++;
+                                checked++;
+                            }
+        CHECK(checked > 0, "the key walk covered something");
+        CHECK(bad_ceiling == 0, "every key packs into 48 bits (%d of %d did not)", bad_ceiling, checked);
+        CHECK(bad_round_trip == 0, "every key survives a double exactly (%d of %d did not)", bad_round_trip, checked);
+    }
+
     // --- assertion 2: version gate DOES release an on-table optimistic card whose
     //     confirming broadcast was dropped (this broadcast names an UNRELATED
     //     card). opt=[card], table=[card], named=[other]. ---

@@ -59,7 +59,8 @@ set +f
 "$SG" --cwd "$root/c" --header anim_plan.h --header legal.h --build "bots=$BOTS" \
   --root AnimPlan --root AnimFrame --root AnimBeats --root AnimEvent --root LegalMoves \
   --const ANIM_TIME_MS --const ANIM_GAP_MS --const ANIM_STEP_NONE --const ANIM_NEVER \
-  --const ANIM_EVT_ --const ANIM_LOC_ --const ANIM_CONFLICT_ --ts "$prod/anim.bots.ts"
+  --const ANIM_EVT_ --const ANIM_LOC_ --const ANIM_CONFLICT_ --const ANIM_SEAT_NONE \
+  --ts "$prod/anim.bots.ts"
 
 # The web client's reader of its slot (c/src/client_table.h): snapshot readers
 # only, no accessor over the struct (specs/view_layout.args).

@@ -916,6 +916,22 @@ int wasm_anim_should_drop_stale(int has_last, int last, int has_incoming, int in
     return anim_should_drop_stale(has_last, last, has_incoming, incoming);
 }
 
+// THE DEDUP KEY (anim_plan.h anim_event_key). Two events collide iff they name
+// the same (type, card, from, to, seat); the seat stands in for the player id
+// because a plan is per viewer. The web used to key its pending moves on a
+// JSON.stringify of those five fields and JSON.parse them back out in five
+// places, which is a byte layout TypeScript knew.
+//
+// It comes back as a DOUBLE so the host can use it as a plain Map key without a
+// BigInt: the key packs six BYTES (bits 0..47, see anim_event_key), so every
+// value it can take is exact in a double, and every value it cannot take -
+// anything at or above 2^48 - is unreachable by construction. Asserted in
+// c/tests/anim_plan_test.c over the whole range of each field.
+double wasm_anim_event_key(int type, int suit, int value, int from, int to, int seat) {
+    const Card card = { (int8_t)suit, (int8_t)value };
+    return (double)anim_event_key(type, card, from, to, seat);
+}
+
 // staleOptimisticKeysOnTable (optimisticAnimation.ts). g_io in:
 //   [0 .. n_opt)                    opt cards      (wire)
 //   [n_opt .. +n_table)             table cards    (wire)

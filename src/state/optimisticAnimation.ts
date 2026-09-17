@@ -21,34 +21,30 @@ interface AnimEvent {
  *
  * The DECISION lives in the C animation core (c/src/anim_plan.h
  * anim_stale_optimistic_on_table), reached through the wasm bridge, so the web,
- * iOS and any future client share one implementation. This wrapper keeps the
- * string-key contract AnimationContext depends on: it parses each optimistic map
- * key for its `.card`, hands the cards to C, and maps the returned indices back
- * to the keys to release. Asserted natively (c/tests/anim_plan_test.c
- * test_optimistic_animation) and end-to-end via e2e/optimistic_animation.test.ts.
+ * iOS and any future client share one implementation. This wrapper is the
+ * marshal and nothing else: it takes the pending map's entries — each a key and
+ * the card it was predicted for — hands the cards to C, and maps the returned
+ * indices back to the keys to release. It never reads a key, because a key is
+ * the kernel's (anim_event_key) and has no fields a host may take apart.
+ * Asserted natively (c/tests/anim_plan_test.c test_optimistic_animation) and
+ * end-to-end via e2e/optimistic_animation.test.ts.
  *
  * Pure: returns the optimistic-map keys to release; no side effects.
  */
-export function staleOptimisticKeysOnTable(
-    optimisticKeys: Iterable<string>,
+export function staleOptimisticKeysOnTable<K>(
+    pending: Iterable<readonly [K, { card: Card }]>,
     tableCards: Card[],
     events: AnimEvent[],
-): string[] {
-    // Parse each key to its card, keeping the key alongside so the C indices map
-    // back. A malformed key (or one with no `.card`) is dropped here, exactly as
-    // the old inline parse did — it can never be released.
+): K[] {
+    const keys: K[] = [];
     const optCards: Card[] = [];
-    const keyForIndex: string[] = [];
-    for (const key of optimisticKeys) {
-        let card: Card | undefined;
-        try { card = JSON.parse(key).card; } catch { continue; }
-        if (!card) continue;
-        optCards.push(card);
-        keyForIndex.push(key);
+    for (const [key, motion] of pending) {
+        keys.push(key);
+        optCards.push(motion.card);
     }
 
     const named: Card[] = [];
     for (const ev of events) for (const c of ev.cards ?? []) named.push(c);
 
-    return animStaleOptimisticOnTable(optCards, tableCards, named).map((i) => keyForIndex[i]);
+    return animStaleOptimisticOnTable(optCards, tableCards, named).map((i) => keys[i]);
 }

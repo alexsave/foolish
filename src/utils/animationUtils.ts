@@ -9,19 +9,3 @@ export const cardsIntersection = (arr1: readonly Card[], arr2: readonly Card[]):
 export const getCardKeyOwner = (card: Card, owner?: number | string) => `${card.suit}-${card.value}-${owner ?? 'global'}`;
 
 export const getCardKey = (card: Card) => `${card.suit}-${card.value}`;
-
-export const createCardEventString = (
-    type: string,
-    card: Card,
-    fromLocation: string,
-    toLocation: string,
-    seat?: number
-): string => {
-    return JSON.stringify({
-        type,
-        card,
-        from_location: fromLocation,
-        to_location: toLocation,
-        seat
-    });
-};

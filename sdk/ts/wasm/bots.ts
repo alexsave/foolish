@@ -170,6 +170,7 @@ interface BotsExports extends EngineExports {
     // policy the web pure modules (src/state/*) delegate to. bots-only.
     wasm_anim_should_drop_stale(hasLast: number, last: number, hasIncoming: number, incoming: number): number;
     wasm_anim_stale_optimistic(nOpt: number, nTable: number, nNamed: number): number;
+    wasm_anim_event_key(type: number, suit: number, value: number, from: number, to: number, seat: number): number;
     wasm_anim_finish_rows(nElim: number, gameOver: number, nPlayers: number, mySeat: number): number;
     wasm_anim_hand_laid_out(nCards: number, nOrder: number, deferredLo: number, deferredHi: number): number;
     wasm_anim_conflict_verdicts(pendingAttacks: number, defenderHand: number,
@@ -980,6 +981,32 @@ export const ANIM_LOC: Record<string, number> = {
 /** The event-type string -> ANIM_EVT_* code (0 for an unknown/None type). */
 export function animEventTypeCode(type: string | undefined): number {
     return (type && type in ANIM_EVT) ? ANIM_EVT[type] : 0;
+}
+
+/** The location string -> ANIM_LOC_* code; a location the wire did not name is
+ *  ANIM_LOC_NONE, which is a code of its own and collides with no real place. */
+export function animLocationCode(loc: string | undefined): number {
+    return (loc && loc in ANIM_LOC) ? ANIM_LOC[loc] : A.ANIM_LOC_NONE;
+}
+
+/**
+ * THE DEDUP KEY, in C (anim_plan.h anim_event_key): two events collide iff they
+ * name the same (type, card, from, to, seat). The seat stands in for the player
+ * id, because a plan is per viewer and the only actor whose prediction can
+ * collide with a confirming broadcast is the local one.
+ *
+ * It is a plain number, not a string and not a BigInt: the kernel packs six
+ * bytes, so every key it can make is exact in a double (asserted over the whole
+ * range in c/tests/anim_plan_test.c). Nothing in TypeScript knows which byte is
+ * which - a caller that wants a field back keeps the field, not the key.
+ */
+export function animEventKey(type: string | undefined, card: Card,
+                             from: string | undefined, to: string | undefined,
+                             seat: number | undefined): number {
+    return bots().wasm_anim_event_key(
+        animEventTypeCode(type), card.suit, card.value,
+        animLocationCode(from), animLocationCode(to),
+        seat === undefined ? A.ANIM_SEAT_NONE : seat);
 }
 
 /** clientReconcile.shouldDropStaleSequence, in C. null models "no version"
