@@ -1,0 +1,7 @@
+0 657b878e56426bbb5a82dfd9 mounted
+0 65aef8fb7be93f805eddba24 tap attack 6s
+50 517344e58eb6bce78dd63917 timer@50
+75 447d440b9621a978a55928fe timer@75
+500 818a021cfcba74fe97b1a3f3 timer@500
+550 39572d43a9facec3faac75db timer@550
+1000 fb7b4447a3f31cc380dcd14d push: my attack
