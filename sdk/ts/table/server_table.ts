@@ -438,10 +438,15 @@ export function tableCodeName(code: number, prefixes: string[]): string {
  * is how the game_status enum spells its labels in the kernel's order.
  */
 export function gameStatusLabel(status: number): string {
-    const name = tableCodeName(status, ['GAME_STATUS_']);
-    if (name.startsWith('UNKNOWN')) throw new RangeError(`table: ${status} is not a GAME_STATUS`);
-    return name.slice('GAME_STATUS_'.length).toLowerCase();
+    // Every commit asks, so the generated names are read once, not per call.
+    statusLabels ??= new Map(Object.entries(L)
+        .filter(([name, value]) => name.startsWith('GAME_STATUS_') && typeof value === 'number')
+        .map(([name, value]) => [value as number, name.slice('GAME_STATUS_'.length).toLowerCase()]));
+    const label = statusLabels.get(status);
+    if (label === undefined) throw new RangeError(`table: ${status} is not a GAME_STATUS`);
+    return label;
 }
+let statusLabels: Map<number, string> | null = null;
 
 /** A table over a PRIVATE bots.wasm instance: nothing else shares its resident slot. */
 export function createServerTable(): ServerTable {

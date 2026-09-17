@@ -12,8 +12,7 @@
 // results back by the seat ids the roster names.
 
 import { serverTable, tableCodeName, type ServerTable, type TableSeat } from '@sdk/ts/table/server_table.ts';
-import { bytesToBareHex } from '@sdk/ts/wire/bytes.ts';
-import { columnHexToBytes } from './table_io.ts';
+import { bytesToColumnHex, columnHexToBytes } from './table_io.ts';
 import { supabaseClient } from './utils.ts';
 
 const BASE_RATING = 1000;
@@ -67,8 +66,8 @@ async function writeReplaySnapshot(
         const { error: snapError } = await supabaseClient.from('game_snapshots').insert({
             game_id: gameId,
             player_ids: seats.map((s) => s.id),
-            moves: `\\x${bytesToBareHex(code)}`,
-            extras: `\\x${bytesToBareHex(extras)}`,
+            moves: bytesToColumnHex(code),
+            extras: bytesToColumnHex(extras),
         });
         if (snapError) throw snapError;
         const { error: retireError } = await supabaseClient.from('games').update({ logs_packed: '' }).eq('id', gameId);

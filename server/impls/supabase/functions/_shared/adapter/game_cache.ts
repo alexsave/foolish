@@ -16,8 +16,11 @@ export interface CachedRow {
     // kernel's round guard. Written by the same commit as `version`, so a stale
     // entry pairs a version with ITS epoch: it can lag, never mislead.
     roundEpoch: number;
-    stateHex: string;   // \x-prefixed, exactly as commit_table stores it
-    rosterHex: string;  // \x-prefixed
+    // The committed blobs as bytes (the kernel's input as is), and the roster's
+    // column text, written back unchanged by a commit that leaves it alone.
+    state: Uint8Array;
+    roster: Uint8Array;
+    rosterHex: string;
     gameSeed: string | null;
 }
 

@@ -323,9 +323,8 @@ async function inAnotherIsolate(gameId: string, other: () => Promise<unknown>): 
 /** What table_act says about a move on this isolate's CACHED row alone (the verdict the fresh re-check must overrule). */
 function onCachedRow(gameId: string, actorId: string, m: PlayMove, intent: number): number {
     const row = getCachedRow(gameId)!;
-    const bytes = (hex: string) => Buffer.from(hex.replace(/^\\x/, ''), 'hex');
     const t = fixtureTable();
-    assert.equal(t.load(bytes(row.stateHex), bytes(row.rosterHex)), L.TABLE_OK);
+    assert.equal(t.load(row.state, row.roster), L.TABLE_OK);
     return t.act(actorId, m.wire, intent, row.roundEpoch);
 }
 

@@ -100,13 +100,13 @@ test('commit_table fences a stale version and accepts the fresh one', async () =
   // A concurrent writer commits first (version moves on).
   await bumpVersion(id);
 
-  assert.equal(await commitProducts(id, staleVersion, products, seats, null, row.gameSeed), null,
+  assert.equal(await commitProducts(id, { ...row, version: staleVersion }, products, seats, null), null,
     'a stale-version commit is rejected');
 
   // Reload the now-current version and commit cleanly.
   const fresh = await loadRow(id, false);
   assert.equal(fresh.version, staleVersion + 1);
-  const version = await commitProducts(id, fresh.version, products, seats, null, fresh.gameSeed);
+  const version = await commitProducts(id, fresh, products, seats, null);
   assert.equal(version, fresh.version + 1, 'a fresh-version commit succeeds and the fence bumps the version by one');
   assert.equal(await dbVersion(id), fresh.version + 1);
 });

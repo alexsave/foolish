@@ -198,7 +198,7 @@ async function runCycle(
             + `(stop ${drive.stop}, delay ${delayMs}ms) ${memLine(table.memoryBytes())}`);
 
         if (!products) return null;
-        const version = await commitProducts(gameId, row.version, products, seats, null, row.gameSeed);
+        const version = await commitProducts(gameId, row, products, seats, null);
         if (version === null) continue;   // somebody else committed: reload and drive again
 
         if (products.ended) {

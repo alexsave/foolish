@@ -29,7 +29,7 @@ import {
     gameStatusLabel, serverTable, tableCodeName, TABLE_DEAL_SEED_BYTES,
     type ServerTable, type TableProducts, type TableSeat,
 } from '@sdk/ts/table/server_table.ts';
-import { bytesToBase64, bytesToBareHex } from '@sdk/ts/wire/bytes.ts';
+import { bytesToBase64 } from '@sdk/ts/wire/bytes.ts';
 import { broadcastMessages, supabaseClient, type BroadcastMessage } from './utils.ts';
 import { getCachedRow, invalidateCachedRow, noteCommittedRow } from './game_cache.ts';
 
@@ -43,14 +43,44 @@ const finalizeMod = lazy(() => import('./finalize.ts'));
 
 // ---- column transports ----------------------------------------------------
 
+// Every commit writes several kilobytes of hex, so the transport writes the
+// character codes into one buffer and decodes it once: no string per byte, no
+// garbage for the collector to chase between moves.
+const HEX_CODES = new Uint8Array(512);
+for (let b = 0; b < 256; b++) {
+    HEX_CODES[2 * b] = '0123456789abcdef'.charCodeAt(b >> 4);
+    HEX_CODES[2 * b + 1] = '0123456789abcdef'.charCodeAt(b & 15);
+}
+const ascii = new TextDecoder();
+const HEX_NIBBLE = new Int8Array(128).fill(-1);
+for (let i = 0; i < 16; i++) {
+    HEX_NIBBLE['0123456789abcdef'.charCodeAt(i)] = i;
+    HEX_NIBBLE['0123456789ABCDEF'.charCodeAt(i)] = i;
+}
+
+/** Bare hex (no '\x'), the text form of the log, view and spectator columns. */
+export function bareHex(b: Uint8Array): string {
+    const out = new Uint8Array(2 * b.length);
+    for (let i = 0; i < b.length; i++) {
+        const v = 2 * b[i];
+        out[2 * i] = HEX_CODES[v];
+        out[2 * i + 1] = HEX_CODES[v + 1];
+    }
+    return ascii.decode(out);
+}
+
 /** '\x'-prefixed hex, the text form of the state and roster columns. */
-export const bytesToColumnHex = (b: Uint8Array): string => `\\x${bytesToBareHex(b)}`;
+export const bytesToColumnHex = (b: Uint8Array): string => `\\x${bareHex(b)}`;
 
 /** Bytes of a hex column, with or without the '\x' prefix. */
 export function columnHexToBytes(hex: string): Uint8Array {
-    const h = hex.startsWith('\\x') ? hex.slice(2) : hex;
-    const out = new Uint8Array(h.length >> 1);
-    for (let i = 0; i < out.length; i++) out[i] = parseInt(h.substr(i * 2, 2), 16);
+    const at = hex.startsWith('\\x') ? 2 : 0;
+    const out = new Uint8Array((hex.length - at) >> 1);
+    for (let i = 0; i < out.length; i++) {
+        const hi = HEX_NIBBLE[hex.charCodeAt(at + 2 * i)], lo = HEX_NIBBLE[hex.charCodeAt(at + 2 * i + 1)];
+        if (hi < 0 || lo < 0) throw new RangeError('table_io: a hex column holds a non-hex character');
+        out[i] = (hi << 4) | lo;
+    }
     return out;
 }
 
@@ -63,6 +93,8 @@ export interface TableRow {
     roundEpoch: number;
     state: Uint8Array;
     roster: Uint8Array;
+    /** The roster column's text as stored: written back as is when an operation leaves the roster alone. */
+    rosterHex: string;
     gameSeed: string | null;
     /** The row came from this isolate's cache, not a fresh SELECT. */
     cached: boolean;
@@ -79,7 +111,7 @@ export async function loadRow(gameId: string, allowCache = true): Promise<TableR
     if (hit) {
         return {
             gameId, version: hit.version, roundEpoch: hit.roundEpoch,
-            state: columnHexToBytes(hit.stateHex), roster: columnHexToBytes(hit.rosterHex),
+            state: hit.state, roster: hit.roster, rosterHex: hit.rosterHex,
             gameSeed: hit.gameSeed, cached: true,
         };
     }
@@ -98,6 +130,7 @@ export async function loadRow(gameId: string, allowCache = true): Promise<TableR
         roundEpoch: Number(data.round_epoch ?? 0),
         state: columnHexToBytes(data.state),
         roster: columnHexToBytes(data.roster),
+        rosterHex: data.roster,
         gameSeed: data.game_seed ?? null,
         cached: false,
     };
@@ -241,7 +274,7 @@ export async function runTableOp(op: TableOp): Promise<TableOutcome> {
         }
 
         const p = c.products;
-        const version = await commitProducts(op.gameId, row.version, p, c.seats, p.dealtNow ? dealSeed : null, row.gameSeed);
+        const version = await commitProducts(op.gameId, row, p, c.seats, p.dealtNow ? dealSeed : null);
         if (version === null) {
             invalidateCachedRow(op.gameId);
             continue;
@@ -317,13 +350,15 @@ function pushOrThrow(e: Uint8Array | number): Uint8Array {
  * or null when another writer committed first (the caller reloads and retries).
  */
 export async function commitProducts(
-    gameId: string, expectedVersion: number, p: TableProducts, seats: TableSeat[],
-    dealSeed: Uint8Array | null, storedSeed: string | null,
+    gameId: string, row: TableRow, p: TableProducts, seats: TableSeat[], dealSeed: Uint8Array | null,
 ): Promise<number | null> {
-    const seedHex = p.dealtNow && dealSeed ? bytesToBareHex(dealSeed) : null;
+    const expectedVersion = row.version;
+    const seedHex = p.dealtNow && dealSeed ? bareHex(dealSeed) : null;
+    const stateHex = bytesToColumnHex(p.state);
+    const rosterHex = p.rosterChanged ? bytesToColumnHex(p.roster) : row.rosterHex;
     const status = gameStatusLabel(p.status);
     const views = seats.flatMap((s, i) => (p.views[i]
-        ? [{ player_id: s.id, view: bytesToBareHex(p.views[i]!), status }]
+        ? [{ player_id: s.id, view: bareHex(p.views[i]!), status }]
         : []));
     // Membership rows feed the realtime policies (gu- and chat: topics): they
     // follow the roster whenever the operation changed it.
@@ -331,17 +366,17 @@ export async function commitProducts(
     const { data, error } = await supabaseClient.rpc('commit_table', {
         p_game_id: gameId,
         p_expected_version: expectedVersion,
-        p_state: bytesToColumnHex(p.state),
-        p_roster: bytesToColumnHex(p.roster),
+        p_state: stateHex,
+        p_roster: rosterHex,
         p_status: p.status,
         p_needs_bots: p.needsBots,
         p_seats: membership ? seats.filter((s) => !s.brain).map((s) => s.id) : null,
         p_bot_seats: membership ? seats.filter((s) => s.brain).map((s) => s.id) : null,
-        p_logs_packed: p.logs ? bytesToBareHex(p.logs) : null,
+        p_logs_packed: p.logs ? bareHex(p.logs) : null,
         p_logs_reset: p.logsReset,
         p_game_seed: seedHex,
         p_views: views,
-        p_spectator: bytesToBareHex(p.spectator),
+        p_spectator: bareHex(p.spectator),
         p_closed_round: p.closedRound,
     });
     if (error) {
@@ -355,9 +390,10 @@ export async function commitProducts(
     noteCommittedRow(gameId, p.status === L.GAME_STATUS_PLAYING ? {
         version,
         roundEpoch: Number(res.round_epoch ?? 0),
-        stateHex: bytesToColumnHex(p.state),
-        rosterHex: bytesToColumnHex(p.roster),
-        gameSeed: seedHex ?? storedSeed,
+        state: p.state,
+        roster: p.roster,
+        rosterHex,
+        gameSeed: seedHex ?? row.gameSeed,
     } : null);
     return version;
 }
