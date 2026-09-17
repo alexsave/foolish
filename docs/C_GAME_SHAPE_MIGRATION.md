@@ -1180,7 +1180,7 @@ Commits `0bdffc21` to `37ad798e`.
 
 Commits `a793ecce` to `0dd06477`, and the doc commit after them.
 
-- BYTEA (`88c5f7fb`): `games.state`, `games.roster`, `games.logs_packed`, `player_views.view` and `spectator_views.view` are `BYTEA`, and `game_snapshots.player_ids` is `UUID[]`, with its GIN index and the participants policy rebuilt on `@>`.
+- BYTEA (`64057452`): `games.state`, `games.roster`, `games.logs_packed`, `player_views.view` and `spectator_views.view` are `BYTEA`, and `game_snapshots.player_ids` is `UUID[]`, with its GIN index and the participants policy rebuilt on `@>`.
   `20260918130000_table_bytea.sql` runs after 4c.
   It refuses, naming the rows, any value that is not whole hex bytes or a seat list that is not UUIDs; it converts each value by its own form (`\x`-hex as the state and roster were written, bare hex as the logs and views were); and it fires no row trigger, so `updated_at` and `version` keep their values.
   `seed.sql` reaches the same end state, and `db_migration_grants` now compares the blob tables' columns and the snapshot policy between the two as well.
