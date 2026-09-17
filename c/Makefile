@@ -619,7 +619,69 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_seed_rng_deterministic \
   -Wl,--export=wasm_set_strategy_seed_deterministic \
   -Wl,--export=wasm_strategy_seed_probe \
-  -Wl,--export=wasm_set_rng_base
+  -Wl,--export=wasm_set_rng_base \
+  -Wl,--export=wasm_layout_hash
+
+# --- Layout hash (tools/structgen) ------------------------------------------
+# Every module linking wasm_api.c exports wasm_layout_hash(): the structgen hash
+# of the Game layout (tools/structgen/specs/game_layout.args) under THAT build's
+# flags, passed in as -DSG_LAYOUT_HASH. sdk/ts/gen/game_layout.<build>.ts carries
+# the same number as LAYOUT_HASH, and bots.ts / engine.ts refuse to run a module
+# whose hash differs - a stale wasm or a stale generated module is a load-time
+# error instead of a wrong read.
+#
+# build/layout/<build>.hash is regenerated on EVERY make that needs it (FORCE)
+# but rewritten only when its content changes, and the bots/rules rules also
+# refresh sdk/ts/gen/game_layout.<build>.ts the same way, so a header edit
+# followed by `make wasm-bots` leaves module and wasm in agreement.
+#
+# The same-second trap: make compares whole-second mtimes, so a header edit
+# landing in the second of the last build rebuilds nothing, and a header whose
+# mtime went BACKWARDS (a checkout, a copy) never does. For a layout change that
+# means objects compiled against two different Game structs linked into one
+# module. So the wasm phony targets settle by CONTENT first: every object
+# directory records the layout hash its objects were compiled for
+# (<objdir>/.layout), and when that differs from the current hash (sg_settle)
+# the directory and the module are deleted before a sub-make builds them from
+# clean. Deleting is the only reliable lever: make 3.81 does not even relink a
+# target whose prerequisite was recreated inside the same second. The file
+# targets (build/bots.wasm, used directly by tools/wasm_anatomy) keep the plain
+# mtime rules, with wasm_api.o depending on the hash file.
+STRUCTGEN_DIR  := ../tools/structgen
+STRUCTGEN      := $(STRUCTGEN_DIR)/build/structgen
+SG_GAME_SPEC   := $(STRUCTGEN_DIR)/specs/game_layout.args
+SG_GAME_ARGS    = $(shell grep -v '^[[:space:]]*\#' $(SG_GAME_SPEC))
+
+$(STRUCTGEN): $(STRUCTGEN_DIR)/structgen.c $(STRUCTGEN_DIR)/Makefile
+	$(MAKE) -C $(STRUCTGEN_DIR) build/structgen
+
+# $(call sg_hash,<build name>,<cflags>,<generated TS module, or empty>)
+sg_hash = @mkdir -p build/layout && \
+  $(STRUCTGEN) --cwd . $(SG_GAME_ARGS) --build '$(1)=$(strip $(2))' --print-hash $(if $(3),--ts $@.ts) > $@.new && \
+  { cmp -s $@.new $@ || { echo "layout $(1): $$(cat $@ 2>/dev/null || echo none) -> $$(cat $@.new)"; mv $@.new $@; }; } && \
+  rm -f $@.new $(if $(3),&& { cmp -s $@.ts $(3) || { cp $@.ts $(3); echo "layout $(1): wrote $(3)"; }; } && rm -f $@.ts)
+
+# $(call sg_settle,<build name>,<object dir>,<wasm file target>): run before the
+# sub-make that builds <wasm file target>, after build/layout/<build>.hash.
+sg_settle = @cmp -s $(2)/.layout build/layout/$(1).hash || { \
+  if [ -d $(2) ]; then echo "layout $(1): $(2) was compiled for $$(cat $(2)/.layout 2>/dev/null || echo an unrecorded layout), not $$(cat build/layout/$(1).hash) - rebuilding $(3) from clean"; fi; \
+  rm -rf $(2) $(3) && mkdir -p $(2) && cp build/layout/$(1).hash $(2)/.layout; }
+
+build/layout/rules.hash: $(STRUCTGEN) FORCE
+	$(call sg_hash,rules,$(WASM_RULES_CFLAGS),../sdk/ts/gen/game_layout.rules.ts)
+build/layout/bots.hash: $(STRUCTGEN) FORCE
+	$(call sg_hash,bots,$(WASM_BOT_CFLAGS),../sdk/ts/gen/game_layout.bots.ts)
+build/layout/bots-explain.hash: $(STRUCTGEN) FORCE
+	$(call sg_hash,bots_explain,$(WASM_BOT_CFLAGS) -DOG_EXPLAIN_BUILD,)
+build/layout/msg.hash: $(STRUCTGEN) FORCE
+	$(call sg_hash,msg,$(WASM_MSG_CFLAGS),)
+build/layout/oracle.hash: $(STRUCTGEN) FORCE
+	$(call sg_hash,oracle,$(WASM_ORACLE_CFLAGS),)
+build/layout/oracle-mt.hash: $(STRUCTGEN) FORCE
+	$(call sg_hash,oracle_mt,$(WASM_ORACLE_MT_CFLAGS),)
+
+.PHONY: FORCE
+FORCE:
 
 # bots.wasm exports the rules API above PLUS the bot bridge (wasm_bots_api.c),
 # and PLUS the FMSG pair (wasm_msg_decode/seal). FMSG is bots-only by steer, not
@@ -756,6 +818,9 @@ build/rulesobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
 build/rulesobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build/rulesobj
 	$(WASM_CC) $(WASM_RULES_CFLAGS) -c $< -o $@
+build/rulesobj/wasm_api.o: wasm/wasm_api.c build/layout/rules.hash $(wildcard src/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build/rulesobj
+	$(WASM_CC) $(WASM_RULES_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/rules.hash) -c $< -o $@
 
 build/rules.wasm: $(WASM_RULES_OBJ)
 	@mkdir -p build
@@ -776,7 +841,9 @@ build/named/rules.named.wasm: $(WASM_RULES_OBJ)
 # rules stays a base64 embed: engine.ts is shared with the BROWSER (replay
 # decode imports it), and browsers have no node:fs/node:zlib for the static-gz
 # loader. Only bots.wasm — server-only — ships as a gzip static asset (below).
-wasm: build/rules.wasm
+wasm: build/layout/rules.hash
+	$(call sg_settle,rules,build/rulesobj,build/rules.wasm)
+	@$(MAKE) --no-print-directory build/rules.wasm
 	node wasm/embed.mjs build/rules.wasm ../sdk/ts/wasm/rules_wasm.ts --gzip
 	@bash ../scripts/wasm_stamp.sh --write
 
@@ -967,6 +1034,9 @@ build/msgobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
 build/msgobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build/msgobj
 	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
+build/msgobj/wasm_api.o: wasm/wasm_api.c build/layout/msg.hash $(wildcard src/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build/msgobj
+	$(WASM_CC) $(WASM_MSG_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/msg.hash) -c $< -o $@
 
 build/msg.wasm: $(WASM_MSG_OBJ) wasm/msg_exports_check.mjs
 	@mkdir -p build
@@ -975,7 +1045,9 @@ build/msg.wasm: $(WASM_MSG_OBJ) wasm/msg_exports_check.mjs
 	node wasm/msg_exports_check.mjs $@
 
 .PHONY: wasm-msg wasm-msg-size
-wasm-msg: build/msg.wasm
+wasm-msg: build/layout/msg.hash
+	$(call sg_settle,msg,build/msgobj,build/msg.wasm)
+	@$(MAKE) --no-print-directory build/msg.wasm
 
 # The number this target exists to produce.
 wasm-msg-size: build/msg.wasm
@@ -1123,6 +1195,9 @@ build/botobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
 build/botobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build/botobj
 	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -c $< -o $@
+build/botobj/wasm_api.o: wasm/wasm_api.c build/layout/bots.hash $(wildcard src/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build/botobj
+	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -DSG_LAYOUT_HASH=$$(cat build/layout/bots.hash) -c $< -o $@
 
 build/bots.wasm: $(WASM_BOT_OBJ)
 	@mkdir -p build
@@ -1136,13 +1211,13 @@ build/bots.wasm: $(WASM_BOT_OBJ)
 # the TT). Extra exports let the JS harness read the per-decision dump from a
 # static buffer (wasm has no file I/O). ANALYSIS ONLY — never shipped.
 .PHONY: bots-wasm-explain
-bots-wasm-explain:
+bots-wasm-explain: build/layout/bots-explain.hash
 	@mkdir -p build/botexplain
 	@for src in $(WASM_BOT_SRC); do \
 	  base=$$(basename $$src .c); opt=-Oz; \
 	  case " $(WASM_BOT_O3_SRC) " in *" $$src "*) opt=-O3;; esac; \
 	  echo "  CC(explain) $$src [$$opt]"; \
-	  $(WASM_CC) $(WASM_BOT_CFLAGS) -DOG_EXPLAIN_BUILD $$opt -c $$src -o build/botexplain/$$base.o || exit 1; \
+	  $(WASM_CC) $(WASM_BOT_CFLAGS) -DOG_EXPLAIN_BUILD -DSG_LAYOUT_HASH=$$(cat build/layout/bots-explain.hash) $$opt -c $$src -o build/botexplain/$$base.o || exit 1; \
 	done
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
 	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_ROSTER_EXPORTS) \
@@ -1184,7 +1259,9 @@ build/named/bots.named.wasm: $(WASM_BOT_OBJ)
 # change invisible to every TS test that loaded the stale one. It also put 80 KB
 # of single-line base64, rewritten on every kernel build, into git. The price is
 # that the browser's door is async (ensureBotsAsync); that is the cheaper half.
-wasm-bots: build/bots.wasm
+wasm-bots: build/layout/bots.hash
+	$(call sg_settle,bots,build/botobj,build/bots.wasm)
+	@$(MAKE) --no-print-directory build/bots.wasm
 	gzip -9 -n -c build/bots.wasm > ../sdk/ts/wasm/bots.wasm.gz
 	@bash ../scripts/wasm_stamp.sh --write
 
@@ -1205,13 +1282,13 @@ WASM_ORACLE_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
   -Wl,--export=wasm_og_explain_ptr -Wl,--export=wasm_og_explain_len \
   -Wl,--export=wasm_og_explain_reset -Wl,--export=wasm_og_reload_flags
 .PHONY: wasm-oracle
-wasm-oracle:
+wasm-oracle: build/layout/oracle.hash
 	@mkdir -p build/botoracle
 	@for src in $(WASM_BOT_SRC); do \
 	  base=$$(basename $$src .c); opt=-Oz; \
 	  case " $(WASM_BOT_O3_SRC) " in *" $$src "*) opt=-O3;; esac; \
 	  echo "  CC(oracle) $$src [$$opt]"; \
-	  $(WASM_CC) $(WASM_ORACLE_CFLAGS) $$opt -c $$src -o build/botoracle/$$base.o || exit 1; \
+	  $(WASM_CC) $(WASM_ORACLE_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle.hash) $$opt -c $$src -o build/botoracle/$$base.o || exit 1; \
 	done
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_ORACLE_LDFLAGS) \
 	          $(WASM_ORACLE_EXPORTS) build/botoracle/*.o -o build/oracle.wasm
@@ -1256,13 +1333,13 @@ WASM_ORACLE_MT_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
   -Wl,--export=wasm_mt_mismatch -Wl,--export=wasm_mt_canary \
   -Wl,--export=wasm_mt_solver -Wl,--export=wasm_mt_verdict -Wl,--export=wasm_mt_defuse
 .PHONY: wasm-oracle-mt
-wasm-oracle-mt:
+wasm-oracle-mt: build/layout/oracle-mt.hash
 	@mkdir -p build/botoraclemt
 	@for src in $(WASM_ORACLE_MT_SRC); do \
 	  base=$$(basename $$src .c); opt=-Oz; \
 	  case " $(WASM_BOT_O3_SRC) " in *" $$src "*) opt=-O3;; esac; \
 	  echo "  CC(oracle-mt) $$src [$$opt]"; \
-	  $(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) $$opt -c $$src -o build/botoraclemt/$$base.o || exit 1; \
+	  $(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $$opt -c $$src -o build/botoraclemt/$$base.o || exit 1; \
 	done
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_ORACLE_MT_LDFLAGS) \
 	          $(WASM_ORACLE_MT_EXPORTS) build/botoraclemt/*.o -o build/oracle-mt.wasm

@@ -32,6 +32,8 @@ import { takeRULES_WASM_B64 } from './rules_wasm.ts';
 // DecompressionStream), and needs no npm/import-map on the Deno edge.
 import { gunzip } from './gunzip.ts';
 import { derivedUuid } from '../wire/detid.ts';
+import { LAYOUT_HASH as RULES_LAYOUT_HASH } from '../gen/game_layout.rules.ts';
+import { assertLayoutHash } from './layout_hash.ts';
 
 // ---------------------------------------------------------------------------
 // Instantiation
@@ -56,6 +58,8 @@ interface EngineExports {
     wasm_state_serialize(): number;
     wasm_state_deserialize(len: number): number;
     wasm_state_format_version(): number;
+    // The Game layout this module was built for (c/Makefile "Layout hash").
+    wasm_layout_hash(): number;
     wasm_export_logs(): number;
     wasm_snap_count(): number;
     wasm_snap_tag(i: number): number;
@@ -148,6 +152,7 @@ function engine(): EngineExports {
     const module = new WebAssembly.Module(rulesWasmBytes() as BufferSource);
     const instance = new WebAssembly.Instance(module, {});
     const ex = instance.exports as unknown as EngineExports;
+    assertLayoutHash('rules.wasm', ex, RULES_LAYOUT_HASH, 'sdk/ts/gen/game_layout.rules.ts');
     ex.wasm_init();
     exportsCache = ex;
     pendingWasmBytes = null;
@@ -177,6 +182,7 @@ export function ensureEngineAsync(): Promise<void> {
                 // hold resident state the bot loop is about to consume).
                 if (exportsCache) return;
                 const ex = instance.exports as unknown as EngineExports;
+                assertLayoutHash('rules.wasm', ex, RULES_LAYOUT_HASH, 'sdk/ts/gen/game_layout.rules.ts');
                 ex.wasm_init();
                 exportsCache = ex;
                 memView = new Uint8Array(0);

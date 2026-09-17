@@ -387,6 +387,18 @@ int wasm_state_deserialize(int len) {
 // loaded matches the format it expects without hardcoding the number twice.
 int wasm_state_format_version(void) { return STATE_FORMAT_VERSION; }
 
+// The Game layout this module was compiled against: tools/structgen's hash of
+// tools/structgen/specs/game_layout.args under THIS build's flags, which
+// c/Makefile computes and passes in (see "Layout hash" there). The TS hosts
+// compare it with LAYOUT_HASH in sdk/ts/gen/game_layout.<build>.ts once per
+// instance and refuse the module on a mismatch. Defined once, here, for every
+// module that links this file - oracle-mt.wasm included (wasm_oracle_mt.c would
+// be a duplicate symbol) - and a build that forgets the flag does not compile.
+#ifndef SG_LAYOUT_HASH
+#error "SG_LAYOUT_HASH is not set: build the wasm modules through c/Makefile"
+#endif
+uint32_t wasm_layout_hash(void) { return SG_LAYOUT_HASH; }
+
 // ---------- logs -----------------------------------------------------------
 // u16 num_logs, then per log: i8 type, i8 player_idx, i8 defender_index,
 // u8 num_pairs, num_pairs x (u8 primary, u8 target) — wire cards, target
