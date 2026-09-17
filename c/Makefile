@@ -788,12 +788,13 @@ WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_client_optimistic_apply -Wl,--export=wasm_client_board_edit \
   -Wl,--export=wasm_client_rearrange_hand -Wl,--export=wasm_client_conflict_verdicts
 
-# A replay's recorded decision as the Oracle imports it (src/replay_steps.h,
-# wasm/wasm_bots_api.c), bots.wasm ONLY: the web page builds the job and hands
-# the bytes to oracle.wasm, which only imports them, so the oracle modules do not
-# link these and their unexported code is dropped there.
+# A replay's recorded decision as the Oracle imports it, and a code at a glance
+# (src/replay_steps.h, wasm/wasm_bots_api.c), bots.wasm ONLY: the web page builds
+# the Oracle's job and hands the bytes to oracle.wasm, which only imports them, so
+# the oracle modules do not link these and their unexported code is dropped there.
 WASM_REPLAY_WEB_EXPORTS := \
-  -Wl,--export=wasm_replay_step_masked_state -Wl,--export=wasm_replay_step_logs
+  -Wl,--export=wasm_replay_step_masked_state -Wl,--export=wasm_replay_step_logs \
+  -Wl,--export=wasm_replay_summary
 
 # C-backed test fixtures (wasm/wasm_table_api.c, e2e/helpers/table_fixture.ts),
 # bots.wasm ONLY, test-only like WASM_ROSTER_EXPORTS: a test composes a board

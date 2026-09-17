@@ -2293,6 +2293,42 @@ static void test_replay_frames_are_the_replay_events(void) {
     }
 }
 
+// A code at a glance must say what the decoder's header and log stream say: the
+// seats, the trump and the opener, the fool and the order the others went out,
+// and one move per attack, cover, pass and pickup record (the extras' gaps).
+static void test_replay_summary_is_the_decode(void) {
+    static unsigned char code[1 << 20];
+    static unsigned char dec[1 << 20];
+    int checked = 0;
+    for (int np = 2; np <= 8; np++) {
+        Game g;
+        unsigned char seed[FOOLISH_SEED_LEN];
+        if (!rs_play_seeded(&g, np, 700 + np, seed)) continue;
+        const int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20, code, (int)sizeof code);
+        const int dl = enc > 0 ? replay_decode(code, enc, dec, (int)sizeof dec) : -1;
+        if (dl < REPLAY_DEC_HDR) { CHECK(0, "a seeded game encodes and decodes"); continue; }
+        ReplaySummary s;
+        memset(&s, 0x55, sizeof s);
+        const int r = replay_summary_v6(code, enc, &s);
+        int moves = 0;
+        const int n_logs = dec[16] | (dec[17] << 8) | (dec[18] << 16) | (dec[19] << 24);
+        const unsigned char *q = dec + REPLAY_DEC_HDR;
+        for (int i = 0; i < n_logs; i++) {
+            if (q[0] == LOG_ATTACK || q[0] == LOG_COVER || q[0] == LOG_PASS || q[0] == LOG_PICKUP) moves++;
+            q += 4 + 2 * q[3];
+        }
+        int same = r == REPLAY_EOK && s.num_players == dec[1] && s.power_suit == dec[2] / 13 && s.first_attacker == dec[3]
+            && s.fool == (dec[4] == 0xFF ? -1 : dec[4]) && s.num_eliminated == dec[7] && s.moves == moves;
+        for (int i = 0; same && i < dec[7]; i++) same = s.elimination[i] == dec[8 + i];
+        CHECK(same, "the summary is what the decoder's header and log stream say");
+        checked++;
+    }
+    CHECK(checked >= 6, "seeded games at most seat counts were summarised");
+    ReplaySummary s;
+    const unsigned char junk[] = { 0x07 };
+    CHECK(replay_summary_v6(junk, 1, &s) < 0, "a code that does not decode has no summary");
+}
+
 // The step index is what lets a scrubber say "Bot 2 passed" instead of "Bot 2
 // attacked": on the wire those are one event type, separated only by a
 // reconstructed English sentence, so the web asks the kernel instead of
@@ -9168,6 +9204,35 @@ static void test_client_optimistic_pickup_rotation_is_the_servers(void) {
     CHECK(hands_same, "the picked-up table is the hand the server commits, before its draws");
 }
 
+// The board a deal lands on, made from the board the deal left: for every seat
+// count, the stock holds every card the deal handed out and every card it did
+// not, and nobody - the viewer least of all - holds a card before it lands.
+static void test_client_board_edit_undeal(void) {
+    int every = 1;
+    for (int np = 2; np <= MAX_PLAYERS; np++) {
+        cb_deal(&cb_game, np, 70 + np);
+        int dealt = cb_game.deck_count + (cb_game.has_flipped ? 1 : 0);
+        for (int s = 0; s < np; s++) dealt += cb_game.players[s].hand_count;
+        for (int viewer = -1; viewer < np; viewer++) {
+            client_init(&ct, &ct_slot);
+            if (client_adopt_board(&ct, &cb_game, viewer) != CLIENT_OK) { every = 0; continue; }
+            cb_view = ct.view;
+            BoardEdit e;
+            memset(&e, 0, sizeof(e));
+            e.op = CLIENT_EDIT_UNDEAL;
+            const int rc = client_board_edit(&ct, &cb_view, &e);
+            int empty = rc == CLIENT_OK && cb_view.my_hand_count == 0 && cb_view.num_battles == 0 && !cb_view.has_flipped
+                && card_is_none(cb_view.flipped) && cb_view.deck_count == dealt;
+            for (int s = 0; s < np; s++) empty &= cb_view.seats[s].hand_count == 0;
+            empty &= cb_view.num_players == np && cb_view.my_seat == viewer
+                && cb_view.first_attacker == ct.view.first_attacker && cb_view.defender == ct.view.defender;
+            if (!empty && every) fprintf(stderr, "  %dp viewer %d: rc %d, deck %d of %d, hand %d\n", np, viewer, rc, cb_view.deck_count, dealt, cb_view.my_hand_count);
+            every &= empty;
+        }
+    }
+    CHECK(every, "the board before a deal holds the whole deck in its stock and no card in any hand, for every seat count and viewer");
+}
+
 static void test_client_board_edits(void) {
     const Card c7s = { .suit = SUIT_SPADES, .value = 6 }, c9d = { .suit = SUIT_DIAMONDS, .value = 8 };
     const Card cKs = { .suit = SUIT_SPADES, .value = 12 };
@@ -9371,6 +9436,7 @@ int main(void) {
     test_replay_v6_carries_a_pending_good();
     test_replay_frames_are_the_replay_events();
     test_replay_step_index_says_what_each_step_is();
+    test_replay_summary_is_the_decode();
     test_replay_step_index_tells_a_pass_from_an_attack();
     test_replay_step_index_reports_a_pending_good();
     test_replay_steps_replays_a_deal_with_no_trump();
@@ -9566,6 +9632,7 @@ int main(void) {
     test_client_optimistic_apply();
     test_client_optimistic_pickup_rotation_is_the_servers();
     test_client_board_edits();
+    test_client_board_edit_undeal();
     test_client_rearrange_hand();
     test_client_conflict_verdicts();
 

@@ -5,7 +5,8 @@
 # and the bots build's flags. The same roots are in game_layout.args, so the
 # layout hash bots.wasm is checked against at load covers these readers too.
 # Lines starting with # are dropped; everything else is split on whitespace.
---header client_table.h --header evwire.h --header anim_plan.h --root TableView --root PushEvent --root ViewRules
+--header client_table.h --header evwire.h --header anim_plan.h --header replay_steps.h --root TableView --root PushEvent --root ViewRules
+--root ReplaySummary --snapshot ReplaySummary --count ReplaySummary.elimination=num_eliminated
 --root BoardEdit --root ClientConflict --root ConflictVerdicts
 --snapshot TableView --snapshot PushEvent --snapshot ViewRules --snapshot ConflictVerdicts --snapshot BoardEdit --snapshot ClientConflict --writer TableView --snapshot-only
 --writer BoardEdit --writer ClientConflict

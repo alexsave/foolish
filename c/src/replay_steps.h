@@ -122,6 +122,26 @@ int replay_steps_count_v6(const unsigned char *code, int code_len,
 int replay_steps_index_v6(const unsigned char *code, int code_len,
                           ReplayHeader *hdr, unsigned char *out, int out_cap);
 
+// ---------- a code at a glance ----------------------------------------------
+//
+// What a code says about its game as a whole, without playing it back: how many
+// sat, the trump and the opening seat, who was the fool and in what order the
+// others went out, and how many moves the extras' gaps time. A screen that lists
+// games, or reads a code's extras beside it, reads this rather than the decoder's
+// bytes (docs/C_GAME_SHAPE_MIGRATION.md Phase 7).
+typedef struct {
+    int8_t  num_players;
+    int8_t  power_suit;
+    int8_t  first_attacker;
+    int8_t  fool;                       // -1 for a code cut mid-game
+    int8_t  num_eliminated;
+    int8_t  elimination[MAX_PLAYERS];   // seats, in the order they went out; the fool is not one
+    int16_t moves;                      // ATTACK, COVER, PASS and PICKUP: one gap each in the extras
+} ReplaySummary;
+
+// Fills `out` from `code`: REPLAY_EOK or -REPLAY_E*.
+int replay_summary_v6(const unsigned char *code, int code_len, ReplaySummary *out);
+
 // ---------- a recorded decision, as an analyser reads it -------------------
 //
 // The Oracle deliberates a decision of a replay as the seat that made it

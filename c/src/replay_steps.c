@@ -418,6 +418,31 @@ int replay_steps_index_v6(const unsigned char *code, int code_len,
     return x.len;
 }
 
+/* ------------------------------- a code at a glance ------------------------ */
+
+static int rs_move_log_type(int kind);
+
+static void rs_count_moves(void *ctx, const ReplayAtom *a) {
+    if (rs_move_log_type(a->kind) >= 0) (*(int *)ctx)++;
+}
+
+int replay_summary_v6(const unsigned char *code, int code_len, ReplaySummary *out) {
+    ReplayHeader hdr;
+    int moves = 0;
+    const int r = replay_decode_atoms_v6(code, code_len, &hdr, rs_count_moves, &moves);
+    if (r < 0) return r;
+    if (hdr.n < 2 || hdr.n > MAX_PLAYERS || hdr.num_eliminated < 0 || hdr.num_eliminated > hdr.n) return -REPLAY_EHEADER;
+    memset(out, 0, sizeof *out);
+    out->num_players = (int8_t)hdr.n;
+    out->power_suit = (int8_t)(hdr.trump_id / 13);
+    out->first_attacker = (int8_t)hdr.first_attacker;
+    out->fool = (int8_t)(hdr.fool >= 0 && hdr.fool < hdr.n ? hdr.fool : -1);
+    out->num_eliminated = (int8_t)hdr.num_eliminated;
+    for (int i = 0; i < hdr.num_eliminated; i++) out->elimination[i] = (int8_t)hdr.elim[i];
+    out->moves = (int16_t)moves;
+    return REPLAY_EOK;
+}
+
 /* ------------------------- a decision, for an analyser --------------------- */
 
 typedef struct {

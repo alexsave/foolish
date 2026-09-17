@@ -19,7 +19,7 @@ import { LegalMove } from '@api/core/bot_interfaces.ts';
 import { loadWasmGz, loadWasmGzAsync } from './wasm_asset.ts';
 import { LAYOUT_HASH as BOTS_LAYOUT_HASH } from '../gen/layout_hash.bots.ts';
 import { assertLayoutHash } from './layout_hash.ts';
-import { memOf as viewMemOf, readTableView, TableView_Snap, CARD_NONE_SUIT, CARD_NONE_VALUE } from '../gen/view_layout.bots.ts';
+import { memOf as viewMemOf, readTableView, readReplaySummary, TableView_Snap, ReplaySummary_Snap, CARD_NONE_SUIT, CARD_NONE_VALUE } from '../gen/view_layout.bots.ts';
 import {
     EngineExports, PackedRunOk, __LOG_TYPE_TO_INT, __MOVE_TYPE, __adoptEngine,
     __marshalGame, __mem, __pooledCard, __replayError, __setResident,
@@ -37,6 +37,7 @@ interface BotsExports extends EngineExports {
     wasm_replay_step_index(code_len: number): number;
     wasm_replay_step_masked_state(code_len: number, step: number, viewer: number): number;
     wasm_replay_step_logs(code_len: number, step: number): number;
+    wasm_replay_summary(code_len: number): number;
     wasm_replay_extras_encode(in_len: number): number;
     wasm_replay_extras_decode(blob_len: number, player_count: number, move_count: number): number;
     wasm_replay_link(in_len: number, style: number): number;
@@ -1454,6 +1455,21 @@ export function replayEventFrames(code: Uint8Array, viewer: number): Uint8Array[
         throw new Error(`replay produced ${frames.length} frames for ${steps} steps`);
     }
     return frames;
+}
+
+/** What a code says about its game as a whole (c/src/replay_steps.h ReplaySummary). */
+export type ReplaySummary = ReplaySummary_Snap;
+
+/**
+ * A code at a glance, without playing it back: the seat count, the trump suit and
+ * the opener, the fool (-1 for a code cut mid-game) and the order the others went
+ * out, and how many moves its extras time. null when the code does not decode.
+ */
+export function replaySummary(code: Uint8Array): ReplaySummary | null {
+    const ex = bots();
+    __mem(ex).set(code, ex.wasm_replay_io_ptr());
+    const at = ex.wasm_replay_summary(code.length);
+    return at > 0 ? readReplaySummary(viewMemOf(ex.memory.buffer), at) : null;
 }
 
 /**

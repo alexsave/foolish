@@ -579,6 +579,14 @@ int client_board_edit(ClientTable *c, TableView *v, const BoardEdit *e) {
                 v->my_hand[v->my_hand_count++] = card;
             }
             return CLIENT_OK;
+        case CLIENT_EDIT_UNDEAL:
+            v->deck_count = (int16_t)(NUM_SUITS * (ACE_VALUE - min_value_for(v->num_players) + 1));
+            v->has_flipped = false;
+            v->flipped = CARD_NONE;
+            v->num_battles = 0;
+            v->my_hand_count = 0;
+            for (int s = 0; s < v->num_players; s++) v->seats[s].hand_count = 0;
+            return CLIENT_OK;
         case CLIENT_EDIT_LOBBY: {
             const int valid = board_game(c, v);
             if (valid != GAME_VALID) { c->detail = valid; return CLIENT_E_STATE; }

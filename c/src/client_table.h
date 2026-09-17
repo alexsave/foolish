@@ -119,6 +119,7 @@ typedef struct {
 #define CLIENT_EDIT_RETURN 5  // `cards` back into my hand, each that is not there already
 #define CLIENT_EDIT_LOBBY  6  // the rematch's lobby (game_reset_to_lobby), before its reset arrives
 #define CLIENT_EDIT_WITHDRAW 7  // a refused move's cards off the table and back in my hand
+#define CLIENT_EDIT_UNDEAL 8  // the board its deal is about to land on: the whole stock, nothing dealt
 
 typedef struct {
     int8_t  op;              // CLIENT_EDIT_*
@@ -304,6 +305,11 @@ int client_optimistic_apply(ClientTable *c, TableView *v, const uint8_t *awire, 
 //   LOBBY   game_reset_to_lobby, the seats the roster marks bots coming back ready.
 //   WITHDRAW each of `cards` leaves the table - an attack with its battle, a cover
 //           from over its attack - and is in a seated viewer's hand once.
+//   UNDEAL  the board a deal lands on (a replay's, the tutorial's, before its first
+//           frame plays): the whole deck for the seat count face down in the stock,
+//           no trump turned, an empty table, and no card in any hand, the viewer's
+//           own included. Everything else - the seats, the lead and the shield the
+//           deal derived - stays as the dealt board has it.
 // CLIENT_OK, CLIENT_E_FORMAT for a view or an edit that is not one, CLIENT_E_STATE
 // when the lobby's board is refused (detail: GAME_INVALID_*), CLIENT_E_CAP.
 int client_board_edit(ClientTable *c, TableView *v, const BoardEdit *e);

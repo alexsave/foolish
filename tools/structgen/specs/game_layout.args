@@ -20,6 +20,7 @@
 # The web client's slot (client_table.h): hashed here so a stale
 # view_layout.bots.ts (specs/view_layout.args) is a load-time error too.
 --header client_table.h --root TableView --root PushEvent --root ViewRules --root BoardEdit --root ClientConflict --root ConflictVerdicts
+--header replay_steps.h --root ReplaySummary
 #
 # The bot cycle the table drives (bot_drive.h): what a server logs of it.
 --header bot_drive.h --root BotDriveOut

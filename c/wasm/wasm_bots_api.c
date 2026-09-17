@@ -575,6 +575,15 @@ int wasm_replay_step_logs(int code_len, int step) {
                                   wasm_io_ptr(), wasm_io_cap());
 }
 
+// A code at a glance (replay_steps.h ReplaySummary), for the host's generated
+// reader: its address, or 0 when the code in the replay buffer does not decode.
+static ReplaySummary g_replay_summary;
+int wasm_replay_summary(int code_len) {
+    if (code_len < 0 || code_len > wasm_replay_io_cap()) return 0;
+    if (replay_summary_v6(wasm_replay_io_ptr(), code_len, &g_replay_summary) != REPLAY_EOK) return 0;
+    return (int)(uintptr_t)&g_replay_summary;
+}
+
 // ---------- the C Roster (src/roster.h), test-only exports ------------------
 //
 // Linked into bots.wasm only (WASM_ROSTER_EXPORTS in the Makefile). They exist
