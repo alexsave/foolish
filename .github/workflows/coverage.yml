@@ -9,7 +9,7 @@ name: coverage
 #
 #   c-engine       game.c / legal.c / replay.c   (gcc --coverage + gcovr)
 #   server-ts      server/impls/supabase/functions/_shared/*  minus wasm
-#   client-rules   src/utils/gameValidation + coverCombinations
+#   client-rules   src/utils/gameValidation
 #
 # Floors live in c/Makefile (COV_LINE_MIN/COV_BRANCH_MIN) and package.json
 # (coverage:check:*). Raise them as coverage climbs; never lower to make a red
