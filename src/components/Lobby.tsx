@@ -83,7 +83,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
             />
             <p className="player-card__name">
                 {player.isAi && <><SovietIcon name="bot" size={14} /> </>}
-                {player.name}
+                {botDisplayName(player.name)}
             </p>
             <div className="player-card__status">
                 <SovietIcon name={isReady ? 'ready' : 'not-ready'} size={16} />

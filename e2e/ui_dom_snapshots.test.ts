@@ -139,7 +139,9 @@ function envelope(gameId: string, board: { state: Uint8Array; roster: Uint8Array
     return hex(env);
 }
 
-const seat = (id: string, name: string, brain?: string): FixtureSeat => (brain ? { id, name, brain } : { id, name });
+// A bot seat is named as the server names it: `bots.nickname`, which carries the reserved
+// '%' prefix (src/common/botName.ts). The page shows the name without it.
+const seat = (id: string, name: string, brain?: string): FixtureSeat => (brain ? { id, name: `%${name}`, brain } : { id, name });
 const ME = 'u-me-0000';
 
 // ---- rendering ------------------------------------------------------------------------
@@ -479,7 +481,7 @@ test('a replay with names, at its last step', async () => {
     const summary = replaySummary(kernelB32Decode(TUTORIAL_MOVES_CODE));
     assert.ok(summary, 'the code has a summary');
     const times = Array.from({ length: summary!.moves + 1 }, (_, k) => 1_780_000_000 + k * 9);
-    const code = joinReplayCode(TUTORIAL_MOVES_CODE, encodeExtras(['Ada', 'Boris', 'Cy'], times));
+    const code = joinReplayCode(TUTORIAL_MOVES_CODE, encodeExtras(['Ada', 'Boris', '%Cy'], times));
     assert.ok(code.length > 64, `a share link longer than a table id (${code.length} characters)`);
     await screen('replay_named_end', 93, () => {}, () => replayPage(code), async (host, wait) => {
         assert.ok(host.querySelector('button[title="Next bout"]'), `the replay renders: ${host.textContent?.slice(0, 120)}`);

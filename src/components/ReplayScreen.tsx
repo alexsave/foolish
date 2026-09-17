@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import type { ViewCard as Card } from '../state/view';
 import { Text } from './Text';
 import { SovietIcon } from './SovietIcon';
+import { botDisplayName } from '../common/botName';
 import { TexturedSurface } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { ReplayServerProvider, useServer, useServerActions } from '../contexts/ServerContext';
@@ -103,7 +104,7 @@ const InlineCardBack = ({ w = 22 }: { w?: number }) => (
 );
 
 const seatName = (seat: number, names?: (string | null)[] | null) =>
-    names?.[seat] || `P${seat + 1}`;
+    botDisplayName(names?.[seat] || `P${seat + 1}`);
 
 /* Playback speeds. 'AUTO' is the condensed default: recorded gaps clamped to
  * short beats. The ×N stops replay the RECORDED timing divided by N — at 1× a

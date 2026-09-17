@@ -6,6 +6,7 @@ import { TexturedSurface, useTexture, getTextureStyle } from './TexturedSurface'
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { Text } from './Text';
 import { RankIcon } from './SovietIcon';
+import { botDisplayName } from '../common/botName';
 import { ReplayShare } from './ReplayShare';
 // The finish order is the kernel's (anim_plan.c anim_finish_rows), over the
 // board's own elimination order and fool, not a second ranking derived here.
@@ -87,7 +88,7 @@ export const WinScreen: React.FC = () => {
                     results.set(player.id, {
                         player_id: player.id,
                         seat: row.seat,
-                        name: player.name,
+                        name: botDisplayName(player.name),
                         rank: row.place,
                         old_elo: eloData.previous_elo,
                         new_elo: eloData.elo_rating,

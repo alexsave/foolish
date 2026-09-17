@@ -5,6 +5,7 @@ import { useStyles } from "../../contexts/StyleContext";
 import { useState, useEffect, useRef } from "react";
 import { SovietIcon } from "../SovietIcon";
 import { SovietCardBack } from "./SovietCardBack";
+import { botDisplayName } from "../../common/botName";
 
 // Mini stacked card back — same SVG as the full CardBack, absolutely positioned
 // to fill the stacked ring slot.
@@ -187,7 +188,7 @@ export const PlayerRing = () => {
                             justifyContent: 'center',
                             position: 'relative'
                         }}>
-                            {player.name}
+                            {botDisplayName(player.name)}
 
                             {bubble && (
                                 <div className={`chat-bubble ${!styles.icons.useEmojiIcons ? 'chat-bubble--soviet' : ''}`}>
