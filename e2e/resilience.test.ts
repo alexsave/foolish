@@ -30,7 +30,6 @@ import { legalMoves, mustReadTable } from './helpers/table_play.ts';
 import { runAction, runMeta, seedLobby } from './helpers/table_server.ts';
 import { __botCycle } from '../server/impls/supabase/functions/_shared/adapter/bot_actions.ts';
 import { serverTable } from '../sdk/ts/table/server_table.ts';
-import { parseBeliefProbe } from '../sdk/ts/wasm/bots.ts';
 import { ACTION_STATUS, AWIRE_KIND } from '../sdk/ts/wire/awire.ts';
 import { suiteRng } from './helpers/rng.ts';
 
@@ -168,8 +167,7 @@ test('a bot cycle that loses its commit replays the moves it already chose inste
   const cycle = async (stompFirst: boolean) => {
     table.__beliefProbeReset();
     const commits = await withStomp(id, (call) => stompFirst && call === 1, () => __botCycle(id));
-    const dump = table.__beliefProbeDump();
-    const searches = parseBeliefProbe(dump.bytes, dump.n).map((r) => `${r.seat}:${r.nLogs}:${[...r.cards].sort().join(',')}`);
+    const searches = table.__beliefProbeDump().map((r) => `${r.seat}:${r.nLogs}:${[...r.cards].sort().join(',')}`);
     const after = (await pgPool.query('SELECT state, logs_packed, version FROM games WHERE id = $1', [id])).rows[0];
     return { commits, searches, after };
   };

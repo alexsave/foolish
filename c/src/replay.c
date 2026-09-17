@@ -30,6 +30,12 @@
 static int g_err_detail = 0;
 int replay_last_error_detail(void) { return g_err_detail; }
 
+// The same refusal in named fields (replay.h ReplayError), set beside the
+// packed detail so the two cannot disagree.
+static ReplayError g_err;
+const ReplayError *replay_last_error(void) { return &g_err; }
+static void err_clear(void) { g_err_detail = 0; g_err.version = g_err.log_type = g_err.menu = 0; }
+
 /* =============================== bignum ================================== */
 // Little-endian u32 limbs. rANS only ever multiplies-accumulates by, and
 // divides by, small integers (M < 2^21), so two exact primitives suffice and
@@ -1151,6 +1157,7 @@ static int find_top_index(RModel *m, const Opt *opts, int n_opts, const Src *s) 
     }
     m->err = REPLAY_ENOTINMENU;
     g_err_detail = (s->kind << 16) | (n_opts & 0xFFFF);
+    g_err.log_type = s->kind; g_err.menu = n_opts;
     return -1;
 }
 
@@ -1490,7 +1497,7 @@ static int encode_v6_run(int n, int trump_id, int fa, int n_actions,
 
 int replay_encode_v6(const unsigned char *in, int in_len,
                      unsigned char *out, int out_cap) {
-    g_err_detail = 0;
+    err_clear();
     if (in_len < 7) return -REPLAY_EINPUT;
     int n = in[0], trump_id = in[1], fa = in[2];
     if (n < 2 || n > MAX_PLAYERS) return -REPLAY_EINPUT;
@@ -1587,7 +1594,7 @@ static int deal_reveals_from_seed(const unsigned char *seed, int seed_len, int n
 
 int replay_encode_v6_from_game(const Game *g, const unsigned char *seed, int seed_len,
                                int max_atoms, unsigned char *out, int out_cap) {
-    g_err_detail = 0;
+    err_clear();
     if (!g || !seed || seed_len < FOOLISH_SEED_LEN) return -REPLAY_EINPUT;
     if (g->num_logs >= MAX_LOGS) return -REPLAY_ETOOLONG;  // overflowed → untrusted
     int n = g->num_players;
@@ -1643,7 +1650,7 @@ int replay_encode_v6_from_game(const Game *g, const unsigned char *seed, int see
 // -REPLAY_E*.
 static int decode_impl(const unsigned char *in, int in_len,
                        unsigned char *out, int out_cap, ReplayHeader *hdr) {
-    g_err_detail = 0;
+    err_clear();
     if (in_len < 0 || in_len > REPLAY_MAX_INT_BYTES) return -REPLAY_ECAP;
     if (out && out_cap < REPLAY_DEC_HDR) return -REPLAY_ECAP;
     if (!bn_from_bytes_be(&g_bn, in, in_len)) return -REPLAY_ECAP;
@@ -1662,6 +1669,7 @@ static int decode_impl(const unsigned char *in, int in_len,
     int version = coder_uniform(&c, REPLAY_VERSION_ALPHABET, -1);
     if (version != REPLAY_FORMAT_VERSION_V10) {
         g_err_detail = version;
+        g_err.version = version;
         return -REPLAY_EVERSION;
     }
     // The pass-mode bit, right after the version symbol: it decides the MENU

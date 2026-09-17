@@ -74,6 +74,23 @@ void replay_action_apply(Game *g, const ReplayAction *a);
 int replay_steps_v6(const unsigned char *code, int code_len, int viewer,
                     ReplayHeader *hdr, EvwSink sink, void *ctx);
 
+// WHERE ONE CHUNK'S FRAMES LIE. The frames themselves are opaque to a host - it
+// forwards each one to the same decoder live play feeds - but their BOUNDARIES
+// are a layout, and a host used to find them by walking the u16 length prefix in
+// front of each. It reads them here instead, through a generated reader.
+//
+// A chunk that produced more frames than this holds is reported short, with
+// `next_step` set to the first frame left out: the caller's next chunk starts
+// there, so nothing is lost and no chunk is ever empty.
+#define REPLAY_FRAME_INDEX_MAX 128
+
+typedef struct {
+    int32_t n;           // frames indexed, 0..REPLAY_FRAME_INDEX_MAX
+    int32_t next_step;   // the step the next chunk starts at (== the step count when done)
+    int32_t off[REPLAY_FRAME_INDEX_MAX];   // each frame's offset in the frames buffer
+    int32_t len[REPLAY_FRAME_INDEX_MAX];   // and its length in bytes
+} ReplayFrameIndex;
+
 // Serialize a v6 replay as packed evwire FRAMES — one per step (the deal, then
 // one per action), which is exactly what live play broadcasts and what the web
 // already decodes and renders. Chunked: a whole game's frames (each carrying a

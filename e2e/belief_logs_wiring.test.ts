@@ -34,7 +34,6 @@ import { applySchema, resetDb, uuid } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
 import { ServerTable, serverTable } from '../sdk/ts/table/server_table.ts';
-import { parseBeliefProbe } from '../sdk/ts/wasm/bots.ts';
 import { mustReadTable } from './helpers/table_play.ts';
 import { fixture } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';
@@ -101,7 +100,7 @@ async function wireLoop() {
   return {
     lockedBotLoop, runMeta, __setTableDealSeedOverride,
     wasmBeliefProbeReset: () => table.__beliefProbeReset(),
-    wasmBeliefProbeDump: () => { const d = table.__beliefProbeDump(); return parseBeliefProbe(d.bytes, d.n); },
+    wasmBeliefProbeDump: () => table.__beliefProbeDump(),
   };
 }
 

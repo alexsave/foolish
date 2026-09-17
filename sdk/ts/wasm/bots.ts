@@ -11,7 +11,12 @@
 import { loadWasmGz, loadWasmGzAsync } from './wasm_asset.ts';
 import { LAYOUT_HASH as BOTS_LAYOUT_HASH } from '../gen/layout_hash.bots.ts';
 import { assertLayoutHash } from './layout_hash.ts';
-import { memOf as viewMemOf, readTableView, readReplaySummary, TableView_Snap, ReplaySummary_Snap, CARD_NONE_SUIT, CARD_NONE_VALUE } from '../gen/view_layout.bots.ts';
+import { memOf as viewMemOf, readTableView, readReplaySummary, readReplayError, readReplayFrameIndex, TableView_Snap, ReplaySummary_Snap, ReplayError_Snap, CARD_NONE_SUIT, CARD_NONE_VALUE } from '../gen/view_layout.bots.ts';
+import { memOf as msgMemOf, readMsgHeader, writeMsgHeader, readReplayExtras, writeReplayExtras,
+         MSG_MAX_NAME, REPLAY_EXTRAS_FLAG_NAMES, REPLAY_EXTRAS_FLAG_TIMES, REPLAY_LINK_STYLE_URL, REPLAY_LINK_STYLE_QR,
+         type MsgHeader_Snap, type ReplayExtras_Snap } from '../gen/msg_layout.bots.ts';
+import * as A from '../gen/anim.bots.ts';
+import { memOf as animMemOf } from '../gen/anim.bots.ts';
 
 /** A card as the kernel's doors here read and write it (suit 0..3, value 1..13; -1/-1 is a hidden card). */
 export interface Card { readonly suit: number; readonly value: number }
@@ -26,12 +31,13 @@ interface EngineExports {
     wasm_cards_a_ptr(): number;
     wasm_cards_b_ptr(): number;
     wasm_legal_moves(i: number): number;
-    wasm_export_moves(start: number, max: number): number;
+    wasm_legal_moves_ptr(): number;
     wasm_replay_io_ptr(): number;
     wasm_replay_io_cap(): number;
-    wasm_replay_error_detail(): number;
+    wasm_replay_error_ptr(): number;
     wasm_msg_decode?(len: number): number;
-    wasm_msg_seal?(len: number): number;
+    wasm_msg_seal?(): number;
+    wasm_msg_header_ptr?(): number;
     wasm_msg_rule_p?(aLen: number, bLen: number): number;
     wasm_msg_rebase?(pendingRound: number, seat: number, wireLen: number): number;
     wasm_msg_pickup_hold?(seat: number, sentAt: number, now: number): number;
@@ -70,43 +76,26 @@ function cardFromWire(b: number): Card {
 
 const MOVE_TYPE = ['attack', 'cover', 'pass', 'pickup', 'good', 'wait'];
 
-// Worst-case wire bytes for one exported move: type + n + 2 x MAX_MOVE_CARDS
-// wire cards (the wasm build pins MAX_MOVE_CARDS=28). The loop advances by the
-// RETURNED count, so a mismatched clamp can shorten chunks but never skip moves.
-const MOVE_WIRE_MAX = 2 + 2 * 28;
-
-// The legal moves of whatever game is RESIDENT in the kernel, no marshal.
+// The legal moves of whatever game is RESIDENT in the kernel, no marshal and no
+// copy: wasm_legal_moves fills the kernel's own LegalMoves and this reads it
+// where it lies, through the generated accessors (sdk/ts/gen/anim.bots.ts).
 function residentLegalMoves(ex: EngineExports, seat: number): { type: string; cards?: Card[]; attack_cards?: Card[] }[] {
     const total = ex.wasm_legal_moves(seat);
-    const base = ex.wasm_io_ptr();
-    const chunk = Math.floor((ex.wasm_io_cap() - 4) / MOVE_WIRE_MAX);
-    const moves: { type: string; cards?: Card[]; attack_cards?: Card[] }[] = [];
-    for (let start = 0; start < total;) {
-        ex.wasm_export_moves(start, chunk);
-        const buf = mem(ex);
-        let q = base;
-        const n = buf[q] | (buf[q + 1] << 8) | (buf[q + 2] << 16) | (buf[q + 3] << 24); q += 4;
-        for (let i = 0; i < n; i++) {
-            const type = MOVE_TYPE[buf[q++]];
-            const k = buf[q++];
-            if (type === 'pickup' || type === 'good' || type === 'wait') {
-                q += k * 2;
-                moves.push({ type });
-                continue;
-            }
-            const cards: Card[] = new Array(k);
-            for (let j = 0; j < k; j++) cards[j] = cardFromWire(buf[q++]);
-            if (type === 'cover') {
-                const attacks: Card[] = new Array(k);
-                for (let j = 0; j < k; j++) attacks[j] = cardFromWire(buf[q++]);
-                moves.push({ type, cards, attack_cards: attacks });
-            } else {
-                q += k;
-                moves.push({ type, cards });
-            }
-        }
-        if (n <= 0) break;   // defensive: a zero-move chunk must not spin
-        start += n;
+    const m = animMemOf(ex.memory.buffer);
+    const lm = ex.wasm_legal_moves_ptr();
+    const card = (p: number): Card => ({ suit: A.Card_get_suit(m, p), value: A.Card_get_value(m, p) });
+    const moves: { type: string; cards?: Card[]; attack_cards?: Card[] }[] = new Array(total);
+    for (let i = 0; i < total; i++) {
+        const mv = A.LegalMoves_moves_at(lm, i);
+        const type = MOVE_TYPE[A.LegalMove_get_type(m, mv)];
+        const k = A.LegalMove_get_n_cards(m, mv);
+        if (type === 'pickup' || type === 'good' || type === 'wait') { moves[i] = { type }; continue; }
+        const cards: Card[] = new Array(k);
+        for (let j = 0; j < k; j++) cards[j] = card(A.LegalMove_cards_at(mv, j));
+        if (type !== 'cover') { moves[i] = { type, cards }; continue; }
+        const attacks: Card[] = new Array(k);
+        for (let j = 0; j < k; j++) attacks[j] = card(A.LegalMove_attack_cards_at(mv, j));
+        moves[i] = { type, cards, attack_cards: attacks };
     }
     return moves;
 }
@@ -117,9 +106,20 @@ const LOG_TYPE_NAMES = ['game_start', 'attack', 'cover', 'pass', 'pickup', 'good
 // Mirrors REPLAY_E* in replay.h. The NUMBERS are the wire between the two
 // files, so 3, 8 and 9 are a deliberate hole: they belonged to the retired
 // retrodiction format and are unreachable now.
-export function __replayError(negCode: number, detail: number): Error {
+//
+// `d` is the refusal's parameters (replay.h ReplayError) as the generated reader
+// copies them out; zeros stand in when a caller has no module to ask (a message
+// written from the code alone).
+const NO_REPLAY_DETAIL: ReplayError_Snap = { version: 0, logType: 0, menu: 0 };
+
+/** Why the module's last replay call refused, through the generated reader. */
+function replayErrorDetail(ex: EngineExports): ReplayError_Snap {
+    return readReplayError(viewMemOf(ex.memory.buffer), ex.wasm_replay_error_ptr());
+}
+
+export function __replayError(negCode: number, d: ReplayError_Snap = NO_REPLAY_DETAIL): Error {
     switch (-negCode) {
-        case 1: return new Error(`unsupported replay format version ${detail}`);
+        case 1: return new Error(`unsupported replay format version ${d.version}`);
         case 2: return new Error('invalid replay: leftover data after game end');
         case 4: return new Error('replay guard: too many events');
         case 5: return new Error('replay desync: no legal moves');
@@ -128,7 +128,7 @@ export function __replayError(negCode: number, detail: number): Error {
         case 10: return new Error('replay desync: the unseen pool is empty');
         case 11: return new Error('replay desync: a supplied reveal is not unseen');
         case 12: return new Error(
-            `replay desync: logged ${LOG_TYPE_NAMES[detail >> 16] ?? (detail >> 16)} not in menu of ${detail & 0xffff}`);
+            `replay desync: logged ${LOG_TYPE_NAMES[d.logType] ?? d.logType} not in menu of ${d.menu}`);
         case 13: return new Error('replay desync: round end not in menu');
         case 14: return new Error('replay desync: attack continuation');
         case 15: return new Error('replay desync: pass continuation');
@@ -150,24 +150,22 @@ export function __replayError(negCode: number, detail: number): Error {
 interface BotsExports extends EngineExports {
     wasm_replay_encode_v6_from_game(max_atoms: number): number;
     wasm_replay_events(viewer: number, from: number, code_len: number): number;
-    wasm_replay_events_n(): number;
-    wasm_replay_events_next(): number;
+    wasm_replay_events_index_ptr(): number;
     wasm_replay_step_count(code_len: number): number;
     wasm_replay_step_index(code_len: number): number;
     wasm_replay_step_masked_state(code_len: number, step: number, viewer: number): number;
     wasm_replay_step_logs(code_len: number, step: number): number;
     wasm_replay_summary(code_len: number): number;
-    wasm_replay_extras_encode(in_len: number): number;
+    wasm_replay_extras_encode(): number;
     wasm_replay_extras_decode(blob_len: number, player_count: number, move_count: number): number;
-    wasm_replay_link(in_len: number, style: number): number;
+    wasm_replay_extras_ptr(): number;
+    wasm_replay_link(moves_len: number, style: number): number;
     wasm_replay_b32_encode(in_len: number): number;
     wasm_replay_b32_decode(in_len: number): number;
     wasm_replay_link_parse(in_len: number): number;
     wasm_unambiguous_cover(n_cover: number, n_battles: number, power_suit: number): number;
     wasm_bot_roster_dump(): number;
     // Belief probe (observability; off until reset arms it)
-    wasm_belief_probe_reset(): void;
-    wasm_belief_probe_dump(): number;
     // Animation core (c/src/anim_plan.h) — the platform-independent animation
     // policy the web pure modules (src/state/*) delegate to. bots-only.
     wasm_anim_should_drop_stale(hasLast: number, last: number, hasIncoming: number, incoming: number): number;
@@ -327,53 +325,6 @@ function bots(): BotsExports {
 // Belief probe: what a bot's search read (c/wasm/wasm_bots_api.c)
 // ---------------------------------------------------------------------------
 
-/** One recorded bot SEARCH, as the kernel saw it (wasm_belief_probe_dump). */
-export interface BeliefProbeRecord {
-    seat: number;
-    /** Log records spliced into the Game the strategy was about to read. */
-    nLogs: number;
-    /** Real cards visible in that log — `${suit}:${value}` ids. */
-    cards: Set<string>;
-}
-
-/**
- * Arm the kernel's belief probe (clears any prior records).
- *
- * Observability for "did the bot actually SEE the session log", answered by the
- * kernel instead of inferred from this side. A spy here could only prove the
- * bytes were handed over, not that the importer spliced them into the Game the
- * strategy read — and since the choose step moved in-kernel (F2/A2) there is no
- * TS seam left to spy on. Off in production until this is called.
- */
-export function wasmBeliefProbeReset(): void { bots().wasm_belief_probe_reset(); }
-
-/** Read back the searches recorded since the last reset, in order. */
-export function wasmBeliefProbeDump(): BeliefProbeRecord[] {
-    const ex = bots();
-    const n = ex.wasm_belief_probe_dump();
-    const base = ex.wasm_io_ptr();
-    return parseBeliefProbe(new Uint8Array(ex.memory.buffer, base, n * 11), n);
-}
-
-/** The records wasm_belief_probe_dump wrote (11 bytes each), from any bots.wasm instance. */
-export function parseBeliefProbe(buf: Uint8Array, n: number): BeliefProbeRecord[] {
-    const out: BeliefProbeRecord[] = [];
-    for (let i = 0; i < n; i++) {
-        const o = i * 11;
-        const cards = new Set<string>();
-        for (let b = 0; b < 8; b++) {
-            const byte = buf[o + 3 + b];
-            for (let bit = 0; bit < 8; bit++) {
-                if (!(byte & (1 << bit))) continue;
-                const code = b * 8 + bit;          // suit*16 + value
-                cards.add(`${code >> 4}:${code & 0xf}`);
-            }
-        }
-        out.push({ seat: buf[o], nLogs: buf[o + 1] | (buf[o + 2] << 8), cards });
-    }
-    return out;
-}
-
 // ---------- FMSG: the iMessage envelope (c/src/msg_wire.h) -------------
 //
 // An iMessage game has no server: the whole game is (32-byte deal seed, v6
@@ -386,17 +337,12 @@ export function parseBeliefProbe(buf: Uint8Array, n: number): BeliefProbeRecord[
 // body is a v6 code), so an envelope in g_io would be clobbered by the codec's
 // own bignum scratch mid-decode. See wasm_api.c.
 
-// The unpacked header — the private ABI msg_blob_write/msg_blob_read define in
-// c/wasm/wasm_api.c. Fixed offsets, fixed-size join slots.
-// Round 16 added the two send-clock bytes at 90, the bubble delta at 92, and
-// the fool's-penalty trio (opening at 93, carry_key at 94, carry_fool at 98),
-// so the joins start at 99.
-const MSG_BLOB_HDR = 99;
-// 2 + the wire's MSG_MAX_NAME: was 14 (2 + 12) before round-5 B1 raised the
-// name cap to 64 bytes (docs/APP_REVIEW_NOTES.md, c/src/msg_wire.h) — must
-// match wasm_api.c's MSG_BLOB_JOIN or this bridge mis-parses every join.
-const MSG_MAX_NAME = 64;
-const MSG_BLOB_JOIN = 2 + MSG_MAX_NAME;
+// The header crosses as the C struct itself (msg_wire.h MsgHeader), read and
+// written through the generated snapshot reader and writer
+// (sdk/ts/gen/msg_layout.bots.ts) at wasm_msg_header_ptr. Nothing here knows an
+// offset or a cap: MSG_MAX_NAME comes from the same generated module, and a name
+// too long for the struct's slot is the writer's RangeError.
+export { MSG_MAX_NAME };
 
 export interface MsgJoin { seat: number; name: string }
 
@@ -464,64 +410,39 @@ function msgError(code: number): Error {
     }
 }
 
-function readBlob(buf: Uint8Array, base: number, len: number): MsgEnvelope {
-    const b = buf.subarray(base, base + len);
-    const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
-    const n_joins = b[7];
-    const joins: MsgJoin[] = [];
-    for (let i = 0; i < n_joins; i++) {
-        const o = MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
-        const nameLen = b[o + 1];
-        joins.push({
-            seat: b[o],
-            name: new TextDecoder().decode(b.subarray(o + 2, o + 2 + nameLen)),
-        });
-    }
+// The struct at wasm_msg_header_ptr <-> this bridge's MsgEnvelope. Only the
+// shapes differ (the snapshot holds byte arrays as number[] and camelCases its
+// fields); every offset is the generated module's.
+function readHeader(ex: EngineExports): MsgEnvelope {
+    const s = readMsgHeader(msgMemOf(ex.memory.buffer), ex.wasm_msg_header_ptr!());
     return {
-        format: b[0], flags: b[1], phase: b[2], n_players: b[3],
-        variant: b[4], round: b[5], last_actor_seat: b[6],
-        game_id: dv.getBigUint64(8, true),
-        turn: dv.getUint16(16, true),
-        parent8: b.slice(18, 26),
-        seed: b.slice(26, 58),
-        digest: b.slice(58, 90),
-        sent_at: dv.getUint16(90, true),
-        n_new: b[92],
-        opening: b[93],
-        carry_key: dv.getUint32(94, true),
-        carry_fool: b[98],
-        joins,
+        format: s.e.format, flags: s.e.flags, phase: s.e.phase, n_players: s.e.nPlayers,
+        variant: s.e.variant, round: s.e.round, last_actor_seat: s.e.lastActorSeat,
+        game_id: s.e.gameId, turn: s.e.turn,
+        parent8: Uint8Array.from(s.e.parent8),
+        seed: Uint8Array.from(s.e.seed),
+        digest: Uint8Array.from(s.digest),
+        sent_at: s.e.sentAt, n_new: s.e.nNew, opening: s.e.opening,
+        carry_key: s.e.carryKey, carry_fool: s.e.carryFool,
+        joins: s.e.joins.map((j) => ({ seat: j.seat, name: j.name })),
     };
 }
 
-function writeBlob(e: MsgEnvelope): Uint8Array {
-    const out = new Uint8Array(MSG_BLOB_HDR + e.joins.length * MSG_BLOB_JOIN);
-    const dv = new DataView(out.buffer);
-    out[0] = e.format; out[1] = e.flags; out[2] = e.phase; out[3] = e.n_players;
-    out[4] = e.variant; out[5] = e.round; out[6] = e.last_actor_seat;
-    out[7] = e.joins.length;
-    dv.setBigUint64(8, e.game_id, true);
-    dv.setUint16(16, e.turn, true);
-    out.set(e.parent8.subarray(0, 8), 18);
-    out.set(e.seed.subarray(0, 32), 26);
-    // 58..90 is the digest: decode-only (an envelope cannot carry its own).
-    dv.setUint16(90, e.sent_at & 0xffff, true);
-    // 92 is n_new: decode-only too (msg_seal derives the delta, see bots.ts's
-    // MsgEnvelope.n_new), so it is left 0 here rather than echoed back.
-    // 93..99 IS written back: unlike the digest and the delta, the fool's
-    // penalty is a term of the deal the caller states.
-    out[93] = e.opening;
-    dv.setUint32(94, e.carry_key >>> 0, true);
-    out[98] = e.carry_fool;
-    e.joins.forEach((j, i) => {
-        const o = MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
-        const name = new TextEncoder().encode(j.name);
-        if (name.length > MSG_MAX_NAME) throw new Error(`nickname over ${MSG_MAX_NAME} bytes: ${j.name}`);
-        out[o] = j.seat;
-        out[o + 1] = name.length;
-        out.set(name, o + 2);
-    });
-    return out;
+function writeHeader(ex: EngineExports, e: MsgEnvelope): void {
+    const snap: MsgHeader_Snap = {
+        e: {
+            format: e.format, flags: e.flags, phase: e.phase, nPlayers: e.n_players,
+            variant: e.variant, round: e.round, lastActorSeat: e.last_actor_seat,
+            gameId: e.game_id, turn: e.turn,
+            parent8: Array.from(e.parent8.subarray(0, 8)),
+            seed: Array.from(e.seed.subarray(0, 32)),
+            sentAt: e.sent_at & 0xffff, nNew: e.n_new, opening: e.opening,
+            carryKey: e.carry_key >>> 0, carryFool: e.carry_fool,
+            joins: e.joins.map((j) => ({ seat: j.seat, name: j.name })),
+        },
+        digest: Array.from(e.digest.subarray(0, 32)),
+    };
+    writeMsgHeader(msgMemOf(ex.memory.buffer), ex.wasm_msg_header_ptr!(), snap);
 }
 
 // Decode + VALIDATE an envelope: the chain is replayed through the kernel, so a
@@ -533,11 +454,10 @@ export function kernelMsgDecode(envelope: Uint8Array): MsgEnvelope {
     const ex = bots();
     if (!ex.wasm_msg_decode) throw new Error('kernelMsgDecode: module has no FMSG support');
     if (envelope.length > ex.wasm_replay_io_cap()) throw new Error('iMessage payload: capacity exceeded');
-    const base = ex.wasm_replay_io_ptr();
-    mem(ex).set(envelope, base);
+    mem(ex).set(envelope, ex.wasm_replay_io_ptr());
     const r = ex.wasm_msg_decode(envelope.length);
     if (r < 0) throw msgError(r);
-    return readBlob(mem(ex), base, r);
+    return readHeader(ex);
 }
 
 // Seal the RESIDENT game into an envelope. `header` supplies what the protocol
@@ -670,8 +590,6 @@ export function kernelMsgPublicView(): { view: TableView_Snap } {
  * synchronous and assume a warm module, like every other reader here.
  */
 
-/** REPLAY_EXTRAS_FLAG_* (c/src/replay_extras.h). */
-const EXTRAS_FLAG_NAMES = 1, EXTRAS_FLAG_TIMES = 2;
 
 /** The kernel's REPLAY_EXTRAS_E* codes, as the messages this format has always
  *  thrown - callers catch extras failures and fall back to "P1"/"P2". */
@@ -688,30 +606,24 @@ function __extrasError(code: number): Error {
     }
 }
 
-/** Pack the kernel's argument blob: flags, then the roster, then the timing. */
-function __extrasArgs(names: string[] | null, startTime: number | null,
-                      gaps: number[] | null): Uint8Array {
-    const enc = new TextEncoder();
-    const encoded = names ? names.map(n => enc.encode(n)) : [];
-    const hasNames = encoded.length > 0;
+/**
+ * The names and timing into the kernel's own struct (replay_extras.h
+ * ReplayExtras) at wasm_replay_extras_ptr, through the generated writer. The
+ * codec's packed argument blob is built from it IN C (replay_extras_pack), so
+ * nothing here knows its layout; a name too wide for the struct's slot, or more
+ * gaps than it holds, is the writer's RangeError.
+ */
+function __extrasArgs(ex: BotsExports, names: string[] | null, startTime: number | null,
+                      gaps: number[] | null): void {
+    const hasNames = (names?.length ?? 0) > 0;
     const hasTimes = startTime !== null && gaps !== null;
-    let n = 1;
-    if (hasNames) { n += 1; for (const b of encoded) n += 2 + b.length; }
-    if (hasTimes) n += 8 + 2 + 8 * gaps!.length;
-    const out = new Uint8Array(n);
-    const dv = new DataView(out.buffer);
-    let q = 0;
-    out[q++] = (hasNames ? EXTRAS_FLAG_NAMES : 0) | (hasTimes ? EXTRAS_FLAG_TIMES : 0);
-    if (hasNames) {
-        out[q++] = encoded.length;
-        for (const b of encoded) { dv.setUint16(q, b.length, true); q += 2; out.set(b, q); q += b.length; }
-    }
-    if (hasTimes) {
-        dv.setFloat64(q, startTime!, true); q += 8;
-        dv.setUint16(q, gaps!.length, true); q += 2;
-        for (const g of gaps!) { dv.setFloat64(q, g, true); q += 8; }
-    }
-    return out;
+    const snap: ReplayExtras_Snap = {
+        flags: (hasNames ? REPLAY_EXTRAS_FLAG_NAMES : 0) | (hasTimes ? REPLAY_EXTRAS_FLAG_TIMES : 0),
+        names: hasNames ? names!.map((text) => ({ text })) : [],
+        startTime: hasTimes ? startTime! : 0,
+        gaps: hasTimes ? gaps! : [],
+    };
+    writeReplayExtras(msgMemOf(ex.memory.buffer), ex.wasm_replay_extras_ptr(), snap);
 }
 
 /**
@@ -722,10 +634,8 @@ function __extrasArgs(names: string[] | null, startTime: number | null,
 export function kernelReplayExtrasEncode(names: string[] | null, startTime: number | null,
                                          gaps: number[] | null): Uint8Array {
     const ex = bots();
-    const args = __extrasArgs(names, startTime, gaps);
-    if (args.length > ex.wasm_replay_io_cap()) throw new Error('extras: roster exceeds the kernel IO buffer');
-    mem(ex).set(args, ex.wasm_replay_io_ptr());
-    const n = ex.wasm_replay_extras_encode(args.length);
+    __extrasArgs(ex, names, startTime, gaps);
+    const n = ex.wasm_replay_extras_encode();
     if (n < 0) throw __extrasError(n);
     const base = ex.wasm_io_ptr();
     return mem(ex).slice(base, base + n);
@@ -748,32 +658,15 @@ export function kernelReplayExtrasDecode(blob: Uint8Array, playerCount: number,
     const ex = bots();
     if (blob.length > ex.wasm_replay_io_cap()) throw new Error('extras: blob exceeds the kernel IO buffer');
     mem(ex).set(blob, ex.wasm_replay_io_ptr());
-    const n = ex.wasm_replay_extras_decode(blob.length, playerCount, moveCount);
-    if (n < 0) throw __extrasError(n);
-    const base = ex.wasm_io_ptr();
-    const out = mem(ex).slice(base, base + n);
-    const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
-    const dec = new TextDecoder();
-    let q = 0;
-    const flags = out[q++];
-    const nNames = out[q++];
-    let namesOut: string[] | null = null;
-    if (flags & EXTRAS_FLAG_NAMES) {
-        namesOut = [];
-        for (let i = 0; i < nNames; i++) {
-            const len = dv.getUint16(q, true); q += 2;
-            namesOut.push(dec.decode(out.subarray(q, q + len))); q += len;
-        }
-    }
-    let startTime: number | null = null;
-    let moveGaps: number[] | null = null;
-    if (flags & EXTRAS_FLAG_TIMES) {
-        startTime = dv.getFloat64(q, true); q += 8;
-        const nGaps = dv.getUint16(q, true); q += 2;
-        moveGaps = [];
-        for (let i = 0; i < nGaps; i++) { moveGaps.push(dv.getFloat64(q, true)); q += 8; }
-    }
-    return { names: namesOut, startTime, moveGaps };
+    const rc = ex.wasm_replay_extras_decode(blob.length, playerCount, moveCount);
+    if (rc < 0) throw __extrasError(rc);
+    const x = readReplayExtras(msgMemOf(ex.memory.buffer), ex.wasm_replay_extras_ptr());
+    const hasTimes = (x.flags & REPLAY_EXTRAS_FLAG_TIMES) !== 0;
+    return {
+        names: (x.flags & REPLAY_EXTRAS_FLAG_NAMES) ? x.names.map((n) => n.text) : null,
+        startTime: hasTimes ? x.startTime : null,
+        moveGaps: hasTimes ? [...x.gaps] : null,
+    };
 }
 
 /**
@@ -784,8 +677,8 @@ export function kernelReplayExtrasDecode(blob: Uint8Array, playerCount: number,
  * codec's, so a phone, a watch and a browser have no business each writing it.
  * `names` must be as wide as the table; unnamed seats are ''.
  */
-/** replay_extras.h REPLAY_LINK_STYLE_*: the https link, or the QR form. */
-export const REPLAY_LINK = { url: 0, qr: 1 } as const;
+/** replay_extras.h REPLAY_LINK_STYLE_*, from the kernel: the https link, or the QR form. */
+export const REPLAY_LINK = { url: REPLAY_LINK_STYLE_URL, qr: REPLAY_LINK_STYLE_QR } as const;
 
 // base32, from the kernel (replay.c replay_b32_encode/decode). replay.h called
 // this alphabet "the web's codec.ts alphabet" and replay.c said a code made on
@@ -834,25 +727,15 @@ export function kernelReplayLinkParse(url: string): string {
 
 export function kernelReplayLink(moves: string, names: string[], style: number = REPLAY_LINK.url): string {
     const ex = bots();
-    const enc = new TextEncoder();
-    const movesBytes = enc.encode(moves);
-    const encoded = names.map(n => enc.encode(n));
-    let rosterLen = 0;
-    for (const b of encoded) rosterLen += 2 + b.length;
-    // [u8 n_names][u16 roster_len][roster][moves] - the code last, so the kernel
-    // can NUL-terminate it in place instead of copying it out.
-    const args = new Uint8Array(3 + rosterLen + movesBytes.length);
-    const dv = new DataView(args.buffer);
-    let q = 0;
-    args[q++] = encoded.length;
-    dv.setUint16(q, rosterLen, true); q += 2;
-    for (const b of encoded) { dv.setUint16(q, b.length, true); q += 2; args.set(b, q); q += b.length; }
-    args.set(movesBytes, q);
-    // The kernel writes a terminator one byte past the input, so the arguments
-    // must fit the buffer with room for it.
-    if (args.length >= ex.wasm_replay_io_cap()) throw new Error('extras: link arguments exceed the kernel IO buffer');
-    mem(ex).set(args, ex.wasm_replay_io_ptr());
-    const w = ex.wasm_replay_link(args.length, style);
+    // The roster goes through the kernel's own struct; the moves code crosses as
+    // itself (a base32 string the kernel NUL-terminates in place, since a long
+    // game's code runs to tens of KB). The kernel writes that terminator one
+    // byte past the input, so the code must fit the buffer with room for it.
+    __extrasArgs(ex, names, null, null);
+    const movesBytes = new TextEncoder().encode(moves);
+    if (movesBytes.length >= ex.wasm_replay_io_cap()) throw new Error('extras: the replay code exceeds the kernel IO buffer');
+    mem(ex).set(movesBytes, ex.wasm_replay_io_ptr());
+    const w = ex.wasm_replay_link(movesBytes.length, style);
     if (w < 0) throw __extrasError(w);
     const base = ex.wasm_io_ptr();
     return new TextDecoder().decode(mem(ex).subarray(base, base + w));
@@ -883,15 +766,14 @@ export function kernelMsgSeal(
     // header ends up carrying (a clock, or a bubble delta, seals format 3), so
     // the caller never states it twice. n_new is 0 for the same reason the
     // digest is: the kernel derives it, from the chain wasm_msg_decode adopted.
-    const blob = writeBlob({ ...header, sent_at: header.sent_at ?? 0, n_new: 0,
-                             opening: header.opening ?? MSG_NO_OPENING,
-                             carry_key: header.carry_key ?? 0,
-                             carry_fool: header.carry_fool ?? MSG_NO_FOOL,
-                             format: 2, turn: 0, round: 0, digest: new Uint8Array(32) });
-    const base = ex.wasm_replay_io_ptr();
-    mem(ex).set(blob, base);
-    const r = ex.wasm_msg_seal(blob.length);
+    writeHeader(ex, { ...header, sent_at: header.sent_at ?? 0, n_new: 0,
+                      opening: header.opening ?? MSG_NO_OPENING,
+                      carry_key: header.carry_key ?? 0,
+                      carry_fool: header.carry_fool ?? MSG_NO_FOOL,
+                      format: 2, turn: 0, round: 0, digest: new Uint8Array(32) });
+    const r = ex.wasm_msg_seal();
     if (r < 0) throw msgError(r);
+    const base = ex.wasm_replay_io_ptr();
     return mem(ex).slice(base, base + r);
 }
 
@@ -917,7 +799,7 @@ export function kernelResidentReplayCodeV6(seed: Uint8Array): Uint8Array {
     const base = ex.wasm_replay_io_ptr();
     mem(ex).set(seed, base);
     const n = ex.wasm_replay_encode_v6_from_game(1 << 30);
-    if (n < 0) throw __replayError(n, ex.wasm_replay_error_detail());
+    if (n < 0) throw __replayError(n, replayErrorDetail(ex));
     return mem(ex).slice(base, base + n);
 }
 
@@ -935,7 +817,7 @@ export function replayStepCount(code: Uint8Array): number {
     const ex = bots();
     mem(ex).set(code, ex.wasm_replay_io_ptr());
     const n = ex.wasm_replay_step_count(code.length);
-    if (n < 0) throw __replayError(n, ex.wasm_replay_error_detail());
+    if (n < 0) throw __replayError(n, replayErrorDetail(ex));
     return n;
 }
 
@@ -970,7 +852,7 @@ export function replayStepIndex(code: Uint8Array): ReplayStepInfo[] {
     const ex = bots();
     mem(ex).set(code, ex.wasm_replay_io_ptr());
     const len = ex.wasm_replay_step_index(code.length);
-    if (len < 0) throw __replayError(len, ex.wasm_replay_error_detail());
+    if (len < 0) throw __replayError(len, replayErrorDetail(ex));
     const buf = mem(ex);
     const base = ex.wasm_io_ptr();
     const out: ReplayStepInfo[] = [];
@@ -994,24 +876,22 @@ export function replayEventFrames(code: Uint8Array, viewer: number): Uint8Array[
     let from = 0;
     // Each chunk re-runs the replay from the start (the arithmetic decode is the
     // cost and it is ~1ms); a game takes a couple of chunks. The guard is a
-    // no-progress backstop, not a step limit.
+    // no-progress backstop, not a step limit. Where each frame lies in the chunk
+    // is the kernel's own index (replay_steps.h ReplayFrameIndex), read through
+    // the generated reader; the frames themselves are opaque bytes forwarded to
+    // the same decoder live play feeds.
     for (let guard = 0; from < steps && guard < 4096; guard++) {
         mem(ex).set(code, ex.wasm_replay_io_ptr());
         const len = ex.wasm_replay_events(viewer, from, code.length);
-        if (len < 0) throw __replayError(len, ex.wasm_replay_error_detail());
-        const next = ex.wasm_replay_events_next();
-        if (next <= from) throw new Error(`replay frames stalled at step ${from}/${steps}`);
+        if (len < 0) throw __replayError(len, replayErrorDetail(ex));
+        const index = readReplayFrameIndex(viewMemOf(ex.memory.buffer), ex.wasm_replay_events_index_ptr());
+        if (index.nextStep <= from) throw new Error(`replay frames stalled at step ${from}/${steps}`);
         const buf = mem(ex);
-        let q = ex.wasm_io_ptr();
-        const end = q + len;
-        for (let i = 0; i < ex.wasm_replay_events_n(); i++) {
-            const flen = buf[q] | (buf[q + 1] << 8);
-            q += 2;
-            if (q + flen > end) throw new Error('replay frame ran past its chunk');
-            frames.push(buf.slice(q, q + flen));
-            q += flen;
+        const base = ex.wasm_io_ptr();
+        for (let i = 0; i < index.off.length; i++) {
+            frames.push(buf.slice(base + index.off[i], base + index.off[i] + index.len[i]));
         }
-        from = next;
+        from = index.nextStep;
     }
     if (frames.length !== steps) {
         throw new Error(`replay produced ${frames.length} frames for ${steps} steps`);

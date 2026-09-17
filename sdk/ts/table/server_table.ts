@@ -68,6 +68,16 @@ export interface TableExports {
     wasm_table_replay_extras(logLen: number): number;
     wasm_belief_probe_reset(): void;
     wasm_belief_probe_dump(): number;
+    wasm_belief_probe_ptr(): number;
+}
+
+/** One recorded bot SEARCH, as the kernel saw it (c/src/bot_drive.h BeliefProbe). */
+export interface BeliefProbeRecord {
+    seat: number;
+    /** Log records spliced into the Game the strategy was about to read. */
+    nLogs: number;
+    /** Real cards visible in that log - `${suit}:${value}` ids. */
+    cards: Set<string>;
 }
 
 /** One bot-loop cycle (table.h table_bot_drive): what it applied, and why it stopped. */
@@ -322,13 +332,33 @@ export class ServerTable {
     /** The module's linear memory, for the edge memory log line. */
     memoryBytes(): number { return this.ex.memory.buffer.byteLength; }
 
-    /** Test observability: arm the belief probe of THIS instance (bots.ts wasmBeliefProbeReset has the why). */
+    /**
+     * Test observability: arm the belief probe of THIS instance.
+     *
+     * What a bot SEARCH saw of the session log, recorded by the kernel as the
+     * strategy was about to read it (c/src/bot_drive.h BeliefProbe). A spy on this
+     * side could only prove the log's bytes were handed over, never that they were
+     * spliced into the Game the strategy read - and since the choose step moved
+     * in-kernel there is no TS seam left to spy on. Off until this is called.
+     */
     __beliefProbeReset(): void { this.ex.wasm_belief_probe_reset(); }
 
-    /** Test observability: the probe's raw records and their count (the layout bots.ts parseBeliefProbe reads). */
-    __beliefProbeDump(): { bytes: Uint8Array; n: number } {
-        const n = this.ex.wasm_belief_probe_dump();
-        return { bytes: this.out(n * 11), n };
+    /** The searches recorded since the last reset, in order, read through the generated accessors. */
+    __beliefProbeDump(): BeliefProbeRecord[] {
+        const m = this.m();
+        const base = this.ex.wasm_belief_probe_ptr();
+        const out: BeliefProbeRecord[] = [];
+        for (let i = 0; i < this.ex.wasm_belief_probe_dump(); i++) {
+            const p = base + i * L.BeliefProbe_SIZE;
+            const bits = L.BeliefProbe_get_cards(m, p);
+            const cards = new Set<string>();
+            // bit (suit * 16 + value) per real card the log showed.
+            for (let code = 0n; code < 64n; code++) {
+                if ((bits >> code) & 1n) cards.add(`${Number(code / 16n)}:${Number(code % 16n)}`);
+            }
+            out.push({ seat: L.BeliefProbe_get_seat(m, p), nLogs: L.BeliefProbe_get_n_logs(m, p), cards });
+        }
+        return out;
     }
 
     /** The loaded roster's seats, in seat order. */

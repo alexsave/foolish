@@ -422,14 +422,8 @@ extern uint32_t wasm_rng_base_internal(void);
 //
 // Behavior-neutral and OFF until a harness calls reset(): production drives
 // never pay the log pass.
-#define BELIEF_PROBE_CAP 64
-
-typedef struct {
-    uint8_t  seat;
-    uint16_t n_logs;
-    uint64_t cards;   // bit (suit*16 + value) per real card visible in the log
-} BeliefProbe;
-
+// BeliefProbe and BELIEF_PROBE_CAP are bot_drive.h's, so the records' layout is
+// declared where structgen can generate their reader.
 static BeliefProbe g_probe[BELIEF_PROBE_CAP];
 static int g_n_probe = 0;
 static int g_probe_on = 0;
@@ -457,19 +451,11 @@ static void probe_capture(const Game *g, int seat) {
 // harness can read the decisions of several cycles in order.
 void wasm_belief_probe_reset(void) { g_n_probe = 0; g_probe_on = 1; }
 
-// Dump the records into the IO buffer; returns the count. 11 bytes each:
-// u8 seat, u16 n_logs (LE), u64 card mask (LE).
-int wasm_belief_probe_dump(void) {
-    unsigned char *out = wasm_io_ptr();
-    int w = 0;
-    for (int i = 0; i < g_n_probe; i++) {
-        out[w++] = g_probe[i].seat;
-        out[w++] = (unsigned char)(g_probe[i].n_logs & 0xFF);
-        out[w++] = (unsigned char)(g_probe[i].n_logs >> 8);
-        for (int b = 0; b < 8; b++) out[w++] = (unsigned char)(g_probe[i].cards >> (8 * b));
-    }
-    return g_n_probe;
-}
+// The records: how many, and where they are (a BeliefProbe[] at the pointer,
+// read through the generated accessors). They used to be re-packed into the IO
+// buffer as 11-byte rows a harness took apart by hand.
+int wasm_belief_probe_dump(void) { return g_n_probe; }
+void *wasm_belief_probe_ptr(void) { return g_probe; }
 
 // The same capture for a drive the C Table runs (table.h table_choose_observer),
 // which seeds itself from the table's deal seed rather than through this bridge.
@@ -533,17 +519,40 @@ extern int wasm_replay_io_cap(void);
 extern int wasm_io_cap(void);
 
 static int g_rs_n_frames, g_rs_next_step;
+// Where this chunk's frames lie (replay_steps.h ReplayFrameIndex), so the host
+// slices them by named fields instead of walking their u16 length prefixes.
+static ReplayFrameIndex g_rs_index;
+
+const void *wasm_replay_events_index_ptr(void) { return &g_rs_index; }
 
 int wasm_replay_events(int viewer, int from, int code_len) {
     g_rs_n_frames = 0;
     g_rs_next_step = from;
-    return replay_steps_frames_v6(wasm_replay_io_ptr(), code_len,
-                                  viewer < 0 ? VIEW_SPECTATOR : viewer, from, 0,
-                                  wasm_io_ptr(), wasm_io_cap(),
-                                  &g_rs_n_frames, &g_rs_next_step);
+    g_rs_index.n = 0;
+    g_rs_index.next_step = from;
+    const int len = replay_steps_frames_v6(wasm_replay_io_ptr(), code_len,
+                                           viewer < 0 ? VIEW_SPECTATOR : viewer, from, 0,
+                                           wasm_io_ptr(), wasm_io_cap(),
+                                           &g_rs_n_frames, &g_rs_next_step);
+    if (len < 0) return len;
+    // Index the chunk: each frame carries a u16 LE length in front of it.
+    const unsigned char *f = wasm_io_ptr();
+    int at = 0, i = 0;
+    for (; i < g_rs_n_frames && i < REPLAY_FRAME_INDEX_MAX; i++) {
+        if (at + 2 > len) break;
+        const int flen = f[at] | (f[at + 1] << 8);
+        if (at + 2 + flen > len) break;
+        g_rs_index.off[i] = at + 2;
+        g_rs_index.len[i] = flen;
+        at += 2 + flen;
+    }
+    g_rs_index.n = i;
+    // A chunk cut short resumes at the first frame left out, so no frame is lost
+    // and the caller still makes progress (the first frame always fits).
+    g_rs_index.next_step = i == g_rs_n_frames ? g_rs_next_step : from + i;
+    return len;
 }
-int wasm_replay_events_n(void)    { return g_rs_n_frames; }
-int wasm_replay_events_next(void) { return g_rs_next_step; }
+
 
 // Steps the code replays to (the deal + one per action). Sizes the scrubber.
 int wasm_replay_step_count(int code_len) {
@@ -623,33 +632,28 @@ int wasm_replay_decoded_next(void) {
 
 static Roster g_roster;
 
-static int rd_u16le(const unsigned char *p) { return p[0] | (p[1] << 8); }
+// The spec a test fills in (roster.h RosterSpec), and where the answers land.
+static RosterSpec        g_roster_spec;
+static RosterTrailerRead g_roster_trailer;
+void *wasm_roster_spec_ptr(void)    { return &g_roster_spec; }
+void *wasm_roster_trailer_ptr(void) { return &g_roster_trailer; }
 
-// SPEC in -> roster_set_title + roster_seat_add per seat -> ROSTER_BYTES in io.
-// Returns ROSTER_BYTES, or the first ROSTER_E_* a call refused with (-100 for
-// a spec that runs off its own end).
-int wasm_roster_encode(int in_len) {
-    const unsigned char *in = wasm_io_ptr();
-    int at = 2, rc;
-    if (in_len < 2 || in_len > wasm_io_cap()) return -100;
+// The spec at wasm_roster_spec_ptr -> roster_set_title + roster_seat_add per
+// seat -> roster_encode into io. Returns ROSTER_BYTES or the ROSTER_E_* refusal.
+// It used to take the same table as a packed seat list a harness wrote itself.
+int wasm_roster_encode(void) {
+    const RosterSpec *s = &g_roster_spec;
+    int rc;
+    if (s->n < 0 || s->n > MAX_PLAYERS) return ROSTER_E_COUNT;
+    if (s->title_len > ROSTER_SPEC_TITLE_MAX) return ROSTER_E_TITLE;
     memset(&g_roster, 0, sizeof(g_roster));
-    const int n = in[0], tl = in[1];
-    if (at + tl > in_len) return -100;
-    if ((rc = roster_set_title(&g_roster, (const char *)in + at, tl)) != ROSTER_OK) return rc;
-    at += tl;
-    for (int s = 0; s < n; s++) {
-        if (at + 2 > in_len) return -100;
-        const int il = rd_u16le(in + at); at += 2;
-        const int id_at = at; at += il;
-        if (at + 2 > in_len) return -100;
-        const int nl = rd_u16le(in + at); at += 2;
-        const int name_at = at; at += nl;
-        if (at + 1 > in_len) return -100;
-        const int bl = in[at++];
-        const int brain_at = at; at += bl;
-        if (at > in_len) return -100;
-        rc = roster_seat_add(&g_roster, (const char *)in + id_at, il, (const char *)in + name_at, nl,
-                             (const char *)in + brain_at, bl);
+    if ((rc = roster_set_title(&g_roster, s->title, s->title_len)) != ROSTER_OK) return rc;
+    for (int i = 0; i < s->n; i++) {
+        const RosterSpecSeat *q = &s->seats[i];
+        if (q->id_len > ROSTER_SPEC_ID_MAX) return ROSTER_E_ID;
+        if (q->name_len > ROSTER_SPEC_NAME_MAX) return ROSTER_E_NAME;
+        if (q->brain_len > ROSTER_SPEC_BRAIN_MAX) return ROSTER_E_BRAIN;
+        rc = roster_seat_add(&g_roster, q->id, q->id_len, q->name, q->name_len, q->brain, q->brain_len);
         if (rc < 0) return rc;
     }
     return roster_encode(&g_roster, wasm_io_ptr(), wasm_io_cap());
@@ -676,22 +680,22 @@ int wasm_roster_trailer_write(int roster_len, int gid_len, int status, unsigned 
     return roster_trailer_write(&g_roster, gid, gid_len, status, good_mask, wasm_io_ptr(), wasm_io_cap());
 }
 
-// A trailer in io -> roster_trailer_read -> io =
-//   u8 status, u32 ai_mask, u16 consumed, u8 gid_len, gid, ROSTER_BYTES roster.
-// Returns that answer's length or the ROSTER_E_* refusal.
+// A trailer in io -> roster_trailer_read. What it found goes into the struct at
+// wasm_roster_trailer_ptr (roster.h RosterTrailerRead); the durable roster it
+// decoded goes back into io as ROSTER_BYTES of opaque bytes the caller forwards.
+// Returns ROSTER_BYTES or the ROSTER_E_* refusal. The answer used to be a packed
+// header a harness took apart itself.
 int wasm_roster_trailer_read(int len) {
     char gid[ROSTER_GAME_ID_MAX + 1];
     int gid_len = 0, status = 0, consumed = 0;
     uint32_t ai = 0;
     const int rc = roster_trailer_read(&g_roster, gid, &gid_len, &status, &ai, wasm_io_ptr(), len, &consumed);
     if (rc != ROSTER_OK) return rc;
-    unsigned char *out = wasm_io_ptr();
-    int at = 0;
-    out[at++] = (unsigned char)status;
-    for (int i = 0; i < 4; i++) out[at++] = (unsigned char)(ai >> (8 * i));
-    out[at++] = (unsigned char)(consumed & 0xff); out[at++] = (unsigned char)(consumed >> 8);
-    out[at++] = (unsigned char)gid_len;
-    memcpy(out + at, gid, (size_t)gid_len); at += gid_len;
-    const int wrote = roster_encode(&g_roster, out + at, wasm_io_cap() - at);
-    return wrote < 0 ? wrote : at + wrote;
+    g_roster_trailer.status = status;
+    g_roster_trailer.ai_mask = ai;
+    g_roster_trailer.consumed = consumed;
+    g_roster_trailer.gid_len = (uint16_t)gid_len;
+    memset(g_roster_trailer.gid, 0, sizeof(g_roster_trailer.gid));
+    memcpy(g_roster_trailer.gid, gid, (size_t)gid_len);
+    return roster_encode(&g_roster, wasm_io_ptr(), wasm_io_cap());
 }

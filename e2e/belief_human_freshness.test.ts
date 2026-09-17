@@ -26,7 +26,6 @@ import assert from 'node:assert/strict';
 
 import { applySchema, resetDb, uuid } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { parseBeliefProbe } from '../sdk/ts/wasm/bots.ts';
 import { serverTable } from '../sdk/ts/table/server_table.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
@@ -81,8 +80,7 @@ test('human+octogen: octogen always sees the human\'s committed moves (resident 
   // log without it.
   const table = await serverTable();
   const record = () => {
-    const dump = table.__beliefProbeDump();
-    for (const r of parseBeliefProbe(dump.bytes, dump.n).filter((x) => x.seat === OCTO_SEAT)) {
+    for (const r of table.__beliefProbeDump().filter((x) => x.seat === OCTO_SEAT)) {
       captures.push({ belief: r.cards, expected: new Set(humanCards) });
     }
     table.__beliefProbeReset();

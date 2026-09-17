@@ -322,8 +322,23 @@ int replay_b32_decode(const char *s, unsigned char *out, int cap);
 int replay_b32_encode(const unsigned char *in, int n, char *out, int cap);
 
 // Parameter of the last error (version for EVERSION, log_type<<16|menu size
-// for ENOTINMENU, 0 otherwise).
+// for ENOTINMENU, 0 otherwise). The C diagnostics print it; a host that words
+// the error reads the struct below instead, so the packing stays in this file.
 int replay_last_error_detail(void);
+
+// WHY the last call refused, in named fields. The refusal CODE is the call's
+// own return value; these are the parameters its message needs, and they are a
+// struct so a host reads them through a generated reader rather than taking one
+// packed integer apart (log_type << 16 | menu, which is what it was).
+// All zero when the last call did not set one.
+typedef struct {
+    int32_t version;    // REPLAY_EVERSION: the format version the code claims
+    int32_t log_type;   // REPLAY_ENOTINMENU: the LOG_* the session recorded
+    int32_t menu;       // REPLAY_ENOTINMENU: how many moves the menu offered
+} ReplayError;
+
+// The last refusal's parameters. Never NULL; valid until the next codec call.
+const ReplayError *replay_last_error(void);
 
 // ---------- the v6 atom stream (A5) -----------------------------------------
 //

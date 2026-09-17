@@ -137,7 +137,7 @@ function roundTripGame(game: Played, np: number, where: string): boolean {
     // The documented refusal (REPLAY_ETOOLONG), reported by the kernel itself.
     // Not an assertion failure: there is nothing to round-trip.
     if (tooLong(bytes)) return false;
-    throw new Error(`v6 encode failed on a ${np}p game (${where}, seed=${rng.seed}): ${__replayError(bytes, 0).message} (${bytes})`);
+    throw new Error(`v6 encode failed on a ${np}p game (${where}, seed=${rng.seed}): ${__replayError(bytes).message} (${bytes})`);
   }
   const x = bytesToBigint(bytes);
   const enc = {

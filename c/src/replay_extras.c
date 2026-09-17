@@ -143,6 +143,70 @@ static int name_bytes(const unsigned char *src, int n, unsigned char *out) {
     return k;
 }
 
+// ---------- the struct <-> the packed blob -----------------------------------
+
+int replay_extras_pack(const ReplayExtras *x, unsigned char *out, int cap) {
+    int w = 0;
+    if (!x || !out) return -REPLAY_EXTRAS_EINPUT;
+    if (x->n_names < 0 || x->n_names > MAX_PLAYERS) return -REPLAY_EXTRAS_EINPUT;
+    if (x->n_gaps < 0 || x->n_gaps > REPLAY_EXTRAS_MAX_GAPS) return -REPLAY_EXTRAS_EINPUT;
+    if (cap < 1) return -REPLAY_EXTRAS_ECAP;
+    out[w++] = x->flags;
+    if (x->flags & REPLAY_EXTRAS_FLAG_NAMES) {
+        if (w + 1 > cap) return -REPLAY_EXTRAS_ECAP;
+        out[w++] = (unsigned char)x->n_names;
+        for (int i = 0; i < x->n_names; i++) {
+            const int n = x->names[i].len;
+            if (n > REPLAY_EXTRAS_NAME_SLOT) return -REPLAY_EXTRAS_EINPUT;
+            if (w + 2 + n > cap) return -REPLAY_EXTRAS_ECAP;
+            wr_u16(out + w, n);
+            w += 2;
+            for (int j = 0; j < n; j++) out[w++] = (unsigned char)x->names[i].text[j];
+        }
+    }
+    if (x->flags & REPLAY_EXTRAS_FLAG_TIMES) {
+        if (w + 10 + 8 * x->n_gaps > cap) return -REPLAY_EXTRAS_ECAP;
+        wr_f64(out + w, x->start_time);
+        w += 8;
+        wr_u16(out + w, x->n_gaps);
+        w += 2;
+        for (int i = 0; i < x->n_gaps; i++) { wr_f64(out + w, x->gaps[i]); w += 8; }
+    }
+    return w;
+}
+
+int replay_extras_unpack(const unsigned char *in, int in_len, ReplayExtras *out) {
+    int p = 0, flags = 0, n = 0;
+    if (!in || !out) return -REPLAY_EXTRAS_EINPUT;
+    out->flags = 0; out->n_names = 0; out->start_time = 0; out->n_gaps = 0;
+    if (!rd_u8(in, in_len, &p, &flags)) return -REPLAY_EXTRAS_EINPUT;
+    out->flags = (uint8_t)flags;
+    // The ANSWER always carries the count byte, even with no names section (the
+    // decoder back-fills both header bytes); only the argument blob omits it.
+    if (!rd_u8(in, in_len, &p, &n)) return -REPLAY_EXTRAS_EINPUT;
+    if (flags & REPLAY_EXTRAS_FLAG_NAMES) {
+        if (n > MAX_PLAYERS) return -REPLAY_EXTRAS_EINPUT;
+        out->n_names = n;
+        for (int i = 0; i < n; i++) {
+            int len = 0;
+            if (!rd_u16(in, in_len, &p, &len)) return -REPLAY_EXTRAS_EINPUT;
+            if (p + len > in_len || len > REPLAY_EXTRAS_NAME_SLOT) return -REPLAY_EXTRAS_EINPUT;
+            out->names[i].len = (uint16_t)len;
+            for (int j = 0; j < len; j++) out->names[i].text[j] = (char)in[p + j];
+            p += len;
+        }
+    }
+    if (flags & REPLAY_EXTRAS_FLAG_TIMES) {
+        int n_gaps = 0;
+        if (!rd_f64(in, in_len, &p, &out->start_time)) return -REPLAY_EXTRAS_EINPUT;
+        if (!rd_u16(in, in_len, &p, &n_gaps)) return -REPLAY_EXTRAS_EINPUT;
+        if (n_gaps > REPLAY_EXTRAS_MAX_GAPS || p + 8 * n_gaps > in_len) return -REPLAY_EXTRAS_EINPUT;
+        out->n_gaps = n_gaps;
+        for (int i = 0; i < n_gaps; i++) rd_f64(in, in_len, &p, &out->gaps[i]);
+    }
+    return p;
+}
+
 // ---------- encode -----------------------------------------------------------
 
 // The gaps of an args blob, read where they sit.

@@ -109,6 +109,48 @@ typedef struct {
     RosterSeat seats[MAX_PLAYERS];
 } Roster;
 
+// ---- the test entries' shapes ---------------------------------------------
+//
+// A table as a TEST states it, and what reading a trailer said. The test-only
+// wasm entries (c/wasm/wasm_bots_api.c, WASM_TEST_EXPORTS) cross with these
+// structs rather than a packed seat list a harness would have to write byte by
+// byte. `RosterSpec` is an INPUT: the title and the seats to roster_set_title
+// and roster_seat_add, in order, so every refusal those make is still the
+// kernel's (a value wider than a slot is the generated writer's RangeError, and
+// nothing drives that path).
+// The slots are WIDER than the roster's own budgets on purpose: a test hands
+// over RAW input so that trimming a name and refusing an id stay the kernel's
+// judgement (roster_seat_add, roster_set_title) and not a writer's range check.
+// 4x a name covers 64 characters of 4-byte scalars, the widest a nickname field
+// can produce, and the parity suite's worst case is 144 bytes.
+#define ROSTER_SPEC_ID_MAX    (2 * ROSTER_ID_MAX)
+#define ROSTER_SPEC_NAME_MAX  (4 * ROSTER_NAME_MAX)
+#define ROSTER_SPEC_BRAIN_MAX (2 * ROSTER_BRAIN_MAX)
+#define ROSTER_SPEC_TITLE_MAX (2 * ROSTER_TITLE_MAX)
+
+typedef struct {
+    uint16_t id_len;    char id[ROSTER_SPEC_ID_MAX];
+    uint16_t name_len;  char name[ROSTER_SPEC_NAME_MAX];
+    uint16_t brain_len; char brain[ROSTER_SPEC_BRAIN_MAX];
+} RosterSpecSeat;
+
+typedef struct {
+    int32_t        n;                  // seats, 0..MAX_PLAYERS
+    uint16_t       title_len;
+    char           title[ROSTER_SPEC_TITLE_MAX];
+    RosterSpecSeat seats[MAX_PLAYERS];
+} RosterSpec;
+
+// What roster_trailer_read found, beside the durable roster it decoded (which
+// the entry leaves in the IO buffer as ROSTER_BYTES of opaque bytes).
+typedef struct {
+    int32_t  status;      // GAME_STATUS_*
+    uint32_t ai_mask;     // bot seats
+    int32_t  consumed;    // trailer bytes read
+    uint16_t gid_len;
+    char     gid[ROSTER_GAME_ID_MAX];
+} RosterTrailerRead;
+
 // The durable blob. decode zeroes *r first and returns ROSTER_OK or ROSTER_E_*;
 // encode refuses an invalid roster and otherwise returns ROSTER_BYTES.
 int      roster_decode(Roster *r, const uint8_t *p, int len);

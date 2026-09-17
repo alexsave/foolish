@@ -50,9 +50,9 @@ void *memset(void *dst, int c, size_t n) {
 // 67,586B at bots' 512/64 (the 72KB default), 16,898B at rules' 128/64
 // (why the rules build overrides to 24KB — see the Makefile L1 notes).
 // Everything else is far smaller (state export <1.1KB, env strings, the
-// chosen move), and the legal-move export is CHUNKED (wasm_export_moves)
-// and clamps its chunk to the buffer, so it no longer sizes IO_CAP — the
-// TS side derives its chunk from wasm_io_cap.
+// chosen move), and the legal-move menu is not copied into it at all: a host
+// reads the resident LegalMoves where it lies (wasm_legal_moves_ptr), so the
+// menu no longer sizes IO_CAP.
 #ifndef WASM_IO_CAP
 #define WASM_IO_CAP (72 * 1024)
 #endif
@@ -735,6 +735,9 @@ int wasm_replay_encode_v6_from_game(int max_atoms) {
 }
 
 int wasm_replay_error_detail(void) { return replay_last_error_detail(); }
+// The same refusal as a struct (replay.h ReplayError), so a host words the
+// message from named fields instead of unpacking log_type << 16 | menu.
+const void *wasm_replay_error_ptr(void) { return replay_last_error(); }
 
 // ---------- FMSG: the iMessage envelope (src/msg_wire.h) -----------------
 //
@@ -762,106 +765,20 @@ int wasm_replay_error_detail(void) { return replay_last_error_detail(); }
 // the payload describes — the /m/ route needs no new rendering path, and a turn
 // continues from exactly what it decoded.
 
-// The unpacked header, the private ABI between msg_wire and its TS/Swift
-// bridges. Fixed offsets and fixed-size join slots: this side is ours, so it
-// trades bytes for a bridge that cannot mis-parse.
+// THE HEADER, as a struct (msg_wire.h MsgHeader), not a byte string. A bridge
+// reads and writes it through the readers and writers tools/structgen generates
+// from that declaration, so the offsets exist once, in C, and a host cannot
+// mis-parse them. It used to be a hand-packed blob with a fixed join slot,
+// written here and re-read field by field in sdk/ts/wasm/bots.ts.
 //
-//   0  1 format      1  1 flags        2  1 phase       3  1 n_players
-//   4  1 variant     5  1 round        6  1 last_actor   7  1 n_joins
-//   8  8 game_id (LE)                 16  2 turn (LE)
-//   18 8 parent8                      26 32 seed
-//   58 32 digest — SHA-256 of the WHOLE envelope; Rule P's tiebreak compares
-//                  these lexicographically, and parent8 is a parent's first 8.
-//                  Decode-only: msg_seal ignores it (an envelope cannot contain
-//                  its own digest).
-//   90  2 sent_at — ROUND 16's send clock, unix seconds mod 65536; 0 on a
-//                  format-2 chain, which carries none. Unlike the digest this
-//                  one goes BOTH ways: a caller that writes it here seals a
-//                  format-3 envelope (msg_wire.c picks the format off the
-//                  clock), and one that leaves it 0 seals format 2 exactly as
-//                  every shipped build does today.
-//   92  1 n_new  - ROUND 16's bubble delta: how many atoms THIS bubble added,
-//                  0 for a chain that does not say (msg_wire.h). DECODE-ONLY,
-//                  and deliberately: msg_seal derives the delta from the base
-//                  turn this host tracks, so a caller cannot claim a boundary
-//                  its body does not have. Whatever is written here is ignored.
-//   93  1 opening - THE FOOL'S PENALTY (msg_wire.h format 4): the seat this
-//                  deal opens on, 0xFF for the ordinary lowest-trump
-//                  derivation. BOTH WAYS, like sent_at: a caller that writes a
-//                  seat here seals a format-4 envelope, and the rematch it
-//                  starts deals from that seat on every device.
-//   94  4 carry_key  - a WAITING lobby's rematch carry, u32 LE; 0 = none.
-//   98  1 carry_fool - the fool's canonical index in that carry; 0xFF = none.
-//                  Both ways as well: the lobby a "New game" creates is sealed
-//                  with them, and every join re-seal carries them forward.
-//   99 n_joins x 66 { u8 seat, u8 name_len, 64 B name }
-#define MSG_BLOB_HDR   99
-// 2 + MSG_MAX_NAME: was 14 (2 + 12) before round-5 B1 raised the name cap to
-// 64 (docs/APP_REVIEW_NOTES.md, msg_wire.h). Unlike the wire encoding (which
-// is length-prefixed per join and needs no slack), this TS bridge blob uses a
-// FIXED-SIZE join slot, so the slot itself must grow with the cap.
-#define MSG_BLOB_JOIN  (2 + MSG_MAX_NAME)
-// 93 + 8 x 66 = 621 B, well inside REPLAY_IO_CAP (32,768 B on the wasm builds
-// that export FMSG) — see wasm_msg_decode/wasm_msg_seal below, which write
-// this blob into g_replay_io.
-#define MSG_BLOB_MAX   (MSG_BLOB_HDR + MSG_MAX_JOINS * MSG_BLOB_JOIN)
+// It lives OUTSIDE g_replay_io deliberately: a decode leaves the envelope's own
+// bytes in that buffer and a seal writes the new ones back over them, so a
+// header parked there would be clobbered by the very call that reads it.
+static MsgHeader g_msg_header;
 
-static void msg_blob_write(const MsgEnvelope *e, const uint8_t *digest, unsigned char *o) {
-    o[0] = e->format; o[1] = e->flags; o[2] = e->phase; o[3] = e->n_players;
-    o[4] = e->variant; o[5] = e->round; o[6] = e->last_actor_seat;
-    o[7] = (unsigned char)e->n_joins;
-    for (int i = 0; i < 8; i++) o[8 + i] = (unsigned char)(e->game_id >> (8 * i));
-    o[16] = (unsigned char)(e->turn & 0xff);
-    o[17] = (unsigned char)(e->turn >> 8);
-    memcpy(o + 18, e->parent8, MSG_PARENT_LEN);
-    memcpy(o + 26, e->seed, MSG_SEED_LEN);
-    if (digest) memcpy(o + 58, digest, SHA256_DIGEST_LEN);
-    else memset(o + 58, 0, SHA256_DIGEST_LEN);
-    o[90] = (unsigned char)(e->sent_at & 0xff);
-    o[91] = (unsigned char)(e->sent_at >> 8);
-    o[92] = e->n_new;
-    o[93] = e->opening;
-    for (int i = 0; i < 4; i++) o[94 + i] = (unsigned char)(e->carry_key >> (8 * i));
-    o[98] = e->carry_fool;
-    for (int i = 0; i < e->n_joins; i++) {
-        unsigned char *j = o + MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
-        j[0] = e->joins[i].seat;
-        j[1] = e->joins[i].name_len;
-        memset(j + 2, 0, MSG_MAX_NAME);
-        memcpy(j + 2, e->joins[i].name, e->joins[i].name_len);
-    }
-}
-
-static int msg_blob_read(const unsigned char *b, int len, MsgEnvelope *e) {
-    if (len < MSG_BLOB_HDR) return MSG_ESHORT;
-    msg_envelope_init(e);   // NOT memset: the rematch fields have sentinels
-    e->format = b[0]; e->flags = b[1]; e->phase = b[2]; e->n_players = b[3];
-    e->variant = b[4]; e->round = b[5]; e->last_actor_seat = b[6];
-    e->n_joins = b[7];
-    if (e->n_joins < 1 || e->n_joins > MSG_MAX_JOINS) return MSG_EJOINS;
-    if (len < MSG_BLOB_HDR + e->n_joins * MSG_BLOB_JOIN) return MSG_ESHORT;
-    uint64_t id = 0;
-    for (int i = 7; i >= 0; i--) id = (id << 8) | b[8 + i];
-    e->game_id = id;
-    e->turn = (uint16_t)(b[16] | (b[17] << 8));
-    memcpy(e->parent8, b + 18, MSG_PARENT_LEN);
-    memcpy(e->seed, b + 26, MSG_SEED_LEN);
-    e->sent_at = (uint16_t)(b[90] | (b[91] << 8));
-    // b[92] (n_new) is NOT read back: msg_seal derives the delta, see the
-    // layout note above.
-    e->opening    = b[93];
-    e->carry_key  = (uint32_t)b[94] | ((uint32_t)b[95] << 8)
-                  | ((uint32_t)b[96] << 16) | ((uint32_t)b[97] << 24);
-    e->carry_fool = b[98];
-    for (int i = 0; i < e->n_joins; i++) {
-        const unsigned char *j = b + MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
-        e->joins[i].seat = j[0];
-        e->joins[i].name_len = j[1];
-        if (j[1] > MSG_MAX_NAME) return MSG_ENAME;
-        memcpy(e->joins[i].name, j + 2, MSG_MAX_NAME);
-    }
-    return MSG_EOK;
-}
+// The address of that header. The whole ABI: the caller reads it after a decode
+// and fills it in before a seal.
+void *wasm_msg_header_ptr(void) { return &g_msg_header; }
 
 // The adopted chain's round, kept from the last successful wasm_msg_decode —
 // Rule R's guard input, and the one thing a rebase needs that the resident Game
@@ -884,9 +801,9 @@ static int g_msg_round = -1;
 // different byte on the same chain.
 
 // in:  g_replay_io[0 .. in_len) = the envelope bytes
-// out: the unpacked header blob, written back over g_replay_io
-// Replays the chain into g_game on the way. Returns the blob length, or -MSG_E*
-// negated into the same space the replay errors use (see the TS bridge).
+// out: the header at wasm_msg_header_ptr (MsgHeader)
+// Replays the chain into g_game on the way. Returns MSG_EOK, or -MSG_E* negated
+// into the same space the replay errors use (see the TS bridge).
 int wasm_msg_decode(int in_len) {
     if (in_len < 0 || in_len > REPLAY_IO_CAP) return MSG_ECAP;
     MsgEnvelope e;
@@ -905,8 +822,13 @@ int wasm_msg_decode(int in_len) {
     g_msg_round = e.round;   // Rule R's guard reads this against a pending move
     // …and the log mark a later seal measures its bubble against.
     g_msg_base_logs = g_game.num_logs;
-    msg_blob_write(&e, digest, g_replay_io);
-    return MSG_BLOB_HDR + e.n_joins * MSG_BLOB_JOIN;
+    // The header, at wasm_msg_header_ptr. `actions` is dropped on the way: it
+    // borrows g_replay_io, which the next call is free to overwrite.
+    g_msg_header.e = e;
+    g_msg_header.e.actions = 0;
+    g_msg_header.e.actions_len = 0;
+    memcpy(g_msg_header.digest, digest, SHA256_DIGEST_LEN);
+    return MSG_EOK;
 }
 
 // Rule P (msg_wire.h §7.2). Two envelopes laid end to end in g_replay_io:
@@ -940,15 +862,25 @@ int wasm_msg_rebase(int pending_round, int seat, int wire_len) {
     return msg_rebase_one(&g_game, g_msg_round, pending_round, seat, &a);
 }
 
-// in:  g_replay_io[0 .. in_len) = the unpacked header blob (digest ignored)
-// out: the envelope bytes, written back over g_replay_io
+// in:  the header at wasm_msg_header_ptr (MsgHeader)
+// out: the envelope bytes in g_replay_io
 // Seals the RESIDENT g_game — the game the caller just played a move on.
 // Returns the envelope length, or a negative MSG_E*.
-int wasm_msg_seal(int in_len) {
-    if (in_len < 0 || in_len > REPLAY_IO_CAP) return MSG_ECAP;
-    MsgEnvelope e;
-    const int rc = msg_blob_read(g_replay_io, in_len, &e);
-    if (rc != MSG_EOK) return rc;
+//
+// Three of the header's fields are the KERNEL'S to state, and a caller does not
+// get to claim them: the digest (an envelope cannot carry its own), `n_new` (the
+// bubble's atom delta, which msg_seal derives from the base turn this host
+// tracks) and the borrowed body. They are cleared here rather than trusted, so
+// the struct a caller filled in cannot assert a boundary its body does not have.
+int wasm_msg_seal(void) {
+    MsgEnvelope e = g_msg_header.e;
+    if (e.n_joins < 1 || e.n_joins > MSG_MAX_JOINS) return MSG_EJOINS;
+    for (int i = 0; i < e.n_joins; i++)
+        if (e.joins[i].name_len > MSG_MAX_NAME) return MSG_ENAME;
+    e.n_new = 0;
+    e.n_actions = 0;
+    e.actions_len = 0;
+    e.actions = 0;
 
     // A v6 body is tens of bytes; 512 is far above any measured game (8p ~68 B).
     static unsigned char body[512];
@@ -1148,21 +1080,11 @@ int wasm_legal_moves(int bot_idx) {
     return g_moves.n;
 }
 
-// Chunked export (the full list can exceed the IO buffer): serializes up to
-// `max_moves` moves starting at `start`. Header: u32 moves written; the
-// caller loops until it has wasm_legal_moves() total.
-int wasm_export_moves(int start, int max_moves) {
-    // Defensive clamp to the buffer: a caller with a stale chunk size gets a
-    // short (but well-formed) chunk instead of an overflow into g_game. The
-    // worst-case wire move is 2 + 2 x MAX_MOVE_CARDS bytes.
-    int fit = (IO_CAP - 4) / (2 + 2 * MAX_MOVE_CARDS);
-    if (max_moves > fit) max_moves = fit;
-    // The layout itself is legal.c's (legal_menu_write) - written down once,
-    // beside the reader the board rules walk it with. The clamp above stays
-    // here because the chunking is this export's own contract with the TS
-    // caller, not a property of the format.
-    const int n = legal_menu_write(&g_moves, start, max_moves, g_io, IO_CAP);
-    if (n >= 0) return n;
-    g_io[0] = g_io[1] = g_io[2] = g_io[3] = 0;   // an empty chunk, never a lie
-    return 4;
-}
+// The menu itself (legal.h LegalMoves), which the caller reads through the
+// generated accessors (sdk/ts/gen/anim.bots.ts). It replaced a CHUNKED packed
+// export: the list can be far larger than the IO buffer, so a host used to loop
+// over u32-prefixed chunks of the wire format and unpack each move by hand.
+// Reading the struct where it already is needs neither the chunks nor the wire
+// (the packed form stays for the hosts that genuinely have to copy it across a
+// boundary - legal_menu_write, which iOS's fio_legal_packed uses).
+void *wasm_legal_moves_ptr(void) { return &g_moves; }

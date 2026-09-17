@@ -610,8 +610,8 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_replay_io_ptr -Wl,--export=wasm_replay_io_cap \
   -Wl,--export=wasm_replay_decode \
   -Wl,--export=wasm_replay_encode_v6 \
-  -Wl,--export=wasm_replay_error_detail \
-  -Wl,--export=wasm_legal_moves -Wl,--export=wasm_export_moves \
+  -Wl,--export=wasm_replay_error_detail -Wl,--export=wasm_replay_error_ptr \
+  -Wl,--export=wasm_legal_moves -Wl,--export=wasm_legal_moves_ptr \
   -Wl,--export=wasm_apply_action -Wl,--export=wasm_finalize_win \
   -Wl,--export=wasm_view_serialize -Wl,--export=wasm_events_serialize \
   -Wl,--export=wasm_rearrange_hand \
@@ -714,23 +714,23 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_export_logs_masked_from \
   -Wl,--export=wasm_events_serialize_from \
   -Wl,--export=wasm_replay_encode_v6_from_game \
-  -Wl,--export=wasm_replay_events -Wl,--export=wasm_replay_events_n \
-  -Wl,--export=wasm_replay_events_next -Wl,--export=wasm_replay_step_count \
+  -Wl,--export=wasm_replay_events -Wl,--export=wasm_replay_events_index_ptr \
+  -Wl,--export=wasm_replay_step_count \
   -Wl,--export=wasm_replay_step_index \
-  -Wl,--export=wasm_replay_extras_encode \
+  -Wl,--export=wasm_replay_extras_encode -Wl,--export=wasm_replay_extras_ptr \
   -Wl,--export=wasm_replay_extras_decode \
   -Wl,--export=wasm_replay_link \
   -Wl,--export=wasm_replay_b32_encode -Wl,--export=wasm_replay_b32_decode \
   -Wl,--export=wasm_replay_link_parse \
   -Wl,--export=wasm_unambiguous_cover \
-  -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal \
+  -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal -Wl,--export=wasm_msg_header_ptr \
   -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
   -Wl,--export=wasm_msg_pickup_hold \
   -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
   -Wl,--export=wasm_anim_finish_rows \
   -Wl,--export=wasm_anim_conflict_verdicts \
   -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport \
-  -Wl,--export=wasm_belief_probe_reset -Wl,--export=wasm_belief_probe_dump
+  -Wl,--export=wasm_belief_probe_reset -Wl,--export=wasm_belief_probe_dump -Wl,--export=wasm_belief_probe_ptr
 
 # The C Roster (src/roster.h), in the TEST build only (WASM_TEST_EXPORTS below):
 # e2e/helpers/roster_kernel.ts drives the durable encoding and the envelope
@@ -738,7 +738,7 @@ WASM_BOTS_API_EXPORTS := \
 # decoder C-written trailers). Production reaches the roster through the table
 # exports, never through these.
 WASM_ROSTER_EXPORTS := \
-  -Wl,--export=wasm_roster_encode -Wl,--export=wasm_roster_decode \
+  -Wl,--export=wasm_roster_encode -Wl,--export=wasm_roster_spec_ptr -Wl,--export=wasm_roster_trailer_ptr -Wl,--export=wasm_roster_decode \
   -Wl,--export=wasm_roster_trailer_write -Wl,--export=wasm_roster_trailer_read
 
 # The C Table (src/table.h, wasm/wasm_table_api.c), bots.wasm ONLY, for the same
@@ -908,11 +908,11 @@ WASM_MSG_SRC := src/game.c src/deal_rng.c src/legal.c src/view.c src/awire.c \
                 wasm/wasm_api.c wasm/wasm_msg_api.c
 
 WASM_MSG_EXPORTS := \
-  -Wl,--export=wasm_replay_extras_encode \
+  -Wl,--export=wasm_replay_extras_encode -Wl,--export=wasm_replay_extras_ptr \
   -Wl,--export=wasm_replay_b32_encode \
   -Wl,--export=wasm_replay_link \
   -Wl,--export=wasm_unambiguous_cover \
-  -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal \
+  -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal -Wl,--export=wasm_msg_header_ptr \
   -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
   -Wl,--export=wasm_msg_pickup_hold \
   -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \

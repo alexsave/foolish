@@ -58,7 +58,7 @@ function memLimits(wasm: Uint8Array): { min: number; max: number | null } {
     throw new Error('no memory section');
 }
 
-test("bots.wasm declared INITIAL memory is 36 pages (static buffers, not the runtime TT)", () => {
+test("bots.wasm declared INITIAL memory is 37 pages (static buffers, not the runtime TT)", () => {
     // bots.wasm can't be pinned — it bump-allocates a per-family transposition
     // table at runtime (see the flat-across-families test below). So we assert
     // the INITIAL declared memory only: the static (data + bss) footprint the
@@ -79,25 +79,47 @@ test("bots.wasm declared INITIAL memory is 36 pages (static buffers, not the run
     // (a new static buffer, or the stack creeping up) trips this. Read straight
     // from the shipped gz artifact.
     //
-    // 36 AGAIN, AND BY 2.5 KiB. This budget was 37 from 6d863b5 (the animation
-    // core moving to C) until fccdb8f, where dropping replay format v9 and the
-    // retrodiction machinery freed ~9 KiB of statics and the image fell back
-    // under the line. The standing TODO that asked for exactly this is
-    // therefore retired. Measured with llvm-nm on the objects this build links:
+    // 37, RAISED DELIBERATELY (Phase 8's generated structs). This budget was 37
+    // from 6d863b5 (the animation core moving to C), fell back to 36 at fccdb8f
+    // when dropping replay format v9 and the retrodiction machinery freed ~9 KiB
+    // of statics, and is 37 again now. What crossed the line: the kernel entry
+    // points whose arguments and results used to be byte strings a host packed
+    // itself now cross as C STRUCTS, and a struct a host reads and writes has to
+    // live somewhere below __heap_base (e2e/no_ts_game_shape.test.ts). Sizes
+    // straight from the generated modules' _SIZE constants:
     //
-    //   named statics   2,334,176 B   (35.62 pages, 297 symbols)
+    //   ReplayExtras       8,744 B   the share link's names and per-move gaps
+    //                               (8,192 of it gaps[MAX_LOGS]: a game cannot
+    //                                have more moves than log records, so the
+    //                                bound is the game's, not a new cap)
+    //   RosterSpec + read  3,528 B   the TEST entries' table and trailer answer
+    //                               (its slots are 2-4x the roster's budgets on
+    //                                purpose, so trimming a name stays the
+    //                                kernel's judgement - see roster.h)
+    //   ReplayFrameIndex   1,032 B   where one chunk of replay frames lies
+    //   MsgHeader            656 B   the FMSG envelope header
+    //   ReplayError           12 B   why the last replay call refused
+    //   ---------------------------
+    //   ~13,016 B of new static against 2,592 B of room under 36 pages.
+    //
+    // Measured with llvm-nm on the objects this build links:
+    //
+    //   named statics   2,347,192 B   (35.82 pages, 337 symbols)
     //   shadow stack       22,528 B   (-Wl,-z,stack-size=22528, --stack-first)
     //   ------------------------------
-    //   total           2,356,704 B   = 35.96 pages -> 36 declared
+    //   total           2,369,720 B   = 36.16 pages -> 37 declared
     //
-    // which leaves 2,592 BYTES under the 36-page line. That is the whole margin:
-    // one new static buffer bigger than ~2.5 KiB below __heap_base puts the page
-    // straight back, and this test is what will say so. If it has to go to 37
-    // again, raise it deliberately here rather than quietly, the way it was
-    // raised and then paid back the first time.
+    // which leaves 55,112 BYTES under the 37-page line - room for a struct or
+    // two, not for another g_io. The alternative was to pay for them out of
+    // g_io (400 KiB, the biggest static here), and it was REJECTED: the
+    // Makefile sizes that buffer for ~3,072 raw log records so the kernel can
+    // filter the whole session itself, and narrowing a measured design target to
+    // dodge a page is how a buffer quietly stops meeting it. The runtime peak is
+    // unaffected - it is the solver's bump-allocated transposition table, which
+    // the flat-across-families test below pins.
     const wasm = new Uint8Array(gunzipSync(readFileSync(resolve('sdk/ts/wasm/bots.wasm.gz'))));
     const { min } = memLimits(wasm);
-    assert.equal(min, 36, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 36 (the deliberate static buffers — IO cap, solver working set, FMSG scratch games). Going UP is a regression: there are only ~2.5 KiB of static room under the 36-page line, so look for a new buffer below __heap_base.`);
+    assert.equal(min, 37, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 37: the deliberate static buffers (g_io 400 KiB, the cordite solver working set, the move enumerators, the resident and replay Games, the FMSG seal and rebase scratch games) plus the bridge's generated structs (ReplayExtras 8,744 B, RosterSpec 3,448 B, ReplayFrameIndex 1,032 B, MsgHeader 656 B). Going UP is a regression: 55,112 B of static room are left under the 37-page line, so look for a new buffer below __heap_base. Going DOWN means something was freed - lower this pin and take the page back.`);
 });
 
 test('loading the bot kernel (read + gunzip + instantiate) fits a 64MB-old-space node', () => {

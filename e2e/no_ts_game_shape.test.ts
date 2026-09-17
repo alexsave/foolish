@@ -143,23 +143,17 @@ const INDEPENDENT_READERS: Record<string, string> = {
         'S1 walks the raw push frames by their length fields for the same reason',
 };
 
-// TEMPORARY: kernel entry points whose argument or result is a hand-packed byte
-// string rather than a C struct structgen generates. Each goes when its C side
-// becomes a struct with a generated reader or writer (tools/structgen specs);
-// entries are never added.
-const NOT_YET_GENERATED: Record<string, string> = {
-    'sdk/ts/wasm/bots.ts#residentLegalMoves': 'wasm_export_moves writes a u32 count and packed moves, not the LegalMoves struct anim.bots.ts reads',
-    'sdk/ts/wasm/bots.ts#__replayError': 'wasm_replay_error_detail packs a log type and a menu size into one u32',
-    'sdk/ts/wasm/bots.ts#parseBeliefProbe': 'wasm_belief_probe_dump writes 11-byte records with a u16 and a card bit set',
-    'sdk/ts/wasm/bots.ts#readBlob': 'the FMSG header blob (msg_blob_write in c/wasm/wasm_api.c) is a private fixed-offset layout',
-    'sdk/ts/wasm/bots.ts#writeBlob': 'the FMSG header blob msg_blob_read takes, the same layout',
-    'sdk/ts/wasm/bots.ts#__extrasArgs': 'wasm_replay_extras_encode takes a packed names and times argument string',
-    'sdk/ts/wasm/bots.ts#kernelReplayExtrasDecode': 'wasm_replay_extras_decode writes packed names and f64 times',
-    'sdk/ts/wasm/bots.ts#kernelReplayLink': 'wasm_replay_link takes a packed roster and moves argument string',
-    'sdk/ts/wasm/bots.ts#replayEventFrames': 'wasm_replay_events writes u16-length-prefixed frames',
-    'e2e/helpers/roster_kernel.ts#spec': 'the test build\'s wasm_roster_* entries take a packed seat list',
-    'e2e/helpers/roster_kernel.ts#cRosterTrailerRead': 'wasm_roster_trailer_read writes a packed status, AI mask and length',
-};
+// Kernel entry points whose argument or result is still a hand-packed byte string
+// rather than a C struct structgen generates. Entries are never added, and the
+// eleven that were here are gone: every one of those entries now crosses as a C
+// struct read or written through a generated accessor (the FMSG header as
+// msg_wire.h MsgHeader, the legal-move menu as legal.h LegalMoves read where it
+// lies, a replay refusal as replay.h ReplayError, a bot search's belief as
+// bot_drive.h BeliefProbe, the share link's names and times as
+// replay_extras.h ReplayExtras, a frames chunk as replay_steps.h
+// ReplayFrameIndex, and the test entries' table and trailer as roster.h
+// RosterSpec and RosterTrailerRead).
+const NOT_YET_GENERATED: Record<string, string> = {};
 
 const ALLOWED: Record<string, string> = { ...INDEPENDENT_READERS, ...NOT_YET_GENERATED };
 
@@ -203,5 +197,6 @@ test('every named function still exists and still needs its entry; the temporary
     const used = new Set(sources().flatMap((f) => layoutWrites(parse(f))).map((o) => o.slice(0, o.indexOf(':'))));
     const stale = Object.keys(ALLOWED).filter((k) => !used.has(k));
     assert.deepEqual(stale, [], `drop from the lists: ${stale.join(', ')}`);
-    assert.ok(Object.keys(NOT_YET_GENERATED).length <= 11, 'entries are never added to NOT_YET_GENERATED');
+    assert.equal(Object.keys(NOT_YET_GENERATED).length, 0,
+        'the temporary list is empty and stays empty: a kernel entry crosses as a struct, not as bytes a host packs');
 });

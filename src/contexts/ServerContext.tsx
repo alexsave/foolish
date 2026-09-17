@@ -23,9 +23,10 @@ type Card = ViewCard;
 // null when it does not read whole.
 const readEnvelope = (bytes: Uint8Array): TableView | null => clientTable().adoptEnvelope(bytes);
 
-// Decode the bare-hex (no \x prefix) `view` blob stored in player_views. Tiny
-// local helper so the dashboard read doesn't pull the replay codec into the
-// main bundle.
+// Decode the hex `view` blob stored in player_views. It is a BYTEA column, so a
+// PostgREST select gives it as '\x'-prefixed hex and a Realtime postgres_changes
+// payload as bare hex; the optional prefix is stripped either way. Tiny local
+// helper so the dashboard read doesn't pull the replay codec into the main bundle.
 const hexToBytes = (hex: string): Uint8Array => {
     const h = hex.startsWith('\\x') ? hex.slice(2) : hex;
     const out = new Uint8Array(h.length >> 1);

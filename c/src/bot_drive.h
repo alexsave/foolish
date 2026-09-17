@@ -177,4 +177,21 @@ void bot_drive_seed_decision(const Game *g, uint32_t base, uint32_t log_offset, 
 // the seed's hex text, the native server its 32 raw bytes). 0 for no seed.
 uint32_t bot_drive_seed_base(const uint8_t *seed, int len);
 
+// ---------- belief probe (test observability) ------------------------------
+//
+// What a bot SEARCH saw of the session log, recorded by the wasm bridge as the
+// strategy was about to read it (c/wasm/wasm_bots_api.c). A host-side spy can
+// only prove the log's bytes were handed over, never that they were spliced into
+// the Game the strategy read - the gap the octogen-blind and cordite
+// stale-belief regressions lived in. The records cross as this struct, read
+// through the generated accessors (sdk/ts/gen/game_layout.<build>.ts), so no
+// harness restates their layout.
+#define BELIEF_PROBE_CAP 64
+
+typedef struct {
+    uint8_t  seat;
+    uint16_t n_logs;   // log records spliced into the Game at the decision
+    uint64_t cards;    // bit (suit*16 + value) per real card visible in that log
+} BeliefProbe;
+
 #endif

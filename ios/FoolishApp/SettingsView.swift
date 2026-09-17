@@ -79,7 +79,7 @@ struct SettingsView: View {
                 HStack { Text("Signed in as"); Spacer(); Text(name).foregroundColor(FColor.textDim) }
                 Button("Sign out") { Task { await auth.signOut() } }
                 // 5.1.1(v): in-app account deletion is mandatory. Calls the
-                // delete-account edge function (this repo's supabase/functions).
+                // delete-account edge function (server/impls/supabase/functions).
                 Button(role: .destructive) { confirmDelete = true } label: {
                     HStack { Text("Delete account"); if deleting { Spacer(); ProgressView() } }
                 }

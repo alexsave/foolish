@@ -36,15 +36,35 @@ extern Game *wasm_game_ptr_internal(void);
 // `player_count` and `move_count` on the way back are the decoded moves', not
 // the blob's - it carries neither.
 
-int wasm_replay_extras_encode(int in_len) {
-    return replay_extras_encode(wasm_replay_io_ptr(), in_len,
-                                wasm_io_ptr(), wasm_io_cap());
+// The extras' names and times cross as ONE struct (replay_extras.h
+// ReplayExtras), read and written through the generated reader and writer, in
+// BOTH directions and for the link's roster below. The packed argument blob the
+// codec itself speaks stays where it belongs: this bridge packs and unpacks it
+// (replay_extras_pack / _unpack, beside the format), so no host writes those
+// bytes. One instance, since no two of these calls overlap.
+static ReplayExtras g_extras;
+void *wasm_replay_extras_ptr(void) { return &g_extras; }
+
+// The struct at wasm_replay_extras_ptr -> the extras blob in the main IO buffer.
+// The packed argument blob is built in the REPLAY buffer on the way, which is
+// where a caller used to have to build it itself.
+int wasm_replay_extras_encode(void) {
+    unsigned char *args = wasm_replay_io_ptr();
+    const int n = replay_extras_pack(&g_extras, args, wasm_replay_io_cap());
+    if (n < 0) return n;
+    return replay_extras_encode(args, n, wasm_io_ptr(), wasm_io_cap());
 }
 
+// The extras blob in the REPLAY buffer -> the struct at wasm_replay_extras_ptr.
+// Returns the answer's name count and gap count as one non-negative number is
+// not enough, so it returns 0 and the struct carries both.
 int wasm_replay_extras_decode(int blob_len, int player_count, int move_count) {
-    return replay_extras_decode(wasm_replay_io_ptr(), blob_len,
-                                player_count, move_count,
-                                wasm_io_ptr(), wasm_io_cap());
+    const int n = replay_extras_decode(wasm_replay_io_ptr(), blob_len,
+                                       player_count, move_count,
+                                       wasm_io_ptr(), wasm_io_cap());
+    if (n < 0) return n;
+    return replay_extras_unpack(wasm_io_ptr(), n, &g_extras) < 0
+        ? -REPLAY_EXTRAS_EINPUT : REPLAY_EXTRAS_EOK;
 }
 
 // base32, the way a replay integer travels as text (replay.h). Both directions
@@ -81,26 +101,28 @@ int wasm_replay_link_parse(int in_len) {
 // https link a person copies, or the uppercase scheme-less form a QR wants,
 // which stays in QR alphanumeric mode and so fits a smaller version. Same link.
 //
-// The REPLAY buffer holds
-// [u8 n_names][u16 roster_len][roster bytes][moves bytes], the link comes back
-// in the MAIN one.
-//
-// The moves code goes LAST so it can be NUL-terminated in place - it is the one
-// argument replay_extras_link wants as a C string, and a long v6 game's code
-// runs to tens of KB, which is not a thing to copy through a fixed buffer. One
-// spare byte at the end of the input is what that costs.
-int wasm_replay_link(int in_len, int style) {
+// The ROSTER is the struct at wasm_replay_extras_ptr (its names; the times are
+// not part of a link). The MOVES CODE is `moves_len` bytes of base32 at the
+// front of the REPLAY buffer - an opaque string, not a struct, which a caller
+// only forwards: a long v6 game's code runs to tens of KB, so it crosses as
+// itself and is NUL-terminated in place here. The link comes back in the MAIN
+// buffer. A caller used to have to pack the roster in front of it by hand.
+int wasm_replay_link(int moves_len, int style) {
+    static unsigned char roster[MAX_PLAYERS * (2 + REPLAY_EXTRAS_NAME_SLOT)];
     unsigned char *in = wasm_replay_io_ptr();
-    int n_names, roster_len, p;
-    if (in_len < 3 || in_len >= wasm_replay_io_cap()) return -REPLAY_EXTRAS_EINPUT;
-    n_names = in[0];
-    roster_len = in[1] | (in[2] << 8);
-    p = 3;
-    if (roster_len < 0 || p + roster_len > in_len) return -REPLAY_EXTRAS_EINPUT;
-    in[in_len] = 0;                            // terminate the moves code in place
-    return replay_extras_link_styled((const char *)(in + p + roster_len),
-                                     in + p, roster_len, n_names, style,
-                                     (char *)wasm_io_ptr(), wasm_io_cap());
+    int w = 0;
+    if (moves_len < 0 || moves_len >= wasm_replay_io_cap()) return -REPLAY_EXTRAS_EINPUT;
+    if (g_extras.n_names < 0 || g_extras.n_names > MAX_PLAYERS) return -REPLAY_EXTRAS_EINPUT;
+    for (int i = 0; i < g_extras.n_names; i++) {
+        const int n = g_extras.names[i].len;
+        if (n > REPLAY_EXTRAS_NAME_SLOT) return -REPLAY_EXTRAS_EINPUT;
+        roster[w++] = (unsigned char)(n & 0xff);
+        roster[w++] = (unsigned char)(n >> 8);
+        for (int j = 0; j < n; j++) roster[w++] = (unsigned char)g_extras.names[i].text[j];
+    }
+    in[moves_len] = 0;                         // terminate the moves code in place
+    return replay_extras_link_styled((const char *)in, roster, w, g_extras.n_names,
+                                     style, (char *)wasm_io_ptr(), wasm_io_cap());
 }
 
 // ---------- one-tap cover resolution (A7/F9) --------------------------------

@@ -53,6 +53,14 @@ VIEW=(--cwd "$root/c" $(spec view_layout))
 set +f
 "$SG" "${VIEW[@]}" --build "bots=$BOTS" --ts "$prod/view_layout.bots.ts"
 
+# The FMSG bridge's header (c/src/msg_wire.h MsgHeader): a snapshot reader, a
+# writer and the codec's constants (specs/msg_layout.args).
+set -f
+# shellcheck disable=SC2207
+MSG=(--cwd "$root/c" $(spec msg_layout))
+set +f
+"$SG" "${MSG[@]}" --build "bots=$BOTS" --ts "$prod/msg_layout.bots.ts"
+
 # The Oracle's Mode B candidate table (c/src/oracle_mt.h), read back from
 # oracle-mt.wasm (specs/oracle_layout.args).
 set -f
