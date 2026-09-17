@@ -66,7 +66,7 @@ async function midBout(np: number, minActions: number): Promise<Game> {
                 const p = game.players[i];
                 if (!shouldBotActCore(game, p, i)) continue;
                 if (calculateLegalMoves(game, p.player_id).length === 0) continue;
-                acted = await processBotAction(game, p);
+                acted = Boolean(await processBotAction(game, p));
             }
             if (!acted) break;
             actions++;
