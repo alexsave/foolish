@@ -25,8 +25,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-    animBuildPlan, animPlanAt, animBuildBeats, ANIM_EVT, ANIM_LOC,
-    ANIM_STEP_NONE, ANIM_NEVER,
+    animBuildPlan, animPlanAt, animBuildBeats, animReversalOrder,
+    ANIM_EVT, ANIM_LOC, ANIM_STEP_NONE, ANIM_NEVER,
+    ANIM_CONFLICT_REVERT, ANIM_CONFLICT_KEEP, ANIM_CONFLICT_CLEAR,
     type AnimPlanEventIn, type AnimBeatEventIn,
 } from '../sdk/ts/wasm/bots.ts';
 
@@ -166,6 +167,39 @@ test('a step that carries no good mask says so, and does not read as eight good 
     assert.equal(b.beats[0].goodMask, -1);
     const withMask = animBuildBeats([{ type: ANIM_EVT.attack_pass, seat: 0, cards: [SIX_S], goodMask: 0xff }]);
     assert.equal(withMask.firstGoodMask, 0xff, 'eight good seats is a real mask and must survive the wire');
+});
+
+// ---- the reversal's order ---------------------------------------------------
+// The rule AnimationContext's four queue-insertion branches gave way to: the
+// board reverses what it must before it plays anything else, last group first,
+// and a group nothing reverts is dropped rather than played as a beat of
+// silence. The decision is transport-dependent and the order is not, which is
+// why a server client reaches it with verdicts it has already asked for.
+
+test('a doomed sequence flies home last group first', () => {
+    const steps = animReversalOrder(
+        [ANIM_CONFLICT_REVERT, ANIM_CONFLICT_REVERT, ANIM_CONFLICT_REVERT],
+        [1, 1, 1]);
+    assert.deepEqual(steps, [[2], [1], [0]], 'the cards travel back the way they came');
+});
+
+test('a group nothing reverts plays no beat of silence', () => {
+    const steps = animReversalOrder(
+        [ANIM_CONFLICT_REVERT, ANIM_CONFLICT_KEEP, ANIM_CONFLICT_CLEAR, ANIM_CONFLICT_REVERT],
+        [2, 1, 1]);
+    assert.deepEqual(steps, [[3], [0]],
+        'the KEEP and the CLEAR build nothing, and the group left empty is dropped');
+});
+
+test('a reversal with nothing doomed is no reversal at all', () => {
+    assert.deepEqual(animReversalOrder([ANIM_CONFLICT_KEEP, ANIM_CONFLICT_CLEAR], [1, 1]), [],
+        'the common case - an arrival that vouches for everything - plays no theatre');
+    assert.deepEqual(animReversalOrder([], []), []);
+});
+
+test('groups that do not account for the motions are refused, not half-reversed', () => {
+    assert.throws(() => animReversalOrder([ANIM_CONFLICT_REVERT, ANIM_CONFLICT_REVERT], [1]),
+        /anim_reversal_order error/);
 });
 
 test('a seatless notice keeps its seat out of the answer', () => {

@@ -1038,6 +1038,42 @@ int wasm_anim_conflict_verdicts(int pending_attacks, int defender_hand,
     return n_motions;
 }
 
+// THE REVERSAL'S ORDER (anim_plan.h anim_reversal_order), for a host that
+// already holds its verdicts - which every SERVER-transport host does, since
+// anim_conflict_verdict is the only entry that asks the AnimServerHope.
+//
+// This is the entry that REPLACES a web rule rather than being reconciled with
+// one. AnimationContext had four branches deciding where a doomed card's return
+// flight went relative to the arriving stream's own events - before a magic
+// transition, before the first attack "for parallel visual effect", before a
+// pickup, or first - and the kernel's rule is simply that the board reverses
+// what it must before it plays anything else, last group first.
+//
+// g_io in:
+//   u8 n_motions, n_motions x u8 verdict (ANIM_CONFLICT_*),
+//   u8 n_groups,  n_groups  x u8 group size
+// g_io out (overwrites): n_steps x u8 step size, then the motion indices, the
+// steps laid end to end. Returns the step count, or a negative ANIM_E*.
+int wasm_anim_reversal_order(void) {
+    int p = 0;
+    const int n_motions = g_io[p++];
+    if (n_motions > ANIM_MAX_CONFLICT_MOTIONS) return ANIM_ECAP;
+    static unsigned char verdicts[ANIM_MAX_CONFLICT_MOTIONS];
+    for (int i = 0; i < n_motions; i++) verdicts[i] = g_io[p++];
+    const int n_groups = g_io[p++];
+    if (n_groups > ANIM_MAX_CONFLICT_GROUPS) return ANIM_ECAP;
+    static int groups[ANIM_MAX_CONFLICT_GROUPS];
+    for (int g = 0; g < n_groups; g++) groups[g] = g_io[p++];
+
+    static AnimConflictPlan plan;
+    const int n = anim_reversal_order(verdicts, n_motions, groups, n_groups, &plan);
+    if (n < 0) return n;
+    int q = 0;
+    for (int i = 0; i < n; i++) g_io[q++] = (unsigned char)plan.step_count[i];
+    for (int i = 0; i < plan.n_order; i++) g_io[q++] = (unsigned char)plan.order[i];
+    return n;
+}
+
 // THE HAND'S ORDER (anim_plan.h anim_hand_laid_out_masked): the array a fan is
 // actually given, backs and all.
 //

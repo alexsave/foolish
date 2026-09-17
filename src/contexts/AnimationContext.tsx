@@ -18,7 +18,7 @@ import { optimisticOverlay } from '../state/optimisticOverlay';
 import { shouldDropStaleSequence } from '../state/clientReconcile';
 import { noteAuthoritativeVersion } from '../state/authoritativeVersion';
 import { frameAt, planFor } from '../state/animPlan';
-import { ANIM_STEP_NONE } from '@sdk/ts/wasm/bots.ts';
+import { ANIM_CONFLICT_REVERT, ANIM_STEP_NONE, animReversalOrder } from '@sdk/ts/wasm/bots.ts';
 
 // Bot bump timeout - 20 seconds of no animations (currently unused)
 // const BOT_BUMP_TIMEOUT = 20000;
@@ -1076,63 +1076,28 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             revertEvent.game_state = (stateWithOptimistic ?? undefined) as TableView | undefined;
         });
 
-        // Find the first attack event from server (the valid attack)
-        const firstAttackIndex = message.events.findIndex((evt: any) =>
-            evt.type === 'attack_pass' && evt.from_location === 'hand'
-        );
-
-        // Find any pickup/clear events
-        const firstPickupIndex = message.events.findIndex((evt: any) =>
-            evt.type === 'pickup' || evt.type === 'cards_to_trash'
-        );
-
-        // Find magic_transition (for good scenario with pickup reverts)
-        const firstMagicTransitionIndex = message.events.findIndex((evt: any) =>
-            evt.type === 'magic_transition'
-        );
-
-        // Check if we have pickup reverts (hand → table)
-        const hasPickupReverts = revertEvents.some(rev => rev.to_location === 'table');
-
-        if (hasPickupReverts && firstMagicTransitionIndex >= 0) {
-            // For optimistic pickup + server good: revert ALL cards back to table first
-            const eventsBeforeMagic = message.events.slice(0, firstMagicTransitionIndex);
-            const restEvents = message.events.slice(firstMagicTransitionIndex);
-
-            const queueOrder = [
-                ...eventsBeforeMagic,
-                ...revertEvents,    // Revert pickups back to table first
-                ...restEvents       // Then magic_transition + cards_to_trash
-            ];
-
-            enqueue(queueOrder);
-        } else if (firstAttackIndex >= 0) {
-            // Queue reverts IMMEDIATELY before the valid attack for parallel visual effect
-            const eventsBeforeAttack = message.events.slice(0, firstAttackIndex);
-            const restEvents = message.events.slice(firstAttackIndex);
-
-            const queueOrder = [
-                ...eventsBeforeAttack,
-                ...revertEvents,    // Revert animates
-                ...restEvents       // Valid attack animates right after (looks parallel)
-            ];
-
-            enqueue(queueOrder);
-        } else if (firstPickupIndex >= 0) {
-            // Queue reverts before the pickup so card goes back to hand first
-            const eventsBeforePickup = message.events.slice(0, firstPickupIndex);
-            const restEvents = message.events.slice(firstPickupIndex);
-
-            const queueOrder = [
-                ...eventsBeforePickup,
-                ...revertEvents,    // Revert animates first
-                ...restEvents       // Then pickup animates
-            ];
-
-            enqueue(queueOrder);
-        } else {
-            enqueue([...revertEvents, ...message.events]);
-        }
+        // THE BOARD REVERSES WHAT IT MUST BEFORE IT PLAYS ANYTHING ELSE, and in
+        // reverse group order: the cards travel back the way they came, last
+        // motion first, and only then does the arriving stream animate forward.
+        //
+        // That is the kernel's rule (c/src/anim_plan.h anim_conflict_reversal,
+        // reached here through anim_reversal_order because the web decides doom
+        // under the SERVER transport), and it REPLACES what it met rather than
+        // being reconciled with it - the standing rule of this migration. What
+        // it met was four branches choosing where a return flight went relative
+        // to the stream's own events: before a magic transition, before the
+        // first attack from hand "for parallel visual effect", before a pickup,
+        // or first. The parallel-effect one was the workaround for not having a
+        // reversal step at all: the revert and the valid attack never did
+        // overlap, they were two flights the author hoped would read as one.
+        //
+        // Each revert event is one group, because each is one parallel step the
+        // prediction flew, and each is already a REVERT: resolveOptimisticConflicts
+        // builds an event only for the cards the kernel's verdict doomed.
+        const reversal = animReversalOrder(
+            revertEvents.map(() => ANIM_CONFLICT_REVERT),
+            revertEvents.map(() => 1));
+        enqueue([...reversal.flat().map((i) => revertEvents[i]), ...message.events]);
     };
 
 

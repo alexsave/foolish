@@ -896,6 +896,25 @@ int anim_conflict_reversal(const AnimConflictMotion *motions, int n_motions,
                            const AnimConflictFacts *facts,
                            AnimConflictPlan *out);
 
+// THE ORDER ALONE, for a caller that already holds the verdicts.
+//
+// THE DECISION IS TRANSPORT-DEPENDENT AND THE ORDER IS NOT, which is the whole
+// reason this is a second entry rather than a flag on the first. Deciding that
+// a card is doomed from silence is a thing only a total order can do, so
+// anim_conflict_reversal refuses a SERVER-transport call; but "the cards travel
+// back the way they came, last group first, and a group nothing reverts is
+// dropped rather than played as a beat of silence" is a fact about a reversal,
+// not about how its doom was learned. A server client reaches the same order by
+// asking anim_conflict_verdict per card first - which it must do anyway, since
+// only that entry asks the AnimServerHope - and handing the verdicts here.
+//
+// `verdicts` is n_motions of ANIM_CONFLICT_*, in the order the motions flew,
+// sliced by `group_sizes` exactly as above; passing `out->verdicts` back in is
+// explicitly allowed. Returns the step count, or ANIM_EBADARG / ANIM_ECAP.
+int anim_reversal_order(const unsigned char *verdicts, int n_motions,
+                        const int *group_sizes, int n_groups,
+                        AnimConflictPlan *out);
+
 // ---- the board's own sets and small rules ---------------------------------
 //
 // THE VEIL, THE HAND, THE TABLE AND THE END SCREEN, lifted whole out of

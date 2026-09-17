@@ -184,6 +184,7 @@ interface BotsExports extends EngineExports {
                          finalDiscard: number, finalFlipped: number): number;
     wasm_anim_plan_at(nowMs: number): number;
     wasm_anim_build_beats(nEvents: number): number;
+    wasm_anim_reversal_order(): number;
 }
 
 // ANIM_TRANSPORT_* (c/src/anim_plan.h).
@@ -1087,7 +1088,11 @@ const ANIM_TABLE_NONE = 0xfe;
 
 /** anim_plan.h ANIM_DEST_*: which kind of place a doomed motion put its card. */
 export const ANIM_DEST = { table: 0, hand: 1, pool: 2 } as const;
-/** anim_plan.h ANIM_CONFLICT_*, in the order the C defines them. */
+/** anim_plan.h ANIM_CONFLICT_*, in the order the C defines them. The CODES are
+ *  generated (sdk/ts/gen/anim.bots.ts); only the names are TypeScript's. */
+export const ANIM_CONFLICT_REVERT = A.ANIM_CONFLICT_REVERT;
+export const ANIM_CONFLICT_KEEP = A.ANIM_CONFLICT_KEEP;
+export const ANIM_CONFLICT_CLEAR = A.ANIM_CONFLICT_CLEAR;
 export const ANIM_CONFLICT = ['revert', 'keep', 'clear'] as const;
 export type AnimConflictVerdict = (typeof ANIM_CONFLICT)[number];
 
@@ -1411,3 +1416,42 @@ function readPlan(ex: BotsExports): AnimPlanSnap {
     };
 }
 
+
+/**
+ * THE ORDER A DOOMED SEQUENCE FLIES HOME IN (anim_plan.h anim_reversal_order),
+ * for a caller that already holds its verdicts - which every server-transport
+ * caller does, since anim_conflict_verdict is the only entry that asks the
+ * AnimServerHope.
+ *
+ * `verdicts` are ANIM_CONFLICT_* per motion in the order the motions flew, and
+ * `groupSizes` slices them into the parallel steps they flew as. The answer is
+ * the steps to play, each a list of motion indices, in REVERSE group order: the
+ * cards travel back the way they came, last group first, and a group nothing
+ * reverts is dropped rather than played as a beat of silence.
+ */
+export function animReversalOrder(
+    verdicts: readonly number[], groupSizes: readonly number[],
+): number[][] {
+    const ex = bots();
+    const buf = mem(ex);
+    const base = ex.wasm_io_ptr();
+    let p = base;
+    buf[p++] = verdicts.length & 0xff;
+    for (const v of verdicts) buf[p++] = v & 0xff;
+    buf[p++] = groupSizes.length & 0xff;
+    for (const g of groupSizes) buf[p++] = g & 0xff;
+    const n = ex.wasm_anim_reversal_order();
+    if (n < 0) throw new Error(`anim_reversal_order error ${n}`);
+    const out = mem(ex);
+    const ob = ex.wasm_io_ptr();
+    const counts: number[] = [];
+    for (let i = 0; i < n; i++) counts.push(out[ob + i]);
+    const steps: number[][] = [];
+    let at = ob + n;
+    for (const c of counts) {
+        const step: number[] = [];
+        for (let i = 0; i < c; i++) step.push(out[at++]);
+        steps.push(step);
+    }
+    return steps;
+}

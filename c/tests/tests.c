@@ -5622,6 +5622,52 @@ static void test_conflict_reversal_drops_what_the_verdicts_empty(void) {
           "a chain that vouches for everything reverses nothing");
 }
 
+static void test_reversal_order_is_not_about_the_transport(void) {
+    // THE DECISION IS TRANSPORT-DEPENDENT AND THE ORDER IS NOT. A server client
+    // cannot learn doom from silence, so anim_conflict_reversal refuses it; but
+    // once that client HAS its verdicts (anim_conflict_verdict, which is the
+    // only entry that asks the AnimServerHope), the shape of the flight home is
+    // the same shape - last group first, a group nothing reverts dropped.
+    const unsigned char verdicts[4] = {
+        ANIM_CONFLICT_REVERT, ANIM_CONFLICT_CLEAR, ANIM_CONFLICT_KEEP, ANIM_CONFLICT_REVERT,
+    };
+    const int groups[3] = { 2, 1, 1 };
+    AnimConflictPlan p;
+
+    anim_set_transport(ANIM_TRANSPORT_SERVER);
+    CHECK(anim_reversal_order(verdicts, 4, groups, 3, &p) == 2,
+          "the order is answered under the transport the reversal itself refuses");
+    CHECK(p.n_order == 2 && p.order[0] == 3 && p.order[1] == 0,
+          "the LAST group's card reverses first, and the middle group is dropped");
+    CHECK(p.n_steps == 2 && p.step_count[0] == 1 && p.step_count[1] == 1,
+          "…one flight each, and no beat of silence for the group the verdicts emptied");
+    CHECK(p.n_verdicts == 4 && p.verdicts[2] == ANIM_CONFLICT_KEEP,
+          "the verdicts come back on the plan, whoever decided them");
+
+    // Both transports give one answer for one set of verdicts: the order cannot
+    // become a second place two clients disagree.
+    AnimConflictPlan chain;
+    anim_set_transport(ANIM_TRANSPORT_CHAIN);
+    CHECK(anim_reversal_order(verdicts, 4, groups, 3, &chain) == 2
+          && chain.n_order == p.n_order && chain.order[0] == p.order[0] && chain.order[1] == p.order[1],
+          "the chain reads the same order off the same verdicts");
+
+    // Handing the plan its OWN verdict array back is the shape a caller that
+    // already ran anim_conflict_reversal has, and it must not read as it writes.
+    for (int i = 0; i < 4; i++) chain.verdicts[i] = verdicts[i];
+    CHECK(anim_reversal_order(chain.verdicts, 4, groups, 3, &chain) == 2
+          && chain.order[0] == 3 && chain.order[1] == 0,
+          "a plan handed its own verdicts answers the same");
+
+    anim_set_transport(ANIM_TRANSPORT_SERVER);
+    CHECK(anim_reversal_order(verdicts, 4, groups, 3, NULL) == ANIM_EBADARG, "no out, no order");
+    CHECK(anim_reversal_order(NULL, 4, groups, 3, &p) == ANIM_EBADARG, "a count with no verdicts");
+    CHECK(anim_reversal_order(verdicts, 4, groups, 2, &p) == ANIM_EBADARG,
+          "groups that leave a motion out describe some other sequence");
+    CHECK(anim_reversal_order(verdicts, 0, NULL, 0, &p) == 0, "nothing flown, nothing to reverse");
+    anim_set_transport(ANIM_TRANSPORT_CHAIN);
+}
+
 static void test_conflict_degenerate_inputs(void) {
     anim_set_transport(ANIM_TRANSPORT_CHAIN);
     AnimConflictFacts f;
@@ -9764,6 +9810,7 @@ int main(void) {
     test_conflict_dest_is_the_flight_builders_own_mapping();
     test_conflict_reversal_flies_back_the_way_it_came();
     test_conflict_reversal_drops_what_the_verdicts_empty();
+    test_reversal_order_is_not_about_the_transport();
     test_conflict_degenerate_inputs();
     test_the_transport_is_the_only_thing_the_two_clients_disagree_about();
     test_board_veil_unions_its_three_sources();

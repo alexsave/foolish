@@ -1054,6 +1054,35 @@ int anim_conflict_reversal(const AnimConflictMotion *motions, int n_motions,
         out->verdicts[i] = (unsigned char)v;
     }
     out->n_verdicts = n_motions;
+    return anim_reversal_order(out->verdicts, n_motions, group_sizes, n_groups, out);
+}
+
+int anim_reversal_order(const unsigned char *verdicts, int n_motions,
+                        const int *group_sizes, int n_groups,
+                        AnimConflictPlan *out) {
+    if (!out) return ANIM_EBADARG;
+    if (n_motions < 0 || n_motions > ANIM_MAX_CONFLICT_MOTIONS) return ANIM_ECAP;
+    if (n_groups < 0 || n_groups > ANIM_MAX_CONFLICT_GROUPS) return ANIM_ECAP;
+    if (n_motions > 0 && !verdicts) return ANIM_EBADARG;
+    if (n_groups > 0 && !group_sizes) return ANIM_EBADARG;
+
+    int total = 0;
+    for (int g = 0; g < n_groups; g++) {
+        if (group_sizes[g] < 0) return ANIM_EBADARG;
+        total += group_sizes[g];
+        if (total > n_motions) return ANIM_EBADARG;
+    }
+    if (total != n_motions) return ANIM_EBADARG;
+
+    // A caller that already ran anim_conflict_reversal hands back the plan's OWN
+    // verdict array, so this is often a copy onto itself - which is exactly what
+    // it does, element by element in ascending order, and costs nothing to
+    // allow. There is deliberately no aliasing guard: one was written and
+    // mutation-checked away, because a self-copy has nothing to prevent.
+    for (int i = 0; i < n_motions; i++) out->verdicts[i] = verdicts[i];
+    out->n_verdicts = n_motions;
+    out->n_steps = 0;
+    out->n_order = 0;
 
     // The starting index of each group, so the walk can run backwards.
     int start[ANIM_MAX_CONFLICT_GROUPS];

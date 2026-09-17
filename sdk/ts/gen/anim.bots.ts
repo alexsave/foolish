@@ -25,6 +25,9 @@ export const ANIM_LOC_TABLE = 2;
 export const ANIM_LOC_DISCARD = 3;
 export const ANIM_LOC_FLIPPED = 4;
 export const ANIM_LOC_NONE = 255;
+export const ANIM_CONFLICT_REVERT = 0;
+export const ANIM_CONFLICT_KEEP = 1;
+export const ANIM_CONFLICT_CLEAR = 2;
 // AnimPlan
 export const AnimPlan_SIZE = 11752;
 export const AnimPlan_n_steps_at = (p: number) => p;
