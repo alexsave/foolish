@@ -416,7 +416,7 @@ test('the dashboard', async () => {
 // order the others went out, and the moves its extras time (the names). Recorded
 // on the code before Phase 7, which read them through the TS replay decoder.
 test('the match history', async () => {
-    const { playSeededV6 } = await import('./helpers/seeded_game.ts');
+    const { seededCode } = await import('./helpers/seeded_codes.ts');
     const { replaySummary } = await import('../sdk/ts/wasm/bots.ts');
     const { encodeExtrasBytes } = await import('../server/api/common/replay/extras.ts');
     const games: { np: number; seed: number; me: number; names: string[] | null }[] = [
@@ -427,7 +427,7 @@ test('the match history', async () => {
     ];
     const snapshots: Rows['snapshots'] = [];
     for (const [i, x] of games.entries()) {
-        const played = await playSeededV6(x.np, x.seed);
+        const played = { code: seededCode(x.np, x.seed) };
         assert.ok(played, `${x.np}p seed ${x.seed} finished`);
         const summary = replaySummary(played!.code);
         assert.ok(summary, 'the code has a summary');
