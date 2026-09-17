@@ -89,6 +89,17 @@ void table_init(Table *t, Game *g, TableSnaps *snaps) {
     if (snaps) snaps->n = 0;
 }
 
+int table_seat_kinds(const Roster *r, int8_t *kinds) {
+    for (int s = 0; s < r->n; s++) {
+        kinds[s] = STRATEGY_KEY_HUMAN;
+        if (r->seats[s].brain_len == 0) continue;
+        const int idx = bot_roster_find(r->seats[s].brain);
+        if (idx < 0 || !bot_roster_linked(idx)) return TABLE_E_UNKNOWN_BRAIN;
+        kinds[s] = (int8_t)bot_roster_at(idx)->strat;
+    }
+    return TABLE_OK;
+}
+
 int table_load(Table *t, const uint8_t *state, int state_len, const uint8_t *roster, int roster_len) {
     Roster r;
     int8_t kinds[MAX_PLAYERS];
@@ -100,13 +111,8 @@ int table_load(Table *t, const uint8_t *state, int state_len, const uint8_t *ros
     // The seat count is the state's second byte; checked before the import so a
     // refusal adopts nothing.
     if (state[2 + 1] != (uint8_t)r.n) return TABLE_E_MISMATCH;
-    for (int s = 0; s < r.n; s++) {
-        kinds[s] = STRATEGY_KEY_HUMAN;
-        if (r.seats[s].brain_len == 0) continue;
-        const int idx = bot_roster_find(r.seats[s].brain);
-        if (idx < 0 || !bot_roster_linked(idx)) return TABLE_E_UNKNOWN_BRAIN;
-        kinds[s] = (int8_t)bot_roster_at(idx)->strat;
-    }
+    const int kr = table_seat_kinds(&r, kinds);
+    if (kr != TABLE_OK) return kr;
     const int v = state_import(t->g, state + 2, 0);
     if (v != GAME_VALID) return v;
     t->g->deterministic_deck = state[1] != 0;

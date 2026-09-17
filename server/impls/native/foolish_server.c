@@ -81,6 +81,7 @@
 #include "bot_drive.h"
 #include "bot_roster.h"
 #include "roster.h"     // the seats' ids and names, beside the Game (game.h Player carries none)
+#include "table.h"      // table_seat_kinds: a restored seat's kind from its roster brain
 #include "strategy.h"   // STRAT_RANDOM — see h_meta's add-bot branch (Stage 4 strategy_key fix)
 #include "ws.h"
 #include "persist.h"
@@ -415,12 +416,18 @@ static void game_mark_dirty(GameSlot *s) {
 //                                        durable roster encoding (roster.h)
 //   next MAX_PLAYERS bytes               seat_ready[] (1 byte each, 0/1)
 //   next 4 bytes                         rng_base, uint32 LE (the bots' seeding base)
+//   next 1 byte                          game.deterministic_deck (0/1)
 // Worst case: 3 + 690 (state_put's documented worst case — see
-// VIEW_CACHE_CAP above) + 13*2 + 1227 + 8 + 4 = 1958 bytes.
+// VIEW_CACHE_CAP above) + 13*2 + 1227 + 8 + 4 + 1 = 1959 bytes.
+// The state codec carries neither the seats' kinds nor the deck mode: the kinds
+// come back from the roster's brains (table_seat_kinds, what table_load does), the
+// deck mode from its own byte. Before version 3 a recovered game came back with
+// every seat a bot of STRAT id 0 (no human could act or read their own seat) and
+// its seed-dealt deck drawing at random.
 // PERSIST_GAME_BLOB_CAP gives margin, same discipline as VIEW_CACHE_CAP.
 // Version 2: the roster replaced version 1's seat_user[]/seat_name[] arrays,
 // so a version 1 row is refused rather than misread. Version 3: rng_base, so a
-// recovered game's bots keep seeding from the base its deal chose.
+// recovered game's bots keep seeding from the base its deal chose, and the deck mode.
 // --------------------------------------------------------------------------
 #define PERSIST_GAME_BLOB_VERSION 3
 #define PERSIST_GAME_BLOB_CAP 2048
@@ -431,7 +438,7 @@ static void game_mark_dirty(GameSlot *s) {
 static int serialize_slot(const GameSlot *s, unsigned char *buf, int cap) {
     unsigned char state[1 + 65536];   // state_put's own documented cap (h_state uses the same 65536)
     int state_len = state_put(&s->game, VIEW_UNMASKED, state);
-    int need = 1 + 2 + state_len + (ID_LEN + 1) * 2 + ROSTER_BYTES + MAX_PLAYERS + 4;
+    int need = 1 + 2 + state_len + (ID_LEN + 1) * 2 + ROSTER_BYTES + MAX_PLAYERS + 4 + 1;
     if (state_len < 0 || need > cap) return -1;
     unsigned char *q = buf;
     *q++ = PERSIST_GAME_BLOB_VERSION;
@@ -444,6 +451,7 @@ static int serialize_slot(const GameSlot *s, unsigned char *buf, int cap) {
     q += ROSTER_BYTES;
     for (int i = 0; i < MAX_PLAYERS; i++) *q++ = (unsigned char)(s->seat_ready[i] ? 1 : 0);
     for (int i = 0; i < 4; i++) *q++ = (unsigned char)(s->rng_base >> (8 * i));
+    *q++ = s->game.deterministic_deck ? 1 : 0;
     return (int)(q - buf);
 }
 
@@ -459,7 +467,7 @@ static bool deserialize_slot(GameSlot *s, const unsigned char *buf, int len) {
     if (len < 3 || buf[0] != PERSIST_GAME_BLOB_VERSION) return false;
     const unsigned char *q = buf + 1;
     int state_len = q[0] | (q[1] << 8); q += 2;
-    int fixed_tail = (ID_LEN + 1) * 2 + ROSTER_BYTES + MAX_PLAYERS + 4;
+    int fixed_tail = (ID_LEN + 1) * 2 + ROSTER_BYTES + MAX_PLAYERS + 4 + 1;
     if (state_len < 0 || state_len > 65536 || 3 + state_len + fixed_tail > len) return false;
     // Exact inverse of state_put(.., VIEW_UNMASKED, ..), and refused whole if
     // the kernel could not have produced the state (game.h game_validate).
@@ -471,10 +479,14 @@ static bool deserialize_slot(GameSlot *s, const unsigned char *buf, int len) {
     // exactly the state's players is refused too.
     if (roster_decode(&s->roster, q, ROSTER_BYTES) != ROSTER_OK) return false;
     if (s->roster.n != s->game.num_players) return false;
+    int8_t kinds[MAX_PLAYERS];
+    if (table_seat_kinds(&s->roster, kinds) != TABLE_OK) return false;
+    for (int i = 0; i < s->roster.n; i++) s->game.players[i].strategy_key = kinds[i];
     q += ROSTER_BYTES;
     for (int i = 0; i < MAX_PLAYERS; i++) s->seat_ready[i] = (*q++ != 0);
     s->rng_base = (uint32_t)q[0] | ((uint32_t)q[1] << 8) | ((uint32_t)q[2] << 16) | ((uint32_t)q[3] << 24);
     q += 4;
+    s->game.deterministic_deck = *q++ != 0;
     s->used = true;
     return true;
 }
@@ -533,6 +545,7 @@ static void persist_self_test(void) {
     a.game.num_battles = 1;
     a.game.table_battles[0].attack.suit = 1; a.game.table_battles[0].attack.value = 9;
     a.game.table_battles[0].defense = CARD_NONE;
+    a.game.deterministic_deck = true;
     a.rng_base = 0xA1B2C3D4u;
     for (int i = 0; i < 3; i++) {
         const bool bot = i == 2;
@@ -544,7 +557,7 @@ static void persist_self_test(void) {
         }
         a.seat_ready[i] = (i % 2) == 0;
         a.game.players[i].status = PLAYER_STATUS_IN;
-        a.game.players[i].strategy_key = (i == 2) ? 0 : STRATEGY_KEY_HUMAN;
+        a.game.players[i].strategy_key = (i == 2) ? (int8_t)bot_roster_at(bot_roster_find("random"))->strat : STRATEGY_KEY_HUMAN;
         a.game.players[i].hand_count = (int8_t)(2 + i);
         for (int j = 0; j < a.game.players[i].hand_count; j++) {
             a.game.players[i].hand[j].suit = (int8_t)((i + j) % 4);
@@ -560,6 +573,18 @@ static void persist_self_test(void) {
         fprintf(stderr, "persist self-test: FAIL (deserialize_slot rejected a round-trip blob)\n"); exit(1);
     }
     if (b.rng_base != a.rng_base) { fprintf(stderr, "persist self-test: FAIL (rng_base not restored)\n"); exit(1); }
+    // The state blob carries neither the seats' kinds nor the deck mode: a
+    // recovered human seat must stay human (else a bot plays for its owner and
+    // /state refuses the owner their own seat), and a seed-dealt deck must keep
+    // popping in order.
+    for (int i = 0; i < 3; i++) {
+        if (b.game.players[i].strategy_key != a.game.players[i].strategy_key) {
+            fprintf(stderr, "persist self-test: FAIL (seat %d kind %d restored as %d)\n", i,
+                    a.game.players[i].strategy_key, b.game.players[i].strategy_key);
+            exit(1);
+        }
+    }
+    if (b.game.deterministic_deck != a.game.deterministic_deck) { fprintf(stderr, "persist self-test: FAIL (deterministic_deck not restored)\n"); exit(1); }
     int n2 = serialize_slot(&b, blob2, sizeof blob2);
     if (n2 != n1 || memcmp(blob1, blob2, (size_t)n1) != 0) {
         fprintf(stderr, "persist self-test: FAIL (serialize->deserialize->serialize not byte-identical, "

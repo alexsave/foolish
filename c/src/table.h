@@ -142,6 +142,13 @@ void table_init(Table *t, Game *g, TableSnaps *snaps);
 // deterministic-deck flag from the blob. On any refusal nothing is loaded.
 int table_load(Table *t, const uint8_t *state, int state_len, const uint8_t *roster, int roster_len);
 
+// Each seat's kind from the roster: STRATEGY_KEY_HUMAN for an empty brain, else
+// the linked bot_roster entry's STRAT_* id. The state blob carries no kinds, so a
+// host restoring a Game from a stored state and roster sets them from this, as
+// table_load does. TABLE_OK, or TABLE_E_UNKNOWN_BRAIN for a brain this build
+// does not link (kinds is then partly written).
+int table_seat_kinds(const Roster *r, int8_t *kinds);
+
 // A move by the seat whose roster id is EXACTLY actor_id. In order: a finished
 // game is TABLE_MOOT; a move composed before the current round (intent_version
 // >= 0 and below round_epoch) is TABLE_STALE_ROUND; an actor with no seat is
