@@ -16,6 +16,7 @@
 #include "msg_wire.h" // MsgHeader: the envelope's header, read where it lies
 #include "view.h"
 #include "client_table.h"  // PushEvent: the step a push walk hands back
+#include "anim_plan.h"     // AnimPlan: the plan, read where it lies
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -254,7 +255,7 @@ static int replay_sweep(void) {
 
             int steps = 0;
             while (fio_game_over() < 0 && steps++ < 5000)
-                if (fio_bot_drive_packed(0, buf, sizeof(buf)) < 0) break;  // human_mask 0 → all bots
+                if (fio_bot_drive(0) < 0) break;   // human_mask 0 -> all bots
 
             int fool = fio_game_over();
             if (fool < 0) { printf("FAIL sweep p=%d seed=%d did not finish\n", players, s); return 1; }
@@ -957,7 +958,8 @@ static int surface_wire_check(void) {
     const int vn = fio_msg_encode(2, 1, 0xF00AULL, zero8, j2, j2n, 0, live, sizeof live);
     if (vn <= 0) { printf("FAIL surface live encode %d\n", vn); return 1; }
 
-    int32_t out[FIO_SURFACE_HEAD + 10 * FIO_SURFACE_STRIDE];
+    // THE PLAN IS THE STRUCT (anim_plan.h AnimSurfacePlan), read where it lies.
+    const AnimSurfacePlan *sp = (const AnimSurfacePlan *)fio_surface_plan_ptr();
 
     // A JOIN ARRIVING ON A LOBBY is a snap, and a snap is the adopt the caller
     // was going to do anyway - so the wire stages NO BEAT, not "one empty beat".
@@ -965,32 +967,31 @@ static int surface_wire_check(void) {
     // caller that reads only the beat count has no length to hold the snap on
     // screen for, and collapses the drawer over it ("i just confirmed the leave
     // snap happens mid collapse").
-    if (fio_msg_surface_plan(lob, ln, joined, jn, out,
-                             (int)(sizeof out / sizeof out[0])) != FIO_SURFACE_HEAD) {
-        printf("FAIL surface: a lone join was staged\n"); return 1;
+    if (fio_msg_surface_plan(lob, ln, joined, jn) != FIO_EOK) {
+        printf("FAIL surface: a lone join was refused\n"); return 1;
     }
-    if (out[0] != 0 || out[1] != 0 || out[2] != fio_anim_surface_beat_ms()) {
-        printf("FAIL surface lone join n=%d total=%d settle=%d\n", out[0], out[1], out[2]);
+    if (sp->n != 0 || sp->total_ms != 0 || sp->settle_ms != fio_anim_surface_beat_ms()) {
+        printf("FAIL surface lone join n=%d total=%d settle=%d\n", sp->n, sp->total_ms, sp->settle_ms);
         return 1;
     }
     // A JOIN AND A START IN ONE TEXT - the report. Two beats: the roster snaps,
     // rests, and then the table fades in.
-    const int n = fio_msg_surface_plan(lob, ln, live, vn, out,
-                                       (int)(sizeof out / sizeof out[0]));
-    if (n != FIO_SURFACE_HEAD + 2 * FIO_SURFACE_STRIDE) {
-        printf("FAIL surface plan rc=%d (msg_err=%d)\n", n, fio_last_msg_error()); return 1;
+    if (fio_msg_surface_plan(lob, ln, live, vn) != FIO_EOK) {
+        printf("FAIL surface plan (msg_err=%d)\n", fio_last_msg_error()); return 1;
     }
-    if (out[0] != 2) { printf("FAIL surface n_beats %d\n", out[0]); return 1; }
-    const int32_t *b0 = out + FIO_SURFACE_HEAD, *b1 = b0 + FIO_SURFACE_STRIDE;
-    if (b0[0] != FIO_SURFACE_ROSTER || b0[1] != FIO_TRANS_SNAP
-        || b0[3] != FIO_CONTROLS_HELD || b0[4] != 0 || b0[5] != 0) {
-        printf("FAIL surface beat0 %d/%d/%d/%d/%d\n", b0[0], b0[1], b0[3], b0[4], b0[5]);
+    if (sp->n != 2) { printf("FAIL surface n_beats %d\n", sp->n); return 1; }
+    const AnimSurfaceBeat *b0 = &sp->beats[0], *b1 = &sp->beats[1];
+    if (b0->kind != FIO_SURFACE_ROSTER || b0->transition != FIO_TRANS_SNAP
+        || b0->controls != FIO_CONTROLS_HELD || b0->duration_ms != 0 || b0->start_ms != 0) {
+        printf("FAIL surface beat0 %d/%d/%d/%d/%d\n", b0->kind, b0->transition, b0->controls,
+               b0->duration_ms, b0->start_ms);
         return 1;
     }
-    if (b1[0] != FIO_SURFACE_BOARD || b1[1] != FIO_TRANS_FADE || b1[5] <= 0) {
-        printf("FAIL surface beat1 %d/%d/%d\n", b1[0], b1[1], b1[5]); return 1;
+    if (b1->kind != FIO_SURFACE_BOARD || b1->transition != FIO_TRANS_FADE || b1->start_ms <= 0) {
+        printf("FAIL surface beat1 %d/%d/%d\n", b1->kind, b1->transition, b1->start_ms); return 1;
     }
-    if (out[1] != b1[5] + b1[4]) { printf("FAIL surface total_ms %d\n", out[1]); return 1; }
+    const int start1 = b1->start_ms;
+    if (sp->total_ms != b1->start_ms + b1->duration_ms) { printf("FAIL surface total_ms %d\n", sp->total_ms); return 1; }
     // A LONE RULES CHANGE - the beat that went missing on a real device in
     // 1.1(58) ("incoming pass toggle unfortunately is a snap too, not a
     // rotate"). One beat, a TURN, and a duration a view can actually animate:
@@ -1001,65 +1002,56 @@ static int surface_wire_check(void) {
     const int rn = fio_msg_encode(0, 0, 0xF00AULL, zero8, j1, j1n, 0, ruled, sizeof ruled);
     if (fio_set_passing(1) != FIO_EOK) { printf("FAIL surface set_passing back\n"); return 1; }
     if (rn <= 0) { printf("FAIL surface ruled encode %d\n", rn); return 1; }
-    const int rc = fio_msg_surface_plan(lob, ln, ruled, rn, out,
-                                        (int)(sizeof out / sizeof out[0]));
-    if (rc != FIO_SURFACE_HEAD + FIO_SURFACE_STRIDE) {
-        printf("FAIL surface rules rc=%d (msg_err=%d)\n", rc, fio_last_msg_error()); return 1;
+    if (fio_msg_surface_plan(lob, ln, ruled, rn) != FIO_EOK) {
+        printf("FAIL surface rules (msg_err=%d)\n", fio_last_msg_error()); return 1;
     }
-    const int32_t *r0 = out + FIO_SURFACE_HEAD;
-    if (out[0] != 1 || r0[0] != FIO_SURFACE_RULES || r0[1] != FIO_TRANS_TURN) {
-        printf("FAIL surface rules beat %d/%d/%d\n", out[0], r0[0], r0[1]); return 1;
+    const AnimSurfaceBeat *r0 = &sp->beats[0];
+    if (sp->n != 1 || r0->kind != FIO_SURFACE_RULES || r0->transition != FIO_TRANS_TURN) {
+        printf("FAIL surface rules beat %d/%d/%d\n", sp->n, r0->kind, r0->transition); return 1;
     }
-    if (r0[3] != FIO_CONTROLS_LIVE || r0[4] <= 0 || r0[5] != 0) {
+    if (r0->controls != FIO_CONTROLS_LIVE || r0->duration_ms <= 0 || r0->start_ms != 0) {
         printf("FAIL surface rules shape controls=%d dur=%d start=%d\n",
-               r0[3], r0[4], r0[5]); return 1;
+               r0->controls, r0->duration_ms, r0->start_ms); return 1;
     }
-    const int turn_ms = r0[4];
+    const int turn_ms = r0->duration_ms;
 
     // THE REVERSAL, 1.1(68): a BOARD on screen and this game's LOBBY arriving is
     // the X on a staged Start, and it crosses as one whole-surface FADE - the
     // same idiom the start wore, read the other way round. It is also the one
     // shape no text can produce, so without this row the wire's only board-side
     // answer would be "nothing".
-    const int un = fio_msg_surface_plan(live, vn, lob, ln, out,
-                                        (int)(sizeof out / sizeof out[0]));
-    if (un != FIO_SURFACE_HEAD + FIO_SURFACE_STRIDE) {
-        printf("FAIL surface undo rc=%d (msg_err=%d)\n", un, fio_last_msg_error()); return 1;
+    if (fio_msg_surface_plan(live, vn, lob, ln) != FIO_EOK) {
+        printf("FAIL surface undo (msg_err=%d)\n", fio_last_msg_error()); return 1;
     }
-    const int32_t *u0 = out + FIO_SURFACE_HEAD;
-    if (out[0] != 1 || u0[0] != FIO_SURFACE_LOBBY || u0[1] != FIO_TRANS_FADE
-        || u0[3] != FIO_CONTROLS_LIVE || u0[4] <= 0 || u0[5] != 0) {
+    const AnimSurfaceBeat *u0 = &sp->beats[0];
+    if (sp->n != 1 || u0->kind != FIO_SURFACE_LOBBY || u0->transition != FIO_TRANS_FADE
+        || u0->controls != FIO_CONTROLS_LIVE || u0->duration_ms <= 0 || u0->start_ms != 0) {
         printf("FAIL surface undo beat %d/%d/%d/%d/%d/%d\n",
-               out[0], u0[0], u0[1], u0[3], u0[4], u0[5]); return 1;
+               sp->n, u0->kind, u0->transition, u0->controls, u0->duration_ms, u0->start_ms); return 1;
     }
-    if (out[2] != out[1]) {
-        printf("FAIL surface undo settle %d vs total %d\n", out[2], out[1]); return 1;
+    if (sp->settle_ms != sp->total_ms) {
+        printf("FAIL surface undo settle %d vs total %d\n", sp->settle_ms, sp->total_ms); return 1;
     }
 
     // A board taking an ARRIVAL is handed nothing at all - no beats and, unlike
     // the lone join above, nothing to wait for either. Same two words the
     // no-op rule uses: two chains that describe the same surface settle in 0.
-    if (fio_msg_surface_plan(live, vn, live, vn, out,
-                             (int)(sizeof out / sizeof out[0])) != FIO_SURFACE_HEAD) {
-        printf("FAIL surface: a board was staged\n"); return 1;
+    if (fio_msg_surface_plan(live, vn, live, vn) != FIO_EOK) {
+        printf("FAIL surface: a board was refused\n"); return 1;
     }
-    if (out[0] != 0 || out[2] != 0) {
-        printf("FAIL surface board n=%d settle=%d\n", out[0], out[2]); return 1;
+    if (sp->n != 0 || sp->settle_ms != 0) {
+        printf("FAIL surface board n=%d settle=%d\n", sp->n, sp->settle_ms); return 1;
     }
-    if (fio_msg_surface_plan(lob, ln, live, vn, out, FIO_SURFACE_HEAD) != FIO_ECAP) {
-        printf("FAIL surface: a short buffer was accepted\n"); return 1;
-    }
-    if (fio_msg_surface_plan(lob, ln, live, 3, out,
-                             (int)(sizeof out / sizeof out[0])) != FIO_EMSG) {
+    if (fio_msg_surface_plan(lob, ln, live, 3) != FIO_EMSG) {
         printf("FAIL surface: a truncated chain was accepted\n"); return 1;
     }
-    printf("surface wire OK (%d bytes, join+start = snap then fade at %dms, "
+    printf("surface wire OK (join+start = snap then fade at %dms, "
            "rules alone = one turn of %dms, a discarded start fades back)\n",
-           n, b1[5], turn_ms);
+           start1, turn_ms);
     return 0;
 }
 
-// THE SHAPE OF A SEQUENCE, over the bytes a board would hold (fio_beats_packed
+// THE SHAPE OF A SEQUENCE, over the bytes a board would hold (fio_beats
 // and the role beat). Portable proof that the crossing packs what the Swift
 // decoder reads: the beat stride, the flags byte, the out and attack-pass seat
 // masks and the 52-bit placed set. The rules themselves are pinned in
@@ -1081,53 +1073,48 @@ static int beats_wire_check(void) {
         8, 1, 0, 0x00, 0,             // OUT seat 1 - a notice
         10, 0xFF, 1, 0x00, 0,         // CARDS_TO_TRASH, no seat
     };
-    unsigned char out[512];
-    const int n = fio_beats_packed(in, (int)sizeof in, (char *)out, sizeof out);
-    if (n != FIO_BEATS_HEAD + 4 * FIO_BEATS_STRIDE) { printf("FAIL beats rc=%d\n", n); return 1; }
-    if (out[0] != FIO_BEATS_VERSION || out[1] != 4) { printf("FAIL beats header\n"); return 1; }
-    if (out[2] != 1 || out[3] != 0x04) { printf("FAIL beats first good mask\n"); return 1; }
+    // THE BEATS ARE THE STRUCT (anim_plan.h AnimBeats), read where they lie.
+    const AnimBeats *bs = (const AnimBeats *)fio_beats_ptr();
+    if (fio_beats(in, (int)sizeof in) != FIO_EOK) { printf("FAIL beats build\n"); return 1; }
+    if (bs->n_beats != 4) { printf("FAIL beats %d\n", bs->n_beats); return 1; }
+    if (bs->first_good_mask != 0x04) { printf("FAIL beats first good mask\n"); return 1; }
 
-    unsigned long long placed = 0;
-    for (int i = 0; i < 8; i++) placed |= (unsigned long long)out[4 + i] << (8 * i);
-    if (placed != (((unsigned long long)1 << 6) | ((unsigned long long)1 << 22)
-                 | ((unsigned long long)1 << 30))) {
-        printf("FAIL beats placed set %llx\n", placed); return 1;
+    if (bs->placed_ids != (((unsigned long long)1 << 6) | ((unsigned long long)1 << 22)
+                         | ((unsigned long long)1 << 30))) {
+        printf("FAIL beats placed set %llx\n", (unsigned long long)bs->placed_ids); return 1;
     }
 
-    const unsigned char *b0 = out + FIO_BEATS_HEAD;
-    const unsigned char *b1 = b0 + FIO_BEATS_STRIDE;
-    if (b0[0] != 0 || b0[1] != 1 || b0[2] != 4 || b0[3] != 0) { printf("FAIL beat 0 head\n"); return 1; }
-    if (b1[0] != 1 || b1[1] != 2 || b1[2] != 5 || b1[3] != 1) { printf("FAIL beat 1 head\n"); return 1; }
+    const AnimBeat *b0 = &bs->beats[0], *b1 = &bs->beats[1];
+    if (b0->first != 0 || b0->n_events != 1 || b0->type != 4 || b0->seat != 0) { printf("FAIL beat 0 head\n"); return 1; }
+    if (b1->first != 1 || b1->n_events != 2 || b1->type != 5 || b1->seat != 1) { printf("FAIL beat 1 head\n"); return 1; }
     // The two covers are one beat, it holds before the sweep, and it adopts the
     // out notice behind it.
-    if ((b1[4] & 1) == 0) { printf("FAIL beat 1 does not hold\n"); return 1; }
-    if ((b0[4] & 1) != 0) { printf("FAIL the attack holds\n"); return 1; }
-    if (b1[5] != (1u << 1)) { printf("FAIL beat 1 outs %d\n", b1[5]); return 1; }
-    if (b0[5] != 0) { printf("FAIL the attack adopted an out\n"); return 1; }
-    if (b0[6] != (1u << 0) || b1[6] != 0) { printf("FAIL attack-pass seats\n"); return 1; }
-    if (b1[7] != 1 || b1[8] != 0) { printf("FAIL beat 1 good mask\n"); return 1; }
-    unsigned long long p1 = 0;
-    for (int i = 0; i < 8; i++) p1 |= (unsigned long long)b1[9 + i] << (8 * i);
-    if (p1 != (((unsigned long long)1 << 22) | ((unsigned long long)1 << 30))) {
-        printf("FAIL beat 1 placed %llx\n", p1); return 1;
+    if ((b1->flags & ANIM_BEAT_HOLDS) == 0) { printf("FAIL beat 1 does not hold\n"); return 1; }
+    if ((b0->flags & ANIM_BEAT_HOLDS) != 0) { printf("FAIL the attack holds\n"); return 1; }
+    if (b1->outs_mask != (1u << 1)) { printf("FAIL beat 1 outs %u\n", b1->outs_mask); return 1; }
+    if (b0->outs_mask != 0) { printf("FAIL the attack adopted an out\n"); return 1; }
+    if (b0->attack_pass_seats != (1u << 0) || b1->attack_pass_seats != 0) { printf("FAIL attack-pass seats\n"); return 1; }
+    if (b1->good_mask != 0) { printf("FAIL beat 1 good mask\n"); return 1; }
+    if (b1->placed_ids != (((unsigned long long)1 << 22) | ((unsigned long long)1 << 30))) {
+        printf("FAIL beat 1 placed %llx\n", (unsigned long long)b1->placed_ids); return 1;
     }
 
     // The role beat, answered off that same beat: seat 0 is defending in the
     // board the badges are WEARING and laid a card, so it is a transfer.
     int roles[FIO_ROLES_OUT];
-    if (fio_roles_pass_hand_off(0, 3, 0x04, b0[6], 1, roles) != 1) {
+    if (fio_roles_pass_hand_off(0, 3, 0x04, (int)b0->attack_pass_seats, 1, roles) != 1) {
         printf("FAIL hand-off not seen\n"); return 1;
     }
     if (roles[0] != 1 || roles[1] != 3 || roles[2] != 0x04) {
         printf("FAIL hand-off roles %d/%d/%d\n", roles[0], roles[1], roles[2]); return 1;
     }
-    if (fio_roles_pass_hand_off(2, 3, 0x04, b0[6], 1, roles) != 0) {
+    if (fio_roles_pass_hand_off(2, 3, 0x04, (int)b0->attack_pass_seats, 1, roles) != 0) {
         printf("FAIL an attacker's throw read as a transfer\n"); return 1;
     }
-    if (fio_roles_goods_cleared(1, 3, 0x04, b1[8], roles) != 1 || roles[2] != 0) {
+    if (fio_roles_goods_cleared(1, 3, 0x04, b1->good_mask, roles) != 1 || roles[2] != 0) {
         printf("FAIL the good the throw-in cleared\n"); return 1;
     }
-    if (fio_roles_goods_opening(1, 3, 0x00, out[3], roles) != 1 || roles[2] != 0x04) {
+    if (fio_roles_goods_opening(1, 3, 0x00, bs->first_good_mask, roles) != 1 || roles[2] != 0x04) {
         printf("FAIL the good this stream opens on\n"); return 1;
     }
     if (fio_badge_drops_as_cards_leave(4) != 1 || fio_badge_drops_as_cards_leave(6) != 0) {
@@ -1138,16 +1125,13 @@ static int beats_wire_check(void) {
     unsigned char bad[sizeof in];
     memcpy(bad, in, sizeof in);
     bad[0] = 9;
-    if (fio_beats_packed(bad, (int)sizeof bad, (char *)out, sizeof out) != FIO_EPARSE) {
+    if (fio_beats(bad, (int)sizeof bad) != FIO_EPARSE) {
         printf("FAIL beats accepted a foreign version\n"); return 1;
     }
-    if (fio_beats_packed(in, 8, (char *)out, sizeof out) != FIO_EPARSE) {
+    if (fio_beats(in, 8) != FIO_EPARSE) {
         printf("FAIL beats accepted a truncated stream\n"); return 1;
     }
-    if (fio_beats_packed(in, (int)sizeof in, (char *)out, FIO_BEATS_HEAD) != FIO_ECAP) {
-        printf("FAIL beats wrote past its buffer\n"); return 1;
-    }
-    printf("beats wire OK (%d bytes, 4 beats)\n", n);
+    printf("beats wire OK (4 beats)\n");
     return 0;
 }
 
@@ -1629,15 +1613,20 @@ static int plan_wire_check(void) {
         4, 0, 1, 2, 1, 1, 1, 12, 0, FIO_PLAN_NO_FLIP, 5, 6, 17,
         2, 3, FIO_PRETABLE_NONE, 17, FIO_PRETABLE_NONE,
     };
-    unsigned char out[512];
-    const int n = fio_anim_plan_packed(in, (int)sizeof in, (char *)out, sizeof out);
-    if (n != FIO_PLAN_HEAD + 2 * FIO_PLAN_STRIDE + 6) { printf("FAIL plan rc=%d\n", n); return 1; }
-    if (out[0] != FIO_PLAN_VERSION || out[1] != 2 || out[2] != 2) { printf("FAIL plan header\n"); return 1; }
+    // THE PLAN IS THE STRUCT (anim_plan.h AnimPlan), read where it lies. This
+    // used to walk a packed block of the same numbers by offset - the same
+    // layout ios_api.c wrote and AnimPlanWire.swift read, stated a third time
+    // here, which is how a test comes to pass against a wire nobody else reads.
+    const AnimPlan *pl = (const AnimPlan *)fio_anim_plan_ptr();
+    if (fio_anim_plan(in, (int)sizeof in) != FIO_EOK) { printf("FAIL plan build\n"); return 1; }
+    if (pl->n_steps != 2 || pl->pre.n_players != 2 || pl->n_veil != 6) {
+        printf("FAIL plan shape %d/%d/%d\n", pl->n_steps, pl->pre.n_players, pl->n_veil); return 1;
+    }
 
     // The freeze: the board BEFORE the pickup. A deck of ONE, not two.
-    if (out[8] != 1) { printf("FAIL plan pre deck %d (the flipped trump was counted back)\n", out[8]); return 1; }
-    if (out[9] != 20) { printf("FAIL plan pre discard %d\n", out[9]); return 1; }
-    if (out[10] != 3 || out[11] != 5) { printf("FAIL plan pre hands %d/%d\n", out[10], out[11]); return 1; }
+    if (pl->pre.deck != 1) { printf("FAIL plan pre deck %d (the flipped trump was counted back)\n", pl->pre.deck); return 1; }
+    if (pl->pre.discard != 20) { printf("FAIL plan pre discard %d\n", pl->pre.discard); return 1; }
+    if (pl->pre.hand[0] != 3 || pl->pre.hand[1] != 5) { printf("FAIL plan pre hands %d/%d\n", pl->pre.hand[0], pl->pre.hand[1]); return 1; }
 
     // …AND THE PRE ROW, which is the half of the freeze this wire used to leave
     // out. This stream SWEEPS, and neither its own steps nor a prior board
@@ -1646,35 +1635,30 @@ static int plan_wire_check(void) {
     // is the whole point of that flag: the right cards in a shape nobody
     // vouched for. Nothing about the sweep path changed; this pins that.
     {
-        const unsigned char *row = out + FIO_PLAN_ROW_AT;
-        if (row[0] != 4 || row[1] != 0) {
-            printf("FAIL plan pre row %d/%d (want 4 cells, unpaired)\n", row[0], row[1]); return 1;
+        if (pl->pre.n_battles != 4 || pl->pre.paired != 0) {
+            printf("FAIL plan pre row %d/%d (want 4 cells, unpaired)\n", pl->pre.n_battles, pl->pre.paired); return 1;
         }
         const unsigned char want_row[8] = { 2, FIO_PRETABLE_NONE, 14, FIO_PRETABLE_NONE,
                                             27, FIO_PRETABLE_NONE, 40, FIO_PRETABLE_NONE };
         for (int i = 0; i < 8; i++)
-            if (row[2 + i] != want_row[i]) { printf("FAIL plan pre row[%d]=%d\n", i, row[2 + i]); return 1; }
+            if (pl->pre.battles[i] != want_row[i]) { printf("FAIL plan pre row[%d]=%d\n", i, pl->pre.battles[i]); return 1; }
     }
 
-    const unsigned char *s0 = out + FIO_PLAN_HEAD;
-    const unsigned char *s1 = s0 + FIO_PLAN_STRIDE;
+    const AnimPlanStep *s0 = &pl->steps[0], *s1 = &pl->steps[1];
     // Each step lands on its OWN board, and the last one is the final board.
-    if (s0[11] != 1 || s0[15] != 3 || s0[16] != 9) { printf("FAIL plan step 0 board\n"); return 1; }
-    if (s1[11] != 0 || s1[15] != 5 || s1[16] != 9) { printf("FAIL plan step 1 board\n"); return 1; }
-    if (s0[13] != 0 || s1[13] != 2 || s1[14] != 0) { printf("FAIL plan in-flight from deck\n"); return 1; }
+    if (s0->deck != 1 || s0->hand[0] != 3 || s0->hand[1] != 9) { printf("FAIL plan step 0 board\n"); return 1; }
+    if (s1->deck != 0 || s1->hand[0] != 5 || s1->hand[1] != 9) { printf("FAIL plan step 1 board\n"); return 1; }
+    if (s0->in_flight_from_deck != 0 || s1->in_flight_from_deck != 2 || s1->in_flight_to_flipped != 0) {
+        printf("FAIL plan in-flight from deck\n"); return 1;
+    }
     // Timing: ANIMATION_TIME each, staggered by TIME+GAP, and the wall time.
-    const int dur = s0[5] | (s0[6] << 8);
-    const int start1 = s1[7] | (s1[8] << 8) | (s1[9] << 16) | (s1[10] << 24);
-    const int total = out[4] | (out[5] << 8) | (out[6] << 16) | (out[7] << 24);
-    if (dur != 500 || start1 != 525 || total != 1025) {
-        printf("FAIL plan timing %d/%d/%d\n", dur, start1, total); return 1;
+    if (s0->duration_ms != 500 || s1->start_ms != 525 || pl->total_ms != 1025) {
+        printf("FAIL plan timing %d/%d/%d\n", s0->duration_ms, s1->start_ms, pl->total_ms); return 1;
     }
     // The veil: every real identity this stream lands, in order, once each.
-    const unsigned char *veil = s1 + FIO_PLAN_STRIDE;
-    if (out[3] != 6) { printf("FAIL plan veil %d\n", out[3]); return 1; }
     const unsigned char want[6] = { 2, 14, 27, 40, 6, 33 };
     for (int i = 0; i < 6; i++)
-        if (veil[i] != want[i]) { printf("FAIL plan veil[%d]=%d\n", i, veil[i]); return 1; }
+        if (pl->veil_ids[i] != want[i]) { printf("FAIL plan veil[%d]=%d\n", i, pl->veil_ids[i]); return 1; }
 
     // A foreign version, a forged header and a buffer that cannot hold the
     // answer are refused, never half-written. The header fields are what size
@@ -1691,7 +1675,7 @@ static int plan_wire_check(void) {
     for (int i = 0; i < (int)(sizeof forged / sizeof forged[0]); i++) {
         memcpy(bad, in, sizeof in);
         bad[forged[i].at] = forged[i].to;
-        if (fio_anim_plan_packed(bad, (int)sizeof bad, (char *)out, sizeof out) != forged[i].want) {
+        if (fio_anim_plan(bad, (int)sizeof bad) != forged[i].want) {
             printf("FAIL plan accepted %s\n", forged[i].what); return 1;
         }
     }
@@ -1720,16 +1704,13 @@ static int plan_wire_check(void) {
         for (int L = 0; L <= sweeps[f].n; L++) {
             unsigned char *edge = probe + page - L;
             memcpy(edge, sweeps[f].b, (size_t)L);
-            const int r = fio_anim_plan_packed(edge, L, (char *)out, sizeof out);
-            if (L < sweeps[f].n ? (r >= 0) : (r <= 0)) {
+            const int r = fio_anim_plan(edge, L);
+            if (L < sweeps[f].n ? (r >= 0) : (r != FIO_EOK)) {
                 printf("FAIL %s at %d bytes rc=%d\n", sweeps[f].what, L, r); return 1;
             }
         }
     }
     munmap(probe, (size_t)page * 2);
-    if (fio_anim_plan_packed(in, (int)sizeof in, (char *)out, FIO_PLAN_HEAD) != FIO_ECAP) {
-        printf("FAIL plan wrote past its buffer\n"); return 1;
-    }
 
     // ---- THE PRE-BUMP, and the one assertion that fails against it ----------
     //
@@ -1748,26 +1729,22 @@ static int plan_wire_check(void) {
     // card is left standing; and ranking the sweep rule after the addition one
     // turns the pickup case above into a 0-cell answer.
     {
-        unsigned char pout[512];
-        const int pn = fio_anim_plan_packed(pass_in, (int)sizeof pass_in,
-                                            (char *)pout, sizeof pout);
-        if (pn != FIO_PLAN_HEAD + FIO_PLAN_STRIDE + 1) {
-            printf("FAIL pass plan rc=%d\n", pn); return 1;
+        if (fio_anim_plan(pass_in, (int)sizeof pass_in) != FIO_EOK || pl->n_steps != 1) {
+            printf("FAIL pass plan\n"); return 1;
         }
-        const unsigned char *row = pout + FIO_PLAN_ROW_AT;
         // ONE cell, not two, and it is the pile that was already there.
-        if (row[0] != 1) {
+        if (pl->pre.n_battles != 1) {
             printf("FAIL pass pre row %d cells (the pre-bump: the arrived row is 2)\n",
-                   row[0]); return 1;
+                   pl->pre.n_battles); return 1;
         }
         // …off a real board, so a caller may treat it as a table.
-        if (row[1] != 1) { printf("FAIL pass pre row unpaired\n"); return 1; }
-        if (row[2] != 3 || row[3] != FIO_PRETABLE_NONE) {
+        if (pl->pre.paired != 1) { printf("FAIL pass pre row unpaired\n"); return 1; }
+        if (pl->pre.battles[0] != 3 || pl->pre.battles[1] != FIO_PRETABLE_NONE) {
             printf("FAIL pass pre row cell %d/%d (want the standing attack, bare)\n",
-                   row[2], row[3]); return 1;
+                   pl->pre.battles[0], pl->pre.battles[1]); return 1;
         }
         // The passed card is veiled - it flies IN to the slot the row grows.
-        if (pout[3] != 1 || pout[FIO_PLAN_HEAD + FIO_PLAN_STRIDE] != 17) {
+        if (pl->n_veil != 1 || pl->veil_ids[0] != 17) {
             printf("FAIL pass veil\n"); return 1;
         }
 
@@ -1779,15 +1756,13 @@ static int plan_wire_check(void) {
             5, 1, 1, 2, 1, 1, 1, 12, 0, FIO_PLAN_NO_FLIP, 5, 5, 17,
             1, 3, 17,
         };
-        const int cn = fio_anim_plan_packed(cover_in, (int)sizeof cover_in,
-                                            (char *)pout, sizeof pout);
-        if (cn != FIO_PLAN_HEAD + FIO_PLAN_STRIDE + 1) {
-            printf("FAIL cover plan rc=%d\n", cn); return 1;
+        if (fio_anim_plan(cover_in, (int)sizeof cover_in) != FIO_EOK || pl->n_steps != 1) {
+            printf("FAIL cover plan\n"); return 1;
         }
-        row = pout + FIO_PLAN_ROW_AT;
-        if (row[0] != 1 || row[1] != 1 || row[2] != 3 || row[3] != FIO_PRETABLE_NONE) {
+        if (pl->pre.n_battles != 1 || pl->pre.paired != 1 ||
+            pl->pre.battles[0] != 3 || pl->pre.battles[1] != FIO_PRETABLE_NONE) {
             printf("FAIL cover pre row %d/%d %d/%d (want 1 bare cell)\n",
-                   row[0], row[1], row[2], row[3]); return 1;
+                   pl->pre.n_battles, pl->pre.paired, pl->pre.battles[0], pl->pre.battles[1]); return 1;
         }
 
         // A MASKED placement names nothing, so there is nothing to take back
@@ -1798,19 +1773,17 @@ static int plan_wire_check(void) {
             4, 0, 1, 2, 1, 0, 1, 12, 0, FIO_PLAN_NO_FLIP, 5, 6,
             2, 3, FIO_PRETABLE_NONE, 17, FIO_PRETABLE_NONE,
         };
-        const int mn = fio_anim_plan_packed(masked_in, (int)sizeof masked_in,
-                                            (char *)pout, sizeof pout);
-        if (mn != FIO_PLAN_HEAD + FIO_PLAN_STRIDE) {
-            printf("FAIL masked plan rc=%d\n", mn); return 1;
+        if (fio_anim_plan(masked_in, (int)sizeof masked_in) != FIO_EOK || pl->n_steps != 1) {
+            printf("FAIL masked plan\n"); return 1;
         }
-        if (pout[FIO_PLAN_ROW_AT] != 0) {
+        if (pl->pre.n_battles != 0) {
             printf("FAIL masked pre row %d (a row was invented for a card nobody named)\n",
-                   pout[FIO_PLAN_ROW_AT]); return 1;
+                   pl->pre.n_battles); return 1;
         }
     }
 
-    printf("plan wire OK (%d bytes, freeze deck=1 over a flipped-trump refill, "
-           "pre row 4-flat / pass 1-of-2 / cover bare / masked none)\n", n);
+    printf("plan wire OK (freeze deck=1 over a flipped-trump refill, "
+           "pre row 4-flat / pass 1-of-2 / cover bare / masked none)\n");
     return 0;
 }
 
@@ -2069,7 +2042,7 @@ int main(void) {
             if (r < 0) { printf("human apply error r=%d\n", r); break; }
         } else {
             // not the human's turn: drive the bots one cycle (all seats but 0).
-            if (fio_bot_drive_packed(1, buf, sizeof(buf)) < 0) break;
+            if (fio_bot_drive(1) < 0) break;
         }
     }
 

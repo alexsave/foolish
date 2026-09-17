@@ -68,32 +68,25 @@ static void le_i32(unsigned char **q, int v) {
     unsigned int u = (unsigned int)v;
     *(*q)++ = u & 0xff; *(*q)++ = (u >> 8) & 0xff; *(*q)++ = (u >> 16) & 0xff; *(*q)++ = (u >> 24) & 0xff;
 }
-int fio_bot_drive_packed(int human_mask, char *out, int cap) {
+// THE CYCLE'S OUTPUT, AS ITSELF (bot_drive.h BotDriveOut), where it lies: the
+// actions applied with their pacing and their moves, why the drive stopped and
+// whether the game ended. It used to be flattened into a packed block here and
+// unpacked in BotDriveWire.swift - a u32 count, a four-byte action head, two
+// card runs and three little-endian ints - which was the same layout written
+// down in two languages.
+//
+// The cycle's DELAY is not in the struct (it is a question about the drive, not
+// a field of it), so it is the return value: milliseconds to wait before the
+// next cycle, or a negative FIO_E*.
+static BotDriveOut g_drive;
+
+const void *fio_bot_drive_ptr(void) { return &g_drive; }
+
+int fio_bot_drive(int human_mask) {
     Game *g = fio_resident_game();
     if (!g) return FIO_ENOGAME;
-    static BotDriveOut drv;
-    bot_drive(g, (uint32_t)human_mask, BOT_DRIVE_MAX_ACTIONS, 0, 0, &drv);
-    const int delay_ms = bot_cycle_delay_ms(g, (uint32_t)human_mask, &drv);
-
-    if (cap < 4) return FIO_ECAP;
-    unsigned char *q = (unsigned char *)out;
-    unsigned int n = (unsigned int)drv.n;
-    *q++ = n & 0xff; *q++ = (n >> 8) & 0xff; *q++ = (n >> 16) & 0xff; *q++ = (n >> 24) & 0xff;
-    for (int i = 0; i < drv.n; i++) {
-        const BotDriveAction *a = &drv.actions[i];
-        const LegalMove *m = &a->move;
-        if ((int)((char *)q - out) + 4 + 2 * m->n_cards + 12 > cap) return FIO_ECAP;
-        *q++ = (unsigned char)a->seat;
-        *q++ = (unsigned char)a->pacing_class;
-        *q++ = (unsigned char)m->type;
-        *q++ = (unsigned char)m->n_cards;
-        for (int c = 0; c < m->n_cards; c++) *q++ = (unsigned char)card_to_id(m->cards[c]);
-        for (int c = 0; c < m->n_cards; c++) *q++ = (unsigned char)card_to_id(m->attack_cards[c]);
-    }
-    le_i32(&q, drv.stop);
-    le_i32(&q, drv.ended);
-    le_i32(&q, delay_ms);
-    return (int)((char *)q - out);
+    bot_drive(g, (uint32_t)human_mask, BOT_DRIVE_MAX_ACTIONS, 0, 0, &g_drive);
+    return bot_cycle_delay_ms(g, (uint32_t)human_mask, &g_drive);
 }
 
 // ---------- strategies -----------------------------------------------------

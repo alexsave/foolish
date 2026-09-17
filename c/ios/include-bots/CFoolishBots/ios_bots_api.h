@@ -25,10 +25,18 @@
 // seat is asked to choose. Returns FIO_EOK or a negative error.
 int fio_set_seat_strategy(int seat, int strategy_id);
 
-// Drive one bot cycle, result packed: u32 n_actions, per action
-// {seat, pace, type, n_cards, cards[], attacks[]}, then i32 stop, ended,
-// delayMs (LE). The BotDriveWire Swift decoder reads it.
-int fio_bot_drive_packed(int human_mask, char *out, int cap);
+// Drive one bot cycle. The result is the kernel's own BotDriveOut
+// (c/src/bot_drive.h) at fio_bot_drive_ptr - the actions applied with their
+// pacing and their moves, why the drive stopped, and the loser seat if the game
+// ended - read through the generated snapshot readers (readBotDriveOut). It
+// used to be flattened into a packed block here and unpacked in
+// BotDriveWire.swift, one layout in two languages.
+//
+// Returns the CYCLE DELAY in milliseconds (how long to wait before driving
+// again - a question about the drive rather than a field of it), or a negative
+// FIO_E*. The drive of a refused call is not to be read.
+int fio_bot_drive(int human_mask);
+const void *fio_bot_drive_ptr(void);
 
 // ---------- the offline bot roster (§7.2) ----------------------------------
 

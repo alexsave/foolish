@@ -10,7 +10,7 @@
 #
 # Measured, at the time this was written: a binary calling only the message
 # entries linked 0 ladder symbols at 139,640 bytes; the same binary plus one
-# fio_bot_drive_packed call linked 47 at 273,592.
+# fio_bot_drive call linked 47 at 273,592.
 #
 # Usage: ios/split_check.sh <ios_api.o>
 set -e

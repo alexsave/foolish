@@ -99,13 +99,15 @@ make ios-goldens    # regenerates ios/Fixtures/goldens.json
 Swift `EngineGoldenTests` then assert the built `libfoolish.a` reproduces
 `goldens.json` byte-for-byte.
 
-Some **Swift** is provable without a Mac too. The client-server envelope's
-packed roster (`sdk/swift/PackedBytes.swift` + `RosterWire.swift` +
-`EnvelopeRoster.swift`) is Foundation-only by design, so
-`npm run test:swift-parity` compiles it with a real Swift toolchain and asserts
-its bytes against `sdk/ts/wire/roster.ts`. The server writes those bytes and
-only the phone reads them, so without this job the two halves are never compiled
-in the same place. CI runs it on Linux inside the official `swift:` image - see
+Some **Swift** is provable without a Mac too. The roster's names block
+(`sdk/swift/PackedBytes.swift` + `RosterWire.swift`) is Foundation-only by
+design, so `npm run test:swift-parity` compiles it with a real Swift toolchain
+and asserts its bytes against the kernel's. It is a WRITER on both sides of the
+language line - Swift writes the block for an FMSG seal, C writes it inside the
+envelope's trailer - which is why it is still a parity test at all; the trailer
+DECODER it used to compile beside it is gone, because the phone reads envelopes
+through `client_adopt_envelope` now and a parity test over one implementation
+only proves it agrees with itself. CI runs it on Linux inside the official `swift:` image - see
 the `swift-parity` job in `.github/workflows/ios.yml`. Any other Swift file that
 can be kept free of `CFoolish` can be gated the same way.
 

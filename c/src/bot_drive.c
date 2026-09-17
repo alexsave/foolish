@@ -37,7 +37,7 @@ int bot_pacing_ms(int pacing_class, int humans_present) {
 // the cycle's visible actions, priced by bot_pacing_ms, reduced when a human is
 // still IN (they set the tempo). Zero when nothing visible happened. Every host
 // used to reduce the actions to a max and re-check humans itself (the native
-// loop, fio_bot_drive_packed); that "how long" is the kernel's to say, once, so
+// loop, fio_bot_drive); that "how long" is the kernel's to say, once, so
 // the trampoline host is left owning only the loop and the actual sleep.
 int bot_cycle_delay_ms(const Game *g, uint32_t human_mask, const BotDriveOut *drv) {
     if (!g || !drv) return 0;

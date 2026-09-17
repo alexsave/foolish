@@ -10,7 +10,7 @@
 // that Swift never parses a binary format; it is wrong and this header is the
 // contract.
 //
-// THE BOT HALF IS NOT HERE. fio_set_seat_strategy, fio_bot_drive_packed,
+// THE BOT HALF IS NOT HERE. fio_set_seat_strategy, fio_bot_drive,
 // fio_strategy_count and fio_strategy_name are declared by
 // ios/include-bots/CFoolishBots/ios_bots_api.h and live in
 // FoolishBots.xcframework, because naming any of them links the strategy
@@ -260,7 +260,7 @@ int fio_last_reject(void);
 // Swift only tweens sprites per step and obeys the freezes/veils. See
 // docs/ANIMATION_CORE_C.md.
 //
-// THE STREAM IS AN INPUT, for the reason fio_beats_packed's is: a board
+// THE STREAM IS AN INPUT, for the reason fio_beats's is: a board
 // animates the stream it was HANDED (often only half a bubble, because a staged
 // bout end is cut at its settlement), and it asks from a SwiftUI render pass
 // that cannot await the actor the resident game lives behind.
@@ -292,46 +292,15 @@ int fio_last_reject(void);
 //   THE ROW IS THE SAME KIND OF ANCHOR, one field later: the row before a pass
 //   is the first event's own row with the passed card taken back off it.
 //
-// OUTPUT (`out`):
-//   0  u8  version
-//   1  u8  n_steps
-//   2  u8  n_players
-//   3  u8  n_veil
-//   4  u32 total wall time, ms (a full-length stream runs past a u16)
-//   8  u8  pre deck   (the count-freeze the display opens on)
-//   9  u8  pre discard
-//  10  FIO_PLAN_SEATS x u8 pre hand counts, by seat
-//  FIO_PLAN_FLIP_AT     u8  the pre FLIPPED TRUMP as a dense id - the other
-//                           half of the stock the well draws; FIO_PLAN_NO_FLIP
-//                           once a refill has dealt it out (see AnimCounts)
-//  FIO_PLAN_ROW_AT      u8  pre n_battles - the ROW the display opens on (see
-//                           AnimCounts); 0 for "no row", never a truncated one
-//  FIO_PLAN_ROW_AT + 1  u8  1 when that row came off a real board, 0 for the
-//                           flat one-cell-per-card reading of a pickup
-//  FIO_PLAN_ROW_AT + 2  2 x FIO_PLAN_BATTLES u8 - the row, attack then cover
-//                           (or FIO_PRETABLE_NONE). Fixed width, like the seat
-//                           block, so the steps sit at a constant offset.
-//   then n_steps x FIO_PLAN_STRIDE:
-//     0  u8  type
-//     1  u8  seat (0xFF none)
-//     2  u8  from
-//     3  u8  to
-//     4  u8  n_cards
-//     5  u16 duration ms
-//     7  u32 start ms (offset from the sequence's first frame)
-//    11  u8  deck as this step lands
-//    12  u8  discard as this step lands
-//    13  u8  cards of this step that left the deck
-//    14  u8  ...of which are bound for the flipped slot (no badge change)
-//    15  FIO_PLAN_SEATS x u8 hand counts as this step lands
-//   then n_veil x u8 dense card id: identities in transit, hidden until the step
-//   that lands them.
-// Returns bytes written, or a negative error.
-// 2: the pre-move ROW joined the freeze, in and out. Both ends of this wire
-// ship together (the xcframework carries the header), so the version is a
-// tripwire for a stale build rather than a compatibility story.
-// 3: and the pre-move FLIPPED TRUMP, in and out - the deck well's other half,
-// which froze nowhere and so vanished from under a frozen pile.
+// OUTPUT: the plan itself (anim_plan.h AnimPlan), at fio_anim_plan_ptr, read
+// through the generated snapshot readers - the freeze with its row and its
+// trump, a step per event with its timing and the board it lands on, the veil,
+// and the wall time. It used to be flattened into a packed block here and read
+// back field by field in AnimPlanWire.swift: 85 bytes of header, a 23-byte
+// stride per step and a veil tail, stated twice and kept in step by hand.
+// The web crosses the same struct (wasm_anim_plan_ptr).
+// Returns FIO_EOK, or a negative error; the plan of a refused call is not to be
+// read.
 #define FIO_PLAN_VERSION 3
 // The seat block is a FIXED width so a step sits at a constant offset whatever
 // the table size; the kernel's MAX_PLAYERS is checked against it at build time.
@@ -341,19 +310,10 @@ int fio_last_reject(void);
 // live table is exactly where it was before the row was in the plan at all,
 // where a TRUNCATED row would be a table missing cards.
 #define FIO_PLAN_BATTLES 32
-// The freeze's own scalars first, then the fixed row block. A dense id is
-// 0..51, so 0xFF cannot collide with one.
+// A dense id is 0..51, so 0xFF cannot collide with one.
 #define FIO_PLAN_NO_FLIP 0xFF
-#define FIO_PLAN_FLIP_AT (10 + FIO_PLAN_SEATS)
-#define FIO_PLAN_ROW_AT  (11 + FIO_PLAN_SEATS)
-// A LITERAL, not the sum it obviously is. Swift's macro importer takes only the
-// simplest constant expressions, and the three-term one this used to be came
-// across as nothing at all ("cannot find 'FIO_PLAN_HEAD' in scope") - a
-// compile error rather than a silent wrong number, but a stupid one to hit
-// twice. The sum it must equal is asserted in ios_api.c.
-#define FIO_PLAN_HEAD    85
-#define FIO_PLAN_STRIDE  (15 + FIO_PLAN_SEATS)
-int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap);
+int fio_anim_plan(const uint8_t *in, int len);
+const void *fio_anim_plan_ptr(void);
 
 // The live-broadcast version gate (anim_should_drop_stale): should a broadcast
 // at `incoming` be dropped as stale given the newest applied `last`? The has_*
@@ -379,30 +339,15 @@ int fio_anim_should_drop_stale(int has_last, int last, int has_incoming, int inc
 // Only REAL identities travel: a masked card back names nothing, so the caller
 // simply does not list it.
 //
-// OUTPUT (`out`), all little-endian:
-//   0   u8  version
-//   1   u8  n_beats
-//   2   u8  the first event's good mask is present
-//   3   u8  the first event's good mask
-//   4   u64 every card the whole stream puts down on the table, as id bits
-//   12  n_beats x FIO_BEATS_STRIDE:
-//        0 u8  index of the beat's first event
-//        1 u8  how many events it spans
-//        2 u8  the lead event's type
-//        3 u8  the lead event's seat (0xFF none)
-//        4 u8  flags: 1 holds after this beat, 2 it moved a card,
-//                     4 it placed one on the table, 8 the acting badge drops
-//                       as these cards LEAVE rather than as they land
-//        5 u8  seats that go out WITH this beat
-//        6 u8  seats that laid cards via ATTACK_PASS in it
-//        7 u8  this beat's good mask is present
-//        8 u8  this beat's good mask (its LAST event's board)
-//        9 u64 the cards it puts on the table, as id bits
-// Returns bytes written, or a negative error.
+// OUTPUT: the beats themselves (anim_plan.h AnimBeats), at fio_beats_ptr, read
+// through the generated snapshot readers - a beat per group with its span, its
+// lead event, its flags, the seats that go out with it, the seats that laid
+// cards via ATTACK_PASS in it, its good mask and the cards it puts down. It used
+// to be flattened into a packed block here and read back in BeatWire.swift.
+// Returns FIO_EOK, or a negative error.
 #define FIO_BEATS_VERSION 1
-#define FIO_BEATS_HEAD    12
-#define FIO_BEATS_STRIDE  17
-int fio_beats_packed(const uint8_t *in, int len, char *out, int cap);
+int fio_beats(const uint8_t *in, int len);
+const void *fio_beats_ptr(void);
 
 // Does a step of this kind take cards out of the acting seat's hand? (The
 // flags-bit-8 question for a caller holding one event rather than a beat.)
@@ -440,7 +385,7 @@ int fio_roles_pass_hand_off(int shown_defender, int shown_first_attacker,
 // from where it actually sat. See anim_plan.h for the rule and for why the
 // PAIRING is the hard part of it.
 //
-// The stream is an input for the reason fio_beats_packed's is, and the prior
+// The stream is an input for the reason fio_beats's is, and the prior
 // board travels with it because a single-action pickup turn carries no earlier
 // board of its own - the pickup step's own board is the emptied table.
 //
@@ -480,7 +425,7 @@ int fio_pre_bout_table_packed(const uint8_t *in, int len, char *out, int cap);
 // clear, and for the ones that revert, the order they fly back in. See
 // anim_plan.h for the rule and for why CLEAR is decided first.
 //
-// ONE ENTRY ANSWERS BOTH, for the reason fio_beats_packed's does: a board that
+// ONE ENTRY ANSWERS BOTH, for the reason fio_beats's does: a board that
 // asked for a motion's verdict and for the reversal's shape separately could be
 // told two different things about the same card.
 //
@@ -1031,27 +976,24 @@ int fio_msg_rule_p(const uint8_t *a, int a_len, const uint8_t *b, int b_len);
 // is the crossing, and it decodes both payloads the way fio_msg_rule_p does.
 //
 // `showing` is the chain the surface is displaying, `arriving` the one that just
-// landed. OUT is int32 pairs:
+// landed. OUT is the plan itself (anim_plan.h AnimSurfacePlan), at
+// fio_surface_plan_ptr, read through the generated snapshot readers: a beat per
+// action with its kind, its idiom, the rules it shows, what its controls do and
+// its timing, plus `settle_ms` - how long the surface must be LOOKED AT before
+// it may be put away, which is not total_ms and is the one a caller about to
+// collapse the drawer wants. A plan with NO BEATS is still an answer, and
+// carries that number: a lone roster snap is folded to no beats and still has
+// to be read, while two chains describing the same table settle in 0 (the no-op
+// rule).
 //
-//    0  n_beats
-//    1  total_ms
-//    2  settle_ms - how long the surface must be LOOKED AT before it may be put
-//       away, which is not the same number as total_ms and is the one a caller
-//       about to collapse the drawer wants. Present even when n_beats is 0: a
-//       lone roster snap is folded to no beats and still has to be read, while
-//       two chains describing the same table settle in 0 (the no-op rule).
-//    3 + i*FIO_SURFACE_STRIDE:  kind (FIO_SURFACE_*), transition (FIO_TRANS_*),
-//                               passing, controls (FIO_CONTROLS_*),
-//                               duration_ms, start_ms
+// It used to be flattened into int32 words here and read back word by word in
+// SurfacePlan.swift.
 //
 // The TRANSITION crosses as data rather than being mapped from `kind` on each
 // platform: which idiom an action wears is a fact about the action, so it is
 // decided once, in C (anim_plan.h), and a client renders what it is told.
 //
-// Returns the number of INT32s written - always at least FIO_SURFACE_HEAD, so a
-// plan with no beats in it (a board taking an arrival, or two envelopes
-// describing the same lobby - the caller then adopts exactly as it always did)
-// still carries its settle_ms - or a negative FIO_E*.
+// Returns FIO_EOK, or a negative FIO_E*.
 #define FIO_SURFACE_HEAD   3
 #define FIO_SURFACE_STRIDE 6
 #define FIO_SURFACE_ROSTER 1   // somebody sat down
@@ -1098,14 +1040,16 @@ int fio_anim_surface_beat_ms(void);
 
 // THE WHOLE-SURFACE CHANGE THAT HAS NO SECOND CHAIN to diff against: the New
 // game screen becoming the lobby it creates, and that lobby being discarded
-// again. Same OUT shape as fio_msg_surface_plan, always one beat, so a client
+// again. Same plan as fio_msg_surface_plan, always one beat, so a client
 // renders it through exactly the same reader. See anim_plan.h's
 // `anim_surface_swap` for why the client is not allowed to decide this itself.
-int fio_anim_surface_swap(int passing, int32_t *out, int cap);
+int fio_anim_surface_swap(int passing);
 
 int fio_msg_surface_plan(const uint8_t *showing, int showing_len,
-                         const uint8_t *arriving, int arriving_len,
-                         int32_t *out, int cap);
+                         const uint8_t *arriving, int arriving_len);
+
+// The plan either of them built (anim_plan.h AnimSurfacePlan), where it lies.
+const void *fio_surface_plan_ptr(void);
 
 // Rule R (§7.4): rebase ONE pending move onto the chain fio_msg_decode
 // last adopted — the ledger's moves, in order. Returns:

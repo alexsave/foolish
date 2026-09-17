@@ -10,16 +10,28 @@
  * server IMMEDIATELY. The iOS client does not deploy that way - it ships through
  * the App Store - and the same envelope is also STORED (player_views.view,
  * spectator_views.view), so there is no request to negotiate a format on. What
- * the kernel writes must read in the Swift decoder that is installed, exactly.
+ * the kernel writes must read in the client that is installed, exactly.
+ *
+ * WHAT IS LEFT OF THE SWIFT HALF, AND WHY. This file used to compile the REAL
+ * Swift trailer DECODER (ios/FoolishNet/EnvelopeRoster.swift) and diff its
+ * reading of the kernel's bytes against the web's. That decoder is gone: Phase
+ * 10 pointed the phone at client_adopt_envelope, which is the same C reader the
+ * web already used, so there is no second implementation to keep in step and a
+ * parity test over one implementation only proves it agrees with itself (the
+ * owner's rule: retire a parity test once its second implementation is gone).
+ *
+ * The WRITER half stays, because its second implementation still ships:
+ * RosterWire.encode writes the names block for an FMSG seal, the C Roster writes
+ * the same block inside the envelope's trailer, and two tests that each parsed
+ * their own output would both pass while the two disagreed about where a
+ * 65-byte name gets cut.
  *
  * So the file holds the kernel's bytes three ways: the envelope's shape (no
  * island, a mandatory trailer), the web's own reader (the client slot,
  * sdk/ts/table/client_table.ts) round-tripping every field a client reads, and
- * the REAL Swift decoder compiled from the tree (the pattern
- * imessage_replay_names.test.ts set - compile the production source, not a
- * copy), including the non-ASCII cases a byte-length codec goes wrong on. The
- * TypeScript roster encoder these used to exercise is retired; the C writer is
- * the one definition now.
+ * the real Swift ENCODER compiled from the tree, including the non-ASCII cases a
+ * byte-length codec goes wrong on. The TypeScript roster encoder these used to
+ * exercise is retired; the C writer is the one definition now.
  *
  * Pure test - needs no Postgres. The Swift half skips where there is no
  * toolchain (Linux CI); it is a Mac-side guard on a Mac-side file.
@@ -210,44 +222,13 @@ const hasSwift = (() => spawnSync('swiftc', ['--version'], { stdio: 'ignore' }).
 const DRIVER = `
 import Foundation
 
-// Two modes, both driving PRODUCTION sources compiled alongside this file:
-//   (default)  hex on stdin -> the decoded roster as JSON on stdout
-//   "encode"   a JSON name list on stdin -> RosterWire.encode's bytes as hex
-// The second is the byte-for-byte gate: the names block has a writer on each
-// side of the language line, and the trim rule is the part with judgement in it.
-if CommandLine.arguments.count > 1 && CommandLine.arguments[1] == "encode" {
-    let raw = FileHandle.standardInput.readDataToEndOfFile()
-    let names = try! JSONDecoder().decode([String].self, from: raw)
-    let joins = names.enumerated().map { MessageJoin(seat: $0.offset, name: $0.element) }
-    print(RosterWire.encode(joins).map { String(format: "%02x", $0) }.joined())
-    exit(0)
-}
-
-let hex = String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self)
-    .trimmingCharacters(in: .whitespacesAndNewlines)
-var b: [UInt8] = []
-var i = hex.startIndex
-while i < hex.endIndex {
-    let j = hex.index(i, offsetBy: 2)
-    b.append(UInt8(hex[i..<j], radix: 16)!)
-    i = j
-}
-guard let (r, next) = EnvelopeRoster.decode(b, at: 0) else {
-    FileHandle.standardError.write("decode returned nil\\n".data(using: .utf8)!)
-    exit(2)
-}
-struct OutPlayer: Encodable { let player_id: String; let name: String; let is_ai: Bool }
-struct Out: Encodable {
-    let id: String; let name: String; let status: Int
-    let players: [OutPlayer]; let good_players: [String]
-    let good_timestamp: Double?; let next: Int
-}
-let out = Out(id: r.id, name: r.name, status: r.status,
-              players: r.players.map { OutPlayer(player_id: $0.playerId, name: $0.name, is_ai: $0.isAI) },
-              good_players: r.goodPlayers, good_timestamp: r.goodTimestamp, next: next)
-let enc = JSONEncoder()
-enc.outputFormatting = [.sortedKeys]
-print(String(decoding: try! enc.encode(out), as: UTF8.self))
+// A JSON name list on stdin -> RosterWire.encode's bytes as hex. The names block
+// has a writer on each side of the language line, and the trim rule is the part
+// with judgement in it.
+let raw = FileHandle.standardInput.readDataToEndOfFile()
+let names = try! JSONDecoder().decode([String].self, from: raw)
+let joins = names.enumerated().map { MessageJoin(seat: $0.offset, name: $0.element) }
+print(RosterWire.encode(joins).map { String(format: "%02x", $0) }.joined())
 `;
 
 let binary: string | null = null;
@@ -255,23 +236,21 @@ let workdir: string | null = null;
 
 // The Swift half of the parity, by PATH. These files are compiled straight out
 // of the tree rather than through a target, so a move breaks this test - which
-// is the point: EnvelopeRoster.swift moved to ios/FoolishNet in the bundle diet
-// (its `public` symbols were dead-strip roots in a shipped dylib) and this list
-// was not updated, so the whole Swift side failed with a swiftc "no such file"
-// that named nothing about parity. `resolve` turns that into a directive.
+// is the point: a file moved in the bundle diet once and this list was not
+// updated, so the whole Swift side failed with a swiftc "no such file" that
+// named nothing about parity. `resolve` turns that into a directive.
 const SWIFT_SOURCES = [
     'sdk/swift/PackedBytes.swift',
     'sdk/swift/RosterWire.swift',
-    'ios/FoolishNet/EnvelopeRoster.swift',
 ];
 
 function resolve(rel: string): string {
     const abs = join(REPO, rel);
     if (!existsSync(abs)) {
         throw new Error(
-            `${rel} is gone. This test compiles the REAL Swift decoder from the ` +
+            `${rel} is gone. This test compiles the REAL Swift encoder from the ` +
             `tree, so if that file moved, update SWIFT_SOURCES in this file - ` +
-            `do not delete the test, or the kernel's writer and the Swift decoder ` +
+            `do not delete the test, or the kernel's writer and the Swift writer ` +
             `are free to drift.`);
     }
     return abs;
@@ -282,7 +261,7 @@ function swiftDecoder(): string {
     workdir = mkdtempSync(join(tmpdir(), 'foolish_roster_wire_'));
     const main = join(workdir, 'main.swift');
     writeFileSync(main, DRIVER);
-    const out = join(workdir, 'decode_roster');
+    const out = join(workdir, 'encode_roster');
     execFileSync('swiftc', [
         ...SWIFT_SOURCES.map(resolve),
         main, '-o', out,
@@ -292,11 +271,6 @@ function swiftDecoder(): string {
 }
 
 const toHex = (b: Uint8Array) => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('');
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function swiftDecode(bytes: Uint8Array): any {
-    return JSON.parse(execFileSync(swiftDecoder(), [], { input: toHex(bytes), encoding: 'utf8' }));
-}
 
 const OVER_BUDGET = [
     '🤡'.repeat(20), 'A' + '👍🏽'.repeat(8), 'Владимир'.repeat(9),
@@ -319,32 +293,6 @@ const C_TABLES: RosterTable[] = [
     { gid: 'empty', title: '', status: 0, goodMask: 0, seats: [] },
 ];
 
-test('the REAL Swift decoder reads the kernel\'s trailers, every field', { skip: !hasSwift && 'no swiftc on this machine' }, () => {
-    for (const table of C_TABLES) {
-        const c = trailerOf(table);
-        const got = swiftDecode(c);
-        assert.equal(got.next, c.length, `${table.gid}: Swift stopped short of the end of C's trailer`);
-        assert.equal(got.id, table.gid);
-        assert.equal(got.name, table.title);
-        assert.equal(got.status, table.status, `${table.gid}: status disagrees`);
-        assert.equal(got.players.length, table.seats.length);
-        got.players.forEach((p: { name: string; player_id: string; is_ai: boolean }, i: number) => {
-            assert.equal(p.player_id, table.seats[i].id, `${table.gid}: seat ${i}'s id`);
-            assert.ok(table.seats[i].name.startsWith(p.name), `${table.gid}: seat ${i}'s name is not a prefix`);
-            assert.equal(p.is_ai, table.seats[i].brain !== '', `${table.gid}: seat ${i}'s is_ai`);
-        });
-        assert.deepEqual(got.good_players, table.seats.filter((_, i) => (table.goodMask >> i) & 1).map((s) => s.id),
-                         `${table.gid}: the good seats, in seat order`);
-        assert.equal(got.good_timestamp ?? null, null, `${table.gid}: the timestamp rides the board, not the trailer`);
-        if (utf8len(table.title) <= 200 && table.seats.every((s) => utf8len(s.name) <= ROSTER_NAME_MAX)) {
-            // Nothing to trim: Swift reads exactly what the web reads.
-            if (table.seats.length > 0) assert.deepEqual(
-                { id: got.id, name: got.name, status: got.status, players: got.players },
-                readTrailer(c, table.seats.length), `${table.gid}: Swift and the client slot read the same roster`);
-        }
-    }
-});
-
 test('Swift and the kernel write the same names block, byte for byte', { skip: !hasSwift && 'no swiftc on this machine' }, () => {
     // The names block has a writer on BOTH sides of the language line -
     // RosterWire.encode writes it for FMSG, the C Roster writes it inside the
@@ -353,7 +301,7 @@ test('Swift and the kernel write the same names block, byte for byte', { skip: !
     // trailer is [format][id][title][status][names block][ids...]: the Swift
     // block must appear in it whole, at a byte boundary, after the header.
     const swift = (names: string[]) =>
-        execFileSync(swiftDecoder(), ['encode'], { input: JSON.stringify(names), encoding: 'utf8' }).trim();
+        execFileSync(swiftDecoder(), [], { input: JSON.stringify(names), encoding: 'utf8' }).trim();
 
     const tables = [
         ['Sveta', 'Misha'],
@@ -371,29 +319,6 @@ test('Swift and the kernel write the same names block, byte for byte', { skip: !
         const block = swift(names);
         const at = c.indexOf(block);
         assert.ok(at > 0 && at % 2 === 0, `Swift's names block for ${JSON.stringify(names)} is not in the kernel's trailer (${block} in ${c})`);
-    }
-});
-
-test('Swift and the web agree on the trim, byte for byte', { skip: !hasSwift && 'no swiftc on this machine' }, () => {
-    // The only part of this format with any judgement in it. A grapheme cluster
-    // may be split, a code point never - and both readers see the SAME cut.
-    for (const name of OVER_BUDGET) {
-        const bytes = trailerOf({
-            gid: 'g', title: 'n', status: 1, goodMask: 0,
-            seats: [{ id: 'p', name, brain: '' }, { id: 'q', name: 'Bob', brain: 'random' }],
-        });
-        const got = swiftDecode(bytes);
-        const mine = readTrailer(bytes, 2)!;
-        assert.deepEqual(got.players, mine.players, `Swift and the web disagree about ${JSON.stringify(name)}`);
-        assert.equal(got.players[1].name, 'Bob', 'the trim desynchronized the seat after it');
-    }
-});
-
-test('a truncated trailer is nothing to Swift too', { skip: !hasSwift && 'no swiftc on this machine' }, () => {
-    const bytes = trailerOf(TABLES[1]);
-    for (const cut of [1, 5, 12, bytes.length - 1]) {
-        const r = spawnSync(swiftDecoder(), [], { input: toHex(bytes.subarray(0, cut)), encoding: 'utf8' });
-        assert.notEqual(r.status, 0, `Swift read a ${cut}-byte prefix as a whole roster`);
     }
 });
 

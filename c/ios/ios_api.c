@@ -410,12 +410,13 @@ _Static_assert(FIO_PLAN_SEATS == MAX_PLAYERS,
                "the plan wire's seat block must be the kernel's table size");
 _Static_assert(FIO_PLAN_BATTLES == ANIM_PLAN_ROW_MAX,
                "the plan wire's row block must be the kernel's plan row width");
-_Static_assert(FIO_PLAN_HEAD == FIO_PLAN_ROW_AT + 2 + 2 * FIO_PLAN_BATTLES,
-               "the plan wire's head is the seat block, the row length, the "
-               "paired flag and the row");
+// THE PLAN AND THE BEATS THEMSELVES, not copies of them: the caller reads them
+// at fio_anim_plan_ptr / fio_beats_ptr through the generated snapshot readers.
+static AnimPlan  g_anim_plan;
+static AnimBeats g_anim_beats;
 
-int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap) {
-    if (!in || !out || len < 5) return FIO_EBADARG;
+int fio_anim_plan(const uint8_t *in, int len) {
+    if (!in || len < 5) return FIO_EBADARG;
     if (in[0] != FIO_PLAN_VERSION) return FIO_EPARSE;
     const int np = in[1];
     const int n = in[2];
@@ -502,57 +503,22 @@ int fio_anim_plan_packed(const uint8_t *in, int len, char *out, int cap) {
         evs[i].battles = row;
     }
 
-    static AnimPlan plan;
     const int rc = anim_build_plan(evs, n, np, in[3], in[4], final_flipped,
-                                   final_hand, &plan);
+                                   final_hand, &g_anim_plan);
     if (rc == ANIM_ECAP) return FIO_ECAP;
     if (rc != ANIM_EOK) return FIO_EBADARG;
 
-    const int need = FIO_PLAN_HEAD + plan.n_steps * FIO_PLAN_STRIDE + plan.n_veil;
-    if (cap < need) return FIO_ECAP;
-    unsigned char *q = (unsigned char *)out;
-    for (int i = 0; i < need; i++) q[i] = 0;
-    q[0] = FIO_PLAN_VERSION;
-    q[1] = (unsigned char)plan.n_steps;
-    q[2] = (unsigned char)np;
-    q[3] = (unsigned char)plan.n_veil;
-    for (int i = 0; i < 4; i++) q[4 + i] = (unsigned char)((plan.total_ms >> (8 * i)) & 0xff);
-    q[8] = (unsigned char)plan.pre.deck;
-    q[9] = (unsigned char)plan.pre.discard;
-    for (int s = 0; s < np; s++) q[10 + s] = (unsigned char)plan.pre.hand[s];
-    // THE TRUMP THE WELL OPENS ON, beside the counts it belongs with.
-    q[FIO_PLAN_FLIP_AT] = card_is_none(plan.pre.flipped)
-        ? (unsigned char)FIO_PLAN_NO_FLIP
-        : (unsigned char)card_to_id(plan.pre.flipped);
-    // THE ROW THE DISPLAY OPENS ON. A row too wide for the fixed block crosses
-    // as no row rather than as a truncated one - see FIO_PLAN_BATTLES.
-    if (plan.pre.n_battles > 0 && plan.pre.n_battles <= FIO_PLAN_BATTLES) {
-        q[FIO_PLAN_ROW_AT] = (unsigned char)plan.pre.n_battles;
-        q[FIO_PLAN_ROW_AT + 1] = (unsigned char)(plan.pre.paired ? 1 : 0);
-        for (int k = 0; k < 2 * plan.pre.n_battles; k++)
-            q[FIO_PLAN_ROW_AT + 2 + k] = plan.pre.battles[k];
-    }
-    for (int i = 0; i < plan.n_steps; i++) {
-        const AnimPlanStep *st = &plan.steps[i];
-        unsigned char *e = q + FIO_PLAN_HEAD + i * FIO_PLAN_STRIDE;
-        e[0] = (unsigned char)st->type;
-        e[1] = (unsigned char)(st->seat < 0 ? 0xFF : st->seat);
-        e[2] = (unsigned char)st->from;
-        e[3] = (unsigned char)st->to;
-        e[4] = (unsigned char)st->n_cards;
-        e[5] = (unsigned char)(st->duration_ms & 0xff);
-        e[6] = (unsigned char)((st->duration_ms >> 8) & 0xff);
-        for (int k = 0; k < 4; k++) e[7 + k] = (unsigned char)((st->start_ms >> (8 * k)) & 0xff);
-        e[11] = (unsigned char)st->deck;
-        e[12] = (unsigned char)st->discard;
-        e[13] = (unsigned char)st->in_flight_from_deck;
-        e[14] = (unsigned char)st->in_flight_to_flipped;
-        for (int s = 0; s < np; s++) e[15 + s] = (unsigned char)st->hand[s];
-    }
-    unsigned char *v = q + FIO_PLAN_HEAD + plan.n_steps * FIO_PLAN_STRIDE;
-    for (int i = 0; i < plan.n_veil; i++) v[i] = plan.veil_ids[i];
-    return need;
+    return FIO_EOK;
 }
+
+// The plan the last fio_anim_plan built (anim_plan.h AnimPlan), where it lies.
+// It used to be flattened into a packed block here and read back field by field
+// in AnimPlanWire.swift - 85 bytes of header, a 23-byte stride per step and a
+// veil tail, stated twice. The web reads this same struct through generated
+// accessors (wasm_anim_plan_ptr); the phone reads it through generated
+// snapshots. Valid until the next fio_anim_plan.
+const void *fio_anim_plan_ptr(void) { return &g_anim_plan; }
+
 
 int fio_anim_should_drop_stale(int has_last, int last, int has_incoming, int incoming) {
     return anim_should_drop_stale(has_last, last, has_incoming, incoming);
@@ -569,8 +535,8 @@ int fio_anim_should_drop_stale(int has_last, int last, int has_incoming, int inc
 // ANIM_MAX_BEATS events and no event names more cards than a full table sweep.
 #define FIO_BEATS_MAX_IDS 1024
 
-int fio_beats_packed(const uint8_t *in, int len, char *out, int cap) {
-    if (!in || !out || len < 2) return FIO_EBADARG;
+int fio_beats(const uint8_t *in, int len) {
+    if (!in || len < 2) return FIO_EBADARG;
     if (in[0] != FIO_BEATS_VERSION) return FIO_EPARSE;
     const int n = in[1];
     if (n > ANIM_MAX_BEATS) return FIO_ECAP;
@@ -602,34 +568,17 @@ int fio_beats_packed(const uint8_t *in, int len, char *out, int cap) {
         p += k;
     }
 
-    AnimBeats b;
-    const int r = anim_build_beats(evs, n, &b);
+    const int r = anim_build_beats(evs, n, &g_anim_beats);
     if (r == ANIM_ECAP) return FIO_ECAP;
     if (r < 0) return FIO_EBADARG;
-    if (cap < FIO_BEATS_HEAD + b.n_beats * FIO_BEATS_STRIDE) return FIO_ECAP;
-
-    unsigned char *q = (unsigned char *)out;
-    q[0] = FIO_BEATS_VERSION;
-    q[1] = (unsigned char)b.n_beats;
-    q[2] = (unsigned char)(b.first_good_mask == ANIM_NO_MASK ? 0 : 1);
-    q[3] = (unsigned char)(b.first_good_mask == ANIM_NO_MASK ? 0 : b.first_good_mask);
-    for (int i = 0; i < 8; i++) q[4 + i] = (unsigned char)((b.placed_ids >> (8 * i)) & 0xff);
-    for (int g = 0; g < b.n_beats; g++) {
-        const AnimBeat *bt = &b.beats[g];
-        unsigned char *e = q + FIO_BEATS_HEAD + g * FIO_BEATS_STRIDE;
-        e[0] = (unsigned char)bt->first;
-        e[1] = (unsigned char)bt->n_events;
-        e[2] = (unsigned char)bt->type;
-        e[3] = (unsigned char)(bt->seat < 0 ? 0xFF : bt->seat);
-        e[4] = (unsigned char)bt->flags;
-        e[5] = (unsigned char)(bt->outs_mask & 0xff);
-        e[6] = (unsigned char)(bt->attack_pass_seats & 0xff);
-        e[7] = (unsigned char)(bt->good_mask == ANIM_NO_MASK ? 0 : 1);
-        e[8] = (unsigned char)(bt->good_mask == ANIM_NO_MASK ? 0 : bt->good_mask);
-        for (int i = 0; i < 8; i++) e[9 + i] = (unsigned char)((bt->placed_ids >> (8 * i)) & 0xff);
-    }
-    return FIO_BEATS_HEAD + b.n_beats * FIO_BEATS_STRIDE;
+    return FIO_EOK;
 }
+
+// The beats the last fio_beats built (anim_plan.h AnimBeats), where they lie.
+// Same story as the plan above: a packed block written here and read back in
+// BeatWire.swift, one layout stated twice.
+const void *fio_beats_ptr(void) { return &g_anim_beats; }
+
 
 // ---------- the pre-bout table ---------------------------------------------
 //
@@ -1808,37 +1757,22 @@ int fio_msg_lobby_rules_changed(int have_baseline, int baseline, int current, in
 
 int fio_anim_surface_beat_ms(void) { return ANIM_TIME_MS; }
 
-static int surface_out(const AnimSurfacePlan *plan, int32_t *out, int cap) {
-    const int n = plan->n;
-    if (cap < FIO_SURFACE_HEAD + n * FIO_SURFACE_STRIDE) return FIO_ECAP;
-    out[0] = n;
-    out[1] = plan->total_ms;
-    out[2] = plan->settle_ms;
-    for (int i = 0; i < n; i++) {
-        int32_t *w = out + FIO_SURFACE_HEAD + i * FIO_SURFACE_STRIDE;
-        w[0] = plan->beats[i].kind;
-        w[1] = plan->beats[i].transition;
-        w[2] = plan->beats[i].passing;
-        w[3] = plan->beats[i].controls;
-        w[4] = plan->beats[i].duration_ms;
-        w[5] = plan->beats[i].start_ms;
-    }
-    return FIO_SURFACE_HEAD + n * FIO_SURFACE_STRIDE;
-}
+// THE SURFACE PLAN ITSELF (anim_plan.h AnimSurfacePlan), where it lies. It used
+// to be flattened into a block of int32 words here and read back word by word
+// in SurfacePlan.swift - a beat's kind, idiom, rules, controls and timing, one
+// stride apart, stated twice.
+static AnimSurfacePlan g_surface_plan;
 
-int fio_anim_surface_swap(int passing, int32_t *out, int cap) {
-    if (!out) return FIO_EBADARG;
-    if (cap < FIO_SURFACE_HEAD) return FIO_ECAP;
-    static AnimSurfacePlan plan;
-    anim_surface_swap(passing, &plan);
-    return surface_out(&plan, out, cap);
+const void *fio_surface_plan_ptr(void) { return &g_surface_plan; }
+
+int fio_anim_surface_swap(int passing) {
+    anim_surface_swap(passing, &g_surface_plan);
+    return FIO_EOK;
 }
 
 int fio_msg_surface_plan(const uint8_t *showing, int showing_len,
-                         const uint8_t *arriving, int arriving_len,
-                         int32_t *out, int cap) {
-    if (!showing || !arriving || !out) return FIO_EBADARG;
-    if (cap < FIO_SURFACE_HEAD) return FIO_ECAP;
+                         const uint8_t *arriving, int arriving_len) {
+    if (!showing || !arriving) return FIO_EBADARG;
     g_last_msg_error = 0;
     static MsgEnvelope a, b;   // ~1.3KB each - too big for this frame
     int rc = msg_decode(showing, showing_len, &a);
@@ -1848,17 +1782,16 @@ int fio_msg_surface_plan(const uint8_t *showing, int showing_len,
 
     MsgSurfaceDelta d;
     msg_surface_delta(&a, &b, &d);
-    static AnimSurfacePlan plan;
     const int n = anim_surface_plan(d.on_a_lobby, d.roster_moved,
                                     d.passing_before, d.passing_after, d.started,
-                                    d.ended, &plan);
+                                    d.ended, &g_surface_plan);
     if (n < 0) return FIO_EMSG;
-    // THE HEAD IS WRITTEN EVEN WITH NO BEATS. `settle_ms` is the answer to a
-    // question the beats cannot carry - how long before this surface may be put
-    // AWAY - and the caller who needs it most is the one holding an empty plan
-    // (a lone roster snap, which is folded to no beats and still has to be read
-    // before the drawer collapses over it). See anim_plan.h.
-    return surface_out(&plan, out, cap);
+    // A PLAN WITH NO BEATS IS STILL AN ANSWER. `settle_ms` answers a question
+    // the beats cannot carry - how long before this surface may be put AWAY -
+    // and the caller who needs it most is the one holding an empty plan (a lone
+    // roster snap, which is folded to no beats and still has to be read before
+    // the drawer collapses over it). See anim_plan.h.
+    return FIO_EOK;
 }
 
 // Rule R over the AWIRE frame - the one rebase entry (the phone stages moves as

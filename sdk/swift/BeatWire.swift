@@ -109,41 +109,35 @@ public struct AnimBeats: Equatable, Sendable {
             input.append(contentsOf: ids.prefix(255))
         }
 
-        var out = [CChar](repeating: 0, count: Int(FIO_BEATS_HEAD)
-                                            + 256 * Int(FIO_BEATS_STRIDE))
-        let n: Int32 = input.withUnsafeBufferPointer { p in
-            fio_beats_packed(p.baseAddress, Int32(input.count), &out, Int32(out.count))
+        // The answer is the kernel's own AnimBeats (anim_plan.h), copied out
+        // through the generated reader. It used to be a packed block with a
+        // 12-byte head and a 17-byte stride, written in ios_api.c and unpacked
+        // here - the same layout in two languages.
+        let ok: Int32 = input.withUnsafeBufferPointer { p in
+            fio_beats(p.baseAddress, Int32(input.count))
         }
-        guard n >= Int32(FIO_BEATS_HEAD) else { self = .empty; return }
+        guard ok == 0, let ptr = fio_beats_ptr(), let bs = try? readAnimBeats(ptr)
+        else { self = .empty; return }
 
-        let b = out.prefix(Int(n)).map { UInt8(bitPattern: $0) }
-        let head = Int(FIO_BEATS_HEAD), stride = Int(FIO_BEATS_STRIDE)
-        let count = Int(b[1])
-        guard b.count >= head + count * stride else { self = .empty; return }
-
-        self.firstGoodMask = b[2] != 0 ? Int(b[3]) : nil
-        self.placed = Self.identities(Self.u64(b, 4))
+        self.firstGoodMask = bs.firstGoodMask == ANIM_NO_MASK ? nil : bs.firstGoodMask
+        self.placed = Self.identities(bs.placedIds)
 
         var out_beats: [Beat] = []
-        out_beats.reserveCapacity(count)
-        var first = 0
-        for i in 0..<count {
-            let e = head + i * stride
-            let n_events = Int(b[e + 1])
+        out_beats.reserveCapacity(bs.beats.count)
+        for b in bs.beats {
             var outs = Set<Int>()
-            for s in 0..<8 where b[e + 5] & (1 << s) != 0 { outs.insert(s) }
-            out_beats.append(Beat(range: first..<(first + n_events),
-                                  type: Int(b[e + 2]),
-                                  seat: b[e + 3] == 0xFF ? -1 : Int(b[e + 3]),
-                                  holds: b[e + 4] & 1 != 0,
-                                  moved: b[e + 4] & 2 != 0,
-                                  placedAny: b[e + 4] & 4 != 0,
-                                  dropsBadge: b[e + 4] & 8 != 0,
+            for s in 0..<8 where b.outsMask & (1 << s) != 0 { outs.insert(s) }
+            out_beats.append(Beat(range: b.first..<(b.first + b.nEvents),
+                                  type: b.type,
+                                  seat: b.seat == ANIM_SEAT_NONE ? -1 : b.seat,
+                                  holds: b.flags & ANIM_BEAT_HOLDS != 0,
+                                  moved: b.flags & ANIM_BEAT_MOVED != 0,
+                                  placedAny: b.flags & ANIM_BEAT_PLACED != 0,
+                                  dropsBadge: b.flags & ANIM_BEAT_DROPS != 0,
                                   outs: outs,
-                                  attackPassSeats: Int(b[e + 6]),
-                                  placed: Self.identities(Self.u64(b, e + 9)),
-                                  goodMask: b[e + 7] != 0 ? Int(b[e + 8]) : nil))
-            first += n_events
+                                  attackPassSeats: b.attackPassSeats,
+                                  placed: Self.identities(b.placedIds),
+                                  goodMask: b.goodMask == ANIM_NO_MASK ? nil : b.goodMask))
         }
         self.beats = out_beats
     }
@@ -152,12 +146,6 @@ public struct AnimBeats: Equatable, Sendable {
         self.beats = beats
         self.placed = placed
         self.firstGoodMask = firstGoodMask
-    }
-
-    private static func u64(_ b: [UInt8], _ at: Int) -> UInt64 {
-        var v: UInt64 = 0
-        for i in 0..<8 where at + i < b.count { v |= UInt64(b[at + i]) << (8 * i) }
-        return v
     }
 
     /// Dense card ids back to the identities the board animates by.

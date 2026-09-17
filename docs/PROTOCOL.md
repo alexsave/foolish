@@ -123,12 +123,16 @@ The names block is the kernel's own (the joins an FMSG header carries,
 encoder/decoder pair, and the production Swift decoder compiled against the
 production TypeScript encoder.
 
-iOS decodes the whole envelope in pure Swift (`MaskedView`, the mirror of
-`view.c state_put`; proven against kernel-emitted fixtures by
-`ios/FoolishTests/PackedViewTests.swift` — the old `fio_view_from_packed_json`
-C bridge and its `make ios-view-test` harness are retired), then merges the
-roster's real names in (`sdk/swift/EnvelopeRoster.swift`). `player_views.
-view` (hex) and the `create` response body are this same envelope.
+iOS reads the whole envelope through the kernel's client slot
+(`c/src/client_table.h` `client_adopt_envelope`, reached as
+`EngineC.adoptEnvelope`), which is the same reader the web uses: the header, the
+masked board and the roster trailer are walked once, in C, and the seats come
+back with their names already on them.
+Phase 10 retired the Swift halves of that walk (`MaskedView`'s byte loop,
+`PackedGame`'s header parse, `EnvelopeRoster`), and
+`ios/FoolishTests/PackedViewTests.swift` still pins the fields against
+kernel-emitted fixtures.
+`player_views.view` (hex) and the `create` response body are this same envelope.
 
 ## 6. Auth (RESOLVED)
 

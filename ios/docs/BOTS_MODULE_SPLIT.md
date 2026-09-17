@@ -5,7 +5,7 @@
 `FoolishKit` is a dynamic framework, so its public API is exported and every
 exported symbol is a `-dead_strip` root.
 `EngineC.botDrive` was public on `FoolishKit`, so it was such a root, and it
-referenced `fio_bot_drive_packed` -> `bot_drive` -> `bot_roster` -> all 21
+referenced `fio_bot_drive` -> `bot_drive` -> `bot_roster` -> all 21
 strategies, `octogen` included.
 `FoolishKit.framework` ships inside `FoolishMessagesApp`, the iMessage-only
 container.

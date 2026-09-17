@@ -20,8 +20,7 @@ int main(void) {
     if (fio_new_game(seed, 32, 2) != 0)          { puts("FAIL new_game"); return 1; }
     if (fio_set_seat_strategy(1, 0) != 0)        { puts("FAIL set_seat_strategy"); return 1; }
 
-    char drv[4096];
-    const int rc = fio_bot_drive_packed(1 /* seat 0 is the human */, drv, sizeof drv);
+    const int rc = fio_bot_drive(1 /* seat 0 is the human */);
     if (rc == -2) {   // FIO_ENOGAME
         puts("FAIL: the bot half has its OWN empty game - two copies of ios_api.o");
         return 1;
@@ -32,6 +31,6 @@ int main(void) {
     const int n = fio_state_packed(0, st, sizeof st);
     if (n <= 0) { printf("FAIL: no board after the drive (%d)\n", n); return 1; }
 
-    printf("one resident game ok (drive wrote %d B, board reads %d B)\n", rc, n);
+    printf("one resident game ok (cycle delay %d ms, board reads %d B)\n", rc, n);
     return 0;
 }
