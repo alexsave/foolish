@@ -489,18 +489,22 @@ Suites:
 
 Gates (measured in Phase 0.3, recorded in a table appended to this document, and re-measured by every phase that can move them):
 
-| Gate | Tool | Baseline at ff9ec2ed | Rule |
+Baselines measured in Phase 0.3 on the owner's Mac (Apple Silicon, Node 26.8.1, local Postgres), on the code at `5e32ed8a` (a `git archive` of `72f5fd51`, which only adds docs and hygiene on top, plus the 0.3 measurement scripts).
+Timings are wall clock on a machine shared with other agents' builds and tests, so run-to-run spread is wide; compare a later phase against a fresh re-measurement of this commit on the same machine, not against these digits alone.
+
+| Gate | Tool (exact command) | Baseline (code at 5e32ed8a) | Rule |
 |---|---|---|---|
-| bots.wasm.gz | `npm run metrics` (`scripts/collect_metrics.mjs:75-83`) | 65,307 B | Phases 2-4: at most +4,096 B cumulative; Phase 8: below baseline + 2,048 B |
-| rules embed | same | `rules_wasm.ts` 20,567 B | not larger until deleted (Phase 8) |
-| guards embed | same | `guards_wasm.ts` 5,236 B | not larger until removed from the web (Phase 6b) |
-| oracle / oracle-mt gz | add to `collect_metrics.mjs` in 0.3 | 69,999 / 71,168 B | at most +512 B each |
-| web bundle gz | new `scripts/measure_web_bundle.mjs` (0.3) | measure | no phase may grow it more than 1,024 B; Phase 8 must end below baseline |
-| bots.wasm memory | `npm run test:mem` | 36 initial pages | no new page without a measured reason |
-| action latency | `e2e/bench_e2e_move.ts`, `npm run bench:bot-e2e` | measure p50 / p95 | no worse than 5 % |
-| create cold start | `e2e/cold_start.mts` | measure | no worse than 10 % (create now instantiates bots.wasm, Q10) |
-| marshal / decode | `bash tools/structgen/test/bench.sh`, plus a `decodePackedGame` bench added in 0.3 | measure ns/op | new C decode + snapshot no slower than today's `decodePackedGame` |
-| Monte-Carlo throughput | `build/cnitro_eval` fixed seeds, games per second for cordite and octogen at 2p and 4p | measure | Phase 3b: no slower, and bot decisions bit-identical |
+| bots.wasm.gz | `node scripts/collect_metrics.mjs` (`size.bots`) | 65,307 B gz (154,343 B raw) | Phases 2-4: at most +4,096 B cumulative; Phase 8: below baseline + 2,048 B |
+| rules embed | same (`size.rules`); file size `wc -c sdk/ts/wasm/rules_wasm.ts` | 15,024 B gz embedded (34,654 B raw); `rules_wasm.ts` 20,567 B | not larger until deleted (Phase 8) |
+| guards embed | same (`size.guards`); `wc -c sdk/ts/wasm/guards_wasm.ts` | 3,525 B gz embedded (7,550 B raw); `guards_wasm.ts` 5,236 B | not larger until removed from the web (Phase 6b) |
+| oracle / oracle-mt gz | same (`size.oracle`, `size["oracle-mt"]`, from `public/*.wasm.gz`) | 69,999 / 71,168 B gz | at most +512 B each |
+| web bundle gz | `node scripts/measure_web_bundle.mjs` (first-load JS: `rootMainFiles` + the route's `entryJSFiles`, gzip -9) | `/` 274,363 B, `/[game_id]` 325,260 B, union 330,504 B gz (1,074,794 B raw, 17 chunks); identical over 4 builds | no phase may grow it more than 1,024 B; Phase 8 must end below baseline |
+| bots.wasm memory | `npm run test:mem` | 36 initial pages (7/7 pass); runtime peak 2,555,904 B after the MC bots (`collect_metrics` `memory`) | no new page without a measured reason |
+| action latency, human move | `E2E_DB_PREFIX=c03m BENCH_E2E_MOVES=300 TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx e2e/bench_e2e_move.ts` (4 humans, packed path) | p50 0.65 ms, p95 1.21 ms (median of 3 runs; p50 range 0.51-0.73) | no worse than 5 % |
+| action latency, bot move | `node scripts/collect_metrics.mjs` (`e2e`: `bench_bot_e2e.ts`, 3 reps x 25 decisions) for p50; `npm run bench:bot-e2e` once for p95 | p50: octogen 34.9, cordite 8.0, blackpowder 3.1, firecracker 3.5 ms; p95 (one run): 80.3, 9.8, 6.3, 11.8 ms | no worse than 5 % |
+| create cold start | 9 fresh processes of `TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx e2e/cold_start.mts <gunzipped bots.wasm>`, median | compile 0.95 ms, cold instantiate + first cordite decision 42.7 ms, warm decision 10.3 ms; create's own pre-response compute (import + `buildPlayerViewRows` + `buildSpectatorView` on a 1-seat lobby, same 9-process method, unscripted probe) 33.7 ms | no worse than 10 % (create now instantiates bots.wasm, Q10) |
+| marshal / decode | `bash tools/structgen/test/bench.sh` (ns/op, tsx / strip / bundle) and `TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx e2e/bench_decode_packed.ts` | structgen: hand-written marshal 242.8 / 286.2 / 253.7, generated marshal + adopt 151.0 / 265.6 / 210.2, hand-written parse 210.2 / 261.3 / 238.9, generated `readState` 159.4 / 170.6 / 185.1; `decodePackedGame` (median of 3 runs of 9x20,000): 2p 1,644, 4p 2,516, 8p 5,013, 4p spectator 2,108 ns/op | new C decode + snapshot no slower than today's `decodePackedGame` |
+| Monte-Carlo throughput | `make -C c build/cnitro_eval`, then `c/build/cnitro_eval --strategy=cordite --opp=cordite --players=2,4 --games=100 --seed-start=200001` (3 runs) and `--strategy=octogen --opp=octogen --players=2 --games=20` / `--players=4 --games=8`, same seed; games/sec from the stderr `rate=` line | cordite 2p 21.4 g/s (18.9-25.7), 4p 20.0 g/s (17.1-22.4); octogen 2p 0.7 g/s, 4p 4.1 g/s (one run each); decision fingerprint = the stdout histograms: cordite 2p `49 51`, 4p `25 20 22 33`; octogen 2p `14 6`, 4p `2 2 0 4` | Phase 3b: no slower, and bot decisions bit-identical |
 
 Red-first rule for every new test: it must fail on the unfixed code with an assertion (not a compile error), then pass; tests written after the code go through the mutation check.
 
