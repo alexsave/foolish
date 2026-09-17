@@ -28,8 +28,18 @@ D="$FOOLISH_OUT/film/$NAME"; rm -rf "$D"; mkdir -p "$D"
 # ---- the board ------------------------------------------------------------
 "$RIG" ruler on >/dev/null
 rm -f "$G/dev.stage" "$G/dev.staged" "$G/dev.claimed"
+# A CLEAN Messages, as tween_autocollapse.sh does. A running Messages keeps the
+# extension's bundle path from before the last `rig.sh build`, and a reinstall
+# moves it: the drawer then opens blank ("LaunchServices cannot find plugin")
+# and nothing ever claims the seed. The transcript is lost, which a measurement
+# does not need.
+xcrun simctl terminate "$FOOLISH_SIM" com.apple.MobileSMS >/dev/null 2>&1
 xcrun simctl launch "$FOOLISH_SIM" com.apple.MobileSMS >/dev/null 2>&1
 "$RIG" enter >/dev/null 2>&1 || { echo "could not enter a conversation" >&2; exit 2; }
+# The last run's throw-in is still STAGED in the compose field - this script
+# leaves one behind every time - and with the keyboard up the app menu has no
+# Foolish in it to open.
+"$RIG" clearstage >/dev/null 2>&1 || true
 SEAT=0 "$RIG" seed goodwait "$SEATS" | tail -1
 "$RIG" killappex >/dev/null 2>&1
 "$RIG" open >/dev/null 2>&1 || { echo "could not open the extension" >&2; exit 2; }
@@ -58,5 +68,6 @@ done
 # ---- measure --------------------------------------------------------------
 python3 "$LIB/tablesquares.py" "$D" --csv "$D/squares.csv"
 rc=$?
+"$RIG" clearstage >/dev/null 2>&1 || true
 echo "$D"
 exit $rc

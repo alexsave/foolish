@@ -10,8 +10,8 @@ row SIDEWAYS, and a bar through the table's centre does not move while both
 pairs slide 36pt left. These squares move exactly when the layout does.
 
 Reads the frames and `times.txt` that `lib/window.sh` writes. Prints one line
-per pair and exits 1 when any pair moved further than `--jump` points between
-two consecutive frames: a jump, not a slide. Exits 2 when there is nothing to
+per pair and exits 1 when any pair jumped (see `is_jump`): further than
+`--jump` points between neighbouring frames, or too fast across a gap. Exits 2 when there is nothing to
 judge (no squares at all - is the ruler on, is this a DEBUG build?).
 
 THE MAGENTA BAR RUNS THROUGH THE SQUARES. On a single row the table's centre
@@ -160,13 +160,33 @@ def track(frames_seen, times, link_pt=80.0):
 
 
 def steps(samples):
-    """Every move between two samples of one pair: (from-frame, to-frame, dx, dy).
+    """Every move between two samples of one pair: (from, to, dx, dy, dt).
 
     Consecutive samples, whether or not frames were missed between them: a pair
-    hidden under a flying card for three frames that reappears 36pt away did
-    not slide there, and skipping the gap is how a jump gets scored as nothing.
+    hidden under a flying card that reappears 36pt away did not slide there,
+    and skipping the gap is how a jump gets scored as nothing.
     """
-    return [(a[0], b[0], b[2] - a[2], b[3] - a[3]) for a, b in zip(samples, samples[1:])]
+    return [(a[0], b[0], b[2] - a[2], b[3] - a[3], b[1] - a[1])
+            for a, b in zip(samples, samples[1:])]
+
+
+NEAR_S = 0.040            # two samples this close are neighbouring frames
+GAP_SPEED = 250.0         # pt/s: across a longer gap, faster than this is a jump
+
+
+def is_jump(dist, dt, jump_pt):
+    """A jump is DISTANCE between neighbouring frames, SPEED across a gap.
+
+    Speed alone does not work: the recorder writes frames 3ms apart, and a
+    2pt step of a perfectly smooth slide is 700pt/s over 3ms. Distance alone
+    does not work either: the thrown card flies over a pair's square, and the
+    first sample after 92ms under it was 7.8pt on - 85pt/s, a slide. A 35pt
+    jump hidden for the same 92ms is 380pt/s. (Hidden for 200ms it would be
+    175 and pass - the limit of what a covered square can say.)
+    """
+    if dist <= jump_pt:
+        return False
+    return dt <= NEAR_S or dist / max(dt, 1e-6) > GAP_SPEED
 
 
 def main():
@@ -200,8 +220,9 @@ def main():
                                             "max step", "sum sq", "jumps"))
     for tr in sorted(tracks, key=lambda t: t["samples"][0][2]):
         st = steps(tr["samples"])
-        mags = [(dx * dx + dy * dy) ** 0.5 for _, _, dx, dy in st]
-        big = [(f0, f1, m) for (f0, f1, _, _), m in zip(st, mags) if m > a.jump]
+        mags = [(dx * dx + dy * dy) ** 0.5 for _, _, dx, dy, _ in st]
+        big = [(f0, f1, m) for (f0, f1, _, _, dt), m in zip(st, mags)
+               if is_jump(m, dt, a.jump)]
         jumps += len(big)
         sm = tr["samples"]
         print("%-8s %6d %8.1f %8.1f %9.1f %9.1f  %s" % (
