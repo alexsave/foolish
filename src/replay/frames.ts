@@ -43,6 +43,12 @@ import { type TableView, type ViewCard as Card } from '../state/view';
 
 export { REPLAY_STEP } from '@sdk/ts/wasm/bots.ts';
 
+/** The key a replay's boards are held under: the frames' game id, and the one
+ *  ReplayServerProvider keeps them in. A board's game id is a table's, and a
+ *  share link - its moves and its extras - is longer than a table's id may be,
+ *  so the kernel's board writer refuses the link itself. */
+export const REPLAY_KEY = 'replay';
+
 /** A step's board plus every seat's exact hand, for the reveal-hands overlay. */
 export type ReplayGameState = TableView & {
     readonly replay_hands: (Card | null)[][];
