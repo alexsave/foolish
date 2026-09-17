@@ -32,7 +32,8 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { applySchema, uuid, pgPool } from './harness.ts';
-import { seedGame } from './harness.ts';
+import { fixture } from './helpers/table_fixture.ts';
+import { seedTable } from './helpers/table_db.ts';
 
 const MIGRATIONS = join(process.cwd(), 'server', 'impls', 'supabase', 'migrations');
 // The migrations that carry this file's policies to hosted, in the order they apply.
@@ -103,11 +104,10 @@ before(async () => {
         GRANT SELECT ON public.player_hands TO anon, authenticated;
         ALTER TABLE realtime.messages ENABLE ROW LEVEL SECURITY;
     `);
-    // The policies read player_hands and nothing else, so a lobby row per game is
-    // all the fixture this needs; seedGame writes the membership rows with it.
-    await seedGame(game, [{ id: a, name: 'A' }, { id: b, name: 'B' }]);
-    await seedGame(otherGame, [{ id: c, name: 'C' }]);
-    await seedGame(hyphenGame, [{ id: c, name: 'C' }]);
+    // Kernel-owned lobby rows; seedTable writes the player_hands membership the policies read.
+    await seedTable(game, fixture().seats([{ id: a, name: 'A' }, { id: b, name: 'B' }]).build());
+    await seedTable(otherGame, fixture().seats([{ id: c, name: 'C' }]).build());
+    await seedTable(hyphenGame, fixture().seats([{ id: c, name: 'C' }]).build());
     await pgPool.query(`INSERT INTO auth.users(id) VALUES ($1)`, [stranger]);
 });
 
