@@ -353,9 +353,6 @@ static void deal_from_envelope(const MsgEnvelope *e, Game *g) {
         g->players[i].strategy_key = 0;
         // Seats are positional here; the joins list is protocol-layer identity
         // the kernel never sees (§4.1).
-        g->players[i].player_id[0] = 'p';
-        g->players[i].player_id[1] = (char)('0' + i);
-        g->players[i].player_id[2] = '\0';
     }
     // The fool's penalty travels with the chain, so re-dealing it is the whole
     // of honouring it: every device that holds these bytes deals the identical

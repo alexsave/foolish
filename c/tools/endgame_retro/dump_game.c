@@ -19,7 +19,7 @@ int main(int argc,char**argv){
     ensure_masks();
     cd_sim_solve_reset();game_set_seed(1);game_set_deal_seed_bytes(seed,32);
     Game g;memset(&g,0,sizeof g);g.num_players=2;
-    for(int i=0;i<2;i++){g.players[i].status=PLAYER_STATUS_READY;g.players[i].strategy_key=(int8_t)STRAT_OCTOGEN;snprintf(g.players[i].player_id,sizeof g.players[i].player_id,"p%d",i);}
+    for(int i=0;i<2;i++){g.players[i].status=PLAYER_STATUS_READY;g.players[i].strategy_key=(int8_t)STRAT_OCTOGEN;}
     start_game(&g);
     printf("{\"seed\":\"%s\",\"trump_suit\":%d,\"flip\":[%d,%d],\"first_attacker\":%d,\"moves\":[\n",
         argv[1],g.power_suit,g.flipped.suit,g.flipped.value,g.first_attacker);

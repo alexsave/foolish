@@ -44,8 +44,6 @@ static void make_2p_game(Game *g) {
     g->num_players = 2;
     for (int i = 0; i < 2; i++) {
         g->players[i].status = PLAYER_STATUS_READY;
-        snprintf(g->players[i].player_id, sizeof(g->players[i].player_id), "p%d", i);
-        snprintf(g->players[i].name, sizeof(g->players[i].name), "P%d", i);
     }
 }
 
@@ -136,7 +134,6 @@ static void test_awire_apply_settles_game_over(void) {
     g.num_players = 3;
     for (int i = 0; i < 3; i++) {
         g.players[i].status = PLAYER_STATUS_READY;
-        snprintf(g.players[i].player_id, sizeof g.players[i].player_id, "p%d", i);
     }
     start_game(&g);
     CHECK(g.status == GAME_STATUS_PLAYING, "settle: a dealt game is PLAYING");
@@ -357,7 +354,6 @@ static void test_full_game_3p_handwritten(void) {
     g.num_players = 3;
     for (int i = 0; i < 3; i++) {
         g.players[i].status = PLAYER_STATUS_READY;
-        snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
     }
     start_game(&g);
     int iters = 0;
@@ -466,7 +462,6 @@ static void test_elimination_order_never_repeats_a_seat(void) {
             g.num_players = np;
             for (int i = 0; i < np; i++) {
                 g.players[i].status = PLAYER_STATUS_READY;
-                snprintf(g.players[i].name, sizeof(g.players[i].name), "p%d", i);
             }
             g.status = GAME_STATUS_WAITING;
             start_game(&g);
@@ -583,7 +578,6 @@ static void setup_playing_2p(Game *g) {
     g->defender = 1;
     for (int i = 0; i < 2; i++) {
         g->players[i].status = PLAYER_STATUS_IN;
-        snprintf(g->players[i].player_id, sizeof(g->players[i].player_id), "p%d", i);
     }
 }
 
@@ -619,7 +613,6 @@ static void setup_playing_np(Game *g, int np) {
     g->deterministic_deck = true;   // draw_index pops deck[0], so the deck is a queue
     for (int i = 0; i < np; i++) {
         g->players[i].status = PLAYER_STATUS_IN;
-        snprintf(g->players[i].player_id, sizeof(g->players[i].player_id), "p%d", i);
     }
 }
 
@@ -1769,8 +1762,6 @@ static void make_seeded_game(Game *g, int n_players, int seed) {
     g->num_players = (int8_t)n_players;
     for (int i = 0; i < n_players; i++) {
         g->players[i].status = PLAYER_STATUS_READY;
-        snprintf(g->players[i].player_id, sizeof(g->players[i].player_id), "p%d", i);
-        snprintf(g->players[i].name, sizeof(g->players[i].name), "P%d", i);
     }
     start_game(g);
 }
@@ -6291,7 +6282,6 @@ static void test_solver_tt_value_carries_its_seat(void) {
         for (int i = 0; i < 2; i++) {
             g.players[i].status = PLAYER_STATUS_READY;
             g.players[i].strategy_key = (int8_t)STRAT_HANDWRITTEN;
-            snprintf(g.players[i].player_id, sizeof g.players[i].player_id, "p%d", i);
         }
         start_game(&g);
         int it = 0;
@@ -6835,6 +6825,20 @@ static int roster_equal(const Roster *a, const Roster *b) {
             || memcmp(x->brain, y->brain, x->brain_len)) return 0;
     }
     return 1;
+}
+
+// A seat's identity lives in the Roster beside the Game, not in Player
+// (docs/C_GAME_SHAPE_MIGRATION.md 2.9, Phase 3b). The Monte-Carlo searchers
+// copy offsetof(Game, logs) bytes per node, so every byte of Player is paid
+// MAX_PLAYERS times per node: status, hand_count, awaiting_attack,
+// strategy_key and the hand, nothing else. A runtime CHECK, not a
+// _Static_assert, so a Player that still carries name and player_id is red by
+// assertion.
+static void test_player_carries_no_identity(void) {
+    CHECK(sizeof(Player) == 4 + MAX_HAND_SIZE * sizeof(Card),
+          "Player is status, hand_count, awaiting_attack, strategy_key and the hand");
+    if (MAX_HAND_SIZE == 64)
+        CHECK(sizeof(Player) == 68, "Player is 68 bytes at the native caps");
 }
 
 static void test_roster_round_trip(void) {
@@ -7992,6 +7996,7 @@ int main(void) {
     test_analyse_verdict_rule();
     test_analyse_belief_holds_on_played_games();
     test_analyse_packed_on_a_generated_game();
+    test_player_carries_no_identity();
     test_roster_round_trip();
     test_roster_decode_refuses_each_malformed_field();
     test_roster_seat_of_is_exact();

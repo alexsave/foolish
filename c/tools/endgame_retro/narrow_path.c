@@ -59,7 +59,7 @@ int main(int argc,char**argv){
     for(long sidx=seed0;sidx<seed0+ncount;sidx++){
         uint8_t seed[32];mkseed(sidx,seed);
         cd_sim_solve_reset();game_set_seed(1);game_set_deal_seed_bytes(seed,32);
-        Game g;memset(&g,0,sizeof g);g.num_players=2;for(int i=0;i<2;i++){g.players[i].status=PLAYER_STATUS_READY;g.players[i].strategy_key=(int8_t)STRAT_OCTOGEN;snprintf(g.players[i].player_id,sizeof g.players[i].player_id,"p%d",i);}
+        Game g;memset(&g,0,sizeof g);g.num_players=2;for(int i=0;i<2;i++){g.players[i].status=PLAYER_STATUS_READY;g.players[i].strategy_key=(int8_t)STRAT_OCTOGEN;}
         start_game(&g);scanned++;
         int run[2]={0,0},maxrun[2]={0,0},maxstart[2]={-1,-1},runstart[2]={-1,-1};
         int iters=0;

@@ -80,6 +80,7 @@
 #include "awire.h"
 #include "bot_drive.h"
 #include "bot_roster.h"
+#include "roster.h"     // the seats' ids and names, beside the Game (game.h Player carries none)
 #include "strategy.h"   // STRAT_RANDOM — see h_meta's add-bot branch (Stage 4 strategy_key fix)
 #include "ws.h"
 #include "persist.h"
@@ -145,9 +146,11 @@ typedef struct {
     char id[ID_LEN + 1];
     Game game;                      // THE kernel state — incl. its own lifecycle status
     // Lobby roster (identity lives beside the state blob, never in it — game.h).
+    // `roster` is the kernel's Roster (roster.h): seat i's id and name, and a
+    // brain for a bot seat. Seats are only ever appended, through seat_add, so
+    // roster.n == game.num_players always.
     char owner[ID_LEN + 1];
-    char seat_user[MAX_PLAYERS][ID_LEN + 1];  // "" for a bot
-    char seat_name[MAX_PLAYERS][24];
+    Roster roster;
     bool seat_ready[MAX_PLAYERS];             // lobby "hit ready" — host state; kind (human/bot) lives in the kernel's strategy_key
     // Per-game lock (T2a). Guards EVERYTHING below this point plus the
     // `game` and lobby-roster fields above: this slot's whole game state,
@@ -404,14 +407,16 @@ static void game_mark_dirty(GameSlot *s) {
 //   [3 .. 3+state_len)                   state_put(&game, VIEW_UNMASKED, .)
 //   next ID_LEN+1 bytes                  id
 //   next ID_LEN+1 bytes                  owner
-//   next MAX_PLAYERS*(ID_LEN+1) bytes    seat_user[]
-//   next MAX_PLAYERS*24 bytes            seat_name[]
+//   next ROSTER_BYTES bytes              roster_encode(&roster), the kernel's
+//                                        durable roster encoding (roster.h)
 //   next MAX_PLAYERS bytes               seat_ready[] (1 byte each, 0/1)
 // Worst case: 3 + 690 (state_put's documented worst case — see
-// VIEW_CACHE_CAP above) + 13*2 + 8*13 + 8*24 + 8 = 1023 bytes.
-// PERSIST_GAME_BLOB_CAP gives real margin, same discipline as VIEW_CACHE_CAP.
+// VIEW_CACHE_CAP above) + 13*2 + 1227 + 8 = 1954 bytes.
+// PERSIST_GAME_BLOB_CAP gives margin, same discipline as VIEW_CACHE_CAP.
+// Version 2: the roster replaced version 1's seat_user[]/seat_name[] arrays,
+// so a version 1 row is refused rather than misread.
 // --------------------------------------------------------------------------
-#define PERSIST_GAME_BLOB_VERSION 1
+#define PERSIST_GAME_BLOB_VERSION 2
 #define PERSIST_GAME_BLOB_CAP 2048
 
 // Returns bytes written, or -1 if it wouldn't fit in `cap` (never happens at
@@ -420,8 +425,7 @@ static void game_mark_dirty(GameSlot *s) {
 static int serialize_slot(const GameSlot *s, unsigned char *buf, int cap) {
     unsigned char state[1 + 65536];   // state_put's own documented cap (h_state uses the same 65536)
     int state_len = state_put(&s->game, VIEW_UNMASKED, state);
-    int need = 1 + 2 + state_len + (ID_LEN + 1) * 2
-             + MAX_PLAYERS * (ID_LEN + 1) + MAX_PLAYERS * 24 + MAX_PLAYERS;
+    int need = 1 + 2 + state_len + (ID_LEN + 1) * 2 + ROSTER_BYTES + MAX_PLAYERS;
     if (state_len < 0 || need > cap) return -1;
     unsigned char *q = buf;
     *q++ = PERSIST_GAME_BLOB_VERSION;
@@ -430,8 +434,8 @@ static int serialize_slot(const GameSlot *s, unsigned char *buf, int cap) {
     memcpy(q, state, (size_t)state_len); q += state_len;
     memcpy(q, s->id, ID_LEN + 1); q += ID_LEN + 1;
     memcpy(q, s->owner, ID_LEN + 1); q += ID_LEN + 1;
-    for (int i = 0; i < MAX_PLAYERS; i++) { memcpy(q, s->seat_user[i], ID_LEN + 1); q += ID_LEN + 1; }
-    for (int i = 0; i < MAX_PLAYERS; i++) { memcpy(q, s->seat_name[i], 24); q += 24; }
+    if (roster_encode(&s->roster, q, ROSTER_BYTES) != ROSTER_BYTES) return -1;
+    q += ROSTER_BYTES;
     for (int i = 0; i < MAX_PLAYERS; i++) *q++ = (unsigned char)(s->seat_ready[i] ? 1 : 0);
     return (int)(q - buf);
 }
@@ -448,7 +452,7 @@ static bool deserialize_slot(GameSlot *s, const unsigned char *buf, int len) {
     if (len < 3 || buf[0] != PERSIST_GAME_BLOB_VERSION) return false;
     const unsigned char *q = buf + 1;
     int state_len = q[0] | (q[1] << 8); q += 2;
-    int fixed_tail = (ID_LEN + 1) * 2 + MAX_PLAYERS * (ID_LEN + 1) + MAX_PLAYERS * 24 + MAX_PLAYERS;
+    int fixed_tail = (ID_LEN + 1) * 2 + ROSTER_BYTES + MAX_PLAYERS;
     if (state_len < 0 || state_len > 65536 || 3 + state_len + fixed_tail > len) return false;
     // Exact inverse of state_put(.., VIEW_UNMASKED, ..), and refused whole if
     // the kernel could not have produced the state (game.h game_validate).
@@ -456,12 +460,11 @@ static bool deserialize_slot(GameSlot *s, const unsigned char *buf, int len) {
     q += state_len;
     memcpy(s->id, q, ID_LEN + 1); s->id[ID_LEN] = 0; q += ID_LEN + 1;
     memcpy(s->owner, q, ID_LEN + 1); s->owner[ID_LEN] = 0; q += ID_LEN + 1;
-    for (int i = 0; i < MAX_PLAYERS; i++) {
-        memcpy(s->seat_user[i], q, ID_LEN + 1); s->seat_user[i][ID_LEN] = 0; q += ID_LEN + 1;
-    }
-    for (int i = 0; i < MAX_PLAYERS; i++) {
-        memcpy(s->seat_name[i], q, 24); s->seat_name[i][23] = 0; q += 24;
-    }
+    // The roster decoder refuses, never clamps; a roster that does not seat
+    // exactly the state's players is refused too.
+    if (roster_decode(&s->roster, q, ROSTER_BYTES) != ROSTER_OK) return false;
+    if (s->roster.n != s->game.num_players) return false;
+    q += ROSTER_BYTES;
     for (int i = 0; i < MAX_PLAYERS; i++) s->seat_ready[i] = (*q++ != 0);
     s->used = true;
     return true;
@@ -514,22 +517,28 @@ static void persist_self_test(void) {
     a.game.first_attacker = 0;
     a.game.defender = 1;
     a.game.deck_count = 5;
-    for (int i = 0; i < 5; i++) { a.game.deck[i].suit = (int8_t)(i % 4); a.game.deck[i].value = (int8_t)(5 + i); }
+    // Every card distinct: deserialize_slot imports through game_validate, which
+    // refuses one card in two places (the deck ranks 13..9 here, the battle
+    // card 9 of another suit, every hand card 8 or lower).
+    for (int i = 0; i < 5; i++) { a.game.deck[i].suit = (int8_t)(i % 4); a.game.deck[i].value = (int8_t)(13 - i); }
     a.game.num_battles = 1;
     a.game.table_battles[0].attack.suit = 1; a.game.table_battles[0].attack.value = 9;
     a.game.table_battles[0].defense = CARD_NONE;
     for (int i = 0; i < 3; i++) {
-        snprintf(a.seat_user[i], sizeof a.seat_user[i], "user%07d", i);
-        snprintf(a.seat_name[i], sizeof a.seat_name[i], "player-%d", i);
+        const bool bot = i == 2;
+        char id[16], name[16];
+        const int id_len = bot ? snprintf(id, sizeof id, "bot%d", i) : snprintf(id, sizeof id, "user%07d", i);
+        const int name_len = bot ? snprintf(name, sizeof name, "%%random %d", i) : snprintf(name, sizeof name, "player-%d", i);
+        if (roster_seat_add(&a.roster, id, id_len, name, name_len, bot ? "random" : "", bot ? 6 : 0) != i) {
+            fprintf(stderr, "persist self-test: FAIL (roster_seat_add)\n"); exit(1);
+        }
         a.seat_ready[i] = (i % 2) == 0;
-        snprintf(a.game.players[i].name, sizeof a.game.players[i].name, "player-%d", i);
-        snprintf(a.game.players[i].player_id, sizeof a.game.players[i].player_id, "user%07d", i);
         a.game.players[i].status = PLAYER_STATUS_IN;
         a.game.players[i].strategy_key = (i == 2) ? 0 : STRATEGY_KEY_HUMAN;
         a.game.players[i].hand_count = (int8_t)(2 + i);
         for (int j = 0; j < a.game.players[i].hand_count; j++) {
             a.game.players[i].hand[j].suit = (int8_t)((i + j) % 4);
-            a.game.players[i].hand[j].value = (int8_t)(6 + j);
+            a.game.players[i].hand[j].value = (int8_t)(5 + j);
         }
     }
 
@@ -561,7 +570,7 @@ static void persist_self_test(void) {
 //     game work, bot work, or socket I/O.
 //
 //   GameSlot.lock (per game) — guards everything else about ONE game: its
-//     `Game` struct, lobby roster (seat_user/seat_name/seat_ready/owner),
+//     `Game` struct, lobby roster (roster/seat_ready/owner),
 //     cond/bot_running, and the per-seat view_cache. This is now the ONLY
 //     lock taken around a kernel-mutating call (awire_apply, bot_drive,
 //     game_seat_and_deal).
@@ -928,11 +937,33 @@ static GameSlot *game_by_id(const char *id) {
 // its roster index. Caller MUST hold `s`'s own lock (reads s->game).
 static bool seat_is_bot(const Game *g, int i) { return g->players[i].strategy_key != STRATEGY_KEY_HUMAN; }
 
-// Caller MUST hold `s`'s own lock (reads s->game and s->seat_user).
+// Caller MUST hold `s`'s own lock (reads s->game and s->roster).
 static int seat_of(GameSlot *s, const char *user_id) {
-    for (int i = 0; i < s->game.num_players; i++)
-        if (!seat_is_bot(&s->game, i) && strcmp(s->seat_user[i], user_id) == 0) return i;
-    return -1;
+    const int i = roster_seat_of(&s->roster, user_id, (int)strlen(user_id));
+    return (i >= 0 && !seat_is_bot(&s->game, i)) ? i : -1;
+}
+
+// Whether the kernel's Roster would seat this display name (UTF-8, and its
+// trim). Asked at signup and at create, so a name the roster refuses never
+// reaches a lobby.
+static bool roster_name_ok(const char *name) {
+    Roster probe;
+    memset(&probe, 0, sizeof probe);
+    return roster_seat_add(&probe, "x", 1, name, (int)strlen(name), "", 0) == 0;
+}
+
+// Seats a player in the Roster and the Game together, so roster.n stays
+// game.num_players. The roster goes first because it is the side that refuses
+// on identity (a name, a duplicate id); when the kernel then refuses the seat
+// (a full or dealt table), the roster seat is taken back. Returns the seat, or
+// -1. Caller MUST hold `s`'s own lock.
+static int seat_add(GameSlot *s, int strategy_key, const char *id, const char *name, const char *brain) {
+    const int r = roster_seat_add(&s->roster, id, (int)strlen(id), name, (int)strlen(name),
+                                  brain, (int)strlen(brain));
+    if (r < 0) return -1;
+    const int i = game_lobby_seat(&s->game, strategy_key);
+    if (i < 0) { roster_seat_remove(&s->roster, r); return -1; }
+    return i;
 }
 
 // The bot game-loop, one thread per game — a TRAMPOLINE, not a blocking hook.
@@ -1093,7 +1124,7 @@ static int game_persist_snapshot(int idx, char *out_id, int id_cap, unsigned cha
     // to touch its own internal bookkeeping via atomics outside the
     // happens-before edge the lock itself provides — glibc's condvar/mutex
     // internals do exactly that). Fix: copy ONLY the fields serialize_slot
-    // actually reads — used/id/game/owner/seat_user/seat_name/seat_ready —
+    // actually reads — used/id/game/owner/roster/seat_ready —
     // which the GameSlot layout above (see its definition) keeps
     // contiguous and entirely BEFORE `lock`, so `offsetof(GameSlot, lock)`
     // bytes is exactly that prefix and never touches the mutex/cond
@@ -1374,7 +1405,9 @@ static uint32_t client_ip_key(const Req *r, const Conn *conn) {
 static void h_signup(Req *r, Conn *conn) {
     if (!ratelimit_allow(client_ip_key(r, conn))) { respond(conn, 429, "{\"error\":\"rate limited\"}"); return; }
     char uname[24] = {0};
-    if (!json_str(r->body, "username", uname, sizeof uname)) { respond(conn, 400, "{\"error\":\"username\"}"); return; }
+    if (!json_str(r->body, "username", uname, sizeof uname) || !roster_name_ok(uname)) {
+        respond(conn, 400, "{\"error\":\"username\"}"); return;
+    }
     pthread_mutex_lock(&g_registry_lock);
     // Dedup by username via the O(1) hash (was an O(users) linear scan).
     User *u = user_by_username(uname);
@@ -1405,6 +1438,8 @@ static void h_create(Req *r, Conn *conn) {
     if (!u) { pthread_mutex_unlock(&g_registry_lock); respond(conn, 401, "{\"error\":\"auth\"}"); return; }
     char user_id[ID_LEN + 1]; snprintf(user_id, sizeof user_id, "%s", u->user_id);
     char username[24]; snprintf(username, sizeof username, "%s", u->username);
+    // A user recovered from an older row may carry a name the roster refuses.
+    if (!roster_name_ok(username)) { pthread_mutex_unlock(&g_registry_lock); respond(conn, 400, "{\"error\":\"username\"}"); return; }
 
     int gidx;
     GameSlot *s = game_alloc_slot(&gidx);           // cleared slot with lock/cond ready (reused or fresh); bounded memory
@@ -1435,11 +1470,7 @@ static void h_create(Req *r, Conn *conn) {
     // Identity lives here; the board is dealt at start.
     Game *g = &s->game;
     g->status = GAME_STATUS_WAITING;   // a fresh slot is zeroed, so say what it is
-    game_lobby_seat(g, STRATEGY_KEY_HUMAN);
-    snprintf(s->seat_user[0], ID_LEN + 1, "%s", user_id);
-    snprintf(s->seat_name[0], 24, "%s", username);
-    snprintf(g->players[0].name, 24, "%s", username);
-    snprintf(g->players[0].player_id, 24, "%s", user_id);
+    seat_add(s, STRATEGY_KEY_HUMAN, user_id, username, "");   // the name passed roster_name_ok above
     game_mark_dirty(s);
     char out[80]; snprintf(out, sizeof out, "{\"game_id\":\"%s\"}", s->id);
     pthread_mutex_unlock(&s->lock);
@@ -1465,13 +1496,9 @@ static void h_meta(Req *r, Conn *conn) {
     if (!strcmp(type, "join")) {
         // Whether there is room, and what a human seat starts as, are the
         // kernel's (game_lobby_seat). Identity is this server's.
-        const int i = seat_of(s, user_id) < 0 ? game_lobby_seat(g, STRATEGY_KEY_HUMAN) : -1;
-        if (i >= 0) {
-            snprintf(s->seat_user[i], ID_LEN + 1, "%s", user_id);
-            snprintf(s->seat_name[i], 24, "%s", username);
-            snprintf(g->players[i].name, 24, "%s", username);
-            snprintf(g->players[i].player_id, 24, "%s", user_id);
-        }
+        // A second join by a seated player is refused by the roster itself
+        // (ROSTER_E_DUPLICATE), before the kernel is asked.
+        seat_add(s, STRATEGY_KEY_HUMAN, user_id, username, "");
     } else if (!strcmp(type, "add-bot")) {
         char skey[24] = {0}; if (!json_str(r->body, "strategy", skey, sizeof skey)) snprintf(skey, sizeof skey, "random");
         int ridx = bot_roster_find(skey);
@@ -1487,13 +1514,16 @@ static void h_meta(Req *r, Conn *conn) {
         // never moved at all (octogen), and one that collided with another
         // entry's id silently played that bot instead (gunpowder's index 6 is
         // STRAT_BLACKPOWDER).
-        const int i = game_lobby_seat(g, entry ? (int)entry->strat : (int)STRAT_RANDOM);
-        if (i >= 0) {
-            s->seat_ready[i] = true;
-            snprintf(s->seat_name[i], 24, "%%%s %d", skey, i);
-            snprintf(g->players[i].name, 24, "%s", s->seat_name[i]);
-            snprintf(g->players[i].player_id, 24, "bot%d", i);
-        }
+        //
+        // The bot's roster seat: id "bot<seat>" (seats are only appended, so
+        // unique), a "%<key> <seat>" name, and the entry's own key as its brain.
+        const int seat = g->num_players;
+        char bot_id[16], bot_name[48];
+        snprintf(bot_id, sizeof bot_id, "bot%d", seat);
+        snprintf(bot_name, sizeof bot_name, "%%%s %d", skey, seat);
+        const int i = seat_add(s, entry ? (int)entry->strat : (int)STRAT_RANDOM, bot_id, bot_name,
+                               entry ? entry->key : "random");
+        if (i >= 0) s->seat_ready[i] = true;
     } else if (!strcmp(type, "start")) {
         const int me = seat_of(s, user_id);
         if (me >= 0) { s->seat_ready[me] = true; game_lobby_ready(g, me); }

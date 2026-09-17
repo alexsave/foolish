@@ -59,7 +59,7 @@ int main(int argc,char**argv){
     sST=malloc((size_t)RCAP*sizeof(SimState));sACT=malloc(RCAP);sVAL=malloc(RCAP);sCNT=malloc((size_t)RCAP*4);
     sEP=malloc((size_t)SECAP*4);sEC=malloc((size_t)SECAP*4);sstk=malloc((size_t)RCAP*4);
     cd_sim_solve_reset();game_set_seed(1);game_set_deal_seed_bytes(seed,32);
-    Game g;memset(&g,0,sizeof g);g.num_players=2;for(int i=0;i<2;i++){g.players[i].status=PLAYER_STATUS_READY;g.players[i].strategy_key=(int8_t)STRAT_OCTOGEN;snprintf(g.players[i].player_id,sizeof g.players[i].player_id,"p%d",i);}
+    Game g;memset(&g,0,sizeof g);g.num_players=2;for(int i=0;i<2;i++){g.players[i].status=PLAYER_STATUS_READY;g.players[i].strategy_key=(int8_t)STRAT_OCTOGEN;}
     start_game(&g);
     int iters=0;
     while(game_done(&g)<0 && iters++<4000){

@@ -243,7 +243,6 @@ int main(void) {
         for (int i = 0; i < 2; i++) {
             g.players[i].status = PLAYER_STATUS_READY;
             g.players[i].strategy_key = (int8_t)e->strat;
-            snprintf(g.players[i].player_id, sizeof g.players[i].player_id, "p%d", i);
         }
         game_set_seed((uint32_t)(gi + 1));
         start_game(&g);

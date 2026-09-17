@@ -28,7 +28,7 @@ with three tiers:
   (game_id -> `GameSlot*`). Never held during game work, bot work, or socket
   I/O.
 - **`GameSlot.lock`** (new field, one per game) — guards everything about
-  ONE game: its `Game` struct, lobby roster (`seat_user`/`seat_name`/
+  ONE game: its `Game` struct, lobby roster (`roster`/
   `seat_ready`/`owner`), `cond`/`bot_running`, and the per-seat view cache.
 - **`g_kernel_lock`** — small, one process-wide mutex, held ONLY around the
   specific kernel calls that mutate a `Game` or drive bots (`awire_apply`,

@@ -934,7 +934,6 @@ int fio_new_game(const uint8_t *seed, int seed_len, int n_players) {
     int8_t strategies[MAX_PLAYERS];
     for (int i = 0; i < n_players; i++) {
         strategies[i] = STRATEGY_KEY_HUMAN;  // all human until fio_set_seat_strategy
-        snprintf(g_game.players[i].player_id, sizeof(g_game.players[i].player_id), "p%d", i);
     }
     game_seat_and_deal(&g_game, strategies, n_players);
     // A GENUINELY fresh game is the classic one: a variant is chosen for a

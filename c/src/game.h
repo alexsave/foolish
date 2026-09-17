@@ -146,8 +146,9 @@ typedef struct {
     bool    awaiting_attack;
     int8_t  strategy_key;      // application-defined; STRATEGY_KEY_HUMAN = a human seat
     Card    hand[MAX_HAND_SIZE];
-    char    name[24];
-    char    player_id[24];
+    // No identity here: a seat's id and name live in the Roster beside the
+    // Game (roster.h). Every Monte-Carlo node copies the players array, and
+    // identity must not ride those copies.
 } Player;
 
 typedef struct {
@@ -427,7 +428,7 @@ uint32_t game_human_mask(const Game *g);
 // written out at four call sites across two servers.
 //
 // Returns the new seat index, or -1 if the game is not WAITING or is full. The
-// host writes name/player_id into the returned seat.
+// host records the seat's id and name in its Roster (roster.h).
 int game_lobby_seat(Game *g, int strategy_key);
 
 // Mark a seated player READY. Returns 1 if that changed anything, else 0
@@ -464,8 +465,7 @@ int game_rearrange_hand(Game *g, int seat, const unsigned char *idx, int n);
 // bot roster index); then deals via start_game, which assigns each seated
 // player's status. Pass NULL to keep the strategy_key the seats already hold (a
 // host that wired kinds incrementally as players joined). The host owns identity
-// (names/player_id/tokens), set on the Player array before or after — the deal
-// never touches it. A bad seat count (n < 2 or > MAX_PLAYERS) is a no-op.
+// (ids, names, tokens) in its Roster; the deal never touches it. A bad seat count (n < 2 or > MAX_PLAYERS) is a no-op.
 void game_seat_and_deal(Game *g, const int8_t *strategy_keys, int n);
 // Records the end of a game on its OWN status: once game_done fires, the kernel
 // (not each host) flips g->status to GAME_OVER, so g->status is the single
@@ -524,7 +524,7 @@ int game_derived_opening(void);
 //
 // `bot_mask` bit s = seat s is a bot, which resets to READY; humans reset to
 // IDLE. It is a PARAMETER because it cannot be a guess: seat identity
-// (is_ai/strategy_key/player_id/name) is deliberately not in the state blob —
+// (strategy_key, and the id and name the Roster holds) is deliberately not in the state blob —
 // it lives with the caller — so the kernel is told, not left to infer.
 //
 // Logs are left alone: this is a board reset, not a new game. start_game
