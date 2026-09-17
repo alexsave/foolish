@@ -3,10 +3,9 @@ import { useServer } from '../contexts/ServerContext';
 import { useAnimation } from '../contexts/AnimationContext';
 import { useGame } from '../contexts/GameContext';
 import { useAuth } from '../contexts/AuthContext';
-import { canCoverPair } from '../wasm/clientGuards';
-import { canPass } from '../utils/gameValidation';
+import { canCoverPair, canPass } from '../utils/gameValidation';
 import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
-import { covered, kernelTable, type ViewCard as Card } from '../state/view';
+import { covered, type ViewCard as Card } from '../state/view';
 
 export const KeyboardInputHandler = () => {
     const { user_id } = useAuth();
@@ -79,7 +78,7 @@ export const KeyboardInputHandler = () => {
             } else {
                 // Multi-card cover - check if unambiguous
                 const unambiguousCover = game
-                    ? kernelUnambiguousCover(selectedCards, kernelTable(game.battles), game.powerSuit)
+                    ? kernelUnambiguousCover(selectedCards, game.battles, game.powerSuit)
                     : null;
                 if (unambiguousCover) {
                     await cover(unambiguousCover.coverCards, unambiguousCover.attackCards);

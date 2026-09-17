@@ -126,7 +126,7 @@ function buildBeats(frames: ReplayFrame[], decoded: DecodedReplay, names: string
         if (has(f, 'refill') && once('draw')) beats.push({ at: i, key: 'draw' });
         if (has(f, 'out') && once('out')) {
             const outEv = f.seq.events.find((e) => e.type === 'out');
-            const seat = frames[i].game.seats.findIndex((p) => p.id === outEv?.player_id);
+            const seat = outEv?.seat ?? -1;
             beats.push({ at: i, key: 'out', name: names[seat >= 0 ? seat : 0] });
         }
         if (f.game.deckCount === 0 && !f.game.hasFlipped && once('deckEmpty'))

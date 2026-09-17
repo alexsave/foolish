@@ -1,44 +1,16 @@
 // Pure client-side reconciliation logic, extracted from ServerContext /
 // AnimationContext so the SAME deployed code can be unit-tested directly (no React
 // needed). The components import from here; the e2e suite imports from here. There
-// is no second copy.
+// is no second copy. The boards the client makes itself - an optimistic move, a
+// resync that keeps pending cards, the rematch's lobby - are the kernel's
+// (src/state/clientBoards.ts); what is left here orders a hand and gates a push.
 
 import { animShouldDropStale } from '@sdk/ts/wasm/bots.ts';
-import { GAME_STATUS, NO_CARD, PLAYER_STATUS, covered, sameCard, type TableView, type ViewCard } from './view';
+import type { ViewCard } from './view';
 
 type Card = ViewCard;
 
 export const cardKey = (c: Card): string => `${c.suit}-${c.value}`;
-
-// The lobby a finished game resets to on "continue" / "proceed to lobby". This
-// is the CLIENT MIRROR of the server's reset (table_continue): status → waiting,
-// each seat IDLE (human) / READY (bot) with an empty hand, and every volatile
-// round field cleared. Used to transition the win screen to the lobby
-// OPTIMISTICALLY (before the meta round-trip); the authoritative reset that
-// follows must match this on the public fields or the user sees a snap
-// (e2e/meta.test.ts holds the two together). Returns a NEW board (no mutation).
-// Phase 6b moves optimistic boards into the kernel (client_optimistic_apply).
-export const resetToLobby = (view: TableView): TableView => ({
-    ...view,
-    status: GAME_STATUS.WAITING,
-    seats: view.seats.map((s) => ({ ...s, status: s.isAi ? PLAYER_STATUS.READY : PLAYER_STATUS.IDLE, handCount: 0, awaitingAttack: false })),
-    myHand: [],
-    deckCount: 0,
-    discardPileLength: 0,
-    hasFlipped: false,
-    flipped: NO_CARD,
-    powerSuit: 0,
-    firstAttacker: 0,
-    defender: 0,
-    fool: -1,
-    battles: [],
-    elimination: [],
-    hasGoodTimestamp: false,
-    goodMask: 0,
-    // Keep the version: the authoritative reset broadcasts at a HIGHER
-    // version, so the animation feed's reorder gate still accepts it.
-});
-const cardComp = sameCard;
 
 // ---- Live broadcast ordering gate -----------------------------------------
 // Broadcasts are fired un-awaited over per-call channels, so under realtime
@@ -57,7 +29,7 @@ export const shouldDropStaleSequence = (lastAppliedVersion: number | null, incom
 // ---- Table reconciliation --------------------------------------------------
 // Trust the server's table outright. Ordering is handled by the version gate and
 // the local player's unconfirmed cards are injected upstream (optimistic resolver
-// for broadcasts, applyOverlayEntries for resync), so appending stale leftover
+// for broadcasts, clientBoards.keepPending for resync), so appending stale leftover
 // battles is unnecessary and would re-introduce a previous bout's cards when an
 // intermediate clear is skipped.
 //
@@ -107,22 +79,6 @@ export const reorderHand = (order: readonly Card[], fromIndex: number, toIndex: 
     return next;
 };
 
-// The debounced hand-rearrange flush (DragContext.scheduleCardRearrangeUpdate ->
-// ServerContext.rearrangeHand) applies `cardIndices` to the CURRENT hand as
-// `indices.map(i => hand[i])`. Those indices were computed against an EARLIER
-// hand snapshot, so by flush time the hand may have shrunk (a card played,
-// drawn, or picked up) — a now-out-of-range index yields `hand[i] === undefined`,
-// minting a hole that crashes the render on `card.suit` (the same "e.suit" prod
-// crash reorderHand guards on the swap side). Only apply when the indices are a
-// true permutation of the current hand — same contract the server's
-// handleRearrangeHand enforces (in range, unique, full-length); otherwise the
-// caller abandons the stale reorder and keeps the authoritative order.
-export const isHandPermutation = (cardIndices: number[], handLength: number): boolean =>
-    Array.isArray(cardIndices)
-    && cardIndices.length === handLength
-    && new Set(cardIndices).size === handLength
-    && cardIndices.every((i) => Number.isInteger(i) && i >= 0 && i < handLength);
-
 // Sticky arrangement memory: keeps every known card's slot and only grows with
 // genuinely-new cards, so a card removed optimistically and then rejected keeps
 // its slot instead of jumping to the end.
@@ -143,28 +99,4 @@ export const displayedHand = (memory: readonly Card[], authHand: readonly Card[]
     for (const m of (memory || [])) { const k = cardKey(m); const a = byKey.get(k); if (a && !used.has(k)) { out.push(a); used.add(k); } }
     for (const c of (authHand || [])) { const k = cardKey(c); if (!used.has(k)) { out.push(c); used.add(k); } }
     return out;
-};
-
-// ---- Optimistic overlay (resync preservation) ------------------------------
-export interface OverlayEntry { card: Card; target?: Card | null }
-
-// Re-apply the local player's unconfirmed optimistic cards onto an
-// authoritatively-loaded board, so a reconnect resync doesn't momentarily drop a
-// just-played card. Idempotent; returns the board itself when there is nothing
-// to apply (a spectator's, or no pending card).
-export const applyOverlayEntries = (v: TableView, entries: OverlayEntry[]): TableView => {
-    if (!entries || entries.length === 0 || v.mySeat < 0) return v;
-    const battles = v.battles.map((b) => ({ ...b }));
-    let hand: readonly Card[] = v.myHand;
-    for (const e of entries) {
-        if (e.target) {
-            const battle = battles.find((b) => cardComp(b.attack, e.target!) && !covered(b));
-            if (battle) battle.defense = e.card;
-        } else {
-            const present = battles.some((b) => cardComp(b.attack, e.card) || (covered(b) && cardComp(b.defense, e.card)));
-            if (!present) battles.push({ attack: e.card, defense: NO_CARD });
-        }
-        hand = hand.filter((c) => !cardComp(c, e.card));
-    }
-    return { ...v, battles, myHand: hand };
 };

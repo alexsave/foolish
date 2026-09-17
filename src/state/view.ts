@@ -35,13 +35,6 @@ export const rulesOf = (view: TableView, fromDeck = 0, toFlipped = 0): ViewRules
 export const tableCards = (view: TableView): ViewCard[] =>
     view.battles.flatMap((b) => (covered(b) ? [b.attack, b.defense] : [b.attack]));
 
-/**
- * The table as the kernel helpers in sdk/ts/wasm/bots.ts still take it
- * (kernelUnambiguousCover, animConflictVerdicts): an uncovered defense as null.
- */
-export const kernelTable = (battles: readonly ViewBattle[]): { attack: ViewCard; defense: ViewCard | null }[] =>
-    battles.map((b) => ({ attack: b.attack, defense: covered(b) ? b.defense : null }));
-
 /** The GAME_STATUS_* and PLAYER_STATUS_* a board carries. */
 export const GAME_STATUS = { WAITING: V.GAME_STATUS_WAITING, PLAYING: V.GAME_STATUS_PLAYING, GAME_OVER: V.GAME_STATUS_GAME_OVER } as const;
 export const PLAYER_STATUS = { IDLE: V.PLAYER_STATUS_IDLE, READY: V.PLAYER_STATUS_READY, IN: V.PLAYER_STATUS_IN, OUT: V.PLAYER_STATUS_OUT } as const;

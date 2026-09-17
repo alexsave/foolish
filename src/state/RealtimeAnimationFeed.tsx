@@ -17,15 +17,15 @@ import { animationFeed } from './animationFeed';
  */
 export const RealtimeAnimationFeed = () => {
     const { user_id } = useAuth();
-    const { loadGame, games } = useServer();
+    const { loadGame, views } = useServer();
     const url_game_id = useParams<{ game_id: string }>().game_id?.toLowerCase();
     // Only a seated player has a gu- stream. Realtime admits the private join
     // only for a member of the game, so a spectator's join is refused every
     // time; spectators get the game-<id> stream from ServerContext instead.
-    // A boolean: this renders on every state change, but the subscription
-    // effect re-runs only when the seat itself comes or goes.
-    const self = url_game_id ? games[url_game_id]?.self : undefined;
-    const seated = !!user_id && self?.player_id === user_id;
+    // The board the signed-in user holds names their seat (mySeat, -1 for a
+    // spectator). A boolean: this renders on every state change, but the
+    // subscription effect re-runs only when the seat itself comes or goes.
+    const seated = !!user_id && !!url_game_id && (views[url_game_id]?.mySeat ?? -1) >= 0;
 
     // Keep loadGame reachable from inside the subscription callback without
     // re-running the effect when its identity changes.

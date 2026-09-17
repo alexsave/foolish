@@ -7,10 +7,10 @@
 //  2. The binary action HTTP envelopes (request + response) round-trip and
 //     reject garbage - the layer production clients actually POST - and the
 //     kernel's request decoder refuses the same garbage.
-//  3. guards.wasm's awire gate (validateActionWire) agrees with the server
-//     kernel: every legal move the kernel enumerates validates 0 against the
-//     view the kernel serves that seat, illegal moves return a reject code,
-//     malformed wire returns -1.
+//  3. The client's awire gate (the kernel's client_validate on the board the
+//     client holds) agrees with the server kernel: every legal move the kernel
+//     enumerates validates 0 against the view the kernel serves that seat,
+//     illegal moves return a reject code, malformed wire is CLIENT_E_MOVE.
 //  4. The envelope the kernel serves a seat (and a spectator) decodes to exactly
 //     that seat's view of the board the kernel holds, for a dealt game, a lobby
 //     and a finished game.
@@ -36,7 +36,8 @@ import { runMeta, seedLobby } from './helpers/table_server.ts';
 import { suiteRng } from './helpers/rng.ts';
 import { encodeAction, decodeAction, encodeActionRequest, decodeActionRequest, encodeActionResponse, decodeActionResponse, ACTION_STATUS } from '../sdk/ts/wire/awire.ts';
 import { decodeEnvelope, readEnvelopeView } from './helpers/client_read.ts';
-import { validateActionWire, initClientGuards } from '../src/wasm/clientGuards.ts';
+import { clientTable } from '../sdk/ts/table/client_table.ts';
+import * as V from '../sdk/ts/gen/view_layout.bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
@@ -138,10 +139,12 @@ test('awire HTTP envelopes: request/response round-trip, garbage rejected (by th
   }
 });
 
-// ---- 3. guards.wasm awire gate parity (DB-free) ------------------------------
+// ---- 3. client awire gate parity (DB-free) ----------------------------------
 
-test('validateActionWire: legal enumerated moves gate 0, illegal reject, malformed -1', async () => {
-  await initClientGuards();
+const validateActionWire = (view: Parameters<ReturnType<typeof clientTable>['validate']>[0], wire: Uint8Array): number =>
+    clientTable().validate(view, wire);
+
+test('client validate: legal enumerated moves gate 0, illegal reject, malformed is refused', async () => {
   let legal = 0, illegal = 0;
   for (let g = 0; g < 6; g++) {
     const gameId = `rg${g}`;
@@ -162,7 +165,7 @@ test('validateActionWire: legal enumerated moves gate 0, illegal reject, malform
       const foreign = encodeAction({ kind: 'attack', cards: [{ suit: 3, value: 13 }, { suit: 3, value: 13 }] });
       assert.ok(validateActionWire(personal, foreign) > 0, 'duplicate/foreign attack rejects');
       // Malformed wire is -1, never a crash.
-      assert.equal(validateActionWire(personal, new Uint8Array([0, 9, 1])), -1, 'malformed wire is -1');
+      assert.equal(validateActionWire(personal, new Uint8Array([0, 9, 1])), V.CLIENT_E_MOVE, 'malformed wire is refused as no move');
       illegal++;
       // Advance the game along a random legal move on the kernel.
       const pick = menu[ri(menu.length)];

@@ -7,12 +7,11 @@ import { CardFace } from "./CardFace";
 import { TexturedSurface } from "../TexturedSurface";
 import { useEffect, useRef } from "react";
 import { Text } from "../Text";
-import { canCoverPair } from "../../wasm/clientGuards";
 import { kernelUnambiguousCover } from "@sdk/ts/wasm/bots.ts";
-import { canAttack, canPass, canCoverCards, canPickup } from "../../utils/gameValidation";
+import { canAttack, canPass, canCoverCards, canCoverPair, canPickup } from "../../utils/gameValidation";
 import { useStyles } from "../../contexts/StyleContext";
 import { useTutorialHint } from "../../contexts/TutorialHintContext";
-import { PLAYER_STATUS, covered, kernelTable, rulesOf } from "../../state/view";
+import { PLAYER_STATUS, covered, rulesOf } from "../../state/view";
 
 // Green glow used by the tutorial to point at the card/button to use next.
 const TUT_GLOW = '0 0 0 3px #2fcf63, 0 0 16px 3px rgba(47,207,99,0.85)';
@@ -87,7 +86,7 @@ const CardDiv = ({ user_id }: { user_id: string }) => {
                 return (
                     <CardFace
                         card={card}
-                        playerId={user_id}
+                        owner={game.mySeat}
                         key={'' + card.value + card.suit}
                         data-card-index={index}
                         data-location="hand"
@@ -222,7 +221,7 @@ export const ActionButtons = () => {
         } else {
             // Use the shared cover resolver (same as DragContext/KeyboardInputHandler)
             // instead of re-implementing the permutation search inline.
-            const mapping = kernelUnambiguousCover(selectedCards, kernelTable(game.battles), game.powerSuit);
+            const mapping = kernelUnambiguousCover(selectedCards, game.battles, game.powerSuit);
             if (mapping) {
                 setActionPressed('cover', true);
                 cover(mapping.coverCards, mapping.attackCards).then(() => {

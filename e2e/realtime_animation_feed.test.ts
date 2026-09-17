@@ -65,7 +65,7 @@ mock.module('../src/contexts/ServerContext.tsx', { namedExports: {
     // (e2e/realtime_feed_seating.test.ts covers that against the real provider).
     useServer: () => ({
         loadGame: async (id: string) => { loadGameCalls.push(id); return { game_id: id }; },
-        games: { [GAME_ID]: { self: { player_id: USER_ID } } },
+        views: { [GAME_ID]: { mySeat: 0 } },
     }),
 } });
 mock.module('../src/backend/Connector.ts', { defaultExport: supabaseMock });

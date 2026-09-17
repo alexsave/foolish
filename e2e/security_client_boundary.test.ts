@@ -66,8 +66,11 @@ export const CLIENT_BOUNDARY = {
         /(^|\/)sdk\/ts\/gen\/view_layout\.bots\.ts$/,
         /(^|\/)sdk\/ts\/table\/client_table\.ts$/,
     ],
-    /** The TypeScript wire readers the client slot replaced (Phase 5a), by name. */
-    retiredReaders: ['decodePackedGame', 'viewToGame', 'decodeEventWire', 'kernelViewFromPacked', 'kernelEventsFromPacked', 'decodePackedRoster'],
+    /** The TypeScript wire readers the client slot replaced (Phase 5a), and the client rules and boards it replaced (Phase 6b), by name. */
+    retiredReaders: ['decodePackedGame', 'viewToGame', 'decodeEventWire', 'kernelViewFromPacked', 'kernelEventsFromPacked', 'decodePackedRoster',
+        'initClientGuards', 'guardsReady', 'resetToLobby', 'applyOverlayEntries', 'isHandPermutation'],
+    /** Modules the client slot replaced: the second kernel the web used to load for its move gates (guards.wasm) (Phase 6b). */
+    retiredModules: [/(^|\/)sdk\/ts\/wasm\/guards_wasm\.ts$/, /(^|\/)src\/wasm\/clientGuards\.ts$/],
     /** Kernel exports that serialize the resident game unmasked. */
     deniedWasmExports: ['wasm_export_state', 'wasm_state_serialize', 'wasm_state_deserialize',
         // the C Table: loads a durable blob, and writes it back out in a commit
@@ -143,7 +146,10 @@ export async function scanClientBoundary(opts: { stdin?: string } = {}): Promise
     // esbuild suffixes a renamed binding with digits (name2) on a collision.
     const symbols = CLIENT_BOUNDARY.deniedSymbols.map(name => ({ name, count: count(new RegExp(`\\b${name}\\d*\\b`, 'g')) })).filter(s => s.count > 0);
     const wasmExports = CLIENT_BOUNDARY.deniedWasmExports.map(name => ({ name, count: count(new RegExp(`\\b${name}\\b`, 'g')) })).filter(s => s.count > 0);
-    const retired = CLIENT_BOUNDARY.retiredReaders.map(name => ({ name, count: count(new RegExp(`\\b${name}\\d*\\b`, 'g')) })).filter(s => s.count > 0);
+    const retired = [
+        ...CLIENT_BOUNDARY.retiredReaders.map(name => ({ name, count: count(new RegExp(`\\b${name}\\d*\\b`, 'g')) })).filter(s => s.count > 0),
+        ...inputs.filter(p => CLIENT_BOUNDARY.retiredModules.some(re => re.test(p))).map(name => ({ name, count: 1 })),
+    ];
     // Chains: to every denied module, and to every module defining a surviving denied symbol.
     const definers = new Set<string>(modules);
     for (const s of [...symbols, ...wasmExports]) {
@@ -175,7 +181,7 @@ test('the web client bundle contains no reader of an unmasked kernel game', asyn
         { modules: [], symbols: [], wasmExports: [] }, `the client can read an unmasked game:${explain(r)}`);
 });
 
-test('the web client reads the wire through the kernel: it reaches view_layout and client_table, and no TS wire reader', async () => {
+test('the web client reads the wire through the kernel: it reaches view_layout and client_table, and no TS wire reader, client rule or second kernel', async () => {
     const r = await scanClientBoundary();
     assert.deepEqual(r.required.filter(q => !q.found), [], `the client does not reach the client slot's readers:${explain(r)}`);
     assert.deepEqual(r.retired, [], `a TypeScript wire reader is still in the client bundle:${explain(r)}`);

@@ -238,7 +238,7 @@ export function buildReverseFrames(frames: ReplayFrame[]): (AnimationSequenceMes
             case 'cover':
                 event = {
                     type: 'pickup',
-                    player_id: fe.player_id,
+                    seat: fe.seat,
                     cards: fe.cards,
                     from_location: 'table',
                     to_location: 'hand',
@@ -250,7 +250,7 @@ export function buildReverseFrames(frames: ReplayFrame[]): (AnimationSequenceMes
             case 'pickup':
                 event = {
                     type: 'attack_pass',
-                    player_id: fe.player_id,
+                    seat: fe.seat,
                     cards: fe.cards,
                     from_location: 'hand',
                     to_location: 'table',
@@ -272,7 +272,7 @@ export function buildReverseFrames(frames: ReplayFrame[]): (AnimationSequenceMes
             default:
                 event = {
                     type: 'magic_transition',
-                    player_id: fe.player_id,
+                    seat: fe.seat,
                     game_state: prev,
                 };
                 break;

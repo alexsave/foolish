@@ -93,7 +93,7 @@ const ScaledCard = ({ w = 22, children }: { w?: number; children: React.ReactNod
 
 const InlineCard = ({ card, w = 22 }: { card: Card; w?: number }) => (
     <ScaledCard w={w}>
-        <CardFace card={card} playerId="replay-inline" />
+        <CardFace card={card} owner="replay-inline" />
     </ScaledCard>
 );
 

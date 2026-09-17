@@ -3,13 +3,10 @@
 // The kernel reads every push (sdk/ts/table/client_table.ts readPush) into
 // steps: what moved, and the board it left. The animation pipeline
 // (AnimationContext.tsx, the replay and the tutorial) plays events keyed by the
-// names it keys a card's flight by - a type, the acting seat's player id, where
-// the cards came from and went - and commits each step's board, a TableView, as
-// it lands. This file names a step's event that way. Every board here is the
-// kernel's snapshot as read; nothing is rebuilt.
-//
-// Phase 6b moves the pipeline's own state onto the client slot, and the event
-// shape with it (docs/C_GAME_SHAPE_MIGRATION.md).
+// names it keys a card's flight by - a type, the acting seat, where the cards came
+// from and went - and commits each step's board, a TableView, as it lands. This
+// file names a step's event that way. Every board here is the kernel's snapshot as
+// read; nothing is rebuilt.
 
 import * as V from '@sdk/ts/gen/view_layout.bots.ts';
 import type { PushEvent, PushRead, TableView, ViewCard } from '@sdk/ts/table/client_table.ts';
@@ -33,7 +30,8 @@ const CARRIES_CARDS = new Set([
 /** One step of a push, as the animation pipeline plays it. */
 export interface ViewEvent {
     type: string;
-    player_id?: string;
+    /** The acting seat. */
+    seat?: number;
     cards?: ViewCard[];
     from_location?: string;
     to_location?: string;
@@ -43,12 +41,9 @@ export interface ViewEvent {
     game_state: TableView;
 }
 
-/** The player id the table's identity gives a seat, or the seat's own name when the push named no one. */
-export const seatPlayerId = (view: TableView, seat: number): string => view.seats[seat]?.id || `seat-${seat}`;
-
 function eventOf(e: PushEvent, view: TableView): ViewEvent {
     const ev: ViewEvent = { type: EVENT_TYPE[e.type], game_state: view };
-    if (e.seat >= 0) ev.player_id = seatPlayerId(view, e.seat);
+    if (e.seat >= 0) ev.seat = e.seat;
     if (e.cards.length > 0 || CARRIES_CARDS.has(e.type)) ev.cards = [...e.cards];
     if (e.from >= 0) ev.from_location = LOCATION[e.from];
     if (e.to >= 0) ev.to_location = LOCATION[e.to];

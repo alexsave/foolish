@@ -12,9 +12,8 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { GAME_STATUS, PLAYER_STATUS } from '../server/api/core/types.ts';
-import { resetToLobby } from '../src/state/clientReconcile.ts';
-import { gameToView } from './helpers/view_game.ts';
+import { lobbyBoard } from '../src/state/clientBoards.ts';
+import { clientTable } from '../sdk/ts/table/client_table.ts';
 import { fixture, fixtureTable, GAME_OVER, IN, OUT } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';
 import { checkCardConservation, mustReadTable, readTable, residentBoard } from './helpers/table_play.ts';
@@ -106,38 +105,32 @@ if (!process.env.VALIDATION_ONLY) {
         assert.equal(await readTable(gameId), null, 'empty game deleted');
     });
 
-    // The client applies "proceed to lobby" OPTIMISTICALLY (resetToLobby) before
-    // the meta round-trip; the authoritative reset (table_continue, the kernel's
-    // game_reset_to_lobby) must agree on the public fields, or the user sees a
-    // snap. Both run on the same finished game.
-    test('optimistic resetToLobby (client) matches table_continue (server)', () => {
-        const players = [
-            { player_id: 'h1', name: 'H1', is_ai: false, status: PLAYER_STATUS.OUT, hand_length: 0 },
-            { player_id: 'b1', name: 'Botty', is_ai: true, status: PLAYER_STATUS.IN, hand_length: 4 },
-        ];
-        const clientGame: any = {
-            id: 'g1', name: 'G1', status: GAME_STATUS.GAME_OVER,
-            discard_pile_length: 7, flipped: { suit: 1, value: 9 },
-            power_suit: 1, first_attacker: 1, defender: 0,
-            table_battles: [{ attack: { suit: 0, value: 5 }, defense: null }],
-            elimination_order: ['h1'], good_timestamp: 123, good_players: ['h1'], version: 41,
-            deck_length: 5, players: structuredClone(players),
-            self: { player_id: 'h1', name: 'H1', is_ai: false, status: PLAYER_STATUS.OUT, hand: [{ suit: 0, value: 5 }], hand_length: 1, awaiting_attack: true, strategy_key: 'human' },
-        };
-        // The same finished board, as the kernel holds it.
+    // The client applies "proceed to lobby" OPTIMISTICALLY (clientBoards.lobbyBoard,
+    // the kernel's game_reset_to_lobby on the board the client holds) before the
+    // meta round-trip; the authoritative reset (table_continue) must agree on the
+    // public fields, or the user sees a snap. Both run on the same finished game.
+    test('optimistic lobbyBoard (client) matches table_continue (server)', () => {
+        // The finished board, as the kernel holds it.
         const fx = fixture().title('G1')
             .seats([{ id: 'h1', name: 'H1' }, { id: 'b1', name: 'Botty', brain: 'random' }])
             .status(GAME_OVER).seatStatus(0, OUT).seatStatus(1, IN).powerSuit(1).attacker(1).defender(0)
             .hand(1, '6c 7c 8c 9c').eliminated(0).discard(20).good(0).goodTimestamp()
             .build();
+        // The client holds it as the envelope it was served reads (TableView), as the web does.
+        const served = fixtureTable();
+        assert.equal(served.load(fx.state, fx.roster), L.TABLE_OK);
+        const envelope = served.envelope('g1', 0, 41);
+        assert.ok(envelope instanceof Uint8Array, 'the finished board is served');
+        const clientView = clientTable().adoptEnvelope(envelope)!;
+        assert.ok(clientView, 'and read');
+        assert.equal(clientView.goodMask, 1, 'the served board still has its good');
         const table = fixtureTable();
         assert.equal(table.load(fx.state, fx.roster), L.TABLE_OK);
         assert.equal(table.continueGame('h1'), L.TABLE_OK, 'the server resets it');
         const server = residentBoard('g1', fx.state, fx.roster);
 
-        // The client holds the finished game as a board (TableView), as the web does.
-        const clientView = gameToView(clientGame);
-        const client = resetToLobby(clientView);
+        const client = lobbyBoard(clientView)!;
+        assert.ok(client, 'the kernel makes the lobby');
         assert.equal(client.status, L.GAME_STATUS_WAITING);
         assert.equal(server.status, L.GAME_STATUS_WAITING, 'status matches');
         for (let i = 0; i < client.seats.length; i++) {

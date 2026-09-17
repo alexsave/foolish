@@ -134,14 +134,14 @@ export const TableBattles = () => {
                     data-battle-index={index}
                     data-card={`${battle.attack.suit}-${battle.attack.value}`}
                     card={battle.attack}
-                    playerId="table"
+                    owner="table"
                     style={attackCardStyle}
                     onClick={() => isSelectingCover && setCoverMap(new Map(coverMap.set(selectedCards[0], battle.attack))) }
                 />
                 {isCovered && (
                     <CardFace 
                         card={battle.defense} 
-                        playerId="table" 
+                        owner="table" 
                         style={defenseCardStyle}
                         data-card={`${battle.defense.suit}-${battle.defense.value}`} 
                     />

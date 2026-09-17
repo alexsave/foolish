@@ -3,18 +3,14 @@ import supabase from '../backend/Connector';
 import { useParams } from 'next/navigation';
 import { useAuth } from './AuthContext';
 import { MAX_PLAYERS } from '@api/core/constants.ts';
-// The rotation comes from the kernel (c/src/game.c get_next_player_index)
-// through guards.wasm, so an optimistic patch lands on the same seats the
-// server's own rotation will. Reached only from pass/pickup, which the
-// board gates on guardsReady (GameView).
-import { nextPlayerIndex } from '../wasm/clientGuards';
 import { ANIMATION_TIME } from '../constants/constants';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { animationFeed } from '../state/animationFeed';
-import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand, mergeTableBattles, applyOverlayEntries, resetToLobby, isHandPermutation } from '../state/clientReconcile';
+import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand, mergeTableBattles } from '../state/clientReconcile';
+import { keepPending, lobbyBoard, optimisticBoard, rearrangedBoard } from '../state/clientBoards';
 import { ACTION_STATUS, REJECT_STALE_ROUND, decodeActionResponse, encodeAction, encodeActionRequest } from '@sdk/ts/wire/awire.ts';
 import { clientTable } from '@sdk/ts/table/client_table.ts';
-import { GAME_STATUS, NO_CARD, PLAYER_STATUS, sameCard, tableCards, type TableView, type ViewCard } from '../state/view';
+import { GAME_STATUS, type TableView, type ViewCard } from '../state/view';
 import { rejectMessage } from '../wasm/rejectMessages';
 import { authoritativeVersion } from '../state/authoritativeVersion';
 import { strings } from '../localization/strings';
@@ -38,8 +34,11 @@ const hexToBytes = (hex: string): Uint8Array => {
 
 // Re-apply the local player's unconfirmed optimistic table cards onto an
 // authoritatively-loaded board (reconnect resync), so a just-played card doesn't
-// vanish then reappear. Thin wrapper over the shared, unit-tested applyOverlayEntries.
-const applyOptimisticOverlay = (v: TableView): TableView => applyOverlayEntries(v, optimisticOverlay.entries());
+// vanish then reappear. The kernel keeps them on the board (clientBoards.keepPending).
+const applyOptimisticOverlay = (v: TableView): TableView => {
+    const pending = optimisticOverlay.entries();
+    return pending.length === 0 ? v : keepPending(v, pending) ?? v;
+};
 
 // Split contexts: actions are all useCallback([])-stable so this provider's
 // value NEVER changes identity — components that only dispatch (buttons, drag
@@ -732,165 +731,52 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }
     };
 
-    const attack = useCallback((cards: Card[], applyOptimistic: () => boolean = () => true, wire?: Uint8Array): Promise<{ game_id: string }> => {
-        // The game this move targets: captured ONCE at tap time, so the deferred
-        // optimistic patch below applies to the same game the request went to
-        // even if the user navigates during the animation.
+    // A move goes to the server FIRST - the server is authoritative and rejects an
+    // illegal move, so the round-trip isn't gated on local validation. The body is
+    // the packed awire buffer: the caller-supplied bytes (already validated against
+    // the kernel) or a fresh encode for direct callers.
+    //
+    // The board the move leaves stands on screen once its flight lands
+    // (ANIMATION_TIME) - but only if the caller's validation, evaluated then, agrees
+    // the move was legal: an invalid move gets no optimistic state to roll back. The
+    // kernel makes that board (clientBoards.optimisticBoard: the table, the hand, a
+    // pass's shield, a pickup's rotation) from the board held at that moment, inside
+    // the updater: a broadcast can commit fresher state in that window, and deriving
+    // from the render-time `games` closure would write that stale table and hand
+    // back over it. The hand order derives from myHand (the displayedHand selector).
+    //
+    // The game is captured ONCE at tap time, so the deferred board applies to the
+    // same game the request went to even if the user navigates during the animation.
+    const playMove = (move: Uint8Array, applyOptimistic: () => boolean): Promise<{ game_id: string }> => {
         const gid = activeGameIdRef.current!;
-        // Fire the server request FIRST — the server is authoritative and rejects an
-        // illegal move, so the round-trip isn't gated on local validation. The body
-        // is the packed awire buffer: the caller-supplied bytes (already validated
-        // against guards.wasm) or a fresh encode for direct callers.
-        const promise = invokePackedAction(gid, wire ?? encodeAction({ kind: 'attack', cards }));
-
-        // Optimistic game state update after animation completes — but only if the
-        // caller's validation (evaluated by ANIMATION_TIME, when this fires) agrees the
-        // move was legal. An invalid move gets no optimistic state to roll back.
-        // Everything is derived inside the updater from prev: this fires up to
-        // ANIMATION_TIME after the tap, and a broadcast can commit fresher state in
-        // that window — deriving from the render-time `games` closure would write
-        // that stale table/hand back over it.
+        const promise = invokePackedAction(gid, move);
         setTimeout(() => {
             if (!applyOptimistic()) return;
             setGames(prev => {
-                const g: TableView = prev[gid];
-                if (!g) return prev;
-                return {
-                    ...prev,
-                    [gid]: {
-                        ...g,
-                        battles: [...g.battles, ...cards.map(card => ({ attack: card, defense: NO_CARD }))],
-                        myHand: g.myHand.filter(card => !cards.some(c => sameCard(c, card)))
-                    }
-                };
+                const board = prev[gid] ? optimisticBoard(prev[gid], move) : null;
+                return board ? { ...prev, [gid]: board } : prev;
             });
-            // Hand order is derived from myHand by the displayedHand selector,
-            // so the optimistic removal above is reflected automatically.
-
         }, ANIMATION_TIME);
-
         return promise;
+    };
+
+    const attack = useCallback((cards: Card[], applyOptimistic: () => boolean = () => true, wire?: Uint8Array): Promise<{ game_id: string }> => {
+        return playMove(wire ?? encodeAction({ kind: 'attack', cards }), applyOptimistic);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const pass = useCallback((cards: Card[], applyOptimistic: () => boolean = () => true, wire?: Uint8Array): Promise<{ game_id: string }> => {
-        const gid = activeGameIdRef.current!; // see attack
-        // Server request first (see attack); optimistic patch gated on validity.
-        const promise = invokePackedAction(gid, wire ?? encodeAction({ kind: 'pass', cards }));
-
-        // Optimistic game state update after animation completes. Derived inside
-        // the updater from prev — see attack for why the closure state is stale.
-        setTimeout(() => {
-            if (!applyOptimistic()) return;
-            setGames(prev => {
-                const g: TableView = prev[gid];
-                if (!g) return prev;
-                return {
-                    ...prev,
-                    [gid]: {
-                        ...g,
-                        battles: [...g.battles, ...cards.map(card => ({ attack: card, defense: NO_CARD }))],
-                        myHand: g.myHand.filter(card => !cards.some(c => sameCard(c, card))),
-                        defender: nextPlayerIndex(g, g.defender)
-                    }
-                };
-            });
-            // Hand order derives from myHand (see displayedHand selector).
-
-        }, ANIMATION_TIME);
-
-        return promise;
+        return playMove(wire ?? encodeAction({ kind: 'pass', cards }), applyOptimistic);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const pickup = useCallback((applyOptimistic: () => boolean = () => true, wire?: Uint8Array): Promise<{ game_id: string }> => {
-        const gid = activeGameIdRef.current!; // see attack
-        // Server request first (see attack); optimistic patch gated on validity.
-        const promise = invokePackedAction(gid, wire ?? encodeAction({ kind: 'pickup' }));
-
-        // Optimistic game state update after animation completes. Derived inside
-        // the updater from prev — see attack for why the closure state is stale.
-        setTimeout(() => {
-            if (!applyOptimistic()) return;
-            setGames(prev => {
-                const g: TableView = prev[gid];
-                if (!g) return prev;
-
-                // The kernel rotates AFTER refill_player_hands, which can
-                // eliminate a hand-emptied seat when the stock runs dry — a
-                // pre-refill rotation would then point at a seat the kernel
-                // skips. The rotation is exact iff no OTHER in-play seat can
-                // be eliminated by the refill (they all still hold cards; we
-                // are the picker and gain the table cards). Otherwise leave
-                // the seats to the authoritative broadcast.
-                const rotationIsExact = g.seats.every((p, i) =>
-                    i === g.mySeat || p.status !== PLAYER_STATUS.IN || p.handCount > 0);
-                const next_first_attacker = rotationIsExact
-                    ? nextPlayerIndex(g, g.defender) : g.firstAttacker;
-                const next_defender = rotationIsExact
-                    ? nextPlayerIndex(g, next_first_attacker) : g.defender;
-
-                // Collect all cards from the table (both attacks and defenses)
-                const allTableCards = tableCards(g);
-
-                return {
-                    ...prev,
-                    [gid]: {
-                        ...g,
-                        battles: [],
-                        myHand: [...g.myHand, ...allTableCards],
-                        firstAttacker: next_first_attacker,
-                        defender: next_defender
-                    }
-                };
-            });
-            // Picked-up cards appear via myHand; the displayedHand selector
-            // appends any new cards to the end of the arrangement automatically.
-
-        }, ANIMATION_TIME);
-
-        return promise;
+        return playMove(wire ?? encodeAction({ kind: 'pickup' }), applyOptimistic);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const cover = useCallback((coverCards: Card[], attackCards: Card[], applyOptimistic: () => boolean = () => true, wire?: Uint8Array): Promise<{ game_id: string }> => {
-        const gid = activeGameIdRef.current!; // see attack
-        // Server request first (see attack); optimistic patch gated on validity.
-        const promise = invokePackedAction(gid,
-            wire ?? encodeAction({ kind: 'cover', cards: coverCards, attack_cards: attackCards }));
-
-        // Optimistic game state update after animation completes. Derived inside
-        // the updater from prev — see attack for why the closure state is stale.
-        setTimeout(() => {
-            if (!applyOptimistic()) return;
-            setGames(prev => {
-                const g: TableView = prev[gid];
-                if (!g) return prev;
-
-                const updatedTableBattles = g.battles.map(battle => {
-                    const attackIndex = attackCards.findIndex(card =>
-                        sameCard(card, battle.attack)
-                    );
-                    if (attackIndex !== -1) {
-                        return { ...battle, defense: coverCards[attackIndex] };
-                    }
-                    return battle;
-                });
-
-                return {
-                    ...prev,
-                    [gid]: {
-                        ...g,
-                        battles: updatedTableBattles,
-                        myHand: g.myHand.filter(card => !coverCards.some(c => sameCard(c, card)))
-                    }
-                };
-            });
-            // Hand order derives from myHand (see displayedHand selector).
-
-        }, ANIMATION_TIME);
-
-        return promise;
+        return playMove(wire ?? encodeAction({ kind: 'cover', cards: coverCards, attack_cards: attackCards }), applyOptimistic);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -1006,25 +892,24 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     }, []);
 
     const rearrangeHand = useCallback((gameId: string, cardIndices: number[]): Promise<{ game_id: string }> => {
-        const previousHand = (gamesRef.current[gameId]?.mySeat ?? -1) >= 0 ? [...gamesRef.current[gameId].myHand] : [];
-
-        if (previousHand.length === 0) {
-            return Promise.reject(new Error(`Cannot rearrange hand`));
-        }
-
         // The reorder is debounced (DragContext.scheduleCardRearrangeUpdate), so by
         // the time it flushes the hand may have changed (a card played, drawn, or
         // picked up). Indices computed against the OLD hand can now be out-of-range
         // or non-bijective; applying them optimistically would mint an `undefined`
-        // slot (previousHand[outOfRange]) into self.hand, and the next render crashes
-        // reading `card.suit`. Only apply a clean permutation (the same contract the
-        // server's handleRearrangeHand enforces); otherwise abandon the stale reorder
-        // rather than materialize a holed hand.
-        if (!isHandPermutation(cardIndices, previousHand.length)) {
+        // slot into the hand, and the next render crashes reading `card.suit`. The
+        // kernel orders the hand only by a true permutation (game_rearrange_hand, the
+        // server's own check); a stale reorder is abandoned rather than materialized.
+        const board = gamesRef.current[gameId];
+        const arranged = board ? rearrangedBoard(board, cardIndices) : { kind: 'no-hand' as const };
+        if (arranged.kind === 'no-hand') {
+            return Promise.reject(new Error(`Cannot rearrange hand`));
+        }
+        if (arranged.kind === 'not-an-order') {
             return Promise.resolve({ game_id: gameId });
         }
 
-        const rearrangedHand = cardIndices.map(index => previousHand[index]);
+        const previousHand = board!.myHand;
+        const rearrangedHand = arranged.view.myHand;
         setGames(prev => ({
             ...prev, [gameId]: {
                 ...prev[gameId],
@@ -1033,9 +918,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         }));
 
         const revert = () => {
-            if (previousHand.length === 0) {
-                return;
-            }
             setGames(prev => ({
                 ...prev, [gameId]: {
                     ...prev[gameId],
@@ -1116,13 +998,12 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // waiting out the meta round-trip (the WinScreen→Lobby swap is purely
         // status-driven — WinScreen renders null once status !== GAME_OVER). The
         // server `continue` runs in the background; its authoritative reset (the
-        // MAGIC_TRANSITION broadcast + response) reconciles with this — they're
-        // built the same way, so there's no visible snap. On failure we roll back
-        // to the finished game so the user can retry. Mirrors handleContinue's
-        // reset in _shared/meta_actions.ts.
+        // MAGIC_TRANSITION broadcast + response) reconciles with this - the kernel
+        // makes both (game_reset_to_lobby), so there's no visible snap. On failure we
+        // roll back to the finished game so the user can retry.
         const prev = gamesRef.current[gameId];
-        if (prev && prev.status === GAME_STATUS.GAME_OVER) {
-            const optimistic = resetToLobby(prev);
+        const optimistic = prev && prev.status === GAME_STATUS.GAME_OVER ? lobbyBoard(prev) : null;
+        if (prev && optimistic) {
             setGames(cur => ({ ...cur, [gameId]: optimistic }));
 
             invokeGameFunctions('meta', { type: 'continue', game_id: gameId }).catch(err => {
@@ -1179,7 +1060,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     }
 
     // The packed move transport (docs/PACKED_WIRE_CUTOVER.md): POST the awire
-    // bytes — the exact buffer guards.wasm validated — wrapped in the binary
+    // bytes - the exact buffer the kernel validated - wrapped in the binary
     // request envelope. functions-js only passes a body through with
     // Content-Type: application/octet-stream when it is a Blob or an
     // ArrayBuffer (a Uint8Array would be JSON.stringified — see
@@ -1255,7 +1136,6 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         game_id: active_game_id,
         view: games[active_game_id!] ?? null,
         views: games,
-        games: seatsOf(games),
         gameLoadError,
         staleRoundNotice,
         chatMessages: chatMessages[active_game_id!] || [],
@@ -1304,25 +1184,12 @@ interface ServerActionsType {
     setLocalHandOrder: (order: readonly Card[]) => void;
 }
 
-/** Whose seat a board is, by game id, as src/state/RealtimeAnimationFeed.tsx reads it. */
-type SeatsByGame = { [key: string]: { self: { player_id: string } | null } };
-
-// The seat each held board gives its viewer, under the name the realtime feed
-// reads (`games[id].self.player_id`). The boards themselves are `views`.
-const seatsOf = (views: { [key: string]: TableView }): SeatsByGame => {
-    const out: SeatsByGame = {};
-    for (const [gid, v] of Object.entries(views)) out[gid] = { self: v.mySeat >= 0 ? { player_id: v.seats[v.mySeat]?.id ?? '' } : null };
-    return out;
-};
-
 interface ServerStateType {
     game_id: string | null;
     /** The board on screen: the kernel's TableView snapshot (src/state/view.ts). */
     view: TableView | null;
     /** Every board this client holds, by game id. */
     views: { [key: string]: TableView };
-    /** Each held board's seat, for the realtime feed (see seatsOf). */
-    games: SeatsByGame;
     gameLoadError: string | null;
     /** A localized notice when the server rejected a move as stale-round (a round
      *  closed before it landed); null when there is nothing to show. Auto-clears. */
@@ -1405,7 +1272,6 @@ export const ReplayServerProvider = ({ gameId, initialGame, children }: {
         game_id: gameId,
         view: games[gameId] ?? initialGame,
         views: games,
-        games: seatsOf(games),
         gameLoadError: null,
         staleRoundNotice: null,
         chatMessages: [],

@@ -633,6 +633,20 @@ test('a pass the next defender cannot hold: a throw-in overtakes it', async () =
     });
 });
 
+test('a throw-in lands while my pass is pending, and the pass still stands', async () => {
+    const board = three().hand(0, '7c Tc Jd Qd').hand(1, '7d 8d Ad').hand(2, 'Js Qs Ks As').table('7h').attacker(0).defender(1).build();
+    await play('pass_pending_throw_in', 117, 'a-pass-pending', board, async (s, srv) => {
+        await s.step('tap pass 7d', () => tap(probe.anim.pass(cards('7d'))));
+        await s.step('Anna throws in 7c on the server', () => { srv.act(ANNA, encodeAction({ kind: 'attack', cards: cards('7c') })); });
+        await s.advance(200);
+        await deliver(s, 'push: Anna\'s throw-in');
+        await s.advance(100);
+        await answer(s, 'server applies mine');
+        await s.advance(700);
+        await deliver(s, 'push: my pass');
+    });
+});
+
 test('a pickup a closing good overtakes', async () => {
     const board = three().hand(0, '9c Tc').hand(1, 'Js Qs Ks').hand(2, 'Ad Qd 6d').table('7h/9h')
         .attacker(0).defender(1).good(0).goodTimestamp().build();

@@ -1,6 +1,6 @@
 // Action wire ("awire" v1) — TS mirror of c/src/awire.h. The client
-// builds ONE buffer per move and uses it for the guards-wasm gate, the
-// optimistic apply, and the POST body; the server kernel applies the same
+// builds ONE buffer per move and uses it for the kernel's gate and
+// optimistic board (c/src/client_table.h), and the POST body; the server kernel applies the same
 // bytes verbatim. Pure TS, no wasm imports.
 import { Card } from "@api/core/types.ts";
 
@@ -15,7 +15,7 @@ export type AwireKindName = keyof typeof AWIRE_KIND;
 
 export const AWIRE_MAX_CARDS = 28;
 
-// Mirrors wire.h / clientGuards wireCard: clamp into the representable
+// Mirrors wire.h: clamp into the representable
 // space; the kernel re-clamps on decode (memory safety never depends on
 // this side).
 export function wireCard(c: Card): number {

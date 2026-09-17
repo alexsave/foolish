@@ -48,10 +48,9 @@ import { useServer } from '../../contexts/ServerContext';
 import { useAnimation } from '../../contexts/AnimationContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useGame } from '../../contexts/GameContext';
-import { canCoverPair } from '../../wasm/clientGuards';
-import { canAttack, canPass, canCoverCards } from '../../utils/gameValidation';
+import { canAttack, canPass, canCoverCards, canCoverPair } from '../../utils/gameValidation';
 import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
-import { covered, kernelTable, rulesOf, type TableView, type ViewCard as Card } from '../../state/view';
+import { covered, rulesOf, type TableView, type ViewCard as Card } from '../../state/view';
 
 type CoverTarget = { kind: 'cover'; attack: Card; battleIndex: number };
 type Target = CoverTarget | { kind: 'pass' };
@@ -267,7 +266,7 @@ export const KeyboardPlayMode = () => {
                     }
                     // defender: cover via the unambiguous mapping, else pass.
                     if (canCoverCards(g, selected)) {
-                        const mapping = kernelUnambiguousCover(selected, kernelTable(g.battles), g.powerSuit);
+                        const mapping = kernelUnambiguousCover(selected, g.battles, g.powerSuit);
                         if (mapping) {
                             s.fire('cover', s.cover(mapping.coverCards, mapping.attackCards), true);
                             return;

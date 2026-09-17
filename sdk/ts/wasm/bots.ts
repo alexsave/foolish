@@ -19,7 +19,7 @@ import { LegalMove } from '@api/core/bot_interfaces.ts';
 import { loadWasmGz, loadWasmGzAsync } from './wasm_asset.ts';
 import { LAYOUT_HASH as BOTS_LAYOUT_HASH } from '../gen/layout_hash.bots.ts';
 import { assertLayoutHash } from './layout_hash.ts';
-import { memOf as viewMemOf, readTableView, TableView_Snap } from '../gen/view_layout.bots.ts';
+import { memOf as viewMemOf, readTableView, TableView_Snap, CARD_NONE_SUIT, CARD_NONE_VALUE } from '../gen/view_layout.bots.ts';
 import {
     EngineExports, PackedRunOk, __LOG_TYPE_TO_INT, __MOVE_TYPE, __adoptEngine,
     __marshalGame, __mem, __pooledCard, __replayError, __setResident,
@@ -1023,6 +1023,11 @@ export function kernelMsgRebase(pendingRound: number, seat: number, wire: Uint8A
 // (the A8 KernelGate guarantees it is loaded before any board renders).
 // ---------------------------------------------------------------------------
 
+// A battle's cover as a wire byte. An uncovered battle's defense is no card: null
+// on the server's Battle, the kernel's CARD_NONE on a board the client holds.
+const coverByte = (d: Card | null): number =>
+    !d || (d.suit === CARD_NONE_SUIT && d.value === CARD_NONE_VALUE) ? WIRE_NONE : __wireLogCard(d);
+
 /** The paired result: cover card i defends attackCards[i]. Mirrors the shape the
  * deleted coverCombinations.ts findUnambiguousCover returned. */
 export interface CoverCombination { coverCards: Card[]; attackCards: Card[]; }
@@ -1033,7 +1038,7 @@ export interface CoverCombination { coverCards: Card[]; attackCards: Card[]; }
  * pairing; otherwise null (the UI then lets the player place cards manually).
  */
 export function kernelUnambiguousCover(
-    coverCards: Card[], tableBattles: Battle[], powerSuit: number,
+    coverCards: readonly Card[], tableBattles: readonly { attack: Card; defense: Card | null }[], powerSuit: number,
 ): CoverCombination | null {
     if (coverCards.length === 0) return null;
     const ex = bots();
@@ -1043,7 +1048,7 @@ export function kernelUnambiguousCover(
     const bptr = ex.wasm_cards_b_ptr();
     for (let i = 0; i < tableBattles.length; i++) {
         mem[bptr + 2 * i] = __wireLogCard(tableBattles[i].attack);
-        mem[bptr + 2 * i + 1] = tableBattles[i].defense ? __wireLogCard(tableBattles[i].defense) : WIRE_NONE;
+        mem[bptr + 2 * i + 1] = coverByte(tableBattles[i].defense);
     }
     const n = ex.wasm_unambiguous_cover(coverCards.length, tableBattles.length, powerSuit);
     if (n <= 0) return null;

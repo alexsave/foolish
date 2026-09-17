@@ -2,11 +2,10 @@ import React, { createContext, useContext, useEffect, useRef, useState } from 'r
 import { useServer } from './ServerContext';
 import { useAnimation } from './AnimationContext';
 import { useGame } from './GameContext';
-import { canCoverPair } from '../wasm/clientGuards';
 import { reorderHand } from '../state/clientReconcile';
-import { canAttack, canPass as canPassValidation } from '../utils/gameValidation';
+import { canAttack, canCoverPair, canPass as canPassValidation } from '../utils/gameValidation';
 import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
-import { covered, kernelTable, type TableView, type ViewCard as Card } from '../state/view';
+import { covered, type TableView, type ViewCard as Card } from '../state/view';
 
 const DragContext = createContext<DragContextType | null>(null);
 
@@ -80,7 +79,7 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
                     return { type: 'cover' as const, targetCard: tableCardUnderCursor.attack };
                 } else {
                     // Multi-card cover - check if unambiguous
-                    const unambiguousCover = kernelUnambiguousCover(cardsToUse, kernelTable(game.battles), game.powerSuit);
+                    const unambiguousCover = kernelUnambiguousCover(cardsToUse, game.battles, game.powerSuit);
                     if (unambiguousCover) {
                         return { type: 'multicover' as const, coverCards: unambiguousCover.coverCards, attackCards: unambiguousCover.attackCards };
                     } else {
@@ -104,7 +103,7 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
                     }
                 } else {
                     // Multi-card cover - check if unambiguous
-                    const unambiguousCover = kernelUnambiguousCover(cardsToUse, kernelTable(game.battles), game.powerSuit);
+                    const unambiguousCover = kernelUnambiguousCover(cardsToUse, game.battles, game.powerSuit);
                     if (unambiguousCover) {
                         return { type: 'multicover' as const, coverCards: unambiguousCover.coverCards, attackCards: unambiguousCover.attackCards };
                     } else {

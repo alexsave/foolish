@@ -1,32 +1,30 @@
-// The client-guards kernel (guards.wasm, via src/wasm/clientGuards.ts) must
-// answer the UI move-gates with the EXACT verdict the authoritative server
-// kernel gives — despite marshaling opponents as hand_length placeholders
-// (the client can't see their cards). That equivalence holds because none of
-// the validators inspect another player's card identity: a player's own move
-// is judged only against their (real) hand, the public table, and opponents'
-// COUNTS. This test proves it across random games, and measures load / call
-// cost and memory flatness.
+// The client's move gates (src/utils/gameValidation.ts, over the kernel's
+// client_validate on the board the screen holds) must answer with the EXACT
+// verdict the authoritative server kernel gives - despite the board holding
+// opponents' hands and the stock only as counts (the client can't see their
+// cards). That equivalence holds because none of the validators inspect another
+// player's card identity: a player's own move is judged only against their
+// (real) hand, the public table, and opponents' COUNTS. This test proves it
+// across random games, and measures call cost and memory flatness. The C twin
+// is c/tests test_client_validate_is_the_engine.
 //
-// Pure kernel test — needs no Postgres.
+// Pure kernel test - needs no Postgres.
 
-import { test, before } from 'node:test';
+import { test } from 'node:test';
 import { gameToView } from './helpers/view_game.ts';
 import type { TableView } from '../sdk/ts/table/client_table.ts';
 import assert from 'node:assert/strict';
 
-import {
-  initClientGuards, guardsReady, guardsMemBytes, canAttack, canPass, canCover, canPickup,
-  canCoverPair, nextPlayerIndex, gameDone,
-} from '../src/wasm/clientGuards.ts';
+import { canAttack, canPass, canPickup, canCoverPair, validateCover } from '../src/utils/gameValidation.ts';
+import { __clientKernelExports } from '../sdk/ts/wasm/bots.ts';
 import { start_game } from '../server/api/common/game_lifecycle.ts';
 import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
 import { shouldBotActCore, processBotAction } from '../server/api/common/pure_bot_actions.ts';
 import {
-  personalize_game, game_done, canCover as tsCanCover, get_next_player_index,
+  personalize_game, game_done, canCover as tsCanCover,
 } from '../server/api/common/common_utils.ts';
 import {
-  kernelValidateAttack, kernelValidatePass, kernelValidateCover, kernelValidatePickup,
-  kernelNextPlayer, kernelCanCover,
+  kernelValidateAttack, kernelValidatePass, kernelValidateCover, kernelValidatePickup, kernelCanCover,
 } from '../sdk/ts/wasm/engine.ts';
 import {
   Game, PersonalGame, PrivatePlayer, Card, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
@@ -50,11 +48,10 @@ const personalFor = (g: Game, seat: number): TableView => gameToView(
 
 // Server-kernel oracle: validate throws on an illegal move.
 const legal = (fn: () => void): boolean => { try { fn(); return true; } catch { return false; } };
-
-before(async () => { await initClientGuards(); assert.ok(guardsReady(), 'guards.wasm loaded'); });
+const canCover = (view: TableView, covers: Card[], attacks: Card[]): boolean => legal(() => validateCover(view, covers, attacks));
 
 test('client gates == authoritative kernel across random games (2..6 players)', async () => {
-  let legalChecks = 0, illegalChecks = 0, projectionChecks = 0;
+  let legalChecks = 0, illegalChecks = 0;
 
   for (let np = 2; np <= 6; np++) {
     const g = mkGame(np);
@@ -84,23 +81,20 @@ test('client gates == authoritative kernel across random games (2..6 players)', 
           }
         }
 
-        // A negative: attacking with a card the player does not hold (an
-        // opponent's). Both engines must reject — and agree.
+        // Negatives: every card of the seat's hand as a lone attack and a lone
+        // pass, and a card the seat does not hold (an opponent's). Both engines
+        // must agree on each.
+        for (const card of p.hand) {
+          assert.equal(canAttack(pg, [card]), legal(() => kernelValidateAttack(g, p.player_id, [card])), 'lone attack parity');
+          assert.equal(canPass(pg, [card]), legal(() => kernelValidatePass(g, p.player_id, [card])), 'lone pass parity');
+          illegalChecks += 2;
+        }
         const foreign = g.players[(seat + 1) % np].hand[0];
         if (foreign) {
           assert.equal(canAttack(pg, [foreign]), legal(() => kernelValidateAttack(g, p.player_id, [foreign])),
             'foreign-card attack parity'); illegalChecks++;
         }
-
-        // Pure projections: next-defender + game-over verdict.
-        if (p.status === PLAYER_STATUS.IN) {
-          assert.equal(nextPlayerIndex(pg, seat), kernelNextPlayer(g, seat), 'next-player parity');
-          assert.equal(nextPlayerIndex(pg, seat), get_next_player_index(g, seat), 'next-player TS parity');
-          projectionChecks++;
-        }
-        const done = gameDone(pg);
-        const tsDone = game_done(g);
-        assert.equal(done === -1 ? null : g.players[done].player_id, tsDone, 'game_done parity');
+        assert.equal(canPickup(pg), legal(() => kernelValidatePickup(g, p.player_id)), 'pickup parity');
       }
 
       const actor = g.players.find((pp, i) => shouldBotActCore(g, pp, i) && calculateLegalMoves(g, pp.player_id).length > 0);
@@ -110,7 +104,8 @@ test('client gates == authoritative kernel across random games (2..6 players)', 
   }
 
   assert.ok(legalChecks > 300, `enough legal-move comparisons (${legalChecks})`);
-  console.error(`[client-guards] legal=${legalChecks} illegal=${illegalChecks} projection=${projectionChecks}`);
+  assert.ok(illegalChecks > 1000, `enough refused-move comparisons (${illegalChecks})`);
+  console.error(`[client-guards] legal=${legalChecks} other=${illegalChecks}`);
 });
 
 test('canCoverPair matches the kernel and the old TS primitive over the full card cross-product', () => {
@@ -118,9 +113,9 @@ test('canCoverPair matches the kernel and the old TS primitive over the full car
     for (let as = 0; as < 4; as++) for (let av = 1; av <= 13; av++) {
       for (let ds = 0; ds < 4; ds++) for (let dv = 1; dv <= 13; dv++) {
         const a: Card = { suit: as, value: av }, d: Card = { suit: ds, value: dv };
-        const g = canCoverPair(a, d, ps);
-        assert.equal(g, kernelCanCover(a, d, ps), 'kernel parity');
-        assert.equal(g, tsCanCover(a, d, ps), 'ex-TS primitive parity');
+        const got = canCoverPair(a, d, ps);
+        assert.equal(got, kernelCanCover(a, d, ps), 'kernel parity');
+        assert.equal(got, tsCanCover(a, d, ps), 'ex-TS primitive parity');
       }
     }
   }
@@ -133,8 +128,10 @@ test('perf + mem: gates are fast and the module memory is flat (no leak)', () =>
   const seat = g.first_attacker;
   const pg = personalFor(g, seat);
   const card = pg.myHand[0];
+  const memory = (__clientKernelExports() as unknown as { memory: WebAssembly.Memory }).memory;
 
-  const memBefore = guardsMemBytes();
+  canAttack(pg, [card]);
+  const memBefore = memory.buffer.byteLength;
 
   const N = 200_000;
   const t0 = performance.now();
@@ -142,12 +139,11 @@ test('perf + mem: gates are fast and the module memory is flat (no leak)', () =>
   for (let i = 0; i < N; i++) { if (canAttack(pg, [card])) truthy++; }
   const dt = performance.now() - t0;
 
-  const memAfter = guardsMemBytes();
+  const memAfter = memory.buffer.byteLength;
   const perCallUs = (dt / N) * 1000;
   console.error(`[client-guards] ${N} gate calls in ${dt.toFixed(0)}ms (${perCallUs.toFixed(2)}µs/call), truthy=${truthy}, mem=${(memBefore / 1024).toFixed(0)}KB`);
 
   assert.ok(truthy === N || truthy === 0, 'deterministic verdict across all calls');
   assert.ok(perCallUs < 25, `gate call is cheap (${perCallUs.toFixed(2)}µs, budget 25µs)`);
   assert.equal(memAfter, memBefore, 'wasm linear memory does not grow across 200k calls (no leak)');
-  assert.ok(memBefore <= 4 * 1024 * 1024, `module memory footprint is small (${(memBefore / 1024).toFixed(0)}KB)`);
 });

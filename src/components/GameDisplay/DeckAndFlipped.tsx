@@ -56,7 +56,7 @@ export const DeckAndFlipped = () => {
                     zIndex: 0,
                 }}
             >
-                {game.hasFlipped && <CardFace card={game.flipped} playerId="flipped" />}
+                {game.hasFlipped && <CardFace card={game.flipped} owner="flipped" />}
             </div>
         )}
         {/* Trump indicator appears when deck and flipped card are gone */}

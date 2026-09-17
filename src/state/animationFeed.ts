@@ -28,7 +28,7 @@ export interface FeedAnimationEvent {
         | 'out'
         | 'refill'
         | 'cards_to_trash';
-    player_id?: string;
+    seat?: number;   // the acting seat
     cards?: ViewCard[]; // card backs are {suit:-1, value:-1}
     from_location?: 'deck' | 'hand' | 'table' | 'discard';
     to_location?: 'deck' | 'hand' | 'table' | 'discard' | 'flipped';

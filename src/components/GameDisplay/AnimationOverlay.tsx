@@ -4,10 +4,9 @@ import { covered, type ViewCard as Card } from '../../state/view';
 import { CardFace } from './CardFace';
 import { CardBack } from './CardBack';
 import { useServer } from '../../contexts/ServerContext';
-// The TS twin of the kernel's can_cover, not clientGuards.canCoverPair: this
-// overlay also renders under ReplayScreen and Tutorial, which never call
-// initClientGuards, so a kernel call here would throw mid-replay.
-import { canCover } from '@api/common/common_utils.ts';
+// The kernel's can_cover: bots.wasm is loaded before any screen renders
+// (src/app/providers.tsx KernelGate), the replay and the tutorial included.
+import { canCoverPair } from '../../utils/gameValidation';
 
 // Table-slot geometry cache (Stage 9). The on-table battle layout is a function of
 // only (how many battle slots there are, the viewport size) — the 4th slot in a
@@ -250,7 +249,12 @@ export const AnimationOverlay = () => {
         // target_card and battle_index are kept in the destructure for future
         // multi-card cover handling; currently unused.
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { type, cards, from_location, to_location, player_id, target_card, target_cards, battle_index, is_revert } = currentAnimation;
+        const { type, cards, from_location, to_location, seat, target_card, target_cards, battle_index, is_revert } = currentAnimation;
+        // The page names a seat's hand by its player id (data-player-id): the id the
+        // event's own board gives its seat, or the board on screen's for a flight
+        // that carries none (a move of mine, a revert).
+        const eventBoard = currentAnimation.game_state ?? game;
+        const player_id = seat === undefined ? undefined : (eventBoard?.seats[seat]?.id || `seat-${seat}`);
 
         // Handle magic_transition separately since it doesn't have cards
         if (type === 'magic_transition') {
@@ -367,7 +371,7 @@ export const AnimationOverlay = () => {
                                 // and hasn't already been targeted by another cover card in this animation
                                 const targetBattle = uncoveredBattles.find(battle => {
                                     const cardKey = `${battle.attack.suit}-${battle.attack.value}`;
-                                    return canCover(battle.attack, card, powerSuit) && !targetedAttackCards.has(cardKey);
+                                    return canCoverPair(battle.attack, card, powerSuit) && !targetedAttackCards.has(cardKey);
                                 });
                                 
                                 if (targetBattle) {

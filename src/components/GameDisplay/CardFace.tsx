@@ -7,11 +7,12 @@ import { useAnimation } from '../../contexts/AnimationContext';
 import { useStyles } from '../../contexts/StyleContext';
 import { SuitIcon } from '../SovietIcon';
 
-export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverlay = false, ...props }: {
+export const CardFace = ({ card, onClick, style = {}, owner, isAnimationOverlay = false, ...props }: {
     card: Card,
     onClick?: () => void,
     style?: React.CSSProperties,
-    playerId?: string,
+    // Whose card this is for its animation state: a seat, or a place's own key.
+    owner?: number | string,
     isAnimationOverlay?: boolean
 } & React.HTMLAttributes<HTMLDivElement>) => {
     const { getCardAnimationState } = useAnimation();
@@ -58,7 +59,7 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
         return <CardBack deckSize={1} />;
     }
 
-    const animationState = getCardAnimationState(card, playerId);
+    const animationState = getCardAnimationState(card, owner);
 
     // Determine if suit is red (hearts/diamonds) or black (spades/clubs)
     const isRed = card.suit === HEARTS || card.suit === DIAMONDS; // hearts or diamonds

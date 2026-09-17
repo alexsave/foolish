@@ -3,8 +3,9 @@
 // shared authoritative utility. Each test FAILS against the pre-fix code.
 //
 //   1. AnimationContext optimistic next-defender used `(defender + 1) % length`,
-//      which does NOT skip eliminated seats — fixed to nextDefenderIndex()
-//      (get_next_player_index). Guarded here via that shared helper.
+//      which does NOT skip eliminated seats - fixed to the kernel's rotation
+//      (get_next_player_index), now the shield of the optimistic board the kernel
+//      makes for the pass (src/state/clientBoards.ts optimisticBoard). Guarded here.
 //   2. KeyboardInputHandler had a local canPass that ignored the next-player
 //      capacity check (and the out-seat skip) — fixed to use the shared canPass.
 //
@@ -17,13 +18,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PersonalGame, PublicPlayer, PrivatePlayer, Card, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY } from '../server/api/core/types.ts';
-import { canPass, nextDefenderIndex } from '../src/utils/gameValidation.ts';
+import { canPass } from '../src/utils/gameValidation.ts';
+import { optimisticBoard } from '../src/state/clientBoards.ts';
+import { encodeAction } from '../sdk/ts/wire/awire.ts';
 import { gameToView } from './helpers/view_game.ts';
+import type { TableView } from '../sdk/ts/table/client_table.ts';
+
+// The shield the board passes to once the viewer's pass stands on it.
+const nextDefenderIndex = (view: TableView): number | undefined =>
+    optimisticBoard(view, encodeAction({ kind: 'pass', cards: [view.myHand[0] ?? { suit: 0, value: 6 }] }))?.defender;
 
 interface Spec { status: 'in' | 'out'; hand_length: number }
 const c = (suit: number, value: number): Card => ({ suit, value });
 
-// Minimal PersonalGame; nextDefenderIndex/canPass read players[].status,
+// Minimal PersonalGame; the pass's rotation/canPass read players[].status,
 // players[].hand_length, defender, and table_battles.
 function makeGame(defender: number, specs: Spec[], table: PersonalGame['table_battles'], selfCards: Card[] = []): PersonalGame {
     const players: PublicPlayer[] = specs.map((s, i) => ({
