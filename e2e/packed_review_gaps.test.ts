@@ -44,7 +44,7 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 const rng = suiteRng('packed_review_gaps');
 const ri = (n: number) => rng.int(n);
 
-const sameCards = (a: { suit: number; value: number }[], b: PlayCard[]) =>
+const sameCards = (a: readonly { suit: number; value: number }[], b: PlayCard[]) =>
   assert.deepEqual(a.map((c) => [c.suit, c.value]), b.map((c) => [c.suit, c.value]));
 
 /**

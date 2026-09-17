@@ -113,7 +113,7 @@ export function registerOptimisticValidation(): void {
         assert.equal(confirming.seat, optimistic.mySeat, 'the push names the seat the tap keyed');
         assert.equal(createCardEventString(confirming.type, confirming.cards![0], confirming.from_location!, confirming.to_location!, confirming.seat), key,
             'so the confirmation matches the optimistic key and is not animated again');
-        assert.deepEqual(staleOptimisticKeysOnTable([key], getTableCards(seq.game), seq.events), [],
+        assert.deepEqual(staleOptimisticKeysOnTable([key], getTableCards(seq.game), seq.events.map((e) => ({ ...e }))), [],
             'and the version gate leaves it for that dedup');
         assert.deepEqual(seq.game.battles, optimistic.battles, 'the confirmed table is the optimistic one');
     });

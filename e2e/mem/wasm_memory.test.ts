@@ -90,7 +90,7 @@ test('rules.wasm linear memory is pinned flat at 3 pages (R0 pin + R1 overlay + 
     // Belt-and-braces: the module actually instantiates at exactly 3 pages and
     // cannot grow past the pin (a memory.grow would trap — but the linker also
     // strips any grow path, since rules.wasm has no allocator).
-    const inst = new WebAssembly.Instance(new WebAssembly.Module(wasm), {});
+    const inst = new WebAssembly.Instance(new WebAssembly.Module(wasm as BufferSource), {});
     const mem = (inst.exports as { memory: WebAssembly.Memory }).memory;
     assert.equal(mem.buffer.byteLength, 3 * PAGE, 'rules.wasm did not instantiate at 3 pages');
     assert.throws(() => mem.grow(1), 'rules.wasm memory grew past its pin — the pin is not enforced');
