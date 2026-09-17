@@ -994,8 +994,6 @@ int fio_msg_rule_p(const uint8_t *a, int a_len, const uint8_t *b, int b_len);
 // decided once, in C (anim_plan.h), and a client renders what it is told.
 //
 // Returns FIO_EOK, or a negative FIO_E*.
-#define FIO_SURFACE_HEAD   3
-#define FIO_SURFACE_STRIDE 6
 #define FIO_SURFACE_ROSTER 1   // somebody sat down
 #define FIO_SURFACE_RULES  2   // the table's rules moved
 #define FIO_SURFACE_BOARD  3   // the game is dealt and the lobby is over
