@@ -5,6 +5,8 @@
 #include "bot_roster.h"
 #include "bot_drive.h"
 #include "anim_plan.h"
+#include "replay.h"
+#include "replay_extras.h"
 #include "../wasm/wire.h"
 #include <string.h>
 
@@ -383,20 +385,41 @@ static void deal(Table *t, const uint8_t *seed) {
     t->lobby_event = false;   // the deal's own events announce it
 }
 
+static const char TITLE_SUFFIX[] = "'s Game";
+#define TITLE_SUFFIX_LEN ((int)sizeof(TITLE_SUFFIX) - 1)
+
+// A new table's title: the creator's name, whole scalars only, then "'s Game".
+// Returns its length (at most ROSTER_TITLE_MAX).
+static int default_title(const char *name, int name_len, char *title) {
+    int keep = name_len < ROSTER_TITLE_MAX - TITLE_SUFFIX_LEN ? name_len : ROSTER_TITLE_MAX - TITLE_SUFFIX_LEN;
+    while (keep > 0 && keep < name_len && ((uint8_t)name[keep] & 0xc0) == 0x80) keep--;
+    memcpy(title, name, (size_t)keep);
+    memcpy(title + keep, TITLE_SUFFIX, (size_t)TITLE_SUFFIX_LEN);
+    return keep + TITLE_SUFFIX_LEN;
+}
+
+// Is the title the default one a seat's player was given at create? The title
+// may hold more of the name than the seat does (a seat keeps ROSTER_NAME_MAX
+// bytes, a title up to its own cap), so the test is that the seat's name is the
+// title's name trimmed the way a seat trims one.
+static bool bytes_same(const char *a, const char *b, int n) {   // no memcmp in the wasm builds
+    for (int i = 0; i < n; i++) if (a[i] != b[i]) return false;
+    return true;
+}
+static bool title_is_default_for(const Roster *r, int seat) {
+    const int p = r->title_len - TITLE_SUFFIX_LEN;
+    const RosterSeat *s = &r->seats[seat];
+    if (p < 0 || !bytes_same(r->title + p, TITLE_SUFFIX, TITLE_SUFFIX_LEN)) return false;
+    return roster_name_trim(r->title, p) == s->name_len && bytes_same(r->title, s->name, s->name_len);
+}
+
 int table_create(Table *t, const char *actor_id, int id_len, const char *name, int name_len) {
-    static const char suffix[] = "'s Game";
-    const int suffix_len = (int)sizeof(suffix) - 1;
     Roster r;
     char title[ROSTER_TITLE_MAX];
     memset(&r, 0, sizeof(r));
     int rc = roster_seat_add(&r, actor_id, id_len, name, name_len, "", 0);
     if (rc < 0) return roster_refusal(t, rc);
-    // The title is the creator's name, whole scalars only, then "'s Game".
-    int keep = name_len < ROSTER_TITLE_MAX - suffix_len ? name_len : ROSTER_TITLE_MAX - suffix_len;
-    while (keep > 0 && keep < name_len && ((uint8_t)name[keep] & 0xc0) == 0x80) keep--;
-    memcpy(title, name, (size_t)keep);
-    memcpy(title + keep, suffix, (size_t)suffix_len);
-    if ((rc = roster_set_title(&r, title, keep + suffix_len)) != ROSTER_OK) return roster_refusal(t, rc);
+    if ((rc = roster_set_title(&r, title, default_title(name, name_len, title))) != ROSTER_OK) return roster_refusal(t, rc);
 
     Game *g = t->g;
     memset(g, 0, offsetof(Game, logs));
@@ -566,9 +589,20 @@ int table_rearrange_hand(Table *t, const char *actor_id, int id_len, const uint8
 
 int table_redact(Table *t, const char *user_id, int id_len, const char *name, int name_len) {
     if (!t->loaded) return TABLE_E_NOT_LOADED;
-    const int rc = roster_redact(&t->r, user_id, id_len, name, name_len);
+    const int seat = roster_seat_of(&t->r, user_id, id_len);
+    // The default title carries the player's name into every envelope, so it is
+    // renamed with them; a title the players chose is theirs to keep.
+    const bool retitle = seat >= 0 && title_is_default_for(&t->r, seat);
+    Roster r = t->r;
+    const int rc = roster_redact(&r, user_id, id_len, name, name_len);
     if (rc == ROSTER_E_SEAT) return TABLE_E_NOT_SEATED;
     if (rc < 0) return roster_refusal(t, rc);
+    if (retitle) {
+        char title[ROSTER_TITLE_MAX];
+        const int tc = roster_set_title(&r, title, default_title(name, name_len, title));
+        if (tc != ROSTER_OK) return roster_refusal(t, tc);
+    }
+    t->r = r;
     scope_open(t, -1);
     t->roster_changed = true;
     return TABLE_OK;
@@ -631,4 +665,291 @@ int elo_deltas(const int32_t *ratings, const int8_t *order, int n, int32_t *out)
         out[me] = total;
     }
     return n;
+}
+
+// ---------- the bot cycle and the end of a game (Phase 4b) --------------------------
+
+int table_seat_of(const Table *t, const char *id, int id_len) {
+    if (!t->loaded) return TABLE_E_NOT_LOADED;
+    return roster_seat_of(&t->r, id, id_len);
+}
+
+int table_set_deal_seed(Table *t, const char *seed_hex, int len) {
+    uint32_t h = 2166136261u;
+    for (int i = 0; i < len; i++) h = (h ^ (uint8_t)seed_hex[i]) * 16777619u;
+    t->rng_base = len > 0 ? h : 0u;
+    return TABLE_OK;
+}
+
+// One session-log record at `at`: [u48 ms][type][seat][defender][n_pairs][pairs].
+// Returns its length, 0 at a truncated tail, TABLE_E_WIRE for an unknown type.
+static int log_record_at(const uint8_t *log, int len, int at) {
+    if (at + 10 > len) return 0;
+    if (log[at + 6] > LOG_DRAW) return TABLE_E_WIRE;
+    const int n = 10 + 2 * log[at + 9];
+    return at + n > len ? 0 : n;
+}
+
+static int64_t log_record_ms(const uint8_t *rec) {
+    int64_t ms = 0;
+    for (int b = 5; b >= 0; b--) ms = ms * 256 + rec[b];
+    return ms;
+}
+
+int table_import_session_log(Table *t, const uint8_t *log, int len) {
+    if (!t->loaded) return TABLE_E_NOT_LOADED;
+    Game *g = t->g;
+    int n = 0, k;
+    for (int at = 0; (k = log_record_at(log, len, at)) != 0; at += k)
+        if (k < 0) return k;
+    for (int at = 0; n < MAX_LOGS && (k = log_record_at(log, len, at)) > 0; at += k) {
+        const uint8_t *r = log + at + 6;
+        GameLog *l = &g->logs[n++];
+        l->log_type = (int8_t)r[0];
+        l->player_idx = (int8_t)r[1];
+        l->defender_index = (int8_t)r[2];
+        l->num_pairs = (int8_t)(r[3] < MAX_LOG_PAIRS ? r[3] : MAX_LOG_PAIRS);
+        for (int j = 0; j < l->num_pairs; j++) {
+            l->pairs[j].primary = card_from_wire_pair(r[4 + 2 * j]);
+            l->pairs[j].target = card_from_wire_pair(r[5 + 2 * j]);
+        }
+    }
+    g->num_logs = n;
+    t->log_start = n;
+    return n;
+}
+
+// Preferred moves: n x { u8 seat, u8 type, u8 n_cards, n_cards wire cards, n_cards wire attack cards }.
+static int prefs_decode(Table *t, const uint8_t *p, int len) {
+    int n = 0, at = 0;
+    while (at < len) {
+        if (n >= MAX_PLAYERS || at + 3 > len) return TABLE_E_WIRE;
+        const int k = p[at + 2];
+        if (k > MAX_MOVE_CARDS || at + 3 + 2 * k > len) return TABLE_E_WIRE;
+        BotDrivePref *pr = &t->prefs[n++];
+        memset(pr, 0, sizeof(*pr));
+        pr->seat = (int8_t)p[at];
+        pr->move.type = (int8_t)p[at + 1];
+        pr->move.n_cards = (int8_t)k;
+        for (int c = 0; c < 2 * k; c++) if (p[at + 3 + c] > 51) return TABLE_E_WIRE;
+        for (int c = 0; c < k; c++) {
+            pr->move.cards[c] = card_of_id(p[at + 3 + c]);
+            pr->move.attack_cards[c] = card_of_id(p[at + 3 + k + c]);
+        }
+        at += 3 + 2 * k;
+    }
+    return n;
+}
+
+// The drive's per-decision seeding (bot_drive.h bot_drive_pre_action_hook): the
+// strategy stream as a decision starts and the draw stream as its move applies,
+// both from the board in front of it and the table's secret base - what the wasm
+// bridge's drive does with its own resident game.
+static _Thread_local uint32_t t_drive_base;
+void (*table_choose_observer)(const Game *g, int seat) = 0;
+
+static void table_drive_seed(const Game *g, int seat, int phase) {
+    if (phase == BOT_DRIVE_PHASE_CHOOSE) {
+        if (table_choose_observer) table_choose_observer(g, seat);
+        random_strategy_set_seed(game_state_seed(g, t_drive_base, 0x9E3779B9u));
+    } else {
+        game_rng_set(game_state_seed(g, t_drive_base, 0u));
+    }
+}
+
+int table_bot_drive(Table *t, const uint8_t *prefs, int prefs_len, int max_actions, BotDriveOut *out) {
+    if (!t->loaded) return TABLE_E_NOT_LOADED;
+    if (!out || prefs_len < 0 || (prefs_len > 0 && !prefs)) return TABLE_E_WIRE;
+    const int n_prefs = prefs_decode(t, prefs, prefs_len);
+    if (n_prefs < 0) { t->n_prefs = 0; return n_prefs; }
+    t->n_prefs = (int8_t)n_prefs;
+
+    scope_open(t, -1);   // the records start above whatever the board holds: an imported session log
+    void (*const prev_snap)(const Game *, int, int) = engine_snap_hook;
+    void (*const prev_seed)(const Game *, int, int) = bot_drive_pre_action_hook;
+    t_capture = t->snaps;
+    engine_snap_hook = table_snap;
+    t_drive_base = t->rng_base;
+    bot_drive_pre_action_hook = table_drive_seed;
+    const int n = bot_drive(t->g, game_human_mask(t->g), max_actions, n_prefs ? t->prefs : 0, n_prefs, out);
+    bot_drive_pre_action_hook = prev_seed;
+    engine_snap_hook = prev_snap;
+    t_capture = 0;
+    if (n < 0) return TABLE_E_WIRE;
+    if (n > 0) {
+        t->actor = out->actions[n - 1].seat;
+        t->ended = finalize(t) >= 0;
+    }
+    return n;
+}
+
+static int pref_put(const BotDrivePref *p, uint8_t *out, int at, int cap) {
+    const int k = p->move.n_cards;
+    if (at + 3 + 2 * k > cap) return TABLE_E_CAP;
+    out[at] = (uint8_t)p->seat;
+    out[at + 1] = (uint8_t)p->move.type;
+    out[at + 2] = (uint8_t)k;
+    for (int c = 0; c < k; c++) {
+        out[at + 3 + c] = wire_from_card(p->move.cards[c]);
+        out[at + 3 + k + c] = wire_from_card(p->move.attack_cards[c]);
+    }
+    return at + 3 + 2 * k;
+}
+
+int table_drive_prefs(const Table *t, const BotDriveOut *drv, uint8_t *out, int cap) {
+    BotDrivePref merged[MAX_PLAYERS];
+    int n = 0;
+    for (int i = 0; i < t->n_prefs; i++) merged[n++] = t->prefs[i];
+    for (int i = 0; drv && i < drv->n; i++) {
+        int j = 0;
+        while (j < n && merged[j].seat != drv->actions[i].seat) j++;
+        if (j == n) {
+            if (n >= MAX_PLAYERS) return TABLE_E_WIRE;
+            n++;
+        }
+        merged[j].seat = drv->actions[i].seat;
+        merged[j].move = drv->actions[i].move;
+    }
+    int at = 0;
+    for (int i = 0; i < n; i++)
+        if ((at = pref_put(&merged[i], out, at, cap)) < 0) return at;
+    return at;
+}
+
+int table_cycle_delay_ms(const Table *t, const BotDriveOut *drv) {
+    return bot_cycle_delay_ms(t->g, game_human_mask(t->g), drv);
+}
+
+static bool info_type(int type) {
+    return type == LOG_ATTACK || type == LOG_COVER || type == LOG_PASS || type == LOG_PICKUP;
+}
+
+// Where the log's last GAME_START session begins (0 when it has none).
+static int session_start(const uint8_t *log, int len) {
+    int start = 0, k;
+    for (int at = 0; (k = log_record_at(log, len, at)) > 0; at += k)
+        if (log[at + 6] == LOG_GAME_START) start = at;
+    return start;
+}
+
+// A whole session log: every record complete and of a known type. Returns 0 or TABLE_E_WIRE.
+static int log_whole(const uint8_t *log, int len) {
+    int at = 0, k;
+    while ((k = log_record_at(log, len, at)) > 0) at += k;
+    return k < 0 || at != len ? TABLE_E_WIRE : 0;
+}
+
+// A card byte as the TS readers on both sides of the gate took it: the hidden
+// card and (for a target) no card kept, anything else past the last card clamped.
+static int gate_card(int b, int target) {
+    if (b == 0xFE || (target && b == 0xFF)) return b;
+    return b > 51 ? 51 : b;
+}
+
+// THE ROUND-TRIP GATE (server/api/common/replay/encode.ts checkInfoActionsMatch):
+// the ATTACK, COVER, PASS and PICKUP records of the log's last GAME_START
+// session, against the decoded code's, in order - same count, same type, the
+// same seat (one the table has), the same card pairs.
+static bool replay_verify(int n_seats, const uint8_t *log, int len, const uint8_t *dec, int dec_len) {
+    if (dec_len < REPLAY_DEC_HDR) return false;
+    const uint32_t n_dec = (uint32_t)dec[16] | ((uint32_t)dec[17] << 8) | ((uint32_t)dec[18] << 16) | ((uint32_t)dec[19] << 24);
+    int d = REPLAY_DEC_HDR, at = session_start(log, len), k = 0;
+    uint32_t read = 0;
+    for (;;) {
+        // The next info record on each side.
+        while ((k = log_record_at(log, len, at)) > 0 && !info_type(log[at + 6])) at += k;
+        const uint8_t *dr = 0;
+        while (read < n_dec) {
+            if (d + 4 > dec_len || d + 4 + 2 * dec[d + 3] > dec_len) return false;
+            const uint8_t *r = dec + d;
+            d += 4 + 2 * r[3];
+            read++;
+            if (info_type(r[0])) { dr = r; break; }
+        }
+        if (k <= 0 || !dr) return k <= 0 && !dr;
+        const uint8_t *lr = log + at + 6;
+        if (lr[0] != dr[0] || lr[1] >= n_seats || lr[1] != dr[1] || lr[3] != dr[3]) return false;
+        for (int j = 0; j < lr[3]; j++) {
+            if (gate_card(lr[4 + 2 * j], 0) != gate_card(dr[4 + 2 * j], 0)) return false;
+            if (gate_card(lr[5 + 2 * j], 1) != gate_card(dr[5 + 2 * j], 1)) return false;
+        }
+        at += k;
+    }
+}
+
+int table_replay_code(Table *t, const uint8_t *seed, int seed_len, const uint8_t *log, int log_len,
+                      uint8_t *out, int cap, uint8_t *scratch, int scratch_cap) {
+    if (!t->loaded) return TABLE_E_NOT_LOADED;
+    if (log_len < 0 || (log_len > 0 && !log) || log_whole(log, log_len) != 0) return TABLE_E_WIRE;
+    const int imported = table_import_session_log(t, log, log_len);
+    if (imported < 0) return imported;
+    const int n = replay_encode_v6_from_game(t->g, seed, seed_len, 1 << 30, out, cap);
+    if (n < 0) return n;
+    const int dn = replay_decode(out, n, scratch, scratch_cap);
+    if (dn < 0) return dn;
+    return replay_verify(t->g->num_players, log, log_len, scratch, dn) ? n : TABLE_E_REPLAY_VERIFY;
+}
+
+// The session's move times, one at a time (replay_extras.h ReplayExtrasGap): the
+// GAME_START and info records of the last session, in order. A cursor, so the
+// encoder's in-order walks cost one pass each.
+typedef struct {
+    const uint8_t *log;
+    int len, start;
+    int at, index;        // the record `index` is at, after the one at `start`
+    double prev;
+} TimesCursor;
+
+static bool timed_type(int type) { return type == LOG_GAME_START || info_type(type); }
+
+// The next timed record at or after `at`, or -1.
+static int timed_next(const TimesCursor *c, int at) {
+    int k;
+    while ((k = log_record_at(c->log, c->len, at)) > 0) {
+        if (timed_type(c->log[at + 6])) return at;
+        at += k;
+    }
+    return -1;
+}
+
+// Exactly the JavaScript arithmetic (Date.parse(created_at) / 1000, then a
+// difference): volatile, so a -ffast-math native build cannot fold the division
+// and the subtraction into something that rounds differently.
+static double record_seconds(const uint8_t *rec) {
+    volatile double ms = (double)log_record_ms(rec);
+    volatile double s = ms / 1000;
+    return s;
+}
+
+static double times_gap(void *ctx, int i) {
+    TimesCursor *c = (TimesCursor *)ctx;
+    if (i == 0 || i != c->index + 1) {   // restart from the first gap
+        c->at = timed_next(c, c->start);
+        c->prev = record_seconds(c->log + c->at);
+        c->index = -1;
+        for (int j = 0; j < i; j++) times_gap(ctx, j);
+    }
+    c->at = timed_next(c, c->at + log_record_at(c->log, c->len, c->at));
+    volatile double t = record_seconds(c->log + c->at);
+    volatile double g = t - c->prev;
+    c->prev = t;
+    c->index = i;
+    return g > 0 ? g : 0;
+}
+
+int table_replay_extras(const Table *t, const uint8_t *log, int log_len, uint8_t *out, int cap) {
+    if (!t->loaded) return TABLE_E_NOT_LOADED;
+    if (log_len < 0 || (log_len > 0 && !log) || log_whole(log, log_len) != 0) return TABLE_E_WIRE;
+    const uint8_t *names[MAX_PLAYERS];
+    int lens[MAX_PLAYERS];
+    for (int s = 0; s < t->r.n; s++) { names[s] = (const uint8_t *)t->r.seats[s].name; lens[s] = t->r.seats[s].name_len; }
+    TimesCursor c = { log, log_len, session_start(log, log_len), 0, -1, 0 };
+    int n_times = 0;
+    for (int at = timed_next(&c, c.start); at >= 0; at = timed_next(&c, at + log_record_at(log, log_len, at))) n_times++;
+    if (n_times - 1 > 0xffff) return TABLE_E_WIRE;
+    const int first = timed_next(&c, c.start);
+    const int n = replay_extras_encode_parts(names, lens, t->r.n, n_times > 0,
+                                             n_times > 0 ? record_seconds(log + first) : 0,
+                                             n_times > 0 ? n_times - 1 : 0, times_gap, &c, out, cap);
+    return n == -REPLAY_EXTRAS_ECAP ? TABLE_E_CAP : n;
 }

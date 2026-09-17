@@ -26,6 +26,7 @@
 #include "game.h"
 #include "roster.h"
 #include "evwire.h"
+#include "bot_drive.h"
 #include <stddef.h>
 
 // ---- results ----------------------------------------------------------------
@@ -50,6 +51,7 @@
 #define TABLE_E_CAP           (-109)  // an output buffer is too small
 #define TABLE_E_NOT_LOADED    (-110)  // no table has been loaded
 #define TABLE_E_NOT_OVER      (-111)  // continue on a game that has not ended
+#define TABLE_E_REPLAY_VERIFY (-112)  // a replay code that does not decode back to its session log
 
 // The response code for a stale-round refusal. It sits above the kernel's
 // ENGINE_REJECT_* space so a client can tell a rules rejection from a server
@@ -125,6 +127,9 @@ typedef struct {
     Card        pre_flip;
     int8_t      actor;          // the acting seat, -1 for none
     int32_t     log_start;      // the operation's first log record
+    // The preferred moves the last table_bot_drive was offered (BotDrivePref).
+    int8_t      n_prefs;
+    BotDrivePref prefs[MAX_PLAYERS];
 } Table;
 
 // Points a table at its storage. Nothing is loaded.
@@ -145,6 +150,10 @@ int table_load(Table *t, const uint8_t *state, int state_len, const uint8_t *ros
 // bots parked READY and humans IDLE).
 int table_act(Table *t, const char *actor_id, int id_len, const uint8_t *awire, int wire_len,
               int64_t intent_version, int64_t round_epoch);
+
+// The seat whose roster id is EXACTLY these bytes, or -1; TABLE_E_NOT_LOADED
+// when no table is loaded. A host picks the caller's response envelope with it.
+int table_seat_of(const Table *t, const char *id, int id_len);
 
 // PLAYING, and a bot seat is still IN: the row's needs_bots column.
 bool table_needs_bots(const Table *t);
@@ -245,7 +254,69 @@ int table_envelope(const Table *t, const char *game_id, int gid_len, int viewer,
 // roster when the operation changed it. A bot seat has no viewer.
 int table_push(const Table *t, const char *game_id, int gid_len, int viewer, uint8_t *out, int cap);
 
+// ---- the bot cycle (docs/C_GAME_SHAPE_MIGRATION.md 2.7) ------------------------
+//
+// One cycle as a server runs it, after table_load: the deal seed, the session
+// log when a belief bot is eligible (table_bots_need_logs), then the drive. The
+// cycle is ONE table operation, so table_commit_products and table_push after it
+// carry exactly what the cycle wrote: its records (never the imported session
+// beneath them), its events, the acting seat, and the finalize when it ended the
+// game.
+
+// The game's deal seed (games.game_seed) as its hex text: the secret base every
+// mid-game draw and every bot decision is seeded from (game.h game_state_seed).
+// FNV-1a 32 over the characters, 0 for none. Call after table_load.
+int table_set_deal_seed(Table *t, const char *seed_hex, int len);
+
+// Loads the session log (games.logs_packed: per record a u48 LE ms timestamp,
+// then the log_record_put layout) into the board, for the belief bots and the
+// replay encoder, and starts the next operation's records above it. A record
+// with more pairs than MAX_LOG_PAIRS keeps its first MAX_LOG_PAIRS; records past
+// MAX_LOGS are dropped; a truncated tail ends the log. Returns the records
+// loaded, or TABLE_E_WIRE for an unknown record type.
+int table_import_session_log(Table *t, const uint8_t *log, int len);
+
+// Drives the bot seats for one cycle (bot_drive.h), seeded per decision from the
+// table's deal seed, with every seat the roster names human left to its player.
+// `prefs` is a blob table_drive_prefs wrote for an earlier attempt of the same
+// cycle that lost its commit (len 0 for none): moves reused while still legal.
+// Returns the actions applied (0 means nothing to commit), TABLE_E_WIRE for a
+// malformed prefs blob, TABLE_E_NOT_LOADED.
+int table_bot_drive(Table *t, const uint8_t *prefs, int prefs_len, int max_actions, BotDriveOut *out);
+
+// The preferred moves to offer a retry of this cycle: the ones the drive was
+// offered, overlaid with what it applied (one per seat, the latest winning).
+// Returns the blob's length, or TABLE_E_CAP.
+int table_drive_prefs(const Table *t, const BotDriveOut *drv, uint8_t *out, int cap);
+
+// Called with the board and the seat just before each bot decision a
+// table_bot_drive searches for (a reused preferred move searches nothing). NULL by
+// default; bots.wasm points it at its belief probe (wasm_bots_api.c).
+extern void (*table_choose_observer)(const Game *g, int seat);
+
+// How long the host waits after the cycle `drv` describes (bot_cycle_delay_ms).
+int table_cycle_delay_ms(const Table *t, const BotDriveOut *drv);
+
 // ---- the end of a game -------------------------------------------------------
+
+// The finished table's v6 replay code, from its 32-byte deal seed and its
+// session log (the layout table_import_session_log reads, which it calls), and
+// then THE ROUND-TRIP GATE: the code is decoded again (into `scratch`) and every
+// ATTACK, COVER, PASS and PICKUP of the log's last GAME_START session must come
+// back with the same seat and card pairs. Returns the code's length, a negative
+// REPLAY_E* from the codec, TABLE_E_WIRE for a log the import refuses, or
+// TABLE_E_REPLAY_VERIFY when the gate fails. Only a code this returns may retire
+// the log.
+int table_replay_code(Table *t, const uint8_t *seed, int seed_len, const uint8_t *log, int log_len,
+                      uint8_t *out, int cap, uint8_t *scratch, int scratch_cap);
+
+// The replay extras blob (replay_extras.h) for the loaded roster's names in seat
+// order and the move times of the session log: its last GAME_START session's
+// GAME_START and ATTACK/COVER/PASS/PICKUP records, each time the record's
+// milliseconds / 1000 as a double, the first the start and the rest as gaps
+// (never negative). A log with none of those records carries no times. Returns
+// the blob's length, TABLE_E_WIRE for a malformed log, or TABLE_E_CAP.
+int table_replay_extras(const Table *t, const uint8_t *log, int log_len, uint8_t *out, int cap);
 
 // The finish order, best first: the eliminated seats in the order they went
 // out, then the fool (anim_plan.c anim_finish_rows). Returns the count.

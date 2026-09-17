@@ -77,6 +77,16 @@ int replay_extras_decode(const unsigned char *blob, int blob_len,
                          int player_count, int move_count,
                          unsigned char *out, int cap);
 
+// The same encoder with its inputs as parts rather than a blob, for a C producer
+// that reads them from somewhere else (table.h table_replay_extras reads the
+// times straight out of a session log). `names` are `n_names` UTF-8 spans; with
+// `has_times`, `gap(ctx, i)` is the seconds of gap i, asked for in order
+// 0..n_gaps-1, twice. Returns bytes written, or -REPLAY_EXTRAS_ECAP.
+typedef double (*ReplayExtrasGap)(void *ctx, int i);
+int replay_extras_encode_parts(const unsigned char *const *names, const int *name_lens, int n_names,
+                               int has_times, double start_time, int n_gaps,
+                               ReplayExtrasGap gap, void *ctx, unsigned char *out, int cap);
+
 // Does this roster say anything worth a segment? An all-empty roster decodes to
 // the same "P1"/"P2" a reader already shows, so the bytes would buy nothing and
 // the link stays exactly what every build before names emitted. Takes the same

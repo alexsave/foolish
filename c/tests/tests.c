@@ -7985,6 +7985,426 @@ static void test_table_rearrange_and_redact(void) {
     TB_REFUSED(table_redact(&tb, RS("nobody"), RS("Deleted player")), TABLE_E_NOT_SEATED, "redact of an unseated id is refused");
 }
 
+// ---- the bot cycle and the end of a game (Phase 4b) ----
+
+// Account deletion renames the table too when its title is the deleted player's
+// default one ("<name>'s Game"): the title rides every envelope.
+static void test_table_redact_default_title(void) {
+    static const char gone[] = "Deleted player";
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_create(&tb, RS("z"), RS("Zelda"));
+    table_join(&tb, RS("y"), RS("Yusuf"));
+    CHECK(table_redact(&tb, RS("y"), RS(gone)) == TABLE_OK && tb.r.title_len == 12
+          && memcmp(tb.r.title, "Zelda's Game", 12) == 0, "another seat's redaction leaves a title named after someone else");
+    CHECK(table_redact(&tb, RS("z"), RS(gone)) == TABLE_OK && tb.r.title_len == (int)strlen(gone) + 7
+          && memcmp(tb.r.title, "Deleted player's Game", 21) == 0, "the creator's redaction renames their default title");
+
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_create(&tb, RS("z"), RS("Zelda"));
+    table_retitle(&tb, RS("z"), RS("Friday"));
+    CHECK(table_redact(&tb, RS("z"), RS(gone)) == TABLE_OK && tb.r.title_len == 6
+          && memcmp(tb.r.title, "Friday", 6) == 0, "a title the players chose is left alone");
+
+    // A name longer than a seat keeps: the title holds more of it than the seat does.
+    char longname[100], emoji[256];
+    memset(longname, 'q', sizeof(longname));
+    for (int i = 0; i < 64; i++) memcpy(emoji + i * 4, "\xf0\x9f\xa4\xa1", 4);
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_create(&tb, RS("z"), longname, sizeof(longname));
+    CHECK(tb.r.seats[0].name_len == 64 && tb.r.title_len == 107, "a 100-byte name: the seat keeps 64, the title all 100");
+    CHECK(table_redact(&tb, RS("z"), RS(gone)) == TABLE_OK && tb.r.title_len == 21
+          && memcmp(tb.r.title, "Deleted player's Game", 21) == 0, "and the redaction still finds the default title");
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_create(&tb, RS("z"), emoji, sizeof(emoji));
+    CHECK(tb.r.title_len == 199, "a name cut on a scalar boundary to fit the title");
+    CHECK(table_redact(&tb, RS("z"), RS(gone)) == TABLE_OK && tb.r.title_len == 21
+          && memcmp(tb.r.title, "Deleted player's Game", 21) == 0, "is recomposed from the replacement name too");
+}
+
+static void test_table_seat_of(void) {
+    tb_fixture(3, 1u << 2, 83);
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(table_seat_of(&tb, RS("id-1")) == TABLE_E_NOT_LOADED, "nothing is seated at an unloaded table");
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the table loads");
+    CHECK(table_seat_of(&tb, RS("id-0")) == 0 && table_seat_of(&tb, RS("id-2")) == 2, "a seated id is its seat, a bot's too");
+    CHECK(table_seat_of(&tb, RS("stranger")) == -1, "an id nobody holds is no seat");
+    CHECK(table_seat_of(&tb, RS("id-")) == -1, "a prefix of a seated id is no seat");
+    CHECK(table_seat_of(&tb, RS("id-10")) == -1, "an id a seated id is a prefix of is no seat");
+    CHECK(table_seat_of(&tb, "", 0) == -1, "the empty id is no seat");
+}
+
+static uint8_t tb_log[1 << 18], tb_log2[1 << 18], tb_code[1 << 16], tb_code2[1 << 16];
+static uint8_t tb_scratch[1 << 20];
+static int tb_log_len;
+static char tb_seed_hex[2 * FOOLISH_SEED_LEN + 1];
+static BotDriveOut tb_drv, tb_drv2;
+static Game tb_ref;
+
+static uint32_t tb_fnv(const char *s, int n) {
+    uint32_t h = 2166136261u;
+    for (int i = 0; i < n; i++) h = (h ^ (uint8_t)s[i]) * 16777619u;
+    return h;
+}
+
+// tb_seed, its hex text, and a lobby of "h" (a human) and two `brain` bots dealt
+// from it: the committed row in tb_state / tb_roster, the session log in tb_log.
+static void tb_bot_table(const char *brain, int seed) {
+    TableCommit c;
+    tb_seed_fill(seed);
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) snprintf(tb_seed_hex + 2 * i, 3, "%02x", tb_seed[i]);
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_create(&tb, RS("h"), RS("Human"));
+    table_add_bot(&tb, RS("h"), RS("b1"), RS("Bot one"), brain, (int)strlen(brain), tb_seed);
+    table_add_bot(&tb, RS("h"), RS("b2"), RS("Бот"), brain, (int)strlen(brain), tb_seed);
+    table_ready(&tb, RS("h"), tb_seed);
+    game_set_seed(1);
+    table_commit_products(&tb, RS("g"), 1, 1700000000000LL, &c, tb_arena, sizeof(tb_arena));
+    memcpy(tb_state, tb_arena + c.state.off, (size_t)c.state.len);
+    tb_state_len = c.state.len;
+    memcpy(tb_roster, tb_arena + c.roster.off, ROSTER_BYTES);
+    memcpy(tb_log, tb_arena + c.logs.off, (size_t)c.logs.len);
+    tb_log_len = c.logs.len;
+}
+
+// The row as the bot loop loads it: the blob, the deal seed, and the session log when asked.
+static int tb_reload(int with_log) {
+    if (table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) != TABLE_OK) return -999;
+    table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
+    return with_log ? table_import_session_log(&tb, tb_log, tb_log_len) : 0;
+}
+
+// Commits the last operation: the row moves on and its records join the session log.
+static int tb_commit_row(int64_t now, TableCommit *c) {
+    const int n = table_commit_products(&tb, RS("g"), 2, now, c, tb_arena, sizeof(tb_arena));
+    if (n < 0) return n;
+    memcpy(tb_state, tb_arena + c->state.off, (size_t)c->state.len);
+    tb_state_len = c->state.len;
+    memcpy(tb_roster, tb_arena + c->roster.off, ROSTER_BYTES);
+    memcpy(tb_log + tb_log_len, tb_arena + c->logs.off, (size_t)c->logs.len);
+    tb_log_len += c->logs.len;
+    return n;
+}
+
+// Seat 0's move by the handwritten brain, through table_act; 0 when seat 0 cannot act.
+static int tb_human_move(void) {
+    if (!should_bot_act(&tb_game, 0)) return 0;
+    calculate_legal_moves(&tb_game, 0, &tb_moves);
+    if (tb_moves.n == 0) return 0;
+    const LegalMove *m = &tb_moves.moves[handwritten_strategy_choose(&tb_game, 0, &tb_moves, 0)];
+    AwireAction a;
+    memset(&a, 0, sizeof(a));
+    a.kind = m->type; a.n = m->n_cards;
+    for (int i = 0; i < m->n_cards; i++) { a.cards[i] = m->cards[i]; a.attacks[i] = m->attack_cards[i]; }
+    const int wl = awire_encode(&a, tb_buf, sizeof(tb_buf));
+    return table_act(&tb, RS("h"), tb_buf, wl, -1, 0) == TABLE_APPLIED;
+}
+
+// The wasm bridge's per-decision seeding (wasm_bots_api.c drive_seed_hook over
+// wasm_api.c state_fnv), restated for a Game that is not the table's.
+static uint32_t tb_hook_base;
+static void tb_bridge_seed(const Game *g, int seat, int phase) {
+    (void)seat;
+    if (phase == BOT_DRIVE_PHASE_CHOOSE) random_strategy_set_seed(game_state_seed(g, tb_hook_base, 0x9E3779B9u));
+    else game_rng_set(game_state_seed(g, tb_hook_base, 0u));
+}
+
+static int tb_record_bytes(const Game *g, int from) {
+    int n = 0;
+    for (int i = from; i < g->num_logs; i++) n += 6 + 4 + 2 * g->logs[i].num_pairs;
+    return n;
+}
+
+static void test_table_deal_seed_and_session_log(void) {
+    tb_bot_table("espresso", 3);
+    CHECK(table_set_deal_seed(&tb, tb_seed_hex, 64) == TABLE_OK && tb.rng_base == tb_fnv(tb_seed_hex, 64),
+          "the deal seed's base is FNV-1a over its hex text (engine.ts rngBaseFromSeed)");
+    CHECK(table_set_deal_seed(&tb, "", 0) == TABLE_OK && tb.rng_base == 0, "no seed is base 0");
+
+    int records = 0;
+    for (int q = 0; q + 10 <= tb_log_len; q += 10 + 2 * tb_log[q + 9]) records++;
+    CHECK(records >= 1 && tb_log[6] == LOG_GAME_START, "the deal wrote a session log that opens with GAME_START");
+    CHECK(tb_reload(1) == records && tb_game.num_logs == records && tb.log_start == records,
+          "every record loads, and the next operation's records start above them");
+    int same = 1;
+    for (int i = 0, q = 0; i < records; i++, q += 10 + 2 * tb_log[q + 9]) {
+        const GameLog *l = &tb_game.logs[i];
+        same &= l->log_type == tb_log[q + 6] && (uint8_t)l->player_idx == tb_log[q + 7]
+              && (uint8_t)l->defender_index == tb_log[q + 8] && l->num_pairs == tb_log[q + 9];
+        for (int j = 0; j < l->num_pairs; j++)
+            same &= card_eq(l->pairs[j].primary, card_from_wire_pair(tb_log[q + 10 + 2 * j]))
+                 && card_eq(l->pairs[j].target, card_from_wire_pair(tb_log[q + 11 + 2 * j]));
+    }
+    CHECK(same, "each record is the bytes' type, seat, defender and card pairs");
+    TableCommit c;
+    CHECK(table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && c.logs.len == 0,
+          "an imported session log is not a product");
+
+    CHECK(tb_reload(0) == 0 && table_import_session_log(&tb, tb_log, tb_log_len - 1) == records - 1,
+          "a truncated tail ends the log");
+    memcpy(tb_log2, tb_log, (size_t)tb_log_len);
+    tb_log2[6] = LOG_DRAW + 1;
+    CHECK(table_import_session_log(&tb, tb_log2, tb_log_len) == TABLE_E_WIRE, "an unknown record type is refused");
+    memset(tb_log2, 0, 10 + 2 * 70);
+    tb_log2[6] = LOG_PICKUP; tb_log2[7] = 0; tb_log2[8] = 0xFF; tb_log2[9] = 70;
+    for (int j = 0; j < 70; j++) { tb_log2[10 + 2 * j] = (uint8_t)(j % 52); tb_log2[11 + 2 * j] = 0xFF; }
+    CHECK(table_import_session_log(&tb, tb_log2, 10 + 2 * 70) == 1 && tb_game.logs[0].num_pairs == MAX_LOG_PAIRS,
+          "a record keeps its first MAX_LOG_PAIRS pairs");
+    memset(tb_log2, 0, sizeof(tb_log2));
+    for (int i = 0; i < MAX_LOGS + 50; i++) { tb_log2[10 * i + 6] = LOG_GOOD; tb_log2[10 * i + 7] = 1; tb_log2[10 * i + 8] = 0xFF; }
+    CHECK(table_import_session_log(&tb, tb_log2, 10 * (MAX_LOGS + 50)) == MAX_LOGS && tb_game.num_logs == MAX_LOGS,
+          "records past MAX_LOGS are dropped");
+    Table unloaded;
+    table_init(&unloaded, &tb_src, &tb_snaps);
+    CHECK(table_import_session_log(&unloaded, tb_log, tb_log_len) == TABLE_E_NOT_LOADED, "an unloaded table imports nothing");
+}
+
+static void test_table_bot_drive_cycle(void) {
+    tb_bot_table("espresso", 5);
+    TableCommit c;
+    int drives = 0, logged_drives = 0, checked = 0, ended_by_drive = 0;
+    for (int step = 0; step < 4000; step++) {
+        const int64_t now = 1700000001000LL + step * 1500;
+        if (tb_reload(0) != 0) break;
+        if (tb_game.status != GAME_STATUS_PLAYING) break;
+        const uint32_t humans = game_human_mask(&tb_game);
+        if (bot_drive_eligible_mask(&tb_game, humans) == 0) {
+            if (!tb_human_move()) break;
+            if (tb_commit_row(now, &c) < 0) break;
+            continue;
+        }
+        const int logs = table_bots_need_logs(&tb);
+        const int imported = logs ? table_import_session_log(&tb, tb_log, tb_log_len) : 0;
+        memcpy(&tb_ref, &tb_game, sizeof(Game));
+        const int n = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
+        if (n <= 0) break;
+        drives++;
+        logged_drives += imported > 0;
+        if (!checked && imported > 0 && tb_drv.stop == BOT_STOP_EVENTS) {
+            checked = 1;
+            CHECK(tb.log_start == imported && tb.actor == tb_drv.actions[n - 1].seat,
+                  "the cycle's records start above the session log, and its actor is its last action's seat");
+            CHECK(table_cycle_delay_ms(&tb, &tb_drv) == bot_cycle_delay_ms(&tb_game, humans, &tb_drv)
+                  && table_cycle_delay_ms(&tb, &tb_drv) > 0, "the delay is bot_cycle_delay_ms of the cycle");
+            // The wasm bridge's cycle on the same board: the same moves and the same board.
+            tb_hook_base = tb_fnv(tb_seed_hex, 64);
+            bot_drive_pre_action_hook = tb_bridge_seed;
+            const int n2 = bot_drive(&tb_ref, humans, 0, 0, 0, &tb_drv2);
+            bot_drive_pre_action_hook = 0;
+            CHECK(n2 == n && memcmp(tb_drv2.actions, tb_drv.actions, sizeof(BotDriveAction) * (size_t)n) == 0
+                  && tb_same_board(&tb_ref, &tb_game), "seeded per decision exactly as the wasm bridge seeds a drive");
+            const int pn = table_commit_products(&tb, RS("g"), 2, now, &c, tb_arena, sizeof(tb_arena));
+            CHECK(pn > 0 && c.logs.len == tb_record_bytes(&tb_game, imported) && c.logs.len > 0
+                  && tb_arena[c.logs.off + 6] != LOG_GAME_START, "the commit carries only the cycle's own records");
+            CHECK(c.n_events > 0, "a visible bot move is announced");
+            const int pl = table_push(&tb, RS("g"), 0, tb_buf, sizeof(tb_buf));
+            EvwHeader h;
+            CHECK(pl > 0 && evwire_read_header(tb_buf, pl, &h) == 0 && h.n_events == c.n_events
+                  && h.actor == tb_drv.actions[n - 1].seat && h.viewer == 0, "the human's push names the bot that moved");
+        }
+        if (tb.ended) {
+            ended_by_drive = 1;
+            CHECK(tb_game.status == GAME_STATUS_GAME_OVER && tb_game.players[0].status == PLAYER_STATUS_IDLE
+                  && tb_game.players[1].status == PLAYER_STATUS_READY && tb_game.players[2].status == PLAYER_STATUS_READY,
+                  "a cycle that ends the game finalizes it: bots READY, the human IDLE");
+        }
+        if (tb_commit_row(now, &c) < 0) break;
+        if (tb.ended) {
+            const int pl = table_push(&tb, RS("g"), 0, tb_buf, sizeof(tb_buf));
+            EvwHeader h;
+            CHECK(c.ended && pl > 0 && evwire_read_header(tb_buf, pl, &h) == 0 && h.n_events == c.n_events,
+                  "and its commit is the ending one");
+            break;
+        }
+    }
+    CHECK(checked && drives > 5 && logged_drives > 0, "the game had logged, visible bot cycles");
+    // A game whose every seat is a bot ends in a cycle.
+    tb_fixture(3, 7u, 97);
+    tb_roster_for(3, 7u, "random", tb_roster);
+    snprintf(tb_seed_hex, sizeof(tb_seed_hex), "%s", "00ff");
+    int ended = 0;
+    for (int step = 0; step < 4000 && !ended; step++) {
+        if (table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) != TABLE_OK) break;
+        table_set_deal_seed(&tb, tb_seed_hex, 4);
+        if (table_bot_drive(&tb, 0, 0, 0, &tb_drv) <= 0) break;
+        ended = tb.ended;
+        if (tb_commit_row(step, &c) < 0) break;
+    }
+    CHECK(ended || ended_by_drive, "a bot cycle ends a game");
+    CHECK(ended && tb_game.players[0].status == PLAYER_STATUS_READY && c.ended && c.status == GAME_STATUS_GAME_OVER,
+          "a bots-only game ends in a cycle with every seat parked READY");
+    Table unloaded;
+    table_init(&unloaded, &tb_src, &tb_snaps);
+    CHECK(table_bot_drive(&unloaded, 0, 0, 0, &tb_drv) == TABLE_E_NOT_LOADED, "an unloaded table drives nothing");
+}
+
+static void test_table_drive_prefs(void) {
+    static uint8_t s1[8192], prefs[4096];
+    tb_fixture(3, 7u, 101);
+    tb_roster_for(3, 7u, "random", tb_roster);
+    // Move on until a cycle has a choice to make that the seed decides.
+    int found = 0, s1_len = 0, plen = 0, bridge_same = 1;
+    for (int step = 0; step < 200 && !found; step++) {
+        snprintf(tb_seed_hex, sizeof(tb_seed_hex), "a%d", step);
+        table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+        table_set_deal_seed(&tb, tb_seed_hex, (int)strlen(tb_seed_hex));
+        memcpy(&tb_ref, &tb_game, sizeof(Game));
+        const int n = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
+        if (n <= 0) break;
+        // `random` draws from the strategy stream: seeded per decision exactly as the wasm bridge seeds it.
+        tb_hook_base = tb_fnv(tb_seed_hex, (int)strlen(tb_seed_hex));
+        bot_drive_pre_action_hook = tb_bridge_seed;
+        const int nb = bot_drive(&tb_ref, 0, 0, 0, 0, &tb_drv2);
+        bot_drive_pre_action_hook = 0;
+        bridge_same &= nb == n && memcmp(tb_drv2.actions, tb_drv.actions, sizeof(BotDriveAction) * (size_t)n) == 0;
+        s1_len = tb_blob(&tb_game, s1);
+        plen = table_drive_prefs(&tb, &tb_drv, prefs, sizeof(prefs));
+        for (int k = 0; k < 16 && !found; k++) {
+            char other[16];
+            snprintf(other, sizeof(other), "b%d", k);
+            table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+            table_set_deal_seed(&tb, other, (int)strlen(other));
+            table_bot_drive(&tb, 0, 0, 0, &tb_drv2);
+            if (tb_blob(&tb_game, tb_buf2) != s1_len || memcmp(tb_buf2, s1, (size_t)s1_len) != 0) {
+                found = 1;
+                // The same seed as that retry, but offered what the first attempt chose.
+                table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+                table_set_deal_seed(&tb, other, (int)strlen(other));
+                const int n3 = table_bot_drive(&tb, prefs, plen, 0, &tb_drv2);
+                CHECK(plen > 0 && n3 == n && memcmp(tb_drv2.actions, tb_drv.actions, sizeof(BotDriveAction) * (size_t)n) == 0
+                      && tb_blob(&tb_game, tb_buf2) == s1_len && memcmp(tb_buf2, s1, (size_t)s1_len) == 0,
+                      "a retry offered the first attempt's moves plays them while they are legal");
+                uint8_t merged[4096];
+                CHECK(table_drive_prefs(&tb, &tb_drv2, merged, sizeof(merged)) == plen,
+                      "offered and applied moves for the same seats merge to one per seat");
+                CHECK(table_bot_drive(&tb, prefs, plen - 1, 0, &tb_drv2) == TABLE_E_WIRE, "a short prefs blob is refused");
+                prefs[plen] = 0;
+                CHECK(table_bot_drive(&tb, prefs, plen + 1, 0, &tb_drv2) == TABLE_E_WIRE, "a prefs blob with a tail is refused");
+                CHECK(table_drive_prefs(&tb, &tb_drv, merged, 2) == TABLE_E_CAP, "a small buffer is refused");
+            }
+        }
+        TableCommit c;
+        tb_commit_row(step, &c);
+    }
+    CHECK(found, "a cycle whose moves another seed would have chosen differently");
+    CHECK(bridge_same, "every cycle chose what the wasm bridge's drive chooses");
+}
+
+// The TS producer's times (extras.ts moveTimesFromLogs) over a session log, in args layout.
+static int tb_extras_args(const Roster *r, const uint8_t *log, int len, uint8_t *out) {
+    int start = 0, q = 0, w = 0, n_times = 0;
+    for (int at = 0; at + 10 <= len; at += 10 + 2 * log[at + 9]) if (log[at + 6] == LOG_GAME_START) start = at;
+    out[w++] = 0;
+    out[w++] = (uint8_t)r->n;
+    for (int s = 0; s < r->n; s++) {
+        out[w++] = r->seats[s].name_len; out[w++] = 0;
+        memcpy(out + w, r->seats[s].name, r->seats[s].name_len); w += r->seats[s].name_len;
+    }
+    out[0] = REPLAY_EXTRAS_FLAG_NAMES;
+    const int times_at = w;
+    double prev = 0, first = 0;
+    w += 8 + 2;
+    for (q = start; q + 10 <= len; q += 10 + 2 * log[q + 9]) {
+        const int type = log[q + 6];
+        if (type != LOG_GAME_START && type != LOG_ATTACK && type != LOG_COVER && type != LOG_PASS && type != LOG_PICKUP) continue;
+        int64_t ms = 0;
+        for (int b = 5; b >= 0; b--) ms = ms * 256 + log[q + b];
+        volatile double msd = (double)ms;
+        volatile double t = msd / 1000;
+        if (n_times == 0) first = t;
+        else { volatile double g = t - prev; double gg = g < 0 ? 0 : g; memcpy(out + w, &gg, 8); w += 8; }
+        prev = t;
+        n_times++;
+    }
+    if (n_times == 0) return times_at;
+    out[0] |= REPLAY_EXTRAS_FLAG_TIMES;
+    memcpy(out + times_at, &first, 8);
+    out[times_at + 8] = (uint8_t)((n_times - 1) & 0xff); out[times_at + 9] = (uint8_t)((n_times - 1) >> 8);
+    return w;
+}
+
+static void test_table_replay_code_and_extras(void) {
+    static uint8_t args[1 << 16];
+    tb_bot_table("random", 9);
+    TableCommit c;
+    int over = 0;
+    for (int step = 0; step < 6000 && !over; step++) {
+        const int64_t now = 1700000002000LL + step * 1731 + (step % 5) * 250;
+        if (tb_reload(0) != 0 || tb_game.status != GAME_STATUS_PLAYING) break;
+        if (bot_drive_eligible_mask(&tb_game, game_human_mask(&tb_game)) == 0) {
+            if (!tb_human_move()) break;
+        } else if (table_bot_drive(&tb, 0, 0, 0, &tb_drv) <= 0) {
+            break;
+        }
+        over = tb.ended;
+        if (tb_commit_row(now, &c) < 0) break;
+    }
+    CHECK(over, "the game is played to its end");
+    Table unloaded;
+    table_init(&unloaded, &tb_src, &tb_snaps);
+    CHECK(table_replay_code(&unloaded, tb_seed, 32, tb_log, tb_log_len, tb_code, sizeof(tb_code), tb_scratch,
+                            sizeof(tb_scratch)) == TABLE_E_NOT_LOADED, "an unloaded table has no replay");
+
+    // The reference: the finished board with the session log parsed apart from the table, encoded directly.
+    tb_reload(0);
+    memcpy(&tb_ref, &tb_game, sizeof(Game));
+    tb_ref.num_logs = 0;
+    for (int q = 0; q + 10 <= tb_log_len && tb_ref.num_logs < MAX_LOGS; q += 10 + 2 * tb_log[q + 9]) {
+        GameLog *l = &tb_ref.logs[tb_ref.num_logs++];
+        l->log_type = (int8_t)tb_log[q + 6]; l->player_idx = (int8_t)tb_log[q + 7];
+        l->defender_index = (int8_t)tb_log[q + 8]; l->num_pairs = (int8_t)tb_log[q + 9];
+        for (int j = 0; j < l->num_pairs; j++) {
+            l->pairs[j].primary = card_from_wire_pair(tb_log[q + 10 + 2 * j]);
+            l->pairs[j].target = card_from_wire_pair(tb_log[q + 11 + 2 * j]);
+        }
+    }
+    const int want = replay_encode_v6_from_game(&tb_ref, tb_seed, 32, 1 << 30, tb_code2, sizeof(tb_code2));
+    const int got = table_replay_code(&tb, tb_seed, 32, tb_log, tb_log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
+    if (got < 0 || want < 0) fprintf(stderr, "  replay: got %d, want %d\n", got, want);
+    CHECK(want > 0 && got == want && memcmp(tb_code, tb_code2, (size_t)want) == 0,
+          "the code is replay_encode_v6_from_game of the finished board and its session log");
+    CHECK(table_replay_code(&tb, tb_seed, 31, tb_log, tb_log_len, tb_code, sizeof(tb_code), tb_scratch,
+                            sizeof(tb_scratch)) < 0, "a short deal seed has no code");
+
+    // The gate: a session log whose pickup names a card the game never picked up.
+    int pickup_at = -1;
+    for (int q = 0; q + 10 <= tb_log_len; q += 10 + 2 * tb_log[q + 9])
+        if (tb_log[q + 6] == LOG_PICKUP && tb_log[q + 9] > 0) pickup_at = q;
+    CHECK(pickup_at >= 0, "the game has a pickup");
+    memcpy(tb_log2, tb_log, (size_t)tb_log_len);
+    tb_log2[pickup_at + 10] = (uint8_t)((tb_log2[pickup_at + 10] + 1) % 52);
+    tb_reload(0);
+    const int gate = table_replay_code(&tb, tb_seed, 32, tb_log2, tb_log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
+    if (gate != TABLE_E_REPLAY_VERIFY) fprintf(stderr, "  gate: got %d\n", gate);
+    CHECK(gate == TABLE_E_REPLAY_VERIFY, "a code that does not decode back to the log's actions is refused");
+
+    // The extras: roster names and the TS producer's move times.
+    tb_reload(0);
+    const int al = tb_extras_args(&tb.r, tb_log, tb_log_len, args);
+    const int ew = replay_extras_encode(args, al, tb_code2, sizeof(tb_code2));
+    const int eg = table_replay_extras(&tb, tb_log, tb_log_len, tb_code, sizeof(tb_code));
+    if (eg != ew || (ew > 0 && memcmp(tb_code, tb_code2, (size_t)ew) != 0)) {
+        fprintf(stderr, "  extras: got %d, want %d\n", eg, ew);
+        for (int i = 0; i < ew; i++) if (tb_code[i] != tb_code2[i]) { fprintf(stderr, "  first diff at byte %d\n", i); break; }
+    }
+    CHECK(ew > 0 && eg == ew && memcmp(tb_code, tb_code2, (size_t)ew) == 0 && (args[0] & REPLAY_EXTRAS_FLAG_TIMES),
+          "the extras are the roster's names and the session's move times");
+    // Only the last GAME_START session counts: an earlier session before it changes nothing.
+    memcpy(tb_log2, tb_log, (size_t)tb_log_len);
+    for (int q = 0; q + 10 <= tb_log_len; q += 10 + 2 * tb_log2[q + 9]) tb_log2[q + 3] = (uint8_t)(tb_log2[q + 3] - 1);
+    memcpy(tb_log2 + tb_log_len, tb_log, (size_t)tb_log_len);
+    const int eg3 = table_replay_extras(&tb, tb_log2, 2 * tb_log_len, tb_code, sizeof(tb_code));
+    CHECK(eg3 == ew && memcmp(tb_code, tb_code2, (size_t)ew) == 0, "an earlier session in the log is not timed");
+    // A log with no timed record: names only.
+    memset(tb_log2, 0, 10);
+    tb_log2[6] = LOG_DRAW; tb_log2[7] = 1; tb_log2[8] = 0xFF;
+    const int al2 = tb_extras_args(&tb.r, tb_log2, 10, args);
+    const int ew2 = replay_extras_encode(args, al2, tb_code2, sizeof(tb_code2));
+    const int eg2 = table_replay_extras(&tb, tb_log2, 10, tb_code, sizeof(tb_code));
+    CHECK(ew2 > 0 && eg2 == ew2 && memcmp(tb_code, tb_code2, (size_t)ew2) == 0 && !(args[0] & REPLAY_EXTRAS_FLAG_TIMES),
+          "a session without timed records carries names only");
+    CHECK(table_replay_extras(&tb, tb_log, tb_log_len, tb_code, 3) == TABLE_E_CAP, "a small buffer is refused");
+}
+
 int main(void) {
     test_state_import_rejects_invalid_values();
     test_state_import_refuses_a_lobby_with_cards();
@@ -8174,6 +8594,12 @@ int main(void) {
     test_table_ready_deals();
     test_table_reseat_retitle_continue();
     test_table_rearrange_and_redact();
+    test_table_redact_default_title();
+    test_table_seat_of();
+    test_table_deal_seed_and_session_log();
+    test_table_bot_drive_cycle();
+    test_table_drive_prefs();
+    test_table_replay_code_and_extras();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;

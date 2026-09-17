@@ -145,63 +145,75 @@ static int name_bytes(const unsigned char *src, int n, unsigned char *out) {
 
 // ---------- encode -----------------------------------------------------------
 
+// The gaps of an args blob, read where they sit.
+typedef struct { const unsigned char *in; int in_len, gaps_at; } BlobGaps;
+
+static double blob_gap(void *ctx, int i) {
+    const BlobGaps *b = (const BlobGaps *)ctx;
+    double g = 0;
+    int q = b->gaps_at + 8 * i;
+    rd_f64(b->in, b->in_len, &q, &g);
+    return g;
+}
+
 int replay_extras_encode(const unsigned char *in, int in_len,
                          unsigned char *out, int cap) {
-    int p = 0, flags = 0, w = 0;
-    int in_flags = 0, n_names = 0, n_gaps = 0;
-    int names_at = 0, gaps_at = 0;
+    const unsigned char *names[255];
+    int lens[255];
+    int p = 0, in_flags = 0, n_names = 0, n_gaps = 0;
     double start_time = 0;
+    BlobGaps gaps = { in, in_len, 0 };
 
     if (!in || !out || cap < 2) return -REPLAY_EXTRAS_ECAP;
     if (!rd_u8(in, in_len, &p, &in_flags)) return -REPLAY_EXTRAS_EINPUT;
 
     if (in_flags & REPLAY_EXTRAS_FLAG_NAMES) {
         if (!rd_u8(in, in_len, &p, &n_names)) return -REPLAY_EXTRAS_EINPUT;
-        names_at = p;
         for (int i = 0; i < n_names; i++) {
-            int len;
-            if (!rd_u16(in, in_len, &p, &len)) return -REPLAY_EXTRAS_EINPUT;
-            if (p + len > in_len) return -REPLAY_EXTRAS_EINPUT;
-            p += len;
+            if (!rd_u16(in, in_len, &p, &lens[i])) return -REPLAY_EXTRAS_EINPUT;
+            if (p + lens[i] > in_len) return -REPLAY_EXTRAS_EINPUT;
+            names[i] = in + p;
+            p += lens[i];
         }
     }
     if (in_flags & REPLAY_EXTRAS_FLAG_TIMES) {
         if (!rd_f64(in, in_len, &p, &start_time)) return -REPLAY_EXTRAS_EINPUT;
         if (!rd_u16(in, in_len, &p, &n_gaps)) return -REPLAY_EXTRAS_EINPUT;
-        gaps_at = p;
+        gaps.gaps_at = p;
         if (p + 8 * n_gaps > in_len) return -REPLAY_EXTRAS_EINPUT;
     }
+    return replay_extras_encode_parts(names, lens, n_names, (in_flags & REPLAY_EXTRAS_FLAG_TIMES) != 0,
+                                      start_time, n_gaps, blob_gap, &gaps, out, cap);
+}
 
+int replay_extras_encode_parts(const unsigned char *const *names, const int *name_lens, int n_names,
+                               int has_times, double start_time, int n_gaps,
+                               ReplayExtrasGap gap, void *ctx, unsigned char *out, int cap) {
+    int flags = 0, w = 0;
+    if (!out || cap < 2) return -REPLAY_EXTRAS_ECAP;
     out[w++] = REPLAY_EXTRAS_VERSION;
     out[w++] = 0;                              // flags, back-filled below
 
     // A roster of zero seats says nothing, and the flags byte exists precisely
     // so a producer can answer one question and stay quiet about the other.
     if (n_names > 0) {
-        int q = names_at;
         flags |= REPLAY_EXTRAS_FLAG_NAMES;
         for (int i = 0; i < n_names; i++) {
             unsigned char nb[REPLAY_EXTRAS_MAX_NAME + 4];
-            int len = in[q] | (in[q + 1] << 8);
-            int nw;
-            q += 2;
-            nw = name_bytes(in + q, len, nb);
-            q += len;
+            const int nw = name_bytes(names[i], name_lens[i], nb);
             if (w + nw + 1 > cap) return -REPLAY_EXTRAS_ECAP;
             for (int j = 0; j < nw; j++) out[w++] = nb[j];
             out[w++] = 0;
         }
     }
 
-    if (in_flags & REPLAY_EXTRAS_FLAG_TIMES) {
+    if (has_times) {
         double max_gap = 0, unit;
         int scale_exp;
         uint64_t start;
         flags |= REPLAY_EXTRAS_FLAG_TIMES;
         for (int i = 0; i < n_gaps; i++) {
-            double g;
-            int q = gaps_at + 8 * i;
-            rd_f64(in, in_len, &q, &g);
+            const double g = gap(ctx, i);
             if (g > max_gap) max_gap = g;
         }
         scale_exp = pick_scale_exp(max_gap);
@@ -216,12 +228,7 @@ int replay_extras_encode(const unsigned char *in, int in_len,
             start = (f >= 1099511627776.0) ? 1099511627775ULL : (uint64_t)f;
         }
         for (int i = 4; i >= 0; i--) out[w++] = (unsigned char)((start >> (8 * i)) & 0xff);
-        for (int i = 0; i < n_gaps; i++) {
-            double g;
-            int q = gaps_at + 8 * i;
-            rd_f64(in, in_len, &q, &g);
-            out[w++] = (unsigned char)quantize_gap(g, unit);
-        }
+        for (int i = 0; i < n_gaps; i++) out[w++] = (unsigned char)quantize_gap(gap(ctx, i), unit);
     }
 
     out[1] = (unsigned char)flags;

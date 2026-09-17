@@ -470,6 +470,10 @@ int wasm_belief_probe_dump(void) {
     return g_n_probe;
 }
 
+// The same capture for a drive the C Table runs (table.h table_choose_observer),
+// which seeds itself from the table's deal seed rather than through this bridge.
+void wasm_belief_probe_observe_internal(const Game *g, int seat) { probe_capture(g, seat); }
+
 static void drive_seed_hook(const Game *g, int seat, int phase) {
     if (phase == BOT_DRIVE_PHASE_CHOOSE) {
         probe_capture(g, seat);

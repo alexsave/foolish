@@ -764,7 +764,11 @@ WASM_TABLE_EXPORTS := \
   -Wl,--export=wasm_table_remove_bot -Wl,--export=wasm_table_ready \
   -Wl,--export=wasm_table_reseat -Wl,--export=wasm_table_retitle \
   -Wl,--export=wasm_table_continue -Wl,--export=wasm_table_rearrange_hand \
-  -Wl,--export=wasm_table_redact
+  -Wl,--export=wasm_table_redact -Wl,--export=wasm_table_seat_of \
+  -Wl,--export=wasm_table_set_deal_seed -Wl,--export=wasm_table_import_session_log \
+  -Wl,--export=wasm_table_bot_drive -Wl,--export=wasm_table_drive_ptr \
+  -Wl,--export=wasm_table_drive_prefs -Wl,--export=wasm_table_cycle_delay_ms \
+  -Wl,--export=wasm_table_replay_code -Wl,--export=wasm_table_replay_extras
 
 # C-backed test fixtures (wasm/wasm_table_api.c, e2e/helpers/table_fixture.ts),
 # bots.wasm ONLY, test-only like WASM_ROSTER_EXPORTS: a test composes a board

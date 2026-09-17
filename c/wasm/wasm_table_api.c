@@ -25,17 +25,25 @@ extern Game *wasm_game_ptr_internal(void);
 extern unsigned char *wasm_io_ptr(void);
 extern int wasm_io_cap(void);
 extern uint32_t wasm_rng_base_internal(void);
+extern void wasm_set_rng_base(uint32_t base);
+extern void wasm_clearenv(void);
+extern void wasm_reload_bot_flags(void);
+extern void wasm_belief_probe_observe_internal(const Game *g, int seat);
+extern unsigned char *wasm_replay_io_ptr(void);
+extern int wasm_replay_io_cap(void);
 
 static TableSnaps   g_table_snaps;
 static Table        g_table;
 static TableCommit  g_table_commit;
 static TableRequest g_table_request;
 static TableElo     g_table_elo;
+static BotDriveOut  g_table_drive;
 static int          g_table_ready;
 
 static Table *table(void) {
     if (!g_table_ready) {
         table_init(&g_table, wasm_game_ptr_internal(), &g_table_snaps);
+        table_choose_observer = wasm_belief_probe_observe_internal;
         g_table_ready = 1;
     }
     return &g_table;
@@ -55,6 +63,7 @@ Roster       *wasm_table_roster_ptr(void)  { return &table()->r; }
 TableCommit  *wasm_table_commit_ptr(void)  { return &g_table_commit; }
 TableRequest *wasm_table_request_ptr(void) { return &g_table_request; }
 TableElo     *wasm_table_elo_ptr(void)     { return &g_table_elo; }
+BotDriveOut  *wasm_table_drive_ptr(void)   { return &g_table_drive; }
 int wasm_table_detail(void) { return table()->detail; }
 int wasm_table_reject(void) { return table()->reject; }
 
@@ -168,7 +177,76 @@ int wasm_table_redact(int id_len, int name_len) {
     return table_redact(table(), (const char *)io, id_len, (const char *)io + id_len, name_len);
 }
 
+// io = [actor id] -> the seat, -1, or TABLE_E_NOT_LOADED.
+int wasm_table_seat_of(int id_len) {
+    const unsigned char *io = inputs(id_len);
+    if (!io || id_len < 0) return TABLE_E_WIRE;
+    return table_seat_of(table(), (const char *)io, id_len);
+}
+
 int wasm_table_needs_bots(void) { return table_needs_bots(table()) ? 1 : 0; }
+
+// ---- the bot cycle and the end of a game ----------------------------------------
+
+// io = [games.game_seed as hex text]. The bridge's own base follows, so every
+// other seeded export (wasm_strategy_seed_probe) agrees with the table's draws.
+int wasm_table_set_deal_seed(int len) {
+    const unsigned char *io = inputs(len);
+    if (!io || len < 0) return TABLE_E_WIRE;
+    const int rc = table_set_deal_seed(table(), (const char *)io, len);
+    wasm_set_rng_base(table()->rng_base);
+    return rc;
+}
+
+// io = [games.logs_packed bytes] -> records loaded.
+int wasm_table_import_session_log(int len) {
+    const unsigned char *io = inputs(len);
+    if (!io || len < 0) return TABLE_E_WIRE;
+    return table_import_session_log(table(), io, len);
+}
+
+// io = [prefs blob from wasm_table_drive_prefs, or nothing] -> actions applied;
+// the cycle is at wasm_table_drive_ptr. No env: the C roster's knob specs are
+// authoritative, and a table an earlier decision left must not override them
+// (the reason sdk/ts/wasm/bots.ts wasmBotDrive clears it too).
+int wasm_table_bot_drive(int prefs_len, int max_actions) {
+    const unsigned char *io = inputs(prefs_len);
+    if (!io || prefs_len < 0) return TABLE_E_WIRE;
+    wasm_clearenv();
+    wasm_reload_bot_flags();
+    return table_bot_drive(table(), io, prefs_len, max_actions, &g_table_drive);
+}
+
+// -> io = the preferred moves to offer a retry of the last cycle.
+int wasm_table_drive_prefs(void) {
+    return table_drive_prefs(table(), &g_table_drive, wasm_io_ptr(), wasm_io_cap());
+}
+
+int wasm_table_cycle_delay_ms(void) { return table_cycle_delay_ms(table(), &g_table_drive); }
+
+// io = [deal seed][session log] -> io = the verified v6 replay code. The code is
+// written into the replay buffer and decoded back into the IO buffer past the
+// inputs (the gate reads the log again), then copied to the front.
+int wasm_table_replay_code(int seed_len, int log_len) {
+    const unsigned char *io = inputs(seed_len + log_len);
+    if (!io || seed_len < 0 || log_len < 0) return TABLE_E_WIRE;
+    const int used = seed_len + log_len;
+    const int n = table_replay_code(table(), io, seed_len, io + seed_len, log_len,
+                                    wasm_replay_io_ptr(), wasm_replay_io_cap(),
+                                    wasm_io_ptr() + used, wasm_io_cap() - used);
+    if (n > 0) memcpy(wasm_io_ptr(), wasm_replay_io_ptr(), (size_t)n);
+    return n;
+}
+
+// io = [session log] -> io = the replay extras blob (built in the replay buffer:
+// the times are read from the log while the blob is written).
+int wasm_table_replay_extras(int log_len) {
+    const unsigned char *io = inputs(log_len);
+    if (!io || log_len < 0) return TABLE_E_WIRE;
+    const int n = table_replay_extras(table(), io, log_len, wasm_replay_io_ptr(), wasm_replay_io_cap());
+    if (n > 0) memcpy(wasm_io_ptr(), wasm_replay_io_ptr(), (size_t)n);
+    return n;
+}
 int wasm_table_bots_need_logs(void) { return table_bots_need_logs(table()) ? 1 : 0; }
 
 // io = [game id] -> io = the arena wasm_table_commit_ptr's spans point into.
