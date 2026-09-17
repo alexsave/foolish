@@ -178,45 +178,25 @@ test('bots.wasm memory is bounded and flat across all MC bot families', async ()
     } as unknown as typeof WebAssembly.Instance;
     (WebAssembly.Instance as unknown as { prototype: unknown }).prototype = RealInstance.prototype;
 
-    const { game_done } = await import('@api/common/common_utils.ts');
-    const { start_game } = await import('@api/common/game_lifecycle.ts');
-    const { processBotAction, shouldBotActCore } = await import('@api/common/pure_bot_actions.ts');
-    const { PLAYER_STATUS, GAME_STATUS } = await import('@api/core/types.ts');
-    type AnyGame = Parameters<typeof start_game>[0];
+    // The production bot path: a table of bots dealt from a seed and driven by
+    // the kernel's bot cycle (table_bot_drive), exactly as the server's loop runs
+    // it (e2e/helpers/bot_table.ts). Imported after the Instance hook, so the
+    // table's bots.wasm instance is captured.
+    const { playBotTable, seedBytes } = await import('../helpers/bot_table.ts');
 
     const wasmTotal = () => memories.reduce((a, m) => a + m.buffer.byteLength, 0);
 
-    const playGame = async (id: string, keys: string[]) => {
-        const g = {
-            players: keys.map((k, i) => ({
-                player_id: `p${i}`, name: `P${i}`, status: PLAYER_STATUS.READY, is_ai: true,
-                hand: [], awaiting_attack: false, hand_length: 0, strategy_key: k,
-            })),
-            deck: [], logs: [], id, name: id, status: GAME_STATUS.PLAYING,
-            deck_length: 0, discard_pile_length: 0, flipped: null, power_suit: 0,
-            first_attacker: 0, defender: 0, table_battles: [], elimination_order: [],
-            good_timestamp: null, good_players: [],
-        } as unknown as AnyGame;
-        start_game(g);
-        let guard = 0;
-        while (game_done(g) === null && ++guard < 2000) {
-            let acted = false;
-            for (let i = 0; i < (g as { players: unknown[] }).players.length; i++) {
-                const p = (g as { players: PrivateLike[] }).players[i];
-                if (!shouldBotActCore(g, p as never, i)) continue;
-                if (await processBotAction(g, p as never)) { acted = true; break; }
-            }
-            if (!acted) break;
-        }
-        assert.notEqual(game_done(g), null, `${id} did not finish`);
+    const playGame = (id: string, keys: string[]) => {
+        const g = playBotTable(keys, seedBytes(keys.length, id.charCodeAt(id.length - 1)), { gameId: id });
+        assert.ok(g.actions > 0 && g.fool >= 0, `${id} did not finish`);
     };
-    type PrivateLike = { player_id: string };
 
     // Game 1 warms the shared solver scratch. Uses the shipped MC ladder bots
     // (octogen, cordite) — semtex/fulminate were dropped from the wasm build, so
     // they would fall back to random and not exercise the solver.
-    await playGame('mem1', ['octogen', 'cordite']);
+    playGame('mem1', ['octogen', 'cordite']);
     const afterFirst = wasmTotal();
+    assert.ok(memories.length > 0, 'the bots.wasm instance was captured');
     // 150MB external is the edge budget; rules+bots plus scratch must sit
     // far below it so JS buffers/fetch bodies have room.
     assert.ok(afterFirst <= 16 * 1048576,
@@ -228,9 +208,9 @@ test('bots.wasm memory is bounded and flat across all MC bot families', async ()
     // the SAME shared world/solver/rollout scratch, so exercising them here must
     // not grow the module by a byte. This is the guard that would have caught the
     // per-family malloc regression that first shipped them.
-    await playGame('mem2', ['cordite', 'octogen']);
-    await playGame('mem3', ['blackpowder', 'firecracker']);            // 2p: solver + handwritten rollout
-    await playGame('mem4', ['firecracker', 'blackpowder', 'firecracker']); // 3p: espresso rollout, no solver
+    playGame('mem2', ['cordite', 'octogen']);
+    playGame('mem3', ['blackpowder', 'firecracker']);            // 2p: solver + handwritten rollout
+    playGame('mem4', ['firecracker', 'blackpowder', 'firecracker']); // 3p: espresso rollout, no solver
     const afterAll = wasmTotal();
     assert.equal(afterAll, afterFirst,
         `wasm memory grew ${((afterAll - afterFirst) / 1048576) | 0}MB across families; per-family allocations are back`);
