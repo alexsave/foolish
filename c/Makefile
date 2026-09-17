@@ -734,12 +734,11 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport \
   -Wl,--export=wasm_belief_probe_reset -Wl,--export=wasm_belief_probe_dump
 
-# The C Roster (src/roster.h), bots.wasm ONLY: not part of WASM_BOTS_API_EXPORTS,
-# because the oracle modules link that list and have no use for a roster, and an
-# unexported roster.o is dropped whole by the linker. Test-only for now: the
-# parity gates (e2e/roster_c_parity.test.ts, e2e/packed_roster_wire.test.ts) hold
-# the C writer byte-identical to the TS one until the server switches over
-# (docs/C_GAME_SHAPE_MIGRATION.md Phase 2, 4b).
+# The C Roster (src/roster.h), in the TEST build only (WASM_TEST_EXPORTS below):
+# e2e/helpers/roster_kernel.ts drives the durable encoding and the envelope
+# trailer through these directly (e2e/roster_c_parity.test.ts,
+# e2e/packed_roster_wire.test.ts). Production reaches the roster through the
+# table exports, never through these.
 WASM_ROSTER_EXPORTS := \
   -Wl,--export=wasm_roster_encode -Wl,--export=wasm_roster_decode \
   -Wl,--export=wasm_roster_trailer_write -Wl,--export=wasm_roster_trailer_read
@@ -797,13 +796,22 @@ WASM_REPLAY_WEB_EXPORTS := \
   -Wl,--export=wasm_replay_summary
 
 # C-backed test fixtures (wasm/wasm_table_api.c, e2e/helpers/table_fixture.ts),
-# bots.wasm ONLY, test-only like WASM_ROSTER_EXPORTS: a test composes a board
+# in the TEST build only, like WASM_ROSTER_EXPORTS: a test composes a board
 # through the generated setters and seals it with the roster into a row the
 # kernel has loaded; card text goes through card.h's parser.
 WASM_FIXTURE_EXPORTS := \
   -Wl,--export=wasm_fixture_begin -Wl,--export=wasm_fixture_title \
   -Wl,--export=wasm_fixture_seat -Wl,--export=wasm_fixture_seal \
   -Wl,--export=wasm_card_list_parse
+
+# The exports only tests call. They are NOT in the shipped bots.wasm.gz: an
+# export roots its code, so each one kept roster.c's durable codec, the fixture
+# sealer and card.h's parser in every module the browser and the edge load.
+# build/bots_test.wasm is the shipped module's objects and link plus these, built
+# on demand (`make -C c wasm-bots-test`, which e2e/helpers/bots_test_wasm.ts runs
+# when the build is missing or older than the wasm sources) and never committed.
+# Same objects, so the same layout hash: the helpers check it like any host.
+WASM_TEST_EXPORTS := $(WASM_ROSTER_EXPORTS) $(WASM_FIXTURE_EXPORTS)
 
 # The rules module's move buffer only feeds the exported menu — production
 # validation is direct rule-checking, and production menus/bot enumeration
@@ -1269,10 +1277,12 @@ build/botobj/wasm_api.o: wasm/wasm_api.c build/layout/bots.hash $(wildcard src/*
 	@mkdir -p build/botobj
 	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -DSG_LAYOUT_HASH=$$(cat build/layout/bots.hash) -c $< -o $@
 
+WASM_BOTS_SHIPPED_EXPORTS = $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_TABLE_EXPORTS) $(WASM_CLIENT_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS)
+
 build/bots.wasm: $(WASM_BOT_OBJ)
 	@mkdir -p build
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
-	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_ROSTER_EXPORTS) $(WASM_TABLE_EXPORTS) $(WASM_CLIENT_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS) $(WASM_FIXTURE_EXPORTS) $(WASM_BOT_OBJ) -o $@
+	          $(WASM_BOTS_SHIPPED_EXPORTS) $(WASM_BOT_OBJ) -o $@
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),$@)
 
 # bots-explain.wasm: byte-for-byte the SAME octogen as bots.wasm (same sources,
@@ -1290,7 +1300,7 @@ bots-wasm-explain: build/layout/bots-explain.hash
 	  $(WASM_CC) $(WASM_BOT_CFLAGS) -DOG_EXPLAIN_BUILD -DSG_LAYOUT_HASH=$$(cat build/layout/bots-explain.hash) $$opt -c $$src -o build/botexplain/$$base.o || exit 1; \
 	done
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
-	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_ROSTER_EXPORTS) $(WASM_TABLE_EXPORTS) $(WASM_CLIENT_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS) $(WASM_FIXTURE_EXPORTS) \
+	          $(WASM_BOTS_SHIPPED_EXPORTS) \
 	          -Wl,--export=wasm_og_explain_ptr -Wl,--export=wasm_og_explain_len -Wl,--export=wasm_og_explain_reset \
 	          build/botexplain/*.o -o build/bots-explain.wasm
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),build/bots-explain.wasm)
@@ -1309,7 +1319,7 @@ bots-wasm-explain: build/layout/bots-explain.hash
 build/named/bots.named.wasm: $(WASM_BOT_OBJ)
 	@mkdir -p build/named
 	$(WASM_CC) --target=wasm32 -nostdlib $(filter-out -Wl$(comma)--strip-all,$(WASM_BOT_LDFLAGS)) \
-	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_ROSTER_EXPORTS) $(WASM_TABLE_EXPORTS) $(WASM_CLIENT_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS) $(WASM_FIXTURE_EXPORTS) $(WASM_BOT_OBJ) -o $@
+	          $(WASM_BOTS_SHIPPED_EXPORTS) $(WASM_BOT_OBJ) -o $@
 	$(if $(strip $(WASM_BOTS_POSTOPT)),$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) $(WASM_BOTS_POSTOPT) --debuginfo $@ -o $@,:)
 
 # bots.wasm ships as ONE gzip STATIC ASSET (config.toml static_files + deploy
@@ -1334,6 +1344,22 @@ wasm-bots: build/layout/bots.hash
 	@$(MAKE) --no-print-directory build/bots.wasm
 	gzip -9 -n -c build/bots.wasm > ../sdk/ts/wasm/bots.wasm.gz
 	@bash ../scripts/wasm_stamp.sh --write
+
+# The test build (WASM_TEST_EXPORTS above): never committed, never shipped.
+# build/bots_test.stamp records the wasm source hash it was built from
+# (scripts/wasm_stamp.sh --hash), which is how the e2e helper knows it is current.
+build/bots_test.wasm: $(WASM_BOT_OBJ)
+	@mkdir -p build
+	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
+	          $(WASM_BOTS_SHIPPED_EXPORTS) $(WASM_TEST_EXPORTS) $(WASM_BOT_OBJ) -o $@.tmp
+	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),$@.tmp)
+	mv $@.tmp $@
+
+.PHONY: wasm-bots-test
+wasm-bots-test: build/layout/bots.hash
+	$(call sg_settle,bots,build/botobj,build/bots_test.wasm)
+	@$(MAKE) --no-print-directory build/bots_test.wasm
+	@bash ../scripts/wasm_stamp.sh --hash > build/bots_test.stamp.tmp && mv build/bots_test.stamp.tmp build/bots_test.stamp
 
 # ---------------------------------------------------------------------------
 # oracle.wasm — the client-side "infinite oracle" replay analyzer

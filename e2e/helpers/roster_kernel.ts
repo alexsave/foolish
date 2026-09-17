@@ -7,7 +7,7 @@
 // same bytes. Knows no roster byte layout: the SPEC below is the exports' own
 // test input shape, and everything C writes comes back as opaque bytes.
 
-import { loadWasmGz } from '../../sdk/ts/wasm/wasm_asset.ts';
+import { botsTestWasm } from './bots_test_wasm.ts';
 
 // ROSTER_* (c/src/roster.h).
 export const ROSTER_BYTES = 1227;
@@ -29,7 +29,7 @@ interface RosterExports {
 let cached: RosterExports | null = null;
 function kernel(): RosterExports {
     if (!cached) {
-        const inst = new WebAssembly.Instance(new WebAssembly.Module(loadWasmGz('bots') as BufferSource), {});
+        const inst = new WebAssembly.Instance(new WebAssembly.Module(botsTestWasm() as BufferSource), {});
         cached = inst.exports as unknown as RosterExports;
     }
     return cached;

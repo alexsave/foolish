@@ -26,7 +26,7 @@ import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
 import { LAYOUT_HASH } from '../../sdk/ts/gen/layout_hash.bots.ts';
 import { ServerTable, type TableExports } from '../../sdk/ts/table/server_table.ts';
 import { assertLayoutHash } from '../../sdk/ts/wasm/layout_hash.ts';
-import { loadWasmGz } from '../../sdk/ts/wasm/wasm_asset.ts';
+import { botsTestWasm } from './bots_test_wasm.ts';
 
 export const WAITING = L.GAME_STATUS_WAITING;
 export const PLAYING = L.GAME_STATUS_PLAYING;
@@ -53,9 +53,9 @@ interface FixtureExports extends TableExports {
 let kernel: { ex: FixtureExports; table: ServerTable } | null = null;
 function k(): { ex: FixtureExports; table: ServerTable } {
     if (!kernel) {
-        const inst = new WebAssembly.Instance(new WebAssembly.Module(loadWasmGz('bots') as BufferSource), {});
+        const inst = new WebAssembly.Instance(new WebAssembly.Module(botsTestWasm() as BufferSource), {});
         const ex = inst.exports as unknown as FixtureExports;
-        assertLayoutHash('bots.wasm', ex, LAYOUT_HASH, 'sdk/ts/gen/layout_hash.bots.ts');
+        assertLayoutHash('bots_test.wasm', ex, LAYOUT_HASH, 'sdk/ts/gen/layout_hash.bots.ts');
         ex.wasm_init();
         kernel = { ex, table: new ServerTable(ex) };
     }

@@ -105,6 +105,13 @@ jobs:
         working-directory: base
         run: npm install
 
+      # The head's benches play C tables sealed by the TEST bots module, which is
+      # never committed (e2e/helpers/bots_test_wasm.ts). A base that predates it
+      # still carries those exports in its shipped module and needs nothing.
+      - name: Build the test bots module (head)
+        working-directory: pr
+        run: bash scripts/ci_bots_test_wasm.sh
+
       - name: Collect base metrics
         working-directory: base
         run: node scripts/collect_metrics.mjs > "$GITHUB_WORKSPACE/base.json"

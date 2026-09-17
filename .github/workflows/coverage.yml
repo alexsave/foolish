@@ -114,6 +114,11 @@ jobs:
       # headless in CI. It only exercises the un-gated Lobby.tsx (the gate scopes
       # are the server _shared logic + the client move rules), so excluding it
       # keeps the gate stable without affecting the measured thresholds.
+      # The TEST bots module (shipped bots.wasm + test-only exports) is never
+      # committed: the fixture and roster helpers load c/build/bots_test.wasm.
+      - name: Build the test bots module
+        run: bash scripts/ci_bots_test_wasm.sh
+
       - name: Run e2e suite under V8 coverage
         run: npm run coverage:e2e
 
