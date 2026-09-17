@@ -3,6 +3,8 @@
 # this backend only adds a socket + an in-memory store. See README.md.
 
 KDIR   := ../../../c
+# A bare `make` builds the server (README.md), not the first rule below.
+.DEFAULT_GOAL := foolish_server
 UNAME  := $(shell uname)
 CFLAGS ?= -O2 -ffast-math -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations \
           -I$(KDIR)/src -DACCELERATE_NEW_LAPACK -DCD_LEAFBOOK
