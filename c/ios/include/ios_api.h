@@ -575,6 +575,11 @@ int fio_covered_sweep_accepts(int paired, const uint8_t *pre, int n_pre,
 #define FIO_SHOWN_SWEEP     1
 #define FIO_SHOWN_PENDING   2
 int fio_shown_table(int n_live, int n_sweep, int n_pending, int *out_sweeping);
+// `fio_shown_table` given the rows (2 bytes per battle, as `fio_table_covers`),
+// with the kernel's hold for cards leaving a table that stays - see
+// anim_shown_table_rows.
+int fio_shown_table_rows(const uint8_t *live, int n_live, const uint8_t *sweep, int n_sweep,
+                         int n_pending, int hold_leaving, int *out_sweeping);
 
 // The end screen's order: rank 1 is the first player out, the fool takes the
 // last place. `elimination` is first-out first and excludes the fool;

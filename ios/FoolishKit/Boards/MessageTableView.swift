@@ -3904,8 +3904,11 @@ public struct MessageTableView: View {
                 withAnimation(.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)) {
                     self.animator.openSlots(flyIds)
                 }
-                // Lift the table copies: snap them hidden (no fade) as the flight starts.
-                self.sweptFlownIds.formUnion(flyIds)
+                // Lift the table copies: snap them hidden (no fade) as the flight
+                // starts. With the kernel's hold the held table itself is let go
+                // in the builder below, in the turn the flight is handed over;
+                // hiding them HERE hid them for as long as `playStep` polled.
+                if !UndoFlightSource.holdsLeaving { self.sweptFlownIds.formUnion(flyIds) }
                 await playStep { lastChance in
                     let laid = self.laidOutHandNow(new)
                     var flights: [Flight] = []
@@ -3929,6 +3932,9 @@ public struct MessageTableView: View {
                         flights.append(Flight(id: "undo-\(c.identity)", card: c, from: from, to: to,
                                               revert: isConflict))
                     }
+                    // The same turn `playStep` gives these to the animator: the
+                    // table lets go of the cards as their ghosts appear.
+                    if UndoFlightSource.holdsLeaving, !flights.isEmpty { self.dropSweep() }
                     return flights.isEmpty ? (lastChance ? [] : nil) : flights
                 }
             }
@@ -4459,7 +4465,7 @@ public struct MessageTableView: View {
     static func gridRow(live: [BattleView], held: [BattleView]?,
                         sweep: [BattleView], pending: [BattleView])
         -> (shown: [BattleView], sweeping: Bool) {
-        PreBoutTable.shownTable(live: held ?? live, sweep: sweep, pending: pending)
+        PreBoutTable.shownTable(live: held ?? live, sweep: sweep, pending: pending, holdLeaving: UndoFlightSource.holdsLeaving)
     }
 
     /// note 4: an approximate source rect for a pickup/discard flight replayed

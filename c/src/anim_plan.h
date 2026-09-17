@@ -1045,6 +1045,14 @@ int anim_covered_sweep_accepts(int paired,
 #define ANIM_SHOWN_SWEEP     1
 #define ANIM_SHOWN_PENDING   2
 int anim_shown_table(int n_live, int n_sweep, int n_pending, int *out_sweeping);
+// The same choice, given the rows. With `hold_leaving` set, a sweep that holds
+// every card of a non-empty live table AND at least one more is cards on their
+// way OFF a table that stays (an undone throw-in or cover, a retraction), and
+// the sweep is drawn - as a sweep, so each card is hidden by its own flight
+// rather than by the live veil. `hold_leaving` 0 is `anim_shown_table`.
+int anim_shown_table_rows(const unsigned char *live, int n_live,
+                          const unsigned char *sweep, int n_sweep,
+                          int n_pending, int hold_leaving, int *out_sweeping);
 
 // ---- the end screen ----
 

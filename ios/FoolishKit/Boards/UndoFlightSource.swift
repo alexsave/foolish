@@ -43,4 +43,20 @@ public enum UndoFlightSource {
         return ownSlotByDefault
         #endif
     }
+
+    /// THE UNDONE CARD STAYS ON THE TABLE UNTIL ITS FLIGHT EXISTS. The grid
+    /// asks the kernel to draw a sweep that holds every live card and more
+    /// (`anim_shown_table_rows`), and `flyUndoReturn` lets it go in the turn it
+    /// hands the animator the flight - the way every other flight hides its
+    /// table copy. See UndoHoldsTableTests. Ships on; `undo.holdtable=0` in
+    /// `dev.flags` puts back the ~90ms gap.
+    public static let holdsLeavingByDefault = true
+
+    public static var holdsLeaving: Bool {
+        #if DEBUG || SOLO_TESTING
+        return MessageDevBoard.flag("undo.holdtable", shipping: holdsLeavingByDefault)
+        #else
+        return holdsLeavingByDefault
+        #endif
+    }
 }

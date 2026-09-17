@@ -169,6 +169,27 @@ public extension PreBoutTable {
     /// board has not started (which exists only because an arrival publishes its
     /// view a paint before anything sets the sweep).
     static func shownTable(live: [BattleView], sweep: [BattleView],
+                           pending: [BattleView], holdLeaving: Bool) -> (shown: [BattleView], sweeping: Bool) {
+        // The same three sources, given as ROWS, so the kernel can see a card
+        // leaving a table that stays (anim_shown_table_rows) - see
+        // UndoHoldsTableTests for the undo that lost its card for 90ms.
+        var sweeping: Int32 = 0
+        let l = wire(live), w = wire(sweep)
+        let which = l.withUnsafeBufferPointer { lp in
+            w.withUnsafeBufferPointer { wp in
+                fio_shown_table_rows(lp.baseAddress, Int32(live.count), wp.baseAddress, Int32(sweep.count),
+                                     Int32(pending.count), holdLeaving ? 1 : 0, &sweeping)
+            }
+        }
+        switch which {
+        case FIO_SHOWN_LIVE:    return (live, sweeping != 0)
+        case FIO_SHOWN_SWEEP:   return (sweep, sweeping != 0)
+        case FIO_SHOWN_PENDING: return (pending, sweeping != 0)
+        default:                return ([], false)
+        }
+    }
+
+    static func shownTable(live: [BattleView], sweep: [BattleView],
                            pending: [BattleView]) -> (shown: [BattleView], sweeping: Bool) {
         var sweeping: Int32 = 0
         let which = fio_shown_table(Int32(live.count), Int32(sweep.count),

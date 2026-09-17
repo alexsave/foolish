@@ -163,6 +163,12 @@ The table under a sweep, and the end screen:
 - `anim_shown_table(n_live, n_sweep, n_pending, out_sweeping)` - which of the
   three tables the grid paints. It turns on emptiness alone, so the tables never
   cross.
+- `anim_shown_table_rows(live, n_live, sweep, n_sweep, n_pending, hold_leaving,
+  out_sweeping)` - the same choice given the rows. With `hold_leaving`, a sweep
+  that holds every card of a non-empty live table and more (an undone throw-in or
+  cover, a retraction) is drawn as a sweep, so a card leaving a table that stays
+  is hidden by its own flight, not a paint after the undo. iOS flag
+  `undo.holdtable`, shipping on.
 - `anim_finish_rows(elimination, game_over, n_players, my_seat, out, cap)` - rank
   1 is the first player out, the fool takes the last place, and that place is the
   SEAT count rather than the row count. Names are not here; identity lives in the

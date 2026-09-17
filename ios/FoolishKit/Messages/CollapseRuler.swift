@@ -256,6 +256,7 @@ public extension View {
                     CollapseRuler.opponentSquareColour
                         .frame(width: CollapseRuler.squareSide, height: CollapseRuler.squareSide)
                         .allowsHitTesting(false)
+                        .zIndex(1_000)   // owner: "the little squares should have high z indexes"
                 }
             }
             // ABOVE THE DECK AND THE DISCARD, which are drawn after these two in
@@ -284,6 +285,7 @@ public extension View {
                 CollapseRuler.tableSquareColour(index)
                     .frame(width: CollapseRuler.squareSide, height: CollapseRuler.squareSide)
                     .allowsHitTesting(false)
+                    .zIndex(1_000)   // owner: "the little squares should have high z indexes"
             }
         } else {
             self
@@ -307,6 +309,7 @@ public extension View {
                 CollapseRuler.flightSquareColour
                     .frame(width: CollapseRuler.squareSide, height: CollapseRuler.squareSide)
                     .allowsHitTesting(false)
+                    .zIndex(1_000)   // owner: "the little squares should have high z indexes"
             }
         } else {
             self

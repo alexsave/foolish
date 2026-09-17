@@ -1201,6 +1201,26 @@ int anim_shown_table(int n_live, int n_sweep, int n_pending, int *out_sweeping) 
     return which;
 }
 
+int anim_shown_table_rows(const unsigned char *live, int n_live,
+                          const unsigned char *sweep, int n_sweep,
+                          int n_pending, int hold_leaving, int *out_sweeping) {
+    // CARDS LEAVING A TABLE THAT STAYS. By the counts alone a non-empty live
+    // table always wins, which is right for a new bout arriving over the last
+    // one's sweep and wrong for an undo: the live table is the old one MINUS
+    // the undone card, so the card vanished from the grid a paint after the
+    // undo and ~90ms before its flight home existed. A sweep that holds every
+    // live card and more is exactly that shape - and nothing else is: the last
+    // bout's sweep shares no card with a new table, an identical table leaves
+    // nothing, and a table gaining cards is not covered by the smaller one.
+    if (hold_leaving && n_pending <= 0 && n_live > 0 && n_sweep > 0
+        && anim_table_covers(sweep, n_sweep, live, n_live) == 1
+        && anim_table_card_ids(sweep, n_sweep) != anim_table_card_ids(live, n_live)) {
+        if (out_sweeping) *out_sweeping = 1;
+        return ANIM_SHOWN_SWEEP;
+    }
+    return anim_shown_table(n_live, n_sweep, n_pending, out_sweeping);
+}
+
 int anim_finish_rows(const unsigned char *elimination, int n_elim,
                      int game_over, int n_players, int my_seat,
                      AnimFinishRow *out, int cap) {
