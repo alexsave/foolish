@@ -28,6 +28,9 @@ import { fixture, fixtureTable, GAME_OVER, IDLE } from './helpers/table_fixture.
 import { seedTable } from './helpers/table_db.ts';
 import { legalMoves, mustReadTable } from './helpers/table_play.ts';
 import { runAction, runMeta, seedLobby } from './helpers/table_server.ts';
+import { __botCycle } from '../server/impls/supabase/functions/_shared/adapter/bot_actions.ts';
+import { serverTable } from '../sdk/ts/table/server_table.ts';
+import { parseBeliefProbe } from '../sdk/ts/wasm/bots.ts';
 import { ACTION_STATUS, AWIRE_KIND } from '../sdk/ts/wire/awire.ts';
 import { suiteRng } from './helpers/rng.ts';
 
@@ -142,6 +145,60 @@ test('a real move recovers from a concurrent write the same way', async () => {
   assert.equal(await dbVersion(id), t0.version + 2);
 });
 
+test('a bot cycle that loses its commit replays the moves it already chose instead of searching again', async () => {
+  // A human and a cordite bot on a pinned deal.
+  const id = `rb${uuid().slice(0, 6)}`;
+  const human = uuid(), bot = uuid();
+  await seedLobby(id, [{ id: human, name: 'H0', ready: false }, { id: bot, name: 'B0', brain: 'cordite' }]);
+  __setTableDealSeedOverride(Uint8Array.from({ length: 32 }, (_, i) => (i * 53 + 11) & 0xff));
+  await runMeta(id, human, { type: 'start' });
+
+  const cols = 'state, roster, status, needs_bots, version, round_epoch, game_seed, logs_packed';
+  const snapshot = async () => (await pgPool.query(`SELECT ${cols} FROM games WHERE id = $1`, [id])).rows[0];
+  const restore = async (r: Record<string, unknown>) => {
+    await pgPool.query(
+      `UPDATE games SET state = $2, roster = $3, status = $4, needs_bots = $5, version = $6, round_epoch = $7, game_seed = $8, logs_packed = $9 WHERE id = $1`,
+      [id, r.state, r.roster, r.status, r.needs_bots, r.version, r.round_epoch, r.game_seed, r.logs_packed]);
+    __clearGameCache();
+  };
+
+  // Every decision the drive SEARCHES for is recorded by the kernel's probe on the
+  // server's table instance; a move replayed from the lost attempt searches nothing.
+  const table = await serverTable();
+  const cycle = async (stompFirst: boolean) => {
+    table.__beliefProbeReset();
+    const commits = await withStomp(id, (call) => stompFirst && call === 1, () => __botCycle(id));
+    const dump = table.__beliefProbeDump();
+    const searches = parseBeliefProbe(dump.bytes, dump.n).map((r) => `${r.seat}:${r.nLogs}:${[...r.cards].sort().join(',')}`);
+    const after = (await pgPool.query('SELECT state, logs_packed, version FROM games WHERE id = $1', [id])).rows[0];
+    return { commits, searches, after };
+  };
+
+  // The first cycle in which the bot has a move to make, run cleanly: the human
+  // moves until then.
+  let before = await snapshot();
+  let clean = await cycle(false);
+  for (let step = 0; clean.commits === 0 && step < 40; step++) {
+    const mv = legalMoves(await mustReadTable(id), (s) => s.id === human)[0];
+    assert.ok(mv, `fixture: the human can move while the bot has none (step ${step})`);
+    assert.equal((await runAction(id, human, mv)).status, ACTION_STATUS.APPLIED);
+    before = await snapshot();
+    clean = await cycle(false);
+  }
+  assert.equal(clean.commits, 1, 'fixture: a bot cycle committed');
+  assert.ok(clean.searches.length > 0, 'the bot searched for its move');
+
+  // The same cycle again from the same row, now losing its first commit.
+  await restore(before);
+  const retried = await cycle(true);
+  assert.equal(retried.commits, 2, 'the first commit lost to a concurrent writer, the retry landed');
+  assert.deepEqual(retried.searches, clean.searches,
+    'the retry searched nothing: every decision of the cycle was searched once, by the attempt that lost');
+  assert.equal(retried.after.state, clean.after.state, 'and the retry committed the same moves');
+  assert.equal(retried.after.logs_packed.length, clean.after.logs_packed.length, 'the same number of log records');
+  assert.equal(Number(retried.after.version), Number(clean.after.version) + 1, 'one extra version: the injected writer');
+});
+
 test('runTableOp gives up cleanly under sustained contention (bounded, no hang)', async () => {
   const { id } = await startedGame();
   const ran = { n: 0 };
@@ -223,4 +280,26 @@ test('a full game commits GAME_OVER and lands its end-of-game side effects (ELO 
     `at least one bot rating moved off the default (seed=${rng.seed})`);
   assert.ok(elos.every((r: { games_played: number }) => r.games_played === 1),
     `every bot recorded exactly one played game (seed=${rng.seed})`);
+});
+
+test('a rating never goes below zero: a loser already at 0 stays at 0, the winner still gains', async () => {
+  const id = `rz${uuid().slice(0, 6)}`;
+  const b0 = uuid(), b1 = uuid();
+  await seedLobby(id, [{ id: b0, name: 'B0', brain: 'random' }, { id: b1, name: 'B1', brain: 'random' }]);
+  await pgPool.query('UPDATE bots SET elo_rating = 0, previous_elo = 0 WHERE id = ANY($1::uuid[])', [[b0, b1]]);
+  __setTableDealSeedOverride(Uint8Array.from({ length: 32 }, (_, i) => (i * 71 + 5) & 0xff));
+  await runMeta(id, b0, { type: 'start' });
+  for (let step = 0; step < 400; step++) {
+    const t = await mustReadTable(id);
+    if (t.status !== L.GAME_STATUS_PLAYING) break;
+    const mv = legalMoves(t)[0];
+    assert.ok(mv, `fixture: somebody can move (step ${step})`);
+    await runAction(id, mv.playerId, mv);
+  }
+  assert.equal((await mustReadTable(id)).statusColumn, 'game_over', 'fixture: the game ended');
+
+  const rows = (await pgPool.query('SELECT elo_rating, previous_elo, games_played FROM bots ORDER BY elo_rating')).rows;
+  assert.deepEqual(rows.map((r) => [r.previous_elo, r.games_played]), [[0, 1], [0, 1]], 'both bots were rated from 0 for this game');
+  assert.equal(rows[0].elo_rating, 0, 'the loser, at 0 already, is held at 0 instead of going negative');
+  assert.ok(rows[1].elo_rating > 0, `the winner still gains (${rows[1].elo_rating})`);
 });

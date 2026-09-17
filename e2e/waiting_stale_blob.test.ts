@@ -29,6 +29,7 @@ import { fixture, fixtureTable } from './helpers/table_fixture.ts';
 import { mustReadTable } from './helpers/table_play.ts';
 import { playToEnd, runMeta, seedLobby } from './helpers/table_server.ts';
 import { suiteRng } from './helpers/rng.ts';
+import { supabaseClient } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
@@ -37,15 +38,31 @@ const rng = suiteRng('waiting_stale_blob');
 interface Rematch { gameId: string; humans: string[]; finishedState: Uint8Array }
 
 // Deal, play to GAME_OVER, `continue`. Returns the blob the finished game
-// carried: the exact bytes that must not reach the lobby.
-async function finishedThenContinued(): Promise<Rematch> {
+// carried: the exact bytes that must not reach the lobby. With `snapshotFails`,
+// the end of the game cannot store its replay snapshot, so the finished
+// session's log is kept as its record (finalize.ts) and is still in the row
+// when `continue` runs; otherwise finalize has already retired it.
+async function finishedThenContinued(opts: { snapshotFails?: boolean } = {}): Promise<Rematch> {
     const gameId = `w${uuid().slice(0, 5)}`;
     const humans = [uuid(), uuid()];
     await seedLobby(gameId, humans.map((id, i) => ({ id, name: `H${i}`, ready: i > 0 })));
     await runMeta(gameId, humans[0], { type: 'start' });
-    const done = await playToEnd(gameId, { pick: (m) => rng.pick(m) });
+    const client = supabaseClient as unknown as { from: (table: string) => unknown };
+    const from = client.from;
+    if (opts.snapshotFails) {
+        client.from = (table: string) => (table === 'game_snapshots'
+            ? { insert: async () => ({ data: null, error: { message: 'injected: the snapshot store is down' } }) }
+            : from.call(client, table));
+    }
+    let done;
+    try {
+        done = await playToEnd(gameId, { pick: (m) => rng.pick(m) });
+    } finally {
+        client.from = from;
+    }
     assert.equal(done.statusColumn, 'game_over', `game played to completion (seed=${rng.seed})`);
     assert.ok(done.seats.some((s) => s.hand.length > 0), 'the finished board really holds cards (the fool\'s hand), so a leak is visible');
+    if (opts.snapshotFails) assert.notEqual((await mustReadTable(gameId)).logsPacked, '', 'fixture: the finished session\'s log is still in the row');
     await runMeta(gameId, humans[0], { type: 'continue' });
     return { gameId, humans, finishedState: done.state };
 }
@@ -68,6 +85,15 @@ if (!process.env.VALIDATION_ONLY) {
         const { rows } = await pgPool.query('SELECT game_seed, logs_packed FROM games WHERE id=$1', [gameId]);
         assert.equal(rows[0].game_seed, null, 'no deal seed survives into the lobby');
         assert.equal(rows[0].logs_packed, '', 'no session log survives into the lobby');
+    });
+
+    test('continue clears a finished session\'s log that its replay snapshot never retired', async () => {
+        const { gameId } = await finishedThenContinued({ snapshotFails: true });
+        const { rows } = await pgPool.query('SELECT status, game_seed, logs_packed, round_epoch FROM games WHERE id=$1', [gameId]);
+        assert.equal(rows[0].status, 'waiting');
+        assert.equal(rows[0].logs_packed, '', 'the finished session\'s log does not survive into the lobby');
+        assert.equal(rows[0].game_seed, null, 'nor its deal seed');
+        assert.equal(Number(rows[0].round_epoch), 0, 'and the lobby starts round 0');
     });
 
     test('the player_views and spectator_views rows the continue commit wrote are a clean lobby\'s envelopes', async () => {

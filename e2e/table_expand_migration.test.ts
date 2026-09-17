@@ -432,6 +432,21 @@ if (!process.env.VALIDATION_ONLY) {
         await legacyCommit("today's server still runs a lobby whose JSON held a round's goods, trump and discard", GOODS_LOBBY);   // a join
         const r = await assertInStep(GOODS_LOBBY, 'join a lobby that held goods');
         assert.deepEqual(r.players.map((p) => p.player_id), [ALICE, DMITRY]);
+
+        // And a legacy write that carries a round's board INTO the lobby (an old
+        // continue that never cleared it) is emptied on the way in, not only by the backfill.
+        await pgPool.query(
+            `UPDATE games SET players = players, good_players = jsonb_build_array($2::text), good_timestamp = 1726531200123,
+                              discard_pile_length = 7, flipped = '{"suit": 1, "value": 9}', power_suit = 1,
+                              table_battles = '[{"attack": {"suit": 1, "value": 9}}]', elimination_order = jsonb_build_array($2::text)
+             WHERE id = $1`, [GOODS_LOBBY, ALICE]);
+        const emptied = await pgPool.query(
+            `SELECT good_players, good_timestamp, discard_pile_length, flipped, power_suit, table_battles, elimination_order FROM games WHERE id = $1`,
+            [GOODS_LOBBY]);
+        assert.deepEqual(emptied.rows[0], {
+            good_players: [], good_timestamp: null, discard_pile_length: 0, flipped: null, power_suit: 0, table_battles: [], elimination_order: [],
+        }, 'the bridge empties a lobby\'s JSONB board on every legacy write');
+        await assertInStep(GOODS_LOBBY, 'a legacy write carrying a round\'s board into the lobby');
     });
 
     test('a username over 64 bytes still joins during the bridge, cut as the kernel cuts it', async () => {
@@ -453,6 +468,22 @@ if (!process.env.VALIDATION_ONLY) {
             const seat = r.players.findIndex((p) => p.player_id === v.player_id);
             assert.equal(hexOf(table.envelope(id, seat, Number(v.version)) as Uint8Array), v.view,
                 `${v.player_id}: the envelope today's server wrote (it trims names the same way)`);
+        }
+    });
+
+    test('a hand-run legacy write to a dealt row keeps needs_bots the JSONB predicate: bots IN, humans only, finished', async () => {
+        // The recorded handler calls only ever deal a game with a bot IN, so the
+        // other two answers of the predicate come from the other writer the bridge
+        // exists for: SQL run by hand against the JSONB roster.
+        const expected = new Map([
+            ['humans_2_mid_bout_good', false], ['mixed_4_after_pickup', true], ['bots_8_mid_game', true], ['finished', false],
+        ]);
+        for (const [key, needsBots] of expected) {
+            const id = idOf(key);
+            const { rowCount } = await pgPool.query('UPDATE games SET players = players WHERE id = $1 AND writer_gen = 1', [id]);
+            assert.equal(rowCount, 1, `${key}: still a legacy-owned row`);
+            const r = await assertInStep(id, `${key} after a hand-run write`);
+            assert.equal(r.needs_bots, needsBots, `${key}: needs_bots`);
         }
     });
 
