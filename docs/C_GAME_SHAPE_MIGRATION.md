@@ -1464,6 +1464,38 @@ Steps:
 4. Split the two big TSX files, which should be much smaller by then: `ReplayScreen.tsx` (829 code lines) into icons, inline cards, step messages, revealed hands, a playback hook, an oracle hook, the stage and the screen shell, with `mergeReplayHandOrder` going to C in step 2; then `AnimationContext.tsx`.
 5. Gate: all 19 animation traces and 16 DOM goldens re-recorded only where the kernel's timing intentionally differs, each diff justified; filmed before/after in Chrome at normal speed (never slow-mo); the web bundle measured.
 
+#### Phase 9 as built, part 1: the audit and the two kernel gaps (commits `50a3f831`, `546565fe`, `2233ee6b`)
+
+**Step 1 is done and is `docs/ANIM_TIMING_AUDIT.md`.**
+Every timing or ordering decision the web makes, with the code that makes it and whether C already answers it.
+Its findings, in short: the web's effective inter-step gap is 0 ms while `ANIM_GAP_MS` is 25; the count-freeze does not exist on the web at all (it commits each step's own board as that step's timer fires, so the first step's board is on screen from frame zero, the battle row included); an `out` event animates as its own 500 ms step of stillness; optimistic POLICY is in C and optimistic TIMING is not, and the board a move leaves rides a SECOND independent `ANIMATION_TIME` timer in `ServerContext` that is not coupled to the flight it is meant to follow; four hand-written variants of the refusal verdict exist against one `anim_conflict_verdict` that already buckets all of them; and the four queue-insertion branches at `AnimationContext.tsx:1074-1112` have no C counterpart at all, with `anim_conflict_reversal` REPLACING them under the standing rule that an incoming iMessage rule replaces the web rule it meets.
+
+**Step 2 landed the two kernel gaps that everything else depends on.**
+
+`anim_plan_at(plan, now_ms, &frame)` is the re-askable entry: a pure function of the plan and the clock, so a push landing mid-flight is answered by the next call rather than by editing the queue a timer chain is walking.
+`AnimFrame` carries everything the web holds in React state today - the step in flight and how far into it, how many have landed (which is the board to commit), the next deadline, the badges as of now, the cards still in the air.
+The clock is an argument; the kernel calls nothing.
+`AnimPlanStep` gains `reveals`, the dense-id bits that step lifts, because the whole-sequence `veil_ids` cannot answer "is this card still veiled at `now_ms`".
+`AnimPlan` grows 10,212 to 11,752 bytes of BSS, which costs the shipped wasm nothing.
+
+`anim_hand_laid_out_masked` is one rule for a hand with face-down slots, closing the hand-order divergence the iMessage work found.
+`ReplayScreen.tsx` is its first consumer: `mergeReplayHandOrder` and `handCardKey` are deleted.
+
+A Linux gcc build of `server/impls/native` is warning-clean now, each silence narrow and reasoned (`2233ee6b`).
+
+**Deliberately NOT exported to wasm yet:** the plan builder, the beats builder and `anim_plan_at`.
+A bridge with no caller is what `0cda5e85` deleted `wasm_anim_build_plan` for being, so they cross with step 3's consumer and not before.
+iOS already reaches the same C through `fio_anim_plan` and `fio_anim_beats`.
+
+**Steps 3, 4 and 5 are NOT done**, and are the remaining Phase 9 work:
+
+1. React consumes the frame: delete the serial `setTimeout` queue, `ANIMATION_TIME` as a timing source, every move-type branch in the animation path, and `optimisticPassState`.
+   This is where the plan, beats and frame entries get their wasm exports.
+2. Split `ReplayScreen.tsx` and `AnimationContext.tsx` under `src/replay/`.
+3. The gate: re-record only the traces and goldens the kernel's timing intentionally differs on, each diff justified frame by frame, and film before/after in Chrome at normal speed.
+
+The two behavioural diffs the gate will have to answer for are already known and written down in the audit: the 25 ms gap, and the reversal order replacing the four insertion branches.
+
 ### Phase 10: generated Swift bindings, and Swift off the wire formats
 
 About 1,250 code lines of Swift know byte layouts today and are kept in step with C by hand: `MessageEnvelope.swift` (382), `AnimPlanWire.swift` (167), `SurfacePlan.swift` (92), `PlayWire.swift` (89), `EvWire.swift` (88), `PackedAction.swift` (84), `MaskedView.swift` (67), `DecodedReplay.swift` (66), `MoveWire.swift` (65), `PackedGame.swift` (65), `RosterWire.swift` (51), `BotDriveWire.swift` (34).
