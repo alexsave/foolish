@@ -1712,13 +1712,8 @@ cmd_tween() {
   # silently stops working while everything else still reads fine.
   # 544 of 1320 is 41% of the frame: ffmpeg moves that much less, and so does
   # the reader.
-  ffmpeg -v error -ss "${FOOLISH_TWEEN_SS:-1.3}" -i "$d/take.mp4" \
-         -t "${FOOLISH_TWEEN_T:-2.2}" \
-         -vf "crop=${FOOLISH_TWEEN_CROP:-544}:ih:0:0" \
-         -fps_mode passthrough "$d/f%05d.ppm" 2>"$d/ffmpeg.err" || {
-    cat "$d/ffmpeg.err" >&2; return 1; }
-  ffprobe -v error -select_streams v:0 -show_entries frame=pts_time -of csv=p=0 \
-          "$d/take.mp4" | tr -d ',' > "$d/times.txt"
+  "$LIB/window.sh" "$d/take.mp4" "$d" "${FOOLISH_TWEEN_SS:-1.3}" \
+                   "${FOOLISH_TWEEN_T:-2.2}" "${FOOLISH_TWEEN_CROP:-544}" || return 1
   tp "extract frames" "$ph"; ph=$(date +%s.%N)
   python3 "$LIB/tween.py" "$d" --csv "$d/edge.csv" --quiet
   tp "measure" "$ph"

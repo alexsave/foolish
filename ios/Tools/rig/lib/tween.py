@@ -167,6 +167,23 @@ def read_frame(p):
     return out
 
 
+def frame_times(take, n):
+    """One presentation time per extracted frame, in the movie's seconds."""
+    # One line per frame, written by the run that wrote the frames
+    # (lib/window.sh). Anything else is refused rather than lined up: this used
+    # to take a WHOLE movie's times and align them to the window from the end,
+    # which placed every frame of every tween ~315ms late.
+    tp = os.path.join(take, "times.txt")
+    if not os.path.exists(tp):
+        sys.exit("no times.txt in %s - extract with lib/window.sh" % take)
+    with open(tp) as fh:
+        times = [float(l) for l in fh if l.strip()]
+    if len(times) != n:
+        sys.exit("%s: %d times for %d frames - re-extract with lib/window.sh"
+                 % (tp, len(times), n))
+    return times
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("take"); ap.add_argument("--csv"); ap.add_argument("--quiet", action="store_true")
@@ -178,13 +195,7 @@ def main():
         or sorted(glob.glob(os.path.join(a.take, "f*.png")))
     if not frames:
         print("no frames in %s" % a.take, file=sys.stderr); sys.exit(1)
-    tp = os.path.join(a.take, "times.txt")
-    times = [float(l) for l in open(tp)] if os.path.exists(tp) else []
-    # `ffprobe` timed the WHOLE movie while the frames may be a window of it
-    # (cmd_tween skips the still lead), so align from the END - the last frame
-    # is the last frame either way.
-    if len(times) > len(frames):
-        times = times[len(times) - len(frames):]
+    times = frame_times(a.take, len(frames))
 
     # A take is hundreds of full-resolution PNGs and the decode is the whole
     # cost, so decode them in parallel - it is the one part of this that is
@@ -193,8 +204,7 @@ def main():
         ms = pool.map(read_frame, frames, chunksize=8)
     rows = []
     for i, m in enumerate(ms):
-        t = times[i] if i < len(times) else (times[-1] if times else i / 60.0)
-        rows.append((i + 1, t, m))
+        rows.append((i + 1, times[i], m))
     off = [r for r in rows if r[2] and r[2].get("offscreen")]
     topoff = [r for r in rows if r[2] and r[2].get("topoff")]
     seen = [r for r in rows if r[2] and "h_pt" in r[2]]

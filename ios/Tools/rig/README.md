@@ -268,6 +268,12 @@ game screen's black name field reports 739 for a drawer whose edge is 584).
   silently does nothing.
 - **`local a=$1 b=$((a*2))` does not work in bash** - every word on a `local`
   line is expanded before any of them is assigned.
+- **A window's frames need the window's times.** `tween` measures a slice of
+  the movie, and lining the whole movie's timestamps up with it from the end put
+  every frame ~315ms late and stretched a 0.77s collapse to 1.0s. `lib/window.sh`
+  logs each frame's time from the run that writes it, and `tween.py` refuses a
+  `times.txt` that does not match its frames. `python3 lib/test_window.py`
+  checks it against a movie whose frames draw their own index.
 
 ## Output rules
 
