@@ -67,7 +67,7 @@ import { settle, tokenFor, postJson, postPacked, EdgeResponse } from './helpers/
 import { lockedBotLoop } from '../server/impls/supabase/functions/_shared/adapter/bot_actions.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
-import { loadWasmGz } from '../sdk/ts/wasm/wasm_asset.ts';
+import { botsTestWasm } from './helpers/bots_test_wasm.ts';
 import { encodeActionRequest, wireCard } from '../sdk/ts/wire/awire.ts';
 import { readEnvelopeView, readPushSequence } from './helpers/client_read.ts';
 import { cRosterTrailerRead } from './helpers/roster_kernel.ts';
@@ -89,7 +89,8 @@ const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 const hexToBytes = (h: string) => Uint8Array.from(Buffer.from(h.replace(/^\\x/, ''), 'hex'));
 
 // ---- the kernel's masked importer, in its own instance ------------------------
-// A separate bots.wasm instance, so probing a payload never disturbs the game the
+// A separate instance of the test build of bots.wasm (every shipped export plus the
+// engine probes this needs, same C and layout hash), so probing a payload never disturbs the game the
 // server's instance holds resident.
 interface ProbeExports {
     memory: WebAssembly.Memory;
@@ -97,7 +98,7 @@ interface ProbeExports {
     wasm_import_state(masked: number): number;
     wasm_view_serialize(viewer: number): number;
 }
-const probe = new WebAssembly.Instance(new WebAssembly.Module(loadWasmGz('bots') as BufferSource), {}).exports as unknown as ProbeExports;
+const probe = new WebAssembly.Instance(new WebAssembly.Module(botsTestWasm() as BufferSource), {}).exports as unknown as ProbeExports;
 probe.wasm_init();
 
 /** The board, imported MASKED and re-serialized for the same viewer. */
