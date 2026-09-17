@@ -50,6 +50,7 @@ import {
     encodePackedRoster, decodePackedRoster, encodeRosterNames, rosterNameBytes,
     PackedRoster,
 } from '../sdk/ts/wire/roster.ts';
+import { RosterTable, cRosterTrailer, tsRosterFor } from './helpers/roster_kernel.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
@@ -454,6 +455,54 @@ test('Swift and TypeScript agree on the trim, byte for byte', { skip: !hasSwift 
         assert.deepEqual(got.players, mine.players,
                          `Swift and TS disagree about ${JSON.stringify(name)}`);
         assert.equal(got.players[1].name, 'Bob', 'the trim desynchronized the seat after it');
+    }
+});
+
+// ===========================================================================
+// 5. The C writer (c/src/roster.c) through the same REAL Swift decoder
+// ===========================================================================
+//
+// The C Roster takes the trailer over from encodePackedRoster (docs/
+// C_GAME_SHAPE_MIGRATION.md Phase 2, 4b). Shipped iOS builds cannot be updated
+// with it, so what C writes has to read in the installed EnvelopeRoster.decode
+// exactly as the TS bytes do. e2e/roster_c_parity.test.ts holds C to TS byte for
+// byte; this closes the loop through the decoder that actually ships.
+
+const C_TABLES: RosterTable[] = [
+    ...ROSTERS.map((r): RosterTable => ({
+        gid: r.id, title: r.name, status: ['waiting', 'playing', 'game_over'].indexOf(r.status),
+        goodMask: r.players.reduce((m, p, i) => m | (r.good_players.includes(p.player_id) ? 1 << i : 0), 0),
+        seats: r.players.map(p => ({ id: p.player_id, name: p.name, brain: p.is_ai ? 'cordite' : '' })),
+    })),
+    ...OVER_BUDGET.map((name, k): RosterTable => ({
+        gid: `g-${k}`, title: 'n', status: 1, goodMask: 0b10,
+        seats: [{ id: 'p', name, brain: '' }, { id: 'q', name: 'Bob', brain: 'random' }],
+    })),
+    {
+        gid: '00000000-0000-4000-8000-0000000000aa', title: '🎴'.repeat(50), status: 2, goodMask: 0b10100101,
+        seats: Array.from({ length: 8 }, (_, i) => ({
+            id: `00000000-0000-4000-8000-00000000000${i}`, name: OVER_BUDGET[i % OVER_BUDGET.length],
+            brain: i % 3 === 0 ? 'octogen' : '',
+        })),
+    },
+    { gid: 'empty', title: '', status: 0, goodMask: 0, seats: [] },
+];
+
+test('the REAL Swift decoder reads C-written trailers exactly as it reads TS-written ones', { skip: !hasSwift && 'no swiftc on this machine' }, () => {
+    for (const table of C_TABLES) {
+        const c = cRosterTrailer(table);
+        assert.ok(c instanceof Uint8Array, `${table.gid}: C refused the table with ${c}`);
+        const fromC = swiftDecode(c);
+        assert.equal(fromC.next, c.length, `${table.gid}: Swift stopped short of the end of C's trailer`);
+        assert.equal(fromC.id, table.gid);
+        assert.equal(fromC.status, table.status);
+        assert.equal(fromC.players.length, table.seats.length);
+        fromC.players.forEach((p: { name: string; player_id: string; is_ai: boolean }, i: number) => {
+            assert.ok(table.seats[i].name.startsWith(p.name), `${table.gid}: seat ${i}'s name is not a prefix`);
+            assert.equal(p.is_ai, table.seats[i].brain !== '', `${table.gid}: seat ${i}'s is_ai`);
+        });
+        assert.deepEqual(fromC, swiftDecode(encodePackedRoster(tsRosterFor(table))),
+                         `${table.gid}: Swift reads C's trailer differently from TS's`);
     }
 });
 
