@@ -23,7 +23,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { Card } from '../server/api/core/types.ts';
+import type { ViewCard as Card } from '../src/state/view';
 import { createCardEventString, getCardKey, getTableCards } from '../src/utils/animationUtils';
 import { staleOptimisticKeysOnTable } from '../src/state/optimisticAnimation';
 import { optimisticBoard } from '../src/state/clientBoards';

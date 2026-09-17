@@ -29,13 +29,13 @@ import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import type { PersonalGame } from '../server/api/core/types.ts';
+import { isCard } from '../src/state/view.ts';
 import { fixture, fixtureTable, GAME_OVER, IDLE, READY, type TableFixture } from './helpers/table_fixture.ts';
 import { legalMoves, residentBoard, type BoardState, type PlayCard } from './helpers/table_play.ts';
 import { runMeta, seedLobby } from './helpers/table_server.ts';
 import { suiteRng } from './helpers/rng.ts';
 import { encodeAction, decodeAction, encodeActionRequest, decodeActionRequest, encodeActionResponse, decodeActionResponse, ACTION_STATUS } from '../sdk/ts/wire/awire.ts';
-import { decodeEnvelope, readEnvelopeView } from './helpers/client_read.ts';
+import { readEnvelopeView } from './helpers/client_read.ts';
 import { clientTable } from '../sdk/ts/table/client_table.ts';
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';
 
@@ -76,17 +76,7 @@ function boardOf(gameId: string, fx: TableFixture): BoardState {
   return residentBoard(gameId, fx.state, fx.roster);
 }
 
-/** The envelope the kernel serves `seat` (-1: a spectator) of `fx`, decoded by the client decoder. */
-function served(gameId: string, fx: TableFixture, seat: number, version: number) {
-  assert.equal(fixtureTable().load(fx.state, fx.roster), L.TABLE_OK, 'table loads');
-  const env = fixtureTable().envelope(gameId, seat, version);
-  if (typeof env === 'number') throw new Error(`envelope refused (${env})`);
-  const decoded = decodeEnvelope(env);
-  assert.ok(decoded, 'the envelope decodes');
-  return decoded!;
-}
-
-/** The same envelope as the board the web holds (what the guards gate reads). */
+/** The envelope the kernel serves `seat` (-1: a spectator) of `fx`, as the board the web holds (what the guards gate reads). */
 function servedView(gameId: string, fx: TableFixture, seat: number, version: number) {
   assert.equal(fixtureTable().load(fx.state, fx.roster), L.TABLE_OK, 'table loads');
   const env = fixtureTable().envelope(gameId, seat, version);
@@ -199,45 +189,46 @@ test('the kernel envelope of every seat and a spectator decodes to its view of t
   const board = boardOf(gameId, fx);
   assert.equal(board.status, L.GAME_STATUS_PLAYING, 'still in play');
   board.seats.forEach((s, seat) => {
-    const d = served(gameId, fx, seat, 7);
-    const got = d.game as PersonalGame;
-    assert.equal(d.version, 7, 'envelope version');
-    assert.equal(d.seat, seat, 'envelope seat');
-    sameCards(got.self.hand, s.hand);
-    assert.deepEqual(got.players.map((p) => [p.player_id, p.name, p.hand_length, p.is_ai]),
+    const got = servedView(gameId, fx, seat, 7);
+    assert.equal(got.version, 7, 'envelope version');
+    assert.equal(got.mySeat, seat, 'envelope seat');
+    sameCards(got.myHand, s.hand);
+    assert.deepEqual(got.seats.map((p) => [p.id, p.name, p.handCount, p.isAi]),
       board.seats.map((x) => [x.id, x.name, x.hand.length, x.brain !== '']), 'public players');
-    assert.equal(got.table_battles.length, board.battles.length, 'battle count');
-    got.table_battles.forEach((b, i) => {
+    assert.equal(got.battles.length, board.battles.length, 'battle count');
+    got.battles.forEach((b, i) => {
       sameCards([b.attack], [board.battles[i].attack]);
-      sameCards(b.defense ? [b.defense] : [], board.battles[i].defense ? [board.battles[i].defense!] : []);
+      sameCards(isCard(b.defense) ? [b.defense] : [], board.battles[i].defense ? [board.battles[i].defense!] : []);
     });
-    assert.equal(got.deck_length, board.deckCount, 'deck length');
+    assert.equal(got.deckCount, board.deckCount, 'deck length');
     assert.equal(got.defender, board.defender, 'defender');
-    assert.equal(got.first_attacker, board.firstAttacker, 'first attacker');
-    assert.equal(got.status, 'playing');
+    assert.equal(got.firstAttacker, board.firstAttacker, 'first attacker');
+    assert.equal(got.status, L.GAME_STATUS_PLAYING);
   });
-  const spec = served(gameId, fx, -1, 7);
-  assert.equal(spec.seat, -1, 'spectator envelope');
-  assert.ok(!(spec.game as PersonalGame).self, 'a spectator is served no hand');
-  assert.deepEqual(spec.game.players.map((p) => p.hand_length), board.seats.map((s) => s.hand.length), 'but every count');
+  const spec = servedView(gameId, fx, -1, 7);
+  assert.equal(spec.mySeat, -1, 'spectator envelope');
+  assert.deepEqual(spec.myHand, [], 'a spectator is served no hand');
+  assert.deepEqual(spec.seats.map((p) => p.handCount), board.seats.map((s) => s.hand.length), 'but every count');
 
   // (b) A lobby, and (c) a finished game: every viewer reads the table the kernel
   // holds, with no card anywhere.
   const lobby = fixture().title('lobby').seats([{ id: ids[0], name: 'H1' }, { id: ids[1], name: 'B2', brain: 'random' }]).build();
   const over = fixture().title('over').seats([{ id: ids[0], name: 'H1' }, { id: ids[1], name: 'B2', brain: 'random' }])
     .status(GAME_OVER).eliminated(0).discard(36).seatStatus(0, IDLE).seatStatus(1, READY).build();
-  for (const [label, row, status] of [['lobby', lobby, 'waiting'], ['finished', over, 'game_over']] as const) {
+  for (const [label, row, status] of [['lobby', lobby, L.GAME_STATUS_WAITING], ['finished', over, L.GAME_STATUS_GAME_OVER]] as const) {
     const b = boardOf(label, row);
+    // The builder's statuses: a human IDLE, a bot READY, in both tables.
+    assert.deepEqual(b.seats.map((s) => s.status), [IDLE, READY], `${label}: the fixture's seat statuses`);
     for (const seat of [0, 1, -1]) {
-      const d = served(label, row, seat, 3);
-      assert.equal(d.seat, seat, `${label}: envelope seat ${seat}`);
-      assert.equal(d.game.status, status, `${label}: status`);
-      assert.equal(d.game.name, b.title, `${label}: title`);
-      assert.deepEqual(d.game.players.map((p) => [p.player_id, p.name, p.status, p.hand_length, p.is_ai]),
-        b.seats.map((s) => [s.id, s.name, s.status === READY ? 'ready' : s.status === IDLE ? 'idle' : String(s.status), 0, s.brain !== '']),
+      const d = servedView(label, row, seat, 3);
+      assert.equal(d.mySeat, seat, `${label}: envelope seat ${seat}`);
+      assert.equal(d.status, status, `${label}: status`);
+      assert.equal(d.title, b.title, `${label}: title`);
+      assert.deepEqual(d.seats.map((p) => [p.id, p.name, p.status, p.handCount, p.isAi]),
+        b.seats.map((s) => [s.id, s.name, s.status, 0, s.brain !== '']),
         `${label}: the roster and seat statuses (viewer ${seat})`);
-      assert.equal(d.game.table_battles.length, 0, `${label}: no table`);
-      if (seat >= 0) assert.deepEqual((d.game as PersonalGame).self.hand, [], `${label}: no hand`);
+      assert.equal(d.battles.length, 0, `${label}: no table`);
+      assert.deepEqual(d.myHand, [], `${label}: no hand`);
     }
   }
 });

@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 
 import { applySchema, resetDb, uuid, pgPool, broadcastLog } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { ANIMATION_EVENT_TYPE } from '../server/api/core/types.ts';
+import { gameStatusLabel } from '../sdk/ts/table/server_table.ts';
 import { fixture, PLAYING } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';
 import { checkCardConservation, legalMoves, mustReadTable, type PlayMove } from './helpers/table_play.ts';
@@ -24,7 +24,7 @@ import { executePackedAction, MalformedActionRequest } from '../server/impls/sup
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { encodeAction, encodeActionRequest, ACTION_STATUS } from '../sdk/ts/wire/awire.ts';
-import { readPush } from './helpers/client_read.ts';
+import { readPushSequence } from './helpers/client_read.ts';
 import type { ReadRoster as ViewRoster } from './helpers/client_read.ts';
 import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
 
@@ -38,10 +38,13 @@ const rng = suiteRng('packed_action');
 const ri = (n: number) => rng.int(n);
 const pick = <T>(a: T[]): T => rng.pick(a);
 
-const KNOWN_EVENT_TYPES = new Set<string>(Object.values(ANIMATION_EVENT_TYPE));
-// A pinned clock: a decoded good_timestamp is read from it, and two decodes of
-// the same bytes must compare equal.
-const CTX = { preGood: [], prevGoodTs: null, now: () => 1 };
+// The animation vocabulary the web plays (src/state/pushSequence.ts names each
+// kernel event type with one of these; an unknown type reads as undefined).
+const KNOWN_EVENT_TYPES = new Set<string>([
+    'magic_transition', 'deal', 'flipped', 'defender_move', 'attack_pass', 'cover',
+    'pickup', 'discard', 'out', 'refill', 'cards_to_trash',
+]);
+const readPush = readPushSequence;
 
 // The broadcast is fire-and-forget (executePackedAction does not await it);
 // drain the microtask/immediate queue so broadcastLog is settled.
@@ -89,10 +92,10 @@ test('packed pipeline: legal awire moves apply, bump the version, rewrite the bl
     const { gameId, seats, roster } = await newDealtGame(3);
     // The move-kind -> the actor's own event type in the broadcast stream.
     const ACTOR_EVENT: Record<string, string> = {
-        attack: ANIMATION_EVENT_TYPE.ATTACK_PASS,
-        pass: ANIMATION_EVENT_TYPE.ATTACK_PASS,
-        cover: ANIMATION_EVENT_TYPE.COVER,
-        pickup: ANIMATION_EVENT_TYPE.PICKUP,
+        attack: 'attack_pass',
+        pass: 'attack_pass',
+        cover: 'cover',
+        pickup: 'pickup',
     };
 
     let applied = 0, broadcasted = 0;
@@ -133,28 +136,28 @@ test('packed pipeline: legal awire moves apply, bump the version, rewrite the bl
                 assert.equal(typeof f.payload.s, 'string', 'sequence id');
                 assert.equal(f.payload.v, out.version, 'payload.v is the committed version');
                 const bytes = base64ToBytes(f.payload.b);
-                const decoded = readPush(bytes, roster, CTX);
+                const decoded = readPush(bytes, roster);
                 assert.ok(decoded, 'payload.b decodes as event wire');
                 // as3: the as2 sequence, then one flags byte (0 for a move: no roster trailer).
                 assert.equal(bytes[bytes.length - 1], 0, 'a move\'s push ends in a zero flags byte');
-                assert.deepEqual(readPush(bytes.subarray(0, bytes.length - 1), roster, CTX), decoded,
+                assert.deepEqual(readPush(bytes.subarray(0, bytes.length - 1), roster), decoded,
                     'and everything before it is the as2 sequence');
                 const expectSeat = f.channel === `game-${gameId}` ? -1 : seats.findIndex((p) => f.channel === `gu-${gameId}-${p.id}`);
                 assert.equal(decoded!.viewerSeat, expectSeat, 'stream is personalized to its channel');
                 assert.ok(decoded!.events.length > 0, 'broadcast carries events');
                 for (const ev of decoded!.events) {
                     assert.ok(KNOWN_EVENT_TYPES.has(ev.type), `known event type ${ev.type}`);
-                    if (ev.player_id !== undefined) {
-                        assert.ok(seats.some((p) => p.id === ev.player_id), `event player ${ev.player_id} is in the game`);
+                    if (ev.seat !== undefined) {
+                        assert.ok(ev.seat >= 0 && ev.seat < seats.length, `event seat ${ev.seat} is in the game`);
                     }
                 }
                 const actorEvent = ACTOR_EVENT[pm.kind];
                 if (actorEvent) {
-                    assert.ok(decoded!.events.some((ev) => ev.type === actorEvent && ev.player_id === pm.playerId),
+                    assert.ok(decoded!.events.some((ev) => ev.type === actorEvent && ev.seat === pm.seat),
                         `a ${pm.kind} broadcasts a ${actorEvent} event by the actor`);
                 }
                 // The trailer is the committed final state - publicly consistent.
-                assert.equal(decoded!.game.status, row.statusColumn, 'decoded final state matches the committed status');
+                assert.equal(gameStatusLabel(decoded!.game.status), row.statusColumn, 'decoded final state matches the committed status');
             }
         }
         applied++;
@@ -336,7 +339,7 @@ test('human moves and the bot loop interleave: same payload shape, strictly incr
         assert.equal(typeof e.payload.s, 'string', 'sequence id');
         assert.equal(typeof e.payload.v, 'number', 'numeric version');
         assert.equal(typeof e.payload.b, 'string', 'base64 event wire');
-        assert.ok(readPush(base64ToBytes(e.payload.b), roster, CTX), 'payload decodes regardless of the emitting path');
+        assert.ok(readPush(base64ToBytes(e.payload.b), roster), 'payload decodes regardless of the emitting path');
         if (!perChannel.has(e.channel)) perChannel.set(e.channel, []);
         perChannel.get(e.channel)!.push(e.payload.v);
     }

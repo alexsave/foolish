@@ -13,7 +13,7 @@
  *     a card, a roster the Roster refuses;
  *   - an accepted fixture round-trips: table_load takes its bytes, the commit
  *     writes them back unchanged, and table_envelope shows every field the
- *     builder set (decoded by today's envelope reader);
+ *     builder set (read by the web's own client slot, as a TableView);
  *   - seedTable stores exactly those bytes, the kernel's status and needs_bots,
  *     and the membership rows, and the stored row loads again.
  * ========================================================================== */
@@ -22,9 +22,9 @@ import { applySchema, pgPool, uuid } from './harness.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { decodeEnvelope } from './helpers/client_read.ts';
-import type { PersonalGame } from '../server/api/core/types.ts';
-import { fixture, fixtureTable, FixtureRefused, GAME_OVER, PLAYING, READY } from './helpers/table_fixture.ts';
+import { readEnvelopeView } from './helpers/client_read.ts';
+import { NO_CARD } from '../src/state/view.ts';
+import { fixture, fixtureTable, FixtureRefused, GAME_OVER, IDLE, IN, OUT, PLAYING, READY } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';
 
 const refusedWith = (code: number, name: string, detail?: string) => (e: unknown) => {
@@ -107,28 +107,29 @@ test('accepted: a dealt game round-trips through table_load and table_envelope',
 
     const env = table.envelope(GID, 0, 7);
     assert.ok(env instanceof Uint8Array, `table_envelope (${env})`);
-    const d = decodeEnvelope(env);
-    assert.ok(d, 'the envelope decodes');
-    const g = d.game as PersonalGame;
-    assert.equal(d.seat, 0);
-    assert.equal(g.name, 'Round trip');
-    assert.equal(g.status, 'playing');
-    assert.deepEqual(g.self.hand, [card(L.SUIT_HEARTS, 5), card(L.SUIT_HEARTS, 6), card(L.SUIT_SPADES, 11)], "seat 0's hand, in order");
-    assert.equal(g.self.awaiting_attack, true);
-    assert.deepEqual(g.players.map((s) => [s.player_id, s.name, s.is_ai, s.status, s.hand_length]), [
-        ['ann', 'Ann', false, 'in', 3], ['bot', 'Robo', true, 'in', 2], ['cid', 'Cid', false, 'in', 1],
+    const g = readEnvelopeView(env);
+    assert.ok(g, 'the envelope reads');
+    assert.equal(g.mySeat, 0);
+    assert.equal(g.title, 'Round trip');
+    assert.equal(g.status, L.GAME_STATUS_PLAYING);
+    assert.deepEqual(g.myHand, [card(L.SUIT_HEARTS, 5), card(L.SUIT_HEARTS, 6), card(L.SUIT_SPADES, 11)], "seat 0's hand, in order");
+    assert.equal(g.seats[0].awaitingAttack, true);
+    assert.deepEqual(g.seats.map((s) => [s.id, s.name, s.isAi, s.status, s.handCount]), [
+        ['ann', 'Ann', false, IN, 3], ['bot', 'Robo', true, IN, 2], ['cid', 'Cid', false, IN, 1],
     ]);
-    assert.deepEqual(g.table_battles, [
+    assert.deepEqual(g.battles, [
         { attack: card(L.SUIT_CLUBS, 6), defense: card(L.SUIT_CLUBS, 7) },
-        { attack: card(L.SUIT_SPADES, 8), defense: null },
+        { attack: card(L.SUIT_SPADES, 8), defense: NO_CARD },
     ]);
-    assert.equal(g.deck_length, 2);
+    assert.equal(g.deckCount, 2);
+    assert.equal(g.hasFlipped, true);
     assert.deepEqual(g.flipped, card(L.SUIT_SPADES, 13));
-    assert.equal(g.power_suit, L.SUIT_SPADES, 'the power suit is the trump suit');
-    assert.equal(g.first_attacker, 1);
+    assert.equal(g.powerSuit, L.SUIT_SPADES, 'the power suit is the trump suit');
+    assert.equal(g.firstAttacker, 1);
     assert.equal(g.defender, 2);
-    assert.equal(g.discard_pile_length, 4);
-    assert.deepEqual(g.good_players, ['ann']);
+    assert.equal(g.discardPileLength, 4);
+    assert.equal(g.goodMask, 1 << 0, 'ann said good');
+    assert.equal(g.hasGoodTimestamp, true);
 });
 
 test('accepted: a lobby, a finished game, eliminations and seat defaults', () => {
@@ -138,26 +139,26 @@ test('accepted: a lobby, a finished game, eliminations and seat defaults', () =>
     const lobby = fixture().seats(seats).seatStatus(2, READY).build();
     assert.equal(table.load(lobby.state, lobby.roster), L.TABLE_OK);
     assert.equal(table.needsBots(), false, 'a lobby needs no bots');
-    const lg = decodeEnvelope(table.envelope(GID, -1, 0) as Uint8Array)!.game;
-    assert.equal(lg.status, 'waiting');
-    assert.deepEqual(lg.players.map((s) => s.status), ['idle', 'ready', 'ready'], 'human IDLE and bot READY by default; seatStatus overrides');
+    const lg = readEnvelopeView(table.envelope(GID, -1, 0) as Uint8Array)!;
+    assert.equal(lg.status, L.GAME_STATUS_WAITING);
+    assert.deepEqual(lg.seats.map((s) => s.status), [IDLE, READY, READY], 'human IDLE and bot READY by default; seatStatus overrides');
 
     const playing = fixture().seats(seats).status(PLAYING).hand(0, '6c').hand(2, '7c').eliminated(1).powerSuit(L.SUIT_DIAMONDS).build();
     assert.equal(table.load(playing.state, playing.roster), L.TABLE_OK);
     assert.equal(table.needsBots(), false, 'the only bot is out');
-    const pg = decodeEnvelope(table.envelope(GID, -1, 0) as Uint8Array)!.game;
-    assert.deepEqual(pg.players.map((s) => s.status), ['in', 'out', 'in'], 'an eliminated seat is OUT while PLAYING');
-    assert.deepEqual(pg.elimination_order, ['b1']);
-    assert.equal(pg.flipped, null);
-    assert.equal(pg.power_suit, L.SUIT_DIAMONDS);
+    const pg = readEnvelopeView(table.envelope(GID, -1, 0) as Uint8Array)!;
+    assert.deepEqual(pg.seats.map((s) => s.status), [IN, OUT, IN], 'an eliminated seat is OUT while PLAYING');
+    assert.deepEqual(pg.elimination, [1]);
+    assert.equal(pg.hasFlipped, false);
+    assert.equal(pg.powerSuit, L.SUIT_DIAMONDS);
     assert.equal(pg.defender, 1, 'the defender defaults to the seat after the attacker');
 
     const over = fixture().seats(seats).status(GAME_OVER).hand(2, 'Kh').eliminated(1, 0).build();
     assert.equal(table.load(over.state, over.roster), L.TABLE_OK);
-    const og = decodeEnvelope(table.envelope(GID, -1, 0) as Uint8Array)!.game;
-    assert.equal(og.status, 'game_over');
-    assert.deepEqual(og.players.map((s) => s.status), ['idle', 'ready', 'idle'], 'a finished game parks bots READY and humans IDLE');
-    assert.deepEqual(og.elimination_order, ['b1', 'h1']);
+    const og = readEnvelopeView(table.envelope(GID, -1, 0) as Uint8Array)!;
+    assert.equal(og.status, L.GAME_STATUS_GAME_OVER);
+    assert.deepEqual(og.seats.map((s) => s.status), [IDLE, READY, IDLE], 'a finished game parks bots READY and humans IDLE');
+    assert.deepEqual(og.elimination, [1, 0]);
 
     const seeded = fixture().seats(seats.slice(0, 2)).status(PLAYING).deck('9h Th').deterministic().build();
     assert.equal(seeded.state[1], 1, 'the durable blob carries the deterministic-deck flag');

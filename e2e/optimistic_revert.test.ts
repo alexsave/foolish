@@ -24,7 +24,7 @@ import './harness.ts';
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, uuid, pgPool, broadcastLog } from './harness.ts';
-import type { Card } from '../server/api/core/types.ts';
+import type { ViewCard as Card } from '../src/state/view';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { fixture, PLAYING } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';

@@ -24,9 +24,7 @@ import { fixture, fixtureTable, PLAYING } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';
 import { mustReadTable, type TableState } from './helpers/table_play.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
-import { GAME_RESP_FORMAT } from '../sdk/ts/wire/view.ts';
-import { decodeEnvelope } from './helpers/client_read.ts';
-import type { PersonalGame } from '../server/api/core/types.ts';
+import { readEnvelopeView } from './helpers/client_read.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 
@@ -66,11 +64,11 @@ async function tok(userId: string, name: string): Promise<string> {
     return tokenFor(userId, name);
 }
 
-/** The shape every wrap400 success must have: octet-stream bytes that lead with the envelope format and are not JSON. */
+/** The shape every wrap400 success must have: octet-stream bytes the client slot reads whole as an envelope, and not JSON. */
 function assertPackedBody(res: EdgeResponse, tag: string): void {
     assert.equal(res.status, 200, `${tag}: 200 (${JSON.stringify(res.json)})`);
     assert.equal(res.type, 'application/octet-stream', `${tag}: octet-stream`);
-    assert.equal(res.bytes[0], GAME_RESP_FORMAT, `${tag}: leads with the packed envelope format byte`);
+    assert.ok(readEnvelopeView(res.bytes), `${tag}: the client slot reads it whole as a packed envelope`);
     // The body is BYTES, not a JSON document. This is the assertion that
     // fails the moment the tail goes back to JSON.stringify.
     assert.throws(() => JSON.parse(new TextDecoder().decode(res.bytes)), `${tag}: body must not parse as JSON`);
@@ -89,10 +87,10 @@ test('wrap400 answers with the PACKED game envelope, never a JSON game', async (
         const res = await postJson('meta', await tok(HUMAN_A, 'A'), { type: 'start', game_id: gameId });
         assertPackedBody(res, tag);
 
-        const decoded = decodeEnvelope(res.bytes);
+        const decoded = readEnvelopeView(res.bytes);
         assert.ok(decoded, `${tag}: the web client reads it`);
         assert.equal(decoded!.version, version, `${tag}: the row's version rides the envelope (a lobby ready commits, a moot start does not)`);
-        assert.equal(decoded!.seat, 0, `${tag}: the caller's seat`);
+        assert.equal(decoded!.mySeat, 0, `${tag}: the caller's seat`);
 
         // And it is exactly the kernel's envelope for this caller at that version.
         const t = await mustReadTable(gameId);
@@ -109,14 +107,14 @@ test('wrap400: a caller with no seat gets the spectator envelope', async () => {
     const res = await postJson('action', await tok(OUTSIDER, 'Nobody'), { type: 'bump', game_id: gameId });
     assertPackedBody(res, 'spectator');
 
-    const decoded = decodeEnvelope(res.bytes);
+    const decoded = readEnvelopeView(res.bytes);
     assert.ok(decoded, 'spectator envelope decodes');
-    assert.equal(decoded!.seat, -1, 'seat -1');
+    assert.equal(decoded!.mySeat, -1, 'seat -1');
     assert.equal(decoded!.version, 42);
-    assert.equal((decoded!.game as PersonalGame).self, undefined, 'a spectator gets no self');
+    assert.deepEqual(decoded!.myHand, [], 'a spectator gets no hand');
     assert.deepEqual(res.bytes, expected, 'byte for byte the kernel\'s spectator envelope');
     // Masking is still the kernel's: real counts, and not the bytes a seated player gets.
-    assert.deepEqual(decoded!.game.players.map((p) => p.hand_length), [6, 6, 6], 'hand counts are real');
+    assert.deepEqual(decoded!.seats.map((p) => p.handCount), [6, 6, 6], 'hand counts are real');
     assert.notDeepEqual(res.bytes, kernelEnvelope(t, HUMAN_A), 'not seat 0\'s envelope');
 });
 
@@ -124,13 +122,11 @@ test('wrap400: seat 1 sees its OWN hand', async () => {
     const gameId = await dealt();
     const res = await postJson('meta', await tok(HUMAN_B, 'B'), { type: 'start', game_id: gameId });
     assertPackedBody(res, 'seat 1');
-    const decoded = decodeEnvelope(res.bytes);
+    const decoded = readEnvelopeView(res.bytes);
     assert.ok(decoded);
-    assert.equal(decoded!.seat, 1);
-    const self = (decoded!.game as PersonalGame).self;
-    assert.ok(self, 'seat 1 gets a self');
+    assert.equal(decoded!.mySeat, 1);
     const t = await mustReadTable(gameId);
-    assert.deepEqual(self!.hand, t.seats[1].hand, 'the viewer\'s own hand is real');
-    assert.equal(self!.player_id, HUMAN_B);
+    assert.deepEqual(decoded!.myHand, t.seats[1].hand, 'the viewer\'s own hand is real');
+    assert.equal(decoded!.seats[decoded!.mySeat].id, HUMAN_B, 'and the seat is the caller\'s');
     assert.deepEqual(res.bytes, kernelEnvelope(t, HUMAN_B), 'byte for byte the kernel\'s envelope for seat 1');
 });
