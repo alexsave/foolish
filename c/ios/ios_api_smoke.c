@@ -13,6 +13,7 @@
 #include "replay.h"   // the codec version this build stamps (-Isrc)
 #include "replay_extras.h"
 #include "evwire.h"   // the packed event reader - see smoke_walk_frames
+#include "msg_wire.h" // MsgHeader: the envelope's header, read where it lies
 #include "view.h"
 #include <stdio.h>
 #include <string.h>
@@ -295,39 +296,40 @@ static int fmsg_check(void) {
     const int chars = (n + 4) / 5 * 8;
     if (chars >= 1000) { printf("FAIL fmsg envelope %d chars >= 1000\n", chars); return 1; }
 
-    // Decode ADOPTS: the payload's game becomes the resident one. The metadata
-    // comes back as the PACKED blob (fio_msg_decode_packed layout): phase(1)
-    // n_players(1) last_actor_seat(1) round(1) turn(u16) game_id(u64) parent8(8)
-    // digest(32) sent_at(u16) n_new(1) opening(1) carry_key(u32) carry_fool(1)
-    // passing(1) n_joins(1) then joins {seat(1) len(1) name[]}.
-    unsigned char *mb = (unsigned char *)buf;
-    if (fio_msg_decode_packed(pay, n, mb, sizeof(buf)) <= 0) {
+    // Decode ADOPTS: the payload's game becomes the resident one. The header
+    // lands where it lies (fio_msg_header_ptr, msg_wire.h MsgHeader) and is read
+    // by its FIELDS - the packed blob this used to walk by offset is gone, and
+    // with it the second statement of that layout.
+    if (fio_msg_decode(pay, n) != FIO_EOK) {
         printf("FAIL fmsg decode: msg_err=%d\n", fio_last_msg_error()); return 1;
     }
-    unsigned long long gid = 0;
-    for (int i = 0; i < 8; i++) gid |= (unsigned long long)mb[6 + i] << (8 * i);
-    if (mb[0] != 2 /* phase LIVE */ || mb[1] != 4 /* n_players */ || gid != 81985529216486895ULL) {
-        printf("FAIL fmsg decode packed shape: phase=%d n=%d gid=%llu\n", mb[0], mb[1], gid); return 1;
+    const MsgHeader *hdr = (const MsgHeader *)fio_msg_header_ptr();
+    if (hdr->e.phase != 2 /* LIVE */ || hdr->e.n_players != 4 ||
+        hdr->e.game_id != 81985529216486895ULL) {
+        printf("FAIL fmsg decode shape: phase=%d n=%d gid=%llu\n",
+               hdr->e.phase, hdr->e.n_players, (unsigned long long)hdr->e.game_id); return 1;
     }
-    // Seat 0's join is "Sveta" - the first record after the 65-byte header
-    // (round 16 added the two send-clock bytes, the bubble delta and the
-    // fool's-penalty trio ahead of n_joins; the rules byte follows them).
-    if (!(mb[65] == 0 && mb[66] == 5 && memcmp(mb + 67, "Sveta", 5) == 0)) {
+    // Seat 0's join is "Sveta".
+    if (!(hdr->e.n_joins >= 1 && hdr->e.joins[0].seat == 0 && hdr->e.joins[0].name_len == 5 &&
+          memcmp(hdr->e.joins[0].name, "Sveta", 5) == 0)) {
         printf("FAIL fmsg decode: seat-0 join not Sveta\n"); return 1;
     }
-    // …and this chain is the classic game, said by the byte the lobby's
-    // checkbox writes rather than assumed by its absence.
-    if (mb[63] != 1) { printf("FAIL fmsg decode: passing byte = %d\n", mb[63]); return 1; }
+    // ...and this chain is the classic game, said by the rule that resolves the
+    // variant against the format rather than assumed by its absence.
+    if (fio_msg_passing() != 1) { printf("FAIL fmsg decode: passing = %d\n", fio_msg_passing()); return 1; }
     // The digest (Rule P's tiebreak) is present and not all-zero.
-    { int allzero = 1; for (int i = 0; i < 32; i++) if (mb[22 + i]) { allzero = 0; break; }
+    { int allzero = 1; for (int i = 0; i < 32; i++) if (hdr->digest[i]) { allzero = 0; break; }
       if (allzero) { printf("FAIL fmsg digest all-zero\n"); return 1; } }
-    // The adopted chain's round — Rule R compares a pending move's round to it.
-    const int adopted_round = mb[3];   // round is byte[3]
+    // The BODY is not handed over: it borrows bytes the next call may overwrite.
+    if (hdr->e.actions || hdr->e.actions_len || hdr->e.n_actions) {
+        printf("FAIL fmsg decode: the header carries the borrowed body\n"); return 1; }
+    // The adopted chain's round - Rule R compares a pending move's round to it.
+    const int adopted_round = hdr->e.round;
 
     // Hostile bytes: every truncation is refused and nothing crashes; then the
     // full payload re-adopts cleanly.
-    for (int cut = 0; cut < n; cut++) (void)fio_msg_decode_packed(pay, cut, mb, sizeof(buf));
-    if (fio_msg_decode_packed(pay, n, mb, sizeof(buf)) <= 0) { printf("FAIL fmsg re-adopt\n"); return 1; }
+    for (int cut = 0; cut < n; cut++) (void)fio_msg_decode(pay, cut);
+    if (fio_msg_decode(pay, n) != FIO_EOK) { printf("FAIL fmsg re-adopt\n"); return 1; }
 
     // Rule P: a chain never beats itself, and the verdict is symmetric.
     if (fio_msg_rule_p(pay, n, pay, n) != 0) { printf("FAIL rule_p reflexive\n"); return 1; }
@@ -365,7 +367,7 @@ static int fmsg_check(void) {
     // chose. Only reachable once a round HAS closed under us.
     if (adopted_round > 0) {
         // Re-adopt first: the rebase above cloned onto the resident game.
-        if (fio_msg_decode_packed(pay, n, mb, sizeof(buf)) <= 0) { printf("FAIL fmsg re-adopt (awire)\n"); return 1; }
+        if (fio_msg_decode(pay, n) != FIO_EOK) { printf("FAIL fmsg re-adopt (awire)\n"); return 1; }
         // "good" is awire {kind=4, n=0}.
         const unsigned char good_awire[2] = { 4, 0 };
         const int stale_w = fio_msg_rebase_awire(adopted_round - 1, 0, good_awire, 2);
@@ -392,7 +394,7 @@ static int fmsg_check(void) {
 // else's history - so a turn of two actions sealed as a delta of one, and
 // everything downstream described only its tail.
 //
-// fio_msg_peek_packed is the read that changes nothing; this is the proof.
+// fio_msg_peek is the read that changes nothing; this is the proof.
 // The turn itself: two actions on the chain `parent`, sealed after each, with
 // the composer's read of its own staged bubble in between when `with_read`.
 // Hands back what the FINAL bubble says about itself.
@@ -400,8 +402,8 @@ static int delta_stage_two(const unsigned char *parent, int pn,
                            const unsigned char *joins, int joins_n,
                            int with_read, int *turn_out, int *delta_out) {
     const uint8_t zero8[8] = {0};
-    unsigned char mb[1 << 14];
-    if (fio_msg_decode_packed(parent, pn, mb, sizeof(mb)) <= 0) return -1;
+    const MsgHeader *hdr = (const MsgHeader *)fio_msg_header_ptr();
+    if (fio_msg_decode(parent, pn) != FIO_EOK) return -1;
 
     int applied = 0, bn = 0;
     unsigned char bubble[2048];
@@ -420,18 +422,18 @@ static int delta_stage_two(const unsigned char *parent, int pn,
         if (bn <= 0) return -1;
         // THE READ: what the composer does with the bubble it has just staged,
         // before the human plays the rest of the turn.
-        if (with_read && fio_msg_peek_packed(bubble, bn, mb, sizeof(mb)) <= 0) return -1;
+        if (with_read && fio_msg_peek(bubble, bn) != FIO_EOK) return -1;
     }
     if (applied != 2) return -1;
-    if (fio_msg_peek_packed(bubble, bn, mb, sizeof(mb)) <= 0) return -1;
-    *turn_out = mb[4] | (mb[5] << 8);
-    *delta_out = mb[56];
+    if (fio_msg_peek(bubble, bn) != FIO_EOK) return -1;
+    *turn_out = hdr->e.turn;
+    *delta_out = hdr->e.n_new;
 
-    // The peek says the same about these bytes as a decode does - same blob,
+    // The peek says the same about these bytes as a decode does - same header,
     // one adopts and one does not. (Last, because it re-adopts.)
-    unsigned char decoded[1 << 14];
-    if (fio_msg_decode_packed(bubble, bn, decoded, sizeof(decoded)) <= 0) return -1;
-    if (memcmp(mb, decoded, (size_t)64) != 0) return -2;
+    MsgHeader peeked = *hdr;
+    if (fio_msg_decode(bubble, bn) != FIO_EOK) return -1;
+    if (memcmp(&peeked, hdr, sizeof peeked) != 0) return -2;
     return 0;
 }
 
@@ -588,10 +590,10 @@ static int smoke_frame_types(const unsigned char *frames, int len, int *types, i
 // event types and the delta the bubble claimed.
 static int smoke_open_bubble(const unsigned char *payload, int pn, int viewer,
                              int *types, int cap, int *n_new_out, int *turn_out) {
-    unsigned char mb[1 << 14];
-    if (fio_msg_decode_packed(payload, pn, mb, sizeof mb) <= 0) return -1;
-    const int turn  = mb[4] | (mb[5] << 8);
-    const int n_new = mb[56];
+    if (fio_msg_decode(payload, pn) != FIO_EOK) return -1;
+    const MsgHeader *h = (const MsgHeader *)fio_msg_header_ptr();
+    const int turn  = h->e.turn;
+    const int n_new = h->e.n_new;
     if (n_new_out) *n_new_out = n_new;
     if (turn_out)  *turn_out  = turn;
     // MessageEnvelope.atomsBefore, in the one form the kernel takes.
@@ -643,8 +645,7 @@ static int chained_cover_check(void) {
         if (par_n <= 0) continue;
 
         // ---- TWO BUBBLES: cover, send, cover, send ----
-        unsigned char mb[1 << 14];
-        if (fio_msg_decode_packed(parent, par_n, mb, sizeof mb) <= 0) continue;
+        if (fio_msg_decode(parent, par_n) != FIO_EOK) continue;
         unsigned char b1[2048], b2[2048];
         int n1 = 0, n2 = 0, ok = 1;
         for (int i = 0; i < 2 && ok; i++) {
@@ -662,7 +663,7 @@ static int chained_cover_check(void) {
             // is where the next bubble's mark comes from (MessageTurnController
             // markSent). Adopting again rather than staging on is the ONLY
             // difference between this and the control below.
-            if (i == 0 && fio_msg_decode_packed(dst, n, mb, sizeof mb) <= 0) { ok = 0; break; }
+            if (i == 0 && fio_msg_decode(dst, n) != FIO_EOK) { ok = 0; break; }
         }
         if (!ok) continue;
 
@@ -672,7 +673,7 @@ static int chained_cover_check(void) {
         if (e1 < 0 || e2 < 0) { printf("FAIL chained cover: a bubble would not open\n"); return 1; }
 
         // ---- ONE BUBBLE, the control: cover, cover, send ----
-        if (fio_msg_decode_packed(parent, par_n, mb, sizeof mb) <= 0) continue;
+        if (fio_msg_decode(parent, par_n) != FIO_EOK) continue;
         unsigned char both[2048];
         int nb = 0;
         ok = 1;
@@ -757,8 +758,8 @@ static int lobby_v2_reseat_check(void) {
 
     // Two joins land (seats 1, 2) — mechanically identical to today's join
     // flow, just never auto-starting: still WAITING, still n_players=8.
-    unsigned char mb[1 << 16];
-    if (fio_msg_decode_packed(waiting, wn, mb, sizeof(mb)) <= 0) {
+    const MsgHeader *hdr = (const MsgHeader *)fio_msg_header_ptr();
+    if (fio_msg_decode(waiting, wn) != FIO_EOK) {
         printf("FAIL lobby waiting decode: msg_err=%d\n", fio_last_msg_error()); return 1;
     }
     const SmokeJoin jspec3[3] = { {0,"Alex"}, {1,"Sveta"}, {2,"Boris"} };
@@ -767,11 +768,12 @@ static int lobby_v2_reseat_check(void) {
     unsigned char waiting3[2048];
     const int wn3 = fio_msg_encode(0, 2, 0xF001ULL, zero8, joins3, joins3_n, 0 /* no send clock in this smoke */, waiting3, sizeof(waiting3));
     if (wn3 <= 0) { printf("FAIL lobby waiting3 encode: %d\n", wn3); return 1; }
-    if (fio_msg_decode_packed(waiting3, wn3, mb, sizeof(mb)) <= 0) {
+    if (fio_msg_decode(waiting3, wn3) != FIO_EOK) {
         printf("FAIL lobby waiting3 decode: msg_err=%d\n", fio_last_msg_error()); return 1;
     }
-    if (mb[0] != 0 || mb[1] != 8) {
-        printf("FAIL lobby: expected WAITING/8 after 2 joins, got phase=%d n=%d\n", mb[0], mb[1]);
+    if (hdr->e.phase != 0 || hdr->e.n_players != 8) {
+        printf("FAIL lobby: expected WAITING/8 after 2 joins, got phase=%d n=%d\n",
+               hdr->e.phase, hdr->e.n_players);
         return 1;   // never auto-starts, whatever the join count
     }
 
@@ -785,11 +787,12 @@ static int lobby_v2_reseat_check(void) {
     // THE claim: the wire accepts a LIVE child whose n_players (3) differs
     // from its WAITING parent's (8) — decode+replay (validation IS replay)
     // succeeds standalone, exactly as any other envelope would.
-    if (fio_msg_decode_packed(live, ln, mb, sizeof(mb)) <= 0) {
+    if (fio_msg_decode(live, ln) != FIO_EOK) {
         printf("FAIL lobby live decode: msg_err=%d\n", fio_last_msg_error()); return 1;
     }
-    if (mb[0] != 2 || mb[1] != 3) {
-        printf("FAIL lobby: expected LIVE/3 after start, got phase=%d n=%d\n", mb[0], mb[1]);
+    if (hdr->e.phase != 2 || hdr->e.n_players != 3) {
+        printf("FAIL lobby: expected LIVE/3 after start, got phase=%d n=%d\n",
+               hdr->e.phase, hdr->e.n_players);
         return 1;
     }
     // Someone (the first attacker on the freshly-dealt 3p game) can act.
@@ -810,7 +813,7 @@ static int lobby_rules_check(void) {
     unsigned char seed[32];
     for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 7 + 3);
     const uint8_t zero8[8] = {0};
-    unsigned char mb[1 << 16];
+    const MsgHeader *hdr = (const MsgHeader *)fio_msg_header_ptr();
 
     if (fio_new_game(seed, 32, 8) != FIO_EOK) { printf("FAIL rules new_game(8)\n"); return 1; }
     if (!fio_passing_allowed()) { printf("FAIL rules: a fresh game was not the classic one\n"); return 1; }
@@ -824,10 +827,10 @@ static int lobby_rules_check(void) {
     unsigned char waiting[2048];
     const int wn = fio_msg_encode(0 /* WAITING */, 0, 0xF003ULL, zero8, joins2, joins2_n, 0, waiting, sizeof(waiting));
     if (wn <= 0) { printf("FAIL rules waiting encode: %d (msg_err=%d)\n", wn, fio_last_msg_error()); return 1; }
-    if (fio_msg_decode_packed(waiting, wn, mb, sizeof(mb)) <= 0) {
+    if (fio_msg_decode(waiting, wn) != FIO_EOK) {
         printf("FAIL rules waiting decode: msg_err=%d\n", fio_last_msg_error()); return 1;
     }
-    if (mb[63] != 0) { printf("FAIL rules: the lobby did not say podkidnoy (%d)\n", mb[63]); return 1; }
+    if (fio_msg_passing() != 0) { printf("FAIL rules: the lobby did not say podkidnoy (%d)\n", fio_msg_passing()); return 1; }
 
     // Start. The deal is re-derived from the locked seed at the joined count,
     // and the rules ride across it.
@@ -836,10 +839,10 @@ static int lobby_rules_check(void) {
     unsigned char live[2048];
     const int ln = fio_msg_encode(2 /* LIVE */, 0, 0xF003ULL, zero8, joins2, joins2_n, 0, live, sizeof(live));
     if (ln <= 0) { printf("FAIL rules live encode: %d (msg_err=%d)\n", ln, fio_last_msg_error()); return 1; }
-    if (fio_msg_decode_packed(live, ln, mb, sizeof(mb)) <= 0) {
+    if (fio_msg_decode(live, ln) != FIO_EOK) {
         printf("FAIL rules live decode: msg_err=%d\n", fio_last_msg_error()); return 1;
     }
-    if (mb[63] != 0) { printf("FAIL rules: the live game lost the rule (%d)\n", mb[63]); return 1; }
+    if (fio_msg_passing() != 0) { printf("FAIL rules: the live game lost the rule (%d)\n", fio_msg_passing()); return 1; }
 
     // And the board this produces offers no transfer - which is the whole point,
     // and is read through the SAME packed menu the app draws its buttons from.

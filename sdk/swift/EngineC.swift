@@ -21,7 +21,11 @@ public enum EngineError: Error, Equatable, Sendable {
 }
 
 public actor EngineC {
-    public init() {}
+    // The generated readers in sdk/swift/gen are byte offsets into the kernel's
+    // structs, and the kernel is a PREBUILT library: if the two were generated
+    // from different headers nothing says so at compile time. KernelLayout does,
+    // here, before the first call reads a single field. See KernelLayout.swift.
+    public init() { _ = KernelLayout.verified }
 
     // ios_api.h error codes, restated so we never depend on how C macros import.
     @_spi(FoolishBots) public static let eOK: Int32 = 0

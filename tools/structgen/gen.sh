@@ -7,9 +7,16 @@
 #                           module is checked against (its own module, so the
 #                           browser can check it without importing a reader of
 #                           the unmasked Game - e2e/security_client_boundary)
+#   sdk/swift/gen/          the module FoolishKit compiles: value snapshots of
+#                           the structs iOS reads out of the kernel it LINKS,
+#                           generated for the iOS caps and the iOS triple. Its
+#                           SG_LAYOUT_HASH is the one c/Makefile bakes into the
+#                           library (`make ios-lib`), so a stale xcframework or
+#                           a stale module is a startup refusal, never a wrong
+#                           offset (sdk/swift/KernelLayout.swift).
 #   tools/structgen/gen/    the generator's own genericity fixtures
 #
-#   gen.sh           write both
+#   gen.sh           write all three
 #   gen.sh --check   regenerate into a temp dir and fail if either is stale (the
 #                    freshness gate, in the style of scripts/check_wasm_freshness.sh)
 #
@@ -41,14 +48,15 @@ flags() { make -s -C "$root/c" -f Makefile -f "$here/print.mk" "sg-print-$1"; }
 spec() { grep -v '^[[:space:]]*#' "$here/specs/$1.args"; }
 BOTS="$(flags WASM_BOT_CFLAGS)"
 prod="$root/sdk/ts/gen"
+swift="$root/sdk/swift/gen"
 fixtures="$here/gen"
 check=0
 if [ "${1:-}" = "--check" ]; then
   check=1
   tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-  prod="$tmp/prod"; fixtures="$tmp/fixtures"
+  prod="$tmp/prod"; fixtures="$tmp/fixtures"; swift="$tmp/swift"
 fi
-mkdir -p "$prod" "$fixtures"
+mkdir -p "$prod" "$fixtures" "$swift"
 
 # The resident Game prefix the TS marshal reads and writes, per wasm build.
 set -f   # the spec is split on whitespace, never globbed
@@ -86,6 +94,17 @@ ORACLE=(--cwd "$root/c" $(spec oracle_layout))
 set +f
 "$SG" "${ORACLE[@]}" --build "oracle_mt=$(flags WASM_ORACLE_MT_CFLAGS)" --ts "$prod/oracle_layout.oracle_mt.ts"
 
+# The structs iOS reads out of the kernel it LINKS (specs/ios_layout.args), as
+# Swift value snapshots. Its own caps and its own triple: neither is the wasm
+# build's, and the layouts really do differ - a pointer alone is 4 bytes there
+# and 8 here.
+set -f
+# shellcheck disable=SC2207
+IOS=(--cwd "$root/c" $(spec ios_layout))
+set +f
+"$SG" "${IOS[@]}" --build "ios=$(flags IOS_CFLAGS)" --target "$(flags IOS_LAYOUT_TRIPLE)" \
+  --swift "$swift/kernel.ios.swift"
+
 # Genericity fixtures (test/verify.test.ts).
 "$SG" --cwd "$here/test" --header kinds.h --root Kinds --build wasm= --const K_ --const KFLAG_ --ts "$fixtures/kinds.ts"
 "$SG" --cwd "$here/test" --header snap.h --root Snap --root SPtr --build wasm= --snapshot Snap --snapshot SPtr --snapshot-only \
@@ -95,6 +114,7 @@ set +f
 if [ "$check" = 1 ]; then
   stale=0
   diff -r "$root/sdk/ts/gen" "$prod" || stale=1
+  diff -r "$root/sdk/swift/gen" "$swift" || stale=1
   # No exclusions: a generated file the diff does not look at is a generated
   # file nothing keeps fresh. gen/ holds generated MODULES only; the wasm the
   # verify test reads is a build output and lives in build/.
@@ -102,9 +122,11 @@ if [ "$check" = 1 ]; then
   # A build output tracked in the repo goes stale the moment its source changes
   # and nobody reruns the build. Everything under gen/ the repo knows about must
   # be a generated MODULE the diff above compares.
-  tracked_junk="$(GIT_OPTIONAL_LOCKS=0 git -C "$root" ls-files "tools/structgen/gen" | grep -v '\.ts$' || true)"
+  tracked_junk="$(GIT_OPTIONAL_LOCKS=0 git -C "$root" ls-files "tools/structgen/gen" | grep -v '\.ts$' || true)
+$(GIT_OPTIONAL_LOCKS=0 git -C "$root" ls-files "sdk/swift/gen" | grep -v '\.swift$' || true)"
+  tracked_junk="$(printf '%s' "$tracked_junk" | grep -v '^$' || true)"
   if [ -n "$tracked_junk" ]; then
-    echo "gen: a build output is committed under tools/structgen/gen - remove it from the repo:"
+    echo "gen: a build output is committed under a generated directory - remove it from the repo:"
     echo "$tracked_junk"
     stale=1
   fi

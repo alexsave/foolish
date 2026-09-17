@@ -7,7 +7,7 @@
 //
 // ONE CODEC, NOT TWO. The seats and their names are the KERNEL's block -
 // `n(1)`, then `n x { seat(1) name_len(1) name[] }`, exactly what
-// `fio_msg_decode_packed` hands back and exactly what RosterWire writes - so
+// a decoded FMSG header carries and exactly what RosterWire writes - so
 // this reads them THROUGH RosterWire rather than beside it. What the envelope
 // needs and the kernel's roster does not (a player id, an is_ai flag, the
 // game's own id/name/status, the good-players order and its timestamp) rides

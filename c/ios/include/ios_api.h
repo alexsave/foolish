@@ -58,6 +58,17 @@ extern "C" {
 #define FIO_ETRANSPORT  -9   // a question that depends on the transport, asked
                              // before anyone said which one this is
 
+// ---------- the layout this library was compiled for ------------------------
+
+// The structgen layout hash of the structs the generated Swift bindings read
+// (tools/structgen/specs/ios_layout.args), baked in by `make ios-lib`. The
+// generated module carries the same number and KernelLayout compares them at
+// startup: a library and a binding built from different headers refuse to run
+// rather than reading the right fields at the wrong offsets. 0 means this build
+// stamped none - the host-compiled smoke and golden binaries, which never meet
+// the Swift side.
+uint32_t fio_layout_hash(void);
+
 // ---------- lifecycle ------------------------------------------------------
 
 // Deal a fresh game from `seed`. When seed_len >= 32 the deal uses the wide
@@ -77,7 +88,7 @@ int fio_new_game(const uint8_t *seed, int seed_len, int n_players);
 // actual joined count once the group decides to start (never a new random
 // seed — that is the "locked at create" guarantee). Requires a wide (32-byte)
 // seed to already be resident (a prior fio_new_game, or an
-// fio_msg_decode_packed of an envelope that carried one) — FIO_ENOSEED
+// fio_msg_decode of an envelope that carried one) — FIO_ENOSEED
 // otherwise. n_players must be 2..8 (FIO_EBADARG, see fio_new_game). The seed
 // itself never crosses back into Swift; this is the same "the kernel keeps
 // the seed" discipline fio_replay_encode_v6_b32 already relies on.
@@ -91,7 +102,7 @@ int fio_reseat_game(int n_players);
 // on the resident game rather than an argument to fio_new_game: a lobby is
 // created before anyone has decided anything, and the checkbox that changes it
 // re-seals a chain that already exists. Call it after adopting the lobby being
-// changed (fio_msg_decode_packed) and before sealing; the seal states it on the
+// changed (fio_msg_decode) and before sealing; the seal states it on the
 // wire, and the Start that re-deals the locked seed carries it across.
 //
 // It changes what is LEGAL - a podkidnoy defender's menu has no transfer in it
@@ -741,26 +752,36 @@ int fio_msg_staged_atoms_before(void);
 
 #define FIO_EMSG        -9   // the FMSG payload was rejected (see fio_last_msg_error)
 
+// THE DECODED HEADER, WHERE IT LIES (msg_wire.h MsgHeader): the envelope the
+// last decode or peek read, plus the SHA-256 of the bytes it came from (Rule P's
+// tiebreak, which an envelope cannot carry about itself). The generated Swift
+// readers copy it out (sdk/swift/gen/kernel.ios.swift, readMsgHeader); no host
+// restates one offset of it.
+//
+// It used to cross as a packed blob this bridge wrote and Swift parsed - the
+// same layout stated twice, in two languages, kept in step by hand. The web has
+// crossed this struct since Phase 1 (wasm_msg_header_ptr) and now the phone
+// does too, so a change to the envelope's fields updates both readers by
+// rerunning one script.
+//
+// The BODY is not in it: `actions` borrows the caller's payload, so it is
+// cleared rather than handed over as a pointer into bytes the next call may
+// overwrite. The moves are read back through the replay entries, the board
+// through fio_state_packed.
+//
+// Valid until the next fio_msg_decode / fio_msg_peek, and never NULL: before
+// either has succeeded it reads as a zeroed envelope.
+const void *fio_msg_header_ptr(void);
+
 // Decode + VALIDATE a payload, and ADOPT it: the chain is replayed through the
 // kernel into the resident game, so every other call in this header then reads
 // the game the payload describes. A corrupt or hand-edited payload fails here,
-// loudly — validation IS replay, and there is no partial recovery (§7.3).
-//
-// The envelope metadata is handed back as a PACKED fixed-layout blob (Swift
-// parses it with MessageEnvelope.decode) — no embedded state / moves
-// (read those via fio_state_packed / fio_legal_packed). Layout:
-//   phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16 LE) game_id(u64 LE)
-//   parent8(8) digest(32) sent_at(u16 LE) n_new(1) opening(1) carry_key(u32 LE)
-//   carry_fool(1) passing(1) n_joins(1)
-//   then n_joins*{seat(1) name_len(1) name[]}.
-// `passing` is the table's rules, already resolved against the envelope's
-// format: 1 the defender may transfer, 0 podkidnoy (see fio_set_passing).
-// ROUND 16: sent_at is the envelope's send clock (unix seconds mod 65536); 0
-// when the chain is format 2 and carries none, which means no pickup hold.
-// Bytes written or negative (FIO_EMSG → fio_last_msg_error).
-int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, int cap);
+// loudly - validation IS replay, and there is no partial recovery (§7.3).
+// The header lands at fio_msg_header_ptr.
+// FIO_EOK, or negative (FIO_EMSG -> fio_last_msg_error).
+int fio_msg_decode(const uint8_t *payload, int len);
 
-// READ the same blob and ADOPT NOTHING: no replay, and not one byte of the
+// READ the same header and ADOPT NOTHING: no replay, and not one byte of the
 // resident game - nor of the base a later seal measures its bubble against -
 // changes. For a caller that only wants the header (the composer reading the
 // joins and the summary out of the bubble it has just sealed).
@@ -775,11 +796,18 @@ int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, i
 // Nothing here validates the body, so the fields are the sender's claims: peek
 // what you are about to SEND or merely describe, decode what is about to be
 // PLAYED (there, validation is the replay and the replay is the point).
-// Bytes written or negative (FIO_EMSG → fio_last_msg_error).
-int fio_msg_peek_packed(const uint8_t *payload, int len, unsigned char *out, int cap);
+// FIO_EOK, or negative (FIO_EMSG -> fio_last_msg_error).
+int fio_msg_peek(const uint8_t *payload, int len);
+
+// THE TABLE'S RULES, off that header: 1 when the defender may transfer
+// (perevodnoy), 0 for podkidnoy. Resolved against the envelope's own format, so
+// no host has to know which formats predate the rules byte and are the passing
+// game by definition. Reading MsgEnvelope.variant instead is the bug this
+// exists to prevent.
+int fio_msg_passing(void);
 
 // 1.0(6) DIAGNOSTIC: replay codec version (5/6/7) of the body the last
-// fio_msg_decode_packed replayed, or -1 for an empty-body message.
+// fio_msg_decode replayed, or -1 for an empty-body message.
 int fio_msg_last_body_version(void);
 
 // Seal the RESIDENT game into a payload — the send path, after the local player
@@ -788,7 +816,7 @@ int fio_msg_last_body_version(void);
 // so a device cannot emit a payload it would itself reject.
 //
 // `joins` is the roster PACKED, in the one layout this file already writes -
-// the tail of fio_msg_decode_packed's blob:
+// the tail of the joins block a decoded header carries:
 //     n_joins(1), then n_joins x { seat(1) name_len(1) name[name_len] }
 // The blob must be consumed exactly (no trailing bytes), and names are <=64
 // UTF-8 bytes (round-5 B1, docs/APP_REVIEW_NOTES.md - was 12, too tight for a
@@ -809,7 +837,7 @@ int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
                    int sent_at, uint8_t *out, int cap);
 
 // ROUND 16 — the pickup hold, asked of the RESIDENT game (the one the last
-// fio_msg_decode_packed replayed). Seconds `seat` must still wait before it may
+// fio_msg_decode replayed). Seconds `seat` must still wait before it may
 // pick up: 0 when it may pick up now. `sent_at` is the clock that came back in
 // the packed blob, `now` the caller's own unix seconds mod 65536.
 //
@@ -1023,7 +1051,7 @@ int fio_msg_surface_plan(const uint8_t *showing, int showing_len,
                          const uint8_t *arriving, int arriving_len,
                          int32_t *out, int cap);
 
-// Rule R (§7.4): rebase ONE pending move onto the chain fio_msg_decode_packed
+// Rule R (§7.4): rebase ONE pending move onto the chain fio_msg_decode
 // last adopted — the ledger's moves, in order. Returns:
 //   0  re-applied, and APPLIED to the resident game (that IS the rebase)
 //   1  discarded by the round-boundary guard

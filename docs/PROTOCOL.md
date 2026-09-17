@@ -117,7 +117,7 @@ rest of the byte, and bounds the view blob without looking past it, so a
 trailer plus a flag bit is invisible to all of them. The island is deleted in
 one commit (`LEGACY_ROSTER_JSON` in `sdk/ts/wire/view.ts`) once no pre-trailer
 client is in the field AND every stored row has been rewritten since the deploy.
-The names block is the kernel's own (`fio_msg_decode_packed`'s tail,
+The names block is the kernel's own (the joins an FMSG header carries,
 `sdk/swift/RosterWire.swift`), so it is one codec and not a second.
 `e2e/packed_roster_wire.test.ts` holds both halves: a frozen 1.0(43)
 encoder/decoder pair, and the production Swift decoder compiled against the

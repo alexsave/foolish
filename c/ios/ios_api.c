@@ -119,6 +119,22 @@ static uint8_t  g_msg_carry_fool = MSG_NO_FOOL;
 // does).
 static int8_t g_msg_rules = 0;
 
+// ---------- the layout this library was compiled for ------------------------
+//
+// `make ios-lib` bakes in the structgen hash of the structs the Swift bindings
+// read (tools/structgen/specs/ios_layout.args, c/Makefile "the iOS layout").
+// The generated module carries the same number, and KernelLayout compares them
+// at startup, so a library and a binding built from different headers refuse to
+// run instead of reading the right fields at the wrong offsets.
+//
+// A build that did not stamp one answers 0, which matches no generated module:
+// the smoke, golden and archive targets build these sources with the host
+// compiler and never meet the Swift side, so they need no libclang.
+#ifndef SG_LAYOUT_HASH
+#define SG_LAYOUT_HASH 0u
+#endif
+uint32_t fio_layout_hash(void) { return (uint32_t)SG_LAYOUT_HASH; }
+
 // ---------- legal moves ----------------------------------------------------
 //
 // The packed wire carries the MOVE_* integer; naming it is the host's job.
@@ -968,7 +984,7 @@ int fio_new_game(const uint8_t *seed, int seed_len, int n_players) {
 //
 // Just fio_new_game fed g_deal_seed back to itself: the seed already lives in
 // the resident-game statics (kept there from whichever call last dealt or
-// decoded it — fio_new_game or fio_msg_decode_packed), so it never has to
+// decoded it — fio_new_game or fio_msg_decode), so it never has to
 // cross back out to Swift and back in, mirroring the same "the kernel keeps
 // the seed, the app never touches it" discipline fio_replay_encode_v6_b32
 // already relies on. Returns FIO_ENOSEED if no wide seed is resident (nothing
@@ -1284,76 +1300,45 @@ static int g_msg_round = -1;      // the adopted chain's round — Rule R's guar
 
 int fio_last_msg_error(void) { return g_last_msg_error; }
 
-// The FMSG envelope decode+adopt hands the metadata back as a PACKED
-// fixed-layout blob (Swift parses it with MessageEnvelope.decode), with no
-// embedded state or moves - the phone reads those through fio_state_packed /
-// fio_legal_packed in the same actor.
-// Layout: phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16 LE)
-//   game_id(u64 LE) parent8(8) digest(32) sent_at(u16 LE) n_new(1)
-//   opening(1) carry_key(u32 LE) carry_fool(1) passing(1) n_joins(1)
-//   then n_joins * { seat(1) name_len(1) name[name_len] }.
-// ROUND 16: sent_at is the envelope's send clock (unix seconds mod 65536, 0 on
-// a format-2 chain that carries none), and n_new is the bubble delta - how many
-// atoms THIS bubble added (0 = the chain does not say; see msg_wire.h). Both
-// sit at the END of the fixed header, after the digest, so every offset the
-// Swift parser already knew is unchanged and only n_joins moves - this blob is
-// a private ABI between two files in one repo, but keeping the prefix stable is
-// what makes the diff readable.
-// THE FOOL'S PENALTY (format 4) appends on the same principle: `opening` is the
-// seat this deal opened on (0xFF = the ordinary lowest-trump derivation), and
-// carry_key/carry_fool are a WAITING lobby's rematch carry (0 / 0xFF = none).
-// The phone needs all three - it shows whose penalty is pending in the lobby,
-// and it hands the carry back to the kernel at Start.
-// THE RULES (format 5/6) append after them: `passing` is 1 when the defender may
-// transfer and 0 for podkidnoy. The lobby draws its checkbox from it, and every
-// later bubble repeats it - already resolved against the envelope's format, so
-// there is nothing here for Swift to interpret.
 // 1.0(6) DIAGNOSTIC: the replay codec version (5/6/7) of the body the last
-// fio_msg_decode_packed replayed, or -1 for an empty-body message. Set through
+// fio_msg_decode replayed, or -1 for an empty-body message. Set through
 // msg_last_body_version (msg_wire.c).
 int fio_msg_last_body_version(void) { return msg_last_body_version; }
 
-// The packed blob itself, written from an already-decoded envelope + its
-// digest. Shared by the ADOPTING decode below and by the non-adopting peek, so
-// the two can never come to describe a payload differently.
-static int fio_msg_pack(const MsgEnvelope *e, const uint8_t *digest,
-                        unsigned char *out, int cap) {
-    int need = 4 + 2 + 8 + MSG_PARENT_LEN + SHA256_DIGEST_LEN + 2 + 1 + 1 + 4 + 1 + 1 + 1;
-    for (int i = 0; i < e->n_joins; i++) need += 2 + e->joins[i].name_len;
-    if (cap < need) return FIO_ECAP;
+// THE HEADER, AS A STRUCT (msg_wire.h MsgHeader), which is how the web has
+// taken it since Phase 1 (wasm_msg_header_ptr). It used to be a packed blob
+// this file wrote and MessageEnvelope.swift read back field by field: 65 bytes
+// of fixed layout plus a join tail, stated twice, in two languages, kept in
+// step by hand and by the comment that used to be here explaining which byte
+// went where.
+//
+// Nothing about the ENVELOPE changed - the wire is msg_wire.c's, as it always
+// was. What changed is that its reader is generated from the declaration
+// (sdk/swift/gen/kernel.ios.swift) instead of written out again.
+//
+// `actions` is dropped on the way, exactly as the wasm twin drops it: the body
+// BORROWS the caller's payload, and a host holding a pointer into bytes the
+// next call may overwrite is worse than a host holding no body at all.
+static MsgHeader g_msg_header;
 
-    unsigned char *q = out;
-    *q++ = e->phase;
-    *q++ = e->n_players;
-    *q++ = e->last_actor_seat;
-    *q++ = e->round;
-    *q++ = (unsigned char)(e->turn & 0xff);
-    *q++ = (unsigned char)((e->turn >> 8) & 0xff);
-    for (int i = 0; i < 8; i++) *q++ = (unsigned char)((e->game_id >> (8 * i)) & 0xff);
-    memcpy(q, e->parent8, MSG_PARENT_LEN); q += MSG_PARENT_LEN;
-    memcpy(q, digest, SHA256_DIGEST_LEN); q += SHA256_DIGEST_LEN;
-    *q++ = (unsigned char)(e->sent_at & 0xff);
-    *q++ = (unsigned char)((e->sent_at >> 8) & 0xff);
-    *q++ = e->n_new;
-    *q++ = e->opening;
-    for (int i = 0; i < 4; i++) *q++ = (unsigned char)((e->carry_key >> (8 * i)) & 0xff);
-    *q++ = e->carry_fool;
-    // THE RULES, as the one question a UI ever asks of them: may the defender
-    // transfer (1) or not (0). Derived here rather than handed over raw, so
-    // Swift never has to know which envelope formats carry a variant byte and
-    // which are the passing game by definition (msg_pass_allowed).
-    *q++ = (unsigned char)(msg_pass_allowed(e) ? 1 : 0);
-    *q++ = (unsigned char)e->n_joins;
-    for (int i = 0; i < e->n_joins; i++) {
-        *q++ = e->joins[i].seat;
-        *q++ = e->joins[i].name_len;
-        memcpy(q, e->joins[i].name, e->joins[i].name_len); q += e->joins[i].name_len;
-    }
-    return (int)(q - out);
+const void *fio_msg_header_ptr(void) { return &g_msg_header; }
+
+static void fio_msg_header_set(const MsgEnvelope *e, const uint8_t *digest) {
+    g_msg_header.e = *e;
+    g_msg_header.e.actions = 0;
+    g_msg_header.e.actions_len = 0;
+    g_msg_header.e.n_actions = 0;
+    memcpy(g_msg_header.digest, digest, SHA256_DIGEST_LEN);
 }
 
-// READ a payload's header and CHANGE NOTHING: the same packed blob as
-// fio_msg_decode_packed, without the replay and without touching one byte of
+// THE RULES, as the one question a UI ever asks of them: may the defender
+// transfer (1) or not (0)? Answered here rather than read off `variant`, so no
+// host has to know which envelope formats predate the rules byte and are the
+// passing game by definition (msg_pass_allowed).
+int fio_msg_passing(void) { return msg_pass_allowed(&g_msg_header.e) ? 1 : 0; }
+
+// READ a payload's header and CHANGE NOTHING: the same header as
+// fio_msg_decode, without the replay and without touching one byte of
 // the resident game or of the base a later seal measures its bubble against.
 //
 // ROUND 16 - because a decode is not a read. The composer decodes the payload
@@ -1369,10 +1354,10 @@ static int fio_msg_pack(const MsgEnvelope *e, const uint8_t *digest,
 //
 // A peek can be asked of ANY payload, including one this device could not
 // replay: nothing here validates the body, so the fields are the sender's
-// claims. Use `fio_msg_decode_packed` for a chain that is about to be PLAYED -
+// claims. Use `fio_msg_decode` for a chain that is about to be PLAYED -
 // there validation is the replay, and the replay is the point.
-int fio_msg_peek_packed(const uint8_t *payload, int len, unsigned char *out, int cap) {
-    if (!payload || !out || cap <= 0) return FIO_EBADARG;
+int fio_msg_peek(const uint8_t *payload, int len) {
+    if (!payload) return FIO_EBADARG;
     g_last_msg_error = 0;
 
     MsgEnvelope e;
@@ -1381,11 +1366,12 @@ int fio_msg_peek_packed(const uint8_t *payload, int len, unsigned char *out, int
 
     uint8_t digest[SHA256_DIGEST_LEN];
     msg_digest(payload, len, digest);
-    return fio_msg_pack(&e, digest, out, cap);
+    fio_msg_header_set(&e, digest);
+    return FIO_EOK;
 }
 
-int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, int cap) {
-    if (!payload || !out || cap <= 0) return FIO_EBADARG;
+int fio_msg_decode(const uint8_t *payload, int len) {
+    if (!payload) return FIO_EBADARG;
     g_last_msg_error = 0;
     msg_last_body_version = -1;   // 1.0(6) diagnostic reset
 
@@ -1419,10 +1405,12 @@ int fio_msg_decode_packed(const uint8_t *payload, int len, unsigned char *out, i
     memcpy(g_deal_seed, e.seed, FOOLISH_SEED_LEN);
     g_has_deal_seed = 1;
 
-    return fio_msg_pack(&e, digest, out, cap);
+    fio_msg_header_set(&e, digest);
+    return FIO_EOK;
 }
 
-// A ROSTER, PACKED - byte for byte the tail fio_msg_decode_packed hands BACK:
+// A ROSTER, PACKED - byte for byte the tail fio_msg_decode's joins are read
+// from:
 //   n_joins(1), then n_joins x { seat(1), name_len(1), name[name_len] }
 // One layout for the roster in both directions, so a host that can read one can
 // write one.
@@ -1786,7 +1774,7 @@ int fio_msg_surface_plan(const uint8_t *showing, int showing_len,
 // awire and the pending ledger holds them the same way). Same contract as
 // wasm_msg_rebase: decode the
 // action, then msg_rebase_one against the adopted chain's round (g_msg_round, set
-// by the last fio_msg_decode_packed). Returns MSG_REBASE_* (0 re-applied and
+// by the last fio_msg_decode). Returns MSG_REBASE_* (0 re-applied and
 // APPLIED to the resident game, 1 discarded by the round guard, 2 discarded as
 // illegal), or a negative MSG_E*.
 int fio_msg_rebase_awire(int pending_round, int seat, const uint8_t *buf, int len) {

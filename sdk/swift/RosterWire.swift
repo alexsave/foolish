@@ -3,7 +3,7 @@
 //
 //     n_joins(1), then n_joins x { seat(1) name_len(1) name[name_len] }
 //
-// That is the tail of `fio_msg_decode_packed`'s blob, so this file is a reader
+// That is the joins block an FMSG header carries, so this file is a reader
 // and a writer of the SAME bytes rather than a second format. It was the last
 // JSON on any path that matters: the four `fio_msg_*` entries took the roster as
 // `[{"seat":0,"name":"Sveta"},...]` and parsed it in C, and the client-server

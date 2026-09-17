@@ -254,7 +254,14 @@ define IOS_BUILD_BOTH
 endef
 
 .PHONY: ios-lib ios-smoke
-ios-lib:
+# THE LIBRARY CARRIES THE LAYOUT IT WAS COMPILED FOR. sdk/swift/gen is generated
+# from these same headers under these same flags; a library built from different
+# ones would read right at every offset the two happen to share and wrong at the
+# rest. Stamped only here, because only the shipped slices are read by the Swift
+# bindings - ios-smoke, ios-goldens and ios-archives build the same sources with
+# the HOST compiler and need no libclang on the machine that runs them.
+ios-lib: IOS_CFLAGS += -DSG_LAYOUT_HASH=$$(cat build/layout/ios.hash)
+ios-lib: build/layout/ios.hash
 	@echo "== device slice (arm64) =="
 	$(call IOS_BUILD_BOTH,arm64-apple-ios$(IOS_MIN_VERSION),iphoneos,build/ios/device)
 	@echo "== simulator slices (arm64 + x86_64) =="
@@ -672,6 +679,30 @@ sg_hash = @mkdir -p build/layout && \
 sg_settle = @cmp -s $(2)/.layout build/layout/$(1).hash || { \
   if [ -d $(2) ]; then echo "layout $(1): $(2) was compiled for $$(cat $(2)/.layout 2>/dev/null || echo an unrecorded layout), not $$(cat build/layout/$(1).hash) - rebuilding $(3) from clean"; fi; \
   rm -rf $(2) $(3) && mkdir -p $(2) && cp build/layout/$(1).hash $(2)/.layout; }
+
+# The iOS layout, which is its own: its caps are not the wasm caps and its
+# target is not wasm32 (a pointer alone is 4 bytes there and 8 here). The hash
+# is of the structs the Swift bindings read (tools/structgen/specs/
+# ios_layout.args), and `ios-lib` bakes it into the library as SG_LAYOUT_HASH,
+# so sdk/swift/gen and the .a it is read against cannot come apart silently.
+#
+# ALL THREE SLICES, compared: the device is arm64 and the simulator is arm64 or
+# x86_64, and one hash is stamped into all three. They agree today - none of
+# these structs has a member whose size or alignment differs between LP64
+# targets - and if one ever stops agreeing, the library it is stamped into
+# would read right on two architectures and wrong on the third, which is
+# exactly the failure this file refuses to ship.
+IOS_LAYOUT_TRIPLE  := arm64-apple-ios$(IOS_MIN_VERSION)
+IOS_LAYOUT_TRIPLES := $(IOS_LAYOUT_TRIPLE) arm64-apple-ios$(IOS_MIN_VERSION)-simulator x86_64-apple-ios$(IOS_MIN_VERSION)-simulator
+SG_IOS_SPEC := $(STRUCTGEN_DIR)/specs/ios_layout.args
+SG_IOS_ARGS  = $(shell grep -v '^[[:space:]]*\#' $(SG_IOS_SPEC))
+build/layout/ios.hash: $(STRUCTGEN) $(SG_IOS_SPEC) FORCE
+	@mkdir -p build/layout && \
+	for t in $(IOS_LAYOUT_TRIPLES); do \
+	  $(STRUCTGEN) --cwd . $(SG_IOS_ARGS) --build 'ios=$(strip $(IOS_CFLAGS))' --target $$t --print-hash || exit 1; \
+	done | sort -u > $@.new && \
+	[ "$$(grep -c . $@.new)" = 1 ] || { echo "layout ios: the iOS slices do not share one layout:"; cat $@.new; exit 1; }
+	@{ cmp -s $@.new $@ || { echo "layout ios: $$(cat $@ 2>/dev/null || echo none) -> $$(cat $@.new)"; mv $@.new $@; }; }; rm -f $@.new
 
 build/layout/bots.hash: $(STRUCTGEN) FORCE
 	$(call sg_hash,bots,$(WASM_BOT_CFLAGS),bots)

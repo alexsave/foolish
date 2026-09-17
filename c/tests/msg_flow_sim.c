@@ -38,6 +38,7 @@
 //  X (exclusion): a device whose name is NOT in the canonical roster never
 //    renders a board (lobby-full / spectator / lobby only).
 #include "ios_api.h"
+#include "msg_wire.h"   // MsgHeader: the envelope's header, read where it lies
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -60,7 +61,6 @@ static Row row[MAXD];
 static Ui ui[MAXD];
 static char dname[MAXD][8];
 static uint64_t GID;
-static unsigned char meta[4096];
 static int fails, s_viol, x_viol, c_viol, l_viol, limbo;
 static int trial;
 
@@ -68,53 +68,57 @@ typedef struct {
     int phase, np, la, turn, n_joins;
     uint8_t digest[32];
     int jseat[8]; char jname[8][8];
-    // The ROSTER exactly as the decode hands it back: n(1) then n x
-    // {seat(1) len(1) name}. That is the same blob RosterWire.encode writes on
-    // the Swift side, so the seat gates below can be asked of the kernel with
-    // the bytes it already produced rather than a re-encoding. Copied out of
-    // the shared `meta` scratch because `meta` is overwritten by the next
-    // decode and an Env outlives one.
+    // The ROSTER as the seal takes it: n(1) then n x {seat(1) len(1) name}.
+    // That is the same blob RosterWire.encode writes on the Swift side, so the
+    // seat gates below can be asked of the kernel with the bytes it already
+    // produced rather than a re-encoding. Copied out of the header because the
+    // header is overwritten by the next decode and an Env outlives one.
     uint8_t joins[1 + 8 * (2 + 64)]; int joins_len;
 } Env;
 
 static uint32_t rng;
 static uint32_t rnd(void) { rng = rng * 1664525u + 1013904223u; return rng >> 8; }
 
-// WHERE THE ROSTER STARTS in fio_msg_pack's blob, as the sum of the fields in
-// front of it: phase, n_players, last_actor, round (4), turn (2), game_id (8),
-// parent8 (8), digest (32), sent_at (2), n_new, opening, carry_key (4),
-// carry_fool, passing (5) = 64, and the roster's own n_joins byte sits there.
+// The decode hands back the header WHERE IT LIES (msg_wire.h MsgHeader), so
+// this reads it by its fields.
 //
-// IT WAS 54 - the sum before sent_at, n_new, opening, carry_key, carry_fool and
-// passing were added to the blob - so every roster this file read was ten bytes
-// of somebody else's fields. Nothing announced it: n_joins read as whatever
-// byte 54 held, the names came out as noise, no device ever recognised its own
-// seat, so every open was a lobby offering JOIN, no game ever started, and all
-// four invariants passed by never being reached. The file had also stopped
-// COMPILING (the roster went packed and fio_msg_encode grew an argument), so
-// this had been unbuildable and unrun rather than wrong-and-green - but it is
-// worth naming as the failure mode a Monte-Carlo harness has: a schedule that
-// reaches nothing reports zero violations exactly like a correct one.
-#define META_NJOINS 64
+// It used to walk a packed blob by offset, and the offset was WRONG: 54, the
+// sum of the fields in front of the roster before sent_at, n_new, opening,
+// carry_key, carry_fool and passing were added to that blob. Every roster this
+// file read was ten bytes of somebody else's fields. Nothing announced it -
+// n_joins read as whatever byte 54 held, the names came out as noise, no device
+// ever recognised its own seat, so every open was a lobby offering JOIN, no game
+// ever started, and all four invariants passed by never being reached. That is
+// the failure mode a Monte-Carlo harness has: a schedule that reaches nothing
+// reports zero violations exactly like a correct one. An offset nobody states
+// cannot be wrong, which is the whole of why the blob is gone.
 
 static int dec(const uint8_t *p, int len, Env *e) {
-    int rc = fio_msg_decode_packed(p, len, meta, sizeof meta);
-    if (rc <= 0) return rc;
+    int rc = fio_msg_decode(p, len);
+    if (rc != FIO_EOK) return rc;
+    const MsgHeader *h = (const MsgHeader *)fio_msg_header_ptr();
     if (e) {
-        e->phase = meta[0]; e->np = meta[1]; e->la = meta[2];
-        e->turn = meta[4] | (meta[5] << 8);
-        memcpy(e->digest, meta + 22, 32);
-        e->n_joins = meta[META_NJOINS];
-        int q = META_NJOINS + 1;
+        e->phase = h->e.phase; e->np = h->e.n_players; e->la = h->e.last_actor_seat;
+        e->turn = h->e.turn;
+        memcpy(e->digest, h->digest, 32);
+        e->n_joins = h->e.n_joins;
         for (int i = 0; i < e->n_joins && i < 8; i++) {
-            e->jseat[i] = meta[q]; int nl = meta[q + 1]; q += 2;
-            memcpy(e->jname[i], meta + q, nl); e->jname[i][nl] = 0; q += nl;
+            e->jseat[i] = h->e.joins[i].seat;
+            int nl = h->e.joins[i].name_len;
+            if (nl > (int)sizeof e->jname[i] - 1) nl = (int)sizeof e->jname[i] - 1;
+            memcpy(e->jname[i], h->e.joins[i].name, (size_t)nl); e->jname[i][nl] = 0;
         }
-        e->joins_len = q - META_NJOINS;
-        if (e->joins_len > 0 && e->joins_len <= (int)sizeof e->joins)
-            memcpy(e->joins, meta + META_NJOINS, (size_t)e->joins_len);
-        else
-            e->joins_len = 0;
+        // …and the same roster PACKED, because that is the shape fio_msg_encode
+        // takes to seal with (n(1) then n x {seat(1) len(1) name}).
+        int q = 0;
+        e->joins[q++] = (uint8_t)h->e.n_joins;
+        for (int i = 0; i < h->e.n_joins; i++) {
+            e->joins[q++] = h->e.joins[i].seat;
+            e->joins[q++] = h->e.joins[i].name_len;
+            memcpy(e->joins + q, h->e.joins[i].name, h->e.joins[i].name_len);
+            q += h->e.joins[i].name_len;
+        }
+        e->joins_len = q;
     }
     return rc;
 }
@@ -227,7 +231,7 @@ static void act_maybe(int d);   // fwd
 
 static void open_surface(int d, const uint8_t *tapped, int tlen, int sender, int evaporate) {
     Env te;
-    if (dec(tapped, tlen, &te) <= 0) return;
+    if (dec(tapped, tlen, &te) != FIO_EOK) return;
     int senderIsLocal = (sender == d);
 
     // MessageSurfaceRouter.resolve: Rule P against the row for this game.
@@ -238,7 +242,7 @@ static void open_surface(int d, const uint8_t *tapped, int tlen, int sender, int
         }
     }
     Env we;
-    if (dec(win, wlen, &we) <= 0) return;
+    if (dec(win, wlen, &we) != FIO_EOK) return;
 
     if (we.phase == 0) {
         // LOBBY. lobbySeat -> LobbyControls.
@@ -260,14 +264,14 @@ static void open_surface(int d, const uint8_t *tapped, int tlen, int sender, int
             show_lobby(d, out, n);
         } else if (offered == LC_START && (rnd() % 100) < 45) {
             // startFromLobby: re-adopt the lobby chain, reseat at joins.count, seal LIVE.
-            if (dec(win, wlen, &we) <= 0) return;
+            if (dec(win, wlen, &we) != FIO_EOK) return;
             if (fio_reseat_game(we.n_joins) != 0) { fails++; return; }
             uint8_t out[PLEN], jb[640];
             const int jl = jpack(&we, -1, "", jb, sizeof jb);
             if (jl < 0) { fails++; return; }
             int n = fio_msg_encode(2, seat, GID, we.digest, jb, jl, 0 /* no send clock in this harness */, out, PLEN);
             if (n <= 0) { printf("trial %d: start seal err=%d\n", trial, fio_last_msg_error()); fails++; return; }
-            Env le; if (dec(out, n, &le) <= 0) { fails++; return; }
+            Env le; if (dec(out, n, &le) != FIO_EOK) { fails++; return; }
             put_row(d, seat, dname[d], out, n);
             if (!evaporate) deliver(out, n, d);
             show_board(d, out, n, seat, &le);
@@ -294,7 +298,7 @@ static void incoming(int d, const uint8_t *p, int len, int sender) {
 static void act_maybe(int d) {
     if (ui[d].kind != UI_BOARD) return;
     Env e;
-    if (dec(ui[d].chain, ui[d].clen, &e) <= 0) return;
+    if (dec(ui[d].chain, ui[d].clen, &e) != FIO_EOK) return;
     if (e.phase != 2) return;
     static char lbuf[64 * 1024];
     int n = fio_legal_packed(ui[d].viewer, lbuf, sizeof lbuf);
@@ -313,7 +317,7 @@ static void act_maybe(int d) {
     if (jl < 0) return;
     int len = fio_msg_encode(2, ui[d].viewer, GID, e.digest, jb, jl, 0 /* no send clock in this harness */, out, PLEN);
     if (len <= 0) return;
-    Env ne; if (dec(out, len, &ne) <= 0) return;
+    Env ne; if (dec(out, len, &ne) != FIO_EOK) return;
     put_row(d, ui[d].viewer, dname[d], out, len);
     deliver(out, len, d);
     show_board(d, out, len, ui[d].viewer, &ne);
@@ -374,7 +378,7 @@ int main(int argc, char **argv) {
         }
 
         // ---- invariants -----------------------------------------------------
-        Env ce; if (dec(tr_[can].p, tr_[can].len, &ce) <= 0) { fails++; continue; }
+        Env ce; if (dec(tr_[can].p, tr_[can].len, &ce) != FIO_EOK) { fails++; continue; }
         for (int d = 0; d < N; d++) {
             const char *mine = NULL; int myseat = -1;
             for (int i = 0; i < ce.n_joins; i++)
@@ -409,7 +413,7 @@ int main(int argc, char **argv) {
         // L: at a fresh LIVE canonical chain, the first attacker's owner can act.
         if (ce.phase == 2 && ce.turn == 0) {
             static char sbuf[64 * 1024];
-            if (dec(tr_[can].p, tr_[can].len, NULL) <= 0) { fails++; continue; }
+            if (dec(tr_[can].p, tr_[can].len, NULL) != FIO_EOK) { fails++; continue; }
             if (fio_state_packed(-2, sbuf, sizeof sbuf) <= 0) { fails++; continue; }
             int fa = (signed char)((unsigned char *)sbuf)[3];
             const char *fan = join_name_at(&ce, fa);

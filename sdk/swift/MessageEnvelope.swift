@@ -193,7 +193,7 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
     /// the kernel the chain up to and including the staged move was history
     /// somebody else made, so the next action of the same turn measured its
     /// delta from the middle of its own bubble. See `atomsBefore`, and
-    /// fio_msg_peek_packed for the whole of it.
+    /// fio_msg_peek for the whole of it.
     ///
     /// Nothing here replays, so nothing here validates: the fields are the
     /// sender's claims. Peek what you are about to SEND; decode what is about
@@ -202,50 +202,39 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
         try await MessageKernel.shared.peek(payload: payload)
     }
 
-    /// Parse the kernel's packed envelope-metadata blob (fio_msg_decode_packed).
-    /// Fixed layout: phase(1) n_players(1) last_actor_seat(1) round(1) turn(u16
-    /// LE) game_id(u64 LE) parent8(8) digest(32) sent_at(u16 LE) n_new(1)
-    /// opening(1) carry_key(u32 LE) carry_fool(1) passing(1) n_joins(1) then
-    /// joins of {seat(1) name_len(1) name[]}. Returns nil if a field runs past
-    /// the end.
+    /// THE HEADER THE KERNEL JUST READ, copied out of it (msg_wire.h MsgHeader,
+    /// at fio_msg_header_ptr, through the generated reader).
     ///
-    /// ROUND 16 grew this by the two sent_at bytes and the n_new byte, then by
-    /// the fool's-penalty trio; the rules byte followed. All of them land AFTER
-    /// the digest, so every offset above is the one it always was.
-    static func decode(packed d: Data) -> MessageEnvelope? {
-        let b = [UInt8](d)
-        let HDR = 65
-        guard b.count >= HDR else { return nil }
-        let phase = Int(b[0]); let nPlayers = Int(b[1]); let last = Int(b[2]); let round = Int(b[3])
-        let turn = Int(b[4]) | (Int(b[5]) << 8)
-        var gid: UInt64 = 0
-        for i in 0..<8 { gid |= UInt64(b[6 + i]) << (8 * i) }
-        let hex = { (r: Range<Int>) in b[r].map { String(format: "%02x", $0) }.joined() }
-        let parent8 = hex(14..<22)
-        let digest = hex(22..<54)
-        let sentAt = Int(b[54]) | (Int(b[55]) << 8)
-        let newAtoms = Int(b[56])
+    /// This was 60 lines of offset arithmetic over a packed blob ios_api.c
+    /// wrote for this one caller: the same layout stated twice, in two
+    /// languages, kept in step by hand. Neither the envelope nor its wire
+    /// changed - what changed is that the reader is generated from the C
+    /// declaration, so a field added to the header updates the phone and the
+    /// browser by rerunning one script.
+    ///
+    /// nil when the header does not read whole, which after a successful decode
+    /// means the bindings and the linked kernel disagree about the layout -
+    /// KernelLayout refuses that pairing at startup, so it cannot be reached.
+    static func resident() -> MessageEnvelope? {
+        guard let p = fio_msg_header_ptr(), let h = try? readMsgHeader(p) else { return nil }
+        let hex = { (bytes: [Int]) in bytes.map { String(format: "%02x", UInt8(truncatingIfNeeded: $0)) }.joined() }
         // 0xFF is the wire's "no penalty here" on both of these (MSG_NO_OPENING
         // / MSG_NO_FOOL), and a 0 key is "no carry".
-        let opening: Int? = b[57] == 0xFF ? nil : Int(b[57])
-        var rawKey: UInt32 = 0
-        for i in 0..<4 { rawKey |= UInt32(b[58 + i]) << (8 * i) }
-        let carryKey: UInt32? = rawKey == 0 ? nil : rawKey
-        let carryFool: Int? = b[62] == 0xFF ? nil : Int(b[62])
-        // The rules, already resolved against the envelope's format by the
-        // kernel (msg_pass_allowed): Swift never learns which formats carry a
-        // variant byte.
-        let passing = b[63] != 0
-        // The roster, through the one codec that also WRITES it (RosterWire) -
-        // n_joins sits at 64, so the tail starts one byte earlier than HDR.
-        guard let roster = RosterWire.decode(b, at: HDR - 1) else { return nil }
-        let joins = roster.joins
-        return MessageEnvelope(phase: phase, turn: turn, round: round, nPlayers: nPlayers,
-                               lastActorSeat: last, gameId: String(gid),
-                               parent8: parent8, digest: digest, sentAt: sentAt,
-                               newAtoms: newAtoms, opening: opening,
-                               carryKey: carryKey, carryFool: carryFool,
-                               passingAllowed: passing, joins: joins)
+        return MessageEnvelope(
+            phase: h.e.phase, turn: h.e.turn, round: h.e.round, nPlayers: h.e.nPlayers,
+            lastActorSeat: h.e.lastActorSeat,
+            // A u64: a String because JSON numbers are doubles.
+            gameId: String(h.e.gameId),
+            parent8: hex(h.e.parent8), digest: hex(h.digest),
+            sentAt: h.e.sentAt, newAtoms: h.e.nNew,
+            opening: h.e.opening == MSG_NO_OPENING ? nil : h.e.opening,
+            carryKey: h.e.carryKey == 0 ? nil : UInt32(truncatingIfNeeded: h.e.carryKey),
+            carryFool: h.e.carryFool == MSG_NO_FOOL ? nil : h.e.carryFool,
+            // The rules, resolved against the envelope's format by the kernel
+            // (msg_pass_allowed): Swift never learns which formats carry a
+            // variant byte, which is why it does not read `variant` itself.
+            passingAllowed: fio_msg_passing() != 0,
+            joins: h.e.joins.map { MessageJoin(seat: $0.seat, name: $0.name) })
     }
 }
 
@@ -253,21 +242,21 @@ public struct MessageEnvelope: Codable, Sendable, Equatable {
 /// EngineC (ios_api.h: not reentrant).
 public actor MessageKernel {
     public static let shared = MessageKernel()
-    private init() {}
+    // The iMessage extension reaches the kernel through this actor and not
+    // through EngineC, so the layout gate has to stand here too (KernelLayout).
+    private init() { _ = KernelLayout.verified }
 
-    /// Decode + validate + ADOPT through the PACKED envelope wire — the metadata
-    /// crosses as a fixed-layout blob, no JSON. The view is read separately
+    /// Decode + validate + ADOPT. The metadata crosses as the kernel's own
+    /// struct, read through the generated bindings, and no JSON. The view is read separately
     /// (residentView) in this same actor. `viewer` no longer rides the decode
     /// (metadata is viewer-independent); it stays in the signature for the
     /// call sites that pass a seat, and is applied on the residentView read.
     public func decode(payload: Data, viewer: Int) throws -> MessageEnvelope {
-        var out = [UInt8](repeating: 0, count: 4 * 1024)
-        let n: Int32 = payload.withUnsafeBytes { raw in
-            fio_msg_decode_packed(raw.bindMemory(to: UInt8.self).baseAddress,
-                                  Int32(payload.count), &out, Int32(out.count))
+        let rc: Int32 = payload.withUnsafeBytes { raw in
+            fio_msg_decode(raw.bindMemory(to: UInt8.self).baseAddress, Int32(payload.count))
         }
-        guard n > 0 else { throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error())) }
-        guard let env = MessageEnvelope.decode(packed: Data(out.prefix(Int(n)))) else {
+        guard rc == 0 else { throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error())) }
+        guard let env = MessageEnvelope.resident() else {
             throw MessageEnvelope.Failure.damaged(code: -1)
         }
         return env
@@ -278,13 +267,11 @@ public actor MessageKernel {
     /// resident game moves, the bubble-delta base least of all. See
     /// `MessageEnvelope.peek`.
     public func peek(payload: Data) throws -> MessageEnvelope {
-        var out = [UInt8](repeating: 0, count: 4 * 1024)
-        let n: Int32 = payload.withUnsafeBytes { raw in
-            fio_msg_peek_packed(raw.bindMemory(to: UInt8.self).baseAddress,
-                                Int32(payload.count), &out, Int32(out.count))
+        let rc: Int32 = payload.withUnsafeBytes { raw in
+            fio_msg_peek(raw.bindMemory(to: UInt8.self).baseAddress, Int32(payload.count))
         }
-        guard n > 0 else { throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error())) }
-        guard let env = MessageEnvelope.decode(packed: Data(out.prefix(Int(n)))) else {
+        guard rc == 0 else { throw MessageEnvelope.Failure.damaged(code: Int(fio_last_msg_error())) }
+        guard let env = MessageEnvelope.resident() else {
             throw MessageEnvelope.Failure.damaged(code: -1)
         }
         return env
