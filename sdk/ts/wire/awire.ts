@@ -80,12 +80,14 @@ export function decodeAction(buf: Uint8Array): AwireMove | null {
     if ((name === 'pickup' || name === 'good') && n !== 0) return null;
     const expected = 2 + n * (name === 'cover' ? 2 : 1);
     if (buf.length !== expected) return null;
+    // Every card byte is a card: awire_decode refuses the wire otherwise.
+    for (let i = 2; i < expected; i++) if (buf[i] > 51) return null;
     const cards: Card[] = [];
-    for (let i = 0; i < n; i++) cards.push(cardFromWireByte(buf[2 + i] > 51 ? 51 : buf[2 + i]));
+    for (let i = 0; i < n; i++) cards.push(cardFromWireByte(buf[2 + i]));
     const move: AwireMove = { kind: name, cards };
     if (name === 'cover') {
         const attacks: Card[] = [];
-        for (let i = 0; i < n; i++) attacks.push(cardFromWireByte(buf[2 + n + i] > 51 ? 51 : buf[2 + n + i]));
+        for (let i = 0; i < n; i++) attacks.push(cardFromWireByte(buf[2 + n + i]));
         move.attack_cards = attacks;
     }
     return move;

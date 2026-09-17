@@ -123,6 +123,23 @@ static void test_awire_apply_roundtrip(void) {
     CHECK(!awire_apply(&g, 7, &dec), "awire_apply: seat out of range rejected");
 }
 
+// Test: a card byte in an action wire is a card (0..51), or the wire is refused.
+// It used to clamp onto card 51, so [attack, 1, 0xFF] played the ace of diamonds
+// for a seat that held it, and the hidden card 0xFE reached the rules as a move.
+static void test_awire_refuses_bytes_that_are_not_cards(void) {
+    AwireAction a;
+    const unsigned char ok[] = { AWIRE_ATTACK, 1, 51 };
+    const unsigned char none[] = { AWIRE_ATTACK, 1, 0xFF }, hidden[] = { AWIRE_PASS, 1, 0xFE }, past[] = { AWIRE_ATTACK, 2, 3, 52 };
+    const unsigned char cover_ok[] = { AWIRE_COVER, 1, 7, 6 }, cover_bad[] = { AWIRE_COVER, 1, 7, 200 };
+    CHECK(awire_decode(ok, sizeof ok, &a) == 1 && a.cards[0].suit == 3 && a.cards[0].value == 13, "card 51 is the ace of diamonds");
+    CHECK(awire_decode(none, sizeof none, &a) == 0, "0xFF (no card) is refused, not clamped onto card 51");
+    CHECK(awire_decode(hidden, sizeof hidden, &a) == 0, "0xFE (the hidden card) is refused");
+    CHECK(awire_decode(past, sizeof past, &a) == 0, "52 is refused in any position");
+    CHECK(awire_decode(cover_ok, sizeof cover_ok, &a) == 1, "a cover of real cards reads");
+    CHECK(awire_decode(cover_bad, sizeof cover_bad, &a) == 0, "a cover's attack card byte is held to the same rule");
+    CHECK(awire_frame_len(none, sizeof none) == 3, "the frame walk still measures the frame (the chain container refuses at decode)");
+}
+
 // Test: the kernel records its OWN game-over. A full game played through the
 // apply chokepoint (awire_apply — the native server + iOS path) must leave
 // g->status == GAME_OVER when it ends, so no host recomputes game_done to keep a
@@ -8722,6 +8739,7 @@ int main(void) {
     test_deal_rng_unbiased();
     test_start_game();
     test_awire_apply_roundtrip();
+    test_awire_refuses_bytes_that_are_not_cards();
     test_awire_apply_settles_game_over();
     test_game_human_mask();
     test_game_seat_and_deal();

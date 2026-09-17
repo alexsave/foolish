@@ -81,6 +81,10 @@ test('awire: decodeAction returns null on every malformed shape', () => {
         { label: 'cover half-truncated pairs', wire: new Uint8Array([1, 2, 7, 8, 9]) },
         { label: 'cover with trailing garbage', wire: new Uint8Array([1, 1, 7, 8, 9]) },
         { label: 'good with trailing garbage', wire: new Uint8Array([4, 0, 1]) },
+        { label: 'attack of no card (0xFF)', wire: new Uint8Array([0, 1, 0xff]) },
+        { label: 'pass of the hidden card (0xFE)', wire: new Uint8Array([2, 1, 0xfe]) },
+        { label: 'attack of card 52', wire: new Uint8Array([0, 2, 51, 52]) },
+        { label: 'cover of attack byte 200', wire: new Uint8Array([1, 1, 7, 200]) },
     ];
     for (const { label, wire } of cases) {
         assert.equal(decodeAction(wire), null, `${label} decodes to null`);
@@ -109,7 +113,8 @@ test('awire: decodeAction never throws on random byte strings, and any accept is
             const kind = ri(6);
             const n = ri(31);
             const body = new Uint8Array(kind === 1 ? 2 * n : n);
-            for (let j = 0; j < body.length; j++) body[j] = ri(256);
+            // Mostly real card bytes, so whole frames get through; now and then any byte.
+            for (let j = 0; j < body.length; j++) body[j] = ri(8) === 0 ? ri(256) : ri(52);
             wire = new Uint8Array([kind, n, ...body]);
         } else {
             wire = new Uint8Array(ri(80));
@@ -129,9 +134,7 @@ test('awire: decodeAction never throws on random byte strings, and any accept is
         if (d.kind === 'pickup' || d.kind === 'good') assert.equal(d.cards!.length, 0, 'no-card kinds carry no cards');
         if (d.kind === 'cover') assert.equal(d.attack_cards!.length, d.cards!.length, 'cover pairs positional');
         for (const c of [...d.cards!, ...(d.attack_cards ?? [])]) {
-            const hidden = c.suit === -1 && c.value === -1; // 0xFE wire byte
-            assert.ok(hidden || (c.suit >= 0 && c.suit <= 3 && c.value >= 1 && c.value <= 13),
-                `decoded card in range: ${JSON.stringify(c)}`);
+            assert.ok(c.suit >= 0 && c.suit <= 3 && c.value >= 1 && c.value <= 13, `decoded card is a card: ${JSON.stringify(c)}`);
         }
     }
     // The near-valid quarter guarantees the accept path actually ran.
