@@ -18,6 +18,16 @@
 //   a packed body, the version only grows, the bot moves on its own, the finished
 //   game has a replay snapshot, and each human's player_views row is terminal.
 //
+// It also reads its views the way the clients do, to pin what a BYTEA view column
+// looks like on the wire: alice subscribes to her player_views rows over Realtime
+// postgres_changes (the web's pv- channel, iOS GameFeed) and selects them through
+// PostgREST as herself (ServerContext.tsx, OnlineGame.resync). Measured on a local
+// stack: PostgREST sends '\x'-hex text and Realtime sends bare hex, both lower
+// case. The web (ServerContext.tsx hexToBytes) and iOS (PackedGame.hexToData)
+// accept both, so the check pins each form, that the last change Realtime
+// delivered is the bytes PostgREST returns, and that the client's envelope reader
+// accepts them.
+//
 // Choosing a move needs the full board, which no client may read, so the script
 // reads games.state and games.roster with the service role and asks the kernel
 // (e2e/helpers/table_play.ts legalMoves) - exactly what a client's own hand and
@@ -29,6 +39,8 @@ import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { fixtureTable } from './helpers/table_fixture.ts';
 import { legalMoves, residentBoard, type BoardState } from './helpers/table_play.ts';
 import { encodeActionRequest, decodeActionResponse, ACTION_STATUS } from '../sdk/ts/wire/awire.ts';
+import { createClient } from '@supabase/supabase-js';
+import { clientTable } from '../sdk/ts/table/client_table.ts';
 
 const say = (s: string) => process.stdout.write(`${s}\n`);
 
@@ -95,10 +107,56 @@ async function row(gameId: string): Promise<Row> {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// ---- the view column as the clients receive it ----------------------------------
+
+interface ViewChange { view: unknown; version: number }
+interface Feed { changes: ViewChange[]; close: () => Promise<void> }
+
+/** alice's player_views changes over Realtime postgres_changes, as the web's pv- channel subscribes. */
+async function viewFeed(u: User): Promise<Feed> {
+    const client = createClient(url, anon, { global: { headers: { Authorization: `Bearer ${u.token}` } }, auth: { persistSession: false } });
+    await client.realtime.setAuth(u.token);
+    const changes: ViewChange[] = [];
+    const filter = { schema: 'public', table: 'player_views', filter: `player_id=eq.${u.id}` };
+    const channel = client.channel(`pv-${u.id}`);
+    const push = (p: { new: Record<string, unknown> }) => changes.push({ view: p.new.view, version: Number(p.new.version) });
+    channel.on('postgres_changes', { event: 'INSERT', ...filter }, push).on('postgres_changes', { event: 'UPDATE', ...filter }, push);
+    await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error('realtime: the pv- channel did not subscribe in 20 s')), 20_000);
+        channel.subscribe((status, err) => {
+            if (status === 'SUBSCRIBED') { clearTimeout(t); resolve(); }
+            if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') { clearTimeout(t); reject(new Error(`realtime: ${status} ${err ?? ''}`)); }
+        });
+    });
+    return { changes, close: async () => { await client.removeAllChannels(); } };
+}
+
+const viewBytes = (what: string, v: unknown, form: RegExp): Uint8Array => {
+    if (typeof v !== 'string' || !form.test(v)) throw new Error(`${what}: the view is not ${form} text: ${JSON.stringify(v)?.slice(0, 40)}`);
+    return Uint8Array.from(Buffer.from(v.replace(/^\\x/, ''), 'hex'));
+};
+const PREFIXED_HEX = /^\\x([0-9a-f]{2})+$/;   // PostgREST's BYTEA
+const BARE_HEX = /^([0-9a-f]{2})+$/;          // Realtime postgres_changes' BYTEA
+
+async function checkViewWire(feed: Feed, u: User, gameId: string, finalVersion: number): Promise<void> {
+    for (let i = 0; i < 40 && !feed.changes.some((c) => c.version === finalVersion); i++) await sleep(250);
+    await feed.close();
+    const [rest] = await json('GET', `/rest/v1/player_views?select=view,version&game_id=eq.${gameId}`, anon, u.token);
+    const restBytes = viewBytes('PostgREST select', rest?.view, PREFIXED_HEX);
+    const last = feed.changes.find((c) => c.version === finalVersion);
+    if (!last) throw new Error(`realtime: no player_views change at the final version ${finalVersion} (got ${feed.changes.length} changes)`);
+    for (const c of feed.changes) viewBytes(`realtime change at version ${c.version}`, c.view, BARE_HEX);
+    if (Buffer.compare(viewBytes('realtime', last.view, BARE_HEX), restBytes) !== 0) throw new Error('realtime and PostgREST disagree on the final view');
+    const board = clientTable().adoptEnvelope(restBytes);
+    if (!board || board.gameId !== gameId) throw new Error('the client envelope reader refuses the stored view');
+    say(`views on the wire: ${feed.changes.length} realtime changes as bare hex, the PostgREST row as '\\x'-hex, the same bytes at the final version; the client reads them (${restBytes.length} B)`);
+}
+
 async function main(): Promise<void> {
     const stamp = String(Date.now());
     const alice = await user('alice', stamp), bob = await user('bob', stamp);
     say(`users: ${alice.id} ${bob.id}`);
+    const feed = await viewFeed(alice);
 
     await edge('create', alice, {});
     let gameId = '';
@@ -157,8 +215,15 @@ async function main(): Promise<void> {
     say(`finished at version ${r.version}: ${moves} human moves, ${botCommits} bot cycles, ${snaps.length} replay snapshot(s)`);
     say(`player_views: ${JSON.stringify(views)}`);
     if (snaps.length !== 1) throw new Error('no replay snapshot for the finished game');
+    // MatchHistory.tsx reads the seat list as a JSON array of ids, under the participants policy.
+    const mine = await json('GET', `/rest/v1/game_snapshots?game_id=eq.${gameId}&select=player_ids,moves`, anon, alice.token);
+    const ids = mine[0]?.player_ids;
+    if (!Array.isArray(ids) || !ids.includes(alice.id) || !ids.includes(bob.id) || !/^\\x[0-9a-f]+$/.test(mine[0].moves)) {
+        throw new Error(`alice's snapshot read: ${JSON.stringify(mine).slice(0, 200)}`);
+    }
     if (views.length !== 2 || views.some((v: { status: string }) => v.status !== 'game_over')) throw new Error('a human has no terminal view row');
     if (botCommits === 0) throw new Error('the bot never moved on its own');
+    await checkViewWire(feed, alice, gameId, r.version);
     say('live online smoke: OK');
 }
 
