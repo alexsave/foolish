@@ -128,8 +128,12 @@ int replay_steps_index_v6(const unsigned char *code, int code_len,
 // sat, the trump and the opening seat, who was the fool and in what order the
 // others went out, and how many moves the extras' gaps time. A screen that lists
 // games, or reads a code's extras beside it, reads this rather than the decoder's
-// bytes (docs/C_GAME_SHAPE_MIGRATION.md Phase 7).
+// bytes (docs/C_GAME_SHAPE_MIGRATION.md Phase 7). It is the decoder's whole
+// header, so no host reads replay_decode's header bytes either.
 typedef struct {
+    uint8_t version;                    // the format version the code was cut under
+    Card    trump;                      // the trump card (the flipped card, or the one drawn)
+    int16_t discard_pile_length;        // cards discarded by the end of the stream
     int8_t  num_players;
     int8_t  power_suit;
     int8_t  first_attacker;

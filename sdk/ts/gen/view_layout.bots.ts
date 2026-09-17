@@ -138,13 +138,13 @@ export const readViewRules = (m: Mem, p: number): ViewRules_Snap => {
     return { firstAttackerBadge: m.i8[p], defenderBadge: m.i8[p + 1], canSayGood: m.u8[p + 2] !== 0, showDeckPile: m.u8[p + 3] !== 0, showFlippedSlot: m.u8[p + 4] !== 0, showTrumpIcon: m.u8[p + 5] !== 0, botToMove: m.u8[p + 6] !== 0, deckPile: m.dv.getInt16(p + 8, true), deckBadge: m.dv.getInt16(p + 10, true) };
 };
 // ReplaySummary snapshot
-export interface ReplaySummary_Snap { readonly numPlayers: number; readonly powerSuit: number; readonly firstAttacker: number; readonly fool: number; readonly elimination: readonly number[]; readonly moves: number; }
+export interface ReplaySummary_Snap { readonly version: number; readonly trump: Card_Snap; readonly discardPileLength: number; readonly numPlayers: number; readonly powerSuit: number; readonly firstAttacker: number; readonly fool: number; readonly elimination: readonly number[]; readonly moves: number; }
 export const readReplaySummary = (m: Mem, p: number): ReplaySummary_Snap => {
-    const n_elimination = m.i8[p + 4];
+    const n_elimination = m.i8[p + 8];
     if (!(n_elimination >= 0 && n_elimination <= 8)) throw new RangeError(`ReplaySummary.elimination: count ${n_elimination} is outside 0..8`);
     const elimination: number[] = new Array(n_elimination);
-    for (let i = 0; i < n_elimination; i++) elimination[i] = m.i8[p + 5 + i];
-    return { numPlayers: m.i8[p], powerSuit: m.i8[p + 1], firstAttacker: m.i8[p + 2], fool: m.i8[p + 3], elimination: elimination, moves: m.dv.getInt16(p + 14, true) };
+    for (let i = 0; i < n_elimination; i++) elimination[i] = m.i8[p + 9 + i];
+    return { version: m.u8[p], trump: readCard(m, p + 1), discardPileLength: m.dv.getInt16(p + 2, true), numPlayers: m.i8[p + 4], powerSuit: m.i8[p + 5], firstAttacker: m.i8[p + 6], fool: m.i8[p + 7], elimination: elimination, moves: m.dv.getInt16(p + 18, true) };
 };
 // BoardEdit snapshot
 export interface BoardEdit_Snap { readonly op: number; readonly firstAttacker: number; readonly defender: number; readonly target: Card_Snap; readonly cards: readonly Card_Snap[]; }

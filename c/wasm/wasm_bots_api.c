@@ -587,6 +587,28 @@ int wasm_replay_summary(int code_len) {
     return (int)(uintptr_t)&g_replay_summary;
 }
 
+// replay_decode's log stream, one record at a time (replay.h ReplayDecodedLog),
+// for the generated reader. TEST build only (c/Makefile WASM_TEST_EXPORTS): tests
+// and tools read a code's whole log stream; no shipped host does. open decodes
+// the code in the replay buffer in place and returns REPLAY_EOK or -REPLAY_E*;
+// next returns the record's address, 0 past the last, or -REPLAY_EINPUT.
+static ReplayDecodedLog g_replay_log;
+static int g_replay_log_len, g_replay_log_at;
+extern int wasm_replay_decode(int in_len);
+int wasm_replay_decoded_open(int code_len) {
+    g_replay_log_len = g_replay_log_at = 0;
+    const int n = wasm_replay_decode(code_len);
+    if (n < 0) return n;
+    g_replay_log_len = n;
+    g_replay_log_at = REPLAY_DEC_HDR;
+    return REPLAY_EOK;
+}
+int wasm_replay_decoded_next(void) {
+    if (g_replay_log_len == 0) return -REPLAY_EINPUT;
+    const int r = replay_decoded_log(wasm_replay_io_ptr(), g_replay_log_len, &g_replay_log_at, &g_replay_log);
+    return r == 1 ? (int)(uintptr_t)&g_replay_log : r;
+}
+
 // ---------- the C Roster (src/roster.h), test-only exports ------------------
 //
 // Linked into bots.wasm only (WASM_ROSTER_EXPORTS in the Makefile). They exist

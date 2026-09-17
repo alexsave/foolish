@@ -433,6 +433,9 @@ int replay_summary_v6(const unsigned char *code, int code_len, ReplaySummary *ou
     if (r < 0) return r;
     if (hdr.n < 2 || hdr.n > MAX_PLAYERS || hdr.num_eliminated < 0 || hdr.num_eliminated > hdr.n) return -REPLAY_EHEADER;
     memset(out, 0, sizeof *out);
+    out->version = (uint8_t)hdr.version;
+    out->trump = card_of_id(hdr.trump_id);
+    out->discard_pile_length = (int16_t)hdr.discard_count;
     out->num_players = (int8_t)hdr.n;
     out->power_suit = (int8_t)(hdr.trump_id / 13);
     out->first_attacker = (int8_t)hdr.first_attacker;

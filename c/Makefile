@@ -811,7 +811,12 @@ WASM_FIXTURE_EXPORTS := \
 # on demand (`make -C c wasm-bots-test`, which e2e/helpers/bots_test_wasm.ts runs
 # when the build is missing or older than the wasm sources) and never committed.
 # Same objects, so the same layout hash: the helpers check it like any host.
-WASM_TEST_EXPORTS := $(WASM_ROSTER_EXPORTS) $(WASM_FIXTURE_EXPORTS)
+# A code's whole log stream, record by record (replay.h ReplayDecodedLog,
+# e2e/helpers/replay_decode.ts): tests and tools read it, no shipped host does.
+WASM_REPLAY_DECODE_EXPORTS := \
+  -Wl,--export=wasm_replay_decoded_open -Wl,--export=wasm_replay_decoded_next
+
+WASM_TEST_EXPORTS := $(WASM_ROSTER_EXPORTS) $(WASM_FIXTURE_EXPORTS) $(WASM_REPLAY_DECODE_EXPORTS)
 
 # The rules module's move buffer only feeds the exported menu — production
 # validation is direct rule-checking, and production menus/bot enumeration

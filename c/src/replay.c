@@ -1740,6 +1740,30 @@ int replay_decode(const unsigned char *in, int in_len,
     return decode_impl(in, in_len, out, out_cap, 0);
 }
 
+int replay_decoded_log(const unsigned char *dec, int len, int *at, ReplayDecodedLog *out) {
+    const int p = *at;
+    if (p < REPLAY_DEC_HDR || p > len) return -REPLAY_EINPUT;
+    if (p == len) return 0;
+    if (len - p < 4) return -REPLAY_EINPUT;
+    const unsigned char *q = dec + p;
+    const int n = q[3];
+    if (n > REPLAY_MAX_PAIRS || len - p - 4 < 2 * n) return -REPLAY_EINPUT;
+    for (int i = 0; i < n; i++) {
+        if (q[4 + 2 * i] > 51) return -REPLAY_EINPUT;
+        if (q[5 + 2 * i] > 51 && q[5 + 2 * i] != REPLAY_CARD_NONE) return -REPLAY_EINPUT;
+    }
+    out->log_type = (int8_t)q[0];
+    out->seat = q[1] == 0xFF ? -1 : (int8_t)q[1];
+    out->defender = q[2] == 0xFF ? -1 : (int8_t)q[2];
+    out->n_pairs = (uint8_t)n;
+    for (int i = 0; i < n; i++) {
+        out->primary[i] = card_of_id(q[4 + 2 * i]);
+        out->target[i] = q[5 + 2 * i] == REPLAY_CARD_NONE ? CARD_NONE : card_of_id(q[5 + 2 * i]);
+    }
+    *at = p + 4 + 2 * n;
+    return 1;
+}
+
 // The atoms, not the logs — see replay.h. Same decode, same model (the menus
 // ARE the coder's probability model, so the walk is unavoidable either way);
 // only the reporting differs.

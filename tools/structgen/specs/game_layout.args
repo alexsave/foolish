@@ -22,6 +22,11 @@
 --header client_table.h --root TableView --root PushEvent --root ViewRules --root BoardEdit --root ClientConflict --root ConflictVerdicts
 --header replay_steps.h --root ReplaySummary
 #
+# A code's decoded log stream, record by record (replay.h, the test build's
+# wasm_replay_decoded_next): its log types and the codec's result codes.
+--header replay.h --root ReplayDecodedLog
+--const LOG_ --const REPLAY_E
+#
 # The bot cycle the table drives (bot_drive.h): what a server logs of it.
 --header bot_drive.h --root BotDriveOut
 --fields LegalMove=type,n_cards,cards,attack_cards

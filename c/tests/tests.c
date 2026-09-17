@@ -2318,7 +2318,8 @@ static void test_replay_summary_is_the_decode(void) {
             q += 4 + 2 * q[3];
         }
         int same = r == REPLAY_EOK && s.num_players == dec[1] && s.power_suit == dec[2] / 13 && s.first_attacker == dec[3]
-            && s.fool == (dec[4] == 0xFF ? -1 : dec[4]) && s.num_eliminated == dec[7] && s.moves == moves;
+            && s.fool == (dec[4] == 0xFF ? -1 : dec[4]) && s.num_eliminated == dec[7] && s.moves == moves
+            && s.version == dec[0] && card_to_id(s.trump) == dec[2] && s.discard_pile_length == (dec[5] | (dec[6] << 8));
         for (int i = 0; same && i < dec[7]; i++) same = s.elimination[i] == dec[8 + i];
         CHECK(same, "the summary is what the decoder's header and log stream say");
         checked++;
@@ -2327,6 +2328,64 @@ static void test_replay_summary_is_the_decode(void) {
     ReplaySummary s;
     const unsigned char junk[] = { 0x07 };
     CHECK(replay_summary_v6(junk, 1, &s) < 0, "a code that does not decode has no summary");
+}
+
+// replay_decoded_log is how a host reads the decoder's log stream: every record,
+// field for field, in order, then the end - and a refusal for bytes the decoder
+// never writes rather than a read past them.
+static void test_replay_decoded_log_reads_the_stream(void) {
+    static unsigned char code[1 << 20];
+    static unsigned char dec[1 << 20];
+    int checked = 0;
+    for (int np = 2; np <= 8; np++) {
+        Game g;
+        unsigned char seed[FOOLISH_SEED_LEN];
+        if (!rs_play_seeded(&g, np, 900 + np, seed)) continue;
+        const int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20, code, (int)sizeof code);
+        const int dl = enc > 0 ? replay_decode(code, enc, dec, (int)sizeof dec) : -1;
+        if (dl < REPLAY_DEC_HDR) { CHECK(0, "a seeded game encodes and decodes"); continue; }
+        const int n_logs = dec[16] | (dec[17] << 8) | (dec[18] << 16) | (dec[19] << 24);
+        int at = REPLAY_DEC_HDR, same = 1, read = 0;
+        const unsigned char *q = dec + REPLAY_DEC_HDR;
+        ReplayDecodedLog l;
+        for (int i = 0; same && i < n_logs; i++) {
+            same = replay_decoded_log(dec, dl, &at, &l) == 1
+                && l.log_type == q[0] && l.seat == (q[1] == 0xFF ? -1 : q[1]) && l.defender == (q[2] == 0xFF ? -1 : q[2])
+                && l.n_pairs == q[3];
+            for (int j = 0; same && j < q[3]; j++) {
+                const int p = q[4 + 2 * j], t = q[5 + 2 * j];
+                same = card_to_id(l.primary[j]) == p
+                    && (t == REPLAY_CARD_NONE ? card_is_none(l.target[j]) : card_to_id(l.target[j]) == t);
+            }
+            q += 4 + 2 * q[3];
+            read += same;
+        }
+        CHECK(same && read == n_logs, "every record of the stream reads as its bytes, in order");
+        CHECK(at == dl && replay_decoded_log(dec, dl, &at, &l) == 0, "then the stream ends where the decoder's output does");
+        checked++;
+    }
+    CHECK(checked >= 6, "seeded games at most seat counts were read");
+
+    ReplayDecodedLog l;
+    int at = REPLAY_DEC_HDR;
+    unsigned char bad[REPLAY_DEC_HDR + 8] = {0};
+    const unsigned char rec[] = { LOG_ATTACK, 0, 1, 1, 5, REPLAY_CARD_NONE };
+    memcpy(bad + REPLAY_DEC_HDR, rec, sizeof rec);
+    CHECK(replay_decoded_log(bad, REPLAY_DEC_HDR + 5, &at, &l) == -REPLAY_EINPUT, "a record cut short is refused");
+    CHECK(at == REPLAY_DEC_HDR, "and the cursor does not move");
+    CHECK(replay_decoded_log(bad, REPLAY_DEC_HDR + 6, &at, &l) == 1 && card_is_none(l.target[0]), "the whole record reads");
+    bad[REPLAY_DEC_HDR + 4] = 52; at = REPLAY_DEC_HDR;
+    CHECK(replay_decoded_log(bad, REPLAY_DEC_HDR + 6, &at, &l) == -REPLAY_EINPUT, "a card id past 51 is refused");
+    bad[REPLAY_DEC_HDR + 4] = REPLAY_CARD_NONE; at = REPLAY_DEC_HDR;
+    CHECK(replay_decoded_log(bad, REPLAY_DEC_HDR + 6, &at, &l) == -REPLAY_EINPUT, "a primary card is never none");
+    bad[REPLAY_DEC_HDR + 4] = 5; bad[REPLAY_DEC_HDR + 3] = REPLAY_MAX_PAIRS + 1; at = REPLAY_DEC_HDR;
+    static unsigned char wide[REPLAY_DEC_HDR + 4 + 2 * (REPLAY_MAX_PAIRS + 1)];
+    memcpy(wide, bad, sizeof bad);
+    CHECK(replay_decoded_log(wide, (int)sizeof wide, &at, &l) == -REPLAY_EINPUT, "more pairs than a record holds is refused");
+    at = 3;
+    CHECK(replay_decoded_log(bad, REPLAY_DEC_HDR + 6, &at, &l) == -REPLAY_EINPUT, "a cursor inside the header is refused");
+    at = REPLAY_DEC_HDR + 7;
+    CHECK(replay_decoded_log(bad, REPLAY_DEC_HDR + 6, &at, &l) == -REPLAY_EINPUT, "a cursor past the stream is refused");
 }
 
 // The step index is what lets a scrubber say "Bot 2 passed" instead of "Bot 2
@@ -9521,6 +9580,7 @@ int main(void) {
     test_replay_frames_are_the_replay_events();
     test_replay_step_index_says_what_each_step_is();
     test_replay_summary_is_the_decode();
+    test_replay_decoded_log_reads_the_stream();
     test_replay_step_index_tells_a_pass_from_an_attack();
     test_replay_step_index_reports_a_pending_good();
     test_replay_steps_replays_a_deal_with_no_trump();
