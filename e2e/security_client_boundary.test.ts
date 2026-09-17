@@ -25,6 +25,11 @@
 //
 // The config below is the contract the migration extends: when it adds a module
 // or a function that reads a full Game, it adds it here.
+//
+// Since Phase 5a the client reads the wire through the kernel too, so the
+// boundary is pinned from the other side as well: the bundle DOES reach the
+// client slot's generated snapshot readers (view_layout) and its wrapper, and
+// the TypeScript wire readers they replaced are not in it.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -56,6 +61,13 @@ export const CLIENT_BOUNDARY = {
         // the server bot drive (sdk/ts/wasm/bots.ts), which exports post-state blobs
         'wasmBotDrive',
     ],
+    /** Modules the client must reach: it reads the wire through the kernel's client slot. */
+    requiredModules: [
+        /(^|\/)sdk\/ts\/gen\/view_layout\.bots\.ts$/,
+        /(^|\/)sdk\/ts\/table\/client_table\.ts$/,
+    ],
+    /** The TypeScript wire readers the client slot replaced (Phase 5a), by name. */
+    retiredReaders: ['decodePackedGame', 'viewToGame', 'decodeEventWire', 'kernelViewFromPacked', 'kernelEventsFromPacked', 'decodePackedRoster'],
     /** Kernel exports that serialize the resident game unmasked. */
     deniedWasmExports: ['wasm_export_state', 'wasm_state_serialize', 'wasm_state_deserialize',
         // the C Table: loads a durable blob, and writes it back out in a commit
@@ -81,6 +93,8 @@ function workerEntries(): string[] {
 
 export interface BoundaryReport {
     modules: string[];
+    required: { pattern: string; found: boolean }[];
+    retired: { name: string; count: number }[];
     symbols: { name: string; count: number }[];
     wasmExports: { name: string; count: number }[];
     chains: string[];
@@ -125,9 +139,11 @@ export async function scanClientBoundary(opts: { stdin?: string } = {}): Promise
     const code = r.outputFiles.filter(f => f.path.endsWith('.js')).map(f => f.text).join('\n');
     const count = (re: RegExp) => (code.match(re) ?? []).length;
     const modules = inputs.filter(p => CLIENT_BOUNDARY.deniedModules.some(re => re.test(p)));
+    const required = CLIENT_BOUNDARY.requiredModules.map(re => ({ pattern: String(re), found: inputs.some(p => re.test(p)) }));
     // esbuild suffixes a renamed binding with digits (name2) on a collision.
     const symbols = CLIENT_BOUNDARY.deniedSymbols.map(name => ({ name, count: count(new RegExp(`\\b${name}\\d*\\b`, 'g')) })).filter(s => s.count > 0);
     const wasmExports = CLIENT_BOUNDARY.deniedWasmExports.map(name => ({ name, count: count(new RegExp(`\\b${name}\\b`, 'g')) })).filter(s => s.count > 0);
+    const retired = CLIENT_BOUNDARY.retiredReaders.map(name => ({ name, count: count(new RegExp(`\\b${name}\\d*\\b`, 'g')) })).filter(s => s.count > 0);
     // Chains: to every denied module, and to every module defining a surviving denied symbol.
     const definers = new Set<string>(modules);
     for (const s of [...symbols, ...wasmExports]) {
@@ -144,17 +160,25 @@ export async function scanClientBoundary(opts: { stdin?: string } = {}): Promise
             if (imp.kind === 'dynamic-import' && !imp.external) chains.push(`dynamic import: ${from} =(keeps every export of)=> ${imp.path}`);
         }
     }
-    return { modules, symbols, wasmExports, chains };
+    return { modules, required, retired, symbols, wasmExports, chains };
 }
 
 const explain = (r: BoundaryReport) =>
     `\n  denied modules: ${JSON.stringify(r.modules)}\n  denied symbols in the bundle: ${JSON.stringify(r.symbols)}` +
-    `\n  denied wasm exports in the bundle: ${JSON.stringify(r.wasmExports)}\n  import chains:\n    ${r.chains.join('\n    ')}`;
+    `\n  denied wasm exports in the bundle: ${JSON.stringify(r.wasmExports)}` +
+    `\n  required modules: ${JSON.stringify(r.required)}\n  retired wire readers in the bundle: ${JSON.stringify(r.retired)}` +
+    `\n  import chains:\n    ${r.chains.join('\n    ')}`;
 
 test('the web client bundle contains no reader of an unmasked kernel game', async () => {
     const r = await scanClientBoundary();
     assert.deepEqual({ modules: r.modules, symbols: r.symbols, wasmExports: r.wasmExports },
         { modules: [], symbols: [], wasmExports: [] }, `the client can read an unmasked game:${explain(r)}`);
+});
+
+test('the web client reads the wire through the kernel: it reaches view_layout and client_table, and no TS wire reader', async () => {
+    const r = await scanClientBoundary();
+    assert.deepEqual(r.required.filter(q => !q.found), [], `the client does not reach the client slot's readers:${explain(r)}`);
+    assert.deepEqual(r.retired, [], `a TypeScript wire reader is still in the client bundle:${explain(r)}`);
 });
 
 // The scanner itself must be able to see a violation, or a green above means

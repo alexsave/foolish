@@ -15,7 +15,7 @@ import { optimisticOverlay } from '../state/optimisticOverlay';
 import { animationFeed } from '../state/animationFeed';
 import { cardKey, mergeHandOrder, reconcileHandMemory, displayedHand, mergeTableBattles, applyOverlayEntries, resetToLobby, isHandPermutation } from '../state/clientReconcile';
 import { ACTION_STATUS, REJECT_STALE_ROUND, decodeActionResponse, encodeAction, encodeActionRequest } from '@sdk/ts/wire/awire.ts';
-import { decodePackedGame } from '@sdk/ts/wire/view.ts';
+import { decodeEnvelope } from '../state/snapshotToGame';
 import { rejectMessage } from '../wasm/rejectMessages';
 import { authoritativeVersion } from '../state/authoritativeVersion';
 import { strings } from '../localization/strings';
@@ -345,7 +345,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         const applyRow = (row: any) => {
             if (!row?.view) return;
             try {
-                const decoded = decodePackedGame(hexToBytes(row.view));
+                const decoded = decodeEnvelope(hexToBytes(row.view));
                 if (!decoded) return;
                 const g = decoded.game as PersonalGame;
                 // The on-screen game is animation-owned (RealtimeAnimationFeed):
@@ -448,7 +448,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         const bytes = typeof Blob !== 'undefined' && data instanceof Blob
             ? new Uint8Array(await data.arrayBuffer())
             : data instanceof ArrayBuffer ? new Uint8Array(data) : null;
-        const decoded = bytes ? decodePackedGame(bytes) : null;
+        const decoded = bytes ? decodeEnvelope(bytes) : null;
         if (!decoded) throw new Error('create: unreadable packed response');
         const game: PersonalGame = {
             ...(decoded.game as PersonalGame),
@@ -588,7 +588,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 .eq('game_id', gameId)
                 .maybeSingle();
             if (error || !(data as any)?.view) return null;
-            const decoded = decodePackedGame(hexToBytes((data as any).view));
+            const decoded = decodeEnvelope(hexToBytes((data as any).view));
             if (!decoded) return null;
             const g = decoded.game as PersonalGame;
             return { ...g, self: (g as any).self ?? null };
@@ -611,7 +611,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
                 .eq('game_id', gameId)
                 .maybeSingle();
             if (error || !(data as any)?.view) return null;
-            const decoded = decodePackedGame(hexToBytes((data as any).view));
+            const decoded = decodeEnvelope(hexToBytes((data as any).view));
             if (!decoded) return null;
             const g = decoded.game as PersonalGame;
             return { ...g, self: (g as any).self ?? null };
@@ -1101,9 +1101,9 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
         // The dashboard list is a plain indexed RLS SELECT straight from the
         // player_views cache (docs/PLAYER_VIEWS.md) — no edge function, no cold
         // start, no per-viewer masking on read (rows are masked at write time).
-        // Each row's `view` is the caller's packed single-game envelope,
-        // materialized here by the shared decodePackedGame. player_views is kept
-        // complete by commit_game / create_game, so there is no fallback: an
+        // Each row's `view` is the caller's packed single-game envelope, read
+        // here through the kernel by the shared decodeEnvelope. player_views is
+        // kept complete by commit_game / create_game, so there is no fallback: an
         // empty result simply means the user has no games.
         try {
             const { data: rows, error } = await supabase
@@ -1118,7 +1118,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             const games: { [key: string]: PersonalGame } = {};
             for (const row of rows ?? []) {
                 try {
-                    const decoded = decodePackedGame(hexToBytes((row as any).view));
+                    const decoded = decodeEnvelope(hexToBytes((row as any).view));
                     if (!decoded) continue;
                     const g = decoded.game as PersonalGame;
                     games[g.id] = { ...g, self: (g as any).self ?? null };
@@ -1180,7 +1180,7 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
             } else if (data instanceof ArrayBuffer) {
                 bytes = new Uint8Array(data);
             }
-            const game = bytes ? decodePackedGame(bytes)?.game ?? null : null;
+            const game = bytes ? decodeEnvelope(bytes)?.game ?? null : null;
 
             if (!game || !game.id) {
                 throw new Error(`Invalid response from ${functionName}: missing game ID`);

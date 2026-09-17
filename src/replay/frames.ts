@@ -3,9 +3,10 @@
  * =============================================================================
  * The kernel rebuilds the real Game a v6 code describes, replays it through the
  * real engine, and hands back the SAME packed evwire frames a live game sends —
- * one per step (the deal, then one per action). This module pulls them, decodes
- * them with the client's LIVE decoder, and shapes the handful of things a
- * scrubber needs on top: what each step is, and what each seat held.
+ * one per step (the deal, then one per action). This module pulls them, reads
+ * them with the client's LIVE reader (the kernel's client slot, through
+ * src/state/snapshotToGame.ts), and shapes the handful of things a scrubber
+ * needs on top: what each step is, and what each seat held.
  *
  * What used to be here instead: a TS fold over the decoded log stream that
  * rebuilt every board itself and RETRODICTED the hidden cards — assigning each
@@ -35,9 +36,9 @@ import { deckSizeFor } from '@api/core/constants.ts';
 import {
     replayEventFrames, replayStepIndex, REPLAY_STEP, ReplayStepInfo,
 } from '@sdk/ts/wasm/bots.ts';
-import { decodeEventWire, DecodedEvent } from '@sdk/ts/wire/evwire.ts';
-import type { ViewRoster } from '@sdk/ts/wire/view.ts';
+import { clientTable } from '@sdk/ts/table/client_table.ts';
 import { AnimationSequenceMessage, FeedAnimationEvent } from '../state/animationFeed';
+import { pushToSequence, SnapshotEvent, SnapshotOptions } from '../state/snapshotToGame';
 
 export { REPLAY_STEP } from '@sdk/ts/wasm/bots.ts';
 
@@ -91,18 +92,12 @@ const NARRATED_EVENT: Record<number, string> = {
     // GOOD moves no cards — nothing to narrate but the seat.
 };
 
-export const replayRoster = (
-    gameId: string, n: number, names?: (string | null)[] | null,
-): ViewRoster => ({
-    id: gameId,
-    name: '',
-    players: Array.from({ length: n }, (_, s) => ({
-        player_id: `seat-${s}`,
-        name: names?.[s] || `P${s + 1}`,
-        is_ai: false,
-        strategy_key: 'human',
-    })),
-});
+/* A replay's frames name no one: their seats are `seat-N`, named from the
+ * extras (or P1, P2...), and the board is the game id's with no title. */
+const readFrame = (bytes: Uint8Array, opts: SnapshotOptions) => {
+    const read = clientTable().readPush(bytes, { as3: false, identity: 'none' });
+    return read ? pushToSequence(read, opts) : null;
+};
 
 export interface ReplayFramesOpts {
     /** Seat whose eyes the replay is watched through; -1 (default) = spectator.
@@ -131,23 +126,22 @@ export function buildReplayFrames(
     }
 
     // Player count comes from the frames, not from a header we would have to
-    // trust separately: decode step 0 once with a roster wide enough to name any
-    // seat, then build the real roster from what came back.
-    const probe = decodeEventWire(main[0], replayRoster(gameId, 8, names), CTX);
+    // trust separately: read step 0 once, then name the seats it has.
+    const seats: SnapshotOptions = { ...CTX, names: names ?? [], gameId, title: '' };
+    const probe = readFrame(main[0], seats);
     if (!probe) throw new Error('replay: the opening frame did not decode');
     const n = probe.game.players.length;
-    const roster = replayRoster(gameId, n, names);
 
     // One replay per seat, read for that seat's own hand. This is the reveal
     // eye's whole source of truth — see the header.
     const perSeat = Array.from({ length: n }, (_, s) => replayEventFrames(code, s));
 
     return main.map((bytes, i) => {
-        const seq = decodeEventWire(bytes, roster, CTX);
+        const seq = readFrame(bytes, seats);
         if (!seq) throw new Error(`replay: step ${i} did not decode`);
 
         const hands: (Card | null)[][] = perSeat.map((frames, s) => {
-            const own = decodeEventWire(frames[i], roster, CTX);
+            const own = readFrame(frames[i], seats);
             const self = (own?.game as PersonalGame | undefined)?.self;
             // A seat's own frame always reveals its own hand; fall back to backs
             // rather than crash if a future masking change ever breaks that.
@@ -192,7 +186,7 @@ export function buildReplayFrames(
 
 /* A replay has no live good-order or good-clock to carry forward — the mask in
  * each frame is the whole truth, and every step is decoded from scratch. */
-const CTX = { preGood: [] as string[], prevGoodTs: null, now: () => 0 };
+const CTX = { prevGoodTs: null, now: () => 0 };
 
 /**
  * The state the opening deal animates OUT of: a full face-down stock, empty
@@ -232,7 +226,7 @@ export function buildReverseFrames(frames: ReplayFrame[]): (AnimationSequenceMes
         const prev = frames[i - 1].game;
         // The action is the frame's first event; the ones after it are what the
         // action caused, and they land back on `prev` for free by being dropped.
-        const fe = frames[i].seq.events[0] as DecodedEvent & FeedAnimationEvent;
+        const fe = frames[i].seq.events[0] as SnapshotEvent & FeedAnimationEvent;
         let event: FeedAnimationEvent;
 
         switch (fe.type) {

@@ -246,6 +246,11 @@ export async function ensureBotsAsync(): Promise<void> {
     bots();
 }
 
+/** The warm module's exports, for the web client's slot (sdk/ts/table/client_table.ts), which types what it calls. */
+export function __clientKernelExports(): WebAssembly.Exports {
+    return bots() as unknown as WebAssembly.Exports;
+}
+
 function bots(): BotsExports {
     if (exportsCache) return exportsCache;
     const module = new WebAssembly.Module(loadWasmGz('bots') as BufferSource);

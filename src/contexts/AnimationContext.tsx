@@ -8,7 +8,8 @@ import supabase from '../backend/Connector';
 import { ANIMATION_TIME } from '../constants/constants';
 import { validateActionWire, nextDefenderIndex } from '../utils/gameValidation';
 import { encodeAction } from '@sdk/ts/wire/awire.ts';
-import { decodeEventWire } from '@sdk/ts/wire/evwire.ts';
+import { clientTable } from '@sdk/ts/table/client_table.ts';
+import { pushToSequence } from '../state/snapshotToGame';
 import { base64ToBytes } from '@sdk/ts/wire/bytes.ts';
 import { getTableCards, cardsIntersection, getCardKeyPlayerId, createCardEventString, getCardKey } from '../utils/animationUtils';
 import { animationFeed } from '../state/animationFeed';
@@ -777,70 +778,48 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             .finally(() => packedRefetchInFlight.current.delete(gid));
     };
 
-    // Packed broadcast envelope {t:'as2', s, v, b, game_id, r?, m?} -> the
-    // legacy sequence shape (docs/PACKED_WIRE_CUTOVER.md). This is the
-    // client's render-boundary materialization for live broadcasts: the
-    // evwire bytes become JS events/games right here and the EXISTING
-    // pipeline (version gate, dedup, optimistic-conflict resolution) runs
-    // unchanged on the result.
+    // Packed broadcast envelope {t:'as2' | 'as3', s, v, b, game_id, r?} -> the
+    // legacy sequence shape (docs/PACKED_WIRE_CUTOVER.md). This is the client's
+    // render-boundary read for live broadcasts: the kernel reads the bytes
+    // (sdk/ts/table/client_table.ts), src/state/snapshotToGame.ts maps them onto
+    // today's events and games, and the EXISTING pipeline (version gate, dedup,
+    // optimistic-conflict resolution) runs unchanged on the result.
     //
-    // The roster comes from the envelope (`r`) when present — the JS-encoded
-    // lobby/meta broadcasts carry it because those are exactly the actions
-    // that CHANGE the roster (join/exit/add-bot/rearrange), which a local
-    // stale roster can't decode correctly. Kernel-encoded human moves carry
-    // no `r` (a move can't change identities) and fall back to the loaded
-    // game. `m` carries the original message strings for the same broadcasts
-    // (their MAGIC_TRANSITIONs are arbitrary text the fixed message codes
-    // can't reconstruct).
+    // Who sits where: an as3 push that changed the roster carries it. Otherwise
+    // the table's identity the kernel kept from the last envelope or roster push
+    // it read for this game names the seats - or, from a server that still
+    // sends as2 lobby broadcasts, the JSON roster beside them (`r`), which is
+    // exactly the case a kept identity would be stale for. `m` (message prose)
+    // is ignored: no component renders an event's message (Q7).
     const decodePackedEnvelope = (m: any): any | null => {
         if (typeof m.b !== 'string') return null;
         const gid = typeof m.game_id === 'string' ? m.game_id : url_game_id;
-        const g = gid ? gamesRef.current[gid] : undefined;
-        let roster: { id: string; name: string; players: { player_id: string; name: string; is_ai: boolean }[] };
-        if (m.r && Array.isArray(m.r.players)) {
-            roster = { id: gid ?? m.r.name, name: m.r.name ?? g?.name ?? '', players: m.r.players };
-        } else if (g && g.players && g.players.length > 0) {
-            roster = {
-                id: g.id,
-                name: g.name,
-                players: g.players.map(p => ({ player_id: p.player_id, name: p.name, is_ai: p.is_ai })),
-            };
-        } else {
-            // No way to name the seats: fetch the authoritative state and
-            // drop this sequence.
-            refetchForEnvelope(gid, typeof m.v === 'number' ? m.v : undefined);
-            return null;
+        const version = typeof m.v === 'number' ? m.v : undefined;
+        const table = clientTable();
+        let identity: 'kept' | Uint8Array = 'kept';
+        if (m.r && Array.isArray(m.r.players) && gid) {
+            const built = table.identityFromSeats(gid, m.r.name ?? '', m.r.players.map((p: any) => ({
+                id: String(p.player_id), name: String(p.name ?? ''), isAi: p.is_ai === true,
+            })));
+            if (built) identity = built;
         }
-        const ctx = {
-            preGood: g?.good_players ?? [],
-            prevGoodTs: g?.good_timestamp ?? null,
-        };
-        let decoded;
+        const g = gid ? gamesRef.current[gid] : undefined;
+        let read = null;
         try {
-            decoded = decodeEventWire(base64ToBytes(m.b), roster, ctx);
+            read = table.readPush(base64ToBytes(m.b), { as3: m.t === 'as3', gameId: gid, version, identity });
         } catch (e) {
             console.error('packed animation envelope decode failed:', e);
-            decoded = null;
         }
-        // Undecodable bytes, or events naming seats beyond the roster we
-        // decoded with (the roster changed while this client was away —
-        // e.g. a bot was added and the game started): the local roster is
-        // stale. Refetch and drop; the load carries the fresh roster.
-        const seatOutOfRange = decoded?.events.some((ev: any) =>
-            ev.game_state && ev.game_state.players.length > roster.players.length);
-        if (!decoded || seatOutOfRange) {
-            refetchForEnvelope(gid, typeof m.v === 'number' ? m.v : undefined);
+        // Unreadable bytes, or a push the kernel could not name the seats of
+        // (no identity for this game yet, or one whose seats the push's boards
+        // do not have - the roster changed while this client was away): fetch
+        // the authoritative state and drop this sequence. The load carries the
+        // fresh roster.
+        if (!read || read.final.seats.length === 0 || read.final.seats[0].id === '') {
+            refetchForEnvelope(gid, version);
             return null;
         }
-        // Envelope-carried message strings are authoritative where present
-        // (null = the event had no message).
-        if (Array.isArray(m.m)) {
-            decoded.events.forEach((ev: any, i: number) => {
-                const s = m.m[i];
-                if (s == null) delete ev.message;
-                else ev.message = s;
-            });
-        }
+        const decoded = pushToSequence(read, { prevGoodTs: g?.good_timestamp ?? null });
         return {
             type: 'animation_sequence',
             sequence_id: m.s,
@@ -853,7 +832,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
     // Handle animation messages from real-time channel
     const handleAnimationMessage = (message: any) => {
-        if (message && message.t === 'as2') {
+        if (message && (message.t === 'as2' || message.t === 'as3')) {
             message = decodePackedEnvelope(message);
             if (!message) return;
         }

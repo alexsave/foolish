@@ -62,7 +62,7 @@ export interface AnimationSequenceMessage {
  * AnimationSequenceMessage directly.
  */
 export interface PackedSequenceEnvelope {
-    t: 'as2';
+    t: 'as2' | 'as3';
     /** sequence id (dedup key) */
     s: string;
     /** committed games.version (the monotonic reorder-drop token) */

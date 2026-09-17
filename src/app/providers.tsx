@@ -13,13 +13,11 @@ import { ErrorBoundary } from '../components/ErrorBoundary';
 // The kernel gate (A8/F7).
 //
 // The browser runs kernel code synchronously on the render and realtime paths
-// (the move guards, the optimistic-conflict and stale-animation rules, replay
-// frames) and the module has to be FETCHED (there is no filesystem), so bots()
-// throws until it is warm. The wire DECODE is not one of those calls yet:
-// decodePackedGame and kernelEventsFromPacked read the bytes in TypeScript
-// (sdk/ts/wire/packed_read.ts) until docs/C_GAME_SHAPE_MIGRATION.md Phase 5a
-// moves it into bots.wasm. The fetch is paid once per session against a cached
-// asset.
+// (every envelope and push the page reads, through the client slot in
+// sdk/ts/table/client_table.ts; the move guards, the optimistic-conflict and
+// stale-animation rules, replay frames) and the module has to be FETCHED (there
+// is no filesystem), so bots() throws until it is warm. The fetch is paid once
+// per session against a cached asset.
 //
 // A gate, not a fire-and-forget warm, because the realtime subscription's
 // applyRow is a synchronous callback: "probably warm by the time a board
