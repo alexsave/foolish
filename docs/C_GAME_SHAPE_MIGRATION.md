@@ -394,6 +394,8 @@ Dropped: `name`, `deck_length`, `discard_pile_length`, `flipped`, `players`, `po
 `state` becomes `NOT NULL` once every lobby has a blob.
 
 Indexes: drop `idx_games_name` and `idx_games_playing_updated_at`; add `CREATE INDEX idx_games_bot_scan ON games(updated_at) WHERE needs_bots;`.
+
+As built after the final pass (`20260918130000_table_bytea.sql`): `state`, `roster` and `logs_packed` are `BYTEA`, as are `player_views.view` and `spectator_views.view`; `game_snapshots.player_ids` is `UUID[]`; `game_seed` stays hex `TEXT`, which the kernel reads as text.
 `player_hands`, `bot_hands`, `player_views`, `spectator_views`, `game_snapshots`, `chat_messages` keep their shapes.
 
 ### 3.2 The durable roster encoding (fixed width, versioned)
@@ -434,6 +436,22 @@ commit_table(p_game_id TEXT, p_expected_version BIGINT,
              p_game_seed TEXT DEFAULT NULL, p_views JSONB DEFAULT NULL,
              p_spectator TEXT DEFAULT NULL, p_closed_round BOOLEAN DEFAULT FALSE) RETURNS JSONB
 ```
+
+As built after the final pass, the signature carries no JSON, and 4a already creates it, so the functions deployed between 4a and 4c call it:
+
+```sql
+commit_table(p_game_id TEXT, p_expected_version BIGINT, p_state TEXT, p_status SMALLINT, p_needs_bots BOOLEAN,
+             p_roster TEXT DEFAULT NULL,             -- NULL keeps the stored roster
+             p_seats UUID[] DEFAULT NULL, p_bot_seats UUID[] DEFAULT NULL,
+             p_logs_packed TEXT DEFAULT NULL, p_logs_reset BOOLEAN DEFAULT FALSE, p_game_seed TEXT DEFAULT NULL,
+             p_view_players UUID[] DEFAULT NULL, p_views TEXT[] DEFAULT NULL,
+             p_spectator TEXT DEFAULT NULL, p_closed_round BOOLEAN DEFAULT FALSE,
+             OUT committed BOOLEAN, OUT new_version BIGINT, OUT new_round_epoch BIGINT)
+create_table(p_game_id TEXT, p_player_id UUID, p_state TEXT, p_roster TEXT,
+             p_view TEXT DEFAULT NULL, p_spectator TEXT DEFAULT NULL) RETURNS VOID
+```
+
+Every blob parameter is base64, and the views take the game's status.
 
 It raises on a NULL `p_state` or `p_roster`, maps `p_status` to the enum by index, clears `game_seed` and `logs_packed` when the status is WAITING, and otherwise keeps every rule the current function has (CAS, log append, `round_epoch`, membership upserts and bot prune, view upsert and prune, spectator upsert).
 `create_table(p_game_id, p_player_id UUID, p_state, p_roster, p_views, p_spectator)` replaces `create_game` (`20260906120000:189-230`).
@@ -502,9 +520,9 @@ Timings are wall clock on a machine shared with other agents' builds and tests, 
 | web bundle gz | `node scripts/measure_web_bundle.mjs` (first-load JS: `rootMainFiles` + the route's `entryJSFiles`, gzip -9) | `/` 274,363 B, `/[game_id]` 325,260 B, union 330,504 B gz (1,074,794 B raw, 17 chunks); identical over 4 builds | no phase may grow it more than 1,024 B; Phase 8 must end below baseline (Phase 5a, at `aae9e17f`: `/` 270,442 B, `/[game_id]` 320,473 B, union 325,717 B gz (1,059,959 B raw, 17 chunks), -4,787 B against the same measurement before the web switched, which read 330,504 B as the baseline; met. Phase 6a, measured at `48359ee3` (before) and on `198a0e60`'s tree (after): `/` 270,503 to 270,222 B, `/[game_id]` 320,563 to 320,690 B, union 325,807 to 325,934 B gz (1,060,276 to 1,058,783 B raw, 17 chunks), +127 B; met, and not the shrink the phase expected: the generated `TableView` writer and `ViewRules` reader outweigh the deleted mapping by that much. Phase 6b, measured on `198a0e60`'s tree (before) and `decfb369` (after): `/` 270,222 to 265,363 B, `/[game_id]` 320,690 to 315,633 B, union 325,934 to 320,877 B gz (1,058,783 to 1,051,746 B raw, 17 chunks), -5,057 B; met, the guards embed and its TS marshal gone. Phase 7, measured on a fresh build of `144ca23d` (before, the same 320,877 B) and on `d4b4f907` (after): `/` 265,363 to 247,423 B, `/[game_id]` 315,633 to 296,484 B, union 320,877 to 301,728 B gz (1,051,746 to 1,025,518 B raw, 17 to 16 chunks), -19,149 B; met: the engine chunk the replay decoder and the Oracle's marshal pulled into first load is gone) |
 | bots.wasm memory | `npm run test:mem` | 36 initial pages (7/7 pass); runtime peak 2,555,904 B after the MC bots (`collect_metrics` `memory`) | no new page without a measured reason (Phase 3.i and 3.ii: 36 pages, 7/7 pass; Phase 3b: 36 pages, 7/7 pass; Phase 4b: 36 pages, 7/7 pass; Phase 5a: 36 pages, 7/7 pass; Phase 6a: 36 pages, 7/7 pass; Phase 6b: 36 pages, 7/7 pass; Phase 7: 36 pages, 7/7 pass) |
 | table parity (Phase 3 on) | `TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx --test e2e/table_parity.test.ts` (step counts on stderr, `[table_parity]`) | Phase 3.i: 5/5 tests; 2,242 driven requests over 10 games (8 fixture rows at load, 4 dealt fixture games and 6 fuzz deals played on), 1,336 applied, 652 rejected, 151 not seated, 95 malformed wires, 8 moot, 6 games to their end; 3,997 envelopes and 3,977 pushes byte-equal. Phase 3.ii: 7/7 tests; the same move counts, plus 51 lobby edits (31 applied, 18 refused, 1 moot ready, 1 emptied table, 6 deals: a scripted lobby from create to an empty table, a bot-completed deal, and every fixture lobby joined, readied and dealt), 103 envelopes and 97 pushes byte-equal | every product byte-equal to today's TS pipeline, with only the Q1 trailer normalization; a new divergence needs a plan decision |
-| action latency, human move | `E2E_DB_PREFIX=c03m BENCH_E2E_MOVES=300 TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx e2e/bench_e2e_move.ts` (4 humans, packed path) | p50 0.65 ms, p95 1.21 ms (median of 3 runs; p50 range 0.51-0.73) | no worse than 5 % (Phase 4b, 3 runs interleaved with the server at `e71ff714` on one machine and database, medians new / old: p50 0.50 / 0.57 ms (0.44-0.52 / 0.55-0.65), p95 0.62 / 0.86 ms; met. The first cutover measured p50 2.9 ms, 5x, from the status label walking every generated export per commit and hex built one string per byte; fixed in `b3c9fa4c`). Phase 4c's `table_set_deal_seed` after every `runTableOp` load, 3 runs interleaved with and without it: p50 0.58 / 0.53 / 0.45 ms with, 0.53 / 0.44 / 0.51 ms without, p95 0.60-0.69 / 0.66-0.67 ms: within the run-to-run spread |
+| action latency, human move | `E2E_DB_PREFIX=c03m BENCH_E2E_MOVES=300 TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx e2e/bench_e2e_move.ts` (4 humans, packed path) | p50 0.65 ms, p95 1.21 ms (median of 3 runs; p50 range 0.51-0.73) | no worse than 5 % (Phase 4b, 3 runs interleaved with the server at `e71ff714` on one machine and database, medians new / old: p50 0.50 / 0.57 ms (0.44-0.52 / 0.55-0.65), p95 0.62 / 0.86 ms; met. The first cutover measured p50 2.9 ms, 5x, from the status label walking every generated export per commit and hex built one string per byte; fixed in `b3c9fa4c`). Phase 4c's `table_set_deal_seed` after every `runTableOp` load, 3 runs interleaved with and without it: p50 0.58 / 0.53 / 0.45 ms with, 0.53 / 0.44 / 0.51 ms without, p95 0.60-0.69 / 0.66-0.67 ms: within the run-to-run spread. Phase 8 final pass, part 2 (BYTEA, base64 and array parameters, no roster resent), interleaved with a `git archive` of `636b123a` on one machine and database: on a quiet machine, 2 runs, before / after p50 0.46, 0.44 / 0.38, 0.38 ms and p95 0.88, 0.58 / 0.55, 0.50 ms; 3 earlier runs under other agents' load, p50 1.58, 1.58, 0.72 / 0.93, 0.67, 0.68 ms; hosted-like with `E2E_DB_RTT_MS=10` (every database request 10 ms, 100 moves, 3 runs), p50 15.31, 14.18, 13.74 / 14.55, 14.25, 13.65 ms and p95 16.84, 15.37, 14.82 / 16.25, 23.10, 14.95 ms; met. The `commit_table` JSON body per commit (deals included) went from 5,986 to 2,414 B, -60 % |
 | action latency, bot move | `node scripts/collect_metrics.mjs` (`e2e`: `bench_bot_e2e.ts`, 3 reps x 25 decisions) for p50; `npm run bench:bot-e2e` once for p95 | p50: octogen 34.9, cordite 8.0, blackpowder 3.1, firecracker 3.5 ms; p95 (one run): 80.3, 9.8, 6.3, 11.8 ms | no worse than 5 % (Phase 4b, `BENCH_BOT_MOVES=25`, 3 runs interleaved with `e71ff714`, medians new / old: p50 octogen 31.1 / 36.2, cordite 6.4 / 8.2, blackpowder 1.8 / 3.2, firecracker 2.3 / 3.3 ms; p95 63.1 / 76.8, 8.2 / 10.0, 3.1 / 4.7, 8.5 / 12.8 ms; met) |
-| create cold start | 9 fresh processes of `TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx e2e/cold_start.mts <gunzipped bots.wasm>`, median | compile 0.95 ms, cold instantiate + first cordite decision 42.7 ms, warm decision 10.3 ms; create's own pre-response compute (import + `buildPlayerViewRows` + `buildSpectatorView` on a 1-seat lobby, same 9-process method, unscripted probe) 33.7 ms | no worse than 10 % (create now instantiates bots.wasm, Q10) (Phase 4b, create's pre-response compute, 9 fresh processes alternating with `e71ff714`, medians new / old: 16.6 / 24.5 ms (`table_create` + `table_commit` against `buildPlayerViewRows` + `buildSpectatorView`); met) Phase 4c's create fix moves `create_table` onto the response path; its kernel compute is unchanged, and create's time to response in process against local Postgres (201 creates by distinct users, `EdgeRuntime.waitUntil` collected, 3 runs each) went from p50 0.22-0.25 / p95 0.36-0.51 ms, first call 35-39 ms, to p50 0.58-0.63 / p95 0.80-0.83 ms, first call 40-71 ms: the added time is one local `create_table` round trip, and on hosted it is one PostgREST call. Recorded, not waived: a creator must never be answered with a game that is not stored. Phase 8 final pass, on `37ad798e`, 9 fresh processes with the load average near 3.5 (other agents' suites between runs): compile 0.54 ms, cold instantiate + first cordite table decision 37.2 ms (37.0-38.4), warm decision 11.5 ms (11.4-11.6); the cold figure is now `createServerTable`, a six-seat cordite table dealt by table ops and one `table_bot_drive`, not the retired `wasmChooseMoveDirect` path, so the rows compare as paths, not digits |
+| create cold start | 9 fresh processes of `TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx e2e/cold_start.mts <gunzipped bots.wasm>`, median | compile 0.95 ms, cold instantiate + first cordite decision 42.7 ms, warm decision 10.3 ms; create's own pre-response compute (import + `buildPlayerViewRows` + `buildSpectatorView` on a 1-seat lobby, same 9-process method, unscripted probe) 33.7 ms | no worse than 10 % (create now instantiates bots.wasm, Q10) (Phase 4b, create's pre-response compute, 9 fresh processes alternating with `e71ff714`, medians new / old: 16.6 / 24.5 ms (`table_create` + `table_commit` against `buildPlayerViewRows` + `buildSpectatorView`); met) Phase 4c's create fix moves `create_table` onto the response path; its kernel compute is unchanged, and create's time to response in process against local Postgres (201 creates by distinct users, `EdgeRuntime.waitUntil` collected, 3 runs each) went from p50 0.22-0.25 / p95 0.36-0.51 ms, first call 35-39 ms, to p50 0.58-0.63 / p95 0.80-0.83 ms, first call 40-71 ms: the added time is one local `create_table` round trip, and on hosted it is one PostgREST call. Recorded, not waived: a creator must never be answered with a game that is not stored. Phase 8 final pass, on `37ad798e`, 9 fresh processes with the load average near 3.5 (other agents' suites between runs): compile 0.54 ms, cold instantiate + first cordite table decision 37.2 ms (37.0-38.4), warm decision 11.5 ms (11.4-11.6); the cold figure is now `createServerTable`, a six-seat cordite table dealt by table ops and one `table_bot_drive`, not the retired `wasmChooseMoveDirect` path, so the rows compare as paths, not digits. Phase 8 final pass, part 2, create's time to response (`E2E_DB_PREFIX=db2_ BENCH_CREATES=201 TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx e2e/bench_create.ts`), interleaved with a `git archive` of `636b123a`: quiet machine, 2 runs, before / after first call 42.4, 39.6 / 42.3, 40.8 ms, p50 0.59, 0.58 / 0.52, 0.51 ms, p95 0.91, 0.81 / 0.72, 1.02 ms; hosted-like with `E2E_DB_RTT_MS=10` (51 creates, 3 runs), p50 15.80, 14.28, 13.83 / 14.24, 13.93, 13.49 ms; met. The `create_table` JSON body went from 3,183 to 2,111 B, -34 % |
 | marshal / decode | `bash tools/structgen/test/bench.sh` (ns/op, tsx / strip / bundle) and `TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx e2e/bench_decode_packed.ts` | structgen: hand-written marshal 242.8 / 286.2 / 253.7, generated marshal + adopt 151.0 / 265.6 / 210.2, hand-written parse 210.2 / 261.3 / 238.9, generated `readState` 159.4 / 170.6 / 185.1; `decodePackedGame` (median of 3 runs of 9x20,000): 2p 1,644, 4p 2,516, 8p 5,013, 4p spectator 2,108 ns/op | new C decode + snapshot no slower than today's `decodePackedGame` (Phase 5a, medians of 3 runs of 9x20,000 on one machine, side by side before the TS reader was deleted at `e6a295fd`, ns/op 2p / 4p / 8p / 4p spectator: `decodePackedGame` 1,612 / 2,399 / 3,933 / 2,019; C adopt + snapshot 1,327 / 1,823 / 2,700 / 1,793; `decodeEnvelope` (adopt + snapshot + the transitional `PersonalGame` mapping, what the web runs) 1,430 / 1,958 / 2,926 / 1,848; met. The first C read measured slower; `b85091e1` keeps the identity bytes where they already are and does less per byte in roster checks and the generated readers). Phase 8 final pass, on `37ad798e` with the load average near 3.5: C adopt + snapshot, median of 3 runs of 9x20,000, 2p 1,614 / 4p 2,024 / 8p 3,027 / 4p spectator 2,015 ns/op (run medians 1,448-1,692 / 1,959-2,120 / 3,016-3,223 / 1,977-2,167), at or below the retired `decodePackedGame`'s 1,612 / 2,399 / 3,933 / 2,019; met. The structgen bench no longer has marshal rows (the hand-written marshal and the TS `Game` it wrote are gone); its accessor shapes, tsx / strip / bundle ns/op, on the test build: i8 get+set 4.9 / 4.1 / 5.0, i16 DataView 5.0 / 5.8 / 4.2, u32 DataView 5.1 / 5.9 / 6.0, card raw_set(pack) 4.7 / 4.2 / 4.3, card raw_get 5.2 / 4.1 / 4.2, 8 cards raw_set 8.0 / 9.3 / 9.0, 10-char string set+get 90.3 / 93.7 / 115.9, pointer `_deref_at` + `Card_raw_get` 10.9 / 6.7 / 6.7 against a raw u32 read's 5.5 / 5.9 / 6.1 |
 | Monte-Carlo throughput | `make -C c build/cnitro_eval`, then `c/build/cnitro_eval --strategy=cordite --opp=cordite --players=2,4 --games=100 --seed-start=200001` (3 runs) and `--strategy=octogen --opp=octogen --players=2 --games=20` / `--players=4 --games=8`, same seed; games/sec from the stderr `rate=` line | cordite 2p 21.4 g/s (18.9-25.7), 4p 20.0 g/s (17.1-22.4); octogen 2p 0.7 g/s, 4p 4.1 g/s (one run each); decision fingerprint = the stdout histograms: cordite 2p `49 51`, 4p `25 20 22 33`; octogen 2p `14 6`, 4p `2 2 0 4`. Phase 3b, 3 rounds interleaving the binary built at `52dd08f2` with the one after, medians before / after: cordite 2p 27.6 / 27.7 g/s, 4p 24.0 / 24.1 g/s; octogen 2p 24.0 / 24.0 s for 20 games (0.8 g/s both), 4p 1.8 / 1.8 s (4.5 g/s both); every histogram identical to the baseline's in all 18 runs | Phase 3b: no slower, and bot decisions bit-identical (Phase 3b: met; the expected improvement did not show at the eval's 0.1 g/s and 0.1 s resolution) |
 
@@ -816,13 +834,18 @@ Server fixes made alongside, both found by tests red on the old code:
   Only a legacy deck reads that draw (a seed-dealt deck pops its top card), which is why nothing noticed.
   `e2e/table_rng_base.test.ts` plays the same legacy-deck pickup round twice, each after a bot cycle of a game with a different seed.
 
-Deploy order, all owner steps:
+Deploy order, all owner steps (the final pass, part 2, added step 0 and the BYTEA migration in step 4):
 
+0. Read-only, before anything: `SELECT version FROM supabase_migrations.schema_migrations WHERE version >= '20260917140000' ORDER BY 1;` returns no rows.
+   The grant relock `20260917000000` and the realtime policy migrations `20260917120000` and `20260917130000` may already be applied from their own branches, and this check allows them.
+   If `20260917140000` is listed, 4a was applied with the earlier `commit_table` signature (hex `TEXT` blobs, JSONB views, a JSONB result), and the final pass's edit of 4a will not run there: stop, and first write a migration that drops and recreates `commit_table` and `create_table` with the final signature, followed by the lockdown loop.
 1. 4a (`20260917140000_table_expand.sql`) applied on hosted.
-2. The 4b edge functions deployed (a push that changes no migration, or `supabase functions deploy --workdir server/impls` by hand) and verified live: one online game created, joined, played with a bot to its end, with no `commit_game` in the function logs.
+2. The edge functions deployed (a push that changes no migration, or `supabase functions deploy --workdir server/impls` by hand) and verified live: one online game created, joined, played with a bot to its end, with no `commit_game` in the function logs.
+   They call the final `commit_table` and `create_table`, which 4a creates.
 3. The read-only pre-checks below, each returning no rows.
-4. Only then 4c: merge it in a push of its own.
-   If it ever lands together with the 4b functions, the migration refuses, the deploy job stops before its functions step, and the live functions keep working: deploy the functions by hand, verify, and re-run the workflow.
+4. Only then 4c, with `20260918130000_table_bytea.sql` in the same push or a later one, after its own pre-checks below.
+   If it ever lands together with the functions of step 2, the contract migration refuses, the deploy job stops before its functions step, and the live functions keep working: deploy the functions by hand, verify, and re-run the workflow.
+   The functions of step 2 work before and after the BYTEA migration: they read a blob column's hex text with or without the `\x` prefix, and the signature they call does not change.
 
 Hosted pre-checks, read-only, before applying 4c:
 
@@ -844,6 +867,30 @@ WHERE n.nspname = 'public' AND p.proname NOT IN ('commit_game', 'create_game', '
 
 -- no scheduled job reads games' JSONB
 SELECT jobname, command FROM cron.job WHERE command ~ '\m(players|writer_gen)\M';
+```
+
+Hosted pre-checks, read-only, before applying `20260918130000_table_bytea.sql` (each should return no rows, except the last, which should list `player_views`):
+
+```sql
+-- values the migration refuses: not whole hex bytes (with or without the \x prefix), or a seat list that is not UUIDs
+SELECT 'games ' || id FROM games
+WHERE state !~ '^(\\x)?([0-9a-fA-F]{2})*$' OR roster !~ '^(\\x)?([0-9a-fA-F]{2})*$' OR coalesce(logs_packed, '') !~ '^(\\x)?([0-9a-fA-F]{2})*$'
+UNION ALL SELECT 'player_views ' || game_id || '/' || player_id FROM player_views WHERE view !~ '^(\\x)?([0-9a-fA-F]{2})*$'
+UNION ALL SELECT 'spectator_views ' || game_id FROM spectator_views WHERE view !~ '^(\\x)?([0-9a-fA-F]{2})*$'
+UNION ALL SELECT 'game_snapshots ' || id FROM game_snapshots
+WHERE jsonb_typeof(player_ids) <> 'array' OR EXISTS (SELECT 1 FROM jsonb_array_elements(player_ids) e
+  WHERE jsonb_typeof(e) <> 'string' OR e #>> '{}' !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$');
+
+-- anything else that reads a converted column as text: a view, a function body, a scheduled job
+SELECT DISTINCT c.relname FROM pg_depend d JOIN pg_rewrite r ON r.oid = d.objid JOIN pg_class c ON c.oid = r.ev_class
+WHERE d.refobjid IN ('public.games'::regclass, 'public.player_views'::regclass, 'public.spectator_views'::regclass, 'public.game_snapshots'::regclass)
+  AND c.relname NOT IN ('games', 'player_views', 'spectator_views', 'game_snapshots');
+SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public' AND p.proname NOT IN ('commit_table', 'create_table') AND p.prosrc ~ '\m(logs_packed|player_ids|roster)\M';
+SELECT jobname, command FROM cron.job WHERE command ~ '\m(logs_packed|player_ids|player_views|spectator_views)\M';
+
+-- the realtime publication keeps player_views through the type change
+SELECT tablename FROM pg_publication_tables WHERE pubname = 'supabase_realtime';
 ```
 
 ### Phase 5a: the web reads envelopes and pushes through C
@@ -1128,6 +1175,43 @@ Commits `0bdffc21` to `37ad798e`.
   With the base changed every cycle, all four games ended (116, 78, 207 and 181 cycles); handwritten and simple_heuristic tables at 2, 4 and 6 seats (30 seeds each) all ended.
   Not changed here, because it changes bot moves: a table whose remaining players are all random bots can loop without end in production (about 1 game in 40 at 4 to 7 seats), holding `needs_bots` forever.
   The fix that keeps a decision a function of the stored row is to fold a monotonic progress count the row already carries (the session log's length, or the row version) into the strategy seed; a no-progress rule in the kernel would be a rules change and is not proposed.
+
+#### Phase 8 as built: database and local dev stack (final pass, part 2)
+
+Commits `a793ecce` to `0dd06477`, and the doc commit after them.
+
+- BYTEA (`88c5f7fb`): `games.state`, `games.roster`, `games.logs_packed`, `player_views.view` and `spectator_views.view` are `BYTEA`, and `game_snapshots.player_ids` is `UUID[]`, with its GIN index and the participants policy rebuilt on `@>`.
+  `20260918130000_table_bytea.sql` runs after 4c.
+  It refuses, naming the rows, any value that is not whole hex bytes or a seat list that is not UUIDs; it converts each value by its own form (`\x`-hex as the state and roster were written, bare hex as the logs and views were); and it fires no row trigger, so `updated_at` and `version` keep their values.
+  `seed.sql` reaches the same end state, and `db_migration_grants` now compares the blob tables' columns and the snapshot policy between the two as well.
+- No JSON on the write path: `commit_table` and `create_table` take base64 blobs, the views as `p_view_players UUID[]` beside `p_views TEXT[]` with the game's status, and the membership arrays as `UUID[]`, and they answer `OUT committed, new_version, new_round_epoch` (3.3).
+  A commit whose operation left the roster alone sends no roster, and SQL keeps the stored one.
+  Because the functions deployed between 4a and 4c already call the writers, 4a itself creates the final signature (writing the hex `TEXT` the columns still have); 4c and the BYTEA migration replace only the bodies, so the grants are kept.
+  4a and 4c were edited in place: `origin/main`'s newest migration is `20260906120000`, so neither was ever applied on hosted, and deploy step 0 checks exactly that.
+- The transport was measured, not assumed: `e2e/bench_commit_transport.ts` calls a local stack's real PostgREST behind Kong, 20 rounds of 50 calls, with one 4-seat commit's blob sizes.
+  Hex `TEXT` with JSONB views is 3,657 body bytes, `\x`-hex `BYTEA` and `BYTEA[]` parameters 3,534 B, and base64 `TEXT` and `TEXT[]` 2,433 B, at p50 3.5-3.8 ms and p95 5.2-6.2 ms each, and 28.1-28.5 ms each with a 20 ms round trip added: latency does not tell them apart, bytes do.
+  The edge runtime (`supabase-edge-runtime-1.74.3`, V8 11.6) has no `Uint8Array.prototype.toBase64`, so `table_io.ts` encodes with a table loop, measured in that runtime at 3.3 us per 1.5 KB against 4.6 us for the hex loop and 17.6 us for `btoa` over a character string, and uses the native method where a runtime has one; the broadcast payload uses the same encoder.
+  `e2e/table_io_transport.test.ts` holds the loop to Node's base64 at every length up to 300 and at blob sizes, since Node itself takes the native path.
+- What the clients receive, measured by `e2e/live_online_smoke.ts` on a local stack: a PostgREST select of a `BYTEA` view is `\x`-hex text, and a Realtime `postgres_changes` payload carries the same column as bare lower-case hex, the same text it carried for the `TEXT` column before.
+  The web (`ServerContext.tsx` `hexToBytes`) and iOS (`PackedGame.hexToData`, used by `OnlineGame.resync` and for the `GameFeed` rows) both strip an optional `\x` before decoding, so neither client needs a change; `MatchHistory.tsx` reads `player_ids` as a JSON array, which PostgREST returns for `UUID[]`.
+  The smoke checks every Realtime change and the PostgREST row, that the final ones are the same bytes, and that the client's envelope reader accepts them.
+- The local dev stack (`f200b6eb`): a fresh `supabase start --workdir server/impls` failed at `20260616030000` because the baseline migration was an empty placeholder.
+  It now holds `seed.sql` as of `0134ac2b`, the schema the tracked migrations were written against (ported from `889da662` on `claude/ios-redesign`); hosted records the baseline as applied, and `db_migration_grants` replays from `20260807120000`, so neither runs it.
+  Enabling RLS on `realtime.messages` is guarded in the baseline and in `seed.sql`, because `supabase_realtime_admin` owns that table there and `postgres` may create policies on it but not alter it.
+  `seed.sql` drops `game_snapshots` before creating it, since the migrations create it first on a local start.
+  Each function has its own `deno.json` import map, which `config.toml` names, because `functions serve` ignored the shared map and every worker failed to boot on the aliases; `deploy_paths_validation` holds the five maps identical.
+  `edge_runtime.policy` is `per_worker`, since `oneshot` reaps the bot loop; `889da662`'s service_role grant was not needed, because the current image's default privileges already cover it.
+  Verified end to end: `supabase start` (36 migrations and `seed.sql`), `supabase functions serve`, and the live smoke to game over (115 human moves, 35 bot cycles, 155 Realtime changes, one replay snapshot, alice's snapshot read under RLS).
+  The smoke also carries `ba897d5b` from `live-checks-fixes` (say Good when Good is all the humans have).
+- The lease flake (`1545c1a6`): `lease.test.ts` expected a second acquire right after a 200 ms lease to be blocked, and under load that acquire could arrive after 200 ms ("blocked while live" failed 2 runs in 15 with 48 busy loops on 8 cores).
+  "At once" is now one transaction, whose `now()` does not move, and "later" is the stored expiry moved back by the time that passes; the TTL arithmetic is pinned exactly.
+  20 of 20 runs passed under the same load, and three mutations of the lease functions each turn a named assertion red.
+- The e2e shim reads `BYTEA` as PostgREST sends it (`\x`-hex text), binds a JSON array to an array column, answers a function with `OUT` parameters as one object, can add a round trip to every database request (`E2E_DB_RTT_MS`), and counts each RPC's JSON body bytes; `e2e/bench_create.ts` measures create's time to response.
+- Also fixed: the `auth.ts` type errors at their cause (a JWKS entry is a `JsonWebKey` plus its kid, the decoded signature is backed by an `ArrayBuffer`, `claimsToUser` builds a typed `User`), and the shim's missing `auth.getUser`, which made a token the local verifier refused fail as "getUser is not a function".
+- Mutation checks, each restored with `git checkout`: views converted as UTF-8 text, seat lists reversed, the participants policy opened, the refusal disabled, and the BYTEA writer ignoring a sent roster each turn a named `table_bytea_migration` assertion red.
+  Dropping the `COALESCE` that keeps an unsent roster turns `table_expand_migration` and `table_contract_migration` red; the contract one survived at first, and that suite now also commits an unchanged roster after 4c.
+  The base64 loop without its second pad turns `table_io_transport` red, and the server sending no roster on a join turns 7 `meta` tests red.
+- Suites: the 36 DB-backed e2e files (196 tests), `table_bytea_migration`, `table_io_transport`, `npm run test:validate`, `npm run typecheck` and `npm run check:determinism` pass.
 
 ### 4.1 Dependency and parallelism summary
 
