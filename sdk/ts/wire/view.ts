@@ -162,6 +162,7 @@ export interface PackedGameRoster extends ViewRoster {
     good_timestamp: number | null;
 }
 
+// retired by Phase 4b; deleted in Phase 8 (the server's envelopes are table_envelope / table_commit_products)
 export function encodeGameResponse(
     version: number, seat: number, roster: PackedGameRoster, viewBlob: Uint8Array,
 ): Uint8Array {

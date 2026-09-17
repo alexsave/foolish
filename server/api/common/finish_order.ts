@@ -50,9 +50,3 @@ export function gameFinishPlaces(game: FinishGame, mySeat = -1): FinishPlace[] {
             isYou: r.isYou,
         }));
 }
-
-/** The finish order as bare player_ids, best first. The shape the ELO pass
- *  wants. */
-export function calculateGameRankings(game: FinishGame): string[] {
-    return gameFinishPlaces(game).map((r) => r.player_id);
-}

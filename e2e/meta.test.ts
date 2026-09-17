@@ -1,6 +1,7 @@
-// E2E for the consolidated `meta` endpoint: the REAL handlers (start / add-bot /
-// exit / continue from _shared/meta_actions.ts — the same code meta/index.ts
-// dispatches) through the REAL CAS commit + pg adapter.
+// E2E for the consolidated `meta` endpoint: the REAL handler (meta_actions.ts,
+// the code meta/index.ts dispatches: one C Table operation per body.type)
+// through the REAL CAS commit (commit_table) and the pg adapter, on kernel-owned
+// rows. Results are read back through the kernel (helpers/table_play.ts).
 //
 // Owns the meta validation scenarios; the fast runner
 // (e2e/validation/db_validation.test.ts) imports `registerMetaValidation` and
@@ -9,42 +10,40 @@
 import './harness.ts';
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
-import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
-import { handleMetaAction, handleContinue } from '../server/impls/supabase/functions/_shared/adapter/meta_actions.ts';
+import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
+import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { GAME_STATUS, PLAYER_STATUS } from '../server/api/core/types.ts';
 import { resetToLobby } from '../src/state/clientReconcile.ts';
-import { applyPlayerMove, checkCardConservation, legalMovesFor } from './dispatch.ts';
+import { fixture, fixtureTable, GAME_OVER, IN, OUT } from './helpers/table_fixture.ts';
+import { seedTable } from './helpers/table_db.ts';
+import { checkCardConservation, mustReadTable, readTable, residentBoard } from './helpers/table_play.ts';
+import { playToEnd, runMeta, seedLobby } from './helpers/table_server.ts';
 import { suiteRng } from './helpers/rng.ts';
 
 // Only one test here draws: the rematch scenario plays a dealt game out with
 // random legal moves. Seeded, so the game it plays is the same game every run.
 const rng = suiteRng('meta');
 
-const params = (game: any, userId: string, body: any) => ({ user: { id: userId } as any, user_name: 'U', body, game, reqId: 'r' });
-const runMeta = (gameId: string, userId: string, body: any) =>
-    executeWithGameLock(gameId, async (game) => handleMetaAction(params(game, userId, body)), 'meta', false);
+const human = (id: string, name: string, ready = true) => ({ id, name, ready });
 
 // ---- handpicked validation: a representative deal + a reject -----------------
 export function registerMetaValidation(): void {
-    test('meta:start — when all players are ready the game deals and conserves cards', async () => {
+    test('meta:start - when all players are ready the game deals and conserves cards', async () => {
         const gameId = `m${uuid().slice(0, 5)}`;
         const h1 = uuid(), h2 = uuid();
-        await seedGame(gameId, [
-            { id: h1, name: 'H1', is_ai: false, strategy_key: 'human' },
-            { id: h2, name: 'H2', is_ai: false, strategy_key: 'human' },
-        ]); // seedGame marks players READY
-        await runMeta(gameId, h1, { type: 'start', game_id: gameId });
-        const g = await loadCompleteGame(gameId);
-        assert.equal(g.status, GAME_STATUS.PLAYING, 'game started');
+        await seedLobby(gameId, [human(h1, 'H1', false), human(h2, 'H2')]);
+        await runMeta(gameId, h1, { type: 'start' });
+        const t = await mustReadTable(gameId);
+        assert.equal(t.status, L.GAME_STATUS_PLAYING, 'game started');
+        assert.equal(t.statusColumn, 'playing', 'and the column says so');
         assert.ok((await checkCardConservation(gameId)).ok, 'cards conserved on deal');
     });
 
     test('meta: unknown type is rejected', async () => {
         const gameId = `m${uuid().slice(0, 5)}`;
         const h1 = uuid();
-        await seedGame(gameId, [{ id: h1, name: 'H1', is_ai: false, strategy_key: 'human' }]);
-        await assert.rejects(runMeta(gameId, h1, { type: 'nonsense', game_id: gameId }), /unknown meta action/i);
+        await seedLobby(gameId, [human(h1, 'H1')]);
+        await assert.rejects(runMeta(gameId, h1, { type: 'nonsense' }), /unknown meta action/i);
     });
 }
 
@@ -52,258 +51,215 @@ if (!process.env.VALIDATION_ONLY) {
     before(async () => { await applySchema(); });
     beforeEach(async () => { await resetDb(); });
 
-    test('meta:add-bot — adds a bot and (all ready) starts the game', async () => {
+    test('meta:add-bot - adds a bot and (all ready) starts the game', async () => {
         const gameId = `m${uuid().slice(0, 5)}`;
         const h1 = uuid();
-        await seedGame(gameId, [{ id: h1, name: 'H1', is_ai: false, strategy_key: 'human' }]);
+        await seedLobby(gameId, [human(h1, 'H1')]);
         await pgPool.query('INSERT INTO bots(id,nickname,strategy_key) VALUES($1,$2,$3)', [uuid(), 'Botty', 'random']);
 
-        await runMeta(gameId, h1, { type: 'add-bot', game_id: gameId });
-        const g = await loadCompleteGame(gameId);
-        assert.equal(g.players.length, 2, 'bot added');
-        assert.equal(g.players.filter(p => p.is_ai).length, 1, 'one bot');
-        assert.equal(g.status, GAME_STATUS.PLAYING, 'all ready -> started');
+        const res = await runMeta(gameId, h1, { type: 'add-bot' });
+        const t = await mustReadTable(gameId);
+        assert.equal(t.seats.length, 2, 'bot added');
+        assert.equal(t.seats.filter(s => s.brain).length, 1, 'one bot');
+        assert.equal(t.status, L.GAME_STATUS_PLAYING, 'all ready -> started');
+        assert.equal((await pgPool.query('SELECT count(*) FROM bot_hands WHERE game_id=$1', [gameId])).rows[0].count, '1', 'the bot is a member');
+        assert.equal(res.runBots === gameId, t.needsBotsColumn, 'the bots are woken exactly when the kernel says they have work');
     });
 
-    test('meta:add-bot — a specific bot_id adds exactly that bot', async () => {
+    test('meta:add-bot - a specific bot_id adds exactly that bot', async () => {
         const gameId = `m${uuid().slice(0, 5)}`;
         const h1 = uuid(), b1 = uuid(), b2 = uuid();
-        await seedGame(gameId, [{ id: h1, name: 'H1', is_ai: false, strategy_key: 'human' }]);
+        await seedLobby(gameId, [human(h1, 'H1')]);
         await pgPool.query('INSERT INTO bots(id,nickname,strategy_key) VALUES($1,$2,$3),($4,$5,$6)',
             [b1, 'Botty1', 'random', b2, 'Botty2', 'random']);
 
-        await runMeta(gameId, h1, { type: 'add-bot', game_id: gameId, bot_id: b2 });
-        const g = await loadCompleteGame(gameId);
-        const bots = g.players.filter(p => p.is_ai);
+        await runMeta(gameId, h1, { type: 'add-bot', bot_id: b2 });
+        const bots = (await mustReadTable(gameId)).seats.filter(s => s.brain);
         assert.equal(bots.length, 1, 'one bot added');
-        assert.equal(bots[0].player_id, b2, 'the requested bot (b2), not a random one');
+        assert.equal(bots[0].id, b2, 'the requested bot (b2), not a random one');
+        assert.equal(bots[0].name, 'Botty2', 'seated under its nickname');
     });
 
-    test('meta:add-bot — an unavailable bot_id is rejected', async () => {
+    test('meta:add-bot - an unavailable bot_id is rejected', async () => {
         const gameId = `m${uuid().slice(0, 5)}`;
         const h1 = uuid();
-        await seedGame(gameId, [{ id: h1, name: 'H1', is_ai: false, strategy_key: 'human' }]);
+        await seedLobby(gameId, [human(h1, 'H1')]);
         await pgPool.query('INSERT INTO bots(id,nickname,strategy_key) VALUES($1,$2,$3)', [uuid(), 'Botty', 'random']);
-        await assert.rejects(runMeta(gameId, h1, { type: 'add-bot', game_id: gameId, bot_id: uuid() }), /not available/i);
+        await assert.rejects(runMeta(gameId, h1, { type: 'add-bot', bot_id: uuid() }), /not available/i);
     });
 
-    test('meta:exit — removing a bot drops it; removing the last player deletes the game', async () => {
+    test('meta:exit - removing a bot drops it; removing the last player deletes the game', async () => {
         const gameId = `m${uuid().slice(0, 5)}`;
         const h1 = uuid(), bot = uuid();
-        await seedGame(gameId, [
-            { id: h1, name: 'H1', is_ai: false, strategy_key: 'human' },
-            { id: bot, name: 'Botty', is_ai: true, strategy_key: 'random' },
-        ]);
-        await pgPool.query("UPDATE games SET status='waiting' WHERE id=$1", [gameId]);
+        await seedLobby(gameId, [human(h1, 'H1', false), { id: bot, name: 'Botty', brain: 'random' }]);
 
-        // seedGame gave the bot a bot_hands row; removing it must clear that row.
-        // handleExit no longer DELETEs it directly — commit_game prunes bot_hands
-        // not in the post-removal roster — so this asserts that prune fires.
-        assert.equal((await pgPool.query('SELECT count(*) FROM bot_hands WHERE game_id=$1', [gameId])).rows[0].count, '1', 'bot hand present before removal');
-        await runMeta(gameId, h1, { type: 'exit', game_id: gameId, bot_id: bot });
-        let g = await loadCompleteGame(gameId);
-        assert.equal(g.players.length, 1, 'bot removed');
-        assert.equal((await pgPool.query('SELECT count(*) FROM bot_hands WHERE game_id=$1', [gameId])).rows[0].count, '0', 'bot hand pruned by commit_game');
+        // The bot's membership row goes with the commit that removes it:
+        // commit_table prunes bot_hands to the roster in the same transaction.
+        assert.equal((await pgPool.query('SELECT count(*) FROM bot_hands WHERE game_id=$1', [gameId])).rows[0].count, '1', 'bot member before removal');
+        await runMeta(gameId, h1, { type: 'exit', bot_id: bot });
+        assert.equal((await mustReadTable(gameId)).seats.length, 1, 'bot removed');
+        assert.equal((await pgPool.query('SELECT count(*) FROM bot_hands WHERE game_id=$1', [gameId])).rows[0].count, '0', 'bot membership pruned by commit_table');
 
-        // The last exit must RESOLVE, not just happen to delete the row: it used
-        // to succeed and then 400 (the CAS commit missed the deleted row, read it
-        // as a conflict, and the retry's reload threw "not found").
-        const res = await runMeta(gameId, h1, { type: 'exit', game_id: gameId });
-        assert.equal(res.deleted, true, 'exit of the last player reports the deletion');
-        assert.equal((await pgPool.query('SELECT count(*) FROM games WHERE id=$1', [gameId])).rows[0].count, '0', 'empty game deleted');
+        // The last exit must RESOLVE, not just happen to delete the row.
+        await runMeta(gameId, h1, { type: 'exit' });
+        assert.equal(await readTable(gameId), null, 'empty game deleted');
     });
 
     // The client applies "proceed to lobby" OPTIMISTICALLY (resetToLobby) before
-    // the meta round-trip; the authoritative server reset (handleContinue) that
-    // follows must agree on the public fields, or the user sees a snap. Run BOTH
-    // on the same finished game and compare.
-    //
-    // handleContinue is now the kernel's game_reset_to_lobby, so this compares
-    // the client's mirror against the kernel rather than against a second TS
-    // copy. The good-players pair below is why that mattered: this test used to
-    // check everything EXCEPT those two, and they were exactly where the two
-    // resets disagreed - the server left the finished round's goods set and let
-    // the next deal clear them, so the lobby it broadcast still showed them.
-    test('optimistic resetToLobby (client) matches handleContinue (server)', () => {
+    // the meta round-trip; the authoritative reset (table_continue, the kernel's
+    // game_reset_to_lobby) must agree on the public fields, or the user sees a
+    // snap. Both run on the same finished game.
+    test('optimistic resetToLobby (client) matches table_continue (server)', () => {
         const players = [
             { player_id: 'h1', name: 'H1', is_ai: false, status: PLAYER_STATUS.OUT, hand_length: 0 },
             { player_id: 'b1', name: 'Botty', is_ai: true, status: PLAYER_STATUS.IN, hand_length: 4 },
         ];
-        const finishedCommon = {
+        const clientGame: any = {
             id: 'g1', name: 'G1', status: GAME_STATUS.GAME_OVER,
             discard_pile_length: 7, flipped: { suit: 1, value: 9 },
             power_suit: 1, first_attacker: 1, defender: 0,
             table_battles: [{ attack: { suit: 0, value: 5 }, defense: null }],
             elimination_order: ['h1'], good_timestamp: 123, good_players: ['h1'], version: 41,
-        };
-        const clientGame: any = {
-            ...structuredClone(finishedCommon), deck_length: 5,
-            players: structuredClone(players),
+            deck_length: 5, players: structuredClone(players),
             self: { player_id: 'h1', name: 'H1', is_ai: false, status: PLAYER_STATUS.OUT, hand: [{ suit: 0, value: 5 }], hand_length: 1, awaiting_attack: true, strategy_key: 'human' },
         };
-        const serverGame: any = {
-            ...structuredClone(finishedCommon), deck: [],
-            players: players.map(p => ({ ...p, hand: [], awaiting_attack: false, strategy_key: p.is_ai ? 'random' : 'human' })),
-        };
+        // The same finished board, as the kernel holds it.
+        const fx = fixture().title('G1')
+            .seats([{ id: 'h1', name: 'H1' }, { id: 'b1', name: 'Botty', brain: 'random' }])
+            .status(GAME_OVER).seatStatus(0, OUT).seatStatus(1, IN).powerSuit(1).attacker(1).defender(0)
+            .hand(1, '6c 7c 8c 9c').eliminated(0).discard(20).good(0).goodTimestamp()
+            .build();
+        const table = fixtureTable();
+        assert.equal(table.load(fx.state, fx.roster), L.TABLE_OK);
+        assert.equal(table.continueGame('h1'), L.TABLE_OK, 'the server resets it');
+        const server = residentBoard('g1', fx.state, fx.roster);
 
         const client = resetToLobby(clientGame);
-        const server = handleContinue({ user: { id: 'h1' }, game: serverGame } as any).game;
-
         assert.equal(client.status, GAME_STATUS.WAITING);
-        assert.equal(server.status, client.status, 'status matches');
+        assert.equal(server.status, L.GAME_STATUS_WAITING, 'status matches');
+        const PLAYER_INT: Record<string, number> = { idle: L.PLAYER_STATUS_IDLE, ready: L.PLAYER_STATUS_READY, in: L.PLAYER_STATUS_IN, out: L.PLAYER_STATUS_OUT };
         for (let i = 0; i < client.players.length; i++) {
-            assert.equal(client.players[i].status, server.players[i].status, `player ${i} status matches server`);
+            assert.equal(PLAYER_INT[client.players[i].status], server.seats[i].status, `player ${i} status matches server`);
             assert.equal(client.players[i].hand_length, 0, `player ${i} hand cleared`);
+            assert.equal(server.seats[i].hand.length, 0, `seat ${i} hand cleared`);
         }
-        for (const f of ['discard_pile_length', 'power_suit', 'first_attacker', 'defender'] as const) {
-            assert.equal((client as any)[f], (server as any)[f], `${f} matches server`);
+        for (const [f, s] of [['discard_pile_length', 'discard'], ['power_suit', 'powerSuit'], ['first_attacker', 'firstAttacker'], ['defender', 'defender']] as const) {
+            assert.equal((client as any)[f], (server as any)[s], `${f} matches server`);
         }
         assert.equal(client.flipped, null);
+        assert.equal(server.trump, null);
         assert.deepEqual(client.table_battles, []);
+        assert.deepEqual(server.battles, []);
         assert.deepEqual(client.elimination_order, []);
+        assert.deepEqual(server.eliminated, []);
         assert.deepEqual(client.good_players, [], 'client clears the goods');
-        assert.deepEqual(server.good_players, client.good_players, 'good_players matches server');
+        assert.equal(server.goodMask, 0, 'the server clears the goods');
         assert.equal(client.good_timestamp, null, 'client clears the good timestamp');
-        assert.equal(server.good_timestamp, client.good_timestamp, 'good_timestamp matches server');
         assert.equal(client.version, 41, 'version preserved for the reorder gate');
         assert.equal(clientGame.status, GAME_STATUS.GAME_OVER, 'input not mutated (rollback needs it)');
     });
 
-    test('meta:continue — resets a finished game back to the lobby', async () => {
+    test('meta:continue - resets a finished game back to the lobby', async () => {
         const gameId = `m${uuid().slice(0, 5)}`;
-        const h1 = uuid(), h2 = uuid();
-        await seedGame(gameId, [
-            { id: h1, name: 'H1', is_ai: false, strategy_key: 'human' },
-            { id: h2, name: 'H2', is_ai: false, strategy_key: 'human' },
-        ]);
-        await pgPool.query("UPDATE games SET status='game_over' WHERE id=$1", [gameId]);
+        const h1 = uuid(), h2 = uuid(), bot = uuid();
+        await seedTable(gameId, fixture()
+            .seats([{ id: h1, name: 'H1' }, { id: h2, name: 'H2' }, { id: bot, name: 'Botty', brain: 'random' }])
+            .status(GAME_OVER).powerSuit(0).eliminated(0, 2).discard(36).build());
 
-        await runMeta(gameId, h1, { type: 'continue', game_id: gameId });
-        const g = await loadCompleteGame(gameId);
-        assert.equal(g.status, GAME_STATUS.WAITING, 'reset to lobby');
-        assert.ok(g.players.every(p => p.is_ai ? p.status === PLAYER_STATUS.READY : p.status === PLAYER_STATUS.IDLE), 'statuses reset');
+        await runMeta(gameId, h1, { type: 'continue' });
+        const t = await mustReadTable(gameId);
+        assert.equal(t.status, L.GAME_STATUS_WAITING, 'reset to lobby');
+        assert.equal(t.statusColumn, 'waiting');
+        assert.deepEqual(t.seats.map(s => s.status), [L.PLAYER_STATUS_IDLE, L.PLAYER_STATUS_IDLE, L.PLAYER_STATUS_READY], 'humans idle, bots ready');
     });
 
-    test('meta:join — a new player joins a waiting game and gets a hand row', async () => {
+    test('meta:join - a new player joins a waiting game and becomes a member', async () => {
         const gameId = `m${uuid().slice(0, 5)}`;
         const h1 = uuid(), joiner = uuid();
-        await seedGame(gameId, [{ id: h1, name: 'H1', is_ai: false, strategy_key: 'human' }]);
-        await pgPool.query("UPDATE games SET status='waiting' WHERE id=$1", [gameId]);
+        await seedLobby(gameId, [human(h1, 'H1')]);
         await pgPool.query('INSERT INTO auth.users(id) VALUES($1) ON CONFLICT DO NOTHING', [joiner]);
 
-        await runMeta(gameId, joiner, { type: 'join', game_id: gameId });
-        const g = await loadCompleteGame(gameId);
-        assert.equal(g.players.length, 2, 'joiner added to players');
-        assert.ok(g.players.some(p => p.player_id === joiner), 'joiner present');
-        assert.equal((await pgPool.query('SELECT count(*) FROM player_hands WHERE game_id=$1 AND player_id=$2', [gameId, joiner])).rows[0].count, '1', 'joiner hand row persisted');
+        await runMeta(gameId, joiner, { type: 'join' }, 'Joiner');
+        const t = await mustReadTable(gameId);
+        assert.deepEqual(t.seats.map(s => [s.id, s.name]), [[h1, 'H1'], [joiner, 'Joiner']], 'joiner seated under their name');
+        assert.equal((await pgPool.query('SELECT count(*) FROM player_hands WHERE game_id=$1 AND player_id=$2', [gameId, joiner])).rows[0].count, '1', 'joiner membership persisted');
 
-        await assert.rejects(runMeta(gameId, joiner, { type: 'join', game_id: gameId }), /already in game/i);
+        await assert.rejects(runMeta(gameId, joiner, { type: 'join' }), /already in game/i);
     });
 
-    test('meta:rearrange-players — reorders the lobby seating', async () => {
+    test('meta:rearrange-players - reorders the lobby seating', async () => {
         const gameId = `m${uuid().slice(0, 5)}`;
         const h1 = uuid(), h2 = uuid();
-        await seedGame(gameId, [
-            { id: h1, name: 'H1', is_ai: false, strategy_key: 'human' },
-            { id: h2, name: 'H2', is_ai: false, strategy_key: 'human' },
-        ]);
-        await pgPool.query("UPDATE games SET status='waiting' WHERE id=$1", [gameId]);
+        await seedLobby(gameId, [human(h1, 'H1'), human(h2, 'H2')]);
 
-        await runMeta(gameId, h1, { type: 'rearrange-players', game_id: gameId, new_order: [h2, h1] });
-        const g = await loadCompleteGame(gameId);
-        assert.deepEqual(g.players.map(p => p.player_id), [h2, h1], 'order swapped');
+        await runMeta(gameId, h1, { type: 'rearrange-players', new_order: [h2, h1] });
+        assert.deepEqual((await mustReadTable(gameId)).seats.map(s => s.id), [h2, h1], 'order swapped');
 
-        await assert.rejects(runMeta(gameId, h1, { type: 'rearrange-players', game_id: gameId, new_order: [h1] }), /exactly 2 player/i);
-        await assert.rejects(runMeta(gameId, h1, { type: 'rearrange-players', game_id: gameId, new_order: [h1, uuid()] }), /not found/i);
+        await assert.rejects(runMeta(gameId, h1, { type: 'rearrange-players', new_order: [h1] }), /every seated player exactly once/i);
+        await assert.rejects(runMeta(gameId, h1, { type: 'rearrange-players', new_order: [h1, uuid()] }), /every seated player exactly once/i);
     });
 
-    test('meta:update-name — renames the game in the lobby (with validation)', async () => {
+    test('meta:update-name - renames the game in the lobby (with validation)', async () => {
         const gameId = `m${uuid().slice(0, 5)}`;
         const h1 = uuid();
-        await seedGame(gameId, [{ id: h1, name: 'H1', is_ai: false, strategy_key: 'human' }]);
-        await pgPool.query("UPDATE games SET status='waiting' WHERE id=$1", [gameId]);
+        await seedLobby(gameId, [human(h1, 'H1')]);
 
-        await runMeta(gameId, h1, { type: 'update-name', game_id: gameId, new_name: '  Cool Game  ' });
-        const g = await loadCompleteGame(gameId);
-        assert.equal(g.name, 'Cool Game', 'name trimmed + saved');
+        await runMeta(gameId, h1, { type: 'update-name', new_name: '  Cool Game  ' });
+        assert.equal((await mustReadTable(gameId)).title, 'Cool Game', 'name trimmed + saved');
 
-        await assert.rejects(runMeta(gameId, h1, { type: 'update-name', game_id: gameId, new_name: '   ' }), /non-empty/i);
-        await assert.rejects(runMeta(gameId, h1, { type: 'update-name', game_id: gameId, new_name: 'x'.repeat(51) }), /50 characters/i);
+        await assert.rejects(runMeta(gameId, h1, { type: 'update-name', new_name: '   ' }), /1-50 characters/i);
+        await assert.rejects(runMeta(gameId, h1, { type: 'update-name', new_name: 'x'.repeat(51) }), /1-50 characters/i);
     });
 
-    test('create_game RPC — creates games + player_hands membership in one call', async () => {
+    test('create_table RPC - creates games + player_hands membership in one call', async () => {
         const gameId = `c${uuid().slice(0, 5)}`;
         const creator = uuid();
         await pgPool.query('INSERT INTO auth.users(id) VALUES($1) ON CONFLICT DO NOTHING', [creator]);
+        const table = fixtureTable();
+        assert.equal(table.create(creator, 'Creator'), L.TABLE_OK);
+        const p = table.commit(gameId, 0, 0);
+        assert.ok(typeof p !== 'number');
+        const hex = (b: Uint8Array) => `\\x${Buffer.from(b).toString('hex')}`;
+        await pgPool.query('SELECT create_table($1,$2,$3,$4)', [gameId, creator, hex(p.state), hex(p.roster)]);
 
-        const players = [{ player_id: creator, name: 'Creator', status: 'idle', is_ai: false }];
-        await pgPool.query('SELECT create_game($1,$2,$3,$4)', [gameId, "Creator's Game", creator, JSON.stringify(players)]);
-
-        const g = await loadCompleteGame(gameId);
-        assert.equal(g.status, GAME_STATUS.WAITING, 'waiting lobby');
-        assert.equal(g.name, "Creator's Game");
-        assert.equal(g.players.length, 1, 'creator seated');
-        assert.deepEqual(g.deck, [], 'empty deck row created');
-        assert.equal((await pgPool.query('SELECT count(*) FROM player_hands WHERE game_id=$1 AND player_id=$2', [gameId, creator])).rows[0].count, '1', 'creator hand row created');
+        const t = await mustReadTable(gameId);
+        assert.equal(t.statusColumn, 'waiting', 'waiting lobby');
+        assert.equal(t.title, "Creator's Game");
+        assert.deepEqual(t.seats.map(s => s.id), [creator], 'creator seated');
+        assert.equal(t.deckCount, 0, 'no deck');
+        assert.equal((await pgPool.query('SELECT count(*) FROM player_hands WHERE game_id=$1 AND player_id=$2', [gameId, creator])).rows[0].count, '1', 'creator membership created');
     });
 
-    // Regression: the full rematch cycle on a DEALT game (the seeded-continue
-    // test above never writes a blob, so it misses the stale-blob class of
-    // bug: `continue` used to leave the finished session's kernel blob in
-    // games.state — COALESCE never cleared it — and the blob-authoritative
-    // loaders then served the finished state to the new lobby: multi-human
-    // rematches could never start, post-continue join/exit bricked every
-    // load with a seat-count mismatch, and the old seats' hands leaked).
-    test('meta:continue — full rematch on a dealt game: blob cleared, lobby mutable, restart works', async () => {
+    // The full rematch cycle on a DEALT game: continue must replace the finished
+    // session's blob with the lobby's, the lobby must stay mutable, and a rematch
+    // must deal.
+    test('meta:continue - full rematch on a dealt game: blob replaced, lobby mutable, restart works', async () => {
         const gameId = `m${uuid().slice(0, 5)}`;
         const h1 = uuid(), h2 = uuid(), h3 = uuid();
-        await seedGame(gameId, [
-            { id: h1, name: 'H1', is_ai: false, strategy_key: 'human' },
-            { id: h2, name: 'H2', is_ai: false, strategy_key: 'human' },
-        ]);
-        await runMeta(gameId, h1, { type: 'start', game_id: gameId });
+        await seedLobby(gameId, [human(h1, 'H1', false), human(h2, 'H2')]);
+        await runMeta(gameId, h1, { type: 'start' });
 
-        // Play the dealt game to completion so the final commit writes a
-        // GAME_OVER blob — the exact state that used to go stale.
-        for (let steps = 0; steps < 600; steps++) {
-            const g = await loadCompleteGame(gameId);
-            if (g.status !== GAME_STATUS.PLAYING) break;
-            const moves = legalMovesFor(g);
-            if (moves.length === 0) break;
-            const pick = rng.pick(moves);
-            try {
-                await executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, pick) }), `rm${steps}`, true);
-            } catch { /* stale pick under the CAS — normal */ }
-        }
-        const finished = await pgPool.query('SELECT status, state FROM games WHERE id=$1', [gameId]);
-        assert.equal(finished.rows[0].status, 'game_over', `game played to completion (seed=${rng.seed})`);
-        assert.ok(finished.rows[0].state, `finished game carries a blob (seed=${rng.seed})`);
+        const finished = await playToEnd(gameId, { pick: (m) => rng.pick(m) });
+        assert.equal(finished.statusColumn, 'game_over', `game played to completion (seed=${rng.seed})`);
 
-        // Continue: the reset commit must REPLACE the finished blob (with the
-        // lobby blob of the seats, on a WAITING transition), or everything below regresses.
-        await runMeta(gameId, h1, { type: 'continue', game_id: gameId });
-        const reset = await pgPool.query(
-            'SELECT status, state, legacy_lobby_state_hex(players) AS lobby, logs_packed FROM games WHERE id=$1', [gameId]);
-        assert.equal(reset.rows[0].status, 'waiting', 'reset to lobby');
-        assert.notEqual(reset.rows[0].state, finished.rows[0].state, 'stale blob replaced on the WAITING transition');
-        assert.equal(reset.rows[0].state, reset.rows[0].lobby, 'the lobby blob of the seats');
-        const lobbyG = await loadCompleteGame(gameId);
-        assert.ok(lobbyG.players.every(p => p.hand.length === 0), 'no hands survive into the lobby');
+        await runMeta(gameId, h1, { type: 'continue' });
+        const reset = await mustReadTable(gameId);
+        assert.equal(reset.statusColumn, 'waiting', 'reset to lobby');
+        assert.notDeepEqual(reset.state, finished.state, 'the finished blob is replaced');
+        assert.ok(reset.seats.every(s => s.hand.length === 0), 'no hands survive into the lobby');
+        assert.equal(reset.logsPacked, '', 'the session log is gone with the session');
 
-        // The post-continue lobby must be fully mutable: join + exit used to
-        // brick every subsequent load via the blob/roster seat mismatch.
+        // The post-continue lobby must be fully mutable.
         await pgPool.query('INSERT INTO auth.users(id) VALUES($1) ON CONFLICT DO NOTHING', [h3]);
-        await runMeta(gameId, h3, { type: 'join', game_id: gameId });
-        await runMeta(gameId, h2, { type: 'exit', game_id: gameId });
-        const churned = await loadCompleteGame(gameId);
-        assert.equal(churned.players.length, 2, 'join + exit both applied');
-        assert.ok(churned.players.some(p => p.player_id === h3), 'joiner present');
+        await runMeta(gameId, h3, { type: 'join' });
+        await runMeta(gameId, h2, { type: 'exit' });
+        const churned = await mustReadTable(gameId);
+        assert.deepEqual(churned.seats.map(s => s.id), [h1, h3], 'join + exit both applied');
 
         // Everyone readies up: the rematch must actually deal.
-        await runMeta(gameId, h1, { type: 'start', game_id: gameId });
-        await runMeta(gameId, h3, { type: 'start', game_id: gameId });
-        const restarted = await loadCompleteGame(gameId);
-        assert.equal(restarted.status, GAME_STATUS.PLAYING, 'rematch dealt');
+        await runMeta(gameId, h1, { type: 'start' });
+        await runMeta(gameId, h3, { type: 'start' });
+        assert.equal((await mustReadTable(gameId)).statusColumn, 'playing', 'rematch dealt');
         assert.ok((await checkCardConservation(gameId)).ok, 'cards conserved on the rematch deal');
     });
 

@@ -1,4 +1,4 @@
-// E2E: the REAL bot-lease plpgsql (try_acquire / renew / release — lifted verbatim
+// E2E: the REAL bot-lease plpgsql (try_acquire / renew / release - lifted verbatim
 // from the migrations) running in real Postgres.
 //
 // Owns the lease validation scenarios; the fast runner
@@ -8,16 +8,18 @@
 import './harness.ts';
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
+import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
+import { seedLobby } from './helpers/table_server.ts';
 
 const acquire = async (id: string, ttl: number) => (await pgPool.query('SELECT try_acquire_bot_lease($1,$2) AS t', [id, ttl])).rows[0].t;
 const renew = async (id: string, tok: string, ttl: number) => (await pgPool.query('SELECT renew_bot_lease($1,$2,$3) AS r', [id, tok, ttl])).rows[0].r;
 const release = async (id: string, tok: string) => pgPool.query('SELECT release_bot_lease($1,$2)', [id, tok]);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// The lease lives on the games row; any kernel-owned row will do.
 async function game(): Promise<string> {
     const id = `l${uuid().slice(0, 6)}`;
-    await seedGame(id, [{ id: uuid(), name: 'B', is_ai: true, strategy_key: 'random' }]);
+    await seedLobby(id, [{ id: uuid(), name: 'B', brain: 'random' }]);
     return id;
 }
 

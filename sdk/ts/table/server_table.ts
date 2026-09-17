@@ -14,13 +14,13 @@
 //
 // Server and tests only. The browser must never reach this module: it hands out
 // the unmasked state blob (e2e/security_client_boundary.test.ts denies it).
-// No production caller yet: the server moves onto it in Phase 4b
-// (docs/C_GAME_SHAPE_MIGRATION.md).
+// The Supabase server runs every game operation through it since Phase 4b
+// (docs/C_GAME_SHAPE_MIGRATION.md; server/impls/supabase/functions/_shared/adapter/table_io.ts).
 
 import * as L from '../gen/game_layout.bots.ts';
 import { LAYOUT_HASH } from '../gen/layout_hash.bots.ts';
 import { assertLayoutHash } from '../wasm/layout_hash.ts';
-import { loadWasmGz } from '../wasm/wasm_asset.ts';
+import { loadWasmGz, loadWasmGzAsync } from '../wasm/wasm_asset.ts';
 
 /** The bots.wasm exports this wrapper calls (c/wasm/wasm_table_api.c). */
 export interface TableExports {
@@ -57,6 +57,27 @@ export interface TableExports {
     wasm_table_continue(idLen: number): number;
     wasm_table_rearrange_hand(idLen: number, n: number): number;
     wasm_table_redact(idLen: number, nameLen: number): number;
+    wasm_table_seat_of(idLen: number): number;
+    wasm_table_set_deal_seed(len: number): number;
+    wasm_table_import_session_log(len: number): number;
+    wasm_table_bot_drive(prefsLen: number, maxActions: number): number;
+    wasm_table_drive_ptr(): number;
+    wasm_table_drive_prefs(): number;
+    wasm_table_cycle_delay_ms(): number;
+    wasm_table_replay_code(seedLen: number, logLen: number): number;
+    wasm_table_replay_extras(logLen: number): number;
+    wasm_belief_probe_reset(): void;
+    wasm_belief_probe_dump(): number;
+}
+
+/** One bot-loop cycle (table.h table_bot_drive): what it applied, and why it stopped. */
+export interface TableDrive {
+    /** Actions applied; 0 means nothing to commit. */
+    n: number;
+    /** BOT_STOP_* */
+    stop: number;
+    /** The acting seat of each applied action, in order (for logs). */
+    seats: number[];
 }
 
 /** A deal seed: the bytes the host draws from crypto for a lobby edit that may deal. */
@@ -232,6 +253,79 @@ export class ServerTable {
 
     botsNeedLogs(): boolean { return this.ex.wasm_table_bots_need_logs() !== 0; }
 
+    /** table_seat_of: the seat whose roster id is exactly `actorId`, or -1 (or TABLE_E_NOT_LOADED). */
+    seatOf(actorId: string): number {
+        const [i] = this.put(enc.encode(actorId));
+        return this.ex.wasm_table_seat_of(i);
+    }
+
+    // ---- the bot cycle (table.h): after load, in one kernel section ----
+
+    /** table_set_deal_seed: the loaded game's deal seed as its stored hex text (null: none). */
+    setDealSeed(seedHex: string | null): number {
+        const [n] = this.put(enc.encode(seedHex ?? ''));
+        return this.ex.wasm_table_set_deal_seed(n);
+    }
+
+    /** table_import_session_log: the stored session log (games.logs_packed bytes). Records loaded, or a refusal. */
+    importSessionLog(log: Uint8Array): number {
+        const [n] = this.put(log);
+        return this.ex.wasm_table_import_session_log(n);
+    }
+
+    /** table_bot_drive, offered `prefs` (a drivePrefs() blob of a failed attempt, or null). A TableDrive, or a refusal. */
+    botDrive(prefs: Uint8Array | null, maxActions = 0): TableDrive | number {
+        const [p] = this.put(prefs ?? new Uint8Array(0));
+        const n = this.ex.wasm_table_bot_drive(p, maxActions);
+        if (n < 0) return n;
+        const m = this.m();
+        const d = this.ex.wasm_table_drive_ptr();
+        const count = L.BotDriveOut_get_n(m, d);
+        return {
+            n: count,
+            stop: L.BotDriveOut_get_stop(m, d),
+            seats: Array.from({ length: count }, (_, i) => L.BotDriveAction_get_seat(m, L.BotDriveOut_actions_at(d, i))),
+        };
+    }
+
+    /** table_drive_prefs: the opaque blob to offer a retry of the last cycle. */
+    drivePrefs(): Uint8Array {
+        const n = this.ex.wasm_table_drive_prefs();
+        if (n < 0) throw new Error(`table: drive prefs refused (${n})`);
+        return this.out(n);
+    }
+
+    /** table_cycle_delay_ms: how long to wait after the last cycle. */
+    cycleDelayMs(): number { return this.ex.wasm_table_cycle_delay_ms(); }
+
+    // ---- the end of a game ----
+
+    /** table_replay_code: the verified v6 replay code of the loaded finished game, or a refusal. */
+    replayCode(seed: Uint8Array, log: Uint8Array): Uint8Array | number {
+        const [s, l] = this.put(seed, log);
+        const n = this.ex.wasm_table_replay_code(s, l);
+        return n < 0 ? n : this.out(n);
+    }
+
+    /** table_replay_extras: the replay extras blob (names from the roster, times from the log), or a refusal. */
+    replayExtras(log: Uint8Array): Uint8Array | number {
+        const [l] = this.put(log);
+        const n = this.ex.wasm_table_replay_extras(l);
+        return n < 0 ? n : this.out(n);
+    }
+
+    /** The module's linear memory, for the edge memory log line. */
+    memoryBytes(): number { return this.ex.memory.buffer.byteLength; }
+
+    /** Test observability: arm the belief probe of THIS instance (bots.ts wasmBeliefProbeReset has the why). */
+    __beliefProbeReset(): void { this.ex.wasm_belief_probe_reset(); }
+
+    /** Test observability: the probe's raw records and their count (the layout bots.ts parseBeliefProbe reads). */
+    __beliefProbeDump(): { bytes: Uint8Array; n: number } {
+        const n = this.ex.wasm_belief_probe_dump();
+        return { bytes: this.out(n * 11), n };
+    }
+
     /** The loaded roster's seats, in seat order. */
     seats(): TableSeat[] {
         const m = this.m();
@@ -326,6 +420,29 @@ export class ServerTable {
     }
 }
 
+/**
+ * The generated name of a kernel result code among the constant families
+ * `prefixes` name ('TABLE_E_', 'ROSTER_E_', 'GAME_INVALID_', ...), for logs and
+ * error messages. UNKNOWN(<code>) when no constant has that value.
+ */
+export function tableCodeName(code: number, prefixes: string[]): string {
+    for (const [name, value] of Object.entries(L)) {
+        if (value === code && prefixes.some((p) => name.startsWith(p))) return name;
+    }
+    return `UNKNOWN(${code})`;
+}
+
+/**
+ * The database's spelling of a GAME_STATUS_* value: the constant's generated
+ * name after the prefix, lower case ('waiting', 'playing', 'game_over'), which
+ * is how the game_status enum spells its labels in the kernel's order.
+ */
+export function gameStatusLabel(status: number): string {
+    const name = tableCodeName(status, ['GAME_STATUS_']);
+    if (name.startsWith('UNKNOWN')) throw new RangeError(`table: ${status} is not a GAME_STATUS`);
+    return name.slice('GAME_STATUS_'.length).toLowerCase();
+}
+
 /** A table over a PRIVATE bots.wasm instance: nothing else shares its resident slot. */
 export function createServerTable(): ServerTable {
     const inst = new WebAssembly.Instance(new WebAssembly.Module(loadWasmGz('bots') as BufferSource), {});
@@ -333,4 +450,15 @@ export function createServerTable(): ServerTable {
     assertLayoutHash('bots.wasm', ex, LAYOUT_HASH, 'sdk/ts/gen/layout_hash.bots.ts');
     ex.wasm_init();
     return new ServerTable(ex);
+}
+
+let shared: Promise<ServerTable> | null = null;
+
+/**
+ * The server's one table: a private bots.wasm instance, loaded once per isolate.
+ * The bytes are read asynchronously first (Deno must not read a file
+ * synchronously inside a request handler), then the module is instantiated.
+ */
+export function serverTable(): Promise<ServerTable> {
+    return (shared ??= loadWasmGzAsync('bots').then(() => createServerTable()));
 }

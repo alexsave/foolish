@@ -43,7 +43,10 @@ export const pgAdminConfig = {
 };
 
 /** The database THIS test file owns. Nothing else reads or writes it. */
-export const suiteDatabase = `${process.env.E2E_DB_PREFIX || 'e2e'}_${suiteSlug}`;
+// Lower case: CREATE DATABASE folds an unquoted name to lower case, and the pool
+// connects by the exact name, so a mixed-case E2E_DB_PREFIX would create one
+// database and connect to another that does not exist.
+export const suiteDatabase = `${process.env.E2E_DB_PREFIX || 'e2e'}_${suiteSlug}`.toLowerCase();
 
 // ---- Connection budget ---------------------------------------------------
 // Files run in parallel now, so the ceiling is (pool size x files in flight),
@@ -63,7 +66,11 @@ export const suiteDatabase = `${process.env.E2E_DB_PREFIX || 'e2e'}_${suiteSlug}
 const WIDE_POOLS: Record<string, number> = { concurrent_games: 24, lease: 30 };
 const poolMax = Number(process.env.E2E_PG_POOL_MAX || WIDE_POOLS[suiteSlug] || 8);
 
-const pool = new Pool({ ...pgAdminConfig, database: suiteDatabase, max: poolMax });
+// Every session runs in UTC, as the hosted Supabase database does. The games
+// timestamps are TIMESTAMP (no zone) stamped by now(), and the server compares
+// them with ISO instants (the bot heartbeat's staleness window): under a local
+// time zone those two clocks disagree by the zone's offset.
+const pool = new Pool({ ...pgAdminConfig, database: suiteDatabase, max: poolMax, options: '-c TimeZone=UTC' });
 
 // pg-pool's end() resolves as soon as it has CALLED client.end() on its idle
 // clients - not when their connections are closed. client.end() only queues the
@@ -135,7 +142,7 @@ async function loadGamesEmbed(id: string): Promise<Result> {
     } finally { c.release(); }
 }
 
-interface Filter { col: string; op: 'eq' | 'in' | 'lt'; val: any }
+interface Filter { col: string; op: 'eq' | 'in' | 'lt' | 'gt'; val: any }
 
 class QueryBuilder implements PromiseLike<Result> {
     private filters: Filter[] = [];
@@ -156,6 +163,7 @@ class QueryBuilder implements PromiseLike<Result> {
     eq(col: string, val: any) { this.filters.push({ col, op: 'eq', val }); return this; }
     in(col: string, val: any[]) { this.filters.push({ col, op: 'in', val }); return this; }
     lt(col: string, val: any) { this.filters.push({ col, op: 'lt', val }); return this; }
+    gt(col: string, val: any) { this.filters.push({ col, op: 'gt', val }); return this; }
     // supabase-js appends on repeated .order() calls; mirror that
     order(col: string, opts: any = {}) { this.orders.push({ col, asc: opts.ascending !== false }); return this; }
     limit(n: number) { this.limitN = n; return this; }
@@ -167,7 +175,8 @@ class QueryBuilder implements PromiseLike<Result> {
         const parts = this.filters.map((f) => {
             if (f.op === 'in') { params.push(f.val); return `${f.col} = ANY($${params.length})`; }
             params.push(f.val);
-            return f.op === 'lt' ? `${f.col} < $${params.length}` : `${f.col} = $${params.length}`;
+            if (f.op === 'lt') return `${f.col} < $${params.length}`;
+            return f.op === 'gt' ? `${f.col} > $${params.length}` : `${f.col} = $${params.length}`;
         });
         return ' WHERE ' + parts.join(' AND ');
     }
@@ -281,6 +290,21 @@ globalThis.fetch = (async (input: any, init?: any): Promise<Response> => {
     throw new Error(`e2e: unexpected fetch to ${url}`);
 }) as typeof fetch;
 
+// The array-typed parameter names of a function, read from the catalog once per name.
+const arrayParamCache = new Map<string, Promise<Set<string>>>();
+function arrayParams(fn: string): Promise<Set<string>> {
+    let got = arrayParamCache.get(fn);
+    if (!got) {
+        got = pool.query(
+            `SELECT a.name FROM pg_proc p, unnest(p.proargnames, p.proargtypes::oid[]) AS a(name, typ)
+             JOIN pg_type t ON t.oid = a.typ WHERE p.proname = $1 AND t.typcategory = 'A'`, [fn])
+            .then((r) => new Set(r.rows.map((row: { name: string }) => row.name)))
+            .catch(() => new Set<string>());
+        arrayParamCache.set(fn, got);
+    }
+    return got;
+}
+
 export const createClient = (_url?: string, _key?: string) => ({
     from: (table: string) => new QueryBuilder(table),
     rpc: async (name: string, params: Record<string, any> = {}): Promise<Result> => {
@@ -289,12 +313,33 @@ export const createClient = (_url?: string, _key?: string) => ({
             // Named-argument call, like PostgREST: defaulted params may be
             // omitted and the caller's key order can't silently misbind.
             const placeholders = keys.map((k, i) => `${k} => $${i + 1}`).join(',');
-            const vals = keys.map((k) => { const v = params[k]; return v !== null && typeof v === 'object' ? JSON.stringify(v) : v; });
+            // PostgREST binds a JSON value by the parameter's declared type: a
+            // JSON array to an array parameter (commit_table's p_seats TEXT[]),
+            // anything structured to JSONB (commit_game's p_seats JSONB). pg does
+            // the same when handed a JS array or a JSON string.
+            const arrays = await arrayParams(name);
+            const vals = keys.map((k) => {
+                const v = params[k];
+                if (Array.isArray(v) && arrays.has(k)) return v;
+                return v !== null && typeof v === 'object' ? JSON.stringify(v) : v;
+            });
             const r = await pool.query(`SELECT ${name}(${placeholders}) AS result`, vals);
             return ok(r.rows[0]?.result ?? null);
         } catch (error) { return { data: null, error }; }
     },
     channel: (name: string, _cfg?: any) => new Channel(name),
+    // GoTrue's admin API, as far as delete-account reaches it: deleting the user
+    // row cascades exactly what the hosted auth delete cascades.
+    auth: {
+        admin: {
+            deleteUser: async (id: string): Promise<{ data: unknown; error: any }> => {
+                try {
+                    await pool.query('DELETE FROM auth.users WHERE id = $1', [id]);
+                    return { data: {}, error: null };
+                } catch (error) { return { data: null, error }; }
+            },
+        },
+    },
     removeChannel: async (_ch: any) => 'ok',
 });
 

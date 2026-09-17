@@ -1,66 +1,52 @@
-// Per-isolate packed-state cache (docs/PACKED_WIRE_CUTOVER.md, "end to end").
+// Per-isolate row cache (docs/PACKED_WIRE_CUTOVER.md, "end to end";
+// docs/C_GAME_SHAPE_MIGRATION.md Phase 4b).
 //
-// The packed action path needs exactly one thing from the DB before the
-// kernel runs: the current blob + roster at a known version. This isolate
-// usually WROTE that state a moment ago (the previous human move, or the bot
-// loop driving the same game via EdgeRuntime.waitUntil) — so remember it and
-// skip the load round-trip. Correctness never depends on freshness: the
-// commit is CAS-fenced on the version, so a stale entry costs one conflict
-// and a reload, never a wrong write. commitGame keeps the cache current for
-// EVERY dealt commit (packed and JS paths alike) and evicts on any
-// non-PLAYING transition; cross-isolate writers surface as conflicts.
-import { GAME_STATUS, Game } from '@api/core/types.ts';
+// A table operation needs exactly one thing from the DB before the kernel runs:
+// the row's state and roster blobs at a known version. This isolate usually
+// WROTE that row a moment ago (the previous human move, or the bot loop driving
+// the same game via EdgeRuntime.waitUntil), so it remembers what it committed
+// and skips the load round-trip. Correctness never depends on freshness: every
+// commit is CAS-fenced on the version, so a stale entry costs one conflict and a
+// reload, never a wrong write. The cache holds opaque bytes and bookkeeping
+// columns only; what they mean is the kernel's.
 
-export interface CachedGame {
+export interface CachedRow {
     version: number;
-    // The version at which the current round began (games.round_epoch). Read by
-    // the packed path's round-boundary guard; a stale value can only cost a
-    // reject-recheck reload or a CAS conflict, never a wrong write (see
-    // executePackedAction).
+    // The version at which the current round began (games.round_epoch), for the
+    // kernel's round guard. Written by the same commit as `version`, so a stale
+    // entry pairs a version with ITS epoch: it can lag, never mislead.
     roundEpoch: number;
-    stateHex: string; // \x-prefixed, exactly as commit_game stores it
-    name: string;
-    status: string;
-    players: { player_id: string; name: string; is_ai: boolean }[];
-    good_players: string[];
-    good_timestamp: number | null;
+    stateHex: string;   // \x-prefixed, exactly as commit_table stores it
+    rosterHex: string;  // \x-prefixed
+    gameSeed: string | null;
 }
 
 const CACHE_CAP = 256;
-const cache = new Map<string, CachedGame>();
+const cache = new Map<string, CachedRow>();
 
-export function getCachedGame(gameId: string): CachedGame | undefined {
+export function getCachedRow(gameId: string): CachedRow | undefined {
     return cache.get(gameId);
 }
 
-export function invalidateCachedGame(gameId: string): void {
+export function invalidateCachedRow(gameId: string): void {
     cache.delete(gameId);
 }
 
-// Called by commitGame after a successful version-gated write.
-export function noteCommittedGame(game: Game, version: number, stateHex: string | null, roundEpoch: number = 0): void {
-    if (!stateHex || game.status !== GAME_STATUS.PLAYING) {
-        // Game over / lobby reset: the next read must see the columns
-        // (finalize, moot checks, lobby assembly) — never a cached blob.
-        cache.delete(game.id);
+// Called after a successful version-gated commit of a row that is in play.
+// Rows outside play (a lobby, a finished game) are evicted instead: they are
+// edited from many isolates, and the next read should see the table as stored.
+export function noteCommittedRow(gameId: string, row: CachedRow | null): void {
+    if (!row) {
+        cache.delete(gameId);
         return;
     }
-    if (!cache.has(game.id) && cache.size >= CACHE_CAP) {
+    if (!cache.has(gameId) && cache.size >= CACHE_CAP) {
         // Evict the oldest entry (Map preserves insertion order).
         const oldest = cache.keys().next().value;
         if (oldest !== undefined) cache.delete(oldest);
     }
-    cache.delete(game.id); // reinsert to refresh recency
-    cache.set(game.id, {
-        version,
-        roundEpoch,
-        stateHex,
-        name: game.name,
-        status: game.status,
-        players: game.players.map(p => ({ player_id: p.player_id, name: p.name, is_ai: p.is_ai })),
-        good_players: [...game.good_players],
-        good_timestamp: game.good_timestamp,
-    });
+    cache.delete(gameId); // reinsert to refresh recency
+    cache.set(gameId, row);
 }
 
 // Test hook.

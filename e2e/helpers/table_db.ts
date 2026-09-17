@@ -6,8 +6,8 @@
 // and roster blobs, the status column and needs_bots from the kernel, and the
 // membership rows every realtime policy reads. The row is owned by the kernel
 // writers (writer_gen 2), so the legacy bridge trigger derives nothing from the
-// JSONB columns, which keep their defaults. It replaces seedGame
-// (e2e/harness.ts) for the new schema; the seedGame callers move in Phase 4b.
+// JSONB columns, which keep their defaults. It replaced the harness's JSONB
+// seedGame in Phase 4b.
 //
 // What the row says about its seats comes from the kernel: the fixture is
 // loaded into the C Table and the seats, bot brains, status and needs_bots are
@@ -58,4 +58,23 @@ export async function seedTable(gameId: string, fx: TableFixture, opts: SeedTabl
     } finally {
         c.release();
     }
+}
+
+/**
+ * Replaces a stored row's board in place, as a test that tampers with a game
+ * does: the state and roster blobs, and the kernel's status and needs_bots for
+ * them. version, round_epoch, the session log and the membership rows are left
+ * alone, and so is this process's server row cache (clear it if the server
+ * could hold the row: game_cache.ts __clearGameCache).
+ */
+export async function overwriteTable(gameId: string, fx: TableFixture): Promise<void> {
+    const table = fixtureTable();
+    const rc = table.load(fx.state, fx.roster);
+    if (rc !== L.TABLE_OK) throw new Error(`overwriteTable: the fixture does not load: ${reasonOf(rc, ['GAME_INVALID_', 'TABLE_E_'])} (${rc})`);
+    const p = table.commit(gameId, 0, 0);
+    if (typeof p === 'number') throw new Error(`overwriteTable: no products (${p})`);
+    const { rowCount } = await pgPool.query(
+        `UPDATE games SET state = $2, roster = $3, status = (enum_range(NULL::game_status))[$4 + 1], needs_bots = $5 WHERE id = $1`,
+        [gameId, hex(p.state), hex(p.roster), p.status, p.needsBots]);
+    if (rowCount !== 1) throw new Error(`overwriteTable: no games row ${gameId}`);
 }

@@ -183,6 +183,7 @@ const sanitizedType = (t: string) =>
 
 // `viewerSeat` -1 = spectator; `actorSeat` -1 = unknown/none (the decoder
 // does not depend on it — see goodPlayersFromViewMask).
+// retired by Phase 4b; deleted in Phase 8 (the server's pushes are table_push)
 export function encodeEventWire(
     events: AnimationEvent[], finalGame: Game, viewerSeat: number, actorSeat: number,
 ): Uint8Array {

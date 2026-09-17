@@ -40,7 +40,12 @@ import { __setDealSeedOverride } from '../sdk/ts/wasm/engine.ts';
 import { game_done } from '../server/api/common/common_utils.ts';
 import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
 import { shouldBotActCore, processBotAction } from '../server/api/common/pure_bot_actions.ts';
-import { gameFinishPlaces, calculateGameRankings } from '../server/api/common/finish_order.ts';
+import { gameFinishPlaces } from '../server/api/common/finish_order.ts';
+
+// The finish order as bare player_ids, best first. (The server's ELO pass reads
+// it from the C Table since Phase 4b: table_rankings, held to this same kernel
+// rule by e2e/table_parity.test.ts.)
+const calculateGameRankings = (g: Parameters<typeof gameFinishPlaces>[0]) => gameFinishPlaces(g).map((r) => r.player_id);
 import { animFinishRows } from '../sdk/ts/wasm/bots.ts';
 import {
     Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,

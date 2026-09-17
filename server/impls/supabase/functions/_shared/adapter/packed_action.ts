@@ -1,212 +1,56 @@
-// The packed action pipeline (docs/PACKED_WIRE_CUTOVER.md): a human move as
-// bytes end to end. The TS layer here does only what C cannot: HTTP auth is
-// upstream (wrap400), this module maps the caller to a seat via the roster
-// column, runs the CAS commit loop, keeps the JSONB public dual + log rows in
-// sync, and fires the broadcast. The game itself — validation, application,
-// win finalization, per-viewer masking, event synthesis — happens inside ONE
-// synchronous kernel section (engine.ts runPackedAction). No TS Game object
-// exists on this path except the single cold materialization for the DB dual.
-import {
-    broadcastPackedEventBuffers, commitGame,
-    finalizeEndedGame, supabaseClient,
-} from './utils.ts';
-import { GAME_STATUS } from '@api/core/types.ts';
-import { ACTION_STATUS, REJECT_STALE_ROUND } from '@sdk/ts/wire/awire.ts';
-import { getCachedGame, invalidateCachedGame } from './game_cache.ts';
+// The `action` endpoint's move path (docs/C_GAME_SHAPE_MIGRATION.md 2.3): a
+// human move as bytes end to end.
+//
+// The request body is the kernel's action request ([fmt | gid_len | game id |
+// (intent version) | action wire]) and the response is the kernel's action
+// response ([fmt | status | code | u32 version]); both layouts are C's
+// (table_request_decode, table_action_response). The move itself - the seat of
+// the auth id, the finished-game and stale-round guards, the rules, the finish,
+// the masking, the events - is table_act and the commit products. This module
+// is the CAS loop's caller: it says which results commit nothing, and that a
+// refusal read off this isolate's cache is re-checked against the database.
 
-// A lazy import that resolves ONCE. The deferral is deliberate (a cold start must
-// not pull the rules-wasm embed it never uses); re-RESOLVING the specifier on
-// every call was not - see the note on `lazy` in
-// server/impls/supabase/functions/_shared/adapter/utils.ts.
-const lazy = <T>(load: () => Promise<T>): (() => Promise<T>) => {
-    let mod: Promise<T> | undefined;
-    return () => (mod ??= load());
-};
-const codecMod = lazy(() => import('@api/common/replay/codec.ts'));
-const engineMod = lazy(() => import('@sdk/ts/wasm/engine.ts'));
-const logwireMod = lazy(() => import('@sdk/ts/wire/logwire.ts'));
-const bytesMod = lazy(() => import('@sdk/ts/wire/bytes.ts'));
+import * as L from '@sdk/ts/gen/game_layout.bots.ts';
+import { serverTable } from '@sdk/ts/table/server_table.ts';
+import { runTableOp, TableRefusal } from './table_io.ts';
 
-
-export interface PackedActionOutcome {
-    status: number;       // ACTION_STATUS.*
-    rejectCode: number;   // ENGINE_REJECT_* (0 unless REJECTED)
-    version: number;      // committed (or current) games.version
-    gameStatus: string;   // the caller's run_bots gate
+export interface ActionOutcome {
+    /** The response body. */
+    body: Uint8Array;
+    gameId: string;
+    /** The committed row has a bot to drive. */
+    needsBots: boolean;
 }
 
-interface GamesRow {
-    id: string;
-    name: string;
-    status: string;
-    version: number | null;
-    round_epoch: number | null;
-    state: string | null;
-    players: { player_id: string; name: string; is_ai: boolean; status: string }[];
-    good_players: string[] | null;
-    good_timestamp: number | null;
+/** A request the kernel could not parse. */
+export class MalformedActionRequest extends Error {
+    constructor() { super('malformed action request'); this.name = 'MalformedActionRequest'; }
 }
 
-const MAX_ATTEMPTS = 5;
+// A move that commits nothing: the game was already over, the move was composed
+// before the current round began, or the rules refused it.
+const noCommit = (rc: number) => rc === L.TABLE_MOOT || rc === L.TABLE_STALE_ROUND || rc === L.TABLE_REJECTED;
+// A refusal is only authoritative against fresh state: an apply from a stale
+// cache self-corrects through the CAS conflict, but a refusal never reaches it.
+const freshOnly = (rc: number) => rc === L.TABLE_STALE_ROUND || rc === L.TABLE_REJECTED;
 
-export async function executePackedAction(
-    gameId: string, userId: string, wire: Uint8Array, reqId: string = 'packed',
-    intentVersion?: number,
-): Promise<PackedActionOutcome> {
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        // The load: this isolate usually committed this game's previous state
-        // (the last human move, or the bot loop it scheduled), so the
-        // CAS-fenced cache skips the round-trip on the hot path — a stale
-        // entry surfaces as a commit conflict and the retry reloads fresh.
-        // The fresh load selects ONLY what this path reads; games.logs_packed
-        // in particular grows all session and must never ride along.
-        let row: GamesRow;
-        const cached = attempt === 1 ? getCachedGame(gameId) : undefined;
-        if (cached) {
-            row = {
-                id: gameId, name: cached.name, status: cached.status,
-                version: cached.version, round_epoch: cached.roundEpoch, state: cached.stateHex,
-                players: cached.players, good_players: cached.good_players,
-                good_timestamp: cached.good_timestamp,
-            };
-        } else {
-            const { data, error } = await supabaseClient
-                .from('games')
-                .select('id, name, status, version, round_epoch, state, players, good_players, good_timestamp')
-                .eq('id', gameId).single();
-            if (error || !data) throw new Error(`Game ${gameId} not found`);
-            row = data as GamesRow;
-        }
-        const expectedVersion = row.version ?? 0;
+export async function executePackedAction(requestBody: Uint8Array, userId: string, reqId = 'action'): Promise<ActionOutcome> {
+    const table = await serverTable();
+    const request = table.requestDecode(requestBody);
+    if (typeof request === 'number') throw new MalformedActionRequest();
+    const { gameId, wire, intent } = request;
 
-        // End-game race: same moot rule as executeWithGameLock — a move that
-        // lost the race to a game-ending commit is a no-op, not an error.
-        // Checked BEFORE the round guard: a move against a finished game is a
-        // clean MOOT (the client resolves it as a no-op success), not a
-        // stale-round reject that would pop a toast at the win screen.
-        if (row.status === GAME_STATUS.GAME_OVER) {
-            console.log(`[${reqId}][PACKED] game ${gameId} already over — move is a no-op`);
-            return { status: ACTION_STATUS.MOOT, rejectCode: 0, version: expectedVersion, gameStatus: row.status };
-        }
-
-        // Round-boundary guard (docs/WEB_RACE_BUG_HANDOFF.md). The client stamps
-        // its move with intentVersion — the games.version it composed the move
-        // against. round_epoch is the version the CURRENT round began at, bumped
-        // whenever a pickup/discard closes a round. intentVersion < round_epoch
-        // means a round closed AFTER the client composed this move: the move was
-        // aimed at a battle that no longer exists, and letting the kernel
-        // re-validate it against the fresh round is exactly the "revert, then it
-        // plays anyway" ghost. Reject it as stale intent instead. This is
-        // round-scoped, not version-scoped: same-round throw-ins (cross-version
-        // but same round_epoch) still validate purely by kernel legality.
-        //   - Old clients (v1 envelope) send no intentVersion => not guarded.
-        //   - A reject is only authoritative against FRESH state: a stale cache
-        //     entry always pairs a version with ITS epoch (both written by one
-        //     commit), so it can lag but never mislead — if it trips here on the
-        //     cached hot path, drop it and re-check against the DB before
-        //     rejecting. The inverse (cache too old to trip) is caught by the CAS
-        //     version fence on commit, which reloads fresh and re-runs this.
-        const roundEpoch = row.round_epoch ?? 0;
-        if (intentVersion !== undefined && intentVersion < roundEpoch) {
-            if (cached) { invalidateCachedGame(gameId); continue; }
-            console.log(`[${reqId}][PACKED] stale-round reject: intent v${intentVersion} < round_epoch v${roundEpoch} (game ${gameId})`);
-            return { status: ACTION_STATUS.REJECTED, rejectCode: REJECT_STALE_ROUND, version: expectedVersion, gameStatus: row.status };
-        }
-
-        // Every PLAYING row carries a state blob: the deal writes one, on both
-        // the all-ready and the add-bot branches. A row without one predates
-        // games.state, and the JSON pipeline that used to re-derive its events
-        // in TypeScript is gone, so there is nothing to fall back to.
-        if (!row.state) {
-            throw new Error(`Game ${gameId} has no state blob - it predates the packed pipeline`);
-        }
-
-        // The caller's auth identity IS the player id; the seat index is the
-        // kernel's name for them. Keep the legacy error priority: playing-
-        // state guard outranks membership.
-        const seat = row.players.findIndex(p => p.player_id === userId);
-        if (seat < 0) {
-            if (row.status !== GAME_STATUS.PLAYING) throw new Error(`Game ${gameId} is not in playing state`);
-            throw new Error(`Player ${userId} not in game ${gameId}`);
-        }
-
-        let aiMask = 0;
-        const humanSeats: number[] = [];
-        row.players.forEach((p, i) => { if (p.is_ai) aiMask |= 1 << i; else humanSeats.push(i); });
-
-        // ONE synchronous kernel section: load blob -> apply wire -> finalize
-        // win -> serialize state + logs + every recipient's masked event
-        // stream. Lazy import keeps the wasm embed off lobby-only cold starts.
-        const { hexToBytes, bytesToHex } = await codecMod();
-        const { runPackedAction, materializeKernelGame } = await engineMod();
-        const { logsFromKernelExport } = await logwireMod();
-        const { bytesToBareHex } = await bytesMod();
-        const run = runPackedAction(hexToBytes(row.state), seat, wire, aiMask, humanSeats);
-
-        if (!run.ok) {
-            // A rejection is only authoritative against FRESH state: an apply
-            // from a stale cache self-corrects through the CAS conflict, but
-            // a reject never reaches the CAS — so re-run once from the DB.
-            if (cached) { invalidateCachedGame(gameId); continue; }
-            return { status: ACTION_STATUS.REJECTED, rejectCode: run.reason, version: expectedVersion, gameStatus: row.status };
-        }
-
-        // The single JS materialization: the commit's JSONB public dual (the
-        // roster/battles columns the heartbeat scan and lobby reads consume).
-        // Bot strategy keys are only needed by the end-of-game finalize;
-        // patched there, cold path.
-        const game = materializeKernelGame(run.post, {
-            id: row.id,
-            name: row.name,
-            version: expectedVersion,
-            deck_length: 0,
-            players: row.players.map(p => ({
-                player_id: p.player_id, name: p.name, is_ai: p.is_ai,
-                strategy_key: p.is_ai ? 'bot' : 'human',
-            })),
-            good_players: row.good_players || [],
-            good_timestamp: row.good_timestamp || null,
-        }, userId);
-
-        // This move's log records, kernel-masked, straight to the packed
-        // session-log column — the timestamp is the only thing TS adds.
-        const logsHex = run.logsWire.length > 2
-            ? bytesToBareHex(logsFromKernelExport(run.logsWire, Date.now()))
-            : null;
-        const commit = await commitGame(game, expectedVersion, bytesToHex(run.stateBlob), logsHex);
-        if (commit.status === 'conflict') {
-            // Someone else committed (another isolate, or a JS-path writer):
-            // whatever we believed about this game is stale.
-            invalidateCachedGame(gameId);
-            if (attempt < MAX_ATTEMPTS) continue;
-            throw new Error(`Could not commit game ${gameId} after ${MAX_ATTEMPTS} attempts — write contention`);
-        }
-
-        if (run.ended) {
-            // ELO + replay snapshot + log wipe, exactly once (only the
-            // winning commit reaches here). Real strategy keys for the
-            // finalize consumers.
-            const botIds = row.players.filter(p => p.is_ai).map(p => p.player_id);
-            if (botIds.length > 0) {
-                const { data: botRows } = await supabaseClient.from('bots').select('id, strategy_key').in('id', botIds);
-                const strat = new Map<string, string>((botRows ?? []).map((b: { id: string; strategy_key: string }) => [b.id, b.strategy_key]));
-                for (const p of game.players) {
-                    if (p.is_ai) p.strategy_key = strat.get(p.player_id) ?? p.strategy_key;
-                }
-            }
-            await finalizeEndedGame(game);
-        }
-
-        // Broadcast the kernel's own per-viewer streams AFTER the durable
-        // commit, fire-and-forget — a plain `good` (zero events, not ended)
-        // broadcasts nothing, exactly like the JSON path.
-        if (run.nEvents > 0) {
-            broadcastPackedEventBuffers(game, run.events, reqId).catch(err =>
-                console.error(`[${reqId}] Error broadcasting packed events:`, err));
-        }
-
-        return { status: ACTION_STATUS.APPLIED, rejectCode: 0, version: game.version ?? 0, gameStatus: game.status };
+    let out;
+    try {
+        out = await runTableOp({
+            gameId, reqId, viewerId: userId, noCommit, freshOnly,
+            run: ({ table: t, row }) => t.act(userId, wire, intent, row.roundEpoch),
+        });
+    } catch (e) {
+        if (e instanceof TableRefusal && e.code === L.TABLE_E_WIRE) throw new MalformedActionRequest();
+        throw e;
     }
-    throw new Error(`Could not commit game ${gameId}`);
+    // The response is written in its own tiny kernel call: the section that
+    // produced `out` ended at the commit's await.
+    return { body: table.actionResponse(out.result, out.reject, out.version), gameId, needsBots: out.committed && out.needsBots };
 }
-

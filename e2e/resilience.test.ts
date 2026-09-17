@@ -1,23 +1,37 @@
-// Resilience of the server's optimistic-concurrency core (executeWithGameLock +
-// the version-gated commit_game RPC) against the failure modes it is built to
+// Resilience of the server's optimistic-concurrency core (table_io.ts runTableOp
+// + the version-fenced commit_table RPC) against the failure modes it is built to
 // survive: a concurrent writer committing under us, sustained write contention,
 // a vanished game, a move landing on an already-finished game, and the
 // best-effort end-of-game side effects (ELO + replay snapshot) actually landing.
 //
-// Nothing here mocks the database — it is the real commit_game plpgsql and the
-// real loader running in Postgres, with contention injected by a second writer.
+// Nothing here mocks the database: it is the real commit_table plpgsql and the
+// real loader running in Postgres, on kernel-owned rows. Contention is injected
+// at the one transport seam the server has, supabaseClient.rpc: a second writer
+// bumps games.version immediately before the server's own commit_table call
+// reaches Postgres, which is exactly "another request committed between our
+// load and our commit", deterministically. (The operation itself is a
+// synchronous kernel section now, so it can no longer await a writer inside
+// itself the way the old executeWithGameLock callback did.)
 
 import './harness.ts';
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
+import { applySchema, resetDb, uuid, pgPool, broadcastLog } from './harness.ts';
+import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import {
-  executeWithGameLock, loadCompleteGame, commitGame, } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
-import { packedProducts, start_game_packed } from '../server/api/common/game_lifecycle.ts';
-import { GAME_STATUS, AnimationEvent } from '../server/api/core/types.ts';
-import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
+  commitProducts, loadRow, runTableOp, __setTableDealSeedOverride,
+} from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
+import { supabaseClient } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
+import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
+import { fixture, fixtureTable, GAME_OVER, IDLE } from './helpers/table_fixture.ts';
+import { seedTable } from './helpers/table_db.ts';
+import { legalMoves, mustReadTable } from './helpers/table_play.ts';
+import { runAction, runMeta, seedLobby } from './helpers/table_server.ts';
+import { ACTION_STATUS, AWIRE_KIND } from '../sdk/ts/wire/awire.ts';
 import { suiteRng } from './helpers/rng.ts';
+
+if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 
 const rng = suiteRng('resilience');
 const pick = rng.pick;
@@ -25,119 +39,188 @@ const dbVersion = async (id: string): Promise<number> =>
   Number((await pgPool.query('SELECT version FROM games WHERE id=$1', [id])).rows[0].version);
 const bumpVersion = (id: string) => pgPool.query('UPDATE games SET version = version + 1 WHERE id=$1', [id]);
 
-// Seed + start a 2-bot game (real deal via the kernel), leaving it PLAYING.
-async function startedGame(): Promise<string> {
-  const id = `rs${uuid().slice(0, 6)}`;
-  await seedGame(id, [
-    { id: uuid(), name: 'B0', is_ai: true, strategy_key: 'random' },
-    { id: uuid(), name: 'B1', is_ai: true, strategy_key: 'random' },
-  ]);
-  await executeWithGameLock(id, async (g) => ({ game: g, events: [], packed: packedProducts(start_game_packed(g)) }), 'start', false);
-  return id;
+// Every deal draws its seed from the suite stream, so a red run replays its deals.
+const dealSeed = () => Uint8Array.from({ length: 32 }, () => rng.int(256));
+
+/**
+ * Runs `body` with a second writer injected before the server's commit_table
+ * calls: `stomp(n)` is asked, per call (1-based), whether to bump the version
+ * first. Returns how many commit_table calls the server made.
+ */
+async function withStomp(gameId: string, stomp: (call: number) => boolean, body: () => Promise<void>): Promise<number> {
+  const client = supabaseClient as unknown as { rpc: (name: string, params?: Record<string, unknown>) => Promise<unknown> };
+  const real = client.rpc;
+  let calls = 0;
+  client.rpc = async (name, params) => {
+    if (name === 'commit_table') {
+      calls++;
+      if (stomp(calls)) await bumpVersion(gameId);
+    }
+    return real.call(client, name, params);
+  };
+  try { await body(); } finally { client.rpc = real; }
+  return calls;
 }
 
-before(async () => { await applySchema(); });
-beforeEach(async () => { await resetDb(); });
-after(async () => { await pgPool.end(); });
+// A dealt game between a human (seat 0) and a random bot, dealt by the kernel
+// through the real lobby op and commit. Every seat moves through the move path.
+async function startedGame(): Promise<{ id: string; human: string; bot: string }> {
+  const id = `rs${uuid().slice(0, 6)}`;
+  const human = uuid(), bot = uuid();
+  await seedLobby(id, [{ id: human, name: 'H0', ready: false }, { id: bot, name: 'B0', brain: 'random' }]);
+  __setTableDealSeedOverride(dealSeed());
+  await runMeta(id, human, { type: 'start' });
+  assert.equal((await mustReadTable(id)).status, L.GAME_STATUS_PLAYING, 'fixture: the game dealt');
+  return { id, human, bot };
+}
 
-test('commit_game fences a stale version and accepts the fresh one', async () => {
-  const id = await startedGame();
-  const g = await loadCompleteGame(id);
-  const staleVersion = g.version!;
+// A no-op table operation by a seated player: load, commit what was loaded.
+// It commits (nothing refuses it), which is all a CAS test needs.
+const rereadOp = (gameId: string, counter: { n: number }) => ({
+  gameId, reqId: 'resilience', viewerId: null,
+  run: () => { counter.n++; return L.TABLE_OK; },
+});
+
+before(async () => { await applySchema(); });
+beforeEach(async () => { await resetDb(); __clearGameCache(); });
+after(async () => { __setTableDealSeedOverride(null); await pgPool.end(); });
+
+test('commit_table fences a stale version and accepts the fresh one', async () => {
+  const { id } = await startedGame();
+  const row = await loadRow(id, false);
+  const staleVersion = row.version;
+
+  // The products of the loaded row, as one kernel section copies them out.
+  const table = fixtureTable();
+  assert.equal(table.load(row.state, row.roster), L.TABLE_OK);
+  const seats = table.seats();
+  const products = table.commit(id, staleVersion + 1, 0);
+  assert.ok(typeof products !== 'number', 'the loaded table has commit products');
 
   // A concurrent writer commits first (version moves on).
   await bumpVersion(id);
 
-  const conflict = await commitGame(g, staleVersion);
-  assert.equal(conflict.status, 'conflict', 'a stale-version commit is rejected');
+  assert.equal(await commitProducts(id, staleVersion, products, seats, null, row.gameSeed), null,
+    'a stale-version commit is rejected');
 
   // Reload the now-current version and commit cleanly.
-  const g2 = await loadCompleteGame(id);
-  const freshVersion = Number(g2.version!);   // BIGINT arrives as a string via node-pg
-  const ok = await commitGame(g2, freshVersion);
-  assert.equal(ok.status, 'ok', 'a fresh-version commit succeeds');
-  assert.equal(Number(ok.version), freshVersion + 1, 'the fence bumps the version by one');
+  const fresh = await loadRow(id, false);
+  assert.equal(fresh.version, staleVersion + 1);
+  const version = await commitProducts(id, fresh.version, products, seats, null, fresh.gameSeed);
+  assert.equal(version, fresh.version + 1, 'a fresh-version commit succeeds and the fence bumps the version by one');
+  assert.equal(await dbVersion(id), fresh.version + 1);
 });
 
-test('executeWithGameLock recovers from a concurrent write (conflict -> reload -> retry -> commit)', async () => {
-  const id = await startedGame();
+test('runTableOp recovers from a concurrent write (conflict -> reload -> retry -> commit)', async () => {
+  const { id } = await startedGame();
   const startVersion = await dbVersion(id);
 
-  let calls = 0;
-  await executeWithGameLock(id, async (g) => {
-    calls++;
-    // On the first pass only, simulate another actor committing between our
-    // load and our commit — that pass MUST conflict and be redone.
-    if (calls === 1) await bumpVersion(id);
-    return { game: g, events: [] };
-  }, 'recover', false);
+  const ran = { n: 0 };
+  // On the first commit only, another actor commits between our load and our commit.
+  const commits = await withStomp(id, (call) => call === 1, async () => {
+    const out = await runTableOp(rereadOp(id, ran));
+    assert.equal(out.committed, true, 'the redone operation committed');
+    assert.equal(out.version, startVersion + 2, 'the outcome carries the committed version');
+  });
 
-  assert.ok(calls >= 2, `operation was retried after the conflict (ran ${calls}x)`);
+  assert.equal(ran.n, 2, `the operation was run again after the conflict (ran ${ran.n}x)`);
+  assert.equal(commits, 2, 'one conflicting commit, one that landed');
   // startVersion +1 (the injected writer) +1 (our eventual successful commit).
   assert.equal(await dbVersion(id), startVersion + 2, 'exactly the injected write + our redone commit landed');
 });
 
-test('executeWithGameLock gives up cleanly under sustained contention (bounded, no hang)', async () => {
-  const id = await startedGame();
+test('a real move recovers from a concurrent write the same way', async () => {
+  const { id, human } = await startedGame();
+  const t0 = await mustReadTable(id);
+  const mv = legalMoves(t0, (s) => s.id === human)[0] ?? legalMoves(t0)[0];
+  assert.ok(mv, 'fixture: somebody can move');
+  let res!: Awaited<ReturnType<typeof runAction>>;
+  const commits = await withStomp(id, (call) => call === 1, async () => { res = await runAction(id, mv.playerId, mv); });
+  assert.equal(res.status, ACTION_STATUS.APPLIED, 'the move applied after the retry');
+  assert.equal(commits, 2);
+  assert.equal(res.version, t0.version + 2, 'the response carries the version the move committed at');
+  assert.equal(await dbVersion(id), t0.version + 2);
+});
 
-  let calls = 0;
+test('runTableOp gives up cleanly under sustained contention (bounded, no hang)', async () => {
+  const { id } = await startedGame();
+  const ran = { n: 0 };
   await assert.rejects(
-    executeWithGameLock(id, async (g) => {
-      calls++;
-      await bumpVersion(id);   // every attempt is stomped -> every commit conflicts
-      return { game: g, events: [] };
-    }, 'contention', false),
+    withStomp(id, () => true, async () => { await runTableOp(rereadOp(id, ran)); }),
     /write contention/i,
     'exhausting the retries surfaces a clean error, not a hang',
   );
-  assert.equal(calls, 5, 'bounded at exactly MAX_ATTEMPTS (5), never an unbounded spin');
+  assert.equal(ran.n, 5, 'bounded at exactly MAX_ATTEMPTS (5), never an unbounded spin');
 });
 
-test('loadCompleteGame throws a clean "not found" for a missing game', async () => {
-  await assert.rejects(loadCompleteGame(`ghost-${uuid().slice(0, 6)}`), /not found/i);
+test('a missing game is a clean "not found", on the loader and on the move path', async () => {
+  const ghost = `ghost-${uuid().slice(0, 6)}`;
+  await assert.rejects(loadRow(ghost, false), /not found/i);
+  await assert.rejects(runAction(ghost, uuid(), Uint8Array.of(AWIRE_KIND.pickup, 0)), /not found/i);
 });
 
 test('a move on an already-finished game is a moot no-op, never a crash', async () => {
-  const id = await startedGame();
-  await pgPool.query(`UPDATE games SET status='game_over' WHERE id=$1`, [id]);
+  const id = `ro${uuid().slice(0, 6)}`;
+  const a = uuid(), b = uuid();
+  await seedTable(id, fixture().seats([{ id: a, name: 'A' }, { id: b, name: 'B' }])
+    .status(GAME_OVER).eliminated(0).discard(36).seatStatus(0, IDLE).seatStatus(1, IDLE).build(), { version: 7 });
+  const before = await mustReadTable(id);
+  const sent = broadcastLog.length;
 
-  let operationRan = false;
-  const res = await executeWithGameLock(id, async (g) => {
-    operationRan = true;                      // must NOT run for a finished game
-    throw new Error('handler should never be invoked on a finished game');
-  }, 'moot', /*mootIfGameOver*/ true);
-
-  assert.equal(operationRan, false, 'the handler is short-circuited');
-  assert.equal(res.events.length, 0, 'no events emitted');
-  assert.equal(res.game.status, GAME_STATUS.GAME_OVER, 'the finished state is returned as-is');
+  for (const wire of [Uint8Array.of(AWIRE_KIND.pickup, 0), Uint8Array.of(AWIRE_KIND.good, 0), Uint8Array.of(AWIRE_KIND.attack, 1, 4)]) {
+    const res = await runAction(id, a, wire);
+    assert.equal(res.status, ACTION_STATUS.MOOT, 'the kernel answers moot');
+    assert.equal(res.version, 7, 'the response carries the stored version');
+    assert.equal(res.needsBots, false);
+  }
+  const after = await mustReadTable(id);
+  assert.equal(after.version, before.version, 'nothing committed');
+  assert.deepEqual(after.state, before.state, 'the finished state is left as-is');
+  assert.equal(broadcastLog.length, sent, 'no events broadcast');
 });
 
 test('a full game commits GAME_OVER and lands its end-of-game side effects (ELO + snapshot)', async () => {
-  const id = await startedGame();
+  // Bots only, as before: the deal is a lobby ready by a seated bot's id, which
+  // no client can send (a bot has no auth account) but is the kernel's own deal
+  // through the real meta handler and commit_table.
+  const id = `rf${uuid().slice(0, 6)}`;
+  const b0 = uuid(), b1 = uuid();
+  await seedLobby(id, [{ id: b0, name: 'B0', brain: 'random' }, { id: b1, name: 'B1', brain: 'random' }]);
+  __setTableDealSeedOverride(dealSeed());
+  await runMeta(id, b0, { type: 'start' });
+  assert.equal((await mustReadTable(id)).status, L.GAME_STATUS_PLAYING, 'fixture: the bots-only game dealt');
 
+  let last: ReturnType<typeof legalMoves>[number] | null = null;
   for (let step = 0; step < 300; step++) {
-    const g = await loadCompleteGame(id);
-    if (g.status !== GAME_STATUS.PLAYING) break;
-    const moves = legalMovesFor(g);
+    const t = await mustReadTable(id);
+    if (t.status !== L.GAME_STATUS_PLAYING) break;
+    const moves = legalMoves(t);
     if (moves.length === 0) break;
-    try {
-      await executeWithGameLock(id, async (gg) => ({ game: gg, ...applyPlayerMove(gg, pick(moves)) }), `p${step}`, true);
-    } catch { /* transient contention — not expected single-threaded, but harmless */ }
+    const mv = pick(moves);
+    last = mv;
+    await runAction(id, mv.playerId, mv);
   }
 
-  const finalStatus = (await pgPool.query('SELECT status FROM games WHERE id=$1', [id])).rows[0].status;
-  assert.equal(finalStatus, 'game_over',
+  const final = await mustReadTable(id);
+  assert.equal(final.statusColumn, 'game_over',
     `the game reached and durably committed GAME_OVER (seed=${rng.seed})`);
+  assert.equal(final.needsBotsColumn, false, 'a finished game has no bot work');
 
-  // The replay snapshot is a best-effort side effect — but on the happy path it
-  // must land (proving finalizeEndedGame ran to completion).
+  // A move after the end is moot.
+  assert.ok(last, 'moves were made');
+  assert.equal((await runAction(id, last!.playerId, last!)).status, ACTION_STATUS.MOOT, 'a late move on the finished game is moot');
+
+  // The replay snapshot is a best-effort side effect, but on the happy path it
+  // must land (proving finalizeEndedGame ran to completion) and retire the log.
   const snaps = Number((await pgPool.query('SELECT count(*)::int AS n FROM game_snapshots WHERE game_id=$1', [id])).rows[0].n);
   assert.equal(snaps, 1, `exactly one replay snapshot row was written (seed=${rng.seed})`);
+  assert.equal((await mustReadTable(id)).logsPacked, '', `the session log was retired after the snapshot (seed=${rng.seed})`);
 
-  // updateEloRatings ran: the two bots no longer sit at the 1000 default.
+  // The rating update ran: the two bots no longer sit at the 1000 default.
   const elos = (await pgPool.query('SELECT elo_rating, games_played FROM bots')).rows;
-  assert.ok(elos.some((r: any) => r.elo_rating !== 1000),
+  assert.equal(elos.length, 2);
+  assert.ok(elos.some((r: { elo_rating: number }) => r.elo_rating !== 1000),
     `at least one bot rating moved off the default (seed=${rng.seed})`);
-  assert.ok(elos.every((r: any) => r.games_played === 1),
+  assert.ok(elos.every((r: { games_played: number }) => r.games_played === 1),
     `every bot recorded exactly one played game (seed=${rng.seed})`);
 });

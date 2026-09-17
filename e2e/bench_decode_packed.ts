@@ -9,9 +9,9 @@
 // it must be no slower.
 //
 // The envelopes are real ones. A seeded game is dealt and played by the
-// handwritten bot until the table holds a battle, then packedViewOf (the builder
-// behind player_views, the create response and a realtime push) writes one
-// envelope for seat 0 and one for a spectator. Cases: 2p, 4p and 8p player
+// handwritten bot until the table holds a battle, then the C Table (table_envelope,
+// the writer behind player_views, the create response and a realtime push since
+// Phase 4b) writes one envelope for seat 0 and one for a spectator. Cases: 2p, 4p and 8p player
 // views, and the 4p spectator view.
 //
 //   TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx e2e/bench_decode_packed.ts
@@ -25,8 +25,9 @@ import { game_done } from '@api/common/common_utils.ts';
 import { Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, StrategyKey } from '@api/core/types.ts';
 import { shouldBotActCore, processBotAction } from '@api/common/pure_bot_actions.ts';
 import { calculateLegalMoves } from '@api/common/bot_strategy.ts';
-import { packedViewOf } from '@api/common/player_views.ts';
-import { __setDealSeedOverride } from '@sdk/ts/wasm/engine.ts';
+import { __setDealSeedOverride, serializeGameState } from '@sdk/ts/wasm/engine.ts';
+import { createServerTable } from '@sdk/ts/table/server_table.ts';
+import { cRosterEncode } from './helpers/roster_kernel.ts';
 import { decodePackedGame } from '@sdk/ts/wire/view.ts';
 import { seedBytes } from './helpers/seeded_game.ts';
 
@@ -80,6 +81,18 @@ async function midBout(np: number, minActions: number): Promise<Game> {
     return game;
 }
 
+// The envelope the server writes for `viewer` (a seat, or -1) of this board.
+const table = createServerTable();
+function envelopeOf(game: Game, viewer: number): Uint8Array {
+    const roster = cRosterEncode(game.name, game.players.map((p) => ({ id: p.player_id, name: p.name, brain: p.is_ai ? String(p.strategy_key) : '' })));
+    if (typeof roster === 'number') throw new Error(`roster refused (${roster})`);
+    const rc = table.load(serializeGameState(game), roster);
+    if (rc < 0) throw new Error(`the board does not load (${rc})`);
+    const e = table.envelope(game.id, viewer, Number(game.version ?? 0));
+    if (typeof e === 'number') throw new Error(`envelope refused (${e})`);
+    return e;
+}
+
 const median = (a: number[]) => { const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 
 function time(buf: Uint8Array): { median: number; min: number; max: number } {
@@ -106,10 +119,10 @@ function time(buf: Uint8Array): { median: number; min: number; max: number } {
 async function main(): Promise<void> {
     const games = { 2: await midBout(2, 6), 4: await midBout(4, 10), 8: await midBout(8, 14) };
     const cases: { name: string; buf: Uint8Array }[] = [
-        { name: '2p player', buf: await packedViewOf(games[2], games[2].players[0].player_id) },
-        { name: '4p player', buf: await packedViewOf(games[4], games[4].players[0].player_id) },
-        { name: '8p player', buf: await packedViewOf(games[8], games[8].players[0].player_id) },
-        { name: '4p spectator', buf: await packedViewOf(games[4], 'not-seated') },
+        { name: '2p player', buf: envelopeOf(games[2], 0) },
+        { name: '4p player', buf: envelopeOf(games[4], 0) },
+        { name: '8p player', buf: envelopeOf(games[8], 0) },
+        { name: '4p spectator', buf: envelopeOf(games[4], -1) },
     ];
 
     const results = cases.map(({ name, buf }) => {

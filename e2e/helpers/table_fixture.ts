@@ -65,6 +65,11 @@ function k(): { ex: FixtureExports; table: ServerTable } {
 /** The C Table over the fixtures' own bots.wasm instance. */
 export function fixtureTable(): ServerTable { return k().table; }
 
+/** The raw exports of that instance, for a test helper that reads the loaded board through the generated accessors. */
+export function fixtureExports(): TableExports & { wasm_game_ptr_internal(): number; wasm_moves_ptr_internal(): number; wasm_legal_moves(seat: number): number } {
+    return k().ex as unknown as ReturnType<typeof fixtureExports>;
+}
+
 /** The generated name of a kernel result code, among the constant families `prefixes` name. */
 export function reasonOf(code: number, prefixes: string[]): string {
     for (const [name, value] of Object.entries(L)) {

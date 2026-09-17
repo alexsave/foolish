@@ -73,7 +73,9 @@ export async function tokenFor(userId: string, username = `u-${userId.slice(0, 4
 const handlers = new Map<string, ServedHandler>();
 
 /** The handler functions/<name>/index.ts registers with serve(). */
-export async function edge(name: 'action' | 'meta' | 'create'): Promise<ServedHandler> {
+export type EdgeName = 'action' | 'meta' | 'create' | 'bot-heartbeat' | 'delete-account';
+
+export async function edge(name: EdgeName): Promise<ServedHandler> {
     const got = handlers.get(name);
     if (got) return got;
     const before = servedHandlers.length;
@@ -101,7 +103,7 @@ async function read(res: Response): Promise<EdgeResponse> {
 const URL_BASE = 'http://edge.local/functions/v1';
 
 /** POST a JSON body to an edge function as `token` (null = no Authorization). */
-export async function postJson(name: 'action' | 'meta' | 'create', token: string | null, body: unknown): Promise<EdgeResponse> {
+export async function postJson(name: EdgeName, token: string | null, body: unknown): Promise<EdgeResponse> {
     const h = await edge(name);
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (token) headers.authorization = `Bearer ${token}`;

@@ -1,9 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { corsHeaders, handleCors } from "@shared/adapter/cors.ts";
 import { getAuthenticatedUser } from "@shared/adapter/auth.ts";
-import { Game, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from "@api/core/types.ts";
-import { createId } from "@api/common/common_utils.ts";
-import { buildPlayerViewRows, buildSpectatorView } from "@api/common/player_views.ts";
+import { gameStatusLabel, serverTable, tableCodeName } from "@sdk/ts/table/server_table.ts";
+import { bytesToBareHex } from "@sdk/ts/wire/bytes.ts";
 import { createClient } from 'jsr:@supabase/supabase-js';
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
@@ -12,98 +11,66 @@ const supabaseClient = createClient(
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
 );
 
-// Decode the bare-hex packed envelope buildPlayerViewRows produces into its raw
-// bytes (the response body). Tiny local helper — create stays off the replay
-// codec / rules-wasm boot graph.
-const hexToBytes = (hex: string): Uint8Array => {
-    const out = new Uint8Array(hex.length >> 1);
-    for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-    return out;
-};
+// A new game id: six characters of a random UUID.
+const newGameId = (): string => crypto.randomUUID().slice(0, 6);
 
-// Create a game. A standalone handler (not wrap400) because it returns a PACKED
-// view buffer (the same envelope the player_views cache stores) — the client
-// decodes it with the shared decodePackedGame, so create is no longer a JSON
-// special case.
+// Create a game (docs/C_GAME_SHAPE_MIGRATION.md Phase 4b): table_create seats
+// the caller in a new lobby, and the commit products are the whole row - the
+// state and roster blobs, the creator's envelope (which is also the response
+// body) and the spectator envelope.
 //
-// `create` is the ONE handler whose response depends on NO database read: the new
-// lobby is fully determined by the inputs, so we build the creator's masked view
-// (which IS both the response body AND the player_views cache seed) and hand it
-// back immediately, then do the DB write AFTER the response, in the background
-// (EdgeRuntime.waitUntil keeps the isolate alive — same as the post-response bot
-// loop). This takes the create_game PostgREST round-trip (~594ms from a cold
-// isolate) off what the user waits on. Every other action must first LOAD a game,
-// so none of them can defer like this.
+// `create` is the one handler whose response depends on NO database read, so
+// the row is written AFTER the response, in the background (EdgeRuntime.waitUntil
+// keeps the isolate alive). That takes the create_table round-trip off what the
+// user waits on.
 serve(async (req: Request): Promise<Response> => {
     const cors = handleCors(req);
     if (cors) return cors;
 
     try {
         const user = await getAuthenticatedUser(req);
-        const user_id = user.id;
-        const user_name = user.user_metadata.username;
+        const gameId = newGameId();
+        const table = await serverTable();
 
-        const game_id: string = createId();
-        const game_name = `${user_name}'s Game`;
+        // ---- kernel section ----
+        const rc = table.create(user.id, user.user_metadata.username ?? '');
+        if (rc < 0) throw new Error(`create refused: ${tableCodeName(rc, ['TABLE_E_', 'ROSTER_E_'])} (detail ${table.detail()})`);
+        const p = table.commit(gameId, 0, Date.now());
+        if (typeof p === 'number') throw new Error(`create: no products (${tableCodeName(p, ['TABLE_E_'])})`);
+        const mine = p.views[0];
+        // ---- end of the kernel section ----
+        if (!mine) throw new Error('create: no envelope for the creator');
 
-        // The lobby Game — fed to the SAME masked-view builder commit_game /
-        // create_game use, so the buffer we return and the row we seed are
-        // byte-identical to a later player_views read / get_game fetch.
-        const dbGameData: Game = {
-            id: game_id, name: game_name, deck: [], deck_length: 0, discard_pile_length: 0,
-            flipped: null,
-            players: [{
-                player_id: user_id, name: user_name, status: PLAYER_STATUS.IDLE, is_ai: false,
-                hand: [], hand_length: 0, awaiting_attack: false, strategy_key: STRATEGY_KEY.HUMAN,
-            }],
-            status: GAME_STATUS.WAITING, power_suit: 0, first_attacker: 0, defender: 0,
-            table_battles: [], elimination_order: [], good_timestamp: null, good_players: [], logs: [],
-        };
-
-        // The creator's packed view envelope (built by the pure-TS lobby mirror —
-        // no rules-wasm): the response body AND the player_views cache seed. The
-        // spectator view (seat -1) seeds spectator_views so non-participants can
-        // view the new lobby without get_game.
-        const p_views = await buildPlayerViewRows(dbGameData, null, 0);
-        const p_spectator = await buildSpectatorView(dbGameData, null, 0);
-        const mine = p_views.find(r => r.player_id === user_id);
-
-        // Persist AFTER the response (create_game does the 3 inserts + the
-        // player_views seed in one transaction — the fastest, atomic way). Retry
-        // a few times: a background failure is invisible to the client now (it
-        // already has the game), so don't silently drop the write; a
-        // unique-violation means an earlier attempt landed → treat as success.
+        const status = gameStatusLabel(p.status);
         const persist = (async () => {
+            // Retry a few times: a background failure is invisible to the client
+            // (it already has the game). A unique violation means an earlier
+            // attempt landed.
             for (let attempt = 1; attempt <= 3; attempt++) {
-                const { error } = await supabaseClient.rpc('create_game', {
-                    p_game_id: game_id,
-                    p_name: game_name,
-                    p_player_id: user_id,
-                    p_players: [{ player_id: user_id, name: user_name, status: PLAYER_STATUS.IDLE, is_ai: false }],
-                    p_views,
-                    p_spectator,
+                const { error } = await supabaseClient.rpc('create_table', {
+                    p_game_id: gameId,
+                    p_player_id: user.id,
+                    p_state: `\\x${bytesToBareHex(p.state)}`,
+                    p_roster: `\\x${bytesToBareHex(p.roster)}`,
+                    p_views: [{ player_id: user.id, view: bytesToBareHex(mine), status }],
+                    p_spectator: bytesToBareHex(p.spectator),
                 });
                 if (!error) return;
-                if ((error as { code?: string }).code === '23505') return; // already inserted by a prior attempt
-                console.error(`[create] background persist attempt ${attempt}/3 failed for ${game_id}: ${error.message}`);
+                if ((error as { code?: string }).code === '23505') return;
+                console.error(`[create] background persist attempt ${attempt}/3 failed for ${gameId}: ${error.message}`);
             }
-            console.error(`[create] background persist GAVE UP for ${game_id} — the client holds a game that isn't in the DB`);
+            console.error(`[create] background persist GAVE UP for ${gameId}: the client holds a game that isn't in the DB`);
         })();
 
         const er = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime;
         if (er && typeof er.waitUntil === 'function') er.waitUntil(persist);
         else await persist; // no EdgeRuntime (local/test): don't lose the write
 
-        // Return the packed view buffer (decodable by decodePackedGame). The
-        // creator is a human seated in the roster, so buildPlayerViewRows always
-        // yields their row; no row means the builder is broken, and an error is
-        // a truer answer than a second, JSON-shaped way to say the same game.
-        if (!mine) throw new Error('create: no view row for the creator');
-        return new Response(hexToBytes(mine.view) as unknown as BodyInit, {
+        return new Response(mine as unknown as BodyInit, {
             headers: { ...corsHeaders, 'Content-Type': 'application/octet-stream' },
         });
-    } catch (e: any) {
-        return new Response(JSON.stringify({ error: e.message }), {
+    } catch (e: unknown) {
+        return new Response(JSON.stringify({ error: (e as Error).message }), {
             status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
     }

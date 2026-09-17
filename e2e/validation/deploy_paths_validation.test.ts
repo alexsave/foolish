@@ -134,3 +134,50 @@ test('a NEW file beside a deployed one would trigger a deploy too', () => {
     assert.deepEqual(blind, [],
         `a new file in these directories would deploy nothing: ${blind.join(', ')}`);
 });
+
+// ---- the wasm asset each function loads --------------------------------------
+
+/** The files one function's entrypoint reaches, statically or by dynamic import. */
+function graphOf(entry: string): Set<string> {
+    const seen = new Set<string>();
+    const queue = [entry];
+    while (queue.length) {
+        const f = queue.pop()!;
+        if (seen.has(f) || !existsSync(f)) continue;
+        seen.add(f);
+        for (const m of readFileSync(f, 'utf8').matchAll(SPEC)) {
+            const target = resolveSpec(m[1], f);
+            if (target && existsSync(target) && !seen.has(target)) queue.push(target);
+        }
+    }
+    return seen;
+}
+
+/** config.toml's static_files for one [functions.<name>] section. */
+function staticFilesOf(name: string): string[] {
+    const toml = readFileSync(join(SUPA, 'config.toml'), 'utf8').split('\n');
+    const start = toml.findIndex((l) => l.trim() === `[functions.${name}]`);
+    if (start < 0) return [];
+    const out: string[] = [];
+    for (const line of toml.slice(start + 1)) {
+        const t = line.trim();
+        if (t.startsWith('[')) break;
+        if (!t.startsWith('static_files')) continue;
+        for (const m of t.matchAll(/"([^"]+)"/g)) out.push(relative(REPO, resolve(SUPA, m[1])));
+    }
+    return out;
+}
+
+test('every function that loads bots.wasm bundles it (config.toml static_files)', () => {
+    // The C Table runs in every function that touches a game (Phase 4b of
+    // docs/C_GAME_SHAPE_MIGRATION.md): create and delete-account load the module
+    // too now, and a deploy without the asset fails on the first request.
+    const loader = join(REPO, 'sdk/ts/wasm/wasm_asset.ts');
+    const missing: string[] = [];
+    for (const name of readdirSync(FUNCTIONS)) {
+        const entry = join(FUNCTIONS, name, 'index.ts');
+        if (!existsSync(entry) || !graphOf(entry).has(loader)) continue;
+        if (!staticFilesOf(name).includes('sdk/ts/wasm/bots.wasm.gz')) missing.push(name);
+    }
+    assert.deepEqual(missing, [], `these functions load bots.wasm without bundling it: ${missing.join(', ')}`);
+});

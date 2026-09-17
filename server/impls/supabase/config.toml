@@ -278,7 +278,7 @@ s3_access_key = "env(S3_ACCESS_KEY)"
 s3_secret_key = "env(S3_SECRET_KEY)"
 
 # bots.wasm ships as a raw gzip static asset (see sdk/ts/wasm/wasm_asset.ts),
-# bundled into each bot-running function by `supabase functions deploy
+# bundled into every function that runs the C Table by `supabase functions deploy
 # --use-api` (no Docker). rules/guards inflate from gzip+base64 embeds via the
 # vendored sdk/ts/wasm/gunzip.ts (relative import — no import_map needed).
 #
@@ -305,8 +305,10 @@ import_map = "./functions/import_map.json"
 static_files = [ "../../../sdk/ts/wasm/bots.wasm.gz" ]
 [functions.create]
 import_map = "./functions/import_map.json"
+static_files = [ "../../../sdk/ts/wasm/bots.wasm.gz" ]
 [functions.delete-account]
 import_map = "./functions/import_map.json"
+static_files = [ "../../../sdk/ts/wasm/bots.wasm.gz" ]
 # NOTE: the CI diagnostic `memtest` also needs bots.wasm.gz, but its
 # static_files entry is injected by .github/workflows/memory.yml at run time
 # — NOT declared here. `supabase functions deploy` deploys every function in

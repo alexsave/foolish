@@ -56,6 +56,7 @@ function readTs(buf: Uint8Array, q: number): number {
 // JS GameLog[] (the appendLogs output — DRAW identities already hidden) ->
 // logwire records. `seatOf` maps player ids to seats (session rosters are
 // seat-stable: rearrange only exists in WAITING games).
+// retired by Phase 4b; deleted in Phase 8 (the server's records are table_commit_products')
 export function encodeLogs(logs: GameLog[], seatOf: (pid: string | null) => number): Uint8Array {
     const out: number[] = [];
     for (const l of logs) {
@@ -81,6 +82,7 @@ export function encodeLogs(logs: GameLog[], seatOf: (pid: string | null) => numb
 // records) -> logwire records, stamping one clock value across the move (the
 // old path stamped each move's rows within the same millisecond anyway).
 // Byte splice only — no JS log objects.
+// retired by Phase 4b; deleted in Phase 8 (the server's records are table_commit_products')
 export function logsFromKernelExport(kernelBytes: Uint8Array, nowMs: number): Uint8Array {
     const n = kernelBytes[0] | (kernelBytes[1] << 8);
     const out: number[] = [];
@@ -108,6 +110,7 @@ export function logsFromKernelExport(kernelBytes: Uint8Array, nowMs: number): Ui
 const LOG_PICKUP_INT = LOG_TYPE_TO_INT.get(LOG_TYPE.PICKUP)!;
 const LOG_DISCARD_INT = LOG_TYPE_TO_INT.get(LOG_TYPE.DISCARD)!;
 
+// retired by Phase 4b; deleted in Phase 8 (table_commit_products sets closed_round)
 export function logwireClosesRound(buf: Uint8Array): boolean {
     let q = 0;
     while (q < buf.length) {
@@ -129,6 +132,7 @@ export function logwireClosesRound(buf: Uint8Array): boolean {
 const hx = (c: number): number => (c <= 57 ? c - 48 : (c <= 70 ? c - 55 : c - 87)); // '0'-'9' | 'A'-'F' | 'a'-'f'
 const byteAt = (h: string, charIdx: number): number => (hx(h.charCodeAt(charIdx)) << 4) | hx(h.charCodeAt(charIdx + 1));
 
+// retired by Phase 4b; deleted in Phase 8 (table_commit_products sets closed_round)
 export function logwireHexClosesRound(hex: string): boolean {
     const start = hex.startsWith('\\x') ? 2 : 0; // hexToBytes tolerated both; match it
     let q = start;

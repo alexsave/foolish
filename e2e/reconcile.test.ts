@@ -1,63 +1,72 @@
-// E2E across the wire: drive a REAL multi-bout game (real executeWithGameLock +
-// handlers + commit_game + broadcastAnimationEvents), capture the exact broadcasts
-// the focus player's client would receive, then feed them through the REAL client
+// E2E across the wire: drive a REAL multi-bout game (the real move path:
+// executePackedAction -> the table_io CAS loop -> the C Table -> commit_table ->
+// the kernel's per-viewer pushes), capture the exact broadcasts the focus
+// player's client would receive, then feed them through the REAL client
 // reconciliation (clientReconcile: the version gate + trust-incoming table merge)
-// under REORDERED delivery — and assert the client converges to the server's
+// under REORDERED delivery - and assert the client converges to the server's
 // authoritative table. This is the broadcast-reordering fix end to end.
 
 import './harness.ts';
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { applySchema, resetDb, seedGame, uuid, pgPool, broadcastLog } from './harness.ts';
-import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
-import { packedProducts, start_game_packed } from '../server/api/common/game_lifecycle.ts';
-import { AnimationEvent } from '../server/api/core/types.ts';
-import { legalMovesFor, applyPlayerMove } from './dispatch.ts';
+import { applySchema, resetDb, uuid, pgPool, broadcastLog } from './harness.ts';
+import * as L from '../sdk/ts/gen/game_layout.bots.ts';
+import { legalMoves, mustReadTable } from './helpers/table_play.ts';
+import { runAction, runMeta, seedLobby } from './helpers/table_server.ts';
+import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
+import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { shouldDropStaleSequence, mergeTableBattles } from '../src/state/clientReconcile';
 import { decodeEventWire } from '../sdk/ts/wire/evwire.ts';
 import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
 import { suiteRng, type SeededRng } from './helpers/rng.ts';
 
-// Two streams, so widening one does not renumber the other: `moves` drives the
-// game the broadcasts come from, `arrival` the reordering they are replayed in.
+// Three streams, so widening one does not renumber the others: `deal` pins each
+// game's deal seed, `moves` drives the game the broadcasts come from, `arrival`
+// the reordering they are replayed in.
 const rng = suiteRng('reconcile');
+const dealRng = rng.fork('deal');
 const moveRng = rng.fork('moves');
 const arrivalRng = rng.fork('arrival');
 const tkeys = (bs: any[]) => bs.flatMap((b: any) => (b.defense ? [`${b.attack.suit}-${b.attack.value}`, `${b.defense.suit}-${b.defense.value}`] : [`${b.attack.suit}-${b.attack.value}`])).sort();
 
 before(async () => { await applySchema(); });
-beforeEach(async () => { await resetDb(); });
+beforeEach(async () => { await resetDb(); __clearGameCache(); });
 
 interface Bcast { version: number; eventTables: any[][]; finalTable: any[] }
 
-async function driveAndCapture(): Promise<{ stream: Bcast[]; serverFinalTable: any[] }> {
+async function driveAndCapture(): Promise<{ stream: Bcast[]; serverFinalTable: unknown[] }> {
     const gameId = `r${uuid().slice(0, 6)}`;
     const human = uuid();
-    const seeded = [
-        { id: human, name: 'Hero', is_ai: false, strategy_key: 'human' },
-        { id: uuid(), name: 'B0', is_ai: true, strategy_key: 'random' },
-        { id: uuid(), name: 'B1', is_ai: true, strategy_key: 'random' },
+    const seats = [
+        { id: human, name: 'Hero', ready: false },
+        { id: uuid(), name: 'B0', brain: 'random' },
+        { id: uuid(), name: 'B1', brain: 'random' },
     ];
-    await seedGame(gameId, seeded);
-    // The identity roster the client already holds when a broadcast arrives —
+    await seedLobby(gameId, seats);
+    __setTableDealSeedOverride(Uint8Array.from({ length: 32 }, () => dealRng.int(256)));
+    await runMeta(gameId, human, { type: 'start' });
+    // The identity roster the client already holds when a broadcast arrives -
     // exactly what it needs to decode the packed event wire.
-    const roster = { id: gameId, name: gameId, players: seeded.map((p) => ({ player_id: p.id, name: p.name, is_ai: p.is_ai })) };
-    await executeWithGameLock(gameId, async (g) => ({ game: g, events: [], packed: packedProducts(start_game_packed(g)) }), 'start', false);
+    const roster = { id: gameId, name: gameId, players: seats.map((p) => ({ player_id: p.id, name: p.name, is_ai: !!p.brain })) };
 
+    // Every seat, bots included, moves through the move path under its own id,
+    // so the move stream (and so the broadcasts) is the suite seed's.
     let steps = 0;
     while (steps < 600) {
-        const g = await loadCompleteGame(gameId);
-        if (g.status !== 'playing') break;
-        const moves = legalMovesFor(g);
+        const t = await mustReadTable(gameId);
+        if (t.status !== L.GAME_STATUS_PLAYING) break;
+        const moves = legalMoves(t);
         if (moves.length === 0) break;
-        try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, moveRng.pick(moves)) }), `s${steps}`, true); } catch { /* */ }
+        const mv = moveRng.pick(moves);
+        try { await runAction(gameId, mv.playerId, mv); } catch { /* */ }
         steps++;
     }
+    await new Promise((r) => setImmediate(r));   // the broadcast is fire-and-forget
 
-    // The focus player's personalized channel. Broadcasts are packed now
-    // ({t,s,v,b}); decode the base64 event wire with the REAL client decoder
-    // to recover the per-step snapshots + final game. preGood/prevGoodTs are
-    // dummies — this test only consumes table_battles and the version.
+    // The focus player's personalized channel: the kernel's push bytes, decoded
+    // with the REAL client decoder to recover the per-step snapshots + final
+    // game. preGood/prevGoodTs are dummies - this test only consumes
+    // table_battles and the version.
     const chan = `gu-${gameId}-${human}`;
     const stream: Bcast[] = broadcastLog
         .filter((b) => b.channel === chan && b.event === 'animation_events')
@@ -70,7 +79,7 @@ async function driveAndCapture(): Promise<{ stream: Bcast[]; serverFinalTable: a
                 finalTable: decoded!.game?.table_battles ?? [],
             };
         });
-    const serverFinalTable = (await loadCompleteGame(gameId)).table_battles;
+    const serverFinalTable = (await mustReadTable(gameId)).battles;
     return { stream, serverFinalTable };
 }
 
@@ -104,4 +113,4 @@ test('client converges to the server table under heavy reordering (real broadcas
     assert.ok(trials > 0, `expected at least one multi-broadcast game (seed=${rng.seed})`);
 });
 
-after(async () => { await pgPool.end(); });
+after(async () => { __setTableDealSeedOverride(null); await pgPool.end(); });

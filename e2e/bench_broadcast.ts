@@ -1,17 +1,16 @@
-// Microbench: wall-clock of ONE broadcastAnimationEvents call, driving the REAL
-// shipped function against the real adapter transport. To make the comparison
-// meaningful (the in-process shim has ~0 network cost), inject a per-POST latency
-// via E2E_BCAST_LATENCY_MS — applied identically to the old channel.send() shim
-// and the new batched-fetch shim. Run this script on `main` (old N+1 sends) and
-// on the branch (1 batched send) with the same env to compare.
+// Microbench: wall-clock of ONE broadcastPushes call (table_io.ts), driving the
+// REAL shipped function against the real adapter transport. The pushes are a
+// deal's (the fattest broadcast in a game), written by the C Table. To make a
+// comparison meaningful (the in-process shim has ~0 network cost), inject a
+// per-POST latency via E2E_BCAST_LATENCY_MS.
 //
 //   E2E_BCAST_LATENCY_MS=60 BENCH_HUMANS=6 BENCH_ITERS=20 \
-//     node --import tsx e2e/bench_broadcast.ts
+//     TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx e2e/bench_broadcast.ts
 import './harness.ts';
-import { applySchema, resetDb, seedGame, uuid, pgPool, broadcastLog, resetBroadcastLog } from './harness.ts';
-import { executeWithGameLock, broadcastAnimationEvents, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
-import { AnimationEvent } from '../server/api/core/types.ts';
+import { applySchema, uuid, pgPool, broadcastLog, resetBroadcastLog } from './harness.ts';
+import * as L from '../sdk/ts/gen/game_layout.bots.ts';
+import { broadcastPushes } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
+import { fixture, fixtureTable, READY } from './helpers/table_fixture.ts';
 
 const HUMANS = Number(process.env.BENCH_HUMANS || 6);
 const BOTS = Number(process.env.BENCH_BOTS || 0);
@@ -20,33 +19,42 @@ const LAT = Number(process.env.E2E_BCAST_LATENCY_MS || 0);
 
 async function main() {
     await applySchema();
-    await resetDb();
 
+    // A real deal's pushes: every seat ready but one, which readies and deals.
     const gameId = `g${uuid().slice(0, 6)}`;
-    const players = [
-        ...Array.from({ length: HUMANS }, (_, i) => ({ id: uuid(), name: `H${i}`, is_ai: false, strategy_key: 'human' })),
-        ...Array.from({ length: BOTS }, (_, i) => ({ id: uuid(), name: `B${i}`, is_ai: true, strategy_key: 'random' })),
+    const seats = [
+        ...Array.from({ length: HUMANS }, (_, i) => ({ id: uuid(), name: `H${i}` })),
+        ...Array.from({ length: BOTS }, (_, i) => ({ id: uuid(), name: `B${i}`, brain: 'random' })),
     ];
-    await seedGame(gameId, players);
-
-    // Capture a real game + real events (the dealt-hands start sequence).
-    let events: AnimationEvent[] = [];
-    await executeWithGameLock(gameId, async (g) => { events = start_game(g) as AnimationEvent[]; return { game: g, events }; }, 'start', false);
-    const game = await loadCompleteGame(gameId);
+    let b = fixture().seats(seats);
+    seats.forEach((_, i) => { if (i > 0) b = b.seatStatus(i, READY); });
+    const fx = b.build();
+    const table = fixtureTable();
+    if (table.load(fx.state, fx.roster) !== L.TABLE_OK) throw new Error('the lobby does not load');
+    if (table.ready(seats[0].id, new Uint8Array(32)) !== L.TABLE_OK) throw new Error('the deal was refused');
+    const p = table.commit(gameId, 1, 0);
+    if (typeof p === 'number') throw new Error(`no products (${p})`);
+    const roster = table.seats();
+    const pushes: { viewer: number; bytes: Uint8Array }[] = [];
+    for (const viewer of [...roster.flatMap((s, i) => (s.brain ? [] : [i])), -1]) {
+        const push = table.push(gameId, viewer);
+        if (typeof push === 'number') throw new Error(`push refused (${push})`);
+        pushes.push({ viewer, bytes: push });
+    }
 
     // Warm up (JIT, connections), not measured.
-    await broadcastAnimationEvents(game, events, 'warm');
+    await broadcastPushes(gameId, 1, roster, pushes, 'warm');
     resetBroadcastLog();
 
     const samples: number[] = [];
     for (let i = 0; i < ITERS; i++) {
         const t0 = performance.now();
-        await broadcastAnimationEvents(game, events, `bench${i}`);
+        await broadcastPushes(gameId, 1, roster, pushes, `bench${i}`);
         samples.push(performance.now() - t0);
     }
 
-    samples.sort((a, b) => a - b);
-    const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
+    samples.sort((x, y) => x - y);
+    const mean = samples.reduce((x, y) => x + y, 0) / samples.length;
     const median = samples[Math.floor(samples.length / 2)];
     const posts = broadcastLog.length / ITERS; // recorded messages per broadcast
 

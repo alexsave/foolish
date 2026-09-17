@@ -2,179 +2,134 @@
 // `action` bump nudge come back through.
 //
 // That tail used to be `new Response(JSON.stringify(personalViewOf(...)))`: a
-// whole personalized game, masked by the kernel and then re-serialized as JSON,
-// on the one edge response that had not been cut over. It now returns the PACKED
-// envelope - the same bytes `create` returns, `player_views.view` stores and the
-// realtime feed pushes.
+// whole personalized game re-serialized as JSON. It returns the PACKED envelope
+// - the same bytes `create` returns, `player_views.view` stores and a client
+// fetch decodes - and since Phase 4b those bytes are the C Table's
+// (table_envelope), handed through wrap400 untouched.
 //
-// Nothing tested it. Every e2e suite reaches the server through
-// executeWithGameLock / handleMetaAction, i.e. BELOW wrap400; the handler itself
-// was only ever exercised in production (auth_jwt.test.ts's header says as much:
-// "the HTTP handler using it isn't integration-tested"). So a JSON body could
-// have come back forever with every suite green. This test calls the real
-// handler wrap400 returns, over a real Request, with a real signed token.
-//
-// No Postgres and no network: the request carries NO game_id, which is
-// wrap400's own "operations that don't involve games" branch - it runs the
-// supplied execute directly and then shapes the response, which is precisely
-// the code under test. The JWKS is injected (as in auth_jwt.test.ts) so the
-// auth step is real signature verification, offline.
+// Suites that reach the server through handleMetaAction run BELOW wrap400, so a
+// JSON body could come back with every one of them green. This test goes through
+// the real handlers wrap400 returns (meta/index.ts, action/index.ts) over a real
+// Request with a real signed token (e2e/helpers/edge.ts), on kernel-owned rows,
+// and holds each response to the kernel's own envelope for the caller's seat at
+// the row's version, byte for byte. That comparison replaces the retired
+// personalViewOf oracle.
 
 import './harness.ts';
-import { test } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-
-import { wrap400 } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
-import { __setJwksForTest } from '../server/impls/supabase/functions/_shared/adapter/auth.ts';
-import { personalViewOf } from '../server/api/common/player_views.ts';
+import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
+import { postJson, settle, tokenFor, type EdgeResponse } from './helpers/edge.ts';
+import { fixture, fixtureTable, PLAYING } from './helpers/table_fixture.ts';
+import { seedTable } from './helpers/table_db.ts';
+import { mustReadTable, type TableState } from './helpers/table_play.ts';
+import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { decodePackedGame, GAME_RESP_FORMAT } from '../sdk/ts/wire/view.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
-import { __setKernelSeedSource } from '../sdk/ts/wasm/engine.ts';
-import {
-    Game, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY, PersonalGame, PublicGame, PrivatePlayer,
-} from '../server/api/core/types.ts';
+import type { PersonalGame } from '../server/api/core/types.ts';
 
-if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
-
-__setKernelSeedSource(() => 4242); // pin the deal so the fixture is reproducible
-
-// ---- a signed token, minted independently of the verifier -------------------
-
-const enc = new TextEncoder();
-const b64url = (bytes: Uint8Array): string => {
-    let bin = '';
-    for (const b of bytes) bin += String.fromCharCode(b);
-    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-};
-const b64urlStr = (s: string): string => b64url(enc.encode(s));
-
-async function mintToken(sub: string, username: string): Promise<string> {
-    const kp = await crypto.subtle.generateKey(
-        { name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
-    const jwk = await crypto.subtle.exportKey('jwk', kp.publicKey) as JsonWebKey & { kid?: string; use?: string };
-    jwk.kid = 'wrap400'; jwk.use = 'sig';
-    __setJwksForTest({ keys: [jwk] });
-
-    // A FIXED far-future expiry rather than now+1h: expiry is auth_jwt.test.ts's
-    // subject, not this file's, and reading the clock here would be entropy the
-    // determinism gate is right to refuse.
-    const EXP_2100 = 4102444800;
-    const h = b64urlStr(JSON.stringify({ alg: 'ES256', kid: 'wrap400', typ: 'JWT' }));
-    const p = b64urlStr(JSON.stringify({
-        sub, aud: 'authenticated', role: 'authenticated',
-        exp: EXP_2100, user_metadata: { username },
-    }));
-    const sig = new Uint8Array(await crypto.subtle.sign(
-        { name: 'ECDSA', hash: 'SHA-256' }, kp.privateKey, enc.encode(`${h}.${p}`)));
-    return `${h}.${p}.${b64url(sig)}`;
-}
+if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 
 // ---- fixtures ---------------------------------------------------------------
 
-const HUMAN_A = 'aaaaaaaa-0000-4000-8000-000000000001';
-const HUMAN_B = 'bbbbbbbb-0000-4000-8000-000000000002';
-const BOT = 'cccccccc-0000-4000-8000-000000000003';
-const OUTSIDER = 'dddddddd-0000-4000-8000-000000000004';
+const HUMAN_A = uuid(), HUMAN_B = uuid(), BOT = uuid(), OUTSIDER = uuid();
+const SEATS = [{ id: HUMAN_A, name: 'A' }, { id: HUMAN_B, name: 'B' }, { id: BOT, name: 'Bot', brain: 'random' }];
 
-const mkPlayer = (id: string, name: string, isAi: boolean): PrivatePlayer => ({
-    player_id: id, name, status: PLAYER_STATUS.READY, is_ai: isAi,
-    hand: [], hand_length: 0, awaiting_attack: false,
-    strategy_key: isAi ? STRATEGY_KEY.RANDOM : STRATEGY_KEY.HUMAN,
-});
-
-const mkLobby = (): Game => ({
-    id: 'wrap400game', name: 'wrap400 wire', status: GAME_STATUS.WAITING,
-    players: [mkPlayer(HUMAN_A, 'A', false), mkPlayer(HUMAN_B, 'B', false), mkPlayer(BOT, 'Bot', true)],
-    deck: [], deck_length: 0, discard_pile_length: 0, flipped: null,
-    power_suit: 0, first_attacker: 0, defender: 0, table_battles: [],
-    elimination_order: [], good_timestamp: null, good_players: [], logs: [],
-    version: 42,
-});
-
-const dealt = (): Game => {
-    const g = mkLobby();
-    start_game(g);
-    g.status = GAME_STATUS.PLAYING;
+/** A lobby nobody has readied in: A's `start` readies A and deals nothing. */
+async function lobby(): Promise<string> {
+    const g = `w${uuid().slice(0, 5)}`;
+    await seedTable(g, fixture().title('wrap400 wire').seats(SEATS).build(), { version: 42 });
     return g;
-};
-
-/** Drive one request through the REAL wrap400 handler. */
-async function call(game: Game, sub: string, username: string): Promise<Response> {
-    const token = await mintToken(sub, username);
-    // No `binary` escape hatch and no game_id: this is exactly the branch a
-    // `meta` request (and the `action` bump) takes.
-    const handler = wrap400(async () => ({ game, events: [] }));
-    return handler(new Request('http://local/meta', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'start' }),
-    }));
 }
+
+/** A dealt game at version 42: a `start` on it is moot and commits nothing. */
+async function dealt(): Promise<string> {
+    const g = `w${uuid().slice(0, 5)}`;
+    await seedTable(g, fixture().title('wrap400 wire').seats(SEATS)
+        .status(PLAYING).attacker(0).defender(1)
+        .hand(0, '6h 7h 8h 9h Th Jh').hand(1, '6s 7s 8s 9s Ts Js').hand(2, '6d 7d 8d 9d Td Jd')
+        .deck('6c 7c 8c 9c Tc Jc Qc Kc').trump('Ac')
+        .build(), { version: 42 });
+    return g;
+}
+
+/** The kernel's envelope for `userId` on the stored row `t` (the fixtures' table holds it after mustReadTable). */
+function kernelEnvelope(t: TableState, userId: string): Uint8Array {
+    const table = fixtureTable();
+    const env = table.envelope(t.gameId, table.seatOf(userId), t.version);
+    if (typeof env === 'number') throw new Error(`fixture: no envelope (${env})`);
+    return env;
+}
+
+async function tok(userId: string, name: string): Promise<string> {
+    await pgPool.query('INSERT INTO auth.users(id) VALUES ($1) ON CONFLICT DO NOTHING', [userId]);
+    return tokenFor(userId, name);
+}
+
+/** The shape every wrap400 success must have: octet-stream bytes that lead with the envelope format and are not JSON. */
+function assertPackedBody(res: EdgeResponse, tag: string): void {
+    assert.equal(res.status, 200, `${tag}: 200 (${JSON.stringify(res.json)})`);
+    assert.equal(res.type, 'application/octet-stream', `${tag}: octet-stream`);
+    assert.equal(res.bytes[0], GAME_RESP_FORMAT, `${tag}: leads with the packed envelope format byte`);
+    // The body is BYTES, not a JSON document. This is the assertion that
+    // fails the moment the tail goes back to JSON.stringify.
+    assert.throws(() => JSON.parse(new TextDecoder().decode(res.bytes)), `${tag}: body must not parse as JSON`);
+}
+
+before(async () => { await applySchema(); });
+// A bump may have woken the bot loop: let it finish before the next test truncates under it.
+beforeEach(async () => { await settle(); await resetDb(); __clearGameCache(); });
+after(async () => { await settle(); });
 
 // ---- the wire ---------------------------------------------------------------
 
 test('wrap400 answers with the PACKED game envelope, never a JSON game', async () => {
-    for (const [tag, game] of [['lobby', mkLobby()], ['dealt', dealt()]] as const) {
-        const res = await call(game, HUMAN_A, 'A');
-        assert.equal(res.status, 200, `${tag}: 200`);
-        assert.equal(res.headers.get('Content-Type'), 'application/octet-stream', `${tag}: octet-stream`);
+    for (const [tag, make, version] of [['lobby', lobby, 43], ['dealt', dealt, 42]] as const) {
+        const gameId = await make();
+        const res = await postJson('meta', await tok(HUMAN_A, 'A'), { type: 'start', game_id: gameId });
+        assertPackedBody(res, tag);
 
-        const bytes = new Uint8Array(await res.arrayBuffer());
-        assert.equal(bytes[0], GAME_RESP_FORMAT, `${tag}: leads with the packed envelope format byte`);
-
-        // The body is BYTES, not a JSON document. This is the assertion that
-        // fails the moment the tail goes back to JSON.stringify.
-        assert.throws(
-            () => JSON.parse(new TextDecoder().decode(bytes)),
-            `${tag}: body must not parse as JSON`,
-        );
-
-        // And it carries exactly what the JSON body carried: the same game the
-        // retired `personalViewOf` response produced, for the same caller.
-        const decoded = decodePackedGame(bytes);
+        const decoded = decodePackedGame(res.bytes);
         assert.ok(decoded, `${tag}: decodePackedGame reads it`);
-        assert.equal(decoded!.version, 42, `${tag}: the row's version rides the envelope`);
+        assert.equal(decoded!.version, version, `${tag}: the row's version rides the envelope (a lobby ready commits, a moot start does not)`);
         assert.equal(decoded!.seat, 0, `${tag}: the caller's seat`);
-        assert.deepEqual(
-            decoded!.game,
-            await personalViewOf(game, HUMAN_A) as PersonalGame,
-            `${tag}: decodes to what the JSON body used to be`,
-        );
+
+        // And it is exactly the kernel's envelope for this caller at that version.
+        const t = await mustReadTable(gameId);
+        assert.equal(t.version, version, `${tag}: the stored row agrees`);
+        assert.deepEqual(res.bytes, kernelEnvelope(t, HUMAN_A), `${tag}: byte for byte the kernel's envelope for seat 0`);
     }
 });
 
 test('wrap400: a caller with no seat gets the spectator envelope', async () => {
-    const game = dealt();
-    const res = await call(game, OUTSIDER, 'Nobody');
-    assert.equal(res.headers.get('Content-Type'), 'application/octet-stream');
+    const gameId = await dealt();
+    const t = await mustReadTable(gameId);
+    const expected = kernelEnvelope(t, OUTSIDER);
+    // The one JSON request an outsider may send: the bump nudge.
+    const res = await postJson('action', await tok(OUTSIDER, 'Nobody'), { type: 'bump', game_id: gameId });
+    assertPackedBody(res, 'spectator');
 
-    const bytes = new Uint8Array(await res.arrayBuffer());
-    const decoded = decodePackedGame(bytes);
+    const decoded = decodePackedGame(res.bytes);
     assert.ok(decoded, 'spectator envelope decodes');
     assert.equal(decoded!.seat, -1, 'seat -1');
+    assert.equal(decoded!.version, 42);
     assert.equal((decoded!.game as PersonalGame).self, undefined, 'a spectator gets no self');
-    assert.deepEqual(
-        decoded!.game,
-        await personalViewOf(game, OUTSIDER) as PublicGame,
-        'the spectator view matches the retired JSON one',
-    );
-    // Masking is still the kernel's: no hand identities for anyone.
-    for (const p of decoded!.game.players) {
-        assert.ok(p.hand_length > 0, 'hand counts are real');
-    }
+    assert.deepEqual(res.bytes, expected, 'byte for byte the kernel\'s spectator envelope');
+    // Masking is still the kernel's: real counts, and not the bytes a seated player gets.
+    assert.deepEqual(decoded!.game.players.map((p) => p.hand_length), [6, 6, 6], 'hand counts are real');
+    assert.notDeepEqual(res.bytes, kernelEnvelope(t, HUMAN_A), 'not seat 0\'s envelope');
 });
 
 test('wrap400: seat 1 sees its OWN hand', async () => {
-    const game = dealt();
-    const res = await call(game, HUMAN_B, 'B');
-    const decoded = decodePackedGame(new Uint8Array(await res.arrayBuffer()));
+    const gameId = await dealt();
+    const res = await postJson('meta', await tok(HUMAN_B, 'B'), { type: 'start', game_id: gameId });
+    assertPackedBody(res, 'seat 1');
+    const decoded = decodePackedGame(res.bytes);
     assert.ok(decoded);
     assert.equal(decoded!.seat, 1);
     const self = (decoded!.game as PersonalGame).self;
     assert.ok(self, 'seat 1 gets a self');
-    assert.deepEqual(
-        self!.hand, game.players[1].hand.map(c => ({ suit: c.suit, value: c.value })),
-        'the viewer\'s own hand is real',
-    );
+    const t = await mustReadTable(gameId);
+    assert.deepEqual(self!.hand, t.seats[1].hand, 'the viewer\'s own hand is real');
     assert.equal(self!.player_id, HUMAN_B);
+    assert.deepEqual(res.bytes, kernelEnvelope(t, HUMAN_B), 'byte for byte the kernel\'s envelope for seat 1');
 });

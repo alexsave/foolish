@@ -151,12 +151,40 @@ export const ALLOW = [
     {
         rule: 'random-uuid',
         file: 'server/impls/supabase/functions/_shared/adapter/utils.ts',
-        calls: 2,
+        calls: 1,
         reason:
-            'Two correlation tokens on the LIVE server, neither of which any reader '
-            + 'compares or orders by: the broadcast envelope sequence id (the client '
-            + 'dedupes an animation sequence by it; playback order comes from the version) '
-            + 'and a request-id prefix for log lines. Nothing replays these.',
+            'A request-id prefix for log lines on the LIVE server. No reader compares or '
+            + 'orders by it; nothing replays it.',
+    },
+    {
+        rule: 'random-uuid',
+        file: 'server/impls/supabase/functions/_shared/adapter/table_io.ts',
+        calls: 1,
+        reason:
+            'The broadcast envelope sequence id `s`: the client dedupes an animation '
+            + 'sequence by it, and playback order comes from the version `v`. Nothing '
+            + 'replays it.',
+    },
+    {
+        rule: 'random-bytes',
+        file: 'server/impls/supabase/functions/_shared/adapter/table_io.ts',
+        calls: 1,
+        // The server's half of THE draw (engine.ts carries the offline hosts').
+        reason:
+            'The server\'s deal seed: 32 crypto bytes per attempt of a lobby edit that may '
+            + 'deal (drawDealSeed), handed to table_ready / table_add_bot and saved to '
+            + 'games.game_seed when the edit deals, so the game replays from it; tests pin '
+            + 'it with __setTableDealSeedOverride.',
+    },
+    {
+        rule: 'random-uuid',
+        file: 'server/impls/supabase/functions/create/index.ts',
+        calls: 1,
+        reason:
+            'The game id, which is also the code a player shares to join, so it must be '
+            + 'unguessable. Part of "seeding a live game", not a defect. CAVEAT: it is '
+            + 'randomUUID().slice(0, 6) - 24 bits, which collides at a few thousand live '
+            + 'games. Widen it; do not derive it.',
     },
     {
         rule: 'clock',

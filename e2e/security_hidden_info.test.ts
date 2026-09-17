@@ -14,9 +14,10 @@
 //
 // Viewers: every seated human, a signed-in stranger (spectator), and anon.
 //
-// Ground truth is the kernel's UNMASKED state (games.state through
-// deserializeGameState) plus the set of cards that have ever been public (every
-// card named by a committed non-DRAW session log, archived by a test-only
+// Ground truth is the kernel's UNMASKED state (games.state and games.roster,
+// loaded into the fixtures' C Table and read through the generated accessors,
+// e2e/helpers/table_play.ts) plus the set of cards that have ever been public
+// (every card named by a committed non-DRAW session log, archived by a test-only
 // trigger so the end-of-game log wipe cannot hide one).
 //
 // Each payload is checked three independent ways, because a decoder only proves
@@ -32,19 +33,22 @@
 //      re-serialized for the same viewer (wasm_view_serialize). A masked board
 //      is a fixed point of that round trip; a real card in a hidden slot comes
 //      back as 0xFE, a stray trailing byte is not re-emitted, a hidden
-//      awaiting-attack flag comes back 0. Every envelope is also re-encoded from
-//      its decoded parts (encodeGameResponse) and must reproduce its bytes, and
-//      every event stream is walked to its last byte, so no byte goes
-//      unaccounted for. Event card bytes must be 0xFE or a card the viewer may
-//      know; another seat's DEAL/REFILL may name only the face-up trump.
+//      awaiting-attack flag comes back 0. Every envelope must also be byte for
+//      byte the envelope the kernel writes for that viewer from the stored row
+//      at the envelope's version (table_envelope), and every realtime push (the
+//      kernel's as3 payload: the event sequence, a flags byte, the roster
+//      trailer when the roster changed) is walked to its last byte, so no byte
+//      goes unaccounted for. Event card bytes must be 0xFE or a card the viewer
+//      may know; another seat's DEAL/REFILL may name only the face-up trump.
 //
 //   3. NONINTERFERENCE (the raw scan). A card-byte value scan would false-
 //      positive (a count, a seat or a status is also a byte 0..51), so instead:
 //      before a step, the cards the viewer cannot see are rotated among their
 //      slots (other seats' hands and the deck; the viewer's own hand, the cards
 //      the viewer will draw, the acting seats' hands, the table and the trump
-//      are pinned so the step is the same step), the rotated state is committed
-//      in place of the real one, the IDENTICAL request is replayed, and every
+//      are pinned so the step is the same step), the rotated state (sealed by the
+//      kernel, table_seal) is committed in place of the real one, the IDENTICAL
+//      request is replayed, and every
 //      payload that viewer receives must be byte-identical to the real run's.
 //      Any byte - in any field, of any format, decoded by anything or nothing -
 //      that depends on a hidden card differs between the two worlds. The only
@@ -59,33 +63,30 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, uuid, pgPool, broadcastLog } from './harness.ts';
 import { settle, tokenFor, postJson, postPacked, EdgeResponse } from './helpers/edge.ts';
-import { loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
 import { lockedBotLoop } from '../server/impls/supabase/functions/_shared/adapter/bot_actions.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
-import {
-    __setDealSeedOverride, __setEngineClock, deserializeGameState, serializeGameState,
-} from '../sdk/ts/wasm/engine.ts';
+import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { loadWasmGz } from '../sdk/ts/wasm/wasm_asset.ts';
-import { AwireMove, encodeAction, encodeActionRequest, wireCard } from '../sdk/ts/wire/awire.ts';
-import { decodePackedGame, encodeGameResponse } from '../sdk/ts/wire/view.ts';
+import { encodeActionRequest, wireCard } from '../sdk/ts/wire/awire.ts';
+import { decodePackedGame } from '../sdk/ts/wire/view.ts';
 import { decodePackedRoster } from '../sdk/ts/wire/roster.ts';
 import { decodeEventWire } from '../sdk/ts/wire/evwire.ts';
 import { decodeLogs } from '../sdk/ts/wire/logwire.ts';
 import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
-import { bytesToHex, hexToBytes } from '../server/api/common/replay/codec.ts';
-import { legalMovesFor } from './dispatch.ts';
+import * as L from '../sdk/ts/gen/game_layout.bots.ts';
+import { fixtureTable } from './helpers/table_fixture.ts';
+import { legalMoves, readTable, rebuild, type BoardState, type PlayCard } from './helpers/table_play.ts';
 import { suiteRng } from './helpers/rng.ts';
-import {
-    ANIMATION_EVENT_TYPE, Card, Game, GAME_STATUS, LOG_TYPE, PersonalGame,
-} from '../server/api/core/types.ts';
+import { ANIMATION_EVENT_TYPE, LOG_TYPE, PersonalGame } from '../server/api/core/types.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 
 const rng = suiteRng('security_hidden_info');
 const HIDDEN = 0xfe;
 const NONE = 0xff;
-const id = (c: Card) => wireCard(c);
+const id = (c: PlayCard) => wireCard(c);
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
+const hexToBytes = (h: string) => Uint8Array.from(Buffer.from(h.replace(/^\\x/, ''), 'hex'));
 
 // ---- the kernel's masked importer, in its own instance ------------------------
 // A separate bots.wasm instance, so probing a payload never disturbs the game the
@@ -162,20 +163,23 @@ const spectatorRow = (gameId: string, userId: string) => asRole('authenticated',
 
 // ---- ground truth -----------------------------------------------------------------
 
-interface Truth { status: string; game: Game | null; seatOf: Map<string, number> }
+interface Truth {
+    /** The status column. */
+    status: string;
+    /** The dealt board, read by the kernel; null for a lobby (or no row). */
+    board: BoardState | null;
+    /** The stored row as the kernel reads it (lobby or dealt); null when the row is gone. */
+    row: BoardState | null;
+    seatOf: Map<string, number>;
+    version: number;
+}
 
 async function truthOf(t: Table): Promise<Truth> {
-    const { rows } = await pgPool.query('SELECT status, state, players, good_players, good_timestamp FROM games WHERE id=$1', [t.gameId]);
-    const row = rows[0];
-    const seatOf = new Map<string, number>((row.players as { player_id: string }[]).map((p, i) => [p.player_id, i]));
-    if (!row.state || row.status === GAME_STATUS.WAITING) return { status: row.status, game: null, seatOf };
-    const game = deserializeGameState(hexToBytes(row.state), {
-        id: t.gameId, name: '', version: 0, deck_length: 0,
-        players: row.players.map((p: { player_id: string; name: string; is_ai: boolean }) =>
-            ({ player_id: p.player_id, name: p.name, is_ai: p.is_ai, strategy_key: p.is_ai ? 'random' : 'human' })),
-        good_players: row.good_players ?? [], good_timestamp: row.good_timestamp === null ? null : Number(row.good_timestamp),
-    });
-    return { status: row.status, game, seatOf };
+    const row = await readTable(t.gameId);
+    if (!row) return { status: 'deleted', board: null, row: null, seatOf: new Map(), version: 0 };
+    const seatOf = new Map(row.seats.map((s, i) => [s.id, i] as const));
+    const dealt = row.status !== L.GAME_STATUS_WAITING;
+    return { status: row.statusColumn, board: dealt ? row : null, row, seatOf, version: row.version };
 }
 
 // Every card a committed session log has named face up, except DRAW records
@@ -224,7 +228,7 @@ async function receivedBy(t: Table, v: Viewer, cap: Capture): Promise<Record<str
 
 // ---- the three checks for one viewer --------------------------------------------------
 
-const cardsOf = (g: Game | null, seat: number) => (g && seat >= 0 ? g.players[seat].hand.map(id) : []);
+const cardsOf = (b: BoardState | null, seat: number) => (b && seat >= 0 ? b.seats[seat].hand.map(id) : []);
 
 function checkViewEnvelope(t: Table, bytes: Uint8Array, v: Viewer, seat: number, pre: Truth, post: Truth, what: string) {
     t.counts.views++;
@@ -238,15 +242,24 @@ function checkViewEnvelope(t: Table, bytes: Uint8Array, v: Viewer, seat: number,
     const roster = decodePackedRoster(bytes, 11 + viewLen);
     assert.ok(roster, `${what}: the roster trailer decodes`);
     assert.equal(roster!.next, bytes.length, `${what}: no bytes after the roster trailer`);
-    assert.equal(hex(encodeGameResponse(d!.version, seat, roster!.roster, blob)), hex(bytes),
-        `${what}: the envelope is exactly its decoded parts`);
     assert.equal(blob[1], seat < 0 ? 0xff : seat, `${what}: the view blob is written for seat ${seat}`);
     assertMaskedFixedPoint(blob.subarray(2), seat, what);
+    // Every byte is the kernel's own envelope for this viewer, from the stored row,
+    // at the version the envelope carries (the rows and responses are the final
+    // commit's: a step's post state).
+    if (post.row && d!.version === post.version) {
+        const table = fixtureTable();
+        assert.equal(table.load(post.row.state, post.row.roster), L.TABLE_OK, `${what}: the stored row loads`);
+        const want = table.envelope(t.gameId, seat, d!.version);
+        assert.ok(want instanceof Uint8Array, `${what}: table_envelope`);
+        assert.equal(hex(bytes), hex(want), `${what}: the envelope is byte for byte the kernel's for ${viewerName(v)}`);
+        t.counts.exactEnvelopes++;
+    }
 
     // 1. decode: exactly the viewer's own hand, the public board, nothing more.
     const g = d!.game;
     const self = (g as PersonalGame).self;
-    const truth = post.game;
+    const truth = post.board;
     if (seat < 0) assert.equal(self, undefined, `${what}: a spectator view has no self`);
     if (!truth) {
         assert.equal(g.deck_length, 0, `${what}: a lobby has no deck`);
@@ -258,10 +271,10 @@ function checkViewEnvelope(t: Table, bytes: Uint8Array, v: Viewer, seat: number,
         assert.deepEqual(self!.hand.map(id), cardsOf(truth, seat), `${what}: own hand is the real hand`);
         t.counts.ownCards += self!.hand.length;
     }
-    g.players.forEach((p, i) => assert.equal(p.hand_length, truth.players[i].hand.length, `${what}: seat ${i} hand count`));
+    g.players.forEach((p, i) => assert.equal(p.hand_length, truth.seats[i].hand.length, `${what}: seat ${i} hand count`));
     assert.equal(g.deck_length, truth.deck.length, `${what}: deck count`);
-    assert.deepEqual(g.flipped, truth.flipped, `${what}: face-up trump`);
-    assert.deepEqual(g.table_battles, truth.table_battles, `${what}: table`);
+    assert.deepEqual(g.flipped, truth.trump, `${what}: face-up trump`);
+    assert.deepEqual(g.table_battles, truth.battles, `${what}: table`);
 }
 
 // Walk an evwire stream to its last byte, handing back each board and each
@@ -284,20 +297,24 @@ function walkEvwire(b: Uint8Array, what: string) {
     }
     const lenB = take(2);
     const final = take(lenB[0] | (lenB[1] << 8));
-    assert.equal(q, b.length, `${what}: the stream ends where its last board ends`);
-    return { viewer, events, final };
+    // as3: one flags byte, then the roster trailer when the operation changed the roster.
+    const [flags] = take(1);
+    assert.equal(flags & ~1, 0, `${what}: no unknown as3 flag bits`);
+    let roster = null;
+    if (flags & 1) {
+        roster = decodePackedRoster(b, q);
+        assert.ok(roster, `${what}: the announced roster trailer decodes`);
+        q = roster!.next;
+    }
+    assert.equal(q, b.length, `${what}: the payload ends where its last block ends`);
+    return { viewer, events, final, roster: roster?.roster ?? null };
 }
 
 function checkEventPayload(t: Table, payload: Record<string, unknown>, v: Viewer, seat: number,
                            pre: Truth, post: Truth, roster: { id: string; name: string; players: { player_id: string; name: string; is_ai: boolean }[] }, what: string) {
     t.counts.streams++;
-    for (const k of Object.keys(payload)) assert.ok(['t', 's', 'v', 'b', 'r', 'm'].includes(k), `${what}: unexpected envelope key ${k}`);
-    if (payload.r) {
-        const r = payload.r as { name: string; players: Record<string, unknown>[] };
-        assert.deepEqual(Object.keys(r).sort(), ['name', 'players'], `${what}: roster extra carries only name + players`);
-        for (const p of r.players) assert.deepEqual(Object.keys(p).sort(), ['is_ai', 'name', 'player_id'], `${what}: roster seat keys`);
-    }
-    if (payload.m) for (const m of payload.m as (string | null)[]) assert.ok(m === null || typeof m === 'string', `${what}: message is text`);
+    // The JSON envelope carries the kernel's bytes and nothing else (plan Q7: no r / m extras).
+    assert.deepEqual(Object.keys(payload).sort(), ['b', 's', 't', 'v'], `${what}: envelope keys`);
 
     const b = base64ToBytes(payload.b as string);
     const walked = walkEvwire(b, what);
@@ -306,7 +323,12 @@ function checkEventPayload(t: Table, payload: Record<string, unknown>, v: Viewer
     assertMaskedFixedPoint(walked.final, seat, `${what} trailer board`);
 
     // Which cards may this viewer see named?
-    const may = new Set<number>([...t.everPublic, ...cardsOf(pre.game, seat), ...cardsOf(post.game, seat)]);
+    const may = new Set<number>([...t.everPublic, ...cardsOf(pre.board, seat), ...cardsOf(post.board, seat)]);
+    if (walked.roster) {
+        // A roster block announces seats and names, never a card or a hand.
+        assert.deepEqual(walked.roster.players.map((p) => p.player_id), roster.players.map((p) => p.player_id), `${what}: the announced roster is the table's`);
+        t.counts.rosterBlocks++;
+    }
     if (t.trumpId !== null) may.add(t.trumpId);
     const decoded = decodeEventWire(b, roster, { preGood: [], prevGoodTs: null, now: () => 0 });
     assert.ok(decoded, `${what}: the client decodes the stream`);
@@ -332,16 +354,16 @@ function checkEventPayload(t: Table, payload: Record<string, unknown>, v: Viewer
 function checkAnonRow(t: Table, row: Record<string, unknown> | null, post: Truth, what: string) {
     if (!row) return;
     t.counts.anonRows++;
-    const truth = post.game;
+    const truth = post.board;
     const allowed = new Set<number>();
-    if (truth?.flipped) allowed.add(id(truth.flipped));
-    for (const bt of truth?.table_battles ?? []) { allowed.add(id(bt.attack)); if (bt.defense) allowed.add(id(bt.defense)); }
+    if (truth?.trump) allowed.add(id(truth.trump));
+    for (const bt of truth?.battles ?? []) { allowed.add(id(bt.attack)); if (bt.defense) allowed.add(id(bt.defense)); }
     const walk = (x: unknown, path: string) => {
         if (Array.isArray(x)) { x.forEach((y, i) => walk(y, `${path}[${i}]`)); return; }
         if (x && typeof x === 'object') {
             const o = x as Record<string, unknown>;
             if (typeof o.suit === 'number' && typeof o.value === 'number' && o.suit >= 0) {
-                assert.ok(allowed.has(id(o as unknown as Card)), `${what}: anon column ${path} names a card that is not on the public board`);
+                assert.ok(allowed.has(id(o as unknown as PlayCard)), `${what}: anon column ${path} names a card that is not on the public board`);
             }
             for (const k of Object.keys(o)) {
                 assert.ok(!/hand$|deck$|^cards$|seed|state/.test(k) || k === 'hand_length' || k === 'deck_length', `${what}: anon column ${path}.${k}`);
@@ -354,9 +376,11 @@ function checkAnonRow(t: Table, row: Record<string, unknown> | null, post: Truth
 }
 
 async function checkAllViewers(t: Table, cap: Capture, pre: Truth, post: Truth, label: string) {
-    const { rows } = await pgPool.query('SELECT id, name, players FROM games WHERE id=$1', [t.gameId]);
-    if (rows.length === 0) return;
-    const roster = { id: rows[0].id, name: rows[0].name, players: rows[0].players };
+    if (!post.row) return;
+    const roster = {
+        id: t.gameId, name: post.row.title,
+        players: post.row.seats.map((s) => ({ player_id: s.id, name: s.name, is_ai: s.brain !== '' })),
+    };
     const viewers: Viewer[] = [...t.humans.map(h => ({ kind: 'human', h }) as Viewer), { kind: 'spectator', h: t.spectator }, { kind: 'anon' }];
     for (const v of viewers) {
         const seat = v.kind === 'human' ? (post.seatOf.get(v.h.id) ?? -1) : -1;
@@ -415,24 +439,23 @@ async function restoreRows(gameId: string, snap: Rows, stateOverride?: string) {
 // (what the viewer draws this step), and the whole deck if `pinDeck` (a bot
 // cycle may draw and then act on what it drew). Table and trump are never in a
 // hand or the deck, so they cannot move.
-function rotateHidden(truth: Game, pinSeats: Set<number>, pinCards: Set<number>, pinDeck: boolean): { game: Game; moved: number } {
-    const slots: { get: () => Card; set: (c: Card) => void }[] = [];
-    truth.players.forEach((p, s) => {
+function rotateHidden(truth: BoardState, pinSeats: Set<number>, pinCards: Set<number>, pinDeck: boolean): { board: BoardState; moved: number } {
+    const board: BoardState = structuredClone(truth);
+    const slots: { get: () => PlayCard; set: (c: PlayCard) => void }[] = [];
+    board.seats.forEach((p, s) => {
         if (pinSeats.has(s)) return;
         p.hand.forEach((c, j) => { if (!pinCards.has(id(c))) slots.push({ get: () => p.hand[j], set: (x) => { p.hand[j] = x; } }); });
     });
     if (!pinDeck) {
-        truth.deck.forEach((c, j) => { if (!pinCards.has(id(c))) slots.push({ get: () => truth.deck[j], set: (x) => { truth.deck[j] = x; } }); });
+        board.deck.forEach((c, j) => { if (!pinCards.has(id(c))) slots.push({ get: () => board.deck[j], set: (x) => { board.deck[j] = x; } }); });
     }
     const cards = slots.map(s => s.get());
-    if (cards.length < 2) return { game: truth, moved: 0 };
+    if (cards.length < 2) return { board, moved: 0 };
     slots.forEach((s, i) => s.set(cards[(i + 1) % cards.length]));
-    return { game: truth, moved: cards.length };
+    return { board, moved: cards.length };
 }
 
 // ---- steps ----------------------------------------------------------------------
-
-let clock = 1_900_000_000_000;
 
 interface Step {
     label: string;
@@ -445,7 +468,6 @@ interface Step {
 
 async function runCaptured(step: Step): Promise<Capture> {
     const from = broadcastLog.length;
-    __setEngineClock(() => clock);
     const response = await step.run();
     await settle();
     return {
@@ -463,16 +485,15 @@ async function dropBotLease(gameId: string) {
 }
 
 async function doStep(t: Table, step: Step, noninterference: boolean): Promise<Truth> {
-    clock += 1000;
     const pre = await truthOf(t);
     const s0 = await snapshotRows(t.gameId);
     const capA = await runCaptured(step);
     const post = await truthOf(t);
     await refreshEverPublic(t);
-    if (post.game?.flipped && t.trumpId === null) t.trumpId = id(post.game.flipped);
+    if (post.board?.trump && t.trumpId === null) t.trumpId = id(post.board.trump);
     await checkAllViewers(t, capA, pre, post, `${t.gameId} ${step.label}`);
 
-    if (!noninterference || !pre.game || post.status !== GAME_STATUS.PLAYING) return post;
+    if (!noninterference || !pre.board || post.status !== 'playing') return post;
 
     // Replay the step in a world where every card this viewer cannot see sits in
     // a different slot; everything the viewer receives must be byte-identical.
@@ -484,17 +505,18 @@ async function doStep(t: Table, step: Step, noninterference: boolean): Promise<T
     for (const v of viewers) {
         const seat = v.kind === 'human' ? (pre.seatOf.get(v.h.id) ?? -1) : -1;
         const pinSeats = new Set<number>([...actors, ...(seat >= 0 ? [seat] : [])]);
-        const drawn = new Set<number>(seat >= 0 ? cardsOf(post.game, seat).filter(c => !cardsOf(pre.game, seat).includes(c)) : []);
+        const drawn = new Set<number>(seat >= 0 ? cardsOf(post.board, seat).filter(c => !cardsOf(pre.board, seat).includes(c)) : []);
         // A fresh copy of the PRE state to rotate.
         await restoreRows(t.gameId, s0);
-        const fresh = (await truthOf(t)).game!;
-        // The twin is built by the kernel's own codec; unrotated it must be the real blob.
-        assert.equal(hex(serializeGameState((await truthOf(t)).game!)), hex(hexToBytes(s0.games.state)), 'the twin codec is faithful');
+        const fresh = (await truthOf(t)).board!;
+        // The twin is sealed by the kernel (table_seal); unrotated it must be the real blob.
+        const realHex = String(s0.games.state).replace(/^\\x/, '');
+        assert.equal(hex(rebuild(fresh).build().state), realHex, 'the twin builder is faithful');
         const twin = rotateHidden(fresh, pinSeats, drawn, step.pinDeck);
         if (twin.moved < 2) continue;
-        const twinBlob = serializeGameState(twin.game);
-        assert.notEqual(hex(twinBlob), hex(hexToBytes(s0.games.state)), 'the twin world really differs');
-        await restoreRows(t.gameId, s0, bytesToHex(twinBlob));
+        const twinBlob = rebuild(twin.board).build().state;
+        assert.notEqual(hex(twinBlob), realHex, 'the twin world really differs');
+        await restoreRows(t.gameId, s0, `\\x${hex(twinBlob)}`);
         const capB = await runCaptured(step);
         assert.deepEqual(await receivedBy(t, v, capB), real.get(v),
             `${t.gameId} ${step.label}: what ${viewerName(v)} receives depends on ${twin.moved} cards it cannot see (noninterference)`);
@@ -521,16 +543,13 @@ async function human(name: string): Promise<Human> {
     return { id: hid, name, tok: await tokenFor(hid, name) };
 }
 
-const toAwire = (m: { type: string; cards?: Card[]; attack_cards?: Card[] }): AwireMove =>
-    ({ kind: m.type, cards: m.cards, attack_cards: m.attack_cards } as AwireMove);
-
 async function playTable(nHumans: number, nBots: number, dealSeed: number): Promise<Table> {
     const humans: Human[] = [];
     for (let i = 0; i < nHumans; i++) humans.push(await human(`h${i}x${nHumans + nBots}`));
     const bots = await seatBots(nBots);
     const t: Table = {
         gameId: '', humans, bots, spectator: await human(`spec${nHumans + nBots}`), trumpId: null, everPublic: new Set(),
-        counts: { views: 0, streams: 0, anonRows: 0, ownCards: 0, namedCards: 0, otherDraws: 0, twins: 0, rotated: 0, humanSteps: 0, botSteps: 0 },
+        counts: { views: 0, exactEnvelopes: 0, streams: 0, rosterBlocks: 0, anonRows: 0, ownCards: 0, namedCards: 0, otherDraws: 0, twins: 0, rotated: 0, humanSteps: 0, botSteps: 0 },
     };
 
     // create - the response is the creator's first payload
@@ -552,33 +571,33 @@ async function playTable(nHumans: number, nBots: number, dealSeed: number): Prom
     for (let i = 0; i < Math.max(nHumans, nBots); i++) { if (humans[i]) order.push(humans[i].id); if (bots[i]) order.push(bots[i]); }
     await doStep(t, meta(humans[0], { type: 'rearrange-players', new_order: order }, 'rearrange-players'), false);
 
-    __setDealSeedOverride(Uint8Array.from({ length: 32 }, (_, i) => (dealSeed * 131 + i * 17) & 0xff));
+    __setTableDealSeedOverride(Uint8Array.from({ length: 32 }, (_, i) => (dealSeed * 131 + i * 17) & 0xff));
     for (const h of humans) await doStep(t, meta(h, { type: 'start' }, `start ${h.name}`), false);
     let truth = await truthOf(t);
-    assert.equal(truth.status, GAME_STATUS.PLAYING, `${t.gameId}: the table dealt`);
+    assert.equal(truth.status, 'playing', `${t.gameId}: the table dealt`);
 
     const isBot = new Set(bots);
-    for (let n = 0; n < 600 && truth.status === GAME_STATUS.PLAYING; n++) {
-        const g = await loadCompleteGame(t.gameId);
-        const humanMoves = legalMovesFor(g, pid => !isBot.has(pid));
-        const botMoves = legalMovesFor(g, pid => isBot.has(pid));
+    for (let n = 0; n < 600 && truth.status === 'playing'; n++) {
+        const g = truth.board!;
+        const humanMoves = legalMoves(g, s => !isBot.has(s.id));
+        const botMoves = legalMoves(g, s => isBot.has(s.id));
         const humanFirst = humanMoves.length > 0 && (botMoves.length === 0 || rng.next() < 0.6);
         if (humanFirst) {
             // Prefer real moves; `good` only now and then, or when it is all there is.
-            const real = humanMoves.filter(m => m.move.type !== 'good');
+            const real = humanMoves.filter(m => m.kind !== 'good');
             const pool = real.length > 0 && rng.next() < 0.85 ? real : humanMoves;
             const pm = rng.pick(pool);
             const who = humans.find(h => h.id === pm.playerId)!;
-            const seat = g.players.findIndex(p => p.player_id === pm.playerId);
+            const version = truth.version;
             t.counts.humanSteps++;
             truth = await doStep(t, {
-                label: `#${n} ${who.name} ${pm.move.type}`, requester: who,
-                run: () => postPacked(who.tok, encodeActionRequest(t.gameId, encodeAction(toAwire(pm.move)), Number(g.version ?? 0))),
-                actors: () => [seat], pinDeck: false,
+                label: `#${n} ${who.name} ${pm.kind}`, requester: who,
+                run: () => postPacked(who.tok, encodeActionRequest(t.gameId, pm.wire, version)),
+                actors: () => [pm.seat], pinDeck: false,
             }, true);
         } else if (botMoves.length > 0) {
             await dropBotLease(t.gameId);
-            const botSeats = g.players.map((p, i) => (p.is_ai ? i : -1)).filter(i => i >= 0);
+            const botSeats = g.seats.map((p, i) => (p.brain ? i : -1)).filter(i => i >= 0);
             t.counts.botSteps++;
             truth = await doStep(t, {
                 label: `#${n} bot cycle`, requester: null,
@@ -590,7 +609,6 @@ async function playTable(nHumans: number, nBots: number, dealSeed: number): Prom
             break;
         }
     }
-    __setEngineClock(null);
     return t;
 }
 
@@ -602,7 +620,7 @@ function assertExercised(t: Table, label: string) {
         for (const r of rows) if (r.logs) for (const l of decodeLogs(hexToBytes(r.logs), t.gameId, [])) kinds.add(l.log_type);
         const c = t.counts;
         const { rows: st } = await pgPool.query('SELECT status FROM games WHERE id=$1', [t.gameId]);
-        assert.equal(st[0].status, GAME_STATUS.GAME_OVER, `${label}: played to the end, so the final payloads were checked too`);
+        assert.equal(st[0].status, 'game_over', `${label}: played to the end, so the final payloads were checked too`);
         assert.ok(kinds.has(LOG_TYPE.PICKUP), `${label}: the game included a pickup (${[...kinds]})`);
         assert.ok(kinds.has(LOG_TYPE.DISCARD), `${label}: the game included a discard (${[...kinds]})`);
         assert.ok(kinds.has(LOG_TYPE.DRAW), `${label}: the game included draws`);
@@ -611,6 +629,8 @@ function assertExercised(t: Table, label: string) {
         assert.ok(c.otherDraws > 0, `${label}: another seat's draws reached a viewer (${c.otherDraws})`);
         assert.ok(c.twins >= c.humanSteps, `${label}: noninterference replays ran (${c.twins})`);
         assert.ok(c.rotated > c.twins * 2, `${label}: and moved real cards (${c.rotated})`);
+        assert.ok(c.exactEnvelopes > c.views / 2, `${label}: most envelopes were held to the kernel's bytes (${c.exactEnvelopes} of ${c.views})`);
+        assert.ok(c.rosterBlocks > 0, `${label}: as3 roster blocks were walked (${c.rosterBlocks})`);
     })();
 }
 

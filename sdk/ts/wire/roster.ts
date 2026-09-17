@@ -168,6 +168,7 @@ function writeNames(w: Writer, names: string[]) {
 }
 
 /** The packed roster - everything the JSON island carried, in bytes. */
+// retired by Phase 4b; deleted in Phase 8 (the server writes the trailer in C: roster_trailer_write)
 export function encodePackedRoster(roster: PackedRoster): Uint8Array {
     const status = ROSTER_STATUS.indexOf(roster.status);
     if (status < 0) throw new Error(`roster: unknown status ${roster.status}`);

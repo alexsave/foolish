@@ -15,10 +15,15 @@
  *        seat and the spectator, the envelope today's server cached in
  *        player_views / spectator_views.
  *
- * Then today's server, unchanged, runs its lobby handlers on the expanded schema
- * and the bridge trigger keeps roster, needs_bots and the lobby blob in step with
- * what it writes; the kernel writers (commit_table / create_table) take a row
- * over, and a legacy commit_game on it is refused.
+ * Then the pre-4b server's writes land on the expanded schema and the bridge
+ * trigger keeps roster, needs_bots and the lobby blob in step with them; the
+ * kernel writers (commit_table / create_table) take a row over, and a legacy
+ * commit_game on it is refused. The pre-4b server is the one still deployed
+ * while 4a is live, but Phase 4b deleted its code from this tree, so its writes
+ * are the commit_game calls its lobby handlers made in this very suite,
+ * recorded before the deletion (e2e/fixtures/pre_table/legacy_commits.jsonl, one
+ * call per line with the test it belongs to) and replayed here as SQL, exactly as
+ * PostgREST binds them.
  *
  * INTENTIONAL DIVERGENCES, each decided in the plan and asserted explicitly:
  *   Q1  The envelope's roster trailer. Today's server writes the good ids in the
@@ -41,8 +46,6 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PoolClient } from 'pg';
 import { applyPlatformShim, pgPool } from './harness.ts';
-import { commitGame, executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
-import { handleMetaAction } from '../server/impls/supabase/functions/_shared/adapter/meta_actions.ts';
 import { createServerTable, TableProducts } from '../sdk/ts/table/server_table.ts';
 import {
     GAME_INVALID_LOBBY_CARDS, GAME_STATUS_GAME_OVER, GAME_STATUS_PLAYING, GAME_STATUS_WAITING, TABLE_OK,
@@ -197,10 +200,25 @@ async function inRolledBackTx<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> 
     }
 }
 
-const runMeta = (gameId: string, userId: string, userName: string, body: object) =>
-    executeWithGameLock(gameId, async (game) => handleMetaAction(
-        { user: { id: userId } as never, user_name: userName, body: { game_id: gameId, ...body }, game, reqId: 'expand' } as never),
-    'expand', false);
+// The pre-4b server's commit_game calls, in the order its handlers made them.
+interface LegacyCall { name: string; params: Record<string, unknown>; test: string }
+const LEGACY: LegacyCall[] = readFileSync(join(FIXTURE, 'legacy_commits.jsonl'), 'utf8')
+    .split('\n').filter(Boolean).map((l) => JSON.parse(l));
+const legacyCursor = new Map<string, number>();
+
+/** Replays the next recorded commit_game call of `test`; resolves to its JSON result, rejects on a RAISE. */
+async function legacyCommit(test: string, gameId: string): Promise<{ status: string }> {
+    const calls = LEGACY.filter((c) => c.test === test);
+    const i = legacyCursor.get(test) ?? 0;
+    legacyCursor.set(test, i + 1);
+    const call = calls[i];
+    assert.ok(call, `${test}: a recorded legacy call #${i}`);
+    assert.equal(call.params.p_game_id, gameId, `${test}: recorded call #${i} is for ${gameId}`);
+    const keys = Object.keys(call.params);
+    const r = await pgPool.query(`SELECT ${call.name}(${keys.map((k, j) => `${k} => $${j + 1}`).join(',')}) AS result`,
+        keys.map((k) => { const v = call.params[k]; return v !== null && typeof v === 'object' ? JSON.stringify(v) : v; }));
+    return r.rows[0].result;
+}
 
 /** After a legacy write: the bridge kept roster, needs_bots and the lobby blob in step with the JSONB. */
 async function assertInStep(gameId: string, label: string): Promise<Row> {
@@ -371,46 +389,47 @@ if (!process.env.VALIDATION_ONLY) {
         assert.deepEqual(env, plainEnv, 'the spectator sees no goods in the lobby');
     });
 
-    test('today\'s lobby handlers keep roster, needs_bots and the lobby blob in step on the expanded schema', async () => {
+    test('the pre-4b lobby handlers\' writes keep roster, needs_bots and the lobby blob in step on the expanded schema', async () => {
+        const T = "today's lobby handlers keep roster, needs_bots and the lobby blob in step on the expanded schema";
         const id = idOf('lobby_1_seat');   // alice alone
-        await runMeta(id, DMITRY, 'Дмитрий', { type: 'join' });
+        await legacyCommit(T, id);   // { type: 'join' }
         let r = await assertInStep(id, 'join');
         assert.deepEqual(r.players.map((p) => p.player_id), [ALICE, DMITRY]);
 
-        await runMeta(id, ALICE, 'alice', { type: 'add-bot', bot_id: CORDITE_BOT });
+        await legacyCommit(T, id);   // { type: 'add-bot', bot_id: CORDITE_BOT }
         r = await assertInStep(id, 'add-bot');
         assert.equal(r.players.length, 3);
 
-        await runMeta(id, DMITRY, 'Дмитрий', { type: 'update-name', new_name: '  Новое имя 🃏 за столом  ' });
+        await legacyCommit(T, id);   // { type: 'update-name', new_name: '  Новое имя 🃏 за столом  ' }
         r = await assertInStep(id, 'rename');
         assert.equal(r.name, 'Новое имя 🃏 за столом');
 
-        await runMeta(id, ALICE, 'alice', { type: 'rearrange-players', new_order: [CORDITE_BOT, DMITRY, ALICE] });
+        await legacyCommit(T, id);   // { type: 'rearrange-players', new_order: [CORDITE_BOT, DMITRY, ALICE] }
         r = await assertInStep(id, 'reseat');
         assert.deepEqual(r.players.map((p) => p.player_id), [CORDITE_BOT, DMITRY, ALICE]);
 
-        await runMeta(id, ALICE, 'alice', { type: 'exit', bot_id: CORDITE_BOT });
+        await legacyCommit(T, id);   // { type: 'exit', bot_id: CORDITE_BOT }
         r = await assertInStep(id, 'exit (a bot)');
-        await runMeta(id, ALICE, 'alice', { type: 'exit', player_id: DMITRY });
+        await legacyCommit(T, id);   // { type: 'exit', player_id: DMITRY }
         r = await assertInStep(id, 'exit (a player)');
         assert.deepEqual(r.players.map((p) => p.player_id), [ALICE]);
 
         // Through the deal: the dealt commit's blob is the kernel's, and a bot seat IN sets needs_bots.
-        await runMeta(id, ALICE, 'alice', { type: 'start' });
-        await runMeta(id, ALICE, 'alice', { type: 'add-bot', bot_id: RANDOM_BOT });
+        await legacyCommit(T, id);   // { type: 'start' }
+        await legacyCommit(T, id);   // { type: 'add-bot', bot_id: RANDOM_BOT }
         r = await assertInStep(id, 'add-bot deals');
         assert.equal(r.status, 'playing');
         assert.equal(r.needs_bots, true);
     });
 
-    test('today\'s server still runs a lobby whose JSON held a round\'s goods, trump and discard', async () => {
+    test('the pre-4b server still runs a lobby whose JSON held a round\'s goods, trump and discard', async () => {
         // Today's server builds a lobby's views by marshalling the JSONB board
         // into the kernel, and the kernel refuses a lobby holding any of those
         // (GAME_INVALID_LOBBY_CARDS). So the backfill empties them in the JSONB
         // too, exactly as game_reset_to_lobby empties them in C.
         const r0 = await rowOf(GOODS_LOBBY);
         assert.deepEqual([r0.good_players, r0.good_timestamp], [[], null], 'no goods left in the JSONB lobby');
-        await runMeta(GOODS_LOBBY, DMITRY, 'Дмитрий', { type: 'join' });
+        await legacyCommit("today's server still runs a lobby whose JSON held a round's goods, trump and discard", GOODS_LOBBY);   // a join
         const r = await assertInStep(GOODS_LOBBY, 'join a lobby that held goods');
         assert.deepEqual(r.players.map((p) => p.player_id), [ALICE, DMITRY]);
     });
@@ -422,7 +441,7 @@ if (!process.env.VALIDATION_ONLY) {
         const name = `${long}🂡`;
         assert.equal(Buffer.byteLength(name), 66);
         await pgPool.query(`INSERT INTO auth.users (id, raw_user_meta_data) VALUES ($1, $2)`, [user, JSON.stringify({ username: name })]);
-        await runMeta(id, user, name, { type: 'join' });
+        await legacyCommit('a username over 64 bytes still joins during the bridge, cut as the kernel cuts it', id);   // the join
         const r = await rowOf(id);
         assert.equal(r.players.at(-1)!.name, name, 'the JSONB keeps the whole name');
         loadRow(r);
@@ -477,16 +496,10 @@ if (!process.env.VALIDATION_ONLY) {
         const members = await pgPool.query('SELECT player_id::text FROM player_hands WHERE game_id = $1 ORDER BY 1', [id]);
         assert.deepEqual(members.rows.map((m) => m.player_id), [ALICE, DMITRY].sort());
 
-        // The in-flight old request: today's handler reloads the JSONB and commits. Refused, row untouched.
-        const quiet = console.error;
-        console.error = () => {};   // commitGame logs the RPC error it rethrows
-        try {
-            await assert.rejects(runMeta(id, DMITRY, 'Дмитрий', { type: 'update-name', new_name: 'stale' }),
-                /owned by the table writers \(writer_gen 2\)/);
-            await assert.rejects(commitGame(await loadCompleteGame(id), next), /writer_gen 2/);
-        } finally {
-            console.error = quiet;
-        }
+        // The in-flight old request: the pre-4b handler reloaded the JSONB and committed. Refused, row untouched.
+        const T = 'the kernel writers take a row over, and a legacy commit_game on it is refused';
+        await assert.rejects(legacyCommit(T, id), /owned by the table writers \(writer_gen 2\)/);   // an update-name
+        await assert.rejects(legacyCommit(T, id), /writer_gen 2/);   // a commit at the new version
         const after = await rowOf(id);
         assert.equal(after.version, r.version);
         assert.equal(after.roster, r.roster);

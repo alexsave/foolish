@@ -1,7 +1,8 @@
-// Tiny harness around the REAL deployed server code. It only does three things
-// the platform would otherwise do: provide Deno env/globals, seed a game row, and
-// reset the DB. Everything gameplay-related goes through the genuine _shared
-// modules (executeWithGameLock, the action handlers, commit_game, the bot lease).
+// Tiny harness around the REAL deployed server code. It only does what the
+// platform would otherwise do: provide Deno env/globals, a database per test
+// file, and a reset. Everything gameplay-related goes through the genuine
+// _shared modules (table_io's CAS loop over the C Table, commit_table, the bot
+// lease); rows are seeded by the kernel (e2e/helpers/table_db.ts).
 
 // Deno globals the server modules read at import/runtime.
 (globalThis as any).Deno = (globalThis as any).Deno || { env: { get: (k: string) => process.env[k] || 'x' } };
@@ -114,27 +115,8 @@ export async function resetDb(): Promise<void> {
     resetBroadcastLog();
 }
 
-export interface SeedPlayer { id: string; name: string; is_ai: boolean; strategy_key: string }
-
-// Seed a fresh WAITING game with the given players (lobby state, empty hands).
-export async function seedGame(gameId: string, players: SeedPlayer[]): Promise<void> {
-    const c = await pool.connect();
-    try {
-        await c.query('BEGIN');
-        for (const p of players) {
-            if (p.is_ai) await c.query('INSERT INTO bots(id,nickname,strategy_key) VALUES($1,$2,$3) ON CONFLICT (id) DO NOTHING', [p.id, p.name, p.strategy_key]);
-            else await c.query('INSERT INTO auth.users(id) VALUES($1) ON CONFLICT DO NOTHING', [p.id]);
-        }
-        const playersJson = players.map((p) => ({ player_id: p.id, name: p.name, status: 'ready', is_ai: p.is_ai, hand_length: 0, strategy_key: p.strategy_key }));
-        await c.query(
-            `INSERT INTO games(id,name,players,status,power_suit,first_attacker,defender,version)
-             VALUES($1,$2,$3,'waiting',0,0,0,0)`, [gameId, `${gameId}`, JSON.stringify(playersJson)]);
-        for (const p of players) {
-            if (p.is_ai) await c.query('INSERT INTO bot_hands(game_id,bot_id) VALUES($1,$2)', [gameId, p.id]);
-            else await c.query('INSERT INTO player_hands(game_id,player_id) VALUES($1,$2)', [gameId, p.id]);
-        }
-        await c.query('COMMIT');
-    } catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); }
-}
+// Seeding a game is the kernel's: e2e/helpers/table_db.ts seedTable writes a
+// C-built fixture as a kernel-owned row, and e2e/helpers/table_server.ts
+// seedLobby a lobby of given seats (docs/C_GAME_SHAPE_MIGRATION.md Phase 4b).
 
 export const pgPool = pool;

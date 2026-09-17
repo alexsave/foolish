@@ -567,7 +567,11 @@ export function wasmBeliefProbeDump(): BeliefProbeRecord[] {
     const ex = bots();
     const n = ex.wasm_belief_probe_dump();
     const base = ex.wasm_io_ptr();
-    const buf = new Uint8Array(ex.memory.buffer, base, n * 11);
+    return parseBeliefProbe(new Uint8Array(ex.memory.buffer, base, n * 11), n);
+}
+
+/** The records wasm_belief_probe_dump wrote (11 bytes each), from any bots.wasm instance. */
+export function parseBeliefProbe(buf: Uint8Array, n: number): BeliefProbeRecord[] {
     const out: BeliefProbeRecord[] = [];
     for (let i = 0; i < n; i++) {
         const o = i * 11;
