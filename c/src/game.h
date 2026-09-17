@@ -520,7 +520,8 @@ int game_derived_opening(void);
 // definition of that transition (docs/C_CORE_CONSOLIDATION.md F6). Three hosts
 // hand-zeroed this list independently: the server (handleContinue), the web
 // client (clientReconcile.resetToLobby, which had to "match byte-for-byte or
-// the UI snaps"), and iOS was specced to port it a third time.
+// the UI snaps"; the web now asks the kernel, client_table.h CLIENT_EDIT_LOBBY),
+// and iOS was specced to port it a third time.
 //
 // `bot_mask` bit s = seat s is a bot, which resets to READY; humans reset to
 // IDLE. It is a PARAMETER because it cannot be a guess: seat identity

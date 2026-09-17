@@ -5,10 +5,14 @@
 # and the bots build's flags. The same roots are in game_layout.args, so the
 # layout hash bots.wasm is checked against at load covers these readers too.
 # Lines starting with # are dropped; everything else is split on whitespace.
---header client_table.h --header evwire.h --root TableView --root PushEvent --root ViewRules
---snapshot TableView --snapshot PushEvent --snapshot ViewRules --writer TableView --snapshot-only
+--header client_table.h --header evwire.h --header anim_plan.h --root TableView --root PushEvent --root ViewRules
+--root BoardEdit --root ClientConflict --root ConflictVerdicts
+--snapshot TableView --snapshot PushEvent --snapshot ViewRules --snapshot ConflictVerdicts --snapshot BoardEdit --snapshot ClientConflict --writer TableView --snapshot-only
+--writer BoardEdit --writer ClientConflict
+--count BoardEdit.cards=n_cards --count ClientConflict.events=n_events --count ClientConflict.motions=n_motions
+--count ConflictEvent.cards=n_cards --count ConflictVerdicts.verdicts=n
 --count TableView.battles=num_battles --count TableView.seats=num_players
 --count TableView.my_hand=my_hand_count --count TableView.elimination=num_eliminated
 --count TableView.game_id=gid_len --count TableView.title=title_len
 --count ViewSeat.id=id_len --count ViewSeat.name=name_len --count PushEvent.cards=n_cards
---const GAME_STATUS_ --const PLAYER_STATUS_ --const EVW_T_ --const EVW_LOC_ --const EVW_MSG_ --const CLIENT_ --const CARD_NONE_
+--const GAME_STATUS_ --const PLAYER_STATUS_ --const EVW_T_ --const EVW_LOC_ --const EVW_MSG_ --const CLIENT_ --const CARD_NONE_ --const ANIM_DEST_ --const ANIM_CONFLICT_ --const ANIM_EVT_

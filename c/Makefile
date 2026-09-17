@@ -781,7 +781,12 @@ WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_client_push_final -Wl,--export=wasm_client_identity \
   -Wl,--export=wasm_client_identity_begin -Wl,--export=wasm_client_identity_seat \
   -Wl,--export=wasm_client_rules_view_ptr -Wl,--export=wasm_client_rules_ptr \
-  -Wl,--export=wasm_client_view_rules
+  -Wl,--export=wasm_client_view_rules \
+  -Wl,--export=wasm_client_edit_view_ptr -Wl,--export=wasm_client_final_view_ptr \
+  -Wl,--export=wasm_client_board_edit_ptr -Wl,--export=wasm_client_conflict_ptr \
+  -Wl,--export=wasm_client_verdicts_ptr -Wl,--export=wasm_client_validate \
+  -Wl,--export=wasm_client_optimistic_apply -Wl,--export=wasm_client_board_edit \
+  -Wl,--export=wasm_client_rearrange_hand -Wl,--export=wasm_client_conflict_verdicts
 
 # C-backed test fixtures (wasm/wasm_table_api.c, e2e/helpers/table_fixture.ts),
 # bots.wasm ONLY, test-only like WASM_ROSTER_EXPORTS: a test composes a board
@@ -902,8 +907,11 @@ wasm: build/layout/rules.hash
 	@bash ../scripts/wasm_stamp.sh --write
 
 # Client-guards module: game.c ONLY — no legal.c enumeration, no replay.c
-# codec. It backs the browser's UI move-gates (validate-only) and optimistic
-# apply (see src/wasm/clientGuards.ts). The smallest kernel we ship: it exists
+# codec. It backed the browser's UI move-gates (validate-only) until Phase 6b
+# (docs/C_GAME_SHAPE_MIGRATION.md): the web now judges and predicts its moves on
+# its bots.wasm client slot (src/client_table.h client_validate,
+# client_optimistic_apply) and loads no guards.wasm; the module stays for its
+# tests until Phase 8 retires it. The smallest kernel we ship: it exists
 # so the interactive client stops reimplementing the rules in TS (one engine,
 # not two). Same wire layout as rules.wasm; e2e asserts guards==rules parity.
 # Smaller caps than the rules module: the client never imports a session log
@@ -952,7 +960,7 @@ WASM_GUARDS_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk
 # Explicit export allow-list, same rationale as WASM_API_EXPORTS (this
 # replaced --export-all here too: it pinned every internal symbol as a GC
 # root and bloated the name section). A NEW wasm_* guards entry point must be
-# added here or the browser bridge won't see it (clientGuards.ts fails loudly).
+# added here or its tests won't see it.
 # Trimmed to the roots LIVE client code + the guards tests actually reach
 # (see e2e/client_guards.test.ts). Everything dropped here — the snapshot /
 # log-readout exports, wasm_set_seed/io_cap/reject_reason, the awire-apply
@@ -962,9 +970,9 @@ WASM_GUARDS_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk
 # bloated the shipped module. Re-add an export line to revive a capability;
 # the C stays in game.c / wasm_guards_api.c.
 # VALIDATION-ONLY: the kernel optimistic-apply entries (wasm_attack..pickup +
-# wasm_export_state) are dropped. Production optimistic play is the pure-TS
-# overlay (src/state/optimisticOverlay.ts + clientReconcile.ts), NOT this wasm
-# path — applyMove had NO src/ runtime caller, only an e2e test. Removing the
+# wasm_export_state) are dropped. Production optimistic play is bots.wasm's
+# client slot (src/client_table.h), NOT this wasm path — applyMove had NO src/
+# runtime caller, only an e2e test. Removing the
 # apply exports lets wasm-ld drop handle_*'s apply-only wrappers; validation
 # itself still dry-runs handle_* (validate_run), so rules parity is unchanged.
 # Revive the client-side kernel apply by re-adding these five + applyMove.

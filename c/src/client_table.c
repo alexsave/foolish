@@ -1,5 +1,7 @@
 // client_table.c - the web client's slot. See client_table.h.
 #include "client_table.h"
+#include "anim_plan.h"
+#include "awire.h"
 #include "evwire.h"
 #include "view.h"
 #include "../wasm/wire.h"
@@ -28,11 +30,10 @@ static void put_text(char *dst, uint8_t *dst_len, const char *src, int len) {
     *dst_len = (uint8_t)len;
 }
 
-// The slot's board, as `viewer` sees it, joined to the roster when there is one.
-static void view_fill(ClientTable *c, int viewer, int status) {
-    const Game *g = c->g;
-    TableView *v = &c->view;
-    // Only what the counts cover is ever read, so nothing past them is cleared.
+// A board's game fields, as `viewer` sees it: everything but who sits where, the
+// table's name and the version. Only what the counts cover is ever read, so
+// nothing past them is cleared.
+static void view_board(TableView *v, const Game *g, int viewer, int status) {
     v->status = (int8_t)status;
     v->num_players = g->num_players;
     v->power_suit = g->power_suit;
@@ -48,7 +49,6 @@ static void view_fill(ClientTable *c, int viewer, int status) {
     v->has_good_timestamp = g->has_good_timestamp;
     v->flipped = g->has_flipped ? g->flipped : CARD_NONE;
     v->good_mask = g->good_players_mask;
-    v->version = c->version;
     memcpy(v->battles, g->table_battles, sizeof(Battle) * (size_t)g->num_battles);
     memcpy(v->elimination, g->elimination_order, (size_t)g->num_eliminated);
     for (int s = 0; s < g->num_players; s++) {
@@ -56,6 +56,19 @@ static void view_fill(ClientTable *c, int viewer, int status) {
         vs->status = g->players[s].status;
         vs->hand_count = g->players[s].hand_count;
         vs->awaiting_attack = s == viewer && g->players[s].awaiting_attack;
+    }
+    v->my_hand_count = viewer >= 0 ? g->players[viewer].hand_count : 0;
+    if (viewer >= 0) memcpy(v->my_hand, g->players[viewer].hand, (size_t)v->my_hand_count);
+}
+
+// The slot's board, as `viewer` sees it, joined to the roster when there is one.
+static void view_fill(ClientTable *c, int viewer, int status) {
+    const Game *g = c->g;
+    TableView *v = &c->view;
+    view_board(v, g, viewer, status);
+    v->version = c->version;
+    for (int s = 0; s < g->num_players; s++) {
+        ViewSeat *vs = &v->seats[s];
         vs->is_ai = c->has_roster && ((c->ai_mask >> s) & 1u) != 0;
         if (c->has_roster) {
             put_text(vs->id, &vs->id_len, c->r.seats[s].id, c->r.seats[s].id_len);
@@ -65,8 +78,6 @@ static void view_fill(ClientTable *c, int viewer, int status) {
             put_text(vs->name, &vs->name_len, "", 0);
         }
     }
-    v->my_hand_count = viewer >= 0 ? g->players[viewer].hand_count : 0;
-    if (viewer >= 0) memcpy(v->my_hand, g->players[viewer].hand, (size_t)v->my_hand_count);
     if (c->has_roster) {
         put_text(v->game_id, &v->gid_len, c->gid, c->gid_len);
         put_text(v->title, &v->title_len, c->r.title, c->r.title_len);
@@ -346,4 +357,288 @@ int client_view_rules(const TableView *v, int from_deck, int to_flipped, ViewRul
     out->show_flipped_slot = out->show_deck_pile || v->has_flipped || to_flipped > 0;
     out->show_trump_icon = !out->show_deck_pile && !v->has_flipped && to_flipped == 0;
     return CLIENT_OK;
+}
+
+// ---------- the boards a client makes ------------------------------------------------
+
+// A view whose counts fit what it holds and whose viewer is a seat or nobody.
+static int view_holds(const TableView *v) {
+    return v->num_players >= 0 && v->num_players <= MAX_PLAYERS && v->num_battles >= 0 && v->num_battles <= MAX_BATTLES
+        && v->num_eliminated >= 0 && v->num_eliminated <= MAX_PLAYERS && v->my_hand_count >= 0 && v->my_hand_count <= MAX_HAND_SIZE
+        && v->my_seat >= -1 && v->my_seat < v->num_players;
+}
+
+static Game *rules_game(ClientTable *c) { return (Game *)(void *)c->rules.bytes; }
+
+// The view as the rules read it (see client_table.h): the masked game a server's
+// view of this board would import as, the viewer's hand real and every card it
+// cannot see the placeholder a masked import holds. GAME_VALID, or the
+// GAME_INVALID_* the board is refused for.
+static int board_game(ClientTable *c, const TableView *v) {
+    if (!view_holds(v) || v->deck_count < 0 || v->deck_count > MAX_DECK) return GAME_INVALID_COUNT;
+    Game *g = rules_game(c);
+    const Card hidden = { .suit = 0, .value = 1 };   // view.c card_from_wire_masked
+    memset(g, 0, sizeof c->rules.bytes);
+    g->status = v->status;
+    g->num_players = v->num_players;
+    g->power_suit = v->power_suit;
+    g->first_attacker = v->first_attacker;
+    g->defender = v->defender;
+    g->discard_pile_length = v->discard_pile_length;
+    g->has_flipped = v->has_flipped;
+    g->flipped = v->has_flipped ? v->flipped : (Card){ .suit = 0, .value = 0 };
+    g->good_players_mask = v->good_mask;
+    g->has_good_timestamp = v->has_good_timestamp;
+    g->deck_count = v->deck_count;
+    for (int i = 0; i < v->deck_count; i++) g->deck[i] = hidden;
+    g->num_battles = v->num_battles;
+    memcpy(g->table_battles, v->battles, sizeof(Battle) * (size_t)v->num_battles);
+    for (int s = 0; s < v->num_players; s++) {
+        Player *p = &g->players[s];
+        const int mine = s == v->my_seat;
+        const int n = mine ? v->my_hand_count : v->seats[s].hand_count;
+        if (n < 0 || n > MAX_HAND_SIZE) return GAME_INVALID_COUNT;
+        p->status = v->seats[s].status;
+        p->awaiting_attack = v->seats[s].awaiting_attack;
+        p->hand_count = (int8_t)n;
+        for (int i = 0; i < n; i++) p->hand[i] = mine ? v->my_hand[i] : hidden;
+    }
+    g->num_eliminated = v->num_eliminated;
+    memcpy(g->elimination_order, v->elimination, (size_t)v->num_eliminated);
+    // A dry run's draws take the stock's top (no random draw, nothing of the
+    // module's generator spent) and its log records land in the one slot.
+    g->deterministic_deck = true;
+    g->log_cap = 1;
+    return game_validate(g, GAME_VALIDATE_MASKED);
+}
+
+int client_validate(ClientTable *c, const TableView *v, const uint8_t *awire, int len) {
+    const int valid = board_game(c, v);
+    if (valid != GAME_VALID) return valid;
+    AwireAction a;
+    if (!awire || len < 0 || !awire_decode(awire, len, &a)) return CLIENT_E_MOVE;
+    const int seat = v->my_seat < 0 ? 0 : v->my_seat;
+    if (seat >= v->num_players) return CLIENT_E_MOVE;
+    // A gate must not reach the host's animation snapshots.
+    void (*hook)(const Game *, int, int) = engine_snap_hook;
+    engine_snap_hook = 0;
+    engine_last_reject = ENGINE_REJECT_NONE;
+    const bool ok = awire_apply(rules_game(c), seat, &a);
+    engine_snap_hook = hook;
+    return ok ? 0 : engine_last_reject;
+}
+
+// The viewer's hand without any of `cards`.
+static void hand_without(TableView *v, const Card *cards, int n) {
+    int kept = 0;
+    for (int i = 0; i < v->my_hand_count; i++) {
+        int gone = 0;
+        for (int k = 0; k < n && !gone; k++) gone = card_eq(v->my_hand[i], cards[k]);
+        if (!gone) v->my_hand[kept++] = v->my_hand[i];
+    }
+    v->my_hand_count = (int8_t)kept;
+}
+
+static int card_on_table(const TableView *v, Card c) {
+    for (int i = 0; i < v->num_battles; i++)
+        if (card_eq(v->battles[i].attack, c) || (!card_is_none(v->battles[i].defense) && card_eq(v->battles[i].defense, c))) return 1;
+    return 0;
+}
+
+int client_optimistic_apply(ClientTable *c, TableView *v, const uint8_t *awire, int len) {
+    if (!view_holds(v)) return CLIENT_E_FORMAT;
+    AwireAction a;
+    if (!awire || len < 0 || !awire_decode(awire, len, &a)) return CLIENT_E_MOVE;
+    switch (a.kind) {
+        case AWIRE_ATTACK:
+        case AWIRE_PASS: {
+            int defender = v->defender;
+            if (a.kind == AWIRE_PASS) {
+                const int valid = board_game(c, v);
+                if (valid != GAME_VALID) { c->detail = valid; return CLIENT_E_STATE; }
+                defender = get_next_player_index(rules_game(c), v->defender);
+            }
+            if (v->num_battles + a.n > MAX_BATTLES) return CLIENT_E_CAP;
+            for (int i = 0; i < a.n; i++) v->battles[v->num_battles++] = (Battle){ .attack = a.cards[i], .defense = CARD_NONE };
+            hand_without(v, a.cards, a.n);
+            v->defender = (int8_t)defender;
+            return CLIENT_OK;
+        }
+        case AWIRE_COVER:
+            for (int b = 0; b < v->num_battles; b++)
+                for (int i = 0; i < a.n; i++)
+                    if (card_eq(a.attacks[i], v->battles[b].attack)) { v->battles[b].defense = a.cards[i]; break; }
+            hand_without(v, a.cards, a.n);
+            return CLIENT_OK;
+        case AWIRE_PICKUP: {
+            int table = 0;
+            for (int b = 0; b < v->num_battles; b++) table += card_is_none(v->battles[b].defense) ? 1 : 2;
+            if (v->my_hand_count + table > MAX_HAND_SIZE) return CLIENT_E_CAP;
+            // The server rotates after the refill; the board knows that rotation
+            // only while the refill cannot put a seat out.
+            int knowable = 1;
+            for (int s = 0; s < v->num_players; s++)
+                if (s != v->my_seat && v->seats[s].status == PLAYER_STATUS_IN && v->seats[s].hand_count <= 0) knowable = 0;
+            if (knowable) {
+                const int valid = board_game(c, v);
+                if (valid != GAME_VALID) { c->detail = valid; return CLIENT_E_STATE; }
+                const int lead = get_next_player_index(rules_game(c), v->defender);
+                v->defender = (int8_t)get_next_player_index(rules_game(c), lead);
+                v->first_attacker = (int8_t)lead;
+            }
+            for (int b = 0; b < v->num_battles; b++) {
+                v->my_hand[v->my_hand_count++] = v->battles[b].attack;
+                if (!card_is_none(v->battles[b].defense)) v->my_hand[v->my_hand_count++] = v->battles[b].defense;
+            }
+            v->num_battles = 0;
+            return CLIENT_OK;
+        }
+        default:   // good: nothing moves until the server says the bout closed
+            return CLIENT_OK;
+    }
+}
+
+int client_board_edit(ClientTable *c, TableView *v, const BoardEdit *e) {
+    if (!view_holds(v) || e->n_cards > MAX_HAND_SIZE) return CLIENT_E_FORMAT;
+    const int n = e->n_cards;
+    switch (e->op) {
+        case CLIENT_EDIT_KEEP:
+            if (v->my_seat < 0) return CLIENT_OK;   // a spectator makes no move to keep
+            for (int i = 0; i < n; i++) {
+                const Card card = e->cards[i];
+                if (!card_on_table(v, card)) {
+                    if (!card_is_none(e->target)) {
+                        for (int b = 0; b < v->num_battles; b++) {
+                            if (!card_eq(v->battles[b].attack, e->target)) continue;
+                            if (card_is_none(v->battles[b].defense)) v->battles[b].defense = card;
+                            break;
+                        }
+                    } else {
+                        if (v->num_battles >= MAX_BATTLES) return CLIENT_E_CAP;
+                        v->battles[v->num_battles++] = (Battle){ .attack = card, .defense = CARD_NONE };
+                    }
+                }
+                hand_without(v, &card, 1);
+            }
+            return CLIENT_OK;
+        case CLIENT_EDIT_TURN:
+            v->first_attacker = e->first_attacker;
+            v->defender = e->defender;
+            return CLIENT_OK;
+        case CLIENT_EDIT_TABLE:
+            if (n > MAX_BATTLES) return CLIENT_E_CAP;
+            for (int i = 0; i < n; i++) v->battles[i] = (Battle){ .attack = e->cards[i], .defense = CARD_NONE };
+            v->num_battles = (int8_t)n;
+            return CLIENT_OK;
+        case CLIENT_EDIT_LIFT: {
+            int kept = 0;
+            for (int b = 0; b < v->num_battles; b++) {
+                const Battle bt = v->battles[b];
+                int lifted = 0;
+                for (int i = 0; i < n && !lifted; i++)
+                    lifted = card_eq(bt.attack, e->cards[i]) || (!card_is_none(bt.defense) && card_eq(bt.defense, e->cards[i]));
+                if (!lifted) v->battles[kept++] = bt;
+            }
+            v->num_battles = (int8_t)kept;
+            return CLIENT_OK;
+        }
+        case CLIENT_EDIT_RETURN:
+            if (v->my_seat < 0) return CLIENT_OK;
+            for (int i = 0; i < n; i++) {
+                int held = 0;
+                for (int h = 0; h < v->my_hand_count && !held; h++) held = card_eq(v->my_hand[h], e->cards[i]);
+                if (held) continue;
+                if (v->my_hand_count >= MAX_HAND_SIZE) return CLIENT_E_CAP;
+                v->my_hand[v->my_hand_count++] = e->cards[i];
+            }
+            return CLIENT_OK;
+        case CLIENT_EDIT_LOBBY: {
+            const int valid = board_game(c, v);
+            if (valid != GAME_VALID) { c->detail = valid; return CLIENT_E_STATE; }
+            uint32_t bots = 0;
+            for (int s = 0; s < v->num_players; s++) if (v->seats[s].is_ai) bots |= 1u << s;
+            Game *g = rules_game(c);
+            game_reset_to_lobby(g, bots);
+            view_board(v, g, v->my_seat, g->status);
+            return CLIENT_OK;
+        }
+        default:
+            return CLIENT_E_FORMAT;
+    }
+}
+
+int client_rearrange_hand(ClientTable *c, TableView *v, const uint8_t *idx, int n) {
+    if (!view_holds(v)) return CLIENT_E_FORMAT;
+    if (v->my_seat < 0 || v->my_hand_count == 0) return CLIENT_E_MISMATCH;
+    const int valid = board_game(c, v);
+    if (valid != GAME_VALID) { c->detail = valid; return CLIENT_E_STATE; }
+    Game *g = rules_game(c);
+    if (!game_rearrange_hand(g, v->my_seat, idx, n)) return CLIENT_E_MOVE;
+    memcpy(v->my_hand, g->players[v->my_seat].hand, (size_t)v->my_hand_count);
+    return CLIENT_OK;
+}
+
+static int uncovered(const TableView *v) {
+    int n = 0;
+    for (int b = 0; b < v->num_battles; b++) n += card_is_none(v->battles[b].defense);
+    return n;
+}
+
+// A card as the conflict rule names it: its dense id, or ANIM_CARD_NONE for a
+// back or no card at all.
+static int conflict_id(Card c) {
+    return c.suit >= 0 && c.suit < NUM_SUITS && c.value >= 1 && c.value <= ACE_VALUE ? card_to_id(c) : ANIM_CARD_NONE;
+}
+
+int client_conflict_verdicts(const TableView *open, const TableView *final, const ClientConflict *q, ConflictVerdicts *out) {
+    if (!view_holds(open) || !view_holds(final) || q->n_events > CLIENT_CONFLICT_MAX_EVENTS
+        || q->n_motions > CLIENT_CONFLICT_MAX_MOTIONS) return CLIENT_E_FORMAT;
+    out->n = 0;
+    // Module storage, like the slot: a host asks one question at a time.
+    static AnimEvent events[CLIENT_CONFLICT_MAX_EVENTS];
+    static int moved[CLIENT_CONFLICT_MAX_EVENTS * MAX_HAND_SIZE];
+    for (int e = 0; e < q->n_events; e++) {
+        const ConflictEvent *ce = &q->events[e];
+        if (ce->n_cards > MAX_HAND_SIZE) return CLIENT_E_FORMAT;
+        events[e] = (AnimEvent){ .type = ce->type, .seat = ANIM_SEAT_NONE, .from = ANIM_LOC_NONE, .to = ANIM_LOC_NONE,
+                                 .cards = ce->cards, .n_cards = ce->n_cards, .mask_cards = ce->masked ? 1 : 0 };
+    }
+    int table_cleared = 0;
+    const int n_moved = anim_conflict_sweep(events, q->n_events, moved, (int)(sizeof moved / sizeof moved[0]), &table_cleared);
+    if (n_moved < 0) return n_moved;
+
+    // Where the push's cards stand: both sides of every battle on its last board, and the viewer's hand there.
+    unsigned char table[2 * MAX_BATTLES], hand[MAX_HAND_SIZE];
+    for (int b = 0; b < open->num_battles; b++) {
+        const int attack = conflict_id(open->battles[b].attack), cover = conflict_id(open->battles[b].defense);
+        table[2 * b] = attack < 0 ? (unsigned char)ANIM_TABLE_NONE : (unsigned char)attack;
+        table[2 * b + 1] = cover < 0 ? (unsigned char)ANIM_TABLE_NONE : (unsigned char)cover;
+    }
+    int n_hand = 0;
+    for (int i = 0; i < open->my_hand_count; i++) {
+        const int id = conflict_id(open->my_hand[i]);
+        if (id >= 0) hand[n_hand++] = (unsigned char)id;
+    }
+    AnimConflictFacts facts;
+    const int fr = anim_conflict_facts(moved, n_moved, table, open->num_battles, hand, n_hand, &facts);
+    if (fr != ANIM_EOK) return fr;
+
+    int pending = q->pending_attacks;
+    if (pending < 0) {
+        pending = 0;
+        for (int i = 0; i < q->n_motions; i++) pending += !q->motions[i].is_cover;
+    }
+    AnimServerHope hope;
+    hope.table_cleared = table_cleared;
+    hope.pending_attacks = pending;
+    hope.defender_hand = q->defender_seat >= 0 && q->defender_seat < final->num_players ? final->seats[q->defender_seat].hand_count : 0;
+    hope.final_uncovered = uncovered(q->uncovered_on_final ? final : open);
+    for (int i = 0; i < q->n_motions; i++) {
+        hope.is_cover = q->motions[i].is_cover;
+        const int v = anim_conflict_verdict(conflict_id(q->motions[i].card), q->motions[i].dest, &facts, &hope);
+        if (v < 0) return v;
+        out->verdicts[i] = (uint8_t)v;
+    }
+    out->n = q->n_motions;
+    return q->n_motions;
 }

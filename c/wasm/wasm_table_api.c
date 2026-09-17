@@ -420,3 +420,48 @@ int wasm_client_identity_seat(int id_len, int name_len, int is_ai) {
     if (!io || id_len < 0 || name_len < 0) return CLIENT_E_IDENTITY;
     return client_identity_seat(client(), (const char *)io, id_len, (const char *)io + id_len, name_len, is_ai);
 }
+
+// ---- the boards a client makes (client_table.h, Phase 6b) ----
+//
+// A gate reads the board the rules view holds (wasm_client_rules_view_ptr, the
+// same board client_view_rules reads, and neither changes it). An edit changes
+// the board at wasm_client_edit_view_ptr in place, and the host reads it back.
+// A conflict question reads the edit view as the push's last board and the
+// final view as its final board. Everything is written through the generated
+// writers (sdk/ts/gen/view_layout.bots.ts).
+static TableView        g_edit_view, g_final_view;
+static BoardEdit        g_board_edit;
+static ClientConflict   g_conflict;
+static ConflictVerdicts g_verdicts;
+TableView *wasm_client_edit_view_ptr(void)        { return &g_edit_view; }
+TableView *wasm_client_final_view_ptr(void)       { return &g_final_view; }
+BoardEdit *wasm_client_board_edit_ptr(void)       { return &g_board_edit; }
+ClientConflict *wasm_client_conflict_ptr(void)    { return &g_conflict; }
+ConflictVerdicts *wasm_client_verdicts_ptr(void)  { return &g_verdicts; }
+
+// io = [action wire]; the board at the rules view.
+int wasm_client_validate(int len) {
+    const unsigned char *io = inputs(len);
+    if (!io || len < 0) return CLIENT_E_MOVE;
+    return client_validate(client(), &g_rules_view, io, len);
+}
+
+// io = [action wire]; the board at the edit view.
+int wasm_client_optimistic_apply(int len) {
+    const unsigned char *io = inputs(len);
+    if (!io || len < 0) return CLIENT_E_MOVE;
+    return client_optimistic_apply(client(), &g_edit_view, io, len);
+}
+
+int wasm_client_board_edit(void) { return client_board_edit(client(), &g_edit_view, &g_board_edit); }
+
+// io = [one byte per hand index]; the board at the edit view.
+int wasm_client_rearrange_hand(int n) {
+    const unsigned char *io = inputs(n);
+    if (!io || n < 0) return CLIENT_E_MOVE;
+    return client_rearrange_hand(client(), &g_edit_view, io, n);
+}
+
+int wasm_client_conflict_verdicts(void) {
+    return client_conflict_verdicts(&g_edit_view, &g_final_view, &g_conflict, &g_verdicts);
+}

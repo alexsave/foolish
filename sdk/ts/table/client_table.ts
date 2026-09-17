@@ -24,6 +24,8 @@ export type ViewSeat = V.ViewSeat_Snap;
 export type ViewCard = V.Card_Snap;
 export type ViewBattle = V.Battle_Snap;
 export type ViewRules = V.ViewRules_Snap;
+export type BoardEdit = V.BoardEdit_Snap;
+export type ConflictQuestion = V.ClientConflict_Snap;
 
 /** One step of a push: what moved, and the board it left. */
 export interface PushStep { event: PushEvent; view: TableView }
@@ -51,6 +53,17 @@ export interface ClientExports {
     wasm_client_rules_view_ptr(): number;
     wasm_client_rules_ptr(): number;
     wasm_client_view_rules(fromDeck: number, toFlipped: number): number;
+    wasm_client_edit_view_ptr(): number;
+    wasm_client_final_view_ptr(): number;
+    wasm_client_board_edit_ptr(): number;
+    wasm_client_conflict_ptr(): number;
+    wasm_client_verdicts_ptr(): number;
+    wasm_client_validate(len: number): number;
+    wasm_client_optimistic_apply(len: number): number;
+    wasm_client_board_edit(): number;
+    wasm_client_rearrange_hand(n: number): number;
+    wasm_client_conflict_verdicts(): number;
+    wasm_can_cover(attackSuit: number, attackValue: number, defenseSuit: number, defenseValue: number, powerSuit: number): number;
 }
 
 /** A seat of an identity built from parts (a roster that arrived as JSON). */
@@ -180,7 +193,7 @@ export class ClientTable {
         let byFlight = this.ruled.get(view);
         const hit = byFlight?.get(key);
         if (hit) return hit;
-        V.writeTableView(this.m(), this.ex.wasm_client_rules_view_ptr(), view);
+        this.writeRulesView(view);
         const rc = this.ex.wasm_client_view_rules(fromDeck, toFlipped);
         if (rc !== V.CLIENT_OK) throw new Error(`client view rules: the view was refused (${rc})`);
         const r = V.readViewRules(this.m(), this.ex.wasm_client_rules_ptr());
@@ -189,6 +202,86 @@ export class ClientTable {
         return r;
     }
     private readonly ruled = new WeakMap<TableView, Map<number, ViewRules>>();
+
+    // The board the rules view holds: the rules and the gates only read it, so a
+    // render that asks several of them of one board writes it once.
+    private rulesBoard: TableView | null = null;
+    private writeRulesView(view: TableView): void {
+        if (this.rulesBoard === view) return;
+        this.rulesBoard = null;
+        V.writeTableView(this.m(), this.ex.wasm_client_rules_view_ptr(), view);
+        this.rulesBoard = view;
+    }
+
+    // ---- the boards a client makes (c/src/client_table.h, Phase 6b) ----
+
+    /**
+     * The viewer's move, as its action wire, judged on `view` by the engine:
+     * 0 legal, the ENGINE_REJECT_* that refuses it, CLIENT_E_MOVE for a wire that
+     * is not a move, or the GAME_INVALID_* the board is refused for.
+     */
+    validate(view: TableView, wire: Uint8Array): number {
+        this.writeRulesView(view);
+        if (!this.put(wire)) return V.CLIENT_E_MOVE;
+        return this.ex.wasm_client_validate(wire.length);
+    }
+
+    /** The board `view` becomes once the viewer's move (its action wire) stands on it, or null when the kernel refuses. */
+    optimisticApply(view: TableView, wire: Uint8Array): TableView | null {
+        V.writeTableView(this.m(), this.ex.wasm_client_edit_view_ptr(), view);
+        if (!this.put(wire)) return this.refused(V.CLIENT_E_MOVE);
+        const rc = this.ex.wasm_client_optimistic_apply(wire.length);
+        if (rc !== V.CLIENT_OK) return this.refused(rc);
+        return V.readTableView(this.m(), this.ex.wasm_client_edit_view_ptr());
+    }
+
+    /** The board after each edit in turn (CLIENT_EDIT_*), or null when the kernel refuses one. */
+    edit(view: TableView, ...edits: BoardEdit[]): TableView | null {
+        const m = this.m();
+        V.writeTableView(m, this.ex.wasm_client_edit_view_ptr(), view);
+        for (const e of edits) {
+            V.writeBoardEdit(this.m(), this.ex.wasm_client_board_edit_ptr(), e);
+            const rc = this.ex.wasm_client_board_edit();
+            if (rc !== V.CLIENT_OK) return this.refused(rc);
+        }
+        return V.readTableView(this.m(), this.ex.wasm_client_edit_view_ptr());
+    }
+
+    /**
+     * The viewer's hand in the order `indices` gives: the board, or the refusal -
+     * CLIENT_E_MISMATCH when there is no hand to order, CLIENT_E_MOVE when the
+     * indices are not an order of it.
+     */
+    rearrangeHand(view: TableView, indices: readonly number[]): { rc: number; view: TableView | null } {
+        // An index a byte cannot hold is no index of a hand: 255 is past every hand.
+        const bytes = Uint8Array.from(indices, (i) => (Number.isInteger(i) && i >= 0 && i < 255 ? i : 255));
+        V.writeTableView(this.m(), this.ex.wasm_client_edit_view_ptr(), view);
+        if (!this.put(bytes)) return { rc: V.CLIENT_E_MOVE, view: this.refused(V.CLIENT_E_MOVE) };
+        const rc = this.ex.wasm_client_rearrange_hand(bytes.length);
+        if (rc !== V.CLIENT_OK) return { rc, view: this.refused(rc) };
+        return { rc, view: V.readTableView(this.m(), this.ex.wasm_client_edit_view_ptr()) };
+    }
+
+    /**
+     * The conflict verdict (ANIM_CONFLICT_*) for each of the question's motions
+     * against a push whose last board is `open` and whose final board is `final`.
+     * Throws when the kernel refuses the question: a verdict nobody could read is
+     * not a verdict to act on.
+     */
+    conflictVerdicts(open: TableView, final: TableView, q: ConflictQuestion): readonly number[] {
+        const m = this.m();
+        V.writeTableView(m, this.ex.wasm_client_edit_view_ptr(), open);
+        V.writeTableView(m, this.ex.wasm_client_final_view_ptr(), final);
+        V.writeClientConflict(m, this.ex.wasm_client_conflict_ptr(), q);
+        const n = this.ex.wasm_client_conflict_verdicts();
+        if (n < 0) throw new Error(`client conflict verdicts: refused (${n})`);
+        return V.readConflictVerdicts(this.m(), this.ex.wasm_client_verdicts_ptr()).verdicts;
+    }
+
+    /** Whether `defense` beats `attack` under `powerSuit` (the kernel's can_cover). */
+    canCover(attack: ViewCard, defense: ViewCard, powerSuit: number): boolean {
+        return this.ex.wasm_can_cover(attack.suit, attack.value, defense.suit, defense.value, powerSuit) === 1;
+    }
 }
 
 let shared: ClientTable | null = null;

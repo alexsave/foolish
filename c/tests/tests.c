@@ -8750,6 +8750,7 @@ static void cvr_board(TableView *v, int viewer) {
     v->fool = -1;
     v->deck_count = 12;
     v->has_flipped = true;
+    v->power_suit = SUIT_CLUBS;
     v->flipped = (Card){ .suit = SUIT_CLUBS, .value = 12 };
     v->num_battles = 1;
     v->battles[0] = (Battle){ .attack = { .suit = SUIT_HEARTS, .value = 6 }, .defense = { .suit = SUIT_HEARTS, .value = 8 } };
@@ -8855,6 +8856,466 @@ static void test_client_view_rules(void) {
     cvr_board(&v, 0);
     CHECK(client_view_rules(&v, -1, 0, &r) == CLIENT_E_FORMAT && client_view_rules(&v, 0, -2, &r) == CLIENT_E_FORMAT,
           "a negative flight is refused");
+}
+
+// ---------- the boards a client makes (client_table.h, Phase 6b) ----------------------
+
+static Game cb_game, cb_real;
+static LegalMoves cb_moves;
+static TableView cb_view, cb_view2;
+static ClientConflict cb_q;
+static ConflictVerdicts cb_out;
+static uint32_t cb_rng;
+
+// seat 0 led 7h, the attack cvr_board lays.
+static Card cvr_attack(void) { return (Card){ .suit = SUIT_HEARTS, .value = 6 }; }
+
+// table.c finalize: the end of a game, bots parked ready and humans idle.
+static void cb_finalize(Game *g, uint32_t bots) {
+    if (game_done(g) < 0) return;
+    g->status = GAME_STATUS_GAME_OVER;
+    for (int i = 0; i < g->num_players; i++)
+        g->players[i].status = ((bots >> i) & 1u) ? PLAYER_STATUS_READY : PLAYER_STATUS_IDLE;
+}
+
+static int cb_rand(int n) {
+    cb_rng = cb_rng * 1664525u + 1013904223u;
+    return (int)((cb_rng >> 8) % (uint32_t)n);
+}
+
+static void cb_deal(Game *g, int np, int seed) {
+    unsigned char s[FOOLISH_SEED_LEN];
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) s[i] = (unsigned char)(i * 13 + seed);
+    game_set_seed((uint32_t)seed);
+    game_set_deal_seed_bytes(s, FOOLISH_SEED_LEN);
+    memset(g, 0, offsetof(Game, logs));
+    g->num_players = (int8_t)np;
+    for (int i = 0; i < np; i++) g->players[i].status = PLAYER_STATUS_READY;
+    start_game(g);
+    game_set_seed(1);
+}
+
+static int cb_wire(int kind, const Card *cards, const Card *attacks, int n, uint8_t *w) {
+    AwireAction a;
+    memset(&a, 0, sizeof(a));
+    a.kind = kind;
+    a.n = n;
+    for (int i = 0; i < n; i++) { a.cards[i] = cards[i]; if (attacks) a.attacks[i] = attacks[i]; }
+    return awire_encode(&a, w, 64);
+}
+
+// The engine's own verdict on the whole game: the move dry-run on a copy.
+static int cb_engine_verdict(const Game *g, int seat, const uint8_t *w, int wl) {
+    AwireAction a;
+    if (!awire_decode(w, wl, &a)) return CLIENT_E_MOVE;
+    memcpy(&cb_real, g, offsetof(Game, logs));
+    cb_real.num_logs = 0;
+    void (*hook)(const Game *, int, int) = engine_snap_hook;
+    engine_snap_hook = 0;
+    engine_last_reject = ENGINE_REJECT_NONE;
+    const bool ok = awire_apply(&cb_real, seat, &a);
+    engine_snap_hook = hook;
+    return ok ? 0 : engine_last_reject;
+}
+
+// Plays one random legal move of a seat that may act; 0 when nobody can.
+static int cb_step(Game *g) {
+    int seats[MAX_PLAYERS], n = 0;
+    for (int s = 0; s < g->num_players; s++) {
+        if (!should_bot_act(g, s)) continue;
+        calculate_legal_moves(g, s, &cb_moves);
+        if (cb_moves.n > 0) seats[n++] = s;
+    }
+    if (n == 0 || game_done(g) >= 0) return 0;
+    const int seat = seats[cb_rand(n)];
+    calculate_legal_moves(g, seat, &cb_moves);
+    const LegalMove *m = &cb_moves.moves[cb_rand(cb_moves.n)];
+    uint8_t w[64];
+    const int wl = cb_wire(m->type, m->cards, m->attack_cards, m->n_cards, w);
+    AwireAction a;
+    if (wl <= 0 || !awire_decode(w, wl, &a)) return 0;
+    g->num_logs = 0;
+    return awire_apply(g, seat, &a) ? 1 : 0;
+}
+
+static void test_client_validate_is_the_engine(void) {
+    int checked = 0, legal = 0, refused = 0, wrong = 0;
+    uint8_t w[64];
+    cb_rng = 7;
+    for (int np = 2; np <= 6; np++) {
+        cb_deal(&cb_game, np, 40 + np);
+        client_init(&ct, &ct_slot);
+        for (int moves = 0; moves < 400; moves++) {
+            for (int seat = 0; seat < np; seat++) {
+                if (cb_game.players[seat].status != PLAYER_STATUS_IN) continue;
+                if (client_adopt_board(&ct, &cb_game, seat) != CLIENT_OK) { wrong++; continue; }
+                cb_view = ct.view;
+                const Player *p = &cb_game.players[seat];
+                // Every enumerated legal move, and a spread of moves the rules refuse.
+                calculate_legal_moves(&cb_game, seat, &cb_moves);
+                for (int i = 0; i < cb_moves.n && i < 24; i++) {
+                    const LegalMove *m = &cb_moves.moves[i];
+                    const int wl = cb_wire(m->type, m->cards, m->attack_cards, m->n_cards, w);
+                    const int got = client_validate(&ct, &cb_view, w, wl), want = cb_engine_verdict(&cb_game, seat, w, wl);
+                    if (got != want || got != 0) { if (wrong++ < 5) fprintf(stderr, "  legal move %d: client %d, engine %d\n", m->type, got, want); }
+                    checked++; legal++;
+                }
+                for (int h = 0; h < p->hand_count; h++) {
+                    const Card c = p->hand[h];
+                    for (int kind = AWIRE_ATTACK; kind <= AWIRE_PASS; kind++) {
+                        int wl;
+                        if (kind == AWIRE_COVER) {
+                            if (cb_game.num_battles == 0) continue;
+                            const Card at = cb_game.table_battles[cb_rand(cb_game.num_battles)].attack;
+                            wl = cb_wire(kind, &c, &at, 1, w);
+                        } else {
+                            wl = cb_wire(kind, &c, 0, 1, w);
+                        }
+                        const int got = client_validate(&ct, &cb_view, w, wl), want = cb_engine_verdict(&cb_game, seat, w, wl);
+                        if (got != want && wrong++ < 5) fprintf(stderr, "  kind %d card %d/%d: client %d, engine %d\n", kind, c.suit, c.value, got, want);
+                        checked++;
+                        refused += got > 0;
+                    }
+                }
+                for (int kind = AWIRE_PICKUP; kind <= AWIRE_GOOD; kind++) {
+                    const int wl = cb_wire(kind, 0, 0, 0, w);
+                    const int got = client_validate(&ct, &cb_view, w, wl), want = cb_engine_verdict(&cb_game, seat, w, wl);
+                    if (got != want && wrong++ < 5) fprintf(stderr, "  kind %d: client %d, engine %d\n", kind, got, want);
+                    checked++;
+                    refused += got > 0;
+                }
+                // A card another seat holds.
+                const Player *o = &cb_game.players[(seat + 1) % np];
+                if (o->hand_count > 0) {
+                    const int wl = cb_wire(AWIRE_ATTACK, &o->hand[0], 0, 1, w);
+                    const int got = client_validate(&ct, &cb_view, w, wl), want = cb_engine_verdict(&cb_game, seat, w, wl);
+                    if (got != want && wrong++ < 5) fprintf(stderr, "  a foreign card: client %d, engine %d\n", got, want);
+                    checked++;
+                }
+            }
+            if (!cb_step(&cb_game)) break;
+        }
+    }
+    fprintf(stderr, "  [client_validate] %d moves judged, %d legal, %d refused\n", checked, legal, refused);
+    CHECK(checked > 3000 && legal > 500 && refused > 1000, "enough moves were judged, legal and refused");
+    CHECK(wrong == 0, "a seat's move on its own view is judged exactly as the engine judges it on the whole game");
+
+    cb_deal(&cb_game, 3, 5);
+    client_adopt_board(&ct, &cb_game, cb_game.first_attacker);
+    cb_view = ct.view;
+    CHECK(client_validate(&ct, &cb_view, (const uint8_t *)"\x00\x09\x01", 3) == CLIENT_E_MOVE, "a wire that is not a move is refused as one");
+    CHECK(client_validate(&ct, &cb_view, 0, 0) == CLIENT_E_MOVE, "and so is no wire");
+    cb_view.power_suit = 9;
+    CHECK(client_validate(&ct, &cb_view, w, cb_wire(AWIRE_PICKUP, 0, 0, 0, w)) == GAME_INVALID_POWER_SUIT,
+          "a board the rules refuse is refused before any move is judged");
+    cb_view = ct.view;
+    cb_view.my_seat = 5;
+    CHECK(client_validate(&ct, &cb_view, w, cb_wire(AWIRE_PICKUP, 0, 0, 0, w)) < 0, "a viewer the board does not seat is refused");
+}
+
+static int cb_same_cards(const Card *a, const Card *b, int n) {
+    for (int i = 0; i < n; i++) if (!card_eq(a[i], b[i])) return 0;
+    return 1;
+}
+
+static void test_client_optimistic_apply(void) {
+    uint8_t w[64];
+    const Card c7s = { .suit = SUIT_SPADES, .value = 6 }, c7d = { .suit = SUIT_DIAMONDS, .value = 6 };
+    const Card c9h = { .suit = SUIT_HEARTS, .value = 8 }, cKs = { .suit = SUIT_SPADES, .value = 12 };
+
+    // attack: the table grows, the hand shrinks, nobody's count or turn moves.
+    cvr_board(&cb_view, 0);
+    cb_view.num_battles = 0;
+    cb_view.my_hand_count = 3;
+    cb_view.my_hand[0] = c7s; cb_view.my_hand[1] = c9h; cb_view.my_hand[2] = c7d;
+    CHECK(client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_ATTACK, (Card[]){ c7s, c7d }, 0, 2, w)) == CLIENT_OK
+          && cb_view.num_battles == 2 && card_eq(cb_view.battles[0].attack, c7s) && card_is_none(cb_view.battles[0].defense)
+          && card_eq(cb_view.battles[1].attack, c7d) && card_is_none(cb_view.battles[1].defense)
+          && cb_view.my_hand_count == 1 && card_eq(cb_view.my_hand[0], c9h)
+          && cb_view.seats[0].hand_count == 5 && cb_view.defender == 1 && cb_view.first_attacker == 0,
+          "an attack lays its cards on the table as attacks and takes them out of the hand");
+
+    // pass: the shield goes to the next seat in play.
+    cvr_board(&cb_view, 1);
+    cb_view.battles[0].defense = CARD_NONE;
+    cb_view.num_players = 4;
+    cb_view.seats[3].status = PLAYER_STATUS_IN;
+    cb_view.seats[3].hand_count = 4;
+    cb_view.seats[2].status = PLAYER_STATUS_OUT;
+    cb_view.seats[2].hand_count = 0;
+    cb_view.num_eliminated = 1;
+    cb_view.elimination[0] = 2;
+    cb_view.my_hand_count = 2;
+    cb_view.my_hand[0] = c7s; cb_view.my_hand[1] = cKs;
+    CHECK(client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_PASS, &c7s, 0, 1, w)) == CLIENT_OK
+          && cb_view.defender == 3 && cb_view.first_attacker == 0 && cb_view.num_battles == 2
+          && card_eq(cb_view.battles[1].attack, c7s) && cb_view.my_hand_count == 1 && card_eq(cb_view.my_hand[0], cKs),
+          "a pass hands the shield past a seat that is out, and its card joins the attacks");
+
+    // cover: the named attack takes the paired cover.
+    cvr_board(&cb_view, 1);
+    cb_view.battles[0].defense = CARD_NONE;
+    cb_view.battles[1] = (Battle){ .attack = c7d, .defense = CARD_NONE };
+    cb_view.num_battles = 2;
+    cb_view.my_hand_count = 2;
+    cb_view.my_hand[0] = c9h; cb_view.my_hand[1] = cKs;
+    const Card attack7h = cvr_attack();
+    CHECK(client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_COVER, &c9h, &attack7h, 1, w)) == CLIENT_OK
+          && card_eq(cb_view.battles[0].defense, c9h) && card_is_none(cb_view.battles[1].defense)
+          && cb_view.my_hand_count == 1 && card_eq(cb_view.my_hand[0], cKs),
+          "a cover covers the attack it names and leaves the hand");
+
+    // good: nothing moves.
+    cvr_board(&cb_view, 2);
+    cb_view2 = cb_view;
+    CHECK(client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_GOOD, 0, 0, 0, w)) == CLIENT_OK
+          && memcmp(&cb_view, &cb_view2, sizeof(TableView)) == 0, "a good moves nothing");
+
+    // pickup when another seat in play holds no card: the refill may put it out, so the turn stays.
+    cvr_board(&cb_view, 1);
+    cb_view.seats[2].hand_count = 0;
+    cb_view.my_hand_count = 1;
+    cb_view.my_hand[0] = cKs;
+    CHECK(client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_PICKUP, 0, 0, 0, w)) == CLIENT_OK
+          && cb_view.first_attacker == 0 && cb_view.defender == 1 && cb_view.num_battles == 0 && cb_view.my_hand_count == 3
+          && card_eq(cb_view.my_hand[0], cKs) && card_eq(cb_view.my_hand[1], attack7h) && card_eq(cb_view.my_hand[2], c9h),
+          "a pickup takes the table, attack before cover, and leaves a turn the refill could change alone");
+
+    CHECK(client_optimistic_apply(&ct, &cb_view, (const uint8_t *)"\x07\x00", 2) == CLIENT_E_MOVE, "a wire that is not a move is refused");
+    cvr_board(&cb_view, 0);
+    cb_view.num_battles = MAX_BATTLES;
+    CHECK(client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_ATTACK, &c7s, 0, 1, w)) == CLIENT_E_FORMAT
+          || client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_ATTACK, &c7s, 0, 1, w)) == CLIENT_E_CAP,
+          "a table past its capacity is refused, never overrun");
+}
+
+// The optimistic pickup's lead and shield are the ones the server commits, at
+// every table size: whenever the board can know them, they are the engine's.
+static void test_client_optimistic_pickup_rotation_is_the_servers(void) {
+    uint8_t w[64];
+    const int wl = cb_wire(AWIRE_PICKUP, 0, 0, 0, w);
+    int total_exact = 0, total_left = 0, all_same = 1, hands_same = 1, left_alone = 1, every_count = 1;
+    cb_rng = 99;
+    for (int np = 2; np <= MAX_PLAYERS; np++) {
+        int exact = 0;
+        for (int game = 0; game < 40 && exact < 30; game++) {
+            cb_deal(&cb_game, np, 300 + np * 17 + game);
+            client_init(&ct, &ct_slot);
+            for (int moves = 0; moves < 600; moves++) {
+                const int d = cb_game.defender;
+                if (cb_game.status == GAME_STATUS_PLAYING && cb_game.num_battles > 0 && cb_engine_verdict(&cb_game, d, w, wl) == 0
+                    && client_adopt_board(&ct, &cb_game, d) == CLIENT_OK) {
+                    cb_view = ct.view;
+                    const int before_hand = cb_view.my_hand_count;
+                    const int rc = client_optimistic_apply(&ct, &cb_view, w, wl);
+                    cb_engine_verdict(&cb_game, d, w, wl);   // cb_real: the committed pickup, refill and rotation
+                    int could_go_out = 0;
+                    for (int s = 0; s < np; s++)
+                        if (s != d && cb_game.players[s].status == PLAYER_STATUS_IN && cb_game.players[s].hand_count == 0) could_go_out = 1;
+                    if (rc != CLIENT_OK) { all_same = 0; continue; }
+                    if (!could_go_out) {
+                        exact++;
+                        if (cb_view.first_attacker != cb_real.first_attacker || cb_view.defender != cb_real.defender) {
+                            if (all_same) fprintf(stderr, "  %dp: optimistic %d/%d, committed %d/%d\n", np,
+                                                  cb_view.first_attacker, cb_view.defender, cb_real.first_attacker, cb_real.defender);
+                            all_same = 0;
+                        }
+                    } else {
+                        total_left++;
+                        if (cb_view.first_attacker != cb_game.first_attacker || cb_view.defender != cb_game.defender) left_alone = 0;
+                    }
+                    hands_same &= cb_view.num_battles == 0 && cb_view.my_hand_count > before_hand
+                        && cb_view.my_hand_count <= cb_real.players[d].hand_count
+                        && cb_same_cards(cb_view.my_hand, cb_real.players[d].hand, cb_view.my_hand_count);
+                }
+                if (!cb_step(&cb_game)) break;
+            }
+        }
+        if (exact < 30) { fprintf(stderr, "  %dp: only %d pickups\n", np, exact); every_count = 0; }
+        total_exact += exact;
+    }
+    fprintf(stderr, "  [pickup rotation] %d pickups the board could predict, %d it left to the server\n", total_exact, total_left);
+    CHECK(every_count, "every seat count from 2 to 8 had its pickups checked");
+    CHECK(all_same, "an optimistic pickup's lead and shield are the ones the server commits");
+    CHECK(left_alone, "and where a refill could put a seat out, the board leaves the turn to the server");
+    CHECK(hands_same, "the picked-up table is the hand the server commits, before its draws");
+}
+
+static void test_client_board_edits(void) {
+    const Card c7s = { .suit = SUIT_SPADES, .value = 6 }, c9d = { .suit = SUIT_DIAMONDS, .value = 8 };
+    const Card cKs = { .suit = SUIT_SPADES, .value = 12 };
+    const Card attack7h = cvr_attack(), cover9h = { .suit = SUIT_HEARTS, .value = 8 };
+    BoardEdit e;
+
+    // KEEP: a pending attack, a pending cover, a card the table already shows.
+    cvr_board(&cb_view, 0);
+    cb_view.battles[0].defense = CARD_NONE;
+    cb_view.my_hand_count = 3;
+    cb_view.my_hand[0] = c7s; cb_view.my_hand[1] = cKs; cb_view.my_hand[2] = cover9h;
+    memset(&e, 0, sizeof(e));
+    e.op = CLIENT_EDIT_KEEP; e.n_cards = 1; e.cards[0] = c7s; e.target = CARD_NONE;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && cb_view.num_battles == 2 && card_eq(cb_view.battles[1].attack, c7s)
+          && cb_view.my_hand_count == 2 && card_eq(cb_view.my_hand[0], cKs), "a kept attack stands on the table and not in the hand");
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && cb_view.num_battles == 2, "a card the table holds is not laid twice");
+    e.cards[0] = cover9h; e.target = attack7h;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && card_eq(cb_view.battles[0].defense, cover9h) && cb_view.my_hand_count == 1,
+          "a kept cover covers its target");
+    e.cards[0] = cKs;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && card_eq(cb_view.battles[0].defense, cover9h) && cb_view.num_battles == 2
+          && cb_view.my_hand_count == 0, "a covered target keeps its cover, and the card still leaves the hand");
+    cvr_board(&cb_view, -1);
+    e.cards[0] = c7s; e.target = CARD_NONE;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && cb_view.num_battles == 1 && cb_view.my_hand_count == 0,
+          "a spectator makes no move, so nothing of its is kept on a board");
+
+    // TURN, TABLE, LIFT, RETURN.
+    cvr_board(&cb_view, 1);
+    memset(&e, 0, sizeof(e));
+    e.op = CLIENT_EDIT_TURN; e.first_attacker = 2; e.defender = 0;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && cb_view.first_attacker == 2 && cb_view.defender == 0, "a turn sets lead and shield");
+    memset(&e, 0, sizeof(e));
+    e.op = CLIENT_EDIT_TABLE; e.n_cards = 2; e.cards[0] = c7s; e.cards[1] = c9d;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && cb_view.num_battles == 2 && card_eq(cb_view.battles[1].attack, c9d)
+          && card_is_none(cb_view.battles[0].defense) && card_is_none(cb_view.battles[1].defense), "a table is the cards, uncovered");
+    cvr_board(&cb_view, 1);
+    cb_view.battles[1] = (Battle){ .attack = c7s, .defense = CARD_NONE };
+    cb_view.battles[2] = (Battle){ .attack = c9d, .defense = CARD_NONE };
+    cb_view.num_battles = 3;
+    memset(&e, 0, sizeof(e));
+    e.op = CLIENT_EDIT_LIFT; e.n_cards = 2; e.cards[0] = cover9h; e.cards[1] = c9d;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && cb_view.num_battles == 1 && card_eq(cb_view.battles[0].attack, c7s),
+          "a lift takes off every battle holding one of the cards, by its attack or its cover");
+    cb_view.my_hand_count = 1;
+    cb_view.my_hand[0] = cKs;
+    memset(&e, 0, sizeof(e));
+    e.op = CLIENT_EDIT_RETURN; e.n_cards = 2; e.cards[0] = c9d; e.cards[1] = cKs;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && cb_view.my_hand_count == 2 && card_eq(cb_view.my_hand[1], c9d),
+          "a return adds the cards the hand does not hold, after it");
+    e.op = 42;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_E_FORMAT, "an edit that is not one is refused");
+
+    // LOBBY: the board the server's reset (table_continue) gives, before it arrives.
+    tb_fixture(3, 1u << 2, 151);
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the table loads");
+    for (int guard = 0; guard < 3000 && tb_game.status == GAME_STATUS_PLAYING; guard++) if (!cb_step(&tb_game)) break;
+    cb_finalize(&tb_game, 1u << 2);
+    CHECK(tb_game.status == GAME_STATUS_GAME_OVER, "a game played to its end");
+    client_init(&ct, &ct_slot);
+    CHECK(client_adopt_board(&ct, &tb_game, 0) == CLIENT_OK, "its board, as seat 0 sees it");
+    cb_view = ct.view;
+    for (int s = 0; s < 3; s++) cb_view.seats[s].is_ai = s == 2;
+    memset(&e, 0, sizeof(e));
+    e.op = CLIENT_EDIT_LOBBY;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK, "the lobby is made");
+    game_reset_to_lobby(&tb_game, 1u << 2);
+    CHECK(client_adopt_board(&ct, &tb_game, 0) == CLIENT_OK, "the server's reset board");
+    cb_view2 = ct.view;
+    for (int s = 0; s < 3; s++) cb_view2.seats[s].is_ai = s == 2;
+    CHECK(ct_same_view(&cb_view, &cb_view2) && cb_view.fool == -1 && cb_view.status == GAME_STATUS_WAITING
+          && cb_view.seats[2].status == PLAYER_STATUS_READY && cb_view.seats[0].status == PLAYER_STATUS_IDLE,
+          "the rematch's lobby is the server's reset, bots ready and humans not");
+}
+
+static void test_client_rearrange_hand(void) {
+    cvr_board(&cb_view, 0);
+    cb_view.my_hand_count = 3;
+    for (int i = 0; i < 3; i++) cb_view.my_hand[i] = (Card){ .suit = SUIT_SPADES, .value = (int8_t)(5 + i) };
+    cb_view.seats[0].hand_count = 3;
+    cb_view2 = cb_view;
+    CHECK(client_rearrange_hand(&ct, &cb_view, (const uint8_t[]){ 2, 0, 1 }, 3) == CLIENT_OK
+          && card_eq(cb_view.my_hand[0], cb_view2.my_hand[2]) && card_eq(cb_view.my_hand[1], cb_view2.my_hand[0])
+          && card_eq(cb_view.my_hand[2], cb_view2.my_hand[1]), "the hand takes the order the indices give");
+    cb_view = cb_view2;
+    CHECK(client_rearrange_hand(&ct, &cb_view, (const uint8_t[]){ 0, 0, 1 }, 3) == CLIENT_E_MOVE
+          && memcmp(&cb_view, &cb_view2, sizeof(TableView)) == 0, "a repeated index is not an order, and nothing moves");
+    CHECK(client_rearrange_hand(&ct, &cb_view, (const uint8_t[]){ 0, 1 }, 2) == CLIENT_E_MOVE, "nor is an order of another length");
+    CHECK(client_rearrange_hand(&ct, &cb_view, (const uint8_t[]){ 0, 1, 3 }, 3) == CLIENT_E_MOVE, "nor one past the hand");
+    cb_view.my_hand_count = 0;
+    CHECK(client_rearrange_hand(&ct, &cb_view, 0, 0) == CLIENT_E_MISMATCH, "an empty hand has no order to take");
+    cvr_board(&cb_view, -1);
+    CHECK(client_rearrange_hand(&ct, &cb_view, 0, 0) == CLIENT_E_MISMATCH, "nor has a spectator");
+}
+
+static int cb_verdicts(TableView *open, TableView *final) {
+    const int n = client_conflict_verdicts(open, final, &cb_q, &cb_out);
+    return n;
+}
+
+static void test_client_conflict_verdicts(void) {
+    anim_set_transport(ANIM_TRANSPORT_SERVER);
+    const Card c7s = { .suit = SUIT_SPADES, .value = 6 }, c9d = { .suit = SUIT_DIAMONDS, .value = 8 };
+    const Card back = { .suit = -1, .value = -1 };
+
+    // The push's last board shows 7h/9h; its final board has the defender, seat 1, at 5 cards.
+    cvr_board(&cb_view, 0);
+    cb_view2 = cb_view;
+    memset(&cb_q, 0, sizeof(cb_q));
+    cb_q.defender_seat = 1;
+    cb_q.pending_attacks = -1;
+    cb_q.n_motions = 2;
+    cb_q.motions[0] = (ConflictMotion){ .card = cvr_attack(), .dest = ANIM_DEST_TABLE };
+    cb_q.motions[1] = (ConflictMotion){ .card = c7s, .dest = ANIM_DEST_TABLE };
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_KEEP && cb_out.verdicts[1] == ANIM_CONFLICT_KEEP,
+          "a card standing on the table is kept, and so is an attack the defender can still take");
+    cb_view2.seats[1].hand_count = 1;
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_KEEP && cb_out.verdicts[1] == ANIM_CONFLICT_REVERT,
+          "two pending attacks do not fit the final board's defender's hand of one");
+    cb_view2.seats[1].hand_count = 2;
+    cb_q.motions[0] = (ConflictMotion){ .card = c9d, .dest = ANIM_DEST_TABLE };
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_KEEP && cb_out.verdicts[1] == ANIM_CONFLICT_KEEP,
+          "two fit a hand of two");
+    cb_q.defender_seat = -1;
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_REVERT && cb_out.verdicts[1] == ANIM_CONFLICT_REVERT,
+          "no defender seat is a hand of none");
+    cb_q.defender_seat = 7;
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_REVERT, "and so is a seat the board does not have");
+
+    // The sweep: a pickup the push carries clears what it names, and a back names nothing.
+    cb_q.defender_seat = 1;
+    cb_q.n_events = 1;
+    cb_q.events[0].type = ANIM_EVT_PICKUP;
+    cb_q.events[0].n_cards = 2;
+    cb_q.events[0].cards[0] = c7s;
+    cb_q.events[0].cards[1] = back;
+    cb_view.num_battles = 0;
+    cb_q.motions[0] = (ConflictMotion){ .card = c7s, .dest = ANIM_DEST_TABLE };
+    cb_q.motions[1] = (ConflictMotion){ .card = c9d, .dest = ANIM_DEST_TABLE };
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_CLEAR && cb_out.verdicts[1] == ANIM_CONFLICT_REVERT,
+          "a card the push's pickup carries is cleared, and one the swept table never held reverts");
+
+    // A card I took into my hand stands there, on the push's last board.
+    cb_q.motions[1] = (ConflictMotion){ .card = c9d, .dest = ANIM_DEST_MY_HAND };
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[1] == ANIM_CONFLICT_REVERT, "a picked-up card the hand does not hold reverts");
+    cb_view.my_hand_count = 1;
+    cb_view.my_hand[0] = c9d;
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[1] == ANIM_CONFLICT_KEEP, "one it holds is kept");
+
+    // Uncovered attacks: the open board's, or the final board's when asked.
+    cvr_board(&cb_view, 0);
+    cb_view.battles[0].defense = CARD_NONE;
+    cb_view2 = cb_view;
+    cb_view2.battles[0].defense = (Card){ .suit = SUIT_HEARTS, .value = 8 };
+    cb_view2.seats[1].hand_count = 2;
+    memset(&cb_q, 0, sizeof(cb_q));
+    cb_q.defender_seat = 1;
+    cb_q.pending_attacks = -1;
+    cb_q.n_motions = 2;
+    cb_q.motions[0] = (ConflictMotion){ .card = c7s, .dest = ANIM_DEST_TABLE };
+    cb_q.motions[1] = (ConflictMotion){ .card = c9d, .dest = ANIM_DEST_TABLE };
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_REVERT,
+          "the open board's uncovered attack and two pending ones overfill a hand of two");
+    cb_q.uncovered_on_final = true;
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_KEEP, "the final board's covered table leaves room");
+    cb_q.uncovered_on_final = false;
+    cb_q.motions[1].is_cover = true;
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_KEEP, "a cover is not a pending attack");
+    cb_q.pending_attacks = 2;
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_REVERT, "unless the count is said outright");
+
+    cb_q.n_motions = CLIENT_CONFLICT_MAX_MOTIONS + 1;
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == CLIENT_E_FORMAT, "more motions than the question holds is refused");
+    anim_set_transport(ANIM_TRANSPORT_CHAIN);
 }
 
 int main(void) {
@@ -9057,6 +9518,12 @@ int main(void) {
     test_client_reads_every_push_of_a_game();
     test_client_push_steps_and_refusals();
     test_client_view_rules();
+    test_client_validate_is_the_engine();
+    test_client_optimistic_apply();
+    test_client_optimistic_pickup_rotation_is_the_servers();
+    test_client_board_edits();
+    test_client_rearrange_hand();
+    test_client_conflict_verdicts();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;

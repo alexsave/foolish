@@ -43,6 +43,7 @@
 #define CLIENT_E_IDENTITY (-206)  // identity bytes refused (detail: ROSTER_E_*)
 #define CLIENT_E_ORDER    (-207)  // push_next / push_final with no push open
 #define CLIENT_E_CAP      (-208)  // an output buffer is too small
+#define CLIENT_E_MOVE     (-209)  // an action wire that is not a move, or a hand order that is not one
 
 // One seat as the viewer sees it. `hand_count` is every seat's; the cards are
 // the viewer's own only (TableView.my_hand).
@@ -109,6 +110,63 @@ typedef struct {
     int16_t deck_badge;            // the count on the pile: the stock, the trump, and cards in flight to the trump
 } ViewRules;
 
+// An edit a client makes to a board it holds (client_board_edit): each is a
+// board the screen shows that no server wrote. See client_board_edit.
+#define CLIENT_EDIT_KEEP   1  // my pending cards stand on the table: over `target`, or as attacks
+#define CLIENT_EDIT_TURN   2  // the lead and the shield my pending pass moved: first_attacker, defender
+#define CLIENT_EDIT_TABLE  3  // the table is `cards`, as uncovered attacks
+#define CLIENT_EDIT_LIFT   4  // every battle holding one of `cards` leaves the table
+#define CLIENT_EDIT_RETURN 5  // `cards` back into my hand, each that is not there already
+#define CLIENT_EDIT_LOBBY  6  // the rematch's lobby (game_reset_to_lobby), before its reset arrives
+
+typedef struct {
+    int8_t  op;              // CLIENT_EDIT_*
+    int8_t  first_attacker;  // TURN
+    int8_t  defender;        // TURN
+    uint8_t n_cards;
+    Card    target;          // KEEP: the attack every card covers, CARD_NONE for attacks
+    Card    cards[MAX_HAND_SIZE];
+} BoardEdit;
+
+// The conflict verdict's question about my pending motions, asked of a push's
+// boards (client_conflict_verdicts). The events and motions are the host's -
+// the push's events it has not already played, the cards it has in flight -
+// and the boards say the rest.
+#define CLIENT_CONFLICT_MAX_EVENTS 128   // == ANIM_MAX_STEPS
+#define CLIENT_CONFLICT_MAX_MOTIONS 64
+
+typedef struct {
+    int8_t  type;       // ANIM_EVT_*
+    bool    masked;     // viewer-masked backs: they name nothing
+    uint8_t n_cards;
+    Card    cards[MAX_HAND_SIZE];   // a card that is not one (a back) names nothing
+} ConflictEvent;
+
+typedef struct {
+    Card    card;       // CARD_NONE: a masked back
+    int8_t  dest;       // ANIM_DEST_*
+    bool    is_cover;
+} ConflictMotion;
+
+typedef struct {
+    int8_t  defender_seat;      // whose hand on the final board bounds my attacks; -1: none (a hand of 0)
+    bool    uncovered_on_final; // count the uncovered attacks on the final board, else on the open one
+    int8_t  pending_attacks;    // my unconfirmed attacks; -1: the motions that are not covers
+    uint8_t n_events;
+    uint8_t n_motions;
+    ConflictEvent  events[CLIENT_CONFLICT_MAX_EVENTS];
+    ConflictMotion motions[CLIENT_CONFLICT_MAX_MOTIONS];
+} ClientConflict;
+
+typedef struct {
+    uint8_t n;
+    uint8_t verdicts[CLIENT_CONFLICT_MAX_MOTIONS];   // ANIM_CONFLICT_* per motion
+} ConflictVerdicts;
+
+// A board as the rules read it: a masked Game with room for the one log record a
+// dry run writes (log_cap 1), so a move can be judged on it.
+typedef struct { _Alignas(8) unsigned char bytes[offsetof(Game, logs) + sizeof(GameLog)]; } ClientRulesSlot;
+
 typedef struct {
     Game     *g;          // the slot: a masked board, prefix storage (offsetof(Game, logs))
     Roster    r;
@@ -126,6 +184,7 @@ typedef struct {
     uint32_t  version;
     int32_t   identity_at;  // where in the last read input its roster trailer began, -1 for none
     bool      open;
+    ClientRulesSlot rules;  // scratch: the board a gate, a rotation or a reset reads as a game
 } ClientTable;
 
 // The slot's storage: a Game prefix, which is all a masked import writes.
@@ -187,5 +246,75 @@ int client_identity_seat(ClientTable *c, const char *id, int id_len, const char 
 // CLIENT_E_FORMAT for a view that is not one: a count past its capacity, a
 // viewer that is not a seat, a negative flight.
 int client_view_rules(const TableView *v, int from_deck, int to_flipped, ViewRules *out);
+
+// ---------- the boards a client makes (docs/C_GAME_SHAPE_MIGRATION.md Phase 6b) ----------
+//
+// Not every board a screen holds is a read of bytes a server wrote. A move the
+// viewer made stands on the board before the server confirms it; a push's boards
+// keep the viewer's still-pending cards on them; a card flying home lands on the
+// board it left; the rematch's lobby shows before its reset arrives. Each of
+// those boards is made here, from a board the host holds written back through
+// the generated writer, in place - so a host holds boards and decides when to
+// show them, and never what they are.
+//
+// A board is read as the rules read it by importing it as a masked game: the
+// viewer's hand is real, every card the viewer cannot see (the stock, the other
+// hands) is a placeholder that is counted and never named, and the whole is
+// judged as a masked import is (game_validate, GAME_VALIDATE_MASKED). The rules
+// never name another seat's card, so a gate on that game is the server's verdict.
+
+// The viewer's move on `v`, dry-run by the engine (awire_apply on the board as a
+// game, nothing kept): 0 legal, the ENGINE_REJECT_* that refuses it,
+// CLIENT_E_MOVE for a wire that is not a move, or the GAME_INVALID_* the board
+// itself is refused for. A spectator's move is judged for seat 0.
+int client_validate(ClientTable *c, const TableView *v, const uint8_t *awire, int len);
+
+// The board the viewer's move leaves until the server says otherwise, from the
+// move's own wire. It is a prediction of what the viewer will see, not a
+// judgement: the host applies a move it judged (client_validate) when it made
+// it, and the seats' hand counts stay the server's.
+//   attack, pass: the cards join the table as attacks and leave the hand; a pass
+//     also hands the shield to the next seat in play (get_next_player_index).
+//   cover: each battle whose attack the wire names takes the cover paired with it,
+//     and the covers leave the hand.
+//   pickup: the table joins the hand, each attack before its cover, and the lead
+//     and the shield move on as the server's rotation will (get_next_player_index
+//     twice) - unless the refill after it could put a seat out (another seat in
+//     play holds no card), which would move them somewhere the board cannot know.
+//   good: nothing moves.
+// CLIENT_OK, CLIENT_E_MOVE, CLIENT_E_FORMAT for a view that is not one,
+// CLIENT_E_STATE when the rotation's board is refused (detail: GAME_INVALID_*),
+// CLIENT_E_CAP for a table or a hand past its capacity.
+int client_optimistic_apply(ClientTable *c, TableView *v, const uint8_t *awire, int len);
+
+// The board after `e` (CLIENT_EDIT_*):
+//   KEEP    each card, in order, unless the table already holds it on either side:
+//           as the cover of the battle whose attack is `target` while that battle
+//           is uncovered, or as a new attack when `target` is CARD_NONE; and out of
+//           the viewer's hand either way. A spectator's board is left as it is.
+//   TURN    the lead and the shield are `first_attacker` and `defender`.
+//   TABLE   the table is `cards`, each an uncovered attack.
+//   LIFT    every battle whose attack or cover is one of `cards` leaves the table.
+//   RETURN  each of `cards` not in a seated viewer's hand is appended to it.
+//   LOBBY   game_reset_to_lobby, the seats the roster marks bots coming back ready.
+// CLIENT_OK, CLIENT_E_FORMAT for a view or an edit that is not one, CLIENT_E_STATE
+// when the lobby's board is refused (detail: GAME_INVALID_*), CLIENT_E_CAP.
+int client_board_edit(ClientTable *c, TableView *v, const BoardEdit *e);
+
+// The viewer's hand in the order `idx` gives (game_rearrange_hand): CLIENT_OK,
+// CLIENT_E_MISMATCH when the viewer holds no hand to order (a spectator, an empty
+// hand), CLIENT_E_MOVE when `idx` is not a permutation of the hand, CLIENT_E_STATE
+// when the board is refused.
+int client_rearrange_hand(ClientTable *c, TableView *v, const uint8_t *idx, int n);
+
+// The conflict verdict for each of `q`'s motions against a push (anim_plan.h
+// anim_conflict_sweep, anim_conflict_facts, anim_conflict_verdict; the server
+// transport): the push's events are what it moves; `open` - the push's last
+// board - is where its cards stand, on the table and in the viewer's hand; the
+// server's hope reads the hand of `q->defender_seat` on `final` and the uncovered
+// attacks of `final` or `open`. Fills `out`; the motion count, or
+// CLIENT_E_FORMAT for a view or a question that is not one, or the negative
+// ANIM_E* the rule returns.
+int client_conflict_verdicts(const TableView *open, const TableView *final, const ClientConflict *q, ConflictVerdicts *out);
 
 #endif
