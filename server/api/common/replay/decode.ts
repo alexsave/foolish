@@ -24,7 +24,8 @@ const lazy = <T>(load: () => Promise<T>): (() => Promise<T>) => {
     let mod: Promise<T> | undefined;
     return () => (mod ??= load());
 };
-const engineMod = lazy(() => import("@sdk/ts/wasm/engine.ts"));
+// Through decode_kernel.ts, not engine.ts: see the note there.
+const engineMod = lazy(() => import("./decode_kernel.ts"));
 
 
 // Byte layout: REPLAY_DEC_HDR + per-log records — see c/src/replay.h.
