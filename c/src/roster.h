@@ -37,7 +37,7 @@
 //
 // 2. THE ENVELOPE TRAILER, which shipped iOS builds decode in Swift
 //    (ios/FoolishNet/EnvelopeRoster.swift) and the web decodes in TS
-//    (sdk/ts/wire/roster.ts decodePackedRoster). Written byte for byte like
+//    (c/src/client_table.c, through roster_trailer_read). Written byte for byte like
 //    roster.ts encodePackedRoster:
 //
 //      u8  format = 1

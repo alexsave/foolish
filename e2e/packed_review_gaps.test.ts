@@ -35,7 +35,7 @@ import { legalMoves, residentBoard, type BoardState, type PlayCard } from './hel
 import { runMeta, seedLobby } from './helpers/table_server.ts';
 import { suiteRng } from './helpers/rng.ts';
 import { encodeAction, decodeAction, encodeActionRequest, decodeActionRequest, encodeActionResponse, decodeActionResponse, ACTION_STATUS } from '../sdk/ts/wire/awire.ts';
-import { decodePackedGame } from '../sdk/ts/wire/view.ts';
+import { decodeEnvelope } from './helpers/client_read.ts';
 import { validateActionWire, initClientGuards } from '../src/wasm/clientGuards.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
@@ -80,7 +80,7 @@ function served(gameId: string, fx: TableFixture, seat: number, version: number)
   assert.equal(fixtureTable().load(fx.state, fx.roster), L.TABLE_OK, 'table loads');
   const env = fixtureTable().envelope(gameId, seat, version);
   if (typeof env === 'number') throw new Error(`envelope refused (${env})`);
-  const decoded = decodePackedGame(env);
+  const decoded = decodeEnvelope(env);
   assert.ok(decoded, 'the envelope decodes');
   return decoded!;
 }

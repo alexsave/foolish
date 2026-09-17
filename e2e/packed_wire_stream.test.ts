@@ -36,8 +36,9 @@ import {
 } from '../sdk/ts/wasm/engine.ts';
 import { start_game_packed } from '../server/api/common/game_lifecycle.ts';
 import { encodeAction, AwireKindName } from '../sdk/ts/wire/awire.ts';
-import { decodeEventWire } from '../sdk/ts/wire/evwire.ts';
-import { kernelEventsFromPacked } from '../sdk/ts/wasm/bots.ts';
+import { readPush } from './helpers/client_read.ts';
+import { clientTable } from '../sdk/ts/table/client_table.ts';
+import { EVW_T_COVER, EVW_T_DEAL, EVW_T_REFILL } from '../sdk/ts/gen/view_layout.bots.ts';
 import { logsFromKernelExport, decodeLogs } from '../sdk/ts/wire/logwire.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
@@ -73,35 +74,33 @@ type Handler = (g: Game, pid: string) => AnimationEvent[];
 // final MAGIC_TRANSITION the packed path emits via append_final_transition).
 
 
-// Personalization scan: every event snapshot + the trailer of a viewer's stream
-// must carry no non-viewer hand, and DEAL/REFILL card identities must reach only
-// the receiving seat.
+// Personalization scan: every step of a viewer's stream shows no hand but the
+// viewer's own, and DEAL/REFILL card identities reach only the receiving seat.
 //
-// This used to walk the bytes by hand with parseMaskedState. That parser is gone
-// (A8/F7) and the kernel reads its own format now, so the scan asks the kernel —
-// which is also the honest way round: it inspects what a CLIENT would actually
-// be able to see, rather than what a second parser thinks is in there.
-function assertNoLeaks(bytes: Uint8Array, viewer: number, numPlayers: number): void {
+// It asks the client's reader (the kernel's client slot), which is the honest way
+// round: it inspects what a CLIENT can see, and a view the slot reads holds the
+// viewer's own hand and every other seat as a count only - no other hand is there
+// to be read.
+function assertNoLeaks(bytes: Uint8Array, viewer: number, numPlayers: number): number {
   assert.equal(bytes[0], 1, 'evwire format version');
-  const seq = kernelEventsFromPacked(bytes);
-  assert.equal(seq.viewer, viewer, 'the stream is addressed to this viewer');
+  const read = clientTable().readPush(bytes, { as3: false, identity: 'none' });
+  assert.ok(read, 'the stream reads');
+  assert.equal(read.final.mySeat, viewer, 'the stream is addressed to this viewer');
 
-  const noForeignHand = (state: { players: { seat: number; hand: unknown }[] }, where: string) => {
-    for (const p of state.players) {
-      if (p.seat === viewer) continue;
-      assert.equal(p.hand, null, `seat ${p.seat} hand masked for viewer ${viewer} (${where})`);
-    }
+  const ownHandOnly = (view: typeof read.final, where: string) => {
+    assert.equal(view.mySeat, viewer, `the view is the viewer's (${where})`);
+    assert.equal(view.myHand.length, viewer < 0 ? 0 : view.seats[viewer].handCount, `only the viewer's own hand (${where})`);
   };
 
   let checked = 0, covers = 0;
-  for (const ev of seq.events) {
-    // 1 = deal, 9 = refill (EVW_T_*); a card bound for someone else's hand.
-    if ((ev.type === 1 || ev.type === 9) && ev.seat !== viewer) {
+  for (const { event: ev, view } of read.steps) {
+    // A card bound for someone else's hand.
+    if ((ev.type === EVW_T_DEAL || ev.type === EVW_T_REFILL) && ev.seat !== viewer) {
       for (const c of ev.cards) {
-        assert.equal(c, null, `deal/refill cards masked (viewer ${viewer}, seat ${ev.seat})`);
+        assert.deepEqual(c, { suit: -1, value: -1 }, `deal/refill cards masked (viewer ${viewer}, seat ${ev.seat})`);
       }
     }
-    noForeignHand(ev.state, `event ${ev.type}`);
+    ownHandOnly(view, `event ${ev.type}`);
 
     // A COVER is the one event that carries BOTH optional trailer fields - the
     // covered attack card and the battle index it landed in (evwire.c's
@@ -111,21 +110,19 @@ function assertNoLeaks(bytes: Uint8Array, viewer: number, numPlayers: number): v
     // see it, and neither can a shape check. Tying them together is what makes
     // the order observable - the target must be the attack card sitting in the
     // battle the event names.
-    if (ev.type === 5) {
-      assert.ok(ev.target != null, 'a cover names the card it covered');
-      assert.ok(ev.battle != null, 'a cover names the battle it landed in');
-      const b = ev.state.battles[ev.battle!];
-      assert.ok(b, `cover battle index ${ev.battle} is on the board (${ev.state.battles.length} battles)`);
-      assert.deepEqual(
-        b.attack, ev.target,
-        `cover target ${JSON.stringify(ev.target)} is battle ${ev.battle}'s attack ${JSON.stringify(b.attack)}`,
-      );
+    if (ev.type === EVW_T_COVER) {
+      assert.ok(ev.hasTarget, 'a cover names the card it covered');
+      assert.ok(ev.battle >= 0, 'a cover names the battle it landed in');
+      const bt = view.battles[ev.battle];
+      assert.ok(bt, `cover battle index ${ev.battle} is on the board (${view.battles.length} battles)`);
+      assert.deepEqual(bt.attack, ev.target,
+        `cover target ${JSON.stringify(ev.target)} is battle ${ev.battle}'s attack ${JSON.stringify(bt.attack)}`);
       covers++;
     }
     checked++;
   }
-  noForeignHand(seq.game, 'trailer');
-  assert.equal(checked, seq.events.length, 'every event was scanned');
+  ownHandOnly(read.final, 'trailer');
+  assert.equal(checked, read.steps.length, 'every event was scanned');
   assert.ok(numPlayers >= 2);
   return covers;
 }
@@ -158,8 +155,6 @@ test('every packed stream is leak-free, decodable, and mirrors the committed sta
       const kind = m.type as AwireKindName;
       const seat = game.players.findIndex(p => p.player_id === actor.player_id);
 
-      const preGood = [...game.good_players];
-      const preGoodTs = game.good_timestamp;
       moveSeed = (moveSeed * 48271 + mv + 1) >>> 0;
 
       const wire = encodeAction({ kind, cards: m.cards, attack_cards: m.attack_cards });
@@ -187,13 +182,14 @@ test('every packed stream is leak-free, decodable, and mirrors the committed sta
         const cBytes = run.events.get(viewer)!;
         coversChecked += assertNoLeaks(cBytes, viewer, game.players.length);
 
-        const decoded = decodeEventWire(cBytes, roster, { preGood, prevGoodTs: preGoodTs, now: () => 4242 });
+        const decoded = readPush(cBytes, roster, { now: () => 4242 });
         assert.ok(decoded, 'stream decodes');
         // The decoded final game mirrors the committed public state.
         assert.equal(decoded!.game.status, game.status, 'status');
         assert.equal(decoded!.game.deck_length, game.deck.length, 'deck length');
         assert.equal(decoded!.game.discard_pile_length, game.discard_pile_length, 'discard length');
-        assert.deepEqual(decoded!.game.good_players, game.good_players, 'good order reconstructed');
+        // The goods said, in seat order (the order they were said is not on the wire, plan Q1).
+        assert.deepEqual([...decoded!.game.good_players].sort(), [...game.good_players].sort(), 'goods said');
       }
       moves++;
       if (run.ended) { ends++; break; }

@@ -36,7 +36,7 @@ import { settle, tokenFor, postJson, postPacked } from './helpers/edge.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { ACTION_STATUS, decodeActionResponse } from '../sdk/ts/wire/awire.ts';
-import { decodePackedGame } from '../sdk/ts/wire/view.ts';
+import { decodeEnvelope } from './helpers/client_read.ts';
 import { IDLE, PLAYING, READY, WAITING } from './helpers/table_fixture.ts';
 import { actionRequest, legalMoves, mustReadTable } from './helpers/table_play.ts';
 import { seedLobby } from './helpers/table_server.ts';
@@ -367,7 +367,7 @@ test('action bump: open to anyone by design, and it changes nothing', async () =
     const before = await world(gameId);
     const res = await postJson('action', c.tok.S, { type: 'bump', game_id: gameId, player_id: c.A });
     assert.equal(res.status, 200, 'a spectator may nudge a stalled game');
-    const view = decodePackedGame(res.bytes);
+    const view = decodeEnvelope(res.bytes);
     assert.ok(view, 'the response is a packed view');
     assert.equal(view!.seat, -1, 'and it is the SPECTATOR view, not the view of the player the body named');
     // A bump commits nothing on the C Table (it only reads the row and wakes the
@@ -383,7 +383,7 @@ test('create: the new lobby seats the CALLER, whoever the body names', async () 
     const c = await cast();
     const res = await postJson('create', c.tok.A, { player_id: c.B, user_id: c.B, name: 'x' });
     assert.equal(res.status, 200, `create succeeds: ${JSON.stringify(res.json)}`);
-    const view = decodePackedGame(res.bytes);
+    const view = decodeEnvelope(res.bytes);
     assert.ok(view, 'the response is a packed view');
     await settle();
     assert.deepEqual(await ids(view!.game.id), [c.A], 'seated: the caller alone');

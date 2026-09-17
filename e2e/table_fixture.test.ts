@@ -22,7 +22,7 @@ import { applySchema, pgPool, uuid } from './harness.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { decodePackedGame } from '../sdk/ts/wire/view.ts';
+import { decodeEnvelope } from './helpers/client_read.ts';
 import type { PersonalGame } from '../server/api/core/types.ts';
 import { fixture, fixtureTable, FixtureRefused, GAME_OVER, PLAYING, READY } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';
@@ -107,7 +107,7 @@ test('accepted: a dealt game round-trips through table_load and table_envelope',
 
     const env = table.envelope(GID, 0, 7);
     assert.ok(env instanceof Uint8Array, `table_envelope (${env})`);
-    const d = decodePackedGame(env);
+    const d = decodeEnvelope(env);
     assert.ok(d, 'the envelope decodes');
     const g = d.game as PersonalGame;
     assert.equal(d.seat, 0);
@@ -138,14 +138,14 @@ test('accepted: a lobby, a finished game, eliminations and seat defaults', () =>
     const lobby = fixture().seats(seats).seatStatus(2, READY).build();
     assert.equal(table.load(lobby.state, lobby.roster), L.TABLE_OK);
     assert.equal(table.needsBots(), false, 'a lobby needs no bots');
-    const lg = decodePackedGame(table.envelope(GID, -1, 0) as Uint8Array)!.game;
+    const lg = decodeEnvelope(table.envelope(GID, -1, 0) as Uint8Array)!.game;
     assert.equal(lg.status, 'waiting');
     assert.deepEqual(lg.players.map((s) => s.status), ['idle', 'ready', 'ready'], 'human IDLE and bot READY by default; seatStatus overrides');
 
     const playing = fixture().seats(seats).status(PLAYING).hand(0, '6c').hand(2, '7c').eliminated(1).powerSuit(L.SUIT_DIAMONDS).build();
     assert.equal(table.load(playing.state, playing.roster), L.TABLE_OK);
     assert.equal(table.needsBots(), false, 'the only bot is out');
-    const pg = decodePackedGame(table.envelope(GID, -1, 0) as Uint8Array)!.game;
+    const pg = decodeEnvelope(table.envelope(GID, -1, 0) as Uint8Array)!.game;
     assert.deepEqual(pg.players.map((s) => s.status), ['in', 'out', 'in'], 'an eliminated seat is OUT while PLAYING');
     assert.deepEqual(pg.elimination_order, ['b1']);
     assert.equal(pg.flipped, null);
@@ -154,7 +154,7 @@ test('accepted: a lobby, a finished game, eliminations and seat defaults', () =>
 
     const over = fixture().seats(seats).status(GAME_OVER).hand(2, 'Kh').eliminated(1, 0).build();
     assert.equal(table.load(over.state, over.roster), L.TABLE_OK);
-    const og = decodePackedGame(table.envelope(GID, -1, 0) as Uint8Array)!.game;
+    const og = decodeEnvelope(table.envelope(GID, -1, 0) as Uint8Array)!.game;
     assert.equal(og.status, 'game_over');
     assert.deepEqual(og.players.map((s) => s.status), ['idle', 'ready', 'idle'], 'a finished game parks bots READY and humans IDLE');
     assert.deepEqual(og.elimination_order, ['b1', 'h1']);

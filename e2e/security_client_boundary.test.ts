@@ -213,7 +213,7 @@ test('canary: a client module calling the durable blob reader is caught by the s
 });
 
 test('canary: a client module using only masked kernel helpers is NOT flagged', async () => {
-    const r = await scanClientBoundary({ stdin: `import { kernelViewFromPacked } from './sdk/ts/wire/packed_read.ts'; console.log(kernelViewFromPacked);` });
+    const r = await scanClientBoundary({ stdin: `import { readTableView } from './sdk/ts/gen/view_layout.bots.ts'; console.log(readTableView);` });
     assert.deepEqual({ modules: r.modules, symbols: r.symbols, wasmExports: r.wasmExports },
         { modules: [], symbols: [], wasmExports: [] }, `a masked reader is allowed:${explain(r)}`);
 });

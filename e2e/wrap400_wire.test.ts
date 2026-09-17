@@ -24,7 +24,8 @@ import { fixture, fixtureTable, PLAYING } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';
 import { mustReadTable, type TableState } from './helpers/table_play.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
-import { decodePackedGame, GAME_RESP_FORMAT } from '../sdk/ts/wire/view.ts';
+import { GAME_RESP_FORMAT } from '../sdk/ts/wire/view.ts';
+import { decodeEnvelope } from './helpers/client_read.ts';
 import type { PersonalGame } from '../server/api/core/types.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
@@ -88,8 +89,8 @@ test('wrap400 answers with the PACKED game envelope, never a JSON game', async (
         const res = await postJson('meta', await tok(HUMAN_A, 'A'), { type: 'start', game_id: gameId });
         assertPackedBody(res, tag);
 
-        const decoded = decodePackedGame(res.bytes);
-        assert.ok(decoded, `${tag}: decodePackedGame reads it`);
+        const decoded = decodeEnvelope(res.bytes);
+        assert.ok(decoded, `${tag}: the web client reads it`);
         assert.equal(decoded!.version, version, `${tag}: the row's version rides the envelope (a lobby ready commits, a moot start does not)`);
         assert.equal(decoded!.seat, 0, `${tag}: the caller's seat`);
 
@@ -108,7 +109,7 @@ test('wrap400: a caller with no seat gets the spectator envelope', async () => {
     const res = await postJson('action', await tok(OUTSIDER, 'Nobody'), { type: 'bump', game_id: gameId });
     assertPackedBody(res, 'spectator');
 
-    const decoded = decodePackedGame(res.bytes);
+    const decoded = decodeEnvelope(res.bytes);
     assert.ok(decoded, 'spectator envelope decodes');
     assert.equal(decoded!.seat, -1, 'seat -1');
     assert.equal(decoded!.version, 42);
@@ -123,7 +124,7 @@ test('wrap400: seat 1 sees its OWN hand', async () => {
     const gameId = await dealt();
     const res = await postJson('meta', await tok(HUMAN_B, 'B'), { type: 'start', game_id: gameId });
     assertPackedBody(res, 'seat 1');
-    const decoded = decodePackedGame(res.bytes);
+    const decoded = decodeEnvelope(res.bytes);
     assert.ok(decoded);
     assert.equal(decoded!.seat, 1);
     const self = (decoded!.game as PersonalGame).self;

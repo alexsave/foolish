@@ -10,10 +10,16 @@
  *   1. EQUALITY. For every envelope and every push a server writes while tables
  *      are created, joined, filled with bots, dealt, played to their end by humans
  *      and bots, and continued - 2, 4 and 8 seats, every human seat and the
- *      spectator - the new read is exactly the old one: the seat, the version,
- *      the board, the names, and each event with its board. The C Table writes
- *      the bytes (sdk/ts/table/server_table.ts on a private bots.wasm). Decided
- *      differences, removed before comparing: event message prose (Q7).
+ *      spectator - the client reads the board the table holds, as that viewer
+ *      may see it: the seat, the version, the names, the counts, the table, its
+ *      own hand. The C Table writes the bytes (sdk/ts/table/server_table.ts on a
+ *      private bots.wasm); the truth is its state blob, personalized by the
+ *      server's TS oracle. A push reads to the same board its envelope gives,
+ *      in every form a server sends it (as3, as3 labelled as2, as2).
+ *
+ *      Until the TS readers were deleted this compared against them instead:
+ *      2,066 envelopes and 2,579 pushes read identically (commit e6a295fd),
+ *      message prose aside (Q7).
  *
  *   2. REFUSAL. An envelope that does not read whole - no trailer, a truncated
  *      trailer, a count past its capacity, a card byte that is not a card - is
@@ -22,8 +28,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decodePackedGame } from '../sdk/ts/wire/view.ts';
-import { decodeEventWire } from '../sdk/ts/wire/evwire.ts';
+import { personalize_game } from '../server/api/common/common_utils.ts';
+import { PersonalGame } from '../server/api/core/types.ts';
 import { decodeEnvelope, pushToSequence } from '../src/state/snapshotToGame.ts';
 import { clientTable } from '../sdk/ts/table/client_table.ts';
 import { deserializeGameState, kernelLegalMoves } from '../sdk/ts/wasm/engine.ts';
@@ -59,32 +65,76 @@ const counts = { envelopes: 0, pushes: 0, events: 0, games: 0, lobbyEdits: 0 };
 interface Row { gid: string; state: Uint8Array; roster: Uint8Array; version: number; title: string }
 
 const seed = (k: number) => Uint8Array.from({ length: 32 }, (_, i) => (i * 29 + k * 13 + 1) & 0xff);
-const withoutProse = <T extends { events: { message?: string }[] }>(seq: T) => ({ ...seq, events: seq.events.map(({ message: _m, ...e }) => e) });
 
-/** Every envelope and push of the table's last operation, read both ways. */
+/** The table's board as `viewer` may see it: the state blob, personalized by the server's TS oracle. */
+function truth(row: Row, viewer: number) {
+    const seats = server.seats();
+    const game = deserializeGameState(row.state, {
+        id: row.gid, name: row.title, deck_length: 0, good_players: seats.map((s) => s.id), good_timestamp: 1,
+        players: seats.map((s) => ({ player_id: s.id, name: s.name, is_ai: s.brain !== '', strategy_key: s.brain || 'human' })),
+    });
+    return personalize_game(game, viewer >= 0 ? seats[viewer].id : 'a-spectator');
+}
+
+/** Every envelope and push of the table's last operation, read by the client and held to the table. */
 function compareProducts(label: string, row: Row, p: Exclude<ReturnType<ServerTable['commit']>, number>): void {
     const seats = server.seats();
     const viewers = [...seats.map((s, i) => (s.brain ? -1 : i)).filter((i) => i >= 0), -1];
+    const envelopeGames = new Map<number, unknown>();
     for (const viewer of viewers) {
         const env = viewer >= 0 ? p.views[viewer]! : p.spectator;
-        const old = decodePackedGame(env, NOW);
-        assert.ok(old, `${label}: the old reader reads the envelope`);
-        assert.deepEqual(decodeEnvelope(env, NOW), old, `${label}: viewer ${viewer} envelope`);
+        const d = decodeEnvelope(env, NOW);
+        assert.ok(d, `${label}: viewer ${viewer} envelope reads`);
+        const g = d.game, want = truth(row, viewer);
+        const w = `${label}: viewer ${viewer}`;
+        assert.equal(d.seat, viewer, `${w} seat`);
+        assert.equal(d.version, row.version, `${w} version`);
+        assert.equal(g.version, row.version, `${w} game version`);
+        assert.equal(g.id, row.gid, `${w} id`);
+        assert.equal(g.name, row.title, `${w} title`);
+        assert.deepEqual(g.players, want.players, `${w} players (ids, names, bots, statuses, counts)`);
+        assert.deepEqual(g.table_battles, want.table_battles, `${w} table`);
+        assert.equal(g.deck_length, want.deck_length, `${w} deck`);
+        assert.equal(g.discard_pile_length, want.discard_pile_length, `${w} discard`);
+        assert.deepEqual(g.flipped, want.flipped, `${w} trump`);
+        assert.equal(g.status, want.status, `${w} status`);
+        assert.equal(g.power_suit, want.power_suit, `${w} power suit`);
+        assert.equal(g.first_attacker, want.first_attacker, `${w} first attacker`);
+        assert.equal(g.defender, want.defender, `${w} defender`);
+        assert.deepEqual(g.elimination_order, want.elimination_order, `${w} elimination`);
+        assert.deepEqual(g.good_players, want.good_players, `${w} goods, in seat order`);
+        assert.equal(g.good_timestamp === null, want.good_timestamp === null, `${w} good clock`);
+        if (viewer >= 0) {
+            const self = (g as PersonalGame).self, wantSelf = (want as PersonalGame).self;
+            assert.deepEqual(self.hand, wantSelf.hand, `${w} own hand, in order`);
+            assert.equal(self.awaiting_attack, wantSelf.awaiting_attack, `${w} awaiting attack`);
+            assert.equal(self.player_id, wantSelf.player_id, `${w} self`);
+        } else {
+            assert.ok(!('self' in g), `${w}: a spectator has no self`);
+        }
+        const { version: _v, ...board } = g;
+        envelopeGames.set(viewer, board);
         counts.envelopes++;
     }
     if (p.nEvents === 0) return;
-    const title = decodePackedGame(p.spectator, NOW)!.game.name;
-    const roster = { id: row.gid, name: title, players: seats.map((s) => ({ player_id: s.id, name: s.name, is_ai: s.brain !== '' })) };
     for (const viewer of viewers) {
         const as3 = server.push(row.gid, viewer);
         assert.ok(as3 instanceof Uint8Array, `${label}: push ${viewer}`);
-        const old = decodeEventWire(as3.subarray(0, as3.length - 1), roster, { preGood: [], prevGoodTs: null, now: NOW });
-        assert.ok(old, `${label}: the old reader reads the push`);
         const read = clientTable().readPush(as3, { as3: true, gameId: row.gid, version: row.version });
         assert.ok(read, `${label}: viewer ${viewer} push reads (${JSON.stringify(clientTable().lastRefusal())})`);
         const mine = pushToSequence(read, { now: NOW });
-        assert.deepEqual({ viewerSeat: mine.viewerSeat, events: mine.events, game: mine.game },
-            { viewerSeat: old.viewerSeat, ...withoutProse({ events: old.events }), game: old.game }, `${label}: viewer ${viewer} push`);
+        assert.equal(mine.viewerSeat, viewer, `${label}: viewer ${viewer} push is theirs`);
+        assert.equal(mine.events.length, p.nEvents, `${label}: viewer ${viewer} push carries every event`);
+        assert.deepEqual(mine.game, envelopeGames.get(viewer), `${label}: viewer ${viewer} push ends on the envelope's board`);
+        mine.events.forEach((e, i) => {
+            const raw = read.steps[i].event, w = `${label}: viewer ${viewer} event ${i}`;
+            assert.deepEqual(e.game_state.players.map((pl) => pl.player_id), seats.map((s) => s.id), `${w} names the seats`);
+            assert.equal(e.player_id, raw.seat >= 0 ? seats[raw.seat].id : undefined, `${w} actor`);
+            assert.ok(typeof e.type === 'string' && e.type.length > 0, `${w} type`);
+            assert.deepEqual(e.cards ?? [], raw.cards, `${w} cards`);
+            assert.equal(e.battle_index, raw.battle >= 0 ? raw.battle : undefined, `${w} battle`);
+            assert.deepEqual(e.target_card, raw.hasTarget ? raw.target : undefined, `${w} target`);
+        });
         counts.pushes++;
         counts.events += read.steps.length;
         // What a server since Phase 4b sends until Phase 5b: these very bytes, labelled as2.
@@ -123,6 +173,7 @@ function play(label: string, gid: string, humans: number, bots: string[], k: num
     const row: Row = { gid, state: new Uint8Array(0), roster: new Uint8Array(0), version: 0, title: '' };
     const ids = Array.from({ length: humans }, (_, i) => `00000000-0000-4000-8000-${String(k * 16 + i).padStart(12, '0')}`);
     const names = ['Дмитрий', 'Zoë 🃏', 'Ann', '田中花子', 'q'.repeat(70), 'Bo', 'Cy', 'Di'];
+    row.title = `${names[0]}'s Game`;
     assert.equal(server.create(ids[0], names[0]), L.TABLE_OK);
     commit(`${label} create`, row);
     for (let i = 1; i < humans; i++) lobby(`${label} join ${i}`, row, () => server.join(ids[i], names[i]));
@@ -161,7 +212,7 @@ function play(label: string, gid: string, humans: number, bots: string[], k: num
     counts.games++;
 }
 
-test('every envelope and push of whole games reads through C exactly as the TS readers read it', () => {
+test('every envelope and push of whole games reads through C as the board the table holds', () => {
     play('2p', 'g2', 2, [], 1);
     play('4p', 'g4', 2, ['random', 'handwritten'], 2);
     play('8p', 'g8-0000-4000-8000-000000000008', 3, ['random', 'random', 'handwritten', 'random', 'simple_heuristic'], 3);

@@ -19,14 +19,7 @@ import { LegalMove } from '@api/core/bot_interfaces.ts';
 import { loadWasmGz, loadWasmGzAsync } from './wasm_asset.ts';
 import { LAYOUT_HASH as BOTS_LAYOUT_HASH } from '../gen/layout_hash.bots.ts';
 import { assertLayoutHash } from './layout_hash.ts';
-import {
-    KernelState, KernelSequence, kernelViewFromPacked, kernelEventsFromPacked,
-} from '@sdk/ts/wire/packed_read.ts';
-
-// view.h: mask every hand and the deck.
-const VIEW_SPECTATOR = -1;
-// view.c's wasm_view_serialize prefixes [format, viewer] before the state.
-const VIEW_FORMAT_VERSION = 1;
+import { memOf as viewMemOf, readTableView, TableView_Snap } from '../gen/view_layout.bots.ts';
 import {
     EngineExports, PackedRunOk, __LOG_TYPE_TO_INT, __MOVE_TYPE, __adoptEngine,
     __marshalGame, __mem, __pooledCard, __replayError, __setResident,
@@ -1082,37 +1075,19 @@ export function wasmViewFromGame(game: Game, viewerSeat: number): Uint8Array {
 // the bubble snapshot shows (it lands in notifications and on lock screens, so
 // it must never carry a hand — design §5 invariants).
 //
-// wasm_view_serialize reads the RESIDENT game, so this needs no re-deserialize:
+// The resident game is read into the web client's slot as a spectator sees it
+// (c/src/client_table.h client_adopt_board), so this needs no re-deserialize:
 // the envelope already put the game in the kernel. The masking itself is in
 // view.c, like every other view in the product — nothing here decides what a
-// stranger may see.
-export function kernelMsgPublicView(): { view: KernelState } {
-    const ex = bots() as unknown as EngineExports;
-    const base = ex.wasm_io_ptr();
-    const len = ex.wasm_view_serialize(VIEW_SPECTATOR);
-    const blob = __mem(ex).slice(base, base + len);
-    // The blob leads with [VIEW_FORMAT_VERSION, viewer] (wasm_view_serialize);
-    // the masked state starts after it.
-    if (blob.length < 2) throw new Error('view: empty payload');
-    if (blob[0] !== VIEW_FORMAT_VERSION) {
-        throw new Error(`view: format ${blob[0]}, this build reads ${VIEW_FORMAT_VERSION}`);
-    }
-    return { view: kernelViewFromPacked(blob.subarray(2), VIEW_SPECTATOR) };
+// stranger may see. The view names no one: the joins carry the names.
+export function kernelMsgPublicView(): { view: TableView_Snap } {
+    const ex = bots() as unknown as {
+        memory: WebAssembly.Memory; wasm_client_adopt_resident(viewer: number): number; wasm_client_view_ptr(): number;
+    };
+    const rc = ex.wasm_client_adopt_resident(-1);
+    if (rc !== 0) throw new Error(`view: the resident game does not read (${rc})`);
+    return { view: readTableView(viewMemOf(ex.memory.buffer), ex.wasm_client_view_ptr()) };
 }
-
-// ---------------------------------------------------------------------------
-// Packed bytes -> objects
-//
-// The door the web's wire decode goes through. The decoders themselves are in
-// wire/packed_read.ts, in TypeScript, and re-exported here because every caller
-// already imports this module - see that file's header for why they are not in
-// C any more and what keeps them honest.
-// ---------------------------------------------------------------------------
-
-export type {
-    KernelCard, KernelPlayerState, KernelState, KernelEvent, KernelSequence,
-} from '@sdk/ts/wire/packed_read.ts';
-export { kernelViewFromPacked, kernelEventsFromPacked };
 
 /* ---------------- the replay code's extras blob (c/src/replay_extras.h) ------
  *
@@ -1381,7 +1356,7 @@ export function kernelResidentReplayCodeV6(seed: Uint8Array): Uint8Array {
 //
 // A v6 code, rebuilt into the real Game and replayed through the real engine,
 // handed back as the SAME packed evwire frames live play broadcasts. The caller
-// decodes them with decodeEventWire — the one it already uses for live play —
+// reads them with the client slot's push reader - the one it uses for live play -
 // so a replay is not a second rendering path.
 // ---------------------------------------------------------------------------
 

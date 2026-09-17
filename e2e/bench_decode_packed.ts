@@ -1,8 +1,5 @@
 // Microbench: the web's read of one packed game envelope.
 //
-//   decodePackedGame   the retired TS reader (sdk/ts/wire/view.ts over
-//                      packed_read.ts): header, roster trailer, masked board, and
-//                      the viewToGame materialization into a PersonalGame
 //   adopt + snapshot   Phase 5a: the kernel's client slot reads the envelope
 //                      (c/src/client_table.c) and the generated reader copies the
 //                      TableView out (sdk/ts/gen/view_layout.bots.ts)
@@ -10,7 +7,8 @@
 //                      (src/state/snapshotToGame.ts) - what the web runs today
 //
 // It is the "marshal / decode" gate in docs/C_GAME_SHAPE_MIGRATION.md 4.0: the C
-// read plus snapshot must be no slower than decodePackedGame.
+// read plus snapshot must be no slower than the retired TS reader, decodePackedGame
+// (measured side by side before it was deleted; the numbers are in that table).
 //
 // The envelopes are real ones, written by the C Table: a table of one human and
 // handwritten bots is dealt from a pinned seed and played (bots by their cycle,
@@ -20,7 +18,6 @@
 //   TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx e2e/bench_decode_packed.ts
 //   BENCH_ITERS=20000 BENCH_RUNS=9 BENCH_JSON=1 ...
 
-import { decodePackedGame } from '@sdk/ts/wire/view.ts';
 import { clientTable } from '@sdk/ts/table/client_table.ts';
 import { decodeEnvelope } from '../src/state/snapshotToGame.ts';
 import { deserializeGameState, kernelLegalMoves } from '@sdk/ts/wasm/engine.ts';
@@ -103,7 +100,6 @@ function main(): void {
     ];
     const client = clientTable();
     const readers: Record<string, (buf: Uint8Array) => number> = {
-        decodePackedGame: (buf) => decodePackedGame(buf, NOW)!.game.players.length,
         'adopt + snapshot': (buf) => client.adoptEnvelope(buf)!.seats.length,
         decodeEnvelope: (buf) => decodeEnvelope(buf, NOW)!.game.players.length,
     };

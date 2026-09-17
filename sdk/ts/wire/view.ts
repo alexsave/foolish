@@ -1,28 +1,12 @@
-// Masked view state ("view" v1) — TS mirror of c/src/view.c. The
-// kernel's per-viewer masked put_state payload is THE representation of a
-// personalized game on the wire; this module is the single place JS objects
-// are materialized from it (the React render boundary / test assertions),
-// plus the byte-writer the TS evwire encoder uses so the legacy JS event
-// paths (bot loop, meta actions) emit byte-identical streams.
-// Pure TS, no wasm imports — shared by client, edge functions and e2e.
-import {
-    Card, Game, GAME_STATUS, PersonalGame, PLAYER_STATUS,
-    PrivatePlayer, PublicGame, PublicPlayer,
-} from "@api/core/types.ts";
-import { WIRE_HIDDEN, WIRE_NONE, wireCard } from "./awire.ts";
-import { KernelCard, KernelState, kernelViewFromPacked } from "@sdk/ts/wasm/bots.ts";
-import { decodePackedRoster, encodePackedRoster } from "./roster.ts";
+// The response envelope ("view" v1) as TypeScript still writes it: the encoder a
+// server used before the C Table wrote every envelope (table.h table_envelope),
+// kept for the tests that hold the shipped format (Phase 8 deletes it). The
+// READER is gone: a client reads an envelope through the kernel's client slot
+// (c/src/client_table.h, sdk/ts/table/client_table.ts), docs/C_GAME_SHAPE_MIGRATION.md
+// Phase 5a.
+import { encodePackedRoster } from "./roster.ts";
 
 export const VIEW_FORMAT_VERSION = 1;
-
-const G_STATUS_FROM_INT = [GAME_STATUS.WAITING, GAME_STATUS.PLAYING, GAME_STATUS.GAME_OVER] as const;
-const G_STATUS_TO_INT: Record<string, number> = {
-    [GAME_STATUS.WAITING]: 0, [GAME_STATUS.PLAYING]: 1, [GAME_STATUS.GAME_OVER]: 2,
-};
-const P_STATUS_FROM_INT = [PLAYER_STATUS.IDLE, PLAYER_STATUS.READY, PLAYER_STATUS.IN, PLAYER_STATUS.OUT] as const;
-const P_STATUS_TO_INT: Record<string, number> = {
-    [PLAYER_STATUS.IDLE]: 0, [PLAYER_STATUS.READY]: 1, [PLAYER_STATUS.IN]: 2, [PLAYER_STATUS.OUT]: 3,
-};
 
 // Identity/presentation fields the packed formats deliberately omit — the
 // same split as engine.ts's RosterTemplate.
@@ -30,93 +14,6 @@ export interface ViewRoster {
     id: string;
     name: string;
     players: { player_id: string; name: string; is_ai: boolean; strategy_key?: string }[];
-}
-
-// This file used to carry a parseMaskedState that read view.c's layout byte for
-// byte. That reader is now wire/packed_read.ts (reached through
-// kernelViewFromPacked) - one place, shared with the event stream, rather than
-// inlined here. What is left in this file is the part the kernel structurally
-// cannot do: joining the board to the roster.
-
-// Reconstruct the good_players array (insertion-ordered) from the mask.
-// The pre-known order survives; at most ONE player can be newly added per
-// action (the actor), so appending any masked-but-unknown pid in seat order
-// reproduces goodPlayersFromMask exactly without needing the actor id.
-export function goodPlayersFromViewMask(mask: number, roster: ViewRoster, preGood: string[]): string[] {
-    if (mask === 0) return [];
-    const seatOf = new Map(roster.players.map((p, i) => [p.player_id, i]));
-    const out = preGood.filter(pid => {
-        const s = seatOf.get(pid);
-        return s !== undefined && (mask & (1 << s)) !== 0;
-    });
-    for (let s = 0; s < roster.players.length; s++) {
-        if ((mask & (1 << s)) !== 0) {
-            const pid = roster.players[s].player_id;
-            if (!out.includes(pid)) out.push(pid);
-        }
-    }
-    return out;
-}
-
-export interface ViewDecodeCtx {
-    preGood: string[];              // the last known good_players order
-    prevGoodTs: number | null;      // the last known good_timestamp value
-    now?: () => number;             // injectable clock for tests
-}
-
-// The kernel speaks {s,v}; the app speaks {suit,value}.
-const card = (c: KernelCard): Card => ({ suit: c.s, value: c.v });
-
-// Materialize the React-facing view model from a board the KERNEL decoded — the
-// one place a kernel board becomes a JS game object. viewerSeat < 0 yields a
-// spectator PublicGame (no self).
-//
-// Everything this adds is something the kernel does not have and should not:
-// identity (game.h keeps it out of the blob deliberately), the good-players
-// INSERTION order (needs the caller's prior order), and the good_timestamp VALUE
-// (a host clock reading). The kernel says what the board is; this says who the
-// seats are.
-export function viewToGame(
-    view: KernelState, roster: ViewRoster, viewerSeat: number, ctx: ViewDecodeCtx,
-): PersonalGame | PublicGame {
-    const players: PublicPlayer[] = view.players.map((vp, i) => ({
-        player_id: roster.players[i]?.player_id ?? `seat-${i}`,
-        name: roster.players[i]?.name ?? `seat-${i}`,
-        is_ai: roster.players[i]?.is_ai ?? false,
-        status: P_STATUS_FROM_INT[vp.status] ?? PLAYER_STATUS.IDLE,
-        hand_length: vp.handCount,
-    }));
-    const base: PublicGame = {
-        id: roster.id,
-        name: roster.name,
-        deck_length: view.deckCount,
-        discard_pile_length: view.discardCount,
-        flipped: view.flipped ? card(view.flipped) : null,
-        players,
-        status: G_STATUS_FROM_INT[view.status] ?? GAME_STATUS.WAITING,
-        power_suit: view.powerSuit,
-        first_attacker: view.firstAttacker,
-        defender: view.defender,
-        table_battles: view.battles.map(b => ({
-            attack: card(b.attack),
-            defense: b.defense ? card(b.defense) : null,
-        })),
-        elimination_order: view.eliminationOrder.map(s => roster.players[s]?.player_id ?? `seat-${s}`),
-        good_players: goodPlayersFromViewMask(view.goodMask, roster, ctx.preGood),
-        good_timestamp: view.hasGoodTs ? (ctx.prevGoodTs ?? (ctx.now ?? Date.now)()) : null,
-    };
-    if (viewerSeat < 0 || viewerSeat >= view.players.length) return base;
-    const vp = view.players[viewerSeat];
-    const self: PrivatePlayer = {
-        ...players[viewerSeat],
-        // The kernel emits "hand":null for any seat that is not the viewer. On a
-        // well-formed view that cannot be the viewer's own seat; render card
-        // backs rather than crash if it ever is.
-        hand: vp.hand ? vp.hand.map(card) : new Array(vp.handCount).fill({ suit: -1, value: -1 }),
-        awaiting_attack: vp.awaitingAttack,
-        strategy_key: roster.players[viewerSeat]?.strategy_key ?? 'human',
-    };
-    return { ...base, self } as PersonalGame;
 }
 
 // ---------------------------------------------------------------------------
@@ -140,8 +37,8 @@ export function viewToGame(
 // while the field caught up.
 //
 // The island is now gone: roster_len is written as 0 and the trailer is
-// mandatory. A payload without the flag no longer decodes at all - see
-// decodePackedGame. The u16 at bytes 7-8 stays so every offset after it is
+// mandatory. A payload without the flag no longer decodes at all (the client
+// slot refuses it). The u16 at bytes 7-8 stays so every offset after it is
 // unchanged, and e2e/packed_roster_wire.test.ts still pins the prefix with a
 // frozen replica of the 1.0(43) decoder.
 // ---------------------------------------------------------------------------
@@ -190,54 +87,6 @@ export function encodeGameResponse(
     // which every shipped reader does.
     out.set(trailer, q);
     return out;
-}
-
-// Decode + materialize in one step — the client's render-boundary JS
-// conversion for an authoritative fetch. Returns null on an unknown format.
-export function decodePackedGame(
-    buf: Uint8Array, now?: () => number,
-): { game: PersonalGame | PublicGame; version: number; seat: number } | null {
-    if (buf.length < 11 || buf[0] !== GAME_RESP_FORMAT) return null;
-    const isPlayer = (buf[1] & 1) !== 0;
-    const seat = isPlayer ? buf[2] : -1;
-    const version = (buf[3] | (buf[4] << 8) | (buf[5] << 16) | (buf[6] << 24)) >>> 0;
-    const rosterLen = buf[7] | (buf[8] << 8);
-    if (9 + rosterLen + 2 > buf.length) return null;
-    let roster: PackedGameRoster;
-    let state: KernelState;
-    let q = 9 + rosterLen;
-    try {
-        const viewLen = buf[q] | (buf[q + 1] << 8);
-        // The roster is the packed trailer, and ONLY the packed trailer. A
-        // payload without the flag was written before the trailer existed - an
-        // idle game's cached player_views row, or an older server - and it is
-        // UNREADABLE now rather than JSON-parsed, because the island it used to
-        // carry is gone. Callers already treat null as unreadable, and the next
-        // commit on that game rewrites its row.
-        if ((buf[1] & GAME_RESP_FLAG_PACKED_ROSTER) === 0) return null;
-        const packed = decodePackedRoster(buf, q + 2 + viewLen);
-        if (!packed) return null;
-        roster = packed.roster as PackedGameRoster;
-        q += 2;
-        if (q + viewLen > buf.length || buf[q] !== VIEW_FORMAT_VERSION) return null;
-        // The envelope around the blob is this file's own invention (it is
-        // written by encodeGameResponse a few lines up, in TypeScript, with no C
-        // twin), so reading it here duplicates nothing. The BLOB inside it is
-        // view.c's. Skip [fmt | viewer].
-        state = kernelViewFromPacked(buf.subarray(q + 2, q + viewLen), seat);
-    } catch {
-        return null; // truncated/corrupt payload — caller treats as unreadable
-    }
-    const game = viewToGame(state, roster, seat, {
-        preGood: roster.good_players ?? [],
-        prevGoodTs: roster.good_timestamp ?? null,
-        now,
-    });
-    // games.status is column-authoritative over the blob's copy — same rule
-    // as loadCompleteGame.
-    game.status = roster.status as PublicGame['status'];
-    game.version = version;
-    return { game, version, seat };
 }
 
 // ---------------------------------------------------------------------------

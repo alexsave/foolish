@@ -42,12 +42,13 @@ import {
 import {
     GAME_RESP_FORMAT, GAME_RESP_FLAG_PACKED_ROSTER,
     VIEW_FORMAT_VERSION, PackedGameRoster,
-    encodeGameResponse, decodePackedGame,
+    encodeGameResponse,
 } from '../sdk/ts/wire/view.ts';
+import { decodeEnvelope } from './helpers/client_read.ts';
 import { wasmViewFromGame } from '../sdk/ts/wasm/bots.ts';
 import {
     ROSTER_MAX_NAME_BYTES, ROSTER_WIRE_FORMAT,
-    encodePackedRoster, decodePackedRoster, encodeRosterNames, rosterNameBytes,
+    encodePackedRoster, encodeRosterNames, rosterNameBytes,
     PackedRoster,
 } from '../sdk/ts/wire/roster.ts';
 import { RosterTable, cRosterTrailer, tsRosterFor } from './helpers/roster_kernel.ts';
@@ -93,6 +94,25 @@ const rosterFor = (game: Game): PackedGameRoster => ({
 // compared against is the format's one definition.
 function viewBlobFor(game: Game, seat: number): Uint8Array {
     return wasmViewFromGame(game, seat);
+}
+
+// A roster trailer read the way the web client reads one: as the trailer of an
+// envelope (the view blob of a lobby of that many seats) through the kernel's
+// client slot. What it reads is the table's identity - its id, title, status and
+// seats; the good ids and their timestamp are checked for shape and not read
+// (the goods live in the board, plan Q1). Null when the trailer does not read
+// whole.
+function readTrailer(trailer: Uint8Array, seats: number) {
+    const blob = viewBlobFor(mkGame(Array.from({ length: seats }, (_, i) => `s${i}`)), -1);
+    const env = new Uint8Array(11 + blob.length + trailer.length);
+    env.set([GAME_RESP_FORMAT, GAME_RESP_FLAG_PACKED_ROSTER, 0xff, 1, 0, 0, 0, 0, 0, blob.length & 0xff, blob.length >> 8]);
+    env.set(blob, 11);
+    env.set(trailer, 11 + blob.length);
+    const d = decodeEnvelope(env);
+    return d && {
+        id: d.game.id, name: d.game.name, status: d.game.status,
+        players: d.game.players.map((p) => ({ player_id: p.player_id, name: p.name, is_ai: p.is_ai })),
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -176,7 +196,7 @@ test('the envelope carries no roster island, and the trailer is the roster', () 
     assert.ok((out[1] & GAME_RESP_FLAG_PACKED_ROSTER) !== 0, 'the trailer flag must be set');
     assert.equal(out[0], GAME_RESP_FORMAT);
 
-    const dec = decodePackedGame(out);
+    const dec = decodeEnvelope(out);
     assert.ok(dec, 'the envelope must decode');
     assert.deepEqual(dec!.game.players.map(p => p.name), ['Sveta', 'Misha', 'Пётр'],
                      'the names came from the packed trailer');
@@ -200,7 +220,7 @@ test('an envelope with no packed trailer is unreadable, not an empty table', () 
     const head = 9 + 2 + blob.length;
     const legacy = full.subarray(0, head).slice();
     legacy[1] &= ~GAME_RESP_FLAG_PACKED_ROSTER;
-    assert.equal(decodePackedGame(legacy), null, 'a trailer-less envelope must not decode');
+    assert.equal(decodeEnvelope(legacy), null, 'a trailer-less envelope must not decode');
 });
 
 
@@ -235,26 +255,27 @@ const ROSTERS: PackedRoster[] = [
     },
 ];
 
-test('the packed roster round-trips every field the roster carries', () => {
+test('the packed roster round-trips every field a client reads', () => {
     for (const roster of ROSTERS) {
         const bytes = encodePackedRoster(roster);
         assert.equal(bytes[0], ROSTER_WIRE_FORMAT, 'the trailer leads with its version byte');
-        const back = decodePackedRoster(bytes, 0);
+        // It reads whole or not at all: a trailer with bytes to spare is refused too.
+        const back = readTrailer(bytes, roster.players.length);
         assert.ok(back, `roster ${roster.id} did not decode`);
-        assert.equal(back!.next, bytes.length, 'the reader stopped somewhere other than the end');
-        assert.deepEqual(back!.roster, roster, `roster ${roster.id} lost a field`);
+        const { good_players: _g, good_timestamp: _t, ...identity } = roster;
+        assert.deepEqual(back, identity, `roster ${roster.id} lost a field`);
     }
 });
 
 test('a roster read short is nothing, never half a table', () => {
     const bytes = encodePackedRoster(ROSTERS[1]);
     for (let cut = 0; cut < bytes.length; cut++) {
-        assert.equal(decodePackedRoster(bytes.subarray(0, cut), 0), null,
+        assert.equal(readTrailer(bytes.subarray(0, cut), ROSTERS[1].players.length), null,
                      `a ${cut}-byte prefix decoded to a roster`);
     }
     const wrongFormat = Uint8Array.from(bytes);
     wrongFormat[0] = ROSTER_WIRE_FORMAT + 1;
-    assert.equal(decodePackedRoster(wrongFormat, 0), null, 'an unknown trailer version was read anyway');
+    assert.equal(readTrailer(wrongFormat, ROSTERS[1].players.length), null, 'an unknown trailer version was read anyway');
 });
 
 test('a name is trimmed to 64 UTF-8 BYTES, on a scalar boundary, never mid-codepoint', () => {
@@ -272,16 +293,16 @@ test('a name is trimmed to 64 UTF-8 BYTES, on a scalar boundary, never mid-codep
                       { player_id: 'q', name: 'Bob', is_ai: false }],
             good_players: [], good_timestamp: null,
         };
-        const back = decodePackedRoster(encodePackedRoster(roster), 0);
+        const back = readTrailer(encodePackedRoster(roster), 2);
         assert.ok(back, 'a long name broke the roster');
-        const got = back!.roster.players[0].name;
+        const got = back!.players[0].name;
         assert.ok(utf8len(got) <= ROSTER_MAX_NAME_BYTES, `${name}: still over budget at ${utf8len(got)}B`);
         assert.ok(name.startsWith(got), `${name}: the trim did not keep a prefix`);
         assert.ok(got.length > 0, `${name}: the trim ate the whole name`);
         // A severed multi-byte sequence decodes to U+FFFD - the failure a
         // byte-length codec makes when it trims bytes instead of scalars.
         assert.ok(!got.includes('�'), `${name}: the trim cut a codepoint in half`);
-        assert.equal(back!.roster.players[1].name, 'Bob', `${name}: the trim desynchronized the next seat`);
+        assert.equal(back!.players[1].name, 'Bob', `${name}: the trim desynchronized the next seat`);
     }
 });
 
@@ -451,7 +472,7 @@ test('Swift and TypeScript agree on the trim, byte for byte', { skip: !hasSwift 
         };
         const bytes = encodePackedRoster(roster);
         const got = swiftDecode(bytes);
-        const mine = decodePackedRoster(bytes, 0)!.roster;
+        const mine = readTrailer(bytes, 2)!;
         assert.deepEqual(got.players, mine.players,
                          `Swift and TS disagree about ${JSON.stringify(name)}`);
         assert.equal(got.players[1].name, 'Bob', 'the trim desynchronized the seat after it');

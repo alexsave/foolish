@@ -16,7 +16,7 @@ import { runAction, runMeta, seedLobby } from './helpers/table_server.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { shouldDropStaleSequence, mergeTableBattles } from '../src/state/clientReconcile';
-import { decodeEventWire } from '../sdk/ts/wire/evwire.ts';
+import { readPush } from './helpers/client_read.ts';
 import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
 import { suiteRng, type SeededRng } from './helpers/rng.ts';
 
@@ -71,7 +71,7 @@ async function driveAndCapture(): Promise<{ stream: Bcast[]; serverFinalTable: u
     const stream: Bcast[] = broadcastLog
         .filter((b) => b.channel === chan && b.event === 'animation_events')
         .map((b) => {
-            const decoded = decodeEventWire(base64ToBytes(b.payload.b), roster, { preGood: [], prevGoodTs: null });
+            const decoded = readPush(base64ToBytes(b.payload.b), roster, { preGood: [], prevGoodTs: null });
             assert.ok(decoded, `packed broadcast payload must decode (v=${b.payload.v})`);
             return {
                 version: b.payload.v as number,

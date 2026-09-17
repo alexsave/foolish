@@ -19,10 +19,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-    ensureBotsAsync, kernelEventsFromPacked, replayEventFrames,
-} from '../sdk/ts/wasm/bots.ts';
-import { decodeEventWire } from '../sdk/ts/wire/evwire.ts';
+import { ensureBotsAsync, replayEventFrames } from '../sdk/ts/wasm/bots.ts';
+import { clientTable } from '../sdk/ts/table/client_table.ts';
+import { CLIENT_E_PUSH } from '../sdk/ts/gen/view_layout.bots.ts';
+import { readPush } from './helpers/client_read.ts';
 import { PLAYER_STATUS } from '../server/api/core/types.ts';
 import { playSeededV6 } from './helpers/seeded_game.ts';
 
@@ -34,7 +34,7 @@ const roster = (np: number) => ({
         player_id: `seat-${i}`, name: `P${i}`, is_ai: true,
     })),
 });
-const CTX = { preGood: [] as string[], prevGoodTs: null, now: () => 0 };
+const CTX = { now: () => 0 };
 
 // The last frame of a finished game carries the committed final board as its
 // trailer. That board must be the one the engine ended on — the whole decode
@@ -47,7 +47,7 @@ test('the decoded final board is the board the engine actually ended on', async 
         const played = seeded!.game;
 
         const frames = replayEventFrames(seeded!.code, -1);
-        const last = decodeEventWire(frames[frames.length - 1], roster(np), CTX);
+        const last = readPush(frames[frames.length - 1], roster(np), CTX);
         assert.ok(last, 'the last frame decodes');
 
         const board = last!.game;
@@ -75,7 +75,7 @@ test('a spectator decode carries no hand, and a seat decode carries its own', as
     const code = seeded!.code;
 
     // The deal frame — the one place every hand is full and a leak would show.
-    const spectator = decodeEventWire(replayEventFrames(code, -1)[0], roster(3), CTX);
+    const spectator = readPush(replayEventFrames(code, -1)[0], roster(3), CTX);
     assert.ok(spectator, 'the deal frame decodes for a spectator');
     assert.equal((spectator!.game as { self?: unknown }).self, undefined,
                  'a spectator has no self');
@@ -102,7 +102,7 @@ test('a spectator decode carries no hand, and a seat decode carries its own', as
     assert.ok(dealt > 0, `${dealt} dealt cards were checked — the loop is not vacuous`);
     assert.equal(flipped, 1, 'and exactly one trump was turned');
 
-    const seat1 = decodeEventWire(replayEventFrames(code, 1)[0], roster(3), CTX);
+    const seat1 = readPush(replayEventFrames(code, 1)[0], roster(3), CTX);
     assert.ok(seat1, 'the deal frame decodes for seat 1');
     const self = (seat1!.game as { self: { hand: { suit: number }[] } }).self;
     assert.ok(self, 'seat 1 has a self');
@@ -122,18 +122,18 @@ test('an unreadable payload decodes to null rather than a wrong board', async ()
     const seeded = await playSeededV6(3, 71, 'robusta');
     const frame = replayEventFrames(seeded!.code, -1)[0];
 
-    assert.ok(decodeEventWire(frame, roster(3), CTX), 'the whole frame reads (the control)');
+    assert.ok(readPush(frame, roster(3), CTX), 'the whole frame reads (the control)');
 
     for (const len of [1, 4, 8, Math.floor(frame.length / 2), frame.length - 1]) {
-        assert.equal(decodeEventWire(frame.subarray(0, len), roster(3), CTX), null,
+        assert.equal(readPush(frame.subarray(0, len), roster(3), CTX), null,
                      `a ${len}-byte prefix is unreadable, not a partial board`);
     }
 
     const foreign = frame.slice();
     foreign[0] = 99;
-    assert.equal(decodeEventWire(foreign, roster(3), CTX), null,
+    assert.equal(readPush(foreign, roster(3), CTX), null,
                  'a format this build does not read is refused, not guessed at');
 
-    // And the raw door says why, rather than returning an empty sequence.
-    assert.throws(() => kernelEventsFromPacked(foreign), /not a readable payload/);
+    // And the kernel says why, rather than returning an empty sequence.
+    assert.equal(clientTable().lastRefusal().code, CLIENT_E_PUSH, 'refused as a push that does not read');
 });

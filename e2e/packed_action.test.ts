@@ -24,8 +24,8 @@ import { executePackedAction, MalformedActionRequest } from '../server/impls/sup
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { encodeAction, encodeActionRequest, ACTION_STATUS } from '../sdk/ts/wire/awire.ts';
-import { decodeEventWire } from '../sdk/ts/wire/evwire.ts';
-import type { ViewRoster } from '../sdk/ts/wire/view.ts';
+import { readPush } from './helpers/client_read.ts';
+import type { ReadRoster as ViewRoster } from './helpers/client_read.ts';
 import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
 
 // console.error too: a fixture game has no deal seed, so its end logs that no
@@ -133,11 +133,11 @@ test('packed pipeline: legal awire moves apply, bump the version, rewrite the bl
                 assert.equal(typeof f.payload.s, 'string', 'sequence id');
                 assert.equal(f.payload.v, out.version, 'payload.v is the committed version');
                 const bytes = base64ToBytes(f.payload.b);
-                const decoded = decodeEventWire(bytes, roster, CTX);
+                const decoded = readPush(bytes, roster, CTX);
                 assert.ok(decoded, 'payload.b decodes as event wire');
                 // as3: the as2 sequence, then one flags byte (0 for a move: no roster trailer).
                 assert.equal(bytes[bytes.length - 1], 0, 'a move\'s push ends in a zero flags byte');
-                assert.deepEqual(decodeEventWire(bytes.subarray(0, bytes.length - 1), roster, CTX), decoded,
+                assert.deepEqual(readPush(bytes.subarray(0, bytes.length - 1), roster, CTX), decoded,
                     'and everything before it is the as2 sequence');
                 const expectSeat = f.channel === `game-${gameId}` ? -1 : seats.findIndex((p) => f.channel === `gu-${gameId}-${p.id}`);
                 assert.equal(decoded!.viewerSeat, expectSeat, 'stream is personalized to its channel');
@@ -336,7 +336,7 @@ test('human moves and the bot loop interleave: same payload shape, strictly incr
         assert.equal(typeof e.payload.s, 'string', 'sequence id');
         assert.equal(typeof e.payload.v, 'number', 'numeric version');
         assert.equal(typeof e.payload.b, 'string', 'base64 event wire');
-        assert.ok(decodeEventWire(base64ToBytes(e.payload.b), roster, CTX), 'payload decodes regardless of the emitting path');
+        assert.ok(readPush(base64ToBytes(e.payload.b), roster, CTX), 'payload decodes regardless of the emitting path');
         if (!perChannel.has(e.channel)) perChannel.set(e.channel, []);
         perChannel.get(e.channel)!.push(e.payload.v);
     }

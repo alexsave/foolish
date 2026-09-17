@@ -21,10 +21,10 @@
 // trigger so the end-of-game log wipe cannot hide one).
 //
 // Each payload is checked three independent ways, because a decoder only proves
-// what the decoder reads - packed_read.ts SKIPS the bytes of every hand but the
-// viewer's and every deck byte, so a leak sitting there is invisible to it:
+// what the decoder reads - the client's reader keeps no hand but the viewer's
+// and no deck byte, so a leak sitting there is invisible to it:
 //
-//   1. DECODE. The client decoders (decodePackedGame, decodeEventWire) must show
+//   1. DECODE. The client's reader (sdk/ts/table/client_table.ts) must show
 //      the viewer exactly their own hand, the public board, and nothing else.
 //
 //   2. KERNEL MASKED RE-ENCODE. Every board inside a payload (a view blob, each
@@ -68,9 +68,9 @@ import { __clearGameCache } from '../server/impls/supabase/functions/_shared/ada
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { loadWasmGz } from '../sdk/ts/wasm/wasm_asset.ts';
 import { encodeActionRequest, wireCard } from '../sdk/ts/wire/awire.ts';
-import { decodePackedGame } from '../sdk/ts/wire/view.ts';
-import { decodePackedRoster } from '../sdk/ts/wire/roster.ts';
-import { decodeEventWire } from '../sdk/ts/wire/evwire.ts';
+import { decodeEnvelope, readPush } from './helpers/client_read.ts';
+import { cRosterTrailerRead } from './helpers/roster_kernel.ts';
+import { clientTable } from '../sdk/ts/table/client_table.ts';
 import { decodeLogs } from '../sdk/ts/wire/logwire.ts';
 import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
@@ -232,16 +232,16 @@ const cardsOf = (b: BoardState | null, seat: number) => (b && seat >= 0 ? b.seat
 
 function checkViewEnvelope(t: Table, bytes: Uint8Array, v: Viewer, seat: number, pre: Truth, post: Truth, what: string) {
     t.counts.views++;
-    const d = decodePackedGame(bytes);
+    const d = decodeEnvelope(bytes);
     assert.ok(d, `${what}: the view envelope decodes`);
     assert.equal(d!.seat, seat, `${what}: the envelope is ${viewerName(v)}'s own (seat ${seat})`);
 
     // 2. byte accounting: [9-byte header][u16 view_len][view blob][packed roster], nothing else.
     const viewLen = bytes[9] | (bytes[10] << 8);
     const blob = bytes.subarray(11, 11 + viewLen);
-    const roster = decodePackedRoster(bytes, 11 + viewLen);
-    assert.ok(roster, `${what}: the roster trailer decodes`);
-    assert.equal(roster!.next, bytes.length, `${what}: no bytes after the roster trailer`);
+    const roster = cRosterTrailerRead(bytes.subarray(11 + viewLen));
+    assert.ok(typeof roster !== 'number', `${what}: the roster trailer decodes (${roster})`);
+    assert.equal(11 + viewLen + roster.consumed, bytes.length, `${what}: no bytes after the roster trailer`);
     assert.equal(blob[1], seat < 0 ? 0xff : seat, `${what}: the view blob is written for seat ${seat}`);
     assertMaskedFixedPoint(blob.subarray(2), seat, what);
     // Every byte is the kernel's own envelope for this viewer, from the stored row,
@@ -300,14 +300,16 @@ function walkEvwire(b: Uint8Array, what: string) {
     // as3: one flags byte, then the roster trailer when the operation changed the roster.
     const [flags] = take(1);
     assert.equal(flags & ~1, 0, `${what}: no unknown as3 flag bits`);
-    let roster = null;
+    let roster: string[] | null = null;
     if (flags & 1) {
-        roster = decodePackedRoster(b, q);
-        assert.ok(roster, `${what}: the announced roster trailer decodes`);
-        q = roster!.next;
+        const r = cRosterTrailerRead(b.subarray(q));
+        assert.ok(typeof r !== 'number', `${what}: the announced roster trailer decodes (${r})`);
+        q += r.consumed;
+        // The seat ids it announces, as the client reads them from the push itself.
+        roster = clientTable().readPush(b, { as3: true, identity: 'none' })!.final.seats.map((s) => s.id);
     }
     assert.equal(q, b.length, `${what}: the payload ends where its last block ends`);
-    return { viewer, events, final, roster: roster?.roster ?? null };
+    return { viewer, events, final, roster };
 }
 
 function checkEventPayload(t: Table, payload: Record<string, unknown>, v: Viewer, seat: number,
@@ -326,11 +328,11 @@ function checkEventPayload(t: Table, payload: Record<string, unknown>, v: Viewer
     const may = new Set<number>([...t.everPublic, ...cardsOf(pre.board, seat), ...cardsOf(post.board, seat)]);
     if (walked.roster) {
         // A roster block announces seats and names, never a card or a hand.
-        assert.deepEqual(walked.roster.players.map((p) => p.player_id), roster.players.map((p) => p.player_id), `${what}: the announced roster is the table's`);
+        assert.deepEqual(walked.roster, roster.players.map((p) => p.player_id), `${what}: the announced roster is the table's`);
         t.counts.rosterBlocks++;
     }
     if (t.trumpId !== null) may.add(t.trumpId);
-    const decoded = decodeEventWire(b, roster, { preGood: [], prevGoodTs: null, now: () => 0 });
+    const decoded = readPush(b, roster, { now: () => 0 });
     assert.ok(decoded, `${what}: the client decodes the stream`);
     assert.equal(decoded!.events.length, walked.events.length, `${what}: decoder and walk agree on the event count`);
     for (const [i, e] of walked.events.entries()) {
@@ -555,7 +557,7 @@ async function playTable(nHumans: number, nBots: number, dealSeed: number): Prom
     // create - the response is the creator's first payload
     const noActors = () => [];
     const created = await runCaptured({ label: 'create', requester: humans[0], run: () => postJson('create', humans[0].tok, {}), actors: noActors, pinDeck: false });
-    const d = decodePackedGame(created.response!.bytes);
+    const d = decodeEnvelope(created.response!.bytes);
     assert.ok(d, 'create answered with a view');
     t.gameId = d!.game.id;
     await holdBotLease(t.gameId); // bots act only in explicit bot steps
@@ -695,7 +697,7 @@ async function channelFixture() {
     const a = await human('rt-a'), b = await human('rt-b'), spectator = await human('rt-spec');
     const created = await postJson('create', a.tok, {});
     await settle();
-    const gameId = decodePackedGame(created.bytes)!.game.id;
+    const gameId = decodeEnvelope(created.bytes)!.game.id;
     assert.equal((await postJson('meta', b.tok, { type: 'join', game_id: gameId })).status, 200, 'b joins');
     await settle();
     await pgPool.query(`INSERT INTO realtime.messages(topic, extension) SELECT 'x', 'broadcast' WHERE NOT EXISTS (SELECT 1 FROM realtime.messages)`);

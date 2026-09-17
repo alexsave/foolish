@@ -11,7 +11,7 @@
 //      for the auth id's seat): TABLE_APPLIED == legal, TABLE_REJECTED == illegal
 //   3. CLIENT       - canPass from src/utils/gameValidation.ts (the UI button gate),
 //      over the PersonalGame the client decodes from the server's envelope bytes
-//      (decodePackedGame): the stored player_views row for a human defender
+//      (decodeEnvelope, the web's reader): the stored player_views row for a human defender
 // The invariant: all three must agree for the defender's own hand. A disagreement
 // is the "I could pass legally but the client gave me no option" bug (or its dual).
 //
@@ -29,7 +29,7 @@ import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { Card, PersonalGame } from '../server/api/core/types.ts';
 import { canPass as clientCanPass } from '../src/utils/gameValidation.ts';
-import { decodePackedGame } from '../sdk/ts/wire/view.ts';
+import { decodeEnvelope as readEnvelope } from './helpers/client_read.ts';
 import { encodeAction } from '../sdk/ts/wire/awire.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
@@ -67,7 +67,7 @@ function clientGame(b: BoardState, seat: number, version: number): PersonalGame 
 }
 
 function decodeEnvelope(bytes: Uint8Array): PersonalGame {
-    const d = decodePackedGame(bytes);
+    const d = readEnvelope(bytes);
     assert.ok(d, 'the client decodes the envelope');
     return d.game as PersonalGame;
 }

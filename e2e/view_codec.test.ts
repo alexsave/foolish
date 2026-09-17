@@ -1,15 +1,14 @@
 // Masked-view codec ("view" v1) — the get_game packed round trip. For real
 // kernel-driven games: durable blob -> serializeViewBlob(seat) (the kernel's
-// per-viewer masking) -> encodeGameResponse envelope -> decodePackedGame (the
-// client's render-boundary materialization). The decoded JS game must equal
+// per-viewer masking) -> encodeGameResponse envelope -> decodeEnvelope (the web
+// client's reader: the kernel's client slot and the transitional game mapping). The decoded JS game must equal
 // personalize_game(game, pid) — the retired JSON path's output — on every
 // shared field, for every seat and for the spectator.
 //
-// The raw view blob must also never carry another player's hand identities.
-// That line stood in this header for a long time with nothing checking it: the
-// per-seat assertion in checkView reads the blob back through the kernel's own
-// decoder, which reports a non-viewer hand as null regardless of the bytes. The
-// invariant is now asserted where it lives, on the bytes.
+// The raw view blob must also never carry another player's hand identities. That
+// is asserted where it lives, on the bytes ("a masked view does not depend on the
+// hands it is masking" below): a reader cannot show it, since a view the client
+// reads holds no hand but the viewer's own by construction.
 //
 // Pure kernel + TS codec test — needs no Postgres.
 
@@ -32,11 +31,8 @@ import { handlePass } from '../server/api/common/actions/pass.ts';
 import { handlePickup } from '../server/api/common/actions/pickup.ts';
 import { handleGood } from '../server/api/common/actions/good.ts';
 import { AwireKindName } from '../sdk/ts/wire/awire.ts';
-import {
-    decodePackedGame, encodeGameResponse, PackedGameRoster,
-    VIEW_FORMAT_VERSION,
-} from '../sdk/ts/wire/view.ts';
-import { kernelViewFromPacked } from '../sdk/ts/wasm/bots.ts';
+import { encodeGameResponse, PackedGameRoster, VIEW_FORMAT_VERSION } from '../sdk/ts/wire/view.ts';
+import { decodeEnvelope } from './helpers/client_read.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
@@ -90,35 +86,10 @@ function checkView(game: Game, blob: Uint8Array, seat: number, version: number, 
     assert.equal(viewBlob[0], VIEW_FORMAT_VERSION, `${tag}: view blob format byte`);
     assert.equal(viewBlob[1], seat < 0 ? 0xff : seat, `${tag}: view blob viewer byte`);
 
-    // Personalization on the raw bytes: parse the masked payload — every
-    // non-viewer hand must be fully hidden (counts intact), the viewer's own
-    // hand fully real. The deck is always masked but its LENGTH is real.
-    // Read back by the kernel (A8/F7) — the TS parser that used to shadow
-    // view.c's layout here is gone. The blob leads with [fmt | viewer].
-    const state = kernelViewFromPacked(viewBlob.subarray(2), seat);
-    state.players.forEach((vp, i) => {
-        assert.equal(vp.handCount, game.players[i].hand.length, `${tag}: seat ${i} hand count real for viewer ${seat}`);
-        if (i === seat) {
-            assert.ok(vp.hand, `${tag}: the viewer's own hand is present`);
-            vp.hand!.forEach((c, j) => assert.deepEqual({ suit: c.s, value: c.v }, game.players[i].hand[j],
-                                                        `${tag}: own hand card ${j} real`));
-        } else {
-            // The decoder says hand: null for a seat that is not the viewer.
-            // NOTE what this does and does not prove: packed_read.ts emits null
-            // BECAUSE the seat is not the viewer, not because the bytes were
-            // hidden, so a payload full of real identities would satisfy it
-            // too. It pins the decoder's contract, nothing about the masking.
-            // The masking itself is asserted on the bytes, in "a masked view
-            // does not depend on the hands it is masking" below.
-            assert.equal(vp.hand, null, `${tag}: seat ${i} reported as null for viewer ${seat}`);
-        }
-    });
-    assert.equal(state.deckCount, game.deck.length, `${tag}: deck length real`);
-
     // Envelope round trip — the exact get_game packed response.
     const roster = rosterFor(game);
     const bytes = encodeGameResponse(version, seat, roster, viewBlob);
-    const dec = decodePackedGame(bytes, () => 424242);
+    const dec = decodeEnvelope(bytes, () => 424242);
     assert.ok(dec, `${tag}: packed game response decodes`);
     assert.equal(dec!.version, version, `${tag}: version survives the envelope`);
     assert.equal(dec!.seat, seat < 0 ? -1 : seat, `${tag}: seat survives the envelope`);
@@ -139,8 +110,9 @@ function checkView(game: Game, blob: Uint8Array, seat: number, version: number, 
     assert.equal(dg.power_suit, expected.power_suit, `${tag}: power_suit`);
     assert.equal(dg.first_attacker, expected.first_attacker, `${tag}: first_attacker`);
     assert.equal(dg.defender, expected.defender, `${tag}: defender`);
-    assert.deepEqual(dg.good_players, expected.good_players, `${tag}: good_players order`);
-    assert.equal(dg.good_timestamp, expected.good_timestamp, `${tag}: good_timestamp value`);
+    // The goods said and whether their clock runs; their order and the clock's value are not on the wire (plan Q1).
+    assert.deepEqual([...dg.good_players].sort(), [...expected.good_players].sort(), `${tag}: good_players`);
+    assert.equal(dg.good_timestamp === null, expected.good_timestamp === null, `${tag}: good_timestamp running`);
     assert.deepEqual(dg.elimination_order, expected.elimination_order, `${tag}: elimination_order`);
 
     if (seat >= 0) {
@@ -159,10 +131,10 @@ function checkView(game: Game, blob: Uint8Array, seat: number, version: number, 
 // ---------------------------------------------------------------------------
 // THE MASKING ITSELF, ON THE BYTES
 // ---------------------------------------------------------------------------
-// checkView above asserts "seat i hand masked for viewer s" - and cannot fail.
-// It reads the blob back with kernelViewFromPacked, which reports
-// hand: null for any seat that is not the viewer BECAUSE it is not the viewer,
-// not because the bytes were hidden. So the identities could all be sitting in
+// checkView above once asserted "seat i hand masked for viewer s" - and could not
+// fail. It read the blob back with a TS decoder that reported hand: null for any
+// seat that is not the viewer BECAUSE it is not the viewer, not because the bytes
+// were hidden. So the identities could all be sitting in
 // the payload and that assertion would still pass. The file header has claimed
 // this invariant since it was written; nothing was checking it.
 //
@@ -219,7 +191,7 @@ test('a masked view does not depend on the hands it is masking', () => {
     assert.ok(compared >= 20, `expected a spread of viewers, got ${compared}`);
 });
 
-test('view codec: blob -> serializeViewBlob -> encodeGameResponse -> decodePackedGame equals personalize_game for every seat + spectator', () => {
+test('view codec: blob -> serializeViewBlob -> encodeGameResponse -> decodeEnvelope equals personalize_game for every seat + spectator', () => {
     const GAMES = Number(process.env.VIEW_GAMES || 10);
     let checks = 0, ends = 0;
 

@@ -1,20 +1,15 @@
-// Event wire ("evwire" v1) — TS mirror of c/src/evwire.h.
-//
-// decodeEventWire: packed bytes -> the AnimationSequenceMessage the client
-// animation pipeline already consumes (events with per-step game_state
-// snapshots + the final game). This is the client's render-boundary
-// materialization; nothing upstream of it handles JS game objects.
+// Event wire ("evwire" v1) — TS mirror of c/src/evwire.h, the encoder half.
+// The reader is the kernel's (c/src/client_table.h, through
+// sdk/ts/table/client_table.ts, docs/C_GAME_SHAPE_MIGRATION.md Phase 5a).
 //
 // encodeEventWire: JS AnimationEvent[] -> the SAME bytes the kernel's
 // wasm_events_serialize produces. The paths still running on JS Games (bot
 // loop, meta/lobby actions) encode at the broadcast edge so the client sees
 // exactly one format; e2e proves C and TS emissions byte-identical.
 // Pure TS, no wasm imports.
-import { AnimationEvent, ANIMATION_EVENT_TYPE, Card, Game, PersonalGame, PublicGame } from "@api/core/types.ts";
-import { SUIT_MAP, VALUE_MAP } from "@api/core/constants.ts";
+import { AnimationEvent, ANIMATION_EVENT_TYPE, Game } from "@api/core/types.ts";
 import { WIRE_HIDDEN, wireCard } from "./awire.ts";
-import { ViewDecodeCtx, ViewRoster, viewToGame } from "./view.ts";
-import { KernelState, kernelEventsFromPacked, wasmViewFromGame } from "@sdk/ts/wasm/bots.ts";
+import { wasmViewFromGame } from "@sdk/ts/wasm/bots.ts";
 
 export const EVWIRE_FORMAT_VERSION = 1;
 export const EVW_SEAT_NONE = 0xff;
@@ -41,113 +36,6 @@ export const EVW_MSG = {
     DREW: 6, DEFENDER_MOVE: 7, PICKUP: 8, GOOD_TRANSITION: 9,
     START_MAGIC: 10, FIRST_ATTACKER: 11,
 } as const;
-
-const cardDisplay = (c: Card) => `${VALUE_MAP[c.value]} of ${SUIT_MAP[c.suit]}`;
-const cardList = (cards: Card[]) => cards.map(cardDisplay).join(', ');
-
-// The client never rendered server messages, but the reconstruction keeps
-// byte/behavior parity with the retired JSON path testable end-to-end.
-function reconstructMessage(
-    msg: number, seatName: string, cards: Card[], target: Card | null,
-    view: { defender: number; firstAttacker: number; players: { status: number }[] },
-    roster: ViewRoster,
-): string | undefined {
-    switch (msg) {
-        case EVW_MSG.ATTACKED: return `${seatName} attacked with ${cardList(cards)}`;
-        case EVW_MSG.PASSED: return `${seatName} passed with ${cardList(cards)}`;
-        case EVW_MSG.OUT: return `${seatName} is out`;
-        case EVW_MSG.COVERED: return `${seatName} covered ${cardDisplay(target!)} with ${cardDisplay(cards[0])}`;
-        case EVW_MSG.DISCARDED: return `${cards.length} cards discarded`;
-        case EVW_MSG.DREW: return `${seatName} drew ${cards.length} cards`;
-        case EVW_MSG.DEFENDER_MOVE: return `${seatName} is now the defender`;
-        case EVW_MSG.PICKUP: return `${seatName} picked up ${cards.length} cards`;
-        case EVW_MSG.GOOD_TRANSITION: {
-            // transitionReason: attackers still IN at this snapshot, minus
-            // the defender (player-status int 2 = IN).
-            let attackers = 0;
-            for (let i = 0; i < view.players.length; i++) {
-                if (i !== view.defender && view.players[i].status === 2) attackers++;
-            }
-            return `All ${attackers} attackers said good and all attacks covered - proceeding to next round`;
-        }
-        case EVW_MSG.START_MAGIC: return `All players ready - starting game!`;
-        case EVW_MSG.FIRST_ATTACKER: {
-            const name = roster.players[view.firstAttacker]?.name ?? `seat-${view.firstAttacker}`;
-            return `Player ${name} is the first attacker, wait for them to attack`;
-        }
-        default: return undefined;
-    }
-}
-
-export interface DecodedEvent {
-    type: string;
-    player_id?: string;
-    cards?: Card[];
-    from_location?: string;
-    to_location?: string;
-    target_card?: Card;
-    battle_index?: number;
-    message?: string;
-    game_state: PersonalGame | PublicGame;
-}
-
-export interface DecodedSequence {
-    viewerSeat: number;   // -1 spectator
-    actorSeat: number;    // -1 none
-    events: DecodedEvent[];
-    game: PersonalGame | PublicGame; // the committed final state (trailer)
-}
-
-// Packed sequence -> client-shape events. Returns null on anything the kernel
-// cannot read — an unknown format version, a truncated payload — because a
-// caller must treat that as unreadable, never as empty.
-//
-// The bytes are read by the KERNEL (kernelEventsFromPacked -> evwire.c's own
-// reader). What is left here is the join the kernel cannot do: seat -> player_id
-// and name, the message prose, and the location/type enums the app speaks. That
-// is why this function still exists and why it is now this short.
-export function decodeEventWire(buf: Uint8Array, roster: ViewRoster, ctx: ViewDecodeCtx): DecodedSequence | null {
-    let seq;
-    try {
-        seq = kernelEventsFromPacked(buf);
-    } catch {
-        return null;
-    }
-
-    const viewerSeat = seq.viewer;
-    const actorSeat = seq.actor;
-    const events: DecodedEvent[] = seq.events.map((e) => {
-        const type = EVENT_TYPE_FROM_INT[e.type];
-        // A masked card (the DEAL/REFILL redaction) arrives as null and renders
-        // as a back; the kernel never sent the identity, so there is none to lose.
-        const cards: Card[] = e.cards.map((c) => (c ? { suit: c.s, value: c.v } : { suit: -1, value: -1 }));
-        const target: Card | null = e.target ? { suit: e.target.s, value: e.target.v } : null;
-
-        const ev: DecodedEvent = {
-            type,
-            game_state: viewToGame(e.state, roster, viewerSeat, ctx),
-        };
-        if (e.seat >= 0) ev.player_id = roster.players[e.seat]?.player_id ?? `seat-${e.seat}`;
-        if (cards.length > 0 || type === ANIMATION_EVENT_TYPE.ATTACK_PASS
-            || type === ANIMATION_EVENT_TYPE.DISCARD || type === ANIMATION_EVENT_TYPE.PICKUP
-            || type === ANIMATION_EVENT_TYPE.DEAL || type === ANIMATION_EVENT_TYPE.CARDS_TO_TRASH
-            || type === ANIMATION_EVENT_TYPE.REFILL || type === ANIMATION_EVENT_TYPE.FLIPPED
-            || type === ANIMATION_EVENT_TYPE.COVER) ev.cards = cards;
-        if (e.from !== LOC_NONE) ev.from_location = LOC_FROM_INT[e.from];
-        if (e.to !== LOC_NONE) ev.to_location = LOC_FROM_INT[e.to];
-        if (target) ev.target_card = target;
-        if (e.battle !== undefined) ev.battle_index = e.battle;
-        const seatName = e.seat >= 0 ? (roster.players[e.seat]?.name ?? `seat-${e.seat}`) : '';
-        const message = reconstructMessage(e.msg, seatName, cards, target, e.state, roster);
-        if (message !== undefined) ev.message = message;
-        return ev;
-    });
-
-    return {
-        viewerSeat, actorSeat, events,
-        game: viewToGame(seq.game, roster, viewerSeat, ctx),
-    };
-}
 
 // ---------------------------------------------------------------------------
 // TS encoder — byte-for-byte what wasm_events_serialize emits, driven from

@@ -31,8 +31,8 @@ import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { resolveUnconfirmedAttackCovers } from '../src/state/optimisticConflicts';
 import { getTableCards, getCardKey } from '../src/utils/animationUtils';
-import { decodeEventWire } from '../sdk/ts/wire/evwire.ts';
-import type { ViewRoster } from '../sdk/ts/wire/view.ts';
+import { readPush } from './helpers/client_read.ts';
+import type { ReadRoster as ViewRoster } from './helpers/client_read.ts';
 import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
 
 const rng = suiteRng('optimistic_revert');
@@ -54,7 +54,7 @@ function streamFor(gameId: string, playerId: string, roster: ViewRoster) {
     const chan = `gu-${gameId}-${playerId}`;
     return broadcastLog
         .filter((b) => b.channel === chan && b.event === 'animation_events')
-        .map((b) => decodeEventWire(base64ToBytes(b.payload.b), roster, { preGood: [], prevGoodTs: null })!);
+        .map((b) => readPush(base64ToBytes(b.payload.b), roster, { preGood: [], prevGoodTs: null })!);
 }
 
 // AnimationContext's inputs to the decision, pulled out of a raw broadcast exactly

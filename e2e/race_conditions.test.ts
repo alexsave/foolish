@@ -28,7 +28,7 @@ import { cardText, checkCardConservation, legalMoves, mustReadTable, type PlayMo
 import { runAction, runMeta } from './helpers/table_server.ts';
 import { __clearGameCache, getCachedRow, noteCommittedRow } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { encodeAction, ACTION_STATUS, REJECT_STALE_ROUND } from '../sdk/ts/wire/awire.ts';
-import { decodeEventWire } from '../sdk/ts/wire/evwire.ts';
+import { readPush } from './helpers/client_read.ts';
 import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
@@ -492,7 +492,7 @@ for (const otherWriter of [false, true]) {
             const mine = broadcastLog.slice(logStart).filter((e) => e.event === 'animation_events' && e.channel.includes(g.gameId));
             assert.equal(mine.length, 3, `${g.gameId}: one push per human and the spectator`);
             for (const e of mine) {
-                const d = decodeEventWire(base64ToBytes(e.payload.b), roster, { preGood: [], prevGoodTs: null });
+                const d = readPush(base64ToBytes(e.payload.b), roster, { preGood: [], prevGoodTs: null });
                 assert.ok(d, `${g.gameId}: its push decodes against its roster`);
                 assert.equal(e.payload.v, s.version, `${g.gameId}: the push carries its commit's version`);
                 assert.ok(d!.events.some((ev) => ev.type === kind && ev.player_id === s.seats[actorSeat].id),

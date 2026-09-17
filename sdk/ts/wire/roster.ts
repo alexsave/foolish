@@ -86,48 +86,6 @@ class Writer {
     text(s: string) { this.blob(new TextEncoder().encode(s)); }
 }
 
-class Reader {
-    constructor(private readonly b: Uint8Array, public at: number) {}
-    u8(): number | null {
-        if (this.at >= this.b.length) return null;
-        return this.b[this.at++];
-    }
-    u16(): number | null {
-        if (this.at + 2 > this.b.length) return null;
-        const v = this.b[this.at] | (this.b[this.at + 1] << 8);
-        this.at += 2;
-        return v;
-    }
-    f64(): number | null {
-        if (this.at + 8 > this.b.length) return null;
-        const dv = new DataView(this.b.buffer, this.b.byteOffset + this.at, 8);
-        this.at += 8;
-        return dv.getFloat64(0, /*littleEndian*/ true);
-    }
-    bytes(n: number): Uint8Array | null {
-        if (n < 0 || this.at + n > this.b.length) return null;
-        const out = this.b.subarray(this.at, this.at + n);
-        this.at += n;
-        return out;
-    }
-    blob8(): Uint8Array | null {
-        const n = this.u8();
-        return n === null ? null : this.bytes(n);
-    }
-    blob(): Uint8Array | null {
-        const n = this.u16();
-        return n === null ? null : this.bytes(n);
-    }
-    text8(): string | null {
-        const v = this.blob8();
-        return v === null ? null : new TextDecoder().decode(v);
-    }
-    text(): string | null {
-        const v = this.blob();
-        return v === null ? null : new TextDecoder().decode(v);
-    }
-}
-
 /**
  * One name's UTF-8 bytes, trimmed to the budget on a SCALAR boundary - byte for
  * byte with RosterWire.nameBytes. Scalars and not grapheme clusters: `Array.
@@ -201,60 +159,4 @@ export function encodePackedRoster(roster: PackedRoster): Uint8Array {
         w.f64(roster.good_timestamp);
     }
     return Uint8Array.from(w.bytes);
-}
-
-/**
- * The packed roster back out of a buffer, starting at `at`. Returns the roster
- * and the offset just past it, or null if any field runs off the end - the same
- * all-or-nothing RosterWire keeps, since a roster read short is a different
- * table.
- */
-export function decodePackedRoster(
-    buf: Uint8Array, at: number,
-): { roster: PackedRoster; next: number } | null {
-    const r = new Reader(buf, at);
-    if (r.u8() !== ROSTER_WIRE_FORMAT) return null;
-    const id = r.text();
-    const name = r.text();
-    const statusInt = r.u8();
-    if (id === null || name === null || statusInt === null) return null;
-    if (statusInt >= ROSTER_STATUS.length) return null;
-    const n = r.u8();
-    if (n === null) return null;
-    const names: string[] = [];
-    for (let i = 0; i < n; i++) {
-        const seat = r.u8();
-        const nm = r.text8();
-        if (seat === null || nm === null || seat !== i) return null;
-        names.push(nm);
-    }
-    const players: PackedRosterPlayer[] = [];
-    for (let i = 0; i < n; i++) {
-        const pid = r.text();
-        const isAi = r.u8();
-        if (pid === null || isAi === null) return null;
-        players.push({ player_id: pid, name: names[i], is_ai: isAi !== 0 });
-    }
-    const nGood = r.u8();
-    if (nGood === null) return null;
-    const good: string[] = [];
-    for (let i = 0; i < nGood; i++) {
-        const id2 = r.text();
-        if (id2 === null) return null;
-        good.push(id2);
-    }
-    const hasTs = r.u8();
-    if (hasTs === null) return null;
-    let ts: number | null = null;
-    if (hasTs !== 0) {
-        ts = r.f64();
-        if (ts === null) return null;
-    }
-    return {
-        roster: {
-            id, name, status: ROSTER_STATUS[statusInt], players,
-            good_players: good, good_timestamp: ts,
-        },
-        next: r.at,
-    };
 }

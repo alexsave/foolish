@@ -8,7 +8,7 @@
  * broadcasts. This asserts the two halves of that claim that only the web can
  * check:
  *
- *   1. the frames decode with decodeEventWire — the client's LIVE decoder, not
+ *   1. the frames decode with the client's LIVE reader (helpers/client_read.ts), not
  *      a replay-specific one; and
  *   2. what comes out is the game the engine actually played.
  *
@@ -27,9 +27,8 @@ import {
 import { shouldBotActCore, processBotAction } from '../server/api/common/pure_bot_actions.ts';
 import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
 import { kernelReplayEncodeV6FromGame, replayEventFrames, replayStepCount } from '../sdk/ts/wasm/bots.ts';
-import { decodeEventWire } from '../sdk/ts/wire/evwire.ts';
+import { readPush, type ReadRoster } from './helpers/client_read.ts';
 import { __setDealSeedOverride } from '../sdk/ts/wasm/engine.ts';
-import type { ViewRoster } from '../sdk/ts/wire/view.ts';
 
 if (!process.env.E2E_VERBOSE) {
     console.log = () => {};
@@ -84,11 +83,10 @@ async function playSeeded(np: number): Promise<Game | null> {
     return game_done(game) !== null ? game : null;
 }
 
-const roster = (game: Game): ViewRoster => ({
+const roster = (game: Game): ReadRoster => ({
     id: game.id, name: game.name,
     players: game.players.map(p => ({
         player_id: p.player_id, name: p.name, is_ai: p.is_ai,
-        strategy_key: p.strategy_key,
     })),
 });
 
@@ -112,7 +110,7 @@ test('a v6 replay decodes as LIVE evwire frames, and is the game that was played
         let last: any = null;
         for (const frame of frames) {
             // The LIVE decoder. Not a replay-specific one — that is the point.
-            const seq = decodeEventWire(frame, roster(game), ctx);
+            const seq = readPush(frame, roster(game), ctx);
             assert.ok(seq, `${np}p: step ${decodedSteps} decodes with the live decoder`);
             if (!seq) break;
             decodedSteps++;
