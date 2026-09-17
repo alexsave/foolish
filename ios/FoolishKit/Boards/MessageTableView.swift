@@ -5276,7 +5276,9 @@ public struct MessageTableView: View {
                 // timer while it is up, and `undoPillTapped` asks again at the
                 // tap in case one lands between two redraws.
                 TimelineView(.periodic(from: .now, by: 0.1)) { _ in
-                    let still = UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty)
+                    // …and not while my play is still being staged: a Good flies
+                    // nothing, and the move is sealed before the collapse begins.
+                    let still = UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty) && !playInFlight
                     if UndoGate.hides {
                         // Shown enabled, or not shown - never dimmed.
                         if !controller.conflictRetracting && still {
@@ -5309,7 +5311,7 @@ public struct MessageTableView: View {
     /// The Undo pill's tap: refused while the board moves (UndoGate), then the
     /// same `undoAction` the bubble's X runs - which does NOT ask the gate.
     private func undoPillTapped() {
-        guard UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty) else {
+        guard UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty), !playInFlight else {
             AnimLog.say("undo refused: the board is still moving")
             return
         }

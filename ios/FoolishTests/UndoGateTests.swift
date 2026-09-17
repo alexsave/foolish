@@ -50,8 +50,8 @@ final class UndoGateTests: XCTestCase {
     /// The live answer reads the extension's auto-collapse too.
     /// MUTANT: `acceptsNow` not passing `CollapseTween.isAutoCollapsing`.
     func testTheLiveAnswerFollowsTheAutoCollapse() {
-        CollapseTween.isAutoCollapsing = true
-        defer { CollapseTween.isAutoCollapsing = false }
+        CollapseTween.autoCollapses += 1
+        defer { CollapseTween.autoCollapses -= 1 }
         XCTAssertFalse(UndoGate.acceptsNow())
     }
 
@@ -66,8 +66,16 @@ final class UndoGateTests: XCTestCase {
                                         presenting: false, autoCollapsing: false, cardsVeiled: true),
                        "Undo flashed up between the tap and the flight")
         let board = try source("FoolishKit/Boards/MessageTableView.swift")
-        XCTAssertTrue(board.contains("UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty)"),
-                      "the board does not tell the gate about cards it is veiling")
+        XCTAssertTrue(board.contains("let still = UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty) && !playInFlight"),
+                      "the board does not tell the gate about cards it is veiling, or a play still being staged")
+        // A bout-ending Good flies nothing and veils nothing, and `stageNow`
+        // seals the move (`stagedPayload`) before the extension's stage - and its
+        // auto-collapse count - even begins: filmed, ~100ms of Undo between Good
+        // and the collapse (owner: "I see the action butotn text quickly flash
+        // from good to undo before disappearing"). `playInFlight` spans exactly
+        // that, and the whole stage after it.
+        XCTAssertTrue(board.contains("guard UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty), !playInFlight else"),
+                      "a tap on Undo is taken while the play is still being staged")
         XCTAssertFalse(board.contains("UndoGate.acceptsNow {") || board.contains("UndoGate.acceptsNow else"),
                        "somewhere still asks the gate without the veil")
     }
@@ -134,18 +142,26 @@ final class UndoGateTests: XCTestCase {
                       "the Undo pill is drawn (dimmed) while the gate or a retraction refuses")
     }
 
-    /// The extension marks the WHOLE auto-collapse: from the moment `stage`
-    /// takes the expanded path until the transition has settled, on every way
-    /// out of it.
-    /// MUTANTS: the mark set after the rest; the `defer` that clears it removed.
+    /// The extension marks the WHOLE auto-collapse, from its FIRST line - before
+    /// the bubble picture is baked - until the transition has settled, as a
+    /// COUNT so a newer stage is not uncovered by an older one finishing.
+    /// Filmed on a bout-ending Good (no flight, nothing veiled): Undo showed for
+    /// ~100ms between the tap and the collapse, because the mark was taken
+    /// after `await MessageSummary.forStagedBubble`.
+    /// MUTANTS: the mark taken after the picture is baked; the count not
+    /// released on the way out; a plain flag an older stage can clear.
     func testTheExtensionMarksTheWholeAutoCollapse() throws {
         let vc = try source("FoolishMessages/MessagesViewController.swift")
-        let set = try XCTUnwrap(vc.range(of: "CollapseTween.isAutoCollapsing = true"),
-                                "the extension never marks its auto-collapse")
-        let rest = try XCTUnwrap(vc.range(of: "try? await Task.sleep(nanoseconds: 250_000_000)"))
-        XCTAssertLessThan(set.lowerBound, rest.lowerBound, "marked only after the rest began")
-        XCTAssertTrue(vc.contains("defer { CollapseTween.isAutoCollapsing = false }"),
+        let start = try XCTUnwrap(vc.range(of: "private func stage(payload: Data, mySeat: Int, fromUndo: Bool = false) async {"))
+        let body = String(vc[start.upperBound...].prefix(12000))
+        let mark = try XCTUnwrap(body.range(of: "if collapsing { CollapseTween.autoCollapses += 1 }"),
+                                 "the extension never marks its auto-collapse")
+        let bake = try XCTUnwrap(body.range(of: "await MessageSummary.forStagedBubble"))
+        XCTAssertLessThan(mark.lowerBound, bake.lowerBound, "marked only after the picture is baked")
+        XCTAssertTrue(body.contains("defer { if collapsing { CollapseTween.autoCollapses -= 1 } }"),
                       "an early return leaves Undo hidden for good")
+        XCTAssertFalse(vc.contains("CollapseTween.isAutoCollapsing = true"),
+                       "a plain flag: an older stage finishing uncovers a newer one's collapse")
     }
 
     /// The flag's other state is build 72's Undo, pressable at any time.
@@ -191,7 +207,7 @@ final class UndoGateTests: XCTestCase {
                       "the Undo pill does not draw itself disabled while the board moves")
         XCTAssertTrue(board.contains("action: undoPillTapped"),
                       "the Undo pill does not re-check the gate at the tap")
-        XCTAssertTrue(board.contains("guard UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty) else"),
+        XCTAssertTrue(board.contains("guard UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty), !playInFlight else"),
                       "undoPillTapped does not refuse a tap mid-animation")
         let undo = try XCTUnwrap(board.range(of: "private func undoAction()"))
         let body = board[undo.upperBound...].prefix(600)
