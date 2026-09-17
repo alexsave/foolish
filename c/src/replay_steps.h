@@ -122,6 +122,46 @@ int replay_steps_count_v6(const unsigned char *code, int code_len,
 int replay_steps_index_v6(const unsigned char *code, int code_len,
                           ReplayHeader *hdr, unsigned char *out, int out_cap);
 
+// ---------- a recorded decision, as an analyser reads it -------------------
+//
+// The Oracle deliberates a decision of a replay as the seat that made it
+// (docs/C_GAME_SHAPE_MIGRATION.md Phase 7). What it needs are two things only
+// the kernel can say honestly about a code: the board that seat decided on, as
+// that seat saw it, and the public history before the move. Both are bytes the
+// analyser's module imports unchanged (wasm_import_state masked,
+// wasm_import_logs); the host reads no byte of either.
+
+// The most bytes a board in the state_put layout (view.h) can take.
+#define RS_BOARD_MAX (17 + MAX_DECK + 1 + 2 * MAX_BATTLES \
+                      + MAX_PLAYERS * (3 + MAX_HAND_SIZE) + 1 + MAX_PLAYERS)
+
+// The board action step `step` (1 .. steps - 1) was decided on - the board step
+// `step - 1` left - as `viewer` (a seat of the game, or VIEW_SPECTATOR) sees it,
+// in the state_put layout a masked import reads: the viewer's hand real, every
+// card the viewer cannot see written hidden. Returns bytes written;
+// -REPLAY_EINPUT for a step that is not an action or a viewer that is not a
+// seat, -REPLAY_ECAP when `out_cap` is below RS_BOARD_MAX, or -REPLAY_E*.
+int replay_steps_board_v6(const unsigned char *code, int code_len, int step, int viewer,
+                          unsigned char *out, int out_cap);
+
+// The public session log before action step `step`'s move, as an analyser's
+// memory: replay_decode's log stream up to the record of that move, in the log
+// import layout (u16 LE count, then per record u8 log_type, u8 seat,
+// u8 defender_index, u8 n_pairs, n_pairs x (u8 primary, u8 target)), every
+// LOG_DRAW's card written hidden (a drawn card's identity is nobody's public
+// knowledge, view.h log_record_put) and at most MAX_LOGS records, keep-first.
+//
+// The decoded log stream is not the step stream (see replay_steps_index_v6), but
+// the moves are one record each in both, in the same order: every ATTACK, COVER,
+// PASS and PICKUP step is the next record of those four types, and the pair must
+// agree on the type and the seat. A step with no record of its own (a GOOD, a
+// ROUND_END), a step past the records, or a pair that disagrees has no memory
+// this can vouch for: -REPLAY_EINPUT. `out` also holds the decode while this
+// runs, so `out_cap` must fit the whole decoded stream. Returns bytes written,
+// or -REPLAY_E*.
+int replay_steps_memory_v6(const unsigned char *code, int code_len, int step,
+                           unsigned char *out, int out_cap);
+
 // The game the last successful replay_steps_v6 rebuilt — the state its code
 // decodes TO, valid until the next call. A whole-game code leaves the finished
 // game here; a mid-game cut leaves the exact position, which is what a

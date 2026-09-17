@@ -788,6 +788,13 @@ WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_client_optimistic_apply -Wl,--export=wasm_client_board_edit \
   -Wl,--export=wasm_client_rearrange_hand -Wl,--export=wasm_client_conflict_verdicts
 
+# A replay's recorded decision as the Oracle imports it (src/replay_steps.h,
+# wasm/wasm_bots_api.c), bots.wasm ONLY: the web page builds the job and hands
+# the bytes to oracle.wasm, which only imports them, so the oracle modules do not
+# link these and their unexported code is dropped there.
+WASM_REPLAY_WEB_EXPORTS := \
+  -Wl,--export=wasm_replay_step_masked_state -Wl,--export=wasm_replay_step_logs
+
 # C-backed test fixtures (wasm/wasm_table_api.c, e2e/helpers/table_fixture.ts),
 # bots.wasm ONLY, test-only like WASM_ROSTER_EXPORTS: a test composes a board
 # through the generated setters and seals it with the roster into a row the
@@ -1264,7 +1271,7 @@ build/botobj/wasm_api.o: wasm/wasm_api.c build/layout/bots.hash $(wildcard src/*
 build/bots.wasm: $(WASM_BOT_OBJ)
 	@mkdir -p build
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
-	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_ROSTER_EXPORTS) $(WASM_TABLE_EXPORTS) $(WASM_CLIENT_EXPORTS) $(WASM_FIXTURE_EXPORTS) $(WASM_BOT_OBJ) -o $@
+	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_ROSTER_EXPORTS) $(WASM_TABLE_EXPORTS) $(WASM_CLIENT_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS) $(WASM_FIXTURE_EXPORTS) $(WASM_BOT_OBJ) -o $@
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),$@)
 
 # bots-explain.wasm: byte-for-byte the SAME octogen as bots.wasm (same sources,
@@ -1282,7 +1289,7 @@ bots-wasm-explain: build/layout/bots-explain.hash
 	  $(WASM_CC) $(WASM_BOT_CFLAGS) -DOG_EXPLAIN_BUILD -DSG_LAYOUT_HASH=$$(cat build/layout/bots-explain.hash) $$opt -c $$src -o build/botexplain/$$base.o || exit 1; \
 	done
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
-	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_ROSTER_EXPORTS) $(WASM_TABLE_EXPORTS) $(WASM_CLIENT_EXPORTS) $(WASM_FIXTURE_EXPORTS) \
+	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_ROSTER_EXPORTS) $(WASM_TABLE_EXPORTS) $(WASM_CLIENT_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS) $(WASM_FIXTURE_EXPORTS) \
 	          -Wl,--export=wasm_og_explain_ptr -Wl,--export=wasm_og_explain_len -Wl,--export=wasm_og_explain_reset \
 	          build/botexplain/*.o -o build/bots-explain.wasm
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),build/bots-explain.wasm)
@@ -1301,7 +1308,7 @@ bots-wasm-explain: build/layout/bots-explain.hash
 build/named/bots.named.wasm: $(WASM_BOT_OBJ)
 	@mkdir -p build/named
 	$(WASM_CC) --target=wasm32 -nostdlib $(filter-out -Wl$(comma)--strip-all,$(WASM_BOT_LDFLAGS)) \
-	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_ROSTER_EXPORTS) $(WASM_TABLE_EXPORTS) $(WASM_CLIENT_EXPORTS) $(WASM_FIXTURE_EXPORTS) $(WASM_BOT_OBJ) -o $@
+	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_ROSTER_EXPORTS) $(WASM_TABLE_EXPORTS) $(WASM_CLIENT_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS) $(WASM_FIXTURE_EXPORTS) $(WASM_BOT_OBJ) -o $@
 	$(if $(strip $(WASM_BOTS_POSTOPT)),$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) $(WASM_BOTS_POSTOPT) --debuginfo $@ -o $@,:)
 
 # bots.wasm ships as ONE gzip STATIC ASSET (config.toml static_files + deploy

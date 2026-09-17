@@ -35,6 +35,8 @@ interface BotsExports extends EngineExports {
     wasm_replay_events_next(): number;
     wasm_replay_step_count(code_len: number): number;
     wasm_replay_step_index(code_len: number): number;
+    wasm_replay_step_masked_state(code_len: number, step: number, viewer: number): number;
+    wasm_replay_step_logs(code_len: number, step: number): number;
     wasm_replay_extras_encode(in_len: number): number;
     wasm_replay_extras_decode(blob_len: number, player_count: number, move_count: number): number;
     wasm_replay_link(in_len: number, style: number): number;
@@ -1452,6 +1454,35 @@ export function replayEventFrames(code: Uint8Array, viewer: number): Uint8Array[
         throw new Error(`replay produced ${frames.length} frames for ${steps} steps`);
     }
     return frames;
+}
+
+/**
+ * The board action step `step` of a code was decided on, as `viewer` saw it: the
+ * bytes a masked wasm_import_state reads, for the Oracle to import unchanged
+ * (c/src/replay_steps.h replay_steps_board_v6). null when the step is not an
+ * action or the viewer is not a seat.
+ */
+export function replayStepMaskedState(code: Uint8Array, step: number, viewer: number): Uint8Array | null {
+    const ex = bots();
+    __mem(ex).set(code, ex.wasm_replay_io_ptr());
+    const len = ex.wasm_replay_step_masked_state(code.length, step, viewer);
+    if (len < 0) return null;
+    const at = ex.wasm_io_ptr();
+    return __mem(ex).slice(at, at + len);
+}
+
+/**
+ * The public log before action step `step`'s move, as the Oracle's memory: the
+ * bytes wasm_import_logs reads (c/src/replay_steps.h replay_steps_memory_v6).
+ * null when the step has no record of its own to pair with (a good, a round end).
+ */
+export function replayStepLogs(code: Uint8Array, step: number): Uint8Array | null {
+    const ex = bots();
+    __mem(ex).set(code, ex.wasm_replay_io_ptr());
+    const len = ex.wasm_replay_step_logs(code.length, step);
+    if (len < 0) return null;
+    const at = ex.wasm_io_ptr();
+    return __mem(ex).slice(at, at + len);
 }
 
 // ===========================================================================

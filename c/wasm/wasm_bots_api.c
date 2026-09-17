@@ -559,6 +559,22 @@ int wasm_replay_step_index(int code_len) {
                                  wasm_io_ptr(), wasm_io_cap());
 }
 
+// A recorded decision, as the Oracle imports it (replay_steps.h): the board step
+// `step` was decided on, as `viewer` saw it, and the public log before it. The
+// code is in the replay buffer; the bytes come back in the main IO buffer for the
+// host to hand to oracle.wasm unchanged. bots.wasm only (WASM_REPLAY_WEB_EXPORTS):
+// the web builds the job, the oracle modules only import it.
+int wasm_replay_step_masked_state(int code_len, int step, int viewer) {
+    if (code_len < 0 || code_len > wasm_replay_io_cap()) return -REPLAY_ECAP;
+    return replay_steps_board_v6(wasm_replay_io_ptr(), code_len, step, viewer,
+                                 wasm_io_ptr(), wasm_io_cap());
+}
+int wasm_replay_step_logs(int code_len, int step) {
+    if (code_len < 0 || code_len > wasm_replay_io_cap()) return -REPLAY_ECAP;
+    return replay_steps_memory_v6(wasm_replay_io_ptr(), code_len, step,
+                                  wasm_io_ptr(), wasm_io_cap());
+}
+
 // ---------- the C Roster (src/roster.h), test-only exports ------------------
 //
 // Linked into bots.wasm only (WASM_ROSTER_EXPORTS in the Makefile). They exist
