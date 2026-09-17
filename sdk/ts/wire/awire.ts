@@ -2,7 +2,9 @@
 // builds ONE buffer per move and uses it for the kernel's gate and
 // optimistic board (c/src/client_table.h), and the POST body; the server kernel applies the same
 // bytes verbatim. Pure TS, no wasm imports.
-import { Card } from "@api/core/types.ts";
+
+/** A card as the wire carries it (suit 0..3, value 1..13; -1/-1 is a hidden card). */
+export interface Card { readonly suit: number; readonly value: number }
 
 export const AWIRE_KIND = {
     attack: 0,

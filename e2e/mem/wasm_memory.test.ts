@@ -29,11 +29,10 @@ import { resolve } from 'node:path';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
-// bots.wasm now ships as a gzip STATIC ASSET (bots.wasm.gz) — a real binary, so
-// concern #1 (parse-time concat blowup) is gone by construction for it. The
-// rules kernel is still a base64 embed (rules_wasm.ts) because engine.ts is
-// shared with the browser, which has no node:zlib — so it keeps the original
-// single-line-literal guard.
+// bots.wasm ships as a gzip STATIC ASSET (bots.wasm.gz) - a real binary, so
+// concern #1 (parse-time concat blowup) is gone by construction. It is the only
+// kernel module the hosts load: the rules.wasm and guards.wasm embeds are gone
+// (docs/C_GAME_SHAPE_MIGRATION.md Q10), and their pins with them.
 test('bots.wasm ships as a small gzip static asset (not a base64 embed)', () => {
     const buf = readFileSync(resolve('sdk/ts/wasm/bots.wasm.gz'));
     assert.equal(buf[0], 0x1f, 'bots.wasm.gz is not gzip');
@@ -41,29 +40,7 @@ test('bots.wasm ships as a small gzip static asset (not a base64 embed)', () => 
     assert.ok(buf.length < 80 * 1024, `bots.wasm.gz is ${(buf.length / 1024) | 0}KB; unexpectedly large`);
 });
 
-test('rules embed is a single-line literal (no parse-time concat garbage)', () => {
-    const rel = 'sdk/ts/wasm/rules_wasm.ts';
-    const src = readFileSync(resolve(rel), 'utf8');
-    assert.ok(!/'\s*\+/.test(src), `${rel} is chunk-concatenated; regenerate with c/wasm/embed.mjs`);
-    assert.ok(src.trimEnd().split('\n').length <= 12, `${rel} is not a single-line embed`);
-});
-
-// R0 pin + R1 arena overlay + R4 stack shrink
-// (docs/RULES_GUARDS_WASM_MEMORY_PLAN.md): rules.wasm linear memory is now a
-// hard-pinned 3 pages (was 5 pre-round: overlay -1 page, stack 64->32 KiB -1
-// page). The pin (--initial-memory == --max-memory) means the module can never
-// memory.grow, so the instance's memory is EXACTLY 3 pages and stays flat for
-// the process's life. Read the committed embed straight off disk (base64 ->
-// gunzip) so this runs in CI without a build, and without disturbing the
-// take-once accessor the engine uses. guards.wasm's 1-page pin is asserted
-// alongside for good measure.
 const PAGE = 65536;
-function embedWasmBytes(relTs: string): Uint8Array {
-    const src = readFileSync(resolve(relTs), 'utf8');
-    const m = src.match(/'([A-Za-z0-9+/=]+)'/);
-    assert.ok(m, `${relTs}: no base64 literal found`);
-    return new Uint8Array(gunzipSync(Buffer.from(m![1], 'base64')));
-}
 // Parse the memory section's (min, max) page limits straight from the binary —
 // the pin is a link-time fact, so assert on the module, not a live instance.
 function memLimits(wasm: Uint8Array): { min: number; max: number | null } {
@@ -80,32 +57,6 @@ function memLimits(wasm: Uint8Array): { min: number; max: number | null } {
     }
     throw new Error('no memory section');
 }
-
-test('rules.wasm linear memory is pinned flat at 3 pages (R0 pin + R1 overlay + R4 stack)', () => {
-    const wasm = embedWasmBytes('sdk/ts/wasm/rules_wasm.ts');
-    const { min, max } = memLimits(wasm);
-    assert.equal(min, 3, `rules.wasm initial memory is ${min} pages (${min * PAGE}B); expected 3 — a static buffer grew, or the overlay/stack regressed`);
-    assert.equal(max, 3, `rules.wasm max memory is ${max} pages; expected a hard 3-page pin (--initial-memory == --max-memory)`);
-
-    // Belt-and-braces: the module actually instantiates at exactly 3 pages and
-    // cannot grow past the pin (a memory.grow would trap — but the linker also
-    // strips any grow path, since rules.wasm has no allocator).
-    const inst = new WebAssembly.Instance(new WebAssembly.Module(wasm as BufferSource), {});
-    const mem = (inst.exports as { memory: WebAssembly.Memory }).memory;
-    assert.equal(mem.buffer.byteLength, 3 * PAGE, 'rules.wasm did not instantiate at 3 pages');
-    assert.throws(() => mem.grow(1), 'rules.wasm memory grew past its pin — the pin is not enforced');
-    assert.equal(mem.buffer.byteLength, 3 * PAGE, 'rules.wasm memory changed after a rejected grow');
-});
-
-test('guards.wasm linear memory is pinned flat at 1 page', () => {
-    // guards.wasm ships as a gzip embed like rules; assert its 1-page L1 pin is
-    // intact (it shares game.c/view.c/awire.c with rules, so a shared-flag leak
-    // that regrew it would show here).
-    const wasm = embedWasmBytes('sdk/ts/wasm/guards_wasm.ts');
-    const { min, max } = memLimits(wasm);
-    assert.equal(min, 1, `guards.wasm initial memory is ${min} pages; expected the 1-page L1 pin`);
-    assert.equal(max, 1, `guards.wasm max memory is ${max} pages; expected a hard 1-page pin`);
-});
 
 test("bots.wasm declared INITIAL memory is 36 pages (static buffers, not the runtime TT)", () => {
     // bots.wasm can't be pinned — it bump-allocates a per-family transposition

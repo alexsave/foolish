@@ -23,7 +23,7 @@ import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
 import { tableCodeName, type ServerTable, type TableDrive } from '../../sdk/ts/table/server_table.ts';
 import { fixture, fixtureExports, fixtureTable } from './table_fixture.ts';
 
-/** The 32-byte deal seed of test game `s` at `np` seats (the one e2e/helpers/seeded_game.ts used). */
+/** The 32-byte deal seed of test game `s` at `np` seats (the seeds the frozen games in seeded_codes.ts were dealt on). */
 export const seedBytes = (np: number, s: number): Uint8Array =>
     new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 31 + s * 13 + np) & 0xff));
 

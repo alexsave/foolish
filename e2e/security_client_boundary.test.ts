@@ -51,7 +51,7 @@ export const CLIENT_BOUNDARY = {
     ],
     /** Functions that read or write an unmasked kernel game, by name. */
     deniedSymbols: [
-        // the durable (unmasked) state blob codec - sdk/ts/wasm/engine.ts
+        // the durable (unmasked) state blob codec (the TS one, sdk/ts/wasm/engine.ts, is deleted)
         'serializeGameState', 'deserializeGameState', 'loadStateBlob',
         // unmasked kernel state -> JS Game
         'parseState', 'stateToGame', 'materializeKernelGame',
@@ -221,7 +221,10 @@ test('canary: a client module importing the C-backed test fixtures is caught by 
 });
 
 test('canary: a client module calling the durable blob reader is caught by the symbol rule', async () => {
-    const r = await scanClientBoundary({ stdin: `import { deserializeGameState } from './sdk/ts/wasm/engine.ts'; console.log(deserializeGameState);` });
+    // The TS durable blob reader is deleted (Phase 8); the canary brings its own, as
+    // a resurrected copy would, calling the kernel's unmasked importer.
+    const reader = 'export function deserializeGameState(ex: { wasm_state_deserialize(n: number): number }, n: number) { return ex.wasm_state_deserialize(n); }';
+    const r = await scanClientBoundary({ stdin: `${reader} console.log(deserializeGameState);` });
     assert.ok(r.symbols.some(s => s.name === 'deserializeGameState'), `symbol rule saw deserializeGameState:${explain(r)}`);
     assert.ok(r.wasmExports.some(s => s.name === 'wasm_state_deserialize'), `and the wasm export it calls:${explain(r)}`);
 });

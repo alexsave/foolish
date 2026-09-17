@@ -25,14 +25,13 @@ import { buildReplayFrames } from '../src/replay/frames.ts';
 import { buildOracleJob } from '../src/oracle/replayOracleInput.ts';
 import { ORACLE_MT_ENV, oracleSeedBase } from '../src/oracle/oracleMtSession.ts';
 import { openMtRig } from '../e2e/helpers/oracle_mt_node.ts';
-import { playSeededV6 } from '../e2e/helpers/seeded_game.ts';
+import { seededCode } from '../e2e/helpers/seeded_codes.ts';
 
 const SECONDS = Number(process.env.BENCH_SECONDS || '5');
 const THREADS = Number(process.env.BENCH_THREADS || String(Math.max(1, os.cpus().length - 2)));
 
 async function buildJob() {
-    const played = await playSeededV6(4, 42);
-    if (!played) throw new Error('the seeded game did not finish');
+    const played = { code: seededCode(4, 42) };
     const frames = buildReplayFrames(played.code, 'g', null);
     const idx = Math.floor(frames.length * 0.4);
     const job = buildOracleJob(frames, played.code, idx, true, 'bench');

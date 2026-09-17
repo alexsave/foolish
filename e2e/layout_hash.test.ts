@@ -3,8 +3,8 @@
 //
 // c/Makefile bakes tools/structgen's layout hash into every wasm module
 // (wasm_layout_hash); sdk/ts/gen/layout_hash.<build>.ts carries the same number
-// as LAYOUT_HASH; engine.ts (rules.wasm) and bots.ts (bots.wasm) compare the two
-// once per instance, before wasm_init (sdk/ts/wasm/layout_hash.ts).
+// as LAYOUT_HASH; bots.ts, server_table.ts and client_table.ts compare the two
+// once per bots.wasm instance, before wasm_init (sdk/ts/wasm/layout_hash.ts).
 //
 // A doctored LAYOUT_HASH stands in for "the headers moved and only one side was
 // rebuilt": the load must throw, name the module and the generated file, and
@@ -17,33 +17,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { gunzip } from '../sdk/ts/wasm/gunzip.ts';
 import { __overrideLayoutHash, assertLayoutHash } from '../sdk/ts/wasm/layout_hash.ts';
-import { stateFormatVersion } from '../sdk/ts/wasm/engine.ts';
 import { __ensureBots, kernelBotRoster } from '../sdk/ts/wasm/bots.ts';
-import { LAYOUT_HASH as RULES_LAYOUT_HASH } from '../sdk/ts/gen/layout_hash.rules.ts';
 import { LAYOUT_HASH as BOTS_LAYOUT_HASH } from '../sdk/ts/gen/layout_hash.bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; }
 
 const doctored = (h: number) => (h ^ 0x5a5a5a5a) >>> 0;
 const hex = (h: number) => `0x${(h >>> 0).toString(16).padStart(8, '0')}`;
-
-// Runs first: engine() must instantiate rules.wasm itself, before bots.wasm
-// adopts the engine slot below.
-test('rules.wasm: a doctored LAYOUT_HASH refuses the module at load; the real one loads', () => {
-    __overrideLayoutHash(doctored(RULES_LAYOUT_HASH));
-    try {
-        assert.throws(() => stateFormatVersion(), (e: Error) => {
-            assert.match(e.message, /rules\.wasm/);
-            assert.match(e.message, /sdk\/ts\/gen\/layout_hash\.rules\.ts/);
-            assert.ok(e.message.includes(hex(RULES_LAYOUT_HASH)), `names the module's hash: ${e.message}`);
-            assert.ok(e.message.includes(hex(doctored(RULES_LAYOUT_HASH))), `names the expected hash: ${e.message}`);
-            return true;
-        });
-    } finally {
-        __overrideLayoutHash(null);
-    }
-    assert.equal(typeof stateFormatVersion(), 'number', 'the refusal left engine() retryable');
-});
 
 test('bots.wasm: a doctored LAYOUT_HASH refuses the module at load; the real one loads', () => {
     __overrideLayoutHash(doctored(BOTS_LAYOUT_HASH));

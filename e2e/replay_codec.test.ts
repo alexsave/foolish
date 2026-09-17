@@ -28,10 +28,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   kernelB32Encode, kernelReplayLink, kernelB32Decode, kernelReplayLinkParse,
-  replayStepCount, replayStepIndex, replaySummary, REPLAY_STEP,
+  replayStepCount, replayStepIndex, replaySummary, REPLAY_STEP, __replayError,
 } from '../sdk/ts/wasm/bots.ts';
-import { __replayError, isReplayTooLong } from '../sdk/ts/wasm/engine.ts';
 import * as V from '../sdk/ts/gen/view_layout.bots.ts';
+import { REPLAY_ETOOLONG } from '../sdk/ts/gen/game_layout.bots.ts';
 import {
   base64Decode, base64Encode, bytesToBigint,
 } from '../server/api/common/replay/codec.ts';
@@ -97,7 +97,7 @@ function encodeGame(game: Pick<Played, 'state' | 'roster' | 'seed' | 'log'>): Ui
   return table.replayCode(game.seed, game.log);
 }
 
-const tooLong = (rc: number) => isReplayTooLong(__replayError(rc, 0));
+const tooLong = (rc: number) => rc === -REPLAY_ETOOLONG;
 
 const INFO_STEP: Record<number, string> = {
   [REPLAY_STEP.ATTACK]: 'attack', [REPLAY_STEP.PASS]: 'pass',

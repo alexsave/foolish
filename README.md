@@ -50,7 +50,7 @@ Deploys to Vercel with zero config — Vercel auto-detects Next.js and serves th
 | `npm run dev` | Run the client in dev mode (hot reload). |
 | `npm run build` / `npm start` | Production build / serve. |
 | `npm run test:e2e` | Full-stack tests against a real Postgres (see [`e2e/`](e2e/README.md)). |
-| `npm run bot:game` | Run a headless bot-vs-bot game locally (`offlinefun/localtest/bot_loop_core.ts`). |
+| `npm run bot:game` | Play headless bot-vs-bot games locally through the C kernel (`c/build/cnitro_eval`). |
 
 ## Repository layout
 
@@ -117,12 +117,10 @@ in `c/src/*_strategy.c` and ships as a second module, `bots.wasm`
 (`make wasm-bots` → `sdk/ts/wasm/bots_wasm.ts`, ~150 KB): the rules kernel
 plus all bots plus a choose-move bridge. A bot turn marshals the game in
 once and the kernel enumerates legal moves and picks one — only the chosen
-index crosses back to TS (`sdk/ts/wasm/bots.ts`,
-`WasmBotStrategy` in `bot_strategy.ts`). The seven heuristic bots are
-**exact behavioral mirrors** of the TS originals — `e2e/bot_parity.test.ts`
-proves the kernel picks the identical move on every decision of thousands
-of seeded games (RNG streams pinned on both sides); the retired TS sources
-are frozen as oracles in `offlinefun/localtest/frozen/`. cordite/fulminate
+index crosses back to TS (`sdk/ts/table/server_table.ts`, the C Table's bot
+cycle). The heuristic bots began as exact behavioral mirrors of TS originals;
+those TS sources and their parity oracles are retired, and the C strategies
+are the bots. cordite/fulminate
 run the C originals directly (the TS versions were ports of them), at the
 production world budget via the `CD_BUDGET` knob — roughly **15× faster**
 per decision than the TS implementation at 4 players (bitboard rollouts +

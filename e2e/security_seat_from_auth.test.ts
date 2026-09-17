@@ -36,7 +36,7 @@ import { settle, tokenFor, postJson, postPacked } from './helpers/edge.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { ACTION_STATUS, decodeActionResponse } from '../sdk/ts/wire/awire.ts';
-import { decodeEnvelope } from './helpers/client_read.ts';
+import { readEnvelopeView } from './helpers/client_read.ts';
 import { IDLE, PLAYING, READY, WAITING } from './helpers/table_fixture.ts';
 import { actionRequest, legalMoves, mustReadTable } from './helpers/table_play.ts';
 import { seedLobby } from './helpers/table_server.ts';
@@ -367,9 +367,9 @@ test('action bump: open to anyone by design, and it changes nothing', async () =
     const before = await world(gameId);
     const res = await postJson('action', c.tok.S, { type: 'bump', game_id: gameId, player_id: c.A });
     assert.equal(res.status, 200, 'a spectator may nudge a stalled game');
-    const view = decodeEnvelope(res.bytes);
+    const view = readEnvelopeView(res.bytes);
     assert.ok(view, 'the response is a packed view');
-    assert.equal(view!.seat, -1, 'and it is the SPECTATOR view, not the view of the player the body named');
+    assert.equal(view!.mySeat, -1, 'and it is the SPECTATOR view, not the view of the player the body named');
     // A bump commits nothing on the C Table (it only reads the row and wakes the
     // bots the kernel says have work), so not even the version token moves.
     await assertUnchanged(gameId, before, 'stranger bump');
@@ -383,10 +383,10 @@ test('create: the new lobby seats the CALLER, whoever the body names', async () 
     const c = await cast();
     const res = await postJson('create', c.tok.A, { player_id: c.B, user_id: c.B, name: 'x' });
     assert.equal(res.status, 200, `create succeeds: ${JSON.stringify(res.json)}`);
-    const view = decodeEnvelope(res.bytes);
+    const view = readEnvelopeView(res.bytes);
     assert.ok(view, 'the response is a packed view');
     await settle();
-    assert.deepEqual(await ids(view!.game.id), [c.A], 'seated: the caller alone');
-    const { rows: views } = await pgPool.query('SELECT player_id FROM player_views WHERE game_id=$1', [view!.game.id]);
+    assert.deepEqual(await ids(view!.gameId), [c.A], 'seated: the caller alone');
+    const { rows: views } = await pgPool.query('SELECT player_id FROM player_views WHERE game_id=$1', [view!.gameId]);
     assert.deepEqual(views.map((r) => r.player_id), [c.A], 'the only view row is the caller\'s');
 });

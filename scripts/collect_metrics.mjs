@@ -5,7 +5,7 @@
 //   E2E_PG* set + TSX_TSCONFIG_PATH=e2e/tsconfig.json node scripts/collect_metrics.mjs
 //
 // Metrics:
-//   size   — the three wasm modules (rules/guards embedded b64, bots.wasm.gz), raw + gzip bytes,
+//   size   — the kernel module every host loads (bots.wasm.gz), raw + gzip bytes,
 //            plus the replay oracle's two committed modules (public/oracle.wasm.gz,
 //            public/oracle-mt.wasm.gz)
 //   webBundle — first-load JS of `/` and `/[game_id]`, gzip bytes, from a real
@@ -27,20 +27,6 @@ const runNode = (args, extraEnv = {}) =>
     { encoding: 'utf8', env: { ...tsxEnv, ...extraEnv }, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
 
 // ---- size: committed wasm artifacts (no toolchain needed) ----
-// Return the decompressed wasm bytes for a base64 embed (rules/guards) …
-function embeddedBytes(tsFile) {
-  const src = readFileSync(`${WASM}/${tsFile}`, 'utf8');
-  const m = src.match(/b64[^']*'([A-Za-z0-9+/=]+)'/);
-  if (!m) return null;
-  return gunzipSync(Buffer.from(m[1], 'base64'));
-}
-function embeddedSize(tsFile) {
-  const src = readFileSync(`${WASM}/${tsFile}`, 'utf8');
-  const m = src.match(/b64[^']*'([A-Za-z0-9+/=]+)'/);
-  if (!m) return null;
-  const gz = Buffer.from(m[1], 'base64');
-  return { raw: gunzipSync(gz).length, gz: gz.length };
-}
 function gzFileSize(path) {
   const gz = readFileSync(path);
   return { raw: gunzipSync(gz).length, gz: gz.length };
@@ -48,7 +34,7 @@ function gzFileSize(path) {
 
 // DECLARED linear memory: the (min,max) page limits in a module's memory
 // section — the size the module reserves at instantiation, independent of any
-// runtime bench. This is what the R0/R1/R4 rules shrink and the guards pin move.
+// runtime bench.
 // Deterministic + toolchain-free, so it runs on both base and head everywhere.
 const PAGE = 65536;
 function linearMemOf(bytes) {
@@ -70,8 +56,6 @@ function linearMemOf(bytes) {
 function linearMemory() {
   try {
     return {
-      rules: linearMemOf(embeddedBytes('rules_wasm.ts')),
-      guards: linearMemOf(embeddedBytes('guards_wasm.ts')),
       bots: linearMemOf(gunzipSync(readFileSync(`${WASM}/bots.wasm.gz`))),
     };
   } catch (e) { return { error: String(e.message || e) }; }
@@ -80,8 +64,6 @@ function linearMemory() {
 function size() {
   try {
     return {
-      rules: embeddedSize('rules_wasm.ts'),
-      guards: embeddedSize('guards_wasm.ts'),
       bots: gzFileSize(`${WASM}/bots.wasm.gz`),
       // The oracle modules are served from public/ rather than embedded; a
       // checkout that predates one reports null for it rather than failing.

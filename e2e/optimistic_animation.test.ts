@@ -39,7 +39,7 @@ const card: Card = { suit: 1, value: 9 };
 // How AnimationContext keys an optimistic attack: ('attack_pass', card, hand->table, self)
 const optimisticAttackKey = createCardEventString('attack_pass', card, 'hand', 'table', SELF);
 
-// The server's confirming attack broadcast (supabase/_shared/common/actions/attack.ts).
+// The server's confirming attack broadcast (the as3 push table_act's commit writes).
 const serverAttackEvent = {
     type: 'attack_pass',
     seat: SELF,

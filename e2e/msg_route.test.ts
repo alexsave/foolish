@@ -1,5 +1,5 @@
-// The /m/ route's pipeline, minus React: base32 → decode → PUBLIC view → the
-// game object the board renders. The page is JSX around exactly this.
+// The /m/ route's pipeline, minus React: base32 → decode → PUBLIC view, the
+// board the page renders. The page is JSX around exactly this.
 //
 // The claim under test is the invariant, not the layout: a stranger with the
 // link sees the table and NO hand. That must hold because view.c masked it, not
@@ -7,8 +7,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { kernelMsgDecode, kernelMsgPublicView, kernelB32Encode, kernelB32Decode } from '../sdk/ts/wasm/bots.ts';
-
-import { snapshotToGame } from './helpers/view_game.ts';
 
 const FIXTURE = 'f7020002efcdab89674523010a0000030001000000000000000079d87206410d37d302c19dfb6cacbc8bebf879d242622082315709cc0f183788030004416e6e300104416e6e310204416e6e320a00012951da5bef3096f9f7bf2cfb58d013f6d7fa';
 const bytes = Uint8Array.from(FIXTURE.match(/../g)!.map(b => parseInt(b, 16)));
@@ -30,22 +28,21 @@ test('a stranger with the link sees the table and NO hand', () => {
     const env = kernelMsgDecode(kernelB32Decode(kernelB32Encode(bytes)));
     const { view } = kernelMsgPublicView();
     const names = Array.from({ length: env.n_players }, (_, i) => env.joins.find(j => j.seat === i)?.name || `Seat ${i + 1}`);
-    const game = snapshotToGame(view, { names, gameId: 'imessage', title: 'iMessage game' }) as any;
 
-    // The public table is all there — this is a real page, not a bounce.
-    assert.equal(game.players.length, env.n_players);
-    assert.ok(game.power_suit >= 0, 'trump is public');
-    assert.ok(typeof game.deck_length === 'number');
-    assert.ok(Array.isArray(game.table_battles));
-    assert.deepEqual(game.players.map((p: any) => p.name), ['Ann0', 'Ann1', 'Ann2']);
+    // The public table is all there - this is a real page, not a bounce.
+    assert.equal(view.seats.length, env.n_players);
+    assert.ok(view.powerSuit >= 0, 'trump is public');
+    assert.ok(view.deckCount >= 0, 'the stock is a count');
+    assert.ok(Array.isArray(view.battles));
+    assert.deepEqual(names, ['Ann0', 'Ann1', 'Ann2']);
 
-    // ...and no hand crossed. A spectator view has no `self`, and every seat is
-    // a count only. This appears on lock screens; a leak here is the payload
-    // handing someone else's cards to a stranger.
-    assert.equal(game.self, undefined, 'a spectator has no hand');
-    for (const p of game.players) {
-        assert.equal((p as any).hand, undefined, `seat ${p.player_id} leaked a hand`);
-        assert.ok(p.hand_length > 0, 'counts are public, identities are not');
+    // ...and no hand crossed. A spectator's board sits nobody and holds no hand,
+    // and every seat is a count only. This appears on lock screens; a leak here
+    // is the payload handing someone else's cards to a stranger.
+    assert.equal(view.mySeat, -1, 'a spectator sits no seat');
+    assert.equal(view.myHand.length, 0, 'a spectator has no hand');
+    for (const [i, seat] of view.seats.entries()) {
+        assert.ok(seat.handCount > 0, `seat ${i}: counts are public, identities are not`);
     }
 });
 

@@ -16,7 +16,7 @@ import { runAction, runMeta, seedLobby } from './helpers/table_server.ts';
 import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { shouldDropStaleSequence, mergeTableBattles } from '../src/state/clientReconcile';
-import { readPush } from './helpers/client_read.ts';
+import { readPushSequence } from './helpers/client_read.ts';
 import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
 import { suiteRng, type SeededRng } from './helpers/rng.ts';
 
@@ -27,12 +27,12 @@ const rng = suiteRng('reconcile');
 const dealRng = rng.fork('deal');
 const moveRng = rng.fork('moves');
 const arrivalRng = rng.fork('arrival');
-const tkeys = (bs: any[]) => bs.flatMap((b: any) => (b.defense ? [`${b.attack.suit}-${b.attack.value}`, `${b.defense.suit}-${b.defense.value}`] : [`${b.attack.suit}-${b.attack.value}`])).sort();
+const tkeys = (bs: readonly any[]) => bs.flatMap((b: any) => (b.defense ? [`${b.attack.suit}-${b.attack.value}`, `${b.defense.suit}-${b.defense.value}`] : [`${b.attack.suit}-${b.attack.value}`])).sort();
 
 before(async () => { await applySchema(); });
 beforeEach(async () => { await resetDb(); __clearGameCache(); });
 
-interface Bcast { version: number; eventTables: any[][]; finalTable: any[] }
+interface Bcast { version: number; eventTables: (readonly any[])[]; finalTable: readonly any[] }
 
 async function driveAndCapture(): Promise<{ stream: Bcast[]; serverFinalTable: unknown[] }> {
     const gameId = `r${uuid().slice(0, 6)}`;
@@ -63,30 +63,29 @@ async function driveAndCapture(): Promise<{ stream: Bcast[]; serverFinalTable: u
     }
     await new Promise((r) => setImmediate(r));   // the broadcast is fire-and-forget
 
-    // The focus player's personalized channel: the kernel's push bytes, decoded
-    // with the REAL client decoder to recover the per-step snapshots + final
-    // game. preGood/prevGoodTs are dummies - this test only consumes
-    // table_battles and the version.
+    // The focus player's personalized channel: the kernel's push bytes, read
+    // through the web's own client slot into the per-step boards and the final
+    // board (TableView). This test only consumes the battles and the version.
     const chan = `gu-${gameId}-${human}`;
     const stream: Bcast[] = broadcastLog
         .filter((b) => b.channel === chan && b.event === 'animation_events')
         .map((b) => {
-            const decoded = readPush(base64ToBytes(b.payload.b), roster, { preGood: [], prevGoodTs: null });
+            const decoded = readPushSequence(base64ToBytes(b.payload.b), roster);
             assert.ok(decoded, `packed broadcast payload must decode (v=${b.payload.v})`);
             return {
                 version: b.payload.v as number,
-                eventTables: decoded!.events.map((e) => e.game_state?.table_battles ?? []),
-                finalTable: decoded!.game?.table_battles ?? [],
+                eventTables: decoded!.events.map((e) => e.game_state.battles),
+                finalTable: decoded!.game.battles,
             };
         });
     const serverFinalTable = (await mustReadTable(gameId)).battles;
     return { stream, serverFinalTable };
 }
 
-function replayReordered(stream: Bcast[], jitter: number, arrival: SeededRng): any[] {
+function replayReordered(stream: Bcast[], jitter: number, arrival: SeededRng): readonly any[] {
     // reordered arrival: emit index spacing 2ms + uniform 0..jitter
     const order = stream.map((b, i) => ({ b, t: i * 2 + arrival.next() * jitter })).sort((x, y) => x.t - y.t).map((x) => x.b);
-    let table: any[] = [];
+    let table: readonly any[] = [];
     let lastApplied: number | null = null;
     for (const bc of order) {
         if (shouldDropStaleSequence(lastApplied, bc.version)) continue; // REAL gate

@@ -33,7 +33,6 @@ import assert from 'node:assert/strict';
 
 import { applySchema, resetDb, uuid } from './harness.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { decodeLogs } from '../sdk/ts/wire/logwire.ts';
 import { bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
 import { ServerTable, serverTable } from '../sdk/ts/table/server_table.ts';
 import { parseBeliefProbe } from '../sdk/ts/wasm/bots.ts';
@@ -113,12 +112,14 @@ beforeEach(async () => { await resetDb(); });
 after(() => { restoreSeed?.(); });
 
 // Number of session-log records currently persisted for this game (the source
-// of truth a belief bot is supposed to see), through the real decoder.
-async function persistedLogCount(gameId: string, seatIds: string[]): Promise<number> {
-  const hex = (await mustReadTable(gameId)).logsPacked;
-  if (!hex) return 0;
-  try { return decodeLogs(Buffer.from(hex.replace(/^\\x/, ''), 'hex'), gameId, seatIds.map((player_id) => ({ player_id }))).length; }
-  catch { return -1; }
+// of truth a belief bot is supposed to see), as the kernel reads them: the row
+// loaded on the C Table and its logs_packed imported, the bot loop's own door.
+async function persistedLogCount(gameId: string): Promise<number> {
+  const t = await mustReadTable(gameId);
+  if (!t.logsPacked) return 0;
+  const table = await serverTable();
+  if (table.load(t.state, t.roster) < 0) return -1;
+  return table.importSessionLog(Buffer.from(t.logsPacked.replace(/^\\x/, ''), 'hex'));
 }
 
 test('the server bot loop feeds octogen the whole session log (not an empty one)', async () => {
@@ -155,7 +156,7 @@ test('the server bot loop feeds octogen the whole session log (not an empty one)
 
   const final = await mustReadTable(gameId);
   assert.equal(final.status, L.GAME_STATUS_PLAYING, 'precondition: one segment does not finish the game (a finished game retires its log)');
-  const sessionLen = await persistedLogCount(gameId, seats.map((s) => s.id));
+  const sessionLen = await persistedLogCount(gameId);
   const maxSeen = Math.max(0, ...searches.map((s) => s.nLogs));
   process.stdout.write(`[wiring] octogen searches=${searches.length} maxKernelLogs=${maxSeen} fedBuffers=${fed.length} persistedSessionLen=${sessionLen}\n`);
 

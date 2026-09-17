@@ -5,15 +5,10 @@
 // names a push's events for its animation pipeline (src/state/pushSequence.ts).
 // Tests that assert on what a player or a spectator is shown read through the
 // same door, so they hold the product's reader rather than a second one:
-// readPushSequence is exactly the web's. decodeEnvelope and readPush give the
-// same boards in the PersonalGame shape older assertions are written against
-// (./view_game.ts, retired in Phase 8).
+// readPushSequence is exactly the web's.
 
 import { clientTable, type TableView } from '../../sdk/ts/table/client_table.ts';
 import { pushToSequence as viewSequence } from '../../src/state/pushSequence.ts';
-import { pushToSequence } from './view_game.ts';
-
-export { decodeEnvelope } from './view_game.ts';
 
 /** An envelope as the web holds it: the board, or null when it does not read whole. */
 export const readEnvelopeView = (bytes: Uint8Array): TableView | null => clientTable().adoptEnvelope(bytes);
@@ -27,15 +22,10 @@ export interface ReadRoster {
 
 /**
  * A realtime push (as a server labels it `as2`: the sequence, or the whole as3
- * push) read with the seats named by `roster`, or null when it does not read
- * whole or does not seat the roster's players.
+ * push) as the web's animation pipeline receives it: events and boards
+ * (TableView), with the seats named by `roster`; null when it does not read whole
+ * or does not seat the roster's players.
  */
-export function readPush(bytes: Uint8Array, roster: ReadRoster, opts: { now?: () => number } = {}) {
-    const read = readNamedPush(bytes, roster);
-    return read ? pushToSequence(read, { now: opts.now }) : null;
-}
-
-/** The same push as the web's animation pipeline receives it: events and boards (TableView). */
 export function readPushSequence(bytes: Uint8Array, roster: ReadRoster) {
     const read = readNamedPush(bytes, roster);
     return read ? viewSequence(read) : null;
