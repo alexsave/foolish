@@ -1,5 +1,10 @@
 # CPU hot-path profiling — foolish_server, and the octogen solver at two TT sizes
 
+> **Dated measurement, 2026-09-05.**
+> Every number here came off one box, one compiler build and one workload on that date, and the code it profiled has moved since.
+> Read the *shape* of the findings - which function dominates, what the hoists bought - rather than the absolute cycle counts.
+> Re-derive any figure with `profile.sh`; each section prints the exact command it used.
+
 Measured on this box: Linux, 4-core Xeon, clang 18 (Ubuntu). Profilers
 present: **valgrind (callgrind), gprof**. Profilers absent: **perf, sample**.
 So every capture below went through callgrind — the report says so instead

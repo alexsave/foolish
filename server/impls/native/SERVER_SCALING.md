@@ -1,5 +1,10 @@
 # Server concurrency — per-game locks + work-queue routing ("T2a")
 
+> **Build record, 2026-09-05, with later stages appended.**
+> The design this describes is what the server ships: per-game locks, the work-queue shards, the epoll loop, the reclaim policy.
+> The numbers, the Helgrind digests and the gate records are measurements taken on one box as each stage landed, and they are not re-run when the repo moves.
+> Where a gate record names a test or a tool, it names the one that existed then: `replay_difftest`, for instance, was retired on 2026-09-18 and the gate below is the record of a run that included it.
+
 Production-hardening stage 1 of 3 (concurrency) for
 `server/impls/native/foolish_server.c`. Stage 2 (SQLite WAL write-behind
 persistence + crash recovery) is now done too — see

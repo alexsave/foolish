@@ -1,5 +1,8 @@
 # Server TLS — HTTPS + WSS ("Stage 3")
 
+> **Build record, 2026-09-05.**
+> The design is what the server ships; the overhead table and the Helgrind digest are measurements taken on one box as the stage landed.
+
 Production-hardening stage 3 of 3 for `server/impls/native/foolish_server.c`.
 Stage 1 (per-game locks + work-queue routing, "T2a") and Stage 2 (SQLite
 WAL write-behind persistence + crash recovery) are done — see

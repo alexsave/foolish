@@ -1,5 +1,9 @@
 # Server durability — SQLite WAL write-behind persistence ("Stage 2")
 
+> **Build record, 2026-09-05, blob layout revised 2026-09-17.**
+> The design is what the server ships; the throughput and crash-test numbers are measurements taken on one box as the stage landed.
+> The on-disk blob layout below is versioned in the code, so treat `persist.c` as the authority and this section as its explanation.
+
 Production-hardening stage 2 of 3 (durability) for
 `server/impls/native/foolish_server.c`. Stage 1 (per-game locks + work-queue
 routing, "T2a") is done — see [`SERVER_SCALING.md`](SERVER_SCALING.md).

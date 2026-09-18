@@ -1,5 +1,10 @@
 # make/unmake in the endgame solver — a measured null
 
+> **Dated null result, 2026-09-05.**
+> The timings were taken on one box against `cordite_sim.c` as it stood that day.
+> The verdict (not worth ~185 lines of subtle solver code for ~2%) is the durable part; the percentages are not.
+> The prototype is not in the tree, so re-running this means rebuilding it.
+
 **Result: correct but not worth it. Reverted. Do not retread without a
 different design.** The `-DCD_MAKE_UNMAKE` prototype was SIG-identical to the
 shipped copy-make solver (proven, below) but only ~2% faster at best and a
