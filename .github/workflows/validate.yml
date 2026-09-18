@@ -73,5 +73,15 @@ jobs:
       - name: Type-check (web and e2e)
         run: npm run typecheck
 
+      # The TEST bots module (shipped bots.wasm + test-only exports) is never
+      # committed, and the scenarios below load it through
+      # e2e/helpers/bots_test_wasm.ts, which builds it on demand. That build runs
+      # tools/structgen, so it needs libclang - which this lane did not install,
+      # and every scenario that touches a board failed on clang-c/Index.h until
+      # this step was added. The script installs the toolchain, builds once, and
+      # exports WASM_CC/LLVM_PREFIX for the suite.
+      - name: Build the test bots module
+        run: bash scripts/ci_bots_test_wasm.sh
+
       - name: Run validation suite (handpicked regression scenarios)
         run: npm run test:validate
