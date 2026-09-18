@@ -53,6 +53,18 @@ jobs:
         with:
           version: 2.116.0
 
+      # e2e/edge_memtest/index.ts statically imports sdk/ts/gen/game_layout.bots.ts
+      # (deliberately - `functions serve` only stages modules reachable by static
+      # import, see that file's own comment), and tools/structgen writes it from
+      # the C headers. Generated before the function is copied into place, so what
+      # the edge runtime bundles is this tree's layout.
+      - name: Generated modules (the served function compiles them in)
+        run: |
+          # SOURCED, not run: a step exports to LATER steps through GITHUB_ENV,
+          # so within this one the toolchain has to land in this shell.
+          . scripts/ci_llvm.sh
+          bash tools/structgen/gen.sh
+
       - name: Install the diagnostic function
         run: |
           cp -r e2e/edge_memtest server/impls/supabase/functions/memtest

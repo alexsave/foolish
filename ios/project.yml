@@ -360,6 +360,19 @@ targets:
             echo "error: Run: cd c && make ios-lib"
             exit 1
           fi
+          # The OTHER half of the same pair. sdk/swift/gen/kernel.ios.swift is a
+          # build output - tools/structgen writes it from these same headers, and
+          # `make ios-lib` writes it beside the hash it bakes into the library.
+          # This target compiles it, so a tree where it has never been generated
+          # fails as a pile of "cannot find 'TableView' in scope" in files that
+          # have nothing wrong with them. Say the actual thing instead.
+          GEN="$SRCROOT/../sdk/swift/gen/kernel.ios.swift"
+          if [ ! -f "$GEN" ]; then
+            echo "error: sdk/swift/gen/kernel.ios.swift has not been generated."
+            echo "error: It is a build output, not a committed file."
+            echo "error: Run: cd c && make ios-lib   (or: bash tools/structgen/gen.sh)"
+            exit 1
+          fi
       # NOTE: no Supabase here. The network stack lives in FoolishNet, which the
       # iMessage extension never links — see that target's comment.
     settings:

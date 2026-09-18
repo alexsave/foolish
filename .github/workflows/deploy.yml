@@ -80,6 +80,20 @@ jobs:
         with:
           version: 2.116.0
 
+      # The functions import sdk/ts/gen through their @sdk/ alias
+      # (functions/<name>/deno.json), and `functions deploy` COMPILES that code
+      # into the bundle it ships. Those modules are written by tools/structgen
+      # from the C headers, so they are generated here, from this commit, before
+      # anything is bundled - the deployed server reads the kernel's memory at
+      # the offsets this tree's headers describe, or it reads them at somebody
+      # else's.
+      - name: Generated modules (the functions compile them in)
+        run: |
+          # SOURCED, not run: a step exports to LATER steps through GITHUB_ENV,
+          # so within this one the toolchain has to land in this shell.
+          . scripts/ci_llvm.sh
+          bash tools/structgen/gen.sh
+
       - name: Link project
         run: supabase link --project-ref "$SUPABASE_PROJECT_REF" --workdir server/impls
 

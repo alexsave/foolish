@@ -139,11 +139,13 @@ jobs:
           bash tools/structgen/test/hash.sh
 
       - name: Accessors against wasm32 C (verify)
-        # gen.sh without --check also builds test/verify.c into build/verify.wasm,
-        # which needs wasm-ld (lld-22). That module is never committed - its bytes
-        # are this runner's clang, not a macOS one - so this step is what makes it.
+        # --verify-wasm links test/verify.c into build/verify.wasm. That module is
+        # never committed - its bytes are this runner's clang, not a macOS one -
+        # so this step is what makes it. It is a separate flag from plain gen.sh
+        # because the link needs wasm-ld (lld-22) and every OTHER lane runs gen.sh
+        # for the modules alone, where libclang is enough.
         run: |
-          bash tools/structgen/gen.sh
+          bash tools/structgen/gen.sh --verify-wasm
           TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx --test tools/structgen/test/verify.test.ts
 
   freshness:
