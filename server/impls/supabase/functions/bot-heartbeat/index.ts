@@ -3,7 +3,14 @@
 // migrations/20260616040000_bot_heartbeat_cron.sql). Which games need driving is
 // the kernel's verdict, stored as games.needs_bots by every commit (table.h
 // table_needs_bots: PLAYING, and a bot seat still IN); the scan only adds the
-// staleness window. The cron is a dumb trigger.
+// staleness window.
+//
+// The cron tick is gated (migration 20260918230000): it posts only when some
+// row the kernel says needs bots has committed within ABANDON_MS, so an idle
+// database costs nothing. The gate is strictly weaker than the filter below -
+// it does not know about STALE_MS - so every tick this function would have
+// dispatched on still arrives, and the cadence while a game is live is the
+// unchanged 10 seconds.
 //
 // Two modes (one function, so the cron only needs one URL):
 //   SCAN  (no game_id, the cron): find stalled bot games, then dispatch one
@@ -27,10 +34,23 @@ const SELF_URL = `${SUPABASE_URL}/functions/v1/bot-heartbeat`;
 
 const supabaseClient = createClient(SUPABASE_URL, SERVICE_KEY);
 
-// A game untouched for this long (no commit) might be stalled with bot work pending.
+// A game untouched for this long might be stalled with bot work pending. Bounded
+// on updated_at, which is every write to the row: a drive in flight has just
+// taken the lease, so the row reads fresh and a second drive is not dispatched
+// on top of it.
 const STALE_MS = 10_000;
-// Ignore games untouched for ages - those are abandoned, not stalled; don't keep
-// bumping them forever.
+// Ignore games nobody has MOVED in for ages - those are abandoned, not stalled;
+// don't keep bumping them forever. Bounded on last_commit_at, which moves only
+// when `version` moves, i.e. only on a kernel commit (migration
+// 20260918230000). It cannot be updated_at: the drive this scan dispatches
+// takes and releases the bot lease, both of which UPDATE games, and
+// update_games_updated_at stamps updated_at on any update - so the heartbeat
+// refreshed its own guard and the guard never fired. Hosted game 24a407 was
+// still being driven 67 days after its last move.
+//
+// The cron command carries this same window as its gate (interval '1 hour'), so
+// an idle tick never reaches this function at all; the two are held equal by
+// e2e/heartbeat_gate.test.ts.
 const ABANDON_MS = 60 * 60 * 1000; // 1 hour
 const MAX_GAMES = 100; // safety cap per scan
 
@@ -62,14 +82,15 @@ serve(async (req: Request): Promise<Response> => {
     }
 
     // ---- SCAN: the stalled games the kernel says have bot work ----
-    // The partial index idx_games_bot_scan covers exactly this filter.
+    // The partial index idx_games_bot_scan covers the needs_bots + updated_at
+    // range; last_commit_at filters the abandoned ones out of it.
     const now = Date.now();
     const { data, error } = await supabaseClient
         .from('games')
         .select('id')
         .eq('needs_bots', true)
         .lt('updated_at', new Date(now - STALE_MS).toISOString())
-        .gt('updated_at', new Date(now - ABANDON_MS).toISOString())
+        .gt('last_commit_at', new Date(now - ABANDON_MS).toISOString())
         .limit(MAX_GAMES);
 
     if (error) {

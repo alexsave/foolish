@@ -107,8 +107,13 @@ export function registerDbGrantsValidation(): void {
             `SELECT p.oid::regprocedure::text AS fn FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
              WHERE n.nspname = 'public' AND (p.proname IN ('commit_game', 'create_game') OR p.proname LIKE 'legacy\\_%')`);
         assert.deepEqual(rows.map((r) => r.fn), []);
+        // The whole list, so the bridge cannot come back unnoticed and a new
+        // trigger has to be argued for here. games_stamp_last_commit derives
+        // last_commit_at from `version` for the bot heartbeat's abandon guard
+        // (migration 20260918230000); update_games_updated_at is the stamp every
+        // table in this schema carries.
         const triggers = await pgPool.query(`SELECT tgname FROM pg_trigger WHERE tgrelid = 'public.games'::regclass AND NOT tgisinternal ORDER BY 1`);
-        assert.deepEqual(triggers.rows.map((r) => r.tgname), ['update_games_updated_at']);
+        assert.deepEqual(triggers.rows.map((r) => r.tgname), ['games_stamp_last_commit', 'update_games_updated_at']);
     });
 }
 

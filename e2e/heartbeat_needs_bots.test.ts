@@ -32,15 +32,23 @@ globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
 before(async () => { await applySchema(); });
 after(async () => { await settle(); });
 
-// The row's last commit, moved into the past. update_games_updated_at would stamp
-// the UPDATE itself with now(), so it is paused for the statement.
+// The row's last commit, moved into the past: its last WRITE (updated_at, which
+// carries the scan's staleness window) and its last MOVE (last_commit_at, which
+// carries the abandon window - see migration 20260918230000). Both triggers are
+// paused for the statement; one stamps updated_at on any update, the other owns
+// last_commit_at outright, so neither column can be written with them on.
 async function age(gameId: string, seconds: number): Promise<void> {
     const c = await pgPool.connect();
     try {
         await c.query('BEGIN');
         await c.query('ALTER TABLE games DISABLE TRIGGER update_games_updated_at');
-        await c.query(`UPDATE games SET updated_at = now() - make_interval(secs => $2) WHERE id = $1`, [gameId, seconds]);
+        await c.query('ALTER TABLE games DISABLE TRIGGER games_stamp_last_commit');
+        await c.query(
+            `UPDATE games SET updated_at = now() - make_interval(secs => $2),
+                              last_commit_at = now() - make_interval(secs => $2)
+             WHERE id = $1`, [gameId, seconds]);
         await c.query('ALTER TABLE games ENABLE TRIGGER update_games_updated_at');
+        await c.query('ALTER TABLE games ENABLE TRIGGER games_stamp_last_commit');
         await c.query('COMMIT');
     } finally {
         c.release();

@@ -6,7 +6,9 @@
 -- POST leaves a row in `net._http_response`. A migration that maintains either
 -- table cannot be replayed on a bare Postgres without them, so the two tables and
 -- the one function a migration calls are declared here, column for column as
--- `information_schema.columns` reports them on wngpfwmwkltonwosqflx.
+-- `information_schema.columns` reports them on wngpfwmwkltonwosqflx. Supabase
+-- Vault comes along too, because the heartbeat's command reads the service-role
+-- key out of it.
 --
 -- Only the SHAPE is real. There is no background worker here: nothing sends an
 -- HTTP request, nothing reaps a response on the TTL, nothing fires a job. A test
@@ -19,6 +21,7 @@
 
 CREATE SCHEMA IF NOT EXISTS net;
 CREATE SCHEMA IF NOT EXISTS cron;
+CREATE SCHEMA IF NOT EXISTS vault;
 
 -- pg_net's response log. UNLOGGED and with no primary key, exactly as pg_net
 -- creates it; `created` carries the default that makes the extension's TTL sweep
@@ -45,6 +48,53 @@ CREATE INDEX IF NOT EXISTS _http_response_created_idx ON net._http_response (cre
 -- every insert extends the file. Declaring it off here makes the harness
 -- reproduce that deterministically instead of racing a local autovacuum daemon.
 ALTER TABLE net._http_response SET (autovacuum_enabled = false);
+
+-- pg_net's outbound queue, and the one function the heartbeat's cron command
+-- calls. Real pg_net's http_post does exactly this - it appends the request to
+-- net.http_request_queue and returns the id, and a background worker it owns
+-- sends it later and writes net._http_response. There is no worker here, so a
+-- row in the queue means "this tick posted", which is the question every
+-- heartbeat-gate assertion asks. The signature is pg_net 0.14.0's, argument
+-- names and defaults included, so the production command string runs unedited.
+CREATE TABLE IF NOT EXISTS net.http_request_queue (
+    id          bigserial PRIMARY KEY,
+    method      text        NOT NULL,
+    url         text        NOT NULL,
+    headers     jsonb       NOT NULL,
+    body        bytea,
+    timeout_milliseconds integer NOT NULL,
+    queued      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE OR REPLACE FUNCTION net.http_post(
+    url text,
+    body jsonb DEFAULT '{}'::jsonb,
+    params jsonb DEFAULT '{}'::jsonb,
+    headers jsonb DEFAULT '{"Content-Type": "application/json"}'::jsonb,
+    timeout_milliseconds integer DEFAULT 5000
+)
+RETURNS bigint
+LANGUAGE sql
+AS $$
+    INSERT INTO net.http_request_queue (method, url, headers, body, timeout_milliseconds)
+    VALUES ('POST', url, headers, convert_to(body::text, 'UTF8'), timeout_milliseconds)
+    RETURNING id;
+$$;
+
+-- Supabase Vault, as the heartbeat's command reads it: one decrypted view over
+-- the project's secrets. The service-role key is a per-project secret, so the
+-- value here is a placeholder - what the command needs is for the lookup to
+-- resolve, since a SELECT inside a function's argument list is evaluated only
+-- if the function is evaluated at all, which is the whole point of the gate.
+CREATE TABLE IF NOT EXISTS vault.decrypted_secrets (
+    id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    name             text UNIQUE,
+    description      text NOT NULL DEFAULT '',
+    decrypted_secret text
+);
+INSERT INTO vault.decrypted_secrets (name, decrypted_secret)
+VALUES ('service_role_key', 'e2e-not-a-real-key')
+ON CONFLICT (name) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS cron.job (
     jobid     bigserial PRIMARY KEY,

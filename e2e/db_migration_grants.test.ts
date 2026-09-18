@@ -368,6 +368,45 @@ export function registerMigrationGrantsValidation(): void {
                 `the contract migration must run after the expand migration, got ${replayed[contract]} before ${replayed[expand]}`);
             assert.ok(contract < bytea,
                 `the BYTEA migration must run after the contract migration, got ${replayed[bytea]} before ${replayed[contract]}`);
+
+            // The chain does not end at BYTEA. The heartbeat's liveness migration
+            // adds last_commit_at to games and derives it from `version`, and the
+            // whole argument for that column is that commit_table is the ONLY
+            // writer of `version` - which is true of the contracted schema and
+            // not of the one before it, where commit_game bumped it too. So it
+            // belongs after the contract for the same reason the contract belongs
+            // after the expand: the file it depends on has to have run.
+            //
+            // It was itself renumbered once, out of a collision with the contract
+            // migration's own new number - two branches in flight, both landing
+            // on 20260918210000. The sibling test below is the general form.
+            const heartbeat = at('_heartbeat_liveness_and_gate.sql');
+            assert.ok(contract < heartbeat,
+                `the heartbeat liveness migration must run after the contract migration, got `
+                + `${replayed[heartbeat]} before ${replayed[contract]}`);
+        });
+
+        test('no two migrations share a timestamp', () => {
+            // The general form of the renumber above, and the thing that actually
+            // bites: two branches in flight pick the same prefix, both merge, and
+            // `readdirSync().sort()` orders them by their SUFFIX - which is to
+            // say alphabetically by title, which is to say arbitrarily. That is a
+            // deploy failure discovered on hosted. Here it is a CI failure.
+            //
+            // Every migration on disk, not only the replayed window: a collision
+            // in the already-applied prefix is just as ambiguous to read, and
+            // hosted's own history is keyed on the version string.
+            const all = readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql')).sort();
+            const byStamp = new Map<string, string[]>();
+            for (const f of all) {
+                const stamp = f.slice(0, f.indexOf('_'));
+                byStamp.set(stamp, [...(byStamp.get(stamp) ?? []), f]);
+            }
+            const clashes = [...byStamp].filter(([, fs]) => fs.length > 1);
+            assert.deepEqual(clashes.map(([stamp, fs]) => `${stamp}: ${fs.join(' + ')}`), [],
+                'two migrations carry the same timestamp. supabase db push keys its history on the version '
+                + 'string and applies in filename order, so which of these runs first is decided by their '
+                + 'titles. Renumber the one that depends on the other to a later stamp.');
         });
 
         test('no SECURITY DEFINER function is client-callable after the last migration', () => {
