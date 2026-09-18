@@ -57,10 +57,21 @@ import XCTest
 
 final class BoardSpringOverrideTests: XCTestCase {
 
-    private func source() throws -> String {
+    private func source(_ path: String = "FoolishKit/Boards/MessageTableView.swift") throws -> String {
         let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        return try String(contentsOf: here.deletingLastPathComponent()
-            .appendingPathComponent("FoolishKit/Boards/MessageTableView.swift"), encoding: .utf8)
+        let url = here.deletingLastPathComponent().appendingPathComponent(path)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            XCTFail("\(path) is gone - this test needs its path updated")
+            return ""
+        }
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    /// The modifier itself lives in BoardSpring.swift now; the five sites that
+    /// SPEND it are still the board's. Both halves are asserted below, each
+    /// against the file that owns it.
+    private func springSource() throws -> String {
+        try source("FoolishKit/Boards/BoardSpring.swift")
     }
 
     /// Lines of `src` that are code, not comment.
@@ -81,7 +92,7 @@ final class BoardSpringOverrideTests: XCTestCase {
     /// trigger the ancestor animates on. A modifier that did anything else
     /// would leave five happy-looking call sites and a floating action bar.
     func testTheModifierIsTheNestedSameTriggerOverride() throws {
-        let body = try modifierBody(code(try source())).joined(separator: "\n")
+        let body = try modifierBody(code(try springSource())).joined(separator: "\n")
         XCTAssertTrue(body.contains("animation(nil, value: trigger)"),
                       "`doesNotRideTheBoardSpring` must nil the animation for the trigger it "
                       + "is handed. The override only works because the trigger is the SAME "
@@ -93,8 +104,11 @@ final class BoardSpringOverrideTests: XCTestCase {
     /// replaced, and a sixth site written out longhand is a site whose reason
     /// is not written down anywhere.
     func testTheChromeSpendsTheOneModifier() throws {
+        // The modifier's own body is in another file now, so the board has no
+        // licensed copy at all: any `.animation(nil, value:)` here is a
+        // hand-spelled sixth site.
+        let mine = try modifierBody(code(try springSource()))
         let lines = code(try source())
-        let mine = try modifierBody(lines)
         let inlined = lines.filter { $0.contains(".animation(nil, value:") && !mine.contains($0) }
         XCTAssertTrue(inlined.isEmpty,
                       "a chrome site re-spells the board-spring override by hand: "

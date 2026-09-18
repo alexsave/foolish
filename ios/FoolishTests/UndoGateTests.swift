@@ -66,7 +66,7 @@ final class UndoGateTests: XCTestCase {
                                         presenting: false, autoCollapsing: false, cardsVeiled: true),
                        "Undo flashed up between the tap and the flight")
         let board = try source("FoolishKit/Boards/MessageTableView.swift")
-        XCTAssertTrue(board.contains("let still = UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty) && !playInFlight"),
+        XCTAssertTrue(board.contains("still: UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty) && !playInFlight"),
                       "the board does not tell the gate about cards it is veiling, or a play still being staged")
         // A bout-ending Good flies nothing and veils nothing, and `stageNow`
         // seals the move (`stagedPayload`) before the extension's stage - and its
@@ -90,8 +90,20 @@ final class UndoGateTests: XCTestCase {
     /// the selection is cleared; never cleared when the apply answers.
     func testNoPlayButtonBetweenTheTapAndTheStage() throws {
         let board = try source("FoolishKit/Boards/MessageTableView.swift")
-        XCTAssertTrue(board.contains("let acting = controller.iCanAct && !controller.canSend && !playInFlight"),
-                      "the play buttons do not stand down while a play is being applied")
+        // The rule itself is a value now - see
+        // BoardActionMenuTests.testNoPillBetweenTheTapAndTheStage. What only
+        // this file can check is that the board still HANDS the menu its own
+        // in-flight flag, and that `play` sets it before it clears the
+        // selection. A menu that is never told is a menu that never stands down.
+        XCTAssertTrue(board.contains("playInFlight: playInFlight"),
+                      "the play buttons are not told a play is being applied")
+        XCTAssertEqual(BoardActionMenu.resolve(
+            PlayProbe(move: nil, coverable: [0], bestCover: 0,
+                      canAttack: true, canPass: true, canSayGood: true),
+            .init(iCanAct: true, canSend: false, playInFlight: true, boardStill: true,
+                  superseded: false, pickupHeld: false, isDefender: true, isOut: false,
+                  tableIsEmpty: false, selectionIsEmpty: true)), .none,
+            "a pill is offered while a play is being applied")
         let start = try XCTUnwrap(board.range(of: "private func play(_ move: Move) {"))
         let body = String(board[start.upperBound...].prefix(4000))
         let mark = try XCTUnwrap(body.range(of: "playInFlight = ActionPillSlot.holdsWhilePlaying"),
@@ -114,8 +126,14 @@ final class UndoGateTests: XCTestCase {
     func testNoPlayButtonWhileAnUndoFlies() throws {
         XCTAssertTrue(ActionPillSlot.waitsForStillByDefault)
         let board = try source("FoolishKit/Boards/MessageTableView.swift")
-        XCTAssertTrue(board.contains("let acting = controller.iCanAct && !controller.canSend && !playInFlight && boardStill"),
-                      "a play button shows while the board is still moving")
+        // Again: the standing-down is BoardActionMenuTests'
+        // testNoPillWhileTheBoardIsStillMoving. Here: that the board computes
+        // "still" from the two statics, hands it over, and redraws on the timer
+        // that is the only thing those statics will ever be re-read by.
+        XCTAssertTrue(board.contains("let boardStill = !ActionPillSlot.waitsForStill\n            || UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty)"),
+                      "the board no longer asks the gate whether it has come to rest")
+        XCTAssertTrue(board.contains("boardStill: boardStill"),
+                      "the menu is not told whether the board has come to rest")
         XCTAssertTrue(board.contains("TimelineView(.periodic(from: .now, by: 0.1)) { _ in\n                    actionBar(view)"),
                       "the play column is not redrawn when the board comes to rest")
         // Take is the one pill NOT gated on `acting` (it deliberately does not
@@ -123,8 +141,17 @@ final class UndoGateTests: XCTestCase {
         // out on it - filmed: Pickup back on the plank through a pickup undo's
         // whole flight, and (owner) "the label... changed for a single frame
         // after you hit pickup".
-        XCTAssertTrue(board.contains("&& controller.pickupHold == 0 && !controller.superseded\n                && !playInFlight && boardStill,"),
-                      "Take shows during a play in flight or an animation")
+        XCTAssertEqual(BoardActionMenu.resolve(
+            PlayProbe(move: nil, coverable: [], bestCover: nil,
+                      canAttack: false, canPass: false, canSayGood: false),
+            .init(iCanAct: true, canSend: false, playInFlight: false, boardStill: false,
+                  superseded: false, pickupHeld: false, isDefender: true, isOut: false,
+                  tableIsEmpty: false, selectionIsEmpty: true)).canPickup, false,
+            "Take shows during a play in flight or an animation")
+        XCTAssertTrue(board.contains("pickupHeld: controller.pickupHold != 0"),
+                      "the menu is not told about the throw-in hold")
+        XCTAssertTrue(board.contains("superseded: controller.superseded"),
+                      "the menu is not told this seat was stood down")
     }
 
     /// Hidden, not dimmed - and it ships that way.
@@ -137,9 +164,12 @@ final class UndoGateTests: XCTestCase {
         // Owner: "basically I never want to see a dimmed undo button." That
         // covers the conflict retraction's disabled Undo too: shown enabled,
         // or not shown.
-        let board = try source("FoolishKit/Boards/MessageTableView.swift")
-        XCTAssertTrue(board.contains("if !controller.conflictRetracting && still {\n                            undoPill(enabled: true)"),
-                      "the Undo pill is drawn (dimmed) while the gate or a retraction refuses")
+        XCTAssertEqual(BoardActionMenu.undoPill(canSend: true, retracting: false,
+                                                still: false, hides: true), .absent,
+                       "the Undo pill is drawn (dimmed) while the gate refuses")
+        XCTAssertEqual(BoardActionMenu.undoPill(canSend: true, retracting: true,
+                                                still: true, hides: true), .absent,
+                       "the Undo pill is drawn (dimmed) while a retraction refuses")
     }
 
     /// The extension marks the WHOLE auto-collapse, from its FIRST line - before
@@ -203,8 +233,10 @@ final class UndoGateTests: XCTestCase {
     /// `undoAction` directly; `undoAction` itself asking the gate.
     func testThePillAsksAndTheBubbleXDoesNot() throws {
         let board = try source("FoolishKit/Boards/MessageTableView.swift")
-        XCTAssertTrue(board.contains("undoPill(enabled: !controller.conflictRetracting && still)"),
-                      "the Undo pill does not draw itself disabled while the board moves")
+        XCTAssertTrue(board.contains("undoPill(enabled: pill == .enabled)"),
+                      "the Undo pill does not draw itself from the gate's own answer")
+        XCTAssertTrue(board.contains("retracting: controller.conflictRetracting"),
+                      "the Undo pill is not told about a retraction in flight")
         XCTAssertTrue(board.contains("action: undoPillTapped"),
                       "the Undo pill does not re-check the gate at the tap")
         XCTAssertTrue(board.contains("guard UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty), !playInFlight else"),
