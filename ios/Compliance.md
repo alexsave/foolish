@@ -45,14 +45,15 @@ mirror.
   the 1.1 record actually has the `/imessage-privacy` URL on file, so the
   filing was right and this doc was wrong.
 - Support URL: `https://www.foolish.cards/support` (`public/support.html`).
-- Both are plain static HTML with zero script tags, on purpose: every React
-  route renders behind `KernelGate` and needs `bots.wasm` before it paints, so
-  a `curl` of the old React `/support` returned only the noscript line. The
-  Marketing URL on the record, `https://www.foolish.cards/about`, is still a
-  React route and still JavaScript-gated, on purpose: it is linked from the home
-  screen and localized in all five shipped languages, so a static English file
-  would be a regression. Optional metadata, so a quality item rather than a
-  blocker; the submission doc §8 has the fix that would be right.
+- Both are plain static HTML with zero script tags, on purpose: React routes
+  used to render behind a root `KernelGate` that needed `bots.wasm` before they
+  painted, so a `curl` of the old React `/support` returned only the noscript
+  line. The Marketing URL on the record, `https://www.foolish.cards/about`, is
+  still a React route, and it now prerenders its real text in all five shipped
+  languages: the gate moved off the root onto the routes that actually run the
+  kernel (submission doc §8). It stays a React route deliberately - it is linked
+  from the home screen and localized, so a static English file would be a
+  regression.
 - Those are all of them. Every URL-bearing field on the record was enumerated
   through the App Store Connect API, not assumed: `privacyChoicesUrl`,
   `privacyPolicyText` and `whatsNew` are null, and the only other URL is the

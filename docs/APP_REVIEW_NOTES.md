@@ -80,11 +80,14 @@ blocker, and it should not be treated as one.
   The React `/privacy` and `/support` routes and their components are deleted,
   so there is one copy of each page, and `curl` on any of the three returns the
   full text with no script tags at all.
-  The Marketing URL, `/about`, has the same symptom and is deliberately left as
-  a React route: it is linked from the home screen and localized in five
-  languages, so a static English file would be a regression. The fix that fits
-  it is moving `KernelGate` off the root and onto the routes that need a kernel
-  (`docs/IMESSAGE_APP_STORE_SUBMISSION.md` §8), which is its own change.
+  The Marketing URL, `/about`, had the same symptom and was NOT converted the
+  same way: it is linked from the home screen and localized in five languages,
+  so a static English file would have been a regression. It was fixed at the
+  root instead - `KernelGate` moved off `providers.tsx` onto the routes that run
+  the kernel, so `/about`, `/leaderboard` and `/delete-account` prerender their
+  real text with every language and the chrome intact. The route list is derived
+  from the import graph and asserted both ways by
+  `e2e/validation/kernel_gate_validation.test.ts`.
 - The in-app language picker offers five languages in Release (en/ru/ko/zh/vi)
   while `CFBundleLocalizations` declares three. Under-declaring is not a
   rejection, but the store will not list Chinese or Vietnamese.

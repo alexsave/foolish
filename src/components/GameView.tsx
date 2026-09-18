@@ -40,7 +40,8 @@ export const GameView = () => {
         return <WinScreen />;
     } else {
         // The board's gates and optimistic moves are the kernel's, which is loaded
-        // before any screen renders (src/app/providers.tsx KernelGate).
+        // before this screen renders: /[game_id] is wrapped in KernelGate
+        // (src/components/KernelGate.tsx).
         return <GameDisplay />;
     }
 }; 

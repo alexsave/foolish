@@ -4,8 +4,9 @@ import { covered, seatKey, type ViewCard as Card } from '../../state/view';
 import { CardFace } from './CardFace';
 import { CardBack } from './CardBack';
 import { useServer } from '../../contexts/ServerContext';
-// The kernel's can_cover: bots.wasm is loaded before any screen renders
-// (src/app/providers.tsx KernelGate), the replay and the tutorial included.
+// The kernel's can_cover: bots.wasm is loaded before any screen that reaches this
+// renders - /, /[game_id], /dashboard, /history and /tutorial are each wrapped in
+// KernelGate (src/components/KernelGate.tsx), the replay and the tutorial included.
 import { canCoverPair } from '../../utils/gameValidation';
 
 // Table-slot geometry cache (Stage 9). The on-table battle layout is a function of
