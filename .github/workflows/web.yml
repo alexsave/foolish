@@ -24,10 +24,17 @@ name: web
 #
 # ONE THING THE OWNER STILL HAS TO DO, and it is not optional:
 #
-#   Vercel dashboard > Project > Settings > Git: turn OFF automatic deployments.
+#   Turn OFF Vercel's automatic deployments for this project. The live setting
+#   today is gitProviderOptions.createDeployments = "enabled":
+#
+#     PATCH https://api.vercel.com/v9/projects/<projectId>?teamId=<orgId>
+#     {"gitProviderOptions": {"createDeployments": "disabled"}}
+#
 #   Until that is off, Vercel ALSO builds every push from source, in an image
 #   with no libclang. That is harmless while sdk/ts/gen is still committed and
-#   it takes the live site down the moment it is not.
+#   it takes the live site down the moment it is not - so it is flipped as part
+#   of the cutover, NOT before: while those modules are still committed, Vercel's
+#   source builds are the only thing deploying the site at all.
 #
 # The three secrets (VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID) are set.
 # The org and project ids are read by the CLI from the environment, so nothing
@@ -70,7 +77,18 @@ jobs:
       - name: Generated modules
         run: bash tools/structgen/gen.sh
 
+      # PLACEHOLDER SUPABASE ENV, and the reason is worth stating: `next build`
+      # prerenders /_not-found and friends, and the module that creates the
+      # Supabase client throws `supabaseUrl is required` at module scope when the
+      # variables are absent. The real values live in the Vercel project and
+      # arrive through `vercel pull` in the deploy job; this job is a COMPILE
+      # gate, so it only needs something well-formed to prerender against. A
+      # value that looks real would be worse: it would suggest this job talks to
+      # a backend, and it must not.
       - name: Build the web app
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_KEY: placeholder-anon-key-not-used-by-this-job
         run: npm run build
 
       # Printed, not gated - the same way wasm.yml prints module sizes so a
