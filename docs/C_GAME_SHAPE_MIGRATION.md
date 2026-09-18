@@ -789,7 +789,7 @@ Server TS that remains is I/O: HTTP and CORS (`wrap400`, the function entries), 
 
 After Phase 4b is deployed.
 
-- Scope: `server/impls/supabase/migrations/2026MMDD000000_table_contract.sql`, `seed.sql` rewritten to the final schema of 3.1 and 3.3, `delete_account` rewrite, `e2e/db_grants.test.ts`.
+- Scope: `server/impls/supabase/migrations/2026MMDD000000_table_contract.sql`, `seed.sql` rewritten to the final schema of 3.1 and 3.3, `delete_account` rewrite, `e2e/db_grants.test.ts`, `e2e/fixtures/pre_table/pre_blob_finished.sql`.
 - Deletes: the legacy columns, `writer_gen`, `commit_game`, `create_game`, `legacy_roster_hex`, `legacy_lobby_state_hex`, `idx_games_name`, `idx_games_playing_updated_at`, the two `games` policies.
 - Red-first tests: the contract migration applied on top of `e2e/fixtures/pre_table` plus 4a leaves every fixture row loadable with identical envelopes; `anon` and `authenticated` have no privilege at all on `games`; no function named `commit_game` exists.
 - Must pass: e2e, validate, S.
@@ -809,17 +809,27 @@ Migration `20260918120000_table_contract.sql`, with `seed.sql` rewritten to the 
   The migration raises when `games` has rows but none with `writer_gen = 2`: that is a database the 4b functions never wrote to, where every running function still calls `commit_game`.
   It also raises, naming them, on rows without a `state` or `roster` blob.
   Because `deploy.yml` pushes migrations before it deploys functions, a push that carries this migration together with the 4b functions stops at the migration step, before the functions step, and the live functions keep working on the 4a schema.
+- Between the two refusals, step 0.1 deletes the finished games that predate `games.state`.
+  `games.state` arrived in `20260707120000`; a game that reached `game_over` before it has a JSONB record of itself and no blob, and 4a cannot synthesise one, because `legacy_lobby_state_hex` builds a lobby board (no cards anywhere) and a finished board cannot be rebuilt from public JSONB that never held a hand or a deck.
+  Hosted has 34 such rows out of 90, all `game_over`, created between 2025-07-21 and 2026-07-01 and last written in June or July 2026.
+  Asked whether to synthesise a blob for them or drop them, the owner chose to drop them.
+  The predicate is exactly `status = 'game_over' AND state IS NULL`, so a `waiting` or `playing` row without a blob still hits the refusal and stops the deploy.
+  What goes with a deleted row is what its foreign keys say: `player_hands`, `bot_hands`, `chat_messages`, `player_views` and `spectator_views` are `ON DELETE CASCADE` and go; `game_snapshots` is `ON DELETE SET NULL`, so the replay survives with its `game_id` cleared.
+  Match history queries `game_snapshots` by `player_ids` (which is also its RLS read ACL), so a deleted game's replay stays in its players' history and stays replayable; the only path that looks a snapshot up by `game_id` is `ReplayShare`, which runs on the win screen of a game just finished.
 - Every row keeps its bytes: `DROP COLUMN` rewrites nothing and fires no row trigger, so `state`, `roster`, `version`, `status`, `needs_bots`, `round_epoch`, `game_seed`, `logs_packed` and `updated_at` are unchanged.
 
 Tests, red first by assertion (the migration file did not exist, and `seed.sql` still had the grants and legacy writers):
 
 - `e2e/table_contract_migration.test.ts` builds the hosted history on `e2e/fixtures/pre_table`: the captured rows, the 4a migration, then 4b's writes (a legacy lobby taken over by a join through `commit_table`, a dealt row committed, a new `create_table` row), then 4c.
-  All 9 rows keep every stored column and `updated_at`, `table_load` accepts each, and the 23 envelopes C writes (every human seat and the spectator) are byte-equal to the ones before 4c and to the cached `player_views` / `spectator_views`.
+  It adds `e2e/fixtures/pre_table/pre_blob_finished.sql`, a hand-written copy of the captured `finished` game with `state`, `game_seed` and `logs_packed` NULL, one dependent row per foreign key that points at `games`, and a second snapshot belonging to the blob-carrying twin as the control.
+  All 9 surviving rows keep every stored column and `updated_at`, `table_load` accepts each, and the 23 envelopes C writes (every human seat and the spectator) are byte-equal to the ones before 4c and to the cached `player_views` / `spectator_views`.
+  The pre-blob row is gone, its five cascading tables are empty for it, its `game_snapshots` row is still there with `game_id` NULL and its `player_ids` intact, and the `game_over` row that does have a blob is untouched, its snapshot still pointing at it.
   It also holds the final column set, indexes, trigger and no policy; no `commit_game`, `create_game` or `legacy_*`; no client privilege; both refusals; and `commit_table`, `create_table` and `delete_account` on the contracted table (no games column written, `updated_at` included).
 - `e2e/db_grants.test.ts` (on `seed.sql`): no client privilege on `games` and no policy; no legacy writer or bridge trigger.
 - `e2e/db_migration_grants.test.ts` replays the migrations under Supabase's default privileges (which grant ALL on every table): anon cannot execute `commit_table`, no legacy writer is left, neither client role holds any privilege on `games`, and `seed.sql` builds the same `games` columns, indexes, triggers and writers (now including `delete_account`) and the same posture.
 
 Mutation checks after the code, each restored with `git checkout`: removing the `REVOKE`, keeping `commit_game`, removing either refusal, and a `delete_account` that still writes the user's games each turn a named test red; the last one first survived (the test compared kernel columns only) and the test now compares every column.
+Widening step 0.1's predicate from `status = 'game_over' AND state IS NULL` to `status = 'game_over'` turns both `4c applies` and `4c deletes the pre-blob finished game` red; removing the step entirely turns `4c applies` red with the refusal's own message, `games rows without a state or roster blob: prb001`.
 A `seed.sql` that grants `SELECT (id, status, version)` back turns `db_grants`, `db_migration_grants`, `packed_review_gaps` and S1 red.
 
 Tests that read a dropped column follow the schema: `e2e/helpers/table_db.ts` `seedTable` no longer writes `writer_gen`, `table_fixture` stops asserting it, S1's anon viewer must now be refused the `games` read outright (42501) where it used to read the granted columns, and `packed_review_gaps` asserts no `games` column is readable.
@@ -854,11 +864,12 @@ One merge carrying all three migrations would therefore apply the expand, the co
 
 So the branch ships as two pull requests:
 
-- **Deploy 1** is this branch without `20260918120000_table_contract.sql` and `20260918130000_table_bytea.sql`, with `seed.sql` at the end state of the expand migration.
+- **Deploy 1** is the branch without `20260918120000_table_contract.sql` and `20260918130000_table_bytea.sql`, with `seed.sql` at the end state of the expand migration.
   Merging it applies 4a and deploys the 4b functions in one workflow run, in that order, which is steps 1 and 2 of the deploy order above.
   The functions call the final `commit_table` and `create_table` signature, which 4a creates.
 - **Deploy 2** is the two migrations, `seed.sql` rewritten to the final schema, and the tests that assert the contracted and BYTEA schema (`e2e/table_contract_migration.test.ts`, `e2e/table_bytea_migration.test.ts`, and the `db_grants`, `db_migration_grants`, `packed_review_gaps`, `security_hidden_info`, `table_fixture`, `table_db` and blob-column assertions that follow from them).
   It is merged only after deploy 1 is live and verified, which is steps 3 and 4.
+  It is the commit on top of deploy 1's, so the two together are the branch as it was reviewed.
 
 `e2e/db_migration_grants.test.ts`'s "seed.sql and the migrations build the same schema public, object for object" is what holds each of the two states honest: on deploy 1 it compares the chain through 4a against `seed.sql` at the same point.
 
@@ -876,8 +887,15 @@ SELECT count(*) FILTER (WHERE writer_gen = 2) AS kernel_rows, max(updated_at) FI
        min(created_at) FILTER (WHERE writer_gen = 2 AND players = '[]'::jsonb) AS first_create_table
 FROM games;   -- expect kernel_rows > 0 and last_legacy_write before first_create_table
 
--- rows the migration refuses
+-- rows the migration refuses, and the finished ones it deletes instead (34 on hosted)
 SELECT id, status FROM games WHERE state IS NULL OR roster IS NULL;
+SELECT count(*) AS deleted, min(created_at), max(updated_at) FROM games WHERE status = 'game_over' AND state IS NULL;
+
+-- the replays of those games. They survive (game_snapshots.game_id is ON DELETE SET NULL)
+-- and match history reads by player_ids, so this is a count of rows that lose a pointer,
+-- not of replays that are lost.
+SELECT count(*) FROM game_snapshots s JOIN games g ON g.id = s.game_id
+WHERE g.status = 'game_over' AND g.state IS NULL;
 
 -- anything else that depends on a column being dropped (a view fails the DROP; a function would fail at run time)
 SELECT DISTINCT c.relname FROM pg_depend d JOIN pg_rewrite r ON r.oid = d.objid JOIN pg_class c ON c.oid = r.ev_class

@@ -31,7 +31,7 @@ const nameHex = Buffer.from(NAME, 'utf8').toString('hex');
 
 async function gameIdOf(createResponse: Uint8Array): Promise<string> {
     await settle();
-    const { rows } = await pgPool.query('SELECT game_id FROM player_views WHERE view = $1', [Buffer.from(createResponse).toString('hex')]);
+    const { rows } = await pgPool.query('SELECT game_id FROM player_views WHERE view = $1', [`\\x${Buffer.from(createResponse).toString('hex')}`]);
     assert.equal(rows.length, 1, 'the created lobby has its creator view');
     return rows[0].game_id;
 }
