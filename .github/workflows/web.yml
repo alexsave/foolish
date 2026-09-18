@@ -50,6 +50,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    # `labeled` is here so that adding the `preview` label is itself enough to
+    # get a URL. Without it the label would only take effect on the next push,
+    # which is a trap: you ask for a preview, nothing happens, and there is no
+    # message saying why.
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch: {}
 
 concurrency:
@@ -146,6 +151,31 @@ jobs:
             exit 0
           fi
 
+          # OPT-IN. A preview is only built when someone asks for one by
+          # labelling the pull request `preview`. Default is no deployment.
+          labelled='${{ contains(github.event.pull_request.labels.*.name, ''preview'') }}'
+          if [ "$labelled" != "true" ]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "no 'preview' label; not spending a deployment"
+            {
+              echo "### No preview deployment"
+              echo
+              echo "Previews are opt-in. Add the **\`preview\`** label to this pull request"
+              echo "and push (or re-run this workflow) to get a URL."
+              echo
+              echo "Why: Vercel's free plan allows **100 deployments per day across the"
+              echo "whole account**, and a preview on every push to every pull request"
+              echo "spends the budget that merges to \`main\` need. On 2026-09-18 it ran"
+              echo "out and production could not deploy for hours."
+              echo
+              echo "The \`build\` gate still ran and still had to pass, so this pull"
+              echo "request is still proven to compile."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Labelled, so someone wants a URL - but a preview of a bundle that
+          # cannot differ is still not worth a deployment.
           base='${{ github.event.pull_request.base.sha }}'
           git fetch --no-tags origin "$base" 2>/dev/null || true
           changed=$(git diff --name-only "$base...HEAD" 2>/dev/null || git diff --name-only "$base" HEAD)
@@ -156,8 +186,9 @@ jobs:
             {
               echo "### No preview deployment"
               echo
-              echo "Nothing in this change can reach the served site, so it did not spend"
-              echo "one of Vercel's 100 deployments per day."
+              echo "This pull request carries the \`preview\` label, but nothing in the"
+              echo "change can reach the served site, so the preview would be identical"
+              echo "to production."
               echo
               echo "The \`build\` gate still ran and still had to pass."
               echo
