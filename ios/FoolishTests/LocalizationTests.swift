@@ -343,7 +343,7 @@ final class LocalizationTests: XCTestCase {
     /// the app renders, and a generator checked only against itself proves
     /// nothing. This is what keeps the two honest about each other.
     func testTheKeyListAndTheGeneratedKeysAgree() {
-        let generated = Set(FoolishStringKeys.values)
+        let generated = Set(FoolishStringKeys)
         let listed = Set(Self.allKeys)
         XCTAssertEqual(generated.subtracting(listed), [],
                        "c/i18n/keys.h has keys this suite does not know about: "
