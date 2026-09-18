@@ -257,7 +257,7 @@ Each item below names the test seam that found it or now holds it.
 1. **A state-writing database function was callable by anonymous users.**
    A migration dropped and recreated it without repeating an earlier lockdown loop, and a newly created function is executable by `PUBLIC`.
    The suite that should have caught it read only the from-scratch schema file, which did re-run the lockdown, so CI was green while the migrated database was open.
-   Found by a test that **replays the migration history in order** and asserts after each step that no privileged function is executable by a client role (`e2e/db_migration_grants.test.ts`), which is now a standing gate.
+   Found by a test that **replays the migration history in order** and asserts after each step that no privileged function is executable by a client role (`e2e/db_migration_grants.test.ts`, now `e2e/db_platform_grants.test.ts` over seed.sql since the migration history was collapsed into it), which is now a standing gate.
    The relock is a migration on this branch and the deploy is the owner's, so the finding is closed in the repo and open on the deployed database until then.
    Generalization: a schema file and a migration chain are two implementations of one schema, and they drift; hold them equal object by object.
 2. **A forged-row path into other players' ratings.**

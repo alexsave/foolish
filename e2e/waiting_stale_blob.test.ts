@@ -12,8 +12,8 @@
 // kernel check plus the writer: game_validate refuses a WAITING board holding
 // any card (GAME_INVALID_LOBBY_CARDS, pinned by kernel_state_validation.test.ts
 // and the C tests), table_continue writes the lobby board, and a stored stale
-// blob is read as the finished game it is, never as a lobby (the pre-migration
-// fixture row, pinned in table_expand_migration.test.ts).
+// blob is read as the finished game it is, never as a lobby (the row the
+// pre-blob hosted database really held, carried in by the expand migration).
 //
 // What stays here is the real path end to end: a two-human game dealt and played
 // to GAME_OVER through the real handlers and commit_table, then `continue`d, and

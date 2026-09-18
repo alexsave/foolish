@@ -185,7 +185,7 @@ The policy is gone and every client write privilege on every public table is
 revoked, except the chat INSERT.
 The same migration relocks `commit_game`, which migration `20260906120000` had
 reopened to anon by dropping and recreating it.
-`e2e/db_migration_grants.test.ts` replays the migrations over the hosted schema to
+`e2e/db_platform_grants.test.ts` builds seed.sql under Supabase's default privileges to
 hold both.
 
 ---

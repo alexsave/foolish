@@ -1,5 +1,5 @@
 // E2E: the REAL bot-lease plpgsql (try_acquire / renew / release - lifted verbatim
-// from the migrations) running in real Postgres.
+// from seed.sql) running in real Postgres.
 //
 // Owns the lease validation scenarios; the fast runner
 // (e2e/validation/db_validation.test.ts) imports `registerLeaseValidation` and

@@ -729,7 +729,8 @@ test('realtime: nobody but its owner can join a gu- topic; anon cannot join game
 // UUID, so that field is only its first 8 hex digits and every gu- join was
 // refused, the owner's included (fail-closed, not a leak). The policy now
 // rebuilds the exact topic from the player_hands row
-// (migrations/20260917120000_realtime_channel_exact_topics.sql).
+// (seed.sql's realtime policies; migration 20260917120000 carried the same
+// change to hosted).
 test('realtime: a seated player can join their OWN gu- topic', async () => {
     const { a, b, gameId, canJoin } = await channelFixture();
     assert.equal(await canJoin('authenticated', a.id, `gu-${gameId}-${a.id}`), true, 'A can join A\'s own gu- topic');
