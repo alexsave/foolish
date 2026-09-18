@@ -110,7 +110,7 @@ final class MemoryProfileTests: XCTestCase {
 
         print("\n-- the bubble snapshot (one per staged move) --")
         let view = try XCTUnwrap(sampleBoard(), "could not build a sample board")
-        let first = cost("first render") { _ = BubbleSnapshot.render(publicView: view) }
+        _ = cost("first render") { _ = BubbleSnapshot.render(publicView: view) }
 
         // WARM THE RENDERER BEFORE MEASURING, and do not count what that costs.
         //
@@ -245,7 +245,28 @@ final class MemoryProfileTests: XCTestCase {
         XCTAssertLessThan(bitmapAt3xMB, 3,
                           "the bubble bitmap is now \(bitmapAt3xMB) MB at 3x - "
                           + "the extension holds one of these per staged move")
-        XCTAssertGreaterThan(first, 0, "the snapshot measured as free - the harness is not working")
+        // THE METER IS ALIVE - asked of the one number in this dump that is big
+        // enough to be sure of.
+        //
+        // It used to be asked of `first`: ONE bubble render's footprint delta,
+        // 2 MB of bitmap. That reads +0.00 whenever the allocator serves those
+        // 2 MB out of pages the process has already dirtied, which is most of
+        // the time once ~840 other tests have run ahead of it in the same
+        // process. Measured across six full-suite runs on this Mac it failed
+        // three of them, always as "0.0 is not greater than 0.0", and passed
+        // every single time the test was run on its own - so the tripwire was
+        // firing on what else happened to run first, which is exactly how a
+        // tripwire gets ignored, and while it was being ignored it could not
+        // report the thing it is for either. The printed line in those same
+        // runs: `first render +0.00 MB`, `+0.03 MB`, `+0.00 MB`.
+        //
+        // The texture bake is the honest question. Seven forced JPEG decodes,
+        // held for the whole measurement, and it reads 13.88 MB in every run of
+        // all six - far past anything a warm allocator absorbs. If THAT reads
+        // free, `FlightRecorder.footprintMB` is broken, which is the only thing
+        // this assertion was ever about.
+        XCTAssertGreaterThan(textureTotal, 0,
+                             "the textures measured as free - the harness is not working")
         // THE ONE THAT WOULD KILL A LONG GAME. A cache is allowed to cost
         // something once; a per-render cost that never comes back is a countdown
         // to the extension's memory ceiling, and the bubble is re-rendered on
