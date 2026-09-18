@@ -1140,7 +1140,11 @@ static void emit_swift_writer(Buf *sw, Rec *r, int *strings) {
             continue;
         }
         if (f->nd == 1) {
-            char n[64];
+            // `name` is the Swift expression for the field (up to the 300 bytes
+            // declared above), and this holds it plus ".count", so it is sized
+            // off that buffer rather than guessed: gcc's -Wformat-truncation
+            // reads the declared size, and a smaller one is an error under -Werror.
+            char n[sizeof name + 8];
             if (c) {
                 bprintf(sw, "    if %s.count > %ld { throw SGLayoutError.tooLong(field: \"%s.%s\", got: %s.count, capacity: %ld) }\n",
                         name, f->dims[0], r->name, f->name, name, f->dims[0]);
