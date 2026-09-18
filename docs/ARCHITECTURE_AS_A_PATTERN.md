@@ -10,10 +10,11 @@ It has three parts:
 2. **How to build an app this way from scratch** - structure and order, including the C-first / C-server variant.
 3. **The generalized performance/memory/size playbook** - the five moves.
 
-The evidence behind the claims here lives in three companion documents, cited rather than repeated:
+The evidence behind the claims here lives in four companion documents, cited rather than repeated:
 `docs/C_GAME_SHAPE_MIGRATION.md` is the migration that produced this end state, phase by phase, with every measurement and every gate;
 `docs/KERNEL_LIFT_BRIEF.md` is the Swift-to-C campaign and the boundary rule it works from;
-`docs/C_CORE_CONSOLIDATION.md` is the audit that inventoried what was still duplicated between the kernel and each platform.
+`docs/C_CORE_CONSOLIDATION.md` is the audit that inventoried what was still duplicated between the kernel and each platform;
+`docs/CODEGEN_ALTERNATIVES.md` is the measured refusal of the Component Model and of `embind`, over a prototype in `experiments/component-model/` that anyone can re-run.
 
 ---
 
@@ -115,9 +116,9 @@ The generic tests are the honest part: C compiled from the same headers fills a 
 The Swift suite went red by assertion first, with 34 failures against readers that returned zeros.
 
 *Why not an off-the-shelf binding generator.*
-The alternatives were measured rather than dismissed, and the numbers are recorded in `docs/C_GAME_SHAPE_MIGRATION.md` section 7.
-The Component Model with `jco` needed about 15 times the glue for the same surface, made calls about 13 times slower, and required an allocator inside a kernel that deliberately has none.
-Emscripten's `embind` brings a JavaScript runtime, an allocator and a libc into a module whose whole point is that it has none of those.
+The alternatives were measured rather than dismissed, on a prototype that is in the tree and re-runnable: `docs/CODEGEN_ALTERNATIVES.md` has the tool versions, the tables and the commands, over the sources in `experiments/component-model/`.
+The Component Model with `jco` needed about 15 times the glue for the same two functions (12,556 B against 814 B gzipped, both minified the same way), made a round trip 12 to 15 times slower (8,053 ns against 543 ns on Node 26), and required an allocator inside a kernel that deliberately has none: 9 `cabi_realloc` calls per `import-state` on a four-player board, one for the record and one for every list in it, with no way to opt out.
+Emscripten's `embind` brings a JavaScript runtime, an allocator and a libc into a module whose whole point is that it has none of those, and the same two functions cost 22 imports where the kernel has none, 11.8 times the module, and 34 to 38 times the round trip.
 The conclusion worth carrying to another project: a tool of this kind is a **`bindgen`**, not an **`emcc`**.
 It should read the types you already wrote and emit host-side access to them; it should not bring a runtime, a memory model or an ABI of its own.
 At about 1,570 lines for three emitters it is a few days of work, not a quarter, and libclang is the right parser precisely because it is the same front end that laid the struct out.
@@ -472,7 +473,10 @@ Moving this much logic into the kernel grew the shipped kernel and shrank the sh
 |---|---|---|
 | kernel module, gzipped | 65,307 B | 80,913 B |
 | the two deleted role-specific modules | 18,549 B | 0 |
-| web bundle, first-load union, gzipped | 330,504 B | 304,866 B |
+| web bundle, first-load union, gzipped | 330,504 B | 304,551 B |
+
+Both end-state figures are the tree as it stands, not a number carried forward: the kernel is the committed `sdk/ts/wasm/bots.wasm.gz`, and the bundle is `node scripts/measure_web_bundle.mjs`, which gave 304,551 B identically over two builds.
+That is 315 B under the 304,866 B Phase 10 recorded, from the three code commits that landed after it.
 
 The kernel grew about 24 percent and the shipped web bundle fell about 8 percent, so total shipped bytes fell.
 That is not an accident of this domain; it is what happens when the code you delete is marshalling code, whose size is proportional to the number of fields, while the code you add is a rule, whose size is proportional to the number of decisions.

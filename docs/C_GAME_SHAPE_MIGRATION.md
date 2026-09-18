@@ -1773,12 +1773,14 @@ What must land in it, each with the evidence from this branch:
 
 1. **The kernel owns the SHAPE, not just the rules.** The document still describes TS as "a thin marshaling bridge" around shared rules. The end state is stronger: no TypeScript type declares the domain's shape, no hand-written TS or Swift knows a byte layout, and the host keeps only HTTP, auth, DB calls, realtime, timers and rendering. Cite `e2e/no_ts_game_shape.test.ts` and `e2e/table_no_game_object.test.ts` as the mechanism that keeps it true.
 2. **Generated bindings as the replacement for hand-written marshalling.** `tools/structgen` (libclang, one C file): per-build layout modules, snapshot readers and writers, string helpers, generated constants, a layout hash the module carries so a mismatched pair refuses to run, and `gen.sh --check` in CI. Include the measured comparison against the alternatives (Component Model / jco: about 15x the glue, 13x slower calls, a required allocator; Emscripten embind: a runtime, an allocator, libc) and the conclusion that the nearest relative is `bindgen`, not `emcc`.
+   (The evidence for this item now lives in `docs/CODEGEN_ALTERNATIVES.md` over `experiments/component-model/`; the re-run restated "13x slower" as 12 to 15 times, and measured embind rather than reasoning about it.)
 3. **The import-free kernel as a deliberate property**, with the pros and cons written out: one instantiation shape across five hosts, no host can hand the kernel anything, determinism is structural; against that, no callbacks, no host clock, everything the kernel needs ships in it, and pull-based APIs instead of timers (Phase 9's per-frame animation call is the worked example).
 4. **The data-plane rule**: fixed-size value structs cross the boundary; variable-length wires stay entirely in C; pointers may be read, never written, from the host (structgen refuses a pointer in a writer).
 5. **Expand / switch / contract for the durable store**, as three owner deploys, with the kernel's blobs plus scalars the SQL filters on, and the measured result of taking JSON out (commit payload -60 percent, latency unchanged, so bytes not encoding were the win).
 6. **What the discipline actually catches**, as the honest argument for the pattern: this migration surfaced an anon-callable `commit_game`, a forged-row path into other players' ELO, non-members editing lobbies, 15 full-state readers reachable from the web bundle, two unauthenticated per-seat endpoints in the native server, a realtime policy that refused everyone, three animation double-draw bugs, and two bot determinism bugs. Name the test seams that found each (payload noninterference, static bundle boundary, seat-from-auth, frame-by-frame traces, two-instance determinism).
 7. **Test doctrine**, generalized: red-first by assertion, mutation-check anything written after the code, retire a parity test once its second implementation is gone (keep cross-language parity while two implementations still ship), and prefer one gate that cannot be forgotten (a layout hash, a freshness check, a static import boundary) over a convention.
 8. **The fit spectrum and taxes sections**, refreshed with what this migration actually cost: wasm grew (65,307 -> about 77 KB gz) while the shipped web bundle fell (330,504 -> about 301,700 B gz), and the owner's priority order (C over TS first, then speed and size, both measured every phase).
+   (The two figures in this item are the brief's, written before Phases 9 and 10 landed; the measured ones are 80,913 B and 304,551 B, see "Phase 11 as built" below.)
 
 Keep it honest about what did NOT move: rendering, scheduling, HTTP/auth/DB, and the deliberate independent wire walks in the security test.
 Cross-reference `docs/C_GAME_SHAPE_MIGRATION.md`, `docs/KERNEL_LIFT_BRIEF.md` and `docs/C_CORE_CONSOLIDATION.md` rather than repeating them.
@@ -1792,11 +1794,16 @@ All eight required additions are in, plus the multi-language story (one clang-de
 Three things in the brief did not survive contact with the sources, and the document says so rather than repeating them.
 
 - **The size figures in item 8 are stale**, because the brief was written before Phases 9 and 10 landed.
-  The document uses the last measured numbers in this file: `bots.wasm.gz` 65,307 to **80,913 B** (not "about 77 KB"), and the web bundle union 330,504 to **304,866 B** gz (not "about 301,700 B").
+  The document uses measured numbers, not the brief's: `bots.wasm.gz` 65,307 to **80,913 B** (not "about 77 KB"), and the web bundle union 330,504 to **304,551 B** gz (not "about 301,700 B").
+  Both were re-verified against the tree on 2026-09-17, the kernel by the size of the committed `sdk/ts/wasm/bots.wasm.gz` and the bundle by `node scripts/measure_web_bundle.mjs`, which returned 304,551 B identically over two builds.
+  That is 315 B under the 304,866 B Phase 10 recorded, from the three code commits that landed after Phase 10.
   Both still say what the brief wanted them to say: the kernel grew about 24 percent, the shipped bundle fell about 8 percent, and total shipped bytes fell.
-- **The Component Model / jco and embind measurement is recorded nowhere in the repo** except the Phase 11 brief itself (no doc, no commit message, no note under `tools/structgen`).
-  The document carries the numbers and cites this file as their only home, so a reader can see how thin the provenance is.
-  If they are to survive as doctrine, the run should be written down somewhere with a date and a command.
+- **The Component Model / jco and embind measurement was recorded nowhere in the repo** except the Phase 11 brief itself (no doc, no commit message, no note under `tools/structgen`), so it could not be re-run or trusted.
+  That is now closed: the prototype is `experiments/component-model/` and the write-up is `docs/CODEGEN_ALTERNATIVES.md`, with tool versions, the machine, the size and latency tables, and the commands.
+  Re-running it reproduced the size table byte for byte and the latency table within noise, and changed two claims.
+  **embind was never actually measured**; it is now, because `emcc` was on the machine, and it is worse than the brief guessed (22 imports where the kernel has none, 11.8 times the module, 34 to 38 times the round trip).
+  And the inherited mechanical finding that `-Wl,--strip-all` deletes the `component-type` custom section **does not reproduce** with clang 22.1.8 and wasm-tools 1.259.0; the section survives a stripped link.
+  The latency claim is restated as 12 to 15 times rather than a single 13, because the ratio depends on whether lists reach the boundary as plain arrays or typed arrays.
 - **Two claims about Phase 0 fixes needed downgrading.**
   `e2e/lobby_authz.test.ts` (0.2) does not exist, so the lobby finding is cited against `e2e/security_seat_from_auth.test.ts` and `e2e/table_server_seat.test.ts`, which do hold it.
   The `commit_game` relock is a migration on this branch and not yet deployed, so the document says the finding is closed in the repo and open on hosted until the owner's deploy.
