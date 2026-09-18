@@ -50,9 +50,12 @@ worse than v1**. That inversion is the finding:
    hundreds per decision, annihilating its per-sample noise. AlphaZero's
    value nets won in Go because rollouts there were *biased and bad*;
    here they are the strong incumbent. A net must beat the averaged
-   estimator's *bias* (small, since hunt-4 measured the rollout-policy
-   bias as mostly unexploitable) with near-zero bias of its own —
-   unreachable at CPU-trainable scale.
+   estimator's *bias* with near-zero bias of its own: unreachable at
+   CPU-trainable scale. (Hunt 4 read that bias as mostly unexploitable;
+   hunt 5 showed it is real and worth -0.237+-0.060 at pc2 against a
+   strong MC opponent, but only ~70x more simulation ever cashed it in,
+   which is not a route a cheaper learned evaluator can take. See
+   `OCTOGEN.md` hunt 5.)
 3. Combined with the historical nitro/GRPO/NEAT plateaus, the consistent
    lesson: **at this compute scale, learning loses to simulation in this
    game.** A genuine ML win would need GPU-scale training aimed at the
