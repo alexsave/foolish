@@ -113,9 +113,14 @@ test('add-bot flood is capped at 8 seats (no oversized-lobby crash)', async () =
     await seedLobby(bad, [{ id: H0, name: 'Alice', ready: false }, { id: H1, name: 'Bob' }]);
     const other = fixture().seats(Array.from({ length: 8 }, (_, i) => ({ id: uuid(), name: `X${i}`, brain: 'random' }))).build();
     const hex = (b: Uint8Array) => `\\x${Buffer.from(b).toString('hex')}`;
-    for (const [what, sql, args] of [
-        ['a roster seating 8 under a 2-seat state', 'UPDATE games SET roster = $2 WHERE id = $1', [hex(other.roster)]],
-        ['a truncated roster', 'UPDATE games SET roster = substring(roster from 1 for 7) WHERE id = $1', []],
+    // Each case names the refusal it must draw. The columns are hex TEXT until the
+    // BYTEA migration (the next deploy's PR), so cutting the roster to 7 characters
+    // leaves an odd number of hex digits and the column reader refuses it one step
+    // before the kernel sees it; on BYTEA the same cut is whole bytes and the
+    // refusal is the kernel's. Either way it is a named refusal that writes nothing.
+    for (const [what, refusal, sql, args] of [
+        ['a roster seating 8 under a 2-seat state', /does not load/i, 'UPDATE games SET roster = $2 WHERE id = $1', [hex(other.roster)]],
+        ['a truncated roster', /odd number of digits/i, 'UPDATE games SET roster = substring(roster from 1 for 7) WHERE id = $1', []],
     ] as const) {
         await pgPool.query(sql, [bad, ...args]);
         __clearGameCache();
@@ -123,7 +128,7 @@ test('add-bot flood is capped at 8 seats (no oversized-lobby crash)', async () =
         const err = await runMeta(bad, H0, { type: 'start' }, 'Alice').then(() => null, (e) => e);
         assert.ok(err, `${what}: the deal is refused`);
         assert.ok(!crashed(err), `${what}: a clean refusal, not a crash (${String(err?.message)})`);
-        assert.match(String(err.message), /does not load/i, `${what}: refused as a row the kernel will not load`);
+        assert.match(String(err.message), refusal, `${what}: refused, and named`);
         assert.deepEqual((await pgPool.query('SELECT version, state, roster FROM games WHERE id = $1', [bad])).rows[0], stored, `${what}: nothing written`);
     }
 });
