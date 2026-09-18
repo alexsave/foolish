@@ -71,7 +71,8 @@ CREATE TABLE games (
   bot_lease_token UUID,              -- bot-loop lease holder token (replaces bot_locks)
   bot_lease_until TIMESTAMPTZ,       -- bot-loop lease expiry; auto-expiring, no finally-release needed
   created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
+  updated_at TIMESTAMP DEFAULT NOW(),
+  last_commit_at TIMESTAMPTZ NOT NULL DEFAULT now() -- now() at the moment `version` last changed, OLD's value at every other moment (trigger games_stamp_last_commit): the bot heartbeat's abandon guard. updated_at cannot serve it - the bot lease RPCs UPDATE games, so update_games_updated_at refreshes updated_at on the heartbeat's own drive and the guard never fires.
 );
 
 -- The same words as the line comments above, but stored in the catalog, which is
@@ -86,6 +87,8 @@ COMMENT ON COLUMN games.needs_bots IS
   'PLAYING and a bot seat is still IN (the kernel''s table_needs_bots): the bot heartbeat''s scan predicate.';
 COMMENT ON COLUMN games.logs_packed IS
   'The session log: kernel log records with u48 timestamps, DRAW identities pre-masked, appended by commit_table. Empty in a lobby and once the replay snapshot is stored.';
+COMMENT ON COLUMN games.last_commit_at IS
+  'now() at the moment `version` last changed, and OLD''s value at every other moment (trigger games_stamp_last_commit). The bot heartbeat''s abandon guard: a lease acquire/release, or any other write that is not a kernel commit, leaves it alone. updated_at cannot serve - the lease RPCs bump it through update_games_updated_at, which is what made the guard unfirable.';
 
 -- Game decks table - SENSITIVE: Only edge functions can access
 -- MEMBERSHIP: which humans are in which game. Named for the hands it used to
@@ -233,6 +236,9 @@ CREATE INDEX idx_chat_messages_created_at ON chat_messages(created_at);
 CREATE INDEX idx_games_updated_at ON games(updated_at);
 -- bot-heartbeat SCAN (every 10s): needs_bots + updated_at window
 CREATE INDEX idx_games_bot_scan ON games(updated_at) WHERE needs_bots;
+-- and the cron tick's gate (migration 20260918230000): leading on last_commit_at
+-- so the EXISTS stops at the first live row instead of walking every stalled one
+CREATE INDEX idx_games_bot_gate ON games(last_commit_at) WHERE needs_bots;
 CREATE INDEX idx_user_elo_ratings_user_id ON user_elo_ratings(user_id);
 CREATE INDEX idx_user_elo_ratings_elo_rating ON user_elo_ratings(elo_rating);
 CREATE INDEX idx_bots_strategy_key ON bots(strategy_key);
@@ -425,6 +431,28 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- games.last_commit_at: now() when `version` changed, OLD's value otherwise.
+-- Written on EVERY insert and update, so a writer cannot supply its own value
+-- and cannot refresh it without committing. `version` moves in commit_table and
+-- nowhere else, and that means a move happened - which is what
+-- the bot heartbeat's abandon guard needs and what updated_at could not give
+-- it, the bot lease being an UPDATE like any other. See migration
+-- 20260918230000_heartbeat_liveness_and_gate.sql.
+CREATE OR REPLACE FUNCTION games_stamp_last_commit()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
+BEGIN
+  IF TG_OP = 'INSERT' OR NEW.version IS DISTINCT FROM OLD.version THEN
+    NEW.last_commit_at := now();
+  ELSE
+    NEW.last_commit_at := OLD.last_commit_at;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
 -- Function to broadcast chat message changes
 CREATE OR REPLACE FUNCTION public.chat_messages_changes()
 RETURNS TRIGGER
@@ -466,10 +494,15 @@ $$;
 -- TRIGGERS: Set up automatic triggers
 -- =============================================================================
 
-CREATE TRIGGER update_games_updated_at 
+CREATE TRIGGER update_games_updated_at
   BEFORE UPDATE ON games
-  FOR EACH ROW 
+  FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER games_stamp_last_commit
+  BEFORE INSERT OR UPDATE ON games
+  FOR EACH ROW
+  EXECUTE FUNCTION games_stamp_last_commit();
 
 
 CREATE TRIGGER update_player_hands_updated_at 
