@@ -1,5 +1,11 @@
 # The lifecycle skin — lobby/result/scoring kernel-reuse audit
 
+> **Dated audit, July 2026, revised 2026-09-18.**
+> The call counts, the "who duplicates what" table and the §4 work order were taken by reading the three hosts as they stood in July 2026.
+> Read them as the state of the question when it was asked, not as the current balance.
+> The 2026-09-18 revision only re-pointed references to TypeScript modules the C-game-shape work deleted that day; no finding was re-measured.
+> L2 is done and says so inline; L1 and L3 to L7 are open as written.
+
 *Investigation, July 2026 — a follow-on to `C_CORE_CONSOLIDATION.md`. That doc
 (F1–F9) traced the TS server and the iOS offline client and moved the game's
 INSIDE — rules, deal, legality, apply, per-seat masking, the bot cycle, the
@@ -40,7 +46,7 @@ Findings, ranked by leverage (shared-across-hosts × no-kernel-home × bug-risk)
 |---|---|---|---|
 | L1 | **Lobby/seating state machine** — join (seat + human kind), add-bot (seat cap + roster pick + kind), set-ready, the `all-ready ∧ ≥2 → deal` start predicate, exit | **N + T** | **NEW.** No kernel entry exists; both servers hand-roll it, with a byte-identical start predicate. Propose a kernel lobby module (§4.1). |
 | L2 | **Rematch reset** — `game_over → waiting` board clear | **N + T** | **DONE.** Both hosts call `game_reset_to_lobby` now. The web was in this row too, not just the native server: `handleContinue` hand-rolled its own and left `good_players`/`good_timestamp` set for the lobby to show. The native copy was the partial board clear §4.2 describes. Both adopted, §4.2. |
-| L3 | **End-of-game result** - winner / fool / placements from `elimination_order` | **N** | **PARTLY DONE for the web.** `anim_finish_rows` now answers the placements and the web reaches it through `server/api/common/finish_order.ts`; the native server still has no ranking. `game_result` (§4.3) would finish it. |
+| L3 | **End-of-game result** - winner / fool / placements from `elimination_order` | **N** | **PARTLY DONE for the web.** `anim_finish_rows` now answers the placements and the web reaches it through `sdk/ts/wasm/bots.ts`'s `animFinishRows`; the native server still has no ranking. `game_result` (§4.3) would finish it. |
 | L4 | **"Does this game need a bot to act?"** predicate | **N + T** | Kernel already has the pieces (`bot_drive_eligible_mask` + `game_done`); expose one convenience wrapper (§4.4). |
 | L5 | **Scoring math** — elimination→rankings, pairwise Elo delta, base-1000 | **T + S** | Three copies of one formula (+ the `main_elo.c` CLI). PURE and kernel-able, BUT the doctrine lists Elo as a host non-goal — a boundary call, not a slam dunk (§4.5). |
 | L6 | **Initial lobby construction** — seat-0 / WAITING / empty-board literal | **N + T** | Folds into L1 as `game_create_lobby` (§4.6). |
@@ -204,9 +210,12 @@ divergence survived it.
 ### 4.3 L3 — end-of-game result (winner / fool / placements)
 
 The kernel exposes `game_done` (the fool seat, or -1) and, since the finish-order
-convergence, `anim_finish_rows` for the placements - which the web's single TS
-ranker `server/api/common/finish_order.ts` now calls, replacing the two copies in
+convergence, `anim_finish_rows` for the placements - which the web calls through
+`sdk/ts/wasm/bots.ts`'s `animFinishRows`, replacing the two copies in
 `calculateGameRankings` and `WinScreen`.
+(That call used to go through a thin `server/api/common/finish_order.ts` wrapper.
+The C game shape retired it on 2026-09-18; `src/components/WinScreen.tsx` now
+calls the kernel wrapper directly, so the web has one ranker rather than none.)
 What is left is the native server, which surfaces status but not a ranking, and
 the winner/fool recomputation in `handleContinue` and `check_win_sync`
 (`utils.ts`). One pure derivation would finish it:
@@ -240,6 +249,12 @@ Three copies of one formula: TS `calculateGameRankings` + `calculateEloChange`
 in SQL (`create_default_elo_rating`), and the standalone arena tool
 `c/src/main_elo.c` (which has the pairwise math but is not a callable kernel
 function). The pure parts are kernel-able:
+
+*(As of 2026-09-18 the TS half of this row is already gone: the C game shape
+deleted `common_utils.ts` along with `calculateGameRankings` and
+`calculateEloChange`, and `updateEloRatings` with it. What the row counted as
+three copies is now the SQL constant plus `main_elo.c`. The boundary question
+below is unchanged; the volume of duplication it is weighed against is smaller.)*
 
 ```c
 void game_rankings(const Game *g, int8_t placements_out[MAX_PLAYERS]);   // = L3's placements

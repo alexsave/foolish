@@ -1,5 +1,10 @@
 # Deploying `foolish_server` — platform, TLS, email, and the stateful-scaling plan
 
+> **Dated recommendation, 2026-09-05.**
+> Every vendor claim below - pricing, free-tier sizes, which provider supports what - was checked on that date and cited to the page it came from.
+> Provider pricing and feature matrices move faster than this repo does, so re-check any number before spending against it.
+> The architectural argument (one long-lived process, sticky WebSockets, `game_id` sharding) is the durable part; the vendor table is the perishable part.
+
 This is a deployment recommendation, not an implementation — no code in this
 repo changed for it. It's decision support for putting `foolish_server.c`
 (see [`README.md`](README.md), [`SERVER_SCALING.md`](SERVER_SCALING.md),
