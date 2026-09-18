@@ -395,7 +395,7 @@ Dropped: `name`, `deck_length`, `discard_pile_length`, `flipped`, `players`, `po
 
 Indexes: drop `idx_games_name` and `idx_games_playing_updated_at`; add `CREATE INDEX idx_games_bot_scan ON games(updated_at) WHERE needs_bots;`.
 
-As built after the final pass (`20260918130000_table_bytea.sql`): `state`, `roster` and `logs_packed` are `BYTEA`, as are `player_views.view` and `spectator_views.view`; `game_snapshots.player_ids` is `UUID[]`; `game_seed` stays hex `TEXT`, which the kernel reads as text.
+As built after the final pass (`20260918220000_table_bytea.sql`): `state`, `roster` and `logs_packed` are `BYTEA`, as are `player_views.view` and `spectator_views.view`; `game_snapshots.player_ids` is `UUID[]`; `game_seed` stays hex `TEXT`, which the kernel reads as text.
 `player_hands`, `bot_hands`, `player_views`, `spectator_views`, `game_snapshots`, `chat_messages` keep their shapes.
 
 ### 3.2 The durable roster encoding (fixed width, versioned)
@@ -801,7 +801,7 @@ After Phase 4b is deployed.
 
 #### Phase 4c as built
 
-Migration `20260918120000_table_contract.sql`, with `seed.sql` rewritten to the same end state.
+Migration `20260918210000_table_contract.sql`, with `seed.sql` rewritten to the same end state.
 
 - `games` is `id`, `status`, `state TEXT NOT NULL`, `roster TEXT NOT NULL`, `needs_bots`, `game_seed`, `logs_packed`, `version`, `round_epoch`, `bot_lease_token`, `bot_lease_until`, `created_at`, `updated_at` (3.1), with indexes `games_pkey`, `idx_games_status`, `idx_games_updated_at`, `idx_games_bot_scan` and the one trigger `update_games_updated_at`.
 - Dropped: the twelve JSONB columns including `name` (Q5), `writer_gen` (3.4: it fenced the legacy writers off the kernel's rows, and none are left), `commit_game` and `create_game` (every overload, found by name), the `games_legacy_bridge` trigger and `legacy_games_bridge`, all four `legacy_*` helpers (`legacy_roster_hex`, `legacy_lobby_state_hex`, `legacy_roster_field`, `legacy_utf8_cut`), `idx_games_name`, `idx_games_playing_updated_at`, both `games` policies (`DROP POLICY IF EXISTS`, since 20260917000000 already dropped the create one on hosted), and every table and column privilege of `PUBLIC`, `anon` and `authenticated` on `games`.
@@ -857,7 +857,7 @@ Deploy order, all owner steps (the final pass, part 2, added step 0 and the BYTE
 2. The edge functions deployed (a push that changes no migration, or `supabase functions deploy --workdir server/impls` by hand) and verified live: one online game created, joined, played with a bot to its end, with no `commit_game` in the function logs.
    They call the final `commit_table` and `create_table`, which 4a creates.
 3. The read-only pre-checks below, each returning no rows.
-4. Only then 4c, with `20260918130000_table_bytea.sql` in the same push or a later one, after its own pre-checks below.
+4. Only then 4c, with `20260918220000_table_bytea.sql` in the same push or a later one, after its own pre-checks below.
    If it ever lands together with the functions of step 2, the contract migration refuses, the deploy job stops before its functions step, and the live functions keep working: deploy the functions by hand, verify, and re-run the workflow.
    The functions of step 2 work before and after the BYTEA migration: they read a blob column's hex text with or without the `\x` prefix, and the signature they call does not change.
 
@@ -868,7 +868,7 @@ One merge carrying all three migrations would therefore apply the expand, the co
 
 So the branch ships as two pull requests:
 
-- **Deploy 1** is the branch without `20260918120000_table_contract.sql` and `20260918130000_table_bytea.sql`, with `seed.sql` at the end state of the expand migration.
+- **Deploy 1** is the branch without `20260918210000_table_contract.sql` and `20260918220000_table_bytea.sql`, with `seed.sql` at the end state of the expand migration.
   Merging it applies 4a and deploys the 4b functions in one workflow run, in that order, which is steps 1 and 2 of the deploy order above.
   The functions call the final `commit_table` and `create_table` signature, which 4a creates.
 - **Deploy 2** is the two migrations, `seed.sql` rewritten to the final schema, and the tests that assert the contracted and BYTEA schema (`e2e/table_contract_migration.test.ts`, `e2e/table_bytea_migration.test.ts`, and the `db_grants`, `db_migration_grants`, `packed_review_gaps`, `security_hidden_info`, `table_fixture`, `table_db` and blob-column assertions that follow from them).
@@ -876,6 +876,21 @@ So the branch ships as two pull requests:
   It is the commit on top of deploy 1's, so the two together are the branch as it was reviewed.
 
 `e2e/db_migration_grants.test.ts`'s "seed.sql and the migrations build the same schema public, object for object" is what holds each of the two states honest: on deploy 1 it compares the chain through 4a against `seed.sql` at the same point.
+
+##### Why 4c and BYTEA are numbered 20260918210000 and 20260918220000
+
+They were written as `20260918120000` and `20260918130000`.
+Deploy 2 waits on a function deploy, and while it waited `20260918200000_pg_net_response_log_retention.sql` merged and applied to hosted.
+The first attempt to merge deploy 2 then failed at `supabase db push` with `Found local migration files to be inserted before the last migration on remote database`, naming both files: they now sorted before the newest applied remote migration.
+Nothing was applied and no function was deployed, so hosted stayed at `20260918200000` and internally consistent.
+
+The fix is the renumber, not `--include-all`.
+That flag would permanently allow a migration to be inserted before ones already applied, and the invariant it gives up - applied order is filename order - is worth more than the one push it would save, in a repository that has had migration drift before.
+
+The renumber changes no real dependency.
+The pg_net migration truncates `net._http_response` and schedules a `VACUUM`; it reads and writes nothing in schema `public` and nothing in this branch reads it.
+The only order that matters is `20260917140000` (4a) < `20260918210000` (4c) < `20260918220000` (BYTEA), and that is what the filenames say.
+Any deploy that waits again should check the same thing before merging: that the two files still sort after the last row of `supabase_migrations.schema_migrations` on hosted.
 
 Splitting it surfaced one real gap in the hosted stand-in.
 `e2e/fixtures/hosted_schema_pre_20260807120000.sql` is a copy of `seed.sql` at `6b9e8432`, and `seed.sql` did not define `delete_account` then, although hosted had run `20260714120000_account_deletion.sql` two weeks earlier.
@@ -912,7 +927,7 @@ WHERE n.nspname = 'public' AND p.proname NOT IN ('commit_game', 'create_game', '
 SELECT jobname, command FROM cron.job WHERE command ~ '\m(players|writer_gen)\M';
 ```
 
-Hosted pre-checks, read-only, before applying `20260918130000_table_bytea.sql` (each should return no rows, except the last, which should list `player_views`):
+Hosted pre-checks, read-only, before applying `20260918220000_table_bytea.sql` (each should return no rows, except the last, which should list `player_views`):
 
 ```sql
 -- values the migration refuses: not whole hex bytes (with or without the \x prefix), or a seat list that is not UUIDs
@@ -1266,7 +1281,7 @@ Commits `638e096d` and the one after it.
 Commits `a793ecce` to `0dd06477`, and the doc commit after them.
 
 - BYTEA (`64057452`): `games.state`, `games.roster`, `games.logs_packed`, `player_views.view` and `spectator_views.view` are `BYTEA`, and `game_snapshots.player_ids` is `UUID[]`, with its GIN index and the participants policy rebuilt on `@>`.
-  `20260918130000_table_bytea.sql` runs after 4c.
+  `20260918220000_table_bytea.sql` runs after 4c.
   It refuses, naming the rows, any value that is not whole hex bytes or a seat list that is not UUIDs; it converts each value by its own form (`\x`-hex as the state and roster were written, bare hex as the logs and views were); and it fires no row trigger, so `updated_at` and `version` keep their values.
   `seed.sql` reaches the same end state, and `db_migration_grants` now compares the blob tables' columns and the snapshot policy between the two as well.
 - No JSON on the write path: `commit_table` and `create_table` take base64 blobs, the views as `p_view_players UUID[]` beside `p_views TEXT[]` with the game's status, and the membership arrays as `UUID[]`, and they answer `OUT committed, new_version, new_round_epoch` (3.3).
@@ -1919,7 +1934,7 @@ pg_dump --schema-only --no-owner --schema=public # same result, plus physical co
 ```
 
 A and C are byte-identical, so the two ways of building the migration chain agree.
-A and B differed in exactly six things, every one of them a catalog COMMENT the migrations store and `seed.sql` did not: the `player_hands` and `bot_hands` table comments from `20260906120000`, and the `games.state`, `games.roster`, `games.needs_bots` and `games.logs_packed` column comments from `20260917140000` and `20260918130000`.
+A and B differed in exactly six things, every one of them a catalog COMMENT the migrations store and `seed.sql` did not: the `player_hands` and `bot_hands` table comments from `20260906120000`, and the `games.state`, `games.roster`, `games.needs_bots` and `games.logs_packed` column comments from `20260917140000` and `20260918220000`.
 `seed.sql` had the same words as `--` line comments, which reach nothing but `seed.sql`.
 Those are now `COMMENT` statements and the two paths are equal.
 
@@ -1935,12 +1950,12 @@ A mutation that comments out `idx_games_bot_scan` in `seed.sql` turns it red and
 **It must not happen before this branch is deployed, and it should not happen after either.**
 
 **1. The branch's six migrations are undeployed, and their whole point is that they run in three separate deploys.**
-`origin/main`'s newest migration is `20260906120000`; this branch adds `20260917000000` (the grant relock), `20260917120000` and `20260917130000` (realtime), `20260917140000` (4a expand), `20260918120000` (4c contract) and `20260918130000` (BYTEA).
+`origin/main`'s newest migration is `20260906120000`; this branch adds `20260917000000` (the grant relock), `20260917120000` and `20260917130000` (realtime), `20260917140000` (4a expand), `20260918210000` (4c contract) and `20260918220000` (BYTEA).
 Section 3.4 and the Phase 4c deploy order require 4a on hosted, THEN the edge functions, THEN 4c and BYTEA, because a single migration that drops `players` breaks every running old function for the length of the function deploy.
 A collapsed baseline is a file hosted is TOLD is already applied.
 Applying that idea here means 4a, 4c and the BYTEA conversion never run on hosted at all: the live database keeps its JSONB columns and has no `roster`, while the 4b functions that only know `commit_table` go live against it.
 That is the outage the three-deploy order exists to prevent.
-The collapse cannot even be considered until `20260918130000` is recorded as applied on hosted.
+The collapse cannot even be considered until `20260918220000` is recorded as applied on hosted.
 
 **2. Even for the 32 migrations hosted has already applied, `supabase db push` refuses, and the repair is the opposite of the one assumed.**
 Measured, not remembered.
@@ -1969,9 +1984,9 @@ The history stays, because it is the only record of how a live database holding 
 
 ### If the owner still wants the collapse later
 
-Only after `20260918130000_table_bytea.sql` is applied on hosted and Phase 4c's deploy order is complete, and as its own PR that touches nothing else:
+Only after `20260918220000_table_bytea.sql` is applied on hosted and Phase 4c's deploy order is complete, and as its own PR that touches nothing else:
 
-1. Read-only first: `SELECT version FROM supabase_migrations.schema_migrations ORDER BY 1;` on hosted, and confirm the last row is `20260918130000`.
+1. Read-only first: `SELECT version FROM supabase_migrations.schema_migrations ORDER BY 1;` on hosted, and confirm the last row is `20260918220000`.
 2. Rewrite `20250628051540_remote_baseline.sql` to hold the end state (the current `seed.sql`, minus its `DROP ... IF EXISTS` preamble), delete the other 35 files, and keep the baseline's version number so hosted still recognises it.
 3. Prove it with the gate above before touching hosted: the new one-file chain and `seed.sql` must produce an empty catalog diff, and `e2e/db_migration_grants.test.ts` must be repointed at a frozen schema captured AFTER the collapse, or retired with its security scenarios moved into `db_grants.test.ts`.
 4. On hosted, once: `supabase migration repair --status reverted <the 35 collapsed versions>` (the CLI prints the exact list), then `supabase db push --dry-run` must answer `{"upToDate":true}` before any real push.

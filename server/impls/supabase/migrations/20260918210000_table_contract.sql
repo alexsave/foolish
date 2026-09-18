@@ -10,6 +10,18 @@
 --                                 through commit_table / create_table
 --   4c contract (this file)       the JSONB game shape goes
 --
+-- This file and 20260918220000_table_bytea.sql were written as 20260918120000
+-- and 20260918130000 and renumbered before they were ever applied. 4c waits on a
+-- function deploy, and while it waited 20260918200000 (the pg_net response-log
+-- retention) merged and applied to hosted, so the old numbers sorted BEFORE the
+-- last applied remote migration and `supabase db push` refused to insert them
+-- there. The renumber keeps the property that applied order is filename order,
+-- which is what that refusal protects; `--include-all` would have given it up
+-- permanently. Nothing here depends on the pg_net migration or it on this: that
+-- one truncates net._http_response and schedules a VACUUM, and touches no table
+-- in this schema. What must hold is only 20260917140000 < this file <
+-- 20260918220000, and it does.
+--
 -- DEPLOY ONLY AFTER THE 4b FUNCTIONS ARE LIVE AND VERIFIED. The pre-4b functions
 -- call commit_game and create_game and read `players`; every one of their
 -- requests fails once this runs. deploy.yml pushes migrations BEFORE it deploys
@@ -44,7 +56,7 @@
 --    idx_games_bot_scan). `state` and `roster` become NOT NULL.
 -- 5. commit_table and create_table lose their writer_gen writes (same signatures,
 --    so CREATE OR REPLACE keeps their grants). The columns are still hex TEXT;
---    20260918130000_table_bytea.sql makes them BYTEA.
+--    20260918220000_table_bytea.sql makes them BYTEA.
 -- 6. delete_account stops rewriting games.players (Q8 as built in 4b): the
 --    delete-account function redacts the name in every seated table itself,
 --    through table_redact and commit_table, which also rewrites the cached views

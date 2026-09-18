@@ -344,6 +344,32 @@ export function registerMigrationGrantsValidation(): void {
             assert.ok(replayed.includes('20260906120000_drop_json_hand_columns.sql'), `replayed: ${replayed.join(', ')}`);
         });
 
+        test('the game-shape migrations sort in the order they depend on each other', () => {
+            // The replay above is `readdirSync().sort()`, which is also the order
+            // `supabase db push` applies in and the order hosted recorded. The three
+            // steps of the C game shape are a chain - expand adds the blobs, contract
+            // drops the JSONB and makes them NOT NULL, BYTEA converts them - so their
+            // filenames have to say so.
+            //
+            // They were renumbered once, from 20260918120000 and 20260918130000, after
+            // 20260918200000 (pg_net) merged and applied to hosted while 4c waited on a
+            // function deploy: db push refuses to insert a file before the last applied
+            // remote migration, and the fix is the renumber, never --include-all. That
+            // hosted fact is not knowable from here; this holds the half that is.
+            const at = (suffix: string): number => {
+                const hits = replayed.filter((m) => m.endsWith(suffix));
+                assert.equal(hits.length, 1, `exactly one ${suffix} migration (found: ${hits.join(', ') || 'none'})`);
+                return replayed.indexOf(hits[0]);
+            };
+            const expand = at('_table_expand.sql');
+            const contract = at('_table_contract.sql');
+            const bytea = at('_table_bytea.sql');
+            assert.ok(expand < contract,
+                `the contract migration must run after the expand migration, got ${replayed[contract]} before ${replayed[expand]}`);
+            assert.ok(contract < bytea,
+                `the BYTEA migration must run after the contract migration, got ${replayed[bytea]} before ${replayed[contract]}`);
+        });
+
         test('no SECURITY DEFINER function is client-callable after the last migration', () => {
             const offenders = [...openedBy].map(([k, m]) => `${k} (opened by ${m})`);
             assert.deepEqual(
@@ -369,7 +395,7 @@ export function registerMigrationGrantsValidation(): void {
         });
 
         test('the contract migration left no legacy writer: commit_game, create_game and the bridge are gone', async () => {
-            // Phase 4c (20260918120000_table_contract.sql). A function that does not
+            // Phase 4c (20260918210000_table_contract.sql). A function that does not
             // exist cannot be reopened by a later grant.
             const { rows } = await pgPool.query(
                 `SELECT p.oid::regprocedure::text AS fn FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
