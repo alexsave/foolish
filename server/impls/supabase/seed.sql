@@ -809,8 +809,16 @@ END $$;
 -- Enable Supabase Realtime with proper security
 -- =============================================================================
 
--- Enable RLS on the realtime messages table
-ALTER TABLE IF EXISTS realtime.messages ENABLE ROW LEVEL SECURITY;
+-- Enable RLS on the realtime messages table. Guarded: on the Supabase images
+-- supabase_realtime_admin owns realtime.messages with RLS already on, and
+-- `postgres` (which runs this file on `supabase start`) may create policies on
+-- it but not ALTER it ("must be owner of table messages"). The e2e shim's table
+-- (e2e/schema.sql) starts with RLS off, and its superuser turns it on here.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_class WHERE oid = to_regclass('realtime.messages') AND NOT relrowsecurity) THEN
+    ALTER TABLE realtime.messages ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $$;
 
 -- Drop existing policies if they exist
 DROP POLICY IF EXISTS "authenticated can receive game broadcasts" ON "realtime"."messages";
@@ -834,63 +842,44 @@ USING (
 );
 
 
--- Policy for private user channels (topic: user-{email_prefix})
--- Users can read messages sent to them  
-CREATE POLICY "authenticated can receive private messages"
-ON "realtime"."messages"
-FOR SELECT
-TO authenticated
-USING (
-  (SELECT realtime.topic()) = CONCAT('user-', split_part(((select current_setting('request.jwt.claims', true))::jsonb ->> 'email'), '@', 1))
-  AND realtime.messages.extension IN ('broadcast')
-);
-
--- Anyone can send private messages to any user (for system notifications)
-CREATE POLICY "authenticated can send private messages"
-ON "realtime"."messages"
-FOR INSERT
-TO authenticated
-WITH CHECK (
-  (SELECT realtime.topic()) LIKE 'user-%'
-  AND realtime.messages.extension IN ('broadcast')
-);
+-- (No user-{email} channel policies: nothing uses that topic family, and its
+-- receive policy matched on the email's local part. Dropped on hosted by
+-- migrations/20260917130000_drop_user_realtime_policies.sql.)
 
 -- Policy for private game-user channels (topic: gu-{game_id}-{user_id})
--- Users can only read messages from their own game-user channels
+-- A user reads only their own seat's stream, for a game they are in. The topic is
+-- rebuilt from the membership row and compared whole, never parsed: a user id is a
+-- hyphenated UUID, so splitting the topic on '-' cannot recover it (see
+-- migrations/20260917120000_realtime_channel_exact_topics.sql).
 CREATE POLICY "authenticated can receive game-user messages"
 ON "realtime"."messages"
 FOR SELECT
 TO authenticated
 USING (
   (SELECT realtime.topic()) LIKE 'gu-%' AND
-  -- Extract user_id from topic (gu-{game_id}-{user_id}) and verify it matches current user
-  split_part((SELECT realtime.topic()), '-', 3) = (select auth.uid())::text AND
-  -- Extract game_id and verify user is in that game
   EXISTS (
     SELECT 1
-    FROM player_hands
-    WHERE 
-      player_id = (select auth.uid())
-      AND game_id = split_part((SELECT realtime.topic()), '-', 2)
+    FROM public.player_hands ph
+    WHERE ph.player_id = (SELECT auth.uid())
+      AND (SELECT realtime.topic()) = 'gu-' || ph.game_id || '-' || (SELECT auth.uid())::text
   ) AND
   realtime.messages.extension IN ('broadcast')
 );
 
--- Policy for chat broadcasts (topic: chat-{game_id})
--- Users can receive chat broadcasts for games they're participating in
+-- Policy for chat broadcasts (topic: chat:{game_id})
+-- Users can receive chat broadcasts for games they're participating in, on the
+-- exact topic the chat_messages_changes trigger broadcasts to.
 CREATE POLICY "authenticated can receive chat broadcasts"
 ON "realtime"."messages"
 FOR SELECT
 TO authenticated
 USING (
   (SELECT realtime.topic()) LIKE 'chat:%' AND
-  -- Extract game_id from topic (chat:{game_id}) and verify user is in that game
   EXISTS (
     SELECT 1
-    FROM player_hands
-    WHERE 
-      player_id = (select auth.uid())
-      AND game_id = split_part((SELECT realtime.topic()), ':', 2)
+    FROM public.player_hands ph
+    WHERE ph.player_id = (SELECT auth.uid())
+      AND (SELECT realtime.topic()) = 'chat:' || ph.game_id
   ) AND
   realtime.messages.extension IN ('broadcast')
 );
@@ -907,16 +896,6 @@ FOR INSERT
 TO service_role
 WITH CHECK (
   (SELECT realtime.topic()) LIKE 'game-%'
-  AND realtime.messages.extension IN ('broadcast')
-);
-
--- Service role can send private messages (for server notifications)
-CREATE POLICY "service role can send private messages"
-ON "realtime"."messages"
-FOR INSERT
-TO service_role  
-WITH CHECK (
-  (SELECT realtime.topic()) LIKE 'user-%'
   AND realtime.messages.extension IN ('broadcast')
 );
 
