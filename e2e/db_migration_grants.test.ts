@@ -39,6 +39,7 @@ import { applyPlatformShim, pgPool } from './harness.ts';
 const SUPABASE = join(process.cwd(), 'server', 'impls', 'supabase');
 const MIGRATIONS = join(SUPABASE, 'migrations');
 const FIXTURE = join(process.cwd(), 'e2e', 'fixtures', 'hosted_schema_pre_20260807120000.sql');
+const EXTENSIONS = join(process.cwd(), 'e2e', 'fixtures', 'platform_extensions.sql');
 
 // The first migration the fixture does NOT already contain.
 const FIRST_REPLAYED = '20260807120000';
@@ -288,6 +289,11 @@ export function registerMigrationGrantsValidation(): void {
         before(async () => {
             await applyPlatformShim();
             await pgPool.query(SUPABASE_PLATFORM);
+            // The hosted project also has pg_net and pg_cron, and a migration may
+            // maintain their tables (20260918200000 truncates the response log and
+            // schedules a VACUUM of it). The frozen fixture is a dump of schema
+            // public, so the two extensions come from their own shim.
+            await pgPool.query(readFileSync(EXTENSIONS, 'utf8'));
             await pgPool.query(readFileSync(FIXTURE, 'utf8'));
             baselineExposed = await exposedRpcs();
             for (const x of baselineExposed) openedBy.set(`${x.fn} [${x.who}]`, 'the frozen hosted schema');
