@@ -203,7 +203,7 @@ export const ReplayStage = ({ fool, code, frames, reverses, gameId, names, times
                 <div style={{ display: 'flex', gap: 7, alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                     {btn(<IconBoutStart />, play.boutStart, t('replay_bout_start'))}
                     {btn(<IconStepBack />, play.stepBack, t('replay_step_back'))}
-                    {btn(playing ? <IconPause /> : <IconPlay />, () => play.setPlaying((p) => !p), t(playing ? 'pause' : 'play'))}
+                    {btn(playing ? <IconPause /> : <IconPlay />, () => play.setPlaying((p) => !p), t(playing ? 'pause' : 'replay_play'))}
                     {btn(<IconStepForward />, play.stepForward, t('replay_step_forward'))}
                     {btn(<IconBoutNext />, play.nextBout, t('replay_bout_next'))}
                     {btn(<IconEye />, () => setReveal((r) => !r), t(reveal ? 'hide_cards' : 'reveal_cards'), reveal)}

@@ -34,6 +34,10 @@
 //                 one file per language, and nothing in C makes twenty-five
 //                 independent tables carry the same keys.
 // --name IDENT    what the emitted modules export. Defaults to the table's name.
+// --ts-const      emit the TS table as `as const` rather than with a declared
+//                 type, so its keys and values stay literal types. A host can
+//                 then derive a union of the real key names from the table
+//                 itself instead of keeping a second list that goes stale.
 // --ts / --swift  where to write. --json writes the same data as JSON, which is
 //                 what a test reads to check the extraction without compiling
 //                 either language.
@@ -87,7 +91,8 @@
 
 static const char *headers[MAXN], *table_name, *out_ts, *out_swift, *out_json, *export_name;
 static const char *cwd = ".", *target, *flags = "";
-static int require_complete;
+static int require_complete, ts_const;
+static const char *complete_if;   // --require-complete-if TABLE.COLUMN
 static int nheaders;
 static const char *label_table[MAXDIM];   // --labels T.D=L, by dimension
 
@@ -392,9 +397,35 @@ static void read_table(CXTranslationUnit tu, const char *name, Table *out) {
 // cannot be emitted, and silently dropping it is how a table loses a language.
 typedef struct { char **name; long n; } Labels;
 
+// A spec is either a whole table (`NAMES`) or one column of a table of structs
+// (`KEYS.name`). One reader for both, so a companion table can answer with any
+// of its columns and neither the caller nor this file cares which shape it is.
+static void read_column(CXTranslationUnit tu, const char *spec, Table *t, long *col) {
+    char *name = xstrdup(spec), *dot = strrchr(name, '.');
+    *col = 0;
+    if (dot) *dot = 0;
+    read_table(tu, name, t);
+    if (!dot) {
+        if (t->ndim != 1) die("%s is not one-dimensional: name one of its columns as %s.FIELD", name, name);
+        return;
+    }
+    if (!t->is_struct) die("%s is not a table of structs, so it has no column %s", name, dot + 1);
+    for (long i = 0; i < t->nfield; i++) if (!strcmp(t->field[i], dot + 1)) { *col = i; return; }
+    die("%s has no column named %s", name, dot + 1);
+}
+
 static void read_labels(CXTranslationUnit tu, const char *tbl, long want, Labels *out) {
     Table t = {0};
-    read_table(tu, tbl, &t);
+    long col;
+    read_column(tu, tbl, &t, &col);
+    if (t.is_struct) {
+        // One column of a struct table, lifted out as the one-dimensional table
+        // of names the rest of this function already knows how to check.
+        Table flat = { t.name, 1, { t.dim[0], 0 }, 0, NULL, {0}, {0}, 0, NULL };
+        if (!(flat.cells = calloc((size_t)t.dim[0], sizeof *flat.cells))) die("out of memory");
+        for (long i = 0; i < t.dim[0]; i++) flat.cells[i] = *cell_at(&t, i, col);
+        t = flat;
+    }
     if (t.ndim != 1) die("--labels table %s must be one-dimensional", tbl);
     if (t.dim[0] != want)
         die("--labels table %s holds %ld name(s) for a dimension of %ld", tbl, t.dim[0], want);
@@ -537,9 +568,19 @@ static void emit_ts(Table *t, Labels *lab) {
         snprintf(ty, sizeof ty, lab[0].name ? "Readonly<Record<string, %s>>" : "readonly %s[]", inner);
     }
     static const Syntax sx = { "{", "}", "[", "]", ":", "{}", quoted };
-    bprintf(&b, "\nexport type %sTable = %s;\n\nexport const %s: %sTable = ", export_name, ty, export_name, export_name);
-    emit_dim(&b, t, lab, 0, 0, &sx, "");
-    bprintf(&b, ";\n");
+    // --ts-const: `as const` instead of a declared type, so TypeScript keeps
+    // every key and value as a LITERAL. That is what lets a host derive a union
+    // of the real key names from the emitted table (the website's StringId)
+    // rather than restating them in a second place that can fall behind.
+    if (ts_const) {
+        bprintf(&b, "\nexport const %s = ", export_name);
+        emit_dim(&b, t, lab, 0, 0, &sx, "");
+        bprintf(&b, " as const;\n");
+    } else {
+        bprintf(&b, "\nexport type %sTable = %s;\n\nexport const %s: %sTable = ", export_name, ty, export_name, export_name);
+        emit_dim(&b, t, lab, 0, 0, &sx, "");
+        bprintf(&b, ";\n");
+    }
     write_out(out_ts, &b);
     free(b.s);
 }
@@ -658,7 +699,8 @@ static const char *absolute(const char *path) {
 
 static void usage(void) {
     fputs("usage: datagen --cwd DIR --header H... --table T [--labels T.DIM=L]...\n"
-          "               [--require-complete] [--flags FLAGS] [--target TRIPLE] [--name IDENT]\n"
+          "               [--require-complete] [--require-complete-if T.COL]\n"
+          "               [--ts-const] [--flags FLAGS] [--target TRIPLE] [--name IDENT]\n"
           "               [--ts OUT.ts] [--swift OUT.swift] [--json OUT.json]\n", stderr);
     exit(2);
 }
@@ -667,6 +709,7 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         if (!strcmp(a, "--require-complete")) { require_complete = 1; continue; }
+        if (!strcmp(a, "--ts-const")) { ts_const = 1; continue; }
         if (!strcmp(a, "--help") || !strcmp(a, "-h")) usage();
         if (strncmp(a, "--", 2)) die("unexpected argument %s", a);
         if (i + 1 >= argc) die("%s needs a value", a);
@@ -691,6 +734,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--json")) out_json = v;
         else if (!strcmp(a, "--target")) target = v;
         else if (!strcmp(a, "--flags")) flags = v;
+        else if (!strcmp(a, "--require-complete-if")) { complete_if = v; require_complete = 1; }
         else if (!strcmp(a, "--cwd")) cwd = v;
         else die("unknown argument %s", a);
     }
@@ -718,15 +762,41 @@ int main(int argc, char **argv) {
         if (d >= t.ndim) die("--labels for dimension %d, but %s has %d", d, table_name, t.ndim);
         read_labels(tu, label_table[d], t.dim[d], &lab[d]);
     }
+    // --require-complete-if: which slots are REQUIRED, read out of a companion
+    // table's column. This is the two-tier rule, as data.
+    //
+    // A key nobody has translated yet and a key that does not exist are not the
+    // same mistake. The second is a bug - the enum and the table disagree, and
+    // some host will ask for a name nothing answers to. The first is just work
+    // not done, and making it a build error would mean nobody could add a string
+    // without doing twenty-five translations in the same commit, which is how a
+    // key ends up quietly added to English only.
+    //
+    // So c/i18n/keys.h says, per key, whether every language must carry it, and
+    // the ones that must are checked here. The rest are holes, left out of the
+    // emitted module, and the host falls back to English - visibly, and counted
+    // by e2e/validation/i18n_source_of_truth.test.ts.
+    int *required = NULL;
+    if (complete_if) {
+        Table c = {0}; long col;
+        read_column(tu, complete_if, &c, &col);
+        if (c.dim[0] != t.dim[0])
+            die("--require-complete-if %s has %ld rows for a dimension of %ld", complete_if, c.dim[0], t.dim[0]);
+        if (!(required = calloc((size_t)c.dim[0], sizeof *required))) die("out of memory");
+        for (long i = 0; i < c.dim[0]; i++) {
+            Cell *cell = cell_at(&c, i, col);
+            if (cell->kind != 'i') die("--require-complete-if %s has no integer at index %ld", complete_if, i);
+            required[i] = cell->i != 0;
+        }
+    }
     if (require_complete) {
-        // Every slot the index space has, filled. The reason this flag exists is
-        // that splitting one 2-D table into one file per language traded a
-        // compile error for a silent empty string: nothing in C makes twenty-five
-        // independent tables carry the same keys. This does.
         Buf missing = {0}; int nmissing = 0;
         for (long a = 0; a < t.dim[0]; a++)
             for (long b = 0; b < cols_of(&t); b++) {
                 if (cell_at(&t, a, b)->kind) continue;
+                // A one-dimensional table is indexed by `a`; a two-dimensional
+                // one asks about its column, since that is the key axis.
+                if (required && !required[t.ndim == 2 ? b : a]) continue;
                 if (nmissing < 20) {
                     bprintf(&missing, "\n  ");
                     if (lab[0].name) bprintf(&missing, "%s", lab[0].name[a]); else bprintf(&missing, "[%ld]", a);
@@ -735,8 +805,9 @@ int main(int argc, char **argv) {
                 nmissing++;
             }
         if (nmissing)
-            die("%s leaves %d slot(s) of its index space empty, and --require-complete forbids that:%s%s",
-                table_name, nmissing, missing.s ? missing.s : "", nmissing > 20 ? "\n  ... and more" : "");
+            die("%s is missing %d value(s) that every language must carry%s:%s%s",
+                table_name, nmissing, complete_if ? " (c/i18n/keys.h marks these `1`)" : "",
+                missing.s ? missing.s : "", nmissing > 20 ? "\n  ... and more" : "");
     }
 
     if (out_ts) emit_ts(&t, lab);

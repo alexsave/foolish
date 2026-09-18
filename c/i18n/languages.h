@@ -49,10 +49,12 @@ typedef enum {
 // READS THIS TABLE to find out what to generate, so no build script, no CI lane
 // and no host keeps a list of languages that could fall behind this one.
 //
-// This is also where the questions a language raises that are NOT translations
-// get answered - what it calls itself, and which way it is written. The website
-// hard-codes those for three languages in LanguageSwitcher.tsx today while the
-// phone app carries twenty-five of them in a Swift switch.
+// It also answers the questions a language raises that are NOT translations -
+// what it calls itself, how to draw it in a one-line picker, and which way it is
+// written. Those lived in two places before: a 25-case Swift switch for the
+// endonyms and a hard-coded three-entry array in the website's
+// LanguageSwitcher.tsx, which is the whole reason the site offered three
+// languages while the phone offered twenty-five.
 //
 // It is a table of STRUCTS on purpose. datagen reads a row's fields by name the
 // same way it reads an array's slots by designator, so a column added here
@@ -60,35 +62,37 @@ typedef enum {
 typedef struct {
     const char *code;     // the ISO 639-1 subtag a speaker's locale begins with
     const char *display;  // the name the language calls ITSELF, in its own script
+    const char *flag;     // one flag emoji, for a picker with room for a picture
+    const char *label;    // two or three characters, for a picker without room
     int         rtl;      // written right to left (it does not flip the board)
 } FsLanguage;
 
 static const FsLanguage FS_LANGUAGES[FS_L_COUNT] = {
-    [FS_L_EN] = { "en", "English",          0 },
-    [FS_L_RU] = { "ru", "Русский",          0 },
-    [FS_L_KO] = { "ko", "한국어",              0 },
-    [FS_L_ZH] = { "zh", "中文",               0 },
-    [FS_L_VI] = { "vi", "Tiếng Việt",       0 },
-    [FS_L_ES] = { "es", "Español",          0 },
-    [FS_L_PT] = { "pt", "Português",        0 },
-    [FS_L_FR] = { "fr", "Français",         0 },
-    [FS_L_DE] = { "de", "Deutsch",          0 },
-    [FS_L_IT] = { "it", "Italiano",         0 },
-    [FS_L_JA] = { "ja", "日本語",              0 },
-    [FS_L_PL] = { "pl", "Polski",           0 },
-    [FS_L_UK] = { "uk", "Українська",       0 },
-    [FS_L_TR] = { "tr", "Türkçe",           0 },
-    [FS_L_ID] = { "id", "Bahasa Indonesia", 0 },
-    [FS_L_TH] = { "th", "ไทย",              0 },
-    [FS_L_NL] = { "nl", "Nederlands",       0 },
-    [FS_L_SV] = { "sv", "Svenska",          0 },
-    [FS_L_DA] = { "da", "Dansk",            0 },
-    [FS_L_NO] = { "no", "Norsk",            0 },
-    [FS_L_FI] = { "fi", "Suomi",            0 },
-    [FS_L_CS] = { "cs", "Čeština",          0 },
-    [FS_L_RO] = { "ro", "Română",           0 },
-    [FS_L_HE] = { "he", "עברית",            1 },
-    [FS_L_AR] = { "ar", "العربية",          1 },
+    [FS_L_EN] = { "en", "English",          "🇺🇸", "EN",  0 },
+    [FS_L_RU] = { "ru", "Русский",          "🇷🇺", "РУ",  0 },
+    [FS_L_KO] = { "ko", "한국어",              "🇰🇷", "한",   0 },
+    [FS_L_ZH] = { "zh", "中文",               "🇨🇳", "中",   0 },
+    [FS_L_VI] = { "vi", "Tiếng Việt",       "🇻🇳", "VI",  0 },
+    [FS_L_ES] = { "es", "Español",          "🇪🇸", "ES",  0 },
+    [FS_L_PT] = { "pt", "Português",        "🇵🇹", "PT",  0 },
+    [FS_L_FR] = { "fr", "Français",         "🇫🇷", "FR",  0 },
+    [FS_L_DE] = { "de", "Deutsch",          "🇩🇪", "DE",  0 },
+    [FS_L_IT] = { "it", "Italiano",         "🇮🇹", "IT",  0 },
+    [FS_L_JA] = { "ja", "日本語",              "🇯🇵", "日",   0 },
+    [FS_L_PL] = { "pl", "Polski",           "🇵🇱", "PL",  0 },
+    [FS_L_UK] = { "uk", "Українська",       "🇺🇦", "УК",  0 },
+    [FS_L_TR] = { "tr", "Türkçe",           "🇹🇷", "TR",  0 },
+    [FS_L_ID] = { "id", "Bahasa Indonesia", "🇮🇩", "ID",  0 },
+    [FS_L_TH] = { "th", "ไทย",              "🇹🇭", "ไทย", 0 },
+    [FS_L_NL] = { "nl", "Nederlands",       "🇳🇱", "NL",  0 },
+    [FS_L_SV] = { "sv", "Svenska",          "🇸🇪", "SV",  0 },
+    [FS_L_DA] = { "da", "Dansk",            "🇩🇰", "DA",  0 },
+    [FS_L_NO] = { "no", "Norsk",            "🇳🇴", "NO",  0 },
+    [FS_L_FI] = { "fi", "Suomi",            "🇫🇮", "FI",  0 },
+    [FS_L_CS] = { "cs", "Čeština",          "🇨🇿", "CS",  0 },
+    [FS_L_RO] = { "ro", "Română",           "🇷🇴", "RO",  0 },
+    [FS_L_HE] = { "he", "עברית",            "🇮🇱", "עב",  1 },
+    [FS_L_AR] = { "ar", "العربية",          "🇸🇦", "ع",   1 },
 };
 
 #endif

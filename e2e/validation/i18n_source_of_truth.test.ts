@@ -86,9 +86,13 @@ test('no C language file is missing from the registry', async () => {
         + `  ${orphans.join('\n  ')}\n`);
 });
 
-test('every language carries every key', async () => {
+async function keyList(): Promise<string[]> {
     const { FoolishStringKeys } = await import(join(GEN, 'keys.ts'));
-    const keys: string[] = Object.values(FoolishStringKeys);
+    return Object.values(FoolishStringKeys);
+}
+
+test('every language carries every key', async () => {
+    const keys = await keyList();
     assert.ok(keys.length >= 199, `the key list holds ${keys.length} keys`);
     const gaps: string[] = [];
     for (const { code } of await languages()) {
@@ -101,11 +105,24 @@ test('every language carries every key', async () => {
         + `  ${gaps.slice(0, 20).join('\n  ')}\n`);
 });
 
+test('no string is empty or only whitespace', async () => {
+    // A blank cell renders as a blank button. It is the one failure that looks
+    // like a layout bug rather than a missing translation, so it is checked as
+    // its own thing rather than folded into key coverage.
+    const keys = await keyList();
+    const blank: string[] = [];
+    for (const { code } of await languages()) {
+        const t = await table(code);
+        for (const k of keys) if (!(t[k] ?? '').trim()) blank.push(`${code}.${k}`);
+    }
+    assert.deepEqual(blank, [], `these strings are empty:\n  ${blank.join('\n  ')}\n`);
+});
+
 test('a placeholder a language drops is a placeholder the board never fills', async () => {
     // {name}-style holes are substituted by the host. A translation that lost
     // one renders "Waiting for" with nothing after it, which no test of key
     // coverage can see.
-    const holes = (s: string) => (s.match(/\{[a-z]+\}/g) ?? []).sort().join(',');
+    const holes = (s: string) => [...new Set(s.match(/\{[a-zA-Z_]+\}/g) ?? [])].sort().join(',');
     const en = await table('en');
     const wrong: string[] = [];
     for (const { code } of await languages()) {

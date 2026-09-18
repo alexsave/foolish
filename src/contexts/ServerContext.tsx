@@ -14,7 +14,7 @@ import { clientTable } from '@sdk/ts/table/client_table.ts';
 import { GAME_STATUS, type TableView, type ViewCard } from '../state/view';
 import { rejectMessage } from '../wasm/rejectMessages';
 import { authoritativeVersion } from '../state/authoritativeVersion';
-import { strings } from '../localization/strings';
+import { EN, StringId, StringTable, isLanguage, loadLanguage, translate } from '../localization/strings';
 
 type Card = ViewCard;
 
@@ -99,10 +99,17 @@ export const ServerProvider = ({ children }: { children: React.ReactNode }) => {
     // off the pickup broadcast; this just tells the user WHY their card came back.
     const [staleRoundNotice, setStaleRoundNotice] = useState<string | null>(null);
     const staleNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // This runs OUTSIDE the React localization context - it is called from a
+    // realtime handler, not from a render - so it reads the stored language
+    // itself. English is already loaded (it is the fallback floor), and any
+    // other language is fetched: `translate` falls back to English meanwhile,
+    // so the notice is never blank and never late.
     const showStaleRoundNotice = useCallback(() => {
-        const lang = (typeof localStorage !== 'undefined' && localStorage.getItem('foolish_language')) || 'en';
-        const table = strings[lang] ?? strings.en;
-        setStaleRoundNotice(table.staleRoundReject ?? strings.en.staleRoundReject);
+        const stored = typeof localStorage !== 'undefined' ? localStorage.getItem('foolish_language') : null;
+        const lang = stored && isLanguage(stored) ? stored : 'en';
+        const show = (table: StringTable) => setStaleRoundNotice(translate(table, 'staleRoundReject' as StringId));
+        show(EN);
+        if (lang !== 'en') loadLanguage(lang).then(show);
         if (staleNoticeTimer.current) clearTimeout(staleNoticeTimer.current);
         staleNoticeTimer.current = setTimeout(() => setStaleRoundNotice(null), 4000);
     }, []);

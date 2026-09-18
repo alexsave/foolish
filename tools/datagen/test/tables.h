@@ -51,4 +51,29 @@ static const char *const DG_MIXED[DG_NCOL] = {
     [DG_C2] = "التقاط\tand a tab", // Arabic, plus an escape the emitters rewrite
 };
 
+// A companion table that says, per slot, whether a value is REQUIRED there. Two
+// tiers: a slot marked 1 must be filled and a slot marked 0 may be a hole. This
+// is the shape c/i18n/keys.h uses to tell "nobody has translated this yet" from
+// "this key does not exist", which are not the same mistake.
+typedef struct {
+    const char *name;
+    int         everywhere;
+} DgSlotInfo;
+
+static const DgSlotInfo DG_SLOTS[DG_NCOL] = {
+    [DG_C0] = { "a", 1 },
+    [DG_C1] = { "b", 1 },
+    [DG_C2] = { "c", 0 },   // optional: a hole here is allowed
+};
+
+// Fills the two required slots and leaves the optional one empty.
+static const char *const DG_PARTIAL[DG_NCOL] = { [DG_C0] = "have a", [DG_C1] = "have b" };
+
+// Two rows where the table it is asked about has three.
+typedef struct { const char *name; int flag; } DgPair;
+static const DgPair DG_PAIR[2] = { { "x", 1 }, { "y", 1 } };
+
+// Leaves a REQUIRED slot empty, which must fail.
+static const char *const DG_SHORT[DG_NCOL] = { [DG_C0] = "have a", [DG_C2] = "have c" };
+
 #endif

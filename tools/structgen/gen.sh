@@ -174,8 +174,11 @@ dg() { "$DG" --cwd "$root/c/i18n" "$@"; }
 # field name - the case that proves this tool is not string-table-shaped.
 dg --header languages.h --table FS_LANGUAGES --require-complete --name FoolishLanguages \
    --ts "$i18n_ts/languages.ts" --swift "$i18n_swift/FoolishLanguages.swift"
-# Every key that exists, in one list, so a host can check its own coverage.
-dg --header keys.h --table FS_KEY_NAME --require-complete --name FoolishStringKeys \
+# Every key that exists, in one list. --ts-const so TypeScript keeps them as
+# LITERAL types: the website's `StringId` union is derived from this array
+# (src/localization/strings.ts), so the set of keys a call site may ask for is
+# the set the C declares, checked by tsc, and not a second list to fall behind.
+dg --header keys.h --table FS_KEY_NAME --require-complete --name FoolishStringKeys --ts-const \
    --ts "$i18n_ts/keys.ts" --swift "$i18n_swift/FoolishStringKeys.swift"
 
 # …and one module per language. THE LIST COMES FROM THE REGISTRY, read back out
@@ -192,6 +195,13 @@ for code in $codes; do
   # key a compile error; twenty-five independent tables would make it a silent
   # empty string on a board in a language nobody here reads. This is what took
   # that job over, and it names every key it cannot find.
+  #
+  # Every language carries every key, so the strict form is what runs here.
+  # datagen also has --require-complete-if TABLE.COLUMN, which requires only the
+  # slots a companion column marks - the shape for a table that is allowed to be
+  # partly translated. Nothing needs it today (tools/datagen/test/cli.sh covers
+  # it), and the day a key lands that cannot be translated in one commit, it is
+  # the flag to reach for instead of letting a hole through unnoticed.
   dg --header "strings_$code.c" --table "FS_STRINGS_$up" --labels "FS_STRINGS_$up.0=FS_KEY_NAME" \
      --require-complete --name "FoolishStrings$cap" \
      --ts "$i18n_ts/strings.$code.ts" --swift "$i18n_swift/FoolishStrings$cap.swift"

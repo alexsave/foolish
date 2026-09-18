@@ -1,22 +1,29 @@
+import { useEffect, useRef, useState } from 'react';
 import { useLocalization, Language } from '../contexts/LocalizationContext';
 
-interface LanguageConfig {
-  code: Language;
-  flag: string;
-  label: string;
-}
+// The language picker. THE LIST COMES FROM THE C (c/i18n/languages.h, through
+// the generated registry) - it is not written here any more.
+//
+// It used to be three hard-coded rows, `{ code, flag, label }` for en/ru/ko,
+// sitting next to a phone app that carried twenty-five languages. That array
+// was the whole reason the site offered three: the strings for the others did
+// not exist on this side, and nothing here could have listed them anyway.
+//
+// Twenty-five will not fit in a row of fixed buttons, so the shape changed with
+// the count: one button showing the active language, and a panel that opens
+// with all of them, each naming itself. A player looking for their language
+// finds it written the way they write it.
 
-const LANGUAGES: LanguageConfig[] = [
-  { code: 'en', flag: '🇺🇸', label: 'EN' },
-  { code: 'ru', flag: '🇷🇺', label: 'РУ' },
-  { code: 'ko', flag: '🇰🇷', label: '한' },
-];
+// Soviet-style flag icons - proper flags with Soviet color palette.
+// Red (#B32929) replaces reds, Cream (#F5E6C8) replaces whites, Black (#0A0A0A)
+// replaces blues. Only the three the theme was drawn for have one; everything
+// else falls back to its emoji flag, which is what `hasSovietFlag` is for.
+const SOVIET_CODES = new Set(['en', 'ru', 'ko']);
+const hasSovietFlag = (code: Language) => SOVIET_CODES.has(code);
 
-// Soviet-style flag icons - proper flags with Soviet color palette
-// Red (#B32929) replaces reds, Cream (#F5E6C8) replaces whites, Black (#0A0A0A) replaces blues
 const SovietFlag: React.FC<{ code: Language; size?: number }> = ({ code, size = 45 }) => {
   const width = size;
-  const height = size * (2/3); // 2:3 height:width ratio
+  const height = size * (2 / 3); // 2:3 height:width ratio
   const style: React.CSSProperties = {
     width,
     height,
@@ -65,7 +72,7 @@ const SovietFlag: React.FC<{ code: Language; size?: number }> = ({ code, size = 
         <svg viewBox="0 0 150 100" style={style}>
           {/* Cream field */}
           <rect x="0" y="0" width="150" height="100" fill="#F5E6C8" />
-          
+
           {/* Taeguk (yin-yang) - centered */}
           <g transform="translate(75, 50)">
             {/* Red (yang) half */}
@@ -73,7 +80,7 @@ const SovietFlag: React.FC<{ code: Language; size?: number }> = ({ code, size = 
             {/* Black (yin) half - replacing blue */}
             <path d="M 0,22 A 22,22 0 0,1 0,-22 A 11,11 0 0,1 0,0 A 11,11 0 0,0 0,22" fill="#0A0A0A" />
           </g>
-          
+
           {/* Trigrams - positioned closer to taeguk */}
           {/* Geon (☰) - top left - 3 solid bars */}
           <g transform="translate(38, 28) rotate(-56.31)" stroke="#0A0A0A" strokeWidth="3.5" strokeLinecap="butt">
@@ -81,7 +88,7 @@ const SovietFlag: React.FC<{ code: Language; size?: number }> = ({ code, size = 
             <line x1="-10" y1="0" x2="10" y2="0" />
             <line x1="-10" y1="6" x2="10" y2="6" />
           </g>
-          
+
           {/* Gon (☷) - bottom right - 3 broken bars */}
           <g transform="translate(112, 72) rotate(-56.31)" stroke="#0A0A0A" strokeWidth="3.5" strokeLinecap="butt">
             <line x1="-10" y1="-6" x2="-2" y2="-6" />
@@ -91,7 +98,7 @@ const SovietFlag: React.FC<{ code: Language; size?: number }> = ({ code, size = 
             <line x1="-10" y1="6" x2="-2" y2="6" />
             <line x1="2" y1="6" x2="10" y2="6" />
           </g>
-          
+
           {/* Gam (☵) - top right - broken, solid, broken */}
           <g transform="translate(112, 28) rotate(56.31)" stroke="#0A0A0A" strokeWidth="3.5" strokeLinecap="butt">
             <line x1="-10" y1="-6" x2="-2" y2="-6" />
@@ -100,7 +107,7 @@ const SovietFlag: React.FC<{ code: Language; size?: number }> = ({ code, size = 
             <line x1="-10" y1="6" x2="-2" y2="6" />
             <line x1="2" y1="6" x2="10" y2="6" />
           </g>
-          
+
           {/* Ri (☲) - bottom left - solid, broken, solid */}
           <g transform="translate(38, 72) rotate(56.31)" stroke="#0A0A0A" strokeWidth="3.5" strokeLinecap="butt">
             <line x1="-10" y1="-6" x2="10" y2="-6" />
@@ -116,33 +123,78 @@ const SovietFlag: React.FC<{ code: Language; size?: number }> = ({ code, size = 
 };
 
 export const LanguageSwitcher = () => {
-  const { language, setLanguage } = useLocalization();
+  const { language, setLanguage, languages } = useLocalization();
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+
+  const active = languages.find((l) => l.code === language) ?? languages[0];
+
+  // Close on an outside tap or on Escape - a panel this size sits over the
+  // board, and a player who opened it by accident needs it gone without having
+  // to choose a language they did not want.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (root.current && !root.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const face = (code: Language, flag: string, label: string, size: number) => (
+    <>
+      {/* Soviet mode: CSS hides emoji content, shows SovietFlag */}
+      {/* Default mode: CSS shows emoji content, hides SovietFlag */}
+      <span className="btn-language__flag btn-language__flag--emoji">{flag}</span>
+      <span className="btn-language__label btn-language__label--emoji">{label}</span>
+      {hasSovietFlag(code)
+        ? <span className="btn-language__flag--soviet"><SovietFlag code={code} size={size} /></span>
+        : <span className="btn-language__flag--soviet btn-language__flag--soviet-text">{label}</span>}
+    </>
+  );
 
   return (
-    <div className="fixed flex gap-sm" style={{
+    <div ref={root} className="fixed" style={{
       // Stay clear of the home indicator / notch in standalone (PWA) mode.
       bottom: 'max(10px, env(safe-area-inset-bottom, 0px))',
       right: 'max(10px, env(safe-area-inset-right, 0px))',
       zIndex: 1000,
     }}>
-      {LANGUAGES.map(({ code, flag, label }) => {
-        const isActive = language === code;
-        return (
-          <button
-            key={code}
-            onClick={() => setLanguage(code)}
-            disabled={isActive}
-            className={`btn-language ${isActive ? 'btn-language--active' : ''}`}
-          >
-            {/* Soviet mode: CSS hides emoji content, shows SovietFlag */}
-            {/* Default mode: CSS shows emoji content, hides SovietFlag */}
-            <span className="btn-language__flag btn-language__flag--emoji">{flag}</span>
-            <span className="btn-language__label btn-language__label--emoji">{label}</span>
-            <span className="btn-language__flag--soviet"><SovietFlag code={code} size={40} /></span>
-          </button>
-        );
-      })}
+      {open && (
+        <div className="language-menu" role="listbox" aria-label={active.display}>
+          {languages.map(({ code, display, flag, label, rtl }) => (
+            <button
+              key={code}
+              role="option"
+              aria-selected={code === language}
+              dir={rtl ? 'rtl' : 'ltr'}
+              className={`language-menu__item ${code === language ? 'language-menu__item--active' : ''}`}
+              onClick={() => { setLanguage(code); setOpen(false); }}
+            >
+              <span className="language-menu__flag">{hasSovietFlag(code)
+                ? <SovietFlag code={code} size={24} />
+                : flag}</span>
+              <span className="language-menu__name">{display}</span>
+              <span className="language-menu__code">{label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="btn-language"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={active.display}
+        title={active.display}
+      >
+        {face(active.code, active.flag, active.label, 40)}
+      </button>
     </div>
   );
 };
-
