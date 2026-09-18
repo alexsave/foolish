@@ -1,12 +1,16 @@
 # Foolish on watchOS — Full Design Plan
 
-> **Status (2026-07-15): the screen design this plan anticipated is now
-> finished.** A five-round design study (options A–H, merged in #96) settled
-> the final layout — **Option H**: first-person board, vertical table list,
-> crown-driven fisheye hand lane, caption verbs. For building the watch UI,
-> use **`docs/WATCHOS_SPEC.md`** (implementor handoff) with
-> `docs/watchos-layout.html` (interactive mockups) and `docs/WATCHOS_LAYOUT.md`
-> (decision record + engine-verified rules facts). The screen sections below
+> **Status (2026-09-18): the screen design this plan anticipated was finished,
+> and then built.** A five-round design study (options A–H, merged in #96)
+> settled the layout — **Option H**: first-person board, vertical table list,
+> crown-driven fisheye hand lane, caption verbs. It was then implemented and
+> landed as source in `ios/WatchUI/` (`bf351671`), where it sits **parked and
+> not compiling** - `ios/WatchUI/README.md` is the current state of record and
+> the first thing to read.
+> The layout truth is `docs/WATCHOS_LAYOUT.md` §4.6 and **§4.6.1 (as built)**,
+> which override both `docs/WATCHOS_SPEC.md` (the pre-build handoff) and
+> `docs/watchos-layout.html` (the mockups) wherever they disagree. The screen
+> sections below
 > (§4–§5) are **superseded** by that study; this doc remains the plan of
 > record for everything structural — App-Store bundling (§1), architecture &
 > connectivity (§6–§8), complications (§9), milestones & sequencing (§11:
