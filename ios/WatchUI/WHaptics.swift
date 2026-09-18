@@ -1,4 +1,4 @@
-// WHaptics.swift — the watchOS haptic vocabulary (docs/WATCHOS_G_SPEC.md §8). Every
+// WHaptics.swift — the watchOS haptic vocabulary (docs/WATCHOS_SPEC.md §8). Every
 // buzz means "you can act now"; everything else is silent. Mapped to WKInterfaceDevice.
 
 import WatchKit

@@ -9,7 +9,7 @@ bot-lease plpgsql, `broadcastAnimationEvents`) and the real client reconciliatio
 The only substitution is the part of the platform we can't run locally
 (PostgREST + Realtime), replaced by one small `pg`-backed adapter
 (`adapters/supabase.ts`, ~180 lines) implementing exactly the supabase-js surface
-the server uses. The `commit_game` / lease plpgsql is the verbatim migration code,
+the server uses. The `commit_table` / lease plpgsql is seed.sql's own code,
 running in real Postgres. Nothing about gameplay is mocked.
 
 How the real server code loads under Node: `e2e/tsconfig.json` maps the three
@@ -30,6 +30,25 @@ npm run test:e2e
 ```
 
 Connection is configurable via `E2E_PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE`.
+
+**This is not the supabase container.**
+The adapter talks to `127.0.0.1:5432` as `stress`/`stress` on database `foolish`.
+`supabase start` is not enough, and the way it fails is misleading: you get
+`relation "games" does not exist`, which means "no e2e Postgres", not "missing
+migrations" - the supabase DB on `:54322` has a perfectly good `games` table,
+which is exactly what makes the error read the wrong way.
+CI stands the real one up as a `postgres:16` service; locally:
+
+```bash
+docker run -d --name foolish-e2e-pg \
+  -e POSTGRES_USER=stress -e POSTGRES_PASSWORD=stress -e POSTGRES_DB=foolish \
+  -p 5432:5432 postgres:16
+```
+
+**Never run two suites at once** - `resetDb()` TRUNCATEs shared tables and will
+corrupt the other run.
+Don't rebuild `bots.wasm.gz` while a suite is running either; the suite loads the
+`.gz`.
 
 ## One database per file, and the two lanes that follow
 

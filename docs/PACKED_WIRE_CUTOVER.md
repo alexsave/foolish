@@ -1,7 +1,36 @@
 # Packed wire cut-over — C buffers end to end
 
-The state blob cut-over (docs/STATE_BLOB_CUTOVER.md) made the kernel's packed
-blob the durable store. This change extends the same discipline to every hot
+> **Historical, 2026-07.**
+> The cut-over below shipped.
+> Names and shapes have moved since: the CAS RPC is `commit_table`, `games.state`
+> is `BYTEA`, the `_shared/*` modules live under `_shared/adapter/`, and
+> `rules.wasm`/`guards.wasm` were retired in C game shape Phase 8 - there is one
+> module, `bots.wasm`.
+> The measurements, the PostgREST side-door section and the cache-correctness
+> argument are the durable parts.
+> For byte layouts read the C headers (`c/src/awire.h`, `c/src/evwire.h`,
+> `c/src/view.h`), never this file.
+
+## What the blob replaced
+
+Before this, durable game state was rebuilt from `player_hands` / `bot_hands` /
+`game_decks` JSONB joins.
+The earlier state-blob cut-over (`docs/STATE_BLOB_CUTOVER.md`, retired
+2026-09-18) replaced those with one kernel-produced blob, and four things from it
+are worth keeping:
+
+- **The size**: the blob is ~96 bytes against multi-KB of JSONB.
+- **The proof**: `e2e/state_codec.test.ts` round-tripped 36,787 seeded games
+  byte-lossless.
+- **Why the hand tables were kept anyway**: the commit stops writing them once a
+  game is dealt, but still writes them while the game is a lobby, because
+  `player_hands` doubles as the player-to-game **membership index**. Dropping the
+  tables needs that index moved somewhere else first.
+- **The rollout policy**: games dealt before the cut-over kept `state = NULL` and
+  fell back to the join path, so their next commit produced a blob. Safe to
+  deploy without a backfill.
+
+This change extends the same discipline to every hot
 boundary: **game state now crosses client→server→client as kernel-produced
 packed bytes**, and JavaScript objects exist only at the React render boundary.
 
@@ -181,19 +210,3 @@ the `games.state` column holds the UNMASKED state, and the pre-existing
 "Anyone can view games" RLS policy exposed it to any client via PostgREST.
 Migration `20260707140000_hide_state_blob.sql` (mirrored in seed.sql)
 switches `games` to column-level SELECT grants — everything except `state`
-and the bot-lease columns. RLS cannot hide a column; grants can.
-
-## Live verification checklist (needs a real Supabase stack; same drill as
-STATE_BLOB_CUTOVER.md — the dev container cannot run edge functions)
-
-1. Deploy `action`, `get_game` + the web client together (coordinated deploy:
-   the broadcast format changes for all clients at server deploy).
-2. Play attack/cover/pass/pickup/good/goods-transition through two browsers:
-   animations play per step, each client sees only its own hand, spectator tab
-   sees card backs for every DEAL/REFILL.
-3. Reject path: force an illegal move (stale second client) → clean revert,
-   reject code surfaced, no 500s.
-4. Bot game: bot moves broadcast the packed format (TS encoder path) and
-   interleave correctly with human packed moves.
-5. Reload mid-game (get_game packed round-trip), dashboard list, replay share
-   at game end.

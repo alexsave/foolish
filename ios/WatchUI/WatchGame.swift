@@ -1,5 +1,5 @@
 // WatchGame.swift — the watch's view-model over the REAL engine (Option G,
-// docs/WATCHOS_G_SPEC.md). Wraps a FoolishKit `LocalGame` (offline vs the C bots)
+// docs/WATCHOS_SPEC.md). Wraps a FoolishKit `LocalGame` (offline vs the C bots)
 // and derives exactly what the Table/Roster screens render: the seat strip, the
 // battle pairs, the Crown focus list (hand + terminal), and — for each focused
 // item — the single pill/tap outcome from §5. No Durak rule lives here; every

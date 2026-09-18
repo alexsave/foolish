@@ -173,13 +173,13 @@ test('§12.2-5 exact regime: a proven win/loss verdict appears near the end', as
 test('§12.2-7 why sidecar: binary paths decode, merge, and template into a proof', async () => {
     const { decodePathsBlob } = await import('../src/oracle/pathsBlob.ts');
     const { explainCandidate } = await import('../src/oracle/explain.ts');
-    const { strings } = await import('../src/localization/strings.ts');
-    const en = strings.en as unknown as Record<string, string>;
-    const t = (id: string, params?: Record<string, string | number>) => {
-        let out = en[id] ?? id;
-        for (const [k, v] of Object.entries(params ?? {})) out = out.split(`{${k}}`).join(String(v));
-        return out;
-    };
+    // The English table, which is now generated from c/i18n rather than written
+    // in strings.ts. `translate` is the site's own substitution, so this test
+    // fills placeholders exactly the way the browser does.
+    const { EN, translate } = await import('../src/localization/strings.ts');
+    const t = (id: string, params?: Record<string, string | number>) =>
+        translate(EN, id as never, Object.fromEntries(
+            Object.entries(params ?? {}).map(([k, v]) => [k, String(v)])));
 
     const inst = await freshInstance();
     const { code, frames, id } = await fixture('4p', 4, 42);

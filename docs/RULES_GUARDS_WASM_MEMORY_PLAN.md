@@ -1,5 +1,16 @@
 # rules.wasm / guards.wasm memory shrink — execution handoff
 
+> **Historical. Both modules are gone** - `rules.wasm` and `guards.wasm` were
+> retired with the TS game shape (`docs/C_GAME_SHAPE_MIGRATION.md` Phase 8), and
+> `make wasm` / `make wasm-guards` are no longer Makefile targets.
+> The doc is kept because its output still ships: `CD_RULES_OVERLAY` and the
+> 3-page pin live on inside `msg.wasm`, and `c/src/rules_overlay.h`,
+> `c/wasm/wasm_api.c`, `c/Makefile` and `e2e/rules_stack_canary.mts` all cite
+> this file by name as the explanation.
+> Its R4 stack measurement and the §2/§8 negative results are not recorded
+> anywhere else. The gates it tells you to run (`e2e/rules_overlay.test.ts`)
+> no longer exist.
+
 **Audience.** This doc is written for an executor who has NOT read the bots
 round. Everything you need is either in this file, in the two companion docs
 (`docs/BOTS_WASM_MEMORY_PLAN.md`, `docs/WASM_L1_BUDGET.md`), or at an exact

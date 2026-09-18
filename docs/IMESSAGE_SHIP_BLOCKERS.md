@@ -1,5 +1,13 @@
 # iMessage app — ship blockers & the dependency chain to the App Store (2026-07-17)
 
+> **Historical, and the chain closed.** The app shipped to the App Store; the
+> live submission documents are `docs/IMESSAGE_APP_STORE_SUBMISSION.md` and
+> `ios/Compliance.md`, and the Mac half is `docs/IMESSAGE_MAC_RUNBOOK.md`.
+> Do not re-plan from the A/B dependency graph below.
+> One rider from it may still be open and is not tracked elsewhere: the
+> `game_snapshots.extras` replay-name blob is not anonymized on account
+> deletion.
+
 *A from-the-tree audit of `main` answering one question: **what still stands
 between this repo and (a) the app being live on the App Store and (b) iMessage
 games working properly?** Every claim below was verified against the code on

@@ -526,3 +526,109 @@
   color: #F5E6C8;
   font-weight: bold;
 }
+
+/* ===== Language menu =====
+   Twenty-five languages will not fit in a row of fixed buttons, so the picker
+   is one button and a panel. The panel is capped in height and scrolls: it sits
+   over the board, and a list that grew past the viewport would put the language
+   at the bottom out of reach on a phone. */
+.language-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  width: min(280px, calc(100vw - 20px));
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  /* The same solid dark panel the chat popover uses, so the two floating
+     surfaces on this site are one surface. Themed: the Soviet block below
+     repaints it. */
+  background-color: var(--color-chat-bg-solid);
+  border: 1px solid var(--color-chat-border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.language-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-bold);
+  cursor: pointer;
+  text-align: start;
+  transition: var(--transition-base);
+}
+
+.language-menu__item:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+.language-menu__item--active {
+  background-color: rgba(255, 255, 255, 0.14);
+  cursor: default;
+}
+
+.language-menu__flag {
+  font-size: 20px;
+  line-height: 1;
+  width: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.language-menu__name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.language-menu__code {
+  opacity: 0.55;
+  font-size: var(--font-size-sm);
+  flex: 0 0 auto;
+}
+
+/* The Soviet theme drew flags for three languages. The other twenty-two show
+   their short label in the same slot rather than an emoji the theme's palette
+   would clash with. */
+.btn-language__flag--soviet-text {
+  color: #F5E6C8;
+  font-weight: bold;
+  padding: 2px 6px;
+  line-height: 1.4;
+}
+
+[data-theme="soviet"] .language-menu {
+  background-color: #F5E6C8;
+  border: 3px solid #0A0A0A;
+  box-shadow: 4px 4px 0 #0A0A0A;
+  border-radius: 0;
+}
+
+[data-theme="soviet"] .language-menu__item {
+  color: #0A0A0A;
+  border-radius: 0;
+}
+
+[data-theme="soviet"] .language-menu__item:hover {
+  background-color: rgba(179, 41, 41, 0.15);
+}
+
+[data-theme="soviet"] .language-menu__item--active {
+  background-color: #B32929;
+  color: #F5E6C8;
+}

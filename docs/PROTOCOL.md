@@ -1,5 +1,16 @@
 # Foolish backend protocol (client contract)
 
+> **Historical anchors, 2026-07-14.**
+> §3 (realtime channels), §6 (auth), §7 (meta semantics) and §8 are documented
+> nowhere else and carry forward unchanged.
+> §4 and §5 restate byte layouts that `c/src/awire.h` and `c/src/table.h` own -
+> read the headers, which are newer. §5's "the roster is packed and the JSON
+> island is a compatibility shim, both written today" is no longer true: the
+> island is retired (`c/src/table.c` writes zeroes for it) and
+> `LEGACY_ROSTER_JSON` is gone. `REJECT_STALE_ROUND=100` shipped as
+> `TABLE_STALE_ROUND = 3`, and `sdk/ts/wire/view.ts` is now
+> `c/src/client_table.h` / `sdk/ts/table/client_table.ts`.
+
 *The wire contract between a Foolish client and the Supabase backend, extracted
 from the web client (the protocol's only spec) for the native iOS port
 (`IOS_APP_DESIGN.md` §8, §16.D). Verified anchors 2026-07-14. This is now a

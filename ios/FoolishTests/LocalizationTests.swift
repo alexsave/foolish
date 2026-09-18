@@ -332,6 +332,59 @@ final class LocalizationTests: XCTestCase {
         .cs: ["offline"],
     ]
 
+    // ---- the generated table is the same table ------------------------------
+    //
+    // The strings are C now (c/i18n), and tools/datagen writes FoolishKit's
+    // copy and the website's from them. These three say the seams hold.
+
+    /// Every key this app asks for must exist in c/i18n/keys.h.
+    ///
+    /// ONE DIRECTION ONLY, and the asymmetry is the point. `allKeys` is what the
+    /// PHONE renders; the key space also carries the website's screens, which
+    /// this app has none of (a leaderboard, an Oracle panel, a replay
+    /// transport). So the C being a superset is correct and expected, and a key
+    /// the C does not declare is the real failure: the app would ask for a name
+    /// nothing answers to and render the key itself on the board.
+    ///
+    /// `allKeys` is not replaced by the generated list on purpose. It is an
+    /// INDEPENDENT oracle, written by a person against what the app renders,
+    /// and a generator checked only against itself proves nothing.
+    func testEveryKeyTheAppAsksForExists() {
+        let missing = Set(Self.allKeys).subtracting(Set(FoolishStringKeys))
+        XCTAssertEqual(missing, [],
+                       "this app asks for keys c/i18n/keys.h does not declare: "
+                       + missing.sorted().joined(separator: ", "))
+    }
+
+    /// Every language the C registry declares must reach a table through
+    /// `FStrings.table`. That function is the one hand-written list left on this
+    /// side - Swift cannot look a `let` up by name - so this is what makes a
+    /// missing case a red test rather than a board silently in English.
+    func testEveryDeclaredLanguageResolvesToATable() {
+        for row in FStrings.languages {
+            let table = FStrings.table(row.code)
+            XCTAssertNotNil(table, "c/i18n declares \(row.code) but FStrings.table has no case for it")
+            XCTAssertEqual(table?.count, FoolishStringKeys.count,
+                           "\(row.code) resolved to a table of \(table?.count ?? 0) keys, not \(FoolishStringKeys.count)")
+        }
+    }
+
+    /// `AppLanguage` and the C registry are two lists of the same languages, and
+    /// each case's endonym is written out in both. They must agree, or the
+    /// picker names a language the table cannot serve.
+    func testAppLanguageMatchesTheRegistry() {
+        XCTAssertEqual(AppLanguage.allCases.map(\.rawValue), FStrings.languages.map(\.code),
+                       "AppLanguage and c/i18n/languages.h list different languages, or list them in a different order")
+        for row in FStrings.languages {
+            XCTAssertEqual(AppLanguage(rawValue: row.code)?.display, row.display,
+                           "\(row.code) calls itself something different in AppLanguage.display than in c/i18n/languages.h")
+        }
+        for row in FStrings.languages {
+            XCTAssertEqual(AppLanguage(rawValue: row.code)?.isRTL, row.rtl != 0,
+                           "\(row.code) disagrees about being right-to-left")
+        }
+    }
+
     /// Every key the table is expected to carry. Listed rather than reflected
     /// because the table is private and - more to the point - because a list
     /// is what makes "the app asks for a key nobody wrote" a failure instead

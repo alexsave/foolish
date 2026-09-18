@@ -82,7 +82,7 @@ uint32_t fio_layout_hash(void);
 int fio_new_game(const uint8_t *seed, int seed_len, int n_players);
 
 // Re-deal the RESIDENT game's own locked deal seed at a DIFFERENT player
-// count — the iMessage lobby's "Start" action (docs/IMESSAGE_LOBBY_V2.md): a
+// count — the iMessage lobby's "Start" action (docs/IMESSAGE_LOBBY_V3.md): a
 // group lobby is created OPEN (fio_new_game with the wire's max capacity, 8)
 // so seats stay free to fill; this re-derives the SAME seed's deal at the
 // actual joined count once the group decides to start (never a new random

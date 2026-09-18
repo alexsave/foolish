@@ -1,5 +1,14 @@
 # Pre-Mortem — Shipping the Foolish iMessage Extension to the App Store
 
+> **Historical, 2026-07-25.** The app shipped, so the "Conditional Go" decision
+> and every "Status: Not started" row are closed, and E1 ("no one has ever
+> played a full game over real transport") is answered.
+> **T5 (abandonment) is not.** A human who closes Messages mid-bout still leaves
+> the game permanently unadvanceable - no bots, no server, no forfeit, timeout
+> or nudge - and no other document owns that problem.
+> P1's negative result (the kernel cannot dupe a card, with its falsification
+> condition) is the other reason this file is kept.
+
 ## Session Details
 
 | Field | Value |

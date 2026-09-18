@@ -1,4 +1,4 @@
-// Lobby v2 — the open-count group lobby (docs/IMESSAGE_LOBBY_V2.md, batch 6
+// Lobby v2 — the open-count group lobby (docs/IMESSAGE_LOBBY_V3.md, batch 6
 // item C, notes 19/20/25), end to end through the SAME wasm kernel the web and
 // the phone both replay against.
 //

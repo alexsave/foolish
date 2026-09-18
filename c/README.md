@@ -5,9 +5,9 @@ heuristic / Monte-Carlo bots. Native code so we can simulate and evaluate
 millions of games without crossing the language boundary into the TS server.
 
 **The kernel here IS the production rules engine.** `game.c` + `legal.c`
-compile to WebAssembly (`make wasm`) and run every live move: the TS files in
-`server/api/common/actions/` are thin bridges over this code (see
-`wasm/wasm_api.c` and `sdk/ts/wasm/engine.ts`). The old TS rule
+compile to WebAssembly (`make wasm-bots`) and run every live move. Every host
+is a thin bridge over this code: see `wasm/wasm_api.c`, and the web reaches it
+through `sdk/ts/table/`. The old TS rule
 implementations were deleted after a differential harness proved the two
 engines byte-identical across ~100k mirrored actions. The deck rule is
 settled and hardcoded in `card.h`: 2..5 players → 36 cards, 6+ → 52,
@@ -47,10 +47,17 @@ Bots (weakest → strongest):
 - `robusta` — public-info Monte-Carlo; `firecracker` / `gunpowder` are
   robusta with different rollout policies.
 - `blackpowder` — belief-constrained determinized MC + exact endgame.
-- `cordite` — blackpowder's successor; ELO #1, beats every other bot at
-  every player count. See `CORDITE.md` (and `BLACKPOWDER.md`).
+- `cordite` - blackpowder's successor. See `CORDITE.md` (and `BLACKPOWDER.md`).
+- `semtex` - cordite's successor (`SEMTEX.md`). Research only: octogen took
+  its place in the shipped roster, so `bot_roster.c` does not seed it.
+- `octogen` - **the current apex and the top shipped tier** (`OCTOGEN.md`).
 - `fulminate` — cordite + in-game per-seat opponent profiling (skews each
   profiled seat's rollout policy toward its best-fit archetype).
+- `torpex` - semtex's search with a learned value net. A measured negative
+  result, pipeline kept (`TORPEX.md`).
+- `novichok` - the cheating ceiling probe (`NOVICHOK.md`). Arena only, and it
+  must stay unreachable from `bots.wasm` and the roster.
+- `astrolite`, `distilled` - research arms; see `CORDITE_RESEARCH.md`.
 - Production TS mirrors: `simple_heuristic`, `champion`, `ultimate_champion`,
   `hacker`, `espresso_prod`, `handwritten_prod` — ported move for move from
   the retired TS bots; the TS originals and their parity suite are gone.
@@ -61,7 +68,7 @@ seed reproduces the same play run-to-run.
 ## Tools
 
 ```
-make all          # builds the four binaries below into build/
+make all          # builds the binaries below into build/
 make tests        # build + run the engine unit tests
 ```
 
@@ -73,8 +80,46 @@ make tests        # build + run the engine unit tests
   `    --pool=random,handwritten,espresso,robusta,firecracker,gunpowder,blackpowder,cordite`
 - `cnitro_replay` — replay one game move-by-move from a seed.
 - `cnitro_tests`  — engine smoke tests.
+- `cnitro_gen`, `cnitro_distill`, `cnitro_analyse` - the torpex training-data
+  generator (`TORPEX.md`), the distillation arm (`CORDITE_RESEARCH.md`) and the
+  post-game analyser (`docs/POST_GAME_ANALYSER.md`).
+
+The shipped roster (`src/bot_roster.c`) is ten tiers ending at octogen:
+`random, simple_heuristic, handwritten, espresso, robusta, firecracker,
+gunpowder, blackpowder, cordite, octogen`. There is no `cordite_max` or
+`octogen_max` - read `bot_roster.c`'s own comment for why "Max" was weaker.
 
 `bench_cordite.sh` runs the standard cordite benchmark suite.
+
+### Building the wasm on a Mac needs homebrew LLVM
+
+The variable is `WASM_CC`, not `CC`, and it defaults to plain `clang` - which on
+macOS is Apple clang and cannot target wasm32 at all:
+
+```
+make wasm-bots WASM_CC=/opt/homebrew/opt/llvm/bin/clang
+```
+
+Builds are byte-reproducible, so rebuilding and getting a different
+`sdk/ts/wasm/bots.wasm.gz` means your change moved it, not the toolchain.
+CI never rebuilds the wasm - it ships the committed `.gz`.
+
+
+### The arena fingerprint - a cheap "did bot behaviour drift?" check
+
+`./build/cnitro_eval 2>/dev/null | tail -1` prints one deterministic line for
+the default matchup.
+Two builds that print the same line play the same games; a changed line means
+some bot's decisions moved, which is either the point of your change or a bug
+in it.
+It is a diff, not a constant: the value is expected to move whenever a strategy
+or the engine's RNG consumption changes, so record it before and after rather
+than pinning it.
+
+```
+2   1.300   1.500   70.0%   140 60      # July 2026 (docs/CONSOLIDATION_PLAN.md, now retired)
+2   1.315   1.500    68.5%  137 63      # 2026-09-18, origin/main @ 801c58a0
+```
 
 ## History
 

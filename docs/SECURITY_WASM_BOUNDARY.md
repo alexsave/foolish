@@ -1,5 +1,11 @@
 # Adversarial review: the C/WASM kernel boundary
 
+> **Historical, July 2026. All findings fixed**, with the regression tests named
+> below. The pass/fail counts are of that date. `rules.wasm` was retired in C
+> game shape Phase 8 - the clamps it describes now ship inside `bots.wasm` and
+> `msg.wasm`. The threat model, the four findings' mechanisms and the
+> "what held up" list are the durable parts.
+
 An attacker-mindset pass over the newest, memory-unsafe attack surface: the
 freestanding C kernel (`cnitro`, compiled to `rules.wasm` + `bots.wasm`) that
 is now the single source of truth for rules AND bot play. The kernel has no

@@ -1,5 +1,11 @@
 # The web's animation timing and ordering, decision by decision
 
+> **Historical: this is the pre-migration audit.** Phase 9 steps 2-5 landed
+> (see "WHAT CAME OF THIS" at the foot of this file) and rewrote most of the
+> call sites the `AnimationContext.tsx:NNNN` anchors below point at.
+> Read the body for the comparison and the two negative results, not for line
+> numbers, and read the closing "C must NOT grow" list as the live part.
+
 Phase 9 step 1 of `docs/C_GAME_SHAPE_MIGRATION.md` section 7.
 Written before any code changes, so that what moves to C in step 2 is a list and not a guess.
 

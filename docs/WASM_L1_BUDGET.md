@@ -1,5 +1,15 @@
 # WASM linear-memory L1 budget
 
+> **Historical round, and the headline numbers have moved.**
+> There is one shipped kernel now, not three: `rules.wasm` and `guards.wasm`
+> were retired in C game shape Phase 8, and `bots.wasm` is pinned at **37
+> pages**, not the 13-14 quoted below. The live budget, with a per-symbol
+> breakdown, is `e2e/mem/wasm_memory.test.ts` - read that for current state.
+> Two caps below are also inverted since: `MAX_LOGS` is 1024, and `g_io` is
+> 400 KiB because the M9 overlay was later reversed.
+> What stands: the 63K-game measured-cap table, the `MAX_SNAPS`/`BN_CAP`
+> derivations, and the TT-divergence floor narrative with its repro commands.
+
 Every static buffer in the three shipped kernels (`rules.wasm`, `guards.wasm`,
 `bots.wasm`) is sized from a measured maximum, not a round guess. The goal that
 drove this pass: **fit the client-guards module's entire linear memory in an L1

@@ -1,5 +1,15 @@
 # Cordite strength research — can more compute make it win more?
 
+> **Historical, and partly overturned.** Finding 1's "pc2 is world-saturated"
+> conclusion was measured on the TS engine at a smaller budget against weaker
+> fields; `SEMTEX.md`'s worlds finding overturns it for the cordite mirror.
+> Read that before acting on this.
+> The TS harnesses named here (`cordite_arena.ts`, `cordite_h2h.ts`,
+> `offlinefun/localtest/`) are gone, and the v2.3/v2.4 version labels have no
+> counterpart in the C tree, which uses `CD_BUDGET=prod|max`.
+> The two "do not re-run blind" negatives - truncated rollouts with a positional
+> leaf eval, and distillation - are the reason this file is kept.
+
 This is an honest write-up of a focused effort to make **cordite** (the deployed
 belief-constrained determinized Monte-Carlo Durak bot) measurably stronger by
 spending more compute per decision, and to speed it up so a bigger budget is

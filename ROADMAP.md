@@ -147,9 +147,12 @@ carried by the wire and the replay codec - see docs/PODKIDNOY.md. Online games
 are still perevodnoy only, because their rules would have to survive
 `games.state`.
 A `variant` config on `games` threaded through `refill_deck` and the handlers
-is straightforward — **but the replay wire format is version-frozen (v2–v5)
-and encodes none of this**, so variants need a v6 header field. Do the codec
-design first; everything else follows.
+is straightforward.
+The codec half of this is **done**: the replay format is at v10, and the
+iMessage wire already carries a rules byte (`MSG_VARIANT_PASS`, FMSG formats
+5/6 - see `docs/PODKIDNOY.md`).
+What is left is the online path: `games.state` has to carry the variant so a
+server-side game's rules survive a reload.
 
 ### 9. Turn notifications
 PWA + service worker already exist (`offlinefun/`), so Web Push for "it's your
@@ -169,11 +172,19 @@ achievements can be granted retroactively. Cheap delight once history exists.
 
 ## Engineering debt worth scheduling
 
-- **`GameStateSource` unification** (`docs/REFACTOR_NOTES.md`) — one live /
-  replay / tutorial interface behind a single parameterized `GameBoard`. Was
-  explicitly deferred "after cordite"; cordite shipped. The tutorial and replay
-  screens each re-derive board state today, and every new surface (spectate,
-  history previews) pays that tax again.
+- **One board, one source** - live / replay / tutorial behind a single
+  parameterized `GameBoard`. Was explicitly deferred "after cordite"; cordite
+  shipped. Phases 6a/6b/7 of the C game shape migration put every screen on
+  `TableView` snapshots, which removed most of the tax, but the three surfaces
+  still re-compose the board three ways, and every new surface (spectate,
+  history previews) pays that again. See `docs/C_GAME_SHAPE_MIGRATION.md`
+  phases 6a-7 for what landed.
+- **`game_snapshots.extras` is not anonymized on account deletion.** The
+  replay-name blob survives a delete and needs replay re-encoding to clear.
+  Documented in the migration; revisit before the deletion story is leaned on.
+  (Carried over from `docs/NEXT_STEPS.md`, retired 2026-09-18, and from
+  `docs/IMESSAGE_SHIP_BLOCKERS.md` - it is the one rider from either that is
+  still open.)
 - **RLS coverage in e2e** — the harness connects as superuser, so policies
   (the `game_snapshots` participant ACL above all) are never exercised by
   tests. A `SET ROLE authenticated` + `request.jwt.claims` fixture would close

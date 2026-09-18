@@ -28,7 +28,7 @@ final class DumpLeaksTheDealTests: XCTestCase {
     private func source() throws -> [String] {
         let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         return try String(contentsOf: here.deletingLastPathComponent()
-            .appendingPathComponent("FoolishKit/Messages/MessagesRootView.swift"),
+            .appendingPathComponent("FoolishKit/Messages/GameSurface.swift"),
             encoding: .utf8).components(separatedBy: "\n")
     }
 

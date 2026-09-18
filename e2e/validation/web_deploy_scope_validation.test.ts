@@ -177,6 +177,35 @@ test('the workflow actually uses the filter, and production is never scoped', ()
         'web.yml no longer deploys production unconditionally');
 });
 
+test('previews are opt-in, and asking for one actually triggers a run', () => {
+    // Owner decision 2026-09-18, after production could not deploy for hours
+    // because preview deploys had spent the account's 100/day: "make previews
+    // opt in. Most changes don't affect web lately."
+    const wf = readFileSync(WORKFLOW, 'utf8');
+
+    assert.match(wf, /contains\(github\.event\.pull_request\.labels\.\*\.name, ''preview''\)/,
+        'web.yml no longer gates the preview on the `preview` label - every pull request '
+        + 'will deploy again, and production loses the race for the day\'s budget');
+
+    // The label must be a TRIGGER, not only a condition. Without `labeled` in
+    // the event types, adding the label does nothing until the next push: you
+    // ask for a preview, nothing happens, and no message says why.
+    const on = wf.slice(0, wf.indexOf('jobs:'));
+    assert.match(on, /types:\s*\[[^\]]*labeled[^\]]*\]/,
+        'pull_request does not trigger on `labeled`, so adding the preview label '
+        + 'would not build a preview until someone pushed again');
+
+    // Production must not be reachable through the label gate: the unconditional
+    // production path has to come FIRST, before any label check, or a merge to
+    // main would need a label it can never carry.
+    const decide = wf.slice(wf.indexOf('id: decide'));
+    const prodAt = decide.search(/github\.event_name.*!=.*pull_request/);
+    const labelAt = decide.search(/contains\(github\.event\.pull_request\.labels/);
+    assert.ok(prodAt >= 0 && labelAt >= 0 && prodAt < labelAt,
+        'the label gate now runs before the production branch - a merge to main would '
+        + 'be asked for a label it cannot have, and production would never deploy');
+});
+
 test('the filter is executable and self-consistent', () => {
     assert.ok(existsSync(FILTER), 'scripts/web_deploy_scope.sh is missing');
     // eslint-disable-next-line no-bitwise

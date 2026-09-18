@@ -1,5 +1,12 @@
 # Harness notes, round 2 - triage
 
+> **Historical, 2026-07-20 (round 2 of many).** Batches 8-11 landed; rounds 4,
+> 5, 22, 44 and 47 have happened since and superseded most of this.
+> The value is the root causes and the confidence column, not the batch plan.
+> **Note 9 was never resolved** ("Kernel `refill_player_hands` shows no 2p
+> asymmetry... no deterministic repro was found") - read it before
+> re-investigating the 2-player self-deal draw.
+
 Second pass of on-device testing (2026-07-20), after batches 1-7 landed. Sixteen
 notes. This file is the same shape as `HARNESS_NOTES_TRIAGE.md`: every note gets a
 root cause with evidence before anything is written, and the batch order is driven

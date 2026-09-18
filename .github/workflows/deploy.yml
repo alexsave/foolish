@@ -1,10 +1,15 @@
 name: deploy
 
-# Ships the Supabase backend on every merge to main: applies pending database
-# migrations, then deploys the edge functions. Migrations run FIRST so new
-# schema is in place before the new function code that depends on it (the
-# expand-then-deploy order; additive migrations keep the currently-live
+# Ships the Supabase backend on every merge to main: applies any pending schema
+# change, then deploys the edge functions. The schema change runs FIRST so it is
+# in place before the new function code that depends on it (the
+# expand-then-deploy order; an additive change keeps the currently-live
 # functions working during the window).
+#
+# server/impls/supabase/seed.sql is the schema, and every database but hosted is
+# built from it. Hosted is the one database that cannot be - seed.sql drops every
+# table it finds - so a change reaches it as a delta through
+# server/impls/supabase/migrations/, whose README has the rule.
 #
 # Required repository secrets (Settings > Secrets and variables > Actions):
 #   SUPABASE_ACCESS_TOKEN  - personal access token from
@@ -63,6 +68,10 @@ on:
       # comment is for.
       - 'c/src/**'
       - 'tools/structgen/**'
+      # tools/llvm.mk is where structgen's libclang comes from now, shared with
+      # tools/datagen. A deploy runs gen.sh, and gen.sh cannot build the
+      # generator without it.
+      - 'tools/llvm.mk'
   workflow_dispatch: {}
 
 # Never let two deploys race; queue instead of cancelling a push mid-flight.
@@ -111,8 +120,29 @@ jobs:
       - name: Link project
         run: supabase link --project-ref "$SUPABASE_PROJECT_REF" --workdir server/impls
 
-      - name: Apply database migrations
-        run: supabase db push --linked --yes --workdir server/impls
+      # NORMALLY A NO-OP, AND THAT IS THE POINT. seed.sql is the schema now, and
+      # server/impls/supabase/migrations/ is empty: a merge to main runs no SQL
+      # against the hosted database at all and goes straight to the functions.
+      #
+      # On the day somebody does add a delta there (its README has the rule),
+      # this step applies it before the functions that depend on it deploy. One
+      # thing has to happen first, once, by hand: hosted's history table still
+      # records the 39 versions whose files this commit deleted, and
+      # `supabase db push` REFUSES to run while a remote version has no local
+      # file - "LegacyDbPushMissingLocalError: Remote migration versions not
+      # found in local migrations directory", measured against a real Postgres
+      # carrying those rows, with the local directory both empty and absent. The
+      # one-time command that clears them is in the README. It is bookkeeping
+      # (it DELETEs rows from the history table and touches no schema), it can
+      # never be needed twice, and it is deliberately not here: nothing that
+      # touches hosted belongs on the merge path.
+      - name: Apply pending schema changes, if there are any
+        run: |
+          if ls server/impls/supabase/migrations/*.sql >/dev/null 2>&1; then
+            supabase db push --linked --yes --workdir server/impls
+          else
+            echo "server/impls/supabase/migrations/ holds no .sql file: this deploy runs no SQL against the hosted database."
+          fi
 
       - name: Deploy edge functions
         run: supabase functions deploy --project-ref "$SUPABASE_PROJECT_REF" --workdir server/impls

@@ -225,14 +225,14 @@ write-behind durability for every game and user (see
 the same in-memory game (`foolish_server_quic`, sharded across cores — see
 [`SERVER_SCALING.md`](SERVER_SCALING.md) "Stage 7"), admission control
 (`--max-conns`), and game reclamation that bounds RAM by peak concurrent games
-rather than cumulative. Partially present since Stage 6 (plaintext only): when
-a SERVER-SIDE BOT's move changes a game, the epoll worker that owns that
-game's connections proactively pushes fresh state to all of them (see
-`SERVER_SCALING.md` "Stage 6" — the epoll↔bot_thread wakeup seam); a HUMAN
-move does NOT broadcast to other seats (deliberately — see that same
-section for why fanning out on every human move measurably hurt
-throughput) — every `/ws` client still polls its own seat for that case
-(see `foolish_hammer.c`'s ws worker). The packed binary envelope the iOS
+rather than cumulative. Present since Stage 6 (plaintext only): the epoll
+worker that owns a game's connections proactively pushes fresh state to all
+of them whenever the game changes - a bot's move or a human's
+(`worker_push_stale`, `foolish_server.c:3018`). Stage 6 landed the
+bot-move half and briefly suppressed the human fan-out on throughput
+grounds; T1f (`PROFILE_HOTPATH.md`) root-caused that as a load-tool
+artifact and made the protocol push-only for both, so nothing polls any
+more. The packed binary envelope the iOS
 client expects (this speaks plain JSON over HTTP; `/ws` speaks the kernel's
 own packed wire), cert rotation, graceful (503-style) backpressure beyond
 admission control's fd-level shedding and the work-queue's own bounded

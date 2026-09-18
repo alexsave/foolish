@@ -97,5 +97,5 @@ The short version:
 - [`server/impls/native/README.md`](../server/impls/native/README.md) - endpoints, protocol, the kernel/server split, current status
 - [`docs/ARCHITECTURE_AS_A_PATTERN.md`](ARCHITECTURE_AS_A_PATTERN.md) - the doctrine this implementation tests
 - [`docs/C_CORE_CONSOLIDATION.md`](C_CORE_CONSOLIDATION.md) - A10, the split into `server/api` + `server/impls/*` and the DAG that `e2e/validation/layering_validation.test.ts` enforces
-- [`docs/SERVER_LIFECYCLE_CONSOLIDATION.md`](SERVER_LIFECYCLE_CONSOLIDATION.md) - the follow-on audit of the lobby/result/scoring skin, which found the native server hand-rolling a partial rematch reset instead of calling the kernel's `game_reset_to_lobby` (L2, still open)
+- [`docs/SERVER_LIFECYCLE_CONSOLIDATION.md`](SERVER_LIFECYCLE_CONSOLIDATION.md) - the follow-on audit of the lobby/result/scoring skin, which found the native server hand-rolling a partial rematch reset instead of calling the kernel's `game_reset_to_lobby` (L2, since done)
 - [`c/MAKE_UNMAKE.md`](../c/MAKE_UNMAKE.md) - a banked negative result from the same profiling work: make/unmake in the endgame solver, measured, reverted

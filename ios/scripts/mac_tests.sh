@@ -119,6 +119,22 @@ else FMT=(cat); fi
 
 say() { printf '\n\033[1m== %s\033[0m\n' "$1"; }
 
+# ---- 0. the generated modules FoolishKit compiles ---------------------------
+#
+# sdk/swift/gen is a BUILD OUTPUT, not committed, and FoolishKit compiles it:
+# kernel.ios.swift (the kernel's layouts) and gen/i18n (the app's text, written
+# from c/i18n). Every npm lane regenerates it through a pre-hook; nothing on the
+# Mac path did, so an Xcode build here could compile last week's modules against
+# this week's headers and this week's strings.
+#
+# That is not hypothetical. It was measured on exactly this script: a language's
+# name was changed in c/i18n/languages.h, the suite was run, and the test that
+# exists to catch that PASSED - because the Swift it compiled still held the old
+# value. A mutation that does not reach the artifact looks identical to a test
+# that cannot fail.
+say "generated modules (tools/structgen/gen.sh)"
+bash tools/structgen/gen.sh
+
 # ---- 1. the C engine, as the app links it ----------------------------------
 if [ "$build_lib" -eq 1 ]; then
   say "C engine xcframework (make ios-lib)"

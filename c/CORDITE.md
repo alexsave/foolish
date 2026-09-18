@@ -1,5 +1,14 @@
 # Cordite — belief-constrained determinized Monte Carlo, v2
 
+> **Still shipping** (roster tier 9), but the "Production TS port" section at
+> the foot of this file describes code that no longer exists: `cordite_core.ts`,
+> `cordite_strategy.ts`, `bot_strategy.ts` and the `offlinefun/localtest`
+> harness were all deleted with the TS bot layer, and `cordite_max` is
+> repudiated by `c/src/bot_roster.c` (it was `CD_BUDGET=max`, a flat budget that
+> is roughly half the player-count-aware `prod` schedule at 6-8 players).
+> The measurements, the two flagged negative results and the `bench_cordite.sh`
+> repro are live.
+
 The successor to blackpowder (as smokeless powder was to black powder).
 Same legitimacy contract: **no LLM, no cheating** — it sees exactly what a
 human sees (own hand, table, hand counts, deck count, the public move

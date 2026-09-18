@@ -1,5 +1,14 @@
 # C game shape migration
 
+> **COMPLETE AND DEPLOYED (2026-09-18). Do not execute the steps below.**
+> Phases 0-11 all landed and carry their own "as built" sections; the rebase is
+> recorded in `docs/REBASE_INVENTORY.md` and both deploys are in `git log`.
+> What is still worth reading: the §4.0 gate table (every measurement, per
+> phase, attributed by commit), the §5 risk register, the §6 Q1-Q18 rationale,
+> and the Cleanup section's migration-collapse evidence.
+> The scope bullets, delete lists and deploy-order runbooks are spent, and
+> several of the files they name no longer exist.
+
 Status: plan, written 2026-09-17 on branch `worktree-c-game-shape` at `ff9ec2ed`.
 Every file:line below was read at that commit.
 Recommendations in section 6 are written to be taken as decisions unless the owner says otherwise.

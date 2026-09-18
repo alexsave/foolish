@@ -36,13 +36,28 @@ import XCTest
 
 final class NameFieldKeyboardTests: XCTestCase {
 
-    /// MessagesRootView.swift, the one file holding all three name fields.
-    private func source() throws -> [String] {
+    /// One of the extension's surface files, by its path under `ios/`.
+    ///
+    /// These used to be one file and this helper took no argument. They are
+    /// three now (the screens, the modifier they share, and the surface that
+    /// routes to them), and each assertion below says which one it is about -
+    /// which is the point of the split, not an inconvenience of it. A path that
+    /// does not resolve fails here rather than reading as an empty file, so a
+    /// later rename is a red test and not a silently vacuous one.
+    private func source(_ path: String) throws -> [String] {
         // #filePath is this file; the surface sits one directory over.
         let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        let url = here.deletingLastPathComponent()
-            .appendingPathComponent("FoolishKit/Messages/MessagesRootView.swift")
+        let url = here.deletingLastPathComponent().appendingPathComponent(path)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            XCTFail("\(path) is gone - this test needs its path updated")
+            return []
+        }
         return try String(contentsOf: url, encoding: .utf8).components(separatedBy: "\n")
+    }
+
+    /// LobbyScreens.swift, the one file holding all three name fields.
+    private func source() throws -> [String] {
+        try source("FoolishKit/Messages/LobbyScreens.swift")
     }
 
     private func code(_ lines: [String]) -> [String] {
@@ -151,8 +166,8 @@ final class NameFieldKeyboardTests: XCTestCase {
     /// round-46 tests all passed anyway because none of them asked WHICH height
     /// was being measured. This one does.
     func testAutofocusMeasuresTheSurfaceNotItself() throws {
-        let src = code(try source())
-        guard let i = src.firstIndex(where: { $0.contains("private struct NameFieldAutofocus") }),
+        let src = code(try source("FoolishKit/Messages/NameFieldAutofocus.swift"))
+        guard let i = src.firstIndex(where: { $0.contains("struct NameFieldAutofocus") }),
               let end = src[i...].firstIndex(where: { $0.hasPrefix("}") && $0 != src[i] })
         else { return XCTFail("NameFieldAutofocus is gone - this test needs rewriting") }
         let body = src[i...end].joined(separator: "\n")
@@ -161,8 +176,11 @@ final class NameFieldKeyboardTests: XCTestCase {
         XCTAssertFalse(body.contains("GeometryReader"),
                        "a GeometryReader here measures the FIELD, not the drawer")
         // …and the root has to publish it, or the environment default (0) makes
-        // the gate unreachable in the other direction.
-        XCTAssertTrue(src.contains(where: { $0.contains(".environment(\\.surfaceHeight, geo.size.height)") }),
+        // the gate unreachable in the other direction. The root is a different
+        // file now, which is exactly the relationship being asserted: only the
+        // view that IS the drawer may measure it.
+        let root = code(try source("FoolishKit/Messages/MessagesRootView.swift"))
+        XCTAssertTrue(root.contains(where: { $0.contains(".environment(\\.surfaceHeight, geo.size.height)") }),
                       "nothing publishes surfaceHeight from the root GeometryReader")
     }
 
@@ -174,7 +192,7 @@ final class NameFieldKeyboardTests: XCTestCase {
     /// exact dead end this whole feature exists to cure. The host's own live
     /// answer is the second half of the gate.
     func testAutofocusAlsoWaitsForTheHostToSayExpanded() throws {
-        let src = code(try source())
+        let src = code(try source("FoolishKit/Messages/NameFieldAutofocus.swift"))
         guard let i = src.firstIndex(where: { $0.contains("private func raise(_ height: CGFloat)") })
         else { return XCTFail("NameFieldAutofocus.raise is gone - this test needs rewriting") }
         let body = src[i...min(i + 4, src.count - 1)].joined(separator: "\n")
@@ -189,7 +207,7 @@ final class NameFieldKeyboardTests: XCTestCase {
     /// dropped, opening any conversation with a known name takes the screen
     /// over uninvited.
     func testExpandForNameEntryIsGatedOnOwingAName() throws {
-        let src = code(try source())
+        let src = code(try source("FoolishKit/Messages/GameSurface.swift"))
         guard let i = src.firstIndex(where: { $0.contains("private func expandForNameEntry()") }) else {
             return XCTFail("expandForNameEntry is gone - this test needs rewriting")
         }

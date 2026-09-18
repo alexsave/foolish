@@ -1,5 +1,14 @@
 # Foolish for iOS — Full Design Doc & Build Plan
 
+> **Design record, July 2026. The app shipped**, so §16's milestone checklists
+> and §17's status table are historical.
+> One rule in it is now the opposite of the truth and should not be followed:
+> §16.0's "JSON bridge rule" (*Swift never parses the kernel's packed binary
+> formats; decode it in Swift with `Codable`*) was reversed by the JSON wipe -
+> Swift reads the packed wire, and `fio_anim_plan_json` is deleted.
+> The module map in §4/§16.A4 also names `FoolishKit/Engine/` and
+> `FoolishKit/Net/`, which are now `sdk/swift/` and `ios/FoolishNet/`.
+
 *A zero-context, implementation-ready design for a proper, App-Store-approved
 native iOS app: a port of foolish.cards with a cleaned-up, opinionated visual
 identity. No billing in v1, but architected so client-side Infinite Oracle

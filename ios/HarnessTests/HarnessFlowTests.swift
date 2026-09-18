@@ -21,7 +21,7 @@ import FoolishKit
 @MainActor
 final class HarnessFlowTests: XCTestCase {
 
-    // Mirror of GameSurface.load()'s routing (FoolishKit/Messages/MessagesRootView.swift):
+    // Mirror of GameSurface.load()'s routing (FoolishKit/Messages/GameSurface.swift):
     //   no payloadURL  -> New game setup (no game in the thread yet)
     //   decodable URL  -> load + board
     // (`damaged` is reserved for a link that fails to decode, not reachable from

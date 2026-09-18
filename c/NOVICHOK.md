@@ -26,6 +26,15 @@ it ended up answering three more interesting ones:
 Novichok is C-only, never registered in TS/production seeds, and (like
 espresso's hand-peek) exists purely as a benchmark ceiling probe.
 
+**Containment rule (do not relax it).**
+Novichok reads opponents' real hands, so it must stay unreachable from
+`bots.wasm` and from the shipped bot roster - a player must never be able to
+draw it as an opponent.
+The cheap check is a grep for `novichok` over whatever currently registers
+bots for production; it should return nothing.
+This rule outlived the branch-merge runbook that first wrote it down
+(`docs/CONSOLIDATION_PLAN.md`, retired 2026-09-18).
+
 ## What it cheats at
 
 Starting from a verbatim octogen copy (`nv_` namespace):

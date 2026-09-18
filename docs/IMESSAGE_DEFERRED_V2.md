@@ -365,6 +365,16 @@ assumes today's shape:
 
 ### 3.3 The safe rollout: the `variant` byte already exists for this
 
+> **Correction, 2026-09-18: the variant byte is no longer free.**
+> Podkidnoy shipped and spent bit0 as `MSG_VARIANT_PASS` on FMSG formats 5 and
+> 6 (`c/src/msg_wire.h`, `docs/PODKIDNOY.md`), with `MSG_VARIANT_KNOWN` as the
+> accepted mask.
+> The design below is still right in shape - one rules-variant bitmask, not a
+> format bump per rule - but `= 1` would collide with a shipped rule on real
+> chains. The next free bit is bit1, and the "hard-pinned to 0" reading of
+> `msg_wire.c` is gone: non-zero values inside `MSG_VARIANT_KNOWN` are accepted.
+> The same correction applies to §1.4, which inherits this assumption.
+
 `msg_wire.h`'s envelope carries a `variant` field at offset 16 (`:172`,
 `uint8_t variant;` in `MsgEnvelope`), documented as "reserved rules-variant
 byte, =0 today" and explicitly earmarked for exactly this kind of thing
@@ -478,7 +488,7 @@ What's already tracked in this repo, so batch 7 doesn't duplicate it:
 
 **Current funnel state, after batch 6.** A game bubble's URL is always a
 `/m/1<base32>` payload link (never a bare `foolish.cards/<code>`, since batch
-6 fixed the FINISHED-bubble-unparseable bug — `IMESSAGE_LOBBY_V2.md`,
+6 fixed the FINISHED-bubble-unparseable bug - `IMESSAGE_LOBBY_V3.md`,
 "FINISHED bubble: `/m/` + the web funnel"). `src/app/m/[payload]/page.tsx`
 decodes any phase read-only and renders a `Funnel` component
 (`page.tsx:170–195`) with: a prominent **"🎬 Watch the replay"** CTA when the

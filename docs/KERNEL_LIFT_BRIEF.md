@@ -1,5 +1,10 @@
 # The Swift-to-C lift: the brief every stage works from
 
+> **Campaign finished, 2026-09-05.** Every queued stage is DONE.
+> The house rules at the top are still live guidance; the stage log below is a
+> record, and some of the paths and recipes in it have since been retired
+> (noted inline where they would otherwise mislead).
+
 This is the working brief for the campaign that moves logic out of
 `ios/FoolishKit` and into the C kernel under `c/`.
 It exists so each stage can be handed to a fresh pair of hands without
@@ -61,7 +66,9 @@ So:
 - `c/src/json_out.c` used to be the ONE exception, on the grounds that it was
   how non-Swift hosts (the web, through wasm) read the kernel's formats.
   It is deleted: no JSON crosses any host boundary now.
-  The web reads the two packed formats in `sdk/ts/wire/packed_read.ts` instead.
+  The web read the two packed formats in `sdk/ts/wire/packed_read.ts`; that
+  module is gone and the web now reads through the C Table
+  (`sdk/ts/table/client_table.ts`, `c/src/client_table.h`).
   That is a byte layout stated twice, which this brief otherwise forbids, and it
   is the deliberate price of the exception going away - see that file's header.
   Do not add a JSON emitter back for a new host; give it a packed layout.
@@ -128,7 +135,7 @@ Do not run `xcodegen generate` by hand without restoring
 |---|---|
 | the animation core | `c/src/anim_plan.{c,h}` |
 | the event wire (writer, and now the reader) | `c/src/evwire.{c,h}` |
-| the web's reader for the two packed formats | `sdk/ts/wire/packed_read.ts` |
+| the web's reader for the two packed formats | `sdk/ts/wire/packed_read.ts` (since deleted - the web reads through `sdk/ts/table/client_table.ts`) |
 | legality and the move menu | `c/src/legal.{c,h}` |
 | the iOS bridge | `c/ios/ios_api.c`, `c/ios/include/ios_api.h` |
 | C tests | `c/tests/tests.c` |
@@ -1288,6 +1295,10 @@ The inversion is not real; the pessimism about the numbers is.
 Reproduced with the committed harness, not a new one:
 `make og_explain`, then `OG_EXPLAIN=<file> ./build/og_explain <seed> moves deal`
 driving the recorded game (`tests/og_explain.c`, `driven_replay`).
+**That command no longer runs**: the `og_explain` target and its
+`c/tools/og_explain` pipeline were retired (`c/Makefile`, 2026-09-18). The
+measurements below stand; the recipe does not. The nearest live equivalent is
+the post-game analyser (`make analyse`, `docs/POST_GAME_ANALYSER.md`).
 
 **The ranking at the cover of the last eight is CORRECT.**
 An exhaustive minimax over the real kernel (`calculate_legal_moves` + the

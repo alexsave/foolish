@@ -344,7 +344,7 @@ public actor MessageKernel {
     }
 
     /// Re-deal the RESIDENT game's own LOCKED seed at a different player count —
-    /// the group lobby's Start action (docs/IMESSAGE_LOBBY_V2.md): a lobby is
+    /// the group lobby's Start action (docs/IMESSAGE_LOBBY_V3.md): a lobby is
     /// created OPEN (`newGame(seed:, players: 8)`, the wire's max capacity) so
     /// seats stay free; Start re-derives the SAME seed's deal at the ACTUAL
     /// joined count (never a new random seed — that is the "locked at create"

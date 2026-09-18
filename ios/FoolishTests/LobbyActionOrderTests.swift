@@ -70,7 +70,7 @@ final class LobbyActionOrderTests: XCTestCase {
     private func source() throws -> String {
         let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         let url = here.deletingLastPathComponent()
-            .appendingPathComponent("FoolishKit/Messages/MessagesRootView.swift")
+            .appendingPathComponent("FoolishKit/Messages/GameSurface.swift")
         return try String(contentsOf: url, encoding: .utf8)
     }
 
@@ -81,7 +81,7 @@ final class LobbyActionOrderTests: XCTestCase {
     /// loudly rather than quietly passing on a slice of the wrong function.
     private func body(of fn: String, in src: String) throws -> String {
         let head = try XCTUnwrap(src.range(of: "private func \(fn)("),
-                                 "\(fn) is not a private func in MessagesRootView.swift")
+                                 "\(fn) is not a private func in GameSurface.swift")
         var depth = 0, started = false, out = ""
         for ch in src[head.lowerBound...] {
             if ch == "{" { depth += 1; started = true }

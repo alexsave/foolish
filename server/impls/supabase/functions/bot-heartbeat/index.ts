@@ -1,11 +1,11 @@
 // Server-side bot driver - replaces the dependency on a browser tab's poll to keep
 // games progressing. Invoked by a pg_cron job every few seconds (see
-// migrations/20260616040000_bot_heartbeat_cron.sql). Which games need driving is
+// seed.sql's SCHEDULED JOBS section). Which games need driving is
 // the kernel's verdict, stored as games.needs_bots by every commit (table.h
 // table_needs_bots: PLAYING, and a bot seat still IN); the scan only adds the
 // staleness window.
 //
-// The cron tick is gated (migration 20260918230000): it posts only when some
+// The cron tick is gated (the same section): it posts only when some
 // row the kernel says needs bots has committed within ABANDON_MS, so an idle
 // database costs nothing. The gate is strictly weaker than the filter below -
 // it does not know about STALE_MS - so every tick this function would have
