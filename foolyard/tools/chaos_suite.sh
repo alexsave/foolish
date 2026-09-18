@@ -5,12 +5,32 @@
 # A finding here is not automatically a bug. Some are expected by construction
 # and the point is the COUNT - view_regression on a datagram link is what an
 # unordered transport IS, and a stall behind a griefer is the answer to a
-# product question. What matters is that the kernel-level ones (conservation,
-# mutation_on_reject, phantom_hand_loss, seat_mismatch, cross_deal_apply) stay
-# at zero, and that nothing new appears where it did not before.
+# product question.
+#
+# Five of them are different, and this script EXITS NON-ZERO on them, which is
+# what makes it a gate rather than a wall chart:
+#
+#   conservation, mutation_on_reject, phantom_hand_loss, seat_mismatch
+#       the kernel's own invariants. No wire can excuse one of these; if the
+#       transport can make the kernel break a rule, the kernel is broken.
+#   queue_overflow
+#       not a kernel fault but a RUN fault: a game's request backlog ran out of
+#       room, so the run stopped simulating what it says it simulated and every
+#       other count in that column is under-reported. A silently wrong answer.
+#
+# `cross_deal_apply` is deliberately NOT in that set, though an earlier draft of
+# this header said it was. It fires for real (ws-hostile, seed 1) and it is a
+# finding about the PRODUCT wire, not the kernel: nothing in a frame names which
+# deal it was decided on, and the game id survives a rematch, so a move chosen
+# just before a re-deal is applied just after it. README.md has it under the
+# detectors. It is a bug in the protocol the sim is modelling, and the sim
+# reporting it is the sim working.
 #
 #   bash tools/chaos_suite.sh          # 3 seeds
 #   SEEDS="1 2 3 4 5" bash tools/chaos_suite.sh
+#
+# Exit: 0 if all five gated kinds are zero, 1 otherwise. CI runs it (see
+# .github/workflows/foolyard.yml); the printed matrix is for humans.
 set -u
 cd "$(dirname "$0")/.."
 
@@ -38,6 +58,25 @@ CONFIGS=(
 KINDS=(conservation mutation_on_reject stall phantom_hand_loss duplicate_applied
        view_regression queue_overflow seat_mismatch cross_deal_apply move_applied_late)
 
+# The gated subset, by NAME - so a reordering of KINDS cannot silently re-point
+# the gate at a different finding, the way an index list would.
+GATED=(conservation mutation_on_reject phantom_hand_loss seat_mismatch queue_overflow)
+
+is_gated() {
+    for g in "${GATED[@]}"; do [ "$g" = "$1" ] && return 0; done
+    return 1
+}
+
+# Every gated name must really be one of the kinds foolyard prints. A typo here
+# ("conservaton") would gate on a count that is always zero because nothing ever
+# writes it - a gate that cannot fail, which is the failure this whole file is
+# about.
+for g in "${GATED[@]}"; do
+    found=0
+    for k in "${KINDS[@]}"; do [ "$k" = "$g" ] && found=1; done
+    [ "$found" = 1 ] || { echo "chaos_suite: gated kind '$g' is not a finding foolyard reports"; exit 2; }
+done
+
 printf "%-17s %6s  cons  muta stall phant dupli viewr queue seatm cross latem\n" "config" "games"
 printf '%.0s-' {1..110}; printf "\n"
 
@@ -45,6 +84,7 @@ printf '%.0s-' {1..110}; printf "\n"
 # in lockstep with KINDS.
 NK=${#KINDS[@]}
 TOTAL=(); for ((i=0;i<NK;i++)); do TOTAL[$i]=0; done
+total_games=0
 
 for cfg in "${CONFIGS[@]}"; do
     name="${cfg%%|*}"; args="${cfg#*|}"
@@ -53,13 +93,19 @@ for cfg in "${CONFIGS[@]}"; do
     for sd in $SEEDS; do
         out=$($BIN $args --seed "$sd" 2>&1)
         g=$(echo "$out" | awk '/^  games/{print $4}')
-        games=$((games + ${g:-0}))
+        # An unparsed line is not a zero. If the report's wording moves, every
+        # `${v:-0}` below turns into a clean sheet and the gate stops gating -
+        # so a missing field is a hard error, not a default.
+        [ -n "$g" ] || { echo "chaos_suite: no games line in '$name' seed $sd - the report format moved"; exit 2; }
+        games=$((games + g))
         for ((i=0;i<NK;i++)); do
             v=$(echo "$out" | awk -v k="${KINDS[$i]}" '$1==k{print $2}')
-            sum[$i]=$(( ${sum[$i]} + ${v:-0} ))
-            TOTAL[$i]=$(( ${TOTAL[$i]} + ${v:-0} ))
+            [ -n "$v" ] || { echo "chaos_suite: '$name' seed $sd printed no ${KINDS[$i]} count - the report format moved"; exit 2; }
+            sum[$i]=$(( ${sum[$i]} + v ))
+            TOTAL[$i]=$(( ${TOTAL[$i]} + v ))
         done
     done
+    total_games=$((total_games + games))
     printf "%-17s %6d" "$name" "$games"
     for ((i=0;i<NK;i++)); do
         if [ "${sum[$i]}" = 0 ]; then printf " %5s" "."; else printf " %5d" "${sum[$i]}"; fi
@@ -72,5 +118,30 @@ printf "%-17s %6s" "TOTAL" ""
 for ((i=0;i<NK;i++)); do
     if [ "${TOTAL[$i]}" = 0 ]; then printf " %5s" "."; else printf " %5d" "${TOTAL[$i]}"; fi
 done
-printf "\n\nKernel-level findings must be zero: conservation, mutation_on_reject,\n"
-printf "phantom_hand_loss, seat_mismatch. Anything else is transport behaviour.\n"
+printf "\n\n"
+
+# The gate. A run that played no games at all would satisfy every count
+# trivially, so the total games played is checked too: chaos with nothing in it
+# is the same clean sheet as chaos that passed.
+failed=""
+for ((i=0;i<NK;i++)); do
+    if is_gated "${KINDS[$i]}" && [ "${TOTAL[$i]}" != 0 ]; then
+        failed="$failed ${KINDS[$i]}=${TOTAL[$i]}"
+    fi
+done
+
+if [ "$total_games" -lt 100 ]; then
+    printf "FAIL: the suite finished only %d games - it is not exercising anything.\n" "$total_games"
+    exit 1
+fi
+
+if [ -n "$failed" ]; then
+    printf "FAIL:%s\n" "$failed"
+    printf "These are the kernel's own invariants plus run integrity. No wire\n"
+    printf "excuses one: re-run the named config with --deep and a single seed.\n"
+    exit 1
+fi
+
+printf "PASS: %d games, and all of %s stayed at zero.\n" "$total_games" "${GATED[*]}"
+printf "Everything else in the matrix is transport behaviour, not a bug -\n"
+printf "see the header of this file and README.md's detector table.\n"

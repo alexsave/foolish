@@ -1,0 +1,106 @@
+name: foolyard
+
+# foolyard/ links the REAL kernel: its Makefile compiles `../c/src/*.c` with a
+# wildcard, so every kernel change is a foolyard build, and nothing else in CI
+# builds it. Without this lane it is a simulation harness that nobody runs, and
+# this repo already knows exactly what that costs.
+#
+# og_explain was that: a pipeline whose drivers named paths the repo had moved
+# out from under them. It kept running, kept printing, and for two months it was
+# printing the wrong thing, because the instrumented wasm it thought it was
+# swapping in was going to a path no loader read. Nothing failed. Nothing said
+# so. e2e/validation/helper_scripts_validation.test.ts exists because of it.
+#
+# So this lane asserts the three things that must not silently stop being true:
+#
+#   1. it COMPILES against today's c/src. The likeliest way foolyard dies is a
+#      kernel signature change - awire_apply, bot_drive, calculate_legal_moves,
+#      state_put - and a sim that does not build is at least loud.
+#   2. it is DETERMINISTIC. README.md's central claim is "same seed plus same
+#      code gives the same run, event for event". Two runs of one seed are
+#      diffed here, so a stray clock, address or uninitialised read cannot creep
+#      in and quietly make every measured number unrepeatable.
+#   3. the KERNEL still does not flinch under chaos. tools/chaos_suite.sh runs
+#      thirteen hostile configurations and exits non-zero if any of the kernel's
+#      own invariants broke, or if a run overflowed its queue and so under-
+#      reported everything else. See that file's header for why the transport
+#      findings (stall, view_regression, duplicate_applied, cross_deal_apply)
+#      are NOT gated: they are what the sim exists to report.
+#
+# What this lane deliberately does NOT do is check the measured NUMBERS in
+# README.md and SCALE_PROJECTION.md. Those are a function of the kernel and move
+# whenever play changes, so pinning them would fail on every legitimate kernel
+# change and be reflexively bypassed. They are re-measured by hand; the commands
+# are written above each block for exactly that reason.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  sim:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # No node, no libclang, no wasm toolchain: foolyard is a plain native C
+      # build of foolyard/src + foolyard/clients + c/src, and tools/structgen
+      # writes TypeScript and Swift, which nothing here links. `cc` is enough.
+      - name: Compiler
+        run: cc --version | head -1
+
+      - name: Build against today's kernel
+        run: make -C foolyard -j"$(nproc)"
+
+      # A clean lineup on a clean wire has nothing to find, so the run is
+      # expected to be totally silent - `clean`, exit 0. If this one goes red the
+      # sim is broken, not the transport.
+      - name: A quiet table is clean
+        run: |
+          cd foolyard
+          ./foolyard --games 8 --secs 600 --seed 1 \
+            --lineup wellbehaved@400,wellbehaved@600,handwritten@300,random@200 | tee /tmp/quiet.txt
+          grep -q '^  clean$' /tmp/quiet.txt \
+            || { echo "::error::a quiet table reported findings"; exit 1; }
+          # A run that dealt nothing would also be "clean". It has to have played.
+          finished=$(awk '/^  games/{print $4}' /tmp/quiet.txt)
+          [ "${finished:-0}" -ge 1 ] \
+            || { echo "::error::the quiet run finished $finished games - it simulated nothing"; exit 1; }
+          echo "quiet run finished $finished games with no findings"
+
+      # Same seed, same code, same run - event for event. --trace prints one line
+      # per scheduler pop and what it did, which is the finest-grained record the
+      # sim has, so this diff is as strict as the claim. Both streams are kept:
+      # the trace is stdout, the findings are stderr, and a divergence in which
+      # detector fired is exactly as interesting as one in the event order.
+      #
+      # The single line that is ALLOWED to differ is the wall-clock summary
+      # ("... in 0.01s wall (1231512 events/s)"), which measures real time and so
+      # cannot repeat. It is normalised rather than dropped, so the line itself
+      # still has to be there.
+      - name: The same seed gives the same run
+        run: |
+          cd foolyard
+          for i in 1 2; do
+            ./foolyard --games 4 --secs 300 --seed 12345 --trace \
+              --lineup datagram@150,resender@250,wellbehaved@200,handwritten@300 \
+              --loss 4 --dup 5 --jitter 400 > "/tmp/raw$i.txt" 2>&1 || true
+            sed -E 's/ in [0-9.]+s wall \([0-9]+ events\/s\)/ in WALL/' \
+              "/tmp/raw$i.txt" > "/tmp/trace$i.txt"
+          done
+          # An empty trace would diff clean against another empty trace.
+          lines=$(wc -l < /tmp/trace1.txt)
+          [ "$lines" -ge 1000 ] \
+            || { echo "::error::--trace produced only $lines lines - it has stopped tracing"; exit 1; }
+          grep -q ' in WALL' /tmp/trace1.txt \
+            || { echo "::error::no wall-clock summary line - the report format moved and this diff is normalising nothing"; exit 1; }
+          diff -u /tmp/trace1.txt /tmp/trace2.txt \
+            || { echo "::error::two runs of seed 12345 diverged - foolyard is no longer deterministic"; exit 1; }
+          echo "$lines traced lines, identical across two runs"
+
+      # The gate. Thirteen hostile configurations x three seeds; see the script's
+      # header for which findings are gated and why the rest are not.
+      - name: Chaos suite (the kernel's invariants under every hostile wire)
+        run: SEEDS="1 2 3" bash foolyard/tools/chaos_suite.sh
