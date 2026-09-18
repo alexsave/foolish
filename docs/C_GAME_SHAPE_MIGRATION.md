@@ -1784,6 +1784,27 @@ Keep it honest about what did NOT move: rendering, scheduling, HTTP/auth/DB, and
 Cross-reference `docs/C_GAME_SHAPE_MIGRATION.md`, `docs/KERNEL_LIFT_BRIEF.md` and `docs/C_CORE_CONSOLIDATION.md` rather than repeating them.
 No code changes in this phase; docs only, so its gate is a read-through plus the repo's markdown conventions (one sentence per line, no em dashes).
 
+#### Phase 11 as built
+
+`docs/ARCHITECTURE_AS_A_PATTERN.md` is rewritten (391 lines to 610), keeping its three parts and its "never seen Durak" rule.
+All eight required additions are in, plus the multi-language story (one clang-derived model, three emitters, a per-target hash), a "what did NOT move" section, the two refusals, a section on running an effort like this, and a closing section on where the repo is still short of the pattern.
+
+Three things in the brief did not survive contact with the sources, and the document says so rather than repeating them.
+
+- **The size figures in item 8 are stale**, because the brief was written before Phases 9 and 10 landed.
+  The document uses the last measured numbers in this file: `bots.wasm.gz` 65,307 to **80,913 B** (not "about 77 KB"), and the web bundle union 330,504 to **304,866 B** gz (not "about 301,700 B").
+  Both still say what the brief wanted them to say: the kernel grew about 24 percent, the shipped bundle fell about 8 percent, and total shipped bytes fell.
+- **The Component Model / jco and embind measurement is recorded nowhere in the repo** except the Phase 11 brief itself (no doc, no commit message, no note under `tools/structgen`).
+  The document carries the numbers and cites this file as their only home, so a reader can see how thin the provenance is.
+  If they are to survive as doctrine, the run should be written down somewhere with a date and a command.
+- **Two claims about Phase 0 fixes needed downgrading.**
+  `e2e/lobby_authz.test.ts` (0.2) does not exist, so the lobby finding is cited against `e2e/security_seat_from_auth.test.ts` and `e2e/table_server_seat.test.ts`, which do hold it.
+  The `commit_game` relock is a migration on this branch and not yet deployed, so the document says the finding is closed in the repo and open on hosted until the owner's deploy.
+
+Also corrected against the sources rather than carried forward: the old "three specialized wasm modules" headline (two of the three were deleted in Phase 8, and what survived is specialization by target and by export allow-list), the differential-parity seam (now stated as the rule for when to retire a parity test), the `-O3` file count in the performance playbook (three, not five), and the audit's remaining items, which are three landed whole, one landed in part and two not landed (`docs/ANIM_TIMING_AUDIT.md` section 13; the monotonic watermark is still `Math.max` at `src/contexts/AnimationContext.tsx:292`).
+
+No code, test or gate changed.
+
 ### Final step: rebase onto main, replayed slowly (owner, 2026-09-17)
 
 The owner chose a REBASE replay over a single merge, deliberately, so every commit is re-applied and nothing is silently swallowed by one big conflict resolution.
