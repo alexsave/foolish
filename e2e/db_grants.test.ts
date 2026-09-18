@@ -13,7 +13,11 @@
 // PostgREST does not expose them, so they are not remotely callable.
 //
 // Runs against seed.sql applied verbatim to a real Postgres, so it covers the
-// fresh-database path (seed.sql), not just the migration.
+// fresh-database path (seed.sql) only. The hosted project never runs seed.sql,
+// and this stayed green while 20260906120000 left commit_game open there:
+// e2e/db_migration_grants.test.ts replays the migrations the hosted project
+// actually receives, under Supabase's default privileges, and also holds the
+// table-write invariant.
 //
 // Owns the grant validation scenarios; the fast runner
 // (e2e/validation/db_validation.test.ts) imports `registerDbGrantsValidation`
