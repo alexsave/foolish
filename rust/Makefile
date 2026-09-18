@@ -6,7 +6,14 @@
 #
 # The C benches compile the actual kernel sources from ../c/src with the same
 # native flags production uses (c/Makefile: -O3 -ffast-math -flto, clang).
-CC     ?= clang
+#
+# `CC ?= clang` would NOT do it: make ships CC with a built-in default of `cc`,
+# so `?=` never fires and the "clang" build silently became whatever `cc` points
+# at - gcc on most Linux boxes, which is the very thing bench-c-gcc exists to
+# measure separately. Override only make's own default, never the environment's.
+ifeq ($(origin CC),default)
+CC := clang
+endif
 CFLAGS ?= -O3 -ffast-math -flto -Wall -Wextra -Wno-unused-parameter -I../c/src
 
 KSRC_LEGAL   = ../c/src/game.c ../c/src/deal_rng.c ../c/src/legal.c
