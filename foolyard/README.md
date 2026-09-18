@@ -143,14 +143,20 @@ only exist once there is a wire.
 | `cross_deal_apply` | a move decided in one game applied to the next after a rematch |
 | `move_applied_late` | a seat's earlier move applied after its later one |
 
-Check depth is a knob, because at 1024 tables the detectors are 6.5% of the
-run and a pure capacity measurement does not want them:
+Check depth is a knob, because the detectors are ~6% of a run and a pure
+capacity measurement does not want them. The lineup is named because the cost
+is a fraction of the PLAY, so a table of bare seconds means nothing without it:
 
-| | what runs | 1024 tables, 1 sim-hour |
-|---|---|---|
-| `--no-checks` | nothing | **1.53 s** |
-| default | O(seats) card count every change, full 52-card walk every 16th | **1.63 s** |
-| `--deep` | full walk every change + clone/compare on every reject | **2.56 s** |
+```sh
+./foolyard --games 1024 --secs 3600 --seed 1 \
+    --lineup wellbehaved@400,wellbehaved@600,handwritten@300,random@200
+```
+
+| | what runs | wall time | vs `--no-checks` |
+|---|---|---|---|
+| `--no-checks` | nothing | **5.28 s** | - |
+| default | O(seats) card count every change, full 52-card walk every 16th | **5.59 s** | +5.9% |
+| `--deep` | full walk every change + clone/compare on every reject | **9.90 s** | +87% |
 
 The split default is mutation-tested, not assumed: injecting a created card
 (count breaks) is caught 182 times, and injecting a card duplicated OVER
@@ -162,14 +168,16 @@ turn clock, so one seat that declines to act holds its table forever:
 
 ```
 $ ./foolyard --games 2 --secs 200 --lineup wellbehaved@200,griefer@0,handwritten@300
-[  30.000s] stall   game 1 v1 quiet for 30.0s: defender 2, queue 0,
+[  35.000s] stall   game 0 v6 quiet for 30.9s: defender 1, queue 0,
+                    could move 0x2, bots parked 0x4, subscribed 0x3
+[  35.000s] stall   game 1 v5 quiet for 31.0s: defender 1, queue 0,
                     could move 0x2, bots parked 0x4, subscribed 0x3
   games      2 dealt, 0 finished
-  moves      2 sent, 2 applied
+  moves      5 sent, 5 applied
 ```
 
 `could move 0x2` is only the griefer, and it never will. Two tables, 200
-seconds, two moves. Nothing anywhere breaks the deadlock.
+seconds, five moves between them. Nothing anywhere breaks the deadlock.
 
 ### what a retried move costs
 
@@ -181,16 +189,18 @@ key, so the server applies whatever is still legal:
 ```
 $ ./foolyard --games 6 --secs 400 --loss 4 --dup 3 --jitter 400 \
     --lineup wellbehaved@150,laggy@600,reconnect@200,resender@250,stale@700,handwritten@200,random@100
-[   4.200s] duplicate_applied  game 5 seat 3: good(n=0) seq 3 applied again
-                               (last was 3), chosen at v11, board at v15
-  moves      4469 sent, 3054 applied, 2101 applied against a board the mover had not seen
-  duplicate_applied    45
+[   3.194s] duplicate_applied  game 3 seat 3: good(n=0) seq 2 applied again,
+                               chosen at v8, board at v13
+[   6.274s] duplicate_applied  game 0 seat 3: good(n=0) seq 4 applied again,
+                               chosen at v13, board at v20
+  moves      4633 sent, 3076 applied, 2217 applied against a board the mover had not seen
+  duplicate_applied    42
 ```
 
 Every single one is `good(n=0)`, and that is the whole story: a move carrying
 cards immunises itself, because the retry names a card that has already left
 the hand and is rejected as not-in-hand. `good` carries nothing, so a retry
-that arrives 4-9 versions late lands in a **later bout the client never saw**
+that arrives 1 to 10 versions late lands in a **later bout the client never saw**
 and says good there - silently forfeiting a throw-in the player still had.
 Invisible from the client, and a concrete argument for an idempotency key on
 the action path.
@@ -207,45 +217,46 @@ server that stutters, and rematches churning through:
 ```
 
 ```
-  moves      10479 sent, 5939 applied, 4641 rejected, 4487 applied against a board the mover had not seen
-  packets    57516 sent, 2912 dropped, 3243 duplicated, 3125 overtaken
+  moves      6757 sent, 3741 applied, 3064 rejected, 2917 applied against a board the mover had not seen
+  packets    37025 sent, 1838 dropped, 2161 duplicated, 2122 overtaken
 
   conservation         0
   mutation_on_reject   0
-  stall                4
+  stall                7
   phantom_hand_loss    0
-  duplicate_applied    103
-  view_regression      3125
+  duplicate_applied    72
+  view_regression      2122
   cross_deal_apply     0
-  move_applied_late    26
+  move_applied_late    14
 ```
 
 **The kernel does not flinch.** Zero conservation failures and zero
-mutations-on-reject across 10,479 moves, 4,487 of them decided against a board
+mutations-on-reject across 6,757 moves, 2,917 of them decided against a board
 the mover had never seen. Everything below is the transport around it.
 
 ### a lost push strands a seat forever
 
-All four stalls are a **datagram** seat, with `subscribed 0x3f` - everyone
+All seven stalls are a **datagram** seat, with `subscribed 0x3f` - everyone
 still connected, nobody disconnected, the seat simply never learns it is its
 turn. A QUIC DATAGRAM push is not retransmitted, there is no connection reset
 to trigger a reconnect, the protocol is push-only, and the client never polls.
 Dropping only the loss knob and changing nothing else:
 
 ```
-loss 0%:  27 dealt, 19 finished,  1 stall
-loss 5%:  17 dealt,  9 finished,  4 stalls
+loss 0%:  25 dealt, 17 finished,  2 stalls
+loss 5%:  13 dealt,  5 finished,  7 stalls
 ```
 
-Lost pushes halve the throughput of the whole table.
+Lost pushes cut the whole table's throughput to under a third.
 
 ### ...and even with no loss at all
 
-That one remaining stall at **0% loss** is the sharper version. Nothing was
+Those two remaining stalls at **0% loss** are the sharper version. Nothing was
 dropped. The pushes simply arrived out of order, and on an unordered transport
 a client's state is whichever push landed *last*, not the newest one. It read a
 stale board, concluded it was not its turn, and waited forever for a push that
-can never come - because the board cannot change until it acts.
+can never come - because the board cannot change until it acts. Both are a
+datagram seat again (`could move 0x1` and `0x2`, the two `datagram` tiers).
 
 Neither failure exists on the `/ws` path, where TCP ordering and connection
 resets between them cover both cases. Both are properties of push-only over an
@@ -256,8 +267,9 @@ state.
 ### moves applied out of the order they were made
 
 ```
-[  19.595s] move_applied_late  game 4 seat 0: pickup(n=0) seq 11 applied after seq 12 had already landed
-[  48.808s] move_applied_late  game 0 seat 0: attack(n=1) seq 67 applied after seq 68 had already landed
+[  29.092s] move_applied_late  game 4 seat 0: good(n=0) seq 21 applied after seq 22 had already landed
+[  45.778s] move_applied_late  game 2 seat 0: attack(n=1) seq 39 applied after seq 40 had already landed
+[ 115.177s] move_applied_late  game 0 seat 0: pickup(n=0) seq 93 applied after seq 94 had already landed
 ```
 
 Not duplicates - a seat's *earlier* move arriving behind its later one and

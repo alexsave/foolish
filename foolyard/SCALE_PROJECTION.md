@@ -29,6 +29,15 @@ Frame rate per table barely moves with the mix, which makes it a usable
 constant: **~1.2-1.5 frames/sec per live table**, both directions, and that is
 what a connection actually has to carry.
 
+> **This table does not record the lineup it was run with, so it cannot be
+> re-run.** A later attempt to reproduce it from the description alone
+> ("human seats thinking 5-6s per move (+-4s), 90ms wire") landed 2.7x off on
+> game length and 2.6x off on moves per game, which is a different measurement,
+> not this one. Every figure derived from it below - frames/sec per table, and
+> so the connection and memory walls - inherits that. Re-measure with the
+> command written down before trusting it again; the capacity table at the
+> bottom of this file is the format to follow.
+
 ## The bridge
 
 Three inputs the business documents do not state. They are assumptions, not
@@ -92,14 +101,22 @@ is the number that matters most.
 
 Yes, comfortably, on a laptop:
 
-| | tables | sim time | wall time |
-|---|---|---|---|
-| one core | 1,024 | 1 hour | **8.1 s** |
-| 8 shards | 8,192 | 1 hour | **14.6 s** |
-| one core, human-paced | 512 | 2 hours | **2.5 s** |
+Two lineups, because wall time is a fraction of the PLAY and a bare second
+means nothing without one. `bot` is
+`wellbehaved@400,wellbehaved@600,handwritten@300,random@200`; `human` is four
+`wellbehaved@5500+4000` seats on a 90ms wire (`--latency 90`).
 
-Sustained ~3.1M events/sec, linear in tables. A full sim-**day** at the
-breakout scale of 5,833 tables costs about **6 minutes on one core**.
+| | lineup | tables | sim time | wall time |
+|---|---|---|---|---|
+| one core | bot | 1,024 | 1 hour | **5.6 s** |
+| 8 shards | bot | 8,192 | 1 hour | **12.1 s** |
+| one core | human | 1,024 | 1 hour | **1.8 s** |
+| one core, human-paced | human | 512 | 2 hours | **1.7 s** |
+
+Sustained ~4.0M events/sec on either, linear in tables: the lineups differ in
+events per table, not in the cost of an event. Extrapolating, a full sim-**day**
+at the breakout scale of 5,833 tables is about **4 minutes** on one core at
+human pace, or about **13 minutes** if every table carries bots.
 
 The per-process ceiling is ~4,000 tables: peak packets in flight runs at 2 per
 table against `ID_LIMIT`'s 8,192 slots, which is the 13-bit event param. Past
