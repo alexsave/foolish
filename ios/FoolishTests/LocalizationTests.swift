@@ -337,20 +337,23 @@ final class LocalizationTests: XCTestCase {
     // The strings are C now (c/i18n), and tools/datagen writes FoolishKit's
     // copy and the website's from them. These three say the seams hold.
 
-    /// The hand-written `allKeys` below and the generated key list must be the
-    /// same set. `allKeys` is not deleted in favour of the generated one on
-    /// purpose: it is an INDEPENDENT oracle, written by a person against what
-    /// the app renders, and a generator checked only against itself proves
-    /// nothing. This is what keeps the two honest about each other.
-    func testTheKeyListAndTheGeneratedKeysAgree() {
-        let generated = Set(FoolishStringKeys)
-        let listed = Set(Self.allKeys)
-        XCTAssertEqual(generated.subtracting(listed), [],
-                       "c/i18n/keys.h has keys this suite does not know about: "
-                       + generated.subtracting(listed).sorted().joined(separator: ", "))
-        XCTAssertEqual(listed.subtracting(generated), [],
-                       "this suite expects keys c/i18n/keys.h does not declare: "
-                       + listed.subtracting(generated).sorted().joined(separator: ", "))
+    /// Every key this app asks for must exist in c/i18n/keys.h.
+    ///
+    /// ONE DIRECTION ONLY, and the asymmetry is the point. `allKeys` is what the
+    /// PHONE renders; the key space also carries the website's screens, which
+    /// this app has none of (a leaderboard, an Oracle panel, a replay
+    /// transport). So the C being a superset is correct and expected, and a key
+    /// the C does not declare is the real failure: the app would ask for a name
+    /// nothing answers to and render the key itself on the board.
+    ///
+    /// `allKeys` is not replaced by the generated list on purpose. It is an
+    /// INDEPENDENT oracle, written by a person against what the app renders,
+    /// and a generator checked only against itself proves nothing.
+    func testEveryKeyTheAppAsksForExists() {
+        let missing = Set(Self.allKeys).subtracting(Set(FoolishStringKeys))
+        XCTAssertEqual(missing, [],
+                       "this app asks for keys c/i18n/keys.h does not declare: "
+                       + missing.sorted().joined(separator: ", "))
     }
 
     /// Every language the C registry declares must reach a table through
