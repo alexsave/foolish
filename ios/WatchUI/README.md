@@ -77,10 +77,14 @@ In rough order, and none of it is watch-UI work:
    The watch needs the generated models plus `FoolishBots`, so the likely answer
    is a small watch-safe module rather than a destination on `FoolishKit`.
 3. Reconcile the four API drifts in the table above.
-4. Re-check identity: player names now come out of the Roster blob, not
-   `games.name`/`players`, so `RosterScreen`'s name source needs rechecking.
-5. Only then add `dependencies:` to the `WatchFoolish` target in
+4. Only then add `dependencies:` to the `WatchFoolish` target in
    `ios/project.yml`.
+
+Checked and **not** a problem, so nobody spends time on it twice: identity moved
+into a Roster blob server-side, but `PlayerView.name` is still there in
+`sdk/swift/Models.swift`, and `WatchGame.name(for:)` already generates a stable
+display name when a seat's kernel name is empty - which is every offline bot
+seat. The roster screen needs nothing.
 
 ## Where it came from
 
