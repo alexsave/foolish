@@ -183,9 +183,30 @@ test('previews are opt-in, and asking for one actually triggers a run', () => {
     // opt in. Most changes don't affect web lately."
     const wf = readFileSync(WORKFLOW, 'utf8');
 
-    assert.match(wf, /contains\(github\.event\.pull_request\.labels\.\*\.name, ''preview''\)/,
+    assert.match(wf, /contains\(github\.event\.pull_request\.labels\.\*\.name, 'preview'\)/,
         'web.yml no longer gates the preview on the `preview` label - every pull request '
         + 'will deploy again, and production loses the race for the day\'s budget');
+
+    // THIS ASSERTION EXISTS BECAUSE THE BUG SHIPPED. The first version of the
+    // label gate wrote ''preview'' inside a `run: |` block, doubling the quotes
+    // as if it were a YAML single-quoted scalar. A block scalar does not quote
+    // anything, so Actions received contains(..., ''preview'') , rejected the
+    // expression, and rejected the WHOLE WORKFLOW FILE - every job vanished and
+    // main's production deploy never ran.
+    //
+    // Nothing local caught it: the file is valid YAML (ruby -ryaml parses it
+    // happily) and merely an invalid Actions expression, and the test above was
+    // written to match the broken spelling, so it went green against the defect
+    // it was supposed to describe. Same failure family as every other entry in
+    // this repo's mutation notes - green against the wrong artifact.
+    for (const [bad, what] of [
+        ["''preview''", 'doubled single quotes (YAML-scalar escaping inside a block scalar)'],
+        ['\\"preview\\"', 'escaped double quotes'],
+    ] as const) {
+        assert.equal(wf.includes(`labels.*.name, ${bad}`), false,
+            `web.yml uses ${what} in the label expression. GitHub will refuse the whole `
+            + 'workflow file, not just this step, and every job in it disappears.');
+    }
 
     // The label must be a TRIGGER, not only a condition. Without `labeled` in
     // the event types, adding the label does nothing until the next push: you

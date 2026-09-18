@@ -153,7 +153,17 @@ jobs:
 
           # OPT-IN. A preview is only built when someone asks for one by
           # labelling the pull request `preview`. Default is no deployment.
-          labelled='${{ contains(github.event.pull_request.labels.*.name, ''preview'') }}'
+          #
+          # The quotes here are load-bearing and were wrong once. `run: |` is a
+          # YAML BLOCK scalar, so nothing inside it is YAML-quoted and a doubled
+          # '' is two literal characters, not an escape. Written as ''preview''
+          # the expression reaches Actions as contains(..., ''preview'') , which
+          # it refuses - and it refuses the WHOLE FILE, so every job in this
+          # workflow disappears rather than one step failing. That is what
+          # "This run likely failed because of a workflow file issue" means, and
+          # a local YAML parse will not catch it: the file is valid YAML and an
+          # invalid expression. Single quotes inside, double quotes outside.
+          labelled="${{ contains(github.event.pull_request.labels.*.name, 'preview') }}"
           if [ "$labelled" != "true" ]; then
             echo "deploy=false" >> "$GITHUB_OUTPUT"
             echo "no 'preview' label; not spending a deployment"
