@@ -47,8 +47,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useServer } from '../../contexts/ServerContext';
 import { useAnimation } from '../../contexts/AnimationContext';
 import { useGame } from '../../contexts/GameContext';
-import { canAttack, canPass, canCoverCards, canCoverPair } from '../../utils/gameValidation';
-import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
+import { canAttack, canPass, coverGesture } from '../../utils/gameValidation';
+import { clientTable } from '@sdk/ts/table/client_table.ts';
+import { PLAY_TARGET_HAND } from '@sdk/ts/gen/view_layout.bots.ts';
 import { covered, rulesOf, seatKey, type TableView, type ViewCard as Card } from '../../state/view';
 
 type CoverTarget = { kind: 'cover'; attack: Card; battleIndex: number };
@@ -264,13 +265,11 @@ export const KeyboardPlayMode = () => {
                         }
                         return;
                     }
-                    // defender: cover via the unambiguous mapping, else pass.
-                    if (canCoverCards(g, selected)) {
-                        const mapping = kernelUnambiguousCover(selected, g.battles, g.powerSuit);
-                        if (mapping) {
-                            s.fire('cover', s.cover(mapping.coverCards, mapping.attackCards), true);
-                            return;
-                        }
+                    // defender: the cover the kernel aims at, else pass.
+                    const move = coverGesture(g, selected);
+                    if (move) {
+                        s.fire('cover', s.cover([...move.cards], [...move.attackCards]), true);
+                        return;
                     }
                     if (canPass(g, selected)) {
                         s.fire('pass', s.pass(selected), true);
@@ -284,10 +283,11 @@ export const KeyboardPlayMode = () => {
                     return;
                 }
                 // defender: decide cover vs pass vs target-selection
-                const coverable: CoverTarget[] = g.battles
-                    .map((b, i) => ({ b, i }))
-                    .filter(({ b }) => !covered(b) && canCoverPair(b.attack, card, g.powerSuit))
-                    .map(({ b, i }) => ({ kind: 'cover', attack: b.attack, battleIndex: i }));
+                // Which battles this card could cover is the kernel's answer
+                // (client_play -> legal.h play_coverable_battles); which of them
+                // to offer, and in what order to cycle them, is this picker's.
+                const coverable: CoverTarget[] = clientTable().play(g, [card], PLAY_TARGET_HAND).coverable
+                    .map((i) => ({ kind: 'cover', attack: g.battles[i].attack, battleIndex: i }));
                 const passOK = canPass(g, [card]);
 
                 if (coverable.length === 0 && passOK) { s.fire('pass', s.pass([card])); return; }
@@ -426,11 +426,11 @@ export const KeyboardPlayMode = () => {
 };
 
 /* ------------------------------- helpers ----------------------------------- */
-// Cover->attack mapping resolution lives in ONE place — the kernel
-// (kernelUnambiguousCover -> legal.c unambiguous_cover). The local copy that
-// used to sit here, and the TS coverCombinations.ts that replaced it, are both
-// gone (A7/F9): one resolver for web/phone/watch/iMessage. Whether Good may be
-// said is the kernel's too (client_view_rules can_say_good).
+// What a gesture means lives in ONE place - the kernel (client_play, over
+// legal.h's play_* rules). The local cover resolver that used to sit here, and
+// the TS coverCombinations.ts that replaced it, are both gone: one answer for
+// web/phone/watch/iMessage. Whether Good may be said is the kernel's too
+// (client_view_rules can_say_good).
 
 // the "empty space" the pass arrow points at: just right of the table battles
 function passPoint(): { x: number; y: number } {

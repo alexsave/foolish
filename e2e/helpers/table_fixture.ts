@@ -48,6 +48,9 @@ interface FixtureExports extends TableExports {
     wasm_fixture_seat(idLen: number, nameLen: number, brainLen: number): number;
     wasm_fixture_seal(): number;
     wasm_card_list_parse(len: number, cap: number, battles: number): number;
+    wasm_cards_a_ptr(): number;
+    wasm_cards_b_ptr(): number;
+    wasm_unambiguous_cover(nCover: number, nBattles: number, powerSuit: number): number;
 }
 
 let kernel: { ex: FixtureExports; table: ServerTable } | null = null;
@@ -257,4 +260,57 @@ function parseOne(step: string, text: string): number {
     const { cards } = parseCards(step, text, 1, false);
     if (cards.length === 0) throw new FixtureRefused(step, L.CARD_PARSE_E_EMPTY, 'CARD_PARSE_E_EMPTY');
     return cards[0];
+}
+
+// ---- the one-tap cover resolver (legal.c unambiguous_cover) -----------------
+//
+// "Do these cover cards cover the uncovered attacks in exactly ONE way" - a
+// different question from the menu's, and one no shipped host asks any more: the
+// web's Cover button moved to client_play (client_table.h) and iOS never called
+// it. So wasm_unambiguous_cover is a TEST-BUILD export now (c/Makefile
+// WASM_BOTS_UNSHIPPED_API), and this is the only thing that reaches it. The
+// packing lives here for the same reason the export does - it is a test's
+// business, not a product's.
+
+/** The paired result: cover card i defends attackCards[i]. */
+export interface CoverCombination { coverCards: PlayCardLike[]; attackCards: PlayCardLike[] }
+
+interface PlayCardLike { suit: number; value: number }
+
+// The wire card byte (c/wasm/wire.h): 0..51 = suit*13 + (value-1), 0xFF no card.
+const WIRE_NONE = 0xff;
+const wireCard = (c: PlayCardLike): number => c.suit * 13 + (c.value - 1);
+
+/**
+ * The pairing, or null when the selection covers the table in no way or in more
+ * than one. An uncovered battle's defense is null, or the kernel's CARD_NONE on
+ * a board a client holds.
+ */
+export function unambiguousCover(
+    coverCards: readonly PlayCardLike[],
+    battles: readonly { attack: PlayCardLike; defense: PlayCardLike | null }[],
+    powerSuit: number,
+): CoverCombination | null {
+    if (coverCards.length === 0) return null;
+    const ex = fixtureExports() as unknown as FixtureExports;
+    const buf = new Uint8Array(ex.memory.buffer);
+    const a = ex.wasm_cards_a_ptr();
+    coverCards.forEach((c, i) => { buf[a + i] = wireCard(c); });
+    const b = ex.wasm_cards_b_ptr();
+    battles.forEach((t, i) => {
+        buf[b + 2 * i] = wireCard(t.attack);
+        const d = t.defense;
+        buf[b + 2 * i + 1] = !d || (d.suit === -2 && d.value === -2) ? WIRE_NONE : wireCard(d);
+    });
+    const n = ex.wasm_unambiguous_cover(coverCards.length, battles.length, powerSuit);
+    if (n <= 0) return null;
+    // Re-fetch: a wasm call can grow (and detach) the buffer.
+    const out = new Uint8Array(ex.memory.buffer);
+    const io = ex.wasm_io_ptr();
+    const attackCards: PlayCardLike[] = [];
+    for (let i = 0; i < n; i++) {
+        const v = out[io + i];
+        attackCards.push({ suit: (v / 13) | 0, value: (v % 13) + 1 });
+    }
+    return { coverCards: [...coverCards], attackCards };
 }

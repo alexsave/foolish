@@ -7,11 +7,10 @@ import { CardFace } from "./CardFace";
 import { TexturedSurface } from "../TexturedSurface";
 import { useEffect, useRef } from "react";
 import { Text } from "../Text";
-import { kernelUnambiguousCover } from "@sdk/ts/wasm/bots.ts";
-import { canAttack, canPass, canCoverCards, canCoverPair, canPickup } from "../../utils/gameValidation";
+import { canAttack, canPass, canCoverCards, canPickup, coverGesture } from "../../utils/gameValidation";
 import { useStyles } from "../../contexts/StyleContext";
 import { useTutorialHint } from "../../contexts/TutorialHintContext";
-import { PLAYER_STATUS, covered, rulesOf, seatKey } from "../../state/view";
+import { PLAYER_STATUS, rulesOf, seatKey } from "../../state/view";
 
 // Green glow used by the tutorial to point at the card/button to use next.
 const TUT_GLOW = '0 0 0 3px #2fcf63, 0 0 16px 3px rgba(47,207,99,0.85)';
@@ -209,34 +208,18 @@ export const ActionButtons = () => {
         });
     };
 
+    // The button aims itself: which battle it covers, and with which cards, is
+    // the kernel's answer (gameValidation.coverGesture -> client_play with
+    // CLIENT_PLAY_COVER_BUTTON). The same answer decided the button was live.
     const handleCoverClick = () => {
-        const uncoveredBattles = game.battles.filter(battle => !covered(battle));
-
-        if (selectedCards.length === 1) {
-            const validTarget = uncoveredBattles.find(battle =>
-                canCoverPair(battle.attack, selectedCards[0], game.powerSuit)
-            );
-            if (validTarget) {
-                setActionPressed('cover', true);
-                setSelectedCards([]);
-                cover([selectedCards[0]], [validTarget.attack]).catch((e) => {
-                    console.error('Cover failed:', e.message);
-                    setActionPressed('cover', false);
-                });
-            }
-        } else {
-            // Use the shared cover resolver (same as DragContext/KeyboardInputHandler)
-            // instead of re-implementing the permutation search inline.
-            const mapping = kernelUnambiguousCover(selectedCards, game.battles, game.powerSuit);
-            if (mapping) {
-                setActionPressed('cover', true);
-                setSelectedCards([]);
-                cover(mapping.coverCards, mapping.attackCards).catch((e) => {
-                    console.error('Multi-card cover failed:', e.message);
-                    setActionPressed('cover', false);
-                });
-            }
-        }
+        const move = coverGesture(game, selectedCards);
+        if (!move) return;
+        setActionPressed('cover', true);
+        setSelectedCards([]);
+        cover([...move.cards], [...move.attackCards]).catch((e) => {
+            console.error('Cover failed:', e.message);
+            setActionPressed('cover', false);
+        });
     };
 
     const spacerStyle = { width: '60px', height: '40px' };

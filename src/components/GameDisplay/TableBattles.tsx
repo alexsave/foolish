@@ -4,7 +4,9 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useGame } from "../../contexts/GameContext";
 import { useDrag } from "../../contexts/DragContext";
 import { useTutorialHint } from "../../contexts/TutorialHintContext";
-import { covered } from "../../state/view";
+import { covered, sameCard } from "../../state/view";
+import { MOVE_ATTACK, MOVE_COVER, MOVE_PASS } from "@sdk/ts/gen/view_layout.bots.ts";
+import type { ClientPlay } from "@sdk/ts/table/client_table.ts";
 
 const COVER_ROTATION: string = (Math.PI/ 16) + 'rad';
 
@@ -22,48 +24,22 @@ export const TableBattles = () => {
     }
 
     // Determine what action would happen if we dropped right now
-    let currentAction: 
-        | { type: 'attack' }
-        | { type: 'cover', targetCard: any }
-        | { type: 'multicover', coverCards: any[], attackCards: any[] }
-        | { type: 'pass' }
-        | { type: 'rearrange' }
-        | { type: 'invalid' }
-        | null = null;
+    let currentAction: ClientPlay | null = null;
     if (isDraggingForGameAction && draggedCard && currentCursorPos) {
         currentAction = determineGameAction(currentCursorPos.x, currentCursorPos.y, draggedCard);
     }
 
-    // Helper function to check if a card would be covered by the current action
-    const isCardBeingCovered = (attackCard: any) => {
-        if (!currentAction) return false;
-        
-        if (currentAction.type === 'cover' && currentAction.targetCard) {
-            return currentAction.targetCard.value === attackCard.value && 
-                   currentAction.targetCard.suit === attackCard.suit;
-        }
-        
-        if (currentAction.type === 'multicover' && currentAction.attackCards) {
-            return currentAction.attackCards.some((card: any) => 
-                card.value === attackCard.value && card.suit === attackCard.suit
-            );
-        }
-        
-        return false;
-    };
+    // Would the current drop cover this attack? The kernel's move names the
+    // attacks it covers, so a single cover and a multi-cover are one case.
+    const isCardBeingCovered = (attackCard: { suit: number; value: number }) =>
+        currentAction?.moveType === MOVE_COVER
+        && currentAction.attackCards.some((c) => sameCard(c, attackCard));
 
-    // Calculate how many empty drop zones we need for attack/pass
-    let emptyDropZones = 0;
-    if (currentAction && (currentAction.type === 'attack' || currentAction.type === 'pass')) {
-        // Check if the dragged card is part of selected cards
-        const isDraggedCardSelected = selectedCards.some(selectedCard =>
-            selectedCard.value === draggedCard!.value && selectedCard.suit === draggedCard!.suit
-        );
-        
-        // Use all selected cards if the dragged card is selected, otherwise just the dragged card
-        const cardsToUse = isDraggedCardSelected && selectedCards.length > 0 ? selectedCards : [draggedCard];
-        emptyDropZones = cardsToUse.length;
-    }
+    // How many empty drop zones an attack or a pass would need: the cards the
+    // kernel's move actually lays.
+    const emptyDropZones = currentAction
+        && (currentAction.moveType === MOVE_ATTACK || currentAction.moveType === MOVE_PASS)
+        ? currentAction.cards.length : 0;
 
     return <div data-table-container style={{
         display: 'flex',

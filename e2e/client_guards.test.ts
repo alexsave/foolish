@@ -20,7 +20,8 @@ import assert from 'node:assert/strict';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import type { TableView, ViewCard as Card } from '../sdk/ts/table/client_table.ts';
 import { canAttack, canPass, canPickup, canCoverPair, validateCover } from '../src/utils/gameValidation.ts';
-import { __clientKernelExports, kernelUnambiguousCover } from '../sdk/ts/wasm/bots.ts';
+import { __clientKernelExports } from '../sdk/ts/wasm/bots.ts';
+import { unambiguousCover as kernelUnambiguousCover } from './helpers/table_fixture.ts';
 import { encodeAction, type AwireMove } from '../sdk/ts/wire/awire.ts';
 import { MemTable, residentMoves } from './helpers/table_mem.ts';
 

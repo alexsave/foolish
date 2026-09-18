@@ -9,10 +9,10 @@
 // only, so the board's hidden cards cannot change a verdict; e2e/client_guards
 // and c/tests (test_client_validate_is_the_engine) hold that to the server.
 //
-// What remains in TS is only the UI *affordance* layered on the rules:
-// canCoverCards decides when to OFFER a one-click cover (i.e. when the covered
-// set is unambiguous), a presentation choice, not a rule - and even that asks
-// the kernel (kernelUnambiguousCover).
+// The Cover button is the kernel's too: coverGesture hands the selection and
+// the board to client_play, which aims the button (play_best_cover_target) and
+// resolves the move that lands there (play_resolve) in one call, so the button's
+// enable state and its click can never be two different answers.
 //
 // Every gate takes the board the screen holds: the kernel's TableView snapshot
 // (src/state/view.ts), the viewer's seat its `mySeat`. The gates are synchronous:
@@ -20,9 +20,9 @@
 // is wrapped in src/components/KernelGate.tsx, asserted from the import graph by
 // e2e/validation/kernel_gate_validation.test.ts.
 
-import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
 import { encodeAction, type AwireMove } from '@sdk/ts/wire/awire.ts';
-import { clientTable } from '@sdk/ts/table/client_table.ts';
+import { clientTable, type ClientPlay } from '@sdk/ts/table/client_table.ts';
+import { CLIENT_PLAY_COVER_BUTTON, MOVE_COVER } from '@sdk/ts/gen/view_layout.bots.ts';
 import { rejectMessage } from '../wasm/rejectMessages';
 import type { TableView, ViewCard as Card } from '../state/view';
 
@@ -47,15 +47,21 @@ export const canPass = (view: TableView, cards: Cards): boolean =>
 export const canPickup = (view: TableView): boolean =>
     verdict(view, { kind: 'pickup' }) === 0;
 
-// ---- cover offer (UI affordance over the kernel's can_cover) ----------------
-// True when the selection covers uncovered attacks in exactly one unambiguous
-// way - resolved in the kernel (kernelUnambiguousCover -> legal.c
-// unambiguous_cover), the one resolver every host shares (A7/F9). This is a
-// display choice (whether to offer the one-click cover), not a rule.
-export const canCoverCards = (view: TableView, selectedCards: Cards): boolean => {
-    if (selectedCards.length === 0) return false;
-    return kernelUnambiguousCover(selectedCards, view.battles, view.powerSuit) !== null;
+// ---- the Cover button ------------------------------------------------------
+// What the button does with this selection, and so whether to show it at all:
+// the kernel aims it (legal.h play_best_cover_target - the highest attack the
+// selection beats, trumps outranking everything, ties to the leftmost) and
+// resolves the move that lands there (play_resolve). One answer for the enable
+// state and the click, so a live button cannot turn out to have no move.
+export const coverGesture = (view: TableView, selectedCards: Cards): ClientPlay | null => {
+    if (selectedCards.length === 0) return null;
+    const p = clientTable().play(view, selectedCards, CLIENT_PLAY_COVER_BUTTON);
+    return p.moveType === MOVE_COVER ? p : null;
 };
+
+/** Whether the Cover button is live for this selection. */
+export const canCoverCards = (view: TableView, selectedCards: Cards): boolean =>
+    coverGesture(view, selectedCards) !== null;
 
 // Whether `defense` beats `attack` under the board's power suit (the kernel's can_cover).
 export const canCoverPair = (attack: Card, defense: Card, powerSuit: number): boolean =>
