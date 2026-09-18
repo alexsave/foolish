@@ -63,6 +63,10 @@ on:
       # comment is for.
       - 'c/src/**'
       - 'tools/structgen/**'
+      # tools/llvm.mk is where structgen's libclang comes from now, shared with
+      # tools/datagen. A deploy runs gen.sh, and gen.sh cannot build the
+      # generator without it.
+      - 'tools/llvm.mk'
   workflow_dispatch: {}
 
 # Never let two deploys race; queue instead of cancelling a push mid-flight.

@@ -144,6 +144,57 @@ set +f
 "$SG" "${IOS[@]}" --build "ios=$(flags IOS_CFLAGS)" --target "$(flags IOS_LAYOUT_TRIPLE)" \
   --swift "$swift/kernel.ios.swift"
 
+# ---- the translated strings (tools/datagen) ---------------------------------
+#
+# A SIBLING TOOL, not a structgen flag. structgen asks clang for shape - every
+# offset, size and stride - and never reads a value; datagen asks for contents
+# and never reads a layout. They share this driver, tools/llvm.mk and the
+# libclang it finds, and nothing else. See tools/datagen/datagen.c.
+#
+# The source is c/i18n: one keys.h, one registry, and one strings_<code>.c per
+# language. NONE OF IT IS COMPILED INTO ANYTHING SHIPPED - c/i18n is outside
+# c/src and appears in no *_SRC list, because twenty-five languages is around
+# 150 KB of string data and bots.wasm.gz is downloaded by every visitor.
+# e2e/validation/i18n_not_in_wasm.test.ts is the gate on that.
+#
+# ONE MODULE PER LANGUAGE, and that is a bundle decision, not tidiness: a
+# dynamic import keeps every export of its target alive in the web bundle
+# whatever the importer uses (src/wasm/msgKernel.ts learned this the expensive
+# way), so the module the site imports for a language has to BE one language.
+make -s -C "$root/tools/datagen" build/datagen
+DG="$root/tools/datagen/build/datagen"
+i18n_ts="$prod/i18n"; i18n_swift="$swift/i18n"
+mkdir -p "$i18n_ts" "$i18n_swift"
+dg() { "$DG" --cwd "$root/c/i18n" "$@"; }
+
+# The registry first: what languages there are, what each calls itself, and
+# which way it is written. A table of structs, so datagen reads its columns by
+# field name - the case that proves this tool is not string-table-shaped.
+dg --header languages.h --table FS_LANGUAGES --require-complete --name FoolishLanguages \
+   --ts "$i18n_ts/languages.ts" --swift "$i18n_swift/FoolishLanguages.swift"
+# Every key that exists, in one list, so a host can check its own coverage.
+dg --header keys.h --table FS_KEY_NAME --require-complete --name FoolishStringKeys \
+   --ts "$i18n_ts/keys.ts" --swift "$i18n_swift/FoolishStringKeys.swift"
+
+# …and one module per language. THE LIST COMES FROM THE REGISTRY, read back out
+# of the C, so adding a language is adding its file and its row and nothing
+# else. A row whose strings_<code>.c is missing fails here, by name.
+dg --header languages.h --table FS_LANGUAGES --json "$i18n_ts/.languages.json"
+codes="$(sed -n 's/.*"code": "\([a-z][a-z]*\)".*/\1/p' "$i18n_ts/.languages.json")"
+rm -f "$i18n_ts/.languages.json"
+[ -n "$codes" ] || { echo "gen: the language registry (c/i18n/languages.h) read back empty" >&2; exit 1; }
+for code in $codes; do
+  up="$(printf '%s' "$code" | tr '[:lower:]' '[:upper:]')"
+  cap="$(printf '%s%s' "$(printf '%s' "${code%"${code#?}"}" | tr '[:lower:]' '[:upper:]')" "${code#?}")"
+  # --require-complete is the load-bearing flag. One 25-row table made a missing
+  # key a compile error; twenty-five independent tables would make it a silent
+  # empty string on a board in a language nobody here reads. This is what took
+  # that job over, and it names every key it cannot find.
+  dg --header "strings_$code.c" --table "FS_STRINGS_$up" --labels "FS_STRINGS_$up.0=FS_KEY_NAME" \
+     --require-complete --name "FoolishStrings$cap" \
+     --ts "$i18n_ts/strings.$code.ts" --swift "$i18n_swift/FoolishStrings$cap.swift"
+done
+
 # Genericity fixtures (test/verify.test.ts).
 "$SG" --cwd "$here/test" --header kinds.h --root Kinds --build wasm= --const K_ --const KFLAG_ --ts "$fixtures/kinds.ts"
 "$SG" --cwd "$here/test" --header snap.h --root Snap --root SPtr --build wasm= --snapshot Snap --snapshot SPtr --snapshot-only \
