@@ -109,8 +109,16 @@ background/foreground and rotation without a crash or a broken state.
 ---
 
 
-**Verdict: not approvable as submitted.** Four blockers, nine majors, eleven
-minors, one item that needs a two-device check before it can be called anything.
+> **Superseded, 2026-09-18.** Everything from here down is the earlier
+> pass-1/pass-2 record against Release 1.1(49). Its verdict was answered: the
+> blockers were fixed and the app shipped. Read pass 3 above for current state,
+> and treat the code citations below as dated - `MSG_MAX_NAME` is 64 bytes /
+> 16 chars (not 12), the default table is felt (not `.wool`), and the bundles
+> declare more than three localizations.
+
+**Verdict at the time: not approvable as submitted.** Four blockers, nine majors,
+eleven minors, one item that needs a two-device check before it can be called
+anything.
 
 This is the merged record of two independent adversarial passes over the same
 build. Pass 1 swept the main flows and the submission metadata; pass 2 went to

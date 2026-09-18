@@ -1007,7 +1007,7 @@ int fio_new_game(const uint8_t *seed, int seed_len, int n_players) {
 }
 
 // Re-deal the CURRENT resident game's own LOCKED seed at a different player
-// count — the iMessage lobby's "Start" action (docs/IMESSAGE_LOBBY_V2.md): a
+// count — the iMessage lobby's "Start" action (docs/IMESSAGE_LOBBY_V3.md): a
 // group lobby is created OPEN (fio_new_game with the wire's max capacity, 8,
 // §5.2) so seats stay free to fill; when the joined players decide to start,
 // this re-derives the SAME seed's deal at the ACTUAL joined count (seats are

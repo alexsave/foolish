@@ -129,18 +129,13 @@ position (as done above to clear octogen of the "inaccuracy").
 
 ```sh
 cd c
-# core sources minus cordite_sim.c (the tools #include it for the static sim_* helpers)
-CORE="src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/awire.c \
-  src/evwire.c src/random_strategy.c src/espresso_strategy.c src/handwritten_strategy.c \
-  src/robusta_strategy.c src/firecracker_strategy.c src/gunpowder_strategy.c \
-  src/blackpowder_strategy.c src/cordite_strategy.c src/astrolite_strategy.c \
-  src/simple_heuristic_strategy.c src/champion_strategy.c src/ultimate_champion_strategy.c \
-  src/hacker_strategy.c src/fulminate_strategy.c src/espresso_prod_strategy.c \
-  src/handwritten_prod_strategy.c src/distill_feat.c src/distilled_strategy.c \
-  src/semtex_strategy.c src/octogen_strategy.c src/torpex_strategy.c src/torpex_value.c \
-  src/novichok_strategy.c"
+# core sources minus cordite_sim.c (the tools #include it for the static sim_* helpers).
+# Ask the Makefile rather than hardcoding the list - it has grown a lot, and a
+# stale hardcoded list fails at link with "_bot_knob_int, referenced from ...".
+CORE=$(make -s print-core | tr ' ' '\n' | grep -v cordite_sim.c | tr '\n' ' ')
 FLAGS="-O3 -ffast-math -Isrc -Wno-deprecated-declarations -DCD_TT_BITS=20"
 
+# bash: $CORE.  zsh (this Mac's default shell) does not word-split, so: ${=CORE}
 clang $FLAGS tools/endgame_retro/solve.c    $CORE -o build/eg_solve    -lm && ./build/eg_solve 60000000
 clang $FLAGS tools/endgame_retro/validate.c $CORE -o build/eg_validate -lm && ./build/eg_validate 20000 4
 clang $FLAGS tools/endgame_retro/alphabeta_probe.c $CORE -o build/eg_probe -lm && ./build/eg_probe 200000000

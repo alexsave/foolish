@@ -108,14 +108,14 @@ before `lock`.
 ### Deletion
 
 `persist_delete(table, id)` exists in `persist.h`/`persist.c` and is wired
-into the same drain/transaction path as an upsert — but nothing in
-`foolish_server.c` currently calls it, because `g_games[]`/`g_users[]`
-themselves are an insert-only store with no GC (see their own "insert-only,
-no delete" comment in `foolish_server.c`, predating this stage). If that
-ever changes, deleting a finished/GC'd game's row is a one-line
-`persist_delete(g_game_table, s->id)` call away — the schema and the write
-path both already support it honestly rather than silently dropping
-deletes.
+into the same drain/transaction path as an upsert.
+When this stage was written nothing called it, because `g_games[]`/`g_users[]`
+were an insert-only store with no GC.
+**That changed in Stage 7**: the slot reaper calls
+`if (g_game_table) persist_delete(g_game_table, s->id);`
+(`foolish_server.c:3301`), so a reclaimed game's row is deleted rather than
+silently left behind.
+The schema and the write path support it honestly rather than dropping deletes.
 
 ## The blob format
 
@@ -158,8 +158,11 @@ codec (this server already used it, unchanged, for `/state`/`/ws` before
 this stage), not something Stage 2 introduces.
 
 **Users** (`serialize_user`/`deserialize_user`): fixed-width — version byte
-+ `token[33]` + `user_id[13]` + `username[24]` = 71 bytes, no length field
-needed.
++ `user_id[ID_LEN + 1]` + `username[24]`, no length field needed.
+No token is stored: session tokens became stateless HMAC-signed blobs
+(`make_token`/`verify_token`), so a user is looked up by the `user_id` the
+token carries. `deserialize_user` requires the exact length, which is how the
+older token-bearing rows are cleanly rejected rather than misread.
 
 ### The round-trip gate
 
@@ -188,7 +191,8 @@ already exist — call each table's load callback **synchronously, once per
 row**, with no locking needed (nothing else is running yet):
 
 - `user_persist_load`: finds a free `g_users[]` slot, `deserialize_user`s
-  the row into it, inserts it into `g_token_ht`.
+  the row into it, and indexes it by user id and username (`g_userid_ht`,
+  `g_username_ht`). There is no token table to insert into any more.
 - `game_persist_load`: finds a free `g_games[]` slot, `memset`s it,
   `deserialize_slot`s the row into it, `pthread_mutex_init`/`cond_init`s
   its lock/cond (never restored FROM the blob — these are runtime-only,

@@ -1,5 +1,12 @@
 # octogen · pc 2 — transposition-table divergence
 
+> **Generated file, 2026-07-10.** Produced by
+> `c/tools/tt_divergence_viz/table.mjs` from the committed `data/W/*.gw`; do not
+> hand-edit it, re-run `accrue_div.sh`.
+> Its "TT13 <- shipped" marker predates the current build: `c/Makefile` ships
+> `-DCD_TT_BITS=12` for `bots.wasm`, with 20 only for the oracle builds. Check
+> the Makefile, not this marker, for what ships.
+
 Directly-measured fraction of games whose move sequence differs from the TT22 reference, by `CD_TT_BITS`, with a 95% Wilson interval. Seed-keyed and deduped, so this is poolable and keeps tightening as more seeds run. Model column is the baseline-free upper bound P(W > 2^bits) from the working-set distribution; latency is avg protagonist decision CPU time (CD_LAT pass).
 
 Reference: TT22 · up to **1,020 seeds** per size.

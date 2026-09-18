@@ -1,5 +1,13 @@
 # Foolish → $1M: A Monetization Roadmap
 
+> **Historical, July 2026, and superseded on the money.**
+> `docs/ORACLE_MONETIZATION_ENGINEERING.md` replaced the Phase-1 revenue mix and
+> is the better copy of every overlapping number.
+> No Phase-0 gate was ever entered, so the phase/gate checklist is scaffolding.
+> What survives here and nowhere else: §1's engineering-framing vs
+> business-framing table, §2's ARPDAU arithmetic, §7's side-quest ceilings and
+> §8's pre-committed answers.
+
 *A realistic, staged plan for turning foolish.cards into a seven-figure business,
 written against the actual state of this repo (July 2026).*
 

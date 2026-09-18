@@ -1,6 +1,6 @@
 # iMessage lobby v3
 
-Supersedes `IMESSAGE_LOBBY_V2.md`. Driven by round-2 harness notes 2, 14, 15 and
+Supersedes lobby v2, whose surviving sections are folded in at the end of this file. Driven by round-2 harness notes 2, 14, 15 and
 16 (see `HARNESS_NOTES_R2.md` for the triage and root causes).
 
 v2's shape was right - an open lobby with no player-count picker, the count
@@ -263,3 +263,60 @@ comments updated to match. Known residual trust edge, unchanged: a group
 that SHRINKS to two members reads as a DM, so a departed player's 2-player
 game could S1-resolve for the remaining bystander — same §6.3 trust level as
 the picker, unreachable without mid-game membership churn.
+
+## Carried over from lobby v2
+
+`docs/IMESSAGE_LOBBY_V2.md` was retired on 2026-09-18.
+Three of its sections describe things v3 did not change, and live code cites
+them, so they live here now.
+The rest of v2 - "a DM deals a LIVE game the instant you tap Start", the
+8-capacity DM deal, the "Send invite" button - is what v3 replaced, and should
+not be read as current.
+
+### Why WAITING's `n_players == 8` means "open"
+
+In a group lobby, 8 is the wire's maximum, not a chosen size.
+`LobbyView` renders it as an open lobby (joined list + "N joined"), never as 8
+literal seats.
+The wire has no cross-check between a child envelope's `n_players` and its
+parent's: parentage is only `parent8`, the parent digest's first 8 bytes,
+carried and read back but never re-verified against the parent's own bytes.
+Every envelope re-deals from its own `seed` + `n_players` on decode
+(`deal_from_envelope`), so a WAITING(8) to LIVE(3) transition is not a special
+case - just two independent, self-describing envelopes sharing a seed.
+`c/ios/ios_api_smoke.c`'s `lobby_v2_reseat_check` and `e2e/msg_lobby_v2.test.ts`
+prove this end to end: create, 3 joins (still WAITING/8), start at 3, play a
+move, decode every leg.
+
+**Caveat, accepted:** the seed lives in the WAITING envelope's own bytes, and
+decode is replay for anyone, so a participant can peek at an 8-player deal from
+that seed before Start.
+That is no worse than the trust already accepted for seat identity (§6.3):
+casual-game trust, not cheat-resistance.
+It also reveals nothing about the game actually played - Start re-seeds a
+*different* deal at the real count, not a trim of the 8-player one.
+
+### Session-per-game
+
+`stage()` reused `conversation.selectedMessage?.session` unconditionally, so a
+game's own turns collapse into one bubble - but reusing it for the **first**
+bubble of a **new** game folded the just-finished game's result card into it,
+erasing it from the transcript.
+Fix: `startingNewGame` (set on the New game tap, cleared by
+`didReceive`/`didStartSending`) gates it -
+`session: startingNewGame ? nil : conversation.selectedMessage?.session`.
+One session per game; a new game never collapses the previous game's final
+bubble.
+
+### FINISHED bubble: `/m/` and the web funnel
+
+The FINISHED bubble's URL is a normal `/m/` payload link, not the bare
+`foolish.cards/<code>` replay link.
+That bare link has no `/m/1<base32>` shape, so a receiver tapping the final move
+got the damaged-link screen instead of the finished board.
+The funnel moves one hop out: `src/app/m/[payload]/page.tsx` already decodes any
+payload through the kernel; for a FINISHED one it also derives the replay code
+from what it just decoded (`kernelResidentReplayCodeV6` - no re-marshal, the
+decode already left the session log resident) and shows a "Watch the replay" CTA
+beside the install/play ones, falling back to a plain game-over banner if
+derivation ever fails.

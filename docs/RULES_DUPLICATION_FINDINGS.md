@@ -1,5 +1,13 @@
 # Rules-duplication & marshal-hazard findings (post replay-kernel port)
 
+> **Historical: dated to the replay-kernel port, before the TS rules layer was
+> removed entirely.** The framing below - a TS layer policed against the kernel
+> - no longer applies: `server/api/common/actions/*`, `bot_strategy.ts` and
+> `meta_actions.ts` are gone, and `rules.wasm`/`guards.wasm` with them.
+> What carries forward: the **deliberate** duplications list ("do not 'fix'
+> these"), the refuted-by-verification list, and the Makefile header-dependency
+> trap.
+
 Adversarially-verified sweep run after porting the replay codec's rules
 projection into the C kernel (`c/src/replay.c`). Every finding below was
 independently confirmed against the code by a second reviewer instructed to

@@ -798,7 +798,7 @@ static int chained_cover_check(void) {
 // ---------- Lobby v2: open-count WAITING -> Start reseat -> LIVE -----------
 //
 // Proves the mechanism batch 6 / item C picked for the iMessage group lobby
-// (docs/IMESSAGE_LOBBY_V2.md): a group lobby is created OPEN (n_players=8, the
+// (docs/IMESSAGE_LOBBY_V3.md): a group lobby is created OPEN (n_players=8, the
 // wire's max) so seats stay free; "Start" re-derives the SAME locked seed at
 // the ACTUAL joined count via fio_reseat_game, and the resulting LIVE
 // envelope's n_players (3) legitimately differs from its WAITING parent's (8)

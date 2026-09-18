@@ -1,5 +1,12 @@
 # Test-harness phone notes — triage (2026-07-20)
 
+> **Historical, 2026-07-20 (round 1).** Batches 1-6 landed and batch 7 became
+> `docs/IMESSAGE_DEFERRED_V2.md`.
+> One warning in it is no longer true and should not be acted on: the
+> "no Mac has compiled or run this tree yet ... must re-record snapshot
+> references" paragraph. Many Mac sessions have happened since, the app shipped,
+> and `ios/Tools/rig/README.md` is the current word on running things.
+
 Owner went through the iMessage test harness on-device and left ~44 notes.
 Each note below is mapped to a root cause (verified against the tree at
 `c9751ae`) and an implementation batch. Batches are landed one at a time, in

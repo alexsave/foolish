@@ -1,5 +1,13 @@
 # Foolish iMessage Extension — App Store Pre-Submission Review (Report 3)
 
+> **Superseded by `docs/APP_REVIEW_NOTES.md` pass 3 (2026-09-08), which is a
+> later, Release-build, two-pass review and tracks which of these findings
+> closed.** Kept for two things that exist nowhere else: the duplicate-`9♠`
+> evidence with its own "must be reproduced against a real dealt game" caveat,
+> and the "what I could NOT test, and why" list of harness limits.
+> This pre-dates the auto-stage flow, the felt default table and the icon
+> redesign.
+
 **Reviewer:** Adversarial pre-submission pass (hands-on, driven in iOS 26.3 Simulator, iPhone 17 Pro)
 **Date:** 2026-07-25
 **What was exercised:** The `FoolishHarness` dev host (renders the real `MessagesRootView`) for 2-player and 6-player tables, plus the **actual shipping iMessage extension** launched inside Messages to confirm the harness is representative.

@@ -1090,7 +1090,9 @@ design, same `--games=3 --seats=2 --secs=20` scale T1c/T1d used.
   (`/proc/<pid>/status`'s `Threads:`), alongside the existing RSS sampling.
 - `bench_results/stage6_epoll/` — Helgrind summary + raw log (gitignored).
 - `bench_results/T1e_epoll_ws_lines/` — the callgrind hot-line capture (see
-  PROFILE_HOTPATH.md "T1e").
+  PROFILE_HOTPATH.md "T1e"). Everything it holds is gitignored
+  (`annotated*.txt`), so unlike its T1c/T1d siblings the directory is local
+  only; regenerate it with `profile.sh`.
 - `bench_results/stage6_octogen/` — the Sweep B re-run data (raw CSVs,
   matching Stage 4/5's own `bench_results/stage{4,5}_octogen/` layout).
 
@@ -1266,8 +1268,9 @@ WebTransport, and game reclamation (bounded memory). Still open:
    browser/mobile clients. See [`DEPLOYMENT.md`](DEPLOYMENT.md).
 2. **Cross-worker QUIC migration** needs eBPF Connection-ID socket steering
    (Deliverable 2's caveat).
-3. **Rate limiting / abuse protection** — no per-IP throttle on `/auth/signup`
-   or `/create` yet (the connection cap is process-wide, not per-client).
+3. ~~**Rate limiting / abuse protection**~~ - landed since.
+   `ratelimit_allow(client_ip_key(r, conn))` guards `/auth/signup` and
+   `/create` (`foolish_server.c:1463,1492`), each answering 429.
 4. **async-cancel residual** (PROFILE_HOTPATH.md T1g) — the remaining ~half
    needs raw `syscall()`.
 5. **Horizontal scale-out** — one process, one machine; the per-game lock

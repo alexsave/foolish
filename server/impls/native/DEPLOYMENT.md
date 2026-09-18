@@ -322,11 +322,10 @@ numbers, not a new benchmark — flagged as such.
   network metrics, and will scrape a custom `/metrics` endpoint if the
   app exposes one ([Metrics on Fly.io](https://fly.io/docs/monitoring/metrics/),
   [Observability for User Apps](https://fly.io/docs/blueprints/observability-for-user-apps/)).
-  The server already has `/stats` (bot/octogen decision counters,
-  Stage 4) — wiring that (and per-shard connection/game counts) into a
-  Prometheus-format endpoint is a small addition, not a platform problem;
-  README already names "structured observability" as the one thing not
-  attempted yet.
+  The server has both: `/stats` (bot/octogen decision counters, Stage 4) and,
+  since this doc was written, a Prometheus text-exposition `/metrics`
+  (`foolish_server.c` `h_metrics`), so the scrape target exists and nothing
+  needs wiring for it.
 - **TLS + email**: TLS is free/automatic (§2); Postmark's HTTP API is a
   libcurl call from an off-hot-path thread, platform-agnostic — no
   Fly-specific integration needed.

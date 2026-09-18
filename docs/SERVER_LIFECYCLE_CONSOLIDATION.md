@@ -330,6 +330,6 @@ game's interior, extended to its skin.
 
 ## 7. Status
 
-Design only. No code changed; no `c/src/` file touched (the kernel is under
-concurrent animation work — reconcile every signature here against it before
-implementing). Nothing in §6 is started.
+Mostly design. Reconcile every signature here against `c/src/` before
+implementing. L2 (§4.2) and LA1 have landed; L1 and L4-L7 are not started, and
+the §6 table is the current state of each.

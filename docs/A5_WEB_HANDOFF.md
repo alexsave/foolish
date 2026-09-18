@@ -1,5 +1,11 @@
 # A5 web — handoff (July 2026)
 
+> **Historical.** A5 landed, and so did the A8/A9/A10 work listed under "what
+> is left". `docs/C_CORE_CONSOLIDATION.md`'s A-row table is the canonical index.
+> The part that is not reconstructible - the no-trump first-attacker bug, the
+> seat-less good, the 92/79/76 log-stream table and the three toothless tests -
+> is why this file is kept.
+
 Branch `a5-web-consumer`, cut from `main` @ `538124e`. Three commits:
 
 | | |
@@ -198,7 +204,9 @@ test is actually holding its claim against.
   that matters. I verified this by stashing.
 - **`npm run test:e2e` exits 0 with failures.** Trust the `ℹ fail` line.
 - **`WASM_CC=/opt/homebrew/opt/llvm/bin/clang`**, not `CC=`. Plain `clang` is
-  Apple clang and cannot target wasm32. Rebuild **both**: `make -C cnitro
-  wasm-bots` *and* `make -C cnitro wasm` (`game.c` is in both).
+  Apple clang and cannot target wasm32. The directory is `c/`, not `cnitro/`,
+  and there is one module now: `make -C c wasm-bots`. (This bullet used to say
+  `make -C cnitro wasm-bots` *and* `make -C cnitro wasm`; `rules.wasm` was
+  retired in Phase 8 and `cnitro/` is a husk, so neither command runs.)
 - The Bash tool's cwd persists between calls, including after a failed `cd`.
   Absolute paths.

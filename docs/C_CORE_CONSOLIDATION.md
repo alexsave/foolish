@@ -1,5 +1,12 @@
 # What else belongs in C — kernel reuse audit & action plan
 
+> **Historical. Every A-row is DONE or SUPERSEDED**, A10 included, and the §6
+> A-row table is the canonical, up-to-date index.
+> §4.4, §4.6 and §4.7 still describe their work as "remaining" and name files
+> (`src/replay/view.ts`, `src/replay/animate.ts`, `e2e/bot_drive_parity.test.ts`,
+> `e2e/replay_v6_parity.test.ts`) that A5/A6/A9 deleted - read the A-row table,
+> not those sections, for what is left.
+
 *Investigation, July 2026 — merged from two independent audits of the same
 question (one traced the server/iOS game loop, the other the client-side
 logic surface); their findings are unioned here and the originals retired.
@@ -17,7 +24,7 @@ No code has been changed; this is the report + work order.*
 
 *Companions: `ARCHITECTURE_AS_A_PATTERN.md` (the doctrine),
 `RULES_DUPLICATION_FINDINGS.md` (the earlier rules sweep this extends),
-`PACKED_WIRE_CUTOVER.md` / `STATE_BLOB_CUTOVER.md` (the wire story).*
+`PACKED_WIRE_CUTOVER.md` (the wire story).*
 
 ---
 

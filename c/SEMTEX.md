@@ -1,5 +1,14 @@
 # Semtex — cordite's successor
 
+> **Research-only since octogen took the top tier.** `semtex_strategy.c` still
+> builds and every `SX_*` knob is still read, but `c/src/bot_roster.c` does not
+> seed `semtex`, and there is no `semtex_max` - see `bot_roster.c`'s own note on
+> why the "Max" flat world budget was weaker at 6-8 players.
+> The "Production TS port" section below, and the TS half of §4, describe code
+> that was deleted with the TS bot layer; the measurements and the paired-eval
+> methodology are the reason this file is kept, and `OCTOGEN.md` depends on
+> them.
+
 Semtex is cordite (belief-constrained determinized Monte Carlo, see
 CORDITE.md) plus three levers that beat cordite head-to-head and one that
 exploits weak opponents harder — with the explicit design constraint that

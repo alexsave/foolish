@@ -256,9 +256,11 @@ full Games. `rules.wasm` overrides to 128 and is untouched.
   decoder existed, because the browser was the only producer.)
 - `c/src/msg_wire.{h,c}` — the envelope. `msg_seal` is the producer,
   `msg_decode` is structure, `msg_replay` is semantics.
-- `c/tests/msg_wire_test.c` — in `make difftests`, ahead of
-  `solver_difftest` (which fails identically on `main` and would otherwise stop
-  it ever running — `NEXT_STEPS.md` §5).
+- `c/tests/msg_wire_test.c` - in `make difftests`, ahead of `solver_difftest`.
+  It was put ahead deliberately, because `solver_difftest` used to fail on
+  `main` and would otherwise have stopped it ever running. That failure was the
+  TT seat-sign bug and is fixed (`docs/KERNEL_LIFT_BRIEF.md`); verified
+  `mismatches=0` on 2026-09-18.
 
 ### The four things worth not re-deriving
 

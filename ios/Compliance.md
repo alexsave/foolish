@@ -188,7 +188,8 @@ Expected band: **4+**.
 
 ### App Review notes (reviewer script)
 
-Full text: submission doc §5a. Summary: **there is no demo account concept to
+Full text: submission doc §13c (§5a is the superseded draft - do not paste it).
+Summary: **there is no demo account concept to
 even decline** — the app has no sign-in screen of any kind, in any mode, and
 no way to launch it outside Messages (`LSApplicationLaunchProhibited`). The
 entire review surface is: open Messages → app drawer → New game → play a

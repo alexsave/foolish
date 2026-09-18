@@ -1,4 +1,4 @@
-// Overlays.swift — the ChooserOverlay (docs/WATCHOS_G_SPEC.md §5 G2b). Presented for an
+// Overlays.swift — the ChooserOverlay (docs/WATCHOS_SPEC.md §5). Presented for an
 // ambiguous cover (≥2 targets) or a cover-or-pass fork. Race-safe: only the ✕ dismisses;
 // outside taps do nothing.
 //

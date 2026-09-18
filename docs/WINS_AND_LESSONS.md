@@ -131,6 +131,11 @@ The **subject** was wrong.
 - `CoverTiltTests` tested a function with no caller.
 - Two rig oracles had baselines that were hiding the defects they existed to
   catch.
+- The belief guards spied from TypeScript, which could only ever prove the loop
+  handed the bytes over - never that `importLogsPacked` spliced them into the
+  `Game` the strategy actually read. That gap is exactly where "octogen chose
+  blind" and the cordite stale-belief bug lived, and closing it meant moving the
+  observation into the kernel (`wasm_belief_probe_*`, `c/wasm/wasm_bots_api.c`).
 
 **The practice:** write the mutation, run it, watch it go red.
 Not "does this test pass" but "can this test fail, against this artifact, in

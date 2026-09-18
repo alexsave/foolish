@@ -1,5 +1,9 @@
 # Rebase inventory: what `origin/main` brought, and how the replay handled it
 
+> **Closed ledger, 2026-09-17.** The rebase landed; the commit SHAs below are
+> pre-rebase and will not resolve. Kept for the batch-invariant technique and
+> the measured 273-byte `bots.wasm.gz` delta.
+
 This is the checklist for the final step of `docs/C_GAME_SHAPE_MIGRATION.md` ("Final step: rebase onto main, replayed slowly").
 The owner chose a rebase replay over one merge so that nothing incoming is swallowed by a single conflict resolution, and this file is the record that proves it was not.
 

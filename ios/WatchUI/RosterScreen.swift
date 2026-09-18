@@ -1,4 +1,4 @@
-// RosterScreen.swift — the roster page (docs/WATCHOS_G_SPEC.md §3). The player list +
+// RosterScreen.swift — the roster page (docs/WATCHOS_SPEC.md §3). The player list +
 // game state: one row per seat (name · count · shield if defending), you in gold; a
 // footer with deck/discard/flip and who's out. Under Option H this is a page PUSHED by
 // tapping the table's seat strip — the system back chevron returns (§4.6).

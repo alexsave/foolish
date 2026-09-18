@@ -1,7 +1,7 @@
 # The post-game analyser
 
 A systematic, LLM-free review of a finished game: which decisions were mistakes, how large, and what the evidence is.
-It is the tool `docs/ORACLE_ANALYSER_HANDOFF.md` (landing with `claude/kernel-lift-from-swift`) specified, built in C on the real kernel.
+It is the tool the Oracle-analyser brief specified, built in C on the real kernel; that brief is retired and what survived it is folded in below ("What this was briefed from").
 Nothing is wired into a product surface; it is ready and callable, with a CLI that proves it on a real recorded game.
 
 Code: `c/src/analyse.{h,c}` (the analyser and the packed wire, reader beside writer), `c/src/main_analyse.c` (the CLI), `c/tests/analyse_test.c` (the recorded game, the proofs, the cost measurement).
@@ -190,6 +190,39 @@ The mutations are listed in each test file's header and were run as a batch (`sc
 The first batch of twelve caught ten as designed and exposed two tests that did not test: "a different seed gives different bytes" stayed green with the world shuffle ignoring its seed (handwritten draws its own RNG from the same seed and moved the bytes anyway), and flipping the struct-level finished-board leaf of the exact play changed nothing (with the stock at one card the bitboard solver takes every tail, so that leaf is dead there).
 Both were fixed by testing the thing itself: the sampler has a direct test, and the proof mutation is the sign of the value the solver hands back.
 Re-run, both are caught: twelve of twelve.
+
+## What this was briefed from
+
+The brief this tool was built to was `docs/ORACLE_ANALYSER_HANDOFF.md`, retired
+2026-09-18 once everything in it had either shipped or been measured here.
+Its cost figures were estimates and are superseded by the measured table above.
+Four things in it are not superseded, and are kept here because a future reader
+would otherwise re-derive them the expensive way.
+
+**The deferral, in the owner's words.**
+"the business decisions can wait, I just want this ready."
+So: build the tool so it WORKS and measure what it costs.
+Do not choose client-side versus server-metered and do not pick a price - the
+measured table above is the input to that decision, not the decision.
+
+**The Oracle's MC scores are wrong in the last plies.**
+Never let a verdict rest on them.
+Everything must be a played-out game or an exact solve.
+This is the reason the analyser exists at all.
+
+**Do not port `branch.c`.**
+The scratchpad `ogx/branch.c` hardcodes 2 players, takes the first attacker from
+argv, overwrites hands AFTER `start_game` and analyses seat 1.
+It is a fixture loader for one game, not a path worth generalising.
+
+**Base32 decode is not in `CORE_SRC`.**
+It is a static in `c/ios/ios_api.c` (it stops at `-` for the extras suffix).
+Lift it if you need it; do not write a third one.
+
+**You cannot easily encode the analysed game.**
+`replay_encode_v6_from_game` needs the deal SEED, which a finished `Game` cannot
+answer.
+Use the lower-level `replay_encode_v6`, which takes the reveals explicitly.
 
 ## Prior art
 

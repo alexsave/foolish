@@ -1,5 +1,12 @@
 # Octogen information-hiding rule: pick up instead of partial-covering
 
+> **The rule is shipped and unconditional**; the harness that measured it was
+> deliberately deleted (see the Harness section, which says so).
+> Two corrections: `rules.wasm` and `guards.wasm` no longer exist, so the
+> "they do not embed octogen and are unaffected" line has no subject; and the
+> 2-player row marked "_TBD (run in progress)_" refers to a run from mid-2026
+> that never reported - treat it as not done, not as pending.
+
 **Status: SHIPPED (always on).** When octogen is defending and *cannot cover every
 card on the table*, it used to still cover SOME of them before the inevitable
 pickup. Because a pickup returns the defender's own cover cards to its hand **and
