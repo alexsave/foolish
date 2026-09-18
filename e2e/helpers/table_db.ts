@@ -1,13 +1,11 @@
 // table_db.ts - a C-built fixture into a games row (docs/C_GAME_SHAPE_MIGRATION.md Phase 3c).
 //
 // seedTable writes a TableFixture (e2e/helpers/table_fixture.ts) the way the
-// kernel writers do after the expand migration (create_table / commit_table,
-// server/impls/supabase/migrations/20260917140000_table_expand.sql): the state
-// and roster blobs, the status column and needs_bots from the kernel, and the
-// membership rows every realtime policy reads. The row is owned by the kernel
-// writers (writer_gen 2), so the legacy bridge trigger derives nothing from the
-// JSONB columns, which keep their defaults. It replaced the harness's JSONB
-// seedGame in Phase 4b.
+// kernel writers do (create_table / commit_table, seed.sql): the state and
+// roster blobs, the status column and needs_bots from the kernel, and the
+// membership rows every realtime policy reads. It replaced the harness's JSONB
+// seedGame in Phase 4b; since the contract migration (Phase 4c) a games row has
+// no other columns to fill.
 //
 // What the row says about its seats comes from the kernel: the fixture is
 // loaded into the C Table and the seats, bot brains, status and needs_bots are
@@ -44,8 +42,8 @@ export async function seedTable(gameId: string, fx: TableFixture, opts: SeedTabl
             else await c.query('INSERT INTO auth.users(id) VALUES ($1) ON CONFLICT DO NOTHING', [s.id]);
         }
         await c.query(
-            `INSERT INTO games (id, status, state, roster, needs_bots, writer_gen, version)
-             VALUES ($1, (enum_range(NULL::game_status))[$2 + 1], $3, $4, $5, 2, $6)`,
+            `INSERT INTO games (id, status, state, roster, needs_bots, version)
+             VALUES ($1, (enum_range(NULL::game_status))[$2 + 1], $3, $4, $5, $6)`,
             [gameId, products.status, hex(products.state), hex(products.roster), products.needsBots, version]);
         for (const s of seats) {
             if (s.brain) await c.query('INSERT INTO bot_hands(game_id, bot_id) VALUES ($1, $2)', [gameId, s.id]);

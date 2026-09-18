@@ -38,6 +38,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { applySchema, pgPool } from './harness.ts';
+import { seedTable } from './helpers/table_db.ts';
+import { fixture, PLAYING } from './helpers/table_fixture.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
@@ -82,11 +84,29 @@ async function seedResponses(n: number, minutesAgo: number): Promise<void> {
     );
 }
 
+const GAME_ID = 'keepme';
+
 /** The seeded game, as every column reads after the migration ran over it. */
 const gameRow = async () =>
-    (await pgPool.query(`SELECT *, status::text AS status FROM games WHERE id = 'keepme'`)).rows[0];
+    (await pgPool.query(`SELECT *, status::text AS status FROM games WHERE id = $1`, [GAME_ID])).rows[0];
 
-const GAME_ID = 'keepme';
+// The product data the migration must not touch, built by the kernel
+// (e2e/helpers/table_fixture.ts) and stored the way commit_table stores it
+// (e2e/helpers/table_db.ts seedTable). Since the contract migration a games row
+// is the two blobs and the scalars SQL filters on, so the row has to be a real
+// board for the comparison to have anything in it: this one is a dealt game with
+// two named seats, a bot among them, five cards in hands, a deck and a trump.
+// Every one of those facts is bytes inside `state` or `roster`, and `SELECT *`
+// compares them - along with `status`, `needs_bots` (TRUE, because a bot is
+// still IN) and `updated_at`, which seed.sql's update_games_updated_at trigger
+// would move under any write at all.
+const HUMAN = '00000000-0000-4000-8000-0000000000a1';
+const BOT = '00000000-0000-4000-8000-0000000000b1';
+const seedGame = () => seedTable(GAME_ID, fixture()
+    .seats([{ id: HUMAN, name: 'keep me' }, { id: BOT, name: 'Bolt', brain: 'random' }])
+    .title('keep me too')
+    .status(PLAYING).hand(0, '6h 7h Qs').hand(1, '8d 9c').deck('Th Jh').trump('Qc')
+    .build());
 
 describe('pg_net response-log retention', () => {
     let beforeBytes = 0;
@@ -98,11 +118,9 @@ describe('pg_net response-log retention', () => {
         await pgPool.query(extensionsSql);
 
         // Product data the migration must not touch.
-        await pgPool.query(
-            `INSERT INTO games (id, name, players, status) VALUES ($1, 'keep me', '[]'::jsonb, 'waiting')`,
-            [GAME_ID],
-        );
+        await seedGame();
         beforeGame = await gameRow();
+        assert.equal(beforeGame?.needs_bots, true, 'the seeded row is a dealt game with a bot still in it');
 
         // A log spanning both sides of any retention window somebody might reach
         // for: a day old, an hour old, and a minute old.
