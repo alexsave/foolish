@@ -30,9 +30,9 @@ const CROSS_ORIGIN_ISOLATED = process.env.FOOLISH_CROSS_ORIGIN_ISOLATION === '1'
 // A LOCAL next.config.js SHADOWS THIS FILE. Next resolves .js before .mjs, and
 // this repo's .gitignore hides a next.config.js, so a machine that has one gets
 // NONE of this - no rewrites, no headers - while CI and Vercel get all of it.
-// The symptom is /privacy and /imessage-privacy falling through to the [game_id]
-// route locally and working fine in production. If that happens, move the local
-// next.config.js aside rather than doubting this file.
+// The symptom is /privacy, /imessage-privacy and /support falling through to the
+// [game_id] route locally and working fine in production. If that happens, move
+// the local next.config.js aside rather than doubting this file.
 const nextConfig = {
   reactStrictMode: true,
   async rewrites() {
@@ -45,6 +45,10 @@ const nextConfig = {
       // because it is a different product with a different answer: that one
       // collects nothing, this one describes an optional account.
       { source: '/privacy', destination: '/privacy.html' },
+      // The Support URL on both app records, static for the same reason. It was
+      // the other half of the same finding (docs/APP_REVIEW_NOTES.md): a
+      // reviewer's `curl` of the React route returned only the noscript line.
+      { source: '/support', destination: '/support.html' },
     ];
   },
   async headers() {

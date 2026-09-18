@@ -75,9 +75,9 @@ completely independent timelines.
 | **SKU** | `foolish-imessage-durak` (suggested) | Any unique string. |
 | **Primary language** | English (U.S.) | See §9 for the store-listing localization call. |
 | **Copyright** | `© 2026 <your name/entity>` | Fill in. |
-| **Privacy Policy URL** | `https://foolish.cards/privacy` | Added this session (`src/app/privacy/page.tsx`) — was missing entirely, a hard blocker for either app record. |
-| **Support URL** | `https://foolish.cards/support` | Added this session. |
-| **Marketing URL** (optional) | `https://foolish.cards/about` | Pre-existing, unedited. |
+| **Privacy Policy URL** | `https://www.foolish.cards/imessage-privacy` | **What is actually filed** on the 1.1 record (checked against the App Store Connect API, 2026-09-18). This app's own policy, `public/imessage-privacy.html` - not `/privacy`, which is the web/iOS app's and describes an optional account this app does not have. |
+| **Support URL** | `https://www.foolish.cards/support` | Filed as above. `public/support.html`. |
+| **Marketing URL** (optional) | `https://www.foolish.cards/about` | Filed as above. Still the React `/about` route, so it needs JavaScript; see §8. |
 
 ### 1a. Open question I can't resolve without an App Store Connect account
 
@@ -397,28 +397,60 @@ regenerate with a different seed on request.
 
 ---
 
-## 8. Privacy Policy & Support pages — added to the site
+## 8. Privacy Policy & Support pages - plain static HTML, not React routes
 
-Two static pages were added (previously missing entirely — a hard submission
-blocker for *either* app record, since Apple requires a live Privacy Policy
-URL):
+**Superseded 2026-09 (twice).**
+This section originally described two React routes and argued that one shared
+policy page across both app records "doesn't need splitting".
+Both halves of that were reversed, and the reasons are worth keeping.
 
-- **`src/app/privacy/page.tsx`** + **`src/components/Privacy.tsx`** →
-  `foolish.cards/privacy`. Already leads with the correct, unconditional
-  claim for this app: *"Playing a game in iMessage sends no data to us at
-  all."* It also covers the host app's separate, optional account system
-  (accurate for that product, not applicable to this one) — one shared
-  policy page across both app records is normal practice and doesn't need
-  splitting.
-- **`src/app/support/page.tsx`** + **`src/components/Support.tsx`** →
-  `foolish.cards/support`. Generic support contact + links; no changes
-  needed for this revision.
+**They are three separate pages, because they are three different products.**
+The iMessage app collects nothing at all; the web/iOS app has to describe an
+optional account, online play, and camera access for QR replays.
+Collapsing them would mean one of the two pages lying.
 
-Both reuse the `/about` page's exact layout classes and `ErrorBoundary`
-wrapper. **Not localized** (English only) — flag if you want ru/ko versions.
-**Verified with a real production build** (`npm run build`, dependencies
-actually installed): both routes statically prerendered clean alongside every
-existing route, plus a clean `tsc --noEmit` pass.
+**They are static files, not React routes.**
+Every React route in this app renders behind `KernelGate`
+(`src/app/providers.tsx`), which renders nothing until `bots.wasm` loads and
+throws if it fails.
+A `curl` of the React `/support` route returned only *"You need to enable
+JavaScript to run this app."* - no heading, no contact address, nothing
+(`docs/APP_REVIEW_NOTES.md`, pass 3).
+A page a reviewer opens must not depend on the game kernel loading, so all
+three are plain HTML with zero script tags, served through rewrites in
+`next.config.mjs`:
+
+| File | URL | Whose policy |
+| --- | --- | --- |
+| `public/imessage-privacy.html` | `/imessage-privacy` | `cards.foolish.msg`. **This is the Privacy Policy URL filed on the 1.1 record.** |
+| `public/privacy.html` | `/privacy` | The web app and `cards.foolish.app`. Linked from the iMessage one, and links back. |
+| `public/support.html` | `/support` | Shared. **This is the Support URL filed on the 1.1 record.** |
+
+The set of URLs on the record is closed, not assumed: a read of the App Store
+Connect API on 2026-09-18 enumerated every URL-bearing field.
+`privacyChoicesUrl`, `privacyPolicyText` and `whatsNew` are all null.
+`appStoreReviewDetail.notes` carries a replay link, `foolish.cards/<code>`,
+which needs JavaScript and correctly so: that URL *is* the wasm replay player, a
+game surface rather than a document.
+
+Still open: the Marketing URL on the record is `/about`, which has the same
+symptom and is deliberately **not** being converted the same way.
+It is not the same kind of page.
+It is linked from the home screen (`src/components/Welcome.tsx`, a `next/link`),
+so it is in-app navigation rather than a standalone marketing page, and it is
+localized across all five shipped locales with a live `LanguageSwitcher`.
+A static English HTML file would drop four languages and the app chrome.
+Marketing URL is optional metadata and a reviewer's browser runs JavaScript, so
+this is a quality item, not a blocker.
+
+The fix that *would* be right is a different change: `/about` needs no kernel at
+all, and moving `KernelGate` out of the root `Providers` and down onto the
+routes that actually need it makes Next prerender `/about`'s real text while
+keeping every language, the chrome and the SPA navigation.
+That was verified by experiment, and it wants its own PR and its own e2e pass,
+because it touches the app's core render path.
+
+**Not localized** (English only) - flag if you want ru/ko versions.
 
 ---
 
@@ -449,13 +481,14 @@ either answer is defensible.
 
 ## 11. What's *not* paperwork — real infrastructure gaps this doc surfaces
 
-- **`support@foolish.cards` / `privacy@foolish.cards`** — referenced in the
-  new pages and the App Review notes. These need to actually receive mail
-  (a forwarding rule is enough) before submission. Account/DNS setup, not
-  something draftable from here.
-- **The Privacy/Support pages need to actually deploy** to
-  `foolish.cards/privacy` and `/support` before you put those URLs in App
-  Store Connect — they're committed to this branch, not yet live.
+- ~~**`support@foolish.cards` / `privacy@foolish.cards`**~~ - **resolved by
+  deletion.** No mailbox was ever set up, so the pages now use
+  `alexvsaveliev@gmail.com`, which receives mail today. Revisit only if a
+  branded address is wanted.
+- ~~**The Privacy/Support pages need to actually deploy**~~ - **done.** All
+  three are live and were checked with `curl` against `www.foolish.cards`,
+  which is the host App Store Connect actually has on file (the apex redirects
+  to it).
 
 ---
 
