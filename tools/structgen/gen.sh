@@ -25,22 +25,35 @@
 #                          test/verify.test.ts reads. Separate because that link
 #                          needs wasm-ld, and a lane that only needs the modules
 #                          should only need libclang.
-#   gen.sh --check         regenerate into a temp dir and fail if either is stale (the
-#                          freshness gate, in the style of scripts/check_wasm_freshness.sh)
+#   gen.sh --check         generate TWICE, as two separate processes into two
+#                          temp trees, and refuse a difference. The generator
+#                          has to be a function of this tree and of nothing else.
+#   gen.sh --print-dirs    the output directories, repo-relative. Needs no
+#                          toolchain: it is how the gate below asks what is
+#                          generated instead of keeping its own list.
 #
-# build/verify.wasm is a BUILD OUTPUT, so it lives with the generator's own
-# binary and is not committed. It is a wasm32 link of test/verify.c whose bytes
-# are the toolchain's, so a macOS homebrew clang and CI's clang-22 on Linux
-# write two different modules from the same source. It USED to sit in gen/ and
-# be committed, with `diff -x verify.wasm` excusing it from the freshness check
-# for exactly that reason - and the exclusion is what let it rot: it was last
-# written at 05192715 and still held the layouts anim_plan.h had before 546565fe
-# grew AnimPlan, while `gen.sh --check` reported everything fresh. It is built
-# on demand now (test/verify.test.ts reads it, CI runs this script before the
-# test), and two checks keep that true: --check refuses a tracked build output
-# under gen/, and the link is run twice and compared, so a source that stops
-# building reproducibly (a __DATE__, a path, an uninitialised pad) fails here
-# rather than turning up as a mystery diff.
+# NOTHING HERE IS COMMITTED, and the argument is one this repo has already paid
+# for. `verify.wasm` sat committed under gen/ with `diff -x verify.wasm` excusing
+# it from the freshness check, because its bytes really are the toolchain's; the
+# exclusion is what let it rot, still holding the layouts anim_plan.h had before
+# AnimPlan grew while `gen.sh --check` reported everything fresh (f6338351). An
+# artifact nothing compares is an artifact nothing keeps fresh, and the cheapest
+# way to have nothing to compare is to have nothing committed. So these are
+# ignored build outputs, written by every lane that consumes them, and
+# e2e/validation/generated_outputs_validation.test.ts refuses a tracked one.
+#
+# What --check USED to do was diff the committed copies against a fresh run.
+# With nothing committed there is no stale copy to find, so it proves the other
+# half instead: that two runs agree. A generator that ordered a hash table by
+# address, or wrote a timestamp, would hand two lanes of the same commit two
+# different layouts, and only the LAYOUT_HASH handshake would ever notice. It is
+# the check gen.sh already makes of verify.wasm, applied to the modules.
+#
+# That is safe only because the generated TEXT does not depend on which libclang
+# writes it. Measured on this tree, byte-identical including both layout hashes:
+# Homebrew clang 22.1.8 (macOS arm64), apt.llvm.org clang 22.1.8 (Linux x86_64
+# and aarch64) and Ubuntu clang 18.1.3. test/hash.sh independently pins the hash
+# itself to layout facts only, which is the second line of defence.
 #
 # game_layout.<build>.ts and layout_hash.<build>.ts are ALSO written by the wasm make targets (c/Makefile,
 # "Layout hash"), from the same specs/game_layout.args and the same flags, so
@@ -49,25 +62,39 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
+
+# The output directories, repo-relative, as ONE fact. `gen.sh --print-dirs`
+# answers with them and needs no toolchain, so the gate that refuses a tracked
+# structgen output (e2e/validation/generated_outputs_validation.test.ts) asks
+# the generator what it writes instead of keeping its own list. Printed before
+# anything is built, for the same reason.
+OUT_DIRS="sdk/ts/gen
+sdk/swift/gen
+tools/structgen/gen"
+if [ "${1:-}" = "--print-dirs" ]; then printf '%s\n' "$OUT_DIRS"; exit 0; fi
+
 CLANG="${WASM_CC:-/opt/homebrew/opt/llvm/bin/clang}"
 make -s -C "$here" build/structgen
 SG="$here/build/structgen"
 flags() { make -s -C "$root/c" -f Makefile -f "$here/print.mk" "sg-print-$1"; }
 spec() { grep -v '^[[:space:]]*#' "$here/specs/$1.args"; }
 BOTS="$(flags WASM_BOT_CFLAGS)"
-prod="$root/sdk/ts/gen"
-swift="$root/sdk/swift/gen"
-fixtures="$here/gen"
+# …and the same three as absolute paths, read back from the one list above so
+# the two cannot drift.
+prod="$root/$(printf '%s\n' "$OUT_DIRS" | sed -n 1p)"
+swift="$root/$(printf '%s\n' "$OUT_DIRS" | sed -n 2p)"
+fixtures="$root/$(printf '%s\n' "$OUT_DIRS" | sed -n 3p)"
+# Where the two --check runs are told to write. Not for general use: the whole
+# point of this script is that a build writes the real thing.
+if [ -n "${SG_OUT_ROOT:-}" ]; then
+  prod="$SG_OUT_ROOT/ts"; swift="$SG_OUT_ROOT/swift"; fixtures="$SG_OUT_ROOT/fixtures"
+fi
 check=0
 case "${1:-}" in
   ""|--check|--verify-wasm) ;;
-  *) echo "gen.sh: unknown argument '$1' (want nothing, --check or --verify-wasm)" >&2; exit 2 ;;
+  *) echo "gen.sh: unknown argument '$1' (want nothing, --check, --verify-wasm or --print-dirs)" >&2; exit 2 ;;
 esac
-if [ "${1:-}" = "--check" ]; then
-  check=1
-  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-  prod="$tmp/prod"; fixtures="$tmp/fixtures"; swift="$tmp/swift"
-fi
+[ "${1:-}" = "--check" ] && check=1
 mkdir -p "$prod" "$fixtures" "$swift"
 
 # The resident Game prefix the TS marshal reads and writes, per wasm build.
@@ -124,26 +151,17 @@ set +f
   --count SPtr.vals=n_vals --count SPtr.items=n_items --count SPtr.name=name_len --count SPtr.none=n_none --ts "$fixtures/snap.ts"
 
 if [ "$check" = 1 ]; then
-  stale=0
-  diff -r "$root/sdk/ts/gen" "$prod" || stale=1
-  diff -r "$root/sdk/swift/gen" "$swift" || stale=1
-  # No exclusions: a generated file the diff does not look at is a generated
-  # file nothing keeps fresh. gen/ holds generated MODULES only; the wasm the
-  # verify test reads is a build output and lives in build/.
-  diff -r "$here/gen" "$fixtures" || stale=1
-  # A build output tracked in the repo goes stale the moment its source changes
-  # and nobody reruns the build. Everything under gen/ the repo knows about must
-  # be a generated MODULE the diff above compares.
-  tracked_junk="$(GIT_OPTIONAL_LOCKS=0 git -C "$root" ls-files "tools/structgen/gen" | grep -v '\.ts$' || true)
-$(GIT_OPTIONAL_LOCKS=0 git -C "$root" ls-files "sdk/swift/gen" | grep -v '\.swift$' || true)"
-  tracked_junk="$(printf '%s' "$tracked_junk" | grep -v '^$' || true)"
-  if [ -n "$tracked_junk" ]; then
-    echo "gen: a build output is committed under a generated directory - remove it from the repo:"
-    echo "$tracked_junk"
-    stale=1
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  # Two independent PROCESSES, not two passes in one: whatever a run leaves
+  # behind in memory cannot be what makes the second agree with the first.
+  SG_OUT_ROOT="$tmp/a" bash "$0"
+  SG_OUT_ROOT="$tmp/b" bash "$0"
+  if diff -r "$tmp/a" "$tmp/b"; then
+    echo "gen: reproducible - two runs of the generator over this tree wrote the same bytes"
+    exit 0
   fi
-  if [ "$stale" = 0 ]; then echo "gen: fresh"; else echo "gen: STALE - run tools/structgen/gen.sh"; exit 1; fi
-  exit 0
+  echo "gen: NOT reproducible - two runs of the generator over one tree disagree"
+  exit 1
 fi
 [ "${1:-}" = "--verify-wasm" ] || exit 0
 

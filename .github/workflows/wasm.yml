@@ -94,13 +94,20 @@ jobs:
   structgen:
     # tools/structgen reads C struct layouts through libclang and writes the TS
     # that reads kernel memory (sdk/ts/gen/*.ts) plus the layout hash every wasm
-    # module is checked against at load. gen.sh --check fails when the committed
-    # modules are stale against c/src.
+    # module is checked against at load. None of it is committed - it is written
+    # by every build that consumes it - so `gen.sh --check` no longer diffs a
+    # committed copy: it generates twice, as two processes, and refuses a
+    # difference. A generator that was not a function of the tree would hand two
+    # lanes of one commit two different layouts.
+    #
+    # The gate that refuses a RE-COMMITTED output lives in the fast lane instead
+    # (e2e/validation/generated_outputs_validation.test.ts, run by validate.yml),
+    # because it needs git and node and no compiler at all.
     #
     # LLVM 22 from apt.llvm.org, pinned: the Mac generates with Homebrew's LLVM
-    # 22, and the generated text must match byte for byte (docs/
-    # C_GAME_SHAPE_MIGRATION.md Q12). The layout hash itself is independent of
-    # the libclang version - that is the second line of defence, pinned by
+    # 22. The generated text is measured byte-identical across that, this, and
+    # Ubuntu's own clang 18 - and the layout hash is independent of the libclang
+    # version by construction, which is the second line of defence, pinned by
     # test/hash.sh.
     runs-on: ubuntu-latest
     env:
@@ -130,7 +137,7 @@ jobs:
         # segfaulted on its first run and only this job's Linux saw it.
         run: make -C tools/structgen build/structgen CFLAGS="-O2 -std=c11 -Wall -Wextra -Werror"
 
-      - name: Generated modules are fresh
+      - name: The generator is a function of the tree (two runs agree)
         run: bash tools/structgen/gen.sh --check
 
       - name: CLI refusals and the layout hash

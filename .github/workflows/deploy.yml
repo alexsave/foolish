@@ -49,6 +49,20 @@ on:
       # imported, it is BUNDLED as a static asset (config.toml static_files), so
       # a kernel rebuild alone must redeploy.
       - 'sdk/ts/wasm/bots.wasm.gz'
+      # THE SOURCES OF sdk/ts/gen, which the import graph cannot see. The
+      # functions import those modules and this workflow generates them from the
+      # C headers before bundling, so a header or a spec change is a change to
+      # the deployed code - but the modules are build outputs now, so no file
+      # under 'sdk/ts/**' moves when a header does. Without these two lines a
+      # layout change would merge, deploy nothing, and leave the server reading
+      # the kernel at last week's offsets.
+      #
+      # deploy_paths_validation.test.ts walks the import graph and cannot reach
+      # a generator through a generated file, so these are the one pair of
+      # entries in this list that the test does not derive. That is what the
+      # comment is for.
+      - 'c/src/**'
+      - 'tools/structgen/**'
   workflow_dispatch: {}
 
 # Never let two deploys race; queue instead of cancelling a push mid-flight.

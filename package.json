@@ -14,6 +14,7 @@
     "gen": "bash tools/structgen/gen.sh",
     "dev": "next dev",
     "predev": "npm run gen",
+    "prebuild": "npm run gen",
     "build": "next build",
     "start": "next start",
     "pretypecheck": "npm run gen",

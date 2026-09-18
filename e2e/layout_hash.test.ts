@@ -10,6 +10,22 @@
 // rebuilt": the load must throw, name the module and the generated file, and
 // leave the host retryable, so the real hash then loads normally.
 //
+// THE THIRD TEST CARRIES MORE WEIGHT THAN IT USED TO. sdk/ts/gen is no longer
+// committed - every build regenerates it - while bots.wasm.gz and the two
+// oracle modules still are. So the two halves no longer go stale together: a
+// header edit moves the generated side immediately and leaves the committed
+// modules where they were, and this is the test that says so. It was measured,
+// not assumed: widening one field of Game (`int8_t num_battles` -> int32_t) and
+// regenerating moved LAYOUT_HASH from 0xd61d98ee to 0x9b485bb8, and the load of
+// the committed bots.wasm.gz threw
+//
+//   bots.wasm was built for Game layout 0xd61d98ee, but
+//   sdk/ts/gen/layout_hash.bots.ts describes 0x…: the module and the generated
+//   accessors come from different C headers.
+//
+// before wasm_init, not a wrong offset afterwards (sdk/ts/wasm/layout_hash.ts
+// is called before the first kernel call, by construction).
+//
 // Pure kernel test - needs no Postgres.
 
 import { test } from 'node:test';
