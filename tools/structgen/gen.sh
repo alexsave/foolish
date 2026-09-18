@@ -16,9 +16,17 @@
 #                           offset (sdk/swift/KernelLayout.swift).
 #   tools/structgen/gen/    the generator's own genericity fixtures
 #
-#   gen.sh           write all three
-#   gen.sh --check   regenerate into a temp dir and fail if either is stale (the
-#                    freshness gate, in the style of scripts/check_wasm_freshness.sh)
+#   gen.sh                 write all three. THIS RUNS AS PART OF EVERY BUILD -
+#                          `npm run build`, `typecheck` and every test lane go
+#                          through it (package.json, the `gen` script and its
+#                          pre-hooks), so the modules a lane compiles are the
+#                          ones this tree's headers describe.
+#   gen.sh --verify-wasm   …and link test/verify.c into build/verify.wasm, which
+#                          test/verify.test.ts reads. Separate because that link
+#                          needs wasm-ld, and a lane that only needs the modules
+#                          should only need libclang.
+#   gen.sh --check         regenerate into a temp dir and fail if either is stale (the
+#                          freshness gate, in the style of scripts/check_wasm_freshness.sh)
 #
 # build/verify.wasm is a BUILD OUTPUT, so it lives with the generator's own
 # binary and is not committed. It is a wasm32 link of test/verify.c whose bytes
@@ -51,6 +59,10 @@ prod="$root/sdk/ts/gen"
 swift="$root/sdk/swift/gen"
 fixtures="$here/gen"
 check=0
+case "${1:-}" in
+  ""|--check|--verify-wasm) ;;
+  *) echo "gen.sh: unknown argument '$1' (want nothing, --check or --verify-wasm)" >&2; exit 2 ;;
+esac
 if [ "${1:-}" = "--check" ]; then
   check=1
   tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
@@ -133,20 +145,31 @@ $(GIT_OPTIONAL_LOCKS=0 git -C "$root" ls-files "sdk/swift/gen" | grep -v '\.swif
   if [ "$stale" = 0 ]; then echo "gen: fresh"; else echo "gen: STALE - run tools/structgen/gen.sh"; exit 1; fi
   exit 0
 fi
+[ "${1:-}" = "--verify-wasm" ] || exit 0
+
 verify_link() {
   "$CLANG" --target=wasm32 -nostdlib -ffreestanding -O1 -I"$here/test" -I"$root/c/src" -isystem "$root/c/wasm/include" \
     -D_Thread_local= -DMAX_LOG_PAIRS=64 -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
     -Wl,--no-entry -Wl,--export-all "$here/test/verify.c" -o "$1"
 }
-mkdir -p "$here/build"
-verify_link "$here/build/verify.wasm"
 # The same source, linked again: the module the test reads has to be a function
 # of verify.c and the headers it includes, and of nothing else.
-twin="$(mktemp -t verify.XXXXXX).wasm"
-verify_link "$twin"
-if ! cmp -s "$here/build/verify.wasm" "$twin"; then
+#
+# THE TWO LINKS ARE GIVEN THE SAME BASENAME, in two directories, and that is
+# load-bearing. wasm-ld writes a `name` custom section whose module-name
+# subsection is the output file's basename, so linking once to `verify.wasm` and
+# once to a `mktemp` name produced two modules differing by exactly those bytes:
+# identical section tables, identical strings, and `gen: verify.wasm does not
+# build reproducibly` on every CI run from the day this check landed. macOS
+# homebrew clang emits no module-name subsection at all, which is why it passed
+# on the machine it was written on and only Linux ever saw it. With one basename
+# the section says the same thing in both, and what is left to differ is what
+# the check is for: a __DATE__, an address, an uninitialised pad.
+mkdir -p "$here/build/twin"
+verify_link "$here/build/verify.wasm"
+verify_link "$here/build/twin/verify.wasm"
+if ! cmp -s "$here/build/verify.wasm" "$here/build/twin/verify.wasm"; then
   echo "gen: verify.wasm does not build reproducibly - two links of the same source differ"
-  rm -f "$twin"
   exit 1
 fi
-rm -f "$twin"
+rm -rf "$here/build/twin"

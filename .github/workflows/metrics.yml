@@ -112,6 +112,20 @@ jobs:
         working-directory: pr
         run: bash scripts/ci_bots_test_wasm.sh
 
+      # BOTH CHECKOUTS, and by hand rather than through the `premetrics` hook:
+      # the steps below run `node scripts/collect_metrics.mjs` directly, so npm
+      # never sees the script name and never runs its pre-hook. The collector
+      # shells into `next build` and the e2e benches, which compile sdk/ts/gen.
+      # Each side generates from ITS OWN headers - that is the whole point of
+      # measuring two commits - so this cannot be done once and shared.
+      - name: Generated modules (both sides)
+        run: |
+          # SOURCED, not run: a step exports to LATER steps through GITHUB_ENV,
+          # so within this one the toolchain has to land in this shell.
+          . pr/scripts/ci_llvm.sh
+          bash pr/tools/structgen/gen.sh
+          bash base/tools/structgen/gen.sh
+
       - name: Collect base metrics
         working-directory: base
         run: node scripts/collect_metrics.mjs > "$GITHUB_WORKSPACE/base.json"

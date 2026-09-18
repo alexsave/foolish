@@ -676,8 +676,11 @@ $(STRUCTGEN): $(STRUCTGEN_DIR)/structgen.c $(STRUCTGEN_DIR)/Makefile
 
 # $(call sg_hash,<build name>,<cflags>,<ts stem, or empty>): with a stem, also
 # writes ../sdk/ts/gen/game_layout.<stem>.ts and ../sdk/ts/gen/layout_hash.<stem>.ts.
-sg_gen  = ../sdk/ts/gen
-sg_sync = && { cmp -s $(1) $(2) || { cp $(1) $(2); echo "layout: wrote $(2)"; }; } && rm -f $(1)
+sg_gen   = ../sdk/ts/gen
+sg_swift = ../sdk/swift/gen
+# mkdir first: nothing under sdk/*/gen is committed, so on a fresh checkout the
+# directory does not exist until something generates into it.
+sg_sync = && { mkdir -p $(dir $(2)); { cmp -s $(1) $(2) || { cp $(1) $(2); echo "layout: wrote $(2)"; }; }; } && rm -f $(1)
 sg_hash = @mkdir -p build/layout && \
   $(STRUCTGEN) --cwd . $(SG_GAME_ARGS) --build '$(1)=$(strip $(2))' --print-hash \
     $(if $(3),--ts $@.ts --hash-ts $@.hash.ts) > $@.new && \
@@ -713,6 +716,20 @@ build/layout/ios.hash: $(STRUCTGEN) $(SG_IOS_SPEC) FORCE
 	done | sort -u > $@.new && \
 	[ "$$(grep -c . $@.new)" = 1 ] || { echo "layout ios: the iOS slices do not share one layout:"; cat $@.new; exit 1; }
 	@{ cmp -s $@.new $@ || { echo "layout ios: $$(cat $@ 2>/dev/null || echo none) -> $$(cat $@.new)"; mv $@.new $@; }; }; rm -f $@.new
+# AND THE MODULE THE HASH IS FOR, beside it. `ios-lib` bakes this hash into the
+# library; sdk/swift/gen/kernel.ios.swift carries it as SG_LAYOUT_HASH and
+# FoolishKit compiles that file. Writing only the hash here meant the pair was
+# made by two different commands - `make ios-lib` and `tools/structgen/gen.sh` -
+# and running the first without the second gave a library and a module that
+# disagree, which sdk/swift/KernelLayout.swift turns into a fatalError at the
+# first EngineC(). The wasm builds have written their own generated module all
+# along ($(call sg_hash,…,bots)); this is the same rule for iOS.
+#
+# Same cmp-then-copy as sg_sync: the file's mtime moves only when its CONTENT
+# does, so a rebuild that changes no layout does not make Xcode recompile
+# FoolishKit.
+	@$(STRUCTGEN) --cwd . $(SG_IOS_ARGS) --build 'ios=$(strip $(IOS_CFLAGS))' --target $(IOS_LAYOUT_TRIPLE) \
+	  --swift $@.swift $(call sg_sync,$@.swift,$(sg_swift)/kernel.ios.swift)
 
 build/layout/bots.hash: $(STRUCTGEN) FORCE
 	$(call sg_hash,bots,$(WASM_BOT_CFLAGS),bots)

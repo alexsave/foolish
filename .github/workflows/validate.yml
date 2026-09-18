@@ -61,6 +61,14 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      # BEFORE the type-check, not after. tools/structgen writes the modules
+      # sdk/, src/, server/ and e2e/ import, and it runs as a pre-hook of every
+      # npm script that compiles or loads them (package.json "//gen"), so the
+      # compiler has to be here before the first of those - `npm run typecheck`,
+      # two steps down. The wasm build below re-uses what this installs.
+      - name: Toolchain (libclang, for the generated modules)
+        run: bash scripts/ci_llvm.sh
+
       # No Math.random() in e2e/, sdk/ or server/. The invariant it guards: one
       # crypto draw per game, at the deal; everything after it derives from that
       # seed. Needs no database, so it runs first and fails in seconds.
