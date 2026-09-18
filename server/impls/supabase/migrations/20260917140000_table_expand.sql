@@ -23,9 +23,12 @@
 --    and a lobby's JSONB board is emptied (goods, trump, discard, table,
 --    elimination) because today's server marshals it into that same kernel.
 --    The conversion REFUSES what the kernel would refuse (an id over 36 bytes, a
---    name over 64 bytes, a title over 200 bytes, more than 8 seats, a bot seat
---    with no bots row) so a bad row fails this migration instead of loading as
---    garbage later. e2e/table_expand_migration.test.ts decodes every converted
+--    name over 64 bytes, a title over 200 bytes, more than 8 seats, a duplicate
+--    id, a bots row whose strategy_key is not a brain) so a bad row fails this
+--    migration instead of loading as garbage later. A bot seat whose bots row
+--    was deleted long ago is not one of those: a pre-pass (4.1) resolves those
+--    seats first, per status, and the encoder stays strict behind it.
+--    e2e/table_expand_migration.test.ts decodes every converted
 --    row with the real C decoder and compares the envelopes C writes from it
 --    with the ones today's server cached.
 -- 3. A trigger keeps `roster`, `needs_bots` and the lobby `state` in step on
@@ -176,7 +179,10 @@ BEGIN
     ELSIF (v_seat->>'is_ai')::boolean THEN
       SELECT b.strategy_key INTO v_brain FROM bots b WHERE b.id::text = v_id;
       -- A brain is 1..23 bytes of printable ASCII (roster.c brain_ok). Whether
-      -- this build links it is table_load's question (Q16), not SQL's.
+      -- this build links it is table_load's question (Q16), not SQL's. The
+      -- backfill never meets the missing-row half of this: 4.1 resolves those
+      -- seats before it runs. The trigger can, if a legacy writer ever seats a
+      -- bot that is not in `bots`, and then the write is the thing to refuse.
       IF v_brain IS NULL OR v_brain !~ '^[!-~]{1,23}$' THEN
         RAISE EXCEPTION 'legacy roster: bot seat % has no bots row with a valid strategy_key (%)', v_id, v_brain
           USING ERRCODE = 'data_exception';
@@ -299,6 +305,106 @@ CREATE TRIGGER games_legacy_bridge
 -- and stamping every row now would make every abandoned game look live.
 -- `version` is left alone too: nothing a client or a CAS holds changes meaning.
 ALTER TABLE games DISABLE TRIGGER update_games_updated_at;
+
+-- 4.1 THE PRE-PASS: bot seats whose bots row is gone.
+--
+-- A seat can name a bot that no longer exists. 20260711130000_drop_non_wasm_bots
+-- deleted the retired strategies (champion, ultimate_champion, hacker, espresso,
+-- semtex, semtex_max) from `bots` and left behind every seat in `games.players`
+-- that named one. The hosted database has 29 such seats across 21 games: 20 of
+-- them waiting, 9 game_over, none playing. The encoder below is right to refuse
+-- a bot seat with no brain when it converts a row the server just wrote, but as
+-- a deploy gate over six-month-old rows it is wrong, and it is what failed this
+-- migration on hosted. So the orphans are resolved here and the encoder stays
+-- strict: a seat with no id or no name, a name over the cap, more than 8 seats,
+-- a duplicate id or a bots row whose strategy_key is not a brain all still stop
+-- the migration.
+--
+-- The resolution rewrites `games.players`, not just the roster bytes, because
+-- the bridge trigger re-derives the roster from `players` on every later legacy
+-- write: a "continue" on one of these finished games has to keep working, and a
+-- fix that lived only in the backfill would raise the moment one was touched.
+--
+--   waiting    the seat is dropped. The bot does not exist any more, so an
+--              abandoned lobby simply loses a ghost that could never play; a
+--              player who opens it can add a bot that does exist. Its bot_hands
+--              row goes with it (the bot_hands -> bots FK already cascaded it
+--              away when the bots row was deleted, so the DELETE is belt and
+--              braces rather than the thing doing the work).
+--
+--   game_over  the seat, its name and its place stay, and it is repointed at a
+--              bots row that survives, so the record still reads "%Champion 1"
+--              while the roster names a brain the kernel links. The brain
+--              cannot affect the row: the game is finished, the state blob is
+--              the whole record of it, and nothing will ever ask that seat for
+--              a move again.
+--
+--   playing    the same repoint, and the bot_hands membership follows it.
+--              Dropping the seat is not open here (its cards are in the state
+--              blob, whose seat count table_load checks against the roster's),
+--              and the game is frozen today anyway because the bot loop cannot
+--              resolve the bot either, so a brain that exists is strictly
+--              better than what the row has now. No such row exists as of this
+--              deploy; this is the branch for one appearing in between.
+--
+-- The substitute is a `random` bot. It is the one brain that claims nothing
+-- about how it plays, so it reads as the placeholder it is instead of falsely
+-- crediting the seat to a strategy it never used. Whichever surviving `random`
+-- bot is not already seated in that game is taken (a seat cannot be filled
+-- twice), lowest id first, so the choice is deterministic; if the game seats
+-- every one of them the pick widens to any surviving bot, and if even that is
+-- empty the migration raises rather than guess.
+DO $$
+DECLARE
+  c_substitute_key CONSTANT TEXT := 'random';
+  r     RECORD;
+  v_sub UUID;
+  v_key TEXT;
+BEGIN
+  FOR r IN
+    SELECT g.id, g.status::text AS status, (s.k - 1)::int AS idx,
+           s.seat->>'player_id' AS bot_id, s.seat->>'name' AS bot_name
+    FROM games g
+    CROSS JOIN LATERAL jsonb_array_elements(g.players) WITH ORDINALITY AS s(seat, k)
+    WHERE jsonb_typeof(s.seat->'is_ai') = 'boolean'
+      AND (s.seat->>'is_ai')::boolean
+      AND s.seat->>'player_id' IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM bots b WHERE b.id::text = s.seat->>'player_id')
+    -- Descending, so dropping a seat never shifts the index of one still to come.
+    ORDER BY g.id, s.k DESC
+  LOOP
+    IF r.status = 'waiting' THEN
+      UPDATE games SET players = players - r.idx WHERE id = r.id;
+      DELETE FROM bot_hands WHERE game_id = r.id AND bot_id::text = r.bot_id;
+      RAISE NOTICE 'table_expand: game % (waiting) drops seat % "%": its bot % has no bots row',
+        r.id, r.idx, r.bot_name, r.bot_id;
+    ELSE
+      -- Re-read `games` per seat: an earlier iteration of this same loop may
+      -- already have seated a substitute in this very game.
+      SELECT b.id, b.strategy_key INTO v_sub, v_key
+      FROM bots b
+      WHERE b.strategy_key ~ '^[!-~]{1,23}$'
+        AND NOT EXISTS (
+          SELECT 1 FROM games g2
+          CROSS JOIN LATERAL jsonb_array_elements(g2.players) AS s2(seat)
+          WHERE g2.id = r.id AND s2.seat->>'player_id' = b.id::text)
+      ORDER BY (b.strategy_key <> c_substitute_key), b.id
+      LIMIT 1;
+      IF v_sub IS NULL THEN
+        RAISE EXCEPTION 'legacy roster: game % seat % (bot %) has no bots row, and no surviving bot is free to stand in for it',
+          r.id, r.idx, r.bot_id USING ERRCODE = 'data_exception';
+      END IF;
+      UPDATE games SET players = jsonb_set(players, ARRAY[r.idx::text, 'player_id'], to_jsonb(v_sub::text))
+      WHERE id = r.id;
+      IF r.status = 'playing' THEN
+        DELETE FROM bot_hands WHERE game_id = r.id AND bot_id::text = r.bot_id;
+        INSERT INTO bot_hands (game_id, bot_id) VALUES (r.id, v_sub) ON CONFLICT DO NOTHING;
+      END IF;
+      RAISE NOTICE 'table_expand: game % (%) keeps seat % "%" and gives it bot % (%): its own bot % has no bots row',
+        r.id, r.status, r.idx, r.bot_name, v_sub, v_key, r.bot_id;
+    END IF;
+  END LOOP;
+END $$;
 
 UPDATE games SET
   roster     = legacy_roster_hex(players, name),

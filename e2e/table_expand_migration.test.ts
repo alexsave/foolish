@@ -88,6 +88,17 @@ const RANDOM_BOT = 'a9e7a7b0-8c30-4808-8ce7-000000000007';      // 'Random 🎲'
 // carry them. A copy of the one-seat lobby otherwise.
 const GOODS_LOBBY = 'wgood1';
 
+// The rows that failed this migration on hosted: a bot seat naming a bot whose
+// `bots` row 20260711130000_drop_non_wasm_bots deleted six months ago (29 such
+// seats across 21 games there, 20 waiting and 9 game_over). One per status the
+// pre-pass (4.1) has a branch for; e2e/fixtures/pre_table/orphan_bots.sql makes
+// them the way hosted made them.
+const ORPHAN_WAITING = 'worp01';
+const ORPHAN_GAME_OVER = 'gorp01';
+const ORPHAN_PLAYING = 'plorp1';
+const ORPHANS = [ORPHAN_WAITING, ORPHAN_GAME_OVER, ORPHAN_PLAYING];
+const DEAD_CORDITE_MAX = '00000000-0000-4000-8000-0000000000c2';
+
 interface JsonSeat { player_id: string; name: string; is_ai: boolean; status: string }
 interface Row {
     id: string; name: string; status: string; players: JsonSeat[]; state: string | null; roster: string | null;
@@ -189,6 +200,61 @@ async function assertCachedEnvelopes(r: Row, label: string): Promise<number> {
 
 // ---- the database side --------------------------------------------------------
 
+type Queryable = Pick<PoolClient, 'query'>;
+
+/**
+ * The pre-pass's end state, asserted wherever the migration has just run: the
+ * abandoned lobby lost the ghost seat and its membership row, while the finished
+ * and the live game each kept their seat, its name and its place, with a brain
+ * the kernel takes.
+ */
+async function assertOrphansResolved(q: Queryable, label: string): Promise<void> {
+    const row = async (id: string): Promise<Row> =>
+        (await q.query('SELECT *, status::text AS status FROM games WHERE id = $1', [id])).rows[0] as Row;
+    const handsOf = async (id: string): Promise<string[]> =>
+        (await q.query('SELECT bot_id::text FROM bot_hands WHERE game_id = $1 ORDER BY 1', [id])).rows.map((h) => h.bot_id as string);
+    // The substitute the pre-pass must have chosen: the lowest-id surviving `random` bot.
+    const sub = (await q.query(`SELECT id::text, strategy_key FROM bots WHERE strategy_key = 'random' ORDER BY id LIMIT 1`)).rows[0] as
+        { id: string; strategy_key: string };
+
+    // waiting: the seat is gone, and so is its bot_hands row. The bot that still exists keeps its.
+    const lobby = await row(ORPHAN_WAITING);
+    assert.equal(lobby.status, 'waiting');
+    assert.deepEqual(lobby.players.map((p) => p.player_id), [DMITRY, CORDITE_BOT],
+        `${label}: the abandoned lobby dropped the seat whose bot no longer exists`);
+    assert.deepEqual(await handsOf(ORPHAN_WAITING), [CORDITE_BOT],
+        `${label}: and its bot_hands row went with it, the surviving bot's left alone`);
+
+    // game_over: the seat, its name and its place stay; only the brain behind it changes.
+    const finished = await row(ORPHAN_GAME_OVER);
+    assert.equal(finished.status, 'game_over');
+    assert.equal(finished.players.length, 3, `${label}: the finished game keeps every seat`);
+    assert.equal(finished.players[2].name, '%Espresso 3', `${label}: the retired bot's name, in its place`);
+    assert.equal(finished.players[2].is_ai, true, `${label}: still a bot seat`);
+    assert.equal(finished.players[2].player_id, sub.id, `${label}: repointed at the substitute bot`);
+
+    // playing: the same, and the membership follows the roster.
+    const live = await row(ORPHAN_PLAYING);
+    assert.equal(live.status, 'playing');
+    assert.equal(live.players.length, 4, `${label}: the live game keeps every seat`);
+    assert.equal(live.players[2].name, '%Cordite Max 2', `${label}: the retired bot's name, in its place`);
+    assert.equal(live.players[2].player_id, sub.id, `${label}: repointed at the substitute bot`);
+    assert.equal(live.needs_bots, true, `${label}: a live game with a bot seat IN still needs bots`);
+    const liveHands = await handsOf(ORPHAN_PLAYING);
+    assert.ok(liveHands.includes(sub.id), `${label}: the live game's bot_hands follows the roster (${liveHands})`);
+    assert.ok(!liveHands.includes(DEAD_CORDITE_MAX), `${label}: and does not still name the bot that is gone`);
+
+    // Every one of them is a row the kernel takes, with the brain the roster names.
+    for (const r of [lobby, finished, live]) {
+        assert.ok(r.roster, `${label}: ${r.id} has a roster`);
+        const rc = table.load(bytes(r.state!), bytes(r.roster!));
+        assert.equal(rc, TABLE_OK, `${label}: ${r.id}: table_load accepts it (rc ${rc}, detail ${table.detail()})`);
+    }
+    const seats = table.seats();   // the live game's, still loaded
+    assert.equal(seats[2].brain, sub.strategy_key, `${label}: the seat's brain is the substitute's strategy_key`);
+    assert.equal(seats[2].name, '%Cordite Max 2', `${label}: the roster keeps the retired bot's name`);
+}
+
 async function inRolledBackTx<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
     const c = await pgPool.connect();
     try {
@@ -242,6 +308,7 @@ if (!process.env.VALIDATION_ONLY) {
         await applyPlatformShim();
         await pgPool.query(readFileSync(join(FIXTURE, 'schema.sql'), 'utf8'));
         await pgPool.query(rowsSql);
+        await pgPool.query(readFileSync(join(FIXTURE, 'orphan_bots.sql'), 'utf8'));
         await pgPool.query(
             `INSERT INTO games (id, name, players, status, discard_pile_length, flipped, good_players, good_timestamp, state, version)
              SELECT $1, name, players, status, 7, '{"suit": 1, "value": 9}', jsonb_build_array(players->0->>'player_id'),
@@ -271,15 +338,42 @@ if (!process.env.VALIDATION_ONLY) {
                 params: [lobby], error: /the title is 201 bytes, over the kernel's cap of 200/,
             },
             {
+                // Nine seats and nothing else wrong with any of them, so the
+                // count is the only thing that can refuse the row.
                 what: 'nine seats',
-                mutate: `UPDATE games SET players = (SELECT jsonb_agg(jsonb_set(p, '{player_id}', to_jsonb(p->>'player_id' || i)))
-                           FROM jsonb_array_elements(players || players || players) WITH ORDINALITY AS t(p, i)) WHERE id = $1`,
+                mutate: `UPDATE games SET players = (SELECT jsonb_agg(jsonb_build_object(
+                           'player_id', 'seat-' || i, 'name', 'seat ' || i, 'is_ai', false, 'status', 'idle'))
+                           FROM generate_series(1, 9) AS i) WHERE id = $1`,
                 params: [lobby], error: /9 seats, over the kernel's 8/,
             },
             {
-                what: 'a bot seat with no bots row',
-                mutate: `UPDATE games SET players = jsonb_set(players, '{1,player_id}', '"00000000-0000-4000-8000-00000000dead"') WHERE id = $1`,
-                params: [lobby], error: /bot seat 00000000-0000-4000-8000-00000000dead has no bots row/,
+                // A MISSING bots row is not one of these any more: the pre-pass
+                // resolves those (the test below). A bots row that is there and
+                // whose strategy_key is not a brain (roster.c brain_ok: 1..23
+                // bytes of printable ASCII) is still the migration's to refuse.
+                what: 'a bots row whose strategy_key is 24 bytes',
+                mutate: `UPDATE bots SET strategy_key = repeat('x', 24) WHERE id = $1`,
+                params: [CORDITE_BOT], error: /bot seat dfdca6c5-d4e9-4a5a-94dc-000000000005 has no bots row with a valid strategy_key \(x{24}\)/,
+            },
+            {
+                what: 'a bots row with an empty strategy_key',
+                mutate: `UPDATE bots SET strategy_key = '' WHERE id = $1`,
+                params: [CORDITE_BOT], error: /bot seat dfdca6c5-d4e9-4a5a-94dc-000000000005 has no bots row with a valid strategy_key \(\)/,
+            },
+            {
+                what: 'the same id seated twice',
+                mutate: `UPDATE games SET players = jsonb_set(players, '{2,player_id}', players->1->'player_id') WHERE id = $1`,
+                params: [lobby], error: /player dfdca6c5-d4e9-4a5a-94dc-000000000005 is seated twice/,
+            },
+            {
+                what: 'a seat with no player_id',
+                mutate: `UPDATE games SET players = players #- '{0,player_id}' WHERE id = $1`,
+                params: [lobby], error: /a seat has no player_id/,
+            },
+            {
+                what: 'a seat with no name',
+                mutate: `UPDATE games SET players = players #- '{0,name}' WHERE id = $1`,
+                params: [lobby], error: /seat bf8245d5-0270-4aca-8282-000000000001 has no name/,
             },
             {
                 what: 'a lobby seat with an unknown status',
@@ -306,9 +400,24 @@ if (!process.env.VALIDATION_ONLY) {
         });
     });
 
+    test('a bot seat whose bots row was deleted long ago does not fail the migration', async () => {
+        // This is what hosted raised on 2026-09-17, with the whole migration in
+        // one transaction, so nothing applied at all:
+        //   ERROR: legacy roster: bot seat 47367aa7-... has no bots row with ...
+        // Run in a rolled-back transaction so the real conversion below is still
+        // the first one this database sees.
+        await inRolledBackTx(async (c) => {
+            const raised = await c.query(migrationSql).then(() => null, (e: Error) => e);
+            assert.equal(raised, null,
+                `the migration resolves a bot seat whose bots row is gone instead of raising: ${raised?.message ?? ''}`);
+            await assertOrphansResolved(c, 'a rolled-back conversion');
+        });
+    });
+
     test('the expand migration applies to the captured rows without touching version or updated_at', async () => {
         before4a = new Map((await allRows()).map((r) => [r.id, r]));
-        assert.equal(before4a.size, scenarios.size + 1, 'every captured game and the synthetic goods lobby');
+        assert.equal(before4a.size, scenarios.size + 1 + ORPHANS.length,
+            'every captured game, the synthetic goods lobby and the three orphan-bot rows');
         await pgPool.query(migrationSql);
         const after = await allRows();
         assert.deepEqual(after.map((r) => r.id), [...before4a.keys()]);
@@ -319,6 +428,19 @@ if (!process.env.VALIDATION_ONLY) {
             assert.equal(r.writer_gen, 1, `${r.id}: owned by today's writers`);
             if (r.status !== 'waiting') assert.equal(r.state, was.state, `${r.id}: a dealt blob is untouched`);
         }
+    });
+
+    test('the resolved orphan seats survive a later legacy write to the same rows', async () => {
+        await assertOrphansResolved(pgPool, 'the real conversion');
+        // The bridge trigger re-derives the roster from `players` on every legacy
+        // write, so a fix that lived only in the roster bytes would raise the
+        // next time one of these rows was touched - a "continue" on the finished
+        // game, say. It has to be the JSONB that was resolved.
+        for (const id of ORPHANS) {
+            const { rowCount } = await pgPool.query('UPDATE games SET players = players WHERE id = $1', [id]);
+            assert.equal(rowCount, 1, `${id}: a legacy write lands`);
+        }
+        await assertOrphansResolved(pgPool, 'after a legacy write');
     });
 
     test('every converted row loads in C, with the JSONB seats, bot brains, title and needs_bots', async () => {
@@ -341,7 +463,7 @@ if (!process.env.VALIDATION_ONLY) {
     test('C writes the envelope today\'s server cached for every human seat and the spectator', async () => {
         let seats = 0, games = 0, withGoods = 0;
         for (const r of await allRows()) {
-            if (r.id === GOODS_LOBBY) continue;   // synthetic: no cached views
+            if (r.id === GOODS_LOBBY || ORPHANS.includes(r.id)) continue;   // synthetic: no cached views
             seats += await assertCachedEnvelopes(r, r.id);
             games++;
             if (r.good_players.length > 0) withGoods++;
