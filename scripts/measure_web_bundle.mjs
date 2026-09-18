@@ -38,9 +38,12 @@ import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import vm from 'node:vm';
 
+// Each `manifest` is a path inside the .next build tree, not a path in this
+// repo, so the marker below tells e2e/validation/helper_scripts_validation.test.ts
+// not to look for it here.
 export const ROUTES = [
-    { route: '/', entry: '[project]/src/app/page', manifest: 'server/app/page_client-reference-manifest.js' },
-    { route: '/[game_id]', entry: '[project]/src/app/[game_id]/page', manifest: 'server/app/[game_id]/page_client-reference-manifest.js' },
+    { route: '/', entry: '[project]/src/app/page', manifest: 'server/app/page_client-reference-manifest.js' },   // no-repo-path
+    { route: '/[game_id]', entry: '[project]/src/app/[game_id]/page', manifest: 'server/app/[game_id]/page_client-reference-manifest.js' },   // no-repo-path
 ];
 
 // Large trees the web build never reads. Skipping them keeps the staged copy
