@@ -75,7 +75,7 @@ CREATE TABLE games (
 );
 
 -- The same words as the line comments above, but stored in the catalog, which is
--- where the migrations put them (20260917140000, 20260918130000) and therefore
+-- where the migrations put them (20260917140000, 20260918220000) and therefore
 -- where a reader of the hosted database finds them. A line comment in this file
 -- reaches nothing but this file.
 COMMENT ON COLUMN games.state IS
@@ -270,7 +270,7 @@ ALTER TABLE spectator_views ENABLE ROW LEVEL SECURITY;
 -- stays enabled with no policy, so a grant added by mistake still reads nothing.
 -- Supabase grants ALL on every public table to anon and authenticated; REVOKE on
 -- the table also revokes every column privilege. Mirrors migration
--- 20260918120000_table_contract.sql.
+-- 20260918210000_table_contract.sql.
 REVOKE ALL ON public.games FROM PUBLIC, anon, authenticated;
 
 -- Player Hands: Players can ONLY see their own hands
@@ -552,7 +552,7 @@ CREATE TRIGGER enforce_username_not_bot
 -- that no longer seats them. The blobs arrive base64 (a third fewer PostgREST
 -- body bytes than hex, measured at the same latency) and are stored as bytes;
 -- the views are parallel arrays; a NULL roster keeps the stored one; the result
--- is the OUT columns. Mirrors migration 20260918130000_table_bytea.sql.
+-- is the OUT columns. Mirrors migration 20260918220000_table_bytea.sql.
 CREATE OR REPLACE FUNCTION commit_table(
   p_game_id          TEXT,
   p_expected_version BIGINT,
@@ -692,7 +692,7 @@ BEGIN
 END;
 $$;
 
--- Account deletion (migrations 20260714120000, 20260918120000). The seat names
+-- Account deletion (migrations 20260714120000, 20260918210000). The seat names
 -- in games.roster and in every cached view are redacted by the delete-account
 -- edge function before it calls this (table_redact per seated table, committed
 -- through commit_table; docs/C_GAME_SHAPE_MIGRATION.md Q8). Owned rows cascade

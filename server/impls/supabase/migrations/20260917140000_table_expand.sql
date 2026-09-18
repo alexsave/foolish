@@ -554,7 +554,7 @@ $$;
 --
 -- The blobs ride as base64 (measured through PostgREST: a third fewer body bytes
 -- than hex, the same latency), and the columns stay hex TEXT until
--- 20260918130000_table_bytea.sql makes them BYTEA, so this body writes the text
+-- 20260918220000_table_bytea.sql makes them BYTEA, so this body writes the text
 -- forms the legacy writers write. The signature is final from here on: the
 -- functions deployed between 4a and 4c already call it. The views are parallel
 -- arrays with the game's status, the roster NULL when the operation left it alone,

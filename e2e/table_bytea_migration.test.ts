@@ -9,11 +9,11 @@
  *     -> 20260917140000_table_expand.sql            (4a)
  *     -> kernel writes as the functions make them   (a join, a dealt commit that
  *                                                    leaves the roster alone, a create)
- *     -> 20260918120000_table_contract.sql          (4c)
+ *     -> 20260918210000_table_contract.sql          (4c)
  *     -> legacy snapshots with JSONB seat lists, and a blob of each column
  *        rewritten in its other text form ('\x'-hex where bare hex was
  *        written, bare where '\x' was), which a hand-run write could leave
- *     -> 20260918130000_table_bytea.sql
+ *     -> 20260918220000_table_bytea.sql
  *
  * and holds: every state, roster, session log and cached view is byte for byte
  * the bytes its text spelled, whichever form; version, status, needs_bots,
@@ -41,7 +41,7 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 const FIXTURE = join(process.cwd(), 'e2e', 'fixtures', 'pre_table');
 const MIGRATIONS = join(process.cwd(), 'server', 'impls', 'supabase', 'migrations');
 const sqlOf = (name: string) => readFileSync(join(MIGRATIONS, name), 'utf8');
-const BYTEA = '20260918130000_table_bytea.sql';
+const BYTEA = '20260918220000_table_bytea.sql';
 
 const table = createServerTable();
 /** The bytes a hex text spells, '\x'-prefixed (how a BYTEA column reads) or bare. */
@@ -157,7 +157,7 @@ if (!process.env.VALIDATION_ONLY) {
         assert.equal(table.create(DMITRY, 'Dmitry'), TABLE_OK);
         await createTableSql('kb0001', DMITRY, table.commit('kb0001', 0, 0) as TableProducts);
 
-        await pgPool.query(sqlOf('20260918120000_table_contract.sql'));
+        await pgPool.query(sqlOf('20260918210000_table_contract.sql'));
 
         // Snapshots as the functions before this migration wrote them: seat lists as JSON arrays.
         await pgPool.query(`INSERT INTO auth.users (id) VALUES ($1) ON CONFLICT DO NOTHING`, [STRANGER]);

@@ -1,7 +1,7 @@
 -- BYTEA: the kernel's blobs are stored as bytes, and the last JSON in the game
 -- tables goes (docs/C_GAME_SHAPE_MIGRATION.md 3.1, "Final pass: BYTEA").
 --
--- Deploy with 20260918120000_table_contract.sql or any time after it: the
+-- Deploy with 20260918210000_table_contract.sql or any time after it: the
 -- functions live by then already call commit_table and create_table with the
 -- signature this keeps (base64 blobs, parallel view arrays, the OUT result), and
 -- every reader they have parses both text forms a SELECT returns ('\x'-hex from a
