@@ -74,6 +74,19 @@ CREATE TABLE games (
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
+-- The same words as the line comments above, but stored in the catalog, which is
+-- where the migrations put them (20260917140000, 20260918130000) and therefore
+-- where a reader of the hosted database finds them. A line comment in this file
+-- reaches nothing but this file.
+COMMENT ON COLUMN games.state IS
+  'The kernel''s durable board (c/src/table.h, v02): every hand and the deck order, a lobby included. SENSITIVE: service_role only.';
+COMMENT ON COLUMN games.roster IS
+  'The kernel''s durable roster (c/src/roster.h, format 1, 1227 bytes): each seat''s id, name and bot brain, and the table title. SENSITIVE: service_role only.';
+COMMENT ON COLUMN games.needs_bots IS
+  'PLAYING and a bot seat is still IN (the kernel''s table_needs_bots): the bot heartbeat''s scan predicate.';
+COMMENT ON COLUMN games.logs_packed IS
+  'The session log: kernel log records with u48 timestamps, DRAW identities pre-masked, appended by commit_table. Empty in a lobby and once the replay snapshot is stored.';
+
 -- Game decks table - SENSITIVE: Only edge functions can access
 -- MEMBERSHIP: which humans are in which game. Named for the hands it used to
 -- carry - the dealt state is games.state, and the hand/awaiting_attack columns
@@ -88,6 +101,8 @@ CREATE TABLE player_hands (
   updated_at TIMESTAMP DEFAULT NOW(),
   PRIMARY KEY (game_id, player_id) -- One hand per player per game
 );
+COMMENT ON TABLE player_hands IS
+  'Membership: which humans are in which game. Named for the hands it used to carry; the dealt state is games.state. The realtime RLS policies EXISTS over this table, so it is load-bearing even though it holds no cards.';
 
 -- Chat messages table
 CREATE TABLE chat_messages (
@@ -134,6 +149,8 @@ CREATE TABLE bot_hands (
   updated_at TIMESTAMP DEFAULT NOW(),
   PRIMARY KEY (game_id, bot_id) -- One hand per bot per game
 );
+COMMENT ON TABLE bot_hands IS
+  'Membership: which bots are in which game. See player_hands.';
 
 -- NOTE: game_locks and bot_locks are GONE. Concurrency is now handled by
 -- games.version (optimistic CAS via the commit_table RPC) and the games.bot_lease_*
