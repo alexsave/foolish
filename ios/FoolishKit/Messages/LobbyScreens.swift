@@ -1,4 +1,4 @@
-// LobbyScreens — everything the extension shows BEFORE a board: the new-game
+// LobbyScreens - everything the extension shows BEFORE a board: the new-game
 // setup, the waiting lobby, the name gate and the seat picker.
 //
 // One surface's worth of pre-game UI, lifted out of MessagesRootView.swift.

@@ -1,4 +1,4 @@
-// BoardActionMenuTests — the board's pill menu, driven without a board.
+// BoardActionMenuTests - the board's pill menu, driven without a board.
 //
 // MOST OF THESE USED TO BE SOURCE-TEXT SCANS in UndoGateTests, matching the
 // exact spelling of an expression inside `MessageTableView.actionBar` - down to

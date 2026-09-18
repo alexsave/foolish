@@ -1,7 +1,6 @@
-// MessageDebugFlags — the single-device testing knobs, never in a Release build.
+// MessageDebugFlags - the single-device testing knobs, never in a Release build.
 
 import Foundation
-
 
 #if DEBUG || SOLO_TESTING
 /// DEBUG-only knobs for single-device testing (never compiled into Release —

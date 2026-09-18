@@ -1,4 +1,4 @@
-// FRoleGlyphs — the three marks a seat can wear, their ink and their sizes:
+// FRoleGlyphs - the three marks a seat can wear, their ink and their sizes:
 // sword (attacking), shield (defending), check (said good).
 //
 // Design-system shapes, drawn from paths and nothing else. They are worn by
@@ -8,7 +8,6 @@
 // merely where they were written.
 
 import SwiftUI
-
 
 /// THE ink every role mark is drawn in: a WHITE body with a BLACK outline.
 ///

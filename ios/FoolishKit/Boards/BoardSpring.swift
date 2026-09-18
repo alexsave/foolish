@@ -1,4 +1,4 @@
-// BoardSpring — the two modifiers the message board's chrome wears, and the
+// BoardSpring - the two modifiers the message board's chrome wears, and the
 // rule each of them is.
 //
 // Both were at the bottom of MessageTableView.swift, under the 2,200-line view
@@ -8,7 +8,6 @@
 // chrome, and they are the same two rules wherever chrome sits.
 
 import SwiftUI
-
 
 /// THE CHROME DOES NOT RIDE THE BOARD'S CARD SPRING - round 7, written once.
 ///

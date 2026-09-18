@@ -1,4 +1,4 @@
-// BoardActionMenu — WHICH pills the board offers right now, as one value.
+// BoardActionMenu - WHICH pills the board offers right now, as one value.
 //
 // Pulled out of `MessageTableView.actionBar` and `MessageTableView.undoSlot`,
 // which is where every one of these enable states was decided inside a
@@ -17,39 +17,39 @@
 
 import Foundation
 
-public struct BoardActionMenu: Equatable, Sendable {
-    public let canAttack: Bool
-    public let canCover: Bool
-    public let canPass: Bool
-    public let canPickup: Bool
-    public let canDone: Bool
+struct BoardActionMenu: Equatable, Sendable {
+    let canAttack: Bool
+    let canCover: Bool
+    let canPass: Bool
+    let canPickup: Bool
+    let canDone: Bool
 
     /// What the board knows about ITSELF - the gates that are not the kernel's
     /// to answer, because they are about this screen rather than about Durak.
-    public struct Gates: Equatable, Sendable {
+    struct Gates: Equatable, Sendable {
         /// The kernel published a menu for my seat (`controller.iCanAct`).
-        public var iCanAct: Bool
+        var iCanAct: Bool
         /// A move is staged and waiting on Messages' Send. While it is, the only
         /// control the board offers is Undo: the extension has already dropped
         /// the human at the compose bar.
-        public var canSend: Bool
+        var canSend: Bool
         /// A move of mine is between the tap and the kernel's answer.
-        public var playInFlight: Bool
+        var playInFlight: Bool
         /// The board is at rest enough to accept a play (`ActionPillSlot`/
         /// `UndoGate`). Computed by the caller because it reads statics nothing
         /// publishes, which is also why the pills are redrawn on a short timer.
-        public var boardStill: Bool
+        var boardStill: Bool
         /// Round 20: the kernel stood this seat down (a newer chain arrived).
-        public var superseded: Bool
+        var superseded: Bool
         /// Round 16: the 15-second hold that gives attackers a fair chance to
         /// throw in before the defender may take. Non-zero means held.
-        public var pickupHeld: Bool
-        public var isDefender: Bool
-        public var isOut: Bool
-        public var tableIsEmpty: Bool
-        public var selectionIsEmpty: Bool
+        var pickupHeld: Bool
+        var isDefender: Bool
+        var isOut: Bool
+        var tableIsEmpty: Bool
+        var selectionIsEmpty: Bool
 
-        public init(iCanAct: Bool, canSend: Bool, playInFlight: Bool, boardStill: Bool,
+        init(iCanAct: Bool, canSend: Bool, playInFlight: Bool, boardStill: Bool,
                     superseded: Bool, pickupHeld: Bool, isDefender: Bool, isOut: Bool,
                     tableIsEmpty: Bool, selectionIsEmpty: Bool) {
             self.iCanAct = iCanAct; self.canSend = canSend
@@ -62,7 +62,7 @@ public struct BoardActionMenu: Equatable, Sendable {
 
     /// Nothing offered. The read-only board a spectator is looking at, and the
     /// resting value for a board with no view yet.
-    public static let none = BoardActionMenu(canAttack: false, canCover: false, canPass: false,
+    static let none = BoardActionMenu(canAttack: false, canCover: false, canPass: false,
                                              canPickup: false, canDone: false)
 
     /// The five play pills, from one kernel probe and the board's own gates.
@@ -72,7 +72,7 @@ public struct BoardActionMenu: Equatable, Sendable {
     /// still. Whatever that gate says, the kernel still has the final word on
     /// each individual pill - so a board that wrongly believed itself to be
     /// acting could at worst offer a move the kernel had already listed.
-    public static func resolve(_ probe: PlayProbe, _ g: Gates) -> BoardActionMenu {
+    static func resolve(_ probe: PlayProbe, _ g: Gates) -> BoardActionMenu {
         let acting = g.iCanAct && !g.canSend && !g.playInFlight && g.boardStill
         return BoardActionMenu(
             canAttack: acting && !g.isDefender && probe.canAttack,
@@ -85,7 +85,7 @@ public struct BoardActionMenu: Equatable, Sendable {
             canDone: acting && probe.canSayGood && g.selectionIsEmpty)
     }
 
-    /// TAKE — THE ONE PILL ON THIS BOARD THAT IS NOT THE KERNEL'S LEGAL MENU,
+    /// TAKE - THE ONE PILL ON THIS BOARD THAT IS NOT THE KERNEL'S LEGAL MENU,
     /// and the reason is worth reading before anyone "fixes" it.
     ///
     /// The condition is the web's own (`rawPickup = isDefending &&
@@ -132,7 +132,7 @@ public struct BoardActionMenu: Equatable, Sendable {
     /// enum so the third state cannot be reached by accident - the rule the
     /// owner asked for is "shown enabled, or not shown - never dimmed", and
     /// with a Bool pair that is a convention rather than a shape.
-    public enum UndoPill: Equatable, Sendable {
+    enum UndoPill: Equatable, Sendable {
         /// No pill at all: nothing is staged, or the board is moving and
         /// `UndoGate.hides` says a moving board hides rather than dims.
         case absent
@@ -151,7 +151,7 @@ public struct BoardActionMenu: Equatable, Sendable {
     ///   door to forget.
     /// - `still`: the board is not animating and my play is not mid-stage.
     /// - `hides`: `UndoGate.hides` - see the enum.
-    public static func undoPill(canSend: Bool, retracting: Bool,
+    static func undoPill(canSend: Bool, retracting: Bool,
                                 still: Bool, hides: Bool) -> UndoPill {
         guard canSend else { return .absent }
         let usable = !retracting && still

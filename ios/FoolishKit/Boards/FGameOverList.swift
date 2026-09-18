@@ -1,4 +1,4 @@
-// FGameOverList — the ranked results screen, first-out down to the fool, with
+// FGameOverList - the ranked results screen, first-out down to the fool, with
 // New game and the replay link under it (web WinScreen parity).
 //
 // The board gives way to this when the game ends, and that swap is the only
@@ -8,7 +8,6 @@
 
 import SwiftUI
 import UIKit   // UIPasteboard, for the replay link's refused-to-open fallback
-
 
 /// One row of the ranked end screen (web WinScreen parity, minus ELO). `place` is
 /// 1-based: rank 1 is the first player out (best); the fool is `place == total`.

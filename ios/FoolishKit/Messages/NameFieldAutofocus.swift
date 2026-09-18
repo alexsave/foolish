@@ -1,4 +1,4 @@
-// NameFieldAutofocus — the keyboard a name field raises for itself, and the two
+// NameFieldAutofocus - the keyboard a name field raises for itself, and the two
 // environment values it needs to know when.
 //
 // Used by all three name screens (NewGameSetup, LobbyView, NameGateView, in

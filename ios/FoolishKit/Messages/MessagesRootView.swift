@@ -1,4 +1,4 @@
-// MessagesRootView — WHERE the extension's surface is, per presentation style
+// MessagesRootView - WHERE the extension's surface is, per presentation style
 // (§10), and the tween that carries it between the two.
 //
 // Compact is the KEYBOARD AREA (§3.5): no text field, no horizontal scrollers —

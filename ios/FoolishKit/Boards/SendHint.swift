@@ -1,4 +1,4 @@
-// SendHint — the staged-but-unsent reminder (round-8 #3 / round-9): the blue
+// SendHint - the staged-but-unsent reminder (round-8 #3 / round-9): the blue
 // arrow that bobs under Messages' own Send button, its caption, the alignment
 // guide the two share and the white outline that keeps both legible on wool.
 //
@@ -8,7 +8,6 @@
 // it can be looked at on its own and why it belongs on its own.
 
 import SwiftUI
-
 
 /// Round-8 #3: the shared axis the send reminder's arrow and caption align on
 /// - the vertical line under Messages' Send button. The arrow always centres

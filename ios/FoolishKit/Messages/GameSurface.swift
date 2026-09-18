@@ -1,4 +1,4 @@
-// GameSurface — the state machine behind the extension's one surface (§5/§6/§7).
+// GameSurface - the state machine behind the extension's one surface (§5/§6/§7).
 //
 // MessagesRootView routes the PRESENTATION style (compact drawer vs expanded
 // sheet) and drives the collapse tween; this is what it shows inside either

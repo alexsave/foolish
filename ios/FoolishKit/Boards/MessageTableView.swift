@@ -10,7 +10,6 @@
 
 import SwiftUI
 import Foundation   // sin/cos for the ring placement
-import UIKit        // UIPasteboard, for the replay link's refused-to-open fallback
 
 public struct MessageTableView: View {
     @ObservedObject private var controller: MessageTurnController
@@ -797,7 +796,7 @@ public struct MessageTableView: View {
             if let view = controller.view {
                 ZStack {
                 // Redrawn on a short timer: whether the board is still is read
-                // from statics nothing publishes (see `boardStill` in actionBar).
+                // from statics nothing publishes (see `boardStill` in actionGates).
                 TimelineView(.periodic(from: .now, by: 0.1)) { _ in
                     actionBar(view)
                 }

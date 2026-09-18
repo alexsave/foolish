@@ -1,4 +1,4 @@
-// LobbyControls — WHICH control a lobby offers, as a pure function of
+// LobbyControls - WHICH control a lobby offers, as a pure function of
 // (mySeat, joined, capacity, who sent the newest bubble).
 //
 // Pulled out of LobbyView long ago and out of MessagesRootView.swift here: it
