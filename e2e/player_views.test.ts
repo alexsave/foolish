@@ -54,7 +54,7 @@ function envelopeOf(t: TableState, viewer: number): string {
     assert.equal(table.load(t.state, t.roster), L.TABLE_OK);
     const e = table.envelope(t.gameId, viewer, t.version);
     assert.ok(e instanceof Uint8Array, `table_envelope(${viewer}) = ${e}`);
-    return `\\x${Buffer.from(e).toString('hex')}`;   // a BYTEA view, as PostgREST and the pool read it
+    return Buffer.from(e).toString('hex');
 }
 
 async function dealtGame(prefix: string, bot = false): Promise<{ gameId: string; h1: string; h2: string; b1: string }> {
@@ -164,7 +164,7 @@ test('create seeds the creator\'s lobby row and the spectator lobby row', async 
     assert.equal(views.get(h1)!.status, 'waiting');
     assert.equal(views.get(h1)!.version, '0');
     assert.equal(views.get(h1)!.view, envelopeOf(t, 0), 'the creator\'s row is the kernel\'s seat 0 envelope');
-    assert.equal(views.get(h1)!.view, `\\x${Buffer.from(res.bytes).toString('hex')}`, 'and the create response body');
+    assert.equal(views.get(h1)!.view, Buffer.from(res.bytes).toString('hex'), 'and the create response body');
 
     const spec = await spectatorFor(gameId);
     assert.ok(spec, 'spectator lobby row seeded');

@@ -154,7 +154,7 @@ test('every finished game gets a replay snapshot and its logs wiped (log order i
         // The packed session-log column (the snapshot's source) is retired after
         // a snapshot — game_logs rows are gone (migration 20260708120000).
         const packed = await pgPool.query('SELECT logs_packed FROM games WHERE id=$1', [gameId]);
-        assert.equal(packed.rows[0].logs_packed, '\\x', `finished game ${gameId} kept its packed session log (seed=${rng.seed}) - snapshot should have retired it`);
+        assert.equal(packed.rows[0].logs_packed, '', `finished game ${gameId} kept its packed session log (seed=${rng.seed}) - snapshot should have retired it`);
     }
     assert.ok(finished >= 2, `expected at least 2 finished games, got ${finished} (seed=${rng.seed})`);
 });

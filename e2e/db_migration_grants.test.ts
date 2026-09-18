@@ -231,20 +231,8 @@ const PUBLIC_CATALOG = `
   ORDER BY 1
 `;
 
-// Every privilege a client role holds on games, SELECT included, at table level
-// or on any column (docs/C_GAME_SHAPE_MIGRATION.md 3.3).
-const GAMES_CLIENT_PRIVILEGES = `
-  SELECT r.role || ' ' || p.priv AS grant
-  FROM (VALUES ('anon'), ('authenticated')) AS r(role)
-  CROSS JOIN (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) AS p(priv)
-  WHERE CASE WHEN p.priv IN ('SELECT', 'INSERT', 'UPDATE', 'REFERENCES')
-             THEN has_any_column_privilege(r.role, 'public.games', p.priv)
-             ELSE has_table_privilege(r.role, 'public.games', p.priv) END
-  ORDER BY 1
-`;
-
 type Exposure = { fn: string; who: string };
-type Posture = { exposed: string[]; writes: string[]; writePolicies: string[]; gamesPrivileges: string[] };
+type Posture = { exposed: string[]; writes: string[]; writePolicies: string[] };
 
 async function exposedRpcs(): Promise<Exposure[]> {
     const { rows } = await pgPool.query(EXPOSED_SECDEF);
@@ -257,8 +245,7 @@ async function posture(): Promise<Posture> {
     const exposed = (await exposedRpcs()).map((e) => `${e.fn} [${e.who}]`);
     const writes = (await pgPool.query(CLIENT_WRITES)).rows.map((r) => r.grant);
     const writePolicies = (await pgPool.query(WRITE_POLICIES)).rows.map((r) => r.policy);
-    const gamesPrivileges = (await pgPool.query(GAMES_CLIENT_PRIVILEGES)).rows.map((r) => r.grant);
-    return { exposed, writes, writePolicies, gamesPrivileges };
+    return { exposed, writes, writePolicies };
 }
 
 function replayedMigrations(): string[] {
@@ -320,7 +307,7 @@ export function registerMigrationGrantsValidation(): void {
             hostedCatalog = (await pgPool.query(PUBLIC_CATALOG)).rows.map((r) => r.item);
 
             await pgPool.query(
-                `INSERT INTO games (id, status, state, roster) VALUES ($1, 'waiting', '\\x00', '\\x00')`,
+                `INSERT INTO games (id, name, players, status) VALUES ($1, 'victim', '[]'::jsonb, 'waiting')`,
                 [VICTIM_GAME],
             );
             await pgPool.query(`INSERT INTO auth.users (id) VALUES ($1), ($2)`, [MEMBER, ATTACKER]);
@@ -362,19 +349,16 @@ export function registerMigrationGrantsValidation(): void {
             });
         });
 
-        test('the contract migration left no legacy writer: commit_game, create_game and the bridge are gone', async () => {
-            // Phase 4c (20260918120000_table_contract.sql). A function that does not
-            // exist cannot be reopened by a later grant.
-            const { rows } = await pgPool.query(
-                `SELECT p.oid::regprocedure::text AS fn FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-                 WHERE n.nspname = 'public' AND (p.proname IN ('commit_game', 'create_game') OR p.proname LIKE 'legacy\\_%')`);
-            assert.deepEqual(rows.map((r) => r.fn), []);
-        });
-
-        test('neither client role holds any privilege on games, SELECT included, under the platform defaults', () => {
-            // Supabase's default privileges grant ALL on every table; the contract
-            // migration takes every one back. No client reads games (3.3).
-            assert.deepEqual(hostedPosture!.gamesPrivileges, []);
+        test('anon cannot execute commit_game, as POST /rest/v1/rpc/commit_game would', async () => {
+            // The legacy writer is still here until the contract migration drops it,
+            // and 20260807120000 plus 20260917000000 must keep it off the client roles.
+            await asClient('anon', null, async (c) => {
+                await assert.rejects(
+                    c.query(`SELECT commit_game('no-such-game', 0, '{}'::jsonb)`),
+                    (e: { code?: string }) => e.code === '42501',
+                    'anon executed commit_game, the RPC that rewrites any game',
+                );
+            });
         });
 
         test('no client role holds a write privilege on a public table, beyond the intended ones', () => {
@@ -406,7 +390,7 @@ export function registerMigrationGrantsValidation(): void {
             });
             await asClient('anon', null, async (c) => {
                 await assert.rejects(
-                    c.query(`INSERT INTO games (id, state, roster) VALUES ('forged-anon', '\\x00', '\\x00')`),
+                    c.query(`INSERT INTO games (id, name) VALUES ('forged-anon', 'forged')`),
                     (e: { code?: string }) => e.code === '42501',
                 );
             });

@@ -261,15 +261,12 @@ if (!process.env.VALIDATION_ONLY) {
           await c.query('ROLLBACK');
         }
 
-        // No column is readable at all since the contract migration: lobby and
-        // spectate listings read player_views / spectator_views.
-        for (const column of ['id', 'status', 'version']) {
-          await c.query('BEGIN');
-          await c.query(`SET LOCAL ROLE ${role}`);
-          await assert.rejects(c.query(`SELECT ${column} FROM games WHERE id=$1`, [gameId]), /permission denied/,
-            `${role} cannot read games.${column}`);
-          await c.query('ROLLBACK');
-        }
+        // The public columns stay readable - lobby/spectate listings work.
+        await c.query('BEGIN');
+        await c.query(`SET LOCAL ROLE ${role}`);
+        const pub = await c.query('SELECT id, name, status, version FROM games WHERE id=$1', [gameId]);
+        assert.equal(pub.rows.length, 1, `${role} reads public columns`);
+        await c.query('ROLLBACK');
       }
     } finally {
       c.release();

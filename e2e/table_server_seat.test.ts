@@ -2,8 +2,8 @@
 // a request acts as is the auth user's roster seat, resolved by the kernel, and
 // nothing in a request body selects the actor.
 //
-// Every row here is the kernel's (e2e/helpers/table_db.ts seedTable: state and
-// roster blobs) and every request goes through the real edge entry
+// Every row here is kernel-owned (e2e/helpers/table_db.ts seedTable: state and
+// roster blobs, writer_gen 2) and every request goes through the real edge entry
 // point with a real signed token. For `action` and for every `meta` type the
 // test sends the request as one user while the body names another (player_id,
 // user_id, seat), and reads the stored table back through the kernel

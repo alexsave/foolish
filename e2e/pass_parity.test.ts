@@ -232,7 +232,7 @@ if (!process.env.VALIDATION_ONLY) {
                     'SELECT view, version FROM player_views WHERE game_id=$1 AND player_id=$2', [gameId, defender.id])).rows[0];
                 if (row) {
                     assert.equal(Number(row.version), t.version, `the stored view is at the row's version (iter=${i})`);
-                    personal = readView(Buffer.from(row.view.replace(/^\\x/, ''), 'hex'));
+                    personal = readView(Buffer.from(row.view, 'hex'));
                     fromStoredView++;
                 } else {
                     personal = clientGame(t, d, t.version);

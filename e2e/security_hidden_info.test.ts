@@ -10,8 +10,7 @@
 //     on the public `game-{game}` topic
 //   - the viewer's player_views row, read as that user under RLS
 //   - the spectator_views row, read as an authenticated user under RLS
-//   - the games row, read AS anon (refused outright: since the contract
-//     migration no client role holds any privilege on games)
+//   - the games columns the anon role is granted, read AS anon
 //
 // Viewers: every seated human, a signed-in stranger (spectator), and anon.
 //
@@ -130,7 +129,7 @@ interface Table {
 }
 
 // A viewer is a seated human (seat >= 0), the signed-in spectator (seat -1,
-// `spectator`), or anon (seat -1, whose read of games is refused).
+// `spectator`), or anon (seat -1, reads only the anon-granted columns).
 type Viewer = { kind: 'human'; h: Human } | { kind: 'spectator'; h: Human } | { kind: 'anon' };
 const viewerName = (v: Viewer) => v.kind === 'anon' ? 'anon' : `${v.kind}:${v.h.name}`;
 
@@ -150,16 +149,12 @@ async function asRole<T>(role: 'anon' | 'authenticated', sub: string | null, fn:
     }
 }
 
-/** The games row as anon reads it: 'denied' when Postgres refuses the read (42501), else what it returned. */
-async function anonGamesRow(gameId: string): Promise<'denied' | Record<string, unknown> | null> {
-    return asRole('anon', null, async (c) => {
-        try {
-            return (await c.query('SELECT * FROM games WHERE id=$1', [gameId])).rows[0] ?? null;
-        } catch (e) {
-            if ((e as { code?: string }).code === '42501') return 'denied';
-            throw e;
-        }
-    });
+let anonColumns: string[] = [];
+
+async function anonGamesRow(gameId: string): Promise<Record<string, unknown> | null> {
+    const cols = anonColumns.filter(c => c !== 'updated_at');
+    return asRole('anon', null, async (c) =>
+        (await c.query(`SELECT ${cols.join(', ')} FROM games WHERE id=$1`, [gameId])).rows[0] ?? null);
 }
 const ownViewRow = (gameId: string, userId: string) => asRole('authenticated', userId, async (c) =>
     (await c.query('SELECT view, version, status FROM player_views WHERE game_id=$1', [gameId])).rows);
@@ -378,11 +373,28 @@ function checkEventPayload(t: Table, payload: Record<string, unknown>, v: Viewer
     }
 }
 
-function checkAnonRow(t: Table, row: 'denied' | Record<string, unknown> | null, what: string) {
+function checkAnonRow(t: Table, row: Record<string, unknown> | null, post: Truth, what: string) {
+    if (!row) return;
     t.counts.anonRows++;
-    // Not a filtered row, not an empty one: the read itself is refused, so no
-    // column of the unmasked board or the roster can ever reach anon.
-    assert.equal(row, 'denied', `${what}: anon's read of games is refused (got ${JSON.stringify(row)})`);
+    const truth = post.board;
+    const allowed = new Set<number>();
+    if (truth?.trump) allowed.add(id(truth.trump));
+    for (const bt of truth?.battles ?? []) { allowed.add(id(bt.attack)); if (bt.defense) allowed.add(id(bt.defense)); }
+    const walk = (x: unknown, path: string) => {
+        if (Array.isArray(x)) { x.forEach((y, i) => walk(y, `${path}[${i}]`)); return; }
+        if (x && typeof x === 'object') {
+            const o = x as Record<string, unknown>;
+            if (typeof o.suit === 'number' && typeof o.value === 'number' && o.suit >= 0) {
+                assert.ok(allowed.has(id(o as unknown as PlayCard)), `${what}: anon column ${path} names a card that is not on the public board`);
+            }
+            for (const k of Object.keys(o)) {
+                assert.ok(!/hand$|deck$|^cards$|seed|state/.test(k) || k === 'hand_length' || k === 'deck_length', `${what}: anon column ${path}.${k}`);
+                walk(o[k], `${path}.${k}`);
+            }
+        }
+    };
+    walk(row, 'games');
+    assert.ok(!('state' in row) && !('game_seed' in row) && !('logs_packed' in row), `${what}: anon reads no server-only column`);
 }
 
 async function checkAllViewers(t: Table, cap: Capture, pre: Truth, post: Truth, label: string) {
@@ -409,7 +421,7 @@ async function checkAllViewers(t: Table, cap: Capture, pre: Truth, post: Truth, 
             }
             for (const r of await spectatorRow(t.gameId, v.h.id)) checkViewEnvelope(t, hexToBytes(r.view), v, -1, pre, post, `${what} spectator_views`);
         } else {
-            checkAnonRow(t, await anonGamesRow(t.gameId), what);
+            checkAnonRow(t, await anonGamesRow(t.gameId), post, what);
         }
     }
 }
@@ -662,17 +674,17 @@ before(async () => {
         GRANT SELECT ON public.player_hands TO authenticated;
         -- Test-only: keep every session log the game ever committed, so the set of
         -- cards that have been public survives the end-of-game log wipe.
-        CREATE TABLE e2e_log_archive (game_id TEXT, logs BYTEA);
+        CREATE TABLE e2e_log_archive (game_id TEXT, logs TEXT);
         CREATE FUNCTION e2e_archive_logs() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
           IF COALESCE(OLD.logs_packed, '') <> '' AND NEW.logs_packed IS DISTINCT FROM OLD.logs_packed THEN
             INSERT INTO e2e_log_archive VALUES (OLD.id, OLD.logs_packed);
           END IF; RETURN NEW; END $$;
         CREATE TRIGGER e2e_archive_logs BEFORE UPDATE ON games FOR EACH ROW EXECUTE FUNCTION e2e_archive_logs();
     `);
-    const anonColumns = (await pgPool.query(
+    anonColumns = (await pgPool.query(
         `SELECT column_name FROM information_schema.column_privileges
-         WHERE table_schema='public' AND table_name='games' AND grantee IN ('anon', 'PUBLIC') AND privilege_type='SELECT'`)).rows.map(r => r.column_name);
-    assert.deepEqual(anonColumns, [], 'anon holds no column of games (docs/C_GAME_SHAPE_MIGRATION.md 3.3)');
+         WHERE table_schema='public' AND table_name='games' AND grantee='anon' AND privilege_type='SELECT'`)).rows.map(r => r.column_name);
+    assert.ok(anonColumns.includes('players') && !anonColumns.includes('state'), `anon column grants as expected: ${anonColumns}`);
     jsonbGamesColumns = new Set((await pgPool.query(
         `SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='games' AND data_type='jsonb'`)).rows.map(r => r.column_name));
 });

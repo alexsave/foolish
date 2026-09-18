@@ -46,22 +46,9 @@ const EXPOSED_SECDEF = `
 `;
 
 const STATE_RPCS = [
-    'commit_table', 'create_table', 'delete_account',
+    'commit_game', 'create_game', 'commit_table', 'create_table',
     'try_acquire_bot_lease', 'release_bot_lease', 'renew_bot_lease',
 ];
-
-// Every privilege a client role holds on games, at table level or on any column
-// (docs/C_GAME_SHAPE_MIGRATION.md 3.3: no client reads games; the web and iOS
-// read player_views and spectator_views).
-const GAMES_CLIENT_PRIVILEGES = `
-  SELECT r.role || ' ' || p.priv AS grant
-  FROM (VALUES ('anon'), ('authenticated')) AS r(role)
-  CROSS JOIN (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) AS p(priv)
-  WHERE CASE WHEN p.priv IN ('SELECT', 'INSERT', 'UPDATE', 'REFERENCES')
-             THEN has_any_column_privilege(r.role, 'public.games', p.priv)
-             ELSE has_table_privilege(r.role, 'public.games', p.priv) END
-  ORDER BY 1
-`;
 
 export function registerDbGrantsValidation(): void {
     test('grants: no client-callable SECURITY DEFINER function is reachable by anon/authenticated', async () => {
@@ -93,22 +80,6 @@ export function registerDbGrantsValidation(): void {
         assert.ok(rows.length >= STATE_RPCS.length, `expected all of ${STATE_RPCS.join(', ')}, got ${rows.length}`);
         const broken = rows.filter((r) => !r.service).map((r) => r.proname);
         assert.deepEqual(broken, [], `service_role lost EXECUTE on: ${broken.join(', ')}`);
-    });
-
-    test('grants: anon and authenticated hold no privilege at all on games, and games has no policy', async () => {
-        const { rows } = await pgPool.query(GAMES_CLIENT_PRIVILEGES);
-        assert.deepEqual(rows.map((r) => r.grant), [], 'games holds the unmasked state blob and the roster; no client reads it');
-        const policies = await pgPool.query(`SELECT policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = 'games'`);
-        assert.deepEqual(policies.rows, []);
-    });
-
-    test('grants: the legacy JSONB writers are gone - no commit_game, create_game, legacy_* function or bridge trigger', async () => {
-        const { rows } = await pgPool.query(
-            `SELECT p.oid::regprocedure::text AS fn FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-             WHERE n.nspname = 'public' AND (p.proname IN ('commit_game', 'create_game') OR p.proname LIKE 'legacy\\_%')`);
-        assert.deepEqual(rows.map((r) => r.fn), []);
-        const triggers = await pgPool.query(`SELECT tgname FROM pg_trigger WHERE tgrelid = 'public.games'::regclass AND NOT tgisinternal ORDER BY 1`);
-        assert.deepEqual(triggers.rows.map((r) => r.tgname), ['update_games_updated_at']);
     });
 }
 

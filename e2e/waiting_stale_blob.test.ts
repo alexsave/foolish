@@ -84,14 +84,14 @@ if (!process.env.VALIDATION_ONLY) {
         assert.equal(hex(t.roster), hex(clean.roster), 'and the same roster');
         const { rows } = await pgPool.query('SELECT game_seed, logs_packed FROM games WHERE id=$1', [gameId]);
         assert.equal(rows[0].game_seed, null, 'no deal seed survives into the lobby');
-        assert.equal(rows[0].logs_packed, '\\x', 'no session log survives into the lobby (an empty BYTEA reads as \\x)');
+        assert.equal(rows[0].logs_packed, '', 'no session log survives into the lobby');
     });
 
     test('continue clears a finished session\'s log that its replay snapshot never retired', async () => {
         const { gameId } = await finishedThenContinued({ snapshotFails: true });
         const { rows } = await pgPool.query('SELECT status, game_seed, logs_packed, round_epoch FROM games WHERE id=$1', [gameId]);
         assert.equal(rows[0].status, 'waiting');
-        assert.equal(rows[0].logs_packed, '\\x', 'the finished session\'s log does not survive into the lobby');
+        assert.equal(rows[0].logs_packed, '', 'the finished session\'s log does not survive into the lobby');
         assert.equal(rows[0].game_seed, null, 'nor its deal seed');
         assert.equal(Number(rows[0].round_epoch), 0, 'and the lobby starts round 0');
     });
@@ -110,13 +110,13 @@ if (!process.env.VALIDATION_ONLY) {
             assert.equal(Number(r.version), t.version, 'written by the continue commit');
             const want = table.envelope(gameId, humans.indexOf(r.player_id), t.version);
             assert.ok(want instanceof Uint8Array);
-            assert.equal(r.view, `\\x${hex(want)}`, `${r.player_id}'s lobby row is a clean lobby's envelope: no old card, count or trump`);
+            assert.equal(r.view, hex(want), `${r.player_id}'s lobby row is a clean lobby's envelope: no old card, count or trump`);
         }
         const spec = await pgPool.query('SELECT view, status FROM spectator_views WHERE game_id=$1', [gameId]);
         const want = table.envelope(gameId, -1, t.version);
         assert.ok(want instanceof Uint8Array);
         assert.equal(spec.rows[0].status, 'waiting');
-        assert.equal(spec.rows[0].view, `\\x${hex(want)}`, 'the spectator row is a clean lobby\'s envelope');
+        assert.equal(spec.rows[0].view, hex(want), 'the spectator row is a clean lobby\'s envelope');
     });
 
     test('a finished blob put back on a WAITING row is read as the finished game, never as a lobby', async () => {

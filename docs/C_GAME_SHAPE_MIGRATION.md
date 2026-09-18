@@ -847,6 +847,27 @@ Deploy order, all owner steps (the final pass, part 2, added step 0 and the BYTE
    If it ever lands together with the functions of step 2, the contract migration refuses, the deploy job stops before its functions step, and the live functions keep working: deploy the functions by hand, verify, and re-run the workflow.
    The functions of step 2 work before and after the BYTEA migration: they read a blob column's hex text with or without the `\x` prefix, and the signature they call does not change.
 
+#### How the deploy order is carried by two pull requests
+
+`.github/workflows/deploy.yml` runs `supabase db push` first and `supabase functions deploy` second, on every push to main.
+One merge carrying all three migrations would therefore apply the expand, the contract and the BYTEA migration before a single new function is live, and the contract migration's first refusal (no row with `writer_gen = 2`) would stop the job with the expand applied and the old functions still running.
+
+So the branch ships as two pull requests:
+
+- **Deploy 1** is this branch without `20260918120000_table_contract.sql` and `20260918130000_table_bytea.sql`, with `seed.sql` at the end state of the expand migration.
+  Merging it applies 4a and deploys the 4b functions in one workflow run, in that order, which is steps 1 and 2 of the deploy order above.
+  The functions call the final `commit_table` and `create_table` signature, which 4a creates.
+- **Deploy 2** is the two migrations, `seed.sql` rewritten to the final schema, and the tests that assert the contracted and BYTEA schema (`e2e/table_contract_migration.test.ts`, `e2e/table_bytea_migration.test.ts`, and the `db_grants`, `db_migration_grants`, `packed_review_gaps`, `security_hidden_info`, `table_fixture`, `table_db` and blob-column assertions that follow from them).
+  It is merged only after deploy 1 is live and verified, which is steps 3 and 4.
+
+`e2e/db_migration_grants.test.ts`'s "seed.sql and the migrations build the same schema public, object for object" is what holds each of the two states honest: on deploy 1 it compares the chain through 4a against `seed.sql` at the same point.
+
+Splitting it surfaced one real gap in the hosted stand-in.
+`e2e/fixtures/hosted_schema_pre_20260807120000.sql` is a copy of `seed.sql` at `6b9e8432`, and `seed.sql` did not define `delete_account` then, although hosted had run `20260714120000_account_deletion.sql` two weeks earlier.
+The contract migration recreates `delete_account`, so with 4c in the chain the two sides agreed anyway; without it the comparison reported a difference that hosted does not have.
+The fixture now carries that function and its lockdown verbatim from the migration, marked where it sits.
+
+
 Hosted pre-checks, read-only, before applying 4c:
 
 ```sql
