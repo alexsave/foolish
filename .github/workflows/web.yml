@@ -183,10 +183,24 @@ jobs:
           vercel build ${{ steps.target.outputs.prod }} --token="$VERCEL_TOKEN"
 
       # --prebuilt: upload .vercel/output, do not build again on their side.
+      #
+      # --archive=tgz: upload it as ONE tarball rather than as individual files.
+      # Without it every deploy uploads the whole output tree file by file, and
+      # the free plan allows 5000 uploads per 24 hours across the account - which
+      # a Next.js build blows through in a handful of deploys:
+      #
+      #   Error: Too many requests - try again in 24 hours
+      #   (more than 5000, code: "api-upload-free").
+      #
+      # This lane was born on 2026-09-18 and hit that ceiling the same day, with
+      # several branches deploying previews. The old model had Vercel pull from
+      # git and upload nothing, so the quota never came up; moving the build here
+      # traded a build for thousands of small uploads, and this is the other half
+      # of that trade.
       - name: Vercel deploy
         if: steps.creds.outputs.ready == 'true'
         run: |
-          url=$(vercel deploy --prebuilt ${{ steps.target.outputs.prod }} --token="$VERCEL_TOKEN")
+          url=$(vercel deploy --prebuilt --archive=tgz ${{ steps.target.outputs.prod }} --token="$VERCEL_TOKEN")
           echo "deployed (${{ steps.target.outputs.env }}): $url"
           {
             echo "### Deployed - ${{ steps.target.outputs.env }}"
