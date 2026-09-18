@@ -37,34 +37,40 @@ const StepMessage = ({ frame, names }: {
                     <Text id="trump" />: {frame.cards.length > 0 && cards(frame.cards)}
                 </span>
             );
+        // THE replay_* KEYS, NOT THE BUTTON ONES. This line narrates what a
+        // named player DID - "Alice attacks: 7of spades" - while `attack`,
+        // `cover`, `pass`, `pickup` and `good` label the buttons the player
+        // presses to do it. One key cannot be both: Russian shipped the button
+        // wording ("Подкидываю", first person), so this line read "Alice I
+        // throw in". Two meanings, two keys (c/i18n/keys.h).
         case REPLAY_STEP.ATTACK:
             return (
                 <span>
-                    {who} <SovietIcon name="sword" size={13} /> <Text id="attack" />: {cards(frame.cards)}
+                    {who} <SovietIcon name="sword" size={13} /> <Text id="replay_attack" />: {cards(frame.cards)}
                 </span>
             );
         case REPLAY_STEP.COVER:
             return (
                 <span>
-                    {who} <Text id="cover" />: {cards(frame.cards)} → {frame.target && cards([frame.target])}
+                    {who} <Text id="replay_cover" />: {cards(frame.cards)} → {frame.target && cards([frame.target])}
                 </span>
             );
         case REPLAY_STEP.PASS:
             return (
                 <span>
-                    {who} <Text id="pass" />: {cards(frame.cards)}
+                    {who} <Text id="replay_pass" />: {cards(frame.cards)}
                 </span>
             );
         case REPLAY_STEP.PICKUP:
             return (
                 <span>
-                    {who} <Text id="pickup" /> ({frame.count})
+                    {who} <Text id="replay_pickup" /> ({frame.count})
                 </span>
             );
         case REPLAY_STEP.GOOD:
             return (
                 <span>
-                    {who} ✓ <Text id="good" />
+                    {who} ✓ <Text id="replay_good" />
                 </span>
             );
         // The bout closed: everyone still in said good, and the table went to
@@ -72,7 +78,7 @@ const StepMessage = ({ frame, names }: {
         case REPLAY_STEP.ROUND_END:
             return (
                 <span>
-                    ✓ <Text id="good" /> - {frame.count} <Text id="discarded" />
+                    ✓ <Text id="replay_good" /> - {frame.count} <Text id="discarded" />
                 </span>
             );
         default:
