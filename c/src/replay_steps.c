@@ -418,6 +418,147 @@ int replay_steps_index_v6(const unsigned char *code, int code_len,
     return x.len;
 }
 
+/* ------------------------------- a code at a glance ------------------------ */
+
+static int rs_move_log_type(int kind);
+
+static void rs_count_moves(void *ctx, const ReplayAtom *a) {
+    if (rs_move_log_type(a->kind) >= 0) (*(int *)ctx)++;
+}
+
+int replay_summary_v6(const unsigned char *code, int code_len, ReplaySummary *out) {
+    ReplayHeader hdr;
+    int moves = 0;
+    const int r = replay_decode_atoms_v6(code, code_len, &hdr, rs_count_moves, &moves);
+    if (r < 0) return r;
+    if (hdr.n < 2 || hdr.n > MAX_PLAYERS || hdr.num_eliminated < 0 || hdr.num_eliminated > hdr.n) return -REPLAY_EHEADER;
+    memset(out, 0, sizeof *out);
+    out->version = (uint8_t)hdr.version;
+    out->trump = card_of_id(hdr.trump_id);
+    out->discard_pile_length = (int16_t)hdr.discard_count;
+    out->num_players = (int8_t)hdr.n;
+    out->power_suit = (int8_t)(hdr.trump_id / 13);
+    out->first_attacker = (int8_t)hdr.first_attacker;
+    out->fool = (int8_t)(hdr.fool >= 0 && hdr.fool < hdr.n ? hdr.fool : -1);
+    out->num_eliminated = (int8_t)hdr.num_eliminated;
+    for (int i = 0; i < hdr.num_eliminated; i++) out->elimination[i] = (int8_t)hdr.elim[i];
+    out->moves = (int16_t)moves;
+    return REPLAY_EOK;
+}
+
+/* ------------------------- a decision, for an analyser --------------------- */
+
+typedef struct {
+    unsigned char *out;
+    int want;        // the step whose board is written
+    int viewer;
+    int idx;         // step cursor; the step count once the playback ends
+    int len, err;
+} RsBoardCtx;
+
+static void rs_step_board(const Game *g, int viewer, void *u) {
+    (void)viewer;
+    RsBoardCtx *b = (RsBoardCtx *)u;
+    if (b->idx++ != b->want) return;
+    if (b->viewer >= g->num_players) { b->err = REPLAY_EINPUT; return; }
+    b->len = state_put(g, b->viewer, b->out);
+}
+
+int replay_steps_board_v6(const unsigned char *code, int code_len, int step, int viewer,
+                          unsigned char *out, int out_cap) {
+    if (step < 1 || viewer < VIEW_SPECTATOR) return -REPLAY_EINPUT;
+    if (out_cap < RS_BOARD_MAX) return -REPLAY_ECAP;
+    RsBoardCtx b;
+    memset(&b, 0, sizeof b);
+    b.out = out;
+    b.want = step - 1;
+    b.viewer = viewer;
+    b.len = -1;
+    const int r = rs_play(code, code_len, VIEW_SPECTATOR, 0, rs_step_board, &b);
+    if (r < 0) return r;
+    if (b.err) return -b.err;
+    // The board was written, but `step` itself must be a step the code has.
+    if (b.len < 0 || b.idx <= step) return -REPLAY_EINPUT;
+    return b.len;
+}
+
+// The one log type each move step is recorded as; -1 for a step with none.
+static int rs_move_log_type(int kind) {
+    switch (kind) {
+        case REPLAY_ATOM_ATTACK: return LOG_ATTACK;
+        case REPLAY_ATOM_COVER:  return LOG_COVER;
+        case REPLAY_ATOM_PASS:   return LOG_PASS;
+        case REPLAY_ATOM_PICKUP: return LOG_PICKUP;
+        default:                 return -1;
+    }
+}
+
+typedef struct {
+    const unsigned char *rec;   // the decoded records (replay.h DECODE output, past its header)
+    int n_logs;
+    int at, li;                 // the next record: its byte offset and its index
+    int want, idx;              // the step asked about, and the step cursor
+    int paired;                 // records before the asked step's own, or -1
+} RsMemoryCtx;
+
+// Walks the steps and the records side by side: each move step takes the next
+// move record, and the asked step is paired only if that record is its move.
+static void rs_step_memory(const Game *g, int viewer, void *u) {
+    (void)g;
+    (void)viewer;
+    RsMemoryCtx *m = (RsMemoryCtx *)u;
+    const int me = m->idx++;
+    if (me > m->want || !g_rs_cur) return;
+    const int type = rs_move_log_type(g_rs_cur->kind);
+    if (type < 0) return;
+    while (m->li < m->n_logs && m->rec[m->at] != LOG_ATTACK && m->rec[m->at] != LOG_COVER
+           && m->rec[m->at] != LOG_PASS && m->rec[m->at] != LOG_PICKUP) {
+        m->at += 4 + 2 * m->rec[m->at + 3];
+        m->li++;
+    }
+    if (m->li >= m->n_logs) return;
+    if (me == m->want && m->rec[m->at] == type
+        && m->rec[m->at + 1] == (unsigned char)g_rs_cur->seat) m->paired = m->li;
+    m->at += 4 + 2 * m->rec[m->at + 3];
+    m->li++;
+}
+
+int replay_steps_memory_v6(const unsigned char *code, int code_len, int step,
+                           unsigned char *out, int out_cap) {
+    if (step < 1) return -REPLAY_EINPUT;
+    int r = replay_decode(code, code_len, out, out_cap);
+    if (r < 0) return r;
+    if (r < REPLAY_DEC_HDR) return -REPLAY_EINPUT;
+
+    RsMemoryCtx m;
+    memset(&m, 0, sizeof m);
+    m.rec = out + REPLAY_DEC_HDR;
+    m.n_logs = (int)((uint32_t)out[16] | ((uint32_t)out[17] << 8)
+                     | ((uint32_t)out[18] << 16) | ((uint32_t)out[19] << 24));
+    m.want = step;
+    m.paired = -1;
+    r = rs_play(code, code_len, VIEW_SPECTATOR, 0, rs_step_memory, &m);
+    if (r < 0) return r;
+    if (m.paired < 0) return -REPLAY_EINPUT;
+
+    // The records before the move, moved down over the decode header one at a
+    // time (each lands at or before where it was read), each draw's card hidden.
+    const int n = m.paired < MAX_LOGS ? m.paired : MAX_LOGS;
+    unsigned char *dst = out + 2;
+    const unsigned char *src = m.rec;
+    for (int i = 0; i < n; i++) {
+        const int len = 4 + 2 * src[3];
+        for (int k = 0; k < len; k++) dst[k] = src[k];   // forward: dst never passes src
+        if (dst[0] == LOG_DRAW)
+            for (int k = 0; k < dst[3]; k++) dst[4 + 2 * k] = REPLAY_CARD_HIDDEN;
+        dst += len;
+        src += len;
+    }
+    out[0] = (unsigned char)(n & 0xff);
+    out[1] = (unsigned char)((n >> 8) & 0xff);
+    return (int)(dst - out);
+}
+
 // Total steps a code replays to: the deal, then one per action. The web sizes
 // its scrubber from this before it starts pulling frames.
 int replay_steps_count_v6(const unsigned char *code, int code_len,

@@ -1,17 +1,18 @@
-// E2E: drives the REAL deployed server orchestration — executeWithGameLock (the
-// optimistic-CAS retry loop), the real action handlers, commit_game / bot-lease
-// plpgsql, and broadcastAnimationEvents — against a real Postgres. The only
-// substitution is PostgREST/Realtime, replaced by the small pg adapter.
+// E2E: drives the REAL deployed server orchestration - the table_io CAS loop,
+// the C Table's move and deal, commit_table, the bot lease, the broadcast -
+// against a real Postgres. The only substitution is PostgREST/Realtime,
+// replaced by the small pg adapter. Every seat, bots included, moves through
+// the move path here (the bot loop has its own suites), so the suite seed
+// reproduces every game it plays.
 
 import './harness.ts'; // sets Deno globals BEFORE any server module loads
 import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { applySchema, resetDb, seedGame, uuid, pgPool, broadcastLog } from './harness.ts';
-import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
-import { packedProducts, start_game_packed } from '../server/api/common/game_lifecycle.ts';
-import { AnimationEvent } from '../server/api/core/types.ts';
-import { legalMovesFor, applyPlayerMove, checkCardConservation, PlayerMove } from './dispatch.ts';
+import { applySchema, resetDb, uuid, pgPool, broadcastLog } from './harness.ts';
+import * as L from '../sdk/ts/gen/game_layout.bots.ts';
+import { checkCardConservation, legalMoves, mustReadTable, type PlayMove } from './helpers/table_play.ts';
+import { runAction, runMeta, seedLobby } from './helpers/table_server.ts';
 import { suiteRng } from './helpers/rng.ts';
 
 // One stream for the whole file: every test here draws sequentially, so the
@@ -20,22 +21,19 @@ const rng = suiteRng('server');
 const rand = (n: number) => rng.int(n);
 const pick = <T>(a: T[]): T => rng.pick(a);
 
-// Going through executeWithGameLock would mutate; for a read we just enumerate
-// moves from a fresh load via the adapter-backed path. loadCompleteGame is a
-// top-level import rather than an `await import` here, because the e2e runner's
-// TS loader re-resolves a dynamic import on every call (~1.9ms) and this runs
-// once per move of every game.
-const loadGame = (gameId: string) => loadCompleteGame(gameId);
+const playing = (t: { status: number }) => t.status === L.GAME_STATUS_PLAYING;
+const move = (gameId: string, m: PlayMove) => runAction(gameId, m.playerId, m).catch(() => { /* a stale pick under the CAS */ });
 
 async function newGame(humans: number, bots: number): Promise<{ gameId: string; humanIds: string[]; botIds: Set<string> }> {
     const gameId = `g${uuid().slice(0, 6)}`;
-    const players = [] as { id: string; name: string; is_ai: boolean; strategy_key: string }[];
     const humanIds: string[] = [];
-    for (let i = 0; i < humans; i++) { const id = uuid(); humanIds.push(id); players.push({ id, name: `H${i}`, is_ai: false, strategy_key: 'human' }); }
     const botIds = new Set<string>();
-    for (let i = 0; i < bots; i++) { const id = uuid(); botIds.add(id); players.push({ id, name: `B${i}`, is_ai: true, strategy_key: 'random' }); }
-    await seedGame(gameId, players);
-    await executeWithGameLock(gameId, async (g) => ({ game: g, events: [], packed: packedProducts(start_game_packed(g)) }), 'start', false);
+    const seats = [];
+    for (let i = 0; i < humans; i++) { const id = uuid(); humanIds.push(id); seats.push({ id, name: `H${i}`, ready: i > 0 }); }
+    for (let i = 0; i < bots; i++) { const id = uuid(); botIds.add(id); seats.push({ id, name: `B${i}`, brain: 'random' }); }
+    await seedLobby(gameId, seats);
+    await runMeta(gameId, humanIds[0], { type: 'start' });
+    assert.ok(playing(await mustReadTable(gameId)), 'fixture: the game dealt');
     return { gameId, humanIds, botIds };
 }
 
@@ -44,11 +42,11 @@ export function registerServerValidation(): void {
     test('server: a short real game conserves cards and broadcasts strictly-increasing versions', async () => {
         const { gameId } = await newGame(2, 1);
         for (let step = 0; step < 40; step++) {
-            const g = await loadGame(gameId);
-            if (g.status !== 'playing') break;
-            const moves = legalMovesFor(g);
+            const t = await mustReadTable(gameId);
+            if (!playing(t)) break;
+            const moves = legalMoves(t);
             if (moves.length === 0) break;
-            try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, pick(moves)) }), `s${step}`, true); } catch { /* stale */ }
+            await move(gameId, pick(moves));
             const chk = await checkCardConservation(gameId);
             assert.ok(chk.ok, `card conservation violated at step ${step} (seed=${rng.seed}): ${chk.detail}`);
         }
@@ -67,13 +65,13 @@ export function registerServerValidation(): void {
     test('server: a burst of overlapping submits against one version cannot duplicate or lose a card', async () => {
         const { gameId, botIds } = await newGame(3, 1);
         for (let step = 0; step < 25; step++) {
-            const snap = await loadGame(gameId);
-            if (snap.status !== 'playing') break;
-            const moves = legalMovesFor(snap, (id) => !botIds.has(id));
+            const snap = await mustReadTable(gameId);
+            if (!playing(snap)) break;
+            const moves = legalMoves(snap, (s) => !botIds.has(s.id));
             if (moves.length === 0) continue;
-            const burst: PlayerMove[] = [pick(moves), pick(moves)];
+            const burst: PlayMove[] = [pick(moves), pick(moves)];
             burst.push(burst[0]); // rapid double-submit
-            await Promise.all(burst.map((m, i) => executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, m) }), `b${step}-${i}`, true).catch(() => {})));
+            await Promise.all(burst.map((m) => move(gameId, m)));
             const chk = await checkCardConservation(gameId);
             assert.ok(chk.ok, `conservation broke under contention at step ${step} (seed=${rng.seed}): ${chk.detail}`);
         }
@@ -84,16 +82,15 @@ if (!process.env.VALIDATION_ONLY) {
 before(async () => { await applySchema(); });
 beforeEach(async () => { await resetDb(); });
 
-test('card conservation holds across a full sequential game (real executeWithGameLock + handlers + commit_game)', async () => {
+test('card conservation holds across a full sequential game (real table_io CAS loop + C Table + commit_table)', async () => {
     const { gameId } = await newGame(2, 1);
     let steps = 0;
     while (steps < 3000) {
-        const g = await loadGame(gameId);
-        if (g.status !== 'playing') break;
-        const moves = legalMovesFor(g);
+        const t = await mustReadTable(gameId);
+        if (!playing(t)) break;
+        const moves = legalMoves(t);
         if (moves.length === 0) break;
-        const m = pick(moves);
-        try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, m) }), `s${steps}`, true); } catch { /* stale */ }
+        await move(gameId, pick(moves));
         const chk = await checkCardConservation(gameId);
         assert.ok(chk.ok, `card conservation violated at step ${steps} (seed=${rng.seed}): ${chk.detail}`);
         steps++;
@@ -105,11 +102,11 @@ test('every broadcast carries a monotonically non-decreasing games.version (the 
     const { gameId } = await newGame(2, 1);
     let steps = 0;
     while (steps < 2000) {
-        const g = await loadGame(gameId);
-        if (g.status !== 'playing') break;
-        const moves = legalMovesFor(g);
+        const t = await mustReadTable(gameId);
+        if (!playing(t)) break;
+        const moves = legalMoves(t);
         if (moves.length === 0) break;
-        try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, pick(moves)) }), `s${steps}`, true); } catch { /* */ }
+        await move(gameId, pick(moves));
         steps++;
     }
     // Each animation_events broadcast must carry a numeric version (the packed
@@ -132,26 +129,25 @@ test('every broadcast carries a monotonically non-decreasing games.version (the 
 
 test('every finished game gets a replay snapshot and its logs wiped (log order is deterministic)', async () => {
     // Regression check for the replay-desync glitch: a move's cascade stamps
-    // several logs in the same millisecond, and ordering the session by
-    // created_at alone returned those ties in arbitrary order — the encoder then
-    // threw "replay desync: logged attack not in menu" and finished games kept
-    // raw logs instead of a snapshot (~1 in 5 games). The fix orders by
-    // (created_at, seq). Several games make a regression's tie-scramble likely.
+    // several logs in the same millisecond, and a session whose records lost
+    // their order made the encoder throw and left finished games with raw logs
+    // instead of a snapshot (~1 in 5 games). Several games make a regression
+    // likely to show.
     let finished = 0;
     for (let round = 0; round < 6; round++) {
         await resetDb();
         const { gameId } = await newGame(1, 2);
         let steps = 0;
         while (steps < 600) {
-            const g = await loadGame(gameId);
-            if (g.status !== 'playing') break;
-            const moves = legalMovesFor(g);
+            const t = await mustReadTable(gameId);
+            if (!playing(t)) break;
+            const moves = legalMoves(t);
             if (moves.length === 0) break;
-            try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, pick(moves)) }), `s${steps}`, true); } catch { /* stale */ }
+            await move(gameId, pick(moves));
             steps++;
         }
-        const g = await loadGame(gameId);
-        if (g.status !== 'game_over') continue;
+        const t = await mustReadTable(gameId);
+        if (t.statusColumn !== 'game_over') continue;
         finished++;
         const snaps = await pgPool.query('SELECT moves FROM game_snapshots WHERE game_id=$1', [gameId]);
         assert.equal(snaps.rowCount, 1, `finished game ${gameId} has no replay snapshot (seed=${rng.seed}) - the encoder desynced (check log ordering)`);
@@ -167,16 +163,16 @@ test('CAS serializes concurrent moves without losing or duplicating a card', asy
     const { gameId, botIds } = await newGame(3, 1);
     let steps = 0;
     while (steps < 1500) {
-        const snap = await loadGame(gameId);
-        if (snap.status !== 'playing') break;
-        const moves = legalMovesFor(snap, (id) => !botIds.has(id));
+        const snap = await mustReadTable(gameId);
+        if (!playing(snap)) break;
+        const moves = legalMoves(snap, (s) => !botIds.has(s.id));
         if (moves.length === 0) { steps++; continue; }
         // fire a burst of overlapping requests against the same loaded version
-        const burst: PlayerMove[] = [];
+        const burst: PlayMove[] = [];
         const n = 1 + rand(Math.min(3, moves.length));
         for (let i = 0; i < n; i++) burst.push(pick(moves));
         if (rng.chance(0.3)) burst.push(burst[0]); // rapid double-submit
-        await Promise.all(burst.map((m, i) => executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, m) }), `b${steps}-${i}`, true).catch(() => {})));
+        await Promise.all(burst.map((m) => move(gameId, m)));
         const chk = await checkCardConservation(gameId);
         assert.ok(chk.ok, `conservation broke under contention at step ${steps} (seed=${rng.seed}): ${chk.detail}`);
         steps++;

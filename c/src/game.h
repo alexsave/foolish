@@ -146,8 +146,9 @@ typedef struct {
     bool    awaiting_attack;
     int8_t  strategy_key;      // application-defined; STRATEGY_KEY_HUMAN = a human seat
     Card    hand[MAX_HAND_SIZE];
-    char    name[24];
-    char    player_id[24];
+    // No identity here: a seat's id and name live in the Roster beside the
+    // Game (roster.h). Every Monte-Carlo node copies the players array, and
+    // identity must not ride those copies.
 } Player;
 
 typedef struct {
@@ -273,6 +274,22 @@ void     random_strategy_set_seed(uint32_t s);
 double   random_strategy_random(void);
 uint32_t random_strategy_rng_get(void);
 
+// A 32-bit RNG seed from `base` (the SERVER-ONLY secret derived from
+// games.game_seed, 0 when a game has none), a per-use `salt`, and the PUBLIC,
+// replay-recoverable board: positions, deck/discard sizes, each seat's hand
+// COUNT and the table. Reproducible from a shared replay, different every
+// decision, unpredictable without `base`. Never 0.
+uint32_t game_state_seed(const Game *g, uint32_t base, uint32_t salt);
+
+// The salt of each stream a host seeds from game_state_seed, distinct so no two
+// streams start from the same value on the same board: the draw stream
+// (game_random) as a move applies, the strategy stream (random_strategy_random)
+// as a bot decision starts, and the draw stream again as that decision's search
+// starts, so its rollouts read nothing a module's earlier work left behind.
+#define GAME_SEED_SALT_DRAW      0u
+#define GAME_SEED_SALT_STRATEGY  0x9E3779B9u
+#define GAME_SEED_SALT_SEARCH    0x85EBCA6Bu
+
 // ---------- Engine observation hooks ------------------------------------
 //
 // Optional callback fired at exactly the points where the production TS
@@ -350,6 +367,39 @@ extern _Thread_local void (*engine_snap_hook)(const Game *g, int tag, int aux);
 // engine_snap_hook comment above for the wasm/single-thread transparency note.
 extern _Thread_local int engine_last_reject;
 
+// ---------- Imported-state validation -----------------------------------
+//
+// A Game that crosses a trust boundary - the transient IO marshal from a host,
+// a durable blob out of a database row, a server view decoded on a client - is
+// checked HERE, once, before the kernel adopts it. The decoder (view.c
+// state_get) clamps COUNTS so it can never corrupt memory; this checks VALUES:
+// that every status, seat index, card and mask is one the kernel could itself
+// have produced. Hosts do not repeat these checks; they surface the code.
+//
+// Returns GAME_VALID (0) or one negative GAME_INVALID_* reason. The numbers are
+// the wire to every host's message table (sdk/ts/wasm/engine.ts
+// STATE_INVALID) - append, never renumber.
+#define GAME_VALID                     0
+#define GAME_INVALID_COUNT            (-1)  // a count on the wire exceeded its capacity
+#define GAME_INVALID_STATUS           (-2)  // Game.status is not a GAME_STATUS_*
+#define GAME_INVALID_NUM_PLAYERS      (-3)  // too few seats for a dealt game
+#define GAME_INVALID_PLAYER_STATUS    (-4)  // a Player.status is not a PLAYER_STATUS_*
+#define GAME_INVALID_POWER_SUIT       (-5)  // power_suit is not a suit
+#define GAME_INVALID_SEAT             (-6)  // first_attacker/defender is not a seat
+#define GAME_INVALID_ELIMINATION      (-7)  // elimination order: bad seat, repeat, or too long
+#define GAME_INVALID_GOOD_MASK        (-8)  // a good bit for a seat that does not exist
+#define GAME_INVALID_CARD             (-9)  // a card that is not a card of this game's deck
+#define GAME_INVALID_DUPLICATE_CARD   (-10) // one card in two places
+#define GAME_INVALID_FLIPPED          (-11) // the face-up trump is not of the power suit
+#define GAME_INVALID_LOBBY_CARDS      (-12) // a WAITING game holds a card, a battle, a flip, an out or a good
+
+// game_validate flag: `g` came from a MASKED view (view.c state_get masked=1),
+// so the deck and the hands hold placeholders rather than real cards. Their
+// identities are then not checked; everything face-up still is.
+#define GAME_VALIDATE_MASKED 1
+
+int game_validate(const Game *g, int flags);
+
 // ---------- Helpers -----------------------------------------------------
 
 bool can_cover(Card attack, Card defense, int power_suit);
@@ -387,7 +437,7 @@ uint32_t game_human_mask(const Game *g);
 // written out at four call sites across two servers.
 //
 // Returns the new seat index, or -1 if the game is not WAITING or is full. The
-// host writes name/player_id into the returned seat.
+// host records the seat's id and name in its Roster (roster.h).
 int game_lobby_seat(Game *g, int strategy_key);
 
 // Mark a seated player READY. Returns 1 if that changed anything, else 0
@@ -403,14 +453,28 @@ int game_lobby_ready(Game *g, int seat);
 // single one does not have to rely on.
 int game_lobby_can_deal(const Game *g);
 
+// Unseat one player from a WAITING game: the seats above move down one, as the
+// table's roster does (roster_seat_remove). Returns 1, or 0 for a game that is
+// not WAITING or a seat out of range (nothing changed).
+int game_lobby_unseat(Game *g, int seat);
+
+// Reseat a WAITING game: new seat i is old seat perm[i]. n must be the seat
+// count and perm a permutation of it. Returns 1, or 0 with nothing changed.
+int game_lobby_reorder(Game *g, const int8_t *perm, int n);
+
+// Reorder a seat's own hand: new card i is old card idx[i]. The permutation
+// check is load-bearing - n must equal the hand count and each index be used
+// exactly once, or a hostile request mints duplicate cards. Returns 1, or 0
+// with nothing changed.
+int game_rearrange_hand(Game *g, int seat, const unsigned char *idx, int n);
+
 // Seat `n` players and DEAL, in one kernel call — the whole "go from a lobby to a
 // dealt board" the hosts used to hand-roll. Sets the seat count; if
 // `strategy_keys` is non-NULL, writes each seat's kind (STRATEGY_KEY_HUMAN, or a
 // bot roster index); then deals via start_game, which assigns each seated
 // player's status. Pass NULL to keep the strategy_key the seats already hold (a
 // host that wired kinds incrementally as players joined). The host owns identity
-// (names/player_id/tokens), set on the Player array before or after — the deal
-// never touches it. A bad seat count (n < 2 or > MAX_PLAYERS) is a no-op.
+// (ids, names, tokens) in its Roster; the deal never touches it. A bad seat count (n < 2 or > MAX_PLAYERS) is a no-op.
 void game_seat_and_deal(Game *g, const int8_t *strategy_keys, int n);
 // Records the end of a game on its OWN status: once game_done fires, the kernel
 // (not each host) flips g->status to GAME_OVER, so g->status is the single
@@ -465,11 +529,12 @@ int game_derived_opening(void);
 // definition of that transition (docs/C_CORE_CONSOLIDATION.md F6). Three hosts
 // hand-zeroed this list independently: the server (handleContinue), the web
 // client (clientReconcile.resetToLobby, which had to "match byte-for-byte or
-// the UI snaps"), and iOS was specced to port it a third time.
+// the UI snaps"; the web now asks the kernel, client_table.h CLIENT_EDIT_LOBBY),
+// and iOS was specced to port it a third time.
 //
 // `bot_mask` bit s = seat s is a bot, which resets to READY; humans reset to
 // IDLE. It is a PARAMETER because it cannot be a guess: seat identity
-// (is_ai/strategy_key/player_id/name) is deliberately not in the state blob —
+// (strategy_key, and the id and name the Roster holds) is deliberately not in the state blob —
 // it lives with the caller — so the kernel is told, not left to infer.
 //
 // Logs are left alone: this is a board reset, not a new game. start_game
@@ -491,6 +556,19 @@ bool handle_good(Game *g, int player_idx);
 // ---------- Loop helpers ------------------------------------------------
 
 bool should_bot_act(const Game *g, int bot_idx);
+
+// The turn rule should_bot_act applies, over only the facts it reads, so a board
+// that is not a Game (client_table.h TableView) is asked the same question: a
+// playing seat that is in may act on an empty table only as the first attacker,
+// as the defender only while an attack is uncovered, and as an attacker until it
+// has said good.
+static inline bool turn_may_act(int game_status, int seat_status, int seat, int num_battles, bool all_covered,
+                                int first_attacker, int defender, uint32_t good_mask) {
+    if (game_status != GAME_STATUS_PLAYING || seat_status != PLAYER_STATUS_IN) return false;
+    if (num_battles == 0) return seat == first_attacker;
+    if (seat == defender) return !all_covered;
+    return !(good_mask & (1u << seat));
+}
 
 // Public entries for the two round-lifecycle phases the TS server also
 // exposed standalone (executeRoundTransition / refillPlayerHandsWithEvents).

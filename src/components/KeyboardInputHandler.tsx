@@ -1,16 +1,15 @@
 import { useEffect, useCallback } from 'react';
-import { Card } from '@api/core/types.ts';
 import { useServer } from '../contexts/ServerContext';
 import { useAnimation } from '../contexts/AnimationContext';
 import { useGame } from '../contexts/GameContext';
 import { useAuth } from '../contexts/AuthContext';
-import { canCoverPair } from '../wasm/clientGuards';
-import { canPass } from '../utils/gameValidation';
+import { canCoverPair, canPass } from '../utils/gameValidation';
 import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
+import { covered, type ViewCard as Card } from '../state/view';
 
 export const KeyboardInputHandler = () => {
     const { user_id } = useAuth();
-    const { game, localHandOrder } = useServer();
+    const { view: game, localHandOrder } = useServer();
     const { attack, pass, cover, pickup, good } = useAnimation();
     const { selectedCards, setSelectedCards, handleCardSelection } = useGame();
 
@@ -41,8 +40,8 @@ export const KeyboardInputHandler = () => {
     // (kernelUnambiguousCover -> legal.c unambiguous_cover), shared by every
     // input path and every host (A7/F9).
     //
-    // Pass legality uses the SHARED canPass (src/utils/gameValidation.ts) — the
-    // same predicate the buttons/drag use — so the keyboard path can't diverge.
+    // Pass legality uses the SHARED canPass (src/utils/gameValidation.ts) - the
+    // same predicate the buttons/drag use - so the keyboard path can't diverge.
     // The previous local copy omitted the next-player capacity check AND the
     // eliminated-seat skip, so it offered passes the server would reject.
 
@@ -50,9 +49,10 @@ export const KeyboardInputHandler = () => {
     const handleAttack = useCallback(async () => {
         if (!game || selectedCards.length === 0) return;
 
+        // A move spends the selection when it is sent, refused or not (see ActionButtons).
         try {
+            setSelectedCards([]);
             await attack(selectedCards);
-            setSelectedCards([]); // Clear selection after successful action
         } catch (error) {
             console.error('Attack failed:', error);
         }
@@ -64,26 +64,26 @@ export const KeyboardInputHandler = () => {
         try {
             if (selectedCards.length === 1) {
                 // Single card cover - find which attack it can cover
-                const uncoveredBattles = game.table_battles.filter(battle => !battle.defense);
-                const validTargets = uncoveredBattles.filter(battle => 
-                    canCoverPair(battle.attack, selectedCards[0], game.power_suit)
+                const uncoveredBattles = game.battles.filter(battle => !covered(battle));
+                const validTargets = uncoveredBattles.filter(battle =>
+                    canCoverPair(battle.attack, selectedCards[0], game.powerSuit)
                 );
                 
                 if (validTargets.length === 1) {
                     // Card can only cover one specific attack - allow cover action
+                    setSelectedCards([]);
                     await cover([selectedCards[0]], [validTargets[0].attack]);
-                    setSelectedCards([]); // Clear selection after successful action
                 } else {
                     console.error('Cover is ambiguous or invalid');
                 }
             } else {
                 // Multi-card cover - check if unambiguous
                 const unambiguousCover = game
-                    ? kernelUnambiguousCover(selectedCards, game.table_battles, game.power_suit)
+                    ? kernelUnambiguousCover(selectedCards, game.battles, game.powerSuit)
                     : null;
                 if (unambiguousCover) {
+                    setSelectedCards([]);
                     await cover(unambiguousCover.coverCards, unambiguousCover.attackCards);
-                    setSelectedCards([]); // Clear selection after successful action
                 } else {
                     console.error('Multi-card cover is ambiguous or invalid');
                 }
@@ -99,8 +99,8 @@ export const KeyboardInputHandler = () => {
 
         try {
             if (canPass(game, selectedCards)) {
+                setSelectedCards([]);
                 await pass(selectedCards);
-                setSelectedCards([]); // Clear selection after successful action
             } else {
                 console.error('Pass is not valid');
             }
@@ -113,8 +113,8 @@ export const KeyboardInputHandler = () => {
         if (!game) return;
 
         try {
+            setSelectedCards([]);
             await pickup();
-            setSelectedCards([]); // Clear selection after successful action
         } catch (error) {
             console.error('Pickup failed:', error);
         }
@@ -124,8 +124,8 @@ export const KeyboardInputHandler = () => {
         if (!game) return;
 
         try {
+            setSelectedCards([]);
             await good();
-            setSelectedCards([]); // Clear selection after successful action
         } catch (error) {
             console.error('Good failed:', error);
         }
@@ -169,8 +169,7 @@ export const KeyboardInputHandler = () => {
             }
 
             // Action keys
-            const self_index = game.players.findIndex((player) => player.player_id === user_id);
-            const isDefending = game.defender === self_index;
+            const isDefending = game.defender === game.mySeat;
             
             // Space or A for attack, Space or C for cover (mutually exclusive)
             if ((key === ' ' || key === 'a') && !isDefending) {

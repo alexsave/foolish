@@ -1,19 +1,20 @@
 import React, { useEffect, useState } from 'react';
 import { useServer } from '../contexts/ServerContext';
-import { useAuth } from '../contexts/AuthContext';
-import { GAME_STATUS } from '@api/core/types.ts';
+import { GAME_STATUS } from '../state/view';
 import supabase from '../backend/Connector';
 import { TexturedSurface, useTexture, getTextureStyle } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { Text } from './Text';
 import { RankIcon } from './SovietIcon';
+import { botDisplayName } from '../common/botName';
 import { ReplayShare } from './ReplayShare';
-// The finish order is the kernel's (anim_plan.c anim_finish_rows), not a
-// second ranking derived here.
-import { gameFinishPlaces } from '@api/common/finish_order.ts';
+// The finish order is the kernel's (anim_plan.c anim_finish_rows), over the
+// board's own elimination order and fool, not a second ranking derived here.
+import { animFinishRows } from '@sdk/ts/wasm/bots.ts';
 
 interface PlayerResult {
     player_id: string;
+    seat: number;
     name: string;
     rank: number;
     old_elo: number;
@@ -23,8 +24,7 @@ interface PlayerResult {
 }
 
 export const WinScreen: React.FC = () => {
-    const { game, continueGame } = useServer();
-    const { user_id } = useAuth();
+    const { view: game, continueGame } = useServer();
     const { woodUrl } = useTexture();
     const [playerResults, setPlayerResults] = useState<Map<string, PlayerResult>>(new Map());
     const [loading, setLoading] = useState(true);
@@ -37,8 +37,8 @@ export const WinScreen: React.FC = () => {
         const loadEloData = async () => {
             try {
                 // Separate player IDs by type
-                const userIds = game.players.filter(p => !p.is_ai).map(p => p.player_id);
-                const botIds = game.players.filter(p => p.is_ai).map(p => p.player_id);
+                const userIds = game.seats.filter(p => !p.isAi).map(p => p.id);
+                const botIds = game.seats.filter(p => p.isAi).map(p => p.id);
                 
                 // Make bulk calls for ELO data
                 const [userEloData, botEloData] = await Promise.all([
@@ -77,22 +77,23 @@ export const WinScreen: React.FC = () => {
                 // Calculate player results from the kernel's finish order.
                 const results = new Map<string, PlayerResult>();
 
-                for (const place of gameFinishPlaces(game)) {
-                    const player = game.players.find(p => p.player_id === place.player_id);
+                for (const row of animFinishRows([...game.elimination], game.fool, game.seats.length, -1)) {
+                    const player = game.seats[row.seat];
                     if (!player) continue;
 
-                    const eloData = player.is_ai
-                        ? botEloMap.get(place.player_id) || { elo_rating: 0, previous_elo: 0 }
-                        : userEloMap.get(place.player_id) || { elo_rating: 0, previous_elo: 0 };
+                    const eloData = player.isAi
+                        ? botEloMap.get(player.id) || { elo_rating: 0, previous_elo: 0 }
+                        : userEloMap.get(player.id) || { elo_rating: 0, previous_elo: 0 };
 
-                    results.set(place.player_id, {
-                        player_id: place.player_id,
-                        name: player.name,
-                        rank: place.place,
+                    results.set(player.id, {
+                        player_id: player.id,
+                        seat: row.seat,
+                        name: botDisplayName(player.name),
+                        rank: row.place,
                         old_elo: eloData.previous_elo,
                         new_elo: eloData.elo_rating,
                         elo_change: eloData.elo_rating - eloData.previous_elo,
-                        is_ai: player.is_ai
+                        is_ai: player.isAi
                     });
                 }
 
@@ -119,7 +120,7 @@ export const WinScreen: React.FC = () => {
 
     const handleContinue = async () => {
         try {
-            await continueGame(game.id);
+            await continueGame(game.gameId);
         } catch (error) {
             console.error('Error continuing game:', error);
         }
@@ -134,14 +135,14 @@ export const WinScreen: React.FC = () => {
         <div className="page" style={{ padding: '0.25rem 1rem 1rem' }}>
             <WoolBackgroundLayer />
             
-            <h1 className="win-screen__title">done - {game.name}</h1>
+            <h1 className="win-screen__title">done - {game.title}</h1>
 
             <div className="win-screen__results">
                 {/* One wood plank behind the whole list (CSS hides it in Soviet
                     mode via [data-theme="soviet"] .bg-wood { display: none }). */}
                 <div className="bg-wood" style={getTextureStyle(woodUrl, false, 0.42)} />
                 {sortedResults.map((result) => {
-                    const isCurrentUser = result.player_id === user_id;
+                    const isCurrentUser = result.seat === game.mySeat;
 
                     const eloClass = result.elo_change > 0
                         ? 'result-card__elo-change--positive'
@@ -182,7 +183,7 @@ export const WinScreen: React.FC = () => {
                 })}
             </div>
 
-            <ReplayShare game={game} />
+            <ReplayShare gameId={game.gameId} />
 
             <TexturedSurface
                 as="button"

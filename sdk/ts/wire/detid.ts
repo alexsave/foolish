@@ -2,8 +2,8 @@
  * Derived ids: a UUID shape with no entropy behind it
  * =============================================================================
  * The product's invariant is that exactly one draw in the system is truly
- * random - the crypto deal seed, once per live game (injectDealSeed in
- * sdk/ts/wasm/engine.ts). Everything downstream of it must be a function of its
+ * random - the crypto deal seed, once per live game (drawDealSeed in
+ * server/impls/supabase/functions/_shared/adapter/table_io.ts). Everything downstream of it must be a function of its
  * inputs, so the same inputs replay to the same bytes.
  *
  * `crypto.randomUUID()` broke that in two quiet places. A session log row got a

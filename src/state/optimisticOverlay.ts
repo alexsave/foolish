@@ -1,4 +1,4 @@
-import { Card } from '@api/core/types.ts';
+import type { ViewCard as Card } from './view';
 
 /**
  * A tiny bridge so the authoritative REST load path (ServerContext.loadGame, used

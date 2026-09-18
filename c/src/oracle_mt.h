@@ -10,19 +10,28 @@
 #define CNITRO_ORACLE_MT_H
 
 #include <stdint.h>
+#include "card.h"
 
 #define OG_MT_MAX_CANDS 26
 #define OG_MT_MAX_CARDS 12          // candidate moves never exceed this in practice
 
-// One candidate's move descriptor, packed for the TS overlay: each card byte is
-// (suit << 4) | value - suit 0-3, value 1-13, decoded TS-side to {suit,value}.
+// One candidate's move descriptor. The host reads the table back through the
+// snapshot reader generated from OgMtCandidates (sdk/ts/gen/oracle_layout.oracle_mt.ts),
+// so no byte of it is laid out by hand on either side.
 typedef struct {
     uint8_t type;                   // MOVE_* id
     uint8_t n_cards;
-    uint8_t cards[OG_MT_MAX_CARDS];
+    Card    cards[OG_MT_MAX_CARDS];
     uint8_t n_targets;
-    uint8_t targets[OG_MT_MAX_CARDS];
+    Card    targets[OG_MT_MAX_CARDS];   // a cover's attack cards, in cards' order
 } OgMtCand;
+
+// The published candidate table as the host reads it (wasm_mt_candidates): a copy
+// taken once the table is published, so a read never races a publisher.
+typedef struct {
+    uint8_t  n;
+    OgMtCand cand[OG_MT_MAX_CANDS];
+} OgMtCandidates;
 
 typedef struct {
     // job control (written by the control instance under wasm_mt_setup)

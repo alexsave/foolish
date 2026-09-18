@@ -32,7 +32,7 @@ below).
 
 Apple's Messages host can't be extended past its 2 seeded participants, and two
 sims can't iMessage each other — so a 3–8 player game can't be exercised on the
-shipping path (this is what `multisuggestion.txt` correctly diagnosed). So I
+shipping path. So I
 built **FoolishHarness**, a dev-only app target (never shipped) that renders the
 **same `MessagesRootView`** the extension renders, driven by a fake 2–8
 participant transcript with a participant switcher.

@@ -2,28 +2,33 @@
 //
 // The product's whole determinism story is that a game is a pure function of
 // its deal seed: 32 crypto bytes drawn once, saved to games.game_seed, and
-// everything after them derived. That story was quietly false in the shape
-// nobody looks at - not the cards, which were always right, but the rows the
-// game writes down. Every session log got `id: crypto.randomUUID()` and
-// `created_at: new Date()`, so replaying one game twice produced two states
-// that no equality check could match, and "did this change anything?" had no
-// answer you could compute.
+// everything after them derived - the deal, every draw, and every bot decision
+// (the strategy streams are seeded from the board and the seed's secret base).
+// That story was once quietly false in the shape nobody looks at: not the
+// cards, which were always right, but the rows the game writes down, which drew
+// a fresh id and a wall-clock stamp each.
 //
-// So this plays the SAME deal twice, from the same pinned seed and the same
-// pinned clock, and asserts the two games are identical all the way down -
-// hands, table, deck, and the log rows. It is the assertion the fix exists for:
-// swap derivedUuid back to crypto.randomUUID in sdk/ts/wasm/engine.ts, or drop
-// the clock hook, and this goes red on the first log row.
+// So this plays the SAME deal twice, from the same seed and the same commit
+// clock, the way the server plays one - a C Table through the kernel's bot
+// cycle (helpers/bot_table.ts) - and asserts the two runs are identical all the
+// way down: the durable state blob after every cycle, the roster, the session
+// log rows (games.logs_packed), and the replay code the finished game is cut
+// into. The second run is on a DIFFERENT bots.wasm instance, so the game is a
+// function of its seed and not of whatever the module played before it.
 //
-// It needs no database. The kernel and the rules surface are the whole subject.
+// (The TS Game's log ids, which this file also held, are gone with that Game:
+// a session log record carries no id.)
+//
+// It needs no database. The kernel is the whole subject.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
-import { __setDealSeedOverride, __setEngineClock } from '../sdk/ts/wasm/engine.ts';
-import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
-import { executeBotMove } from '../server/api/common/pure_bot_actions.ts';
-import { Game, GAME_STATUS, PLAYER_STATUS, STRATEGY_KEY } from '../server/api/core/types.ts';
+import { createServerTable, type ServerTable } from '../sdk/ts/table/server_table.ts';
+import * as L from '../sdk/ts/gen/game_layout.bots.ts';
+import { botCycle, dealBotTable, replayCodeOf, type BotTableRow } from './helpers/bot_table.ts';
+import { fixtureTable } from './helpers/table_fixture.ts';
 import { suiteRng } from './helpers/rng.ts';
+
+if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
 const rng = suiteRng('replay_is_a_function');
 
@@ -34,129 +39,44 @@ function dealSeed(): Uint8Array {
     return Uint8Array.from({ length: 32 }, () => r.int(256));
 }
 
-// A clock that does not move. The stamps a game writes are real product data -
-// the replay extras read per-move timing off them - so the engine still calls a
-// clock; what it must also do is let a caller say which one.
-const FIXED_MS = 1_700_000_000_000;
+const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
-function freshGame(id: string, players: number): Game {
-    return {
-        id,
-        name: id,
-        status: GAME_STATUS.WAITING,
-        players: Array.from({ length: players }, (_, i) => ({
-            player_id: `p${i}`,
-            name: `P${i}`,
-            status: PLAYER_STATUS.READY,
-            is_ai: true,
-            hand: [],
-            hand_length: 0,
-            awaiting_attack: false,
-            strategy_key: STRATEGY_KEY.RANDOM,
-        })),
-        deck: [],
-        deck_length: 0,
-        discard_pile_length: 0,
-        flipped: null,
-        power_suit: 0,
-        first_attacker: 0,
-        defender: 0,
-        table_battles: [],
-        elimination_order: [],
-        good_timestamp: null,
-        good_players: [],
-        logs: [],
-        belief_logs: [],
-        game_seed: null,
-    } as unknown as Game;
-}
-
-/** Deal and play `steps` moves, always taking the same legal move. */
-function playOnce(id: string, players: number, steps: number): Game {
-    const g = freshGame(id, players);
-    start_game(g);
-    for (let i = 0; i < steps && g.status === GAME_STATUS.PLAYING; i++) {
-        // The FIRST legal move of the FIRST seat that has one, every time: the
-        // subject here is reproducibility, so the move choice must not be the
-        // thing under test.
-        let played = false;
-        for (const p of g.players) {
-            if (p.status !== PLAYER_STATUS.IN) continue;
-            const move = calculateLegalMoves(g, p.player_id).find((m) => m.type !== 'wait');
-            if (!move) continue;
-            executeBotMove(g, p, move);
-            played = true;
-            break;
-        }
-        if (!played) break;
+/** Deal and play the game to its end on `table`, keeping every committed row. */
+function playOnce(table: ServerTable, seed: Uint8Array): BotTableRow[] {
+    let row = dealBotTable(['random', 'handwritten', 'random', 'handwritten'], seed, { table, gameId: 'rf' });
+    const rows = [row];
+    while (row.status === L.GAME_STATUS_PLAYING) {
+        const c = botCycle(row, { table });
+        assert.ok(c.drive.n > 0, `a playing game with no bot move at version ${row.version}`);
+        row = c.row;
+        rows.push(row);
     }
-    return g;
+    return rows;
 }
 
 test('the same deal played twice is the same game, log rows included', () => {
     const seed = dealSeed();
-    const hex = [...seed].map((b) => b.toString(16).padStart(2, '0')).join('');
+    const a = playOnce(fixtureTable(), seed);
+    const b = playOnce(createServerTable(), seed);
+    const last = a[a.length - 1];
 
-    __setEngineClock(() => FIXED_MS);
-    try {
-        __setDealSeedOverride(seed);
-        const a = playOnce('rf', 4, 40);
-        __setDealSeedOverride(seed);
-        const b = playOnce('rf', 4, 40);
-        __setDealSeedOverride(null);
+    assert.ok(last.log.length > 0, `the run wrote no logs, so it proves nothing (deal ${hex(seed)})`);
+    assert.equal(last.status, L.GAME_STATUS_GAME_OVER, `the run did not finish (deal ${hex(seed)})`);
 
-        assert.ok(a.logs.length > 0, `the run wrote no logs, so it proves nothing (deal ${hex})`);
+    // The cards first, cycle by cycle, so a failure here reads as a rules
+    // problem rather than a bookkeeping one, and names the cycle it starts at.
+    assert.equal(b.length, a.length, `two plays of deal ${hex(seed)} took different numbers of cycles (seed=${rng.seed}, ${rng.env})`);
+    a.forEach((ra, i) => {
+        assert.equal(hex(b[i].state), hex(ra.state),
+            `two plays of deal ${hex(seed)} diverge at cycle ${i} (seed=${rng.seed}, ${rng.env})`);
+    });
+    assert.equal(hex(b[b.length - 1].roster), hex(last.roster), `roster differs (deal ${hex(seed)})`);
 
-        // The cards first, so a failure here reads as a rules problem rather
-        // than a bookkeeping one.
-        assert.deepEqual(
-            a.players.map((p) => p.hand), b.players.map((p) => p.hand),
-            `two plays of deal ${hex} dealt different hands (seed=${rng.seed}, ${rng.env})`,
-        );
-        assert.deepEqual(a.table_battles, b.table_battles, `table differs (deal ${hex})`);
-        assert.equal(a.deck_length, b.deck_length, `deck differs (deal ${hex})`);
+    // Then the rows: the session log as the table commits it, record for record.
+    assert.equal(hex(b[b.length - 1].log), hex(last.log),
+        `the session log ROWS differ between two plays of deal ${hex(seed)} (seed=${rng.seed}, ${rng.env})`);
 
-        // Then the rows. This is the half that used to differ on every run:
-        // each log carried a fresh UUID and a fresh wall-clock stamp.
-        assert.equal(a.logs.length, b.logs.length, `log counts differ (deal ${hex})`);
-        assert.deepEqual(
-            a.logs, b.logs,
-            `the log ROWS differ between two plays of deal ${hex} (seed=${rng.seed}, ${rng.env}). `
-            + 'If the diff is only `id` or `created_at`, something went back to drawing them: '
-            + 'see derivedUuid in sdk/ts/wire/detid.ts and __setEngineClock in sdk/ts/wasm/engine.ts.',
-        );
-
-        // Whole-object equality, so a field added later is covered without
-        // anyone remembering to come back here.
-        assert.deepEqual(a, b, `the two games differ somewhere outside the fields named above (deal ${hex})`);
-    } finally {
-        __setEngineClock(null);
-        __setDealSeedOverride(null);
-    }
-});
-
-test('log ids are unique within a game and stable across a rerun', () => {
-    const seed = dealSeed();
-    __setEngineClock(() => FIXED_MS);
-    try {
-        __setDealSeedOverride(seed);
-        const g = playOnce('uniq', 3, 40);
-        const ids = g.logs.map((l) => l.id);
-        assert.equal(new Set(ids).size, ids.length, `a game reused a log id (seed=${rng.seed})`);
-        // A UUID shape, because these go into Postgres `uuid` columns.
-        for (const id of ids) {
-            assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/, `not a v4-shaped id: ${id}`);
-        }
-        // A DIFFERENT game id gives different ids, so two games' rows never
-        // collide even though neither drew anything.
-        __setDealSeedOverride(seed);
-        const other = playOnce('uniq2', 3, 40);
-        assert.equal(
-            new Set([...ids, ...other.logs.map((l) => l.id)]).size, ids.length + other.logs.length,
-            'two games with the same deal produced colliding log ids',
-        );
-    } finally {
-        __setEngineClock(null);
-        __setDealSeedOverride(null);
-    }
+    // And the whole game, as the code it is shared as.
+    assert.equal(hex(replayCodeOf(b[b.length - 1], seed, { table: fixtureTable() })),
+        hex(replayCodeOf(last, seed, { table: fixtureTable() })), `the replay codes differ (deal ${hex(seed)})`);
 });

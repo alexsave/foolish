@@ -28,7 +28,7 @@ with three tiers:
   (game_id -> `GameSlot*`). Never held during game work, bot work, or socket
   I/O.
 - **`GameSlot.lock`** (new field, one per game) — guards everything about
-  ONE game: its `Game` struct, lobby roster (`seat_user`/`seat_name`/
+  ONE game: its `Game` struct, lobby roster (`roster`/
   `seat_ready`/`owner`), `cond`/`bot_running`, and the per-seat view cache.
 - **`g_kernel_lock`** — small, one process-wide mutex, held ONLY around the
   specific kernel calls that mutate a `Game` or drive bots (`awire_apply`,
@@ -1195,7 +1195,7 @@ alongside WS — WS for LAN/datacenter, WebTransport for mobile — not a
 replacement.
 
 Verified end to end with Cloudflare's `quiche-client` (H3 `/state` is
-byte-identical to the TCP `/state`) and `wt_client` (a WebTransport datagram
+byte-identical to the TCP `/state`, and a seat's view reaches only its owner's `token=`) and `wt_client` (a WebTransport datagram
 round-trip); see `quic_test.sh`.
 
 ### Deliverable 3 — game reclamation (bounded memory)

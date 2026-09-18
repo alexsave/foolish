@@ -1,27 +1,8 @@
-import { Battle, Card, PublicGame } from "@api/core/types.ts";
+import { type ViewCard as Card } from "../state/view";
 
-export const getTableCards = (gameState: PublicGame): Card[] => gameState.table_battles
-    ?.flatMap((b: Battle) => b.defense ? [b.attack, b.defense] : [b.attack]) || [];
+export const cardsIntersection = (arr1: readonly Card[], arr2: readonly Card[]): Card[] => arr1.filter(card => arr2.some(c => c.suit === card.suit && c.value === card.value));
 
-
-export const cardsIntersection = (arr1: Card[], arr2: Card[]): Card[] => arr1.filter(card => arr2.some(c => c.suit === card.suit && c.value === card.value));
-
-export const getCardKeyPlayerId = (card: Card, playerId?: string) => `${card.suit}-${card.value}-${playerId || 'global'}`;
+// A card's animation key: the card and whose it is - a seat, or a place's own key ('table', 'flipped').
+export const getCardKeyOwner = (card: Card, owner?: number | string) => `${card.suit}-${card.value}-${owner ?? 'global'}`;
 
 export const getCardKey = (card: Card) => `${card.suit}-${card.value}`;
-
-export const createCardEventString = (
-    type: string,
-    card: Card,
-    fromLocation: string,
-    toLocation: string,
-    playerId?: string
-): string => {
-    return JSON.stringify({
-        type,
-        card,
-        from_location: fromLocation,
-        to_location: toLocation,
-        player_id: playerId
-    });
-};

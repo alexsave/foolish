@@ -589,23 +589,19 @@ static int build_random_frame(unsigned char *buf, int cap, unsigned int *seed) {
 // 0 (never blocks/retries) on any failure — a bad HTTP round, a
 // not-currently-playing game, or zero legal moves — so the caller always
 // has the random-frame path as a fallback.
-static int build_legal_frame(const Config *cfg, const char *gid, int seat,
-                              unsigned char *buf, int cap, unsigned int *seed) {
-    unsigned char resp[RESP_CAP]; HttpResp r;
-    char path[64];
-    snprintf(path, sizeof path, "/state?game_id=%s&seat=%d", gid, seat);
-    if (!http_do(cfg->host, cfg->port, "GET", path, NULL, NULL, 0, resp, sizeof resp, &r)) return 0;
-    if (r.status != 200 || !r.body || r.body_len <= 0) return 0;
-
-    static __thread Game g;
+// A random legal move of `seat` on board `g`, encoded; with `cardless` only a
+// PICKUP or GOOD, the moves a board with that seat's hand hidden still knows are
+// legal. 0 when there is none.
+static int frame_of_legal_move(const Game *g, int seat, bool cardless,
+                               unsigned char *buf, int cap, unsigned int *seed) {
     static __thread LegalMoves moves;
-    memset(&g, 0, sizeof g);
-    state_get(&g, r.body, /*masked=*/1);
-    if (g.status != GAME_STATUS_PLAYING || seat < 0 || seat >= g.num_players) return 0;
-
-    calculate_legal_moves(&g, seat, &moves);
-    if (moves.n <= 0) return 0;
-    const LegalMove *m = &moves.moves[rand_r(seed) % (unsigned)moves.n];
+    if (g->status != GAME_STATUS_PLAYING || seat < 0 || seat >= g->num_players) return 0;
+    calculate_legal_moves((Game *)g, seat, &moves);
+    int pick[MAX_LEGAL_MOVES], n = 0;
+    for (int i = 0; i < moves.n; i++)
+        if (!cardless || moves.moves[i].type == MOVE_PICKUP || moves.moves[i].type == MOVE_GOOD) pick[n++] = i;
+    if (n <= 0) return 0;
+    const LegalMove *m = &moves.moves[pick[rand_r(seed) % (unsigned)n]];
 
     AwireAction a; memset(&a, 0, sizeof a);
     switch (m->type) {
@@ -624,6 +620,20 @@ static int build_legal_frame(const Config *cfg, const char *gid, int seat,
         if (a.kind == AWIRE_COVER) a.attacks[i] = m->attack_cards[i];
     }
     return awire_encode(&a, buf, cap);
+}
+
+static int build_legal_frame(const Config *cfg, const char *gid, int seat, const char *token,
+                              unsigned char *buf, int cap, unsigned int *seed) {
+    unsigned char resp[RESP_CAP]; HttpResp r;
+    char path[64];
+    snprintf(path, sizeof path, "/state?game_id=%s&seat=%d", gid, seat);
+    if (!http_do(cfg->host, cfg->port, "GET", path, token, NULL, 0, resp, sizeof resp, &r)) return 0;
+    if (r.status != 200 || !r.body || r.body_len <= 0) return 0;
+
+    static __thread Game g;
+    memset(&g, 0, sizeof g);
+    state_get(&g, r.body, /*masked=*/1);
+    return frame_of_legal_move(&g, seat, false, buf, cap, seed);
 }
 
 // ---------------------------------------------------------------------------
@@ -677,7 +687,7 @@ static void *loader_thread(void *arg) {
             unsigned char frame[64];
             int flen = 0;
             if (g_cfg.mixed && (rand_r(&seed) % 5 == 0))
-                flen = build_legal_frame(&g_cfg, hg.id, seat, frame, sizeof frame, &seed);
+                flen = build_legal_frame(&g_cfg, hg.id, seat, hu.token, frame, sizeof frame, &seed);
             if (flen <= 0) flen = build_random_frame(frame, sizeof frame, &seed);
             char path[48];
             snprintf(path, sizeof path, "/action?game_id=%s", hg.id);
@@ -691,7 +701,7 @@ static void *loader_thread(void *arg) {
         } else if (roll < 900) {
             char path[64];
             snprintf(path, sizeof path, "/state?game_id=%s&seat=%d", hg.id, seat);
-            bool okc = http_do(g_cfg.host, g_cfg.port, "GET", path, NULL, NULL, 0, respbuf, RESP_CAP, &r);
+            bool okc = http_do(g_cfg.host, g_cfg.port, "GET", path, hu.token, NULL, 0, respbuf, RESP_CAP, &r);
             st->total_requests++; st->state_gets++;
             record_status(st, okc, r.status);
         } else if (roll < 995) {
@@ -1030,16 +1040,32 @@ typedef struct {
     Config        *cfg;
     char           gid[16];
     char           token[96];
+    int            seat;   // the seat its probes claim (see SPEC_MOVE_PROBE_N)
     SpecThreadStats *st;
 } SpecClientArg;
 
-// Every SPEC_MOVE_PROBE_N polls, a spectator sends a real, well-FRAMED move
-// frame (build_random_frame — the same helper --mode=action's random-frame
-// path uses) instead of an empty poll, purely to verify server-side that it
-// gets silently ignored: this is the empirical half of the "spectators MAY
-// NOT submit moves" gate (SERVER_SCALING.md), not something this program
-// needs for its own load shape. move_accepted staying 0 across a whole run
-// is the pass condition; a real spectator client would never do this.
+// A spectator sends a real move frame after each of its first
+// SPEC_MOVE_PROBE_FIRST pushes and then after every SPEC_MOVE_PROBE_N-th, purely
+// to verify server-side that it gets silently ignored: this is the empirical
+// half of the "spectators MAY NOT submit moves" gate (SERVER_SCALING.md), not
+// something this program needs for its own load shape. move_accepted staying 0
+// across a whole run is the pass condition; a real spectator client would never
+// do this.
+//
+// The probe is the strongest move a spectator could try: it connects with the
+// game creator's token AND claims a seat (spectator=1&seat=N), and sends a move
+// that is LEGAL for that seat on the board the push it just received shows: a
+// PICKUP or GOOD, which the masked board still knows are legal. So only the
+// server's spectator guard stands between the probe and an applied move; a
+// random frame would be refused by the rules anyway, and the check would prove
+// nothing. The claimed seat is the server bot's when the game has one: a bot
+// thinks before it moves, so the probe still lands on the board it was built
+// from, where a human seat's ws_worker answers the same push first. (Measured:
+// with the guard removed from ws_apply_move_locked, 2 to 3 of 8 or 9 probes were
+// accepted in each of four runs.) The first probes come early because a short
+// smoke run sees only a handful of pushes: with only the every-25th cadence the
+// stage-4 smoke test sent 0 probes and its accepted=0 passed vacuously.
+#define SPEC_MOVE_PROBE_FIRST 8
 #define SPEC_MOVE_PROBE_N 25
 
 static void *spectator_worker(void *argp) {
@@ -1050,7 +1076,7 @@ static void *spectator_worker(void *argp) {
     if (!msgbuf) return NULL;
 
     char path[80];
-    snprintf(path, sizeof path, "/ws?game_id=%s&spectator=1", a->gid);
+    snprintf(path, sizeof path, "/ws?game_id=%s&spectator=1&seat=%d", a->gid, a->seat);
 
     // PROFILE_HOTPATH.md "T1f": plaintext (the default) is receive-only —
     // no empty polls, ever; the periodic move-probe (SPEC_MOVE_PROBE_N,
@@ -1086,9 +1112,12 @@ static void *spectator_worker(void *argp) {
 
             if (legacy_poll) usleep(WS_IDLE_POLL_US);   // same poll cadence a not-currently-eligible human seat uses (--tls only)
             recv_n++;
-            if (recv_n % SPEC_MOVE_PROBE_N == 0) {
+            if (st->move_attempts < SPEC_MOVE_PROBE_FIRST || recv_n % SPEC_MOVE_PROBE_N == 0) {
+                static __thread Game g;
                 unsigned char frame[64];
-                int flen = build_random_frame(frame, sizeof frame, &seed);
+                memset(&g, 0, sizeof g);
+                state_get(&g, msgbuf + 1, /*masked=*/1);
+                const int flen = frame_of_legal_move(&g, a->seat, true, frame, sizeof frame, &seed);
                 if (flen > 0 && ws_send_frame(&wc, WS_OP_BIN, frame, flen) >= 0) {
                     st->move_attempts++;
                     pending_probe = true;
@@ -1158,6 +1187,7 @@ static void run_ws_load(Config *cfg) {
                 // seat-0 (creator) token rather than minting dedicated
                 // spectator accounts (see spectator_worker's header doc).
                 snprintf(sa->token, sizeof sa->token, "%s", g_users[hg->user_idx[0]].token);
+                sa->seat = cfg->server_bot[0] ? hg->n_seats : 0;   // the bot joins after every human
                 sa->st = &spec_stats[sidx];
                 sidx++;
             }

@@ -97,7 +97,7 @@ behavior: POSIX doesn't guarantee a live mutex's raw bytes are safe to
 copy while another thread might be locking/unlocking that same mutex, even
 from the thread currently holding it. Helgrind caught it as a real
 data race. Fixed by copying only `offsetof(GameSlot, lock)` bytes — the
-`used`/`id`/`game`/`owner`/`seat_user`/`seat_name`/`seat_ready` prefix
+`used`/`id`/`game`/`owner`/`roster`/`seat_ready` prefix
 `serialize_slot` actually reads, which the struct layout keeps entirely
 before `lock`.
 
@@ -127,9 +127,10 @@ refuse, rather than misinterpret — an old row.
 [3 .. 3+state_len)                   state_put(&game, VIEW_UNMASKED, ..)
 next ID_LEN+1 bytes                  id
 next ID_LEN+1 bytes                  owner
-next MAX_PLAYERS*(ID_LEN+1) bytes    seat_user[]
-next MAX_PLAYERS*24 bytes            seat_name[]
+next ROSTER_BYTES (1227) bytes       roster_encode(&roster), the kernel's durable roster (c/src/roster.h)
 next MAX_PLAYERS bytes               seat_ready[]  (1 byte each, 0/1)
+next 4 bytes                         rng_base, uint32 LE (the bots' per-decision seeding base)
+next 1 byte                          game.deterministic_deck (0/1)
 ```
 
 The `Game` itself is serialized with the kernel's own existing, exact
@@ -139,10 +140,10 @@ server for `/state`/`/ws`) — plus the lobby/identity fields that codec
 deliberately never carries (`game.h`: identity lives with the host, never
 in the state blob). Worst case: 3 + 690 (`state_put`'s own documented
 worst case — see `VIEW_CACHE_CAP`'s comment in `foolish_server.c`) + 13×2 +
-8×13 + 8×24 + 8 = **1023 bytes**. `PERSIST_GAME_BLOB_CAP` (2048) gives real
-margin, the same discipline `VIEW_CACHE_CAP` uses. In practice, measured
-rows are far smaller (see the crash test output below — dealt games ran
-30-70 bytes on the wire).
+1227 + 8 + 4 + 1 = **1959 bytes** (blob version 3, which added `rng_base` and the deck mode, and restores each seat's kind from its roster brain, which the state codec does not carry; version 2 rows had no base and version 1 rows carried fixed `seat_user[]`/`seat_name[]` arrays, and both are refused). `PERSIST_GAME_BLOB_CAP` (2048) gives
+margin, the same discipline `VIEW_CACHE_CAP` uses. The roster is fixed width, so a row is 1,269 bytes plus its state; the state part is
+small (the crash test output below, from version 1, shows dealt games at
+30-70 bytes of state).
 
 One deliberate scope note: `state_put`/`state_get` do not carry the game's
 **log** (`g->logs[]` — used for replay/animation, not for resuming play).
@@ -167,7 +168,7 @@ two serializations to be byte-for-byte identical — or the process exits
 before it ever opens a socket:
 
 ```
-persist self-test: OK (games: 376-byte round-trip byte-identical)
+persist self-test: OK (games: 1307-byte round-trip byte-identical)
 ```
 
 A regression here (a field silently dropped in either direction, an

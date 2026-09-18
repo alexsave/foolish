@@ -1,228 +1,322 @@
 // Adversarial / illegal-input fuzzer. Fires malformed and rule-breaking action
-// requests — the kind a malicious or buggy client could POST — through the REAL
-// server validation+execution path (verify_player_in_game + the real handlers,
-// exactly as server/impls/supabase/functions/action/index.ts dispatches) under the REAL CAS
-// commit, and asserts the hard safety invariant after EVERY attempt:
+// requests - the bytes a malicious or buggy client could POST - through the REAL
+// server move path (packed_action.ts executePackedAction: the kernel's request
+// decode, the table_io CAS loop, table_act for the auth id's seat, commit_table)
+// against a real Postgres, and asserts the hard safety invariant after EVERY
+// attempt:
 //
-//   card conservation holds — no input ever duplicates or loses a card.
+//   card conservation holds - no input ever duplicates or loses a card.
 //
-// Plus targeted checks that obviously-illegal inputs are rejected, not applied.
+// Plus: an input that can never be legal is never applied, every refusal is a
+// clean one (a kernel verdict or a named refusal, never a low-level throw), and
+// targeted checks that obviously-illegal inputs are rejected for the right reason.
+//
+// Migrated to the C Table (docs/C_GAME_SHAPE_MIGRATION.md Phase 4b). What changed
+// and where the old cases went:
+//   - The generator is table-shaped and local (see `generators` below): the shared
+//     e2e/helpers/fuzz_moves.ts draws from a TypeScript Game and still serves
+//     e2e/table_parity.test.ts. The hostile inputs are the same families, as the
+//     bytes a client can actually send.
+//   - The JSON-shape families (cards as a string / object / number, card fields as
+//     strings or nested junk, null fields) have no byte form: a move is packed
+//     only. Their byte-level counterparts are here (unknown kinds, truncated and
+//     over-long wires, garbage card bytes, malformed request envelopes), and a
+//     JSON move naming any player is refused by e2e/table_server_seat.test.ts
+//     ('action: a JSON body naming another player acts for nobody').
+//   - registerAttackValidation (run by e2e/validation/handlers_validation.test.ts)
+//     held the TS handleAttack twin; it now holds the C Table's table_act on a
+//     kernel-built board, in memory, with the kernel's reject reason.
 
 import './harness.ts';
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { applySchema, resetDb, seedGame, uuid, pgPool } from './harness.ts';
-import { executeWithGameLock, loadCompleteGame } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
-import { verify_player_in_game } from '../server/api/common/common_utils.ts';
-import { packedProducts, start_game_packed } from '../server/api/common/game_lifecycle.ts';
-import { Game, AnimationEvent, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY, PrivatePlayer, Card } from '../server/api/core/types.ts';
-import { handleAttack } from '../server/api/common/actions/attack.ts';
-import { handleCover } from '../server/api/common/actions/cover.ts';
-import { handlePass } from '../server/api/common/actions/pass.ts';
-import { handlePickup } from '../server/api/common/actions/pickup.ts';
-import { handleGood } from '../server/api/common/actions/good.ts';
-import { legalMovesFor, applyPlayerMove, checkCardConservation } from './dispatch.ts';
+import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
+import * as L from '../sdk/ts/gen/game_layout.bots.ts';
+import { AWIRE_KIND, ACTION_STATUS, decodeActionResponse, encodeActionRequest, wireCard } from '../sdk/ts/wire/awire.ts';
+import { executePackedAction, MalformedActionRequest } from '../server/impls/supabase/functions/_shared/adapter/packed_action.ts';
+import { GameNotFound, TableRefusal, __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
+import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
+import { fixture, fixtureTable } from './helpers/table_fixture.ts';
+import { checkCardConservation, legalMoves, mustReadTable, residentBoard, type PlayCard, type TableState } from './helpers/table_play.ts';
+import { runAction, runMeta, seedLobby } from './helpers/table_server.ts';
+import { suiteRng } from './helpers/rng.ts';
 
-// Deterministic RNG so a found exploit reproduces from the printed seed.
-let seed = Number(process.env.FUZZ_SEED || 0x1234abcd) >>> 0;
-const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 0x100000000; };
-const ri = (n: number) => Math.floor(rnd() * n);
-const pick = <T>(a: T[]): T => a[ri(a.length)];
+if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 
-interface FuzzReq { type: string; player_id: string; cards?: any; cover_cards?: any; attack_cards?: any }
+// Deterministic: moves, hostile inputs and every deal come from the suite seed,
+// so a found exploit reproduces from the printed seed (E2E_SEED_FUZZ).
+const rng = suiteRng('fuzz');
+const { int: ri, pick } = rng;
 
-// The REAL action-endpoint dispatch (mirrors action/index.ts): membership check
-// then the real handler. No swallowing — illegal input must surface as a throw.
-function applyAction(game: Game, req: FuzzReq): AnimationEvent[] {
-    verify_player_in_game(game, req.player_id);
-    switch (req.type) {
-        case 'attack': return handleAttack(game, req.player_id, req.cards);
-        case 'cover': return handleCover(game, req.player_id, req.cover_cards, req.attack_cards);
-        case 'pass': return handlePass(game, req.player_id, req.cards);
-        case 'pickup': return handlePickup(game, req.player_id);
-        case 'good': return handleGood(game, req.player_id);
-        default: throw new Error(`unknown action type: ${req.type}`);
-    }
-}
-
-const garbageCard = (): Card => ({ suit: pick([-1, 0, 1, 2, 3, 7, 99]), value: pick([-1, 0, 1, 9, 13, 14, 99]) });
-const someHandCard = (g: Game): Card | null => {
-    const withHands = g.players.filter((p) => p.hand && p.hand.length);
-    if (!withHands.length) return null;
-    return pick(pick(withHands).hand);
-};
-const attackerId = (g: Game): string => {
-    const atks = g.players.filter((_, i) => i !== g.defender && g.players[i].status === PLAYER_STATUS.IN);
-    return (atks.length ? pick(atks) : g.players[0]).player_id;
-};
-
-// Adversarial request generators against the current state.
-const GENERATORS: ((g: Game) => FuzzReq)[] = [
-    // 1) DUPLICATE identical card in one attack — the object-identity dedup hole.
-    (g) => { const c = someHandCard(g) ?? garbageCard(); return { type: 'attack', player_id: g.players[g.first_attacker].player_id, cards: [{ ...c }, { ...c }] }; },
-    // 2) duplicate identical cover card
-    (g) => { const c = someHandCard(g) ?? garbageCard(); const a = g.table_battles[0]?.attack ?? garbageCard(); return { type: 'cover', player_id: g.players[g.defender].player_id, cover_cards: [{ ...c }, { ...c }], attack_cards: [{ ...a }, { ...a }] }; },
-    // 3) duplicate identical pass card
-    (g) => { const c = someHandCard(g) ?? garbageCard(); return { type: 'pass', player_id: g.players[g.defender].player_id, cards: [{ ...c }, { ...c }] }; },
-    // 4) forged card not in hand
-    (g) => ({ type: 'attack', player_id: attackerId(g), cards: [{ suit: ri(4), value: 1 + ri(13) }] }),
-    // 5) out-of-range garbage card
-    (g) => ({ type: 'attack', player_id: attackerId(g), cards: [garbageCard()] }),
-    // 6) wrong role: defender attacks
-    (g) => { const c = someHandCard(g) ?? garbageCard(); return { type: 'attack', player_id: g.players[g.defender].player_id, cards: [{ ...c }] }; },
-    // 7) wrong role: an attacker tries to cover/pickup
-    (g) => ({ type: pick(['cover', 'pickup']), player_id: attackerId(g), cover_cards: [garbageCard()], attack_cards: [garbageCard()] }),
-    // 8) player not in the game
-    (g) => ({ type: pick(['attack', 'cover', 'pass', 'pickup', 'good']), player_id: uuid(), cards: [garbageCard()], cover_cards: [garbageCard()], attack_cards: [garbageCard()] }),
-    // 9) empty / null / huge payloads
-    (g) => ({ type: 'attack', player_id: attackerId(g), cards: pick([[], null, undefined, Array(20).fill(someHandCard(g) ?? garbageCard())]) }),
-    // 10) mixed-value first attack
-    (g) => { const h = g.players[g.first_attacker].hand; return { type: 'attack', player_id: g.players[g.first_attacker].player_id, cards: h.length >= 2 ? [h[0], h[1]] : [garbageCard(), garbageCard()] }; },
-    // 11) cover with non-covering / off-table attack_cards
-    (g) => ({ type: 'cover', player_id: g.players[g.defender].player_id, cover_cards: [someHandCard(g) ?? garbageCard()], attack_cards: [garbageCard()] }),
-    // 12) good by the defender / out of turn
-    (g) => ({ type: 'good', player_id: g.players[g.defender].player_id }),
-    // 13) mismatched cover/attack array lengths
-    (g) => ({ type: 'cover', player_id: g.players[g.defender].player_id, cover_cards: [someHandCard(g) ?? garbageCard()], attack_cards: [] }),
-    // 14) malformed types: cards is a string / object / number instead of an array
-    (g) => ({ type: 'attack', player_id: attackerId(g), cards: pick(['not-an-array', { suit: 0, value: 5 }, 42, true]) as any }),
-    // 15) card fields are strings / objects / nested junk
-    (g) => ({ type: 'attack', player_id: attackerId(g), cards: [{ suit: '0' as any, value: '5' as any }, { suit: {} as any, value: [] as any }] }),
-    // 16) injection-ish strings in player_id / type (parameterized queries must shrug)
-    (g) => ({ type: pick(["attack'; DROP TABLE games;--", '__proto__', 'constructor']) as any, player_id: pick(["1' OR '1'='1", "'; DELETE FROM player_hands; --", '../../etc/passwd']) }),
-    // 17) bounded-large payload (DoS attempt — must stay bounded, not hang/OOM)
-    (g) => ({ type: 'attack', player_id: g.players[g.first_attacker].player_id, cards: Array(300).fill(0).map(() => ({ ...(someHandCard(g) ?? garbageCard()) })) }),
-    // 18) null / missing required fields
-    (g) => ({ type: pick(['attack', 'cover', 'pass']), player_id: pick([null, undefined, '']) as any, cards: null, cover_cards: null, attack_cards: null }),
-];
-
-// Distinguish a clean rule rejection from a crash-class error (the kind that would
-// be a confusing 500 if wrap400 didn't catch-all): TypeError/RangeError or a
-// low-level "cannot read undefined / not a function / stack" message.
-function isCrashClass(e: any): boolean {
-    if (e instanceof RangeError) return true;
-    const m = String(e?.message ?? e);
-    return /cannot read|is not a function|is not iterable|maximum call stack|out of memory|reading '/i.test(m);
-}
-
-// loadCompleteGame is a top-level import, not an `await import` per call: under
-// the e2e runner's TS loader a dynamic import re-runs the resolver every time
-// (~1.9ms) even for a module already in the registry, and this is called once per
-// fuzz iteration.
-const loadGame = (gameId: string): Promise<Game> => loadCompleteGame(gameId);
-async function freshGame(): Promise<string> {
-    const gameId = `f${uuid().slice(0, 6)}`;
-    await seedGame(gameId, [
-        { id: uuid(), name: 'H0', is_ai: false, strategy_key: 'human' },
-        { id: uuid(), name: 'H1', is_ai: false, strategy_key: 'human' },
-        { id: uuid(), name: 'B0', is_ai: true, strategy_key: 'random' },
-    ]);
-    await executeWithGameLock(gameId, async (g) => ({ game: g, events: [], packed: packedProducts(start_game_packed(g)) }), 'start', false);
-    return gameId;
-}
+const wc = (c: PlayCard) => wireCard(c);
+const bytes = (...xs: number[]) => Uint8Array.from(xs.map((x) => x & 0xff));
 
 // ---- handpicked, pure validation (no DB): the always-reject invariants -------
 export function registerAttackValidation(): void {
-    const card = (suit: number, value: number): Card => ({ suit, value });
-    const player = (id: string, hand: Card[]): PrivatePlayer => ({
-        player_id: id, name: id, status: PLAYER_STATUS.IN, is_ai: false,
-        hand, awaiting_attack: false, hand_length: hand.length, strategy_key: STRATEGY_KEY.HUMAN,
-    });
-    const mkGame = (players: PrivatePlayer[], defender = 1): Game => ({
-        id: 'g', name: 'g', deck_length: 0, discard_pile_length: 0, flipped: null,
-        status: GAME_STATUS.PLAYING, power_suit: 0, first_attacker: 0, defender,
-        table_battles: [], elimination_order: [], good_timestamp: null, good_players: [], deck: [], logs: [], players,
-    });
-
     test('attack: forged card, identical-duplicate, and non-member attacks are all rejected', () => {
-        const hand = [card(0, 10), card(1, 10), card(2, 12)];
-        const g = mkGame([player('atk', hand.slice()), player('def', [card(3, 14)])], 1);
-        // forged card not in hand
-        assert.throws(() => handleAttack(g, 'atk', [card(3, 9)]), /not in/i, 'forged card');
+        // The kernel builds the board: atk (seat 0) attacks def (seat 1).
+        const fx = fixture().seats([{ id: 'atk', name: 'atk' }, { id: 'def', name: 'def' }])
+            .status(L.GAME_STATUS_PLAYING).attacker(0).defender(1).powerSuit(0)
+            .hand(0, '6c 6d 8h').hand(1, 'Ks').deck('').discard(32).build();
+        const table = fixtureTable();
+        const hand0 = (): PlayCard[] => { table.load(fx.state, fx.roster); return residentBoard('g', fx.state, fx.roster).seats[0].hand; };
+        const original = hand0();
+        assert.equal(original.length, 3, 'fixture: the attacker holds three cards');
+
+        const attack = (actor: string, cards: PlayCard[]) => {
+            assert.equal(table.load(fx.state, fx.roster), L.TABLE_OK);
+            const rc = table.act(actor, Uint8Array.from([AWIRE_KIND.attack, cards.length, ...cards.map(wc)]), null, 0);
+            return { rc, reject: rc === L.TABLE_REJECTED ? table.reject() : 0, hand: residentBoard('g', fx.state, fx.roster).seats[0].hand };
+        };
+
+        // forged: a card the attacker does not hold
+        const forged = attack('atk', [{ suit: 3, value: 9 }]);
+        assert.equal(forged.rc, L.TABLE_REJECTED, 'forged card');
+        assert.equal(forged.reject, L.ENGINE_REJECT_NOT_IN_HAND, 'forged card: not in hand');
+        assert.deepEqual(forged.hand, original, 'forged card: the hand is untouched');
         // the object-identity duplicate hole: [X, X] must be rejected, never duplicated
-        const x = card(0, 10);
-        assert.throws(() => handleAttack(g, 'atk', [{ ...x }, { ...x }]), /duplicate/i, 'identical duplicate');
+        const dup = attack('atk', [original[0], original[0]]);
+        assert.equal(dup.rc, L.TABLE_REJECTED, 'identical duplicate');
+        assert.equal(dup.reject, L.ENGINE_REJECT_DUPLICATES, 'identical duplicate: duplicates');
+        assert.deepEqual(dup.hand, original, 'identical duplicate: the hand is untouched');
         // a player who isn't in the game
-        assert.throws(() => handleAttack(g, 'ghost', [card(0, 10)]), /not found in game/i, 'non-member');
+        assert.equal(attack('ghost', [original[0]]).rc, L.TABLE_E_NOT_SEATED, 'non-member');
+        assert.equal(attack('', [original[0]]).rc, L.TABLE_E_NOT_SEATED, 'empty actor id');
+        assert.equal(attack('at', [original[0]]).rc, L.TABLE_E_NOT_SEATED, 'a prefix of a seated id');
     });
 }
 
 if (!process.env.VALIDATION_ONLY) {
 before(async () => { await applySchema(); });
-beforeEach(async () => { await resetDb(); });
+beforeEach(async () => { await resetDb(); __clearGameCache(); });
+after(async () => { __setTableDealSeedOverride(null); await pgPool.end(); });
+
+async function freshGame(): Promise<string> {
+    const gameId = `f${uuid().slice(0, 6)}`;
+    const h0 = uuid();
+    await seedLobby(gameId, [
+        { id: h0, name: 'H0', ready: false },
+        { id: uuid(), name: 'H1' },
+        { id: uuid(), name: 'B0', brain: 'random' },
+    ]);
+    __setTableDealSeedOverride(Uint8Array.from({ length: 32 }, () => ri(256)));
+    await runMeta(gameId, h0, { type: 'start' });
+    return gameId;
+}
+
+// ---- the table-shaped adversarial generator ------------------------------------
+
+interface Hostile {
+    family: string;
+    /** The auth user id the request is sent as. */
+    actor: string;
+    /** The whole request body. */
+    body: Uint8Array;
+    /** No state makes this input legal: it must never be applied. */
+    neverLegal: boolean;
+}
+
+const garbageByte = () => pick([52, 60, 99, 127, 200, 0xfe, 0xff]);
+const anyWire = () => bytes(ri(256), ri(256), ...Array.from({ length: ri(6) }, () => ri(256)));
+
+function generators(): ((t: TableState) => Hostile)[] {
+    let cur: TableState;
+    const seatId = (i: number) => cur.seats[i]?.id ?? uuid();
+    const req = (wire: Uint8Array, intent?: number) => encodeActionRequest(cur.gameId, wire, intent);
+    const someHandCard = (): PlayCard | null => {
+        const withHands = cur.seats.filter((s) => s.hand.length);
+        return withHands.length ? pick(pick(withHands).hand) : null;
+    };
+    const aCard = (): number => { const c = someHandCard(); return c ? wc(c) : ri(52); };
+    const attackerId = () => {
+        const atks = cur.seats.map((s, i) => ({ s, i })).filter(({ s, i }) => i !== cur.defender && s.status === L.PLAYER_STATUS_IN);
+        return (atks.length ? pick(atks).s : cur.seats[0]).id;
+    };
+    const firstAttacker = () => seatId(cur.firstAttacker);
+    const defender = () => seatId(cur.defender);
+    const h = (f: string, actor: string, body: Uint8Array, neverLegal: boolean): Hostile => ({ family: f, actor, body, neverLegal });
+    const gens: ((t: TableState) => Hostile)[] = [
+        // 1) DUPLICATE identical card in one attack - the object-identity dedup hole.
+        () => { const c = aCard(); return h('dup-attack', firstAttacker(), req(bytes(AWIRE_KIND.attack, 2, c, c)), true); },
+        // 2) duplicate identical cover card
+        () => { const c = aCard(); const a = cur.battles[0] ? wc(cur.battles[0].attack) : ri(52); return h('dup-cover', defender(), req(bytes(AWIRE_KIND.cover, 2, c, c, a, a)), true); },
+        // 3) duplicate identical pass card
+        () => { const c = aCard(); return h('dup-pass', defender(), req(bytes(AWIRE_KIND.pass, 2, c, c)), true); },
+        // 4) forged card, possibly not in hand
+        () => h('forged', attackerId(), req(bytes(AWIRE_KIND.attack, 1, ri(52))), false),
+        // 5) out-of-range garbage card byte (hidden, none, past the deck)
+        () => h('garbage-card', attackerId(), req(bytes(AWIRE_KIND.attack, 1, garbageByte())), false),
+        // 6) wrong role: defender attacks with a card of their own
+        () => { const hand = cur.seats[cur.defender]?.hand ?? []; const c = hand.length ? wc(pick(hand)) : ri(52); return h('defender-attacks', defender(), req(bytes(AWIRE_KIND.attack, 1, c)), true); },
+        // 7) wrong role: an attacker tries to cover / pick up
+        () => pick([
+            h('attacker-covers', attackerId(), req(bytes(AWIRE_KIND.cover, 1, aCard(), cur.battles[0] ? wc(cur.battles[0].attack) : ri(52))), true),
+            h('attacker-picks-up', attackerId(), req(bytes(AWIRE_KIND.pickup, 0)), true),
+        ]),
+        // 8) a player who is not in the game
+        () => h('not-seated', uuid(), req(pick([bytes(AWIRE_KIND.attack, 1, aCard()), bytes(AWIRE_KIND.pickup, 0), bytes(AWIRE_KIND.good, 0), bytes(AWIRE_KIND.pass, 1, aCard())])), true),
+        // 9) empty / over-long / count-past-the-body payloads
+        () => { const c = aCard(); return pick([
+            h('attack-empty', attackerId(), req(bytes(AWIRE_KIND.attack, 0)), true),
+            h('attack-20-same', attackerId(), req(bytes(AWIRE_KIND.attack, 20, ...Array(20).fill(c))), true),
+            h('attack-29-cards', attackerId(), req(bytes(AWIRE_KIND.attack, 29, ...Array.from({ length: 29 }, (_, i) => i))), true),
+            h('attack-count-past-body', attackerId(), req(bytes(AWIRE_KIND.attack, 255, c, c)), true),
+        ]); },
+        // 10) mixed-value first attack
+        () => { const hand = cur.seats[cur.firstAttacker]?.hand ?? []; const cs = hand.length >= 2 ? [wc(hand[0]), wc(hand[1])] : [ri(52), ri(52)]; return h('mixed-first-attack', firstAttacker(), req(bytes(AWIRE_KIND.attack, 2, ...cs)), false); },
+        // 11) cover with a non-covering / off-table attack card
+        () => h('cover-off-table', defender(), req(bytes(AWIRE_KIND.cover, 1, aCard(), garbageByte())), false),
+        // 12) good by the defender / out of turn
+        () => h('defender-good', defender(), req(bytes(AWIRE_KIND.good, 0)), true),
+        // 13) mismatched cover/attack lengths
+        () => h('cover-mismatched', defender(), req(pick([bytes(AWIRE_KIND.cover, 1, aCard()), bytes(AWIRE_KIND.cover, 2, aCard(), aCard(), aCard())])), true),
+        // 14) malformed wire: unknown kind, one byte, cards on a pickup/good, extra trailing bytes
+        () => pick([
+            h('unknown-kind', attackerId(), req(bytes(5 + ri(251), 0)), true),
+            h('one-byte-wire', attackerId(), encodeActionRequest(cur.gameId, bytes(AWIRE_KIND.pickup)), true),
+            h('pickup-with-cards', defender(), req(bytes(AWIRE_KIND.pickup, 1, aCard())), true),
+            h('good-with-cards', attackerId(), req(bytes(AWIRE_KIND.good, 1, aCard())), true),
+            h('trailing-bytes', attackerId(), req(bytes(AWIRE_KIND.attack, 1, aCard(), 0)), true),
+        ]),
+        // 15) random bytes as the wire
+        () => h('random-wire', pick(cur.seats).id, req(anyWire()), false),
+        // 16) injection-ish strings as the actor (parameterized queries must shrug; the kernel seats nobody)
+        () => h('injection-actor', pick(["1' OR '1'='1", "'; DELETE FROM player_hands; --", '../../etc/passwd', '__proto__', 'constructor']),
+            req(bytes(AWIRE_KIND.attack, 1, aCard())), true),
+        // 17) bounded-large payloads (DoS attempt - must stay bounded, not hang/OOM)
+        () => pick([
+            h('attack-300-cards', firstAttacker(), req(Uint8Array.from([AWIRE_KIND.attack, 300 & 0xff, ...Array.from({ length: 300 }, () => aCard())])), true),
+            h('body-8kb', firstAttacker(), req(Uint8Array.from({ length: 8192 }, () => ri(256))), true),
+            // past the kernel's IO buffer: the host must refuse it, not overflow a copy
+            h('body-past-io-cap', firstAttacker(), req(new Uint8Array(256 * 1024).fill(AWIRE_KIND.attack)), true),
+        ]),
+        // 18) an empty actor id
+        () => h('empty-actor', '', req(pick([bytes(AWIRE_KIND.attack, 1, aCard()), bytes(AWIRE_KIND.pickup, 0)])), true),
+        // 19) malformed request envelopes
+        () => pick([
+            h('envelope-bad-format', attackerId(), Uint8Array.of(3 + ri(250), 1, 0x61, AWIRE_KIND.pickup, 0), true),
+            h('envelope-empty', attackerId(), new Uint8Array(0), true),
+            h('envelope-gid-past-body', attackerId(), Uint8Array.of(1, 200, 0x61, 0x62), true),
+            h('envelope-v2-short', attackerId(), Uint8Array.of(2, 0, 1, 2, 3), true),
+            h('envelope-other-game', attackerId(), encodeActionRequest(pick(["g'; DROP TABLE games;--", 'nope', ' ', 'x'.repeat(255)]), bytes(AWIRE_KIND.pickup, 0)), true),
+            h('envelope-invalid-utf8-gid', attackerId(), Uint8Array.of(1, 2, 0xff, 0xfe, AWIRE_KIND.pickup, 0), true),
+        ]),
+        // 20) intent versions at the edges on a real move (stale, zero, far future)
+        () => {
+            const moves = legalMoves(cur);
+            if (!moves.length) return h('intent-edge', attackerId(), req(bytes(AWIRE_KIND.pickup, 0), 0), false);
+            const m = pick(moves);
+            return h('intent-edge', m.playerId, req(m.wire, pick([0, cur.roundEpoch - 1, 0xffffffff])), false);
+        },
+    ];
+    return gens.map((g) => (t: TableState) => { cur = t; return g(t); });
+}
+
+type Outcome = 'applied' | 'rejected' | 'moot' | 'malformed' | 'refused' | 'not-found' | 'crash';
+
+// The move path as the endpoint runs it. Anything but a kernel verdict or a named
+// refusal is crash-class: it would reach the client as an unexplained error.
+async function send(x: Hostile): Promise<{ outcome: Outcome; detail: string }> {
+    try {
+        const out = await executePackedAction(x.body, x.actor, 'fuzz');
+        const r = decodeActionResponse(out.body);
+        if (!r) return { outcome: 'crash', detail: 'the response did not decode' };
+        const outcome = r.status === ACTION_STATUS.APPLIED ? 'applied' : r.status === ACTION_STATUS.MOOT ? 'moot' : 'rejected';
+        return { outcome, detail: `code ${r.rejectCode}` };
+    } catch (e) {
+        if (e instanceof MalformedActionRequest) return { outcome: 'malformed', detail: e.message };
+        if (e instanceof TableRefusal) return { outcome: 'refused', detail: e.message };
+        if (e instanceof GameNotFound) return { outcome: 'not-found', detail: e.message };
+        return { outcome: 'crash', detail: `${(e as Error)?.name}: ${(e as Error)?.message ?? e}` };
+    }
+}
 
 test('adversarial fuzz: no illegal/malformed input ever duplicates or loses a card', async () => {
     const ITER = Number(process.env.FUZZ_ITERS || 3000);
+    const gens = generators();
     const violations: string[] = [];
+    const appliedIllegal: string[] = [];
+    const crashes: string[] = [];
+    const tally = new Map<Outcome, number>();
+    const byFamily = new Map<string, Set<Outcome>>();
     let gameId = await freshGame();
-    let attempts = 0, rejected = 0, committed = 0, crashClass = 0;
+    let attempts = 0;
 
     for (let i = 0; i < ITER; i++) {
-        let g = await loadGame(gameId);
-        if (g.status !== 'playing') { gameId = await freshGame(); g = await loadGame(gameId); }
+        let t = await mustReadTable(gameId);
+        if (t.status !== L.GAME_STATUS_PLAYING) { gameId = await freshGame(); t = await mustReadTable(gameId); }
 
         // 35% legal move to keep the game evolving through phases; else adversarial.
-        if (rnd() < 0.35) {
-            const moves = legalMovesFor(g);
-            if (moves.length) { try { await executeWithGameLock(gameId, async (gg) => ({ game: gg, ...applyPlayerMove(gg, pick(moves)) }), `m${i}`, true); } catch { /* */ } }
+        if (rng.next() < 0.35) {
+            const moves = legalMoves(t);
+            if (moves.length) { const m = pick(moves); try { await runAction(gameId, m.playerId, m); } catch { /* */ } }
             continue;
         }
 
         attempts++;
-        const req = pick(GENERATORS)(g);
-        try {
-            await executeWithGameLock(gameId, async (gg) => ({ game: gg, events: applyAction(gg, req) }), `f${i}`, true);
-            committed++;
-        } catch (e) {
-            rejected++; // rejection is the desired outcome for illegal input
-            if (isCrashClass(e)) crashClass++;
-        }
+        const x = pick(gens)(t);
+        const { outcome, detail } = await send(x);
+        tally.set(outcome, (tally.get(outcome) ?? 0) + 1);
+        (byFamily.get(x.family) ?? byFamily.set(x.family, new Set()).get(x.family)!).add(outcome);
+        const where = `seed=${rng.seed} iter=${i} family=${x.family} actor=${JSON.stringify(x.actor)} body=${Buffer.from(x.body.slice(0, 48)).toString('hex')}`;
+        if (outcome === 'crash' && crashes.length < 5) crashes.push(`${where} -> ${detail}`);
+        if (outcome === 'applied' && x.neverLegal && appliedIllegal.length < 5) appliedIllegal.push(where);
 
         const chk = await checkCardConservation(gameId);
-        if (!chk.ok) violations.push(`seed=${process.env.FUZZ_SEED || '0x1234abcd'} iter=${i} req=${JSON.stringify(req)} -> ${chk.detail}`);
+        if (!chk.ok) violations.push(`${where} -> ${chk.detail}`);
     }
 
+    const summary = [...tally.entries()].map(([k, v]) => `${k}=${v}`).join(' ');
     // Hard invariant: no adversarial input may ever duplicate or lose a card.
     assert.equal(violations.length, 0, `card conservation broken by adversarial input:\n  ${violations.slice(0, 3).join('\n  ')}`);
-    assert.ok(attempts > 100 && rejected > 0, `fuzz ran (attempts=${attempts} rejected=${rejected} committed=${committed} crashClass=${crashClass})`);
-    // Malformed payloads must now produce clean rule rejections, not low-level
-    // TypeErrors — the input guards make crash-class errors impossible.
-    assert.equal(crashClass, 0, `malformed input produced ${crashClass} ungraceful crash-class error(s)`);
+    const refusedClean = (tally.get('rejected') ?? 0) + (tally.get('malformed') ?? 0) + (tally.get('refused') ?? 0);
+    assert.ok(attempts > 100 && refusedClean > 0, `fuzz ran (attempts=${attempts} ${summary})`);
+    // An input no state makes legal is never applied.
+    assert.equal(appliedIllegal.length, 0, `a never-legal input was APPLIED:\n  ${appliedIllegal.join('\n  ')}`);
+    // Malformed payloads produce clean refusals, never low-level throws.
+    assert.equal(crashes.length, 0, `malformed input produced ungraceful crash-class error(s):\n  ${crashes.join('\n  ')}`);
     // The process surviving ITER hostile requests IS the no-crash assertion.
-    console.error(`[fuzz] attempts=${attempts} rejected=${rejected} committed=${committed} crashClass=${crashClass}`);
+    process.stdout.write(`[fuzz] attempts=${attempts} ${summary}\n`);
+    if (process.env.E2E_VERBOSE) for (const [f, o] of [...byFamily].sort()) process.stdout.write(`[fuzz]   ${f}: ${[...o].join(',')}\n`);
 });
 
 test('targeted: forged cards and non-members are always rejected', async () => {
     const gameId = await freshGame();
-    const g = await loadGame(gameId);
-    const attacker = g.players[g.first_attacker].player_id;
+    const t = await mustReadTable(gameId);
+    const attacker = t.seats[t.firstAttacker];
     // A forged card = a real card the attacker does not hold. (An out-of-range
-    // {99,99} is WRONG here: the marshal clamp maps it onto the ace of
-    // diamonds, and on deals where the attacker holds that card the "forged"
-    // attack is legitimately legal — a 1-in-6 flake.)
-    const hand = g.players[g.first_attacker].hand as { suit: number; value: number }[];
-    let forged: { suit: number; value: number } | null = null;
+    // byte is WRONG here: the kernel clamps it onto a real card, and on deals
+    // where the attacker holds that card the "forged" attack is legitimately
+    // legal - a 1-in-6 flake.)
+    let forged: PlayCard | null = null;
     for (let s = 0; s < 4 && !forged; s++)
         for (let v = 5; v <= 13 && !forged; v++)
-            if (!hand.some((c) => c.suit === s && c.value === v)) forged = { suit: s, value: v };
-    assert.throws(() => applyAction(g, { type: 'attack', player_id: attacker, cards: [forged!] }), /not in/i, 'forged card rejected');
-    // a player who isn't in the game
-    assert.throws(() => applyAction(g, { type: 'attack', player_id: uuid(), cards: [g.players[g.first_attacker].hand[0]] }), /not in/i, 'non-member rejected');
+            if (!attacker.hand.some((c) => c.suit === s && c.value === v)) forged = { suit: s, value: v };
+    const res = await runAction(gameId, attacker.id, bytes(AWIRE_KIND.attack, 1, wc(forged!)));
+    assert.equal(res.status, ACTION_STATUS.REJECTED, 'forged card rejected');
+    assert.equal(res.rejectCode, L.ENGINE_REJECT_NOT_IN_HAND, 'forged card: not in hand');
+    assert.equal(res.version, t.version, 'the response carries the unchanged version');
+    // a player who isn't in the game, sending the attacker's own card
+    await assert.rejects(runAction(gameId, uuid(), bytes(AWIRE_KIND.attack, 1, wc(attacker.hand[0]))), /not in game/i, 'non-member rejected');
+    assert.equal((await mustReadTable(gameId)).version, t.version, 'nothing committed');
 });
 
 test('regression: sending the same card twice in one move is rejected (no duplication)', async () => {
     const gameId = await freshGame();
-    const g = await loadGame(gameId);
-    const fa = g.players[g.first_attacker];
-    const dup = fa.hand[0];
-    // attack with [X, X] — the object-identity dedup hole — must be rejected.
-    assert.throws(() => applyAction(g, { type: 'attack', player_id: fa.player_id, cards: [{ ...dup }, { ...dup }] }), /duplicate/i, 'duplicate attack rejected');
-    // and the durable state is untouched (the throw happened before any commit).
+    const t = await mustReadTable(gameId);
+    const fa = t.seats[t.firstAttacker];
+    const x = wc(fa.hand[0]);
+    // attack with [X, X] - the object-identity dedup hole - must be rejected.
+    const res = await runAction(gameId, fa.id, bytes(AWIRE_KIND.attack, 2, x, x));
+    assert.equal(res.status, ACTION_STATUS.REJECTED, 'duplicate attack rejected');
+    assert.equal(res.rejectCode, L.ENGINE_REJECT_DUPLICATES, 'duplicate attack: duplicates');
+    // and the durable state is untouched (the refusal committed nothing).
+    const later = await mustReadTable(gameId);
+    assert.equal(later.version, t.version, 'nothing committed');
+    assert.deepEqual(later.seats[t.firstAttacker].hand, fa.hand, 'the hand is untouched');
     const chk = await checkCardConservation(gameId);
     assert.ok(chk.ok, `state intact after rejected duplicate: ${chk.detail}`);
 });
 
 registerAttackValidation();
-
-after(async () => { await pgPool.end(); });
 }

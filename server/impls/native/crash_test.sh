@@ -56,6 +56,9 @@ trap cleanup EXIT
 echo "== crash_test.sh: workdir=$WORKDIR db=$DBFILE port=$PORT =="
 
 [ -x "$DIR/foolish_server" ] || (cd "$DIR" && make foolish_server >/dev/null)
+# One token secret for both server processes, so a token signed before the crash
+# still reads its own seat after it (/state requires the seat's owner).
+export FOOLISH_TOKEN_SECRET="${FOOLISH_TOKEN_SECRET:-5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e}"
 [ -x "$DIR/foolish_hammer" ] || (cd "$DIR" && make foolish_hammer >/dev/null)
 
 wait_for_health() {
@@ -150,10 +153,11 @@ if [ "$STATUS_B" != "1" ]; then echo "FAIL: scenario B's game did not reach PLAY
 sleep "$WAIT_FOR_DRAIN_SECS"
 
 STATUS_A_BEFORE=$(curl -s "$H/status?game_id=$GID_A")
-curl -s "$H/state?game_id=$GID_A&seat=0" -o "$WORKDIR/a_state0_before.bin"
-curl -s "$H/state?game_id=$GID_A&seat=1" -o "$WORKDIR/a_state1_before.bin"
+# Game A's seats belong to foolish_hammer's accounts: read its public spectator view.
+curl -s "$H/state?game_id=$GID_A&seat=-1" -o "$WORKDIR/a_state0_before.bin"
+curl -s "$H/state?game_id=$GID_A&seat=-1" -o "$WORKDIR/a_state1_before.bin"
 STATUS_B_BEFORE=$(curl -s "$H/status?game_id=$GID_B")
-curl -s "$H/state?game_id=$GID_B&seat=0" -o "$WORKDIR/b_state0_before.bin"
+curl -s "$H/state?game_id=$GID_B&seat=0" -H "Authorization: Bearer $BT" -o "$WORKDIR/b_state0_before.bin"
 echo "-- pre-crash: A status=$STATUS_A_BEFORE size=$(wc -c < "$WORKDIR/a_state0_before.bin")B" \
      "| B status=$STATUS_B_BEFORE size=$(wc -c < "$WORKDIR/b_state0_before.bin")B"
 
@@ -178,10 +182,10 @@ echo "-- recovered server up, pid=$SRV_PID2"
 grep "persist: recovered" "$SRV_LOG2" | sed 's/^/   /' || true
 
 STATUS_A_AFTER=$(curl -s "$H/status?game_id=$GID_A")
-curl -s "$H/state?game_id=$GID_A&seat=0" -o "$WORKDIR/a_state0_after.bin"
-curl -s "$H/state?game_id=$GID_A&seat=1" -o "$WORKDIR/a_state1_after.bin"
+curl -s "$H/state?game_id=$GID_A&seat=-1" -o "$WORKDIR/a_state0_after.bin"
+curl -s "$H/state?game_id=$GID_A&seat=-1" -o "$WORKDIR/a_state1_after.bin"
 STATUS_B_AFTER=$(curl -s "$H/status?game_id=$GID_B")
-curl -s "$H/state?game_id=$GID_B&seat=0" -o "$WORKDIR/b_state0_after.bin"
+curl -s "$H/state?game_id=$GID_B&seat=0" -H "Authorization: Bearer $BT" -o "$WORKDIR/b_state0_after.bin"
 echo "-- post-recovery: A status=$STATUS_A_AFTER size=$(wc -c < "$WORKDIR/a_state0_after.bin")B" \
      "| B status=$STATUS_B_AFTER size=$(wc -c < "$WORKDIR/b_state0_after.bin")B"
 

@@ -99,7 +99,6 @@ static int play_one_verbose(uint32_t seed, int n_players, int protagonist, int o
     for (int i = 0; i < n_players; i++) {
         g.players[i].status = PLAYER_STATUS_READY;
         g.players[i].strategy_key = (int8_t)((i == 0) ? protagonist : opp);
-        snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
     }
     start_game(&g);
     printf("seed=%u  trump=%c  deck=%d  hands:", seed, SUIT_CHAR[(int)g.power_suit], g.deck_count);
@@ -206,7 +205,6 @@ static int play_one_audit(uint32_t seed, int n_players, int protagonist, int opp
     for (int i = 0; i < n_players; i++) {
         g.players[i].status = PLAYER_STATUS_READY;
         g.players[i].strategy_key = (int8_t)((i == 0) ? protagonist : opp);
-        snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
     }
     start_game(&g);
 
@@ -304,7 +302,6 @@ static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
     for (int i = 0; i < n_players; i++) {
         g.players[i].status = PLAYER_STATUS_READY;
         g.players[i].strategy_key = (int8_t)((i == 0) ? protagonist : opp);
-        snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
     }
     start_game(&g);
 

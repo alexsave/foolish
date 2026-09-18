@@ -92,10 +92,19 @@ function e2eRows(base, head) {
 }
 
 function sizeRows(base, head) {
-  return ['rules', 'guards', 'bots'].map((m) => {
+  return ['rules', 'guards', 'bots', 'oracle', 'oracle-mt'].map((m) => {
     const b = base?.size?.[m], h = head?.size?.[m];
     return `| \`${m}.wasm\` | ${kb(b?.raw)} / ${kb(b?.gz)} | ${kb(h?.raw)} / ${kb(h?.gz)} | ${deltaCell(b?.gz, h?.gz, { fmt: kb })} |`;
   }).join('\n');
+}
+
+// First-load JS per route plus the union, from scripts/measure_web_bundle.mjs.
+function webBundleRows(base, head) {
+  const b = base?.webBundle, h = head?.webBundle;
+  const rows = [...Object.keys(h?.routes || b?.routes || {}).map((r) => [`\`${r}\``, b?.routes?.[r], h?.routes?.[r]]),
+    ['total (union)', b?.total, h?.total]];
+  return rows.map(([label, bv, hv]) =>
+    `| ${label} | ${kb(bv?.raw)} / ${kb(bv?.gz)} | ${kb(hv?.raw)} / ${kb(hv?.gz)} | ${deltaCell(bv?.gz, hv?.gz, { fmt: kb })} |`).join('\n');
 }
 
 function memRow(label, bBytes, hBytes) {
@@ -160,6 +169,13 @@ _Lower is better; Δ is on gzip._
 | module | base raw/gz | this PR raw/gz | Δ gz |
 |---|---|---|---|
 ${sizeRows(base, head)}
+
+### 🌐 web bundle, first-load JS (raw / gzip)
+_Lower is better; Δ is on gzip. Runtime chunks plus each route's entry chunks from \`next build\`._
+
+| route | base raw/gz | this PR raw/gz | Δ gz |
+|---|---|---|---|
+${webBundleRows(base, head)}
 
 ### 🧪 Coverage
 ${COV_OPEN}

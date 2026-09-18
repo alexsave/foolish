@@ -16,7 +16,7 @@ echo "(views are packed now — we watch the status + the packed view's byte len
 echo " which changes as battles/hands change, proving the board advances over time):"
 for i in $(seq 0 8); do
   ST=$(curl -s "$H/status?game_id=$GID")
-  BYTES=$(curl -s "$H/state?game_id=$GID&seat=0" | wc -c | tr -d ' ')
+  BYTES=$(curl -s "$H/state?game_id=$GID&seat=0" -H "Authorization: Bearer $AT" | wc -c | tr -d ' ')
   printf '  t=%ss  status=%s  packed_view_bytes=%s\n' "$i" "$ST" "$BYTES"
   sleep 1
 done

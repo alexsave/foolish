@@ -1,8 +1,8 @@
 // Concurrency blast against the local edge runtime: N simultaneous requests,
-// each running a couple of semtex/octogen decisions. Reports status counts and
+// each running a couple of cordite/octogen decisions. Reports status counts and
 // latency percentiles.
 const N = Number(process.argv[2] ?? 100);
-const URL = 'http://127.0.0.1:54321/functions/v1/memtest?keys=semtex,octogen&maxmoves=2';
+const URL = 'http://127.0.0.1:54321/functions/v1/memtest?keys=cordite,octogen&maxmoves=2';
 
 const t0 = performance.now();
 const results = await Promise.all(Array.from({ length: N }, async () => {

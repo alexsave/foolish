@@ -1,7 +1,7 @@
-// Shared GPU texture pipeline used by WoodTexture and WoolBackground. Both
-// generate per-pixel colours on the CPU, then upload one GL point per pixel and
-// read the canvas back as a PNG blob URL. Only the pixel generator and the
-// background clear colour differ between the two textures.
+// The GPU texture pipeline WoodTexture uses (the wool weave has its own worker,
+// src/utils/woolWorker.ts). It generates per-pixel colours on the CPU, then
+// uploads one GL point per pixel and reads the canvas back as a PNG blob URL.
+// The pixel generator and the background clear colour are the caller's.
 
 export interface PixelData {
     positions: Float32Array;

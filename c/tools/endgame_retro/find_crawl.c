@@ -106,8 +106,7 @@ int main(int argc,char**argv){
         for(int i=0;i<32;i++){ x^=x<<13;x^=x>>7;x^=x<<17; seed[i]=(uint8_t)(x&0xff); }
         cd_sim_solve_reset(); game_set_seed(1); game_set_deal_seed_bytes(seed,32);
         Game g; memset(&g,0,sizeof g); g.num_players=2;
-        for(int i=0;i<2;i++){ g.players[i].status=PLAYER_STATUS_READY; g.players[i].strategy_key=(int8_t)STRAT_OCTOGEN;
-            snprintf(g.players[i].player_id,sizeof g.players[i].player_id,"p%d",i); }
+        for(int i=0;i<2;i++){ g.players[i].status=PLAYER_STATUS_READY; g.players[i].strategy_key=(int8_t)STRAT_OCTOGEN; }
         start_game(&g);
         scanned++;
         int iters=0;

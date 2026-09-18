@@ -112,7 +112,7 @@ test('create-open-lobby(8) -> 3 joins (never auto-starting) -> start-at-3 -> pla
     const verdict = kernelMsgRebase(env.round, chosen!.seat, toWire(chosen!.move));
     assert.equal(verdict, MSG_REBASE_REAPPLY, `${chosen!.move.type} by seat ${chosen!.seat} should REAPPLY`);
 
-    const finished = kernelMsgPublicView().view.gameOver >= 0;
+    const finished = kernelMsgPublicView().view.fool >= 0;
     const live1 = kernelMsgSeal({
         flags: 0, phase: finished ? 3 : 2, n_players: 3, variant: 0,
         last_actor_seat: chosen!.seat, game_id: GAME_ID,
@@ -181,7 +181,7 @@ test('two Starts race: the fuller roster wins Rule P everywhere, but never over 
     assert.ok(chosen, 'the 3p deal must have a first attacker with a legal move');
     assert.equal(kernelMsgRebase(env3.round, chosen!.seat, toWire(chosen!.move)), MSG_REBASE_REAPPLY);
     const played3 = kernelMsgSeal({
-        flags: 0, phase: kernelMsgPublicView().view.gameOver >= 0 ? 3 : 2, n_players: 3, variant: 0,
+        flags: 0, phase: kernelMsgPublicView().view.fool >= 0 ? 3 : 2, n_players: 3, variant: 0,
         last_actor_seat: chosen!.seat, game_id: gid,
         parent8: env3.digest.slice(0, 8), seed: env3.seed, joins: env3.joins,
     });

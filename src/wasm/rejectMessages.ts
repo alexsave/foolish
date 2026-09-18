@@ -32,10 +32,12 @@ export const REJECT_MESSAGES: Record<number, string> = {
 // an edge policy — here, a round closed before it landed.
 const REJECT_STALE_ROUND = 100;
 
-// -1 is the guards/rules kernels' "malformed wire" verdict (not an
-// ENGINE_REJECT_* code); anything else unknown falls through generically.
+// -1 is the rules kernel's "malformed wire" verdict and CLIENT_E_MOVE the client
+// slot's (neither is an ENGINE_REJECT_* code); anything else unknown falls
+// through generically.
+const CLIENT_E_MOVE = -209;
 export function rejectMessage(code: number): string {
-    if (code === -1) return 'MALFORMED: unreadable action wire';
+    if (code === -1 || code === CLIENT_E_MOVE) return 'MALFORMED: unreadable action wire';
     if (code === REJECT_STALE_ROUND) return 'STALE_ROUND: a round closed before this move landed';
     return REJECT_MESSAGES[code] ?? `move rejected (code ${code})`;
 }

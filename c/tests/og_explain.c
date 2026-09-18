@@ -228,7 +228,6 @@ static int driven_replay(uint8_t *seed, const char *movesfile, const char *dealf
     for (int i = 0; i < 2; i++) {
         g.players[i].status = PLAYER_STATUS_READY;
         g.players[i].strategy_key = (int8_t)STRAT_OCTOGEN;
-        snprintf(g.players[i].player_id, sizeof g.players[i].player_id, "p%d", i);
     }
     start_game(&g);
     if (dealfile) inject_deal(&g, dealfile);
@@ -337,7 +336,6 @@ int main(int argc, char **argv) {
     for (int i = 0; i < 2; i++) {
         g.players[i].status = PLAYER_STATUS_READY;
         g.players[i].strategy_key = (int8_t)STRAT_OCTOGEN;
-        snprintf(g.players[i].player_id, sizeof g.players[i].player_id, "p%d", i);
     }
     start_game(&g);
 

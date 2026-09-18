@@ -54,7 +54,7 @@ CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.
             src/torpex_value.c src/novichok_strategy.c \
             src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
             src/sha256.c src/msg_wire.c src/msg_expand.c src/anim_plan.c \
-            src/analyse.c
+            src/analyse.c src/roster.c src/table.c src/client_table.c src/card.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
 .PHONY: all clean tests print-core print-wasm-src
@@ -67,10 +67,10 @@ print-core:
 # than copied into the script: a second copy of this list is how the artifact
 # and the sources it is built from drift apart in the first place. Not the same
 # set as CORE_SRC - the native CLI mains (main_elo.c, main_showcase.c) are in
-# neither wasm module, and a change to one of them must not be read as a stale
+# no wasm module, and a change to one of them must not be read as a stale
 # artifact.
 print-wasm-src:
-	@echo $(sort $(WASM_RULES_SRC) $(WASM_GUARDS_SRC) $(WASM_BOT_SRC) $(WASM_ORACLE_MT_SRC))
+	@echo $(sort $(WASM_BOT_SRC) $(WASM_ORACLE_MT_SRC))
 all: build/cnitro_eval build/cnitro_elo build/cnitro_replay build/cnitro_showcase build/cnitro_tests build/cnitro_gen
 
 # Generic compile rule for sources under src/ (build/%.o: src/%.c).
@@ -223,7 +223,8 @@ IOS_CAPS   := -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_MOVE_CARDS=28 \
 IOS_CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c \
                 src/replay_steps.c src/replay_extras.c src/view.c src/awire.c \
                 src/evwire.c src/sha256.c src/msg_wire.c src/msg_expand.c \
-                src/anim_plan.c ios/ios_api.c
+                src/anim_plan.c src/roster.c src/card.c src/client_table.c \
+                ios/ios_api.c
 IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC),$(CORE_SRC)) ios/ios_bots_api.c
 
 # Everything, for the host-side smoke/golden binaries that want one link line.
@@ -238,6 +239,7 @@ IOS_CFLAGS := -O2 -Isrc -Iios/include -Iios/include-bots/CFoolishBots $(IOS_CAPS
 
 # $(1)=target-triple  $(2)=sdk name  $(3)=output dir  $(4)=lib name  $(5)=sources
 define IOS_BUILD_SLICE
+	@rm -rf $(3)/obj-$(4)
 	@mkdir -p $(3)/obj-$(4)
 	@for s in $(5); do \
 	  o=$(3)/obj-$(4)/$$(basename $$s .c).o; \
@@ -254,7 +256,14 @@ define IOS_BUILD_BOTH
 endef
 
 .PHONY: ios-lib ios-smoke
-ios-lib:
+# THE LIBRARY CARRIES THE LAYOUT IT WAS COMPILED FOR. sdk/swift/gen is generated
+# from these same headers under these same flags; a library built from different
+# ones would read right at every offset the two happen to share and wrong at the
+# rest. Stamped only here, because only the shipped slices are read by the Swift
+# bindings - ios-smoke, ios-goldens and ios-archives build the same sources with
+# the HOST compiler and need no libclang on the machine that runs them.
+ios-lib: IOS_CFLAGS += -DSG_LAYOUT_HASH=$$(cat build/layout/ios.hash)
+ios-lib: build/layout/ios.hash
 	@echo "== device slice (arm64) =="
 	$(call IOS_BUILD_BOTH,arm64-apple-ios$(IOS_MIN_VERSION),iphoneos,build/ios/device)
 	@echo "== simulator slices (arm64 + x86_64) =="
@@ -287,6 +296,13 @@ ios-lib:
 #   2. core + bots still share ONE resident game (ios/one_game_check.c)
 # (1) is the one that keeps octogen out of the iMessage bundle. (2) is what
 # would break silently if the split were done carelessly.
+#
+# THE OBJECT DIRECTORIES ARE EMPTIED FIRST, here and in IOS_BUILD_SLICE, because
+# both archives are made by globbing *.o: a source that MOVES from one list to
+# the other leaves its old object behind in the directory it left, the glob
+# picks it up, and the two archives then define the same symbols twice. Moving
+# client_table.c into the core list is exactly that, and "ld: 16 duplicate
+# symbols" is what it says when nothing sweeps.
 # `ar` on a Mac is not necessarily Apple's: a homebrew binutils on PATH writes a
 # GNU-format archive that ld(1) refuses ("archive member '/' not a mach-o
 # file"). Apple's libtool writes what its linker reads, and is what ios-lib
@@ -295,6 +311,7 @@ IOS_ARCHIVE := $(if $(filter Darwin,$(shell uname -s)),libtool -static -o,ar rcs
 
 .PHONY: ios-archives
 ios-archives:
+	@rm -rf build/ios-a/core build/ios-a/bots
 	@mkdir -p build/ios-a/core build/ios-a/bots
 	@for s in $(IOS_CORE_SRC); do \
 	  $(CC) $(IOS_CFLAGS) -c $$s -o build/ios-a/core/$$(basename $$s .c).o || exit 1; done
@@ -610,8 +627,8 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_replay_io_ptr -Wl,--export=wasm_replay_io_cap \
   -Wl,--export=wasm_replay_decode \
   -Wl,--export=wasm_replay_encode_v6 \
-  -Wl,--export=wasm_replay_error_detail \
-  -Wl,--export=wasm_legal_moves -Wl,--export=wasm_export_moves \
+  -Wl,--export=wasm_replay_error_detail -Wl,--export=wasm_replay_error_ptr \
+  -Wl,--export=wasm_legal_moves -Wl,--export=wasm_legal_moves_ptr \
   -Wl,--export=wasm_apply_action -Wl,--export=wasm_finalize_win \
   -Wl,--export=wasm_view_serialize -Wl,--export=wasm_events_serialize \
   -Wl,--export=wasm_rearrange_hand \
@@ -619,7 +636,97 @@ WASM_API_EXPORTS := \
   -Wl,--export=wasm_seed_rng_deterministic \
   -Wl,--export=wasm_set_strategy_seed_deterministic \
   -Wl,--export=wasm_strategy_seed_probe \
-  -Wl,--export=wasm_set_rng_base
+  -Wl,--export=wasm_set_rng_base \
+  -Wl,--export=wasm_layout_hash
+
+# --- Layout hash (tools/structgen) ------------------------------------------
+# Every module linking wasm_api.c exports wasm_layout_hash(): the structgen hash
+# of the Game layout (tools/structgen/specs/game_layout.args) under THAT build's
+# flags, passed in as -DSG_LAYOUT_HASH. sdk/ts/gen/layout_hash.<build>.ts carries
+# the same number as LAYOUT_HASH (a module of its own, beside the accessors in
+# game_layout.<build>.ts, so the browser checks it without importing a reader of
+# the unmasked Game), and bots.ts / engine.ts refuse to run a module
+# whose hash differs - a stale wasm or a stale generated module is a load-time
+# error instead of a wrong read.
+#
+# build/layout/<build>.hash is regenerated on EVERY make that needs it (FORCE)
+# but rewritten only when its content changes, and the bots/rules rules also
+# refresh sdk/ts/gen/{game_layout,layout_hash}.<build>.ts the same way, so a header edit
+# followed by `make wasm-bots` leaves module and wasm in agreement.
+#
+# The same-second trap: make compares whole-second mtimes, so a header edit
+# landing in the second of the last build rebuilds nothing, and a header whose
+# mtime went BACKWARDS (a checkout, a copy) never does. For a layout change that
+# means objects compiled against two different Game structs linked into one
+# module. So the wasm phony targets settle by CONTENT first: every object
+# directory records the layout hash its objects were compiled for
+# (<objdir>/.layout), and when that differs from the current hash (sg_settle)
+# the directory and the module are deleted before a sub-make builds them from
+# clean. Deleting is the only reliable lever: make 3.81 does not even relink a
+# target whose prerequisite was recreated inside the same second. The file
+# targets (build/bots.wasm, used directly by tools/wasm_anatomy) keep the plain
+# mtime rules, with wasm_api.o depending on the hash file.
+STRUCTGEN_DIR  := ../tools/structgen
+STRUCTGEN      := $(STRUCTGEN_DIR)/build/structgen
+SG_GAME_SPEC   := $(STRUCTGEN_DIR)/specs/game_layout.args
+SG_GAME_ARGS    = $(shell grep -v '^[[:space:]]*\#' $(SG_GAME_SPEC))
+
+$(STRUCTGEN): $(STRUCTGEN_DIR)/structgen.c $(STRUCTGEN_DIR)/Makefile
+	$(MAKE) -C $(STRUCTGEN_DIR) build/structgen
+
+# $(call sg_hash,<build name>,<cflags>,<ts stem, or empty>): with a stem, also
+# writes ../sdk/ts/gen/game_layout.<stem>.ts and ../sdk/ts/gen/layout_hash.<stem>.ts.
+sg_gen  = ../sdk/ts/gen
+sg_sync = && { cmp -s $(1) $(2) || { cp $(1) $(2); echo "layout: wrote $(2)"; }; } && rm -f $(1)
+sg_hash = @mkdir -p build/layout && \
+  $(STRUCTGEN) --cwd . $(SG_GAME_ARGS) --build '$(1)=$(strip $(2))' --print-hash \
+    $(if $(3),--ts $@.ts --hash-ts $@.hash.ts) > $@.new && \
+  { cmp -s $@.new $@ || { echo "layout $(1): $$(cat $@ 2>/dev/null || echo none) -> $$(cat $@.new)"; mv $@.new $@; }; } && \
+  rm -f $@.new $(if $(3),$(call sg_sync,$@.ts,$(sg_gen)/game_layout.$(3).ts) $(call sg_sync,$@.hash.ts,$(sg_gen)/layout_hash.$(3).ts))
+
+# $(call sg_settle,<build name>,<object dir>,<wasm file target>): run before the
+# sub-make that builds <wasm file target>, after build/layout/<build>.hash.
+sg_settle = @cmp -s $(2)/.layout build/layout/$(1).hash || { \
+  if [ -d $(2) ]; then echo "layout $(1): $(2) was compiled for $$(cat $(2)/.layout 2>/dev/null || echo an unrecorded layout), not $$(cat build/layout/$(1).hash) - rebuilding $(3) from clean"; fi; \
+  rm -rf $(2) $(3) && mkdir -p $(2) && cp build/layout/$(1).hash $(2)/.layout; }
+
+# The iOS layout, which is its own: its caps are not the wasm caps and its
+# target is not wasm32 (a pointer alone is 4 bytes there and 8 here). The hash
+# is of the structs the Swift bindings read (tools/structgen/specs/
+# ios_layout.args), and `ios-lib` bakes it into the library as SG_LAYOUT_HASH,
+# so sdk/swift/gen and the .a it is read against cannot come apart silently.
+#
+# ALL THREE SLICES, compared: the device is arm64 and the simulator is arm64 or
+# x86_64, and one hash is stamped into all three. They agree today - none of
+# these structs has a member whose size or alignment differs between LP64
+# targets - and if one ever stops agreeing, the library it is stamped into
+# would read right on two architectures and wrong on the third, which is
+# exactly the failure this file refuses to ship.
+IOS_LAYOUT_TRIPLE  := arm64-apple-ios$(IOS_MIN_VERSION)
+IOS_LAYOUT_TRIPLES := $(IOS_LAYOUT_TRIPLE) arm64-apple-ios$(IOS_MIN_VERSION)-simulator x86_64-apple-ios$(IOS_MIN_VERSION)-simulator
+SG_IOS_SPEC := $(STRUCTGEN_DIR)/specs/ios_layout.args
+SG_IOS_ARGS  = $(shell grep -v '^[[:space:]]*\#' $(SG_IOS_SPEC))
+build/layout/ios.hash: $(STRUCTGEN) $(SG_IOS_SPEC) FORCE
+	@mkdir -p build/layout && \
+	for t in $(IOS_LAYOUT_TRIPLES); do \
+	  $(STRUCTGEN) --cwd . $(SG_IOS_ARGS) --build 'ios=$(strip $(IOS_CFLAGS))' --target $$t --print-hash || exit 1; \
+	done | sort -u > $@.new && \
+	[ "$$(grep -c . $@.new)" = 1 ] || { echo "layout ios: the iOS slices do not share one layout:"; cat $@.new; exit 1; }
+	@{ cmp -s $@.new $@ || { echo "layout ios: $$(cat $@ 2>/dev/null || echo none) -> $$(cat $@.new)"; mv $@.new $@; }; }; rm -f $@.new
+
+build/layout/bots.hash: $(STRUCTGEN) FORCE
+	$(call sg_hash,bots,$(WASM_BOT_CFLAGS),bots)
+build/layout/bots-explain.hash: $(STRUCTGEN) FORCE
+	$(call sg_hash,bots_explain,$(WASM_BOT_CFLAGS) -DOG_EXPLAIN_BUILD,)
+build/layout/msg.hash: $(STRUCTGEN) FORCE
+	$(call sg_hash,msg,$(WASM_MSG_CFLAGS),)
+build/layout/oracle.hash: $(STRUCTGEN) FORCE
+	$(call sg_hash,oracle,$(WASM_ORACLE_CFLAGS),)
+build/layout/oracle-mt.hash: $(STRUCTGEN) FORCE
+	$(call sg_hash,oracle_mt,$(WASM_ORACLE_MT_CFLAGS),)
+
+.PHONY: FORCE
+FORCE:
 
 # bots.wasm exports the rules API above PLUS the bot bridge (wasm_bots_api.c),
 # and PLUS the FMSG pair (wasm_msg_decode/seal). FMSG is bots-only by steer, not
@@ -648,239 +755,165 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_export_logs_masked_from \
   -Wl,--export=wasm_events_serialize_from \
   -Wl,--export=wasm_replay_encode_v6_from_game \
-  -Wl,--export=wasm_replay_events -Wl,--export=wasm_replay_events_n \
-  -Wl,--export=wasm_replay_events_next -Wl,--export=wasm_replay_step_count \
+  -Wl,--export=wasm_replay_events -Wl,--export=wasm_replay_events_index_ptr \
+  -Wl,--export=wasm_replay_step_count \
   -Wl,--export=wasm_replay_step_index \
-  -Wl,--export=wasm_replay_extras_encode \
+  -Wl,--export=wasm_replay_extras_encode -Wl,--export=wasm_replay_extras_ptr \
   -Wl,--export=wasm_replay_extras_decode \
   -Wl,--export=wasm_replay_link \
   -Wl,--export=wasm_replay_b32_encode -Wl,--export=wasm_replay_b32_decode \
   -Wl,--export=wasm_replay_link_parse \
   -Wl,--export=wasm_unambiguous_cover \
-  -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal \
+  -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal -Wl,--export=wasm_msg_header_ptr \
   -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
   -Wl,--export=wasm_msg_pickup_hold \
   -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
-  -Wl,--export=wasm_anim_build_plan \
-  -Wl,--export=wasm_anim_finish_rows \
+  -Wl,--export=wasm_anim_event_key \
+  -Wl,--export=wasm_anim_finish_rows -Wl,--export=wasm_anim_hand_laid_out \
   -Wl,--export=wasm_anim_conflict_verdicts \
   -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport \
-  -Wl,--export=wasm_belief_probe_reset -Wl,--export=wasm_belief_probe_dump
+  -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr -Wl,--export=wasm_anim_beats_ptr \
+  -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_plan_at -Wl,--export=wasm_anim_build_beats \
+  -Wl,--export=wasm_anim_reversal_order \
+  -Wl,--export=wasm_belief_probe_reset -Wl,--export=wasm_belief_probe_dump -Wl,--export=wasm_belief_probe_ptr
 
-# The rules module's move buffer only feeds the exported menu — production
-# validation is direct rule-checking, and production menus/bot enumeration
-# run on the adopted bots instance (engine slot adoption, see engine.ts).
-# 1024 covers every menu the parity/fuzz suites produce; the bots module
-# keeps the native 4096 for bot candidate lists.
-# MAX_LOGS=128: the rules module never imports session logs (that is
-# wasm_import_logs, bots-only) and each marshal restarts num_logs at 0, so
-# g_game only ever holds ONE action's logs — hard worst ~76 (a 64-cover
-# round's discard + draws + transitions). The bots module MUST keep 512:
-# its belief imports the whole session log (TS MAX_KERNEL_LOGS mirror).
-# Stack 32KB (R4, docs/RULES_GUARDS_WASM_MEMORY_PLAN.md): no solver, no
-# rollouts — the deepest rules path is the cover enumeration. A wasm stack
-# canary (paint 0xA5, drive the cover + attack-combination corpus through the
-# production kernelLegalMoves marshal, scan) measures the realistic worst at
-# 14.3 KiB (calc_cover_moves' CoverOption opts[64] ~= 9 KiB single frame, plus
-# ~576 B/level over n_uncovered levels of choose_attack_subset). 32 KiB is
-# 2.23x that. The old 64 KiB was sized for the analytic MAX_BATTLES=64 worst
-# (~45 KiB), but that state is unreachable: choose_attack_subset enumerates
-# 2^n_uncovered subsets, so it HANGS by ~n_uncovered 28-30 — long before the
-# ~40-battle depth that would overflow even the 32 KiB stack. So no state that
-# completes at 64 KiB traps at 32 KiB; --stack-first keeps any surprise a loud
-# trap that the fuzz + cover e2e suites (which drive enumeration harder than
-# production) exercise directly. The trailing -z stack-size overrides the
-# shared flags' 256KB (last one wins in wasm-ld). Net: -32 KiB stack, and with
-# the R1 arena at 102,544 B the module drops 4 -> 3 pages.
-# WASM_IO_CAP=24576: this build's widest unchunked io write is the log
-# export at MAX_LOGS=128 — 2 + 128 x (4 + 64x2) = 16,898B; 24KB is 1.45x
-# that (the 72KB default exists for bots' 512-log session export).
-# Together with the shared L1 caps above, rules.wasm linear memory drops
-# 53 pages (3.31MB) -> 5 pages (320KB).
-# PIN (R0, docs/RULES_GUARDS_WASM_MEMORY_PLAN.md): --initial-memory ==
-# --max-memory freezes rules.wasm linear memory exactly like the guards pin
-# (see WASM_GUARDS_FLAGS below). The module has no allocator and never calls
-# memory.grow (all state is the static caps above), so a fixed size is a hard
-# invariant: if any buffer grows past the pin, wasm-ld REFUSES TO LINK, and any
-# runtime memory.grow traps. This is what makes the tight R1 headroom a build
-# error instead of a production surprise. Re-pin LOWER after each landed
-# candidate. 196608 = 3 pages after the R1 arena overlay + R4 stack shrink
-# (below); 4 pages (262144) was the post-overlay floor and 5 pages (327680)
-# the pre-overlay floor.
-# CD_RULES_OVERLAY (R1, docs/RULES_GUARDS_WASM_MEMORY_PLAN.md): alias the
-# replay-call scratch family (g_rec + g_bn + g_replay_io, ~90 KiB) over the
-# action family (g_moves + g_snaps + g_io) in one arena (src/rules_overlay.h,
-# g_rules_arena in wasm_api.c). The two families are provably never live at the
-# same time (single-threaded module; replay encode/decode vs action/menu are
-# top-level exports that never nest, and each buffer is written-before-read
-# within its call). Saves ~93 KiB → 5 pages -> 4 pages. rules.wasm ONLY: the
-# bots build aliases into solve_ws instead (CD_WASM_OVERLAY), native uses plain
-# statics; the two flavors are mutually exclusive (#error in rules_overlay.h).
+# The C Roster (src/roster.h), in the TEST build only (WASM_TEST_EXPORTS below):
+# e2e/helpers/roster_kernel.ts drives the durable encoding and the envelope
+# trailer through these directly (e2e/packed_roster_wire.test.ts feeds the Swift
+# decoder C-written trailers). Production reaches the roster through the table
+# exports, never through these.
+WASM_ROSTER_EXPORTS := \
+  -Wl,--export=wasm_roster_encode -Wl,--export=wasm_roster_spec_ptr -Wl,--export=wasm_roster_trailer_ptr -Wl,--export=wasm_roster_decode \
+  -Wl,--export=wasm_roster_trailer_write -Wl,--export=wasm_roster_trailer_read
+
+# The C Table (src/table.h, wasm/wasm_table_api.c), bots.wasm ONLY, for the same
+# reason as the roster: the oracle modules link WASM_BOTS_API_EXPORTS and have no
+# use for a table, and an unexported table.o is dropped whole by the linker. No
+# production caller yet (docs/C_GAME_SHAPE_MIGRATION.md Phase 3); the server
+# switches to it in Phase 4b, through sdk/ts/table/server_table.ts.
+WASM_TABLE_EXPORTS := \
+  -Wl,--export=wasm_table_roster_ptr -Wl,--export=wasm_table_commit_ptr \
+  -Wl,--export=wasm_table_request_ptr -Wl,--export=wasm_table_elo_ptr \
+  -Wl,--export=wasm_table_detail -Wl,--export=wasm_table_reject \
+  -Wl,--export=wasm_table_request_decode -Wl,--export=wasm_table_load \
+  -Wl,--export=wasm_table_act -Wl,--export=wasm_table_needs_bots \
+  -Wl,--export=wasm_table_bots_need_logs -Wl,--export=wasm_table_commit_products \
+  -Wl,--export=wasm_table_push -Wl,--export=wasm_table_envelope \
+  -Wl,--export=wasm_table_action_response -Wl,--export=wasm_table_rankings \
+  -Wl,--export=wasm_elo_deltas \
+  -Wl,--export=wasm_table_create -Wl,--export=wasm_table_join \
+  -Wl,--export=wasm_table_leave -Wl,--export=wasm_table_add_bot \
+  -Wl,--export=wasm_table_remove_bot -Wl,--export=wasm_table_ready \
+  -Wl,--export=wasm_table_reseat -Wl,--export=wasm_table_retitle \
+  -Wl,--export=wasm_table_continue -Wl,--export=wasm_table_rearrange_hand \
+  -Wl,--export=wasm_table_redact -Wl,--export=wasm_table_seat_of \
+  -Wl,--export=wasm_table_set_deal_seed -Wl,--export=wasm_table_set_session_log \
+  -Wl,--export=wasm_table_bot_drive -Wl,--export=wasm_table_drive_ptr \
+  -Wl,--export=wasm_table_drive_prefs -Wl,--export=wasm_table_cycle_delay_ms \
+  -Wl,--export=wasm_table_replay_code -Wl,--export=wasm_table_replay_extras
+
+# The web client's slot (src/client_table.h, wasm/wasm_table_api.c), bots.wasm
+# ONLY: the browser reads every envelope and push through these, and through the
+# generated snapshot readers in sdk/ts/gen/view_layout.bots.ts.
+WASM_CLIENT_EXPORTS := \
+  -Wl,--export=wasm_client_view_ptr -Wl,--export=wasm_client_event_ptr \
+  -Wl,--export=wasm_client_detail -Wl,--export=wasm_client_adopt_envelope \
+  -Wl,--export=wasm_client_adopt_resident -Wl,--export=wasm_client_identity_at \
+  -Wl,--export=wasm_client_push_open -Wl,--export=wasm_client_push_next \
+  -Wl,--export=wasm_client_push_final -Wl,--export=wasm_client_identity \
+  -Wl,--export=wasm_client_identity_begin -Wl,--export=wasm_client_identity_seat \
+  -Wl,--export=wasm_client_rules_view_ptr -Wl,--export=wasm_client_rules_ptr \
+  -Wl,--export=wasm_client_view_rules \
+  -Wl,--export=wasm_client_edit_view_ptr -Wl,--export=wasm_client_final_view_ptr \
+  -Wl,--export=wasm_client_board_edit_ptr -Wl,--export=wasm_client_conflict_ptr \
+  -Wl,--export=wasm_client_verdicts_ptr -Wl,--export=wasm_client_validate \
+  -Wl,--export=wasm_client_optimistic_apply -Wl,--export=wasm_client_board_edit \
+  -Wl,--export=wasm_client_rearrange_hand -Wl,--export=wasm_client_conflict_verdicts
+
+# A replay's recorded decision as the Oracle imports it, and a code at a glance
+# (src/replay_steps.h, wasm/wasm_bots_api.c), bots.wasm ONLY: the web page builds
+# the Oracle's job and hands the bytes to oracle.wasm, which only imports them, so
+# the oracle modules do not link these and their unexported code is dropped there.
+WASM_REPLAY_WEB_EXPORTS := \
+  -Wl,--export=wasm_replay_step_masked_state -Wl,--export=wasm_replay_step_logs \
+  -Wl,--export=wasm_replay_summary
+
+# C-backed test fixtures (wasm/wasm_table_api.c, e2e/helpers/table_fixture.ts),
+# in the TEST build only, like WASM_ROSTER_EXPORTS: a test composes a board
+# through the generated setters and seals it with the roster into a row the
+# kernel has loaded; card text goes through card.h's parser.
+WASM_FIXTURE_EXPORTS := \
+  -Wl,--export=wasm_fixture_begin -Wl,--export=wasm_fixture_title \
+  -Wl,--export=wasm_fixture_seat -Wl,--export=wasm_fixture_seal \
+  -Wl,--export=wasm_card_list_parse
+
+# The exports only tests call. They are NOT in the shipped bots.wasm.gz: an
+# export roots its code, so each one kept roster.c's durable codec, the fixture
+# sealer and card.h's parser in every module the browser and the edge load.
+# build/bots_test.wasm is the shipped module's objects and link plus these, built
+# on demand (`make -C c wasm-bots-test`, which e2e/helpers/bots_test_wasm.ts runs
+# when the build is missing or older than the wasm sources) and never committed.
+# Same objects, so the same layout hash: the helpers check it like any host.
+# A code's whole log stream, record by record (replay.h ReplayDecodedLog,
+# e2e/helpers/replay_decode.ts): tests and tools read it, no shipped host does.
+WASM_REPLAY_DECODE_EXPORTS := \
+  -Wl,--export=wasm_replay_decoded_open -Wl,--export=wasm_replay_decoded_next
+
+# The rules and bot bridge entries no shipped host of bots.wasm calls any more.
+# They served the TS game shape: engine.ts marshalled a TS Game into the resident
+# slot and drove it move by move (attack .. refill, the state and log codecs, the
+# snapshot ring, the replay codec), and bots.ts chose moves for it (the env
+# table, choose_move, the resident drive and its seeding). Phase 8 deleted both;
+# the server plays the C Table and the web its client slot. Checked before the
+# move, by name, across src/, server/, sdk/ts/ and scripts/: no caller. The oracle
+# modules keep them all (oracleBridge.ts imports states, logs and brains and calls
+# choose_move on oracle.wasm), and so does the test build, where the fixture and
+# probe suites (kernel_state_validation, security_hidden_info) still knock on the
+# state doors. Filtered out of bots.wasm's link only, so WASM_API_EXPORTS and
+# WASM_BOTS_API_EXPORTS stay the oracle modules' lists.
+WASM_BOTS_UNSHIPPED_API := \
+  -Wl,--export=wasm_game_ptr_internal -Wl,--export=wasm_moves_ptr_internal \
+  -Wl,--export=wasm_set_seed -Wl,--export=wasm_set_deal_seed_bytes -Wl,--export=wasm_reject_reason \
+  -Wl,--export=wasm_import_state -Wl,--export=wasm_export_state \
+  -Wl,--export=wasm_state_serialize -Wl,--export=wasm_state_deserialize \
+  -Wl,--export=wasm_state_format_version \
+  -Wl,--export=wasm_export_logs -Wl,--export=wasm_export_logs_masked \
+  -Wl,--export=wasm_snap_count -Wl,--export=wasm_snap_tag -Wl,--export=wasm_snap_aux \
+  -Wl,--export=wasm_export_snapshot \
+  -Wl,--export=wasm_start_game -Wl,--export=wasm_attack -Wl,--export=wasm_cover \
+  -Wl,--export=wasm_pass -Wl,--export=wasm_pickup -Wl,--export=wasm_good \
+  -Wl,--export=wasm_transition -Wl,--export=wasm_refill \
+  -Wl,--export=wasm_reset_to_lobby -Wl,--export=wasm_human_mask \
+  -Wl,--export=wasm_import_strategy_keys \
+  -Wl,--export=wasm_game_done -Wl,--export=wasm_should_act -Wl,--export=wasm_next_player \
+  -Wl,--export=wasm_replay_decode -Wl,--export=wasm_replay_encode_v6 \
+  -Wl,--export=wasm_apply_action -Wl,--export=wasm_finalize_win \
+  -Wl,--export=wasm_view_serialize -Wl,--export=wasm_events_serialize \
+  -Wl,--export=wasm_rearrange_hand -Wl,--export=wasm_set_deterministic_deck \
+  -Wl,--export=wasm_seed_rng_deterministic -Wl,--export=wasm_set_strategy_seed_deterministic \
+  -Wl,--export=wasm_strategy_seed_probe -Wl,--export=wasm_set_rng_base \
+  -Wl,--export=wasm_setenv_from_io -Wl,--export=wasm_clearenv \
+  -Wl,--export=wasm_import_logs -Wl,--export=wasm_clear_logs \
+  -Wl,--export=wasm_set_game_key -Wl,--export=wasm_set_strategy_seed -Wl,--export=wasm_reload_bot_flags \
+  -Wl,--export=wasm_choose_move \
+  -Wl,--export=wasm_bot_drive -Wl,--export=wasm_bot_eligible_mask \
+  -Wl,--export=wasm_bot_cycle_delay_ms -Wl,--export=wasm_bot_drive_log_start \
+  -Wl,--export=wasm_export_logs_masked_from -Wl,--export=wasm_events_serialize_from
+
+WASM_TEST_EXPORTS := $(WASM_ROSTER_EXPORTS) $(WASM_FIXTURE_EXPORTS) $(WASM_REPLAY_DECODE_EXPORTS) $(WASM_BOTS_UNSHIPPED_API)
+
+# The small-memory flag set the iMessage module (wasm-msg below) is built from.
+# It was rules.wasm's, which the web and the edge functions no longer load: every
+# host reads the ONE bots.wasm (docs/C_GAME_SHAPE_MIGRATION.md Phase 8). Its caps
+# and its pin are rules.wasm's measured ones (docs/RULES_GUARDS_WASM_MEMORY_PLAN.md
+# R0, R1, R4): a 1024-move menu, MAX_LOGS=128 (one action's logs), a 32 KiB stack,
+# CD_RULES_OVERLAY (the replay scratch aliased over the action buffers, see
+# src/rules_overlay.h), and a 3-page memory pin that wasm-msg lifts to its own.
 WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
                     -DMAX_LEGAL_MOVES=1024 -DMAX_LOGS=128 -DWASM_IO_CAP=24576 \
                     -DCD_RULES_OVERLAY \
                     -Wl,-z,stack-size=32768 \
                     -Wl,--initial-memory=196608 -Wl,--max-memory=196608
-
-# Blanket header dependency, same rationale as the native objects: a header
-# edit must rebuild BOTH wasm modules or they ship divergent kernels.
-WASM_RULES_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/awire.c \
-                  src/evwire.c src/sha256.c src/msg_wire.c wasm/wasm_api.c
-
-# Built from per-file OBJECTS (not one single-step `clang *.c -o` invocation),
-# for the same reason bots is: single-step clang emits NO function-name section
-# — even unstripped — so the wasm-anatomy tool cannot recover names for it. A
-# separate-object link keeps the symbols, and the post-link wasm-opt recovers
-# the extra whole-program DCE single-step did for free (net +~60 B, behavior-
-# identical, gated by e2e/wasm_kernel_fuzz). Split the combined flag set into
-# compile-only (-c) and link-only (-Wl%). rules/guards are size-first (no MC hot
-# loop) ⇒ -Oz, unlike bots (-O2 --inlining-optimizing); a global WASM_POSTOPT
-# override still wins.
-WASM_RULES_CFLAGS  := $(filter-out -Wl%,$(WASM_RULES_FLAGS))
-WASM_RULES_LDFLAGS := --target=wasm32 -nostdlib $(filter -Wl%,$(WASM_RULES_FLAGS))
-WASM_RULES_POSTOPT ?= $(if $(strip $(WASM_POSTOPT)),$(WASM_POSTOPT),-Oz)
-WASM_RULES_OBJ := $(addprefix build/rulesobj/,$(notdir $(WASM_RULES_SRC:.c=.o)))
-
-build/rulesobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
-	@mkdir -p build/rulesobj
-	$(WASM_CC) $(WASM_RULES_CFLAGS) -c $< -o $@
-build/rulesobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
-	@mkdir -p build/rulesobj
-	$(WASM_CC) $(WASM_RULES_CFLAGS) -c $< -o $@
-
-build/rules.wasm: $(WASM_RULES_OBJ)
-	@mkdir -p build
-	$(WASM_CC) $(WASM_RULES_LDFLAGS) $(WASM_API_EXPORTS) $(WASM_RULES_OBJ) -o $@
-	$(call wasm_postopt,$(WASM_RULES_POSTOPT),$@)
-
-# Name-preserving companion (wasm-anatomy): same objects/link/wasm-opt as the
-# shipped module, minus -Wl,--strip-all and with wasm-opt --debuginfo ⇒ its CODE
-# section is byte-identical to build/rules.wasm but names are kept. generate.sh
-# asserts that byte-identity.
-build/named/rules.named.wasm: $(WASM_RULES_OBJ)
-	@mkdir -p build/named
-	$(WASM_CC) $(filter-out -Wl$(comma)--strip-all,$(WASM_RULES_LDFLAGS)) $(WASM_API_EXPORTS) $(WASM_RULES_OBJ) -o $@
-	$(if $(strip $(WASM_RULES_POSTOPT)),$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) $(WASM_RULES_POSTOPT) --debuginfo $@ -o $@,:)
-
-# Regenerates the base64 module the TS side imports (works unchanged in
-# Deno edge functions, Node and browsers — no asset pipeline needed).
-# rules stays a base64 embed: engine.ts is shared with the BROWSER (replay
-# decode imports it), and browsers have no node:fs/node:zlib for the static-gz
-# loader. Only bots.wasm — server-only — ships as a gzip static asset (below).
-wasm: build/rules.wasm
-	node wasm/embed.mjs build/rules.wasm ../sdk/ts/wasm/rules_wasm.ts --gzip
-	@bash ../scripts/wasm_stamp.sh --write
-
-# Client-guards module: game.c ONLY — no legal.c enumeration, no replay.c
-# codec. It backs the browser's UI move-gates (validate-only) and optimistic
-# apply (see src/wasm/clientGuards.ts). The smallest kernel we ship: it exists
-# so the interactive client stops reimplementing the rules in TS (one engine,
-# not two). Same wire layout as rules.wasm; e2e asserts guards==rules parity.
-# Smaller caps than the rules module: the client never imports a session log
-# (each marshal starts fresh), and as a validate-only build it emits no logs at
-# all (see -DGUARDS_VALIDATE_ONLY / MAX_LOGS=1 below).
-#
-# THE L1 MODULE: linear memory is PINNED to one 64KB wasm page — the whole
-# module state (stack, Game, clone scratch, io, card buffers) lives inside
-# a single page that fits an L1 data cache (Neoverse/Graviton L1d is
-# exactly 64KB; Apple M-series is 128KB). --initial-memory=--max-memory
-# makes it a hard link-time + run-time invariant: if a buffer grows past
-# the page, wasm-ld REFUSES TO LINK (no silent regression), and the module
-# can never memory.grow (it has no allocator — verified: no memory.grow
-# opcode in the binary). Budget & measurements: docs/WASM_L1_BUDGET.md.
-# Stack 16KB: validate_run's Game clone lives in BSS (wasm_guards_api.c
-# g_validate_tmp), not on the stack — and at MAX_LOGS=1 it is now ~1.1KB, not the
-# old ~9.6KB. What remains on the stack is handle_* / state_get frames (<2KB
-# observed) — 16KB is >5x that, and --stack-first keeps any regression a loud trap.
-# MAX_SNAPS=1: the shipped guards module exports no snapshot readers (see
-# WASM_GUARDS_EXPORTS below), so the ring was 55.7KB of write-only memory.
-# -DGUARDS_VALIDATE_ONLY: guards validates by dry-running handle_* on a throwaway
-# clone and reading ONLY the reject code. Both the animation logs those handlers
-# emit AND the end-of-round stock refill happen in the COMMIT phase, after every
-# reject check — no reject depends on them and the post-move state is discarded.
-# So this compiles the log-append path (log_alloc/log_add_card/log_add_pair) and
-# refill_player_hands (→ draw_card, refill_deck) down to no-ops; handle_*'s full
-# mutation still runs, so every reject code stays byte-identical to the server.
-# Gated by e2e/client_guards (kernel-parity) + e2e/wasm_kernel_fuzz.
-# MAX_LOGS=1 / MAX_LOG_PAIRS=1: with GUARDS_VALIDATE_ONLY the logs are never
-# written (no-op path) and never marshaled (the wire carries no logs), so the
-# Game.logs[] buffer is DEAD. At 64/64 it was 8,448 B of the 9,608 B Game struct
-# (88%) — and validate_run's game_clone memcpy(sizeof(Game)) copied ALL of it on
-# EVERY gate. Shrinking to 1/1 drops sizeof(Game) to 1,168 B: the per-gate clone
-# copies ~8.4 KB less and g_game + g_validate_tmp reclaim ~16.9 KB of the 64 KB
-# page. Nothing in the guards-linked set (game.c/view.c/awire.c/wasm_guards_api.c)
-# uses these for a live buffer — the card inputs are g_in_a[MAX_IN_CARDS].
-WASM_GUARDS_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory \
-                     -isystem wasm/include -Isrc -D_Thread_local= -DDEAL_RNG_DISABLED \
-                     -DGUARDS_VALIDATE_ONLY \
-                     -DMAX_LOG_PAIRS=1 -DMAX_BATTLES=64 -DMAX_LOGS=1 -DMAX_SNAPS=1 \
-                     -Wall -Wextra -Wno-unused-parameter \
-                     -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=16384 -Wl,--stack-first \
-                     -Wl,--initial-memory=65536 -Wl,--max-memory=65536 \
-                     -Wl,--strip-all
-
-# Explicit export allow-list, same rationale as WASM_API_EXPORTS (this
-# replaced --export-all here too: it pinned every internal symbol as a GC
-# root and bloated the name section). A NEW wasm_* guards entry point must be
-# added here or the browser bridge won't see it (clientGuards.ts fails loudly).
-# Trimmed to the roots LIVE client code + the guards tests actually reach
-# (see e2e/client_guards.test.ts). Everything dropped here — the snapshot /
-# log-readout exports, wasm_set_seed/io_cap/reject_reason, the awire-apply
-# entry (wasm_apply_action), and the good-move entries (wasm_good /
-# wasm_validate_good, subsumed by wasm_validate_action which handles all five
-# kinds) — was reachable from NO caller in src/ or e2e/, so rooting it only
-# bloated the shipped module. Re-add an export line to revive a capability;
-# the C stays in game.c / wasm_guards_api.c.
-# VALIDATION-ONLY: the kernel optimistic-apply entries (wasm_attack..pickup +
-# wasm_export_state) are dropped. Production optimistic play is the pure-TS
-# overlay (src/state/optimisticOverlay.ts + clientReconcile.ts), NOT this wasm
-# path — applyMove had NO src/ runtime caller, only an e2e test. Removing the
-# apply exports lets wasm-ld drop handle_*'s apply-only wrappers; validation
-# itself still dry-runs handle_* (validate_run), so rules parity is unchanged.
-# Revive the client-side kernel apply by re-adding these five + applyMove.
-WASM_GUARDS_EXPORTS := \
-  -Wl,--export=wasm_io_ptr \
-  -Wl,--export=wasm_cards_a_ptr -Wl,--export=wasm_cards_b_ptr \
-  -Wl,--export=wasm_init \
-  -Wl,--export=wasm_import_state \
-  -Wl,--export=wasm_validate_attack -Wl,--export=wasm_validate_cover \
-  -Wl,--export=wasm_validate_pass -Wl,--export=wasm_validate_pickup \
-  -Wl,--export=wasm_validate_action \
-  -Wl,--export=wasm_game_done -Wl,--export=wasm_next_player -Wl,--export=wasm_can_cover
-
-# The client guards module never deals (its optimistic draws are placeholders
-# and it never learns the seed), so -DDEAL_RNG_DISABLED compiles out the ChaCha
-# deal RNG entirely and deal_rng.c is not linked — no crypto weight in the
-# browser bundle. draw_card falls back to the trivial LCG index for its
-# placeholder splices, exactly as before this feature.
-WASM_GUARDS_SRC := src/game.c src/view.c src/awire.c wasm/wasm_guards_api.c
-
-# Object-based, same rationale as rules above (symbols for the anatomy tool).
-WASM_GUARDS_CFLAGS  := $(filter-out -Wl%,$(WASM_GUARDS_FLAGS))
-WASM_GUARDS_LDFLAGS := --target=wasm32 -nostdlib $(filter -Wl%,$(WASM_GUARDS_FLAGS))
-WASM_GUARDS_POSTOPT ?= $(if $(strip $(WASM_POSTOPT)),$(WASM_POSTOPT),-Oz)
-WASM_GUARDS_OBJ := $(addprefix build/guardsobj/,$(notdir $(WASM_GUARDS_SRC:.c=.o)))
-
-build/guardsobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
-	@mkdir -p build/guardsobj
-	$(WASM_CC) $(WASM_GUARDS_CFLAGS) -c $< -o $@
-build/guardsobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
-	@mkdir -p build/guardsobj
-	$(WASM_CC) $(WASM_GUARDS_CFLAGS) -c $< -o $@
-
-build/guards.wasm: $(WASM_GUARDS_OBJ)
-	@mkdir -p build
-	$(WASM_CC) $(WASM_GUARDS_LDFLAGS) $(WASM_GUARDS_EXPORTS) $(WASM_GUARDS_OBJ) -o $@
-	$(call wasm_postopt,$(WASM_GUARDS_POSTOPT),$@)
-
-build/named/guards.named.wasm: $(WASM_GUARDS_OBJ)
-	@mkdir -p build/named
-	$(WASM_CC) $(filter-out -Wl$(comma)--strip-all,$(WASM_GUARDS_LDFLAGS)) $(WASM_GUARDS_EXPORTS) $(WASM_GUARDS_OBJ) -o $@
-	$(if $(strip $(WASM_GUARDS_POSTOPT)),$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) $(WASM_GUARDS_POSTOPT) --debuginfo $@ -o $@,:)
-
-wasm-guards: build/guards.wasm
-	node wasm/embed.mjs build/guards.wasm ../sdk/ts/wasm/guards_wasm.ts GUARDS_WASM_B64 --gzip
-	@bash ../scripts/wasm_stamp.sh --write
 
 # ---------- msg module: the iMessage extension's kernel, and nothing else ----
 #
@@ -920,17 +953,21 @@ WASM_MSG_SRC := src/game.c src/deal_rng.c src/legal.c src/view.c src/awire.c \
                 wasm/wasm_api.c wasm/wasm_msg_api.c
 
 WASM_MSG_EXPORTS := \
-  -Wl,--export=wasm_replay_extras_encode \
+  -Wl,--export=wasm_replay_extras_encode -Wl,--export=wasm_replay_extras_ptr \
   -Wl,--export=wasm_replay_b32_encode \
   -Wl,--export=wasm_replay_link \
   -Wl,--export=wasm_unambiguous_cover \
-  -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal \
+  -Wl,--export=wasm_msg_decode -Wl,--export=wasm_msg_seal -Wl,--export=wasm_msg_header_ptr \
   -Wl,--export=wasm_msg_rule_p -Wl,--export=wasm_msg_rebase \
   -Wl,--export=wasm_msg_pickup_hold \
   -Wl,--export=wasm_anim_should_drop_stale -Wl,--export=wasm_anim_stale_optimistic \
-  -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_finish_rows \
+  -Wl,--export=wasm_anim_event_key \
+  -Wl,--export=wasm_anim_finish_rows -Wl,--export=wasm_anim_hand_laid_out \
   -Wl,--export=wasm_anim_conflict_verdicts \
-  -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport
+  -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport \
+  -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr -Wl,--export=wasm_anim_beats_ptr \
+  -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_plan_at -Wl,--export=wasm_anim_build_beats \
+  -Wl,--export=wasm_anim_reversal_order
 
 # The rules API, minus the one export that would drag a replay DECODER in.
 # (wasm_replay_decode is declared in wasm_api.c, which this target shares with
@@ -958,6 +995,9 @@ build/msgobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
 build/msgobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build/msgobj
 	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
+build/msgobj/wasm_api.o: wasm/wasm_api.c build/layout/msg.hash $(wildcard src/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build/msgobj
+	$(WASM_CC) $(WASM_MSG_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/msg.hash) -c $< -o $@
 
 build/msg.wasm: $(WASM_MSG_OBJ) wasm/msg_exports_check.mjs
 	@mkdir -p build
@@ -966,7 +1006,9 @@ build/msg.wasm: $(WASM_MSG_OBJ) wasm/msg_exports_check.mjs
 	node wasm/msg_exports_check.mjs $@
 
 .PHONY: wasm-msg wasm-msg-size
-wasm-msg: build/msg.wasm
+wasm-msg: build/layout/msg.hash
+	$(call sg_settle,msg,build/msgobj,build/msg.wasm)
+	@$(MAKE) --no-print-directory build/msg.wasm
 
 # The number this target exists to produce.
 wasm-msg-size: build/msg.wasm
@@ -974,8 +1016,6 @@ wasm-msg-size: build/msg.wasm
 	  $$(wc -c < build/msg.wasm) $$(gzip -9 -c build/msg.wasm | wc -c)
 	@[ -f build/bots.wasm ] && printf 'bots.wasm   raw %7d  gzip %7d\n' \
 	  $$(wc -c < build/bots.wasm) $$(gzip -9 -c build/bots.wasm | wc -c) || true
-	@[ -f build/rules.wasm ] && printf 'rules.wasm  raw %7d  gzip %7d\n' \
-	  $$(wc -c < build/rules.wasm) $$(gzip -9 -c build/rules.wasm | wc -c) || true
 
 # Bot module: the rules kernel PLUS every algorithmic bot strategy and the
 # choose-move bridge. A superset of rules.wasm, loaded only where bots run
@@ -1036,8 +1076,8 @@ WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_st
                 src/simple_heuristic_strategy.c \
                 src/handwritten_prod_strategy.c \
                 src/octogen_strategy.c \
-                src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
-                wasm/wasm_api.c wasm/wasm_bots_api.c wasm/wasm_msg_api.c
+                src/bot_knobs.c src/bot_roster.c src/bot_drive.c src/roster.c src/table.c src/client_table.c src/card.c \
+                wasm/wasm_api.c wasm/wasm_bots_api.c wasm/wasm_msg_api.c wasm/wasm_table_api.c
 
 # PER-FILE opt (a mix one clang invocation can't express): the profiled hot MC
 # core is built at -O3, everything else at -Oz. -O3 on those five files cuts the
@@ -1114,11 +1154,17 @@ build/botobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
 build/botobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build/botobj
 	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -c $< -o $@
+build/botobj/wasm_api.o: wasm/wasm_api.c build/layout/bots.hash $(wildcard src/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build/botobj
+	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -DSG_LAYOUT_HASH=$$(cat build/layout/bots.hash) -c $< -o $@
+
+WASM_BOTS_SHIPPED_EXPORTS = $(filter-out $(WASM_BOTS_UNSHIPPED_API),$(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS)) \
+                            $(WASM_TABLE_EXPORTS) $(WASM_CLIENT_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS)
 
 build/bots.wasm: $(WASM_BOT_OBJ)
 	@mkdir -p build
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
-	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_BOT_OBJ) -o $@
+	          $(WASM_BOTS_SHIPPED_EXPORTS) $(WASM_BOT_OBJ) -o $@
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),$@)
 
 # bots-explain.wasm: byte-for-byte the SAME octogen as bots.wasm (same sources,
@@ -1127,16 +1173,16 @@ build/bots.wasm: $(WASM_BOT_OBJ)
 # the TT). Extra exports let the JS harness read the per-decision dump from a
 # static buffer (wasm has no file I/O). ANALYSIS ONLY — never shipped.
 .PHONY: bots-wasm-explain
-bots-wasm-explain:
+bots-wasm-explain: build/layout/bots-explain.hash
 	@mkdir -p build/botexplain
 	@for src in $(WASM_BOT_SRC); do \
 	  base=$$(basename $$src .c); opt=-Oz; \
 	  case " $(WASM_BOT_O3_SRC) " in *" $$src "*) opt=-O3;; esac; \
 	  echo "  CC(explain) $$src [$$opt]"; \
-	  $(WASM_CC) $(WASM_BOT_CFLAGS) -DOG_EXPLAIN_BUILD $$opt -c $$src -o build/botexplain/$$base.o || exit 1; \
+	  $(WASM_CC) $(WASM_BOT_CFLAGS) -DOG_EXPLAIN_BUILD -DSG_LAYOUT_HASH=$$(cat build/layout/bots-explain.hash) $$opt -c $$src -o build/botexplain/$$base.o || exit 1; \
 	done
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
-	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
+	          $(WASM_BOTS_SHIPPED_EXPORTS) \
 	          -Wl,--export=wasm_og_explain_ptr -Wl,--export=wasm_og_explain_len -Wl,--export=wasm_og_explain_reset \
 	          build/botexplain/*.o -o build/bots-explain.wasm
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),build/bots-explain.wasm)
@@ -1155,7 +1201,7 @@ bots-wasm-explain:
 build/named/bots.named.wasm: $(WASM_BOT_OBJ)
 	@mkdir -p build/named
 	$(WASM_CC) --target=wasm32 -nostdlib $(filter-out -Wl$(comma)--strip-all,$(WASM_BOT_LDFLAGS)) \
-	          $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) $(WASM_BOT_OBJ) -o $@
+	          $(WASM_BOTS_SHIPPED_EXPORTS) $(WASM_BOT_OBJ) -o $@
 	$(if $(strip $(WASM_BOTS_POSTOPT)),$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) $(WASM_BOTS_POSTOPT) --debuginfo $@ -o $@,:)
 
 # bots.wasm ships as ONE gzip STATIC ASSET (config.toml static_files + deploy
@@ -1175,9 +1221,27 @@ build/named/bots.named.wasm: $(WASM_BOT_OBJ)
 # change invisible to every TS test that loaded the stale one. It also put 80 KB
 # of single-line base64, rewritten on every kernel build, into git. The price is
 # that the browser's door is async (ensureBotsAsync); that is the cheaper half.
-wasm-bots: build/bots.wasm
+wasm-bots: build/layout/bots.hash
+	$(call sg_settle,bots,build/botobj,build/bots.wasm)
+	@$(MAKE) --no-print-directory build/bots.wasm
 	gzip -9 -n -c build/bots.wasm > ../sdk/ts/wasm/bots.wasm.gz
 	@bash ../scripts/wasm_stamp.sh --write
+
+# The test build (WASM_TEST_EXPORTS above): never committed, never shipped.
+# build/bots_test.stamp records the wasm source hash it was built from
+# (scripts/wasm_stamp.sh --hash), which is how the e2e helper knows it is current.
+build/bots_test.wasm: $(WASM_BOT_OBJ)
+	@mkdir -p build
+	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
+	          $(WASM_BOTS_SHIPPED_EXPORTS) $(WASM_TEST_EXPORTS) $(WASM_BOT_OBJ) -o $@.tmp
+	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),$@.tmp)
+	mv $@.tmp $@
+
+.PHONY: wasm-bots-test
+wasm-bots-test: build/layout/bots.hash
+	$(call sg_settle,bots,build/botobj,build/bots_test.wasm)
+	@$(MAKE) --no-print-directory build/bots_test.wasm
+	@bash ../scripts/wasm_stamp.sh --hash > build/bots_test.stamp.tmp && mv build/bots_test.stamp.tmp build/bots_test.stamp
 
 # ---------------------------------------------------------------------------
 # oracle.wasm — the client-side "infinite oracle" replay analyzer
@@ -1196,13 +1260,13 @@ WASM_ORACLE_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
   -Wl,--export=wasm_og_explain_ptr -Wl,--export=wasm_og_explain_len \
   -Wl,--export=wasm_og_explain_reset -Wl,--export=wasm_og_reload_flags
 .PHONY: wasm-oracle
-wasm-oracle:
+wasm-oracle: build/layout/oracle.hash
 	@mkdir -p build/botoracle
 	@for src in $(WASM_BOT_SRC); do \
 	  base=$$(basename $$src .c); opt=-Oz; \
 	  case " $(WASM_BOT_O3_SRC) " in *" $$src "*) opt=-O3;; esac; \
 	  echo "  CC(oracle) $$src [$$opt]"; \
-	  $(WASM_CC) $(WASM_ORACLE_CFLAGS) $$opt -c $$src -o build/botoracle/$$base.o || exit 1; \
+	  $(WASM_CC) $(WASM_ORACLE_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle.hash) $$opt -c $$src -o build/botoracle/$$base.o || exit 1; \
 	done
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_ORACLE_LDFLAGS) \
 	          $(WASM_ORACLE_EXPORTS) build/botoracle/*.o -o build/oracle.wasm
@@ -1247,13 +1311,13 @@ WASM_ORACLE_MT_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
   -Wl,--export=wasm_mt_mismatch -Wl,--export=wasm_mt_canary \
   -Wl,--export=wasm_mt_solver -Wl,--export=wasm_mt_verdict -Wl,--export=wasm_mt_defuse
 .PHONY: wasm-oracle-mt
-wasm-oracle-mt:
+wasm-oracle-mt: build/layout/oracle-mt.hash
 	@mkdir -p build/botoraclemt
 	@for src in $(WASM_ORACLE_MT_SRC); do \
 	  base=$$(basename $$src .c); opt=-Oz; \
 	  case " $(WASM_BOT_O3_SRC) " in *" $$src "*) opt=-O3;; esac; \
 	  echo "  CC(oracle-mt) $$src [$$opt]"; \
-	  $(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) $$opt -c $$src -o build/botoraclemt/$$base.o || exit 1; \
+	  $(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $$opt -c $$src -o build/botoraclemt/$$base.o || exit 1; \
 	done
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_ORACLE_MT_LDFLAGS) \
 	          $(WASM_ORACLE_MT_EXPORTS) build/botoraclemt/*.o -o build/oracle-mt.wasm

@@ -30,6 +30,12 @@
 static int g_err_detail = 0;
 int replay_last_error_detail(void) { return g_err_detail; }
 
+// The same refusal in named fields (replay.h ReplayError), set beside the
+// packed detail so the two cannot disagree.
+static ReplayError g_err;
+const ReplayError *replay_last_error(void) { return &g_err; }
+static void err_clear(void) { g_err_detail = 0; g_err.version = g_err.log_type = g_err.menu = 0; }
+
 /* =============================== bignum ================================== */
 // Little-endian u32 limbs. rANS only ever multiplies-accumulates by, and
 // divides by, small integers (M < 2^21), so two exact primitives suffice and
@@ -1151,6 +1157,7 @@ static int find_top_index(RModel *m, const Opt *opts, int n_opts, const Src *s) 
     }
     m->err = REPLAY_ENOTINMENU;
     g_err_detail = (s->kind << 16) | (n_opts & 0xFFFF);
+    g_err.log_type = s->kind; g_err.menu = n_opts;
     return -1;
 }
 
@@ -1490,7 +1497,7 @@ static int encode_v6_run(int n, int trump_id, int fa, int n_actions,
 
 int replay_encode_v6(const unsigned char *in, int in_len,
                      unsigned char *out, int out_cap) {
-    g_err_detail = 0;
+    err_clear();
     if (in_len < 7) return -REPLAY_EINPUT;
     int n = in[0], trump_id = in[1], fa = in[2];
     if (n < 2 || n > MAX_PLAYERS) return -REPLAY_EINPUT;
@@ -1541,6 +1548,17 @@ static DealSlot g_deal_slot;
 // trump. Passing the whole stock rather than only the cards this game went on
 // to draw is what the TS producer did too, and costs nothing: run_replay_v6
 // pops reveals as draws happen and never reads the tail.
+// THE SLOT IS DELIBERATELY SHORTER THAN A Game, which is the whole point of it
+// (see DEAL_SLOT_BYTES above): a full Game is ~130 KB of logs this deal never
+// reads. gcc sees the cast reach past the array it really is and says so
+// ("array subscript 'Game[0]' is partly outside array bounds of 'DealSlot[1]'",
+// -Warray-bounds). It is right about the bytes and wrong about the intent, so
+// the warning is off for THIS FUNCTION ONLY - not for the file, and not by
+// growing the slot back to a Game.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
 static int deal_reveals_from_seed(const unsigned char *seed, int seed_len, int n,
                                   unsigned char *reveals, int *out_nr, int *out_trump) {
     Game *d = (Game *)g_deal_slot.bytes;
@@ -1584,10 +1602,13 @@ static int deal_reveals_from_seed(const unsigned char *seed, int seed_len, int n
     *out_nr = nr;
     return 0;
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 int replay_encode_v6_from_game(const Game *g, const unsigned char *seed, int seed_len,
                                int max_atoms, unsigned char *out, int out_cap) {
-    g_err_detail = 0;
+    err_clear();
     if (!g || !seed || seed_len < FOOLISH_SEED_LEN) return -REPLAY_EINPUT;
     if (g->num_logs >= MAX_LOGS) return -REPLAY_ETOOLONG;  // overflowed → untrusted
     int n = g->num_players;
@@ -1643,7 +1664,7 @@ int replay_encode_v6_from_game(const Game *g, const unsigned char *seed, int see
 // -REPLAY_E*.
 static int decode_impl(const unsigned char *in, int in_len,
                        unsigned char *out, int out_cap, ReplayHeader *hdr) {
-    g_err_detail = 0;
+    err_clear();
     if (in_len < 0 || in_len > REPLAY_MAX_INT_BYTES) return -REPLAY_ECAP;
     if (out && out_cap < REPLAY_DEC_HDR) return -REPLAY_ECAP;
     if (!bn_from_bytes_be(&g_bn, in, in_len)) return -REPLAY_ECAP;
@@ -1662,6 +1683,7 @@ static int decode_impl(const unsigned char *in, int in_len,
     int version = coder_uniform(&c, REPLAY_VERSION_ALPHABET, -1);
     if (version != REPLAY_FORMAT_VERSION_V10) {
         g_err_detail = version;
+        g_err.version = version;
         return -REPLAY_EVERSION;
     }
     // The pass-mode bit, right after the version symbol: it decides the MENU
@@ -1738,6 +1760,30 @@ static int decode_impl(const unsigned char *in, int in_len,
 int replay_decode(const unsigned char *in, int in_len,
                   unsigned char *out, int out_cap) {
     return decode_impl(in, in_len, out, out_cap, 0);
+}
+
+int replay_decoded_log(const unsigned char *dec, int len, int *at, ReplayDecodedLog *out) {
+    const int p = *at;
+    if (p < REPLAY_DEC_HDR || p > len) return -REPLAY_EINPUT;
+    if (p == len) return 0;
+    if (len - p < 4) return -REPLAY_EINPUT;
+    const unsigned char *q = dec + p;
+    const int n = q[3];
+    if (n > REPLAY_MAX_PAIRS || len - p - 4 < 2 * n) return -REPLAY_EINPUT;
+    for (int i = 0; i < n; i++) {
+        if (q[4 + 2 * i] > 51) return -REPLAY_EINPUT;
+        if (q[5 + 2 * i] > 51 && q[5 + 2 * i] != REPLAY_CARD_NONE) return -REPLAY_EINPUT;
+    }
+    out->log_type = (int8_t)q[0];
+    out->seat = q[1] == 0xFF ? -1 : (int8_t)q[1];
+    out->defender = q[2] == 0xFF ? -1 : (int8_t)q[2];
+    out->n_pairs = (uint8_t)n;
+    for (int i = 0; i < n; i++) {
+        out->primary[i] = card_of_id(q[4 + 2 * i]);
+        out->target[i] = q[5 + 2 * i] == REPLAY_CARD_NONE ? CARD_NONE : card_of_id(q[5 + 2 * i]);
+    }
+    *at = p + 4 + 2 * n;
+    return 1;
 }
 
 // The atoms, not the logs — see replay.h. Same decode, same model (the menus

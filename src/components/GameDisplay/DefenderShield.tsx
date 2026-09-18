@@ -1,25 +1,20 @@
-import { PersonalGame } from "@api/core/types.ts";
-import { useAuth } from "../../contexts/AuthContext";
 import { useServer } from "../../contexts/ServerContext";
 import { SovietIcon } from "../SovietIcon";
+import { rulesOf, type TableView } from "../../state/view";
 
 export const DefenderShield = () => {
-    const game: PersonalGame = useServer().game as PersonalGame;
-    const { user_id } = useAuth();
-    const self_index = game.players.findIndex((player) => player.player_id === user_id);
+    const game = useServer().view as TableView;
+    const self_index = game.mySeat;
 
-    // Don't show shield during intermediate initialization state (deck exists but flipped card not set)
-    if (game.deck_length > 0 && game.flipped === null) {
+    // The shield's seat is the kernel's (client_view_rules): the defender, and
+    // no one during the deal's intermediate state (deck laid out, trump not yet turned).
+    const defender = rulesOf(game).defenderBadge;
+    if (defender < 0) {
         return <></>;
     }
 
-    const defenderPlayer = game.players[game.defender];
-    if (!defenderPlayer) {
-        return <></>;
-    }
-
-    const visual_index = (game.defender - self_index + game.players.length) % game.players.length;
-    const radians = (2) * Math.PI * visual_index / (game.players.length);
+    const visual_index = (defender - self_index + game.seats.length) % game.seats.length;
+    const radians = (2) * Math.PI * visual_index / (game.seats.length);
 
     // Calculate defender position
     const H = window.innerHeight;

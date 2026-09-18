@@ -278,6 +278,12 @@ typedef struct {
     // bound for the flipped (trump) slot (which does NOT reduce the deck badge).
     int in_flight_from_deck;
     int in_flight_to_flipped;
+    // WHICH VEILED CARDS THIS STEP LIFTS, as dense-id bits. AnimPlan.veil_ids
+    // says which identities the whole sequence brings into being; it cannot
+    // answer "is this card still veiled at now_ms", because that needs to know
+    // WHICH step reveals it. A caller sampling the plan per frame unions the
+    // reveals of every step that has not landed (anim_plan_at).
+    uint64_t reveals;
 } AnimPlanStep;
 
 typedef struct {
@@ -371,6 +377,67 @@ int anim_step_duration_ms(int event_type);
 int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
                     int final_deck, int final_discard, Card final_flipped,
                     const int *final_hand, AnimPlan *out);
+
+// ---- the plan, RE-ASKED ---------------------------------------------------
+//
+// A PLAN IS NOT A SCHEDULE, and a host with a frame loop wants the second one.
+// The web's answer was a chain of setTimeouts, one per step, each committing a
+// board and arming the next; a push arriving mid-flight could then only be
+// applied by editing the queue the chain was walking, which is what the four
+// insertion branches in AnimationContext.tsx were. This entry inverts it: ask
+// "where does this stand at now_ms" every frame and the answer is a value, so
+// an arrival is answered by the NEXT call and nothing has to be cancelled.
+//
+// THE CLOCK IS AN ARGUMENT. This file calls nothing (the import-free kernel
+// rule), so `now_ms` is measured from the sequence's start and the host owns
+// the origin - the same shape msg_pickup_hold_remaining takes its `now` in.
+//
+// Everything the web held in React state while its chain walked is a field
+// here: which step is flying, how far into it, which board to commit, which
+// badges to show, and which cards are still in the air.
+
+// "no step is playing right now", for a gap between two flights and for a
+// sequence that has ended. A caller drawing a flight for a step that is not
+// playing is the stale-overlay class of bug.
+#define ANIM_STEP_NONE (-1)
+// "the answer will not change again", for AnimFrame.next_ms. Distinct from 0,
+// which would mean "re-ask immediately".
+#define ANIM_NEVER (-1)
+
+typedef struct {
+    int step;         // the step whose flight is playing, or ANIM_STEP_NONE
+    int elapsed_ms;   // how far into that step's flight; 0 when none is playing
+    // HOW MANY STEPS HAVE LANDED, which is the board to commit: 0 means the
+    // freeze is what shows, n means steps[n-1]'s own board does. It is a count
+    // and not an index precisely so that "nothing has landed yet" is
+    // expressible without a second sentinel.
+    int landed;
+    // THE NEXT MOMENT THE ANSWER CHANGES, from the sequence's start: the
+    // landing of the step in flight, or the start of the next one, or
+    // ANIM_NEVER. A caller with a frame loop uses it to skip work; a caller
+    // with a timer uses it as the one deadline it has to arm.
+    int next_ms;
+    int done;         // 1 once every step has landed
+    // THE BADGES AS OF NOW: the freeze until step 0 lands, then the last
+    // landed step's own board. The same walk anim_build_plan already did,
+    // sampled rather than replayed.
+    int deck, discard;
+    int hand[MAX_PLAYERS];
+    int n_players;
+    Card flipped;     // the freeze's trump until a step lands one out
+    // Of the step in flight: how many of its cards are out of the deck, and
+    // how many of those are bound for the trump's slot.
+    int in_flight_from_deck, in_flight_to_flipped;
+    // THE VEIL AS OF NOW, as dense-id bits: every identity the sequence brings
+    // into being whose own step has not landed. Union of the reveals of the
+    // steps still to come, which is why AnimPlanStep carries `reveals`.
+    uint64_t veiled;
+} AnimFrame;
+
+// Sample `plan` at `now_ms` (from the sequence's start).
+// Returns ANIM_EOK, or ANIM_EBADARG (NULL plan or out, a negative clock, a
+// plan whose step count is out of range).
+int anim_plan_at(const AnimPlan *plan, int now_ms, AnimFrame *out);
 
 // ---- beats: the SHAPE a sequence plays in ---------------------------------
 //
@@ -829,6 +896,25 @@ int anim_conflict_reversal(const AnimConflictMotion *motions, int n_motions,
                            const AnimConflictFacts *facts,
                            AnimConflictPlan *out);
 
+// THE ORDER ALONE, for a caller that already holds the verdicts.
+//
+// THE DECISION IS TRANSPORT-DEPENDENT AND THE ORDER IS NOT, which is the whole
+// reason this is a second entry rather than a flag on the first. Deciding that
+// a card is doomed from silence is a thing only a total order can do, so
+// anim_conflict_reversal refuses a SERVER-transport call; but "the cards travel
+// back the way they came, last group first, and a group nothing reverts is
+// dropped rather than played as a beat of silence" is a fact about a reversal,
+// not about how its doom was learned. A server client reaches the same order by
+// asking anim_conflict_verdict per card first - which it must do anyway, since
+// only that entry asks the AnimServerHope - and handing the verdicts here.
+//
+// `verdicts` is n_motions of ANIM_CONFLICT_*, in the order the motions flew,
+// sliced by `group_sizes` exactly as above; passing `out->verdicts` back in is
+// explicitly allowed. Returns the step count, or ANIM_EBADARG / ANIM_ECAP.
+int anim_reversal_order(const unsigned char *verdicts, int n_motions,
+                        const int *group_sizes, int n_groups,
+                        AnimConflictPlan *out);
+
 // ---- the board's own sets and small rules ---------------------------------
 //
 // THE VEIL, THE HAND, THE TABLE AND THE END SCREEN, lifted whole out of
@@ -975,6 +1061,30 @@ int anim_laid_count(const unsigned char *hand, int n_hand,
 int anim_hand_laid_out(const unsigned char *cards, int n_cards, uint64_t deferred,
                        const unsigned char *order, int n_order,
                        unsigned char *out, int cap);
+
+// THE SAME ARRAY FOR A HAND THAT HAS FACE-DOWN SLOTS IN IT. An
+// ANIM_TABLE_UNKNOWN entry is a card that is there and has no dense id - a
+// back the caller cannot name - and it is the one thing the rule above cannot
+// express, because everything it decides it decides by identity.
+//
+// THREE IMPLEMENTATIONS OF THIS SHIPPED ON THE WEB, and that is what this
+// closes. mergeReplayHandOrder (src/components/ReplayScreen.tsx) reconciled
+// backs BY COUNT over a `(Card | null)[]`; displayedHand
+// (src/state/clientReconcile.ts) reconciled BY KEY and had no way to hold a
+// back at all; anim_hand_laid_out took dense ids only. So one rearrangement
+// scrubbed through a replay and played live could produce two different
+// arrays, which is the hand-order divergence the iMessage work found.
+//
+// A BACK IS RECONCILED BY COUNT, because it has no identity to be stale
+// about: each ANIM_TABLE_UNKNOWN in `order` consumes one of the hand's backs
+// while any are left, and the extras fall out. Everything else is the rule
+// above, unchanged - stale and repeated known ids drop out, deferred cards
+// reserve nothing, and the hand's leftovers append in kernel order. A hand
+// with no backs in it gets the identical answer from both entries.
+// Returns the count written, or ANIM_ECAP / ANIM_EBADARG.
+int anim_hand_laid_out_masked(const unsigned char *cards, int n_cards, uint64_t deferred,
+                              const unsigned char *order, int n_order,
+                              unsigned char *out, int cap);
 
 // ---- the table under the sweep ----
 

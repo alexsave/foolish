@@ -27,9 +27,10 @@
 // a green run against a hand-built fixture is evidence about the fixture.
 //
 // MUTATION MATRIX (each run against the change it names, each must FAIL):
-//   * SurfacePlan's decode reading `passing` where `transition` sits ->
+//   * SurfacePlan's read taking `passing` where `transition` sits ->
 //     testJoinAndStartSnapsThenFades, testRulesAloneRotates
-//   * FIO_SURFACE_STRIDE as 6 -> every beat-shaped assertion
+//     (the words are the kernel's AnimSurfaceBeat fields now, not offsets into
+//     a block of int32s - Phase 10)
 //   * anim_surface_plan not collapsing a lone snap -> testJoinAloneStagesNothing
 //   * the game-id guard in msg_surface_delta -> testAnotherGamesBubbleIsASwitch
 import XCTest

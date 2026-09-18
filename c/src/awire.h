@@ -1,5 +1,6 @@
 // Action wire ("awire" v1) — the packed move a client sends. The SAME bytes
-// the browser validates through guards.wasm are POSTed verbatim and applied
+// the browser validates on its client slot (client_table.h client_validate)
+// are POSTed verbatim and applied
 // by rules.wasm on the server: one decoder, compiled into both modules, so
 // the two sides can never disagree about what a payload means.
 //

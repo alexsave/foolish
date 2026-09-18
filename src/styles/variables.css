@@ -68,6 +68,10 @@
   --text-shadow-darker: 2px 2px 4px rgba(0, 0, 0, 0.9);
   --text-shadow-title: 0 4px 8px rgba(0, 0, 0, 0.4), 0 2px 4px rgba(0, 0, 0, 0.3);
   --text-shadow-outline: 0 0 3px black, 0 0 3px black, 0 0 3px black;
+  /* Small light text straight on the wool (seat names, the share row): the
+     pale weave needs a hard black shadow under a bone label to read, as the
+     iOS seat badge draws it (FSeatBadge.nameShadow). */
+  --text-shadow-label: 0 1px 2px rgba(0, 0, 0, 0.9), 0 0 3px rgba(0, 0, 0, 0.75), 0 0 1px rgba(0, 0, 0, 0.9);
   
   /* Error boundary shadow */
   --shadow-error: 2px 2px 10px rgba(0, 0, 0, 0.1);
@@ -213,6 +217,7 @@
   --text-shadow-darker: none;
   --text-shadow-title: none;
   --text-shadow-outline: none;
+  --text-shadow-label: none;
   
   /* ===== Soviet Borders - Thick and bold ===== */
   --border-wood: 4px solid #B32929;

@@ -1,30 +1,24 @@
-// The bot roster is written down in three places. This test makes them agree.
+// The bot roster is written down in two places, and the kernel's build is a
+// third witness. This test makes them agree.
 //
 // The canonical table is the C kernel's (c/src/bot_roster.c): key -> brain
 // + tuning knobs + logs flag + flags, shared by the server, the phone and every
-// future client (docs/C_CORE_CONSOLIDATION.md F1/A1). The other two are
-// consumers that still restate parts of it:
+// future client (docs/C_CORE_CONSOLIDATION.md F1/A1). The server seats a bot by
+// its key through that table on the C Table (table_load refuses a brain the
+// build does not know). The other places that name bots:
 //
-//   * server/api/common/bot_strategy.ts — the TS registry, which still
-//     carries the knobs as a wasm env table. Env OVERRIDES the roster
-//     (c/src/bot_knobs.h), so while both exist the server's behavior is
-//     defined by this file — and it must therefore say EXACTLY what the roster
-//     says, or the phone and the site run different bots. That is not a
-//     hypothetical: before the roster, iOS ran cordite at the arena budget with
-//     early-race off, and pointed `handwritten`/`espresso` at the arena variants
-//     rather than the production mirrors (§3).
-//   * server/impls/supabase/seed.sql — the live bot rows, which must be exactly the roster's
-//     `seeded` set. A seeded key the kernel does not dispatch silently plays as
-//     `random` (wasm_choose_move's default arm), i.e. a bot that plays nothing
-//     like its name and pollutes the Elo leaderboard.
+//   * server/impls/supabase/seed.sql - the live bot rows, which must be exactly
+//     the roster's `seeded` set, each linked into the shipped bots.wasm. A seeded
+//     key the kernel does not dispatch is a bot that plays nothing like its name
+//     and pollutes the Elo leaderboard.
+//   * .github/workflows/memory.yml - the edge memory gate's bot keysets.
 //
-// These are read as TEXT on purpose: the assertion must hold without a C or
-// wasm build, so it also catches an edit that lands before bots.wasm.gz is
-// regenerated. When the TS env table is deleted (the cutover step), the registry
-// half of this test goes with it and the roster simply wins.
+// The roster and seed.sql are read as TEXT on purpose: those assertions must
+// hold without a C or wasm build, so they also catch an edit that lands before
+// bots.wasm.gz is regenerated. The kernel's own dump (kernelBotRoster) is then
+// held to the text, so the shipped module carries the table the source says.
 import { test } from 'node:test';
-import { botStrategyKeys, resolveBotStrategy, WasmBotStrategy } from '../server/api/common/bot_strategy.ts';
-import { kernelBotRoster, kernelBotStrat } from '../sdk/ts/wasm/bots.ts';
+import { kernelBotRoster } from '../sdk/ts/wasm/bots.ts';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -97,24 +91,6 @@ function parseKnobSpec(spec: string): Record<string, string> {
     return out;
 }
 
-// Parse the TS registry rows:
-//   ['cordite', new WasmBotStrategy('cordite', STRAT.cordite, { env: {...}, logs: true })],
-// The registry, ASKED rather than parsed. It used to be scraped out of
-// bot_strategy.ts as text, because it was a second table that had to be held
-// against the C one. It is not a table any more - it is built from
-// kernelBotRoster() - so this reads what the server would actually dispatch.
-function tsRegistry(): Map<string, { strat: number; logs: boolean }> {
-    const out = new Map<string, { strat: number; logs: boolean }>();
-    for (const key of botStrategyKeys()) {
-        const s = resolveBotStrategy(key);
-        assert.ok(s instanceof WasmBotStrategy, `registry key '${key}' is not a kernel strategy`);
-        const w = s as WasmBotStrategy;
-        assert.equal(w.name, key, `registry key '${key}' disagrees with its display name '${w.name}'`);
-        out.set(key, { strat: kernelBotStrat(key), logs: w.logs });
-    }
-    return out;
-}
-
 // The bots seed.sql actually inserts.
 function parseSeededKeys(): Set<string> {
     // Strip `--` comments FIRST: the prose between the rows contains semicolons
@@ -130,23 +106,6 @@ function parseSeededKeys(): Set<string> {
     for (const m of stmt.matchAll(/\(\s*'[^']*'\s*,\s*'([^']+)'\s*\)/g)) keys.add(m[1]);
     return keys;
 }
-
-// STRAT_* (C) <-> STRAT.* (TS, wasm/bots.ts) name mapping. Both sides are
-// checked against strategy.h so a renamed id fails loudly rather than silently
-// comparing two different brains.
-const C_TO_TS_STRAT: Record<string, string> = {
-    STRAT_RANDOM: 'random',
-    STRAT_SIMPLE_HEURISTIC: 'simple_heuristic',
-    STRAT_HANDWRITTEN_PROD: 'handwritten',
-    STRAT_ESPRESSO_PROD: 'espresso',
-    STRAT_FIRECRACKER: 'firecracker',
-    STRAT_BLACKPOWDER: 'blackpowder',
-    STRAT_CORDITE: 'cordite',
-    STRAT_OCTOGEN: 'octogen',
-    // Offline-only rungs; the site has never registered these.
-    STRAT_ROBUSTA: null as unknown as string,
-    STRAT_GUNPOWDER: null as unknown as string,
-};
 
 test('C roster: table is well-formed and is the strength ladder', () => {
     const roster = parseCRoster();
@@ -191,50 +150,28 @@ test('C roster: the _max tiers are retired', () => {
     for (const gone of ['cordite_max', 'octogen_max', 'semtex_max']) {
         assert.ok(!keys.has(gone), `${gone} must not return to the roster`);
     }
-    const registry = tsRegistry();
+    const dumped = new Set(kernelBotRoster().map(e => e.key));
     for (const gone of ['cordite_max', 'octogen_max', 'semtex_max']) {
-        assert.ok(!registry.has(gone), `${gone} must not be registered in TS`);
+        assert.ok(!dumped.has(gone), `${gone} must not be in the kernel's roster`);
     }
     assert.ok(!parseSeededKeys().has('cordite_max'), 'cordite_max must not be seeded');
     assert.ok(!parseSeededKeys().has('octogen_max'), 'octogen_max must not be seeded');
 });
 
-test('the TS registry IS the roster\'s seeded set - there is no second table', () => {
+test('the shipped kernel carries the roster the source says, and links every seeded bot', () => {
     const roster = parseCRoster();
-    const registry = tsRegistry();
-
-    // Exactly the seeded rows, no more and no fewer. This used to be a
-    // field-by-field comparison of two hand-written tables; bot_strategy.ts now
-    // BUILDS its registry from kernelBotRoster(), so what is left to check is
-    // that it selects the right rows and carries them faithfully.
-    const seeded = roster.filter(r => r.seeded).map(r => r.key).sort();
-    assert.deepEqual([...registry.keys()].sort(), seeded,
-        'the registry must dispatch exactly the bots seed.sql creates');
-
-    // parseCRoster reads bot_roster.c as TEXT, so its `strat` is the C symbol
-    // name; the runtime dump gives the id that symbol compiles to. Compare each
-    // against its own kind: the text roster settles which rows exist and which
-    // are seeded, the dump settles what the registry carried across.
     const dump = new Map(kernelBotRoster().map(e => [e.key, e]));
+    assert.deepEqual([...dump.keys()], roster.map(r => r.key), 'the kernel dumps the rows bot_roster.c lists, in order');
     for (const entry of roster) {
-        const ts = registry.get(entry.key);
-        if (!ts) {
-            // Offline-only rungs (espresso/robusta/gunpowder) must NOT acquire a
-            // registration: the site never deals them, and two of the three are
-            // not even linked into the shipped bots.wasm
-            // (FOOLISH_SEEDED_BOTS_ONLY), so a seat carrying one would play the
-            // first legal move under that bot's name.
-            assert.ok(!entry.seeded, `${entry.key} is seeded but missing from the registry`);
-            continue;
-        }
-        const k = dump.get(entry.key);
-        assert.ok(k, `${entry.key} is in bot_roster.c but not in the kernel's own dump`);
-        assert.equal(ts.strat, k!.strat,
-            `${entry.key}: the registry's brain id is not the roster's`);
-        assert.equal(ts.logs, k!.usesLogs,
-            `${entry.key}: uses_logs differs - one host would skip the belief log`);
-        assert.equal(k!.usesLogs, entry.usesLogs,
-            `${entry.key}: the kernel dump disagrees with bot_roster.c's own text`);
+        const k = dump.get(entry.key)!;
+        assert.equal(k.usesLogs, entry.usesLogs,
+            `${entry.key}: uses_logs differs - the server would skip or feed the belief log wrongly`);
+        assert.equal(k.seeded, entry.seeded, `${entry.key}: seeded differs from bot_roster.c`);
+        assert.equal(k.offline, entry.offline, `${entry.key}: offline differs from bot_roster.c`);
+        assert.equal(k.tier, entry.tier, `${entry.key}: tier differs from bot_roster.c`);
+        // A seeded bot is dealt on the site: the shipped module must run its
+        // brain, or a seat carrying it has no bot behind its name.
+        if (entry.seeded) assert.ok(k.linked, `${entry.key} is seeded but not linked into bots.wasm`);
     }
 });
 
@@ -261,7 +198,7 @@ function parseWorkflowKeysets(): string[][] {
 
 test('memory.yml drives bots that this tree actually ships', () => {
     const roster = parseCRoster();
-    const registry = tsRegistry();
+    const linked = new Set(kernelBotRoster().filter(e => e.linked).map(e => e.key));
     const keysets = parseWorkflowKeysets();
 
     assert.ok(keysets.length > 0, 'the edge-serve gate drives no bots at all');
@@ -272,12 +209,10 @@ test('memory.yml drives bots that this tree actually ships', () => {
             const entry = roster.find(r => r.key === key);
             assert.ok(entry, `memory.yml drives '${key}', which is not in the C roster `
                 + `(c/src/bot_roster.c). It resolves to 'random', and the job measures that.`);
-            // In the roster is not enough: the SERVER seats bots through the TS
-            // registry, and a key it does not carry takes the same silent
-            // fallback even though the kernel knows the name.
-            assert.ok(registry.has(key), `memory.yml drives '${key}', which the C roster knows `
-                + `but the TS registry (server/api/common/bot_strategy.ts) does not — the edge `
-                + `runtime seats 'random' for it.`);
+            // In the roster is not enough: a brain the shipped bots.wasm does not
+            // link cannot be seated, so the gate would measure nothing under its name.
+            assert.ok(linked.has(key), `memory.yml drives '${key}', which the C roster knows `
+                + `but the shipped bots.wasm does not link.`);
         }
     }
 

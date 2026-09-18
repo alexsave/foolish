@@ -85,7 +85,6 @@ static bool play_one_game(uint32_t seed, int num_players, const int *seat_strats
     for (int i = 0; i < num_players; i++) {
         g.players[i].status = PLAYER_STATUS_READY;
         g.players[i].strategy_key = (int8_t)COMPS[seat_strats[i]].strat_key;
-        snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
     }
     start_game(&g);
 

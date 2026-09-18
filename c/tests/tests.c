@@ -22,6 +22,9 @@
 #include "../src/anim_plan.h"
 #include "../src/cordite_sim.h"
 #include "../src/analyse.h"
+#include "../src/roster.h"
+#include "../src/table.h"
+#include "../src/client_table.h"
 #include "../wasm/wire.h"
 #include <stdio.h>
 #include <sys/mman.h>
@@ -42,8 +45,6 @@ static void make_2p_game(Game *g) {
     g->num_players = 2;
     for (int i = 0; i < 2; i++) {
         g->players[i].status = PLAYER_STATUS_READY;
-        snprintf(g->players[i].player_id, sizeof(g->players[i].player_id), "p%d", i);
-        snprintf(g->players[i].name, sizeof(g->players[i].name), "P%d", i);
     }
 }
 
@@ -122,6 +123,23 @@ static void test_awire_apply_roundtrip(void) {
     CHECK(!awire_apply(&g, 7, &dec), "awire_apply: seat out of range rejected");
 }
 
+// Test: a card byte in an action wire is a card (0..51), or the wire is refused.
+// It used to clamp onto card 51, so [attack, 1, 0xFF] played the ace of diamonds
+// for a seat that held it, and the hidden card 0xFE reached the rules as a move.
+static void test_awire_refuses_bytes_that_are_not_cards(void) {
+    AwireAction a;
+    const unsigned char ok[] = { AWIRE_ATTACK, 1, 51 };
+    const unsigned char none[] = { AWIRE_ATTACK, 1, 0xFF }, hidden[] = { AWIRE_PASS, 1, 0xFE }, past[] = { AWIRE_ATTACK, 2, 3, 52 };
+    const unsigned char cover_ok[] = { AWIRE_COVER, 1, 7, 6 }, cover_bad[] = { AWIRE_COVER, 1, 7, 200 };
+    CHECK(awire_decode(ok, sizeof ok, &a) == 1 && a.cards[0].suit == 3 && a.cards[0].value == 13, "card 51 is the ace of diamonds");
+    CHECK(awire_decode(none, sizeof none, &a) == 0, "0xFF (no card) is refused, not clamped onto card 51");
+    CHECK(awire_decode(hidden, sizeof hidden, &a) == 0, "0xFE (the hidden card) is refused");
+    CHECK(awire_decode(past, sizeof past, &a) == 0, "52 is refused in any position");
+    CHECK(awire_decode(cover_ok, sizeof cover_ok, &a) == 1, "a cover of real cards reads");
+    CHECK(awire_decode(cover_bad, sizeof cover_bad, &a) == 0, "a cover's attack card byte is held to the same rule");
+    CHECK(awire_frame_len(none, sizeof none) == 3, "the frame walk still measures the frame (the chain container refuses at decode)");
+}
+
 // Test: the kernel records its OWN game-over. A full game played through the
 // apply chokepoint (awire_apply — the native server + iOS path) must leave
 // g->status == GAME_OVER when it ends, so no host recomputes game_done to keep a
@@ -134,7 +152,6 @@ static void test_awire_apply_settles_game_over(void) {
     g.num_players = 3;
     for (int i = 0; i < 3; i++) {
         g.players[i].status = PLAYER_STATUS_READY;
-        snprintf(g.players[i].player_id, sizeof g.players[i].player_id, "p%d", i);
     }
     start_game(&g);
     CHECK(g.status == GAME_STATUS_PLAYING, "settle: a dealt game is PLAYING");
@@ -355,7 +372,6 @@ static void test_full_game_3p_handwritten(void) {
     g.num_players = 3;
     for (int i = 0; i < 3; i++) {
         g.players[i].status = PLAYER_STATUS_READY;
-        snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
     }
     start_game(&g);
     int iters = 0;
@@ -464,7 +480,6 @@ static void test_elimination_order_never_repeats_a_seat(void) {
             g.num_players = np;
             for (int i = 0; i < np; i++) {
                 g.players[i].status = PLAYER_STATUS_READY;
-                snprintf(g.players[i].name, sizeof(g.players[i].name), "p%d", i);
             }
             g.status = GAME_STATUS_WAITING;
             start_game(&g);
@@ -581,7 +596,6 @@ static void setup_playing_2p(Game *g) {
     g->defender = 1;
     for (int i = 0; i < 2; i++) {
         g->players[i].status = PLAYER_STATUS_IN;
-        snprintf(g->players[i].player_id, sizeof(g->players[i].player_id), "p%d", i);
     }
 }
 
@@ -617,7 +631,6 @@ static void setup_playing_np(Game *g, int np) {
     g->deterministic_deck = true;   // draw_index pops deck[0], so the deck is a queue
     for (int i = 0; i < np; i++) {
         g->players[i].status = PLAYER_STATUS_IN;
-        snprintf(g->players[i].player_id, sizeof(g->players[i].player_id), "p%d", i);
     }
 }
 
@@ -1767,8 +1780,6 @@ static void make_seeded_game(Game *g, int n_players, int seed) {
     g->num_players = (int8_t)n_players;
     for (int i = 0; i < n_players; i++) {
         g->players[i].status = PLAYER_STATUS_READY;
-        snprintf(g->players[i].player_id, sizeof(g->players[i].player_id), "p%d", i);
-        snprintf(g->players[i].name, sizeof(g->players[i].name), "P%d", i);
     }
     start_game(g);
 }
@@ -2280,6 +2291,101 @@ static void test_replay_frames_are_the_replay_events(void) {
         CHECK(r == REPLAY_EOK, "the same code replays to the event sink");
         CHECK(ctx.n_events > 0, "and the sink saw events");
     }
+}
+
+// A code at a glance must say what the decoder's header and log stream say: the
+// seats, the trump and the opener, the fool and the order the others went out,
+// and one move per attack, cover, pass and pickup record (the extras' gaps).
+static void test_replay_summary_is_the_decode(void) {
+    static unsigned char code[1 << 20];
+    static unsigned char dec[1 << 20];
+    int checked = 0;
+    for (int np = 2; np <= 8; np++) {
+        Game g;
+        unsigned char seed[FOOLISH_SEED_LEN];
+        if (!rs_play_seeded(&g, np, 700 + np, seed)) continue;
+        const int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20, code, (int)sizeof code);
+        const int dl = enc > 0 ? replay_decode(code, enc, dec, (int)sizeof dec) : -1;
+        if (dl < REPLAY_DEC_HDR) { CHECK(0, "a seeded game encodes and decodes"); continue; }
+        ReplaySummary s;
+        memset(&s, 0x55, sizeof s);
+        const int r = replay_summary_v6(code, enc, &s);
+        int moves = 0;
+        const int n_logs = dec[16] | (dec[17] << 8) | (dec[18] << 16) | (dec[19] << 24);
+        const unsigned char *q = dec + REPLAY_DEC_HDR;
+        for (int i = 0; i < n_logs; i++) {
+            if (q[0] == LOG_ATTACK || q[0] == LOG_COVER || q[0] == LOG_PASS || q[0] == LOG_PICKUP) moves++;
+            q += 4 + 2 * q[3];
+        }
+        int same = r == REPLAY_EOK && s.num_players == dec[1] && s.power_suit == dec[2] / 13 && s.first_attacker == dec[3]
+            && s.fool == (dec[4] == 0xFF ? -1 : dec[4]) && s.num_eliminated == dec[7] && s.moves == moves
+            && s.version == dec[0] && card_to_id(s.trump) == dec[2] && s.discard_pile_length == (dec[5] | (dec[6] << 8));
+        for (int i = 0; same && i < dec[7]; i++) same = s.elimination[i] == dec[8 + i];
+        CHECK(same, "the summary is what the decoder's header and log stream say");
+        checked++;
+    }
+    CHECK(checked >= 6, "seeded games at most seat counts were summarised");
+    ReplaySummary s;
+    const unsigned char junk[] = { 0x07 };
+    CHECK(replay_summary_v6(junk, 1, &s) < 0, "a code that does not decode has no summary");
+}
+
+// replay_decoded_log is how a host reads the decoder's log stream: every record,
+// field for field, in order, then the end - and a refusal for bytes the decoder
+// never writes rather than a read past them.
+static void test_replay_decoded_log_reads_the_stream(void) {
+    static unsigned char code[1 << 20];
+    static unsigned char dec[1 << 20];
+    int checked = 0;
+    for (int np = 2; np <= 8; np++) {
+        Game g;
+        unsigned char seed[FOOLISH_SEED_LEN];
+        if (!rs_play_seeded(&g, np, 900 + np, seed)) continue;
+        const int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20, code, (int)sizeof code);
+        const int dl = enc > 0 ? replay_decode(code, enc, dec, (int)sizeof dec) : -1;
+        if (dl < REPLAY_DEC_HDR) { CHECK(0, "a seeded game encodes and decodes"); continue; }
+        const int n_logs = dec[16] | (dec[17] << 8) | (dec[18] << 16) | (dec[19] << 24);
+        int at = REPLAY_DEC_HDR, same = 1, read = 0;
+        const unsigned char *q = dec + REPLAY_DEC_HDR;
+        ReplayDecodedLog l;
+        for (int i = 0; same && i < n_logs; i++) {
+            same = replay_decoded_log(dec, dl, &at, &l) == 1
+                && l.log_type == q[0] && l.seat == (q[1] == 0xFF ? -1 : q[1]) && l.defender == (q[2] == 0xFF ? -1 : q[2])
+                && l.n_pairs == q[3];
+            for (int j = 0; same && j < q[3]; j++) {
+                const int p = q[4 + 2 * j], t = q[5 + 2 * j];
+                same = card_to_id(l.primary[j]) == p
+                    && (t == REPLAY_CARD_NONE ? card_is_none(l.target[j]) : card_to_id(l.target[j]) == t);
+            }
+            q += 4 + 2 * q[3];
+            read += same;
+        }
+        CHECK(same && read == n_logs, "every record of the stream reads as its bytes, in order");
+        CHECK(at == dl && replay_decoded_log(dec, dl, &at, &l) == 0, "then the stream ends where the decoder's output does");
+        checked++;
+    }
+    CHECK(checked >= 6, "seeded games at most seat counts were read");
+
+    ReplayDecodedLog l;
+    int at = REPLAY_DEC_HDR;
+    unsigned char bad[REPLAY_DEC_HDR + 8] = {0};
+    const unsigned char rec[] = { LOG_ATTACK, 0, 1, 1, 5, REPLAY_CARD_NONE };
+    memcpy(bad + REPLAY_DEC_HDR, rec, sizeof rec);
+    CHECK(replay_decoded_log(bad, REPLAY_DEC_HDR + 5, &at, &l) == -REPLAY_EINPUT, "a record cut short is refused");
+    CHECK(at == REPLAY_DEC_HDR, "and the cursor does not move");
+    CHECK(replay_decoded_log(bad, REPLAY_DEC_HDR + 6, &at, &l) == 1 && card_is_none(l.target[0]), "the whole record reads");
+    bad[REPLAY_DEC_HDR + 4] = 52; at = REPLAY_DEC_HDR;
+    CHECK(replay_decoded_log(bad, REPLAY_DEC_HDR + 6, &at, &l) == -REPLAY_EINPUT, "a card id past 51 is refused");
+    bad[REPLAY_DEC_HDR + 4] = REPLAY_CARD_NONE; at = REPLAY_DEC_HDR;
+    CHECK(replay_decoded_log(bad, REPLAY_DEC_HDR + 6, &at, &l) == -REPLAY_EINPUT, "a primary card is never none");
+    bad[REPLAY_DEC_HDR + 4] = 5; bad[REPLAY_DEC_HDR + 3] = REPLAY_MAX_PAIRS + 1; at = REPLAY_DEC_HDR;
+    static unsigned char wide[REPLAY_DEC_HDR + 4 + 2 * (REPLAY_MAX_PAIRS + 1)];
+    memcpy(wide, bad, sizeof bad);
+    CHECK(replay_decoded_log(wide, (int)sizeof wide, &at, &l) == -REPLAY_EINPUT, "more pairs than a record holds is refused");
+    at = 3;
+    CHECK(replay_decoded_log(bad, REPLAY_DEC_HDR + 6, &at, &l) == -REPLAY_EINPUT, "a cursor inside the header is refused");
+    at = REPLAY_DEC_HDR + 7;
+    CHECK(replay_decoded_log(bad, REPLAY_DEC_HDR + 6, &at, &l) == -REPLAY_EINPUT, "a cursor past the stream is refused");
 }
 
 // The step index is what lets a scrubber say "Bot 2 passed" instead of "Bot 2
@@ -3187,6 +3293,240 @@ static void test_replay_refuses_every_retired_version(void) {
 }
 
 /* ---------------- A6: reset to lobby is one transform -------------------- */
+
+// ---------- state_import: the kernel refuses a state it could not produce ----
+//
+// Every host hands the kernel a Game as bytes (the transient IO marshal, the
+// durable blob, a masked view). The decoder clamps counts so it cannot corrupt
+// memory, but a VALUE the kernel could never have produced - a status of 7, a
+// defender seat past the table, an eliminated seat that does not exist, a card
+// byte that is no card, one card in two hands - used to be adopted as it came
+// and then played on. state_import must refuse each, name why, and leave the
+// destination game untouched.
+
+#define SV_PREFIX offsetof(Game, logs)
+
+typedef struct { int deck0, battles, players[MAX_PLAYERS], elim; } SvOffsets;
+
+// Byte offsets into a state_put buffer, walked the way state_get reads it.
+static void sv_offsets(const unsigned char *b, SvOffsets *o) {
+    int q = 14;
+    const int dc = b[q] | (b[q + 1] << 8);
+    q += 2;
+    o->deck0 = q;
+    q += dc;
+    o->battles = q;
+    q += 1 + 2 * b[q];
+    for (int i = 0; i < b[1] && i < MAX_PLAYERS; i++) {
+        o->players[i] = q;              // [status][awaiting][count][cards...]
+        q += 3 + b[q + 2];
+    }
+    o->elim = q;                        // [num_eliminated][seats...]
+}
+
+static Game sv_src, sv_dst, sv_before, sv_tmp;
+static unsigned char sv_buf[8192], sv_m[8192];
+
+// Import `buf` into sv_dst (which holds some other valid game) and check the
+// verdict. A refusal must leave every byte of sv_dst's state as it was.
+static void sv_expect(const unsigned char *buf, int masked, int want, const char *msg) {
+    memcpy(&sv_before, &sv_dst, SV_PREFIX);
+    const int r = state_import(&sv_dst, buf, masked);
+    if (r != want) fprintf(stderr, "  state_import(%s): got %d, want %d\n", msg, r, want);
+    CHECK(r == want, msg);
+    if (want != GAME_VALID)
+        CHECK(memcmp(&sv_before, &sv_dst, SV_PREFIX) == 0, msg);
+}
+
+// A 4-seat game mid-bout: dealt, trump face up, one attack on the table.
+static void sv_fixture(Game *g) {
+    game_set_seed(77);
+    random_strategy_set_seed(77);
+    memset(g, 0, sizeof(*g));
+    g->num_players = 4;
+    for (int i = 0; i < 4; i++) g->players[i].status = PLAYER_STATUS_READY;
+    start_game(g);
+    const int fa = g->first_attacker;
+    Card c = g->players[fa].hand[0];
+    handle_attack(g, fa, &c, 1);
+}
+
+static void sv_mutate_expect(const SvOffsets *o, int at, unsigned char byte, int want, const char *msg) {
+    (void)o;
+    memcpy(sv_m, sv_buf, sizeof sv_buf);
+    sv_m[at] = byte;
+    sv_expect(sv_m, 0, want, msg);
+}
+
+static void test_state_import_rejects_invalid_values(void) {
+    unsigned char seed[FOOLISH_SEED_LEN];
+    // The destination holds a finished 3-seat game, so "nothing adopted" is
+    // checked against a state that differs from every source below.
+    CHECK(rs_play_seeded(&sv_dst, 3, 4242, seed), "destination game plays out");
+
+    sv_fixture(&sv_src);
+    CHECK(sv_src.num_battles == 1 && sv_src.has_flipped, "fixture is mid-bout with a trump up");
+    memset(sv_buf, 0, sizeof sv_buf);
+    const int len = state_put(&sv_src, VIEW_UNMASKED, sv_buf);
+    SvOffsets o;
+    sv_offsets(sv_buf, &o);
+    CHECK(o.elim == len - 1, "offset walk agrees with state_put");
+
+    // ---- valid states are adopted ----
+    sv_expect(sv_buf, 0, GAME_VALID, "a dealt mid-bout game imports");
+    {
+        static unsigned char back[8192];
+        CHECK(state_put(&sv_dst, VIEW_UNMASKED, back) == len && memcmp(back, sv_buf, (size_t)len) == 0,
+              "the imported game is the one that was exported");
+    }
+    memset(sv_m, 0, sizeof sv_m);
+    state_put(&sv_src, 0, sv_m);
+    sv_expect(sv_m, 1, GAME_VALID, "seat 0's masked view imports as masked");
+    memcpy(&sv_tmp, &sv_src, sizeof sv_tmp);
+    game_reset_to_lobby(&sv_tmp, 0);
+    memset(sv_m, 0, sizeof sv_m);
+    state_put(&sv_tmp, VIEW_UNMASKED, sv_m);
+    sv_expect(sv_m, 0, GAME_VALID, "a lobby imports");
+    CHECK(rs_play_seeded(&sv_tmp, 6, 99, seed), "6-seat game plays out");
+    memset(sv_m, 0, sizeof sv_m);
+    state_put(&sv_tmp, VIEW_UNMASKED, sv_m);
+    sv_expect(sv_m, 0, GAME_VALID, "a finished 52-card game imports");
+
+    // ---- statuses ----
+    sv_mutate_expect(&o, 0, 3, GAME_INVALID_STATUS, "game status 3");
+    sv_mutate_expect(&o, 0, 0xFF, GAME_INVALID_STATUS, "game status -1");
+    sv_mutate_expect(&o, o.players[2], 4, GAME_INVALID_PLAYER_STATUS, "player status 4");
+
+    // ---- suit and seats ----
+    sv_mutate_expect(&o, 2, 4, GAME_INVALID_POWER_SUIT, "power suit 4");
+    sv_mutate_expect(&o, 2, 0xFF, GAME_INVALID_POWER_SUIT, "power suit -1");
+    sv_mutate_expect(&o, 4, 4, GAME_INVALID_SEAT, "defender == num_players");
+    sv_mutate_expect(&o, 3, 0xFF, GAME_INVALID_SEAT, "first attacker -1");
+    sv_mutate_expect(&o, 3, 7, GAME_INVALID_SEAT, "first attacker past the table");
+
+    // ---- elimination order (the buffer is zero past `len`, so a longer list reads zeros) ----
+    memcpy(sv_m, sv_buf, sizeof sv_buf);
+    sv_m[o.elim] = 1; sv_m[o.elim + 1] = 4;
+    sv_expect(sv_m, 0, GAME_INVALID_ELIMINATION, "eliminated seat == num_players");
+    memcpy(sv_m, sv_buf, sizeof sv_buf);
+    sv_m[o.elim] = 1; sv_m[o.elim + 1] = 0xFF;
+    sv_expect(sv_m, 0, GAME_INVALID_ELIMINATION, "eliminated seat -1");
+    memcpy(sv_m, sv_buf, sizeof sv_buf);
+    sv_m[o.elim] = 2; sv_m[o.elim + 1] = 1; sv_m[o.elim + 2] = 1;
+    sv_expect(sv_m, 0, GAME_INVALID_ELIMINATION, "a seat eliminated twice");
+    memcpy(sv_m, sv_buf, sizeof sv_buf);
+    sv_m[o.elim] = 5;
+    for (int i = 0; i < 5; i++) sv_m[o.elim + 1 + i] = (unsigned char)(i % 4);
+    sv_expect(sv_m, 0, GAME_INVALID_ELIMINATION, "more eliminated than seated");
+
+    // ---- good mask ----
+    sv_mutate_expect(&o, 9, 1u << 4, GAME_INVALID_GOOD_MASK, "good bit for seat 4 of 4");
+    sv_mutate_expect(&o, 12, 0x80, GAME_INVALID_GOOD_MASK, "good bit 31");
+
+    // ---- cards ----
+    sv_mutate_expect(&o, o.deck0, 52, GAME_INVALID_CARD, "deck byte 52");
+    sv_mutate_expect(&o, o.deck0, 0xFE, GAME_INVALID_CARD, "hidden card in an unmasked deck");
+    sv_mutate_expect(&o, o.deck0, 0, GAME_INVALID_CARD, "a card below the 36-card deck");
+    sv_mutate_expect(&o, o.players[1] + 3, 0xFF, GAME_INVALID_CARD, "no-card in a hand");
+    sv_mutate_expect(&o, o.battles + 1, 0xFF, GAME_INVALID_CARD, "no-card as an attack");
+    sv_mutate_expect(&o, o.battles + 2, 0xC0, GAME_INVALID_CARD, "byte 0xC0 as a defense");
+    sv_mutate_expect(&o, 8, 0xFF, GAME_INVALID_CARD, "no-card as the face-up trump");
+    sv_mutate_expect(&o, 2, (unsigned char)((sv_src.power_suit + 1) % 4), GAME_INVALID_FLIPPED,
+                     "trump suit disagrees with the face-up card");
+    sv_mutate_expect(&o, o.players[1] + 3, sv_buf[o.players[0] + 3], GAME_INVALID_DUPLICATE_CARD,
+                     "one card in two hands");
+    sv_mutate_expect(&o, o.deck0, sv_buf[8], GAME_INVALID_DUPLICATE_CARD,
+                     "the face-up trump also in the deck");
+    sv_mutate_expect(&o, o.players[0] + 3, sv_buf[o.battles + 1], GAME_INVALID_DUPLICATE_CARD,
+                     "a card both on the table and in a hand");
+
+    // ---- counts past capacity are refused, not silently clamped ----
+    sv_mutate_expect(&o, 1, MAX_PLAYERS + 1, GAME_INVALID_COUNT, "num_players 9");
+    memcpy(sv_m, sv_buf, sizeof sv_buf);
+    sv_m[14] = (unsigned char)(MAX_DECK + 1); sv_m[15] = 0;
+    sv_expect(sv_m, 0, GAME_INVALID_COUNT, "deck_count past MAX_DECK");
+    sv_mutate_expect(&o, o.players[0] + 2, MAX_HAND_SIZE + 1, GAME_INVALID_COUNT, "hand past MAX_HAND_SIZE");
+
+    // ---- too few seats for a dealt game ----
+    memcpy(&sv_tmp, &sv_src, sizeof sv_tmp);
+    sv_tmp.num_players = 1;
+    sv_tmp.first_attacker = 0;
+    sv_tmp.defender = 0;
+    memset(sv_m, 0, sizeof sv_m);
+    state_put(&sv_tmp, VIEW_UNMASKED, sv_m);
+    sv_expect(sv_m, 0, GAME_INVALID_NUM_PLAYERS, "a one-seat game in play");
+
+    // ---- a masked view still has its face-up cards checked ----
+    memset(sv_m, 0, sizeof sv_m);
+    state_put(&sv_src, 0, sv_m);
+    {
+        SvOffsets mo;
+        sv_offsets(sv_m, &mo);
+        sv_m[mo.battles + 1] = 0xFE;
+        sv_expect(sv_m, 1, GAME_INVALID_CARD, "a hidden attack card in a masked view");
+    }
+}
+
+// ---------- a WAITING game holds no cards anywhere ----------------------------
+//
+// A lobby is seats and nothing else. The five TS guards e2e/waiting_stale_blob
+// pins ("a WAITING game must never load from a blob") existed because a lobby
+// row could carry a finished session's board; the kernel refuses that state
+// itself now, for every place a card or a round fact can sit.
+
+// sv_tmp <- a clean 4-seat lobby, bots at seats 1 and 3.
+static void lc_lobby(void) {
+    memcpy(&sv_tmp, &sv_src, sizeof sv_tmp);
+    game_reset_to_lobby(&sv_tmp, (1u << 1) | (1u << 3));
+}
+
+static void lc_expect(int masked_viewer, int want, const char *msg) {
+    memset(sv_m, 0, sizeof sv_m);
+    state_put(&sv_tmp, masked_viewer, sv_m);
+    sv_expect(sv_m, masked_viewer != VIEW_UNMASKED, want, msg);
+}
+
+static void test_state_import_refuses_a_lobby_with_cards(void) {
+    unsigned char seed[FOOLISH_SEED_LEN];
+    CHECK(rs_play_seeded(&sv_dst, 3, 4243, seed), "destination game plays out");
+    sv_fixture(&sv_src);
+    const Card spare = sv_src.deck[0];     // a real card of this deck, in no other place
+
+    lc_lobby();
+    lc_expect(VIEW_UNMASKED, GAME_VALID, "a clean lobby imports");
+    lc_expect(0, GAME_VALID, "a clean lobby imports as seat 0's masked view");
+    lc_expect(VIEW_SPECTATOR, GAME_VALID, "a clean lobby imports as the spectator view");
+
+    lc_lobby(); sv_tmp.deck_count = 1; sv_tmp.deck[0] = spare;
+    lc_expect(VIEW_UNMASKED, GAME_INVALID_LOBBY_CARDS, "a lobby with a deck card");
+    lc_lobby(); sv_tmp.num_battles = 1; sv_tmp.table_battles[0].attack = spare;
+    sv_tmp.table_battles[0].defense = CARD_NONE;
+    lc_expect(VIEW_UNMASKED, GAME_INVALID_LOBBY_CARDS, "a lobby with a battle on the table");
+    lc_lobby(); sv_tmp.players[2].hand_count = 1; sv_tmp.players[2].hand[0] = spare;
+    lc_expect(VIEW_UNMASKED, GAME_INVALID_LOBBY_CARDS, "a lobby with a card in a hand");
+    lc_expect(0, GAME_INVALID_LOBBY_CARDS, "a lobby with a card in a hand, as a masked view");
+    lc_lobby(); sv_tmp.has_flipped = true; sv_tmp.flipped = spare; sv_tmp.power_suit = spare.suit;
+    lc_expect(VIEW_UNMASKED, GAME_INVALID_LOBBY_CARDS, "a lobby with a face-up trump");
+    lc_lobby(); sv_tmp.discard_pile_length = 6;
+    lc_expect(VIEW_UNMASKED, GAME_INVALID_LOBBY_CARDS, "a lobby with a discard pile");
+    lc_lobby(); sv_tmp.num_eliminated = 1; sv_tmp.elimination_order[0] = 2;
+    lc_expect(VIEW_UNMASKED, GAME_INVALID_LOBBY_CARDS, "a lobby with a seat out");
+    lc_lobby(); sv_tmp.good_players_mask = 1u << 2;
+    lc_expect(VIEW_UNMASKED, GAME_INVALID_LOBBY_CARDS, "a lobby with a good said");
+    lc_lobby(); sv_tmp.has_good_timestamp = true;
+    lc_expect(VIEW_UNMASKED, GAME_INVALID_LOBBY_CARDS, "a lobby with a good timestamp");
+
+    // The damaged row the TS guards were written for: a finished session's
+    // board with only the status put back to WAITING. (The clean lobbies above
+    // were adopted into sv_dst, so the finished game is played again.)
+    CHECK(rs_play_seeded(&sv_dst, 3, 4243, seed), "destination game plays out again");
+    CHECK(sv_dst.num_eliminated > 0 && sv_dst.discard_pile_length > 0, "the board is a finished one");
+    memset(sv_m, 0, sizeof sv_m);
+    state_put(&sv_dst, VIEW_UNMASKED, sv_m);
+    sv_m[0] = GAME_STATUS_WAITING;
+    memcpy(&sv_tmp, &sv_dst, sizeof sv_tmp);
+    sv_expect(sv_m, 0, GAME_INVALID_LOBBY_CARDS, "a finished board relabelled WAITING");
+}
 
 static void test_reset_to_lobby(void) {
     Game g;
@@ -5282,6 +5622,52 @@ static void test_conflict_reversal_drops_what_the_verdicts_empty(void) {
           "a chain that vouches for everything reverses nothing");
 }
 
+static void test_reversal_order_is_not_about_the_transport(void) {
+    // THE DECISION IS TRANSPORT-DEPENDENT AND THE ORDER IS NOT. A server client
+    // cannot learn doom from silence, so anim_conflict_reversal refuses it; but
+    // once that client HAS its verdicts (anim_conflict_verdict, which is the
+    // only entry that asks the AnimServerHope), the shape of the flight home is
+    // the same shape - last group first, a group nothing reverts dropped.
+    const unsigned char verdicts[4] = {
+        ANIM_CONFLICT_REVERT, ANIM_CONFLICT_CLEAR, ANIM_CONFLICT_KEEP, ANIM_CONFLICT_REVERT,
+    };
+    const int groups[3] = { 2, 1, 1 };
+    AnimConflictPlan p;
+
+    anim_set_transport(ANIM_TRANSPORT_SERVER);
+    CHECK(anim_reversal_order(verdicts, 4, groups, 3, &p) == 2,
+          "the order is answered under the transport the reversal itself refuses");
+    CHECK(p.n_order == 2 && p.order[0] == 3 && p.order[1] == 0,
+          "the LAST group's card reverses first, and the middle group is dropped");
+    CHECK(p.n_steps == 2 && p.step_count[0] == 1 && p.step_count[1] == 1,
+          "…one flight each, and no beat of silence for the group the verdicts emptied");
+    CHECK(p.n_verdicts == 4 && p.verdicts[2] == ANIM_CONFLICT_KEEP,
+          "the verdicts come back on the plan, whoever decided them");
+
+    // Both transports give one answer for one set of verdicts: the order cannot
+    // become a second place two clients disagree.
+    AnimConflictPlan chain;
+    anim_set_transport(ANIM_TRANSPORT_CHAIN);
+    CHECK(anim_reversal_order(verdicts, 4, groups, 3, &chain) == 2
+          && chain.n_order == p.n_order && chain.order[0] == p.order[0] && chain.order[1] == p.order[1],
+          "the chain reads the same order off the same verdicts");
+
+    // Handing the plan its OWN verdict array back is the shape a caller that
+    // already ran anim_conflict_reversal has, and it must not read as it writes.
+    for (int i = 0; i < 4; i++) chain.verdicts[i] = verdicts[i];
+    CHECK(anim_reversal_order(chain.verdicts, 4, groups, 3, &chain) == 2
+          && chain.order[0] == 3 && chain.order[1] == 0,
+          "a plan handed its own verdicts answers the same");
+
+    anim_set_transport(ANIM_TRANSPORT_SERVER);
+    CHECK(anim_reversal_order(verdicts, 4, groups, 3, NULL) == ANIM_EBADARG, "no out, no order");
+    CHECK(anim_reversal_order(NULL, 4, groups, 3, &p) == ANIM_EBADARG, "a count with no verdicts");
+    CHECK(anim_reversal_order(verdicts, 4, groups, 2, &p) == ANIM_EBADARG,
+          "groups that leave a motion out describe some other sequence");
+    CHECK(anim_reversal_order(verdicts, 0, NULL, 0, &p) == 0, "nothing flown, nothing to reverse");
+    anim_set_transport(ANIM_TRANSPORT_CHAIN);
+}
+
 static void test_conflict_degenerate_inputs(void) {
     anim_set_transport(ANIM_TRANSPORT_CHAIN);
     AnimConflictFacts f;
@@ -6055,7 +6441,6 @@ static void test_solver_tt_value_carries_its_seat(void) {
         for (int i = 0; i < 2; i++) {
             g.players[i].status = PLAYER_STATUS_READY;
             g.players[i].strategy_key = (int8_t)STRAT_HANDWRITTEN;
-            snprintf(g.players[i].player_id, sizeof g.players[i].player_id, "p%d", i);
         }
         start_game(&g);
         int it = 0;
@@ -6560,13 +6945,2746 @@ static void test_analyse_packed_on_a_generated_game(void) {
     }
 }
 
+/* ---------------------------------------------------------------------------
+ * Roster (c/src/roster.h): the table's identity beside the board.
+ * ------------------------------------------------------------------------- */
+
+#define RS(s) (s), (int)strlen(s)
+
+// Two seats: a human and a bot, under a title.
+static void roster_fixture(Roster *r) {
+    memset(r, 0, sizeof(*r));
+    roster_set_title(r, RS("Sveta's Game"));
+    roster_seat_add(r, RS("p-0"), RS("Sveta"), RS(""));
+    roster_seat_add(r, RS("p-1"), RS("Бот"), RS("cordite"));
+}
+
+// A roster at every cap: 8 seats, 36-byte ids, 64-byte names, 23-byte brains
+// and a 200-byte title.
+static void roster_full_fixture(Roster *r) {
+    char id[ROSTER_ID_MAX + 1], name[ROSTER_NAME_MAX + 1], brain[ROSTER_BRAIN_MAX + 1], title[ROSTER_TITLE_MAX + 1];
+    memset(r, 0, sizeof(*r));
+    memset(title, 'T', ROSTER_TITLE_MAX); title[ROSTER_TITLE_MAX] = 0;
+    roster_set_title(r, title, ROSTER_TITLE_MAX);
+    for (int s = 0; s < MAX_PLAYERS; s++) {
+        snprintf(id, sizeof(id), "00000000-0000-4000-8000-00000000000%d", s);
+        memset(name, 'a' + s, ROSTER_NAME_MAX); name[ROSTER_NAME_MAX] = 0;
+        memset(brain, 'k', ROSTER_BRAIN_MAX); brain[ROSTER_BRAIN_MAX] = 0;
+        roster_seat_add(r, id, ROSTER_ID_MAX, name, ROSTER_NAME_MAX, brain, (s & 1) ? ROSTER_BRAIN_MAX : 0);
+    }
+}
+
+static int roster_equal(const Roster *a, const Roster *b) {
+    if (a->n != b->n || a->title_len != b->title_len) return 0;
+    if (memcmp(a->title, b->title, a->title_len) != 0) return 0;
+    for (int s = 0; s < a->n; s++) {
+        const RosterSeat *x = &a->seats[s], *y = &b->seats[s];
+        if (x->id_len != y->id_len || x->name_len != y->name_len || x->brain_len != y->brain_len) return 0;
+        if (memcmp(x->id, y->id, x->id_len) || memcmp(x->name, y->name, x->name_len)
+            || memcmp(x->brain, y->brain, x->brain_len)) return 0;
+    }
+    return 1;
+}
+
+// Card notation (card.h), the reader test fixtures build boards with
+// (e2e/helpers/table_fixture.ts, Phase 3c).
+static bool card_is(Card c, int suit, int value) { return c.suit == suit && c.value == value; }
+#define PARSE1(str, c) card_parse((str), (int)strlen(str), (c))
+
+static void test_card_parse_valid(void) {
+    Card c = CARD_NONE;
+    CHECK(PARSE1("6h", &c) == 0 && card_is(c, SUIT_HEARTS, 5), "6h is the six of hearts (value 5)");
+    CHECK(PARSE1("2s", &c) == 0 && card_is(c, SUIT_SPADES, 1), "2s is value 1, the full deck's lowest");
+    CHECK(PARSE1("9c", &c) == 0 && card_is(c, SUIT_CLUBS, 8), "9c");
+    CHECK(PARSE1("10d", &c) == 0 && card_is(c, SUIT_DIAMONDS, 9), "10d is value 9");
+    CHECK(PARSE1("Td", &c) == 0 && card_is(c, SUIT_DIAMONDS, 9), "T is 10");
+    CHECK(PARSE1("Js", &c) == 0 && card_is(c, SUIT_SPADES, 10), "J is value 10");
+    CHECK(PARSE1("Qs", &c) == 0 && card_is(c, SUIT_SPADES, 11), "Q is value 11");
+    CHECK(PARSE1("Kh", &c) == 0 && card_is(c, SUIT_HEARTS, 12), "K is value 12");
+    CHECK(PARSE1("Ac", &c) == 0 && card_is(c, SUIT_CLUBS, ACE_VALUE), "A is ACE_VALUE");
+    int all = 1;
+    static const char *ranks[] = { "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A" };
+    static const char suits[] = "shcd";
+    for (int s = 0; s < 4; s++)
+        for (int r = 0; r < 13; r++) {
+            char buf[4];
+            int n = snprintf(buf, sizeof(buf), "%s%c", ranks[r], suits[s]);
+            Card x = CARD_NONE;
+            if (card_parse(buf, n, &x) != 0 || card_to_id(x) != s * 13 + r) all = 0;
+        }
+    CHECK(all, "every rank of every suit reads as its dense id, in suit order s h c d");
+    // The length is the string: bytes past it are never read.
+    CHECK(card_parse("6hXYZ", 2, &c) == 0 && card_is(c, SUIT_HEARTS, 5), "len bounds the read");
+}
+
+static void test_card_parse_case(void) {
+    Card a = CARD_NONE, b = CARD_NONE;
+    CHECK(PARSE1("qs", &a) == 0 && PARSE1("QS", &b) == 0 && card_eq(a, b) && card_is(a, SUIT_SPADES, 11),
+          "rank and suit letters read in either case");
+    CHECK(PARSE1("aH", &a) == 0 && card_is(a, SUIT_HEARTS, ACE_VALUE), "mixed case");
+    CHECK(PARSE1("tD", &a) == 0 && card_is(a, SUIT_DIAMONDS, 9), "t is 10 as well");
+}
+
+static void test_card_parse_whitespace(void) {
+    Card c = CARD_NONE;
+    CHECK(PARSE1("  7c\t", &c) == 0 && card_is(c, SUIT_CLUBS, 6), "whitespace around one card is ignored");
+    CHECK(PARSE1("\n8d\r\n", &c) == 0 && card_is(c, SUIT_DIAMONDS, 7), "newlines are whitespace");
+    CHECK(PARSE1("7 c", &c) == CARD_PARSE_E_SUIT, "no space inside a card");
+    CHECK(PARSE1("1 0h", &c) == CARD_PARSE_E_RANK, "no space inside 10");
+    CHECK(PARSE1("6h 7h", &c) == CARD_PARSE_E_SYNTAX, "one card, not two");
+
+    Card out[8], cov[8];
+    const char *l = " 6h,7h\tQs \n";
+    CHECK(card_list_parse(l, (int)strlen(l), out, NULL, 8) == 3
+          && card_is(out[0], SUIT_HEARTS, 5) && card_is(out[1], SUIT_HEARTS, 6) && card_is(out[2], SUIT_SPADES, 11),
+          "a list splits on whitespace and commas, in order");
+    CHECK(card_list_parse("", 0, out, NULL, 8) == 0, "an empty list is no cards");
+    CHECK(card_list_parse(" \t, ", 4, out, NULL, 8) == 0, "only separators is no cards");
+    const char *b = "7c/8c  9d";
+    CHECK(card_list_parse(b, (int)strlen(b), out, cov, 8) == 2
+          && card_is(out[0], SUIT_CLUBS, 6) && card_is(cov[0], SUIT_CLUBS, 7)
+          && card_is(out[1], SUIT_DIAMONDS, 8) && card_is_none(cov[1]),
+          "a battle list: attack/cover, and a lone attack has CARD_NONE for its cover");
+    CHECK(card_list_parse("7c / 8c", 7, out, cov, 8) == CARD_PARSE_E_EMPTY, "no space around the '/'");
+}
+
+static void test_card_parse_invalid(void) {
+    Card c = CARD_NONE, out[4], cov[4];
+    CHECK(PARSE1("", &c) == CARD_PARSE_E_EMPTY, "empty");
+    CHECK(PARSE1("   ", &c) == CARD_PARSE_E_EMPTY, "only whitespace");
+    CHECK(PARSE1("1h", &c) == CARD_PARSE_E_RANK, "1 is not a rank");
+    CHECK(PARSE1("0h", &c) == CARD_PARSE_E_RANK, "0 is not a rank");
+    CHECK(PARSE1("11h", &c) == CARD_PARSE_E_RANK, "11 is not a rank");
+    CHECK(PARSE1("Xh", &c) == CARD_PARSE_E_RANK, "X is not a rank");
+    CHECK(PARSE1("h6", &c) == CARD_PARSE_E_RANK, "suit first is refused");
+    CHECK(PARSE1("6", &c) == CARD_PARSE_E_SUIT, "a rank with no suit");
+    CHECK(PARSE1("6x", &c) == CARD_PARSE_E_SUIT, "x is not a suit");
+    CHECK(PARSE1("10", &c) == CARD_PARSE_E_SUIT, "10 with no suit");
+    CHECK(PARSE1("6hh", &c) == CARD_PARSE_E_SYNTAX, "junk after the suit");
+    CHECK(PARSE1("6h/7h", &c) == CARD_PARSE_E_SYNTAX, "a pair is not one card");
+    CHECK(card_parse("6h", -1, &c) == CARD_PARSE_E_EMPTY, "a negative length reads nothing");
+    CHECK(card_parse(NULL, 0, &c) == CARD_PARSE_E_EMPTY, "no string");
+    c = card_of_id(7);
+    CHECK(PARSE1("6x", &c) < 0 && card_to_id(c) == 7, "a refusal leaves *out untouched");
+
+    CHECK(card_list_parse("6h 7x", 5, out, NULL, 4) == CARD_PARSE_E_SUIT, "one bad card refuses the list");
+    CHECK(card_list_parse("6h7h", 4, out, NULL, 4) == CARD_PARSE_E_SYNTAX, "cards need a separator");
+    CHECK(card_list_parse("6h/7h", 5, out, NULL, 4) == CARD_PARSE_E_SYNTAX, "a '/' outside a battle list");
+    CHECK(card_list_parse("/7h", 3, out, cov, 4) == CARD_PARSE_E_EMPTY, "a battle with no attack");
+    CHECK(card_list_parse("6h/", 3, out, cov, 4) == CARD_PARSE_E_EMPTY, "a battle with a '/' and no cover");
+    CHECK(card_list_parse("6h/7h/8h", 8, out, cov, 4) == CARD_PARSE_E_SYNTAX, "a battle is at most two cards");
+    CHECK(card_list_parse("6h 7h 8h", 8, out, NULL, 2) == CARD_PARSE_E_CAP, "more cards than the output holds");
+    CHECK(card_list_parse("6h 7h", 5, out, NULL, 2) == 2, "exactly the output's capacity fits");
+}
+#undef PARSE1
+
+// A seat's identity lives in the Roster beside the Game, not in Player
+// (docs/C_GAME_SHAPE_MIGRATION.md 2.9, Phase 3b). The Monte-Carlo searchers
+// copy offsetof(Game, logs) bytes per node, so every byte of Player is paid
+// MAX_PLAYERS times per node: status, hand_count, awaiting_attack,
+// strategy_key and the hand, nothing else. A runtime CHECK, not a
+// _Static_assert, so a Player that still carries name and player_id is red by
+// assertion.
+static void test_player_carries_no_identity(void) {
+    CHECK(sizeof(Player) == 4 + MAX_HAND_SIZE * sizeof(Card),
+          "Player is status, hand_count, awaiting_attack, strategy_key and the hand");
+    if (MAX_HAND_SIZE == 64)
+        CHECK(sizeof(Player) == 68, "Player is 68 bytes at the native caps");
+}
+
+static void test_roster_round_trip(void) {
+    Roster r, back;
+    uint8_t buf[ROSTER_BYTES], again[ROSTER_BYTES];
+
+    roster_fixture(&r);
+    CHECK(r.n == 2, "the fixture seated two");
+    CHECK(roster_encode(&r, buf, sizeof(buf)) == ROSTER_BYTES, "encode writes exactly ROSTER_BYTES");
+    CHECK(buf[0] == ROSTER_FORMAT_VERSION && buf[1] == 2 && buf[2] == 12, "header: version, n, title_len");
+    CHECK(memcmp(buf + 3, "Sveta's Game", 12) == 0 && buf[3 + 12] == 0, "title bytes, zero padded");
+    CHECK(buf[203] == 3 && memcmp(buf + 204, "p-0", 3) == 0, "seat 0 id at 203");
+    CHECK(buf[203 + 37] == 5 && memcmp(buf + 203 + 38, "Sveta", 5) == 0, "seat 0 name at +37");
+    CHECK(buf[203 + 102] == 0, "seat 0 is human (brain_len 0)");
+    CHECK(buf[203 + 128 + 102] == 7 && memcmp(buf + 203 + 128 + 103, "cordite", 7) == 0, "seat 1 brain at +102");
+    int zero_tail = 1;
+    for (int i = 203 + 2 * 128; i < ROSTER_BYTES; i++) if (buf[i]) zero_tail = 0;
+    CHECK(zero_tail, "unused seat records are all zero");
+    CHECK(roster_decode(&back, buf, ROSTER_BYTES) == ROSTER_OK, "the encoding decodes");
+    CHECK(roster_equal(&r, &back), "decode gives back every field");
+    CHECK(roster_encode(&back, again, sizeof(again)) == ROSTER_BYTES && memcmp(buf, again, ROSTER_BYTES) == 0,
+          "decode -> encode is the identity");
+    CHECK(roster_encode(&r, buf, ROSTER_BYTES - 1) == ROSTER_E_CAP, "a small buffer is refused");
+
+    roster_full_fixture(&r);
+    CHECK(r.n == MAX_PLAYERS && r.title_len == ROSTER_TITLE_MAX, "the full fixture is at every cap");
+    CHECK(roster_encode(&r, buf, sizeof(buf)) == ROSTER_BYTES, "a roster at every cap encodes");
+    CHECK(roster_decode(&back, buf, ROSTER_BYTES) == ROSTER_OK && roster_equal(&r, &back),
+          "a roster at every cap round-trips");
+
+    memset(&r, 0, sizeof(r));
+    CHECK(roster_encode(&r, buf, sizeof(buf)) == ROSTER_BYTES && roster_decode(&back, buf, ROSTER_BYTES) == ROSTER_OK
+          && back.n == 0, "an empty roster round-trips");
+}
+
+static void test_roster_decode_refuses_each_malformed_field(void) {
+    Roster r, back;
+    uint8_t good[ROSTER_BYTES + 1], b[ROSTER_BYTES + 1];
+    roster_fixture(&r);
+    roster_encode(&r, good, ROSTER_BYTES);
+    good[ROSTER_BYTES] = 0;
+    const int s0 = 203, s1 = 203 + 128;
+
+#define MUTATE(expect, msg, ...) do { memcpy(b, good, sizeof(b)); __VA_ARGS__; \
+        CHECK(roster_decode(&back, b, ROSTER_BYTES) == (expect), msg); } while (0)
+
+    CHECK(roster_decode(&back, good, ROSTER_BYTES - 1) == ROSTER_E_LENGTH, "one byte short is refused");
+    CHECK(roster_decode(&back, good, ROSTER_BYTES + 1) == ROSTER_E_LENGTH, "one byte long is refused");
+    CHECK(roster_decode(&back, good, 0) == ROSTER_E_LENGTH, "nothing is refused");
+    MUTATE(ROSTER_E_VERSION, "an unknown version is refused", b[0] = 2);
+    MUTATE(ROSTER_E_VERSION, "version 0 is refused", b[0] = 0);
+    MUTATE(ROSTER_E_COUNT, "n over MAX_PLAYERS is refused", b[1] = MAX_PLAYERS + 1);
+    MUTATE(ROSTER_E_COUNT, "a negative n is refused", b[1] = 0xff);
+    MUTATE(ROSTER_E_TITLE, "a title over 200 bytes is refused", b[2] = ROSTER_TITLE_MAX + 1);
+    MUTATE(ROSTER_E_TITLE, "a title that is not UTF-8 is refused", b[3] = 0xff);
+    MUTATE(ROSTER_E_ID, "an id over 36 bytes is refused", b[s0] = ROSTER_ID_MAX + 1);
+    MUTATE(ROSTER_E_ID, "an empty id is refused", b[s0] = 0; memset(b + s0 + 1, 0, 3));
+    MUTATE(ROSTER_E_ID, "a NUL inside an id is refused", b[s0 + 2] = 0);
+    MUTATE(ROSTER_E_NAME, "a name over 64 bytes is refused", b[s0 + 37] = ROSTER_NAME_MAX + 1);
+    MUTATE(ROSTER_E_NAME, "a stray 0xff in a name is refused", b[s0 + 38] = 0xff);
+    MUTATE(ROSTER_E_NAME, "an overlong encoding is refused", b[s0 + 38] = 0xc0; b[s0 + 39] = 0x80);
+    MUTATE(ROSTER_E_NAME, "a UTF-16 surrogate is refused", b[s0 + 38] = 0xed; b[s0 + 39] = 0xa0; b[s0 + 40] = 0x80);
+    MUTATE(ROSTER_E_NAME, "a code point past U+10FFFF is refused",
+           b[s0 + 38] = 0xf4; b[s0 + 39] = 0x90; b[s0 + 40] = 0x80; b[s0 + 41] = 0x80);
+    MUTATE(ROSTER_E_NAME, "a name cut mid-sequence is refused", b[s1 + 37] = 5);   // "Бот" is 6 bytes
+    MUTATE(ROSTER_E_NAME, "a lone continuation byte is refused", b[s0 + 38] = 0x80);
+    MUTATE(ROSTER_E_BRAIN, "a brain over 23 bytes is refused", b[s1 + 102] = ROSTER_BRAIN_MAX + 1);
+    MUTATE(ROSTER_E_BRAIN, "a brain that is not printable ASCII is refused", b[s1 + 103] = ' ');
+    MUTATE(ROSTER_E_DUPLICATE, "two seats with one id are refused", b[s1 + 3] = '0');
+    MUTATE(ROSTER_E_PADDING, "a byte past the title is refused", b[3 + 12] = 'x');
+    MUTATE(ROSTER_E_PADDING, "a byte past an id is refused", b[s0 + 1 + 3] = 'x');
+    MUTATE(ROSTER_E_PADDING, "a byte past a name is refused", b[s0 + 38 + 5] = 'x');
+    MUTATE(ROSTER_E_PADDING, "a byte past a brain is refused", b[s1 + 103 + 7] = 'x');
+    MUTATE(ROSTER_E_PADDING, "a reserved byte is refused", b[s0 + 126] = 1);
+    MUTATE(ROSTER_E_PADDING, "an unused seat record that is not empty is refused", b[203 + 5 * 128 + 50] = 1);
+    MUTATE(ROSTER_OK, "the unmutated bytes still decode", (void)0);
+#undef MUTATE
+
+    // A Roster built in memory is held to the same rules as one decoded.
+    roster_fixture(&r);
+    r.seats[1].id_len = 3; memcpy(r.seats[1].id, "p-0", 3);
+    CHECK(roster_validate(&r) == ROSTER_E_DUPLICATE, "validate finds a duplicate id");
+    CHECK(roster_encode(&r, b, ROSTER_BYTES) == ROSTER_E_DUPLICATE, "encode refuses an invalid roster");
+    roster_fixture(&r); r.n = MAX_PLAYERS + 1;
+    CHECK(roster_validate(&r) == ROSTER_E_COUNT, "validate refuses n over MAX_PLAYERS");
+    roster_fixture(&r); r.n = -1;
+    CHECK(roster_validate(&r) == ROSTER_E_COUNT, "validate refuses a negative n");
+}
+
+static void test_roster_seat_of_is_exact(void) {
+    Roster r;
+    roster_fixture(&r);
+    const char *uuid = "0b5f3a52-7c1e-4d2b-9a8e-3f1c2d4e5f60";
+    CHECK(roster_seat_add(&r, uuid, 36, RS("Uuid"), RS("")) == 2, "a UUID seat is added at 2");
+    CHECK(roster_seat_of(&r, RS("p-0")) == 0, "seat_of finds seat 0");
+    CHECK(roster_seat_of(&r, RS("p-1")) == 1, "seat_of finds seat 1");
+    CHECK(roster_seat_of(&r, uuid, 36) == 2, "seat_of finds a UUID");
+    CHECK(roster_seat_of(&r, RS("p-")) == -1, "a prefix of a seated id misses");
+    CHECK(roster_seat_of(&r, uuid, 35) == -1, "a UUID less its last byte misses");
+    CHECK(roster_seat_of(&r, uuid, 8) == -1, "a UUID's first group misses");
+    CHECK(roster_seat_of(&r, RS("p-00")) == -1, "a seated id plus a byte misses");
+    CHECK(roster_seat_of(&r, RS("P-0")) == -1, "case matters");
+    CHECK(roster_seat_of(&r, "", 0) == -1, "the empty id misses");
+    CHECK(roster_seat_of(&r, RS("nobody")) == -1, "an unseated id misses");
+    CHECK(roster_seat_of(&r, "p-0", -1) == -1, "a negative length misses");
+    r.n = 1;
+    CHECK(roster_seat_of(&r, RS("p-1")) == -1, "a record past n is not a seat");
+}
+
+static void test_roster_ops(void) {
+    Roster r, before;
+    char id[8];
+
+    memset(&r, 0, sizeof(r));
+    for (int s = 0; s < MAX_PLAYERS; s++) {
+        snprintf(id, sizeof(id), "id-%d", s);
+        CHECK(roster_seat_add(&r, id, (int)strlen(id), RS("n"), s == 3 ? "random" : "", s == 3 ? 6 : 0) == s,
+              "add returns the new seat");
+    }
+    CHECK(r.n == MAX_PLAYERS, "eight seats");
+    CHECK(roster_bot_mask(&r) == (1u << 3), "the bot mask is the seats with a brain");
+    before = r;
+    CHECK(roster_seat_add(&r, RS("id-9"), RS("n"), RS("")) == ROSTER_E_FULL, "a ninth seat is refused");
+    CHECK(roster_seat_add(&r, RS("id-2"), RS("n"), RS("")) == ROSTER_E_DUPLICATE, "a seated id is refused");
+    CHECK(memcmp(&r, &before, sizeof(r)) == 0, "a refused add leaves the roster untouched");
+
+    roster_fixture(&r);
+    before = r;
+    CHECK(roster_seat_add(&r, RS("p-0"), RS("Again"), RS("")) == ROSTER_E_DUPLICATE, "a duplicate join is refused");
+    CHECK(roster_seat_add(&r, "", 0, RS("x"), RS("")) == ROSTER_E_ID, "an empty id is refused");
+    CHECK(roster_seat_add(&r, RS("0123456789012345678901234567890123456"), RS("x"), RS("")) == ROSTER_E_ID,
+          "a 37-byte id is refused");
+    CHECK(roster_seat_add(&r, RS("p-2"), "\xff\xfe", 2, RS("")) == ROSTER_E_NAME, "a name that is not UTF-8 is refused");
+    CHECK(roster_seat_add(&r, RS("p-2"), RS("x"), RS("012345678901234567890123")) == ROSTER_E_BRAIN,
+          "a 24-byte brain is refused");
+    CHECK(roster_seat_add(&r, RS("p-2"), RS("x"), RS("cor dite")) == ROSTER_E_BRAIN, "a brain with a space is refused");
+    CHECK(memcmp(&r, &before, sizeof(r)) == 0, "every refused add left the roster untouched");
+    CHECK(roster_seat_add(&r, RS("p-2"), RS(""), RS("")) == 2, "an empty name is a name");
+
+    // An over-long name is trimmed on the way in, like every envelope trims it.
+    const char *clowns = "🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡";
+    CHECK(roster_seat_add(&r, RS("p-3"), RS(clowns), RS("")) == 3 && r.seats[3].name_len == 64
+          && memcmp(r.seats[3].name, clowns, 64) == 0, "an 80-byte name is stored as its 64-byte scalar prefix");
+
+    // remove compacts the seats above
+    CHECK(roster_seat_remove(&r, 1) == ROSTER_OK && r.n == 3, "remove drops one seat");
+    CHECK(roster_seat_of(&r, RS("p-1")) == -1 && roster_seat_of(&r, RS("p-2")) == 1
+          && roster_seat_of(&r, RS("p-3")) == 2, "the seats above moved down");
+    CHECK(roster_bot_mask(&r) == 0, "the removed seat took its brain with it");
+    before = r;
+    CHECK(roster_seat_remove(&r, 3) == ROSTER_E_SEAT && roster_seat_remove(&r, -1) == ROSTER_E_SEAT,
+          "remove refuses a seat out of range");
+    CHECK(memcmp(&r, &before, sizeof(r)) == 0, "a refused remove leaves the roster untouched");
+    uint8_t enc[ROSTER_BYTES];
+    CHECK(roster_encode(&r, enc, sizeof(enc)) == ROSTER_BYTES && enc[203 + 3 * 128] == 0,
+          "the vacated record encodes as zero");
+    CHECK(roster_seat_remove(&r, 2) == ROSTER_OK && roster_seat_remove(&r, 1) == ROSTER_OK
+          && roster_seat_remove(&r, 0) == ROSTER_OK && r.n == 0, "remove down to empty");
+    CHECK(roster_seat_remove(&r, 0) == ROSTER_E_SEAT, "remove from an empty roster is refused");
+
+    // reorder: new seat i is old seat perm[i]
+    memset(&r, 0, sizeof(r));
+    roster_seat_add(&r, RS("a"), RS("A"), RS(""));
+    roster_seat_add(&r, RS("b"), RS("B"), RS("random"));
+    roster_seat_add(&r, RS("c"), RS("C"), RS(""));
+    const int8_t perm[3] = { 2, 0, 1 };
+    CHECK(roster_reorder(&r, perm, 3) == ROSTER_OK, "a permutation reorders");
+    CHECK(roster_seat_of(&r, RS("c")) == 0 && roster_seat_of(&r, RS("a")) == 1 && roster_seat_of(&r, RS("b")) == 2,
+          "new seat i is old seat perm[i]");
+    CHECK(r.seats[2].name[0] == 'B' && roster_bot_mask(&r) == (1u << 2), "names and brains travel with their ids");
+    before = r;
+    const int8_t dup[3] = { 0, 0, 1 }, out_of_range[3] = { 0, 1, 3 }, negative[3] = { 0, 1, -1 };
+    CHECK(roster_reorder(&r, dup, 3) == ROSTER_E_PERM, "a repeated seat is not a permutation");
+    CHECK(roster_reorder(&r, out_of_range, 3) == ROSTER_E_PERM, "a seat past n is not a permutation");
+    CHECK(roster_reorder(&r, negative, 3) == ROSTER_E_PERM, "a negative seat is not a permutation");
+    CHECK(roster_reorder(&r, perm, 2) == ROSTER_E_PERM, "a permutation of the wrong length is refused");
+    CHECK(memcmp(&r, &before, sizeof(r)) == 0, "a refused reorder leaves the roster untouched");
+
+    // retitle
+    char title[ROSTER_TITLE_MAX + 2];
+    memset(title, 'x', sizeof(title));
+    CHECK(roster_set_title(&r, RS("Игра Володи")) == ROSTER_OK && r.title_len == strlen("Игра Володи")
+          && memcmp(r.title, "Игра Володи", r.title_len) == 0, "retitle stores the bytes");
+    CHECK(roster_set_title(&r, title, ROSTER_TITLE_MAX) == ROSTER_OK && r.title_len == ROSTER_TITLE_MAX,
+          "a 200-byte title is allowed");
+    before = r;
+    CHECK(roster_set_title(&r, title, ROSTER_TITLE_MAX + 1) == ROSTER_E_TITLE, "a 201-byte title is refused");
+    CHECK(roster_set_title(&r, "\xc3", 1) == ROSTER_E_TITLE, "a title that is not UTF-8 is refused");
+    CHECK(memcmp(&r, &before, sizeof(r)) == 0, "a refused retitle leaves the roster untouched");
+    CHECK(roster_set_title(&r, "", 0) == ROSTER_OK && r.title_len == 0, "an empty title is allowed");
+
+    // redact
+    CHECK(roster_redact(&r, RS("b"), RS("Deleted player")) == 2, "redact returns the seat");
+    CHECK(r.seats[2].name_len == 14 && memcmp(r.seats[2].name, "Deleted player", 14) == 0
+          && roster_seat_of(&r, RS("b")) == 2 && r.seats[2].brain_len == 6, "redact renames and keeps the rest");
+    before = r;
+    CHECK(roster_redact(&r, RS("zz"), RS("Deleted player")) == ROSTER_E_SEAT, "redact of an unseated id is refused");
+    CHECK(roster_redact(&r, RS("b"), "\xff", 1) == ROSTER_E_NAME, "redact to a name that is not UTF-8 is refused");
+    CHECK(memcmp(&r, &before, sizeof(r)) == 0, "a refused redact leaves the roster untouched");
+}
+
+// The corpus e2e/packed_roster_wire.test.ts trims, with the byte lengths
+// roster.ts rosterNameBytes gives each (computed there, pinned here).
+static void test_roster_name_trim_matches_the_ts_and_swift_rule(void) {
+    static const struct { const char *name; int want; } corpus[] = {
+        { "🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡🤡", 64 },                  // 80 B
+        { "ВладимирВладимирВладимирВладимирВладимирВладимирВладимирВладимирВладимир", 64 }, // 144 B
+        { "A👍🏽👍🏽👍🏽👍🏽👍🏽👍🏽👍🏽👍🏽", 61 },                             // 65 B, cut inside a cluster
+        { "さくらさくらさくらさくらさくらさくらさくらさくら", 63 },               // 72 B
+        { "x🇺🇦🇺🇦🇺🇦🇺🇦🇺🇦🇺🇦🇺🇦🇺🇦🇺🇦", 61 },                             // 73 B
+        { "Sveta", 5 }, { "", 0 }, { "Пётр", 8 },
+        { "a\"b\\c", 5 }, { "line\nbreak", 10 },
+    };
+    for (size_t i = 0; i < sizeof(corpus) / sizeof(corpus[0]); i++) {
+        CHECK(roster_name_trim(corpus[i].name, (int)strlen(corpus[i].name)) == corpus[i].want,
+              "trim matches rosterNameBytes on the corpus");
+    }
+    // '👍🏽'.repeat(n) for n = 1..25: 8 B per cluster until the budget.
+    char thumbs[25 * 8 + 1];
+    for (int n = 1; n <= 25; n++) {
+        thumbs[0] = 0;
+        for (int k = 0; k < n; k++) strcat(thumbs, "👍🏽");
+        const int want = n * 8 < ROSTER_NAME_MAX ? n * 8 : ROSTER_NAME_MAX;
+        CHECK(roster_name_trim(thumbs, (int)strlen(thumbs)) == want, "thumbs trim like rosterNameBytes");
+    }
+    // Exactly 64 bytes is kept whole; 65 ASCII bytes lose one.
+    char ascii[66];
+    memset(ascii, 'q', 65); ascii[65] = 0;
+    CHECK(roster_name_trim(ascii, 64) == 64 && roster_name_trim(ascii, 65) == 64, "ASCII trims at 64");
+    CHECK(roster_name_trim(ascii, 0) == 0 && roster_name_trim(ascii, -3) == 0, "nothing trims to nothing");
+}
+
+static const uint8_t ROSTER_TRAILER_GOLDEN[] = {
+    // encodePackedRoster({ id: 'game-1', name: "Sveta's Game", status: 'playing',
+    //   players: [{p-0, Sveta, false}, {p-1, Бот, true}], good_players: ['p-1'],
+    //   good_timestamp: null }), from sdk/ts/wire/roster.ts
+    0x01,0x06,0x00,0x67,0x61,0x6d,0x65,0x2d,0x31,0x0c,0x00,0x53,0x76,0x65,0x74,0x61,0x27,0x73,0x20,0x47,
+    0x61,0x6d,0x65,0x01,0x02,0x00,0x05,0x53,0x76,0x65,0x74,0x61,0x01,0x06,0xd0,0x91,0xd0,0xbe,0xd1,0x82,
+    0x03,0x00,0x70,0x2d,0x30,0x00,0x03,0x00,0x70,0x2d,0x31,0x01,0x01,0x03,0x00,0x70,0x2d,0x31,0x00,
+};
+
+static void test_roster_trailer(void) {
+    Roster r, back;
+    uint8_t out[ROSTER_TRAILER_MAX + 16];
+    const int golden_len = (int)sizeof(ROSTER_TRAILER_GOLDEN);
+    roster_fixture(&r);
+
+    CHECK(roster_trailer_write(&r, RS("game-1"), 1, 1u << 1, out, sizeof(out)) == golden_len
+          && memcmp(out, ROSTER_TRAILER_GOLDEN, golden_len) == 0, "the trailer is encodePackedRoster's bytes");
+    int small_ok = 1;
+    for (int cap = 0; cap < golden_len; cap++)
+        if (roster_trailer_write(&r, RS("game-1"), 1, 2, out, cap) != ROSTER_E_CAP) small_ok = 0;
+    CHECK(small_ok, "every buffer smaller than the trailer is refused");
+    CHECK(roster_trailer_write(&r, RS("game-1"), 3, 0, out, sizeof(out)) == ROSTER_E_STATUS, "status 3 is refused");
+    CHECK(roster_trailer_write(&r, RS("game-1"), -1, 0, out, sizeof(out)) == ROSTER_E_STATUS, "status -1 is refused");
+    CHECK(roster_trailer_write(&r, RS("game-1"), 1, 1u << 2, out, sizeof(out)) == ROSTER_E_GOOD,
+          "a good bit past the seats is refused");
+    char gid[ROSTER_GAME_ID_MAX + 1];
+    memset(gid, 'g', sizeof(gid));
+    CHECK(roster_trailer_write(&r, gid, ROSTER_GAME_ID_MAX + 1, 0, 0, out, sizeof(out)) == ROSTER_E_GAME_ID,
+          "a game id over its cap is refused");
+    Roster bad = r; bad.seats[1].id_len = 0;
+    CHECK(roster_trailer_write(&bad, RS("game-1"), 0, 0, out, sizeof(out)) == ROSTER_E_ID,
+          "an invalid roster writes no trailer");
+
+    Roster full;
+    roster_full_fixture(&full);
+    CHECK(roster_trailer_write(&full, gid, ROSTER_GAME_ID_MAX, 2, 0xff, out, sizeof(out)) == ROSTER_TRAILER_MAX,
+          "a trailer at every cap is ROSTER_TRAILER_MAX");
+
+    // read
+    char got_gid[ROSTER_GAME_ID_MAX + 1];
+    int got_gid_len = -1, status = -1, consumed = -1;
+    uint32_t ai = 0xdead;
+    uint8_t in[sizeof(ROSTER_TRAILER_GOLDEN) + 16];
+    memcpy(in, ROSTER_TRAILER_GOLDEN, golden_len);
+    in[golden_len] = 0x77;   // a byte after the trailer is not the trailer's
+    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, in, golden_len + 1, &consumed) == ROSTER_OK,
+          "the golden trailer reads");
+    CHECK(consumed == golden_len, "the reader stops at the end of the trailer");
+    CHECK(got_gid_len == 6 && memcmp(got_gid, "game-1", 6) == 0 && status == 1 && ai == (1u << 1),
+          "game id, status and the AI seats come back");
+    Roster want = r;
+    want.seats[1].brain_len = 0; memset(want.seats[1].brain, 0, sizeof(want.seats[1].brain));
+    CHECK(roster_equal(&back, &want), "ids, names and title come back; the brain does not ride a trailer");
+
+    int short_ok = 1;
+    for (int cut = 0; cut < golden_len; cut++)
+        if (roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, in, cut, &consumed) >= 0) short_ok = 0;
+    CHECK(short_ok, "every truncation of the trailer is refused");
+    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, in, 12, &consumed) == ROSTER_E_SHORT,
+          "a cut trailer is E_SHORT");
+
+#define TMUTATE(expect, msg, ...) do { memcpy(in, ROSTER_TRAILER_GOLDEN, golden_len); __VA_ARGS__; \
+        CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, in, golden_len, &consumed) == (expect), msg); } while (0)
+    TMUTATE(ROSTER_E_VERSION, "an unknown trailer version is refused", in[0] = 2);
+    TMUTATE(ROSTER_E_STATUS, "a trailer status over 2 is refused", in[23] = 3);
+    TMUTATE(ROSTER_E_COUNT, "a trailer seat count over 8 is refused", in[24] = 9);
+    TMUTATE(ROSTER_E_SEAT, "a names block out of seat order is refused", in[25] = 1);
+    TMUTATE(ROSTER_E_NAME, "a trailer name that is not UTF-8 is refused", in[27] = 0xff);
+    TMUTATE(ROSTER_E_FLAG, "an is_ai byte of 2 is refused", in[45] = 2);
+    TMUTATE(ROSTER_E_DUPLICATE, "a trailer with a duplicate id is refused", in[50] = '0');
+    TMUTATE(ROSTER_E_FLAG, "a has_ts byte of 2 is refused", in[58] = 2);
+#undef TMUTATE
+    // A timestamp written by an older TS server is shape-checked and skipped.
+    memcpy(in, ROSTER_TRAILER_GOLDEN, golden_len);
+    in[golden_len - 1] = 1;
+    memset(in + golden_len, 0x42, 8);
+    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, in, golden_len + 8, &consumed) == ROSTER_OK
+          && consumed == golden_len + 8, "a trailer with a timestamp reads past it");
+    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, in, golden_len + 7, &consumed) == ROSTER_E_SHORT,
+          "a cut timestamp is refused");
+
+    // write -> read round trip at every cap
+    int n = roster_trailer_write(&full, gid, ROSTER_GAME_ID_MAX, 2, 0x81, out, sizeof(out));
+    CHECK(roster_trailer_read(&back, got_gid, &got_gid_len, &status, &ai, out, n, &consumed) == ROSTER_OK
+          && consumed == n && got_gid_len == ROSTER_GAME_ID_MAX && status == 2 && ai == 0xaa,
+          "a full trailer reads back");
+    for (int s = 0; s < MAX_PLAYERS; s++) { full.seats[s].brain_len = 0; }
+    CHECK(roster_equal(&back, &full), "a full trailer keeps every id and name");
+}
+
+/* ---------------------- the C Table (src/table.h) ---------------------------- */
+
+static Game tb_game, tb_src, tb_before;
+static TableSnaps tb_snaps;
+static Table tb;
+static uint8_t tb_state[8192], tb_state2[8192], tb_roster[ROSTER_BYTES], tb_roster2[ROSTER_BYTES];
+static uint8_t tb_arena[1 << 18], tb_buf[1 << 16], tb_buf2[1 << 16];
+static int tb_state_len;
+static LegalMoves tb_moves;
+
+static int tb_blob(const Game *g, uint8_t *out) {
+    out[0] = TABLE_STATE_FORMAT;
+    out[1] = g->deterministic_deck ? 1 : 0;
+    return 2 + state_put(g, VIEW_UNMASKED, out + 2);
+}
+
+// Seats "id-0".."id-<n-1>", named "Seat i", with `brain` where `bots` says.
+static void tb_roster_for(int np, uint32_t bots, const char *brain, uint8_t *out) {
+    Roster r;
+    char id[16], name[16];
+    memset(&r, 0, sizeof(r));
+    roster_set_title(&r, RS("Table"));
+    for (int i = 0; i < np; i++) {
+        snprintf(id, sizeof(id), "id-%d", i);
+        snprintf(name, sizeof(name), "Seat %d", i);
+        const int bot = (bots >> i) & 1u;
+        roster_seat_add(&r, id, (int)strlen(id), name, (int)strlen(name), bot ? brain : "", bot ? (int)strlen(brain) : 0);
+    }
+    roster_encode(&r, out, ROSTER_BYTES);
+}
+
+// A seeded deal of `np` seats into tb_src, its blob into tb_state, its roster
+// (a `random` brain at each `bots` seat) into tb_roster.
+static void tb_fixture(int np, uint32_t bots, int seed) {
+    unsigned char s[FOOLISH_SEED_LEN];
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) s[i] = (unsigned char)(i * 7 + seed);
+    game_set_seed((uint32_t)seed);
+    game_set_deal_seed_bytes(s, FOOLISH_SEED_LEN);
+    memset(&tb_src, 0, sizeof(tb_src));
+    tb_src.num_players = (int8_t)np;
+    for (int i = 0; i < np; i++) tb_src.players[i].status = PLAYER_STATUS_READY;
+    start_game(&tb_src);
+    game_set_seed(1);   // wide deal mode off again for whatever runs next
+    tb_state_len = tb_blob(&tb_src, tb_state);
+    tb_roster_for(np, bots, "random", tb_roster);
+}
+
+static int tb_same_board(const Game *a, const Game *b) {
+    static unsigned char x[8192], y[8192];
+    const int n = state_put(a, VIEW_UNMASKED, x);
+    return n == state_put(b, VIEW_UNMASKED, y) && memcmp(x, y, (size_t)n) == 0;
+}
+
+static int tb_attack_wire(const Game *g, uint8_t *w) {
+    const Card c = g->players[g->first_attacker].hand[0];
+    w[0] = AWIRE_ATTACK; w[1] = 1; w[2] = wire_from_card(c);
+    return 3;
+}
+
+static void test_table_load(void) {
+    tb_fixture(3, 1u << 2, 11);
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(table_act(&tb, RS("id-0"), tb_buf, 3, -1, 0) == TABLE_E_NOT_LOADED, "nothing acts on an unloaded table");
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK && tb.loaded, "a dealt row loads");
+    CHECK(tb_same_board(&tb_game, &tb_src), "the loaded board is the blob's");
+    CHECK(tb_game.deterministic_deck, "the deterministic-deck flag is carried from the blob");
+    CHECK(tb_game.players[0].strategy_key == STRATEGY_KEY_HUMAN && tb_game.players[1].strategy_key == STRATEGY_KEY_HUMAN,
+          "a seat with no brain is a human");
+    CHECK(tb_game.players[2].strategy_key == bot_roster_at(bot_roster_find("random"))->strat,
+          "a bot seat's kind is its brain's strat");
+    CHECK(tb.r.n == 3 && roster_seat_of(&tb.r, RS("id-2")) == 2, "the roster is loaded");
+
+    // A refusal loads nothing and leaves the board as it was.
+    memcpy(&tb_before, &tb_game, offsetof(Game, logs));
+    tb_fixture(3, 1u << 2, 12);
+#define REFUSE(want, msg, state, slen, roster) do { \
+        const int rc_ = table_load(&tb, state, slen, roster, ROSTER_BYTES); \
+        if (rc_ != (want)) fprintf(stderr, "  table_load(%s): got %d, want %d\n", msg, rc_, want); \
+        CHECK(rc_ == (want) && !tb.loaded, msg); \
+        CHECK(memcmp(&tb_before, &tb_game, offsetof(Game, logs)) == 0, msg); } while (0)
+    memcpy(tb_state2, tb_state, sizeof(tb_state)); tb_state2[0] = 3;
+    REFUSE(TABLE_E_STATE_VERSION, "a state blob of an unknown format", tb_state2, tb_state_len, tb_roster);
+    REFUSE(TABLE_E_STATE_VERSION, "a state blob too short to hold a board", tb_state, 3, tb_roster);
+    memcpy(tb_roster2, tb_roster, ROSTER_BYTES); tb_roster2[0] = 9;
+    REFUSE(TABLE_E_ROSTER, "a roster of an unknown format", tb_state, tb_state_len, tb_roster2);
+    CHECK(tb.detail == ROSTER_E_VERSION, "the roster refusal carries the roster's reason");
+    tb_roster_for(4, 0, "", tb_roster2);
+    REFUSE(TABLE_E_MISMATCH, "a roster with a seat the state does not have", tb_state, tb_state_len, tb_roster2);
+    tb_roster_for(2, 0, "", tb_roster2);
+    REFUSE(TABLE_E_MISMATCH, "a state with a seat the roster does not have", tb_state, tb_state_len, tb_roster2);
+    tb_roster_for(3, 1u << 1, "nope", tb_roster2);
+    REFUSE(TABLE_E_UNKNOWN_BRAIN, "a bot seat with a brain no build has", tb_state, tb_state_len, tb_roster2);
+    tb_roster_for(3, 1u << 1, "cord", tb_roster2);
+    REFUSE(TABLE_E_UNKNOWN_BRAIN, "a bot seat naming a prefix of a brain", tb_state, tb_state_len, tb_roster2);
+    memcpy(tb_state2, tb_state, sizeof(tb_state)); tb_state2[2] = GAME_STATUS_WAITING;
+    REFUSE(GAME_INVALID_LOBBY_CARDS, "a WAITING row that holds a dealt board", tb_state2, tb_state_len, tb_roster);
+    memcpy(tb_state2, tb_state, sizeof(tb_state)); tb_state2[2 + 4] = 7;
+    REFUSE(GAME_INVALID_SEAT, "a state the kernel could not have produced", tb_state2, tb_state_len, tb_roster);
+#undef REFUSE
+
+    // A clean lobby row loads, flag off.
+    memcpy(&tb_src, &tb_before, offsetof(Game, logs));
+    game_reset_to_lobby(&tb_src, 1u << 2);
+    tb_src.deterministic_deck = false;
+    tb_state_len = tb_blob(&tb_src, tb_state);
+    tb_roster_for(3, 1u << 2, "random", tb_roster);
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "a lobby row loads");
+    CHECK(!tb_game.deterministic_deck && tb_game.status == GAME_STATUS_WAITING, "a lobby row is a lobby");
+}
+
+// table_seal: a board a fixture composed field by field comes back as a row
+// the kernel has already loaded, or as the refusal that row would get
+// (e2e/helpers/table_fixture.ts, Phase 3c).
+static void test_table_seal(void) {
+    Roster r;
+    tb_fixture(3, 1u << 2, 21);
+    CHECK(roster_decode(&r, tb_roster, ROSTER_BYTES) == ROSTER_OK, "the fixture roster decodes");
+    table_init(&tb, &tb_game, &tb_snaps);
+
+    int n = table_seal(&tb, &tb_src, &r, tb_buf, (int)sizeof(tb_buf));
+    CHECK(n == tb_state_len && memcmp(tb_buf, tb_state, (size_t)n) == 0, "the state blob is the board's durable blob");
+    CHECK(memcmp(tb_buf + n, tb_roster, ROSTER_BYTES) == 0, "the durable roster follows it");
+    CHECK(tb.loaded && tb_same_board(&tb_game, &tb_src) && tb.r.n == 3, "and the table holds the loaded row");
+
+    // The table's own board may be the one sealed.
+    memcpy(&tb_game, &tb_src, offsetof(Game, logs));
+    n = table_seal(&tb, &tb_game, &r, tb_buf, (int)sizeof(tb_buf));
+    CHECK(n == tb_state_len && memcmp(tb_buf, tb_state, (size_t)n) == 0 && tb.loaded, "sealing t->g in place");
+
+#define SEAL_REFUSES(want, msg, cap) do { \
+        const int rc_ = table_seal(&tb, &tb_src, &r, tb_buf, (cap)); \
+        if (rc_ != (want)) fprintf(stderr, "  table_seal(%s): got %d, want %d\n", msg, rc_, want); \
+        CHECK(rc_ == (want) && !tb.loaded, msg); } while (0)
+    SEAL_REFUSES(TABLE_E_CAP, "an output too small for any row", 64);
+
+    tb_src.status = GAME_STATUS_WAITING;
+    SEAL_REFUSES(GAME_INVALID_LOBBY_CARDS, "a lobby holding cards", (int)sizeof(tb_buf));
+    tb_src.status = GAME_STATUS_PLAYING;
+
+    tb_src.players[1].hand[0] = tb_src.players[0].hand[0];
+    SEAL_REFUSES(GAME_INVALID_DUPLICATE_CARD, "one card in two hands", (int)sizeof(tb_buf));
+    tb_fixture(3, 1u << 2, 21);
+
+    const int16_t deck = tb_src.deck_count;
+    tb_src.deck_count = MAX_DECK + 1;
+    SEAL_REFUSES(GAME_INVALID_COUNT, "a deck past its array is refused before it is walked", (int)sizeof(tb_buf));
+    tb_src.deck_count = deck;
+    tb_src.players[2].hand_count = -1;
+    SEAL_REFUSES(GAME_INVALID_COUNT, "a negative hand count", (int)sizeof(tb_buf));
+    tb_fixture(3, 1u << 2, 21);
+    tb_src.num_eliminated = MAX_PLAYERS + 1;
+    SEAL_REFUSES(GAME_INVALID_ELIMINATION, "an elimination order past its array", (int)sizeof(tb_buf));
+    tb_fixture(3, 1u << 2, 21);
+    tb_src.num_players = MAX_PLAYERS + 1;
+    SEAL_REFUSES(GAME_INVALID_NUM_PLAYERS, "more seats than a table has", (int)sizeof(tb_buf));
+    tb_fixture(3, 1u << 2, 21);
+
+    tb_src.num_players = 2;
+    SEAL_REFUSES(TABLE_E_MISMATCH, "a board with fewer seats than the roster", (int)sizeof(tb_buf));
+    tb_src.num_players = 3;
+
+    r.seats[1].id_len = 0;
+    SEAL_REFUSES(TABLE_E_ROSTER, "a roster that does not encode", (int)sizeof(tb_buf));
+    CHECK(tb.detail == ROSTER_E_ID, "with the roster's reason");
+    roster_decode(&r, tb_roster, ROSTER_BYTES);
+    memcpy(r.seats[2].brain, "nope", 5);
+    r.seats[2].brain_len = 4;
+    SEAL_REFUSES(TABLE_E_UNKNOWN_BRAIN, "a bot seat with a brain this build lacks", (int)sizeof(tb_buf));
+#undef SEAL_REFUSES
+}
+
+static void test_table_act_resolves_the_seat_from_the_actor_id(void) {
+    tb_fixture(3, 1u << 2, 21);
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the table loads");
+    uint8_t w[8];
+    const int wl = tb_attack_wire(&tb_game, w);
+    const int fa = tb_game.first_attacker;
+    char fa_id[8], other_id[8], longer[8];
+    snprintf(fa_id, sizeof(fa_id), "id-%d", fa);
+    snprintf(other_id, sizeof(other_id), "id-%d", tb_game.defender);
+    snprintf(longer, sizeof(longer), "%s0", fa_id);
+
+    memcpy(&tb_before, &tb_game, offsetof(Game, logs));
+#define ACT_NOOP(want, msg, ...) do { \
+        const int rc_ = table_act(&tb, __VA_ARGS__, w, wl, -1, 0); \
+        if (rc_ != (want)) fprintf(stderr, "  table_act(%s): got %d, want %d\n", msg, rc_, want); \
+        CHECK(rc_ == (want), msg); \
+        CHECK(memcmp(&tb_before, &tb_game, offsetof(Game, logs)) == 0, msg); } while (0)
+    ACT_NOOP(TABLE_E_NOT_SEATED, "an id with no seat acts for nobody", RS("nobody"));
+    ACT_NOOP(TABLE_E_NOT_SEATED, "a spectator's auth id acts for nobody", RS("0b5f3a52-7c1e-4d2b-9a8e-3f1c2d4e5f60"));
+    ACT_NOOP(TABLE_E_NOT_SEATED, "the empty id acts for nobody", "", 0);
+    ACT_NOOP(TABLE_E_NOT_SEATED, "a prefix of a seated id acts for nobody", RS("id-"));
+    ACT_NOOP(TABLE_E_NOT_SEATED, "a seated id cut short acts for nobody", fa_id, 3);
+    ACT_NOOP(TABLE_E_NOT_SEATED, "a seated id with a byte appended acts for nobody", longer, (int)strlen(longer));
+    // Seated, but not this seat's card or turn: the move is the ACTOR's.
+    ACT_NOOP(TABLE_REJECTED, "another seated id cannot play the first attacker's card", other_id, (int)strlen(other_id));
+    CHECK(tb.reject != ENGINE_REJECT_NONE, "the rejection carries the kernel's reason");
+    uint8_t bad[4] = { AWIRE_ATTACK, 1, w[2], 0 };
+    CHECK(table_act(&tb, fa_id, (int)strlen(fa_id), bad, 4, -1, 0) == TABLE_E_WIRE, "a malformed wire is refused");
+    CHECK(memcmp(&tb_before, &tb_game, offsetof(Game, logs)) == 0, "a malformed wire changes nothing");
+#undef ACT_NOOP
+
+    CHECK(table_act(&tb, fa_id, (int)strlen(fa_id), w, wl, -1, 0) == TABLE_APPLIED, "the first attacker's id plays their card");
+    CHECK(tb_game.num_battles == 1 && tb.actor == fa && !tb.ended, "the attack is on the table, by the resolved seat");
+    CHECK(tb_snaps.n == 1 && tb_snaps.tag[0] == ENGINE_HOOK_ATTACK, "the attack's hook snapshot is captured");
+}
+
+static void test_table_act_moot_and_stale_round(void) {
+    // Stale round: a move composed before the current round began.
+    tb_fixture(2, 0, 31);
+    table_init(&tb, &tb_game, &tb_snaps);
+    uint8_t w[8];
+    char fa_id[8];
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the table loads");
+    const int wl = tb_attack_wire(&tb_game, w);
+    snprintf(fa_id, sizeof(fa_id), "id-%d", tb_game.first_attacker);
+    CHECK(table_act(&tb, fa_id, (int)strlen(fa_id), w, wl, 4, 5) == TABLE_STALE_ROUND, "intent 4 < round 5 is stale");
+    CHECK(tb_game.num_battles == 0, "a stale move changes nothing");
+    CHECK(table_act(&tb, RS("nobody"), w, wl, 4, 5) == TABLE_STALE_ROUND, "the round guard outranks the seat check");
+    CHECK(table_act(&tb, fa_id, (int)strlen(fa_id), w, wl, 5, 5) == TABLE_APPLIED, "intent == round is current");
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the table reloads");
+    CHECK(table_act(&tb, fa_id, (int)strlen(fa_id), w, wl, -1, 5) == TABLE_APPLIED, "no intent is not guarded");
+
+    // Moot: a move against a finished game is a no-op, before any other check.
+    unsigned char seed[FOOLISH_SEED_LEN];
+    CHECK(rs_play_seeded(&tb_src, 3, 3131, seed), "a game plays out");
+    game_set_seed(1);
+    tb_src.status = GAME_STATUS_GAME_OVER;
+    for (int i = 0; i < 3; i++) tb_src.players[i].status = PLAYER_STATUS_IDLE;
+    tb_state_len = tb_blob(&tb_src, tb_state);
+    tb_roster_for(3, 0, "", tb_roster);
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "a finished row loads");
+    memcpy(&tb_before, &tb_game, offsetof(Game, logs));
+    CHECK(table_act(&tb, RS("id-0"), w, wl, -1, 0) == TABLE_MOOT, "a move on a finished game is moot");
+    CHECK(table_act(&tb, RS("id-0"), w, wl, 1, 9) == TABLE_MOOT, "moot outranks the round guard");
+    CHECK(table_act(&tb, RS("nobody"), w, wl, -1, 0) == TABLE_MOOT, "moot outranks the seat check");
+    CHECK(table_act(&tb, RS("id-0"), w, 1, -1, 0) == TABLE_MOOT, "moot outranks the wire check");
+    CHECK(memcmp(&tb_before, &tb_game, offsetof(Game, logs)) == 0, "a moot move changes nothing");
+}
+
+static void test_table_commit_products(void) {
+    tb_fixture(3, 1u << 2, 41);
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the table loads");
+    TableCommit c;
+
+    // Straight after a load: the row as it is, nothing to append or broadcast.
+    int n = table_commit_products(&tb, RS("g-1"), 7, 0x010203040506LL, &c, tb_arena, sizeof(tb_arena));
+    CHECK(n > 0 && c.logs.len == 0 && c.n_events == 0 && !c.ended && !c.closed_round && !c.logs_reset,
+          "a load alone has no records and no events");
+    CHECK(c.state.len == tb_state_len && memcmp(tb_arena + c.state.off, tb_state, (size_t)tb_state_len) == 0,
+          "the state blob round-trips byte for byte");
+    CHECK(c.roster.len == ROSTER_BYTES && memcmp(tb_arena + c.roster.off, tb_roster, ROSTER_BYTES) == 0,
+          "the roster blob round-trips byte for byte");
+    CHECK(c.status == GAME_STATUS_PLAYING && c.fool == -1 && c.num_players == 3 && c.needs_bots,
+          "status, fool and needs_bots are the board's");
+    CHECK(n == c.spectator.off + c.spectator.len, "the arena ends with the spectator envelope");
+
+    uint8_t w[8];
+    char fa_id[8];
+    const int wl = tb_attack_wire(&tb_game, w);
+    const int fa = tb_game.first_attacker;
+    snprintf(fa_id, sizeof(fa_id), "id-%d", fa);
+    CHECK(table_act(&tb, fa_id, (int)strlen(fa_id), w, wl, -1, 0) == TABLE_APPLIED, "the attack applies");
+    n = table_commit_products(&tb, RS("g-1"), 7, 0x010203040506LL, &c, tb_arena, sizeof(tb_arena));
+    CHECK(n > 0, "the products fit");
+    CHECK(c.state.len == tb_blob(&tb_game, tb_buf) && memcmp(tb_arena + c.state.off, tb_buf, (size_t)c.state.len) == 0,
+          "the state blob is the board after the move");
+    const uint8_t *lg = tb_arena + c.logs.off;
+    CHECK(c.logs.len == 6 + 4 + 2 && lg[0] == 0x06 && lg[1] == 0x05 && lg[5] == 0x01 && lg[6] == LOG_ATTACK
+          && lg[7] == fa && lg[8] == 0xFF && lg[9] == 1 && lg[10] == w[2] && lg[11] == 0xFF,
+          "one ATTACK record, stamped with the clock as u48 little-endian");
+    CHECK(c.n_events == 1 && !c.closed_round && !c.logs_reset, "one event, no round closed");
+    for (int s = 0; s < 3; s++) {
+        if (s == 2) { CHECK(c.views[s].len == 0, "a bot seat has no envelope"); continue; }
+        const uint8_t *e = tb_arena + c.views[s].off;
+        const int m = table_envelope(&tb, RS("g-1"), s, 7, tb_buf, sizeof(tb_buf));
+        CHECK(m == c.views[s].len && memcmp(e, tb_buf, (size_t)m) == 0, "the view is table_envelope's");
+        CHECK(e[0] == 1 && e[1] == 0x03 && e[2] == s && e[3] == 7 && e[4] == 0 && e[5] == 0 && e[6] == 0
+              && e[7] == 0 && e[8] == 0, "the envelope header: format, flags, seat, version, empty island");
+        const int vl = e[9] | (e[10] << 8);
+        const int sl = state_put(&tb_game, s, tb_buf2);
+        CHECK(vl == 2 + sl && e[11] == VIEW_FORMAT_VERSION && e[12] == s
+              && memcmp(e + 13, tb_buf2, (size_t)sl) == 0, "the view blob is the board masked for its seat");
+        Roster back;
+        char gid[ROSTER_GAME_ID_MAX + 1];
+        int gl, st, used;
+        uint32_t ai;
+        CHECK(roster_trailer_read(&back, gid, &gl, &st, &ai, e + 11 + vl, m - 11 - vl, &used) == ROSTER_OK
+              && used == m - 11 - vl && gl == 3 && memcmp(gid, "g-1", 3) == 0 && st == GAME_STATUS_PLAYING
+              && ai == (1u << 2), "the trailer names the game, its status and its bot");
+    }
+    {
+        const uint8_t *e = tb_arena + c.spectator.off;
+        const int vl = e[9] | (e[10] << 8);
+        const int sl = state_put(&tb_game, VIEW_SPECTATOR, tb_buf2);
+        CHECK(e[1] == 0x02 && e[2] == 0xFF && e[12] == 0xFF && vl == 2 + sl
+              && memcmp(e + 13, tb_buf2, (size_t)sl) == 0, "the spectator envelope masks every hand");
+    }
+
+    // The push: the evwire sequence, then the flags byte.
+    for (int v = -1; v < 2; v++) {
+        const int pl = table_push(&tb, RS("g-1"), v, tb_buf, sizeof(tb_buf));
+        int seq, flags, block;
+        CHECK(pl > 0 && evwire_as3_split(tb_buf, pl, &seq, &flags, &block) == 0 && flags == 0
+              && seq + 1 == pl && block == pl, "a move's push is its sequence and a zero flags byte");
+        EvwHeader h;
+        CHECK(evwire_read_header(tb_buf, pl, &h) == 0 && h.viewer == v && h.actor == fa && h.n_events == 1,
+              "the sequence is masked for its viewer and names the actor");
+    }
+    CHECK(table_push(&tb, RS("g-1"), 2, tb_buf, sizeof(tb_buf)) == TABLE_E_NOT_SEATED, "a bot seat has no push");
+    CHECK(table_commit_products(&tb, RS("g-1"), 7, 0, &c, tb_arena, 64) == TABLE_E_CAP, "a small arena is refused");
+
+    // The defender takes the table: a round closes, and the refill's draws are hidden.
+    char def_id[8];
+    snprintf(def_id, sizeof(def_id), "id-%d", tb_game.defender);
+    uint8_t pick[2] = { AWIRE_PICKUP, 0 };
+    CHECK(table_act(&tb, def_id, (int)strlen(def_id), pick, 2, -1, 0) == TABLE_APPLIED, "the defender picks up");
+    n = table_commit_products(&tb, RS("g-1"), 8, 1, &c, tb_arena, sizeof(tb_arena));
+    CHECK(n > 0 && c.closed_round && !c.logs_reset && c.n_events > 1, "a pickup closes the round");
+    int draws_hidden = 1, saw_draw = 0;
+    for (int q = c.logs.off; q < c.logs.off + c.logs.len; ) {
+        const int type = tb_arena[q + 6], np = tb_arena[q + 9];
+        for (int j = 0; j < np && type == LOG_DRAW; j++) {
+            saw_draw = 1;
+            if (tb_arena[q + 10 + 2 * j] != 0xFE) draws_hidden = 0;
+        }
+        q += 10 + 2 * np;
+    }
+    CHECK(saw_draw && draws_hidden, "drawn cards are hidden in the session-log records");
+}
+
+static void test_table_plays_a_game_to_its_end(void) {
+    tb_fixture(3, 1u << 1, 51);
+    table_init(&tb, &tb_game, &tb_snaps);
+    TableCommit c;
+    int rc = TABLE_E_NOT_LOADED, reloads_ok = 1;
+    for (int guard = 0; guard < 5000; guard++) {
+        // Every move goes the way a server's does: load the committed row, act, commit.
+        if (table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) != TABLE_OK) { reloads_ok = 0; break; }
+        int seat = -1;
+        for (int s = 0; s < 3 && seat < 0; s++) if (should_bot_act(&tb_game, s)) seat = s;
+        if (seat < 0) break;
+        calculate_legal_moves(&tb_game, seat, &tb_moves);
+        const LegalMove *m = &tb_moves.moves[handwritten_strategy_choose(&tb_game, seat, &tb_moves, 0)];
+        AwireAction a;
+        memset(&a, 0, sizeof(a));
+        a.kind = m->type; a.n = m->n_cards;
+        for (int i = 0; i < m->n_cards; i++) { a.cards[i] = m->cards[i]; a.attacks[i] = m->attack_cards[i]; }
+        const int wl = awire_encode(&a, tb_buf, sizeof(tb_buf));
+        char id[8];
+        snprintf(id, sizeof(id), "id-%d", seat);
+        rc = table_act(&tb, id, (int)strlen(id), tb_buf, wl, -1, 0);
+        if (rc != TABLE_APPLIED || tb.ended) break;
+        const int pn = table_commit_products(&tb, RS("g"), 1, 0, &c, tb_arena, sizeof(tb_arena));
+        if (pn < 0) { reloads_ok = 0; break; }
+        memcpy(tb_state, tb_arena + c.state.off, (size_t)c.state.len);
+        tb_state_len = c.state.len;
+    }
+    CHECK(reloads_ok, "every committed state blob reloads");
+    CHECK(rc == TABLE_APPLIED && tb.ended, "the game plays to its end through the table");
+    const int n = table_commit_products(&tb, RS("g"), 99, 0, &c, tb_arena, sizeof(tb_arena));
+    CHECK(n > 0 && c.ended && c.status == GAME_STATUS_GAME_OVER && c.fool >= 0 && !c.needs_bots,
+          "the ending commit is over, names the fool and needs no bots");
+    CHECK(tb_game.players[1].status == PLAYER_STATUS_READY && tb_game.players[0].status == PLAYER_STATUS_IDLE
+          && tb_game.players[2].status == PLAYER_STATUS_IDLE, "the finalize parks the bot READY and the humans IDLE");
+    const int pl = table_push(&tb, RS("g"), 0, tb_buf, sizeof(tb_buf));
+    EvwHeader h;
+    CHECK(pl > 0 && evwire_read_header(tb_buf, pl, &h) == 0 && h.n_events == c.n_events, "the push carries every event");
+    CHECK(table_act(&tb, RS("id-0"), tb_buf, 2, -1, 0) == TABLE_MOOT, "and the next move is moot");
+
+    int8_t order[MAX_PLAYERS];
+    const int k = table_rankings(&tb, order);
+    CHECK(k == 3 && order[2] == c.fool, "the fool finishes last");
+    CHECK(order[0] == tb_game.elimination_order[0] && order[1] == tb_game.elimination_order[1],
+          "the others finish in the order they went out");
+}
+
+static void test_table_request_and_response(void) {
+    TableRequest q;
+    const uint8_t v1[] = { 1, 3, 'a', 'b', 'c', AWIRE_PICKUP, 0 };
+    CHECK(table_request_decode(v1, sizeof(v1), &q) == 0 && q.fmt == 1 && !q.has_intent && q.gid_off == 2
+          && q.gid_len == 3 && q.wire_off == 5 && q.wire_len == 2, "a v1 request: game id and wire, no intent");
+    const uint8_t v2[] = { 2, 1, 'g', 0x05, 0x01, 0, 0x80, AWIRE_GOOD, 0 };
+    CHECK(table_request_decode(v2, sizeof(v2), &q) == 0 && q.has_intent && q.intent == 0x80000105u
+          && q.wire_off == 7 && q.wire_len == 2, "a v2 request: the u32 intent, then the wire");
+    CHECK(table_request_decode(v2, 8, &q) == TABLE_E_WIRE, "a v2 request with a one-byte wire is refused");
+    CHECK(table_request_decode(v2, 6, &q) == TABLE_E_WIRE, "a v2 request cut inside the intent is refused");
+    const uint8_t v3[] = { 3, 1, 'g', AWIRE_GOOD, 0 };
+    CHECK(table_request_decode(v3, sizeof(v3), &q) == TABLE_E_WIRE, "an unknown request format is refused");
+    const uint8_t long_gid[] = { 1, 200, 'g', AWIRE_GOOD, 0 };
+    CHECK(table_request_decode(long_gid, sizeof(long_gid), &q) == TABLE_E_WIRE, "a game id past the body is refused");
+    CHECK(table_request_decode(v1, 1, &q) == TABLE_E_WIRE, "a one-byte body is refused");
+
+    uint8_t r[TABLE_RESP_BYTES];
+    CHECK(table_action_response(TABLE_APPLIED, 0, 0x01020304u, r, sizeof(r)) == TABLE_RESP_BYTES
+          && r[0] == 1 && r[1] == 0 && r[2] == 0 && r[3] == 4 && r[4] == 3 && r[5] == 2 && r[6] == 1,
+          "applied: status 0 and the version");
+    CHECK(table_action_response(TABLE_REJECTED, ENGINE_REJECT_NOT_IN_HAND, 9, r, sizeof(r)) == TABLE_RESP_BYTES
+          && r[1] == 1 && r[2] == ENGINE_REJECT_NOT_IN_HAND, "rejected: status 1 and the kernel's reason");
+    CHECK(table_action_response(TABLE_STALE_ROUND, 0, 9, r, sizeof(r)) == TABLE_RESP_BYTES
+          && r[1] == 1 && r[2] == TABLE_REJECT_STALE_ROUND, "stale: status 1 and the policy code 100");
+    CHECK(table_action_response(TABLE_MOOT, 5, 9, r, sizeof(r)) == TABLE_RESP_BYTES && r[1] == 2 && r[2] == 0,
+          "moot: status 2 and no code");
+    CHECK(table_action_response(TABLE_APPLIED, 0, 9, r, 6) == TABLE_E_CAP, "a short buffer is refused");
+}
+
+static void test_evwire_as3_split(void) {
+    static Game g;
+    memset(&g, 0, sizeof(g));
+    g.num_players = 2;
+    static uint8_t buf[4096];
+    const int seq = evwire_serialize(0, 0, 0, 0, &g, VIEW_SPECTATOR, -1, 1, buf, sizeof(buf));
+    int s, f, b;
+    CHECK(seq > 0 && evwire_as3_split(buf, seq, &s, &f, &b) == EVW_EPARSE, "an as2 payload has no flags byte");
+    buf[seq] = 0;
+    CHECK(evwire_as3_split(buf, seq + 1, &s, &f, &b) == 0 && s == seq && f == 0 && b == seq + 1, "flags 0 ends the payload");
+    buf[seq + 1] = 0x42;
+    CHECK(evwire_as3_split(buf, seq + 2, &s, &f, &b) == EVW_EPARSE, "bytes no flag announced are refused");
+    buf[seq] = 0x02;
+    CHECK(evwire_as3_split(buf, seq + 1, &s, &f, &b) == EVW_EPARSE, "an unknown flag is refused");
+    buf[seq] = EVW_AS3_ROSTER;
+    CHECK(evwire_as3_split(buf, seq + 1, &s, &f, &b) == EVW_EPARSE, "a roster flag with no roster is refused");
+    CHECK(evwire_as3_split(buf, seq + 2, &s, &f, &b) == 0 && f == EVW_AS3_ROSTER && b == seq + 1,
+          "a roster flag points at the trailer");
+    CHECK(evwire_as3_split(buf, seq - 1, &s, &f, &b) == EVW_EPARSE, "a cut sequence is refused");
+}
+
+static void test_elo_deltas(void) {
+    int32_t out[MAX_PLAYERS];
+    const int32_t even2[2] = { 1000, 1000 };
+    const int8_t first0[2] = { 0, 1 }, first1[2] = { 1, 0 };
+    CHECK(elo_deltas(even2, first0, 2, out) == 2 && out[0] == 5 && out[1] == -5, "an even pair moves 5 each way");
+    CHECK(elo_deltas(even2, first1, 2, out) == 2 && out[1] == 5 && out[0] == -5, "the order is by place, not seat");
+    const int32_t three[3] = { 1000, 1000, 1000 };
+    const int8_t o3[3] = { 2, 0, 1 };
+    CHECK(elo_deltas(three, o3, 3, out) == 3 && out[2] == 10 && out[0] == 0 && out[1] == -10,
+          "three even seats: +10, 0, -10");
+    // The steps: a win against a player 511 above is worth 9, 512 above is 10.
+    int32_t r[2] = { 1000, 1511 };
+    CHECK(elo_deltas(r, first0, 2, out) == 2 && out[0] == 9 && out[1] == -9, "d = 511: 9");
+    r[1] = 1512;
+    CHECK(elo_deltas(r, first0, 2, out) == 2 && out[0] == 10 && out[1] == -10, "d = 512: 10");
+    r[1] = 1000 - 34;
+    CHECK(elo_deltas(r, first0, 2, out) == 2 && out[0] == 5 && out[1] == -5, "d = -34: 5");
+    r[1] = 1000 - 35;
+    CHECK(elo_deltas(r, first0, 2, out) == 2 && out[0] == 4 && out[1] == -4, "d = -35: 4");
+    r[1] = 1000 - 5000;
+    CHECK(elo_deltas(r, first0, 2, out) == 2 && out[0] == 0 && out[1] == 0, "a far weaker loser moves nothing");
+    const int8_t dup[2] = { 0, 0 }, range[2] = { 0, 2 };
+    CHECK(elo_deltas(even2, dup, 2, out) == TABLE_E_WIRE, "a repeated seat is refused");
+    CHECK(elo_deltas(even2, range, 2, out) == TABLE_E_WIRE, "a seat past n is refused");
+}
+
+// ---- lobby edits ----
+
+static uint8_t tb_seed[FOOLISH_SEED_LEN];
+
+static void tb_seed_fill(int k) { for (int i = 0; i < FOOLISH_SEED_LEN; i++) tb_seed[i] = (uint8_t)(i * 13 + k); }
+
+// tb <- a lobby created by "a" (Alice), joined by "b" (Bob) and "c" (Cleo).
+static void tb_lobby(void) {
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_create(&tb, RS("a"), RS("Alice"));
+    table_join(&tb, RS("b"), RS("Bob"));
+    table_join(&tb, RS("c"), RS("Cleo"));
+}
+
+static int tb_same_table(const Table *x, const Game *before_g, const Roster *before_r) {
+    return memcmp(&x->r, before_r, sizeof(Roster)) == 0 && memcmp(x->g, before_g, offsetof(Game, logs)) == 0;
+}
+
+static Roster tb_r_before;
+#define TB_SNAPSHOT() do { memcpy(&tb_before, &tb_game, offsetof(Game, logs)); tb_r_before = tb.r; } while (0)
+#define TB_REFUSED(expr, want, msg) do { \
+        TB_SNAPSHOT(); const int rc_ = (expr); \
+        if (rc_ != (want)) fprintf(stderr, "  %s: got %d, want %d\n", msg, rc_, want); \
+        CHECK(rc_ == (want), msg); \
+        CHECK(tb_same_table(&tb, &tb_before, &tb_r_before), msg); } while (0)
+
+static void test_table_create_and_join(void) {
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(table_join(&tb, RS("b"), RS("Bob")) == TABLE_E_NOT_LOADED, "no join before a table exists");
+    CHECK(table_create(&tb, RS("a"), RS("Alice")) == TABLE_OK && tb.loaded, "create seats the creator");
+    CHECK(tb.r.n == 1 && tb_game.num_players == 1 && tb_game.status == GAME_STATUS_WAITING
+          && tb_game.players[0].status == PLAYER_STATUS_IDLE, "one IDLE seat in a WAITING game");
+    CHECK(tb.r.title_len == 12 && memcmp(tb.r.title, "Alice's Game", 12) == 0, "titled after the creator");
+    TableCommit c;
+    CHECK(table_commit_products(&tb, RS("g"), 0, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && c.n_events == 0
+          && c.views[0].len > 0 && c.logs.len == 0, "a new table commits a view and announces nothing");
+    {
+        static Game g2;
+        static TableSnaps s2;
+        Table t2;
+        char big[256];
+        for (int i = 0; i < 64; i++) memcpy(big + i * 4, "\xf0\x9f\xa4\xa1", 4);
+        table_init(&t2, &g2, &s2);
+        CHECK(table_create(&t2, RS("z"), big, 256) == TABLE_OK && t2.r.title_len == 192 + 7
+              && memcmp(t2.r.title + 192, "'s Game", 7) == 0,
+              "a long name is cut on a scalar boundary to keep the title under its cap");
+        CHECK(t2.r.seats[0].name_len == 64, "and the seat name is trimmed like every roster name");
+    }
+
+    CHECK(table_join(&tb, RS("b"), RS("Bob")) == TABLE_OK && tb.r.n == 2 && tb_game.num_players == 2
+          && tb_game.players[1].status == PLAYER_STATUS_IDLE && tb.roster_changed && tb.lobby_event,
+          "a join seats an IDLE human and changes the roster");
+    CHECK(table_commit_products(&tb, RS("g"), 1, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && c.n_events == 1
+          && c.roster_changed, "a join is one announced event");
+    const int pl = table_push(&tb, RS("g"), 0, tb_buf, sizeof(tb_buf));
+    int seq, flags, block;
+    Roster pushed;
+    char gid[ROSTER_GAME_ID_MAX + 1];
+    int gl, st, used;
+    uint32_t ai;
+    CHECK(pl > 0 && evwire_as3_split(tb_buf, pl, &seq, &flags, &block) == 0 && flags == EVW_AS3_ROSTER
+          && roster_trailer_read(&pushed, gid, &gl, &st, &ai, tb_buf + block, pl - block, &used) == ROSTER_OK
+          && block + used == pl && pushed.n == 2, "the join's push carries the new roster");
+    TB_REFUSED(table_join(&tb, RS("b"), RS("Bob again")), TABLE_E_ROSTER, "a duplicate join is refused");
+    CHECK(tb.detail == ROSTER_E_DUPLICATE, "as a duplicate");
+    for (int i = 2; i < MAX_PLAYERS; i++) {
+        char id[8];
+        snprintf(id, sizeof(id), "p%d", i);
+        table_join(&tb, id, (int)strlen(id), RS("P"));
+    }
+    CHECK(tb.r.n == MAX_PLAYERS && tb_game.num_players == MAX_PLAYERS, "the table fills");
+    TB_REFUSED(table_join(&tb, RS("p9"), RS("Late")), TABLE_E_ROSTER, "a join to a full table is refused");
+    CHECK(tb.detail == ROSTER_E_FULL, "as full");
+
+    tb_fixture(2, 0, 61);
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+    TB_REFUSED(table_join(&tb, RS("late"), RS("Late")), TABLE_E_NOT_WAITING, "no join once dealt");
+}
+
+static void test_table_leave_and_bots(void) {
+    tb_seed_fill(1);
+    tb_lobby();
+    TB_REFUSED(table_leave(&tb, RS("stranger"), RS("b")), TABLE_E_NOT_SEATED, "a stranger cannot remove a player");
+    TB_REFUSED(table_leave(&tb, RS("a"), RS("nobody")), TABLE_E_NOT_SEATED, "an unseated target is refused");
+    TB_REFUSED(table_add_bot(&tb, RS("stranger"), RS("bot-1"), RS("Rando"), RS("random"), tb_seed),
+               TABLE_E_NOT_SEATED, "a stranger cannot add a bot");
+    TB_REFUSED(table_add_bot(&tb, RS("a"), RS("bot-1"), RS("Rando"), RS("nope"), tb_seed),
+               TABLE_E_UNKNOWN_BRAIN, "a brain no build has is refused");
+    TB_REFUSED(table_add_bot(&tb, RS("a"), RS("bot-1"), RS("Rando"), "", 0, tb_seed),
+               TABLE_E_UNKNOWN_BRAIN, "a bot needs a brain");
+    CHECK(table_add_bot(&tb, RS("a"), RS("bot-1"), RS("Rando"), RS("random"), tb_seed) == TABLE_OK
+          && tb.r.n == 4 && tb_game.players[3].status == PLAYER_STATUS_READY
+          && tb_game.players[3].strategy_key == bot_roster_at(bot_roster_find("random"))->strat
+          && !tb.dealt_now, "a bot sits down READY with its brain's kind, and nothing deals yet");
+    TB_REFUSED(table_leave(&tb, RS("a"), RS("bot-1")), TABLE_E_FORBIDDEN, "a bot is not removed as a leaving player");
+    TB_REFUSED(table_remove_bot(&tb, RS("a"), RS("b")), TABLE_E_NOT_SEATED, "a human is not removed as a bot");
+    TB_REFUSED(table_remove_bot(&tb, RS("stranger"), RS("bot-1")), TABLE_E_NOT_SEATED, "a stranger cannot remove a bot");
+
+    // a kicks b: the seats above move down, statuses with them
+    table_ready(&tb, RS("c"), tb_seed);
+    CHECK(table_leave(&tb, RS("a"), RS("b")) == TABLE_OK && tb.r.n == 3 && tb_game.num_players == 3
+          && roster_seat_of(&tb.r, RS("c")) == 1 && tb_game.players[1].status == PLAYER_STATUS_READY
+          && tb_game.players[2].status == PLAYER_STATUS_READY && roster_seat_of(&tb.r, RS("bot-1")) == 2,
+          "removing another human compacts both halves of the table");
+    CHECK(table_remove_bot(&tb, RS("c"), RS("bot-1")) == TABLE_OK && tb.r.n == 2 && tb_game.num_players == 2,
+          "a seated player removes a bot");
+    CHECK(table_leave(&tb, RS("c"), RS("c")) == TABLE_OK && tb.r.n == 1, "a player leaves");
+    CHECK(table_leave(&tb, RS("a"), RS("a")) == TABLE_EMPTY && tb.r.n == 0 && tb_game.num_players == 0,
+          "the last seat leaving empties the table");
+
+    // a bot that makes every seat ready deals, with the roster change on the push
+    tb_lobby();
+    table_ready(&tb, RS("a"), tb_seed);
+    table_ready(&tb, RS("b"), tb_seed);
+    table_ready(&tb, RS("c"), tb_seed);
+    CHECK(tb_game.status == GAME_STATUS_PLAYING, "three ready humans deal");
+    tb_lobby();
+    table_ready(&tb, RS("a"), tb_seed);
+    table_ready(&tb, RS("b"), tb_seed);
+    CHECK(tb_game.status == GAME_STATUS_WAITING, "one human not ready: no deal");
+    TB_REFUSED(table_add_bot(&tb, RS("a"), RS("b"), RS("Twin"), RS("random"), tb_seed), TABLE_E_ROSTER,
+               "a bot with a seated id is refused");
+    CHECK(tb.detail == ROSTER_E_DUPLICATE, "as a duplicate");
+    for (int i = 0; i < MAX_PLAYERS - 3; i++) {
+        char id[8];
+        snprintf(id, sizeof(id), "bot-%d", i);
+        table_add_bot(&tb, RS("a"), id, (int)strlen(id), RS("Bot"), RS("random"), tb_seed);
+    }
+    TB_REFUSED(table_add_bot(&tb, RS("a"), RS("bot-9"), RS("Bot"), RS("random"), tb_seed), TABLE_E_ROSTER,
+               "a bot for a full table is refused");
+    CHECK(tb.detail == ROSTER_E_FULL, "as full");
+}
+
+static void test_table_ready_deals(void) {
+    tb_seed_fill(7);
+    tb_lobby();
+    TB_REFUSED(table_ready(&tb, RS("stranger"), tb_seed), TABLE_E_NOT_SEATED, "a stranger cannot ready");
+    CHECK(table_ready(&tb, RS("a"), tb_seed) == TABLE_OK && tb_game.players[0].status == PLAYER_STATUS_READY
+          && tb.lobby_event && !tb.roster_changed && !tb.dealt_now, "a ready is announced and deals nothing yet");
+    CHECK(table_ready(&tb, RS("a"), tb_seed) == TABLE_OK && tb.lobby_event, "readying twice is still announced");
+    CHECK(table_add_bot(&tb, RS("b"), RS("bot-1"), RS("Rando"), RS("random"), tb_seed) == TABLE_OK && !tb.dealt_now,
+          "a bot with humans unready deals nothing");
+    table_ready(&tb, RS("b"), tb_seed);
+    game_set_seed(1);   // wide deal mode off, whatever an earlier deal on this thread left
+    const int deal_was = game_deal_seed_active();
+    CHECK(deal_was == 0, "wide deal mode is off before the deal");
+    CHECK(table_ready(&tb, RS("c"), tb_seed) == TABLE_OK && tb.dealt_now && !tb.lobby_event
+          && tb_game.status == GAME_STATUS_PLAYING && tb_game.deterministic_deck, "the last ready deals from the seed");
+    CHECK(game_deal_seed_active() == deal_was, "the deal puts the deal RNG back");
+    TableCommit c;
+    CHECK(table_commit_products(&tb, RS("g"), 5, 42, &c, tb_arena, sizeof(tb_arena)) > 0 && c.dealt_now && c.logs_reset
+          && !c.closed_round && c.logs.len > 0 && tb_arena[c.logs.off + 6] == LOG_GAME_START
+          && c.n_events == 4 + 1 + 1 + 1 + 1, "the deal commits a fresh session log and every deal event");
+    const uint8_t dealt_len = (uint8_t)c.state.len;
+    memcpy(tb_state2, tb_arena + c.state.off, (size_t)c.state.len);
+    CHECK(table_ready(&tb, RS("a"), tb_seed) == TABLE_MOOT && tb_game.status == GAME_STATUS_PLAYING,
+          "a ready after the deal is a no-op");
+
+    // the same seed deals the same board
+    tb_lobby();
+    table_ready(&tb, RS("a"), tb_seed);
+    table_add_bot(&tb, RS("b"), RS("bot-1"), RS("Rando"), RS("random"), tb_seed);
+    table_ready(&tb, RS("b"), tb_seed);
+    table_ready(&tb, RS("c"), tb_seed);
+    CHECK(table_commit_products(&tb, RS("g"), 5, 42, &c, tb_arena, sizeof(tb_arena)) > 0 && c.state.len == dealt_len
+          && memcmp(tb_arena + c.state.off, tb_state2, dealt_len) == 0, "one seed, one deal");
+
+    // a bot that completes the table deals, and its push carries the roster
+    tb_lobby();
+    table_ready(&tb, RS("a"), tb_seed);
+    table_ready(&tb, RS("b"), tb_seed);
+    table_leave(&tb, RS("a"), RS("c"));
+    CHECK(tb_game.status == GAME_STATUS_WAITING, "a leave never deals, even one that leaves every seat ready");
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_create(&tb, RS("a"), RS("Alice"));
+    table_ready(&tb, RS("a"), tb_seed);
+    CHECK(tb_game.status == GAME_STATUS_WAITING, "one ready seat does not deal");
+    CHECK(table_add_bot(&tb, RS("a"), RS("bot-1"), RS("Rando"), RS("random"), tb_seed) == TABLE_OK && tb.dealt_now
+          && tb.roster_changed && tb_game.status == GAME_STATUS_PLAYING, "a bot that makes every seat ready deals");
+    const int pl = table_push(&tb, RS("g"), 0, tb_buf, sizeof(tb_buf));
+    int seq, flags, block;
+    CHECK(pl > 0 && evwire_as3_split(tb_buf, pl, &seq, &flags, &block) == 0 && flags == EVW_AS3_ROSTER,
+          "and the deal's push carries the roster the bot changed");
+}
+
+static void test_table_reseat_retitle_continue(void) {
+    tb_seed_fill(3);
+    tb_lobby();
+    table_ready(&tb, RS("b"), tb_seed);
+    const uint8_t order[] = { 1, 'c', 1, 'a', 1, 'b' };
+    TB_REFUSED(table_reseat(&tb, RS("stranger"), order, sizeof(order)), TABLE_E_NOT_SEATED, "a stranger cannot reseat");
+    const uint8_t dup[] = { 1, 'c', 1, 'a', 1, 'a' }, unknown[] = { 1, 'c', 1, 'a', 1, 'z' }, shorter[] = { 1, 'c', 1, 'a' };
+    const uint8_t longer[] = { 1, 'c', 1, 'a', 1, 'b', 1, 'b' }, cut[] = { 1, 'c', 1, 'a', 3, 'b' };
+    TB_REFUSED(table_reseat(&tb, RS("a"), dup, sizeof(dup)), TABLE_E_ROSTER, "a reseat naming a seat twice is refused");
+    CHECK(tb.detail == ROSTER_E_PERM, "as not a permutation");
+    TB_REFUSED(table_reseat(&tb, RS("a"), unknown, sizeof(unknown)), TABLE_E_ROSTER, "a reseat naming a stranger is refused");
+    TB_REFUSED(table_reseat(&tb, RS("a"), shorter, sizeof(shorter)), TABLE_E_ROSTER, "a reseat leaving a seat out is refused");
+    TB_REFUSED(table_reseat(&tb, RS("a"), longer, sizeof(longer)), TABLE_E_ROSTER, "a reseat with a seat too many is refused");
+    TB_REFUSED(table_reseat(&tb, RS("a"), cut, sizeof(cut)), TABLE_E_ROSTER, "a cut id list is refused");
+    CHECK(table_reseat(&tb, RS("a"), order, sizeof(order)) == TABLE_OK && roster_seat_of(&tb.r, RS("c")) == 0
+          && roster_seat_of(&tb.r, RS("b")) == 2 && tb_game.players[2].status == PLAYER_STATUS_READY
+          && tb_game.players[0].status == PLAYER_STATUS_IDLE && tb.roster_changed, "a reseat moves ids and statuses together");
+
+    // retitle: 50 characters as the web counts them, trimmed, not empty
+    char t51[52];
+    memset(t51, 'x', 51);
+    TB_REFUSED(table_retitle(&tb, RS("a"), t51, 51), TABLE_E_ROSTER, "a 51-character title is refused");
+    CHECK(tb.detail == ROSTER_E_TITLE, "as a title");
+    char emoji[4 * 26];
+    for (int i = 0; i < 26; i++) memcpy(emoji + 4 * i, "\xf0\x9f\x8e\xb4", 4);
+    TB_REFUSED(table_retitle(&tb, RS("a"), emoji, 4 * 26), TABLE_E_ROSTER, "26 emoji are 52 UTF-16 units: refused");
+    CHECK(table_retitle(&tb, RS("a"), emoji, 4 * 25) == TABLE_OK && tb.r.title_len == 100, "25 emoji are 50: allowed");
+    TB_REFUSED(table_retitle(&tb, RS("a"), RS(" \t\xe3\x80\x80 ")), TABLE_E_ROSTER, "a title of whitespace is refused");
+    TB_REFUSED(table_retitle(&tb, RS("stranger"), RS("Mine")), TABLE_E_NOT_SEATED, "a stranger cannot retitle");
+    CHECK(table_retitle(&tb, RS("b"), RS("\xc2\xa0 Durak night \xe2\x80\xa8\n")) == TABLE_OK
+          && tb.r.title_len == 11 && memcmp(tb.r.title, "Durak night", 11) == 0, "a title is trimmed like String.trim");
+    memset(t51, 'x', 50);
+    CHECK(table_retitle(&tb, RS("b"), t51, 50) == TABLE_OK, "exactly 50 characters is allowed");
+
+    // continue: only from a finished game
+    TB_REFUSED(table_continue(&tb, RS("a")), TABLE_E_NOT_OVER, "continue on a lobby is refused");
+    unsigned char seed[FOOLISH_SEED_LEN];
+    CHECK(rs_play_seeded(&tb_src, 3, 777, seed), "a game plays out");
+    game_set_seed(1);
+    tb_src.status = GAME_STATUS_GAME_OVER;
+    CHECK(tb_src.deterministic_deck, "the seeded game draws from its deterministic deck");
+    for (int i = 0; i < 3; i++) tb_src.players[i].status = i == 2 ? PLAYER_STATUS_READY : PLAYER_STATUS_IDLE;
+    tb_state_len = tb_blob(&tb_src, tb_state);
+    tb_roster_for(3, 1u << 2, "random", tb_roster);
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the finished row loads");
+    TB_REFUSED(table_continue(&tb, RS("stranger")), TABLE_E_NOT_SEATED, "a stranger cannot continue");
+    CHECK(table_continue(&tb, RS("id-1")) == TABLE_OK && tb_game.status == GAME_STATUS_WAITING
+          && tb_game.players[2].status == PLAYER_STATUS_READY && tb_game.players[0].status == PLAYER_STATUS_IDLE
+          && tb_game.deck_count == 0 && tb.lobby_event && !tb.roster_changed, "continue resets to the lobby, bots READY");
+    CHECK(!tb_game.deterministic_deck, "a lobby blob carries no deterministic-deck flag");
+    TableCommit c;
+    CHECK(table_commit_products(&tb, RS("g"), 9, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && c.n_events == 1
+          && table_load(&tb, tb_arena + c.state.off, c.state.len, tb_roster, ROSTER_BYTES) == TABLE_OK,
+          "the lobby it commits is one a table loads");
+
+    tb_fixture(2, 0, 71);
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+    TB_REFUSED(table_continue(&tb, RS("id-0")), TABLE_E_NOT_OVER, "continue on a running game is refused");
+}
+
+static void test_table_rearrange_and_redact(void) {
+    tb_fixture(2, 0, 81);
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+    const int n = tb_game.players[1].hand_count;
+    uint8_t idx[MAX_HAND_SIZE];
+    for (int i = 0; i < n; i++) idx[i] = (uint8_t)i;
+    idx[1] = 0;
+    TB_REFUSED(table_rearrange_hand(&tb, RS("id-1"), idx, n), TABLE_E_WIRE, "duplicate indices are refused");
+    TB_REFUSED(table_rearrange_hand(&tb, RS("id-1"), idx, n - 1), TABLE_E_WIRE, "too few indices are refused");
+    for (int i = 0; i < n; i++) idx[i] = (uint8_t)i;
+    idx[0] = (uint8_t)n;
+    TB_REFUSED(table_rearrange_hand(&tb, RS("id-1"), idx, n), TABLE_E_WIRE, "an index past the hand is refused");
+    TB_REFUSED(table_rearrange_hand(&tb, RS("stranger"), idx, n), TABLE_E_NOT_SEATED, "a stranger has no hand");
+    for (int i = 0; i < n; i++) idx[i] = (uint8_t)(n - 1 - i);
+    const Card first = tb_game.players[1].hand[0], last = tb_game.players[1].hand[n - 1];
+    const Card other = tb_game.players[0].hand[0];
+    CHECK(table_rearrange_hand(&tb, RS("id-1"), idx, n) == TABLE_OK && card_eq(tb_game.players[1].hand[0], last)
+          && card_eq(tb_game.players[1].hand[n - 1], first) && card_eq(tb_game.players[0].hand[0], other),
+          "the actor's own hand is reversed, no other");
+    TableCommit c;
+    CHECK(table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && c.n_events == 0
+          && c.logs.len == 0, "a rearrange announces nothing and logs nothing");
+
+    CHECK(table_redact(&tb, RS("id-0"), RS("Deleted player")) == TABLE_OK && tb.roster_changed
+          && tb.r.seats[0].name_len == 14 && roster_seat_of(&tb.r, RS("id-0")) == 0, "redact renames the seat");
+    TB_REFUSED(table_redact(&tb, RS("nobody"), RS("Deleted player")), TABLE_E_NOT_SEATED, "redact of an unseated id is refused");
+}
+
+// ---- the bot cycle and the end of a game (Phase 4b) ----
+
+// Account deletion renames the table too when its title is the deleted player's
+// default one ("<name>'s Game"): the title rides every envelope.
+static void test_table_redact_default_title(void) {
+    static const char gone[] = "Deleted player";
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_create(&tb, RS("z"), RS("Zelda"));
+    table_join(&tb, RS("y"), RS("Yusuf"));
+    CHECK(table_redact(&tb, RS("y"), RS(gone)) == TABLE_OK && tb.r.title_len == 12
+          && memcmp(tb.r.title, "Zelda's Game", 12) == 0, "another seat's redaction leaves a title named after someone else");
+    CHECK(table_redact(&tb, RS("z"), RS(gone)) == TABLE_OK && tb.r.title_len == (int)strlen(gone) + 7
+          && memcmp(tb.r.title, "Deleted player's Game", 21) == 0, "the creator's redaction renames their default title");
+
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_create(&tb, RS("z"), RS("Zelda"));
+    table_retitle(&tb, RS("z"), RS("Friday"));
+    CHECK(table_redact(&tb, RS("z"), RS(gone)) == TABLE_OK && tb.r.title_len == 6
+          && memcmp(tb.r.title, "Friday", 6) == 0, "a title the players chose is left alone");
+
+    // A name longer than a seat keeps: the title holds more of it than the seat does.
+    char longname[100], emoji[256];
+    memset(longname, 'q', sizeof(longname));
+    for (int i = 0; i < 64; i++) memcpy(emoji + i * 4, "\xf0\x9f\xa4\xa1", 4);
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_create(&tb, RS("z"), longname, sizeof(longname));
+    CHECK(tb.r.seats[0].name_len == 64 && tb.r.title_len == 107, "a 100-byte name: the seat keeps 64, the title all 100");
+    CHECK(table_redact(&tb, RS("z"), RS(gone)) == TABLE_OK && tb.r.title_len == 21
+          && memcmp(tb.r.title, "Deleted player's Game", 21) == 0, "and the redaction still finds the default title");
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_create(&tb, RS("z"), emoji, sizeof(emoji));
+    CHECK(tb.r.title_len == 199, "a name cut on a scalar boundary to fit the title");
+    CHECK(table_redact(&tb, RS("z"), RS(gone)) == TABLE_OK && tb.r.title_len == 21
+          && memcmp(tb.r.title, "Deleted player's Game", 21) == 0, "is recomposed from the replacement name too");
+}
+
+static void test_table_seat_of(void) {
+    tb_fixture(3, 1u << 2, 83);
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(table_seat_of(&tb, RS("id-1")) == TABLE_E_NOT_LOADED, "nothing is seated at an unloaded table");
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the table loads");
+    CHECK(table_seat_of(&tb, RS("id-0")) == 0 && table_seat_of(&tb, RS("id-2")) == 2, "a seated id is its seat, a bot's too");
+    CHECK(table_seat_of(&tb, RS("stranger")) == -1, "an id nobody holds is no seat");
+    CHECK(table_seat_of(&tb, RS("id-")) == -1, "a prefix of a seated id is no seat");
+    CHECK(table_seat_of(&tb, RS("id-10")) == -1, "an id a seated id is a prefix of is no seat");
+    CHECK(table_seat_of(&tb, "", 0) == -1, "the empty id is no seat");
+}
+
+static uint8_t tb_log[1 << 18], tb_log2[1 << 18], tb_code[1 << 16], tb_code2[1 << 16];
+static uint8_t tb_scratch[1 << 20];
+static int tb_log_len;
+static char tb_seed_hex[2 * FOOLISH_SEED_LEN + 1];
+static BotDriveOut tb_drv, tb_drv2;
+static Game tb_ref;
+
+static uint32_t tb_fnv(const char *s, int n) {
+    uint32_t h = 2166136261u;
+    for (int i = 0; i < n; i++) h = (h ^ (uint8_t)s[i]) * 16777619u;
+    return h;
+}
+
+// tb_seed, its hex text, and a lobby of "h" (a human) and two `brain` bots dealt
+// from it: the committed row in tb_state / tb_roster, the session log in tb_log.
+static void tb_bot_table(const char *brain, int seed) {
+    TableCommit c;
+    tb_seed_fill(seed);
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) snprintf(tb_seed_hex + 2 * i, 3, "%02x", tb_seed[i]);
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_create(&tb, RS("h"), RS("Human"));
+    table_add_bot(&tb, RS("h"), RS("b1"), RS("Bot one"), brain, (int)strlen(brain), tb_seed);
+    table_add_bot(&tb, RS("h"), RS("b2"), RS("Бот"), brain, (int)strlen(brain), tb_seed);
+    table_ready(&tb, RS("h"), tb_seed);
+    game_set_seed(1);
+    table_commit_products(&tb, RS("g"), 1, 1700000000000LL, &c, tb_arena, sizeof(tb_arena));
+    memcpy(tb_state, tb_arena + c.state.off, (size_t)c.state.len);
+    tb_state_len = c.state.len;
+    memcpy(tb_roster, tb_arena + c.roster.off, ROSTER_BYTES);
+    memcpy(tb_log, tb_arena + c.logs.off, (size_t)c.logs.len);
+    tb_log_len = c.logs.len;
+}
+
+// The row as the bot loop loads it: the blob, the deal seed, and the session log
+// when asked (the loop always hands it over; `with_log` 0 is for the cases below
+// that ask what a table does without it).
+static int tb_reload(int with_log) {
+    if (table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) != TABLE_OK) return -999;
+    table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
+    return with_log ? table_set_session_log(&tb, tb_log, tb_log_len) : 0;
+}
+
+// Commits the last operation: the row moves on and its records join the session log.
+static int tb_commit_row(int64_t now, TableCommit *c) {
+    const int n = table_commit_products(&tb, RS("g"), 2, now, c, tb_arena, sizeof(tb_arena));
+    if (n < 0) return n;
+    memcpy(tb_state, tb_arena + c->state.off, (size_t)c->state.len);
+    tb_state_len = c->state.len;
+    memcpy(tb_roster, tb_arena + c->roster.off, ROSTER_BYTES);
+    memcpy(tb_log + tb_log_len, tb_arena + c->logs.off, (size_t)c->logs.len);
+    tb_log_len += c->logs.len;
+    return n;
+}
+
+// Seat 0's move by the handwritten brain, through table_act; 0 when seat 0 cannot act.
+static int tb_human_move(void) {
+    if (!should_bot_act(&tb_game, 0)) return 0;
+    calculate_legal_moves(&tb_game, 0, &tb_moves);
+    if (tb_moves.n == 0) return 0;
+    const LegalMove *m = &tb_moves.moves[handwritten_strategy_choose(&tb_game, 0, &tb_moves, 0)];
+    AwireAction a;
+    memset(&a, 0, sizeof(a));
+    a.kind = m->type; a.n = m->n_cards;
+    for (int i = 0; i < m->n_cards; i++) { a.cards[i] = m->cards[i]; a.attacks[i] = m->attack_cards[i]; }
+    const int wl = awire_encode(&a, tb_buf, sizeof(tb_buf));
+    return table_act(&tb, RS("h"), tb_buf, wl, -1, 0) == TABLE_APPLIED;
+}
+
+// The wasm bridge's per-decision seeding (wasm_bots_api.c drive_seed_hook), for a
+// Game that is not the table's: the same kernel policy over the bridge's own base,
+// and log offset 0 because its resident game holds the whole session log.
+static uint32_t tb_hook_base;
+static void tb_bridge_seed(const Game *g, int seat, int phase) {
+    (void)seat;
+    bot_drive_seed_decision(g, tb_hook_base, 0u, phase);
+}
+
+static int tb_record_bytes(const Game *g, int from) {
+    int n = 0;
+    for (int i = from; i < g->num_logs; i++) n += 6 + 4 + 2 * g->logs[i].num_pairs;
+    return n;
+}
+
+static void test_table_deal_seed_and_session_log(void) {
+    tb_bot_table("espresso", 3);
+    CHECK(table_set_deal_seed(&tb, tb_seed_hex, 64) == TABLE_OK && tb.rng_base == tb_fnv(tb_seed_hex, 64),
+          "the deal seed's base is FNV-1a over its hex text (engine.ts rngBaseFromSeed)");
+    CHECK(table_set_deal_seed(&tb, "", 0) == TABLE_OK && tb.rng_base == 0, "no seed is base 0");
+
+    int records = 0;
+    for (int q = 0; q + 10 <= tb_log_len; q += 10 + 2 * tb_log[q + 9]) records++;
+    CHECK(records >= 1 && tb_log[6] == LOG_GAME_START, "the deal wrote a session log that opens with GAME_START");
+    CHECK(tb_reload(1) == records && tb_game.num_logs == records && tb.log_start == records
+          && tb.log_len == records,
+          "every record loads, and the next operation's records start above them");
+    int same = 1;
+    for (int i = 0, q = 0; i < records; i++, q += 10 + 2 * tb_log[q + 9]) {
+        const GameLog *l = &tb_game.logs[i];
+        same &= l->log_type == tb_log[q + 6] && (uint8_t)l->player_idx == tb_log[q + 7]
+              && (uint8_t)l->defender_index == tb_log[q + 8] && l->num_pairs == tb_log[q + 9];
+        for (int j = 0; j < l->num_pairs; j++)
+            same &= card_eq(l->pairs[j].primary, card_from_wire_pair(tb_log[q + 10 + 2 * j]))
+                 && card_eq(l->pairs[j].target, card_from_wire_pair(tb_log[q + 11 + 2 * j]));
+    }
+    CHECK(same, "each record is the bytes' type, seat, defender and card pairs");
+    TableCommit c;
+    CHECK(table_commit_products(&tb, RS("g"), 2, 0, &c, tb_arena, sizeof(tb_arena)) > 0 && c.logs.len == 0,
+          "an imported session log is not a product");
+
+    CHECK(tb_reload(0) == 0 && tb.log_len == 0, "a table that was handed no log has no session beneath it");
+    CHECK(table_set_session_log(&tb, tb_log, tb_log_len - 1) == records - 1,
+          "a truncated tail ends the log");
+    memcpy(tb_log2, tb_log, (size_t)tb_log_len);
+    tb_log2[6] = LOG_DRAW + 1;
+    CHECK(table_set_session_log(&tb, tb_log2, tb_log_len) == TABLE_E_WIRE, "an unknown record type is refused");
+    memset(tb_log2, 0, 10 + 2 * 70);
+    tb_log2[6] = LOG_PICKUP; tb_log2[7] = 0; tb_log2[8] = 0xFF; tb_log2[9] = 70;
+    for (int j = 0; j < 70; j++) { tb_log2[10 + 2 * j] = (uint8_t)(j % 52); tb_log2[11 + 2 * j] = 0xFF; }
+    CHECK(table_set_session_log(&tb, tb_log2, 10 + 2 * 70) == 1 && tb_game.logs[0].num_pairs == MAX_LOG_PAIRS,
+          "a record keeps its first MAX_LOG_PAIRS pairs");
+    memset(tb_log2, 0, sizeof(tb_log2));
+    for (int i = 0; i < MAX_LOGS + 50; i++) { tb_log2[10 * i + 6] = LOG_GOOD; tb_log2[10 * i + 7] = 1; tb_log2[10 * i + 8] = 0xFF; }
+    CHECK(table_set_session_log(&tb, tb_log2, 10 * (MAX_LOGS + 50)) == MAX_LOGS + 50
+          && tb_game.num_logs == MAX_LOGS && tb.log_len == MAX_LOGS + 50,
+          "records past MAX_LOGS are not read onto the board, but they are still counted");
+    Table unloaded;
+    table_init(&unloaded, &tb_src, &tb_snaps);
+    CHECK(table_set_session_log(&unloaded, tb_log, tb_log_len) == TABLE_E_NOT_LOADED, "an unloaded table takes no log");
+}
+
+static void test_table_bot_drive_cycle(void) {
+    tb_bot_table("espresso", 5);
+    TableCommit c;
+    int drives = 0, logged_drives = 0, checked = 0, ended_by_drive = 0;
+    for (int step = 0; step < 4000; step++) {
+        const int64_t now = 1700000001000LL + step * 1500;
+        if (tb_reload(0) != 0) break;
+        if (tb_game.status != GAME_STATUS_PLAYING) break;
+        const uint32_t humans = game_human_mask(&tb_game);
+        if (bot_drive_eligible_mask(&tb_game, humans) == 0) {
+            if (!tb_human_move()) break;
+            if (tb_commit_row(now, &c) < 0) break;
+            continue;
+        }
+        const int logs = table_bots_need_logs(&tb);
+        table_set_session_log(&tb, tb_log, tb_log_len);
+        const int imported = logs ? tb_game.num_logs : 0;
+        memcpy(&tb_ref, &tb_game, sizeof(Game));
+        const int n = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
+        if (n <= 0) break;
+        drives++;
+        logged_drives += imported > 0;
+        if (!checked && imported > 0 && tb_drv.stop == BOT_STOP_EVENTS) {
+            checked = 1;
+            CHECK(tb.log_start == imported && tb.actor == tb_drv.actions[n - 1].seat,
+                  "the cycle's records start above the session log, and its actor is its last action's seat");
+            CHECK(table_cycle_delay_ms(&tb, &tb_drv) == bot_cycle_delay_ms(&tb_game, humans, &tb_drv)
+                  && table_cycle_delay_ms(&tb, &tb_drv) > 0, "the delay is bot_cycle_delay_ms of the cycle");
+            // The wasm bridge's cycle on the same board: the same moves and the same board.
+            tb_hook_base = tb_fnv(tb_seed_hex, 64);
+            bot_drive_pre_action_hook = tb_bridge_seed;
+            const int n2 = bot_drive(&tb_ref, humans, 0, 0, 0, &tb_drv2);
+            bot_drive_pre_action_hook = 0;
+            CHECK(n2 == n && memcmp(tb_drv2.actions, tb_drv.actions, sizeof(BotDriveAction) * (size_t)n) == 0
+                  && tb_same_board(&tb_ref, &tb_game), "seeded per decision exactly as the wasm bridge seeds a drive");
+            const int pn = table_commit_products(&tb, RS("g"), 2, now, &c, tb_arena, sizeof(tb_arena));
+            CHECK(pn > 0 && c.logs.len == tb_record_bytes(&tb_game, imported) && c.logs.len > 0
+                  && tb_arena[c.logs.off + 6] != LOG_GAME_START, "the commit carries only the cycle's own records");
+            CHECK(c.n_events > 0, "a visible bot move is announced");
+            const int pl = table_push(&tb, RS("g"), 0, tb_buf, sizeof(tb_buf));
+            EvwHeader h;
+            CHECK(pl > 0 && evwire_read_header(tb_buf, pl, &h) == 0 && h.n_events == c.n_events
+                  && h.actor == tb_drv.actions[n - 1].seat && h.viewer == 0, "the human's push names the bot that moved");
+        }
+        if (tb.ended) {
+            ended_by_drive = 1;
+            CHECK(tb_game.status == GAME_STATUS_GAME_OVER && tb_game.players[0].status == PLAYER_STATUS_IDLE
+                  && tb_game.players[1].status == PLAYER_STATUS_READY && tb_game.players[2].status == PLAYER_STATUS_READY,
+                  "a cycle that ends the game finalizes it: bots READY, the human IDLE");
+        }
+        if (tb_commit_row(now, &c) < 0) break;
+        if (tb.ended) {
+            const int pl = table_push(&tb, RS("g"), 0, tb_buf, sizeof(tb_buf));
+            EvwHeader h;
+            CHECK(c.ended && pl > 0 && evwire_read_header(tb_buf, pl, &h) == 0 && h.n_events == c.n_events,
+                  "and its commit is the ending one");
+            break;
+        }
+    }
+    CHECK(checked && drives > 5 && logged_drives > 0, "the game had logged, visible bot cycles");
+    // A game whose every seat is a bot ends in a cycle.
+    tb_fixture(3, 7u, 97);
+    tb_roster_for(3, 7u, "random", tb_roster);
+    snprintf(tb_seed_hex, sizeof(tb_seed_hex), "%s", "00ff");
+    int ended = 0;
+    for (int step = 0; step < 4000 && !ended; step++) {
+        if (table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) != TABLE_OK) break;
+        table_set_deal_seed(&tb, tb_seed_hex, 4);
+        if (table_bot_drive(&tb, 0, 0, 0, &tb_drv) <= 0) break;
+        ended = tb.ended;
+        if (tb_commit_row(step, &c) < 0) break;
+    }
+    CHECK(ended || ended_by_drive, "a bot cycle ends a game");
+    CHECK(ended && tb_game.players[0].status == PLAYER_STATUS_READY && c.ended && c.status == GAME_STATUS_GAME_OVER,
+          "a bots-only game ends in a cycle with every seat parked READY");
+    Table unloaded;
+    table_init(&unloaded, &tb_src, &tb_snaps);
+    CHECK(table_bot_drive(&unloaded, 0, 0, 0, &tb_drv) == TABLE_E_NOT_LOADED, "an unloaded table drives nothing");
+}
+
+static void test_table_drive_prefs(void) {
+    static uint8_t s1[8192], prefs[4096];
+    tb_fixture(3, 7u, 101);
+    tb_roster_for(3, 7u, "random", tb_roster);
+    // Move on until a cycle has a choice to make that the seed decides.
+    int found = 0, s1_len = 0, plen = 0, bridge_same = 1;
+    for (int step = 0; step < 200 && !found; step++) {
+        snprintf(tb_seed_hex, sizeof(tb_seed_hex), "a%d", step);
+        table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+        table_set_deal_seed(&tb, tb_seed_hex, (int)strlen(tb_seed_hex));
+        memcpy(&tb_ref, &tb_game, sizeof(Game));
+        const int n = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
+        if (n <= 0) break;
+        // `random` draws from the strategy stream: seeded per decision exactly as the wasm bridge seeds it.
+        tb_hook_base = tb_fnv(tb_seed_hex, (int)strlen(tb_seed_hex));
+        bot_drive_pre_action_hook = tb_bridge_seed;
+        const int nb = bot_drive(&tb_ref, 0, 0, 0, 0, &tb_drv2);
+        bot_drive_pre_action_hook = 0;
+        bridge_same &= nb == n && memcmp(tb_drv2.actions, tb_drv.actions, sizeof(BotDriveAction) * (size_t)n) == 0;
+        s1_len = tb_blob(&tb_game, s1);
+        plen = table_drive_prefs(&tb, &tb_drv, prefs, sizeof(prefs));
+        for (int k = 0; k < 16 && !found; k++) {
+            char other[16];
+            snprintf(other, sizeof(other), "b%d", k);
+            table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+            table_set_deal_seed(&tb, other, (int)strlen(other));
+            table_bot_drive(&tb, 0, 0, 0, &tb_drv2);
+            if (tb_blob(&tb_game, tb_buf2) != s1_len || memcmp(tb_buf2, s1, (size_t)s1_len) != 0) {
+                found = 1;
+                // The same seed as that retry, but offered what the first attempt chose.
+                table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+                table_set_deal_seed(&tb, other, (int)strlen(other));
+                const int n3 = table_bot_drive(&tb, prefs, plen, 0, &tb_drv2);
+                CHECK(plen > 0 && n3 == n && memcmp(tb_drv2.actions, tb_drv.actions, sizeof(BotDriveAction) * (size_t)n) == 0
+                      && tb_blob(&tb_game, tb_buf2) == s1_len && memcmp(tb_buf2, s1, (size_t)s1_len) == 0,
+                      "a retry offered the first attempt's moves plays them while they are legal");
+                uint8_t merged[4096];
+                CHECK(table_drive_prefs(&tb, &tb_drv2, merged, sizeof(merged)) == plen,
+                      "offered and applied moves for the same seats merge to one per seat");
+                CHECK(table_bot_drive(&tb, prefs, plen - 1, 0, &tb_drv2) == TABLE_E_WIRE, "a short prefs blob is refused");
+                prefs[plen] = 0;
+                CHECK(table_bot_drive(&tb, prefs, plen + 1, 0, &tb_drv2) == TABLE_E_WIRE, "a prefs blob with a tail is refused");
+                CHECK(table_drive_prefs(&tb, &tb_drv, merged, 2) == TABLE_E_CAP, "a small buffer is refused");
+            }
+        }
+        TableCommit c;
+        tb_commit_row(step, &c);
+    }
+    CHECK(found, "a cycle whose moves another seed would have chosen differently");
+    CHECK(bridge_same, "every cycle chose what the wasm bridge's drive chooses");
+    // A blob of an attack (whose attack cards are nothing) and a cover reads back.
+    {
+        BotDriveOut two;
+        uint8_t blob[64];
+        memset(&two, 0, sizeof(two));
+        two.n = 2;
+        two.actions[0].seat = 0; two.actions[0].move.type = MOVE_ATTACK; two.actions[0].move.n_cards = 1;
+        two.actions[0].move.cards[0] = card_of_id(5);
+        two.actions[1].seat = 1; two.actions[1].move.type = MOVE_COVER; two.actions[1].move.n_cards = 1;
+        two.actions[1].move.cards[0] = card_of_id(6); two.actions[1].move.attack_cards[0] = card_of_id(5);
+        table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+        tb.n_prefs = 0;
+        const int bl = table_drive_prefs(&tb, &two, blob, sizeof(blob));
+        CHECK(bl == 3 + 1 + 3 + 2, "an attack's blob entry carries its cards, a cover's its cards and the ones they cover");
+        CHECK(table_bot_drive(&tb, blob, bl, 0, &tb_drv) >= 0 && tb.n_prefs == 2
+              && card_eq(tb.prefs[1].move.attack_cards[0], card_of_id(5)), "and the drive reads both back");
+    }
+}
+
+// A committed cycle's bytes: the actions (pacing, then seat, type and cards), then the state blob, the cycle's
+// session-log records and the human's and the spectator's pushes. Returns the length.
+static int tb_cycle_bytes(int n, uint8_t *out) {
+    TableCommit c;
+    int w = 0;
+    for (int i = 0; i < n; i++) out[w++] = tb_drv.actions[i].pacing_class;
+    tb.n_prefs = 0;   // no offered moves: the blob is the cycle's own actions (seat, type, cards)
+    const int pl = table_drive_prefs(&tb, &tb_drv, out + w, 4096);
+    if (pl < 0) return -1;
+    w += pl;
+    if (table_commit_products(&tb, RS("g"), 2, 1700000009000LL, &c, tb_arena, sizeof(tb_arena)) < 0) return -1;
+    memcpy(out + w, tb_arena + c.state.off, (size_t)c.state.len); w += c.state.len;
+    memcpy(out + w, tb_arena + c.logs.off, (size_t)c.logs.len); w += c.logs.len;
+    for (int v = 0; v >= -1; v--) {
+        const int pl = table_push(&tb, RS("g"), v, out + w, 1 << 15);
+        if (pl < 0) return -1;
+        w += pl;
+    }
+    return w;
+}
+
+// A stored row's bot cycle is a function of the row and its deal seed, never of
+// what the module ran before: a CAS retry on another edge isolate, or a cold one,
+// must choose what this one chose. Every roster brain, at each of a game's first 40 cycles:
+// once on a module whose RNG streams hold one value, once after a different
+// value and an unrelated robusta cycle on another table.
+static void test_table_bot_drive_ignores_instance_history(void) {
+    static uint8_t other_state[8192], other_roster[ROSTER_BYTES], a[1 << 17], b[1 << 17];
+    static Game other_game;
+    static TableSnaps other_snaps;
+    Table other;
+    tb_fixture(4, 15u, 57);
+    tb_roster_for(4, 15u, "robusta", other_roster);
+    const int other_len = tb_state_len;
+    memcpy(other_state, tb_state, (size_t)other_len);
+
+    int n_roster = 0;
+    const BotRosterEntry *roster = bot_roster(&n_roster);
+    for (int e = 0; e < n_roster; e++) {
+        const char *brain = roster[e].key;
+        tb_bot_table(brain, 40 + e);
+        int drives = 0, same = 1, first_diff = -1;
+        for (int step = 0; step < 400 && drives < 40; step++) {
+            TableCommit c;
+            if (tb_reload(0) != 0 || tb_game.status != GAME_STATUS_PLAYING) break;
+            if (bot_drive_eligible_mask(&tb_game, game_human_mask(&tb_game)) == 0) {
+                if (!tb_human_move() || tb_commit_row(1700000001000LL + step, &c) < 0) break;
+                continue;
+            }
+            game_rng_set(0x13579BDFu);
+            random_strategy_set_seed(0x2468ACE0u);
+            tb_reload(1);
+            const int na = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
+            const int la = na > 0 ? tb_cycle_bytes(na, a) : na;
+
+            game_rng_set(0xC0FFEE11u + (uint32_t)step);
+            random_strategy_set_seed(0xBADC0DEu ^ (uint32_t)step);
+            table_init(&other, &other_game, &other_snaps);
+            table_load(&other, other_state, other_len, other_roster, ROSTER_BYTES);
+            table_set_deal_seed(&other, "5eed", 4);
+            table_bot_drive(&other, 0, 0, 0, &tb_drv2);
+            tb_reload(1);
+            const int nb = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
+            const int lb = nb > 0 ? tb_cycle_bytes(nb, b) : nb;
+
+            if (na <= 0 || nb != na || la != lb || la < 0 || memcmp(a, b, (size_t)la) != 0) {
+                if (same) first_diff = step;
+                same = 0;
+            }
+            if (na <= 0 || tb_commit_row(1700000001000LL + step, &c) < 0) break;
+            drives++;
+        }
+        if (!same) fprintf(stderr, "  %s: the cycle at step %d depends on the module's history\n", brain, first_diff);
+        CHECK(drives >= 10, "the brain drove a game's cycles");
+        CHECK(same, "a bot cycle is the same on a module with another history (see the brain above)");
+    }
+}
+
+// A bot decision is seeded from the board AND the game's progress, which is the
+// length of the row's session log (bot_drive.h bot_drive_seed_decision).
+//
+// The board alone is not enough: a table of `random` bots can return to an exact
+// earlier board, and a decision that is a function of the board alone then repeats
+// the move, and the board, forever (measured: about one game in 40 at 4 to 7
+// seats). So the SAME board with a SHORTER log must be able to draw differently -
+// while the same STORED ROW, log included, still drives the same cycle on any table.
+static void test_table_bot_drive_progress_seeds_the_decision(void) {
+    static Game row_game;
+    static TableSnaps row_snaps;
+    static BotDriveOut drv_a;
+    Table row_table;
+    tb_bot_table("random", 5);
+    int drives = 0, moved = 0, replays = 0, same_row = 1, shorter = 0;
+    for (int step = 0; step < 200 && drives < 40; step++) {
+        TableCommit c;
+        if (tb_reload(1) < 0 || tb_game.status != GAME_STATUS_PLAYING) break;
+        if (bot_drive_eligible_mask(&tb_game, game_human_mask(&tb_game)) == 0) {
+            if (!tb_human_move() || tb_commit_row(1700000003000LL + step * 1000, &c) < 0) break;
+            continue;
+        }
+
+        // The row as it stands.
+        const int na = table_bot_drive(&tb, 0, 0, 0, &tb_drv);
+        if (na <= 0) break;
+        memcpy(&drv_a, &tb_drv, sizeof(drv_a));
+
+        // The same board, one session-log record shorter: only the progress moved.
+        int last = 0;
+        for (int q = 0; q + 10 <= tb_log_len; q += 10 + 2 * tb_log[q + 9]) last = q;
+        if (last > 0 && tb_reload(0) == 0) {
+            table_set_session_log(&tb, tb_log, last);
+            const int nb = table_bot_drive(&tb, 0, 0, 0, &tb_drv2);
+            shorter++;
+            if (nb != na || memcmp(tb_drv2.actions, drv_a.actions, sizeof(BotDriveAction) * (size_t)na) != 0) moved++;
+        }
+
+        // The same stored row on another table: the same cycle, action for action.
+        table_init(&row_table, &row_game, &row_snaps);
+        if (table_load(&row_table, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK) {
+            table_set_deal_seed(&row_table, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
+            table_set_session_log(&row_table, tb_log, tb_log_len);
+            const int nc = table_bot_drive(&row_table, 0, 0, 0, &tb_drv2);
+            replays++;
+            if (nc != na || memcmp(tb_drv2.actions, drv_a.actions, sizeof(BotDriveAction) * (size_t)na) != 0) same_row = 0;
+        }
+
+        // Carry the row on with the cycle the row itself drove.
+        if (tb_reload(1) < 0 || table_bot_drive(&tb, 0, 0, 0, &tb_drv) <= 0) break;
+        if (tb_commit_row(1700000003000LL + step * 1000, &c) < 0) break;
+        drives++;
+    }
+    CHECK(drives >= 20 && replays >= 20 && shorter >= 20, "the game had cycles to compare");
+    CHECK(same_row, "the same stored row drives the same cycle on any table");
+    CHECK(moved >= drives / 4, "a board at a different session-log length draws differently");
+}
+
+// The TS producer's times (extras.ts moveTimesFromLogs) over a session log, in args layout.
+static int tb_extras_args(const Roster *r, const uint8_t *log, int len, uint8_t *out) {
+    int start = 0, q = 0, w = 0, n_times = 0;
+    for (int at = 0; at + 10 <= len; at += 10 + 2 * log[at + 9]) if (log[at + 6] == LOG_GAME_START) start = at;
+    out[w++] = 0;
+    out[w++] = (uint8_t)r->n;
+    for (int s = 0; s < r->n; s++) {
+        out[w++] = r->seats[s].name_len; out[w++] = 0;
+        memcpy(out + w, r->seats[s].name, r->seats[s].name_len); w += r->seats[s].name_len;
+    }
+    out[0] = REPLAY_EXTRAS_FLAG_NAMES;
+    const int times_at = w;
+    double prev = 0, first = 0;
+    w += 8 + 2;
+    for (q = start; q + 10 <= len; q += 10 + 2 * log[q + 9]) {
+        const int type = log[q + 6];
+        if (type != LOG_GAME_START && type != LOG_ATTACK && type != LOG_COVER && type != LOG_PASS && type != LOG_PICKUP) continue;
+        int64_t ms = 0;
+        for (int b = 5; b >= 0; b--) ms = ms * 256 + log[q + b];
+        volatile double msd = (double)ms;
+        volatile double t = msd / 1000;
+        if (n_times == 0) first = t;
+        else { volatile double g = t - prev; double gg = g < 0 ? 0 : g; memcpy(out + w, &gg, 8); w += 8; }
+        prev = t;
+        n_times++;
+    }
+    if (n_times == 0) return times_at;
+    out[0] |= REPLAY_EXTRAS_FLAG_TIMES;
+    memcpy(out + times_at, &first, 8);
+    out[times_at + 8] = (uint8_t)((n_times - 1) & 0xff); out[times_at + 9] = (uint8_t)((n_times - 1) >> 8);
+    return w;
+}
+
+static void test_table_replay_code_and_extras(void) {
+    static uint8_t args[1 << 16];
+    tb_bot_table("random", 9);
+    TableCommit c;
+    int over = 0;
+    for (int step = 0; step < 6000 && !over; step++) {
+        const int64_t now = 1700000002000LL + step * 1731 + (step % 5) * 250;
+        if (tb_reload(1) < 0 || tb_game.status != GAME_STATUS_PLAYING) break;
+        if (bot_drive_eligible_mask(&tb_game, game_human_mask(&tb_game)) == 0) {
+            if (!tb_human_move()) break;
+        } else if (table_bot_drive(&tb, 0, 0, 0, &tb_drv) <= 0) {
+            break;
+        }
+        over = tb.ended;
+        if (tb_commit_row(now, &c) < 0) break;
+    }
+    CHECK(over, "the game is played to its end");
+    Table unloaded;
+    table_init(&unloaded, &tb_src, &tb_snaps);
+    CHECK(table_replay_code(&unloaded, tb_seed, 32, tb_log, tb_log_len, tb_code, sizeof(tb_code), tb_scratch,
+                            sizeof(tb_scratch)) == TABLE_E_NOT_LOADED, "an unloaded table has no replay");
+
+    // The reference: the finished board with the session log parsed apart from the table, encoded directly.
+    tb_reload(0);
+    memcpy(&tb_ref, &tb_game, sizeof(Game));
+    tb_ref.num_logs = 0;
+    for (int q = 0; q + 10 <= tb_log_len && tb_ref.num_logs < MAX_LOGS; q += 10 + 2 * tb_log[q + 9]) {
+        GameLog *l = &tb_ref.logs[tb_ref.num_logs++];
+        l->log_type = (int8_t)tb_log[q + 6]; l->player_idx = (int8_t)tb_log[q + 7];
+        l->defender_index = (int8_t)tb_log[q + 8]; l->num_pairs = (int8_t)tb_log[q + 9];
+        for (int j = 0; j < l->num_pairs; j++) {
+            l->pairs[j].primary = card_from_wire_pair(tb_log[q + 10 + 2 * j]);
+            l->pairs[j].target = card_from_wire_pair(tb_log[q + 11 + 2 * j]);
+        }
+    }
+    const int want = replay_encode_v6_from_game(&tb_ref, tb_seed, 32, 1 << 30, tb_code2, sizeof(tb_code2));
+    const int got = table_replay_code(&tb, tb_seed, 32, tb_log, tb_log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
+    if (got < 0 || want < 0) fprintf(stderr, "  replay: got %d, want %d\n", got, want);
+    CHECK(want > 0 && got == want && memcmp(tb_code, tb_code2, (size_t)want) == 0,
+          "the code is replay_encode_v6_from_game of the finished board and its session log");
+    CHECK(table_replay_code(&tb, tb_seed, 31, tb_log, tb_log_len, tb_code, sizeof(tb_code), tb_scratch,
+                            sizeof(tb_scratch)) < 0, "a short deal seed has no code");
+
+    // The gate: a session log whose pickup names a card the game never picked up.
+    int pickup_at = -1;
+    for (int q = 0; q + 10 <= tb_log_len; q += 10 + 2 * tb_log[q + 9])
+        if (tb_log[q + 6] == LOG_PICKUP && tb_log[q + 9] > 0) pickup_at = q;
+    CHECK(pickup_at >= 0, "the game has a pickup");
+    memcpy(tb_log2, tb_log, (size_t)tb_log_len);
+    tb_log2[pickup_at + 10] = (uint8_t)((tb_log2[pickup_at + 10] + 1) % 52);
+    tb_reload(0);
+    const int gate = table_replay_code(&tb, tb_seed, 32, tb_log2, tb_log_len, tb_code, sizeof(tb_code), tb_scratch, sizeof(tb_scratch));
+    if (gate != TABLE_E_REPLAY_VERIFY) fprintf(stderr, "  gate: got %d\n", gate);
+    CHECK(gate == TABLE_E_REPLAY_VERIFY, "a code that does not decode back to the log's actions is refused");
+
+    // The extras: roster names and the TS producer's move times.
+    tb_reload(0);
+    const int al = tb_extras_args(&tb.r, tb_log, tb_log_len, args);
+    const int ew = replay_extras_encode(args, al, tb_code2, sizeof(tb_code2));
+    const int eg = table_replay_extras(&tb, tb_log, tb_log_len, tb_code, sizeof(tb_code));
+    if (eg != ew || (ew > 0 && memcmp(tb_code, tb_code2, (size_t)ew) != 0)) {
+        fprintf(stderr, "  extras: got %d, want %d\n", eg, ew);
+        for (int i = 0; i < ew; i++) if (tb_code[i] != tb_code2[i]) { fprintf(stderr, "  first diff at byte %d\n", i); break; }
+    }
+    CHECK(ew > 0 && eg == ew && memcmp(tb_code, tb_code2, (size_t)ew) == 0 && (args[0] & REPLAY_EXTRAS_FLAG_TIMES),
+          "the extras are the roster's names and the session's move times");
+    // Only the last GAME_START session counts: an earlier session before it changes nothing.
+    memcpy(tb_log2, tb_log, (size_t)tb_log_len);
+    for (int q = 0; q + 10 <= tb_log_len; q += 10 + 2 * tb_log2[q + 9]) tb_log2[q + 3] = (uint8_t)(tb_log2[q + 3] - 1);
+    memcpy(tb_log2 + tb_log_len, tb_log, (size_t)tb_log_len);
+    const int eg3 = table_replay_extras(&tb, tb_log2, 2 * tb_log_len, tb_code, sizeof(tb_code));
+    CHECK(eg3 == ew && memcmp(tb_code, tb_code2, (size_t)ew) == 0, "an earlier session in the log is not timed");
+    // A log with no timed record: names only.
+    memset(tb_log2, 0, 10);
+    tb_log2[6] = LOG_DRAW; tb_log2[7] = 1; tb_log2[8] = 0xFF;
+    const int al2 = tb_extras_args(&tb.r, tb_log2, 10, args);
+    const int ew2 = replay_extras_encode(args, al2, tb_code2, sizeof(tb_code2));
+    const int eg2 = table_replay_extras(&tb, tb_log2, 10, tb_code, sizeof(tb_code));
+    CHECK(ew2 > 0 && eg2 == ew2 && memcmp(tb_code, tb_code2, (size_t)ew2) == 0 && !(args[0] & REPLAY_EXTRAS_FLAG_TIMES),
+          "a session without timed records carries names only");
+    CHECK(table_replay_extras(&tb, tb_log, tb_log_len, tb_code, 3) == TABLE_E_CAP, "a small buffer is refused");
+}
+
+/* ---------------------- the client slot (src/client_table.h) -------------------- */
+
+static ClientSlot ct_slot;
+static ClientTable ct;
+static uint8_t ct_env[1 << 14], ct_env2[1 << 14], ct_push[1 << 16], ct_id[4096], ct_raw[4096];
+static TableView ct_view;
+
+// An envelope composed around a raw masked state (view.c state_put bytes): the
+// header, the view blob, the roster trailer of `r` - so a test can doctor any part.
+static int ct_envelope(const uint8_t *state, int slen, int seat, const Roster *r, uint8_t *out) {
+    out[0] = 1; out[1] = (uint8_t)((seat >= 0 ? 1 : 0) | 2); out[2] = seat >= 0 ? (uint8_t)seat : 0xFF;
+    out[3] = 9; out[4] = 0; out[5] = 0; out[6] = 0; out[7] = 0; out[8] = 0;
+    const int vl = 2 + slen;
+    out[9] = (uint8_t)vl; out[10] = (uint8_t)(vl >> 8);
+    out[11] = VIEW_FORMAT_VERSION; out[12] = out[2];
+    memcpy(out + 13, state, (size_t)slen);
+    const int tl = roster_trailer_write(r, "g-7", 3, GAME_STATUS_PLAYING, 0, out + 11 + vl, 4096);
+    return 11 + vl + tl;
+}
+
+// The view a board and roster must read as, for `viewer`.
+static int ct_view_is(const TableView *v, const Game *g, const Roster *r, int viewer) {
+    int ok = v->status == g->status && v->num_players == g->num_players && v->power_suit == g->power_suit
+          && v->first_attacker == g->first_attacker && v->defender == g->defender && v->num_battles == g->num_battles
+          && v->deck_count == g->deck_count && v->discard_pile_length == g->discard_pile_length
+          && v->has_flipped == g->has_flipped && (!g->has_flipped || card_eq(v->flipped, g->flipped))
+          && v->good_mask == g->good_players_mask && v->num_eliminated == g->num_eliminated && v->my_seat == viewer;
+    for (int i = 0; ok && i < g->num_battles; i++)
+        ok = card_eq(v->battles[i].attack, g->table_battles[i].attack) && card_eq(v->battles[i].defense, g->table_battles[i].defense);
+    for (int i = 0; ok && i < g->num_eliminated; i++) ok = v->elimination[i] == g->elimination_order[i];
+    for (int s = 0; ok && s < g->num_players; s++) {
+        const ViewSeat *vs = &v->seats[s];
+        ok = vs->status == g->players[s].status && vs->hand_count == g->players[s].hand_count
+          && vs->awaiting_attack == (s == viewer && g->players[s].awaiting_attack)
+          && vs->is_ai == (r->seats[s].brain_len > 0) && vs->id_len == r->seats[s].id_len
+          && memcmp(vs->id, r->seats[s].id, vs->id_len) == 0 && vs->name_len == r->seats[s].name_len
+          && memcmp(vs->name, r->seats[s].name, vs->name_len) == 0;
+    }
+    if (ok && viewer >= 0) {
+        ok = v->my_hand_count == g->players[viewer].hand_count;
+        for (int i = 0; ok && i < v->my_hand_count; i++) ok = card_eq(v->my_hand[i], g->players[viewer].hand[i]);
+    }
+    return ok && (viewer >= 0 || v->my_hand_count == 0) && v->title_len == r->title_len && memcmp(v->title, r->title, r->title_len) == 0;
+}
+
+static void test_client_adopts_envelopes(void) {
+    tb_fixture(3, 1u << 2, 131);
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the table loads");
+    uint8_t w[8];
+    char fa[8];
+    snprintf(fa, sizeof(fa), "id-%d", tb_game.first_attacker);
+    CHECK(table_act(&tb, fa, (int)strlen(fa), w, tb_attack_wire(&tb_game, w), -1, 0) == TABLE_APPLIED, "a card is on the table");
+    client_init(&ct, &ct_slot);
+    for (int viewer = -1; viewer < 3; viewer++) {
+        const int n = table_envelope(&tb, RS("g-7"), viewer, 42, ct_env, sizeof(ct_env));
+        const int rc = client_adopt_envelope(&ct, ct_env, n);
+        if (rc != CLIENT_OK) fprintf(stderr, "  adopt(viewer %d): %d\n", viewer, rc);
+        CHECK(rc == CLIENT_OK && ct_view_is(&ct.view, &tb_game, &tb.r, viewer) && ct.view.version == 42
+              && ct.view.gid_len == 3 && memcmp(ct.view.game_id, "g-7", 3) == 0 && ct.view.fool == -1,
+              "an envelope reads as its viewer's board, seats, title, game id and version");
+    }
+    const int idn = client_identity(&ct, ct_id, sizeof(ct_id));
+    Roster back;
+    char gid[ROSTER_GAME_ID_MAX + 1];
+    int gl, st, used;
+    uint32_t ai;
+    CHECK(idn > 0 && roster_trailer_read(&back, gid, &gl, &st, &ai, ct_id, idn, &used) == ROSTER_OK && used == idn
+          && back.n == 3 && ai == (1u << 2) && gl == 3, "the identity it keeps is the table's roster trailer");
+    {
+        const int n = table_envelope(&tb, RS("g-7"), 1, 42, ct_env, sizeof(ct_env));
+        const int at = (client_adopt_envelope(&ct, ct_env, n), client_identity_at(&ct));
+        CHECK(at == 11 + (ct_env[9] | (ct_env[10] << 8)), "and it sits in the envelope, from the trailer to the end");
+        CHECK(roster_trailer_read(&back, gid, &gl, &st, &ai, ct_env + at, n - at, &used) == ROSTER_OK && used == n - at,
+              "which reads as the same identity");
+    }
+
+    // Refused, never clamped.
+    const int slen = state_put(&tb_game, 0, ct_raw);
+    int n = ct_envelope(ct_raw, slen, 0, &tb.r, ct_env);
+    CHECK(client_adopt_envelope(&ct, ct_env, n) == CLIENT_OK, "the composed envelope reads (the control)");
+    for (int cut = 1; cut < 40; cut++) {
+        const int rc = client_adopt_envelope(&ct, ct_env, n - cut);
+        if (rc >= 0) { fprintf(stderr, "  a %d-byte-short envelope read\n", cut); CHECK(0, "a truncated trailer is refused"); break; }
+    }
+    CHECK(client_adopt_envelope(&ct, ct_env, 11 + 2 + slen) == CLIENT_E_TRAILER, "no trailer is refused");
+    memcpy(ct_env2, ct_env, (size_t)n); ct_env2[1] = 1;
+    CHECK(client_adopt_envelope(&ct, ct_env2, 11 + 2 + slen) == CLIENT_E_FORMAT, "an envelope that announces no trailer is refused");
+    memcpy(ct_env2, ct_env, (size_t)n); ct_env2[1] |= 4;
+    CHECK(client_adopt_envelope(&ct, ct_env2, n) == CLIENT_E_FORMAT, "an unknown flag is refused");
+    memcpy(ct_env2, ct_env, (size_t)n); ct_env2[n] = 0;
+    CHECK(client_adopt_envelope(&ct, ct_env2, n + 1) == CLIENT_E_TRAILER, "a byte after the trailer is refused");
+    memcpy(ct_env2, ct_env, (size_t)n); ct_env2[12] = 1;
+    CHECK(client_adopt_envelope(&ct, ct_env2, n) == CLIENT_E_FORMAT, "a view blob for another viewer is refused");
+    memcpy(ct_env2, ct_env, (size_t)n); ct_env2[2] = 5;
+    CHECK(client_adopt_envelope(&ct, ct_env2, n) < 0, "a seat the board does not have is refused");
+    // A card byte that is not a card, in the battle on the table.
+    int battles_at = 16 + tb_game.deck_count;
+    CHECK(ct_raw[battles_at] == 1, "the doctored blob has its one battle where the test expects");
+    memcpy(ct_raw + 4000 - slen, ct_raw, 0);
+    uint8_t doctored[4096];
+    memcpy(doctored, ct_raw, (size_t)slen);
+    doctored[battles_at + 1] = 0x80;
+    n = ct_envelope(doctored, slen, 0, &tb.r, ct_env2);
+    CHECK(client_adopt_envelope(&ct, ct_env2, n) == CLIENT_E_STATE && ct.detail == GAME_INVALID_CARD,
+          "a card byte 0x80 is refused, not clamped onto a card");
+    // A count over its capacity, with bytes enough behind it to be read.
+    memcpy(doctored, ct_raw, (size_t)battles_at);
+    doctored[battles_at] = MAX_BATTLES + 1;
+    for (int i = 0; i < 2 * (MAX_BATTLES + 1); i++) doctored[battles_at + 1 + i] = (uint8_t)(i % 52);
+    const int tail = slen - battles_at - 3;
+    memcpy(doctored + battles_at + 1 + 2 * (MAX_BATTLES + 1), ct_raw + battles_at + 3, (size_t)tail);
+    n = ct_envelope(doctored, battles_at + 1 + 2 * (MAX_BATTLES + 1) + tail, 0, &tb.r, ct_env2);
+    CHECK(client_adopt_envelope(&ct, ct_env2, n) == CLIENT_E_STATE, "a battle count over its capacity is refused");
+    // A roster that seats someone the board does not.
+    Roster two = tb.r;
+    two.n = 2;
+    n = ct_envelope(ct_raw, slen, 0, &two, ct_env2);
+    CHECK(client_adopt_envelope(&ct, ct_env2, n) == CLIENT_E_MISMATCH, "a roster of another seat count is refused");
+}
+
+// Every push of a whole game, for every viewer, through the client: each opens,
+// every step reads, and the final board is the envelope's.
+// Two views read the same: every field and every counted element.
+static int ct_same_view(const TableView *a, const TableView *b) {
+    if (memcmp(a, b, offsetof(TableView, battles)) != 0) return 0;
+    if (memcmp(a->battles, b->battles, sizeof(Battle) * (size_t)a->num_battles) != 0) return 0;
+    for (int s = 0; s < a->num_players; s++) {
+        const ViewSeat *x = &a->seats[s], *y = &b->seats[s];
+        if (x->status != y->status || x->hand_count != y->hand_count || x->awaiting_attack != y->awaiting_attack
+            || x->is_ai != y->is_ai || x->id_len != y->id_len || x->name_len != y->name_len
+            || memcmp(x->id, y->id, x->id_len) != 0 || memcmp(x->name, y->name, x->name_len) != 0) return 0;
+    }
+    return memcmp(a->my_hand, b->my_hand, (size_t)a->my_hand_count) == 0
+        && memcmp(a->elimination, b->elimination, (size_t)a->num_eliminated) == 0
+        && memcmp(a->game_id, b->game_id, a->gid_len) == 0 && memcmp(a->title, b->title, a->title_len) == 0;
+}
+
+static void test_client_reads_every_push_of_a_game(void) {
+    tb_fixture(3, 1u << 1, 137);
+    table_init(&tb, &tb_game, &tb_snaps);
+    client_init(&ct, &ct_slot);
+    TableCommit c;
+    int pushes = 0, steps = 0, all_ok = 1, finals_ok = 1, ended = 0, as2_ok = 1;
+    for (int guard = 0; guard < 5000 && !ended; guard++) {
+        if (table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) != TABLE_OK) { all_ok = 0; break; }
+        int seat = -1;
+        for (int s = 0; s < 3 && seat < 0; s++) if (should_bot_act(&tb_game, s)) seat = s;
+        if (seat < 0) break;
+        calculate_legal_moves(&tb_game, seat, &tb_moves);
+        const LegalMove *m = &tb_moves.moves[handwritten_strategy_choose(&tb_game, seat, &tb_moves, 0)];
+        AwireAction a;
+        memset(&a, 0, sizeof(a));
+        a.kind = m->type; a.n = m->n_cards;
+        for (int i = 0; i < m->n_cards; i++) { a.cards[i] = m->cards[i]; a.attacks[i] = m->attack_cards[i]; }
+        const int wl = awire_encode(&a, tb_buf, sizeof(tb_buf));
+        char id[8];
+        snprintf(id, sizeof(id), "id-%d", seat);
+        if (table_act(&tb, id, (int)strlen(id), tb_buf, wl, -1, 0) != TABLE_APPLIED) { all_ok = 0; break; }
+        ended = tb.ended;
+        for (int viewer = -1; viewer < 3; viewer++) {
+            if (viewer == 1) continue;   // the bot seat has no push
+            const int en = table_envelope(&tb, RS("g"), viewer, 5, ct_env, sizeof(ct_env));
+            if (client_adopt_envelope(&ct, ct_env, en) != CLIENT_OK) { all_ok = 0; break; }
+            memcpy(&ct_view, &ct.view, sizeof(TableView));
+            const int idn = client_identity(&ct, ct_id, sizeof(ct_id));
+            const int pl = table_push(&tb, RS("g"), viewer, ct_push, sizeof(ct_push));
+            int rc = client_push_open(&ct, ct_push, pl, 1, ct_id, idn, 5), k = 0;
+            while (rc == CLIENT_OK && (k = client_push_next(&ct)) == 1) steps++;
+            if (rc != CLIENT_OK || k != 0 || client_push_final(&ct) != CLIENT_OK) {
+                if (all_ok) fprintf(stderr, "  push for viewer %d at move %d: open %d, next %d, detail %d\n", viewer, guard, rc, k, ct.detail);
+                all_ok = 0;
+                continue;
+            }
+            pushes++;
+            finals_ok &= ct_same_view(&ct_view, &ct.view);
+            // The same sequence as an as2 payload: no flags byte.
+            rc = client_push_open(&ct, ct_push, pl - 1, 0, ct_id, idn, 5);
+            while (rc == CLIENT_OK && (k = client_push_next(&ct)) == 1) { }
+            as2_ok &= rc == CLIENT_OK && k == 0 && client_push_final(&ct) == CLIENT_OK && ct_same_view(&ct_view, &ct.view);
+        }
+        if (table_commit_products(&tb, RS("g"), 5, 0, &c, tb_arena, sizeof(tb_arena)) < 0) { all_ok = 0; break; }
+        memcpy(tb_state, tb_arena + c.state.off, (size_t)c.state.len);
+        tb_state_len = c.state.len;
+    }
+    CHECK(ended && pushes > 100 && steps > pushes, "a whole game's pushes were read");
+    CHECK(all_ok, "every push opens and every step's board is one the kernel accepts");
+    CHECK(finals_ok, "a push's final board is exactly the view its envelope gives");
+    CHECK(as2_ok, "the as2 form of every push reads the same");
+    CHECK(ct.view.status == GAME_STATUS_GAME_OVER && ct.view.fool >= 0 && ct.view.fool == c.fool, "the last view names the fool");
+}
+
+static void test_client_push_steps_and_refusals(void) {
+    tb_fixture(3, 1u << 2, 139);
+    table_init(&tb, &tb_game, &tb_snaps);
+    table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES);
+    client_init(&ct, &ct_slot);
+    CHECK(client_push_next(&ct) == CLIENT_E_ORDER && client_push_final(&ct) == CLIENT_E_ORDER, "nothing is read before a push opens");
+    const int en = table_envelope(&tb, RS("g-7"), 0, 3, ct_env, sizeof(ct_env));
+    client_adopt_envelope(&ct, ct_env, en);
+    const int idn = client_identity(&ct, ct_id, sizeof(ct_id));
+    uint8_t w[8];
+    const int fa = tb_game.first_attacker;
+    char fa_id[8];
+    snprintf(fa_id, sizeof(fa_id), "id-%d", fa);
+    const int wl = tb_attack_wire(&tb_game, w);
+    const Card played = card_from_wire_state(w[2]);
+    table_act(&tb, fa_id, (int)strlen(fa_id), w, wl, -1, 0);
+    int pl = table_push(&tb, RS("g-7"), 0, ct_push, sizeof(ct_push));
+    CHECK(client_push_open(&ct, ct_push, pl, 1, ct_id, idn, 4) == CLIENT_OK && client_push_next(&ct) == 1
+          && ct.event.type == EVW_T_ATTACK_PASS && ct.event.seat == fa && ct.event.msg == EVW_MSG_ATTACKED
+          && ct.event.from == EVW_LOC_HAND && ct.event.to == EVW_LOC_TABLE && ct.event.battle == -1 && !ct.event.has_target
+          && ct.event.n_cards == 1 && card_eq(ct.event.cards[0], played), "the attack step: its type, seat, route and card");
+    CHECK(ct.view.num_battles == 1 && card_eq(ct.view.battles[0].attack, played) && ct.view.my_seat == 0 && ct.view.version == 4
+          && ct.view.seats[2].is_ai && ct.view.title_len == tb.r.title_len, "and its board, with the table's identity");
+    CHECK(client_push_next(&ct) == 0 && client_push_final(&ct) == CLIENT_OK && client_push_next(&ct) == CLIENT_E_ORDER,
+          "one step, the final board, and the push is closed");
+    CHECK(client_push_open(&ct, ct_push, pl, 1, 0, 0, 4) == CLIENT_OK && client_push_next(&ct) == 1
+          && ct.view.seats[0].id_len == 0 && ct.view.title_len == 0, "a push with no identity names no one");
+    client_push_final(&ct);
+
+    // A defender's cover: a target and a battle.
+    char def_id[8];
+    snprintf(def_id, sizeof(def_id), "id-%d", tb_game.defender);
+    calculate_legal_moves(&tb_game, tb_game.defender, &tb_moves);
+    int cover = -1;
+    for (int i = 0; i < tb_moves.n && cover < 0; i++) if (tb_moves.moves[i].type == MOVE_COVER) cover = i;
+    if (cover >= 0) {
+        AwireAction a;
+        memset(&a, 0, sizeof(a));
+        a.kind = MOVE_COVER; a.n = 1; a.cards[0] = tb_moves.moves[cover].cards[0]; a.attacks[0] = tb_moves.moves[cover].attack_cards[0];
+        const int cl = awire_encode(&a, tb_buf, sizeof(tb_buf));
+        CHECK(table_act(&tb, def_id, (int)strlen(def_id), tb_buf, cl, -1, 0) == TABLE_APPLIED, "the defender covers");
+        pl = table_push(&tb, RS("g-7"), -1, ct_push, sizeof(ct_push));
+        CHECK(client_push_open(&ct, ct_push, pl, 1, ct_id, idn, 5) == CLIENT_OK && client_push_next(&ct) == 1
+              && ct.event.type == EVW_T_COVER && ct.event.has_target && card_eq(ct.event.target, played) && ct.event.battle == 0
+              && ct.view.my_seat == -1 && ct.view.my_hand_count == 0, "the cover step names its target and battle");
+        client_push_final(&ct);
+    }
+
+    // Refusals.
+    pl = table_push(&tb, RS("g-7"), 0, ct_push, sizeof(ct_push));
+    CHECK(client_push_open(&ct, ct_push, pl, 1, ct_id, idn, 5) == CLIENT_OK, "the control opens");
+    client_push_final(&ct);
+    CHECK(client_push_open(&ct, ct_push, pl - 1, 1, ct_id, idn, 5) == CLIENT_E_PUSH, "an as3 push without its flags byte is refused");
+    CHECK(client_push_open(&ct, ct_push, pl, 0, ct_id, idn, 5) == CLIENT_OK,
+          "an as3 push labelled as2 (a server since Phase 4b, before 5b) reads");
+    client_push_final(&ct);
+    ct_push[pl - 1] = 0x40;
+    CHECK(client_push_open(&ct, ct_push, pl, 0, ct_id, idn, 5) == CLIENT_E_PUSH, "an as2 push with bytes after its sequence that are no as3 block is refused");
+    ct_push[pl - 1] = 0;
+    ct_push[pl - 1] = 2;
+    CHECK(client_push_open(&ct, ct_push, pl, 1, ct_id, idn, 5) == CLIENT_E_PUSH, "an unknown flag is refused");
+    ct_push[pl - 1] = 0;
+    for (int cut = 2; cut < pl; cut += 7)
+        if (client_push_open(&ct, ct_push, pl - cut, 1, ct_id, idn, 5) >= 0) { CHECK(0, "a truncated push is refused"); break; }
+    // The first event's first card byte (header 4, event head 7).
+    const uint8_t keep = ct_push[4 + 7];
+    ct_push[4 + 7] = 0x80;
+    CHECK(client_push_open(&ct, ct_push, pl, 1, ct_id, idn, 5) == CLIENT_E_PUSH, "an event card byte that is not a card is refused");
+    ct_push[4 + 7] = keep;
+    CHECK(client_identity_begin(&ct, RS("g-7"), RS("T")) == CLIENT_OK && client_identity_seat(&ct, RS("a"), RS("A"), 0) == CLIENT_OK
+          && client_identity_seat(&ct, RS("b"), RS("B"), 1) == CLIENT_OK, "an identity of two seats builds");
+    int two = client_identity(&ct, ct_id, sizeof(ct_id));
+    CHECK(two > 0 && client_push_open(&ct, ct_push, pl, 1, ct_id, two, 5) == CLIENT_E_MISMATCH,
+          "a push against the identity of a table with other seats is refused");
+    CHECK(client_identity_begin(&ct, RS("g-7"), RS("T")) == CLIENT_OK && client_identity_seat(&ct, RS("a"), RS("A"), 0) == CLIENT_OK
+          && client_identity_seat(&ct, RS("b"), RS("B"), 1) == CLIENT_OK
+          && client_identity_seat(&ct, RS("c"), RS("Цэ"), 0) == CLIENT_OK && (two = client_identity(&ct, ct_id, sizeof(ct_id))) > 0
+          && client_push_open(&ct, ct_push, pl, 1, ct_id, two, 5) == CLIENT_OK && client_push_next(&ct) == 1
+          && ct.view.seats[1].is_ai && ct.view.seats[2].name_len == 4 && ct.view.gid_len == 3, "and one of three decodes it");
+    client_push_final(&ct);
+    CHECK(client_identity_begin(&ct, RS("g-7"), RS("T")) == CLIENT_OK && client_identity_seat(&ct, RS("a"), RS("A"), 0) == CLIENT_OK
+          && client_identity_seat(&ct, RS("a"), RS("again"), 0) < 0, "an identity refuses a duplicate seat");
+    ct_id[0] = 9;
+    CHECK(client_push_open(&ct, ct_push, pl, 1, ct_id, two, 5) == CLIENT_E_IDENTITY, "identity bytes that do not read are refused");
+
+    // A roster-carrying push is its own identity.
+    tb_lobby();
+    CHECK(table_join(&tb, RS("d"), RS("Dora")) == TABLE_OK, "a join");
+    pl = table_push(&tb, RS("g-9"), 0, ct_push, sizeof(ct_push));
+    CHECK(client_push_open(&ct, ct_push, pl, 0, 0, 0, 1) == CLIENT_OK && client_push_next(&ct) == 1 && client_push_final(&ct) == CLIENT_OK
+          && ct.view.num_players == 4 && ct.view.seats[3].name_len == 4, "labelled as2, a join's push still names the new seat");
+    CHECK(client_push_open(&ct, ct_push, pl, 1, 0, 0, 1) == CLIENT_OK && client_push_next(&ct) == 1 && client_push_final(&ct) == CLIENT_OK
+          && ct.view.num_players == 4 && ct.view.seats[3].name_len == 4 && memcmp(ct.view.seats[3].name, "Dora", 4) == 0
+          && ct.view.gid_len == 3 && memcmp(ct.view.game_id, "g-9", 3) == 0, "a join's push names the new seat without an identity");
+    CHECK(client_identity(&ct, ct_id, sizeof(ct_id)) > 0, "and becomes the identity kept");
+
+    // A board the module holds, read as a viewer sees it.
+    tb_fixture(3, 0, 141);
+    CHECK(client_adopt_board(&ct, &tb_src, -1) == CLIENT_OK && ct.view.my_seat == -1 && ct.view.my_hand_count == 0
+          && ct.view.num_players == 3 && ct.view.seats[1].hand_count == tb_src.players[1].hand_count
+          && ct.view.seats[0].id_len == 0 && ct.view.deck_count == tb_src.deck_count, "a held board, as a spectator sees it, naming no one");
+    CHECK(client_adopt_board(&ct, &tb_src, 2) == CLIENT_OK && ct.view.my_hand_count == tb_src.players[2].hand_count
+          && card_eq(ct.view.my_hand[0], tb_src.players[2].hand[0]), "and as a seat sees it");
+    CHECK(client_adopt_board(&ct, &tb_src, 3) == CLIENT_E_MISMATCH, "a viewer the board does not seat is refused");
+}
+
+// A 3-seat board mid-bout, as seat `viewer` sees it: seat 0 led 7h (covered by 9h),
+// seat 1 defends, a dealt stock of 12 under a face-up trump.
+static void cvr_board(TableView *v, int viewer) {
+    memset(v, 0, sizeof(*v));
+    v->status = GAME_STATUS_PLAYING;
+    v->num_players = 3;
+    v->first_attacker = 0;
+    v->defender = 1;
+    v->my_seat = (int8_t)viewer;
+    v->fool = -1;
+    v->deck_count = 12;
+    v->has_flipped = true;
+    v->power_suit = SUIT_CLUBS;
+    v->flipped = (Card){ .suit = SUIT_CLUBS, .value = 12 };
+    v->num_battles = 1;
+    v->battles[0] = (Battle){ .attack = { .suit = SUIT_HEARTS, .value = 6 }, .defense = { .suit = SUIT_HEARTS, .value = 8 } };
+    for (int s = 0; s < 3; s++) { v->seats[s].status = PLAYER_STATUS_IN; v->seats[s].hand_count = 5; }
+}
+
+static void test_client_view_rules(void) {
+    TableView v;
+    ViewRules r;
+
+    // Good: offered to an attacker who is in and has not said it, once every attack is covered.
+    cvr_board(&v, 2);
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.can_say_good, "an attacker is offered Good over a covered table");
+    v.good_mask = 1u << 2;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "not once it has said it");
+    v.good_mask = 1u << 0;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.can_say_good, "another seat's Good is not this one's");
+    cvr_board(&v, 1);
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "the defender is never offered Good");
+    cvr_board(&v, 2);
+    v.battles[1] = (Battle){ .attack = { .suit = SUIT_DIAMONDS, .value = 6 }, .defense = CARD_NONE };
+    v.num_battles = 2;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "not while an attack stands uncovered");
+    v.num_battles = 0;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "not over an empty table");
+    cvr_board(&v, -1);
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "a spectator is offered nothing");
+    cvr_board(&v, 2);
+    v.seats[2].status = PLAYER_STATUS_OUT;
+    v.seats[2].hand_count = 0;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "a seat that is out says nothing (handle_good: NOT_IN_STATUS)");
+    cvr_board(&v, 2);
+    v.status = GAME_STATUS_GAME_OVER;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.can_say_good, "nor on a finished game (handle_good: NOT_PLAYING)");
+
+    // The sword: the next bout's lead, on an empty table once the deal has turned the trump.
+    cvr_board(&v, 2);
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == -1 && r.defender_badge == 1,
+          "mid-bout: no sword, the shield on the defender");
+    v.num_battles = 0;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == 0, "an empty table: the sword on the lead");
+    v.has_flipped = false;
+    v.flipped = CARD_NONE;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == -1 && r.defender_badge == -1,
+          "mid-deal (a stock and no trump yet): neither badge");
+    v.deck_count = 0;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == 0 && r.defender_badge == 1,
+          "the stock and trump drawn out late in the game: both badges");
+    v.defender = 3;
+    v.first_attacker = -1;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.first_attacker_badge == -1 && r.defender_badge == -1,
+          "a badge names only a seat the board has");
+
+    // The stock: cards in flight leave the pile first, and the ones bound for the trump still count on it.
+    cvr_board(&v, 0);
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.deck_pile == 12 && r.deck_badge == 13
+          && r.show_deck_pile && r.show_flipped_slot && !r.show_trump_icon, "a dealt stock and its trump");
+    v.has_flipped = false;
+    v.deck_count = 7;
+    CHECK(client_view_rules(&v, 7, 1, &r) == CLIENT_OK && r.deck_pile == 0 && r.deck_badge == 1
+          && !r.show_deck_pile && r.show_flipped_slot && !r.show_trump_icon, "the last cards in flight, one to the trump slot");
+    CHECK(client_view_rules(&v, 9, 0, &r) == CLIENT_OK && r.deck_pile == 0 && r.deck_badge == 0
+          && !r.show_deck_pile && !r.show_flipped_slot && r.show_trump_icon, "more in flight than the stock holds shows none");
+    v.deck_count = 0;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.deck_badge == 0 && r.show_trump_icon && !r.show_flipped_slot,
+          "stock and trump gone: the power suit");
+
+    // A bot to move: should_bot_act's rule, for any seat the roster marks a bot.
+    cvr_board(&v, 0);
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "no bot seats, no bot to move");
+    v.seats[2].is_ai = true;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.bot_to_move, "a bot attacker that has not said good may throw in");
+    v.good_mask = 1u << 2;
+    v.seats[1].is_ai = true;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.bot_to_move,
+          "not once it said good, and a bot defender over a covered table waits");
+    v.battles[1] = (Battle){ .attack = { .suit = SUIT_DIAMONDS, .value = 6 }, .defense = CARD_NONE };
+    v.num_battles = 2;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.bot_to_move, "a bot defender with an attack to answer");
+    cvr_board(&v, 0);
+    v.seats[0].is_ai = true;
+    v.num_battles = 0;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && r.bot_to_move, "a bot first attacker on an empty table");
+    v.first_attacker = 2;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "not when a human leads");
+    cvr_board(&v, 0);
+    v.seats[2].is_ai = true;
+    v.seats[2].status = PLAYER_STATUS_OUT;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "a bot that is out never moves");
+    v.seats[2].status = PLAYER_STATUS_IN;
+    v.status = GAME_STATUS_GAME_OVER;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_OK && !r.bot_to_move, "nor on a finished game");
+
+    // Refusals: a view that is not one.
+    cvr_board(&v, 0);
+    v.num_players = MAX_PLAYERS + 1;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_E_FORMAT, "more seats than a table has is refused");
+    cvr_board(&v, 3);
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_E_FORMAT, "a viewer who is not a seat is refused");
+    cvr_board(&v, 0);
+    v.num_battles = -1;
+    CHECK(client_view_rules(&v, 0, 0, &r) == CLIENT_E_FORMAT, "a negative battle count is refused");
+    cvr_board(&v, 0);
+    CHECK(client_view_rules(&v, -1, 0, &r) == CLIENT_E_FORMAT && client_view_rules(&v, 0, -2, &r) == CLIENT_E_FORMAT,
+          "a negative flight is refused");
+}
+
+// ---------- the boards a client makes (client_table.h, Phase 6b) ----------------------
+
+static Game cb_game, cb_real;
+static LegalMoves cb_moves;
+static TableView cb_view, cb_view2;
+static ClientConflict cb_q;
+static ConflictVerdicts cb_out;
+static uint32_t cb_rng;
+
+// seat 0 led 7h, the attack cvr_board lays.
+static Card cvr_attack(void) { return (Card){ .suit = SUIT_HEARTS, .value = 6 }; }
+
+// table.c finalize: the end of a game, bots parked ready and humans idle.
+static void cb_finalize(Game *g, uint32_t bots) {
+    if (game_done(g) < 0) return;
+    g->status = GAME_STATUS_GAME_OVER;
+    for (int i = 0; i < g->num_players; i++)
+        g->players[i].status = ((bots >> i) & 1u) ? PLAYER_STATUS_READY : PLAYER_STATUS_IDLE;
+}
+
+static int cb_rand(int n) {
+    cb_rng = cb_rng * 1664525u + 1013904223u;
+    return (int)((cb_rng >> 8) % (uint32_t)n);
+}
+
+static void cb_deal(Game *g, int np, int seed) {
+    unsigned char s[FOOLISH_SEED_LEN];
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) s[i] = (unsigned char)(i * 13 + seed);
+    game_set_seed((uint32_t)seed);
+    game_set_deal_seed_bytes(s, FOOLISH_SEED_LEN);
+    memset(g, 0, offsetof(Game, logs));
+    g->num_players = (int8_t)np;
+    for (int i = 0; i < np; i++) g->players[i].status = PLAYER_STATUS_READY;
+    start_game(g);
+    game_set_seed(1);
+}
+
+static int cb_wire(int kind, const Card *cards, const Card *attacks, int n, uint8_t *w) {
+    AwireAction a;
+    memset(&a, 0, sizeof(a));
+    a.kind = kind;
+    a.n = n;
+    for (int i = 0; i < n; i++) { a.cards[i] = cards[i]; if (attacks) a.attacks[i] = attacks[i]; }
+    return awire_encode(&a, w, 64);
+}
+
+// The engine's own verdict on the whole game: the move dry-run on a copy.
+static int cb_engine_verdict(const Game *g, int seat, const uint8_t *w, int wl) {
+    AwireAction a;
+    if (!awire_decode(w, wl, &a)) return CLIENT_E_MOVE;
+    memcpy(&cb_real, g, offsetof(Game, logs));
+    cb_real.num_logs = 0;
+    void (*hook)(const Game *, int, int) = engine_snap_hook;
+    engine_snap_hook = 0;
+    engine_last_reject = ENGINE_REJECT_NONE;
+    const bool ok = awire_apply(&cb_real, seat, &a);
+    engine_snap_hook = hook;
+    return ok ? 0 : engine_last_reject;
+}
+
+// Plays one random legal move of a seat that may act; 0 when nobody can.
+static int cb_step(Game *g) {
+    int seats[MAX_PLAYERS], n = 0;
+    for (int s = 0; s < g->num_players; s++) {
+        if (!should_bot_act(g, s)) continue;
+        calculate_legal_moves(g, s, &cb_moves);
+        if (cb_moves.n > 0) seats[n++] = s;
+    }
+    if (n == 0 || game_done(g) >= 0) return 0;
+    const int seat = seats[cb_rand(n)];
+    calculate_legal_moves(g, seat, &cb_moves);
+    const LegalMove *m = &cb_moves.moves[cb_rand(cb_moves.n)];
+    uint8_t w[64];
+    const int wl = cb_wire(m->type, m->cards, m->attack_cards, m->n_cards, w);
+    AwireAction a;
+    if (wl <= 0 || !awire_decode(w, wl, &a)) return 0;
+    g->num_logs = 0;
+    return awire_apply(g, seat, &a) ? 1 : 0;
+}
+
+static void test_client_validate_is_the_engine(void) {
+    int checked = 0, legal = 0, refused = 0, wrong = 0;
+    uint8_t w[64];
+    cb_rng = 7;
+    for (int np = 2; np <= 6; np++) {
+        cb_deal(&cb_game, np, 40 + np);
+        client_init(&ct, &ct_slot);
+        for (int moves = 0; moves < 400; moves++) {
+            for (int seat = 0; seat < np; seat++) {
+                if (cb_game.players[seat].status != PLAYER_STATUS_IN) continue;
+                if (client_adopt_board(&ct, &cb_game, seat) != CLIENT_OK) { wrong++; continue; }
+                cb_view = ct.view;
+                const Player *p = &cb_game.players[seat];
+                // Every enumerated legal move, and a spread of moves the rules refuse.
+                calculate_legal_moves(&cb_game, seat, &cb_moves);
+                for (int i = 0; i < cb_moves.n && i < 24; i++) {
+                    const LegalMove *m = &cb_moves.moves[i];
+                    const int wl = cb_wire(m->type, m->cards, m->attack_cards, m->n_cards, w);
+                    const int got = client_validate(&ct, &cb_view, w, wl), want = cb_engine_verdict(&cb_game, seat, w, wl);
+                    if (got != want || got != 0) { if (wrong++ < 5) fprintf(stderr, "  legal move %d: client %d, engine %d\n", m->type, got, want); }
+                    checked++; legal++;
+                }
+                for (int h = 0; h < p->hand_count; h++) {
+                    const Card c = p->hand[h];
+                    for (int kind = AWIRE_ATTACK; kind <= AWIRE_PASS; kind++) {
+                        int wl;
+                        if (kind == AWIRE_COVER) {
+                            if (cb_game.num_battles == 0) continue;
+                            const Card at = cb_game.table_battles[cb_rand(cb_game.num_battles)].attack;
+                            wl = cb_wire(kind, &c, &at, 1, w);
+                        } else {
+                            wl = cb_wire(kind, &c, 0, 1, w);
+                        }
+                        const int got = client_validate(&ct, &cb_view, w, wl), want = cb_engine_verdict(&cb_game, seat, w, wl);
+                        if (got != want && wrong++ < 5) fprintf(stderr, "  kind %d card %d/%d: client %d, engine %d\n", kind, c.suit, c.value, got, want);
+                        checked++;
+                        refused += got > 0;
+                    }
+                }
+                for (int kind = AWIRE_PICKUP; kind <= AWIRE_GOOD; kind++) {
+                    const int wl = cb_wire(kind, 0, 0, 0, w);
+                    const int got = client_validate(&ct, &cb_view, w, wl), want = cb_engine_verdict(&cb_game, seat, w, wl);
+                    if (got != want && wrong++ < 5) fprintf(stderr, "  kind %d: client %d, engine %d\n", kind, got, want);
+                    checked++;
+                    refused += got > 0;
+                }
+                // A card another seat holds.
+                const Player *o = &cb_game.players[(seat + 1) % np];
+                if (o->hand_count > 0) {
+                    const int wl = cb_wire(AWIRE_ATTACK, &o->hand[0], 0, 1, w);
+                    const int got = client_validate(&ct, &cb_view, w, wl), want = cb_engine_verdict(&cb_game, seat, w, wl);
+                    if (got != want && wrong++ < 5) fprintf(stderr, "  a foreign card: client %d, engine %d\n", got, want);
+                    checked++;
+                }
+            }
+            if (!cb_step(&cb_game)) break;
+        }
+    }
+    fprintf(stderr, "  [client_validate] %d moves judged, %d legal, %d refused\n", checked, legal, refused);
+    CHECK(checked > 3000 && legal > 500 && refused > 1000, "enough moves were judged, legal and refused");
+    CHECK(wrong == 0, "a seat's move on its own view is judged exactly as the engine judges it on the whole game");
+
+    cb_deal(&cb_game, 3, 5);
+    client_adopt_board(&ct, &cb_game, cb_game.first_attacker);
+    cb_view = ct.view;
+    CHECK(client_validate(&ct, &cb_view, (const uint8_t *)"\x00\x09\x01", 3) == CLIENT_E_MOVE, "a wire that is not a move is refused as one");
+    CHECK(client_validate(&ct, &cb_view, 0, 0) == CLIENT_E_MOVE, "and so is no wire");
+    cb_view.power_suit = 9;
+    CHECK(client_validate(&ct, &cb_view, w, cb_wire(AWIRE_PICKUP, 0, 0, 0, w)) == GAME_INVALID_POWER_SUIT,
+          "a board the rules refuse is refused before any move is judged");
+    cb_view = ct.view;
+    cb_view.my_seat = 5;
+    CHECK(client_validate(&ct, &cb_view, w, cb_wire(AWIRE_PICKUP, 0, 0, 0, w)) < 0, "a viewer the board does not seat is refused");
+}
+
+static int cb_same_cards(const Card *a, const Card *b, int n) {
+    for (int i = 0; i < n; i++) if (!card_eq(a[i], b[i])) return 0;
+    return 1;
+}
+
+static void test_client_optimistic_apply(void) {
+    uint8_t w[64];
+    const Card c7s = { .suit = SUIT_SPADES, .value = 6 }, c7d = { .suit = SUIT_DIAMONDS, .value = 6 };
+    const Card c9h = { .suit = SUIT_HEARTS, .value = 8 }, cKs = { .suit = SUIT_SPADES, .value = 12 };
+
+    // attack: the table grows, the hand shrinks, nobody's count or turn moves.
+    cvr_board(&cb_view, 0);
+    cb_view.num_battles = 0;
+    cb_view.my_hand_count = 3;
+    cb_view.my_hand[0] = c7s; cb_view.my_hand[1] = c9h; cb_view.my_hand[2] = c7d;
+    CHECK(client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_ATTACK, (Card[]){ c7s, c7d }, 0, 2, w)) == CLIENT_OK
+          && cb_view.num_battles == 2 && card_eq(cb_view.battles[0].attack, c7s) && card_is_none(cb_view.battles[0].defense)
+          && card_eq(cb_view.battles[1].attack, c7d) && card_is_none(cb_view.battles[1].defense)
+          && cb_view.my_hand_count == 1 && card_eq(cb_view.my_hand[0], c9h)
+          && cb_view.seats[0].hand_count == 5 && cb_view.defender == 1 && cb_view.first_attacker == 0,
+          "an attack lays its cards on the table as attacks and takes them out of the hand");
+
+    // pass: the shield goes to the next seat in play.
+    cvr_board(&cb_view, 1);
+    cb_view.battles[0].defense = CARD_NONE;
+    cb_view.num_players = 4;
+    cb_view.seats[3].status = PLAYER_STATUS_IN;
+    cb_view.seats[3].hand_count = 4;
+    cb_view.seats[2].status = PLAYER_STATUS_OUT;
+    cb_view.seats[2].hand_count = 0;
+    cb_view.num_eliminated = 1;
+    cb_view.elimination[0] = 2;
+    cb_view.my_hand_count = 2;
+    cb_view.my_hand[0] = c7s; cb_view.my_hand[1] = cKs;
+    CHECK(client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_PASS, &c7s, 0, 1, w)) == CLIENT_OK
+          && cb_view.defender == 3 && cb_view.first_attacker == 0 && cb_view.num_battles == 2
+          && card_eq(cb_view.battles[1].attack, c7s) && cb_view.my_hand_count == 1 && card_eq(cb_view.my_hand[0], cKs),
+          "a pass hands the shield past a seat that is out, and its card joins the attacks");
+
+    // cover: the named attack takes the paired cover.
+    cvr_board(&cb_view, 1);
+    cb_view.battles[0].defense = CARD_NONE;
+    cb_view.battles[1] = (Battle){ .attack = c7d, .defense = CARD_NONE };
+    cb_view.num_battles = 2;
+    cb_view.my_hand_count = 2;
+    cb_view.my_hand[0] = c9h; cb_view.my_hand[1] = cKs;
+    const Card attack7h = cvr_attack();
+    CHECK(client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_COVER, &c9h, &attack7h, 1, w)) == CLIENT_OK
+          && card_eq(cb_view.battles[0].defense, c9h) && card_is_none(cb_view.battles[1].defense)
+          && cb_view.my_hand_count == 1 && card_eq(cb_view.my_hand[0], cKs),
+          "a cover covers the attack it names and leaves the hand");
+
+    // good: nothing moves.
+    cvr_board(&cb_view, 2);
+    cb_view2 = cb_view;
+    CHECK(client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_GOOD, 0, 0, 0, w)) == CLIENT_OK
+          && memcmp(&cb_view, &cb_view2, sizeof(TableView)) == 0, "a good moves nothing");
+
+    // pickup when another seat in play holds no card: the refill may put it out, so the turn stays.
+    cvr_board(&cb_view, 1);
+    cb_view.seats[2].hand_count = 0;
+    cb_view.my_hand_count = 1;
+    cb_view.my_hand[0] = cKs;
+    CHECK(client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_PICKUP, 0, 0, 0, w)) == CLIENT_OK
+          && cb_view.first_attacker == 0 && cb_view.defender == 1 && cb_view.num_battles == 0 && cb_view.my_hand_count == 3
+          && card_eq(cb_view.my_hand[0], cKs) && card_eq(cb_view.my_hand[1], attack7h) && card_eq(cb_view.my_hand[2], c9h),
+          "a pickup takes the table, attack before cover, and leaves a turn the refill could change alone");
+
+    CHECK(client_optimistic_apply(&ct, &cb_view, (const uint8_t *)"\x07\x00", 2) == CLIENT_E_MOVE, "a wire that is not a move is refused");
+
+    // A move whose board already shows it - its confirmation, or a push that kept it,
+    // landed first - leaves that board as it is.
+    cvr_board(&cb_view, 0);
+    cb_view.num_battles = 0;
+    cb_view.my_hand_count = 2;
+    cb_view.my_hand[0] = c7s; cb_view.my_hand[1] = c9h;
+    client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_ATTACK, &c7s, 0, 1, w));
+    cb_view2 = cb_view;
+    CHECK(client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_ATTACK, &c7s, 0, 1, w)) == CLIENT_OK
+          && memcmp(&cb_view, &cb_view2, sizeof(TableView)) == 0, "an attack the table already shows is not laid twice");
+    cvr_board(&cb_view, 1);
+    cb_view.battles[0].defense = CARD_NONE;
+    cb_view.num_players = 4;
+    cb_view.seats[3].status = PLAYER_STATUS_IN;
+    cb_view.seats[3].hand_count = 4;
+    cb_view.my_hand_count = 1;
+    cb_view.my_hand[0] = c7s;
+    client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_PASS, &c7s, 0, 1, w));
+    cb_view2 = cb_view;
+    CHECK(cb_view.defender == 2 && client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_PASS, &c7s, 0, 1, w)) == CLIENT_OK
+          && memcmp(&cb_view, &cb_view2, sizeof(TableView)) == 0, "a pass the table already shows does not hand the shield on again");
+    cvr_board(&cb_view, 1);
+    cb_view.num_battles = 0;
+    cb_view2 = cb_view;
+    CHECK(client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_PICKUP, 0, 0, 0, w)) == CLIENT_OK
+          && memcmp(&cb_view, &cb_view2, sizeof(TableView)) == 0, "a pickup of a table already taken moves no turn");
+    cvr_board(&cb_view, 0);
+    cb_view.num_battles = MAX_BATTLES;
+    CHECK(client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_ATTACK, &c7s, 0, 1, w)) == CLIENT_E_FORMAT
+          || client_optimistic_apply(&ct, &cb_view, w, cb_wire(AWIRE_ATTACK, &c7s, 0, 1, w)) == CLIENT_E_CAP,
+          "a table past its capacity is refused, never overrun");
+}
+
+// The optimistic pickup's lead and shield are the ones the server commits, at
+// every table size: whenever the board can know them, they are the engine's.
+static void test_client_optimistic_pickup_rotation_is_the_servers(void) {
+    uint8_t w[64];
+    const int wl = cb_wire(AWIRE_PICKUP, 0, 0, 0, w);
+    int total_exact = 0, total_left = 0, all_same = 1, hands_same = 1, left_alone = 1, every_count = 1;
+    cb_rng = 99;
+    for (int np = 2; np <= MAX_PLAYERS; np++) {
+        int exact = 0;
+        for (int game = 0; game < 40 && exact < 30; game++) {
+            cb_deal(&cb_game, np, 300 + np * 17 + game);
+            client_init(&ct, &ct_slot);
+            for (int moves = 0; moves < 600; moves++) {
+                const int d = cb_game.defender;
+                if (cb_game.status == GAME_STATUS_PLAYING && cb_game.num_battles > 0 && cb_engine_verdict(&cb_game, d, w, wl) == 0
+                    && client_adopt_board(&ct, &cb_game, d) == CLIENT_OK) {
+                    cb_view = ct.view;
+                    const int before_hand = cb_view.my_hand_count;
+                    const int rc = client_optimistic_apply(&ct, &cb_view, w, wl);
+                    cb_engine_verdict(&cb_game, d, w, wl);   // cb_real: the committed pickup, refill and rotation
+                    int could_go_out = 0;
+                    for (int s = 0; s < np; s++)
+                        if (s != d && cb_game.players[s].status == PLAYER_STATUS_IN && cb_game.players[s].hand_count == 0) could_go_out = 1;
+                    if (rc != CLIENT_OK) { all_same = 0; continue; }
+                    if (!could_go_out) {
+                        exact++;
+                        if (cb_view.first_attacker != cb_real.first_attacker || cb_view.defender != cb_real.defender) {
+                            if (all_same) fprintf(stderr, "  %dp: optimistic %d/%d, committed %d/%d\n", np,
+                                                  cb_view.first_attacker, cb_view.defender, cb_real.first_attacker, cb_real.defender);
+                            all_same = 0;
+                        }
+                    } else {
+                        total_left++;
+                        if (cb_view.first_attacker != cb_game.first_attacker || cb_view.defender != cb_game.defender) left_alone = 0;
+                    }
+                    hands_same &= cb_view.num_battles == 0 && cb_view.my_hand_count > before_hand
+                        && cb_view.my_hand_count <= cb_real.players[d].hand_count
+                        && cb_same_cards(cb_view.my_hand, cb_real.players[d].hand, cb_view.my_hand_count);
+                }
+                if (!cb_step(&cb_game)) break;
+            }
+        }
+        if (exact < 30) { fprintf(stderr, "  %dp: only %d pickups\n", np, exact); every_count = 0; }
+        total_exact += exact;
+    }
+    fprintf(stderr, "  [pickup rotation] %d pickups the board could predict, %d it left to the server\n", total_exact, total_left);
+    CHECK(every_count, "every seat count from 2 to 8 had its pickups checked");
+    CHECK(all_same, "an optimistic pickup's lead and shield are the ones the server commits");
+    CHECK(left_alone, "and where a refill could put a seat out, the board leaves the turn to the server");
+    CHECK(hands_same, "the picked-up table is the hand the server commits, before its draws");
+}
+
+// The board a deal lands on, made from the board the deal left: for every seat
+// count, the stock holds every card the deal handed out and every card it did
+// not, and nobody - the viewer least of all - holds a card before it lands.
+static void test_client_board_edit_undeal(void) {
+    int every = 1;
+    for (int np = 2; np <= MAX_PLAYERS; np++) {
+        cb_deal(&cb_game, np, 70 + np);
+        int dealt = cb_game.deck_count + (cb_game.has_flipped ? 1 : 0);
+        for (int s = 0; s < np; s++) dealt += cb_game.players[s].hand_count;
+        for (int viewer = -1; viewer < np; viewer++) {
+            client_init(&ct, &ct_slot);
+            if (client_adopt_board(&ct, &cb_game, viewer) != CLIENT_OK) { every = 0; continue; }
+            cb_view = ct.view;
+            BoardEdit e;
+            memset(&e, 0, sizeof(e));
+            e.op = CLIENT_EDIT_UNDEAL;
+            const int rc = client_board_edit(&ct, &cb_view, &e);
+            int empty = rc == CLIENT_OK && cb_view.my_hand_count == 0 && cb_view.num_battles == 0 && !cb_view.has_flipped
+                && card_is_none(cb_view.flipped) && cb_view.deck_count == dealt;
+            for (int s = 0; s < np; s++) empty &= cb_view.seats[s].hand_count == 0;
+            empty &= cb_view.num_players == np && cb_view.my_seat == viewer
+                && cb_view.first_attacker == ct.view.first_attacker && cb_view.defender == ct.view.defender;
+            if (!empty && every) fprintf(stderr, "  %dp viewer %d: rc %d, deck %d of %d, hand %d\n", np, viewer, rc, cb_view.deck_count, dealt, cb_view.my_hand_count);
+            every &= empty;
+        }
+    }
+    CHECK(every, "the board before a deal holds the whole deck in its stock and no card in any hand, for every seat count and viewer");
+}
+
+static void test_client_board_edits(void) {
+    const Card c7s = { .suit = SUIT_SPADES, .value = 6 }, c9d = { .suit = SUIT_DIAMONDS, .value = 8 };
+    const Card cKs = { .suit = SUIT_SPADES, .value = 12 };
+    const Card attack7h = cvr_attack(), cover9h = { .suit = SUIT_HEARTS, .value = 8 };
+    BoardEdit e;
+
+    // KEEP: a pending attack, a pending cover, a card the table already shows.
+    cvr_board(&cb_view, 0);
+    cb_view.battles[0].defense = CARD_NONE;
+    cb_view.my_hand_count = 3;
+    cb_view.my_hand[0] = c7s; cb_view.my_hand[1] = cKs; cb_view.my_hand[2] = cover9h;
+    memset(&e, 0, sizeof(e));
+    e.op = CLIENT_EDIT_KEEP; e.n_cards = 1; e.cards[0] = c7s; e.target = CARD_NONE;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && cb_view.num_battles == 2 && card_eq(cb_view.battles[1].attack, c7s)
+          && cb_view.my_hand_count == 2 && card_eq(cb_view.my_hand[0], cKs), "a kept attack stands on the table and not in the hand");
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && cb_view.num_battles == 2, "a card the table holds is not laid twice");
+    e.cards[0] = cover9h; e.target = attack7h;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && card_eq(cb_view.battles[0].defense, cover9h) && cb_view.my_hand_count == 1,
+          "a kept cover covers its target");
+    e.cards[0] = cKs;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && card_eq(cb_view.battles[0].defense, cover9h) && cb_view.num_battles == 2
+          && cb_view.my_hand_count == 0, "a covered target keeps its cover, and the card still leaves the hand");
+    cvr_board(&cb_view, -1);
+    e.cards[0] = c7s; e.target = CARD_NONE;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && cb_view.num_battles == 1 && cb_view.my_hand_count == 0,
+          "a spectator makes no move, so nothing of its is kept on a board");
+
+    // TURN, TABLE, LIFT, RETURN.
+    cvr_board(&cb_view, 1);
+    memset(&e, 0, sizeof(e));
+    e.op = CLIENT_EDIT_TURN; e.first_attacker = 2; e.defender = 0;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && cb_view.first_attacker == 2 && cb_view.defender == 0, "a turn sets lead and shield");
+    memset(&e, 0, sizeof(e));
+    e.op = CLIENT_EDIT_TABLE; e.n_cards = 2; e.cards[0] = c7s; e.cards[1] = c9d;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && cb_view.num_battles == 2 && card_eq(cb_view.battles[1].attack, c9d)
+          && card_is_none(cb_view.battles[0].defense) && card_is_none(cb_view.battles[1].defense), "a table is the cards, uncovered");
+    cvr_board(&cb_view, 1);
+    cb_view.battles[1] = (Battle){ .attack = c7s, .defense = CARD_NONE };
+    cb_view.battles[2] = (Battle){ .attack = c9d, .defense = CARD_NONE };
+    cb_view.num_battles = 3;
+    memset(&e, 0, sizeof(e));
+    e.op = CLIENT_EDIT_LIFT; e.n_cards = 2; e.cards[0] = cover9h; e.cards[1] = c9d;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && cb_view.num_battles == 1 && card_eq(cb_view.battles[0].attack, c7s),
+          "a lift takes off every battle holding one of the cards, by its attack or its cover");
+    cb_view.my_hand_count = 1;
+    cb_view.my_hand[0] = cKs;
+    memset(&e, 0, sizeof(e));
+    e.op = CLIENT_EDIT_RETURN; e.n_cards = 2; e.cards[0] = c9d; e.cards[1] = cKs;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && cb_view.my_hand_count == 2 && card_eq(cb_view.my_hand[1], c9d),
+          "a return adds the cards the hand does not hold, after it");
+    e.op = 42;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_E_FORMAT, "an edit that is not one is refused");
+
+    // WITHDRAW: a refused move's cards leave the table - an attack with its battle, a
+    // cover from over its attack - and are in my hand once each.
+    cvr_board(&cb_view, 1);
+    cb_view.battles[1] = (Battle){ .attack = c7s, .defense = CARD_NONE };
+    cb_view.num_battles = 2;
+    cb_view.my_hand_count = 1;
+    cb_view.my_hand[0] = cKs;
+    memset(&e, 0, sizeof(e));
+    e.op = CLIENT_EDIT_WITHDRAW; e.n_cards = 3; e.cards[0] = cover9h; e.cards[1] = c7s; e.cards[2] = cKs;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && cb_view.num_battles == 1 && card_eq(cb_view.battles[0].attack, attack7h)
+          && card_is_none(cb_view.battles[0].defense) && cb_view.my_hand_count == 3 && card_eq(cb_view.my_hand[0], cKs)
+          && card_eq(cb_view.my_hand[1], cover9h) && card_eq(cb_view.my_hand[2], c7s),
+          "a withdrawn cover uncovers its attack, a withdrawn attack takes its battle, and each is in my hand once");
+    cvr_board(&cb_view, -1);
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK && cb_view.num_battles == 1 && card_eq(cb_view.battles[0].defense, cover9h),
+          "a spectator withdraws nothing");
+
+    // LOBBY: the board the server's reset (table_continue) gives, before it arrives.
+    tb_fixture(3, 1u << 2, 151);
+    table_init(&tb, &tb_game, &tb_snaps);
+    CHECK(table_load(&tb, tb_state, tb_state_len, tb_roster, ROSTER_BYTES) == TABLE_OK, "the table loads");
+    for (int guard = 0; guard < 3000 && tb_game.status == GAME_STATUS_PLAYING; guard++) if (!cb_step(&tb_game)) break;
+    cb_finalize(&tb_game, 1u << 2);
+    CHECK(tb_game.status == GAME_STATUS_GAME_OVER, "a game played to its end");
+    client_init(&ct, &ct_slot);
+    CHECK(client_adopt_board(&ct, &tb_game, 0) == CLIENT_OK, "its board, as seat 0 sees it");
+    cb_view = ct.view;
+    for (int s = 0; s < 3; s++) cb_view.seats[s].is_ai = s == 2;
+    memset(&e, 0, sizeof(e));
+    e.op = CLIENT_EDIT_LOBBY;
+    CHECK(client_board_edit(&ct, &cb_view, &e) == CLIENT_OK, "the lobby is made");
+    game_reset_to_lobby(&tb_game, 1u << 2);
+    CHECK(client_adopt_board(&ct, &tb_game, 0) == CLIENT_OK, "the server's reset board");
+    cb_view2 = ct.view;
+    for (int s = 0; s < 3; s++) cb_view2.seats[s].is_ai = s == 2;
+    CHECK(ct_same_view(&cb_view, &cb_view2) && cb_view.fool == -1 && cb_view.status == GAME_STATUS_WAITING
+          && cb_view.seats[2].status == PLAYER_STATUS_READY && cb_view.seats[0].status == PLAYER_STATUS_IDLE,
+          "the rematch's lobby is the server's reset, bots ready and humans not");
+}
+
+static void test_client_rearrange_hand(void) {
+    cvr_board(&cb_view, 0);
+    cb_view.my_hand_count = 3;
+    for (int i = 0; i < 3; i++) cb_view.my_hand[i] = (Card){ .suit = SUIT_SPADES, .value = (int8_t)(5 + i) };
+    cb_view.seats[0].hand_count = 3;
+    cb_view2 = cb_view;
+    CHECK(client_rearrange_hand(&ct, &cb_view, (const uint8_t[]){ 2, 0, 1 }, 3) == CLIENT_OK
+          && card_eq(cb_view.my_hand[0], cb_view2.my_hand[2]) && card_eq(cb_view.my_hand[1], cb_view2.my_hand[0])
+          && card_eq(cb_view.my_hand[2], cb_view2.my_hand[1]), "the hand takes the order the indices give");
+    cb_view = cb_view2;
+    CHECK(client_rearrange_hand(&ct, &cb_view, (const uint8_t[]){ 0, 0, 1 }, 3) == CLIENT_E_MOVE
+          && memcmp(&cb_view, &cb_view2, sizeof(TableView)) == 0, "a repeated index is not an order, and nothing moves");
+    CHECK(client_rearrange_hand(&ct, &cb_view, (const uint8_t[]){ 0, 1 }, 2) == CLIENT_E_MOVE, "nor is an order of another length");
+    CHECK(client_rearrange_hand(&ct, &cb_view, (const uint8_t[]){ 0, 1, 3 }, 3) == CLIENT_E_MOVE, "nor one past the hand");
+    cb_view.my_hand_count = 0;
+    CHECK(client_rearrange_hand(&ct, &cb_view, 0, 0) == CLIENT_E_MISMATCH, "an empty hand has no order to take");
+    cvr_board(&cb_view, -1);
+    CHECK(client_rearrange_hand(&ct, &cb_view, 0, 0) == CLIENT_E_MISMATCH, "nor has a spectator");
+}
+
+static int cb_verdicts(TableView *open, TableView *final) {
+    const int n = client_conflict_verdicts(open, final, &cb_q, &cb_out);
+    return n;
+}
+
+static void test_client_conflict_verdicts(void) {
+    anim_set_transport(ANIM_TRANSPORT_SERVER);
+    const Card c7s = { .suit = SUIT_SPADES, .value = 6 }, c9d = { .suit = SUIT_DIAMONDS, .value = 8 };
+    const Card back = { .suit = -1, .value = -1 };
+
+    // The push's last board shows 7h/9h; its final board has the defender, seat 1, at 5 cards.
+    cvr_board(&cb_view, 0);
+    cb_view2 = cb_view;
+    memset(&cb_q, 0, sizeof(cb_q));
+    cb_q.defender_seat = 1;
+    cb_q.pending_attacks = -1;
+    cb_q.n_motions = 2;
+    cb_q.motions[0] = (ConflictMotion){ .card = cvr_attack(), .dest = ANIM_DEST_TABLE };
+    cb_q.motions[1] = (ConflictMotion){ .card = c7s, .dest = ANIM_DEST_TABLE };
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_KEEP && cb_out.verdicts[1] == ANIM_CONFLICT_KEEP,
+          "a card standing on the table is kept, and so is an attack the defender can still take");
+    cb_view2.seats[1].hand_count = 1;
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_KEEP && cb_out.verdicts[1] == ANIM_CONFLICT_REVERT,
+          "two pending attacks do not fit the final board's defender's hand of one");
+    cb_view2.seats[1].hand_count = 2;
+    cb_q.motions[0] = (ConflictMotion){ .card = c9d, .dest = ANIM_DEST_TABLE };
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_KEEP && cb_out.verdicts[1] == ANIM_CONFLICT_KEEP,
+          "two fit a hand of two");
+    cb_q.defender_seat = -1;
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_REVERT && cb_out.verdicts[1] == ANIM_CONFLICT_REVERT,
+          "no defender seat is a hand of none");
+    cb_q.defender_seat = 7;
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_REVERT, "and so is a seat the board does not have");
+
+    // The sweep: a pickup the push carries clears what it names, and a back names nothing.
+    cb_q.defender_seat = 1;
+    cb_q.n_events = 1;
+    cb_q.events[0].type = ANIM_EVT_PICKUP;
+    cb_q.events[0].n_cards = 2;
+    cb_q.events[0].cards[0] = c7s;
+    cb_q.events[0].cards[1] = back;
+    cb_view.num_battles = 0;
+    cb_q.motions[0] = (ConflictMotion){ .card = c7s, .dest = ANIM_DEST_TABLE };
+    cb_q.motions[1] = (ConflictMotion){ .card = c9d, .dest = ANIM_DEST_TABLE };
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_CLEAR && cb_out.verdicts[1] == ANIM_CONFLICT_REVERT,
+          "a card the push's pickup carries is cleared, and one the swept table never held reverts");
+
+    // A card I took into my hand stands there, on the push's last board.
+    cb_q.motions[1] = (ConflictMotion){ .card = c9d, .dest = ANIM_DEST_MY_HAND };
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[1] == ANIM_CONFLICT_REVERT, "a picked-up card the hand does not hold reverts");
+    cb_view.my_hand_count = 1;
+    cb_view.my_hand[0] = c9d;
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[1] == ANIM_CONFLICT_KEEP, "one it holds is kept");
+
+    // Uncovered attacks: the open board's, or the final board's when asked.
+    cvr_board(&cb_view, 0);
+    cb_view.battles[0].defense = CARD_NONE;
+    cb_view2 = cb_view;
+    cb_view2.battles[0].defense = (Card){ .suit = SUIT_HEARTS, .value = 8 };
+    cb_view2.seats[1].hand_count = 2;
+    memset(&cb_q, 0, sizeof(cb_q));
+    cb_q.defender_seat = 1;
+    cb_q.pending_attacks = -1;
+    cb_q.n_motions = 2;
+    cb_q.motions[0] = (ConflictMotion){ .card = c7s, .dest = ANIM_DEST_TABLE };
+    cb_q.motions[1] = (ConflictMotion){ .card = c9d, .dest = ANIM_DEST_TABLE };
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_REVERT,
+          "the open board's uncovered attack and two pending ones overfill a hand of two");
+    cb_q.uncovered_on_final = true;
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_KEEP, "the final board's covered table leaves room");
+    cb_q.uncovered_on_final = false;
+    cb_q.motions[1].is_cover = true;
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_KEEP, "a cover is not a pending attack");
+    cb_q.pending_attacks = 2;
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == 2 && cb_out.verdicts[0] == ANIM_CONFLICT_REVERT, "unless the count is said outright");
+
+    cb_q.n_motions = CLIENT_CONFLICT_MAX_MOTIONS + 1;
+    CHECK(cb_verdicts(&cb_view, &cb_view2) == CLIENT_E_FORMAT, "more motions than the question holds is refused");
+    anim_set_transport(ANIM_TRANSPORT_CHAIN);
+}
+
 int main(void) {
+    test_state_import_rejects_invalid_values();
+    test_state_import_refuses_a_lobby_with_cards();
     test_reset_to_lobby();
     test_replay_steps_rebuilds_the_played_game();
     test_replay_steps_mid_game_cut_conserves_the_deck();
     test_replay_v6_carries_a_pending_good();
     test_replay_frames_are_the_replay_events();
     test_replay_step_index_says_what_each_step_is();
+    test_replay_summary_is_the_decode();
+    test_replay_decoded_log_reads_the_stream();
     test_replay_step_index_tells_a_pass_from_an_attack();
     test_replay_step_index_reports_a_pending_good();
     test_replay_steps_replays_a_deal_with_no_trump();
@@ -6600,6 +9718,7 @@ int main(void) {
     test_deal_rng_unbiased();
     test_start_game();
     test_awire_apply_roundtrip();
+    test_awire_refuses_bytes_that_are_not_cards();
     test_awire_apply_settles_game_over();
     test_game_human_mask();
     test_game_seat_and_deal();
@@ -6691,6 +9810,7 @@ int main(void) {
     test_conflict_dest_is_the_flight_builders_own_mapping();
     test_conflict_reversal_flies_back_the_way_it_came();
     test_conflict_reversal_drops_what_the_verdicts_empty();
+    test_reversal_order_is_not_about_the_transport();
     test_conflict_degenerate_inputs();
     test_the_transport_is_the_only_thing_the_two_clients_disagree_about();
     test_board_veil_unions_its_three_sources();
@@ -6722,6 +9842,50 @@ int main(void) {
     test_analyse_verdict_rule();
     test_analyse_belief_holds_on_played_games();
     test_analyse_packed_on_a_generated_game();
+    test_card_parse_valid();
+    test_card_parse_case();
+    test_card_parse_whitespace();
+    test_card_parse_invalid();
+    test_player_carries_no_identity();
+    test_roster_round_trip();
+    test_roster_decode_refuses_each_malformed_field();
+    test_roster_seat_of_is_exact();
+    test_roster_ops();
+    test_roster_name_trim_matches_the_ts_and_swift_rule();
+    test_roster_trailer();
+    test_table_load();
+    test_table_seal();
+    test_table_act_resolves_the_seat_from_the_actor_id();
+    test_table_act_moot_and_stale_round();
+    test_table_commit_products();
+    test_table_plays_a_game_to_its_end();
+    test_table_request_and_response();
+    test_evwire_as3_split();
+    test_elo_deltas();
+    test_table_create_and_join();
+    test_table_leave_and_bots();
+    test_table_ready_deals();
+    test_table_reseat_retitle_continue();
+    test_table_rearrange_and_redact();
+    test_table_redact_default_title();
+    test_table_seat_of();
+    test_table_deal_seed_and_session_log();
+    test_table_bot_drive_cycle();
+    test_table_drive_prefs();
+    test_table_bot_drive_ignores_instance_history();
+    test_table_bot_drive_progress_seeds_the_decision();
+    test_table_replay_code_and_extras();
+    test_client_adopts_envelopes();
+    test_client_reads_every_push_of_a_game();
+    test_client_push_steps_and_refusals();
+    test_client_view_rules();
+    test_client_validate_is_the_engine();
+    test_client_optimistic_apply();
+    test_client_optimistic_pickup_rotation_is_the_servers();
+    test_client_board_edits();
+    test_client_board_edit_undeal();
+    test_client_rearrange_hand();
+    test_client_conflict_verdicts();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;

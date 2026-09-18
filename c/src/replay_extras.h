@@ -28,6 +28,11 @@
 #ifndef CNITRO_REPLAY_EXTRAS_H
 #define CNITRO_REPLAY_EXTRAS_H
 
+#include <stdint.h>
+
+#include "game.h"     // MAX_PLAYERS
+#include "roster.h"   // ROSTER_NAME_MAX
+
 #define REPLAY_EXTRAS_VERSION     2
 #define REPLAY_EXTRAS_FLAG_NAMES  1
 #define REPLAY_EXTRAS_FLAG_TIMES  2
@@ -66,6 +71,48 @@
 // NUL-terminated list safe for arbitrary Unicode at all). On the way OUT they
 // are what the blob holds.
 
+// ---------- the same thing as a STRUCT --------------------------------------
+//
+// The packed blob above is a C format: the codec's own argument shape, and what
+// the C tests and the iOS smoke drive it with. It is not a good thing to hand
+// ACROSS a language boundary, because a host then has to write and read those
+// bytes itself - which is what the TS bridge used to do, offset by offset. So
+// the bridge crosses with this struct instead, read and written through the
+// readers and writers tools/structgen generates from this declaration.
+//
+// A name's slot is ROSTER_NAME_MAX wide, the widest name anything in the product
+// can hold; the 48-byte budget above is the FORMAT's, and the encoder still
+// applies it (a struct carries the name raw, as the packed blob did).
+// A game cannot have more information-bearing moves than log records, so this is
+// the GAME's bound and not a new one: it scales with the build's MAX_LOGS.
+#ifndef REPLAY_EXTRAS_MAX_GAPS
+#define REPLAY_EXTRAS_MAX_GAPS MAX_LOGS
+#endif
+#define REPLAY_EXTRAS_NAME_SLOT ROSTER_NAME_MAX
+
+typedef struct {
+    uint16_t len;                              // UTF-8 bytes, 0 for an unnamed seat
+    char     text[REPLAY_EXTRAS_NAME_SLOT];    // not NUL-terminated
+} ReplayExtrasName;
+
+typedef struct {
+    uint8_t  flags;      // REPLAY_EXTRAS_FLAG_*: which sections are present
+    int32_t  n_names;    // seats, dense and seat-ordered; 0 = no names section
+    ReplayExtrasName names[MAX_PLAYERS];
+    double   start_time; // unix seconds of the first move
+    int32_t  n_gaps;     // seconds-since-the-previous-move entries
+    double   gaps[REPLAY_EXTRAS_MAX_GAPS];
+} ReplayExtras;
+
+// The struct <-> the packed blob, beside the format they describe so the two
+// cannot drift. `pack` writes the blob `replay_extras_encode` takes; `unpack`
+// reads the blob `replay_extras_decode` writes. The two differ in ONE byte: the
+// answer always carries the name count, the argument only under its flag.
+// Both return 0, or -REPLAY_EXTRAS_E*: ECAP for a blob that does not fit, EINPUT
+// for one that is malformed or wider than the struct holds.
+int replay_extras_pack(const ReplayExtras *x, unsigned char *out, int cap);
+int replay_extras_unpack(const unsigned char *in, int in_len, ReplayExtras *out);
+
 // Roster + timing -> the extras blob. Returns bytes written, or -REPLAY_EXTRAS_E*.
 int replay_extras_encode(const unsigned char *in, int in_len,
                          unsigned char *out, int cap);
@@ -76,6 +123,16 @@ int replay_extras_encode(const unsigned char *in, int in_len,
 int replay_extras_decode(const unsigned char *blob, int blob_len,
                          int player_count, int move_count,
                          unsigned char *out, int cap);
+
+// The same encoder with its inputs as parts rather than a blob, for a C producer
+// that reads them from somewhere else (table.h table_replay_extras reads the
+// times straight out of a session log). `names` are `n_names` UTF-8 spans; with
+// `has_times`, `gap(ctx, i)` is the seconds of gap i, asked for in order
+// 0..n_gaps-1, twice. Returns bytes written, or -REPLAY_EXTRAS_ECAP.
+typedef double (*ReplayExtrasGap)(void *ctx, int i);
+int replay_extras_encode_parts(const unsigned char *const *names, const int *name_lens, int n_names,
+                               int has_times, double start_time, int n_gaps,
+                               ReplayExtrasGap gap, void *ctx, unsigned char *out, int cap);
 
 // Does this roster say anything worth a segment? An all-empty roster decodes to
 // the same "P1"/"P2" a reader already shows, so the bytes would buy nothing and

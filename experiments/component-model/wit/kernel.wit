@@ -1,0 +1,40 @@
+package foolish:kernel@0.1.0;
+
+interface state {
+  enum game-status { waiting, playing, finished }
+  enum player-status { idle, ready, playing, out }
+
+  record battle {
+    attack: u8,
+    defense: option<u8>,
+  }
+
+  record player {
+    status: player-status,
+    awaiting: bool,
+    hand: list<u8>,
+  }
+
+  record game {
+    status: game-status,
+    num-players: u8,
+    trump-suit: u8,
+    first-attacker: s8,
+    defender: s8,
+    discard: u16,
+    flipped: option<u8>,
+    good-mask: u32,
+    has-good-ts: bool,
+    deck: list<u8>,
+    battles: list<battle>,
+    players: list<player>,
+    elimination: list<u8>,
+  }
+
+  import-state: func(g: game);
+  export-state: func() -> game;
+}
+
+world kernel {
+  export state;
+}

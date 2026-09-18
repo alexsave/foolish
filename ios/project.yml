@@ -313,7 +313,7 @@ targets:
       # real module split, not a source location change, and the reason is what
       # ships: this framework is DYNAMIC, so its public API is exported and
       # therefore a dead-strip root. While EngineC.botDrive was public HERE, that
-      # export linked fio_bot_drive_packed -> bot_drive -> bot_roster -> all 21
+      # export linked fio_bot_drive -> bot_drive -> bot_roster -> all 21
       # strategies including octogen, and this framework ships inside
       # FoolishMessagesApp. A game that plays people and never drives a seat was
       # carrying the strongest brain in the roster.

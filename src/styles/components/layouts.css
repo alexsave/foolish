@@ -48,6 +48,20 @@
   transition: all 0.2s ease;
   position: relative;
   z-index: 10;
+  /* The title sits between the back button (top left) and its mirror image, so
+     it is centred and never runs under the button: a long title ends in an
+     ellipsis instead. */
+  max-width: calc(100% - 2 * (var(--btn-icon-size) + 18px));
+  text-overflow: ellipsis;
+}
+
+/* A phone: the title steps down in size before it has to cut a name short. */
+@media (max-width: 480px) {
+  .lobby__name-input {
+    font-size: clamp(1.25rem, 6.4vw, 2rem);
+    padding-left: 0.25rem;
+    padding-right: 0.25rem;
+  }
 }
 
 .lobby__name-input--editing {
@@ -750,12 +764,15 @@
 
 .result-card__name--current {
   color: var(--color-success);
+  /* my row's green reads on the wood only with the label shadow under it */
+  text-shadow: var(--text-shadow-label);
 }
 
 .result-card__you {
   color: var(--color-success);
   font-size: 0.75rem;
-  font-weight: normal;
+  font-weight: 600;
+  text-shadow: var(--text-shadow-label);
 }
 
 .result-card__elo {
@@ -932,8 +949,10 @@
   background-color: #F5E6C8;
   color: #B32929;
   width: 100vw;
+  max-width: none;
   margin-left: calc(-50vw + 50%);
-  padding: 12px 0;
+  /* The band runs edge to edge; its text keeps clear of the back button. */
+  padding: 12px calc(var(--btn-icon-size) + 18px);
 }
 
 [data-theme="soviet"] .lobby__name-input--editing {

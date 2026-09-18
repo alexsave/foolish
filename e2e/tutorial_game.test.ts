@@ -21,15 +21,27 @@
 
 import { test } from 'node:test';
 import { bytesToBigint } from '../server/api/common/replay/codec.ts';
-import { kernelB32Decode } from '../sdk/ts/wasm/bots.ts';
+import { kernelB32Decode, replaySummary } from '../sdk/ts/wasm/bots.ts';
 import assert from 'node:assert/strict';
 
-import { codeToGame, bigintToBytes } from '../server/api/common/replay/codec.ts';
-import { decodeReplay } from '../server/api/common/replay/decode.ts';
+import { bigintToBytes } from '../server/api/common/replay/codec.ts';
 import { buildReplayFrames, REPLAY_STEP, ReplayFrame } from '../src/replay/frames.ts';
 import { TUTORIAL_MOVES_CODE, TUTORIAL_NAMES } from '../src/components/tutorialGame.ts';
-import { PLAYER_STATUS } from '../server/api/core/types.ts';
-import { FORMAT_VERSION_V6 } from '../server/api/common/replay/core.ts';
+import { PLAYER_STATUS } from '../src/state/view.ts';
+
+// The ONE replay format: inline reveals, hidden-state-lossless, partial-game
+// (c/src/replay.h REPLAY_FORMAT_VERSION_V10,
+// docs/REPLAY_FORMAT6_HIDDEN_STATE.md). Was 6, then 7 (pass-mode bit), then 8
+// (forced-opening bit), and is now 10 for a reason that is not a wire change at
+// all: the bytes did not move, the deal order under them did. A code carrying
+// any other version is refused, never re-read.
+//
+// A hand-written number on purpose: this is the pin. The codec itself is the C
+// kernel's (c/src/replay.c, replay_steps.c) and hosts read a code through
+// bots.wasm, so reading the version from the kernel here would assert the
+// kernel against itself. Never change the wire format in one place: bump the
+// version in replay.h AND decide what happens to every code already cut.
+const FORMAT_VERSION_V6 = 10;
 
 if (!process.env.E2E_VERBOSE) {
     console.log = () => {};
@@ -38,48 +50,53 @@ if (!process.env.E2E_VERBOSE) {
 }
 
 const LEARNER = 0;
-const SELF_ID = 'seat-0';
 
 // Mirrors Tutorial.tsx's learnerOwesGood — a good that CLOSES a bout is not
 // attributed to anyone (v6 records the round ending, not who ended it), so the
 // learner's own closing good arrives as a seat-less ROUND_END.
 const learnerOwesGood = (prev: ReplayFrame | undefined): boolean => {
     if (!prev) return false;
-    const me = prev.game.players[LEARNER];
+    const me = prev.game.seats[LEARNER];
     return !!me && me.status !== PLAYER_STATUS.OUT
         && prev.game.defender !== LEARNER
-        && !prev.game.good_players.includes(SELF_ID);
+        && ((prev.game.goodMask >>> LEARNER) & 1) === 0;
 };
 
 const isLearnerStep = (frames: ReplayFrame[], i: number): boolean => {
     if (i < 0 || i >= frames.length) return false;
     const f = frames[i];
     if (f.kind === REPLAY_STEP.ROUND_END) return learnerOwesGood(frames[i - 1]);
-    return f.seat === LEARNER && [
+    const moves: readonly number[] = [
         REPLAY_STEP.ATTACK, REPLAY_STEP.COVER, REPLAY_STEP.PASS,
         REPLAY_STEP.PICKUP, REPLAY_STEP.GOOD,
-    ].includes(f.kind);
+    ];
+    return f.seat === LEARNER && moves.includes(f.kind);
 };
 
+// Read the way Tutorial.tsx reads it: the kernel's summary of the code, and the
+// frames from the learner's seat.
 const load = async () => {
     const x = bytesToBigint(kernelB32Decode(TUTORIAL_MOVES_CODE));
-    const decoded = await decodeReplay(x);
+    const summary = replaySummary(bigintToBytes(x));
+    assert.ok(summary, 'the tutorial code has a summary');
     const frames = buildReplayFrames(bigintToBytes(x), 'tutorial', TUTORIAL_NAMES, {
-        viewer: LEARNER, fool: decoded.fool,
+        viewer: LEARNER, fool: summary!.fool,
     });
-    return { decoded, frames };
+    return { summary: summary!, frames };
 };
 
 export function registerTutorialValidation(): void {
 test('the tutorial code still replays on the kernel that ships', async () => {
-    const { decoded, frames } = await load();
-    assert.equal(decoded.formatVersion, FORMAT_VERSION_V6,
+    const { summary, frames } = await load();
+    assert.equal(summary.version, FORMAT_VERSION_V6,
         'the tutorial is an inline-reveal code (the retrodiction line cannot replay)');
-    assert.equal(decoded.playerCount, 3, '3-player game');
+    assert.equal(summary.numPlayers, 3, '3-player game');
     assert.ok(frames.length > 10, `replays to ${frames.length} steps`);
     assert.equal(frames[0].kind, REPLAY_STEP.DEAL, 'it opens with the deal');
-    assert.notEqual(decoded.fool, LEARNER, 'the learner is not left the fool');
-    assert.equal(decoded.firstAttacker, LEARNER, 'the learner holds the lowest trump and leads');
+    assert.notEqual(summary.fool, LEARNER, 'the learner is not left the fool');
+    assert.equal(summary.firstAttacker, LEARNER, 'the learner holds the lowest trump and leads');
+    assert.equal(summary.trump.suit, summary.powerSuit, 'the flipped trump names the trump suit');
+    assert.equal(summary.elimination.length, 2, 'the two others go out before the fool is left');
 });
 
 test('the learner sees their own hand and nobody else\'s', async () => {
@@ -88,20 +105,21 @@ test('the learner sees their own hand and nobody else\'s', async () => {
     // would for a real player there. If this ever showed the whole table the
     // tutorial would be teaching from a cheat.
     for (const f of frames) {
-        assert.ok(f.game.self, 'the learner has a self');
-        assert.equal(f.game.self.hand.length, f.game.players[LEARNER].hand_length,
+        assert.equal(f.game.mySeat, LEARNER, 'the learner has a seat');
+        assert.equal(f.game.seats[LEARNER].id, '', 'the learner\'s seat is nobody\'s account: the board says whose hand it is');
+        assert.equal(f.game.myHand.length, f.game.seats[LEARNER].handCount,
             'the learner holds their real hand');
-        for (const c of f.game.self.hand) {
+        for (const c of f.game.myHand) {
             assert.ok(c.suit >= 0 && c.value >= 0, 'the learner\'s own cards are face-up');
         }
     }
 });
 
 test('the tutorial teaches every element it narrates', async () => {
-    const { decoded, frames } = await load();
+    const { summary, frames } = await load();
     const kinds = (k: number) => frames.filter((f) => f.kind === k);
     const learner = (k: number) => frames.filter((f) => f.kind === k && f.seat === LEARNER);
-    const ps = decoded.powerSuit;
+    const ps = summary.powerSuit;
 
     // The learner performs each move the tutorial prompts for...
     assert.ok(learner(REPLAY_STEP.ATTACK).length > 0, 'the learner attacks');
@@ -112,7 +130,7 @@ test('the tutorial teaches every element it narrates', async () => {
     // ...including a throw-in (an attack onto a table that is not empty)...
     const threwIn = frames.some((f, i) =>
         f.kind === REPLAY_STEP.ATTACK && f.seat === LEARNER
-        && i > 0 && frames[i - 1].game.table_battles.length > 0);
+        && i > 0 && frames[i - 1].game.battles.length > 0);
     assert.ok(threwIn, 'the learner throws in');
 
     // ...and a trump cover, the one the beat calls out by name.
@@ -134,7 +152,7 @@ test('the tutorial teaches every element it narrates', async () => {
     assert.ok(kinds(REPLAY_STEP.ROUND_END).length > 0, 'a bout closes and the table is binned');
     assert.ok(frames.some((f) => f.seq.events.some((e) => e.type === 'refill')), 'players draw');
     assert.ok(frames.some((f) => f.seq.events.some((e) => e.type === 'out')), 'a player goes out');
-    assert.ok(frames.some((f) => f.game.deck_length === 0 && f.game.flipped === null),
+    assert.ok(frames.some((f) => f.game.deckCount === 0 && !f.game.hasFlipped),
         'the stock runs out');
 });
 
@@ -152,8 +170,9 @@ test('walking the tutorial the way a learner does reaches the end', async () => 
             const f = frames[next];
             const kind = f.kind === REPLAY_STEP.ROUND_END ? REPLAY_STEP.GOOD : f.kind;
             // Every learner step maps to a button the tutorial can highlight.
-            assert.ok([REPLAY_STEP.ATTACK, REPLAY_STEP.PASS, REPLAY_STEP.PICKUP,
-                       REPLAY_STEP.GOOD, REPLAY_STEP.COVER].includes(kind),
+            const askable: readonly number[] = [REPLAY_STEP.ATTACK, REPLAY_STEP.PASS, REPLAY_STEP.PICKUP,
+                       REPLAY_STEP.GOOD, REPLAY_STEP.COVER];
+            assert.ok(askable.includes(kind),
                 `step ${next} (kind ${f.kind}) is a move the learner can be asked for`);
             if (kind === REPLAY_STEP.ATTACK || kind === REPLAY_STEP.PASS || kind === REPLAY_STEP.COVER) {
                 assert.ok(f.cards.length > 0, `step ${next} highlights the cards to play`);

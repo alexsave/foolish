@@ -50,14 +50,14 @@ const en: Dict = {
   replay: 'Play the tutorial again',
   exit: 'Go to a real game',
   your_move: 'Your move',
-  press_or_drag: 'Press the highlighted button below — or drag the green card onto the table.',
+  press_or_drag: 'Press the highlighted button below - or drag the green card onto the table.',
   press_button: 'Press the highlighted button below.',
   drag_tip: 'You play by tapping a card and pressing a button. You can also drag a card onto the table.',
 
   intro:
     'You attack and defend with cards. First to empty their hand is safe; the last one still holding cards is the fool (дурак).',
   goal:
-    'With four players or fewer the 2s–5s are removed — only 6 and up are used. Everyone is dealt 6 cards.',
+    'With four players or fewer the 2s–5s are removed - only 6 and up are used. Everyone is dealt 6 cards.',
   deck_low:
     'One more card is flipped under the deck. This is the draw pile, and its suit is the trump (power) suit.',
   trump:
@@ -67,21 +67,21 @@ const en: Dict = {
   first_attacker_you:
     'You hold the lowest trump, so you lead the first attack.',
   attack:
-    'An attack is a card placed toward the player clockwise — the defender ({name}). They must answer it.',
+    'An attack is a card placed toward the player clockwise - the defender ({name}). They must answer it.',
   cover:
     'To cover, the defender beats a card with a higher card of the same suit.',
   trump_cover:
-    'A trump covers any non-trump card — even a low trump beats a high card of another suit.',
+    'A trump covers any non-trump card - even a low trump beats a high card of another suit.',
   stack_rule:
     'Each stack stays at two cards: an attack on the bottom, its cover on top. A covered pair is done.',
   throw_in:
-    'Any attacker may throw in another card whose value already sits on the table. Things can blow up fast — that’s the fun.',
+    'Any attacker may throw in another card whose value already sits on the table. Things can blow up fast - that’s the fun.',
   capacity:
     'But the uncovered cards can never outnumber the cards left in the defender’s hand.',
   pass:
     'Instead of covering, the defender can add a card of the same value and pass the whole attack to the next player.',
   pickup:
-    'If the defender can’t — or won’t — answer, they pick up every card on the table.',
+    'If the defender can’t - or won’t - answer, they pick up every card on the table.',
   pickup_skip:
     '{name} picked up, so their turn is skipped and the next player leads.',
   good:
@@ -89,12 +89,12 @@ const en: Dict = {
   discard:
     'The covered cards go to the discard pile face down. The defender held and now leads the next round.',
   draw:
-    'Between rounds everyone refills back to six from the draw pile — attackers first, the defender last.',
+    'Between rounds everyone refills back to six from the draw pile - attackers first, the defender last.',
   deck_empty:
     'The draw pile is empty. From here, whoever plays their last card is safe and out of the game.',
-  out: '{name} played their final card — safe, and out of the game!',
+  out: '{name} played their final card - safe, and out of the game!',
   fool:
-    '{name} is left holding cards — the fool! That’s the whole game. Ready to play for real?',
+    '{name} is left holding cards - the fool! That’s the whole game. Ready to play for real?',
   done: 'You’ve learned every move. Nice work!',
 };
 
@@ -107,16 +107,16 @@ const ru: Dict = {
   replay: 'Пройти обучение снова',
   exit: 'К настоящей игре',
   your_move: 'Ваш ход',
-  press_or_drag: 'Нажмите выделенную кнопку ниже — или перетащите зелёную карту на стол.',
+  press_or_drag: 'Нажмите выделенную кнопку ниже - или перетащите зелёную карту на стол.',
   press_button: 'Нажмите выделенную кнопку ниже.',
   drag_tip: 'Вы играете, выбирая карту и нажимая кнопку. Также можно перетащить карту на стол.',
 
   intro:
-    'Вы атакуете и отбиваетесь картами. Кто первым избавился от карт — в безопасности; последний с картами — дурак.',
+    'Вы атакуете и отбиваетесь картами. Кто первым избавился от карт - в безопасности; последний с картами - дурак.',
   goal:
-    'При четырёх игроках и меньше двойки–пятёрки убираются — играют только с шестёрок. Каждому раздают по 6 карт.',
+    'При четырёх игроках и меньше двойки–пятёрки убираются - играют только с шестёрок. Каждому раздают по 6 карт.',
   deck_low:
-    'Ещё одну карту кладут под колоду. Это колода добора, и её масть — козырная.',
+    'Ещё одну карту кладут под колоду. Это колода добора, и её масть - козырная.',
   trump:
     'Открытая карта задаёт козырную масть. Козырь бьёт любую карту другой масти, каким бы ни был номинал.',
   first_attacker:
@@ -124,15 +124,15 @@ const ru: Dict = {
   first_attacker_you:
     'У вас младший козырь, поэтому вы заходите первым.',
   attack:
-    'Атака — карта, положенная игроку по часовой стрелке: отбивающемуся ({name}). Он должен ответить.',
+    'Атака - карта, положенная игроку по часовой стрелке: отбивающемуся ({name}). Он должен ответить.',
   cover:
     'Чтобы отбиться, защищающийся бьёт карту старшей картой той же масти.',
   trump_cover:
-    'Козырь кроет любую некозырную карту — даже младший козырь бьёт старшую карту другой масти.',
+    'Козырь кроет любую некозырную карту - даже младший козырь бьёт старшую карту другой масти.',
   stack_rule:
     'В каждой стопке только две карты: атака снизу, защита сверху. Покрытая пара завершена.',
   throw_in:
-    'Любой атакующий может подкинуть карту того же номинала, что уже на столе. Карт может стать очень много — в этом и веселье.',
+    'Любой атакующий может подкинуть карту того же номинала, что уже на столе. Карт может стать очень много - в этом и веселье.',
   capacity:
     'Но непокрытых карт не может быть больше, чем карт в руке у отбивающегося.',
   pass:
@@ -146,12 +146,12 @@ const ru: Dict = {
   discard:
     'Покрытые карты уходят в отбой рубашкой вверх. Защитник отбился и теперь заходит первым.',
   draw:
-    'Между конами все добирают до шести из колоды — сначала атакующие, отбивающийся последним.',
+    'Между конами все добирают до шести из колоды - сначала атакующие, отбивающийся последним.',
   deck_empty:
     'Колода добора пуста. Теперь тот, кто сыграл последнюю карту, в безопасности и выходит из игры.',
-  out: '{name} сыграл последнюю карту — в безопасности и вышел из игры!',
+  out: '{name} сыграл последнюю карту - в безопасности и вышел из игры!',
   fool:
-    '{name} остался с картами — дурак! Вот и вся игра. Готовы сыграть по-настоящему?',
+    '{name} остался с картами - дурак! Вот и вся игра. Готовы сыграть по-настоящему?',
   done: 'Вы освоили все ходы. Отлично!',
 };
 
@@ -164,7 +164,7 @@ const ko: Dict = {
   replay: '튜토리얼 다시 하기',
   exit: '실제 게임으로',
   your_move: '당신의 차례',
-  press_or_drag: '아래의 강조된 버튼을 누르세요 — 또는 초록색 카드를 테이블로 끌어다 놓으세요.',
+  press_or_drag: '아래의 강조된 버튼을 누르세요 - 또는 초록색 카드를 테이블로 끌어다 놓으세요.',
   press_button: '아래의 강조된 버튼을 누르세요.',
   drag_tip: '카드를 탭하고 버튼을 눌러 플레이합니다. 카드를 테이블로 드래그할 수도 있습니다.',
 
@@ -185,11 +185,11 @@ const ko: Dict = {
   cover:
     '방어하려면 같은 무늬의 더 높은 카드로 공격 카드를 이깁니다.',
   trump_cover:
-    '으뜸패는 다른 무늬의 어떤 카드든 방어합니다 — 낮은 으뜸패라도 다른 무늬의 높은 카드를 이깁니다.',
+    '으뜸패는 다른 무늬의 어떤 카드든 방어합니다 - 낮은 으뜸패라도 다른 무늬의 높은 카드를 이깁니다.',
   stack_rule:
     '각 더미는 두 장으로 유지합니다: 아래에 공격, 위에 방어. 방어된 짝은 끝난 것입니다.',
   throw_in:
-    '공격자는 누구나 이미 테이블에 있는 숫자의 카드를 추가로 던질 수 있습니다. 카드가 순식간에 불어나죠 — 그게 재미입니다.',
+    '공격자는 누구나 이미 테이블에 있는 숫자의 카드를 추가로 던질 수 있습니다. 카드가 순식간에 불어나죠 - 그게 재미입니다.',
   capacity:
     '하지만 방어되지 않은 카드 수가 수비자의 남은 손 카드 수를 넘을 수는 없습니다.',
   pass:
@@ -203,12 +203,12 @@ const ko: Dict = {
   discard:
     '방어된 카드는 뒷면으로 버림 더미에 갑니다. 수비자는 막아냈고 이제 다음 판을 시작합니다.',
   draw:
-    '판 사이에 모두 덱에서 여섯 장으로 다시 채웁니다 — 공격자가 먼저, 수비자가 마지막입니다.',
+    '판 사이에 모두 덱에서 여섯 장으로 다시 채웁니다 - 공격자가 먼저, 수비자가 마지막입니다.',
   deck_empty:
     '드로우 더미가 비었습니다. 이제 마지막 카드를 낸 사람이 안전하게 게임에서 빠집니다.',
-  out: '{name}이(가) 마지막 카드를 냈습니다 — 안전하게 탈출!',
+  out: '{name}이(가) 마지막 카드를 냈습니다 - 안전하게 탈출!',
   fool:
-    '{name}이(가) 카드를 들고 남았습니다 — 바보! 이게 게임 전부입니다. 실제로 해볼까요?',
+    '{name}이(가) 카드를 들고 남았습니다 - 바보! 이게 게임 전부입니다. 실제로 해볼까요?',
   done: '모든 동작을 익혔습니다. 잘했어요!',
 };
 

@@ -252,6 +252,10 @@ drawer_settled() {
   b=$(grab_y); [ "$a" = "$b" ]
 }
 not_in_thread() { ! in_thread; }
+# THE "+" APP MENU IS UP. "dismiss popup" is iOS 26's dismissal target and is
+# absent on iOS 27, where the open menu reports only its app rows - so the rows
+# are what this asks for, with the old target still tried first.
+menu_up() { ax_first "dismiss popup" "Camera" "Photos" >/dev/null 2>&1; }
 # THE SEND HAS GONE THROUGH. Messages only shows a Send button while the compose
 # field holds something, so its DISAPPEARANCE is the completion signal - which
 # is what the flat 4s after every Send was standing in for, five times a run.
@@ -291,6 +295,24 @@ pull_y() {
 tap_ax() {
   local pt; pt=$(ax "$1") || { echo "no '$1' on screen" >&2; return 1; }
   tap $(echo "$pt" | awk '{print $1, $2}') "${2:-1}"
+}
+
+# THE BACK CHEVRON OUT OF A THREAD, whatever this OS calls it.
+#
+# Messages labelled it "Messages" through iOS 26 and labels it "Back" on iOS 27,
+# and the rig asked for the old name by hand in three places. On iOS 27 every one
+# of them fails - and each is inside a "leave the thread, then probe" loop that
+# breaks out on the failure and carries on regardless, so the NEXT tap lands
+# inside the thread it never left: at the row heights `enter` probes that is the
+# header, which opens Apple's contact card, and every later read is of that sheet.
+# The symptom is "could not open conversation" with a grey contact editor on
+# screen, which names neither the cause nor the thread.
+#
+# Both labels, in one tree, oldest first. This is the only label in the rig with
+# a version split; the rest of Apple's chrome (add, Message, Send) is unchanged.
+tap_back() {
+  local pt; pt=$(ax_first "Messages" "Back") || { echo "no back chevron on screen" >&2; return 1; }
+  tap $(echo "$pt" | awk '{print $1, $2}') "${1:-1}"
 }
 
 group_dir() {
@@ -500,7 +522,7 @@ cmd_enter() {
   # Leave whatever thread we are in, so the row probe has a list to probe.
   local i=0
   while [ $i -lt 3 ] && in_thread; do
-    tap_ax "Messages" 0.3 || break
+    tap_back 0.3 || break
     poll 16 0.15 not_in_thread || true
     i=$((i + 1))
   done
@@ -524,13 +546,39 @@ cmd_enter() {
     # which made `session` (it alternates threads, so it misses constantly)
     # SLOWER than the fixed 2.5s sleep it replaced. `in_thread` is the part
     # that is actually pending; the identity is settled the moment it lands.
+    #
+    # NEVER PROBE A ROW WHILE A THREAD IS STILL OPEN. The candidate heights
+    # overlap the thread's own header, which is a Button that opens Apple's
+    # CONTACT CARD - and that card has no `add`, so `in_thread` reads false
+    # underneath it and every remaining candidate taps into the card instead of
+    # the list. The run then ends "could not open conversation" with a grey
+    # contact editor on screen, which is trap 5's damage reached without anyone
+    # touching the device. The back-out above and at the foot of this loop are
+    # both best-effort (`|| true`, a bounded poll); this is the reading that the
+    # list is really underneath before a blind tap commits to it.
+    if in_thread; then
+      tap_back 0.3 || true
+      poll 16 0.15 not_in_thread || continue
+    fi
     tap $((W / 2)) "$y" 0.3
     poll 12 0.15 in_thread || true
-    if here_is "$want"; then
+    # THE HEADER LANDS AFTER THE COMPOSE BAR DOES, so the identity is NOT
+    # settled the moment `add` appears. On iOS 27 the navigation bar's title
+    # Button - the only element that says WHICH thread this is - can still be
+    # missing from the tree when `add` is already in it, so a single ask reads
+    # "wrong thread" for the right one, backs straight out, and spends every
+    # remaining candidate opening and rejecting threads it already had. Measured
+    # here: a hand-driven tap on the row this loop had just rejected opened the
+    # wanted thread every time.
+    #
+    # Confirm over a SHORT budget instead. On a genuinely wrong thread this
+    # costs 0.9s on top of the poll above, which is why that poll is still on
+    # `in_thread` rather than on this: the expensive case stays bounded.
+    if poll 6 0.15 here_is "$want"; then
       mkdir -p "$(dirname "$ycache")"; printf '%s' "$y" > "$ycache"
       return 0
     fi
-    in_thread && { tap_ax "Messages" 0.3 && poll 16 0.15 not_in_thread || true; }
+    in_thread && { tap_back 0.3 && poll 16 0.15 not_in_thread || true; }
   done
   echo "could not open conversation '${want:-any}'" >&2
   return 1
@@ -627,10 +675,21 @@ cmd_open() {
   # is up when Messages puts its dismissal target on screen - NOT when "Foolish"
   # is visible, which is below the fold on a stock device and only the swipe
   # loop underneath can reach.
+  #
+  # WHAT "the menu came" IS ASKED OF. Through iOS 26 the menu put a "dismiss
+  # popup" element in the tree; iOS 27 does not - the open menu reports the
+  # application and its app rows and nothing else. So that poll could never come
+  # true there: every open burned its full budget three times over (9s), tapped
+  # `add` twice more at a screen where the menu was already covering it, and
+  # printed "no 'add' on screen" for a menu that was up and correct. The menu's
+  # own rows are the honest evidence on both, and Apple's first two are in every
+  # build; `menu_up` asks for the dismissal target first so nothing changes on
+  # an OS that still offers it.
   local m=0
   while [ $m -lt 3 ]; do
+    menu_up && break
     tap_ax "add" 0.3
-    poll 12 0.25 ax "dismiss popup" && break
+    poll 12 0.25 menu_up && break
     m=$((m + 1))
   done
   read -r W H < <(screen)
@@ -1087,7 +1146,7 @@ cmd_leave() {
   local i=0 inside=1
   while [ $i -lt 3 ]; do
     if ! in_thread; then inside=0; break; fi
-    tap_ax "Messages" 0.3 || break
+    tap_back 0.3 || break
     poll 16 0.15 not_in_thread || true
     i=$((i + 1))
   done
@@ -1704,10 +1763,31 @@ cmd_film() {
   rm -rf "$d"; mkdir -p "$d"
   xcrun simctl io "$SIM" recordVideo --codec h264 --force "$d/take.mp4" >/dev/null 2>&1 &
   local rec=$!
-  sleep 3
-  "$@"
+  # THE RECORDER MUST DIE EVEN WHEN THE FILMED COMMAND DOES.
+  #
+  # `set -e` is on, so a `"$@"` that fails - `play` on a hand with no legal
+  # one-card move, say - left this function before the kill below, with a HOST
+  # recorder still running. There is one per host, so every later film then
+  # died at its own start with "Resource busy: Host recording is already in
+  # progress", swallowed into /dev/null, and surfaced as ffmpeg complaining
+  # about a take.mp4 that was never written - a message that names neither the
+  # cause nor the run that caused it. The leak outlives the shell, so it also
+  # survives into the NEXT session.
+  #
+  # A trap on this pid, cleared on the way out, so the recorder's life is the
+  # function's life whatever happens inside it.
+  trap 'kill -INT '"$rec"' 2>/dev/null || true' EXIT INT TERM
+  # THE PRE-ROLL, because `recordVideo` does not start when it is launched.
+  # Three seconds was enough on the machine this was written on; where the
+  # recorder takes longer, the filmed command runs BEFORE the first frame and
+  # the take opens on the animation's end state - which looks like a finished
+  # take and shows nothing. There is no signal to poll (the process says
+  # nothing until SIGINT), so it stays a wait, but it stops being a constant.
+  sleep "${FOOLISH_FILM_PREROLL:-3}"
+  "$@" || true
   sleep "$secs"
   kill -INT $rec 2>/dev/null || true; sleep 4
+  trap - EXIT INT TERM
   # `tp` and `ph` are tween's; borrowed here without being defined, so under
   # `set -u` every film died right after the recorder stopped, with the movie
   # written and no frames extracted. Timed the same way now.

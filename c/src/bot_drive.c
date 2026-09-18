@@ -37,7 +37,7 @@ int bot_pacing_ms(int pacing_class, int humans_present) {
 // the cycle's visible actions, priced by bot_pacing_ms, reduced when a human is
 // still IN (they set the tempo). Zero when nothing visible happened. Every host
 // used to reduce the actions to a max and re-check humans itself (the native
-// loop, fio_bot_drive_packed); that "how long" is the kernel's to say, once, so
+// loop, fio_bot_drive); that "how long" is the kernel's to say, once, so
 // the trampoline host is left owning only the loop and the actual sleep.
 int bot_cycle_delay_ms(const Game *g, uint32_t human_mask, const BotDriveOut *drv) {
     if (!g || !drv) return 0;
@@ -152,6 +152,28 @@ static int classify(int move_type, const BoardMark *before, const Game *after) {
 // ---------- the cycle ------------------------------------------------------
 
 void (*bot_drive_pre_action_hook)(const Game *g, int seat, int phase) = 0;
+
+void bot_drive_seed_decision(const Game *g, uint32_t base, uint32_t log_offset, int phase) {
+    // The progress term, folded into the secret base so it reaches every salt's
+    // stream through the one mix game_state_seed already avalanches (its final
+    // xorshift-multiply chain), and so a host with no base still gets a seed
+    // that moves. Knuth's multiplicative constant spreads +1 across all 32 bits.
+    const uint32_t progress = log_offset + (uint32_t)g->num_logs;
+    base ^= progress * 2654435761u;
+    if (phase == BOT_DRIVE_PHASE_CHOOSE) {
+        random_strategy_set_seed(game_state_seed(g, base, GAME_SEED_SALT_STRATEGY));
+        game_rng_set(game_state_seed(g, base, GAME_SEED_SALT_SEARCH));
+    } else {
+        game_rng_set(game_state_seed(g, base, GAME_SEED_SALT_DRAW));
+    }
+}
+
+uint32_t bot_drive_seed_base(const uint8_t *seed, int len) {
+    if (!seed || len <= 0) return 0u;
+    uint32_t h = 2166136261u;
+    for (int i = 0; i < len; i++) h = (h ^ seed[i]) * 16777619u;
+    return h;
+}
 
 // Choose with the snapshot hook OFF.
 //

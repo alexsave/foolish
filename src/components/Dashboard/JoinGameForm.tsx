@@ -33,7 +33,9 @@ export const JoinGameForm: React.FC = () => {
                 placeholder={t('enter_game_id')}
                 inputMode="text"
                 className="input-wood"
-                style={{ textAlign: 'center', width: '50%' }}
+                // The field takes the room the button's label leaves, so its
+                // placeholder is not cut to "Enter existing ga".
+                style={{ textAlign: 'center', flex: '1 1 auto', minWidth: 0 }}
             />
             <TexturedSurface
                 as="button"
@@ -42,7 +44,7 @@ export const JoinGameForm: React.FC = () => {
                 disabled={!gameId.trim()}
                 className="btn-wood btn-wood--sm"
                 style={{
-                    width: '50%',
+                    flex: '0 0 auto',
                     marginLeft: '0.5rem',
                     opacity: gameId.trim() ? 1 : 0.6,
                 }}

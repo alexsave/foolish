@@ -211,6 +211,48 @@ int evwire_read(const unsigned char *buf, int len,
 // that is not whole. See evw_is_settlement for what is being cut and why.
 int evwire_frames_settlement_cut(const unsigned char *frames, int len);
 
+// WHERE THE FRAMES ARE in that stream: `off[i]` and `len[i]` for each, in play
+// order, so a host can hand one sequence at a time to a reader without knowing
+// that the container is a u16 length prefix.
+//
+// Counting frames is not counting events, and the difference is a rule: a step
+// emits any number of events, including none (a good that does not close the
+// bout), so a caller asking "how far back does this stream reach" must count
+// frames. That is why this is here rather than left to each host's own walk.
+//
+// Returns the frame count (0 for an empty stream), EVW_ECAP when there are more
+// than `cap` of them, or EVW_EPARSE for a stream that is not whole. `off` and
+// `len` may be NULL to count only.
+#define EVW_ECAP -3
+int evwire_frames(const unsigned char *frames, int len, int *off, int *flen, int cap);
+
+// ---------- as3: the push payload ------------------------------------------
+//
+// What a realtime push carries (the `b` of {t:'as3', s, v, b}). It is the
+// sequence above byte for byte - the whole as2 payload - followed by one flags
+// byte and whatever blocks the flags announce:
+//
+//   evwire sequence              (as2)
+//   u8  flags                    EVW_AS3_* bits; any other bit is refused
+//   [roster trailer]             when EVW_AS3_ROSTER: this push changed the
+//                                table's roster (a join, a leave, a bot, a
+//                                reseat, a retitle), so it carries the new one
+//                                in roster.h's envelope-trailer layout and a
+//                                receiver never decodes a lobby against a stale
+//                                roster
+//
+// The trailer is the LAST thing in the payload, so a reader that finds the flag
+// reads it to the end (roster_trailer_read reports how much it consumed, and
+// anything left over is a malformed payload).
+#define EVW_AS3_ROSTER 0x01
+
+// Where the parts of an as3 payload are. On success returns 0 and sets
+// *seq_len (the as2 prefix), *flags, and *block_off (the offset of the first
+// byte after the flags - the roster trailer when EVW_AS3_ROSTER, else len).
+// EVW_EPARSE for a sequence that does not decode whole, a missing flags byte,
+// an unknown flag, or bytes after the flags that no flag announced.
+int evwire_as3_split(const unsigned char *buf, int len, int *seq_len, int *flags, int *block_off);
+
 // Serialize the full sequence for `viewer` (seat index, or VIEW_SPECTATOR).
 // `logs`/`n_logs` are THIS action's kernel logs (the resident game's fresh
 // log buffer). `final_g` is the post-action (post-finalize) state for the

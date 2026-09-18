@@ -30,7 +30,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The `wasm` and `wasm-guards` targets embed through wasm/embed.mjs.
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -42,9 +41,15 @@ jobs:
         # default, and wasm-oracle-mt calls wasm-opt unconditionally). On a Mac
         # this needs WASM_CC=/opt/homebrew/opt/llvm/bin/clang instead, because
         # Apple's clang has no wasm32 target at all - see c/Makefile.
+        # libclang-dev: every wasm target now runs tools/structgen first for the
+        # layout hash it compiles in (c/Makefile "Layout hash"). The hash does
+        # not depend on the libclang version (tools/structgen/test/hash.sh), so
+        # the distro LLVM is enough here; the structgen job below pins LLVM 22
+        # for the generated TEXT.
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends clang lld binaryen
+          sudo apt-get install -y --no-install-recommends clang lld binaryen libclang-dev
+          echo "LLVM_PREFIX=/usr/lib/llvm-$(clang -dumpversion | cut -d. -f1)" >> "$GITHUB_ENV"
           echo "--- versions the artifacts would be built with ---"
           clang --version | head -1
           wasm-ld --version
@@ -53,7 +58,7 @@ jobs:
       - name: Build every wasm target the Makefile declares
         # Enumerated, never hardcoded: a target added later is covered the day it
         # lands. Every module's rule is a top-level `wasm…:` target in c/Makefile
-        # (wasm, wasm-guards, wasm-bots, wasm-oracle, wasm-oracle-mt today).
+        # (wasm-msg, wasm-bots, wasm-bots-test, wasm-oracle, wasm-oracle-mt today).
         run: |
           set -u
           targets=$(grep -oE '^wasm[A-Za-z0-9_-]*:' c/Makefile | tr -d ':' | sort -u)
@@ -85,6 +90,61 @@ jobs:
         run: |
           ls -l c/build/*.wasm 2>/dev/null || true
           git status --porcelain -- sdk/ts/wasm public || true
+
+  structgen:
+    # tools/structgen reads C struct layouts through libclang and writes the TS
+    # that reads kernel memory (sdk/ts/gen/*.ts) plus the layout hash every wasm
+    # module is checked against at load. gen.sh --check fails when the committed
+    # modules are stale against c/src.
+    #
+    # LLVM 22 from apt.llvm.org, pinned: the Mac generates with Homebrew's LLVM
+    # 22, and the generated text must match byte for byte (docs/
+    # C_GAME_SHAPE_MIGRATION.md Q12). The layout hash itself is independent of
+    # the libclang version - that is the second line of defence, pinned by
+    # test/hash.sh.
+    runs-on: ubuntu-latest
+    env:
+      LLVM_PREFIX: /usr/lib/llvm-22
+      WASM_CC: /usr/lib/llvm-22/bin/clang
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: LLVM 22 (apt.llvm.org)
+        run: |
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          sudo bash /tmp/llvm.sh 22
+          sudo apt-get install -y --no-install-recommends libclang-22-dev lld-22
+          "$WASM_CC" --version | head -1
+
+      - name: Build structgen
+        # -Werror: gcc 13 here only warns on an undeclared function and assumes it
+        # returns int. structgen once called strdup, which glibc does not declare
+        # under -std=c11, and every copied pointer was cut to 32 bits: the tool
+        # segfaulted on its first run and only this job's Linux saw it.
+        run: make -C tools/structgen build/structgen CFLAGS="-O2 -std=c11 -Wall -Wextra -Werror"
+
+      - name: Generated modules are fresh
+        run: bash tools/structgen/gen.sh --check
+
+      - name: CLI refusals and the layout hash
+        run: |
+          bash tools/structgen/test/cli.sh
+          bash tools/structgen/test/hash.sh
+
+      - name: Accessors against wasm32 C (verify)
+        # gen.sh without --check also builds test/verify.c into build/verify.wasm,
+        # which needs wasm-ld (lld-22). That module is never committed - its bytes
+        # are this runner's clang, not a macOS one - so this step is what makes it.
+        run: |
+          bash tools/structgen/gen.sh
+          TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx --test tools/structgen/test/verify.test.ts
 
   freshness:
     runs-on: ubuntu-latest

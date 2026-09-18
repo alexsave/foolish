@@ -43,7 +43,10 @@ import {
     animConflictVerdicts, animEventTypeCode, ANIM_DEST, ANIM_TRANSPORT_SERVER,
     __setAnimTransport, AnimConflictMotion, AnimConflictInputs,
 } from '../sdk/ts/wasm/bots.ts';
-import { Card, Battle } from '../server/api/core/types.ts';
+
+// The shapes the shim takes, named off its own signature.
+type Battle = AnimConflictInputs['openTable'][number];
+type Card = Battle['attack'];
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 

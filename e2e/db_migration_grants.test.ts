@@ -128,6 +128,109 @@ const WRITE_POLICIES = `
   ORDER BY 1
 `;
 
+// The games table and the functions that write it, as the database holds them:
+// columns with their types, nullability and defaults (of games and of the
+// tables its writers fill with blobs), indexes, triggers, the snapshot read
+// policy, and
+// each writer's definition with comments and whitespace folded away (seed.sql
+// explains more than a migration does; the code must be the same).
+const GAMES_SHAPE = `
+  SELECT 'column ' || table_name || '.' || column_name || ' ' || data_type || ' ' || udt_name || ' ' || is_nullable || ' ' || coalesce(column_default, '') AS item
+  FROM information_schema.columns
+  WHERE table_schema = 'public' AND table_name IN ('games', 'player_views', 'spectator_views', 'game_snapshots')
+  UNION ALL
+  SELECT 'index ' || indexdef FROM pg_indexes WHERE schemaname = 'public' AND tablename IN ('games', 'game_snapshots')
+  UNION ALL
+  SELECT 'policy ' || tablename || ' ' || policyname || ' ' || cmd || ' ' || coalesce(qual, '') || ' ' || coalesce(with_check, '')
+  FROM pg_policies WHERE schemaname = 'public' AND tablename = 'game_snapshots'
+  UNION ALL
+  SELECT 'trigger ' || pg_get_triggerdef(oid) FROM pg_trigger WHERE tgrelid = 'public.games'::regclass AND NOT tgisinternal
+  UNION ALL
+  SELECT 'function ' || p.oid::regprocedure::text || ' ' || md5(regexp_replace(regexp_replace(
+           pg_get_functiondef(p.oid), '--[^\\n]*', '', 'g'), '\\s+', ' ', 'g'))
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public'
+    AND (p.proname IN ('commit_game', 'create_game', 'commit_table', 'create_table', 'delete_account') OR p.proname LIKE 'legacy\\_%')
+  ORDER BY 1
+`;
+
+// The WHOLE of schema public, as the catalogs hold it, order-insensitive.
+//
+// GAMES_SHAPE above compares the games family; this compares everything, so the
+// migration chain and seed.sql are held equal object by object rather than in
+// the four places somebody remembered to list. It is what makes seed.sql
+// readable as the schema without the migration history being collapsed into it:
+// the two paths are proven to end in the same database on every run.
+//
+// Physical column ORDER is deliberately not compared. The chain grew games and
+// user_elo_ratings a column at a time, seed.sql declares them in the order of
+// docs/C_GAME_SHAPE_MIGRATION.md 3.1, and nothing reads a column by position
+// (PostgREST answers named JSON, every server query names its columns). That
+// divergence already exists between the hosted database and every local one.
+const PUBLIC_CATALOG = `
+  SELECT 'column ' || table_name || '.' || column_name || ' ' || data_type || ' ' || udt_name
+         || ' null=' || is_nullable || ' default=' || coalesce(column_default, '') AS item
+  FROM information_schema.columns WHERE table_schema = 'public'
+  UNION ALL
+  SELECT 'constraint ' || conrelid::regclass::text || ' ' || conname || ' ' || pg_get_constraintdef(oid)
+  FROM pg_constraint WHERE connamespace = 'public'::regnamespace
+  UNION ALL
+  SELECT 'index ' || indexdef FROM pg_indexes WHERE schemaname = 'public'
+  UNION ALL
+  SELECT 'trigger ' || tgrelid::regclass::text || ' ' || pg_get_triggerdef(oid)
+  FROM pg_trigger WHERE NOT tgisinternal AND tgrelid::regclass::text NOT LIKE 'pg\\_%'
+  UNION ALL
+  SELECT 'policy ' || schemaname || '.' || tablename || ' ' || policyname || ' ' || cmd
+         || ' roles=' || array_to_string(roles, ',') || ' permissive=' || permissive
+         || ' using=' || coalesce(qual, '') || ' check=' || coalesce(with_check, '')
+  FROM pg_policies
+  UNION ALL
+  SELECT 'rls ' || c.relname || ' enabled=' || c.relrowsecurity || ' forced=' || c.relforcerowsecurity
+  FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p')
+  UNION ALL
+  SELECT 'function ' || p.oid::regprocedure::text || ' secdef=' || p.prosecdef
+         || ' vol=' || p.provolatile::text || ' ret=' || pg_get_function_result(p.oid)
+         || ' body=' || md5(regexp_replace(regexp_replace(pg_get_functiondef(p.oid), '--[^\\n]*', '', 'g'), '\\s+', ' ', 'g'))
+  FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace
+  UNION ALL
+  SELECT 'enum ' || t.typname || ' ' || e.enumsortorder || ' ' || e.enumlabel
+  FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid WHERE t.typnamespace = 'public'::regnamespace
+  UNION ALL
+  SELECT 'tablegrant ' || c.relname || ' ' || r.role || ' ' || p.priv || ' ' || has_table_privilege(r.role, c.oid, p.priv)
+  FROM pg_class c
+  CROSS JOIN (VALUES ('anon'), ('authenticated'), ('service_role'), ('public')) AS r(role)
+  CROSS JOIN (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) AS p(priv)
+  WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+  UNION ALL
+  SELECT 'colgrant ' || c.relname || '.' || a.attname || ' ' || r.role || ' ' || p.priv || ' '
+         || has_column_privilege(r.role, c.oid, a.attnum, p.priv)
+  FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+  CROSS JOIN (VALUES ('anon'), ('authenticated'), ('service_role'), ('public')) AS r(role)
+  CROSS JOIN (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('REFERENCES')) AS p(priv)
+  WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+  UNION ALL
+  SELECT 'fngrant ' || p.oid::regprocedure::text || ' ' || r.role || ' ' || has_function_privilege(r.role, p.oid, 'EXECUTE')
+  FROM pg_proc p CROSS JOIN (VALUES ('anon'), ('authenticated'), ('service_role'), ('public')) AS r(role)
+  WHERE p.pronamespace = 'public'::regnamespace
+  UNION ALL
+  SELECT 'seqgrant ' || c.relname || ' ' || r.role || ' ' || p.priv || ' ' || has_sequence_privilege(r.role, c.oid, p.priv)
+  FROM pg_class c CROSS JOIN (VALUES ('anon'), ('authenticated'), ('service_role'), ('public')) AS r(role)
+  CROSS JOIN (VALUES ('SELECT'), ('UPDATE'), ('USAGE')) AS p(priv)
+  WHERE c.relnamespace = 'public'::regnamespace AND c.relkind = 'S'
+  UNION ALL
+  SELECT 'publication ' || pubname || ' ' || schemaname || '.' || tablename FROM pg_publication_tables
+  UNION ALL
+  SELECT 'comment ' || c.relname || ' :: ' || obj_description(c.oid, 'pg_class')
+  FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p', 'v', 'm')
+    AND obj_description(c.oid, 'pg_class') IS NOT NULL
+  UNION ALL
+  SELECT 'comment ' || c.relname || '.' || a.attname || ' :: ' || col_description(c.oid, a.attnum)
+  FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+  WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p', 'v', 'm')
+    AND col_description(c.oid, a.attnum) IS NOT NULL
+  ORDER BY 1
+`;
+
 type Exposure = { fn: string; who: string };
 type Posture = { exposed: string[]; writes: string[]; writePolicies: string[] };
 
@@ -171,6 +274,8 @@ const MEMBER = '00000000-0000-4000-8000-0000000be4be';
 const VICTIM_GAME = 'victim-game';
 
 let hostedPosture: Posture | null = null;
+let hostedGamesShape: string[] | null = null;
+let hostedCatalog: string[] | null = null;
 
 export function registerMigrationGrantsValidation(): void {
     describe('hosted schema: the frozen pre-20260807120000 schema plus every later migration', () => {
@@ -198,6 +303,8 @@ export function registerMigrationGrantsValidation(): void {
                 for (const k of now) if (!openedBy.has(k)) openedBy.set(k, m);
                 for (const k of [...openedBy.keys()]) if (!now.has(k)) openedBy.delete(k);
             }
+            hostedGamesShape = (await pgPool.query(GAMES_SHAPE)).rows.map((r) => r.item);
+            hostedCatalog = (await pgPool.query(PUBLIC_CATALOG)).rows.map((r) => r.item);
 
             await pgPool.query(
                 `INSERT INTO games (id, name, players, status) VALUES ($1, 'victim', '[]'::jsonb, 'waiting')`,
@@ -230,11 +337,23 @@ export function registerMigrationGrantsValidation(): void {
             );
         });
 
-        test('anon cannot execute commit_game, as POST /rest/v1/rpc/commit_game would', async () => {
+        test('anon cannot execute commit_table, as POST /rest/v1/rpc/commit_table would', async () => {
             await asClient('anon', null, async (c) => {
                 await assert.rejects(
                     // A game id that matches nothing: if EXECUTE is granted this returns
-                    // {"status":"conflict"} and touches no row.
+                    // committed = false and touches no row.
+                    c.query(`SELECT * FROM commit_table(p_game_id => 'no-such-game', p_expected_version => 0, p_state => 'AA==', p_status => 0::smallint, p_needs_bots => FALSE)`),
+                    (e: { code?: string }) => e.code === '42501',
+                    'anon executed commit_table, the RPC that rewrites any game',
+                );
+            });
+        });
+
+        test('anon cannot execute commit_game, as POST /rest/v1/rpc/commit_game would', async () => {
+            // The legacy writer is still here until the contract migration drops it,
+            // and 20260807120000 plus 20260917000000 must keep it off the client roles.
+            await asClient('anon', null, async (c) => {
+                await assert.rejects(
                     c.query(`SELECT commit_game('no-such-game', 0, '{}'::jsonb)`),
                     (e: { code?: string }) => e.code === '42501',
                     'anon executed commit_game, the RPC that rewrites any game',
@@ -261,9 +380,9 @@ export function registerMigrationGrantsValidation(): void {
             await asClient('authenticated', ATTACKER, async (c) => {
                 await assert.rejects(
                     c.query(
-                        `INSERT INTO games (id, name, players, status, state)
-                         VALUES ('forged', 'forged', $1::jsonb, 'playing', 'deadbeef')`,
-                        [JSON.stringify([{ player_id: ATTACKER, name: 'a', status: 'in', is_ai: false }])],
+                        `INSERT INTO games (id, status, state, roster)
+                         VALUES ('forged', 'playing', '\\xdeadbeef', $1)`,
+                        [`\\x01${Buffer.from(ATTACKER).toString('hex')}`],
                     ),
                     (e: { code?: string }) => e.code === '42501',
                     'authenticated inserted a games row directly',
@@ -336,6 +455,43 @@ export function registerMigrationGrantsValidation(): void {
             assert.deepEqual(p.exposed, [], `exposed: ${p.exposed.join(', ')}`);
             const unexpected = p.writes.filter((w) => !(w in INTENDED_CLIENT_WRITES));
             assert.deepEqual(unexpected, [], `unexpected client writes: ${unexpected.join(', ')}`);
+        });
+
+        test('seed.sql and the migrations build the same games table and games writers', async () => {
+            // A fresh database (seed.sql) and the hosted one (the migrations) run the
+            // same edge functions, so a column, trigger or writer that differs
+            // between them is a server that passes locally and breaks on deploy.
+            assert.ok(hostedGamesShape, 'the hosted suite must run first');
+            const seedShape = (await pgPool.query(GAMES_SHAPE)).rows.map((r) => r.item);
+            assert.ok(seedShape.some((i) => i.startsWith('function commit_table(')), 'the comparison sees the table writers');
+            assert.deepEqual(seedShape, hostedGamesShape);
+        });
+
+        test('seed.sql and the migrations build the same schema public, object for object', async () => {
+            // The whole of it: columns, constraints, indexes, triggers, policies, RLS,
+            // functions with their bodies, enum values, every table, column, function
+            // and sequence grant, the realtime publication, and the comments.
+            //
+            // This is the equivalence the migration history would have to hold for it
+            // to be safe to collapse into seed.sql, checked on every run instead of
+            // once by hand (docs/C_GAME_SHAPE_MIGRATION.md, "Cleanup as built").
+            assert.ok(hostedCatalog, 'the hosted suite must run first');
+            const seedCatalog: string[] = (await pgPool.query(PUBLIC_CATALOG)).rows.map((r) => r.item);
+            assert.ok(seedCatalog.length > 1000, `the comparison is not vacuous: ${seedCatalog.length} items`);
+            // The symmetric difference, not the two 1,400-item lists: a deepEqual of
+            // those prints neither the object that differs nor how.
+            const hosted = new Set(hostedCatalog);
+            const seed = new Set(seedCatalog);
+            const differences = [
+                ...seedCatalog.filter((i) => !hosted.has(i)).map((i) => `seed.sql only: ${i}`),
+                ...hostedCatalog!.filter((i) => !seed.has(i)).map((i) => `migrations only: ${i}`),
+            ].sort();
+            assert.deepEqual(
+                differences, [],
+                'seed.sql and the migrations end in different databases. The hosted project only ever '
+                + 'receives the migrations and every other database is built from seed.sql, so anything '
+                + 'that differs here passes locally and breaks on deploy (or the other way round).',
+            );
         });
 
         test('seed.sql and the migrations end in the same security posture', async () => {

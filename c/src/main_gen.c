@@ -149,7 +149,6 @@ int main(int argc, char **argv) {
         for (int i = 0; i < n; i++) {
             g.players[i].status = PLAYER_STATUS_READY;
             g.players[i].strategy_key = (int8_t)strat;
-            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
         }
         start_game(&g);
 

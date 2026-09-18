@@ -70,24 +70,36 @@ int state_put(const Game *g, int viewer, unsigned char *out) {
     return (int)(q - out);
 }
 
-// Masked decode: WIRE_CARD_HIDDEN becomes the {0,1} placeholder the browser
-// marshal always used for redacted cards; everything else clamps like the
-// legacy path.
-static Card card_from_wire_masked(unsigned char b) {
-    if (b == WIRE_CARD_HIDDEN) { Card c; c.suit = 0; c.value = 1; return c; }
-    return card_from_wire_state(b);
+// A state card byte, decoded EXACTLY: 0..51 is that card, and every other byte
+// becomes the {-1,-1} not-a-card, which game_validate refuses. (It used to
+// clamp onto the ace of diamonds, which turned a corrupt byte into a real card
+// the state could then be played on.)
+static Card card_from_wire_exact(unsigned char b) {
+    if (b > 51) { Card c; c.suit = -1; c.value = -1; return c; }
+    return card_of_id(b);
 }
 
-void state_get(Game *g, const unsigned char *p, int masked) {
+// Masked decode: WIRE_CARD_HIDDEN becomes the {0,1} placeholder the browser
+// marshal always used for redacted cards; everything else decodes exactly.
+static Card card_from_wire_masked(unsigned char b) {
+    if (b == WIRE_CARD_HIDDEN) { Card c; c.suit = 0; c.value = 1; return c; }
+    return card_from_wire_exact(b);
+}
+
+int state_get(Game *g, const unsigned char *p, int masked) {
     const unsigned char *q = p;
+    int clamped = 0;
     // No full-struct memset: the Game is ~200 KB (mostly log capacity) and
     // every read in the kernel is bounded by the counts set below. Every
     // count is clamped to its array capacity — the kernel must never corrupt
     // memory on a malformed/corrupt input (see docs/SECURITY_WASM_BOUNDARY.md).
+    // A clamp is also reported: past a clamped count the bytes no longer line
+    // up with the fields, so state_import refuses the whole state.
+#define CLAMP(v, hi) do { if ((v) < 0) { (v) = 0; clamped = 1; } \
+                          if ((v) > (hi)) { (v) = (hi); clamped = 1; } } while (0)
     g->status = (int8_t)*q++;
     g->num_players = (int8_t)*q++;
-    if (g->num_players < 0) g->num_players = 0;
-    if (g->num_players > MAX_PLAYERS) g->num_players = MAX_PLAYERS;
+    CLAMP(g->num_players, MAX_PLAYERS);
     g->power_suit = (int8_t)*q++;
     g->first_attacker = (int8_t)*q++;
     g->defender = (int8_t)*q++;
@@ -98,7 +110,7 @@ void state_get(Game *g, const unsigned char *p, int masked) {
     // code reads it unguarded and {0,0} acts as a harmless never-matches pin.
     {
         unsigned char fw = *q++;
-        if (g->has_flipped) g->flipped = card_from_wire_state(fw);
+        if (g->has_flipped) g->flipped = card_from_wire_exact(fw);
         else { g->flipped.suit = 0; g->flipped.value = 0; }
     }
     g->good_players_mask = (uint32_t)q[0] | ((uint32_t)q[1] << 8)
@@ -106,40 +118,96 @@ void state_get(Game *g, const unsigned char *p, int masked) {
     q += 4;
     g->has_good_timestamp = (*q++ != 0);
     g->deck_count = (int16_t)(q[0] | (q[1] << 8)); q += 2;
-    if (g->deck_count < 0) g->deck_count = 0;
-    if (g->deck_count > MAX_DECK) g->deck_count = MAX_DECK;
+    CLAMP(g->deck_count, MAX_DECK);
     for (int i = 0; i < g->deck_count; i++) {
         unsigned char b = *q++;
-        g->deck[i] = masked ? card_from_wire_masked(b) : card_from_wire_state(b);
+        g->deck[i] = masked ? card_from_wire_masked(b) : card_from_wire_exact(b);
     }
-    g->num_battles = (int8_t)*q++;
-    if (g->num_battles < 0) g->num_battles = 0;
-    if (g->num_battles > MAX_BATTLES) g->num_battles = MAX_BATTLES;
+    // Read as a byte, not an int8: MAX_BATTLES is 64 in wasm, so 128..255 must
+    // clamp high rather than wrap negative.
+    {
+        int nb = *q++;
+        CLAMP(nb, MAX_BATTLES);
+        g->num_battles = (int8_t)nb;
+    }
     for (int i = 0; i < g->num_battles; i++) {
         Battle *b = &g->table_battles[i];
-        b->attack = card_from_wire_state(*q++);
+        b->attack = card_from_wire_exact(*q++);
         unsigned char db = *q++;
-        b->defense = (db == WIRE_CARD_NONE) ? CARD_NONE : card_from_wire_state(db);
+        b->defense = (db == WIRE_CARD_NONE) ? CARD_NONE : card_from_wire_exact(db);
     }
     for (int i = 0; i < g->num_players; i++) {
         Player *pl = &g->players[i];
         pl->status = (int8_t)*q++;
         pl->awaiting_attack = (*q++ != 0);
         pl->hand_count = (int8_t)*q++;
-        if (pl->hand_count < 0) pl->hand_count = 0;
-        if (pl->hand_count > MAX_HAND_SIZE) pl->hand_count = MAX_HAND_SIZE;
+        CLAMP(pl->hand_count, MAX_HAND_SIZE);
         for (int j = 0; j < pl->hand_count; j++) {
             unsigned char b = *q++;
-            pl->hand[j] = masked ? card_from_wire_masked(b) : card_from_wire_state(b);
+            pl->hand[j] = masked ? card_from_wire_masked(b) : card_from_wire_exact(b);
         }
     }
     g->num_eliminated = (int8_t)*q++;
-    if (g->num_eliminated < 0) g->num_eliminated = 0;
-    if (g->num_eliminated > MAX_PLAYERS) g->num_eliminated = MAX_PLAYERS;
+    CLAMP(g->num_eliminated, MAX_PLAYERS);
+#undef CLAMP
     for (int i = 0; i < g->num_eliminated; i++) g->elimination_order[i] = (int8_t)*q++;
     g->num_logs = 0;
     // The resident game always has a full-size log array; only sampled-world
     // slots ever set log_cap (see game.h). Re-pin defensively per marshal.
     g->log_cap = 0;
     g->log_virt = 0;
+    return clamped ? GAME_INVALID_COUNT : GAME_VALID;
+}
+
+int state_measure(const unsigned char *p, int len) {
+    // status, num_players, power_suit, first_attacker, defender, u16 discard,
+    // has_flipped, flipped, u32 good mask, has_good_timestamp, then u16 deck_count.
+    if (!p || len < 16) return -1;
+    const int np = (int8_t)p[1];
+    const int deck = (int16_t)(p[14] | (p[15] << 8));
+    if (np < 0 || np > MAX_PLAYERS || deck < 0 || deck > MAX_DECK) return -1;
+    int q = 16 + deck;
+    if (q + 1 > len || p[q] > MAX_BATTLES) return -1;
+    q += 1 + 2 * p[q];
+    for (int i = 0; i < np; i++) {
+        if (q + 3 > len) return -1;
+        const int hand = (int8_t)p[q + 2];
+        if (hand < 0 || hand > MAX_HAND_SIZE) return -1;
+        q += 3 + hand;
+    }
+    if (q + 1 > len || p[q] > MAX_PLAYERS) return -1;
+    q += 1 + p[q];
+    return q > len ? -1 : q;
+}
+
+int state_import(Game *g, const unsigned char *p, int masked) {
+    // Decode in place over a saved copy of the state part of `g` (everything
+    // ahead of the log array, which is all state_get writes and game_validate
+    // reads), and put the copy back if the result is refused. A byte copy
+    // rather than a scratch Game: a full Game is ~136 KB at the wasm caps, and
+    // this path is on every marshal.
+    unsigned char saved[offsetof(Game, logs)];
+    memcpy(saved, g, sizeof saved);
+    int r = state_get(g, p, masked);
+    if (r == GAME_VALID) r = game_validate(g, masked ? GAME_VALIDATE_MASKED : 0);
+    if (r != GAME_VALID) memcpy(g, saved, sizeof saved);
+    return r;
+}
+
+int log_record_put(const GameLog *l, int mask_draws, int pre_has_flip, Card pre_flip,
+                   int has_flipped_now, unsigned char *out) {
+    const int flip_drawn = pre_has_flip && !has_flipped_now;
+    const int hide = mask_draws && l->log_type == LOG_DRAW;
+    unsigned char *q = out;
+    *q++ = (unsigned char)l->log_type;
+    *q++ = (unsigned char)l->player_idx;
+    *q++ = (unsigned char)l->defender_index;
+    *q++ = (unsigned char)l->num_pairs;
+    for (int j = 0; j < l->num_pairs; j++) {
+        const LogPair *pr = &l->pairs[j];
+        *q++ = (hide && !(flip_drawn && card_eq(pr->primary, pre_flip)))
+            ? (unsigned char)WIRE_CARD_HIDDEN : wire_from_card(pr->primary);
+        *q++ = wire_from_card(pr->target);
+    }
+    return (int)(q - out);
 }

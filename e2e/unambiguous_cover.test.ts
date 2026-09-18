@@ -20,8 +20,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { ensureBotsAsync, kernelUnambiguousCover } from '../sdk/ts/wasm/bots.ts';
-import { canCover } from '../server/api/common/common_utils.ts';
-import { Card, Battle } from '../server/api/core/types.ts';
+import { clientTable, type ViewCard } from '../sdk/ts/table/client_table.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
@@ -29,6 +28,14 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 let seed = 0x1234abcd >>> 0;
 const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 0x100000000; };
 const ri = (n: number) => Math.floor(rnd() * n);
+
+type Card = ViewCard;
+interface Battle { attack: Card; defense: Card | null }
+
+// Whether one card beats another is the kernel's can_cover (the rule the
+// resolver pairs by), not a TS copy of it. What stays test-local is the
+// brute-force pairing below.
+const canCover = (attack: Card, defense: Card, trump: number): boolean => clientTable().canCover(attack, defense, trump);
 
 const card = (suit: number, value: number): Card => ({ suit, value });
 const key = (c: Card) => `${c.suit}-${c.value}`;

@@ -1210,12 +1210,10 @@ static void og_mt_pack_desc(const LegalMoves *moves, const Candidates *C,
         d->type = (uint8_t)m->type;
         int nc = m->n_cards; if (nc > OG_MT_MAX_CARDS) nc = OG_MT_MAX_CARDS;
         d->n_cards = (uint8_t)nc;
-        for (int k = 0; k < nc; k++)
-            d->cards[k] = (uint8_t)(((m->cards[k].suit & 0xf) << 4) | (m->cards[k].value & 0xf));
+        for (int k = 0; k < nc; k++) d->cards[k] = m->cards[k];
         if (m->type == MOVE_COVER) {
             d->n_targets = (uint8_t)nc;
-            for (int k = 0; k < nc; k++)
-                d->targets[k] = (uint8_t)(((m->attack_cards[k].suit & 0xf) << 4) | (m->attack_cards[k].value & 0xf));
+            for (int k = 0; k < nc; k++) d->targets[k] = m->attack_cards[k];
         }
     }
     *n_out = n;

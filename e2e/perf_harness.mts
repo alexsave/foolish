@@ -1,30 +1,11 @@
 // Ad-hoc harness (not part of the suite): bot decision latency through the
-// production wasm path, with pinned RNG so runs are comparable across builds.
-// Reports per-family decision timing over full games.
-import { start_game, game_done } from '../server/api/common/common_utils.ts';
-import { processBotAction, shouldBotActCore } from '../server/api/common/pure_bot_actions.ts';
-import { __setBotSeedSource } from '../sdk/ts/wasm/bots.ts';
-import { __setKernelSeedSource } from '../sdk/ts/wasm/engine.ts';
-import { Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS } from '../server/api/core/types.ts';
-
-const mkLcgU32 = (seed: number) => {
-    let s = seed >>> 0;
-    return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s; };
-};
-
-const mkPlayer = (i: number, key: string): PrivatePlayer => ({
-    player_id: `p${i}`, name: `P${i}`, status: PLAYER_STATUS.READY, is_ai: true,
-    hand: [], awaiting_attack: false, hand_length: 0,
-    strategy_key: key as PrivatePlayer['strategy_key'],
-});
-
-const mkGame = (id: string, keys: string[]): Game => ({
-    players: keys.map((k, i) => mkPlayer(i, k)),
-    deck: [], logs: [], id, name: id, status: GAME_STATUS.PLAYING,
-    deck_length: 0, discard_pile_length: 0, flipped: null, power_suit: 0,
-    first_attacker: 0, defender: 0, table_battles: [], elimination_order: [],
-    good_timestamp: null, good_players: [],
-});
+// production path - the kernel's bot cycle (table_bot_drive) on a table of bots,
+// exactly as the server's loop runs it (e2e/helpers/bot_table.ts) - one action
+// per cycle, from pinned deal seeds so runs are comparable across builds.
+// Reports per-brain decision timing over full games.
+//   TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx e2e/perf_harness.mts
+import { botCycle, dealBotTable, seedBytes } from './helpers/bot_table.ts';
+import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; }
 const report = console.error.bind(console); // survives the console.log gag
@@ -32,31 +13,21 @@ const report = console.error.bind(console); // survives the console.log gag
 const GAMES = Number(process.env.PERF_GAMES ?? '6');
 const stats: Record<string, { n: number; ms: number; max: number }> = {};
 
-for (const keys of [['semtex', 'octogen'], ['cordite', 'fulminate']]) {
+for (const brains of [['cordite', 'octogen'], ['firecracker', 'blackpowder']]) {
     for (let gi = 0; gi < GAMES; gi++) {
-        __setKernelSeedSource(mkLcgU32(0xDEA1 ^ gi));
-        const meta = mkLcgU32(0xB07 ^ gi);
-        __setBotSeedSource(() => meta());
-        const g = mkGame(`perf${gi}`, keys);
-        start_game(g);
-        let guard = 0;
-        while (game_done(g) === null && ++guard < 2000) {
-            let acted = false;
-            for (let i = 0; i < g.players.length; i++) {
-                const p = g.players[i];
-                if (!shouldBotActCore(g, p, i)) continue;
-                const t = performance.now();
-                const r = await processBotAction(g, p);
-                const dt = performance.now() - t;
-                const s = (stats[p.strategy_key] ??= { n: 0, ms: 0, max: 0 });
-                s.n++; s.ms += dt; if (dt > s.max) s.max = dt;
-                if (r) { acted = true; break; }
-            }
-            if (!acted) break;
+        let row = dealBotTable(brains, seedBytes(brains.length, 0xDEA1 ^ gi), { gameId: `perf${gi}` });
+        for (let guard = 0; row.status === L.GAME_STATUS_PLAYING && guard < 4000; guard++) {
+            const c = botCycle(row, { maxActions: 1 });
+            if (c.drive.n === 0) break;
+            const brain = brains[c.drive.seats[0]];
+            const s = (stats[brain] ??= { n: 0, ms: 0, max: 0 });
+            s.n++; s.ms += c.ms; if (c.ms > s.max) s.max = c.ms;
+            row = c.row;
         }
+        if (row.status === L.GAME_STATUS_PLAYING) report(`perf${gi} ${brains.join(' vs ')}: did not finish`);
     }
 }
 
 for (const [k, s] of Object.entries(stats)) {
-    report(`${k.padEnd(10)} decisions=${s.n} avg=${(s.ms / s.n).toFixed(1)}ms max=${s.max.toFixed(0)}ms total=${(s.ms / 1000).toFixed(1)}s`);
+    report(`${k.padEnd(12)} decisions=${s.n} avg=${(s.ms / s.n).toFixed(1)}ms max=${s.max.toFixed(0)}ms total=${(s.ms / 1000).toFixed(1)}s`);
 }

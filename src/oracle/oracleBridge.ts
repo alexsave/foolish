@@ -1,14 +1,12 @@
 /* =============================================================================
- * Infinite Oracle — one wasm instance's bridge (worker-side, §8.5)
+ * Infinite Oracle - one wasm instance's bridge (worker-side, §8.5)
  * Talks to a single oracle.wasm instance: instantiate, install env, and run one
- * deliberation batch in the exact load-bearing call order (§4.3). Reuses the
- * engine.ts marshal helpers (NOT bots.ts — that singleton would hijack the
- * replay screen's rules instance). Never shared between workers.
+ * deliberation batch in the exact load-bearing call order (§4.3). The position
+ * and the memory are the kernel's bytes (OracleJob.state, .logsWire), written
+ * into the instance unchanged. Never shared between workers.
  * ========================================================================== */
 
-import { Game } from '@api/core/types.ts';
-import { __marshalGame, __mem, __setResident } from '@sdk/ts/wasm/engine.ts';
-import { OracleGameState, OracleDumpRecord } from './types';
+import { OracleDumpRecord, OracleJob } from './types';
 
 const STRAT_OCTOGEN = 20;
 
@@ -16,7 +14,7 @@ interface OracleExports {
     memory: WebAssembly.Memory;
     wasm_init(): void;
     wasm_io_ptr(): number;
-    wasm_import_state(): void;
+    wasm_import_state(masked: number): number;
     wasm_import_strategy_keys(): void;
     wasm_import_logs(): void;
     wasm_clearenv(): void;
@@ -31,7 +29,10 @@ interface OracleExports {
 
 export type BatchResult =
     | { record: OracleDumpRecord }
-    | { error: 'empty' | 'parse' | 'overflow' };
+    | { error: 'empty' | 'parse' | 'overflow' | 'state' };
+
+/** The instance's linear memory, as bytes: a fresh view on every call (a choose may grow it). */
+const bytesOf = (ex: OracleExports) => new Uint8Array(ex.memory.buffer);
 
 export class OracleInstance {
     ex!: OracleExports;
@@ -51,7 +52,7 @@ export class OracleInstance {
         ex.wasm_clearenv();
         const base = ex.wasm_io_ptr();
         for (const [k, v] of Object.entries(env)) {
-            const buf = __mem(ex as never);
+            const buf = bytesOf(ex);
             let q = base;
             for (let i = 0; i < k.length; i++) buf[q++] = k.charCodeAt(i) & 0xff;
             buf[q++] = 0;
@@ -62,35 +63,33 @@ export class OracleInstance {
         ex.wasm_og_reload_flags();
     }
 
-    /** One deliberation batch (§8.5 steps 2-9). Marshals fresh, seeds, chooses,
-     *  reads + parses the first dump line. Order is load-bearing (§4.3). */
+    /** One deliberation batch (§8.5 steps 2-9). Imports the position fresh,
+     *  seeds, chooses, reads + parses the first dump line. Order is load-bearing
+     *  (§4.3). */
     analyzeOnce(
-        blob: OracleGameState,
-        seat: number,
-        logsWire: Uint8Array,
-        memoryOn: boolean,
+        job: Pick<OracleJob, 'state' | 'seat' | 'numPlayers' | 'logsWire' | 'memoryOn'>,
         seed: number,
     ): BatchResult {
         const ex = this.ex;
+        const seat = job.seat;
 
-        // 2. fresh marshal every batch — never consume a stale resident mark.
-        __setResident(null);
-        __marshalGame(ex as never, blob as unknown as Game);
+        // 2. a fresh import every batch: the board as the acting seat saw it,
+        //    every card it could not see hidden. The kernel judges it first.
+        bytesOf(ex).set(job.state, ex.wasm_io_ptr());
+        if (ex.wasm_import_state(1) < 0) return { error: 'state' };
 
         // 3. strategy keys: one i8 -1 per seat. Inert for this module (no
         //    espresso_prod), but the call reads num_players bytes unconditionally.
         {
-            const buf = __mem(ex as never);
+            const buf = bytesOf(ex);
             const q = ex.wasm_io_ptr();
-            for (let i = 0; i < blob.players.length; i++) buf[q + i] = 0xff;
+            for (let i = 0; i < job.numPlayers; i++) buf[q + i] = 0xff;
             ex.wasm_import_strategy_keys();
         }
 
-        // 4. session logs (memory ON only). logsWire already carries the u16
-        //    count header + records — write it whole at the io ptr.
-        if (memoryOn && logsWire.length > 2) {
-            const buf = __mem(ex as never);
-            buf.set(logsWire, ex.wasm_io_ptr());
+        // 4. session logs (memory ON only): the u16 count header + records, whole.
+        if (job.memoryOn && job.logsWire.length > 2) {
+            bytesOf(ex).set(job.logsWire, ex.wasm_io_ptr());
             ex.wasm_import_logs();
         }
 
@@ -104,8 +103,7 @@ export class OracleInstance {
         const len = ex.wasm_og_explain_len();
         if (len <= 0) return { error: 'empty' };
         const ptr = ex.wasm_og_explain_ptr();
-        const buf = __mem(ex as never);
-        const text = this.decoder.decode(buf.subarray(ptr, ptr + len));
+        const text = this.decoder.decode(bytesOf(ex).subarray(ptr, ptr + len));
         const nl = text.indexOf('\n');
         const line = nl >= 0 ? text.slice(0, nl) : text;
 

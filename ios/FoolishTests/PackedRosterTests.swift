@@ -7,11 +7,11 @@
 // entry point OnlineGame uses - over an envelope assembled here byte by byte
 // around a REAL masked-state blob from the kernel.
 //
-// The cross-language half (that the SERVER writes the bytes this reader
-// expects) is e2e/packed_roster_wire.test.ts, which compiles
-// sdk/swift/EnvelopeRoster.swift against the production TypeScript encoder.
-// This file is the other half: that the app's decoder puts those fields where
-// the board reads them.
+// THE READER IS THE KERNEL'S (c/src/client_table.h client_adopt_envelope,
+// through EngineC.adoptEnvelope), the same one the web uses. This file is what
+// says the app puts those fields where the board reads them; the bytes
+// themselves are pinned against the server's writer in
+// e2e/packed_roster_wire.test.ts.
 import XCTest
 @testable import FoolishKit
 @testable import FoolishNet

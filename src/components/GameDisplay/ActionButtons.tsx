@@ -1,4 +1,3 @@
-import { Card, PersonalGame, PLAYER_STATUS } from "@api/core/types.ts";
 import { useAuth } from "../../contexts/AuthContext";
 import { useServer } from "../../contexts/ServerContext";
 import { useAnimation } from "../../contexts/AnimationContext";
@@ -8,11 +7,11 @@ import { CardFace } from "./CardFace";
 import { TexturedSurface } from "../TexturedSurface";
 import { useEffect, useRef } from "react";
 import { Text } from "../Text";
-import { canCoverPair } from "../../wasm/clientGuards";
 import { kernelUnambiguousCover } from "@sdk/ts/wasm/bots.ts";
-import { canAttack, canPass, canCoverCards, canPickup } from "../../utils/gameValidation";
+import { canAttack, canPass, canCoverCards, canCoverPair, canPickup } from "../../utils/gameValidation";
 import { useStyles } from "../../contexts/StyleContext";
 import { useTutorialHint } from "../../contexts/TutorialHintContext";
+import { PLAYER_STATUS, covered, rulesOf, seatKey } from "../../state/view";
 
 // Green glow used by the tutorial to point at the card/button to use next.
 const TUT_GLOW = '0 0 0 3px #2fcf63, 0 0 16px 3px rgba(47,207,99,0.85)';
@@ -44,22 +43,24 @@ const ActionButton: React.FC<ActionButtonProps> = ({ seed, onClick, children }) 
     );
 };
 
-const CardDiv = ({ user_id }: { user_id: string }) => {
-    const { game, localHandOrder } = useServer() as { game: PersonalGame, localHandOrder: Card[] };
+const CardDiv = () => {
+    const { view: game, localHandOrder } = useServer();
     const { selectedCards } = useGame();
     const { draggedCardIndex, isDraggingForGameAction, startCardDrag, isActuallyDragging } = useDrag();
     const styles = useStyles();
     const hint = useTutorialHint();
 
-    if (!game || !game.self) {
+    if (!game || game.mySeat < 0) {
         return <p style={{ color: 'var(--color-text-primary)', fontSize: '18px' }}><Text id="spectating" /></p>;
     }
+    // The page's name for my hand, which flights and the keyboard find it by.
+    const handKey = seatKey(game, game.mySeat);
 
     return (
         <div 
             data-touch-interactive
             data-hand-container
-            data-player-id={user_id}
+            data-player-id={handKey}
             style={{
                 display: 'flex',
                 flexDirection: 'row',
@@ -87,11 +88,11 @@ const CardDiv = ({ user_id }: { user_id: string }) => {
                 return (
                     <CardFace
                         card={card}
-                        playerId={user_id}
+                        owner={game.mySeat}
                         key={'' + card.value + card.suit}
                         data-card-index={index}
                         data-location="hand"
-                        data-player-id={user_id}
+                        data-player-id={handKey}
                         data-card={`${card.suit}-${card.value}`}
                         draggable={true}
                         onMouseDown={(e) => startCardDrag(e, index)}
@@ -108,7 +109,10 @@ const CardDiv = ({ user_id }: { user_id: string }) => {
                             justifyContent: 'center',
                             alignItems: 'center',
                             opacity: (isDragging && !isDraggingForAction) ? 0.3 : 1,
-                            transition: 'all 0.1s ease',
+                            // visibility switches at once: a card a flight carries is hidden
+                            // here (CardFace), and a transition's first frame would still hide
+                            // it after the flight has landed.
+                            transition: 'all 0.1s ease, visibility 0s',
                             transform: isHinted ? 'translateY(-10px)' : undefined,
                             cursor: 'move',
                             userSelect: 'none',
@@ -133,25 +137,23 @@ const Glow = ({ on, children }: { on: boolean; children: React.ReactNode }) => (
 
 export const ActionButtons = () => {
     const { user_id } = useAuth();
-    const { game } = useServer() as { game: PersonalGame };
+    const { view: game } = useServer();
     const { pickup, good, attack, pass, cover } = useAnimation();
     const { selectedCards, setSelectedCards, pressedActions, setActionPressed } = useGame();
     const hint = useTutorialHint();
 
-    const self_index = game?.players.findIndex((player) => player.player_id === user_id) ?? -1;
+    const self_index = game?.mySeat ?? -1;
     const isDefending = game && self_index !== -1 ? game.defender === self_index : false;
 
     // raw "this button is relevant" predicates, ignoring the optimistic pressed
     // flag. The rendered button additionally requires !pressedActions[name], so a
     // press (click OR keyboard) hides it immediately until the server catches up.
+    // Whether Good is offered is the kernel's (client_view_rules).
     //
     // TODO(ios-parity): iMessage board hides Take while cards are selected
     // (defender) and Good while cards are selected (attacker); consider matching
     // here.
-    const rawGood = !!(!isDefending &&
-        (game?.table_battles.length ?? 0) > 0 &&
-        (game?.table_battles.every(battle => battle.defense) ?? false) &&
-        !(game?.good_players?.includes(user_id ?? '') ?? false));
+    const rawGood = !!game && rulesOf(game).canSayGood;
     const rawAttack = !!(game && !isDefending && canAttack(game, selectedCards));
     const rawPass = !!(game && isDefending && canPass(game, selectedCards));
     const rawCover = !!(game && isDefending && canCoverCards(game, selectedCards));
@@ -176,20 +178,23 @@ export const ActionButtons = () => {
         }
     }, [rawGood, rawAttack, rawPass, rawCover, rawPickup, pressedActions, setActionPressed]);
 
-    if (!game || !game.self) {
+    if (!game || game.mySeat < 0) {
         return <div></div>;
     }
 
-    const isOut = game.self.status === PLAYER_STATUS.OUT;
+    const isOut = game.seats[game.mySeat].status === PLAYER_STATUS.OUT;
     if (isOut) {
         return <div></div>;
     }
 
+    // A move spends the selection when it is sent: its cards leave the hand, and a
+    // refused card comes home unselected. Clearing it when the server answers
+    // instead left a refused card selected (the next pick mixed with it and the
+    // Attack button vanished) and wiped a pick made while the move was on its way.
     const handleAttackClick = () => {
         setActionPressed('attack', true);
-        attack(selectedCards).then(() => {
-            setSelectedCards([]);
-        }).catch((e) => {
+        setSelectedCards([]);
+        attack(selectedCards).catch((e) => {
             console.error('Attack failed:', e.message);
             setActionPressed('attack', false);
         });
@@ -197,26 +202,24 @@ export const ActionButtons = () => {
 
     const handlePassClick = () => {
         setActionPressed('pass', true);
-        pass(selectedCards).then(() => {
-            setSelectedCards([]);
-        }).catch((e) => {
+        setSelectedCards([]);
+        pass(selectedCards).catch((e) => {
             console.error('Pass failed:', e.message);
             setActionPressed('pass', false);
         });
     };
 
     const handleCoverClick = () => {
-        const uncoveredBattles = game.table_battles.filter(battle => !battle.defense);
+        const uncoveredBattles = game.battles.filter(battle => !covered(battle));
 
         if (selectedCards.length === 1) {
             const validTarget = uncoveredBattles.find(battle =>
-                canCoverPair(battle.attack, selectedCards[0], game.power_suit)
+                canCoverPair(battle.attack, selectedCards[0], game.powerSuit)
             );
             if (validTarget) {
                 setActionPressed('cover', true);
-                cover([selectedCards[0]], [validTarget.attack]).then(() => {
-                    setSelectedCards([]);
-                }).catch((e) => {
+                setSelectedCards([]);
+                cover([selectedCards[0]], [validTarget.attack]).catch((e) => {
                     console.error('Cover failed:', e.message);
                     setActionPressed('cover', false);
                 });
@@ -224,12 +227,11 @@ export const ActionButtons = () => {
         } else {
             // Use the shared cover resolver (same as DragContext/KeyboardInputHandler)
             // instead of re-implementing the permutation search inline.
-            const mapping = kernelUnambiguousCover(selectedCards, game.table_battles, game.power_suit);
+            const mapping = kernelUnambiguousCover(selectedCards, game.battles, game.powerSuit);
             if (mapping) {
                 setActionPressed('cover', true);
-                cover(mapping.coverCards, mapping.attackCards).then(() => {
-                    setSelectedCards([]);
-                }).catch((e) => {
+                setSelectedCards([]);
+                cover(mapping.coverCards, mapping.attackCards).catch((e) => {
                     console.error('Multi-card cover failed:', e.message);
                     setActionPressed('cover', false);
                 });
@@ -244,7 +246,7 @@ export const ActionButtons = () => {
             data-touch-interactive
             style={{ display: 'flex', flexDirection: 'column', position: 'absolute', bottom: 'max(10px, env(safe-area-inset-bottom))', left: '0px', right: '0px', justifyContent: 'end', alignItems: 'center', height: '200px' }}
         >
-            {game && game.self && (
+            {game && game.mySeat >= 0 && (
                 <div 
                     data-touch-interactive
                     style={{
@@ -325,7 +327,8 @@ export const ActionButtons = () => {
                 </div>
             )}
 
-            {user_id && <CardDiv user_id={user_id} />}
+            {/* a signed-in watcher is told they are watching; a seat holds a hand, signed in or not (the tutorial) */}
+            {(user_id || (game && game.mySeat >= 0)) && <CardDiv />}
         </div>
     );
 };

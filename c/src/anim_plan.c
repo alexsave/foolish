@@ -4,6 +4,7 @@
 // noted where it agrees.
 
 #include "anim_plan.h"
+#include <string.h>  // memset, for the frame sample's zero-fill
 
 // ---- small helpers --------------------------------------------------------
 
@@ -30,6 +31,14 @@ static void keyset_add_card(unsigned char *s, Card c) {
 static int keyset_has_card(const unsigned char *s, Card c) {
     int k = anim_card_key(c);
     return (k >= 0 && k < KEYSET_N) ? s[k] : 0;
+}
+
+// One dense card id as its bit in the u64 sets this file speaks in. Up here
+// rather than beside the veil it was written for: the plan's per-step reveal
+// set is the same bit, and a helper declared below its first caller does not
+// compile.
+static uint64_t ap_bit(int id) {
+    return (id >= 0 && id < 52) ? ((uint64_t)1 << id) : 0;
 }
 
 // ---- timing policy --------------------------------------------------------
@@ -174,7 +183,11 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
     // wasm32; the alternative was static scratch, and msg.wasm's linear memory
     // is pinned to the page.
     {
-        AnimPreEvent pre_evs[ANIM_MAX_STEPS];
+        // ZEROED WHOLE, not up to n_events. Only the first n_events entries
+        // are ever read, but the array crosses into anim_pre_stream_table as
+        // one object and gcc says so (-Wmaybe-uninitialized); an array a rule
+        // walks should not have an undefined tail for anyone to be right about.
+        AnimPreEvent pre_evs[ANIM_MAX_STEPS] = {0};
         unsigned char sweep_ids[ANIM_MAX_CARDS];
         int n_sweep_ids = 0, sweep_at = -1;
         for (int i = 0; i < n_events; i++) {
@@ -265,6 +278,11 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
         // Veil: a real card landing in a hand or on the table is in transit until
         // this step; hide it so it flies rather than popping in. Masked backs and
         // cards headed to the discard pile (no rendered identity) are not veiled.
+        //
+        // The bit goes on THIS step's `reveals` in the same pass, off the same
+        // dedup: the step that first veils a card is the step that lifts it, so
+        // a second walk could only ever disagree.
+        st->reveals = 0;
         if ((ev->to == ANIM_LOC_HAND || ev->to == ANIM_LOC_TABLE) && !ev->mask_cards
             && ev->cards && ev->n_cards > 0) {
             for (int k = 0; k < ev->n_cards; k++) {
@@ -273,6 +291,7 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
                 if (out->n_veil >= ANIM_MAX_VEIL) return ANIM_ECAP;
                 veil_seen[id] = 1;
                 out->veil_ids[out->n_veil++] = (unsigned char)id;
+                st->reveals |= ap_bit(id);
             }
         }
     }
@@ -281,6 +300,82 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
     out->total_ms = n_events > 0
         ? out->steps[n_events - 1].start_ms + out->steps[n_events - 1].duration_ms
         : 0;
+    return ANIM_EOK;
+}
+
+// ---- the plan, re-asked ---------------------------------------------------
+//
+// ONE PASS OVER THE STEPS, and no state kept between calls. A frame is a pure
+// function of (plan, now_ms), which is the whole property that lets a host
+// re-ask instead of cancelling a timer chain: two calls with the same clock
+// cannot disagree, and a call with a later clock needs nothing the earlier one
+// left behind.
+//
+// A STEP HAS LANDED AT start_ms + duration_ms, inclusive. The instant of the
+// landing belongs to the landed board and not to the flight, because that is
+// what the web's setTimeout callback did - it committed the board and cleared
+// the flight in one commit - and a frame that still drew the flight there
+// would show the card twice, on the board it landed on and in the air.
+int anim_plan_at(const AnimPlan *plan, int now_ms, AnimFrame *out) {
+    if (!plan || !out || now_ms < 0) return ANIM_EBADARG;
+    if (plan->n_steps < 0 || plan->n_steps > ANIM_MAX_STEPS) return ANIM_EBADARG;
+
+    const int n = plan->n_steps;
+    // The badges open on the FREEZE and walk forward one landing at a time,
+    // which is the same board anim_build_plan already put in `pre`. Nothing is
+    // re-derived here; the plan is read.
+    out->n_players = plan->pre.n_players;
+    out->deck = plan->pre.deck;
+    out->discard = plan->pre.discard;
+    out->flipped = plan->pre.flipped;
+    for (int s = 0; s < MAX_PLAYERS; s++)
+        out->hand[s] = (s < plan->pre.n_players) ? plan->pre.hand[s] : 0;
+
+    out->step = ANIM_STEP_NONE;
+    out->elapsed_ms = 0;
+    out->in_flight_from_deck = 0;
+    out->in_flight_to_flipped = 0;
+    out->landed = 0;
+    out->next_ms = ANIM_NEVER;
+    out->veiled = 0;
+
+    for (int i = 0; i < n; i++) {
+        const AnimPlanStep *st = &plan->steps[i];
+        const int land = st->start_ms + st->duration_ms;
+        if (now_ms >= land) {
+            // Landed: its own board is what shows, and its veil is lifted.
+            out->landed = i + 1;
+            out->deck = st->deck;
+            out->discard = st->discard;
+            for (int s = 0; s < plan->pre.n_players && s < MAX_PLAYERS; s++)
+                out->hand[s] = st->hand[s];
+            continue;
+        }
+        // The first step that has not landed decides the rest of the answer:
+        // it is either in flight or still ahead of us, and either way nothing
+        // after it can be playing (the steps are laid out in order).
+        out->veiled |= st->reveals;
+        if (out->next_ms == ANIM_NEVER) {
+            if (now_ms >= st->start_ms) {
+                out->step = i;
+                out->elapsed_ms = now_ms - st->start_ms;
+                out->in_flight_from_deck = st->in_flight_from_deck;
+                out->in_flight_to_flipped = st->in_flight_to_flipped;
+                out->next_ms = land;          // the landing is the next change
+            } else {
+                out->next_ms = st->start_ms;  // we are in the gap before it
+            }
+        }
+    }
+    // THE TRUMP IS THE FREEZE'S FOR THE WHOLE SEQUENCE, and deliberately not
+    // walked forward: a step carries no trump of its own (AnimPlanStep holds
+    // three scalars and a row, never the stock's other half), and the one
+    // event that hands the trump out cannot be told from an ordinary draw by
+    // anything the plan holds - the same blind spot anim_build_plan's header
+    // describes about undoing a refill. `pre.flipped` is what shows while the
+    // sequence plays, which is the rule the owner stated at 1.1(55); once
+    // `done`, the caller has the final board and reads the trump off that.
+    out->done = (out->landed >= n) ? 1 : 0;
     return ANIM_EOK;
 }
 
@@ -959,6 +1054,35 @@ int anim_conflict_reversal(const AnimConflictMotion *motions, int n_motions,
         out->verdicts[i] = (unsigned char)v;
     }
     out->n_verdicts = n_motions;
+    return anim_reversal_order(out->verdicts, n_motions, group_sizes, n_groups, out);
+}
+
+int anim_reversal_order(const unsigned char *verdicts, int n_motions,
+                        const int *group_sizes, int n_groups,
+                        AnimConflictPlan *out) {
+    if (!out) return ANIM_EBADARG;
+    if (n_motions < 0 || n_motions > ANIM_MAX_CONFLICT_MOTIONS) return ANIM_ECAP;
+    if (n_groups < 0 || n_groups > ANIM_MAX_CONFLICT_GROUPS) return ANIM_ECAP;
+    if (n_motions > 0 && !verdicts) return ANIM_EBADARG;
+    if (n_groups > 0 && !group_sizes) return ANIM_EBADARG;
+
+    int total = 0;
+    for (int g = 0; g < n_groups; g++) {
+        if (group_sizes[g] < 0) return ANIM_EBADARG;
+        total += group_sizes[g];
+        if (total > n_motions) return ANIM_EBADARG;
+    }
+    if (total != n_motions) return ANIM_EBADARG;
+
+    // A caller that already ran anim_conflict_reversal hands back the plan's OWN
+    // verdict array, so this is often a copy onto itself - which is exactly what
+    // it does, element by element in ascending order, and costs nothing to
+    // allow. There is deliberately no aliasing guard: one was written and
+    // mutation-checked away, because a self-copy has nothing to prevent.
+    for (int i = 0; i < n_motions; i++) out->verdicts[i] = verdicts[i];
+    out->n_verdicts = n_motions;
+    out->n_steps = 0;
+    out->n_order = 0;
 
     // The starting index of each group, so the walk can run backwards.
     int start[ANIM_MAX_CONFLICT_GROUPS];
@@ -985,10 +1109,6 @@ int anim_conflict_reversal(const AnimConflictMotion *motions, int n_motions,
 // A dense id as a bit. An id outside the deck - a viewer-masked back, or a
 // corrupt byte - contributes nothing, which is the same thing the conflict
 // model says about it.
-static uint64_t ap_bit(int id) {
-    return (id >= 0 && id < 52) ? ((uint64_t)1 << id) : 0;
-}
-
 uint64_t anim_veil_veiled(uint64_t hidden, uint64_t pending_open,
                           int has_hand_before, uint64_t hand_before,
                           int has_my_hand, uint64_t my_hand) {
@@ -1135,6 +1255,62 @@ int anim_hand_laid_out(const unsigned char *cards, int n_cards, uint64_t deferre
         seen |= bit;
     }
     for (int i = 0; i < n_cards; i++) {
+        const uint64_t bit = ap_bit(cards[i]);
+        if (!bit || !(live & bit) || (seen & bit)) continue;
+        if (w >= cap) return ANIM_ECAP;
+        out[w++] = cards[i];
+        seen |= bit;
+    }
+    return w;
+}
+
+// The same rule with the one thing identities cannot carry: a slot holding a
+// card nobody can name. See the header for why the web had three of these.
+int anim_hand_laid_out_masked(const unsigned char *cards, int n_cards, uint64_t deferred,
+                              const unsigned char *order, int n_order,
+                              unsigned char *out, int cap) {
+    if (!out || n_cards < 0 || n_order < 0) return ANIM_EBADARG;
+    if (n_cards > 0 && !cards) return ANIM_EBADARG;
+    if (n_order > 0 && !order) return ANIM_EBADARG;
+
+    // The live known ids, exactly as the dense-id rule reads them, plus a
+    // COUNT of the backs - which is all a back can be reconciled by, having no
+    // identity to be stale about.
+    uint64_t live = 0;
+    int backs = 0;
+    for (int i = 0; i < n_cards; i++) {
+        if (cards[i] == ANIM_TABLE_UNKNOWN) { backs++; continue; }
+        const uint64_t bit = ap_bit(cards[i]);
+        if (bit && !(deferred & bit)) live |= bit;
+    }
+
+    uint64_t seen = 0;
+    int left = backs, w = 0;
+    for (int i = 0; i < n_order; i++) {
+        if (order[i] == ANIM_TABLE_UNKNOWN) {
+            // One back per back the hand really holds; an order asking for more
+            // is a memory of a hand that is gone, and the extras fall out here
+            // rather than drawing a card that is not there.
+            if (left <= 0) continue;
+            if (w >= cap) return ANIM_ECAP;
+            out[w++] = ANIM_TABLE_UNKNOWN;
+            left--;
+            continue;
+        }
+        const uint64_t bit = ap_bit(order[i]);
+        if (!bit || !(live & bit) || (seen & bit)) continue;
+        if (w >= cap) return ANIM_ECAP;
+        out[w++] = order[i];
+        seen |= bit;
+    }
+    for (int i = 0; i < n_cards; i++) {
+        if (cards[i] == ANIM_TABLE_UNKNOWN) {
+            if (left <= 0) continue;
+            if (w >= cap) return ANIM_ECAP;
+            out[w++] = ANIM_TABLE_UNKNOWN;
+            left--;
+            continue;
+        }
         const uint64_t bit = ap_bit(cards[i]);
         if (!bit || !(live & bit) || (seen & bit)) continue;
         if (w >= cap) return ANIM_ECAP;

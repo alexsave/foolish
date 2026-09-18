@@ -20,8 +20,29 @@ public enum EngineError: Error, Equatable, Sendable {
     case unknown(Int)
 }
 
+/// What a server response envelope says, once the kernel has read it: the
+/// board as this viewer sees it, the table's identity, and the legal menu for
+/// the seat. Everything in it comes off ONE adopt, so no two fields can
+/// describe two different payloads.
+public struct AdoptedEnvelope: Sendable {
+    public let view: GameView
+    /// `games.id` - the client's handle on the game, off the roster trailer.
+    public let gameId: String
+    /// The viewer's seat, or -1 for a spectator.
+    public let seat: Int
+    /// The committed version this envelope is of.
+    public let version: Int
+    /// The seat's legal moves, PACKED - the form a board passes on (PlayWire
+    /// takes the menu as bytes). Empty for a spectator.
+    public let legalPacked: Data
+}
+
 public actor EngineC {
-    public init() {}
+    // The generated readers in sdk/swift/gen are byte offsets into the kernel's
+    // structs, and the kernel is a PREBUILT library: if the two were generated
+    // from different headers nothing says so at compile time. KernelLayout does,
+    // here, before the first call reads a single field. See KernelLayout.swift.
+    public init() { _ = KernelLayout.verified }
 
     // ios_api.h error codes, restated so we never depend on how C macros import.
     @_spi(FoolishBots) public static let eOK: Int32 = 0
@@ -100,11 +121,27 @@ public actor EngineC {
     // that links FoolishKit - the iMessage extension included. See
     // sdk/swift/bots/EngineC+Bots.swift.
 
-    // MARK: online packed-view decode (§16.D4)
+    // MARK: online envelopes (§16.D4)
 
-    // A server masked-view blob decodes to a GameView in pure Swift via
-    // MaskedView.decode (see PackedGame) — the packed→JSON bridge that used to
-    // live here (fio_view_from_packed_json) is gone with the JSON surface.
+    /// A server response envelope, ADOPTED AND READ IN ONE ACTOR CALL: the
+    /// board, the table's identity and the seat's legal menu, all off the one
+    /// client slot the kernel keeps.
+    ///
+    /// One call because it is one slot. The envelope used to be taken apart in
+    /// Swift - the header by offset, the roster by its own byte walk, the names
+    /// merged onto the board afterwards - and then the blob was handed back
+    /// DOWN for the legal menu, from a different actor hop. Everything the
+    /// kernel holds between two awaits is a thing another caller can move
+    /// underneath it (see `resealFromBase`, and the resident-slot rule), so the
+    /// adopt and every read of what it produced happen here, together.
+    public func adoptEnvelope(_ bytes: Data) -> AdoptedEnvelope? {
+        guard MaskedView.envelope(bytes) != nil, let t = MaskedView.table() else { return nil }
+        let menu = t.mySeat >= 0
+            ? ((try? json { fio_legal_from_view(Int32(t.mySeat), $0, $1) }) ?? MoveWire.emptyMenu)
+            : MoveWire.emptyMenu
+        return AdoptedEnvelope(view: GameView(kernel: t), gameId: t.gameId, seat: t.mySeat,
+                               version: t.version, legalPacked: menu)
+    }
 
     /// Legal moves for `seat` computed from a server packed masked-view blob —
     /// online enable-states, kernel-computed (§3). The PACKED form is what the
@@ -155,15 +192,15 @@ public actor EngineC {
 
     // MARK: typed decoders (convenience)
 
+    /// The resident board as `viewer` sees it. No bytes cross: the kernel masks
+    /// its own game and reads it back through the client slot (MaskedView).
     public func state(viewer: Int) throws -> GameView {
-        let data = try json { fio_state_packed(Int32(viewer), $0, $1) }
-        guard let v = MaskedView.decode(data, viewer: viewer) else { throw EngineError.unknown(-1) }
+        guard let v = MaskedView.resident(viewer: viewer) else { throw EngineError.unknown(-1) }
         return v
     }
     public func publicState() throws -> GameView {
         // Spectator view: VIEW_SPECTATOR sentinel (-1) unmasks nothing.
-        let data = try json { fio_state_packed(Int32(-1), $0, $1) }
-        guard let v = MaskedView.decode(data, viewer: -1) else { throw EngineError.unknown(-1) }
+        guard let v = MaskedView.resident(viewer: -1) else { throw EngineError.unknown(-1) }
         return v
     }
     public func legalMoves(seat: Int) throws -> [Move] {

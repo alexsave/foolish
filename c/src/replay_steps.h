@@ -74,6 +74,23 @@ void replay_action_apply(Game *g, const ReplayAction *a);
 int replay_steps_v6(const unsigned char *code, int code_len, int viewer,
                     ReplayHeader *hdr, EvwSink sink, void *ctx);
 
+// WHERE ONE CHUNK'S FRAMES LIE. The frames themselves are opaque to a host - it
+// forwards each one to the same decoder live play feeds - but their BOUNDARIES
+// are a layout, and a host used to find them by walking the u16 length prefix in
+// front of each. It reads them here instead, through a generated reader.
+//
+// A chunk that produced more frames than this holds is reported short, with
+// `next_step` set to the first frame left out: the caller's next chunk starts
+// there, so nothing is lost and no chunk is ever empty.
+#define REPLAY_FRAME_INDEX_MAX 128
+
+typedef struct {
+    int32_t n;           // frames indexed, 0..REPLAY_FRAME_INDEX_MAX
+    int32_t next_step;   // the step the next chunk starts at (== the step count when done)
+    int32_t off[REPLAY_FRAME_INDEX_MAX];   // each frame's offset in the frames buffer
+    int32_t len[REPLAY_FRAME_INDEX_MAX];   // and its length in bytes
+} ReplayFrameIndex;
+
 // Serialize a v6 replay as packed evwire FRAMES — one per step (the deal, then
 // one per action), which is exactly what live play broadcasts and what the web
 // already decodes and renders. Chunked: a whole game's frames (each carrying a
@@ -121,6 +138,70 @@ int replay_steps_count_v6(const unsigned char *code, int code_len,
 #define RS_SEAT_NONE    0xFF
 int replay_steps_index_v6(const unsigned char *code, int code_len,
                           ReplayHeader *hdr, unsigned char *out, int out_cap);
+
+// ---------- a code at a glance ----------------------------------------------
+//
+// What a code says about its game as a whole, without playing it back: how many
+// sat, the trump and the opening seat, who was the fool and in what order the
+// others went out, and how many moves the extras' gaps time. A screen that lists
+// games, or reads a code's extras beside it, reads this rather than the decoder's
+// bytes (docs/C_GAME_SHAPE_MIGRATION.md Phase 7). It is the decoder's whole
+// header, so no host reads replay_decode's header bytes either.
+typedef struct {
+    uint8_t version;                    // the format version the code was cut under
+    Card    trump;                      // the trump card (the flipped card, or the one drawn)
+    int16_t discard_pile_length;        // cards discarded by the end of the stream
+    int8_t  num_players;
+    int8_t  power_suit;
+    int8_t  first_attacker;
+    int8_t  fool;                       // -1 for a code cut mid-game
+    int8_t  num_eliminated;
+    int8_t  elimination[MAX_PLAYERS];   // seats, in the order they went out; the fool is not one
+    int16_t moves;                      // ATTACK, COVER, PASS and PICKUP: one gap each in the extras
+} ReplaySummary;
+
+// Fills `out` from `code`: REPLAY_EOK or -REPLAY_E*.
+int replay_summary_v6(const unsigned char *code, int code_len, ReplaySummary *out);
+
+// ---------- a recorded decision, as an analyser reads it -------------------
+//
+// The Oracle deliberates a decision of a replay as the seat that made it
+// (docs/C_GAME_SHAPE_MIGRATION.md Phase 7). What it needs are two things only
+// the kernel can say honestly about a code: the board that seat decided on, as
+// that seat saw it, and the public history before the move. Both are bytes the
+// analyser's module imports unchanged (wasm_import_state masked,
+// wasm_import_logs); the host reads no byte of either.
+
+// The most bytes a board in the state_put layout (view.h) can take.
+#define RS_BOARD_MAX (17 + MAX_DECK + 1 + 2 * MAX_BATTLES \
+                      + MAX_PLAYERS * (3 + MAX_HAND_SIZE) + 1 + MAX_PLAYERS)
+
+// The board action step `step` (1 .. steps - 1) was decided on - the board step
+// `step - 1` left - as `viewer` (a seat of the game, or VIEW_SPECTATOR) sees it,
+// in the state_put layout a masked import reads: the viewer's hand real, every
+// card the viewer cannot see written hidden. Returns bytes written;
+// -REPLAY_EINPUT for a step that is not an action or a viewer that is not a
+// seat, -REPLAY_ECAP when `out_cap` is below RS_BOARD_MAX, or -REPLAY_E*.
+int replay_steps_board_v6(const unsigned char *code, int code_len, int step, int viewer,
+                          unsigned char *out, int out_cap);
+
+// The public session log before action step `step`'s move, as an analyser's
+// memory: replay_decode's log stream up to the record of that move, in the log
+// import layout (u16 LE count, then per record u8 log_type, u8 seat,
+// u8 defender_index, u8 n_pairs, n_pairs x (u8 primary, u8 target)), every
+// LOG_DRAW's card written hidden (a drawn card's identity is nobody's public
+// knowledge, view.h log_record_put) and at most MAX_LOGS records, keep-first.
+//
+// The decoded log stream is not the step stream (see replay_steps_index_v6), but
+// the moves are one record each in both, in the same order: every ATTACK, COVER,
+// PASS and PICKUP step is the next record of those four types, and the pair must
+// agree on the type and the seat. A step with no record of its own (a GOOD, a
+// ROUND_END), a step past the records, or a pair that disagrees has no memory
+// this can vouch for: -REPLAY_EINPUT. `out` also holds the decode while this
+// runs, so `out_cap` must fit the whole decoded stream. Returns bytes written,
+// or -REPLAY_E*.
+int replay_steps_memory_v6(const unsigned char *code, int code_len, int step,
+                           unsigned char *out, int out_cap);
 
 // The game the last successful replay_steps_v6 rebuilt — the state its code
 // decodes TO, valid until the next call. A whole-game code leaves the finished

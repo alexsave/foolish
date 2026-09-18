@@ -47,7 +47,6 @@ static int play_one_dump(uint32_t seed, int n_players, int max_moves, FILE *out)
     for (int i = 0; i < n_players; i++) {
         g.players[i].status = PLAYER_STATUS_READY;
         g.players[i].strategy_key = (int8_t)STRAT_CORDITE;
-        snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
     }
     start_game(&g);
 

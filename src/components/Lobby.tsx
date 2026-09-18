@@ -21,9 +21,8 @@ import { useServer } from "../contexts/ServerContext";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useMemo } from "react";
 import { WEBSITE_DOMAIN } from "../constants/constants";
-import { useAuth } from "../contexts/AuthContext";
 import { QRCodeSVG } from "qrcode.react";
-import { PLAYER_STATUS, PublicPlayer, GAME_STATUS } from "@api/core/types.ts";
+import { PLAYER_STATUS, GAME_STATUS, type ViewSeat } from "../state/view";
 import supabase from "../backend/Connector";
 import { usePreventScroll } from "../hooks/usePreventScroll";
 import { MAX_PLAYERS } from "@api/core/constants.ts";
@@ -43,11 +42,13 @@ interface BotOption {
 }
 
 interface PlayerCardProps {
-    player: PublicPlayer;
+    player: ViewSeat;
     index: number;
     isDragging: boolean;
     isDropTarget: boolean;
     pendingReady: boolean;
+    /** This card is the viewer's own seat. */
+    isSelf: boolean;
     textureUrl: string | null;
     useWoodTexture: boolean;
 }
@@ -56,14 +57,14 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
     player,
     isDragging,
     pendingReady,
+    isSelf,
     textureUrl,
     useWoodTexture,
 }) => {
-    const { user_id } = useAuth();
-    const playerSeed = seedFromString(player.player_id);
-    const flip = flipFromString(player.player_id);
+    const playerSeed = seedFromString(player.id);
+    const flip = flipFromString(player.id);
     const playerCardStyle = getTextureStyle(textureUrl, !useWoodTexture, playerSeed);
-    const isReady = player.status !== PLAYER_STATUS.IDLE || (player.player_id === user_id && pendingReady);
+    const isReady = player.status !== PLAYER_STATUS.IDLE || (isSelf && pendingReady);
 
     return (
         <div className="player-card">
@@ -81,8 +82,8 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
                 style={{ pointerEvents: isDragging ? 'auto' : 'none' }}
             />
             <p className="player-card__name">
-                {player.is_ai && <><SovietIcon name="bot" size={14} /> </>}
-                {player.name}
+                {player.isAi && <><SovietIcon name="bot" size={14} /> </>}
+                {botDisplayName(player.name)}
             </p>
             <div className="player-card__status">
                 <SovietIcon name={isReady ? 'ready' : 'not-ready'} size={16} />
@@ -93,9 +94,12 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
 
 export const Lobby = () => {
     const game_id = useParams<{ game_id: string }>().game_id?.toLowerCase();
-    const { game, updateGameName, rearrangePlayer, addBot, exitGame, joinGame, startGame } = useServer();
+    const { view: game, updateGameName, rearrangePlayer, addBot, exitGame, joinGame, startGame } = useServer();
     const router = useRouter();
-    const { user_id } = useAuth();
+    // The viewer's own seat, by its player id: the lobby list is the viewer's
+    // local order (seats dragged around before the server hears of it), so a
+    // seat is found by id rather than by index.
+    const mySeatId = game && game.mySeat >= 0 ? game.seats[game.mySeat]?.id ?? null : null;
     const { t } = useLocalization();
     const { woodUrl, concreteUrl } = useTexture();
     const styles = useStyles();
@@ -111,7 +115,7 @@ export const Lobby = () => {
     const [editingName, setEditingName] = useState('');
     const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
     const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-    const [localPlayerOrder, setLocalPlayerOrder] = useState<PublicPlayer[]>([]);
+    const [localPlayerOrder, setLocalPlayerOrder] = useState<readonly ViewSeat[]>([]);
     const [isDragging, setIsDragging] = useState(false);
     const [hasSwapped, setHasSwapped] = useState(false);
     const [isDirty, setIsDirty] = useState(false);
@@ -136,11 +140,11 @@ export const Lobby = () => {
     // those added optimistically this session (server not yet caught up).
     const selectableBots = useMemo(() => {
         const taken = new Set<string>([
-            ...(game?.players ?? []).filter(p => p.is_ai).map(p => p.player_id),
+            ...(game?.seats ?? []).filter(p => p.isAi).map(p => p.id),
             ...pendingBotRealIds,
         ]);
         return allBots.filter(b => !taken.has(b.id));
-    }, [allBots, game?.players, pendingBotRealIds]);
+    }, [allBots, game?.seats, pendingBotRealIds]);
 
     const rearrangeTimerRef = useRef<NodeJS.Timeout | null>(null);
     const pendingReadyRef = useRef<boolean>(false);
@@ -150,23 +154,23 @@ export const Lobby = () => {
     const addBotFnRef = useRef<((bot?: BotOption) => void) | null>(null);
 
     useEffect(() => {
-        if (game?.players) {
+        if (game?.seats) {
             if (localPlayerOrder.length === 0) {
-                setLocalPlayerOrder(game.players);
+                setLocalPlayerOrder(game.seats);
                 return;
             }
-            
-            const serverOrderIds = game.players.map(p => p.player_id).join(',');
+
+            const serverOrderIds = game.seats.map(p => p.id).join(',');
             const localNonOptimisticIds = localPlayerOrder
-                .filter(p => !optimisticBotIds.has(p.player_id))
-                .map(p => p.player_id)
+                .filter(p => !optimisticBotIds.has(p.id))
+                .map(p => p.id)
                 .join(',');
             const hasLocalChanges = serverOrderIds !== localNonOptimisticIds;
-            
-            const serverBotIds = new Set(game.players.filter(p => p.is_ai).map(p => p.player_id));
+
+            const serverBotIds = new Set(game.seats.filter(p => p.isAi).map(p => p.id));
             const localNonOptimisticBotIds = localPlayerOrder
-                .filter(p => p.is_ai && !optimisticBotIds.has(p.player_id))
-                .map(p => p.player_id);
+                .filter(p => p.isAi && !optimisticBotIds.has(p.id))
+                .map(p => p.id);
             
             if (serverBotIds.size > localNonOptimisticBotIds.length && optimisticBotIds.size > 0) {
                 const tempBotIds = Array.from(optimisticBotIds);
@@ -182,25 +186,25 @@ export const Lobby = () => {
                     }
                     return next;
                 });
-                setLocalPlayerOrder(game.players);
+                setLocalPlayerOrder(game.seats);
                 return;
             }
-            
+
             const isCompletelyIdle = !isDragging && !hasPendingRearrange && !isRearranging && !pendingReady && !hasLocalChanges && optimisticBotIds.size === 0;
-            
+
             if (isCompletelyIdle) {
-                setLocalPlayerOrder(game.players);
+                setLocalPlayerOrder(game.seats);
             }
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [game?.players, isDragging, hasPendingRearrange, isRearranging, pendingReady, localPlayerOrder.length, optimisticBotIds]);
+    }, [game?.seats, isDragging, hasPendingRearrange, isRearranging, pendingReady, localPlayerOrder.length, optimisticBotIds]);
 
     useEffect(() => {
         pendingReadyRef.current = pendingReady;
     }, [pendingReady]);
 
     useEffect(() => {
-        setLocalPlayerOrder(game?.players ?? []);
+        setLocalPlayerOrder(game?.seats ?? []);
         setIsDirty(false);
         setHasSwapped(false);
         setPendingReady(false);
@@ -214,7 +218,7 @@ export const Lobby = () => {
             setHasPendingRearrange(false);
         }
         setIsRearranging(false);
-    }, [game_id, game?.players]);
+    }, [game_id, game?.seats]);
 
     useEffect(() => {
         return () => {
@@ -332,7 +336,7 @@ export const Lobby = () => {
 
     const handleStartEditing = () => {
         setIsEditingName(true);
-        setEditingName(game.name);
+        setEditingName(game.title);
     };
 
     const handleSaveName = () => {
@@ -342,7 +346,7 @@ export const Lobby = () => {
             setEditingName('');
             return;
         }
-        if (trimmedName && trimmedName !== game.name) {
+        if (trimmedName && trimmedName !== game.title) {
             updateGameName(game_id!, trimmedName).catch(console.error);
         }
         setIsEditingName(false);
@@ -364,13 +368,13 @@ export const Lobby = () => {
         }
     };
 
-    const scheduleRearrangeUpdate = (newOrder: PublicPlayer[]) => {
+    const scheduleRearrangeUpdate = (newOrder: readonly ViewSeat[]) => {
         if (rearrangeTimerRef.current) {
             clearTimeout(rearrangeTimerRef.current);
         }
 
-        const originalPlayers = game!.players;
-        const playerIds = newOrder.map(player => player.player_id);
+        const originalPlayers = game!.seats;
+        const playerIds = newOrder.map(player => player.id);
         setHasPendingRearrange(true);
 
         rearrangeTimerRef.current = setTimeout(() => {
@@ -403,16 +407,17 @@ export const Lobby = () => {
         if (!game_id) return;
 
         // Use the real bot id as the optimistic id when we know it (picker), so the
-        // card's React key — and thus its texture seed (seedFromString(player_id)) —
+        // card's React key - and thus its texture seed (seedFromString(its id)) -
         // stays identical once the server confirms: no plank-texture pop on the
         // red→green switch. The random fallback has no id yet, so it keeps a temp id.
         const optimisticId = bot ? bot.id : `temp-bot-${Date.now()}`;
-        const optimisticBot: PublicPlayer = {
-            player_id: optimisticId,
+        const optimisticBot: ViewSeat = {
+            id: optimisticId,
             name: bot ? bot.nickname : '',
             status: PLAYER_STATUS.IDLE,
-            is_ai: true,
-            hand_length: 0
+            isAi: true,
+            handCount: 0,
+            awaitingAttack: false,
         };
 
         setOptimisticBotIds(prev => new Set(prev).add(optimisticId));
@@ -431,7 +436,7 @@ export const Lobby = () => {
                 next.delete(bot.id);
                 return next;
             });
-            setLocalPlayerOrder(prev => prev.filter(p => p.player_id !== optimisticId));
+            setLocalPlayerOrder(prev => prev.filter(p => p.id !== optimisticId));
         });
     };
     // Keep the deferred-add effect pointed at the current handleAddBot closure.
@@ -439,17 +444,17 @@ export const Lobby = () => {
 
     const handleRemovePlayer = (playerId: string, isBot: boolean) => {
         if (!game_id) return;
-        setLocalPlayerOrder(prev => prev.filter(p => p.player_id !== playerId));
+        setLocalPlayerOrder(prev => prev.filter(p => p.id !== playerId));
         exitGame(game_id, isBot ? playerId : undefined, isBot ? undefined : playerId).catch(console.error);
     };
 
     const handleReadyClick = () => {
         setLocalPlayerOrder(prev => prev.map(p => 
-            p.player_id === user_id ? { ...p, status: PLAYER_STATUS.READY } : p
+            p.id === mySeatId ? { ...p, status: PLAYER_STATUS.READY } : p
         ));
-        
-        const serverOrderIds = game!.players.map(p => p.player_id).join(',');
-        const localOrderIds = localPlayerOrder.map(p => p.player_id).join(',');
+
+        const serverOrderIds = game!.seats.map(p => p.id).join(',');
+        const localOrderIds = localPlayerOrder.map(p => p.id).join(',');
         const hasLocalChanges = serverOrderIds !== localOrderIds;
         
         setPendingReady(true);
@@ -504,7 +509,7 @@ export const Lobby = () => {
                 ref={inputRef}
                 className={`lobby__name-input ${isEditingName ? 'lobby__name-input--editing' : ''}`}
                 type="text"
-                value={isEditingName ? editingName : game.name}
+                value={isEditingName ? editingName : game.title}
                 onChange={(e) => isEditingName && setEditingName(e.target.value)}
                 onBlur={isEditingName ? handleSaveName : undefined}
                 onKeyDown={handleKeyDown}
@@ -522,14 +527,17 @@ export const Lobby = () => {
             </div>
             
             <div className="lobby__players">
-                {localPlayerOrder.map((player: PublicPlayer, index: number) => {
-                    const showExitButton = game.status === GAME_STATUS.WAITING;
-                    const showRemoveBotButton = !!(player.is_ai && game.status === GAME_STATUS.WAITING && game.self);
+                {localPlayerOrder.map((player: ViewSeat, index: number) => {
+                    // Leaving and kicking are for people seated at the lobby (the
+                    // server refuses anyone else); a spectator gets the join button.
+                    const seated = game.mySeat >= 0;
+                    const showExitButton = game.status === GAME_STATUS.WAITING && seated;
+                    const showRemoveBotButton = !!(player.isAi && game.status === GAME_STATUS.WAITING && seated);
                     const showXButton = showExitButton || showRemoveBotButton;
 
                     return (
-                        <div 
-                            key={player.player_id}
+                        <div
+                            key={player.id}
                             className={`lobby__player-wrapper ${draggedIndex === index ? 'lobby__player-wrapper--dragging' : ''}`}
                             data-player-index={index}
                             onMouseDown={(e) => handleDragStart(e, index)}
@@ -541,6 +549,7 @@ export const Lobby = () => {
                                 isDragging={draggedIndex === index}
                                 isDropTarget={dragOverIndex === index}
                                 pendingReady={pendingReady}
+                                isSelf={player.id === mySeatId}
                                 textureUrl={textureUrl}
                                 useWoodTexture={useWoodTexture}
                             />
@@ -549,10 +558,10 @@ export const Lobby = () => {
                                     className="btn-remove-player"
                                     onClick={(e) => {
                                         e.stopPropagation();
-                                        if (showExitButton && game.players.length === 1) {
+                                        if (showExitButton && game.seats.length === 1) {
                                             router.push('/dashboard');
                                         }
-                                        handleRemovePlayer(player.player_id, showRemoveBotButton);
+                                        handleRemovePlayer(player.id, showRemoveBotButton);
                                     }}
                                     style={useWoodTexture ? buttonTextureStyle : undefined}
                                     title={showRemoveBotButton ? t('remove_bot') : t('exit_game')}
@@ -565,7 +574,7 @@ export const Lobby = () => {
                 })}
             </div>
             
-            {game.status === GAME_STATUS.WAITING && game.self && localPlayerOrder.length < MAX_PLAYERS && (
+            {game.status === GAME_STATUS.WAITING && game.mySeat >= 0 && localPlayerOrder.length < MAX_PLAYERS && (
                 <div className="lobby__add-bot-row">
                     {selectableBots.length > 1 && (
                         <button
@@ -608,7 +617,7 @@ export const Lobby = () => {
                 </div>
             )}
             
-            {game.status === GAME_STATUS.WAITING && !game.self && game.players.length < MAX_PLAYERS && (
+            {game.status === GAME_STATUS.WAITING && game.mySeat < 0 && game.seats.length < MAX_PLAYERS && (
                 <div className="lobby__join-section">
                     <button 
                         className="btn-wood btn-wood--md"
@@ -620,7 +629,7 @@ export const Lobby = () => {
                 </div>
             )}
             
-            {game.status === GAME_STATUS.WAITING && game.self && !pendingReady && (
+            {game.status === GAME_STATUS.WAITING && game.mySeat >= 0 && !pendingReady && (
                 <div className="btn-ready" onClick={handleReadyClick} style={useWoodTexture ? buttonTextureStyle : undefined}>
                     {useWoodTexture && <div className="btn-ready__texture" style={buttonTextureStyle} />}
                     <p className="btn-ready__text"><Text id="ready" /></p>

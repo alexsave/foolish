@@ -1,8 +1,10 @@
 // Action wire ("awire" v1) — TS mirror of c/src/awire.h. The client
-// builds ONE buffer per move and uses it for the guards-wasm gate, the
-// optimistic apply, and the POST body; the server kernel applies the same
+// builds ONE buffer per move and uses it for the kernel's gate and
+// optimistic board (c/src/client_table.h), and the POST body; the server kernel applies the same
 // bytes verbatim. Pure TS, no wasm imports.
-import { Card } from "@api/core/types.ts";
+
+/** A card as the wire carries it (suit 0..3, value 1..13; -1/-1 is a hidden card). */
+export interface Card { readonly suit: number; readonly value: number }
 
 export const AWIRE_KIND = {
     attack: 0,
@@ -15,7 +17,7 @@ export type AwireKindName = keyof typeof AWIRE_KIND;
 
 export const AWIRE_MAX_CARDS = 28;
 
-// Mirrors wire.h / clientGuards wireCard: clamp into the representable
+// Mirrors wire.h: clamp into the representable
 // space; the kernel re-clamps on decode (memory safety never depends on
 // this side).
 export function wireCard(c: Card): number {
@@ -80,12 +82,14 @@ export function decodeAction(buf: Uint8Array): AwireMove | null {
     if ((name === 'pickup' || name === 'good') && n !== 0) return null;
     const expected = 2 + n * (name === 'cover' ? 2 : 1);
     if (buf.length !== expected) return null;
+    // Every card byte is a card: awire_decode refuses the wire otherwise.
+    for (let i = 2; i < expected; i++) if (buf[i] > 51) return null;
     const cards: Card[] = [];
-    for (let i = 0; i < n; i++) cards.push(cardFromWireByte(buf[2 + i] > 51 ? 51 : buf[2 + i]));
+    for (let i = 0; i < n; i++) cards.push(cardFromWireByte(buf[2 + i]));
     const move: AwireMove = { kind: name, cards };
     if (name === 'cover') {
         const attacks: Card[] = [];
-        for (let i = 0; i < n; i++) attacks.push(cardFromWireByte(buf[2 + n + i] > 51 ? 51 : buf[2 + n + i]));
+        for (let i = 0; i < n; i++) attacks.push(cardFromWireByte(buf[2 + n + i]));
         move.attack_cards = attacks;
     }
     return move;

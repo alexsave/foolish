@@ -19,10 +19,7 @@
  * small one.
  * ========================================================================== */
 
-import { LogType } from "@api/core/types.ts";
 import { kernelB32Encode, kernelB32Decode } from "@sdk/ts/wasm/bots.ts";
-import { INFO_TYPES } from "./core.ts";
-import { LOG_TYPE } from "@api/core/types.ts";
 import {
     kernelReplayExtrasEncode,
     kernelReplayExtrasDecode,
@@ -92,7 +89,7 @@ function gapsFrom(moveTimes: number[]): number[] {
 
 /**
  * Convenience wrapper over absolute unix-seconds move times - [GAME_START,
- * move, move, ...] as produced by moveTimesFromLogs. Differences of absolute
+ * move, move, ...]. Differences of absolute
  * doubles resolve to ~us near the current epoch; finer than that, use
  * encodeExtrasFromGaps.
  */
@@ -117,30 +114,4 @@ export function decodeExtras(
     moveCount: number,
 ): ReplayExtras {
     return kernelReplayExtrasDecode(kernelB32Decode(extras), playerCount, moveCount);
-}
-
-/* ------------------------- extracting times server-side ------------------- */
-
-/**
- * Pull [GAME_START time, each info-move time...] (unix seconds) out of a
- * session's logs - same session slicing and move filter as the move encoder.
- */
-export function moveTimesFromLogs(
-    logs: { log_type: LogType; created_at: string }[],
-): number[] {
-    let session = logs;
-    for (let i = logs.length - 1; i >= 0; i--) {
-        if (logs[i].log_type === LOG_TYPE.GAME_START) {
-            session = logs.slice(i);
-            break;
-        }
-    }
-    const times: number[] = [];
-    for (const l of session) {
-        if (l.log_type === LOG_TYPE.GAME_START || INFO_TYPES.includes(l.log_type)) {
-            const t = Date.parse(l.created_at) / 1000;
-            times.push(Number.isFinite(t) ? t : times[times.length - 1] ?? 0);
-        }
-    }
-    return times;
 }

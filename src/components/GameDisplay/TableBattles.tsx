@@ -1,27 +1,25 @@
-import { PersonalGame } from "@api/core/types.ts";
 import { CardFace } from "./CardFace";
 import { useServer } from "../../contexts/ServerContext";
 import { useAuth } from "../../contexts/AuthContext";
 import { useGame } from "../../contexts/GameContext";
 import { useDrag } from "../../contexts/DragContext";
 import { useTutorialHint } from "../../contexts/TutorialHintContext";
+import { covered } from "../../state/view";
 
 const COVER_ROTATION: string = (Math.PI/ 16) + 'rad';
 
 export const TableBattles = () => {
-    const game: PersonalGame = useServer().game as PersonalGame;
+    const game = useServer().view;
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { user_id } = useAuth();
     const { coverMap, setCoverMap, isSelectingCover, selectedCards } = useGame();
     const { isDraggingForGameAction, draggedCard, currentCursorPos, determineGameAction } = useDrag();
     const hint = useTutorialHint();
-    
+
     // Handle case where game is not loaded yet
-    if (!game || !game.players || !game.table_battles) {
+    if (!game) {
         return <div></div>;
     }
-    
-    // const self_index = game.players.findIndex(p => p.player_id === user_id);
 
     // Determine what action would happen if we dropped right now
     let currentAction: 
@@ -76,7 +74,7 @@ export const TableBattles = () => {
         maxWidth: '300px',
         margin: '0 auto'
     }}> {
-        game.table_battles.map((battle, index) => {
+        game.battles.map((battle, index) => {
             let containerStyle: React.CSSProperties = {
                 display: 'flex',
                 flexDirection: 'column',
@@ -101,14 +99,14 @@ export const TableBattles = () => {
             // Tutorial: green-outline the attack the learner should cover.
             if (hint?.targetCard &&
                 hint.targetCard.suit === battle.attack.suit &&
-                hint.targetCard.value === battle.attack.value && !battle.defense) {
+                hint.targetCard.value === battle.attack.value && !covered(battle)) {
                 containerStyle.border = '3px solid #2fcf63';
                 containerStyle.boxShadow = '0 0 14px 2px rgba(47,207,99,0.7)';
                 containerStyle.borderRadius = '8px';
             }
 
             // Determine if this battle is covered
-            const isCovered = !!battle.defense;
+            const isCovered = covered(battle);
 
             // Card styles with rotation around bottom center
             const attackCardStyle: React.CSSProperties = {
@@ -136,14 +134,14 @@ export const TableBattles = () => {
                     data-battle-index={index}
                     data-card={`${battle.attack.suit}-${battle.attack.value}`}
                     card={battle.attack}
-                    playerId="table"
+                    owner="table"
                     style={attackCardStyle}
                     onClick={() => isSelectingCover && setCoverMap(new Map(coverMap.set(selectedCards[0], battle.attack))) }
                 />
-                {battle.defense && (
+                {isCovered && (
                     <CardFace 
                         card={battle.defense} 
-                        playerId="table" 
+                        owner="table" 
                         style={defenseCardStyle}
                         data-card={`${battle.defense.suit}-${battle.defense.value}`} 
                     />
@@ -156,7 +154,7 @@ export const TableBattles = () => {
         <div 
             key={`empty-${index}`} 
             data-location="table"
-            data-battle-index={game.table_battles.length + index}
+            data-battle-index={game.battles.length + index}
             style={{
                 display: 'flex',
                 flexDirection: 'column',

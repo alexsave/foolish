@@ -1,0 +1,1578 @@
+// structgen - C structs -> TypeScript accessors over wasm32 linear memory, and
+// Swift value snapshots over the same struct in native memory.
+//
+// libclang parses the headers for ONE target under ONE build's layout flags;
+// every offset, size, bitfield position and array stride comes from clang,
+// never from this tool. Run it once per build (layouts differ between builds).
+// It writes one TS module of accessors and computes that layout's hash, which
+// the build passes to the C side (-DSG_LAYOUT_HASH=...) so a module can prove at
+// load time which layout it was compiled with.
+//
+//   structgen --cwd DIR --header H... --root T... --build NAME=FLAGS
+//             [--target TRIPLE] [--fields T=f1,f2,SIZE]... [--const PREFIX]...
+//             [--snapshot T]... [--count T.f=c]... [--writer T]... [--snapshot-only]
+//             [--ts OUT] [--swift OUT] [--hash-ts OUT] [--print-hash]
+//
+// --ts OUT        the accessors (no hash: a host that only checks the hash must
+//                 not have to import the accessors, which read the raw struct)
+// --swift OUT     the same --snapshot readers (and --writer writers) as Swift
+//                 value types over a POINTER TO THE C STRUCT ITSELF. See the
+//                 Swift section at the end of this comment.
+// --hash-ts OUT   a module holding only `export const LAYOUT_HASH = 0x...;`
+// --print-hash    the same hash on stdout
+// --target TRIPLE the target libclang parses for; wasm32 by default. A host that
+//                 links the C natively (iOS) reads the layout ITS compiler makes,
+//                 so its run passes its own triple and its own caps.
+//
+// --fields T=...  emit (and follow) only these fields of record T; a field that
+//                 does not exist is an error. SIZE requests T_SIZE.
+// --const PREFIX  emit every enum constant and object-like integer #define whose
+//                 name starts with PREFIX; a prefix that matches nothing is an error.
+//
+// --snapshot T    emit `interface T_Snap` and `readT(m, p): T_Snap`, which copies the
+//                 record out of wasm memory into a plain object that holds no
+//                 pointer into it (so it outlives the memory's next write), and the
+//                 same for every record T reaches. Fields are named in camelCase;
+//                 nested records become objects, arrays become arrays, char[N]
+//                 becomes a string. The types are readonly: a snapshot is a value.
+// --count T.f=c   in a snapshot, array T.f holds only its first T.c elements (a
+//                 char[N] is then c bytes of UTF-8 rather than NUL-terminated). The
+//                 count field itself is not copied (it is the array's length), and
+//                 a count outside 0..N throws a RangeError rather than reading past
+//                 the array.
+// --writer T      emit `writeT(m, p, s)`, the inverse of readT: it writes a T_Snap back
+//                 into wasm memory, and the same for every record T reaches, so the
+//                 kernel can read a value the host holds (a board the host changed).
+//                 T must be a --snapshot. An array writes its count from its length and
+//                 a string its UTF-8 bytes; a value that does not fit - more elements
+//                 than the array holds, more bytes than the string, an uncounted array
+//                 of the wrong length - throws a RangeError rather than truncate.
+// --snapshot-only the module holds the snapshot readers and the constants, not the
+//                 per-field accessors.
+//
+// Pointers are read, never written. In wasm32 a pointer is a u32 offset into
+// linear memory, so following one means reading that u32 and using it as the
+// pointee's `p`. The TS never produces a pointer C will dereference.
+//   accessors     `T *f` emits T_f_at (the address of the pointer itself) and
+//                 X_f_ptr(m, p): the address it holds, 0 for NULL. When T is a
+//                 record or a scalar, also X_f_deref_at(m, p, i): the address of
+//                 element i, after checking the pointer is not NULL and element i
+//                 lies inside wasm memory (a RangeError otherwise). void *, a
+//                 function pointer, an incomplete type or a pointer to a pointer
+//                 get the address getter only. There is never a setter, and a
+//                 record only a pointer reaches gets its accessors like any other.
+//   --snapshot    a pointer field is refused unless it has --count X.f=c; with
+//                 one, the snapshot follows it and copies c elements (a char
+//                 pointee becomes c bytes of UTF-8). NULL with a nonzero count, or
+//                 elements past the end of memory, throw a RangeError; NULL with a
+//                 count of 0 is an empty array.
+//   --writer      a record that reaches a pointer field is refused.
+//   layout hash   a pointer field hashes as a pointer, with its pointee's size and
+//                 kind, and a record pointee's own fields (a cycle back to a record
+//                 on the path hashes as how far back it points).
+//
+// ---- the Swift emitter (--swift) --------------------------------------------
+//
+// Same model, same counts, same refusals; a different host. A Swift host LINKS
+// the kernel, so there is no linear memory to index into and no `Mem`: a reader
+// takes the address of the C struct itself (`UnsafeRawPointer`) and copies the
+// record out of it into a `Sendable` value type, so nothing Swift holds points
+// into storage the kernel writes next. That is the same rule as the TS snapshots
+// and as the resident-slot discipline the iOS app already keeps.
+//
+//   --swift implies --snapshot-only: there are no per-field accessors, because a
+//   host that wants a field of a struct it can address wants the struct.
+//   `T_Snap` is `struct TSnap: Sendable, Equatable`, `readT(p)` builds one, and
+//   `writeT(p, s)` writes one back. Both THROW rather than read or write out of
+//   range: a count outside 0..N, a NULL pointer with a count, a string or an
+//   array too long for its field. A refusal names the field and the value, which
+//   is what a returned nil cannot do, and the call sites are few.
+//   Integers widen to Int (Int64/UInt64 at 8 bytes), floats to Double, a
+//   `char[N]` to String, exactly as the TS side widens to number/bigint/string.
+//   A field named after a Swift keyword is emitted in backticks.
+//   The module carries `SG_LAYOUT_HASH`, this run's layout hash: a host compares
+//   it with the hash the LIBRARY was stamped with, so a stale binding and a
+//   stale library are a startup refusal instead of a wrong offset.
+//
+// A LOAD IS ALIGNED BY CONSTRUCTION, which is why the readers use `load` and not
+// `loadUnaligned`: every address they read is a field of a C struct at the
+// address C gave it, so it already satisfies that field's alignment.
+#include <clang-c/Index.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+#define MAXN 64
+static const char *headers[MAXN], *roots[MAXN], *prefixes[MAXN], *snaps[MAXN], *writers[MAXN], *build, *out_ts, *out_swift, *out_hash_ts, *cwd = ".";
+static const char *target = "wasm32";
+static int nheaders, nroots, nprefixes, nsnaps, nwriters, print_hash, snapshot_only;
+typedef struct { char *type, *field, *count; int used; } Count;
+static Count counts[MAXN];
+static int ncounts;
+
+static void die(const char *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    fputs("structgen: ", stderr); vfprintf(stderr, fmt, ap); fputc('\n', stderr);
+    va_end(ap); exit(1);
+}
+
+// ---- growable string -----------------------------------------------------
+typedef struct { char *s; size_t n, cap; } Buf;
+static void bprintf(Buf *b, const char *fmt, ...) {
+    for (;;) {
+        va_list ap; va_start(ap, fmt);
+        size_t room = b->cap - b->n;
+        int k = vsnprintf(b->s ? b->s + b->n : NULL, room, fmt, ap);
+        va_end(ap);
+        if (k >= 0 && (size_t)k < room) { b->n += (size_t)k; return; }
+        b->cap = b->cap * 2 + (size_t)k + 256;
+        if (!(b->s = realloc(b->s, b->cap))) die("out of memory");
+    }
+}
+// Not strdup: under -std=c11 glibc does not declare it, and an implicit int
+// return truncates the pointer on a 64-bit Linux host.
+static char *xstrdup(const char *s) {
+    size_t n = strlen(s) + 1;
+    char *d = malloc(n);
+    if (!d) die("out of memory");
+    return memcpy(d, s, n);
+}
+static char *str(CXString cs) { char *d = xstrdup(clang_getCString(cs)); clang_disposeString(cs); return d; }
+#define GROW(arr, n, cap) do { if ((n) == (cap) && !((arr) = realloc((arr), sizeof *(arr) * ((cap) = (cap) * 2 + 16)))) die("out of memory"); } while (0)
+
+// ---- --fields requests -------------------------------------------------------
+typedef struct { char *type; char *names[256]; char seen[256]; int n, used; } Spec;
+static Spec specs[MAXN];
+static int nspecs;
+static Spec *spec_for(const char *type) {
+    for (int i = 0; i < nspecs; i++) if (!strcmp(specs[i].type, type)) return &specs[i];
+    return NULL;
+}
+static int spec_has(Spec *s, const char *name) {
+    for (int i = 0; i < s->n; i++) if (!strcmp(s->names[i], name)) return s->seen[i] = 1;
+    return 0;
+}
+
+// ---- the model -------------------------------------------------------------
+typedef struct {
+    char *name;
+    long off;            // bytes
+    int lo, width;       // bitfield: first bit within byte `off`, bit count; width 0 = not a bitfield
+    char kind;           // bitfield only
+    int nd; long dims[8];
+    int type;            // index into recs (not a bitfield)
+} Field;
+typedef struct {
+    char *key, *name, *expr;
+    long size;
+    char kind;           // scalars: i u b f, p = a pointer (records: 0)
+    int pointee;         // a pointer: the record or scalar it points to, -1 if nothing to follow (void, a function, ...)
+    int pointee_done;    // a pointer: pointee resolved
+    CXType ptr_decl;     // a pointer: the declared type of the first field that reached it,
+    int ptr_nd;          //   its array levels,
+    char *ptr_rec, *ptr_field, *ptr_expr;   //   and that field's record, name and C expression (NULL: no field did)
+    int record, charlike, is_union;
+    int snap;            // --snapshot: 1 once reached from a snapshot root
+    int writer;          // --writer: 1 once reached from a writer root
+    CXType t;
+    Field *f; int nf, capf;
+} Rec;
+static Rec *recs;
+static int nrecs, caprecs;
+static int root_rec[MAXN];   // --root i -> its record
+
+static char kind_of(CXType t) {
+    switch (t.kind) {
+    case CXType_Bool: return 'b';
+    case CXType_Float: case CXType_Double: case CXType_LongDouble: return 'f';
+    case CXType_Char_U: case CXType_UChar: case CXType_UShort: case CXType_UInt: case CXType_ULong:
+    case CXType_ULongLong: case CXType_UInt128: return 'u';
+    case CXType_Pointer: case CXType_BlockPointer: return 'p';
+    case CXType_Enum:    // an enum is stored as its underlying integer type
+        return kind_of(clang_getCanonicalType(clang_getEnumDeclIntegerType(clang_getTypeDeclaration(t))));
+    default: return 'i';
+    }
+}
+
+// `key` is the canonical type's spelling, used ONLY to recognise the same type
+// reached twice within this run. It is never emitted and never hashed: libclang
+// renders a canonical type differently across LLVM versions. Qualifiers are
+// not part of it: `const Card *` points at the same Card as a Card field.
+static int want(CXType t, const char *name, const char *expr) {
+    t = clang_getUnqualifiedType(t);
+    char *key = str(clang_getTypeSpelling(t));
+    for (int i = 0; i < nrecs; i++) if (!strcmp(recs[i].key, key)) { free(key); return i; }
+    GROW(recs, nrecs, caprecs);
+    Rec *r = &recs[nrecs];
+    memset(r, 0, sizeof *r);
+    r->key = key; r->name = xstrdup(name); r->expr = xstrdup(expr); r->t = t;
+    long long sz = clang_Type_getSizeOf(t);
+    if (sz < 0) die("%s: no size (incomplete type?)", name);
+    r->size = (long)sz;
+    r->record = t.kind == CXType_Record;
+    r->is_union = r->record && clang_getCursorKind(clang_getTypeDeclaration(t)) == CXCursor_UnionDecl;
+    if (!r->record) r->kind = kind_of(t);
+    r->pointee = -1;
+    r->charlike = t.kind == CXType_Char_S || t.kind == CXType_Char_U;   // plain char; int8_t/uint8_t arrays are bytes
+    return nrecs++;
+}
+
+static int is_ident(const char *s) {
+    if (!(*s == '_' || (*s >= 'A' && *s <= 'Z') || (*s >= 'a' && *s <= 'z'))) return 0;
+    for (; *s; s++) if (!(*s == '_' || (*s >= '0' && *s <= '9') || (*s >= 'A' && *s <= 'Z') || (*s >= 'a' && *s <= 'z'))) return 0;
+    return 1;
+}
+
+// The name the HEADER gives a field's element type: the typedef or struct/union
+// tag exactly as declared, or NULL for an unnamed record. This, not a rendering
+// of the type, names the generated accessors (Card_get_suit): declared names are
+// what the header author wrote, so every libclang reports them alike.
+// `t` is the field's declared (sugared) type with its `nd` array levels still on.
+static char *declared_name(CXType t, int nd) {
+    for (;;) {
+        if (t.kind == CXType_Elaborated) { t = clang_Type_getNamedType(t); continue; }
+        if (nd > 0) {   // an array level, possibly behind a typedef of the array type
+            if (t.kind == CXType_Typedef) { t = clang_getTypedefDeclUnderlyingType(clang_getTypeDeclaration(t)); continue; }
+            if (t.kind != CXType_ConstantArray) return NULL;
+            t = clang_getArrayElementType(t); nd--;
+            continue;
+        }
+        if (t.kind == CXType_Typedef) return str(clang_getCursorSpelling(clang_getTypeDeclaration(t)));
+        if (t.kind == CXType_Record || t.kind == CXType_Enum) {
+            CXCursor d = clang_getTypeDeclaration(t);
+            return clang_Cursor_isAnonymous(d) ? NULL : str(clang_getCursorSpelling(d));
+        }
+        return NULL;
+    }
+}
+
+// The pointee of a pointer field as the header declares it (sugar kept, so
+// declared_name can name it). `t` is the field's declared type with its `nd`
+// array levels still on; typedefs of the pointer or array type are looked through.
+static CXType sugared_pointee(CXType t, int nd) {
+    for (;;) {
+        if (t.kind == CXType_Elaborated) { t = clang_Type_getNamedType(t); continue; }
+        if (t.kind == CXType_Attributed) { t = clang_Type_getModifiedType(t); continue; }
+        if (t.kind == CXType_Typedef) { t = clang_getTypedefDeclUnderlyingType(clang_getTypeDeclaration(t)); continue; }
+        if (nd > 0 && t.kind == CXType_ConstantArray) { t = clang_getArrayElementType(t); nd--; continue; }
+        if (t.kind == CXType_Pointer) return clang_getPointeeType(t);
+        return clang_getPointeeType(clang_getCanonicalType(t));
+    }
+}
+
+// Resolves what pointer `pi` points to: a record or a scalar with a size, or
+// nothing to follow (pointee -1). Runs after every record embedded in the roots
+// has been walked, so a pointer never reorders the records a module emits.
+// Returns whether it reached a type not seen before.
+static int resolve_pointee(int pi) {
+    Rec *p = &recs[pi];
+    if (p->pointee_done || !p->ptr_rec) return 0;   // a pointer no field declares (a pointee of a pointer) is not followed
+    p->pointee_done = 1;
+    CXType pt = clang_getCanonicalType(clang_getPointeeType(p->t));
+    int followable = pt.kind == CXType_Record || pt.kind == CXType_Enum || (pt.kind > CXType_Void && pt.kind <= CXType_LastBuiltin);
+    if (!followable || clang_Type_getSizeOf(pt) <= 0) return 0;   // void, a function, an array, a pointer, an incomplete type
+    char *id = declared_name(sugared_pointee(p->ptr_decl, p->ptr_nd), 0);
+    Buf name = {0}, pexpr = {0};
+    if (id && is_ident(id)) bprintf(&name, "%s", id); else bprintf(&name, "%s_%s", p->ptr_rec, p->ptr_field);
+    bprintf(&pexpr, "*(%s)", p->ptr_expr);
+    int before = nrecs, t = want(pt, name.s, pexpr.s);   // may move recs: p is stale from here
+    recs[pi].pointee = t;
+    free(id); free(name.s); free(pexpr.s);
+    return nrecs != before;
+}
+
+typedef struct { int rec; long long base; } Walk;
+static enum CXVisitorResult on_field(CXCursor c, CXClientData d) {
+    Walk *w = d;
+    long long bits = clang_Cursor_getOffsetOfField(c);
+    if (bits < 0) die("%s: no offset for a field", recs[w->rec].name);
+    bits += w->base;
+    CXType ft = clang_getCanonicalType(clang_getCursorType(c));
+    if (clang_Cursor_isAnonymousRecordDecl(clang_getTypeDeclaration(ft))) {   // members reachable by name
+        Walk inner = { w->rec, bits };
+        clang_Type_visitFields(ft, on_field, &inner);
+        return CXVisit_Continue;
+    }
+    Field f = { .name = str(clang_getCursorSpelling(c)), .off = (long)(bits / 8), .type = -1 };
+    Spec *s = spec_for(recs[w->rec].name);
+    if (s && !spec_has(s, f.name)) { free(f.name); return CXVisit_Continue; }
+    if (clang_Cursor_isBitField(c)) {
+        f.lo = (int)(bits % 8); f.width = clang_getFieldDeclBitWidth(c); f.kind = kind_of(ft);
+        if (f.lo + f.width > 32) die("%s.%s: bitfields wider than a 32-bit window are not supported", recs[w->rec].name, f.name);
+    } else {
+        while (ft.kind == CXType_ConstantArray) {
+            if (f.nd == 8) die("%s.%s: too many array dimensions", recs[w->rec].name, f.name);
+            f.dims[f.nd++] = (long)clang_getArraySize(ft);
+            ft = clang_getCanonicalType(clang_getArrayElementType(ft));
+        }
+        if (ft.kind == CXType_IncompleteArray || ft.kind == CXType_VariableArray)
+            die("%s.%s: arrays without a constant size are not supported", recs[w->rec].name, f.name);
+        char *id = declared_name(clang_getCursorType(c), f.nd);
+        Buf name = {0}, expr = {0};
+        if (id && is_ident(id)) bprintf(&name, "%s", id); else bprintf(&name, "%s_%s", recs[w->rec].name, f.name);
+        bprintf(&expr, "(%s).%s", recs[w->rec].expr, f.name);
+        for (int i = 0; i < f.nd; i++) bprintf(&expr, "[0]");
+        f.type = want(ft, name.s, expr.s);
+        Rec *pr = &recs[f.type];
+        if (pr->kind == 'p' && !pr->ptr_rec) {   // followed later (resolve_pointee), as this field declares it
+            pr->ptr_decl = clang_getCursorType(c); pr->ptr_nd = f.nd;
+            pr->ptr_rec = xstrdup(recs[w->rec].name); pr->ptr_field = xstrdup(f.name); pr->ptr_expr = xstrdup(expr.s);
+        }
+        free(id); free(name.s); free(expr.s);
+    }
+    Rec *r = &recs[w->rec];
+    GROW(r->f, r->nf, r->capf);
+    r->f[r->nf++] = f;
+    return CXVisit_Continue;
+}
+
+// ---- constants ----------------------------------------------------------------
+typedef struct { char *name; int prefix; long long value; int macro; } Const;
+static Const *consts;
+static int nconsts, capconsts;
+static int prefix_of(const char *name) {
+    for (int i = 0; i < nprefixes; i++) if (!strncmp(name, prefixes[i], strlen(prefixes[i]))) return i;
+    return -1;
+}
+static void add_const(const char *name, int macro, long long value) {
+    int p = prefix_of(name);
+    if (p < 0) return;
+    for (int i = 0; i < nconsts; i++) if (!strcmp(consts[i].name, name)) return;
+    GROW(consts, nconsts, capconsts);
+    consts[nconsts++] = (Const){ xstrdup(name), p, value, macro };
+}
+static enum CXChildVisitResult on_macro(CXCursor c, CXCursor parent, CXClientData d) {
+    (void)parent; (void)d;
+    if (clang_getCursorKind(c) == CXCursor_MacroDefinition && !clang_Cursor_isMacroFunctionLike(c) && !clang_Cursor_isMacroBuiltin(c)) {
+        char *name = str(clang_getCursorSpelling(c));
+        add_const(name, 1, 0);
+        free(name);
+    }
+    return CXChildVisit_Continue;
+}
+static enum CXChildVisitResult on_decl(CXCursor c, CXCursor parent, CXClientData d) {
+    (void)parent; (void)d;
+    enum CXCursorKind k = clang_getCursorKind(c);
+    if (k == CXCursor_EnumConstantDecl) {
+        char *name = str(clang_getCursorSpelling(c));
+        int idx;
+        if (sscanf(name, "__structgen_m%d", &idx) == 1) consts[idx].value = clang_getEnumConstantDeclValue(c);
+        else add_const(name, 0, clang_getEnumConstantDeclValue(c));
+        free(name);
+    }
+    if (k == CXCursor_EnumDecl || k == CXCursor_TypedefDecl || k == CXCursor_StructDecl || k == CXCursor_UnionDecl)
+        return CXChildVisit_Recurse;
+    if (k == CXCursor_VarDecl) {
+        char *name = str(clang_getCursorSpelling(c));
+        int i;
+        if (sscanf(name, "__structgen_root%d", &i) == 1) {
+            CXType t = clang_getCanonicalType(clang_getPointeeType(clang_getCursorType(c)));
+            Buf expr = {0};
+            bprintf(&expr, "*(%s *)0", roots[i]);
+            int r = want(t, roots[i], expr.s);
+            if (!recs[r].record) die("root %s is not a struct or union", roots[i]);
+            root_rec[i] = r;
+            free(expr.s);
+        }
+        free(name);
+    }
+    return CXChildVisit_Continue;
+}
+
+// ---- TU ----------------------------------------------------------------------
+static const char *args[512];
+static int nargs;
+static void build_args(const char *flags) {
+    static char triple[256];
+    snprintf(triple, sizeof triple, "--target=%s", target);
+    args[nargs++] = triple; args[nargs++] = "-ffreestanding"; args[nargs++] = "-iquote"; args[nargs++] = ".";
+    // libclang does not find its own builtin headers (stdint.h, stdbool.h):
+    // use the resource dir of the clang this tool was built against.
+    args[nargs++] = "-resource-dir"; args[nargs++] = SG_RESOURCE_DIR;
+    static const char *with_arg[] = { "-isystem", "-include", "-I", "-D", "-U", "-iquote", "-idirafter" };
+    static const char *keep[] = { "-D", "-U", "-I", "-isystem", "-iquote", "-idirafter", "-include", "-std=",
+                                  "-fsigned-char", "-funsigned-char", "-fshort-enums", "-fno-short-enums", "-fpack-struct", "-m" };
+    char *fl = xstrdup(flags);   // lives for the process: args[] points into it
+    for (char *tok = strtok(fl, " \t\n"); tok; tok = strtok(NULL, " \t\n")) {
+        if (nargs > 500) die("too many build flags");
+        int pair = 0;
+        for (size_t k = 0; k < sizeof with_arg / sizeof *with_arg; k++) pair |= !strcmp(tok, with_arg[k]);
+        if (pair) {
+            args[nargs++] = tok;
+            if (!(tok = strtok(NULL, " \t\n"))) die("build flag %s needs a value", args[nargs - 1]);
+            args[nargs++] = tok;
+            continue;
+        }
+        for (size_t k = 0; k < sizeof keep / sizeof *keep; k++)
+            if (!strncmp(tok, keep[k], strlen(keep[k]))) { args[nargs++] = tok; break; }
+    }
+}
+static CXTranslationUnit parse(CXIndex idx, const char *src, unsigned opts) {
+    struct CXUnsavedFile probe = { "__structgen_probe.c", src, (unsigned long)strlen(src) };
+    CXTranslationUnit tu;
+    enum CXErrorCode e = clang_parseTranslationUnit2(idx, "__structgen_probe.c", args, nargs, &probe, 1,
+        opts | CXTranslationUnit_SkipFunctionBodies, &tu);
+    if (e != CXError_Success) die("libclang parse failed (CXErrorCode %d)", (int)e);
+    int errors = 0;
+    for (unsigned i = 0; i < clang_getNumDiagnostics(tu); i++) {
+        CXDiagnostic dg = clang_getDiagnostic(tu, i);
+        if (clang_getDiagnosticSeverity(dg) >= CXDiagnostic_Error) {
+            char *m = str(clang_formatDiagnostic(dg, clang_defaultDiagnosticDisplayOptions()));
+            fprintf(stderr, "%s\n", m); free(m); errors++;
+        }
+        clang_disposeDiagnostic(dg);
+    }
+    if (errors) die("%d compile error(s)%s", errors, nconsts ? " (a --const prefix matching a non-integer #define shows as __structgen_m*)" : "");
+    return tu;
+}
+
+// ---- emission ------------------------------------------------------------------
+static const char *scalar_access(char kind, long size, int write, const char **vt) {
+    static const struct { char k; long sz; const char *rd, *wr, *vt; } T[] = {
+        { 'i', 1, "m.i8[%s]", "m.i8[%s] = v", "number" }, { 'u', 1, "m.u8[%s]", "m.u8[%s] = v", "number" },
+        { 'b', 1, "m.u8[%s] !== 0", "m.u8[%s] = v ? 1 : 0", "boolean" },
+        { 'i', 2, "m.dv.getInt16(%s, true)", "m.dv.setInt16(%s, v, true)", "number" },
+        { 'u', 2, "m.dv.getUint16(%s, true)", "m.dv.setUint16(%s, v, true)", "number" },
+        { 'i', 4, "m.dv.getInt32(%s, true)", "m.dv.setInt32(%s, v, true)", "number" },
+        { 'u', 4, "m.dv.getUint32(%s, true)", "m.dv.setUint32(%s, v, true)", "number" },
+        { 'f', 4, "m.dv.getFloat32(%s, true)", "m.dv.setFloat32(%s, v, true)", "number" },
+        { 'f', 8, "m.dv.getFloat64(%s, true)", "m.dv.setFloat64(%s, v, true)", "number" },
+        { 'i', 8, "m.dv.getBigInt64(%s, true)", "m.dv.setBigInt64(%s, v, true)", "bigint" },
+        { 'u', 8, "m.dv.getBigUint64(%s, true)", "m.dv.setBigUint64(%s, v, true)", "bigint" },
+    };
+    for (size_t i = 0; i < sizeof T / sizeof *T; i++)
+        if (T[i].k == kind && T[i].sz == size) { *vt = T[i].vt; return write ? T[i].wr : T[i].rd; }
+    return NULL;
+}
+// "p" or "p + off": the address of a member at byte offset `off`.
+static const char *at(long off) {
+    static char buf[8][32];
+    static int k;
+    char *b = buf[k++ % 8];
+    if (off) snprintf(b, sizeof buf[0], "p + %ld", off); else snprintf(b, sizeof buf[0], "p");
+    return b;
+}
+// A window of `bytes` little-endian bytes at p + off, as an unsigned integer.
+static void window(char *out, size_t cap, long off, int bytes) {
+    if (bytes == 1) snprintf(out, cap, "m.u8[%s]", at(off));
+    else snprintf(out, cap, "m.dv.getUint%d(%s, true)", bytes == 2 ? 16 : 32, at(off));
+}
+
+// Which string helpers the module uses.
+#define STR_ACCESSORS 1   // cstrGet and cstrSet (char[N] accessors)
+#define STR_CSTR_GET  2   // cstrGet (a snapshot's NUL-terminated char[N])
+#define STR_UTF8_GET  4   // utf8Get (a snapshot's counted char[N])
+#define STR_UTF8_SET  8   // utf8Set (a writer's counted char[N])
+
+static void emit_record(Buf *ts, Rec *r, int *strings) {
+    Spec *s = spec_for(r->name);
+    bprintf(ts, "// %s\n", r->name);
+    if (!s || spec_has(s, "SIZE")) bprintf(ts, "export const %s_SIZE = %ld;\n", r->name, r->size);
+    int all_bits = r->nf > 0 && !s;
+    for (int j = 0; j < r->nf; j++) all_bits &= r->f[j].width > 0;
+    if (r->size == 1 || r->size == 2 || r->size == 4) {   // the whole record as one unsigned integer
+        const char *vt, *rd = scalar_access('u', r->size, 0, &vt), *wr = scalar_access('u', r->size, 1, &vt);
+        bprintf(ts, "export const %s_raw_get = (m: Mem, p: number) => ", r->name); bprintf(ts, rd, "p");
+        bprintf(ts, ";\nexport const %s_raw_set = (m: Mem, p: number, v: number) => { ", r->name); bprintf(ts, wr, "p");
+        bprintf(ts, "; };\n");
+    }
+    if (all_bits && r->size <= 4) {                         // pack/unpack the raw integer by field
+        bprintf(ts, "export const %s_pack = (", r->name);
+        for (int j = 0; j < r->nf; j++) bprintf(ts, "%s_%s: %s", j ? ", " : "", r->f[j].name, r->f[j].kind == 'b' ? "boolean" : "number");
+        bprintf(ts, ") => (");
+        for (int j = 0; j < r->nf; j++) {
+            Field *f = &r->f[j];
+            int pos = (int)f->off * 8 + f->lo;
+            bprintf(ts, "%s((%s_%s << %d) & %u)", j ? " | " : "", f->kind == 'b' ? "+" : "", f->name, pos,
+                (unsigned)((((1ull << f->width) - 1) << pos) & 0xffffffffull));
+        }
+        bprintf(ts, ")%s;\n", r->size == 4 ? " >>> 0" : "");
+        for (int j = 0; j < r->nf; j++) {
+            Field *f = &r->f[j];
+            int pos = (int)f->off * 8 + f->lo;
+            bprintf(ts, "export const %s_unpack_%s = (r: number) => %s(r << %d) %s %d%s;\n", r->name, f->name,
+                f->kind == 'b' ? "(" : "", 32 - pos - f->width, f->kind == 'i' ? ">>" : ">>>", 32 - f->width, f->kind == 'b' ? ") !== 0" : "");
+        }
+    }
+    for (int j = 0; j < r->nf; j++) {
+        Field *f = &r->f[j];
+        if (f->width) {
+            int bytes = (f->lo + f->width + 7) / 8;
+            if (bytes == 3) bytes = 4;
+            char W[64];
+            window(W, sizeof W, f->off, bytes);
+            unsigned mask = (unsigned)((((1ull << f->width) - 1) << f->lo) & 0xffffffffull);
+            bprintf(ts, "export const %s_get_%s = (m: Mem, p: number) => %s(%s << %d) %s %d%s;\n", r->name, f->name,
+                f->kind == 'b' ? "(" : "", W, 32 - f->lo - f->width, f->kind == 'i' ? ">>" : ">>>", 32 - f->width, f->kind == 'b' ? ") !== 0" : "");
+            const char *vt = f->kind == 'b' ? "boolean" : "number", *v = f->kind == 'b' ? "+v" : "v";
+            if (bytes == 1)
+                bprintf(ts, "export const %s_set_%s = (m: Mem, p: number, v: %s) => { m.u8[%s] = (%s & %d) | ((%s << %d) & %u); };\n",
+                    r->name, f->name, vt, at(f->off), W, (int)~mask, v, f->lo, mask);
+            else
+                bprintf(ts, "export const %s_set_%s = (m: Mem, p: number, v: %s) => { m.dv.setUint%d(%s, ((%s & %d) | ((%s << %d) & %u)) >>> 0, true); };\n",
+                    r->name, f->name, vt, bytes * 8, at(f->off), W, (int)~mask, v, f->lo, mask);
+            continue;
+        }
+        Rec *t = &recs[f->type];
+        Buf addr = {0}, idxs = {0};
+        bprintf(&addr, "%s", at(f->off));
+        long stride = t->size;
+        for (int k = f->nd - 1; k >= 0; k--) {
+            if (stride == 1) bprintf(&addr, " + i%d", k); else bprintf(&addr, " + i%d * %ld", k, stride);
+            stride *= f->dims[k];
+        }
+        bprintf(&idxs, "%s", "");
+        for (int k = 0; k < f->nd; k++) bprintf(&idxs, ", i%d: number", k);
+        bprintf(ts, "export const %s_%s_at = (p: number%s) => %s;\n", r->name, f->name, idxs.s, addr.s);
+        for (int k = 0; k < f->nd; k++) {
+            if (k) bprintf(ts, "export const %s_%s_LEN%d = %ld;\n", r->name, f->name, k, f->dims[k]);
+            else bprintf(ts, "export const %s_%s_LEN = %ld;\n", r->name, f->name, f->dims[k]);
+        }
+        const char *vt, *rd = t->record ? NULL : scalar_access(t->kind, t->size, 0, &vt);
+        if (rd) {
+            bprintf(ts, "export const %s_get_%s = (m: Mem, p: number%s) => ", r->name, f->name, idxs.s); bprintf(ts, rd, addr.s);
+            bprintf(ts, ";\nexport const %s_set_%s = (m: Mem, p: number%s, v: %s) => { ", r->name, f->name, idxs.s, vt);
+            bprintf(ts, scalar_access(t->kind, t->size, 1, &vt), addr.s);
+            bprintf(ts, "; };\n");
+        }
+        if (t->kind == 'p') {   // an address to read and follow, never to write
+            bprintf(ts, "export const %s_%s_ptr = (m: Mem, p: number%s) => m.dv.getUint32(%s, true);\n", r->name, f->name, idxs.s, addr.s);
+            if (t->pointee >= 0) {
+                long es = recs[t->pointee].size;
+                char end[64], el[64];
+                if (es == 1) { snprintf(end, sizeof end, "a + i + 1"); snprintf(el, sizeof el, "a + i"); }
+                else { snprintf(end, sizeof end, "a + (i + 1) * %ld", es); snprintf(el, sizeof el, "a + i * %ld", es); }
+                bprintf(ts, "export const %s_%s_deref_at = (m: Mem, p: number%s, i: number) => {\n"
+                            "    const a = m.dv.getUint32(%s, true);\n"
+                            "    if (a === 0) throw new RangeError('%s.%s: NULL');\n"
+                            "    if (!(i >= 0) || %s > m.u8.byteLength) throw new RangeError(`%s.%s: element ${i} at ${a} is outside wasm memory (${m.u8.byteLength} bytes)`);\n"
+                            "    return %s;\n"
+                            "};\n",
+                    r->name, f->name, idxs.s, addr.s, r->name, f->name, end, r->name, f->name, el);
+            }
+        }
+        if (t->charlike && f->nd == 1) {   // char[N]: a NUL-terminated UTF-8 string of at most N-1 bytes
+            *strings |= STR_ACCESSORS;
+            bprintf(ts, "export const %s_get_%s_str = (m: Mem, p: number) => cstrGet(m, %s, %ld);\n", r->name, f->name, at(f->off), f->dims[0]);
+            bprintf(ts, "export const %s_set_%s_str = (m: Mem, p: number, v: string) => { cstrSet(m, %s, %ld, v, '%s.%s'); };\n",
+                r->name, f->name, at(f->off), f->dims[0], r->name, f->name);
+        }
+        free(addr.s); free(idxs.s);
+    }
+}
+
+// ---- snapshots ---------------------------------------------------------------------
+
+// snake_case -> camelCase, into a static buffer.
+static const char *camel(const char *s) {
+    static char buf[8][256];
+    static int k;
+    char *b = buf[k++ % 8];
+    size_t w = 0;
+    for (int up = 0; *s && w + 1 < sizeof buf[0]; s++) {
+        if (*s == '_' && w > 0) { up = 1; continue; }
+        b[w++] = (char)(up && *s >= 'a' && *s <= 'z' ? *s - 32 : *s);
+        up = 0;
+    }
+    b[w] = 0;
+    return b;
+}
+
+static Count *count_for(const char *rec, const char *field) {
+    for (int i = 0; i < ncounts; i++)
+        if (!strcmp(counts[i].type, rec) && !strcmp(counts[i].field, field)) return &counts[i];
+    return NULL;
+}
+static int is_count_field(const char *rec, const char *field) {
+    for (int i = 0; i < ncounts; i++)
+        if (!strcmp(counts[i].type, rec) && !strcmp(counts[i].count, field)) return 1;
+    return 0;
+}
+static Field *field_named(Rec *r, const char *name) {
+    for (int j = 0; j < r->nf; j++) if (!strcmp(r->f[j].name, name)) return &r->f[j];
+    return NULL;
+}
+
+// Marks `ri` and every record its fields reach as snapshotted.
+static void snap_mark(int ri) {
+    Rec *r = &recs[ri];
+    if (r->snap) return;
+    if (r->is_union) die("--snapshot: %s is a union, which has no one value to copy", r->name);
+    r->snap = 1;
+    for (int j = 0; j < r->nf; j++) {
+        Field *f = &r->f[j];
+        if (f->width || is_count_field(r->name, f->name)) continue;
+        Rec *t = &recs[f->type];
+        if (t->kind == 'p') {
+            if (f->nd) die("--snapshot: %s.%s is an array of pointers; a snapshot follows one pointer by its --count", r->name, f->name);
+            if (!count_for(r->name, f->name))
+                die("--snapshot: %s.%s is a pointer; give --count %s.%s=<count field> to copy what it points to", r->name, f->name, r->name, f->name);
+            if (t->pointee < 0)
+                die("--snapshot: %s.%s points to nothing a snapshot can copy (void, a function, an incomplete type or a pointer)", r->name, f->name);
+            const char *vt;
+            Rec *e = &recs[t->pointee];
+            if (!e->record && !scalar_access(e->kind, e->size, 0, &vt))
+                die("--snapshot: %s.%s points to a scalar of %ld bytes, which has no reader", r->name, f->name, e->size);
+            if (e->record) snap_mark(t->pointee);
+            continue;
+        }
+        if (f->nd > 1) die("--snapshot: %s.%s has %d array dimensions; a snapshot copies one", r->name, f->name, f->nd);
+        if (t->record) snap_mark(f->type);
+    }
+}
+
+// The TS type of a field's element in a snapshot.
+static const char *snap_elem_type(Rec *t) {
+    static char buf[4][128];
+    static int k;
+    char *b = buf[k++ % 4];
+    const char *vt = "number";
+    if (t->record) snprintf(b, sizeof buf[0], "%s_Snap", t->name);
+    else { scalar_access(t->kind, t->size, 0, &vt); snprintf(b, sizeof buf[0], "%s", vt); }
+    return b;
+}
+
+static void emit_snapshot(Buf *ts, Rec *r, int *strings) {
+    bprintf(ts, "// %s snapshot\nexport interface %s_Snap {", r->name, r->name);
+    for (int j = 0; j < r->nf; j++) {
+        Field *f = &r->f[j];
+        if (is_count_field(r->name, f->name)) continue;
+        const char *type;
+        if (f->width) type = f->kind == 'b' ? "boolean" : "number";
+        else {
+            Rec *t = &recs[f->type];
+            int ptr = t->kind == 'p';
+            if (ptr) t = &recs[t->pointee];   // a counted pointer copies like a counted array of its pointee
+            if (t->charlike && (f->nd == 1 || ptr)) type = "string";
+            else if (f->nd == 1 || ptr) { static char arr[160]; snprintf(arr, sizeof arr, "readonly %s[]", snap_elem_type(t)); type = arr; }
+            else type = snap_elem_type(t);
+        }
+        bprintf(ts, " readonly %s: %s;", camel(f->name), type);
+    }
+    bprintf(ts, " }\nexport const read%s = (m: Mem, p: number): %s_Snap => {\n", r->name, r->name);
+    // Counts first: every one is checked before anything is read with it.
+    for (int j = 0; j < r->nf; j++) {
+        Field *f = &r->f[j];
+        Count *c = f->width ? NULL : count_for(r->name, f->name);
+        if (!c) continue;
+        Field *cf = field_named(r, c->count);
+        const char *vt, *rd = scalar_access(recs[cf->type].kind, recs[cf->type].size, 0, &vt);
+        bprintf(ts, "    const n_%s = ", f->name);
+        bprintf(ts, rd, at(cf->off));
+        Rec *t = &recs[f->type];
+        if (t->kind == 'p') {   // the pointer, checked against its count before anything is read through it
+            long es = recs[t->pointee].size;
+            char bytes[160];
+            if (es == 1) snprintf(bytes, sizeof bytes, "n_%s", f->name); else snprintf(bytes, sizeof bytes, "n_%s * %ld", f->name, es);
+            bprintf(ts, ";\n    const a_%s = m.dv.getUint32(%s, true);\n    if (n_%s !== 0) {\n", f->name, at(f->off), f->name);
+            bprintf(ts, "        if (a_%s === 0) throw new RangeError(`%s.%s: NULL with a count of ${n_%s}`);\n", f->name, r->name, f->name, f->name);
+            bprintf(ts, "        if (!(n_%s > 0) || a_%s + %s > m.u8.byteLength) throw new RangeError(`%s.%s: ${n_%s} elements at ${a_%s} are outside wasm memory (${m.u8.byteLength} bytes)`);\n    }\n",
+                    f->name, f->name, bytes, r->name, f->name, f->name, f->name);
+            continue;
+        }
+        bprintf(ts, ";\n    if (!(n_%s >= 0 && n_%s <= %ld)) throw new RangeError(`%s.%s: count ${n_%s} is outside 0..%ld`);\n",
+                f->name, f->name, f->dims[0], r->name, f->name, f->name, f->dims[0]);
+    }
+    for (int j = 0; j < r->nf; j++) {
+        Field *f = &r->f[j];
+        if (f->width || is_count_field(r->name, f->name)) continue;
+        Rec *t = &recs[f->type];
+        int ptr = t->kind == 'p';
+        if (!ptr && f->nd != 1) continue;
+        char base[160];
+        if (ptr) { snprintf(base, sizeof base, "a_%s", f->name); t = &recs[t->pointee]; }
+        else snprintf(base, sizeof base, "%s", at(f->off));
+        if (t->charlike) continue;
+        char n[160];
+        if (count_for(r->name, f->name)) snprintf(n, sizeof n, "n_%s", f->name); else snprintf(n, sizeof n, "%ld", f->dims[0]);
+        bprintf(ts, "    const %s: %s[] = new Array(%s);\n", camel(f->name), snap_elem_type(t), n);
+        bprintf(ts, "    for (let i = 0; i < %s; i++) %s[i] = ", n, camel(f->name));
+        char a[256];
+        if (t->size == 1) snprintf(a, sizeof a, "%s + i", base); else snprintf(a, sizeof a, "%s + i * %ld", base, t->size);
+        if (t->record) bprintf(ts, "read%s(m, %s);\n", t->name, a);
+        else { const char *vt; bprintf(ts, scalar_access(t->kind, t->size, 0, &vt), a); bprintf(ts, ";\n"); }
+    }
+    // A record of bitfields that fits one integer is read once and unpacked.
+    int packed = r->nf > 0 && (r->size == 1 || r->size == 2 || r->size == 4);
+    for (int j = 0; j < r->nf; j++) packed &= r->f[j].width > 0;
+    if (packed) {
+        const char *vt;
+        bprintf(ts, "    const raw = ");
+        bprintf(ts, scalar_access('u', r->size, 0, &vt), "p");
+        bprintf(ts, ";\n");
+    }
+    bprintf(ts, "    return {");
+    for (int j = 0, first = 1; j < r->nf; j++) {
+        Field *f = &r->f[j];
+        if (is_count_field(r->name, f->name)) continue;
+        bprintf(ts, "%s%s: ", first ? " " : ", ", camel(f->name));
+        first = 0;
+        if (packed) {
+            const int pos = (int)f->off * 8 + f->lo;
+            bprintf(ts, "%s(raw << %d) %s %d%s", f->kind == 'b' ? "(" : "", 32 - pos - f->width,
+                    f->kind == 'i' ? ">>" : ">>>", 32 - f->width, f->kind == 'b' ? ") !== 0" : "");
+            continue;
+        }
+        if (f->width) {
+            int bytes = (f->lo + f->width + 7) / 8;
+            if (bytes == 3) bytes = 4;
+            char W[64];
+            window(W, sizeof W, f->off, bytes);
+            bprintf(ts, "%s(%s << %d) %s %d%s", f->kind == 'b' ? "(" : "", W, 32 - f->lo - f->width,
+                    f->kind == 'i' ? ">>" : ">>>", 32 - f->width, f->kind == 'b' ? ") !== 0" : "");
+            continue;
+        }
+        Rec *t = &recs[f->type];
+        if (t->kind == 'p') {   // counted (snap_mark): copied above, or a counted string
+            if (recs[t->pointee].charlike) { *strings |= STR_UTF8_GET; bprintf(ts, "utf8Get(m, a_%s, n_%s)", f->name, f->name); }
+            else bprintf(ts, "%s", camel(f->name));
+        } else if (t->charlike && f->nd == 1) {
+            if (count_for(r->name, f->name)) { *strings |= STR_UTF8_GET; bprintf(ts, "utf8Get(m, %s, n_%s)", at(f->off), f->name); }
+            else { *strings |= STR_CSTR_GET; bprintf(ts, "cstrGet(m, %s, %ld)", at(f->off), f->dims[0]); }
+        } else if (f->nd == 1) {
+            bprintf(ts, "%s", camel(f->name));
+        } else if (t->record) {
+            bprintf(ts, "read%s(m, %s)", t->name, at(f->off));
+        } else {
+            const char *vt;
+            bprintf(ts, scalar_access(t->kind, t->size, 0, &vt), at(f->off));
+        }
+    }
+    bprintf(ts, " };\n};\n");
+}
+
+// ---- writers ----------------------------------------------------------------------
+
+// Marks `ri` and every record its fields reach as written.
+static void writer_mark(int ri) {
+    Rec *r = &recs[ri];
+    if (r->writer) return;
+    r->writer = 1;
+    for (int j = 0; j < r->nf; j++) {
+        Field *f = &r->f[j];
+        if (f->width) continue;
+        if (recs[f->type].kind == 'p')
+            die("--writer: %s.%s is a pointer; a writer never writes an address C would follow", r->name, f->name);
+        if (is_count_field(r->name, f->name)) continue;
+        if (recs[f->type].record) writer_mark(f->type);
+    }
+}
+
+// A scalar store of `val` at `addr`.
+static void scalar_store(Buf *ts, char kind, long size, const char *addr, const char *val) {
+    static const struct { char k; long sz; const char *wr; } T[] = {
+        { 'i', 1, "m.i8[%s] = %s" }, { 'u', 1, "m.u8[%s] = %s" }, { 'b', 1, "m.u8[%s] = %s ? 1 : 0" },
+        { 'i', 2, "m.dv.setInt16(%s, %s, true)" }, { 'u', 2, "m.dv.setUint16(%s, %s, true)" },
+        { 'i', 4, "m.dv.setInt32(%s, %s, true)" }, { 'u', 4, "m.dv.setUint32(%s, %s, true)" },
+        { 'f', 4, "m.dv.setFloat32(%s, %s, true)" }, { 'f', 8, "m.dv.setFloat64(%s, %s, true)" },
+        { 'i', 8, "m.dv.setBigInt64(%s, %s, true)" }, { 'u', 8, "m.dv.setBigUint64(%s, %s, true)" },
+    };
+    for (size_t i = 0; i < sizeof T / sizeof *T; i++)
+        if (T[i].k == kind && T[i].sz == size) { bprintf(ts, T[i].wr, addr, val); return; }
+    die("no scalar store for kind %c size %ld", kind, size);
+}
+
+static void emit_writer(Buf *ts, Rec *r, int *strings) {
+    bprintf(ts, "export const write%s = (m: Mem, p: number, s: %s_Snap): void => {\n", r->name, r->name);
+    int packed = r->nf > 0 && (r->size == 1 || r->size == 2 || r->size == 4);
+    for (int j = 0; j < r->nf; j++) packed &= r->f[j].width > 0;
+    if (packed) {   // a record of bitfields that fits one integer is written once
+        Buf v = {0};
+        bprintf(&v, "(");
+        for (int j = 0; j < r->nf; j++) {
+            Field *f = &r->f[j];
+            const int pos = (int)f->off * 8 + f->lo;
+            bprintf(&v, "%s((%ss.%s << %d) & %u)", j ? " | " : "", f->kind == 'b' ? "+" : "", camel(f->name), pos,
+                (unsigned)((((1ull << f->width) - 1) << pos) & 0xffffffffull));
+        }
+        bprintf(&v, ")%s", r->size == 4 ? " >>> 0" : "");
+        bprintf(ts, "    ");
+        scalar_store(ts, 'u', r->size, "p", v.s);
+        bprintf(ts, ";\n};\n");
+        free(v.s);
+        return;
+    }
+    for (int j = 0; j < r->nf; j++) {
+        Field *f = &r->f[j];
+        if (is_count_field(r->name, f->name)) continue;
+        char name[256];
+        snprintf(name, sizeof name, "%s", camel(f->name));
+        if (f->width) {
+            int bytes = (f->lo + f->width + 7) / 8;
+            if (bytes == 3) bytes = 4;
+            char W[64];
+            window(W, sizeof W, f->off, bytes);
+            unsigned mask = (unsigned)((((1ull << f->width) - 1) << f->lo) & 0xffffffffull);
+            if (bytes == 1)
+                bprintf(ts, "    m.u8[%s] = (%s & %d) | ((%ss.%s << %d) & %u);\n", at(f->off), W, (int)~mask, f->kind == 'b' ? "+" : "", name, f->lo, mask);
+            else
+                bprintf(ts, "    m.dv.setUint%d(%s, ((%s & %d) | ((%ss.%s << %d) & %u)) >>> 0, true);\n",
+                    bytes * 8, at(f->off), W, (int)~mask, f->kind == 'b' ? "+" : "", name, f->lo, mask);
+            continue;
+        }
+        Rec *t = &recs[f->type];
+        Count *c = count_for(r->name, f->name);
+        Field *cf = c ? field_named(r, c->count) : NULL;
+        if (t->charlike && f->nd == 1) {
+            if (c) {
+                *strings |= STR_UTF8_SET;
+                char n[400];
+                snprintf(n, sizeof n, "utf8Set(m, %s, %ld, s.%s, '%s.%s')", at(f->off), f->dims[0], name, r->name, f->name);
+                bprintf(ts, "    ");
+                scalar_store(ts, recs[cf->type].kind, recs[cf->type].size, at(cf->off), n);
+                bprintf(ts, ";\n");
+            } else {
+                *strings |= STR_ACCESSORS;
+                bprintf(ts, "    cstrSet(m, %s, %ld, s.%s, '%s.%s');\n", at(f->off), f->dims[0], name, r->name, f->name);
+            }
+            continue;
+        }
+        if (f->nd == 1) {
+            char n[300], a[300], e[300];
+            if (c) {
+                bprintf(ts, "    const n_%s = s.%s.length;\n    if (n_%s > %ld) throw new RangeError(`%s.%s: ${n_%s} elements do not fit in %ld`);\n    ",
+                    f->name, name, f->name, f->dims[0], r->name, f->name, f->name, f->dims[0]);
+                snprintf(n, sizeof n, "n_%s", f->name);
+                scalar_store(ts, recs[cf->type].kind, recs[cf->type].size, at(cf->off), n);
+                bprintf(ts, ";\n");
+            } else {
+                bprintf(ts, "    if (s.%s.length !== %ld) throw new RangeError(`%s.%s: ${s.%s.length} elements, not %ld`);\n",
+                    name, f->dims[0], r->name, f->name, name, f->dims[0]);
+                snprintf(n, sizeof n, "%ld", f->dims[0]);
+            }
+            if (t->size == 1) snprintf(a, sizeof a, "%s + i", at(f->off)); else snprintf(a, sizeof a, "%s + i * %ld", at(f->off), t->size);
+            snprintf(e, sizeof e, "s.%s[i]", name);
+            bprintf(ts, "    for (let i = 0; i < %s; i++) ", n);
+            if (t->record) bprintf(ts, "write%s(m, %s, %s)", t->name, a, e);
+            else scalar_store(ts, t->kind, t->size, a, e);
+            bprintf(ts, ";\n");
+            continue;
+        }
+        char sv[300];
+        snprintf(sv, sizeof sv, "s.%s", name);
+        if (t->record) { bprintf(ts, "    write%s(m, %s, %s);\n", t->name, at(f->off), sv); continue; }
+        bprintf(ts, "    ");
+        scalar_store(ts, t->kind, t->size, at(f->off), sv);
+        bprintf(ts, ";\n");
+    }
+    bprintf(ts, "};\n");
+}
+
+// ---- Swift ------------------------------------------------------------------------
+//
+// The same snapshots and writers over a POINTER TO THE C STRUCT: a Swift host
+// links the kernel, so there is no linear memory and no `Mem`. Everything else -
+// which records are copied, which arrays are counted, what a bad count does - is
+// the model above, shared with the TS emitter.
+
+// Swift's reserved words, as far as a member name can collide with one: a
+// declaration name may be any of these in backticks, which is what a field
+// called `in`, `case` or `default` gets.
+static int swift_reserved(const char *s) {
+    static const char *kw[] = {
+        "associatedtype", "class", "deinit", "enum", "extension", "fileprivate", "func", "import", "init",
+        "inout", "internal", "let", "open", "operator", "private", "precedencegroup", "protocol", "public",
+        "rethrows", "static", "struct", "subscript", "typealias", "var", "break", "case", "catch", "continue",
+        "default", "defer", "do", "else", "fallthrough", "for", "guard", "if", "in", "repeat", "return",
+        "throw", "throws", "switch", "where", "while", "Any", "as", "await", "false", "is", "nil", "self",
+        "Self", "super", "true", "try", "Protocol", "Type",
+    };
+    for (size_t i = 0; i < sizeof kw / sizeof *kw; i++) if (!strcmp(s, kw[i])) return 1;
+    return 0;
+}
+// A field's Swift member name: camelCase, in backticks when that is a keyword.
+static const char *swift_name(const char *field) {
+    static char buf[4][260];
+    static int k;
+    char *b = buf[k++ % 4];
+    const char *c = camel(field);
+    if (swift_reserved(c)) snprintf(b, sizeof buf[0], "`%s`", c); else snprintf(b, sizeof buf[0], "%s", c);
+    return b;
+}
+
+// A scalar's Swift type. Integers WIDEN to Int, as the TS side widens to
+// `number`: a snapshot is read and compared, not stored back into the same
+// width, and a host that had to write `Int(v.handCount)` at every use would
+// grow exactly the conversions this generator exists to remove. Eight bytes
+// keep their signedness, where Int would lose the top of a u64 (game_id).
+static const char *swift_scalar_type(char kind, long size) {
+    if (kind == 'b') return "Bool";
+    if (kind == 'f') return "Double";
+    if (size == 8) return kind == 'u' ? "UInt64" : "Int64";
+    if (size == 1 || size == 2 || size == 4) return "Int";
+    return NULL;
+}
+// The Swift type of a snapshot field's element.
+static const char *swift_elem_type(Rec *t) {
+    static char buf[4][128];
+    static int k;
+    char *b = buf[k++ % 4];
+    if (t->record) snprintf(b, sizeof buf[0], "%sSnap", t->name);
+    else {
+        const char *s = swift_scalar_type(t->kind, t->size);
+        if (!s) die("no Swift type for kind %c size %ld", t->kind, t->size);
+        snprintf(b, sizeof buf[0], "%s", s);
+    }
+    return b;
+}
+// The type of a whole snapshot field (an array, a string or one element).
+static const char *swift_field_type(Rec *r, Field *f) {
+    static char buf[4][160];
+    static int k;
+    char *b = buf[k++ % 4];
+    (void)r;
+    if (f->width) return f->kind == 'b' ? "Bool" : "Int";
+    Rec *t = &recs[f->type];
+    int ptr = t->kind == 'p';
+    if (ptr) t = &recs[t->pointee];
+    if (t->charlike && (f->nd == 1 || ptr)) return "String";
+    if (f->nd == 1 || ptr) { snprintf(b, sizeof buf[0], "[%s]", swift_elem_type(t)); return b; }
+    return swift_elem_type(t);
+}
+
+// The Swift type one scalar is LOADED as: the C type, exactly.
+static const char *swift_raw_type(char kind, long size) {
+    if (kind == 'b') return "UInt8";
+    if (kind == 'f') return size == 4 ? "Float" : "Double";
+    switch (size) {
+    case 1: return kind == 'u' ? "UInt8" : "Int8";
+    case 2: return kind == 'u' ? "UInt16" : "Int16";
+    case 4: return kind == 'u' ? "UInt32" : "Int32";
+    case 8: return kind == 'u' ? "UInt64" : "Int64";
+    }
+    die("no Swift load for kind %c size %ld", kind, size);
+    return NULL;
+}
+// ...and read back as the snapshot's own (widened) type.
+static const char *swift_read(char kind, long size, const char *base, const char *off) {
+    static char buf[4][512];
+    static int k;
+    char *b = buf[k++ % 4];
+    char load[400];
+    snprintf(load, sizeof load, "%s.load(fromByteOffset: %s, as: %s.self)", base, off, swift_raw_type(kind, size));
+    if (kind == 'b') snprintf(b, sizeof buf[0], "%s != 0", load);
+    else if (kind == 'f') snprintf(b, sizeof buf[0], size == 4 ? "Double(%s)" : "%s", load);
+    else if (size == 8) snprintf(b, sizeof buf[0], "%s", load);
+    else snprintf(b, sizeof buf[0], "Int(%s)", load);
+    return b;
+}
+// One scalar stored back. `val` is an expression of the snapshot's type.
+static void swift_store(Buf *sw, char kind, long size, const char *base, const char *off, const char *val) {
+    const char *t = swift_raw_type(kind, size);
+    char conv[700];
+    if (kind == 'b') snprintf(conv, sizeof conv, "UInt8((%s) ? 1 : 0)", val);
+    else if (kind == 'f') snprintf(conv, sizeof conv, size == 4 ? "Float(%s)" : "%s", val);
+    else snprintf(conv, sizeof conv, "%s(truncatingIfNeeded: %s)", t, val);
+    bprintf(sw, "%s.storeBytes(of: %s, toByteOffset: %s, as: %s.self)", base, conv, off, t);
+}
+// The unsigned window a bitfield lives in.
+static int swift_window_bytes(Field *f) {
+    int bytes = (f->lo + f->width + 7) / 8;
+    return bytes == 3 ? 4 : bytes;
+}
+static const char *swift_window(Field *f, const char *base) {
+    static char buf[4][300];
+    static int k;
+    char *b = buf[k++ % 4];
+    snprintf(b, sizeof buf[0], "UInt32(%s.load(fromByteOffset: %ld, as: UInt%d.self))", base, f->off, swift_window_bytes(f) * 8);
+    return b;
+}
+// A bitfield read out of that window, as Int or Bool.
+static const char *swift_bits_read(Field *f, const char *base) {
+    static char buf[4][600];
+    static int k;
+    char *b = buf[k++ % 4];
+    const int up = 32 - f->lo - f->width, down = 32 - f->width;
+    if (f->kind == 'i')
+        snprintf(b, sizeof buf[0], "Int(Int32(bitPattern: %s << %d) >> %d)", swift_window(f, base), up, down);
+    else if (f->kind == 'b')
+        snprintf(b, sizeof buf[0], "((%s << %d) >> %d) != 0", swift_window(f, base), up, down);
+    else
+        snprintf(b, sizeof buf[0], "Int((%s << %d) >> %d)", swift_window(f, base), up, down);
+    return b;
+}
+
+static void emit_swift_snapshot(Buf *sw, Rec *r, int *strings) {
+    bprintf(sw, "\n/// %s (c struct), copied out of the kernel's storage.\n", r->name);
+    bprintf(sw, "public struct %sSnap: Sendable, Equatable {\n", r->name);
+    bprintf(sw, "    /// sizeof(%s) under this build: what a host allocates to hand C one.\n", r->name);
+    bprintf(sw, "    public static let cSize = %ld\n", r->size);
+    for (int j = 0; j < r->nf; j++) {
+        Field *f = &r->f[j];
+        if (is_count_field(r->name, f->name)) continue;
+        bprintf(sw, "    public let %s: %s\n", swift_name(f->name), swift_field_type(r, f));
+    }
+    // The memberwise init is internal by default, and a snapshot is a public
+    // value: a host builds one to hand back through a writer.
+    bprintf(sw, "    public init(");
+    for (int j = 0, first = 1; j < r->nf; j++) {
+        Field *f = &r->f[j];
+        if (is_count_field(r->name, f->name)) continue;
+        bprintf(sw, "%s%s: %s", first ? "" : ", ", swift_name(f->name), swift_field_type(r, f));
+        first = 0;
+    }
+    bprintf(sw, ") {\n");
+    for (int j = 0; j < r->nf; j++) {
+        Field *f = &r->f[j];
+        if (is_count_field(r->name, f->name)) continue;
+        bprintf(sw, "        self.%s = %s\n", swift_name(f->name), swift_name(f->name));
+    }
+    bprintf(sw, "    }\n}\n");
+
+    bprintf(sw, "public func read%s(_ p: UnsafeRawPointer) throws -> %sSnap {\n", r->name, r->name);
+    // Counts first: every one is checked before anything is read with it.
+    for (int j = 0; j < r->nf; j++) {
+        Field *f = &r->f[j];
+        Count *c = f->width ? NULL : count_for(r->name, f->name);
+        if (!c) continue;
+        Field *cf = field_named(r, c->count);
+        char off[32];
+        snprintf(off, sizeof off, "%ld", cf->off);
+        bprintf(sw, "    let n_%s = %s\n", f->name, swift_read(recs[cf->type].kind, recs[cf->type].size, "p", off));
+        Rec *t = &recs[f->type];
+        if (t->kind == 'p') {
+            bprintf(sw, "    let a_%s = p.load(fromByteOffset: %ld, as: UnsafeRawPointer?.self)\n", f->name, f->off);
+            bprintf(sw, "    if n_%s != 0 && a_%s == nil { throw SGLayoutError.null(field: \"%s.%s\", count: n_%s) }\n",
+                    f->name, f->name, r->name, f->name, f->name);
+            // A pointer has no capacity to check a count against, but a NEGATIVE
+            // count is still not one: it would be read as a range and crash.
+            bprintf(sw, "    if n_%s < 0 { throw SGLayoutError.count(field: \"%s.%s\", got: n_%s, capacity: Int.max) }\n",
+                    f->name, r->name, f->name, f->name);
+            continue;
+        }
+        bprintf(sw, "    if n_%s < 0 || n_%s > %ld { throw SGLayoutError.count(field: \"%s.%s\", got: n_%s, capacity: %ld) }\n",
+                f->name, f->name, f->dims[0], r->name, f->name, f->name, f->dims[0]);
+    }
+    // Then the arrays, each bounded by a count that has been checked.
+    for (int j = 0; j < r->nf; j++) {
+        Field *f = &r->f[j];
+        if (f->width || is_count_field(r->name, f->name)) continue;
+        Rec *t = &recs[f->type];
+        const int ptr = t->kind == 'p';
+        if (ptr) t = &recs[t->pointee];
+        if (!ptr && f->nd != 1) continue;
+        if (t->charlike) continue;
+        char n[64];
+        if (count_for(r->name, f->name)) snprintf(n, sizeof n, "n_%s", f->name); else snprintf(n, sizeof n, "%ld", f->dims[0]);
+        bprintf(sw, "    var %s: [%s] = []\n", swift_name(f->name), swift_elem_type(t));
+        bprintf(sw, "    %s.reserveCapacity(%s)\n", swift_name(f->name), n);
+        char elem[128];
+        if (t->size == 1) snprintf(elem, sizeof elem, "i"); else snprintf(elem, sizeof elem, "i * %ld", t->size);
+        if (ptr) {
+            bprintf(sw, "    if let a = a_%s {\n        for i in 0..<%s { %s.append(", f->name, n, swift_name(f->name));
+            if (t->record) bprintf(sw, "try read%s(a + %s)", t->name, elem);
+            else bprintf(sw, "%s", swift_read(t->kind, t->size, "a", elem));
+            bprintf(sw, ") }\n    }\n");
+            continue;
+        }
+        char off[128];
+        if (t->size == 1) snprintf(off, sizeof off, "%ld + i", f->off); else snprintf(off, sizeof off, "%ld + i * %ld", f->off, t->size);
+        bprintf(sw, "    for i in 0..<%s { %s.append(", n, swift_name(f->name));
+        if (t->record) bprintf(sw, "try read%s(p + %s)", t->name, off);
+        else bprintf(sw, "%s", swift_read(t->kind, t->size, "p", off));
+        bprintf(sw, ") }\n");
+    }
+    bprintf(sw, "    return %sSnap(", r->name);
+    for (int j = 0, first = 1; j < r->nf; j++) {
+        Field *f = &r->f[j];
+        if (is_count_field(r->name, f->name)) continue;
+        bprintf(sw, "%s%s: ", first ? "" : ", ", swift_name(f->name));
+        first = 0;
+        if (f->width) { bprintf(sw, "%s", swift_bits_read(f, "p")); continue; }
+        Rec *t = &recs[f->type];
+        char off[64];
+        snprintf(off, sizeof off, "%ld", f->off);
+        if (t->kind == 'p') {   // counted (snap_mark): copied above, or a counted string
+            if (recs[t->pointee].charlike) {
+                *strings |= STR_UTF8_GET;
+                bprintf(sw, "a_%s.map { sgUTF8($0, 0, n_%s) } ?? \"\"", f->name, f->name);
+            } else bprintf(sw, "%s", swift_name(f->name));
+        } else if (t->charlike && f->nd == 1) {
+            if (count_for(r->name, f->name)) { *strings |= STR_UTF8_GET; bprintf(sw, "sgUTF8(p, %ld, n_%s)", f->off, f->name); }
+            else { *strings |= STR_CSTR_GET; bprintf(sw, "sgCStr(p, %ld, %ld)", f->off, f->dims[0]); }
+        } else if (f->nd == 1) {
+            bprintf(sw, "%s", swift_name(f->name));
+        } else if (t->record) {
+            bprintf(sw, "try read%s(p + %ld)", t->name, f->off);
+        } else {
+            bprintf(sw, "%s", swift_read(t->kind, t->size, "p", off));
+        }
+    }
+    bprintf(sw, ")\n}\n");
+}
+
+static void emit_swift_writer(Buf *sw, Rec *r, int *strings) {
+    bprintf(sw, "public func write%s(_ p: UnsafeMutableRawPointer, _ s: %sSnap) throws {\n", r->name, r->name);
+    for (int j = 0; j < r->nf; j++) {
+        Field *f = &r->f[j];
+        if (is_count_field(r->name, f->name)) continue;
+        char name[300];
+        snprintf(name, sizeof name, "s.%s", swift_name(f->name));
+        if (f->width) {
+            const unsigned mask = (unsigned)((((1ull << f->width) - 1) << f->lo) & 0xffffffffull);
+            const int bytes = swift_window_bytes(f);
+            char val[400];
+            if (f->kind == 'b') snprintf(val, sizeof val, "UInt32(%s ? 1 : 0)", name);
+            else snprintf(val, sizeof val, "UInt32(truncatingIfNeeded: %s)", name);
+            bprintf(sw, "    p.storeBytes(of: UInt%d(truncatingIfNeeded: (%s & ~UInt32(%u)) | ((%s << %d) & UInt32(%u))), toByteOffset: %ld, as: UInt%d.self)\n",
+                    bytes * 8, swift_window(f, "p"), mask, val, f->lo, mask, f->off, bytes * 8);
+            continue;
+        }
+        Rec *t = &recs[f->type];
+        Count *c = count_for(r->name, f->name);
+        Field *cf = c ? field_named(r, c->count) : NULL;
+        char coff[32] = "0";
+        if (cf) snprintf(coff, sizeof coff, "%ld", cf->off);
+        if (t->charlike && f->nd == 1) {
+            if (c) {
+                *strings |= STR_UTF8_SET;
+                char n[500];
+                snprintf(n, sizeof n, "try sgUTF8Set(p, %ld, %ld, %s, \"%s.%s\")", f->off, f->dims[0], name, r->name, f->name);
+                bprintf(sw, "    ");
+                swift_store(sw, recs[cf->type].kind, recs[cf->type].size, "p", coff, n);
+                bprintf(sw, "\n");
+            } else {
+                *strings |= STR_ACCESSORS;
+                bprintf(sw, "    try sgCStrSet(p, %ld, %ld, %s, \"%s.%s\")\n", f->off, f->dims[0], name, r->name, f->name);
+            }
+            continue;
+        }
+        if (f->nd == 1) {
+            // `name` is the Swift expression for the field (up to the 300 bytes
+            // declared above), and this holds it plus ".count", so it is sized
+            // off that buffer rather than guessed: gcc's -Wformat-truncation
+            // reads the declared size, and a smaller one is an error under -Werror.
+            char n[sizeof name + 8];
+            if (c) {
+                bprintf(sw, "    if %s.count > %ld { throw SGLayoutError.tooLong(field: \"%s.%s\", got: %s.count, capacity: %ld) }\n",
+                        name, f->dims[0], r->name, f->name, name, f->dims[0]);
+                snprintf(n, sizeof n, "%s.count", name);
+                bprintf(sw, "    ");
+                swift_store(sw, recs[cf->type].kind, recs[cf->type].size, "p", coff, n);
+                bprintf(sw, "\n");
+            } else {
+                bprintf(sw, "    if %s.count != %ld { throw SGLayoutError.tooLong(field: \"%s.%s\", got: %s.count, capacity: %ld) }\n",
+                        name, f->dims[0], r->name, f->name, name, f->dims[0]);
+                snprintf(n, sizeof n, "%ld", f->dims[0]);
+            }
+            char off[128];
+            if (t->size == 1) snprintf(off, sizeof off, "%ld + i", f->off); else snprintf(off, sizeof off, "%ld + i * %ld", f->off, t->size);
+            bprintf(sw, "    for i in 0..<%s { ", n);
+            if (t->record) bprintf(sw, "try write%s(p + %s, %s[i])", t->name, off, name);
+            else {
+                char el[400];
+                snprintf(el, sizeof el, "%s[i]", name);
+                swift_store(sw, t->kind, t->size, "p", off, el);
+            }
+            bprintf(sw, " }\n");
+            continue;
+        }
+        char off[32];
+        snprintf(off, sizeof off, "%ld", f->off);
+        if (t->record) { bprintf(sw, "    try write%s(p + %ld, %s)\n", t->name, f->off, name); continue; }
+        bprintf(sw, "    ");
+        swift_store(sw, t->kind, t->size, "p", off, name);
+        bprintf(sw, "\n");
+    }
+    bprintf(sw, "}\n");
+}
+// ---- the layout hash -------------------------------------------------------------
+// FNV-1a over the LAYOUT facts the emitted TS relies on, and nothing else:
+//   every emitted field, walked from each --root along its field path
+//   ("Game.players.hand.suit"): byte offset, bit range and bit kind, or array
+//   dims, element size, element kind (i u b f, r = record) and char-ness;
+//   each record SIZE the module emits (requested, or its raw_get/raw_set);
+//   each --const constant's name and value, in emission order.
+// Paths are made of --root names (the caller's) and field names (the header's);
+// record and typedef names are NOT in it. Renaming a typedef renames the
+// generated accessors (a TS compile error at every user) but leaves the hash
+// alone, and libclang's rendering of a type, which differs between LLVM
+// versions, can never reach it. tools/structgen/test/hash.sh pins both halves.
+static unsigned layout_hash = 2166136261u;
+static int hash_path[256], hash_depth;   // the records on the path being hashed, for a pointer cycle
+static void hput(const char *fmt, ...) {
+    char line[1024];
+    va_list ap; va_start(ap, fmt);
+    int k = vsnprintf(line, sizeof line, fmt, ap);
+    va_end(ap);
+    if (k < 0 || (size_t)k >= sizeof line) die("hash line too long");
+    for (int i = 0; i <= k; i++) layout_hash = (layout_hash ^ (unsigned char)(i < k ? line[i] : '\n')) * 16777619u;
+}
+static void hash_record(int ri, const char *path) {
+    Rec *r = &recs[ri];
+    Spec *s = spec_for(r->name);
+    if (hash_depth == 256) die("%s: records nested too deep to hash", path);
+    hash_path[hash_depth++] = ri;
+    if (!s || spec_has(s, "SIZE") || r->size == 1 || r->size == 2 || r->size == 4) hput("%s size %ld", path, r->size);
+    for (int j = 0; j < r->nf; j++) {
+        Field *f = &r->f[j];
+        if (f->width) { hput("%s.%s off %ld bits %d+%d %c", path, f->name, f->off, f->lo, f->width, f->kind); continue; }
+        Rec *t = &recs[f->type];
+        char dims[128] = "";
+        for (int k = 0; k < f->nd; k++) snprintf(dims + strlen(dims), sizeof dims - strlen(dims), "[%ld]", f->dims[k]);
+        if (t->kind == 'p') {   // pointer-ness, then the pointee by size and kind, and a record pointee's own layout
+            if (t->pointee < 0) { hput("%s.%s off %ld%s elem %ld p -> none", path, f->name, f->off, dims, t->size); continue; }
+            Rec *e = &recs[t->pointee];
+            hput("%s.%s off %ld%s elem %ld p -> %ld %c%s", path, f->name, f->off, dims, t->size, e->size, e->record ? 'r' : e->kind, e->charlike ? " char" : "");
+            if (!e->record) continue;
+            int back = 0;
+            for (int k = hash_depth - 1; k >= 0 && !back; k--) if (hash_path[k] == t->pointee) back = hash_depth - k;
+            Buf child = {0};
+            bprintf(&child, "%s.%s*", path, f->name);
+            if (back) hput("%s back %d", child.s, back); else hash_record(t->pointee, child.s);
+            free(child.s);
+            continue;
+        }
+        hput("%s.%s off %ld%s elem %ld %c%s", path, f->name, f->off, dims, t->size, t->record ? 'r' : t->kind, t->charlike ? " char" : "");
+        if (t->record) {
+            Buf child = {0};
+            bprintf(&child, "%s.%s", path, f->name);
+            hash_record(f->type, child.s);
+            free(child.s);
+        }
+    }
+    hash_depth--;
+}
+
+static int cmp_str(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
+static void check_unique_names(const Buf *ts, const char *decl, const char *stop) {   // generated names are joined with '_' and could collide
+    char **names = NULL; int n = 0, cap = 0;
+    const size_t dl = strlen(decl);
+    for (const char *p = ts->s; p && (p = strstr(p, decl)); ) {
+        p += dl;
+        size_t len = strcspn(p, stop);
+        GROW(names, n, cap);
+        names[n] = malloc(len + 1); memcpy(names[n], p, len); names[n++][len] = 0;
+    }
+    qsort(names, (size_t)n, sizeof *names, cmp_str);
+    for (int i = 1; i < n; i++) if (!strcmp(names[i - 1], names[i])) die("generated name %s is emitted twice", names[i]);
+    for (int i = 0; i < n; i++) free(names[i]);
+    free(names);
+}
+
+static const char *absolute(const char *path) {
+    if (!path || path[0] == '/') return path;
+    char dir[4096];
+    if (!getcwd(dir, sizeof dir)) die("cannot read the working directory");
+    char *abs = malloc(strlen(dir) + strlen(path) + 2);
+    if (!abs) die("out of memory");
+    return strcat(strcat(strcpy(abs, dir), "/"), path);
+}
+
+static const char *build_name_end;   // build .. build_name_end is NAME in --build NAME=FLAGS
+
+// The header both generated modules start with.
+static void emit_banner(FILE *fp) {
+    fprintf(fp, "// GENERATED by tools/structgen - do not edit.\n// build: %.*s; roots: ", (int)(build_name_end - build), build);
+    for (int i = 0; i < nroots; i++) fprintf(fp, "%s%s", i ? ", " : "", roots[i]);
+    fputc('\n', fp);
+}
+
+static void usage(void) {
+    fputs("usage: structgen --cwd DIR --header H... --root T... --build NAME=FLAGS\n"
+          "                 [--fields T=f1,f2,SIZE]... [--const PREFIX]...\n"
+          "                 [--snapshot T]... [--count T.f=c]... [--writer T]... [--snapshot-only]\n"
+          "                 [--target TRIPLE] [--ts OUT.ts] [--swift OUT.swift] [--hash-ts OUT.ts] [--print-hash]\n", stderr);
+    exit(2);
+}
+
+int main(int argc, char **argv) {
+    for (int i = 1; i < argc; i++) {
+        const char *a = argv[i];
+        if (!strcmp(a, "--print-hash")) { print_hash = 1; continue; }
+        if (!strcmp(a, "--snapshot-only")) { snapshot_only = 1; continue; }
+        if (!strcmp(a, "--help") || !strcmp(a, "-h")) usage();
+        if (strncmp(a, "--", 2)) die("unexpected argument %s", a);
+        if (i + 1 >= argc || !strncmp(argv[i + 1], "--", 2)) die("%s needs a value", a);
+        const char *v = argv[++i];
+        if (!strcmp(a, "--header")) { if (nheaders == MAXN) die("too many --header"); headers[nheaders++] = v; }
+        else if (!strcmp(a, "--root")) { if (nroots == MAXN) die("too many --root"); roots[nroots++] = v; }
+        else if (!strcmp(a, "--const")) { if (nprefixes == MAXN) die("too many --const"); prefixes[nprefixes++] = v; }
+        else if (!strcmp(a, "--snapshot")) { if (nsnaps == MAXN) die("too many --snapshot"); snaps[nsnaps++] = v; }
+        else if (!strcmp(a, "--writer")) { if (nwriters == MAXN) die("too many --writer"); writers[nwriters++] = v; }
+        else if (!strcmp(a, "--count")) {
+            if (ncounts == MAXN) die("too many --count");
+            Count *c = &counts[ncounts++];
+            char *dot, *eq = NULL;
+            c->type = xstrdup(v);
+            if (!(dot = strchr(c->type, '.')) || !(eq = strchr(dot, '=')) || dot == c->type || eq == dot + 1 || !eq[1])
+                die("--count must be TYPE.field=count_field");
+            *dot = 0; *eq = 0;
+            c->field = dot + 1; c->count = eq + 1;
+        }
+        else if (!strcmp(a, "--build")) { if (build) die("one --build per run (run once per build)"); build = v; }
+        else if (!strcmp(a, "--ts")) out_ts = v;
+        else if (!strcmp(a, "--swift")) out_swift = v;
+        else if (!strcmp(a, "--hash-ts")) out_hash_ts = v;
+        else if (!strcmp(a, "--target")) target = v;
+        else if (!strcmp(a, "--cwd")) cwd = v;
+        else if (!strcmp(a, "--fields")) {
+            if (nspecs == MAXN) die("too many --fields");
+            Spec *s = &specs[nspecs++];
+            char *eq = strchr(s->type = xstrdup(v), '=');
+            if (!eq || eq == s->type || !eq[1]) die("--fields must be TYPE=f1,f2,...");
+            *eq = 0;
+            for (char *tok = strtok(eq + 1, ","); tok; tok = strtok(NULL, ",")) {
+                if (s->n == 256) die("too many fields for %s", s->type);
+                s->names[s->n++] = tok;
+            }
+        }
+        else die("unknown argument %s", a);
+    }
+    if (!nheaders || !nroots || !build) usage();
+    if (!out_ts && !out_swift && !out_hash_ts && !print_hash) die("nothing to do: give --ts, --swift, --hash-ts and/or --print-hash");
+    if (out_swift && !nsnaps) die("--swift without a --snapshot: Swift gets value snapshots, not accessors");
+    const char *eq = strchr(build, '=');
+    if (!eq || eq == build) die("--build must be NAME=FLAGS");
+    build_name_end = eq;
+    out_ts = absolute(out_ts);   // output paths are relative to where we were started, not to --cwd
+    out_swift = absolute(out_swift);
+    out_hash_ts = absolute(out_hash_ts);
+    if (chdir(cwd)) die("cannot cd to %s", cwd);
+    build_args(eq + 1);
+
+    Buf src = {0};
+    for (int i = 0; i < nheaders; i++) bprintf(&src, "#include \"%s\"\n", headers[i]);
+    for (int i = 0; i < nroots; i++) bprintf(&src, "%s *__structgen_root%d;\n", roots[i], i);
+    CXIndex idx = clang_createIndex(0, 0);
+    CXTranslationUnit tu = parse(idx, src.s, nprefixes ? CXTranslationUnit_DetailedPreprocessingRecord : 0);
+    if (nprefixes) {
+        // #defines have no value in the AST: collect their names, then let clang
+        // evaluate each one as an enumerator in a second parse.
+        clang_visitChildren(clang_getTranslationUnitCursor(tu), on_macro, NULL);
+        if (nconsts) {
+            for (int i = 0; i < nconsts; i++) bprintf(&src, "enum { __structgen_m%d = (%s) };\n", i, consts[i].name);
+            clang_disposeTranslationUnit(tu);
+            tu = parse(idx, src.s, 0);
+        }
+    }
+    clang_visitChildren(clang_getTranslationUnitCursor(tu), on_decl, NULL);
+    for (int i = 0; i < nprefixes; i++) {
+        int hit = 0;
+        for (int j = 0; j < nconsts; j++) hit |= consts[j].prefix == i;
+        if (!hit) die("--const %s matches no enum constant or #define", prefixes[i]);
+    }
+    // Every record the roots embed, then what their pointers reach, and so on
+    // until a pass reaches nothing new.
+    for (int walked = 0, more = 1; more; ) {
+        for (; walked < nrecs; walked++) if (recs[walked].record) {
+            Walk w = { walked, 0 };
+            clang_Type_visitFields(recs[walked].t, on_field, &w);
+        }
+        more = 0;
+        for (int i = 0; i < nrecs; i++) if (recs[i].kind == 'p') more |= resolve_pointee(i);
+    }
+    for (int i = 0; i < nspecs; i++) {
+        Spec *s = &specs[i];
+        int found = 0;
+        for (int j = 0; j < nrecs; j++) found |= recs[j].record && !strcmp(recs[j].name, s->type);
+        if (!found) die("--fields %s: no such record reached from the roots", s->type);
+        spec_has(s, "SIZE");
+        for (int j = 0; j < s->n; j++) if (!s->seen[j]) die("--fields %s: no field named %s", s->type, s->names[j]);
+    }
+
+    if (snapshot_only && !nsnaps) die("--snapshot-only without a --snapshot");
+    for (int i = 0; i < ncounts; i++) {
+        Count *c = &counts[i];
+        Rec *r = NULL;
+        for (int j = 0; j < nrecs; j++) if (recs[j].record && !strcmp(recs[j].name, c->type)) r = &recs[j];
+        if (!r) die("--count %s.%s: no such record reached from the roots", c->type, c->field);
+        Field *f = field_named(r, c->field), *cf = field_named(r, c->count);
+        if (!f || f->width || (recs[f->type].kind == 'p' ? f->nd != 0 : f->nd != 1))
+            die("--count %s.%s: not a one-dimensional array field or a pointer", c->type, c->field);
+        if (!cf) die("--count %s.%s=%s: %s has no field named %s", c->type, c->field, c->count, c->type, c->count);
+        if (cf->width || cf->nd || recs[cf->type].record || recs[cf->type].kind == 'f' || recs[cf->type].kind == 'p' || recs[cf->type].size > 4)
+            die("--count %s.%s=%s: the count is not an integer field of %s", c->type, c->field, c->count, c->type);
+    }
+    for (int i = 0; i < nsnaps; i++) {
+        int found = -1;
+        for (int j = 0; j < nrecs; j++) if (recs[j].record && !strcmp(recs[j].name, snaps[i])) found = j;
+        if (found < 0) die("--snapshot %s: no such record reached from the roots", snaps[i]);
+        snap_mark(found);
+    }
+    for (int i = 0; i < nwriters; i++) {
+        int found = -1;
+        for (int j = 0; j < nrecs; j++) if (recs[j].record && recs[j].snap && !strcmp(recs[j].name, writers[i])) found = j;
+        if (found < 0) die("--writer %s: not a --snapshot (a writer writes the snapshot type back)", writers[i]);
+        writer_mark(found);
+    }
+    // TWO ARRAYS CANNOT SHARE ONE COUNT IN A WRITER. A reader is happy to read
+    // both from the same number; a writer writes that number once per array, so
+    // the LAST one silently decides it - and an empty second array (an awire
+    // cover's attack list on a move that is not a cover) would write a count of
+    // zero over a real one. Refused here rather than emitted, because the bug it
+    // makes is a payload that is correctly formed and wrong.
+    for (int i = 0; i < ncounts; i++)
+        for (int j = i + 1; j < ncounts; j++) {
+            if (strcmp(counts[i].type, counts[j].type) || strcmp(counts[i].count, counts[j].count)) continue;
+            for (int r = 0; r < nrecs; r++)
+                if (recs[r].writer && !strcmp(recs[r].name, counts[i].type))
+                    die("--writer %s: %s.%s and %s.%s share the count %s, and a writer writes it once per array",
+                        counts[i].type, counts[i].type, counts[i].field, counts[j].type, counts[j].field, counts[i].count);
+        }
+    for (int i = 0; i < ncounts; i++) {
+        int used = 0;
+        for (int j = 0; j < nrecs; j++) used |= recs[j].snap && !strcmp(recs[j].name, counts[i].type);
+        if (!used) die("--count %s.%s: %s is not in any snapshot", counts[i].type, counts[i].field, counts[i].type);
+    }
+
+    // ---- the module body, and the layout hash beside it -----------------------
+    Buf ts = {0};
+    int strings = 0;
+    if (nconsts) bprintf(&ts, "// constants\n");
+    for (int p = 0; p < nprefixes; p++)
+        for (int m = 1; m >= 0; m--)
+            for (int j = 0; j < nconsts; j++)
+                if (consts[j].prefix == p && consts[j].macro == m) {
+                    bprintf(&ts, "export const %s = %lld;\n", consts[j].name, consts[j].value);
+                    hput("const %s %lld", consts[j].name, consts[j].value);
+                }
+    if (!snapshot_only) for (int i = 0; i < nrecs; i++) if (recs[i].record) emit_record(&ts, &recs[i], &strings);
+    for (int i = 0; i < nrecs; i++) if (recs[i].snap) emit_snapshot(&ts, &recs[i], &strings);
+    for (int i = 0; i < nrecs; i++) if (recs[i].writer) emit_writer(&ts, &recs[i], &strings);
+    check_unique_names(&ts, "export const ", " =");
+    for (int i = 0; i < nroots; i++) hash_record(root_rec[i], roots[i]);
+    unsigned hash = layout_hash;
+
+    // The Swift module: the same snapshots and writers, over the struct itself.
+    Buf sw = {0};
+    int swstrings = 0;
+    if (out_swift) {
+        if (nconsts) bprintf(&sw, "\n// constants\n");
+        for (int p = 0; p < nprefixes; p++)
+            for (int m = 1; m >= 0; m--)
+                for (int j = 0; j < nconsts; j++)
+                    if (consts[j].prefix == p && consts[j].macro == m)
+                        bprintf(&sw, "public let %s = %lld\n", consts[j].name, consts[j].value);
+        for (int i = 0; i < nrecs; i++) if (recs[i].snap) emit_swift_snapshot(&sw, &recs[i], &swstrings);
+        for (int i = 0; i < nrecs; i++) if (recs[i].writer) emit_swift_writer(&sw, &recs[i], &swstrings);
+        // The struct and function names only: `public let` is also how a member
+        // is declared, and two records are free to have a field of one name.
+        // Constants cannot collide with each other (add_const dedups by name).
+        check_unique_names(&sw, "public struct ", ":");
+        check_unique_names(&sw, "public func ", "(");
+    }
+
+    if (out_ts) {
+        FILE *fp = fopen(out_ts, "w");
+        if (!fp) die("cannot write %s", out_ts);
+        emit_banner(fp);
+        fputs("export interface Mem { u8: Uint8Array; i8: Int8Array; dv: DataView }\n"
+              "export const memOf = (b: ArrayBuffer): Mem => ({ u8: new Uint8Array(b), i8: new Int8Array(b), dv: new DataView(b) });\n", fp);
+        if (strings & (STR_ACCESSORS | STR_UTF8_SET))   // char[N] as UTF-8; ASCII stays off TextEncoder/TextDecoder
+            fputs("const utf8Enc = /* @__PURE__ */ new TextEncoder(), utf8Dec = /* @__PURE__ */ new TextDecoder();\n", fp);
+        else if (strings) fputs("const utf8Dec = /* @__PURE__ */ new TextDecoder();\n", fp);
+        if (strings & (STR_ACCESSORS | STR_CSTR_GET)) fputs(
+            "const cstrGet = (m: Mem, a: number, n: number) => {\n"
+            "    let s = '', e = a;\n"
+            "    for (const end = a + n; e < end; e++) { const c = m.u8[e]; if (c === 0) return s; if (c > 127) break; s += String.fromCharCode(c); }\n"
+            "    while (e < a + n && m.u8[e] !== 0) e++;\n"
+            "    return e === a + n && s.length === n ? s : utf8Dec.decode(m.u8.subarray(a, e));\n"
+            "};\n", fp);
+        if (strings & STR_ACCESSORS) fputs(
+            "const cstrSet = (m: Mem, a: number, n: number, s: string, what: string) => {\n"
+            "    let i = 0;\n"
+            "    const len = s.length;\n"
+            "    if (len < n) while (i < len) { const c = s.charCodeAt(i); if (c === 0 || c > 127) break; i++; }\n"
+            "    if (i === len && len < n) { for (let j = 0; j < len; j++) m.u8[a + j] = s.charCodeAt(j); }\n"
+            "    else {\n"
+            "        const b = utf8Enc.encode(s);\n"
+            "        if (b.length > n - 1) throw new RangeError(`${what}: ${b.length} UTF-8 bytes do not fit in ${n - 1}`);\n"
+            "        if (b.includes(0)) throw new RangeError(`${what}: contains a NUL`);\n"
+            "        m.u8.set(b, a); i = b.length;\n"
+            "    }\n"
+            "    for (let j = i; j < n; j++) m.u8[a + j] = 0;\n"
+            "};\n", fp);
+        if (strings & STR_UTF8_GET) fputs(   // exactly n bytes of UTF-8 (a counted char array)
+            "const utf8Get = (m: Mem, a: number, n: number) => {\n"
+            "    if (n > 16) return utf8Dec.decode(m.u8.subarray(a, a + n));   // past a few bytes the decoder wins\n"
+            "    let s = '';\n"
+            "    for (let i = 0; i < n; i++) { const c = m.u8[a + i]; if (c > 127) return utf8Dec.decode(m.u8.subarray(a, a + n)); s += String.fromCharCode(c); }\n"
+            "    return s;\n"
+            "};\n", fp);
+        if (strings & STR_UTF8_SET) fputs(   // a counted char array: its bytes, a NUL when there is room; returns the count
+            "const utf8Set = (m: Mem, a: number, n: number, s: string, what: string) => {\n"
+            "    let i = 0;\n"
+            "    const len = s.length;\n"
+            "    while (i < len && i < n && s.charCodeAt(i) < 128) { m.u8[a + i] = s.charCodeAt(i); i++; }\n"
+            "    if (i < len) {\n"
+            "        const b = utf8Enc.encode(s);\n"
+            "        if (b.length > n) throw new RangeError(`${what}: ${b.length} UTF-8 bytes do not fit in ${n}`);\n"
+            "        m.u8.set(b, a); i = b.length;\n"
+            "    }\n"
+            "    if (i < n) m.u8[a + i] = 0;\n"
+            "    return i;\n"
+            "};\n", fp);
+        fwrite(ts.s, 1, ts.n, fp);
+        if (fclose(fp)) die("cannot write %s", out_ts);
+    }
+    if (out_swift) {
+        FILE *fp = fopen(out_swift, "w");
+        if (!fp) die("cannot write %s", out_swift);
+        emit_banner(fp);
+        fprintf(fp, "// target: %s\n\n", target);
+        fprintf(fp,
+            "/// The layout THESE readers were generated for. A host compares it with the\n"
+            "/// hash the library it links was stamped with (-DSG_LAYOUT_HASH), so a stale\n"
+            "/// binding or a stale library is a refusal at startup and never a wrong offset.\n"
+            "public let SG_LAYOUT_HASH: UInt32 = 0x%08x\n\n", hash);
+        fputs("/// Why a generated reader or writer refused. Every one of them names the field\n"
+              "/// and the value: a payload that does not read whole is not read at all.\n"
+              "public enum SGLayoutError: Error, Equatable, Sendable {\n"
+              "    /// A count outside 0...capacity - a struct that does not describe itself.\n"
+              "    /// Behind a pointer there is no capacity to check, and the capacity is Int.max.\n"
+              "    case count(field: String, got: Int, capacity: Int)\n"
+              "    /// A NULL pointer with a count, so there is nothing to copy the count from.\n"
+              "    case null(field: String, count: Int)\n"
+              "    /// A value with more elements or bytes than the field holds.\n"
+              "    case tooLong(field: String, got: Int, capacity: Int)\n"
+              "}\n", fp);
+        if (swstrings & STR_UTF8_GET) fputs(
+            "\n@inline(__always) private func sgUTF8(_ p: UnsafeRawPointer, _ o: Int, _ n: Int) -> String {\n"
+            "    String(decoding: UnsafeRawBufferPointer(start: p + o, count: n), as: UTF8.self)\n"
+            "}\n", fp);
+        if (swstrings & STR_CSTR_GET) fputs(
+            "\n@inline(__always) private func sgCStr(_ p: UnsafeRawPointer, _ o: Int, _ n: Int) -> String {\n"
+            "    let b = UnsafeRawBufferPointer(start: p + o, count: n)\n"
+            "    var e = 0\n"
+            "    while e < n && b[e] != 0 { e += 1 }\n"
+            "    return String(decoding: UnsafeRawBufferPointer(rebasing: b[0..<e]), as: UTF8.self)\n"
+            "}\n", fp);
+        if (swstrings & STR_UTF8_SET) fputs(
+            "\n// A counted char array: its bytes, a NUL when there is room; returns the count.\n"
+            "@inline(__always) private func sgUTF8Set(_ p: UnsafeMutableRawPointer, _ o: Int, _ n: Int,\n"
+            "                                        _ s: String, _ what: String) throws -> Int {\n"
+            "    let b = Array(s.utf8)\n"
+            "    if b.count > n { throw SGLayoutError.tooLong(field: what, got: b.count, capacity: n) }\n"
+            "    let d = (p + o).bindMemory(to: UInt8.self, capacity: n)\n"
+            "    for i in 0..<b.count { d[i] = b[i] }\n"
+            "    if b.count < n { d[b.count] = 0 }\n"
+            "    return b.count\n"
+            "}\n", fp);
+        if (swstrings & STR_ACCESSORS) fputs(
+            "\n// A NUL-terminated char[N]: at most N-1 bytes, NUL-padded to N.\n"
+            "@inline(__always) private func sgCStrSet(_ p: UnsafeMutableRawPointer, _ o: Int, _ n: Int,\n"
+            "                                        _ s: String, _ what: String) throws {\n"
+            "    let b = Array(s.utf8)\n"
+            "    if b.count > n - 1 { throw SGLayoutError.tooLong(field: what, got: b.count, capacity: n - 1) }\n"
+            "    let d = (p + o).bindMemory(to: UInt8.self, capacity: n)\n"
+            "    for i in 0..<b.count { d[i] = b[i] }\n"
+            "    for i in b.count..<n { d[i] = 0 }\n"
+            "}\n", fp);
+        fwrite(sw.s, 1, sw.n, fp);
+        if (fclose(fp)) die("cannot write %s", out_swift);
+    }
+    if (out_hash_ts) {
+        FILE *fp = fopen(out_hash_ts, "w");
+        if (!fp) die("cannot write %s", out_hash_ts);
+        emit_banner(fp);
+        fprintf(fp, "export const LAYOUT_HASH = 0x%08x;\n", hash);
+        if (fclose(fp)) die("cannot write %s", out_hash_ts);
+    }
+    if (print_hash) printf("0x%08x\n", hash);
+    clang_disposeTranslationUnit(tu);
+    clang_disposeIndex(idx);
+    return 0;
+}

@@ -15,7 +15,7 @@ import { CreateGameButton } from "./Dashboard/CreateGameButton";
 export const Dashboard = () => {
     const router = useRouter();
     const { username } = useAuth();
-    const { games, getUserGames } = useServer();
+    const { views: games, getUserGames } = useServer();
     const { t } = useLocalization();
 
     useEffect(() => {
@@ -60,7 +60,7 @@ export const Dashboard = () => {
             <div className="w-full flex-1 z-content" style={{ maxWidth: '95vw' }}>
                 <div className="flex flex-col items-center" style={{ gap: '6px' }}>
                     {Object.values(games).map((game) => (
-                        <GameCard key={game.id} game={game} />
+                        <GameCard key={game.gameId} game={game} />
                     ))}
 
                 {Object.keys(games).length === 0 && (

@@ -28,12 +28,39 @@
 // Returns bytes written.
 int state_put(const Game *g, int viewer, unsigned char *out);
 
-// Parse the layout back into g. masked=0 reproduces the legacy get_state
-// exactly (hostile bytes clamp to real cards; defense-in-depth count clamps).
-// masked=1 additionally decodes WIRE_CARD_HIDDEN state cards to the {0,1}
-// placeholder — the same placeholder the browser marshal always used for
-// redacted cards, so a client importing a masked view gets a kernel state
-// byte-identical to one marshaled from the host's own PersonalGame.
-void state_get(Game *g, const unsigned char *p, int masked);
+// Parse the layout back into g, WITHOUT judging it - an import goes through
+// state_import below. Counts clamp to their array capacity (memory safety on a
+// hostile buffer) and a clamp is reported as GAME_INVALID_COUNT; a card byte
+// that is not a card decodes to the {-1,-1} not-a-card. masked=1 additionally
+// decodes WIRE_CARD_HIDDEN deck and hand cards to the {0,1} placeholder - the
+// same placeholder the browser marshal always used for redacted cards, so a
+// client importing a masked view gets a kernel state byte-identical to one
+// marshaled from the host's own PersonalGame.
+int state_get(Game *g, const unsigned char *p, int masked);
+
+// The exact byte length of the state_put payload at p, reading no byte at or
+// past p + len, or -1: a count past its capacity (a player count, the deck, the
+// battles, a hand, the eliminations) or a payload that runs off the end. For a
+// reader of bytes off the network, which state_get (it trusts its caller for the
+// length) must never see unmeasured.
+int state_measure(const unsigned char *p, int len);
+
+// THE import: decode the layout and adopt it into `g` only if it is valid
+// (game.h game_validate). Returns GAME_VALID, or a negative GAME_INVALID_*
+// reason with `g` left exactly as it was. Every path that takes a state from
+// outside the kernel - the transient IO marshal, the durable blob, a masked
+// view on a client - goes through this rather than state_get.
+int state_import(Game *g, const unsigned char *p, int masked);
+
+// One kernel log record in the export layout the session log is built from:
+//   u8 log_type, u8 player seat (0xFF system), u8 defender_index (0xFF none),
+//   u8 num_pairs, num_pairs x (u8 primary, u8 target)   wire cards
+// With `mask_draws`, THE DRAW-PRIVACY RULE: a drawn card's identity is written
+// as WIRE_CARD_HIDDEN, except the face-up trump when it was drawn by this action
+// (`pre_has_flip` and the game no longer has one, `pre_flip` being the trump
+// that was up before the action began) - that draw is public. Returns bytes
+// written (4 + 2 x num_pairs; the caller sizes the buffer).
+int log_record_put(const GameLog *l, int mask_draws, int pre_has_flip, Card pre_flip,
+                   int has_flipped_now, unsigned char *out);
 
 #endif

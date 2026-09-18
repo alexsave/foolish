@@ -277,7 +277,8 @@ static void qw_handle_wt_connect(QConn *c, int64_t stream, const QwHdrs *h) {
 }
 
 // A plain HTTP/3 request (not WebTransport). We serve the read-only endpoints
-// the game exposes over HTTP: /health and /state.
+// the game exposes over HTTP: /health and /state. A seat's /state needs
+// token=<bearer>, the credential the WebTransport CONNECT carries too.
 static void qw_handle_h3_request(QConn *c, int64_t stream, const QwHdrs *h) {
     if (strcmp(h->method, "GET") != 0) { qw_send_simple(c, stream, "405", NULL, 0); return; }
 
@@ -288,8 +289,9 @@ static void qw_handle_h3_request(QConn *c, int64_t stream, const QwHdrs *h) {
     if (strncmp(h->path, "/state", 6) == 0) {
         char game_id[48]; qw_query_str(h->path, "game_id", game_id, sizeof game_id);
         int seat = -1;    qw_query_int(h->path, "seat", &seat);
+        char token[128];  qw_query_str(h->path, "token", token, sizeof token);
         unsigned char view[QW_VIEW_CAP];
-        int vn = gb_state_for(game_id, seat, view, sizeof view);
+        int vn = gb_state_for(game_id, seat, token, view, sizeof view);
         if (vn < 0) { qw_send_simple(c, stream, "404", NULL, 0); return; }
         quiche_h3_header hs[] = {
             { .name = (const uint8_t *)":status", .name_len = 7, .value = (const uint8_t *)"200", .value_len = 3 },

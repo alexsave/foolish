@@ -75,7 +75,6 @@ static bool play_all_cordite(Game *g, int np, uint32_t seed, int strat) {
     for (int i = 0; i < np; i++) {
         g->players[i].status = PLAYER_STATUS_READY;
         g->players[i].strategy_key = (int8_t)strat;
-        snprintf(g->players[i].player_id, sizeof(g->players[i].player_id), "p%d", i);
     }
     start_game(g);
     g_T = 0;

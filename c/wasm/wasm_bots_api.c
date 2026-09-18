@@ -389,9 +389,9 @@ static int g_drive_log_start;
 
 int wasm_bot_drive_log_start(void) { return g_drive_log_start; }
 
-// Re-seed from the CURRENT board at each phase, exactly where the
-// one-move-per-call path does: the strategy LCG as a decision starts
-// (wasmChooseMove) and the draw LCG as the move is applied (packedActionCore).
+// Re-seed from the CURRENT board at each phase, as table.c table_drive_seed
+// does: the strategy LCG and the search's draw LCG as a decision starts, and the
+// draw LCG as the move is applied.
 // This is the whole per-decision seeding policy, and it lives here rather than
 // in the TS bridge: the caller only ever hands the kernel the secret it cannot
 // derive (wasm_set_rng_base from the deal seed), and the kernel decides what
@@ -401,6 +401,7 @@ int wasm_bot_drive_log_start(void) { return g_drive_log_start; }
 // decision seeds off the state in front of it.
 extern void wasm_set_strategy_seed_deterministic(void);
 extern void wasm_seed_rng_deterministic(void);
+extern uint32_t wasm_rng_base_internal(void);
 
 // ---------- belief probe (observability) ----------------------------------
 //
@@ -421,14 +422,8 @@ extern void wasm_seed_rng_deterministic(void);
 //
 // Behavior-neutral and OFF until a harness calls reset(): production drives
 // never pay the log pass.
-#define BELIEF_PROBE_CAP 64
-
-typedef struct {
-    uint8_t  seat;
-    uint16_t n_logs;
-    uint64_t cards;   // bit (suit*16 + value) per real card visible in the log
-} BeliefProbe;
-
+// BeliefProbe and BELIEF_PROBE_CAP are bot_drive.h's, so the records' layout is
+// declared where structgen can generate their reader.
 static BeliefProbe g_probe[BELIEF_PROBE_CAP];
 static int g_n_probe = 0;
 static int g_probe_on = 0;
@@ -456,27 +451,22 @@ static void probe_capture(const Game *g, int seat) {
 // harness can read the decisions of several cycles in order.
 void wasm_belief_probe_reset(void) { g_n_probe = 0; g_probe_on = 1; }
 
-// Dump the records into the IO buffer; returns the count. 11 bytes each:
-// u8 seat, u16 n_logs (LE), u64 card mask (LE).
-int wasm_belief_probe_dump(void) {
-    unsigned char *out = wasm_io_ptr();
-    int w = 0;
-    for (int i = 0; i < g_n_probe; i++) {
-        out[w++] = g_probe[i].seat;
-        out[w++] = (unsigned char)(g_probe[i].n_logs & 0xFF);
-        out[w++] = (unsigned char)(g_probe[i].n_logs >> 8);
-        for (int b = 0; b < 8; b++) out[w++] = (unsigned char)(g_probe[i].cards >> (8 * b));
-    }
-    return g_n_probe;
-}
+// The records: how many, and where they are (a BeliefProbe[] at the pointer,
+// read through the generated accessors). They used to be re-packed into the IO
+// buffer as 11-byte rows a harness took apart by hand.
+int wasm_belief_probe_dump(void) { return g_n_probe; }
+void *wasm_belief_probe_ptr(void) { return g_probe; }
 
+// The same capture for a drive the C Table runs (table.h table_choose_observer),
+// which seeds itself from the table's deal seed rather than through this bridge.
+void wasm_belief_probe_observe_internal(const Game *g, int seat) { probe_capture(g, seat); }
+
+// One policy, the kernel's (bot_drive.h bot_drive_seed_decision), over this
+// bridge's own base. Log offset 0: g_game is resident, so it holds the whole
+// session log the host imported.
 static void drive_seed_hook(const Game *g, int seat, int phase) {
-    if (phase == BOT_DRIVE_PHASE_CHOOSE) {
-        probe_capture(g, seat);
-        wasm_set_strategy_seed_deterministic();
-    } else {
-        wasm_seed_rng_deterministic();
-    }
+    if (phase == BOT_DRIVE_PHASE_CHOOSE) probe_capture(g, seat);
+    bot_drive_seed_decision(g, wasm_rng_base_internal(), 0u, phase);
 }
 
 int wasm_bot_drive(int human_mask, int max_actions, int n_pref) {
@@ -529,17 +519,40 @@ extern int wasm_replay_io_cap(void);
 extern int wasm_io_cap(void);
 
 static int g_rs_n_frames, g_rs_next_step;
+// Where this chunk's frames lie (replay_steps.h ReplayFrameIndex), so the host
+// slices them by named fields instead of walking their u16 length prefixes.
+static ReplayFrameIndex g_rs_index;
+
+const void *wasm_replay_events_index_ptr(void) { return &g_rs_index; }
 
 int wasm_replay_events(int viewer, int from, int code_len) {
     g_rs_n_frames = 0;
     g_rs_next_step = from;
-    return replay_steps_frames_v6(wasm_replay_io_ptr(), code_len,
-                                  viewer < 0 ? VIEW_SPECTATOR : viewer, from, 0,
-                                  wasm_io_ptr(), wasm_io_cap(),
-                                  &g_rs_n_frames, &g_rs_next_step);
+    g_rs_index.n = 0;
+    g_rs_index.next_step = from;
+    const int len = replay_steps_frames_v6(wasm_replay_io_ptr(), code_len,
+                                           viewer < 0 ? VIEW_SPECTATOR : viewer, from, 0,
+                                           wasm_io_ptr(), wasm_io_cap(),
+                                           &g_rs_n_frames, &g_rs_next_step);
+    if (len < 0) return len;
+    // Index the chunk: each frame carries a u16 LE length in front of it.
+    const unsigned char *f = wasm_io_ptr();
+    int at = 0, i = 0;
+    for (; i < g_rs_n_frames && i < REPLAY_FRAME_INDEX_MAX; i++) {
+        if (at + 2 > len) break;
+        const int flen = f[at] | (f[at + 1] << 8);
+        if (at + 2 + flen > len) break;
+        g_rs_index.off[i] = at + 2;
+        g_rs_index.len[i] = flen;
+        at += 2 + flen;
+    }
+    g_rs_index.n = i;
+    // A chunk cut short resumes at the first frame left out, so no frame is lost
+    // and the caller still makes progress (the first frame always fits).
+    g_rs_index.next_step = i == g_rs_n_frames ? g_rs_next_step : from + i;
+    return len;
 }
-int wasm_replay_events_n(void)    { return g_rs_n_frames; }
-int wasm_replay_events_next(void) { return g_rs_next_step; }
+
 
 // Steps the code replays to (the deal + one per action). Sizes the scrubber.
 int wasm_replay_step_count(int code_len) {
@@ -555,3 +568,134 @@ int wasm_replay_step_index(int code_len) {
                                  wasm_io_ptr(), wasm_io_cap());
 }
 
+// A recorded decision, as the Oracle imports it (replay_steps.h): the board step
+// `step` was decided on, as `viewer` saw it, and the public log before it. The
+// code is in the replay buffer; the bytes come back in the main IO buffer for the
+// host to hand to oracle.wasm unchanged. bots.wasm only (WASM_REPLAY_WEB_EXPORTS):
+// the web builds the job, the oracle modules only import it.
+int wasm_replay_step_masked_state(int code_len, int step, int viewer) {
+    if (code_len < 0 || code_len > wasm_replay_io_cap()) return -REPLAY_ECAP;
+    return replay_steps_board_v6(wasm_replay_io_ptr(), code_len, step, viewer,
+                                 wasm_io_ptr(), wasm_io_cap());
+}
+int wasm_replay_step_logs(int code_len, int step) {
+    if (code_len < 0 || code_len > wasm_replay_io_cap()) return -REPLAY_ECAP;
+    return replay_steps_memory_v6(wasm_replay_io_ptr(), code_len, step,
+                                  wasm_io_ptr(), wasm_io_cap());
+}
+
+// A code at a glance (replay_steps.h ReplaySummary), for the host's generated
+// reader: its address, or 0 when the code in the replay buffer does not decode.
+static ReplaySummary g_replay_summary;
+int wasm_replay_summary(int code_len) {
+    if (code_len < 0 || code_len > wasm_replay_io_cap()) return 0;
+    if (replay_summary_v6(wasm_replay_io_ptr(), code_len, &g_replay_summary) != REPLAY_EOK) return 0;
+    return (int)(uintptr_t)&g_replay_summary;
+}
+
+// replay_decode's log stream, one record at a time (replay.h ReplayDecodedLog),
+// for the generated reader. TEST build only (c/Makefile WASM_TEST_EXPORTS): tests
+// and tools read a code's whole log stream; no shipped host does. open decodes
+// the code in the replay buffer in place and returns REPLAY_EOK or -REPLAY_E*;
+// next returns the record's address, 0 past the last, or -REPLAY_EINPUT.
+static ReplayDecodedLog g_replay_log;
+static int g_replay_log_len, g_replay_log_at;
+extern int wasm_replay_decode(int in_len);
+int wasm_replay_decoded_open(int code_len) {
+    g_replay_log_len = g_replay_log_at = 0;
+    const int n = wasm_replay_decode(code_len);
+    if (n < 0) return n;
+    g_replay_log_len = n;
+    g_replay_log_at = REPLAY_DEC_HDR;
+    return REPLAY_EOK;
+}
+int wasm_replay_decoded_next(void) {
+    if (g_replay_log_len == 0) return -REPLAY_EINPUT;
+    const int r = replay_decoded_log(wasm_replay_io_ptr(), g_replay_log_len, &g_replay_log_at, &g_replay_log);
+    return r == 1 ? (int)(uintptr_t)&g_replay_log : r;
+}
+
+// ---------- the C Roster (src/roster.h), test-only exports ------------------
+//
+// Exported only from the test build (WASM_ROSTER_EXPORTS, part of
+// WASM_TEST_EXPORTS in the Makefile). They let e2e drive roster.c directly and
+// feed the real Swift decoder C-written trailers (e2e/packed_roster_wire.test.ts);
+// production reaches the roster through the wasm_table_* exports.
+//
+// Every call reads its input from the IO buffer and writes its answer back
+// there. A roster crosses in one test-only SPEC layout:
+//   u8 n, u8 title_len, title,
+//   n x { u16 id_len, id, u16 name_len, name, u8 brain_len, brain }
+// u16 lengths on id and name so a test can send an over-long one and see the
+// kernel trim (a name) or refuse (an id). All little-endian.
+#include "roster.h"
+
+static Roster g_roster;
+
+// The spec a test fills in (roster.h RosterSpec), and where the answers land.
+static RosterSpec        g_roster_spec;
+static RosterTrailerRead g_roster_trailer;
+void *wasm_roster_spec_ptr(void)    { return &g_roster_spec; }
+void *wasm_roster_trailer_ptr(void) { return &g_roster_trailer; }
+
+// The spec at wasm_roster_spec_ptr -> roster_set_title + roster_seat_add per
+// seat -> roster_encode into io. Returns ROSTER_BYTES or the ROSTER_E_* refusal.
+// It used to take the same table as a packed seat list a harness wrote itself.
+int wasm_roster_encode(void) {
+    const RosterSpec *s = &g_roster_spec;
+    int rc;
+    if (s->n < 0 || s->n > MAX_PLAYERS) return ROSTER_E_COUNT;
+    if (s->title_len > ROSTER_SPEC_TITLE_MAX) return ROSTER_E_TITLE;
+    memset(&g_roster, 0, sizeof(g_roster));
+    if ((rc = roster_set_title(&g_roster, s->title, s->title_len)) != ROSTER_OK) return rc;
+    for (int i = 0; i < s->n; i++) {
+        const RosterSpecSeat *q = &s->seats[i];
+        if (q->id_len > ROSTER_SPEC_ID_MAX) return ROSTER_E_ID;
+        if (q->name_len > ROSTER_SPEC_NAME_MAX) return ROSTER_E_NAME;
+        if (q->brain_len > ROSTER_SPEC_BRAIN_MAX) return ROSTER_E_BRAIN;
+        rc = roster_seat_add(&g_roster, q->id, q->id_len, q->name, q->name_len, q->brain, q->brain_len);
+        if (rc < 0) return rc;
+    }
+    return roster_encode(&g_roster, wasm_io_ptr(), wasm_io_cap());
+}
+
+// ROSTER_BYTES in io -> roster_decode -> roster_encode back into io, so a test
+// asserts decode is lossless without reading the layout itself. Returns
+// ROSTER_BYTES or the ROSTER_E_* refusal.
+int wasm_roster_decode(int len) {
+    const int rc = roster_decode(&g_roster, wasm_io_ptr(), len);
+    if (rc != ROSTER_OK) return rc;
+    return roster_encode(&g_roster, wasm_io_ptr(), wasm_io_cap());
+}
+
+// io = ROSTER_BYTES durable roster, then gid_len bytes of game id -> the
+// envelope trailer in io. Returns its length or the ROSTER_E_* refusal.
+int wasm_roster_trailer_write(int roster_len, int gid_len, int status, unsigned int good_mask) {
+    char gid[ROSTER_GAME_ID_MAX + 1];
+    const unsigned char *io = wasm_io_ptr();
+    if (gid_len < 0 || gid_len > ROSTER_GAME_ID_MAX || roster_len < 0) return ROSTER_E_GAME_ID;
+    int rc = roster_decode(&g_roster, io, roster_len);
+    if (rc != ROSTER_OK) return rc;
+    memcpy(gid, io + roster_len, (size_t)gid_len);
+    return roster_trailer_write(&g_roster, gid, gid_len, status, good_mask, wasm_io_ptr(), wasm_io_cap());
+}
+
+// A trailer in io -> roster_trailer_read. What it found goes into the struct at
+// wasm_roster_trailer_ptr (roster.h RosterTrailerRead); the durable roster it
+// decoded goes back into io as ROSTER_BYTES of opaque bytes the caller forwards.
+// Returns ROSTER_BYTES or the ROSTER_E_* refusal. The answer used to be a packed
+// header a harness took apart itself.
+int wasm_roster_trailer_read(int len) {
+    char gid[ROSTER_GAME_ID_MAX + 1];
+    int gid_len = 0, status = 0, consumed = 0;
+    uint32_t ai = 0;
+    const int rc = roster_trailer_read(&g_roster, gid, &gid_len, &status, &ai, wasm_io_ptr(), len, &consumed);
+    if (rc != ROSTER_OK) return rc;
+    g_roster_trailer.status = status;
+    g_roster_trailer.ai_mask = ai;
+    g_roster_trailer.consumed = consumed;
+    g_roster_trailer.gid_len = (uint16_t)gid_len;
+    memset(g_roster_trailer.gid, 0, sizeof(g_roster_trailer.gid));
+    memcpy(g_roster_trailer.gid, gid, (size_t)gid_len);
+    return roster_encode(&g_roster, wasm_io_ptr(), wasm_io_cap());
+}

@@ -3,8 +3,8 @@
  * =============================================================================
  * Drives the REAL src/oracle Mode B objects (OracleMtSession + the C
  * accumulator in public/oracle-mt.wasm.gz) over node:worker_threads, against
- * games played here rather than frozen replay codes (helpers/seeded_game.ts -
- * a frozen code is only readable by the kernel that cut it).
+ * the finished game frozen in helpers/seeded_codes.ts, whose decisions the
+ * fixtures below pin by step index (a kernel that no longer reads it throws there).
  *
  * What each test is FOR, since a threaded suite can go green for the wrong
  * reason more easily than most:
@@ -30,8 +30,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { decodeReplay } from '../server/api/common/replay/decode.ts';
-import { bytesToBigint } from '../server/api/common/replay/codec.ts';
 import { gunzip } from '../sdk/ts/wasm/gunzip.ts';
 import { buildReplayFrames } from '../src/replay/frames.ts';
 import { buildOracleJob } from '../src/oracle/replayOracleInput.ts';
@@ -40,7 +38,7 @@ import { OracleAccumulator } from '../src/oracle/accumulator.ts';
 import { OracleJob } from '../src/oracle/types.ts';
 import { ORACLE_MT_ENV, oracleSeedBase } from '../src/oracle/oracleMtSession.ts';
 import { openMtRig } from './helpers/oracle_mt_node.ts';
-import { playSeededV6 } from './helpers/seeded_game.ts';
+import { seededCode } from './helpers/seeded_codes.ts';
 
 const ORACLE_BYTES = gunzip(new Uint8Array(readFileSync('public/oracle.wasm.gz')));
 
@@ -56,20 +54,18 @@ const ORACLE_BYTES = gunzip(new Uint8Array(readFileSync('public/oracle.wasm.gz')
 const FIX_MC = { np: 2, seed: 7, idx: 39 };
 const FIX_EXACT = { np: 2, seed: 7, idx: 49 };
 
-type Played = { decoded: Awaited<ReturnType<typeof decodeReplay>>; frames: ReturnType<typeof buildReplayFrames> };
+type Played = { code: Uint8Array; frames: ReturnType<typeof buildReplayFrames> };
 const gameCache = new Map<string, Played>();
 
 async function jobAt(np: number, seed: number, idx: number): Promise<OracleJob> {
     const key = `${np}:${seed}`;
     let hit = gameCache.get(key);
     if (!hit) {
-        const played = await playSeededV6(np, seed);
-        assert.ok(played, 'the seeded game finished');
-        const decoded = await decodeReplay(bytesToBigint(played!.code));
-        hit = { decoded, frames: buildReplayFrames(played!.code, 'g', null, { fool: decoded.fool }) };
+        const code = seededCode(np, seed);
+        hit = { code, frames: buildReplayFrames(code, 'g', null) };
         gameCache.set(key, hit);
     }
-    const job = buildOracleJob(hit.frames, hit.decoded, idx, true, `mt-${np}-${seed}-${idx}`);
+    const job = buildOracleJob(hit.frames, hit.code, idx, true, `mt-${np}-${seed}-${idx}`);
     assert.ok(job, `step ${idx} of the ${np}p seed-${seed} game is a decision`);
     return job!;
 }
@@ -94,7 +90,7 @@ async function modeA(job: OracleJob, minN: number, batchCap: number) {
     const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey });
     let batches = 0;
     for (let b = 0; b < batchCap; b++) {
-        const r = inst.analyzeOnce(job.gameBlob, job.seat, job.logsWire, job.memoryOn, 1009 + b * 7919);
+        const r = inst.analyzeOnce(job, 1009 + b * 7919);
         if (!('record' in r)) continue;
         acc.add(r.record);
         batches++;

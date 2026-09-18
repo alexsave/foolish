@@ -93,7 +93,8 @@ const VERIFY_PARAMS: Record<Alg, EcdsaParams | AlgorithmIdentifier> = {
     RS256: { name: 'RSASSA-PKCS1-v1_5' },
 };
 
-interface Jwk { kid?: string; kty?: string; [k: string]: unknown; }
+// A JWKS entry: a Web Crypto JWK (what importKey takes) plus the key id it is served under.
+type Jwk = JsonWebKey & { kid?: string };
 interface Jwks { keys: Jwk[]; }
 
 // Raw JWKs by kid, and CryptoKeys imported under a specific alg, cached across
@@ -108,7 +109,7 @@ const importedByKidAlg = new Map<string, CryptoKey>(); // `${kid}:${alg}` → ke
 let lastJwksFetch = 0;
 let injectedJwks: Jwks | null = null; // test hook (see __setJwksForTest); bypasses the network
 
-const b64urlToBytes = (s: string): Uint8Array => {
+const b64urlToBytes = (s: string): Uint8Array<ArrayBuffer> => {
     const b64 = s.replace(/-/g, '+').replace(/_/g, '/');
     const bin = atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4)); // atob throws on malformed → caller catches
     const out = new Uint8Array(bin.length);
@@ -170,7 +171,7 @@ async function keyForKid(kid: string, alg: Alg): Promise<CryptoKey | null> {
     const jwk = await jwkForKid(kid);
     if (!jwk) return null;
     try {
-        const key = await crypto.subtle.importKey('jwk', jwk as JsonWebKey, IMPORT_PARAMS[alg], false, ['verify']);
+        const key = await crypto.subtle.importKey('jwk', jwk, IMPORT_PARAMS[alg], false, ['verify']);
         importedByKidAlg.set(cacheKey, key);
         return key;
     } catch {
@@ -229,7 +230,7 @@ export async function verifyJwtLocal(token: string): Promise<VerifiedClaims | nu
     const key = await keyForKid(header.kid, alg);
     if (!key) return null;
 
-    let sig: Uint8Array;
+    let sig: Uint8Array<ArrayBuffer>;
     try {
         sig = b64urlToBytes(s);
     } catch {
@@ -273,7 +274,7 @@ export function __setJwksForTest(jwks: Jwks | null): void {
 // user_metadata.username) from verified JWT claims. The token already carries
 // these — no need to round-trip to GoTrue to fetch them again.
 function claimsToUser(claims: VerifiedClaims): User {
-    return {
+    const user: User = {
         id: claims.sub,
         aud: (claims.aud as string) ?? '',
         role: claims.role ?? 'authenticated',
@@ -282,5 +283,6 @@ function claimsToUser(claims: VerifiedClaims): User {
         app_metadata: claims.app_metadata ?? {},
         user_metadata: claims.user_metadata ?? {},
         created_at: '',
-    } as User;
+    };
+    return user;
 }

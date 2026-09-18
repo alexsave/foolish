@@ -1,5 +1,5 @@
 /* =============================================================================
- * A5 — the web's replay is the game the engine played
+ * A5 - the web's replay is the game the engine played
  * =============================================================================
  * e2e/replay_steps_frames.test.ts proves the kernel's frames decode with the
  * live decoder. This is the layer above: src/replay/frames.ts, the thing the
@@ -9,29 +9,26 @@
  * looking right while being wrong:
  *
  *   1. every board is the board the engine really played (not a re-derivation);
- *   2. the reveal-hands eye shows what each seat REALLY held — the old screen
+ *   2. the reveal-hands eye shows what each seat REALLY held - the old screen
  *      retrodicted this and could be confidently wrong;
  *   3. the status line's kinds come from the kernel and match the real game,
  *      passes included;
- *   4. cards are conserved at every step, which is what a desync looks like.
+ *   4. cards are conserved at every step, which is what a desync looks like;
+ *   5. the board before the deal is the kernel's (client_board_edit UNDEAL): the
+ *      whole stock, and no card in anyone's hand, the watching seat's included;
+ *   6. a replay's seats are named by the code's extras, and carry no invented
+ *      player id (Phase 7: the boards are snapshots of the replay's own frames).
  * ========================================================================== */
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { start_game } from '../server/api/common/game_lifecycle.ts';
-import { game_done } from '../server/api/common/common_utils.ts';
-import {
-    Card, Game, GAME_STATUS, PLAYER_STATUS, PrivatePlayer, StrategyKey,
-} from '../server/api/core/types.ts';
-import { shouldBotActCore, processBotAction } from '../server/api/common/pure_bot_actions.ts';
-import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
-import { kernelReplayEncodeV6FromGame } from '../sdk/ts/wasm/bots.ts';
-import { __setDealSeedOverride } from '../sdk/ts/wasm/engine.ts';
-import { deckSizeFor } from '../server/api/core/constants.ts';
+import { covered } from '../src/state/view.ts';
 import {
     buildReplayFrames, buildReverseFrames, preDealGame, stepTimes, REPLAY_STEP,
 } from '../src/replay/frames.ts';
+import { seedBytes } from './helpers/bot_table.ts';
+import { cardKey as key, movesOf, playRecorded, type RecordedGame } from './helpers/replay_play.ts';
 
 if (!process.env.E2E_VERBOSE) {
     console.log = () => {};
@@ -40,87 +37,43 @@ if (!process.env.E2E_VERBOSE) {
     console.info = () => {};
 }
 
-const hexToBytes = (h: string) =>
-    new Uint8Array((h.match(/.{2}/g) ?? []).map(b => parseInt(b, 16)));
-
-const seedFor = (np: number, s: number) =>
-    hexToBytes(Array.from({ length: 32 }, (_, i) =>
-        (((i * 31 + s * 13 + np) & 0xff)).toString(16).padStart(2, '0')).join(''));
-
-const mkPlayer = (i: number, strategy: StrategyKey): PrivatePlayer => ({
-    player_id: `bot_${i}`, name: `Bot ${i}`, status: PLAYER_STATUS.READY,
-    is_ai: true, hand: [], awaiting_attack: false, hand_length: 0,
-    strategy_key: strategy,
-});
-
-function mkGame(np: number, seedHex: string): Game {
-    return {
-        players: Array.from({ length: np }, (_, i) => mkPlayer(i, 'handwritten' as StrategyKey)),
-        deck: [], logs: [], id: 'g', name: 'g', status: GAME_STATUS.PLAYING,
-        deck_length: 0, discard_pile_length: 0, flipped: null, power_suit: 0,
-        first_attacker: 0, defender: 0, table_battles: [], elimination_order: [],
-        good_timestamp: null, good_players: [], game_seed: seedHex,
-    } as unknown as Game;
-}
-
-/** A seeded game played to the end, exactly as the finalize path sees one. */
-async function playSeeded(np: number, s: number): Promise<{ game: Game; code: Uint8Array } | null> {
-    const seed = seedFor(np, s);
-    const seedHex = Array.from(seed).map(b => b.toString(16).padStart(2, '0')).join('');
-    const game = mkGame(np, seedHex);
-    __setDealSeedOverride(seed);
-    try {
-        start_game(game);
-        for (let guard = 0; guard < 20000 && game_done(game) === null; guard++) {
-            let acted = false;
-            for (let i = 0; i < game.players.length && !acted; i++) {
-                const p = game.players[i];
-                if (!shouldBotActCore(game, p, i)) continue;
-                if (calculateLegalMoves(game, p.player_id).length === 0) continue;
-                acted = await processBotAction(game, p);
-            }
-            if (!acted) return null;
-        }
-    } finally {
-        __setDealSeedOverride(null);
-    }
-    if (game_done(game) === null) return null;
-    return { game, code: kernelReplayEncodeV6FromGame(game, seed, undefined, 1 << 20) };
-}
-
-const key = (c: Card) => `${c.suit}-${c.value}`;
+/**
+ * A seeded game played to the end by the kernel's bot cycle on a C Table, with
+ * the boards its table served and the pushes it sent: the truth each replay
+ * below is held against (helpers/replay_play.ts).
+ */
+const playSeeded = (np: number, s: number): RecordedGame => playRecorded(Array(np).fill('handwritten'), seedBytes(np, s));
 
 test('every step of a web replay is a board the engine really played', async () => {
     for (let np = 2; np <= 4; np++) {
-        const played = await playSeeded(np, 500 + np);
-        assert.ok(played, `${np}p seeded game completed`);
-        if (!played) continue;
-        const { game, code } = played;
+        const { spectatorView: ended, code } = playSeeded(np, 500 + np);
 
         const frames = buildReplayFrames(code, 'g', null);
         assert.ok(frames.length > 1, `${np}p: the code has steps`);
 
         // The closing board is the board the engine finished on. Not "a board
-        // consistent with" it — the same one.
+        // consistent with" it - the same one.
         const last = frames[frames.length - 1].game;
-        assert.equal(last.discard_pile_length, game.discard_pile_length,
+        assert.equal(last.discardPileLength, ended.discardPileLength,
             `${np}p: ends on the played discard count`);
-        assert.equal(last.deck_length, 0, `${np}p: a finished game drained its stock`);
-        assert.equal(last.players.length, np, `${np}p: every seat came back`);
+        assert.equal(last.deckCount, 0, `${np}p: a finished game drained its stock`);
+        assert.equal(last.seats.length, np, `${np}p: every seat came back`);
         for (let s = 0; s < np; s++) {
-            assert.equal(last.players[s].hand_length, game.players[s].hand.length,
+            assert.equal(last.seats[s].handCount, ended.seats[s].handCount,
                 `${np}p: seat ${s} ends holding what it really held`);
         }
 
         // Cards are conserved at EVERY step: hands + table + stock + flip +
-        // discard is the whole deck, always. A desynced replay fails here.
-        const deckSize = deckSizeFor(np);
+        // discard is the whole deck, always. A desynced replay fails here. The
+        // whole deck is the stock the deal was dealt from.
+        const deckSize = preDealGame(frames[0]).deckCount;
+        assert.equal(deckSize, np >= 6 ? 52 : 36, `${np}p: the deck the seat count plays with`);
         frames.forEach((f, i) => {
-            const inHands = f.game.players.reduce((sum, p) => sum + p.hand_length, 0);
-            const onTable = f.game.table_battles.reduce(
-                (sum, b) => sum + 1 + (b.defense ? 1 : 0), 0);
-            const total = inHands + onTable + f.game.deck_length
-                + (f.game.flipped ? 1 : 0) + f.game.discard_pile_length;
+            const inHands = f.game.seats.reduce((sum, p) => sum + p.handCount, 0);
+            const onTable = f.game.battles.reduce(
+                (sum, b) => sum + 1 + (covered(b) ? 1 : 0), 0);
+            const total = inHands + onTable + f.game.deckCount
+                + (f.game.hasFlipped ? 1 : 0) + f.game.discardPileLength;
             assert.equal(total, deckSize, `${np}p step ${i}: ${total} cards accounted for`);
         });
     }
@@ -129,13 +82,10 @@ test('every step of a web replay is a board the engine really played', async () 
 test('the reveal eye shows the hand a seat REALLY held, not a guess', async () => {
     // The old screen retrodicted this: it bound each revealed card back to the
     // oldest face-down slot that could have held it. That is a consistent guess
-    // and nothing more. v6 is hidden-state-lossless, so this must be exact — at
+    // and nothing more. v6 is hidden-state-lossless, so this must be exact - at
     // the FINAL step, where the played game's own hands are there to check.
     for (let np = 2; np <= 4; np++) {
-        const played = await playSeeded(np, 500 + np);
-        assert.ok(played, `${np}p seeded game completed`);
-        if (!played) continue;
-        const { game, code } = played;
+        const { seatViews, code } = playSeeded(np, 500 + np);
 
         const frames = buildReplayFrames(code, 'g', null);
         const hands = frames[frames.length - 1].game.replay_hands;
@@ -143,7 +93,8 @@ test('the reveal eye shows the hand a seat REALLY held, not a guess', async () =
 
         for (let s = 0; s < np; s++) {
             const shown = hands[s].map(c => c && key(c)).sort();
-            const real = game.players[s].hand.map(c => key(c)).sort();
+            // The hand the table served seat s at the end: its own cards, face up.
+            const real = seatViews[s].myHand.map(c => key(c)).sort();
             assert.deepEqual(shown, real, `${np}p: seat ${s}'s revealed hand is its real hand`);
             assert.ok(!hands[s].includes(null), `${np}p: seat ${s} has no unknown cards`);
         }
@@ -152,7 +103,7 @@ test('the reveal eye shows the hand a seat REALLY held, not a guess', async () =
         // which is what catches a per-seat replay drifting out of step order.
         frames.forEach((f, i) => {
             f.game.replay_hands.forEach((h, s) => {
-                assert.equal(h.length, f.game.players[s].hand_length,
+                assert.equal(h.length, f.game.seats[s].handCount,
                     `${np}p step ${i}: seat ${s}'s revealed hand matches its count`);
             });
         });
@@ -165,11 +116,12 @@ test('the status line asks the kernel what happened, and gets the real game back
     let sawPass = false;
     for (let np = 3; np <= 4; np++) {
         for (let s = 0; s < 12 && !sawPass; s++) {
-            const played = await playSeeded(np, 900 + s);
-            if (!played) continue;
-            const { game, code } = played;
+            const { events, code } = playSeeded(np, 900 + s);
 
-            const count = (t: string) => game.logs.filter(l => l.log_type === t).length;
+            // What live play pushed: one attack_pass event per attack or pass,
+            // told apart by the kernel's message code, not by prose.
+            const moves = movesOf(events);
+            const count = (t: keyof typeof moves) => moves[t];
             if (count('pass') === 0) continue;
             sawPass = true;
 
@@ -205,9 +157,7 @@ test('the status line asks the kernel what happened, and gets the real game back
 });
 
 test('stepping back lands on the previous step\'s real board', async () => {
-    const played = await playSeeded(3, 503);
-    assert.ok(played);
-    if (!played) return;
+    const played = playSeeded(3, 503);
 
     const frames = buildReplayFrames(played.code, 'g', null);
     const reverse = buildReverseFrames(frames);
@@ -216,7 +166,7 @@ test('stepping back lands on the previous step\'s real board', async () => {
     assert.equal(reverse[0], null, 'nothing precedes the deal');
     for (let i = 1; i < frames.length; i++) {
         const rev = reverse[i]!;
-        // The board a step-back commits is the kernel's own previous board —
+        // The board a step-back commits is the kernel's own previous board -
         // never a rewind computed from the animation.
         assert.equal(rev.game, frames[i - 1].game, `step ${i} back lands on step ${i - 1}'s board`);
         assert.equal(rev.events.length, 1, `step ${i} back is one flight`);
@@ -226,23 +176,23 @@ test('stepping back lands on the previous step\'s real board', async () => {
 });
 
 test('the deal animates out of an empty table, and the clock tracks the moves', async () => {
-    const played = await playSeeded(3, 504);
-    assert.ok(played);
-    if (!played) return;
+    const played = playSeeded(3, 504);
 
     const frames = buildReplayFrames(played.code, 'g', null);
 
     const pre = preDealGame(frames[0]);
-    assert.equal(pre.deck_length, deckSizeFor(3), 'the stock starts whole');
-    assert.equal(pre.flipped, null, 'nothing is flipped yet');
-    assert.deepEqual(pre.players.map(p => p.hand_length), [0, 0, 0], 'no one has been dealt to');
-    assert.equal(pre.table_battles.length, 0, 'the table is empty');
+    const dealt = frames[0].game;
+    assert.equal(pre.deckCount, dealt.deckCount + (dealt.hasFlipped ? 1 : 0) + dealt.seats.reduce((n, p) => n + p.handCount, 0),
+        'the stock starts whole: every card the deal handed out is still in it');
+    assert.equal(pre.hasFlipped, false, 'nothing is flipped yet');
+    assert.deepEqual(pre.seats.map(p => p.handCount), [0, 0, 0], 'no one has been dealt to');
+    assert.equal(pre.battles.length, 0, 'the table is empty');
 
-    // One recorded gap per attack/cover/pass/pickup — the exact set of step
+    // One recorded gap per attack/cover/pass/pickup - the exact set of step
     // kinds the clock advances on. If those ever drift apart the timestamps slide
     // silently, so check the arithmetic end to end.
     const timed = frames.filter(f =>
-        [REPLAY_STEP.ATTACK, REPLAY_STEP.COVER, REPLAY_STEP.PASS, REPLAY_STEP.PICKUP]
+        ([REPLAY_STEP.ATTACK, REPLAY_STEP.COVER, REPLAY_STEP.PASS, REPLAY_STEP.PICKUP] as number[])
             .includes(f.kind)).length;
     const gaps = Array.from({ length: timed }, () => 10);
     const times = stepTimes(frames, 1000, gaps);
@@ -251,4 +201,37 @@ test('the deal animates out of an empty table, and the clock tracks the moves', 
 
     assert.deepEqual(stepTimes(frames, null, null), frames.map(() => null),
         'no timing data, no timestamps');
+});
+
+test('before the deal lands, nobody holds a card - the watching seat included', async () => {
+    // A replay watched from a seat (the tutorial's learner) is masked for that
+    // seat, so its first frame already shows that seat's dealt hand. The board
+    // the deal animates onto must not: the cards have not been dealt yet.
+    const played = playSeeded(3, 504);
+    for (const viewer of [-1, 0, 2]) {
+        const frames = buildReplayFrames(played.code, 'g', null, { viewer });
+        assert.equal(frames[0].game.mySeat, viewer, `the frames are watched from ${viewer}`);
+        const pre = preDealGame(frames[0]);
+        assert.deepEqual(pre.myHand, [], `viewer ${viewer}: my hand is empty before the deal`);
+        assert.deepEqual(pre.seats.map((p) => p.handCount), [0, 0, 0], `viewer ${viewer}: every hand is empty`);
+        assert.equal(pre.mySeat, viewer, `viewer ${viewer}: still watched from the same seat`);
+        assert.deepEqual(pre.replay_hands, [[], [], []], `viewer ${viewer}: the reveal eye shows no hand either`);
+    }
+});
+
+test('a replay\'s seats are named by its extras, and carry no invented player id', async () => {
+    const played = playSeeded(3, 505);
+    const named = buildReplayFrames(played.code, 'g', ['Ada', null, 'Cy']);
+    const plain = buildReplayFrames(played.code, 'g', null, { fool: 1 });
+    for (const [frames, names] of [[named, ['Ada', 'P2', 'Cy']], [plain, ['P1', 'P2', 'P3']]] as const) {
+        for (const f of [frames[0], frames[frames.length >> 1]]) {
+            assert.deepEqual(f.game.seats.map((s) => s.id), ['', '', ''], 'no seat has a player id');
+            assert.deepEqual(f.game.seats.map((s) => s.name), names, 'the seats are named by the extras, or P1, P2...');
+            assert.equal(f.game.gameId, 'g', 'the board is the replay\'s');
+            for (const e of f.seq.events) {
+                const board = (e as unknown as { game_state?: { seats: readonly { id: string }[] } }).game_state;
+                if (board) assert.deepEqual(board.seats.map((s) => s.id), ['', '', ''], 'nor on an event\'s board');
+            }
+        }
+    }
 });

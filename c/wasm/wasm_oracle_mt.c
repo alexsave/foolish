@@ -23,6 +23,7 @@
 
 #ifdef FOOLISH_ORACLE_MT
 #include <stdint.h>
+#include <string.h>
 #include "game.h"
 #include "legal.h"
 #include "oracle_mt.h"
@@ -168,24 +169,20 @@ int wasm_mt_verdict(int i) {
 __attribute__((export_name("wasm_mt_defuse")))
 void wasm_mt_defuse(void) { __atomic_store_n(&g_ogmt.defuse_probe, 1u, __ATOMIC_RELAXED); }
 
-/* Dump the candidate descriptor table into the io buffer for the TS overlay.
- * Per candidate: type, n_cards, n_cards x cardByte, n_targets, n_targets x
- * cardByte (cardByte = (suit<<4)|value). Returns the candidate count, or -1 if
- * the descriptors are not yet published. */
+/* The published candidate table, copied for the host to read through its
+ * generated reader (OgMtCandidates): its address, or 0 if the descriptors are not
+ * yet published. Control instance only. */
+static OgMtCandidates g_ogmt_read;
+
 __attribute__((export_name("wasm_mt_candidates")))
 int wasm_mt_candidates(void) {
-    if (__atomic_load_n(&g_ogmt.cand_state, __ATOMIC_ACQUIRE) != 2u) return -1;
-    unsigned char *q = wasm_io_ptr();
+    if (__atomic_load_n(&g_ogmt.cand_state, __ATOMIC_ACQUIRE) != 2u) return 0;
     int n = g_ogmt.n_candidates;
-    for (int i = 0; i < n && i < OG_MT_MAX_CANDS; i++) {
-        const OgMtCand *d = &g_ogmt.cand[i];
-        *q++ = d->type;
-        *q++ = d->n_cards;
-        for (int k = 0; k < d->n_cards; k++) *q++ = d->cards[k];
-        *q++ = d->n_targets;
-        for (int k = 0; k < d->n_targets; k++) *q++ = d->targets[k];
-    }
-    return n;
+    if (n < 0) n = 0;
+    if (n > OG_MT_MAX_CANDS) n = OG_MT_MAX_CANDS;
+    g_ogmt_read.n = (uint8_t)n;
+    memcpy(g_ogmt_read.cand, g_ogmt.cand, sizeof g_ogmt_read.cand);
+    return (int)(uintptr_t)&g_ogmt_read;
 }
 
 /* ---- MT7: the worker thread loop (never returns) ------------------------ */

@@ -16,8 +16,11 @@
 #define MAX_PENDING_DELETES 256
 #define PERSIST_ID_CAP 40   // generous over ID_LEN+1(13) — ids here are opaque strings to this file
 
+// The SQL table name's room, which is also the bound every statement built from
+// it is proved to fit in (see persist_register_table).
+#define PERSIST_TABLE_NAME_CAP 32
 struct PersistTable {
-    char name[32];
+    char name[PERSIST_TABLE_NAME_CAP];
     int  capacity;
     int  blob_cap;
     PersistSnapshotFn snapshot_fn;
@@ -88,6 +91,17 @@ PersistTable *persist_register_table(const char *sql_table_name, int capacity,
                                       PersistLoadFn load_fn) {
     if (g_n_tables >= MAX_TABLES) {
         fprintf(stderr, "persist: too many tables registered (max %d)\n", MAX_TABLES);
+        return NULL;
+    }
+    // A NAME THAT DOES NOT FIT IS REFUSED, not truncated: every statement below
+    // is built by interpolating it, and a silently shortened name would create
+    // and then read a DIFFERENT table. It also gives gcc the bound it was
+    // missing - without it, a `char name[32]` is a string it must assume runs on
+    // to the end of the enclosing struct ("directive output may be truncated
+    // writing up to 82335 bytes", -Wformat-truncation).
+    if (strlen(sql_table_name) >= PERSIST_TABLE_NAME_CAP) {
+        fprintf(stderr, "persist: table name too long (max %d): %s\n",
+                PERSIST_TABLE_NAME_CAP - 1, sql_table_name);
         return NULL;
     }
     PersistTable *t = &g_tables[g_n_tables++];
@@ -243,22 +257,24 @@ bool persist_start(const char *db_path, int interval_ms) {
     for (int i = 0; i < g_n_tables; i++) {
         PersistTable *t = &g_tables[i];
         char sql[256];
+        // The precision is the same cap registration enforces, spelled here too
+        // so the statement's length is provable at the call.
         snprintf(sql, sizeof sql,
-            "CREATE TABLE IF NOT EXISTS %s(id TEXT PRIMARY KEY, blob BLOB NOT NULL, updated_us INTEGER);",
-            t->name);
+            "CREATE TABLE IF NOT EXISTS %.*s(id TEXT PRIMARY KEY, blob BLOB NOT NULL, updated_us INTEGER);",
+            PERSIST_TABLE_NAME_CAP - 1, t->name);
         if (sqlite3_exec(g_db, sql, NULL, NULL, &errmsg) != SQLITE_OK) {
             fprintf(stderr, "persist: schema(%s) failed: %s\n", t->name, errmsg ? errmsg : "?");
             sqlite3_free(errmsg); sqlite3_close(g_db); g_db = NULL; return false;
         }
         snprintf(sql, sizeof sql,
-            "INSERT INTO %s(id,blob,updated_us) VALUES(?1,?2,?3) "
+            "INSERT INTO %.*s(id,blob,updated_us) VALUES(?1,?2,?3) "
             "ON CONFLICT(id) DO UPDATE SET blob=excluded.blob, updated_us=excluded.updated_us;",
-            t->name);
+            PERSIST_TABLE_NAME_CAP - 1, t->name);
         if (sqlite3_prepare_v2(g_db, sql, -1, &t->upsert_stmt, NULL) != SQLITE_OK) {
             fprintf(stderr, "persist: prepare upsert(%s) failed: %s\n", t->name, sqlite3_errmsg(g_db));
             sqlite3_close(g_db); g_db = NULL; return false;
         }
-        snprintf(sql, sizeof sql, "DELETE FROM %s WHERE id=?1;", t->name);
+        snprintf(sql, sizeof sql, "DELETE FROM %.*s WHERE id=?1;", PERSIST_TABLE_NAME_CAP - 1, t->name);
         if (sqlite3_prepare_v2(g_db, sql, -1, &t->delete_stmt, NULL) != SQLITE_OK) {
             fprintf(stderr, "persist: prepare delete(%s) failed: %s\n", t->name, sqlite3_errmsg(g_db));
             sqlite3_close(g_db); g_db = NULL; return false;
@@ -272,7 +288,7 @@ bool persist_start(const char *db_path, int interval_ms) {
     for (int i = 0; i < g_n_tables; i++) {
         PersistTable *t = &g_tables[i];
         char sql[128];
-        snprintf(sql, sizeof sql, "SELECT id, blob FROM %s;", t->name);
+        snprintf(sql, sizeof sql, "SELECT id, blob FROM %.*s;", PERSIST_TABLE_NAME_CAP - 1, t->name);
         sqlite3_stmt *sel;
         if (sqlite3_prepare_v2(g_db, sql, -1, &sel, NULL) != SQLITE_OK) {
             fprintf(stderr, "persist: prepare select(%s) failed: %s\n", t->name, sqlite3_errmsg(g_db));

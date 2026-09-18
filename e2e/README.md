@@ -175,6 +175,7 @@ production does, so their seed reproduces the move choices but not the deal.
 | `reconcile.test.ts` | real broadcasts → real client gate + table merge | client converges to the authoritative table under heavy reordering |
 | `client.test.ts` | `clientReconcile` (the deployed client logic) | no hand swaps/dupes/table-cards; trust-incoming table; version gate; optimistic-overlay resync |
 | `concurrent_games.test.ts` | many real games on one Postgres | no deadlock, no cross-game corruption (answers "is the parallel deadlock a real bug?" — it isn't). The per-file isolation is per FILE, never per game: all 24 games still share this file's one database, which is the whole point of the test |
+| `pool_teardown.test.ts` | the harness pool and its teardown | `pool.end()` resolves only after every pooled connection has closed, so the teardown's `DROP DATABASE ... WITH (FORCE)` never terminates a live backend (that FATAL used to surface as an uncaughtException that turned a green file red) |
 | `fuzz.test.ts` | the real validation+handler dispatch + CAS | adversarial/illegal/malformed input never duplicates or loses a card, illegal moves are rejected, the server survives hostile payloads (found + fixed a card-duplication exploit) |
 | `rearrange.test.ts` | the real `handleRearrangeHand` + CAS | duplicate/garbage index lists are rejected (found + fixed a card-cloning exploit); a real permutation conserves cards |
 | `meta.test.ts` | the real consolidated `meta` handlers + CAS | start/add-bot/exit/continue behave correctly through one endpoint |

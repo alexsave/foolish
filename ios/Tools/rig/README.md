@@ -68,7 +68,9 @@ has no iMessage account - that is the platform's ceiling, not a choice.
 because the finding is worth more than the code.
 
 **3. Apple's chrome is found by LABEL; our board is found by COLOUR.**
-Inside a thread the accessibility tree names the back chevron (`Messages`), the
+Inside a thread the accessibility tree names the back chevron (`Messages`
+through iOS 26, `Back` on iOS 27 - `tap_back` asks for both, and it is the only
+label in the rig with a version split), the
 `add` button, the `Message` field and, once there is text, `Send`; the `+` menu
 names every app, so `Foolish` is found rather than guessed; and the first-run
 sheets name `OK` / `Continue`.

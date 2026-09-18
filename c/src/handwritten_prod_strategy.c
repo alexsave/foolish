@@ -20,12 +20,12 @@
 //       moves — consumed even when only one such move exists;
 //   (3) the final random fallback. A single decision can consume (1) then
 //       (2), or (1) then (3), exactly like the TS control flow.
-// - getTrumpAttackProbability's early exit reads `game.deck_length`, a
-//   projection field nothing updates after DB load ("unused but necessary
-//   for type", utils.ts): the wasm engine's applyStateToGame never writes it
-//   and the parity harness pins it at 0 for the whole game (mkGame in
-//   e2e/bot_parity.test.ts). The disjunction `deck_length > 0 || flipped !==
-//   null` therefore reduces to the flipped test, mirrored as g->has_flipped
+// - getTrumpAttackProbability's early exit read `game.deck_length`, a
+//   projection field nothing updated after DB load ("unused but necessary
+//   for type", utils.ts): the retired TS engine never wrote it and the
+//   retired parity harness pinned it at 0 for the whole game. The
+//   disjunction `deck_length > 0 || flipped !== null` therefore reduced to
+//   the flipped test, mirrored as g->has_flipped
 //   alone — deliberately NOT g->deck_count, which would diverge whenever the
 //   stale TS field (0) and the live deck disagree. (In every reachable
 //   kernel state deck_count > 0 implies has_flipped anyway: the flipped

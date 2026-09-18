@@ -48,6 +48,25 @@ static inline bool card_eq(Card a, Card b) {
     return a.suit == b.suit && a.value == b.value;
 }
 
+// IS THIS A CARD OF A DECK whose values run min_value..max_value? Three files
+// asked this with four comparisons each, and on a Linux gcc build two of them
+// were answered by the compiler rather than at runtime: `suit` is a 3-bit
+// SIGNED field, so it cannot reach NUM_SUITS, and `value` is a 5-bit signed
+// field, so it cannot reach 16 ("comparison is always true due to limited
+// range of data type", -Wtype-limits).
+//
+// The bounds are real requirements, so they are not deleted - they move to
+// where they actually hold. The suit's ceiling is the field's width, pinned by
+// the assert below, which stops compiling if the field ever widens instead of
+// quietly letting a suit nobody has through. The value's is a RUNTIME argument
+// here, which is what it always was (ACE_VALUE is 13 and the field reaches 15,
+// so that comparison was never a tautology).
+_Static_assert(NUM_SUITS > 3, "a 3-bit signed suit cannot exceed 3: if NUM_SUITS ever fits the field, "
+                              "card_in_range needs its upper comparison back");
+static inline bool card_in_range(Card c, int min_value, int max_value) {
+    return c.suit >= 0 && c.value >= min_value && c.value <= max_value;
+}
+
 // Card <-> dense id (0..51): id = suit*13 + (value-1). The replay codec's
 // alphabets and the wire card byte are both this numbering.
 static inline Card card_of_id(int id) {
@@ -76,8 +95,43 @@ static inline bool card_has_value(const bool *marks, int value) {
 
 // "No card" sentinel: replaces the has_defense/has_target booleans (an
 // uncovered battle stores CARD_NONE as its defense; a single-card log pair
-// stores CARD_NONE as its target). Distinct from the -1/-1 hidden card.
-#define CARD_NONE ((Card){ .suit = -2, .value = -2 })
-static inline bool card_is_none(Card c) { return c.suit == -2 && c.value == -2; }
+// stores CARD_NONE as its target). Distinct from the -1/-1 hidden card. Its two
+// fields are named so a host holding a copied-out card can tell the sentinel by
+// name (sdk/ts/gen/view_layout.bots.ts), never by a number of its own.
+#define CARD_NONE_SUIT  (-2)
+#define CARD_NONE_VALUE (-2)
+#define CARD_NONE ((Card){ .suit = CARD_NONE_SUIT, .value = CARD_NONE_VALUE })
+static inline bool card_is_none(Card c) { return c.suit == CARD_NONE_SUIT && c.value == CARD_NONE_VALUE; }
+
+// ---------- Card notation ------------------------------------------------
+//
+// The one reader of a card written as text, for test fixtures and tools
+// (e2e/helpers/table_fixture.ts reaches it through bots.wasm; no host keeps a
+// parser of its own). A card is a rank then a suit, with no space between:
+//
+//   rank   2 3 4 5 6 7 8 9, 10 or T, J, Q, K, A
+//   suit   s (spades), h (hearts), c (clubs), d (diamonds)
+//
+// Letters in either case: "6h", "10s", "Td", "QC", "as". The Card it reads is
+// this file's numbering (rank 2 is value 1, A is ACE_VALUE). Whether the card
+// belongs to a game's deck is the game's question (game_validate), not this one.
+//
+// A list is cards separated by whitespace or commas, and may be empty. In a
+// list of battles each item is an attack, or an attack and its cover joined by
+// '/': "7c/8c 9d". Nothing is ever skipped or guessed: the first thing that is
+// not a card refuses the whole string.
+#define CARD_PARSE_E_EMPTY  (-1)  // no card where one was expected (an empty string, "/8c", "7c/")
+#define CARD_PARSE_E_RANK   (-2)  // the token does not start with a rank
+#define CARD_PARSE_E_SUIT   (-3)  // the rank is not followed by a suit
+#define CARD_PARSE_E_SYNTAX (-4)  // something after the suit: "6hh", a '/' outside a battle list
+#define CARD_PARSE_E_CAP    (-5)  // more cards than the output holds
+
+// Exactly one card; whitespace around it is ignored. 0, or CARD_PARSE_E_*.
+int card_parse(const char *s, int len, Card *out);
+
+// A list: the number of cards (items) written to out, or CARD_PARSE_E_*. With
+// covers non-NULL it is a battle list, and covers[i] is item i's cover, or
+// CARD_NONE when it has none; with covers NULL a '/' is refused.
+int card_list_parse(const char *s, int len, Card *out, Card *covers, int cap);
 
 #endif

@@ -30,9 +30,10 @@ compiler. The analysis binary is built on demand via `make og_explain`.
 
 ## What the pipeline does (`explain.py` runs these in order)
 
-1. **`decode_to_json.mjs`** — reuses the deployed replay codec
-   (`urlToGame` + `decodeReplay`) to recover the public log stream + game meta
-   from the share URL → `replay_decoded.json`.
+1. **`decode_to_json.mjs`** - the kernel decodes the share URL
+   (`e2e/helpers/replay_decode.ts`: the code's summary and the decoder's log
+   stream, on the test bots module) into the public log stream + game meta
+   → `replay_decoded.json`.
 2. **`make og_explain`** — builds `c/tests/og_explain.c` with
    `-DOG_EXPLAIN_BUILD`, the flag that compiles the deliberation-dump
    instrumentation **into** octogen. That flag lives *only* in this make target,

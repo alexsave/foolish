@@ -222,6 +222,9 @@ byte-comparing committed products). It paid for itself three times:
    blackpowder/cordite/octogen save and restore it). Both changed a real bot
    move in the harness. Guarded by `test_bot_drive_pre_action_hook`
    (negative-tested).
+   **Superseded (September 2026):** the choose now also seeds the draw LCG, from its own salt (`GAME_SEED_SALT_SEARCH`, `game.h`).
+   Reading whatever the last apply left made a robusta or firecracker cycle a function of the module's history, so a CAS retry on another isolate could choose a different move.
+   The owner accepted the changed moves; `test_table_bot_drive_ignores_instance_history` and `e2e/table_bot_determinism.test.ts` guard it.
 3. **The belief log must be sliced, not exported from zero.** A cycle whose
    bots read the session log has that whole log resident BENEATH the records it
    writes, so `wasm_export_logs_masked_from` / `wasm_events_serialize_from` take

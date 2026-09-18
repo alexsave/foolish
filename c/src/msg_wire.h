@@ -475,6 +475,21 @@ typedef struct {
     const unsigned char *actions;
 } MsgEnvelope;
 
+// THE HEADER A BRIDGE HANDS OVER: the envelope a decode produced, plus the
+// SHA-256 of the bytes it came from (Rule P's tiebreak needs it, and an envelope
+// cannot carry its own digest). This is the struct itself, not a byte string: a
+// host reads and writes it through the readers and writers tools/structgen
+// generates from this declaration, so no bridge on either side of the kernel
+// restates an offset. The body is not in it - `actions` is borrowed from the
+// buffer the envelope was decoded out of and a seal's body is the kernel's own -
+// and neither are the fields a producer must not be able to claim: `digest` and
+// `n_new` are written by the kernel and ignored when it reads one back
+// (wasm_msg_seal).
+typedef struct {
+    MsgEnvelope e;
+    uint8_t     digest[SHA256_DIGEST_LEN];
+} MsgHeader;
+
 // May the defender transfer, in the game these bytes describe? THE reader for
 // the variant byte: it knows that formats 2-4 predate the rules byte and are
 // the passing game by definition, so no caller has to remember which formats

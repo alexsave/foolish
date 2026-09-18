@@ -1,64 +1,39 @@
 // Perf/mem harness for the wasm bot module: plays deterministic cordite-vs-
-// cordite games through the REAL TS bridge (wasmChooseMoveDirect) and reports
-// ns/decision + peak linear-memory MB. Seeds are pinned so every build variant
-// runs the byte-identical workload (same deals, same MC rollouts) — the only
-// thing that changes between runs is the swapped-in bots.wasm.
-import { game_done } from '../server/api/common/common_utils.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
-import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
-import { shouldBotActCore, executeBotMove } from '../server/api/common/pure_bot_actions.ts';
-import { STRAT, wasmChooseMoveDirect, __setBotSeedSource, __botsWasmMB } from '../sdk/ts/wasm/bots.ts';
-import { __setKernelSeedSource } from '../sdk/ts/wasm/engine.ts';
-import { Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY } from '../server/api/core/types.ts';
+// cordite games through the bot cycle the server runs (table_bot_drive on the C
+// Table, e2e/helpers/bot_table.ts, one decision per cycle) and reports
+// ns/decision + peak linear-memory MB. Deal seeds are pinned and every decision
+// is seeded from its game's deal seed, so every build variant runs the
+// byte-identical workload (same deals, same MC rollouts) - the only thing that
+// changes between runs is the swapped-in bots.wasm.
+//
+// Phase 8 (docs/C_GAME_SHAPE_MIGRATION.md) moved it off the TypeScript Game and
+// wasmChooseMoveDirect: a decision's time is now the drive alone (choose and
+// apply, in C), with no JS marshal around it.
+import * as L from '../sdk/ts/gen/game_layout.bots.ts';
+import { fixtureTable } from './helpers/table_fixture.ts';
+import { botCycle, dealBotTable, seedBytes } from './helpers/bot_table.ts';
 
 const __log = console.log.bind(console);
 console.log = () => {}; console.warn = () => {}; console.info = () => {};
 
-const mkLcgU32 = (seed: number) => { let s = (seed >>> 0) || 1; return () => (s = (Math.imul(s, 1664525) + 1013904223) >>> 0); };
-const mkPlayer = (i: number): PrivatePlayer => ({
-  player_id: `p${i}`, name: `P${i}`, status: PLAYER_STATUS.READY, is_ai: true,
-  hand: [], awaiting_attack: false, hand_length: 0, strategy_key: STRATEGY_KEY.CORDITE,
-});
-const mkGame = (np: number): Game => ({
-  players: Array.from({ length: np }, (_, i) => mkPlayer(i)),
-  deck: [], logs: [], id: 'bench', name: 'bench', status: GAME_STATUS.PLAYING,
-  deck_length: 0, discard_pile_length: 0, flipped: null, power_suit: 0,
-  first_attacker: 0, defender: 0, table_battles: [], elimination_order: [],
-  good_timestamp: null, good_players: [],
-});
-
 const PCS = [2, 4, 6, 8];
 const GAMES = 2;
-__setKernelSeedSource(mkLcgU32(0xDEA1));       // deterministic deals/refills — identical every variant
-const botSeed = mkLcgU32(0x12345);              // deterministic per-decision MC seed
+const table = fixtureTable();
 
-let decisions = 0, totalNs = 0, peakMB = 0;
+let decisions = 0, totalMs = 0, peakMB = 0;
 const wall0 = process.hrtime.bigint();
 for (const np of PCS) {
   for (let gi = 0; gi < GAMES; gi++) {
-    const g = mkGame(np);
-    start_game(g);
-    let guard = 0;
-    while (game_done(g) === null && ++guard < 2000) {
-      let advanced = false;
-      for (let i = 0; i < np; i++) {
-        const p = g.players[i];
-        if (!shouldBotActCore(g, p, i)) continue;
-        const lm = calculateLegalMoves(g, p.player_id);
-        if (lm.length === 0) continue;
-        const seed = botSeed();
-        __setBotSeedSource(() => seed);
-        const s = process.hrtime.bigint();
-        const mv = wasmChooseMoveDirect(g, p.player_id, STRAT.cordite);
-        totalNs += Number(process.hrtime.bigint() - s);
-        __setBotSeedSource(null);
-        decisions++;
-        if (mv && executeBotMove(g, p, mv) !== false) { advanced = true; break; }
-      }
-      if (!advanced) break;
+    let row = dealBotTable(Array.from({ length: np }, () => 'cordite'), seedBytes(np, 0xdea1 + gi), { gameId: 'bench' });
+    for (let guard = 0; guard < 2000 && row.status === L.GAME_STATUS_PLAYING; guard++) {
+      const c = botCycle(row, { maxActions: 1 });
+      if (c.drive.n === 0) break;
+      totalMs += c.ms;
+      decisions += c.drive.n;
+      row = c.row;
     }
-    const mb = __botsWasmMB(); if (mb > peakMB) peakMB = mb;
+    const mb = Math.round(table.memoryBytes() / 1048576); if (mb > peakMB) peakMB = mb;
   }
 }
 const wallMs = Math.round(Number(process.hrtime.bigint() - wall0) / 1e6);
-__log('BENCH ' + JSON.stringify({ decisions, ns_per_decision: Math.round(totalNs / decisions), peakMB, wallMs }));
+__log('BENCH ' + JSON.stringify({ decisions, ns_per_decision: Math.round((totalMs * 1e6) / decisions), peakMB, wallMs }));

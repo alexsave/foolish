@@ -1,5 +1,4 @@
 import React from 'react';
-import { PersonalGame } from '@api/core/types.ts';
 import { useServer } from '../contexts/ServerContext';
 import { TableBattles } from './GameDisplay/TableBattles';
 import { PlayerRing } from './GameDisplay/PlayerRing';
@@ -21,8 +20,8 @@ import { Text } from './Text';
  * Live `GameDisplay`, the replay `ReplayStage`, and the `TutorialBoard` are all
  * the same composition of the shared GameDisplay/* render pieces — they only
  * differ in WHICH pieces appear, how far the play area is inset (to clear each
- * screen's chrome), and the chrome itself. The render pieces read the game from
- * `useServer().game` (+ animation/auth/game/drag/hint contexts), so this layout
+ * screen's chrome), and the chrome itself. The render pieces read the board from
+ * `useServer().view` (+ animation/auth/game/drag/hint contexts), so this layout
  * is source-agnostic: the live ServerProvider, the replay provider, and the
  * tutorial provider each supply a different implementation of that same read
  * surface, and capability flags below pick what to show.
@@ -65,9 +64,9 @@ export const GameBoard = ({
     chrome,
     overlay,
 }: GameBoardProps) => {
-    const game = useServer().game as PersonalGame;
+    const view = useServer().view;
 
-    if (!game || !game.players || !game.players.length) {
+    if (!view || !view.seats.length) {
         return <div><Text id="loading" /></div>;
     }
 

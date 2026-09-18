@@ -226,7 +226,6 @@ static int play_game_rules(const uint8_t *seed, int n_players, int max_actions,
     for (int i = 0; i < n_players; i++) {
         g.players[i].status = PLAYER_STATUS_READY;
         g.players[i].strategy_key = 0;
-        snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
     }
     start_game(&g);
 
@@ -784,7 +783,6 @@ static void test_rule_p_child_beats_parent(void) {
         for (int i = 0; i < 4; i++) {
             gm.players[i].status = PLAYER_STATUS_READY;
             gm.players[i].strategy_key = 0;
-            snprintf(gm.players[i].player_id, sizeof(gm.players[i].player_id), "p%d", i);
         }
         start_game(&gm);
 
@@ -910,7 +908,6 @@ static void test_rule_p_child_beats_parent(void) {
         for (int i = 0; i < 4; i++) {
             gm.players[i].status = PLAYER_STATUS_READY;
             gm.players[i].strategy_key = 0;
-            snprintf(gm.players[i].player_id, sizeof(gm.players[i].player_id), "p%d", i);
         }
         start_game(&gm);
 
@@ -1345,7 +1342,6 @@ static void test_bubble_delta(void) {
             for (int i = 0; i < np; i++) {
                 g.players[i].status = PLAYER_STATUS_READY;
                 g.players[i].strategy_key = 0;
-                snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
             }
             start_game(&g);
 
@@ -1824,7 +1820,6 @@ static void test_fool_penalty_wire(void) {
             for (int i = 0; i < np; i++) {
                 g.players[i].status = PLAYER_STATUS_READY;
                 g.players[i].strategy_key = 0;
-                snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
             }
             game_open_at_seat(opening);
             start_game(&g);
@@ -1923,7 +1918,6 @@ static void test_forced_opening_replay(void) {
         for (int i = 0; i < np; i++) {
             g.players[i].status = PLAYER_STATUS_READY;
             g.players[i].strategy_key = 0;
-            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
         }
         // Derive first, so the test only runs where the penalty really differs
         // from the ordinary rule (otherwise there is no override to prove).
@@ -1937,7 +1931,6 @@ static void test_forced_opening_replay(void) {
         for (int i = 0; i < np; i++) {
             g.players[i].status = PLAYER_STATUS_READY;
             g.players[i].strategy_key = 0;
-            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
         }
         game_open_at_seat(opening);
         start_game(&g);
@@ -2395,7 +2388,6 @@ static void probe_v6_midgame(uint32_t seed0, int np, int bot) {
             rg.num_players = (int8_t)np;
             for (int i = 0; i < np; i++) {
                 rg.players[i].status = PLAYER_STATUS_READY;
-                snprintf(rg.players[i].player_id, sizeof(rg.players[i].player_id), "p%d", i);
             }
             start_game(&rg);
 
@@ -2512,7 +2504,6 @@ static void print_twocover(int np, int one_bubble) {
         for (int i = 0; i < np; i++) {
             g.players[i].status = PLAYER_STATUS_READY;
             g.players[i].strategy_key = 0;
-            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
         }
         start_game(&g);
 
@@ -2677,7 +2668,6 @@ static void print_passable(int np) {
         for (int i = 0; i < np; i++) {
             g.players[i].status = PLAYER_STATUS_READY;
             g.players[i].strategy_key = 0;
-            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
         }
         start_game(&g);   // rules 0 = perevodnoy, which is what makes a pass legal
 
@@ -2768,7 +2758,6 @@ static void print_goodwait(int np) {
         for (int i = 0; i < np; i++) {
             g.players[i].status = PLAYER_STATUS_READY;
             g.players[i].strategy_key = 0;
-            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
         }
         start_game(&g);
 
@@ -2914,7 +2903,6 @@ static void print_endgame(int np, int passing, int arrival) {
         for (int i = 0; i < np; i++) {
             g.players[i].status = PLAYER_STATUS_READY;
             g.players[i].strategy_key = 0;
-            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
         }
         start_game(&g);
 
@@ -3029,7 +3017,6 @@ static void print_lastdefense(int np) {
         for (int i = 0; i < np; i++) {
             g.players[i].status = PLAYER_STATUS_READY;
             g.players[i].strategy_key = 0;
-            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
         }
         start_game(&g);
 
@@ -3157,7 +3144,6 @@ static void print_lastmove_ex(int np, int kind, int live) {
         for (int i = 0; i < np; i++) {
             g.players[i].status = PLAYER_STATUS_READY;
             g.players[i].strategy_key = 0;
-            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
         }
         start_game(&g);
 
@@ -3370,7 +3356,6 @@ static void print_chain(int np, int count, int depth) {
         for (int i = 0; i < np; i++) {
             g.players[i].status = PLAYER_STATUS_READY;
             g.players[i].strategy_key = 0;
-            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
         }
         start_game(&g);
 
@@ -3587,7 +3572,6 @@ static void print_fatboard(int target, int np, int nopass, int preroll) {
         for (int i = 0; i < np; i++) {
             g.players[i].status = PLAYER_STATUS_READY;
             g.players[i].strategy_key = 0;
-            snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
         }
         start_game(&g);
 
@@ -3871,7 +3855,6 @@ static void print_fixtures4(void) {
             for (int i = 0; i < np; i++) {
                 g.players[i].status = PLAYER_STATUS_READY;
                 g.players[i].strategy_key = 0;
-                snprintf(g.players[i].player_id, sizeof(g.players[i].player_id), "p%d", i);
             }
             game_open_at_seat(opening);
             start_game(&g);

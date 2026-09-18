@@ -6,7 +6,7 @@
 // bot-lease plpgsql. PostgREST + Realtime are replaced by direct SQL and an
 // in-process broadcast recorder; everything else is the genuine article.
 
-import { Pool } from 'pg';
+import { Pool, types as pgTypes } from 'pg';
 import { basename } from 'path';
 
 // ---- One Postgres DATABASE per test file ---------------------------------
@@ -43,7 +43,10 @@ export const pgAdminConfig = {
 };
 
 /** The database THIS test file owns. Nothing else reads or writes it. */
-export const suiteDatabase = `${process.env.E2E_DB_PREFIX || 'e2e'}_${suiteSlug}`;
+// Lower case: CREATE DATABASE folds an unquoted name to lower case, and the pool
+// connects by the exact name, so a mixed-case E2E_DB_PREFIX would create one
+// database and connect to another that does not exist.
+export const suiteDatabase = `${process.env.E2E_DB_PREFIX || 'e2e'}_${suiteSlug}`.toLowerCase();
 
 // ---- Connection budget ---------------------------------------------------
 // Files run in parallel now, so the ceiling is (pool size x files in flight),
@@ -63,15 +66,57 @@ export const suiteDatabase = `${process.env.E2E_DB_PREFIX || 'e2e'}_${suiteSlug}
 const WIDE_POOLS: Record<string, number> = { concurrent_games: 24, lease: 30 };
 const poolMax = Number(process.env.E2E_PG_POOL_MAX || WIDE_POOLS[suiteSlug] || 8);
 
-const pool = new Pool({ ...pgAdminConfig, database: suiteDatabase, max: poolMax });
+// Every session runs in UTC, as the hosted Supabase database does. The games
+// timestamps are TIMESTAMP (no zone) stamped by now(), and the server compares
+// them with ISO instants (the bot heartbeat's staleness window): under a local
+// time zone those two clocks disagree by the zone's offset.
+//
+// BYTEA reads come back as PostgREST sends them: the '\x'-hex text Postgres
+// writes, not a Buffer. The server parses exactly what hosted hands it, and a
+// test that reads a blob column through the pool sees the same text a client
+// would.
+const BYTEA_OID = 17;
+const pgTypesAsPostgrest = {
+    getTypeParser: ((oid: number, format?: string) =>
+        oid === BYTEA_OID ? (v: string) => v : pgTypes.getTypeParser(oid, format as 'text')) as typeof pgTypes.getTypeParser,
+};
+const pool = new Pool({ ...pgAdminConfig, database: suiteDatabase, max: poolMax, options: '-c TimeZone=UTC', types: pgTypesAsPostgrest });
+
+// pg-pool's end() resolves as soon as it has CALLED client.end() on its idle
+// clients - not when their connections are closed. client.end() only queues the
+// Terminate message; the backend is still alive, and still attached to this
+// file's database, for a moment afterwards. The harness's teardown drops that
+// database next, WITH (FORCE), which SIGTERMs any backend still there. A backend
+// that takes the signal before it reads Terminate answers with
+// `FATAL 57P01 terminating connection due to administrator command`, the ended
+// client still carries the pool's idle error listener, the pool re-emits it with
+// no 'error' listener, and node:test reports an uncaughtException "generated
+// asynchronous activity after the test ended" against whichever test opened that
+// client - a red file whose tests all passed. The wider the pool and the busier
+// the machine, the likelier: concurrent_games (24 clients) in the full run.
+//
+// So "the pool is closed" means every client's connection is closed: track each
+// client the pool opens until pg reports its connection ended, and resolve end()
+// only once none is left. e2e/pool_teardown.test.ts pins it.
+const openClients = new Set<unknown>();
+let allClosed: (() => void) | null = null;
+pool.on('connect', (client) => {
+    openClients.add(client);
+    client.once('end', () => { openClients.delete(client); if (openClients.size === 0) allClosed?.(); });
+});
+const endPool = pool.end.bind(pool);
+async function closePoolDrained(): Promise<void> {
+    const closed = new Promise<void>((resolve) => { allClosed = resolve; });
+    await endPool();
+    if (openClients.size > 0) await closed;
+}
 
 // pg's Pool.end() rejects when called twice, and the suite lifecycle now ends the
 // pool from the harness (the same hook that drops the database) while ~20 suites
 // still end it themselves in their own after(). Fold repeat calls onto the first
 // promise so hook ordering can't turn cleanup into a spurious red.
-const closePoolOnce = pool.end.bind(pool);
 let poolClosing: Promise<void> | null = null;
-(pool as unknown as { end: () => Promise<void> }).end = () => (poolClosing ??= closePoolOnce());
+(pool as unknown as { end: () => Promise<void> }).end = () => (poolClosing ??= closePoolDrained());
 
 export const e2ePool = pool;
 
@@ -83,6 +128,15 @@ const PK: Record<string, string> = {
 };
 
 type Result = { data: any; error: any };
+
+// E2E_DB_RTT_MS: every shimmed PostgREST request waits this long (half before,
+// half after), a stand-in for hosted's edge-to-database round trip in the
+// latency benches. 0 (the default) adds nothing.
+const dbRtt = Number(process.env.E2E_DB_RTT_MS || 0);
+const rttHalf = (): Promise<void> | null => (dbRtt ? new Promise((r) => setTimeout(r, dbRtt / 2)) : null);
+
+/** JSON body bytes PostgREST would receive, per RPC name: the benches' payload measure. */
+export const rpcBodyBytes = new Map<string, { calls: number; bytes: number }>();
 const ok = (data: any): Result => ({ data, error: null });
 
 // Build the nested object loadCompleteGame expects from its PostgREST embed:
@@ -107,7 +161,26 @@ async function loadGamesEmbed(id: string): Promise<Result> {
     } finally { c.release(); }
 }
 
-interface Filter { col: string; op: 'eq' | 'in' | 'lt'; val: any }
+interface Filter { col: string; op: 'eq' | 'in' | 'lt' | 'gt'; val: any }
+
+// The array-typed columns of a table, read from the catalog once per table.
+// PostgREST binds a JSON array to an array column (game_snapshots.player_ids
+// UUID[]) and anything else structured as JSON; pg does the same when handed a
+// JS array or a JSON string.
+const arrayColumnCache = new Map<string, Promise<Set<string>>>();
+function arrayColumns(table: string): Promise<Set<string>> {
+    let got = arrayColumnCache.get(table);
+    if (!got) {
+        got = pool.query(
+            `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND data_type = 'ARRAY'`, [table])
+            .then((r) => new Set(r.rows.map((row: { column_name: string }) => row.column_name)))
+            .catch(() => new Set<string>());
+        arrayColumnCache.set(table, got);
+    }
+    return got;
+}
+const bindValue = (arrays: Set<string>, col: string, v: any): any =>
+    (Array.isArray(v) && arrays.has(col)) ? v : (v !== null && typeof v === 'object' ? JSON.stringify(v) : v);
 
 class QueryBuilder implements PromiseLike<Result> {
     private filters: Filter[] = [];
@@ -128,6 +201,7 @@ class QueryBuilder implements PromiseLike<Result> {
     eq(col: string, val: any) { this.filters.push({ col, op: 'eq', val }); return this; }
     in(col: string, val: any[]) { this.filters.push({ col, op: 'in', val }); return this; }
     lt(col: string, val: any) { this.filters.push({ col, op: 'lt', val }); return this; }
+    gt(col: string, val: any) { this.filters.push({ col, op: 'gt', val }); return this; }
     // supabase-js appends on repeated .order() calls; mirror that
     order(col: string, opts: any = {}) { this.orders.push({ col, asc: opts.ascending !== false }); return this; }
     limit(n: number) { this.limitN = n; return this; }
@@ -139,12 +213,18 @@ class QueryBuilder implements PromiseLike<Result> {
         const parts = this.filters.map((f) => {
             if (f.op === 'in') { params.push(f.val); return `${f.col} = ANY($${params.length})`; }
             params.push(f.val);
-            return f.op === 'lt' ? `${f.col} < $${params.length}` : `${f.col} = $${params.length}`;
+            if (f.op === 'lt') return `${f.col} < $${params.length}`;
+            return f.op === 'gt' ? `${f.col} > $${params.length}` : `${f.col} = $${params.length}`;
         });
         return ' WHERE ' + parts.join(' AND ');
     }
 
     private async run(): Promise<Result> {
+        await rttHalf();
+        try { return await this.runQuery(); } finally { await rttHalf(); }
+    }
+
+    private async runQuery(): Promise<Result> {
         // loadCompleteGame's embedded games select
         if (this.table === 'games' && this.op === 'select' && this.selectCols.includes('(')) {
             const id = this.filters.find((f) => f.col === 'id')?.val;
@@ -169,12 +249,12 @@ class QueryBuilder implements PromiseLike<Result> {
                 const r = await pool.query(sql, params);
                 return ok(r.rows);
             }
+            const arrays = await arrayColumns(this.table);
             if (this.op === 'update') {
                 const params: any[] = [];
                 const row = this.rows[0] ?? {};
                 const sets = Object.keys(row).map((col) => {
-                    const v = row[col];
-                    params.push(v !== null && typeof v === 'object' ? JSON.stringify(v) : v);
+                    params.push(bindValue(arrays, col, row[col]));
                     return `${col} = $${params.length}`;
                 });
                 if (sets.length === 0) return ok([]);
@@ -187,8 +267,7 @@ class QueryBuilder implements PromiseLike<Result> {
             const cols = Array.from(new Set(this.rows.flatMap((row) => Object.keys(row))));
             const params: any[] = [];
             const valuesSql = this.rows.map((row) => '(' + cols.map((col) => {
-                const v = row[col];
-                params.push(v !== null && typeof v === 'object' ? JSON.stringify(v) : v);
+                params.push(bindValue(arrays, col, row[col]));
                 return `$${params.length}`;
             }).join(',') + ')').join(',');
             let sql = `INSERT INTO ${this.table} (${cols.join(',')}) VALUES ${valuesSql}`;
@@ -253,23 +332,99 @@ globalThis.fetch = (async (input: any, init?: any): Promise<Response> => {
     throw new Error(`e2e: unexpected fetch to ${url}`);
 }) as typeof fetch;
 
+// The array-typed parameter names of a function, read from the catalog once per name.
+const arrayParamCache = new Map<string, Promise<Set<string>>>();
+
+// Whether a function returns one composite row (OUT parameters or a row type),
+// which PostgREST answers as a JSON object with a key per column.
+const compositeCache = new Map<string, Promise<boolean>>();
+function returnsComposite(fn: string): Promise<boolean> {
+    let got = compositeCache.get(fn);
+    if (!got) {
+        got = pool.query(
+            `SELECT bool_or(NOT p.proretset AND (t.typtype = 'c' OR p.prorettype = 'record'::regtype)) AS composite
+             FROM pg_proc p JOIN pg_type t ON t.oid = p.prorettype WHERE p.proname = $1`, [fn])
+            .then((r) => r.rows[0]?.composite === true)
+            .catch(() => false);
+        compositeCache.set(fn, got);
+    }
+    return got;
+}
+function arrayParams(fn: string): Promise<Set<string>> {
+    let got = arrayParamCache.get(fn);
+    if (!got) {
+        got = pool.query(
+            `SELECT a.name FROM pg_proc p, unnest(p.proargnames, p.proargtypes::oid[]) AS a(name, typ)
+             JOIN pg_type t ON t.oid = a.typ WHERE p.proname = $1 AND t.typcategory = 'A'`, [fn])
+            .then((r) => new Set(r.rows.map((row: { name: string }) => row.name)))
+            .catch(() => new Set<string>());
+        arrayParamCache.set(fn, got);
+    }
+    return got;
+}
+
 export const createClient = (_url?: string, _key?: string) => ({
     from: (table: string) => new QueryBuilder(table),
     rpc: async (name: string, params: Record<string, any> = {}): Promise<Result> => {
+        const stat = rpcBodyBytes.get(name) ?? { calls: 0, bytes: 0 };
+        stat.calls++;
+        stat.bytes += Buffer.byteLength(JSON.stringify(params));
+        rpcBodyBytes.set(name, stat);
+        await rttHalf();
         try {
             const keys = Object.keys(params);
             // Named-argument call, like PostgREST: defaulted params may be
             // omitted and the caller's key order can't silently misbind.
             const placeholders = keys.map((k, i) => `${k} => $${i + 1}`).join(',');
-            const vals = keys.map((k) => { const v = params[k]; return v !== null && typeof v === 'object' ? JSON.stringify(v) : v; });
+            // PostgREST binds a JSON value by the parameter's declared type: a
+            // JSON array to an array parameter (commit_table's p_seats TEXT[]),
+            // anything structured to JSONB (commit_game's p_seats JSONB). pg does
+            // the same when handed a JS array or a JSON string.
+            const arrays = await arrayParams(name);
+            const vals = keys.map((k) => {
+                const v = params[k];
+                if (Array.isArray(v) && arrays.has(k)) return v;
+                return v !== null && typeof v === 'object' ? JSON.stringify(v) : v;
+            });
+            if (await returnsComposite(name)) {
+                const r = await pool.query(`SELECT * FROM ${name}(${placeholders})`, vals);
+                return ok(r.rows[0] ?? null);
+            }
             const r = await pool.query(`SELECT ${name}(${placeholders}) AS result`, vals);
             return ok(r.rows[0]?.result ?? null);
-        } catch (error) { return { data: null, error }; }
+        } catch (error) { return { data: null, error }; } finally { await rttHalf(); }
     },
     channel: (name: string, _cfg?: any) => new Channel(name),
+    // GoTrue's admin API, as far as delete-account reaches it: deleting the user
+    // row cascades exactly what the hosted auth delete cascades.
+    auth: {
+        // GoTrue verifying a token (auth.ts's fallback when local verification
+        // fails): there is no GoTrue here and no token it issued, so it refuses,
+        // as GoTrue refuses a token it cannot verify.
+        getUser: async (_token?: string): Promise<{ data: { user: User | null }; error: { message: string } | null }> =>
+            ({ data: { user: null }, error: { message: 'invalid JWT: no GoTrue in the e2e shim' } }),
+        admin: {
+            deleteUser: async (id: string): Promise<{ data: unknown; error: any }> => {
+                try {
+                    await pool.query('DELETE FROM auth.users WHERE id = $1', [id]);
+                    return { data: {}, error: null };
+                } catch (error) { return { data: null, error }; }
+            },
+        },
+    },
     removeChannel: async (_ch: any) => 'ok',
 });
 
-export type User = { id: string; user_metadata: { username: string }; email?: string };
+/** supabase-js's User, as far as the server builds or reads one. */
+export type User = {
+    id: string;
+    aud: string;
+    role?: string;
+    email?: string;
+    phone?: string;
+    app_metadata: { [key: string]: any };
+    user_metadata: { [key: string]: any };
+    created_at: string;
+};
 
 export const closePool = () => pool.end();

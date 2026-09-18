@@ -1,4 +1,6 @@
 -- FROZEN FIXTURE - do not edit, do not keep in sync with seed.sql.
+-- (One exception, marked where it sits: delete_account, which the copy's source
+-- was missing and hosted has. See the note at the function.)
 --
 -- This is server/impls/supabase/seed.sql exactly as it stood at 6b9e8432, the
 -- parent of 1bb0a78a, which added migration 20260807120000. Reproduce with:
@@ -795,6 +797,52 @@ BEGIN
   RETURN v_rows > 0;
 END;
 $$;
+
+-- ONE ADDITION to the verbatim copy, verbatim itself: public.delete_account and
+-- its lockdown, exactly as migration 20260714120000_account_deletion.sql creates
+-- them. That migration is one of the ones this file stands in for (it is older
+-- than 20260807120000 and hosted has run it), but seed.sql did not define the
+-- function at 6b9e8432, so the copy inherited the omission. Without it the
+-- hosted stand-in is missing a function the hosted database has had since
+-- 2026-07-14, and the seed/migration comparison below reports a difference that
+-- does not exist on hosted.
+CREATE OR REPLACE FUNCTION public.delete_account(p_user_id UUID)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  -- Redact the player's display name in every game they appear in. players is a
+  -- JSONB array of {player_id, name, ...}; rebuild it, anonymizing only the
+  -- leaving player's element. The @> filter limits the rewrite to affected rows.
+  UPDATE games g
+  SET players = (
+    SELECT jsonb_agg(
+      CASE
+        WHEN elem->>'player_id' = p_user_id::text
+          THEN jsonb_set(elem, '{name}', '"Deleted player"'::jsonb)
+        ELSE elem
+      END
+    )
+    FROM jsonb_array_elements(g.players) AS elem
+  )
+  WHERE g.players @> jsonb_build_array(jsonb_build_object('player_id', p_user_id::text));
+
+  -- Belt-and-suspenders: clear the denormalized username copy. If the FK is
+  -- ON DELETE CASCADE the row vanishes with the auth user anyway; if it is ever
+  -- SET NULL, this ensures no username lingers.
+  UPDATE public.user_elo_ratings
+  SET username = NULL
+  WHERE user_id = p_user_id;
+END;
+$$;
+
+-- Only the service role (the edge function) may run this - never a client.
+REVOKE ALL ON FUNCTION public.delete_account(UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.delete_account(UUID) FROM anon;
+REVOKE ALL ON FUNCTION public.delete_account(UUID) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.delete_account(UUID) TO service_role;
 
 -- =============================================================================
 -- REALTIME AUTHORIZATION POLICIES

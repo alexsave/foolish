@@ -11,14 +11,7 @@
 #include "awire.h"
 #include <string.h>
 
-// The wide, reproducible deal (ChaCha) lives ONLY in builds that actually deal:
-// the rules kernel (server deal + replay) and native tools/tests. The client
-// guards module never deals — its optimistic draws are placeholder cards and it
-// never learns the seed — so it is compiled with -DDEAL_RNG_DISABLED and never
-// links deal_rng. See the Makefile guards flags.
-#ifndef DEAL_RNG_DISABLED
 #include "deal_rng.h"
-#endif
 
 // ---------- RNG (two independent LCGs, same recurrence as TS) ----------
 //
@@ -38,7 +31,6 @@ static _Thread_local uint32_t g_rand_seed = 1;
 // (the C suite, the e2e seedSource hooks, in-flight legacy games) is unchanged.
 // game_set_seed() always turns it off.
 static _Thread_local int g_deal_wide = 0;
-#ifndef DEAL_RNG_DISABLED
 static _Thread_local DealRng g_deal_rng;
 
 // Fisher-Yates over the whole deck, driven by the ChaCha stream. Called once at
@@ -66,7 +58,6 @@ static void deal_shuffle(Game *g) {
         Card t = g->deck[i]; g->deck[i] = g->deck[j]; g->deck[j] = t;
     }
 }
-#endif
 
 // Random index in [0, n) for a DECK DRAW. Deterministic mode pops the top of the
 // pre-shuffled deck (0); legacy consumes one game_random() and clamps, byte-for-
@@ -87,9 +78,7 @@ static int draw_index(const Game *g, int n) {
 // when nobody holds a trump). Deterministic mode draws it, unbiased, from the
 // same ChaCha stream (so it too is reproducible); legacy uses the LCG.
 static int deal_index(int n) {
-#ifndef DEAL_RNG_DISABLED
     if (g_deal_wide) return (n <= 1) ? 0 : (int)deal_rng_bounded(&g_deal_rng, (uint32_t)n);
-#endif
     int idx = (int)(game_random() * n);
     if (idx < 0) idx = 0;
     if (idx >= n) idx = n - 1;
@@ -112,36 +101,31 @@ void game_set_seed(uint32_t s) {
     g_deal_wide = 0;   // revert the deal to the legacy 32-bit LCG path
 }
 
-#ifndef DEAL_RNG_DISABLED
 void game_set_deal_seed_bytes(const uint8_t *seed, int len) {
     if (!seed || len < FOOLISH_SEED_LEN) return;  // too little entropy: leave wide mode off
     deal_rng_seed(&g_deal_rng, seed);
     g_deal_wide = 1;                 // start_game will shuffle; draws then pop
 }
-#else
-void game_set_deal_seed_bytes(const uint8_t *seed, int len) { (void)seed; (void)len; }
-#endif
 
 int game_deal_seed_active(void) { return g_deal_wide; }
 
 // Deal-RNG save/restore (see game.h). Layout is private to this file: byte 0 is
 // the wide flag, the rest is the ChaCha state. Nothing persists or ships it, so
 // it needs no wire discipline — only enough room, which the assert pins.
-void game_deal_rng_get(unsigned char *out) {
+// The array declarators match game.h's: a pointer parameter against an array
+// declaration is -Warray-parameter, and the declaration is the one that says
+// how much room the caller owes.
+void game_deal_rng_get(unsigned char out[GAME_DEAL_RNG_STATE_MAX]) {
     memset(out, 0, GAME_DEAL_RNG_STATE_MAX);
     out[0] = (unsigned char)g_deal_wide;
-#ifndef DEAL_RNG_DISABLED
     _Static_assert(1 + sizeof(DealRng) <= GAME_DEAL_RNG_STATE_MAX,
                    "GAME_DEAL_RNG_STATE_MAX too small for the wide flag + DealRng");
     memcpy(out + 1, &g_deal_rng, sizeof g_deal_rng);
-#endif
 }
 
-void game_deal_rng_set(const unsigned char *in) {
+void game_deal_rng_set(const unsigned char in[GAME_DEAL_RNG_STATE_MAX]) {
     g_deal_wide = in[0];
-#ifndef DEAL_RNG_DISABLED
     memcpy(&g_deal_rng, in + 1, sizeof g_deal_rng);
-#endif
 }
 uint32_t game_random_u32(void) {
     g_seed = g_seed * 1664525u + 1013904223u;
@@ -159,6 +143,25 @@ void     game_rng_set(uint32_t s) {
 
 void random_strategy_set_seed(uint32_t s) {
     g_rand_seed = s ? s : 1;
+}
+
+// See game.h. Moved here from wasm_api.c (state_fnv) so the table layer and the
+// wasm bridge seed from one definition; the byte order of the mix is unchanged.
+uint32_t game_state_seed(const Game *g, uint32_t base, uint32_t salt) {
+    uint32_t h = 2166136261u ^ (salt * 2654435761u) ^ base;
+#define MIX(b) do { h = (h ^ (uint32_t)(unsigned char)(b)) * 16777619u; } while (0)
+    MIX(g->defender); MIX(g->first_attacker); MIX(g->power_suit);
+    MIX(g->deck_count); MIX((unsigned)g->deck_count >> 8);
+    MIX(g->discard_pile_length); MIX((unsigned)g->discard_pile_length >> 8);
+    for (int p = 0; p < g->num_players; p++) MIX(g->players[p].hand_count);
+    MIX(g->num_battles);
+    for (int i = 0; i < g->num_battles; i++) {
+        MIX(g->table_battles[i].attack.suit);  MIX(g->table_battles[i].attack.value);
+        MIX(g->table_battles[i].defense.suit); MIX(g->table_battles[i].defense.value);
+    }
+#undef MIX
+    h ^= h >> 16; h *= 0x85EBCA6Bu; h ^= h >> 13; h *= 0xC2B2AE35u; h ^= h >> 16;
+    return h ? h : 1;
 }
 // Current strategy-LCG state, WITHOUT advancing it. Live (wasm) this is reseeded
 // per bot decision from state_fnv (which folds in the SERVER-ONLY g_rng_base),
@@ -215,6 +218,105 @@ void game_settle_status(Game *g) {
         g->status = GAME_STATUS_GAME_OVER;
 }
 
+// Is `c` a card of a deck whose lowest value is `min_value`? The comparisons
+// are card.h's now: a 3-bit signed suit cannot reach NUM_SUITS, so gcc was
+// answering one of them itself (-Wtype-limits) and the assert beside
+// card_in_range holds it instead.
+static bool card_in_deck(Card c, int min_value) {
+    return card_in_range(c, min_value, ACE_VALUE);
+}
+
+// Mark card `c` seen; false if it already was. Only called on in-deck cards,
+// so the id is 0..51.
+static bool card_first_sighting(uint64_t *seen, Card c) {
+    const uint64_t bit = 1ull << card_to_id(c);
+    if (*seen & bit) return false;
+    *seen |= bit;
+    return true;
+}
+
+int game_validate(const Game *g, int flags) {
+    const bool masked = (flags & GAME_VALIDATE_MASKED) != 0;
+    const int np = g->num_players;
+
+    if (g->status < GAME_STATUS_WAITING || g->status > GAME_STATUS_GAME_OVER)
+        return GAME_INVALID_STATUS;
+    if (g->deck_count < 0 || g->deck_count > MAX_DECK
+        || g->num_battles < 0 || g->num_battles > MAX_BATTLES)
+        return GAME_INVALID_COUNT;
+    for (int i = 0; i < np && i < MAX_PLAYERS; i++)
+        if (g->players[i].hand_count < 0 || g->players[i].hand_count > MAX_HAND_SIZE)
+            return GAME_INVALID_COUNT;
+    // A lobby may hold any number of seats while it fills; a dealt game needs two.
+    if (np < 0 || np > MAX_PLAYERS || (g->status != GAME_STATUS_WAITING && np < 2))
+        return GAME_INVALID_NUM_PLAYERS;
+    // A lobby is seats and nothing else: no card in any place a card can sit,
+    // and none of the facts a round leaves behind. A row that carries a
+    // finished session's board under a WAITING status is refused here, once,
+    // rather than guarded against by every host that loads one.
+    if (g->status == GAME_STATUS_WAITING) {
+        bool held = g->deck_count != 0 || g->num_battles != 0 || g->has_flipped
+                 || g->discard_pile_length != 0 || g->num_eliminated != 0
+                 || g->good_players_mask != 0 || g->has_good_timestamp;
+        for (int i = 0; i < np; i++) held = held || g->players[i].hand_count != 0;
+        if (held) return GAME_INVALID_LOBBY_CARDS;
+    }
+    for (int i = 0; i < np; i++)
+        if (g->players[i].status < PLAYER_STATUS_IDLE || g->players[i].status > PLAYER_STATUS_OUT)
+            return GAME_INVALID_PLAYER_STATUS;
+    if (g->power_suit < 0 || g->power_suit >= NUM_SUITS)
+        return GAME_INVALID_POWER_SUIT;
+    // An empty lobby has no seat to point at; its seat fields rest at 0.
+    const int seats = np > 0 ? np : 1;
+    if (g->first_attacker < 0 || g->first_attacker >= seats
+        || g->defender < 0 || g->defender >= seats)
+        return GAME_INVALID_SEAT;
+
+    if (g->num_eliminated < 0 || g->num_eliminated > np) return GAME_INVALID_ELIMINATION;
+    {
+        unsigned out = 0;
+        for (int i = 0; i < g->num_eliminated; i++) {
+            const int s = g->elimination_order[i];
+            if (s < 0 || s >= np || (out & (1u << s))) return GAME_INVALID_ELIMINATION;
+            out |= 1u << s;
+        }
+    }
+    if ((g->good_players_mask >> np) != 0) return GAME_INVALID_GOOD_MASK;
+
+    // Cards. Face-up cards (the table, the trump) are checked against this
+    // game's deck and against each other in every view. The deck and the hands
+    // are too, unless the state is a masked view - there they hold placeholders,
+    // so all that can be asked is that each is some card.
+    const int min_value = min_value_for(np);
+    uint64_t seen = 0;
+    if (g->has_flipped) {
+        if (!card_in_deck(g->flipped, min_value)) return GAME_INVALID_CARD;
+        if (g->flipped.suit != g->power_suit) return GAME_INVALID_FLIPPED;
+        card_first_sighting(&seen, g->flipped);
+    }
+    for (int i = 0; i < g->num_battles; i++) {
+        const Battle *b = &g->table_battles[i];
+        if (!card_in_deck(b->attack, min_value)) return GAME_INVALID_CARD;
+        if (!card_first_sighting(&seen, b->attack)) return GAME_INVALID_DUPLICATE_CARD;
+        if (card_is_none(b->defense)) continue;
+        if (!card_in_deck(b->defense, min_value)) return GAME_INVALID_CARD;
+        if (!card_first_sighting(&seen, b->defense)) return GAME_INVALID_DUPLICATE_CARD;
+    }
+    const int hidden_min = masked ? 1 : min_value;
+    for (int i = 0; i < g->deck_count; i++) {
+        if (!card_in_deck(g->deck[i], hidden_min)) return GAME_INVALID_CARD;
+        if (!masked && !card_first_sighting(&seen, g->deck[i])) return GAME_INVALID_DUPLICATE_CARD;
+    }
+    for (int p = 0; p < np; p++) {
+        const Player *pl = &g->players[p];
+        for (int j = 0; j < pl->hand_count; j++) {
+            if (!card_in_deck(pl->hand[j], hidden_min)) return GAME_INVALID_CARD;
+            if (!masked && !card_first_sighting(&seen, pl->hand[j])) return GAME_INVALID_DUPLICATE_CARD;
+        }
+    }
+    return GAME_VALID;
+}
+
 uint32_t game_human_mask(const Game *g) {
     if (!g) return 0;
     uint32_t m = 0;
@@ -245,6 +347,43 @@ int game_lobby_ready(Game *g, int seat) {
     return 1;
 }
 
+int game_lobby_unseat(Game *g, int seat) {
+    if (!g || g->status != GAME_STATUS_WAITING || seat < 0 || seat >= g->num_players) return 0;
+    for (int i = seat; i + 1 < g->num_players; i++) g->players[i] = g->players[i + 1];
+    g->num_players--;
+    memset(&g->players[g->num_players], 0, sizeof(Player));
+    return 1;
+}
+
+int game_lobby_reorder(Game *g, const int8_t *perm, int n) {
+    Player old[MAX_PLAYERS];
+    unsigned seen = 0;
+    if (!g || !perm || g->status != GAME_STATUS_WAITING || n != g->num_players || n < 0 || n > MAX_PLAYERS) return 0;
+    for (int i = 0; i < n; i++) {
+        if (perm[i] < 0 || perm[i] >= n || (seen & (1u << perm[i]))) return 0;
+        seen |= 1u << perm[i];
+    }
+    for (int i = 0; i < n; i++) old[i] = g->players[i];
+    for (int i = 0; i < n; i++) g->players[i] = old[perm[i]];
+    return 1;
+}
+
+int game_rearrange_hand(Game *g, int seat, const unsigned char *idx, int n) {
+    if (!g || seat < 0 || seat >= g->num_players) return 0;
+    Player *pl = &g->players[seat];
+    if (n != pl->hand_count || n < 0 || n > MAX_HAND_SIZE || (n > 0 && !idx)) return 0;
+    unsigned char seen[MAX_HAND_SIZE];
+    Card out[MAX_HAND_SIZE];
+    for (int i = 0; i < n; i++) seen[i] = 0;
+    for (int i = 0; i < n; i++) {
+        if (idx[i] >= (unsigned char)n || seen[idx[i]]) return 0;
+        seen[idx[i]] = 1;
+        out[i] = pl->hand[idx[i]];
+    }
+    for (int i = 0; i < n; i++) pl->hand[i] = out[i];
+    return 1;
+}
+
 int game_lobby_can_deal(const Game *g) {
     if (!g || g->status != GAME_STATUS_WAITING) return 0;
     if (g->num_players < 2) return 0;
@@ -265,29 +404,6 @@ void game_seat_and_deal(Game *g, const int8_t *strategy_keys, int n) {
 
 // ---------- Logs -------------------------------------------------------
 
-#ifdef GUARDS_VALIDATE_ONLY
-// GUARDS_VALIDATE_ONLY: guards.wasm is a MOVE VALIDATOR. It dry-runs the real
-// handle_* on a throwaway clone and reads ONLY the reject code — the animation
-// logs those handlers emit (and the end-of-round stock refill, see
-// refill_player_hands below) are always discarded (guards exports no log/state
-// reader, and legality never reads g->logs / num_pairs; verified by the greps
-// behind e2e/client_guards + e2e/wasm_kernel_fuzz). Compile the whole log-append
-// path down to no-ops so the validator carries none of it. A single static sink
-// backs callers that write log fields directly (e.g. LOG_DEFENDER_CHANGE's
-// dc->defender_index); those writes are inert. _Thread_local for the same
-// reason as the drop-branch `scratch` below (Stage 5) — this build is
-// guards.wasm-only (single-threaded, and c/Makefile neutralizes the
-// qualifier there anyway) so it is moot in practice, but keeping the
-// qualifier here means the file has ONE rule ("kernel-mutated statics are
-// thread-local"), not a guards-only exception to remember.
-static _Thread_local GameLog g_log_sink;
-static GameLog *log_alloc(Game *g, int log_type, int player_idx) {
-    (void)g; (void)log_type; (void)player_idx;
-    return &g_log_sink;
-}
-static void log_add_card(GameLog *l, Card c) { (void)l; (void)c; }
-static void log_add_pair(GameLog *l, Card primary, Card target) { (void)l; (void)primary; (void)target; }
-#else
 
 static GameLog *log_alloc(Game *g, int log_type, int player_idx) {
     bool drop;
@@ -307,10 +423,9 @@ static GameLog *log_alloc(Game *g, int log_type, int player_idx) {
     }
     if (drop) {
         // _Thread_local (Stage 5): this IS live on the server's concurrent
-        // play path (a log-cap overflow during a real game), unlike the
-        // GUARDS_VALIDATE_ONLY sink above — two games' handle_* calls
-        // overflowing in the same instant would otherwise tear one shared
-        // GameLog between threads.
+        // play path (a log-cap overflow during a real game) - two games'
+        // handle_* calls overflowing in the same instant would otherwise tear
+        // one shared GameLog between threads.
         static _Thread_local GameLog scratch;
         memset(&scratch, 0, sizeof(scratch));
         scratch.log_type = log_type;
@@ -339,7 +454,6 @@ static void log_add_pair(GameLog *l, Card primary, Card target) {
     p->primary = primary;
     p->target = target;
 }
-#endif  // GUARDS_NO_LOG
 
 // ---------- Hand ops ---------------------------------------------------
 
@@ -543,12 +657,10 @@ void start_game(Game *g) {
     // from the durable blob, not the thread-local) keep popping the pre-shuffled
     // deck. Legacy deals leave it false and draw at random, exactly as before.
     g->deterministic_deck = g_deal_wide ? true : false;
-#ifndef DEAL_RNG_DISABLED
     // Seed-dealt game: shuffle the whole deck once from the ChaCha stream, then
     // every draw below (and every mid-game refill) pops the top — the full deal
     // and game are reproducible from the seed.
     if (g_deal_wide) deal_shuffle(g);
-#endif
     start_game_dealt(g);
 }
 
@@ -620,15 +732,6 @@ static bool no_cards_left(const Game *g) {
     return g->deck_count == 0 && !g->has_flipped;
 }
 
-#ifdef GUARDS_VALIDATE_ONLY
-// Validate-only build: the stock refill runs only in a move's COMMIT phase,
-// AFTER every reject check has passed — no reject code depends on the cards it
-// draws, and guards discards the post-move state. No-op it so the whole draw
-// path (draw_card, refill_deck) dead-code-eliminates out of the validator.
-// (handle_* still runs full mutation, so cover's mid-apply re-check and pass's
-// post-mutation PASS_OVERFLOW reject stay byte-for-byte identical to the server.)
-static void refill_player_hands(Game *g) { (void)g; }
-#else
 // One seat's turn at the talon: draw to six, log it as one DRAW, and drop a
 // seat that came out of it with nothing while the stock still had cards for
 // someone else. The OUT check sits AFTER the hook on purpose - TS pushed the
@@ -682,7 +785,6 @@ static void refill_player_hands(Game *g) {
     // Last, always.
     draw_up_to_six(g, defender);
 }
-#endif  // GUARDS_VALIDATE_ONLY
 
 // ---------- Action: attack --------------------------------------------
 
@@ -1105,15 +1207,12 @@ void engine_run_refill(Game *g) { refill_player_hands(g); }
 bool should_bot_act(const Game *g, int bot_idx) {
     if (g->status != GAME_STATUS_PLAYING) return false;
     if (g->players[bot_idx].status != PLAYER_STATUS_IN) return false;
-    bool first_attack = (g->num_battles == 0);
-    bool is_def = (bot_idx == g->defender);
     bool all_covered = (g->num_battles > 0);
     for (int i = 0; i < g->num_battles; i++) {
         if (!!card_is_none(g->table_battles[i].defense)) { all_covered = false; break; }
     }
-    if (first_attack) return bot_idx == g->first_attacker;
-    if (is_def) return !all_covered;
-    return !(g->good_players_mask & (1u << bot_idx));
+    return turn_may_act(g->status, g->players[bot_idx].status, bot_idx, g->num_battles, all_covered,
+                        g->first_attacker, g->defender, g->good_players_mask);
 }
 
 // ---------- Clone -----------------------------------------------------

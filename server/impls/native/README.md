@@ -128,7 +128,7 @@ POST /auth/signup {username}            -> {token, user_id}     (also /auth/sign
 POST /create               (Bearer)     -> {game_id}            creator takes seat 0
 POST /meta {type,game_id[,strategy]}    (Bearer)   type: join | add-bot | start | continue
 POST /action?game_id=..  <awire bytes>  (Bearer)   applies, then runs the bots
-GET  /state?game_id=..&seat=..          -> the kernel's masked view (packed)
+GET  /state?game_id=..&seat=..  (Bearer, your own seat; no seat or seat=-1: the public spectator view) -> the kernel's masked view (packed)
 GET  /status?game_id=..                 -> 0 waiting / 1 playing / 2 over
 GET  /health
 GET  /stats  -> {live_connections, max_connections, games, games_live, games_reclaimed, free_slots, users, moves_applied, bot_decisions, octogen_decisions}
@@ -142,7 +142,7 @@ when the server was started with `--tls` (see "TLS", above, and
 TLS-wrapped socket.
 
 The `foolish_server_quic` build (Stage 7) additionally serves `GET /health`
-and `GET /state` over HTTP/3, and a WebTransport session at
+and `GET /state` over HTTP/3 (a seat's view needs `token=` of its owner, as TCP `/state` needs the Bearer header; the spectator view is public), and a WebTransport session at
 `CONNECT /wt?token=..&game_id=..&seat=..` (`:protocol=webtransport`) that
 pushes the seat's masked view as a QUIC DATAGRAM and applies inbound move
 DATAGRAMs — the same push-only model as `/ws`, onto the same game. See

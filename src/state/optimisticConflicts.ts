@@ -1,25 +1,31 @@
-// Pure decision logic for the "my optimistically-played attack/cover card is not
-// (yet) on the authoritative table" case, extracted from AnimationContext's
-// resolveOptimisticConflicts so the SAME deployed logic is unit-testable (the
-// component imports from here; the e2e suite imports from here — no second copy).
+// The "my optimistically-played card is not (yet) where I put it on the
+// authoritative board" decision, for AnimationContext's resolveOptimisticConflicts
+// and the e2e suite alike (no second copy).
 //
-// When a versioned broadcast lands whose server table does NOT include one of the
-// local player's still-pending optimistic attack/cover cards, we must decide, per
-// card, whether to:
-//   - REVERT it (fly it back to hand — it was genuinely never accepted), or
-//   - KEEP it (merge it into the incoming states so it stays put until its own
-//     confirming broadcast / the server's verdict on our action resolves it).
+// When a versioned broadcast lands whose boards do NOT show one of the local
+// player's still-pending optimistic cards, we must decide, per card, whether to:
+//   - REVERT it (fly it back - it was genuinely never accepted),
+//   - KEEP it (merge it into the incoming boards so it stays put until its own
+//     confirming broadcast / the server's verdict on our action resolves it), or
+//   - CLEAR it (the broadcast's own pickup or trash carries it off; drop its
+//     tracking and let that event animate it).
 //
 // Getting this wrong is the "card jumps to the table, snaps back to my hand, then
 // re-appears on the table" flicker players see when they play a card at almost the
 // same moment as another player, or when a defender picks the card up immediately.
+//
+// THE DECISION IS THE KERNEL'S, read off the push's boards themselves
+// (c/src/client_table.h client_conflict_verdicts over anim_plan.h
+// anim_conflict_verdict): where the push's cards stand, the defender's hand that
+// bounds my attacks, the uncovered attacks. This file names the question.
+// Asserted natively (c/tests: test_client_conflict_verdicts, anim_plan_test.c
+// test_optimistic_revert) and end-to-end by e2e/optimistic_revert.test.ts.
 
-import { Card } from '@api/core/types.ts';
+import * as V from '@sdk/ts/gen/view_layout.bots.ts';
 import { getCardKey } from '../utils/animationUtils';
-import {
-    animConflictVerdicts, animEventTypeCode, ANIM_DEST,
-    AnimConflictInputs, AnimConflictMotion, AnimConflictVerdict,
-} from '@sdk/ts/wasm/bots.ts';
+import { animEventTypeCode } from '@sdk/ts/wasm/bots.ts';
+import { clientTable } from '@sdk/ts/table/client_table.ts';
+import type { TableView, ViewCard as Card } from './view';
 
 export interface AttackCoverResolution {
     /** Optimistic attack/cover cards to fly back to hand (genuinely never accepted). */
@@ -28,7 +34,7 @@ export interface AttackCoverResolution {
     merge: Card[];
     /**
      * Optimistic attack/cover cards that WERE accepted onto the table and then swept
-     * off it by this broadcast's own pickup/cards_to_trash — drop their optimistic
+     * off it by this broadcast's own pickup/cards_to_trash - drop their optimistic
      * tracking WITHOUT a revert animation; the clear event itself animates them off
      * the table. Reverting these to hand is the "I put a card down and someone picked
      * it up, and it flew back to my hand" flicker.
@@ -36,91 +42,79 @@ export interface AttackCoverResolution {
     clear: Card[];
 }
 
-interface AnimEvent { type?: string; cards?: Card[] }
-interface GameStateLike { defender?: number; players?: { hand_length?: number }[]; table_battles?: { defense?: unknown }[] }
+interface AnimEvent { type?: string; cards?: readonly Card[] }
+
+/** Where a pending motion put its card (anim_plan.h ANIM_DEST_*). */
+export const CONFLICT_DEST = { table: V.ANIM_DEST_TABLE, hand: V.ANIM_DEST_MY_HAND } as const;
+
+/** One pending motion: which card, where it went, and whether it was the defender's own cover. */
+export interface ConflictMotion { card: Card; dest: number; isCover?: boolean }
+
+/** The push a pending motion is judged against. */
+export interface ConflictPush {
+    /** The push's events this client has not already played. Which of them sweep is the kernel's call. */
+    events: readonly AnimEvent[];
+    /** The push's last board: where its cards stand, on the table and in my hand. */
+    open: TableView;
+    /** The push's final board. */
+    final: TableView;
+    /** The seat whose hand on the final board bounds my pending attacks; -1 for none. */
+    defenderSeat: number;
+    /** Count the uncovered attacks on the final board rather than the open one. */
+    uncoveredOnFinal?: boolean;
+    /** My pending attacks, when they are not simply the motions that are not covers. */
+    pendingAttacks?: number;
+}
 
 /**
+ * THE CONFLICT VERDICT for a set of motions, straight from the kernel. All four
+ * shapes AnimationContext asks about come through here.
+ */
+export function resolveConflictMotions(motions: readonly ConflictMotion[], push: ConflictPush): { revert: Card[]; keep: Card[]; clear: Card[] } {
+    const out: { revert: Card[]; keep: Card[]; clear: Card[] } = { revert: [], keep: [], clear: [] };
+    if (motions.length === 0) return out;
+    const verdicts = clientTable().conflictVerdicts(push.open, push.final, {
+        defenderSeat: push.defenderSeat,
+        uncoveredOnFinal: push.uncoveredOnFinal ?? false,
+        pendingAttacks: push.pendingAttacks ?? -1,
+        events: push.events.map((e) => ({ type: animEventTypeCode(e.type), masked: false, cards: e.cards ?? [] })),
+        motions: motions.map((m) => ({ card: m.card, dest: m.dest, isCover: !!m.isCover })),
+    });
+    verdicts.forEach((v, i) => {
+        out[v === V.ANIM_CONFLICT_KEEP ? 'keep' : v === V.ANIM_CONFLICT_CLEAR ? 'clear' : 'revert'].push(motions[i].card);
+    });
+    return out;
+}
+
+/**
+ * My pending attack and cover cards the push's last board does not show.
+ *
  * @param myOptimisticAttackCovers the local player's pending optimistic attack/cover cards
- * @param serverTableCards         the authoritative table cards this broadcast shows
- * @param events                   the broadcast's animation events
- * @param finalGameState           the broadcast's final personalized game state (message.game || serverState)
- * @param myOptimisticCoverKeys    getCardKey()s of the pending cards that are COVERS —
+ * @param open                     the push's last board (the last event's game_state)
+ * @param events                   the push's animation events
+ * @param final                    the push's final board as this viewer sees it
+ * @param myOptimisticCoverKeys    getCardKey()s of the pending cards that are COVERS -
  *                                 the defender-capacity rule applies only to attacks
- *                                 (a cover is the defender's own play and has no
- *                                 capacity rule in the kernel; counting covers here
- *                                 used to false-revert legal in-flight covers)
  */
 export function resolveUnconfirmedAttackCovers(
     myOptimisticAttackCovers: Card[],
-    serverTableCards: Card[],
-    events: AnimEvent[],
-    finalGameState: GameStateLike | null | undefined,
+    open: TableView,
+    events: readonly AnimEvent[],
+    final: TableView,
     myOptimisticCoverKeys?: Set<string>,
 ): AttackCoverResolution {
-    // The DECISION is the C animation core's (anim_plan.h anim_conflict_verdict),
-    // via resolveConflictMotions below. Asserted natively
-    // (c/tests/anim_plan_test.c test_optimistic_revert) and end-to-end by
-    // e2e/optimistic_revert.test.ts.
-    //
-    // The ATTACK/COVER shape: every card landed on the table, and capacity
-    // measures the FINAL board's defender.
     if (myOptimisticAttackCovers.length === 0) return { revert: [], merge: [], clear: [] };
-
-    // Defender scalars, exactly as the old inline capacity check read them:
-    // an undefined defender yields a 0 hand size.
-    const defenderHand = finalGameState?.defender !== undefined
-        ? (finalGameState.players?.[finalGameState.defender]?.hand_length ?? 0)
-        : 0;
-    const finalUncovered = finalGameState?.table_battles?.filter((b) => !b.defense).length ?? 0;
-
+    // Every card landed on the table, and the capacity is the final board's
+    // defender's, against the final board's uncovered attacks.
     const r = resolveConflictMotions(
         myOptimisticAttackCovers.map((card) => ({
             card,
-            dest: ANIM_DEST.table,
+            dest: CONFLICT_DEST.table,
             isCover: myOptimisticCoverKeys ? myOptimisticCoverKeys.has(getCardKey(card)) : false,
         })),
-        {
-            events: conflictEvents(events),
-            openTable: serverTableCards.map((attack) => ({ attack, defense: null })),
-            myHand: [],
-            defenderHand,
-            finalUncovered,
-        });
+        { events, open, final, defenderSeat: final.defender, uncoveredOnFinal: true });
     // `merge` is this caller's word for the rule's KEEP.
     return { revert: r.revert, merge: r.keep, clear: r.clear };
-}
-
-/** The app's animation events as the kernel reads them: a type code and the
- *  cards. Which of them SWEEP is the kernel's call, not this file's. */
-export const conflictEvents = (events: AnimEvent[]): AnimConflictInputs['events'] =>
-    events.map((e) => ({ type: animEventTypeCode(e.type), cards: e.cards ?? [] }));
-
-/**
- * THE CONFLICT VERDICT for a set of motions, straight from the kernel
- * (anim_plan.h anim_conflict_facts + anim_conflict_verdict). All four shapes
- * AnimationContext asks about come through here - the three that are not
- * attack/cover used to be inline capacity checks, with none of the rule's
- * precedence, pool or masked-back cases.
- *
- * Takes the kernel's own shapes, so there is no second set of types to keep in
- * step. `pendingAttacks` defaults to the non-cover motions.
- */
-export function resolveConflictMotions(
-    motions: AnimConflictMotion[],
-    inputs: Omit<AnimConflictInputs, 'pendingAttacks'> & { pendingAttacks?: number },
-): { revert: Card[]; keep: Card[]; clear: Card[] } {
-    const out: { revert: Card[]; keep: Card[]; clear: Card[] } = { revert: [], keep: [], clear: [] };
-    if (motions.length === 0) return out;
-
-    const verdicts: AnimConflictVerdict[] = animConflictVerdicts(motions, {
-        ...inputs,
-        pendingAttacks: inputs.pendingAttacks ?? motions.filter((m) => !m.isCover).length,
-    });
-    verdicts.forEach((v, i) => {
-        const card = motions[i].card;
-        if (card) out[v === 'keep' ? 'keep' : v].push(card);
-    });
-    return out;
 }
 
 // Re-export so callers can key by card without another import.

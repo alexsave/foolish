@@ -94,6 +94,7 @@ jobs:
           mkdir -p base/scripts
           cp pr/scripts/collect_metrics.mjs base/scripts/collect_metrics.mjs
           cp pr/scripts/render_metrics.cjs  base/scripts/render_metrics.cjs
+          cp pr/scripts/measure_web_bundle.mjs base/scripts/measure_web_bundle.mjs
           cp pr/e2e/bench_bot_e2e.ts        base/e2e/bench_bot_e2e.ts
 
       - name: Install deps (head)
@@ -103,6 +104,13 @@ jobs:
       - name: Install deps (base)
         working-directory: base
         run: npm install
+
+      # The head's benches play C tables sealed by the TEST bots module, which is
+      # never committed (e2e/helpers/bots_test_wasm.ts). A base that predates it
+      # still carries those exports in its shipped module and needs nothing.
+      - name: Build the test bots module (head)
+        working-directory: pr
+        run: bash scripts/ci_bots_test_wasm.sh
 
       - name: Collect base metrics
         working-directory: base

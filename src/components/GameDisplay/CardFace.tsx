@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Card } from '@api/core/types.ts';
+import type { ViewCard as Card } from '../../state/view';
 import { CardBack } from './CardBack';
 import { VALUE_MAP } from '../../utils/cards';
 import { HEARTS, DIAMONDS } from '@api/core/constants.ts';
@@ -7,11 +7,12 @@ import { useAnimation } from '../../contexts/AnimationContext';
 import { useStyles } from '../../contexts/StyleContext';
 import { SuitIcon } from '../SovietIcon';
 
-export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverlay = false, ...props }: {
+export const CardFace = ({ card, onClick, style = {}, owner, isAnimationOverlay = false, ...props }: {
     card: Card,
     onClick?: () => void,
     style?: React.CSSProperties,
-    playerId?: string,
+    // Whose card this is for its animation state: a seat, or a place's own key.
+    owner?: number | string,
     isAnimationOverlay?: boolean
 } & React.HTMLAttributes<HTMLDivElement>) => {
     const { getCardAnimationState } = useAnimation();
@@ -43,7 +44,7 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
     // Defense in depth: never crash the whole Game Page on a missing card. A
     // null/undefined slot should be impossible now that the hand reorder is
     // bounds-safe (see reorderHand / DragContext), but if one ever reaches here
-    // — a sparse-array hole, a stale render — degrade to a face-down instead of
+    // - a sparse-array hole, a stale render - degrade to a face-down instead of
     // dereferencing `card.suit` on undefined (prod: "undefined is not an object
     // (evaluating 'e.suit')").
     if (!card) {
@@ -58,7 +59,7 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
         return <CardBack deckSize={1} />;
     }
 
-    const animationState = getCardAnimationState(card, playerId);
+    const animationState = getCardAnimationState(card, owner);
 
     // Determine if suit is red (hearts/diamonds) or black (spades/clubs)
     const isRed = card.suit === HEARTS || card.suit === DIAMONDS; // hearts or diamonds
@@ -110,9 +111,12 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
     const animationStyle: React.CSSProperties = {};
 
     if (animationState.isAnimating && !isAnimationOverlay) {
-        // Hide the original card since the AnimationOverlay is showing the animated version
-        // But don't hide cards that are being rendered inside the AnimationOverlay itself
-        animationStyle.opacity = 0;
+        // A flight carries this card (AnimationOverlay draws it), so the place it
+        // left or is landing on does not show it too. Hidden at once and shown at
+        // once: `visibility` with no transition, applied over the caller's style so
+        // a hand card's own opacity and transition cannot show it through the flight.
+        animationStyle.visibility = 'hidden';
+        animationStyle.transition = 'none';
         animationStyle.pointerEvents = 'none';
     }
 
@@ -131,7 +135,14 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
         WebkitTouchCallout: 'none',
     } as React.CSSProperties;
 
-    const mergedStyle = { ...defaultStyle, ...animationStyle, ...style };
+    const mergedStyle = { ...defaultStyle, ...style, ...animationStyle };
+
+    // "10" is two glyphs in an index 12px wide, centred: at 20px Georgia it spills
+    // over the card's left border (and its rotated copy over the right). Drawn a
+    // little tighter and nudged in, it clears the border by about 1px at every width.
+    const tenStyle: React.CSSProperties | undefined = valueSymbol === '10'
+        ? { letterSpacing: '-0.08em', marginLeft: '3px' }
+        : undefined;
 
     if (isThinCard) {
         return <div
@@ -157,7 +168,7 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
                 left: '4px',
                 top: '4px',
             }}>
-                <div>{valueSymbol}</div>
+                <div key={valueSymbol} style={tenStyle}>{valueSymbol}</div>
                 <div>{renderSuit(14)}</div>
             </div>
 
@@ -168,7 +179,7 @@ export const CardFace = ({ card, onClick, style = {}, playerId, isAnimationOverl
                 right: '4px',
                 transform: 'rotate(180deg)',
             }}>
-                <div>{valueSymbol}</div>
+                <div key={valueSymbol} style={tenStyle}>{valueSymbol}</div>
                 <div>{renderSuit(14)}</div>
             </div>
 

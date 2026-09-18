@@ -50,9 +50,9 @@ void *memset(void *dst, int c, size_t n) {
 // 67,586B at bots' 512/64 (the 72KB default), 16,898B at rules' 128/64
 // (why the rules build overrides to 24KB — see the Makefile L1 notes).
 // Everything else is far smaller (state export <1.1KB, env strings, the
-// chosen move), and the legal-move export is CHUNKED (wasm_export_moves)
-// and clamps its chunk to the buffer, so it no longer sizes IO_CAP — the
-// TS side derives its chunk from wasm_io_cap.
+// chosen move), and the legal-move menu is not copied into it at all: a host
+// reads the resident LegalMoves where it lies (wasm_legal_moves_ptr), so the
+// menu no longer sizes IO_CAP.
 #ifndef WASM_IO_CAP
 #define WASM_IO_CAP (72 * 1024)
 #endif
@@ -229,25 +229,34 @@ static int put_state(const Game *g, unsigned char *p) {
     return state_put(g, VIEW_UNMASKED, p);
 }
 
-static void get_state(Game *g, const unsigned char *p) {
-    state_get(g, p, 0);
-}
-
-// TS -> C: parse the IO buffer into the working game. The ephemeral IO format
+// TS -> C: parse the IO buffer into the working game - if the kernel accepts
+// it. Returns GAME_VALID (0), or a negative GAME_INVALID_* reason (game.h
+// game_validate) with the working game left exactly as it was: a host never
+// gets to install a state the kernel could not have produced.
+//
+// `masked` is the host saying what it is handing over. 0: a whole game, every
+// card real (the server's own Game). 1: one seat's knowledge, with placeholder
+// cards standing in for the deck and the hands it cannot see (the replay
+// oracle's deliberation state) - their identities are then not judged, and
+// everything face-up still is. A host that omits the argument gets 0.
+//
+// The ephemeral IO format
 // carries no deterministic_deck flag (only the durable blob does), so reset it:
 // a fresh deal has start_game set it, and a legacy game draws at random. This
 // also stops a reused engine instance inheriting a prior game's flag. The
 // caller re-asserts the flag right after (wasm_set_deterministic_deck) for a
 // seed-dealt game — otherwise the bot path (which imports rather than
 // deserializes) would draw at random mid-game and diverge from the deal seed.
-void wasm_import_state(void) {
-    get_state(&g_game, g_io);
+int wasm_import_state(int masked) {
+    const int r = state_import(&g_game, g_io, masked ? 1 : 0);
+    if (r != GAME_VALID) return r;
     g_game.deterministic_deck = false;
     // A game swapped in wholesale is not the one the last FMSG decode adopted,
     // so its log count says nothing about whether that chain has moved. Forget
     // the mark (see g_msg_base_logs); a seal then behaves exactly as it did
     // before the mark existed.
     g_msg_base_logs = -1;
+    return GAME_VALID;
 }
 
 // Re-assert the deterministic-deck flag after wasm_import_state. Seed-dealt
@@ -268,6 +277,10 @@ void wasm_set_deterministic_deck(int on) { g_game.deterministic_deck = on != 0; 
 // no deal seed (legacy) — live games always set it (see wasm_set_rng_base).
 static uint32_t g_rng_base = 0u;
 void wasm_set_rng_base(uint32_t base) { g_rng_base = base; }
+// For sibling bridge units (wasm_table_api.c): the base the table seeds its
+// mid-game draws from, so a table action draws exactly what wasm_apply_action
+// after wasm_seed_rng_deterministic does.
+uint32_t wasm_rng_base_internal(void) { return g_rng_base; }
 
 // Per-decision RNG seed for the Monte-Carlo bots' world sampling (salt
 // 0x9E3779B9) and the mid-game deal RNG (salt 0). It folds the SECRET
@@ -287,20 +300,7 @@ void wasm_set_rng_base(uint32_t base) { g_rng_base = base; }
 // Unpredictability still rests entirely on the secret seed — the public terms
 // are known to everyone, but without g_rng_base they can't yield the stream.
 static uint32_t state_fnv(uint32_t salt) {
-    uint32_t h = 2166136261u ^ (salt * 2654435761u) ^ g_rng_base;
-#define MIX(b) do { h = (h ^ (uint32_t)(unsigned char)(b)) * 16777619u; } while (0)
-    MIX(g_game.defender); MIX(g_game.first_attacker); MIX(g_game.power_suit);
-    MIX(g_game.deck_count); MIX((unsigned)g_game.deck_count >> 8);
-    MIX(g_game.discard_pile_length); MIX((unsigned)g_game.discard_pile_length >> 8);
-    for (int p = 0; p < g_game.num_players; p++) MIX(g_game.players[p].hand_count);
-    MIX(g_game.num_battles);
-    for (int i = 0; i < g_game.num_battles; i++) {
-        MIX(g_game.table_battles[i].attack.suit);  MIX(g_game.table_battles[i].attack.value);
-        MIX(g_game.table_battles[i].defense.suit); MIX(g_game.table_battles[i].defense.value);
-    }
-#undef MIX
-    h ^= h >> 16; h *= 0x85EBCA6Bu; h ^= h >> 13; h *= 0xC2B2AE35u; h ^= h >> 16;
-    return h ? h : 1;
+    return game_state_seed(&g_game, g_rng_base, salt);
 }
 
 // Seed the mid-game LCG (game_random) deterministically from the CURRENT game
@@ -310,7 +310,7 @@ static uint32_t state_fnv(uint32_t salt) {
 // (legacy random deals, bot tie-breaks) reproducible — the whole game replays
 // from the deal seed alone. Seed-dealt games pop the pre-shuffled deck and
 // never consume this, but it costs nothing and covers the legacy path too.
-void wasm_seed_rng_deterministic(void) { game_rng_set(state_fnv(0u)); }
+void wasm_seed_rng_deterministic(void) { game_rng_set(state_fnv(GAME_SEED_SALT_DRAW)); }
 
 // Seed the STRATEGY LCG (random_strategy_random, consumed by the Monte-Carlo
 // bots' rollout opponent models) deterministically from state, replacing the
@@ -319,13 +319,13 @@ void wasm_seed_rng_deterministic(void) { game_rng_set(state_fnv(0u)); }
 // stream, so a fresh Math.random each decision meant a different choice from
 // identical state. A distinct salt keeps it decorrelated from the draw stream.
 void wasm_set_strategy_seed_deterministic(void) {
-    random_strategy_set_seed(state_fnv(0x9E3779B9u));
+    random_strategy_set_seed(state_fnv(GAME_SEED_SALT_STRATEGY));
 }
 
 // Debug/analysis hook: the strategy seed that would be chosen for the CURRENT
 // marshaled state. Lets a harness confirm the seed varies per decision (public
 // board changes) yet reproduces across a replay. Behavior-neutral.
-uint32_t wasm_strategy_seed_probe(void) { return state_fnv(0x9E3779B9u); }
+uint32_t wasm_strategy_seed_probe(void) { return state_fnv(GAME_SEED_SALT_STRATEGY); }
 
 // C -> TS: serialize the working game into the IO buffer; returns length.
 int wasm_export_state(void) { return put_state(&g_game, g_io); }
@@ -362,18 +362,33 @@ int wasm_state_serialize(void) {
 
 // Load a durable blob (already written into g_io) back into the working game.
 // Returns 1 on success, 0 if the leading version byte is one this kernel does
-// not understand (caller must treat as unreadable, never as an empty game).
+// not understand (caller must treat as unreadable, never as an empty game), or
+// a negative GAME_INVALID_* reason if the state inside is one the kernel
+// refuses (game.h game_validate) - the working game is then left as it was.
 int wasm_state_deserialize(int len) {
     if (len < 2) return 0;
     if (g_io[0] != STATE_FORMAT_VERSION) return 0;
+    const int r = state_import(&g_game, g_io + 2, 0);
+    if (r != GAME_VALID) return r;
     g_game.deterministic_deck = g_io[1] != 0;
-    get_state(&g_game, g_io + 2);
     return 1;
 }
 
 // The version this kernel writes — lets the TS bridge assert the embed it
 // loaded matches the format it expects without hardcoding the number twice.
 int wasm_state_format_version(void) { return STATE_FORMAT_VERSION; }
+
+// The Game layout this module was compiled against: tools/structgen's hash of
+// tools/structgen/specs/game_layout.args under THIS build's flags, which
+// c/Makefile computes and passes in (see "Layout hash" there). The TS hosts
+// compare it with LAYOUT_HASH in sdk/ts/gen/game_layout.<build>.ts once per
+// instance and refuse the module on a mismatch. Defined once, here, for every
+// module that links this file - oracle-mt.wasm included (wasm_oracle_mt.c would
+// be a duplicate symbol) - and a build that forgets the flag does not compile.
+#ifndef SG_LAYOUT_HASH
+#error "SG_LAYOUT_HASH is not set: build the wasm modules through c/Makefile"
+#endif
+uint32_t wasm_layout_hash(void) { return SG_LAYOUT_HASH; }
 
 // ---------- logs -----------------------------------------------------------
 // u16 num_logs, then per log: i8 type, i8 player_idx, i8 defender_index,
@@ -389,33 +404,18 @@ static int g_pre_has_flip;
 // only for the bot drive, whose belief bots need the SESSION log resident
 // while they choose — see wasm_export_logs_masked_from.
 static int export_logs(int mask_draws, int start) {
-    // The DRAW-privacy rule (the TS appendLogs convention, now kernel-side):
-    // drawn-card identities are hidden EXCEPT the flipped trump, whose draw
-    // is public. "The flip was drawn during this action" is the pre-action
-    // has_flipped (captured by begin_action) going false.
-    const int flip_drawn = g_pre_has_flip && !g_game.has_flipped;
+    // The DRAW-privacy rule (the TS appendLogs convention, now kernel-side) is
+    // view.c log_record_put's: drawn-card identities are hidden EXCEPT the
+    // flipped trump, whose draw is public. "The flip was drawn during this
+    // action" is the pre-action has_flipped (captured by begin_action) going false.
     if (start < 0 || start > g_game.num_logs) start = 0;
     const int n = g_game.num_logs - start;
     unsigned char *q = g_io;
     *q++ = (unsigned char)(n & 0xff);
     *q++ = (unsigned char)((n >> 8) & 0xff);
-    for (int i = start; i < g_game.num_logs; i++) {
-        const GameLog *l = &g_game.logs[i];
-        const int hide = mask_draws && l->log_type == LOG_DRAW;
-        *q++ = (unsigned char)l->log_type;
-        *q++ = (unsigned char)l->player_idx;
-        *q++ = (unsigned char)l->defender_index;
-        *q++ = (unsigned char)l->num_pairs;
-        for (int j = 0; j < l->num_pairs; j++) {
-            const LogPair *pr = &l->pairs[j];
-            if (hide && !(flip_drawn && card_eq(pr->primary, g_pre_flip))) {
-                *q++ = (unsigned char)WIRE_CARD_HIDDEN;
-            } else {
-                *q++ = wire_from_card(pr->primary);
-            }
-            *q++ = wire_from_card(pr->target);
-        }
-    }
+    for (int i = start; i < g_game.num_logs; i++)
+        q += log_record_put(&g_game.logs[i], mask_draws, g_pre_has_flip, g_pre_flip,
+                            g_game.has_flipped, q);
     return (int)(q - g_io);
 }
 
@@ -641,20 +641,7 @@ int wasm_events_serialize(int viewer, int actor, int append_final_transition) {
 // EXACTLY once — otherwise a hostile payload mints duplicate cards. Returns
 // 1 applied, 0 invalid (state untouched).
 int wasm_rearrange_hand(int seat, int n) {
-    if (seat < 0 || seat >= g_game.num_players) return 0;
-    Player *pl = &g_game.players[seat];
-    if (n != pl->hand_count || n < 0 || n > MAX_HAND_SIZE) return 0;
-    unsigned char seen[MAX_HAND_SIZE];
-    Card out[MAX_HAND_SIZE];
-    for (int i = 0; i < n; i++) seen[i] = 0;
-    for (int i = 0; i < n; i++) {
-        const unsigned char idx = g_in_raw_a[i];
-        if (idx >= (unsigned char)n || seen[idx]) return 0;
-        seen[idx] = 1;
-        out[i] = pl->hand[idx];
-    }
-    for (int i = 0; i < n; i++) pl->hand[i] = out[i];
-    return 1;
+    return game_rearrange_hand(&g_game, seat, g_in_raw_a, n);
 }
 
 // ---------- queries ----------------------------------------------------------
@@ -748,6 +735,9 @@ int wasm_replay_encode_v6_from_game(int max_atoms) {
 }
 
 int wasm_replay_error_detail(void) { return replay_last_error_detail(); }
+// The same refusal as a struct (replay.h ReplayError), so a host words the
+// message from named fields instead of unpacking log_type << 16 | menu.
+const void *wasm_replay_error_ptr(void) { return replay_last_error(); }
 
 // ---------- FMSG: the iMessage envelope (src/msg_wire.h) -----------------
 //
@@ -775,106 +765,20 @@ int wasm_replay_error_detail(void) { return replay_last_error_detail(); }
 // the payload describes — the /m/ route needs no new rendering path, and a turn
 // continues from exactly what it decoded.
 
-// The unpacked header, the private ABI between msg_wire and its TS/Swift
-// bridges. Fixed offsets and fixed-size join slots: this side is ours, so it
-// trades bytes for a bridge that cannot mis-parse.
+// THE HEADER, as a struct (msg_wire.h MsgHeader), not a byte string. A bridge
+// reads and writes it through the readers and writers tools/structgen generates
+// from that declaration, so the offsets exist once, in C, and a host cannot
+// mis-parse them. It used to be a hand-packed blob with a fixed join slot,
+// written here and re-read field by field in sdk/ts/wasm/bots.ts.
 //
-//   0  1 format      1  1 flags        2  1 phase       3  1 n_players
-//   4  1 variant     5  1 round        6  1 last_actor   7  1 n_joins
-//   8  8 game_id (LE)                 16  2 turn (LE)
-//   18 8 parent8                      26 32 seed
-//   58 32 digest — SHA-256 of the WHOLE envelope; Rule P's tiebreak compares
-//                  these lexicographically, and parent8 is a parent's first 8.
-//                  Decode-only: msg_seal ignores it (an envelope cannot contain
-//                  its own digest).
-//   90  2 sent_at — ROUND 16's send clock, unix seconds mod 65536; 0 on a
-//                  format-2 chain, which carries none. Unlike the digest this
-//                  one goes BOTH ways: a caller that writes it here seals a
-//                  format-3 envelope (msg_wire.c picks the format off the
-//                  clock), and one that leaves it 0 seals format 2 exactly as
-//                  every shipped build does today.
-//   92  1 n_new  - ROUND 16's bubble delta: how many atoms THIS bubble added,
-//                  0 for a chain that does not say (msg_wire.h). DECODE-ONLY,
-//                  and deliberately: msg_seal derives the delta from the base
-//                  turn this host tracks, so a caller cannot claim a boundary
-//                  its body does not have. Whatever is written here is ignored.
-//   93  1 opening - THE FOOL'S PENALTY (msg_wire.h format 4): the seat this
-//                  deal opens on, 0xFF for the ordinary lowest-trump
-//                  derivation. BOTH WAYS, like sent_at: a caller that writes a
-//                  seat here seals a format-4 envelope, and the rematch it
-//                  starts deals from that seat on every device.
-//   94  4 carry_key  - a WAITING lobby's rematch carry, u32 LE; 0 = none.
-//   98  1 carry_fool - the fool's canonical index in that carry; 0xFF = none.
-//                  Both ways as well: the lobby a "New game" creates is sealed
-//                  with them, and every join re-seal carries them forward.
-//   99 n_joins x 66 { u8 seat, u8 name_len, 64 B name }
-#define MSG_BLOB_HDR   99
-// 2 + MSG_MAX_NAME: was 14 (2 + 12) before round-5 B1 raised the name cap to
-// 64 (docs/APP_REVIEW_NOTES.md, msg_wire.h). Unlike the wire encoding (which
-// is length-prefixed per join and needs no slack), this TS bridge blob uses a
-// FIXED-SIZE join slot, so the slot itself must grow with the cap.
-#define MSG_BLOB_JOIN  (2 + MSG_MAX_NAME)
-// 93 + 8 x 66 = 621 B, well inside REPLAY_IO_CAP (32,768 B on the wasm builds
-// that export FMSG) — see wasm_msg_decode/wasm_msg_seal below, which write
-// this blob into g_replay_io.
-#define MSG_BLOB_MAX   (MSG_BLOB_HDR + MSG_MAX_JOINS * MSG_BLOB_JOIN)
+// It lives OUTSIDE g_replay_io deliberately: a decode leaves the envelope's own
+// bytes in that buffer and a seal writes the new ones back over them, so a
+// header parked there would be clobbered by the very call that reads it.
+static MsgHeader g_msg_header;
 
-static void msg_blob_write(const MsgEnvelope *e, const uint8_t *digest, unsigned char *o) {
-    o[0] = e->format; o[1] = e->flags; o[2] = e->phase; o[3] = e->n_players;
-    o[4] = e->variant; o[5] = e->round; o[6] = e->last_actor_seat;
-    o[7] = (unsigned char)e->n_joins;
-    for (int i = 0; i < 8; i++) o[8 + i] = (unsigned char)(e->game_id >> (8 * i));
-    o[16] = (unsigned char)(e->turn & 0xff);
-    o[17] = (unsigned char)(e->turn >> 8);
-    memcpy(o + 18, e->parent8, MSG_PARENT_LEN);
-    memcpy(o + 26, e->seed, MSG_SEED_LEN);
-    if (digest) memcpy(o + 58, digest, SHA256_DIGEST_LEN);
-    else memset(o + 58, 0, SHA256_DIGEST_LEN);
-    o[90] = (unsigned char)(e->sent_at & 0xff);
-    o[91] = (unsigned char)(e->sent_at >> 8);
-    o[92] = e->n_new;
-    o[93] = e->opening;
-    for (int i = 0; i < 4; i++) o[94 + i] = (unsigned char)(e->carry_key >> (8 * i));
-    o[98] = e->carry_fool;
-    for (int i = 0; i < e->n_joins; i++) {
-        unsigned char *j = o + MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
-        j[0] = e->joins[i].seat;
-        j[1] = e->joins[i].name_len;
-        memset(j + 2, 0, MSG_MAX_NAME);
-        memcpy(j + 2, e->joins[i].name, e->joins[i].name_len);
-    }
-}
-
-static int msg_blob_read(const unsigned char *b, int len, MsgEnvelope *e) {
-    if (len < MSG_BLOB_HDR) return MSG_ESHORT;
-    msg_envelope_init(e);   // NOT memset: the rematch fields have sentinels
-    e->format = b[0]; e->flags = b[1]; e->phase = b[2]; e->n_players = b[3];
-    e->variant = b[4]; e->round = b[5]; e->last_actor_seat = b[6];
-    e->n_joins = b[7];
-    if (e->n_joins < 1 || e->n_joins > MSG_MAX_JOINS) return MSG_EJOINS;
-    if (len < MSG_BLOB_HDR + e->n_joins * MSG_BLOB_JOIN) return MSG_ESHORT;
-    uint64_t id = 0;
-    for (int i = 7; i >= 0; i--) id = (id << 8) | b[8 + i];
-    e->game_id = id;
-    e->turn = (uint16_t)(b[16] | (b[17] << 8));
-    memcpy(e->parent8, b + 18, MSG_PARENT_LEN);
-    memcpy(e->seed, b + 26, MSG_SEED_LEN);
-    e->sent_at = (uint16_t)(b[90] | (b[91] << 8));
-    // b[92] (n_new) is NOT read back: msg_seal derives the delta, see the
-    // layout note above.
-    e->opening    = b[93];
-    e->carry_key  = (uint32_t)b[94] | ((uint32_t)b[95] << 8)
-                  | ((uint32_t)b[96] << 16) | ((uint32_t)b[97] << 24);
-    e->carry_fool = b[98];
-    for (int i = 0; i < e->n_joins; i++) {
-        const unsigned char *j = b + MSG_BLOB_HDR + i * MSG_BLOB_JOIN;
-        e->joins[i].seat = j[0];
-        e->joins[i].name_len = j[1];
-        if (j[1] > MSG_MAX_NAME) return MSG_ENAME;
-        memcpy(e->joins[i].name, j + 2, MSG_MAX_NAME);
-    }
-    return MSG_EOK;
-}
+// The address of that header. The whole ABI: the caller reads it after a decode
+// and fills it in before a seal.
+void *wasm_msg_header_ptr(void) { return &g_msg_header; }
 
 // The adopted chain's round, kept from the last successful wasm_msg_decode —
 // Rule R's guard input, and the one thing a rebase needs that the resident Game
@@ -897,9 +801,9 @@ static int g_msg_round = -1;
 // different byte on the same chain.
 
 // in:  g_replay_io[0 .. in_len) = the envelope bytes
-// out: the unpacked header blob, written back over g_replay_io
-// Replays the chain into g_game on the way. Returns the blob length, or -MSG_E*
-// negated into the same space the replay errors use (see the TS bridge).
+// out: the header at wasm_msg_header_ptr (MsgHeader)
+// Replays the chain into g_game on the way. Returns MSG_EOK, or -MSG_E* negated
+// into the same space the replay errors use (see the TS bridge).
 int wasm_msg_decode(int in_len) {
     if (in_len < 0 || in_len > REPLAY_IO_CAP) return MSG_ECAP;
     MsgEnvelope e;
@@ -918,8 +822,13 @@ int wasm_msg_decode(int in_len) {
     g_msg_round = e.round;   // Rule R's guard reads this against a pending move
     // …and the log mark a later seal measures its bubble against.
     g_msg_base_logs = g_game.num_logs;
-    msg_blob_write(&e, digest, g_replay_io);
-    return MSG_BLOB_HDR + e.n_joins * MSG_BLOB_JOIN;
+    // The header, at wasm_msg_header_ptr. `actions` is dropped on the way: it
+    // borrows g_replay_io, which the next call is free to overwrite.
+    g_msg_header.e = e;
+    g_msg_header.e.actions = 0;
+    g_msg_header.e.actions_len = 0;
+    memcpy(g_msg_header.digest, digest, SHA256_DIGEST_LEN);
+    return MSG_EOK;
 }
 
 // Rule P (msg_wire.h §7.2). Two envelopes laid end to end in g_replay_io:
@@ -953,15 +862,25 @@ int wasm_msg_rebase(int pending_round, int seat, int wire_len) {
     return msg_rebase_one(&g_game, g_msg_round, pending_round, seat, &a);
 }
 
-// in:  g_replay_io[0 .. in_len) = the unpacked header blob (digest ignored)
-// out: the envelope bytes, written back over g_replay_io
+// in:  the header at wasm_msg_header_ptr (MsgHeader)
+// out: the envelope bytes in g_replay_io
 // Seals the RESIDENT g_game — the game the caller just played a move on.
 // Returns the envelope length, or a negative MSG_E*.
-int wasm_msg_seal(int in_len) {
-    if (in_len < 0 || in_len > REPLAY_IO_CAP) return MSG_ECAP;
-    MsgEnvelope e;
-    const int rc = msg_blob_read(g_replay_io, in_len, &e);
-    if (rc != MSG_EOK) return rc;
+//
+// Three of the header's fields are the KERNEL'S to state, and a caller does not
+// get to claim them: the digest (an envelope cannot carry its own), `n_new` (the
+// bubble's atom delta, which msg_seal derives from the base turn this host
+// tracks) and the borrowed body. They are cleared here rather than trusted, so
+// the struct a caller filled in cannot assert a boundary its body does not have.
+int wasm_msg_seal(void) {
+    MsgEnvelope e = g_msg_header.e;
+    if (e.n_joins < 1 || e.n_joins > MSG_MAX_JOINS) return MSG_EJOINS;
+    for (int i = 0; i < e.n_joins; i++)
+        if (e.joins[i].name_len > MSG_MAX_NAME) return MSG_ENAME;
+    e.n_new = 0;
+    e.n_actions = 0;
+    e.actions_len = 0;
+    e.actions = 0;
 
     // A v6 body is tens of bytes; 512 is far above any measured game (8p ~68 B).
     static unsigned char body[512];
@@ -995,6 +914,22 @@ int wasm_msg_pickup_hold(int seat, int sent_at, int now) {
 // two has_* flags model TS null (a replay sequence has no version -> never gated).
 int wasm_anim_should_drop_stale(int has_last, int last, int has_incoming, int incoming) {
     return anim_should_drop_stale(has_last, last, has_incoming, incoming);
+}
+
+// THE DEDUP KEY (anim_plan.h anim_event_key). Two events collide iff they name
+// the same (type, card, from, to, seat); the seat stands in for the player id
+// because a plan is per viewer. The web used to key its pending moves on a
+// JSON.stringify of those five fields and JSON.parse them back out in five
+// places, which is a byte layout TypeScript knew.
+//
+// It comes back as a DOUBLE so the host can use it as a plain Map key without a
+// BigInt: the key packs six BYTES (bits 0..47, see anim_event_key), so every
+// value it can take is exact in a double, and every value it cannot take -
+// anything at or above 2^48 - is unreachable by construction. Asserted in
+// c/tests/anim_plan_test.c over the whole range of each field.
+double wasm_anim_event_key(int type, int suit, int value, int from, int to, int seat) {
+    const Card card = { (int8_t)suit, (int8_t)value };
+    return (double)anim_event_key(type, card, from, to, seat);
 }
 
 // staleOptimisticKeysOnTable (optimisticAnimation.ts). g_io in:
@@ -1119,6 +1054,76 @@ int wasm_anim_conflict_verdicts(int pending_attacks, int defender_hand,
     return n_motions;
 }
 
+// THE REVERSAL'S ORDER (anim_plan.h anim_reversal_order), for a host that
+// already holds its verdicts - which every SERVER-transport host does, since
+// anim_conflict_verdict is the only entry that asks the AnimServerHope.
+//
+// This is the entry that REPLACES a web rule rather than being reconciled with
+// one. AnimationContext had four branches deciding where a doomed card's return
+// flight went relative to the arriving stream's own events - before a magic
+// transition, before the first attack "for parallel visual effect", before a
+// pickup, or first - and the kernel's rule is simply that the board reverses
+// what it must before it plays anything else, last group first.
+//
+// g_io in:
+//   u8 n_motions, n_motions x u8 verdict (ANIM_CONFLICT_*),
+//   u8 n_groups,  n_groups  x u8 group size
+// g_io out (overwrites): n_steps x u8 step size, then the motion indices, the
+// steps laid end to end. Returns the step count, or a negative ANIM_E*.
+int wasm_anim_reversal_order(void) {
+    int p = 0;
+    const int n_motions = g_io[p++];
+    if (n_motions > ANIM_MAX_CONFLICT_MOTIONS) return ANIM_ECAP;
+    static unsigned char verdicts[ANIM_MAX_CONFLICT_MOTIONS];
+    for (int i = 0; i < n_motions; i++) verdicts[i] = g_io[p++];
+    const int n_groups = g_io[p++];
+    if (n_groups > ANIM_MAX_CONFLICT_GROUPS) return ANIM_ECAP;
+    static int groups[ANIM_MAX_CONFLICT_GROUPS];
+    for (int g = 0; g < n_groups; g++) groups[g] = g_io[p++];
+
+    static AnimConflictPlan plan;
+    const int n = anim_reversal_order(verdicts, n_motions, groups, n_groups, &plan);
+    if (n < 0) return n;
+    int q = 0;
+    for (int i = 0; i < n; i++) g_io[q++] = (unsigned char)plan.step_count[i];
+    for (int i = 0; i < plan.n_order; i++) g_io[q++] = (unsigned char)plan.order[i];
+    return n;
+}
+
+// THE HAND'S ORDER (anim_plan.h anim_hand_laid_out_masked): the array a fan is
+// actually given, backs and all.
+//
+// THREE IMPLEMENTATIONS OF THIS SHIPPED ON THE WEB and one in C, which is the
+// hand-order divergence the iMessage work found: a replay reconciled its
+// face-down slots by COUNT and the live hand reconciled by KEY, so the same
+// rearrangement could come out two different ways depending on which screen was
+// drawing it. One door, so they cannot.
+//
+// g_io in:
+//   [0 .. n_cards)              the hand, in kernel order: dense ids, or
+//                               ANIM_TABLE_UNKNOWN for a slot the caller
+//                               cannot name (a replay's face-down card)
+//   [n_cards .. +n_order)       the viewer's preferred order, same alphabet
+// g_io out (overwrites): the laid-out array, one byte per slot.
+// `deferred_lo`/`deferred_hi` are the deferred-card bitset's two halves, because
+// a wasm export's arguments are 32 bits wide and the set is 52.
+// Returns the count written, or a negative ANIM_E*.
+int wasm_anim_hand_laid_out(int n_cards, int n_order,
+                            unsigned deferred_lo, unsigned deferred_hi) {
+    if (n_cards < 0 || n_order < 0) return ANIM_EBADARG;
+    if (n_cards > MAX_HAND_SIZE || n_order > MAX_HAND_SIZE) return ANIM_ECAP;
+    unsigned char hand[MAX_HAND_SIZE], order[MAX_HAND_SIZE], out[MAX_HAND_SIZE];
+    for (int i = 0; i < n_cards; i++) hand[i] = g_io[i];
+    for (int i = 0; i < n_order; i++) order[i] = g_io[n_cards + i];
+    const uint64_t deferred = ((uint64_t)deferred_hi << 32) | (uint64_t)deferred_lo;
+    const int n = anim_hand_laid_out_masked(hand, n_cards, deferred,
+                                            n_order ? order : 0, n_order,
+                                            out, MAX_HAND_SIZE);
+    if (n < 0) return n;
+    for (int i = 0; i < n; i++) g_io[i] = out[i];
+    return n;
+}
+
 // THE TRANSPORT (anim_plan.h), said once by the host. Every wasm host is the
 // server shape - a browser, an edge function, a test harness driving either -
 // but the kernel will not assume that, so bots.ts states it at module init.
@@ -1127,30 +1132,129 @@ int wasm_anim_conflict_verdicts(int pending_attacks, int defender_hand,
 int wasm_anim_set_transport(int transport) { return anim_set_transport(transport); }
 int wasm_anim_transport(void) { return anim_transport(); }
 
-// anim_build_plan (the count-freeze + veil + timing). g_io in:
-//   [0 .. n_players)   final_hand counts (u8 each)
-//   then events: n_events x { u8 type, u8 seat(0xFF none), u8 from, u8 to,
-//                             u8 mask, u8 n_cards, n_cards x u8 wire card,
-//                             u8 has_counts, u8 deck, u8 discard,
-//                             (NO flipped trump - see the CARD_NONE below),
-//                             n_players x u8 hand,
-//                             u8 n_battles (0xFE = no board),
-//                             2 x n_battles u8 attack/cover dense ids }
-// AND EVERY EVENT CARRIES ITS ROW. The freeze is the whole board, not three
-// numbers off it: the row before a pass is the first event's own row with the
-// passed card taken back off it (anim_plan.h, AnimCounts). A caller that drops
-// the rows gets no row and paints the live table, which is the pre-bump.
-// EVERY EVENT CARRIES THE BOARD IT COMMITTED. The freeze is one undo off the
-// FIRST event's own board, not a walk back from the final one - see
-// anim_plan.h - so a caller that drops the snapshots gets the fallback and the
-// deck badge reads a card high whenever the flipped trump is drawn.
-// Scalars: n_events, n_players, final_deck, final_discard.
-// g_io out (overwrites): a packed AnimPlan blob (see the TS bridge readPlan).
-// Returns bytes written, or a negative ANIM_E*.
-static void put_u16le(unsigned char *o, int *p, int v) {
-    o[(*p)++] = (unsigned char)(v & 0xff);
-    o[(*p)++] = (unsigned char)((v >> 8) & 0xff);
+// ---------- the plan, the frame and the beats ---------------------------------
+//
+// THE THREE ENTRIES A HOST WITH A FRAME LOOP NEEDS, and the reason they cross
+// here and not earlier: wasm_anim_build_plan was DELETED in 0cda5e85 for being
+// a bridge with no caller, so the builders wait for the consumer that asks them
+// (docs/C_GAME_SHAPE_MIGRATION.md Phase 9). iOS reaches the same C natively
+// through fio_anim_plan / fio_anim_beats.
+//
+// THE STRUCTS ARE READ WHERE THEY LIE, like wasm_legal_moves_ptr: a plan is
+// 11,752 bytes and a host that copied it through g_io once per frame would
+// spend more time marshalling than animating. The caller reads them through the
+// generated accessors (sdk/ts/gen/anim.bots.ts), which is also why AnimFrame is
+// a structgen root: no TypeScript may know a byte offset.
+static AnimPlan  g_anim_plan;
+static AnimFrame g_anim_frame;
+static AnimBeats g_anim_beats;
+
+void *wasm_anim_plan_ptr(void)  { return &g_anim_plan; }
+void *wasm_anim_frame_ptr(void) { return &g_anim_frame; }
+void *wasm_anim_beats_ptr(void) { return &g_anim_beats; }
+
+// "no seat" / "this event carries no board", on the wire. A seat is 0..7 and a
+// battle count at most MAX_BATTLES, so 0xFF names neither. A GOOD MASK is the
+// one field this sentinel could not serve: eight players all wearing the mark
+// is 0xFF, so ANIM_NO_MASK crosses as its own flag byte rather than as a value
+// no mask may take.
+#define ANIM_W_NONE 0xFFu
+
+// THE PLAN (anim_plan.h anim_build_plan). g_io in, per event:
+//   u8 type (ANIM_EVT_*), u8 seat (ANIM_W_NONE for none),
+//   u8 from, u8 to (ANIM_LOC_*; ANIM_LOC_NONE is already 0xFF),
+//   u8 mask_cards, u8 n_cards, n_cards x u8 wire card,
+//   u8 has_counts, and when it is 1: u8 deck, u8 discard, u8 flipped (wire
+//     card), n_players x u8 hand,
+//   u8 n_battles (ANIM_W_NONE for "no board of its own"), then 2 x that u8.
+// Then, once: n_players x u8 the FINAL hand.
+// Scalars: the final board's deck, discard and flipped (a wire card).
+// The answer is left in g_anim_plan for the caller to read where it lies.
+// Returns ANIM_EOK, or a negative ANIM_E*.
+int wasm_anim_build_plan(int n_events, int n_players,
+                         int final_deck, int final_discard, int final_flipped) {
+    if (n_events < 0 || n_players < 0 || n_players > MAX_PLAYERS) return ANIM_EBADARG;
+    if (n_events > ANIM_MAX_STEPS) return ANIM_ECAP;
+    static AnimPlanEvent events[ANIM_MAX_STEPS];
+    static Card cpool[ANIM_MAX_CARD_POOL];
+    static int  hpool[ANIM_MAX_STEPS * MAX_PLAYERS];
+    static unsigned char bpool[ANIM_MAX_STEPS * 2 * MAX_BATTLES];
+    int nc_pool = 0, nh_pool = 0, nb_pool = 0, p = 0;
+    for (int e = 0; e < n_events; e++) {
+        AnimPlanEvent *ev = &events[e];
+        ev->type = g_io[p++];
+        const unsigned char seat = g_io[p++];
+        ev->seat = (seat == ANIM_W_NONE) ? ANIM_SEAT_NONE : (int)seat;
+        ev->from = g_io[p++];
+        ev->to   = g_io[p++];
+        ev->mask_cards = g_io[p++] ? 1 : 0;
+        const int nc = g_io[p++];
+        if (nc > ANIM_MAX_CARDS || nc_pool + nc > (int)(sizeof cpool / sizeof cpool[0])) return ANIM_ECAP;
+        ev->cards = nc ? &cpool[nc_pool] : 0;
+        ev->n_cards = nc;
+        for (int k = 0; k < nc; k++) cpool[nc_pool++] = card_from_wire_pair(g_io[p++]);
+        ev->has_counts = g_io[p++] ? 1 : 0;
+        ev->deck = ev->discard = 0;
+        ev->flipped = CARD_NONE;
+        ev->hand = 0;
+        if (ev->has_counts) {
+            ev->deck = g_io[p++];
+            ev->discard = g_io[p++];
+            ev->flipped = card_from_wire_pair(g_io[p++]);
+            if (nh_pool + n_players > (int)(sizeof hpool / sizeof hpool[0])) return ANIM_ECAP;
+            ev->hand = &hpool[nh_pool];
+            for (int s = 0; s < n_players; s++) hpool[nh_pool++] = g_io[p++];
+        }
+        const unsigned char nb = g_io[p++];
+        if (nb == ANIM_W_NONE) { ev->n_battles = ANIM_NO_BOARD; ev->battles = 0; continue; }
+        if (nb > MAX_BATTLES || nb_pool + 2 * nb > (int)sizeof bpool) return ANIM_ECAP;
+        ev->n_battles = nb;
+        ev->battles = &bpool[nb_pool];
+        for (int k = 0; k < 2 * nb; k++) bpool[nb_pool++] = g_io[p++];
+    }
+    int final_hand[MAX_PLAYERS];
+    for (int s = 0; s < n_players; s++) final_hand[s] = g_io[p++];
+    return anim_build_plan(events, n_events, n_players, final_deck, final_discard,
+                           card_from_wire_pair((unsigned char)(final_flipped & 0xff)),
+                           final_hand, &g_anim_plan);
 }
+
+// WHERE THE PLAN STANDS AT now_ms (anim_plan.h anim_plan_at), measured from the
+// sequence's start. The clock is an argument: the kernel imports nothing, so
+// the host owns the origin and re-asks every frame. The answer lands in
+// g_anim_frame. Returns ANIM_EOK or a negative ANIM_E*.
+int wasm_anim_plan_at(int now_ms) {
+    return anim_plan_at(&g_anim_plan, now_ms, &g_anim_frame);
+}
+
+// THE BEATS (anim_plan.h anim_build_beats). g_io in, per event:
+//   u8 type, u8 seat (ANIM_W_NONE for none), u8 mask_cards,
+//   u8 has_good_mask, u8 good_mask, u8 n_cards, n_cards x u8 wire card.
+// The answer is left in g_anim_beats. Returns the beat count, or a negative ANIM_E*.
+int wasm_anim_build_beats(int n_events) {
+    if (n_events < 0) return ANIM_EBADARG;
+    if (n_events > ANIM_MAX_BEATS) return ANIM_ECAP;
+    static AnimBeatEvent events[ANIM_MAX_BEATS];
+    static Card cpool[ANIM_MAX_CARD_POOL];
+    int nc_pool = 0, p = 0;
+    for (int e = 0; e < n_events; e++) {
+        AnimBeatEvent *ev = &events[e];
+        ev->type = g_io[p++];
+        const unsigned char seat = g_io[p++];
+        ev->seat = (seat == ANIM_W_NONE) ? ANIM_SEAT_NONE : (int)seat;
+        ev->mask_cards = g_io[p++] ? 1 : 0;
+        const int has_gm = g_io[p++];
+        const unsigned char gm = g_io[p++];
+        ev->good_mask = has_gm ? (int)gm : ANIM_NO_MASK;
+        const int nc = g_io[p++];
+        if (nc > ANIM_MAX_CARDS || nc_pool + nc > (int)(sizeof cpool / sizeof cpool[0])) return ANIM_ECAP;
+        ev->cards = nc ? &cpool[nc_pool] : 0;
+        ev->n_cards = nc;
+        for (int k = 0; k < nc; k++) cpool[nc_pool++] = card_from_wire_pair(g_io[p++]);
+    }
+    return anim_build_beats(events, n_events, &g_anim_beats);
+}
+
 // THE FINISH ORDER (anim_plan.h anim_finish_rows), for the end screen. g_io in:
 //   [0 .. n_elim)  the elimination seats, first out first.
 // Scalars: game_over is the fool's seat (negative while the game runs),
@@ -1175,123 +1279,6 @@ int wasm_anim_finish_rows(int n_elim, int game_over, int n_players, int my_seat)
     return n;
 }
 
-// Wall time and step offsets: a full-length stream (ANIM_MAX_STEPS x the
-// stride) runs past 65535 ms, so these two are the wide ones.
-static void put_u32le(unsigned char *o, int *p, int v) {
-    for (int i = 0; i < 4; i++) o[(*p)++] = (unsigned char)((v >> (8 * i)) & 0xff);
-}
-int wasm_anim_build_plan(int n_events, int n_players, int final_deck, int final_discard) {
-    if (n_players < 2 || n_players > MAX_PLAYERS) return ANIM_EBADARG;
-    if (n_events < 0 || n_events > ANIM_MAX_STEPS) return ANIM_ECAP;
-    static Card ev_cards[ANIM_MAX_CARD_POOL];
-    static AnimPlanEvent events[ANIM_MAX_STEPS];
-    static int ev_hand[ANIM_MAX_STEPS][MAX_PLAYERS];
-    int final_hand[MAX_PLAYERS];
-    int p = 0, cpool = 0;
-    for (int i = 0; i < n_players; i++) final_hand[i] = g_io[p++];
-    for (int e = 0; e < n_events; e++) {
-        events[e].type = g_io[p++];
-        int seat = g_io[p++];
-        events[e].seat = (seat == 0xFF) ? ANIM_SEAT_NONE : seat;
-        events[e].from = g_io[p++];
-        events[e].to = g_io[p++];
-        events[e].mask_cards = g_io[p++] ? 1 : 0;
-        int nc = g_io[p++];
-        if (nc < 0 || nc > ANIM_MAX_CARDS || cpool + nc > (int)(sizeof(ev_cards)/sizeof(ev_cards[0])))
-            return ANIM_ECAP;
-        events[e].cards = &ev_cards[cpool];
-        events[e].n_cards = nc;
-        for (int k = 0; k < nc; k++) ev_cards[cpool++] = card_from_wire_pair(g_io[p++]);
-        events[e].has_counts = g_io[p++] ? 1 : 0;
-        events[e].deck = g_io[p++];
-        events[e].discard = g_io[p++];
-        // THE FLIPPED TRUMP IS NOT ON THIS WIRE, and CARD_NONE is what that
-        // says. The browser draws its own DeckAndFlipped straight off the live
-        // game state and has never asked the plan for the stock's other half;
-        // the iMessage board does (c/ios/ios_api.c, FIO_PLAN_FLIP_AT), which is
-        // where the freeze it belongs to is actually read. Written explicitly
-        // rather than left to whatever the static array held, so `pre.flipped`
-        // over this wire means one definite thing - and the TS bridge
-        // deliberately does not expose it, so nothing can read that one thing
-        // as "the trump is gone".
-        events[e].flipped = CARD_NONE;
-        for (int s = 0; s < n_players; s++) ev_hand[e][s] = g_io[p++];
-        events[e].hand = ev_hand[e];
-        // …and the row that step committed, in the 2-bytes-per-battle layout.
-        // ANIM_TABLE_NONE as the COUNT is "no board", which is what a redacted
-        // table crosses as: a row that cannot be described honestly is not
-        // described at all.
-        //
-        // BORROWED FROM g_io, NOT COPIED, and that is a page of linear memory.
-        // AnimPlanEvent BORROWS its array inputs for the call - the same
-        // contract EvwEvent keeps - and a row on this wire is ALREADY the dense
-        // ids the kernel compares, byte for byte, so there is nothing to
-        // transform. (`cards` beside it is copied because card_from_wire_pair
-        // genuinely changes the bytes; the rows do not need it.) A per-step copy
-        // buffer here is ANIM_MAX_STEPS x 2 x ANIM_PLAN_ROW_MAX = 8,192 B of
-        // bss, and bots.wasm has 2,592 B of room under its 36-page line
-        // (e2e/mem/wasm_memory.test.ts) - so the copy cost a whole 64 KiB page
-        // and the borrow gives it back.
-        //
-        // THE BORROW IS ONLY SAFE BECAUSE EVERY WRITE TO g_io HAPPENS AFTER
-        // anim_build_plan HAS RETURNED. It reads these rows and copies what it
-        // keeps into `plan`; the output loop below then starts its own cursor at
-        // zero over the same buffer. Move any part of that output before the
-        // plan call and the rows are overwritten under it - which is a wrong
-        // table, not a crash, so nothing would say so.
-        const int n_bat = g_io[p++];
-        if (n_bat == ANIM_TABLE_NONE) {
-            events[e].n_battles = ANIM_NO_BOARD;
-            events[e].battles = 0;
-        } else {
-            if (n_bat > ANIM_PLAN_ROW_MAX) return ANIM_ECAP;
-            events[e].n_battles = n_bat;
-            events[e].battles = &g_io[p];
-            p += 2 * n_bat;
-        }
-    }
-    static AnimPlan plan;
-    int rc = anim_build_plan(events, n_events, n_players, final_deck, final_discard,
-                             CARD_NONE, final_hand, &plan);
-    if (rc != ANIM_EOK) return rc;
-
-    int o = 0;
-    g_io[o++] = (unsigned char)plan.n_steps;
-    g_io[o++] = (unsigned char)n_players;
-    put_u16le(g_io, &o, plan.pre.deck);
-    put_u16le(g_io, &o, plan.pre.discard);
-    for (int s = 0; s < n_players; s++) put_u16le(g_io, &o, plan.pre.hand[s]);
-    put_u32le(g_io, &o, plan.total_ms);
-    g_io[o++] = (unsigned char)plan.n_veil;
-    for (int i = 0; i < plan.n_veil; i++) g_io[o++] = plan.veil_ids[i];
-    // THE ROW THE DISPLAY OPENS ON, length-prefixed. Too wide for the block is
-    // NO row rather than a truncated one - a table missing cards is worse than
-    // the live table the caller already had.
-    {
-        const int n_row = (plan.pre.n_battles > 0
-                           && plan.pre.n_battles <= ANIM_PLAN_ROW_MAX)
-                          ? plan.pre.n_battles : 0;
-        g_io[o++] = (unsigned char)n_row;
-        g_io[o++] = (unsigned char)(n_row > 0 && plan.pre.paired ? 1 : 0);
-        for (int k = 0; k < 2 * n_row; k++) g_io[o++] = plan.pre.battles[k];
-    }
-    for (int i = 0; i < plan.n_steps; i++) {
-        AnimPlanStep *st = &plan.steps[i];
-        g_io[o++] = (unsigned char)st->type;
-        g_io[o++] = (unsigned char)(st->seat < 0 ? 0xFF : st->seat);
-        g_io[o++] = (unsigned char)st->from;
-        g_io[o++] = (unsigned char)st->to;
-        g_io[o++] = (unsigned char)st->n_cards;
-        put_u16le(g_io, &o, st->duration_ms);
-        put_u32le(g_io, &o, st->start_ms);
-        put_u16le(g_io, &o, st->deck);
-        put_u16le(g_io, &o, st->discard);
-        g_io[o++] = (unsigned char)st->in_flight_from_deck;
-        g_io[o++] = (unsigned char)st->in_flight_to_flipped;
-        for (int s = 0; s < n_players; s++) put_u16le(g_io, &o, st->hand[s]);
-    }
-    return o;
-}
 
 // ---------- legal moves --------------------------------------------------------
 // u32 n, then per move: u8 type, u8 n_cards, n_cards x u8 wire-card cards,
@@ -1302,21 +1289,11 @@ int wasm_legal_moves(int bot_idx) {
     return g_moves.n;
 }
 
-// Chunked export (the full list can exceed the IO buffer): serializes up to
-// `max_moves` moves starting at `start`. Header: u32 moves written; the
-// caller loops until it has wasm_legal_moves() total.
-int wasm_export_moves(int start, int max_moves) {
-    // Defensive clamp to the buffer: a caller with a stale chunk size gets a
-    // short (but well-formed) chunk instead of an overflow into g_game. The
-    // worst-case wire move is 2 + 2 x MAX_MOVE_CARDS bytes.
-    int fit = (IO_CAP - 4) / (2 + 2 * MAX_MOVE_CARDS);
-    if (max_moves > fit) max_moves = fit;
-    // The layout itself is legal.c's (legal_menu_write) - written down once,
-    // beside the reader the board rules walk it with. The clamp above stays
-    // here because the chunking is this export's own contract with the TS
-    // caller, not a property of the format.
-    const int n = legal_menu_write(&g_moves, start, max_moves, g_io, IO_CAP);
-    if (n >= 0) return n;
-    g_io[0] = g_io[1] = g_io[2] = g_io[3] = 0;   // an empty chunk, never a lie
-    return 4;
-}
+// The menu itself (legal.h LegalMoves), which the caller reads through the
+// generated accessors (sdk/ts/gen/anim.bots.ts). It replaced a CHUNKED packed
+// export: the list can be far larger than the IO buffer, so a host used to loop
+// over u32-prefixed chunks of the wire format and unpack each move by hand.
+// Reading the struct where it already is needs neither the chunks nor the wire
+// (the packed form stays for the hosts that genuinely have to copy it across a
+// boundary - legal_menu_write, which iOS's fio_legal_packed uses).
+void *wasm_legal_moves_ptr(void) { return &g_moves; }

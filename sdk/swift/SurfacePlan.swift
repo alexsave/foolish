@@ -100,43 +100,33 @@ public struct SurfacePlan: Equatable, Sendable {
         self.settle = settle
     }
 
-    /// Decode `fio_msg_surface_plan`'s int32 answer. A shape this does not
-    /// recognise is `.none`, which is the same degrade-to-less-animation
-    /// discipline every other wire reader here keeps.
-    fileprivate init(words: [Int32], count: Int) {
-        let head = Int(FIO_SURFACE_HEAD), stride = Int(FIO_SURFACE_STRIDE)
-        guard count >= head else { self = .none; return }
-        let n = Int(words[0])
+    /// The kernel's AnimSurfacePlan (anim_plan.h), copied out through the
+    /// generated reader. It used to arrive as a block of int32 words - three of
+    /// head, six per beat - written in ios_api.c and read back word by word
+    /// here, which is one layout stated twice.
+    fileprivate init?(kernel p: UnsafeRawPointer) {
+        guard let sp = try? readAnimSurfacePlan(p) else { return nil }
         // A PLAN WITH NO BEATS IS STILL AN ANSWER. It was `.none` here until
         // 1.1(68), which was fine while the only question was "what do I
         // animate" and wrong the moment the surface also had to ask "and how
         // long before the drawer may take it away" - a lone roster snap answers
         // 0 and one REST to those two, and collapsing `.none` over it threw the
         // second away.
-        guard n >= 0, count >= head + n * stride else { self = .none; return }
-        let settle = TimeInterval(words[2]) / 1000
-        guard n > 0 else {
-            self.beats = []
-            self.total = 0
-            self.settle = settle
-            return
-        }
+        self.settle = TimeInterval(sp.settleMs) / 1000
+        self.total = TimeInterval(sp.totalMs) / 1000
         var out: [Beat] = []
-        out.reserveCapacity(n)
-        for i in 0..<n {
-            let w = head + i * stride
-            guard let kind = Kind(rawValue: Int(words[w])),
-                  let trans = Transition(rawValue: Int(words[w + 1])),
-                  let controls = Controls(rawValue: Int(words[w + 3]))
-            else { self = .none; return }
+        out.reserveCapacity(sp.beats.count)
+        for b in sp.beats {
+            guard let kind = Kind(rawValue: b.kind),
+                  let trans = Transition(rawValue: b.transition),
+                  let controls = Controls(rawValue: b.controls)
+            else { return nil }
             out.append(Beat(kind: kind, transition: trans, controls: controls,
-                            passing: words[w + 2] != 0,
-                            duration: TimeInterval(words[w + 4]) / 1000,
-                            start: TimeInterval(words[w + 5]) / 1000))
+                            passing: b.passing != 0,
+                            duration: TimeInterval(b.durationMs) / 1000,
+                            start: TimeInterval(b.startMs) / 1000))
         }
         self.beats = out
-        self.total = TimeInterval(words[1]) / 1000
-        self.settle = settle
     }
 }
 
@@ -149,17 +139,14 @@ extension MessageKernel {
     /// adopted would move the game out from under the board being asked about,
     /// which is the phantom-seal shape (see `resealFromBase`).
     public func surfacePlan(showing: Data, arriving: Data) -> SurfacePlan {
-        let cap = Int(FIO_SURFACE_HEAD) + 10 * Int(FIO_SURFACE_STRIDE)
-        var out = [Int32](repeating: 0, count: cap)
-        let n: Int32 = showing.withUnsafeBytes { sp in
+        let rc: Int32 = showing.withUnsafeBytes { sp in
             arriving.withUnsafeBytes { ap in
                 fio_msg_surface_plan(sp.bindMemory(to: UInt8.self).baseAddress, Int32(showing.count),
-                                     ap.bindMemory(to: UInt8.self).baseAddress, Int32(arriving.count),
-                                     &out, Int32(cap))
+                                     ap.bindMemory(to: UInt8.self).baseAddress, Int32(arriving.count))
             }
         }
-        guard n >= Int32(FIO_SURFACE_HEAD) else { return .none }
-        return SurfacePlan(words: out, count: Int(n))
+        guard rc == 0, let p = fio_surface_plan_ptr() else { return .none }
+        return SurfacePlan(kernel: p) ?? .none
     }
 }
 
@@ -174,11 +161,9 @@ extension MessageKernel {
     /// beat the kernel already has an opinion about (owner, on the audit's U6:
     /// "for U6 ... lets prefer fades").
     public func surfaceSwap(passing: Bool) -> SurfacePlan {
-        let cap = Int(FIO_SURFACE_HEAD) + Int(FIO_SURFACE_STRIDE)
-        var out = [Int32](repeating: 0, count: cap)
-        let n = fio_anim_surface_swap(passing ? 1 : 0, &out, Int32(cap))
-        guard n >= Int32(FIO_SURFACE_HEAD) else { return .none }
-        return SurfacePlan(words: out, count: Int(n))
+        guard fio_anim_surface_swap(passing ? 1 : 0) == 0,
+              let p = fio_surface_plan_ptr() else { return .none }
+        return SurfacePlan(kernel: p) ?? .none
     }
 }
 

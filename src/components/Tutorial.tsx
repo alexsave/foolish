@@ -2,7 +2,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Card, PLAYER_STATUS } from '@api/core/types.ts';
+import { PLAYER_STATUS, type TableView, type ViewCard as Card } from '../state/view';
 import { TexturedSurface } from './TexturedSurface';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { AuthContext } from '../contexts/AuthContext';
@@ -17,10 +17,7 @@ import { GameBoard } from './GameBoard';
 import { usePreventScroll } from '../hooks/usePreventScroll';
 import { animationFeed, AnimationSequenceMessage } from '../state/animationFeed';
 import { bigintToBytes, bytesToBigint } from '@api/common/replay/codec.ts';
-import { kernelB32Decode } from '@sdk/ts/wasm/bots.ts';
-import { decodeReplay } from '@api/common/replay/decode.ts';
-import { DecodedReplay } from '@api/common/replay/core.ts';
-import { ensureBotsAsync } from '@sdk/ts/wasm/bots.ts';
+import { ensureBotsAsync, kernelB32Decode, replaySummary, type ReplaySummary } from '@sdk/ts/wasm/bots.ts';
 import {
     buildReplayFrames, preDealGame, ReplayFrame, ReplayGameState, REPLAY_STEP,
 } from '../replay/frames';
@@ -28,7 +25,6 @@ import { canCoverCards } from '../utils/gameValidation';
 import { tutorialStrings, tfmt, TutKey } from '../localization/tutorialStrings';
 import { TUTORIAL_MOVES_CODE, TUTORIAL_NAMES } from './tutorialGame';
 
-const SELF_ID = 'seat-0';
 const LEARNER_SEAT = 0;
 const GAME_ID = 'tutorial';
 const RESULT = { game_id: GAME_ID };
@@ -47,28 +43,30 @@ const LEARNER_KINDS: number[] = [
  * is theirs to give. */
 const learnerOwesGood = (prev: ReplayFrame | undefined): boolean => {
     if (!prev) return false;
-    const me = prev.game.players[LEARNER_SEAT];
+    const me = prev.game.seats[LEARNER_SEAT];
     return !!me
         && me.status !== PLAYER_STATUS.OUT
         && prev.game.defender !== LEARNER_SEAT
-        && !prev.game.good_players.includes(SELF_ID);
+        && ((prev.game.goodMask >>> LEARNER_SEAT) & 1) === 0;
 };
 
 /* The learner's hand, in a stable display order. The frames are built for seat 0
- * (buildReplayFrames viewer), so `self` is already the kernel's own masked view —
- * the same one a real player in that seat is served. All this adds is the sort:
+ * (buildReplayFrames viewer), so the board's own hand is already the kernel's
+ * masked view - the same one a real player in that seat is served, with no
+ * account behind the seat (the board's mySeat says whose hand it is). All this
+ * adds is the sort:
  * trumps last, then by value, so the hand does not reshuffle itself under the
  * learner as they play. */
-function sortedSelf(state: ReplayGameState, powerSuit: number) {
-    const hand = [...(state.self?.hand ?? [])];
+function sortedHand(state: TableView, powerSuit: number): Card[] {
+    const hand = [...state.myHand];
     hand.sort((a, b) => {
         const ta = a.suit === powerSuit ? 1 : 0, tb = b.suit === powerSuit ? 1 : 0;
         return ta - tb || a.value - b.value || a.suit - b.suit;
     });
-    return { ...state.self, player_id: SELF_ID, is_ai: false, hand, strategy_key: 'human' };
+    return hand;
 }
-const mkWithSelf = (powerSuit: number) => <T extends ReplayGameState>(state: T): T =>
-    (!state || !state.players ? state : ({ ...state, self: sortedSelf(state, powerSuit) } as T));
+const mkWithSelf = (powerSuit: number) => <T extends TableView>(state: T): T =>
+    (!state || !state.seats ? state : ({ ...state, myHand: sortedHand(state, powerSuit) } as T));
 
 /* ----------------------------- concept beats ------------------------------- */
 interface Beat { at: number; key: TutKey; extra?: TutKey; name?: string; }
@@ -85,12 +83,12 @@ interface Beat { at: number; key: TutKey; extra?: TutKey; name?: string; }
  * step that teaches two things at once — a round end is both "good" and
  * "discard" — would silently drop one. Rather than lose it, that step gets ONE
  * beat carrying both. */
-function buildBeats(frames: ReplayFrame[], decoded: DecodedReplay, names: string[]): Beat[] {
+function buildBeats(frames: ReplayFrame[], summary: ReplaySummary, names: string[]): Beat[] {
     const beats: Beat[] = [];
     const seen = new Set<string>();
     const once = (k: string) => (seen.has(k) ? false : (seen.add(k), true));
-    const ps = decoded.powerSuit;
-    const fa = decoded.firstAttacker;
+    const ps = summary.powerSuit;
+    const fa = summary.firstAttacker;
     beats.push({ at: 0, key: fa === LEARNER_SEAT ? 'first_attacker_you' : 'first_attacker', name: names[fa] });
 
     const has = (f: ReplayFrame, type: string) => f.seq.events.some((e) => e.type === type);
@@ -100,7 +98,7 @@ function buildBeats(frames: ReplayFrame[], decoded: DecodedReplay, names: string
         const prev = frames[i - 1];
         switch (f.kind) {
             case REPLAY_STEP.ATTACK:
-                if (prev && prev.game.table_battles.length > 0 && once('throwIn'))
+                if (prev && prev.game.battles.length > 0 && once('throwIn'))
                     beats.push({ at: i, key: 'throw_in', extra: 'capacity' });
                 break;
             case REPLAY_STEP.COVER: {
@@ -125,12 +123,12 @@ function buildBeats(frames: ReplayFrame[], decoded: DecodedReplay, names: string
         if (has(f, 'refill') && once('draw')) beats.push({ at: i, key: 'draw' });
         if (has(f, 'out') && once('out')) {
             const outEv = f.seq.events.find((e) => e.type === 'out');
-            const seat = frames[i].game.players.findIndex((p) => p.player_id === outEv?.player_id);
+            const seat = outEv?.seat ?? -1;
             beats.push({ at: i, key: 'out', name: names[seat >= 0 ? seat : 0] });
         }
-        if (f.game.deck_length === 0 && f.game.flipped === null && once('deckEmpty'))
+        if (f.game.deckCount === 0 && !f.game.hasFlipped && once('deckEmpty'))
             beats.push({ at: i, key: 'deck_empty' });
-        if (i === frames.length - 1) beats.push({ at: i, key: 'fool', name: names[decoded.fool] });
+        if (i === frames.length - 1) beats.push({ at: i, key: 'fool', name: names[summary.fool] });
     }
     beats.sort((a, b) => a.at - b.at);
     return beats;
@@ -149,7 +147,7 @@ interface Move {
 interface TutPlay {
     S: Record<TutKey, string>;
     names: string[];
-    decoded: DecodedReplay;
+    summary: ReplaySummary;
     stepIdx: number;
     awaiting: boolean;
     finished: boolean;
@@ -162,19 +160,19 @@ const TutPlayContext = createContext<TutPlay | null>(null);
 const useTutPlay = () => useContext(TutPlayContext)!;
 
 interface PlaybackProps {
-    decoded: DecodedReplay;
+    summary: ReplaySummary;
     frames: ReplayFrame[];
     names: string[];
     onExit: () => void;
 }
 
-const TutorialPlayback = ({ decoded, frames, names, onExit }: PlaybackProps) => {
-    const { updateGameState, game } = useServer();
+const TutorialPlayback = ({ summary, frames, names, onExit }: PlaybackProps) => {
+    const { updateGameState, view: game } = useServer();
     const real = useAnimation();
     const { isAnimating } = real;
     const { language } = useLocalization();
     const S = tutorialStrings[language];
-    const withSelf = useMemo(() => mkWithSelf(decoded.powerSuit), [decoded.powerSuit]);
+    const withSelf = useMemo(() => mkWithSelf(summary.powerSuit), [summary.powerSuit]);
 
     const [stepIdx, setStepIdx] = useState(-1);
     const stepRef = useRef(stepIdx);
@@ -182,7 +180,7 @@ const TutorialPlayback = ({ decoded, frames, names, onExit }: PlaybackProps) => 
     const lastIdx = frames.length - 1;
     const publishSeq = useRef(0);
 
-    const beats = useMemo(() => buildBeats(frames, decoded, names), [frames, decoded, names]);
+    const beats = useMemo(() => buildBeats(frames, summary, names), [frames, summary, names]);
     // The learner's own move: a step they acted on, or the seat-less round end
     // their good is what the table is waiting for (see learnerOwesGood).
     const isLearnerStep = useCallback(
@@ -195,12 +193,20 @@ const TutorialPlayback = ({ decoded, frames, names, onExit }: PlaybackProps) => 
         [frames, lastIdx],
     );
 
+    // A published step is on its way until its animation starts: the feed queues
+    // it in this render and the queue picks it up in the next, so for one commit
+    // the step is set and nothing is animating yet. The hint must not read that
+    // commit as the board it points at, or it flashes before the deal lands.
+    const [landing, setLanding] = useState(false);
+    useEffect(() => { if (isAnimating) setLanding(false); }, [isAnimating]);
+
     const publishStep = useCallback((i: number) => {
         const seq: AnimationSequenceMessage = structuredClone(frames[i].seq);
         seq.sequence_id = `tut-${i}-${++publishSeq.current}-${Math.random().toString(36).slice(2)}`;
         seq.timestamp = Date.now();
         if (seq.events[0]) (seq.events[0] as any)._nonce = seq.sequence_id;
         animationFeed.publish(seq);
+        setLanding(seq.events.length > 0);
         setStepIdx(i);
     }, [frames]);
 
@@ -240,10 +246,11 @@ const TutorialPlayback = ({ decoded, frames, names, onExit }: PlaybackProps) => 
     const skipToEnd = useCallback(() => {
         real.resetAnimations();
         updateGameState(GAME_ID, withSelf(frames[lastIdx].game));
+        setLanding(false);
         setStepIdx(lastIdx);
     }, [frames, lastIdx, real, updateGameState, withSelf]);
 
-    const awaiting = stepIdx >= 0 && stepIdx < lastIdx && !isAnimating && isLearnerStep(stepIdx + 1);
+    const awaiting = stepIdx >= 0 && stepIdx < lastIdx && !isAnimating && !landing && isLearnerStep(stepIdx + 1);
     const pending = awaiting ? frames[stepIdx + 1] : null;
     const finished = stepIdx >= lastIdx;
 
@@ -291,7 +298,7 @@ const TutorialPlayback = ({ decoded, frames, names, onExit }: PlaybackProps) => 
         good: async () => { tryAdvance(REPLAY_STEP.GOOD); return RESULT; },
     }), [real, tryAdvance]);
 
-    const play: TutPlay = { S, names, decoded, stepIdx, awaiting, finished, beatText, move, skipToEnd, onExit };
+    const play: TutPlay = { S, names, summary, stepIdx, awaiting, finished, beatText, move, skipToEnd, onExit };
 
     return (
         <TutPlayContext.Provider value={play}>
@@ -311,7 +318,7 @@ const TutorialPlayback = ({ decoded, frames, names, onExit }: PlaybackProps) => 
 /* ------------------------------- the board --------------------------------- */
 const TutorialBoard = () => {
     usePreventScroll();
-    const { S, names, decoded, stepIdx, awaiting, finished, beatText, move, skipToEnd, onExit } = useTutPlay();
+    const { S, names, summary, stepIdx, awaiting, finished, beatText, move, skipToEnd, onExit } = useTutPlay();
     const { setSelectedCards } = useGame();
 
     // auto-select the scripted cards so the right wooden button appears; keyed
@@ -419,7 +426,7 @@ const TutorialBoard = () => {
                         }}
                     >
                         <div style={{ fontSize: '2rem', marginBottom: 6 }}>🃏</div>
-                        <p style={{ fontSize: '1.05rem', lineHeight: 1.4, margin: '0 0 6px' }}>{tfmt(S.fool, { name: names[decoded.fool] })}</p>
+                        <p style={{ fontSize: '1.05rem', lineHeight: 1.4, margin: '0 0 6px' }}>{tfmt(S.fool, { name: names[summary.fool] })}</p>
                         <p style={{ fontSize: '0.9rem', opacity: 0.85, margin: '0 0 18px' }}>{S.done}</p>
                         <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
                             <TexturedSurface as="button" seed={0.3} className="btn-wood btn-wood--md" onClick={() => window.location.reload()}>
@@ -470,17 +477,18 @@ const IntroCard = ({ onStart, onSkip }: { onStart: () => void; onSkip: () => voi
 
 /* --------------------------------- root ------------------------------------ */
 const buildTutorialData = async () => {
-    const x = bytesToBigint(kernelB32Decode(TUTORIAL_MOVES_CODE));
+    const code = bigintToBytes(bytesToBigint(kernelB32Decode(TUTORIAL_MOVES_CODE)));
     await ensureBotsAsync();
-    const decoded = await decodeReplay(x);
-    const names = TUTORIAL_NAMES.slice(0, decoded.playerCount);
-    const withSelf = mkWithSelf(decoded.powerSuit);
+    const summary = replaySummary(code);
+    if (!summary) throw new Error('tutorial: the frozen code does not decode');
+    const names = TUTORIAL_NAMES.slice(0, summary.numPlayers);
+    const withSelf = mkWithSelf(summary.powerSuit);
 
     // Built for SEAT 0: the learner is a player, not a spectator, so the kernel
     // masks their boards exactly as it would in a real game — they see their own
     // hand and nobody else's. All withSelf adds is the display sort.
-    const frames = buildReplayFrames(bigintToBytes(x), GAME_ID, names, {
-        viewer: LEARNER_SEAT, fool: decoded.fool,
+    const frames = buildReplayFrames(code, GAME_ID, names, {
+        viewer: LEARNER_SEAT, fool: summary.fool,
     }).map((f) => ({
         ...f,
         game: withSelf(f.game),
@@ -491,7 +499,7 @@ const buildTutorialData = async () => {
         },
     }));
     const initial = withSelf(preDealGame(frames[0]));
-    return { decoded, frames, initial, names };
+    return { summary, frames, initial, names };
 };
 
 export const Tutorial = () => {
@@ -500,8 +508,8 @@ export const Tutorial = () => {
     const [started, setStarted] = useState(false);
     useEffect(() => setMounted(true), []);
 
-    // Async: decodeReplay runs in the rules kernel, which the browser must
-    // compile asynchronously. undefined = still decoding, null = failed.
+    // Async: the replay runs in bots.wasm, which the browser must compile
+    // asynchronously. undefined = still decoding, null = failed.
     const [data, setData] = useState<Awaited<ReturnType<typeof buildTutorialData>> | null | undefined>(undefined);
     useEffect(() => {
         if (!mounted) return;
@@ -517,8 +525,10 @@ export const Tutorial = () => {
 
     if (!mounted || data === undefined) return null;
 
+    // Nobody signs in to the tutorial: the learner's seat is the board's own
+    // (mySeat), and the page names its hand by the seat (state/view.ts seatKey).
     const tutorialAuth = {
-        user_id: SELF_ID, username: 'You', loading: false,
+        user_id: null, username: 'You', loading: false,
         signIn: async () => ({} as any), signUp: async () => ({} as any),
         signOut: async () => {}, updatePassword: async () => {},
         redirectAfterLogin: null, setRedirectAfterLogin: () => {}, clearRedirectAfterLogin: () => {},
@@ -542,7 +552,7 @@ export const Tutorial = () => {
                                 <IntroCard onStart={() => setStarted(true)} onSkip={exit} />
                             ) : (
                                 <TutorialPlayback
-                                    decoded={data.decoded}
+                                    summary={data.summary}
                                     frames={data.frames}
                                     names={data.names}
                                     onExit={exit}

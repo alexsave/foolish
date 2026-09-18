@@ -1,4 +1,4 @@
-import { Card, PersonalGame, PublicGame } from '@api/core/types.ts';
+import type { TableView, ViewCard } from './view';
 
 /**
  * The animation feed: a tiny pub/sub carrying "animation sequence" messages —
@@ -28,15 +28,15 @@ export interface FeedAnimationEvent {
         | 'out'
         | 'refill'
         | 'cards_to_trash';
-    player_id?: string;
-    cards?: Card[]; // card backs are {suit:-1, value:-1}
+    seat?: number;   // the acting seat
+    cards?: ViewCard[]; // card backs are {suit:-1, value:-1}
     from_location?: 'deck' | 'hand' | 'table' | 'discard';
     to_location?: 'deck' | 'hand' | 'table' | 'discard' | 'flipped';
-    target_card?: Card;
+    target_card?: ViewCard;
     battle_index?: number;
     message?: string;
-    /** game state to commit once this event's animation lands */
-    game_state: PersonalGame | PublicGame;
+    /** the board to commit once this event's animation lands */
+    game_state: TableView;
 }
 
 export interface AnimationSequenceMessage {
@@ -44,8 +44,8 @@ export interface AnimationSequenceMessage {
     sequence_id: string;
     timestamp: number;
     events: FeedAnimationEvent[];
-    /** final game state, committed when the whole sequence has played */
-    game: PersonalGame | PublicGame;
+    /** the final board, committed when the whole sequence has played */
+    game: TableView;
     /** Committed games.version this sequence reflects. Present on live broadcasts
      *  (stamped by the server); absent for replay-synthesized sequences. The
      *  consumer uses it to drop sequences that arrive out of order under realtime
@@ -62,7 +62,7 @@ export interface AnimationSequenceMessage {
  * AnimationSequenceMessage directly.
  */
 export interface PackedSequenceEnvelope {
-    t: 'as2';
+    t: 'as2' | 'as3';
     /** sequence id (dedup key) */
     s: string;
     /** committed games.version (the monotonic reorder-drop token) */

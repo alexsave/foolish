@@ -244,8 +244,11 @@ enabled = false
 [edge_runtime]
 enabled = true
 # Configure one of the supported request policies: `oneshot`, `per_worker`.
-# Use `oneshot` for hot reload, or `per_worker` for load testing.
-policy = "oneshot"
+# MUST be `per_worker`, as hosted runs: the bot loop runs after the response under
+# `EdgeRuntime.waitUntil` (scheduleBotLoop, bot-heartbeat), and `oneshot` reaps the
+# worker as soon as the response is sent, so a local game stalls on its first bot
+# turn. The cost is no hot reload: restart `supabase functions serve` after an edit.
+policy = "per_worker"
 # Port to attach the Chrome inspector for debugging edge functions.
 inspector_port = 8083
 
@@ -278,7 +281,7 @@ s3_access_key = "env(S3_ACCESS_KEY)"
 s3_secret_key = "env(S3_SECRET_KEY)"
 
 # bots.wasm ships as a raw gzip static asset (see sdk/ts/wasm/wasm_asset.ts),
-# bundled into each bot-running function by `supabase functions deploy
+# bundled into every function that runs the C Table by `supabase functions deploy
 # --use-api` (no Docker). rules/guards inflate from gzip+base64 embeds via the
 # vendored sdk/ts/wasm/gunzip.ts (relative import — no import_map needed).
 #
@@ -290,23 +293,29 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # one real deploy. If deploy rejects the `../` path, the fix-forward is a
 # predeploy step that stages sdk/ts/wasm/bots.wasm.gz into a path under
 # supabase/ (gitignored, regenerated from the one canonical .gz).
-# import_map: the Deno resolver for the @api/@sdk/@shared aliases the functions
-# now use (mirrors the tsconfig paths the Node/tsx side reads). Path is relative
-# to this config; the map's own entries are relative to functions/. Every
-# function that imports an alias needs it declared.
+# import_map: the Deno resolver for the @shared/@api/@sdk aliases the functions use
+# (mirrors the tsconfig paths the Node/tsx side reads), one deno.json per
+# function. Path is relative to this config; the map's own entries are relative
+# to the function's directory. It is the function's own deno.json because
+# `supabase functions serve` resolves aliases only from there: with a shared map
+# every local worker failed to boot ("Relative import path "@sdk/..." not
+# prefixed"). e2e/validation/deploy_paths_validation.test.ts holds the five maps
+# identical.
 [functions.action]
-import_map = "./functions/import_map.json"
+import_map = "./functions/action/deno.json"
 static_files = [ "../../../sdk/ts/wasm/bots.wasm.gz" ]
 [functions.meta]
-import_map = "./functions/import_map.json"
+import_map = "./functions/meta/deno.json"
 static_files = [ "../../../sdk/ts/wasm/bots.wasm.gz" ]
 [functions.bot-heartbeat]
-import_map = "./functions/import_map.json"
+import_map = "./functions/bot-heartbeat/deno.json"
 static_files = [ "../../../sdk/ts/wasm/bots.wasm.gz" ]
 [functions.create]
-import_map = "./functions/import_map.json"
+import_map = "./functions/create/deno.json"
+static_files = [ "../../../sdk/ts/wasm/bots.wasm.gz" ]
 [functions.delete-account]
-import_map = "./functions/import_map.json"
+import_map = "./functions/delete-account/deno.json"
+static_files = [ "../../../sdk/ts/wasm/bots.wasm.gz" ]
 # NOTE: the CI diagnostic `memtest` also needs bots.wasm.gz, but its
 # static_files entry is injected by .github/workflows/memory.yml at run time
 # — NOT declared here. `supabase functions deploy` deploys every function in

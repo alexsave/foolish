@@ -25,11 +25,15 @@ int awire_decode(const unsigned char *buf, int len, AwireAction *out) {
     if (expected == 0 || len != expected) return 0;
     const int kind = buf[0];
     const int n = buf[1];
+    // Every card byte is a card. A byte past the last card - the hidden card, no
+    // card, anything else - is a malformed wire, never clamped onto a real card
+    // the seat might happen to hold.
+    for (int i = 2; i < expected; i++) if (buf[i] > 51) return 0;
     out->kind = kind;
     out->n = n;
-    for (int i = 0; i < n; i++) out->cards[i] = card_from_wire_state(buf[2 + i]);
+    for (int i = 0; i < n; i++) out->cards[i] = card_of_id(buf[2 + i]);
     if (kind == AWIRE_COVER) {
-        for (int i = 0; i < n; i++) out->attacks[i] = card_from_wire_state(buf[2 + n + i]);
+        for (int i = 0; i < n; i++) out->attacks[i] = card_of_id(buf[2 + n + i]);
     }
     return 1;
 }

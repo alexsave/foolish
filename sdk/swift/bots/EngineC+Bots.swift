@@ -4,7 +4,7 @@
 // Foolish.xcframework is a static archive, so ld links it per object; FoolishKit
 // is a dynamic framework, so its public API is exported and therefore a
 // dead-strip root. While `botDrive` was a public method ON FoolishKit's EngineC,
-// that export linked fio_bot_drive_packed -> bot_drive -> bot_roster -> all 21
+// that export linked fio_bot_drive -> bot_drive -> bot_roster -> all 21
 // strategies, octogen included. FoolishKit ships inside FoolishMessagesApp, so
 // octogen shipped in the iMessage bundle - a game that plays people and never
 // drives a seat carried the strongest brain in the roster.
@@ -36,7 +36,12 @@ extension EngineC {
     public func botDrive(humanSeats: [Int]) throws -> BotDrive {
         var mask: Int32 = 0
         for s in humanSeats where s >= 0 { mask |= (1 << Int32(s)) }
-        return BotDriveWire.decode(try json { fio_bot_drive_packed(mask, $0, $1) })
+        // ONE CALL, then the read: the cycle's result is the kernel's own
+        // BotDriveOut where it lies, and this actor is what keeps the drive and
+        // the read of it from being two different cycles.
+        let delay = fio_bot_drive(mask)
+        try Self.check(delay >= 0 ? 0 : delay)
+        return BotDriveWire.read(delayMs: Int(delay))
     }
 
     // MARK: strategies

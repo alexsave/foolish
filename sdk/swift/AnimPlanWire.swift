@@ -61,6 +61,28 @@ public struct AnimPlan: Equatable, Sendable {
         /// draw a wrong face. See c/src/anim_plan.h, AnimCounts.
         public let flipped: Card?
 
+        /// The kernel's AnimCounts as the freeze this type carries. The ROW is
+        /// two bytes per battle (the attack, then its cover or the no-card
+        /// sentinel), which is why `n_battles` is not that array's length and
+        /// crosses beside it.
+        public init(kernel c: AnimCountsSnap) {
+            var hand: [Int: Int] = [:]
+            for (s, n) in c.hand.enumerated() { hand[s] = n }
+            var row: [BattleView] = []
+            row.reserveCapacity(c.nBattles)
+            for i in 0..<min(c.nBattles, c.battles.count / 2) {
+                let cover = c.battles[2 * i + 1]
+                row.append(BattleView(attack: AnimPlan.card(UInt8(truncatingIfNeeded: c.battles[2 * i])),
+                                      defense: cover == Int(FIO_PRETABLE_NONE)
+                                               ? nil : AnimPlan.card(UInt8(truncatingIfNeeded: cover))))
+            }
+            self.init(deck: c.deck, discard: c.discard, hand: hand,
+                      battles: row, battlesPaired: c.paired != 0,
+                      // CARD_NONE once a refill has dealt the trump out.
+                      flipped: c.flipped.value > 0
+                               ? Card(s: c.flipped.suit, v: c.flipped.value) : nil)
+        }
+
         public init(deck: Int, discard: Int, hand: [Int: Int],
                     battles: [BattleView] = [], battlesPaired: Bool = false,
                     flipped: Card? = nil) {
@@ -158,70 +180,33 @@ public struct AnimPlan: Equatable, Sendable {
             input.append(contentsOf: PreBoutTable.table(board?.battles))
         }
 
-        let head = Int(FIO_PLAN_HEAD), stride = Int(FIO_PLAN_STRIDE)
-        var out = [CChar](repeating: 0, count: head + 256 * stride + 256)
-        let n: Int32 = input.withUnsafeBufferPointer { p in
-            fio_anim_plan_packed(p.baseAddress, Int32(input.count), &out, Int32(out.count))
+        // The answer is the kernel's own AnimPlan (anim_plan.h), copied out
+        // through the generated reader. It used to be flattened into a packed
+        // block - an 85-byte head, a 23-byte stride per step, a veil tail - and
+        // unpacked here, which was the same layout written down twice.
+        let ok: Int32 = input.withUnsafeBufferPointer { p in
+            fio_anim_plan(p.baseAddress, Int32(input.count))
         }
-        guard n >= Int32(head) else { self = Self.frozen(at: finalView); return }
+        guard ok == 0, let ptr = fio_anim_plan_ptr(), let pl = try? readAnimPlan(ptr),
+              pl.pre.hand.count == np
+        else { self = Self.frozen(at: finalView); return }
 
-        let b = out.prefix(Int(n)).map { UInt8(bitPattern: $0) }
-        let count = Int(b[1]), seats = Int(b[2]), nVeil = Int(b[3])
-        guard seats == np, b.count >= head + count * stride + nVeil else {
-            self = Self.frozen(at: finalView)
-            return
+        self.totalMs = pl.totalMs
+        self.pre = Counts(kernel: pl.pre)
+        // A step's board carries NO row, deliberately, and anim_plan.h says
+        // why: the row a step settles to IS that step's own snapshot, which
+        // every client already commits as the flight lands (the same line that
+        // pins the deck and the badges). Only the FREEZE needs a rule.
+        self.steps = pl.steps.map { st in
+            Step(type: st.type, seat: st.seat == ANIM_SEAT_NONE ? -1 : st.seat,
+                 from: st.from, to: st.to, cardCount: st.nCards,
+                 durationMs: st.durationMs, startMs: st.startMs,
+                 counts: Counts(deck: st.deck, discard: st.discard,
+                                hand: Self.seatDict(st.hand, seats: np)),
+                 inFlightFromDeck: st.inFlightFromDeck,
+                 inFlightToFlipped: st.inFlightToFlipped)
         }
-        self.totalMs = Self.u32(b, 4)
-        let rowAt = Int(FIO_PLAN_ROW_AT)
-        let rowCount = Int(b[rowAt])
-        var preRow: [BattleView] = []
-        preRow.reserveCapacity(rowCount)
-        for i in 0..<rowCount {
-            let at = rowAt + 2 + 2 * i
-            let cover = b[at + 1]
-            preRow.append(BattleView(attack: Self.card(b[at]),
-                                     defense: cover == UInt8(FIO_PRETABLE_NONE)
-                                              ? nil : Self.card(cover)))
-        }
-        let preHand = Self.seatDict(b, at: 10, seats: np)
-        let paired: Bool = b[rowAt + 1] != 0
-        let flip = b[Int(FIO_PLAN_FLIP_AT)]
-        self.pre = Counts(deck: Int(b[8]), discard: Int(b[9]), hand: preHand,
-                          battles: preRow, battlesPaired: paired,
-                          flipped: flip < 52 ? Self.card(flip) : nil)
-
-        var built: [Step] = []
-        built.reserveCapacity(count)
-        for i in 0..<count {
-            let e = head + i * stride
-            // A step's board carries NO row, deliberately, and the header says
-            // why: the row a step settles to IS that step's own snapshot, which
-            // every client already commits as the flight lands (the same line
-            // that pins the deck and the badges). Only the FREEZE needs a rule,
-            // and only the freeze crosses this wire.
-            let stepCounts = Counts(deck: Int(b[e + 11]), discard: Int(b[e + 12]),
-                                    hand: Self.seatDict(b, at: e + 15, seats: np))
-            let seat: Int = b[e + 1] == 0xFF ? -1 : Int(b[e + 1])
-            let duration: Int = Int(b[e + 5]) | (Int(b[e + 6]) << 8)
-            let type: Int = Int(b[e])
-            let from: Int = Int(b[e + 2]), to: Int = Int(b[e + 3])
-            let cardCount: Int = Int(b[e + 4])
-            let startMs: Int = Self.u32(b, e + 7)
-            let fromDeck: Int = Int(b[e + 13]), toFlipped: Int = Int(b[e + 14])
-            built.append(Step(type: type, seat: seat, from: from, to: to,
-                              cardCount: cardCount, durationMs: duration,
-                              startMs: startMs, counts: stepCounts,
-                              inFlightFromDeck: fromDeck,
-                              inFlightToFlipped: toFlipped))
-        }
-        self.steps = built
-
-        let v = head + count * stride
-        var ids = Set<String>()
-        for i in 0..<nVeil where b[v + i] < 52 {
-            ids.insert(Card(s: Int(b[v + i]) / 13, v: Int(b[v + i]) % 13 + 1).identity)
-        }
-        self.veil = ids
+        self.veil = Set(pl.veilIds.filter { $0 < 52 }.map { Card(s: $0 / 13, v: $0 % 13 + 1).identity })
     }
 
     private init(pre: Counts, steps: [Step], veil: Set<String>, totalMs: Int) {
@@ -253,7 +238,7 @@ public struct AnimPlan: Equatable, Sendable {
         return UInt8(f.s * 13 + (f.v - 1))
     }
 
-    private static func card(_ id: UInt8) -> Card {
+    fileprivate static func card(_ id: UInt8) -> Card {
         Card(s: Int(id) / 13, v: Int(id) % 13 + 1)
     }
 
@@ -261,15 +246,10 @@ public struct AnimPlan: Equatable, Sendable {
         Dictionary(uniqueKeysWithValues: v.players.map { ($0.seat, $0.handCount) })
     }
 
-    private static func u32(_ b: [UInt8], _ at: Int) -> Int {
-        var v = 0
-        for i in 0..<4 where at + i < b.count { v |= Int(b[at + i]) << (8 * i) }
-        return v
-    }
-
-    private static func seatDict(_ b: [UInt8], at: Int, seats: Int) -> [Int: Int] {
+    /// A seat-indexed hand block as the dictionary this type carries.
+    private static func seatDict(_ hand: [Int], seats: Int) -> [Int: Int] {
         var out: [Int: Int] = [:]
-        for s in 0..<seats where at + s < b.count { out[s] = Int(b[at + s]) }
+        for s in 0..<min(seats, hand.count) { out[s] = hand[s] }
         return out
     }
 }

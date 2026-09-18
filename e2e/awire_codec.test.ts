@@ -4,19 +4,25 @@
 // decodeAction now exists as the ORACLE this file fuzzes the encoder against.
 // It must still mirror awire_decode's strictness exactly - null (never a throw,
 // never a partial parse) on any malformed buffer - because that strictness is
-// what makes it a usable oracle. Pure TS — needs no Postgres and no wasm.
+// what makes it a usable oracle. The last test holds the client's request and
+// the stale-round response to the server's own codec, the C Table's
+// (table_request_decode, table_action_response), over the shipped bots.wasm:
+// the TS encoder and the C decoder both ship, so they must agree byte for byte.
+// Needs no Postgres.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { Card } from '../server/api/core/types.ts';
 import {
     AWIRE_KIND, AWIRE_MAX_CARDS, AwireKindName, AwireMove,
     ACTION_REQ_FORMAT, ACTION_REQ_FORMAT_V1,
     decodeAction, encodeAction, encodeActionRequest, decodeActionRequest,
+    encodeActionResponse, ACTION_STATUS, REJECT_STALE_ROUND,
 } from '../sdk/ts/wire/awire.ts';
-import { logwireClosesRound, logwireHexClosesRound, logsFromKernelExport } from '../sdk/ts/wire/logwire.ts';
-import { bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
+import { createServerTable } from '../sdk/ts/table/server_table.ts';
+import { TABLE_STALE_ROUND } from '../sdk/ts/gen/game_layout.bots.ts';
+
+type Card = NonNullable<AwireMove['cards']>[number];
 
 // Deterministic RNG so a failure reproduces from the printed seed.
 let seed = Number(process.env.FUZZ_SEED || 0xa11ce) >>> 0;
@@ -81,6 +87,10 @@ test('awire: decodeAction returns null on every malformed shape', () => {
         { label: 'cover half-truncated pairs', wire: new Uint8Array([1, 2, 7, 8, 9]) },
         { label: 'cover with trailing garbage', wire: new Uint8Array([1, 1, 7, 8, 9]) },
         { label: 'good with trailing garbage', wire: new Uint8Array([4, 0, 1]) },
+        { label: 'attack of no card (0xFF)', wire: new Uint8Array([0, 1, 0xff]) },
+        { label: 'pass of the hidden card (0xFE)', wire: new Uint8Array([2, 1, 0xfe]) },
+        { label: 'attack of card 52', wire: new Uint8Array([0, 2, 51, 52]) },
+        { label: 'cover of attack byte 200', wire: new Uint8Array([1, 1, 7, 200]) },
     ];
     for (const { label, wire } of cases) {
         assert.equal(decodeAction(wire), null, `${label} decodes to null`);
@@ -109,7 +119,8 @@ test('awire: decodeAction never throws on random byte strings, and any accept is
             const kind = ri(6);
             const n = ri(31);
             const body = new Uint8Array(kind === 1 ? 2 * n : n);
-            for (let j = 0; j < body.length; j++) body[j] = ri(256);
+            // Mostly real card bytes, so whole frames get through; now and then any byte.
+            for (let j = 0; j < body.length; j++) body[j] = ri(8) === 0 ? ri(256) : ri(52);
             wire = new Uint8Array([kind, n, ...body]);
         } else {
             wire = new Uint8Array(ri(80));
@@ -129,9 +140,7 @@ test('awire: decodeAction never throws on random byte strings, and any accept is
         if (d.kind === 'pickup' || d.kind === 'good') assert.equal(d.cards!.length, 0, 'no-card kinds carry no cards');
         if (d.kind === 'cover') assert.equal(d.attack_cards!.length, d.cards!.length, 'cover pairs positional');
         for (const c of [...d.cards!, ...(d.attack_cards ?? [])]) {
-            const hidden = c.suit === -1 && c.value === -1; // 0xFE wire byte
-            assert.ok(hidden || (c.suit >= 0 && c.suit <= 3 && c.value >= 1 && c.value <= 13),
-                `decoded card in range: ${JSON.stringify(c)}`);
+            assert.ok(c.suit >= 0 && c.suit <= 3 && c.value >= 1 && c.value <= 13, `decoded card is a card: ${JSON.stringify(c)}`);
         }
     }
     // The near-valid quarter guarantees the accept path actually ran.
@@ -181,71 +190,27 @@ test('awire request envelope: malformed/truncated buffers decode to null (never 
     assert.equal(decodeActionRequest(new Uint8Array([ACTION_REQ_FORMAT_V1, 2, 65, 66])), null, 'v1 missing wire');
 });
 
-// ---------------------------------------------------------------------------
-// Round-close detector (drives the round_epoch guard, docs/WEB_RACE_BUG_HANDOFF.md):
-// a move closes a round exactly when its logs carry a PICKUP or a DISCARD.
-// ---------------------------------------------------------------------------
-const PICKUP_INT = 4, DISCARD_INT = 6, ATTACK_INT = 1, COVER_INT = 2, DEFENDER_CHANGE_INT = 7;
-// Build the kernel's raw log export (u16 count + timestamp-less records) that
-// logsFromKernelExport consumes — the exact bytes the packed path produces.
-function kernelExport(recs: { type: number; seat: number; def: number; pairs: number[][] }[]): Uint8Array {
-    const out: number[] = [recs.length & 0xff, (recs.length >> 8) & 0xff];
-    for (const r of recs) {
-        out.push(r.type, r.seat, r.def, r.pairs.length);
-        for (const p of r.pairs) out.push(p[0], p[1]);
+test('the client\'s request is what the server\'s C codec reads, and its stale-round response is the client\'s bytes', () => {
+    const table = createServerTable();
+    const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
+    const wires = [Uint8Array.of(3, 0), Uint8Array.of(0, 1, 7), Uint8Array.of(1, 2, 8, 9, 10, 11)];
+    for (const gid of ['a', 'd79ae3', 'x'.repeat(64)]) {
+        for (const wire of wires) {
+            for (const intent of [undefined, 0, 5, 0x7fffffff, 0xffffffff]) {
+                const body = encodeActionRequest(gid, wire, intent);
+                const c = table.requestDecode(body);
+                assert.ok(typeof c !== 'number', `${gid}/${hex(wire)}/${intent}: the server decodes it (${c})`);
+                assert.deepEqual({ gameId: c.gameId, wire: hex(c.wire), intent: c.intent },
+                    { gameId: gid, wire: hex(wire), intent: intent ?? null }, `${gid}/${hex(wire)}/${intent}`);
+            }
+        }
     }
-    return new Uint8Array(out);
-}
-const logwireOf = (recs: Parameters<typeof kernelExport>[0]) => logsFromKernelExport(kernelExport(recs), 1_700_000_000_000);
-
-test('logwireClosesRound: true iff the move logged a pickup or a discard', () => {
-    assert.equal(logwireClosesRound(new Uint8Array([])), false, 'empty log — no close');
-    assert.equal(logwireClosesRound(logwireOf([{ type: ATTACK_INT, seat: 0, def: 0xff, pairs: [[5, 0xff]] }])), false, 'a plain attack does not close a round');
-    assert.equal(logwireClosesRound(logwireOf([{ type: COVER_INT, seat: 1, def: 1, pairs: [[5, 10]] }])), false, 'a cover does not close a round');
-    assert.equal(logwireClosesRound(logwireOf([{ type: PICKUP_INT, seat: 1, def: 1, pairs: [[5, 0xff], [10, 0xff]] }])), true, 'a pickup closes the round');
-    assert.equal(logwireClosesRound(logwireOf([{ type: DISCARD_INT, seat: 0xff, def: 0xff, pairs: [[5, 0xff]] }])), true, 'a discard closes the round');
-    // A realistic covered-then-discarded round + its defender-change trailer.
-    assert.equal(logwireClosesRound(logwireOf([
-        { type: ATTACK_INT, seat: 0, def: 0xff, pairs: [[5, 0xff]] },
-        { type: COVER_INT, seat: 1, def: 1, pairs: [[5, 18]] },
-        { type: DISCARD_INT, seat: 0xff, def: 0xff, pairs: [[5, 18]] },
-        { type: DEFENDER_CHANGE_INT, seat: 0xff, def: 0, pairs: [] },
-    ])), true, 'a full covered round that trashes closes the round');
-});
-
-test('logwireHexClosesRound: the zero-alloc hex scan agrees with the byte scan on every shape', () => {
-    // The hot-path detector reads the bare-hex string commit_game stores; it
-    // must be byte-for-byte identical to the Uint8Array scan (which the tests
-    // above pin) — including the empty log, the \\x-prefixed form, and records
-    // with pairs (whose stride the scan must skip correctly).
-    const shapes: Parameters<typeof kernelExport>[0][] = [
-        [],
-        [{ type: ATTACK_INT, seat: 0, def: 0xff, pairs: [[5, 0xff]] }],
-        [{ type: COVER_INT, seat: 1, def: 1, pairs: [[5, 10], [7, 12]] }],
-        [{ type: PICKUP_INT, seat: 1, def: 1, pairs: [[5, 0xff], [10, 0xff], [3, 0xff]] }],
-        [{ type: DISCARD_INT, seat: 0xff, def: 0xff, pairs: [[5, 0xff]] }],
-        [
-            { type: ATTACK_INT, seat: 0, def: 0xff, pairs: [[5, 0xff]] },
-            { type: COVER_INT, seat: 1, def: 1, pairs: [[5, 18]] },
-            { type: DISCARD_INT, seat: 0xff, def: 0xff, pairs: [[5, 18]] },
-            { type: DEFENDER_CHANGE_INT, seat: 0xff, def: 0, pairs: [] },
-        ],
-        // A pickup hiding AFTER a big multi-pair attack — the stride skip must
-        // land on the right type byte, not a card byte that happens to be 4/6.
-        [
-            { type: ATTACK_INT, seat: 0, def: 0xff, pairs: [[4, 0xff], [6, 0xff], [4, 0xff]] },
-            { type: PICKUP_INT, seat: 1, def: 1, pairs: [[4, 0xff]] },
-        ],
-    ];
-    for (const recs of shapes) {
-        const bytes = recs.length ? logwireOf(recs) : new Uint8Array([]);
-        const bare = bytesToBareHex(bytes);
-        const expected = logwireClosesRound(bytes);
-        assert.equal(logwireHexClosesRound(bare), expected, `hex scan matches byte scan (${JSON.stringify(recs.map(r => r.type))})`);
-        // Tolerates the pg \\x prefix exactly as hexToBytes did.
-        assert.equal(logwireHexClosesRound('\\x' + bare), expected, 'hex scan tolerates the \\x prefix');
-        // Upper-case hex nibbles parse identically (charCode math covers A-F).
-        assert.equal(logwireHexClosesRound(bare.toUpperCase()), expected, 'hex scan is case-insensitive');
+    for (const bad of [Uint8Array.of(), Uint8Array.of(1), Uint8Array.of(2, 1, 0x67, 1, 0, 0), Uint8Array.of(9, 0, 3, 0)]) {
+        assert.equal(decodeActionRequest(bad), null, `the client's reader refuses ${hex(bad)}`);
+        assert.equal(typeof table.requestDecode(bad), 'number', `the server refuses ${hex(bad)}`);
     }
-    assert.equal(logwireHexClosesRound(''), false, 'empty hex — no close');
+    for (const version of [0, 1, 256, 0x01020304, 0x7fffffff]) {
+        assert.equal(hex(table.actionResponse(TABLE_STALE_ROUND, 0, version)),
+            hex(encodeActionResponse(ACTION_STATUS.REJECTED, REJECT_STALE_ROUND, version)), `stale round at ${version}`);
+    }
 });

@@ -143,6 +143,19 @@
   text-shadow: var(--text-shadow-dark);
 }
 
+/* ===== My hand's row (ActionButtons) ===== */
+/* The row spans the screen, and its cards grow to fill it: without a gutter the
+   outer cards sit on the screen's edges, where a phone's rounded corners and
+   bezel cut them. The gutter is the back button's inset, or the safe area where
+   that is larger (a phone on its side). */
+[data-hand-container] {
+  box-sizing: border-box;
+  padding-left: 10px;
+  padding-left: max(10px, env(safe-area-inset-left, 0px));
+  padding-right: 10px;
+  padding-right: max(10px, env(safe-area-inset-right, 0px));
+}
+
 /* ===== Player's Hand Cards ===== */
 .card-in-hand {
   flex: 1 1 0;

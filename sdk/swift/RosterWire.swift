@@ -3,8 +3,11 @@
 //
 //     n_joins(1), then n_joins x { seat(1) name_len(1) name[name_len] }
 //
-// That is the tail of `fio_msg_decode_packed`'s blob, so this file is a reader
-// and a writer of the SAME bytes rather than a second format. It was the last
+// That is the joins block an FMSG header carries, so this file WRITES the bytes
+// the kernel reads back as its own. It had a reader beside the writer while
+// something in Swift still parsed an envelope; nothing does (the header crosses
+// as MsgHeader and a server envelope through the client slot), so what is left
+// is the writer alone. It was the last
 // JSON on any path that matters: the four `fio_msg_*` entries took the roster as
 // `[{"seat":0,"name":"Sveta"},...]` and parsed it in C, and the client-server
 // envelope carried a JSON island inside an otherwise packed payload
@@ -50,22 +53,6 @@ public enum RosterWire {
             w.blob8(nameBytes(j.name))   // <=64 bytes, so the u8 prefix always fits
         }
         return w.data
-    }
-
-    /// The roster back out of a blob, starting at `at`. Returns the joins and
-    /// the offset just past them, or nil if any record runs off the end - the
-    /// same all-or-nothing the C reader keeps, since a roster read short is a
-    /// different table.
-    public static func decode(_ b: [UInt8], at: Int) -> (joins: [MessageJoin], next: Int)? {
-        var r = PackedReader(b, at: at)
-        guard let n = r.u8() else { return nil }
-        var joins: [MessageJoin] = []
-        joins.reserveCapacity(n)
-        for _ in 0..<n {
-            guard let seat = r.u8(), let name = r.blob8() else { return nil }
-            joins.append(MessageJoin(seat: seat, name: String(decoding: name, as: UTF8.self)))
-        }
-        return (joins, r.at)
     }
 
     /// CALL A GATE THAT TAKES A ROSTER AND A NAME. Both cross as bytes with a

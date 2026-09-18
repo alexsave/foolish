@@ -229,6 +229,24 @@ int replay_encode_v6(const unsigned char *in, int in_len,
 int replay_decode(const unsigned char *in, int in_len,
                   unsigned char *out, int out_cap);
 
+// One record of replay_decode's log stream, as fields: what a host reads instead
+// of the bytes (the header is replay_steps.h's ReplaySummary).
+typedef struct {
+    int8_t  log_type;                   // LOG_*
+    int8_t  seat;                       // -1: no seat (0xFF on the wire)
+    int8_t  defender;                   // -1: none
+    uint8_t n_pairs;
+    Card    primary[REPLAY_MAX_PAIRS];
+    Card    target[REPLAY_MAX_PAIRS];   // CARD_NONE when the pair has no target
+} ReplayDecodedLog;
+
+// Reads the record at *at of the decoder output `dec` (len bytes; *at starts at
+// REPLAY_DEC_HDR) into `out` and advances *at past it. Returns 1 for a record, 0
+// at the end of the stream (*at == len), or -REPLAY_EINPUT for bytes the decoder
+// never writes: a record that runs past len, more pairs than REPLAY_MAX_PAIRS, a
+// card id past 51 (a target may also be REPLAY_CARD_NONE), *at outside the stream.
+int replay_decoded_log(const unsigned char *dec, int len, int *at, ReplayDecodedLog *out);
+
 // ---------- Format 6 from a played game (the one v6 producer) ---------------
 //
 // Encode `g` — a game DEALT FROM `seed` — as a v6 replay. This is the whole of
@@ -304,8 +322,23 @@ int replay_b32_decode(const char *s, unsigned char *out, int cap);
 int replay_b32_encode(const unsigned char *in, int n, char *out, int cap);
 
 // Parameter of the last error (version for EVERSION, log_type<<16|menu size
-// for ENOTINMENU, 0 otherwise).
+// for ENOTINMENU, 0 otherwise). The C diagnostics print it; a host that words
+// the error reads the struct below instead, so the packing stays in this file.
 int replay_last_error_detail(void);
+
+// WHY the last call refused, in named fields. The refusal CODE is the call's
+// own return value; these are the parameters its message needs, and they are a
+// struct so a host reads them through a generated reader rather than taking one
+// packed integer apart (log_type << 16 | menu, which is what it was).
+// All zero when the last call did not set one.
+typedef struct {
+    int32_t version;    // REPLAY_EVERSION: the format version the code claims
+    int32_t log_type;   // REPLAY_ENOTINMENU: the LOG_* the session recorded
+    int32_t menu;       // REPLAY_ENOTINMENU: how many moves the menu offered
+} ReplayError;
+
+// The last refusal's parameters. Never NULL; valid until the next codec call.
+const ReplayError *replay_last_error(void);
 
 // ---------- the v6 atom stream (A5) -----------------------------------------
 //

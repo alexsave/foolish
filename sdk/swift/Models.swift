@@ -182,7 +182,7 @@ public enum MoveType: String, Codable, Sendable {
 }
 
 /// One move — a legal-move menu entry, an intent to apply, or (with `seat`) the
-/// move a bot just made (fio_bot_drive_packed result).
+/// move a bot just made (fio_bot_drive result).
 // A move crosses to the kernel as an AWIRE frame (sdk/swift/MoveWire.swift,
 // c/src/awire.c) and never as JSON. Codable is gone with jsonString(), which
 // existed only to feed fio_apply_json - an entry point that no longer exists.
@@ -313,7 +313,7 @@ public struct GameEvent: Codable, Equatable, Sendable {
     public var isSettlement: Bool { fio_evw_is_settlement(Int32(type)) != 0 }
 }
 
-/// One turn of the kernel's bot cycle (fio_bot_drive_packed).
+/// One turn of the kernel's bot cycle (fio_bot_drive).
 ///
 /// The cycle applies 0..n actions and stops on the same conditions as the
 /// website's loop; silent actions bundle rather than costing a delay each.

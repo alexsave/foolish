@@ -1,99 +1,91 @@
-// The meta handlers guard several actions to the WAITING lobby state (and cap
-// the lobby at MAX_PLAYERS). The e2e meta suite drives real games that are
-// always WAITING when these run, so the "wrong status" / "lobby full" throws
-// go unexercised. handleMetaAction is a pure in-memory dispatch for these
-// error paths, so this needs no Postgres.
+// The lobby edits are guarded to the WAITING lobby (and the lobby is capped at
+// 8 seats); continue is guarded to a finished game. The e2e meta suite drives
+// real games that are always WAITING when these run, so the "wrong status" /
+// "lobby full" refusals go unexercised there. The judgement is the C Table's
+// (table_join / table_reseat / table_retitle / table_continue); this drives the
+// REAL handler (meta_actions.ts) on kernel-owned rows and pins the refusal each
+// one surfaces (table_io.ts refusalMessage) and that a refusal commits nothing.
+//
+// Deleted with the TS Game: the winner / fool announcement `continue` used to
+// return as a message event. A push carries no messages any more (plan Q7); who
+// finished where rides the ending move's events, and the reset itself is pinned
+// below and in e2e/meta.test.ts 'meta:continue - resets a finished game back to
+// the lobby'.
 
-// harness.ts (imported first) installs the Deno/EdgeRuntime globals that
-// meta_actions -> utils -> auth reference at module load. No DB is touched.
 import './harness.ts';
-import { test, after } from 'node:test';
+import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { pgPool } from './harness.ts';
+import { applySchema, resetDb, uuid, pgPool } from './harness.ts';
+import { fixture, GAME_OVER, IDLE, IN, OUT, PLAYING, WAITING } from './helpers/table_fixture.ts';
+import { seedTable } from './helpers/table_db.ts';
+import { mustReadTable } from './helpers/table_play.ts';
+import { runMeta } from './helpers/table_server.ts';
 
-import { handleMetaAction } from '../server/impls/supabase/functions/_shared/adapter/meta_actions.ts';
-import { MAX_PLAYERS } from '../server/api/core/constants.ts';
-import {
-  Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
-} from '../server/api/core/types.ts';
-import type { ExecutionParams } from '../server/impls/supabase/functions/_shared/adapter/utils.ts';
+if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 
-if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
+const gid = () => `g${uuid().slice(0, 5)}`;
 
-const mkPlayer = (id: string, status = PLAYER_STATUS.IDLE): PrivatePlayer => ({
-  player_id: id, name: id, status, is_ai: false, hand: [], awaiting_attack: false,
-  hand_length: 0, strategy_key: STRATEGY_KEY.HUMAN,
-});
+/** Two humans mid-game: h1 attacks, h2 defends. */
+async function playing(h1: string, h2: string): Promise<string> {
+    const g = gid();
+    await seedTable(g, fixture().seats([{ id: h1, name: 'h1' }, { id: h2, name: 'h2' }])
+        .status(PLAYING).hand(0, '6h 7h 8h').hand(1, '6s 7s 8s').deck('9d Td').trump('Ac').build());
+    return g;
+}
 
-const mkGame = (players: PrivatePlayer[], status = GAME_STATUS.WAITING): Game => ({
-  players, deck: [], logs: [], id: 'g', name: 'g', status,
-  deck_length: 0, discard_pile_length: 0, flipped: null, power_suit: 0,
-  first_attacker: 0, defender: 0, table_battles: [], elimination_order: [],
-  good_timestamp: null, good_players: [],
-});
+/** The refusal, and that the row did not move. */
+async function refused(gameId: string, userId: string, body: Record<string, unknown>, why: RegExp, what: string): Promise<void> {
+    const v0 = (await mustReadTable(gameId)).version;
+    await assert.rejects(runMeta(gameId, userId, body), why, what);
+    assert.equal((await mustReadTable(gameId)).version, v0, `${what}: nothing committed`);
+}
 
-const exec = (game: Game, userId: string, body: any): ExecutionParams => ({
-  user: { id: userId, user_metadata: { username: userId } } as any,
-  user_name: userId, body, game, reqId: 't',
-});
+before(async () => { await applySchema(); });
+beforeEach(async () => { await resetDb(); });
+after(async () => { await pgPool.end(); });
 
 test('join is rejected outside the WAITING lobby and when the lobby is full', async () => {
-  const playing = mkGame([mkPlayer('h1')], GAME_STATUS.PLAYING);
-  await assert.rejects(
-    handleMetaAction(exec(playing, 'newbie', { type: 'join', game_id: 'g' })),
-    /not waiting for players/i, 'join blocked on a live game',
-  );
+    const h1 = uuid(), h2 = uuid(), newbie = uuid();
+    await refused(await playing(h1, h2), newbie, { type: 'join' }, /not in its lobby/i, 'join blocked on a live game');
 
-  const full = mkGame(Array.from({ length: MAX_PLAYERS }, (_, i) => mkPlayer(`h${i}`)));
-  await assert.rejects(
-    handleMetaAction(exec(full, 'newbie', { type: 'join', game_id: 'g' })),
-    /full \(max/i, `join blocked at ${MAX_PLAYERS} players`,
-  );
+    const full = gid();
+    await seedTable(full, fixture().seats(Array.from({ length: 8 }, (_, i) => ({ id: uuid(), name: `h${i}` }))).build());
+    await refused(full, newbie, { type: 'join' }, /full \(max 8/i, 'join blocked at 8 players');
 });
 
 test('rearrange-players and update-name are lobby-only', async () => {
-  const over = mkGame([mkPlayer('h1'), mkPlayer('h2')], GAME_STATUS.GAME_OVER);
-  await assert.rejects(
-    handleMetaAction(exec(over, 'h1', { type: 'rearrange-players', game_id: 'g', new_order: ['h2', 'h1'] })),
-    /only rearrange players during game lobby/i, 'rearrange blocked once the game started',
-  );
+    const h1 = uuid(), h2 = uuid();
+    const over = gid();
+    await seedTable(over, fixture().seats([{ id: h1, name: 'h1' }, { id: h2, name: 'h2' }])
+        .status(GAME_OVER).eliminated(0).discard(36).seatStatus(0, IDLE).seatStatus(1, IDLE).build());
+    await refused(over, h1, { type: 'rearrange-players', new_order: [h2, h1] }, /not in its lobby/i, 'rearrange blocked once the game started');
 
-  const playing = mkGame([mkPlayer('h1')], GAME_STATUS.PLAYING);
-  await assert.rejects(
-    handleMetaAction(exec(playing, 'h1', { type: 'update-name', game_id: 'g', new_name: 'x' })),
-    /only update name during game lobby/i, 'rename blocked once the game started',
-  );
+    await refused(await playing(h1, h2), h1, { type: 'update-name', new_name: 'x' }, /not in its lobby/i, 'rename blocked once the game started');
 });
 
 test('continue is rejected while the game is still in progress', async () => {
-  const playing = mkGame([mkPlayer('h1', PLAYER_STATUS.IN)], GAME_STATUS.PLAYING);
-  await assert.rejects(
-    handleMetaAction(exec(playing, 'h1', { type: 'continue', game_id: 'g' })),
-    /is not over/i, 'continue blocked mid-game',
-  );
+    const h1 = uuid(), h2 = uuid();
+    await refused(await playing(h1, h2), h1, { type: 'continue' }, /is not over/i, 'continue blocked mid-game');
 });
 
-test('continue reset reports the winner, then the fool, then a bare reset', async () => {
-  // A player already OUT is announced as the winner.
-  const withWinner = mkGame([mkPlayer('w', PLAYER_STATUS.OUT), mkPlayer('f', PLAYER_STATUS.IN)], GAME_STATUS.GAME_OVER);
-  const r1 = await handleMetaAction(exec(withWinner, 'w', { type: 'continue', game_id: 'g' }));
-  assert.match(r1.events[0].message!, /won!/i, 'winner announced');
-  assert.equal(r1.game.status, GAME_STATUS.WAITING, 'game returns to the lobby');
-  assert.ok(r1.game.players.every(p => p.hand.length === 0), 'hands cleared on reset');
-
-  // No winner but a lone IN player -> announced as the fool.
-  const withFool = mkGame([mkPlayer('a', PLAYER_STATUS.IN), mkPlayer('b', PLAYER_STATUS.IDLE)], GAME_STATUS.GAME_OVER);
-  const r2 = await handleMetaAction(exec(withFool, 'a', { type: 'continue', game_id: 'g' }));
-  assert.match(r2.events[0].message!, /fool/i, 'fool announced when there is no OUT winner');
+test('continue resets a finished game to the lobby, clearing the fool\'s hand', async () => {
+    const w = uuid(), f = uuid();
+    const g = gid();
+    // The winner is OUT; the fool is still IN, holding cards.
+    await seedTable(g, fixture().seats([{ id: w, name: 'w' }, { id: f, name: 'f' }])
+        .status(GAME_OVER).seatStatus(0, OUT).seatStatus(1, IN).hand(1, '6c 7c').eliminated(0).discard(34).powerSuit(1).build());
+    const v0 = (await mustReadTable(g)).version;
+    await runMeta(g, w, { type: 'continue' });
+    const t = await mustReadTable(g);
+    assert.equal(t.status, WAITING, 'game returns to the lobby');
+    assert.equal(t.statusColumn, 'waiting');
+    assert.equal(t.version, v0 + 1, 'and the reset committed');
+    assert.ok(t.seats.every((s) => s.hand.length === 0), 'hands cleared on reset');
+    assert.deepEqual(t.seats.map((s) => s.status), [IDLE, IDLE], 'both humans back to idle');
+    assert.deepEqual(t.eliminated, [], 'the finish order is gone with the session');
 });
 
 test('an unknown meta action type is rejected', async () => {
-  const g = mkGame([mkPlayer('h1')]);
-  await assert.rejects(
-    handleMetaAction(exec(g, 'h1', { type: 'no-such-action' })),
-    /unknown meta action type/i,
-  );
+    const h1 = uuid(), h2 = uuid();
+    await refused(await playing(h1, h2), h1, { type: 'no-such-action' }, /unknown meta action type/i, 'unknown type');
 });
-
-// Release the harness's (unused) pg pool so the runner exits cleanly.
-after(async () => { await pgPool.end(); });

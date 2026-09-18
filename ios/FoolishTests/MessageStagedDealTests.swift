@@ -424,15 +424,32 @@ final class MessageStagedDealTests: XCTestCase {
 
     // MARK: the boundary itself
 
+    /// A real two-seat masked board (view.c `state_put`), for the frames below.
+    /// Two seats because their events name seat 1, and every snapshot in a frame
+    /// must agree with every other on how many seats the table has.
+    private func twoSeatBoard() async throws -> Data {
+        let engine = EngineC()
+        try await engine.newGame(seed: seed(7), players: 2)
+        return try await engine.statePackedData(viewer: 0)
+    }
+
     /// Build a frame stream by hand in the shape the kernel writes: a u16 LE
-    /// length, then `version, viewer, actor, n_events`, then one 9-byte event per
-    /// type (7 fixed bytes, no cards, an empty snapshot), then an empty trailer.
-    /// The cut is a question about TYPES and ORDER, so a stream carrying nothing
-    /// else asks it as sharply as possible.
-    private func frames(_ groups: [[EventType]]) -> Data {
+    /// length, then `version, viewer, actor, n_events`, then each event's seven
+    /// fixed bytes (no cards, no target, no battle) and the board its step
+    /// commits, then the frame's trailer board. The cut is a question about
+    /// TYPES and ORDER, so the events carry nothing else.
+    ///
+    /// The BOARDS are real, and that is not decoration. The kernel reads its own
+    /// wire now (`client_push_open`), and it refuses a frame whose snapshots are
+    /// not boards - a frame that does not read WHOLE animates nothing, which is
+    /// stricter than the Swift byte walk this replaced and is the discipline the
+    /// slot keeps everywhere else. A fixture with empty snapshots would be a
+    /// stream the kernel never writes and never accepts, so it could only ask
+    /// the cut its question by being undecodable.
+    private func frames(_ groups: [[EventType]], board: Data) -> Data {
         var out = Data()
         for g in groups {
-            let flen = 4 + g.count * 9 + 2
+            let flen = 4 + g.count * (9 + board.count) + 2 + board.count
             out.append(UInt8(flen & 0xff)); out.append(UInt8((flen >> 8) & 0xff))
             out.append(1)                       // EVWIRE_FORMAT_VERSION
             out.append(0); out.append(0)        // viewer, actor
@@ -444,9 +461,13 @@ final class MessageStagedDealTests: XCTestCase {
                 out.append(1); out.append(2)    // from, to
                 out.append(0)                   // flags
                 out.append(0)                   // n_cards
-                out.append(0); out.append(0)    // snap_len 0
+                out.append(UInt8(board.count & 0xff))
+                out.append(UInt8((board.count >> 8) & 0xff))
+                out.append(board)               // the board this step commits
             }
-            out.append(0); out.append(0)        // final_len 0
+            out.append(UInt8(board.count & 0xff))
+            out.append(UInt8((board.count >> 8) & 0xff))
+            out.append(board)                   // the frame's trailer board
         }
         return out
     }
@@ -459,8 +480,9 @@ final class MessageStagedDealTests: XCTestCase {
     /// pinned on. That extension is gone - the cut moved into C, where the rule
     /// and the count-across-frames both live - so they are asked of the wire the
     /// kernel actually answers over.
-    func testTheSettlementBoundaryIsTheKernels() {
-        func cut(_ types: [EventType]) -> Int? { EvWire.settlementCut(frames([types])) }
+    func testTheSettlementBoundaryIsTheKernels() async throws {
+        let board = try await twoSeatBoard()
+        func cut(_ types: [EventType]) -> Int? { EvWire.settlementCut(frames([types], board: board)) }
         // A cover that swept the table: the cover is the player's, the rest is not.
         XCTAssertEqual(cut([.cover, .cardsToTrash, .refill]), 1)
         XCTAssertEqual(cut([.cover, .cover, .discard, .refill]), 2)
@@ -478,8 +500,9 @@ final class MessageStagedDealTests: XCTestCase {
     /// list, so the cut has to count ACROSS frames. This is the half a client
     /// working from its own decoded list would get wrong for free, and the reason
     /// the question is the kernel's rather than an index computed after the fact.
-    func testTheCutCountsAcrossFrames() {
-        let stream = frames([[.attackPass], [.cover, .discard, .refill]])
+    func testTheCutCountsAcrossFrames() async throws {
+        let stream = frames([[.attackPass], [.cover, .discard, .refill]], board: try await twoSeatBoard())
+        XCTAssertEqual(EvWire.frameCount(stream), 2, "the stream is two steps")
         XCTAssertEqual(EvWire.decodeFrames(stream).count, 4, "the frames flatten to one list")
         XCTAssertEqual(EvWire.settlementCut(stream), 2,
                        "the second frame's settlement is at 2 in the flat list, not at 0")

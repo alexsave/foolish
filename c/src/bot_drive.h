@@ -123,10 +123,14 @@ uint32_t bot_drive_eligible_mask(const Game *g, uint32_t human_mask);
 // Called at each phase of each seat's action, if installed. NULL by default.
 //
 // For hosts that re-seed their RNG per decision. The server does: the strategy
-// LCG is seeded from state_fnv before every choose and the mid-game draw LCG
-// before every apply (wasm_api.c), so both streams are a pure function of the
-// secret deal seed and the public board — reproducible to the server, and
-// unpredictable to everyone else. A cycle drives several seats per call, so
+// LCG and the draw LCG (under its search salt) are seeded from state_fnv before
+// every choose, and the draw LCG again before every apply (table.c
+// table_drive_seed, game.h GAME_SEED_SALT_*), so every stream is a pure function
+// of the secret deal seed and the public board — reproducible to the server,
+// unpredictable to everyone else, and blind to what the module ran before (the
+// Monte-Carlo rollouts of robusta and firecracker draw from the draw stream, so
+// leaving it unseeded made a decision depend on the module's history). A cycle
+// drives several seats per call, so
 // without this the seeding would happen once per CYCLE instead of once per
 // DECISION, and bundling would silently change how bots play:
 //
@@ -134,16 +138,60 @@ uint32_t bot_drive_eligible_mask(const Game *g, uint32_t human_mask);
 //     stream (`random` and `handwritten_prod` call random_strategy_random; the
 //     Monte-Carlo bots only read the state via random_strategy_rng_get);
 //   * the two phases are SEPARATE because a strategy's search consumes the draw
-//     stream (its rollouts refill scratch games), so a host that re-seeds the
-//     draw LCG before the choose would both feed the search a value the
-//     single-move path never gave it and leave the real refill drawing from
-//     whatever the search consumed. Both were caught by
-//     e2e/bot_drive_parity.test.ts as a changed bot move.
+//     stream (its rollouts refill scratch games), so a host that seeded the draw
+//     LCG only before the choose would leave the real refill drawing from
+//     whatever the search consumed.
 //
 // It is a hook rather than a bot_drive() argument because the derivation is
 // host property: g_rng_base is a server-only secret the phone and the native
 // arena do not have. They install nothing and keep their own seeding, which is
 // why this must default to NULL. Same shape as engine_snap_hook (game.h).
 extern void (*bot_drive_pre_action_hook)(const Game *g, int seat, int phase);
+
+// The per-decision seeding every server host installs through that hook, so the
+// policy has one definition: at CHOOSE the strategy stream and the draw stream
+// (under its search salt), at APPLY the draw stream, each from game_state_seed of
+// the board in front of the decision, the host's secret `base` and the game's
+// PROGRESS. The Table (table.c), the native server (server/impls/native) and the
+// wasm bridge's resident drive all call it.
+//
+// PROGRESS is the length of the game's session log at the decision: the records
+// the board already holds (g->num_logs) plus `log_offset`, the records the row's
+// log holds BELOW g->logs[0] for a host that did not load them (the Table loads
+// them only for a brain that reads them). 0 when `g` holds the whole log.
+//
+// Why the board alone is not enough. Every other term of the seed is the public
+// board, so two decisions on the SAME board draw the same numbers — and a table
+// whose remaining players are all `random` bots can return to an exact earlier
+// board, which then repeats its move, and the board, forever. Measured over 40
+// seeds per seat count at 2 to 8 seats, one game each at 4, 5, 6 and 7 seats
+// looped that way (period 12 to 15 cycles, from cycle 105 to 156), about 1 game
+// in 40 at those seat counts; in production such a table holds `needs_bots`
+// forever. The session log only grows, so folding its length in makes a repeated
+// board draw a fresh number and the loop cannot close. It keeps the decision a
+// pure function of the STORED ROW — state, roster and log — so every instance
+// that loads that row still chooses the same move.
+void bot_drive_seed_decision(const Game *g, uint32_t base, uint32_t log_offset, int phase);
+
+// A host's secret base from its deal seed (FNV-1a over the bytes; the Table hashes
+// the seed's hex text, the native server its 32 raw bytes). 0 for no seed.
+uint32_t bot_drive_seed_base(const uint8_t *seed, int len);
+
+// ---------- belief probe (test observability) ------------------------------
+//
+// What a bot SEARCH saw of the session log, recorded by the wasm bridge as the
+// strategy was about to read it (c/wasm/wasm_bots_api.c). A host-side spy can
+// only prove the log's bytes were handed over, never that they were spliced into
+// the Game the strategy read - the gap the octogen-blind and cordite
+// stale-belief regressions lived in. The records cross as this struct, read
+// through the generated accessors (sdk/ts/gen/game_layout.<build>.ts), so no
+// harness restates their layout.
+#define BELIEF_PROBE_CAP 64
+
+typedef struct {
+    uint8_t  seat;
+    uint16_t n_logs;   // log records spliced into the Game at the decision
+    uint64_t cards;    // bit (suit*16 + value) per real card visible in that log
+} BeliefProbe;
 
 #endif

@@ -1,9 +1,8 @@
 /* One Mode A fleet member, in plain JS (scripts/oracle_bench.mts).
  * Replays exactly the per-batch wasm work src/oracle/oracleBridge.ts does -
  * import state, strategy keys, logs, seed, reset the dump, choose, then read and
- * JSON.parse the dump - against its own private oracle.wasm instance. The only
- * thing it skips is the JS marshal's arithmetic, replaced by a memcpy of the
- * bytes that marshal produced on the main thread. */
+ * JSON.parse the dump - against its own private oracle.wasm instance, from the
+ * job's kernel-written state and log bytes. */
 import { parentPort, workerData } from 'node:worker_threads';
 
 const { bytes, stateBytes, seat, numPlayers, logsWire, memoryOn, env, seconds, tid } = workerData;
@@ -29,7 +28,7 @@ const end = Date.now() + seconds * 1000;
 while (Date.now() < end) {
     for (let k = 0; k < 8; k++) {                     // batch the clock check
         seed = (seed * 1103515245 + 12345) >>> 0;
-        mem().set(stateBytes, ex.wasm_io_ptr()); ex.wasm_import_state();
+        mem().set(stateBytes, ex.wasm_io_ptr()); ex.wasm_import_state(1); // masked, as oracleBridge imports it
         { const buf = mem(); const q = ex.wasm_io_ptr(); for (let i = 0; i < numPlayers; i++) buf[q + i] = 0xff; ex.wasm_import_strategy_keys(); }
         if (memoryOn && logsWire.length > 2) { mem().set(logsWire, ex.wasm_io_ptr()); ex.wasm_import_logs(); }
         ex.wasm_set_strategy_seed(seed >>> 0);

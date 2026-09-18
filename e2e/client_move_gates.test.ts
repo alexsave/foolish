@@ -1,6 +1,6 @@
 // Client-side move gates (src/utils/gameValidation.ts). The rule gates now
-// delegate to the kernel (guards.wasm) — e2e/client_guards fuzzes them against
-// the authoritative server kernel across thousands of states. This file keeps
+// delegate to the kernel (the client slot's client_validate) - e2e/client_guards
+// fuzzes them against the authoritative server kernel across thousands of states. This file keeps
 // hand-picked concrete cases (readable regressions) plus the one piece that is
 // NOT a kernel rule: canCoverCards, the UI affordance that decides when to
 // OFFER a one-click cover (unambiguous target set).
@@ -17,36 +17,26 @@ import assert from 'node:assert/strict';
 import {
   canAttack, canCoverCards, canPickup, validateAttack, validatePass, validatePickup, validateCover,
 } from '../src/utils/gameValidation.ts';
-import {
-  PersonalGame, PublicPlayer, Card, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
-} from '../server/api/core/types.ts';
+import type { TableView, ViewCard as Card } from '../sdk/ts/table/client_table.ts';
+import * as L from '../sdk/ts/gen/game_layout.bots.ts';
+import { boardFixture, fixtureView, type BoardSpec } from './helpers/table_mem.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
 const C = (suit: number, value: number): Card => ({ suit, value });
-const P = (i: number, handLen: number): PublicPlayer => ({
-  name: `P${i}`, player_id: `p${i}`, status: PLAYER_STATUS.IN, hand_length: handLen, is_ai: false,
-});
 
 // Diamonds (3) trump; seat 0 attacks / seat 1 defends. `self` is the acting
-// seat with a real hand.
+// seat with a real hand; every other seat holds `handLens` cards nobody names
+// (the defender `defenderHand`). The board is sealed by the kernel and read
+// from the viewer's envelope, as the client reads it.
 const mkGame = (
   handLens: number[],
-  table: PersonalGame['table_battles'],
-  opts: { defenderHand?: number; selfSeat?: number; selfHand?: Card[] } = {},
-): PersonalGame => {
-  const { defenderHand = 6, selfSeat = 0, selfHand = [] } = opts;
-  const players = handLens.map((n, i) => P(i, i === 1 ? defenderHand : n));
-  const base = players[selfSeat];
-  return {
-    id: 'g', name: 'g', deck_length: 0, discard_pile_length: 0, flipped: null,
-    players, status: GAME_STATUS.PLAYING, power_suit: 3, first_attacker: 0, defender: 1,
-    table_battles: table, elimination_order: [], good_timestamp: null, good_players: [],
-    self: {
-      player_id: base.player_id, name: base.name, status: PLAYER_STATUS.IN, is_ai: false,
-      hand: selfHand, awaiting_attack: false, hand_length: selfHand.length, strategy_key: STRATEGY_KEY.HUMAN,
-    },
-  };
+  table: NonNullable<BoardSpec['table']>,
+  opts: { defenderHand?: number; selfSeat?: number; selfHand?: Card[]; status?: number } = {},
+): TableView => {
+  const { defenderHand = 6, selfSeat = 0, selfHand = [], status } = opts;
+  const hands = handLens.map((n, i) => (i === selfSeat ? selfHand : i === 1 ? defenderHand : n));
+  return fixtureView(boardFixture({ hands, table, powerSuit: 3, attacker: 0, defender: 1, status }), selfSeat);
 };
 
 // ---- canAttack --------------------------------------------------------------
@@ -131,8 +121,7 @@ test('canPickup is the defender, a non-empty table, and a game still playing', (
   assert.equal(canPickup(mkGame([6, 6], [], { selfSeat: 1 })), false, 'an empty table has nothing to take');
   assert.equal(canPickup(mkGame([6, 6], table, { selfSeat: 0 })), false, 'an attacker never takes');
 
-  const over = mkGame([6, 6], table, { selfSeat: 1 });
-  over.status = GAME_STATUS.GAME_OVER;
+  const over = mkGame([6, 6], table, { selfSeat: 1, status: L.GAME_STATUS_GAME_OVER });
   assert.equal(canPickup(over), false, 'a finished game offers nothing - the clause the hand-written gate lacked');
 });
 

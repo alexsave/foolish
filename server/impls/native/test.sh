@@ -21,9 +21,22 @@ curl -s -XPOST "$H/meta" -H "Authorization: Bearer $BT" -d "{\"type\":\"start\",
 # them with its own reader (Swift MaskedView), not curl. We just show the bytes
 # to prove they arrive masked per seat.
 echo "── seat 0 (alice) packed view (hex head):"
-curl -s "$H/state?game_id=$GID&seat=0" | od -A x -t x1z | head -3
+curl -s "$H/state?game_id=$GID&seat=0" -H "Authorization: Bearer $AT" | od -A x -t x1z | head -3
 echo "── seat 1 (bob) packed view (hex head):"
-curl -s "$H/state?game_id=$GID&seat=1" | od -A x -t x1z | head -3
+curl -s "$H/state?game_id=$GID&seat=1" -H "Authorization: Bearer $BT" | od -A x -t x1z | head -3
+
+# A seat's view holds that seat's hand: nobody else may read it.
+code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+NOAUTH=$(code "$H/state?game_id=$GID&seat=0")
+NOSEAT=$(code "$H/state?game_id=$GID")
+OTHER=$(code "$H/state?game_id=$GID&seat=0" -H "Authorization: Bearer $BT")
+SPECT=$(code "$H/state?game_id=$GID&seat=-1")
+if [ "$NOAUTH" = 401 ] && [ "$OTHER" = 403 ] && [ "$NOSEAT" = 200 ] && [ "$SPECT" = 200 ]; then
+    echo "── state privacy: PASS (no token 401, another seat 403, spectator view 200)"
+else
+    echo "── state privacy: FAIL (seat 0 without a token $NOAUTH, bob reading seat 0 $OTHER, no seat $NOSEAT, spectator $SPECT)"
+    exit 1
+fi
 echo "── status: $(curl -s "$H/status?game_id=$GID")   (0 waiting / 1 playing / 2 over)"
 
 # ── WebSocket smoke test ────────────────────────────────────────────────
@@ -34,6 +47,11 @@ echo "── status: $(curl -s "$H/status?game_id=$GID")   (0 waiting / 1 playin
 # server-side apply. See foolish_hammer.c's header comment for the protocol.
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOST="${H#*://}"; HOST="${HOST%%/*}"
+
+# ── Bot seeding: a bot's move is a function of its game, not of its thread ───
+echo "── bot seeding self-test"
+if [ ! -x "$DIR/foolish_server" ]; then (cd "$DIR" && make foolish_server >/dev/null); fi
+"$DIR/foolish_server" --self-test-bot-seeding
 WPORT="${HOST##*:}"
 echo "── ws smoke test (mode=ws, tiny scale, port $WPORT)"
 if [ ! -x "$DIR/foolish_hammer" ]; then (cd "$DIR" && make foolish_hammer >/dev/null); fi
@@ -61,9 +79,12 @@ S4_OUT=$("$DIR/foolish_hammer" --host=127.0.0.1 --port="$WPORT" --games=1 --seat
 echo "$S4_OUT" | tail -16
 OCT_DEC=$(echo "$S4_OUT" | grep 'octogen_decisions_summary:' | grep -o 'decisions=[0-9]*' | grep -o '[0-9]*$')
 SPEC_ACCEPT=$(echo "$S4_OUT" | grep 'spectator move probes sent:' | grep -o 'accepted(MUST be 0): [0-9]*' | grep -o '[0-9]*$')
-if [ -n "${OCT_DEC:-}" ] && [ "$OCT_DEC" -gt 0 ] && [ -n "${SPEC_ACCEPT:-}" ] && [ "$SPEC_ACCEPT" -eq 0 ]; then
-    echo "── stage4 smoke test: PASS (octogen decided server-side ${OCT_DEC} time(s); spectator move probes accepted=0)"
+# accepted=0 proves nothing unless probes were sent: require at least one.
+SPEC_SENT=$(echo "$S4_OUT" | grep 'spectator move probes sent:' | grep -o 'sent:[[:space:]]*[0-9]*' | grep -o '[0-9]*$')
+if [ -n "${OCT_DEC:-}" ] && [ "$OCT_DEC" -gt 0 ] && [ -n "${SPEC_SENT:-}" ] && [ "$SPEC_SENT" -gt 0 ] \
+   && [ -n "${SPEC_ACCEPT:-}" ] && [ "$SPEC_ACCEPT" -eq 0 ]; then
+    echo "── stage4 smoke test: PASS (octogen decided server-side ${OCT_DEC} time(s); ${SPEC_SENT} spectator move probes, accepted=0)"
 else
-    echo "── stage4 smoke test: FAIL (octogen_decisions=${OCT_DEC:-?} spectator_move_accepted=${SPEC_ACCEPT:-?})"
+    echo "── stage4 smoke test: FAIL (octogen_decisions=${OCT_DEC:-?} spectator_probes_sent=${SPEC_SENT:-?} spectator_move_accepted=${SPEC_ACCEPT:-?})"
     exit 1
 fi

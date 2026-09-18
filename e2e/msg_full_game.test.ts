@@ -38,17 +38,16 @@ const PRIORITY = ['cover', 'attack', 'good', 'pass', 'pickup'];
 const CAP = 3000;
 
 test('a full 2p game plays to a fool through the FMSG send/accept leg, and no public bubble ever leaks a hand', () => {
-    let bubble = hex(START_2P);
+    let bubble: Uint8Array = hex(START_2P);
     let steps = 0, sealBytesMax = 0, fool = -1;
 
     for (; steps < CAP; steps++) {
         const p = kernelMsgDecode(bubble);              // adopt the chain
 
         // The bubble IMAGE is the spectator snapshot: no seat's hand may appear.
-        for (const pl of kernelMsgPublicView().view.players) {
-            assert.equal(pl.hand, null, `step ${steps}: seat ${pl.seat} hand exposed in the public bubble`);
-        }
-        const over = kernelMsgPublicView().view.gameOver;
+        const pub = kernelMsgPublicView().view;
+        assert.ok(pub.mySeat === -1 && pub.myHand.length === 0, `step ${steps}: a hand exposed in the public bubble`);
+        const over = pub.fool;
         if (over >= 0) { fool = over; break; }
 
         // Whichever seat can act, by the closing priority above.
@@ -67,7 +66,7 @@ test('a full 2p game plays to a fool through the FMSG send/accept leg, and no pu
         // A finished chain seals as FINISHED (phase 3), carrying the replay
         // funnel; anything mid-game is LIVE (phase 2). Sealing a finished game as
         // LIVE is refused by the kernel — so this branch is load-bearing.
-        const finished = kernelMsgPublicView().view.gameOver >= 0;
+        const finished = kernelMsgPublicView().view.fool >= 0;
         bubble = kernelMsgSeal({
             flags: 0, phase: finished ? 3 : 2, n_players: p.n_players, variant: 0,
             last_actor_seat: chosen!.seat, game_id: p.game_id,
@@ -93,12 +92,12 @@ test('a full 2p game plays to a fool through the FMSG send/accept leg, and no pu
 // test that drives a real fixture to a fool and checks that a working replay code
 // comes out of the envelope's own decoded seed. Kept for that.
 test('a FINISHED envelope\'s own seed derives a real replay code — the /m/ page funnel (batch 6 item B)', () => {
-    let bubble = hex(START_2P);
+    let bubble: Uint8Array = hex(START_2P);
     let finishedEnv: ReturnType<typeof kernelMsgDecode> | null = null;
 
     for (let steps = 0; steps < CAP; steps++) {
         const p = kernelMsgDecode(bubble);
-        if (kernelMsgPublicView().view.gameOver >= 0) { finishedEnv = p; break; }
+        if (kernelMsgPublicView().view.fool >= 0) { finishedEnv = p; break; }
 
         let chosen: { seat: number; move: any } | null = null;
         scan: for (const type of PRIORITY) {
@@ -109,7 +108,7 @@ test('a FINISHED envelope\'s own seed derives a real replay code — the /m/ pag
         }
         if (!chosen) break;
         kernelMsgRebase(p.round, chosen.seat, toWire(chosen.move));
-        const finished = kernelMsgPublicView().view.gameOver >= 0;
+        const finished = kernelMsgPublicView().view.fool >= 0;
         bubble = kernelMsgSeal({
             flags: 0, phase: finished ? 3 : 2, n_players: p.n_players, variant: 0,
             last_actor_seat: chosen.seat, game_id: p.game_id,

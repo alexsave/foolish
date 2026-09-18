@@ -1,9 +1,9 @@
-import { PersonalGame } from "@api/core/types.ts";
 import { CardBack } from "./CardBack";
 import { useServer } from "../../contexts/ServerContext";
+import type { TableView } from "../../state/view";
 
 export const DiscardPile = () => {
-    const game: PersonalGame = useServer().game as PersonalGame;
+    const game = useServer().view as TableView;
     
     return (
         <div style={{ 
@@ -19,9 +19,9 @@ export const DiscardPile = () => {
         }}>
             <div style={{ position: 'relative' }} data-location="discard">
                 {/* Always render the discard pile area for animations, but only show cards if there are any */}
-                {game.discard_pile_length > 0 && (
+                {game.discardPileLength > 0 && (
                     <>
-                        <CardBack deckSize={game.discard_pile_length} enableRandomRotation />
+                        <CardBack deckSize={game.discardPileLength} enableRandomRotation />
                         <p style={{
                             position: 'absolute',
                             top: '50%',
@@ -35,7 +35,7 @@ export const DiscardPile = () => {
                             pointerEvents: 'none',
                             zIndex: 1003
                         }}>
-                            {game.discard_pile_length}
+                            {game.discardPileLength}
                         </p>
                     </>
                 )}

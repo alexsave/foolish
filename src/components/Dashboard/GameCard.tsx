@@ -1,33 +1,32 @@
 import { useRouter } from "next/navigation";
-import { useAuth } from "../../contexts/AuthContext";
 import { useTexture, getTextureStyle, seedFromString, flipFromString } from "../TexturedSurface";
 import { Text } from "../Text";
 import { SovietIcon, SuitIcon } from "../SovietIcon";
-import { PLAYER_STATUS, GAME_STATUS, PublicGame } from "@api/core/types.ts";
+import { botDisplayName } from "../../common/botName";
+import { PLAYER_STATUS, GAME_STATUS, type TableView } from "../../state/view";
 
 interface GameCardProps {
-    game: PublicGame;
+    game: TableView;
 }
 
 export const GameCard: React.FC<GameCardProps> = ({ game }) => {
     const router = useRouter();
-    const { username } = useAuth();
     const { woodUrl } = useTexture();
 
     const isGameOver = game.status === GAME_STATUS.GAME_OVER;
     const isWaiting = game.status === GAME_STATUS.WAITING;
     const isPlaying = game.status === GAME_STATUS.PLAYING;
 
-    const readyPlayers = game.players.filter(p => p.status === PLAYER_STATUS.READY).length;
-    const totalPlayers = game.players.length;
+    const readyPlayers = game.seats.filter(p => p.status === PLAYER_STATUS.READY).length;
+    const totalPlayers = game.seats.length;
 
-    const gameSeed = seedFromString(game.id);
-    const flip = flipFromString(game.id);
+    const gameSeed = seedFromString(game.gameId);
+    const flip = flipFromString(game.gameId);
 
     const statusClass = isWaiting ? 'badge--waiting' : isPlaying ? 'badge--playing' : 'badge--gameover';
 
     return (
-        <div className="game-card" onClick={() => router.push(`/${game.id}`)}>
+        <div className="game-card" onClick={() => router.push(`/${game.gameId}`)}>
             {/* CSS hides this in Soviet mode via [data-theme="soviet"] .bg-wood { display: none } */}
             <div 
                 className="bg-wood"
@@ -39,7 +38,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game }) => {
 
             <div className="game-card__header">
                 <div className="flex items-center gap-md flex-1">
-                    <h3 className="game-card__title">{game.name}</h3>
+                    <h3 className="game-card__title">{game.title}</h3>
 
                     {isWaiting && (
                         <span className="game-card__info">
@@ -49,7 +48,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game }) => {
 
                     {isPlaying && (
                         <span className="game-card__info flex items-center gap-xs">
-                            <Text id="deck_cards" />: {game.deck_length + (game.flipped ? 1 : 0)} <SuitIcon suit={game.power_suit} size={16} />
+                            <Text id="deck_cards" />: {game.deckCount + (game.hasFlipped ? 1 : 0)} <SuitIcon suit={game.powerSuit} size={16} />
                         </span>
                     )}
                 </div>
@@ -63,16 +62,16 @@ export const GameCard: React.FC<GameCardProps> = ({ game }) => {
 
             <div className="game-card__players">
                 <div className="flex flex-wrap items-center gap-sm">
-                    {game.players.map((player, idx) => {
+                    {game.seats.map((player, idx) => {
                         const isDefender = isPlaying && game.defender === idx;
-                        const isFirstAttacker = isPlaying && game.first_attacker === idx;
-                        const isCurrentUser = player.name === username;
+                        const isFirstAttacker = isPlaying && game.firstAttacker === idx;
+                        const isCurrentUser = idx === game.mySeat;
 
                         return (
                             <span key={idx} className="game-card__player">
-                                <SovietIcon name={player.is_ai ? 'bot' : 'person'} size={14} />
+                                <SovietIcon name={player.isAi ? 'bot' : 'person'} size={14} />
                                 <span className={`game-card__player-name ${isCurrentUser ? 'game-card__player-name--current' : ''}`}>
-                                    {player.name}
+                                    {botDisplayName(player.name)}
                                 </span>
 
                                 {isWaiting && (
@@ -83,11 +82,11 @@ export const GameCard: React.FC<GameCardProps> = ({ game }) => {
                                     <span className="game-card__player-status">
                                         {isDefender && <SovietIcon name="shield" size={14} />}
                                         {isFirstAttacker && <SovietIcon name="sword" size={14} />}
-                                        {player.hand_length > 0 && <span className="game-card__hand-count">({player.hand_length})</span>}
+                                        {player.handCount > 0 && <span className="game-card__hand-count">({player.handCount})</span>}
                                     </span>
                                 )}
 
-                                {isGameOver && player.hand_length === 0 && (
+                                {isGameOver && player.handCount === 0 && (
                                     <SovietIcon name="crown" size={14} />
                                 )}
                             </span>

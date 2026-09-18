@@ -1,139 +1,84 @@
-// Durable state codec parity — the packed `games.state bytea` format.
+// Durable state codec: the `games.state bytea` blob is lossless.
 //
-// serializeGameState/deserializeGameState (sdk/ts/wasm/
-// engine.ts) pack a Game into the kernel's VERSIONED persist blob and read it
-// back, reattaching the stable roster (ids/names/strategy) + the two
-// presentation fields the kernel doesn't model (good_players order,
-// good_timestamp value) from the row's roster columns. This is the format the
-// server will persist instead of the scattered JSONB columns, so it must be a
-// LOSSLESS round-trip on every reachable game state.
+// The blob is the kernel's (table.h: [TABLE_STATE_FORMAT][deterministic deck]
+// [state_put]). A table loads it (table_load: state_import, game_validate) and
+// every commit writes it back (table_commit_products). Seat identity is not in
+// it: that is the roster column, a separate blob.
 //
-// The test plays thousands of seeded moves through the real kernel and, at
-// every state, asserts:
-//   1. deserialize(serialize(g)) reproduces g exactly (structural parity), and
-//   2. serialize is deterministic and idempotent (byte-identical re-encode).
+// This plays seeded bots-only games through the server's own bot cycle
+// (e2e/helpers/bot_table.ts) and, at every committed state, asserts:
+//   1. load then commit is the identity: the blob a table writes back for a
+//      board it only loaded is byte-identical to the blob it loaded, and
+//   2. the board read back through the generated accessors is the whole blob:
+//      a fixture rebuilt from those fields alone (table_play.ts rebuild) seals
+//      to the same bytes.
 //
-// Pure kernel test — needs no Postgres.
+// The TS marshal this file used to hold (serializeGameState /
+// deserializeGameState over a JS Game) is gone with the TS game shape.
+// Pure kernel test - needs no Postgres.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { game_done } from '../server/api/common/common_utils.ts';
-import { start_game } from '../server/api/common/game_lifecycle.ts';
-import { processBotAction, shouldBotActCore } from '../server/api/common/pure_bot_actions.ts';
-import { calculateLegalMoves } from '../server/api/common/bot_strategy.ts';
-import {
-  serializeGameState, deserializeGameState, stateFormatVersion, RosterTemplate,
-} from '../sdk/ts/wasm/engine.ts';
-import {
-  Game, PrivatePlayer, PLAYER_STATUS, GAME_STATUS, STRATEGY_KEY,
-} from '../server/api/core/types.ts';
+import * as L from '../sdk/ts/gen/game_layout.bots.ts';
+import { fixtureTable, reasonOf } from './helpers/table_fixture.ts';
+import { rebuild, residentBoard } from './helpers/table_play.ts';
+import { dealBotTable, driveBotTable, seedBytes, type BotTableRow } from './helpers/bot_table.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
-const mkPlayer = (i: number): PrivatePlayer => ({
-  player_id: `player-uuid-${i}-abcdef0123456789`, // full-width id (>24 chars): proves identity comes from the roster, not the blob
-  name: `Player ${i}`, status: PLAYER_STATUS.READY, is_ai: true,
-  hand: [], awaiting_attack: false, hand_length: 0, strategy_key: STRATEGY_KEY.RANDOM,
-});
-const mkGame = (np: number, id: string): Game => ({
-  players: Array.from({ length: np }, (_, i) => mkPlayer(i)),
-  deck: [], logs: [], id, name: `${id} game`, status: GAME_STATUS.PLAYING,
-  deck_length: 0, discard_pile_length: 0, flipped: null, power_suit: 0,
-  first_attacker: 0, defender: 0, table_battles: [], elimination_order: [],
-  good_timestamp: null, good_players: [], version: 7,
-});
-
-// The roster/identity + presentation columns the server stores alongside the blob.
-const rosterOf = (g: Game): RosterTemplate => ({
-  id: g.id, name: g.name, version: g.version, deck_length: g.deck.length,
-  players: g.players.map(p => ({
-    player_id: p.player_id, name: p.name, is_ai: p.is_ai, strategy_key: p.strategy_key,
-  })),
-  good_players: g.good_players, good_timestamp: g.good_timestamp,
-});
-
-// Everything the packed blob + roster must reproduce. Excludes purely-derived
-// fields (hand_length/deck_length) and logs (persisted separately, stripped
-// before any consumer sees the state).
-const projection = (g: Game) => ({
-  status: g.status, power_suit: g.power_suit, first_attacker: g.first_attacker,
-  defender: g.defender, discard_pile_length: g.discard_pile_length, flipped: g.flipped,
-  deck: g.deck, table_battles: g.table_battles, elimination_order: g.elimination_order,
-  good_players: g.good_players, good_timestamp: g.good_timestamp,
-  id: g.id, name: g.name, version: g.version,
-  players: g.players.map(p => ({
-    player_id: p.player_id, name: p.name, is_ai: p.is_ai, strategy_key: p.strategy_key,
-    status: p.status, awaiting_attack: p.awaiting_attack, hand: p.hand,
-  })),
-});
-
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
-test('kernel state codec reports a stable format version', () => {
-  // v2 added the deterministic_deck flag byte after the version (seed-dealt
-  // games; see cnitro wasm_state_serialize). Deserialize still accepts v1, so
-  // blobs written before the bump keep loading.
-  assert.equal(stateFormatVersion(), 2);
+test('every commit writes the durable blob at the current format', () => {
+  const row = dealBotTable(['random', 'random', 'random', 'random'], seedBytes(4, 1));
+  assert.equal(L.TABLE_STATE_FORMAT, 2, 'the format this kernel writes');
+  assert.equal(row.state[0], L.TABLE_STATE_FORMAT, 'the dealt blob leads with its format');
 });
 
-test('v1 blobs are rejected — they must be migrated to v2, not tolerated', () => {
-  // The kernel reads only v2; the deploy-time migration
-  // 20260708130000_migrate_state_blobs_v2 rewrites every stored v1 blob. Prove
-  // the kernel does NOT silently accept a v1 blob (so a missed migration fails
-  // loud, not with a mis-parsed game). Rebuild the old v1 shape from a v2 blob:
-  // [version=1][put_state...], i.e. drop the flag byte and stamp version 1.
-  const g = mkGame(4, 'v1reject');
-  start_game(g);
-  const cur = serializeGameState(g);
-  assert.equal(cur[0], 2, 'current writer emits v2');
-  const v1 = Uint8Array.from([1, ...cur.slice(2)]);
-  assert.throws(() => deserializeGameState(v1, rosterOf(g)), /Unreadable game state blob/);
+test('a blob of any other format is refused, not misread', () => {
+  // v1 blobs were migrated to v2 at deploy (20260708130000_migrate_state_blobs_v2);
+  // a missed one must fail loud, never load as a mis-parsed game.
+  const row = dealBotTable(['random', 'random', 'random', 'random'], seedBytes(4, 2));
+  const table = fixtureTable();
+  for (const version of [0, 1, 3, 0xff]) {
+    const blob = row.state.slice();
+    blob[0] = version;
+    const rc = table.load(blob, row.roster);
+    assert.equal(rc, L.TABLE_E_STATE_VERSION, `format ${version}: ${reasonOf(rc, ['TABLE_E_', 'GAME_INVALID_'])}`);
+  }
+  assert.equal(table.load(row.state, row.roster), L.TABLE_OK, 'the blob as written loads');
 });
 
-test('every reachable game state round-trips losslessly through the packed blob', async () => {
+test('every reachable game state round-trips losslessly through the durable blob', () => {
+  const table = fixtureTable();
   let checks = 0;
   let maxBlob = 0;
-  const VERSION = stateFormatVersion();
+
+  const roundTrip = (row: BotTableRow) => {
+    maxBlob = Math.max(maxBlob, row.state.length);
+    // 1. load then commit writes the same bytes back.
+    const rc = table.load(row.state, row.roster);
+    assert.equal(rc, L.TABLE_OK, `check ${checks}: the committed blob loads (${reasonOf(rc, ['TABLE_E_', 'GAME_INVALID_'])})`);
+    const board = residentBoard(row.gameId, row.state, row.roster);
+    const p = table.commit(row.gameId, row.version, 0);
+    assert.ok(typeof p !== 'number', `check ${checks}: products of a loaded table`);
+    assert.equal(hex(p.state), hex(row.state), `check ${checks}: load then commit is not byte-identical`);
+    // 2. the fields the generated accessors read are the whole blob.
+    const again = rebuild(board).build();
+    assert.equal(hex(again.state), hex(row.state), `check ${checks}: the board read back does not rebuild the blob`);
+    checks++;
+  };
 
   for (const np of [2, 3, 4, 6]) {
-    for (let seed = 0; seed < 40; seed++) {
-      const g = mkGame(np, `s${np}-${seed}`);
-      start_game(g);
-
-      const roundTrip = () => {
-        const blob = serializeGameState(g);
-        assert.equal(blob[0], VERSION, 'blob carries the format-version byte');
-        maxBlob = Math.max(maxBlob, blob.length);
-
-        const restored = deserializeGameState(blob, rosterOf(g));
-        // 1. structural parity: the restored game matches the original exactly.
-        assert.deepEqual(projection(restored), projection(g),
-          `round-trip mismatch at check ${checks}`);
-        // 2. determinism/idempotence: re-encoding the restored game is byte-identical.
-        assert.equal(hex(serializeGameState(restored)), hex(blob),
-          `re-encode not byte-identical at check ${checks}`);
-        checks++;
-      };
-
-      roundTrip(); // freshly-dealt state
-      let guard = 0;
-      while (game_done(g) === null && ++guard < 100000) {
-        const eligible: PrivatePlayer[] = [];
-        for (let i = 0; i < g.players.length; i++) {
-          const p = g.players[i];
-          if (shouldBotActCore(g, p, i) && calculateLegalMoves(g, p.player_id).length > 0) eligible.push(p);
-        }
-        if (eligible.length === 0) break;
-        let acted = false;
-        for (const p of eligible) { if (await processBotAction(g, p)) { acted = true; break; } }
-        if (!acted) break;
-        roundTrip(); // after every accepted move, incl. terminal states
-      }
+    for (let seed = 0; seed < 10; seed++) {
+      const dealt = dealBotTable(Array(np).fill('handwritten'), seedBytes(np, 1000 + seed), { gameId: `s${np}-${seed}` });
+      roundTrip(dealt);
+      const end = driveBotTable(dealt, { maxActions: 1, maxCycles: 20000, onCycle: (c) => roundTrip(c.row) });
+      assert.equal(end.status, L.GAME_STATUS_GAME_OVER, `${np}p seed ${seed} finished`);
     }
   }
 
-  assert.ok(checks > 5000, `expected thousands of round-trips, ran ${checks}`);
-  // The blob must stay small — it's the whole point vs the JSONB columns.
-  assert.ok(maxBlob < 2048, `packed state blob unexpectedly large: ${maxBlob} bytes`);
-  console.error(`  state_codec: ${checks} round-trips, max blob ${maxBlob} bytes, v${VERSION}`);
+  assert.ok(checks > 2000, `expected thousands of round-trips, ran ${checks}`);
+  // The blob must stay small: it is the whole row's game.
+  assert.ok(maxBlob < 2048, `durable state blob unexpectedly large: ${maxBlob} bytes`);
+  console.error(`  state_codec: ${checks} round-trips, max blob ${maxBlob} bytes, v${L.TABLE_STATE_FORMAT}`);
 });

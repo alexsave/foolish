@@ -1,7 +1,7 @@
 /* =============================================================================
  * Infinite Oracle — Worker entry: protocol + batch loop (§8.5, §8.6)
  * One oracle.wasm instance per worker (Mode A: instance fleet). Loops
- * marshal -> seed -> choose -> read dump, posts each batch to the controller,
+ * import -> seed -> choose -> read dump, posts each batch to the controller,
  * adapts OG_W1 to device speed, and honours the exact/forced/defuse stop rules.
  * Cancellation-safe: a new 'analyze' (or 'stop') bumps the generation and the
  * running loop exits at its next checkpoint.
@@ -70,7 +70,7 @@ async function runLoop(job: OracleJob, seedSalt: number, gen: number): Promise<v
 
         const seed = nextSeed();
         const t0 = performance.now();
-        const res = inst.analyzeOnce(job.gameBlob, job.seat, job.logsWire, job.memoryOn, seed);
+        const res = inst.analyzeOnce(job, seed);
         const batchMs = performance.now() - t0;
 
         if ('error' in res) {

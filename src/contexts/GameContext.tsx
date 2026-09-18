@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState } from 'react';
-import { Card, PersonalGame } from '@api/core/types.ts';
+import type { ViewCard as Card } from '../state/view';
 import { useServer } from './ServerContext';
 
 const GameContext = createContext<GameContextType | null>(null);
@@ -7,8 +7,9 @@ const GameContext = createContext<GameContextType | null>(null);
 // Things related to game state, mostly taken from GameDisplay.
 // Sometimes the game will directly use ServerContext though
 export const GameProvider = ({ children }: { children: React.ReactNode }) => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { game } = useServer() as { game: PersonalGame, rearrangeHand: (game_id: string, indices: number[]) => Promise<{ game_id: string }> };
+    // Subscribed to the server state so this provider's value is renewed with
+    // every board, as its consumers have always been rendered.
+    useServer();
 
     const [coverMap, setCoverMap] = useState<Map<Card, Card>>(new Map());
 

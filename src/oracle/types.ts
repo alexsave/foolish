@@ -4,45 +4,22 @@
  * the overlay, and the headless test — one source of truth for every shape.
  * ========================================================================== */
 
-import { Card } from '@api/core/types.ts';
-
 /* --------------------------- the analysis job ---------------------------- */
 
-/** A Game-shaped object __marshalGame (engine.ts) accepts. Only the fields
- *  marshalGame reads are present; good/elimination are player_id STRINGS
- *  ('seat-N') — numeric seats fail silently in __marshalGame (§8.4). */
-export interface OracleGameState {
-    id: string;
-    status: string;                 // GAME_STATUS.PLAYING
-    power_suit: number;
-    first_attacker: number;
-    defender: number;
-    discard_pile_length: number;
-    flipped: Card | null;
-    good_players: string[];         // 'seat-N'[]
-    good_timestamp: number | null;
-    deck: Card[];                   // deckCount placeholders (COUNT is meaningful)
-    table_battles: { attack: Card; defense: Card | null }[];
-    elimination_order: string[];    // 'seat-N'[], ordered
-    deterministic_deck: boolean;    // always false — replay has no deal seed
-    players: {
-        player_id: string;          // 'seat-N'
-        status: string;             // PLAYER_STATUS.IN / .OUT
-        name: string;
-        is_ai: boolean;
-        hand_length: number;
-        hand: Card[];               // acting seat: real; others: placeholders
-        awaiting_attack: boolean;   // inert — always false (§8.4)
-    }[];
-}
-
-/** Structured-clone-safe job shipped to every worker (§8.2). */
+/** Structure-clone-safe job shipped to every worker (§8.2). The position is the
+ *  kernel's bytes, imported by oracle.wasm unchanged: no field of the board is
+ *  read or laid out here. */
 export interface OracleJob {
     decisionId: string;             // `${code}:${j}:${memoryOn?1:0}`
     seat: number;                   // acting seat
     memoryOn: boolean;
-    gameBlob: OracleGameState;
-    logsWire: Uint8Array;           // pre-encoded kernel log wire (empty if memory off)
+    /** The board the seat decided on, as it saw it: what a masked
+     *  wasm_import_state reads (c/src/replay_steps.h replay_steps_board_v6). */
+    state: Uint8Array;
+    /** The public log before the move, what wasm_import_logs reads
+     *  (replay_steps_memory_v6); empty when memory is off. */
+    logsWire: Uint8Array;
+    powerSuit: number;              // the trump suit, for the dump's card tokens
     recordedKey: string;            // canonical key of the recorded move (§9.4)
     recordedLabel: string;          // human label of the recorded move
     numPlayers: number;
@@ -147,7 +124,7 @@ export interface OracleSnapshot {
 // OG_EX_VAL, suit via "SHCD", trump-starred. Recorded-move tokens must match so
 // the recorded move keys to its candidate row.
 const OG_EX_VAL = ['?', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
-export function oracleCardToken(c: Card, trump: number): string {
+export function oracleCardToken(c: { suit: number; value: number }, trump: number): string {
     const v = c.value >= 1 && c.value <= 13 ? OG_EX_VAL[c.value] : '?';
     const s = c.suit >= 0 && c.suit < 4 ? 'SHCD'[c.suit] : '?';
     return `${v}${s}${c.suit === trump ? '*' : ''}`;

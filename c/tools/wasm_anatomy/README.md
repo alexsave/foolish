@@ -1,13 +1,13 @@
 # WASM Anatomy
 
-An interactive, single-file HTML dissection of the three WebAssembly modules the
-cnitro rules kernel ships:
+An interactive, single-file HTML dissection of the WebAssembly module the kernel
+ships to every host:
 
 | module        | ships as                          | contents |
 | ------------- | --------------------------------- | -------- |
-| `rules.wasm`  | base64 in `rules_wasm.ts`         | engine + legal-move generator + replay codec |
-| `guards.wasm` | base64 in `guards_wasm.ts`        | `game.c` only — browser UI move-gates |
-| `bots.wasm`   | gzip static asset `bots.wasm.gz`  | rules **+** every algorithmic bot strategy |
+| `bots.wasm`   | gzip static asset `bots.wasm.gz`  | the rules, the C Table, the web client slot, the codecs, every algorithmic bot strategy |
+
+`rules.wasm` and `guards.wasm` were retired with the TS game shape (docs/C_GAME_SHAPE_MIGRATION.md Phase 8); a page rendered before that still shows them.
 
 The rendered page lives at [`docs/wasm-anatomy.html`](../../../docs/wasm-anatomy.html) —
 open it in any current browser (self-contained, ~0.9 MB, no network).
@@ -37,8 +37,7 @@ Per module, seven views:
 ## Accuracy
 
 The bytes analyzed are **byte-identical to the shipped artifacts** — the build
-verifies `build/rules.wasm` and `build/bots.wasm` reproduce the committed
-`rules_wasm.ts` / `bots.wasm.gz` exactly. Function *names* are recovered from a
+verifies `build/bots.wasm` reproduces the committed `bots.wasm.gz` exactly. Function *names* are recovered from a
 name-preserving companion build (the same link, minus `-Wl,--strip-all`), whose
 CODE section is identical, so names map 1:1 onto the shipped bytes. The
 disassembler is self-contained (MVP + sign-extension + bulk-memory; the modules
