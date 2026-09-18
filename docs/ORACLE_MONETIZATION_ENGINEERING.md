@@ -1,5 +1,14 @@
 # Selling the Infinite Oracle — Engineering & Business Doc
 
+> **Nothing here is built.** There is no Stripe, no entitlements table and no
+> analytics in the tree - this is the surviving decision record for a direction
+> nobody has started, and it is the better copy of every number it shares with
+> `docs/MONETIZATION_ROADMAP.md`.
+> **All external facts were verified July 13, 2026**: re-check §8/§8b fees and
+> §16's legal watchlist before spending against any of them.
+> §15's ordering is also overtaken - the iOS app and the iMessage extension both
+> shipped without any of this stack.
+
 *How to take the shipped, client-side Infinite Oracle (`docs/INFINITE_ORACLE_DESIGN.md`)
 to paid, across Web/Stripe, iOS, Google Play, and Telegram — with auth, entitlements,
 metering, threading, pricing, fees, and tax. All external facts verified July 13, 2026;

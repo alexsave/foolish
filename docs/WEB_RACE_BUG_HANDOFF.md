@@ -1,5 +1,14 @@
 # Handoff: stale-intent actions across round boundaries (web) + race regression suite
 
+> **SHIPPED.** The guard exists as `intent_version` (u32) + `games.round_epoch`
+> + `TABLE_STALE_ROUND` - see
+> `server/impls/supabase/migrations/20260713120000_round_epoch_stale_guard.sql`
+> and `e2e/race_conditions.test.ts`.
+> Note the design below differs from what was built: it proposes `intent_round`
+> (a u8/u16 counting round closures) and the name `REJECT_STALE_ROUND`.
+> Read §2 (the mechanism), §3 (the two negative results) and §6 (the seven-race
+> table); §4, §5 and §7 are a spent plan.
+
 *Investigation handoff for a suspected live bug on foolish.cards, plus the spec
 for a permanent concurrency regression suite. Self-contained: assumes no prior
 context beyond this repo. Verified anchors as of 2026-07-13 (branch

@@ -1,5 +1,13 @@
 # bots.wasm total-memory shrink — execution handoff
 
+> **Historical. The net-page result below is superseded**: `bots.wasm` is pinned
+> at 37 pages today (`e2e/mem/wasm_memory.test.ts`), not 14, and M9's `g_io`
+> overlay was later reversed (`WASM_IO_CAP` is 400 KiB). M3's "keep 512" was
+> also inverted - `MAX_LOGS` is 1024.
+> §1-5 is a spent plan. §6-8 is the payload: the M-candidate ledger with its
+> negative results, the W1-W7 interface constraints, and the per-decision
+> latencies. Other docs cite this file by line range, so it is not reflowed.
+
 **Mission.** Shrink `bots.wasm`'s TOTAL linear memory. The transposition table is
 done (1 MiB → 32 KiB, see `SOLVER_TT_WORKING_SET_PLAN.md`); it is no longer a
 dominant block. The remaining giants are the **shadow stack (256 KiB)**, the

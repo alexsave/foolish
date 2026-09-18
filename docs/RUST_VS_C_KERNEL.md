@@ -14,6 +14,17 @@ Rust and measured against the shipped C.
 > server and a live replay format outweighs it, and the measured performance
 > case is a wash either way. `rust/README.md` records what was decided and why.
 > Nothing in `rust/` is a started migration; it is the frozen evidence.
+>
+> **Measured against the tree of ~July 2026.** Two things in the argument have
+> since changed under it: `rules.wasm` and `guards.wasm` were deleted in C game
+> shape Phase 8, so §4.1's size-discipline argument and §7.4's "treat
+> `guards.wasm` (6.5 KB) as the acceptance test" have no subject; and §3.0's
+> main-versus-branch split is inverted, because everything it says is only on
+> the branch (`ws.c`, `conn.c`, `quic_wt.c`, `persist.c`, the `_Thread_local`
+> pass) is on main now.
+> **Still live and unfixed:** §3.2 #2, `state_get` taking no input length
+> (`c/src/view.h`), which the doc itself calls the highest-priority item here
+> and a five-line change that does not wait on any rewrite.
 
 **TL;DR — recommendation in one paragraph.** Performance is close to a wash
 and should not drive the decision: POC ports of four real hot paths — now

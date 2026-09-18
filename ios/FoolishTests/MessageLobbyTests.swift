@@ -1,4 +1,4 @@
-// The lobby (design §5.2, rewritten for lobby v2 — docs/IMESSAGE_LOBBY_V2.md,
+// The lobby (design §5.2, rewritten for lobby v2 — docs/IMESSAGE_LOBBY_V3.md,
 // notes 19/20/25), end to end through the kernel — the send path a creator and
 // each joiner take, with no Messages harness. Proves that a phase-0 bubble
 // seals and decodes (seed + joins, zero actions), that a joiner appends the
@@ -22,7 +22,7 @@ final class MessageLobbyTests: XCTestCase {
     /// at the wire's MAX capacity (8) — not a chosen count, because lobby v2
     /// asks for none up front — and the sealed bubble is WAITING, carrying only
     /// the creator's own join. n_players==8 here is the open-lobby convention
-    /// (see docs/IMESSAGE_LOBBY_V2.md), never a real 8-player game.
+    /// (see docs/IMESSAGE_LOBBY_V3.md), never a real 8-player game.
     func testCreatorSealsAnOpenWaitingBubble() async throws {
         let k = MessageKernel.shared
         try await k.newGame(seed: freshSeed(3), players: 8)   // fixes seed + open capacity

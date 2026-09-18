@@ -1,5 +1,13 @@
 # The Infinite Oracle — replay move-strength analysis, designed
 
+> **Built.** Mode A and Mode B both shipped, and the why-panel landed
+> flag-gated (§9.7 below).
+> Two pointers will not resolve any more: §8b is superseded by
+> `docs/INFINITE_ORACLE_MODE_B.md`, which has the measurements; and the
+> `c/tools/og_explain/` precedents cited in §4.1, §9.2 and §9.4 were retired
+> on 2026-09-18, so §9.2's bar-width formula now exists only here.
+> §13's build order and §12.3's browser-acceptance script are spent.
+
 **Addendum, §9.7 (the "why" panel): LANDED, FLAG-GATED, OFF.**
 The overlay carries a click-to-open detail per candidate: octogen's belief block rendered visually (pins, voids, floors, unseen pool) and a chess.com-style TEMPLATE proof of why the expected finish is what it is, with no AI calls anywhere near it.
 The proof names the most likely concrete reply, folds the dominant playout storylines into a probability tree, writes prose chains from measured MC probabilities, and closes with a counterfactual against the best candidate.

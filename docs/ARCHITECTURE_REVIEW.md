@@ -1,5 +1,12 @@
 # Architecture review — July 2026
 
+> **Historical, July 2026.** The fixes in Part 1 shipped, and the two ranked
+> "not yet done" lists are largely spent - most entries were either fixed on the
+> branch (the status table says which) or deleted outright by the C game shape
+> migration. Code pointers predate that migration, so file paths have moved.
+> The payload is Part 1's four root causes and the three items left open on
+> purpose, each with its reason.
+
 A full pass over the project: the e2e harness was run against the real server
 code + real Postgres to surface glitches, and the server architecture flow and
 client data flow were audited end to end. This document records what was found,

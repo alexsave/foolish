@@ -743,7 +743,7 @@ export function kernelMsgSeal(
 // adopted — the TS-side twin of MessageKernel.residentReplayCode()
 // (sdk/swift/MessageEnvelope.swift), reached off the same resident g_game
 // instead of Swift's fio_replay_share_code_b32. Used by the /m/ page's
-// FINISHED-bubble funnel (docs/IMESSAGE_LOBBY_V2.md, batch 6 item B): once a
+// FINISHED-bubble funnel (docs/IMESSAGE_LOBBY_V3.md, batch 6 item B): once a
 // payload decodes, msg_replay has already run the whole chain through the
 // ORDINARY kernel handlers (handle_attack etc.), which log exactly like any
 // other play — so the resident game already carries the full session log a

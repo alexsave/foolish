@@ -67,5 +67,6 @@ Torpex stays registered (`torpex`/`tx`, C-only, research) with the full
 pipeline, so a future GPU-scale attempt starts from working
 data-generation, training, and inference plumbing rather than from
 scratch. No weights are shipped; without them torpex plays exactly like
-semtex. The strongest deployable bot remains **semtex** (SEMTEX.md);
-the strongest research bot is **octogen** (OCTOGEN.md).
+semtex. The strongest deployed bot is **octogen** (OCTOGEN.md), which took the
+top roster tier after this was written; **semtex** (SEMTEX.md) is the research
+predecessor torpex is measured against.

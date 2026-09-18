@@ -1,5 +1,13 @@
 # Blackpowder — belief-constrained determinized Monte Carlo
 
+> **Superseded as the apex** by cordite, then semtex, then octogen - the
+> "strongest non-cheating bot in the pool" line below was true when written.
+> Kept because the gunpowder and robusta baseline matrices are recorded nowhere
+> else, along with the belief-machinery derivation every later bot inherits.
+> Its "raise the world count if CPU allows" advice is bounded by
+> `CORDITE_RESEARCH.md` finding 2 (~2x, then variance starvation), and the
+> "server-side notes" describe a TS port that was built and later deleted.
+
 The strongest non-cheating bot in the pool. No LLM, no neural net, no
 reading of hidden state: it sees exactly what a human player sees (own
 hand, table, hand counts, deck count, the public move history) and runs

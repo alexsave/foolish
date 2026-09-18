@@ -16,9 +16,10 @@ taking and proven-loss avoidance in a region where semtex still samples.
 Measured on the clean harness: **never worse in any cell**; strictly
 better in ~0.25-0.5% of deals — @ cordite tables pc2 1/0/399, pc3 2/0/398;
 @ semtex tables pc2 0/0/200. Cost: ~1.8x pc2 decision wall-clock, which is
-why octogen stays **C-only** — on Supabase that CPU price for that
-frequency fails the compute bar, so production keeps `semtex` (base cost)
-and `semtex_max` (full measured world budgets). Since octogen is
+why octogen was expected to stay **C-only** - on Supabase that CPU price for
+that frequency looked like it would fail the compute bar. (That prediction did
+not hold: **octogen is the shipped top tier today**, `c/src/bot_roster.c`, and
+semtex is not seeded at all.) Since octogen is
 decision-identical to semtex outside the window, semtex's entire validated
 dominance matrix (SEMTEX.md) transfers verbatim, plus the strict extra wins.
 
