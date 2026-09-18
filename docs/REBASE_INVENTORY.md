@@ -99,4 +99,75 @@ Replayed with `git rebase --onto`, one phase at a time, HEAD detached, `rerere.e
 
 ## 4. The log
 
-Appended per batch below: what conflicted, how it was resolved, and every incoming change deliberately dropped with its reason.
+### The one invariant the replay was checked against
+
+After every batch, `git diff --stat <the batch's original end commit> HEAD` was compared with main's own diffstat.
+It came out `41 files changed, 3143 insertions(+), 135 deletions(-)` after all fourteen, which is main's diff exactly.
+That is the mechanical statement that the replay added main and lost nothing of either side: if any of our 187 commits had been dropped, or any of main's 27 hunks swallowed, the numbers would move.
+
+### What conflicted
+
+Forty conflicts, every one of them `sdk/ts/wasm/WASM_STAMP`, and no other file conflicted in the whole replay.
+That is the shape the inventory predicted: main changed no TypeScript, and its C is appended at the end of sections our phases did not touch.
+
+The stamp was never resolved by taking a side.
+It is a pure function of the wasm source set (`scripts/wasm_stamp.sh --hash`), so each conflict was resolved by REGENERATING it against the tree at that commit - which is a tree that now includes main's `anim_plan.c`.
+Forty regenerations produced forty distinct values, so no `rerere` resolution was replayed onto a commit it did not belong to.
+
+| Batch | Commits | Conflicts | Resolution |
+| --- | --- | --- | --- |
+| 1 Phase 0.x | 15 | 2 stamp | regenerated |
+| 2 Phase 2, 3b | 15 | 5 stamp | regenerated |
+| 3 Phase 4b | 17 | 9 stamp | regenerated |
+| 4 Phase 5a, 4c | 6 | none | - |
+| 5 Phase 5b | 11 | none | - |
+| 6 Phase 6a, 6b | 9 | 4 stamp | regenerated |
+| 7 Phase 7 | 14 | 3 stamp | regenerated |
+| 8 Phase 8 part 1 | 13 | none | - |
+| 9 Phase 8 part 2 | 24 | 5 stamp | regenerated |
+| 10 Phase 8 final | 17 | 3 stamp | regenerated |
+| 11 Phase 8 final, rest | 12 | 2 stamp | regenerated |
+| 12 Phase 9 | 16 | 5 stamp | regenerated |
+| 13 Phase 10, cleanup | 15 | 2 stamp | regenerated |
+| 14 Phase 11 | 5 | none | - |
+
+Batch 10 also hit a transient `index.lock` from another process in this repository; the rebase rescheduled its last pick and it went through on the next `--continue`.
+
+### The gates, per batch
+
+C suite (`make -C c tests`), `tools/structgen/gen.sh --check` and both `tsc` projects ran after every batch and were green each time.
+The C suite grew as the phases landed - 4,953 after batch 1 to 5,730 at the tip - and 0 failed at every stop.
+`gen.sh --check` reported `gen: fresh` at every batch, including `diff -r sdk/swift/gen`, so Phase 10's generated Swift is consistent with a header that now carries main's two new `fio_` declarations.
+Beyond that: `test:swift-parity` after batches 2, 13 and at the tip; `test:validate` after batch 3 and at the tip; the two doctrine guards after batch 9 and at the tip; `make ios-smoke`, `make ios-goldens` and `ios/scripts/lint_architecture.sh` after batch 13 and at the tip.
+
+`scripts/check_wasm_freshness.sh origin/main` is green at the tip and was green at batches 1 to 4.
+It was RED at batch 5, and that is inherited rather than introduced: the original branch's batch 5 changes `tools/structgen/structgen.c`, which is in the stamped source set, and re-stamps only later in `da8e6e41`.
+An intermediate commit is allowed to be stale; the tip is not, and the tip is not.
+
+### The rebuild, and why no artifact byte is committed for it
+
+Every wasm artifact was rebuilt once on the replayed tree (`make -C c WASM_CC=/opt/homebrew/opt/llvm/bin/clang wasm-bots wasm-oracle wasm-oracle-mt`).
+`public/oracle.wasm.gz` and `public/oracle-mt.wasm.gz` came out byte-identical to what is committed.
+`sdk/ts/wasm/bots.wasm.gz` came out 273 B smaller (80,913 to 80,640).
+
+That 273 B is toolchain skew, not main's C, and it was measured rather than assumed: with main's five C files reverted to the pre-rebase branch and nothing else changed, the same build produces the same 80,640 B.
+So main's `anim_shown_table_rows` and `anim_pass_slot_shown` cost the shipped module exactly zero bytes - they are reachable from no wasm export, which is what main's own `cf79e396` and `fb2767cb` said when they re-stamped without a byte moving.
+The rebuilt bytes were therefore discarded and the committed artifacts kept, because committing them would churn a shipped module by a quantity this repo has already decided is meaningless (the reasoning is in the header of `scripts/check_wasm_freshness.sh`, and it is why the stamp exists at all).
+The stamp in the tree matches the sources in the tree, main's C included.
+
+### Files main changed that this branch had deleted
+
+None.
+
+The one the migration doc named in advance, `sdk/swift/PreTableWire.swift`, is not deleted here: Phase 10 left it in place and this branch has not touched it since `a844b2a1`.
+Main's addition to it is `PassSlotWire.shown` and a `shownTable(…, holdLeaving:)` overload, and both are calls straight into `fio_pass_slot_shown` and `fio_shown_table_rows`.
+That is a reader over the kernel, which is the rule Phase 10 was enforcing, so there was no intent to port: the change lands as written.
+
+Nothing else main touched is missing here, which the diffstat invariant above states mechanically.
+
+### What was dropped
+
+Nothing.
+
+No incoming commit was skipped, no incoming hunk was resolved away, and the only content that was deliberately not carried forward is the 273 B of rebuilt `bots.wasm.gz`, which is a rebuild of the same sources on a different toolchain and is argued above.
+
