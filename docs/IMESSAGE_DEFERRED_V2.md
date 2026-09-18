@@ -422,15 +422,16 @@ what it collects.** This is a store-submission requirement (the app record's
 There is **no** requirement for an in-app or in-extension privacy link for an
 app that collects nothing — that's a separate, optional convenience.
 
-**Status update (2026-07-21): the URL half of this note is now DONE.** The
-App-Store-submission branch (merged into this one) added the actual pages this
-section says the store record needs — `src/app/privacy/page.tsx` +
-`src/components/Privacy.tsx` → `foolish.cards/privacy`, and
-`src/app/support/page.tsx` + `src/components/Support.tsx` →
-`foolish.cards/support` — and `docs/IMESSAGE_APP_STORE_SUBMISSION.md` is the
-full paperwork package that consumes them (its metadata table names both URLs).
-Both pages must actually be DEPLOYED before those URLs go into App Store
-Connect. What remains open is the *product* half below, unchanged.
+**Status update (2026-09-18): the URL half of this note is DONE and live.**
+The pages this section says the store record needs exist, are deployed, and are
+on file at App Store Connect: `public/imessage-privacy.html` →
+`www.foolish.cards/imessage-privacy` (this app's policy) and
+`public/support.html` → `www.foolish.cards/support`.
+They are plain static HTML rather than the React routes an earlier pass wrote,
+because React routes render behind `KernelGate` and a policy page must load
+even when the game bundle does not.
+`docs/IMESSAGE_APP_STORE_SUBMISSION.md` §8 is the full account.
+What remains open is the *product* half below, unchanged.
 
 What's already tracked in this repo, so batch 7 doesn't duplicate it:
 

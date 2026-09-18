@@ -68,12 +68,23 @@ blocker, and it should not be treated as one.
 - The shipping default table is `.wool` (`FPrefs.swift:71`), the loud pink
   plaid - while every store screenshot candidate in the QA set was shot on
   felt. Either merge the felt-default change or re-shoot the screenshots.
-- `foolish.cards/privacy` and `/support` are client-rendered behind
-  `KernelGate` (`src/app/providers.tsx`), which renders nothing until
-  `bots.wasm` loads and throws if it fails - `curl` returns only "You need to
+- ✅ **Resolved.** `foolish.cards/privacy` and `/support` were client-rendered
+  behind `KernelGate` (`src/app/providers.tsx`), which renders nothing until
+  `bots.wasm` loads and throws if it fails - `curl` returned only "You need to
   enable JavaScript to run this app." The static page built exactly to avoid
-  this, `public/imessage-privacy.html`, works, but is not the URL the
-  submission doc names and still says the game is "two-player".
+  this, `public/imessage-privacy.html`, worked, but was not the URL the
+  submission doc names and still said the game was "two-player".
+  All three App Store Connect URLs are now static files served through
+  rewrites in `next.config.mjs`: `public/privacy.html` (`355590a6`),
+  `public/imessage-privacy.html`, and `public/support.html`.
+  The React `/privacy` and `/support` routes and their components are deleted,
+  so there is one copy of each page, and `curl` on any of the three returns the
+  full text with no script tags at all.
+  The Marketing URL, `/about`, has the same symptom and is deliberately left as
+  a React route: it is linked from the home screen and localized in five
+  languages, so a static English file would be a regression. The fix that fits
+  it is moving `KernelGate` off the root and onto the routes that need a kernel
+  (`docs/IMESSAGE_APP_STORE_SUBMISSION.md` §8), which is its own change.
 - The in-app language picker offers five languages in Release (en/ru/ko/zh/vi)
   while `CFBundleLocalizations` declares three. Under-declaring is not a
   rejection, but the store will not list Chinese or Vietnamese.
