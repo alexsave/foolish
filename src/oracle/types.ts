@@ -48,22 +48,69 @@ export interface OracleDumpCandidate {
     chosen: number;
 }
 
+/** Octogen's belief block, emitted per record (og_ex_emit): cards publicly
+ *  PINNED to each seat's hand, the genuinely-unknown pool, per-seat void
+ *  constraints (attack cards the seat demonstrably could not beat) and rank
+ *  floors. The raw material of the overlay's belief display. */
+export interface OracleDumpBelief {
+    pinned: string[][];
+    pool: string[];
+    voids: string[][];
+    floor: number[];
+}
+
 export interface OracleDumpRecord {
     seat: number;
     deck: number;
     defender: number;
     trump: number;
+    belief?: OracleDumpBelief;
+    hand?: string[];
+    hand_count?: number;
+    opp_counts?: number[];
+    table?: { attack: string; defense: string | null }[];
     solver: { applied: number; result: string };
     candidates: OracleDumpCandidate[];
     chosen: string;
     overflow?: number;             // §6.3 staging-buffer overflow marker
 }
 
+/* ---------------------- MC path sidecar (binary blob) --------------------- */
+// Per-candidate playout storylines, shipped NEXT TO the JSON record as a
+// packed little-endian blob (wasm_og_paths_ptr/len - no JSON on the hot batch
+// path). Decoder: pathsBlob.ts. Round-outcome symbols (cd_orc,
+// c/src/cordite_sim.h): 1 = we defended and beat the round, 2 = we were
+// forced to pick up, 3 = an opponent beat the round, 4 = an opponent picked
+// up. A shorter seq than the round count means the playout resolved (game
+// over or exact leaf) inside the recorded window.
+//
+// Mode A ONLY. oracle-mt.wasm carries no trace hooks at all (CD_ORC_TRACE in
+// c/src/cordite_sim.h says why), so under Mode B every candidate's `why` is
+// undefined and the overlay renders no proof panel.
+
+export interface OraclePathStat { seq: number[]; n: number; fin: number; }
+/** First move by any non-hero seat after the root move: type indexes
+ *  MV_ATTACK..MV_GOOD (0..4), card is a 0..51 id or 52 for card-less. */
+export interface OracleReplyStat { type: number; card: number; n: number; }
+export interface OracleCandAgg {
+    n: number;                     // playouts folded
+    mepk: number;                  // my pickups per playout
+    oppk: number;                  // opponent pickups per playout
+    metr: number;                  // my trump cards spent per playout
+    opptr: number;                 // opponent trump cards spent per playout
+    rnds: number;                  // rounds resolved per playout
+}
+export interface OracleCandPaths {
+    agg: OracleCandAgg;
+    replies: OracleReplyStat[];
+    paths: OraclePathStat[];
+}
+
 /* --------------------- worker <-> controller protocol -------------------- */
 
 export type WorkerToMain =
     | { t: 'ready' }
-    | { t: 'batch'; decisionId: string; record: OracleDumpRecord; batchMs: number; gen: number }
+    | { t: 'batch'; decisionId: string; record: OracleDumpRecord; batchMs: number; gen: number; paths?: ArrayBuffer }
     | { t: 'exact'; decisionId: string; gen: number }
     | { t: 'forced'; decisionId: string; gen: number }
     | { t: 'empty'; decisionId: string; gen: number }
@@ -93,6 +140,10 @@ export interface OracleCandidate {
     pruned: boolean;
     chosen: boolean;
     played: boolean;               // matches the recorded move
+    /** Merged MC path data for the "why" panel (top storylines, most likely
+     *  replies, whole-playout marginals). Absent until a sidecar arrives, and
+     *  always absent under Mode B. */
+    why?: OracleCandPaths;
 }
 
 export type OracleStatus =
@@ -115,6 +166,20 @@ export interface OracleSnapshot {
     recordedPresent: boolean;      // recorded move appeared among candidates
     approx: boolean;
     deckAlive: boolean;
+    numPlayers: number;
+    /** Decision-static context for the belief display (from the dump record).
+     *  Mode A only - Mode B has no JSON record to read it from. */
+    belief?: {
+        pinned: string[][];
+        voids: string[][];
+        floor: number[];
+        poolCount: number;
+        hand: string[];
+        oppCounts: number[];
+        table: { attack: string; defense: string | null }[];
+        defender: number;
+        trump: number;
+    };
     error?: string;
 }
 
@@ -136,6 +201,35 @@ export function canonicalMoveKey(type: string, cards: string[], target?: string[
     const c = [...cards].sort().join(',');
     const t = [...(target ?? [])].sort().join(',');
     return `${type}|${c}|${t}`;
+}
+
+/* -------------------------------- flags ---------------------------------- */
+
+/** The click-to-open "why" proof panel (docs/INFINITE_ORACLE_DESIGN.md §9.7).
+ *  OFF in production, and off in a default dev run.
+ *
+ *  The replay route is a self-contained base32 payload that needs no auth and
+ *  no database row, so a client-side panel cannot be metered. The code lands
+ *  here so it stops rotting in a branch, not so it ships enabled.
+ *
+ *  This is the web's first feature flag, and it deliberately reuses the one
+ *  gate shape the app already has - a build-time environment variable, like
+ *  FOOLISH_CROSS_ORIGIN_ISOLATION in next.config.mjs - rather than inventing a
+ *  parallel knob system. NEXT_PUBLIC_ is what makes it readable from the
+ *  client: Next inlines it at build time, so with the flag off the whole panel
+ *  is statically unreachable. The shipping value below is the default, and the
+ *  env var is the documented override, exactly as ios/FoolishApp/PhoneOnly/
+ *  Flags.swift derives its debug override from a shipping constant.
+ *
+ *  Turn it on for development:  NEXT_PUBLIC_FOOLISH_ORACLE_WHY=1 npm run dev
+ */
+export const ORACLE_WHY_PANEL_SHIPPING = false;
+
+export function oracleWhyPanelEnabled(): boolean {
+    const v = process.env.NEXT_PUBLIC_FOOLISH_ORACLE_WHY;
+    if (v === '1') return true;
+    if (v === '0') return false;
+    return ORACLE_WHY_PANEL_SHIPPING;
 }
 
 /* ------------------------------ tuning knobs ----------------------------- */

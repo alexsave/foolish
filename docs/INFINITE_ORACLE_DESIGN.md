@@ -1,5 +1,24 @@
 # The Infinite Oracle — replay move-strength analysis, designed
 
+**Addendum, §9.7 (the "why" panel): LANDED, FLAG-GATED, OFF.**
+The overlay carries a click-to-open detail per candidate: octogen's belief block rendered visually (pins, voids, floors, unseen pool) and a chess.com-style TEMPLATE proof of why the expected finish is what it is, with no AI calls anywhere near it.
+The proof names the most likely concrete reply, folds the dominant playout storylines into a probability tree, writes prose chains from measured MC probabilities, and closes with a counterfactual against the best candidate.
+Every sentence is a localized template filled with a real measured number.
+
+Data rides a BINARY sidecar next to the JSONL record (`wasm_og_paths_ptr`/`wasm_og_paths_len`, decoded by `src/oracle/pathsBlob.ts`) because this is the hot batch path and a JSON round-trip there is not free.
+Per candidate it carries the top-12 round-outcome path clusters, the top-3 first replies and the whole-playout marginals, traced by the `cd_orc` hooks in `c/src/cordite_sim.c` and aggregated per deliberation in `c/src/octogen_strategy.c`.
+Proof templates live in `src/oracle/explain.ts`; the UI is `OracleOverlay.tsx`'s `WhyPanel`; headless coverage is `e2e/oracle_replay.test.ts` §12.2-7 and `e2e/oracle_why_flag.test.ts`.
+
+**Mode A only.** The C trace is gated by `CD_ORC_TRACE` (`c/src/cordite_sim.h`), which is `FOOLISH_ORACLE_BUILD && !FOOLISH_ORACLE_MT`.
+`oracle-mt.wasm` has no JSON explain sink to hang a sidecar off, restores real TLS (the aggregation is ~163 KiB of thread-local state per worker thread), and would pay for all of it to produce something nothing can read.
+Under Mode B every candidate's `why` is undefined and the panel simply does not open; nothing else about the overlay changes.
+`public/oracle-mt.wasm.gz` is byte-identical across this change, and so is `sdk/ts/wasm/bots.wasm.gz`.
+
+**The flag.** `ORACLE_WHY_PANEL_SHIPPING` in `src/oracle/types.ts` is `false`, and `oracleWhyPanelEnabled()` returns it unless `NEXT_PUBLIC_FOOLISH_ORACLE_WHY` overrides.
+It is off in production and off in a default dev run; `NEXT_PUBLIC_FOOLISH_ORACLE_WHY=1 npm run dev` turns it on.
+The reason it is dark is not quality: the replay route is a self-contained base32 payload that needs no auth and no database row, so a client-side panel cannot be metered.
+With the flag off the rows carry no click handler, no pointer cursor and no hint line, which `e2e/oracle_why_flag.test.ts` asserts rather than assumes.
+
 **Status: IMPLEMENTED (Mode A).** Mode A shipped on branch
 `claude/replay-ui-new-feature-tektn9`: the C hooks (`-DFOOLISH_ORACLE_BUILD`),
 the `wasm-oracle` Makefile target + committed `public/oracle.wasm.gz`, the

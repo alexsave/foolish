@@ -200,6 +200,48 @@ Game *solve_scratch_root(void);
 // read inside the slot.
 void  solve_clone_root(Game *dst, const Game *src);
 
+// Infinite-oracle path trace (docs/INFINITE_ORACLE_DESIGN.md, the "why this
+// EF" panel): while active, playouts record the first few ROUND outcomes
+// from the hero's perspective plus salient marginals, so the oracle UI can
+// explain a candidate's expected finish with real MC path probabilities.
+// Suppressed inside exact solves (cd_sim_solve explores hypothetical lines
+// through the same apply handlers).
+//
+// Compiled ONLY into the Mode A oracle module. Shipped builds carry no trace
+// of it, and Mode B (oracle-mt.wasm) is excluded DELIBERATELY: that module has
+// no JSON explain sink to hang the sidecar off (OG_EXPLAIN_BUILD is not set
+// there), it restores real TLS, and the per-candidate aggregation below is
+// ~163 KiB of thread-local state per worker thread. Paying that eight times
+// over to produce something nothing can read is not a trade worth making, so
+// the oracle "why" panel is a Mode A feature and degrades to no panel in
+// Mode B (src/components/OracleOverlay.tsx says so to the reader).
+#if defined(FOOLISH_ORACLE_BUILD) && !defined(FOOLISH_ORACLE_MT)
+#define CD_ORC_TRACE 1
+#endif
+
+#ifdef CD_ORC_TRACE
+#define CD_ORC_ROUNDS 4
+typedef struct {
+    int      active;
+    int      me;
+    // Round outcome symbols, base-5 digits (0 = playout ended before round):
+    //   1 = I defended and beat the round     2 = I defended and picked up
+    //   3 = an opponent beat the round        4 = an opponent picked up
+    uint8_t  sym[CD_ORC_ROUNDS];
+    int      nsym;
+    int      me_pickups, opp_pickups;   // whole-playout pickup counts
+    int      me_trumps,  opp_trumps;    // trump cards played (attack/cover/pass)
+    int      rounds;                    // rounds resolved before termination
+    // First move by any seat other than `me` after the root move - the
+    // chess.com-style "most likely reply" datum. card = first card id, or
+    // 0xFF for card-less moves (pickup/good).
+    uint8_t  have_reply, reply_type, reply_card;
+} CdOrcTrace;
+extern _Thread_local CdOrcTrace cd_orc;
+void cd_orc_begin(int me);   // reset + activate for one root-move playout
+void cd_orc_end(void);       // deactivate
+#endif
+
 // Difftest slow-rollout slot (CD/SX/OG_DIFFTEST research modes): the "slow"
 // game a difftest rollout replays on. One shared copy — difftests run one
 // family at a time and the fast rollout completes before the slow one
