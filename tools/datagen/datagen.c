@@ -9,18 +9,30 @@
 // together would mean a layout hash over data that has no layout.
 //
 //   datagen --cwd DIR --header H... --table T [--labels T.DIM=L]...
-//           [--flags FLAGS] [--target TRIPLE] [--name IDENT]
+//           [--require-complete] [--flags FLAGS] [--target TRIPLE] [--name IDENT]
 //           [--ts OUT] [--swift OUT] [--json OUT]
 //
 // --table T       the table to read: a file-scope `static const` array of one or
-//                 two dimensions whose elements are string literals or integer
-//                 constant expressions. The values come from clang's own
-//                 evaluator (clang_Cursor_Evaluate), so a cell may be any
-//                 constant expression C accepts, not just a literal token.
+//                 two dimensions, or a one-dimensional array of STRUCTS, whose
+//                 cells are string literals or integer constant expressions. The
+//                 values come from clang's own evaluator (clang_Cursor_Evaluate),
+//                 so a cell may be any constant expression C accepts - a macro,
+//                 an enum constant, arithmetic, two adjacent string literals -
+//                 and not just a literal token.
+//                 An array of structs uses the struct's FIELDS as its second
+//                 dimension, named by the record, each with its own C type; the
+//                 emitted row is an interface in TS and a struct in Swift.
 // --labels T.D=L  table L (a one-dimensional table of strings, read the same
 //                 way) names dimension D's indices, so the emitted table is
 //                 keyed by those strings instead of by position. Without it the
-//                 dimension is emitted as an array.
+//                 dimension is emitted as an array. A struct's columns are
+//                 already named, so --labels T.1 is refused for one.
+// --require-complete
+//                 every slot of the index space must be filled, and a gap is a
+//                 build failure naming each one. This is what stands in for a
+//                 compile error once a table is SPLIT across files: c/i18n holds
+//                 one file per language, and nothing in C makes twenty-five
+//                 independent tables carry the same keys.
 // --name IDENT    what the emitted modules export. Defaults to the table's name.
 // --ts / --swift  where to write. --json writes the same data as JSON, which is
 //                 what a test reads to check the extraction without compiling
@@ -30,9 +42,10 @@
 //
 // ---- the designator is the key, and that is the whole safety argument -------
 //
-// A row is written `[LANG_RU] = { [K_GOOD] = "Бито", ... }`. The designator is
-// the NAME of the slot, and datagen resolves it to that enumerator's value, so
-// a table is read by name in both dimensions. Positional entries are still
+// A row is written `[LANG_RU] = { [K_GOOD] = "Бито", ... }`, and a struct's cell
+// `.knobs = "..."`. Either way the designator is the NAME of the slot, and
+// datagen resolves it to an index - an enumerator's value, or a field's
+// position in its record - so a table is read by name in both dimensions. Positional entries are still
 // accepted with C's own rule (the next index after the last one written), which
 // is what makes the tool general - an ordered lookup table needs no designators
 // at all - but a table that designates is a table that cannot be silently
