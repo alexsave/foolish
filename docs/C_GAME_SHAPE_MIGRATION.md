@@ -1798,3 +1798,21 @@ How to do it:
 5. A file main changed that this branch DELETED is the dangerous case, and the rule is: stay deleted, port the INTENT of main's change onto the kernel path, and record each one in a table (file, what main changed, where it landed here). `PreTableWire.swift` is the known example: it gets the Phase 10 treatment (read through the kernel or a generated binding), not a hand-written revival.
 6. Anything new on main that declares the TS game shape or packs bytes by hand must land on the C types instead; `e2e/no_ts_game_shape.test.ts` and `e2e/table_no_game_object.test.ts` fail loudly if it does not.
 7. After the replay: rebuild every wasm artifact once, run the full gate set, and run the single full `npm run test:e2e` on the REBASED tree (it is the tree that ships, so the one full run belongs here rather than before the rebase).
+
+### iOS verification (2026-09-17), and three defects that are NOT this branch's
+
+Phase 10's Swift changes were exercised on a simulator: FoolishTests 787 executed / 1 skipped / 0 failures, HarnessTests 29 / 0, the shipping FoolishMessagesApp scheme builds, and the C-side gates are green (ios-smoke, ios-goldens with no diff, ios-archives, swift-parity 6/6, wasm freshness).
+An arrival replay of a dense board animated attack/cover/attack/cover/attack with the counts settling step by step, which is evwire + AnimPlan + beats + SurfacePlan running through the GENERATED Swift readers on a device.
+Screenshots and films: the session scratchpad's `phase10_ios/` (not committed).
+
+Snapshot references: `__Snapshots__` is excluded from the test target and git-ignored on purpose (per-machine), so run 1 in a fresh checkout asserts nothing for 7 ComponentSnapshotTests.
+That gap was closed by recording the same 7 at the branch point on the SAME simulator and diffing: byte-identical to this branch.
+A first attempt recorded on a different iOS runtime showed card-back diffs, which was the runtime, not the branch.
+
+Three findings that reproduce at the branch point (54078863) and are therefore pre-existing, recorded here so they are not lost:
+
+1. **Phantom card over the shield.** On a dense board where the viewer is the defender, the board draws a raised J that the kernel does not have: `msg_wire_test --holdcheck` replays the payload to seat 1 hand 4, the board shows 5, the phantom survives a re-open and re-fans into the hand on pickup (10 drawn where 9 are real). Likely `MessageTableView.fanHoldback` / `HandLayout.fanCards` holdback surviving the settle.
+2. **MemoryProfileTests is environment-sensitive**, not a tree regression: it asserts absolute resident MB, so it fails on a simulator that already has Messages and the appex warm (30.1 MB here, 19.2 MB at the branch point) and passes twice on a clean device.
+3. **The Good tap's staged bubble takes about 3.3 s to surface Send.**
+
+Also seen, not conclusive: hand ARRAY order differed between two fresh installs (Q 10 8 K vs Q 8 10 K), which is adjacent to the known hand-order divergence.
