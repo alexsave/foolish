@@ -12,7 +12,7 @@ It is not part of any build, any test suite or any CI job: it is a standing expe
 `e2e/no_ts_game_shape.test.ts` walks every `.ts`, `.mjs` and `.js` file under `server/`, `sdk/`, `src/`, `e2e/`, `scripts/` and `tools/`, and fails any file that touches a wasm instance's memory and assembles a multi-byte value by hand.
 The benchmark's whole point is that its baseline does exactly that, because that is what the repo's own hand-written marshalling used to look like.
 Putting it under `tools/` would fail that gate or need an entry in a list the test says only ever shrinks.
-It sits beside `rustpoc/` and `offlinefun/` instead, the two research trees the repo already keeps outside the product tree.
+It sits beside `rust/` and `offlinefun/` instead, the two research trees the repo already keeps outside the product tree.
 
 ## What was measured
 

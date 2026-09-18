@@ -127,7 +127,7 @@ int main(int argc, char **argv) {
         // msg_wire.c's fmt_has_rematch guard). A plain memset leaves both at 0,
         // which reads as "seat 0" and is rejected with MSG_EFORMAT - so set the
         // sentinels explicitly. (These fields postdate this bench's first run;
-        // see rustpoc/README.md on re-validating before trusting a number.)
+        // see rust/README.md on re-validating before trusting a number.)
         e.opening = MSG_NO_OPENING;
         e.carry_fool = MSG_NO_FOOL;
         e.format = MSG_FORMAT_V6;

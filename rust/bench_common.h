@@ -24,25 +24,25 @@ typedef struct {
     uint8_t hand[8][64];
 } PocState;
 
-static uint64_t fnv1a(uint64_t h, const void *data, size_t n) {
+static inline uint64_t fnv1a(uint64_t h, const void *data, size_t n) {
     const unsigned char *p = (const unsigned char *)data;
     for (size_t i = 0; i < n; i++) { h ^= p[i]; h *= 1099511628211ull; }
     return h;
 }
-static uint64_t fnv1a_u32(uint64_t h, uint32_t v) {
+static inline uint64_t fnv1a_u32(uint64_t h, uint32_t v) {
     unsigned char b[4] = { (unsigned char)v, (unsigned char)(v >> 8),
                            (unsigned char)(v >> 16), (unsigned char)(v >> 24) };
     return fnv1a(h, b, 4);
 }
 #define FNV_INIT 1469598103934665603ull
 
-static const unsigned char *rd_bytes(const unsigned char *p, void *dst, size_t n) {
+static inline const unsigned char *rd_bytes(const unsigned char *p, void *dst, size_t n) {
     memcpy(dst, p, n);
     return p + n;
 }
 
 // Returns malloc'd array of states; sets *out_n.
-static PocState *load_states(const char *path, unsigned *out_n) {
+static inline PocState *load_states(const char *path, unsigned *out_n) {
     FILE *f = fopen(path, "rb");
     if (!f) { perror(path); exit(1); }
     fseek(f, 0, SEEK_END);
@@ -80,13 +80,13 @@ static PocState *load_states(const char *path, unsigned *out_n) {
     return st;
 }
 
-static double now_s(void) {
+static inline double now_s(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
 }
 
-static long peak_rss_kb(void) {
+static inline long peak_rss_kb(void) {
     FILE *f = fopen("/proc/self/status", "r");
     if (!f) return -1;
     char line[256];
