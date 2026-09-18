@@ -1,0 +1,111 @@
+-- =============================================================================
+-- pg_net's response log: give the 511 MB back, and keep a VACUUM on it
+-- =============================================================================
+-- The hosted database (wngpfwmwkltonwosqflx) was 542.5 MB against the 500 MB free
+-- plan cap. Measured read-only on 2026-09-18:
+--
+--   net._http_response       511.1 MB total (498 MB heap + 13 MB index)
+--   live rows                2,155
+--   live bytes               2.5 MB       sum(pg_column_size(t.*)); every row is
+--                                         1,200 B and the JSON body inside it is 28
+--   oldest / newest row      08:50:28Z / 14:50:14Z, i.e. exactly pg_net.ttl = 6h
+--   heap                     63,763 pages
+--   pages holding a live row 360, and they are pages 63,403..63,762 - the LAST 360.
+--                            Pages 0..63,402, 495 MB, hold nothing live at all.
+--   autovacuum_count         1 (last_autovacuum 2026-08-05), vacuum_count 0
+--   n_dead_tup               4
+--   cron.job                 one job: bot-heartbeat, '10 seconds', 17,243 runs in
+--                            the last 2 days, 0 failures
+--
+-- So neither of the two usual suspects is guilty. The TTL is the 6-hour default
+-- and it is working - the live window is exactly six hours wide. The volume is
+-- modest: one heartbeat POST every 10 s is 8,640 responses a day, 2,155 alive at
+-- any moment, 2.5 MB of actual data. What is wrong is that the table only ever
+-- grows, and the mechanism is a loop that sustains itself:
+--
+--   1. pg_net's reaper DELETEs rows past the TTL. Its own sequential scan prunes
+--      those dead tuples off the page as it goes, which frees the space WITHIN the
+--      page but does not touch the free space map - only VACUUM writes that.
+--   2. Because the pruning keeps n_dead_tup near zero (it is 4 right now, against
+--      431,140 lifetime deletes), the table never crosses the autovacuum threshold
+--      of 50 + 0.2 x 2,141 ~ 478 dead tuples. Autovacuum has therefore run on it
+--      ONCE, ever.
+--   3. With no free space map entries, every INSERT extends the relation instead
+--      of reusing a page. Go to 1.
+--
+-- 8,640 rows a day at 6 rows to a page is ~1,440 new pages a day, ~11.8 MB a day,
+-- which is what 63,763 pages since the last autovacuum on 2026-08-05 comes to. The
+-- note left on 20260712120000 - "self-pruned by the extension, so its LIVE rows
+-- stay small" - was right about the rows and wrong about the file.
+--
+-- ---------------------------------------------------------------------------
+-- WHAT THIS DOES
+-- ---------------------------------------------------------------------------
+-- TRUNCATE, not DELETE. A DELETE would empty the table and leave the file exactly
+-- as long as it found it; that is the whole disease. TRUNCATE hands the extents
+-- back to the OS immediately and, unlike VACUUM (FULL), runs inside the
+-- transaction `supabase db push` wraps a migration in.
+--
+-- Dropping the newest rows is as acceptable as dropping the oldest: NOTHING in
+-- this project ever reads a response. The heartbeat calls net.http_post and never
+-- collects it; net.http_collect_response appears nowhere outside pg_net's own
+-- function bodies (checked against pg_get_functiondef on hosted, and by grep over
+-- the tree). There is no read latency for a retention window to have to exceed. If
+-- a caller ever starts collecting, this has to become a time-bounded DELETE plus a
+-- separate reclaim, and e2e/pg_net_log_retention_migration.test.ts says so in an
+-- assertion.
+--
+-- Then a scheduled VACUUM, which is the part that makes it stay fixed. A plain
+-- VACUUM writes the free space map, so the next insert reuses a reaped page rather
+-- than extending the file, and the heap settles at the live window (~2,160 rows,
+-- ~360 pages, ~3 MB) plus at most one interval's worth of new pages. Every 15
+-- minutes that is 90 rows, ~15 pages, ~120 kB. Call it under 5 MB with the index,
+-- against 511 MB.
+--
+-- One bare statement in the job, deliberately: cron.use_background_workers is off
+-- on this instance, so pg_cron sends the command to a libpq backend as a simple
+-- query. A multi-statement command would arrive as an implicit transaction block
+-- and Postgres refuses VACUUM inside one.
+--
+-- WHAT THIS DOES NOT DO, and why:
+--
+--   cron.job_run_details is left alone. It is 14.5 MB holding 16,832 live rows of
+--   ~830 B - all live, no dead space, already bounded by the 2-day DELETE that
+--   20260712120000 folded into the heartbeat job, and autovacuumed 159 times. It
+--   is 2.6% of the database and it is not sick. Truncating it would return 14.5 MB
+--   that comes straight back in 48 hours, at the price of two days of the only
+--   history an operator has for the heartbeat.
+--
+--   ALTER TABLE net._http_response SET (autovacuum_vacuum_insert_threshold = ...)
+--   would be the tidier fix - insert-driven autovacuum, PG 13+, and this instance
+--   is 17.4. It is not available to us: the table is owned by supabase_admin and
+--   the migration runs as postgres, which is not a member of it, so ALTER TABLE is
+--   refused. postgres does hold TRUNCATE and (PG 17) MAINTAIN on the table, which
+--   is exactly what the two statements below need.
+--
+--   The heartbeat's own frequency is untouched. The pg_net row rate (2,155 rows /
+--   6 h = 5.99/min) is the cron rate (6/min) and nothing else - the per-game drive
+--   dispatches are fetch() calls from inside the edge function, not pg_net - so
+--   changing it is a gameplay decision, not a storage one, and does not belong in
+--   a reclaim migration.
+--
+-- IDEMPOTENT. TRUNCATE on an empty table is a no-op, and cron.schedule() upserts
+-- on (jobname, username), so a re-push replaces the job rather than adding one.
+-- ---------------------------------------------------------------------------
+
+-- 511 MB, of which 2.5 MB is data nothing reads.
+TRUNCATE net._http_response;
+
+-- And it stays gone.
+SELECT cron.schedule(
+  'pg-net-response-vacuum',
+  '*/15 * * * *',
+  'VACUUM net._http_response'
+);
+
+-- To check on it later:
+--   select * from cron.job where jobname = 'pg-net-response-vacuum';
+--   select status, return_message, start_time from cron.job_run_details
+--     where jobid = (select jobid from cron.job where jobname = 'pg-net-response-vacuum')
+--     order by start_time desc limit 10;
+--   select pg_size_pretty(pg_total_relation_size('net._http_response'));
