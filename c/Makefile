@@ -413,16 +413,17 @@ leafbook-verify:
 	./build/leafbook_verify 1000000
 
 # ---------------------------------------------------------------------------
-# og_explain: octogen deliberation-dump analysis tool (c/tools/og_explain).
-# -DOG_EXPLAIN_BUILD is what compiles the OG_EXPLAIN machinery INTO octogen; it
-# is defined ONLY here, so every shipped native + wasm build carries none of it.
-# Build with the same CFLAGS as the eval harness so octogen's evaluation matches
-# production. `make og_explain` produces build/og_explain; the pipeline driver
-# (tools/og_explain/explain.py) invokes it.
-.PHONY: og_explain
-og_explain:
-	@mkdir -p build
-	$(CC) $(CFLAGS) -DOG_EXPLAIN_BUILD $(CORE_SRC) tests/og_explain.c -o build/og_explain $(LDFLAGS)
+# The `og_explain` native target and its c/tools/og_explain python pipeline are
+# gone. They re-dealt a game from a 64-hex seed and X-rayed octogen's
+# deliberation into a static HTML page. The kernel does that job directly now,
+# and does it from a share link with no seed at all: replay_steps_board_v6 /
+# replay_steps_memory_v6 (src/replay_steps.h) take the board and the public log
+# straight out of a v6 code, which is what the Infinite Oracle (`wasm-oracle`
+# below, public/oracle.wasm.gz, src/oracle/) reads to show the same
+# per-candidate deliberation live in the browser, and what `make analyse`
+# reads to review every legal move at every decision (docs/POST_GAME_ANALYSER.md).
+# The python drivers were a second way to a place the kernel already reaches.
+# -DOG_EXPLAIN_BUILD lives on: it is what the oracle builds are made of.
 
 # ---------------------------------------------------------------------------
 # WebAssembly rules kernel: game.c + legal.c + the wasm bridge, compiled

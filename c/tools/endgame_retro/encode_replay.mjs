@@ -1,3 +1,11 @@
+// @archived: five of the six modules it drives were deleted by A10 and the
+// kernel lift (server/api/common/game_lifecycle.ts, server/api/core/types.ts,
+// server/api/common/replay/encode.ts, sdk/ts/wasm/engine.ts,
+// sdk/ts/wire/logwire.ts), so this cannot run. The C crawlers beside it still
+// build and are still useful; only this last minting step is stranded. Kept,
+// not deleted, so whoever picks the endgame_retro research back up can see what
+// it used to do - rewrite it against today's kernel entries, or drop it.
+//
 // Mint a shareable v6 replay URL from a dump_game.c moves JSON.
 //   ./build/dump_game <seed> > moves.json
 //   TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx \
