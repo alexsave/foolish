@@ -1,0 +1,195 @@
+name: web
+
+# The web app is BUILT HERE and the output is uploaded, rather than built by
+# Vercel from the repository.
+#
+# WHY. `sdk/ts/gen` is written by tools/structgen, a libclang program that reads
+# the C headers. The web imports those modules, so building the site means
+# running that generator - and Vercel's build image is not a place this repo can
+# install libclang into, or test that it did. Zero-config Vercel worked only
+# while the generated modules were committed, which is the arrangement being
+# removed (the same arrangement that let verify.wasm rot for months; see
+# tools/structgen/gen.sh). So the build moves to the runner that already has the
+# toolchain and already proves it works on every pull request, and Vercel goes
+# back to being the thing that serves the output.
+#
+# Two jobs, split by what they need:
+#
+#   build    `next build` over freshly generated modules. No secrets. This is
+#            the gate: it says the site compiles from THIS tree's headers.
+#   deploy   `vercel build` + `vercel deploy --prebuilt`. A PREVIEW deployment
+#            on a pull request, the PRODUCTION one on main. The preview is what
+#            makes this lane reviewable: a URL, from a real deploy, before the
+#            production path depends on it.
+#
+# ONE THING THE OWNER STILL HAS TO DO, and it is not optional:
+#
+#   Turn OFF Vercel's automatic deployments for this project. The live setting
+#   today is gitProviderOptions.createDeployments = "enabled":
+#
+#     PATCH https://api.vercel.com/v9/projects/<projectId>?teamId=<orgId>
+#     {"gitProviderOptions": {"createDeployments": "disabled"}}
+#
+#   Until that is off, Vercel ALSO builds every push from source, in an image
+#   with no libclang. That is harmless while sdk/ts/gen is still committed and
+#   it takes the live site down the moment it is not - so it is flipped as part
+#   of the cutover, NOT before: while those modules are still committed, Vercel's
+#   source builds are the only thing deploying the site at all.
+#
+# The three secrets (VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID) are set.
+# The org and project ids are read by the CLI from the environment, so nothing
+# here needs a checked-in .vercel/ link - and .vercel/ stays gitignored.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The gate. Proves the site builds from generated modules with nothing secret
+  # involved - so it still means something on the day a token is rotated away.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      # libclang, then the modules themselves. Generated EXPLICITLY rather than
+      # through an npm hook, because `npm run build` is also what Vercel's own
+      # automatic builds run, and those happen in an image with no libclang -
+      # so until the owner turns them off, adding a prebuild hook would take
+      # their side down rather than ours.
+      - name: Toolchain (libclang, for the generated modules)
+        run: bash scripts/ci_llvm.sh
+
+      - name: Generated modules
+        run: bash tools/structgen/gen.sh
+
+      # PLACEHOLDER SUPABASE ENV, and the reason is worth stating: `next build`
+      # prerenders /_not-found and friends, and the module that creates the
+      # Supabase client throws `supabaseUrl is required` at module scope when the
+      # variables are absent. The real values live in the Vercel project and
+      # arrive through `vercel pull` in the deploy job; this job is a COMPILE
+      # gate, so it only needs something well-formed to prerender against. A
+      # value that looks real would be worse: it would suggest this job talks to
+      # a backend, and it must not.
+      - name: Build the web app
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_KEY: placeholder-anon-key-not-used-by-this-job
+        run: npm run build
+
+      # Printed, not gated - the same way wasm.yml prints module sizes so a
+      # sudden jump is at least visible to a human.
+      - name: What the build produced
+        if: always()
+        run: du -sh .next 2>/dev/null || true
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      # A job that quietly does nothing is a job nobody notices is doing
+      # nothing. If a secret is missing this says which, in the log and in the
+      # run summary, rather than failing inside the CLI with something
+      # unreadable.
+      - name: Are the deploy credentials present?
+        id: creds
+        run: |
+          missing=""
+          [ -n "$VERCEL_TOKEN" ]      || missing="$missing VERCEL_TOKEN"
+          [ -n "$VERCEL_ORG_ID" ]     || missing="$missing VERCEL_ORG_ID"
+          [ -n "$VERCEL_PROJECT_ID" ] || missing="$missing VERCEL_PROJECT_ID"
+          if [ -n "$missing" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::the web deploy did not run - missing secrets:$missing"
+            {
+              echo "### The web deploy did not run"
+              echo
+              echo "Missing repository secrets: \`$missing\`"
+              echo
+              echo "See the header of .github/workflows/web.yml."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # PRODUCTION only from main. Everything else is a preview, which is what
+      # makes a pull request able to prove this lane without touching the site.
+      - name: Production or preview?
+        id: target
+        if: steps.creds.outputs.ready == 'true'
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "env=production" >> "$GITHUB_OUTPUT"
+            echo "prod=--prod" >> "$GITHUB_OUTPUT"
+          else
+            echo "env=preview" >> "$GITHUB_OUTPUT"
+            echo "prod=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.creds.outputs.ready == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.creds.outputs.ready == 'true'
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        if: steps.creds.outputs.ready == 'true'
+        run: npm install
+
+      - name: Toolchain (libclang, for the generated modules)
+        if: steps.creds.outputs.ready == 'true'
+        run: bash scripts/ci_llvm.sh
+
+      # Pinned, never floated, for the reason deploy.yml gives for pinning the
+      # Supabase CLI: a deploy tool that changes under us changes what ships.
+      - name: Install the Vercel CLI
+        if: steps.creds.outputs.ready == 'true'
+        run: npm install --global vercel@59.23.1
+
+      # `vercel pull` writes .vercel/project.json into the RUNNER's checkout so
+      # `vercel build` has the project's settings and environment. It needs no
+      # pre-existing link: VERCEL_ORG_ID and VERCEL_PROJECT_ID in the env are
+      # what it resolves the project from. Nothing it writes is committed -
+      # .vercel/ is gitignored and this checkout is thrown away.
+      #
+      # `vercel build` then runs the project's own build command, `npm run
+      # build`, in this checkout - so the modules are generated first, into the
+      # tree it is about to compile.
+      - name: Vercel build
+        if: steps.creds.outputs.ready == 'true'
+        run: |
+          bash tools/structgen/gen.sh
+          vercel pull --yes --environment=${{ steps.target.outputs.env }} --token="$VERCEL_TOKEN"
+          vercel build ${{ steps.target.outputs.prod }} --token="$VERCEL_TOKEN"
+
+      # --prebuilt: upload .vercel/output, do not build again on their side.
+      - name: Vercel deploy
+        if: steps.creds.outputs.ready == 'true'
+        run: |
+          url=$(vercel deploy --prebuilt ${{ steps.target.outputs.prod }} --token="$VERCEL_TOKEN")
+          echo "deployed (${{ steps.target.outputs.env }}): $url"
+          {
+            echo "### Deployed - ${{ steps.target.outputs.env }}"
+            echo
+            echo "$url"
+          } >> "$GITHUB_STEP_SUMMARY"
