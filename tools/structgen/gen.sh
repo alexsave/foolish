@@ -155,7 +155,9 @@ set +f
 # language. NONE OF IT IS COMPILED INTO ANYTHING SHIPPED - c/i18n is outside
 # c/src and appears in no *_SRC list, because twenty-five languages is around
 # 150 KB of string data and bots.wasm.gz is downloaded by every visitor.
-# e2e/validation/i18n_not_in_wasm.test.ts is the gate on that.
+# The gate is e2e/validation/i18n_source_of_truth.test.ts, whose first test
+# ('no translated string reaches the shipped wasm') gunzips the shipped module
+# and searches it rather than trusting this comment.
 #
 # ONE MODULE PER LANGUAGE, and that is a bundle decision, not tidiness: a
 # dynamic import keeps every export of its target alive in the web bundle
