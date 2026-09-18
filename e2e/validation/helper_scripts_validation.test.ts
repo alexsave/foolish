@@ -91,8 +91,23 @@ function isGenerated(abs: string): boolean {
     return GENERATED_ROOTS.some((root) => abs === root || abs.startsWith(root + '/'));
 }
 
-/** The tool directories: everything here is run by hand, never by CI. */
-const ROOTS = ['scripts', 'c/tools'];
+/**
+ * The tool directories: almost everything here is run by hand, never by CI.
+ *
+ * foolyard/tools is here for the same reason the other two are. foolyard is a
+ * discrete-event simulator that links `../c/src` with a wildcard, and three of
+ * its four tools - the latency ladder, the latency test, the speed sweep - are
+ * run by a person when a question comes up and by nothing else, which is the
+ * exact shape og_explain had. Its fourth, chaos_suite.sh, IS run by CI
+ * (.github/workflows/foolyard.yml); being covered twice costs nothing.
+ *
+ * Nothing in foolyard/tools names a repo source path TODAY - they shell out to
+ * the built `./foolyard` and nothing else. That is the argument for covering
+ * the directory rather than the files in it: the day one of them reaches for a
+ * kernel header, a fixture or a TS module, the walk below has it already, with
+ * nobody having to remember to come back here.
+ */
+const ROOTS = ['scripts', 'c/tools', 'foolyard/tools'];
 
 /** Directories that hold no source of ours. */
 const SKIP_DIRS = new Set(['node_modules', '.build', '.git']);

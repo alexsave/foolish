@@ -1,0 +1,422 @@
+# foolyard - a discrete-event Durak table
+
+A simulated Foolish server, the real C kernel deciding every rule, and clients
+on modelled wires - all inside one deterministic single-threaded process where
+time is a number that only moves when an event says so.
+
+Adapted from [tiltyard](../../tiltyard)'s market simulator. What came across is
+the timing machinery (a packed-event priority queue, a bucketed scheduler, a
+slot freelist, the pop-dispatch main loop); what did not is everything about
+order books. The game logic is not reimplemented here either: `awire_apply`,
+`bot_drive`, `calculate_legal_moves` and `state_put` are the same
+[`../c/src`](../c/src) sources the wasm, iOS and native-server builds link.
+
+```sh
+make
+./foolyard --help
+./foolyard --lineup wellbehaved@200,laggy@800,handwritten@300,octogen@600
+```
+
+## why
+
+[`sem_fuzz.c`](../server/impls/native/sem_fuzz.c) already proves the kernel
+cannot be cheated: it fires illegal moves at `awire_apply` with full ground
+truth. But it plays straight-line games - decide, apply, decide, apply - and
+so it can never reach the states that only exist when there is a *wire* and a
+*clock* between deciding and applying:
+
+- a move chosen against a board three versions stale, landing anyway
+- a bot cycle interleaved with a human move that was already in flight
+- a retransmit applied twice because nothing in the protocol says "again"
+- a push that overtakes a newer one on a datagram link, so the client renders
+  backwards
+- a table that simply stops, because everyone believes it is someone else's turn
+
+Those need modelled time, which is what this is.
+
+## the shape of it
+
+| file | what it is |
+|---|---|
+| `include/constants.h` | the event word's bit layout, and the whole timing budget |
+| `src/pq.c` | 4-ary min-heap of packed `u32` events |
+| `src/sch.c` | the bucketed scheduler: 256 buckets, 65.5ms each |
+| `src/fl.c` | fixed slab + free stack, with occupancy tracking |
+| `src/net.c` | the wire: latency, jitter, loss, duplication, ordering |
+| `src/server.c` | the game registry: request queue, versions, push fanout, bot trampoline |
+| `src/client.c` | client core: decode a view, run the tier, submit, self-wake |
+| `src/invariant.c` | the detectors |
+| `clients/*.c` | one file per client tier |
+
+### the event word
+
+One `u32` per scheduled event, ordered by plain integer compare:
+
+```
+[ prio:16 | type:3 | param:13 ]
+```
+
+`prio` is the fire time within its bucket (microseconds), `param` names a
+packet slot, a client, or a game+seat. A bucket spans 65536us and there are
+256 of them, so the wheel reaches 16.7s ahead; anything further parks in a
+timer slot and walks in with `EV_HOP` events that `sch_pop` consumes itself.
+
+Two deliberate departures from tiltyard's `sch.c`:
+
+1. **A bucket entry masks explicitly (`fire & P_MASK`) instead of relying on
+   the shift to truncate.** Tiltyard writes the raw `now + delta` sum into the
+   priority field, and for anything past one bucket span that sum does not fit
+   - but `sum << E_BITS` drops the overflow, so what lands in the field is
+   exactly `sum & P_MASK`, the correct within-bucket offset. It is right, and
+   right for any `P_BITS + E_BITS == 64` split; it is just load-bearing
+   behaviour that nothing states. (Checked, not assumed: 50,002 events with
+   deltas up to 45 bucket spans pop in order.) Here `cursor_start` carries the
+   laps and the entry stores the masked offset, so the invariant is written
+   down rather than inferred from a shift width.
+2. **No slow bucket.** Nothing in a Durak session is scheduled days out, so the
+   seconds-resolution second tier, its rounding, and its spreading jitter are
+   replaced by the exact hop above.
+
+### what the server models
+
+The native server ([`../server/impls/native`](../server/impls/native)), minus
+the sockets: per-game request queues serviced one at a time (the per-game
+lock), a version bumped on every board change, per-seat masked views cut with
+`state_put`, a push-only fanout, and the bot trampoline - one `bot_drive`
+cycle, priced by `bot_cycle_delay_ms`, rescheduled rather than slept through.
+
+One departure, and it is the interesting one: **each bot seat is driven
+separately, on its own clock.** The real server drives every eligible bot in
+one cycle and paces them uniformly so a human can follow along. Here a seat
+waits its own `think_us`, which means the order among simultaneously-eligible
+bots is decided by who thinks fastest rather than by `bot_drive`'s fairness
+shuffle. That is what makes a speed matchup possible (see below).
+
+### what is on the wire, and what is not
+
+`Packet` is split in two on purpose. The wire half is what a real frame
+carries. The `obs_*` half - the version a view was cut at, the version a mover
+had last seen, its sequence number - is **not on the wire and could not be**:
+an awire frame has no version field and a `/ws` push is `[ok][state bytes]`.
+A client can neither prove when it decided nor tell a stale view from a fresh
+one, and could lie about both if the protocol let it. Those fields exist so
+the harness can say "applied a move chosen three versions ago". Nothing in
+`server.c` branches on them.
+
+## clients
+
+One file per tier behind a narrow interface, like tiltyard's `src/strategy/`.
+A tier is a `settings` / `on_view` / `on_wake` triple; add a file, add its name
+to `CLIENT_TIERS` in `include/client.h`, and it can be seated.
+
+| tier | what it does |
+|---|---|
+| `wellbehaved` | the reference `/ws` client: decode, think, submit from the newest view |
+| `laggy` | same brain, 3x latency and 4x jitter |
+| `reconnect` | drops its socket mid-bout and re-subscribes |
+| `resender` | retransmits the same frame under the same seq when an ack is slow |
+| `stale` | decides the instant it sees a board, then sits on the decision |
+| `poller` | no subscription at all: `GET /state` on a timer, the pre-`/ws` path |
+| `griefer` | connects, watches, never plays |
+| `datagram` | the WebTransport path: unordered, droppable QUIC DATAGRAM pushes |
+
+Every one picks uniformly from `calculate_legal_moves`, exactly as
+`foolish_hammer`'s ws worker does. Play strength is not the point.
+
+## the detectors
+
+Findings are counted, and up to 8 lines PER KIND are printed with a timestamp
+(per kind, so 3000 view regressions cannot bury a single rare finding under them). Three are
+`sem_fuzz`'s, re-asserted because the sim reaches states it cannot; the rest
+only exist once there is a wire.
+
+| finding | what it means |
+|---|---|
+| `conservation` | an accepted move broke the physical deck (lifted from `sem_fuzz`) |
+| `mutation_on_reject` | a rejected move still changed the board (`--deep`) |
+| `stall` | a live game with a legal move went quiet |
+| `phantom_hand_loss` | a card left a seat's hand with no move of its own |
+| `duplicate_applied` | the same `(seat, seq)` was applied twice |
+| `view_regression` | a client adopted a view older than one it held |
+| `queue_overflow` | a game's request backlog overflowed |
+| `seat_mismatch` | a frame arrived for a seat it does not own |
+| `cross_deal_apply` | a move decided in one game applied to the next after a rematch |
+| `move_applied_late` | a seat's earlier move applied after its later one |
+
+Check depth is a knob, because the detectors are ~6% of a run and a pure
+capacity measurement does not want them. The lineup is named because the cost
+is a fraction of the PLAY, so a table of bare seconds means nothing without it:
+
+```sh
+./foolyard --games 1024 --secs 3600 --seed 1 \
+    --lineup wellbehaved@400,wellbehaved@600,handwritten@300,random@200
+```
+
+| | what runs | wall time | vs `--no-checks` |
+|---|---|---|---|
+| `--no-checks` | nothing | **5.28 s** | - |
+| default | O(seats) card count every change, full 52-card walk every 16th | **5.59 s** | +5.9% |
+| `--deep` | full walk every change + clone/compare on every reject | **9.90 s** | +87% |
+
+The split default is mutation-tested, not assumed: injecting a created card
+(count breaks) is caught 182 times, and injecting a card duplicated OVER
+another - which leaves the count intact, so only the full walk can see it - is
+still caught, twice. `--no-checks` catches neither, which is the point of it.
+
+`stall` doubles as a product question rather than a bug report. Foolish has no
+turn clock, so one seat that declines to act holds its table forever:
+
+```
+$ ./foolyard --games 2 --secs 200 --lineup wellbehaved@200,griefer@0,handwritten@300
+[  35.000s] stall   game 0 v6 quiet for 30.9s: defender 1, queue 0,
+                    could move 0x2, bots parked 0x4, subscribed 0x3
+[  35.000s] stall   game 1 v5 quiet for 31.0s: defender 1, queue 0,
+                    could move 0x2, bots parked 0x4, subscribed 0x3
+  games      2 dealt, 0 finished
+  moves      5 sent, 5 applied
+```
+
+`could move 0x2` is only the griefer, and it never will. Two tables, 200
+seconds, five moves between them. Nothing anywhere breaks the deadlock.
+
+### what a retried move costs
+
+`resender` models an **HTTP retry**, not a TCP one: a `POST /action` whose
+reply is slow, sent again by the app. (On `/ws` the app never re-sends a frame
+- TCP does that below it.) Neither `/action` nor `/ws` carries an idempotency
+key, so the server applies whatever is still legal:
+
+```
+$ ./foolyard --games 6 --secs 400 --loss 4 --dup 3 --jitter 400 \
+    --lineup wellbehaved@150,laggy@600,reconnect@200,resender@250,stale@700,handwritten@200,random@100
+[   3.194s] duplicate_applied  game 3 seat 3: good(n=0) seq 2 applied again,
+                               chosen at v8, board at v13
+[   6.274s] duplicate_applied  game 0 seat 3: good(n=0) seq 4 applied again,
+                               chosen at v13, board at v20
+  moves      4633 sent, 3076 applied, 2217 applied against a board the mover had not seen
+  duplicate_applied    42
+```
+
+Every single one is `good(n=0)`, and that is the whole story: a move carrying
+cards immunises itself, because the retry names a card that has already left
+the hand and is rejected as not-in-hand. `good` carries nothing, so a retry
+that arrives 1 to 10 versions late lands in a **later bout the client never saw**
+and says good there - silently forfeiting a throw-in the player still had.
+Invisible from the client, and a concrete argument for an idempotency key on
+the action path.
+
+## turning everything up at once
+
+Every tier, two datagram seats, 5% loss, 6% duplication, 700ms of jitter, a
+server that stutters, and rematches churning through:
+
+```sh
+./foolyard --games 8 --secs 900 \
+  --lineup datagram@120,datagram@400,resender@200,stale@900,reconnect@150,laggy@600,random@80,octogen@200 \
+  --loss 5 --dup 6 --jitter 700 --latency 80 --hiccup-pct 12 --hiccup-ms 900 --seed 42
+```
+
+```
+  moves      6757 sent, 3741 applied, 3064 rejected, 2917 applied against a board the mover had not seen
+  packets    37025 sent, 1838 dropped, 2161 duplicated, 2122 overtaken
+
+  conservation         0
+  mutation_on_reject   0
+  stall                7
+  phantom_hand_loss    0
+  duplicate_applied    72
+  view_regression      2122
+  cross_deal_apply     0
+  move_applied_late    14
+```
+
+**The kernel does not flinch.** Zero conservation failures and zero
+mutations-on-reject across 6,757 moves, 2,917 of them decided against a board
+the mover had never seen. Everything below is the transport around it.
+
+### a lost push strands a seat forever
+
+All seven stalls are a **datagram** seat, with `subscribed 0x3f` - everyone
+still connected, nobody disconnected, the seat simply never learns it is its
+turn. A QUIC DATAGRAM push is not retransmitted, there is no connection reset
+to trigger a reconnect, the protocol is push-only, and the client never polls.
+Dropping only the loss knob and changing nothing else:
+
+```
+loss 0%:  25 dealt, 17 finished,  2 stalls
+loss 5%:  13 dealt,  5 finished,  7 stalls
+```
+
+Lost pushes cut the whole table's throughput to under a third.
+
+### ...and even with no loss at all
+
+Those two remaining stalls at **0% loss** are the sharper version. Nothing was
+dropped. The pushes simply arrived out of order, and on an unordered transport
+a client's state is whichever push landed *last*, not the newest one. It read a
+stale board, concluded it was not its turn, and waited forever for a push that
+can never come - because the board cannot change until it acts. Both are a
+datagram seat again (`could move 0x1` and `0x2`, the two `datagram` tiers).
+
+Neither failure exists on the `/ws` path, where TCP ordering and connection
+resets between them cover both cases. Both are properties of push-only over an
+unreliable, unordered transport, and both would want the same fix: a sequence
+number on the push so a client can see a gap, or an idle timer that re-reads
+state.
+
+### moves applied out of the order they were made
+
+```
+[  29.092s] move_applied_late  game 4 seat 0: good(n=0) seq 21 applied after seq 22 had already landed
+[  45.778s] move_applied_late  game 2 seat 0: attack(n=1) seq 39 applied after seq 40 had already landed
+[ 115.177s] move_applied_late  game 0 seat 0: pickup(n=0) seq 93 applied after seq 94 had already landed
+```
+
+Not duplicates - a seat's *earlier* move arriving behind its later one and
+being applied anyway, because nothing in the frame says which came first. Only
+reachable on the unordered path.
+
+## the speed matchup
+
+Because each seat has its own clock, the same brain can be sat at one table at
+two speeds and scored by who ends up the fool. `tools/speed_sweep.py` runs that
+matrix, in both seat polarities (Durak's opening seat is derived from the deal,
+so seat position is not neutral and has to be cancelled out):
+
+```sh
+python3 tools/speed_sweep.py --brains random,handwritten --games 40
+```
+
+fast = 50ms, slow = 2000ms, alternating seats, 80 games per cell. Under the
+null the fool is a fast seat half the time:
+
+```
+brain          np  fast seats   games  expected  observed       z
+random          2         1.0      80     0.500     0.412    -1.6
+random          3         1.5      80     0.500     0.300    -3.6  <--
+random          4         2.0      80     0.500     0.237    -4.7  <--
+random          5         2.5      80     0.500     0.163    -6.0  <--
+random          6         3.0      80     0.500     0.263    -4.2  <--
+random          7         3.5      80     0.500     0.087    -7.4  <--
+random          8         4.0      80     0.500     0.287    -3.8  <--
+handwritten     2         1.0      80     0.500     0.425    -1.3
+handwritten     3         1.5      80     0.500     0.512     0.2
+handwritten     4         2.0      80     0.500     0.562     1.1
+handwritten     5         2.5      80     0.500     0.500     0.0
+handwritten     6         3.0      80     0.500     0.425    -1.3
+handwritten     7         3.5      80     0.500     0.463    -0.7
+handwritten     8         4.0      80     0.500     0.550     0.9
+octogen         2         1.0      40     0.500     0.450    -0.6
+octogen         3         1.5      40     0.500     0.425    -0.9
+octogen         4         2.0      40     0.500     0.450    -0.6
+octogen         5         2.5      40     0.500     0.450    -0.6
+octogen         6         3.0      40     0.500     0.550     0.6
+octogen         7         3.5      40     0.500     0.425    -0.9
+octogen         8         4.0      40     0.500     0.400    -1.3
+```
+
+For `random`, thinking faster is worth a great deal from three players up. For
+`handwritten` and `octogen` it is worth nothing at any size. The difference is
+what the policy does with an extra chance to act: a random bot throws in
+whenever it legally may, so acting first means shedding cards first and going
+out sooner, while the deliberate bots decline the throw-ins they do not want
+and gain nothing from being asked earlier. **Speed only pays if your policy
+spends cards when given the opportunity.**
+
+At two players nobody is racing anyone - attacker and defender strictly
+alternate - and the effect disappears even for `random`, which is the control
+this wanted.
+
+A practical reading: the live server's uniform bot slowdown is not quietly
+handing the paced-down bots a disadvantage, because the bots it actually
+ships are the deliberate kind. It would have, on `random`.
+
+### the graded version
+
+`tools/latency_ladder.py` seats a ladder of think times (50ms..2000ms,
+geometric) around one table and rotates it so each rung visits each seat once.
+For `random`, the fool rate rises monotonically along the ladder at every size
+from three players up, and is flat at two - the control:
+
+```
+np=2  n=80    expected 0.500   50ms 0.425(-1.3)  2000ms 0.575(+1.3)   [flat]
+np=4  n=160   expected 0.250   50ms 0.081(-4.9)  171ms 0.125(-3.7)  585ms 0.169(-2.4)  2000ms 0.625(+11.0)
+np=8  n=320   expected 0.125   50ms 0.013(-6.1)  85ms 0.047(-4.2)  143ms 0.050(-4.1)  243ms 0.059(-3.5)
+                                412ms 0.109(-0.8)  697ms 0.134(+0.5)  1181ms 0.225(+5.4)  2000ms 0.362(+12.8)
+```
+
+At eight players a 50ms seat is the fool 1.3% of the time and a 2000ms seat
+36.2%, against 12.5% expected, with the eight rungs almost perfectly in order.
+
+`octogen` on the same ladder is flat everywhere - no rung is meaningfully off
+its expectation at any table size:
+
+```
+np=2  n=40    50ms 0.600(+1.3)  2000ms 0.400(-1.3)
+np=5  n=100   50ms 0.190(-0.3)  126ms 0.210(+0.2)  316ms 0.150(-1.3)  795ms 0.200(+0.0)  2000ms 0.250(+1.2)
+np=8  n=160   50ms 0.119(-0.2)  85ms 0.131(+0.2)  143ms 0.094(-1.2)  243ms 0.087(-1.4)
+                412ms 0.119(-0.2)  697ms 0.156(+1.2)  1181ms 0.131(+0.2)  2000ms 0.163(+1.4)
+```
+
+The slowest rung does sit slightly above expectation in the larger games
+(+2.4, +1.9, +1.4 at np=6/7/8), which is a hint and not a result at n=120-160.
+If it is real it is small; the `random` effect at the same sizes is 5 to 12
+standard deviations.
+
+### and the same question for a human's connection
+
+`tools/latency_test.py` asks it of clients instead of bots: four identical
+`wellbehaved` seats on a clean wire - no loss, no duplication, no jitter -
+differing only in how long they take to answer, with the lineup rotated so each
+latency sits in each seat exactly once.
+
+```
+600 finished games, 4 rotations pooled
+
+  latency   fool    share       z        (expected 0.250)
+     50ms     57    0.095    -8.8
+    200ms    100    0.167    -4.7
+    800ms    126    0.210    -2.3
+   2000ms    317    0.528    15.7
+```
+
+Strictly monotonic, and latency is the only variable: the slowest seat is the
+fool in more than half of all games, the fastest in one in ten.
+
+That is an upper bound, though, not the answer: those clients pick uniformly
+from the legal menu, which is the policy class the sweep above shows speed
+helps most. The `thinker` tier is the same client with `handwritten_prod`
+choosing instead of a coin - the one roster brain that is SOUND on a masked
+view, since it reads only its own hand, the table, and counts (`hand_count`,
+`deck_count`, `discard_pile_length`, `has_flipped`), every one of which
+`state_put` preserves exactly. The belief bots would be reading `{0,1}`
+placeholders where the deck and the other hands should be.
+
+Same wire, same rotations, only the policy differs:
+
+```
+                     thinker (a real brain)      wellbehaved (random)
+np=8, expected 0.125
+    50ms             0.100 (-1.4)                0.016 (-5.9)
+   243ms             0.103 (-1.2)                0.078 (-2.5)
+   697ms             0.131 (+0.3)                0.138 (+0.7)
+  2000ms             0.181 (+3.0)                0.409 (+15.4)
+```
+
+**A real brain cuts the latency penalty by roughly four to five times, and does
+not erase it.** The shape changes too: for `thinker` only the slowest rung is
+significant (+3.8 at np=6, +3.0 at np=8), so being *slower* costs nothing and
+being genuinely *slow* costs something, while `random` is punished all the way
+along the ladder. At two players `thinker` is dead flat, 0.500/0.500.
+
+Worth noting against the bot sweep, where `handwritten` was flat everywhere:
+the same policy is flat as a server-side bot and mildly penalised as a
+networked client. The likely reason is that a client pays a round trip per move
+and can act only once per wake, where `bot_drive` bundles a cycle in place -
+plausible, and not something these runs prove.
+
+## determinism
+
+Same seed plus same code gives the same run, event for event. Every stream is
+its own `u64` (`src/rng.c`): the world's, each client's. Nothing here touches
+a socket, a clock, or a file.
