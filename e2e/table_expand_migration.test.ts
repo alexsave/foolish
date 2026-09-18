@@ -96,7 +96,12 @@ const GOODS_LOBBY = 'wgood1';
 const ORPHAN_WAITING = 'worp01';
 const ORPHAN_GAME_OVER = 'gorp01';
 const ORPHAN_PLAYING = 'plorp1';
-const ORPHANS = [ORPHAN_WAITING, ORPHAN_GAME_OVER, ORPHAN_PLAYING];
+// The row the first hosted deploy actually died on: a lobby with BOTH bot seats
+// dead. Resolving one rewrites games.players, which is what the bridge trigger
+// fires on, and its re-derivation then met the seat still waiting its turn. One
+// orphan per row never showed it.
+const ORPHAN_WAITING_TWO = 'worp04';
+const ORPHANS = [ORPHAN_WAITING, ORPHAN_GAME_OVER, ORPHAN_PLAYING, ORPHAN_WAITING_TWO];
 const DEAD_CORDITE_MAX = '00000000-0000-4000-8000-0000000000c2';
 
 interface JsonSeat { player_id: string; name: string; is_ai: boolean; status: string }
@@ -224,6 +229,16 @@ async function assertOrphansResolved(q: Queryable, label: string): Promise<void>
         `${label}: the abandoned lobby dropped the seat whose bot no longer exists`);
     assert.deepEqual(await handsOf(ORPHAN_WAITING), [CORDITE_BOT],
         `${label}: and its bot_hands row went with it, the surviving bot's left alone`);
+
+    // The two-dead-seat lobby: BOTH go, and the human is left alone. This is the
+    // row that made the first hosted deploy raise, because resolving the first
+    // seat fired the bridge trigger over a row that still held the second.
+    const lobby2 = await row(ORPHAN_WAITING_TWO);
+    assert.equal(lobby2.status, 'waiting');
+    assert.deepEqual(lobby2.players.map((p) => p.player_id), [DMITRY],
+        `${label}: the lobby with two dead bot seats dropped both`);
+    assert.deepEqual(await handsOf(ORPHAN_WAITING_TWO), [],
+        `${label}: and neither left a bot_hands row behind`);
 
     // game_over: the seat, its name and its place stay; only the brain behind it changes.
     const finished = await row(ORPHAN_GAME_OVER);

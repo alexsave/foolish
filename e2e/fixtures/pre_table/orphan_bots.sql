@@ -17,7 +17,8 @@
 INSERT INTO public.bots (id, nickname, strategy_key, created_at, updated_at) VALUES
   ('00000000-0000-4000-8000-0000000000c1', '%Champion 1',    'champion',    '2026-09-17 00:00:00', '2026-09-17 00:00:00'),
   ('00000000-0000-4000-8000-0000000000e3', '%Espresso 3',    'espresso',    '2026-09-17 00:00:00', '2026-09-17 00:00:00'),
-  ('00000000-0000-4000-8000-0000000000c2', '%Cordite Max 2', 'semtex_max',  '2026-09-17 00:00:00', '2026-09-17 00:00:00');
+  ('00000000-0000-4000-8000-0000000000c2', '%Cordite Max 2', 'semtex_max',  '2026-09-17 00:00:00', '2026-09-17 00:00:00'),
+  ('00000000-0000-4000-8000-0000000000d1', '%One Card 2',    'one_card',    '2026-09-17 00:00:00', '2026-09-17 00:00:00');
 
 -- waiting: the 3-seat lobby (a human and two bots), its second bot retired.
 INSERT INTO public.games (id, name, deck_length, discard_pile_length, flipped, players, status, power_suit,
@@ -26,6 +27,23 @@ INSERT INTO public.games (id, name, deck_length, discard_pile_length, flipped, p
 SELECT 'worp01', name, deck_length, discard_pile_length, flipped,
        jsonb_set(jsonb_set(players, '{2,player_id}', '"00000000-0000-4000-8000-0000000000c1"'),
                  '{2,name}', '"%Champion 1"'),
+       status, power_suit, first_attacker, defender, table_battles, elimination_order, good_timestamp, good_players,
+       state, game_seed, logs_packed, version, round_epoch, created_at, updated_at
+FROM public.games WHERE id = '779adf';
+
+-- waiting, BOTH bot seats retired. This is the row that broke the first deploy
+-- of this migration on hosted (game 0370d0 seated %One Card 2 and %Champion 1):
+-- resolving one seat rewrites games.players, which is what the bridge trigger
+-- fires on, and the re-derivation then met the seat still waiting its turn.
+INSERT INTO public.games (id, name, deck_length, discard_pile_length, flipped, players, status, power_suit,
+                          first_attacker, defender, table_battles, elimination_order, good_timestamp, good_players,
+                          state, game_seed, logs_packed, version, round_epoch, created_at, updated_at)
+SELECT 'worp04', name, deck_length, discard_pile_length, flipped,
+       jsonb_set(jsonb_set(
+         jsonb_set(jsonb_set(players, '{1,player_id}', '"00000000-0000-4000-8000-0000000000d1"'),
+                   '{1,name}', '"%One Card 2"'),
+         '{2,player_id}', '"00000000-0000-4000-8000-0000000000c1"'),
+         '{2,name}', '"%Champion 1"'),
        status, power_suit, first_attacker, defender, table_battles, elimination_order, good_timestamp, good_players,
        state, game_seed, logs_packed, version, round_epoch, created_at, updated_at
 FROM public.games WHERE id = '779adf';
@@ -65,4 +83,4 @@ INSERT INTO public.bot_hands (game_id, bot_id, joined_at, created_at, updated_at
 
 -- And the retirement itself: the bots go, their bot_hands rows cascade with
 -- them, and the seats in games.players are left naming nothing.
-DELETE FROM public.bots WHERE strategy_key IN ('champion', 'espresso', 'semtex_max');
+DELETE FROM public.bots WHERE strategy_key IN ('champion', 'espresso', 'semtex_max', 'one_card');

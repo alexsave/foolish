@@ -305,6 +305,15 @@ CREATE TRIGGER games_legacy_bridge
 -- and stamping every row now would make every abandoned game look live.
 -- `version` is left alone too: nothing a client or a CAS holds changes meaning.
 ALTER TABLE games DISABLE TRIGGER update_games_updated_at;
+-- AND the bridge, across the pre-pass only. The pre-pass rewrites games.players,
+-- which is exactly what the bridge fires on, so it would re-derive the roster
+-- from a HALF-resolved row: a lobby with two dead bot seats raises on the second
+-- while the first is being dropped, which is how the first deploy of this
+-- migration failed on hosted. Nothing is lost by holding it off - 4.2 below
+-- rewrites roster, needs_bots and the lobby state for EVERY row a moment later,
+-- which is all the bridge would have computed. It goes back on before section 5,
+-- so the legacy writers still derive their own blobs afterwards.
+ALTER TABLE games DISABLE TRIGGER games_legacy_bridge;
 
 -- 4.1 THE PRE-PASS: bot seats whose bots row is gone.
 --
@@ -419,6 +428,7 @@ UPDATE games SET
   table_battles = '[]', elimination_order = '[]', good_players = '[]', good_timestamp = NULL
 WHERE status = 'waiting';
 
+ALTER TABLE games ENABLE TRIGGER games_legacy_bridge;
 ALTER TABLE games ENABLE TRIGGER update_games_updated_at;
 
 -- ---------------------------------------------------------------------------
