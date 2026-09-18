@@ -854,11 +854,12 @@ One merge carrying all three migrations would therefore apply the expand, the co
 
 So the branch ships as two pull requests:
 
-- **Deploy 1** is this branch without `20260918120000_table_contract.sql` and `20260918130000_table_bytea.sql`, with `seed.sql` at the end state of the expand migration.
+- **Deploy 1** is the branch without `20260918120000_table_contract.sql` and `20260918130000_table_bytea.sql`, with `seed.sql` at the end state of the expand migration.
   Merging it applies 4a and deploys the 4b functions in one workflow run, in that order, which is steps 1 and 2 of the deploy order above.
   The functions call the final `commit_table` and `create_table` signature, which 4a creates.
 - **Deploy 2** is the two migrations, `seed.sql` rewritten to the final schema, and the tests that assert the contracted and BYTEA schema (`e2e/table_contract_migration.test.ts`, `e2e/table_bytea_migration.test.ts`, and the `db_grants`, `db_migration_grants`, `packed_review_gaps`, `security_hidden_info`, `table_fixture`, `table_db` and blob-column assertions that follow from them).
   It is merged only after deploy 1 is live and verified, which is steps 3 and 4.
+  It is the commit on top of deploy 1's, so the two together are the branch as it was reviewed.
 
 `e2e/db_migration_grants.test.ts`'s "seed.sql and the migrations build the same schema public, object for object" is what holds each of the two states honest: on deploy 1 it compares the chain through 4a against `seed.sql` at the same point.
 

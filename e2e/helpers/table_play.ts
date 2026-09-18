@@ -80,7 +80,7 @@ export async function readTable(gameId: string): Promise<TableState | null> {
     return {
         ...residentBoard(gameId, state, roster),
         version: Number(r.version), roundEpoch: Number(r.round_epoch), statusColumn: r.status, needsBotsColumn: r.needs_bots,
-        gameSeed: r.game_seed, logsPacked: r.logs_packed,
+        gameSeed: r.game_seed, logsPacked: r.logs_packed === null ? null : r.logs_packed.replace(/^\\x/, ''),
     };
 }
 
