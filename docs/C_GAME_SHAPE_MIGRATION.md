@@ -1816,3 +1816,102 @@ Three findings that reproduce at the branch point (54078863) and are therefore p
 3. **The Good tap's staged bubble takes about 3.3 s to surface Send.**
 
 Also seen, not conclusive: hand ARRAY order differed between two fresh installs (Q 10 8 K vs Q 8 10 K), which is adjacent to the known hand-order divergence.
+
+## Cleanup as built (2026-09-17)
+
+A repo-hygiene pass ran on this branch: stray files, one-line modules folded into their callers, and the question of whether the SQL migration history can collapse into `seed.sql`.
+The migration half is recorded here because it is the half with a hosted database on the other end of it.
+
+### The question
+
+Make `seed.sql` the single source of truth for a fresh database, collapse the migration history to ONE baseline whose end state is identical to it, and repair the hosted history so the collapsed versions are not re-run.
+
+### The equivalence, proven
+
+The premise was checked first, mechanically, because everything else depends on it.
+
+Three databases were built on one Postgres, each after the same platform shim (`e2e/schema.sql`, Supabase's `ALTER DEFAULT PRIVILEGES` grants, and a `cron` / `net` / `vault` stub so the two pg_cron migrations apply on a vanilla server; none of those objects live in schema `public`, which is the only schema compared):
+
+- **A**: every migration in `server/impls/supabase/migrations/`, in order, from scratch.
+  This is possible now that the baseline is real schema rather than the old empty placeholder.
+- **B**: `seed.sql`.
+- **C**: `e2e/fixtures/hosted_schema_pre_20260807120000.sql` plus every migration from `20260807120000` on, which is the path `e2e/db_migration_grants.test.ts` builds and the path hosted actually went through.
+
+Each was reduced to an order-insensitive catalog snapshot of schema `public`: columns with types, nullability and defaults; constraints; indexes; triggers; policies; RLS flags; functions with `pg_get_functiondef` hashed after comments and whitespace are folded away; enum values in order; every table, column, function and sequence privilege for `anon`, `authenticated`, `service_role` and `PUBLIC`; the realtime publication; and every catalog comment.
+1,390 items each.
+
+```
+psql -d <db> -f catalog.sql > cat_<db>.txt      # the query is now PUBLIC_CATALOG in e2e/db_migration_grants.test.ts
+diff -u cat_a.txt cat_c.txt                     # EMPTY: from-scratch chain == frozen fixture + replay
+diff -u cat_a.txt cat_b.txt                     # six rows, all of them comments (below)
+pg_dump --schema-only --no-owner --schema=public # same result, plus physical column order
+```
+
+A and C are byte-identical, so the two ways of building the migration chain agree.
+A and B differed in exactly six things, every one of them a catalog COMMENT the migrations store and `seed.sql` did not: the `player_hands` and `bot_hands` table comments from `20260906120000`, and the `games.state`, `games.roster`, `games.needs_bots` and `games.logs_packed` column comments from `20260917140000` and `20260918130000`.
+`seed.sql` had the same words as `--` line comments, which reach nothing but `seed.sql`.
+Those are now `COMMENT` statements and the two paths are equal.
+
+The `pg_dump` diff shows one further difference the catalog comparison deliberately ignores: physical column ORDER in `games` and `user_elo_ratings`.
+The chain grew them a column at a time, `seed.sql` declares them in the order of 3.1.
+Nothing reads a column by position (PostgREST answers named JSON, every server query names its columns), and that divergence already exists today between hosted and every local database, so it is excluded from the comparison with the reason written down rather than churned away.
+
+This is now a standing gate, not a one-off: `e2e/db_migration_grants.test.ts` gained "seed.sql and the migrations build the same schema public, object for object", which runs the same query against both databases it already builds.
+A mutation that comments out `idx_games_bot_scan` in `seed.sql` turns it red and names the index.
+
+### The collapse itself: not now, and the evidence
+
+**It must not happen before this branch is deployed, and it should not happen after either.**
+
+**1. The branch's six migrations are undeployed, and their whole point is that they run in three separate deploys.**
+`origin/main`'s newest migration is `20260906120000`; this branch adds `20260917000000` (the grant relock), `20260917120000` and `20260917130000` (realtime), `20260917140000` (4a expand), `20260918120000` (4c contract) and `20260918130000` (BYTEA).
+Section 3.4 and the Phase 4c deploy order require 4a on hosted, THEN the edge functions, THEN 4c and BYTEA, because a single migration that drops `players` breaks every running old function for the length of the function deploy.
+A collapsed baseline is a file hosted is TOLD is already applied.
+Applying that idea here means 4a, 4c and the BYTEA conversion never run on hosted at all: the live database keeps its JSONB columns and has no `roster`, while the 4b functions that only know `commit_table` go live against it.
+That is the outage the three-deploy order exists to prevent.
+The collapse cannot even be considered until `20260918130000` is recorded as applied on hosted.
+
+**2. Even for the 32 migrations hosted has already applied, `supabase db push` refuses, and the repair is the opposite of the one assumed.**
+Measured, not remembered.
+A throwaway database was given only `supabase_migrations.schema_migrations` with all 36 versions recorded, so no schema SQL ran, and the CLI this repo pins (2.116.0, the version `deploy.yml` installs) was pointed at it:
+
+```
+supabase db push --db-url <url> --dry-run --workdir server/impls
+```
+
+With the history intact: `{"upToDate":true,"dryRun":true,...,"message":"Remote database is up to date."}`, exit 0.
+With every file but the baseline moved aside: `LegacyDbPushMissingLocalError`, "Remote migration versions not found in local migrations directory", exit 1.
+The CLI's own suggested fix is `supabase migration repair --status reverted <35 versions>`, which DELETES the tracking rows, not `--status applied`, which inserts them.
+`deploy.yml` runs `supabase db push --linked --yes` before it deploys functions, so the next merge to main would stop at the migration step and deploy nothing.
+This is the same failure the July 2026 migration-drift episode produced, from the other direction.
+
+**3. The collapse would gut the test that exists because these two paths drifted.**
+`e2e/db_migration_grants.test.ts` replays from `20260807120000` over a frozen hosted schema precisely because `20260906120000` dropped and recreated `commit_game` without repeating `20260807120000`'s lockdown, so anyone holding the public anon key could rewrite any game, and `db_grants.test.ts` stayed green the whole time because it reads `seed.sql`.
+Collapsing deletes exactly that pair of migrations.
+What the test replays after a collapse would be `seed.sql` compared against itself, which is a tautology, and the regression class it guards is the class the six undeployed migrations belong to.
+
+### What was done instead
+
+The benefit the collapse was after is a single, readable schema file that a reviewer can trust.
+`seed.sql` already is that file, and it is now mechanically held to the migration chain object for object on every run.
+The history stays, because it is the only record of how a live database holding real games came to be, and because `db push` needs it.
+
+### If the owner still wants the collapse later
+
+Only after `20260918130000_table_bytea.sql` is applied on hosted and Phase 4c's deploy order is complete, and as its own PR that touches nothing else:
+
+1. Read-only first: `SELECT version FROM supabase_migrations.schema_migrations ORDER BY 1;` on hosted, and confirm the last row is `20260918130000`.
+2. Rewrite `20250628051540_remote_baseline.sql` to hold the end state (the current `seed.sql`, minus its `DROP ... IF EXISTS` preamble), delete the other 35 files, and keep the baseline's version number so hosted still recognises it.
+3. Prove it with the gate above before touching hosted: the new one-file chain and `seed.sql` must produce an empty catalog diff, and `e2e/db_migration_grants.test.ts` must be repointed at a frozen schema captured AFTER the collapse, or retired with its security scenarios moved into `db_grants.test.ts`.
+4. On hosted, once: `supabase migration repair --status reverted <the 35 collapsed versions>` (the CLI prints the exact list), then `supabase db push --dry-run` must answer `{"upToDate":true}` before any real push.
+5. `supabase db push --dry-run` from a clean checkout of main, as a final check that CI will not fail on the next merge.
+
+Step 4 is `--status reverted`, not `--status applied`: the rows being removed are ones whose files no longer exist.
+`--status applied` would be right only for a NEW baseline version hosted has never seen, which is a different and worse shape, because it leaves 35 stale rows behind.
+
+### The rest of the pass
+
+Deleted: `cirun.txt` and `multisuggestion.txt` at the repo root (one-off dumps, no reader), and `server/api/common/replay/core.ts` (one constant, one importer, folded into `e2e/tutorial_game.test.ts`).
+Also removed: `animationUtils.getTableCards`, a synonym for `state/view.tableCards`, and the `dotenv` devDependency, which nothing imported.
+`RECONCILE_GRACE_MS` moved from `src/constants/constants.ts` into `ServerContext.tsx` beside its one reader.
+Kept, with reasons in the commits: `IMG_7452.PNG` and `IMG_7453.PNG`, which are the only copy of the app icon's source art and now live at `ios/Tools/icon-source/`; `src/wasm/msgKernel.ts`, the client-bundle boundary; `seatName.ts`, `animationUtils.ts` and `tutorialGame.ts`, which all have several callers; and `docs/review-shots`, `docs/review-shots-2` and `ios/docs/review_2026-07-25`, each of which its review notes embed.
