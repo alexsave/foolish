@@ -29,5 +29,11 @@ clang -O3 -Isrc -DCD_TT_BITS=20 -DOG_EXPLAIN_BUILD -DFOOLISH_ORACLE_BUILD \
   tools/endgame_retro/find_crawl.c <core-minus-cordite_sim> -lm -o build/find_crawl
 ./build/find_crawl <seed_start> <count> <max_cards> <min_moves>   # e.g. 1 400 10 3
 ./build/verify_crawl <seed> <ply>     # confirm solver plays the win, MC loses
-./build/dump_game    <seed> > moves.json   # then TS: drive + encodeReplayV6 -> URL
+./build/dump_game    <seed> > moves.json   # the moves; see below for turning one into a URL
 ```
+`encode_replay.mjs` used to turn that `moves.json` into a share URL. It is gone: five
+of its six imports named modules that A10 and the kernel lift deleted, nothing called
+it, and the round trip it existed for no longer needs it. A recorded game is reached
+from its v6 code directly now, with no deal seed and no re-drive, through
+`replay_steps_board_v6` / `replay_steps_memory_v6` (`c/src/replay_steps.h`) - which is
+also how `build/cnitro_analyse --code=<v6 code>` reads a game.
