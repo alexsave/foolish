@@ -225,22 +225,34 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
 
   # ---- watchOS companion (docs/WATCHOS_APP_PLAN.md) ----------------------
-  # W1 SCAFFOLD ONLY. Reserves the target + its registered bundle id
-  # (cards.foolish.app.watchkitapp), buildable on the watch simulator, so the
-  # app record and signing have a home. Deliberately standalone:
-  #   - does NOT depend on FoolishKit yet: FoolishKit has no watchOS destination
-  #     and vendor/Foolish.xcframework has no watchOS slice (that is the next
-  #     watch step). Adding a broken cross-platform link here would fail the
-  #     build, so the dependency is omitted until the engine is ported.
-  #   - is NOT embedded in the host Foolish app yet, so the iOS app + iMessage
-  #     extension builds are entirely unaffected. To BUNDLE it later, add
-  #     `- target: WatchFoolish` (embed: true) to Foolish's dependencies.
+  # PARKED, AND IT DOES NOT COMPILE. Read ios/WatchUI/README.md before touching
+  # anything here - that file is the whole story, and this comment is only the
+  # build-system half of it.
+  #
+  # W1 reserved the target and its registered bundle id
+  # (cards.foolish.app.watchkitapp) so the app record and signing have a home.
+  # bf351671 then landed the finished Option H screen design into WatchUI/ as
+  # source, deliberately ahead of the engine that runs it. That engine still is
+  # not there, so:
+  #   - the target has NO dependencies. FoolishKit has no watchOS destination and
+  #     vendor/*.xcframework has no watchOS slice, so WatchGame.swift cannot see
+  #     Card / Move / GameView / LocalGame and `xcodebuild -scheme WatchFoolish`
+  #     FAILS. That is the known state, not a regression. Adding a broken
+  #     cross-platform link here would not fix it either.
+  #   - nothing depends on this target and no CI job builds it. The iOS job
+  #     builds FoolishMessagesApp plus the two test schemes, and the rig builds
+  #     FoolishMessagesApp, so iOS and iMessage are untouched by it.
+  #   - it is NOT embedded in the host Foolish app. To BUNDLE it once it builds,
+  #     add `- target: WatchFoolish` (embed: true) to Foolish's dependencies.
   # Independent-capable via WKRunsIndependentlyOfCompanionApp (WatchUI/Info.plist).
   WatchFoolish:
     type: application
     platform: watchOS
     sources:
       - path: WatchUI
+        # The parked-state note is documentation, not an app resource.
+        excludes:
+          - README.md
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.app.watchkitapp

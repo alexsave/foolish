@@ -1,16 +1,27 @@
 # Foolish on the wrist — 40 mm watchOS layout study
 
+> **Status: Option H was built.** It is the code in `ios/WatchUI/` (landed as
+> source in `bf351671`). Start at **§4.6 and §4.6.1 (as built)**, which override
+> the earlier text wherever they disagree - the mocks and the G spec were both
+> written before the screen existed.
+> The client does **not currently compile**; see `ios/WatchUI/README.md` for
+> exactly what rotted under it and what reviving it costs.
+
 Deliverables:
 
-- **`docs/watchos-layout.html`** — the canonical mockups: every screen state as
+- **`docs/watchos-layout.html`** — the mockups: every screen state as
   HTML/CSS/JS at native watch pixels, viewable at true physical size (with a
   monitor-calibration control), a 10 mm-finger overlay, a 2×3 tap-zone
   overlay, and five live crown/tap demos. Eight design options (A–H) with
-  per-element rationale; **Option H (§8) is the final layout**.
-- **`docs/WATCHOS_SPEC.md`** — the implementation handoff: the final Option H
-  layout as a self-contained SwiftUI spec (points, decision tables,
-  FoolishKit integration, acceptance checklist). **Give the implementor that
-  file.**
+  per-element rationale; Option H (§8) is the one that was built. Useful for
+  the states, but **not canonical for H any more** - §4.6.1 lists where the
+  built screen departs from these frames.
+- **`docs/WATCHOS_SPEC.md`** — the pre-build Option H handoff (points, decision
+  tables, acceptance checklist). Written before the screen existed, so its
+  FoolishKit integration section names paths that have since moved
+  (`ios/sdk/swift/`, `ios/FoolishKit/Engine/`, `ios/FoolishKit/Net/`). Still
+  the reference for the action decision table, haptics and notifications;
+  **§4.6.1 below wins on layout.**
 - **This doc** — the verified rules (with citations), the Apple HIG
   constraints (with quotes), the design reviews and their engine verdicts,
   and ASCII reference frames.
@@ -27,12 +38,15 @@ How this converged, in four rounds:
    swipe-paged table, terse verbs. A/B/C were confirmed illegible at real
    size; D's notifications survive.
 5. **Owner reviews of G against the running simulator → Option H** ("All
-   vertical") — **the final layout.** Single fisheye hand representation
-   anchored bottom-right (three small neighbors stacked above), table as a
-   vertically-centered list (scrolls past five rows), gray ALL-CAPS caption
-   verbs instead of pills (ATTACK · GOOD · PICKUP · COVER · PASS ·
-   COVER/PASS), zero horizontal gestures, roster behind a seat-strip tap.
-   Handoff: `docs/WATCHOS_SPEC.md`.
+   vertical") — **the layout that was built.** Single fisheye hand
+   representation anchored bottom-right (three small neighbors stacked above),
+   table as a vertically-centered list that scrolls once it overflows, gray
+   ALL-CAPS caption verbs instead of pills (ATTACK · GOOD · PICKUP · COVER ·
+   PASS · COVER/PASS), and the roster one page to the right, reachable by a
+   swipe or by tapping the seat strip.
+6. **Building it moved nine more things** — recorded in §4.6.1. Notably the
+   "zero horizontal gestures" claim in round 5 did not survive owner review;
+   the root is a two-page pager again.
 
 ---
 
@@ -161,7 +175,7 @@ Zones top-to-bottom: status (24 px) · opponent counts (25 px, shield boxed) ·
 pair grid (2×3, look-zone) · focus card + label column (the touch zone) ·
 chip strip + ✓ (look-zone + terminal detent) · page dots.
 
-## 4.5 · Option G — "First person, refined" (ships)
+## 4.5 · Option G — "First person, refined" (superseded by H)
 
 F's architecture, twice refined against the owner's running 40 mm simulator
 build (measurements taken from its screenshot):
@@ -195,7 +209,7 @@ build (measurements taken from its screenshot):
   glance** (icon · FOOLISH · title) for the wrist-raise moment.
 - **One card per action** — multi-card pass stays web-only (`game.c:759`).
 
-## 4.6 · Option H — "All vertical" (alternative, under evaluation)
+## 4.6 · Option H — "All vertical" (**built** — `ios/WatchUI/`)
 
 Owner-directed variant of G: every horizontally-movable thing rotated
 vertical, and the double hand display removed.
@@ -227,6 +241,184 @@ hand representation with a physical crown-to-lane mapping; G has a bigger
 focused card (56 vs 42 pt) and bigger table glyphs (31 vs 19 pt), and is
 simpler to build (no fisheye, no region-scoped scroll). Mocked as H1–H5 +
 live demo in the HTML (§8).
+
+### 4.6.1 · As built — where the shipped code departs from the mock
+
+H is the watch client (`ios/WatchUI/`, replacing G's TablePager / FocusSlot /
+ChipStrip / pill). Nine owner calls made during the build, each of which the
+mocks do **not** show:
+
+1. **The fisheye window is ±2, the focus is ~36 pt, and ±2 is drawn at the ±1
+   size** — the ring is graded by *opacity alone* (1.0 / 0.9 / 0.45), not by
+   size. The mock shrank each ring (v1: 18 pt then 12 pt; v2: dropped ±2
+   entirely), which made the outer items read as debris. A 42 pt focus cannot
+   fit a ±2 window on a 197 pt face at all — v1 tried and its +2-below fell off
+   the screen. At ~36 pt the window fits with only the bottom ±2 clipping a few
+   pt on the face's edge, which doubles as the lane's "more below" cue.
+   *(The §4.6 bullet above still describes the v1 ±2 window; v2 shrank it to ±1
+   in the HTML but never updated the prose. ±2 is the shipped answer either
+   way.)*
+2. **The verb is gray, uppercase, plain system SF, and 7 pt** — the same size
+   as the header's column labels; `WFont.caption` is the single token for every
+   chrome word in the app, table and chooser alike. The mock colour-coded each
+   verb (gold/blue/green/red) in a custom rounded face at ~10.5 pt. Gray +
+   system type matches the platform and lets the lane, not the caption, carry
+   colour. It sits **directly under the focused card** (y ≈ 158 pt), which is
+   why the lane's down-offsets are larger than its up-offsets: the caption
+   lives in that gap.
+3. **The table list is centred** in its column until it overflows, then it
+   scrolls (with the edge fades). The mock always top-aligns; a one-pair table
+   clinging to the top of the column reads as a bug. Its glyphs and the ▸ are
+   **larger** than the mock's (17 pt / 13 pt), which costs a row: **four** are
+   visible, not v2's five — i.e. back to what §4.6 asked for originally.
+   A beaten pair recedes by **opacity alone** — G's spec desaturates it as well,
+   but that throws away the suit colour, which is the fastest thing you read a
+   card by, and you can still be thrown more of that rank.
+   Cards **arrive from the direction the play came from**: an attack rises from
+   the bottom, a cover drops from the top. They **leave** on a short fade, NOT
+   the deal spring — a pickup moves those very cards into your hand, so a slow
+   exit paints the same card on the table and in the lane at once, a state the
+   single 52-card deck makes impossible (`game.c:305-316`).
+4. **The chooser is a row of captioned choices** — no tiles, no prompt string,
+   no receiver name. Each item is a bare icon that IS its own button with one
+   word under it: a cover target renders as its glyph captioned `COVER`; pass
+   renders as a blue **↑** captioned `PASS`. (Icons shrink from 30→21 pt past
+   three choices — a trump can cover several same-rank attacks.) It only ever
+   opens for genuinely ambiguous actions: ≥2 cover targets, or cover+pass.
+5. **Arrows carry the two "where do the cards go" actions.** The defender's
+   lane terminal is a red **↓** (pickup — they come to you), pairing with the
+   chooser's blue **↑** (pass — it goes onward). The mock's `+n` count next to
+   pickup is gone; the table list already shows what you'd be taking.
+6. **Dimming desaturates; it does not fade.** `Glyph(dim:)` used to drop the
+   whole card to 32 % opacity, which pulled the suit AND the rank knocked out
+   of it toward black together — measured on the sim, the suit fell to
+   luminance 78 against ink at ~5 and **the card lost its value**. It now holds
+   the suit at a mid gray (`WColor.suitDim` #6E6E73) with dark ink: separation
+   111 at the focus, 100 at ±1. This is the failure §2 already warned about for
+   the table pager ("desaturate toward gray, not pure opacity"); the shared
+   glyph component simply never did it. The lane's ±2 ring also went 0.45 →
+   0.6 opacity, since a dim card at 0.45 crushed the rank away again (50).
+7. **The InfoLine is two rows, not one**: a 7 pt label line
+   (`FLIP|TRUMP · DECK · DISCARD`) over a values row that is therefore just
+   *card icon · number · number*. The mock inlined SF-symbol deck/discard icons
+   next to each number; naming the columns once, in the header, retires them.
+   The first label switches FLIP → TRUMP when the flipped card is drawn.
+8. **Elimination is shown, not stated.** The roster's `out: …` footer line is
+   gone and the strikethrough with it; an escaped player's row simply goes dark
+   gray (`WColor.out`) at the bottom of the list.
+9. **"Zero horizontal gestures" did not survive contact.** The owner wants the
+   roster on a swipe as well as the strip tap, so the root is a horizontal
+   pager again (Table page 0, Roster page 1): drag right→left for the roster,
+   tap the seat strip for the same. **Still no page dots** — the face has no
+   room and the strip is the discoverable door. The roster is *not* a pushed
+   page. Opening on the table is load-bearing: it keeps watchOS's left-edge
+   back-swipe (pop to the games list) unshadowed, which putting the roster on
+   the left would have cost. So H's remaining gesture claims are: the crown is
+   never navigation, and the table list is the only drag.
+
+The seat-strip cell caps at 18 pt (G said 22) — that, plus the four-row table,
+is what pays for the two-row header without pushing the lane off the bottom.
+Everything on this face is within ~3 pt of overflowing; re-check the whole
+column before growing any of it.
+
+### 4.6.2 · Colour means state, and only state
+
+The strip and the roster share one colour function. **There is no "you" colour** —
+gold used to mean "you", which made it the one hue that said nothing about the
+game. You are marked by *weight* instead, which frees colour entirely:
+
+| colour | meaning |
+|---|---|
+| **red** | the opener, *while the bout is still waiting on their opening attack* |
+| **orange** | defender (and the shield) |
+| **green** | said GOOD — these counts are the vote tally |
+| **dark gray** | escaped |
+| **white** | everyone else |
+
+Red is **transient**: it clears to white the instant they attack, so it reads as
+"we're waiting on them", not as a permanent role. It is derived from public state
+(`firstAttacker` + an empty table) because the bridge deliberately masks
+`awaitingAttack` to the viewer's own seat (`c/ios/ios_api.c`).
+
+Precedence: out ▸ defender ▸ good ▸ opening ▸ white. Two of those can never
+actually collide — the defender can never say GOOD (`game.c:844`), and a seat
+that still owes the opening attack cannot have voted (`legal.c:377-384`).
+
+**Your seat is the digit's weight**: semibold, against regular for everyone else.
+That is deliberately a *short* step on SF's weight axis (2 stops); heavy-vs-light
+is 5 stops and reads as two different typefaces. Two dead ends got here, both
+worth not repeating:
+
+- *An underline.* When you are also the defender the shield wraps your seat and
+  its bottom tip lands exactly where the underline goes; at 8 seats that hid it
+  completely.
+- *An outline (solid you / hollow them).* **SwiftUI cannot stroke `Text`.** There
+  is no stroke modifier, and `AttributedString`'s `strokeWidth` is a UIKit
+  attribute that SwiftUI's `Text` ignores. The SwiftUI route is
+  [`textRenderer(_:)`](https://developer.apple.com/documentation/swiftui/view/textrenderer(_:)),
+  **watchOS 11+** — we target 10.0. (Note Apple's own docs disagree here: the
+  [`TextRenderer` protocol page](https://developer.apple.com/documentation/swiftui/textrenderer)
+  claims watchOS 10 / iOS 17, one major version early across every platform;
+  the modifier page's watchOS 11 is the one to trust, and it is the binding
+  constraint anyway.) CoreText *can* do it at watchOS 10 —
+  `CTFontCreatePathForGlyph` vends real glyph paths — and it was built and it
+  worked; it was dropped because a hairline outline is simply less legible than
+  weight at 12.5 pt, not because it was impossible.
+
+Nothing forces a deployment bump: the App Store's 28 Apr 2026 rule is about the
+**build SDK** (watchOS 26), not the minimum OS. Bumping to 11 would cost Series
+4, Series 5 and 1st-gen SE. Apple does not publish watchOS adoption figures.
+
+### 4.6.3 · Tuning — in Xcode, not in the app
+
+Every number above is a constant in `HTuning.swift`; no layout view holds a
+literal. `Previews.swift` renders the real screens on **static fixtures** — a
+fixed `GameView` plus a fixed legal menu, no kernel, no bots, no deal. Edit a
+number in `HTuning.swift` (or a fixture in `Previews.swift`), hit save, and the
+canvas redraws. That is the whole loop: **there is no tuning UI in the app**, and
+there should never be one.
+
+Why static: booting a real game in a preview is slow, non-deterministic, and
+fights the single-global C kernel — you get whatever the deal gives you instead
+of the state you wanted to look at. `WatchGame.init(preview:legal:)` is the seam
+(no LocalGame behind it); `Deal` in Previews.swift is a small builder — hands are
+strings like `"6h Ac 10s"`. Previews cover the 8-player table (attacker, all-dim,
+defending/pickup, empty, 7-pair scroll, 11-card hand, all-voted), heads-up, both
+chooser shapes, the roster (incl. escapees), the games list, and game over.
+
+### 4.6.4 · The bot, and pacing
+
+The watch plays **octogen** (`WatchGame.defaultStrategy`) — it was already in the
+offline roster (`c/ios/ios_api.c` ROSTER, built `-DCD_LEAFBOOK` so its endgame
+oracle is live); the watch simply never asked for it. LocalGame's thermal guard
+still downgrades seats to espresso on a hot device (§7.2), which is what makes an
+8-seat table of a heavy MC solver safe to ask for.
+
+**Bots move asynchronously to you**, as they do on the server. `LocalGame`'s
+drive loop used to stop the moment the human was an eligible actor — but Durak
+has no turn order for throw-ins (any non-defender, any time — `game.c:538`), so
+you and the bots are routinely eligible together. The loop therefore froze every
+bot until you played, which made GOOD feel like a "let the bots move" button. It
+should only stop when the human is the *sole* eligible actor (nothing can change
+until you move anyway). That change lives in the shared offline session, so the
+phone app gets it too.
+
+Because of that, **pacing is per-surface** (`LocalGame.botPacingMS`): the phone
+keeps the server's 600–1200 ms, the watch runs 1500–2600. Once bots stop waiting
+for you, an 8-seat table at phone pace rewrites itself faster than a wrist can
+read it.
+**Neither of those two LocalGame changes is on main** — they were never ported
+out of `claude/ios-redesign`, and `botPacingMS` does not exist on today's
+`sdk/swift/bots/LocalGame.swift`. See `ios/WatchUI/README.md`.
+
+**The lane's terminal item only exists when it acts.** The opener cannot say GOOD
+before attacking (`legal.c:377-384`), so during that window there is no ✓ in the
+lane at all — offering one advertises a move the kernel would refuse.
+
+Inspection flags (simulator has no Crown): `-table`/`-table4`/`-table8` deal a
+real offline game, `-focus N` parks the lane on item N, `-pairs`/`-pairs7`
+inject table rows (`-pairs7` overflows the list), `-roster` opens on the roster
+page, `-chooser` opens the overlay, `-over` opens the fool reveal.
 
 ## 5 · The other options (all kept in the HTML)
 

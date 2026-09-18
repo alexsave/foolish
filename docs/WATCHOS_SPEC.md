@@ -1,4 +1,16 @@
-# Foolish watchOS — implementation spec (final: Option H layout)
+# Foolish watchOS — implementation spec (Option H layout)
+
+> **This was written before the screen existed, and the screen has since been
+> built** - it is `ios/WatchUI/`, parked and not compiling
+> (`ios/WatchUI/README.md`).
+> Where this file and `docs/WATCHOS_LAYOUT.md` §4.6.1 (as built) disagree,
+> **§4.6.1 wins**: it records nine owner calls made during the build that no
+> mock or spec here shows.
+> §0's integration table is also out of date - `ios/sdk/swift/`,
+> `ios/FoolishKit/Engine/` and `ios/FoolishKit/Net/` are now `sdk/swift/`,
+> `sdk/swift/bots/` and `ios/FoolishNet/`.
+> What still holds here: the action decision table, the haptic vocabulary and
+> the notification anatomy.
 
 Audience: a SwiftUI developer building the watchOS client. This document is
 self-contained: you do not need the design history (that lives in
