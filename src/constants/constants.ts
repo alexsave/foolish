@@ -1,12 +1,13 @@
-import { ANIM_TIME_MS } from '@sdk/ts/gen/anim.bots.ts';
-
-export const WEBSITE_DOMAIN = 'foolish.cards';
-// How long a refused move waits for the pushes it was refused over before the page
-// loads the game (ServerContext reconcileAfter): two flights, time for a late push.
+// The product's domain, in the QR code the lobby shows and in the synthetic
+// address an anonymous account is registered under.
 //
-// DERIVED FROM THE KERNEL'S FLIGHT, not from a TypeScript copy of it. This file
-// used to hold `ANIMATION_TIME = 500` and every duration, gap and deadline in
-// the product was that one number; the flight itself is the kernel's
-// (c/src/anim_plan.h ANIM_TIME_MS, generated into sdk/ts/gen/anim.bots.ts), so
-// the coupling this comment relies on cannot silently come apart.
-export const RECONCILE_GRACE_MS = 2 * ANIM_TIME_MS;
+// The only thing left in this file. It used to hold `ANIMATION_TIME = 500`, from
+// which every duration, gap and deadline in the product was derived; Phase 9
+// moved the timing into the kernel (c/src/anim_plan.h, generated into
+// sdk/ts/gen/anim.bots.ts) and RECONCILE_GRACE_MS, the last thing built on it,
+// now lives beside its one caller in ServerContext.tsx.
+//
+// It stays a module of its own because e2e/lobby_add_bot.test.ts mocks this
+// exact path (`mock.module('../src/constants/constants.ts', ...)`) to point the
+// QR code at example.com.
+export const WEBSITE_DOMAIN = 'foolish.cards';

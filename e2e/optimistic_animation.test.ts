@@ -24,8 +24,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import type { ViewCard as Card } from '../src/state/view';
-import { getCardKey, getTableCards } from '../src/utils/animationUtils';
+import { tableCards, type ViewCard as Card } from '../src/state/view';
+import { getCardKey } from '../src/utils/animationUtils';
 import { animEventKey } from '../sdk/ts/wasm/bots.ts';
 import { staleOptimisticKeysOnTable } from '../src/state/optimisticAnimation';
 import { optimisticBoard } from '../src/state/clientBoards';
@@ -107,7 +107,7 @@ export function registerOptimisticValidation(): void {
         const mine = { suit: 0, value: 5 };
         const wire = encodeAction({ kind: 'attack', cards: [mine] });
         const optimistic = optimisticBoard(held, wire)!;
-        assert.ok(optimistic && getTableCards(optimistic).some((c) => getCardKey(c) === getCardKey(mine)), 'the card stands on the optimistic board');
+        assert.ok(optimistic && tableCards(optimistic).some((c) => getCardKey(c) === getCardKey(mine)), 'the card stands on the optimistic board');
         const key = animEventKey('attack_pass', mine, 'hand', 'table', optimistic.mySeat);
 
         // The server applies it and pushes Rival its confirmation.
@@ -121,7 +121,7 @@ export function registerOptimisticValidation(): void {
         assert.equal(confirming.seat, optimistic.mySeat, 'the push names the seat the tap keyed');
         assert.equal(animEventKey(confirming.type, confirming.cards![0], confirming.from_location!, confirming.to_location!, confirming.seat), key,
             'so the confirmation matches the optimistic key and is not animated again');
-        assert.deepEqual(staleOptimisticKeysOnTable(pending(key, mine), getTableCards(seq.game), seq.events.map((e) => ({ ...e }))), [],
+        assert.deepEqual(staleOptimisticKeysOnTable(pending(key, mine), tableCards(seq.game), seq.events.map((e) => ({ ...e }))), [],
             'and the version gate leaves it for that dedup');
         assert.deepEqual(seq.game.battles, optimistic.battles, 'the confirmed table is the optimistic one');
     });

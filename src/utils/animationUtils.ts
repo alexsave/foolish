@@ -1,7 +1,4 @@
-import { tableCards, type TableView, type ViewCard as Card } from "../state/view";
-
-export const getTableCards = (view: TableView): Card[] => tableCards(view);
-
+import { type ViewCard as Card } from "../state/view";
 
 export const cardsIntersection = (arr1: readonly Card[], arr2: readonly Card[]): Card[] => arr1.filter(card => arr2.some(c => c.suit === card.suit && c.value === card.value));
 

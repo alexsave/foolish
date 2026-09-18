@@ -24,7 +24,7 @@ import './harness.ts';
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { applySchema, resetDb, uuid, pgPool, broadcastLog } from './harness.ts';
-import type { ViewCard as Card } from '../src/state/view';
+import { tableCards, type ViewCard as Card } from '../src/state/view';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { fixture, PLAYING } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';
@@ -35,7 +35,7 @@ import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_
 import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
 import { resolveUnconfirmedAttackCovers } from '../src/state/optimisticConflicts';
 import { keepPending, optimisticBoard } from '../src/state/clientBoards';
-import { getTableCards, getCardKey } from '../src/utils/animationUtils';
+import { getCardKey } from '../src/utils/animationUtils';
 import { clientTable, type TableView } from '../sdk/ts/table/client_table.ts';
 import { fixtureTable } from './helpers/table_fixture.ts';
 import type { TableState } from './helpers/table_play.ts';
@@ -84,7 +84,7 @@ function heldBoard(t: TableState, seat: number): TableView {
     return view!;
 }
 
-const tableHas = (v: TableView, c: Card) => getTableCards(v).filter((x) => sameCard(x, c)).length;
+const tableHas = (v: TableView, c: Card) => tableCards(v).filter((x) => sameCard(x, c)).length;
 const handHas = (v: TableView, c: Card) => v.myHand.some((x) => sameCard(x, c));
 
 test('SCENARIO B: a card the defender picks up is NOT reverted to my hand', async () => {

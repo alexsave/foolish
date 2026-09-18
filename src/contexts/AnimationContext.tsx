@@ -7,10 +7,10 @@ import { validateActionWire } from '../utils/gameValidation';
 import { encodeAction } from '@sdk/ts/wire/awire.ts';
 import { clientTable } from '@sdk/ts/table/client_table.ts';
 import { pushToSequence } from '../state/pushSequence';
-import { covered, rulesOf, type TableView, type ViewCard } from '../state/view';
+import { covered, rulesOf, tableCards, type TableView, type ViewCard } from '../state/view';
 import { keepPending, lifted, optimisticBoard, returnedToHand, tableOf, turnedBoard, withdrawn } from '../state/clientBoards';
 import { base64ToBytes } from '@sdk/ts/wire/bytes.ts';
-import { getTableCards, cardsIntersection, getCardKeyOwner, getCardKey } from '../utils/animationUtils';
+import { cardsIntersection, getCardKeyOwner, getCardKey } from '../utils/animationUtils';
 import { animationFeed } from '../state/animationFeed';
 import { staleOptimisticKeysOnTable } from '../state/optimisticAnimation';
 import { resolveUnconfirmedAttackCovers, resolveConflictMotions, CONFLICT_DEST } from '../state/optimisticConflicts';
@@ -416,7 +416,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         // Check if server's final state already includes my optimistic cards
         // If so, they were accepted! Don't revert.
-        const serverTableCards = getTableCards(serverState);
+        const serverTableCards = tableCards(serverState);
 
 
         // Find MY optimistic cards (attacks, covers, pickups)
@@ -1417,7 +1417,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         }
 
         const game = games[game_id];
-        const allTableCards = getTableCards(game);
+        const allTableCards = tableCards(game);
 
         // One awire buffer for the gate + the POST body (see attack).
         const wire = encodeAction({ kind: 'pickup' });

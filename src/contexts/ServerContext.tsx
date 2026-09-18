@@ -3,7 +3,7 @@ import supabase from '../backend/Connector';
 import { useParams } from 'next/navigation';
 import { useAuth } from './AuthContext';
 import { MAX_PLAYERS } from '@api/core/constants.ts';
-import { RECONCILE_GRACE_MS } from '../constants/constants';
+import { ANIM_TIME_MS } from '@sdk/ts/gen/anim.bots.ts';
 import { optimisticOverlay } from '../state/optimisticOverlay';
 import { animationFeed } from '../state/animationFeed';
 import { holdPrivateChannel } from '../state/privateChannel';
@@ -33,6 +33,16 @@ const hexToBytes = (hex: string): Uint8Array => {
     for (let i = 0; i < out.length; i++) out[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16);
     return out;
 };
+
+// How long a refused move waits for the pushes it was refused over before
+// reconcileAfter loads the game: two flights, time for a late push.
+//
+// DERIVED FROM THE KERNEL'S FLIGHT, not from a TypeScript copy of it. This used
+// to be `ANIMATION_TIME = 500` in src/constants/constants.ts, and every
+// duration, gap and deadline in the product was that one number; the flight
+// itself is the kernel's (c/src/anim_plan.h ANIM_TIME_MS, generated into
+// sdk/ts/gen/anim.bots.ts), so the coupling cannot silently come apart.
+const RECONCILE_GRACE_MS = 2 * ANIM_TIME_MS;
 
 // Re-apply the local player's unconfirmed optimistic table cards onto an
 // authoritatively-loaded board (reconnect resync), so a just-played card doesn't

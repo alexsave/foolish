@@ -28,7 +28,20 @@ import { bigintToBytes } from '../server/api/common/replay/codec.ts';
 import { buildReplayFrames, REPLAY_STEP, ReplayFrame } from '../src/replay/frames.ts';
 import { TUTORIAL_MOVES_CODE, TUTORIAL_NAMES } from '../src/components/tutorialGame.ts';
 import { PLAYER_STATUS } from '../src/state/view.ts';
-import { FORMAT_VERSION_V6 } from '../server/api/common/replay/core.ts';
+
+// The ONE replay format: inline reveals, hidden-state-lossless, partial-game
+// (c/src/replay.h REPLAY_FORMAT_VERSION_V10,
+// docs/REPLAY_FORMAT6_HIDDEN_STATE.md). Was 6, then 7 (pass-mode bit), then 8
+// (forced-opening bit), and is now 10 for a reason that is not a wire change at
+// all: the bytes did not move, the deal order under them did. A code carrying
+// any other version is refused, never re-read.
+//
+// A hand-written number on purpose: this is the pin. The codec itself is the C
+// kernel's (c/src/replay.c, replay_steps.c) and hosts read a code through
+// bots.wasm, so reading the version from the kernel here would assert the
+// kernel against itself. Never change the wire format in one place: bump the
+// version in replay.h AND decide what happens to every code already cut.
+const FORMAT_VERSION_V6 = 10;
 
 if (!process.env.E2E_VERBOSE) {
     console.log = () => {};
