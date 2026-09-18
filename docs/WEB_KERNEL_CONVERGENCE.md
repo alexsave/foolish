@@ -227,6 +227,8 @@ It also fixes the Cover-button targeting to the kernel's rule.
 Cost: the menu-caching work in §3, and the behaviour change in §4.1.
 Do it after (1) and treat the cache as the design problem, not the shim.
 
+> **This one was attempted, on the same day, and parked. Read §6 before starting it.**
+
 **3. `fio_finish_rows`. 55 TS lines out, about 20 back, +129 gzip.**
 The finish order is currently derived in three places - `anim_finish_rows`, `calculateGameRankings`, and `WinScreen` - and the two TS copies already disagree with C on dedup.
 Cheapest new export in the report and it collapses a genuine three-way fork.
@@ -266,6 +268,64 @@ Exporting them would be growing the module for nothing.
 `move_stats.ts` + `pass_prob.ts` + `cardTracker.ts` = 2,315 lines reachable only from a dev tool.
 Deleting them removes four times more TypeScript than every kernel candidate in this report combined, at zero risk and zero wasm cost.
 It is not what was asked, but if the goal is less TS, it is the largest lever in the tree.
+
+## 6. Negative result: recommendation 2 was built, measured, and parked
+
+Recommendation 2 above is the one thing in this report that has already been tried.
+It was implemented the same day the report was written, measured, and deliberately not landed.
+The work survives unmerged on `claude/web-kernel-convergence-impl-20eljs-pr4`, tip `9d6887d8504586aa931f32d51919704f208b1241`.
+Do not start it again without reading this section, because the line-count case the recommendation rests on does not survive contact with the build.
+
+### The hypothesis
+
+Exporting `legal.c`'s `play_*` gesture rules to `bots.wasm` and pointing the web's five "what does this gesture mean" sites at them is a net deletion of TypeScript: about 146 lines out, about 50 lines of shim back, for about +887 gzip bytes of module growth.
+
+### The setup
+
+Four rules were exported and wrapped: `wasm_play_resolve`, `wasm_play_coverable`, `wasm_play_best_cover_target`, `wasm_play_can_say_good`.
+That is 100 lines of C in `c/wasm/wasm_api.c` and 2 lines of `-Wl,--export=` in `c/Makefile`.
+Three of the five call sites were then converted: `ActionButtons` (the good gate and the Cover button's target), `KeyboardInputHandler`, and `KeyboardPlayMode`.
+`DragContext.determineGameAction` (84 lines, the largest single site and most of the 146) was not converted, for the reason in the next paragraph.
+
+The blocker is that the `play_*` rules take a *published pair* - the menu the kernel enumerated for a seat, and the table it was enumerated on - and the web does not compute a legal-move menu client-side at all.
+It validates individual candidates through `guards.wasm` instead.
+So a new module, `src/wasm/playMenu.ts`, had to produce one: a redacted marshal of the `PersonalGame` into the kernel's `Game` shape (placeholder cards for every hand the client cannot see and for the deck), fed through `kernelMenuWire` -> `calculate_legal_moves`, memoised in a `WeakMap` keyed on the game object because `determineGameAction` runs on every frame of a drag and the enumeration is not something to do sixty times a second.
+That module is the cost the report did not price.
+
+### The measurement
+
+| | predicted | built |
+|---|---|---|
+| TS deleted at the call sites | 146 | 22 |
+| TS added at the call sites | - | 32 |
+| TS added as marshalling shim (`sdk/ts/wasm/bots.ts`) | about 50 | 151 |
+| TS added to produce the menu (`src/wasm/playMenu.ts`) | 0 | 73 |
+| **net TypeScript** | **about -96** | **+234** |
+| `bots.wasm.gz` | +887 | +2,116 (67,049 -> 69,165, +3.2%) |
+
+### Why it failed
+
+The rules are cheap, and they are correct.
+What is expensive is their *input*.
+A rule that reads nothing but its arguments is the right shape for a drag frame, and it is exactly what lets the same rule serve a SwiftUI render pass - but it pushes the job of assembling those arguments onto the caller, and on the web that job did not exist yet.
+The phone gets the menu for free because `MessageTurnController` already holds one; the browser does not.
+So the crossing costs a redacted marshal plus a cache per position before a single line of gesture logic is deleted, and it deletes less than the marshal costs.
+
+The report's 146-line figure also assumed all five sites converted.
+Four of the five are between 6 and 29 lines each, which is under the 40-line net-negative floor §3 sets for any candidate; only `DragContext` clears it, and `DragContext` is also the site whose DOM hit-test has to be threaded into the menu lookup.
+
+### What is worth keeping from it
+
+The exports themselves are sound and the proof is real.
+`e2e/play_board.test.ts` on that branch is 289 lines that walk real positions and assert the four rules agree with `calculateLegalMoves`, and it is mutation-checked.
+It caught a genuine pre-ship bug: the TS side spelled "no cover" as `0xff` (`engine.ts`'s `WIRE_NONE`) where `legal.h` uses `0xfe`, which makes `battle_is_uncovered` false everywhere, so the board silently answers "nothing is coverable".
+Anyone re-opening this question should start from that test rather than rewrite it.
+
+### What would change the verdict
+
+One thing only: the web computing a legal-move menu client-side for some other reason.
+If a menu already exists per position, `playMenu.ts` and its cache stop being this candidate's cost, the arithmetic collapses to the 151-line shim against the five call sites, and `DragContext` becomes convertible.
+Until then, recommendation 2 is priced wrong and recommendations 1 and 3 remain the ones worth taking.
 
 ## Appendix: how to reproduce the measurement
 
