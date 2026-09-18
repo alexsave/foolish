@@ -11,6 +11,8 @@
  * This builds that history on the rows the hosted database really held:
  *
  *   e2e/fixtures/pre_table/schema.sql + rows.sql   (captured from the pre-4a server)
+ *     + pre_blob_finished.sql                       (a finished game from before
+ *                                                    games.state existed)
  *     -> 20260917140000_table_expand.sql            (4a)
  *     -> kernel writes as 4b makes them             (a join taken over by
  *                                                    commit_table, a dealt row
@@ -27,6 +29,14 @@
  * The migration refuses to run while no row is owned by the kernel writers
  * (4b is not live, so today's functions still call commit_game) and while any
  * row lacks a blob. Both refusals are exercised in rolled-back transactions.
+ *
+ * One kind of row can never satisfy the second refusal: a game that reached
+ * game_over before games.state existed (20260707120000) has a JSONB record of
+ * itself and no blob, and 4a cannot synthesise one (it builds a lobby blob for
+ * WAITING rows only). The hosted database has 34 of them. The owner's call is
+ * to delete them, which the migration does before the refusal, exactly on
+ * `status = 'game_over' AND state IS NULL` - so a waiting or playing row
+ * without a blob still stops the deploy.
  * ========================================================================== */
 
 import './harness.ts';
@@ -68,6 +78,12 @@ const idOf = (key: string): string => {
 };
 
 const ALICE = 'dc3c32b8-9486-443b-943c-000000000000';
+
+// e2e/fixtures/pre_table/pre_blob_finished.sql: the finished game from before
+// games.state existed, and the snapshot rows of it and of its blob-carrying twin.
+const PRE_BLOB = 'prb001';
+const PRE_BLOB_SNAPSHOT = '00000000-0000-4000-8000-0000000000f2';
+const CONTROL_SNAPSHOT = '00000000-0000-4000-8000-0000000000f3';
 
 // The final games shape (docs/C_GAME_SHAPE_MIGRATION.md 3.1): column, type, nullable.
 const FINAL_COLUMNS = [
@@ -132,6 +148,7 @@ if (!process.env.VALIDATION_ONLY) {
         await applyPlatformShim();
         await pgPool.query(readFileSync(join(FIXTURE, 'schema.sql'), 'utf8'));
         await pgPool.query(rowsSql);
+        await pgPool.query(readFileSync(join(FIXTURE, 'pre_blob_finished.sql'), 'utf8'));
         await pgPool.query(readFileSync(join(MIGRATIONS, EXPAND), 'utf8'));
     });
 
@@ -171,7 +188,15 @@ if (!process.env.VALIDATION_ONLY) {
 
         const gens = (await pgPool.query('SELECT id, writer_gen FROM games WHERE writer_gen = 2 ORDER BY id')).rows.map((r) => r.id);
         assert.deepEqual(gens, [takenOver, dealtCommitted, created].sort(), 'exactly those rows are the kernel writers\'');
-        assert.ok(scenarios.size + 1 - gens.length >= 5, 'most rows are still the legacy writers\', untouched since 4a');
+        const total = (await pgPool.query('SELECT count(*)::int AS n FROM games')).rows[0].n as number;
+        assert.ok(total - gens.length >= 5, 'most rows are still the legacy writers\', untouched since 4a');
+    });
+
+    test('4a leaves a game that finished before games.state existed with a roster and no blob', async () => {
+        const { rows } = await pgPool.query(
+            `SELECT state, roster IS NOT NULL AS has_roster, status::text AS status, writer_gen FROM games WHERE id = $1`, [PRE_BLOB]);
+        assert.deepEqual(rows, [{ state: null, has_roster: true, status: 'game_over', writer_gen: 1 }],
+            '4a synthesises a lobby blob for WAITING rows only, so this one arrives at 4c with a NULL state');
     });
 
     test('4c refuses a row without a state or roster blob, naming it', async () => {
@@ -185,9 +210,10 @@ if (!process.env.VALIDATION_ONLY) {
         });
     });
 
-    test('4c applies: every row keeps its blobs, version, status and needs_bots, and C writes the same envelopes, which are the cached views', async () => {
-        before4c = await storedRows();
-        assert.equal(before4c.length, scenarios.size + 1, 'every captured game and the new table');
+    test('4c applies: every surviving row keeps its blobs, version, status and needs_bots, and C writes the same envelopes, which are the cached views', async () => {
+        const all = await storedRows();
+        assert.equal(all.length, scenarios.size + 2, 'every captured game, the pre-blob one and the new table');
+        before4c = all.filter((r) => r.id !== PRE_BLOB);
         for (const r of before4c) {
             envelopesBefore.set(r.id, envelopesOf(r));
             membersBefore.set(r.id, {
@@ -196,7 +222,7 @@ if (!process.env.VALIDATION_ONLY) {
                 views: await cachedViews(r.id),
             });
         }
-        const updatedAt = (await pgPool.query('SELECT id, updated_at FROM games ORDER BY id')).rows;
+        const updatedAt = (await pgPool.query('SELECT id, updated_at FROM games WHERE id <> $1 ORDER BY id', [PRE_BLOB])).rows;
 
         await pgPool.query(contractSql());
 
@@ -219,6 +245,33 @@ if (!process.env.VALIDATION_ONLY) {
         }
         assert.ok(compared >= 12 + 8, `every human seat and spectator of every game compared (${compared})`);
         process.stderr.write(`[table_contract] ${after.length} rows, ${compared} envelopes byte-equal to before 4c and to the cached views\n`);
+    });
+
+    test('4c deletes the pre-blob finished game and takes exactly the rows its foreign keys say', async () => {
+        const q = async (sql: string, p: unknown[] = []) => (await pgPool.query(sql, p)).rows;
+        assert.deepEqual(await q('SELECT id FROM games WHERE id = $1', [PRE_BLOB]), [],
+            'the game that never had a state blob is gone, so `state` can be NOT NULL');
+
+        // ON DELETE CASCADE: membership, chat and both view caches of a game
+        // nobody can open again.
+        for (const t of ['player_hands', 'bot_hands', 'chat_messages', 'player_views', 'spectator_views'])
+            assert.deepEqual(await q(`SELECT count(*)::int AS n FROM ${t} WHERE game_id = $1`, [PRE_BLOB]),
+                [{ n: 0 }], `${t} cascaded away with the game`);
+
+        // ON DELETE SET NULL: the replay outlives the game row. player_ids is
+        // both the read ACL and what match history queries on, so the game stays
+        // in its players' history and stays replayable.
+        assert.deepEqual(await q(
+            `SELECT game_id, player_ids, encode(moves, 'hex') AS moves FROM game_snapshots WHERE id = $1`, [PRE_BLOB_SNAPSHOT]),
+            [{ game_id: null, player_ids: [ALICE, 'bf8245d5-0270-4aca-8282-000000000001'], moves: '0102030405' }],
+            'the snapshot survives with its game_id cleared and its ACL intact');
+
+        // The finished game that DOES have a blob is not in the predicate.
+        const control = idOf('finished');
+        assert.deepEqual(await q('SELECT id, status::text AS status FROM games WHERE id = $1', [control]),
+            [{ id: control, status: 'game_over' }], 'a game_over row WITH a blob survives');
+        assert.deepEqual(await q('SELECT game_id FROM game_snapshots WHERE id = $1', [CONTROL_SNAPSHOT]),
+            [{ game_id: control }], 'and so does its replay, still pointing at it');
     });
 
     test('games is the final shape: the JSONB columns, writer_gen and name are gone, both blobs are NOT NULL', async () => {

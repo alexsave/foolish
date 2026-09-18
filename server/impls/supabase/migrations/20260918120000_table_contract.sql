@@ -20,7 +20,8 @@
 --
 -- WHAT THIS DOES
 --
--- 0. Refuses: no row owned by the kernel writers (4b not live), or any row
+-- 0. Refuses: no row owned by the kernel writers (4b not live). Then deletes the
+--    finished games that never had a state blob, and refuses any OTHER row
 --    without both blobs (nothing a 4a-or-later writer can leave).
 -- 1. The bridge goes: the games_legacy_bridge trigger and its function, and the
 --    SQL restatement of the kernel's byte layouts (legacy_roster_hex,
@@ -50,24 +51,74 @@
 --    this SQL never reached. What is left here is the leaderboard username.
 -- 7. The lockdown loop, as after every change to a definer function.
 --
--- No row's state, roster, version, status, needs_bots, round_epoch, seed, log or
--- updated_at changes (ALTER TABLE ... DROP COLUMN does not fire row triggers).
--- e2e/table_contract_migration.test.ts applies this on top of the captured
--- pre-4a rows, 4a and 4b's writes, and holds every row's blobs and envelopes to
--- what they were.
+-- Apart from the rows step 0.1 deletes, no row's state, roster, version, status,
+-- needs_bots, round_epoch, seed, log or updated_at changes (ALTER TABLE ... DROP
+-- COLUMN does not fire row triggers). e2e/table_contract_migration.test.ts
+-- applies this on top of the captured pre-4a rows, 4a and 4b's writes, and holds
+-- every surviving row's blobs and envelopes to what they were.
 
 -- ---------------------------------------------------------------------------
 -- 0. Refuse to run too early
 -- ---------------------------------------------------------------------------
 DO $$
-DECLARE
-  v_missing TEXT;
 BEGIN
   IF EXISTS (SELECT 1 FROM games) AND NOT EXISTS (SELECT 1 FROM games WHERE writer_gen = 2) THEN
     RAISE EXCEPTION 'table contract: no games row is owned by the kernel writers (writer_gen 2), so the Phase 4b edge functions have not written here yet. Deploy and verify them first: this migration removes commit_game, create_game and games.players, which the functions before them use.'
       USING ERRCODE = 'object_not_in_prerequisite_state';
   END IF;
+END $$;
 
+-- ---------------------------------------------------------------------------
+-- 0.1 The finished games that never had a state blob
+-- ---------------------------------------------------------------------------
+-- games.state arrived in 20260707120000. A game that reached game_over before
+-- that has a JSONB record of itself and nothing else: there has never been a
+-- blob to carry, and 4a's synthesis is for WAITING rows only (a lobby holds no
+-- cards, so legacy_lobby_state_hex can build one honestly; a finished board
+-- cannot be rebuilt from the public JSONB, which never held a hand or a deck).
+-- The hosted database has 34 such rows out of 90, every one game_over, created
+-- between 2025-07-21 and 2026-07-01 and last written in June or July 2026.
+--
+-- The owner's call, asked whether to synthesise a blob for them or drop them:
+-- drop them. They are finished games nobody can resume, they carry no cards and
+-- no session anyone can replay from `games`, and the final schema wants `state`
+-- NOT NULL.
+--
+-- The predicate is exactly those rows. A WAITING or PLAYING row without a blob
+-- is not one of them and still falls to the refusal below: 4a gives every
+-- waiting row a lobby blob and every playing row already had one, so such a row
+-- would mean something is wrong, and the deploy should stop rather than delete
+-- it.
+--
+-- What goes with a deleted row, by its foreign key: player_hands, bot_hands,
+-- chat_messages, player_views and spectator_views CASCADE (all five are caches
+-- or membership of a game that is over). game_snapshots is ON DELETE SET NULL,
+-- so the replay survives with its game_id cleared - match history reads
+-- game_snapshots by player_ids, not by game_id, so a snapshot of one of these
+-- games stays in its players' history and stays replayable. The one path that
+-- looks a snapshot up BY game_id is ReplayShare, which only ever runs on the
+-- win screen of a game just finished.
+DO $$
+DECLARE
+  v_gone TEXT;
+  v_n    INT;
+BEGIN
+  WITH deleted AS (
+    DELETE FROM games WHERE status = 'game_over' AND state IS NULL RETURNING id
+  )
+  SELECT count(*)::int, string_agg(id, ', ' ORDER BY id) INTO v_n, v_gone FROM deleted;
+  IF v_n > 0 THEN
+    RAISE NOTICE 'table contract: deleted % finished game(s) that predate games.state: %', v_n, v_gone;
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- 0.2 Refuse any other row without both blobs
+-- ---------------------------------------------------------------------------
+DO $$
+DECLARE
+  v_missing TEXT;
+BEGIN
   SELECT string_agg(id, ', ' ORDER BY id) INTO v_missing FROM games WHERE state IS NULL OR roster IS NULL;
   IF v_missing IS NOT NULL THEN
     RAISE EXCEPTION 'table contract: games rows without a state or roster blob: %', v_missing
