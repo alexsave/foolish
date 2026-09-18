@@ -410,9 +410,12 @@ optional account, online play, and camera access for QR replays.
 Collapsing them would mean one of the two pages lying.
 
 **They are static files, not React routes.**
-Every React route in this app renders behind `KernelGate`
-(`src/app/providers.tsx`), which renders nothing until `bots.wasm` loads and
-throws if it fails.
+At the time they were written, every React route in this app rendered behind
+`KernelGate` in `src/app/providers.tsx`, which renders nothing until `bots.wasm`
+loads and throws if it fails.
+(The gate has since moved off the root onto the routes that run the kernel - see
+the `/about` note below - but these three pages stay static: a policy a reviewer
+opens should not depend on this app's render pipeline at all.)
 A `curl` of the React `/support` route returned only *"You need to enable
 JavaScript to run this app."* - no heading, no contact address, nothing
 (`docs/APP_REVIEW_NOTES.md`, pass 3).
@@ -433,22 +436,23 @@ Connect API on 2026-09-18 enumerated every URL-bearing field.
 which needs JavaScript and correctly so: that URL *is* the wasm replay player, a
 game surface rather than a document.
 
-Still open: the Marketing URL on the record is `/about`, which has the same
-symptom and is deliberately **not** being converted the same way.
-It is not the same kind of page.
+The Marketing URL, `/about`, had the same symptom and was deliberately **not**
+converted the same way, because it is not the same kind of page.
 It is linked from the home screen (`src/components/Welcome.tsx`, a `next/link`),
 so it is in-app navigation rather than a standalone marketing page, and it is
 localized across all five shipped locales with a live `LanguageSwitcher`.
-A static English HTML file would drop four languages and the app chrome.
-Marketing URL is optional metadata and a reviewer's browser runs JavaScript, so
-this is a quality item, not a blocker.
+A static English HTML file would have dropped four languages and the app chrome
+to fix optional metadata.
 
-The fix that *would* be right is a different change: `/about` needs no kernel at
-all, and moving `KernelGate` out of the root `Providers` and down onto the
-routes that actually need it makes Next prerender `/about`'s real text while
-keeping every language, the chrome and the SPA navigation.
-That was verified by experiment, and it wants its own PR and its own e2e pass,
-because it touches the app's core render path.
+**Fixed at the root instead.** `/about` needs no kernel at all, so `KernelGate`
+moved out of the root `Providers` and down onto the routes that run the kernel
+(`/`, `/[game_id]`, `/dashboard`, `/history`, `/tutorial`).
+`/about` now prerenders its real text, in every language, with the chrome and the
+SPA navigation intact, and so do `/leaderboard` and `/delete-account`.
+The route list is not maintained by hand: it is derived from each page's import
+graph and asserted in both directions by
+`e2e/validation/kernel_gate_validation.test.ts`, so a page added on the wrong
+side of that line turns a test red rather than shipping blank.
 
 **Not localized** (English only) - flag if you want ru/ko versions.
 
