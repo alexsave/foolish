@@ -13,13 +13,18 @@ name: web
 # toolchain and already proves it works on every pull request, and Vercel goes
 # back to being the thing that serves the output.
 #
-# Two jobs, split by what they need:
+# Three jobs, split by what they need:
 #
 #   build    `next build` over freshly generated modules. No secrets. This is
-#            the gate: it says the site compiles from THIS tree's headers.
+#            the gate: it says the site compiles from THIS tree's headers, and
+#            it runs on every change whatever the other two decide.
+#   scope    on a pull request, can this change reach the served site at all?
+#            Vercel's free plan allows 100 deployments a day across the account
+#            and this repo has spent them; see the job for the whole story.
 #   deploy   `vercel build` + `vercel deploy --prebuilt`. A PREVIEW deployment
-#            on a pull request, the PRODUCTION one on main. The preview is what
-#            makes this lane reviewable: a URL, from a real deploy, before the
+#            on a pull request that `scope` says could change the site, the
+#            PRODUCTION one on every push to main. The preview is what makes
+#            this lane reviewable: a URL, from a real deploy, before the
 #            production path depends on it.
 #
 # ONE THING THE OWNER STILL HAS TO DO, and it is not optional:
@@ -97,8 +102,81 @@ jobs:
         if: always()
         run: du -sh .next 2>/dev/null || true
 
+  # Is a preview deployment worth one of the day's hundred?
+  #
+  # Vercel's free plan allows 100 DEPLOYMENTS per day ACROSS THE ACCOUNT, and on
+  # 2026-09-18 this repo spent all of them before the evening:
+  #
+  #   ✗ Resource is limited - try again in 24 hours
+  #     (more than 100, code: "api-deployments-free-per-day")
+  #
+  # after which every deploy in the repo failed, production included. This is a
+  # SECOND quota, distinct from the 5000-uploads/24h one that `--archive=tgz`
+  # answers below, and the tarball does nothing for it: one deploy is one deploy
+  # however few files it uploads.
+  #
+  # It was spent rather than earned. `deploy` ran on EVERY push to EVERY pull
+  # request, so a day of C, docs and iOS work burned the same budget as web
+  # work, and a docs-only push was the one that finally hit the wall.
+  #
+  # So previews are scoped, by scripts/web_deploy_scope.sh. That list is an
+  # INVERSE list on purpose - a path is skippable only when it provably cannot
+  # reach the bundle, and anything unrecognised deploys - and
+  # e2e/validation/web_deploy_scope_validation.test.ts walks the web's real
+  # import graph to prove the skipped prefixes really are unreachable.
+  #
+  # Production is never scoped. A merge to main always deploys: a stale site
+  # costs more than a deployment, and main merges are a couple of dozen a day
+  # against a hundred.
+  scope:
+    runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.decide.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Can this change reach the served site?
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            echo "production deploys unconditionally"
+            exit 0
+          fi
+
+          base='${{ github.event.pull_request.base.sha }}'
+          git fetch --no-tags origin "$base" 2>/dev/null || true
+          changed=$(git diff --name-only "$base...HEAD" 2>/dev/null || git diff --name-only "$base" HEAD)
+          relevant=$(printf '%s\n' "$changed" | bash scripts/web_deploy_scope.sh)
+
+          if [ -z "$relevant" ]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### No preview deployment"
+              echo
+              echo "Nothing in this change can reach the served site, so it did not spend"
+              echo "one of Vercel's 100 deployments per day."
+              echo
+              echo "The \`build\` gate still ran and still had to pass."
+              echo
+              echo '<details><summary>Files changed</summary>'
+              echo
+              echo '```'
+              printf '%s\n' "$changed"
+              echo '```'
+              echo '</details>'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            echo "deploying; web-relevant files:"
+            printf '%s\n' "$relevant"
+          fi
+
   deploy:
-    needs: build
+    needs: [build, scope]
+    if: needs.scope.outputs.deploy == 'true'
     runs-on: ubuntu-latest
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
