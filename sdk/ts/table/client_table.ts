@@ -26,6 +26,7 @@ export type ViewBattle = V.Battle_Snap;
 export type ViewRules = V.ViewRules_Snap;
 export type BoardEdit = V.BoardEdit_Snap;
 export type ConflictQuestion = V.ClientConflict_Snap;
+export type ClientPlay = V.ClientPlay_Snap;
 
 /** One step of a push: what moved, and the board it left. */
 export interface PushStep { event: PushEvent; view: TableView }
@@ -63,6 +64,9 @@ export interface ClientExports {
     wasm_client_board_edit(): number;
     wasm_client_rearrange_hand(n: number): number;
     wasm_client_conflict_verdicts(): number;
+    wasm_client_gesture_ptr(): number;
+    wasm_client_play_ptr(): number;
+    wasm_client_play(): number;
     wasm_can_cover(attackSuit: number, attackValue: number, defenseSuit: number, defenseValue: number, powerSuit: number): number;
 }
 
@@ -282,6 +286,38 @@ export class ClientTable {
     canCover(attack: ViewCard, defense: ViewCard, powerSuit: number): boolean {
         return this.ex.wasm_can_cover(attack.suit, attack.value, defense.suit, defense.value, powerSuit) === 1;
     }
+
+    /**
+     * What a gesture means on `view` (c/src/client_table.h client_play, over
+     * legal.h's play_* rules): the move `cards` let go at `target` resolves to,
+     * which battles they could cover, the battle the Cover button aims at, and
+     * whether this seat may say Good yet.
+     *
+     * `target` is a battle index, PLAY_TARGET_TABLE for the open table,
+     * PLAY_TARGET_HAND for a drop back in the hand (always a rearrange, never a
+     * play), or CLIENT_PLAY_COVER_BUTTON for the button, which aims itself.
+     * `moveType` is a MOVE_*, or -1 when the gesture names no legal move - an
+     * answer, not a refusal. Throws when the kernel refuses the board.
+     *
+     * The answer is kept per board, selection and target: a drag asks this on
+     * every frame while the finger sits still, and the menu behind it is a full
+     * cover enumeration. The same memo `rules` above keeps, for the same reason.
+     */
+    play(view: TableView, cards: readonly ViewCard[], target: number): ClientPlay {
+        const key = `${target}|${cards.map((c) => `${c.suit},${c.value}`).join(' ')}`;
+        let byGesture = this.plays.get(view);
+        const hit = byGesture?.get(key);
+        if (hit) return hit;
+        this.writeRulesView(view);
+        V.writeClientGesture(this.m(), this.ex.wasm_client_gesture_ptr(), { target, cards: [...cards] });
+        const rc = this.ex.wasm_client_play();
+        if (rc !== V.CLIENT_OK) throw new Error(`client play: the gesture was refused (${rc})`);
+        const p = V.readClientPlay(this.m(), this.ex.wasm_client_play_ptr());
+        if (!byGesture) this.plays.set(view, byGesture = new Map());
+        byGesture.set(key, p);
+        return p;
+    }
+    private readonly plays = new WeakMap<TableView, Map<string, ClientPlay>>();
 }
 
 let shared: ClientTable | null = null;

@@ -11,7 +11,7 @@
 import { loadWasmGz, loadWasmGzAsync } from './wasm_asset.ts';
 import { LAYOUT_HASH as BOTS_LAYOUT_HASH } from '../gen/layout_hash.bots.ts';
 import { assertLayoutHash } from './layout_hash.ts';
-import { memOf as viewMemOf, readTableView, readReplaySummary, readReplayError, readReplayFrameIndex, TableView_Snap, ReplaySummary_Snap, ReplayError_Snap, CARD_NONE_SUIT, CARD_NONE_VALUE } from '../gen/view_layout.bots.ts';
+import { memOf as viewMemOf, readTableView, readReplaySummary, readReplayError, readReplayFrameIndex, TableView_Snap, ReplaySummary_Snap, ReplayError_Snap } from '../gen/view_layout.bots.ts';
 import { memOf as msgMemOf, readMsgHeader, writeMsgHeader, readReplayExtras, writeReplayExtras,
          MSG_MAX_NAME, REPLAY_EXTRAS_FLAG_NAMES, REPLAY_EXTRAS_FLAG_TIMES, REPLAY_LINK_STYLE_URL, REPLAY_LINK_STYLE_QR,
          type MsgHeader_Snap, type ReplayExtras_Snap } from '../gen/msg_layout.bots.ts';
@@ -163,7 +163,6 @@ interface BotsExports extends EngineExports {
     wasm_replay_b32_encode(in_len: number): number;
     wasm_replay_b32_decode(in_len: number): number;
     wasm_replay_link_parse(in_len: number): number;
-    wasm_unambiguous_cover(n_cover: number, n_battles: number, power_suit: number): number;
     wasm_bot_roster_dump(): number;
     // Belief probe (observability; off until reset arms it)
     // Animation core (c/src/anim_plan.h) — the platform-independent animation
@@ -524,54 +523,6 @@ export function kernelMsgRebase(pendingRound: number, seat: number, wire: Uint8A
     const r = ex.wasm_msg_rebase(pendingRound, seat, wire.length);
     if (r < 0) throw msgError(r);
     return r;
-}
-
-// ---------------------------------------------------------------------------
-// One-tap cover resolution (A7/F9)
-//
-// The one-gesture cover affordance, decided in the kernel (legal.c's
-// unambiguous_cover) so the web drag, phone tap-commit, watch chooser and
-// iMessage share one resolver instead of a coverCombinations.ts copy each.
-// Reads only the handful of cards passed — no game marshal — so it is cheap
-// enough to call while a drag hovers. Runs on the browser's warm bots.wasm
-// (the A8 KernelGate guarantees it is loaded before any board renders).
-// ---------------------------------------------------------------------------
-
-// A battle's cover as a wire byte. An uncovered battle's defense is no card: null
-// from a caller that says so, the kernel's CARD_NONE on a board the client holds.
-const coverByte = (d: Card | null): number =>
-    !d || (d.suit === CARD_NONE_SUIT && d.value === CARD_NONE_VALUE) ? WIRE_NONE : wireLogCard(d);
-
-/** The paired result: cover card i defends attackCards[i]. Mirrors the shape the
- * deleted coverCombinations.ts findUnambiguousCover returned. */
-export interface CoverCombination { coverCards: Card[]; attackCards: Card[]; }
-
-/**
- * If `coverCards` cover the table's uncovered attacks in exactly one unambiguous
- * way (every valid full pairing covers the same set of attacks), return that
- * pairing; otherwise null (the UI then lets the player place cards manually).
- */
-export function kernelUnambiguousCover(
-    coverCards: readonly Card[], tableBattles: readonly { attack: Card; defense: Card | null }[], powerSuit: number,
-): CoverCombination | null {
-    if (coverCards.length === 0) return null;
-    const ex = bots();
-    const buf = mem(ex);
-    const aptr = ex.wasm_cards_a_ptr();
-    for (let i = 0; i < coverCards.length; i++) buf[aptr + i] = wireLogCard(coverCards[i]);
-    const bptr = ex.wasm_cards_b_ptr();
-    for (let i = 0; i < tableBattles.length; i++) {
-        buf[bptr + 2 * i] = wireLogCard(tableBattles[i].attack);
-        buf[bptr + 2 * i + 1] = coverByte(tableBattles[i].defense);
-    }
-    const n = ex.wasm_unambiguous_cover(coverCards.length, tableBattles.length, powerSuit);
-    if (n <= 0) return null;
-    // Re-fetch the memory view: a wasm call can grow (and detach) the buffer.
-    const out = mem(ex);
-    const io = ex.wasm_io_ptr();
-    const attackCards: Card[] = [];
-    for (let i = 0; i < n; i++) attackCards.push(cardFromWire(out[io + i]));
-    return { coverCards: [...coverCards], attackCards };
 }
 
 // The PUBLIC view of the game the last kernelMsgDecode adopted — every hand as

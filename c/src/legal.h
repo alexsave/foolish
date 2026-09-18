@@ -62,15 +62,23 @@ void calculate_legal_moves_lite(const Game *g, int bot_idx, LegalMoves *out);
 // out_attacks[] and returns 1. Otherwise returns 0 and the caller lets the
 // player place cards manually.
 //
-// ITS ONE CALLER IS THE WEB, through wasm_unambiguous_cover. This used to claim
-// every client called it; none of the Apple ones did, and the header said so
-// for long enough that iOS grew its own answer in Swift instead. That answer is
-// now play_resolve below, which asks a DIFFERENT question - "does exactly one
-// entry of the enumerated menu use this selection" rather than "is there
-// exactly one pairing" - and the two are not interchangeable: this one pairs
-// several cover cards onto several attacks at once, while the menu already has
-// each pairing as its own entry. Both are the kernel's; neither is a mirror of
-// the other.
+// IT NOW HAS NO PRODUCTION CALLER. It used to claim every client called it; none
+// of the Apple ones did, and the header said so for long enough that iOS grew
+// its own answer in Swift instead. That answer is play_resolve below, which asks
+// a DIFFERENT question - "does exactly one entry of the enumerated menu use this
+// selection" rather than "is there exactly one pairing" - and the two are not
+// interchangeable: this one pairs several cover cards onto several attacks at
+// once, while the menu already has each pairing as its own entry.
+//
+// The web was the last caller, through wasm_unambiguous_cover, and it moved to
+// client_play (client_table.h) with the rest of its gesture rules. So the shipped
+// bots.wasm no longer exports this: the export moved to WASM_BOTS_UNSHIPPED_API
+// (c/Makefile), which keeps it on the oracle modules and the TEST build and takes
+// 1,191 raw / 533 gzip bytes back off a module whose gzip is capped at 80 KiB.
+// The rule itself stays, proven by c/tests and by e2e/unambiguous_cover.test.ts
+// over the test build; whether a future host wants the pairing question is a
+// decision nobody has had to make yet, and deleting it is not this file's to
+// take.
 int unambiguous_cover(const Card *cover_cards, int n_cover,
                       const Battle *battles, int n_battles, int power_suit,
                       Card *out_attacks);

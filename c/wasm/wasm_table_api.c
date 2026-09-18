@@ -30,6 +30,7 @@ extern void wasm_set_rng_base(uint32_t base);
 extern void wasm_clearenv(void);
 extern void wasm_reload_bot_flags(void);
 extern void wasm_belief_probe_observe_internal(const Game *g, int seat);
+extern LegalMoves *wasm_moves_ptr_internal(void);
 extern unsigned char *wasm_replay_io_ptr(void);
 extern int wasm_replay_io_cap(void);
 
@@ -464,4 +465,25 @@ int wasm_client_rearrange_hand(int n) {
 
 int wasm_client_conflict_verdicts(void) {
     return client_conflict_verdicts(&g_edit_view, &g_final_view, &g_conflict, &g_verdicts);
+}
+
+// ---- what a gesture on a board means (client_table.h) ----
+//
+// The gesture is written through the generated writer and the answer read
+// through the generated reader, so the host never sees a menu byte. The scratch
+// is the module's: g_moves, the one LegalMoves every enumerator here fills, and
+// the IO buffer for the menu it is published as. Both are borrowed for the
+// length of this call and read by nobody after it - like every other entry in
+// this file, it is one synchronous section, and a host that holds a resident
+// menu read (wasm_legal_moves_ptr) has already copied it out.
+static ClientGesture g_gesture;
+static ClientPlay    g_play;
+ClientGesture *wasm_client_gesture_ptr(void) { return &g_gesture; }
+ClientPlay *wasm_client_play_ptr(void)       { return &g_play; }
+
+int wasm_client_play(void) {
+    const ClientPlayScratch scratch = {
+        .moves = wasm_moves_ptr_internal(), .wire = wasm_io_ptr(), .wire_cap = wasm_io_cap(),
+    };
+    return client_play(client(), &g_rules_view, &g_gesture, &scratch, &g_play);
 }

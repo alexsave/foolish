@@ -15,7 +15,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  canAttack, canCoverCards, canPickup, validateAttack, validatePass, validatePickup, validateCover,
+  canAttack, canCoverCards, canPickup, coverGesture, validateAttack, validatePass, validatePickup, validateCover,
 } from '../src/utils/gameValidation.ts';
 import type { TableView, ViewCard as Card } from '../sdk/ts/table/client_table.ts';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
@@ -60,26 +60,58 @@ test('canAttack: a follow-up attack must match a value already on the table', ()
   assert.equal(canAttack(g, [C(2, 8)]), false, 'value not on the table');
 });
 
-// ---- canCoverCards (UI affordance, not a kernel rule) -----------------------
+// ---- the Cover button (client_play, legal.h play_*) -------------------------
+//
+// This used to be an affordance of its own: canCoverCards asked legal.c's
+// unambiguous_cover "do these cards cover these attacks in exactly one way",
+// a pure card-arithmetic question that read neither the seat nor the hand.
+// It is the kernel's gesture rule now - the board's own menu, for the viewer's
+// own seat - and two things change with it. A selection with SEVERAL legal
+// targets is now offered rather than withheld, because the kernel aims the
+// button (play_best_cover_target: the highest attack it beats, trumps
+// outranking everything, ties to the leftmost) instead of refusing to choose.
+// And the viewer has to be the seat that could actually make the move, holding
+// the cards, which the old answer never checked.
+//
+// The viewer is seat 1, the defender, holding what it plays.
 
-test('canCoverCards: single card is offered only when its target is unambiguous', () => {
-  const two = mkGame([6, 6], [{ attack: C(0, 7), defense: null }, { attack: C(0, 8), defense: null }]);
-  assert.equal(canCoverCards(two, [C(0, 9)]), false, 'a 9♠ covering both 7♠ and 8♠ is ambiguous');
+const defending = (table: NonNullable<BoardSpec['table']>, hand: Card[]): TableView =>
+  mkGame([6, 6], table, { selfSeat: 1, selfHand: hand });
 
-  const one = mkGame([6, 6], [{ attack: C(0, 7), defense: null }]);
+test('the Cover button aims at the highest attack it beats, and is offered whenever it has one', () => {
+  const two = defending([{ attack: C(0, 7), defense: null }, { attack: C(0, 8), defense: null }], [C(0, 9)]);
+  assert.equal(canCoverCards(two, [C(0, 9)]), true, 'a 9♠ over both 7♠ and 8♠ is offered, not withheld');
+  assert.deepEqual(coverGesture(two, [C(0, 9)])!.attackCards.map((c) => ({ suit: c.suit, value: c.value })),
+    [C(0, 8)], 'and it aims at the 8♠, the higher of the two');
+
+  const one = defending([{ attack: C(0, 7), defense: null }], [C(0, 9), C(0, 6)]);
   assert.equal(canCoverCards(one, [C(0, 9)]), true, 'exactly one legal target -> offered');
   assert.equal(canCoverCards(one, [C(0, 6)]), false, 'a card that cannot cover -> not offered');
   assert.equal(canCoverCards(one, []), false, 'no selection -> false');
 });
 
-test('canCoverCards: multi-card cover is offered only when the mapping is unambiguous', () => {
-  const unambiguous = mkGame([6, 6], [{ attack: C(0, 7), defense: null }, { attack: C(2, 8), defense: null }]);
-  assert.equal(canCoverCards(unambiguous, [C(0, 9), C(2, 9)]), true, 'each cover fits exactly one attack');
+test('the Cover button is the viewer\'s own move: the wrong seat, or a card not held, is no move', () => {
+  const table = [{ attack: C(0, 7), defense: null }];
+  const attacker = mkGame([6, 6], table, { selfSeat: 0, selfHand: [C(0, 9)] });
+  assert.equal(canCoverCards(attacker, [C(0, 9)]), false, 'an attacker covers nothing');
+  const empty = mkGame([6, 6], table, { selfSeat: 1, selfHand: [C(0, 6)] });
+  assert.equal(canCoverCards(empty, [C(0, 9)]), false, 'a card the defender does not hold is not playable');
+});
 
-  const ambiguous = mkGame([6, 6], [
+test('a multi-card cover is one move over several battles', () => {
+  const g = defending([{ attack: C(0, 7), defense: null }, { attack: C(2, 8), defense: null }], [C(0, 9), C(2, 9)]);
+  const move = coverGesture(g, [C(0, 9), C(2, 9)]);
+  assert.ok(move, 'each cover fits an attack, so the button is live');
+  assert.equal(move!.cards.length, 2, 'and it lays both cards');
+
+  // Two trumps over three plain attacks: several pairings exist. The old
+  // affordance withheld the button; the kernel picks the strongest target.
+  const many = defending([
     { attack: C(0, 7), defense: null }, { attack: C(0, 8), defense: null }, { attack: C(0, 9), defense: null },
-  ]);
-  assert.equal(canCoverCards(ambiguous, [C(3, 10), C(3, 11)]), false, 'two trumps over three attacks is ambiguous');
+  ], [C(3, 10), C(3, 11)]);
+  assert.equal(canCoverCards(many, [C(3, 10), C(3, 11)]), true, 'two trumps over three attacks is offered');
+  assert.ok(coverGesture(many, [C(3, 10), C(3, 11)])!.attackCards.some((c) => c.suit === 0 && c.value === 9),
+    'and it covers the 9♠, the highest of the three');
 });
 
 // ---- throwing validators (optimistic-apply pre-checks) ----------------------

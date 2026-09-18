@@ -692,3 +692,81 @@ int client_conflict_verdicts(const TableView *open, const TableView *final, cons
     out->n = q->n_motions;
     return q->n_motions;
 }
+
+// ---------- what a gesture on a board means -----------------------------------
+
+int client_play(ClientTable *c, const TableView *v, const ClientGesture *g,
+                const ClientPlayScratch *s, ClientPlay *out) {
+    if (!c || !v || !g || !s || !s->moves || !s->wire || !out) return CLIENT_E_FORMAT;
+    memset(out, 0, sizeof(*out));
+    out->move_type = -1;
+    out->best_cover = -1;
+    if (g->n_cards < 0 || g->n_cards > MAX_MOVE_CARDS) return CLIENT_E_FORMAT;
+
+    const int valid = board_game(c, v);
+    if (valid != GAME_VALID) return valid;
+    // A spectator makes no gesture: there is no seat whose menu this would be.
+    if (v->my_seat < 0) return CLIENT_E_MISMATCH;
+    const int seat = v->my_seat;
+
+    // The published pair. The menu is the kernel's full legal set for the seat,
+    // not play_human_menu's narrowing: the narrowing is play_can_say_good, which
+    // is answered below, and every other rule here wants the whole set.
+    calculate_legal_moves(rules_game(c), seat, s->moves);
+    const int menu_len = legal_menu_write(s->moves, 0, -1, s->wire, s->wire_cap);
+    if (menu_len == LEGAL_WIRE_ECAP) return CLIENT_E_CAP;
+    if (menu_len < 0) return CLIENT_E_FORMAT;
+
+    unsigned char table[2 * MAX_BATTLES];
+    for (int i = 0; i < v->num_battles; i++) {
+        table[2 * i] = (unsigned char)card_to_id(v->battles[i].attack);
+        table[2 * i + 1] = card_is_none(v->battles[i].defense)
+            ? (unsigned char)LEGAL_WIRE_NONE : (unsigned char)card_to_id(v->battles[i].defense);
+    }
+    const PlayBoard b = {
+        .menu = s->wire, .menu_len = menu_len,
+        .table = table, .n_battles = v->num_battles,
+        .power_suit = v->power_suit, .is_defender = seat == v->defender,
+    };
+
+    unsigned char sel[MAX_MOVE_CARDS];
+    for (int i = 0; i < g->n_cards; i++) sel[i] = (unsigned char)card_to_id(g->cards[i]);
+
+    const uint64_t mask = play_coverable_battles(&b, sel, g->n_cards);
+    for (int i = 0; i < v->num_battles && i < 64; i++)
+        if (mask & ((uint64_t)1 << i)) out->coverable[out->n_coverable++] = (int8_t)i;
+    out->best_cover = (int8_t)play_best_cover_target(&b, sel, g->n_cards);
+    out->can_say_good = play_can_say_good(&b) != 0;
+
+    // The Cover button aims itself; every other gesture named its own target. A
+    // button with nothing to aim at resolves to nothing rather than falling
+    // through to PLAY_TARGET_TABLE, which -1 would otherwise mean.
+    int target = g->target;
+    if (target == CLIENT_PLAY_COVER_BUTTON) {
+        if (out->best_cover < 0) return CLIENT_OK;
+        target = out->best_cover;
+    }
+    const int idx = play_resolve(&b, sel, g->n_cards, target);
+    if (idx < 0) return CLIENT_OK;
+
+    MenuWalk w;
+    MenuMove m;
+    if (legal_menu_begin(&w, b.menu, b.menu_len) < 0) return CLIENT_OK;
+    while (legal_menu_next(&w, &m) == 1) {
+        if (w.index != idx) continue;
+        if (m.n_cards > MAX_MOVE_CARDS) return CLIENT_E_CAP;
+        out->move_type = (int8_t)m.type;
+        out->n_cards = (int8_t)m.n_cards;
+        // A move that covers nothing names no attack. legal_menu_write pads the
+        // attack bytes of a non-cover with card_to_id of a zeroed Card, which is
+        // no card at all, so anything but a cover's real id is the no-card here
+        // rather than a byte decoded into a suit that does not exist.
+        for (int i = 0; i < m.n_cards; i++) {
+            out->cards[i] = card_of_id(m.cards[i]);
+            out->attack_cards[i] = m.type == MOVE_COVER && m.attacks[i] <= 51
+                ? card_of_id(m.attacks[i]) : CARD_NONE;
+        }
+        return CLIENT_OK;
+    }
+    return CLIENT_OK;
+}

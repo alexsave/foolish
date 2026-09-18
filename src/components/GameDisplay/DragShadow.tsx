@@ -4,6 +4,7 @@ import { CardFace } from "./CardFace";
 import { SovietIcon } from "../SovietIcon";
 import { useStyles } from "../../contexts/StyleContext";
 import { useLocalization } from "../../contexts/LocalizationContext";
+import { MOVE_ATTACK, MOVE_COVER, MOVE_PASS } from "@sdk/ts/gen/view_layout.bots.ts";
 
 export const DragShadow = () => {
     const { selectedCards } = useGame();
@@ -11,14 +12,15 @@ export const DragShadow = () => {
     const styles = useStyles();
     const { t } = useLocalization();
 
-    const getIndicatorContent = (actionType: string) => {
-        switch (actionType) {
-            case 'attack':
+    // The badge under the cursor names the kernel's MOVE_*, not a word this
+    // file invented for it.
+    const getIndicatorContent = (moveType: number) => {
+        switch (moveType) {
+            case MOVE_ATTACK:
                 return <><SovietIcon name="sword" size={16} /> {t('attack')}</>;
-            case 'cover':
-            case 'multicover':
+            case MOVE_COVER:
                 return <><SovietIcon name="shield" size={16} /> {t('cover')}</>;
-            case 'pass':
+            case MOVE_PASS:
                 return <>{styles.icons.passIcon} {t('pass')}</>;
             default:
                 return null;
@@ -30,7 +32,7 @@ export const DragShadow = () => {
     }
 
     const action = determineGameAction(currentCursorPos.x, currentCursorPos.y, draggedCard);
-    const indicatorContent = getIndicatorContent(action.type);
+    const indicatorContent = getIndicatorContent(action.moveType);
 
     const isDraggedCardSelected = selectedCards.some(selectedCard =>
         selectedCard.value === draggedCard.value && selectedCard.suit === draggedCard.suit

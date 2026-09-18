@@ -31,6 +31,7 @@
 #define CNITRO_CLIENT_TABLE_H
 
 #include "game.h"
+#include "legal.h"
 #include "roster.h"
 #include <stddef.h>
 
@@ -338,5 +339,64 @@ int client_rearrange_hand(ClientTable *c, TableView *v, const uint8_t *idx, int 
 // CLIENT_E_FORMAT for a view or a question that is not one, or the negative
 // ANIM_E* the rule returns.
 int client_conflict_verdicts(const TableView *open, const TableView *final, const ClientConflict *q, ConflictVerdicts *out);
+
+// ---------- what a gesture on a board means ----------------------------------
+//
+// legal.h's play_* rules read a PUBLISHED PAIR - the menu the kernel enumerated
+// for a seat, and the table it was enumerated on - and nothing else. That is
+// what lets a render pass call them, and it is why the phone can: iOS already
+// holds a menu (MessageTurnController), so ios_api.c's fio_play_probe takes one
+// as an argument. A browser holds no menu. It holds the board a server sent it.
+//
+// So the pair is made HERE, on the way in: the view is read as a masked game -
+// the same board_game client_validate judges on - the viewer's menu is
+// enumerated on it, and every gesture question is answered off that one menu in
+// one call. One answer, so a screen cannot paint a highlight the drop then
+// refuses, and no menu ever crosses to a host that would then have to know what
+// a menu byte means.
+
+// Where a gesture ended, past legal.h's PLAY_TARGET_HAND / PLAY_TARGET_TABLE and
+// the battle indices: the Cover BUTTON, which names no battle and means "the
+// one play_best_cover_target picks". A drag names its own battle and a keyboard
+// press does not, and that difference is the whole of it.
+#define CLIENT_PLAY_COVER_BUTTON (-3)
+
+// The cards under the finger, and where they were let go.
+typedef struct {
+    int8_t n_cards;
+    int8_t target;                 // a battle index, PLAY_TARGET_*, or CLIENT_PLAY_COVER_BUTTON
+    Card   cards[MAX_MOVE_CARDS];
+} ClientGesture;
+
+// What that gesture means on that board.
+typedef struct {
+    int8_t move_type;              // the MOVE_* it resolves to, or -1 for no legal move
+    int8_t n_cards;                // of the resolved move
+    int8_t n_coverable;
+    int8_t best_cover;             // the battle the Cover button aims at, -1 for none
+    bool   can_say_good;           // play_can_say_good: may this seat end the bout yet
+    Card   cards[MAX_MOVE_CARDS];          // the resolved move's cards
+    Card   attack_cards[MAX_MOVE_CARDS];   // the attack each of them covers (a cover only)
+    int8_t coverable[MAX_BATTLES];         // the battles this selection could cover, ascending
+} ClientPlay;
+
+// The scratch the answer is worked out in. The caller owns both because a
+// LegalMoves is a third of a megabyte at the wasm caps and every host already
+// keeps exactly one; `wire` holds the enumerated menu for the length of the
+// call and nothing reads it afterwards.
+typedef struct {
+    LegalMoves    *moves;
+    unsigned char *wire;
+    int            wire_cap;
+} ClientPlayScratch;
+
+// The gesture `g` read against `v` (legal.h play_resolve, play_coverable_battles,
+// play_best_cover_target, play_can_say_good). CLIENT_OK and `out` filled -
+// move_type -1 when the gesture names no legal move, which is an answer, not a
+// refusal - or CLIENT_E_FORMAT for a view or a gesture that is not one,
+// CLIENT_E_MISMATCH when the viewer is not a seat, the GAME_INVALID_* the board
+// is refused for, or CLIENT_E_CAP when the menu does not fit `wire`.
+int client_play(ClientTable *c, const TableView *v, const ClientGesture *g,
+                const ClientPlayScratch *s, ClientPlay *out);
 
 #endif

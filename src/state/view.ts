@@ -43,6 +43,32 @@ export const seatKey = (view: TableView | null | undefined, seat: number): strin
 export const tableCards = (view: TableView): ViewCard[] =>
     view.battles.flatMap((b) => (covered(b) ? [b.attack, b.defense] : [b.attack]));
 
+// ---- a gesture, in the kernel's terms ---------------------------------------
+//
+// What a gesture MEANS is client_play's (legal.h play_*), and it takes a target
+// and a selection. Turning a pointer into those two is the browser's half, and
+// it is the only half of a gesture the kernel cannot answer: these two put it
+// where a test can reach it without a DOM.
+
+/**
+ * Where a drop landed, in the kernel's terms (legal.h PLAY_TARGET_*). `battle`
+ * is the battle the pointer was over, from the page's own hit-test, or null.
+ * A battle index the board does not hold is the open table, never a drop on a
+ * battle that is not there.
+ */
+export const dropTarget = (view: TableView, inHand: boolean, battle: number | null): number => {
+    if (inHand) return V.PLAY_TARGET_HAND;
+    return battle !== null && battle >= 0 && battle < view.battles.length ? battle : V.PLAY_TARGET_TABLE;
+};
+
+/**
+ * The cards a gesture carries: the whole selection when the dragged card is part
+ * of it, otherwise the dragged card on its own. Dragging an unselected card is
+ * how a player plays one card while several are picked.
+ */
+export const gestureCards = (selected: readonly ViewCard[], dragged: ViewCard): ViewCard[] =>
+    selected.length > 0 && selected.some((c) => sameCard(c, dragged)) ? [...selected] : [dragged];
+
 /** The GAME_STATUS_* and PLAYER_STATUS_* a board carries. */
 export const GAME_STATUS = { WAITING: V.GAME_STATUS_WAITING, PLAYING: V.GAME_STATUS_PLAYING, GAME_OVER: V.GAME_STATUS_GAME_OVER } as const;
 export const PLAYER_STATUS = { IDLE: V.PLAYER_STATUS_IDLE, READY: V.PLAYER_STATUS_READY, IN: V.PLAYER_STATUS_IN, OUT: V.PLAYER_STATUS_OUT } as const;

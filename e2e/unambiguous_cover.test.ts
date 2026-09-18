@@ -19,8 +19,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ensureBotsAsync, kernelUnambiguousCover } from '../sdk/ts/wasm/bots.ts';
+import { ensureBotsAsync } from '../sdk/ts/wasm/bots.ts';
 import { clientTable, type ViewCard } from '../sdk/ts/table/client_table.ts';
+import { unambiguousCover as kernelUnambiguousCover } from './helpers/table_fixture.ts';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 

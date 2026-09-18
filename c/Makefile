@@ -846,7 +846,9 @@ WASM_CLIENT_EXPORTS := \
   -Wl,--export=wasm_client_board_edit_ptr -Wl,--export=wasm_client_conflict_ptr \
   -Wl,--export=wasm_client_verdicts_ptr -Wl,--export=wasm_client_validate \
   -Wl,--export=wasm_client_optimistic_apply -Wl,--export=wasm_client_board_edit \
-  -Wl,--export=wasm_client_rearrange_hand -Wl,--export=wasm_client_conflict_verdicts
+  -Wl,--export=wasm_client_rearrange_hand -Wl,--export=wasm_client_conflict_verdicts \
+  -Wl,--export=wasm_client_gesture_ptr -Wl,--export=wasm_client_play_ptr \
+  -Wl,--export=wasm_client_play
 
 # A replay's recorded decision as the Oracle imports it, and a code at a glance
 # (src/replay_steps.h, wasm/wasm_bots_api.c), bots.wasm ONLY: the web page builds
@@ -889,7 +891,16 @@ WASM_REPLAY_DECODE_EXPORTS := \
 # probe suites (kernel_state_validation, security_hidden_info) still knock on the
 # state doors. Filtered out of bots.wasm's link only, so WASM_API_EXPORTS and
 # WASM_BOTS_API_EXPORTS stay the oracle modules' lists.
+#
+# wasm_unambiguous_cover joined them on 2026-09-18. legal.c's unambiguous_cover
+# was the web's one-tap cover resolver and the web's alone (its own header said
+# so); the web's gesture rules moved to client_play, which asks the menu's
+# question instead, and nothing shipped knocks on this door any more. Leaving it
+# exported cost 1,191 raw / 533 gzip bytes of a module whose gzip is capped at
+# 80 KiB (e2e/mem/wasm_memory.test.ts) - the rule and its fuzz stay, on the test
+# build, which is what this list is for.
 WASM_BOTS_UNSHIPPED_API := \
+  -Wl,--export=wasm_unambiguous_cover \
   -Wl,--export=wasm_game_ptr_internal -Wl,--export=wasm_moves_ptr_internal \
   -Wl,--export=wasm_set_seed -Wl,--export=wasm_set_deal_seed_bytes -Wl,--export=wasm_reject_reason \
   -Wl,--export=wasm_import_state -Wl,--export=wasm_export_state \

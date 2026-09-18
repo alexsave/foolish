@@ -3,9 +3,9 @@ import { useServer } from './ServerContext';
 import { useAnimation } from './AnimationContext';
 import { useGame } from './GameContext';
 import { reorderHand } from '../state/clientReconcile';
-import { canAttack, canCoverPair, canPass as canPassValidation } from '../utils/gameValidation';
-import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
-import { covered, type TableView, type ViewCard as Card } from '../state/view';
+import { clientTable, type ClientPlay } from '@sdk/ts/table/client_table.ts';
+import { MOVE_ATTACK, MOVE_COVER, MOVE_PASS } from '@sdk/ts/gen/view_layout.bots.ts';
+import { dropTarget, gestureCards, type TableView, type ViewCard as Card } from '../state/view';
 
 const DragContext = createContext<DragContextType | null>(null);
 
@@ -43,120 +43,22 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
         return y >= handAreaTop;
     };
 
-    // Cover-combination resolution lives in the kernel now
-    // (kernelUnambiguousCover -> legal.c unambiguous_cover), shared by every
-    // input path and every host (A7/F9).
-
-    // Helper function to determine what action should be taken
-    const determineGameAction = (x: number, y: number, draggedCard: Card) => {
-        if (isInHandArea(x, y)) {
-            return { type: 'rearrange' as const };
-        }
-
-        const isDefending = game.defender === game.mySeat;
-
-        if (isDefending) {
-            const tableCardUnderCursor = getTableCardUnderCursor(x, y);
-            const passIsPossible = canPass(draggedCard);
-
-            // Check if the dragged card is part of selected cards
-            const isDraggedCardSelected = selectedCards.some(selectedCard =>
-                selectedCard.value === draggedCard.value && selectedCard.suit === draggedCard.suit
-            );
-
-            // Use all selected cards if the dragged card is selected, otherwise just the dragged card
-            const cardsToUse = isDraggedCardSelected && selectedCards.length > 0 ? selectedCards : [draggedCard];
-
-            if (tableCardUnderCursor && !covered(tableCardUnderCursor)) {
-                // Dragging to an uncovered attack card
-                if (cardsToUse.length === 1) {
-                    // Single card cover - only if it actually beats the
-                    // target (the kernel rejects CANNOT_COVER; without this
-                    // check an illegal drop fired a doomed request)
-                    if (!canCoverPair(tableCardUnderCursor.attack, cardsToUse[0], game.powerSuit)) {
-                        return { type: 'invalid' as const };
-                    }
-                    return { type: 'cover' as const, targetCard: tableCardUnderCursor.attack };
-                } else {
-                    // Multi-card cover - check if unambiguous
-                    const unambiguousCover = kernelUnambiguousCover(cardsToUse, game.battles, game.powerSuit);
-                    if (unambiguousCover) {
-                        return { type: 'multicover' as const, coverCards: unambiguousCover.coverCards, attackCards: unambiguousCover.attackCards };
-                    } else {
-                        return { type: 'invalid' as const };
-                    }
-                }
-            } else if (!passIsPossible) {
-                // Can't pass and in empty space
-                if (cardsToUse.length === 1) {
-                    // Single card - check which uncovered attacks this card can actually cover
-                    const uncoveredBattles = game.battles.filter(battle => !covered(battle));
-                    const validTargets = uncoveredBattles.filter(battle =>
-                        canCoverPair(battle.attack, cardsToUse[0], game.powerSuit)
-                    );
-                    
-                    if (validTargets.length === 1) {
-                        // Card can only cover one specific attack - allow cover action
-                        return { type: 'cover' as const, targetCard: validTargets[0].attack };
-                    } else {
-                        return { type: 'invalid' as const };
-                    }
-                } else {
-                    // Multi-card cover - check if unambiguous
-                    const unambiguousCover = kernelUnambiguousCover(cardsToUse, game.battles, game.powerSuit);
-                    if (unambiguousCover) {
-                        return { type: 'multicover' as const, coverCards: unambiguousCover.coverCards, attackCards: unambiguousCover.attackCards };
-                    } else {
-                        return { type: 'invalid' as const };
-                    }
-                }
-            } else {
-                // Pass is possible and dragging to empty space = pass
-                return { type: 'pass' as const };
-            }
-        } else {
-            // Attacker: check if attack is valid before allowing it
-            // Check if the dragged card is part of selected cards
-            const isDraggedCardSelected = selectedCards.some(selectedCard =>
-                selectedCard.value === draggedCard.value && selectedCard.suit === draggedCard.suit
-            );
-
-            // Use all selected cards if the dragged card is selected, otherwise just the dragged card
-            const cardsToUse = isDraggedCardSelected && selectedCards.length > 0 ? selectedCards : [draggedCard];
-
-            // Use shared validation function
-            if (canAttack(game, cardsToUse)) {
-                return { type: 'attack' as const };
-            } else {
-                return { type: 'invalid' as const };
-            }
-        }
+    // The battle the pointer is over, if any. The hit-test is the one part of a
+    // gesture that is irreducibly the browser's; what it means is not (see
+    // state/view.ts dropTarget).
+    const battleUnderCursor = (x: number, y: number): number | null => {
+        const el = document.elementsFromPoint(x, y).find((e) => e.getAttribute('data-battle-index') !== null);
+        return el ? parseInt(el.getAttribute('data-battle-index')!, 10) : null;
     };
 
-    // Helper function to detect which table card is under the cursor
-    const getTableCardUnderCursor = (x: number, y: number) => {
-        const elements = document.elementsFromPoint(x, y);
-        const battleCardElement = elements.find(el => el.getAttribute('data-battle-index') !== null);
-        if (battleCardElement) {
-            const battleIndex = parseInt(battleCardElement.getAttribute('data-battle-index')!);
-            return game.battles[battleIndex];
-        }
-        return null;
-    };
-
-    // Helper function to check if passing is possible
-    const canPass = (draggedCard: Card) => {
-        // Check if the dragged card is part of selected cards
-        const isDraggedCardSelected = selectedCards.some(selectedCard =>
-            selectedCard.value === draggedCard.value && selectedCard.suit === draggedCard.suit
-        );
-
-        // Use all selected cards if the dragged card is selected, otherwise just the dragged card
-        const cardsToCheck = isDraggedCardSelected && selectedCards.length > 0 ? selectedCards : [draggedCard];
-
-        // Use shared validation function
-        return canPassValidation(game, cardsToCheck);
-    };
+    // What the drop means, which is the kernel's to say (client_table.h
+    // client_play, over legal.h's play_* rules): the move it names, with
+    // moveType -1 for a drop that names none - back in the hand, onto a battle
+    // this card cannot beat, or an auto-cover too ambiguous to pick for the
+    // player. Every one of those used to be a branch here.
+    const determineGameAction = (x: number, y: number, draggedCard: Card): ClientPlay =>
+        clientTable().play(game, gestureCards(selectedCards, draggedCard),
+                           dropTarget(game, isInHandArea(x, y), battleUnderCursor(x, y)));
 
     const startCardDrag = (e: React.MouseEvent | React.TouchEvent, index: number) => {
         e.preventDefault();
@@ -290,44 +192,15 @@ export const DragProvider = ({ children }: { children: React.ReactNode }) => {
         if (isDraggingForGameAction && draggedCard && isActuallyDragging && currentCursorPos) {
             const action = determineGameAction(currentCursorPos.x, currentCursorPos.y, draggedCard);
 
-            // Check if the dragged card is part of selected cards
-            const isDraggedCardSelected = selectedCards.some(selectedCard =>
-                selectedCard.value === draggedCard.value && selectedCard.suit === draggedCard.suit
-            );
-
-            // Use all selected cards if the dragged card is selected, otherwise just the dragged card
-            const cardsToUse = isDraggedCardSelected && selectedCards.length > 0 ? selectedCards : [draggedCard];
-
             // A move spends the selection when it is sent, refused or not (see ActionButtons).
-            const sends = action.type === 'attack' || action.type === 'pass'
-                || (action.type === 'cover' && !!action.targetCard)
-                || (action.type === 'multicover' && !!action.coverCards && !!action.attackCards);
-            if (sends) setSelectedCards([]);
-            if (action.type === 'attack') {
-                attack(cardsToUse).catch((e) => {
-                    console.error('Attack failed:', e.message);
-                });
-
-            } else if (action.type === 'cover' && action.targetCard) {
-                // Single card cover
-                const cardToUse = cardsToUse[0];
-                cover([cardToUse], [action.targetCard]).catch((e) => {
-                    console.error('Cover failed:', e.message);
-                });
-
-            } else if (action.type === 'multicover' && action.coverCards && action.attackCards) {
-                // Multi-card cover with unambiguous mapping
-                cover(action.coverCards, action.attackCards).catch((e) => {
-                    console.error('Multi-card cover failed:', e.message);
-                });
-
-            } else if (action.type === 'pass') {
-
-                pass(cardsToUse).catch((e) => {
-                    console.error('Pass failed:', e.message);
-                });
+            if (action.moveType >= 0) setSelectedCards([]);
+            if (action.moveType === MOVE_ATTACK) {
+                attack([...action.cards]).catch((e) => { console.error('Attack failed:', e.message); });
+            } else if (action.moveType === MOVE_COVER) {
+                cover([...action.cards], [...action.attackCards]).catch((e) => { console.error('Cover failed:', e.message); });
+            } else if (action.moveType === MOVE_PASS) {
+                pass([...action.cards]).catch((e) => { console.error('Pass failed:', e.message); });
             }
-
         }
 
         // Schedule the final update to the server with current order (for rearranging)
@@ -397,13 +270,7 @@ interface DragContextType {
     isDraggingForGameAction: boolean;
     draggedCard: Card | null;
     currentCursorPos: { x: number; y: number } | null;
-    determineGameAction: (x: number, y: number, draggedCard: Card) => 
-        | { type: 'attack' }
-        | { type: 'cover', targetCard: Card }
-        | { type: 'multicover', coverCards: Card[], attackCards: Card[] }
-        | { type: 'pass' }
-        | { type: 'rearrange' }
-        | { type: 'invalid' };
+    determineGameAction: (x: number, y: number, draggedCard: Card) => ClientPlay;
     startCardDrag: (e: React.MouseEvent | React.TouchEvent, index: number) => void;
 }
 

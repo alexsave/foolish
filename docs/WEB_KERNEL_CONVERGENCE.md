@@ -227,7 +227,7 @@ It also fixes the Cover-button targeting to the kernel's rule.
 Cost: the menu-caching work in §3, and the behaviour change in §4.1.
 Do it after (1) and treat the cache as the design problem, not the shim.
 
-> **This one was attempted, on the same day, and parked. Read §6 before starting it.**
+> **This one was attempted, parked (§6), and re-run on 2026-09-18, when it paid. See §7.**
 
 **3. `fio_finish_rows`. 55 TS lines out, about 20 back, +129 gzip.**
 The finish order is currently derived in three places - `anim_finish_rows`, `calculateGameRankings`, and `WinScreen` - and the two TS copies already disagree with C on dedup.
@@ -326,6 +326,24 @@ Anyone re-opening this question should start from that test rather than rewrite 
 One thing only: the web computing a legal-move menu client-side for some other reason.
 If a menu already exists per position, `playMenu.ts` and its cache stop being this candidate's cost, the arithmetic collapses to the 151-line shim against the five call sites, and `DragContext` becomes convertible.
 Until then, recommendation 2 is priced wrong and recommendations 1 and 3 remain the ones worth taking.
+
+## 7. It was re-run on 2026-09-18, and it paid
+
+Read §6 for the shape of the problem, but not for the verdict: it has been overtaken.
+
+The answer §6 was waiting for - "the web computing a legal-move menu client-side for some other reason" - is not what happened, and looking for it was the mistake.
+The menu never needed to be client-side at all.
+What arrived instead was the web holding its board as the kernel's own `TableView` (`client_table.h`), which `client_validate` already reads back as a masked game: so the published pair can be made *inside* the kernel, from the board the screen already has, and no menu ever crosses to a host that would then have to know what a menu byte means.
+`c/src/client_table.h` `client_play` is that entry - the same "one answer, one walk of one menu" shape `ios_api.c`'s `fio_play_probe` has - and `src/wasm/playMenu.ts`, the redacted marshal and the `WeakMap` were never written.
+
+The second half was `tools/structgen`, which did not exist when §6 was written.
+The 151-line shim was a hand-copied `LEGAL_WIRE_NONE`, a hand-written `PlayBoard` interface and a hand-written byte packer - `--const`, `--fields` and `--writer` respectively.
+`ClientGesture`'s writer and `ClientPlay`'s reader are generated now, and `PLAY_TARGET_*` / `MOVE_*` are read out of `legal.h`, so the sentinel §6 records as the branch's one real bug cannot be spelled wrong twice.
+
+All five call sites converted, `DragContext` included: it is convertible once the DOM hit-test hands the kernel a battle index and nothing else.
+`bots.wasm.gz` +774 gzip (+0.96%) against §6's +2,116, because retiring the now-callerless `wasm_unambiguous_cover` gave 533 of the 1,313 back.
+
+The lasting lesson is §3's, restated: the cost of these rules is never the rule, it is assembling their arguments - so the question to ask of the next candidate is not "does the caller already have the inputs" but "can the inputs be made on the far side of the boundary".
 
 ## Appendix: how to reproduce the measurement
 

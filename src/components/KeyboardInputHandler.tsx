@@ -3,9 +3,8 @@ import { useServer } from '../contexts/ServerContext';
 import { useAnimation } from '../contexts/AnimationContext';
 import { useGame } from '../contexts/GameContext';
 import { useAuth } from '../contexts/AuthContext';
-import { canCoverPair, canPass } from '../utils/gameValidation';
-import { kernelUnambiguousCover } from '@sdk/ts/wasm/bots.ts';
-import { covered, type ViewCard as Card } from '../state/view';
+import { canPass, coverGesture } from '../utils/gameValidation';
+import { type ViewCard as Card } from '../state/view';
 
 export const KeyboardInputHandler = () => {
     const { user_id } = useAuth();
@@ -36,9 +35,9 @@ export const KeyboardInputHandler = () => {
         return localHandOrder[position - 1];
     };
 
-    // Cover-combination resolution lives in the kernel now
-    // (kernelUnambiguousCover -> legal.c unambiguous_cover), shared by every
-    // input path and every host (A7/F9).
+    // What the Cover key means lives in the kernel now (gameValidation
+    // coverGesture -> client_play, legal.h play_*), shared by every input path
+    // and every host.
     //
     // Pass legality uses the SHARED canPass (src/utils/gameValidation.ts) - the
     // same predicate the buttons/drag use - so the keyboard path can't diverge.
@@ -60,34 +59,16 @@ export const KeyboardInputHandler = () => {
 
     const handleCover = useCallback(async () => {
         if (!game || selectedCards.length === 0) return;
-
+        // The same one answer the Cover BUTTON uses: the kernel aims the cover
+        // and names the move, or there is no cover to make.
+        const move = coverGesture(game, selectedCards);
+        if (!move) {
+            console.error('Cover is ambiguous or invalid');
+            return;
+        }
         try {
-            if (selectedCards.length === 1) {
-                // Single card cover - find which attack it can cover
-                const uncoveredBattles = game.battles.filter(battle => !covered(battle));
-                const validTargets = uncoveredBattles.filter(battle =>
-                    canCoverPair(battle.attack, selectedCards[0], game.powerSuit)
-                );
-                
-                if (validTargets.length === 1) {
-                    // Card can only cover one specific attack - allow cover action
-                    setSelectedCards([]);
-                    await cover([selectedCards[0]], [validTargets[0].attack]);
-                } else {
-                    console.error('Cover is ambiguous or invalid');
-                }
-            } else {
-                // Multi-card cover - check if unambiguous
-                const unambiguousCover = game
-                    ? kernelUnambiguousCover(selectedCards, game.battles, game.powerSuit)
-                    : null;
-                if (unambiguousCover) {
-                    setSelectedCards([]);
-                    await cover(unambiguousCover.coverCards, unambiguousCover.attackCards);
-                } else {
-                    console.error('Multi-card cover is ambiguous or invalid');
-                }
-            }
+            setSelectedCards([]);
+            await cover([...move.cards], [...move.attackCards]);
         } catch (error) {
             console.error('Cover failed:', error);
         }

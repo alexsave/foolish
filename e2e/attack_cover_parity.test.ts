@@ -39,10 +39,9 @@ import { encodeAction } from '../sdk/ts/wire/awire.ts';
 import {
   canAttack as clientCanAttack,
   validateAttack as clientValidateAttack,
-  canCoverCards as clientCanCoverCards,
+  coverGesture as clientCoverGesture,
   validateCover as clientValidateCover,
 } from '../src/utils/gameValidation.ts';
-import { kernelUnambiguousCover } from '../sdk/ts/wasm/bots.ts';
 import { MemTable, type MemBoard } from './helpers/table_mem.ts';
 import { suiteRng } from './helpers/rng.ts';
 
@@ -143,21 +142,23 @@ function playAndCheck(np: number, brain: string, stats: { states: number; attack
           assert.equal(optimistic, server, `validateAttack !== kernel: ${detail}`);
         }
       } else {
-        // 2. COVER button: offered => kernel-legal
+        // 2. COVER button: offered => the move it would send is kernel-legal
         const uncovered = game.battles.filter((b) => !b.defense);
         if (uncovered.length > 0 && p.hand.length > 0) {
           const selections: Card[][] = p.hand.map((c) => [c]);
           if (p.hand.length >= 2) selections.push([p.hand[0], p.hand[1]]);
           for (const sel of selections) {
-            if (!clientCanCoverCards(personal, sel)) continue;
-            const mapping = kernelUnambiguousCover(sel, game.battles, game.powerSuit);
-            assert.ok(mapping, `canCoverCards true but no unambiguous mapping (seed=${rng.seed})`);
+            // A live Cover button carries a move with it (client_play resolves
+            // the button's own target), so this is now one assertion, not two:
+            // the move the button would send is one the kernel accepts.
+            const move = clientCoverGesture(personal, sel);
+            if (!move) continue;
             stats.covers++;
+            const covers = [...move.cards], attacks = [...move.attackCards];
             assert.ok(
-              serverAllowsCover(t, seat, mapping!.coverCards, mapping!.attackCards),
+              serverAllowsCover(t, seat, covers, attacks),
               `client offers a cover the kernel rejects (seed=${rng.seed}): `
-              + `covers=[${mapping!.coverCards.map(cardKey).join(',')}] `
-              + `attacks=[${mapping!.attackCards.map(cardKey).join(',')}]`,
+              + `covers=[${covers.map(cardKey).join(',')}] attacks=[${attacks.map(cardKey).join(',')}]`,
             );
           }
           // 3. COVER optimistic gate: exact agreement on explicit mappings
