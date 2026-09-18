@@ -15,7 +15,7 @@
 // Runs against seed.sql applied verbatim to a real Postgres, so it covers the
 // fresh-database path (seed.sql) only. The hosted project never runs seed.sql,
 // and this stayed green while 20260906120000 left commit_game open there:
-// e2e/db_migration_grants.test.ts replays the migrations the hosted project
+// e2e/db_platform_grants.test.ts asserts the same over the same seed.sql
 // actually receives, under Supabase's default privileges, and also holds the
 // table-write invariant.
 //
@@ -74,7 +74,7 @@ export function registerDbGrantsValidation(): void {
             offenders, [],
             'SECURITY DEFINER functions bypass RLS and PostgREST exposes them as RPCs. '
             + 'Revoke from PUBLIC, anon and authenticated, then grant to service_role only '
-            + '(see server/impls/supabase/migrations/20260807120000_lock_down_state_rpcs.sql). '
+            + '(seed.sql revokes them right after the CREATEs, under REVOKE THE PLATFORM DEFAULTS). '
             + `Exposed: ${offenders.join(', ')}`,
         );
     });

@@ -77,8 +77,8 @@ export async function applySchema(): Promise<void> {
 /**
  * A fresh database for this file with only the Supabase platform shim, no app
  * schema. For a suite that must build the schema some other way than seed.sql
- * (e2e/db_migration_grants.test.ts replays the migrations the hosted project
- * receives). Recreates the database, so calling it again starts over.
+ * (e2e/db_platform_grants.test.ts loads it under Supabase's default
+ * privileges). Recreates the database, so calling it again starts over.
  */
 export async function applyPlatformShim(): Promise<void> {
     await onAdmin(`DROP DATABASE IF EXISTS ${suiteDatabase} WITH (FORCE)`);
@@ -87,6 +87,15 @@ export async function applyPlatformShim(): Promise<void> {
 
     const shim = readFileSync(join(process.cwd(), 'e2e', 'schema.sql'), 'utf8');
     await pool.query(shim);
+    // And the two platform EXTENSIONS, before seed.sql rather than after it.
+    // seed.sql schedules the bot heartbeat and the pg_net response-log VACUUM
+    // (its SCHEDULED JOBS section), and it skips them on a Postgres that has no
+    // pg_cron - so a database that met the shapes only afterwards would build a
+    // schema with no bot loop in it and every assertion about the jobs would be
+    // asserting nothing. Standing them up here makes "what seed.sql builds" the
+    // same question in the harness as it is on a server.
+    const extensions = readFileSync(join(process.cwd(), 'e2e', 'fixtures', 'platform_extensions.sql'), 'utf8');
+    await pool.query(extensions);
 }
 
 // Release: close the pool, then drop the file's database. Best-effort by design:

@@ -1,6 +1,28 @@
 -- =============================================================================
 -- Supabase Schema for Game Application
--- Copy and paste this entire script into Supabase's SQL Editor
+-- =============================================================================
+-- THE WHOLE DATABASE, AND THE ONLY DEFINITION OF IT. Every database this project
+-- runs on - a `supabase start`, an e2e test's own, the hosted project - is this
+-- file. It drops what it finds and builds the schema, the RLS, the grants, the
+-- kernel writers, the two pg_cron jobs and the bot roster from nothing, and it is
+-- idempotent: running it again lands in the same place.
+--
+-- The `server/impls/supabase/migrations/` directory is gone. It held 39 files
+-- recording how the hosted database got from June 2026 to here, every one of them
+-- already applied there, and this file had been kept equal to their end state by
+-- a test that built both and compared the catalogs object for object. A comment
+-- below that says "migration 20260708120000" is therefore a citation of git
+-- history, not a path: `git log -- server/impls/supabase/migrations` still has
+-- every one of them, and they are worth reading for the reasoning. Nothing in
+-- the tree reads them.
+--
+-- HOW A SCHEMA CHANGE REACHES PRODUCTION: hosted is the one database that cannot
+-- be rebuilt from this file, since it drops every table it finds, so a change
+-- gets there as a delta - written twice, in the same commit: here in its final
+-- form, and in server/impls/supabase/migrations/ as the statement that takes
+-- today's production database to it. That directory is normally empty, a merge
+-- to main runs no SQL against hosted, and its README has the rule for the day
+-- somebody needs one.
 -- =============================================================================
 
 -- Enable necessary extensions first
@@ -16,7 +38,7 @@ DROP FUNCTION IF EXISTS update_updated_at_column() CASCADE;
 -- Drop tables in reverse dependency order (this will automatically drop all policies and triggers)
 DROP TABLE IF EXISTS spectator_views CASCADE;
 DROP TABLE IF EXISTS player_views CASCADE;
-DROP TABLE IF EXISTS game_snapshots CASCADE;  -- `supabase start` applies the migrations first, which create it
+DROP TABLE IF EXISTS game_snapshots CASCADE;
 DROP TABLE IF EXISTS chat_messages CASCADE;
 DROP TABLE IF EXISTS bot_hands CASCADE;
 DROP TABLE IF EXISTS player_hands CASCADE;
@@ -385,7 +407,7 @@ GRANT SELECT ON public.spectator_views TO authenticated;
 -- write a client makes on purpose is sending chat, gated by the chat_messages
 -- INSERT policy above, so it is granted back. SELECT is untouched. Must run after
 -- every CREATE TABLE. Mirrors migration 20260917000000 and is asserted under the
--- platform defaults by e2e/db_migration_grants.test.ts.
+-- platform defaults by e2e/db_platform_grants.test.ts.
 DO $$
 DECLARE
   rel regclass;
@@ -805,7 +827,7 @@ $$;
 -- PostgREST does not expose them. Must run after every definer function is
 -- created; a function a client is meant to call must be granted explicitly
 -- after this. See migrations 20260807120000 and
--- 20260917000000, e2e/db_grants.test.ts and e2e/db_migration_grants.test.ts.
+-- 20260917000000, e2e/db_grants.test.ts and e2e/db_platform_grants.test.ts.
 DO $$
 DECLARE
   fn regprocedure;
@@ -932,6 +954,230 @@ WITH CHECK (
 
 
 -- =============================================================================
+-- SCHEDULED JOBS: the bot heartbeat, and the VACUUM that keeps pg_net's log small
+-- =============================================================================
+-- These two pg_cron entries are RUNNING INFRASTRUCTURE, not schema. They used to
+-- live only in the migration history (20260616040000_bot_heartbeat_cron,
+-- 20260712120000_heartbeat_prune_cron_history,
+-- 20260918200000_pg_net_response_log_retention,
+-- 20260918230000_heartbeat_liveness_and_gate); when that history was retired this
+-- file became their only definition, so a database built from seed.sql alone has
+-- a bot loop and a bounded response log. Without them a fresh database has no bot
+-- loop at all - bots never move in a game with nobody watching it - and pg_net's
+-- response log grows without bound until it eats the disk.
+--
+-- WHY THIS SECTION IS GUARDED
+--
+-- pg_cron and pg_net are platform extensions. The hosted project and a local
+-- `supabase start` both have them; the bare Postgres the e2e harness runs on has
+-- neither, and gets the shapes instead (e2e/fixtures/platform_extensions.sql,
+-- applied by the harness before this file so the jobs below are really
+-- scheduled and really asserted). A Postgres with neither gets the schema and no
+-- jobs rather than an error, because the gameplay schema above is the part every
+-- database needs and the scheduler is the part only a server needs.
+--
+-- IDEMPOTENT. CREATE EXTENSION IF NOT EXISTS, and cron.schedule() upserts on
+-- (jobname, username), so re-running this file replaces a job rather than adding
+-- a second one.
+
+DO $$
+BEGIN
+  IF to_regnamespace('cron') IS NULL
+     AND EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pg_cron') THEN
+    EXECUTE 'CREATE EXTENSION IF NOT EXISTS pg_cron';
+  END IF;
+  IF to_regnamespace('net') IS NULL
+     AND EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pg_net') THEN
+    EXECUTE 'CREATE EXTENSION IF NOT EXISTS pg_net';
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF to_regprocedure('cron.schedule(text,text,text)') IS NULL THEN
+    RAISE NOTICE 'pg_cron is not installed: the bot heartbeat and the pg_net response-log VACUUM are NOT scheduled on this database. That is expected on a plain Postgres and wrong on a server.';
+    RETURN;
+  END IF;
+
+  -- ---------------------------------------------------------------------------
+  -- 1. The bot heartbeat
+  -- ---------------------------------------------------------------------------
+  -- A DUMB TRIGGER: every 10s it POSTs the bot-heartbeat edge function's SCAN
+  -- endpoint (empty body). ALL "which games need driving" logic lives in the
+  -- function (TypeScript), not here.
+  --
+  -- PREREQUISITES on a server:
+  --   1. Deploy the `bot-heartbeat` edge function.
+  --   2. Store the service-role key in Vault so it isn't written in plaintext:
+  --        select vault.create_secret('<YOUR_SERVICE_ROLE_KEY>', 'service_role_key');
+  --      (Settings > API has the service_role key. Run create_secret once.)
+  --
+  -- '10 seconds' is pg_cron's sub-minute interval syntax (pg_cron >= 1.5;
+  -- Supabase ships a newer one). An instance that rejects it falls back to
+  -- '* * * * *', but that makes bots-only games lurch in 60s bursts.
+  --
+  -- Cost: pg_cron and pg_net are free. The only metered cost is edge
+  -- invocations, which is what the WHERE EXISTS below is about.
+  --
+  -- THE PRUNE. cron.job_run_details appends a row on EVERY job run and never
+  -- prunes itself. At ~8,600 runs a day it reached ~224k rows / 151 MB in 26
+  -- days and, with pg_net's response log, blew past the 500 MB free-tier cap.
+  -- The DELETE scans only the last ~2 days of rows (a few thousand) and removes
+  -- anything older, so the table stays small forever. end_time IS NULL for an
+  -- in-flight run and `NULL < ...` is NULL, so a running job is never deleted.
+  -- It lives inside the heartbeat job rather than in a cron entry of its own, at
+  -- the operator's request.
+  --
+  -- THE GATE. Measured on hosted (wngpfwmwkltonwosqflx, read-only) on
+  -- 2026-09-18: 8,622 runs in 24 h => 258,660 net.http_post calls / 30 days,
+  -- every one an edge invocation, against a 500,000 free-tier month of which
+  -- 277,366 was already spent. Of 90 games exactly ONE was playing - 24a407,
+  -- created 2026-07-13 - with version and round_epoch frozen across two dumps
+  -- 410 s apart while updated_at advanced the whole time and sat at exactly
+  -- bot_lease_until + 1 second in both. That +1 second is release_bot_lease: it
+  -- sets bot_lease_until = now() - 1s and update_games_updated_at stamps
+  -- updated_at on the same UPDATE. So the heartbeat, driving a game abandoned 67
+  -- days earlier, refreshed the very column the scan's one-hour ABANDON bound
+  -- reads. The guard meant to stop this was the thing the loop kept resetting.
+  --
+  -- games.last_commit_at (declared on the games table above, written by the
+  -- games_stamp_last_commit trigger) is the liveness clock the loop cannot wind:
+  -- it moves only when `version` moves, and `version` moves in exactly one place
+  -- in the whole schema, commit_table's `version = version + 1`, which is a
+  -- kernel commit. The gate reads it.
+  --
+  -- The cadence does not change: 10 seconds while a game is live, because gating
+  -- costs no latency and widening the interval buys the same saving by making
+  -- bots slower for the people who ARE playing. The gate is deliberately WEAKER
+  -- than the scan's own filter - it asks only for a row the kernel says needs
+  -- bots whose last commit is inside the same one-hour window, and leaves the
+  -- 10-second staleness test where it already lives, in the function. So every
+  -- tick that would have dispatched still posts, and the ticks that now cost
+  -- nothing are exactly the ticks that used to post and dispatch nothing.
+  --
+  -- What "something to drive" means is not a guess: games.needs_bots IS the
+  -- kernel's verdict (c/src/table.h table_needs_bots - PLAYING, and a bot seat
+  -- still IN), written by every commit, and it is already the scan's predicate.
+  -- A WAITING lobby is never the heartbeat's business, and the lobby paths wake
+  -- the bots inline through scheduleBotLoop on the commit that starts the game.
+  --
+  -- SHAPE NOTES, because pg_cron sends this as a SIMPLE QUERY on this instance
+  -- (cron.use_background_workers is off), which makes the two statements one
+  -- implicit transaction block:
+  --   * Both statements are happy there.
+  --   * `SELECT f() WHERE <false>` returns zero rows and never evaluates f().
+  --     That is what makes the tick free: no request is queued, no response row
+  --     is written, no function is invoked.
+  --   * now() is transaction time, so the gate and the DELETE see one clock.
+  -- The interval below is the scan's ABANDON_MS (functions/bot-heartbeat/index.ts)
+  -- and the two are asserted equal in e2e/heartbeat_gate.test.ts - a gate
+  -- NARROWER than the scan would strand a game the scan was willing to drive.
+  --
+  -- The URL is the hosted project's, as it has been since this job was first
+  -- scheduled. A local stack therefore posts at hosted's bot-heartbeat with a
+  -- service-role key its Vault does not have, which 401s and drives nothing; the
+  -- local bot loop is woken inline by scheduleBotLoop instead.
+  PERFORM cron.schedule(
+    'bot-heartbeat',
+    '10 seconds',
+    $job$
+  DELETE FROM cron.job_run_details WHERE end_time < now() - interval '2 days';
+  SELECT net.http_post(
+    url := 'https://wngpfwmwkltonwosqflx.supabase.co/functions/v1/bot-heartbeat',
+    headers := jsonb_build_object(
+      'Content-Type',  'application/json',
+      'Authorization', 'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'service_role_key'),
+      'apikey',        (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'service_role_key')
+    ),
+    body := '{}'::jsonb,
+    timeout_milliseconds := 5000
+  )
+  WHERE EXISTS (
+    SELECT 1 FROM games
+    WHERE needs_bots
+      AND last_commit_at > now() - interval '1 hour'
+  );
+  $job$
+  );
+
+  -- ---------------------------------------------------------------------------
+  -- 2. The VACUUM that keeps pg_net's response log from eating the disk
+  -- ---------------------------------------------------------------------------
+  -- Measured on hosted on 2026-09-18: the database was 542.5 MB against the
+  -- 500 MB free-plan cap, and net._http_response was 511.1 MB of it - holding
+  -- 2,155 live rows totalling 2.5 MB. The heap was 63,763 pages and every live
+  -- row sat in the LAST 360 of them; pages 0..63,402, 495 MB, held nothing.
+  -- autovacuum_count was 1, ever.
+  --
+  -- Neither usual suspect is guilty. pg_net's TTL is the 6-hour default and it
+  -- works - the live window is exactly six hours wide - and one POST every 10 s
+  -- is only 8,640 responses a day. What is wrong is a loop that sustains itself:
+  --
+  --   1. pg_net's reaper DELETEs rows past the TTL. Its own sequential scan
+  --      prunes those dead tuples off the page as it goes, which frees space
+  --      WITHIN the page but does not touch the free space map - only VACUUM
+  --      writes that.
+  --   2. Because the pruning keeps n_dead_tup near zero (4, against 431,140
+  --      lifetime deletes), the table never crosses the autovacuum threshold of
+  --      50 + 0.2 x 2,141 ~ 478 dead tuples. Autovacuum ran on it ONCE.
+  --   3. With no free space map entries, every INSERT extends the relation
+  --      instead of reusing a page. Go to 1.
+  --
+  -- 8,640 rows a day at 6 rows to a page is ~1,440 new pages, ~11.8 MB a day.
+  --
+  -- A plain VACUUM writes the free space map, so the next insert reuses a reaped
+  -- page rather than extending the file, and the heap settles at the live window
+  -- (~2,160 rows, ~360 pages, ~3 MB) plus at most one interval's worth of new
+  -- pages - every 15 minutes that is 90 rows, ~15 pages, ~120 kB. Under 5 MB
+  -- with the index, against 511 MB. e2e/pg_net_log_retention.test.ts runs two
+  -- days of the production cycle twice, once with this command and once without,
+  -- and holds the two apart.
+  --
+  -- ONE BARE STATEMENT in the job, deliberately: cron.use_background_workers is
+  -- off on this instance, so pg_cron sends the command to a libpq backend as a
+  -- simple query. A multi-statement command would arrive as an implicit
+  -- transaction block and Postgres refuses VACUUM inside one.
+  --
+  -- WHAT THIS DOES NOT DO, and why:
+  --
+  --   cron.job_run_details is left to the heartbeat's own DELETE above. It is
+  --   14.5 MB of 16,832 LIVE rows - no dead space to reclaim, already bounded,
+  --   autovacuumed 159 times. It is 2.6% of the database and it is not sick.
+  --
+  --   ALTER TABLE net._http_response SET (autovacuum_vacuum_insert_threshold)
+  --   would be tidier - insert-driven autovacuum, PG 13+, and this instance is
+  --   17.4 - but the table is owned by supabase_admin and we are postgres, which
+  --   is not a member of it, so ALTER TABLE is refused. postgres does hold
+  --   MAINTAIN on it, which is what VACUUM needs.
+  --
+  --   The heartbeat's frequency is untouched. The pg_net row rate IS the cron
+  --   rate and nothing else - the per-game drive dispatches are fetch() calls
+  --   from inside the edge function, not pg_net - so changing it is a gameplay
+  --   decision, not a storage one.
+  --
+  -- The 511 MB itself was handed back by a one-time `TRUNCATE net._http_response`
+  -- (a DELETE would have left the file exactly as long as it found it) in the
+  -- migration this section replaces. That reclaim has happened; a database built
+  -- from this file has nothing to reclaim, so only the part that keeps it fixed
+  -- is here.
+  PERFORM cron.schedule(
+    'pg-net-response-vacuum',
+    '*/15 * * * *',
+    'VACUUM net._http_response'
+  );
+END $$;
+
+-- To check on them later:
+--   select jobname, schedule, active from cron.job;
+--   select status, return_message, start_time from cron.job_run_details
+--     where jobid = (select jobid from cron.job where jobname = 'bot-heartbeat')
+--     order by start_time desc limit 10;
+--   select count(*) from net._http_response where created > now() - interval '1 hour';
+--   select pg_size_pretty(pg_total_relation_size('net._http_response'));
+--   select id, version, updated_at, last_commit_at from games where needs_bots;
+
+
+-- =============================================================================
 -- SEED DATA: Initial bots with different strategies
 -- =============================================================================
 
@@ -1007,8 +1253,8 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 
 -- Bots carry the reserved '%' prefix so bot-vs-human is recoverable from the
 -- name-only replay codec. Done as an UPDATE (rather than prefixing every literal
--- above) so the list stays readable; idempotent via the left() check. The live
--- DB gets this same rename via migrations/20260615120000_reserve_bot_username_prefix.sql.
+-- above) so the list stays readable; idempotent via the left() check. The hosted
+-- database was given the same rename by migration 20260615120000.
 UPDATE bots SET nickname = '%' || nickname WHERE left(nickname, 1) <> '%';
 
 

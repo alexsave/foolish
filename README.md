@@ -74,7 +74,7 @@ supabase/
                           good/exit/start/continue/add-bot/bot_bump/meta/...
   functions/_shared/      types, actions, replay codec, and the WASM bridges
                           to the C kernel (rules + bot brains)
-  migrations/             schema, incl. CAS concurrency + bot-lease heartbeat
+  seed.sql                the whole schema: tables, RLS, the kernel writers, the cron jobs
   seed.sql                seeds the bot roster (Cordite, Espresso, Handwritten, …)
 
 c/                   pure-C Durak engine + bot arena  ← project 1

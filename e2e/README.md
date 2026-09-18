@@ -9,7 +9,7 @@ bot-lease plpgsql, `broadcastAnimationEvents`) and the real client reconciliatio
 The only substitution is the part of the platform we can't run locally
 (PostgREST + Realtime), replaced by one small `pg`-backed adapter
 (`adapters/supabase.ts`, ~180 lines) implementing exactly the supabase-js surface
-the server uses. The `commit_game` / lease plpgsql is the verbatim migration code,
+the server uses. The `commit_table` / lease plpgsql is seed.sql's own code,
 running in real Postgres. Nothing about gameplay is mocked.
 
 How the real server code loads under Node: `e2e/tsconfig.json` maps the three

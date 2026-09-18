@@ -29,16 +29,9 @@
 import './harness.ts';
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { applySchema, uuid, pgPool } from './harness.ts';
 import { fixture } from './helpers/table_fixture.ts';
 import { seedTable } from './helpers/table_db.ts';
-
-const MIGRATIONS = join(process.cwd(), 'server', 'impls', 'supabase', 'migrations');
-// The migrations that carry this file's policies to hosted, in the order they apply.
-const REALTIME_MIGRATIONS = ['_realtime_channel_exact_topics.sql', '_drop_tmp_allow_all_realtime_policy.sql', '_drop_user_realtime_policies.sql']
-    .map((suffix) => readdirSync(MIGRATIONS).find((f) => f.endsWith(suffix)));
 
 type Role = 'anon' | 'authenticated';
 
@@ -195,43 +188,16 @@ test('game-: any signed-in user receives the spectator stream, anon does not', a
     await assertGameMatrix('seed.sql');
 });
 
-// Hosted receives migrations, never seed.sql, and its realtime policies were
-// created from seed.sql as it stood before these migrations. So put that legacy
-// set back, apply the migrations in order, and require exactly the policies a
-// fresh seed.sql database has - then the whole matrix again.
-//
-// A FROZEN FIXTURE, copied verbatim from seed.sql at a844b2a1. It is what the
-// migrations must be able to start from; it is never to be "fixed".
-const LEGACY_POLICIES = `
-DROP POLICY IF EXISTS "authenticated can receive game-user messages" ON "realtime"."messages";
-DROP POLICY IF EXISTS "authenticated can receive chat broadcasts" ON "realtime"."messages";
-DROP POLICY IF EXISTS "authenticated can receive private messages" ON "realtime"."messages";
-DROP POLICY IF EXISTS "authenticated can send private messages" ON "realtime"."messages";
-DROP POLICY IF EXISTS "service role can send private messages" ON "realtime"."messages";
-CREATE POLICY "authenticated can receive private messages" ON "realtime"."messages" FOR SELECT TO authenticated USING (
-  (SELECT realtime.topic()) = CONCAT('user-', split_part(((select current_setting('request.jwt.claims', true))::jsonb ->> 'email'), '@', 1))
-  AND realtime.messages.extension IN ('broadcast'));
-CREATE POLICY "authenticated can send private messages" ON "realtime"."messages" FOR INSERT TO authenticated WITH CHECK (
-  (SELECT realtime.topic()) LIKE 'user-%' AND realtime.messages.extension IN ('broadcast'));
-CREATE POLICY "authenticated can receive game-user messages" ON "realtime"."messages" FOR SELECT TO authenticated USING (
-  (SELECT realtime.topic()) LIKE 'gu-%' AND
-  split_part((SELECT realtime.topic()), '-', 3) = (select auth.uid())::text AND
-  EXISTS (SELECT 1 FROM player_hands WHERE player_id = (select auth.uid()) AND game_id = split_part((SELECT realtime.topic()), '-', 2)) AND
-  realtime.messages.extension IN ('broadcast'));
-CREATE POLICY "authenticated can receive chat broadcasts" ON "realtime"."messages" FOR SELECT TO authenticated USING (
-  (SELECT realtime.topic()) LIKE 'chat:%' AND
-  EXISTS (SELECT 1 FROM player_hands WHERE player_id = (select auth.uid()) AND game_id = split_part((SELECT realtime.topic()), ':', 2)) AND
-  realtime.messages.extension IN ('broadcast'));
-CREATE POLICY "service role can send private messages" ON "realtime"."messages" FOR INSERT TO service_role WITH CHECK (
-  (SELECT realtime.topic()) LIKE 'user-%' AND realtime.messages.extension IN ('broadcast'));
--- AND the one hosted carried that this repo never wrote: a blanket SELECT, read
--- off the live catalog on 2026-09-18. With the legacy gu- policy refusing
--- everyone, THIS is what admitted every join on hosted - including one player to
--- another player's per-seat stream.
-CREATE POLICY "tmp_allow_all" ON "realtime"."messages" FOR SELECT TO authenticated USING (true);
-`;
-
-/** No policy may admit a topic unconditionally: that is what tmp_allow_all did. */
+/** No policy may admit a topic unconditionally: that is what tmp_allow_all did.
+ *
+ * Hosted carried a blanket `tmp_allow_all` SELECT policy on realtime.messages
+ * that this repository never wrote - read off the live catalog on 2026-09-18.
+ * With the legacy gu- policy refusing everyone (it cut the topic apart with
+ * split_part, so split_part(topic, '-', 3) was the first 8 hex digits of a UUID
+ * and never equalled auth.uid()), THAT blanket policy was what admitted every
+ * join on hosted, one player to another player's per-seat stream included. The
+ * policies that replaced it are the ones asserted above; this is the assertion
+ * that nothing may reintroduce the shape of the hole. */
 async function assertNoBlanketPolicy(stage: string): Promise<void> {
     const { rows } = await pgPool.query(
         `SELECT policyname, qual FROM pg_policies
@@ -240,26 +206,6 @@ async function assertNoBlanketPolicy(stage: string): Promise<void> {
     assert.deepEqual(rows, [], `${stage}: a SELECT policy on realtime.messages admits every topic: ${rows.map((r) => r.policyname).join(', ')}`);
 }
 
-test('the migrations take the legacy hosted policies to exactly the seed.sql set', async () => {
-    for (const [i, m] of REALTIME_MIGRATIONS.entries()) assert.ok(m, `realtime migration ${i + 1} exists`);
-    const policies = async () => (await pgPool.query(
-        `SELECT policyname, cmd, roles::text, qual, with_check FROM pg_policies
-         WHERE schemaname = 'realtime' AND tablename = 'messages' ORDER BY policyname`)).rows;
-    const fromSeed = await policies();
-
+test('no SELECT policy on realtime.messages admits every topic', async () => {
     await assertNoBlanketPolicy('seed.sql');
-
-    await pgPool.query(LEGACY_POLICIES);
-    // Fixture sanity, both halves of what hosted actually looked like: the legacy
-    // gu- policy refuses its owner, and tmp_allow_all admits a stranger to it.
-    assert.equal(await canReceive('authenticated', b, `gu-${game}-${a}`), true,
-        'fixture sanity: tmp_allow_all admits another player to A\'s per-seat stream');
-
-    for (const m of REALTIME_MIGRATIONS) await pgPool.query(readFileSync(join(MIGRATIONS, m!), 'utf8'));
-    assert.deepEqual(await policies(), fromSeed);
-    await assertNoBlanketPolicy('migration');
-    await assertGuMatrix('migration');
-    await assertChatMatrix('migration');
-    await assertGameMatrix('migration');
-    await assertNoClientSendsAndNoUserTopics('migration');
 });

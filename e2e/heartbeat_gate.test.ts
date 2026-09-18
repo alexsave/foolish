@@ -1,7 +1,8 @@
 /* =============================================================================
  * The bot heartbeat stops paying for games nobody is playing
  * =============================================================================
- * Migration 20260918230000_heartbeat_liveness_and_gate.sql, and the scan in
+ * seed.sql's SCHEDULED JOBS section - the bot-heartbeat cron entry and the
+ * games.last_commit_at column and trigger the gate reads - and the scan in
  * functions/bot-heartbeat/index.ts that reads what it writes.
  *
  * Measured on hosted (wngpfwmwkltonwosqflx, read-only) on 2026-09-18: one
@@ -53,9 +54,8 @@ import { lockedBotLoop } from '../server/impls/supabase/functions/_shared/adapte
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 
 const SUPABASE = join(process.cwd(), 'server', 'impls', 'supabase');
-const MIGRATION = join(SUPABASE, 'migrations', '20260918230000_heartbeat_liveness_and_gate.sql');
+const SEED = join(SUPABASE, 'seed.sql');
 const HEARTBEAT_TS = join(SUPABASE, 'functions', 'bot-heartbeat', 'index.ts');
-const EXTENSIONS = join(process.cwd(), 'e2e', 'fixtures', 'platform_extensions.sql');
 
 const JOB_NAME = 'bot-heartbeat';
 
@@ -173,9 +173,13 @@ const liveGame = async (tag: string, botToMove = false): Promise<string> => {
 
 describe('the heartbeat only fires when there is something to drive', () => {
     before(async () => {
+        // applySchema() is e2e/schema.sql + e2e/fixtures/platform_extensions.sql
+        // + seed.sql, in that order, and the job below comes out of seed.sql -
+        // nothing here schedules anything. A shim applied AFTER seed.sql would
+        // leave cron.job empty and every assertion in this file vacuous, which
+        // is why the harness stands the extensions up first.
         await applySchema();
-        await pgPool.query(readFileSync(EXTENSIONS, 'utf8'));
-        await pgPool.query(readFileSync(MIGRATION, 'utf8'));
+        assert.ok(await scheduledCommand(), 'seed.sql scheduled the bot-heartbeat job');
     });
 
     beforeEach(async () => {
@@ -429,21 +433,27 @@ describe('the heartbeat only fires when there is something to drive', () => {
         assert.equal(await tick(), 0, 'and 5,001 stalled bot games are still 5,001 reasons not to post');
     });
 
-    // ---- the migration is replayable -----------------------------------------
+    // ---- seed.sql is replayable ----------------------------------------------
 
-    test('running the migration a second time changes nothing', async () => {
+    test('re-applying seed.sql leaves one heartbeat job, not two', async () => {
+        // seed.sql is what `supabase start` and `supabase db reset` run, and they
+        // run it against whatever is already there. cron.schedule() upserts on
+        // (jobname, username), so a second application must REPLACE the job. Two
+        // bot-heartbeat entries would be two POSTs every ten seconds - the edge
+        // bill this file exists to halve, doubled instead.
+        //
+        // Last in the file: seed.sql drops and rebuilds the gameplay tables, so
+        // it takes the scenarios' rows with it.
+        await pgPool.query(readFileSync(SEED, 'utf8'));
+
+        for (const job of [JOB_NAME, 'pg-net-response-vacuum']) {
+            assert.equal(
+                await scalar<number>('SELECT count(*)::int AS v FROM cron.job WHERE jobname = $1', [job]), 1,
+                `a second seed.sql left two ${job} jobs`);
+        }
+
         const g = await liveGame('id');
         await age(g, 30);
-        const before = await clocks(g);
-
-        await pgPool.query(readFileSync(MIGRATION, 'utf8'));
-
-        assert.deepEqual(await clocks(g), before,
-            'the replay rewrote a live row. The backfill matches no row once the column is filled, and it '
-            + 'holds update_games_updated_at off while it runs, so a re-push cannot restamp a game.');
-        assert.equal(await scalar<number>('SELECT count(*)::int AS v FROM cron.job WHERE jobname = $1', [JOB_NAME]), 1,
-            'cron.schedule() replaces a job by name rather than adding one, so db push re-running this '
-            + 'migration leaves one job, not two');
-        assert.equal(await tick(), 1, 'and the gate still opens for the live game');
+        assert.equal(await tick(), 1, 'and the gate still opens for a live game after the replay');
     });
 });
