@@ -3,7 +3,13 @@
 // replay_decode's log stream through the generated readers). Emits {logs,
 // trumpCard, powerSuit, firstAttacker, fool, eliminationOrder, playerCount}.
 //
+//   bash tools/structgen/gen.sh   # once, if nothing has generated in this tree
 //   node --import tsx c/tools/og_explain/decode_to_json.mjs "<replay-url>" replay_decoded.json
+//
+// The gen.sh line is there because this is run by hand rather than through an
+// npm script, and sdk/ts/gen is a build output: every npm lane generates it
+// through a pre-hook (package.json "//gen"), and nothing does that for a bare
+// `node` invocation.
 //
 // The out-path is an explicit argument (not stdout) because instantiating the
 // wasm engine prints a "[perf] ..." line to stdout that would corrupt piped JSON.

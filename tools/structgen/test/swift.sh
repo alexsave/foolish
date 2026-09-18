@@ -11,10 +11,11 @@
 # every offset the generator emitted is the offset offsetof would give - checked
 # against the real headers rather than a copy of them.
 #
-# Nothing here is committed: the module is generated into build/ for the host it
-# is about to run on, exactly as build/verify.wasm is linked for the run that
-# reads it. The COMMITTED Swift is the production one (sdk/swift/gen), which is
-# generated for one fixed triple and diffed by gen.sh --check.
+# The module is generated into build/ for the host it is about to run on,
+# exactly as build/verify.wasm is linked for the run that reads it. The
+# PRODUCTION Swift (sdk/swift/gen) is not committed either: it is generated for
+# one fixed triple by tools/structgen/gen.sh and by `make ios-lib`, which bakes
+# the matching hash into the library FoolishKit links.
 #
 #   swift.sh         generate, compile and run
 set -euo pipefail

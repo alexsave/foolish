@@ -55,6 +55,24 @@ yarn-error.log*
 .cursor
 
 
+# tools/structgen's outputs. BUILD OUTPUTS, written by tools/structgen/gen.sh
+# (and by the wasm and ios-lib make targets) on every build that consumes them -
+# the web, the type-check, every test lane, the edge-function deploy, FoolishKit.
+#
+# They used to be committed. verify.wasm is why they are not: it sat committed
+# under tools/structgen/gen/ with `diff -x verify.wasm` excusing it from the
+# freshness check, and the exclusion is what let it rot for months while the
+# check reported everything fresh (f6338351). An artifact nothing compares is an
+# artifact nothing keeps fresh, and the cheapest way to have nothing to compare
+# is to have nothing committed.
+#
+# e2e/validation/generated_outputs_validation.test.ts refuses a tracked file
+# under any of these, and reads the directory list out of gen.sh rather than
+# restating it here - so a new output is covered the day it lands.
+sdk/ts/gen/
+sdk/swift/gen/
+tools/structgen/gen/
+
 # c
 c/build/
 c/*.trace/

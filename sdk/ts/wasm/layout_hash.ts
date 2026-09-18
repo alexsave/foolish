@@ -35,7 +35,8 @@ export function assertLayoutHash(
     if (got !== want) {
         throw new Error(`${module} was built for Game layout ${hex(got)}, but ${generatedPath} ` +
             `describes ${hex(want)}: the module and the generated accessors come from different C headers. ` +
-            `Rebuild the module (make -C c wasm wasm-bots, which also rewrites sdk/ts/gen/{game_layout,layout_hash}.*.ts) ` +
-            `and commit both, or run tools/structgen/gen.sh if only the generated module is stale.`);
+            `The accessors are a build output and were just written from c/src, so it is the MODULE that ` +
+            `is behind: rebuild and commit it (make -C c wasm-bots wasm-oracle wasm-oracle-mt, with ` +
+            `WASM_CC=/opt/homebrew/opt/llvm/bin/clang on a Mac).`);
     }
 }

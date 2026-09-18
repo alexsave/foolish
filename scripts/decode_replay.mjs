@@ -2,7 +2,13 @@
 // names and move gaps its extras carry. The kernel decodes it (the test build's
 // record reader, e2e/helpers/replay_decode.ts).
 //
+//   bash tools/structgen/gen.sh   # once, if nothing has generated in this tree
 //   node --import tsx scripts/decode_replay.mjs "<replay link or code>" [first event]
+//
+// The gen.sh line is there because this is run by hand rather than through an
+// npm script, and sdk/ts/gen is a build output: every npm lane generates it
+// through a pre-hook (package.json "//gen"), and nothing does that for a bare
+// `node` invocation.
 import { ensureBotsAsync } from '../sdk/ts/wasm/bots.ts';
 import { decodeReplayLink } from '../e2e/helpers/replay_decode.ts';
 import * as G from '../sdk/ts/gen/game_layout.bots.ts';

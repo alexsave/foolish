@@ -65,7 +65,14 @@ sha() {  # one file -> bare hex, on both a Mac and CI's Linux
 sources() {
   make -C c -s print-wasm-src | tr ' ' '\n' | sed '/^$/d' | sed 's|^|c/|'
   ls c/src/*.h c/wasm/include/* 2>/dev/null || true
-  ls tools/structgen/structgen.c tools/structgen/specs/*.args sdk/ts/gen/game_layout.*.ts sdk/ts/gen/layout_hash.*.ts
+  # structgen's own source and specs, because the layout hash compiled into
+  # every module comes from them. NOT the modules it writes: those are build
+  # outputs now, ignored and absent from a fresh checkout, and hashing them
+  # would (a) make this script need libclang, which the freshness job
+  # deliberately does not install, and (b) add nothing - they are a function of
+  # these two plus the headers above plus the WASM_* lines hash_all already
+  # reads out of c/Makefile.
+  ls tools/structgen/structgen.c tools/structgen/specs/*.args
 }
 
 # The hash covers the source CONTENTS plus the c/Makefile lines that decide what
