@@ -214,13 +214,14 @@ test('table_load refuses every truncation of a real state blob', () => {
     // its end lands on garbage that game_validate also refuses, for one of a
     // dozen other reasons - so "it was refused" passes against the over-read
     // this test exists to pin. GAME_INVALID_COUNT is the length saying no.
+    const NAMES = ['GAME_INVALID_', 'TABLE_E_'];
     let refused = 0;
     for (let cut = 0; cut < fx.state.length; cut++) {
         const r = table.load(fx.state.subarray(0, cut), fx.roster);
         // Below four bytes the blob has no version/seat-count header to read at all.
         const want = cut < 4 ? L.TABLE_E_STATE_VERSION : L.GAME_INVALID_COUNT;
         if (r === want) refused++;
-        else assert.fail(`a blob cut to ${cut} of ${fx.state.length} bytes answered ${reasonOf(r)}, want ${reasonOf(want)}`);
+        else assert.fail(`a blob cut to ${cut} of ${fx.state.length} bytes answered ${reasonOf(r, NAMES)}, want ${reasonOf(want, NAMES)}`);
     }
     assert.equal(refused, fx.state.length, 'every cut of the blob is refused for its length');
     assert.equal(table.load(fx.state, fx.roster), L.TABLE_OK, 'and the whole one still loads after');
