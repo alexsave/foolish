@@ -15,6 +15,15 @@
 // (start_game_packed, processBotActionPacked, game_done) onto the C Table
 // (e2e/helpers/bot_table.ts): one action per committed cycle, each hashed as the
 // durable state blob it wrote.
+//
+// The native twin of the simple_heuristic cases is c/tests/tests.c
+// test_table_bots_only_game_replays_from_its_seed: the same two seeds, the same
+// cycle chain through the C Table, whole games. Those cases cost about a
+// millisecond here and stay as the wasm build's run of it. The octogen cases
+// have no native twin at whole-game length on purpose: six whole octogen games
+// cost more natively than the entire C suite, so per-cycle purity is proven in
+// C (test_table_bot_drive_ignores_instance_history) and the whole game, and the
+// withheld-seed divergence, only here.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';

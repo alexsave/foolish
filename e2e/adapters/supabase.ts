@@ -60,9 +60,19 @@ export const suiteDatabase = `${process.env.E2E_DB_PREFIX || 'e2e'}_${suiteSlug}
 // for concurrent_games, 30 simultaneous lease acquires for lease. Everything
 // else peaks in the low single digits and gets 8.
 //
-// Worst case at the DB lane's concurrency of 4 (scripts/run_e2e.mjs): both wide
-// suites plus two ordinary ones = 24 + 30 + 8 + 8 = 70, plus at most one
-// short-lived admin connection per file = 74. Comfortably inside 97.
+// Worst case at the DB lane's concurrency of 5 (scripts/run_e2e.mjs): both wide
+// suites plus three ordinary ones = 24 + 30 + 8 + 8 + 8 = 78, plus at most one
+// short-lived admin connection per file = 83. Comfortably inside 97.
+//
+// These sizes were re-measured and deliberately left alone. Every db file's
+// high-water mark of open pooled connections was recorded across a full run:
+// lease 30, concurrent_games 24, pool_teardown 8 (it fills the pool to
+// pgPool.options.max by design), adversarial_ts_layer 8, server 4,
+// race_conditions 3, and every one of the other 31 files exactly 2. Cutting the
+// ordinary size to 4 on that evidence would buy a lane width of 8 - and the lane
+// ran 68.5s at width 8 against 56.3s at width 5. Slots were never what it was
+// short of; one Postgres and eight cores were. The measurement is written down
+// here so the next reader does not have to take the afternoon to repeat it.
 const WIDE_POOLS: Record<string, number> = { concurrent_games: 24, lease: 30 };
 const poolMax = Number(process.env.E2E_PG_POOL_MAX || WIDE_POOLS[suiteSlug] || 8);
 
@@ -70,6 +80,28 @@ const poolMax = Number(process.env.E2E_PG_POOL_MAX || WIDE_POOLS[suiteSlug] || 8
 // timestamps are TIMESTAMP (no zone) stamped by now(), and the server compares
 // them with ISO instants (the bot heartbeat's staleness window): under a local
 // time zone those two clocks disagree by the zone's offset.
+//
+// And every session commits ASYNCHRONOUSLY. Measured on this Postgres: 200
+// one-row commits take 269 ms with synchronous_commit on and 2.4 ms with it off
+// - 1.35 ms of fsync per COMMIT against 0.012 ms. The suite commits tens of
+// thousands of times, since every move is a commit_game CAS.
+//
+// This is not a weaker database. synchronous_commit only decides when COMMIT
+// RETURNS relative to the WAL reaching the platter; it changes no visibility, no
+// isolation, no locking and no constraint, so every CAS race, deadlock and
+// conservation assertion in the suite is the same experiment it was. What it
+// gives up is surviving a power cut - of a database this file CREATEs at its
+// start and DROPs at its end, whose every row exists to be asserted about once.
+//
+// Per-session (the connection's `options`), which is what makes it hold even on
+// a connection opened before the server-wide tuning lands and on a server that
+// refuses to be tuned at all. It is worth 3.4s of the db lane's 59.7s on its
+// own, which is honest rather than dramatic - the lane's time is round trips,
+// not fsync. What a session option cannot reach is CREATE DATABASE's own
+// checkpoint, the WAL writer and the post-checkpoint full-page images; those are
+// server settings, and harness.ts turns them off with ALTER SYSTEM + reload on
+// the first connection of a run (a further 4s of the db lane - see
+// assertAndTuneServer there, and e2e/README.md for the table).
 //
 // BYTEA reads come back as PostgREST sends them: the '\x'-hex text Postgres
 // writes, not a Buffer. The server parses exactly what hosted hands it, and a
@@ -80,7 +112,8 @@ const pgTypesAsPostgrest = {
     getTypeParser: ((oid: number, format?: string) =>
         oid === BYTEA_OID ? (v: string) => v : pgTypes.getTypeParser(oid, format as 'text')) as typeof pgTypes.getTypeParser,
 };
-const pool = new Pool({ ...pgAdminConfig, database: suiteDatabase, max: poolMax, options: '-c TimeZone=UTC', types: pgTypesAsPostgrest });
+export const SESSION_OPTIONS = '-c TimeZone=UTC -c synchronous_commit=off';
+const pool = new Pool({ ...pgAdminConfig, database: suiteDatabase, max: poolMax, options: SESSION_OPTIONS, types: pgTypesAsPostgrest });
 
 // pg-pool's end() resolves as soon as it has CALLED client.end() on its idle
 // clients - not when their connections are closed. client.end() only queues the

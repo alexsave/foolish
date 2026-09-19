@@ -136,10 +136,10 @@ export function layoutWrites(sf: ts.SourceFile): string[] {
 //
 // Permanent: a test that must read the wire without the kernel's own reader.
 const INDEPENDENT_READERS: Record<string, string> = {
-    'e2e/security_hidden_info.test.ts#checkViewEnvelope':
+    'e2e/helpers/hidden_info.ts#checkViewEnvelope':
         'S1 scans the raw envelope bytes a client receives for card identities it must not see; it finds the view '
         + 'by its length field itself, so a reader bug cannot hide a leak from the scan',
-    'e2e/security_hidden_info.test.ts#walkEvwire':
+    'e2e/helpers/hidden_info.ts#walkEvwire':
         'S1 walks the raw push frames by their length fields for the same reason',
 };
 

@@ -27,6 +27,25 @@ endif
 ifeq ($(OMP),1)
   CFLAGS  += -fopenmp
   LDFLAGS += -fopenmp
+else
+  # ...and when it is NOT parallel, the qualifier is pure cost. Darwin has no
+  # local-exec TLS model: on arm64 every read of a _Thread_local compiles to a
+  # call through the variable's thread-local descriptor into ___tlv_get_addr,
+  # and the solver reads its scratch (sim_rec_moves, sim_rec_child, VALUE_MASK,
+  # the TT pointer) several times per node. Measured with /usr/bin/sample over
+  # build/cnitro_tests: 2,814 of 18,554 samples - 15% of the whole binary -
+  # were inside that thunk, 1,428 of them from sim_solve_rec alone. Removing it
+  # took `make tests` from 27.7s to 24.0s with every one of the 5,761 checks
+  # passing and every counter in the output identical.
+  #
+  # Safe exactly while nothing here runs two threads, which is the same
+  # condition OMP=1 turns off: the only pthreads in the tree are the analyser's
+  # (src/analyse.c, AnalyseParams.threads), and the two targets that pass
+  # threads > 1 build their own objects from CORE_SRC and filter this back out
+  # - see ANALYSE_CFLAGS. The wasm bots module has neutralised the qualifier
+  # the same way since it was written (WASM_BOT_CFLAGS below), so this is the
+  # build the shipped module already gets, not a new experiment.
+  CFLAGS  += -D_Thread_local=
 endif
 
 # LEAFBOOK (c/LEAFBOOK.md, docs/L1_SPEND_PLAN.md §4): compile octogen's
@@ -102,6 +121,24 @@ build/tests.o: tests/tests.c $(wildcard src/*.h)
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# 5,761 checks in 23.8s at -O3, and 23.5s of that is ONE of the 204 tests:
+# test_table_session_log_is_load_bearing_for_octogen, 3,430 octogen decisions at
+# 6.9ms each (half of them the memory-taken-away run that IS the experiment).
+# /usr/bin/sample puts all of it in sim_solve_rec / sim_gen_moves / cover_assign
+# - no per-decision setup, no rebuild, no allocation - so the only lever left on
+# it is fewer decisions, which is sample size and not waste.
+#
+# Where that one test should live is an open question for a human, and here are
+# the two measurements it needs. No workflow runs THIS target; the only CI lane
+# that runs the native suite is coverage.yml, which builds it at -O0 --coverage
+# (and without -DCD_LEAFBOOK, so octogen there is not the octogen that ships).
+# That binary is 81.6s with the test and 11.8s without it - the experiment is
+# 69.8s of a coverage job, several times that on a CI runner. And it buys the
+# gate nothing: game.c / legal.c / replay.c come to 2163 of 2304 lines with it
+# and 2163 of 2304 without it, the identical missing-line list. So the useful
+# move is a lane that runs `make tests` at the flags the product ships, and then
+# leaving the experiment out of the coverage build - not one without the other,
+# since dropping it from coverage today would leave it running in no CI at all.
 tests: build/cnitro_tests
 	./build/cnitro_tests
 
@@ -178,7 +215,13 @@ difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/sol
 #   make analyse          build/cnitro_analyse, the CLI (--threads=N fans the
 #                         world loop over N pthreads; same bytes at any N)
 #   make analyse-test     build + run tests/analyse_test.c on the recorded game
-ANALYSE_CFLAGS = $(CFLAGS) $(IOS_CAPS)
+# The ONE native product that really does run the engine on several threads, so
+# it is the one that keeps real thread-local storage: --threads=N fans the world
+# loop over N pthreads and every world plays games through game.c's RNG and the
+# cordite solver's scratch. The default build neutralises _Thread_local for the
+# 15% it costs on Darwin (see OMP above); here the qualifier is load-bearing and
+# is filtered back in. Same idiom as WASM_ORACLE_MT_CFLAGS.
+ANALYSE_CFLAGS = $(filter-out -D_Thread_local=,$(CFLAGS)) $(IOS_CAPS)
 .PHONY: analyse analyse-test
 analyse:
 	@mkdir -p build

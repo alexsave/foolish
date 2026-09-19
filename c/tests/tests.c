@@ -9735,6 +9735,228 @@ static void test_table_bot_drive_progress_seeds_the_decision(void) {
     CHECK(moved >= drives / 4, "a board at a different session-log length draws differently");
 }
 
+// ---- bots-only tables played to their end, cycle by cycle, through the table ----
+//
+// The server plays a bot-vs-bot game as a chain of cycles over a stored row
+// (bot_actions.ts runCycle, e2e/helpers/bot_table.ts botCycle): load the row,
+// set its deal seed, hand over its session log, table_bot_drive ONE action,
+// commit the products, and the next cycle loads what the last one committed.
+// These helpers are that chain for a row of `np` `brain` seats, so the two tests
+// after them can say what the whole chain guarantees over whole games at every
+// width. e2e/marshal_resident.test.ts keeps a short handwritten case of the same
+// over the wasm build (and its full cordite case), e2e/deal_determinism.test.ts
+// its cheap simple_heuristic cases and its octogen games; each says why.
+
+typedef struct {
+    uint8_t  state[8192];
+    uint8_t  roster[ROSTER_BYTES];
+    uint8_t  log[1 << 16];
+    int      state_len, log_len, status, fool;
+    uint32_t version;
+} TbRow;
+
+static uint32_t tb_fold(uint32_t h, const uint8_t *p, int n) {
+    for (int i = 0; i < n; i++) h = (h ^ p[i]) * 16777619u;
+    return h;
+}
+
+// A bots-only lobby of `np` `brain` seats, dealt from `seed` by table_ready on
+// `t` as the server deals one (dealBotTable), committed as version 1 into `row`.
+// Returns 0 when the kernel refused any step, or the deal did not come out a
+// deterministic-deck PLAYING game.
+static int tb_row_deal(TbRow *row, Table *t, int np, const char *brain, const uint8_t *seed) {
+    TableCommit c;
+    memset(t->g, 0, sizeof(Game));
+    t->g->num_players = (int8_t)np;
+    game_reset_to_lobby(t->g, (1u << np) - 1u);
+    row->state_len = tb_blob(t->g, row->state);
+    tb_roster_for(np, (1u << np) - 1u, brain, row->roster);
+    if (table_load(t, row->state, row->state_len, row->roster, ROSTER_BYTES) != TABLE_OK) return 0;
+    game_set_seed(1);
+    if (table_ready(t, RS("id-0"), seed) != TABLE_OK || !t->dealt_now) return 0;
+    if (table_commit_products(t, RS("g"), 1, 1700000000000LL, &c, tb_arena, sizeof(tb_arena)) < 0) return 0;
+    memcpy(row->state, tb_arena + c.state.off, (size_t)c.state.len);
+    row->state_len = c.state.len;
+    memcpy(row->roster, tb_arena + c.roster.off, ROSTER_BYTES);
+    memcpy(row->log, tb_arena + c.logs.off, (size_t)c.logs.len);
+    row->log_len = c.logs.len;
+    row->version = 1;
+    row->status = c.status;
+    row->fool = c.fool;
+    return row->state[1] == 1 && c.status == GAME_STATUS_PLAYING;
+}
+
+// One server cycle on `row`, on `t`: one action by whichever bot is up, committed,
+// the row moved on. Folds what the cycle committed - the action, the state blob,
+// the cycle's session-log records and the spectator's push - into `h`. Returns
+// the actions applied (0 when no bot had work) or a negative kernel code.
+static int tb_row_cycle(TbRow *row, Table *t, const char *seed_hex, uint32_t *h) {
+    TableCommit c;
+    int rc = table_load(t, row->state, row->state_len, row->roster, ROSTER_BYTES);
+    if (rc != TABLE_OK) return rc;
+    table_set_deal_seed(t, seed_hex, (int)strlen(seed_hex));
+    if ((rc = table_set_session_log(t, row->log, row->log_len)) < 0) return rc;
+    const int n = table_bot_drive(t, 0, 0, 1, &tb_drv);
+    if (n <= 0) return n;
+    const int64_t now = 1700000000000LL + (int64_t)row->version * 1000;
+    if ((rc = table_commit_products(t, RS("g"), row->version + 1, now, &c, tb_arena, sizeof(tb_arena))) < 0) return rc;
+    for (int i = 0; i < n; i++) {
+        const LegalMove *m = &tb_drv.actions[i].move;
+        const uint8_t head[3] = { (uint8_t)tb_drv.actions[i].seat, (uint8_t)m->type, (uint8_t)m->n_cards };
+        *h = tb_fold(*h, head, 3);
+        for (int k = 0; k < m->n_cards; k++) {
+            const uint8_t cards[2] = { wire_from_card(m->cards[k]), m->type == MOVE_COVER ? wire_from_card(m->attack_cards[k]) : 0 };
+            *h = tb_fold(*h, cards, 2);
+        }
+    }
+    *h = tb_fold(*h, tb_arena + c.state.off, c.state.len);
+    *h = tb_fold(*h, tb_arena + c.logs.off, c.logs.len);
+    *h = tb_fold(*h, tb_arena + c.spectator.off, c.spectator.len);
+    memcpy(row->state, tb_arena + c.state.off, (size_t)c.state.len);
+    row->state_len = c.state.len;
+    memcpy(row->roster, tb_arena + c.roster.off, ROSTER_BYTES);
+    if (c.logs_reset) row->log_len = 0;
+    if (row->log_len + c.logs.len > (int)sizeof(row->log)) return TABLE_E_CAP;
+    memcpy(row->log + row->log_len, tb_arena + c.logs.off, (size_t)c.logs.len);
+    row->log_len += c.logs.len;
+    row->version++;
+    row->status = c.status;
+    row->fool = c.fool;
+    return n;
+}
+
+typedef struct { uint32_t hash; int cycles, ended; } TbPlayed;
+
+// `row` played to its end on `t`, one action a cycle, with `seed_hex` as the
+// deal seed of every cycle: the hash of the deal and everything the chain
+// committed, closed with the fool.
+static TbPlayed tb_row_play(TbRow *row, Table *t, const char *seed_hex) {
+    TbPlayed p = { tb_fold(2166136261u, row->state, row->state_len), 0, 0 };
+    while (p.cycles < 4000 && row->status == GAME_STATUS_PLAYING && tb_row_cycle(row, t, seed_hex, &p.hash) > 0) p.cycles++;
+    p.ended = row->status == GAME_STATUS_GAME_OVER;
+    const uint8_t fool = (uint8_t)row->fool;
+    p.hash = tb_fold(p.hash, &fool, 1);
+    return p;
+}
+
+static void tb_seed_hex_of(const uint8_t *seed, char *out) {
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) snprintf(out + 2 * i, 3, "%02x", seed[i]);
+}
+
+// A whole bots-only game replays byte for byte from its 32-byte deal seed
+// through the server's cycle chain: the seeded deal (table_ready), every
+// mid-game refill from the deterministic deck the blob carries, every decision,
+// every commit - and two seeds are two games, so a deal that stopped reading its
+// seed is caught. simple_heuristic consumes no RNG and keeps no memory, so a
+// divergence here is the deck or the commit, never the bot. The seeds are the
+// two e2e/deal_determinism.test.ts plays; that file keeps the same assertions
+// over the wasm build, and its octogen games too: six whole octogen games cost
+// more natively than this entire suite, so the brain whose decisions are the
+// seed's is proven per cycle by test_table_bot_drive_ignores_instance_history
+// and per whole game only over wasm.
+static void test_table_bots_only_game_replays_from_its_seed(void) {
+    static TbRow row;
+    static const uint8_t reviewed[FOOLISH_SEED_LEN] = {
+        0xda,0x64,0x5f,0xf5,0x15,0x77,0x7b,0x2c,0x47,0xd1,0xc5,0x99,0x37,0xc7,0xdb,0xd6,
+        0x37,0x37,0x2e,0xf1,0xf2,0xe4,0x40,0xcf,0x98,0x67,0xea,0x9c,0xd2,0x32,0x7d,0x5f };
+    uint8_t seeds[2][FOOLISH_SEED_LEN];
+    char hex[2][2 * FOOLISH_SEED_LEN + 1];
+    uint32_t played[2] = { 0, 0 };
+    memcpy(seeds[0], reviewed, FOOLISH_SEED_LEN);
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) seeds[1][i] = (uint8_t)(i + 1);
+    for (int k = 0; k < 2; k++) tb_seed_hex_of(seeds[k], hex[k]);
+    table_init(&tb, &tb_game, &tb_snaps);
+    for (int k = 0; k < 2; k++) {
+        char what[160];
+        CHECK(tb_row_deal(&row, &tb, 2, "simple_heuristic", seeds[k]), "a seeded bots-only lobby deals a deterministic-deck game");
+        const TbPlayed a = tb_row_play(&row, &tb, hex[k]);
+        tb_row_deal(&row, &tb, 2, "simple_heuristic", seeds[k]);
+        const TbPlayed c = tb_row_play(&row, &tb, hex[k]);
+        snprintf(what, sizeof(what), "simple_heuristic: the whole game replays from deal seed %d (%d cycles)", k, a.cycles);
+        CHECK(a.ended && c.ended && a.cycles > 20 && a.cycles == c.cycles && a.hash == c.hash, what);
+        played[k] = a.hash;
+    }
+    CHECK(played[0] != played[1], "two deal seeds are two games (the deal reads its seed)");
+}
+
+// A stored row's bot cycle owes nothing to the tables the module drove before it.
+// The server's bot loop runs every cycle on ONE resident game: it loads a row,
+// drives, commits, and the next cycle (the same game after a CAS conflict, or
+// another game entirely, of another width) loads over whatever the last one
+// left - its board, its session log, its bots' scratch state, its draw streams.
+// Five bots-only games of 2 to 6 seats are played to their end in lockstep on
+// one table, so every load follows a different board of a different width; each
+// must commit, cycle for cycle, the bytes it commits when it is the only game the
+// table plays. e2e/marshal_resident.test.ts keeps a short random-board case of
+// the same over the wasm build for handwritten, and its full cordite case: the
+// world slots and transposition table cordite leaves resident are sized by
+// defines the wasm build alone sets (WORLD_LOG_CAP, CD_TT_BITS), so the native
+// build cannot stand in for it there.
+static void test_table_bot_drive_ignores_other_tables(void) {
+    enum { GAMES = 5, CYCLES = 1024 };
+    static TbRow rows[GAMES];
+    static uint32_t want[GAMES][CYCLES];
+    static int want_n[GAMES];
+    static const char *const brains[] = { "handwritten", "simple_heuristic", "random" };
+    uint8_t seed[FOOLISH_SEED_LEN];
+    char hex[2 * FOOLISH_SEED_LEN + 1];
+    for (int b = 0; b < (int)(sizeof(brains) / sizeof(brains[0])); b++) {
+        int compared = 0, same = 1, ended = 1, dealt = 1;
+        for (int round = 0; round < 2; round++) {
+            for (int i = 0; i < FOOLISH_SEED_LEN; i++) seed[i] = (uint8_t)(i * 29 + 7 * round + 3 * b + 1);
+            tb_seed_hex_of(seed, hex);
+            // Each game alone, on a table initialised for it (the TS oracle's
+            // private instance): the running hash after every cycle.
+            table_init(&tb, &tb_game, &tb_snaps);
+            for (int g = 0; g < GAMES; g++) {
+                seed[0] = (uint8_t)(g + 2);
+                dealt &= tb_row_deal(&rows[g], &tb, g + 2, brains[b], seed);
+                uint32_t h = tb_fold(2166136261u, rows[g].state, rows[g].state_len);
+                want_n[g] = 0;
+                while (want_n[g] < CYCLES && rows[g].status == GAME_STATUS_PLAYING && tb_row_cycle(&rows[g], &tb, hex, &h) > 0)
+                    want[g][want_n[g]++] = h;
+                ended &= rows[g].status == GAME_STATUS_GAME_OVER;
+            }
+            // The same five games in lockstep on one table that has already run the
+            // reference games: the hazard is that every load, the deals included,
+            // follows another game's cycle.
+            uint32_t h[GAMES];
+            int n[GAMES];
+            table_init(&tb, &tb_game, &tb_snaps);
+            for (int g = 0; g < GAMES; g++) {
+                seed[0] = (uint8_t)(g + 2);
+                dealt &= tb_row_deal(&rows[g], &tb, g + 2, brains[b], seed);
+                h[g] = tb_fold(2166136261u, rows[g].state, rows[g].state_len);
+                n[g] = 0;
+            }
+            for (int live = GAMES; live > 0;) {
+                live = 0;
+                for (int g = 0; g < GAMES; g++) {
+                    if (rows[g].status != GAME_STATUS_PLAYING || n[g] >= CYCLES) continue;
+                    if (tb_row_cycle(&rows[g], &tb, hex, &h[g]) <= 0) continue;
+                    live++;
+                    if (n[g] >= want_n[g] || want[g][n[g]] != h[g]) {
+                        if (same) fprintf(stderr, "  %s: game %d (%d seats) cycle %d differs after other tables' cycles\n",
+                                          brains[b], g, g + 2, n[g]);
+                        same = 0;
+                    }
+                    n[g]++;
+                    compared++;
+                }
+            }
+            for (int g = 0; g < GAMES; g++) {
+                ended &= rows[g].status == GAME_STATUS_GAME_OVER;
+                same &= n[g] == want_n[g];
+            }
+        }
+        char what[160];
+        snprintf(what, sizeof(what), "%s: ten games of 2 to 6 seats dealt and played to their end (%d cycles)", brains[b], compared);
+        CHECK(dealt && ended && compared >= 400, what);
+        snprintf(what, sizeof(what), "%s: a row loaded after other tables' cycles commits what it commits alone", brains[b]);
+        CHECK(same, what);
+    }
+}
+
 // The TS producer's times (extras.ts moveTimesFromLogs) over a session log, in args layout.
 static int tb_extras_args(const Roster *r, const uint8_t *log, int len, uint8_t *out) {
     int start = 0, q = 0, w = 0, n_times = 0;
@@ -9849,6 +10071,270 @@ static void test_table_replay_code_and_extras(void) {
     CHECK(ew2 > 0 && eg2 == ew2 && memcmp(tb_code, tb_code2, (size_t)ew2) == 0 && !(args[0] & REPLAY_EXTRAS_FLAG_TIMES),
           "a session without timed records carries names only");
     CHECK(table_replay_extras(&tb, tb_log, tb_log_len, tb_code, 3) == TABLE_E_CAP, "a small buffer is refused");
+}
+
+/* ------- bots-only rows at the e2e suites' volume (belief_logs, state_codec) ------- */
+//
+// e2e/belief_logs.test.ts and e2e/state_codec.test.ts drove the C Table through
+// bots.wasm from Node and asserted a property of the kernel alone: no database,
+// no server and no client crossed, and together they were the floor under the
+// whole e2e suite's wall clock (73 seconds each). The rule for that suite is
+// that a test which only calls C methods is not an e2e test, so the bulk of
+// each moved here, where the same games cost an order of magnitude less, and
+// each TypeScript file keeps one small case that still runs its property through
+// the shipped wasm build. The rows here are played exactly as those files played
+// them: the same lobby, the same deal seeds, the same one-action bot cycle.
+
+// The 32-byte deal seed of test game `s` at `np` seats, exactly as
+// e2e/helpers/bot_table.ts seedBytes writes it, so the games played here are the
+// games the wasm suites played before they moved. Also sets tb_seed_hex.
+static void tb_seed_bytes(int np, int s) {
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) tb_seed[i] = (uint8_t)((i * 31 + s * 13 + np) & 0xff);
+    for (int i = 0; i < FOOLISH_SEED_LEN; i++) snprintf(tb_seed_hex + 2 * i, 3, "%02x", tb_seed[i]);
+}
+
+// A stored games row as the bot loop holds it between cycles (bot_table.ts
+// BotTableRow): the blobs, the version, the session log and the status column.
+typedef struct {
+    uint8_t  state[8192];
+    int      state_len;
+    uint8_t  roster[ROSTER_BYTES];
+    uint8_t  log[1 << 16];
+    int      log_len;
+    uint32_t version;
+    int      status;
+} BlRow;
+static BlRow bl_row;
+
+// Writes the loaded table's last operation into the row as commit_table does
+// (bot_table.ts commitRow): the blobs, the next version, and the operation's
+// records appended to the session log, or a fresh log when the operation dealt.
+// The commit clock is the suites' (the first commit's time, each later commit
+// one second on). Returns the products' length, the refusal, or -1000 when the
+// row's log would overflow: a silent cut here would hand a belief bot a shorter
+// memory than the server holds.
+static int bl_row_commit(BlRow *row, TableCommit *c) {
+    const int64_t now = 1700000000000LL + (int64_t)row->version * 1000;
+    const int n = table_commit_products(&tb, RS("g"), row->version + 1, now, c, tb_arena, sizeof(tb_arena));
+    if (n < 0) return n;
+    if (c->logs_reset) row->log_len = 0;
+    if (row->log_len + c->logs.len > (int)sizeof(row->log)) return -1000;
+    memcpy(row->state, tb_arena + c->state.off, (size_t)c->state.len);
+    row->state_len = c->state.len;
+    memcpy(row->roster, tb_arena + c->roster.off, ROSTER_BYTES);
+    memcpy(row->log + row->log_len, tb_arena + c->logs.off, (size_t)c->logs.len);
+    row->log_len += c->logs.len;
+    row->version++;
+    row->status = c->status;
+    return n;
+}
+
+// A lobby of `np` bots of `brain` in seats id-0.. (P1, P2, ...), every seat
+// ready, dealt by the first seat's ready from `seed` the way the server's last
+// ready deals (bot_table.ts dealBotTable): the committed row at version 1.
+// TABLE_OK, or the refusal.
+static int bl_bots_only_row(BlRow *row, int np, const char *brain, const uint8_t *seed) {
+    static Game lobby;
+    Roster r;
+    TableCommit c;
+    memset(&lobby, 0, sizeof(lobby));
+    lobby.status = GAME_STATUS_WAITING;
+    lobby.num_players = (int8_t)np;
+    for (int i = 0; i < np; i++) lobby.players[i].status = PLAYER_STATUS_READY;
+    memset(&r, 0, sizeof(r));
+    roster_set_title(&r, RS("g"));
+    for (int i = 0; i < np; i++) {
+        char id[16], name[16];
+        snprintf(id, sizeof(id), "id-%d", i);
+        snprintf(name, sizeof(name), "P%d", i + 1);
+        roster_seat_add(&r, id, (int)strlen(id), name, (int)strlen(name), brain, (int)strlen(brain));
+    }
+    table_init(&tb, &tb_game, &tb_snaps);
+    int rc = table_seal(&tb, &lobby, &r, tb_buf, (int)sizeof(tb_buf));
+    if (rc < 0) return rc;
+    rc = table_ready(&tb, RS("id-0"), seed);
+    game_set_seed(1);   // wide deal mode off again for whatever runs next (tb_fixture)
+    if (rc != TABLE_OK) return rc;
+    if (!tb.dealt_now) return TABLE_E_NOT_WAITING;
+    row->version = 0;
+    row->log_len = 0;
+    rc = bl_row_commit(row, &c);
+    return rc < 0 ? rc : TABLE_OK;
+}
+
+// One committed bot cycle as the server's runCycle makes it (bot_table.ts
+// botCycle): load the row, set its deal seed, hand over `log` (the row's own, or
+// another one to take the memory away), drive at most `max_actions`, and commit
+// when anything was applied. Returns the actions applied (0 commits nothing),
+// or the refusal.
+static int bl_row_cycle(BlRow *row, const uint8_t *log, int log_len, int max_actions, TableCommit *c) {
+    int rc = table_load(&tb, row->state, row->state_len, row->roster, ROSTER_BYTES);
+    if (rc < 0) return rc;
+    rc = table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
+    if (rc < 0) return rc;
+    rc = table_set_session_log(&tb, log, log_len);
+    if (rc < 0) return rc;
+    const int n = table_bot_drive(&tb, 0, 0, max_actions, &tb_drv);
+    if (n <= 0) return n;
+    rc = bl_row_commit(row, c);
+    return rc < 0 ? rc : n;
+}
+
+// The belief bots' session log is LOAD-BEARING (was e2e/belief_logs.test.ts).
+//
+// octogen and the other belief brains deduce hidden cards from the session log.
+// For a long window the server loaded state without it, so they chose blind in
+// production and played as if they had no memory (the octogen investigation).
+// The bot loop now hands the kernel the stored log (games.logs_packed) whenever
+// table_bots_need_logs says a belief bot is about to choose. This pins the
+// kernel half: from the same row, the same deal seed and the same position,
+// octogen's committed state with the session log differs from its committed
+// state with the memory taken away on a meaningful fraction of positions. If the
+// imported log were being ignored again (the regression), that count would be
+// exactly 0. The wiring half - that the real bot loop reads and hands over the
+// whole log - is e2e/belief_logs_wiring.test.ts, and e2e/belief_logs.test.ts
+// keeps one game through the shipped wasm, watched by the belief probe.
+//
+// "The memory taken away" is NOT an empty log, which is what the e2e file
+// compared against. The log's record count is the progress term of every bot
+// decision's seed (bot_drive.h bot_drive_seed_decision: log_offset + num_logs,
+// the same number whether the records are on the board or only counted), so an
+// empty log moves octogen's RNG stream and changes moves even when the records
+// are never read - measured at 320 of 1,736 positions with the import cut out.
+// That comparison could not go red on the regression it guards. The blind run
+// here hands over a log of the SAME record count made of GAME_START records,
+// which carry nothing and which og_build_belief ignores: same seed, same board,
+// no memory. With the import cut out the two runs are then identical and the
+// count is exactly 0. A choose observer (table_choose_observer, what the wasm
+// bridge's belief probe is) also confirms that every decision was made over a
+// board holding exactly the records handed over.
+//
+// Native and wasm read the log through the same table_set_session_log, but at
+// different caps: MAX_LOG_PAIRS is 16 here and 64 in bots.wasm, and the engine's
+// writer (game.c log_add_card) drops the pairs past the cap of the build that
+// wrote them. octogen's belief (octogen_strategy.c og_build_belief) reads the
+// pairs of ATTACK, PASS, COVER and DRAW records and, by design, never those of a
+// PICKUP or DISCARD: it replays the table instead, because those lists truncate.
+// So this also measures the widest record of the types octogen reads and refuses
+// to pass unless it is STRICTLY below the native cap: at the cap a record may
+// have been cut, and only below it is the log octogen read here certainly the
+// log it reads in production. A PICKUP or DISCARD can be wider (a defender facing
+// eight attacks picks up sixteen cards); it is reported, not asserted. The
+// decisions themselves are not promised bit-identical across the builds (the
+// solver's transposition table is CD_TT_BITS=12 in wasm, WORLD_LOG_CAP is 40
+// there and 0 here), which is why one game of this still runs through the wasm.
+static int tb_expect_logs, tb_decisions, tb_blind_decisions;
+static void tb_choose_observer(const Game *g, int seat) {
+    (void)seat;
+    tb_decisions++;
+    if (g->num_logs != tb_expect_logs) tb_blind_decisions++;
+}
+
+static void test_table_session_log_is_load_bearing_for_octogen(void) {
+    static uint8_t before_state[8192], before_roster[ROSTER_BYTES], blank[10 * MAX_LOGS];
+    TableCommit c;
+    int compared = 0, changed = 0, refused = 0, widest_read = 0, widest_list = 0;
+    tb_decisions = tb_blind_decisions = 0;
+    table_choose_observer = tb_choose_observer;
+    for (int np = 2; np <= 4; np++) {
+        for (int gi = 0; gi < 6; gi++) {
+            tb_seed_bytes(np, 0xbe11 + gi);
+            if (bl_bots_only_row(&bl_row, np, "octogen", tb_seed) != TABLE_OK) { refused++; continue; }
+            for (int guard = 0; guard < 3000 && bl_row.status == GAME_STATUS_PLAYING; guard++) {
+                // The row before the cycle, so the blind run starts from the same position.
+                const int before_len = bl_row.state_len, before_log_len = bl_row.log_len;
+                memcpy(before_state, bl_row.state, (size_t)before_len);
+                memcpy(before_roster, bl_row.roster, ROSTER_BYTES);
+                if (table_load(&tb, before_state, before_len, before_roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
+                const int belief = table_bots_need_logs(&tb) && before_log_len > 0;
+                // The records the row holds, as the kernel counts them; a log this long
+                // of GAME_START records is the same progress with nothing remembered.
+                const int records = table_set_session_log(&tb, bl_row.log, before_log_len);
+                if (records < 0 || records > MAX_LOGS) { refused++; break; }
+                tb_expect_logs = belief ? records : 0;
+                const int n = bl_row_cycle(&bl_row, bl_row.log, before_log_len, 1, &c);
+                if (n < 0) { refused++; break; }
+                if (n == 0) break;
+                if (!belief) continue;
+                // The same cycle from the same row, with the memory taken away.
+                if (table_load(&tb, before_state, before_len, before_roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
+                table_set_deal_seed(&tb, tb_seed_hex, 2 * FOOLISH_SEED_LEN);
+                memset(blank, 0, (size_t)(10 * records));
+                for (int i = 0; i < records; i++) { blank[10 * i + 6] = LOG_GAME_START; blank[10 * i + 7] = 0xFF; blank[10 * i + 8] = 0xFF; }
+                if (table_set_session_log(&tb, blank, 10 * records) != records) { refused++; break; }
+                const int nb = table_bot_drive(&tb, 0, 0, 1, &tb_drv2);
+                int same = 0;
+                if (nb > 0) {
+                    const int pn = table_commit_products(&tb, RS("g"), bl_row.version, 0, &c, tb_arena, sizeof(tb_arena));
+                    same = pn > 0 && c.state.len == bl_row.state_len
+                        && memcmp(tb_arena + c.state.off, bl_row.state, (size_t)c.state.len) == 0;
+                }
+                changed += !same;
+                compared++;
+            }
+            for (int q = 0; q + 10 <= bl_row.log_len; q += 10 + 2 * bl_row.log[q + 9]) {
+                const int type = bl_row.log[q + 6], pairs = bl_row.log[q + 9];
+                if (type == LOG_PICKUP || type == LOG_DISCARD) { if (pairs > widest_list) widest_list = pairs; }
+                else if (pairs > widest_read) widest_read = pairs;
+            }
+        }
+    }
+    table_choose_observer = 0;
+    fprintf(stderr, "  belief_logs: compared=%d changed=%d decisions=%d widest record octogen reads=%d pairs, pickup/discard=%d\n",
+            compared, changed, tb_decisions, widest_read, widest_list);
+    CHECK(refused == 0, "every octogen row dealt, loaded and drove");
+    CHECK(tb_decisions > 1000 && tb_blind_decisions == 0,
+          "every octogen decision was made over a board holding exactly the session-log records handed over");
+    CHECK(widest_read < MAX_LOG_PAIRS,
+          "every record octogen reads is below the native MAX_LOG_PAIRS, so the import read what bots.wasm reads");
+    CHECK(compared > 500, "more than 500 belief decisions were compared with and without the session log");
+    // If the log were ignored (the regression), this would be exactly 0.
+    CHECK(changed > 0, "the session log changed octogen's move at least once (0 means the belief input is being ignored)");
+}
+
+// The durable state blob is lossless: load then commit is the identity (was
+// e2e/state_codec.test.ts, its first assertion).
+//
+// The games.state bytea blob is the kernel's ([TABLE_STATE_FORMAT][deterministic
+// deck][state_put]). A table loads it (table_load: state_import, game_validate)
+// and every commit writes it back (table_commit_products). This plays seeded
+// bots-only games through the bot cycle at 2, 3, 4 and 6 seats, ten seeds each,
+// and at every committed state asserts that the blob a table writes back for a
+// board it only loaded is byte-identical to the blob it loaded, over more than
+// 2,000 states, with every blob under 2,048 bytes (it is the whole row's game).
+// The suite's other assertion - that a board read back through the GENERATED
+// TypeScript accessors rebuilds the same blob - is a claim about the generated
+// readers that only a test across the wasm boundary can make; it stays in
+// e2e/state_codec.test.ts over two of these games.
+static void test_table_state_blob_round_trips_every_reachable_state(void) {
+    static const int seats[4] = { 2, 3, 4, 6 };
+    TableCommit c;
+    int checks = 0, max_blob = 0, mismatches = 0, refused = 0, unfinished = 0;
+    for (int k = 0; k < 4; k++) {
+        const int np = seats[k];
+        for (int seed = 0; seed < 10; seed++) {
+            tb_seed_bytes(np, 1000 + seed);
+            if (bl_bots_only_row(&bl_row, np, "handwritten", tb_seed) != TABLE_OK) { refused++; continue; }
+            for (int cycle = 0; ; cycle++) {
+                // Load then commit writes the same bytes back.
+                if (bl_row.state_len > max_blob) max_blob = bl_row.state_len;
+                if (table_load(&tb, bl_row.state, bl_row.state_len, bl_row.roster, ROSTER_BYTES) != TABLE_OK) { refused++; break; }
+                const int pn = table_commit_products(&tb, RS("g"), bl_row.version, 0, &c, tb_arena, sizeof(tb_arena));
+                if (pn < 0 || c.state.len != bl_row.state_len
+                    || memcmp(tb_arena + c.state.off, bl_row.state, (size_t)bl_row.state_len) != 0) mismatches++;
+                checks++;
+                if (bl_row.status != GAME_STATUS_PLAYING) break;
+                if (cycle >= 20000 || bl_row_cycle(&bl_row, bl_row.log, bl_row.log_len, 1, &c) <= 0) break;
+            }
+            if (bl_row.status != GAME_STATUS_GAME_OVER) unfinished++;
+        }
+    }
+    fprintf(stderr, "  state_codec: %d round-trips, max blob %d bytes, format %d\n", checks, max_blob, TABLE_STATE_FORMAT);
+    CHECK(refused == 0, "every seeded row dealt and every committed blob loads");
+    CHECK(unfinished == 0, "all 40 games at 2, 3, 4 and 6 seats finished");
+    CHECK(mismatches == 0, "load then commit is byte-identical at every committed state");
+    CHECK(checks > 2000, "more than 2,000 round-trips");
+    CHECK(max_blob < 2048, "the durable state blob stays under 2,048 bytes");
 }
 
 /* ---------------------- the client slot (src/client_table.h) -------------------- */
@@ -11276,7 +11762,11 @@ int main(void) {
     test_table_drive_prefs();
     test_table_bot_drive_ignores_instance_history();
     test_table_bot_drive_progress_seeds_the_decision();
+    test_table_bots_only_game_replays_from_its_seed();
+    test_table_bot_drive_ignores_other_tables();
     test_table_replay_code_and_extras();
+    test_table_session_log_is_load_bearing_for_octogen();
+    test_table_state_blob_round_trips_every_reachable_state();
     test_client_adopts_envelopes();
     test_client_reads_every_push_of_a_game();
     test_client_push_steps_and_refusals();
