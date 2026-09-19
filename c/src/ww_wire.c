@@ -184,7 +184,11 @@ int ww_msg_replay(const WwEnvelope *e, WwGame *g) {
         unsigned char *q = (unsigned char *)g;
         for (unsigned i = 0; i < sizeof *g; i++) q[i] = 0;
         g->phase = WW_PHASE_LOBBY;
-        g->n_players = e->n_players;
+        // ZERO SEATS, not the envelope's capacity. A lobby has no table, and a
+        // game that claimed five players before anybody was dealt would let a
+        // caller ask it for a role. The capacity stays on the envelope, where the
+        // lobby screen reads it.
+        g->n_players = 0;
         g->winner = WW_TEAM_NONE;
         return e->n_records == 0 ? WW_MSG_EOK : WW_MSG_EREPLAY;
     }
@@ -240,7 +244,11 @@ int ww_msg_seal(WwEnvelope *e, const WwGame *g, unsigned char *body, int body_ca
     e->flags = 0;
     e->phase = g->phase;
     e->turn = g->turn;
-    e->n_players = g->n_players;
+    // IN A LOBBY, `n_players` IS THE CAPACITY and the caller owns it - there is no
+    // table yet, so there is no table size to read off the game. The count that
+    // becomes n_players is decided at Start by who actually joined (ww_lobby.h),
+    // which is the whole reason there is no player-count picker.
+    if (g->phase != WW_PHASE_LOBBY) e->n_players = g->n_players;
     e->night = g->night;
     // Resolved nights. A night is settled the moment it stops being the night in
     // play, which is what Rule P clause 1 wants: settled history outranks a

@@ -3,6 +3,7 @@
 #include "ww_view.h"
 #include "ww_wire.h"
 #include "ww_seat.h"
+#include "ww_lobby.h"
 
 // The one resident session. Static, not malloc'd: an iMessage extension has no
 // good moment to free anything and a fixed footprint is the only footprint that
@@ -28,6 +29,68 @@ int wwi_new_game(const uint8_t *seed, int n_players) {
     for (int i = 0; i < 32; i++) S.env.seed[i] = seed[i];
     S.env.n_players = (uint8_t)n_players;
     S.have_game = 1;
+    return WW_OK;
+}
+
+int wwi_create_lobby(const uint8_t *seed, int chat_is_dm,
+                     const uint8_t *name, int name_len) {
+    if (!seed) return WW_ECOUNT;
+    // A LOBBY, NOT A GAME. The resident game is emptied to a lobby rather than
+    // dealt, so there is nothing here for any accessor to read a role out of.
+    unsigned char *q = (unsigned char *)&S.game;
+    for (unsigned i = 0; i < sizeof S.game; i++) q[i] = 0;
+    S.game.phase = WW_PHASE_LOBBY;
+    S.game.winner = WW_TEAM_NONE;
+    reset_env();
+    S.env.phase = WW_PHASE_LOBBY;
+    // A lobby's n_players is its CAPACITY - there is no table yet, and the count
+    // that becomes a table is decided at Start by who joined.
+    S.env.n_players = (uint8_t)ww_lobby_capacity(chat_is_dm);
+    for (int i = 0; i < 32; i++) S.env.seed[i] = seed[i];
+    S.have_game = 1;
+    const int rc = wwi_roster_set(0, name, name_len);
+    if (rc != WW_OK) return rc;
+    S.env.last_actor_seat = 0;
+    return WW_OK;
+}
+
+int wwi_lobby_capacity(int chat_is_dm) { return ww_lobby_capacity(chat_is_dm); }
+
+int wwi_lobby_join(const uint8_t *name, int name_len) {
+    if (S.env.phase != WW_PHASE_LOBBY) return WW_EPHASE;
+    uint8_t claimed[WW_MAX_PLAYERS];
+    for (int i = 0; i < S.env.n_joins; i++) claimed[i] = S.env.joins[i].seat;
+    if (S.env.n_joins >= S.env.n_players) return WW_ECOUNT;     // no room in THIS chat
+    const int seat = ww_lobby_free_seat(claimed, S.env.n_joins);
+    if (seat == WW_NO_SEAT) return WW_ECOUNT;
+    const int rc = wwi_roster_set(seat, name, name_len);
+    if (rc != WW_OK) return rc;
+    S.env.last_actor_seat = (uint8_t)seat;
+    return seat;
+}
+
+int wwi_lobby_offered(int my_seat, int i_sent_the_newest) {
+    return ww_lobby_offered(my_seat, S.env.n_joins, S.env.n_players, i_sent_the_newest);
+}
+
+int wwi_lobby_needs(void) { return ww_lobby_needs(S.env.n_joins); }
+int wwi_lobby_can_exit(int my_seat) { return ww_lobby_can_exit(my_seat, S.env.n_joins); }
+int wwi_lobby_joined(void) { return S.env.n_joins; }
+
+int wwi_lobby_start(const uint8_t *lobby_payload, int len) {
+    // RE-ADOPT FIRST, and this line is load-bearing rather than tidy. Without it
+    // Start reseats whatever game happens to be resident and deals from its seed,
+    // which is a different game with different roles and no error anywhere.
+    const int rc = wwi_adopt(lobby_payload, len);
+    if (rc != WW_MSG_EOK) return rc;
+    if (S.env.phase != WW_PHASE_LOBBY) return WW_EPHASE;
+    const int joined = S.env.n_joins;
+    WwGame dealt;
+    const int rd = ww_lobby_start(&dealt, S.env.seed, joined);
+    if (rd != WW_OK) return rd;
+    S.game = dealt;
+    S.env.phase = WW_PHASE_NIGHT;
+    S.env.n_players = (uint8_t)joined;
     return WW_OK;
 }
 

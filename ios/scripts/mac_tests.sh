@@ -53,6 +53,12 @@ say() { printf '\n== %s ==\n' "$1"; }
 say "C kernel + bridge"
 make -C c tests
 
+# THE RELEASE GATE, before anything else is built. A shipped build must offer no
+# way to choose which seat you are - in this game that is choosing to be the wolf
+# - and this runs both halves, source and Release binary.
+say "release gate"
+ios/scripts/release_gate.sh
+
 if [ "$DO_LIB" = 1 ]; then
   say "Werewolf.xcframework"
   make -C c ios-lib
@@ -80,6 +86,10 @@ if [ "$WHAT" = "all" ] || [ "$WHAT" = "app" ]; then
   # green WerewolfTests run says nothing about whether the extension compiles.
   say "WerewolfMessagesApp (build only)"
   run_scheme WerewolfMessagesApp build
+  # The binary half needs the project, so it runs here rather than beside the
+  # source half above.
+  say "release gate (Release binary)"
+  ios/scripts/release_gate.sh binary
 fi
 
 say "green"

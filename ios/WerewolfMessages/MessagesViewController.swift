@@ -33,6 +33,12 @@ final class MessagesViewController: MSMessagesAppViewController {
     private var gameId: UInt64 = 0
     private var mySeat: Int = -1
     private var lastSealAt: UInt16 = 0
+    /// Whether the bubble on screen is this device's own. The lobby's "the newest
+    /// sender stands aside while there is still room" rule reads it, and Messages is
+    /// the only thing that can answer it.
+    private var iSentTheNewest = false
+    /// The chat shape, which is the one thing lobby capacity varies by.
+    private var chatIsDM = false
 
     // ------------------------------------------------------- the lifecycle ---
 
@@ -101,13 +107,22 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// rule - and even that answer comes from C (`ww_seat.h`).
     private func resolveSeat(_ message: MSMessage, _ conversation: MSConversation) {
         let senderIsLocal = message.senderParticipantIdentifier == conversation.localParticipantIdentifier
-        let chatIsDM = conversation.remoteParticipantIdentifiers.count == 1
+        chatIsDM = conversation.remoteParticipantIdentifiers.count == 1
+        iSentTheNewest = senderIsLocal
         let name = Self.myName()
-        let seat = Kernel.shared.seatOnBoard(cached: mySeat,
-                                            senderIsLocal: senderIsLocal,
-                                            lastActor: -1,
-                                            chatIsDM: chatIsDM,
-                                            myName: name)
+        // A LOBBY SEAT AND A BOARD SEAT ARE DIFFERENT QUESTIONS, and the difference
+        // is a rule rather than a caller's convenience (ww_seat.h). A lobby bubble
+        // is a snapshot of who had joined when it was sealed, so a seat it does not
+        // list is a seat that had not been claimed on this branch - granting Start
+        // off it is how a stale invite hands the game to somebody the lobby does
+        // not contain. A live board is the opposite: it carries every seated player
+        // forward, so a roster that has not caught up is not evidence.
+        let inLobby = Kernel.shared.phase(-1) == .lobby
+        let seat = inLobby
+            ? Kernel.shared.seatInLobby(cached: mySeat, senderIsLocal: senderIsLocal,
+                                        lastActor: -1, chatIsDM: chatIsDM, myName: name)
+            : Kernel.shared.seatOnBoard(cached: mySeat, senderIsLocal: senderIsLocal,
+                                        lastActor: -1, chatIsDM: chatIsDM, myName: name)
         // -1 means the bubble cannot say, and a spectator board is the honest
         // answer. Inventing a seat here would hand somebody else's night to this
         // phone, and in this game that is the whole game.
@@ -125,13 +140,18 @@ final class MessagesViewController: MSMessagesAppViewController {
                             gameId: gameId,
                             parent: parentPayload,
                             lastSealAt: lastSealAt,
+                            iSentTheNewest: iSentTheNewest,
                             stage: { [weak self] payload in self?.stage(payload, in: conversation) },
-                            create: { [weak self] players in self?.create(players, in: conversation) })
+                            create: { [weak self] in self?.create(in: conversation) },
+                            join: { [weak self] in self?.join(in: conversation) },
+                            start: { [weak self] in self?.start(in: conversation) },
+                            invite: { [weak self] in self?.reseal(in: conversation) },
+                            exit: { [weak self] in self?.reseal(in: conversation) })
         let hc = UIHostingController(rootView: root)
         hc.view.backgroundColor = .clear
         addChild(hc)
         view.addSubview(hc.view)
-        hc.view.translatesAutoresizingIntoConstraints = false
+        hc.view.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             hc.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             hc.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -144,18 +164,76 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     // -------------------------------------------------------------- create ---
 
-    private func create(_ players: Int, in conversation: MSConversation) {
+    // CREATING NEVER DEALS. It locks a seed and a game id and seals a WAITING
+    // bubble seating only the creator. Nobody has a role until Start - which is why
+    // tapping this again is not a reroll: there is nothing yet to look at, so there
+    // is nothing to reroll for.
+    //
+    // There is no "deal immediately in a 1:1" branch here, and there must never be
+    // one. The tree this was forked from had one, and it let the creator see their
+    // hand before anything committed. For this game that is seeing your ROLE before
+    // committing, which is not a fairness bug - it is the whole game.
+    private func create(in conversation: MSConversation) {
         do {
-            // The whole hidden deal is 32 bytes from the OS CSPRNG. A player
-            // legitimately observes some outputs of the stream it seeds - their own
-            // role - so it cannot come from anything reversible.
-            try Kernel.shared.newGame(seed: Kernel.freshSeed(), players: players)
+            // The hidden deal is 32 bytes from the OS CSPRNG. A player legitimately
+            // observes some outputs of the stream it seeds - their own role - so it
+            // cannot come from anything reversible.
+            chatIsDM = conversation.remoteParticipantIdentifiers.count == 1
+            try Kernel.shared.createLobby(seed: Kernel.freshSeed(),
+                                          chatIsDM: chatIsDM,
+                                          myName: Self.myName())
             gameId = UInt64.random(in: 1...UInt64.max)
-            try Kernel.shared.setRoster(seat: 0, name: Self.myName())
             mySeat = 0
             parentPayload = nil
             lastSealAt = nowSeconds()
             present(conversation)
+            reseal(in: conversation)
+        } catch {
+            return
+        }
+    }
+
+    /// Join the lobby on screen at the lowest free seat, then reseal it. Route one
+    /// of the two to Start: the joiner's claim lands as its own WAITING bubble and
+    /// anybody already in can then start it.
+    private func join(in conversation: MSConversation) {
+        do {
+            mySeat = try Kernel.shared.joinLobby(myName: Self.myName())
+            present(conversation)
+            reseal(in: conversation)
+        } catch {
+            return
+        }
+    }
+
+    /// START. Both routes land here, which is what makes them one deal:
+    /// join-then-start arrives with the joiner's own WAITING bubble as the parent,
+    /// and join-and-start arrives having just joined off somebody else's. Either
+    /// way Start re-derives the LOCKED seed at the join count.
+    private func start(in conversation: MSConversation) {
+        guard let lobby = parentPayload else { return }
+        do {
+            // Handed the LOBBY CHAIN's own bytes, not trusted to what is resident.
+            // This is one resident kernel that every chat, lobby and board decodes
+            // through, so by the time somebody taps Start the resident game
+            // routinely belongs to something else - and starting off it deals the
+            // wrong roles with no error anywhere.
+            try Kernel.shared.startFromLobby(lobby)
+            present(conversation)
+            reseal(in: conversation)
+        } catch {
+            return
+        }
+    }
+
+    /// Seal the resident state and stage it. What "Send the invite" does, what a
+    /// join does after claiming its seat, and what Start does after dealing.
+    private func reseal(in conversation: MSConversation) {
+        do {
+            let payload = try Kernel.shared.seal(gameId: gameId,
+                                                sentAt: nowSeconds(),
+                                                parent: parentPayload)
+            stage(payload, in: conversation)
         } catch {
             return
         }
@@ -169,7 +247,13 @@ final class MessagesViewController: MSMessagesAppViewController {
         // The caption says what every bubble on this game says, whoever sent it and
         // whatever they sent. A caption that varied with the sender's role would
         // undo the entire night in one line of text.
-        layout.caption = "Night \(Kernel.shared.night(mySeat) + 1)"
+        // The caption says what EVERY bubble on this game says, whoever sent it and
+        // whatever they sent. A caption that varied with the sender's role would
+        // undo the entire night in one line of text - and a caption that named the
+        // wolves' line would do it in one word.
+        layout.caption = Kernel.shared.phase(mySeat) == .lobby
+            ? "Werewolf - \(Kernel.shared.lobbyJoined) in"
+            : "Night \(Kernel.shared.night(mySeat) + 1)"
         layout.subcaption = "Werewolf"
         message.layout = layout
         message.url = Self.url(for: payload)

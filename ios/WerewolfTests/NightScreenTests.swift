@@ -224,3 +224,90 @@ final class NightModelTests: XCTestCase {
         XCTAssertEqual(m.role(of: mark), .villager, "a dead seat's role is public")
     }
 }
+
+// The LOBBY's Swift half. The rules are asserted in C; what is left here is that
+// the screen asks for them and that the create path cannot deal.
+@MainActor
+final class LobbyTests: XCTestCase {
+
+    private func seed(_ v: UInt8) -> Data {
+        var s = Data(count: 32)
+        for i in 0..<32 { s[i] = UInt8(truncatingIfNeeded: Int(v) * 31 + i * 7 + 1) }
+        return s
+    }
+
+    func testCreatingDealsNobody() throws {
+        let k = Kernel.shared
+        try k.createLobby(seed: seed(3), chatIsDM: false, myName: "Alex")
+        XCTAssertEqual(k.phase(-1), .lobby)
+        XCTAssertEqual(k.lobbyJoined, 1, "only the creator is seated")
+        XCTAssertEqual(k.playerCount(-1), 0, "and there is no table")
+        // The whole point: there is nothing to look at, so there is nothing to
+        // re-create for.
+        for s in 0..<k.maxPlayers {
+            XCTAssertEqual(k.role(s, of: s), .unknown, "seat \(s) has no role")
+        }
+        XCTAssertEqual(k.myRole(0), .unknown, "not even the creator's own")
+    }
+
+    func testTheLobbyAsksTheKernelForItsOneControl() throws {
+        let k = Kernel.shared
+        try k.createLobby(seed: seed(4), chatIsDM: false, myName: "Alex")
+        XCTAssertEqual(k.lobbyOffered(mySeat: 0, iSentTheNewest: true), .waiting,
+                       "the newest sender is not asked to post the same thing twice")
+        XCTAssertEqual(k.lobbyOffered(mySeat: 0, iSentTheNewest: false), .invite)
+        XCTAssertEqual(k.lobbyOffered(mySeat: -1, iSentTheNewest: false), .join)
+        XCTAssertEqual(k.lobbyNeeds, k.minPlayers - 1)
+        XCTAssertFalse(k.lobbyCanExit(mySeat: 0), "the creator alone has nothing to leave")
+
+        for n in ["Sveta", "Kim", "Lee", "Ana"] { try k.joinLobby(myName: n) }
+        XCTAssertEqual(k.lobbyJoined, 5)
+        XCTAssertEqual(k.lobbyNeeds, 0)
+        XCTAssertEqual(k.lobbyOffered(mySeat: 0, iSentTheNewest: false), .start)
+        XCTAssertEqual(k.lobbyOffered(mySeat: 0, iSentTheNewest: true), .waiting,
+                       "and still stands aside while there is room")
+        XCTAssertEqual(k.myRole(0), .unknown, "and STILL nobody has a role")
+    }
+
+    func testAOneToOneChatSaysItCannotBePlayed() throws {
+        let k = Kernel.shared
+        try k.createLobby(seed: seed(5), chatIsDM: true, myName: "Alex")
+        XCTAssertEqual(k.lobbyCapacity(chatIsDM: true), 2)
+        try k.joinLobby(myName: "Sveta")
+        // Said once, rather than counted toward a Start that can never arrive.
+        XCTAssertEqual(k.lobbyOffered(mySeat: 0, iSentTheNewest: false), .tooFew)
+        XCTAssertThrowsError(try k.joinLobby(myName: "Kim"), "and nobody else fits")
+    }
+
+    func testStartDealsAndOnlyThen() throws {
+        let k = Kernel.shared
+        try k.createLobby(seed: seed(6), chatIsDM: false, myName: "Alex")
+        for n in ["Sveta", "Kim", "Lee", "Ana", "Bo"] { try k.joinLobby(myName: n) }
+        let lobby = try k.seal(gameId: 0x5EED, sentAt: 0, parent: nil)
+        XCTAssertEqual(k.myRole(0), .unknown, "still nothing")
+
+        // The resident kernel is polluted between the lobby and Start, which is its
+        // ordinary state in the extension - every chat decodes through it.
+        try k.newGame(seed: seed(7), players: 9)
+        XCTAssertEqual(k.playerCount(0), 9)
+
+        try k.startFromLobby(lobby)
+        XCTAssertEqual(k.phase(0), .night)
+        XCTAssertEqual(k.playerCount(0), 6, "six, from the joins and not the resident nine")
+        var wolves = 0
+        for s in 0..<6 where k.role(s, of: s) == .wolf { wolves += 1 }
+        XCTAssertEqual(wolves, 1, "a six-table gets one wolf")
+        var seers = 0
+        for s in 0..<6 where k.role(s, of: s) == .seer { seers += 1 }
+        XCTAssertEqual(seers, 1, "and exactly one seer")
+    }
+
+    func testABelowMinimumLobbyCannotBeStarted() throws {
+        let k = Kernel.shared
+        try k.createLobby(seed: seed(8), chatIsDM: false, myName: "Alex")
+        try k.joinLobby(myName: "Sveta")
+        let lobby = try k.seal(gameId: 1, sentAt: 0, parent: nil)
+        XCTAssertThrowsError(try k.startFromLobby(lobby),
+                            "two cannot be dealt, whatever the UI offered")
+    }
+}

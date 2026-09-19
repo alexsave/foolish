@@ -25,9 +25,50 @@
 // Return codes are the kernel's own (WW_OK / negative WW_E*, WW_MSG_EOK /
 // negative WW_MSG_E*), passed through unchanged. Swift switches on them.
 
+// ------------------------------------------------------------- the lobby ---
+//
+// CREATING NEVER DEALS. It locks the seed and seats only the creator; nobody has
+// a role until wwi_lobby_start. There is no entry point in this file that deals a
+// game at creation, and there must never be one - the tree this was forked from
+// had one for 1:1 chats, and it let the creator see their hand before anything
+// committed. Here that means seeing your ROLE before committing, so it is not a
+// fairness bug, it is the game gone.
+
+// Create a WAITING lobby in the resident slot: locks `seed` (32 bytes), records
+// the chat's capacity, and seats the creator at 0 under `name`.
+int wwi_create_lobby(const uint8_t *seed, int chat_is_dm,
+                     const uint8_t *name, int name_len);
+
+// How many seats this chat can hold. The one thing that varies by chat shape.
+int wwi_lobby_capacity(int chat_is_dm);
+
+// Join the resident lobby at the lowest free seat, under `name`. Returns the seat,
+// or a negative WW_E* (WW_ECOUNT when the lobby is full or the name is unusable).
+int wwi_lobby_join(const uint8_t *name, int name_len);
+
+// What the resident lobby offers this viewer: one WW_LOBBY_* value, drawn by the
+// view exactly as it came back.
+int wwi_lobby_offered(int my_seat, int i_sent_the_newest);
+
+// How many more players before Start is possible, and whether leaving is offered.
+int wwi_lobby_needs(void);
+int wwi_lobby_can_exit(int my_seat);
+int wwi_lobby_joined(void);
+
+// START. Deals the LOCKED seed at the join count, in the resident slot.
+//
+// It re-derives from the seed the LOBBY CHAIN carries, which is why the caller
+// hands over the lobby's bytes rather than trusting what is resident: this is ONE
+// resident kernel that every chat, lobby and board decodes through, so by the time
+// a human taps Start the resident game routinely belongs to something else. Start
+// without the re-adopt deals from the wrong seed, silently.
+int wwi_lobby_start(const uint8_t *lobby_payload, int len);
+
 // ------------------------------------------------------------ the session ---
 
-// Deal a fresh game into the resident slot. `seed` is 32 bytes.
+// Deal a fresh game into the resident slot, with no lobby. THE TESTS' ENTRY, and
+// the rig's - not a product path. Every shipped route to a dealt game goes through
+// wwi_lobby_start, because that is the one that cannot be re-rolled.
 int wwi_new_game(const uint8_t *seed, int n_players);
 
 // Decode AND replay a bubble into the resident slot. The resident game is

@@ -1,0 +1,34 @@
+# THE portable gate. Everything that can be proven without a Mac is proven here,
+# on every push, and that is most of this product: the night's rules, the
+# masking, Rule P, the envelope's hostile-bytes decoder, and the Swift-visible
+# bridge.
+#
+# What this job CANNOT run is the simulator half (ios/scripts/mac_tests.sh),
+# because macOS runners bill at 10x Linux and this repo is private. That script
+# runs `make -C c tests` first for exactly this reason: a Swift failure caused by
+# a kernel bug takes an hour to read, and the same failure out of the C suite
+# names the assertion.
+name: kernel
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: kernel + bridge
+        run: make -C c tests
+      # The sanitizers are a SEPARATE run and not a flag on the one above,
+      # because they change codegen: the point of the plain build is that the code
+      # that ships is the code that was tested, and the point of this one is that
+      # the decoder never reads past a truncated buffer. Both, every time.
+      - name: the same suite under ASan + UBSan
+        run: make -C c tests-asan
+      # The source half of the release gate. A shipped build must offer no way to
+      # choose which seat you are - in this game that is choosing to be the wolf -
+      # and the source half is pure text, so it runs here. The binary half needs
+      # Xcode and runs from ios/scripts/mac_tests.sh.
+      - name: release gate (source)
+        run: ios/scripts/release_gate.sh

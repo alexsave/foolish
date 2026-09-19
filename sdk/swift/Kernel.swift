@@ -42,6 +42,20 @@ public enum Sent: Int32, Sendable {
     case carried = 2
 }
 
+/// What a lobby offers a viewer. Exactly one, because the screen shows one control
+/// and a screen that shows two has a rule missing.
+public enum LobbyControl: Int32, Sendable {
+    case waiting = 0
+    case join = 1
+    case start = 2
+    case invite = 3
+    case full = 4
+    /// Seated, but this CHAT can never seat enough players. A 1:1 chat holds two
+    /// and a hidden-role game needs five, so this is a sentence the lobby says
+    /// once rather than a count it ticks toward forever.
+    case tooFew = 5
+}
+
 public struct KernelError: Error, CustomStringConvertible {
     public let code: Int32
     public var description: String { "werewolf kernel refused: \(code)" }
@@ -67,9 +81,70 @@ public final class Kernel {
     public let maxPlayers = 10
     public let chatMax = 40
 
+    // -------------------------------------------------------------- lobby ---
+    //
+    // CREATING NEVER DEALS. It locks the seed and seats only the creator; nobody
+    // has a role until `startFromLobby`. There is no "deal immediately in a 1:1"
+    // path in this product and there must never be one: the tree this was forked
+    // from had one, and it let the creator see their hand before anything
+    // committed. Here that is seeing your ROLE before committing, so it is not a
+    // fairness bug - it is the game gone.
+
+    /// Lock a seed, record the chat's capacity, seat the creator at 0.
+    public func createLobby(seed: Data, chatIsDM: Bool, myName: String) throws {
+        precondition(seed.count == 32, "the deal seed is 32 bytes")
+        var name = Array(myName.utf8)
+        if name.count > 16 { name = Array(name.prefix(16)) }
+        let rc = seed.withUnsafeBytes { s in
+            name.withUnsafeBufferPointer { n in
+                wwi_create_lobby(s.bindMemory(to: UInt8.self).baseAddress,
+                                 chatIsDM ? 1 : 0, n.baseAddress, Int32(name.count))
+            }
+        }
+        if rc != 0 { throw KernelError(code: rc) }
+    }
+
+    public func lobbyCapacity(chatIsDM: Bool) -> Int { Int(wwi_lobby_capacity(chatIsDM ? 1 : 0)) }
+
+    /// Join at the lowest free seat. Returns the seat.
+    @discardableResult
+    public func joinLobby(myName: String) throws -> Int {
+        var name = Array(myName.utf8)
+        if name.count > 16 { name = Array(name.prefix(16)) }
+        let rc = name.withUnsafeBufferPointer { wwi_lobby_join($0.baseAddress, Int32(name.count)) }
+        if rc < 0 { throw KernelError(code: rc) }
+        return Int(rc)
+    }
+
+    /// The ONE control this lobby offers this viewer. Drawn as it came back; a
+    /// lobby control re-decided in Swift is one two clients can disagree about,
+    /// and here one of those disagreements hands somebody a role.
+    public func lobbyOffered(mySeat: Int, iSentTheNewest: Bool) -> LobbyControl {
+        LobbyControl(rawValue: wwi_lobby_offered(Int32(mySeat), iSentTheNewest ? 1 : 0)) ?? .waiting
+    }
+
+    public var lobbyNeeds: Int { Int(wwi_lobby_needs()) }
+    public var lobbyJoined: Int { Int(wwi_lobby_joined()) }
+    public func lobbyCanExit(mySeat: Int) -> Bool { wwi_lobby_can_exit(Int32(mySeat)) != 0 }
+
+    /// START. Deals the LOCKED seed at the join count, re-derived from the LOBBY
+    /// CHAIN's own bytes rather than from whatever is resident. The re-adopt inside
+    /// is load-bearing: this is one resident kernel that every chat, lobby and
+    /// board decodes through, so by the time a human taps Start the resident game
+    /// routinely belongs to something else, and starting off it deals the wrong
+    /// roles with no error anywhere.
+    public func startFromLobby(_ lobbyPayload: Data) throws {
+        let rc = lobbyPayload.withUnsafeBytes {
+            wwi_lobby_start($0.bindMemory(to: UInt8.self).baseAddress, Int32(lobbyPayload.count))
+        }
+        if rc != 0 { throw KernelError(code: rc) }
+    }
+
     // ------------------------------------------------------------ session ---
 
-    /// Deal a fresh game. `seed` must be 32 bytes.
+    /// Deal a game with no lobby. THE TESTS' AND THE RIG'S entry, not a product
+    /// path - every shipped route to a dealt game goes through `startFromLobby`,
+    /// because that is the one that cannot be re-rolled.
     public func newGame(seed: Data, players: Int) throws {
         precondition(seed.count == 32, "the deal seed is 32 bytes")
         let rc = seed.withUnsafeBytes { wwi_new_game($0.bindMemory(to: UInt8.self).baseAddress, Int32(players)) }

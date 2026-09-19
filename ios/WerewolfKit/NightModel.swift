@@ -161,9 +161,14 @@ public final class NightModel: ObservableObject {
             return nil
         }
         do {
+            // THE LINE GOES THROUGH WHATEVER THIS SEAT IS. It is tempting to gate
+            // it on `amWolf` here, and that is the bug: a model that quietly drops
+            // a line it will not send is a client that believes it sent one, and a
+            // client that believes it sent one will send a second bubble to fix it.
+            // One gate, in C, which refuses (WW_ECHAT) and says so.
             try kernel.nightAct(seat: mySeat,
                                 target: picked ?? noSeat,
-                                line: amWolf && !line.isEmpty ? line : nil,
+                                line: line.isEmpty ? nil : line,
                                 carry: carry)
             let payload = try kernel.seal(gameId: gameId, sentAt: now, parent: parent)
             staged = true

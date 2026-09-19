@@ -6,11 +6,13 @@ CC      ?= clang
 CFLAGS  ?= -O2 -Wall -Wextra -Werror -Wno-unused-parameter -Isrc
 LDFLAGS ?=
 
-# The kernel. Two inherited primitives (deal_rng, sha256) and four werewolf
-# files, and that is the whole domain: roles from a seed, the night, the envelope
-# those cross the thread in, and which seat this device is on a bubble's roster.
+# The kernel. Two inherited primitives (deal_rng, sha256) and five werewolf files,
+# and that is the whole domain: roles from a seed, the night, the envelope those
+# cross the thread in, which seat this device is on a bubble's roster, and the
+# lobby that decides when a seed becomes roles.
 CORE_SRC := src/deal_rng.c src/sha256.c \
-            src/ww_game.c src/ww_view.c src/ww_wire.c src/ww_seat.c
+            src/ww_game.c src/ww_view.c src/ww_wire.c src/ww_seat.c \
+            src/ww_lobby.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
 .PHONY: all tests tests-asan clean print-core ios-lib ios-smoke

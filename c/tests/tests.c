@@ -16,6 +16,8 @@
 #include "../src/ww_game.h"
 #include "../src/ww_view.h"
 #include "../src/ww_wire.h"
+#include "../src/ww_seat.h"
+#include "../src/ww_lobby.h"
 #include "../src/deal_rng.h"
 #include <stdio.h>
 #include <string.h>
@@ -1095,6 +1097,333 @@ static void test_a_started_chain_outranks_a_lobby(void) {
     CHECK(r.phase == WW_PHASE_LOBBY, "still a lobby");
 }
 
+// ------------------------------------------------------------- the lobby ----
+//
+// THE HOLE THESE EXIST TO KEEP SHUT. The tree this was forked from dealt a 1:1
+// game the moment it was created, so the creator saw their hand before anything
+// committed and could re-create until the deck suited them, for free and without
+// a trace. Here the deal is ROLES, so that is not unfairness, it is the game
+// gone: re-create until you are not the wolf, or until you are.
+//
+// So: creating LOCKS the seed and seats only the creator, nobody has a role until
+// Start, and the two ways to reach Start are provably one deal.
+
+static void test_a_lobby_capacity_is_the_chat_shape(void) {
+    CHECK(ww_lobby_capacity(0) == WW_MAX_PLAYERS, "a group holds the wire's maximum");
+    CHECK(ww_lobby_capacity(1) == 2, "a 1:1 chat holds two");
+    // And two is below this game's minimum, which is a sentence the lobby has to
+    // be able to say rather than count toward forever.
+    CHECK(ww_lobby_impossible(ww_lobby_capacity(1)), "so werewolf cannot be played in a 1:1");
+    CHECK(!ww_lobby_impossible(ww_lobby_capacity(0)), "but a group is fine");
+}
+
+static void test_a_lobby_below_the_minimum_cannot_start(void) {
+    const int cap = ww_lobby_capacity(0);
+    for (int joined = 0; joined < WW_MIN_PLAYERS; joined++) {
+        CHECK(!ww_lobby_can_start(joined, cap), "four or fewer cannot be dealt");
+        CHECK(ww_lobby_needs(joined) == WW_MIN_PLAYERS - joined,
+              "and the screen can say how many more");
+    }
+    for (int joined = WW_MIN_PLAYERS; joined <= cap; joined++) {
+        CHECK(ww_lobby_can_start(joined, cap), "five or more can");
+        CHECK(ww_lobby_needs(joined) == 0, "and needs nobody");
+    }
+    CHECK(!ww_lobby_can_start(cap + 1, cap), "and over capacity cannot");
+    // The refusal is in the kernel call that DEALS, not only at the button - a
+    // client that skipped the gate still cannot deal one wolf against three
+    // villagers who therefore already know the answer.
+    WwGame g; uint8_t s[32]; seed_of(s, 61);
+    CHECK(ww_lobby_start(&g, s, 4) == WW_ECOUNT, "four is refused at the deal");
+    CHECK(ww_lobby_start(&g, s, 5) == WW_OK, "five is dealt");
+    CHECK(ww_lobby_start(&g, s, 11) == WW_ECOUNT, "eleven is refused too");
+}
+
+static void test_what_a_lobby_offers(void) {
+    const int cap = ww_lobby_capacity(0);
+    CHECK(ww_lobby_offered(-1, 1, cap, 0) == WW_LOBBY_JOIN, "room, so join");
+    CHECK(ww_lobby_offered(-1, cap, cap, 0) == WW_LOBBY_FULL, "no room, so full");
+    CHECK(ww_lobby_offered(0, 1, cap, 0) == WW_LOBBY_INVITE, "seated and short: invite");
+    CHECK(ww_lobby_offered(0, 1, cap, 1) == WW_LOBBY_WAITING,
+          "but the newest sender is not asked to post the same thing twice");
+    // The newest sender stands aside WHILE THERE IS ROOM.
+    CHECK(ww_lobby_offered(0, 5, cap, 0) == WW_LOBBY_START, "five, and not my bubble: start");
+    CHECK(ww_lobby_offered(0, 5, cap, 1) == WW_LOBBY_WAITING, "five, my bubble: stand aside");
+    CHECK(ww_lobby_offered(0, cap, cap, 1) == WW_LOBBY_START,
+          "a full table has nobody left to stand aside for");
+    // A 1:1 chat, seated: said once, not counted toward.
+    CHECK(ww_lobby_offered(0, 1, 2, 0) == WW_LOBBY_TOO_FEW, "a 1:1 can never seat a table");
+    CHECK(ww_lobby_offered(0, 2, 2, 0) == WW_LOBBY_TOO_FEW, "even full");
+    CHECK(!ww_lobby_can_exit(0, 1), "the creator alone has nothing to leave");
+    CHECK(ww_lobby_can_exit(0, 2), "with somebody else there, they may");
+    CHECK(!ww_lobby_can_exit(-1, 5), "and a watcher cannot leave a lobby they are not in");
+}
+
+static void test_a_join_takes_the_lowest_free_seat(void) {
+    // Lowest-free rather than "the next index": it makes a roster's new seats its
+    // own tail in seat order, which is what lets two devices derive the same order
+    // of joins from two lobby snapshots without having seen what came between.
+    uint8_t claimed[4];
+    CHECK(ww_lobby_free_seat(claimed, 0) == 0, "an empty lobby seats the creator at 0");
+    claimed[0] = 0;
+    CHECK(ww_lobby_free_seat(claimed, 1) == 1, "then 1");
+    claimed[0] = 0; claimed[1] = 2;
+    CHECK(ww_lobby_free_seat(claimed, 2) == 1, "and a gap is filled before the tail");
+    uint8_t full[WW_MAX_PLAYERS];
+    for (int i = 0; i < WW_MAX_PLAYERS; i++) full[i] = (uint8_t)i;
+    CHECK(ww_lobby_free_seat(full, WW_MAX_PLAYERS) == WW_NO_SEAT, "and a full lobby seats nobody");
+}
+
+// A WAITING lobby envelope with `joined` seats, on a locked seed.
+static int seal_lobby(unsigned char *out, int cap, const uint8_t seed[32],
+                      uint64_t game_id, int joined, int last_actor) {
+    WwEnvelope e;
+    ww_envelope_init(&e);
+    e.phase = WW_PHASE_LOBBY;
+    e.n_players = (uint8_t)cap;          // a lobby's n_players is its CAPACITY
+    e.game_id = game_id;
+    e.last_actor_seat = (uint8_t)last_actor;
+    for (int i = 0; i < 32; i++) e.seed[i] = seed[i];
+    fill_roster(&e, joined);
+    e.n_records = 0;
+    e.body = 0;
+    e.body_len = 0;
+    return ww_msg_encode(&e, out, 4096);
+}
+
+static void test_creating_a_game_deals_nobody(void) {
+    // The whole fix, as one assertion: a created game has a locked seed and NO
+    // roles. There is no path in this tree that deals at creation, and a comment
+    // is not what keeps it that way - this is.
+    uint8_t s[32]; seed_of(s, 62);
+    unsigned char buf[4096];
+    const int n = seal_lobby(buf, ww_lobby_capacity(0), s, 0xBEEF, 1, 0);
+    CHECK(n > 0, "a one-seat invite seals");
+    WwEnvelope d; WwGame g;
+    CHECK(ww_msg_decode(buf, n, &d) == WW_MSG_EOK, "and decodes");
+    CHECK(d.phase == WW_PHASE_LOBBY && d.n_joins == 1, "one seat claimed");
+    CHECK(d.n_players == WW_MAX_PLAYERS, "and n_players is the capacity, not a table");
+    CHECK(ww_msg_replay(&d, &g) == WW_MSG_EOK, "it replays");
+    CHECK(g.phase == WW_PHASE_LOBBY, "to a lobby");
+    CHECK(g.n_players == 0, "with no seats at all");
+    CHECK(g.alive == 0, "and nothing anybody could read a role out of");
+    int seed_carried = 1;
+    for (int i = 0; i < 32; i++) if (d.seed[i] != s[i]) seed_carried = 0;
+    CHECK(seed_carried, "the seed is locked on the invite");
+    CHECK(ww_night_act(&g, 0, 1, 0, 0, 0) == WW_EPHASE, "and nobody can act in a lobby");
+}
+
+// THE ROUTE-EQUIVALENCE TEST. Join-then-Start and Join-and-Start must be one
+// deal, because they are: both re-derive the LOCKED seed at joins.count. If they
+// ever stop being one deal, which route a joiner happened to tap becomes a thing
+// that changes who the wolf is.
+static void test_both_start_routes_deal_the_same_roles(void) {
+    uint8_t s[32]; seed_of(s, 63);
+    const int cap = ww_lobby_capacity(0);
+    unsigned char lobby[4096];
+
+    // ROUTE A: five joins land as their own WAITING bubbles, and somebody who was
+    // already in taps Start off the fifth.
+    WwGame a;
+    {
+        int n = 0;
+        for (int joined = 1; joined <= 5; joined++) {
+            n = seal_lobby(lobby, cap, s, 0xAAA, joined, joined - 1);
+            CHECK(n > 0, "each join reseals the lobby");
+        }
+        WwEnvelope d;
+        CHECK(ww_msg_decode(lobby, n, &d) == WW_MSG_EOK, "the fifth decodes");
+        CHECK(ww_lobby_offered(0, d.n_joins, d.n_players, 0) == WW_LOBBY_START,
+              "and a seated player who did not send it may start");
+        CHECK(ww_lobby_start(&a, d.seed, d.n_joins) == WW_OK, "route A deals");
+    }
+
+    // ROUTE B: the fifth joiner seats themselves and seals LIVE directly off the
+    // FOURTH bubble. Their join never exists as its own WAITING bubble - one text
+    // instead of two.
+    WwGame b;
+    {
+        const int n = seal_lobby(lobby, cap, s, 0xAAA, 4, 3);
+        WwEnvelope d;
+        CHECK(ww_msg_decode(lobby, n, &d) == WW_MSG_EOK, "the fourth decodes");
+        CHECK(ww_lobby_offered(-1, d.n_joins, d.n_players, 0) == WW_LOBBY_JOIN,
+              "a watcher may join it");
+        uint8_t claimed[WW_MAX_PLAYERS];
+        for (int i = 0; i < d.n_joins; i++) claimed[i] = d.joins[i].seat;
+        CHECK(ww_lobby_free_seat(claimed, d.n_joins) == 4, "at seat five");
+        CHECK(ww_lobby_start(&b, d.seed, d.n_joins + 1) == WW_OK, "route B deals");
+    }
+
+    CHECK(a.n_players == b.n_players, "the same table size");
+    CHECK(memcmp(a.role, b.role, sizeof a.role) == 0,
+          "and the SAME ROLES, whichever route reached Start");
+    CHECK(a.alive == b.alive, "and the same seats alive");
+    // And it is not vacuously the same because every deal is the same: a different
+    // join count is a different table.
+    WwGame six;
+    CHECK(ww_lobby_start(&six, s, 6) == WW_OK, "six is a table too");
+    CHECK(memcmp(a.role, six.role, sizeof a.role) != 0,
+          "and six players is a different deal, so the comparison above means something");
+}
+
+static void test_start_reads_the_lobbys_seed_and_not_the_last_game(void) {
+    // The trap this pins: the extension is ONE resident kernel that every chat,
+    // lobby and board decodes through, so by the time somebody taps Start the
+    // resident game routinely belongs to something else. Start must re-derive from
+    // the seed the LOBBY CHAIN carries. The route-equivalence test above cannot
+    // catch it - its routes run back to back off one seed - so this is its own
+    // test, with a polluted resident in the middle.
+    uint8_t lobby_seed[32], other_seed[32];
+    seed_of(lobby_seed, 64);
+    seed_of(other_seed, 65);
+    unsigned char buf[4096];
+    const int n = seal_lobby(buf, ww_lobby_capacity(0), lobby_seed, 0xCCC, 7, 6);
+    WwEnvelope d;
+    CHECK(ww_msg_decode(buf, n, &d) == WW_MSG_EOK, "the lobby decodes");
+
+    WwGame resident;
+    CHECK(ww_deal(&resident, other_seed, 9) == WW_OK, "an unrelated game is resident");
+    WwGame started;
+    CHECK(ww_lobby_start(&started, d.seed, d.n_joins) == WW_OK, "start from the lobby chain");
+
+    WwGame expected;
+    CHECK(ww_deal(&expected, lobby_seed, 7) == WW_OK, "the deal the lobby's seed makes");
+    CHECK(started.n_players == 7, "seven, from the joins and not the resident's nine");
+    CHECK(memcmp(started.role, expected.role, sizeof expected.role) == 0,
+          "and the roles the LOCKED seed makes");
+    CHECK(memcmp(started.role, resident.role, 7) != 0,
+          "not the resident game's, so the assertion above is not a coincidence");
+}
+
+// -------------------------------------------------------- seat identity -----
+//
+// Ported from the fork's SeatIdentityTests, which asserted this in Swift because
+// the logic was in Swift. It is in C here (ww_seat.c), so the tests are too -
+// and they are mutation-checkable, which the Swift ones were not.
+//
+// WHY THESE MATTER MORE IN THIS GAME THAN IN THE ONE THEY CAME FROM. Getting a
+// seat wrong in Durak shows you somebody else's cards. Getting it wrong here
+// makes you somebody else's ROLE: it hands a villager the wolves' channel, or
+// hands a wolf's phone the seer's readings. Every honest answer this file can
+// give is better than a guess, which is why -1 is a real answer.
+
+static void join_set(WwJoin *j, int seat, const char *name) {
+    j->seat = (uint8_t)seat;
+    int n = 0;
+    while (name[n] && n < WW_NAME_MAX) { j->name[n] = name[n]; n++; }
+    j->name_len = (uint8_t)n;
+}
+
+static void test_a_cached_seat_beats_the_live_signals(void) {
+    // Even when this device sent the bubble (which would infer seat 3), the cache
+    // is the authoritative answer - it is the one thing a fresh bubble cannot
+    // recover on its own.
+    CHECK(ww_seat_resolve(1, 1, 7, 3, 0) == 1, "the cache wins");
+}
+
+static void test_the_sender_is_its_own_last_actor(void) {
+    CHECK(ww_seat_resolve(-1, 1, 7, 2, 0) == 2, "I sent it, so I am its last actor");
+    CHECK(ww_seat_resolve(-1, 1, 7, 9, 0) == -1, "a last actor off the table says nothing");
+}
+
+static void test_a_stale_out_of_range_cache_is_ignored_not_trusted(void) {
+    // A cache from a bigger game must never seat somebody out of range. It falls
+    // through to the live signals instead of answering with a seat that is not
+    // on this table.
+    CHECK(ww_seat_resolve(9, 1, 7, 4, 0) == 4, "out of range, so the sender inference is used");
+    CHECK(ww_seat_resolve(9, 0, 7, 4, 0) == -1, "and with nothing else, -1");
+}
+
+static void test_no_signal_is_an_honest_minus_one(void) {
+    // The only honest answer when nothing identifies this device. Guessing would
+    // hand somebody else's role to this phone, which in this game is the game.
+    CHECK(ww_seat_resolve(-1, 0, 7, 2, 0) == -1, "nothing identifies me");
+    CHECK(ww_seat_resolve(-1, 0, 7, 2, 1) == -1, "and a DM of five is still nothing");
+}
+
+static void test_the_dm_complement_needs_a_table_of_two(void) {
+    // Sound only because a 1:1 chat has exactly one other human in it. Werewolf
+    // never seats two, so this can never fire here - it is kept because the rule
+    // is about the CHAT rather than the game, and the next product to fork this
+    // tree should not have to re-derive it.
+    CHECK(ww_seat_resolve(-1, 0, 2, 0, 1) == 1, "the receiver is the seat the sender is not");
+    CHECK(ww_seat_resolve(-1, 0, 2, 1, 1) == 0, "either way round");
+    // And it is REFUSED in a group chat: a 2-player game's bubble in a group can
+    // be tapped by any member, and a bystander must not be silently seated.
+    CHECK(ww_seat_resolve(-1, 0, 2, 0, 0) == -1, "a bystander in a group is not the other player");
+}
+
+static void test_my_claim_name_recovers_my_seat(void) {
+    WwJoin j[3];
+    join_set(&j[0], 0, "Alex");
+    join_set(&j[1], 1, "Sveta");
+    join_set(&j[2], 2, "Dima");
+    CHECK(ww_seat_claimed_by_name(j, 3, "Sveta", 5) == 1, "found by name");
+    CHECK(ww_seat_claimed_by_name(j, 3, "Boris", 5) == -1, "and nobody by another");
+    CHECK(ww_name_taken(j, 3, "Dima", 4), "Dima is taken");
+    CHECK(!ww_name_taken(j, 3, "Dim", 3), "and a prefix is not a name");
+    // Name recovery ranks FIRST, so it beats a numeric cache that lost a race.
+    CHECK(ww_seat_resolve_on_board(j, 3, 2, 0, 3, 0, 0, "Sveta", 5) == 1,
+          "the name overrules a cache pointing somewhere else");
+}
+
+static void test_a_lost_claim_race_does_not_seat_me(void) {
+    // Two devices claimed seat 2 off the same stale bubble and this one lost, so
+    // the canonical chain lists somebody else there. Trusting the number would put
+    // their ROLE on this screen.
+    WwJoin j[3];
+    join_set(&j[0], 0, "Alex");
+    join_set(&j[1], 1, "Sveta");
+    join_set(&j[2], 2, "Dima");
+    CHECK(ww_seat_cache_disowned(j, 3, 2, "Boris", 5), "the chain says seat 2 is Dima, not me");
+    CHECK(!ww_seat_cache_disowned(j, 3, 2, "Dima", 4), "and when the names agree it is mine");
+    CHECK(!ww_seat_cache_disowned(j, 3, 5, "Boris", 5),
+          "no join at my seat disowns nothing - stay permissive");
+    CHECK(!ww_seat_cache_disowned(j, 3, -1, "Boris", 5), "no cache, nothing to disown");
+    CHECK(ww_seat_resolve_on_board(j, 3, 2, 0, 7, 0, 0, "Boris", 5) == -1,
+          "so the disowned cache resolves to nobody");
+}
+
+static void test_a_lobby_seats_a_named_device_by_name_or_not_at_all(void) {
+    // A lobby bubble is a snapshot of who had joined when it was sealed, so a seat
+    // it does not list is a seat that had not been claimed on this branch.
+    WwJoin stale[1];
+    join_set(&stale[0], 0, "Alex");
+    CHECK(ww_seat_resolve_in_lobby(stale, 1, 1, 0, 8, 0, 0, "Sveta", 5) == -1,
+          "a cached seat this bubble does not list is not joined");
+    CHECK(ww_seat_resolve_in_lobby(stale, 1, -1, 1, 8, 2, 0, "Sveta", 5) == -1,
+          "and neither is a sender-inferred one");
+    WwJoin fresh[2];
+    join_set(&fresh[0], 0, "Alex");
+    join_set(&fresh[1], 1, "Sveta");
+    CHECK(ww_seat_resolve_in_lobby(fresh, 2, 1, 0, 8, 0, 0, "Sveta", 5) == 1,
+          "once the bubble lists me, I am joined again");
+    // LISTED IS NOT THE SAME AS MINE. In the fork this gap let a player who had
+    // LEFT a lobby be handed the seat of the player who stayed, and act as them.
+    CHECK(ww_seat_resolve_in_lobby(fresh, 2, 1, 0, 8, 0, 0, "Ghost", 5) == -1,
+          "a named stranger gets the listed seat's name, and so gets nothing");
+    // AND THE ROUTE THAT ACTUALLY BIT THE FORK, which the line above does not
+    // reach: the disown check fires first there, so the membership name test was
+    // never exercised. Here the cache is empty and SENDER INFERENCE supplies the
+    // seat - correct on a board, evidence of nothing in a lobby. A player who had
+    // LEFT was handed the seat of the player who stayed, and could act as them.
+    WwJoin gap[2];
+    join_set(&gap[0], 0, "Alex");
+    join_set(&gap[1], 2, "Dima");
+    CHECK(ww_seat_resolve_in_lobby(gap, 2, -1, 1, 8, 2, 0, "Ghost", 5) == -1,
+          "a sender-inferred seat this lobby lists under another name is not mine");
+    CHECK(ww_seat_resolve_in_lobby(gap, 2, -1, 1, 8, 2, 0, "Dima", 4) == 2,
+          "and it IS mine when the lobby lists it under my own");
+    // A device with no recorded name still falls back - it has nothing to match
+    // with, and that is the pre-existing permissive case rather than a new hole.
+    CHECK(ww_seat_resolve_in_lobby(gap, 2, -1, 1, 8, 2, 0, 0, 0) == 2,
+          "a nameless device keeps the old permissive answer");
+    // A BOARD is the opposite, and only a board: a live chain carries every seated
+    // player forward, so a roster that does not list me is one I have not been
+    // sealed into yet.
+    CHECK(ww_seat_resolve_on_board(stale, 1, 1, 0, 8, 0, 0, "Sveta", 5) == 1,
+          "a board seats me off the cache even when this bubble has not caught up");
+}
+
 // ------------------------------------------------------------- the clocks ---
 
 static void test_the_send_floor_counts_down(void) {
@@ -1221,6 +1550,23 @@ int main(void) {
     test_rule_p_prefers_a_child_over_its_parent();
     test_rule_p_is_a_total_order();
     test_a_started_chain_outranks_a_lobby();
+
+    test_a_lobby_capacity_is_the_chat_shape();
+    test_a_lobby_below_the_minimum_cannot_start();
+    test_what_a_lobby_offers();
+    test_a_join_takes_the_lowest_free_seat();
+    test_creating_a_game_deals_nobody();
+    test_both_start_routes_deal_the_same_roles();
+    test_start_reads_the_lobbys_seed_and_not_the_last_game();
+
+    test_a_cached_seat_beats_the_live_signals();
+    test_the_sender_is_its_own_last_actor();
+    test_a_stale_out_of_range_cache_is_ignored_not_trusted();
+    test_no_signal_is_an_honest_minus_one();
+    test_the_dm_complement_needs_a_table_of_two();
+    test_my_claim_name_recovers_my_seat();
+    test_a_lost_claim_race_does_not_seat_me();
+    test_a_lobby_seats_a_named_device_by_name_or_not_at_all();
 
     test_the_send_floor_counts_down();
     test_the_carry_gate_opens_after_a_minute();

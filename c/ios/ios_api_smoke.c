@@ -9,6 +9,7 @@
 #include "ww_game.h"
 #include "ww_view.h"
 #include "ww_wire.h"
+#include "ww_lobby.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -18,9 +19,82 @@ static int n_pass = 0, n_fail = 0;
     else { n_fail++; fprintf(stderr, "FAIL: %s (%s:%d)\n", msg, __FILE__, __LINE__); } \
 } while (0)
 
+// THE LOBBY, THROUGH THE BRIDGE. Creating must not deal, and Start must read the
+// LOBBY's locked seed rather than whatever game happens to be resident - which is
+// the bug the fork's own route-equivalence test could not catch, because its two
+// routes ran back to back off one seed.
+static void lobby_smoke(void) {
+    uint8_t seed[32], other[32];
+    for (int i = 0; i < 32; i++) { seed[i] = (uint8_t)(i * 11 + 5); other[i] = (uint8_t)(i * 3 + 9); }
+
+    CHECK(wwi_create_lobby(seed, 0, (const uint8_t *)"Alex", 4) == WW_OK, "a group lobby");
+    CHECK(wwi_view_phase(-1) == WW_PHASE_LOBBY, "a lobby, not a game");
+    CHECK(wwi_view_n_players(-1) == 0, "with no seats dealt");
+    CHECK(wwi_view_my_role(0) == WW_ROLE_UNKNOWN, "and nobody has a role");
+    CHECK(wwi_lobby_joined() == 1, "the creator is seated");
+    CHECK(wwi_lobby_offered(0, 1) == WW_LOBBY_WAITING, "and is not asked to post again");
+    CHECK(wwi_lobby_offered(0, 0) == WW_LOBBY_INVITE, "but may invite off somebody else's bubble");
+    CHECK(wwi_lobby_offered(-1, 0) == WW_LOBBY_JOIN, "and a watcher may join");
+    CHECK(wwi_lobby_needs() == WW_MIN_PLAYERS - 1, "four more to go");
+    CHECK(!wwi_lobby_can_exit(0), "the creator alone has nothing to leave");
+
+    static const char *rest[6] = { "Sveta", "Kim", "Lee", "Ana", "Bo", "Cy" };
+    for (int i = 0; i < 6; i++)
+        CHECK(wwi_lobby_join((const uint8_t *)rest[i], (int)strlen(rest[i])) == i + 1, "joined");
+    CHECK(wwi_lobby_joined() == 7, "seven in");
+    CHECK(wwi_lobby_needs() == 0, "and nobody more needed");
+    CHECK(wwi_lobby_offered(0, 0) == WW_LOBBY_START, "so a seated player may start");
+    CHECK(wwi_view_my_role(0) == WW_ROLE_UNKNOWN, "and STILL nobody has a role");
+
+    uint8_t lobby[2048];
+    const int ln = wwi_seal(lobby, (int)sizeof lobby, 0x5EED, 0, 0, 0);
+    CHECK(ln > 0, "the lobby seals");
+    {
+        WwEnvelope d;
+        CHECK(ww_msg_decode(lobby, ln, &d) == WW_MSG_EOK, "and decodes");
+        CHECK(d.phase == WW_PHASE_LOBBY && d.n_records == 0, "as a lobby with no records");
+        CHECK(d.n_players == WW_MAX_PLAYERS, "whose n_players is the capacity");
+    }
+
+    // POLLUTE THE RESIDENT with an unrelated game at a different seed and count,
+    // which is the ordinary state of this kernel by the time somebody taps Start.
+    CHECK(wwi_new_game(other, 9) == WW_OK, "an unrelated game becomes resident");
+    CHECK(wwi_view_n_players(0) == 9, "nine seats");
+
+    CHECK(wwi_lobby_start(lobby, ln) == WW_OK, "start from the lobby's own bytes");
+    CHECK(wwi_view_phase(0) == WW_PHASE_NIGHT, "night one");
+    CHECK(wwi_view_n_players(0) == 7, "seven seats, from the joins and not the resident nine");
+    int wolves = 0;
+    for (int s = 0; s < 7; s++) if (wwi_view_role_of(s, s) == WW_ROLE_WOLF) wolves++;
+    CHECK(wolves == ww_wolf_count(7), "and the roles the locked seed deals");
+    // The roles must be the LOBBY seed's, not the polluting game's.
+    WwGame expected;
+    CHECK(ww_deal(&expected, seed, 7) == WW_OK, "the deal that seed makes");
+    int same = 1;
+    for (int s = 0; s < 7; s++) if (wwi_view_role_of(s, s) != expected.role[s]) same = 0;
+    CHECK(same, "exactly the deal the LOCKED seed makes");
+
+    // A lobby too small for the roles cannot be started at all.
+    CHECK(wwi_create_lobby(seed, 0, (const uint8_t *)"Alex", 4) == WW_OK, "a fresh lobby");
+    CHECK(wwi_lobby_join((const uint8_t *)"Sveta", 5) == 1, "two in");
+    uint8_t small[2048];
+    const int sn = wwi_seal(small, (int)sizeof small, 0x5EE2, 0, 0, 0);
+    CHECK(sn > 0, "it seals");
+    CHECK(wwi_lobby_start(small, sn) == WW_ECOUNT, "and two cannot be dealt");
+
+    // A 1:1 chat can never seat a table, and says so instead of counting.
+    CHECK(wwi_create_lobby(seed, 1, (const uint8_t *)"Alex", 4) == WW_OK, "a 1:1 lobby");
+    CHECK(wwi_lobby_capacity(1) == 2, "holds two");
+    CHECK(wwi_lobby_join((const uint8_t *)"Sveta", 5) == 1, "and the one opponent joins");
+    CHECK(wwi_lobby_offered(0, 0) == WW_LOBBY_TOO_FEW, "so the lobby says it cannot be played");
+    CHECK(wwi_lobby_join((const uint8_t *)"Kim", 3) == WW_ECOUNT, "and nobody else fits");
+}
+
 int main(void) {
     uint8_t seed[32];
     for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 7 + 3);
+
+    lobby_smoke();
 
     CHECK(wwi_new_game(seed, 7) == WW_OK, "seven players dealt");
     CHECK(wwi_new_game(seed, 4) == WW_ECOUNT, "four is refused");
