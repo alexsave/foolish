@@ -195,18 +195,6 @@ static bool sample_consistent_state(Game *g_out, const Game *g_in, int my_idx,
     return true;
 }
 
-// Apply a move to game `g` for player `p_idx`. Returns true on success.
-static bool apply_move(Game *g, int p_idx, const LegalMove *m) {
-    switch (m->type) {
-        case MOVE_ATTACK: return handle_attack(g, p_idx, m->cards, m->n_cards);
-        case MOVE_COVER:  return handle_cover (g, p_idx, m->cards, m->attack_cards, m->n_cards);
-        case MOVE_PASS:   return handle_pass  (g, p_idx, m->cards, m->n_cards);
-        case MOVE_PICKUP: return handle_pickup(g, p_idx);
-        case MOVE_GOOD:   return handle_good  (g, p_idx);
-        default:          return false;
-    }
-}
-
 // Roll the game forward using `rollout_fn` for every seat, until completion
 // or `max_turns` reached. Uses calculate_legal_moves_lite (single greedy
 // cover) so cover enumeration doesn't blow up. Callers pass:
@@ -227,7 +215,7 @@ static int simulate_to_end(Game *g, int my_idx, int max_turns, StrategyFn rollou
             if (moves->n == 0) continue;
             int idx = rollout_fn(g, pi, moves, NULL);
             if (idx < 0 || idx >= moves->n) continue;
-            if (apply_move(g, pi, &moves->moves[idx])) { acted = true; break; }
+            if (legal_move_apply(g, pi, &moves->moves[idx])) { acted = true; break; }
         }
         if (!acted) break;
     }
@@ -248,7 +236,7 @@ static double mc_eval_move(const Game *g_orig, int my_idx, const LegalMove *m,
     for (int s = 0; s < n_samples; s++) {
         uint32_t seed = base_seed + (uint32_t)(s + 1) * 0x85EBCA77u;
         if (!sample_consistent_state(g, g_orig, my_idx, u, seed)) continue;
-        if (!apply_move(g, my_idx, m)) continue;
+        if (!legal_move_apply(g, my_idx, m)) continue;
         int fp = simulate_to_end(g, my_idx, 600, rollout_fn);
         if (fp == 0) fp = g->num_players;  // count incomplete as durak (worst)
         total += (double)fp;

@@ -1,4 +1,5 @@
-// ios_api.c — implementation of the Swift-visible bridge (see ios/include/ios_api.h).
+// ios_api.c - THE RESIDENT GAME, and the lifecycle that seats it (see
+// ios/include/ios_api.h for the Swift-visible contract).
 //
 // One static Game, no threads inside (the Swift EngineC wrapper serializes every
 // call onto a single queue). Everything crosses as the kernel's own packed bytes
@@ -6,43 +7,105 @@
 // directly (MaskedView / MoveWire / awire). No Durak rule lives here either:
 // this file only marshals to and from game.c / legal.c / view.c / replay.c
 // (docs/IOS_APP_DESIGN.md §3, §16.0).
+//
+// The bridge is WIDE - 123 entry points at about nine lines each - so it is
+// split by what each entry is ABOUT rather than left in one file: the client's
+// board slot is ios_api_view.c, the move menu and the board's gesture rules are
+// ios_api_play.c, the animation surface is ios_api_anim.c, replays and evwire
+// are ios_api_replay.c, the roster and its seat/name gates are
+// ios_api_identity.c, the iMessage envelope is ios_api_msg.c, and the bot half
+// is ios_bots_api.c (which is a LINK split, not a reading one - see
+// ios_internal.h). What stays here is the state they all share and the calls
+// that establish it.
 
 #include "ios_api.h"
 #include "ios_internal.h"
 
 #include "game.h"
-#include "legal.h"
 #include "view.h"
-#include "replay.h"
-#include "replay_steps.h"
-#include "replay_extras.h"
-#include "evwire.h"
 #include "msg_wire.h"
-#include "msg_expand.h"
-#include "anim_plan.h"
-#include "client_table.h"
 #include "awire.h"
-#include "sha256.h"
 
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 // ---------- the one game --------------------------------------------------
-
-static Game  g_game;
-static int   g_has_game = 0;
+//
+// The resident game and the terms it was dealt under, as ONE struct
+// (ios_internal.h FioSession) because they are one fact: a file that may change
+// this device's game has to be able to see the deal behind it. This file owns
+// the storage; every other TU reaches it through fio_session().
+//
+// THE LOG MARK (msg_base_logs) is the field with the subtlest contract, so it
+// is worth stating where it lives. It is g_session.game's log count at the
+// moment the resident game was established from a chain (a decode), or from a
+// fresh deal. Everything logged since is what this device is about to send, so
+// `fio_msg_encode` hands the mark to msg_seal, which asks the encoder how many
+// atoms of the body come after it - the bubble delta (msg_wire.h's n_new),
+// which is how a receiver knows to animate this move and not the one before it
+// as well.
+//
+// A LOG mark rather than the parent's atom count (which is what this was until
+// round 16): the atom stream is re-derived from the whole log every time it is
+// encoded, so a pending good stops being an atom the moment anything follows
+// it, and two atom counts subtracted lose exactly those. The log only ever
+// grows, so a mark into it is stable. -1 = unknown, and every path that makes a
+// game resident without a chain to measure from must say so, because a stale
+// base would name the WRONG suffix.
+//
+// It lives here for the same reason ios_api_msg.c's g_msg_round does: the fact
+// belongs to the adopted chain, this bridge is the one place that adopts one,
+// and asking Swift to carry it back down at seal time would put a rules input
+// in app code (and in every other host's app code) for nothing.
+//
+// msg_base_sent_at is the send clock of that adopted chain (msg_wire.h's
+// sent_at). A bubble that adds NOTHING repeats it rather than stamping now: the
+// defender's pickup hold measures from when the attack was actually sent, and
+// an undo-to-empty re-seal did not re-send that attack. Without this,
+// cancelling a staged move handed every recipient a fresh 15 seconds of hold on
+// a board nobody touched.
+//
+// msg_opening is THE FOOL'S PENALTY: the seat this game OPENED on, or
+// MSG_NO_OPENING for the ordinary lowest-trump derivation. It belongs to the
+// resident game exactly as deal_seed does - it is a term of the deal, not of
+// any one bubble - so it is established once (by the Start that resolved it, or
+// by decoding a chain that carries it) and then repeated by every seal of that
+// game without Swift having to carry it down each time. A fresh deal clears it:
+// an ordinary new game punishes nobody.
+//
+// msg_carry_key / msg_carry_fool are the other half, and the LOBBY's half: the
+// rematch carry a WAITING envelope hands forward until someone taps Start.
+// Sticky for the same reason - every join re-seals the lobby, and the question
+// must survive each re-seal - and cleared by the deal that answers it
+// (fio_new_game), so a live game never carries a lobby's question alongside its
+// own answer.
+//
+// msg_rules are THE RULES THE RESIDENT GAME IS PLAYED UNDER, kept beside the
+// seed for the same reason: a re-deal (fio_reseat_game, the rematch Start)
+// rebuilds the Game from the locked seed and would otherwise drop them, and the
+// lobby that CHOSE them is several bubbles back by then. Set by decoding a
+// chain (which states them), or by fio_set_passing before a lobby's first seal;
+// repeated by every seal of that game. A fresh deal restores the default, which
+// is the classic passing game (game.h GAME_RULE_NO_PASS is what a variant
+// costs, not what a default does).
+//
+// The sentinels are named in the initialiser rather than assumed to be zero,
+// because two of them are not.
+static FioSession g_session = {
+    .msg_base_logs  = -1,
+    .msg_opening    = MSG_NO_OPENING,
+    .msg_carry_fool = MSG_NO_FOOL,
+};
 
 // ---------- THE ONE SCRATCH GAME ------------------------------------------
 //
-// A Game is 136,328 B at the shipped caps, and this file used to hold THREE of
-// them: the resident game above, plus a private static scratch inside each of
-// fio_legal_from_packed and fio_msg_encode. The resident one has to be resident
-// — its log IS the session history the FMSG encoder reads back. The other two
-// never were: each is filled from the caller's own bytes at the top of a call,
-// consumed before that call returns, and read by nobody afterwards. They were
-// static only to keep a 133 KB frame off the stack, which one shared slot does
-// just as well.
+// A Game is 136,328 B at the shipped caps, and this bridge used to hold THREE
+// of them: the resident game above, plus a private static scratch inside each
+// of fio_legal_from_packed and fio_msg_encode. The resident one has to be
+// resident — its log IS the session history the FMSG encoder reads back. The
+// other two never were: each is filled from the caller's own bytes at the top
+// of a call, consumed before that call returns, and read by nobody afterwards.
+// They were static only to keep a 133 KB frame off the stack, which one shared
+// slot does just as well.
 //
 // FoolishKit is linked by the iMessage extension, which is memory-capped and
 // has a history of being killed, so a whole resident Game that exists only to
@@ -54,71 +117,11 @@ static int   g_has_game = 0;
 // single queue), neither user keeps state across its own return, and neither
 // call path re-enters the other — the kernel never calls back out into fio_*.
 // A future entry point may borrow this slot under exactly those terms: fill it
-// before you read it, and do not hold it across a return.
+// before you read it, and do not hold it across a return. It is now shared
+// ACROSS translation units (fio_scratch_game), which widens the blast radius of
+// breaking that rule but not the rule itself.
 static Game  g_scratch_game;
 static int   g_last_reject = 0;
-static int   g_last_replay_error = 0;
-
-// The deal seed this game was dealt from, kept from fio_new_game (see there).
-// Zero when the game came from a short/absent seed, i.e. the legacy LCG deal —
-// which cannot be re-derived, so those games can only ever encode as v5.
-static uint8_t g_deal_seed[FOOLISH_SEED_LEN];
-static int     g_has_deal_seed = 0;
-
-// ROUND 16 - THE LOG MARK: g_game's log count at the moment the RESIDENT game
-// was established from a chain (a decode), or from a fresh deal. Everything
-// logged since is what this device is about to send, so `fio_msg_encode` hands
-// the mark to msg_seal, which asks the encoder how many atoms of the body come
-// after it - the bubble delta (msg_wire.h's n_new), which is how a receiver
-// knows to animate this move and not the one before it as well.
-//
-// A LOG mark rather than the parent's atom count (which is what this was until
-// the same round): the atom stream is re-derived from the whole log every time
-// it is encoded, so a pending good stops being an atom the moment anything
-// follows it, and two atom counts subtracted lose exactly those. The log only
-// ever grows, so a mark into it is stable.
-//
-// -1 = unknown, and every path that makes a game resident without a chain to
-// measure from must say so, because a stale base would name the WRONG suffix.
-// It is a static for the same reason g_msg_round is: the fact belongs to the
-// adopted chain, this file is the one place that adopts one, and asking Swift
-// to carry it back down at seal time would put a rules input in app code (and
-// in every other host's app code) for nothing.
-static int g_msg_base_logs = -1;
-
-// The send clock of the adopted chain (msg_wire.h's sent_at). A bubble that
-// adds NOTHING repeats it rather than stamping now: the defender's pickup hold
-// measures from when the attack was actually sent, and an undo-to-empty re-seal
-// did not re-send that attack. Without this, cancelling a staged move handed
-// every recipient a fresh 15 seconds of hold on a board nobody touched.
-static uint16_t g_msg_base_sent_at = 0;
-
-// THE FOOL'S PENALTY, on the resident game: the seat this game OPENED on, or
-// MSG_NO_OPENING for the ordinary lowest-trump derivation. It belongs to the
-// resident game exactly as `g_deal_seed` does - it is a term of the deal, not
-// of any one bubble - so it is established once (by the Start that resolved it,
-// or by decoding a chain that carries it) and then repeated by every seal of
-// that game without Swift having to carry it down each time. A fresh deal
-// clears it: an ordinary new game punishes nobody.
-static uint8_t g_msg_opening = MSG_NO_OPENING;
-
-// The other half, and the LOBBY's half: the rematch carry a WAITING envelope
-// hands forward until someone taps Start. Sticky for the same reason - every
-// join re-seals the lobby, and the question must survive each re-seal - and
-// cleared by the deal that answers it (fio_new_game), so a live game never
-// carries a lobby's question alongside its own answer.
-static uint32_t g_msg_carry_key  = 0;
-static uint8_t  g_msg_carry_fool = MSG_NO_FOOL;
-
-// THE RULES THE RESIDENT GAME IS PLAYED UNDER, kept beside the seed for the same
-// reason: a re-deal (fio_reseat_game, the rematch Start) rebuilds the Game from
-// the locked seed and would otherwise drop them, and the lobby that CHOSE them
-// is several bubbles back by then. Set by decoding a chain (which states them),
-// or by fio_set_passing before a lobby's first seal; repeated by every seal of
-// that game. A fresh deal restores the default, which is the classic passing
-// game (game.h GAME_RULE_NO_PASS is what a variant costs, not what a default
-// does).
-static int8_t g_msg_rules = 0;
 
 // ---------- the layout this library was compiled for ------------------------
 //
@@ -136,818 +139,59 @@ static int8_t g_msg_rules = 0;
 #endif
 uint32_t fio_layout_hash(void) { return (uint32_t)SG_LAYOUT_HASH; }
 
-// ---------- legal moves ----------------------------------------------------
+// ---------- what the other translation units may reach ----------------------
 //
-// The packed wire carries the MOVE_* integer; naming it is the host's job.
+// Accessors rather than exported statics, so this file stays the owner and "is
+// there a game" keeps one answer. ios_internal.h states the terms.
+
+FioSession *fio_session(void) { return &g_session; }
+
+// The resident game, for the bridge's other translation units - the domain
+// files beside this one, and ios_bots_api.c across the link split.
+Game *fio_resident_game(void) {
+    return g_session.has_game ? &g_session.game : 0;
+}
+
+Game *fio_scratch_game(void) { return &g_scratch_game; }
 
 // ---------- packed emitters -------------------------------------------------
 //
 // Client and server are kernel-to-kernel, so these hand out the SAME bytes the
-// wasm build does and Swift decodes them directly (MaskedView / MoveWire).
-
-// The seat's legal moves as the packed move wire — identical layout to
-// wasm_export_moves: u32 count, then per move {type, n_cards, cards[n_cards],
-// attacks[n_cards]}. Cards use card_to_id (== wire_from_card for real cards);
-// the reader ignores the attack bytes except on COVER.
-static int emit_legal_packed(const Game *g, int seat, char *out, int cap) {
-    static LegalMoves lm;
-    calculate_legal_moves(g, seat, &lm);
-    // NOTE: GOOD is intentionally NOT filtered here. The kernel menu stays the
-    // full legal set (so fio_actor_mask and this packed menu agree, and bots see
-    // GOOD as always - it is how a seat leaves the eligible set, see legal.c).
-    // The owner's "a human only gets Good once the table is fully covered, and
-    // it disappears when someone throws in" rule is a narrowing applied on the
-    // way to a board (play_can_say_good / play_human_menu), and the "your move
-    // with no live button" status case is handled in the board's status logic,
-    // not by rewriting the kernel's legal set.
-    const int n = legal_menu_write(&lm, 0, -1, (unsigned char *)out, cap);
-    return n == LEGAL_WIRE_ECAP ? FIO_ECAP : n;
-}
+// wasm build does and Swift decodes them directly (MaskedView / MoveWire). The
+// menu's emitter is ios_api_play.c's; this is the board's.
 
 // The resident game's masked view for `viewer`, as the packed state wire
 // (view.c state_put). Swift's MaskedView decoder reads it.
 int fio_state_packed(int viewer, char *out, int cap) {
-    if (!g_has_game) return FIO_ENOGAME;
+    if (!g_session.has_game) return FIO_ENOGAME;
     if (cap < 1024) return FIO_ECAP;   // state_put is unbounded; guard the buffer
-    return state_put(&g_game, viewer, (unsigned char *)out);
+    return state_put(&g_session.game, viewer, (unsigned char *)out);
 }
 
-// ---------- the client's slot: a board as one viewer sees it ----------------
+// ---------- applying a move (§4.4 / A3) -------------------------------------
 //
-// The same reader the web uses (client_table.h), which is the point: a board
-// off the wire is read ONCE, in C, and both hosts copy the result out through
-// generated snapshot readers. MaskedView.swift used to walk state_put's bytes
-// in Swift beside the C that writes them, and derive the game-over rule of its
-// own accord while it was there.
-//
-// ONE SLOT, like everything else in this file: a host adopts, reads the
-// snapshot at fio_view_ptr, and is done with it before anything else touches
-// the kernel (the Swift side serializes every call onto one actor). It costs
-// 4.5 KB of BSS at the iOS caps, which is a Game's logs being somewhere else.
-static ClientTable g_client;
-static ClientSlot  g_client_slot;
-static int         g_client_ready = 0;
-
-static ClientTable *client(void) {
-    if (!g_client_ready) { client_init(&g_client, &g_client_slot); g_client_ready = 1; }
-    return &g_client;
-}
-
-const void *fio_view_ptr(void) { return &client()->view; }
-
-int fio_view_detail(void) { return client()->detail; }
-
-int fio_view_of_resident(int viewer) {
-    if (!g_has_game) return FIO_ENOGAME;
-    return client_adopt_board(client(), &g_game, viewer);
-}
-
-int fio_view_of_state(const uint8_t *buf, int len, int viewer) {
-    if (!buf || len < 0) return FIO_EBADARG;
-    return client_adopt_state(client(), buf, len, viewer);
-}
-
-int fio_view_of_envelope(const uint8_t *buf, int len) {
-    if (!buf || len < 0) return FIO_EBADARG;
-    return client_adopt_envelope(client(), buf, len);
-}
-
-// ---------- one animation sequence, step by step -----------------------------
-//
-// An evwire sequence (one frame of fio_replay_last_events_packed, its u16
-// length already stripped) walked by the kernel's own reader. EvWire.swift used
-// to walk it in Swift - the header, each event's seven fixed bytes, its cards,
-// its optional target and battle, and the u16 snapshot behind them - beside the
-// C that writes those bytes.
-//
-// The whole sequence is checked at OPEN, every event and every board, so a
-// sequence that opens reads to its end. `bytes` must outlive the walk: the
-// kernel reads them where they are.
-int fio_push_open(const uint8_t *buf, int len) {
-    if (!buf || len < 0) return FIO_EBADARG;
-    // as2 (a bare sequence), no identity: an animation frame names no one, and
-    // its seats' names are the caller's to merge as they always were.
-    return client_push_open(client(), buf, len, 0, 0, 0, 0);
-}
-
-// The next step into the event at fio_push_event_ptr and its board into the
-// view: 1, 0 when every step has been read, or a negative CLIENT_E_*.
-int fio_push_next(void) { return client_push_next(client()); }
-
-// The board the sequence COMMITTED (its trailer), into the view, and the walk
-// is closed. Not the last event's board: a step with no events still commits
-// one, which is exactly the case (a bare good) where a client most needs it.
-int fio_push_final(void) { return client_push_final(client()); }
-
-// The step the last fio_push_next read (client_table.h PushEvent).
-const void *fio_push_event_ptr(void) { return &client()->event; }
-
-// The resident game's legal moves for `seat`, packed.
-int fio_legal_packed(int seat, char *out, int cap) {
-    if (!g_has_game) return FIO_ENOGAME;
-    if (seat < 0 || seat >= g_game.num_players) return FIO_EBADARG;
-    return emit_legal_packed(&g_game, seat, out, cap);
-}
-
-// Legal moves for `seat` on THE BOARD THE SLOT HOLDS - the one the last adopt
-// filled. A host that has adopted an envelope has the board in the kernel
-// already; without this it would have to keep the envelope's bytes as well,
-// slice the inner blob back out of them by offset, and hand them down again.
-// Ask it in the same call as the adopt: the slot is one slot.
-int fio_legal_from_view(int seat, char *out, int cap) {
-    const ClientTable *c = client();
-    if (c->g->num_players < 2) return FIO_ENOGAME;
-    if (seat < 0 || seat >= c->g->num_players) return FIO_EBADARG;
-    return emit_legal_packed(c->g, seat, out, cap);
-}
-
-// Legal moves for `seat` computed from a SERVER packed masked view, packed out.
-int fio_legal_from_packed(const uint8_t *buf, int len, int seat, char *out, int cap) {
-    if (!buf || len <= 0) return FIO_EBADARG;
-    Game *tmp = &g_scratch_game;          // the shared slot; see its comment
-    memset(tmp, 0, sizeof *tmp);
-    if (state_import(tmp, buf, len, /*masked=*/1) != GAME_VALID) return FIO_EPARSE;
-    if (tmp->num_players < 2) return FIO_EPARSE;
-    if (seat < 0 || seat >= tmp->num_players) return FIO_EBADARG;
-    return emit_legal_packed(tmp, seat, out, cap);
-}
-
-// ---------- what a gesture on a board means (the board rules) ---------------
-//
-// The rules between a finger and a move - which menu entry a drop resolves to,
-// which battles a selection could cover, which one the Cover button aims at,
-// which moves a human may make at all. They live in legal.c (play_*); this is
-// the crossing.
-//
-// THESE READ NOTHING BUT THEIR ARGUMENTS. Not the resident game, not a static -
-// which is what makes them safe to call from a SwiftUI render pass, where the
-// resident game is behind an actor and unreachable. What a board asks about is
-// its own PUBLISHED pair anyway: the menu it was handed and the table it was
-// handed, which for the iMessage board is sometimes deliberately not the live
-// position (an empty menu while a bout settlement is held back). See the note
-// on PlayBoard in legal.h.
-
-// Fill a PlayBoard from the crossing arguments. `table` is 2 bytes per battle,
-// the attack then its cover or LEGAL_WIRE_NONE.
-static PlayBoard fio_play_board(const uint8_t *menu, int menu_len,
-                                const uint8_t *table, int n_battles,
-                                int power_suit, int is_defender) {
-    PlayBoard b;
-    b.menu = menu; b.menu_len = menu_len;
-    b.table = table; b.n_battles = n_battles;
-    b.power_suit = power_suit; b.is_defender = is_defender;
-    return b;
-}
-
-// ONE ANSWER, so a board cannot paint a highlight that the release then
-// refuses: the resolved move, the coverable set and the button states all come
-// out of one walk of one menu. Layout (LE):
-//
-//   0   u8    flags: 1 = attack legal with this selection, 2 = pass legal,
-//                    4 = this seat may say good
-//   1   i8    the battle the Cover button aims at, -1 for none
-//   2   u64   bitmask of battles this selection could cover
-//   10  ...   the resolved move as a ONE-ENTRY menu wire (count 0 or 1), so
-//             MoveWire decodes it with no second format
-int fio_play_probe(const uint8_t *menu, int menu_len,
-                   const uint8_t *table, int n_battles,
-                   int power_suit, int is_defender,
-                   const uint8_t *sel, int n_sel, int target,
-                   char *out, int cap) {
-    if (!menu || menu_len < 0 || n_battles < 0 || n_sel < 0) return FIO_EBADARG;
-    if (cap < FIO_PLAY_PROBE_HEAD + 4) return FIO_ECAP;
-    const PlayBoard b = fio_play_board(menu, menu_len, table, n_battles,
-                                       power_suit, is_defender);
-
-    const uint64_t mask = play_coverable_battles(&b, sel, n_sel);
-    const int best = play_best_cover_target(&b, sel, n_sel);
-    const int idx  = play_resolve(&b, sel, n_sel, target);
-
-    unsigned char *q = (unsigned char *)out;
-    q[0] = (unsigned char)((play_has_verb(&b, MOVE_ATTACK, sel, n_sel) ? 1 : 0)
-                         | (play_has_verb(&b, MOVE_PASS,   sel, n_sel) ? 2 : 0)
-                         | (play_can_say_good(&b)                      ? 4 : 0));
-    q[1] = (unsigned char)(signed char)best;
-    for (int i = 0; i < 8; i++) q[2 + i] = (unsigned char)((mask >> (8 * i)) & 0xff);
-
-    // The move itself, copied straight off the menu it was found on.
-    unsigned char *m = q + FIO_PLAY_PROBE_HEAD;
-    m[0] = m[1] = m[2] = m[3] = 0;
-    if (idx < 0) return FIO_PLAY_PROBE_HEAD + 4;
-
-    MenuWalk w;
-    MenuMove mm;
-    if (legal_menu_begin(&w, menu, menu_len) < 0) return FIO_PLAY_PROBE_HEAD + 4;
-    while (legal_menu_next(&w, &mm) == 1 && w.index != idx) { }
-    if (w.index != idx) return FIO_PLAY_PROBE_HEAD + 4;
-    if (FIO_PLAY_PROBE_HEAD + 4 + 2 + 2 * mm.n_cards > cap) return FIO_ECAP;
-    m[0] = 1;
-    m[4] = (unsigned char)mm.type;
-    m[5] = (unsigned char)mm.n_cards;
-    for (int i = 0; i < mm.n_cards; i++) m[6 + i] = mm.cards[i];
-    for (int i = 0; i < mm.n_cards; i++) m[6 + mm.n_cards + i] = mm.attacks[i];
-    return FIO_PLAY_PROBE_HEAD + 4 + 2 + 2 * mm.n_cards;
-}
-
-// The moves a HUMAN may make on this board, as the same menu wire in.
-int fio_play_human_menu(const uint8_t *menu, int menu_len,
-                        const uint8_t *table, int n_battles,
-                        char *out, int cap) {
-    if (!menu || menu_len < 0 || n_battles < 0) return FIO_EBADARG;
-    const PlayBoard b = fio_play_board(menu, menu_len, table, n_battles, -1, 0);
-    const int n = play_human_menu(&b, (unsigned char *)out, cap);
-    if (n == LEGAL_WIRE_ECAP) return FIO_ECAP;
-    if (n < 0) return FIO_EPARSE;
-    return n;
-}
-
-// ---------- animation events (§4.4 / A3) -----------------------------------
-//
-// The animation plan — which card flies where, in what order — is derived by
-// the kernel and always has been: the website decodes the evwire stream and
-// plays it, never deriving anything. Offline there is no server to send that
-// stream, and the iOS design's answer used to be a Swift diff engine
-// (`BoardDiff.swift`, "given (old GameView, new GameView) produce moves").
-// That would have been a THIRD implementation of the same derivation, and
-// legacy the day it was written.
-//
-// So: the same kernel hooks that feed the web's evwire feed this too
-// (evwire_walk, the one derivation), and Swift decodes the packed sequence.
-//
-// Nothing is captured on the APPLY path any more. This bridge used to keep 48
-// Game-prefix snapshot slots and arm engine_snap_hook around every
-// fio_apply_awire so it could render the move's events on demand; the app never
-// asked. It animates from the chain instead (fio_replay_last_events_packed,
-// which replays through replay_steps.c and arms its own hook), so the slots were
-// filled on every move and read by nobody.
+// Nothing is captured on the APPLY path. This bridge used to keep 48 Game-prefix
+// snapshot slots and arm engine_snap_hook around every fio_apply_awire so it
+// could render the move's events on demand; the app never asked. It animates
+// from the chain instead (fio_replay_last_events_packed, which replays through
+// replay_steps.c and arms its own hook), so the slots were filled on every move
+// and read by nobody.
 
 // The client sends the awire action bytes — fio_apply_awire is the one apply
 // entry, and the FMSG rebase path (fio_msg_rebase_awire) reads the same frame.
 int fio_apply_awire(int actor_seat, const uint8_t *buf, int len) {
-    if (!g_has_game) return FIO_ENOGAME;
+    if (!g_session.has_game) return FIO_ENOGAME;
     if (!buf || len <= 0) return FIO_EBADARG;
-    if (actor_seat < 0 || actor_seat >= g_game.num_players) return FIO_EBADARG;
+    if (actor_seat < 0 || actor_seat >= g_session.game.num_players) return FIO_EBADARG;
     AwireAction a;
     if (!awire_decode(buf, len, &a)) return FIO_EPARSE;
 
     engine_last_reject = ENGINE_REJECT_NONE;
-    bool ok = awire_apply(&g_game, actor_seat, &a);   // the kernel owns the switch
+    // the kernel owns the switch
+    bool ok = awire_apply(&g_session.game, actor_seat, &a);
     if (!ok) { g_last_reject = engine_last_reject; return FIO_EREJECT; }
     g_last_reject = 0;
     return FIO_EOK;
-}
-
-
-// ---------- animation core (c/src/anim_plan.h) -----------------------------
-//
-// The layout is documented once, in ios_api.h. Like fio_beats_packed, this
-// reads nothing but its arguments: the stream crosses WITH the question because
-// a board animates the stream it was HANDED (a staged bout end is cut in half
-// and the settlement withheld), and because a SwiftUI body cannot await the
-// actor the resident game lives behind.
-
-_Static_assert(FIO_PLAN_SEATS == MAX_PLAYERS,
-               "the plan wire's seat block must be the kernel's table size");
-_Static_assert(FIO_PLAN_BATTLES == ANIM_PLAN_ROW_MAX,
-               "the plan wire's row block must be the kernel's plan row width");
-// THE PLAN AND THE BEATS THEMSELVES, not copies of them: the caller reads them
-// at fio_anim_plan_ptr / fio_beats_ptr through the generated snapshot readers.
-static AnimPlan  g_anim_plan;
-static AnimBeats g_anim_beats;
-
-int fio_anim_plan(const uint8_t *in, int len) {
-    if (!in || len < 5) return FIO_EBADARG;
-    if (in[0] != FIO_PLAN_VERSION) return FIO_EPARSE;
-    const int np = in[1];
-    const int n = in[2];
-    if (np < 2 || np > MAX_PLAYERS) return FIO_EPARSE;
-    if (n > ANIM_MAX_STEPS) return FIO_ECAP;
-
-    int p = 6;
-    if (p + np > len) return FIO_EPARSE;
-    // The final board's flipped trump - read only by the boardless fallback,
-    // but it crosses unconditionally so the header stays fixed-width.
-    const Card final_flipped = in[5] < 52 ? card_of_id(in[5]) : CARD_NONE;
-    int final_hand[MAX_PLAYERS];
-    for (int s = 0; s < np; s++) final_hand[s] = in[p++];
-
-    static AnimPlanEvent evs[ANIM_MAX_STEPS];
-    static int  hands[ANIM_MAX_STEPS][MAX_PLAYERS];
-    static Card pool[ANIM_MAX_CARD_POOL];
-    int n_pool = 0;
-    for (int i = 0; i < n; i++) {
-        // The WHOLE event is bounded before any of it is read - the counts that
-        // decide its length (n_cards, n_ids) first, then the extent they imply.
-        // A bound checked after the reads it guards is not a bound; an optimiser
-        // is free to sink the loads past it.
-        if (p + 6 > len) return FIO_EPARSE;
-        const int n_cards = in[p + 4], n_ids = in[p + 5];
-        if (n_cards > ANIM_MAX_CARDS || n_ids > n_cards) return FIO_ECAP;
-        if (p + 11 + np + n_ids > len) return FIO_EPARSE;
-        if (n_pool + n_ids > ANIM_MAX_CARD_POOL) return FIO_ECAP;
-        const int type = in[p], seat = in[p + 1], from = in[p + 2], to = in[p + 3];
-        const int has_counts = in[p + 6], deck = in[p + 7], discard = in[p + 8];
-        const Card flipped = in[p + 9] < 52 ? card_of_id(in[p + 9]) : CARD_NONE;
-        p += 10;
-        for (int s = 0; s < np; s++) hands[i][s] = in[p + s];
-        p += np;
-        Card *ids = &pool[n_pool];
-        for (int k = 0; k < n_ids; k++) {
-            if (in[p + k] >= 52) return FIO_EPARSE;
-            ids[k] = card_of_id(in[p + k]);
-        }
-        n_pool += n_ids;
-        p += n_ids;
-        // …and the row that step committed. FIO_PRETABLE_NONE is "no board",
-        // which is what a redacted table crosses as (PreTableWire.table): a row
-        // that cannot be described honestly is not described at all.
-        //
-        // BORROWED FROM `in`, NOT COPIED. AnimPlanEvent borrows its array inputs
-        // for the call (the contract EvwEvent keeps), and a row on this wire is
-        // ALREADY the dense ids the kernel compares, byte for byte - unlike
-        // `cards` beside it, which card_of_id genuinely transforms. Bounded
-        // BEFORE the borrow, like every other field here, so the pointer handed
-        // on can only span bytes the caller really owns: the guard-page sweep
-        // below walks every short prefix flush against PROT_NONE and a bound
-        // that is off by one faults there rather than passing.
-        //
-        // Safe for the same reason the wasm twin's is: `out` is written only
-        // after anim_build_plan has returned, and it has copied what it keeps
-        // into `plan` by then.
-        if (p >= len) return FIO_EPARSE;
-        const int n_bat = in[p++];
-        int row_n = ANIM_NO_BOARD;
-        const uint8_t *row = 0;
-        if (n_bat != FIO_PRETABLE_NONE) {
-            if (n_bat > FIO_PLAN_BATTLES) return FIO_ECAP;
-            if (p + 2 * n_bat > len) return FIO_EPARSE;
-            row = &in[p];
-            p += 2 * n_bat;
-            row_n = n_bat;
-        }
-        evs[i].type = type;
-        evs[i].seat = (seat == 0xFF) ? ANIM_SEAT_NONE : seat;
-        evs[i].from = from;
-        evs[i].to = to;
-        evs[i].cards = ids;
-        evs[i].n_cards = n_cards;
-        // Only REAL identities travel; a viewer-masked step lists none, and the
-        // veil must leave its cards alone rather than veil a back.
-        evs[i].mask_cards = (n_ids < n_cards);
-        evs[i].has_counts = has_counts ? 1 : 0;
-        evs[i].deck = deck;
-        evs[i].discard = discard;
-        evs[i].flipped = flipped;
-        evs[i].hand = hands[i];
-        evs[i].n_battles = row_n;
-        evs[i].battles = row;
-    }
-
-    const int rc = anim_build_plan(evs, n, np, in[3], in[4], final_flipped,
-                                   final_hand, &g_anim_plan);
-    if (rc == ANIM_ECAP) return FIO_ECAP;
-    if (rc != ANIM_EOK) return FIO_EBADARG;
-
-    return FIO_EOK;
-}
-
-// The plan the last fio_anim_plan built (anim_plan.h AnimPlan), where it lies.
-// It used to be flattened into a packed block here and read back field by field
-// in AnimPlanWire.swift - 85 bytes of header, a 23-byte stride per step and a
-// veil tail, stated twice. The web reads this same struct through generated
-// accessors (wasm_anim_plan_ptr); the phone reads it through generated
-// snapshots. Valid until the next fio_anim_plan.
-const void *fio_anim_plan_ptr(void) { return &g_anim_plan; }
-
-
-int fio_anim_should_drop_stale(int has_last, int last, int has_incoming, int incoming) {
-    return anim_should_drop_stale(has_last, last, has_incoming, incoming);
-}
-
-// ---------- the shape of a sequence ----------------------------------------
-//
-// The layout is documented once, in ios_api.h. Reads nothing but its arguments:
-// the stream crosses WITH the question because the board's stream is often not
-// the resident game's (a staged bout end is cut in half and the settlement
-// withheld), and because a SwiftUI body cannot await the actor it lives behind.
-
-// Every dense id the input names, across the whole stream. A turn is at most
-// ANIM_MAX_BEATS events and no event names more cards than a full table sweep.
-#define FIO_BEATS_MAX_IDS 1024
-
-int fio_beats(const uint8_t *in, int len) {
-    if (!in || len < 2) return FIO_EBADARG;
-    if (in[0] != FIO_BEATS_VERSION) return FIO_EPARSE;
-    const int n = in[1];
-    if (n > ANIM_MAX_BEATS) return FIO_ECAP;
-
-    AnimBeatEvent evs[ANIM_MAX_BEATS];
-    Card ids[FIO_BEATS_MAX_IDS];
-    int n_ids = 0, p = 2;
-    for (int i = 0; i < n; i++) {
-        if (p + 5 > len) return FIO_EPARSE;
-        const int type = in[p];
-        const int seat = in[p + 1];
-        const int has_good = in[p + 2];
-        const int good = in[p + 3];
-        const int k = in[p + 4];
-        p += 5;
-        if (p + k > len) return FIO_EPARSE;
-        if (n_ids + k > FIO_BEATS_MAX_IDS) return FIO_ECAP;
-        evs[i].type = type;
-        evs[i].seat = (seat == 0xFF) ? ANIM_SEAT_NONE : seat;
-        evs[i].cards = &ids[n_ids];
-        evs[i].n_cards = k;
-        evs[i].mask_cards = 0;   // only real identities are ever listed
-        evs[i].good_mask = has_good ? good : ANIM_NO_MASK;
-        for (int c = 0; c < k; c++) {
-            if (in[p + c] >= 52) return FIO_EPARSE;
-            ids[n_ids + c] = card_of_id(in[p + c]);
-        }
-        n_ids += k;
-        p += k;
-    }
-
-    const int r = anim_build_beats(evs, n, &g_anim_beats);
-    if (r == ANIM_ECAP) return FIO_ECAP;
-    if (r < 0) return FIO_EBADARG;
-    return FIO_EOK;
-}
-
-// The beats the last fio_beats built (anim_plan.h AnimBeats), where they lie.
-// Same story as the plan above: a packed block written here and read back in
-// BeatWire.swift, one layout stated twice.
-const void *fio_beats_ptr(void) { return &g_anim_beats; }
-
-
-// ---------- the pre-bout table ---------------------------------------------
-//
-// The layout is documented once, in ios_api.h. Like fio_beats_packed this reads
-// nothing but its arguments, and the prior board travels with the stream
-// because a single-action pickup turn has no earlier board of its own.
-
-_Static_assert(FIO_PRETABLE_NONE == ANIM_TABLE_NONE,
-               "one 'no card here' byte for a table, not two");
-_Static_assert(ANIM_TABLE_NONE == LEGAL_WIRE_NONE,
-               "…and it is the same byte the menu wire and PlayBoard use");
-
-// One table off the wire: `n` battles at `p`, bounded against `end`. Returns
-// the bytes consumed, or -1 for a table that runs off the buffer or names a
-// card that is not one.
-static int pretable_read(const uint8_t *p, const uint8_t *end, int n) {
-    if (n < 0 || p + 2 * n > end) return -1;
-    for (int i = 0; i < 2 * n; i++)
-        if (p[i] >= 52 && p[i] != ANIM_TABLE_NONE) return -1;
-    return 2 * n;
-}
-
-int fio_pre_bout_table_packed(const uint8_t *in, int len, char *out, int cap) {
-    if (!in || !out || len < 3) return FIO_EBADARG;
-    if (in[0] != FIO_PRETABLE_VERSION) return FIO_EPARSE;
-    const int n = in[1];
-    if (n > ANIM_MAX_STEPS) return FIO_ECAP;
-    const uint8_t *end = in + len;
-
-    int p = 2;
-    const int prior_n = (in[p] == FIO_PRETABLE_NONE) ? ANIM_NO_BOARD : in[p];
-    p++;
-    const uint8_t *prior = in + p;
-    if (prior_n > 0) {
-        const int took = pretable_read(in + p, end, prior_n);
-        if (took < 0) return FIO_EPARSE;
-        p += took;
-    }
-
-    static AnimPreEvent evs[ANIM_MAX_STEPS];
-    for (int i = 0; i < n; i++) {
-        // The WHOLE event is bounded before any of it is read - the counts that
-        // decide its length first, then the extent they imply. A bound checked
-        // after the reads it guards is not a bound.
-        if (in + p + 2 > end) return FIO_EPARSE;
-        const int type = in[p];
-        const int n_bat = (in[p + 1] == FIO_PRETABLE_NONE) ? ANIM_NO_BOARD : in[p + 1];
-        p += 2;
-        evs[i].type = type;
-        evs[i].n_battles = n_bat;
-        evs[i].battles = in + p;
-        if (n_bat > 0) {
-            const int took = pretable_read(in + p, end, n_bat);
-            if (took < 0) return FIO_EPARSE;
-            p += took;
-        }
-        if (in + p + 1 > end) return FIO_EPARSE;
-        const int n_cards = in[p];
-        p++;
-        if (in + p + n_cards > end) return FIO_EPARSE;
-        for (int k = 0; k < n_cards; k++) if (in[p + k] >= 52) return FIO_EPARSE;
-        evs[i].n_cards = n_cards;
-        evs[i].cards = in + p;
-        p += n_cards;
-    }
-
-    static AnimPreTable t;
-    const int rc = anim_pre_bout_table(evs, n, prior_n, prior, &t);
-    if (rc == ANIM_ECAP) return FIO_ECAP;
-    if (rc < 0) return FIO_EBADARG;
-
-    const int need = FIO_PRETABLE_HEAD + 2 * t.n_battles;
-    if (cap < need) return FIO_ECAP;
-    unsigned char *q = (unsigned char *)out;
-    q[0] = FIO_PRETABLE_VERSION;
-    q[1] = (unsigned char)t.n_battles;
-    q[2] = (unsigned char)(t.paired ? 1 : 0);
-    for (int i = 0; i < 2 * t.n_battles; i++) q[FIO_PRETABLE_HEAD + i] = t.battles[i];
-    return need;
-}
-
-// ---------- the conflict model --------------------------------------------
-
-// THE TRANSPORT (anim_plan.h), said once by the host. This library is linked by
-// the iMessage extension, whose messages each carry the whole game in a total
-// order, and by the iOS app, whose online play is confirmed by a later server
-// broadcast - so it cannot be a constant here, and the kernel refuses to guess.
-int fio_set_transport(int transport) { return anim_set_transport(transport); }
-int fio_transport(void) { return anim_transport(); }
-
-int fio_conflict_dest(int event_type, int seat, int my_seat) {
-    return anim_conflict_dest(event_type, seat, my_seat);
-}
-
-// One dense card id off the wire: FIO_CONFLICT_NONE is "no identity here", and
-// anything else off the deck is a corrupt wire rather than a case.
-static int conflict_id(uint8_t b, int *out) {
-    if (b == FIO_CONFLICT_NONE) { *out = ANIM_CARD_NONE; return 1; }
-    if (b >= 52) return 0;
-    *out = b;
-    return 1;
-}
-
-int fio_conflict_packed(const uint8_t *in, int len, char *out, int cap) {
-    if (!in || !out || len < 2) return FIO_EBADARG;
-    if (in[0] != FIO_CONFLICT_VERSION) return FIO_EPARSE;
-    const uint8_t *end = in + len;
-    int p = 1;
-
-    // Every count is bounded before the extent it implies is read - a bound
-    // checked after the reads it guards is not a bound.
-    static int moved[ANIM_MAX_CONFLICT_MOTIONS];
-    if (in + p + 1 > end) return FIO_EPARSE;
-    const int n_moved = in[p++];
-    if (n_moved > ANIM_MAX_CONFLICT_MOTIONS) return FIO_ECAP;
-    if (in + p + n_moved > end) return FIO_EPARSE;
-    for (int i = 0; i < n_moved; i++) {
-        if (!conflict_id(in[p + i], &moved[i])) return FIO_EPARSE;
-    }
-    p += n_moved;
-
-    if (in + p + 1 > end) return FIO_EPARSE;
-    const int n_bat = (in[p] == FIO_CONFLICT_NONE) ? 0 : in[p];
-    p++;
-    const uint8_t *table = in + p;
-    if (in + p + 2 * n_bat > end) return FIO_EPARSE;
-    // Either slot may be FIO_CONFLICT_NONE - an uncovered attack, or a card the
-    // viewer cannot name. Both contribute nothing to the standing set; anything
-    // else off the deck is a corrupt wire.
-    for (int i = 0; i < 2 * n_bat; i++) {
-        if (table[i] >= 52 && table[i] != FIO_CONFLICT_NONE) return FIO_EPARSE;
-    }
-    p += 2 * n_bat;
-
-    if (in + p + 1 > end) return FIO_EPARSE;
-    const int n_hand = in[p++];
-    const uint8_t *hand = in + p;
-    if (in + p + n_hand > end) return FIO_EPARSE;
-    for (int i = 0; i < n_hand; i++) if (hand[i] >= 52) return FIO_EPARSE;
-    p += n_hand;
-
-    if (in + p + 1 > end) return FIO_EPARSE;
-    const int n_groups = in[p++];
-    if (n_groups > ANIM_MAX_CONFLICT_GROUPS) return FIO_ECAP;
-    if (in + p + n_groups > end) return FIO_EPARSE;
-    static int groups[ANIM_MAX_CONFLICT_GROUPS];
-    int n_motions = 0;
-    for (int g = 0; g < n_groups; g++) {
-        groups[g] = in[p + g];
-        n_motions += groups[g];
-    }
-    p += n_groups;
-    if (n_motions > ANIM_MAX_CONFLICT_MOTIONS) return FIO_ECAP;
-    if (in + p + 2 * n_motions > end) return FIO_EPARSE;
-
-    static AnimConflictMotion motions[ANIM_MAX_CONFLICT_MOTIONS];
-    for (int i = 0; i < n_motions; i++) {
-        if (!conflict_id(in[p + 2 * i], &motions[i].card_id)) return FIO_EPARSE;
-        const int dest = in[p + 2 * i + 1];
-        if (dest != FIO_CONFLICT_DEST_TABLE && dest != FIO_CONFLICT_DEST_MY_HAND
-            && dest != FIO_CONFLICT_DEST_POOL) return FIO_EPARSE;
-        motions[i].dest = dest;
-    }
-
-    AnimConflictFacts facts;
-    if (anim_conflict_facts(moved, n_moved, table, n_bat, hand, n_hand, &facts) != ANIM_EOK) {
-        return FIO_EBADARG;
-    }
-    static AnimConflictPlan plan;
-    const int rc = anim_conflict_reversal(motions, n_motions, groups, n_groups, &facts, &plan);
-    if (rc == ANIM_ECAP) return FIO_ECAP;
-    if (rc == ANIM_ETRANSPORT) return FIO_ETRANSPORT;
-    if (rc < 0) return FIO_EBADARG;
-
-    const int need = 2 + plan.n_verdicts + 1 + plan.n_steps + plan.n_order;
-    if (cap < need) return FIO_ECAP;
-    unsigned char *q = (unsigned char *)out;
-    int w = 0;
-    q[w++] = FIO_CONFLICT_VERSION;
-    q[w++] = (unsigned char)plan.n_verdicts;
-    for (int i = 0; i < plan.n_verdicts; i++) q[w++] = plan.verdicts[i];
-    q[w++] = (unsigned char)plan.n_steps;
-    for (int i = 0; i < plan.n_steps; i++) q[w++] = (unsigned char)plan.step_count[i];
-    for (int i = 0; i < plan.n_order; i++) q[w++] = (unsigned char)plan.order[i];
-    return w;
-}
-
-// ---- the board's sets and small rules -------------------------------------
-// Thin crossings: the rule is anim_plan.c's, and every one of these is a set or
-// a scalar, so nothing here parses a record.
-
-uint64_t fio_veil_veiled(uint64_t hidden, uint64_t pending_open,
-                         int has_hand_before, uint64_t hand_before,
-                         int has_my_hand, uint64_t my_hand) {
-    return anim_veil_veiled(hidden, pending_open, has_hand_before, hand_before,
-                            has_my_hand, my_hand);
-}
-
-uint64_t fio_veil_flying(uint64_t hidden, uint64_t pre_hidden) {
-    return anim_veil_flying(hidden, pre_hidden);
-}
-
-uint64_t fio_veil_hand_slot_deferred(uint64_t veiled, uint64_t flying, uint64_t holdback) {
-    return anim_veil_hand_slot_deferred(veiled, flying, holdback);
-}
-
-uint64_t fio_veil_fan(uint64_t veiled, uint64_t holdback) {
-    return anim_veil_fan(veiled, holdback);
-}
-
-void fio_veil_grid(int sweeping, uint64_t veiled,
-                   uint64_t swept_flown, uint64_t sweep_unplaced,
-                   uint64_t sweep_arriving, uint64_t flying,
-                   uint64_t *out_hidden, uint64_t *out_flying) {
-    anim_veil_grid(sweeping, veiled, swept_flown, sweep_unplaced, sweep_arriving,
-                   flying, out_hidden, out_flying);
-}
-
-uint64_t fio_veil_sweep_unplaced(uint64_t placed, uint64_t table) {
-    return anim_veil_sweep_unplaced(placed, table);
-}
-
-void fio_veil_teardown(uint64_t opened, uint64_t orphaned, int is_newest,
-                       uint64_t *out_reveal, uint64_t *out_carry) {
-    anim_veil_teardown(opened, orphaned, is_newest, out_reveal, out_carry);
-}
-
-void fio_veil_handover(uint64_t standing, uint64_t placing,
-                       uint64_t *out_reveal, uint64_t *out_veil) {
-    anim_veil_handover(standing, placing, out_reveal, out_veil);
-}
-
-int fio_veil_unstarted_replay(int replay_pending, int n_events) {
-    return anim_veil_unstarted_replay(replay_pending, n_events);
-}
-
-int fio_holdback_is_mine(int armed_at, int teardown_at) {
-    return anim_holdback_is_mine(armed_at, teardown_at);
-}
-
-uint64_t fio_selection_after_tap(uint64_t selection, int card_id, uint64_t hand) {
-    return anim_selection_after_tap(selection, card_id, hand);
-}
-
-int fio_is_placement(int event_type) { return anim_is_placement(event_type); }
-
-int fio_is_my_placement(int event_type, int seat, int my_seat) {
-    return anim_is_my_placement(event_type, seat, my_seat);
-}
-
-int fio_fan_cards(const uint8_t *hand, int n_hand, const uint8_t *held, int n_held,
-                  char *out, int cap) {
-    if (!out || cap < 0) return FIO_EBADARG;
-    const int rc = anim_fan_cards(hand, n_hand, held, n_held, (unsigned char *)out, cap);
-    if (rc == ANIM_ECAP) return FIO_ECAP;
-    return rc < 0 ? FIO_EBADARG : rc;
-}
-
-int fio_laid_count(const uint8_t *hand, int n_hand, const uint8_t *held, int n_held,
-                   uint64_t deferred) {
-    const int rc = anim_laid_count(hand, n_hand, held, n_held, deferred);
-    if (rc == ANIM_ECAP) return FIO_ECAP;
-    return rc < 0 ? FIO_EBADARG : rc;
-}
-
-int fio_hand_laid_out(const uint8_t *cards, int n_cards, uint64_t deferred,
-                      const uint8_t *order, int n_order, char *out, int cap) {
-    if (!out || cap < 0) return FIO_EBADARG;
-    const int rc = anim_hand_laid_out(cards, n_cards, deferred, order, n_order,
-                                      (unsigned char *)out, cap);
-    if (rc == ANIM_ECAP) return FIO_ECAP;
-    return rc < 0 ? FIO_EBADARG : rc;
-}
-
-uint64_t fio_table_card_ids(const uint8_t *table, int n_battles) {
-    return anim_table_card_ids(table, n_battles);
-}
-
-int fio_table_covers(const uint8_t *outer, int n_outer, const uint8_t *inner, int n_inner) {
-    const int rc = anim_table_covers(outer, n_outer, inner, n_inner);
-    return rc < 0 ? FIO_EBADARG : rc;
-}
-
-int fio_covered_sweep_accepts(int paired, const uint8_t *pre, int n_pre,
-                              const uint8_t *cur, int n_cur) {
-    const int rc = anim_covered_sweep_accepts(paired, pre, n_pre, cur, n_cur);
-    return rc < 0 ? FIO_EBADARG : rc;
-}
-
-int fio_shown_table(int n_live, int n_sweep, int n_pending, int *out_sweeping) {
-    return anim_shown_table(n_live, n_sweep, n_pending, out_sweeping);
-}
-
-int fio_shown_table_rows(const uint8_t *live, int n_live, const uint8_t *sweep, int n_sweep,
-                         int n_pending, int hold_leaving, int *out_sweeping) {
-    const int rc = anim_shown_table_rows(live, n_live, sweep, n_sweep, n_pending,
-                                         hold_leaving, out_sweeping);
-    return rc < ANIM_SHOWN_NONE ? FIO_EBADARG : rc;
-}
-
-int fio_pass_slot_shown(int previewing, int dragging, int seen_this_drag,
-                        int over_dead_pair, int held_at, int n_battles, int rules) {
-    return anim_pass_slot_shown(previewing, dragging, seen_this_drag, over_dead_pair,
-                                held_at, n_battles, rules);
-}
-
-int fio_finish_rows(const uint8_t *elimination, int n_elim, int game_over,
-                    int n_players, int my_seat, char *out, int cap) {
-    if (!out) return FIO_EBADARG;
-    AnimFinishRow rows[MAX_PLAYERS];
-    const int n = anim_finish_rows(elimination, n_elim, game_over, n_players,
-                                   my_seat, rows, MAX_PLAYERS);
-    if (n == ANIM_ECAP) return FIO_ECAP;
-    if (n < 0) return FIO_EBADARG;
-    const int need = FIO_FINISH_HEAD + 3 * n;
-    if (cap < need) return FIO_ECAP;
-    unsigned char *q = (unsigned char *)out;
-    int w = 0;
-    q[w++] = FIO_FINISH_VERSION;
-    q[w++] = (unsigned char)n;
-    q[w++] = (unsigned char)n_players;
-    for (int i = 0; i < n; i++) {
-        q[w++] = (unsigned char)rows[i].place;
-        q[w++] = (unsigned char)rows[i].seat;
-        q[w++] = (unsigned char)rows[i].is_you;
-    }
-    return w;
-}
-
-int fio_shown_ledger_allows(int claim, int sequencing) {
-    return anim_shown_ledger_allows(claim, sequencing);
-}
-
-int fio_badge_drops_as_cards_leave(int type) {
-    return anim_badge_drops_as_cards_leave(type);
-}
-
-static int fio_roles_answer(int changed, const AnimRoles *r, int *out) {
-    if (!changed) return 0;
-    out[0] = r->defender;
-    out[1] = r->first_attacker;
-    out[2] = r->good_mask;
-    return 1;
-}
-
-int fio_roles_goods_opening(int shown_defender, int shown_first_attacker,
-                            int shown_good_mask, int first_good_mask, int *out) {
-    if (!out) return FIO_EBADARG;
-    const AnimRoles shown = { shown_defender, shown_first_attacker, shown_good_mask };
-    AnimRoles r;
-    return fio_roles_answer(anim_goods_opening(shown, first_good_mask, &r), &r, out);
-}
-
-int fio_roles_goods_cleared(int shown_defender, int shown_first_attacker,
-                            int shown_good_mask, int step_good_mask, int *out) {
-    if (!out) return FIO_EBADARG;
-    const AnimRoles shown = { shown_defender, shown_first_attacker, shown_good_mask };
-    AnimRoles r;
-    return fio_roles_answer(anim_goods_cleared(shown, step_good_mask, &r), &r, out);
-}
-
-int fio_roles_pass_hand_off(int shown_defender, int shown_first_attacker,
-                            int shown_good_mask, int attack_pass_seats,
-                            int final_defender, int *out) {
-    if (!out) return FIO_EBADARG;
-    const AnimRoles shown = { shown_defender, shown_first_attacker, shown_good_mask };
-    AnimRoles r;
-    return fio_roles_answer(
-        anim_pass_hand_off(shown, (unsigned)attack_pass_seats, final_defender, &r), &r, out);
 }
 
 int fio_last_reject(void) { return g_last_reject; }
@@ -960,15 +204,15 @@ int fio_new_game(const uint8_t *seed, int seed_len, int n_players) {
     // Deal RNG: wide (ChaCha) mode when 32+ seed bytes are supplied — the whole
     // deal space, reproducible on any platform (deal_rng.h). Otherwise fall back
     // to the legacy 32-bit LCG seed from the first 4 bytes (golden fixtures).
-    g_has_deal_seed = 0;
+    g_session.has_deal_seed = 0;
     if (seed && seed_len >= FOOLISH_SEED_LEN) {
         game_set_deal_seed_bytes(seed, seed_len);
         // Keep it: it is what makes this game's replay v6 (exact hands) instead
         // of v5 (retrodicted). Held here rather than handed back to Swift at
         // share time so the app never has to know a replay needs a deal seed —
         // fio_replay_encode_v6_b32 takes no arguments.
-        memcpy(g_deal_seed, seed, FOOLISH_SEED_LEN);
-        g_has_deal_seed = 1;
+        memcpy(g_session.deal_seed, seed, FOOLISH_SEED_LEN);
+        g_session.has_deal_seed = 1;
     } else {
         uint32_t s = 0;
         if (seed) for (int i = 0; i < seed_len && i < 4; i++) s |= ((uint32_t)seed[i]) << (8 * i);
@@ -976,32 +220,34 @@ int fio_new_game(const uint8_t *seed, int seed_len, int n_players) {
         random_strategy_set_seed(s);
     }
 
-    memset(&g_game, 0, sizeof(g_game));
+    Game *g = &g_session.game;
+    memset(g, 0, sizeof *g);
     // Identity (player_id) and the host-side roster mirror are ours to set; the
     // seat count, per-seat kind, and the deal are the kernel's (game_seat_and_deal).
     int8_t strategies[MAX_PLAYERS];
     for (int i = 0; i < n_players; i++) {
         strategies[i] = STRATEGY_KEY_HUMAN;  // all human until fio_set_seat_strategy
     }
-    game_seat_and_deal(&g_game, strategies, n_players);
+    game_seat_and_deal(g, strategies, n_players);
     // A GENUINELY fresh game is the classic one: a variant is chosen for a
     // table, and this deal is not that table (fio_reseat_game, which re-derives
     // the SAME locked seed when a lobby starts, carries the rules across
     // itself). Without this a lobby played podkidnoy would leave the next local
     // game podkidnoy too, in a process that never restarts.
-    g_msg_rules = 0;
-    g_game.rules = g_msg_rules;
-    g_has_game = 1;
+    g_session.msg_rules = 0;
+    g->rules = g_session.msg_rules;
+    g_session.has_game = 1;
     g_last_reject = 0;
-    g_msg_base_logs = g_game.num_logs;   // a fresh deal continues nothing:
-                                         // every atom after this is new
-    g_msg_base_sent_at = 0;              // …and nobody has sent it anywhere
+    // A fresh deal continues nothing: every atom after this is new, and nobody
+    // has sent it anywhere.
+    g_session.msg_base_logs = g->num_logs;
+    g_session.msg_base_sent_at = 0;
     // The pin is consumed by the deal above, never left standing: a later
     // ordinary game must not inherit a penalty that was owed to someone else.
     // fio_msg_start_rematch is the one caller that sets both, in that order.
-    g_msg_opening = MSG_NO_OPENING;
-    g_msg_carry_key = 0;
-    g_msg_carry_fool = MSG_NO_FOOL;
+    g_session.msg_opening = MSG_NO_OPENING;
+    g_session.msg_carry_key = 0;
+    g_session.msg_carry_fool = MSG_NO_FOOL;
     game_open_at_seat(-1);
     return FIO_EOK;
 }
@@ -1014,25 +260,28 @@ int fio_new_game(const uint8_t *seed, int seed_len, int n_players) {
 // claimed lowest-first, so it is always a contiguous 0..<n) — never a new
 // random seed, which is the "locked at create" guarantee the lobby promises.
 //
-// Just fio_new_game fed g_deal_seed back to itself: the seed already lives in
-// the resident-game statics (kept there from whichever call last dealt or
-// decoded it — fio_new_game or fio_msg_decode), so it never has to
-// cross back out to Swift and back in, mirroring the same "the kernel keeps
-// the seed, the app never touches it" discipline fio_replay_encode_v6_b32
-// already relies on. Returns FIO_ENOSEED if no wide seed is resident (nothing
-// to re-derive from — a lobby is always created wide-seeded, so this is only
-// reachable by calling it out of order), or whatever fio_new_game returns for
-// a bad n_players.
+// Just fio_new_game fed the session's own seed back to itself: the seed already
+// lives in the session (kept there from whichever call last dealt or decoded it
+// — fio_new_game or fio_msg_decode), so it never has to cross back out to Swift
+// and back in, mirroring the same "the kernel keeps the seed, the app never
+// touches it" discipline fio_replay_encode_v6_b32 already relies on. Returns
+// FIO_ENOSEED if no wide seed is resident (nothing to re-derive from — a lobby
+// is always created wide-seeded, so this is only reachable by calling it out of
+// order), or whatever fio_new_game returns for a bad n_players.
 int fio_reseat_game(int n_players) {
-    if (!g_has_deal_seed) return FIO_ENOSEED;
+    if (!g_session.has_deal_seed) return FIO_ENOSEED;
     uint8_t seed[FOOLISH_SEED_LEN];
-    memcpy(seed, g_deal_seed, FOOLISH_SEED_LEN);   // copy out first: fio_new_game
-    // …and the same for the RULES. This is the same table dealt again, not a new
-    // one, so the variant the lobby chose crosses the re-deal (fio_new_game
-    // clears it, deliberately, for the fresh-game case it also serves).
-    const int8_t rules = g_msg_rules;
-    const int rc = fio_new_game(seed, FOOLISH_SEED_LEN, n_players);  // overwrites g_deal_seed
-    if (rc == FIO_EOK) { g_msg_rules = rules; g_game.rules = rules; }
+    // Copy the seed OUT first: fio_new_game overwrites it. …and the same for
+    // the RULES. This is the same table dealt again, not a new one, so the
+    // variant the lobby chose crosses the re-deal (fio_new_game clears it,
+    // deliberately, for the fresh-game case it also serves).
+    memcpy(seed, g_session.deal_seed, FOOLISH_SEED_LEN);
+    const int8_t rules = g_session.msg_rules;
+    const int rc = fio_new_game(seed, FOOLISH_SEED_LEN, n_players);
+    if (rc == FIO_EOK) {
+        g_session.msg_rules = rules;
+        g_session.game.rules = rules;
+    }
     return rc;
 }
 
@@ -1046,8 +295,8 @@ int fio_reseat_game(int n_players) {
 // survives the re-deal Start performs. A caller sets this AFTER adopting the
 // lobby it is changing, and the very next seal states it on the wire.
 int fio_set_passing(int passing) {
-    g_msg_rules = passing ? 0 : (int8_t)GAME_RULE_NO_PASS;
-    if (g_has_game) g_game.rules = g_msg_rules;
+    g_session.msg_rules = passing ? 0 : (int8_t)GAME_RULE_NO_PASS;
+    if (g_session.has_game) g_session.game.rules = g_session.msg_rules;
     return FIO_EOK;
 }
 
@@ -1055,877 +304,20 @@ int fio_set_passing(int passing) {
 // game resident: nothing has said otherwise, and the classic game is what a
 // fresh one would be.
 int fio_passing_allowed(void) {
-    return (g_msg_rules & GAME_RULE_NO_PASS) ? 0 : 1;
+    return (g_session.msg_rules & GAME_RULE_NO_PASS) ? 0 : 1;
 }
 
-int fio_has_game(void) { return g_has_game; }
-
-// The resident game, for the bridge's OTHER translation unit (ios_bots_api.c).
-// An accessor rather than an exported `g_game` so this file stays its owner and
-// "is there a game" keeps one answer - see ios_internal.h for why the split
-// exists at all.
-Game *fio_resident_game(void) { return g_has_game ? &g_game : 0; }
-
-// A server packed-view blob decodes to a GameView in pure Swift (MaskedView),
-// and legal moves from that blob come through fio_legal_from_packed
-// (view.ts / MoveWire).
+int fio_has_game(void) { return g_session.has_game; }
 
 int fio_actor_mask(void) {
-    if (!g_has_game) return FIO_ENOGAME;
+    if (!g_session.has_game) return FIO_ENOGAME;
+    const Game *g = &g_session.game;
     int mask = 0;
-    for (int i = 0; i < g_game.num_players; i++) if (should_bot_act(&g_game, i)) mask |= (1 << i);
+    for (int i = 0; i < g->num_players; i++) if (should_bot_act(g, i)) mask |= (1 << i);
     return mask;
 }
 
 int fio_game_over(void) {
-    if (!g_has_game) return FIO_ENOGAME;
-    return game_done(&g_game);
-}
-
-// ---------- replays (§16.C) ------------------------------------------------
-//
-// DECODE is implemented: base32 (RFC 4648 uppercase, no padding) → the replay
-// integer bytes → replay_decode() → the packed step wire. This is byte-parity
-// with the server by construction (shared replay.c), so a web-generated code
-// plays natively.
-
-// base32 lives in replay.c (replay_b32_decode / replay_b32_encode).
-
-// The exact game, hidden state and all. One kernel call - the deal seed was kept
-// at fio_new_game, the actions are this game's own logs, and the reveal stream
-// is re-derived inside the kernel, so the app assembles nothing. This is the
-// same replay_encode_v6_from_game the server calls through
-// wasm_replay_encode_v6_from_game, so an offline share and a site share are the
-// same code.
-//
-// Returns FIO_ENOSEED for a game dealt without a wide seed: its deal cannot be
-// re-derived, and there is no second format to fall back to any more.
-int fio_replay_encode_v6_b32(char *out, int cap) {
-    if (!g_has_game) return FIO_ENOGAME;
-    if (!g_has_deal_seed) return FIO_ENOSEED;
-    g_last_replay_error = 0;
-    static unsigned char encout[16384];
-    int enclen = replay_encode_v6_from_game(&g_game, g_deal_seed, FOOLISH_SEED_LEN,
-                                            1 << 30, encout, sizeof(encout));
-    if (enclen < 0) { g_last_replay_error = -enclen; return FIO_EREPLAY; }
-    int w = replay_b32_encode(encout, enclen, out, cap);
-    if (w < 0) return FIO_ECAP;
-    return w;
-}
-
-// THE call a client makes for a share code. It is a straight pass-through today
-// because there is one replay format left, and it stays a separate entry point
-// because WHICH FORMAT TO SHARE IS NOT AN APP DECISION: if that choice lived in
-// Swift then the watch, the iMessage extension and every later client would each
-// reimplement it and drift.
-//
-// It used to fall back to the retrodiction encoder when the deal could not be
-// re-derived, and that fallback is deliberately gone rather than replaced. A
-// retrodicted code is not a shorter recording of this game - it is a DIFFERENT
-// game, one whose hidden hands the decoder guesses by complement - so shipping
-// one under a share button trades a visible failure for an invisible lie. A
-// game with no re-derivable deal now returns FIO_ENOSEED, and the caller shows
-// that. (Swift always deals through fio_new_game with 32 bytes, so this is the
-// unreachable branch made honest, not a capability withdrawn.)
-int fio_replay_share_code_b32(char *out, int cap) {
-    return fio_replay_encode_v6_b32(out, cap);
-}
-
-// The whole shareable link, prefix and all (ios_api.h). Pure function of its
-// arguments - no resident game - so a caller may reach it from anywhere.
-int fio_replay_share_link(const char *moves,
-                          const unsigned char *names, int names_len, int n_names,
-                          char *out, int cap) {
-    int n = replay_extras_link(moves, names, names_len, n_names, out, cap);
-    if (n == -REPLAY_EXTRAS_ECAP) return FIO_ECAP;
-    if (n < 0) return FIO_EBADARG;
-    return n;
-}
-
-
-// The animations of the chain's LAST TURN, as packed evwire frames — the "what
-// just happened" an iMessage receiver sees on opening a bubble. Same packed
-// evwire the website renders and live play broadcasts; Swift reads it with
-// EvWire.decodeFrames.
-//
-// THE KERNEL decides the group; the client passes the encoded chain and the one
-// fact the chain cannot hold - `atoms_before`, how many atoms were on it BEFORE
-// this bubble (-1 for "cannot say"). That is a property of the BUBBLE (its
-// `turn` minus the delta it carries, msg_wire.h's n_new), never "where I last
-// looked": a device's cache must not decide what animates.
-//
-// Why the count BEFORE rather than the count added, when the wire carries the
-// latter: because the two are equivalent for a receiver and only this one is
-// answerable by a SENDER. A device animating its own just-played move knows
-// exactly what it adopted (the parent's turn) but not how many atoms its moves
-// became - the codec is not 1:1 with actions, it folds a bout's closing goods
-// into one round_end atom and can expand a closing good into two. Taking the
-// base lets the kernel do that arithmetic against its own step count, so
-// neither side has to guess.
-//
-// A turn is not an action. This used to hand back the final step alone, on the
-// reasoning that a v6 replay is the deal (step 0) then exactly one step per
-// action, and that each step already bundles an action with ALL its
-// kernel-internal consequences — a `pickup` step carries the PICKUP, every
-// seat's refill draws, and the defender change, from the one handle_pickup
-// call. All true, and still one action short of what a BUBBLE carries: a
-// player stages as many actions as they like before sending, so a defender who
-// covers two attacks sends one bubble holding two cover steps. Replaying only
-// the last of them showed the first cover already sitting on the table, landed
-// and rotated, while the second flew in — "if it's a double cover, the first
-// cover will just already be there, and only the second one will play."
-//
-// So the group is a SUFFIX of the step stream, and `atoms_before` says where it
-// starts. A v6 replay is the deal then exactly one step per atom (replay_steps.c's
-// rs_collect keeps every atom but DEAL/DRAW, which is precisely the set
-// msg_replay counts into `turn`), so a chain with B atoms behind it opens its
-// bubble at step B+1 and runs to the end - the atoms this bubble put on the
-// chain, and nothing that was already there. B == the atom count means the
-// bubble added nothing and nothing animates, which is the honest answer for the
-// one bubble that can do it (an undo-to-empty re-seal, §10).
-//
-// WITHOUT a base (-1: a format-2 chain sealed before round 16, or a chain whose
-// delta did not fit) it falls back to the guess that shipped before the field
-// existed: the trailing run of steps by ONE acting seat - walk back
-// over the seatless tail (ROUND_END belongs to whoever caused it), then back
-// over every immediately preceding step by that same seat. That is right only
-// when the sender staged its whole run and sent once, and the owner hit both
-// ways it is wrong: covering, sending, covering, sending replays BOTH covers on
-// the second bubble; and a cover that ends the bout with no ROUND_END atom (the
-// defender's last card - handle_cover discards inline) sits directly before
-// that same seat's opening attack of the next bout, so replaying the attack
-// replays the cover with it. Both are exact with a base, which is why the wire
-// field was added rather than the heuristic sharpened - no walk over the steps
-// can separate two bubbles that a single bubble could have produced.
-//
-// Every frame is masked for `viewer` exactly like live play: the viewer's own
-// drawn/picked-up cards carry real identities (fixing "my own refill never
-// animated on reopen"), everyone else's are hidden backs.
-//
-// Frames come back in the shape replay_steps_frames_v6 writes them — each
-// preceded by a u16 LE length, in play order. v6 only. Returns bytes written
-// (0 if the turn produced nothing to animate), or a negative error.
-int fio_replay_last_events_packed(const char *code, int viewer, int atoms_before,
-                                  unsigned char *out, int cap) {
-    if (!code || !out) return FIO_EBADARG;
-    g_last_replay_error = 0;
-
-    static unsigned char intbuf[16384];
-    int ilen = replay_b32_decode(code, intbuf, sizeof(intbuf));
-    if (ilen < 0) return FIO_ECAP;
-
-    // What each step IS (kind + acting seat), so the run can be found without
-    // decoding a single frame first. The ceiling is the same one `intbuf`
-    // already implies — a chain that decodes to more actions than this could
-    // not have fit in the 16KB buffer above in the first place — and
-    // replay_steps_index_v6 returns -REPLAY_ECAP rather than truncating.
-    #define FIO_MAX_REPLAY_STEPS 2048
-    static unsigned char idx[RS_INDEX_STRIDE * FIO_MAX_REPLAY_STEPS];
-    int ilen_idx = replay_steps_index_v6(intbuf, ilen, 0, idx, sizeof idx);
-    if (ilen_idx < 0) { g_last_replay_error = -ilen_idx; return FIO_EREPLAY; }
-    const int n = ilen_idx / RS_INDEX_STRIDE;
-    if (n <= 0) return 0;
-
-    const int last = n - 1;
-    int from = last;
-    if (atoms_before >= 0) {
-        // The bubble told us where it starts: step 0 is the DEAL, which no
-        // bubble adds, so B atoms behind it means step B+1 onward…
-        from = atoms_before + 1;
-        if (from < 1) from = 1;
-        if (from > n) from = n;          // added nothing: animate nothing
-        // …except on a chain that IS only the deal (a genesis or the lobby's
-        // LIVE handoff, n == 1), where the deal is the one thing to show.
-        if (n == 1) from = 0;
-    } else {
-        // No delta: the pre-round-16 guess. See the note above for what it
-        // cannot separate.
-        // Back over the seatless tail (ROUND_END) to the acting step that caused it.
-        int a = last;
-        while (a > 0 && idx[a * RS_INDEX_STRIDE + 1] == RS_SEAT_NONE) a--;
-        const unsigned char actor = idx[a * RS_INDEX_STRIDE + 1];
-        if (actor != RS_SEAT_NONE) {
-            from = a;
-            // …then back over every step that seat played immediately before it.
-            // Never across another seatless step: that is a closed bout, and the
-            // run on its far side is a different turn.
-            while (from > 1 && idx[(from - 1) * RS_INDEX_STRIDE + 1] == actor) from--;
-        }
-    }
-
-    // The group runs to the end of the stream, so asking for [from, ...) is
-    // exactly it. Length-prefixed frames, in play order, as written.
-    int n_frames = 0, next_step = 0;
-    int r = replay_steps_frames_v6(intbuf, ilen, viewer, from, 0,
-                                   out, cap, &n_frames, &next_step);
-    if (r < 0) { g_last_replay_error = -r; return FIO_EREPLAY; }
-    if (n_frames <= 0) return 0;                   // nothing to animate
-    // A short buffer must not silently drop the END of the turn — the newest
-    // action is the one the viewer most needs to see. FIO_ECAP, not
-    // FIO_EREPLAY: a turn of several frames (each carrying a masked board) can
-    // outgrow the caller's first guess, and ECAP is the code that makes the
-    // Swift side retry with a bigger buffer instead of giving up on the
-    // animation. A real decode failure is still FIO_EREPLAY above.
-    if (next_step <= last) { g_last_replay_error = REPLAY_ECAP; return FIO_ECAP; }
-    return r;
-}
-
-// The replay decode as its RAW binary (replay.h DECODE layout: a 20-byte header
-// then n_logs records of [type,seat,defIdx,n_pairs] + n_pairs*[primary,target]
-// wire-card bytes). Swift parses this directly (DecodedReplay.decode): the
-// stream is handed over whole rather than walked here. Card bytes: 0xFF none,
-// 0xFE hidden, else id.
-int fio_replay_decode_packed(const char *code, unsigned char *out, int cap) {
-    if (!code) return FIO_EBADARG;
-    g_last_replay_error = 0;
-    static unsigned char intbuf[16384];
-    int ilen = replay_b32_decode(code, intbuf, sizeof(intbuf));
-    if (ilen < 0) return FIO_ECAP;
-    int dlen = replay_decode(intbuf, ilen, out, cap);
-    if (dlen < 0) { g_last_replay_error = -dlen; return FIO_EREPLAY; }
-    if (dlen < REPLAY_DEC_HDR) { g_last_replay_error = REPLAY_EINPUT; return FIO_EREPLAY; }
-    return dlen;
-}
-
-int fio_last_replay_error(void) { return g_last_replay_error; }
-
-// Straight through to the rule in evwire.c - see ios_api.h for why the
-// extension asks the kernel rather than switching on the type itself.
-int fio_evw_is_settlement(int type) { return evw_is_settlement(type); }
-
-// THE CUT, over the frame stream fio_replay_last_events_packed just handed
-// back. The clients flatten those frames into one event list, so the answer is
-// an index into the FLATTENED list; the walk across frames is in evwire.c and
-// this is one line so it stays that way.
-int fio_evw_frames_settlement_cut(const unsigned char *frames, int len) {
-    return evwire_frames_settlement_cut(frames, len);
-}
-
-// WHERE THE FRAMES ARE in that same stream, so a host hands one sequence at a
-// time to fio_push_open without knowing that the container is a u16 length
-// prefix. Writes off[i]/len[i] per frame and returns the count (or a negative
-// EVW_E*), and counts alone when both are NULL.
-int fio_evw_frames(const unsigned char *frames, int len, int *off, int *flen, int cap) {
-    return evwire_frames(frames, len, off, flen, cap);
-}
-
-// Where THIS DEVICE's own staged run starts in the resident game's atom stream
-// - the same question msg_seal answers for the bubble delta, asked for the
-// animation instead of for the wire, and answered from the same log mark.
-//
-// It has to be the mark. A board animating its own move used to pass the atom
-// count of the chain it ADOPTED, on the reasoning that everything past it is
-// mine; but the atom stream is re-derived from the whole log on every encode
-// (see g_msg_base_logs above), so that count can be HIGHER than the number of
-// atoms the same history now encodes to. Passed as a starting point it lands
-// past the end of the stream, and the kernel dutifully reports that this turn
-// added nothing - the sender's own bout end animating not at all, and (round
-// 16) its settlement not being recognised as one to withhold.
-int fio_msg_staged_atoms_before(void) {
-    if (g_msg_base_logs < 0) return -1;
-    return replay_atoms_before_log(g_game.logs, g_game.num_logs, g_msg_base_logs);
-}
-
-// ---------- FMSG: the iMessage envelope (src/msg_wire.h) -------------------
-//
-// The phone's door onto the SAME envelope the web reads. Nothing here decides
-// anything: decode/seal/Rule P/rebase are all msg_wire.c, and this file only
-// marshals. That is what makes a phone and a browser agree on a payload by
-// construction rather than by two implementations staying in step —
-// e2e/msg_wire.test.ts pins the wasm side against fixtures the NATIVE kernel
-// sealed, and ios_api_smoke drives these against the same bytes.
-
-static int g_last_msg_error = 0;
-static int g_msg_round = -1;      // the adopted chain's round — Rule R's guard input
-
-int fio_last_msg_error(void) { return g_last_msg_error; }
-
-// 1.0(6) DIAGNOSTIC: the replay codec version (5/6/7) of the body the last
-// fio_msg_decode replayed, or -1 for an empty-body message. Set through
-// msg_last_body_version (msg_wire.c).
-int fio_msg_last_body_version(void) { return msg_last_body_version; }
-
-// THE HEADER, AS A STRUCT (msg_wire.h MsgHeader), which is how the web has
-// taken it since Phase 1 (wasm_msg_header_ptr). It used to be a packed blob
-// this file wrote and MessageEnvelope.swift read back field by field: 65 bytes
-// of fixed layout plus a join tail, stated twice, in two languages, kept in
-// step by hand and by the comment that used to be here explaining which byte
-// went where.
-//
-// Nothing about the ENVELOPE changed - the wire is msg_wire.c's, as it always
-// was. What changed is that its reader is generated from the declaration
-// (sdk/swift/gen/kernel.ios.swift) instead of written out again.
-//
-// `actions` is dropped on the way, exactly as the wasm twin drops it: the body
-// BORROWS the caller's payload, and a host holding a pointer into bytes the
-// next call may overwrite is worse than a host holding no body at all.
-static MsgHeader g_msg_header;
-
-const void *fio_msg_header_ptr(void) { return &g_msg_header; }
-
-static void fio_msg_header_set(const MsgEnvelope *e, const uint8_t *digest) {
-    g_msg_header.e = *e;
-    g_msg_header.e.actions = 0;
-    g_msg_header.e.actions_len = 0;
-    g_msg_header.e.n_actions = 0;
-    memcpy(g_msg_header.digest, digest, SHA256_DIGEST_LEN);
-}
-
-// THE RULES, as the one question a UI ever asks of them: may the defender
-// transfer (1) or not (0)? Answered here rather than read off `variant`, so no
-// host has to know which envelope formats predate the rules byte and are the
-// passing game by definition (msg_pass_allowed).
-int fio_msg_passing(void) { return msg_pass_allowed(&g_msg_header.e) ? 1 : 0; }
-
-// READ a payload's header and CHANGE NOTHING: the same header as
-// fio_msg_decode, without the replay and without touching one byte of
-// the resident game or of the base a later seal measures its bubble against.
-//
-// ROUND 16 - because a decode is not a read. The composer decodes the payload
-// it has just sealed, purely to read the joins and the summary out of it, and
-// that decode used to ADOPT: it told the kernel "the chain up to and including
-// my staged move is history somebody else made", so the NEXT action of the
-// same turn measured its delta from the middle of its own bubble. A bubble
-// carrying two actions then claimed one, and its caption and its recipient's
-// animation both dropped everything but the last (owner: the bubble caption
-// naming the wrong span of a turn). The base belongs to the chain this device
-// ADOPTED - the bubble it opened, or its own bubble once sent - so composing
-// one must not move it, and now it cannot.
-//
-// A peek can be asked of ANY payload, including one this device could not
-// replay: nothing here validates the body, so the fields are the sender's
-// claims. Use `fio_msg_decode` for a chain that is about to be PLAYED -
-// there validation is the replay, and the replay is the point.
-int fio_msg_peek(const uint8_t *payload, int len) {
-    if (!payload) return FIO_EBADARG;
-    g_last_msg_error = 0;
-
-    MsgEnvelope e;
-    const int rc = msg_decode(payload, len, &e);
-    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
-
-    uint8_t digest[SHA256_DIGEST_LEN];
-    msg_digest(payload, len, digest);
-    fio_msg_header_set(&e, digest);
-    return FIO_EOK;
-}
-
-int fio_msg_decode(const uint8_t *payload, int len) {
-    if (!payload) return FIO_EBADARG;
-    g_last_msg_error = 0;
-    msg_last_body_version = -1;   // 1.0(6) diagnostic reset
-
-    MsgEnvelope e;
-    int rc = msg_decode(payload, len, &e);
-    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
-
-    // Digest BEFORE anything reuses the bytes — it is the child's parent8 and
-    // Rule P's tiebreak.
-    uint8_t digest[SHA256_DIGEST_LEN];
-    msg_digest(payload, len, digest);
-
-    rc = msg_replay(&e, &g_game);   // validation IS replay
-    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
-
-    g_has_game = 1;
-    g_msg_round = e.round;
-    // This chain is now the base every later seal measures its bubble against -
-    // the log mark it ends at (which is also what says the game has not moved
-    // past it yet) and the clock a bubble that adds nothing must repeat.
-    g_msg_base_logs = g_game.num_logs;
-    g_msg_base_sent_at = e.sent_at;
-    // …and this chain's opening seat is now the resident game's, so every seal
-    // of it repeats the term of the deal the chain arrived with.
-    g_msg_opening = e.opening;
-    g_msg_carry_key = e.carry_key;
-    g_msg_carry_fool = e.carry_fool;
-    // …and so are its RULES: msg_replay has already stamped them onto the game
-    // it dealt, and this is the copy that survives the re-deal at Start.
-    g_msg_rules = msg_pass_allowed(&e) ? 0 : (int8_t)GAME_RULE_NO_PASS;
-    memcpy(g_deal_seed, e.seed, FOOLISH_SEED_LEN);
-    g_has_deal_seed = 1;
-
-    fio_msg_header_set(&e, digest);
-    return FIO_EOK;
-}
-
-// A ROSTER, PACKED - byte for byte the tail fio_msg_decode's joins are read
-// from:
-//   n_joins(1), then n_joins x { seat(1), name_len(1), name[name_len] }
-// One layout for the roster in both directions, so a host that can read one can
-// write one.
-//
-// Every record is BOUNDED BEFORE IT IS READ, and the blob must be consumed
-// EXACTLY: trailing bytes mean the caller and the kernel disagree about what a
-// roster is, and a roster read short is a different table. Returns FIO_EOK or
-// FIO_EPARSE.
-static int fio_read_joins(const uint8_t *b, int len, MsgEnvelope *e) {
-    if (!b || len < 1) return FIO_EPARSE;
-    const int n = b[0];
-    if (n > MSG_MAX_JOINS) return FIO_EPARSE;
-    int p = 1;
-    for (int i = 0; i < n; i++) {
-        if (p + 2 > len) return FIO_EPARSE;
-        const int seat = b[p];
-        const int name_len = b[p + 1];
-        if (name_len > MSG_MAX_NAME) return FIO_EPARSE;
-        if (p + 2 + name_len > len) return FIO_EPARSE;
-        MsgJoin *jn = &e->joins[i];
-        jn->seat = (uint8_t)seat;
-        jn->name_len = (uint8_t)name_len;
-        if (name_len > 0) memcpy(jn->name, b + p + 2, (size_t)name_len);
-        p += 2 + name_len;
-    }
-    if (p != len) return FIO_EPARSE;
-    e->n_joins = (uint8_t)n;
-    return FIO_EOK;
-}
-
-int fio_msg_encode(int phase, int last_actor_seat, uint64_t game_id,
-                   const uint8_t parent8[8], const uint8_t *joins, int joins_len,
-                   int sent_at, uint8_t *out, int cap) {
-    if (!g_has_game) return FIO_ENOGAME;
-    if (!out || cap <= 0 || !joins || joins_len < 1) return FIO_EBADARG;
-    if (!g_has_deal_seed) return FIO_ENOSEED;   // no seed, no serverless game
-    g_last_msg_error = 0;
-
-    MsgEnvelope e;
-    msg_envelope_init(&e);   // NOT memset: the rematch fields have sentinels
-    e.format = MSG_FORMAT_V6;
-    e.flags = 0;
-    e.phase = (uint8_t)phase;
-    e.game_id = game_id;
-    e.last_actor_seat = (uint8_t)last_actor_seat;
-    e.n_players = (uint8_t)g_game.num_players;
-    // The rules are stamped by msg_seal, off the game itself - a host does not
-    // get to state them independently of what it is sealing.
-    // ROUND 16: the caller's clock, unix seconds mod 65536, or 0 for "do not
-    // stamp this one" - which seals a format-2 envelope exactly as before. The
-    // time is passed IN rather than read here on purpose: a kernel that called
-    // time() would answer differently on two devices holding the same bytes.
-    e.sent_at = (uint16_t)(sent_at & 0xffff);
-    // …EXCEPT on the bubble that adds nothing (§10's undo-to-empty re-seal),
-    // which repeats the adopted chain's stamp instead. `sent_at` is not "when
-    // these bytes were made", it is when the move in them was played, and this
-    // bubble carries no move: stamping now would restart the defender's pickup
-    // hold on an attack that was sent minutes ago, every time somebody changed
-    // their mind. See g_msg_base_sent_at.
-    const int seal_base = msg_seal_base(&g_game, g_msg_base_logs);
-    if (seal_base == MSG_BASE_NOTHING) e.sent_at = g_msg_base_sent_at;
-    // The resident game's opening seat, repeated (see g_msg_opening). Not a
-    // caller's argument: a host that could choose it per bubble could re-point
-    // the deal mid-chain, and msg_replay would reject the result anyway.
-    e.opening = g_msg_opening;
-    e.carry_key = g_msg_carry_key;
-    e.carry_fool = g_msg_carry_fool;
-    if (parent8) memcpy(e.parent8, parent8, MSG_PARENT_LEN);
-    memcpy(e.seed, g_deal_seed, FOOLISH_SEED_LEN);
-
-    const int jrc = fio_read_joins(joins, joins_len, &e);
-    if (jrc != FIO_EOK) return jrc;
-
-    static unsigned char body[1024];   // a v6 body measures ~68 B at 8 players
-    Game *scratch = &g_scratch_game;   // the shared slot; see its comment
-    // ROUND 16: everything played since the resident game was established is
-    // what this bubble adds, so the base is the delta msg_seal writes as n_new
-    // - or MSG_BASE_NOTHING when nothing was played at all (msg_seal_base).
-    const int rc = msg_seal(&e, &g_game, seal_base, body, (int)sizeof body, scratch);
-    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
-    const int n = msg_encode(&e, out, cap);
-    if (n < 0) { g_last_msg_error = n; return n == MSG_ECAP ? FIO_ECAP : FIO_EMSG; }
-    return n;
-}
-
-
-// ---------- Rule F: the fool's penalty ------------------------------------
-
-// A packed roster as a bare array, the shape msg_roster_key wants. Shares
-// fio_read_joins so the entries below cannot read a roster differently from the
-// way a seal writes one.
-static int fio_joins_of(const uint8_t *joins, int joins_len, MsgJoin *out, int *n_out) {
-    static MsgEnvelope tmp;   // static: MsgEnvelope is large, and this is a
-    msg_envelope_init(&tmp);  // single-threaded actor (see the file header)
-    const int rc = fio_read_joins(joins, joins_len, &tmp);
-    if (rc != FIO_EOK) return rc;
-    if (tmp.n_joins < 2 || tmp.n_joins > MSG_MAX_JOINS) return FIO_EBADARG;
-    for (int i = 0; i < tmp.n_joins; i++) out[i] = tmp.joins[i];
-    *n_out = tmp.n_joins;
-    return FIO_EOK;
-}
-
-int fio_msg_carry(const uint8_t *joins_packed, int joins_len, int fool_seat,
-                  uint32_t *key_out, int *fool_index_out) {
-    if (!joins_packed || !key_out || !fool_index_out) return FIO_EBADARG;
-    MsgJoin joins[MSG_MAX_JOINS];
-    int n = 0;
-    const int rc = fio_joins_of(joins_packed, joins_len, joins, &n);
-    if (rc != FIO_EOK) return rc;
-    if (fool_seat < 0 || fool_seat >= n) return FIO_EBADARG;
-
-    uint32_t key = 0;
-    int rot = 0;
-    if (msg_roster_key(joins, n, &key, &rot) != MSG_EOK) return FIO_EBADARG;
-    *key_out = key;
-    // Back out of the seating into the canonical rotation the key was taken
-    // over: canonical[k] == seated[(k + rot) % n], so seat s is index s - rot.
-    *fool_index_out = ((fool_seat - rot) % n + n) % n;
-    return FIO_EOK;
-}
-
-// ---------- the chain layer's gates (msg_wire.h) ---------------------------
-//
-// Nothing here decides anything: each entry reads the packed roster through the
-// one reader a seal uses and hands the rule its arguments.
-
-int fio_msg_chain_is_ahead(int a_phase, int a_round, int a_turn,
-                           int b_phase, int b_round, int b_turn) {
-    return msg_chain_is_ahead(a_phase, a_round, a_turn, b_phase, b_round, b_turn);
-}
-
-int fio_nickname_verdict(int n_chars, int n_bytes) {
-    return msg_nickname_verdict(n_chars, n_bytes);
-}
-
-int fio_name_max_bytes(void) { return MSG_MAX_NAME; }
-int fio_name_max_chars(void) { return MSG_MAX_NAME_CHARS; }
-
-int fio_seat_resolve(int cached_seat, int sender_is_local, int n_players,
-                     int last_actor_seat, int chat_is_dm) {
-    return msg_seat_resolve(cached_seat, sender_is_local, n_players,
-                            last_actor_seat, chat_is_dm);
-}
-
-// The roster every gate below takes, read once. A blob that does not read is
-// an EMPTY roster rather than an error: these gates all fail open, and a caller
-// that cannot read its own bubble has already lost the argument elsewhere.
-//
-// NOT fio_joins_of, which is the rematch key's reader and demands two or more
-// players. A lobby with ONE join is the ordinary case here - it is the bubble
-// the creator sends - and a gate that refused it would put the Join button
-// back on every fresh invite.
-static int fio_gate_joins(const uint8_t *joins, int joins_len, MsgJoin *out) {
-    static MsgEnvelope tmp;   // static for the same reason fio_joins_of is
-    msg_envelope_init(&tmp);
-    if (!joins || fio_read_joins(joins, joins_len, &tmp) != FIO_EOK) return 0;
-    for (int i = 0; i < tmp.n_joins; i++) out[i] = tmp.joins[i];
-    return tmp.n_joins;
-}
-
-int fio_roster_name_taken(const uint8_t *joins, int joins_len,
-                          const uint8_t *name, int name_len) {
-    MsgJoin js[MSG_MAX_JOINS];
-    const int n = fio_gate_joins(joins, joins_len, js);
-    return msg_name_taken(js, n, (const char *)name, name_len);
-}
-
-int fio_seat_claimed_by_name(const uint8_t *joins, int joins_len,
-                             const uint8_t *name, int name_len) {
-    MsgJoin js[MSG_MAX_JOINS];
-    const int n = fio_gate_joins(joins, joins_len, js);
-    return msg_seat_claimed_by_name(js, n, (const char *)name, name_len);
-}
-
-int fio_seat_cache_disowned(const uint8_t *joins, int joins_len, int cached_seat,
-                            const uint8_t *name, int name_len) {
-    MsgJoin js[MSG_MAX_JOINS];
-    const int n = fio_gate_joins(joins, joins_len, js);
-    return msg_seat_cache_disowned(js, n, cached_seat, (const char *)name, name_len);
-}
-
-int fio_seat_resolve_on_board(const uint8_t *joins, int joins_len,
-                              int cached_seat, int sender_is_local, int n_players,
-                              int last_actor_seat, int chat_is_dm,
-                              const uint8_t *name, int name_len) {
-    MsgJoin js[MSG_MAX_JOINS];
-    const int n = fio_gate_joins(joins, joins_len, js);
-    return msg_seat_resolve_on_board(js, n, cached_seat, sender_is_local, n_players,
-                                     last_actor_seat, chat_is_dm,
-                                     (const char *)name, name_len);
-}
-
-int fio_seat_resolve_in_lobby(const uint8_t *joins, int joins_len,
-                              int cached_seat, int sender_is_local, int n_players,
-                              int last_actor_seat, int chat_is_dm,
-                              const uint8_t *name, int name_len) {
-    MsgJoin js[MSG_MAX_JOINS];
-    const int n = fio_gate_joins(joins, joins_len, js);
-    return msg_seat_resolve_in_lobby(js, n, cached_seat, sender_is_local, n_players,
-                                     last_actor_seat, chat_is_dm,
-                                     (const char *)name, name_len);
-}
-
-int fio_msg_set_carry(uint32_t key, int fool_index) {
-    if (key == 0 || fool_index < 0 || fool_index >= MSG_MAX_JOINS) {
-        g_msg_carry_key = 0;
-        g_msg_carry_fool = MSG_NO_FOOL;
-        return FIO_EOK;
-    }
-    g_msg_carry_key = key;
-    g_msg_carry_fool = (uint8_t)fool_index;
-    return FIO_EOK;
-}
-
-int fio_msg_penalty_fool_seat(const uint8_t *joins_packed, int joins_len,
-                              uint32_t carry_key, int carry_fool) {
-    if (!joins_packed) return -1;
-    MsgJoin joins[MSG_MAX_JOINS];
-    int n = 0;
-    if (fio_joins_of(joins_packed, joins_len, joins, &n) != FIO_EOK) return -1;
-    const uint8_t fool = (carry_fool < 0 || carry_fool > 0xFF)
-                       ? (uint8_t)MSG_NO_FOOL : (uint8_t)carry_fool;
-    return msg_rematch_fool_seat(joins, n, carry_key, fool);
-}
-
-int fio_msg_start_rematch(const uint8_t *joins_packed, int joins_len, uint32_t carry_key,
-                          int carry_fool, int *opening_out) {
-    if (!joins_packed || !opening_out) return FIO_EBADARG;
-    MsgJoin joins[MSG_MAX_JOINS];
-    int n = 0;
-    const int rc = fio_joins_of(joins_packed, joins_len, joins, &n);
-    if (rc != FIO_EOK) return rc;
-
-    const uint8_t fool = (carry_fool < 0 || carry_fool > 0xFF)
-                       ? (uint8_t)MSG_NO_FOOL : (uint8_t)carry_fool;
-    const int opening = msg_rematch_opening(joins, n, carry_key, fool);
-
-    // Pin BEFORE the deal and set the resident term AFTER it: fio_new_game
-    // (which fio_reseat_game runs) consumes the pin and then clears both, so
-    // this order is the one that survives it.
-    if (opening >= 0) game_open_at_seat(opening);
-    const int drc = fio_reseat_game(n);
-    if (drc != FIO_EOK) { game_open_at_seat(-1); return drc; }
-    g_msg_opening = (opening >= 0) ? (uint8_t)opening : (uint8_t)MSG_NO_OPENING;
-
-    *opening_out = opening;
-    return FIO_EOK;
-}
-
-// ROUND 16 — the pickup hold, on the resident game. Pure relay: the rule is
-// msg_pickup_hold_remaining (msg_wire.c) and this only supplies the game.
-int fio_msg_pickup_hold(int seat, int sent_at, int now) {
-    if (!g_has_game) return FIO_ENOGAME;
-    return msg_pickup_hold_remaining(&g_game, seat,
-                                     (uint16_t)(sent_at & 0xffff),
-                                     (uint16_t)(now & 0xffff));
-}
-
-int fio_msg_rule_p(const uint8_t *a, int a_len, const uint8_t *b, int b_len) {
-    if (!a || !b) return FIO_EBADARG;
-    g_last_msg_error = 0;
-    MsgChainKey ka, kb;
-    int rc = msg_chain_key(a, a_len, &ka);
-    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
-    rc = msg_chain_key(b, b_len, &kb);
-    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
-    return msg_rule_p(&ka, &kb);
-}
-
-// 1.1(56): the two rules that answer "what does this arriving chain do to the
-// lobby on screen" - msg_surface_delta (what changed, and in what order) and
-// anim_surface_plan (the beats and their timing) - joined here, which is the
-// only place that has both headers. Decodes exactly as fio_msg_rule_p does: two
-// header reads, no resident game touched, so a surface may ask this about a
-// chain it has not adopted.
-// The bridge's names for the controls must BE the kernel's, not merely agree
-// with them today: these functions forward `msg_lobby_offered`'s answer through
-// unchanged, so a value that drifted would silently relabel every control on the
-// lobby. A compile error is the only honest guard for a pair of headers that
-// cannot include each other.
-_Static_assert(FIO_LOBBY_START   == MSG_LOBBY_START,   "lobby control drift: START");
-_Static_assert(FIO_LOBBY_INVITE  == MSG_LOBBY_INVITE,  "lobby control drift: INVITE");
-_Static_assert(FIO_LOBBY_WAITING == MSG_LOBBY_WAITING, "lobby control drift: WAITING");
-_Static_assert(FIO_LOBBY_JOIN    == MSG_LOBBY_JOIN,    "lobby control drift: JOIN");
-_Static_assert(FIO_LOBBY_FULL    == MSG_LOBBY_FULL,    "lobby control drift: FULL");
-
-int fio_msg_lobby_offered(int my_seat, int joined, int capacity,
-                          int i_sent_the_newest, int i_changed_the_rules) {
-    return msg_lobby_offered(my_seat, joined, capacity,
-                             i_sent_the_newest, i_changed_the_rules);
-}
-
-int fio_msg_lobby_can_exit(int my_seat, int joined) {
-    return msg_lobby_can_exit(my_seat, joined);
-}
-
-int fio_msg_lobby_can_set_rules(int my_seat) {
-    return msg_lobby_can_set_rules(my_seat);
-}
-
-int fio_msg_lobby_rules_changed(int have_baseline, int baseline, int current, int mine) {
-    return msg_lobby_rules_changed(have_baseline, baseline, current, mine);
-}
-
-int fio_anim_surface_beat_ms(void) { return ANIM_TIME_MS; }
-
-// THE SURFACE PLAN ITSELF (anim_plan.h AnimSurfacePlan), where it lies. It used
-// to be flattened into a block of int32 words here and read back word by word
-// in SurfacePlan.swift - a beat's kind, idiom, rules, controls and timing, one
-// stride apart, stated twice.
-static AnimSurfacePlan g_surface_plan;
-
-const void *fio_surface_plan_ptr(void) { return &g_surface_plan; }
-
-int fio_anim_surface_swap(int passing) {
-    anim_surface_swap(passing, &g_surface_plan);
-    return FIO_EOK;
-}
-
-int fio_msg_surface_plan(const uint8_t *showing, int showing_len,
-                         const uint8_t *arriving, int arriving_len) {
-    if (!showing || !arriving) return FIO_EBADARG;
-    g_last_msg_error = 0;
-    static MsgEnvelope a, b;   // ~1.3KB each - too big for this frame
-    int rc = msg_decode(showing, showing_len, &a);
-    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
-    rc = msg_decode(arriving, arriving_len, &b);
-    if (rc != MSG_EOK) { g_last_msg_error = rc; return FIO_EMSG; }
-
-    MsgSurfaceDelta d;
-    msg_surface_delta(&a, &b, &d);
-    const int n = anim_surface_plan(d.on_a_lobby, d.roster_moved,
-                                    d.passing_before, d.passing_after, d.started,
-                                    d.ended, &g_surface_plan);
-    if (n < 0) return FIO_EMSG;
-    // A PLAN WITH NO BEATS IS STILL AN ANSWER. `settle_ms` answers a question
-    // the beats cannot carry - how long before this surface may be put AWAY -
-    // and the caller who needs it most is the one holding an empty plan (a lone
-    // roster snap, which is folded to no beats and still has to be read before
-    // the drawer collapses over it). See anim_plan.h.
-    return FIO_EOK;
-}
-
-// Rule R over the AWIRE frame - the one rebase entry (the phone stages moves as
-// awire and the pending ledger holds them the same way). Same contract as
-// wasm_msg_rebase: decode the
-// action, then msg_rebase_one against the adopted chain's round (g_msg_round, set
-// by the last fio_msg_decode). Returns MSG_REBASE_* (0 re-applied and
-// APPLIED to the resident game, 1 discarded by the round guard, 2 discarded as
-// illegal), or a negative MSG_E*.
-int fio_msg_rebase_awire(int pending_round, int seat, const uint8_t *buf, int len) {
-    if (!g_has_game) return FIO_ENOGAME;
-    if (!buf || len <= 0) return FIO_EBADARG;
-    if (g_msg_round < 0) return FIO_ENOGAME;   // nothing adopted to rebase onto
-    if (seat < 0 || seat >= g_game.num_players) return FIO_EBADARG;
-
-    AwireAction a;
-    if (!awire_decode(buf, len, &a)) return FIO_EPARSE;
-    return msg_rebase_one(&g_game, g_msg_round, pending_round, seat, &a);
-}
-
-// ---------- the turn controller, as a transition function -------------------
-//
-// The chain layer's decisions ACROSS its own suspension points (msg_wire.c's
-// msg_turn_*). These marshal and nothing more: no resident game, no static, so
-// they are safe to ask from a render pass the way the board rules already are.
-//
-// The bridge's names are the kernel's values, asserted rather than trusted - a
-// bit or a verdict that drifted between the two headers would be a silent wrong
-// answer, which is the whole class of bug this section exists to prevent.
-_Static_assert(FIO_TURN_STAGED         == MSG_TURN_STAGED,         "turn bits diverged");
-_Static_assert(FIO_TURN_SENDING        == MSG_TURN_SENDING,        "turn bits diverged");
-_Static_assert(FIO_TURN_READY          == MSG_TURN_READY,          "turn bits diverged");
-_Static_assert(FIO_TURN_SUPERSEDED     == MSG_TURN_SUPERSEDED,     "turn bits diverged");
-_Static_assert(FIO_TURN_RETRACTING     == MSG_TURN_RETRACTING,     "turn bits diverged");
-_Static_assert(FIO_TURN_BOARD_WATCHING == MSG_TURN_BOARD_WATCHING, "turn bits diverged");
-_Static_assert(FIO_TURN_HELD           == MSG_TURN_HELD,           "turn bits diverged");
-_Static_assert(FIO_TURN_GENESIS        == MSG_TURN_GENESIS,        "turn bits diverged");
-_Static_assert(FIO_TURN_CANCEL_NOOP    == MSG_TURN_CANCEL_NOOP,    "cancel diverged");
-_Static_assert(FIO_TURN_CANCEL_RESTAGE == MSG_TURN_CANCEL_RESTAGE, "cancel diverged");
-_Static_assert(FIO_TURN_CANCEL_CLEAR   == MSG_TURN_CANCEL_CLEAR,   "cancel diverged");
-_Static_assert(FIO_TURN_ADMIT_RETRACTING  == MSG_TURN_ADMIT_RETRACTING,  "admit diverged");
-_Static_assert(FIO_TURN_ADMIT_SUPERSEDED  == MSG_TURN_ADMIT_SUPERSEDED,  "admit diverged");
-_Static_assert(FIO_TURN_ADMIT_HELD_PICKUP == MSG_TURN_ADMIT_HELD_PICKUP, "admit diverged");
-_Static_assert(FIO_TURN_ARRIVE_SKIP    == MSG_TURN_ARRIVE_SKIP,    "arrival diverged");
-_Static_assert(FIO_TURN_ARRIVE_LATCH   == MSG_TURN_ARRIVE_LATCH,   "arrival diverged");
-_Static_assert(FIO_TURN_ARRIVE_ADOPT   == MSG_TURN_ARRIVE_ADOPT,   "arrival diverged");
-_Static_assert(FIO_TURN_ARRIVE_RETRACT == MSG_TURN_ARRIVE_RETRACT, "arrival diverged");
-_Static_assert(FIO_TURN_BYTES_HOST     == MSG_TURN_BYTES_HOST,     "send picker diverged");
-_Static_assert(FIO_TURN_BYTES_SEALED   == MSG_TURN_BYTES_SEALED,   "send picker diverged");
-_Static_assert(FIO_TURN_SEND_FOREIGN    == MSG_TURN_SEND_FOREIGN,    "send verdict diverged");
-_Static_assert(FIO_TURN_SEND_NOOP       == MSG_TURN_SEND_NOOP,       "send verdict diverged");
-_Static_assert(FIO_TURN_SEND_BLIND      == MSG_TURN_SEND_BLIND,      "send verdict diverged");
-_Static_assert(FIO_TURN_SEND_DECODE     == MSG_TURN_SEND_DECODE,     "send verdict diverged");
-_Static_assert(FIO_TURN_SEND_UNREADABLE == MSG_TURN_SEND_UNREADABLE, "send verdict diverged");
-_Static_assert(FIO_TURN_SEND_REBASE     == MSG_TURN_SEND_REBASE,     "send verdict diverged");
-_Static_assert(FIO_TURN_SEND_OTHERGAME  == MSG_TURN_SEND_OTHERGAME,  "send verdict diverged");
-
-int fio_msg_turn_can_send(int state) { return msg_turn_can_send(state); }
-
-int fio_msg_turn_can_act(int state, int n_human_moves) {
-    return msg_turn_can_act(state, n_human_moves);
-}
-
-int fio_msg_turn_can_stage(int state, int n_human_moves) {
-    return msg_turn_can_stage(state, n_human_moves);
-}
-
-int fio_msg_turn_cancel(int state, int n_pending) {
-    return msg_turn_cancel(state, n_pending);
-}
-
-int fio_msg_turn_admit(int state, int move_type, int pickup_hold) {
-    return msg_turn_admit(state, move_type, pickup_hold);
-}
-
-int fio_msg_turn_arrival(int state, int same_chain) {
-    return msg_turn_arrival(state, same_chain);
-}
-
-int fio_msg_turn_adopt_duplicate(int state, int same_chain) {
-    return msg_turn_adopt_duplicate(state, same_chain);
-}
-
-int fio_msg_turn_sent_source(int staged, int have_host, int have_sealed) {
-    return msg_turn_sent_source(staged, have_host, have_sealed);
-}
-
-int fio_msg_turn_send_verdict(int staged, int have_host, int have_sealed,
-                              int host_is_sealed, int decoded, int same_game) {
-    return msg_turn_send_verdict(staged, have_host, have_sealed, host_is_sealed,
-                                 decoded, same_game);
-}
-
-int fio_msg_turn_hold_state(int n_events, int cut) {
-    return msg_turn_hold_state(n_events, cut);
-}
-
-void fio_msg_turn_publish(int state, int base_atoms_before, int staged_atoms_before,
-                          int n_open_replay, int view_would_change,
-                          int *out_show_held_view, int *out_empty_menu,
-                          int *out_anim_atoms_before, int *out_raise_veil) {
-    MsgTurnRead in;
-    MsgTurnPublished out;
-    in.state = state;
-    in.base_atoms_before = base_atoms_before;
-    in.staged_atoms_before = staged_atoms_before;
-    in.n_open_replay = n_open_replay;
-    in.view_would_change = view_would_change;
-    msg_turn_publish(&in, &out);
-    if (out_show_held_view)    *out_show_held_view = out.show_held_view;
-    if (out_empty_menu)        *out_empty_menu = out.empty_menu;
-    if (out_anim_atoms_before) *out_anim_atoms_before = out.anim_atoms_before;
-    if (out_raise_veil)        *out_raise_veil = out.raise_veil;
-}
-
-/* ---------------------------------------------------------------------------
- * THE NAME-ENTRY DRAWER. c/src/msg_expand.c decides; MessagesViewController
- * performs the effect and owns the callbacks. Kept as a self-contained block at
- * the end of this file so it merges past anything else landing here.
- * ------------------------------------------------------------------------- */
-
-_Static_assert(FIO_EXPAND_WANTED   == MSG_EXPAND_WANTED,   "expand events diverged");
-_Static_assert(FIO_EXPAND_COMPACT  == MSG_EXPAND_COMPACT,  "expand events diverged");
-_Static_assert(FIO_EXPAND_EXPANDED == MSG_EXPAND_EXPANDED, "expand events diverged");
-
-int fio_msg_expand_note(int event, double now,
-                        int *io_pending, int *io_retries, double *io_wanted_at) {
-    MsgExpand st;
-    st.pending   = io_pending   ? *io_pending   : 0;
-    st.retries   = io_retries   ? *io_retries   : 0;
-    st.wanted_at = io_wanted_at ? *io_wanted_at : 0.0;
-    const int issue = msg_expand_note(&st, event, now);
-    if (io_pending)   *io_pending   = st.pending;
-    if (io_retries)   *io_retries   = st.retries;
-    if (io_wanted_at) *io_wanted_at = st.wanted_at;
-    return issue;
+    if (!g_session.has_game) return FIO_ENOGAME;
+    return game_done(&g_session.game);
 }

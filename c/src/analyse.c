@@ -68,17 +68,6 @@ static int an_card_score(Card c, int trump) {
     return c.value + (c.suit == trump ? 20 : 0);
 }
 
-static bool an_apply(Game *g, int seat, const LegalMove *m) {
-    switch (m->type) {
-        case MOVE_ATTACK: return handle_attack(g, seat, m->cards, m->n_cards);
-        case MOVE_COVER:  return handle_cover (g, seat, m->cards, m->attack_cards, m->n_cards);
-        case MOVE_PASS:   return handle_pass  (g, seat, m->cards, m->n_cards);
-        case MOVE_PICKUP: return handle_pickup(g, seat);
-        case MOVE_GOOD:   return handle_good  (g, seat);
-        default:          return false;
-    }
-}
-
 // The seat's finish position on a finished board: 1 = first out, N = the fool.
 static int an_finish_of(const Game *g, int seat) {
     for (int i = 0; i < g->num_eliminated; i++)
@@ -295,7 +284,7 @@ static int an_exact_rec(Game *g, int me, long *budget, int depth) {
     for (int i = 0; i < mv->n; i++) {
         Game *child = solve_scratch_child(depth);
         solve_clone_prefix(child, g);
-        if (!an_apply(child, actor, &mv->moves[i])) continue;
+        if (!legal_move_apply(child, actor, &mv->moves[i])) continue;
         int v = an_exact_rec(child, me, budget, depth + 1);
         if (maximizing && v > 0) return 1;
         if (!maximizing && v < 0) return -1;
@@ -549,7 +538,7 @@ static void an_cell(AnWork *W, int w, int ci) {
     random_strategy_set_seed(an_mix(g_wseed[w], 0xA5A5A5A5u));
     cd_sim_solve_reset();
     AnCell cell = { 0, 0 };
-    if (!an_apply(wg, W->seat, &W->moves->moves[W->node->cand_move[ci]])) {
+    if (!legal_move_apply(wg, W->seat, &W->moves->moves[W->node->cand_move[ci]])) {
         cell.fp = (int8_t)g->num_players;   // an illegal move here is the fool's
     } else {
         int r = 0;

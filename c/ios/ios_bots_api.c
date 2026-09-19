@@ -59,15 +59,6 @@ int fio_set_seat_strategy(int seat, int strategy_id) {
     return FIO_EOK;
 }
 
-// PACKED bot-drive — one kernel cycle, packed:
-//   u32 n_actions, per action {seat, pace, type, n_cards, cards[], attacks[]},
-//   then i32 stop, i32 ended, i32 delayMs (LE).
-// Events are NOT carried (the app doesn't consume them until B4 animation; they
-// come back as packed evwire then).
-static void le_i32(unsigned char **q, int v) {
-    unsigned int u = (unsigned int)v;
-    *(*q)++ = u & 0xff; *(*q)++ = (u >> 8) & 0xff; *(*q)++ = (u >> 16) & 0xff; *(*q)++ = (u >> 24) & 0xff;
-}
 // THE CYCLE'S OUTPUT, AS ITSELF (bot_drive.h BotDriveOut), where it lies: the
 // actions applied with their pacing and their moves, why the drive stopped and
 // whether the game ended. It used to be flattened into a packed block here and

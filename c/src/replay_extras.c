@@ -484,7 +484,13 @@ int replay_extras_link_styled(const char *moves,
 
     n = replay_extras_encode(in, names_len + 2, blob, sizeof(blob));
     if (n < 0) return bare;                    // decoration: a bad roster costs the names, never the link
-    if (w >= cap - 2) return -REPLAY_EXTRAS_ECAP;
+    // NO ROOM FOR THE DASH IS NO ROOM FOR THE ROSTER, and the header's rule for
+    // that is four lines below: the names go, the link stays. This used to
+    // return -ECAP, which made the answer non-monotonic in `cap` - a buffer of
+    // 31 was refused outright while a buffer of 33 got the bare link, for the
+    // identical situation. Worse, at 31 the finished link is already sitting
+    // NUL-terminated in the caller's buffer and the function declined to say so.
+    if (w >= cap - 2) return bare;
     out[w++] = '-';
     n = replay_b32_encode(blob, n, out + w, cap - w);
     if (n < 0) { out[bare] = 0; return bare; }

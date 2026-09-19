@@ -19,6 +19,8 @@ set -uo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
+# The control plane is packed bytes, not JSON - see ctl.sh / ctl_wire.h.
+. "$DIR/ctl.sh"
 
 PORT="${1:-8399}"
 THREADS="${2:-16}"
@@ -62,11 +64,14 @@ else
 fi
 
 # 2) legit request still served?
-POST="$(curl -s --max-time 3 -XPOST "http://127.0.0.1:$PORT/auth/signup" -d '{"username":"survivor"}')"
-if echo "$POST" | grep -q '"token"'; then
+# A real signup, on the packed control wire the fuzzer has been mangling all
+# run (see ctl.sh / ctl_wire.h): a token comes back only if the server is
+# still parsing well-formed frames correctly.
+SURVIVOR_TOKEN="$(ctl_signup "http://127.0.0.1:$PORT" survivor)"
+if [ -n "$SURVIVOR_TOKEN" ]; then
     echo "PASS: a legitimate signup still succeeds after the storm"
 else
-    echo "FAIL: legitimate signup failed after the storm ($POST)"; PASS=false
+    echo "FAIL: legitimate signup failed after the storm (no token in the reply)"; PASS=false
 fi
 
 # 3) disclosure anomaly reported by the fuzzer?

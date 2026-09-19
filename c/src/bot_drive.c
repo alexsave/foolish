@@ -107,19 +107,6 @@ static uint32_t xs32(uint32_t *s) {
     return *s = x;
 }
 
-// ---------- applying -------------------------------------------------------
-
-static int apply_move(Game *g, int seat, const LegalMove *m) {
-    switch (m->type) {
-        case MOVE_ATTACK: return handle_attack(g, seat, m->cards, m->n_cards) ? 1 : 0;
-        case MOVE_COVER:  return handle_cover(g, seat, m->cards, m->attack_cards, m->n_cards) ? 1 : 0;
-        case MOVE_PASS:   return handle_pass(g, seat, m->cards, m->n_cards) ? 1 : 0;
-        case MOVE_PICKUP: return handle_pickup(g, seat) ? 1 : 0;
-        case MOVE_GOOD:   return handle_good(g, seat) ? 1 : 0;
-        default:          return 0;
-    }
-}
-
 // The few scalars that tell a silent `good` from a round-transitioning one.
 // Snapshotting the whole Game would put ~100KB (logs[] included) on the stack,
 // which the wasm shadow stack cannot hold.
@@ -289,7 +276,7 @@ int bot_drive(Game *g, uint32_t human_mask, int max_actions,
         // same value it would have been before the search.
         if (bot_drive_pre_action_hook)
             bot_drive_pre_action_hook(g, seat, BOT_DRIVE_PHASE_APPLY);
-        if (!apply_move(g, seat, &move)) continue;   // rejected: try the next bot
+        if (!legal_move_apply(g, seat, &move)) continue;   // rejected: try the next bot
 
         BotDriveAction *a = &out->actions[out->n++];
         a->seat = (int8_t)seat;

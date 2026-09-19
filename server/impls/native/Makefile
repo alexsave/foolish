@@ -50,17 +50,25 @@ TLS_LDFLAGS ?= -lssl -lcrypto
 # Every kernel source except the standalone tools (their own main()).
 KERNEL_SRC := $(filter-out $(wildcard $(KDIR)/src/main_*.c), $(wildcard $(KDIR)/src/*.c))
 
-# Native (non-kernel) helpers shared by the server and the load client: the
+# Native (non-kernel) helpers shared by the server and its clients: the
 # RFC 6455 WebSocket handshake (SHA-1 + base64) and frame I/O (ws.c/ws.h),
-# and the plaintext-or-TLS Conn I/O abstraction (conn.c/conn.h — Stage 3,
-# TLS.md) both of them now read/write through.
-NATIVE_SRC := ws.c conn.c
+# the plaintext-or-TLS Conn I/O abstraction (conn.c/conn.h - Stage 3,
+# TLS.md) both of them now read/write through, and the packed control-plane
+# wire (ctl_wire.c/ctl_wire.h) the server and every client that talks to it
+# encode and decode with - ONE codec, so nothing scrapes anything.
+NATIVE_SRC := ws.c conn.c ctl_wire.c
+
+# The server itself, split by what each part is ABOUT (see foolish_server.c's
+# header comment for the map). foolish_server.c is the entry point: the CLI,
+# the bring-up order, and the accept loop it hands off to.
+SERVER_SRC := foolish_server.c registry.c session.c lobby.c play.c bots.c \
+              snapshot.c metrics.c httpd.c wsconn.c shard.c push.c srvthread.c
 
 # SQLite write-behind persistence (persist.c/persist.h — Stage 2,
 # DURABILITY.md). Only foolish_server / foolish_server_prof link this.
 PERSIST_SRC := persist.c
 
-foolish_server: foolish_server.c $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC) | require-linux
+foolish_server: $(SERVER_SRC) $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC) | require-linux
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(TLS_LDFLAGS)
 
 run: foolish_server
@@ -81,7 +89,7 @@ foolish_hammer: foolish_hammer.c $(NATIVE_SRC) $(KERNEL_SRC) | require-linux
 PROF_CFLAGS := -g -fno-omit-frame-pointer -O2 -ffast-math -Wall -Wextra \
                -Wno-unused-parameter -Wno-deprecated-declarations \
                -I$(KDIR)/src -DACCELERATE_NEW_LAPACK -DCD_LEAFBOOK
-foolish_server_prof: foolish_server.c $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC) | require-linux
+foolish_server_prof: $(SERVER_SRC) $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC) | require-linux
 	$(CC) $(PROF_CFLAGS) $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(TLS_LDFLAGS)
 
 # AddressSanitizer + UBSan build, for fuzzing the server (fuzz_client.c): catches
@@ -91,7 +99,7 @@ foolish_server_prof: foolish_server.c $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC)
 ASAN_CFLAGS := -fsanitize=address,undefined -fno-omit-frame-pointer -g -O1 \
                -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations \
                -I$(KDIR)/src -DACCELERATE_NEW_LAPACK -DCD_LEAFBOOK
-foolish_server_asan: foolish_server.c $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC) | require-linux
+foolish_server_asan: $(SERVER_SRC) $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC) | require-linux
 	$(CC) $(ASAN_CFLAGS) $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(TLS_LDFLAGS)
 
 # ws_frame_test: the RFC 6455 frame header against a hostile peer (ws.c's
@@ -103,16 +111,29 @@ foolish_server_asan: foolish_server.c $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC)
 WS_TEST_CFLAGS := -fsanitize=undefined -fno-sanitize-recover=undefined \
                   -fno-omit-frame-pointer -g -O1 \
                   -Wall -Wextra -Wno-unused-parameter -DFOOLISH_NO_OPENSSL
-ws_frame_test: ws_frame_test.c $(NATIVE_SRC)
+ws_frame_test: ws_frame_test.c ws.c conn.c
 	$(CC) $(WS_TEST_CFLAGS) $^ -o $@
 .PHONY: ws-frame-test
 ws-frame-test: ws_frame_test
 	./ws_frame_test
 
+# ctl_wire_test: the packed control-plane wire (ctl_wire.c) against itself and
+# against hostile bytes - round trip in one direction, refusal in the other.
+# Built under UBSan so a length that lies is caught as undefined behaviour and
+# not just as a wrong answer. Kernel-free and socket-free, so it builds and
+# runs on macOS too (no epoll).
+CTL_TEST_CFLAGS := -fsanitize=undefined -fno-sanitize-recover=undefined \
+                   -fno-omit-frame-pointer -g -O1 -Wall -Wextra -Wno-unused-parameter
+ctl_wire_test: ctl_wire_test.c ctl_wire.c
+	$(CC) $(CTL_TEST_CFLAGS) $^ -o $@
+.PHONY: ctl-wire-test
+ctl-wire-test: ctl_wire_test
+	./ctl_wire_test
+
 # The adversarial fuzz client: hammers the server with malformed HTTP, junk
 # signups, forged tokens, meta abuse, binary action garbage, seat attacks, and
 # malformed WebSocket frames — trying to crash, corrupt, or bypass it.
-fuzz_client: fuzz_client.c
+fuzz_client: fuzz_client.c ctl_wire.c
 	$(CC) $(CFLAGS) $^ -o $@ -lpthread
 
 # sem_fuzz: the SEMANTIC anti-cheat fuzzer. Links the kernel DIRECTLY (no server,
@@ -143,8 +164,8 @@ sem_fuzz_asan: sem_fuzz.c $(KERNEL_SRC)
 # -ldl, and -lstdc++ after libquiche.a: the BoringSSL quiche bundles is C++ now
 # (its ssl/ objects reference the C++ runtime), and the link failed without it.
 QUICHE_DIR ?= ./quiche
-QUIC_SRC   := quic_wt.c
-foolish_server_quic: foolish_server.c $(QUIC_SRC) $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC) | require-linux
+QUIC_SRC   := quic_wt.c game_bridge.c
+foolish_server_quic: $(SERVER_SRC) $(QUIC_SRC) $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC) | require-linux
 	$(CC) $(CFLAGS) -DFOOLISH_QUIC -DFOOLISH_NO_OPENSSL -I$(QUICHE_DIR)/include \
 	  $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(QUICHE_DIR)/lib/libquiche.a -ldl -lstdc++
 
@@ -154,6 +175,7 @@ wt_client: wt_client.c
 	$(CC) $(CFLAGS) -I$(QUICHE_DIR)/include $^ -o $@ -lpthread -ldl -lm $(QUICHE_DIR)/lib/libquiche.a -lstdc++
 
 clean:
-	rm -f foolish_server foolish_hammer foolish_server_prof foolish_server_quic wt_client
+	rm -f foolish_server foolish_hammer foolish_server_prof foolish_server_quic wt_client \
+	      foolish_server_asan fuzz_client ws_frame_test ctl_wire_test sem_fuzz sem_fuzz_asan
 
 .PHONY: run clean require-linux

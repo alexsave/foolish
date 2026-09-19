@@ -176,15 +176,7 @@ int main(int argc, char **argv) {
             describe_move(m, trump);
             printf("   (had %d legal)\n", moves.n);
 
-            bool ok = false;
-            switch (m->type) {
-                case MOVE_ATTACK: ok = handle_attack(&g, p, m->cards, m->n_cards); break;
-                case MOVE_COVER:  ok = handle_cover (&g, p, m->cards, m->attack_cards, m->n_cards); break;
-                case MOVE_PASS:   ok = handle_pass  (&g, p, m->cards, m->n_cards); break;
-                case MOVE_PICKUP: ok = handle_pickup(&g, p); break;
-                case MOVE_GOOD:   ok = handle_good  (&g, p); break;
-                default: break;
-            }
+            bool ok = legal_move_apply(&g, p, m);
             if (ok) { acted = true; break; }
         }
         if (!acted) break;

@@ -172,15 +172,7 @@ int main(int argc, char **argv) {
                 int idx = dispatch_choose(g.players[pi].strategy_key, &g, pi, &moves);
                 if (idx < 0 || idx >= moves.n) continue;
                 const LegalMove *m = &moves.moves[idx];
-                bool ok = false;
-                switch (m->type) {
-                    case MOVE_ATTACK: ok = handle_attack(&g, pi, m->cards, m->n_cards); break;
-                    case MOVE_COVER:  ok = handle_cover (&g, pi, m->cards, m->attack_cards, m->n_cards); break;
-                    case MOVE_PASS:   ok = handle_pass  (&g, pi, m->cards, m->n_cards); break;
-                    case MOVE_PICKUP: ok = handle_pickup(&g, pi); break;
-                    case MOVE_GOOD:   ok = handle_good  (&g, pi); break;
-                    default: break;
-                }
+                bool ok = legal_move_apply(&g, pi, m);
                 if (ok) { acted = true; break; }
             }
             if (!acted) break;

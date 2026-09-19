@@ -134,12 +134,14 @@ public struct ConflictFacts: Equatable, Sendable {
         let ids = moved.prefix(255).map(Self.id)
         w.append(UInt8(ids.count))
         w.append(contentsOf: ids)
-        let battles = openTable.prefix(Int(Self.none) - 1)
-        w.append(UInt8(battles.count))
-        for b in battles {
-            w.append(Self.id(b.attack))
-            w.append(Self.id(b.defense))
-        }
+        // The table in the one encoding a table has (TableWire): a card the
+        // viewer may not see crosses as the kernel's unnameable byte, which
+        // this rule reads as a cell that vouches for nothing - the same answer
+        // the "names nothing" byte gave here, now the same byte every other
+        // table reader takes.
+        let table = TableWire.encode(Array(openTable.prefix(Int(Self.none) - 1)))
+        w.append(UInt8(table.count / 2))
+        w.append(contentsOf: table)
         let hand = myHand.prefix(255).map(Self.id)
         w.append(UInt8(hand.count))
         w.append(contentsOf: hand)
@@ -158,12 +160,14 @@ public struct ConflictFacts: Equatable, Sendable {
     }
 
     static let none = UInt8(FIO_CONFLICT_NONE)
-    /// A card as a dense id, or the "names nothing" byte. A masked back and a
-    /// card outside the deck are the same case: neither can be conflicted on.
+    /// A card IN A LIST (the moved cards, my hand, a motion) as a dense id, or
+    /// the "names nothing" byte for a masked back or anything off the deck -
+    /// the byte fio_conflict_packed documents for those lists. The TABLE is not
+    /// written here: it has its own encoding and its own byte for that case
+    /// (TableWire), because a table reader elsewhere must be able to tell an
+    /// unnameable card from an empty cell, and a list reader never has to.
     static func id(_ c: Card?) -> UInt8 {
-        guard let c, !c.isHidden, (0...3).contains(c.s), (1...13).contains(c.v)
-        else { return none }
-        return UInt8(c.s * 13 + (c.v - 1))
+        c.flatMap(CardSet.id(of:)) ?? none
     }
 }
 

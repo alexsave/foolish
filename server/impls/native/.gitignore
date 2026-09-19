@@ -16,6 +16,10 @@ sem_fuzz_asan
 # Built under UBSan, on demand, from tracked source - the binary and the
 # debug-info bundle clang leaves beside it on macOS are local only.
 ws_frame_test
+
+# The control-plane wire's own round-trip-and-refusal gate (ctl_wire_test.c,
+# `make ctl-wire-test`). Same story: UBSan, on demand, from tracked source.
+ctl_wire_test
 *.dSYM/
 
 # QUIC/HTTP3/WebTransport build (foolish_server_quic — quic_wt.c). The binary

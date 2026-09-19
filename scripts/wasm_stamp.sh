@@ -72,18 +72,50 @@ sources() {
   # deliberately does not install, and (b) add nothing - they are a function of
   # these two plus the headers above plus the WASM_* lines hash_all already
   # reads out of c/Makefile.
-  ls tools/structgen/structgen.c tools/structgen/specs/*.args
+  #
+  # ASK STRUCTGEN'S MAKEFILE WHAT STRUCTGEN IS MADE OF, rather than naming its
+  # files here. This line used to read `ls tools/structgen/structgen.c`, from
+  # when that was the whole program. It is now seven files plus tools/sgcommon,
+  # and each time it moved, this list stayed still: measured, appending a line
+  # to sg_hash.c left this hash byte-identical while appending one to
+  # structgen.c moved it, so the emitter that writes the layout hash could
+  # change and a committed wasm would still read fresh. That is the precise
+  # hole this script exists to close, reopened by a refactor rather than by any
+  # edit to the kernel - twice in one afternoon, because a list of files is a
+  # copy of a fact that lives somewhere else.
+  #
+  # The Makefile already declares the fact (SG_SRC/SG_HDR and the shared
+  # SGC_SRC/SGC_HDR out of tools/llvm.mk) because it has to build from it, so
+  # it cannot drift from the program the way a second list can. This is the
+  # same move as `make -C c -s print-wasm-src` above: the build system is asked,
+  # not mirrored. Paths come back relative to tools/structgen, hence the
+  # rewrite of the ../sgcommon ones.
+  make -s -C tools/structgen -f print.mk -f Makefile \
+       sg-print-SG_SRC sg-print-SG_HDR sg-print-SGC_SRC sg-print-SGC_HDR \
+    | tr ' ' '\n' | sed '/^$/d' \
+    | sed 's|^|tools/structgen/|' | sed 's|tools/structgen/\.\./|tools/|'
+  ls tools/llvm.mk tools/structgen/specs/*.args
 }
 
 # The hash covers the source CONTENTS plus the c/Makefile lines that decide what
 # the modules are (the WASM_* assignments: flags, caps, source lists). A new
 # make target or a comment in that file is not a kernel change and must not
 # demand a rebuild - the same line-level rule the gate already applied.
+#
+# …AND THE --export= LINES, because an export list is a MULTI-LINE value and the
+# assignment pattern only ever saw its first line. WASM_API_EXPORTS is fifty
+# lines of backslash continuations; adding or dropping an entry left this hash
+# byte-identical (measured 2026-09-19: dropping wasm_replay_error_detail moved
+# the shipped module by 14 gzip bytes and the stamp by none). An export table IS
+# what a module is - it decides both the module's surface and, because an export
+# roots its code, what the linker may drop - so a changed one must demand a
+# rebuild like any other kernel change. No comment in c/Makefile holds
+# `--export=`; the lists are the only thing this matches.
 hash_all() {
   { sources | sort -u | while IFS= read -r f; do
       [ -f "$f" ] && printf '%s %s\n' "$(sha "$f")" "$f"
     done
-    grep -E '^[A-Za-z0-9_]*WASM[A-Za-z0-9_]*[[:space:]]*[:?+]?=' c/Makefile | sort
+    grep -E '^[A-Za-z0-9_]*WASM[A-Za-z0-9_]*[[:space:]]*[:?+]?=|--export=' c/Makefile | sort
   } | if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi \
     | cut -d' ' -f1
 }

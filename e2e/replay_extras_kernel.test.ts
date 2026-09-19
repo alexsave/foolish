@@ -87,7 +87,7 @@ function prng(seed: bigint) {
  * lands somewhere trimming code points never does. */
 const NAME_POOL = [
   '', 'Sveta', 'Misha', 'Владимир', 'さくら', 'Ünïcodé', '한국이름', 'ВАСЯ \u{1F0CF}',
-  '\u{1F921}', 'A\u{1F44D}\u{1F3FD}B', 'a\u0000b',
+  '\u{1F921}', 'A\u{1F44D}\u{1F3FD}B', 'ab',
   '\u{1F921}'.repeat(16),                    // 64 bytes
   'A' + '\u{1F44D}\u{1F3FD}'.repeat(7),      // 57 bytes, 15 code points, 8 graphemes
   'Владимир'.repeat(4),                      // 64 bytes
@@ -214,7 +214,12 @@ test('a NUL inside a nickname cannot terminate a name early', async () => {
   await ensureBotsAsync();
   // NUL is the field terminator. It is stripped rather than escaped; if it were
   // let through, every seat after it would shift by one.
-  const names = ['a b', 'Bob', 'Cyd'];
+  // The NUL is written as an escape, NOT as a raw byte. A literal 0x00 in the
+  // source makes this whole file `data` to file(1), and grep skips binary
+  // files silently - so every recursive grep across e2e/ missed all 17,747
+  // bytes of it, including the searches that look for imports of the frozen
+  // oracle below. Same test, same byte on the wire, visible to tooling.
+  const names = ['a\u0000b', 'Bob', 'Cyd'];
   const blob = kernelReplayExtrasEncode(names, null, null);
   assert.equal(hex(blob), hex(frozenEncodeExtras(names, null, null)));
   assert.deepEqual(kernelReplayExtrasDecode(blob, 3, 0).names, ['ab', 'Bob', 'Cyd']);

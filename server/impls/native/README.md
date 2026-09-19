@@ -25,7 +25,29 @@ link:
 | lock a mutex, pick the seat | — |
 | — | `start_game` (deal), `handle_attack/cover/pass/pickup/good` (apply) |
 | run the per-game bot game-loop thread | `bot_drive` (one paced cycle) + `bot_pacing_ms` (how long to wait) |
-| — | `game_done` (who is the fool), `json_state_of` (masked per-seat view) |
+| — | `game_done` (who is the fool), `state_put` (masked per-seat view, packed) |
+
+### The source map
+
+`foolish_server.c` is the entry point and nothing else: the CLI, the bring-up
+order, and the accept loop it hands off to. The server proper is split by what
+each part is *about*, not by which layer it sits in:
+
+| file | what it is about |
+|---|---|
+| `registry.c` | the live table of games and users, and the two-tier locking over it |
+| `session.c` | accounts and the stateless signed session token |
+| `lobby.c` | `/create` and the `/meta` verbs (join, start, add-bot, continue) |
+| `play.c` | the action path: apply a move, serve the masked view, cache it |
+| `bots.c` | the per-game bot trampoline and its decision counters |
+| `snapshot.c` | the durable form of a game and a user (SQLite write-behind) |
+| `metrics.c` | `/stats` and `/metrics` |
+| `ctl_wire.c` | the packed control-plane wire every endpoint speaks |
+| `httpd.c` | the HTTP front door: parse, respond, route, accept |
+| `wsconn.c` | what a `/ws` session is, and the `--tls` thread-per-connection loop |
+| `shard.c` | epoll-per-shard connection multiplexing (plaintext) |
+| `push.c` | telling everyone watching a game that it changed |
+| `game_bridge.c` | the QUIC/WebTransport front-end onto the same games |
 
 ### Bot pacing (the trampoline)
 
@@ -75,7 +97,7 @@ see [`DURABILITY.md`](DURABILITY.md)) + `libssl`/`libcrypto` (OpenSSL 3.x;
 see [`TLS.md`](TLS.md)). No other external packages — the HTTP/1.1 layer is
 hand-rolled (a real deployment would drop in mongoose/civetweb); auth is a
 stateless HMAC-signed binary token with an expiry (not a JWT, not a stored
-map — see `foolish_server.c`'s make_token/verify_token). Concurrency: a dispatcher (the accept loop)
+map — see `session.c`'s make_token/verify_token). Concurrency: a dispatcher (the accept loop)
 hands each connection off by `game_id`, and each game has its own lock
 instead of one process-wide mutex — see [`SERVER_SCALING.md`](SERVER_SCALING.md)
 ("T2a") for the original design, the Helgrind-clean verdict, and measured
@@ -123,18 +145,34 @@ matching load-test client.
 
 ## Endpoints
 
+**Every body is packed bytes, in both directions. There is no JSON in this
+server.** A move is an `awire` frame (`c/src/awire.c`), a state is the kernel's
+own `state_put` wire (`c/src/view.c`), and the control plane - signing in, the
+lobby verbs, and every answer that is not a view - is
+[`ctl_wire.h`](ctl_wire.h): a four-byte head (version, kind, uint16 LE payload
+length) then length-prefixed fields. Server and clients link the SAME codec
+(`ctl_wire.c`); the shell drivers use [`ctl.sh`](ctl.sh), which is the same
+four bytes in `printf` and `od`.
+
 ```
-POST /auth/signup {username}            -> {token, user_id}     (also /auth/signin)
-POST /create               (Bearer)     -> {game_id}            creator takes seat 0
-POST /meta {type,game_id[,strategy]}    (Bearer)   type: join | add-bot | start | continue
-POST /action?game_id=..  <awire bytes>  (Bearer)   applies, then runs the bots
+POST /auth/signup  CTL_AUTH             -> CTL_SESSION {user_id, username, token}   (also /auth/signin)
+POST /create               (Bearer)     -> CTL_GAME {game_id}   creator takes seat 0
+POST /meta         CTL_META  (Bearer)   -> CTL_LOBBY {game_id, status}
+                                           verb: join | start | add-bot | continue
+POST /action?game_id=..  <awire bytes>  (Bearer)   -> CTL_APPLIED {ok, status}; applies, then runs the bots
 GET  /state?game_id=..&seat=..  (Bearer, your own seat; no seat or seat=-1: the public spectator view) -> the kernel's masked view (packed)
-GET  /status?game_id=..                 -> 0 waiting / 1 playing / 2 over
-GET  /health
-GET  /stats  -> {live_connections, max_connections, games, games_live, games_reclaimed, free_slots, users, moves_applied, bot_decisions, octogen_decisions}
+GET  /status?game_id=..                 -> CTL_STATUS: 0 waiting / 1 playing / 2 over, -1 no such game
+GET  /health                            -> CTL_HEALTH (empty payload)
+GET  /stats  -> CTL_STATS {live_connections, max_connections, games, games_live, games_reclaimed, free_slots, users, moves_applied, bot_decisions, octogen_decisions}
+GET  /metrics                           -> Prometheus text exposition (the ONE deliberate exception: a scrape can only read text)
 GET  /ws?game_id=..&seat=.. (Bearer, Upgrade: websocket) -> RFC 6455 WebSocket
 GET  /ws?game_id=..&spectator=1 (Bearer, Upgrade: websocket) -> read-only spectator WebSocket (Stage 4)
 ```
+
+Any refusal answers `CTL_ERROR` with a one-byte reason (`CTL_ERR_AUTH`,
+`CTL_ERR_NO_GAME`, ...), alongside the HTTP status code clients already branch
+on. `make ctl-wire-test` runs the codec's own round-trip-and-refusal gate; it
+is kernel-free and socket-free, so it builds and runs on macOS too.
 
 Every path above is `http://`/`ws://` by default, or `https://`/`wss://`
 when the server was started with `--tls` (see "TLS", above, and
@@ -228,13 +266,12 @@ the same in-memory game (`foolish_server_quic`, sharded across cores — see
 rather than cumulative. Present since Stage 6 (plaintext only): the epoll
 worker that owns a game's connections proactively pushes fresh state to all
 of them whenever the game changes - a bot's move or a human's
-(`worker_push_stale`, `foolish_server.c:3018`). Stage 6 landed the
+(`worker_push_stale`, [`push.c`](push.c)). Stage 6 landed the
 bot-move half and briefly suppressed the human fan-out on throughput
 grounds; T1f (`PROFILE_HOTPATH.md`) root-caused that as a load-tool
 artifact and made the protocol push-only for both, so nothing polls any
 more. The packed binary envelope the iOS
-client expects (this speaks plain JSON over HTTP; `/ws` speaks the kernel's
-own packed wire), cert rotation, graceful (503-style) backpressure beyond
+client expects, cert rotation, graceful (503-style) backpressure beyond
 admission control's fd-level shedding and the work-queue's own bounded
 blocking push (see `SERVER_SCALING.md`), and rate limits. The point is the architecture, not
 full production readiness — see "Production readiness" below for a plain

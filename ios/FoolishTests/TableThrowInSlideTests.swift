@@ -170,9 +170,7 @@ final class TableThrowInSlideTests: XCTestCase {
         #if DEBUG || SOLO_TESTING
         XCTAssertEqual(FBattleGrid.slidesLive, FBattleGrid.slideByDefault)
         #endif
-        let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        let board = try String(contentsOf: here.deletingLastPathComponent()
-            .appendingPathComponent("FoolishKit/Boards/MessageTableView.swift"), encoding: .utf8)
+        let board = try BoardSource.text()
         XCTAssertTrue(board.contains("slides: FBattleGrid.slidesLive"),
                       "the live table no longer reads the table.slide flag")
         XCTAssertTrue(FBattleGrid.slidePreviewByDefault)

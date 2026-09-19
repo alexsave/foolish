@@ -45,7 +45,7 @@ final class PassSlotTests: XCTestCase {
     /// MUTANTS: the grid reading the bare preview again; the release not
     /// recording the held count; a new drag not resetting the crossing memory.
     func testTheBoardAsksTheKernelAndFeedsItTheDrag() throws {
-        let board = try source("FoolishKit/Boards/MessageTableView.swift")
+        let board = try BoardSource.text()
         XCTAssertTrue(board.contains("let passPreview = sweeping ? false : passSlotShown(view)"),
                       "the table's slot must be the kernel's answer, not the bare preview")
         XCTAssertTrue(board.contains("if passing, target == .table { passHeldAt = view.battles.count }"),

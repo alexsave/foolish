@@ -1,0 +1,70 @@
+# structgen arguments for sdk/kotlin/gen/Kernel.kt: the structs a JVM client
+# reads out of the kernel it LINKS through JNI, as Kotlin value snapshots over
+# the bytes the bridge hands across.
+#
+# Read by tools/structgen/gen.sh with --cwd c/ and an Android triple.
+# Lines starting with # are dropped; everything else is split on whitespace.
+#
+# WHY A SEPARATE RUN from game_layout.args, and the same reason ios_layout.args
+# is one: a pointer is 4 bytes on wasm32 and 8 here, so every offset differs.
+# Against ios_layout.args the layouts agree - both are LP64 little-endian and
+# none of these structs has a member whose size or alignment differs between
+# LP64 targets - but agreeing is not the same as being one fact, and the day one
+# stops agreeing is the day this run has to be its own.
+#
+# WHAT IS NOT HERE, and why:
+#
+#   MsgHeader / MsgEnvelope. That struct exists because iMessage carries a game
+#   inside a message, and there is no iMessage here. A share link is the reach
+#   an Android client has, and it decodes to the same board the roots below
+#   describe. Adding an envelope reader before anything sends one would be
+#   generating a crossing nothing crosses.
+#
+#   The caps. c/Makefile has no Android flag set to read, and the ones it does
+#   have are wrong to borrow by name: IOS_CAPS is shrunk for an iMessage
+#   extension's memory ceiling, which an app does not have. This run therefore
+#   takes the DEFAULT caps the headers declare, which is what a plain NDK build
+#   of c/src gets, so the module and an `ndk-build` of the kernel agree by
+#   default rather than by anyone remembering a flag.
+--header client_table.h --header anim_plan.h --header bot_drive.h --header roster.h
+#
+# The client's slot (client_table.h): one viewer's masked board joined to the
+# table's roster, which is the whole board a client draws.
+--root TableView --root PushEvent --root ViewRules
+--snapshot TableView --snapshot PushEvent --snapshot ViewRules
+--count TableView.battles=num_battles --count TableView.seats=num_players
+--count TableView.my_hand=my_hand_count --count TableView.elimination=num_eliminated
+--count TableView.game_id=gid_len --count TableView.title=title_len
+--count ViewSeat.id=id_len --count ViewSeat.name=name_len
+--count PushEvent.cards=n_cards
+#
+# The animation plan, a frame of it, and the beats (anim_plan.h). The same rows
+# the iOS board animates from: iMessage is the animation spec, so a second
+# client that invents its own timing is a second spec.
+# AnimCounts.battles is NOT counted by n_battles: it holds TWO bytes per battle
+# (attack, cover), so the count is not the array's length.
+--root AnimPlan --root AnimFrame --root AnimBeats --root AnimSurfacePlan
+--snapshot AnimPlan --snapshot AnimFrame --snapshot AnimBeats --snapshot AnimSurfacePlan
+--count AnimPlan.steps=n_steps --count AnimPlan.veil_ids=n_veil
+--count AnimCounts.hand=n_players --count AnimFrame.hand=n_players
+--count AnimBeats.beats=n_beats --count AnimSurfacePlan.beats=n
+#
+# One bot cycle (bot_drive.h), for the local game.
+--root BotDriveOut
+--snapshot BotDriveOut
+--fields LegalMove=type,n_cards,cards,attack_cards
+--count BotDriveOut.actions=n --count LegalMove.cards=n_cards --count LegalMove.attack_cards=n_cards
+#
+# The table's identity (roster.h), for the seats of a lobby the board has not
+# dealt yet.
+--root Roster
+--snapshot Roster
+--count Roster.seats=n --count Roster.title=title_len
+--count RosterSeat.id=id_len --count RosterSeat.name=name_len --count RosterSeat.brain=brain_len
+#
+# The constants a reader of these structs needs, and no others.
+--const CLIENT_ --const ANIM_EVT_ --const ANIM_LOC_ --const ANIM_DEST_ --const ANIM_CONFLICT_
+--const ANIM_SEAT_NONE --const ANIM_STEP_NONE --const ANIM_NEVER --const ANIM_TIME_MS --const ANIM_GAP_MS
+--const ANIM_NO_MASK --const ANIM_BEAT_ --const ANIM_SURFACE_ --const ANIM_TABLE_NONE
+--const BOT_STOP_ --const BOT_PACE_ --const MOVE_
+--const GAME_STATUS_ --const PLAYER_STATUS_ --const ROSTER_E_

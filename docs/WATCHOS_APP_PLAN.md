@@ -8,8 +8,8 @@
 > not compiling** - `ios/WatchUI/README.md` is the current state of record and
 > the first thing to read.
 > The layout truth is `docs/WATCHOS_LAYOUT.md` §4.6 and **§4.6.1 (as built)**,
-> which override both `docs/WATCHOS_SPEC.md` (the pre-build handoff) and
-> `docs/watchos-layout.html` (the mockups) wherever they disagree. The screen
+> which override `docs/WATCHOS_SPEC.md` (the pre-build handoff) wherever they
+> disagree. (The mockups were `docs/watchos-layout.html` (removed 2026-09-18, now that the design is locked; recoverable at `570d734c`).) The screen
 > sections below
 > (§4–§5) are **superseded** by that study; this doc remains the plan of
 > record for everything structural — App-Store bundling (§1), architecture &

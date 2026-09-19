@@ -39,15 +39,16 @@ echo "── starting server (tcp :$TCP_PORT, quic udp :$QUIC_PORT)"
 SRV=$!
 sleep 1.5
 
-tok() { grep -o "\"$1\":\"[^\"]*\"" | head -1 | cut -d'"' -f4; }
+# The TCP control plane is packed bytes, not JSON - see ctl.sh / ctl_wire.h.
+. ./ctl.sh
 H="http://127.0.0.1:$TCP_PORT"
-AT=$(curl -s -XPOST "$H/auth/signup" -d '{"username":"alice"}' | tok token)
-BT=$(curl -s -XPOST "$H/auth/signup" -d '{"username":"bob"}' | tok token)
-GID=$(curl -s -XPOST "$H/create" -H "Authorization: Bearer $AT" | tok game_id)
-curl -s -XPOST "$H/meta" -H "Authorization: Bearer $BT" -d "{\"type\":\"join\",\"game_id\":\"$GID\"}" >/dev/null
-curl -s -XPOST "$H/meta" -H "Authorization: Bearer $AT" -d "{\"type\":\"start\",\"game_id\":\"$GID\"}" >/dev/null
-curl -s -XPOST "$H/meta" -H "Authorization: Bearer $BT" -d "{\"type\":\"start\",\"game_id\":\"$GID\"}" >/dev/null
-echo "── created and dealt game $GID (alice=seat 0, bob=seat 1), status $(curl -s "$H/status?game_id=$GID")"
+AT=$(ctl_signup "$H" alice)
+BT=$(ctl_signup "$H" bob)
+GID=$(ctl_create "$H" "$AT")
+ctl_meta "$H" "$BT" "$CTL_META_JOIN"  "$GID"
+ctl_meta "$H" "$AT" "$CTL_META_START" "$GID"
+ctl_meta "$H" "$BT" "$CTL_META_START" "$GID"
+echo "── created and dealt game $GID (alice=seat 0, bob=seat 1), status $(ctl_status "$H" "$GID")"
 
 # 1. HTTP/3 /state == TCP /state (only if quiche-client is available)
 CLIENT="$QUICHE_DIR/../target/release/quiche-client"

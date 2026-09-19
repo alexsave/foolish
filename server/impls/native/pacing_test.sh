@@ -3,19 +3,19 @@
 # waits bot_pacing_ms between visible cycles) instead of resolving in one instant.
 set -u
 H="${1:-http://127.0.0.1:8099}"
-tok(){ grep -o "\"$1\":\"[^\"]*\"" | head -1 | cut -d'"' -f4; }
-num(){ grep -o "\"$1\":[0-9-]*" | head -1 | grep -o '[0-9-]*$' || true; }
+# The control plane is packed bytes, not JSON - see ctl.sh / ctl_wire.h.
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ctl.sh"
 
-AT=$(curl -s -XPOST "$H/auth/signup" -d '{"username":"alice"}' | tok token)
-GID=$(curl -s -XPOST "$H/create" -H "Authorization: Bearer $AT" | tok game_id)
-curl -s -XPOST "$H/meta" -H "Authorization: Bearer $AT" -d "{\"type\":\"add-bot\",\"game_id\":\"$GID\",\"strategy\":\"cordite\"}"    >/dev/null
-curl -s -XPOST "$H/meta" -H "Authorization: Bearer $AT" -d "{\"type\":\"add-bot\",\"game_id\":\"$GID\",\"strategy\":\"firecracker\"}">/dev/null
-curl -s -XPOST "$H/meta" -H "Authorization: Bearer $AT" -d "{\"type\":\"start\",\"game_id\":\"$GID\"}"                              >/dev/null
+AT=$(ctl_signup "$H" alice)
+GID=$(ctl_create "$H" "$AT")
+ctl_meta "$H" "$AT" "$CTL_META_ADD_BOT" "$GID" cordite
+ctl_meta "$H" "$AT" "$CTL_META_ADD_BOT" "$GID" firecracker
+ctl_meta "$H" "$AT" "$CTL_META_START"   "$GID"
 echo "game $GID dealt: alice + cordite + firecracker. Polling each second"
 echo "(views are packed now — we watch the status + the packed view's byte length,"
 echo " which changes as battles/hands change, proving the board advances over time):"
 for i in $(seq 0 8); do
-  ST=$(curl -s "$H/status?game_id=$GID")
+  ST=$(ctl_status "$H" "$GID")
   BYTES=$(curl -s "$H/state?game_id=$GID&seat=0" -H "Authorization: Bearer $AT" | wc -c | tr -d ' ')
   printf '  t=%ss  status=%s  packed_view_bytes=%s\n' "$i" "$ST" "$BYTES"
   sleep 1
