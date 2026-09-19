@@ -1,7 +1,7 @@
 // SECURITY S2: the web client ships no reader of an UNMASKED kernel game.
 //
 // Hidden information is safe on the wire today because the server only ever
-// hands a client a masked board (e2e/security_hidden_info.test.ts). This file
+// hands a client a masked board (e2e/helpers/hidden_info.ts, run by the security_hidden_info_{2p,4p,6p} files). This file
 // pins the other half: code that turns an unmasked kernel game into bytes or a
 // JS object - the durable-blob codec, the server's packed pipeline, and (after
 // the C Game shape migration) the generated struct accessors - is not part of

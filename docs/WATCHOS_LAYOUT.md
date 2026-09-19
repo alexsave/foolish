@@ -9,7 +9,7 @@
 
 Deliverables:
 
-- **`docs/watchos-layout.html`** — the mockups: every screen state as
+- **The mockups** — `docs/watchos-layout.html` (removed 2026-09-18, now that the design is locked; recoverable at `570d734c`) — every screen state as
   HTML/CSS/JS at native watch pixels, viewable at true physical size (with a
   monitor-calibration control), a 10 mm-finger overlay, a 2×3 tap-zone
   overlay, and five live crown/tap demos. Eight design options (A–H) with

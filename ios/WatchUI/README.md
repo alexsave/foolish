@@ -14,8 +14,8 @@ It was reviewed against a running simulator five times and every number on the
 face is a measured one.
 Read `docs/WATCHOS_LAYOUT.md` §4.6 and §4.6.1 before changing a single constant
 here: §4.6.1 is the as-built record of nine owner calls, several of which were
-arrived at by measuring luminance on the simulator, and the mocks in
-`docs/watchos-layout.html` do not show them.
+arrived at by measuring luminance on the simulator, and the original mocks did
+not show them. Those mocks were `docs/watchos-layout.html` (removed 2026-09-18, now that the design is locked; recoverable at `570d734c`).
 
 ## What the screen is
 

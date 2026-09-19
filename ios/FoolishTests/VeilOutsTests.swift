@@ -407,7 +407,7 @@ final class VeilOutsTests: XCTestCase {
     /// tests above are worthless if `body` quietly grows a second copy of the
     /// subtraction beside the named one.
     func testTheBoardAsksTheseFunctionsRatherThanRepeatingThem() throws {
-        let src = try source("FoolishKit/Boards/MessageTableView.swift")
+        let src = try BoardSource.text()
         for call in ["Veil.veiled(hidden: animator.hidden",
                      "Veil.handSlotDeferred(veiled: veiledCardIds",
                      "Veil.fan(veiled: veiledCardIds, holdback: fanHoldback)",
@@ -426,7 +426,7 @@ final class VeilOutsTests: XCTestCase {
     /// a trace computing its own answer is worse than no trace - it was two
     /// copies of one ternary before this round.
     func testTheGridTraceReportsTheSetTheGridWasGiven() throws {
-        let src = try source("FoolishKit/Boards/MessageTableView.swift")
+        let src = try BoardSource.text()
         XCTAssertTrue(src.contains("Self.traceGrid(sweeping: sweeping, shown: shown,\n"
                                   + "                       hidden: grid.hidden,"),
                       "the trace must read the same value the grid does")
@@ -470,7 +470,7 @@ final class VeilOutsTests: XCTestCase {
     /// MUTANT: add `sweepBattles = view.battles` anywhere else in the file and
     /// this fails.
     func testOnlyTheSweepSettersEverWriteTheSweptTable() throws {
-        let src = try source("FoolishKit/Boards/MessageTableView.swift")
+        let src = try BoardSource.text()
         let writes = src.components(separatedBy: "sweepBattles = ").count - 1
         XCTAssertEqual(writes, 2,
                                   "`sweepBattles` must be written only by `setSweep` and `dropSweep` - "
@@ -493,7 +493,7 @@ final class VeilOutsTests: XCTestCase {
     /// (a card drawn twice is two), which is a different question from the set
     /// of identities a table holds.
     func testTheSweptIdsHaveOneDerivation() throws {
-        let src = try source("FoolishKit/Boards/MessageTableView.swift")
+        let src = try BoardSource.text()
         XCTAssertFalse(src.contains("func ids(_ bs: [BattleView])"),
                                   "`coveredSweep` must ask the kernel, not carry its own copy")
         XCTAssertFalse(src.contains("b.attack.identity] + (b.defense.map"),

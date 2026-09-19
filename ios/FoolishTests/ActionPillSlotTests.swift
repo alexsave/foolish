@@ -55,7 +55,7 @@ final class ActionPillSlotTests: XCTestCase {
     /// MUTANTS: the Undo placement back to `.padding(.trailing, 20)`; the
     /// squares' leading back to a literal `4`; Undo's width back to a literal.
     func testNoPlacementTypesItsOwnInset() throws {
-        let board = try source("FoolishKit/Boards/MessageTableView.swift")
+        let board = try BoardSource.text()
         XCTAssertTrue(board.contains(".padding(.trailing, ActionPillSlot.undoTrailing(aligned: ActionPillSlot.aligned))"),
                       "the Undo slot no longer reads ActionPillSlot")
         XCTAssertTrue(board.contains(".padding(.trailing, ActionPillSlot.outerInset)"),

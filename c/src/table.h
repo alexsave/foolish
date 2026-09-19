@@ -24,6 +24,7 @@
 #define CNITRO_TABLE_H
 
 #include "game.h"
+#include "view.h"
 #include "roster.h"
 #include "evwire.h"
 #include "bot_drive.h"
@@ -58,8 +59,11 @@
 // policy one by the number alone (sdk/ts/wire/awire.ts REJECT_STALE_ROUND).
 #define TABLE_REJECT_STALE_ROUND 100
 
-// The durable state blob: [STATE_FORMAT_VERSION][deterministic deck][state_put].
-#define TABLE_STATE_FORMAT 2
+// The durable state blob: [STATE_BLOB_FORMAT][deterministic deck][state_put].
+// The format, and the codec this layer writes and reads it with, are view.h's
+// (state_blob_put / state_blob_load) - the wasm bridge persists the same column
+// through the same pair, so there is one format byte, not two that can drift.
+#define TABLE_STATE_FORMAT STATE_BLOB_FORMAT
 
 // ---- the action request and response (the `action` endpoint's body) --------
 //
@@ -250,10 +254,9 @@ typedef struct {
 int table_commit_products(const Table *t, const char *game_id, int gid_len, uint32_t next_version,
                           int64_t now_ms, TableCommit *out, uint8_t *arena, int cap);
 
-// One viewer's response envelope (seat, or -1 for the spectator):
-//   u8 fmt=1, u8 flags (bit0 seated viewer, bit1 roster trailer), u8 seat (0xFF),
-//   u32 version, u16 0, u16 view_len, [VIEW_FORMAT_VERSION][viewer][masked state],
-//   the roster trailer (roster.h)
+// One viewer's response envelope (seat, or -1 for the spectator): the header
+// (view.h ENV_*, written with env_header_write and read back by the client
+// through env_header_read), the view blob, then the roster trailer (roster.h).
 int table_envelope(const Table *t, const char *game_id, int gid_len, int viewer, uint32_t version,
                    uint8_t *out, int cap);
 

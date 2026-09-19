@@ -50,8 +50,9 @@ public struct PreBoutTable: Equatable, Sendable {
             input.append(UInt8(truncatingIfNeeded: ev.type))
             input.append(contentsOf: Self.table(ev.state?.battles))
             // A pickup's cards ARE its table and the kernel never masks one; a
-            // redacted card names nothing and is simply not listed.
-            let ids = ev.cards.compactMap { $0 }.filter { !$0.isHidden }.map(Self.id)
+            // redacted card names nothing and is simply not listed. A LIST, not
+            // a table - so the dense id, with nothing off the deck listed.
+            let ids = ev.cards.compactMap { $0 }.compactMap(CardSet.id(of:))
             input.append(UInt8(min(ids.count, 255)))
             input.append(contentsOf: ids.prefix(255))
         }
@@ -70,9 +71,11 @@ public struct PreBoutTable: Equatable, Sendable {
         for i in 0..<count {
             let at = Int(FIO_PRETABLE_HEAD) + 2 * i
             let cover = b[at + 1]
-            table.append(BattleView(attack: Self.card(b[at]),
+            // Dense ids only: the kernel reads a board with an unnameable cell
+            // as no board (ios_api.h), so nothing off the deck reaches here.
+            table.append(BattleView(attack: CardSet.card(b[at]),
                                     defense: cover == UInt8(FIO_PRETABLE_NONE)
-                                             ? nil : Self.card(cover)))
+                                             ? nil : CardSet.card(cover)))
         }
         self.battles = table
         self.paired = b[2] != 0
@@ -83,31 +86,25 @@ public struct PreBoutTable: Equatable, Sendable {
         self.paired = paired
     }
 
-    /// One board as the wire's table: a count, then the attack and its cover (or
-    /// the "no card" byte) per battle. A board with a REDACTED card on it cannot
-    /// be described honestly, so it crosses as no board at all rather than as a
-    /// table with an invented card in it - the kernel never masks a table, so
-    /// this is a corrupt input rather than a case.
+    /// One board as the wire's table: a count, then the kernel's own table
+    /// bytes (TableWire). A board holding a card the viewer may not see is
+    /// sent as it is - the unnameable cell and all - and it is the KERNEL that
+    /// reads such a board as no board, for the reason it states in ios_api.h:
+    /// this answer is laid out by identity, and that cell has none. This used
+    /// to be decided here, by sending "no board" in its place; the decision has
+    /// not changed, only who makes it, so that four table writers could become
+    /// one and the rule could live beside the bytes.
     ///
     /// Shared with AnimPlanWire, which sends every step's row for the same
     /// reason this sends the prior board: the row a stream OPENS on is a fact
     /// about the stream, and one encoding of it means the two wires cannot
     /// disagree about what a table is.
     static func table(_ battles: [BattleView]?) -> [UInt8] {
-        guard let battles, !battles.isEmpty, battles.count < Int(FIO_PRETABLE_NONE),
-              battles.allSatisfy({ !$0.attack.isHidden && !($0.defense?.isHidden ?? false) })
+        guard let battles, !battles.isEmpty, battles.count < Int(FIO_PRETABLE_NONE)
         else { return [UInt8(FIO_PRETABLE_NONE)] }
-        var out: [UInt8] = [UInt8(battles.count)]
-        for b in battles {
-            out.append(id(b.attack))
-            out.append(b.defense.map(id) ?? UInt8(FIO_PRETABLE_NONE))
-        }
-        return out
-    }
-
-    private static func id(_ c: Card) -> UInt8 { UInt8(c.s * 13 + (c.v - 1)) }
-    private static func card(_ id: UInt8) -> Card {
-        Card(s: Int(id) / 13, v: Int(id) % 13 + 1)
+        let bytes = TableWire.encode(battles)
+        guard !bytes.isEmpty else { return [UInt8(FIO_PRETABLE_NONE)] }
+        return [UInt8(bytes.count / 2)] + bytes
     }
 }
 
@@ -140,7 +137,7 @@ public extension PreBoutTable {
     static func cardIds(_ battles: [BattleView]) -> Set<String> {
         let bytes = wire(battles)
         return CardSet.identities(bytes.withUnsafeBufferPointer {
-            fio_table_card_ids($0.baseAddress, Int32(battles.count))
+            fio_table_card_ids($0.baseAddress, Int32(bytes.count / 2))
         })
     }
 
@@ -150,8 +147,8 @@ public extension PreBoutTable {
         let a = wire(outer), b = wire(inner)
         return a.withUnsafeBufferPointer { ap in
             b.withUnsafeBufferPointer { bp in
-                fio_table_covers(ap.baseAddress, Int32(outer.count),
-                                 bp.baseAddress, Int32(inner.count)) == 1
+                fio_table_covers(ap.baseAddress, Int32(a.count / 2),
+                                 bp.baseAddress, Int32(b.count / 2)) == 1
             }
         }
     }
@@ -168,8 +165,8 @@ public extension PreBoutTable {
         let ok = a.withUnsafeBufferPointer { ap in
             b.withUnsafeBufferPointer { bp in
                 fio_covered_sweep_accepts(pre.paired ? 1 : 0,
-                                          ap.baseAddress, Int32(pre.battles.count),
-                                          bp.baseAddress, Int32(current.count)) == 1
+                                          ap.baseAddress, Int32(a.count / 2),
+                                          bp.baseAddress, Int32(b.count / 2)) == 1
             }
         }
         return ok ? pre.battles : nil
@@ -189,7 +186,7 @@ public extension PreBoutTable {
         let l = wire(live), w = wire(sweep)
         let which = l.withUnsafeBufferPointer { lp in
             w.withUnsafeBufferPointer { wp in
-                fio_shown_table_rows(lp.baseAddress, Int32(live.count), wp.baseAddress, Int32(sweep.count),
+                fio_shown_table_rows(lp.baseAddress, Int32(l.count / 2), wp.baseAddress, Int32(w.count / 2),
                                      Int32(pending.count), holdLeaving ? 1 : 0, &sweeping)
             }
         }
@@ -214,23 +211,12 @@ public extension PreBoutTable {
         }
     }
 
-    /// A table as the kernel's 2-bytes-per-battle layout: the attack, then its
-    /// cover or the "no card" byte.
-    ///
-    /// AN EMPTY CELL AND AN UNNAMEABLE CARD ARE DIFFERENT BYTES. A card with no
-    /// dense id - a masked back, or anything off the deck - is a card that IS
-    /// there and cannot be spoken about, and it crosses as FIO_TABLE_UNKNOWN so
-    /// the kernel refuses to certify a swap over it. Spelling it as "no card"
-    /// would make it vanish from the subset test, which is how a table that is
-    /// really losing a card gets accepted as one that only adds a cover.
-    private static func wire(_ battles: [BattleView]) -> [UInt8] {
-        var out: [UInt8] = []
-        out.reserveCapacity(2 * battles.count)
-        for b in battles {
-            out.append(CardSet.id(of: b.attack) ?? UInt8(FIO_TABLE_UNKNOWN))
-            out.append(b.defense.map { CardSet.id(of: $0) ?? UInt8(FIO_TABLE_UNKNOWN) }
-                       ?? UInt8(FIO_CONFLICT_NONE))
-        }
-        return out
-    }
+    /// A table as the kernel writes it (TableWire). This was the one of the
+    /// four Swift table writers that had the masked case right - an empty cell
+    /// and an unnameable card as different bytes, so a sweep over a card nobody
+    /// can name is refused rather than certified - and that answer is now the
+    /// kernel's for every table, stated in ios_api.h beside the bytes. The
+    /// battle count each call below sends is `count / 2` of these bytes, never
+    /// the array's, so a length can never outrun its buffer.
+    private static func wire(_ battles: [BattleView]) -> [UInt8] { TableWire.encode(battles) }
 }

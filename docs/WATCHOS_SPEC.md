@@ -14,11 +14,9 @@
 
 Audience: a SwiftUI developer building the watchOS client. This document is
 self-contained: you do not need the design history (that lives in
-`docs/WATCHOS_LAYOUT.md`; the interactive mockups with live demos are in
-`docs/watchos-layout.html` — **section 8 (Option H, frames H1–H5 + demo) is
-the layout you are building**; section 7 (Option G) is the retained
-alternative, and its G9/G10 frames still define the notifications. Open the
-HTML in a browser and use the "Real size" control).
+`docs/WATCHOS_LAYOUT.md`). **The layout you are building is Option H**, and
+§4.6.1 of that document is the as-built record that governs it. The interactive
+mockups that first showed Options A–H were `docs/watchos-layout.html` (removed 2026-09-18, now that the design is locked; recoverable at `570d734c`).
 
 All UI dimensions are **watchOS points** on the 40 mm baseline
 (324×394 px = **162×197 pt**). Build layout relative so 41–49 mm gain space

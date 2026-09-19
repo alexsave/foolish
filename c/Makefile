@@ -27,6 +27,25 @@ endif
 ifeq ($(OMP),1)
   CFLAGS  += -fopenmp
   LDFLAGS += -fopenmp
+else
+  # ...and when it is NOT parallel, the qualifier is pure cost. Darwin has no
+  # local-exec TLS model: on arm64 every read of a _Thread_local compiles to a
+  # call through the variable's thread-local descriptor into ___tlv_get_addr,
+  # and the solver reads its scratch (sim_rec_moves, sim_rec_child, VALUE_MASK,
+  # the TT pointer) several times per node. Measured with /usr/bin/sample over
+  # build/cnitro_tests: 2,814 of 18,554 samples - 15% of the whole binary -
+  # were inside that thunk, 1,428 of them from sim_solve_rec alone. Removing it
+  # took `make tests` from 27.7s to 24.0s with every one of the 5,761 checks
+  # passing and every counter in the output identical.
+  #
+  # Safe exactly while nothing here runs two threads, which is the same
+  # condition OMP=1 turns off: the only pthreads in the tree are the analyser's
+  # (src/analyse.c, AnalyseParams.threads), and the two targets that pass
+  # threads > 1 build their own objects from CORE_SRC and filter this back out
+  # - see ANALYSE_CFLAGS. The wasm bots module has neutralised the qualifier
+  # the same way since it was written (WASM_BOT_CFLAGS below), so this is the
+  # build the shipped module already gets, not a new experiment.
+  CFLAGS  += -D_Thread_local=
 endif
 
 # LEAFBOOK (c/LEAFBOOK.md, docs/L1_SPEND_PLAN.md §4): compile octogen's
@@ -102,6 +121,24 @@ build/tests.o: tests/tests.c $(wildcard src/*.h)
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# 5,761 checks in 23.8s at -O3, and 23.5s of that is ONE of the 204 tests:
+# test_table_session_log_is_load_bearing_for_octogen, 3,430 octogen decisions at
+# 6.9ms each (half of them the memory-taken-away run that IS the experiment).
+# /usr/bin/sample puts all of it in sim_solve_rec / sim_gen_moves / cover_assign
+# - no per-decision setup, no rebuild, no allocation - so the only lever left on
+# it is fewer decisions, which is sample size and not waste.
+#
+# Where that one test should live is an open question for a human, and here are
+# the two measurements it needs. No workflow runs THIS target; the only CI lane
+# that runs the native suite is coverage.yml, which builds it at -O0 --coverage
+# (and without -DCD_LEAFBOOK, so octogen there is not the octogen that ships).
+# That binary is 81.6s with the test and 11.8s without it - the experiment is
+# 69.8s of a coverage job, several times that on a CI runner. And it buys the
+# gate nothing: game.c / legal.c / replay.c come to 2163 of 2304 lines with it
+# and 2163 of 2304 without it, the identical missing-line list. So the useful
+# move is a lane that runs `make tests` at the flags the product ships, and then
+# leaving the experiment out of the coverage build - not one without the other,
+# since dropping it from coverage today would leave it running in no CI at all.
 tests: build/cnitro_tests
 	./build/cnitro_tests
 
@@ -178,7 +215,13 @@ difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/sol
 #   make analyse          build/cnitro_analyse, the CLI (--threads=N fans the
 #                         world loop over N pthreads; same bytes at any N)
 #   make analyse-test     build + run tests/analyse_test.c on the recorded game
-ANALYSE_CFLAGS = $(CFLAGS) $(IOS_CAPS)
+# The ONE native product that really does run the engine on several threads, so
+# it is the one that keeps real thread-local storage: --threads=N fans the world
+# loop over N pthreads and every world plays games through game.c's RNG and the
+# cordite solver's scratch. The default build neutralises _Thread_local for the
+# 15% it costs on Darwin (see OMP above); here the qualifier is load-bearing and
+# is filtered back in. Same idiom as WASM_ORACLE_MT_CFLAGS.
+ANALYSE_CFLAGS = $(filter-out -D_Thread_local=,$(CFLAGS)) $(IOS_CAPS)
 .PHONY: analyse analyse-test
 analyse:
 	@mkdir -p build
@@ -191,11 +234,15 @@ analyse-test:
 # ---------- iOS static library / xcframework (docs/IOS_APP_DESIGN.md §16.A1) --
 #
 # Builds ../ios/vendor/Foolish.xcframework from the SAME CORE_SRC every native
-# binary uses, plus the Swift-visible bridge (ios/ios_api.c + ios/ios_bots_api.c,
-# declared by ios/include/ios_api.h). The bridge is TWO objects on purpose: this
-# archive links per object, so keeping every bot reference in ios_bots_api.c is
-# what lets a binary that never drives a bot leave the strategy ladder behind
-# (see ios/ios_internal.h). This is macOS + Xcode ONLY (needs xcrun/libtool/xcodebuild and
+# binary uses, plus the Swift-visible bridge ($(IOS_BRIDGE_SRC) +
+# ios/ios_bots_api.c, declared by ios/include/ios_api.h). The BOT half is its
+# own object on purpose: this archive links per object, so keeping every bot
+# reference in ios_bots_api.c is what lets a binary that never drives a bot
+# leave the strategy ladder behind (see ios/ios_internal.h). The core half is
+# several objects for a different reason - it is split by domain, which the
+# linker does not care about either way.
+#
+# This is macOS + Xcode ONLY (needs xcrun/libtool/xcodebuild and
 # the iOS SDKs). On Linux/CI, `make ios-smoke` exercises the identical bridge
 # natively (clang) — it is the portable proof that new->legal->apply->state and
 # a full game run through the Swift entry points.
@@ -240,11 +287,21 @@ IOS_CAPS   := -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_MOVE_CARDS=28 \
 # The split is BY REFERENCE, not by taste: the core set below names no strategy
 # symbol at all (random_strategy_set_seed is defined in game.c, not a strategy
 # file), so nothing in it can drag one in.
+#
+# THE BRIDGE'S OWN CORE HALF is split again, by DOMAIN rather than by link
+# reachability: 123 entry points at about nine lines each is wide, not deep, so
+# they sort by what each one is ABOUT (ios/ios_internal.h says which is which).
+# Every one of these files must keep naming no strategy symbol, and
+# ios/split_check.sh asserts it on each object separately - a bot call put back
+# into ANY of them is caught rather than hidden by the others.
+IOS_BRIDGE_SRC := ios/ios_api.c ios/ios_api_view.c ios/ios_api_play.c \
+                  ios/ios_api_anim.c ios/ios_api_replay.c \
+                  ios/ios_api_identity.c ios/ios_api_msg.c
 IOS_CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c \
                 src/replay_steps.c src/replay_extras.c src/view.c src/awire.c \
                 src/evwire.c src/sha256.c src/msg_wire.c src/msg_expand.c \
                 src/anim_plan.c src/roster.c src/card.c src/client_table.c \
-                ios/ios_api.c
+                $(IOS_BRIDGE_SRC)
 IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC),$(CORE_SRC)) ios/ios_bots_api.c
 
 # Everything, for the host-side smoke/golden binaries that want one link line.
@@ -351,10 +408,11 @@ ios-archives:
 # and drives a full 4-player game to a fool through the Swift-facing entry
 # points. Fast (< 1s). This is the M-A keystone check runnable without a Mac.
 ios-smoke:
-	@mkdir -p build
-	$(CC) $(IOS_CFLAGS) -c ios/ios_api.c -o build/ios_api.o
-	./ios/split_check.sh build/ios_api.o
-	$(CC) $(IOS_CFLAGS) ios/ios_api_smoke.c ios/ios_api.c ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_smoke
+	@mkdir -p build/ios-split
+	@for s in $(IOS_BRIDGE_SRC); do \
+	  $(CC) $(IOS_CFLAGS) -c $$s -o build/ios-split/$$(basename $$s .c).o || exit 1; done
+	./ios/split_check.sh build/ios-split/*.o
+	$(CC) $(IOS_CFLAGS) ios/ios_api_smoke.c $(IOS_BRIDGE_SRC) ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_smoke
 	./build/ios_smoke
 
 # PART OF `difftests`, deliberately. Left out of it, this target rotted twice
@@ -374,7 +432,7 @@ ios-smoke:
 .PHONY: msg-flow-sim
 msg-flow-sim:
 	@mkdir -p build
-	$(CC) $(IOS_CFLAGS) tests/msg_flow_sim.c ios/ios_api.c ios/ios_bots_api.c $(CORE_SRC) -lm -o build/msg_flow_sim
+	$(CC) $(IOS_CFLAGS) tests/msg_flow_sim.c $(IOS_BRIDGE_SRC) ios/ios_bots_api.c $(CORE_SRC) -lm -o build/msg_flow_sim
 	./build/msg_flow_sim 300 9 0
 	./build/msg_flow_sim 300 8 1
 	./build/msg_flow_sim 300 4 1
@@ -382,17 +440,32 @@ msg-flow-sim:
 # The online packed-view decode is now pure Swift (MaskedView) — see
 # ios/FoolishTests/PackedViewTests.swift, which replaces the retired C harness.
 
-# Golden fixtures for the Swift EngineGoldenTests (§16.A3). Emits
-# ../ios/Fixtures/goldens.json from the SAME bridge the app links. Regenerate
-# after any engine/bridge change and commit the result; the Swift test then
-# proves the native build reproduces it byte-for-byte.
+# Golden fixtures for the Swift suite (§16.A3), both written from the SAME
+# bridge the app links. Regenerate after any engine/bridge change and commit the
+# result; the Swift tests then prove the native build reproduces them byte for
+# byte, and CI (.github/workflows/ios.yml) fails if either is stale.
+#
+#   goldens.json          EngineGoldenTests - deal/menu/playthrough hashes.
+#                         JSON only because it predates the packed-wire rule;
+#                         do not grow it, and do not take it as precedent.
+#   action_goldens.bin    PackedActionTests - the awire action frame the kernel
+#                         writes for a fixed set of moves, PACKED (see
+#                         ios/ios_action_goldens.c for the layout).
+#   table_goldens.bin     TableWireTests - the one table layout the kernel
+#                         writes for a fixed set of boards, masked cells
+#                         included, PACKED (see ios/ios_table_goldens.c).
 .PHONY: ios-goldens
 ios-goldens:
-	@mkdir -p build
-	$(CC) $(IOS_CFLAGS) ios/ios_goldens.c ios/ios_api.c ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_goldens
-	@mkdir -p ../ios/Fixtures
+	@mkdir -p build ../ios/Fixtures
+	$(CC) $(IOS_CFLAGS) ios/ios_goldens.c $(IOS_BRIDGE_SRC) ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_goldens
 	./build/ios_goldens > ../ios/Fixtures/goldens.json
 	@echo "wrote ../ios/Fixtures/goldens.json"
+	$(CC) $(IOS_CFLAGS) ios/ios_action_goldens.c $(IOS_BRIDGE_SRC) ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_action_goldens
+	./build/ios_action_goldens > ../ios/Fixtures/action_goldens.bin
+	@echo "wrote ../ios/Fixtures/action_goldens.bin"
+	$(CC) $(IOS_CFLAGS) ios/ios_table_goldens.c $(IOS_BRIDGE_SRC) ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_table_goldens
+	./build/ios_table_goldens > ../ios/Fixtures/table_goldens.bin
+	@echo "wrote ../ios/Fixtures/table_goldens.bin"
 
 # L1 memory budget measurement (docs/WASM_L1_BUDGET.md). Plays ~63K real games
 # and reports the observed maxima that size every wasm static buffer. Built at
@@ -692,7 +765,21 @@ STRUCTGEN      := $(STRUCTGEN_DIR)/build/structgen
 SG_GAME_SPEC   := $(STRUCTGEN_DIR)/specs/game_layout.args
 SG_GAME_ARGS    = $(shell grep -v '^[[:space:]]*\#' $(SG_GAME_SPEC))
 
-$(STRUCTGEN): $(STRUCTGEN_DIR)/structgen.c $(STRUCTGEN_DIR)/Makefile
+# EVERY source and header, not structgen.c alone. structgen used to be one
+# translation unit and this line named it; once it split into sg_clang/sg_model/
+# sg_ts/sg_swift/sg_hash/sg_args, naming one of them meant an edit to any of the
+# others left this target "up to date" - and the binary it did not rebuild is the
+# one that computes SG_LAYOUT_HASH. A stale structgen bakes a hash for a layout
+# that is no longer the layout, which is the failure the hash exists to catch,
+# arriving through the tool that catches it. Measured: after `touch
+# tools/structgen/sg_ts.c`, make called this target up to date.
+#
+# tools/structgen/Makefile lists its sources explicitly and is correct on its
+# own; this wildcard exists because THIS file reaches across into that directory
+# and must not hold a narrower idea of what structgen is made of than it does.
+$(STRUCTGEN): $(wildcard $(STRUCTGEN_DIR)/*.c) $(wildcard $(STRUCTGEN_DIR)/*.h) \
+              $(wildcard $(STRUCTGEN_DIR)/../sgcommon/*.c) $(wildcard $(STRUCTGEN_DIR)/../sgcommon/*.h) \
+              $(STRUCTGEN_DIR)/Makefile $(STRUCTGEN_DIR)/../llvm.mk
 	$(MAKE) -C $(STRUCTGEN_DIR) build/structgen
 
 # $(call sg_hash,<build name>,<cflags>,<ts stem, or empty>): with a stem, also
@@ -919,8 +1006,22 @@ WASM_REPLAY_DECODE_EXPORTS := \
 # exported cost 1,191 raw / 533 gzip bytes of a module whose gzip is capped at
 # 80 KiB (e2e/mem/wasm_memory.test.ts) - the rule and its fuzz stay, on the test
 # build, which is what this list is for.
+#
+# wasm_replay_error_detail joined them on 2026-09-19, found by the gate that
+# now asks the question continuously (e2e/validation/wasm_exports_validation.test.ts).
+# It is the PACKED-INT predecessor of wasm_replay_error_ptr: one int carrying
+# log_type << 16 | menu, which every host stopped unpacking when replay.h grew
+# a ReplayError struct and structgen started generating its reader
+# (sdk/ts/wasm/bots.ts replayErrorDetail). No TypeScript has named it since.
+# The C entry stays for the oracle modules and the test build, and
+# replay_last_error_detail() itself is what the C suites print on a refusal.
+# It is a one-line accessor, so the shipped module moved by 39 raw / 14 gzip
+# bytes: the point here is not the bytes but that the export list and the
+# TypeScript that binds it agree, which is the only state a gate can tell apart
+# from drift.
 WASM_BOTS_UNSHIPPED_API := \
   -Wl,--export=wasm_unambiguous_cover \
+  -Wl,--export=wasm_replay_error_detail \
   -Wl,--export=wasm_game_ptr_internal -Wl,--export=wasm_moves_ptr_internal \
   -Wl,--export=wasm_set_seed -Wl,--export=wasm_set_deal_seed_bytes -Wl,--export=wasm_reject_reason \
   -Wl,--export=wasm_import_state -Wl,--export=wasm_export_state \
@@ -1048,7 +1149,7 @@ build/msgobj/wasm_api.o: wasm/wasm_api.c build/layout/msg.hash $(wildcard src/*.
 	@mkdir -p build/msgobj
 	$(WASM_CC) $(WASM_MSG_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/msg.hash) -c $< -o $@
 
-build/msg.wasm: $(WASM_MSG_OBJ) wasm/msg_exports_check.mjs
+build/msg.wasm: $(WASM_MSG_OBJ) wasm/msg_exports_check.mjs Makefile
 	@mkdir -p build
 	$(WASM_CC) $(WASM_MSG_LDFLAGS) $(WASM_MSG_API_EXPORTS) $(WASM_MSG_EXPORTS) $(WASM_MSG_OBJ) -o $@
 	$(call wasm_postopt,$(WASM_MSG_POSTOPT),$@)
@@ -1210,7 +1311,16 @@ build/botobj/wasm_api.o: wasm/wasm_api.c build/layout/bots.hash $(wildcard src/*
 WASM_BOTS_SHIPPED_EXPORTS = $(filter-out $(WASM_BOTS_UNSHIPPED_API),$(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS)) \
                             $(WASM_TABLE_EXPORTS) $(WASM_CLIENT_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS)
 
-build/bots.wasm: $(WASM_BOT_OBJ)
+# AND THIS FILE, because the export list is IN this file. Every wasm link below
+# reads a WASM_*_EXPORTS list, and none of them named the Makefile, so a
+# changed list relinked nothing: measured on 2026-09-19, dropping
+# wasm_replay_error_detail from WASM_BOTS_UNSHIPPED_API and running
+# `make wasm-bots` reported the module up to date and re-gzipped the OLD bytes.
+# The export table is as much an input to the link as an object file is, and
+# the only place it lives is here. A relink is seconds and the output is
+# reproducible (gzip -n over a deterministic link), so a Makefile edit that
+# changes nothing leaves the tree clean rather than dirty.
+build/bots.wasm: $(WASM_BOT_OBJ) Makefile
 	@mkdir -p build
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
 	          $(WASM_BOTS_SHIPPED_EXPORTS) $(WASM_BOT_OBJ) -o $@
@@ -1247,7 +1357,7 @@ bots-wasm-explain: build/layout/bots-explain.hash
 # (inlining removes functions), a companion WITHOUT the pass would have
 # different function indices and mis-map every name — hence this target runs the
 # identical pass. generate.sh re-strips this and asserts it equals build/bots.wasm.
-build/named/bots.named.wasm: $(WASM_BOT_OBJ)
+build/named/bots.named.wasm: $(WASM_BOT_OBJ) Makefile
 	@mkdir -p build/named
 	$(WASM_CC) --target=wasm32 -nostdlib $(filter-out -Wl$(comma)--strip-all,$(WASM_BOT_LDFLAGS)) \
 	          $(WASM_BOTS_SHIPPED_EXPORTS) $(WASM_BOT_OBJ) -o $@
@@ -1279,7 +1389,7 @@ wasm-bots: build/layout/bots.hash
 # The test build (WASM_TEST_EXPORTS above): never committed, never shipped.
 # build/bots_test.stamp records the wasm source hash it was built from
 # (scripts/wasm_stamp.sh --hash), which is how the e2e helper knows it is current.
-build/bots_test.wasm: $(WASM_BOT_OBJ)
+build/bots_test.wasm: $(WASM_BOT_OBJ) Makefile
 	@mkdir -p build
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
 	          $(WASM_BOTS_SHIPPED_EXPORTS) $(WASM_TEST_EXPORTS) $(WASM_BOT_OBJ) -o $@.tmp
@@ -1387,7 +1497,28 @@ COV_CC         ?= gcc
 COV_FLAGS      := -O0 -g --coverage -Isrc -Wno-unused-parameter -Wno-deprecated-declarations
 COV_LINE_MIN   ?= 90
 COV_BRANCH_MIN ?= 74
-COV_FILTERS    := --filter 'src/game\.c' --filter 'src/legal\.c' --filter 'src/replay\.c'
+# THE WHOLE SHIPPED KERNEL, not three files of it.
+#
+# This list was game/legal/replay back when those were most of what C owned. A
+# great deal has moved here since - the wire formats, the view masking, the
+# animation planner, the table and session layer, the iMessage envelope - and
+# none of it was gated. The gate measured 2,304 lines while the kernel had
+# grown to 7,738, so a file could lose half its coverage and the build stayed
+# green.
+#
+# What is NOT here, deliberately: the bot strategies. They are research code,
+# eleven of them are arena-only and never linked into anything shipped, and
+# holding a Monte-Carlo search to a line floor would gate the build on how
+# often a rollout happens to visit a branch. `make tests` still runs them.
+#
+# The floors stay at 90/74 even though the measured numbers are 94/79, because
+# CI runs real gcc and this was measured with Apple clang plus llvm-cov, and a
+# few points of toolchain drift must not turn into a red main. Raise them as
+# coverage climbs; never lower one to make a red build pass.
+COV_KERNEL     := game legal replay replay_steps replay_extras view awire evwire \
+                  msg_wire msg_expand anim_plan table client_table roster card \
+                  deal_rng sha256 bot_drive bot_roster analyse
+COV_FILTERS    := $(foreach f,$(COV_KERNEL),--filter 'src/$(f)\.c')
 
 .PHONY: coverage
 coverage:
@@ -1397,6 +1528,17 @@ coverage:
 	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/apply_difftest.c -o covbuild/apply_difftest  -lm
 	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/solver_difftest.c -o covbuild/solver_difftest -lm
 	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/replay_v6_test.c  -o covbuild/replay_v6_test  -lm
+	# THE SUITES `make difftests` RUNS AND THIS ONCE DID NOT. Coverage measured
+	# five of the eleven suites, so a file could read 0% while being thoroughly
+	# tested by a binary nobody built here. src/msg_wire.c - 644 lines, the FMSG
+	# envelope the whole iMessage product rides on - reported ZERO, with a
+	# 4,427-line test suite sitting beside it. Measuring a subset does not
+	# understate coverage, it MISDIRECTS it: the number points at the wrong
+	# files, and the gate protects whatever happens to be in the subset.
+	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/msg_wire_test.c   -o covbuild/msg_wire_test   -lm
+	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/anim_plan_test.c  -o covbuild/anim_plan_test  -lm
+	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/msg_expand_test.c -o covbuild/msg_expand_test -lm
+	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/analyse_test.c    -o covbuild/analyse_test    -lm
 	./covbuild/cnitro_tests
 	./covbuild/sim_difftest 4 100
 	./covbuild/apply_difftest 4 50
@@ -1404,7 +1546,41 @@ coverage:
 	./covbuild/solver_difftest 3 40 "" 5000
 	./covbuild/solver_difftest 4 40 "" 5000
 	./covbuild/replay_v6_test 10
+	./covbuild/msg_wire_test 20
+	./covbuild/anim_plan_test
+	./covbuild/msg_expand_test
+	./covbuild/analyse_test
+	# A NEW KERNEL FILE MUST NOT BE ABLE TO SLIP PAST THE GATE. COV_KERNEL is a
+	# hand-written list, and this repo has been bitten four times in one day by
+	# a check that named files while the files moved underneath it. Every source
+	# the iOS app links is, by definition, shipped kernel - so if one of those is
+	# missing from COV_KERNEL, say which, and fail. (The reverse is allowed:
+	# COV_KERNEL also holds table/bot_drive/bot_roster/analyse, which the wasm
+	# and the servers link but the phone does not.)
+	@missing=""; for f in $(notdir $(basename $(filter src/%,$(IOS_CORE_SRC)))); do \
+	   case " $(COV_KERNEL) " in *" $$f "*) ;; *) missing="$$missing $$f" ;; esac; \
+	 done; \
+	 if [ -n "$$missing" ]; then \
+	   echo "coverage: these are linked into the iOS app but are not in COV_KERNEL:$$missing" >&2; \
+	   echo "coverage: add them to COV_KERNEL in c/Makefile, or say in a comment why they are exempt." >&2; \
+	   exit 1; \
+	 fi
+	# --gcov-ignore-parse-errors: gcov miscounts a hot loop, and adding the four
+	# suites above made it hot enough to matter. game.c:1211 (the battle scan,
+	# entered on nearly every kernel call) came back with a hit count of
+	# 5,047,157,994 - a known gcov defect, gcc bugzilla 68080 - and gcovr's
+	# default is to treat a suspicious count as a corrupt report and ABORT.
+	#
+	# That failure is the dangerous kind: gcovr exits non-zero having read only
+	# part of the data, so the run looks like a coverage FAILURE while actually
+	# being a coverage NON-MEASUREMENT. Measured here: the aborted run reported
+	# src/msg_wire.c at 0%, which is wrong by ninety-one points.
+	#
+	# warn_once_per_file, not the silent form: a miscounted line is still worth
+	# one line of output, and if this ever starts firing on files that are not
+	# hot loops that is a signal, not noise.
 	gcovr --root . $(COV_FILTERS) --txt \
+	      --gcov-ignore-parse-errors suspicious_hits.warn_once_per_file \
 	      --fail-under-line $(COV_LINE_MIN) --fail-under-branch $(COV_BRANCH_MIN)
 
 clean:

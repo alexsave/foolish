@@ -14,6 +14,21 @@
 // Oracle: the same stored row, loaded and driven on an instance that just played
 // a DIFFERENT board, must commit byte-identical products to the row loaded and
 // driven on a second private instance. Any divergence is resident-slot leakage.
+//
+// Where the volume lives: c/tests/tests.c test_table_bot_drive_ignores_other_tables
+// plays five bots-only games of 2 to 6 seats to their end in lockstep on one
+// table, every load following another width's board, and holds each cycle's
+// commit against the same game played alone - handwritten, simple_heuristic and
+// random, over a thousand compared cycles - and test_table_bot_drive_ignores_instance_history
+// does the same for every roster brain with the module's RNG streams perturbed
+// between the two drives. The handwritten case here is a short run of the same
+// oracle over the WASM build, because that build has its own arena, IO buffer,
+// reset path and stack, and its resident game is the one the server's bot loop
+// actually reuses. The cordite case keeps its full volume: what cordite leaves
+// resident between tables (its sampled-world slots and its transposition table)
+// is sized by defines only the wasm build sets (WORLD_LOG_CAP=40 against 0
+// native, CD_TT_BITS=12 with CD_TT_2WAY and CD_TT_PACK8 against 16 plain), so a
+// native run proves a differently-configured cordite and cannot stand in here.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -67,8 +82,12 @@ function runDifferential(brain: string, N: number, seed: number) {
   assert.ok(checked > N * 0.5, `${brain}: too few comparable boards (${checked}/${N})`);
 }
 
+// A short run: the native lockstep test above carries the volume for a brain
+// that keeps no state of its own, and this run is for the wasm build's load path.
+// Forty boards still put prior and target rows of one width and one blob length
+// back to back several times, which is the shape of the bug this file exists for.
 test('resident slot: a load leaves nothing of the last table to handwritten', () => {
-  runDifferential('handwritten', 600, 12345);
+  runDifferential('handwritten', 40, 12345);
 });
 
 test('resident slot: a load leaves nothing of the last table to cordite', () => {

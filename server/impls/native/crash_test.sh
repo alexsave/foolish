@@ -81,7 +81,9 @@ wait_for_death() {
     return 1
 }
 
-tok() { grep -o "\"$1\":\"[^\"]*\"" | head -1 | cut -d'"' -f4; }
+# The control plane is packed bytes, not JSON - ctl.sh is the shell's copy of
+# that one codec (see ctl_wire.h).
+. "$DIR/ctl.sh"
 
 # ---------------------------------------------------------------------------
 # Phase 1: fresh --db, drive real gameplay, capture ground truth.
@@ -97,7 +99,7 @@ echo "-- server up, pid=$SRV_PID"
 
 # A dedicated user whose LOGIN (token) we check survives the crash too —
 # users are the second durable table (DURABILITY.md), not just games.
-TOKEN=$(curl -s -XPOST "$H/auth/signup" -d '{"username":"crashtest_login"}' | tok token)
+TOKEN=$(ctl_signup "$H" crashtest_login)
 if [ -z "$TOKEN" ]; then echo "FAIL: signup for the login-survival check failed"; exit 1; fi
 echo "-- signed up crashtest_login, token=${TOKEN:0:8}..."
 
@@ -134,14 +136,13 @@ fi
 # fresh lobby, still genuinely in progress — the actual "an in-progress
 # game survives a crash" claim — without the test being flaky over which
 # exact bot-vs-bot round had landed by the time each curl fired.
-BT=$(curl -s -XPOST "$H/auth/signup" -d '{"username":"crashtest_botgame"}' | tok token)
-GID_B=$(curl -s -XPOST "$H/create" -H "Authorization: Bearer $BT" | tok game_id)
+BT=$(ctl_signup "$H" crashtest_botgame)
+GID_B=$(ctl_create "$H" "$BT")
 for _ in 1 2 3; do
-    curl -s -XPOST "$H/meta" -H "Authorization: Bearer $BT" \
-        -d "{\"type\":\"add-bot\",\"game_id\":\"$GID_B\",\"strategy\":\"cordite\"}" > /dev/null
+    ctl_meta "$H" "$BT" "$CTL_META_ADD_BOT" "$GID_B" cordite
 done
-curl -s -XPOST "$H/meta" -H "Authorization: Bearer $BT" -d "{\"type\":\"start\",\"game_id\":\"$GID_B\"}" > /dev/null
-STATUS_B=$(curl -s "$H/status?game_id=$GID_B")
+ctl_meta "$H" "$BT" "$CTL_META_START" "$GID_B"
+STATUS_B=$(ctl_status "$H" "$GID_B")
 echo "-- [B] bot-backed game_id=$GID_B dealt, status=$STATUS_B (1 == PLAYING expected)"
 if [ "$STATUS_B" != "1" ]; then echo "FAIL: scenario B's game did not reach PLAYING"; exit 1; fi
 
@@ -152,11 +153,11 @@ if [ "$STATUS_B" != "1" ]; then echo "FAIL: scenario B's game did not reach PLAY
 # commit everything that happened," not a race against ongoing writes.
 sleep "$WAIT_FOR_DRAIN_SECS"
 
-STATUS_A_BEFORE=$(curl -s "$H/status?game_id=$GID_A")
+STATUS_A_BEFORE=$(ctl_status "$H" "$GID_A")
 # Game A's seats belong to foolish_hammer's accounts: read its public spectator view.
 curl -s "$H/state?game_id=$GID_A&seat=-1" -o "$WORKDIR/a_state0_before.bin"
 curl -s "$H/state?game_id=$GID_A&seat=-1" -o "$WORKDIR/a_state1_before.bin"
-STATUS_B_BEFORE=$(curl -s "$H/status?game_id=$GID_B")
+STATUS_B_BEFORE=$(ctl_status "$H" "$GID_B")
 curl -s "$H/state?game_id=$GID_B&seat=0" -H "Authorization: Bearer $BT" -o "$WORKDIR/b_state0_before.bin"
 echo "-- pre-crash: A status=$STATUS_A_BEFORE size=$(wc -c < "$WORKDIR/a_state0_before.bin")B" \
      "| B status=$STATUS_B_BEFORE size=$(wc -c < "$WORKDIR/b_state0_before.bin")B"
@@ -181,10 +182,10 @@ fi
 echo "-- recovered server up, pid=$SRV_PID2"
 grep "persist: recovered" "$SRV_LOG2" | sed 's/^/   /' || true
 
-STATUS_A_AFTER=$(curl -s "$H/status?game_id=$GID_A")
+STATUS_A_AFTER=$(ctl_status "$H" "$GID_A")
 curl -s "$H/state?game_id=$GID_A&seat=-1" -o "$WORKDIR/a_state0_after.bin"
 curl -s "$H/state?game_id=$GID_A&seat=-1" -o "$WORKDIR/a_state1_after.bin"
-STATUS_B_AFTER=$(curl -s "$H/status?game_id=$GID_B")
+STATUS_B_AFTER=$(ctl_status "$H" "$GID_B")
 curl -s "$H/state?game_id=$GID_B&seat=0" -H "Authorization: Bearer $BT" -o "$WORKDIR/b_state0_after.bin"
 echo "-- post-recovery: A status=$STATUS_A_AFTER size=$(wc -c < "$WORKDIR/a_state0_after.bin")B" \
      "| B status=$STATUS_B_AFTER size=$(wc -c < "$WORKDIR/b_state0_after.bin")B"
@@ -222,8 +223,9 @@ fi
 # before the crash, must still authenticate. /meta checks the token BEFORE
 # the game_id, so a valid-but-stale token against a bogus game_id comes back
 # 404 ("no game"); a token the crash actually lost comes back 401 ("auth").
-META_CODE=$(curl -s -o /dev/null -w '%{http_code}' -XPOST "$H/meta" \
-    -H "Authorization: Bearer $TOKEN" -d '{"type":"join","game_id":"nonexistent00"}')
+META_CODE=$(ctl_meta_frame "$CTL_META_JOIN" nonexistent00 \
+    | curl -s -o /dev/null -w '%{http_code}' -XPOST "$H/meta" \
+           -H "Authorization: Bearer $TOKEN" --data-binary @-)
 if [ "$META_CODE" = "404" ]; then
     echo "PASS: crashtest_login's token still authenticates after the crash (404, not 401)"
 else

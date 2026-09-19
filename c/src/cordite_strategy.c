@@ -107,17 +107,6 @@ static int cd_in_count(const Game *g) {
     return n;
 }
 
-static bool cd_apply(Game *g, int p_idx, const LegalMove *m) {
-    switch (m->type) {
-        case MOVE_ATTACK: return handle_attack(g, p_idx, m->cards, m->n_cards);
-        case MOVE_COVER:  return handle_cover (g, p_idx, m->cards, m->attack_cards, m->n_cards);
-        case MOVE_PASS:   return handle_pass  (g, p_idx, m->cards, m->n_cards);
-        case MOVE_PICKUP: return handle_pickup(g, p_idx);
-        case MOVE_GOOD:   return handle_good  (g, p_idx);
-        default:          return false;
-    }
-}
-
 // Copy only the live prefix of a Game (header + first num_logs entries).
 // logs[] is the final member, so everything else is inside the prefix.
 static void cd_lite_clone(Game *dst, const Game *src) {
@@ -511,7 +500,7 @@ static int cd_solve(Solver *S, const Game *g, int alpha, int beta, int depth) {
     for (int i = 0; i < mv->n; i++) {
         Game *child = solve_scratch_child(depth);
         solve_clone_prefix(child, g);
-        if (!cd_apply(child, actor, &mv->moves[i])) continue;
+        if (!legal_move_apply(child, actor, &mv->moves[i])) continue;
         int v = cd_solve(S, child, alpha, beta, depth + 1);
         if (S->aborted) return 0;
         if (maximizing) {
@@ -1007,7 +996,7 @@ static int cd_simulate(Game *g, int my_idx, int max_turns) {
                 idx = fn(g, pi, moves, NULL);
             }
             if (idx < 0 || idx >= moves->n) continue;
-            if (cd_apply(g, pi, &moves->moves[idx])) { acted = true; break; }
+            if (legal_move_apply(g, pi, &moves->moves[idx])) { acted = true; break; }
         }
         if (!acted) break;
     }
@@ -1141,7 +1130,7 @@ static int cd_try_endgame_solve(const Game *g, int bot_idx,
             // Slot 0 is free here: cd_solve starts the recursion at depth 1.
             Game *child = solve_scratch_child(0);
             solve_clone_prefix(child, root);
-            if (!cd_apply(child, bot_idx, &moves->moves[i])) continue;
+            if (!legal_move_apply(child, bot_idx, &moves->moves[i])) continue;
             S.aborted = false;
             v = cd_solve(&S, child, alpha, 2000, 1);
             aborted_i = S.aborted;
@@ -1170,7 +1159,7 @@ static int cd_try_endgame_solve(const Game *g, int bot_idx,
         } else {
             Game *child = solve_scratch_child(0);
             solve_clone_prefix(child, root);
-            if (!cd_apply(child, bot_idx, &moves->moves[i])) continue;
+            if (!legal_move_apply(child, bot_idx, &moves->moves[i])) continue;
             S.aborted = false;
             v = cd_solve(&S, child, -1, 0, 1);
             aborted_i = (S.budget <= 0) || S.aborted;
@@ -1519,7 +1508,7 @@ static int cordite_choose_impl(const Game *g, int bot_idx,
                 if (!alive[ci]) continue;
                 cd_lite_clone(trial, world);
                 game_rng_set(sim_rng);   // identical stream for every move
-                if (!cd_apply(trial, bot_idx, &moves->moves[C.idx[ci]])) {
+                if (!legal_move_apply(trial, bot_idx, &moves->moves[C.idx[ci]])) {
                     score[ci] += (double)g->num_players;
                     nsim[ci]++;
                     continue;

@@ -1,5 +1,15 @@
 // SECURITY S1: hidden information never leaves the server for the wrong viewer.
 //
+// This module is the ONE implementation of that scenario. Its callers are the
+// three files e2e/security_hidden_info_{2p,4p,6p}.test.ts, one per seat count,
+// which do nothing but name a table shape and hand it to playTable(). They are
+// separate files, not three tests in one, because node:test gives a file one
+// process and runs its top-level tests one after another: serialised, the three
+// independent scenarios cost 80s and set the db lane's wall-clock floor
+// (scripts/run_e2e.mjs); as three files the lane runs them side by side and the
+// floor drops to the longest one. The body lives here so that a check added or a
+// leak class closed is added once and proved at every seat count.
+//
 // Real games - 2, 4 and 6 seats, humans and bots interleaved - are created,
 // joined, dealt and played through the REAL edge entry points (action / meta /
 // create index.ts handlers, signed tokens, the real bot loop), and after every
@@ -59,28 +69,32 @@
 // Replays after a game ends reveal every hand on purpose (game_snapshots); that
 // is not a live payload and is not checked here.
 
-import './harness.ts';
-import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { applySchema, uuid, pgPool, broadcastLog } from './harness.ts';
-import { settle, tokenFor, postJson, postPacked, EdgeResponse } from './helpers/edge.ts';
-import { lockedBotLoop } from '../server/impls/supabase/functions/_shared/adapter/bot_actions.ts';
-import { __clearGameCache } from '../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
-import { __setTableDealSeedOverride } from '../server/impls/supabase/functions/_shared/adapter/table_io.ts';
-import { botsTestWasm } from './helpers/bots_test_wasm.ts';
-import { encodeActionRequest, wireCard } from '../sdk/ts/wire/awire.ts';
-import { readEnvelopeView, readPushSequence } from './helpers/client_read.ts';
-import { cRosterTrailerRead } from './helpers/roster_kernel.ts';
-import { clientTable } from '../sdk/ts/table/client_table.ts';
-import { base64ToBytes } from '../sdk/ts/wire/bytes.ts';
-import * as L from '../sdk/ts/gen/game_layout.bots.ts';
-import { fixtureTable } from './helpers/table_fixture.ts';
-import { legalMoves, readTable, rebuild, type BoardState, type PlayCard } from './helpers/table_play.ts';
-import { suiteRng } from './helpers/rng.ts';
-import { isCard } from '../src/state/view.ts';
+import { applySchema, uuid, pgPool, broadcastLog } from '../harness.ts';
+import { pgAdminConfig } from '../adapters/supabase.ts';
+import { settle, tokenFor, postJson, postPacked, EdgeResponse } from './edge.ts';
+import { lockedBotLoop } from '../../server/impls/supabase/functions/_shared/adapter/bot_actions.ts';
+import { __clearGameCache } from '../../server/impls/supabase/functions/_shared/adapter/game_cache.ts';
+import { __setTableDealSeedOverride } from '../../server/impls/supabase/functions/_shared/adapter/table_io.ts';
+import { botsTestWasm } from './bots_test_wasm.ts';
+import { encodeActionRequest, wireCard } from '../../sdk/ts/wire/awire.ts';
+import { readEnvelopeView, readPushSequence } from './client_read.ts';
+import { cRosterTrailerRead } from './roster_kernel.ts';
+import { clientTable } from '../../sdk/ts/table/client_table.ts';
+import { base64ToBytes } from '../../sdk/ts/wire/bytes.ts';
+import * as L from '../../sdk/ts/gen/game_layout.bots.ts';
+import { fixtureTable } from './table_fixture.ts';
+import { legalMoves, readTable, rebuild, type BoardState, type PlayCard } from './table_play.ts';
+import { suiteRng } from './rng.ts';
+import { isCard } from '../../src/state/view.ts';
 
+// The harness silences log and warn; the handlers under test also console.error
+// the refusals these games provoke on purpose, so that goes too.
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; console.error = () => {}; }
 
+// One seed name for all three files, so E2E_SEED_SECURITY_HIDDEN_INFO pins every
+// seat count at once. Each file is its own process, so each game draws from the
+// head of the stream rather than from wherever the previous game left it.
 const rng = suiteRng('security_hidden_info');
 const HIDDEN = 0xfe;
 const NONE = 0xff;
@@ -119,7 +133,7 @@ function assertMaskedFixedPoint(board: Uint8Array, viewer: number, what: string)
 // ---- viewers ------------------------------------------------------------------
 
 interface Human { id: string; name: string; tok: string }
-interface Table {
+export interface Table {
     gameId: string;
     humans: Human[];
     bots: string[];
@@ -136,17 +150,76 @@ const viewerName = (v: Viewer) => v.kind === 'anon' ? 'anon' : `${v.kind}:${v.h.
 
 // ---- DB-side reads, as the client roles ---------------------------------------
 
-async function asRole<T>(role: 'anon' | 'authenticated', sub: string | null, fn: (c: import('pg').PoolClient) => Promise<T>): Promise<T> {
+type ClientRole = 'anon' | 'authenticated';
+
+// One read as a client role, the way PostgREST runs a request: a transaction,
+// SET LOCAL ROLE, the JWT claims as a transaction-scoped setting, the statement,
+// and a ROLLBACK that discards all three together. The role and the settings
+// are LOCAL, so nothing outlives the transaction; the ROLLBACK is the one
+// statement that guarantees that, so a client whose ROLLBACK fails is destroyed
+// (release(true)) rather than handed back to the pool where a later read as
+// someone else would run under this role.
+//
+// The preamble is sent as ONE multi-statement string, the way PostgREST batches
+// its own (one SELECT of set_config calls right after the BEGIN), not as one
+// round trip per statement. Measured over one run of the original single file:
+// 7,643 role-scoped reads paid 30,600 preamble round trips (BEGIN, SET LOCAL
+// ROLE, set_config, ROLLBACK), about 4s of an 80s file, on a harness detail.
+// The statements are the same statements in the same order inside the same
+// transaction, so what the read sees is unchanged: current_user is the role and
+// current_setting('request.jwt.claims') is the claims, and both are proved on
+// the pool by roleScopingHolds() before a game is played. Extra transaction-
+// scoped settings (realtime.topic, for the channel policies) ride in the same
+// string. Values are inlined with the driver's escapeLiteral because a
+// multi-statement simple query carries no bind parameters.
+async function asRole<T>(role: ClientRole, sub: string | null, fn: (c: import('pg').PoolClient) => Promise<T>,
+                         settings: Record<string, string> = {}): Promise<T> {
     const c = await pgPool.connect();
+    let clean = false;
     try {
-        await c.query('BEGIN');
-        await c.query(`SET LOCAL ROLE ${role}`);
-        await c.query(`SELECT set_config('request.jwt.claims', $1, true)`,
-            [JSON.stringify(sub ? { sub, role } : { role })]);
+        const claims = JSON.stringify(sub ? { sub, role } : { role });
+        const set = Object.entries({ 'request.jwt.claims': claims, ...settings })
+            .map(([k, v]) => `set_config(${c.escapeLiteral(k)}, ${c.escapeLiteral(v)}, true)`).join(', ');
+        await c.query(`BEGIN; SET LOCAL ROLE ${role}; SELECT ${set}`);
         return await fn(c);
     } finally {
-        try { await c.query('ROLLBACK'); } catch { /* */ }
-        c.release();
+        try { await c.query('ROLLBACK'); clean = true; } catch { /* the client is destroyed below */ }
+        c.release(clean ? undefined : true);
+    }
+}
+
+// The proof that asRole scopes exactly what a read sees, and scopes nothing past
+// the read: inside, the session user is the role and the two settings RLS and
+// the channel policies read (through auth.uid(), auth.role(), realtime.topic())
+// hold the claims and the topic; afterwards, every connection the pool holds
+// answers as the pool's own user with neither. The pool is drained by taking
+// every client at once, so a connection asRole touched cannot hide behind an
+// idle one. The probe reads the settings raw rather than through auth.uid():
+// the client roles hold no USAGE on the auth schema, the policies reach those
+// functions by the grants seed.sql makes, and the probe is about the session.
+async function roleScopingHolds(): Promise<void> {
+    const sub = uuid();
+    // NULLIF: a rolled-back transaction-scoped setting reads back as '' rather
+    // than as the NULL of a setting the session never saw; either is "unset".
+    const probeSql = `SELECT current_user AS who,
+        NULLIF(current_setting('request.jwt.claims', true), '') AS claims, NULLIF(current_setting('realtime.topic', true), '') AS topic`;
+    const inside = await asRole('authenticated', sub, async (c) => (await c.query(probeSql)).rows[0], { 'realtime.topic': 'gu-x-y' });
+    assert.deepEqual(inside, { who: 'authenticated', claims: JSON.stringify({ sub, role: 'authenticated' }), topic: 'gu-x-y' },
+        'asRole: the read runs as the role, with the claims and the extra setting');
+    const anon = await asRole('anon', null, async (c) => (await c.query(probeSql)).rows[0]);
+    assert.deepEqual(anon, { who: 'anon', claims: JSON.stringify({ role: 'anon' }), topic: null },
+        'asRole: anon reads as anon with no subject');
+    const held: import('pg').PoolClient[] = [];
+    try {
+        for (let i = 0; i < pgPool.totalCount; i++) held.push(await pgPool.connect());
+        assert.ok(held.length > 0, 'the pool has connections to check');
+        for (const c of held) {
+            const after = (await c.query(probeSql)).rows[0];
+            assert.deepEqual(after, { who: pgAdminConfig.user, claims: null, topic: null },
+                'asRole: no pooled connection keeps a role, a claim or a topic after the read');
+        }
+    } finally {
+        for (const c of held) c.release();
     }
 }
 
@@ -434,12 +507,17 @@ async function restoreRows(gameId: string, snap: Rows, stateOverride?: string) {
         return jsonbGamesColumns.has(c) && v !== null ? JSON.stringify(v) : v;
     });
     await pgPool.query(`UPDATE games SET ${cols.map((c, i) => `${c}=$${i + 1}`).join(', ')} WHERE id=$${cols.length + 1}`, [...vals, gameId]);
+    // The rows go back in one INSERT per table, not one per row. This is the
+    // harness resetting the world between twin replays, not the server writing
+    // it (commit_table writes player_views set-based, from unnest), and it used
+    // to be the single most common statement of the whole file: 10,552 one-row
+    // INSERTs in one run. A row set from one SELECT * shares one column list.
     for (const [table, rows] of [['player_views', snap.pv], ['spectator_views', snap.sv]] as const) {
         await pgPool.query(`DELETE FROM ${table} WHERE game_id=$1`, [gameId]);
-        for (const r of rows) {
-            const keys = Object.keys(r);
-            await pgPool.query(`INSERT INTO ${table} (${keys.join(',')}) VALUES (${keys.map((_, i) => `$${i + 1}`).join(',')})`, keys.map(k => r[k]));
-        }
+        if (rows.length === 0) continue;
+        const keys = Object.keys(rows[0]);
+        const tuples = rows.map((_, r) => `(${keys.map((_, k) => `$${r * keys.length + k + 1}`).join(',')})`).join(',');
+        await pgPool.query(`INSERT INTO ${table} (${keys.join(',')}) VALUES ${tuples}`, rows.flatMap(row => keys.map(k => row[k])));
     }
     __clearGameCache();
 }
@@ -553,7 +631,11 @@ async function human(name: string): Promise<Human> {
     return { id: hid, name, tok: await tokenFor(hid, name) };
 }
 
-async function playTable(nHumans: number, nBots: number, dealSeed: number): Promise<Table> {
+/**
+ * One whole game at one table shape, every step checked for every viewer: the
+ * scenario the three seat-count files each run once. `dealSeed` pins the deal.
+ */
+export async function playTable(nHumans: number, nBots: number, dealSeed: number): Promise<Table> {
     const humans: Human[] = [];
     for (let i = 0; i < nHumans; i++) humans.push(await human(`h${i}x${nHumans + nBots}`));
     const bots = await seatBots(nBots);
@@ -622,7 +704,8 @@ async function playTable(nHumans: number, nBots: number, dealSeed: number): Prom
     return t;
 }
 
-function assertExercised(t: Table, label: string) {
+/** The game was a real one: played to the end, every kind of record, every checker exercised. */
+export function assertExercised(t: Table, label: string) {
     const kinds = new Set<number>();
     return (async () => {
         for (const log of await sessionLogs(t.gameId)) for (const r of sessionLogRecords(log, label)) kinds.add(r.type);
@@ -641,10 +724,11 @@ function assertExercised(t: Table, label: string) {
         assert.ok(c.rosterBlocks > 0, `${label}: as3 roster blocks were walked (${c.rosterBlocks})`);
     })();
 }
-
 // =============================================================================
 
-before(async () => {
+// The schema this scenario runs on, for each caller's before(): the real
+// seed.sql, the platform functions RLS reads, and the test-only log archive.
+export async function installHiddenInfoSchema(): Promise<void> {
     await applySchema();
     // Faithful stand-ins for Supabase's own auth.uid()/auth.role()/realtime.topic(),
     // so RLS and the realtime channel policies are evaluated for real.
@@ -675,30 +759,12 @@ before(async () => {
     assert.deepEqual(anonColumns, [], 'anon holds no column of games (docs/C_GAME_SHAPE_MIGRATION.md 3.3)');
     jsonbGamesColumns = new Set((await pgPool.query(
         `SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='games' AND data_type='jsonb'`)).rows.map(r => r.column_name));
-});
-after(async () => { await settle(); });
-
-test('2 seats (two humans): every payload each viewer receives hides what it must', async (tc) => {
-    const t = await playTable(2, 0, 2);
-    tc.diagnostic(`${t.gameId} ${JSON.stringify(t.counts)}`);
-    await assertExercised(t, '2p');
-});
-
-test('4 seats (two humans, two bots): every payload each viewer receives hides what it must', async (tc) => {
-    const t = await playTable(2, 2, 4);
-    tc.diagnostic(`${t.gameId} ${JSON.stringify(t.counts)}`);
-    await assertExercised(t, '4p');
-});
-
-test('6 seats (three humans, three bots): every payload each viewer receives hides what it must', async (tc) => {
-    const t = await playTable(3, 3, 6);
-    tc.diagnostic(`${t.gameId} ${JSON.stringify(t.counts)}`);
-    await assertExercised(t, '6p');
-});
+    await roleScopingHolds();
+}
 
 // Channel authorization, as Realtime evaluates it: a private channel join is a
 // SELECT on realtime.messages with realtime.topic() set to the channel.
-async function channelFixture() {
+export async function channelFixture() {
     // A lobby is enough: channel authorization reads membership, not cards.
     const a = await human('rt-a'), b = await human('rt-b'), spectator = await human('rt-spec');
     const created = await postJson('create', a.tok, {});
@@ -707,32 +773,9 @@ async function channelFixture() {
     assert.equal((await postJson('meta', b.tok, { type: 'join', game_id: gameId })).status, 200, 'b joins');
     await settle();
     await pgPool.query(`INSERT INTO realtime.messages(topic, extension) SELECT 'x', 'broadcast' WHERE NOT EXISTS (SELECT 1 FROM realtime.messages)`);
-    const canJoin = (role: 'anon' | 'authenticated', sub: string | null, topic: string) => asRole(role, sub, async (c) => {
-        await c.query(`SELECT set_config('realtime.topic', $1, true)`, [topic]);
-        return (await c.query(`SELECT count(*)::int AS n FROM realtime.messages WHERE extension='broadcast'`)).rows[0].n > 0;
-    });
+    // The topic rides in asRole's preamble, transaction-scoped like the claims.
+    const canJoin = (role: ClientRole, sub: string | null, topic: string) => asRole(role, sub, async (c) =>
+        (await c.query(`SELECT count(*)::int AS n FROM realtime.messages WHERE extension='broadcast'`)).rows[0].n > 0,
+    { 'realtime.topic': topic });
     return { a, b, spectator, gameId, canJoin };
 }
-
-test('realtime: nobody but its owner can join a gu- topic; anon cannot join game-; a signed-in spectator can', async () => {
-    const { a, b, spectator, gameId, canJoin } = await channelFixture();
-    const guA = `gu-${gameId}-${a.id}`;
-    assert.equal(await canJoin('authenticated', b.id, guA), false, 'another seated player cannot join A\'s gu- topic');
-    assert.equal(await canJoin('authenticated', spectator.id, guA), false, 'a spectator cannot join A\'s gu- topic');
-    assert.equal(await canJoin('anon', null, guA), false, 'anon cannot join A\'s gu- topic');
-    assert.equal(await canJoin('anon', null, `game-${gameId}`), false, 'anon cannot join the game- topic');
-    assert.equal(await canJoin('authenticated', spectator.id, `game-${gameId}`), true, 'a signed-in spectator can join the game- topic');
-});
-
-// The owner half of the matrix above. seed.sql's gu- policy used to compare
-// split_part(topic, '-', 3) with auth.uid()::text; a user id is a hyphenated
-// UUID, so that field is only its first 8 hex digits and every gu- join was
-// refused, the owner's included (fail-closed, not a leak). The policy now
-// rebuilds the exact topic from the player_hands row
-// (seed.sql's realtime policies; migration 20260917120000 carried the same
-// change to hosted).
-test('realtime: a seated player can join their OWN gu- topic', async () => {
-    const { a, b, gameId, canJoin } = await channelFixture();
-    assert.equal(await canJoin('authenticated', a.id, `gu-${gameId}-${a.id}`), true, 'A can join A\'s own gu- topic');
-    assert.equal(await canJoin('authenticated', b.id, `gu-${gameId}-${b.id}`), true, 'B, who joined the lobby, can join B\'s own gu- topic');
-});

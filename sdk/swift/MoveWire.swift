@@ -8,6 +8,7 @@
 // Card byte: suit*13 + (value-1); 0xFE/0xFF are never real move cards.
 
 import Foundation
+import CFoolish
 
 public enum MoveWire {
     // Index → MoveType, matching MOVE_* in c/src/legal.h and MOVE_TYPE in the web.
@@ -24,21 +25,59 @@ public enum MoveWire {
         let v = Int(b); return Card(s: v / 13, v: (v % 13) + 1)
     }
 
-    /// Encode a move as the awire action frame [kind, n, cards, (attacks for
-    /// cover)] — what fio_apply_awire / awire_decode reads. Kinds: attack 0,
-    /// cover 1, pass 2, pickup 3, good 4 (AWIRE_KIND). Card byte = suit*13+value-1.
+    /// A move as the awire action frame - the bytes `fio_apply_awire` takes,
+    /// and the body an online move POSTs.
+    ///
+    /// THE KERNEL WRITES IT. This hands over the move's MOVE_* index and its
+    /// cards as suit/value pairs and gets the frame back (`fio_awire_encode` ->
+    /// c/src/awire.c), so the frame's shape - which kinds carry cards, how many
+    /// a cover owes, what a card byte is - is stated in C and nowhere in Swift.
+    /// It is the same reason `encode` below exists rather than a second menu
+    /// writer: one format, one author.
+    ///
+    /// Swift wrote these bytes itself until the kernel grew a door, and the two
+    /// copies that did (here and FoolishNet's PackedAction) had already drifted:
+    /// this one trapped instead of refusing on a move of more than 255 cards,
+    /// and wrote a cover with fewer attack cards than cover cards - a frame the
+    /// decoder rejects - without noticing. The kernel refuses both, so those are
+    /// now empty rather than wrong.
+    ///
+    /// Empty for anything the kernel will not write: `wait` and `unknown`, which
+    /// have no action on the wire, and a structurally impossible move.
     public static func encodeAction(_ move: Move) -> [UInt8] {
-        func byte(_ c: Card) -> UInt8 { c.isHidden ? 0xFE : UInt8(c.s * 13 + (c.v - 1)) }
-        let kind: UInt8
-        switch move.type {
-        case .attack: kind = 0; case .cover: kind = 1; case .pass: kind = 2
-        case .pickup: kind = 3; case .good: kind = 4
-        default: return []      // wait/unknown never reach apply
+        let cards = pairs(move.cards)
+        // Only a cover pairs cover cards with the attacks they land on; every
+        // other kind's frame has no room for them, so they are not offered.
+        let attacks = move.type == .cover ? pairs(move.attackCards ?? []) : pairs([])
+        var cap = 64
+        while true {
+            var out = [CChar](repeating: 0, count: cap)
+            let n: Int32 = cards.withUnsafeBufferPointer { c in
+                attacks.withUnsafeBufferPointer { a in
+                    fio_awire_encode(Int32(wireIndex(move.type)),
+                                     c.baseAddress, Int32(move.cards.count),
+                                     a.baseAddress, Int32(move.type == .cover ? (move.attackCards ?? []).count : 0),
+                                     &out, Int32(cap))
+                }
+            }
+            if n >= 0 { return out.prefix(Int(n)).map { UInt8(bitPattern: $0) } }
+            guard n == -3, cap < 4096 else { return [] }   // FIO_ECAP
+            cap *= 2
         }
-        if move.type == .pickup || move.type == .good { return [kind, 0] }
-        var out: [UInt8] = [kind, UInt8(move.cards.count)]
-        out.append(contentsOf: move.cards.map(byte))
-        if move.type == .cover { out.append(contentsOf: (move.attackCards ?? []).map(byte)) }
+    }
+
+    /// Cards as the kernel's suit/value PAIRS - two signed bytes each, so the
+    /// card-byte arithmetic stays on the C side with the rest of the frame.
+    /// `clamping` rather than a plain conversion because a nonsense card must
+    /// come back as a refusal from the kernel, never as a trap here.
+    ///
+    /// Two zero bytes of tail so an EMPTY list still has a non-nil baseAddress;
+    /// the kernel is told the count separately and never reads them.
+    private static func pairs(_ cards: [Card]) -> [Int8] {
+        var out: [Int8] = []
+        out.reserveCapacity(cards.count * 2 + 2)
+        for c in cards { out.append(Int8(clamping: c.s)); out.append(Int8(clamping: c.v)) }
+        out.append(0); out.append(0)
         return out
     }
 

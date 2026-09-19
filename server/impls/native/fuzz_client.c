@@ -29,6 +29,8 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 
+#include "ctl_wire.h"   // the control plane is packed bytes now - this client builds it, then breaks it
+
 static const char *g_host = "127.0.0.1";
 static int g_port = 8099;
 static volatile int g_stop = 0;
@@ -117,32 +119,60 @@ static _Thread_local char t_rep[65536];
 // have something valid to corrupt) --------
 typedef struct { char token[128]; char game[32]; } Cred;
 
-static void extract(const char *reply, const char *key, char *out, int cap) {
-    out[0] = 0;
-    const char *p = strstr(reply, key);
-    if (!p) return;
-    p += strlen(key);
-    int i = 0; while (p[i] && p[i] != '"' && i < cap - 1) { out[i] = p[i]; i++; } out[i] = 0;
+// Locate the response BODY inside a drained reply. The control plane answers
+// packed frames now, so the body is binary and may hold NUL bytes - it can
+// never be found with strstr, and its length has to come back as a number.
+// Returns NULL if the reply has no header terminator.
+static const unsigned char *reply_body(const char *reply, int n, int *out_len) {
+    for (int i = 0; i + 3 < n; i++)
+        if (reply[i] == '\r' && reply[i+1] == '\n' && reply[i+2] == '\r' && reply[i+3] == '\n') {
+            *out_len = n - (i + 4);
+            return (const unsigned char *)reply + i + 4;
+        }
+    return NULL;
 }
+
+// Build "POST <path> HTTP/1.1" with a BINARY body of exactly bl bytes. Every
+// control-plane request the fuzzer sends - well-formed or hostile - goes
+// through here, because a packed frame cannot be pasted into a format string
+// the way a JSON body could.
+static int build_post(char *req, int cap, const char *path, const char *token,
+                      const void *body, int bl) {
+    int n;
+    if (token && token[0])
+        n = snprintf(req, (size_t)cap, "POST %s HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\nContent-Length: %d\r\n\r\n", path, token, bl);
+    else
+        n = snprintf(req, (size_t)cap, "POST %s HTTP/1.1\r\nHost: x\r\nContent-Length: %d\r\n\r\n", path, bl);
+    if (n < 0 || n >= cap) return -1;
+    if (bl > 0) {
+        if (n + bl > cap) return -1;
+        memcpy(req + n, body, (size_t)bl);
+        n += bl;
+    }
+    return n;
+}
+
 static void get_cred(unsigned *s, Cred *c) {
     char req[512], rep[8192];
     char uname[24]; snprintf(uname, sizeof uname, "fz%u_%u", rr(s), rr(s));
-    int n = snprintf(req, sizeof req,
-        "POST /auth/signup HTTP/1.1\r\nHost: x\r\nContent-Length: %d\r\n\r\n{\"username\":\"%s\"}",
-        (int)strlen(uname) + 15, uname);
-    // build body length correctly
-    char body[64]; int bl = snprintf(body, sizeof body, "{\"username\":\"%s\"}", uname);
-    n = snprintf(req, sizeof req,
-        "POST /auth/signup HTTP/1.1\r\nHost: x\r\nContent-Length: %d\r\n\r\n%s", bl, body);
-    int r = hit(req, n, rep, sizeof rep);
+    unsigned char body[CTL_FRAME_MAX];
+    int bl = ctl_enc_auth(uname, body, sizeof body);
     c->token[0] = c->game[0] = 0;
-    if (r > 0) extract(rep, "\"token\":\"", c->token, sizeof c->token);
+    if (bl < 0) return;
+    int n = build_post(req, sizeof req, "/auth/signup", NULL, body, bl);
+    if (n < 0) return;
+    int r = hit(req, n, rep, sizeof rep);
+    int blen = 0;
+    const unsigned char *b = r > 0 ? reply_body(rep, r, &blen) : NULL;
+    CtlSession sess;
+    if (b && ctl_dec_session(b, blen, &sess)) snprintf(c->token, sizeof c->token, "%s", sess.token);
     if (!c->token[0]) return;
     // create a game
     n = snprintf(req, sizeof req,
         "POST /create HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\nContent-Length: 0\r\n\r\n", c->token);
     r = hit(req, n, rep, sizeof rep);
-    if (r > 0) extract(rep, "\"game_id\":\"", c->game, sizeof c->game);
+    b = r > 0 ? reply_body(rep, r, &blen) : NULL;
+    if (b) ctl_dec_game(b, blen, c->game, sizeof c->game);
 }
 
 // Drive this worker's game to GAME_STATUS_PLAYING so the move fuzzer's frames
@@ -153,13 +183,14 @@ static void get_cred(unsigned *s, Cred *c) {
 static void start_game(unsigned *s, Cred *c) {
     (void)s;
     if (!c->token[0] || !c->game[0]) return;
-    char body[128], req[512];
-    int bl = snprintf(body, sizeof body, "{\"type\":\"add-bot\",\"game_id\":\"%s\",\"strategy\":\"random\"}", c->game);
-    int n = snprintf(req, sizeof req, "POST /meta HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\nContent-Length: %d\r\n\r\n%s", c->token, bl, body);
-    hit(req, n, t_rep, sizeof t_rep);
-    bl = snprintf(body, sizeof body, "{\"type\":\"start\",\"game_id\":\"%s\"}", c->game);
-    n  = snprintf(req, sizeof req, "POST /meta HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\nContent-Length: %d\r\n\r\n%s", c->token, bl, body);
-    hit(req, n, t_rep, sizeof t_rep);
+    unsigned char body[CTL_FRAME_MAX];
+    char req[512];
+    int bl = ctl_enc_meta(CTL_META_ADD_BOT, c->game, "random", body, sizeof body);
+    int n = build_post(req, sizeof req, "/meta", c->token, body, bl);
+    if (n > 0) hit(req, n, t_rep, sizeof t_rep);
+    bl = ctl_enc_meta(CTL_META_START, c->game, "", body, sizeof body);
+    n  = build_post(req, sizeof req, "/meta", c->token, body, bl);
+    if (n > 0) hit(req, n, t_rep, sizeof t_rep);
 }
 
 // ============ ATTACKS ============
@@ -181,23 +212,53 @@ static void atk_http(unsigned *s) {
     hit(req, n, t_rep, sizeof t_rep);
 }
 
-// 2. Hostile signups: empty/huge/binary usernames, non-JSON, JSON injection.
+// 2. Hostile signups, as malformed CONTROL WIRE (ctl_wire.h). Same intent the
+//    JSON version had - empty/huge/binary usernames, a body that is not the
+//    format at all, extra fields smuggled in, a truncated body - expressed in
+//    the shape the server now parses. The packed wire's failure modes are
+//    different from a scraper's and that is exactly why they are worth firing
+//    at: a length prefix that LIES about how much follows, a frame that claims
+//    a payload it does not carry, a kind byte nobody serves.
 static void atk_signup(unsigned *s) {
-    char body[9000], req[9200]; int bl;
-    switch (ri(s, 7)) {
-        case 0: bl = snprintf(body, sizeof body, "{\"username\":\"\"}"); break;
-        case 1: { char h[512]; hostile_str(s, h, 200); bl = snprintf(body, sizeof body, "{\"username\":\"%s\"}", h); break; }
-        case 2: { bl = snprintf(body, sizeof body, "{\"username\":\""); for (; bl < 8000; bl++) body[bl] = 'A'; bl += snprintf(body + bl, sizeof body - bl, "\"}"); break; } // 8k username
-        case 3: bl = snprintf(body, sizeof body, "not json at all %u", rr(s)); break;
-        case 4: bl = snprintf(body, sizeof body, "{\"username\":\"x\",\"admin\":true,\"user_id\":\"root\"}"); break; // injection
-        case 5: bl = snprintf(body, sizeof body, "{\"username\":"); break;                        // truncated json
-        default: { rbytes(s, (uint8_t *)body, 300); bl = 300; break; }                            // binary body
+    uint8_t body[9000]; char req[9200]; int bl;
+    switch (ri(s, 8)) {
+        case 0:   // well-formed frame, empty username
+            bl = ctl_enc_auth("", body, sizeof body); break;
+        case 1: { // well-formed frame, control chars / quotes / high bytes in the name
+            char h[512]; hostile_str(s, h, 200);
+            bl = ctl_enc_auth(h, body, sizeof body); break; }
+        case 2: { // an 8k username behind a length prefix that says 255: the
+                  // frame LIES about its own size in both directions at once
+            bl = 0;
+            body[bl++] = CTL_WIRE_VERSION; body[bl++] = CTL_AUTH;
+            body[bl++] = 0xff; body[bl++] = 0x1f;          // claims 8191 payload bytes
+            body[bl++] = 255;                               // string claims 255
+            for (; bl < 8000; bl++) body[bl] = 'A';         // carries 7995
+            break; }
+        case 3: { // not a control frame at all
+            bl = snprintf((char *)body, sizeof body, "not a frame at all %u", rr(s)); break; }
+        case 4: { // a valid CTL_AUTH frame with EXTRA fields smuggled past the
+                  // declared payload - the packed-wire analogue of the JSON
+                  // injection case ({"username":"x","admin":true,...})
+            bl = ctl_enc_auth("x", body, sizeof body);
+            if (bl > 0 && bl + 8 < (int)sizeof body) {
+                body[bl++] = 4; memcpy(body + bl, "root", 4); bl += 4;
+                body[bl++] = 1;                             // a trailing "admin" byte
+            }
+            break; }
+        case 5:   // the head only: a frame that promises a payload and stops
+            body[0] = CTL_WIRE_VERSION; body[1] = CTL_AUTH; body[2] = 40; body[3] = 0; bl = 4; break;
+        case 6:   // a kind byte no endpoint serves, with a plausible payload
+            bl = ctl_enc_auth("x", body, sizeof body);
+            if (bl > 1) body[1] = (uint8_t)ri(s, 256);
+            break;
+        default: { rbytes(s, body, 300); bl = 300; break; }  // binary body
     }
+    if (bl < 0) bl = 0;
     if (bl > (int)sizeof body) bl = (int)sizeof body;
     const char *path = ri(s, 2) ? "/auth/signup" : "/auth/signin";
-    int n = snprintf(req, sizeof req, "POST %s HTTP/1.1\r\nHost: x\r\nContent-Length: %d\r\n\r\n", path, bl);
-    if (n + bl <= (int)sizeof req) { memcpy(req + n, body, (size_t)bl); n += bl; }
-    hit(req, n, t_rep, sizeof t_rep);
+    int n = build_post(req, sizeof req, path, NULL, body, bl);
+    if (n > 0) hit(req, n, t_rep, sizeof t_rep);
 }
 
 // 3. Forged/garbage Bearer tokens on every authed endpoint.
@@ -217,22 +278,30 @@ static void atk_token(unsigned *s) {
     hit(req, n, t_rep, sizeof t_rep);
 }
 
-// 4. Meta abuse with a VALID token: spam bots (overflow seats), start/join junk.
+// 4. Meta abuse with a VALID token, as control wire: spam bots (overflow
+//    seats), start/join junk, a verb byte nobody serves, a frame whose game_id
+//    runs off its own payload.
 static void atk_meta(unsigned *s, Cred *c) {
     if (!c->token[0]) return;
-    char body[256], req[512];
+    uint8_t body[256]; char req[512];
     const char *g = c->game[0] ? c->game : "deadbeef0000";
     int bl;
-    switch (ri(s, 6)) {
-        case 0: bl = snprintf(body, sizeof body, "{\"type\":\"add-bot\",\"game_id\":\"%s\",\"strategy\":\"cordite\"}", g); break; // spam bots -> seat overflow
-        case 1: bl = snprintf(body, sizeof body, "{\"type\":\"join\",\"game_id\":\"%s\"}", g); break;
-        case 2: bl = snprintf(body, sizeof body, "{\"type\":\"start\",\"game_id\":\"nonexistent%u\"}", rr(s)); break;
-        case 3: { char h[64]; hostile_str(s, h, 30); bl = snprintf(body, sizeof body, "{\"type\":\"%s\",\"game_id\":\"%s\"}", h, g); break; } // junk type
-        case 4: bl = snprintf(body, sizeof body, "{\"type\":\"add-bot\",\"game_id\":\"%s\",\"strategy\":\"../../nope\"}", g); break; // bad strategy
-        default: bl = snprintf(body, sizeof body, "{\"game_id\":\"%s\"}", g); break;    // missing type
+    switch (ri(s, 7)) {
+        case 0: bl = ctl_enc_meta(CTL_META_ADD_BOT, g, "cordite", body, sizeof body); break;   // spam bots -> seat overflow
+        case 1: bl = ctl_enc_meta(CTL_META_JOIN, g, "", body, sizeof body); break;
+        case 2: { char bogus[32]; snprintf(bogus, sizeof bogus, "nonexistent%u", rr(s));
+                  bl = ctl_enc_meta(CTL_META_START, bogus, "", body, sizeof body); break; }
+        case 3: bl = ctl_enc_meta(ri(s, 256), g, "", body, sizeof body); break;                 // junk verb byte
+        case 4: bl = ctl_enc_meta(CTL_META_ADD_BOT, g, "../../nope", body, sizeof body); break; // bad strategy
+        case 5: { // a game_id length prefix that runs past the declared payload
+            bl = ctl_enc_meta(CTL_META_JOIN, g, "", body, sizeof body);
+            if (bl > 5) body[5] = 200;
+            break; }
+        default: bl = ctl_enc_meta(0, "", "", body, sizeof body); break;   // no verb, no game (the "missing type" case)
     }
-    int n = snprintf(req, sizeof req, "POST /meta HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\nContent-Length: %d\r\n\r\n%s", c->token, bl, body);
-    hit(req, n, t_rep, sizeof t_rep);
+    if (bl < 0) bl = 0;
+    int n = build_post(req, sizeof req, "/meta", c->token, body, bl);
+    if (n > 0) hit(req, n, t_rep, sizeof t_rep);
 }
 
 // 5. Unparseable binary /action bodies (the awire move decoder's hostile input).
@@ -343,12 +412,21 @@ static void atk_move(unsigned *s, Cred *c) {
     int r = hit(req, hn, t_rep, sizeof t_rep);
 
     if (r > 0) {
-        if (strstr(t_rep, "not playing") || strstr(t_rep, "not seated")) {
-            // game ended (bot loop ran it out) — mint a fresh PLAYING one
+        // The reply is a packed frame, so read it as one: a CTL_ERROR carries
+        // the refusal as a byte and a CTL_APPLIED means the frame got all the
+        // way to awire_apply. This is the one place the fuzzer parses the
+        // server strictly - everywhere else it just throws bytes and counts.
+        int blen = 0;
+        const unsigned char *b = reply_body(t_rep, r, &blen);
+        int reason = 0;
+        bool applied = false;
+        if (b && ctl_dec_error(b, blen, &reason) &&
+            (reason == CTL_ERR_NOT_PLAYING || reason == CTL_ERR_NOT_SEATED)) {
+            // game ended (bot loop ran it out) - mint a fresh PLAYING one
             get_cred(s, c); start_game(s, c);
-        } else if (strstr(t_rep, "\"ok\":")) {
+        } else if (b && ctl_dec_applied(b, blen, &applied, NULL)) {
             g_move_tests++;                                 // frame reached awire_apply
-            if (strstr(t_rep, "\"ok\":true")) g_move_accepts++;
+            if (applied) g_move_accepts++;
         }
     }
 }

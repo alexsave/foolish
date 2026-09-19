@@ -119,12 +119,17 @@ fi
 touched_src=$(comm -12 \
   <(printf '%s\n' "$watched") \
   <(printf '%s\n' "$changed" | sort -u))
-# …plus the Makefile, but only when the diff moved a WASM_* assignment - the
-# flags, caps and source lists that decide what the modules ARE. A new target or
-# a comment does not qualify (see the note where SOURCES is built).
+# …plus the Makefile, but only when the diff moved a WASM_* assignment or an
+# --export= line - the flags, caps, source lists and export tables that decide
+# what the modules ARE. A new target or a comment does not qualify (see the note
+# where SOURCES is built).
+#
+# The --export= half is the same hole scripts/wasm_stamp.sh had: an export list
+# is a fifty-line continuation and only its first line is an assignment, so
+# adding or dropping an entry read as "this change touches no wasm source".
 if printf '%s\n' "$changed" | grep -qx 'c/Makefile' \
    && git diff "$merge_base"...HEAD -- c/Makefile \
-      | grep -qE '^[+-][A-Za-z0-9_]*WASM[A-Za-z0-9_]*[[:space:]]*[:?+]?='; then
+      | grep -qE '^[+-]([A-Za-z0-9_]*WASM[A-Za-z0-9_]*[[:space:]]*[:?+]?=|.*--export=)'; then
   touched_src=$(printf '%s\nc/Makefile\n' "$touched_src" | sed '/^$/d' | sort -u)
 fi
 touched_art=$(comm -12 \

@@ -41,6 +41,18 @@ typedef struct {
 
 void calculate_legal_moves(const Game *g, int bot_idx, LegalMoves *out);
 
+// One ENUMERATED move applied: the kind -> handler dispatch, once. This is
+// awire.h's canonical-dispatch contract (game.c awire_apply) for the other
+// direction a move reaches the engine - not a decoded wire action but a move
+// the enumerator above produced, which is how every bot, the bot drive, the
+// analyser and the offline harnesses play. The switch is a kernel fact, so a
+// new move kind is added here and nowhere else.
+// Returns what the handler returned; engine_last_reject holds the reason on a
+// false return. Unlike awire_apply it does NOT settle game status: a rollout
+// steps the board thousands of times and the settle belongs to the host that
+// owns the real game.
+bool legal_move_apply(Game *g, int seat, const LegalMove *m);
+
 // Scoped output cap: generation appends (and the combinatorial recursions
 // prune) at `cap` moves instead of MAX_LEGAL_MOVES, so callers may enumerate
 // into buffers with fewer than MAX_LEGAL_MOVES slots (the solver scratch).
@@ -153,7 +165,14 @@ int legal_menu_next(MenuWalk *w, MenuMove *out);
 typedef struct {
     const unsigned char *menu;    // the packed menu wire for this seat
     int menu_len;
-    // 2 bytes per battle: the attack, then its cover or LEGAL_WIRE_NONE.
+    // 2 bytes per battle: the attack, then its cover or LEGAL_WIRE_NONE - the
+    // one table layout (anim_plan.h). A cell holding any other byte off the
+    // deck (ANIM_TABLE_UNKNOWN, a card the viewer is not allowed to see) is A
+    // CARD THAT IS THERE: the battle is covered, and no menu card equals it,
+    // so nothing covers it. It must not read as LEGAL_WIRE_NONE - a cover
+    // spelled as absent opens a battle that is closed, withholds Good and
+    // offers a drop target - and it need not be refused: these rules decide by
+    // menu identity, and a cell with none simply matches nothing.
     const unsigned char *table;
     int n_battles;
     int power_suit;               // trump suit 0..3, or -1 for none

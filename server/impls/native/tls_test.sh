@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# tls_test.sh — Stage 3's correctness gate: generates a throwaway self-signed
+# tls_test.sh - Stage 3's correctness gate: generates a throwaway self-signed
 # cert with the `openssl` CLI, starts foolish_server with --tls against it,
 # and checks:
 #   1) a real TLS handshake completes (`openssl s_client`);
 #   2) HTTPS actually answers a request (`curl -k https://.../health`);
 #   3) WSS (WebSocket-over-TLS) carries the hot loop end-to-end, applying
-#      genuinely LEGAL moves through foolish_hammer --tls --mode=ws — same
+#      genuinely LEGAL moves through foolish_hammer --tls --mode=ws - same
 #      90%+-applied bar test.sh's plaintext ws smoke test holds itself to.
 #
 # Nothing here is committed: the cert/key/db live under a scratch tmp dir
@@ -15,6 +15,10 @@ set -uo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
+# Everything this server answers is packed bytes now (ctl_wire.h); over TLS as
+# over plaintext. CTL_CURL carries the -k these self-signed certs need.
+CTL_CURL="curl -sk"
+. "$DIR/ctl.sh"
 
 PORT="${1:-8199}"
 H="https://127.0.0.1:$PORT"
@@ -62,27 +66,31 @@ echo "── openssl s_client handshake"
 SCLIENT_OUT="$(echo -e "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n" \
     | timeout 5 openssl s_client -connect "127.0.0.1:$PORT" -quiet 2>"$WORKDIR/sclient.err")"
 echo "$SCLIENT_OUT" | head -3
-echo "$SCLIENT_OUT" | grep -q '"ok":true'
+# /health answers an empty CTL_HEALTH frame (ctl_wire.h), so what proves the
+# handshake carried a REAL HTTP response is the status line, not a body string.
+echo "$SCLIENT_OUT" | grep -q '^HTTP/1.1 200'
 check "openssl s_client completes a TLS handshake and gets a real HTTP response" "$?"
 grep -qE 'TLSv1\.[23]' "$WORKDIR/sclient.err" 2>/dev/null || \
     echo | timeout 5 openssl s_client -connect "127.0.0.1:$PORT" 2>&1 | grep -E "Protocol|New," | head -2
 
 # ── 2) curl -k https://.../health ──
 echo "── curl -k https://…/health"
-CURL_OUT="$(curl -sk "$H/health")"
-echo "$CURL_OUT"
-[ "$CURL_OUT" = '{"ok":true}' ]
-check "curl -k https over TLS returns {\"ok\":true}" "$?"
+curl -sk "$H/health" -o "$WORKDIR/health.bin"
+HEALTH_KIND="$(ctl_kind "$WORKDIR/health.bin")"
+echo "   $(wc -c < "$WORKDIR/health.bin" | tr -d ' ')-byte frame, kind=$HEALTH_KIND"
+# 70 == CTL_HEALTH (0x46). An empty payload is the whole answer.
+[ "$HEALTH_KIND" = "70" ]
+check "curl -k https over TLS returns a CTL_HEALTH frame" "$?"
 
-# ── 3) plain HTTP against the SAME (TLS-only) port must NOT parse as HTTP —
+# ── 3) plain HTTP against the SAME (TLS-only) port must NOT parse as HTTP -
 #    confirms the listener really is TLS end-to-end, not falling back ──
 echo "── plaintext HTTP against the TLS-only port (expect garbage/no valid response)"
-PLAIN_OUT="$(curl -s --max-time 2 "http://127.0.0.1:$PORT/health" 2>&1 || true)"
-if [ "$PLAIN_OUT" = '{"ok":true}' ]; then
-    echo "FAIL: plaintext HTTP against the TLS port got a real HTTP response — TLS is not actually enforced"
+PLAIN_CODE="$(curl -s --max-time 2 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/health" 2>/dev/null || true)"
+if [ "$PLAIN_CODE" = "200" ]; then
+    echo "FAIL: plaintext HTTP against the TLS port got a real HTTP response - TLS is not actually enforced"
     PASS=false
 else
-    echo "PASS: plaintext HTTP against the TLS port did not get a valid response ($PLAIN_OUT)"
+    echo "PASS: plaintext HTTP against the TLS port did not get a valid response (http \"$PLAIN_CODE\")"
 fi
 
 # ── 4) WSS smoke: foolish_hammer --tls --mode=ws, real legal moves ──
@@ -103,9 +111,9 @@ fi
 
 echo
 if $PASS; then
-    echo "=== tls_test.sh: PASS — TLS handshake + HTTPS + WSS all verified ==="
+    echo "=== tls_test.sh: PASS - TLS handshake + HTTPS + WSS all verified ==="
     exit 0
 else
-    echo "=== tls_test.sh: FAIL — see above ==="
+    echo "=== tls_test.sh: FAIL - see above ==="
     exit 1
 fi

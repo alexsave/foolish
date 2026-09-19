@@ -126,8 +126,8 @@ final class CountOwnershipTests: XCTestCase {
     /// THE FIVE FIELDS LIVE IN ONE PLACE. Not five pieces of `@State` on the
     /// board any more: one ledger, whose storage the board cannot reach.
     func testTheBoardHoldsOneLedgerAndNoLooseOverrides() throws {
-        let src = try code(source("MessageTableView.swift"))
-        XCTAssertEqual(src.filter { $0.contains("@State private var ledger = ShownLedger()") }.count, 1,
+        let src = try code(BoardSource.lines())
+        XCTAssertEqual(src.filter { $0.contains("@State var ledger = ShownLedger()") }.count, 1,
                        "the board should hold exactly one ShownLedger")
         for gone in ["deckCountOverride", "discardCountOverride", "seatCountOverride",
                      "outShown", "roleShown"] {
@@ -142,7 +142,7 @@ final class CountOwnershipTests: XCTestCase {
     /// this says it too, so that making one settable is a red test and not a
     /// quiet re-opening of rounds 42 and 43.
     func testNothingAssignsALedgerFieldDirectly() throws {
-        let src = try code(source("MessageTableView.swift"))
+        let src = try code(BoardSource.lines())
         // `ledger.deck =`, `ledger.hand[3] =`, and so on. `==` is a read.
         let write = try NSRegularExpression(
             pattern: #"ledger\.(deck|discard|hand|out|roles)(\[[^\]]*\])?\s*=[^=]"#)
@@ -176,7 +176,7 @@ final class CountOwnershipTests: XCTestCase {
     /// A new one somewhere else fails here and has to be argued for in the
     /// claim list - which is the review this rule never got the first two times.
     func testEveryLedgerWriteSitsInsideAKnownOwner() throws {
-        let src = try source("MessageTableView.swift")
+        let src = try BoardSource.lines()
         var accounted: [String] = []
         for (fn, indent) in owners {
             accounted += code(try body(of: fn, in: src, indent: indent))
@@ -194,7 +194,7 @@ final class CountOwnershipTests: XCTestCase {
     /// rounds 42-44 were about, and it is now checkable per call site rather
     /// than "is there a guard in here somewhere".
     func testEachOwnerClaimsWhatItActuallyIs() throws {
-        let src = try source("MessageTableView.swift")
+        let src = try BoardSource.lines()
         let expected: [String: (String, Int)] = [
             // The three bystanders: a live play, a plain-move release, a
             // refusal. All three defer to a running sequence (round 42/43).
@@ -251,7 +251,7 @@ final class CountOwnershipTests: XCTestCase {
     /// must not be re-opened in the name of round 43). Eight spaces = the
     /// function's own top level = it runs on every call.
     func testTheRefusedPlacementIsStillGivenBackUnconditionally() throws {
-        let b = try body(of: "releaseLivePlayVeil", in: try source("MessageTableView.swift"))
+        let b = try body(of: "releaseLivePlayVeil", in: try BoardSource.lines())
         for write in ["handBeforeMyMove = nil", "pendingPlacement = nil",
                       "pendingCover = nil", "animator.cancelHeld(ids)",
                       "animator.reveal(ids)"] {
@@ -267,7 +267,7 @@ final class CountOwnershipTests: XCTestCase {
     /// out as one line so this cannot pass on a `clearSweep()` that has drifted
     /// out of the verdict.
     func testTheSweptTableIsHandedBackOnTheSameTermsAsTheLedger() throws {
-        let b = code(try body(of: "releaseLivePlayVeil", in: try source("MessageTableView.swift")))
+        let b = code(try body(of: "releaseLivePlayVeil", in: try BoardSource.lines()))
         XCTAssertTrue(b.contains("        if released { clearSweep() }"),
                       "the swept table must follow the ledger's own verdict")
         XCTAssertFalse(b.contains("        clearSweep()"),
@@ -281,7 +281,7 @@ final class CountOwnershipTests: XCTestCase {
     /// never come back off their overrides is frozen for good, which is a worse
     /// defect than the twitch.
     func testTheStreamTeardownStillReleasesItUnconditionally() throws {
-        let src = try source("MessageTableView.swift")
+        let src = try BoardSource.lines()
         let stream = code(try body(of: "runEventStream", in: src))
         let teardown = try XCTUnwrap(stream.firstIndex { $0.contains("if mySeq == animSequenceToken {") },
                                      "the teardown's newest-sequence branch")
@@ -376,7 +376,7 @@ final class CountOwnershipTests: XCTestCase {
     /// Both are legitimate. What may not come back is the SEED spelled by hand -
     /// a `RoleState` built into the field, or an `if ... == nil` guarding it.
     func testNoCallSiteSeedsTheMarksByHand() throws {
-        let src = try source("MessageTableView.swift")
+        let src = try BoardSource.lines()
         for fn in ["freezeCounts", "runEventStream", "replayLastMoveOnOpen"] {
             let b = code(try body(of: fn, in: src)).joined(separator: "\n")
             XCTAssertFalse(b.contains("l.roles = RoleState("),
@@ -460,7 +460,7 @@ final class CountOwnershipTests: XCTestCase {
     /// pinned to the first statement of the hold's own `defer`, which is the
     /// one place the order is visible.
     func testEverySequenceHoldIsReleasedFirstThingInItsDefer() throws {
-        let src = code(try source("MessageTableView.swift"))
+        let src = code(try BoardSource.lines())
         let holds = src.indices.filter { src[$0].contains("BoardAnimator.holdSequence()") }
         XCTAssertFalse(holds.isEmpty, "the board takes the depth somewhere")
         for i in holds {
@@ -507,12 +507,12 @@ final class CountOwnershipTests: XCTestCase {
     /// claim: it supersedes everything and then has no way to notice it was
     /// itself superseded) is a red test rather than a plausible-looking line.
     func testTheSequenceTokenIsClaimedThroughOneAccessor() throws {
-        let src = code(try source("MessageTableView.swift"))
+        let src = code(try BoardSource.lines())
         let bumps = src.filter { $0.contains("animSequenceToken += 1") }
         XCTAssertEqual(bumps.count, 1,
                        "the token is bumped only inside `claimAnimSequence` - "
                        + "call it instead of bumping by hand")
-        let claim = try body(of: "claimAnimSequence", in: try source("MessageTableView.swift"))
+        let claim = try body(of: "claimAnimSequence", in: try BoardSource.lines())
         XCTAssertTrue(code(claim).contains { $0.contains("animSequenceToken += 1") },
                       "…and that one bump is the accessor's own")
     }

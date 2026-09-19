@@ -1,6 +1,6 @@
 // game_bridge.h — thin, thread-safe wrappers the QUIC/WebTransport transport
-// (quic_wt.c) uses to reach the shared in-memory game WITHOUT seeing
-// foolish_server.c's statics. Implemented in foolish_server.c, compiled only
+// (quic_wt.c) uses to reach the shared in-memory game WITHOUT seeing the
+// registry's statics. Implemented in game_bridge.c, compiled only
 // in the QUIC build (-DFOOLISH_QUIC). Every call is safe to make from the QUIC
 // thread concurrently with the TCP acceptors and epoll workers: they take the
 // exact same registry / per-game locks the HTTP and /ws paths do, so QUIC is
@@ -39,5 +39,12 @@ int gb_apply_move(const char *game_id, const char *token, int seat,
 // unref per successful ref.
 bool gb_game_ref(const char *game_id);
 void gb_game_unref(const char *game_id);
+
+// Start the QUIC/HTTP3/WebTransport listener on its own detached thread,
+// beside the TCP acceptors, sharing this process's game state through the
+// bridge above. QUIC carries TLS 1.3 itself, so it needs the same cert/key the
+// TCP --tls path would (there is no plaintext QUIC). Returns false if the
+// thread could not be started - main() warns and carries on with TCP only.
+bool quic_bridge_start(int port, int workers, const char *cert, const char *key);
 
 #endif

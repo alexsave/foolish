@@ -87,8 +87,8 @@ final class UndoFlightSourceTests: XCTestCase {
     /// MUTANTS: the snapshot moved inside the Task; the inline lookup restored;
     /// the flight reading `self.lastBattleCardFrames` instead of the snapshot.
     func testTheUndoSnapshotsTheTableBeforeItWaits() throws {
-        let board = try source("FoolishKit/Boards/MessageTableView.swift")
-        let start = try XCTUnwrap(board.range(of: "private func flyUndoReturn("))
+        let board = try BoardSource.text()
+        let start = try XCTUnwrap(board.range(of: "func flyUndoReturn("))
         let body = String(board[start.upperBound...].prefix(9000))
         let snap = try XCTUnwrap(body.range(of: "let fromCardFrames = lastBattleCardFrames"),
                                  "flyUndoReturn does not snapshot the card frames")

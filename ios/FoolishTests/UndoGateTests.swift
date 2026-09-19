@@ -65,7 +65,7 @@ final class UndoGateTests: XCTestCase {
         XCTAssertFalse(UndoGate.accepts(waits: true, sequencing: false, tweening: false,
                                         presenting: false, autoCollapsing: false, cardsVeiled: true),
                        "Undo flashed up between the tap and the flight")
-        let board = try source("FoolishKit/Boards/MessageTableView.swift")
+        let board = try BoardSource.text()
         XCTAssertTrue(board.contains("still: UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty) && !playInFlight"),
                       "the board does not tell the gate about cards it is veiling, or a play still being staged")
         // A bout-ending Good flies nothing and veils nothing, and `stageNow`
@@ -89,7 +89,7 @@ final class UndoGateTests: XCTestCase {
     /// MUTANTS: `acting` not reading the in-flight play; the mark set after
     /// the selection is cleared; never cleared when the apply answers.
     func testNoPlayButtonBetweenTheTapAndTheStage() throws {
-        let board = try source("FoolishKit/Boards/MessageTableView.swift")
+        let board = try BoardSource.text()
         // The rule itself is a value now - see
         // BoardActionMenuTests.testNoPillBetweenTheTapAndTheStage. What only
         // this file can check is that the board still HANDS the menu its own
@@ -104,7 +104,7 @@ final class UndoGateTests: XCTestCase {
                   superseded: false, pickupHeld: false, isDefender: true, isOut: false,
                   tableIsEmpty: false, selectionIsEmpty: true)), .none,
             "a pill is offered while a play is being applied")
-        let start = try XCTUnwrap(board.range(of: "private func play(_ move: Move) {"))
+        let start = try XCTUnwrap(board.range(of: "func play(_ move: Move) {"))
         let body = String(board[start.upperBound...].prefix(4000))
         let mark = try XCTUnwrap(body.range(of: "playInFlight = ActionPillSlot.holdsWhilePlaying"),
                                  "play never marks itself in flight")
@@ -125,7 +125,7 @@ final class UndoGateTests: XCTestCase {
     /// the timer; the flag shipping off.
     func testNoPlayButtonWhileAnUndoFlies() throws {
         XCTAssertTrue(ActionPillSlot.waitsForStillByDefault)
-        let board = try source("FoolishKit/Boards/MessageTableView.swift")
+        let board = try BoardSource.text()
         // Again: the standing-down is BoardActionMenuTests'
         // testNoPillWhileTheBoardIsStillMoving. Here: that the board computes
         // "still" from the two statics, hands it over, and redraws on the timer
@@ -232,7 +232,7 @@ final class UndoGateTests: XCTestCase {
     /// MUTANTS: the pill's `enabled:` without the gate; its action calling
     /// `undoAction` directly; `undoAction` itself asking the gate.
     func testThePillAsksAndTheBubbleXDoesNot() throws {
-        let board = try source("FoolishKit/Boards/MessageTableView.swift")
+        let board = try BoardSource.text()
         XCTAssertTrue(board.contains("undoPill(enabled: pill == .enabled)"),
                       "the Undo pill does not draw itself from the gate's own answer")
         XCTAssertTrue(board.contains("retracting: controller.conflictRetracting"),
@@ -241,7 +241,7 @@ final class UndoGateTests: XCTestCase {
                       "the Undo pill does not re-check the gate at the tap")
         XCTAssertTrue(board.contains("guard UndoGate.acceptsNow(cardsVeiled: !animator.hidden.isEmpty), !playInFlight else"),
                       "undoPillTapped does not refuse a tap mid-animation")
-        let undo = try XCTUnwrap(board.range(of: "private func undoAction()"))
+        let undo = try XCTUnwrap(board.range(of: "func undoAction()"))
         let body = board[undo.upperBound...].prefix(600)
         XCTAssertFalse(body.contains("UndoGate"),
                        "undoAction is shared with the bubble's X, which must never be refused")

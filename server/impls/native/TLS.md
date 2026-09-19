@@ -174,6 +174,16 @@ Content-Type: application/json
 
 $ curl -sk https://127.0.0.1:8299/health
 {"ok":true}
+```
+
+The transcript above is the Stage 3 run, kept as the record of it. The BODIES
+have since changed: the control plane is packed bytes now (`ctl_wire.h`), so
+`/health` answers an empty four-byte `CTL_HEALTH` frame as
+`application/octet-stream` rather than `{"ok":true}`. Nothing about the TLS
+half of this changed - `tls_test.sh` checks the status line and the frame kind
+instead of the old body string.
+
+```
 
 $ echo | openssl s_client -connect 127.0.0.1:8299 2>&1 | grep -E "Protocol|New,"
 New, TLSv1.3, Cipher is TLS_AES_256_GCM_SHA384

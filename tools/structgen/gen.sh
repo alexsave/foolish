@@ -7,6 +7,12 @@
 #                           module is checked against (its own module, so the
 #                           browser can check it without importing a reader of
 #                           the unmasked Game - e2e/security_client_boundary)
+#   sdk/kotlin/gen/         the module a JVM client compiles: the same value
+#                           snapshots again, over the bytes JNI hands across
+#                           rather than over an address the JVM cannot hold.
+#                           Generated for an Android triple and the headers'
+#                           DEFAULT caps (specs/android_layout.args says why),
+#                           and it carries its own sgCheckLayout.
 #   sdk/swift/gen/          the module FoolishKit compiles: value snapshots of
 #                           the structs iOS reads out of the kernel it LINKS,
 #                           generated for the iOS caps and the iOS triple. Its
@@ -16,7 +22,7 @@
 #                           offset (sdk/swift/KernelLayout.swift).
 #   tools/structgen/gen/    the generator's own genericity fixtures
 #
-#   gen.sh                 write all three. THIS RUNS AS PART OF EVERY BUILD -
+#   gen.sh                 write all four. THIS RUNS AS PART OF EVERY BUILD -
 #                          `npm run build`, `typecheck` and every test lane go
 #                          through it (package.json, the `gen` script and its
 #                          pre-hooks), so the modules a lane compiles are the
@@ -70,6 +76,7 @@ root="$(cd "$here/../.." && pwd)"
 # anything is built, for the same reason.
 OUT_DIRS="sdk/ts/gen
 sdk/swift/gen
+sdk/kotlin/gen
 tools/structgen/gen"
 if [ "${1:-}" = "--print-dirs" ]; then printf '%s\n' "$OUT_DIRS"; exit 0; fi
 
@@ -79,15 +86,16 @@ SG="$here/build/structgen"
 flags() { make -s -C "$root/c" -f Makefile -f "$here/print.mk" "sg-print-$1"; }
 spec() { grep -v '^[[:space:]]*#' "$here/specs/$1.args"; }
 BOTS="$(flags WASM_BOT_CFLAGS)"
-# …and the same three as absolute paths, read back from the one list above so
+# …and the same four as absolute paths, read back from the one list above so
 # the two cannot drift.
 prod="$root/$(printf '%s\n' "$OUT_DIRS" | sed -n 1p)"
 swift="$root/$(printf '%s\n' "$OUT_DIRS" | sed -n 2p)"
-fixtures="$root/$(printf '%s\n' "$OUT_DIRS" | sed -n 3p)"
+kotlin="$root/$(printf '%s\n' "$OUT_DIRS" | sed -n 3p)"
+fixtures="$root/$(printf '%s\n' "$OUT_DIRS" | sed -n 4p)"
 # Where the two --check runs are told to write. Not for general use: the whole
 # point of this script is that a build writes the real thing.
 if [ -n "${SG_OUT_ROOT:-}" ]; then
-  prod="$SG_OUT_ROOT/ts"; swift="$SG_OUT_ROOT/swift"; fixtures="$SG_OUT_ROOT/fixtures"
+  prod="$SG_OUT_ROOT/ts"; swift="$SG_OUT_ROOT/swift"; kotlin="$SG_OUT_ROOT/kotlin"; fixtures="$SG_OUT_ROOT/fixtures"
 fi
 check=0
 case "${1:-}" in
@@ -95,7 +103,7 @@ case "${1:-}" in
   *) echo "gen.sh: unknown argument '$1' (want nothing, --check, --verify-wasm or --print-dirs)" >&2; exit 2 ;;
 esac
 [ "${1:-}" = "--check" ] && check=1
-mkdir -p "$prod" "$fixtures" "$swift"
+mkdir -p "$prod" "$fixtures" "$swift" "$kotlin"
 
 # The resident Game prefix the TS marshal reads and writes, per wasm build.
 set -f   # the spec is split on whitespace, never globbed
@@ -144,6 +152,27 @@ set +f
 "$SG" "${IOS[@]}" --build "ios=$(flags IOS_CFLAGS)" --target "$(flags IOS_LAYOUT_TRIPLE)" \
   --swift "$swift/kernel.ios.swift"
 
+# The same structs again for a JVM client (specs/android_layout.args), as Kotlin
+# value snapshots over a ByteBuffer. Its own triple, and the headers' DEFAULT
+# caps rather than a borrowed set: c/Makefile has no Android flags to read, and
+# IOS_CAPS is shrunk for an iMessage extension's memory ceiling, which an app
+# does not have. A cap mismatch between this module and an NDK build of the
+# kernel is what the generated sgCheckLayout refuses at startup.
+#
+# ONE ABI, and aarch64 is it, because that is what ships. The other Android ABIs
+# lay these structs out identically - there is no pointer in them, which is why
+# Kotlin can read them at all - but plain `char` is unsigned on ARM and signed
+# on x86, and the layout hash carries a scalar's kind. So an x86_64 run writes
+# the same readers under a different hash; test/kotlin.sh pins exactly that, and
+# an emulator build has to be stamped from its own run.
+ANDROID_TRIPLE="aarch64-linux-android21"
+set -f
+# shellcheck disable=SC2207
+ANDROID=(--cwd "$root/c" $(spec android_layout))
+set +f
+"$SG" "${ANDROID[@]}" --build "android=-O2 -Isrc" --target "$ANDROID_TRIPLE" \
+  --kotlin "$kotlin/Kernel.kt" --kotlin-package cards.foolish.kernel
+
 # ---- the translated strings (tools/datagen) ---------------------------------
 #
 # A SIBLING TOOL, not a structgen flag. structgen asks clang for shape - every
@@ -165,21 +194,23 @@ set +f
 # way), so the module the site imports for a language has to BE one language.
 make -s -C "$root/tools/datagen" build/datagen
 DG="$root/tools/datagen/build/datagen"
-i18n_ts="$prod/i18n"; i18n_swift="$swift/i18n"
-mkdir -p "$i18n_ts" "$i18n_swift"
+i18n_ts="$prod/i18n"; i18n_swift="$swift/i18n"; i18n_kotlin="$kotlin/i18n"
+mkdir -p "$i18n_ts" "$i18n_swift" "$i18n_kotlin"
 dg() { "$DG" --cwd "$root/c/i18n" "$@"; }
 
 # The registry first: what languages there are, what each calls itself, and
 # which way it is written. A table of structs, so datagen reads its columns by
 # field name - the case that proves this tool is not string-table-shaped.
 dg --header languages.h --table FS_LANGUAGES --require-complete --name FoolishLanguages \
-   --ts "$i18n_ts/languages.ts" --swift "$i18n_swift/FoolishLanguages.swift"
+   --ts "$i18n_ts/languages.ts" --swift "$i18n_swift/FoolishLanguages.swift" \
+   --kotlin "$i18n_kotlin/FoolishLanguages.kt" --kotlin-package cards.foolish.i18n
 # Every key that exists, in one list. --ts-const so TypeScript keeps them as
 # LITERAL types: the website's `StringId` union is derived from this array
 # (src/localization/strings.ts), so the set of keys a call site may ask for is
 # the set the C declares, checked by tsc, and not a second list to fall behind.
 dg --header keys.h --table FS_KEY_NAME --require-complete --name FoolishStringKeys --ts-const \
-   --ts "$i18n_ts/keys.ts" --swift "$i18n_swift/FoolishStringKeys.swift"
+   --ts "$i18n_ts/keys.ts" --swift "$i18n_swift/FoolishStringKeys.swift" \
+   --kotlin "$i18n_kotlin/FoolishStringKeys.kt" --kotlin-package cards.foolish.i18n
 
 # …and one module per language. THE LIST COMES FROM THE REGISTRY, read back out
 # of the C, so adding a language is adding its file and its row and nothing
@@ -204,7 +235,8 @@ for code in $codes; do
   # the flag to reach for instead of letting a hole through unnoticed.
   dg --header "strings_$code.c" --table "FS_STRINGS_$up" --labels "FS_STRINGS_$up.0=FS_KEY_NAME" \
      --require-complete --name "FoolishStrings$cap" \
-     --ts "$i18n_ts/strings.$code.ts" --swift "$i18n_swift/FoolishStrings$cap.swift"
+     --ts "$i18n_ts/strings.$code.ts" --swift "$i18n_swift/FoolishStrings$cap.swift" \
+     --kotlin "$i18n_kotlin/FoolishStrings$cap.kt" --kotlin-package cards.foolish.i18n
 done
 
 # Genericity fixtures (test/verify.test.ts).

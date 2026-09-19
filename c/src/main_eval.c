@@ -148,15 +148,7 @@ static int play_one_verbose(uint32_t seed, int n_players, int protagonist, int o
             printf("[%3d] p%d  %s  [%-22s]  hand=%d  table=[%s]\n",
                    ++step, pi, mt, cbuf, g.players[pi].hand_count,
                    table_buf[0] ? table_buf : "(empty)");
-            bool ok = false;
-            switch (m->type) {
-                case MOVE_ATTACK: ok = handle_attack(&g, pi, m->cards, m->n_cards); break;
-                case MOVE_COVER:  ok = handle_cover (&g, pi, m->cards, m->attack_cards, m->n_cards); break;
-                case MOVE_PASS:   ok = handle_pass  (&g, pi, m->cards, m->n_cards); break;
-                case MOVE_PICKUP: ok = handle_pickup(&g, pi); break;
-                case MOVE_GOOD:   ok = handle_good  (&g, pi); break;
-                default: break;
-            }
+            bool ok = legal_move_apply(&g, pi, m);
             if (ok) { acted = true; break; }
         }
         if (!acted) break;
@@ -246,15 +238,7 @@ static int play_one_audit(uint32_t seed, int n_players, int protagonist, int opp
                 }
             }
             const LegalMove *m = &moves.moves[idx];
-            bool ok = false;
-            switch (m->type) {
-                case MOVE_ATTACK: ok = handle_attack(&g, pi, m->cards, m->n_cards); break;
-                case MOVE_COVER:  ok = handle_cover (&g, pi, m->cards, m->attack_cards, m->n_cards); break;
-                case MOVE_PASS:   ok = handle_pass  (&g, pi, m->cards, m->n_cards); break;
-                case MOVE_PICKUP: ok = handle_pickup(&g, pi); break;
-                case MOVE_GOOD:   ok = handle_good  (&g, pi); break;
-                default: break;
-            }
+            bool ok = legal_move_apply(&g, pi, m);
             if (ok) { acted = true; break; }
         }
         if (!acted) break;
@@ -333,15 +317,7 @@ static int play_one(uint32_t seed, int n_players, int protagonist, int opp) {
                 SIG_FOLD(m->type); SIG_FOLD(m->n_cards);
                 for (int c = 0; c < m->n_cards; c++) { SIG_FOLD(m->cards[c].suit); SIG_FOLD(m->cards[c].value); }
             }
-            bool ok = false;
-            switch (m->type) {
-                case MOVE_ATTACK: ok = handle_attack(&g, pi, m->cards, m->n_cards); break;
-                case MOVE_COVER:  ok = handle_cover (&g, pi, m->cards, m->attack_cards, m->n_cards); break;
-                case MOVE_PASS:   ok = handle_pass  (&g, pi, m->cards, m->n_cards); break;
-                case MOVE_PICKUP: ok = handle_pickup(&g, pi); break;
-                case MOVE_GOOD:   ok = handle_good  (&g, pi); break;
-                default: break;
-            }
+            bool ok = legal_move_apply(&g, pi, m);
             if (ok) { acted = true; break; }
         }
         if (!acted) break;

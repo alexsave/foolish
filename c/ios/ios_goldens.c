@@ -27,22 +27,36 @@ static uint64_t fnv1a(uint64_t h, const char *s, int n) {
     return h;
 }
 
+// A card byte off the packed menu, as the suit/value pair fio_awire_encode
+// takes. Reading the menu's own byte is this generator's job; what the FRAME
+// looks like is not, which is why the frame itself comes from the kernel below.
+static void menu_card_pair(unsigned char b, int8_t *out) {
+    out[0] = (int8_t)(b / 13);
+    out[1] = (int8_t)(b % 13 + 1);
+}
+
 // First packed legal move -> its awire action frame, so the golden is DRIVEN
-// through the same packed path the app ships (EngineC.apply -> fio_apply_awire),
-// Mirrors Swift MoveWire.encodeAction exactly.
+// through the same packed path the app ships (EngineC.apply -> fio_apply_awire).
+// The frame is written by fio_awire_encode, the same door Swift's
+// MoveWire.encodeAction goes through - this used to write the bytes itself and
+// claim in a comment to "mirror Swift exactly", which is the coupling the door
+// removed.
 // packed layout (fio_legal_packed): u32 count, then per move
 //   type(1) n(1) cards[n] attacks[n]; kinds align with AWIRE_* (attack0..good4).
-static int first_move_awire(const unsigned char *packed, int len, unsigned char *out) {
+static int first_move_awire(const unsigned char *packed, int len, unsigned char *out, int cap) {
     if (len < 6) return 0;
     int t = packed[4], n = packed[5];
     if (6 + 2 * n > len) return 0;
     const unsigned char *cards = packed + 6, *attacks = packed + 6 + n;
-    int o = 0;
-    if (t == 3 || t == 4) { out[o++] = (unsigned char)t; out[o++] = 0; return o; } // pickup/good
-    out[o++] = (unsigned char)t; out[o++] = (unsigned char)n;
-    for (int i = 0; i < n; i++) out[o++] = cards[i];
-    if (t == 1) for (int i = 0; i < n; i++) out[o++] = attacks[i];   // cover carries attacks
-    return o;
+    int8_t cp[2 * 64], ap[2 * 64];
+    if (n > 64) return 0;
+    for (int i = 0; i < n; i++) menu_card_pair(cards[i], cp + 2 * i);
+    for (int i = 0; i < n; i++) menu_card_pair(attacks[i], ap + 2 * i);
+    // pickup/good carry no cards; only a cover carries the attacks it pairs with.
+    const int nc = (t == 3 || t == 4) ? 0 : n;
+    const int na = (t == 1) ? n : 0;
+    const int rc = fio_awire_encode(t, cp, nc, ap, na, (char *)out, cap);
+    return rc < 0 ? 0 : rc;
 }
 
 int main(void) {
@@ -91,7 +105,7 @@ int main(void) {
             // loudly rather than silently freezing a half-played golden.
             int lrc = fio_legal_packed(seat, legal, sizeof(legal));
             if (lrc < 0) { fprintf(stderr, "goldens: legal menu did not fit (rc=%d)\n", lrc); return 1; }
-            int al = first_move_awire((const unsigned char *)legal, lrc, awire);
+            int al = first_move_awire((const unsigned char *)legal, lrc, awire, (int)sizeof awire);
             if (al == 0) break;
             if (fio_apply_awire(seat, awire, al) != FIO_EOK) break;
             int sl = fio_state_packed(0, buf, sizeof(buf));

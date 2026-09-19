@@ -115,8 +115,8 @@ final class HoldbackTests: XCTestCase {
     /// MUTANT: delete the `locked:` argument from `hand(_:crop:reserveNoSlot:)`
     /// and this fails.
     func testTheBoardLocksTheHeldCardsInTheFan() throws {
-        let src = try source("FoolishKit/Boards/MessageTableView.swift")
-        let head = try XCTUnwrap(src.range(of: "private func hand(_ view: GameView"))
+        let src = try BoardSource.text()
+        let head = try XCTUnwrap(src.range(of: "func hand(_ view: GameView"))
         let fn = String(src[head.lowerBound...].prefix(2500))
         XCTAssertTrue(fn.contains("locked: Set(fanHoldback.map(\\.identity))"),
                       "the fan must be told which cards are held, or they stay draggable")
@@ -163,7 +163,7 @@ final class HoldbackTests: XCTestCase {
     /// directly rather than read off a string. Same rule, same expression, one
     /// of the two halves no longer a spelling test.
     func testTheHeldCardsAreStillDrawnInTheFan() throws {
-        let src = try source("FoolishKit/Boards/MessageTableView.swift")
+        let src = try BoardSource.text()
         XCTAssertTrue(src.contains("hidden: Veil.fan(veiled: veiledCardIds, holdback: fanHoldback)"),
                       "the fan's hidden set must still be the veil MINUS the held cards")
         let held = Card(s: 0, v: 6)
@@ -223,7 +223,7 @@ final class HoldbackTests: XCTestCase {
     /// MUTANT: restore either site to `hand.filter { !deferred.contains(…) }` and
     /// this fails.
     func testTheTraceAndItsTriggerAreTheSameArithmetic() throws {
-        let src = try source("FoolishKit/Boards/MessageTableView.swift")
+        let src = try BoardSource.text()
         XCTAssertTrue(src.contains("let laidHandCount = HandLayout.laidCount("),
                       "the trigger must count the hand the fan lays out")
         let onChange = try XCTUnwrap(src.range(of: ".onChange(of: laidHandCount)"))
@@ -264,7 +264,7 @@ final class HoldbackTests: XCTestCase {
     /// MUTANT: delete the `releaseHoldback` call from any one of the four and
     /// this fails naming it.
     func testEveryTeardownRescuesTheHoldback() throws {
-        let src = try source("FoolishKit/Boards/MessageTableView.swift")
+        let src = try BoardSource.text()
         // One writer: `releaseHoldback` itself. (`handHoldback = isSpectating ? …`
         // is the arming, and the fly-time `removeAll` is cards letting go one
         // group at a time - neither is a bare clear.)
@@ -382,8 +382,8 @@ final class HoldbackTests: XCTestCase {
         // Anchored INSIDE the property: `mySeat: controller.mySeat` is spelt
         // four times in this file and a whole-file search would pass on any of
         // the other three.
-        let src = try source("FoolishKit/Boards/MessageTableView.swift")
-        let head = try XCTUnwrap(src.range(of: "private var fanHoldback: [Card] {"))
+        let src = try BoardSource.text()
+        let head = try XCTUnwrap(src.range(of: "var fanHoldback: [Card] {"))
         let body = String(src[head.lowerBound...].prefix(200))
         XCTAssertTrue(body.contains("mySeat: controller.mySeat)"),
                       "the veil asks with my real seat; -1 is the spectator and the kernel knows it")
@@ -419,7 +419,7 @@ final class HoldbackTests: XCTestCase {
     /// `fan-rows` trigger, which is the value the rig reads the bug off) and
     /// this fails.
     func testNothingThatDrawsReadsTheArmedHoldbackDirectly() throws {
-        let src = try source("FoolishKit/Boards/MessageTableView.swift")
+        let src = try BoardSource.text()
         // Every line naming it, minus the prose that describes it and the
         // traces that print it (a log is not a layout input).
         let mentions = src.split(separator: "\n", omittingEmptySubsequences: false)
@@ -430,7 +430,7 @@ final class HoldbackTests: XCTestCase {
         // the fly-time `removeAll` (a read and a write on two lines) and the
         // rescue's guard and clear. Nothing that lays anything out.
         let allowed = [
-            "@State private var handHoldback: [Card] = []",
+            "@State var handHoldback: [Card] = []",
             "Self.fanHoldback(unstarted: unstartedReplay, armed: handHoldback,",
             "handHoldback = isSpectating ? []",
             "if !handHoldback.isEmpty {",
@@ -452,7 +452,7 @@ final class HoldbackTests: XCTestCase {
                           + "`fanHoldback`, which answers on the board's FIRST paint")
         }
         // Belt: the property really is what the render sites ask.
-        XCTAssertTrue(src.contains("private var fanHoldback: [Card] {"),
+        XCTAssertTrue(src.contains("var fanHoldback: [Card] {"),
                       "the veil's answer must exist to be asked")
     }
 }

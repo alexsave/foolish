@@ -93,7 +93,7 @@ What specialization survives is sharper than what it replaced:
 
 **2. Generated bindings as the replacement for hand-written marshalling.**
 
-`tools/structgen` is one C file of about 1,570 lines that links libclang.
+`tools/structgen` is a small C program that links libclang, split by domain: the clang traversal that asks for shape, the model it builds, and one unit per emitter.
 It parses the real headers for one target under one build's flags and emits, from the layout clang computed:
 
 - per-field accessors over the host's view of the struct;

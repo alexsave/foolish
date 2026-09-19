@@ -196,6 +196,12 @@ That guard exists because the alternative already happened: a kernel fix that sh
 
 Several things in here would be their own repository anywhere else.
 
+**structgen, and its sibling datagen.**
+[`tools/structgen`](tools/structgen) is a libclang program: it loads the kernel's headers through clang's own parser, asks the real compiler for the real layout of a struct under one target's flags, and writes TypeScript accessors over wasm32 linear memory and Swift value snapshots over the natively-linked struct.
+The same header is a different shape on each: a pointer is 4 bytes on wasm32 and 8 on iOS, so the offsets cannot be shared, only derived.
+[`tools/datagen`](tools/datagen) is the mirror image, reading a `static const` table's initializers instead of its layout, which is what turns 25 C files of translations into 25 modules per host.
+Between them they are the reason no offset and no string in this repo is typed twice, and they are a compiler-adjacent tool that happens to live in a card game.
+
 **The replay codec.**
 [`c/src/replay.c`](c/src/replay.c) encodes a complete finished game into a single integer with rANS entropy coding and base32s it into a URL short enough to stay inside QR alphanumeric mode.
 One shared driver runs encode and decode.

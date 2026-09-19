@@ -80,17 +80,6 @@ static int bp_in_count(const Game *g) {
     return n;
 }
 
-static bool bp_apply(Game *g, int p_idx, const LegalMove *m) {
-    switch (m->type) {
-        case MOVE_ATTACK: return handle_attack(g, p_idx, m->cards, m->n_cards);
-        case MOVE_COVER:  return handle_cover (g, p_idx, m->cards, m->attack_cards, m->n_cards);
-        case MOVE_PASS:   return handle_pass  (g, p_idx, m->cards, m->n_cards);
-        case MOVE_PICKUP: return handle_pickup(g, p_idx);
-        case MOVE_GOOD:   return handle_good  (g, p_idx);
-        default:          return false;
-    }
-}
-
 // ---------- belief state ------------------------------------------------
 
 #define BP_MAX_VOIDS 6
@@ -389,7 +378,7 @@ static int bp_simulate(Game *g, int my_idx, int max_turns) {
             StrategyFn fn = bp_rollout_for(g);
             int idx = fn(g, pi, moves, NULL);
             if (idx < 0 || idx >= moves->n) continue;
-            if (bp_apply(g, pi, &moves->moves[idx])) { acted = true; break; }
+            if (legal_move_apply(g, pi, &moves->moves[idx])) { acted = true; break; }
         }
         if (!acted) break;
     }
@@ -461,7 +450,7 @@ static int bp_solve(Solver *S, const Game *g, int alpha, int beta, int depth) {
     for (int i = 0; i < mv->n; i++) {
         Game *child = solve_scratch_child(depth);
         solve_clone_prefix(child, g);
-        if (!bp_apply(child, actor, &mv->moves[i])) continue;
+        if (!legal_move_apply(child, actor, &mv->moves[i])) continue;
         int v = bp_solve(S, child, alpha, beta, depth + 1);
         if (S->aborted) return 0;
         if (maximizing) {
@@ -521,7 +510,7 @@ static int bp_try_endgame_solve(const Game *g, int bot_idx,
     for (int i = 0; i < moves->n; i++) {
         Game *child = solve_scratch_child(0);
         solve_clone_prefix(child, root);
-        if (!bp_apply(child, bot_idx, &moves->moves[i])) continue;
+        if (!legal_move_apply(child, bot_idx, &moves->moves[i])) continue;
         int v = bp_solve(&S, child, alpha, 2000, 1);
         if (S.aborted) return -1;
         if (v > best_v) { best_v = v; best_idx = i; }
@@ -714,7 +703,7 @@ int blackpowder_strategy_choose(const Game *g, int bot_idx,
                 if (!alive[ci]) continue;
                 bp_clone_world(trial, world);
                 game_rng_set(sim_rng);   // identical stream for every move
-                if (!bp_apply(trial, bot_idx, &moves->moves[C.idx[ci]])) {
+                if (!legal_move_apply(trial, bot_idx, &moves->moves[C.idx[ci]])) {
                     // Move invalid in this world (can't happen for own-hand
                     // moves, but stay safe): count as worst.
                     score[ci] += (double)g->num_players;

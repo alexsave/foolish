@@ -19,7 +19,7 @@
 // buildPlayerViewUpserts (it had no runtime caller; that a cached view can be
 // rebuilt byte for byte from the row is what cases 1 and 5 assert against the
 // kernel) and the decodePackedGame reads of the rows (what a decoder shows a
-// viewer is security_hidden_info.test.ts's subject).
+// viewer is e2e/helpers/hidden_info.ts's subject, run by the security_hidden_info_{2p,4p,6p} files).
 
 import './harness.ts';
 import { test, before, beforeEach } from 'node:test';

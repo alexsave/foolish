@@ -71,6 +71,7 @@ yarn-error.log*
 # restating it here - so a new output is covered the day it lands.
 sdk/ts/gen/
 sdk/swift/gen/
+sdk/kotlin/gen/
 tools/structgen/gen/
 
 # c

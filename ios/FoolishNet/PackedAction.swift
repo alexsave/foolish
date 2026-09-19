@@ -1,29 +1,27 @@
-// PackedAction.swift — Milestone D scaffolding (§8.1, §16.D3). Byte-for-byte
-// port of the web's packed action wire (server/impls/supabase/functions/_shared/
-// packed_action.ts → wire/awire.ts). Every online move POSTs this binary body:
+// PackedAction.swift — the `action` endpoint's binary body (§8.1, §16.D3).
+// Every online move POSTs one:
 //   supabase.functions.invoke("action", body: <these bytes>)
 // and the response is the 7-byte envelope decoded below.
 //
-// This is the ONE place binary crosses the language boundary on the wire (the
-// other is the golden fixtures) — so it is pinned by golden vectors generated
-// from the TS implementation (§16.D3, TODO: action_goldens.json). Until those
-// land and the D milestone wires Net/ into an OnlineGame, this file is unused by
-// the app; it is complete and unit-tested in isolation so D is a leaf addition.
+// THE MOVE INSIDE IT IS THE KERNEL'S, not this file's. The awire action frame
+// used to be written out here as well, a second Swift copy of the layout beside
+// sdk/swift/MoveWire.swift's - and the two had already drifted on what a
+// malformed move does. Both now call `MoveWire.encodeAction`, which asks
+// `fio_awire_encode` (c/src/awire.c). What is left here is the REQUEST
+// ENVELOPE around it, which is a server protocol rather than a game format: its
+// twin is `encodeActionRequest` in sdk/ts/wire/awire.ts and its reader is
+// `table_request_decode` in c/src/table.c.
+//
+// The move frame is pinned by golden vectors generated FROM THE KERNEL -
+// ios/Fixtures/action_goldens.bin, written by c/ios/ios_action_goldens.c and
+// checked fresh in CI - so the Swift mapping from a Move to those bytes is
+// measured against C rather than against itself (ios/FoolishTests/
+// PackedActionTests.swift).
 
 import Foundation
 import FoolishKit
 
 public enum PackedAction {
-
-    // Kind bytes (awire AWIRE_KIND). No `bump` exists in the wire.
-    public enum Kind: UInt8 {
-        case attack = 0, cover = 1, pass = 2, pickup = 3, good = 4
-    }
-
-    // Special card bytes (wire.h).
-    public static let cardHidden: UInt8 = 0xFE   // {-1,-1}
-    public static let cardNone: UInt8 = 0xFF
-    public static let maxCards = 28              // AWIRE_MAX_CARDS
 
     // Request envelope format bytes.
     public static let reqFormatV2: UInt8 = 2     // current: carries intent version
@@ -35,47 +33,21 @@ public enum PackedAction {
     /// guard from WEB_RACE_BUG_HANDOFF.md §5). Surfaced with its own localized copy.
     public static let rejectStaleRound: UInt8 = 100
 
-    // MARK: card encoding
-
-    /// suit*13 + (value-1) → 0..51, matching wire.h. Hidden cards → cardHidden.
-    public static func encodeCard(_ c: Card) -> UInt8 {
-        if c.isHidden { return cardHidden }
-        return UInt8(c.s * 13 + (c.v - 1))
-    }
-
-    public static func decodeCard(_ b: UInt8) -> Card {
-        if b == cardHidden { return .hidden }
-        let v = Int(min(b, 51))
-        return Card(s: v / 13, v: (v % 13) + 1)
-    }
-
     // MARK: move → wire
 
-    /// The move buffer: [kind][n][card×n], with cover appending [attackCard×n].
-    /// Throws on structural violations the wire decoder would reject (§ awire
-    /// decodeAction strictness): pickup/good must carry 0 cards; cover must have
-    /// matching attackCards; n ≤ 28.
+    /// The move buffer: [kind][n][card×n], with cover appending [attackCard×n]
+    /// - written by the kernel, not here.
+    ///
+    /// Throws `unencodableMove` for exactly what `awire_encode` refuses: a move
+    /// with no action on the wire (`wait`, `unknown`), more cards than
+    /// AWIRE_MAX_CARDS, a pickup or good carrying cards, or a cover whose attack
+    /// cards do not pair up with its cover cards. ONE verdict, because there is
+    /// one judge; the three separate errors this used to raise were this file's
+    /// own reading of rules it did not own.
     public static func encode(_ move: Move) throws -> [UInt8] {
-        let kind = try kind(for: move.type)
-        let cards = move.cards
-        if cards.count > maxCards { throw WireError.tooManyCards }
-
-        switch kind {
-        case .pickup, .good:
-            guard cards.isEmpty else { throw WireError.mustBeZeroCard }
-            return [kind.rawValue, 0]
-        case .attack, .pass:
-            var out: [UInt8] = [kind.rawValue, UInt8(cards.count)]
-            out.append(contentsOf: cards.map(encodeCard))
-            return out
-        case .cover:
-            let attacks = move.attackCards ?? []
-            guard attacks.count == cards.count else { throw WireError.coverMismatch }
-            var out: [UInt8] = [kind.rawValue, UInt8(cards.count)]
-            out.append(contentsOf: cards.map(encodeCard))
-            out.append(contentsOf: attacks.map(encodeCard))
-            return out
-        }
+        let bytes = MoveWire.encodeAction(move)
+        guard !bytes.isEmpty else { throw WireError.unencodableMove }
+        return bytes
     }
 
     /// The full HTTP request body (format v2): [2][gid_len][gid][intentVersion:u32 LE][wire].
@@ -112,23 +84,13 @@ public enum PackedAction {
 
     // MARK: helpers
 
-    private static func kind(for t: MoveType) throws -> Kind {
-        switch t {
-        case .attack: return .attack
-        case .cover: return .cover
-        case .pass: return .pass
-        case .pickup: return .pickup
-        case .good: return .good
-        case .wait, .unknown: throw WireError.unsupportedMove
-        }
-    }
-
     private static func leU32(_ v: UInt32) -> [UInt8] {
         [UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF), UInt8((v >> 16) & 0xFF), UInt8((v >> 24) & 0xFF)]
     }
 
     public enum WireError: Error, Equatable {
-        case tooManyCards, mustBeZeroCard, coverMismatch, gameIdTooLong
-        case unsupportedMove, shortResponse, badResponseFormat, badStatus
+        /// The kernel would not write this move as an action frame.
+        case unencodableMove
+        case gameIdTooLong, shortResponse, badResponseFormat, badStatus
     }
 }

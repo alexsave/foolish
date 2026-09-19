@@ -1,4 +1,5 @@
 {
+  "name": "foolish",
   "private": true,
   "dependencies": {
     "@aws-crypto/sha256-js": "^5.2.0",
@@ -23,8 +24,10 @@
     "check:determinism": "node scripts/check_determinism.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p e2e/tsconfig.json",
     "pretest:validate": "npm run gen",
-    "test:validate": "VALIDATION_ONLY=1 TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx --import ./scripts/e2e_child_stdout.mjs --test --test-concurrency=1 e2e/validation/*.test.ts",
+    "//test:validate": "No --test-concurrency: the validation files are pure functions with no Postgres and no shared state, so the 1 was inherited from the days when the whole suite shared one database. Measured, 104 tests either way: 8.77s at concurrency 1, 2.80s at node's default. This is the lane validate.yml runs on every push and every PR.",
+    "test:validate": "VALIDATION_ONLY=1 TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx --import ./scripts/e2e_child_stdout.mjs --test e2e/validation/*.test.ts",
     "pretest:mem": "npm run gen",
+    "//test:mem": "--test-concurrency=1 stays here, unlike test:validate. These files measure wasm memory high-water marks, and a measurement taken while seven other node processes are competing for the same machine is a different measurement.",
     "test:mem": "TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx --import ./scripts/e2e_child_stdout.mjs --test --test-concurrency=1 e2e/mem/*.test.ts",
     "pretest:swift-parity": "npm run gen",
     "test:swift-parity": "TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx --import ./scripts/e2e_child_stdout.mjs --test --test-concurrency=1 e2e/packed_roster_wire.test.ts",

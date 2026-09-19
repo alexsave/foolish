@@ -192,9 +192,12 @@ int fio_legal_from_view(int seat, char *out, int cap);
 // menu from the live game would answer about a position nobody is looking at.
 //
 // `menu` is the seat's packed menu (fio_legal_packed / fio_legal_from_packed
-// bytes). `table` is 2 bytes per battle - the attack, then its cover or 0xFE.
-// `sel` is the selected cards as card bytes. `target` is the battle index a
-// gesture landed on, or FIO_PLAY_TARGET_TABLE / _HAND.
+// bytes). `table` is the one table layout, as fio_table_encode writes it - 2
+// bytes per battle, the attack then its cover or 0xFE. A FIO_TABLE_UNKNOWN
+// cell is a card that is there and cannot be named: the battle counts as
+// covered, and nothing covers it (legal.h, PlayBoard). `sel` is the selected
+// cards as card bytes. `target` is the battle index a gesture landed on, or
+// FIO_PLAY_TARGET_TABLE / _HAND.
 #define FIO_PLAY_TARGET_HAND   (-2)
 #define FIO_PLAY_TARGET_TABLE  (-1)
 
@@ -231,6 +234,36 @@ int fio_play_probe(const uint8_t *menu, int menu_len,
 int fio_play_human_menu(const uint8_t *menu, int menu_len,
                         const uint8_t *table, int n_battles,
                         char *out, int cap);
+// A MOVE, WRITTEN - the awire action frame for one move, so no host has to
+// know what that frame looks like. The inverse of the packed menu above, and
+// the thing every producer needs: the frame fio_apply_awire takes is also the
+// body an online move POSTs, so a host holding a Move has to turn it into
+// bytes before it can do anything with it at all.
+//
+// It exists because both of those hosts had written the layout out again in
+// Swift, from the comment at the top of awire.h, and the two copies had already
+// drifted apart on what an over-long move or a mismatched cover does. awire.c
+// is the ONE statement of the layout; this is its door.
+//
+// Cards arrive as SUIT/VALUE PAIRS - two signed bytes each, the suit then the
+// value, n_cards pairs in `cards` and (cover only) n_attacks in `attacks` -
+// rather than as wire ids, so the id arithmetic stays on this side too. A
+// caller that had to compute suit*13+value-1 would be holding half the format
+// again.
+//
+// `type` is the MOVE_* index the packed menu carries, which is also the awire
+// kind for the five playable moves. MOVE_WAIT has no action on the wire, so it
+// is FIO_EBADARG rather than an empty frame.
+//
+// Returns the bytes written, FIO_ECAP if the frame does not fit in `cap`, or
+// FIO_EBADARG for a move awire will not write (bad type, more than
+// AWIRE_MAX_CARDS cards, a pickup/good carrying cards, a cover whose attack
+// count does not match its cover count).
+int fio_awire_encode(int type,
+                     const int8_t *cards, int n_cards,
+                     const int8_t *attacks, int n_attacks,
+                     char *out, int cap);
+
 // Apply an awire action frame ([kind, n, cards, attacks]) — THE apply entry
 // Returns FIO_EREJECT on an illegal move
 // (see fio_last_reject).
@@ -286,7 +319,10 @@ int fio_last_reject(void);
 //     u8 that board's flipped trump, dense id or FIO_PLAN_NO_FLIP,
 //     n_players x u8 hand counts, n_ids x u8 dense card id,
 //     u8 n_battles (FIO_PRETABLE_NONE for a step carrying no board),
-//     2 x n_battles u8 - the attack and its cover (FIO_PRETABLE_NONE if bare).
+//     2 x n_battles u8 - the attack and its cover (FIO_PRETABLE_NONE if bare),
+//       as fio_table_encode writes it. A row with a FIO_TABLE_UNKNOWN cell is
+//       read as no row, for fio_pre_bout_table_packed's reason: the freeze's
+//       row is laid out by identity, and a cell nobody can name has none.
 //   A step with has_counts == 0 carries the walk forward instead of anchoring
 //   it; a stream whose FIRST event has none falls back to undoing them all.
 //   THE ROW IS THE SAME KIND OF ANCHOR, one field later: the row before a pass
@@ -400,7 +436,10 @@ int fio_roles_pass_hand_off(int shown_defender, int shown_first_attacker,
 //     2 x that many u8: the board's battles
 //     u8 n_cards, n_cards x u8 dense card id (a pickup's cards ARE the table)
 //   A table is always 2 bytes per battle - the attack, then its cover or
-//   FIO_PRETABLE_NONE - which is the layout fio_play_probe's board takes.
+//   FIO_PRETABLE_NONE - which is the layout fio_play_probe's board takes and
+//   fio_table_encode writes. A board with a FIO_TABLE_UNKNOWN cell in it is
+//   read as NO board: the answer is a table to be laid out, and a cell nobody
+//   can name has no face to lay. Any other byte off the deck is a corrupt wire.
 //
 // OUTPUT (`out`):
 //   0  u8 version
@@ -440,7 +479,10 @@ int fio_pre_bout_table_packed(const uint8_t *in, int len, char *out, int cap);
 //        (FIO_CONFLICT_NONE for a masked back - it names nothing)
 //      u8 the opening board's battle count, or FIO_CONFLICT_NONE for no board
 //      2 x that many u8: the opening table (attack, then its cover or
-//        FIO_CONFLICT_NONE). BOTH sides stand.
+//        FIO_CONFLICT_NONE), as fio_table_encode writes it. BOTH sides stand.
+//        A FIO_TABLE_UNKNOWN cell is a card nobody can name: this rule decides
+//        everything by identity, so it vouches for nothing, exactly as a bare
+//        cell does - and its named neighbour still stands.
 //      u8 n_my_hand, that many u8 dense ids: my hand on that board
 //      u8 n_groups
 //      per group: u8 its motion count
@@ -557,6 +599,60 @@ int fio_laid_count(const uint8_t *hand, int n_hand, const uint8_t *held, int n_h
 int fio_hand_laid_out(const uint8_t *cards, int n_cards, uint64_t deferred,
                       const uint8_t *order, int n_order, char *out, int cap);
 
+// ---------- a table, written ------------------------------------------------
+//
+// THE ONE TABLE LAYOUT, written by the kernel. Every entry that takes a table
+// takes this one - fio_play_probe and fio_play_human_menu, the rows on
+// fio_anim_plan's wire, fio_pre_bout_table_packed, fio_conflict_packed and the
+// set rules below: 2 bytes per battle, the attack then its cover, with a bare
+// attack's cover FIO_CONFLICT_NONE (the byte FIO_PRETABLE_NONE and legal.h's
+// LEGAL_WIRE_NONE also are).
+//
+// It exists because Swift had written that layout out FOUR times, and the four
+// disagreed about the one case none of them was built for: a card on the table
+// the viewer is not allowed to see. Two spelled it as "no card", which is not
+// a small mistake - a cover spelled as absent turns a covered battle into an
+// open one, so the Good button is withheld and the battle is offered as a drop
+// target, and nothing refuses because the wire is well-formed. One refused the
+// whole board. One had the right byte. Now none of them spells a table byte at
+// all: the host hands over SUIT/VALUE PAIRS, the fields a kernel view already
+// gives it, and the id arithmetic and both sentinels stay on this side.
+//
+// `pairs` is 4 signed bytes per battle: the attack's suit and value, then the
+// cover's. A bare attack's cover is the pair (FIO_CARD_NONE, FIO_CARD_NONE) -
+// the kernel's own CARD_NONE, which is how an uncovered battle already crosses
+// in a TableView. THE RULE, per cell:
+//
+//   a card the deck holds (suit 0..3, value 1..13)  -> its dense id
+//   the cover slot's (FIO_CARD_NONE, FIO_CARD_NONE)  -> FIO_CONFLICT_NONE
+//   anything else, in either slot                    -> FIO_TABLE_UNKNOWN
+//
+// "Anything else" is the viewer-masked back (-1, -1) above all, and it is a
+// CARD THAT IS THERE and cannot be named - never "no card", for the reason
+// above. It is not a refusal either: the kernel never masks a table, so a
+// table with such a cell is a corrupt view, and each reader has a degrade that
+// keeps the board usable where a refusal here would have to be handled again
+// at every host call site. Each reader states its own:
+//
+//   fio_play_probe / fio_play_human_menu   a card is there: the battle is
+//                                          covered, and nothing covers it
+//   fio_conflict_packed                    it names nothing and vouches for
+//                                          nothing, like a bare cell
+//   fio_pre_bout_table_packed, the plan's  a table to be LAID OUT cannot hold
+//   rows                                   a card nobody can name, so that
+//                                          board is no board
+//   fio_table_covers                       never accounted for (below)
+//
+// The encoder is TOTAL over content, including a (FIO_CARD_NONE, FIO_CARD_NONE)
+// attack, which no host can build (a battle is an attack) and which therefore
+// crosses as an unknown card rather than growing a refusal that four call sites
+// would each have to handle for a shape none of them can produce.
+//
+// Returns 2 * n_battles, FIO_ECAP if that does not fit in `cap`, or
+// FIO_EBADARG for a null pointer or a negative count.
+#define FIO_CARD_NONE (-2)
+int fio_table_encode(const int8_t *pairs, int n_battles, char *out, int cap);
+
 // A table is 2 bytes per battle - the attack, then its cover or
 // FIO_CONFLICT_NONE, the layout fio_conflict_packed's already takes. The cards
 // on it as a set; whether one table accounts for every card on another; and
@@ -615,6 +711,22 @@ int fio_finish_rows(const uint8_t *elimination, int n_elim, int game_over,
 int fio_shown_ledger_allows(int claim, int sequencing);
 
 // ---------- replays (§7.3) -------------------------------------------------
+
+// ARBITRARY BYTES AS BASE32 TEXT - RFC 4648, uppercase, no padding, the same
+// alphabet every replay code travels in (replay.c). NUL-terminated; returns the
+// characters written (not counting the NUL) or FIO_ECAP.
+//
+// The replay entries below are whole codes; this is the raw codec, for the one
+// other text layer the app has: the /m/ bubble URL an iMessage envelope rides
+// in (§4.3). The web reaches the same replay_b32_encode through the wasm, so
+// without this Swift is the only host of three with its own alphabet and its
+// own bit-packing loop - and a Swift test that encodes and then decodes cannot
+// notice if both halves move together.
+//
+// No inverse door on purpose: reading a format the kernel writes is a host's
+// own business (ios_api.h's preamble), and the /m/ reader also has to tolerate
+// a URL's stray characters. Writing one is not.
+int fio_b32_encode(const uint8_t *in, int n, char *out, int cap);
 
 // Encode the CURRENT game's history into a replay integer, base32-ish encoded
 // into `out` as the short shareable code (foolish.cards/<code>). Bytes written
