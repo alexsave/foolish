@@ -2592,6 +2592,490 @@ static void test_replay_step_index_refuses_a_small_buffer(void) {
     CHECK(r < 0, "an index that does not fit is an error, not a truncation");
 }
 
+
+// ---------- THE ORACLE'S TWO DOORS ------------------------------------------
+//
+// replay_steps_board_v6 and replay_steps_memory_v6 are the Infinite Oracle's
+// whole input path: "the board this seat decided on" and "what it knew before
+// the move". They are exported through c/wasm/wasm_bots_api.c and consumed by
+// src/oracle/replayOracleInput.ts, and until this file they were driven ONLY
+// from TypeScript (e2e/oracle_input.test.ts) - so a kernel-side break in the
+// Oracle's input reached the web suite three languages away before it reached
+// the suite that sits next to the code. Their sibling replay_steps_count_v6 has
+// eleven call sites here; these two had none.
+//
+// MUTATIONS RUN (each applied to c/src/replay_steps.c alone, rebuilt, reverted):
+//
+//   1  rs_step_board writes the board at `step`, not at `step - 1`   -> 145 failures
+//   2  rs_step_board writes it for VIEW_SPECTATOR whoever asked      -> 266
+//   3  rs_step_board drops the `viewer >= g->num_players` refusal    -> 1
+//   4  replay_steps_board_v6 drops the `b.idx <= step` end check     -> 1
+//   5  replay_steps_board_v6 drops the out_cap < RS_BOARD_MAX check  -> 1
+//   6  rs_step_memory pairs its record against a seat one over       -> 143
+//   7  rs_step_memory does not skip the non-move records             -> 143
+//   8  replay_steps_memory_v6 keeps a DRAW's real card               -> 1
+//   9  replay_steps_memory_v6 answers a step it could not pair       -> 17
+//  10  replay_deal_start drops the non-forced first_attacker refusal -> 1
+//  11  ...drops the forced branch's derived_opening test             -> 1
+//  12  ...drops the forced branch's first_attacker test              -> 1
+//  13  replay_action_apply's default arm falls into handle_attack    -> 1
+//
+// The seat half of 6 is worth a note. The pairing tests the record's TYPE and
+// its SEAT, and no well-formed code can make those disagree - both streams come
+// out of the same kernel - so the seat test cannot be falsified by an input.
+// What 6 proves instead is that it is load-bearing for the ANSWER: compare
+// against the wrong seat and every move step stops having a memory at all.
+
+// A record of the memory's log layout (replay_steps.h): u8 type, u8 seat,
+// u8 defender, u8 n_pairs, then n_pairs x (u8 primary, u8 target).
+typedef struct { int n; int type[MAX_LOGS]; int seat[MAX_LOGS]; int draws; int shown_draws; } RsMemory;
+
+// Walks the memory blob and reports what it holds, refusing to read past the
+// length the kernel returned - a memory whose records do not add up to exactly
+// that is not a memory an analyser can import.
+static int rs_read_memory(const unsigned char *m, int len, RsMemory *out) {
+    memset(out, 0, sizeof *out);
+    if (len < 2) return 0;
+    const int n = m[0] | (m[1] << 8);
+    int at = 2;
+    for (int i = 0; i < n; i++) {
+        if (at + 4 > len) return 0;
+        const int pairs = m[at + 3];
+        if (at + 4 + 2 * pairs > len) return 0;
+        if (out->n < MAX_LOGS) {
+            out->type[out->n] = m[at];
+            out->seat[out->n] = m[at + 1];
+            out->n++;
+        }
+        if (m[at] == LOG_DRAW)
+            for (int k = 0; k < pairs; k++) {
+                out->draws++;
+                if (m[at + 4 + 2 * k] != REPLAY_CARD_HIDDEN) out->shown_draws++;
+            }
+        at += 4 + 2 * pairs;
+    }
+    return at == len && out->n == n;
+}
+
+static int rs_is_move_atom(int kind) {
+    return kind == REPLAY_ATOM_ATTACK || kind == REPLAY_ATOM_COVER
+        || kind == REPLAY_ATOM_PASS || kind == REPLAY_ATOM_PICKUP;
+}
+
+static int rs_is_move_log(int type) {
+    return type == LOG_ATTACK || type == LOG_COVER || type == LOG_PASS || type == LOG_PICKUP;
+}
+
+// The first frame of a chunk, unwrapped to its committed trailer board. The
+// board an action was decided on is the board the step before it LEFT, and that
+// board is already on the wire as that step's frame trailer - so the door can be
+// held against the frames the web renders rather than against a second copy of
+// state_put.
+static int rs_frame_trailer(const unsigned char *code, int enc, int viewer, int step,
+                            unsigned char *out, int out_cap) {
+    static unsigned char frames[1 << 16];
+    int n = 0, next = 0;
+    const int len = replay_steps_frames_v6(code, enc, viewer, step, 0,
+                                           frames, (int)sizeof frames, &n, &next);
+    if (len < 4 || n < 1) return -1;
+    const int flen = frames[0] | (frames[1] << 8);
+    const unsigned char *fin = 0;
+    int fin_len = 0;
+    if (evwire_read(frames + 2, flen, 0, &fin, &fin_len, 0, 0) < 0) return -1;
+    if (fin_len > out_cap) return -1;
+    memcpy(out, fin, (size_t)fin_len);
+    return fin_len;
+}
+
+static void test_replay_step_board_is_the_board_that_seat_decided_on(void) {
+    static unsigned char code[1 << 20];
+    static unsigned char board[RS_BOARD_MAX], trailer[RS_BOARD_MAX];
+    static unsigned char index[4096];
+
+    int boards = 0, spectator_boards = 0;
+    for (int np = 2; np <= 4; np++) {
+        Game g;
+        unsigned char seed[FOOLISH_SEED_LEN];
+        if (!rs_play_seeded(&g, np, 610 + np, seed)) { CHECK(0, "seeded game plays out"); continue; }
+        const int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                                   code, (int)sizeof code);
+        if (enc <= 0) { CHECK(0, "the played game encodes as v6"); continue; }
+
+        const int steps = replay_steps_count_v6(code, enc, 0);
+        const int ilen = replay_steps_index_v6(code, enc, 0, index, (int)sizeof index);
+        CHECK(ilen == steps * RS_INDEX_STRIDE, "the step index covers every step");
+        if (ilen != steps * RS_INDEX_STRIDE) continue;
+
+        for (int step = 1; step < steps; step++) {
+            const int seat = index[step * RS_INDEX_STRIDE + 1];
+            const int viewer = seat == RS_SEAT_NONE ? VIEW_SPECTATOR : seat;
+            const int len = replay_steps_board_v6(code, enc, step, viewer, board, (int)sizeof board);
+            CHECK(len > 0, "every action step has a board the seat decided on");
+            if (len <= 0) continue;
+            boards++;
+            spectator_boards += viewer == VIEW_SPECTATOR;
+
+            // IT IS THE BOARD THE PREVIOUS STEP LEFT, masked for this seat -
+            // byte for byte the trailer of that step's frame. An off-by-one
+            // here would hand the Oracle the board AFTER the move it is being
+            // asked to second-guess, which still looks like a board.
+            const int tlen = rs_frame_trailer(code, enc, viewer, step - 1, trailer, (int)sizeof trailer);
+            CHECK(tlen == len && memcmp(board, trailer, (size_t)len) == 0,
+                  "the board is the one the step before it left, as that seat saw it");
+
+            // And it is MASKED: the deciding seat's hand real, every other hand
+            // a back. A board that leaked another seat's hand would let the
+            // Oracle deliberate on cards the seat could not see.
+            Game b;
+            memset(&b, 0, sizeof b);
+            CHECK(state_get(&b, board, len, 1) == GAME_VALID, "the board reads back as a game");
+            int mine_real = 0, mine_hidden = 0, theirs_real = 0;
+            for (int s = 0; s < b.num_players; s++)
+                for (int h = 0; h < b.players[s].hand_count; h++) {
+                    // state_get(masked) writes the {0,1} placeholder for a back,
+                    // and no dealt card has value 1 in any deck this game uses.
+                    const int hidden = b.players[s].hand[h].value == 1;
+                    if (s == viewer) { mine_real += !hidden; mine_hidden += hidden; }
+                    else theirs_real += !hidden;
+                }
+            CHECK(theirs_real == 0, "no other seat's hand reaches the board");
+            CHECK(viewer < 0 || mine_hidden == 0, "the deciding seat's own hand is real");
+            (void)mine_real;
+        }
+    }
+    CHECK(boards > 100, "enough recorded decisions had their board rebuilt");
+    CHECK(spectator_boards > 0, "and a round end, which nobody in particular decided");
+}
+
+// The door must refuse a step that is not a decision it can vouch for, rather
+// than writing SOME board for it. Every refusal here is one an analyser would
+// otherwise read as an answer.
+static void test_replay_step_board_refuses_what_is_not_a_decision(void) {
+    static unsigned char code[1 << 20];
+    static unsigned char board[RS_BOARD_MAX];
+
+    Game g;
+    unsigned char seed[FOOLISH_SEED_LEN];
+    if (!rs_play_seeded(&g, 3, 617, seed)) { CHECK(0, "seeded game plays out"); return; }
+    const int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                               code, (int)sizeof code);
+    if (enc <= 0) { CHECK(0, "the played game encodes as v6"); return; }
+    const int steps = replay_steps_count_v6(code, enc, 0);
+    CHECK(steps > 2, "the game has steps to ask about");
+
+    CHECK(replay_steps_board_v6(code, enc, 0, 0, board, (int)sizeof board) == -REPLAY_EINPUT,
+          "the deal was decided by nobody");
+    CHECK(replay_steps_board_v6(code, enc, steps, 0, board, (int)sizeof board) == -REPLAY_EINPUT,
+          "no step past the last");
+    CHECK(replay_steps_board_v6(code, enc, steps + 50, 0, board, (int)sizeof board) == -REPLAY_EINPUT,
+          "nor far past it");
+    CHECK(replay_steps_board_v6(code, enc, 1, 3, board, (int)sizeof board) == -REPLAY_EINPUT,
+          "a viewer that is not a seat of this game");
+    CHECK(replay_steps_board_v6(code, enc, 1, VIEW_UNMASKED, board, (int)sizeof board) == -REPLAY_EINPUT,
+          "and an unmasked read is not a viewer at all");
+    CHECK(replay_steps_board_v6(code, enc, 1, VIEW_SPECTATOR, board, (int)sizeof board) > 0,
+          "but a spectator is a viewer");
+    CHECK(replay_steps_board_v6(code, enc, 1, 0, board, RS_BOARD_MAX - 1) == -REPLAY_ECAP,
+          "a buffer below the board's own bound is refused before the code is played");
+    CHECK(replay_steps_board_v6((const unsigned char *)"\x01\x02\x03", 3, 1, 0, board,
+                                (int)sizeof board) < 0,
+          "and bytes that are not a code are refused, not replayed");
+}
+
+static void test_replay_step_memory_is_the_public_log_before_the_move(void) {
+    static unsigned char code[1 << 20];
+    static unsigned char mem[1 << 18];
+    static unsigned char index[4096];
+    RsMemory m;
+
+    int memories = 0, draws = 0, leaked = 0, refusals = 0;
+    for (int np = 2; np <= 4; np++) {
+        Game g;
+        unsigned char seed[FOOLISH_SEED_LEN];
+        if (!rs_play_seeded(&g, np, 630 + np, seed)) { CHECK(0, "seeded game plays out"); continue; }
+        const int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                                   code, (int)sizeof code);
+        if (enc <= 0) { CHECK(0, "the played game encodes as v6"); continue; }
+        const int steps = replay_steps_count_v6(code, enc, 0);
+        const int ilen = replay_steps_index_v6(code, enc, 0, index, (int)sizeof index);
+        if (ilen != steps * RS_INDEX_STRIDE) { CHECK(0, "the step index covers every step"); continue; }
+
+        int moves_so_far = 0, last_records = -1;
+        for (int step = 1; step < steps; step++) {
+            const int kind = index[step * RS_INDEX_STRIDE];
+            const int seat = index[step * RS_INDEX_STRIDE + 1];
+            const int len = replay_steps_memory_v6(code, enc, step, mem, (int)sizeof mem);
+            if (!rs_is_move_atom(kind)) {
+                // A GOOD or a ROUND_END is not a record of its own, so there is
+                // no "before this move" the kernel can vouch for.
+                CHECK(len == -REPLAY_EINPUT, "a step with no record of its own has no memory");
+                refusals++;
+                continue;
+            }
+            CHECK(len > 0, "every move step has the public log that came before it");
+            if (len <= 0) continue;
+            CHECK(rs_read_memory(mem, len, &m), "the memory's records add up to exactly its length");
+            memories++;
+            draws += m.draws;
+            leaked += m.shown_draws;
+
+            // THE PAIRING, which is the whole reason this door can refuse: the
+            // move records in the memory are exactly the move steps before this
+            // one. A memory that drifted by one would be another move's memory,
+            // and nothing downstream could tell.
+            int move_records = 0;
+            for (int i = 0; i < m.n; i++) move_records += rs_is_move_log(m.type[i]);
+            CHECK(move_records == moves_so_far, "the memory holds one record per move step before it");
+            CHECK(m.n >= last_records, "and a memory never shrinks as the game goes on");
+            last_records = m.n;
+            (void)seat;
+            moves_so_far++;
+        }
+    }
+    CHECK(memories > 100 && draws > 100, "enough memories holding enough draws were read");
+    CHECK(leaked == 0, "no drawn card's identity reached an Oracle memory");
+    CHECK(refusals > 0, "and the steps that are not moves were refused");
+}
+
+static void test_replay_step_memory_refuses_what_it_cannot_pair(void) {
+    static unsigned char code[1 << 20];
+    static unsigned char mem[1 << 18];
+
+    Game g;
+    unsigned char seed[FOOLISH_SEED_LEN];
+    if (!rs_play_seeded(&g, 3, 641, seed)) { CHECK(0, "seeded game plays out"); return; }
+    const int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                               code, (int)sizeof code);
+    if (enc <= 0) { CHECK(0, "the played game encodes as v6"); return; }
+    const int steps = replay_steps_count_v6(code, enc, 0);
+
+    CHECK(replay_steps_memory_v6(code, enc, 0, mem, (int)sizeof mem) == -REPLAY_EINPUT,
+          "the deal made no move, so it has no memory");
+    CHECK(replay_steps_memory_v6(code, enc, -4, mem, (int)sizeof mem) == -REPLAY_EINPUT,
+          "nor does a step before the first");
+    CHECK(replay_steps_memory_v6(code, enc, steps, mem, (int)sizeof mem) == -REPLAY_EINPUT,
+          "no step past the last");
+    // `out` holds the whole decode while the memory is built, so a buffer that
+    // cannot take the decode must say so rather than write what fits.
+    CHECK(replay_steps_memory_v6(code, enc, 1, mem, 8) < 0,
+          "a buffer the decode does not fit is refused");
+    CHECK(replay_steps_memory_v6((const unsigned char *)"\x01\x02\x03", 3, 1, mem,
+                                 (int)sizeof mem) < 0,
+          "and bytes that are not a code are refused");
+}
+
+// The CHUNKING contract, which is what makes the web's scrubber possible at
+// all: a whole game's frames outgrow any single wasm IO buffer, so a caller
+// asks for [from, ...) and gets as many WHOLE frames as fit plus the cursor to
+// resume from. Two things must hold or the web either loses a frame or spins:
+// a chunk is never a partial frame, and the cursor always moves. The existing
+// frame test pulls the stream with a buffer big enough to be uninteresting.
+//
+// MUTATIONS RUN (each applied to c/src/replay_steps.c alone, reverted after):
+//
+//   1  rs_step_frame keeps taking frames after the buffer filled         -> 1 failure
+//      (`f->next != me` dropped)
+//   2  a frame that did not fit still advances the cursor                -> 2
+//   3  replay_deal_v6 drops the `deck_cap < MAX_DECK` refusal            -> 1
+//
+// ONE SURVIVED AND WAS LEFT ALONE. rs_step_frame's `f->len + 2 > f->cap` guard
+// cannot be falsified: without it evwire_serialize is simply handed a negative
+// cap, and its own bound refuses on the first byte with the same answer. It is
+// belt and braces in front of a bound that already holds, and no input can
+// tell the two apart.
+static void test_replay_step_frames_chunk_whole_frames_only(void) {
+    static unsigned char code[1 << 20];
+    static unsigned char whole[1 << 16];
+    static unsigned char chunk[1 << 16];
+
+    Game g;
+    unsigned char seed[FOOLISH_SEED_LEN];
+    if (!rs_play_seeded(&g, 3, 673, seed)) { CHECK(0, "seeded game plays out"); return; }
+    const int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                               code, (int)sizeof code);
+    if (enc <= 0) { CHECK(0, "the played game encodes as v6"); return; }
+    const int steps = replay_steps_count_v6(code, enc, 0);
+
+    int all_n = 0, all_next = 0;
+    const int all = replay_steps_frames_v6(code, enc, VIEW_SPECTATOR, 0, 0,
+                                           whole, (int)sizeof whole, &all_n, &all_next);
+    CHECK(all > 0 && all_n == steps && all_next == steps,
+          "a generous buffer takes the whole stream in one chunk");
+    if (all <= 0) return;
+
+    // A caller with no room for even a length prefix gets nothing, says so with
+    // a cursor that has not moved, and is not handed a truncated frame.
+    int n = -1, next = -1;
+    CHECK(replay_steps_frames_v6(code, enc, VIEW_SPECTATOR, 0, 0, chunk, 1, &n, &next) == 0
+          && n == 0 && next == 0,
+          "a buffer with no room for a length prefix takes no frames and stays put");
+
+    // Every buffer size must either take the whole stream, chunk by chunk and
+    // byte for byte, or stop dead with the cursor exactly where it was - never
+    // a partial frame and never a wrong byte.
+    //
+    // A NOTE ON THE SMALL SIZES, because they are a hazard and not a bug here.
+    // evwire_serialize reserves EVW_SNAP_MAX for every snapshot it is about to
+    // write - a generous worst-case bound, not the snapshot's real size - so a
+    // frame of F bytes needs a good deal more than F + 2 of buffer before it
+    // will serialize at all. Below that the call returns 0 bytes, 0 frames and
+    // `next_step` unchanged, which is the SAME answer as "the stream is
+    // exhausted" except for the cursor. A caller that loops on `from < steps`
+    // and does not also test the cursor spins forever, and nothing in the
+    // return value tells it why. That is pinned below rather than fixed.
+    const int first = whole[0] | (whole[1] << 8);
+    int completed = 0, partials = 0, halted = 0, mismatched = 0;
+    for (int cap = first + 2; cap <= all; cap += (all / 11) + 1) {
+        int at = 0, from = 0, guard = 0;
+        while (from < steps && ++guard < 4096) {
+            n = -1; next = from;
+            const int len = replay_steps_frames_v6(code, enc, VIEW_SPECTATOR, from, 0,
+                                                   chunk, cap, &n, &next);
+            if (len < 0) { mismatched++; break; }
+            // Whatever it handed over is the stream's own next bytes: a re-cut
+            // chunk boundary must never re-cut a FRAME.
+            if (at + len > all || memcmp(chunk, whole + at, (size_t)len) != 0) { mismatched++; break; }
+            at += len;
+            if (next == from) {
+                // This buffer cannot take the frame at `from`. It must then
+                // have taken NOTHING, so a caller is never left holding half
+                // a frame it cannot tell from a whole one.
+                if (len != 0 || n != 0) mismatched++;
+                halted++;
+                break;
+            }
+            if (n < all_n) partials++;
+            from = next;
+        }
+        if (from >= steps) { completed++; if (at != all) mismatched++; }
+    }
+    CHECK(completed > 2, "several buffer sizes took the whole stream");
+    CHECK(partials > 0, "and some of them needed more than one chunk to do it");
+    CHECK(halted > 0, "a buffer under the serializer's reserve halts with the cursor where it was");
+    CHECK(mismatched == 0, "every chunking of the stream is the same bytes as the whole of it");
+
+    // The optional out-parameters really are optional, and a `from` before the
+    // start is the start.
+    CHECK(replay_steps_frames_v6(code, enc, VIEW_SPECTATOR, -5, 0,
+                                 chunk, (int)sizeof chunk, 0, 0) == all,
+          "a negative cursor is the start of the stream, and the counts are optional");
+
+    // The deck buffer replay_deal_v6 fills is the whole deck's, never a
+    // caller's guess at how big this deal is.
+    ReplayHeader hdr;
+    static ReplayAction acts[REPLAY_MAX_ACTIONS];
+    static Card deck[MAX_DECK];
+    int n_deck = 0, n_acts = 0;
+    CHECK(replay_deal_v6(code, enc, &hdr, deck, MAX_DECK - 1, &n_deck,
+                         acts, REPLAY_MAX_ACTIONS, &n_acts) == -REPLAY_ECAP,
+          "a deck buffer short of the whole deck is refused before it is filled");
+}
+
+// ---------- the corruption refusals -----------------------------------------
+//
+// replay_deal_start rebuilds the deal and then PROVES one recorded seat against
+// it: the opening seat the hands derive. Those two refusals are the only thing
+// standing between a code whose hands came back wrong and a replay that renders
+// a different game with a straight face. Nothing had ever executed them.
+static void test_replay_deal_start_refuses_a_header_the_rebuild_disagrees_with(void) {
+    static unsigned char code[1 << 20];
+    static ReplayAction acts[REPLAY_MAX_ACTIONS];
+    static Card deck[MAX_DECK];
+    ReplayHeader hdr;
+    Game g, r;
+    unsigned char seed[FOOLISH_SEED_LEN];
+
+    if (!rs_play_seeded(&g, 3, 653, seed)) { CHECK(0, "seeded game plays out"); return; }
+    const int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                               code, (int)sizeof code);
+    if (enc <= 0) { CHECK(0, "the played game encodes as v6"); return; }
+
+    int n_deck = 0, n_acts = 0;
+    CHECK(replay_deal_v6(code, enc, &hdr, deck, MAX_DECK, &n_deck,
+                         acts, REPLAY_MAX_ACTIONS, &n_acts) == REPLAY_EOK,
+          "the code decodes to a deal");
+    CHECK(replay_deal_start(&r, &hdr, deck, n_deck) == REPLAY_EOK,
+          "and the deal the code describes rebuilds");
+    const int derived = game_derived_opening();
+    CHECK(r.first_attacker == (int8_t)hdr.first_attacker,
+          "the rebuilt hands open where the code says they did");
+    // The doctored headers below only have teeth on a deal that DERIVES its
+    // opening: with no trump anywhere the seat is taken from the header by
+    // design (test_replay_steps_replays_a_deal_with_no_trump) and disagreeing
+    // with it is not something the rebuild could notice.
+    CHECK(derived >= 0 && hdr.forced_opening == 0,
+          "this deal derives its opening rather than being handed one");
+    if (derived < 0 || hdr.forced_opening != 0) return;
+
+    ReplayHeader bad = hdr;
+    bad.first_attacker = (hdr.first_attacker + 1) % hdr.n;
+    CHECK(replay_deal_start(&r, &bad, deck, n_deck) == -REPLAY_EHEADER,
+          "a recorded opening seat the rebuilt hands do not produce is REFUSED");
+
+    // The v8 forced-opening arm: the opening was IMPOSED, so the header's own
+    // seat proves nothing and the seat the deal DERIVES is proved instead.
+    ReplayHeader forced = hdr;
+    forced.forced_opening = 1;
+    forced.derived_opening = derived;
+    forced.first_attacker = (derived + 1) % hdr.n;
+    CHECK(replay_deal_start(&r, &forced, deck, n_deck) == REPLAY_EOK,
+          "an imposed opening may differ from the one the hands derive");
+    CHECK(r.first_attacker == (int8_t)forced.first_attacker,
+          "and the rebuilt game opens on the seat that was imposed");
+
+    ReplayHeader wrong_derive = forced;
+    wrong_derive.derived_opening = (derived + 1) % hdr.n;
+    CHECK(replay_deal_start(&r, &wrong_derive, deck, n_deck) == -REPLAY_EHEADER,
+          "but the seat the hands derive is still held against the rebuild");
+
+    // An imposed seat that is not a seat: game_open_at_seat ignores it and the
+    // deal derives its own opening, which must be a refusal and not a silent
+    // substitution of a seat nobody recorded.
+    ReplayHeader unseatable = forced;
+    unseatable.first_attacker = hdr.n + 3;
+    CHECK(replay_deal_start(&r, &unseatable, deck, n_deck) == -REPLAY_EHEADER,
+          "an imposed seat the table does not have is refused, not quietly derived");
+}
+
+// replay_action_apply is public (c/src/analyse.c drives it move by move), and
+// the one promise it makes about an atom that is not an action is that the game
+// does not move. rs_collect never puts a DEAL or a DRAW in an action list, so
+// nothing else would ever have asked.
+static void test_replay_action_apply_leaves_a_non_action_alone(void) {
+    static unsigned char code[1 << 20];
+    static ReplayAction acts[REPLAY_MAX_ACTIONS];
+    static Card deck[MAX_DECK];
+    static Game r, before;
+    ReplayHeader hdr;
+    Game g;
+    unsigned char seed[FOOLISH_SEED_LEN];
+
+    if (!rs_play_seeded(&g, 3, 659, seed)) { CHECK(0, "seeded game plays out"); return; }
+    const int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                               code, (int)sizeof code);
+    if (enc <= 0) { CHECK(0, "the played game encodes as v6"); return; }
+    int n_deck = 0, n_acts = 0;
+    if (replay_deal_v6(code, enc, &hdr, deck, MAX_DECK, &n_deck,
+                       acts, REPLAY_MAX_ACTIONS, &n_acts) != REPLAY_EOK
+        || replay_deal_start(&r, &hdr, deck, n_deck) != REPLAY_EOK) {
+        CHECK(0, "the code rebuilds a dealt game");
+        return;
+    }
+
+    memcpy(&before, &r, sizeof r);
+    ReplayAction a;
+    memset(&a, 0, sizeof a);
+    a.seat = r.first_attacker;
+    a.n_cards = 1;
+    a.cards[0] = r.players[a.seat].hand[0];
+    for (int kind = REPLAY_ATOM_DEAL; kind <= REPLAY_ATOM_DRAW; kind++) {
+        a.kind = kind;
+        replay_action_apply(&r, &a);
+    }
+    CHECK(memcmp(&before, &r, sizeof r) == 0,
+          "an atom that is not an action moves no byte of the game");
+}
+
 // ---------- the packed evwire READER ----------------------------------------
 //
 // MUTATION-CHECKED, each mutation applied to c/src/evwire.c on its own:
@@ -6900,6 +7384,410 @@ static void test_extras_never_writes_past_its_buffer(void) {
               "extras: decode refuses a buffer it cannot fill");
 }
 
+// ---------- the struct the bridges cross with -------------------------------
+//
+// The packed argument blob above is the CODEC's own shape; what crosses to a
+// host is the ReplayExtras struct, packed and unpacked here (replay_extras.h)
+// so no host writes those offsets itself. c/wasm/wasm_msg_api.c is the only
+// caller, so the whole struct half of this file was reachable only from
+// JavaScript - and the two halves are deliberately NOT inverses of each other
+// (the answer always carries the name count, the argument only under its flag),
+// which is exactly the kind of asymmetry a round-trip test would paper over.
+//
+// MUTATIONS RUN (each applied to c/src/replay_extras.c alone, reverted after):
+//
+//   1  pack writes the name count whether or not the flag is set   -> 1 failure
+//   2  pack writes n_gaps one byte late                            -> 9
+//   3  pack drops the `n_names > MAX_PLAYERS` refusal              -> 1
+//   4  pack drops the times section's ECAP check                   -> 68
+//   5  unpack reads the count byte only under the names flag       -> 4
+//   6  unpack drops the `len > NAME_SLOT` refusal                  -> 1
+//   7  unpack drops the `p + 8 * n_gaps > in_len` refusal          -> 1
+//   8  link_styled emits the dash on an anonymous roster           -> 1
+//   9  link_styled never reaches the encoder (always bare)         -> 5
+//  10  link_styled uses the https prefix for the QR style          -> 3
+//  11  link_styled drops the `names_len > sizeof(in) - 2` refusal  -> the binary faults
+//  12  roster_speaks reads the names without their 2-byte header   -> 5
+//
+// 5 and 6 each SURVIVED a first cut of these tests and the tests were widened
+// rather than the mutation excused: 5 because every cycle here carried names,
+// so the one byte the argument and the answer disagree about never mattered,
+// and 6 because the over-long name was also a truncated one, which the "runs
+// off the end" clause refuses before the slot check is asked.
+
+// The struct's names, as a test reads them back.
+static int ex_name_is(const ReplayExtras *x, int i, const char *s) {
+    const int n = (int)strlen(s);
+    return x->names[i].len == (uint16_t)n && memcmp(x->names[i].text, s, (size_t)n) == 0;
+}
+
+static void ex_set_name(ReplayExtras *x, int i, const char *s) {
+    const int n = (int)strlen(s);
+    x->names[i].len = (uint16_t)n;
+    memcpy(x->names[i].text, s, (size_t)n);
+}
+
+static void test_extras_struct_is_the_argument_blob_the_codec_takes(void) {
+    ReplayExtras x;
+    unsigned char args[1024];
+    memset(&x, 0, sizeof x);
+    x.flags = REPLAY_EXTRAS_FLAG_NAMES | REPLAY_EXTRAS_FLAG_TIMES;
+    x.n_names = 2;
+    ex_set_name(&x, 0, "Ann");
+    ex_set_name(&x, 1, "");
+    x.start_time = 1750000000.0;
+    x.n_gaps = 1;
+    x.gaps[0] = 2.0;
+
+    const int n = replay_extras_pack(&x, args, (int)sizeof args);
+    // Written out by hand because this is a wire the bridge writes against: a
+    // pack/unpack round trip would agree with any layout as long as both ends
+    // did. u8 flags, u8 n_names, per name [u16 len][bytes], f64 start, u16
+    // n_gaps, f64 per gap - all little-endian.
+    unsigned char want[1 + 1 + 2 + 3 + 2 + 8 + 2 + 8];
+    int w = 0;
+    want[w++] = REPLAY_EXTRAS_FLAG_NAMES | REPLAY_EXTRAS_FLAG_TIMES;
+    want[w++] = 2;
+    want[w++] = 3; want[w++] = 0; want[w++] = 'A'; want[w++] = 'n'; want[w++] = 'n';
+    want[w++] = 0; want[w++] = 0;
+    { unsigned long long b; memcpy(&b, &x.start_time, 8);
+      for (int i = 0; i < 8; i++) want[w++] = (unsigned char)((b >> (8 * i)) & 0xff); }
+    want[w++] = 1; want[w++] = 0;
+    { unsigned long long b; memcpy(&b, &x.gaps[0], 8);
+      for (int i = 0; i < 8; i++) want[w++] = (unsigned char)((b >> (8 * i)) & 0xff); }
+    CHECK(n == w, "extras: the packed argument is exactly its fields");
+    CHECK(n == w && memcmp(args, want, (size_t)w) == 0,
+          "extras: [flags][n_names][names][start][n_gaps][gaps], little-endian");
+
+    // A times-only argument carries NO count byte. This is the one byte the
+    // argument and the answer disagree about, and a bridge that guessed wrong
+    // would read the start time one byte out.
+    ReplayExtras t = x;
+    t.flags = REPLAY_EXTRAS_FLAG_TIMES;
+    const int m = replay_extras_pack(&t, args, (int)sizeof args);
+    CHECK(m == 1 + 8 + 2 + 8, "extras: a times-only argument has no name count");
+}
+
+static void test_extras_struct_survives_the_codec(void) {
+    // The cycle the bridge actually runs: struct -> pack -> encode -> the blob
+    // that rides in a link -> decode -> unpack -> struct.
+    ReplayExtras x, back;
+    unsigned char args[1024], blob[1024], answer[4096];
+    memset(&x, 0, sizeof x);
+    x.flags = REPLAY_EXTRAS_FLAG_NAMES | REPLAY_EXTRAS_FLAG_TIMES;
+    x.n_names = 3;
+    ex_set_name(&x, 0, "Sveta");
+    ex_set_name(&x, 1, "\xd0\x92\xd0\xbb\xd0\xb0\xd0\xb4");
+    ex_set_name(&x, 2, "");
+    x.start_time = 1750000000.0;
+    x.n_gaps = 4;
+    x.gaps[0] = 0.25; x.gaps[1] = 3.0; x.gaps[2] = 60.0; x.gaps[3] = 0.0;
+
+    const int na = replay_extras_pack(&x, args, (int)sizeof args);
+    CHECK(na > 0, "extras: the struct packs");
+    const int nb = replay_extras_encode(args, na, blob, (int)sizeof blob);
+    CHECK(nb > 0, "extras: the packed argument encodes");
+    const int nc = replay_extras_decode(blob, nb, x.n_names, x.n_gaps, answer, (int)sizeof answer);
+    CHECK(nc > 0, "extras: the blob decodes");
+    memset(&back, 0xAB, sizeof back);
+    CHECK(replay_extras_unpack(answer, nc, &back) == nc,
+          "extras: the answer unpacks, and reads to exactly its end");
+    CHECK(back.flags == x.flags, "extras: both sections came back flagged");
+    CHECK(back.n_names == 3 && ex_name_is(&back, 0, "Sveta")
+          && ex_name_is(&back, 1, "\xd0\x92\xd0\xbb\xd0\xb0\xd0\xb4")
+          && ex_name_is(&back, 2, ""),
+          "extras: every seat's name came back through the struct");
+    CHECK(back.start_time == x.start_time, "extras: the start time is the second it was given");
+    CHECK(back.n_gaps == 4, "extras: four gaps came back");
+    int inside = 1;
+    for (int i = 0; i < 4; i++) {
+        double err = back.gaps[i] - x.gaps[i];
+        if (err < 0) err = -err;
+        if (err > x.gaps[i] * 0.08 + 1e-12) inside = 0;
+    }
+    CHECK(inside, "extras: every gap came back inside the curve's 7%");
+
+    // The same cycle with NO names section. This is the shape that tells the
+    // argument layout from the answer layout: the answer still carries the
+    // count byte, so a bridge that read it only under the flag would take the
+    // start time one byte early and every gap with it.
+    ReplayExtras t, tback;
+    memset(&t, 0, sizeof t);
+    t.flags = REPLAY_EXTRAS_FLAG_TIMES;
+    t.start_time = 1750000123.0;
+    t.n_gaps = 3;
+    t.gaps[0] = 0.5; t.gaps[1] = 8.0; t.gaps[2] = 120.0;
+    const int ta = replay_extras_pack(&t, args, (int)sizeof args);
+    const int tb = replay_extras_encode(args, ta, blob, (int)sizeof blob);
+    const int tc = replay_extras_decode(blob, tb, 0, t.n_gaps, answer, (int)sizeof answer);
+    CHECK(ta > 0 && tb > 0 && tc > 0, "extras: a timing-only blob makes the round trip");
+    memset(&tback, 0xAB, sizeof tback);
+    CHECK(replay_extras_unpack(answer, tc, &tback) == tc, "extras: and unpacks whole");
+    CHECK(tback.flags == REPLAY_EXTRAS_FLAG_TIMES && tback.n_names == 0,
+          "extras: a timing-only answer names no seat");
+    CHECK(tback.start_time == t.start_time,
+          "extras: the start time of a timing-only answer is where the count byte leaves it");
+    CHECK(tback.n_gaps == 3, "extras: and its three gaps came back");
+    int t_inside = 1;
+    for (int i = 0; i < 3; i++) {
+        double err = tback.gaps[i] - t.gaps[i];
+        if (err < 0) err = -err;
+        if (err > t.gaps[i] * 0.08 + 1e-12) t_inside = 0;
+    }
+    CHECK(t_inside, "extras: inside the curve's 7%, like any other gap");
+}
+
+static void test_extras_struct_refuses_what_it_cannot_hold(void) {
+    ReplayExtras x, back;
+    unsigned char args[1024];
+    memset(&x, 0, sizeof x);
+    x.flags = REPLAY_EXTRAS_FLAG_NAMES;
+    x.n_names = 1;
+    ex_set_name(&x, 0, "Ann");
+
+    CHECK(replay_extras_pack(0, args, (int)sizeof args) == -REPLAY_EXTRAS_EINPUT,
+          "extras: no struct is not a struct");
+    CHECK(replay_extras_pack(&x, 0, 16) == -REPLAY_EXTRAS_EINPUT, "extras: nor is nowhere to write");
+    CHECK(replay_extras_pack(&x, args, 0) == -REPLAY_EXTRAS_ECAP, "extras: a zero cap says ECAP");
+    { ReplayExtras w = x; w.n_names = MAX_PLAYERS + 1;
+      CHECK(replay_extras_pack(&w, args, (int)sizeof args) == -REPLAY_EXTRAS_EINPUT,
+            "extras: more seats than the table has is refused"); }
+    { ReplayExtras w = x; w.n_names = -1;
+      CHECK(replay_extras_pack(&w, args, (int)sizeof args) == -REPLAY_EXTRAS_EINPUT,
+            "extras: and so is a negative roster"); }
+    { ReplayExtras w = x; w.flags |= REPLAY_EXTRAS_FLAG_TIMES; w.n_gaps = REPLAY_EXTRAS_MAX_GAPS + 1;
+      CHECK(replay_extras_pack(&w, args, (int)sizeof args) == -REPLAY_EXTRAS_EINPUT,
+            "extras: more gaps than the struct holds is refused"); }
+    { ReplayExtras w = x; w.names[0].len = REPLAY_EXTRAS_NAME_SLOT + 1;
+      CHECK(replay_extras_pack(&w, args, (int)sizeof args) == -REPLAY_EXTRAS_EINPUT,
+            "extras: a name longer than its slot is refused"); }
+
+    // Every short cap is a refusal, never a half-written argument a bridge
+    // would then hand to the encoder. Both section combinations, because each
+    // section reserves its own room and a missing check in one of them is a
+    // write past the caller's buffer, not a wrong answer.
+    ReplayExtras timed = x;
+    timed.flags |= REPLAY_EXTRAS_FLAG_TIMES;
+    timed.start_time = 1750000000.0;
+    timed.n_gaps = 3;
+    timed.gaps[0] = 1.0; timed.gaps[1] = 2.0; timed.gaps[2] = 4.0;
+    const ReplayExtras *shapes[2] = { &x, &timed };
+    for (int k = 0; k < 2; k++) {
+        const int full = replay_extras_pack(shapes[k], args, (int)sizeof args);
+        CHECK(full > 0, "extras: the argument fits a generous buffer");
+        for (int cap = 0; cap < full; cap++) {
+            unsigned char guard[64];
+            memset(guard, 0xCD, sizeof guard);
+            CHECK(replay_extras_pack(shapes[k], guard, cap) == -REPLAY_EXTRAS_ECAP,
+                  "extras: pack refuses a cap it cannot fill");
+            int clean = 1;
+            for (int i = cap; i < (int)sizeof guard; i++) if (guard[i] != 0xCD) clean = 0;
+            CHECK(clean, "extras: and wrote nothing past it");
+        }
+    }
+
+    // The unpack side, over the ANSWER layout (count byte always present).
+    CHECK(replay_extras_unpack(0, 4, &back) == -REPLAY_EXTRAS_EINPUT, "extras: no answer is not an answer");
+    CHECK(replay_extras_unpack(args, 4, 0) == -REPLAY_EXTRAS_EINPUT, "extras: nor is nowhere to put it");
+    { unsigned char a[] = { REPLAY_EXTRAS_FLAG_NAMES };
+      CHECK(replay_extras_unpack(a, 1, &back) == -REPLAY_EXTRAS_EINPUT,
+            "extras: an answer with no count byte is refused"); }
+    { unsigned char a[] = { REPLAY_EXTRAS_FLAG_NAMES, MAX_PLAYERS + 1 };
+      CHECK(replay_extras_unpack(a, 2, &back) == -REPLAY_EXTRAS_EINPUT,
+            "extras: an answer naming more seats than the table has is refused"); }
+    { unsigned char a[] = { REPLAY_EXTRAS_FLAG_NAMES, 1, 9, 0, 'x' };
+      CHECK(replay_extras_unpack(a, (int)sizeof a, &back) == -REPLAY_EXTRAS_EINPUT,
+            "extras: a name claiming more bytes than it has is refused"); }
+    // The name IS there, in full - only wider than the slot the struct holds.
+    // Written that way on purpose: with the bytes missing too, the "runs off
+    // the end" clause refuses it and the slot check never has to.
+    { unsigned char a[4 + REPLAY_EXTRAS_NAME_SLOT + 8];
+      memset(a, 'x', sizeof a);
+      a[0] = REPLAY_EXTRAS_FLAG_NAMES; a[1] = 1;
+      a[2] = (unsigned char)((REPLAY_EXTRAS_NAME_SLOT + 1) & 0xff);
+      a[3] = (unsigned char)((REPLAY_EXTRAS_NAME_SLOT + 1) >> 8);
+      CHECK(replay_extras_unpack(a, (int)sizeof a, &back) == -REPLAY_EXTRAS_EINPUT,
+            "extras: a name wider than the struct's slot is refused, not truncated"); }
+    { unsigned char a[] = { REPLAY_EXTRAS_FLAG_TIMES, 0, 0, 0, 0 };
+      CHECK(replay_extras_unpack(a, (int)sizeof a, &back) == -REPLAY_EXTRAS_EINPUT,
+            "extras: a times section with no start time is refused"); }
+    { unsigned char a[2 + 8 + 2];
+      memset(a, 0, sizeof a);
+      a[0] = REPLAY_EXTRAS_FLAG_TIMES;
+      a[10] = 4; a[11] = 0;                    // four gaps, none of them present
+      CHECK(replay_extras_unpack(a, (int)sizeof a, &back) == -REPLAY_EXTRAS_EINPUT,
+            "extras: gaps that run off the end of the answer are refused"); }
+    { unsigned char a[2 + 8 + 2];
+      memset(a, 0, sizeof a);
+      a[0] = REPLAY_EXTRAS_FLAG_TIMES;
+      a[10] = (unsigned char)((REPLAY_EXTRAS_MAX_GAPS + 1) & 0xff);
+      a[11] = (unsigned char)((REPLAY_EXTRAS_MAX_GAPS + 1) >> 8);
+      CHECK(replay_extras_unpack(a, (int)sizeof a, &back) == -REPLAY_EXTRAS_EINPUT,
+            "extras: more gaps than the struct holds is refused"); }
+}
+
+// ---------- the whole shareable link ----------------------------------------
+//
+// The string a person is put in front of, built in the kernel so a watch, a
+// phone and a browser cannot glue it three ways. Nothing in C had ever built
+// one: the only caller is c/wasm/wasm_msg_api.c.
+static int ex_roster(unsigned char *out, const char *const *names, int n) {
+    int w = 0;
+    for (int i = 0; i < n; i++) {
+        const int len = (int)strlen(names[i]);
+        out[w++] = (unsigned char)(len & 0xff);
+        out[w++] = (unsigned char)((len >> 8) & 0xff);
+        memcpy(out + w, names[i], (size_t)len);
+        w += len;
+    }
+    return w;
+}
+
+static void test_extras_link_is_the_code_and_what_the_roster_says(void) {
+    const char *moves = "MZXW6YTB";
+    const char *named[] = { "Ann", "", "Bo" };
+    const char *anon[] = { "", "", "" };
+    unsigned char roster[256];
+    char link[512], qr[512], code[128];
+    unsigned char blob[512], answer[4096];
+
+    // No roster at all: byte for byte what every build before names emitted.
+    const int bare = replay_extras_link(moves, 0, 0, 0, link, (int)sizeof link);
+    CHECK(bare == (int)strlen(REPLAY_LINK_PREFIX) + 8
+          && strcmp(link, REPLAY_LINK_PREFIX "MZXW6YTB") == 0,
+          "link: no roster is the prefix and the code, and nothing else");
+
+    // An anonymous table decodes to the same P1/P2 a reader already shows, so
+    // the segment would buy nothing and the link must stay identical.
+    int rn = ex_roster(roster, anon, 3);
+    CHECK(replay_extras_link(moves, roster, rn, 3, link, (int)sizeof link) == bare
+          && strcmp(link, REPLAY_LINK_PREFIX "MZXW6YTB") == 0,
+          "link: an anonymous roster costs no bytes");
+
+    // A roster that says something rides behind the dash - and the dash's tail
+    // must decode back to the very names that went in, or the link says
+    // something else about the game than the caller did.
+    rn = ex_roster(roster, named, 3);
+    const int n = replay_extras_link(moves, roster, rn, 3, link, (int)sizeof link);
+    CHECK(n > bare && (int)strlen(link) == n, "link: a named roster lengthens the link");
+    CHECK(memcmp(link, REPLAY_LINK_PREFIX "MZXW6YTB-", (size_t)bare + 1) == 0,
+          "link: the roster rides behind a dash, after the whole code");
+    const int nb = replay_b32_decode(link + bare + 1, blob, (int)sizeof blob);
+    CHECK(nb > 0, "link: the tail is base32");
+    const int na = replay_extras_decode(blob, nb, 3, 0, answer, (int)sizeof answer);
+    CHECK(na > 0, "link: and the tail is an extras blob");
+    ReplayExtras back;
+    memset(&back, 0, sizeof back);
+    CHECK(replay_extras_unpack(answer, na, &back) == na
+          && back.n_names == 3 && ex_name_is(&back, 0, "Ann")
+          && ex_name_is(&back, 1, "") && ex_name_is(&back, 2, "Bo"),
+          "link: the roster that went in is the roster that comes back out");
+
+    // And the code is still readable out of the string a person pasted.
+    CHECK(replay_link_parse(link, code, (int)sizeof code) == 8 && strcmp(code, moves) == 0,
+          "link: the code reads back out of the link the kernel built");
+
+    // The QR form: the same link, uppercase and scheme-less so a QR stays in
+    // alphanumeric mode. A single lowercase letter costs a whole QR version.
+    const int q = replay_extras_link_styled(moves, roster, rn, 3, REPLAY_LINK_STYLE_QR,
+                                            qr, (int)sizeof qr);
+    CHECK(q > 0 && memcmp(qr, REPLAY_LINK_PREFIX_QR, strlen(REPLAY_LINK_PREFIX_QR)) == 0,
+          "link: the QR form drops the scheme");
+    int alnum = 1;
+    for (int i = 0; i < q; i++) {
+        const char ch = qr[i];
+        if (!((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')
+              || ch == '.' || ch == '/' || ch == '-')) alnum = 0;
+    }
+    CHECK(alnum, "link: every character of the QR form is QR-alphanumeric");
+    CHECK(strcmp(qr + strlen(REPLAY_LINK_PREFIX_QR), link + strlen(REPLAY_LINK_PREFIX)) == 0,
+          "link: the two styles are the same link");
+    CHECK(replay_link_parse(qr, code, (int)sizeof code) == 8 && strcmp(code, moves) == 0,
+          "link: and the QR form names the same game");
+
+    // Decoration: a roster the codec cannot read costs the NAMES, never the link.
+    unsigned char lying[] = { 9, 0, 'x' };
+    CHECK(replay_extras_link(moves, lying, (int)sizeof lying, 1, link, (int)sizeof link) == bare
+          && strcmp(link, REPLAY_LINK_PREFIX "MZXW6YTB") == 0,
+          "link: a roster claiming more bytes than it has costs the names, not the link");
+
+    // Refusals.
+    CHECK(replay_extras_link(0, 0, 0, 0, link, (int)sizeof link) == -REPLAY_EXTRAS_EINPUT,
+          "link: no code is not a link");
+    CHECK(replay_extras_link(moves, 0, 0, 0, 0, 16) == -REPLAY_EXTRAS_EINPUT, "link: nor is nowhere to write");
+    CHECK(replay_extras_link(moves, roster, rn, -1, link, (int)sizeof link) == -REPLAY_EXTRAS_EINPUT,
+          "link: a negative seat count is refused");
+    CHECK(replay_extras_link(moves, roster, rn, 256, link, (int)sizeof link) == -REPLAY_EXTRAS_EINPUT,
+          "link: and so is one past a byte");
+    CHECK(replay_extras_link(moves, 0, 4, 1, link, (int)sizeof link) == -REPLAY_EXTRAS_EINPUT,
+          "link: roster bytes with no roster are refused");
+    CHECK(replay_extras_link(moves, roster, -1, 1, link, (int)sizeof link) == -REPLAY_EXTRAS_EINPUT,
+          "link: and so is a negative roster length");
+    CHECK(replay_extras_link(moves, roster, 1 << 20, 1, link, (int)sizeof link) == -REPLAY_EXTRAS_EINPUT,
+          "link: a roster wider than the codec's own buffer is refused, not copied in");
+    CHECK(replay_extras_link(moves, 0, 0, 0, link, 0) == -REPLAY_EXTRAS_EINPUT,
+          "link: a zero cap is not a buffer at all");
+    for (int cap = 1; cap <= bare; cap++) {
+        char guard[512];
+        memset(guard, 0x7F, sizeof guard);
+        CHECK(replay_extras_link(moves, 0, 0, 0, guard, cap) == -REPLAY_EXTRAS_ECAP,
+              "link: a buffer the bare link does not fit is refused");
+        int clean = 1;
+        for (int i = cap; i < (int)sizeof guard; i++) if (guard[i] != 0x7F) clean = 0;
+        CHECK(clean, "link: and nothing was written past it");
+    }
+}
+
+// ############ THIS TEST IS RED ON PURPOSE. IT NAMES A DEFECT. ################
+//
+// replay_extras_link_styled answers a SHORT BUFFER two different ways depending
+// on how short it is, and the bigger buffer is the one that fails:
+//
+//     cap 30 .. 32   -REPLAY_EXTRAS_ECAP, no link at all
+//     cap 33 .. 47   30, the bare link (the names are dropped)
+//     cap 48+        47, the whole link
+//
+// (measured with the 30-byte link and the 3-seat roster below.) Both bands are
+// the SAME situation - the buffer cannot take the roster - and the function has
+// two answers for it, one line apart:
+//
+//     if (w >= cap - 2) return -REPLAY_EXTRAS_ECAP;      // no room for the dash
+//     out[w++] = '-';
+//     n = replay_b32_encode(blob, n, out + w, cap - w);
+//     if (n < 0) { out[bare] = 0; return bare; }         // no room for the roster
+//
+// The second is the rule replay_extras.h states: "A roster the codec cannot
+// encode costs the NAMES, never the link." The first contradicts it, and it
+// does so at exactly the cap a caller sizes from the bare link: at cap 31 the
+// finished link is already sitting NUL-terminated in the caller's buffer and
+// the function refuses to report it.
+//
+// NOT FIXED HERE: the fix is a behaviour change (return `bare` instead of ECAP
+// once the bare link has been written), and that wants the owner's eyes. The
+// one-line change is `if (w >= cap - 2) return bare;`.
+static void test_extras_link_short_buffer_answers_itself_twice(void) {
+    const char *moves = "MZXW6YTB";
+    const char *named[] = { "Ann", "", "Bo" };
+    unsigned char roster[256];
+    char link[512];
+    const int rn = ex_roster(roster, named, 3);
+    const int bare = replay_extras_link(moves, 0, 0, 0, link, (int)sizeof link);
+
+    // The band that already behaves: the roster does not fit, so it costs the
+    // names and the link comes back anyway.
+    char loose[64];
+    CHECK(replay_extras_link(moves, roster, rn, 3, loose, bare + 3) == bare
+          && strcmp(loose, REPLAY_LINK_PREFIX "MZXW6YTB") == 0,
+          "link: a buffer three bytes over the bare link drops the names and keeps the link");
+
+    // The band that does not. Same situation, one byte less of buffer.
+    char tight[64];
+    memset(tight, 0x7F, sizeof tight);
+    const int t = replay_extras_link(moves, roster, rn, 3, tight, bare + 1);
+    CHECK(t == bare && strcmp(tight, REPLAY_LINK_PREFIX "MZXW6YTB") == 0,
+          "link: a buffer with room for the code but not the roster still gives the link");
+}
+
 static void test_analyse_hypergeom(void) {
     double s36 = 0, s52 = 0;
     for (int k = 0; k <= CARDS_PER_PLAYER; k++) { s36 += analyse_hypergeom(36, 9, k); s52 += analyse_hypergeom(52, 13, k); }
@@ -7918,6 +8806,104 @@ static void test_evwire_as3_split(void) {
     CHECK(evwire_as3_split(buf, seq + 2, &s, &f, &b) == 0 && f == EVW_AS3_ROSTER && b == seq + 1,
           "a roster flag points at the trailer");
     CHECK(evwire_as3_split(buf, seq - 1, &s, &f, &b) == EVW_EPARSE, "a cut sequence is refused");
+}
+
+// ---------- the frame INDEX ---------------------------------------------------
+//
+// evwire_frames is how a host walks a length-prefixed frame stream without
+// knowing what a frame is: it counts them, and it hands back where each one
+// starts and how long it is. It is the one evwire export nothing in C called -
+// c/wasm/wasm_bots_api.c builds the same index inline for the replay scrubber -
+// and a stream it mis-slices is a renderer reading one frame's bytes as
+// another's.
+//
+// MUTATIONS RUN (each applied to c/src/evwire.c alone, reverted after):
+//
+//   1  the index reports the length prefix's offset, not the body's  -> 2 failures
+//   2  the frame length is read at p + 1                             -> 2, then the binary faults
+//   3  the `p + f > len` bound is dropped                            -> 1
+//   4  a zero-length frame is accepted                               -> 1
+//   5  the ECAP guard is dropped                                     -> 1
+//   6  evwire_walk's unknown-hook arm falls into ENGINE_HOOK_ATTACK   -> 1
+
+static void test_evwire_frames_index(void) {
+    static unsigned char code[1 << 20];
+    static unsigned char frames[1 << 16];
+    int off[512], flen[512];
+
+    Game g;
+    unsigned char seed[FOOLISH_SEED_LEN];
+    if (!rs_play_seeded(&g, 3, 667, seed)) { CHECK(0, "seeded game plays out"); return; }
+    const int enc = replay_encode_v6_from_game(&g, seed, FOOLISH_SEED_LEN, 1 << 20,
+                                               code, (int)sizeof code);
+    if (enc <= 0) { CHECK(0, "the played game encodes as v6"); return; }
+    int n_frames = 0, next = 0;
+    const int len = replay_steps_frames_v6(code, enc, VIEW_SPECTATOR, 0, 0,
+                                           frames, (int)sizeof frames, &n_frames, &next);
+    CHECK(len > 0 && n_frames > 2, "a replay produced a stream of frames to index");
+    if (len <= 0) return;
+
+    CHECK(evwire_frames(frames, len, 0, 0, 0) == n_frames,
+          "the index counts exactly the frames the writer wrote");
+    CHECK(evwire_frames(frames, len, off, flen, (int)(sizeof off / sizeof off[0])) == n_frames,
+          "and counts the same when it is also placing them");
+
+    // Every span it named must be a whole frame, and the spans must tile the
+    // stream with no gap and no overlap - which is the only thing that makes
+    // "frame i" mean the same to the indexer and to the reader.
+    int tiled = 1, readable = 1, at = 0;
+    for (int i = 0; i < n_frames; i++) {
+        if (off[i] != at + 2 || flen[i] <= 0) tiled = 0;
+        const unsigned char *fin = 0;
+        int fin_len = 0;
+        if (evwire_read(frames + off[i], flen[i], 0, &fin, &fin_len, 0, 0) < 0) readable = 0;
+        else if ((int)(fin - (frames + off[i])) + fin_len != flen[i]) readable = 0;
+        at = off[i] + flen[i];
+    }
+    CHECK(tiled && at == len, "the spans tile the stream: body after prefix, end to end");
+    CHECK(readable, "and every span is exactly one whole frame");
+
+    // A stream of no frames is not an error - a turn can animate nothing.
+    CHECK(evwire_frames(frames, 0, 0, 0, 0) == 0, "an empty stream holds no frames");
+    CHECK(evwire_frames(0, 4, 0, 0, 0) == EVW_EBADARG, "no stream at all is a bad argument");
+    CHECK(evwire_frames(frames, -1, 0, 0, 0) == EVW_EBADARG, "and so is a negative length");
+    CHECK(evwire_frames(frames, len, off, flen, -1) == EVW_EBADARG, "and a negative cap");
+    CHECK(evwire_frames(frames, len, off, flen, n_frames - 1) == EVW_ECAP,
+          "an index that does not fit says so rather than writing past its arrays");
+    CHECK(evwire_frames(frames, 1, 0, 0, 0) == EVW_EPARSE, "a stream cut inside a length prefix is refused");
+    CHECK(evwire_frames(frames, len - 1, 0, 0, 0) == EVW_EPARSE, "and one cut inside a frame");
+    { unsigned char z[4] = { 0, 0, 0, 0 };
+      CHECK(evwire_frames(z, 4, 0, 0, 0) == EVW_EPARSE, "a zero-length frame is not a frame"); }
+}
+
+// An EvSnap carrying a tag the walk does not know must produce NO event. The
+// snapshots come from engine_snap_hook, so today every tag is one of
+// ENGINE_HOOK_*; the arm is what keeps a stream from a future engine (or a
+// corrupt one) from being rendered as whatever the first case happens to be.
+static int ew_unknown_count;
+static void ew_count_sink(void *ctx, const EvwEvent *ev) { (void)ctx; (void)ev; ew_unknown_count++; }
+
+static void test_evwire_walk_skips_a_hook_it_does_not_know(void) {
+    static Game g;
+    memset(&g, 0, sizeof g);
+    g.num_players = 2;
+    g.defender = 1;
+    GameLog logs[1];
+    memset(logs, 0, sizeof logs);
+    logs[0].log_type = LOG_ATTACK;
+    logs[0].num_pairs = 1;
+    logs[0].pairs[0].primary = (Card){ .suit = SUIT_HEARTS, .value = 6 };
+
+    EvSnap s[2];
+    s[0].g = &g; s[0].tag = ENGINE_HOOK_ATTACK; s[0].aux = 0;
+    s[1].g = &g; s[1].tag = 250;                s[1].aux = 0;   // no such hook
+
+    ew_unknown_count = 0;
+    evwire_walk(s, 1, logs, 1, VIEW_SPECTATOR, ew_count_sink, 0);
+    CHECK(ew_unknown_count == 1, "a hook the walk knows makes one event");
+    ew_unknown_count = 0;
+    evwire_walk(s + 1, 1, logs, 1, VIEW_SPECTATOR, ew_count_sink, 0);
+    CHECK(ew_unknown_count == 0, "a hook it does not know makes none, rather than the first one it does");
 }
 
 static void test_elo_deltas(void) {
@@ -9753,6 +10739,261 @@ static void test_client_conflict_verdicts(void) {
     anim_set_transport(ANIM_TRANSPORT_CHAIN);
 }
 
+// ---------- WHAT A GESTURE ON A BOARD MEANS ---------------------------------
+//
+// client_play is the browser's whole gesture path (c/wasm/wasm_table_api.c
+// wasm_client_play): the board a server sent, the cards under the finger, and
+// one answer covering what they resolve to, which battles they could cover,
+// where the Cover button aims and whether Good is offered. Nothing in C had
+// ever called it - the entry point landed with its host and its tests in
+// TypeScript, which is the same shape of gap as the Oracle's two doors.
+//
+// The assertion that matters is not "it answered": it is that its answer is the
+// ENGINE'S. A highlight the kernel paints and the drop then refuses is the one
+// defect this door exists to make impossible, so every resolved move is dry-run
+// through awire_apply on the whole game and every refused one is too.
+//
+// MUTATIONS RUN (each applied to c/src/client_table.c alone, reverted after):
+//
+//   1  the Cover button falls through to PLAY_TARGET_TABLE when it aims  -> 1 failure
+//      at nothing, instead of resolving to nothing
+//   2  the Cover button aims at best_cover + 1                           -> 1
+//   3  coverable is filled from the battle count, not from the mask      -> 1
+//   4  the menu is enumerated for seat 0 rather than for the viewer      -> 1
+//   5  a cover's attack_cards are taken from m->cards                    -> 1
+//   6  the spectator refusal is dropped                                  -> 1
+//   7  the `n_cards > MAX_MOVE_CARDS` refusal is dropped                 -> 2
+//   8  LEGAL_WIRE_ECAP is reported as CLIENT_E_FORMAT                    -> 1
+//   9  can_say_good is answered from the board's good mask, not the menu -> 1
+//  10  client_adopt_state drops the `viewer >= MAX_PLAYERS` bound        -> 1
+//  11  client_adopt_state drops its seat-count mismatch                  -> 1
+//
+// TWO LINES OF client_table.c ARE LEFT UNCOVERED ON PURPOSE, because no input
+// reaches them:
+//
+//   fool_of's trailing `return -1` wants a finished game whose elimination
+//   order names every seat. The fool IS the seat the order does not name, so a
+//   board game_validate accepts always leaves one.
+//
+//   client_play's trailing `return CLIENT_OK` wants the menu walk to run out
+//   without meeting `idx`. `idx` comes from play_resolve over that same menu
+//   and legal_menu_next visits every index of it, so the walk can only miss it
+//   if the resolver and the menu disagree about what is in the menu.
+//
+// 1 to 5 and 9 all land on the same aggregate check - "a gesture means on a
+// board exactly what the engine makes of it on the game" - because that is the
+// one thing this door promises and the file's own idiom for it (see
+// test_client_validate_is_the_engine). It counts every disagreement, so the
+// number beside it is 1 and the damage is in the counter.
+
+static LegalMoves cp_moves;
+static unsigned char cp_wire[1 << 16];
+static ClientPlay cp_out;
+
+static const ClientPlayScratch cp_scratch = { &cp_moves, cp_wire, (int)sizeof cp_wire };
+
+// The gesture `cards` aimed at `target`, on the board the slot holds.
+static int cp_ask(const TableView *v, const Card *cards, int n, int target, ClientPlay *out) {
+    ClientGesture g;
+    memset(&g, 0, sizeof g);
+    g.n_cards = (int8_t)n;
+    g.target = (int8_t)target;
+    for (int i = 0; i < n && i < MAX_MOVE_CARDS; i++) g.cards[i] = cards[i];
+    return client_play(&ct, v, &g, &cp_scratch, out);
+}
+
+// The engine's verdict on the move client_play resolved to, run against the
+// WHOLE game rather than the masked board - so the two cannot agree by sharing
+// a mistake.
+static int cp_engine_takes(const Game *g, int seat, const ClientPlay *p) {
+    static const int kind_of[] = { [MOVE_ATTACK] = AWIRE_ATTACK, [MOVE_COVER] = AWIRE_COVER,
+                                   [MOVE_PASS] = AWIRE_PASS, [MOVE_PICKUP] = AWIRE_PICKUP,
+                                   [MOVE_GOOD] = AWIRE_GOOD };
+    uint8_t w[64];
+    const int wl = cb_wire(kind_of[p->move_type], p->cards,
+                           p->move_type == MOVE_COVER ? p->attack_cards : 0, p->n_cards, w);
+    if (wl <= 0) return -1;
+    return cb_engine_verdict(g, seat, w, wl) == 0;
+}
+
+static void test_client_play_is_the_engine(void) {
+    int asked = 0, resolved = 0, covers = 0, wrong = 0, good_offers = 0;
+    cb_rng = 11;
+    for (int np = 2; np <= 4; np++) {
+        cb_deal(&cb_game, np, 70 + np);
+        client_init(&ct, &ct_slot);
+        for (int moves = 0; moves < 120; moves++) {
+            for (int seat = 0; seat < np; seat++) {
+                if (cb_game.players[seat].status != PLAYER_STATUS_IN) continue;
+                if (client_adopt_board(&ct, &cb_game, seat) != CLIENT_OK) continue;
+                cb_view = ct.view;
+                const Player *p = &cb_game.players[seat];
+
+                // Good, as the menu offers it. The engine takes a good from
+                // any seat that is in and not defending; the BUTTON is offered
+                // only once the bout could close on it, which is a rule about
+                // the UI and not about legality (legal.h play_can_say_good). So
+                // the offer is exactly the engine's verdict AND that gate - and
+                // in particular an offered Good is always one the engine takes,
+                // which is the half that would be a dead button on screen.
+                if (cp_ask(&cb_view, 0, 0, PLAY_TARGET_TABLE, &cp_out) != CLIENT_OK) { wrong++; continue; }
+                {
+                    uint8_t w[64];
+                    const int wl = cb_wire(AWIRE_GOOD, 0, 0, 0, w);
+                    const int engine_ok = cb_engine_verdict(&cb_game, seat, w, wl) == 0;
+                    int closable = cb_view.num_battles > 0;
+                    for (int b = 0; b < cb_view.num_battles; b++)
+                        if (card_is_none(cb_view.battles[b].defense)) closable = 0;
+                    if (cp_out.can_say_good != (engine_ok && closable)) wrong++;
+                    if (cp_out.can_say_good && !engine_ok) wrong++;
+                    good_offers += cp_out.can_say_good;
+                }
+
+                for (int h = 0; h < p->hand_count && h < 8; h++) {
+                    const Card card = p->hand[h];
+
+                    // Dropped on the table: whatever that resolves to, the
+                    // engine must take it - and when it resolves to nothing,
+                    // the engine must have no move of that shape either.
+                    if (cp_ask(&cb_view, &card, 1, PLAY_TARGET_TABLE, &cp_out) != CLIENT_OK) { wrong++; continue; }
+                    asked++;
+                    if (cp_out.move_type >= 0) {
+                        resolved++;
+                        if (!cp_engine_takes(&cb_game, seat, &cp_out)) wrong++;
+                    }
+
+                    // Every battle the answer says this card could cover must
+                    // be one the engine covers, and every battle it left out
+                    // must be one the engine refuses. A highlight is a promise.
+                    for (int b = 0; b < cb_view.num_battles; b++) {
+                        int listed = 0;
+                        for (int i = 0; i < cp_out.n_coverable; i++) listed |= cp_out.coverable[i] == b;
+                        uint8_t w[64];
+                        const Card attack = cb_view.battles[b].attack;
+                        const int wl = cb_wire(AWIRE_COVER, &card, &attack, 1, w);
+                        const int engine_ok = cb_engine_verdict(&cb_game, seat, w, wl) == 0;
+                        if (listed != engine_ok) wrong++;
+                        covers += listed;
+                    }
+                    if (cp_out.n_coverable > 0) {
+                        int best_listed = 0;
+                        for (int i = 0; i < cp_out.n_coverable; i++) best_listed |= cp_out.coverable[i] == cp_out.best_cover;
+                        if (!best_listed) wrong++;
+                    } else if (cp_out.best_cover >= 0) {
+                        wrong++;
+                    }
+
+                    // The Cover BUTTON aims itself, and must land where
+                    // best_cover says - or on nothing at all when it aims at
+                    // nothing, rather than falling through to the table.
+                    ClientPlay button;
+                    if (cp_ask(&cb_view, &card, 1, CLIENT_PLAY_COVER_BUTTON, &button) != CLIENT_OK) { wrong++; continue; }
+                    if (cp_out.best_cover < 0) {
+                        if (button.move_type != -1) wrong++;
+                    } else {
+                        ClientPlay aimed;
+                        if (cp_ask(&cb_view, &card, 1, cp_out.best_cover, &aimed) != CLIENT_OK) { wrong++; continue; }
+                        if (button.move_type != aimed.move_type || button.n_cards != aimed.n_cards) wrong++;
+                        if (button.move_type == MOVE_COVER && !cp_engine_takes(&cb_game, seat, &button)) wrong++;
+                    }
+                }
+            }
+            if (!cb_step(&cb_game)) break;
+        }
+    }
+    fprintf(stderr, "  [client_play] %d gestures, %d resolved, %d covers offered, %d goods offered\n",
+            asked, resolved, covers, good_offers);
+    CHECK(asked > 500 && resolved > 100 && covers > 50 && good_offers > 10,
+          "enough gestures were read, resolved, offered a cover and offered a good");
+    CHECK(wrong == 0, "a gesture means on a board exactly what the engine makes of it on the game");
+}
+
+static void test_client_play_refuses_what_is_not_a_gesture(void) {
+    ClientGesture g;
+    cb_deal(&cb_game, 3, 77);
+    client_init(&ct, &ct_slot);
+    CHECK(client_adopt_board(&ct, &cb_game, cb_game.first_attacker) == CLIENT_OK, "a board to gesture on");
+    cb_view = ct.view;
+    memset(&g, 0, sizeof g);
+    g.n_cards = 1;
+    g.target = PLAY_TARGET_TABLE;
+    g.cards[0] = cb_game.players[cb_game.first_attacker].hand[0];
+
+    CHECK(client_play(0, &cb_view, &g, &cp_scratch, &cp_out) == CLIENT_E_FORMAT, "no slot is not a slot");
+    CHECK(client_play(&ct, 0, &g, &cp_scratch, &cp_out) == CLIENT_E_FORMAT, "nor is no board");
+    CHECK(client_play(&ct, &cb_view, 0, &cp_scratch, &cp_out) == CLIENT_E_FORMAT, "nor no gesture");
+    CHECK(client_play(&ct, &cb_view, &g, 0, &cp_out) == CLIENT_E_FORMAT, "nor no scratch");
+    CHECK(client_play(&ct, &cb_view, &g, &cp_scratch, 0) == CLIENT_E_FORMAT, "nor nowhere to answer");
+    { ClientPlayScratch s = cp_scratch; s.moves = 0;
+      CHECK(client_play(&ct, &cb_view, &g, &s, &cp_out) == CLIENT_E_FORMAT, "scratch without its move set is not scratch"); }
+    { ClientPlayScratch s = cp_scratch; s.wire = 0;
+      CHECK(client_play(&ct, &cb_view, &g, &s, &cp_out) == CLIENT_E_FORMAT, "nor without its menu buffer"); }
+    { ClientGesture bad = g; bad.n_cards = -1;
+      CHECK(client_play(&ct, &cb_view, &bad, &cp_scratch, &cp_out) == CLIENT_E_FORMAT, "a negative selection is not a selection"); }
+    { ClientGesture bad = g; bad.n_cards = MAX_MOVE_CARDS + 1;
+      CHECK(client_play(&ct, &cb_view, &bad, &cp_scratch, &cp_out) == CLIENT_E_FORMAT,
+            "and a selection wider than a move is refused before a card of it is read"); }
+
+    // A menu that does not fit is a CAP, not a format fault: the caller can fix
+    // one by growing its buffer and not the other.
+    { unsigned char tiny[2];
+      ClientPlayScratch s = { &cp_moves, tiny, (int)sizeof tiny };
+      CHECK(client_play(&ct, &cb_view, &g, &s, &cp_out) == CLIENT_E_CAP, "a menu buffer that cannot hold the menu says CAP"); }
+
+    // A spectator has no seat whose menu this would be.
+    { TableView v = cb_view; v.my_seat = -1;
+      CHECK(client_play(&ct, &v, &g, &cp_scratch, &cp_out) == CLIENT_E_MISMATCH, "a spectator makes no gesture"); }
+
+    // A board the rules refuse is refused as the rules refuse it, before any
+    // menu is enumerated on it.
+    { TableView v = cb_view; v.power_suit = 9;
+      CHECK(client_play(&ct, &v, &g, &cp_scratch, &cp_out) == GAME_INVALID_POWER_SUIT,
+            "a board that is not a board is refused with the reason it is not one"); }
+
+    // A card the seat does not hold names no legal move - which is an ANSWER,
+    // not a refusal, and the difference is a screen that greys a card out
+    // rather than one that reports an error.
+    { ClientGesture ghost = g;
+      ghost.cards[0] = cb_game.players[(cb_game.first_attacker + 1) % 3].hand[0];
+      CHECK(client_play(&ct, &cb_view, &ghost, &cp_scratch, &cp_out) == CLIENT_OK && cp_out.move_type == -1,
+            "a card the seat does not hold resolves to nothing, and says so as an answer"); }
+}
+
+// client_adopt_state: a masked board off the wire with no envelope and no
+// roster around it - the shape a client holds when a server sends it a view
+// and nothing else.
+static void test_client_adopts_a_bare_board(void) {
+    unsigned char buf[4096];
+    cb_deal(&cb_game, 3, 83);
+    client_init(&ct, &ct_slot);
+
+    const int n = state_put(&cb_game, 1, buf);
+    CHECK(client_adopt_state(&ct, buf, n, 1) == CLIENT_OK, "a masked board with no envelope is adopted");
+    CHECK(ct.view.my_seat == 1 && ct.view.num_players == 3
+          && ct.view.my_hand_count == cb_game.players[1].hand_count
+          && card_eq(ct.view.my_hand[0], cb_game.players[1].hand[0]),
+          "and the viewer's own hand came through it real");
+    CHECK(ct.view.seats[0].hand_count == cb_game.players[0].hand_count,
+          "the other seats' counts are there");
+    CHECK(ct.view.seats[0].id_len == 0 && ct.view.gid_len == 0 && ct.view.version == 0,
+          "and a bare board names nobody and carries no version");
+    CHECK(client_identity(&ct, buf, (int)sizeof buf) == 0, "a slot holding a bare board has no identity to write");
+
+    const int sp = state_put(&cb_game, VIEW_SPECTATOR, buf);
+    CHECK(client_adopt_state(&ct, buf, sp, -1) == CLIENT_OK && ct.view.my_seat == -1 && ct.view.my_hand_count == 0,
+          "a spectator's board is adopted as nobody's");
+
+    CHECK(client_adopt_state(&ct, 0, 4, 0) == CLIENT_E_FORMAT, "no bytes are not a board");
+    CHECK(client_adopt_state(&ct, buf, -1, 0) == CLIENT_E_FORMAT, "nor is a negative length");
+    CHECK(client_adopt_state(&ct, buf, sp, MAX_PLAYERS) == CLIENT_E_FORMAT,
+          "a viewer past the table's widest seat is refused before the bytes are read");
+    CHECK(client_adopt_state(&ct, buf, sp, 3) == CLIENT_E_MISMATCH,
+          "and a viewer this board does not seat is a mismatch, not a format fault");
+    CHECK(client_adopt_state(&ct, buf, sp - 1, 0) == CLIENT_E_STATE,
+          "a board that does not measure to its own length is refused");
+    CHECK(ct.open == false, "and adopting never leaves a push open behind it");
+}
+
 int main(void) {
     test_state_import_rejects_invalid_values();
     test_state_import_refuses_a_lobby_with_cards();
@@ -9769,6 +11010,13 @@ int main(void) {
     test_replay_step_index_reports_a_pending_good();
     test_replay_steps_replays_a_deal_with_no_trump();
     test_replay_step_index_refuses_a_small_buffer();
+    test_replay_step_board_is_the_board_that_seat_decided_on();
+    test_replay_step_board_refuses_what_is_not_a_decision();
+    test_replay_step_memory_is_the_public_log_before_the_move();
+    test_replay_step_memory_refuses_what_it_cannot_pair();
+    test_replay_step_frames_chunk_whole_frames_only();
+    test_replay_deal_start_refuses_a_header_the_rebuild_disagrees_with();
+    test_replay_action_apply_leaves_a_non_action_alone();
     test_evwire_read_round_trips_the_writers_own_events();
     test_evwire_read_refuses_a_malformed_sequence();
     test_evwire_frames_settlement_cut();
@@ -9918,6 +11166,11 @@ int main(void) {
     test_extras_roster_speaks_only_when_it_has_something_to_say();
     test_extras_refuses_what_it_cannot_read();
     test_extras_never_writes_past_its_buffer();
+    test_extras_struct_is_the_argument_blob_the_codec_takes();
+    test_extras_struct_survives_the_codec();
+    test_extras_struct_refuses_what_it_cannot_hold();
+    test_extras_link_is_the_code_and_what_the_roster_says();
+    test_extras_link_short_buffer_answers_itself_twice();
     test_analyse_hypergeom();
     test_analyse_verdict_rule();
     test_analyse_belief_holds_on_played_games();
@@ -9941,6 +11194,8 @@ int main(void) {
     test_table_plays_a_game_to_its_end();
     test_table_request_and_response();
     test_evwire_as3_split();
+    test_evwire_frames_index();
+    test_evwire_walk_skips_a_hook_it_does_not_know();
     test_elo_deltas();
     test_table_create_and_join();
     test_table_leave_and_bots();
@@ -9966,6 +11221,9 @@ int main(void) {
     test_client_board_edit_undeal();
     test_client_rearrange_hand();
     test_client_conflict_verdicts();
+    test_client_play_is_the_engine();
+    test_client_play_refuses_what_is_not_a_gesture();
+    test_client_adopts_a_bare_board();
 
     printf("\n%d passed, %d failed\n", n_pass, n_fail);
     return n_fail > 0 ? 1 : 0;
