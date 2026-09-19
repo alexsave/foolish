@@ -605,6 +605,10 @@ static int covers_attack(const MenuMove *m, unsigned char attack) {
 }
 
 static unsigned char battle_attack(const PlayBoard *b, int i) { return b->table[2 * i]; }
+// EXACTLY the no-card byte, and nothing wider. Every other byte in a cover
+// slot is a card - a named one, or the unnameable one the host writes for a
+// card the viewer may not see (legal.h, PlayBoard) - and a test on "off the
+// deck" here would open a closed battle.
 static int battle_is_uncovered(const PlayBoard *b, int i) {
     return b->table[2 * i + 1] == LEGAL_WIRE_NONE;
 }

@@ -1195,6 +1195,34 @@ static int pretable_wire_check(void) {
         }
     }
 
+    // A BOARD HOLDING A CARD NOBODY CAN NAME is neither a corrupt wire nor a
+    // board: the answer is a table to be laid out, and that cell has no face
+    // (ios_api.h, fio_table_encode). It is consumed off the wire and the rule
+    // proceeds as if no board came. Over the pickup above that is the flat
+    // reading, which the exact-account test would have reached anyway - so the
+    // case that PROVES the rule is a discard, whose table is taken off the
+    // last board with cards on it unchecked. With the cell honoured, that
+    // board is skipped and there is no table; without it, a 0xFF cell reaches
+    // the host to be drawn as a card.
+    unsigned char masked[sizeof in];
+    memcpy(masked, in, sizeof in);
+    masked[4] = FIO_TABLE_UNKNOWN;   // the 6d's cover, which the viewer may not see
+    n = fio_pre_bout_table_packed(masked, (int)sizeof masked, (char *)out, sizeof out);
+    if (n != FIO_PRETABLE_HEAD + 6 || out[1] != 3 || out[2] != 0) {
+        printf("FAIL pre-bout masked prior rc=%d n=%d paired=%d (want the flat reading)\n",
+               n, out[1], out[2]); return 1;
+    }
+    const unsigned char discard_in[] = {
+        FIO_PRETABLE_VERSION, 2, FIO_PRETABLE_NONE,   // no prior board
+        5, 1, 44, FIO_TABLE_UNKNOWN, 0,               // COVER: 6d under a card the viewer may not see
+        7, 0, 0,                                      // DISCARD: the emptied table
+    };
+    n = fio_pre_bout_table_packed(discard_in, (int)sizeof discard_in, (char *)out, sizeof out);
+    if (n != FIO_PRETABLE_HEAD || out[1] != 0) {
+        printf("FAIL pre-bout masked discard rc=%d n=%d (a board nobody can lay out was laid out)\n",
+               n, out[1]); return 1;
+    }
+
     // EVERY short prefix, flush against a PROT_NONE guard page - see the plan's
     // loop for why a return code is not enough on its own.
     const long page = sysconf(_SC_PAGESIZE);
@@ -1285,6 +1313,20 @@ static int conflict_wire_check(void) {
     n = fio_conflict_packed(masked, (int)sizeof masked, (char *)out, sizeof out);
     if (n <= 0 || out[3] != FIO_CONFLICT_V_KEEP) {
         printf("FAIL conflict masked back rc=%d v=%d\n", n, out[3]); return 1;
+    }
+
+    // A CARD NOBODY CAN NAME on the opening table is TAKEN, not refused, and
+    // its named neighbour still stands: the 6d covered by a card the viewer may
+    // not see is still the 6d on the table, so the motion that put it there
+    // keeps. Refusing the board here would revert that card for no reason;
+    // reading the cell as bare would be wrong the other way on the pre-bout
+    // table, which is why the byte is its own (ios_api.h, fio_table_encode).
+    memcpy(masked, in, sizeof in);
+    masked[5] = FIO_TABLE_UNKNOWN;    // the king of hearts, masked
+    n = fio_conflict_packed(masked, (int)sizeof masked, (char *)out, sizeof out);
+    if (n != 12 || out[2] != FIO_CONFLICT_V_KEEP || out[3] != FIO_CONFLICT_V_REVERT) {
+        printf("FAIL conflict masked cover rc=%d v=%d/%d (the 6d must still stand)\n",
+               n, out[2], out[3]); return 1;
     }
 
     unsigned char bad[sizeof in];
@@ -1469,6 +1511,46 @@ static int board_rules_check(void) {
     }
     if (fio_hand_laid_out(hand, 3, 0, order, 3, (char *)out, 1) != FIO_ECAP) {
         printf("FAIL laid out wrote past its buffer\n"); return 1;
+    }
+
+    // THE TABLE, WRITTEN (fio_table_encode): the one place a table byte is
+    // chosen. The masked back is the byte that is a card and not the byte
+    // that is no card - reading the two the same way is the vanishing cover -
+    // and a pair no host can build (a bare ATTACK) is still an unnameable card
+    // rather than a refusal, so the encoder stays total. The full vector set
+    // is ios/Fixtures/table_goldens.bin (ios_table_goldens.c); this pins the
+    // rule from C so a Swift suite is not the only reader of it.
+    {
+        const int8_t pairs[] = {
+            0, 6,  FIO_CARD_NONE, FIO_CARD_NONE,   // 6s, bare
+            0, 6,  -1, -1,                         // 6s under a card the viewer may not see
+            -1, -1, FIO_CARD_NONE, FIO_CARD_NONE,  // an attack the viewer may not see, bare
+            FIO_CARD_NONE, FIO_CARD_NONE, 1, 9,    // no attack at all: not a shape, still a cell
+            4, 6,  0, 14,                          // off the deck both ways
+        };
+        unsigned char wire[10];
+        const int rc = fio_table_encode(pairs, 5, (char *)wire, (int)sizeof wire);
+        const unsigned char want[10] = {
+            six, FIO_CONFLICT_NONE,
+            six, FIO_TABLE_UNKNOWN,
+            FIO_TABLE_UNKNOWN, FIO_CONFLICT_NONE,
+            FIO_TABLE_UNKNOWN, nine,
+            FIO_TABLE_UNKNOWN, FIO_TABLE_UNKNOWN,
+        };
+        if (rc != 10 || memcmp(wire, want, 10) != 0) {
+            printf("FAIL table encode rc=%d [%d %d %d %d %d %d %d %d %d %d]\n", rc,
+                   wire[0], wire[1], wire[2], wire[3], wire[4],
+                   wire[5], wire[6], wire[7], wire[8], wire[9]); return 1;
+        }
+        // A bare cover is only a bare COVER: the same pair as an attack is a
+        // card nobody can name, never "no card" in a slot that cannot be empty.
+        if (wire[6] == FIO_CONFLICT_NONE) { printf("FAIL table encode emptied an attack\n"); return 1; }
+        if (fio_table_encode(pairs, 5, (char *)wire, 9) != FIO_ECAP
+            || fio_table_encode(0, 1, (char *)wire, 10) != FIO_EBADARG
+            || fio_table_encode(pairs, -1, (char *)wire, 10) != FIO_EBADARG
+            || fio_table_encode(0, 0, (char *)wire, 0) != 0) {
+            printf("FAIL table encode refusals\n"); return 1;
+        }
     }
 
     // The table, 2 bytes per battle, and the two choices that rest on it.
@@ -1746,6 +1828,23 @@ static int plan_wire_check(void) {
         // The passed card is veiled - it flies IN to the slot the row grows.
         if (pl->n_veil != 1 || pl->veil_ids[0] != 17) {
             printf("FAIL pass veil\n"); return 1;
+        }
+
+        // …AND A ROW HOLDING A CARD NOBODY CAN NAME IS NO ROW. The freeze's
+        // row is copied out verbatim and laid out by identity, so a 0xFF cell
+        // that got through would be drawn as a card. The plan still builds -
+        // the host paints the live row, as it did before rows crossed at all -
+        // while a byte that is neither a card nor a sentinel refuses the plan.
+        unsigned char masked_row[sizeof pass_in];
+        memcpy(masked_row, pass_in, sizeof pass_in);
+        masked_row[23] = FIO_TABLE_UNKNOWN;   // the standing pile's cover, masked
+        if (fio_anim_plan(masked_row, (int)sizeof masked_row) != FIO_EOK || pl->pre.n_battles != 0) {
+            printf("FAIL masked row: pre row %d cells (want none - a cell nobody can name has no face)\n",
+                   pl->pre.n_battles); return 1;
+        }
+        masked_row[23] = 200;
+        if (fio_anim_plan(masked_row, (int)sizeof masked_row) != FIO_EPARSE) {
+            printf("FAIL a row cell that is no card and no sentinel built a plan\n"); return 1;
         }
 
         // A COVER takes the other branch: the row keeps its cell count (a cover

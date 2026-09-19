@@ -8,6 +8,7 @@
 #include "ios_api.h"
 #include "ios_internal.h"
 
+#include "awire.h"
 #include "game.h"
 #include "legal.h"
 #include "view.h"
@@ -72,6 +73,62 @@ int fio_legal_from_packed(const uint8_t *buf, int len, int seat, char *out, int 
     if (tmp->num_players < 2) return FIO_EPARSE;
     if (seat < 0 || seat >= tmp->num_players) return FIO_EBADARG;
     return emit_legal_packed(tmp, seat, out, cap);
+}
+
+// ---------- a move, written -------------------------------------------------
+//
+// The other direction: a move the host is holding, as the awire action frame.
+// See ios_api.h for why this is a kernel entry and not four lines in each host.
+//
+// THE VALIDATION IS awire_encode's, not a copy of it. This fills the struct and
+// asks; the only rule restated here is the array bound, because filling
+// AwireAction past its end is a memory question that has to be answered BEFORE
+// the encoder is allowed to look at it. Everything else - which kinds exist,
+// which carry cards, what a cover owes - is read off awire.c's answer, so the
+// two can never come apart.
+int fio_awire_encode(int type,
+                     const int8_t *cards, int n_cards,
+                     const int8_t *attacks, int n_attacks,
+                     char *out, int cap) {
+    if (!out || cap < 0) return FIO_EBADARG;
+    if (n_cards < 0 || n_cards > AWIRE_MAX_CARDS) return FIO_EBADARG;
+    if (n_attacks < 0 || n_attacks > AWIRE_MAX_CARDS) return FIO_EBADARG;
+    if ((n_cards > 0 && !cards) || (n_attacks > 0 && !attacks)) return FIO_EBADARG;
+    // A cover's pairs are POSITIONAL, so a short attack list is not a frame
+    // with fewer attacks in it - it is a frame that says nothing about what the
+    // last cover cards land on. awire_encode would happily write n attack bytes
+    // out of a list that does not have them, so this is asked first.
+    if (type == AWIRE_COVER && n_attacks != n_cards) return FIO_EBADARG;
+
+    AwireAction a;
+    a.kind = type;
+    a.n = n_cards;
+    // A Card is BITFIELDS (card.h: suit in 3 signed bits, value in 5), so a
+    // pair that does not fit narrows SILENTLY - suit 4 would be stored as -4 and
+    // encode as some other card's byte. Read each field back and refuse the pair
+    // if it did not survive, which costs nothing and states no rule: it only
+    // says the caller handed over something a Card cannot hold.
+    for (int i = 0; i < n_cards; i++) {
+        a.cards[i].suit = cards[2 * i];
+        a.cards[i].value = cards[2 * i + 1];
+        if (a.cards[i].suit != cards[2 * i] || a.cards[i].value != cards[2 * i + 1]) return FIO_EBADARG;
+    }
+    for (int i = 0; i < n_attacks; i++) {
+        a.attacks[i].suit = attacks[2 * i];
+        a.attacks[i].value = attacks[2 * i + 1];
+        if (a.attacks[i].suit != attacks[2 * i] || a.attacks[i].value != attacks[2 * i + 1]) return FIO_EBADARG;
+    }
+
+    // Written into a buffer that is BY CONSTRUCTION the largest legal frame, so
+    // a 0 back can only mean "awire will not write this move" and never "it did
+    // not fit" - which is what lets the two failures keep their own codes
+    // without this file deciding which is which.
+    unsigned char frame[2 + 2 * AWIRE_MAX_CARDS];
+    const int n = awire_encode(&a, frame, (int)sizeof frame);
+    if (n == 0) return FIO_EBADARG;
+    if (n > cap) return FIO_ECAP;
+    memcpy(out, frame, (size_t)n);
+    return n;
 }
 
 // ---------- what a gesture on a board means (the board rules) ---------------

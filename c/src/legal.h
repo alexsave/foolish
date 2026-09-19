@@ -165,7 +165,14 @@ int legal_menu_next(MenuWalk *w, MenuMove *out);
 typedef struct {
     const unsigned char *menu;    // the packed menu wire for this seat
     int menu_len;
-    // 2 bytes per battle: the attack, then its cover or LEGAL_WIRE_NONE.
+    // 2 bytes per battle: the attack, then its cover or LEGAL_WIRE_NONE - the
+    // one table layout (anim_plan.h). A cell holding any other byte off the
+    // deck (ANIM_TABLE_UNKNOWN, a card the viewer is not allowed to see) is A
+    // CARD THAT IS THERE: the battle is covered, and no menu card equals it,
+    // so nothing covers it. It must not read as LEGAL_WIRE_NONE - a cover
+    // spelled as absent opens a battle that is closed, withholds Good and
+    // offers a drop target - and it need not be refused: these rules decide by
+    // menu identity, and a cell with none simply matches nothing.
     const unsigned char *table;
     int n_battles;
     int power_suit;               // trump suit 0..3, or -1 for none

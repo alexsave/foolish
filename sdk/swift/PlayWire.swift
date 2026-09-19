@@ -63,15 +63,15 @@ public enum PlayWire {
     public static func probe(menu: Data, battles: [BattleView], powerSuit: Int,
                              isDefender: Bool, selection: [Card],
                              target: PlayTarget) -> PlayProbe {
-        let table = tableWire(battles)
-        let sel = selection.map(cardByte)
+        let table = TableWire.encode(battles)
+        let sel = selection.map(selectionByte)
         var out = [CChar](repeating: 0, count: 1024)
 
         let n: Int32 = menu.withUnsafeBytes { m in
             table.withUnsafeBufferPointer { t in
                 sel.withUnsafeBufferPointer { s in
                     fio_play_probe(m.bindMemory(to: UInt8.self).baseAddress, Int32(menu.count),
-                                   t.baseAddress, Int32(battles.count),
+                                   t.baseAddress, Int32(table.count / 2),
                                    Int32(powerSuit), isDefender ? 1 : 0,
                                    s.baseAddress, Int32(sel.count), target.wire,
                                    &out, Int32(out.count))
@@ -103,14 +103,14 @@ public enum PlayWire {
     /// live" - a turn handoff reading the raw menu hands the game to a seat
     /// whose only offer is a good the board will not let it make.
     public static func humanMoves(menu: Data, battles: [BattleView]) -> [Move] {
-        let table = tableWire(battles)
+        let table = TableWire.encode(battles)
         var cap = 8 * 1024
         while true {
             var out = [CChar](repeating: 0, count: cap)
             let n: Int32 = menu.withUnsafeBytes { m in
                 table.withUnsafeBufferPointer { t in
                     fio_play_human_menu(m.bindMemory(to: UInt8.self).baseAddress, Int32(menu.count),
-                                        t.baseAddress, Int32(battles.count), &out, Int32(cap))
+                                        t.baseAddress, Int32(table.count / 2), &out, Int32(cap))
                 }
             }
             if n >= 0 { return MoveWire.decode(Data(out.prefix(Int(n)).map { UInt8(bitPattern: $0) })) }
@@ -121,22 +121,18 @@ public enum PlayWire {
 
     // MARK: - the wire
 
-    /// Card byte: suit*13 + value-1, the same numbering the move wire uses.
-    /// 0xFE is the kernel's "no card", which is what an uncovered battle carries.
-    private static func cardByte(_ c: Card) -> UInt8 {
-        c.isHidden ? 0xFE : UInt8(c.s * 13 + (c.v - 1))
-    }
+    // THE TABLE IS THE KERNEL'S TO WRITE (TableWire). This file used to write
+    // it, and spelled a card the viewer may not see as the no-card byte - which
+    // read back as an OPEN battle: Good withheld over a covered table, a drop
+    // target offered on a closed battle, and nothing refusing because the wire
+    // was well-formed. The kernel's rule for that cell is stated once, in
+    // ios_api.h beside the bytes.
 
-    /// The table as the kernel reads it: two bytes per battle, the attack then
-    /// its cover or the no-card sentinel.
-    private static func tableWire(_ battles: [BattleView]) -> [UInt8] {
-        var out: [UInt8] = []
-        out.reserveCapacity(battles.count * 2 + 2)
-        for b in battles {
-            out.append(cardByte(b.attack))
-            out.append(b.defense.map(cardByte) ?? 0xFE)
-        }
-        out.append(0xFE)   // never read; keeps baseAddress non-nil for an empty table
-        return out
+    /// A selected card as the byte the menu names it by. A card that cannot be
+    /// named crosses as the same unnameable byte the table uses, so it equals
+    /// no menu card and the selection resolves to nothing - the only answer a
+    /// question about a card nobody can see can have.
+    private static func selectionByte(_ c: Card) -> UInt8 {
+        CardSet.id(of: c) ?? UInt8(FIO_TABLE_UNKNOWN)
     }
 }
