@@ -101,11 +101,21 @@ sources() {
 # the modules are (the WASM_* assignments: flags, caps, source lists). A new
 # make target or a comment in that file is not a kernel change and must not
 # demand a rebuild - the same line-level rule the gate already applied.
+#
+# …AND THE --export= LINES, because an export list is a MULTI-LINE value and the
+# assignment pattern only ever saw its first line. WASM_API_EXPORTS is fifty
+# lines of backslash continuations; adding or dropping an entry left this hash
+# byte-identical (measured 2026-09-19: dropping wasm_replay_error_detail moved
+# the shipped module by 14 gzip bytes and the stamp by none). An export table IS
+# what a module is - it decides both the module's surface and, because an export
+# roots its code, what the linker may drop - so a changed one must demand a
+# rebuild like any other kernel change. No comment in c/Makefile holds
+# `--export=`; the lists are the only thing this matches.
 hash_all() {
   { sources | sort -u | while IFS= read -r f; do
       [ -f "$f" ] && printf '%s %s\n' "$(sha "$f")" "$f"
     done
-    grep -E '^[A-Za-z0-9_]*WASM[A-Za-z0-9_]*[[:space:]]*[:?+]?=' c/Makefile | sort
+    grep -E '^[A-Za-z0-9_]*WASM[A-Za-z0-9_]*[[:space:]]*[:?+]?=|--export=' c/Makefile | sort
   } | if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi \
     | cut -d' ' -f1
 }
