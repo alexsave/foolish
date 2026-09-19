@@ -3,7 +3,7 @@
     "apps": [],
     "details": [
       {
-        "appID": "TEAMID.cards.foolish.app",
+        "appID": "8N2Z544SB4.cards.foolish.app",
         "components": [
           { "/": "/", "exclude": true, "comment": "homepage stays in the browser" },
           { "/": "/dashboard*", "exclude": true },
