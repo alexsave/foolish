@@ -423,9 +423,21 @@ int ws_recv_message(WsConn *c, unsigned char *buf, int cap, int *opcode) {
         } else if (len == 127) {
             unsigned char ext[8];
             if (ws_fill(c, ext, 8) < 0) return -1;
-            len = 0;
-            for (int i = 0; i < 8; i++) len = (len << 8) | ext[i];
-            if (len < 0) return -1;   // top bit set is a protocol violation per spec
+            // Assemble UNSIGNED. Eight attacker-controlled bytes shifted into a
+            // signed int64 can set the sign bit, which is signed overflow,
+            // which is undefined behaviour - and UB lets the compiler assume
+            // the "len < 0" reject that used to sit here could never fire and
+            // delete it. The guard that made this safe was the guard the UB
+            // removed. Same fix and same reasoning as the other copy of this
+            // parser (foolish_server.c wsasync_feed, commit 22efa79).
+            uint64_t ext_len = 0;
+            for (int i = 0; i < 8; i++) ext_len = (ext_len << 8) | ext[i];
+            // A single frame can never exceed the caller's buffer. Rejecting
+            // here also covers the RFC 6455 5.2 "MSB must be 0" rule and any
+            // absurd 64-bit length, and keeps `total + len` below - an int64
+            // sum - far away from overflowing in its turn.
+            if (cap < 0 || ext_len > (uint64_t)cap) return -1;
+            len = (int64_t)ext_len;
         }
 
         unsigned char mkey[4] = {0, 0, 0, 0};

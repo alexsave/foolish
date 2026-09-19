@@ -266,7 +266,7 @@ int fio_legal_from_packed(const uint8_t *buf, int len, int seat, char *out, int 
     if (!buf || len <= 0) return FIO_EBADARG;
     Game *tmp = &g_scratch_game;          // the shared slot; see its comment
     memset(tmp, 0, sizeof *tmp);
-    if (state_import(tmp, buf, /*masked=*/1) != GAME_VALID) return FIO_EPARSE;
+    if (state_import(tmp, buf, len, /*masked=*/1) != GAME_VALID) return FIO_EPARSE;
     if (tmp->num_players < 2) return FIO_EPARSE;
     if (seat < 0 || seat >= tmp->num_players) return FIO_EBADARG;
     return emit_legal_packed(tmp, seat, out, cap);

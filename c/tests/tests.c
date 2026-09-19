@@ -3327,11 +3327,20 @@ static void sv_offsets(const unsigned char *b, SvOffsets *o) {
 static Game sv_src, sv_dst, sv_before, sv_tmp;
 static unsigned char sv_buf[8192], sv_m[8192];
 
+// How many bytes a host would hand over for `buf`: what the payload measures
+// to, which is what a real framing carries. When the bytes describe no payload
+// at all (a count past capacity), the whole scratch buffer goes over so the
+// import is the thing that refuses it rather than this helper.
+static int sv_len(const unsigned char *buf) {
+    const int n = state_measure(buf, (int)sizeof sv_buf);
+    return n > 0 ? n : (int)sizeof sv_buf;
+}
+
 // Import `buf` into sv_dst (which holds some other valid game) and check the
 // verdict. A refusal must leave every byte of sv_dst's state as it was.
 static void sv_expect(const unsigned char *buf, int masked, int want, const char *msg) {
     memcpy(&sv_before, &sv_dst, SV_PREFIX);
-    const int r = state_import(&sv_dst, buf, masked);
+    const int r = state_import(&sv_dst, buf, sv_len(buf), masked);
     if (r != want) fprintf(stderr, "  state_import(%s): got %d, want %d\n", msg, r, want);
     CHECK(r == want, msg);
     if (want != GAME_VALID)
@@ -3464,6 +3473,76 @@ static void test_state_import_rejects_invalid_values(void) {
         sv_offsets(sv_m, &mo);
         sv_m[mo.battles + 1] = 0xFE;
         sv_expect(sv_m, 1, GAME_INVALID_CARD, "a hidden attack card in a masked view");
+    }
+}
+
+// ---------- a state is only as long as the caller says it is -----------------
+//
+// The decode walks the buffer by the counts the CONTENT carries, so a blob that
+// was cut short - a truncated DB row, a frame that ended early - used to be read
+// to the length its own header claimed, hundreds of bytes past the bytes that
+// actually exist. Every cut of a real state must be refused, and refused
+// without touching a byte past the end.
+//
+// THE BUFFER MUST BE EXACTLY THE RIGHT SIZE AND ON THE HEAP. A truncated
+// payload copied into a big static array still reads inside that array, so the
+// over-read this exists to catch is invisible - the bug passes the test. malloc
+// the exact cut length instead, and ASan (make tests-asan) turns the first byte
+// past it into a hard failure.
+static void test_state_import_refuses_a_truncated_payload(void) {
+    unsigned char seed[FOOLISH_SEED_LEN];
+    CHECK(rs_play_seeded(&sv_dst, 3, 4244, seed), "destination game plays out");
+
+    sv_fixture(&sv_src);
+    memset(sv_buf, 0, sizeof sv_buf);
+    const int len = state_put(&sv_src, VIEW_UNMASKED, sv_buf);
+    CHECK(len > 16, "the fixture serializes to a real payload");
+
+    // The whole thing, on an exactly-sized heap buffer, is still accepted.
+    {
+        unsigned char *exact = (unsigned char *)malloc((size_t)len);
+        memcpy(exact, sv_buf, (size_t)len);
+        memcpy(&sv_before, &sv_dst, SV_PREFIX);
+        CHECK(state_import(&sv_dst, exact, len, 0) == GAME_VALID,
+              "an exactly-sized payload imports");
+        free(exact);
+    }
+
+    // Every cut of it is refused, and nothing is adopted.
+    int refused = 0, adopted = 0;
+    CHECK(rs_play_seeded(&sv_dst, 3, 4244, seed), "destination game plays out again");
+    for (int cut = 0; cut < len; cut++) {
+        unsigned char *heap = (unsigned char *)malloc((size_t)(cut ? cut : 1));
+        memcpy(heap, sv_buf, (size_t)cut);
+        memcpy(&sv_before, &sv_dst, SV_PREFIX);
+        const int r = state_import(&sv_dst, heap, cut, 0);
+        if (r == GAME_INVALID_COUNT) refused++;
+        if (memcmp(&sv_before, &sv_dst, SV_PREFIX) != 0) adopted++;
+        free(heap);
+    }
+    CHECK(refused == len, "every truncation of a real state is refused as a count");
+    CHECK(adopted == 0, "and none of them changed the destination game");
+
+    // The other direction: bytes past the payload are not part of it either.
+    {
+        const int over = len + 1;
+        unsigned char *heap = (unsigned char *)malloc((size_t)over);
+        memcpy(heap, sv_buf, (size_t)len);
+        heap[len] = 0;
+        CHECK(state_import(&sv_dst, heap, over, 0) == GAME_INVALID_COUNT,
+              "a payload with a byte of tail is refused, not silently trimmed");
+        free(heap);
+    }
+
+    // And the length is a length, not a capacity: state_measure reads nothing
+    // at or past the end it is given.
+    {
+        unsigned char *heap = (unsigned char *)malloc((size_t)len);
+        memcpy(heap, sv_buf, (size_t)len);
+        CHECK(state_measure(heap, 15) == -1, "a payload shorter than the fixed header measures -1");
+        CHECK(state_measure(heap, len) == len, "a whole payload measures its own length");
+        CHECK(state_measure(heap, len - 1) == -1, "one byte short measures -1");
+        free(heap);
     }
 }
 
@@ -5272,7 +5351,7 @@ static void pt_note_final(int step, const unsigned char *snap, int snap_len) {
     if (!snap || snap_len <= 0) return;
     static Game snapg;
     memset(&snapg, 0, sizeof snapg);
-    state_get(&snapg, snap, 1);
+    state_get(&snapg, snap, snap_len, 1);
     b->n_bat = snapg.num_battles > MAX_BATTLES ? MAX_BATTLES : snapg.num_battles;
     for (int i = 0; i < b->n_bat; i++) {
         b->bat[2 * i] = (unsigned char)card_to_id(snapg.table_battles[i].attack);
@@ -5295,7 +5374,7 @@ static void pt_sink(void *ctx, int index, const EvwRead *ev) {
     }
     static Game snap;
     memset(&snap, 0, sizeof snap);
-    state_get(&snap, ev->snap, 1);
+    state_get(&snap, ev->snap, ev->snap_len, 1);
     e->n_bat = snap.num_battles > MAX_BATTLES ? MAX_BATTLES : snap.num_battles;
     for (int i = 0; i < e->n_bat; i++) {
         e->bat[2 * i] = (unsigned char)card_to_id(snap.table_battles[i].attack);
@@ -9677,6 +9756,7 @@ static void test_client_conflict_verdicts(void) {
 int main(void) {
     test_state_import_rejects_invalid_values();
     test_state_import_refuses_a_lobby_with_cards();
+    test_state_import_refuses_a_truncated_payload();
     test_reset_to_lobby();
     test_replay_steps_rebuilds_the_played_game();
     test_replay_steps_mid_game_cut_conserves_the_deck();

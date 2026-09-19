@@ -118,7 +118,7 @@ static void smoke_ev_sink(void *ctx, int index, const EvwRead *ev) {
         return;
     }
     memset(&g_smoke_board, 0, sizeof g_smoke_board);
-    state_get(&g_smoke_board, ev->snap, /*masked=*/1);
+    state_get(&g_smoke_board, ev->snap, ev->snap_len, /*masked=*/1);
     for (int p = 0; p < g_smoke_board.num_players; p++) {
         const Player *pl = &g_smoke_board.players[p];
         if (p == c->viewer) {
@@ -623,7 +623,7 @@ static int smoke_hand_count(int seat) {
     if (sl < 0) return -1;
     static Game g;
     memset(&g, 0, sizeof g);
-    state_get(&g, (const unsigned char *)sb, /*masked=*/1);
+    state_get(&g, (const unsigned char *)sb, sl, /*masked=*/1);
     if (seat < 0 || seat >= g.num_players) return -1;
     return g.players[seat].hand_count;
 }

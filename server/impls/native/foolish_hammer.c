@@ -632,7 +632,7 @@ static int build_legal_frame(const Config *cfg, const char *gid, int seat, const
 
     static __thread Game g;
     memset(&g, 0, sizeof g);
-    state_get(&g, r.body, /*masked=*/1);
+    state_get(&g, r.body, r.body_len, /*masked=*/1);
     return frame_of_legal_move(&g, seat, false, buf, cap, seed);
 }
 
@@ -962,7 +962,7 @@ static void *ws_worker(void *argp) {
             if (ok) st->actions_applied++;
 
             memset(&g, 0, sizeof g);
-            state_get(&g, msgbuf + 1, /*masked=*/1);
+            state_get(&g, msgbuf + 1, mlen - 1, /*masked=*/1);
 
             if (g.status == GAME_STATUS_GAME_OVER) {
                 // Drive the rematch off the received state, not a poll —
@@ -1116,7 +1116,7 @@ static void *spectator_worker(void *argp) {
                 static __thread Game g;
                 unsigned char frame[64];
                 memset(&g, 0, sizeof g);
-                state_get(&g, msgbuf + 1, /*masked=*/1);
+                state_get(&g, msgbuf + 1, mlen - 1, /*masked=*/1);
                 const int flen = frame_of_legal_move(&g, a->seat, true, frame, sizeof frame, &seed);
                 if (flen > 0 && ws_send_frame(&wc, WS_OP_BIN, frame, flen) >= 0) {
                     st->move_attempts++;

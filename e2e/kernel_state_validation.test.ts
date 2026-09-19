@@ -37,8 +37,8 @@ interface Doors {
     wasm_state_serialize(): number;
     /** The resident board's state (no prefix) into the IO buffer. */
     wasm_export_state(): number;
-    /** The IO buffer's state into the resident board, masked or whole: GAME_VALID or GAME_INVALID_*. */
-    wasm_import_state(masked: number): number;
+    /** The IO buffer's first `len` bytes into the resident board, masked or whole: GAME_VALID or GAME_INVALID_*. */
+    wasm_import_state(len: number, masked: number): number;
 }
 const doors = (): Doors => fixtureExports() as unknown as Doors;
 const mem = () => L.memOf(doors().memory.buffer);
@@ -157,12 +157,75 @@ test('the masked importer refuses the same values, and leaves the resident board
         const badState = io(doors().wasm_export_state());
         assert.equal(fixtureTable().load(fx.state, fx.roster), L.TABLE_OK, 'the real board is resident again');
         mem().u8.set(badState, doors().wasm_io_ptr());
-        refusedAs(doors().wasm_import_state(1), f.reason, `masked: ${f.name}`);
+        refusedAs(doors().wasm_import_state(badState.length, 1), f.reason, `masked: ${f.name}`);
         assert.deepEqual([...residentBlob()], [...before], `masked: ${f.name}: the refused board was not adopted`);
         checked++;
     }
     assert.equal(checked, FAMILIES.filter((f) => f.masked !== false).length, 'every family a masked board carries went through the masked door');
     assert.ok(checked >= 8, `enough families (${checked})`);
+});
+
+// ---- a state is only as long as the caller says it is -----------------------
+//
+// The decode walks the buffer by the counts the CONTENT carries. Before the
+// import took a length it read as far as those counts said, hundreds of bytes
+// past a blob that had been cut short - reachable from a truncated DB row
+// (table_load) and from a truncated frame (the masked door). Both doors must
+// refuse every cut, and the board resident before must still be resident after.
+//
+// The over-read itself is a memory-safety fact, not a JS-visible one: wasm
+// linear memory is one flat array, so reading off the end of a payload lands
+// on other bytes rather than trapping. The heap-exact ASan proof lives in C
+// (c/tests/tests.c test_state_import_refuses_a_truncated_payload, `make -C c
+// tests-asan`); what these pin is that both network-reachable doors now refuse.
+
+test('the masked door refuses every truncation of a real board', () => {
+    const fx = dealt();
+    assert.equal(fixtureTable().load(fx.state, fx.roster), L.TABLE_OK);
+    const board = io(doors().wasm_export_state());
+    assert.ok(board.length > 16, 'the board is a real payload');
+
+    const before = residentBlob();
+    let refused = 0;
+    for (let cut = 0; cut < board.length; cut++) {
+        mem().u8.set(board.subarray(0, cut), doors().wasm_io_ptr());
+        if (doors().wasm_import_state(cut, 1) === L.GAME_INVALID_COUNT) refused++;
+    }
+    assert.equal(refused, board.length, 'every cut of the board is refused as a count');
+    assert.deepEqual([...residentBlob()], [...before], 'and none of them was adopted');
+
+    // Whole, it is still accepted - the refusal is about the length, not the bytes.
+    mem().u8.set(board, doors().wasm_io_ptr());
+    assert.equal(doors().wasm_import_state(board.length, 1), 0, 'the whole board still imports (GAME_VALID)');
+
+    // A host that forgets the length gets 0, which refuses. Loudly is the point:
+    // a missing wasm argument arrives as 0, never as "the buffer's size".
+    mem().u8.set(board, doors().wasm_io_ptr());
+    assert.equal(doors().wasm_import_state(0, 1), L.GAME_INVALID_COUNT, 'a length of 0 refuses');
+});
+
+test('table_load refuses every truncation of a real state blob', () => {
+    const fx = dealt();
+    const table = fixtureTable();
+    assert.equal(table.load(fx.state, fx.roster), L.TABLE_OK, 'the whole blob loads');
+    const resident = residentBlob();
+
+    // Named refusals, not merely "not TABLE_OK": a truncated blob decoded past
+    // its end lands on garbage that game_validate also refuses, for one of a
+    // dozen other reasons - so "it was refused" passes against the over-read
+    // this test exists to pin. GAME_INVALID_COUNT is the length saying no.
+    const NAMES = ['GAME_INVALID_', 'TABLE_E_'];
+    let refused = 0;
+    for (let cut = 0; cut < fx.state.length; cut++) {
+        const r = table.load(fx.state.subarray(0, cut), fx.roster);
+        // Below four bytes the blob has no version/seat-count header to read at all.
+        const want = cut < 4 ? L.TABLE_E_STATE_VERSION : L.GAME_INVALID_COUNT;
+        if (r === want) refused++;
+        else assert.fail(`a blob cut to ${cut} of ${fx.state.length} bytes answered ${reasonOf(r, NAMES)}, want ${reasonOf(want, NAMES)}`);
+    }
+    assert.equal(refused, fx.state.length, 'every cut of the blob is refused for its length');
+    assert.equal(table.load(fx.state, fx.roster), L.TABLE_OK, 'and the whole one still loads after');
+    assert.deepEqual([...residentBlob()], [...resident], 'byte for byte the same board');
 });
 
 // ---- the refusal does not reach legitimate games ----------------------------

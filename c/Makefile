@@ -105,6 +105,26 @@ build/tests.o: tests/tests.c $(wildcard src/*.h)
 tests: build/cnitro_tests
 	./build/cnitro_tests
 
+# The same suite under AddressSanitizer + UBSan, built in one shot at -O1 (not
+# against CORE_OBJ, whose objects are -O3 -flto and not instrumented).
+# This is where a read past the end of a caller's buffer stops being invisible:
+# the wire decoders take byte counts off the network and off a DB row, and a
+# test that hands one a truncated payload only proves anything if the buffer is
+# exactly that long and on the heap - see tests.c
+# test_state_import_refuses_a_truncated_payload. Not part of `make tests`: it is
+# several times slower and the full-game loops dominate it.
+# object-size is off: replay.c's DealSlot is a Game DELIBERATELY shorter than a
+# Game (see deal_reveals_from_seed, which already turns gcc's -Warray-bounds off
+# for the same reason), and that check flags the intent rather than a bug.
+ASAN_CFLAGS := -fsanitize=address,undefined -fno-sanitize=object-size \
+               -fno-omit-frame-pointer -fno-sanitize-recover=undefined \
+               -g -O1 -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Isrc -DCD_LEAFBOOK
+.PHONY: tests-asan
+tests-asan:
+	@mkdir -p build
+	$(CC) $(ASAN_CFLAGS) $(CORE_SRC) tests/tests.c -o build/cnitro_tests_asan -lm
+	./build/cnitro_tests_asan
+
 # Bitboard-rollout difftests (not part of the default suite). Each plays many
 # games and asserts the bitboard engine matches the struct engine.
 build/sim_difftest: tests/sim_difftest.c $(CORE_OBJ)

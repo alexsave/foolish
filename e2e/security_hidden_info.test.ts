@@ -95,7 +95,7 @@ const hexToBytes = (h: string) => Uint8Array.from(Buffer.from(h.replace(/^\\x/, 
 interface ProbeExports {
     memory: WebAssembly.Memory;
     wasm_init(): void; wasm_io_ptr(): number;
-    wasm_import_state(masked: number): number;
+    wasm_import_state(len: number, masked: number): number;
     wasm_view_serialize(viewer: number): number;
 }
 const probe = new WebAssembly.Instance(new WebAssembly.Module(botsTestWasm() as BufferSource), {}).exports as unknown as ProbeExports;
@@ -105,7 +105,7 @@ probe.wasm_init();
 function maskedReencode(board: Uint8Array, viewer: number): Uint8Array {
     const io = probe.wasm_io_ptr();
     new Uint8Array(probe.memory.buffer).set(board, io);
-    const r = probe.wasm_import_state(1);
+    const r = probe.wasm_import_state(board.length, 1);
     assert.ok(r >= 0, `the kernel's masked importer refused the board (reason ${r})`);
     const len = probe.wasm_view_serialize(viewer);
     return new Uint8Array(probe.memory.buffer).slice(io + 2, io + len);

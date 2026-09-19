@@ -14,7 +14,7 @@ interface OracleExports {
     memory: WebAssembly.Memory;
     wasm_init(): void;
     wasm_io_ptr(): number;
-    wasm_import_state(masked: number): number;
+    wasm_import_state(len: number, masked: number): number;
     wasm_import_strategy_keys(): void;
     wasm_import_logs(): void;
     wasm_clearenv(): void;
@@ -78,7 +78,7 @@ export class OracleInstance {
         // 2. a fresh import every batch: the board as the acting seat saw it,
         //    every card it could not see hidden. The kernel judges it first.
         bytesOf(ex).set(job.state, ex.wasm_io_ptr());
-        if (ex.wasm_import_state(1) < 0) return { error: 'state' };
+        if (ex.wasm_import_state(job.state.length, 1) < 0) return { error: 'state' };
 
         // 3. strategy keys: one i8 -1 per seat. Inert for this module (no
         //    espresso_prod), but the call reads num_players bytes unconditionally.

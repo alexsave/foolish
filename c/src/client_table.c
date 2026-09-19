@@ -87,13 +87,13 @@ static void view_fill(ClientTable *c, int viewer, int status) {
     }
 }
 
-// A masked board off the wire into the slot: measured whole, then read and
-// judged exactly as state_import does (state_get, game_validate). The slot is not
-// saved and put back on a refusal, as state_import would: after a refusal it is
-// not read, and every read here would pay the copy.
+// A masked board off the wire into the slot: read and judged exactly as
+// state_import does (state_get, which measures `len` before it reads a field,
+// then game_validate). The slot is not saved and put back on a refusal, as
+// state_import would: after a refusal it is not read, and every read here would
+// pay the copy.
 static int board_import(ClientTable *c, const uint8_t *p, int len) {
-    if (state_measure(p, len) != len) { c->detail = GAME_INVALID_COUNT; return CLIENT_E_STATE; }
-    int v = state_get(c->g, p, 1);
+    int v = state_get(c->g, p, len, 1);
     if (v == GAME_VALID) v = game_validate(c->g, GAME_VALIDATE_MASKED);
     if (v != GAME_VALID) { c->detail = v; return CLIENT_E_STATE; }
     return CLIENT_OK;

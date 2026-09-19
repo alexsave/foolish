@@ -22,9 +22,11 @@ Rust and measured against the shipped C.
 > main-versus-branch split is inverted, because everything it says is only on
 > the branch (`ws.c`, `conn.c`, `quic_wt.c`, `persist.c`, the `_Thread_local`
 > pass) is on main now.
-> **Still live and unfixed:** §3.2 #2, `state_get` taking no input length
-> (`c/src/view.h`), which the doc itself calls the highest-priority item here
-> and a five-line change that does not wait on any rewrite.
+> **§3.2 #1 and #2 are FIXED** (September 2026), which is what this document
+> was for: the WebSocket signed-shift UB in the second copy of the RFC 6455
+> parser, and the state decoder taking no input length.
+> See §3.2 for what each fix turned out to be - #2 in particular was not the
+> five-line parameter this doc predicted.
 
 **TL;DR — recommendation in one paragraph.** Performance is close to a wash
 and should not drive the decision: POC ports of four real hot paths — now
@@ -236,11 +238,12 @@ topology, since PR squash-merges give main different SHAs:
   It is only needed once a threaded host drives the kernel, which today only
   the branch server does — but it means main's kernel is not thread-safe, and
   the fix must travel with the server whenever that merges.
-- **Of the four live residuals in §3.2, exactly one is on `main`** —
+- **Of the four live residuals in §3.2, exactly one was on `main`** —
   `state_get`'s missing length parameter, byte-identical in both refs. The
-  other three (`ws.c:427`, `Content-Length`, QUIC token) are branch-only.
-  That makes `state_get` the single highest-priority fix in this document,
-  and it is a five-line C change that does not wait on any rewrite.
+  other three (`ws.c:427`, `Content-Length`, QUIC token) were branch-only,
+  and `ws.c` has since reached main with the rest of the server.
+  `state_get` was the single highest-priority fix in this document. It and
+  `ws.c:427` are now fixed on `main`; §3.2 records both.
 
 ### 3.1 Memory-safety bugs found and fixed (kernel: on main; server: branch-only)
 
@@ -258,20 +261,53 @@ topology, since PR squash-merges give main different SHAs:
 | `3b05e1a` | `seat=-2` collided with the trusted `VIEW_UNMASKED` sentinel → full-state disclosure to any caller. | **Not prevented** — logic bug. (Though `enum Viewer` makes the sentinel unforgeable by construction.) |
 | `54992d6` | iOS goldens silently truncated: `fio_legal_moves_json` hit a fixed 64 KB caller buffer, returned an error code the walk ignored, and the fixture froze mid-game. | The fixed-buffer + ignorable-negative-return convention is the C ABI idiom; owned buffers/`Result` remove the class. |
 
-### 3.2 Live residuals (found during this examination, unfixed)
+### 3.2 Live residuals (found during this examination)
 
-1. `server/impls/native/ws.c:427` — **the identical signed-shift UB fixed by
-   `22efa79` survives in the second, hand-maintained copy of the same RFC
-   6455 parser** (the `--tls` path). No fuzz gate ever reaches it and no gate
-   builds it with UBSan. Two copies of one parser exist because C has no
-   clean resumable-decoder abstraction; they have already diverged once.
-2. `c/src/view.c:82` — **`state_get` takes no input length at all.** It
-   clamps every count it writes (so the `Game` can't be corrupted) but reads
-   as many bytes as the *content* implies — up to ~755 bytes past a
-   truncated buffer. Reachable from a corrupt/attacker-writable DB blob via
-   `deserialize_slot` (`foolish_server.c:453`). In Rust this signature is
-   unwritable: a slice carries its length. (The honest cheap C fix is a
-   length parameter — five lines.)
+**#1 and #2 are fixed (September 2026).** They are kept here with what the
+fix turned out to be, because the gap between the diagnosis and the fix is
+itself evidence.
+
+1. ~~`server/impls/native/ws.c:427`~~ — **FIXED.** The identical signed-shift
+   UB fixed by `22efa79` had survived in the second, hand-maintained copy of
+   the same RFC 6455 parser (the `--tls` path).
+   The two copies now agree: the 8-byte length is assembled in a `uint64_t`
+   and rejected against the caller's buffer before it becomes an `int64_t`,
+   which is `22efa79`'s own shape.
+   The diagnosis here was exactly right, including why no gate caught it - no
+   fuzz gate reaches this parser and none built it under UBSan.
+   That second half is now false: `make -C server/impls/native ws-frame-test`
+   builds `ws_frame_test.c` under UBSan with `-fno-sanitize-recover`.
+   It has to be a UBSan test and not an assertion about the return value,
+   because the pre-fix parser still answered `-1` for these frames in a debug
+   build - a return-value test goes green against this defect.
+   The remaining C-shaped risk is unchanged: two copies of one parser exist
+   because C has no clean resumable-decoder abstraction, and they have now
+   diverged twice.
+2. ~~`c/src/view.c:82`~~ — **FIXED, and not where this document said.**
+   `state_get` took no input length: it clamps every count it writes (so the
+   `Game` could not be corrupted) but read as many bytes as the *content*
+   implied - up to ~755 bytes past a truncated buffer, confirmed under ASan
+   as a heap-buffer-overflow read from `deserialize_slot`'s path.
+   **The prescription above - "a length parameter, five lines" - was the
+   wrong fix, and would have left the hole open.**
+   The real problem was one level up: `state_import`, the function `view.h`
+   calls THE import and every external path goes through, took no length
+   either, so the designated safe chokepoint was itself unable to be safe and
+   every caller inherited the over-read.
+   Adding a length to `state_get` alone would have handed that decision back
+   to five call sites, one of which would eventually have passed a buffer
+   capacity - which looks fixed and is not.
+   What landed instead: `state_get` takes a byte count and calls the
+   already-correct `state_measure` itself, refusing anything that does not
+   measure to exactly that length before it reads a single field, and
+   `state_import` forwards it.
+   Every one of the five external callers already had a real byte count to
+   hand over; none had to be invented.
+   The safety is now structural - a new caller cannot repeat this, because
+   there is no length-free spelling to reach for.
+   In Rust the original signature is unwritable: a slice carries its length.
+   But note what that would *not* have given for free - the exactness check.
+   A `&[u8]` bounds the read; it does not say the payload is the whole slice.
 3. `foolish_server.c:1251` — `Content-Length` parsed by unbounded
    `cl = cl*10 + digit` into signed `int`; ten digits is UB. The fuzz corpus
    sends nine.

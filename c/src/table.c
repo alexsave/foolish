@@ -113,7 +113,8 @@ int table_load(Table *t, const uint8_t *state, int state_len, const uint8_t *ros
     if (state[2 + 1] != (uint8_t)r.n) return TABLE_E_MISMATCH;
     const int kr = table_seat_kinds(&r, kinds);
     if (kr != TABLE_OK) return kr;
-    const int v = state_import(t->g, state + 2, 0);
+    // state_len counts the two-byte header too; the payload is the rest.
+    const int v = state_import(t->g, state + 2, state_len - 2, 0);
     if (v != GAME_VALID) return v;
     t->g->deterministic_deck = state[1] != 0;
     t->g->rules = 0;   // online play is the classic game (Q18); a previous FMSG decode may have left a variant

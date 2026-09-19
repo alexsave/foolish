@@ -167,7 +167,14 @@ void client_retransmit(World *w, ClientState *cs) {
 
 static const Game *client_decode(World *w, ClientState *cs) {
     if (w->scratch_client != (i32)cs->id || w->scratch_version != cs->view_version) {
-        state_get(w->scratch, cs->view, 1);
+        // view_len, not sizeof cs->view: the decoder takes the payload's BYTE
+        // COUNT and refuses anything that does not measure to exactly it, and
+        // the capacity would hand it back the over-read it exists to stop.
+        // The count is the one srv_send_view put on the wire (state_put's
+        // return, length-checked into Packet.len), recorded beside the bytes
+        // the moment they are copied in. Both callers decode only a view the
+        // client is actually holding, so it is never 0 here.
+        state_get(w->scratch, cs->view, cs->view_len, 1);
         w->scratch_client = (i32)cs->id;
         w->scratch_version = cs->view_version;
     }
