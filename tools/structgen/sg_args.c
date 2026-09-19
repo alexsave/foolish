@@ -9,7 +9,8 @@
 #include "sg_args.h"
 #include "sg_model.h"
 
-const char *headers[MAXN], *roots[MAXN], *prefixes[MAXN], *snaps[MAXN], *writers[MAXN], *build, *out_ts, *out_swift, *out_hash_ts, *cwd = ".";
+const char *headers[MAXN], *roots[MAXN], *prefixes[MAXN], *snaps[MAXN], *writers[MAXN], *build, *out_ts, *out_swift, *out_kotlin, *out_hash_ts, *cwd = ".";
+const char *kotlin_package;
 const char *target = "wasm32";
 int nheaders, nroots, nprefixes, nsnaps, nwriters, print_hash, snapshot_only;
 const char *build_name_end;
@@ -26,7 +27,8 @@ static void usage(void) {
     fputs("usage: structgen --cwd DIR --header H... --root T... --build NAME=FLAGS\n"
           "                 [--fields T=f1,f2,SIZE]... [--const PREFIX]...\n"
           "                 [--snapshot T]... [--count T.f=c]... [--writer T]... [--snapshot-only]\n"
-          "                 [--target TRIPLE] [--ts OUT.ts] [--swift OUT.swift] [--hash-ts OUT.ts] [--print-hash]\n", stderr);
+          "                 [--target TRIPLE] [--ts OUT.ts] [--swift OUT.swift] [--hash-ts OUT.ts] [--print-hash]\n"
+          "                 [--kotlin OUT.kt --kotlin-package PKG]\n", stderr);
     exit(2);
 }
 
@@ -57,6 +59,8 @@ void sg_args(int argc, char **argv) {
         else if (!strcmp(a, "--build")) { if (build) die("one --build per run (run once per build)"); build = v; }
         else if (!strcmp(a, "--ts")) out_ts = v;
         else if (!strcmp(a, "--swift")) out_swift = v;
+        else if (!strcmp(a, "--kotlin")) out_kotlin = v;
+        else if (!strcmp(a, "--kotlin-package")) kotlin_package = v;
         else if (!strcmp(a, "--hash-ts")) out_hash_ts = v;
         else if (!strcmp(a, "--target")) target = v;
         else if (!strcmp(a, "--cwd")) cwd = v;
@@ -74,14 +78,18 @@ void sg_args(int argc, char **argv) {
         else die("unknown argument %s", a);
     }
     if (!nheaders || !nroots || !build) usage();
-    if (!out_ts && !out_swift && !out_hash_ts && !print_hash) die("nothing to do: give --ts, --swift, --hash-ts and/or --print-hash");
+    if (!out_ts && !out_swift && !out_kotlin && !out_hash_ts && !print_hash) die("nothing to do: give --ts, --swift, --kotlin, --hash-ts and/or --print-hash");
     if (out_swift && !nsnaps) die("--swift without a --snapshot: Swift gets value snapshots, not accessors");
+    if (out_kotlin && !nsnaps) die("--kotlin without a --snapshot: Kotlin gets value snapshots, not accessors");
+    if (out_kotlin && !kotlin_package) die("--kotlin needs --kotlin-package: a Kotlin file declares the package it is in");
+    if (kotlin_package && !out_kotlin) die("--kotlin-package without --kotlin: nothing is being written in Kotlin");
     const char *eq = strchr(build, '=');
     if (!eq || eq == build) die("--build must be NAME=FLAGS");
     build_name_end = eq;
     build_flags = eq + 1;
     out_ts = absolute(out_ts);   // output paths are relative to where we were started, not to --cwd
     out_swift = absolute(out_swift);
+    out_kotlin = absolute(out_kotlin);
     out_hash_ts = absolute(out_hash_ts);
     if (chdir(cwd)) die("cannot cd to %s", cwd);
 }

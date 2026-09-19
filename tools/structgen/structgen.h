@@ -9,6 +9,7 @@
 //   sg_model.c   the model the traversal builds, and the requests over it
 //   sg_ts.c      the TypeScript emitter (accessors and snapshots over wasm32)
 //   sg_swift.c   the Swift emitter (value snapshots over the linked struct)
+//   sg_kotlin.c  the Kotlin emitter (value snapshots over a JNI ByteBuffer)
 //   sg_hash.c    the layout hash, and the module that carries it
 //   structgen.c  main: parse, traverse, emit, write
 //
