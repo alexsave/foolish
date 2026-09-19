@@ -54,6 +54,101 @@ async function onAdmin(sql: string): Promise<void> {
     try { await admin.query(sql); } finally { await admin.end(); }
 }
 
+// ---- The server this suite is allowed to talk to, and how fast it is ------
+//
+// THE MAJOR VERSION IS AN ASSERTION, because it was silently wrong for months.
+// A developer Mac with `brew services start postgresql@15` running AND the
+// README's `foolish-e2e-pg` container running has TWO servers on 5432: brew
+// binds 127.0.0.1 and [::1] specifically, the container's published port binds
+// `*`, and a specific bind beats a wildcard one. So every connection went to
+// PostgreSQL 15 (Homebrew) while this README and all three CI workflows said
+// postgres:16, and every local timing in the repo had been taken on a server
+// nobody meant to measure. `lsof -nP -iTCP:5432 -sTCP:LISTEN` shows both.
+//
+// A wrong server must therefore be an error and not a 20% difference in
+// everyone's numbers. E2E_PG_MAJOR overrides the expectation, for a deliberate
+// experiment on another major; it is the one place to change when CI's image
+// moves, and CI going red is the point - the workflows and this constant cannot
+// drift apart in silence.
+const EXPECT_PG_MAJOR = Number(process.env.E2E_PG_MAJOR || 16);
+
+// And the durability a database that is created at a file's start and dropped at
+// its end does not need. The pool already asks for synchronous_commit=off per
+// session (SESSION_OPTIONS in adapters/supabase.ts); what a session option
+// cannot reach is CREATE DATABASE's own checkpoint, the WAL writer, and the
+// full-page image written after every checkpoint. Those are server settings, and
+// these three are all SIGHUP-settable, which is what makes ALTER SYSTEM + reload
+// the one mechanism that works identically here and on a GitHub Actions service
+// container - `services:` takes no command arguments, so `-c fsync=off` is a
+// thing only a local `docker run` can pass. It runs from the harness so a fresh
+// clone and CI both get it with nothing to remember.
+//
+// Measured on the `postgres:16` container, db lane alone (E2E_LANES=serial),
+// on top of the per-session synchronous_commit=off that was already there:
+//
+//     server as shipped              50.5s
+//     these three                    46.6s / 46.1s
+//     + wal_level=minimal, max_wal_senders=0, shared_buffers=512MB,
+//       max_wal_size=2GB (postmaster settings, needs a restart)    45.7s
+//     + the data directory on a tmpfs ramdisk                      46.1s
+//
+// So the three below are the whole win and the other two rows are noise, which
+// is why neither is here: the postmaster settings cannot be set at all on a CI
+// service container, and the ramdisk measured at nothing. Whole suite,
+// overlapped lanes, 542 tests, six runs in one adjacent block: 87.7s mean
+// before, 83.2s after. Only adjacent runs compare - the same tuned suite on a
+// quiet machine an hour later was 77.8s.
+//
+// This is not a weaker database. None of the three changes visibility,
+// isolation, locking or any constraint - only when writes reach the platter - so
+// every CAS race, deadlock and card-conservation assertion is the same
+// experiment it was. What is given up is surviving a power cut, of a database
+// whose every row exists to be asserted about once. They are a TEST-database
+// choice and must never appear near a real one, which is why the tuning is
+// skipped unless the server is on this machine: a loopback host is the cheap
+// test for "a server this checkout stood up", and E2E_PGHOST pointing somewhere
+// else is exactly the case where writing to postgresql.auto.conf would be wrong.
+const FAST_AND_UNDURABLE = ['fsync', 'full_page_writes', 'synchronous_commit'];
+const LOCAL_HOSTS = ['127.0.0.1', 'localhost', '::1'];
+
+let serverReady: Promise<void> | null = null;
+async function assertAndTuneServer(): Promise<void> {
+    const admin = new Client(pgAdminConfig);
+    await admin.connect();
+    try {
+        const { rows } = await admin.query<{ version: string; num: string; name: string; setting: string }>(
+            `SELECT version() AS version, current_setting('server_version_num') AS num, name, setting
+               FROM pg_settings WHERE name = ANY($1)`, [FAST_AND_UNDURABLE]);
+        const major = Math.floor(Number(rows[0]?.num ?? 0) / 10000);
+        const where = `${pgAdminConfig.host}:${pgAdminConfig.port}`;
+        if (major !== EXPECT_PG_MAJOR) {
+            throw new Error(
+                `e2e: ${where} is PostgreSQL ${major}, and this suite runs on ${EXPECT_PG_MAJOR}.\n`
+                + `  ${rows[0]?.version ?? '(no version)'}\n`
+                + '  CI runs the suite against a postgres:16 service (.github/workflows/'
+                + 'validate.yml, coverage.yml, metrics.yml), so a local run on another major\n'
+                + '  measures and proves something CI never runs.\n'
+                + `  Who is on the port:   lsof -nP -iTCP:${pgAdminConfig.port} -sTCP:LISTEN\n`
+                + '  A brew server wins 127.0.0.1 over a container published on *; stop it with\n'
+                + '                        brew services stop postgresql@15\n'
+                + '  Or keep both and give the container its own port:\n'
+                + '                        docker run ... -p 55432:5432 postgres:16   (see e2e/README.md)\n'
+                + '                        E2E_PGPORT=55432 npm run test:e2e\n'
+                + '  To run on another major on purpose:  E2E_PG_MAJOR=' + major);
+        }
+        if (!LOCAL_HOSTS.includes(String(pgAdminConfig.host))) return;
+        if (rows.every((r) => r.setting === 'off')) return;   // already tuned; the usual path
+        for (const name of FAST_AND_UNDURABLE) await admin.query(`ALTER SYSTEM SET ${name} = off`);
+        await admin.query('SELECT pg_reload_conf()');
+    } catch (e) {
+        // A version mismatch is fatal. A refused ALTER SYSTEM (a non-superuser
+        // role, a managed server) is not: it costs seconds, never correctness,
+        // and the suite must still run. Say so once rather than silently.
+        if (e instanceof Error && e.message.startsWith('e2e: ')) throw e;
+        process.stderr.write(`[e2e] could not tune ${pgAdminConfig.host}:${pgAdminConfig.port}: ${e}\n`);
+    } finally { await admin.end(); }
+}
+
 let ownsDatabase = false;
 
 // Create this FILE's database, then stand up the Supabase platform shim and apply
@@ -81,6 +176,11 @@ export async function applySchema(): Promise<void> {
  * privileges). Recreates the database, so calling it again starts over.
  */
 export async function applyPlatformShim(): Promise<void> {
+    // Before the first statement of the first database, once per process: the
+    // right server, and a fast one. Here rather than in scripts/run_e2e.mjs
+    // because this is the door every Postgres-backed file comes through, runner
+    // or not - `node --test e2e/server.test.ts` on its own gets the same check.
+    await (serverReady ??= assertAndTuneServer());
     await onAdmin(`DROP DATABASE IF EXISTS ${suiteDatabase} WITH (FORCE)`);
     await onAdmin(`CREATE DATABASE ${suiteDatabase}`);
     ownsDatabase = true;
