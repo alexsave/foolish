@@ -1,8 +1,7 @@
 import { useEffect, useLayoutEffect, useState, useRef } from 'react';
 import { useAnimation } from '../../contexts/AnimationContext';
 import { covered, seatKey, type ViewCard as Card } from '../../state/view';
-import { CardFace } from './CardFace';
-import { CardBack } from './CardBack';
+import { FlightCard, type AnimatedCard } from './FlightCard';
 import { useServer } from '../../contexts/ServerContext';
 // The kernel's can_cover: bots.wasm is loaded before any screen that reaches this
 // renders - /, /[game_id], /dashboard, /history and /tutorial are each wrapped in
@@ -71,20 +70,6 @@ const spotFrom = (chain: Array<() => Candidate>, floor: Spot): Spot => {
 /** `spot` moved by (dx, dy). Returns a new object: callers mutate their result. */
 const shifted = (spot: Spot, dx: number, dy: number): Spot => ({ x: spot.x + dx, y: spot.y + dy });
 
-interface AnimatedCard {
-    id: string;
-    card: Card;
-    startPosition: { x: number; y: number };
-    endPosition: { x: number; y: number };
-    progress: number;
-    animationType: string;
-    playerId?: string;
-    isSanitizedRefill?: boolean;
-    cardCount?: number;
-    isRevert?: boolean; // Flag for reverted optimistic animations
-    flight: object; // the event this card flies for
-    fromLanding?: boolean; // starts where an earlier flight landed, at that flight's landing scale
-}
 
 export const AnimationOverlay = () => {
     const [animatedCards, setAnimatedCards] = useState<AnimatedCard[]>([]);
@@ -550,63 +535,9 @@ export const AnimationOverlay = () => {
                 WebkitTouchCallout: 'none',
             } as React.CSSProperties}
         >
-            {animatedCards.map(animatedCard => {
-                const { startPosition, endPosition, progress, card, id, isSanitizedRefill, cardCount, isRevert, fromLanding } = animatedCard;
-                
-                // Use actual position based on progress (CSS will animate the transition)
-                const currentX = progress === 0 
-                    ? startPosition.x 
-                    : endPosition.x;
-                const currentY = progress === 0 
-                    ? startPosition.y 
-                    : endPosition.y;
-
-                return (
-                    <div
-                        key={id}
-                        style={{
-                            position: 'absolute',
-                            left: currentX - 35, // Half card width
-                            top: currentY - 45,  // Half card height
-                            // Scale up during animation; a card taking off from where a flight
-                            // left it starts at the size that flight landed at
-                            transform: `scale(${progress === 0 && fromLanding ? 1.8 : 1.5 + progress * 0.3})`,
-                            opacity: 1,
-                            userSelect: 'none',
-                            WebkitUserSelect: 'none',
-                            WebkitTouchCallout: 'none',
-                            // CSS transitions for smooth animation
-                            transition: progress === 0 
-                                ? 'none' // No transition for initial position
-                                : `left ${flightMs}ms cubic-bezier(0.25, 0.46, 0.45, 0.94), top ${flightMs}ms cubic-bezier(0.25, 0.46, 0.45, 0.94), transform ${flightMs}ms ease-out`
-                        } as React.CSSProperties}
-                    >
-                        {isSanitizedRefill ? (
-                            <CardBack 
-                                deckSize={cardCount || 1}
-                                enableRandomRotation={false}
-                            />
-                        ) : (
-                            <CardFace 
-                                card={card}
-                                isAnimationOverlay={true}
-                                style={{
-                                    border: isRevert 
-                                        ? '2px solid rgb(220, 38, 38)' 
-                                        : '2px solid black',
-                                    boxShadow: isRevert 
-                                        ? `0 ${progress * 10}px ${progress * 20}px rgba(255,0,0,0.6)` 
-                                        : `0 ${progress * 10}px ${progress * 20}px rgba(0,0,0,0.4)`,
-                                    filter: isRevert 
-                                        ? 'brightness(1.3) contrast(1.2) sepia(0.3) saturate(1.8) hue-rotate(-10deg)'
-                                        : 'none',
-                                    backgroundColor: isRevert ? 'rgb(255, 150, 150)' : 'var(--color-card-face)'
-                                }}
-                            />
-                        )}
-                    </div>
-                );
-            })}
+            {animatedCards.map((flight) => (
+                <FlightCard key={flight.id} flight={flight} flightMs={flightMs} />
+            ))}
         </div>
     );
 }; 
