@@ -41,6 +41,18 @@ typedef struct {
 
 void calculate_legal_moves(const Game *g, int bot_idx, LegalMoves *out);
 
+// One ENUMERATED move applied: the kind -> handler dispatch, once. This is
+// awire.h's canonical-dispatch contract (game.c awire_apply) for the other
+// direction a move reaches the engine - not a decoded wire action but a move
+// the enumerator above produced, which is how every bot, the bot drive, the
+// analyser and the offline harnesses play. The switch is a kernel fact, so a
+// new move kind is added here and nowhere else.
+// Returns what the handler returned; engine_last_reject holds the reason on a
+// false return. Unlike awire_apply it does NOT settle game status: a rollout
+// steps the board thousands of times and the settle belongs to the host that
+// owns the real game.
+bool legal_move_apply(Game *g, int seat, const LegalMove *m);
+
 // Scoped output cap: generation appends (and the combinatorial recursions
 // prune) at `cap` moves instead of MAX_LEGAL_MOVES, so callers may enumerate
 // into buffers with fewer than MAX_LEGAL_MOVES slots (the solver scratch).

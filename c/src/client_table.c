@@ -115,39 +115,25 @@ static int identity_read(ClientTable *c, const uint8_t *p, int len, int *status,
 
 // ---------- the envelope --------------------------------------------------------
 
-#define ENV_FORMAT      1
-#define ENV_FLAG_SEATED 0x01
-#define ENV_FLAG_ROSTER 0x02
-
 int client_adopt_envelope(ClientTable *c, const uint8_t *p, int len) {
     c->open = false;
     c->detail = 0;
-    if (!p || len < 13 || p[0] != ENV_FORMAT) return CLIENT_E_FORMAT;
-    const int flags = p[1];
-    if ((flags & ~(ENV_FLAG_SEATED | ENV_FLAG_ROSTER)) || !(flags & ENV_FLAG_ROSTER)) return CLIENT_E_FORMAT;
-    const int seated = (flags & ENV_FLAG_SEATED) != 0;
-    const int seat = seated ? p[2] : -1;
-    if (seated ? seat >= MAX_PLAYERS : p[2] != 0xFF) return CLIENT_E_FORMAT;
-    // The retired JSON roster island (view.ts): empty, but skipped if a server wrote one.
-    int q = 9 + (p[7] | (p[8] << 8));
-    if (q + 2 > len) return CLIENT_E_FORMAT;
-    const int view_len = p[q] | (p[q + 1] << 8);
-    q += 2;
-    if (view_len < 2 || q + view_len > len) return CLIENT_E_FORMAT;
-    if (p[q] != VIEW_FORMAT_VERSION || p[q + 1] != (seated ? seat : 0xFF)) return CLIENT_E_FORMAT;
-    const int trailer = q + view_len;
-    if (trailer >= len) return CLIENT_E_TRAILER;
+    // The header, the island skip and the view's bounds are view.h's, shared
+    // with the writer (table.c table_envelope) so the two cannot drift.
+    EnvHeader h;
+    if (!env_header_read(p, len, &h)) return CLIENT_E_FORMAT;
+    if (h.trailer_at >= len) return CLIENT_E_TRAILER;
 
     // The slot names the table only once the envelope has read whole.
     int rc, status = 0;
     c->identity_at = -1;
-    if ((rc = identity_read(c, p + trailer, len - trailer, &status, CLIENT_E_TRAILER)) != CLIENT_OK) return rc;
-    if ((rc = board_import(c, p + q + 2, view_len - 2)) != CLIENT_OK) return rc;
-    if (c->g->num_players < 1 || c->r.n != c->g->num_players || seat >= c->g->num_players) return CLIENT_E_MISMATCH;
+    if ((rc = identity_read(c, p + h.trailer_at, len - h.trailer_at, &status, CLIENT_E_TRAILER)) != CLIENT_OK) return rc;
+    if ((rc = board_import(c, p + h.state_at, h.state_len)) != CLIENT_OK) return rc;
+    if (c->g->num_players < 1 || c->r.n != c->g->num_players || h.seat >= c->g->num_players) return CLIENT_E_MISMATCH;
     c->has_roster = true;
-    c->identity_at = trailer;
-    c->version = (uint32_t)p[3] | ((uint32_t)p[4] << 8) | ((uint32_t)p[5] << 16) | ((uint32_t)p[6] << 24);
-    view_fill(c, seat, status);
+    c->identity_at = h.trailer_at;
+    c->version = h.version;
+    view_fill(c, h.seat, status);
     return CLIENT_OK;
 }
 

@@ -110,13 +110,11 @@ int table_load(Table *t, const uint8_t *state, int state_len, const uint8_t *ros
     if (rc != ROSTER_OK) { t->detail = rc; return TABLE_E_ROSTER; }
     // The seat count is the state's second byte; checked before the import so a
     // refusal adopts nothing.
-    if (state[2 + 1] != (uint8_t)r.n) return TABLE_E_MISMATCH;
+    if (state[STATE_BLOB_HEADER + 1] != (uint8_t)r.n) return TABLE_E_MISMATCH;
     const int kr = table_seat_kinds(&r, kinds);
     if (kr != TABLE_OK) return kr;
-    // state_len counts the two-byte header too; the payload is the rest.
-    const int v = state_import(t->g, state + 2, state_len - 2, 0);
-    if (v != GAME_VALID) return v;
-    t->g->deterministic_deck = state[1] != 0;
+    const int v = state_blob_load(t->g, state, state_len);
+    if (v != 1) return v == 0 ? TABLE_E_STATE_VERSION : v;
     t->g->rules = 0;   // online play is the classic game (Q18); a previous FMSG decode may have left a variant
     for (int s = 0; s < r.n; s++) t->g->players[s].strategy_key = kinds[s];
     t->r = r;
@@ -198,15 +196,8 @@ bool table_bots_need_logs(const Table *t) {
 
 static int unnamed_seat(const Game *g);
 
-// The state blob: [format][deterministic deck][state_put unmasked].
-static int put_state_blob(const Game *g, uint8_t *out) {
-    out[0] = TABLE_STATE_FORMAT;
-    out[1] = g->deterministic_deck ? 1 : 0;
-    return 2 + state_put(g, VIEW_UNMASKED, out + 2);
-}
-
 // A bound on one state_put, for reserving space before writing it.
-#define TABLE_STATE_MAX (2 + 24 + MAX_DECK + 2 * MAX_BATTLES + MAX_PLAYERS * (3 + MAX_HAND_SIZE) + 1 + MAX_PLAYERS)
+#define TABLE_STATE_MAX (STATE_BLOB_HEADER + 24 + MAX_DECK + 2 * MAX_BATTLES + MAX_PLAYERS * (3 + MAX_HAND_SIZE) + 1 + MAX_PLAYERS)
 
 // ---------- fixtures --------------------------------------------------------------
 
@@ -222,7 +213,7 @@ int table_seal(Table *t, const Game *g, const Roster *r, uint8_t *out, int cap) 
     if (g->num_eliminated < 0 || g->num_eliminated > MAX_PLAYERS) return GAME_INVALID_ELIMINATION;
     for (int i = 0; i < g->num_players; i++)
         if (g->players[i].hand_count < 0 || g->players[i].hand_count > MAX_HAND_SIZE) return GAME_INVALID_COUNT;
-    const int state_len = put_state_blob(g, out);
+    const int state_len = state_blob_put(g, out);
     const int rc = roster_encode(r, out + state_len, cap - state_len);
     if (rc < 0) { t->detail = rc; return TABLE_E_ROSTER; }
     const int loaded = table_load(t, out, state_len, out + state_len, rc);
@@ -238,17 +229,11 @@ int table_envelope(const Table *t, const char *game_id, int gid_len, int viewer,
     if (!t->loaded) return TABLE_E_NOT_LOADED;
     const Game *g = t->g;
     if (viewer >= g->num_players) viewer = -1;
-    if (!out || cap < 11 + 2 + TABLE_STATE_MAX) return TABLE_E_CAP;
-    out[0] = 1;                                                     // GAME_RESP_FORMAT
-    out[1] = (uint8_t)((viewer >= 0 ? 0x01 : 0) | 0x02);            // seated | packed roster trailer
-    out[2] = viewer >= 0 ? (uint8_t)viewer : 0xFF;
-    put_u32(out + 3, version);
-    out[7] = 0; out[8] = 0;                                         // the retired JSON roster island
-    const int view_at = 11;
-    out[view_at] = VIEW_FORMAT_VERSION;
-    out[view_at + 1] = viewer >= 0 ? (uint8_t)viewer : 0xFF;
+    if (!out || cap < ENV_VIEW_AT + 2 + TABLE_STATE_MAX) return TABLE_E_CAP;
+    const int view_at = env_header_write(out, cap, viewer, version);
+    if (view_at < 0) return TABLE_E_CAP;
     const int view_len = 2 + state_put(g, viewer >= 0 ? viewer : VIEW_SPECTATOR, out + view_at + 2);
-    out[9] = (uint8_t)view_len; out[10] = (uint8_t)(view_len >> 8);
+    env_header_set_view_len(out, view_len);
     const int at = view_at + view_len;
     const int n = roster_trailer_write(&t->r, game_id, gid_len, game_status_byte(g), g->good_players_mask,
                                        out + at, cap - at);
@@ -315,7 +300,7 @@ int table_commit_products(const Table *t, const char *game_id, int gid_len, uint
 
     if (cap - at < TABLE_STATE_MAX) return TABLE_E_CAP;
     out->state.off = at;
-    out->state.len = put_state_blob(g, arena + at);
+    out->state.len = state_blob_put(g, arena + at);
     at += out->state.len;
 
     const int rl = roster_encode(&t->r, arena + at, cap - at);
