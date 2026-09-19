@@ -46,7 +46,7 @@ fail() { echo "RELEASE GATE FAILED: $*" >&2; exit 1; }
 
 # The symbols a release build must not contain, and the guard they must sit
 # behind. Add to this list, never remove from it.
-GUARDED='SoloSeatPicker|DevFlags'
+GUARDED='SoloSeatPicker|SoloDealButton|DevFlags'
 GUARD='#if DEBUG \|\| SOLO_TESTING'
 
 echo "== source: every mention of the solo rig is behind the debug guard =="
@@ -101,10 +101,10 @@ xcodebuild -project ios/Werewolf.xcodeproj -scheme WerewolfMessagesApp \
   CODE_SIGNING_ALLOWED=NO >/dev/null
 bin=$(find "$out" -name WerewolfKit -type f -path '*WerewolfKit.framework*' | head -1)
 [ -n "$bin" ] || fail "could not find the Release WerewolfKit binary"
-for sym in SoloSeatPicker DevFlags; do
+for sym in SoloSeatPicker SoloDealButton DevFlags; do
   if nm -gU "$bin" 2>/dev/null | grep -q "$sym" || strings "$bin" | grep -q "$sym"; then
     fail "the Release binary contains $sym"
   fi
 done
-echo "   $(basename "$bin"): no SoloSeatPicker, no DevFlags"
+echo "   $(basename "$bin"): no SoloSeatPicker, no SoloDealButton, no DevFlags"
 echo "== release gate green =="

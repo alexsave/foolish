@@ -188,8 +188,12 @@ public struct NightScreen: View {
                         .font(.system(size: 13, weight: .medium))
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(Night.quiet)
-                .disabled(floor > 0)
+                // Dimmed while the floor stands, because it is disabled while the
+                // floor stands. Caught on the simulator: at full weight under a
+                // greyed primary it read as the live control and invited the tap
+                // that does nothing, which is how a player learns to tap twice.
+                .foregroundStyle(Night.quiet.opacity(ready ? 1 : 0.45))
+                .disabled(!ready)
             }
         }
     }

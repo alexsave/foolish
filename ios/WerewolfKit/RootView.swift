@@ -34,6 +34,23 @@ public struct RootView: View {
     /// is no code that can move it, because the only writer is compiled out.
     @State private var seat: Int
 
+    /// Bumped whenever this device stages a bubble.
+    ///
+    /// WHY THE ROUTER NEEDS IT. The kernel is not an ObservableObject - it is a C
+    /// singleton - so nothing about it can publish. NightModel republishes when
+    /// its own state moves, which redraws the NIGHT SCREEN, but leaves this view's
+    /// body unevaluated: the phase it switched on is a plain function call that is
+    /// never asked again. Caught on the simulator, and it looked exactly like a
+    /// kernel bug: the last player sent, the night genuinely resolved (a dead seat
+    /// appeared on the board, reading "out - was a villager"), and the screen
+    /// stayed on the night with a spent Send button. The game had moved on and the
+    /// router had not noticed.
+    ///
+    /// A token rather than a Combine publisher on the kernel, because every phase
+    /// change in this product follows a stage - that is what a turn IS here - so
+    /// there is exactly one place to bump it and no second path to forget.
+    @State private var revision = 0
+
     public init(mySeat: Int,
                 gameId: UInt64,
                 parent: Data?,
@@ -63,7 +80,13 @@ public struct RootView: View {
         VStack(spacing: 0) {
             #if DEBUG || SOLO_TESTING
             if SoloSeatPicker.offered && Kernel.shared.phase(-1) != .lobby {
-                SoloSeatPicker(seatCount: Kernel.shared.playerCount(-1), current: seat) { s in
+                // `revision` is threaded in so this pane actually redraws. Without it
+                // SwiftUI sees the same seatCount and the same current seat, skips
+                // the struct, and the rig's own rows sit one send behind the board
+                // right beside them - which is worse than no rig, because the
+                // operator trusts it.
+                SoloSeatPicker(seatCount: Kernel.shared.playerCount(-1),
+                               current: seat, revision: revision) { s in
                     seat = s
                 }
                 .padding(.horizontal, Night.gutter)
@@ -71,8 +94,15 @@ public struct RootView: View {
             }
             #endif
             surface
+                .id(revision)
         }
         .background(Night.ground.ignoresSafeArea())
+    }
+
+    /// Every stage this device makes, plus the token bump the router reads.
+    private func staged(_ payload: Data) {
+        stage(payload)
+        revision += 1
     }
 
     @ViewBuilder
@@ -81,11 +111,20 @@ public struct RootView: View {
         case .lobby:
             // A lobby with nobody in it is not a lobby yet - it is a thread with no
             // game in it, and the only thing to offer is making one.
-            if Kernel.shared.lobbyJoined == 0 {
-                NewGameScreen(create: create)
-            } else {
-                LobbyScreen(mySeat: mySeat, iSentTheNewest: iSentTheNewest,
-                            onJoin: join, onStart: start, onInvite: invite, onExit: exit)
+            VStack(spacing: 12) {
+                if Kernel.shared.lobbyJoined == 0 {
+                    NewGameScreen(create: create)
+                } else {
+                    LobbyScreen(mySeat: mySeat, iSentTheNewest: iSentTheNewest,
+                                onJoin: join, onStart: start, onInvite: invite, onExit: exit)
+                }
+                #if DEBUG || SOLO_TESTING
+                if SoloDealButton.offered {
+                    SoloDealButton { seat = 0 }
+                        .padding(.horizontal, Night.gutter)
+                        .padding(.bottom, 12)
+                }
+                #endif
             }
         case .night:
             if seat < 0 {
@@ -99,7 +138,7 @@ public struct RootView: View {
                 // floor the previous seat already spent - which is exactly the
                 // tell the floor exists to remove.
                 NightHost(seat: seat, gameId: gameId, parent: parent,
-                          lastSealAt: lastSealAt, stage: stage)
+                          lastSealAt: lastSealAt, stage: staged)
                     .id(seat)
             }
         case .day, .over:
@@ -154,6 +193,10 @@ struct NewGameScreen: View {
                 .font(.system(size: 14))
                 .multilineTextAlignment(.center)
                 .foregroundStyle(Night.quiet)
+                // Without this the sentence truncates to "...when somebody s..."
+                // the moment anything else shares the stack - which it does, in a
+                // debug build, because the solo rig's own button sits under it.
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 24)
             Button(action: create) {
                 Text("New game")

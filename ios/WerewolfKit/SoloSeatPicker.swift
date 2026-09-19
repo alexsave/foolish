@@ -27,6 +27,56 @@
 #if DEBUG || SOLO_TESTING
 import SwiftUI
 
+/// THE RIG'S OTHER HALF: deal a table here, with no lobby and no chat.
+///
+/// It exists because a werewolf lobby will not seat five people in a simulator's
+/// 1:1 stub conversation - correctly, that is the rule the lobby is there to
+/// enforce - and Apple's Messages on a fresh simulator offers no way to compose a
+/// group. So without this there is no way to LOOK at a night on one machine at
+/// all, which is the one thing this product most needs looked at.
+///
+/// It calls `Kernel.newGame`, which is already documented as the tests' and the
+/// rig's entry rather than a product path: every shipped route to a dealt game
+/// goes through `startFromLobby`. This is the same file as the seat picker on
+/// purpose - one file, one guard, one line in the release gate, and no second
+/// knob to forget.
+public struct SoloDealButton: View {
+    public static var offered: Bool { DevFlags.flag("solo.table", shipping: false) }
+
+    private let players: Int
+    private let onDealt: () -> Void
+
+    public init(players: Int = 7, onDealt: @escaping () -> Void) {
+        self.players = players
+        self.onDealt = onDealt
+    }
+
+    public var body: some View {
+        Button {
+            guard let _ = try? Kernel.shared.newGame(seed: Kernel.freshSeed(), players: players) else { return }
+            for seat in 0..<players {
+                try? Kernel.shared.setRoster(seat: seat, name: Self.rigName(seat))
+            }
+            onDealt()
+        } label: {
+            Text("SOLO RIG: deal \(players) here")
+                .font(.system(size: 14, weight: .semibold))
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.plain)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Night.chosen.opacity(0.25)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Night.chosen, lineWidth: 1))
+        .foregroundStyle(Night.chosen)
+        .accessibilityIdentifier("solo.deal")
+    }
+
+    /// Short, distinct and same-length-ish, so a seat tile's name never changes
+    /// the grid's shape between runs and a contact sheet stays comparable.
+    private static func rigName(_ seat: Int) -> String {
+        ["Alex", "Sveta", "Kim", "Lee", "Ana", "Bo", "Cy", "Dee", "Eli", "Fay"][seat % 10]
+    }
+}
+
 /// Every seat, named where the roster knows one. Offers seats a real Release
 /// build would have resolved automatically, which is exactly the point: on one
 /// simulator both ends of the thread share one App Group and one participant
@@ -40,11 +90,15 @@ public struct SoloSeatPicker: View {
 
     private let seatCount: Int
     private let current: Int
+    /// Changes on every stage. Only here to make SwiftUI redraw this pane - see
+    /// the note at the call site.
+    private let revision: Int
     private let onPick: (Int) -> Void
 
-    public init(seatCount: Int, current: Int, onPick: @escaping (Int) -> Void) {
+    public init(seatCount: Int, current: Int, revision: Int, onPick: @escaping (Int) -> Void) {
         self.seatCount = seatCount
         self.current = current
+        self.revision = revision
         self.onPick = onPick
     }
 

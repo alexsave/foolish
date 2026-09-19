@@ -36,6 +36,13 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
     CODE_SIGN_STYLE: Automatic
+    # The same Apple Developer team as the tree this forked from - same developer,
+    # a new product record. It is here rather than left blank because THE APP GROUP
+    # DEPENDS ON IT: with no team, a simulator build is signed ad-hoc and its
+    # entitlements come out an empty dict, so the App Group silently does not
+    # exist. That is not only a signing detail - it is the store the solo rig's
+    # flag file lives in, so without this the rig cannot be switched on at all.
+    DEVELOPMENT_TEAM: 8N2Z544SB4
     ITSAppUsesNonExemptEncryption: "NO"
 
 configs:
