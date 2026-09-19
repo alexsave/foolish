@@ -948,8 +948,22 @@ WASM_REPLAY_DECODE_EXPORTS := \
 # exported cost 1,191 raw / 533 gzip bytes of a module whose gzip is capped at
 # 80 KiB (e2e/mem/wasm_memory.test.ts) - the rule and its fuzz stay, on the test
 # build, which is what this list is for.
+#
+# wasm_replay_error_detail joined them on 2026-09-19, found by the gate that
+# now asks the question continuously (e2e/validation/wasm_exports_validation.test.ts).
+# It is the PACKED-INT predecessor of wasm_replay_error_ptr: one int carrying
+# log_type << 16 | menu, which every host stopped unpacking when replay.h grew
+# a ReplayError struct and structgen started generating its reader
+# (sdk/ts/wasm/bots.ts replayErrorDetail). No TypeScript has named it since.
+# The C entry stays for the oracle modules and the test build, and
+# replay_last_error_detail() itself is what the C suites print on a refusal.
+# It is a one-line accessor, so the shipped module moved by 39 raw / 14 gzip
+# bytes: the point here is not the bytes but that the export list and the
+# TypeScript that binds it agree, which is the only state a gate can tell apart
+# from drift.
 WASM_BOTS_UNSHIPPED_API := \
   -Wl,--export=wasm_unambiguous_cover \
+  -Wl,--export=wasm_replay_error_detail \
   -Wl,--export=wasm_game_ptr_internal -Wl,--export=wasm_moves_ptr_internal \
   -Wl,--export=wasm_set_seed -Wl,--export=wasm_set_deal_seed_bytes -Wl,--export=wasm_reject_reason \
   -Wl,--export=wasm_import_state -Wl,--export=wasm_export_state \
@@ -1077,7 +1091,7 @@ build/msgobj/wasm_api.o: wasm/wasm_api.c build/layout/msg.hash $(wildcard src/*.
 	@mkdir -p build/msgobj
 	$(WASM_CC) $(WASM_MSG_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/msg.hash) -c $< -o $@
 
-build/msg.wasm: $(WASM_MSG_OBJ) wasm/msg_exports_check.mjs
+build/msg.wasm: $(WASM_MSG_OBJ) wasm/msg_exports_check.mjs Makefile
 	@mkdir -p build
 	$(WASM_CC) $(WASM_MSG_LDFLAGS) $(WASM_MSG_API_EXPORTS) $(WASM_MSG_EXPORTS) $(WASM_MSG_OBJ) -o $@
 	$(call wasm_postopt,$(WASM_MSG_POSTOPT),$@)
@@ -1239,7 +1253,16 @@ build/botobj/wasm_api.o: wasm/wasm_api.c build/layout/bots.hash $(wildcard src/*
 WASM_BOTS_SHIPPED_EXPORTS = $(filter-out $(WASM_BOTS_UNSHIPPED_API),$(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS)) \
                             $(WASM_TABLE_EXPORTS) $(WASM_CLIENT_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS)
 
-build/bots.wasm: $(WASM_BOT_OBJ)
+# AND THIS FILE, because the export list is IN this file. Every wasm link below
+# reads a WASM_*_EXPORTS list, and none of them named the Makefile, so a
+# changed list relinked nothing: measured on 2026-09-19, dropping
+# wasm_replay_error_detail from WASM_BOTS_UNSHIPPED_API and running
+# `make wasm-bots` reported the module up to date and re-gzipped the OLD bytes.
+# The export table is as much an input to the link as an object file is, and
+# the only place it lives is here. A relink is seconds and the output is
+# reproducible (gzip -n over a deterministic link), so a Makefile edit that
+# changes nothing leaves the tree clean rather than dirty.
+build/bots.wasm: $(WASM_BOT_OBJ) Makefile
 	@mkdir -p build
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
 	          $(WASM_BOTS_SHIPPED_EXPORTS) $(WASM_BOT_OBJ) -o $@
@@ -1276,7 +1299,7 @@ bots-wasm-explain: build/layout/bots-explain.hash
 # (inlining removes functions), a companion WITHOUT the pass would have
 # different function indices and mis-map every name — hence this target runs the
 # identical pass. generate.sh re-strips this and asserts it equals build/bots.wasm.
-build/named/bots.named.wasm: $(WASM_BOT_OBJ)
+build/named/bots.named.wasm: $(WASM_BOT_OBJ) Makefile
 	@mkdir -p build/named
 	$(WASM_CC) --target=wasm32 -nostdlib $(filter-out -Wl$(comma)--strip-all,$(WASM_BOT_LDFLAGS)) \
 	          $(WASM_BOTS_SHIPPED_EXPORTS) $(WASM_BOT_OBJ) -o $@
@@ -1308,7 +1331,7 @@ wasm-bots: build/layout/bots.hash
 # The test build (WASM_TEST_EXPORTS above): never committed, never shipped.
 # build/bots_test.stamp records the wasm source hash it was built from
 # (scripts/wasm_stamp.sh --hash), which is how the e2e helper knows it is current.
-build/bots_test.wasm: $(WASM_BOT_OBJ)
+build/bots_test.wasm: $(WASM_BOT_OBJ) Makefile
 	@mkdir -p build
 	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
 	          $(WASM_BOTS_SHIPPED_EXPORTS) $(WASM_TEST_EXPORTS) $(WASM_BOT_OBJ) -o $@.tmp
