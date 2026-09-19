@@ -191,7 +191,7 @@ export const BINDER_MODULES: Readonly<Record<string, ModuleId>> = {
     'e2e/helpers/roster_kernel.ts#RosterExports': 'bots-test',
     'e2e/helpers/table_fixture.ts#FixtureExports': 'bots-test',
     'e2e/kernel_state_validation.test.ts#Doors': 'bots-test',
-    'e2e/security_hidden_info.test.ts#ProbeExports': 'bots-test',
+    'e2e/helpers/hidden_info.ts#ProbeExports': 'bots-test',
     'tools/structgen/test/bench.ts#Kernel': 'bots-test',
     // The Oracle's own modules, committed under public/.
     'src/oracle/oracleBridge.ts#OracleExports': 'oracle',
