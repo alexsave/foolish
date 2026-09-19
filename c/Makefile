@@ -1579,8 +1579,13 @@ coverage:
 	# warn_once_per_file, not the silent form: a miscounted line is still worth
 	# one line of output, and if this ever starts firing on files that are not
 	# hot loops that is a signal, not noise.
+	# BOTH SPELLINGS, because the two platforms overflow the same counter
+	# differently: Apple's gcov reports the wrapped value as a huge positive
+	# (suspicious_hits, game.c:1211 got 5,047,157,994) and Linux's reports it as
+	# a negative (negative_hits, game.c:70 branch 1 taken -7407). Fixing only the
+	# one a Mac produces left this lane green here and red on every runner.
 	gcovr --root . $(COV_FILTERS) --txt \
-	      --gcov-ignore-parse-errors suspicious_hits.warn_once_per_file \
+	      --gcov-ignore-parse-errors suspicious_hits.warn_once_per_file,negative_hits.warn_once_per_file \
 	      --fail-under-line $(COV_LINE_MIN) --fail-under-branch $(COV_BRANCH_MIN)
 
 clean:

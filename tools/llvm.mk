@@ -21,11 +21,28 @@ ifeq ($(strip $(LLVM_PREFIX)),)
     LLVM_PREFIX := /opt/homebrew/opt/llvm
   endif
 endif
+
+# ASKING THIS MAKEFILE A QUESTION IS NOT BUILDING WITH IT. scripts/wasm_stamp.sh
+# asks structgen's Makefile for its own source list (tools/structgen/print.mk),
+# because a stamp that mirrors the file list by hand goes stale the moment the
+# tool is split - which it did. That question compiles nothing and needs no
+# compiler, but the $(error) below fires at PARSE time, so it fired on the one
+# lane that only ever asks: wasm.yml's `freshness` job, which installs no
+# toolchain and never needed one. It failed in 9 seconds naming libclang, three
+# layers away from anything it was doing.
+#
+# So the demand is scoped to goals that actually build something. `sg-print-%`
+# targets are pure `@echo $($*)`; if every goal on the command line is one of
+# those, this file is being read for its variables and stays quiet.
+SG_PRINT_ONLY := $(and $(MAKECMDGOALS),$(if $(filter-out sg-print-%,$(MAKECMDGOALS)),,1))
+
+ifneq ($(SG_PRINT_ONLY),1)
 ifeq ($(strip $(LLVM_PREFIX)),)
   $(error this tool needs libclang and found no llvm-config on PATH. Install it \
     and/or pass LLVM_PREFIX=<prefix>. Ubuntu: `apt-get install libclang-18-dev` \
     then LLVM_PREFIX=/usr/lib/llvm-18 (scripts/ci_llvm.sh does both). \
     macOS: `brew install llvm`)
+endif
 endif
 
 # -Werror=implicit-function-declaration: gcc 13 (Ubuntu 24.04, CI's cc) only WARNS

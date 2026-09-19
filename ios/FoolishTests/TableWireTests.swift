@@ -20,7 +20,6 @@
 // fixture agrees with whatever the kernel says).
 
 import XCTest
-import CFoolish
 @testable import FoolishKit
 
 final class TableWireTests: XCTestCase {
