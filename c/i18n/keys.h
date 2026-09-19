@@ -11,8 +11,9 @@
 // appears in no *_SRC list in c/Makefile, on purpose: twenty-five languages of
 // translations is around 150 KB of string data, and bots.wasm.gz is downloaded
 // by every visitor to the site. The C is a source of truth for a generator, not
-// a translation unit anybody links. e2e/validation/i18n_not_in_wasm.test.ts is
-// the gate.
+// a translation unit anybody links. e2e/validation/i18n_source_of_truth.test.ts
+// is the gate: its first case gunzips the shipped module and searches it for
+// sampled translations rather than trusting this comment.
 //
 // THE ORDER IS ALPHABETICAL BY KEY and means nothing else. A generated module is
 // keyed by these names, never by position, so the enum's values are an internal
