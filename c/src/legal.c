@@ -15,7 +15,7 @@ void legal_set_move_cap(int cap) {
 }
 
 // LEGAL_STATS (measurement-only, compiled out of every production build): record
-// the widest FULL-cap enumeration — i.e. the exported move MENU (the g_moves
+// the widest FULL-cap enumeration - i.e. the exported move MENU (the g_moves
 // buffer sized MAX_LEGAL_MOVES), NOT the solver's compact scratch, which lowers
 // g_move_cap. Sizes the M2 decision (docs/BOTS_WASM_MEMORY_PLAN.md). Prints each
 // new high-water to stderr so a sweep can `grep LEGALMAX | sort -n | tail -1`.
@@ -26,7 +26,7 @@ static void legal_stat_note(const LegalMoves *out, const Game *g, int bot_idx) {
     // Emit each new high-water with the state that drove it (player count,
     // uncovered battles, actor hand size) so a sweep can identify WHICH states
     // are wide: `... 2>&1 | grep LEGALMAX | sort -n | tail`. The wide ones are
-    // large-hand 8-player defenders — cover-combination blow-up (M2 finding).
+    // large-hand 8-player defenders - cover-combination blow-up (M2 finding).
     if (g_move_cap >= MAX_LEGAL_MOVES && out->n > legal_stat_max_n) {
         legal_stat_max_n = out->n;
         fprintf(stderr, "LEGALMAX %d np=%d nb=%d hand=%d\n",
@@ -65,7 +65,7 @@ static void emit_attack(LegalMoves *out, const Card *combo, int k,
 static void combinations_attack(const Card *arr, int n, int start, int k,
                                 Card *buf, int depth,
                                 LegalMoves *out, int defender_cards, int uncovered) {
-    // Prune once the cap is hit — otherwise a hand carrying many same-value
+    // Prune once the cap is hit - otherwise a hand carrying many same-value
     // cards (only reachable via a malformed/corrupt state, since a real hand
     // holds no duplicates) drives ~2^n recursion while push_move silently
     // drops past the cap: an unbounded hang. Mirrors emit_cover_combo's
@@ -119,7 +119,7 @@ static void calc_first_attack_moves(const Game *g, const Player *p, LegalMoves *
     for (int i = 0; i < p->hand_count; i++) {
         int v = p->hand[i].value;
         // Guard the seen[] index: a real card value is 1..13, but a
-        // malformed state can carry anything an int8 holds — an unguarded
+        // malformed state can carry anything an int8 holds - an unguarded
         // seen[v] is an out-of-bounds stack access. Skip impossible values.
         if (v < 1 || v > ACE_VALUE) continue;
         if (seen[v]) continue;
@@ -131,7 +131,7 @@ static void calc_first_attack_moves(const Game *g, const Player *p, LegalMoves *
         }
         // Bound k by defender capacity: emit_attack drops any k where
         // defender_cards < k (uncovered is 0 on a first attack), so combos
-        // above that never enter the move list — but WITHOUT this bound the
+        // above that never enter the move list - but WITHOUT this bound the
         // recursion still explores all C(gn,k) subsets only to reject them at
         // the leaf, a ~2^gn hang on a many-same-value (corrupt) hand. Same
         // move set, no doomed recursion.
@@ -171,7 +171,7 @@ static void calc_regular_attack_moves(const Game *g, const Player *p, LegalMoves
     int k_max = vn < MAX_MOVE_CARDS ? vn : MAX_MOVE_CARDS;
     // Also bound k by remaining defender capacity: emit_attack drops any k
     // with defender_cards < uncovered + k, so wider combos never reach the
-    // move list — bounding here avoids the doomed ~2^vn recursion on a
+    // move list - bounding here avoids the doomed ~2^vn recursion on a
     // many-same-value (corrupt) hand. Same emitted set.
     int cap = defender_cards - uncovered;
     if (cap < k_max) k_max = cap;
@@ -229,7 +229,7 @@ static void choose_attack_subset(const Game *g, const Player *defender,
                                  int *picked, int picked_n,
                                  LegalMoves *out) {
     if (k_left == 0) {
-        // Reference the picked options by pointer — copying each CoverOption
+        // Reference the picked options by pointer - copying each CoverOption
         // (a couple hundred bytes) per enumerated subset was pure overhead.
         const CoverOption *opts[MAX_BATTLES];
         for (int i = 0; i < picked_n; i++) opts[i] = &all_opts[picked[i]];
@@ -307,8 +307,8 @@ static void calc_pass_moves(const Game *g, const Player *defender, LegalMoves *o
     int next_cards = g->players[next].hand_count;
 
     Card buf[MAX_MOVE_CARDS];
-    // Bound k by (a) the buf capacity — combinations_pass writes buf[0..k-1],
-    // so k > MAX_MOVE_CARDS overflows it on a corrupt oversized hand — and
+    // Bound k by (a) the buf capacity - combinations_pass writes buf[0..k-1],
+    // so k > MAX_MOVE_CARDS overflows it on a corrupt oversized hand - and
     // (b) the next player's capacity, since emit_pass drops any k with
     // next_cards < k + n_battles (those combos never reach the list). Without
     // (b) the recursion explores ~2^mn doomed subsets. Same emitted set.
@@ -361,15 +361,36 @@ static void calc_cover_moves_greedy(const Game *g, const Player *defender, Legal
     }
 }
 
+// ---------- applying an enumerated move -------------------------------
+
+bool legal_move_apply(Game *g, int seat, const LegalMove *m) {
+    switch (m->type) {
+        case MOVE_ATTACK: return handle_attack(g, seat, m->cards, m->n_cards);
+        case MOVE_COVER:  return handle_cover (g, seat, m->cards, m->attack_cards, m->n_cards);
+        case MOVE_PASS:   return handle_pass  (g, seat, m->cards, m->n_cards);
+        case MOVE_PICKUP: return handle_pickup(g, seat);
+        case MOVE_GOOD:   return handle_good  (g, seat);
+        default:          return false;
+    }
+}
+
 // ---------- main entry point ------------------------------------------
 
-void calculate_legal_moves(const Game *g, int bot_idx, LegalMoves *out) {
+// The whole menu, once. `cover` is the cover enumerator the caller wants:
+// calc_cover_moves for the full combinatorial menu, calc_cover_moves_greedy for
+// the single greedy lowest-cost full cover a Monte Carlo rollout plays. Nothing
+// else about the enumeration may differ between the two - the lite variant is
+// what every rollout deliberates over, so a rule that held in one and not the
+// other would mean the bots searched a different game than the one production
+// runs.
+static void calc_moves(const Game *g, int bot_idx, LegalMoves *out,
+                       void (*cover)(const Game *, const Player *, LegalMoves *)) {
     out->n = 0;
     if (g->status != GAME_STATUS_PLAYING) return;
     const Player *p = &g->players[bot_idx];
     // An out (hand empty, already safe) or otherwise not-in seat is a spectator:
     // no legal move. Without this, the non-defender branch below would still hand
-    // an out player MOVE_GOOD, which handle_good rejects (status != IN) — the
+    // an out player MOVE_GOOD, which handle_good rejects (status != IN) - the
     // legal menu and the apply-validator disagreeing, which surfaces as a phantom
     // "invalid move" the instant an out seat is queried (iMessage §out-player).
     if (p->status != PLAYER_STATUS_IN) return;
@@ -382,7 +403,7 @@ void calculate_legal_moves(const Game *g, int bot_idx, LegalMoves *out) {
     if (first_attack && is_first_attacker) {
         calc_first_attack_moves(g, p, out);
     } else if (is_def && g->num_battles > 0) {
-        calc_cover_moves(g, p, out);
+        cover(g, p, out);
         if (!all_covered) {
             LegalMove *m = push_move(out);
             if (m) m->type = MOVE_PICKUP;
@@ -412,66 +433,25 @@ void calculate_legal_moves(const Game *g, int bot_idx, LegalMoves *out) {
     legal_stat_note(out, g, bot_idx);
 }
 
-// Lite variant — identical to calculate_legal_moves except cover enumeration
+void calculate_legal_moves(const Game *g, int bot_idx, LegalMoves *out) {
+    calc_moves(g, bot_idx, out, calc_cover_moves);
+}
+
+// Lite variant - identical to calculate_legal_moves except cover enumeration
 // is replaced by a single greedy lowest-cost full-cover. Handwritten always
 // picks the lowest-product full cover, so the greedy result is equivalent in
 // 99%+ of cases (greedy can rarely deviate from product-optimal, but the
 // difference is small and dominated by MC sampling variance).
 void calculate_legal_moves_lite(const Game *g, int bot_idx, LegalMoves *out) {
-    out->n = 0;
-    if (g->status != GAME_STATUS_PLAYING) return;
-    const Player *p = &g->players[bot_idx];
-    // An out (hand empty, already safe) or otherwise not-in seat is a spectator:
-    // no legal move. Without this, the non-defender branch below would still hand
-    // an out player MOVE_GOOD, which handle_good rejects (status != IN) — the
-    // legal menu and the apply-validator disagreeing, which surfaces as a phantom
-    // "invalid move" the instant an out seat is queried (iMessage §out-player).
-    if (p->status != PLAYER_STATUS_IN) return;
-    bool is_def = (bot_idx == g->defender);
-    bool is_first_attacker = (bot_idx == g->first_attacker);
-    bool first_attack = (g->num_battles == 0);
-    bool all_covered = (g->num_battles > 0);
-    for (int i = 0; i < g->num_battles; i++) if (!!card_is_none(g->table_battles[i].defense)) all_covered = false;
-
-    if (first_attack && is_first_attacker) {
-        calc_first_attack_moves(g, p, out);
-    } else if (is_def && g->num_battles > 0) {
-        calc_cover_moves_greedy(g, p, out);    // <-- greedy single cover
-        if (!all_covered) {
-            LegalMove *m = push_move(out);
-            if (m) m->type = MOVE_PICKUP;
-        }
-        calc_pass_moves(g, p, out);
-    } else if (!is_def && g->num_battles > 0) {
-        bool said_good = (g->good_players_mask & (1u << bot_idx)) != 0;
-        if (!said_good) {
-            calc_regular_attack_moves(g, p, out);
-            // GOOD IS ALWAYS HERE WHILE THE SEAT HAS NOT SAID IT, uncovered
-            // table or not. It is not slack in the menu: saying good is how an
-            // attacker signals "done attacking" and LEAVES the bot loop's
-            // eligible set (it sets good_players_mask, which should_bot_act
-            // reads for a non-defender, which bot_drive_eligible_mask reads in
-            // turn). Gate it on all-covered anywhere a bot can see and a bot
-            // holding a legal throw-in could never decline one - it would be
-            // forced to keep attacking until it ran out of cards, and would
-            // stay eligible every cycle for as long as that lasted.
-            //
-            // The human rule ("no good over an uncovered attack") is a
-            // narrowing of this menu, applied by play_human_menu on the way to
-            // a board. It never touches this enumeration.
-            LegalMove *m = push_move(out);
-            if (m) m->type = MOVE_GOOD;
-        }
-    }
-    legal_stat_note(out, g, bot_idx);
+    calc_moves(g, bot_idx, out, calc_cover_moves_greedy);
 }
 
 // ---------- one-tap cover resolution (F9) ----------------------------------
 //
 // Given a set of selected cover cards and the current table, decide whether they
-// cover the uncovered attacks in exactly ONE unambiguous way — every valid full
+// cover the uncovered attacks in exactly ONE unambiguous way - every valid full
 // pairing of cover cards to distinct uncovered attacks covers the SAME set of
-// attacks — so a UI can commit the cover on one gesture instead of asking the
+// attacks - so a UI can commit the cover on one gesture instead of asking the
 // player which card goes on which attack. The web drag, the phone tap-commit,
 // the watch chooser and iMessage all want this, and it is pure set logic over
 // can_cover, so it lives here beside the legality it is built on rather than as a
@@ -482,7 +462,7 @@ void calculate_legal_moves_lite(const Game *g, int bot_idx, LegalMoves *out) {
 // UC_MAX_UNCOVERED (= a u64 pairing bitmask) and the permutation search at
 // UC_SEARCH_CAP nodes. A real bout never has more than 6 uncovered attacks; a
 // corrupt/hostile input that would blow the search up simply reads as "not
-// unambiguous" (return 0), and the caller falls back to manual placement —
+// unambiguous" (return 0), and the caller falls back to manual placement -
 // exactly the safe degradation, never a hang.
 #define UC_MAX_UNCOVERED 64
 #define UC_SEARCH_CAP    200000

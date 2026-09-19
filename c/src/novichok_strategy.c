@@ -190,17 +190,6 @@ static int nv_in_count(const Game *g) {
     return n;
 }
 
-static bool nv_apply(Game *g, int p_idx, const LegalMove *m) {
-    switch (m->type) {
-        case MOVE_ATTACK: return handle_attack(g, p_idx, m->cards, m->n_cards);
-        case MOVE_COVER:  return handle_cover (g, p_idx, m->cards, m->attack_cards, m->n_cards);
-        case MOVE_PASS:   return handle_pass  (g, p_idx, m->cards, m->n_cards);
-        case MOVE_PICKUP: return handle_pickup(g, p_idx);
-        case MOVE_GOOD:   return handle_good  (g, p_idx);
-        default:          return false;
-    }
-}
-
 // Copy only the live prefix of a Game (header + first num_logs entries).
 // logs[] is the final member, so everything else is inside the prefix.
 static void nv_lite_clone(Game *dst, const Game *src) {
@@ -696,7 +685,7 @@ static int nv_solve(Solver *S, const Game *g, int alpha, int beta, int depth) {
     for (int i = 0; i < mv->n; i++) {
         Game *child = &S->child[depth];
         nv_lite_clone(child, g);
-        if (!nv_apply(child, actor, &mv->moves[i])) continue;
+        if (!legal_move_apply(child, actor, &mv->moves[i])) continue;
         int v = nv_solve(S, child, alpha, beta, depth + 1);
         if (S->aborted) return 0;
         if (maximizing) {
@@ -810,7 +799,7 @@ static int nv_simulate(Game *g, int my_idx, int max_turns) {
             StrategyFn fn = nv_rollout_for(g);
             int idx = fn(g, pi, &moves, NULL);
             if (idx < 0 || idx >= moves.n) continue;
-            if (nv_apply(g, pi, &moves.moves[idx])) { acted = true; break; }
+            if (legal_move_apply(g, pi, &moves.moves[idx])) { acted = true; break; }
         }
         if (!acted) break;
     }
@@ -942,7 +931,7 @@ static int nv_try_endgame_solve(const Game *g, int bot_idx,
         } else {
             Game child;
             nv_lite_clone(&child, &root);
-            if (!nv_apply(&child, bot_idx, &moves->moves[i])) continue;
+            if (!legal_move_apply(&child, bot_idx, &moves->moves[i])) continue;
             S.aborted = false;
             v = nv_solve(&S, &child, alpha, 2000, 1);
             aborted_i = S.aborted;
@@ -971,7 +960,7 @@ static int nv_try_endgame_solve(const Game *g, int bot_idx,
         } else {
             Game child;
             nv_lite_clone(&child, &root);
-            if (!nv_apply(&child, bot_idx, &moves->moves[i])) continue;
+            if (!legal_move_apply(&child, bot_idx, &moves->moves[i])) continue;
             S.aborted = false;
             v = nv_solve(&S, &child, -1, 0, 1);
             aborted_i = (S.budget <= 0) || S.aborted;
@@ -1008,7 +997,7 @@ static int nv_peek_trial(const Game *g_in, int my_idx, const LegalMove *root_m,
     static _Thread_local Game g;
     game_clone(&g, g_in);
     game_rng_set(live_rng);
-    if (!nv_apply(&g, my_idx, root_m)) return 0;
+    if (!legal_move_apply(&g, my_idx, root_m)) return 0;
 
     int iters = 0;
     while (game_done(&g) < 0 && iters++ < 4000) {
@@ -1034,7 +1023,7 @@ static int nv_peek_trial(const Game *g_in, int my_idx, const LegalMove *root_m,
             int idx = handwritten_strategy_choose(&g, pi, &moves, NULL);
             game_rng_set(r);
             if (idx < 0 || idx >= moves.n) continue;
-            if (nv_apply(&g, pi, &moves.moves[idx])) { acted = true; break; }
+            if (legal_move_apply(&g, pi, &moves.moves[idx])) { acted = true; break; }
         }
         if (!acted) break;
     }
@@ -1337,7 +1326,7 @@ int novichok_strategy_choose(const Game *g, int bot_idx,
             nv_lite_clone(&probe, g);
             game_rng_set(saved_rng);
             int nl0 = probe.num_logs;
-            if (!nv_apply(&probe, bot_idx, &moves->moves[C.idx[ci]])) continue;
+            if (!legal_move_apply(&probe, bot_idx, &moves->moves[C.idx[ci]])) continue;
             int n = 0;
             for (int li = nl0; li < probe.num_logs; li++) {
                 const GameLog *l = &probe.logs[li];
@@ -1436,7 +1425,7 @@ int novichok_strategy_choose(const Game *g, int bot_idx,
                 if (!alive[ci]) continue;
                 nv_lite_clone(&trial, &world);
                 game_rng_set(sim_rng);   // identical stream for every move
-                if (!nv_apply(&trial, bot_idx, &moves->moves[C.idx[ci]])) {
+                if (!legal_move_apply(&trial, bot_idx, &moves->moves[C.idx[ci]])) {
                     score[ci] += (double)g->num_players;
                     nsim[ci]++;
                     continue;

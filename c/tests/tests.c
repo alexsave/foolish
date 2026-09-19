@@ -9797,6 +9797,9 @@ static TableView ct_view;
 
 // An envelope composed around a raw masked state (view.c state_put bytes): the
 // header, the view blob, the roster trailer of `r` - so a test can doctor any part.
+// Hand-rolled ON PURPOSE, not through view.h env_header_write: the tests below
+// doctor bytes the writer would never emit, and a composer that shared the
+// kernel's codec could not catch the kernel's codec being wrong.
 static int ct_envelope(const uint8_t *state, int slen, int seat, const Roster *r, uint8_t *out) {
     out[0] = 1; out[1] = (uint8_t)((seat >= 0 ? 1 : 0) | 2); out[2] = seat >= 0 ? (uint8_t)seat : 0xFF;
     out[3] = 9; out[4] = 0; out[5] = 0; out[6] = 0; out[7] = 0; out[8] = 0;

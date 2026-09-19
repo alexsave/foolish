@@ -1,7 +1,7 @@
 // WebAssembly bridge for the cnitro rules kernel (game.c + legal.c).
 //
 // The TS side (sdk/ts/wasm/engine.ts) marshals the Game
-// through ONE compact byte layout in a shared IO buffer — deliberately
+// through ONE compact byte layout in a shared IO buffer - deliberately
 // independent of the C struct's padding, so TS never touches struct offsets.
 // Every state field crosses as explicit little-endian bytes.
 //
@@ -29,7 +29,7 @@
 
 // The build enables -mbulk-memory, so these __builtin calls (and every
 // clang-lowered struct copy across the module) compile to the single wasm
-// memory.copy / memory.fill instruction — native memmove in the runtime.
+// memory.copy / memory.fill instruction - native memmove in the runtime.
 // These out-of-line definitions only back the calls clang chooses not to
 // lower inline.
 void *memcpy(void *dst, const void *src, size_t n) {
@@ -45,10 +45,10 @@ void *memset(void *dst, int c, size_t n) {
 // ---------- shared buffers ----------------------------------------------
 
 // Sized by the widest export, which is the LOG export worst case:
-// 2 + MAX_LOGS x (4 + MAX_LOG_PAIRS x 2) — written unchecked by
+// 2 + MAX_LOGS x (4 + MAX_LOG_PAIRS x 2) - written unchecked by
 // wasm_export_logs, so IO_CAP must clear it at the build's MAX_LOGS:
 // 67,586B at bots' 512/64 (the 72KB default), 16,898B at rules' 128/64
-// (why the rules build overrides to 24KB — see the Makefile L1 notes).
+// (why the rules build overrides to 24KB - see the Makefile L1 notes).
 // Everything else is far smaller (state export <1.1KB, env strings, the
 // chosen move), and the legal-move menu is not copied into it at all: a host
 // reads the resident LegalMoves where it lies (wasm_legal_moves_ptr), so the
@@ -59,7 +59,7 @@ void *memset(void *dst, int c, size_t n) {
 #define IO_CAP WASM_IO_CAP
 
 // export_logs writes the whole log stream into g_io with NO bounds check (see
-// there), so IO_CAP being large enough is not an optimization — it is the only
+// there), so IO_CAP being large enough is not an optimization - it is the only
 // thing standing between a long game and a heap smash. That was a COMMENT until
 // a MAX_LOGS bump compiled cleanly straight past it; it is a build error now.
 //
@@ -83,7 +83,7 @@ _Static_assert(LOG_EXPORT_WORST <= IO_CAP,
 #ifdef CD_RULES_OVERLAY
 // R1 (docs/RULES_GUARDS_WASM_MEMORY_PLAN.md): the rules.wasm arena that hosts
 // BOTH buffer families (see rules_overlay.h). Sized by the larger (action)
-// family; the replay family aliases it from offset 0. rules.wasm-only — the
+// family; the replay family aliases it from offset 0. rules.wasm-only - the
 // bots build uses solve_ws (CD_WASM_OVERLAY) and native uses plain statics.
 _Alignas(16) static unsigned char g_rules_arena[RULES_ARENA_SIZE];
 unsigned char *const rules_overlay = g_rules_arena;
@@ -92,13 +92,13 @@ _Static_assert(RULES_OVL_REPLAY_END <= RULES_ARENA_SIZE, "replay family overflow
 #endif
 
 #ifdef CD_WASM_OVERLAY
-// M9 (docs/BOTS_WASM_MEMORY_PLAN.md) aliased g_io into solve_ws — a THIRD
-// non-concurrent tenant, disjoint from the replay scratch above — to save 72 KiB.
+// M9 (docs/BOTS_WASM_MEMORY_PLAN.md) aliased g_io into solve_ws - a THIRD
+// non-concurrent tenant, disjoint from the replay scratch above - to save 72 KiB.
 // That holds only while g_io FITS the slot. It no longer does: g_io is now sized
 // to accept an UNTRIMMED session log on import (~3072 records, 400 KiB) so the
 // kernel can filter dead goods itself instead of making TS pre-filter to fit the
 // buffer. 400 KiB does not fit a 272 KiB arena, so on this build g_io is its own
-// static and the M9 saving is spent — deliberately, to keep a rules concern out
+// static and the M9 saving is spent - deliberately, to keep a rules concern out
 // of TypeScript. The condition is compiled, not assumed: shrink IO_CAP back
 // under the slot and the overlay silently returns.
 #if IO_CAP <= (CD_OVL_GIO_END - CD_OVL_GIO_OFF)
@@ -110,7 +110,7 @@ static unsigned char g_io[IO_CAP];
 
 // R1: g_io is the ACTION family's I/O slot. Disjoint from g_moves/g_snaps
 // (the action call reads a move / writes an export into g_io while g_moves and
-// g_snaps hold the menu / snapshots — all three live at once, at distinct
+// g_snaps hold the menu / snapshots - all three live at once, at distinct
 // offsets), and aliased over the replay family (dead during any replay call).
 _Static_assert(IO_CAP <= RULES_OVL_ACTION_END - RULES_OVL_IO_OFF, "g_io overflows its overlay slot");
 #define g_io ((unsigned char *)(rules_overlay + RULES_OVL_IO_OFF))
@@ -130,7 +130,7 @@ static Game g_game;
 static int g_msg_base_logs = -1;
 
 // Snapshots never carry logs (animation game_states are log-stripped
-// downstream), so each slot stores only the Game prefix up to num_logs —
+// downstream), so each slot stores only the Game prefix up to num_logs -
 // ~2.5 KB instead of the full log-laden struct.
 #define GAME_PREFIX_SIZE (__builtin_offsetof(Game, num_logs))
 typedef struct { _Alignas(8) unsigned char bytes[GAME_PREFIX_SIZE]; } SnapSlot;
@@ -172,7 +172,7 @@ int wasm_io_cap(void) { return IO_CAP; }
 
 // For sibling bridge units (wasm_bots_api.c) that operate on the same
 // working game and scratch move list (LegalMoves is ~330KB at the wasm
-// build's MAX_LEGAL_MOVES=4096 with 1-byte cards — still not worth a
+// build's MAX_LEGAL_MOVES=4096 with 1-byte cards - still not worth a
 // second copy).
 Game *wasm_game_ptr_internal(void) { return &g_game; }
 LegalMoves *wasm_moves_ptr_internal(void) { return &g_moves; }
@@ -192,7 +192,7 @@ static void snap_cb(const Game *g, int tag, int aux) {
 }
 
 // Production configuration: install the snapshot hook. (The deck-size rule
-// is hardcoded in card.h — one rule for every deployment.)
+// is hardcoded in card.h - one rule for every deployment.)
 void wasm_init(void) {
     engine_snap_hook = snap_cb;
 }
@@ -251,7 +251,7 @@ static int put_state(const Game *g, unsigned char *p) {
 // a fresh deal has start_game set it, and a legacy game draws at random. This
 // also stops a reused engine instance inheriting a prior game's flag. The
 // caller re-asserts the flag right after (wasm_set_deterministic_deck) for a
-// seed-dealt game — otherwise the bot path (which imports rather than
+// seed-dealt game - otherwise the bot path (which imports rather than
 // deserializes) would draw at random mid-game and diverge from the deal seed.
 int wasm_import_state(int len, int masked) {
     const int r = state_import(&g_game, g_io, len, masked ? 1 : 0);
@@ -267,20 +267,20 @@ int wasm_import_state(int len, int masked) {
 
 // Re-assert the deterministic-deck flag after wasm_import_state. Seed-dealt
 // games carry it in the durable blob (wasm_state_deserialize restores it), but
-// the transient import path drops it — so the bot loop, which marshals a JS
+// the transient import path drops it - so the bot loop, which marshals a JS
 // Game instead of loading the blob, must set it back or every mid-game refill
 // pops a RANDOM card and the game stops being reproducible from its deal seed.
 void wasm_set_deterministic_deck(int on) { g_game.deterministic_deck = on != 0; }
 
 // SECRET base folded into every mid-game RNG seed below. Set from the 32-byte
-// deal seed (games.game_seed) — which is SERVER-ONLY: it never appears on
+// deal seed (games.game_seed) - which is SERVER-ONLY: it never appears on
 // PublicGame, in the state blob, or in any per-viewer view, so a player can't
 // see or reconstruct it. This is the whole point of the field: the mid-game bot
 // RNG must NOT be derivable from anything on the public board, or a source-code
 // holder could recompute octogen's world-sampling seed and predict its every
 // move. The visible-state bytes below add decorrelation only; the base is what
 // makes the seed unpredictable. 0 only under the test seed-source or a game with
-// no deal seed (legacy) — live games always set it (see wasm_set_rng_base).
+// no deal seed (legacy) - live games always set it (see wasm_set_rng_base).
 static uint32_t g_rng_base = 0u;
 void wasm_set_rng_base(uint32_t base) { g_rng_base = base; }
 // For sibling bridge units (wasm_table_api.c): the base the table seeds its
@@ -294,16 +294,16 @@ uint32_t wasm_rng_base_internal(void) { return g_rng_base; }
 // board state, then avalanches.
 //
 // Two properties have to hold at once:
-//   * Reproducible — every hashed term must be recoverable from a shared replay,
+//   * Reproducible - every hashed term must be recoverable from a shared replay,
 //     so a recorded game replays bit-exactly. That rules OUT num_logs (records
 //     the codec may drop) and the ORDERED hands / face-down deck (hidden from
 //     the bot, and a player can even permute their own hand via rearrange).
-//   * Varying per decision — g_rng_base alone is constant for the whole game, so
+//   * Varying per decision - g_rng_base alone is constant for the whole game, so
 //     seeding from it only would hand every decision the same RNG. So we mix in
 //     the PUBLIC, replay-recoverable state that moves every turn: the cards on
 //     the table, each seat's hand COUNT (not its cards), deck/discard sizes and
 //     the defender. All face-up, all a pure function of the move log.
-// Unpredictability still rests entirely on the secret seed — the public terms
+// Unpredictability still rests entirely on the secret seed - the public terms
 // are known to everyone, but without g_rng_base they can't yield the stream.
 static uint32_t state_fnv(uint32_t salt) {
     return game_state_seed(&g_game, g_rng_base, salt);
@@ -313,7 +313,7 @@ static uint32_t state_fnv(uint32_t salt) {
 // state instead of Math.random. Called once per move-application in place of
 // the old per-move crypto/Math.random reseed: the state is itself a pure
 // function of the deal seed, so mixing it here keeps every game_random draw
-// (legacy random deals, bot tie-breaks) reproducible — the whole game replays
+// (legacy random deals, bot tie-breaks) reproducible - the whole game replays
 // from the deal seed alone. Seed-dealt games pop the pre-shuffled deck and
 // never consume this, but it costs nothing and covers the legacy path too.
 void wasm_seed_rng_deterministic(void) { game_rng_set(state_fnv(GAME_SEED_SALT_DRAW)); }
@@ -338,32 +338,14 @@ int wasm_export_state(void) { return put_state(&g_game, g_io); }
 
 // ---------- durable state codec (versioned) -------------------------------
 //
-// put_state/get_state above are the TRANSIENT request-scoped IO format: they
-// never outlive one edge-function call, so they carry no version. This pair is
-// the ONLY state format written to durable storage (games.state bytea). It is
-// put_state's exact byte layout with a leading 1-byte format version, so a
-// future kernel-layout change becomes an explicit decode branch here instead
-// of silently misreading every persisted game — the same discipline the
-// replay codec (replay.h v2..v5) already applies to its persisted integers.
-//
-// It carries the VOLATILE game state only (positions, deck, battles, per-seat
-// hands/status, good-mask, elimination). Seat identity (player_id/name/
-// strategy_key/is_ai) is stable across a game and lives in a separate roster
-// column, reattached TS-side — exactly the split parseState/stateToGame
-// already assume (KernelState + template).
-// Layout: [version][deterministic_deck flag][put_state...]. The flag byte
-// (added with the seed-dealt deck; see the Game field) is what bumped this from
-// the old v1 [version][put_state...]. There is no v1 read path — a data
-// migration rewrites every stored v1 blob to v2 (flag 0), so no v1 blob ever
-// reaches this kernel; anything that isn't v2 is treated as unreadable.
-#define STATE_FORMAT_VERSION 2
+// The format, the layout and the reasoning are view.h's (state_blob_put /
+// state_blob_load): the table layer writes the same column through the same
+// pair, so these entries are the bridge and nothing more.
 
 // Serialize the working game into g_io as a versioned durable blob; returns
 // the byte length (>=2).
 int wasm_state_serialize(void) {
-    g_io[0] = (unsigned char)STATE_FORMAT_VERSION;
-    g_io[1] = (unsigned char)(g_game.deterministic_deck ? 1 : 0);
-    return 2 + put_state(&g_game, g_io + 2);
+    return state_blob_put(&g_game, g_io);
 }
 
 // Load a durable blob (already written into g_io) back into the working game.
@@ -372,18 +354,12 @@ int wasm_state_serialize(void) {
 // a negative GAME_INVALID_* reason if the state inside is one the kernel
 // refuses (game.h game_validate) - the working game is then left as it was.
 int wasm_state_deserialize(int len) {
-    if (len < 2) return 0;
-    if (g_io[0] != STATE_FORMAT_VERSION) return 0;
-    // `len` counts the two version/flag bytes too; the state is the rest.
-    const int r = state_import(&g_game, g_io + 2, len - 2, 0);
-    if (r != GAME_VALID) return r;
-    g_game.deterministic_deck = g_io[1] != 0;
-    return 1;
+    return state_blob_load(&g_game, g_io, len);
 }
 
-// The version this kernel writes — lets the TS bridge assert the embed it
+// The version this kernel writes - lets the TS bridge assert the embed it
 // loaded matches the format it expects without hardcoding the number twice.
-int wasm_state_format_version(void) { return STATE_FORMAT_VERSION; }
+int wasm_state_format_version(void) { return STATE_BLOB_FORMAT; }
 
 // The Game layout this module was compiled against: tools/structgen's hash of
 // tools/structgen/specs/game_layout.args under THIS build's flags, which
@@ -399,7 +375,7 @@ uint32_t wasm_layout_hash(void) { return SG_LAYOUT_HASH; }
 
 // ---------- logs -----------------------------------------------------------
 // u16 num_logs, then per log: i8 type, i8 player_idx, i8 defender_index,
-// u8 num_pairs, num_pairs x (u8 primary, u8 target) — wire cards, target
+// u8 num_pairs, num_pairs x (u8 primary, u8 target) - wire cards, target
 // 0xFF when the pair has none, 0xFE for the hidden card
 
 // Pre-action flip state, captured by begin_action for the DRAW-privacy rule.
@@ -409,7 +385,7 @@ static int g_pre_has_flip;
 // `start` is the log index this action's records begin at. It is 0 for every
 // path that marshals fresh (wasm_import_state zeroes the log), and non-zero
 // only for the bot drive, whose belief bots need the SESSION log resident
-// while they choose — see wasm_export_logs_masked_from.
+// while they choose - see wasm_export_logs_masked_from.
 static int export_logs(int mask_draws, int start) {
     // The DRAW-privacy rule (the TS appendLogs convention, now kernel-side) is
     // view.c log_record_put's: drawn-card identities are hidden EXCEPT the
@@ -429,16 +405,16 @@ static int export_logs(int mask_draws, int start) {
 int wasm_export_logs(void) { return export_logs(0, 0); }
 
 // The durable/session variant: what leaves the kernel for storage and (via
-// the packed session log) other players' belief imports — draw identities
+// the packed session log) other players' belief imports - draw identities
 // masked per the rule above. See docs/PACKED_WIRE_CUTOVER.md.
 int wasm_export_logs_masked(void) { return export_logs(1, 0); }
 
-// The same, from a log offset — the bot drive's export (F2). A cycle whose
+// The same, from a log offset - the bot drive's export (F2). A cycle whose
 // bots read the session log has that whole log resident BENEATH the records
 // the cycle just wrote (wasm_import_logs loads it into the game's log store,
 // which is where the belief bots read it from), so exporting from zero would
 // hand the commit the entire session again, to be appended a second time.
-// `start` is where the drive began — see wasm_bot_drive_log_start.
+// `start` is where the drive began - see wasm_bot_drive_log_start.
 int wasm_export_logs_masked_from(int start) { return export_logs(1, start); }
 
 // ---------- snapshots -------------------------------------------------------
@@ -587,7 +563,7 @@ int wasm_apply_action(int player_idx, int wire_len) {
 }
 
 // The TS check_win_sync, kernel-side: if the game is done, set GAME_OVER and
-// park every seat (bots READY, humans IDLE — the ai seat bitmask is the one
+// park every seat (bots READY, humans IDLE - the ai seat bitmask is the one
 // fact the kernel doesn't model). Returns the fool's seat, or -1 if the game
 // is not over (state untouched).
 int wasm_finalize_win(unsigned int ai_mask) {
@@ -603,7 +579,7 @@ int wasm_finalize_win(unsigned int ai_mask) {
 
 // Per-viewer masked view blob: [VIEW_FORMAT_VERSION | viewer | masked
 // put_state]. viewer < 0 = spectator. This is what get_game returns and what
-// the client imports — other hands and the deck never leave as real bytes.
+// the client imports - other hands and the deck never leave as real bytes.
 int wasm_view_serialize(int viewer) {
     const int v = viewer < 0 ? VIEW_SPECTATOR : viewer;
     g_io[0] = (unsigned char)VIEW_FORMAT_VERSION;
@@ -641,11 +617,11 @@ int wasm_events_serialize(int viewer, int actor, int append_final_transition) {
     return wasm_events_serialize_from(viewer, actor, append_final_transition, 0);
 }
 
-// Reorder a seat's own hand to the given index order — the rearrange-hand
+// Reorder a seat's own hand to the given index order - the rearrange-hand
 // meta action, validated in the kernel. Indices are single bytes in input
 // buffer A. The permutation check is load-bearing (see actions/rearrange.ts
 // history): n must equal the hand count, every index in range, and each used
-// EXACTLY once — otherwise a hostile payload mints duplicate cards. Returns
+// EXACTLY once - otherwise a hostile payload mints duplicate cards. Returns
 // 1 applied, 0 invalid (state untouched).
 int wasm_rearrange_hand(int seat, int n) {
     return game_rearrange_hand(&g_game, seat, g_in_raw_a, n);
@@ -672,8 +648,8 @@ int wasm_can_cover(int as, int av, int ds, int dv, int power_suit) {
 // wasm builds pass 32KB: decode's worst CONFORMING stream is ~50KB only for
 // a hypothetical every-log-has-52-pairs monster; the measured worst over
 // 28K engine games (tests/l1_measure.c) is 3,117B in and a 200B blob out,
-// so 32KB is >10x the observed ceiling. Oversized inputs — hostile integers
-// or absurd streams — fail with a clean REPLAY_ECAP instead of unbounded
+// so 32KB is >10x the observed ceiling. Oversized inputs - hostile integers
+// or absurd streams - fail with a clean REPLAY_ECAP instead of unbounded
 // growth (the TS reference grew an unbounded array there), and encode/
 // decode stay self-consistent: any stream encode accepts fits decode's
 // output bound by construction (they share this buffer).
@@ -684,7 +660,7 @@ int wasm_can_cover(int as, int av, int ds, int dv, int power_suit) {
 #define REPLAY_IO_CAP WASM_REPLAY_IO_CAP
 #ifdef CD_WASM_OVERLAY
 // M8: g_replay_io aliases into solve_ws (see wasm_overlay.h). The TS bridge
-// writes the input at this pointer, calls the codec, then reads the output —
+// writes the input at this pointer, calls the codec, then reads the output -
 // all within one synchronous function, so no choose call interleaves. cd_overlay
 // is a fixed static address, so a cached wasm_replay_io_ptr() stays valid.
 _Static_assert(REPLAY_IO_CAP <= CD_OVL_END - CD_OVL_IO_OFF, "g_replay_io overflows its overlay slot");
@@ -731,7 +707,7 @@ int wasm_replay_encode_v6(int in_len) {
 //
 // Exported from bots.wasm ONLY (see the Makefile): this needs a whole session
 // log resident, and the rules module is built at MAX_LOGS=128 with no log
-// import — it cannot hold one.
+// import - it cannot hold one.
 int wasm_replay_encode_v6_from_game(int max_atoms) {
     // The seed is copied out first: `out` aliases the buffer it arrived in, and
     // the encoder is free to write output before it has finished with its input.
@@ -752,24 +728,24 @@ const void *wasm_replay_error_ptr(void) { return replay_last_error(); }
 // rules.wasm (-DCD_RULES_OVERLAY) the replay scratch family aliases OVER the
 // action family, legal because "replay encode/decode vs action/menu are
 // top-level exports that never nest" (see the Makefile). An FMSG call IS a
-// replay call — its body is a v6 code and decoding it runs the bignum scratch —
+// replay call - its body is a v6 code and decoding it runs the bignum scratch -
 // so an envelope parked in g_io would be clobbered mid-decode, and MsgEnvelope
 // BORROWS the bytes it decoded from. Keeping it in the replay family's own
 // buffer keeps that invariant true.
 //
-// Both entries are exported from bots.wasm ONLY — not because decode needs
+// Both entries are exported from bots.wasm ONLY - not because decode needs
 // anything rules.wasm lacks (it does not), but because FMSG runs on the ONE big
 // module everywhere, by owner steer: every host (server, web, phone, watch,
 // iMessage) builds on one wasm, and the split comes back later once they all do.
 // Sealing genuinely needs the resident session log, which rules.wasm cannot hold
-// (MAX_LOGS=128, no log import, 3-page pin) — and splitting decode away from
+// (MAX_LOGS=128, no log import, 3-page pin) - and splitting decode away from
 // seal to work around that is exactly the contortion the steer forbids. Two
 // kernels in the tree is the trap: rules_wasm.ts went stale at 32b5b38 while
 // bots.wasm kept being rebuilt, so a C change reached one and not the other.
 //
 // Both replay into the resident g_game, so after a decode the ordinary exports
 // (wasm_view_serialize, wasm_legal_moves, wasm_apply_action) all read the game
-// the payload describes — the /m/ route needs no new rendering path, and a turn
+// the payload describes - the /m/ route needs no new rendering path, and a turn
 // continues from exactly what it decoded.
 
 // THE HEADER, as a struct (msg_wire.h MsgHeader), not a byte string. A bridge
@@ -787,7 +763,7 @@ static MsgHeader g_msg_header;
 // and fills it in before a seal.
 void *wasm_msg_header_ptr(void) { return &g_msg_header; }
 
-// The adopted chain's round, kept from the last successful wasm_msg_decode —
+// The adopted chain's round, kept from the last successful wasm_msg_decode -
 // Rule R's guard input, and the one thing a rebase needs that the resident Game
 // does not carry (a Game has no bout counter; msg_replay derives it).
 static int g_msg_round = -1;
@@ -817,7 +793,7 @@ int wasm_msg_decode(int in_len) {
     const int rc = msg_decode(g_replay_io, in_len, &e);
     if (rc != MSG_EOK) return rc;
 
-    // Digest the envelope BEFORE the blob overwrites it — Rule P needs it, and
+    // Digest the envelope BEFORE the blob overwrites it - Rule P needs it, and
     // these bytes are about to stop existing.
     uint8_t digest[SHA256_DIGEST_LEN];
     msg_digest(g_replay_io, in_len, digest);
@@ -840,7 +816,7 @@ int wasm_msg_decode(int in_len) {
 
 // Rule P (msg_wire.h §7.2). Two envelopes laid end to end in g_replay_io:
 // a at [0, a_len), b at [a_len, a_len + b_len). Returns -1 if a is preferred,
-// +1 if b, 0 if they are the same chain — or a negative MSG_E* < -1 if either
+// +1 if b, 0 if they are the same chain - or a negative MSG_E* < -1 if either
 // is not an envelope (callers check for < -1, see the TS bridge).
 //
 // Structure only: no replay, no Game. Rule P decides which chain to adopt, and
@@ -855,8 +831,8 @@ int wasm_msg_rule_p(int a_len, int b_len) {
     return msg_rule_p(&ka, &kb);
 }
 
-// Rule R (msg_wire.h §7.4). Rebases ONE pending action onto the adopted chain —
-// the game wasm_msg_decode left resident — in the order the ledger holds them.
+// Rule R (msg_wire.h §7.4). Rebases ONE pending action onto the adopted chain -
+// the game wasm_msg_decode left resident - in the order the ledger holds them.
 // The awire frame is in the cards_a buffer, as for wasm_apply_action.
 //
 // Returns MSG_REBASE_* (0 re-applied and APPLIED to the resident game, 1
@@ -871,7 +847,7 @@ int wasm_msg_rebase(int pending_round, int seat, int wire_len) {
 
 // in:  the header at wasm_msg_header_ptr (MsgHeader)
 // out: the envelope bytes in g_replay_io
-// Seals the RESIDENT g_game — the game the caller just played a move on.
+// Seals the RESIDENT g_game - the game the caller just played a move on.
 // Returns the envelope length, or a negative MSG_E*.
 //
 // Three of the header's fields are the KERNEL'S to state, and a caller does not
@@ -898,7 +874,7 @@ int wasm_msg_seal(void) {
     return msg_encode(&e, g_replay_io, REPLAY_IO_CAP);
 }
 
-// ROUND 16 — the pickup hold, on the resident game (the one wasm_msg_decode
+// ROUND 16 - the pickup hold, on the resident game (the one wasm_msg_decode
 // replayed). Seconds `seat` must still wait before it may pick up; 0 = now.
 // Pure relay of msg_pickup_hold_remaining, exported so the web asks the same
 // rule the phone does rather than re-deriving it in TS.
@@ -911,10 +887,10 @@ int wasm_msg_pickup_hold(int seat, int sent_at, int now) {
 // ---------- animation core (anim_plan.h) --------------------------------------
 //
 // The platform-independent animation policy, exported so the web pure modules
-// (src/state/*) delegate here instead of re-deriving it — the same "one kernel
+// (src/state/*) delegate here instead of re-deriving it - the same "one kernel
 // behind every host" argument FMSG makes above. Cards cross as 1-byte wire cards
 // (wire.h: 0..51 real, 0xFE hidden, 0xFF none). These are pure functions over
-// g_io — no resident game, no session log — so they run in any module that
+// g_io - no resident game, no session log - so they run in any module that
 // exports them (the web loads bots.wasm, which is where they ship).
 
 // The version gate (clientReconcile.shouldDropStaleSequence). Pure scalars; the

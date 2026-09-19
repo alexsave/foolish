@@ -18,7 +18,7 @@
 #define VIEW_SPECTATOR (-1)
 
 // Leading byte of the masked view blob (wasm_view_serialize): bump on any
-// layout change, same discipline as STATE_FORMAT_VERSION.
+// layout change, same discipline as STATE_BLOB_FORMAT below.
 #define VIEW_FORMAT_VERSION 1
 
 // Serialize g into the put_state layout (see wasm_api.c for the field-by-
@@ -59,6 +59,107 @@ int state_measure(const unsigned char *p, int len);
 // view on a client - goes through this rather than state_get, and hands over
 // `len`: how many bytes it actually holds, not how big its buffer is.
 int state_import(Game *g, const unsigned char *p, int len, int masked);
+
+// ---------- the durable state blob ----------------------------------------
+//
+// state_put/state_get above are the TRANSIENT request-scoped IO format: they
+// never outlive one edge-function call, so they carry no version. The pair
+// below is the ONLY state format written to durable storage (games.state
+// bytea). It is state_put's exact byte layout with a leading 1-byte format
+// version, so a future kernel-layout change becomes an explicit decode branch
+// here instead of silently misreading every persisted game - the same
+// discipline the replay codec (replay.h v2..v5) already applies to its
+// persisted integers.
+//
+// It carries the VOLATILE game state only (positions, deck, battles, per-seat
+// hands/status, good-mask, elimination). Seat identity (player_id/name/
+// strategy_key/is_ai) is stable across a game and lives in a separate roster
+// column, reattached by the table layer.
+//
+// Layout: [version][deterministic_deck flag][state_put(VIEW_UNMASKED)]. The
+// flag byte (added with the seed-dealt deck; see the Game field) is what
+// bumped this from the old v1 [version][state_put...]. There is no v1 read
+// path - a data migration rewrote every stored v1 blob to v2 (flag 0), so no
+// v1 blob ever reaches this kernel; anything that isn't v2 is unreadable.
+//
+// ONE definition, for every writer and reader of that column: the wasm bridge
+// (wasm_state_serialize / wasm_state_deserialize) and the table layer
+// (table.h TABLE_STATE_FORMAT, table_seal/table_load/table_commit_products)
+// are both these functions, so a format bump cannot land on one side only.
+// A richer on-disk layout that WRAPS this blob is a different format with its
+// own version (server/impls/native/snapshot.c PERSIST_GAME_BLOB_VERSION).
+#define STATE_BLOB_FORMAT 2
+
+// The bytes the blob's header costs, ahead of the state_put payload.
+#define STATE_BLOB_HEADER 2
+
+// Write g as a durable blob; returns the byte length (>= STATE_BLOB_HEADER).
+int state_blob_put(const Game *g, unsigned char *out);
+
+// Load a durable blob back into g. Returns 1 on success; 0 if the leading
+// version byte is not one this kernel reads (the caller must treat that as
+// unreadable, never as an empty game); or a negative GAME_INVALID_* reason if
+// the state inside is one the kernel refuses (game.h game_validate) - g is
+// then left exactly as it was.
+// `len` counts the header bytes too.
+int state_blob_load(Game *g, const unsigned char *p, int len);
+
+// ---------- the response envelope header ----------------------------------
+//
+// The bytes ahead of the view blob in a server response envelope, known ONCE.
+// table.c table_envelope writes them with env_header_write; client_table.c
+// client_adopt_envelope reads them back with env_header_read; shipped iOS
+// builds decode the same layout in Swift. It lives here, beside
+// VIEW_FORMAT_VERSION, because the envelope is a view blob with a header and
+// because both ends link view.c - table.c is the server's alone.
+//
+//   0   u8  ENV_FORMAT
+//   1   u8  flags: ENV_FLAG_SEATED, ENV_FLAG_ROSTER
+//   2   u8  the viewer's seat, 0xFF for the spectator
+//   3   u32 version, little-endian
+//   7   u16 the retired JSON roster island's length (view.ts), then that run
+//  ..   u16 view_len, then the view blob, then the roster trailer (roster.h)
+//
+// All little-endian. The view blob is [VIEW_FORMAT_VERSION][viewer][masked
+// state], and view_len counts those two prefix bytes.
+//
+// THE ISLAND IS A LENGTH-PREFIXED RUN, so the view's offset is DERIVED from it
+// and never a constant. This kernel writes the island empty, which makes the
+// header exactly ENV_VIEW_AT bytes long - but a reader that hardcoded
+// ENV_VIEW_AT would misread the first envelope anyone wrote an island into,
+// which is why there is one reader and it derives.
+#define ENV_FORMAT       1
+#define ENV_FLAG_SEATED  0x01   // bit0: the envelope is for a seated viewer
+#define ENV_FLAG_ROSTER  0x02   // bit1: a packed roster trailer follows the view
+#define ENV_ISLAND_AT    7      // the island's u16 length, then its bytes
+#define ENV_VIEW_AT      11     // the view blob, with the empty island this kernel writes
+
+// What env_header_read found. Offsets are into the envelope it was given.
+typedef struct {
+    int      seat;        // the viewer's seat, or -1 for the spectator
+    uint32_t version;
+    int      state_at;    // the masked state inside the view blob
+    int      state_len;
+    int      trailer_at;  // where the roster trailer starts (state_at + state_len)
+} EnvHeader;
+
+// Writes the header for `viewer` (a seat, or -1 for the spectator) at
+// `version`, the empty island, and the view blob's own two-byte prefix.
+// Returns the view blob's offset (ENV_VIEW_AT), or -1 when `cap` cannot hold
+// even the header. The caller writes the masked state at that offset + 2 and
+// then calls env_header_set_view_len: the length prefix sits AHEAD of a blob
+// whose length is only known once it is written.
+int env_header_write(unsigned char *out, int cap, int viewer, uint32_t version);
+
+// The view blob's length (2 + the state's), into the header written above.
+void env_header_set_view_len(unsigned char *out, int view_len);
+
+// Reads the header of the `len`-byte envelope at p. true and *h filled, or
+// false for a header this kernel does not read (format, flags, seat byte or a
+// length that runs off the end). The view blob is bounds-checked inside p; the
+// TRAILER is not, so h->trailer_at may be len - the caller judges a missing
+// trailer, which is a refusal of its own and not a malformed header.
+bool env_header_read(const unsigned char *p, int len, EnvHeader *h);
 
 // One kernel log record in the export layout the session log is built from:
 //   u8 log_type, u8 player seat (0xFF system), u8 defender_index (0xFF none),

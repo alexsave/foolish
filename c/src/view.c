@@ -204,6 +204,71 @@ int state_import(Game *g, const unsigned char *p, int len, int masked) {
     return r;
 }
 
+int state_blob_put(const Game *g, unsigned char *out) {
+    out[0] = (unsigned char)STATE_BLOB_FORMAT;
+    out[1] = (unsigned char)(g->deterministic_deck ? 1 : 0);
+    return STATE_BLOB_HEADER + state_put(g, VIEW_UNMASKED, out + STATE_BLOB_HEADER);
+}
+
+int state_blob_load(Game *g, const unsigned char *p, int len) {
+    if (len < STATE_BLOB_HEADER) return 0;
+    if (p[0] != STATE_BLOB_FORMAT) return 0;
+    // `len` counts the header bytes too; the state is the rest.
+    const int r = state_import(g, p + STATE_BLOB_HEADER, len - STATE_BLOB_HEADER, 0);
+    if (r != GAME_VALID) return r;
+    g->deterministic_deck = p[1] != 0;
+    return 1;
+}
+
+// ---------- the response envelope header ----------------------------------
+
+_Static_assert(ENV_VIEW_AT == ENV_ISLAND_AT + 2 + 2,
+               "the header is the island's length prefix, an empty island, and the view's length prefix");
+
+int env_header_write(unsigned char *out, int cap, int viewer, uint32_t version) {
+    if (!out || cap < ENV_VIEW_AT + 2) return -1;
+    out[0] = ENV_FORMAT;
+    out[1] = (unsigned char)((viewer >= 0 ? ENV_FLAG_SEATED : 0) | ENV_FLAG_ROSTER);
+    out[2] = viewer >= 0 ? (unsigned char)viewer : 0xFF;
+    out[3] = (unsigned char)(version & 0xff);
+    out[4] = (unsigned char)((version >> 8) & 0xff);
+    out[5] = (unsigned char)((version >> 16) & 0xff);
+    out[6] = (unsigned char)((version >> 24) & 0xff);
+    out[ENV_ISLAND_AT] = 0; out[ENV_ISLAND_AT + 1] = 0;   // the retired JSON roster island, empty
+    out[ENV_VIEW_AT] = VIEW_FORMAT_VERSION;
+    out[ENV_VIEW_AT + 1] = out[2];
+    return ENV_VIEW_AT;
+}
+
+void env_header_set_view_len(unsigned char *out, int view_len) {
+    // The two bytes immediately ahead of the view, which is where they are
+    // because env_header_write wrote the island empty.
+    out[ENV_VIEW_AT - 2] = (unsigned char)view_len;
+    out[ENV_VIEW_AT - 1] = (unsigned char)(view_len >> 8);
+}
+
+bool env_header_read(const unsigned char *p, int len, EnvHeader *h) {
+    if (!p || len < ENV_VIEW_AT + 2 || p[0] != ENV_FORMAT) return false;
+    const int flags = p[1];
+    if ((flags & ~(ENV_FLAG_SEATED | ENV_FLAG_ROSTER)) || !(flags & ENV_FLAG_ROSTER)) return false;
+    const int seated = (flags & ENV_FLAG_SEATED) != 0;
+    const int seat = seated ? p[2] : -1;
+    if (seated ? seat >= MAX_PLAYERS : p[2] != 0xFF) return false;
+    // The retired JSON roster island (view.ts): empty, but skipped if a server wrote one.
+    int q = ENV_ISLAND_AT + 2 + (p[ENV_ISLAND_AT] | (p[ENV_ISLAND_AT + 1] << 8));
+    if (q + 2 > len) return false;
+    const int view_len = p[q] | (p[q + 1] << 8);
+    q += 2;
+    if (view_len < 2 || q + view_len > len) return false;
+    if (p[q] != VIEW_FORMAT_VERSION || p[q + 1] != (seated ? (unsigned char)seat : 0xFF)) return false;
+    h->seat = seat;
+    h->version = (uint32_t)p[3] | ((uint32_t)p[4] << 8) | ((uint32_t)p[5] << 16) | ((uint32_t)p[6] << 24);
+    h->state_at = q + 2;
+    h->state_len = view_len - 2;
+    h->trailer_at = q + view_len;
+    return true;
+}
+
 int log_record_put(const GameLog *l, int mask_draws, int pre_has_flip, Card pre_flip,
                    int has_flipped_now, unsigned char *out) {
     const int flip_drawn = pre_has_flip && !has_flipped_now;

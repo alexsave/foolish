@@ -91,15 +91,7 @@ static int play_one_dump(uint32_t seed, int n_players, int max_moves, FILE *out)
             }
 
             const LegalMove *m = &moves.moves[idx];
-            bool ok = false;
-            switch (m->type) {
-                case MOVE_ATTACK: ok = handle_attack(&g, pi, m->cards, m->n_cards); break;
-                case MOVE_COVER:  ok = handle_cover (&g, pi, m->cards, m->attack_cards, m->n_cards); break;
-                case MOVE_PASS:   ok = handle_pass  (&g, pi, m->cards, m->n_cards); break;
-                case MOVE_PICKUP: ok = handle_pickup(&g, pi); break;
-                case MOVE_GOOD:   ok = handle_good  (&g, pi); break;
-                default: break;
-            }
+            bool ok = legal_move_apply(&g, pi, m);
             if (ok) { acted = true; break; }
         }
         if (!acted) break;
