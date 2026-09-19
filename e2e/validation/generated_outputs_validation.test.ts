@@ -45,8 +45,9 @@ function generatedDirs(): string[] {
 
 test('gen.sh answers for its own output directories', () => {
     const dirs = generatedDirs();
-    // Three today: the TS the web, server and e2e import; the Swift FoolishKit
-    // compiles; the generator's own fixtures. The count is asserted so that a
+    // Four today: the TS the web, server and e2e import; the Swift FoolishKit
+    // compiles; the Kotlin a JVM client would; the generator's own fixtures.
+    // The count is asserted so that a
     // --print-dirs that starts answering with nothing fails HERE rather than
     // making the two checks below pass over an empty list.
     assert.ok(dirs.length >= 3, `${GEN_SH} --print-dirs answered with ${dirs.length} directories: ${dirs.join(', ')}`);

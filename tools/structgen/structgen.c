@@ -1,5 +1,6 @@
-// structgen - C structs -> TypeScript accessors over wasm32 linear memory, and
-// Swift value snapshots over the same struct in native memory.
+// structgen - C structs -> TypeScript accessors over wasm32 linear memory,
+// Swift value snapshots over the same struct in native memory, and Kotlin value
+// snapshots over the bytes of it that JNI hands the JVM.
 //
 // libclang parses the headers for ONE target under ONE build's layout flags;
 // every offset, size, bitfield position and array stride comes from clang,
@@ -11,13 +12,18 @@
 //   structgen --cwd DIR --header H... --root T... --build NAME=FLAGS
 //             [--target TRIPLE] [--fields T=f1,f2,SIZE]... [--const PREFIX]...
 //             [--snapshot T]... [--count T.f=c]... [--writer T]... [--snapshot-only]
-//             [--ts OUT] [--swift OUT] [--hash-ts OUT] [--print-hash]
+//             [--ts OUT] [--swift OUT] [--kotlin OUT --kotlin-package PKG]
+//             [--hash-ts OUT] [--print-hash]
 //
 // --ts OUT        the accessors (no hash: a host that only checks the hash must
 //                 not have to import the accessors, which read the raw struct)
 // --swift OUT     the same --snapshot readers (and --writer writers) as Swift
 //                 value types over a POINTER TO THE C STRUCT ITSELF. See the
 //                 Swift section at the end of this comment.
+// --kotlin OUT    the same readers again for a JVM host. See the Kotlin section
+//                 at the end of this comment.
+// --kotlin-package PKG
+//                 the package that module declares. Required with --kotlin.
 // --hash-ts OUT   a module holding only `export const LAYOUT_HASH = 0x...;`
 // --print-hash    the same hash on stdout
 // --target TRIPLE the target libclang parses for; wasm32 by default. A host that
@@ -98,6 +104,31 @@
 // `loadUnaligned`: every address they read is a field of a C struct at the
 // address C gave it, so it already satisfies that field's alignment.
 //
+// ---- the Kotlin emitter (--kotlin) -------------------------------------------
+//
+// Same model again, and the same LP64 offsets the Swift run reads, because the
+// kernel is C99 and builds under the Android NDK unchanged. What differs is that
+// the JVM cannot hold the kernel's address: the bytes have to be handed to it,
+// which is what the `fio_*` bridge already does (a caller buffer, packed bytes
+// out) and what JNI wants either way. So a reader takes a `java.nio.ByteBuffer`
+// and a byte offset, and one emitted reader serves both a heap buffer over a
+// ByteArray JNI filled and a direct buffer over storage the kernel owns.
+//
+//   `T_Snap` is `data class TSnap`, `readT(buf, p)` builds one and
+//   `writeT(buf, p, s)` writes one back, both THROWING an SGLayoutException
+//   rather than reading or writing out of range. An array is a `List` and never
+//   a Kotlin `Array`, because a data class builds equals() out of its members'
+//   and an Array's is identity.
+//   A POINTER FIELD IS REFUSED: a ByteBuffer holds bytes and no way to follow an
+//   address, so the C side has to flatten such a field before it crosses. That
+//   is the one thing Kotlin will not read that Swift will.
+//   Integers widen to the narrowest LOSSLESS Kotlin type - Int through int32,
+//   Long for uint32 and int64, ULong for uint64 - which is not Swift's rule,
+//   because Kotlin's Int is 32 bits and Swift's is 64.
+//   The module carries SG_LAYOUT_HASH and the `sgCheckLayout` that compares it
+//   with what JNI read out of the library, so the stale-library refusal is
+//   generated rather than hand-written.
+//
 // ---- the parts --------------------------------------------------------------
 //
 // One thing each, and structgen.h lists them. This file is the run itself: the
@@ -112,6 +143,7 @@
 #include "sg_args.h"
 #include "sg_clang.h"
 #include "sg_hash.h"
+#include "sg_kotlin.h"
 #include "sg_model.h"
 #include "sg_swift.h"
 #include "sg_ts.h"
@@ -165,8 +197,14 @@ int main(int argc, char **argv) {
     int swstrings = 0;
     if (out_swift) sg_swift_module(&sw, &swstrings);
 
+    // ...and the Kotlin one: the same again, over the bytes of it.
+    Buf kt = {0};
+    int ktstrings = 0;
+    if (out_kotlin) sg_kotlin_module(&kt, &ktstrings);
+
     if (out_ts) sg_ts_write(out_ts, &ts, strings);
     if (out_swift) sg_swift_write(out_swift, &sw, swstrings, hash);
+    if (out_kotlin) sg_kotlin_write(out_kotlin, &kt, ktstrings, hash);
     if (out_hash_ts) sg_hash_write_ts(out_hash_ts, hash);
     if (print_hash) printf("0x%08x\n", hash);
     return 0;

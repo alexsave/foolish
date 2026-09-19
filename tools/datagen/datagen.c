@@ -1,5 +1,5 @@
-// datagen - a C static table of literals -> the same table as TypeScript and
-// as Swift. The sibling of tools/structgen, on the same libclang.
+// datagen - a C static table of literals -> the same table as TypeScript, as
+// Swift and as Kotlin. The sibling of tools/structgen, on the same libclang.
 //
 // THE TWO TOOLS ASK CLANG DIFFERENT QUESTIONS, which is why they are two
 // programs. structgen asks for SHAPE: every offset, size, bitfield position and
@@ -10,7 +10,7 @@
 //
 //   datagen --cwd DIR --header H... --table T [--labels T.DIM=L]...
 //           [--require-complete] [--flags FLAGS] [--target TRIPLE] [--name IDENT]
-//           [--ts OUT] [--swift OUT] [--json OUT]
+//           [--ts OUT] [--swift OUT] [--kotlin OUT --kotlin-package PKG] [--json OUT]
 //
 // --table T       the table to read: a file-scope `static const` array of one or
 //                 two dimensions, or a one-dimensional array of STRUCTS, whose
@@ -38,9 +38,12 @@
 //                 type, so its keys and values stay literal types. A host can
 //                 then derive a union of the real key names from the table
 //                 itself instead of keeping a second list that goes stale.
-// --ts / --swift  where to write. --json writes the same data as JSON, which is
-//                 what a test reads to check the extraction without compiling
-//                 either language.
+// --ts / --swift / --kotlin
+//                 where to write. --kotlin needs --kotlin-package, because a
+//                 Kotlin file declares the package it is in and a wrong one is a
+//                 wrong import at every call site. --json writes the same data as
+//                 JSON, which is what a test reads to check the extraction
+//                 without compiling any of the three.
 // --flags FLAGS   extra clang flags (-D, -I, -std=...), one string, as structgen
 //                 takes them from a build.
 //
@@ -94,7 +97,8 @@
 #define MAXN 64
 #define MAXDIM 2
 
-static const char *headers[MAXN], *table_name, *out_ts, *out_swift, *out_json, *export_name;
+static const char *headers[MAXN], *table_name, *out_ts, *out_swift, *out_kotlin, *out_json, *export_name;
+static const char *kotlin_package;
 static const char *cwd = ".", *target, *flags = "";
 static int require_complete, ts_const;
 static const char *complete_if;   // --require-complete-if TABLE.COLUMN
@@ -452,6 +456,20 @@ static void quoted_swift(Buf *b, const char *s) {
     free(tmp.s);
 }
 
+// Kotlin's one extra rule is $, which opens a string template: a lone one in a
+// translated price ("$1.99") would be read as a reference to an identifier that
+// does not exist, which is a compile error in twenty-five generated files at
+// once. Everything else is the same text, \uXXXX included.
+static void quoted_kotlin(Buf *b, const char *s) {
+    Buf tmp = {0};
+    quoted(&tmp, s);
+    for (size_t i = 0; i < tmp.n; i++) {
+        if (tmp.s[i] == '$') bprintf(b, "\\$");
+        else bprintf(b, "%c", tmp.s[i]);
+    }
+    free(tmp.s);
+}
+
 typedef void (*Quote)(Buf *, const char *);
 
 static void cell_literal(Buf *b, Cell *c, Quote q) {
@@ -605,6 +623,63 @@ static void emit_swift(Table *t, Labels *lab) {
     free(b.s);
 }
 
+// Kotlin has no braced collection literal: a list is listOf(...) and a map is
+// mapOf(k to v, ...). That is a different SPELLING of the same two brackets and
+// one separator the shared emitter already takes, so it goes through emit_dim
+// like the other two rather than growing a second walker. Trailing commas inside
+// a call are legal Kotlin (1.4).
+static void emit_kotlin(Table *t, Labels *lab) {
+    Buf b = {0};
+    banner(&b, "//");
+    bprintf(&b, "\npackage %s\n", kotlin_package);
+    if (t->is_struct) {
+        bprintf(&b, "\ndata class %sRow(\n", export_name);
+        for (int i = 0; i < t->nfield; i++)
+            bprintf(&b, "    val %s: %s,\n", t->field[i], t->colptr[i] ? "String" : "Int");
+        bprintf(&b, ")\n\nval %s: List<%sRow> = listOf(\n", export_name, export_name);
+        // A Kotlin row is a constructor call with named arguments, not a braced
+        // list, so it is written here rather than through the shared emitter.
+        for (long r = 0; r < t->dim[0]; r++) {
+            bprintf(&b, "    %sRow(", export_name);
+            for (int i = 0; i < t->nfield; i++) {
+                Cell *c = cell_at(t, r, i);
+                bprintf(&b, "%s%s = ", i ? ", " : "", t->field[i]);
+                if (!c->kind) bprintf(&b, t->colptr[i] ? "\"\"" : "0");
+                else cell_literal(&b, c, quoted_kotlin);
+            }
+            bprintf(&b, "),\n");
+        }
+        bprintf(&b, ")\n");
+        write_out(out_kotlin, &b);
+        free(b.s);
+        return;
+    }
+    // Kotlin's Int is 32 bits, where TypeScript's number and Swift's Int are not,
+    // so the leaf type is a question about the VALUES here and not only about
+    // whether they are strings.
+    const char *leaf = "String";
+    for (long i = 0; i < t->dim[0] * (t->ndim == 2 ? t->dim[1] : 1); i++)
+        if (t->cells[i].kind == 'i') {
+            leaf = "Int";
+            for (long j = 0; j < t->dim[0] * (t->ndim == 2 ? t->dim[1] : 1); j++)
+                if (t->cells[j].kind == 'i' && (t->cells[j].i > 2147483647LL || t->cells[j].i < -2147483648LL)) leaf = "Long";
+            break;
+        }
+    char ty[256];
+    if (t->ndim == 1) snprintf(ty, sizeof ty, lab[0].name ? "Map<String, %s>" : "List<%s>", leaf);
+    else {
+        char inner[128];
+        snprintf(inner, sizeof inner, lab[1].name ? "Map<String, %s>" : "List<%s>", leaf);
+        snprintf(ty, sizeof ty, lab[0].name ? "Map<String, %s>" : "List<%s>", inner);
+    }
+    static const Syntax sx = { "mapOf(", ")", "listOf(", ")", " to", "mapOf()", quoted_kotlin };
+    bprintf(&b, "\nval %s: %s = ", export_name, ty);
+    emit_dim(&b, t, lab, 0, 0, &sx, "");
+    bprintf(&b, "\n");
+    write_out(out_kotlin, &b);
+    free(b.s);
+}
+
 static void emit_json(Table *t, Labels *lab) {
     Buf b = {0};
     static const Syntax sx = { "{", "}", "[", "]", ":", "{}", quoted };
@@ -644,7 +719,8 @@ static void usage(void) {
     fputs("usage: datagen --cwd DIR --header H... --table T [--labels T.DIM=L]...\n"
           "               [--require-complete] [--require-complete-if T.COL]\n"
           "               [--ts-const] [--flags FLAGS] [--target TRIPLE] [--name IDENT]\n"
-          "               [--ts OUT.ts] [--swift OUT.swift] [--json OUT.json]\n", stderr);
+          "               [--ts OUT.ts] [--swift OUT.swift] [--json OUT.json]\n"
+          "               [--kotlin OUT.kt --kotlin-package PKG]\n", stderr);
     exit(2);
 }
 
@@ -674,6 +750,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--name")) export_name = v;
         else if (!strcmp(a, "--ts")) out_ts = v;
         else if (!strcmp(a, "--swift")) out_swift = v;
+        else if (!strcmp(a, "--kotlin")) out_kotlin = v;
+        else if (!strcmp(a, "--kotlin-package")) kotlin_package = v;
         else if (!strcmp(a, "--json")) out_json = v;
         else if (!strcmp(a, "--target")) target = v;
         else if (!strcmp(a, "--flags")) flags = v;
@@ -682,9 +760,12 @@ int main(int argc, char **argv) {
         else die("unknown argument %s", a);
     }
     if (!nheaders || !table_name) usage();
-    if (!out_ts && !out_swift && !out_json) die("nothing to do: give --ts, --swift and/or --json");
+    if (!out_ts && !out_swift && !out_kotlin && !out_json) die("nothing to do: give --ts, --swift, --kotlin and/or --json");
+    if (out_kotlin && !kotlin_package) die("--kotlin needs --kotlin-package: a Kotlin file declares the package it is in");
+    if (kotlin_package && !out_kotlin) die("--kotlin-package without --kotlin: nothing is being written in Kotlin");
     if (!export_name) export_name = table_name;
     out_ts = absolute(out_ts); out_swift = absolute(out_swift); out_json = absolute(out_json);
+    out_kotlin = absolute(out_kotlin);
     if (chdir(cwd)) die("cannot cd to %s", cwd);
     build_args();
 
@@ -755,6 +836,7 @@ int main(int argc, char **argv) {
 
     if (out_ts) emit_ts(&t, lab);
     if (out_swift) emit_swift(&t, lab);
+    if (out_kotlin) emit_kotlin(&t, lab);
     if (out_json) emit_json(&t, lab);
     clang_disposeTranslationUnit(tu);
     clang_disposeIndex(idx);

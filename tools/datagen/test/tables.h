@@ -18,7 +18,11 @@
 //               rather than a literal token, because the values come from
 //               clang's evaluator and not from the source text.
 //   DG_MIXED    UTF-8 and right-to-left, plus every character the emitters have
-//               to escape. If a byte survives C -> TS -> Swift it survives here.
+//               to escape. If a byte survives C -> TS -> Swift -> Kotlin it
+//               survives here. The dollar is not decoration: it opens a string
+//               template in Kotlin and in no other target, so a price in a
+//               translated string is a compile error in twenty-five generated
+//               files at once unless the Kotlin emitter escapes it.
 #ifndef DATAGEN_TEST_TABLES_H
 #define DATAGEN_TEST_TABLES_H
 
@@ -46,7 +50,7 @@ static const char *const DG_ORDINAL[DG_NCOL] = { "zero", "one", "two" };
 static const int DG_SCORE[DG_NCOL] = { [DG_C1] = DG_BONUS * 2, [DG_C0] = -1, [DG_C2] = 0 };
 
 static const char *const DG_MIXED[DG_NCOL] = {
-    [DG_C0] = "Бито / 좋아 / \"quoted\" / back\\slash",
+    [DG_C0] = "Бито / 좋아 / \"quoted\" / back\\slash / $1.99",
     [DG_C1] = "קח לעצמך",          // Hebrew, right to left
     [DG_C2] = "التقاط\tand a tab", // Arabic, plus an escape the emitters rewrite
 };
