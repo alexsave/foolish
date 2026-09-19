@@ -57,7 +57,7 @@ import XCTest
 
 final class BoardSpringOverrideTests: XCTestCase {
 
-    private func source(_ path: String = "FoolishKit/Boards/MessageTableView.swift") throws -> String {
+    private func source(_ path: String) throws -> String {
         let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         let url = here.deletingLastPathComponent().appendingPathComponent(path)
         guard FileManager.default.fileExists(atPath: url.path) else {
@@ -108,7 +108,7 @@ final class BoardSpringOverrideTests: XCTestCase {
         // licensed copy at all: any `.animation(nil, value:)` here is a
         // hand-spelled sixth site.
         let mine = try modifierBody(code(try springSource()))
-        let lines = code(try source())
+        let lines = code(try BoardSource.text())
         let inlined = lines.filter { $0.contains(".animation(nil, value:") && !mine.contains($0) }
         XCTAssertTrue(inlined.isEmpty,
                       "a chrome site re-spells the board-spring override by hand: "
@@ -123,7 +123,7 @@ final class BoardSpringOverrideTests: XCTestCase {
     /// trigger. `handHeight` was tried and is the wrong value - the change
     /// arrives through `controller.view`.
     func testEverySitePassesTheAncestorsTrigger() throws {
-        let lines = code(try source())
+        let lines = code(try BoardSource.text())
         let calls = lines.filter { $0.contains(".doesNotRideTheBoardSpring(") }
         XCTAssertEqual(calls.count, 5,
                        "expected the five chrome sites (send hint, self role mark, action "
@@ -141,7 +141,7 @@ final class BoardSpringOverrideTests: XCTestCase {
     /// It must stay on the fixed-size container: round 36 narrowed it there
     /// because outermost it also nulled the chrome's own slide (vector 3).
     func testTheActionColumnKeepsItsTransaction() throws {
-        let lines = code(try source())
+        let lines = code(try BoardSource.text())
         let bar = try XCTUnwrap(lines.firstIndex { $0.contains("actionBar(view)") },
                                 "no `actionBar(view)` placement")
         let block = lines[bar...].prefix(12)
@@ -164,7 +164,7 @@ final class BoardSpringOverrideTests: XCTestCase {
     /// would be the card spring again, and `.onChange`'s own transaction
     /// carries none, which is why the value used to snap.
     func testTheChromeMirrorKeepsItsOwnAnimation() throws {
-        let src = code(try source()).joined(separator: "\n")
+        let src = code(try BoardSource.text()).joined(separator: "\n")
         XCTAssertTrue(src.contains("withAnimation(FMotion.chrome) { buttonLift = h }"),
                       "the `buttonLift` mirror must animate its own row-count change with "
                       + "`FMotion.chrome`. Round 36: \"at least make it slide smoothly instead "
@@ -179,7 +179,7 @@ final class BoardSpringOverrideTests: XCTestCase {
     /// does not reorder the ones after it - all four siblings that followed it
     /// fill and align themselves.
     func testNoEmptyRoleMarkSlotComesBack() throws {
-        let lines = code(try source())
+        let lines = code(try BoardSource.text())
         XCTAssertFalse(lines.contains { $0.contains("lift + 6") },
                        "something is back at the board ZStack's old role-mark line. The mark "
                        + "is drawn from the `selfRoleIndicator` overlay (round 41) and reads "

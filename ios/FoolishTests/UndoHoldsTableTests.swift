@@ -67,10 +67,10 @@ final class UndoHoldsTableTests: XCTestCase {
     /// MUTANTS: gridRow not passing the flag; the release moved before
     /// `playStep`; the early hide left on the flag-on path.
     func testTheBoardHoldsTheTableUntilTheFlightStarts() throws {
-        let board = try source("FoolishKit/Boards/MessageTableView.swift")
+        let board = try BoardSource.text()
         XCTAssertTrue(board.contains("pending: pending, holdLeaving: UndoFlightSource.holdsLeaving)"),
                       "the grid does not ask the kernel to hold a leaving card")
-        let start = try XCTUnwrap(board.range(of: "private func flyUndoReturn("))
+        let start = try XCTUnwrap(board.range(of: "func flyUndoReturn("))
         let body = String(board[start.upperBound...].prefix(9000))
         let step = try XCTUnwrap(body.range(of: "await playStep {"))
         let release = try XCTUnwrap(body.range(of: "if UndoFlightSource.holdsLeaving, !flights.isEmpty { self.dropSweep() }"),
@@ -93,8 +93,8 @@ final class UndoHoldsTableTests: XCTestCase {
     /// paint too late"); Undo now does the same before `controller.undo()`.
     /// MUTANTS: the sweep set after the undo; never set.
     func testUndoHoldsTheTableBeforeTheUndoPublishes() throws {
-        let board = try source("FoolishKit/Boards/MessageTableView.swift")
-        let start = try XCTUnwrap(board.range(of: "private func undoAction() {"))
+        let board = try BoardSource.text()
+        let start = try XCTUnwrap(board.range(of: "func undoAction() {"))
         let body = String(board[start.upperBound...].prefix(2500))
         let hold = try XCTUnwrap(body.range(of: "if UndoFlightSource.holdsLeaving, let table = controller.view?.battles, !table.isEmpty { setSweep(table) }"),
                                  "Undo does not hold the table before it publishes")

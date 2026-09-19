@@ -68,7 +68,7 @@ final class FlightNamespaceInvariantTests: XCTestCase {
     /// ("we should NEVER fade cards in this game. Real life cards don't ever
     /// fade like that! EVER!").
     func testTheVeilingBoardSharesNoNamespace() throws {
-        let src = try source("FoolishKit/Boards/MessageTableView.swift")
+        let src = try BoardSource.text()
         let sites = calls(to: "FHandFan", in: src) + calls(to: "FBattleGrid", in: src)
         XCTAssertFalse(sites.isEmpty, "the board must build a hand and a grid")
         for site in sites {

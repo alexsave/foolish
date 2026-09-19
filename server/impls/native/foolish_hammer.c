@@ -138,6 +138,7 @@
 #include "cli_util.h"   // get_arg / parse_int — shared with the cnitro_* tools
 #include "ws.h"
 #include "conn.h"   // Stage 3: TLS client — see conn.h and g_tls_ctx below
+#include "ctl_wire.h"   // the control plane is packed bytes, not JSON - ONE codec, shared with the server
 
 // ---------------------------------------------------------------------------
 // Config
@@ -372,48 +373,23 @@ static bool http_do(const char *host, int port, const char *method, const char *
     return true;
 }
 
-// Bounded flat-JSON string scraper mirroring the server's own json_str
-// (foolish_server.c) — the wire is the same minimal flat objects both ways.
-// Bounds-checked against body_len (the body may be binary /state bytes with
-// no NUL terminator), never reads past it.
-static bool json_str(const unsigned char *body, int body_len, const char *key, char *out, int cap) {
-    if (!body || body_len <= 0 || cap <= 0) return false;
-    char pat[64];
-    int pl = snprintf(pat, sizeof pat, "\"%s\"", key);
-    if (pl <= 0 || pl >= (int)sizeof pat) return false;
-    for (int i = 0; i + pl <= body_len; i++) {
-        if (memcmp(body + i, pat, (size_t)pl) != 0) continue;
-        const unsigned char *p = body + i + pl;
-        const unsigned char *end = body + body_len;
-        while (p < end && *p != ':') p++;
-        if (p >= end) return false;
-        p++;
-        while (p < end && (*p == ' ' || *p == '"')) p++;
-        int n = 0;
-        while (p < end && *p != '"' && *p != ',' && *p != '}' && n < cap - 1) out[n++] = (char)*p++;
-        out[n] = 0;
-        return n > 0;
-    }
-    return false;
-}
-
 // ---------------------------------------------------------------------------
 // Setup: signup / create / meta helpers (used both by the one-time setup
 // pass and by the load-phase "grow a fresh game" path).
 // ---------------------------------------------------------------------------
 
 static bool do_signup(const Config *cfg, const char *username, HUser *out) {
-    char body[128];
-    int bn = snprintf(body, sizeof body, "{\"username\":\"%s\"}", username);
+    unsigned char body[CTL_FRAME_MAX];
+    int bn = ctl_enc_auth(username, body, sizeof body);
+    if (bn < 0) return false;
     unsigned char resp[RESP_CAP]; HttpResp r;
-    if (!http_do(cfg->host, cfg->port, "POST", "/auth/signup", NULL, (unsigned char *)body, bn, resp, sizeof resp, &r))
+    if (!http_do(cfg->host, cfg->port, "POST", "/auth/signup", NULL, body, bn, resp, sizeof resp, &r))
         return false;
     if (r.status != 200) return false;
-    char tok[96], uid[16];
-    if (!json_str(r.body, r.body_len, "token", tok, sizeof tok)) return false;
-    if (!json_str(r.body, r.body_len, "user_id", uid, sizeof uid)) return false;
-    snprintf(out->token, sizeof out->token, "%s", tok);
-    snprintf(out->user_id, sizeof out->user_id, "%s", uid);
+    CtlSession sess;
+    if (!ctl_dec_session(r.body, r.body_len, &sess)) return false;
+    snprintf(out->token, sizeof out->token, "%s", sess.token);
+    snprintf(out->user_id, sizeof out->user_id, "%s", sess.user_id);
     return true;
 }
 
@@ -421,14 +397,18 @@ static bool do_create(const Config *cfg, const char *token, char *gid_out, int c
     unsigned char resp[RESP_CAP]; HttpResp r;
     if (!http_do(cfg->host, cfg->port, "POST", "/create", token, NULL, 0, resp, sizeof resp, &r)) return false;
     if (r.status != 200) return false;
-    return json_str(r.body, r.body_len, "game_id", gid_out, cap);
+    return ctl_dec_game(r.body, r.body_len, gid_out, cap) != 0;
 }
 
-static bool do_meta(const Config *cfg, const char *token, const char *type, const char *gid) {
-    char body[128];
-    int bn = snprintf(body, sizeof body, "{\"type\":\"%s\",\"game_id\":\"%s\"}", type, gid);
+// `verb` is a CTL_META_* (ctl_wire.h) - the control plane names its verbs in
+// one byte now, so a typo in a JSON "type" string can no longer become a
+// silently-ignored lobby action.
+static bool do_meta(const Config *cfg, const char *token, int verb, const char *gid) {
+    unsigned char body[CTL_FRAME_MAX];
+    int bn = ctl_enc_meta(verb, gid, "", body, sizeof body);
+    if (bn < 0) return false;
     unsigned char resp[RESP_CAP]; HttpResp r;
-    if (!http_do(cfg->host, cfg->port, "POST", "/meta", token, (unsigned char *)body, bn, resp, sizeof resp, &r))
+    if (!http_do(cfg->host, cfg->port, "POST", "/meta", token, body, bn, resp, sizeof resp, &r))
         return false;
     return r.status == 200;
 }
@@ -437,10 +417,11 @@ static bool do_meta(const Config *cfg, const char *token, const char *type, cons
 // is `token`'s user (the game's creator, seat 0), same as any lobby action.
 // Unlike do_meta, this one carries a `strategy` field.
 static bool do_meta_add_bot(const Config *cfg, const char *token, const char *gid, const char *strategy) {
-    char body[160];
-    int bn = snprintf(body, sizeof body, "{\"type\":\"add-bot\",\"game_id\":\"%s\",\"strategy\":\"%s\"}", gid, strategy);
+    unsigned char body[CTL_FRAME_MAX];
+    int bn = ctl_enc_meta(CTL_META_ADD_BOT, gid, strategy, body, sizeof body);
+    if (bn < 0) return false;
     unsigned char resp[RESP_CAP]; HttpResp r;
-    if (!http_do(cfg->host, cfg->port, "POST", "/meta", token, (unsigned char *)body, bn, resp, sizeof resp, &r))
+    if (!http_do(cfg->host, cfg->port, "POST", "/meta", token, body, bn, resp, sizeof resp, &r))
         return false;
     return r.status == 200;
 }
@@ -454,9 +435,10 @@ static bool get_stats(const Config *cfg, unsigned long *bot_decisions, unsigned 
     unsigned char resp[RESP_CAP]; HttpResp r;
     if (!http_do(cfg->host, cfg->port, "GET", "/stats", NULL, NULL, 0, resp, sizeof resp, &r)) return false;
     if (r.status != 200 || !r.body || r.body_len <= 0) return false;
-    char buf[32];
-    if (json_str(r.body, r.body_len, "bot_decisions", buf, sizeof buf)) *bot_decisions = strtoul(buf, NULL, 10);
-    if (json_str(r.body, r.body_len, "octogen_decisions", buf, sizeof buf)) *octogen_decisions = strtoul(buf, NULL, 10);
+    CtlStats st;
+    if (!ctl_dec_stats(r.body, r.body_len, &st)) return false;
+    *bot_decisions = (unsigned long)st.bot_decisions;
+    *octogen_decisions = (unsigned long)st.octogen_decisions;
     return true;
 }
 
@@ -484,7 +466,7 @@ static void setup(const Config *cfg) {
         if (uptr + cfg->seats > g_n_users) break;
         char gid[16];
         if (!do_create(cfg, g_users[uptr].token, gid, sizeof gid)) { uptr += cfg->seats; continue; }
-        for (int s = 1; s < cfg->seats; s++) do_meta(cfg, g_users[uptr + s].token, "join", gid);
+        for (int s = 1; s < cfg->seats; s++) do_meta(cfg, g_users[uptr + s].token, CTL_META_JOIN, gid);
         // Stage 4: the bot joins AFTER every human (still in the lobby,
         // status WAITING) and BEFORE start — server/impls/native/foolish_
         // server.c's h_meta marks it seat_ready=true itself (bots are always
@@ -492,7 +474,7 @@ static void setup(const Config *cfg) {
         // below does.
         if (cfg->server_bot[0] && !do_meta_add_bot(cfg, g_users[uptr].token, gid, cfg->server_bot))
             fprintf(stderr, "  add-bot(%s) failed for game %s\n", cfg->server_bot, gid);
-        for (int s = 0; s < cfg->seats; s++) do_meta(cfg, g_users[uptr + s].token, "start", gid);
+        for (int s = 0; s < cfg->seats; s++) do_meta(cfg, g_users[uptr + s].token, CTL_META_START, gid);
 
         HGame hg; memset(&hg, 0, sizeof hg);
         snprintf(hg.id, sizeof hg.id, "%s", gid);
@@ -532,9 +514,9 @@ static void grow_one_game(const Config *cfg, unsigned int *seed) {
     if (!do_signup(cfg, un2, &u2)) return;
     char gid[16];
     if (!do_create(cfg, u1.token, gid, sizeof gid)) return;
-    if (!do_meta(cfg, u2.token, "join", gid)) return;
-    do_meta(cfg, u1.token, "start", gid);
-    do_meta(cfg, u2.token, "start", gid);
+    if (!do_meta(cfg, u2.token, CTL_META_JOIN, gid)) return;
+    do_meta(cfg, u1.token, CTL_META_START, gid);
+    do_meta(cfg, u2.token, CTL_META_START, gid);
 
     pthread_mutex_lock(&g_users_lock);
     int i1 = -1, i2 = -1;
@@ -695,8 +677,8 @@ static void *loader_thread(void *arg) {
             st->total_requests++; st->actions_sent++;
             record_status(st, okc, r.status);
             if (okc && r.status == 200 && r.body) {
-                char okf[8];
-                if (json_str(r.body, r.body_len, "ok", okf, sizeof okf) && !strcmp(okf, "true")) st->actions_ok++;
+                bool applied = false;
+                if (ctl_dec_applied(r.body, r.body_len, &applied, NULL) && applied) st->actions_ok++;
             }
         } else if (roll < 900) {
             char path[64];
@@ -968,8 +950,8 @@ static void *ws_worker(void *argp) {
                 // Drive the rematch off the received state, not a poll —
                 // PROFILE_HOTPATH.md "T1f".
                 if (!rematch_pending) {
-                    do_meta(a->cfg, a->token, "continue", a->gid);
-                    do_meta(a->cfg, a->token, "start", a->gid);
+                    do_meta(a->cfg, a->token, CTL_META_CONTINUE, a->gid);
+                    do_meta(a->cfg, a->token, CTL_META_START, a->gid);
                     st->rematches++;
                     rematch_pending = true;
                 }

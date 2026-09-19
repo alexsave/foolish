@@ -42,9 +42,9 @@ There is no bot symbol for them to name, because the declarations are not in
 
 The kernel keeps ONE static `Game` and hands it to the bot half through
 `fio_resident_game()` (`c/ios/ios_internal.h`).
-If `libfoolishbots.a` ever pulled its own copy of `ios_api.o`, there would be
-two resident games: the app would deal a board and the bots would drive a
-different, empty one.
+If `libfoolishbots.a` ever pulled its own copy of any of the core bridge
+objects, there would be two resident games: the app would deal a board and the
+bots would drive a different, empty one.
 Nothing would crash.
 It would just play nonsense.
 

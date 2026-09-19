@@ -191,11 +191,15 @@ analyse-test:
 # ---------- iOS static library / xcframework (docs/IOS_APP_DESIGN.md §16.A1) --
 #
 # Builds ../ios/vendor/Foolish.xcframework from the SAME CORE_SRC every native
-# binary uses, plus the Swift-visible bridge (ios/ios_api.c + ios/ios_bots_api.c,
-# declared by ios/include/ios_api.h). The bridge is TWO objects on purpose: this
-# archive links per object, so keeping every bot reference in ios_bots_api.c is
-# what lets a binary that never drives a bot leave the strategy ladder behind
-# (see ios/ios_internal.h). This is macOS + Xcode ONLY (needs xcrun/libtool/xcodebuild and
+# binary uses, plus the Swift-visible bridge ($(IOS_BRIDGE_SRC) +
+# ios/ios_bots_api.c, declared by ios/include/ios_api.h). The BOT half is its
+# own object on purpose: this archive links per object, so keeping every bot
+# reference in ios_bots_api.c is what lets a binary that never drives a bot
+# leave the strategy ladder behind (see ios/ios_internal.h). The core half is
+# several objects for a different reason - it is split by domain, which the
+# linker does not care about either way.
+#
+# This is macOS + Xcode ONLY (needs xcrun/libtool/xcodebuild and
 # the iOS SDKs). On Linux/CI, `make ios-smoke` exercises the identical bridge
 # natively (clang) — it is the portable proof that new->legal->apply->state and
 # a full game run through the Swift entry points.
@@ -240,11 +244,21 @@ IOS_CAPS   := -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_MOVE_CARDS=28 \
 # The split is BY REFERENCE, not by taste: the core set below names no strategy
 # symbol at all (random_strategy_set_seed is defined in game.c, not a strategy
 # file), so nothing in it can drag one in.
+#
+# THE BRIDGE'S OWN CORE HALF is split again, by DOMAIN rather than by link
+# reachability: 123 entry points at about nine lines each is wide, not deep, so
+# they sort by what each one is ABOUT (ios/ios_internal.h says which is which).
+# Every one of these files must keep naming no strategy symbol, and
+# ios/split_check.sh asserts it on each object separately - a bot call put back
+# into ANY of them is caught rather than hidden by the others.
+IOS_BRIDGE_SRC := ios/ios_api.c ios/ios_api_view.c ios/ios_api_play.c \
+                  ios/ios_api_anim.c ios/ios_api_replay.c \
+                  ios/ios_api_identity.c ios/ios_api_msg.c
 IOS_CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c \
                 src/replay_steps.c src/replay_extras.c src/view.c src/awire.c \
                 src/evwire.c src/sha256.c src/msg_wire.c src/msg_expand.c \
                 src/anim_plan.c src/roster.c src/card.c src/client_table.c \
-                ios/ios_api.c
+                $(IOS_BRIDGE_SRC)
 IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC),$(CORE_SRC)) ios/ios_bots_api.c
 
 # Everything, for the host-side smoke/golden binaries that want one link line.
@@ -351,10 +365,11 @@ ios-archives:
 # and drives a full 4-player game to a fool through the Swift-facing entry
 # points. Fast (< 1s). This is the M-A keystone check runnable without a Mac.
 ios-smoke:
-	@mkdir -p build
-	$(CC) $(IOS_CFLAGS) -c ios/ios_api.c -o build/ios_api.o
-	./ios/split_check.sh build/ios_api.o
-	$(CC) $(IOS_CFLAGS) ios/ios_api_smoke.c ios/ios_api.c ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_smoke
+	@mkdir -p build/ios-split
+	@for s in $(IOS_BRIDGE_SRC); do \
+	  $(CC) $(IOS_CFLAGS) -c $$s -o build/ios-split/$$(basename $$s .c).o || exit 1; done
+	./ios/split_check.sh build/ios-split/*.o
+	$(CC) $(IOS_CFLAGS) ios/ios_api_smoke.c $(IOS_BRIDGE_SRC) ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_smoke
 	./build/ios_smoke
 
 # PART OF `difftests`, deliberately. Left out of it, this target rotted twice
@@ -374,7 +389,7 @@ ios-smoke:
 .PHONY: msg-flow-sim
 msg-flow-sim:
 	@mkdir -p build
-	$(CC) $(IOS_CFLAGS) tests/msg_flow_sim.c ios/ios_api.c ios/ios_bots_api.c $(CORE_SRC) -lm -o build/msg_flow_sim
+	$(CC) $(IOS_CFLAGS) tests/msg_flow_sim.c $(IOS_BRIDGE_SRC) ios/ios_bots_api.c $(CORE_SRC) -lm -o build/msg_flow_sim
 	./build/msg_flow_sim 300 9 0
 	./build/msg_flow_sim 300 8 1
 	./build/msg_flow_sim 300 4 1
@@ -389,7 +404,7 @@ msg-flow-sim:
 .PHONY: ios-goldens
 ios-goldens:
 	@mkdir -p build
-	$(CC) $(IOS_CFLAGS) ios/ios_goldens.c ios/ios_api.c ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_goldens
+	$(CC) $(IOS_CFLAGS) ios/ios_goldens.c $(IOS_BRIDGE_SRC) ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_goldens
 	@mkdir -p ../ios/Fixtures
 	./build/ios_goldens > ../ios/Fixtures/goldens.json
 	@echo "wrote ../ios/Fixtures/goldens.json"
@@ -692,7 +707,21 @@ STRUCTGEN      := $(STRUCTGEN_DIR)/build/structgen
 SG_GAME_SPEC   := $(STRUCTGEN_DIR)/specs/game_layout.args
 SG_GAME_ARGS    = $(shell grep -v '^[[:space:]]*\#' $(SG_GAME_SPEC))
 
-$(STRUCTGEN): $(STRUCTGEN_DIR)/structgen.c $(STRUCTGEN_DIR)/Makefile
+# EVERY source and header, not structgen.c alone. structgen used to be one
+# translation unit and this line named it; once it split into sg_clang/sg_model/
+# sg_ts/sg_swift/sg_hash/sg_args, naming one of them meant an edit to any of the
+# others left this target "up to date" - and the binary it did not rebuild is the
+# one that computes SG_LAYOUT_HASH. A stale structgen bakes a hash for a layout
+# that is no longer the layout, which is the failure the hash exists to catch,
+# arriving through the tool that catches it. Measured: after `touch
+# tools/structgen/sg_ts.c`, make called this target up to date.
+#
+# tools/structgen/Makefile lists its sources explicitly and is correct on its
+# own; this wildcard exists because THIS file reaches across into that directory
+# and must not hold a narrower idea of what structgen is made of than it does.
+$(STRUCTGEN): $(wildcard $(STRUCTGEN_DIR)/*.c) $(wildcard $(STRUCTGEN_DIR)/*.h) \
+              $(wildcard $(STRUCTGEN_DIR)/../sgcommon/*.c) $(wildcard $(STRUCTGEN_DIR)/../sgcommon/*.h) \
+              $(STRUCTGEN_DIR)/Makefile $(STRUCTGEN_DIR)/../llvm.mk
 	$(MAKE) -C $(STRUCTGEN_DIR) build/structgen
 
 # $(call sg_hash,<build name>,<cflags>,<ts stem, or empty>): with a stem, also

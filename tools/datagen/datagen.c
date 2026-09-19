@@ -79,12 +79,17 @@
 // no hash table or address ever reaches the output. Two runs over one tree write
 // the same bytes on every platform (tools/structgen/gen.sh --check covers this
 // tool's outputs too, since it writes them).
+//
+// die, Buf/bprintf, xstrdup, absolute and the probe translation unit itself are
+// in tools/sgcommon, shared with structgen: the two tools ask libclang
+// different questions, but they ask them the same way.
 #include <clang-c/Index.h>
-#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "sgc.h"
+#include "sgc_probe.h"
 
 #define MAXN 64
 #define MAXDIM 2
@@ -95,35 +100,6 @@ static int require_complete, ts_const;
 static const char *complete_if;   // --require-complete-if TABLE.COLUMN
 static int nheaders;
 static const char *label_table[MAXDIM];   // --labels T.D=L, by dimension
-
-static void die(const char *fmt, ...) {
-    va_list ap; va_start(ap, fmt);
-    fputs("datagen: ", stderr); vfprintf(stderr, fmt, ap); fputc('\n', stderr);
-    va_end(ap); exit(1);
-}
-
-// ---- growable string -------------------------------------------------------
-typedef struct { char *s; size_t n, cap; } Buf;
-static void bprintf(Buf *b, const char *fmt, ...) {
-    for (;;) {
-        va_list ap; va_start(ap, fmt);
-        size_t room = b->cap - b->n;
-        int k = vsnprintf(b->s ? b->s + b->n : NULL, room, fmt, ap);
-        va_end(ap);
-        if (k >= 0 && (size_t)k < room) { b->n += (size_t)k; return; }
-        b->cap = b->cap * 2 + (size_t)k + 256;
-        if (!(b->s = realloc(b->s, b->cap))) die("out of memory");
-    }
-}
-// Not strdup: under -std=c11 glibc does not declare it, and an implicit int
-// return truncates the pointer on a 64-bit Linux host (structgen's Makefile).
-static char *xstrdup(const char *s) {
-    size_t n = strlen(s) + 1;
-    char *d = malloc(n);
-    if (!d) die("out of memory");
-    return memcpy(d, s, n);
-}
-static char *str(CXString cs) { char *d = xstrdup(clang_getCString(cs)); clang_disposeString(cs); return d; }
 
 // ---- the extracted table ---------------------------------------------------
 //
@@ -650,51 +626,18 @@ static void emit_json(Table *t, Labels *lab) {
 }
 
 // ---- TU ----------------------------------------------------------------------
-static const char *args[512];
-static int nargs;
+//
+// The probe itself is tools/sgcommon; what is datagen's own is the one warning
+// it turns off and the flags the caller passed with --flags, taken as they come:
+// this tool reads values, and a flag it does not understand can only change
+// what the header says a value IS, which is the caller's business.
 static void build_args(void) {
-    static char triple[256];
-    if (target) { snprintf(triple, sizeof triple, "--target=%s", target); args[nargs++] = triple; }
-    args[nargs++] = "-ffreestanding"; args[nargs++] = "-iquote"; args[nargs++] = ".";
-    // libclang does not find its own builtin headers: use the resource dir of
-    // the clang this tool was built against (tools/llvm.mk).
-    args[nargs++] = "-resource-dir"; args[nargs++] = SG_RESOURCE_DIR;
+    sgc_args_base(target);
     // A table of literals is not compiled by anything, so it is read with the
     // warnings off: an unused static in a header is exactly what it is.
-    args[nargs++] = "-Wno-unused-const-variable";
+    sgc_arg("-Wno-unused-const-variable");
     char *fl = xstrdup(flags);
-    for (char *tok = strtok(fl, " \t\n"); tok; tok = strtok(NULL, " \t\n")) {
-        if (nargs > 500) die("too many --flags");
-        args[nargs++] = tok;
-    }
-}
-
-static CXTranslationUnit parse(CXIndex idx, const char *src) {
-    struct CXUnsavedFile probe = { "__datagen_probe.c", src, (unsigned long)strlen(src) };
-    CXTranslationUnit tu;
-    enum CXErrorCode e = clang_parseTranslationUnit2(idx, "__datagen_probe.c", args, nargs, &probe, 1,
-                                                     CXTranslationUnit_SkipFunctionBodies, &tu);
-    if (e != CXError_Success) die("libclang parse failed (CXErrorCode %d)", (int)e);
-    int errors = 0;
-    for (unsigned i = 0; i < clang_getNumDiagnostics(tu); i++) {
-        CXDiagnostic dg = clang_getDiagnostic(tu, i);
-        if (clang_getDiagnosticSeverity(dg) >= CXDiagnostic_Error) {
-            char *m = str(clang_formatDiagnostic(dg, clang_defaultDiagnosticDisplayOptions()));
-            fprintf(stderr, "%s\n", m); free(m); errors++;
-        }
-        clang_disposeDiagnostic(dg);
-    }
-    if (errors) die("%d compile error(s) reading the table's headers", errors);
-    return tu;
-}
-
-static const char *absolute(const char *path) {
-    if (!path || path[0] == '/') return path;
-    char dir[4096];
-    if (!getcwd(dir, sizeof dir)) die("cannot read the working directory");
-    char *abs = malloc(strlen(dir) + strlen(path) + 2);
-    if (!abs) die("out of memory");
-    return strcat(strcat(strcpy(abs, dir), "/"), path);
+    for (char *tok = strtok(fl, " \t\n"); tok; tok = strtok(NULL, " \t\n")) sgc_arg(tok);
 }
 
 static void usage(void) {
@@ -748,7 +691,7 @@ int main(int argc, char **argv) {
     Buf src = {0};
     for (int i = 0; i < nheaders; i++) bprintf(&src, "#include \"%s\"\n", headers[i]);
     CXIndex idx = clang_createIndex(0, 0);
-    CXTranslationUnit tu = parse(idx, src.s);
+    CXTranslationUnit tu = sgc_parse(idx, "__datagen_probe.c", src.s, 0, " reading the table's headers");
 
     Table t = {0};
     read_table(tu, table_name, &t);

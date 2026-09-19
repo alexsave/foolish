@@ -33,8 +33,8 @@ final class UndoReleaseHandHoldTests: XCTestCase {
     /// MUTANTS: the holdback armed inside the Task (after the undo has painted);
     /// never armed; released before `playStep` rather than in its builder.
     func testTheUndoHoldsTheLeavingCardsInTheHandUntilTheirFlight() throws {
-        let board = try source("FoolishKit/Boards/MessageTableView.swift")
-        let start = try XCTUnwrap(board.range(of: "private func flyUndoRelease("))
+        let board = try BoardSource.text()
+        let start = try XCTUnwrap(board.range(of: "func flyUndoRelease("))
         let body = String(board[start.upperBound...].prefix(7000))
         let arm = try XCTUnwrap(body.range(of: "if UndoFlightSource.holdsLeaving { handHoldback = targets.map(\\.0); handHoldbackAt = veiledAt }"),
                                 "the leaving cards are not held in the fan")

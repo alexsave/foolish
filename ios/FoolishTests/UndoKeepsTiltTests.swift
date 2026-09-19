@@ -32,9 +32,7 @@ final class UndoKeepsTiltTests: XCTestCase {
     /// MUTANT: the flight built without `fromAngle`.
     func testTheUndoFlightStartsFromTheTilt() throws {
         XCTAssertTrue(UndoFlightSource.keepsTiltByDefault)
-        let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        let board = try String(contentsOf: here.deletingLastPathComponent()
-            .appendingPathComponent("FoolishKit/Boards/MessageTableView.swift"), encoding: .utf8)
+        let board = try BoardSource.text()
         XCTAssertTrue(board.contains("fromAngle: UndoFlightSource.keepsTilt ? UndoFlightSource.tilt(for: c, in: old.battles) : 0,"),
                       "the undo's flight home no longer starts from the card's tilt")
     }

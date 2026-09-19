@@ -224,9 +224,7 @@ final class RoleCoinArrivalTests: XCTestCase {
     /// before the ghost existed, so the board had no shield on it at all.
     /// MUTANT: the ghost set in the Task, the seats set here.
     func testTheGhostAndTheSeatsAreOneUpdate() throws {
-        let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        let board = try String(contentsOf: here.deletingLastPathComponent()
-            .appendingPathComponent("FoolishKit/Boards/MessageTableView.swift"), encoding: .utf8)
+        let board = try BoardSource.text()
         let begin = try XCTUnwrap(board.range(of: "private func beginRoleFlights"))
         let body = String(board[begin.lowerBound...].prefix(600))
         for line in ["roleDepartingSeats = Set(f.map(", "roleArrivingSeats = Set(f.map(",

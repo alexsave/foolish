@@ -39,11 +39,7 @@ import XCTest
 
 final class HandLandingTests: XCTestCase {
 
-    private func source() throws -> String {
-        let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        return try String(contentsOf: here.deletingLastPathComponent()
-            .appendingPathComponent("FoolishKit/Boards/MessageTableView.swift"), encoding: .utf8)
-    }
+    private func source() throws -> String { try BoardSource.text() }
 
     /// Lines of `src` that are code, not comment - these files carry more prose
     /// than code, and every rung below is also NAMED in the prose around it.
@@ -54,7 +50,7 @@ final class HandLandingTests: XCTestCase {
     }
 
     private func body(of fn: String, in src: String) throws -> String {
-        let head = try XCTUnwrap(src.range(of: "private func \(fn)("), "no func \(fn)")
+        let head = try XCTUnwrap(src.range(of: "func \(fn)("), "no func \(fn)")
         var depth = 0, started = false, out = ""
         for ch in src[head.lowerBound...] {
             out.append(ch)

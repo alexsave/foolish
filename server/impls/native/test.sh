@@ -3,19 +3,21 @@
 # every rule decided by the kernel. Start the server first (`make run`).
 set -euo pipefail
 H="${1:-http://127.0.0.1:8099}"
-tok() { grep -o "\"$1\":\"[^\"]*\"" | head -1 | cut -d'"' -f4; }
+# The control plane is packed bytes, not JSON - ctl.sh is the shell's copy of
+# that one codec (see ctl_wire.h).
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ctl.sh"
 
-echo "── health"; curl -s "$H/health"; echo
-AT=$(curl -s -XPOST "$H/auth/signup" -d '{"username":"alice"}' | tok token)
-BT=$(curl -s -XPOST "$H/auth/signup" -d '{"username":"bob"}'   | tok token)
+echo "── health: HTTP $(curl -s -o /dev/null -w '%{http_code}' "$H/health")"
+AT=$(ctl_signup "$H" alice)
+BT=$(ctl_signup "$H" bob)
 echo "── alice=$AT bob=$BT"
 
-GID=$(curl -s -XPOST "$H/create" -H "Authorization: Bearer $AT" | tok game_id)
+GID=$(ctl_create "$H" "$AT")
 echo "── created game $GID"
-curl -s -XPOST "$H/meta" -H "Authorization: Bearer $BT" -d "{\"type\":\"join\",\"game_id\":\"$GID\"}"; echo " (bob joined)"
-curl -s -XPOST "$H/meta" -H "Authorization: Bearer $AT" -d "{\"type\":\"add-bot\",\"game_id\":\"$GID\",\"strategy\":\"cordite\"}"; echo " (bot added)"
-curl -s -XPOST "$H/meta" -H "Authorization: Bearer $AT" -d "{\"type\":\"start\",\"game_id\":\"$GID\"}"; echo " (alice ready)"
-curl -s -XPOST "$H/meta" -H "Authorization: Bearer $BT" -d "{\"type\":\"start\",\"game_id\":\"$GID\"}"; echo " (bob ready → deal)"
+ctl_meta "$H" "$BT" "$CTL_META_JOIN"    "$GID";           echo " (bob joined)"
+ctl_meta "$H" "$AT" "$CTL_META_ADD_BOT" "$GID" cordite;   echo " (bot added)"
+ctl_meta "$H" "$AT" "$CTL_META_START"   "$GID";           echo " (alice ready)"
+ctl_meta "$H" "$BT" "$CTL_META_START"   "$GID";           echo " (bob ready → deal)"
 
 # Views are the PACKED kernel wire now (view.c state_put) — the client decodes
 # them with its own reader (Swift MaskedView), not curl. We just show the bytes
@@ -37,7 +39,7 @@ else
     echo "── state privacy: FAIL (seat 0 without a token $NOAUTH, bob reading seat 0 $OTHER, no seat $NOSEAT, spectator $SPECT)"
     exit 1
 fi
-echo "── status: $(curl -s "$H/status?game_id=$GID")   (0 waiting / 1 playing / 2 over)"
+echo "── status: $(ctl_status "$H" "$GID")   (0 waiting / 1 playing / 2 over)"
 
 # ── WebSocket smoke test ────────────────────────────────────────────────
 # Exercises the ws.h/ws.c handshake (Sec-WebSocket-Accept) + frame I/O +

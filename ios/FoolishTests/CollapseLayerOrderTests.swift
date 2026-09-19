@@ -29,7 +29,7 @@ final class CollapseLayerOrderTests: XCTestCase {
     /// sat just after the settings squares) and this fails - the hand then comes
     /// BEFORE the flight layer instead of after the mark.
     func testMyCardsAreDrawnAfterMyStatusMark() throws {
-        let lines = try source("FoolishKit/Boards/MessageTableView.swift")
+        let lines = try BoardSource.lines()
         let flights = try XCTUnwrap(lines.firstIndex { $0.contains("FlyingCardsLayer(animator:") },
                                     "the flight layer is gone")
         let mark = try XCTUnwrap(lines.firstIndex { $0.contains("selfRoleIndicator(v)") },
@@ -52,7 +52,7 @@ final class CollapseLayerOrderTests: XCTestCase {
     /// MUTANT: leave `actionBar`, `undoSlot` or `settingsHelpBar` in the board's
     /// ZStack and this fails.
     func testTheButtonsShareTheHandsLevel() throws {
-        let lines = try source("FoolishKit/Boards/MessageTableView.swift")
+        let lines = try BoardSource.lines()
         let mark = try XCTUnwrap(lines.firstIndex { $0.contains("selfRoleIndicator(v)") })
         for name in ["actionBar(view)", "undoSlot", "settingsHelpBar"] {
             let at = try XCTUnwrap(lines.firstIndex { $0.hasSuffix(name) },

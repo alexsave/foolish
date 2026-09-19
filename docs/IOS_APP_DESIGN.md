@@ -1116,8 +1116,8 @@ auto-plays the human with random legal moves to reach the win screen
 ### 17.9 watchOS (designed, parked)
 
 The watch client's design study is complete and merged (#96): final layout is
-Option H, implementor handoff in `docs/WATCHOS_SPEC.md`, interactive mockups in
-`docs/watchos-layout.html`, decision record in `docs/WATCHOS_LAYOUT.md`. The
+Option H, implementor handoff in `docs/WATCHOS_SPEC.md`, decision record in
+`docs/WATCHOS_LAYOUT.md`. The interactive mockups were `docs/watchos-layout.html` (removed 2026-09-18, now that the design is locked; recoverable at `570d734c`). The
 structural plan (`docs/WATCHOS_APP_PLAN.md`) still governs App-Store bundling,
 connectivity, and sequencing: a watchOS target inside this app's record,
 shipped **after Milestone F**. Only build-system prerequisite: watchOS slices

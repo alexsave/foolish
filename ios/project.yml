@@ -455,8 +455,11 @@ targets:
   #
   # ONE resident game still. The kernel has a single static Game reached through
   # fio_resident_game (c/ios/ios_internal.h); FoolishBots.xcframework contains no
-  # copy of ios_api.o, so its bot drive acts on the same board FoolishKit reads.
-  # (Proven on a link: see the commit that introduced this.)
+  # copy of the CORE BRIDGE OBJECTS, so its bot drive acts on the same board
+  # FoolishKit reads. (Proven on a link: see the commit that introduced this.)
+  # Plural, and checked as a set: the core bridge is several translation units
+  # now, and a check that named only one of them would leave the rest free to
+  # link the ladder unnoticed - see c/ios/split_check.sh.
   FoolishBots:
     type: framework
     platform: iOS
