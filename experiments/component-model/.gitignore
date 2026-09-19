@@ -1,5 +1,0 @@
-# Everything this experiment makes or downloads. The committed tree is the
-# sources (wit/, c/), the three scripts and the pinned package.json/lock.
-.tools/
-gen/
-out/
