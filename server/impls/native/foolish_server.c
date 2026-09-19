@@ -471,7 +471,7 @@ static bool deserialize_slot(GameSlot *s, const unsigned char *buf, int len) {
     if (state_len < 0 || state_len > 65536 || 3 + state_len + fixed_tail > len) return false;
     // Exact inverse of state_put(.., VIEW_UNMASKED, ..), and refused whole if
     // the kernel could not have produced the state (game.h game_validate).
-    if (state_import(&s->game, q, /*masked=*/0) != GAME_VALID) return false;
+    if (state_import(&s->game, q, state_len, /*masked=*/0) != GAME_VALID) return false;
     q += state_len;
     memcpy(s->id, q, ID_LEN + 1); s->id[ID_LEN] = 0; q += ID_LEN + 1;
     memcpy(s->owner, q, ID_LEN + 1); s->owner[ID_LEN] = 0; q += ID_LEN + 1;

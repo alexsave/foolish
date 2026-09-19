@@ -86,15 +86,24 @@ static Card card_from_wire_masked(unsigned char b) {
     return card_from_wire_exact(b);
 }
 
-int state_get(Game *g, const unsigned char *p, int masked) {
+int state_get(Game *g, const unsigned char *p, int len, int masked) {
+    // MEASURE FIRST, always. The decode below walks the buffer by the counts
+    // the CONTENT carries, so without this it reads as far as the content says
+    // and not one byte less - up to ~755 bytes past a truncated blob. Every
+    // count is checked here, against the caller's real byte count, before any
+    // of them is used to advance: the payload must be exactly `len` bytes.
+    // `len` is a byte count, not a capacity; handing this a buffer size is the
+    // original bug wearing a parameter.
+    if (state_measure(p, len) != len) return GAME_INVALID_COUNT;
     const unsigned char *q = p;
     int clamped = 0;
     // No full-struct memset: the Game is ~200 KB (mostly log capacity) and
     // every read in the kernel is bounded by the counts set below. Every
-    // count is clamped to its array capacity — the kernel must never corrupt
-    // memory on a malformed/corrupt input (see docs/SECURITY_WASM_BOUNDARY.md).
-    // A clamp is also reported: past a clamped count the bytes no longer line
-    // up with the fields, so state_import refuses the whole state.
+    // count is also clamped to its array capacity - the same set state_measure
+    // already refused, kept as defense in depth (see
+    // docs/SECURITY_WASM_BOUNDARY.md). A clamp is also reported: past a clamped
+    // count the bytes no longer line up with the fields, so state_import
+    // refuses the whole state.
 #define CLAMP(v, hi) do { if ((v) < 0) { (v) = 0; clamped = 1; } \
                           if ((v) > (hi)) { (v) = (hi); clamped = 1; } } while (0)
     g->status = (int8_t)*q++;
@@ -180,15 +189,16 @@ int state_measure(const unsigned char *p, int len) {
     return q > len ? -1 : q;
 }
 
-int state_import(Game *g, const unsigned char *p, int masked) {
+int state_import(Game *g, const unsigned char *p, int len, int masked) {
     // Decode in place over a saved copy of the state part of `g` (everything
     // ahead of the log array, which is all state_get writes and game_validate
     // reads), and put the copy back if the result is refused. A byte copy
     // rather than a scratch Game: a full Game is ~136 KB at the wasm caps, and
     // this path is on every marshal.
+    // The bound is state_get's: it measures `len` before it reads anything.
     unsigned char saved[offsetof(Game, logs)];
     memcpy(saved, g, sizeof saved);
-    int r = state_get(g, p, masked);
+    int r = state_get(g, p, len, masked);
     if (r == GAME_VALID) r = game_validate(g, masked ? GAME_VALIDATE_MASKED : 0);
     if (r != GAME_VALID) memcpy(g, saved, sizeof saved);
     return r;

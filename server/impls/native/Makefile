@@ -94,6 +94,21 @@ ASAN_CFLAGS := -fsanitize=address,undefined -fno-omit-frame-pointer -g -O1 \
 foolish_server_asan: foolish_server.c $(NATIVE_SRC) $(PERSIST_SRC) $(KERNEL_SRC) | require-linux
 	$(CC) $(ASAN_CFLAGS) $^ -o $@ $(LDFLAGS) $(SQLITE_LDFLAGS) $(TLS_LDFLAGS)
 
+# ws_frame_test: the RFC 6455 frame header against a hostile peer (ws.c's
+# 8-byte length form). Built under UBSan with -fno-sanitize-recover ON PURPOSE:
+# the defect it pins is undefined behaviour that a debug build happens not to
+# miscompile, so a return-value assertion alone would go green against it - see
+# the file's header comment. Kernel-free and socket-free, so it builds and runs
+# on macOS too (no epoll, and -DFOOLISH_NO_OPENSSL keeps conn.c off OpenSSL).
+WS_TEST_CFLAGS := -fsanitize=undefined -fno-sanitize-recover=undefined \
+                  -fno-omit-frame-pointer -g -O1 \
+                  -Wall -Wextra -Wno-unused-parameter -DFOOLISH_NO_OPENSSL
+ws_frame_test: ws_frame_test.c $(NATIVE_SRC)
+	$(CC) $(WS_TEST_CFLAGS) $^ -o $@
+.PHONY: ws-frame-test
+ws-frame-test: ws_frame_test
+	./ws_frame_test
+
 # The adversarial fuzz client: hammers the server with malformed HTTP, junk
 # signups, forged tokens, meta abuse, binary action garbage, seat attacks, and
 # malformed WebSocket frames — trying to crash, corrupt, or bypass it.

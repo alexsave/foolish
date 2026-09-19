@@ -234,6 +234,12 @@ static int put_state(const Game *g, unsigned char *p) {
 // game_validate) with the working game left exactly as it was: a host never
 // gets to install a state the kernel could not have produced.
 //
+// `len` is how many bytes the host wrote at wasm_io_ptr(), not the IO buffer's
+// size. The kernel measures the payload against it before reading a field, so
+// a truncated or over-long state is refused (GAME_INVALID_COUNT) instead of
+// read past its end. A host that forgets the argument gets len 0, which every
+// state fails - loudly, which is the point.
+//
 // `masked` is the host saying what it is handing over. 0: a whole game, every
 // card real (the server's own Game). 1: one seat's knowledge, with placeholder
 // cards standing in for the deck and the hands it cannot see (the replay
@@ -247,8 +253,8 @@ static int put_state(const Game *g, unsigned char *p) {
 // caller re-asserts the flag right after (wasm_set_deterministic_deck) for a
 // seed-dealt game — otherwise the bot path (which imports rather than
 // deserializes) would draw at random mid-game and diverge from the deal seed.
-int wasm_import_state(int masked) {
-    const int r = state_import(&g_game, g_io, masked ? 1 : 0);
+int wasm_import_state(int len, int masked) {
+    const int r = state_import(&g_game, g_io, len, masked ? 1 : 0);
     if (r != GAME_VALID) return r;
     g_game.deterministic_deck = false;
     // A game swapped in wholesale is not the one the last FMSG decode adopted,
@@ -368,7 +374,8 @@ int wasm_state_serialize(void) {
 int wasm_state_deserialize(int len) {
     if (len < 2) return 0;
     if (g_io[0] != STATE_FORMAT_VERSION) return 0;
-    const int r = state_import(&g_game, g_io + 2, 0);
+    // `len` counts the two version/flag bytes too; the state is the rest.
+    const int r = state_import(&g_game, g_io + 2, len - 2, 0);
     if (r != GAME_VALID) return r;
     g_game.deterministic_deck = g_io[1] != 0;
     return 1;

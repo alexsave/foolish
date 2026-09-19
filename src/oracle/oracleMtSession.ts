@@ -58,7 +58,7 @@ export interface MtExports {
     memory: WebAssembly.Memory;
     wasm_init(): void;
     wasm_io_ptr(): number;
-    wasm_import_state(masked: number): number;
+    wasm_import_state(len: number, masked: number): number;
     wasm_import_strategy_keys(): void;
     wasm_import_logs(): void;
     wasm_clearenv(): void;
@@ -164,7 +164,7 @@ export class OracleMtSession {
         // the kernel's bytes (OracleJob.state), judged by the import.
         const bytes = () => new Uint8Array(this.memory!.buffer);
         bytes().set(job.state, ex.wasm_io_ptr());
-        if (ex.wasm_import_state(1) < 0) throw new Error('oracle-mt: the position was refused');
+        if (ex.wasm_import_state(job.state.length, 1) < 0) throw new Error('oracle-mt: the position was refused');
         {
             const buf = bytes(); const q = ex.wasm_io_ptr();
             for (let i = 0; i < job.numPlayers; i++) buf[q + i] = 0xff;
