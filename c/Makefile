@@ -1584,8 +1584,15 @@ coverage:
 	# (suspicious_hits, game.c:1211 got 5,047,157,994) and Linux's reports it as
 	# a negative (negative_hits, game.c:70 branch 1 taken -7407). Fixing only the
 	# one a Mac produces left this lane green here and red on every runner.
+	#
+	# `all`, because the option takes ONE value and the two classes cannot both
+	# be named: comma-joined is a single unrecognised choice, and space-separated
+	# leaves the second token to be read as a search directory ("Unknown
+	# directory 'negative_hits.warn_once_per_file'"). Both were tried here.
+	# `all` still prints what it skipped to stderr, so a miscount that is not one
+	# of these two hot-loop overflows is still visible rather than swallowed.
 	gcovr --root . $(COV_FILTERS) --txt \
-	      --gcov-ignore-parse-errors suspicious_hits.warn_once_per_file,negative_hits.warn_once_per_file \
+	      --gcov-ignore-parse-errors all \
 	      --fail-under-line $(COV_LINE_MIN) --fail-under-branch $(COV_BRANCH_MIN)
 
 clean:
