@@ -6,11 +6,11 @@ CC      ?= clang
 CFLAGS  ?= -O2 -Wall -Wextra -Werror -Wno-unused-parameter -Isrc
 LDFLAGS ?=
 
-# The kernel. Two inherited primitives (deal_rng, sha256) and three werewolf
-# files, and that is the whole domain: roles from a seed, the night, and the
-# envelope those cross the thread in.
+# The kernel. Two inherited primitives (deal_rng, sha256) and four werewolf
+# files, and that is the whole domain: roles from a seed, the night, the envelope
+# those cross the thread in, and which seat this device is on a bubble's roster.
 CORE_SRC := src/deal_rng.c src/sha256.c \
-            src/ww_game.c src/ww_view.c src/ww_wire.c
+            src/ww_game.c src/ww_view.c src/ww_wire.c src/ww_seat.c
 CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
 
 .PHONY: all tests tests-asan clean print-core ios-lib ios-smoke
@@ -27,8 +27,13 @@ build/ww_tests: $(CORE_OBJ) tests/tests.c $(wildcard src/*.h)
 	@mkdir -p build
 	$(CC) $(CFLAGS) tests/tests.c $(CORE_OBJ) -o $@ $(LDFLAGS)
 
-tests: build/ww_tests
+# ONE command is the gate, and it runs the bridge too. The bridge is a second
+# reader of the masking, so a leak that only shows up through the flat accessors
+# has to be caught by the same `make tests` everything else is judged by -
+# a second target is a target somebody forgets.
+tests: build/ww_tests build/ios_smoke
 	./build/ww_tests
+	./build/ios_smoke
 
 # The same suite under ASan+UBSan. Its own binary from source rather than the
 # objects above, because the sanitizers change codegen and mixing is how a clean
@@ -85,9 +90,11 @@ ios-lib:
 
 # The bridge, built and run WITHOUT a Mac: the portable proof that
 # deal -> night -> view -> seal -> replay runs through the Swift entry points.
-ios-smoke:
+build/ios_smoke: $(IOS_SRC) ios/ios_api_smoke.c $(wildcard src/*.h) ios/include/ww_api.h
 	@mkdir -p build
-	$(CC) $(IOS_CFLAGS) $(IOS_SRC) ios/ios_api_smoke.c -o build/ios_smoke
+	$(CC) $(IOS_CFLAGS) $(IOS_SRC) ios/ios_api_smoke.c -o $@
+
+ios-smoke: build/ios_smoke
 	./build/ios_smoke
 
 clean:
