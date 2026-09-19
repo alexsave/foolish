@@ -1,589 +1,169 @@
-# XcodeGen spec for Foolish (docs/IOS_APP_DESIGN.md §4, §16.A4).
+# XcodeGen spec for Werewolf.
 #
-# The .xcodeproj is a BUILD ARTIFACT — never hand-edit it, never commit it.
+# The .xcodeproj is a BUILD ARTIFACT - never hand-edit it, never commit it.
 # Regenerate with `xcodegen generate` (brew install xcodegen). Every project
-# change is reviewable here in text.
+# change is reviewable here, in text.
 #
 # BOOTSTRAP ORDER (from a clean checkout):
-#   1. cd ../c && make ios-lib      # builds ios/vendor/Foolish.xcframework
-#   2. cd ../ios && xcodegen generate    # writes Foolish.xcodeproj
-#   3. open Foolish.xcodeproj            # or xcodebuild ... (see README)
-# Step 1 must run first: FoolishKit links vendor/Foolish.xcframework, which does
-# not exist in git (it is generated). See ios/README.md.
-
-name: Foolish
+#   1. cd ../c && make ios-lib      # builds ios/vendor/Werewolf.xcframework
+#   2. cd ../ios && xcodegen generate
+#   3. ios/scripts/mac_tests.sh
+# Step 1 must run first: WerewolfKit links vendor/Werewolf.xcframework, which is
+# not in git because it is generated.
+#
+# THREE TARGETS, and the shape is inherited from the fork for one reason worth
+# stating: an app extension cannot be distributed on its own, so the iMessage
+# game needs a codeless container to carry it. That container links the framework
+# but does not link AGAINST it - @rpath for an extension resolves into its
+# CONTAINING app's Frameworks/, so without the embed the bundle builds clean and
+# then fails to load at runtime.
+#
+# WHAT THIS PROJECT DELIBERATELY HAS NONE OF, because the fork's did and paid for
+# it: no network stack, no accounts, no bots. An iMessage werewolf game has no
+# server - the whole game is the MSMessage URL - so a dependency that talks to one
+# would be bytes on every install for code that install can never run.
+name: Werewolf
 options:
-  bundleIdPrefix: cards.foolish
-  # 16.0, not the doc's 15.0 starter: the signature SF Compressed numerals
-  # (Font.width(.compressed), §5.2) and ShareLink (§16.C2) are iOS 16 APIs, and
-  # iOS 15's install share is negligible for a 2026 launch. The C engine still
-  # builds at -miphoneos-version-min=15.0 (harmless; the app links it at 16).
+  bundleIdPrefix: cards.werewolf
   deploymentTarget:
-    iOS: "16.0"
+    iOS: "17.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
 
 settings:
   base:
-    MARKETING_VERSION: "1.1"
-    CURRENT_PROJECT_VERSION: "73"
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
-    # Milestone F: signing enabled. Xcode manages the certificate + provisioning
-    # profiles automatically against the registered App IDs (cards.foolish.app,
-    # cards.foolish.app.MessagesExtension) and App Group (group.cards.foolish).
-    # DEVELOPMENT_TEAM is the 10-char Team ID from the portal's Membership page.
-    # Simulator builds still need no signing; Xcode skips it for the sim SDK.
     CODE_SIGN_STYLE: Automatic
-    DEVELOPMENT_TEAM: 8N2Z544SB4
-    # Standard HTTPS only — no non-exempt encryption (§11).
     ITSAppUsesNonExemptEncryption: "NO"
 
 configs:
   Debug: debug
   Release: release
 
-packages:
-  SnapshotTesting:
-    url: https://github.com/pointfreeco/swift-snapshot-testing
-    from: 1.17.0
-  # Online play (§16.D1). Linked by FoolishNet ONLY — never FoolishKit, or the
-  # iMessage extension picks up a network stack it never uses (scripts/
-  # lint_architecture.sh fails the build if it creeps back).
-  Supabase:
-    url: https://github.com/supabase/supabase-swift
-    from: 2.0.0
-
 targets:
-  # ---- The app -----------------------------------------------------------
-  Foolish:
-    type: application
-    platform: iOS
-    configFiles:
-      Debug: Config/Debug.xcconfig
-      Release: Config/Release.xcconfig
-    entitlements:
-      path: FoolishApp/Foolish.entitlements
-    sources:
-      # FoolishApp/PhoneOnly/ is not a package, it is a RULE: code that only this
-      # app calls lives here and not in FoolishKit.
-      #
-      # FoolishKit is a DYNAMIC framework and it ships inside FoolishMessagesApp,
-      # so every `public` symbol in it is an export - and an export is a
-      # dead-strip ROOT the linker may never remove, however unreachable it is
-      # from the extension. Phone-only API in FoolishKit is therefore bytes on
-      # every iMessage install for code that install can never run. Moving five
-      # such files out (TableView, QRCode, BotNames, Flags, EntitlementsService)
-      # took 97,808 bytes off the archived FoolishKit binary and dropped
-      # CoreImage.framework from its load list, measured on the Release archive.
-      #
-      # So: before adding a `public` type to FoolishKit, check whether the
-      # iMessage extension can reach it. If only this app can, put it here.
-      - path: FoolishApp
-    dependencies:
-      - target: FoolishKit
-      # The offline bot game. Deliberately absent from FoolishMessages and
-      # FoolishMessagesApp - that is what keeps the ladder out of the iMessage
-      # bundle, so do not add it there to fix a build error. Move the code.
-      - target: FoolishBots
-      - target: FoolishNet
-      # NOTE: the iMessage extension is deliberately NOT embedded here anymore.
-      # It ships in its own app record (FoolishMessagesApp) so the offline
-      # iMessage game can reach the store without waiting on this app's Chain-A
-      # blockers (staging backend, auth rebuild, account deletion, online
-      # privacy labels) — none of which a no-account offline extension has.
-      #
-      # Re-embedding later is a normal app update, not a re-architecture
-      # (docs/IMESSAGE_SHIP_BLOCKERS.md §2; IMESSAGE_IMPLEMENTATION_HANDOFF.md
-      # §3.5), and cards.foolish.app.MessagesExtension stays registered for it.
-      # If it is re-added, DROP the standalone first or a user with both
-      # installed gets two Foolish entries in the Messages drawer.
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.app
-        INFOPLIST_FILE: FoolishApp/Info.plist
-        # Its appiconset carries the same 20/29/40/60pt ladder beside the 1024
-        # for the same reason FoolishMessagesApp's does - see that target for the
-        # measurement. This app had the identical single-1024 set and therefore
-        # the identical 1.86MB loose AppIcon1024x1024.png; the lint that found it
-        # covers both.
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        ENABLE_PREVIEWS: "YES"
-        TARGETED_DEVICE_FAMILY: "1"     # iPhone only in v1 (§2 non-goals)
-
-  # ---- The STANDALONE iMessage app (its own App Store record) -------------
-  # A codeless container for FoolishMessages.appex — an extension cannot be
-  # distributed alone, so shipping the iMessage game without the host app needs
-  # this. No sources: a messages application never runs its own UI.
-  #
-  # The whole point is what it does NOT link: FoolishKit only, so no Supabase,
-  # no accounts, no backend. That is what keeps it clear of 5.1.1(v) account
-  # deletion, the auth rebuild, online privacy labels, and a staging backend.
-  FoolishMessagesApp:
+  # ---- The standalone iMessage app (its own App Store record) -------------
+  # A codeless container for WerewolfMessages.appex. No sources: a messages
+  # application never runs its own UI.
+  WerewolfMessagesApp:
     type: application.messages
     platform: iOS
     entitlements:
-      # Its OWN group, deliberately NOT the host app's group.cards.foolish.
-      # These are two independently-versioned App Store records and nothing in
-      # the host app reads this store today (FoolishApp references
-      # MessageGameStore zero times), so sharing would buy nothing and couple
-      # two release cycles. If the host app ever needs to read Messages games,
-      # it can declare BOTH groups — the entitlement is an array — so this is
-      # reversible without a data migration.
-      path: FoolishMessagesApp/FoolishMessagesApp.entitlements
+      path: WerewolfMessagesApp/WerewolfMessagesApp.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.cards.foolish.msg
+          - group.cards.werewolf.msg
     sources:
-      - path: FoolishMessagesApp
+      - path: WerewolfMessagesApp
     dependencies:
-      - target: FoolishMessages
+      - target: WerewolfMessages
         embed: true
-      # MUST be embedded here even though this container has no code: the .appex
-      # links @rpath/FoolishKit.framework, and @rpath for an extension resolves
-      # into its CONTAINING app's Frameworks/. Without this the bundle builds
-      # clean and then fails to load the extension at runtime.
-      # link:false because this container has no code to link AGAINST it — it
-      # only needs to CARRY the binary. (With link:true xcodegen generates no
-      # phase at all for a codeless target, and the framework silently goes
-      # missing from the bundle.)
-      - target: FoolishKit
+      # MUST be embedded here even though this container has no code - see the
+      # @rpath note at the top. link:false because there is nothing here to link
+      # against it; it only has to CARRY the binary.
+      - target: WerewolfKit
         embed: true
         link: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.msg
-        INFOPLIST_FILE: FoolishMessagesApp/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: cards.werewolf.msg
+        INFOPLIST_FILE: WerewolfMessagesApp/Info.plist
         TARGETED_DEVICE_FAMILY: "1"
-        # App Store validation requires the container to carry an app icon +
-        # CFBundleIconName even though it is a codeless Messages-only app (no Home
-        # Screen icon). Same 1024 icon as the main Foolish app
-        # (FoolishMessagesApp/Assets.xcassets/AppIcon, copied from FoolishApp).
-        #
-        # That appiconset carries the CLASSIC iPhone size ladder (20/29/40/60pt
-        # at @2x/@3x) beside the 1024 marketing icon, and it is a SIZE decision,
-        # not a taste one. actool always emits a loose "standalone" copy of the
-        # primary app icon next to Assets.car - the copy the system reads without
-        # opening the catalog - and it picks the smallest applicable rendition.
-        # With only the 1024 in the set that copy WAS the 1024: AppIcon1024x1024.png,
-        # 1.86MB, 20% of the whole bundle, sitting at the top of the app. With a
-        # 60x60@2x present the standalone is a 31KB file instead. Deleting the
-        # small sizes to "simplify" puts the 1.86MB straight back, and
-        # `--standalone-icon-behavior none` is not an escape: actool hard-errors
-        # ("app icon set ... did not have any applicable content").
-        #
-        # And the loose copy is only HALF the cost. A loose file at the bundle
-        # root is not app-thinned; a rendition inside Assets.car is. With one
-        # rendition there was nothing to thin, so the 1.75MB compiled 1024 rode
-        # along too. With the ladder present, thinning drops BOTH marketing
-        # renditions and Assets.car arrives at 76KB. Measured end to end on the
-        # thinned per-device .ipa (xcodebuild -exportArchive, thin-for-all-
-        # variants):
-        #   before   6.5MB download / 8.3MB install
-        #   after    2.9MB download / 4.8MB install
-        # scripts/lint_architecture.sh fails the build if any iOS icon set loses
-        # its ordinary renditions again.
+        # App Store validation requires the container to carry an app icon even
+        # though a Messages-only app has no Home Screen presence. The set keeps the
+        # ordinary 20/29/40/60pt ladder beside the 1024: actool always emits a
+        # loose standalone copy of the primary icon and picks the SMALLEST
+        # applicable rendition, so with only the 1024 present that loose copy is
+        # the 1024, unthinned, at the top of the bundle.
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
-  # ---- The iMessage extension (M1) ---------------------------------------
-  # An iMessage game has no server: the whole game is the MSMessage URL, so this
-  # target needs no network stack — only FoolishKit's engine and components.
-  FoolishMessages:
+  # ---- The iMessage extension --------------------------------------------
+  WerewolfMessages:
     type: app-extension.messages
     platform: iOS
     entitlements:
-      # Declared here as `properties` so `xcodegen generate` REGENERATES the
-      # App Group into the file instead of blanking it (the host app's
-      # entitlements need a git-checkout after every run; this one does not).
-      # The group is where the seat cache + preferred chain live (§9.3): the
-      # extension has no database and no background time, so its only durable
-      # store is this group. It must match FoolishAppGroup in this target's
-      # Info.plist, which is what MessageGameStore reads at runtime.
-      path: FoolishMessages/FoolishMessages.entitlements
+      # Declared as `properties` so `xcodegen generate` REGENERATES the App Group
+      # into the file instead of blanking it. The group is where the nickname
+      # lives: the extension has no database and no background time, so this is
+      # its only durable store.
+      path: WerewolfMessages/WerewolfMessages.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.cards.foolish.msg
+          - group.cards.werewolf.msg
     sources:
-      - path: FoolishMessages
+      - path: WerewolfMessages
     dependencies:
-      - target: FoolishKit
+      - target: WerewolfKit
     settings:
       base:
-        # Prefixed by its CONTAINER (FoolishMessagesApp), not the host app — an
-        # extension's bundle id must extend the app that embeds it. The old
-        # cards.foolish.app.MessagesExtension id stays registered in the portal
-        # for the day the host app embeds a copy again.
-        PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.msg.MessagesExtension
-        INFOPLIST_FILE: FoolishMessages/Info.plist
+        # Prefixed by its CONTAINER, not a host app - an extension's bundle id
+        # must extend the app that embeds it.
+        PRODUCT_BUNDLE_IDENTIFIER: cards.werewolf.msg.MessagesExtension
+        INFOPLIST_FILE: WerewolfMessages/Info.plist
         # The Messages drawer shows a WIDE (4:3) icon, a different asset from the
-        # host app's square AppIcon — a Messages extension without it is rejected
-        # at upload. The set is the jester-Д cropped to 4:3 (FoolishMessages/
-        # Assets.xcassets/iMessage App Icon).
+        # square AppIcon. An extension without it is rejected at upload.
         ASSETCATALOG_COMPILER_APPICON_NAME: "iMessage App Icon"
-        # The extension's memory ceiling is the reason this target stays thin:
-        # SwiftUI + libfoolish only — no wasm, no WKWebView, no bots, no Oracle
-        # (§17.5).
         TARGETED_DEVICE_FAMILY: "1"
 
-  # ---- watchOS companion (docs/WATCHOS_APP_PLAN.md) ----------------------
-  # PARKED, AND IT DOES NOT COMPILE. Read ios/WatchUI/README.md before touching
-  # anything here - that file is the whole story, and this comment is only the
-  # build-system half of it.
-  #
-  # W1 reserved the target and its registered bundle id
-  # (cards.foolish.app.watchkitapp) so the app record and signing have a home.
-  # bf351671 then landed the finished Option H screen design into WatchUI/ as
-  # source, deliberately ahead of the engine that runs it. That engine still is
-  # not there, so:
-  #   - the target has NO dependencies. FoolishKit has no watchOS destination and
-  #     vendor/*.xcframework has no watchOS slice, so WatchGame.swift cannot see
-  #     Card / Move / GameView / LocalGame and `xcodebuild -scheme WatchFoolish`
-  #     FAILS. That is the known state, not a regression. Adding a broken
-  #     cross-platform link here would not fix it either.
-  #   - nothing depends on this target and no CI job builds it. The iOS job
-  #     builds FoolishMessagesApp plus the two test schemes, and the rig builds
-  #     FoolishMessagesApp, so iOS and iMessage are untouched by it.
-  #   - it is NOT embedded in the host Foolish app. To BUNDLE it once it builds,
-  #     add `- target: WatchFoolish` (embed: true) to Foolish's dependencies.
-  # Independent-capable via WKRunsIndependentlyOfCompanionApp (WatchUI/Info.plist).
-  WatchFoolish:
-    type: application
-    platform: watchOS
-    sources:
-      - path: WatchUI
-        # The parked-state note is documentation, not an app resource.
-        excludes:
-          - README.md
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.app.watchkitapp
-        INFOPLIST_FILE: WatchUI/Info.plist
-        WATCHOS_DEPLOYMENT_TARGET: "10.0"
-        TARGETED_DEVICE_FAMILY: "4"     # watchOS
-        # YES so Xcode injects CFBundleIdentifier/Executable/version keys; the
-        # WK* keys still come from INFOPLIST_FILE (merged). NO left the bundle
-        # without an id, so the watch sim refused to install it.
-        GENERATE_INFOPLIST_FILE: "YES"
-        MARKETING_VERSION: "1.1"
-        CURRENT_PROJECT_VERSION: "73"
-        # The circular watch icon (WatchUI/Assets.xcassets/AppIcon).
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-
-  # ---- Headless harness tests (drive HarnessModel with NO UI) ------------
-  # Hosted by FoolishHarness so `@testable import FoolishHarness` can reach the
-  # internal HarnessModel state machine (the part that carried the B4 "damaged"
-  # bug). xcodegen auto-wires TEST_HOST/BUNDLE_LOADER from the app dependency.
-  # These never ship — they exist to run a whole iMessage game through the
-  # harness model without a simulator tap. See HarnessTests/.
-  HarnessTests:
-    type: bundle.unit-test
-    platform: iOS
-    sources:
-      - path: HarnessTests
-    dependencies:
-      - target: FoolishHarness
-      - target: FoolishKit
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.harnesstests
-        GENERATE_INFOPLIST_FILE: "YES"
-
-  # ---- Shared framework: Engine + DesignSystem + Boards + Messages + Entitlements
-  # Extension-safe by construction: no network stack, no Supabase, no app-only
-  # API. Both shipping products link this — it is the shared UI + engine layer.
-  # Anything that talks to a server belongs in FoolishNet, not here.
-  FoolishKit:
+  # ---- The shared framework: the kernel binding + the night screens -------
+  # Extension-safe by construction. Everything a player sees is in here, and
+  # everything a player sees is rendered from the kernel's masked view.
+  WerewolfKit:
     type: framework
     platform: iOS
     sources:
-      - path: FoolishKit
-        excludes:
-          # A DEAD STRING CATALOG that was shipping. Milestone E4 planned to
-          # replace FStrings' in-code table with this generated catalog
-          # (scripts/gen_ios_strings.mjs writes it); E4 never landed and the
-          # in-code table won instead - round 30 added zh + vi to FStrings and
-          # not to this file, so it is now stale (116 keys, en/ru/ko) as well as
-          # unread.
-          #
-          # It was not free. Compiled, it became three
-          # `<lang>.lproj/Localizable.strings` inside FoolishKit.framework -
-          # 20,686 bytes in the shipped bundle - with NOTHING to read them:
-          # `String(localized:)`, `NSLocalizedString` and `LocalizedStringKey`
-          # have zero call sites in ios/ and sdk/, every string goes through
-          # `FStrings.t`, and neither shipped binary contains the substring
-          # "Localizable" or any ".lproj" at all (checked with `strings` on the
-          # archived FoolishKit, the .appex and the container).
-          #
-          # EXCLUDED rather than deleted: the file and its generator are the
-          # whole of E4's remaining work, and this keeps them reviewable without
-          # paying for them on every install. Adding the catalog back to a
-          # target is one line here.
-          - Localizable.xcstrings
-      # The Swift kernel binding lives in the unified SDK home (A10):
-      # repo-root sdk/swift/ (EngineC.swift + models), sibling to sdk/ts and c.
-      #
-      # EXCEPT sdk/swift/bots/, which is the FoolishBots module below. That is a
-      # real module split, not a source location change, and the reason is what
-      # ships: this framework is DYNAMIC, so its public API is exported and
-      # therefore a dead-strip root. While EngineC.botDrive was public HERE, that
-      # export linked fio_bot_drive -> bot_drive -> bot_roster -> all 21
-      # strategies including octogen, and this framework ships inside
-      # FoolishMessagesApp. A game that plays people and never drives a seat was
-      # carrying the strongest brain in the roster.
+      - path: WerewolfKit
+      # The Swift kernel binding lives in the repo-root sdk/, sibling to c/ - the
+      # same place the fork put it, and for the same reason: it is the boundary,
+      # not a UI file, and a second product forking this tree needs it without
+      # taking the screens.
       - path: ../sdk/swift
-        excludes:
-          - bots/**
-      # NOTE: `- path: Entitlements` used to be here. EntitlementsService has
-      # exactly one caller in the whole repo (FoolishApp/FoolishApp.swift), so
-      # it moved to FoolishApp/PhoneOnly/ with the rest of the phone-only code -
-      # see the `Foolish` target above for what that directory is for.
     dependencies:
-      # The C engine, built by `make ios-lib` in ../c. Static (embed:false).
-      # This is the CORE library only - no strategy ladder is in it, and
-      # c/ios/archive_check.sh fails the build if one appears.
-      - framework: vendor/Foolish.xcframework
-        embed: false
-    # THE KERNEL STALENESS GUARD.
-    #
-    # FoolishKit links a PREBUILT static library, so a change to the C kernel
-    # reaches the app only after `make ios-lib`. Nothing used to say so: the app
-    # kept linking the old library, the C's own tests kept passing (they compile
-    # the real sources), and the Swift tests kept passing too — so a kernel fix
-    # could be "verified" twice over and still not be in the product. That is
-    # exactly what happened to Rule P's phase rule: shipped, tested, absent, and
-    # the group-chat lobby fork it was meant to close carried on.
-    #
-    # This turns that silence into a build failure naming the command. It only
-    # stats files, so it costs nothing on a normal build.
-    preBuildScripts:
-      - name: Kernel freshness (vendor/Foolish.xcframework vs c/)
-        basedOnDependencyAnalysis: false
-        script: |
-          FW="$SRCROOT/vendor/Foolish.xcframework"
-          C="$SRCROOT/../c"
-          if [ ! -d "$FW" ]; then
-            echo "error: vendor/Foolish.xcframework is missing. Run: cd c && make ios-lib"
-            exit 1
-          fi
-          STALE=$(find "$C/src" "$C/ios" \( -name '*.c' -o -name '*.h' \) \
-                    -newer "$FW/Info.plist" -print -quit 2>/dev/null)
-          if [ -n "$STALE" ]; then
-            echo "error: the C kernel changed after the linked library was built"
-            echo "error: (e.g. $STALE). The app would link a STALE kernel."
-            echo "error: Run: cd c && make ios-lib"
-            exit 1
-          fi
-          # The OTHER half of the same pair. sdk/swift/gen/kernel.ios.swift is a
-          # build output - tools/structgen writes it from these same headers, and
-          # `make ios-lib` writes it beside the hash it bakes into the library.
-          # This target compiles it, so a tree where it has never been generated
-          # fails as a pile of "cannot find 'TableView' in scope" in files that
-          # have nothing wrong with them. Say the actual thing instead.
-          GEN="$SRCROOT/../sdk/swift/gen/kernel.ios.swift"
-          if [ ! -f "$GEN" ]; then
-            echo "error: sdk/swift/gen/kernel.ios.swift has not been generated."
-            echo "error: It is a build output, not a committed file."
-            echo "error: Run: cd c && make ios-lib   (or: bash tools/structgen/gen.sh)"
-            exit 1
-          fi
-      # NOTE: no Supabase here. The network stack lives in FoolishNet, which the
-      # iMessage extension never links — see that target's comment.
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.kit
-        DEFINES_MODULE: "YES"
-        # Without this the framework ships with no Info.plist and the app's
-        # embed phase refuses it ("did not contain an Info.plist"). The app
-        # target points at a checked-in plist; the framework has none, so Xcode
-        # has to synthesize one.
-        GENERATE_INFOPLIST_FILE: "YES"
-        # APPLICATION_EXTENSION_API_ONLY: FoolishKit is linked by the iMessage
-        # extension (FoolishMessages), which is extension-only, so the framework
-        # must be too. An audit found FoolishKit + sdk/swift use NO app-only API
-        # (the only app-only call, ShareLink, is in the app target where it
-        # belongs), so this is now ON and the compiler keeps it that way — an
-        # app-only API creeping into FoolishKit becomes a build error, not a
-        # runtime surprise in the extension.
-        #
-        # The old note here said "FoolishKit still links the Supabase SDK, so the
-        # extension binary carries a network stack it never uses" and asked for a
-        # FoolishKitCore/Net split. That is STALE and was removed rather than
-        # left to be believed: the FoolishNet split already finished the job, and
-        # a Sep-2026 audit of the SHIPPED archive proves it. In
-        # FoolishMessagesApp.app:
-        #   otool -L FoolishKit  -> Foundation/SwiftUI/UIKit/CoreGraphics/
-        #                           CoreImage/CoreText/Combine/libswift* only.
-        #                           No Supabase, no Network.framework, no
-        #                           CFNetwork, not one URLSession stub.
-        #   nm  FoolishKit + the .appex, grepped for supabase|realtime|postgrest|
-        #                           gotrue|websocket|URLSession -> 0 hits each.
-        # There is no network stack to remove. If you are here hunting bundle
-        # bytes, the framework binary is 2.6MB of SwiftUI board code, ~460KB of
-        # Swift type-metadata symbol NAMES (a dylib exports them; see below) and
-        # ~130KB of C kernel - not a hidden SDK.
-        APPLICATION_EXTENSION_API_ONLY: "YES"
-        # Measured Sep 2026 and deliberately NOT changed, so nobody re-measures:
-        #   SWIFT_OPTIMIZATION_LEVEL=-Osize  -> 42KB off a 2.62MB binary (1.6%).
-        #   c/Makefile IOS_CFLAGS -O2 -> -Oz -> 45KB off the core archive, but
-        #     that archive is also the inner loop of the host app's Monte Carlo
-        #     bots (FoolishBots resolves game_*/legal_* against THIS framework),
-        #     so taking it needs a third, size-built archive for the extension.
-        # Both are under 1% of the install. The bundle's weight is icons,
-        # textures and SwiftUI - not compiler flags.
-
-  # ---- Online-only framework: Supabase, auth, edge functions, realtime ----
-  # Split out of FoolishKit so the iMessage extension stops linking a network
-  # stack it never uses (§17.5's memory ceiling). The extension's memory limit
-  # is undocumented by Apple and determined experimentally, so the cheapest
-  # insurance is not carrying the SDK at all.
-  #
-  # This is also what lets the iMessage app ship as its own product: the
-  # standalone target links FoolishKit only, so it inherits no account system,
-  # no backend dependency, and none of the host app's compliance surface.
-  #
-  # APPLICATION_EXTENSION_API_ONLY is deliberately OFF here (the default): this
-  # framework is app-only, and leaving the flag off is what keeps app-only API
-  # from creeping back into FoolishKit, where it WOULD break the extension.
-  # ---- The bot half (host app only, NEVER the iMessage extension) ---------
-  # Everything whose mere presence links the strategy ladder: EngineC's four bot
-  # entries, the offline LocalGame session, and the bot-drive wire decoder.
-  #
-  # Split out of FoolishKit so the extension has nothing to name. The C side is
-  # split to match (c/Makefile IOS_CORE_SRC / IOS_BOTS_SRC -> Foolish.xcframework
-  # + FoolishBots.xcframework), which is what makes this real rather than
-  # cosmetic: the ladder is not in the library FoolishKit links, so no link order
-  # or dead-strip behaviour can drag it back.
-  #
-  # ONE resident game still. The kernel has a single static Game reached through
-  # fio_resident_game (c/ios/ios_internal.h); FoolishBots.xcframework contains no
-  # copy of the CORE BRIDGE OBJECTS, so its bot drive acts on the same board
-  # FoolishKit reads. (Proven on a link: see the commit that introduced this.)
-  # Plural, and checked as a set: the core bridge is several translation units
-  # now, and a check that named only one of them would leave the rest free to
-  # link the ladder unnoticed - see c/ios/split_check.sh.
-  FoolishBots:
-    type: framework
-    platform: iOS
-    sources:
-      - path: ../sdk/swift/bots
-    dependencies:
-      - target: FoolishKit
-      # The bot half of the C engine. Static (embed:false), and it holds ONLY
-      # the ladder - its undefined game_*/fio_resident_game resolve against
-      # FoolishKit at link time.
-      - framework: vendor/FoolishBots.xcframework
+      # The C kernel, built by `make ios-lib` in ../c. STATIC (embed:false), so
+      # the linker pulls it in per object and nothing unreferenced ships.
+      - framework: vendor/Werewolf.xcframework
         embed: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.bots
+        PRODUCT_BUNDLE_IDENTIFIER: cards.werewolf.kit
         GENERATE_INFOPLIST_FILE: "YES"
-        # Both xcframeworks' headers are copied into the ONE
-        # $(BUILT_PRODUCTS_DIR)/include, so the bots half ships its header and
-        # module map in a CFoolishBots/ subdirectory - otherwise two files
-        # called module.modulemap land on the same path and the build fails
-        # with "Multiple commands produce". Xcode searches include/ on its own;
-        # the subdirectory is ours to name.
-        HEADER_SEARCH_PATHS: $(inherited) $(BUILT_PRODUCTS_DIR)/include/CFoolishBots
+        # The clang module map that lets Swift `import CWerewolf`, copied into
+        # BUILT_PRODUCTS_DIR/include by the xcframework.
+        HEADER_SEARCH_PATHS: $(inherited) $(BUILT_PRODUCTS_DIR)/include
+        TARGETED_DEVICE_FAMILY: "1"
 
-  FoolishNet:
-    type: framework
-    platform: iOS
-    sources:
-      - path: FoolishNet
-    dependencies:
-      - target: FoolishKit
-      # Online play (§16.D): auth, edge functions, realtime.
-      - package: Supabase
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.net
-        DEFINES_MODULE: "YES"
-        GENERATE_INFOPLIST_FILE: "YES"
-
-  # ---- Unit + snapshot + golden tests ------------------------------------
-  FoolishTests:
+  # ---- Unit tests --------------------------------------------------------
+  # These test the SWIFT side only. Every rule is asserted in C
+  # (`make -C c tests`), so what is left here is the part C cannot see: that the
+  # screen shows what the masked view said and nothing else.
+  WerewolfTests:
     type: bundle.unit-test
     platform: iOS
     sources:
-      - path: FoolishTests
-        # The snapshot references are RECORDED, not authored: swift-snapshot-
-        # testing writes them next to the test on a first run, and .gitignore
-        # keeps them out of the repo because they are per-machine. Listing them
-        # as build inputs means the project only builds on a machine where a
-        # previous run happened to leave them - delete them to re-record and
-        # every build fails with "Build input file cannot be found" before a
-        # test can run.
-        excludes:
-          - __Snapshots__/**
-      - path: Fixtures
-        buildPhase: resources
+      - path: WerewolfTests
     dependencies:
-      - target: Foolish
-      - target: FoolishKit
-      - target: FoolishBots
-      - target: FoolishNet
-      - package: SnapshotTesting
+      - target: WerewolfKit
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.tests
-        # With signing enabled at the project base (Milestone F), even the test
-        # bundle gets signed and therefore needs an Info.plist. Generate one
-        # (FoolishKit does the same) — without it `xcodebuild test` fails to sign.
+        PRODUCT_BUNDLE_IDENTIFIER: cards.werewolf.tests
         GENERATE_INFOPLIST_FILE: "YES"
-
-  # ---- FoolishHarness (DEV TEST HOST — NEVER SHIPPED) --------------------
-  # A normal iOS app that renders the SAME MessagesRootView the iMessage
-  # extension renders, driven by a fake 2-8 "participant" transcript. It exists
-  # ONLY to test N-way group logic + UI on one simulator: Apple's Messages host
-  # cannot be extended past its two seeded participants, and two simulators
-  # cannot iMessage each other, so the shipping path can't exercise a 3-8 player
-  # game locally. This target is NOT embedded in Foolish, is NOT an app-extension,
-  # and must never ship. See ios/HarnessUI/ and docs/IMESSAGE_MAC_RUNBOOK.md.
-  FoolishHarness:
-    type: application
-    platform: iOS
-    sources:
-      - path: HarnessUI
-    dependencies:
-      - target: FoolishKit
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.harness
-        GENERATE_INFOPLIST_FILE: "YES"
-        INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
-        TARGETED_DEVICE_FAMILY: "1"
 
 schemes:
-  Foolish:
+  WerewolfMessagesApp:
     build:
       targets:
-        Foolish: all
-        FoolishKit: all
+        WerewolfMessagesApp: all
+        WerewolfMessages: all
+        WerewolfKit: all
     run:
       config: Debug
+  WerewolfTests:
+    build:
+      targets:
+        WerewolfKit: all
+        WerewolfTests: [test]
     test:
       config: Debug
       targets:
-        - FoolishTests
-  # The standalone iMessage app. Run this scheme to launch Messages in the
-  # simulator with the extension installed (docs/IMESSAGE_MAC_RUNBOOK.md Part 3).
-  FoolishMessagesApp:
-    build:
-      targets:
-        FoolishMessagesApp: all
-        FoolishMessages: all
-        FoolishKit: all
-    run:
-      config: Debug
-
-  # Runs the headless harness game-loop tests (no simulator UI needed).
-  FoolishHarness:
-    build:
-      targets:
-        FoolishHarness: all
-        HarnessTests: all
-    run:
-      config: Debug
-    test:
-      config: Debug
-      targets:
-        - HarnessTests
+        - WerewolfTests

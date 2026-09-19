@@ -1,112 +1,17 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# dependencies
-**/node_modules/
-/.pnp
-.pnp.js
-
-# testing
-/coverage
-tests/coverage
-
-# production
-/build
-/dist
-
-# next.js
-/.next/
-/out/
-/next-env.d.ts
-*.tsbuildinfo
-
-# misc
 .DS_Store
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
 
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Environment Variables
-.env
-.env.build
-.vercel
-
-# Vim swap files. Do NOT write `*.sw*`: that also swallows *.swift, i.e. the
-# whole iOS app. There are two shapes to catch.
-#   .notes.txt.swp        a swap for a named buffer, anywhere in the tree
-#   .swp .swo ... .swa .svz .svy
-#                         vim opened with NO filename, in the repo root. It
-#                         walks the alphabet BACKWARDS on each new session, so
-#                         any pattern with a floor (the old `.sw[c-m]`) leaks
-#                         the moment vim steps past it. Four of them reached
-#                         main that way. The range below covers the whole walk
-#                         and is exactly four characters, so it cannot reach
-#                         `.swift`; the leading slash keeps it at the root.
-*.swp
-*.swo
-*.swn
-.*.sw?
-/.s[t-w][a-z]
-.vscode
-.cursor
-
-
-# tools/structgen's outputs. BUILD OUTPUTS, written by tools/structgen/gen.sh
-# (and by the wasm and ios-lib make targets) on every build that consumes them -
-# the web, the type-check, every test lane, the edge-function deploy, FoolishKit.
-#
-# They used to be committed. verify.wasm is why they are not: it sat committed
-# under tools/structgen/gen/ with `diff -x verify.wasm` excusing it from the
-# freshness check, and the exclusion is what let it rot for months while the
-# check reported everything fresh (f6338351). An artifact nothing compares is an
-# artifact nothing keeps fresh, and the cheapest way to have nothing to compare
-# is to have nothing committed.
-#
-# e2e/validation/generated_outputs_validation.test.ts refuses a tracked file
-# under any of these, and reads the directory list out of gen.sh rather than
-# restating it here - so a new output is covered the day it lands.
-sdk/ts/gen/
-sdk/swift/gen/
-tools/structgen/gen/
-
-# c
+# Build output. c/build is the native + bridge binaries; ios/vendor holds the
+# xcframework `make -C c ios-lib` writes, which is generated from c/src and must
+# never be committed - a stale binary in git is a kernel two people disagree about.
 c/build/
-c/*.trace/
-c/tools/tt_divergence_viz/backup/
-c/tools/tt_divergence_viz/backup2/
-c/tools/tt_divergence_viz/data/W/
+c/covbuild/
+ios/vendor/
 
-# Local scratch that has snuck into commits before: a stray vim runtime file,
-# a dev server log, the iOS snapshot-test output dir, and the memtest edge
-# scratch function. (Bare-name editor spill is handled in the vim block above.)
-.watchrealsizevim
-serve.log
-ios/FoolishTests/__Snapshots__/
-server/impls/supabase/functions/memtest/
-# The supabase CLI's own version-check cache. Written by any `supabase` command,
-# so it appears as untracked the first time you touch the CLI in a session and
-# is exactly the shape of thing that rides along in a `git add -A`.
-supabase/.temp/
+# The Xcode project is generated from ios/project.yml by xcodegen. Hand-editing
+# either it or the workspace is how the two drift; edit project.yml.
+ios/*.xcodeproj/
+ios/*.xcworkspace/
+ios/DerivedData/
 
-# local dev overrides (shadows next.config.mjs if tracked!)
-next.config.js
-
-# Local Claude Code agent worktrees / local state — ignored, EXCEPT the shared
-# project hook below (installs binaryen so `make wasm-bots` can run wasm-opt).
-.claude/*
-!.claude/settings.json
-!.claude/hooks/
-.claude/hooks/*
-!.claude/hooks/session-start.sh
-isolate-*.log
-
-# Coverage artifacts
-.v8cov/
-
-# Python bytecode from the QA tooling - never a repo artifact.
-__pycache__/
-*.pyc
+# The rig's captures.
+ios/Tools/rig/shots/
