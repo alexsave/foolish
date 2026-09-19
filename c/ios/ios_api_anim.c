@@ -30,6 +30,40 @@
 #include "legal.h"
 #include "anim_plan.h"
 
+// ---------- the one table layout, read ---------------------------------------
+//
+// ONE BYTE FOR "NO CARD" AND ONE FOR "A CARD NOBODY CAN NAME", across every
+// header that spells them. The readers below tell the two apart and the set
+// rules in anim_plan.c let the range check answer for both, so a sentinel that
+// drifted in one header would be a card in another.
+_Static_assert(FIO_PRETABLE_NONE == ANIM_TABLE_NONE,
+               "one 'no card here' byte for a table, not two");
+_Static_assert(ANIM_TABLE_NONE == LEGAL_WIRE_NONE,
+               "…and it is the same byte the menu wire and PlayBoard use");
+_Static_assert(FIO_CONFLICT_NONE == ANIM_TABLE_NONE,
+               "…and the conflict wire's");
+_Static_assert(FIO_TABLE_UNKNOWN == ANIM_TABLE_UNKNOWN,
+               "one 'a card is here that cannot be named' byte, not two");
+_Static_assert(FIO_CARD_NONE == CARD_NONE_SUIT && FIO_CARD_NONE == CARD_NONE_VALUE,
+               "the host's bare-cover pair is the kernel's CARD_NONE");
+
+// What a table's cells hold: -1 for a byte that is neither a card nor a
+// sentinel (a corrupt wire), 0 for a table with a FIO_TABLE_UNKNOWN cell in
+// it, 1 for a table every cell of which is a card or bare. The readers that
+// LAY a table out take 0 as "no board" (ios_api.h, fio_table_encode: a cell
+// nobody can name has no face to lay); the ones that reason by identity take
+// it as a cell that vouches for nothing. Stated once so the two cannot come
+// to disagree about which bytes are corrupt.
+static int table_cells(const uint8_t *p, int n) {
+    int unknown = 0;
+    for (int i = 0; i < 2 * n; i++) {
+        if (p[i] < 52 || p[i] == ANIM_TABLE_NONE) continue;
+        if (p[i] == ANIM_TABLE_UNKNOWN) { unknown = 1; continue; }
+        return -1;
+    }
+    return unknown ? 0 : 1;
+}
+
 // ---------- animation core (c/src/anim_plan.h) -----------------------------
 //
 // The layout is documented once, in ios_api.h. Like fio_beats_packed, this
@@ -113,9 +147,16 @@ int fio_anim_plan(const uint8_t *in, int len) {
         if (n_bat != FIO_PRETABLE_NONE) {
             if (n_bat > FIO_PLAN_BATTLES) return FIO_ECAP;
             if (p + 2 * n_bat > len) return FIO_EPARSE;
-            row = &in[p];
+            // The cells are checked here and nowhere later: this row is copied
+            // into the freeze verbatim (anim_plan.c pre_take_board) and the
+            // host lays that out BY IDENTITY, so a byte that is not a card
+            // would be drawn as one. A corrupt byte refuses the plan; a card
+            // nobody can name makes this step carry no row, which is what the
+            // host used to send in its place.
+            const int cells = table_cells(&in[p], n_bat);
+            if (cells < 0) return FIO_EPARSE;
+            if (cells > 0) { row = &in[p]; row_n = n_bat; }
             p += 2 * n_bat;
-            row_n = n_bat;
         }
         evs[i].type = type;
         evs[i].seat = (seat == 0xFF) ? ANIM_SEAT_NONE : seat;
@@ -218,18 +259,17 @@ const void *fio_beats_ptr(void) { return &g_anim_beats; }
 // nothing but its arguments, and the prior board travels with the stream
 // because a single-action pickup turn has no earlier board of its own.
 
-_Static_assert(FIO_PRETABLE_NONE == ANIM_TABLE_NONE,
-               "one 'no card here' byte for a table, not two");
-_Static_assert(ANIM_TABLE_NONE == LEGAL_WIRE_NONE,
-               "…and it is the same byte the menu wire and PlayBoard use");
-
 // One table off the wire: `n` battles at `p`, bounded against `end`. Returns
 // the bytes consumed, or -1 for a table that runs off the buffer or names a
-// card that is not one.
-static int pretable_read(const uint8_t *p, const uint8_t *end, int n) {
+// card that is not one. `*n_board` comes back as `n`, or ANIM_NO_BOARD for a
+// table holding a card nobody can name: the answer here is a table to be laid
+// out, so such a board is consumed off the wire and then not a board
+// (ios_api.h, fio_table_encode).
+static int pretable_read(const uint8_t *p, const uint8_t *end, int n, int *n_board) {
     if (n < 0 || p + 2 * n > end) return -1;
-    for (int i = 0; i < 2 * n; i++)
-        if (p[i] >= 52 && p[i] != ANIM_TABLE_NONE) return -1;
+    const int cells = table_cells(p, n);
+    if (cells < 0) return -1;
+    *n_board = cells > 0 ? n : ANIM_NO_BOARD;
     return 2 * n;
 }
 
@@ -241,11 +281,11 @@ int fio_pre_bout_table_packed(const uint8_t *in, int len, char *out, int cap) {
     const uint8_t *end = in + len;
 
     int p = 2;
-    const int prior_n = (in[p] == FIO_PRETABLE_NONE) ? ANIM_NO_BOARD : in[p];
+    int prior_n = (in[p] == FIO_PRETABLE_NONE) ? ANIM_NO_BOARD : in[p];
     p++;
     const uint8_t *prior = in + p;
     if (prior_n > 0) {
-        const int took = pretable_read(in + p, end, prior_n);
+        const int took = pretable_read(in + p, end, prior_n, &prior_n);
         if (took < 0) return FIO_EPARSE;
         p += took;
     }
@@ -257,16 +297,16 @@ int fio_pre_bout_table_packed(const uint8_t *in, int len, char *out, int cap) {
         // after the reads it guards is not a bound.
         if (in + p + 2 > end) return FIO_EPARSE;
         const int type = in[p];
-        const int n_bat = (in[p + 1] == FIO_PRETABLE_NONE) ? ANIM_NO_BOARD : in[p + 1];
+        int n_bat = (in[p + 1] == FIO_PRETABLE_NONE) ? ANIM_NO_BOARD : in[p + 1];
         p += 2;
         evs[i].type = type;
-        evs[i].n_battles = n_bat;
         evs[i].battles = in + p;
         if (n_bat > 0) {
-            const int took = pretable_read(in + p, end, n_bat);
+            const int took = pretable_read(in + p, end, n_bat, &n_bat);
             if (took < 0) return FIO_EPARSE;
             p += took;
         }
+        evs[i].n_battles = n_bat;
         if (in + p + 1 > end) return FIO_EPARSE;
         const int n_cards = in[p];
         p++;
@@ -337,12 +377,14 @@ int fio_conflict_packed(const uint8_t *in, int len, char *out, int cap) {
     p++;
     const uint8_t *table = in + p;
     if (in + p + 2 * n_bat > end) return FIO_EPARSE;
-    // Either slot may be FIO_CONFLICT_NONE - an uncovered attack, or a card the
-    // viewer cannot name. Both contribute nothing to the standing set; anything
+    // A bare cell (FIO_CONFLICT_NONE) and a card nobody can name
+    // (FIO_TABLE_UNKNOWN) are BOTH taken, and both contribute nothing to the
+    // standing set: this rule decides by identity, and neither has one. The
+    // unknown cell is not refused the way the pre-bout table refuses it because
+    // nothing here is laid out - a named card beside it still stands, and
+    // refusing the whole board would revert that card for no reason. Anything
     // else off the deck is a corrupt wire.
-    for (int i = 0; i < 2 * n_bat; i++) {
-        if (table[i] >= 52 && table[i] != FIO_CONFLICT_NONE) return FIO_EPARSE;
-    }
+    if (table_cells(table, n_bat) < 0) return FIO_EPARSE;
     p += 2 * n_bat;
 
     if (in + p + 1 > end) return FIO_EPARSE;
@@ -483,6 +525,36 @@ int fio_hand_laid_out(const uint8_t *cards, int n_cards, uint64_t deferred,
                                       (unsigned char *)out, cap);
     if (rc == ANIM_ECAP) return FIO_ECAP;
     return rc < 0 ? FIO_EBADARG : rc;
+}
+
+// ---------- a table, written -------------------------------------------------
+//
+// One cell of the one table layout, from the pair a host holds. See ios_api.h
+// for the rule and for why the unnameable card is a byte of its own rather
+// than "no card" or a refusal. The id arithmetic is card.h's, through a Card
+// built only once the pair is known to be a deck card - the bitfields would
+// narrow anything else silently, and a narrowed suit is some other card's id.
+static unsigned char table_cell(int8_t suit, int8_t value, int is_cover) {
+    if (suit >= 0 && suit < 4 && value >= 1 && value <= 13) {
+        Card c;
+        c.suit = suit;
+        c.value = value;
+        return (unsigned char)card_to_id(c);
+    }
+    if (is_cover && suit == FIO_CARD_NONE && value == FIO_CARD_NONE) return FIO_CONFLICT_NONE;
+    return FIO_TABLE_UNKNOWN;
+}
+
+int fio_table_encode(const int8_t *pairs, int n_battles, char *out, int cap) {
+    if (!out || cap < 0 || n_battles < 0) return FIO_EBADARG;
+    if (n_battles > 0 && !pairs) return FIO_EBADARG;
+    if (2 * n_battles > cap) return FIO_ECAP;
+    unsigned char *q = (unsigned char *)out;
+    for (int i = 0; i < n_battles; i++) {
+        q[2 * i]     = table_cell(pairs[4 * i],     pairs[4 * i + 1], 0);
+        q[2 * i + 1] = table_cell(pairs[4 * i + 2], pairs[4 * i + 3], 1);
+    }
+    return 2 * n_battles;
 }
 
 uint64_t fio_table_card_ids(const uint8_t *table, int n_battles) {

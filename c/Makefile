@@ -408,6 +408,9 @@ msg-flow-sim:
 #   action_goldens.bin    PackedActionTests - the awire action frame the kernel
 #                         writes for a fixed set of moves, PACKED (see
 #                         ios/ios_action_goldens.c for the layout).
+#   table_goldens.bin     TableWireTests - the one table layout the kernel
+#                         writes for a fixed set of boards, masked cells
+#                         included, PACKED (see ios/ios_table_goldens.c).
 .PHONY: ios-goldens
 ios-goldens:
 	@mkdir -p build ../ios/Fixtures
@@ -417,6 +420,9 @@ ios-goldens:
 	$(CC) $(IOS_CFLAGS) ios/ios_action_goldens.c $(IOS_BRIDGE_SRC) ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_action_goldens
 	./build/ios_action_goldens > ../ios/Fixtures/action_goldens.bin
 	@echo "wrote ../ios/Fixtures/action_goldens.bin"
+	$(CC) $(IOS_CFLAGS) ios/ios_table_goldens.c $(IOS_BRIDGE_SRC) ios/ios_bots_api.c $(CORE_SRC) -lm -o build/ios_table_goldens
+	./build/ios_table_goldens > ../ios/Fixtures/table_goldens.bin
+	@echo "wrote ../ios/Fixtures/table_goldens.bin"
 
 # L1 memory budget measurement (docs/WASM_L1_BUDGET.md). Plays ~63K real games
 # and reports the observed maxima that size every wasm static buffer. Built at

@@ -3667,6 +3667,8 @@ static void test_reset_to_lobby(void) {
 //   play_can_say_good treats an empty table as fully covered       ->  1 failure
 //   play_human_menu keeps `wait`                                   ->  5 failures
 //   play_human_menu keeps `good` unconditionally                   ->  2 failures
+//   battle_is_uncovered reads "off the deck" (>= 52) as bare, so a
+//     card the viewer may not see opens the battle it covers        ->  5 failures
 //   legal_menu_next reads its n_cards byte at q+2 rather than q+1  -> 58 failures
 //   legal_menu_write emits the count BEFORE the entries (so a
 //     capped write leaves a header claiming moves it never wrote)  ->  1 failure
@@ -4110,6 +4112,67 @@ static int human_menu_types(const PlayBoard *b, unsigned char *out, int cap, int
     legal_menu_begin(&w, out, n);
     while (legal_menu_next(&w, &m) == 1) { types |= 1 << m.type; (*n_out)++; }
     return types;
+}
+
+// A cell as the host writes it for a card the viewer may not see: the
+// unnameable byte, taken from the header rather than spelled here so the test
+// cannot pass against a sentinel the kernel no longer uses.
+static void tb_add_cells(unsigned char attack, unsigned char cover) {
+    g_pm_table[2 * g_pm_nb] = attack;
+    g_pm_table[2 * g_pm_nb + 1] = cover;
+    g_pm_nb++;
+}
+
+// A CARD THE VIEWER MAY NOT SEE, on the table. The rules must read it as a
+// card that is THERE: its battle is covered, and nothing covers it. Read as
+// LEGAL_WIRE_NONE instead, the cover vanishes and the battle opens - Good is
+// withheld and a drop target offered on a battle that is closed - and nothing
+// refuses, because the wire is well-formed. That is the vanishing card this
+// pins, from the side that reads the byte; the side that writes it is pinned
+// by ios_api_smoke.c and the table goldens.
+static void test_play_rules_over_a_card_nobody_can_name(void) {
+    const unsigned char unknown = ANIM_TABLE_UNKNOWN;
+    Card nine = { SUIT_SPADES, 9 };
+    Card jack = { SUIT_SPADES, 11 };
+
+    // An attacker over a nine covered by a card it cannot name: the bout is
+    // fully covered, and Good is live.
+    pm_reset();
+    tb_add_cells((unsigned char)card_to_id(nine), unknown);
+    pm_add(MOVE_GOOD, 0, 0, 0, 0);
+    pm_seal();
+    PlayBoard covered = pm_board(SUIT_DIAMONDS, 0);
+    CHECK(play_can_say_good(&covered), "a cover the viewer cannot see still closes its battle");
+    unsigned char out[64];
+    int n_types = 0;
+    CHECK(human_menu_types(&covered, out, (int)sizeof out, &n_types) == (1 << MOVE_GOOD)
+          && n_types == 1,
+          "…and the human menu keeps Good over it");
+
+    // The defender holding the jack, over that same battle and over an attack
+    // it cannot name: neither is a target. The covered one is closed; the
+    // unnameable attack equals no card the menu names.
+    pm_reset();
+    tb_add_cells((unsigned char)card_to_id(nine), unknown);
+    tb_add_cells(unknown, LEGAL_WIRE_NONE);
+    pm_add(MOVE_COVER, &jack, 1, &nine, 1);
+    pm_seal();
+    PlayBoard def = pm_board(SUIT_DIAMONDS, 1);
+    sel_set(&jack, 1);
+    CHECK(play_coverable_battles(&def, pm_sel, pm_sel_n) == 0,
+          "neither a covered battle nor an unnameable attack is coverable");
+    CHECK(play_best_cover_target(&def, pm_sel, pm_sel_n) == -1, "so the Cover button aims nowhere");
+    CHECK(play_resolve(&def, pm_sel, pm_sel_n, 0) == -1, "a drop on the covered battle is nothing");
+    CHECK(play_resolve(&def, pm_sel, pm_sel_n, 1) == -1, "and a drop on the unnameable attack is nothing");
+
+    // A bare cell is bare whatever attack it sits under: an unnameable attack
+    // still awaits its cover.
+    pm_reset();
+    tb_add_cells(unknown, LEGAL_WIRE_NONE);
+    pm_add(MOVE_GOOD, 0, 0, 0, 0);
+    pm_seal();
+    PlayBoard open = pm_board(SUIT_DIAMONDS, 0);
+    CHECK(!play_can_say_good(&open), "an uncovered attack nobody can name is still uncovered");
 }
 
 static void test_play_human_menu_drops_wait_and_gates_good(void) {
@@ -9831,6 +9894,7 @@ int main(void) {
     test_best_cover_multi_card_selection();
     test_play_has_verb();
     test_play_can_say_good_only_over_a_covered_table();
+    test_play_rules_over_a_card_nobody_can_name();
     test_play_human_menu_drops_wait_and_gates_good();
     test_good_is_always_enumerated_for_an_attacker();
     test_full_game_random();
