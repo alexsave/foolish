@@ -22,7 +22,7 @@ import {
     buildReplayFrames, preDealGame, ReplayFrame, ReplayGameState, REPLAY_STEP,
 } from '../replay/frames';
 import { canCoverCards } from '../utils/gameValidation';
-import { tutorialStrings, tfmt, TutKey } from '../localization/tutorialStrings';
+import type { StringId } from '../localization/strings';
 import { TUTORIAL_MOVES_CODE, TUTORIAL_NAMES } from './tutorialGame';
 
 const LEARNER_SEAT = 0;
@@ -69,6 +69,16 @@ const mkWithSelf = (powerSuit: number) => <T extends TableView>(state: T): T =>
     (!state || !state.seats ? state : ({ ...state, myHand: sortedHand(state, powerSuit) } as T));
 
 /* ----------------------------- concept beats ------------------------------- */
+
+/* The tutorial's own narration, in the one string table (c/i18n/keys.h, the
+ * `tut_` keys). It used to be a second table in this directory with three
+ * languages of its own; a learner reading one of the other twenty-two was
+ * taught in English while the board around them spoke their language. The
+ * narration is also why these keys are NOT the board's: `cover` is a button a
+ * player presses, `tut_cover` is a sentence explaining what covering is, and
+ * the two are different words in most languages. */
+type TutKey = Extract<StringId, `tut_${string}`>;
+
 interface Beat { at: number; key: TutKey; extra?: TutKey; name?: string; }
 
 /* A concept is taught the first time the game shows it.
@@ -89,7 +99,7 @@ function buildBeats(frames: ReplayFrame[], summary: ReplaySummary, names: string
     const once = (k: string) => (seen.has(k) ? false : (seen.add(k), true));
     const ps = summary.powerSuit;
     const fa = summary.firstAttacker;
-    beats.push({ at: 0, key: fa === LEARNER_SEAT ? 'first_attacker_you' : 'first_attacker', name: names[fa] });
+    beats.push({ at: 0, key: fa === LEARNER_SEAT ? 'tut_first_attacker_you' : 'tut_first_attacker', name: names[fa] });
 
     const has = (f: ReplayFrame, type: string) => f.seq.events.some((e) => e.type === type);
 
@@ -99,36 +109,36 @@ function buildBeats(frames: ReplayFrame[], summary: ReplaySummary, names: string
         switch (f.kind) {
             case REPLAY_STEP.ATTACK:
                 if (prev && prev.game.battles.length > 0 && once('throwIn'))
-                    beats.push({ at: i, key: 'throw_in', extra: 'capacity' });
+                    beats.push({ at: i, key: 'tut_throw_in', extra: 'tut_capacity' });
                 break;
             case REPLAY_STEP.COVER: {
-                if (once('cover')) beats.push({ at: i, key: 'cover', extra: 'stack_rule' });
+                if (once('cover')) beats.push({ at: i, key: 'tut_cover', extra: 'tut_stack_rule' });
                 const cov = f.cards[0], tgt = f.target;
                 if (cov && tgt && cov.suit === ps && tgt.suit !== ps && once('trumpCover'))
-                    beats.push({ at: i, key: 'trump_cover' });
+                    beats.push({ at: i, key: 'tut_trump_cover' });
                 break;
             }
-            case REPLAY_STEP.PASS: if (once('pass')) beats.push({ at: i, key: 'pass' }); break;
-            case REPLAY_STEP.PICKUP: if (once('pickup')) beats.push({ at: i, key: 'pickup' }); break;
-            case REPLAY_STEP.GOOD: if (once('good')) beats.push({ at: i, key: 'good' }); break;
+            case REPLAY_STEP.PASS: if (once('pass')) beats.push({ at: i, key: 'tut_pass' }); break;
+            case REPLAY_STEP.PICKUP: if (once('pickup')) beats.push({ at: i, key: 'tut_pickup' }); break;
+            case REPLAY_STEP.GOOD: if (once('good')) beats.push({ at: i, key: 'tut_good' }); break;
             case REPLAY_STEP.ROUND_END: {
                 // The bout closed: everyone said good, and the table was binned.
                 const g = once('good'), d = once('discard');
-                if (g) beats.push({ at: i, key: 'good', extra: d ? 'discard' : undefined });
-                else if (d) beats.push({ at: i, key: 'discard' });
+                if (g) beats.push({ at: i, key: 'tut_good', extra: d ? 'tut_discard' : undefined });
+                else if (d) beats.push({ at: i, key: 'tut_discard' });
                 break;
             }
         }
         // Draws and outs ride the action that caused them.
-        if (has(f, 'refill') && once('draw')) beats.push({ at: i, key: 'draw' });
+        if (has(f, 'refill') && once('draw')) beats.push({ at: i, key: 'tut_draw' });
         if (has(f, 'out') && once('out')) {
             const outEv = f.seq.events.find((e) => e.type === 'out');
             const seat = outEv?.seat ?? -1;
-            beats.push({ at: i, key: 'out', name: names[seat >= 0 ? seat : 0] });
+            beats.push({ at: i, key: 'tut_out', name: names[seat >= 0 ? seat : 0] });
         }
         if (f.game.deckCount === 0 && !f.game.hasFlipped && once('deckEmpty'))
-            beats.push({ at: i, key: 'deck_empty' });
-        if (i === frames.length - 1) beats.push({ at: i, key: 'fool', name: names[summary.fool] });
+            beats.push({ at: i, key: 'tut_deck_empty' });
+        if (i === frames.length - 1) beats.push({ at: i, key: 'tut_fool', name: names[summary.fool] });
     }
     beats.sort((a, b) => a.at - b.at);
     return beats;
@@ -145,7 +155,6 @@ interface Move {
 
 /* ------------------------- playback (state + override) --------------------- */
 interface TutPlay {
-    S: Record<TutKey, string>;
     names: string[];
     summary: ReplaySummary;
     stepIdx: number;
@@ -170,8 +179,7 @@ const TutorialPlayback = ({ summary, frames, names, onExit }: PlaybackProps) => 
     const { updateGameState, view: game } = useServer();
     const real = useAnimation();
     const { isAnimating } = real;
-    const { language } = useLocalization();
-    const S = tutorialStrings[language];
+    const { t } = useLocalization();
     const withSelf = useMemo(() => mkWithSelf(summary.powerSuit), [summary.powerSuit]);
 
     const [stepIdx, setStepIdx] = useState(-1);
@@ -281,8 +289,8 @@ const TutorialPlayback = ({ summary, frames, names, onExit }: PlaybackProps) => 
         return b;
     }, [beats, stepIdx]);
     const beatText = activeBeat
-        ? tfmt(S[activeBeat.key], activeBeat.name ? { name: activeBeat.name } : undefined) +
-          (activeBeat.extra ? ' ' + S[activeBeat.extra] : '')
+        ? t(activeBeat.key, activeBeat.name ? { name: activeBeat.name } : undefined) +
+          (activeBeat.extra ? ' ' + t(activeBeat.extra) : '')
         : '';
 
     const hint: TutorialHint | null = move
@@ -298,7 +306,7 @@ const TutorialPlayback = ({ summary, frames, names, onExit }: PlaybackProps) => 
         good: async () => { tryAdvance(REPLAY_STEP.GOOD); return RESULT; },
     }), [real, tryAdvance]);
 
-    const play: TutPlay = { S, names, summary, stepIdx, awaiting, finished, beatText, move, skipToEnd, onExit };
+    const play: TutPlay = { names, summary, stepIdx, awaiting, finished, beatText, move, skipToEnd, onExit };
 
     return (
         <TutPlayContext.Provider value={play}>
@@ -318,8 +326,9 @@ const TutorialPlayback = ({ summary, frames, names, onExit }: PlaybackProps) => 
 /* ------------------------------- the board --------------------------------- */
 const TutorialBoard = () => {
     usePreventScroll();
-    const { S, names, summary, stepIdx, awaiting, finished, beatText, move, skipToEnd, onExit } = useTutPlay();
+    const { names, summary, stepIdx, awaiting, finished, beatText, move, skipToEnd, onExit } = useTutPlay();
     const { setSelectedCards } = useGame();
+    const { t } = useLocalization();
 
     // auto-select the scripted cards so the right wooden button appears; keyed
     // on the awaiting step so it doesn't loop on every render.
@@ -334,7 +343,7 @@ const TutorialBoard = () => {
     }, [selKey]);
 
     const moveHint = move
-        ? (move.mode === 'drag' ? S.press_or_drag : (move.action === 'pickup' || move.action === 'good') ? S.press_button : S.press_or_drag)
+        ? (move.mode === 'drag' ? t('tut_press_or_drag') : (move.action === 'pickup' || move.action === 'good') ? t('tut_press_button') : t('tut_press_or_drag'))
         : '';
 
     // board inset at top to clear the narration bar
@@ -387,13 +396,13 @@ const TutorialBoard = () => {
                             padding: '6px 12px', color: '#d6ffe2', fontWeight: 700, fontSize: '0.85rem', textAlign: 'center',
                         }}
                     >
-                        ▸ {S.your_move}: {moveHint}
+                        ▸ {t('tut_your_move')}: {moveHint}
                     </div>
                 )}
             </div>
 
             {/* top-left: leave */}
-            <TexturedSurface as="button" seed={0.2} className="btn-icon btn-icon--left" onClick={onExit} aria-label={S.exit}>
+            <TexturedSurface as="button" seed={0.2} className="btn-icon btn-icon--left" onClick={onExit} aria-label={t('tut_exit')}>
                 <span className="btn-icon__symbol">{'<'}</span>
             </TexturedSurface>
 
@@ -407,7 +416,7 @@ const TutorialBoard = () => {
                         background: 'rgba(20,16,12,0.7)', color: 'var(--color-text-primary)', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer',
                     }}
                 >
-                    {S.skip} »
+                    {t('tut_skip')} »
                 </button>
             )}
 
@@ -426,14 +435,14 @@ const TutorialBoard = () => {
                         }}
                     >
                         <div style={{ fontSize: '2rem', marginBottom: 6 }}>🃏</div>
-                        <p style={{ fontSize: '1.05rem', lineHeight: 1.4, margin: '0 0 6px' }}>{tfmt(S.fool, { name: names[summary.fool] })}</p>
-                        <p style={{ fontSize: '0.9rem', opacity: 0.85, margin: '0 0 18px' }}>{S.done}</p>
+                        <p style={{ fontSize: '1.05rem', lineHeight: 1.4, margin: '0 0 6px' }}>{t('tut_fool', { name: names[summary.fool] })}</p>
+                        <p style={{ fontSize: '0.9rem', opacity: 0.85, margin: '0 0 18px' }}>{t('tut_done')}</p>
                         <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
                             <TexturedSurface as="button" seed={0.3} className="btn-wood btn-wood--md" onClick={() => window.location.reload()}>
-                                <span className="btn-wood-text">{S.replay}</span>
+                                <span className="btn-wood-text">{t('tut_replay')}</span>
                             </TexturedSurface>
                             <TexturedSurface as="button" seed={0.6} className="btn-wood btn-wood--md" onClick={onExit}>
-                                <span className="btn-wood-text">{S.exit}</span>
+                                <span className="btn-wood-text">{t('tut_exit')}</span>
                             </TexturedSurface>
                         </div>
                     </div>
@@ -445,9 +454,8 @@ const TutorialBoard = () => {
 
 /* ------------------------------- intro card -------------------------------- */
 const IntroCard = ({ onStart, onSkip }: { onStart: () => void; onSkip: () => void }) => {
-    const { language } = useLocalization();
-    const S = tutorialStrings[language];
-    const bullets: TutKey[] = ['intro', 'goal', 'deck_low', 'trump', 'drag_tip'];
+    const { t } = useLocalization();
+    const bullets: TutKey[] = ['tut_intro', 'tut_goal', 'tut_deck_low', 'tut_trump', 'tut_drag_tip'];
     return (
         <div style={{ position: 'absolute', inset: 0, zIndex: 1300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
             <div
@@ -457,17 +465,17 @@ const IntroCard = ({ onStart, onSkip }: { onStart: () => void; onSkip: () => voi
                     borderRadius: 16, padding: '24px 22px', color: 'var(--color-text-primary)', boxShadow: '0 10px 40px rgba(0,0,0,0.6)',
                 }}
             >
-                <h1 style={{ fontSize: '1.5rem', margin: '0 0 4px', textAlign: 'center' }}>{S.title}</h1>
-                <p style={{ fontSize: '0.9rem', opacity: 0.85, textAlign: 'center', margin: '0 0 16px' }}>{S.subtitle}</p>
+                <h1 style={{ fontSize: '1.5rem', margin: '0 0 4px', textAlign: 'center' }}>{t('tut_title')}</h1>
+                <p style={{ fontSize: '0.9rem', opacity: 0.85, textAlign: 'center', margin: '0 0 16px' }}>{t('tut_subtitle')}</p>
                 <ul style={{ margin: '0 0 20px', paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {bullets.map((k) => (<li key={k} style={{ fontSize: '0.92rem', lineHeight: 1.4 }}>{S[k]}</li>))}
+                    {bullets.map((k) => (<li key={k} style={{ fontSize: '0.92rem', lineHeight: 1.4 }}>{t(k)}</li>))}
                 </ul>
                 <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
                     <TexturedSurface as="button" seed={0.3} className="btn-wood btn-wood--md" onClick={onStart} data-testid="tut-start">
-                        <span className="btn-wood-text">{S.start} ▶</span>
+                        <span className="btn-wood-text">{t('tut_start')} ▶</span>
                     </TexturedSurface>
                     <TexturedSurface as="button" seed={0.7} className="btn-wood btn-wood--md" onClick={onSkip}>
-                        <span className="btn-wood-text">{S.skip}</span>
+                        <span className="btn-wood-text">{t('tut_skip')}</span>
                     </TexturedSurface>
                 </div>
             </div>

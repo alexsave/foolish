@@ -133,3 +133,56 @@ test('a placeholder a language drops is a placeholder the board never fills', as
     }
     assert.deepEqual(wrong, [], `these translations do not carry English's placeholders:\n  ${wrong.join('\n  ')}\n`);
 });
+
+test('no em dash in a translated string', async () => {
+    // The owner's rule, which e2e/ui_copy_no_em_dash.test.ts enforces over src/:
+    // an em dash in copy reads as machine written, and a plain hyphen goes where
+    // one was. That scan walks TypeScript, so when the tables moved to C the
+    // tutorial's narration - which it used to cover - walked out from under it.
+    // This is the same rule over the source the strings live in now, and over
+    // twenty-five languages rather than three.
+    //
+    // ZHONGWEN IS THE EXEMPTION, and it is not a loophole: `——` is the Chinese
+    // dash (破折号), a real mark of that language's own punctuation, always
+    // doubled, and the twenty-seven in strings_zh.c are correct Chinese. The
+    // rule is about English typography written by a machine, so it is asked of
+    // the languages it means.
+    const bad: string[] = [];
+    for (const { code } of await languages()) {
+        if (code === 'zh') continue;
+        const t = await table(code);
+        for (const [k, v] of Object.entries(t)) if (v.includes('—')) bad.push(`${code}.${k}: ${v}`);
+    }
+    assert.deepEqual(bad, [],
+        'these translations contain an em dash. Use a plain hyphen:\n  ' + bad.join('\n  ') + '\n');
+});
+
+test('a language that localises the product name does not leave the English one behind', async () => {
+    // The name is translated, not transliterated: ru "ДУРАЦКИЙ", ko "바보같은".
+    // It is the adjective the game is named for, because Durak is Russian for
+    // fool, so it is a word in each language rather than a token carried
+    // through. These three keys are the ones that SAY the name - the About
+    // heading, the paragraph that explains where the name came from, and the
+    // iMessage invite - and a language that renders the name its own way must
+    // render it its own way in all of them.
+    //
+    // Korean shipped exactly this contradiction: `foolish` was 바보같은 while
+    // `about_foolish` read "FOOLISH 소개" and the invite read "Foolish - 탭하여
+    // 참가", so the heading named a product the reader never saw anywhere else.
+    //
+    // Matched case-sensitively on purpose: the domain `foolish.cards` is an
+    // address, not copy, and is not what this is looking for.
+    const NAMES = ['about_foolish', 'about_paragraph_2', 'ios.msg.joininvite'];
+    const en = await table('en');
+    const stranded: string[] = [];
+    for (const { code } of await languages()) {
+        const t = await table(code);
+        if (t['foolish'] === en['foolish']) continue;
+        for (const k of NAMES)
+            for (const form of [en['foolish'], 'Foolish'])
+                if (t[k].includes(form)) stranded.push(`${code}.${k} still says "${form}", but ${code}.foolish is "${t['foolish']}"`);
+    }
+    assert.deepEqual(stranded, [],
+        'these strings name the product in English in a language that has its own name for it:\n  '
+        + stranded.join('\n  ') + '\n');
+});

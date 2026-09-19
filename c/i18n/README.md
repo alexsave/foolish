@@ -43,6 +43,30 @@ Twenty-five independent tables make it a silent empty string, on a board, in a l
 Every language's table must fill every slot of `FsKey`, and a gap fails the build naming each missing key.
 `e2e/validation/i18n_source_of_truth.test.ts` says it again over the generated modules, and also checks that no translation lost a `{placeholder}` English has.
 
+## The product name is a translation, not a token
+
+`FS_K_FOOLISH` is not spelled the same in every language, and that is the point rather than a drift.
+The game is Durak, Russian for "fool", so the name is the adjective "foolish" and it is a play on the game itself:
+`en` "FOOLISH", `ru` "ДУРАЦКИЙ", `ko` "바보같은", and one for each of the other twenty-two.
+
+Three other keys say the name, and all three have to say the same one:
+`about_foolish` is the About heading, `about_paragraph_2` is the paragraph that explains where the name came from, and `ios.msg.joininvite` is the iMessage invite.
+Korean shipped the contradiction this is written down to prevent: `foolish` was 바보같은 while the heading read "FOOLISH 소개", so the About screen named a product the reader saw nowhere else.
+`e2e/validation/i18n_source_of_truth.test.ts` is the gate.
+
+The DOMAIN is not the name.
+`foolish.cards`, a URL, a bundle id: those are addresses, and they are spelled one way everywhere.
+
+## The tutorial narrates, and that is its own vocabulary
+
+The web tutorial's thirty-three `tut_` keys are here for the same reason everything else is.
+They were a second table in `src/localization/tutorialStrings.ts` with three languages of its own, so a learner reading one of the other twenty-two was taught in English by a board that spoke their language.
+
+They are NOT the board's keys, and the difference is the one #198 already found once.
+`cover` is a word on a button a player presses, and `tut_cover` is a sentence explaining to a learner what covering is.
+`replay_cover` is a third thing again, the player speaking in the first person over a replay.
+Most languages spell those three differently, so they are three keys, and a tutorial written against the wrong one teaches a word the board never shows.
+
 ## Nothing here ships
 
 `c/i18n` is outside `c/src` and appears in no `*_SRC` list in `c/Makefile`, on purpose.
