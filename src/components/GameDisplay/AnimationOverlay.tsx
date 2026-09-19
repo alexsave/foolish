@@ -316,194 +316,205 @@ export const AnimationOverlay = () => {
         // Check if cards are sanitized (refill from other players)
         const isSanitized = cards.every(card => card.suit === -1 && card.value === -1);
 
-        {
-            // Measure placeholder positions for precise targeting
-            const measuredPositions = measurePlaceholderPositions(type, cards, player_id);
-            
-            if (isSanitized) {
-                // Render single CardBack for sanitized refill
-                const startPos = spotFrom([() => findElementByLocation('deck')],
-                    getFallbackPosition('deck'));
-                const endPos = spotFrom([() => findElementByLocation('hand', player_id)],
-                    getFallbackPosition('hand', player_id));
+        // Measure placeholder positions for precise targeting
+        const measuredPositions = measurePlaceholderPositions(type, cards, player_id);
+        
+        if (isSanitized) {
+            // Render single CardBack for sanitized refill
+            const startPos = spotFrom([() => findElementByLocation('deck')],
+                getFallbackPosition('deck'));
+            const endPos = spotFrom([() => findElementByLocation('hand', player_id)],
+                getFallbackPosition('hand', player_id));
 
-                const newAnimatedCard: AnimatedCard = {
-                    id: `sanitized-refill-${player_id}-${Date.now()}`,
-                    card: { suit: -1, value: -1 }, // Keep original sanitized card
+            const newAnimatedCard: AnimatedCard = {
+                id: `sanitized-refill-${player_id}-${Date.now()}`,
+                card: { suit: -1, value: -1 }, // Keep original sanitized card
+                startPosition: startPos,
+                endPosition: endPos,
+                progress: 0,
+                animationType: type,
+                playerId: player_id,
+                isSanitizedRefill: true,
+                cardCount: cards.length,
+                isRevert: is_revert,
+                flight: currentAnimation,
+            };
+
+            setAnimatedCards([newAnimatedCard]);
+        } else {
+            // Render individual CardFaces for normal cards
+            const newAnimatedCards: AnimatedCard[] = [];
+
+            // Cards entering the local hand land at its END - measure those
+            // slots once for the whole batch (deal/refill/pickup).
+            const handSlots = to_location === 'hand'
+                ? measureHandSlotPositions(cards.length, player_id)
+                : [];
+
+            // For cover animations, keep track of which attack cards have been targeted
+            const targetedAttackCards = new Set<string>();
+
+            // WHICH ATTACK THIS COVER CARD IS FOR.
+            //
+            // The event says so outright when it carries target_cards (a
+            // multi-card cover names its pairs). When it does not, the board
+            // has to work it out the way the kernel did: the first uncovered
+            // battle this card can legally cover. `canCoverPair` is the
+            // kernel's can_cover, so this asks the engine rather than
+            // re-deciding the rule.
+            //
+            // STATEFUL, and deliberately so: two cover cards in one flight
+            // must not both aim at the same attack, so a battle claimed here
+            // is struck off for the rest of the batch. That is why this is
+            // called once per card, in order, rather than mapped lazily.
+            const coverTarget = (c: Card, i: number): Card | null => {
+                if (target_cards && target_cards[i]) return target_cards[i];
+                if (!game?.battles) return null;
+
+                const battle = game.battles
+                    .filter((b) => !covered(b))
+                    .find((b) => canCoverPair(b.attack, c, game.powerSuit)
+                        && !targetedAttackCards.has(`${b.attack.suit}-${b.attack.value}`));
+                if (!battle) return null;
+
+                targetedAttackCards.add(`${battle.attack.suit}-${battle.attack.value}`);
+                return battle.attack;
+            };
+
+            // WHERE A CARD STARTS. Three origins, then the shared
+            // resolution. `fromLanding` rides along because a card whose
+            // move the server refused was never laid on the board - only a
+            // flight put it there - so its return starts at the spot, and
+            // the scale, that flight left it at.
+            const liftoff = (card: Card): { spot: Spot; fromLanding: boolean } => {
+                let sourceElement: HTMLElement | null = null;
+                let remembered: Spot | undefined;
+
+                if (from_location === 'hand') {
+                    sourceElement = findElementByLocation('hand', player_id, card.suit, card.value);
+                } else if (from_location === 'deck') {
+                    sourceElement = findElementByLocation('deck');
+                } else if (from_location === 'table') {
+                    sourceElement = document.querySelector(`[data-location="table"] [data-card="${card.suit}-${card.value}"]`) as HTMLElement | null;
+                    remembered = sourceElement ? undefined : tableLandings.get(`${card.suit}-${card.value}`);
+                    if (!sourceElement && !remembered) sourceElement = findElementByLocation('table', undefined, card.suit, card.value);
+                }
+
+                return {
+                    spot: spotFrom([() => sourceElement, () => remembered],
+                        getFallbackPosition(from_location || 'hand', player_id)),
+                    fromLanding: !sourceElement && !!remembered,
+                };
+            };
+
+            // WHERE A CARD LANDS - one function per destination, because a
+            // destination is where the knowledge about it belongs. Each is
+            // a chain plus a floor; none of them nests.
+
+            const landsFlipped = (): Spot => spotFrom([
+                () => findElementByLocation('flipped'),
+                // The trump sits 60px under the deck when its own element
+                // has not rendered yet.
+                () => {
+                    const deck = findElementByLocation('deck');
+                    return deck ? shifted(centreOf(deck), 0, 60) : null;
+                },
+            ], getFallbackPosition('flipped', player_id));
+
+            // The table is the one destination that cares HOW the card got
+            // there: a cover aims at the attack it answers, an attack aims
+            // at the slot it will occupy, anything else aims at the table.
+            const landsOnTable = (card: Card, index: number): Spot => {
+                if (type === 'cover') {
+                    const target = coverTarget(card, index);
+                    // A known target is aimed at exactly; without one we aim
+                    // at the table and fan the cards 70px apart so
+                    // simultaneous covers do not stack on one point. The fan
+                    // belongs ONLY to the untargeted case.
+                    return target
+                        ? spotFrom(
+                            [() => findElementByLocation('table', undefined, target.suit, target.value)],
+                            getFallbackPosition('table', player_id))
+                        : spotFrom([() => {
+                            const table = findElementByLocation('table');
+                            return table ? shifted(centreOf(table), index * 70, 0) : null;
+                        }], getFallbackPosition('table', player_id));
+                }
+
+                if (type === 'attack_pass') {
+                    const slot = (game?.battles.length || 0) + index;
+                    return spotFrom([
+                        // The board already shows the card - a confirmation
+                        // that beat its own flight - so that IS the landing.
+                        () => document.querySelector(`[data-location="table"] [data-card="${card.suit}-${card.value}"]`) as HTMLElement | null,
+                        () => measuredPositions.get(`${index}`),
+                        () => findElementByLocation('table', undefined, undefined, undefined, slot),
+                        // The 60px fan is the FLOOR's alone: a drop zone we
+                        // actually found is already in the right place.
+                    ], shifted(getFallbackPosition('table', player_id), slot * 60, 0));
+                }
+
+                return spotFrom([() => findElementByLocation('table')],
+                    getFallbackPosition('table', player_id));
+            };
+
+            // The card's own place when the hand already holds it (a refused
+            // card never left the board's hand; a board committed before the
+            // flight shows it there), else the measured landing slot for the
+            // local hand; opponents' mini-hands fall through to their
+            // container.
+            const landsInHand = (card: Card, index: number): Spot => spotFrom([
+                () => (player_id
+                    ? document.querySelector(`[data-location="hand"][data-player-id="${player_id}"][data-card="${card.suit}-${card.value}"]`) as HTMLElement | null
+                    : null),
+                () => handSlots[index],
+                () => findElementByLocation('hand', player_id),
+            ], getFallbackPosition('hand', player_id));
+
+            const landsElsewhere = (): Spot => spotFrom(
+                [() => (to_location === 'discard' ? findElementByLocation('discard') : null)],
+                getFallbackPosition(to_location || 'table', player_id));
+
+            const landingFor = (card: Card, index: number): Spot =>
+                to_location === 'flipped' ? landsFlipped()
+                    : to_location === 'table' ? landsOnTable(card, index)
+                        : to_location === 'hand' ? landsInHand(card, index)
+                            : landsElsewhere();
+
+            cards.forEach((card, index) => {
+                const { spot: startPos, fromLanding } = liftoff(card);
+                const endPos = landingFor(card, index);
+
+                // Small offset so simultaneous cards into the same UNMEASURED
+                // area don't fully overlap; measured targets (table slots, hand
+                // slots) are exact - offsetting them would re-introduce drift.
+                const preciselyMeasured = (to_location === 'hand' && handSlots[index] !== undefined) ||
+                    (type === 'attack_pass' && measuredPositions.get(`${index}`) !== undefined);
+                if (!preciselyMeasured) {
+                    const stackOffset = index * 3;
+                    endPos.x += stackOffset;
+                    endPos.y += stackOffset;
+                }
+
+                if (to_location === 'table') tableLandings.set(`${card.suit}-${card.value}`, { ...endPos });
+
+                newAnimatedCards.push({
+                    fromLanding,
+                    id: `${card.suit}-${card.value}-${player_id}-${Date.now()}-${index}`,
+                    card,
                     startPosition: startPos,
                     endPosition: endPos,
                     progress: 0,
                     animationType: type,
                     playerId: player_id,
-                    isSanitizedRefill: true,
-                    cardCount: cards.length,
                     isRevert: is_revert,
                     flight: currentAnimation,
-                };
-
-                setAnimatedCards([newAnimatedCard]);
-            } else {
-                // Render individual CardFaces for normal cards
-                const newAnimatedCards: AnimatedCard[] = [];
-
-                // Cards entering the local hand land at its END - measure those
-                // slots once for the whole batch (deal/refill/pickup).
-                const handSlots = to_location === 'hand'
-                    ? measureHandSlotPositions(cards.length, player_id)
-                    : [];
-
-                // For cover animations, keep track of which attack cards have been targeted
-                const targetedAttackCards = new Set<string>();
-
-                // WHICH ATTACK THIS COVER CARD IS FOR.
-                //
-                // The event says so outright when it carries target_cards (a
-                // multi-card cover names its pairs). When it does not, the board
-                // has to work it out the way the kernel did: the first uncovered
-                // battle this card can legally cover. `canCoverPair` is the
-                // kernel's can_cover, so this asks the engine rather than
-                // re-deciding the rule.
-                //
-                // STATEFUL, and deliberately so: two cover cards in one flight
-                // must not both aim at the same attack, so a battle claimed here
-                // is struck off for the rest of the batch. That is why this is
-                // called once per card, in order, rather than mapped lazily.
-                const coverTarget = (c: Card, i: number): Card | null => {
-                    if (target_cards && target_cards[i]) return target_cards[i];
-                    if (!game?.battles) return null;
-
-                    const battle = game.battles
-                        .filter((b) => !covered(b))
-                        .find((b) => canCoverPair(b.attack, c, game.powerSuit)
-                            && !targetedAttackCards.has(`${b.attack.suit}-${b.attack.value}`));
-                    if (!battle) return null;
-
-                    targetedAttackCards.add(`${battle.attack.suit}-${battle.attack.value}`);
-                    return battle.attack;
-                };
-
-                cards.forEach((card, index) => {
-                    // Find source element
-                    let sourceElement: HTMLElement | null = null;
-                    let startPos: { x: number; y: number };
-                    
-                    let remembered: { x: number; y: number } | undefined;
-                    if (from_location === 'hand') {
-                        sourceElement = findElementByLocation('hand', player_id, card.suit, card.value);
-                    } else if (from_location === 'deck') {
-                        sourceElement = findElementByLocation('deck');
-                    } else if (from_location === 'table') {
-                        sourceElement = document.querySelector(`[data-location="table"] [data-card="${card.suit}-${card.value}"]`) as HTMLElement | null;
-                        remembered = sourceElement ? undefined : tableLandings.get(`${card.suit}-${card.value}`);
-                        if (!sourceElement && !remembered) sourceElement = findElementByLocation('table', undefined, card.suit, card.value);
-                    }
-
-                    startPos = spotFrom(
-                        [() => sourceElement, () => remembered],
-                        getFallbackPosition(from_location || 'hand', player_id),
-                    );
-
-                    let endPos: Spot;
-
-                    if (to_location === 'flipped') {
-                        endPos = spotFrom([
-                            () => findElementByLocation('flipped'),
-                            // The trump sits 60px under the deck when its own
-                            // element has not rendered yet.
-                            () => {
-                                const deck = findElementByLocation('deck');
-                                return deck ? shifted(centreOf(deck), 0, 60) : null;
-                            },
-                        ], getFallbackPosition('flipped', player_id));
-                    } else if (to_location === 'table') {
-                        // Enhanced table targeting logic for multiple cards
-                        if (type === 'cover') {
-                            const targetAttackCard = coverTarget(card, index);
-
-                            // A known target is aimed at exactly; without one we
-                            // aim at the table and fan the cards 70px apart so
-                            // simultaneous covers do not stack on one point.
-                            // Note the fan applies ONLY to the untargeted case.
-                            endPos = targetAttackCard
-                                ? spotFrom(
-                                    [() => findElementByLocation('table', undefined, targetAttackCard.suit, targetAttackCard.value)],
-                                    getFallbackPosition('table', player_id))
-                                : spotFrom([() => {
-                                    const table = findElementByLocation('table');
-                                    return table ? shifted(centreOf(table), index * 70, 0) : null;
-                                }], getFallbackPosition('table', player_id));
-                        } else if (type === 'attack_pass') {
-                            // For attack/pass, use measured placeholder positions for precision,
-                            // unless the board already shows the card (a confirmation that
-                            // beat its flight): then that card is where it lands.
-                            const targetBattleIndex = (game?.battles.length || 0) + index;
-                            endPos = spotFrom([
-                                // The board already shows the card (a confirmation
-                                // that beat its flight): that IS where it lands.
-                                () => document.querySelector(`[data-location="table"] [data-card="${card.suit}-${card.value}"]`) as HTMLElement | null,
-                                () => measuredPositions.get(`${index}`),
-                                () => findElementByLocation('table', undefined, undefined, undefined, targetBattleIndex),
-                                // The 60px fan is the FLOOR's alone: a found drop
-                                // zone is already in the right place.
-                            ], shifted(getFallbackPosition('table', player_id), targetBattleIndex * 60, 0));
-                        } else {
-                            endPos = spotFrom(
-                                [() => findElementByLocation('table')],
-                                getFallbackPosition('table', player_id));
-                        }
-                    } else {
-                        // Handle all other destination types
-                        if (to_location === 'hand') {
-                            // The card's own place when the hand already holds it (a
-                            // refused card never left the board's hand; a board committed
-                            // before the flight shows it there), else the precisely
-                            // measured landing slot for the local hand; opponents'
-                            // mini-hands fall through to their container.
-                            endPos = spotFrom([
-                                () => (player_id
-                                    ? document.querySelector(`[data-location="hand"][data-player-id="${player_id}"][data-card="${card.suit}-${card.value}"]`) as HTMLElement | null
-                                    : null),
-                                () => handSlots[index],
-                                () => findElementByLocation('hand', player_id),
-                            ], getFallbackPosition('hand', player_id));
-                        } else {
-                            endPos = spotFrom(
-                                [() => (to_location === 'discard' ? findElementByLocation('discard') : null)],
-                                getFallbackPosition(to_location || 'table', player_id));
-                        }
-                    }
-
-                    // Small offset so simultaneous cards into the same UNMEASURED
-                    // area don't fully overlap; measured targets (table slots, hand
-                    // slots) are exact - offsetting them would re-introduce drift.
-                    const preciselyMeasured = (to_location === 'hand' && handSlots[index] !== undefined) ||
-                        (type === 'attack_pass' && measuredPositions.get(`${index}`) !== undefined);
-                    if (!preciselyMeasured) {
-                        const stackOffset = index * 3;
-                        endPos.x += stackOffset;
-                        endPos.y += stackOffset;
-                    }
-
-                    if (to_location === 'table') tableLandings.set(`${card.suit}-${card.value}`, { ...endPos });
-
-                    newAnimatedCards.push({
-                        fromLanding: !sourceElement && !!remembered,
-                        id: `${card.suit}-${card.value}-${player_id}-${Date.now()}-${index}`,
-                        card,
-                        startPosition: startPos,
-                        endPosition: endPos,
-                        progress: 0,
-                        animationType: type,
-                        playerId: player_id,
-                        isRevert: is_revert,
-                        flight: currentAnimation,
-                    });
                 });
+            });
 
-                setAnimatedCards(newAnimatedCards);
-            }
-
+            setAnimatedCards(newAnimatedCards);
         }
+
 
         // Use CSS transitions - much smoother than manual animation. Progress goes to 1
         // after a short delay that crosses a browser paint, so the start frame renders
