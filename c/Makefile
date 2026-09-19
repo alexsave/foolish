@@ -1416,7 +1416,28 @@ COV_CC         ?= gcc
 COV_FLAGS      := -O0 -g --coverage -Isrc -Wno-unused-parameter -Wno-deprecated-declarations
 COV_LINE_MIN   ?= 90
 COV_BRANCH_MIN ?= 74
-COV_FILTERS    := --filter 'src/game\.c' --filter 'src/legal\.c' --filter 'src/replay\.c'
+# THE WHOLE SHIPPED KERNEL, not three files of it.
+#
+# This list was game/legal/replay back when those were most of what C owned. A
+# great deal has moved here since - the wire formats, the view masking, the
+# animation planner, the table and session layer, the iMessage envelope - and
+# none of it was gated. The gate measured 2,304 lines while the kernel had
+# grown to 7,738, so a file could lose half its coverage and the build stayed
+# green.
+#
+# What is NOT here, deliberately: the bot strategies. They are research code,
+# eleven of them are arena-only and never linked into anything shipped, and
+# holding a Monte-Carlo search to a line floor would gate the build on how
+# often a rollout happens to visit a branch. `make tests` still runs them.
+#
+# The floors stay at 90/74 even though the measured numbers are 94/79, because
+# CI runs real gcc and this was measured with Apple clang plus llvm-cov, and a
+# few points of toolchain drift must not turn into a red main. Raise them as
+# coverage climbs; never lower one to make a red build pass.
+COV_KERNEL     := game legal replay replay_steps replay_extras view awire evwire \
+                  msg_wire msg_expand anim_plan table client_table roster card \
+                  deal_rng sha256 bot_drive bot_roster analyse
+COV_FILTERS    := $(foreach f,$(COV_KERNEL),--filter 'src/$(f)\.c')
 
 .PHONY: coverage
 coverage:
@@ -1426,6 +1447,17 @@ coverage:
 	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/apply_difftest.c -o covbuild/apply_difftest  -lm
 	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/solver_difftest.c -o covbuild/solver_difftest -lm
 	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/replay_v6_test.c  -o covbuild/replay_v6_test  -lm
+	# THE SUITES `make difftests` RUNS AND THIS ONCE DID NOT. Coverage measured
+	# five of the eleven suites, so a file could read 0% while being thoroughly
+	# tested by a binary nobody built here. src/msg_wire.c - 644 lines, the FMSG
+	# envelope the whole iMessage product rides on - reported ZERO, with a
+	# 4,427-line test suite sitting beside it. Measuring a subset does not
+	# understate coverage, it MISDIRECTS it: the number points at the wrong
+	# files, and the gate protects whatever happens to be in the subset.
+	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/msg_wire_test.c   -o covbuild/msg_wire_test   -lm
+	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/anim_plan_test.c  -o covbuild/anim_plan_test  -lm
+	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/msg_expand_test.c -o covbuild/msg_expand_test -lm
+	$(COV_CC) $(COV_FLAGS) $(CORE_SRC) tests/analyse_test.c    -o covbuild/analyse_test    -lm
 	./covbuild/cnitro_tests
 	./covbuild/sim_difftest 4 100
 	./covbuild/apply_difftest 4 50
@@ -1433,7 +1465,41 @@ coverage:
 	./covbuild/solver_difftest 3 40 "" 5000
 	./covbuild/solver_difftest 4 40 "" 5000
 	./covbuild/replay_v6_test 10
+	./covbuild/msg_wire_test 20
+	./covbuild/anim_plan_test
+	./covbuild/msg_expand_test
+	./covbuild/analyse_test
+	# A NEW KERNEL FILE MUST NOT BE ABLE TO SLIP PAST THE GATE. COV_KERNEL is a
+	# hand-written list, and this repo has been bitten four times in one day by
+	# a check that named files while the files moved underneath it. Every source
+	# the iOS app links is, by definition, shipped kernel - so if one of those is
+	# missing from COV_KERNEL, say which, and fail. (The reverse is allowed:
+	# COV_KERNEL also holds table/bot_drive/bot_roster/analyse, which the wasm
+	# and the servers link but the phone does not.)
+	@missing=""; for f in $(notdir $(basename $(filter src/%,$(IOS_CORE_SRC)))); do \
+	   case " $(COV_KERNEL) " in *" $$f "*) ;; *) missing="$$missing $$f" ;; esac; \
+	 done; \
+	 if [ -n "$$missing" ]; then \
+	   echo "coverage: these are linked into the iOS app but are not in COV_KERNEL:$$missing" >&2; \
+	   echo "coverage: add them to COV_KERNEL in c/Makefile, or say in a comment why they are exempt." >&2; \
+	   exit 1; \
+	 fi
+	# --gcov-ignore-parse-errors: gcov miscounts a hot loop, and adding the four
+	# suites above made it hot enough to matter. game.c:1211 (the battle scan,
+	# entered on nearly every kernel call) came back with a hit count of
+	# 5,047,157,994 - a known gcov defect, gcc bugzilla 68080 - and gcovr's
+	# default is to treat a suspicious count as a corrupt report and ABORT.
+	#
+	# That failure is the dangerous kind: gcovr exits non-zero having read only
+	# part of the data, so the run looks like a coverage FAILURE while actually
+	# being a coverage NON-MEASUREMENT. Measured here: the aborted run reported
+	# src/msg_wire.c at 0%, which is wrong by ninety-one points.
+	#
+	# warn_once_per_file, not the silent form: a miscounted line is still worth
+	# one line of output, and if this ever starts firing on files that are not
+	# hot loops that is a signal, not noise.
 	gcovr --root . $(COV_FILTERS) --txt \
+	      --gcov-ignore-parse-errors suspicious_hits.warn_once_per_file \
 	      --fail-under-line $(COV_LINE_MIN) --fail-under-branch $(COV_BRANCH_MIN)
 
 clean:
