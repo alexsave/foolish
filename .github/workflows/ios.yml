@@ -31,9 +31,14 @@ jobs:
       - name: Goldens are up to date
         run: |
           cd c && make ios-goldens
-          if ! git diff --quiet -- ../ios/Fixtures/goldens.json; then
-            echo "::error::ios/Fixtures/goldens.json is stale - run 'make ios-goldens' and commit."
-            git --no-pager diff -- ../ios/Fixtures/goldens.json
+          # The whole directory, not one file: `make ios-goldens` writes several
+          # fixtures now, and an UNTRACKED one would pass a diff-only check
+          # while never reaching the test bundle.
+          if ! git diff --quiet -- ../ios/Fixtures \
+             || [ -n "$(git ls-files --others --exclude-standard -- ../ios/Fixtures)" ]; then
+            echo "::error::ios/Fixtures is stale - run 'make ios-goldens' and commit."
+            git --no-pager diff --stat -- ../ios/Fixtures
+            git --no-pager status --short -- ../ios/Fixtures
             exit 1
           fi
 

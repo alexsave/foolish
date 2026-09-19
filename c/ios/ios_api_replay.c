@@ -27,6 +27,19 @@ static int g_last_replay_error = 0;
 
 // base32 lives in replay.c (replay_b32_decode / replay_b32_encode).
 
+// BYTES AS BASE32, for the one text layer that is not a replay code: the /m/
+// bubble URL the iMessage extension puts an envelope in. See ios_api.h.
+//
+// Swift had its own copy of this alphabet and its own 5-bit packing loop. The
+// web never did - server/api pulls the same replay_b32_encode out of the wasm -
+// so Swift was the only host restating a codec the kernel exports, and the only
+// test it had encoded and then decoded with the same file.
+int fio_b32_encode(const uint8_t *in, int n, char *out, int cap) {
+    if (!out || n < 0 || (n > 0 && !in)) return FIO_EBADARG;
+    const int w = replay_b32_encode(in, n, out, cap);
+    return w < 0 ? FIO_ECAP : w;
+}
+
 // The exact game, hidden state and all. One kernel call - the deal seed was kept
 // at fio_new_game, the actions are this game's own logs, and the reveal stream
 // is re-derived inside the kernel, so the app assembles nothing. This is the

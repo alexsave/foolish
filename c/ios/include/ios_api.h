@@ -231,6 +231,36 @@ int fio_play_probe(const uint8_t *menu, int menu_len,
 int fio_play_human_menu(const uint8_t *menu, int menu_len,
                         const uint8_t *table, int n_battles,
                         char *out, int cap);
+// A MOVE, WRITTEN - the awire action frame for one move, so no host has to
+// know what that frame looks like. The inverse of the packed menu above, and
+// the thing every producer needs: the frame fio_apply_awire takes is also the
+// body an online move POSTs, so a host holding a Move has to turn it into
+// bytes before it can do anything with it at all.
+//
+// It exists because both of those hosts had written the layout out again in
+// Swift, from the comment at the top of awire.h, and the two copies had already
+// drifted apart on what an over-long move or a mismatched cover does. awire.c
+// is the ONE statement of the layout; this is its door.
+//
+// Cards arrive as SUIT/VALUE PAIRS - two signed bytes each, the suit then the
+// value, n_cards pairs in `cards` and (cover only) n_attacks in `attacks` -
+// rather than as wire ids, so the id arithmetic stays on this side too. A
+// caller that had to compute suit*13+value-1 would be holding half the format
+// again.
+//
+// `type` is the MOVE_* index the packed menu carries, which is also the awire
+// kind for the five playable moves. MOVE_WAIT has no action on the wire, so it
+// is FIO_EBADARG rather than an empty frame.
+//
+// Returns the bytes written, FIO_ECAP if the frame does not fit in `cap`, or
+// FIO_EBADARG for a move awire will not write (bad type, more than
+// AWIRE_MAX_CARDS cards, a pickup/good carrying cards, a cover whose attack
+// count does not match its cover count).
+int fio_awire_encode(int type,
+                     const int8_t *cards, int n_cards,
+                     const int8_t *attacks, int n_attacks,
+                     char *out, int cap);
+
 // Apply an awire action frame ([kind, n, cards, attacks]) — THE apply entry
 // Returns FIO_EREJECT on an illegal move
 // (see fio_last_reject).
@@ -615,6 +645,22 @@ int fio_finish_rows(const uint8_t *elimination, int n_elim, int game_over,
 int fio_shown_ledger_allows(int claim, int sequencing);
 
 // ---------- replays (§7.3) -------------------------------------------------
+
+// ARBITRARY BYTES AS BASE32 TEXT - RFC 4648, uppercase, no padding, the same
+// alphabet every replay code travels in (replay.c). NUL-terminated; returns the
+// characters written (not counting the NUL) or FIO_ECAP.
+//
+// The replay entries below are whole codes; this is the raw codec, for the one
+// other text layer the app has: the /m/ bubble URL an iMessage envelope rides
+// in (§4.3). The web reaches the same replay_b32_encode through the wasm, so
+// without this Swift is the only host of three with its own alphabet and its
+// own bit-packing loop - and a Swift test that encodes and then decodes cannot
+// notice if both halves move together.
+//
+// No inverse door on purpose: reading a format the kernel writes is a host's
+// own business (ios_api.h's preamble), and the /m/ reader also has to tolerate
+// a URL's stray characters. Writing one is not.
+int fio_b32_encode(const uint8_t *in, int n, char *out, int cap);
 
 // Encode the CURRENT game's history into a replay integer, base32-ish encoded
 // into `out` as the short shareable code (foolish.cards/<code>). Bytes written
