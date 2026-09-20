@@ -214,6 +214,18 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
     return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
 }
 
+int uttt_draw_cell(UtttDL *d, int mark, int mv, int32_t seed, float t)
+{
+    if (mv < 0 || mv > 80) return -1;
+    int b = mv / 9, c = mv % 9;
+    float x = (b % 3) * BL + (c % 3) * CE;
+    float y = (b / 3) * BL + (c / 3) * CE;
+    UtttPen p = uttt_pen_92();
+    mark_in(d, mark, x + CE * .1f, y + CE * .1f, CE * .8f,
+            seed * 1000 + b * 9 + c, t, &p);
+    return 0;
+}
+
 int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float calm)
 {
     UtttPen p = uttt_pen_92();

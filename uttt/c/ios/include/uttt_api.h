@@ -40,8 +40,18 @@ int  uti_bot_move(int budget);
  * last:   block*9+cell of the move being drawn, -1 for none. */
 int  uti_draw(int active, int last, float mark_t, float meta_t);
 
+/* JUST the mark being drawn, so an animation does not rebuild the board.
+ * 14,000 polygons is fine once and not fine sixty times a second: the caller
+ * caches uti_draw()'s output as an image and composites this on top. */
+int  uti_draw_one(int mv, float t);
+
 /* One mark on its own, for the side indicator. */
 int  uti_draw_mark(int mark, int32_t seed);
+
+/* The sheet itself. Fills w*h RGBA bytes with the napkin - crossed cellulose
+ * over a warm near-white. Here rather than in the renderer for the same reason
+ * the marks are: both phones have to be looking at the same piece of paper. */
+void uti_paper(uint8_t *rgba, int w, int h);
 
 /* Parallel arrays describing the last uti_draw. Coordinates are 0..1. */
 const float    *uti_points(void);       /* 2 floats a point             */

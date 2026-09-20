@@ -118,3 +118,4 @@ isolate-*.log
 __pycache__/
 *.pyc
 uttt/ios/vendor/
+uttt/ios/*.xcodeproj

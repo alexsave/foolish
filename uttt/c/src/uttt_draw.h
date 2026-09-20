@@ -23,6 +23,9 @@ UtttDrawOpts uttt_draw_opts(int32_t seed);
 /* Build the board. Returns 0, or -1 if it ran out of room. */
 int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o);
 
+/* One cell's mark, partially drawn - the animating stroke on its own. */
+int uttt_draw_cell(UtttDL *d, int mark, int mv, int32_t seed, float t);
+
 /* One mark on its own, for the "you are" indicator. */
 int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float calm);
 

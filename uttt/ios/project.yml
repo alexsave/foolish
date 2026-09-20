@@ -1,0 +1,104 @@
+# XcodeGen spec for Ultimate Tic-Tac-Toe.
+#
+# The .xcodeproj is a BUILD ARTIFACT - never hand-edit it, never commit it.
+#
+# BOOTSTRAP ORDER (from a clean checkout):
+#   1. make -C ../c ios-lib      # writes ios/vendor/Uttt.xcframework
+#   2. xcodegen generate
+#   3. xcodebuild -scheme UtttMessagesApp -destination 'generic/platform=iOS Simulator' build
+# Step 1 must run first: UtttKit links vendor/Uttt.xcframework, which is not in
+# git because it is generated.
+#
+# THREE TARGETS, inherited from the fork for one reason worth stating: an app
+# extension cannot be distributed on its own, so the iMessage game needs a
+# codeless container to carry it. That container EMBEDS the framework without
+# linking against it - @rpath for an extension resolves into its containing
+# app's Frameworks/, so without the embed the bundle builds clean and then
+# fails to load at runtime.
+#
+# WHAT THIS HAS NONE OF: no network stack, no accounts, no database. The whole
+# game is twenty-two bytes in the message URL, so there is nothing to talk to.
+name: Uttt
+options:
+  bundleIdPrefix: cards.uttt
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: 8N2Z544SB4
+    ITSAppUsesNonExemptEncryption: "NO"
+
+configs:
+  Debug: debug
+  Release: release
+
+targets:
+  UtttMessagesApp:
+    type: application.messages
+    platform: iOS
+    sources:
+      - path: UtttMessagesApp
+    dependencies:
+      - target: UtttMessages
+        embed: true
+      # Must be embedded here even though the container has no code: it only
+      # has to CARRY the binary. link:false because there is nothing to link.
+      - target: UtttKit
+        embed: true
+        link: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.uttt.msg
+        INFOPLIST_FILE: UtttMessagesApp/Info.plist
+        TARGETED_DEVICE_FAMILY: "1"
+
+  UtttMessages:
+    type: app-extension.messages
+    platform: iOS
+    sources:
+      - path: UtttMessages
+    dependencies:
+      - target: UtttKit
+    settings:
+      base:
+        # Prefixed by its CONTAINER - an extension's bundle id must extend the
+        # app that embeds it.
+        PRODUCT_BUNDLE_IDENTIFIER: cards.uttt.msg.MessagesExtension
+        INFOPLIST_FILE: UtttMessages/Info.plist
+        TARGETED_DEVICE_FAMILY: "1"
+
+  UtttKit:
+    type: framework
+    platform: iOS
+    sources:
+      - path: UtttKit
+      # The kernel binding lives in the repo's sdk/, sibling to c/ - it is the
+      # boundary, not a UI file.
+      - path: ../sdk/swift
+    dependencies:
+      # STATIC (embed:false), so the linker pulls it in per object and nothing
+      # unreferenced ships.
+      - framework: vendor/Uttt.xcframework
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.uttt.kit
+        GENERATE_INFOPLIST_FILE: "YES"
+        # The clang module map that lets Swift `import CUttt`, copied into
+        # BUILT_PRODUCTS_DIR/include by the xcframework.
+        HEADER_SEARCH_PATHS: $(inherited) $(BUILT_PRODUCTS_DIR)/include
+        TARGETED_DEVICE_FAMILY: "1"
+
+schemes:
+  UtttMessagesApp:
+    build:
+      targets:
+        UtttMessagesApp: all
+    run:
+      config: Debug

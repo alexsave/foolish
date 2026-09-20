@@ -62,8 +62,16 @@ endef
 ios-lib:
 	@echo "== device slice (arm64) =="
 	$(call IOS_SLICE,arm64-apple-ios$(IOS_MIN_VERSION),iphoneos,build/ios/device)
-	@echo "== simulator slice (arm64) =="
-	$(call IOS_SLICE,arm64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim)
+	@echo "== simulator slices (arm64 + x86_64) =="
+	# BOTH, because `-destination 'generic/platform=iOS Simulator'` builds both
+	# and a one-arch library fails the link with "ignoring file ... found
+	# architecture arm64, required architecture x86_64" - which reads like a
+	# missing symbol and is not.
+	$(call IOS_SLICE,arm64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-arm64)
+	$(call IOS_SLICE,x86_64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-x86_64)
+	@mkdir -p build/ios/sim
+	lipo -create build/ios/sim-arm64/libuttt.a build/ios/sim-x86_64/libuttt.a \
+	     -output build/ios/sim/libuttt.a
 	@rm -rf ../ios/vendor/Uttt.xcframework
 	@mkdir -p ../ios/vendor
 	xcodebuild -create-xcframework \
