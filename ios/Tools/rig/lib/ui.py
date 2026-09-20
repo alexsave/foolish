@@ -231,7 +231,7 @@ def host_drawer_top(a, s):
     thing is lowest on our own surface. Ask `drawer_top` whether a drawer is
     expanded first."""
     g = grabber(a, s)
-    return None if g is None else round(g[0] - 5.7, 1)
+    return None if g is None else round(float(g[0]) - 5.7, 1)
 
 
 def last_bubble(a, s):
@@ -478,7 +478,7 @@ def table_cards(a, s):
         b = min(b, hand[0] - 1)
         if b - t < 20 * s:
             continue
-        n = max(1, round((b - t) / row))
+        n = max(1, round(float(b - t) / row))
         step = (b - t) / n
         for k in range(n):
             t0, b0 = int(t + k * step), int(t + (k + 1) * step)

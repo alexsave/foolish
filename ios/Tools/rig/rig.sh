@@ -92,8 +92,35 @@ LIB="$HERE/lib"
 SIM="${FOOLISH_SIM:-}"
 IDB="${FOOLISH_IDB:-idb}"
 OUT="${FOOLISH_OUT:-$HOME/Downloads/foolish-shots}"
-APP_ID=cards.foolish.msg
-EXT_DOM=cards.foolish.msg.MessagesExtension
+
+# ---- the product ----------------------------------------------------------
+# WHICH PRODUCT THIS RIG IS DRIVING, and the only place that knows.
+#
+# Everything here was spelled out where it was used - fourteen times, across a
+# two-thousand-line file - which is fine while there is one product and is the
+# whole job the day there are two. None of it is a mechanism: a second product
+# is this block with different strings, and nothing below it mentions a bundle
+# id, an App Group, a scheme or an app's name again. There is no plugin system
+# and there should not be one.
+#
+# The defaults are today's Durak values, so nothing changes for Foolish. Each
+# is overridable from the environment for the same reason the simulator is.
+#
+# NB the scratch paths above and below (FOOLISH_OUT, FOOLISH_DD, FOOLISH_WORK)
+# are deliberately NOT in here: `lib/ui.py` carries its own copy of the
+# FOOLISH_WORK default, and a rig that changed one of the two would put the
+# screenshot somewhere the finder does not look.
+APP_ID="${RIG_APP_ID:-cards.foolish.msg}"                 # the container app
+EXT_DOM="${RIG_EXT_DOM:-$APP_ID.MessagesExtension}"       # the appex's prefs domain
+APP_GROUP="${RIG_APP_GROUP:-group.$APP_ID}"               # dev.* files live here
+SCHEME="${RIG_SCHEME:-FoolishMessagesApp}"                # what `build` builds
+XCPROJ="${RIG_XCPROJ:-$REPO/ios/Foolish.xcodeproj}"
+APP_BUNDLE="${RIG_APP_BUNDLE:-$SCHEME.app}"               # what `build` installs
+APPEX="${RIG_APPEX:-FoolishMessages}"                     # the appex process
+MENU_NAME="${RIG_MENU_NAME:-Foolish}"                     # the row in the + menu
+LOG_SUBSYSTEM="${RIG_LOG_SUBSYSTEM:-cards.foolish}"       # `rig.sh log`
+# ---- end of the product block ---------------------------------------------
+
 # DerivedData is PER SIMULATOR, which is to say per task (rule 5). One shared
 # DerivedData is the build-side version of sharing a device, and it fails the
 # same silent way: a concurrent agent building a WORKTREE writes its own
@@ -228,7 +255,7 @@ poll() {
 # `seed_open`'s `|| continue` then skipped the seed and the open entirely: three
 # silent retries that never tried anything, reported as "the extension never
 # claimed its seed".
-appex_pid()  { pgrep -f "Devices/$SIM/.*FoolishMessages\.appex" 2>/dev/null | head -1 || true; }
+appex_pid()  { pgrep -f "Devices/$SIM/.*$APPEX\.appex" 2>/dev/null | head -1 || true; }
 appex_gone() { [ -z "$(appex_pid)" ]; }
 kill_appex() {
   local p; p=$(appex_pid || true)
@@ -256,6 +283,30 @@ not_in_thread() { ! in_thread; }
 # absent on iOS 27, where the open menu reports only its app rows - so the rows
 # are what this asks for, with the old target still tried first.
 menu_up() { ax_first "dismiss popup" "Camera" "Photos" >/dev/null 2>&1; }
+# SCROLL THE "+" APP MENU, FROM THE MENU'S OWN GEOMETRY.
+#
+# This was a fraction of the SCREEN - a drag from 89% of the height up to 55% -
+# and a drag that starts below a presented menu or ends above it DISMISSES it.
+# The failure then looks like the opposite of itself: the app really is not on
+# screen any more, so `open` ends "is the extension installed?" for an
+# extension that is installed and a menu the rig threw away itself. The old
+# swipe also fired whether or not a menu was up, so a missed `+` became a drag
+# across the transcript followed by that same wrong diagnosis.
+#
+# `ax.py menu` answers with two row centres inside the menu's own scroll view
+# (see there for the geometry, measured on three phones). On a 6.9" phone,
+# iOS 27.0, 440x956pt: `170 915 519`, where the fraction gave `176 851 526`.
+# The fraction did land inside the menu on every iPhone measured - it is
+# unmoored, not yet wrong - but the menu is a fixed-size popover anchored to
+# the compose bar, so nothing ties it to the screen's height, and at iPad
+# heights the old END point is already above the menu's top edge.
+#
+# A menu that is not on screen is a failure, not a swipe into the transcript.
+menu_swipe() {
+  local m; m=$(python3 "$LIB/ax.py" menu) \
+    || { echo "the + app menu is not on screen - nothing to scroll" >&2; return 1; }
+  swipe 0.5 $(echo "$m" | awk '{print $1, $2, $1, $3}') 0.15
+}
 # THE SEND HAS GONE THROUGH. Messages only shows a Send button while the compose
 # field holds something, so its DISAPPEARANCE is the completion signal - which
 # is what the flat 4s after every Send was standing in for, five times a run.
@@ -310,8 +361,21 @@ tap_ax() {
 #
 # Both labels, in one tree, oldest first. This is the only label in the rig with
 # a version split; the rest of Apple's chrome (add, Message, Send) is unchanged.
+#
+# AND A KIND, WHICH IS THE HALF THAT MAKES THE ORDER SAFE. On iOS 27 the thread
+# still carries two elements called `Messages` - the application and a group the
+# size of the whole screen - so asking for that label first and taking the
+# smallest hit answered with a 440x956 element whose centre is the middle of the
+# transcript. The tap landed in the conversation, this function RETURNED 0, and
+# the caller carried on believing it had left: `enter` then probed its row
+# heights inside the thread (the header is one of them, and it opens Apple's
+# contact card), and the run ended "could not open conversation" with the wanted
+# thread on screen the whole time. Measured on FoolishRigRepair, iOS 27.0:
+# `ax_first "Messages" "Back"` -> `220 478`, dead centre; with `--type Button`
+# it falls through to the chevron at `42 84`.
 tap_back() {
-  local pt; pt=$(ax_first "Messages" "Back") || { echo "no back chevron on screen" >&2; return 1; }
+  local pt; pt=$(ax_first --type Button "Messages" "Back") \
+    || { echo "no back chevron on screen" >&2; return 1; }
   tap $(echo "$pt" | awk '{print $1, $2}') "${1:-1}"
 }
 
@@ -321,12 +385,12 @@ group_dir() {
   for d in ~/Library/Developer/CoreSimulator/Devices/"$SIM"/data/Containers/Shared/AppGroup/*/; do
     id=$(plutil -extract MCMMetadataIdentifier raw \
          "$d/.com.apple.mobile_container_manager.metadata.plist" 2>/dev/null || true)
-    [ "$id" = "group.cards.foolish.msg" ] && { echo "${d%/}"; return; }
+    [ "$id" = "$APP_GROUP" ] && { echo "${d%/}"; return; }
   done
   # Printing nothing here would make every caller write to "/dev.slowmo", which
   # on a machine with a writable root would silently do the wrong thing.
   echo "no App Group container on $SIM - install the app first" >&2
-  echo "/nonexistent/group.cards.foolish.msg"
+  echo "/nonexistent/$APP_GROUP"
 }
 
 # ---------------------------------------------------------------- setup ----
@@ -376,12 +440,12 @@ cmd_build() {
   # this compile-time flag, and the `dev.reseed` file at runtime.
   local cond="DEBUG"
   [ -n "${FOOLISH_RESEED:-}" ] && cond="$cond RIG_RESEED"
-  xcodebuild -project "$REPO/ios/Foolish.xcodeproj" -scheme FoolishMessagesApp \
+  xcodebuild -project "$XCPROJ" -scheme "$SCHEME" \
     -configuration Debug -destination "platform=iOS Simulator,id=$SIM" \
     -derivedDataPath "$DD" SWIFT_ACTIVE_COMPILATION_CONDITIONS="$cond" build | tail -3
   # Install OVER the old build. `simctl uninstall` destroys the App Group and
   # the appex's Preferences container, and both come back with fresh UUIDs.
-  xcrun simctl install "$SIM" "$DD/Build/Products/Debug-iphonesimulator/FoolishMessagesApp.app"
+  xcrun simctl install "$SIM" "$DD/Build/Products/Debug-iphonesimulator/$APP_BUNDLE"
   echo "installed on $SIM"
 }
 
@@ -481,7 +545,7 @@ cmd_setname() {
 
 cmd_nickname() {
   local name="${1:-Alex}" g p
-  g=$(group_dir); p="$g/Library/Preferences/group.cards.foolish.msg.plist"
+  g=$(group_dir); p="$g/Library/Preferences/$APP_GROUP.plist"
   [ -f "$p" ] || { echo "no group prefs yet - run 'rig.sh setname $name' instead" >&2; return 1; }
   plutil -replace 'fmsg\.nickname' -string "$name" "$p"
   echo "nickname: $(plutil -extract 'fmsg\.nickname' raw "$p")"
@@ -692,7 +756,6 @@ cmd_open() {
     poll 12 0.25 menu_up && break
     m=$((m + 1))
   done
-  read -r W H < <(screen)
   # FOOLISH IS BELOW THE FOLD, and on a given device it always will be - the
   # app menu's order does not shuffle between runs. The loop below therefore
   # opened with a `tap_ax "Foolish"` that could not succeed, every single time:
@@ -700,12 +763,12 @@ cmd_open() {
   # and scroll first when we have learned it.
   local mscroll="${FOOLISH_WORK:-/tmp/foolishrig}/menuscroll.$SIM"
   if [ -s "$mscroll" ]; then
-    swipe 0.5 $((W * 2 / 5)) $((H * 89 / 100)) $((W * 2 / 5)) $((H * 55 / 100)) 0.15
-    poll 20 0.15 ax "Foolish" || true
+    menu_swipe || return 1
+    poll 20 0.15 ax "$MENU_NAME" || true
   fi
   local i=0
   while [ $i -lt 5 ]; do
-    if tap_ax "Foolish" 0.4; then
+    if tap_ax "$MENU_NAME" 0.4; then
       [ -s "$mscroll" ] || { mkdir -p "$(dirname "$mscroll")"; printf '%s' "$i" > "$mscroll"; }
       # Seven seconds was an estimate of a cold appex launch. The drawer's own
       # top edge says when it really happened, and `seed_open` polls the claim
@@ -715,11 +778,11 @@ cmd_open() {
     fi
     # The menu is scrolled when the thing we are after is on it - 1.5s was a
     # guess at an inertial scroll that usually settles far sooner.
-    swipe 0.5 $((W * 2 / 5)) $((H * 89 / 100)) $((W * 2 / 5)) $((H * 55 / 100)) 0.15
-    poll 20 0.15 ax "Foolish" || true
+    menu_swipe || return 1
+    poll 20 0.15 ax "$MENU_NAME" || true
     i=$((i + 1))
   done
-  echo "Foolish is not in the app menu - is the extension installed?" >&2
+  echo "$MENU_NAME is not in the app menu - is the extension installed?" >&2
   return 1
 }
 
@@ -1931,7 +1994,7 @@ cmd_mem()    { local g; g=$(group_dir); cat "$g/memprobe.txt" 2>/dev/null || ech
 cmd_log() {
   need_sim
   xcrun simctl spawn "$SIM" log stream --style compact \
-    --predicate 'subsystem BEGINSWITH "cards.foolish"'
+    --predicate "subsystem BEGINSWITH \"$LOG_SUBSYSTEM\""
 }
 
 cmd_probe() {

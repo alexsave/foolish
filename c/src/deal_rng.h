@@ -36,6 +36,25 @@ typedef struct {
 // keystream — that is the reproducibility contract.
 void deal_rng_seed(DealRng *r, const uint8_t seed[32]);
 
+// Seed at an ARBITRARY point in the same keystream: identical to deal_rng_seed
+// followed by throwing away `block` 64-byte blocks (16 u32 draws each), but
+// O(1) instead of O(block), because ChaCha's block counter is an INPUT to the
+// block function and not a state that has to be walked to.
+//
+// WHY THIS EXISTS. deal_rng_seed gives a SEQUENTIAL stream, which is exactly
+// the shape a deal wants - the deck is drawn once, in order, by whoever deals
+// it. Indexing the stream is the other shape: it makes a draw a pure function
+// of (seed, index), so a device that has never computed draws 1..N-1 can still
+// agree with everyone else about draw N. That is what lets a state carry an
+// index instead of a walked generator, and what makes a random value
+// recomputable from a replay without replaying the randomness.
+//
+// The two are one keystream, not two: deal_rng_seed_at(r, s, 0) is exactly
+// deal_rng_seed(r, s), and block B's words are the ones a sequential reader
+// reaches after B*16 draws. The index is 64 bits, the full width of ChaCha's
+// counter.
+void deal_rng_seed_at(DealRng *r, const uint8_t seed[32], uint64_t block);
+
 // Next 32 bits of keystream.
 uint32_t deal_rng_u32(DealRng *r);
 

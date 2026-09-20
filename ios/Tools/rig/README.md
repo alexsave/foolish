@@ -14,7 +14,24 @@ lost.
 export FOOLISH_SIM=<udid>          # rig.sh newsim prints one
 ios/Tools/rig/rig.sh doctor        # what is missing, and how to get it
 ios/Tools/rig/rig.sh               # the full command list
+python3 ios/Tools/rig/lib/test_rig.py      # the checks that need no device
+python3 ios/Tools/rig/lib/test_window.py   # tween's frame times, against a movie
 ```
+
+## Which product this rig drives
+
+One block at the top of `rig.sh`, between `APP_ID=` and
+`# ---- end of the product block`, holds every bundle id, App Group, scheme,
+Xcode project, appex name, `+`-menu row name and log subsystem the rig knows.
+Nothing below it spells any of them again, and `lib/test_rig.py` fails if
+something starts to.
+A second product is that block with different strings - each constant takes a
+`RIG_*` override from the environment - and deliberately nothing more: there is
+no plugin system here and there should not be one.
+The scratch paths (`FOOLISH_OUT`, `FOOLISH_DD`, `FOOLISH_WORK`) are NOT in the
+block, because `lib/ui.py` carries its own copy of the `FOOLISH_WORK` default
+and a rig that changed one of the two would write the screenshot somewhere the
+finder does not look.
 
 ## A shoot, start to finish
 
@@ -67,7 +84,7 @@ has no iMessage account - that is the platform's ceiling, not a choice.
 `lib/transcript.py` holds the `sms.db` route that does *not* work; it is kept
 because the finding is worth more than the code.
 
-**3. Apple's chrome is found by LABEL; our board is found by COLOUR.**
+**3. Apple's chrome is found by LABEL AND KIND; our board is found by COLOUR.**
 Inside a thread the accessibility tree names the back chevron (`Messages`
 through iOS 26, `Back` on iOS 27 - `tap_back` asks for both, and it is the only
 label in the rig with a version split), the
@@ -77,11 +94,22 @@ sheets name `OK` / `Continue`.
 Our extension is a separate process and reports **nothing** - an expanded drawer
 shows up as one zero-height "Activate to dismiss pop-up window" - so everything
 inside the board comes from `lib/ui.py`.
-Two traps, both of which cost a run:
+Three traps, all of which cost a run:
 
 - Match labels **exactly**. `Message` is a substring of `Messages`, the chevron
   is the smaller element, and `find` returns the smallest match - so a loose
   lookup for the compose field taps *back out of the thread*, silently.
+- **A LABEL IS NOT ENOUGH; SAY WHAT KIND OF THING IT IS.** An exact label is
+  still ambiguous, and "the smallest match is the control" stopped being true
+  on iOS 27. A thread there carries an Application *and* a screen-sized Group
+  both called `Messages`, and the chevron is called `Back` - so
+  `ax_first "Messages" "Back"` answered `220 478`, the dead centre of the
+  transcript, tapped the conversation, and **returned 0**. `leave` then spent
+  24s failing, and `enter` went on to probe its row heights inside the thread
+  (one of them is the header, which opens Apple's contact card), ending
+  "could not open conversation" with the wanted thread on screen the whole
+  time. `ax.py first --type Button` falls through to the chevron - `42 84` -
+  and is right on both versions of the OS. `lib/test_rig.py` holds that tree.
 - `idb ui describe-all` answers with the **last foreground app's** tree even
   when something else is on screen. A stale tree looks exactly like a live one,
   and every tap derived from it misses. Call `front` before navigating.
@@ -249,6 +277,19 @@ game screen's black name field reports 739 for a drawer whose edge is 584).
   Opening the extension onto a lobby stages one, and it then rides along in the
   compose field over every later frame - a draft the board on screen could not
   possibly have produced. `clearstage` removes it.
+- **A gesture on Apple's chrome comes from that chrome's own frame, never from
+  a fraction of the screen.** The `+` menu scroll used to drag from 89% of the
+  screen height up to 55%, and a drag that starts below a presented menu or
+  ends above it dismisses it - after which the app really is not on screen, so
+  `open` blames the install for a menu it threw away itself. The menu is a
+  fixed **320x456.5pt** popover anchored above the compose bar, not a fraction
+  of anything: 465.3..921.7 on a 6.9" phone, 383.3..839.7 on a 6.3", and
+  200.5..657.0 on a 4.7" (iOS 27.0, all three measured). So the old fraction
+  landed inside it on every iPhone and was luck rather than design - and it is
+  already wrong above 1090pt of screen, where 55% is above the menu's top edge.
+  `ax.py menu` reads the rows and their scroll view and answers with two row
+  centres inside it. Note the scroll view ends **26pt above** where its last
+  row ends, so "inside the rows" is not "inside the menu".
 - **A downward drag must not start at the top of the screen.**
   An expanded drawer's top edge is within a few points of the status bar, and a
   downward swipe from there is Notification Centre - which leaves the simulator
@@ -265,6 +306,16 @@ game screen's black name field reports 739 for a drawer whose edge is 584).
   photograph a lobby state showing it.
 - **zsh does not word-split unquoted variables.** Every driver here has a
   `#!/bin/bash` shebang for that reason.
+- **A finder answers in PLAIN numbers, because a shell reads its answer as
+  text.** A numpy scalar prints as `219.8` on its own and as
+  `np.float64(219.8)` inside the list or tuple a finder actually returns.
+  `rig.sh` reads those lists with `ast.literal_eval`, which refuses that
+  outright, and coordinates with `printf`, which takes the word `np.float64`
+  and prints **0** - so the tap goes to the corner of the screen while the
+  driver reports the coordinate it meant. `round(x)` is safe (it returns a
+  plain int whatever `x` was); `round(x, 1)` hands back the type it was given,
+  so every rounded measurement in `lib/` writes `round(float(...), 1)` and
+  `lib/test_rig.py` fails on one that does not.
 - **`xcodegen generate` blanks the entitlements files.** `build` restores them
   from git; without that the extension loses its App Group and every seed
   silently does nothing.

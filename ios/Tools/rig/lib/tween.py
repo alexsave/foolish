@@ -135,24 +135,24 @@ def read_array(a):
     if tys:
         out["table_pt"] = round(float(np.mean(tys)), 1)
     if oys:
-        out["opp_pt"] = round(oys[0], 1)
+        out["opp_pt"] = round(float(oys[0]), 1)
     if top is None:
         out["topoff"] = True
         out["top_pt"] = 0.0
     if bot is None:
         out["offscreen"] = True
-        out["bot_pt"] = round(screen_pt, 1)
+        out["bot_pt"] = round(float(screen_pt), 1)
     if bot is not None:
-        out["bot_pt"] = round(bot / s, 1)
+        out["bot_pt"] = round(float(bot) / s, 1)
     if top is None:
-        out["h_pt"] = round(out["bot_pt"], 1)
+        out["h_pt"] = round(float(out["bot_pt"]), 1)
         return out
-    out["top_pt"] = round(top / s, 1)
-    out["h_pt"] = round(out["bot_pt"] - out["top_pt"], 1)
+    out["top_pt"] = round(float(top) / s, 1)
+    out["h_pt"] = round(float(out["bot_pt"] - out["top_pt"]), 1)
     # The box's own left edge, off the bar we just verified.
     xs_ = np.nonzero(topm)[0]
     bx = int(xs_[0]) if len(xs_) else 0
-    out["left_pt"] = round(bx / s, 1)
+    out["left_pt"] = round(float(bx) / s, 1)
     # Band pitch, from a NARROW vertical strip at the box's leading edge - cyan
     # only, because the bands alternate cyan/magenta and are adjacent, so a mask
     # of both merges the strip into one run.

@@ -53,7 +53,8 @@ def reading(a):
     if not box or box.get("topoff") or "top_pt" not in box:
         return None, None, None
     top, left = box["top_pt"], box.get("left_pt", 0.0)
-    return ([(n, round(x - left, 2), round(y - top, 2)) for n, x, y in sq.squares_in(a)],
+    return ([(n, round(float(x - left), 2), round(float(y - top), 2))
+             for n, x, y in sq.squares_in(a)],
             box.get("clock"), top)
 
 

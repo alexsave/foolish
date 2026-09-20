@@ -85,5 +85,6 @@ def squares_in(a):
             continue
         if len(xs) < 0.7 * side * side:
             continue
-        out.append((name, round((x0 + x1) / 2.0 / s, 2), round((y0 + y1) / 2.0 / s, 2)))
+        out.append((name, round(float(x0 + x1) / 2.0 / s, 2),
+                    round(float(y0 + y1) / 2.0 / s, 2)))
     return out
