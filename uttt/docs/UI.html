@@ -254,7 +254,7 @@ canvas.cvm{display:block;position:absolute;inset:0;width:100%;height:100%}
   letter-spacing:0;margin-top:8px;max-width:34ch}
 .figs{display:flex;gap:44px;flex-wrap:wrap;margin:22px 0 30px}
 
-.sheet3{background-color:#f7f6f2;padding:16px 16px 18px;position:relative;
+.sheet3{background-color:#f7f6f2;padding:13px;position:relative;
   display:flex;flex-direction:column;
   background-image:var(--fib-h),var(--fib-v),
     linear-gradient(172deg,#fbfaf7,#f1efe9);
@@ -275,9 +275,13 @@ canvas.cvm{display:block;position:absolute;inset:0;width:100%;height:100%}
 .bss{font:700 16px/1.2 var(--ui);color:#25376b;margin-top:1px}
 .bsn2{font:400 12.5px/1.35 var(--ui);color:#6b6659;margin-top:6px}
 .device.bub{border-radius:14px}
-.collwrap{display:flex;align-items:flex-start;gap:10px;height:100%}
-.collside{flex:none;padding-top:2px}
-.pyou.sm{font-size:26px;line-height:1}
+.collwrap{position:relative;height:100%;display:flex;align-items:center;
+  justify-content:center}
+.collside{position:absolute;left:0;top:0;z-index:4;width:44px;
+  pointer-events:none}
+.pas{line-height:1.25}
+canvas.markico{display:block;width:34px;height:34px;margin-top:3px}
+canvas.markico.big{width:46px;height:46px;margin-top:4px}
 canvas.rbook{display:block}
 
 table.grid.bots td{text-align:right;font:600 13px/1 ui-monospace,monospace}
@@ -445,7 +449,7 @@ and nothing in the app gets to choose. The width is the phone's.</p>
 <p class="lede">Which means <b>the collapsed board is height-limited on every
 phone and width-limited on none.</b> A 440-wide Pro Max gets exactly the same
 board as a 375-wide SE, because both are cut by the same 340.</p>
-<div class="row"><div class="col" style="flex:0 0 375px"><div class="h4"><span class="pill">iPhone SE</span><span style="font:400 12.5px/1 ui-monospace,monospace;color:#7f828b">375&times;340</span></div><div class="device" style="width:375px"><div class="chrome"><i></i></div><div class="sheet3" style="height:340px"><div class="collwrap"><div class="collside"><div class="pas">playing as</div><div class="pyou sm">X</div></div><div class="bwrap" style="width:314px;height:314px;margin-left:auto"><div class="bwrap" style="width:314px;height:314px"><canvas data-board="{&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;, &quot;0,0&quot;: &quot;o&quot;, &quot;0,4&quot;: &quot;x&quot;, &quot;5,5&quot;: &quot;o&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 77, &quot;active&quot;: 5, &quot;last&quot;: &quot;5,5&quot;}"></canvas></div></div></div></div></div></div><div class="col" style="flex:0 0 393px"><div class="h4"><span class="pill">iPhone 16</span><span style="font:400 12.5px/1 ui-monospace,monospace;color:#7f828b">393&times;340</span></div><div class="device" style="width:393px"><div class="chrome"><i></i></div><div class="sheet3" style="height:340px"><div class="collwrap"><div class="collside"><div class="pas">playing as</div><div class="pyou sm">X</div></div><div class="bwrap" style="width:314px;height:314px;margin-left:auto"><div class="bwrap" style="width:314px;height:314px"><canvas data-board="{&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;, &quot;0,0&quot;: &quot;o&quot;, &quot;0,4&quot;: &quot;x&quot;, &quot;5,5&quot;: &quot;o&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 77, &quot;active&quot;: 5, &quot;last&quot;: &quot;5,5&quot;}"></canvas></div></div></div></div></div></div><div class="col" style="flex:0 0 402px"><div class="h4"><span class="pill">16 Pro</span><span style="font:400 12.5px/1 ui-monospace,monospace;color:#7f828b">402&times;340</span></div><div class="device" style="width:402px"><div class="chrome"><i></i></div><div class="sheet3" style="height:340px"><div class="collwrap"><div class="collside"><div class="pas">playing as</div><div class="pyou sm">X</div></div><div class="bwrap" style="width:314px;height:314px;margin-left:auto"><div class="bwrap" style="width:314px;height:314px"><canvas data-board="{&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;, &quot;0,0&quot;: &quot;o&quot;, &quot;0,4&quot;: &quot;x&quot;, &quot;5,5&quot;: &quot;o&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 77, &quot;active&quot;: 5, &quot;last&quot;: &quot;5,5&quot;}"></canvas></div></div></div></div></div></div><div class="col" style="flex:0 0 440px"><div class="h4"><span class="pill">16 Pro Max</span><span style="font:400 12.5px/1 ui-monospace,monospace;color:#7f828b">440&times;340</span></div><div class="device" style="width:440px"><div class="chrome"><i></i></div><div class="sheet3" style="height:340px"><div class="collwrap"><div class="collside"><div class="pas">playing as</div><div class="pyou sm">X</div></div><div class="bwrap" style="width:314px;height:314px;margin-left:auto"><div class="bwrap" style="width:314px;height:314px"><canvas data-board="{&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;, &quot;0,0&quot;: &quot;o&quot;, &quot;0,4&quot;: &quot;x&quot;, &quot;5,5&quot;: &quot;o&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 77, &quot;active&quot;: 5, &quot;last&quot;: &quot;5,5&quot;}"></canvas></div></div></div></div></div></div></div>
+<div class="row"><div class="col" style="flex:0 0 375px"><div class="h4"><span class="pill">iPhone SE</span><span style="font:400 12.5px/1 ui-monospace,monospace;color:#7f828b">375&times;340</span></div><div class="device" style="width:375px"><div class="chrome"><i></i></div><div class="sheet3" style="height:340px"><div class="collwrap"><div class="collside"><div class="pas">you<br>are</div><canvas data-mark="x" data-seed="5" class="markico"></canvas></div><div class="bwrap" style="width:314px;height:314px"><div class="bwrap" style="width:314px;height:314px"><canvas data-board="{&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;, &quot;0,0&quot;: &quot;o&quot;, &quot;0,4&quot;: &quot;x&quot;, &quot;5,5&quot;: &quot;o&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 77, &quot;active&quot;: 5, &quot;last&quot;: &quot;5,5&quot;}"></canvas></div></div></div></div></div></div><div class="col" style="flex:0 0 393px"><div class="h4"><span class="pill">iPhone 16</span><span style="font:400 12.5px/1 ui-monospace,monospace;color:#7f828b">393&times;340</span></div><div class="device" style="width:393px"><div class="chrome"><i></i></div><div class="sheet3" style="height:340px"><div class="collwrap"><div class="collside"><div class="pas">you<br>are</div><canvas data-mark="x" data-seed="5" class="markico"></canvas></div><div class="bwrap" style="width:314px;height:314px"><div class="bwrap" style="width:314px;height:314px"><canvas data-board="{&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;, &quot;0,0&quot;: &quot;o&quot;, &quot;0,4&quot;: &quot;x&quot;, &quot;5,5&quot;: &quot;o&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 77, &quot;active&quot;: 5, &quot;last&quot;: &quot;5,5&quot;}"></canvas></div></div></div></div></div></div><div class="col" style="flex:0 0 402px"><div class="h4"><span class="pill">16 Pro</span><span style="font:400 12.5px/1 ui-monospace,monospace;color:#7f828b">402&times;340</span></div><div class="device" style="width:402px"><div class="chrome"><i></i></div><div class="sheet3" style="height:340px"><div class="collwrap"><div class="collside"><div class="pas">you<br>are</div><canvas data-mark="x" data-seed="5" class="markico"></canvas></div><div class="bwrap" style="width:314px;height:314px"><div class="bwrap" style="width:314px;height:314px"><canvas data-board="{&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;, &quot;0,0&quot;: &quot;o&quot;, &quot;0,4&quot;: &quot;x&quot;, &quot;5,5&quot;: &quot;o&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 77, &quot;active&quot;: 5, &quot;last&quot;: &quot;5,5&quot;}"></canvas></div></div></div></div></div></div><div class="col" style="flex:0 0 440px"><div class="h4"><span class="pill">16 Pro Max</span><span style="font:400 12.5px/1 ui-monospace,monospace;color:#7f828b">440&times;340</span></div><div class="device" style="width:440px"><div class="chrome"><i></i></div><div class="sheet3" style="height:340px"><div class="collwrap"><div class="collside"><div class="pas">you<br>are</div><canvas data-mark="x" data-seed="5" class="markico"></canvas></div><div class="bwrap" style="width:314px;height:314px"><div class="bwrap" style="width:314px;height:314px"><canvas data-board="{&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;, &quot;0,0&quot;: &quot;o&quot;, &quot;0,4&quot;: &quot;x&quot;, &quot;5,5&quot;: &quot;o&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 77, &quot;active&quot;: 5, &quot;last&quot;: &quot;5,5&quot;}"></canvas></div></div></div></div></div></div></div>
 <p class="lede" style="margin-top:8px">The board lands at 244 points across on
 all four - a cell of 27, and a mark of about 22. That is the size the whole
 style study has been aiming at, and it is set by a constant nobody here
@@ -456,7 +460,7 @@ controls.</p>
 <p class="lede">Screen height less about 126 points of Messages chrome. Unlike
 the collapsed strip this one <b>does</b> differ by device - 541 on an SE against
 830 on a Pro Max, which is 54% more room.</p>
-<div class="row"><div class="col" style="flex:0 0 375px"><div class="h4"><span class="pill">iPhone SE</span><span style="font:400 12.5px/1 ui-monospace,monospace;color:#7f828b">375&times;541</span></div><div class="device" style="width:375px"><div class="chrome"><i></i></div><div class="sheet3" style="height:541px"><div class="pbar"><div><div class="pas">playing as</div><div class="pyou">X</div></div><div style="text-align:right"><div class="uhdr">Your move</div><div class="usub">Middle right.</div></div></div><div class="bwrap" style="width:343px;height:343px;margin:auto"><div class="bwrap" style="width:343px;height:343px"><canvas data-board="{&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;, &quot;0,0&quot;: &quot;o&quot;, &quot;0,4&quot;: &quot;x&quot;, &quot;5,5&quot;: &quot;o&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 77, &quot;active&quot;: 5, &quot;last&quot;: &quot;5,5&quot;}"></canvas></div></div><div class="pfoot"><canvas class="rbook" data-rbook="1" style="width:54px;height:54px"></canvas></div></div></div></div><div class="col" style="flex:0 0 393px"><div class="h4"><span class="pill">iPhone 16</span><span style="font:400 12.5px/1 ui-monospace,monospace;color:#7f828b">393&times;726</span></div><div class="device" style="width:393px"><div class="chrome"><i></i></div><div class="sheet3" style="height:726px"><div class="pbar"><div><div class="pas">playing as</div><div class="pyou">X</div></div><div style="text-align:right"><div class="uhdr">Your move</div><div class="usub">Middle right.</div></div></div><div class="bwrap" style="width:361px;height:361px;margin:auto"><div class="bwrap" style="width:361px;height:361px"><canvas data-board="{&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;, &quot;0,0&quot;: &quot;o&quot;, &quot;0,4&quot;: &quot;x&quot;, &quot;5,5&quot;: &quot;o&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 77, &quot;active&quot;: 5, &quot;last&quot;: &quot;5,5&quot;}"></canvas></div></div><div class="pfoot"><canvas class="rbook" data-rbook="1" style="width:54px;height:54px"></canvas></div></div></div></div><div class="col" style="flex:0 0 402px"><div class="h4"><span class="pill">16 Pro</span><span style="font:400 12.5px/1 ui-monospace,monospace;color:#7f828b">402&times;748</span></div><div class="device" style="width:402px"><div class="chrome"><i></i></div><div class="sheet3" style="height:748px"><div class="pbar"><div><div class="pas">playing as</div><div class="pyou">X</div></div><div style="text-align:right"><div class="uhdr">Your move</div><div class="usub">Middle right.</div></div></div><div class="bwrap" style="width:370px;height:370px;margin:auto"><div class="bwrap" style="width:370px;height:370px"><canvas data-board="{&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;, &quot;0,0&quot;: &quot;o&quot;, &quot;0,4&quot;: &quot;x&quot;, &quot;5,5&quot;: &quot;o&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 77, &quot;active&quot;: 5, &quot;last&quot;: &quot;5,5&quot;}"></canvas></div></div><div class="pfoot"><canvas class="rbook" data-rbook="1" style="width:54px;height:54px"></canvas></div></div></div></div><div class="col" style="flex:0 0 440px"><div class="h4"><span class="pill">16 Pro Max</span><span style="font:400 12.5px/1 ui-monospace,monospace;color:#7f828b">440&times;830</span></div><div class="device" style="width:440px"><div class="chrome"><i></i></div><div class="sheet3" style="height:830px"><div class="pbar"><div><div class="pas">playing as</div><div class="pyou">X</div></div><div style="text-align:right"><div class="uhdr">Your move</div><div class="usub">Middle right.</div></div></div><div class="bwrap" style="width:408px;height:408px;margin:auto"><div class="bwrap" style="width:408px;height:408px"><canvas data-board="{&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;, &quot;0,0&quot;: &quot;o&quot;, &quot;0,4&quot;: &quot;x&quot;, &quot;5,5&quot;: &quot;o&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 77, &quot;active&quot;: 5, &quot;last&quot;: &quot;5,5&quot;}"></canvas></div></div><div class="pfoot"><canvas class="rbook" data-rbook="1" style="width:54px;height:54px"></canvas></div></div></div></div></div>
+<div class="row"><div class="col" style="flex:0 0 375px"><div class="h4"><span class="pill">iPhone SE</span><span style="font:400 12.5px/1 ui-monospace,monospace;color:#7f828b">375&times;541</span></div><div class="device" style="width:375px"><div class="chrome"><i></i></div><div class="sheet3" style="height:541px"><div class="pbar"><div><div class="pas">you<br>are</div><canvas data-mark="x" data-seed="9" class="markico big"></canvas></div><div style="text-align:right"><div class="uhdr">Your move</div><div class="usub">Middle right.</div></div></div><div class="bwrap" style="width:343px;height:343px;margin:auto"><div class="bwrap" style="width:343px;height:343px"><canvas data-board="{&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;, &quot;0,0&quot;: &quot;o&quot;, &quot;0,4&quot;: &quot;x&quot;, &quot;5,5&quot;: &quot;o&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 77, &quot;active&quot;: 5, &quot;last&quot;: &quot;5,5&quot;}"></canvas></div></div><div class="pfoot"><canvas class="rbook" data-rbook="1" style="width:54px;height:54px"></canvas></div></div></div></div><div class="col" style="flex:0 0 393px"><div class="h4"><span class="pill">iPhone 16</span><span style="font:400 12.5px/1 ui-monospace,monospace;color:#7f828b">393&times;726</span></div><div class="device" style="width:393px"><div class="chrome"><i></i></div><div class="sheet3" style="height:726px"><div class="pbar"><div><div class="pas">you<br>are</div><canvas data-mark="x" data-seed="9" class="markico big"></canvas></div><div style="text-align:right"><div class="uhdr">Your move</div><div class="usub">Middle right.</div></div></div><div class="bwrap" style="width:361px;height:361px;margin:auto"><div class="bwrap" style="width:361px;height:361px"><canvas data-board="{&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;, &quot;0,0&quot;: &quot;o&quot;, &quot;0,4&quot;: &quot;x&quot;, &quot;5,5&quot;: &quot;o&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 77, &quot;active&quot;: 5, &quot;last&quot;: &quot;5,5&quot;}"></canvas></div></div><div class="pfoot"><canvas class="rbook" data-rbook="1" style="width:54px;height:54px"></canvas></div></div></div></div><div class="col" style="flex:0 0 402px"><div class="h4"><span class="pill">16 Pro</span><span style="font:400 12.5px/1 ui-monospace,monospace;color:#7f828b">402&times;748</span></div><div class="device" style="width:402px"><div class="chrome"><i></i></div><div class="sheet3" style="height:748px"><div class="pbar"><div><div class="pas">you<br>are</div><canvas data-mark="x" data-seed="9" class="markico big"></canvas></div><div style="text-align:right"><div class="uhdr">Your move</div><div class="usub">Middle right.</div></div></div><div class="bwrap" style="width:370px;height:370px;margin:auto"><div class="bwrap" style="width:370px;height:370px"><canvas data-board="{&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;, &quot;0,0&quot;: &quot;o&quot;, &quot;0,4&quot;: &quot;x&quot;, &quot;5,5&quot;: &quot;o&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 77, &quot;active&quot;: 5, &quot;last&quot;: &quot;5,5&quot;}"></canvas></div></div><div class="pfoot"><canvas class="rbook" data-rbook="1" style="width:54px;height:54px"></canvas></div></div></div></div><div class="col" style="flex:0 0 440px"><div class="h4"><span class="pill">16 Pro Max</span><span style="font:400 12.5px/1 ui-monospace,monospace;color:#7f828b">440&times;830</span></div><div class="device" style="width:440px"><div class="chrome"><i></i></div><div class="sheet3" style="height:830px"><div class="pbar"><div><div class="pas">you<br>are</div><canvas data-mark="x" data-seed="9" class="markico big"></canvas></div><div style="text-align:right"><div class="uhdr">Your move</div><div class="usub">Middle right.</div></div></div><div class="bwrap" style="width:408px;height:408px;margin:auto"><div class="bwrap" style="width:408px;height:408px"><canvas data-board="{&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;, &quot;0,0&quot;: &quot;o&quot;, &quot;0,4&quot;: &quot;x&quot;, &quot;5,5&quot;: &quot;o&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 77, &quot;active&quot;: 5, &quot;last&quot;: &quot;5,5&quot;}"></canvas></div></div><div class="pfoot"><canvas class="rbook" data-rbook="1" style="width:54px;height:54px"></canvas></div></div></div></div></div>
 <p class="lede" style="margin-top:8px"><b>And the board cannot use any of it.</b>
 It is square and the width is the binding constraint on every phone, so it tops
 out at 343 on an SE and 408 on a Pro Max while the height runs to 830. The extra
@@ -476,7 +480,7 @@ playout moves in four.</p>
 the canvas pen at 9.2, blue X and red O, a dark grid whose roughness falls with
 the length of the stroke, and the highlighter travelling from block to block
 rather than fading. <b>Tap a square. Again deals a new side.</b></p>
-<div data-play class="playwrap"><div class="device" style="width:402px"><div class="chrome"><i></i></div><div class="sheet3" style="height:748px"><div class="pbar"><div><div class="pas">playing as</div><div class="pyou">X</div></div><div style="text-align:right"><div class="uhdr pstat" style="font-size:19px">Your move</div><div class="usub psub">Anywhere you like.</div></div></div><div class="bwrap pboardw" style="width:370px;height:370px;margin:auto auto"><canvas></canvas></div><div class="pfoot"><span class="pagain">Again</span></div></div></div></div>
+<div data-play class="playwrap"><div class="device" style="width:402px"><div class="chrome"><i></i></div><div class="sheet3" style="height:748px"><div class="pbar"><div><div class="pas">you<br>are</div><canvas class="markico big pmark"></canvas></div><div style="text-align:right"><div class="uhdr pstat" style="font-size:19px">Your move</div><div class="usub psub">Anywhere you like.</div></div></div><div class="bwrap pboardw" style="width:370px;height:370px;margin:auto auto"><canvas></canvas></div><div class="pfoot"><span class="pagain">Again</span></div></div></div></div>
 <p class="lede" style="margin-top:22px">It is worth losing to once. The thing
 nib does that is hard to play against is the thing the bots tab measured -
 <b>it almost never sends you somewhere decided</b>, so you almost never get a
@@ -1716,7 +1720,8 @@ function boardFrame(cv, spec, A, t){
     markAnim(ctx, spec.cells[key], { x: x + C * .1, y: y + C * .1, s: C * .8 },
              (spec.seed || 1) * 1000 + b * 9 + c, 1,
              faded ? { a: PEN92.a * .34 }
-                   : (last ? { w: PEN92.w * 1.55, a: 1, grain: .3 } : null));
+                   : (last ? { w: PEN92.w * 2.0, a: 1, grain: .25,
+                               rough: PEN92.rough * 1.9 } : null));
   }
   if (A.mark){
     const [b, c] = A.mark.at.split(',').map(Number);
@@ -2073,6 +2078,21 @@ function specOf(g, seed){
   return spec;
 }
 
+/* THE SIDE INDICATOR IS A DRAWN MARK, not a glyph. It is the same X that is
+   about to appear on the board, so setting it in Inter made it the only thing
+   in the frame that came out of a font. */
+function initMarkIcons(root){
+  root.querySelectorAll('canvas[data-mark]').forEach(cv => {
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    const px = cv.clientWidth || 34;
+    cv.width = px * dpr; cv.height = px * dpr;
+    const ctx = cv.getContext('2d');
+    ctx.setTransform(dpr * px / 100, 0, 0, dpr * px / 100, 0, 0);
+    markAnim(ctx, cv.dataset.mark, { x: 6, y: 6, s: 88 },
+             parseInt(cv.dataset.seed || '3', 10), 1, { w: PEN92.w * 1.15 });
+  });
+}
+
 function initRbook(root){
   root.querySelectorAll('canvas[data-rbook]').forEach(cv => {
     const dpr = Math.min(3, window.devicePixelRatio || 1);
@@ -2088,46 +2108,97 @@ function initRbook(root){
       fill: '#25376b', fillStyle: 'hachure', hachureGap: 4.2, fillWeight: 1.4,
       hachureAngle: -41, stroke: '#1b2a52', strokeWidth: 1.8,
       roughness: 1.5, bowing: 1.3, seed: 19 });
-    /* a book, in two strokes */
-    rc.line(W/2, 17, W/2, H - 17, { stroke: '#f2f4f9', strokeWidth: 1.9,
-      roughness: 1.4, seed: 23 });
-    rc.linearPath([[15, 17], [W/2, 20], [W - 15, 17], [W - 15, H - 18],
-                   [W/2, H - 15], [15, H - 18], [15, 17]],
-      { stroke: '#f2f4f9', strokeWidth: 1.9, roughness: 1.3, seed: 29 });
+    /* the book is filled too, and faint - it lies ON a hachured square, so a
+       bright solid glyph would fight the fill underneath it */
+    const pg = 'rgba(226,232,244,.55)';
+    rc.polygon([[15, 17], [W/2, 20], [W/2, H - 15], [15, H - 18]],
+      { fill: pg, fillStyle: 'hachure', hachureGap: 2.6, fillWeight: .9,
+        hachureAngle: 38, stroke: pg, strokeWidth: 1.3, roughness: 1.3, seed: 23 });
+    rc.polygon([[W - 15, 17], [W/2, 20], [W/2, H - 15], [W - 15, H - 18]],
+      { fill: pg, fillStyle: 'hachure', hachureGap: 2.6, fillWeight: .9,
+        hachureAngle: -38, stroke: pg, strokeWidth: 1.3, roughness: 1.3, seed: 29 });
   });
 }
 
 function initPlay(root){
   const host = root.querySelector('[data-play]');
   if (!host) return;
-  const cv  = host.querySelector('canvas');
-  const st  = host.querySelector('.pstat');
-  const sub = host.querySelector('.psub');
-  const btn = host.querySelector('.pagain');
-  let g, seed = (Date.now() / 60000) | 0, you = 1, busy = false;
+  const cv   = host.querySelector('.pboardw canvas');
+  const mico = host.querySelector('.pmark');
+  const st   = host.querySelector('.pstat');
+  const sub  = host.querySelector('.psub');
+  const btn  = host.querySelector('.pagain');
+  let g, seed = 1, you = 1, busy = false, raf = 0;
 
+  function drawIcon(){
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    const px = mico.clientWidth || 46;
+    mico.width = px * dpr; mico.height = px * dpr;
+    const c = mico.getContext('2d');
+    c.setTransform(dpr * px / 100, 0, 0, dpr * px / 100, 0, 0);
+    c.clearRect(0, 0, 100, 100);
+    markAnim(c, you === 1 ? 'x' : 'o', { x: 6, y: 6, s: 88 }, seed + 4, 1,
+             { w: PEN92.w * 1.15 });
+  }
   function say(){
     if (g.over){
       st.textContent = g.over === 3 ? 'Drawn.'
         : (g.over === you ? 'You take it.' : 'nib takes it.');
       sub.textContent = g.moves.length + ' moves.';
     } else if (g.turn === you){
-      const L = jLegal(g);
       st.textContent = 'Your move';
       sub.textContent = (g.forced !== 255 && !g.block[g.forced])
-        ? L.length + ' squares are legal.' : 'Anywhere you like.';
-    } else { st.textContent = 'nib is thinking'; sub.textContent = ''; }
+        ? '' : 'Anywhere you like.';
+    } else { st.textContent = 'nib'; sub.textContent = 'thinking'; }
   }
-  function draw(anim){
-    boardFrame(cv, specOf(g, seed), anim || {}, 1);
+  function still(){ boardFrame(cv, specOf(g, seed), {}, 1); }
+
+  /* One move, drawn. The mark inks first and the wash travels after it - the
+     same two beats as the Motion tab, because it is the same code. */
+  function animateMove(before, mv, after, done){
+    const spec = specOf(before, seed);
+    const bTo  = (after.forced !== 255 && !after.block[after.forced])
+                 ? after.forced : (after.over ? null : 'any');
+    const A = { mark: { at: ((mv/9)|0) + ',' + (mv%9),
+                        kind: before.turn === 1 ? 'x' : 'o', a: 0, b: .5 },
+                hl: { from: spec.active == null ? null : spec.active,
+                      to: bTo, at: .52, dur: .34 } };
+    if (bTo == null) delete A.hl;
+    const dur = 1000, t0 = performance.now();
+    cancelAnimationFrame(raf);
+    (function step(now){
+      const t = Math.min(1, (now - t0) / dur);
+      boardFrame(cv, spec, A, t);
+      if (t < 1) raf = requestAnimationFrame(step);
+      else { still(); done && done(); }
+    })(t0);
   }
-  function botTurn(){
-    busy = true; say(); draw();
-    setTimeout(() => {
-      if (!g.over && g.turn !== you) jPlay(g, nibMove(g, 60));
-      busy = false; draw(); say();
-    }, 90);
+
+  function playerMove(mv){
+    const before = jClone(g);
+    jPlay(g, mv);
+    const after = jClone(g);
+    busy = true; say();
+
+    /* NIB THINKS WHILE YOUR MOVE IS STILL BEING DRAWN. The search is a few
+       tens of milliseconds and the draw is a second, so by the time the ink
+       lands the reply is already chosen - which reads as a bot that answers
+       instantly rather than one that pauses to consider. */
+    let reply = null;
+    if (!g.over) setTimeout(() => { reply = nibMove(g, 60); }, 0);
+
+    animateMove(before, mv, after, () => {
+      if (g.over){ busy = false; say(); return; }
+      const fire = () => {
+        const b2 = jClone(g);
+        const m2 = reply != null ? reply : nibMove(g, 60);
+        jPlay(g, m2);
+        animateMove(b2, m2, jClone(g), () => { busy = false; say(); });
+      };
+      if (reply != null) fire(); else setTimeout(fire, 30);
+    });
   }
+
   cv.onclick = e => {
     if (busy || g.over || g.turn !== you) return;
     const r = cv.getBoundingClientRect();
@@ -2137,19 +2208,27 @@ function initPlay(root){
     const cx = Math.min(2, ((x - bx*100/3) / (100/9)) | 0);
     const cy = Math.min(2, ((y - by*100/3) / (100/9)) | 0);
     const mv = (by*3 + bx) * 9 + (cy*3 + cx);
-    if (!jLegal(g).includes(mv)) return;
-    jPlay(g, mv); draw(); say();
-    if (!g.over) botTurn();
+    if (jLegal(g).indexOf(mv) < 0) return;
+    playerMove(mv);
   };
   btn.onclick = () => {
-    g = jNew(); seed = (Date.now() / 997) | 0; PRS = (seed * 2654435761) >>> 0 || 1;
+    cancelAnimationFrame(raf);
+    g = jNew(); seed = (Date.now() / 997) | 0;
+    PRS = (seed * 2654435761) >>> 0 || 1;
     you = (seed & 1) ? 1 : 2;
-    host.querySelector('.pyou').textContent = you === 1 ? 'X' : 'O';
-    busy = false; draw(); say();
-    if (g.turn !== you) botTurn();
+    busy = false; drawIcon(); still(); say();
+    if (g.turn !== you){
+      busy = true; say();
+      setTimeout(() => {
+        const b = jClone(g), m = nibMove(g, 60);
+        jPlay(g, m);
+        animateMove(b, m, jClone(g), () => { busy = false; say(); });
+      }, 120);
+    }
   };
   btn.onclick();
 }
+
 
 /* ---- one parameterised pen, so a hundred recipes are a hundred rows of
    numbers rather than a hundred functions. Every term is multiplicative and
@@ -2273,6 +2352,7 @@ function show(v){
   initAnims(mount);
   initCharts(mount);
   initHists(mount);
+  initMarkIcons(mount);
   initRbook(mount);
   initPlay(mount);
 }
