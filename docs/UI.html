@@ -84,9 +84,10 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
    ===================================================================== */
 :root{
   /* fbm at three scales. Fine = fibre, mid = mottle, coarse = blotch. */
-  --nz-fine:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='180' height='180' filter='url(%23f)'/></svg>");
-  --nz-mid:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.055' numOctaves='5' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='300' height='300' filter='url(%23f)'/></svg>");
-  --nz-coarse:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='400'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.011' numOctaves='6' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='400' height='400' filter='url(%23f)'/></svg>");
+  --nz-fine:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='620' height='620'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='620' height='620' filter='url(%23f)'/></svg>");
+  --nz-mid:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='820' height='820'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.055' numOctaves='5' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='820' height='820' filter='url(%23f)'/></svg>");
+  --nz-coarse:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='980' height='980'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.011' numOctaves='6' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='980' height='980' filter='url(%23f)'/></svg>");
+  --nz-streak:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='820' height='820'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.09 0.006' numOctaves='4' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='820' height='820' filter='url(%23f)'/></svg>");
   /* stretched along x: this is what makes wood look like wood */
   --nz-grain:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='200'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.004 0.085' numOctaves='5' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='400' height='200' filter='url(%23f)'/></svg>");
 }
@@ -109,13 +110,13 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
     radial-gradient(115% 62% at 24% 6%, rgba(224,176,72,.20), transparent 56%),
     radial-gradient(85% 55% at 84% 97%, rgba(140,26,26,.20), transparent 60%),
     linear-gradient(168deg,#141620 0%,#0a0b11 46%,#0d0e15 74%,#08090d 100%);
-  background-size:180px 180px, 300px 300px, 400px 400px, auto, auto, auto;
+  background-size:620px 620px, 820px 820px, 980px 980px, auto, auto, auto;
   background-blend-mode:soft-light, overlay, multiply, screen, screen, normal;
 }
 /* a second grain pass at a different offset kills the tiling rhythm */
 .night::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
-  background-image:var(--nz-mid);background-size:210px 210px;
-  background-position:37px 61px;opacity:.5;mix-blend-mode:overlay}
+  background-image:var(--nz-mid);background-size:760px 760px;
+  background-position:211px 337px;opacity:.5;mix-blend-mode:overlay}
 /* vignette, warm at the top where the flame is, cold at the floor */
 .night::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
   background:
@@ -146,7 +147,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
     var(--nz-fine), var(--nz-mid),
     linear-gradient(152deg, rgba(255,246,222,.13) 0%, transparent 34%),
     linear-gradient(#2b2d3a,#181a24 58%,#0e0f16);
-  background-size:180px 180px, 120px 120px, auto, auto;
+  background-size:620px 620px, 620px 620px, auto, auto;
   background-blend-mode:soft-light, overlay, screen, normal;
   border-top:1px solid rgba(201,162,39,.16);
   display:flex;align-items:center;justify-content:center;
@@ -170,7 +171,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
     var(--nz-fine), var(--nz-mid),
     linear-gradient(150deg, rgba(255,240,196,.36) 0%, rgba(255,240,196,.06) 30%, transparent 46%),
     linear-gradient(#6a5220,#3d2f11 58%,#211806);
-  background-size:180px 180px, 100px 100px, auto, auto;
+  background-size:620px 620px, 620px 620px, auto, auto;
   background-blend-mode:soft-light, overlay, screen, normal;
   border-top-color:#e8c56a;
   box-shadow:inset 0 0 0 1px rgba(232,197,106,.5), inset 0 8px 20px rgba(0,0,0,.4),
@@ -182,7 +183,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
     var(--nz-fine), var(--nz-coarse),
     linear-gradient(152deg, rgba(255,210,190,.1) 0%, transparent 34%),
     linear-gradient(#4a1a1c,#2a0f11 58%,#170809);
-  background-size:180px 180px, 160px 160px, auto, auto;
+  background-size:620px 620px, 700px 700px, auto, auto;
   background-blend-mode:soft-light, multiply, screen, normal;
   border-top-color:rgba(196,54,46,.5)}
 .sh.pack .sig{color:#d8948a} .sh.pack .st{color:#b03a33}
@@ -236,7 +237,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
     radial-gradient(85% 130% at 14% -6%, rgba(176,48,40,.34), transparent 58%),
     radial-gradient(60% 90% at 88% 108%, rgba(122,18,22,.3), transparent 62%),
     linear-gradient(162deg,#220e10,#140708 62%,#0e0506);
-  background-size:180px 180px, 260px 260px, auto, auto, auto;
+  background-size:620px 620px, 820px 820px, auto, auto, auto;
   background-blend-mode:soft-light, multiply, screen, screen, normal;
   box-shadow:inset 0 0 28px rgba(0,0,0,.72), inset 0 1px 0 rgba(216,148,138,.08)}
 .blood .hd{font:600 10px/1 'Cinzel',serif;letter-spacing:.24em;text-transform:uppercase;
@@ -266,14 +267,14 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
     var(--nz-fine), var(--nz-mid),
     linear-gradient(100deg, transparent 12%, rgba(255,244,206,.26) 34%, transparent 56%),
     linear-gradient(#5c4818,#38290e 56%,#241a08);
-  background-size:180px 180px, 140px 140px, auto, auto;
+  background-size:620px 620px, 620px 620px, auto, auto;
   background-blend-mode:soft-light, overlay, screen, normal;
   box-shadow:inset 0 1px 0 rgba(255,238,192,.28), inset 0 -2px 6px rgba(0,0,0,.55),
              0 0 26px rgba(201,162,39,.12)}
 /* cold iron: same pitting, no light in it */
 .seal.dead{border-color:#25252e;color:#5a5466;text-shadow:none;
   background-image:var(--nz-fine), var(--nz-mid), linear-gradient(#1c1d27,#101018);
-  background-size:180px 180px,140px 140px,auto;
+  background-size:620px 620px,620px 620px,auto;
   background-blend-mode:soft-light,overlay,normal;
   box-shadow:inset 0 1px 0 rgba(255,255,255,.04), inset 0 -2px 6px rgba(0,0,0,.5)}
 .seal.blood{border-color:#7e2a25;color:#f2c4bb;
@@ -281,7 +282,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
     var(--nz-fine), var(--nz-coarse),
     linear-gradient(100deg, transparent 14%, rgba(255,190,176,.16) 34%, transparent 56%),
     linear-gradient(#4d1a1c,#2a0d0f 58%,#1a0708);
-  background-size:180px 180px,240px 240px,auto,auto;
+  background-size:620px 620px,820px 820px,auto,auto;
   background-blend-mode:soft-light,multiply,screen,normal}
 .foot{font:400 12.5px/1.4 'EB Garamond',serif;color:#6e6655;text-align:center;font-style:italic}
 
@@ -292,12 +293,12 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
     var(--nz-fine), var(--nz-mid), var(--nz-coarse),
     radial-gradient(78% 56% at 28% 8%, rgba(255,250,226,.95), transparent 60%),
     linear-gradient(166deg,#e6d9b8,#d2c096 56%,#bfab7e);
-  background-size:180px 180px, 280px 280px, 380px 380px, auto, auto;
+  background-size:620px 620px, 820px 820px, 380px 380px, auto, auto;
   background-blend-mode:soft-light, multiply, multiply, screen, normal}
 /* foxing spots: a second coarse pass, offset, warmer */
 .morn::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
-  background-image:var(--nz-coarse);background-size:300px 300px;
-  background-position:88px 43px;opacity:.28;mix-blend-mode:multiply}
+  background-image:var(--nz-coarse);background-size:820px 820px;
+  background-position:331px 197px;opacity:.28;mix-blend-mode:multiply}
 /* the sheet curls away at the edges */
 .morn::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
   background:
@@ -325,7 +326,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
     radial-gradient(64% 50% at 74% 16%, rgba(196,54,46,.3), transparent 58%),
     radial-gradient(90% 62% at 26% 96%, rgba(122,20,24,.22), transparent 64%),
     linear-gradient(174deg,#10131d,#0a0c13 54%,#06070b);
-  background-size:180px 180px, 240px 240px, 320px 320px, auto, auto, auto;
+  background-size:620px 620px, 820px 820px, 320px 320px, auto, auto, auto;
   background-blend-mode:soft-light, overlay, multiply, screen, screen, normal}
 .bub .art .moon{position:absolute;right:26px;top:18px;width:38px;height:38px;border-radius:50%;
   background:radial-gradient(60% 60% at 38% 34%, #c4362e, #7a1418 62%, #4a0d10);
@@ -366,7 +367,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
     radial-gradient(33% 26% at 64% 57%, rgba(74,70,62,.42), transparent 74%),
     radial-gradient(18% 15% at 47% 76%, rgba(74,70,62,.38), transparent 72%),
     radial-gradient(14% 12% at 72% 26%, rgba(74,70,62,.3), transparent 70%);
-  background-size:64px 64px, auto, auto, auto, auto;
+  background-size:320px 320px, auto, auto, auto, auto;
   background-blend-mode:multiply, multiply, multiply, multiply, normal;
   box-shadow:0 0 26px rgba(214,222,236,.28);
   border:0}
@@ -384,7 +385,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
     radial-gradient(26% 21% at 33% 28%, rgba(46,12,12,.6), transparent 72%),
     radial-gradient(33% 26% at 64% 57%, rgba(46,12,12,.45), transparent 74%),
     radial-gradient(18% 15% at 47% 76%, rgba(46,12,12,.4), transparent 72%);
-  background-size:64px 64px, auto, auto, auto;
+  background-size:320px 320px, auto, auto, auto;
   background-blend-mode:multiply, multiply, multiply, normal;
   box-shadow:0 0 34px rgba(158,43,38,.5)}
 
@@ -435,7 +436,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
 .sv .wc .chrome{background:#d8cfb8} .sv .wc .chrome i{background:#8f8straight}
 .sv .wc .chrome i{background:#8f856a}
 .sv .wc .scr{background-image:var(--nz-fine),var(--nz-mid),linear-gradient(#efe8d6,#e2daC4);
-  background-size:180px 180px,260px 260px,auto;
+  background-size:620px 620px,820px 820px,auto;
   background-blend-mode:multiply,multiply,normal}
 /* hatching, the woodcut's only shading tool */
 .sv .wc .scr::before{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;
@@ -480,7 +481,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
     var(--nz-fine),var(--nz-streak),var(--nz-coarse),
     radial-gradient(38% 26% at 76% 12%, rgba(214,232,255,.34), transparent 62%),
     linear-gradient(176deg,#131c30,#0a1020 52%,#060810);
-  background-size:180px 180px,300px 300px,400px 400px,auto,auto;
+  background-size:620px 620px,820px 820px,980px 980px,auto,auto;
   background-blend-mode:soft-light,overlay,multiply,screen,normal}
 .sv .mn .scr::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;
   background:radial-gradient(120% 84% at 60% 30%,transparent 38%,rgba(2,4,10,.82) 100%)}
@@ -496,7 +497,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
   background-image:var(--nz-fine),
   linear-gradient(148deg,rgba(226,240,255,.24) 0%,transparent 36%),
   linear-gradient(#2b3550,#161d2e);
-  background-size:180px 180px,auto,auto;background-blend-mode:soft-light,screen,normal;
+  background-size:620px 620px,auto,auto;background-blend-mode:soft-light,screen,normal;
   box-shadow:inset 0 0 0 1px rgba(0,0,0,.6),inset 0 6px 14px rgba(0,0,0,.45)}
 .sv .mn .s .g{color:#94a6c6} .sv .mn .s .n{color:#c2cfe4} .sv .mn .s .t{color:#66759a}
 .sv .mn .s.pick .e{background-image:var(--nz-fine),
@@ -519,7 +520,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
   var(--nz-fine),var(--nz-streak),
   radial-gradient(40% 30% at 74% 22%, rgba(220,236,255,.4), transparent 60%),
   linear-gradient(#141e34,#070a12);
-  background-size:180px 180px,300px 300px,auto,auto;
+  background-size:620px 620px,820px 820px,auto,auto;
   background-blend-mode:soft-light,overlay,screen,normal}
 .sv .mn .bb .art .moon{position:absolute;right:26px;top:16px;width:46px;height:46px;border-radius:50%;
   background:radial-gradient(60% 60% at 40% 36%,#ffffff,#d4e4ff 58%,#96b0d8);
@@ -537,7 +538,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
 .sv .il .scr{background-image:var(--nz-fine),var(--nz-mid),var(--nz-coarse),
   radial-gradient(70% 50% at 26% 8%,rgba(255,251,230,.95),transparent 60%),
   linear-gradient(168deg,#efe4c2,#ddcfa4 58%,#c9b884);
-  background-size:180px 180px,280px 280px,380px 380px,auto,auto;
+  background-size:620px 620px,820px 820px,380px 380px,auto,auto;
   background-blend-mode:soft-light,multiply,multiply,screen,normal}
 .sv .il .scr::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;
   background:radial-gradient(118% 80% at 46% 38%,transparent 44%,rgba(102,78,38,.36) 100%)}
@@ -554,7 +555,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
 .sv .il .s .e{background-image:var(--nz-fine),
   linear-gradient(150deg,rgba(255,248,214,.5) 0%,transparent 42%),
   linear-gradient(#d8c084,#a98c45);
-  background-size:180px 180px,auto,auto;background-blend-mode:soft-light,screen,normal;
+  background-size:620px 620px,auto,auto;background-blend-mode:soft-light,screen,normal;
   border:1.5px solid #6d5620;box-shadow:inset 0 0 0 1px rgba(255,246,206,.3)}
 .sv .il .s .g{color:#3e2f12} .sv .il .s .n{color:#33280f;font-weight:600} .sv .il .s .t{color:#7a6533}
 .sv .il .s.pick .e{background-image:var(--nz-fine),
@@ -569,7 +570,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
 .sv .il .act{background-image:var(--nz-fine),
   linear-gradient(100deg,transparent 12%,rgba(255,252,222,.5) 32%,transparent 54%),
   linear-gradient(#e2c777,#b2913c);
-  background-size:180px 180px,auto,auto;background-blend-mode:soft-light,screen,normal;
+  background-size:620px 620px,auto,auto;background-blend-mode:soft-light,screen,normal;
   color:#3a2a0c;border:1.5px solid #6d5620;font-family:'Cinzel',serif;
   box-shadow:inset 0 1px 0 rgba(255,250,214,.6)}
 .sv .il .act.off{background-image:linear-gradient(#cdc0a0,#b3a689);color:#7a715c;
@@ -579,7 +580,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
 .sv .il .bb .art{background-image:var(--nz-fine),var(--nz-mid),
   radial-gradient(60% 45% at 72% 18%,rgba(201,162,39,.5),transparent 60%),
   linear-gradient(#3a2c14,#1c1408);
-  background-size:180px 180px,260px 260px,auto,auto;
+  background-size:620px 620px,820px 820px,auto,auto;
   background-blend-mode:soft-light,overlay,screen,normal}
 .sv .il .bb .art .moon{position:absolute;right:28px;top:16px;width:40px;height:40px;border-radius:50%;
   background:radial-gradient(60% 60% at 40% 36%,#fff3c4,#c9a227 60%,#8a6f1c);
@@ -598,7 +599,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
   var(--nz-streak),var(--nz-fine),
   radial-gradient(70% 46% at 50% 4%, rgba(255,240,200,.3), transparent 58%),
   linear-gradient(180deg,#141018,#0a0810);
-  background-size:300px 300px,180px 180px,auto,auto;
+  background-size:820px 820px,180px 180px,auto,auto;
   background-blend-mode:overlay,soft-light,screen,normal}
 /* REFINED. The old version laid a uniform grid over the whole screen, including
    the type - which is not how a window works and made 13pt text sit behind lead.
@@ -669,7 +670,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
 .sv .sg .bb .art{background-image:var(--nz-streak),
   radial-gradient(50% 40% at 74% 20%, rgba(255,226,150,.5), transparent 60%),
   linear-gradient(#1d1630,#0a0810);
-  background-size:260px 260px,auto,auto;background-blend-mode:overlay,screen,normal}
+  background-size:820px 820px,auto,auto;background-blend-mode:overlay,screen,normal}
 .sv .sg .bb .art::after{content:"";position:absolute;inset:0;
   background:repeating-linear-gradient(90deg,rgba(6,5,8,.75) 0 3px,transparent 3px 62px),
              repeating-linear-gradient(0deg,rgba(6,5,8,.75) 0 3px,transparent 3px 68px)}
@@ -689,7 +690,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
 .sv .ae .scr{background-image:var(--nz-fine),var(--nz-coarse),var(--nz-streak),
   radial-gradient(60% 36% at 50% 104%, rgba(226,96,26,.24), transparent 62%),
   linear-gradient(#171614,#0b0b0a 60%,#080807);
-  background-size:180px 180px,400px 400px,300px 300px,auto,auto;
+  background-size:620px 620px,980px 980px,820px 820px,auto,auto;
   background-blend-mode:soft-light,multiply,overlay,screen,normal}
 .sv .ae .scr::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;
   background:radial-gradient(120% 86% at 50% 82%,transparent 36%,rgba(0,0,0,.8) 100%)}
@@ -700,14 +701,14 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
 .sv .ae .s .e{background-image:var(--nz-fine),var(--nz-coarse),
   linear-gradient(150deg,rgba(255,250,240,.08) 0%,transparent 38%),
   linear-gradient(#23211e,#131211);
-  background-size:180px 180px,200px 200px,auto,auto;
+  background-size:620px 620px,700px 700px,auto,auto;
   background-blend-mode:soft-light,multiply,screen,normal;
   box-shadow:inset 0 0 0 1px rgba(0,0,0,.7),inset 0 6px 14px rgba(0,0,0,.5)}
 .sv .ae .s .g{color:#7d766c} .sv .ae .s .n{color:#b7b0a6} .sv .ae .s .t{color:#5f594f}
 /* chosen is a coal: lit from inside, not from a lamp */
 .sv .ae .s.pick .e{background-image:var(--nz-coarse),
   radial-gradient(62% 62% at 46% 58%, #ffb457, #e2601a 40%, #7a2a08 72%, #2a1004);
-  background-size:160px 160px,auto;background-blend-mode:multiply,normal;
+  background-size:700px 700px,auto;background-blend-mode:multiply,normal;
   box-shadow:0 0 34px rgba(226,96,26,.55),inset 0 0 14px rgba(255,190,110,.4)}
 .sv .ae .s.pick .g{color:#1a0a02;text-shadow:0 1px 0 rgba(255,200,140,.45)}
 .sv .ae .s.pick .n{color:#f0d6bc} .sv .ae .s.pick .t{color:#e2601a}
@@ -719,7 +720,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
 .sv .ae .act{border:1px solid #6a3416;color:#ffd0a2;border-radius:2px;
   background-image:var(--nz-fine),linear-gradient(#4a2008,#26100 4);
   background-image:var(--nz-fine),linear-gradient(#4a2008,#261004);
-  background-size:180px 180px,auto;background-blend-mode:soft-light,normal;
+  background-size:620px 620px,auto;background-blend-mode:soft-light,normal;
   box-shadow:0 0 28px rgba(226,96,26,.24),inset 0 1px 0 rgba(255,190,130,.22)}
 .sv .ae .act.off{border-color:#26241f;color:#4e4941;background-image:linear-gradient(#1a1917,#100f0e);
   box-shadow:none}
@@ -728,7 +729,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
 .sv .ae .bb .art{background-image:var(--nz-fine),var(--nz-streak),
   radial-gradient(52% 38% at 50% 106%, rgba(226,96,26,.5), transparent 60%),
   linear-gradient(#1a1816,#080807);
-  background-size:180px 180px,280px 280px,auto,auto;
+  background-size:620px 620px,820px 820px,auto,auto;
   background-blend-mode:soft-light,overlay,screen,normal}
 .sv .ae .bb .art .moon{position:absolute;right:28px;top:16px;width:38px;height:38px;border-radius:50%;
   background:radial-gradient(60% 60% at 40% 36%,#4a4640,#221f1c);
@@ -746,7 +747,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
 .sv .ar .scr{background-image:var(--nz-fine),var(--nz-mid),
   radial-gradient(70% 44% at 50% 2%, rgba(196,168,80,.2), transparent 58%),
   linear-gradient(172deg,#1b1740,#100d2a 56%,#09081a);
-  background-size:180px 180px,300px 300px,auto,auto;
+  background-size:620px 620px,820px 820px,auto,auto;
   background-blend-mode:soft-light,overlay,screen,normal}
 /* star field */
 .sv .ar .scr::before{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;opacity:.6;
@@ -769,7 +770,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
   background-image:var(--nz-fine),
     radial-gradient(70% 50% at 50% 14%, rgba(196,168,80,.24), transparent 64%),
     linear-gradient(#241f52,#141032);
-  background-size:180px 180px,auto,auto;background-blend-mode:soft-light,screen,normal;
+  background-size:620px 620px,auto,auto;background-blend-mode:soft-light,screen,normal;
   box-shadow:inset 0 0 0 3px rgba(11,10,28,.9),inset 0 0 0 4px rgba(196,168,80,.3),
              0 3px 10px rgba(0,0,0,.6)}
 .sv .ar .s .g{color:#e0c96e;font-family:'Cinzel',serif}
@@ -791,7 +792,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
   background-image:var(--nz-fine),
     linear-gradient(100deg,transparent 12%,rgba(255,246,206,.55) 32%,transparent 56%),
     linear-gradient(#e0c96e,#a8873a);
-  background-size:180px 180px,auto,auto;background-blend-mode:soft-light,screen,normal;
+  background-size:620px 620px,auto,auto;background-blend-mode:soft-light,screen,normal;
   box-shadow:0 0 30px rgba(224,201,110,.3),inset 0 1px 0 rgba(255,250,220,.6)}
 .sv .ar .act.off{background-image:linear-gradient(#1b1740,#100d2a);color:#5c5480;
   border-color:#2e2856;box-shadow:none}
@@ -800,7 +801,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
 .sv .ar .bb .art{background-image:var(--nz-fine),
   radial-gradient(46% 34% at 74% 20%, rgba(224,201,110,.45), transparent 60%),
   linear-gradient(#211c4a,#09081a);
-  background-size:180px 180px,auto,auto;background-blend-mode:soft-light,screen,normal}
+  background-size:620px 620px,auto,auto;background-blend-mode:soft-light,screen,normal}
 .sv .ar .bb .art .moon{position:absolute;right:28px;top:16px;width:40px;height:40px;border-radius:50%;
   background:radial-gradient(60% 60% at 40% 36%,#fff4cc,#e0c96e 58%,#a8873a);
   box-shadow:0 0 38px rgba(224,201,110,.6)}
@@ -826,7 +827,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
     radial-gradient(33% 26% at 64% 57%, rgba(74,70,62,.42), transparent 74%),
     radial-gradient(18% 15% at 47% 76%, rgba(74,70,62,.38), transparent 72%),
     radial-gradient(14% 12% at 72% 26%, rgba(74,70,62,.3), transparent 70%);
-  background-size:64px 64px, auto, auto, auto, auto;
+  background-size:320px 320px, auto, auto, auto, auto;
   background-blend-mode:multiply, multiply, multiply, multiply, normal;
   box-shadow:0 0 26px rgba(214,222,236,.28);
   border:0}
@@ -889,7 +890,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
     radial-gradient(33% 26% at 64% 57%, rgba(70,66,58,.44), transparent 74%),
     radial-gradient(18% 15% at 47% 76%, rgba(70,66,58,.4), transparent 72%),
     radial-gradient(14% 12% at 72% 26%, rgba(70,66,58,.32), transparent 70%) !important;
-  background-size:64px 64px, auto, auto, auto, auto !important;
+  background-size:320px 320px, auto, auto, auto, auto !important;
   background-blend-mode:multiply, multiply, multiply, multiply, normal !important;
   box-shadow:0 0 30px rgba(216,222,236,.32) !important;border:0}
 
@@ -898,7 +899,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
   var(--nz-fine), var(--nz-streak),
   radial-gradient(90% 46% at 50% 104%, rgba(255,186,96,.55), transparent 62%),
   linear-gradient(#1d2542 0%, #4a3a52 42%, #9a6a52 72%, #d89a62 100%) !important;
-  background-size:180px 180px,300px 300px,auto,auto !important;
+  background-size:620px 620px,820px 820px,auto,auto !important;
   background-blend-mode:soft-light,overlay,screen,normal !important}
 .art.dawn .moon{display:none}
 
@@ -907,7 +908,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
   var(--nz-fine),
   radial-gradient(70% 40% at 50% 100%, rgba(255,255,255,.5), transparent 60%),
   linear-gradient(#4a86c4 0%, #7fb0d8 54%, #b9d4e4 100%) !important;
-  background-size:180px 180px,auto,auto !important;
+  background-size:620px 620px,auto,auto !important;
   background-blend-mode:soft-light,screen,normal !important}
 .art.day .sun{position:absolute;right:30px;top:20px;width:34px;height:34px;
   border-radius:50%;background:#fffdf6;
@@ -923,9 +924,9 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
 .brick{background-image:
   var(--nz-fine),
   var(--nz-coarse),
-  url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='212' height='118'><rect width='212' height='118' fill='%231e2024'/><polygon points='-6.2,4.1 39.0,4.0 39.9,31.4 -7.0,30.8' fill='%23585c60'/><polygon points='43.5,3.4 72.9,1.4 74.1,29.6 42.0,30.2' fill='%234e5256'/><polygon points='77.0,2.5 131.9,1.3 133.6,30.6 78.1,29.7' fill='%235d6165'/><polygon points='133.7,0.3 170.6,-0.5 172.6,28.1 136.4,27.6' fill='%23515559'/><polygon points='173.6,3.4 219.9,2.3 217.7,30.5 176.5,31.8' fill='%23595d61'/><polygon points='-17.4,32.0 15.0,34.6 15.9,54.7 -18.4,54.7' fill='%234a4e52'/><polygon points='19.2,32.5 76.3,32.6 74.5,53.0 19.6,54.3' fill='%2354585c'/><polygon points='78.1,30.2 118.9,30.5 117.3,51.6 77.7,53.3' fill='%235a5e62'/><polygon points='122.2,32.0 148.9,34.3 151.0,54.2 120.0,55.8' fill='%234d5155'/><polygon points='154.2,32.3 204.7,30.7 203.5,57.5 152.2,56.7' fill='%23555a5e'/><polygon points='-7.2,57.9 34.5,58.4 32.6,84.1 -4.7,85.8' fill='%23585c60'/><polygon points='37.1,59.5 78.7,56.8 79.8,86.5 37.7,87.1' fill='%234f5357'/><polygon points='82.9,56.5 113.4,55.5 114.3,82.6 81.6,83.4' fill='%23585c60'/><polygon points='117.9,58.3 166.5,57.6 168.3,86.2 116.7,85.9' fill='%234e5256'/><polygon points='169.6,55.4 216.6,55.7 216.8,86.2 169.7,86.5' fill='%235d6165'/><polygon points='-18.1,91.1 19.1,91.0 18.4,115.7 -19.5,118.5' fill='%23515559'/><polygon points='21.4,89.6 73.0,87.9 75.3,114.5 21.8,115.3' fill='%23595d61'/><polygon points='76.6,90.3 110.4,88.8 111.0,115.1 78.1,114.7' fill='%234a4e52'/><polygon points='112.8,89.9 156.4,91.1 154.6,114.1 114.6,114.7' fill='%2354585c'/><polygon points='156.6,89.5 204.2,89.5 203.7,116.2 157.4,116.9' fill='%235a5e62'/><path d='M17 5 l2 11 l1 14' stroke='%2330333799' stroke-width='0.9' fill='none'/><path d='M57 5 l-0 11 l2 14' stroke='%2330333799' stroke-width='0.9' fill='none'/><path d='M96 4 l-1 11 l-3 14' stroke='%2330333799' stroke-width='0.9' fill='none'/><path d='M191 5 l-2 11 l-3 14' stroke='%2330333799' stroke-width='0.9' fill='none'/><path d='M99 33 l-1 9 l-0 11' stroke='%2330333799' stroke-width='0.9' fill='none'/><path d='M185 34 l1 10 l-1 12' stroke='%2330333799' stroke-width='0.9' fill='none'/><path d='M11 60 l-2 11 l-3 14' stroke='%2330333799' stroke-width='0.9' fill='none'/><path d='M92 59 l-0 11 l-1 14' stroke='%2330333799' stroke-width='0.9' fill='none'/><path d='M4 93 l1 10 l-0 13' stroke='%2330333799' stroke-width='0.9' fill='none'/><path d='M51 91 l-2 10 l-0 12' stroke='%2330333799' stroke-width='0.9' fill='none'/><path d='M172 93 l-0 10 l-3 12' stroke='%2330333799' stroke-width='0.9' fill='none'/></svg>"),
+  url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='236' height='128'><rect width='236' height='128' fill='%231a1c20'/><polygon points='-9.3,1.5 43.7,1.6 44.6,28.4 -9.3,29.3' fill='%235a5e63'/><path d='M-7 4 L43 4' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M-7 28 L43 28' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M-7 4 L-7 27' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M18 8 l13 -1.2' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M5 18 l17 -0.7' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M15 4 l-2 12 l-2 11' stroke='%2326292d' stroke-width='1.1' fill='none'/><polygon points='49.2,1.4 85.2,2.2 84.8,30.2 48.0,31.8' fill='%2350545a'/><path d='M49 4 L83 4' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M49 30 L83 30' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M49 4 L49 29' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M54 19 l7 -0.4' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M54 23 l7 -1.0' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M55 7 l11 0.8' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M57 13 l8 -0.5' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='87.1,2.3 147.0,2.8 148.0,30.6 87.1,31.6' fill='%2361656b'/><path d='M89 4 L147 4' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M89 30 L147 30' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M89 4 L89 29' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M96 26 l24 -1.1' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M92 15 l21 0.4' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='152.6,0.6 195.2,0.7 193.2,29.9 151.9,30.2' fill='%2353575d'/><path d='M153 3 L193 3' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M153 30 L193 30' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M153 3 L153 29' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M159 26 l7 0.1' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M165 9 l15 -0.6' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M171 14 l11 -0.4' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='196.9,3.2 247.0,2.6 246.1,31.8 197.5,32.9' fill='%235c6066'/><path d='M199 4 L245 4' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M199 31 L245 31' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M199 4 L199 30' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M218 18 l7 0.3' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M213 13 l17 -0.6' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M203 27 l13 0.1' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M213 11 l12 -0.1' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='-22.3,33.7 15.1,34.0 15.2,58.5 -22.8,57.9' fill='%234c5056'/><path d='M-21 35 L15 35' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M-21 57 L15 57' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M-21 35 L-21 56' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M-12 53 l9 0.2' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M-7 54 l8 0.1' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M-3 42 l8 -1.1' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='20.5,35.3 83.5,34.5 83.6,57.5 21.2,57.6' fill='%23565a60'/><path d='M21 37 L83 37' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M21 57 L83 57' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M21 37 L21 56' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M49 40 l19 0.6' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M39 52 l20 -0.3' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M52 52 l9 -0.3' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='88.2,32.8 131.9,32.4 131.9,57.3 89.3,58.3' fill='%235e6268'/><path d='M89 35 L130 35' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M89 57 L130 57' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M89 35 L89 56' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M92 44 l8 0.2' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M105 48 l8 0.0' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='136.3,34.3 168.5,34.3 166.8,58.0 135.6,60.3' fill='%234f535a'/><path d='M136 36 L167 36' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M136 58 L167 58' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M136 36 L136 57' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M140 48 l11 -0.1' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M146 50 l12 0.8' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='170.8,32.6 229.1,32.3 231.2,59.3 172.7,57.3' fill='%23575c62'/><path d='M173 35 L229 35' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M173 57 L229 57' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M173 35 L173 56' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M186 52 l12 0.4' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M199 50 l11 0.9' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M201 54 l8 -0.3' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M197 50 l7 -0.3' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='-8.5,61.8 35.8,62.6 36.9,91.1 -6.9,91.7' fill='%235a5f65'/><path d='M-7 64 L36 64' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M-7 91 L36 91' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M-7 64 L-7 90' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M1 67 l16 -0.2' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M5 74 l6 1.0' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M11 80 l8 -0.1' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M19 64 l3 14 l-0 12' stroke='%2326292d' stroke-width='1.1' fill='none'/><polygon points='41.4,60.4 89.6,60.8 88.6,94.2 41.4,94.2' fill='%2351555c'/><path d='M42 63 L88 63' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M42 92 L88 92' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M42 63 L42 91' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M47 82 l19 0.6' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M54 84 l16 1.0' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M58 75 l19 0.7' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M56 63 l0 14 l-2 13' stroke='%2326292d' stroke-width='1.1' fill='none'/><polygon points='93.7,61.5 128.5,61.8 129.1,94.1 93.1,92.6' fill='%235a5e63'/><path d='M94 64 L127 64' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M94 92 L127 92' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M94 64 L94 91' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M107 67 l11 1.0' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M106 70 l14 0.4' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M109 69 l14 -0.9' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M97 85 l7 0.7' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='131.4,61.2 188.3,61.4 188.0,91.2 132.6,92.6' fill='%2350545a'/><path d='M133 63 L186 63' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M133 91 L186 91' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M133 63 L133 90' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M138 80 l19 -0.0' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M157 82 l10 1.0' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='191.2,63.2 243.8,63.4 242.1,92.8 190.6,92.2' fill='%2361656b'/><path d='M192 65 L242 65' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M192 91 L242 91' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M192 65 L192 90' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M216 79 l6 -0.0' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M201 77 l17 -1.1' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M201 70 l18 -0.9' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M213 70 l16 -0.9' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='-21.9,96.1 19.2,97.1 19.8,122.9 -22.6,122.3' fill='%2353575d'/><path d='M-21 98 L18 98' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M-21 121 L18 121' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M-21 98 L-21 120' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M-2 113 l16 -0.9' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M-13 109 l8 0.0' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M-6 118 l7 -0.6' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M-4 107 l11 -0.8' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='21.8,96.2 82.3,96.7 81.6,122.1 23.2,123.4' fill='%235c6066'/><path d='M24 98 L80 98' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M24 122 L80 122' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M24 98 L24 121' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M27 108 l22 -0.6' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M38 114 l19 -0.4' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M50 98 l-0 12 l2 11' stroke='%2326292d' stroke-width='1.1' fill='none'/><polygon points='84.7,97.6 122.2,98.0 124.2,123.8 85.9,125.7' fill='%234c5056'/><path d='M86 99 L122 99' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M86 124 L122 124' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M86 99 L86 123' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M102 104 l12 0.4' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M93 118 l10 1.1' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M95 115 l7 -0.5' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M98 112 l13 0.2' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='127.3,96.7 172.6,96.1 171.7,122.6 126.5,121.9' fill='%23565a60'/><path d='M128 99 L172 99' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M128 122 L172 122' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M128 99 L128 121' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M144 110 l7 -0.2' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M132 115 l8 -1.2' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M148 112 l11 0.9' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='176.4,96.1 228.2,95.5 228.3,123.3 176.1,122.6' fill='%235e6268'/><path d='M178 97 L226 97' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M178 121 L226 121' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M178 97 L178 120' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M189 114 l11 -0.7' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M196 107 l16 1.0' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M196 110 l7 -0.9' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M199 102 l10 -0.9' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M210 97 l-1 12 l-1 11' stroke='%2326292d' stroke-width='1.1' fill='none'/></svg>"),
   linear-gradient(#14161a,#0a0c0e);
-  background-size:180px 180px, 400px 400px, 212px 118px, auto;
+  background-size:620px 620px, 980px 980px, 236px 128px, auto;
   background-blend-mode:soft-light, multiply, normal, normal}
 
 
@@ -945,7 +946,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
   var(--nz-fine), var(--nz-mid), var(--nz-coarse),
   radial-gradient(90% 40% at 50% -8%, rgba(255,246,214,.5), transparent 60%),
   linear-gradient(174deg,#6e6a5e,#55524a 48%,#403e38) !important;
-  background-size:180px 180px,300px 300px,400px 400px,auto,auto !important;
+  background-size:620px 620px,820px 820px,980px 980px,auto,auto !important;
   background-blend-mode:soft-light,overlay,multiply,screen,normal !important}
 .d1 .night::after{background:radial-gradient(120% 84% at 50% 26%,transparent 50%,rgba(20,18,14,.5) 100%) !important}
 .d1 .ask{color:#f4efe0 !important} .d1 .hdr{color:#b5a87e !important}
@@ -960,7 +961,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
   var(--nz-fine), var(--nz-streak),
   radial-gradient(86% 42% at 50% -6%, rgba(238,244,252,.62), transparent 62%),
   linear-gradient(176deg,#8e98a8,#737d8c 50%,#5b6472) !important;
-  background-size:180px 180px,300px 300px,auto,auto !important;
+  background-size:620px 620px,820px 820px,auto,auto !important;
   background-blend-mode:soft-light,overlay,screen,normal !important}
 .d2 .night::after{background:radial-gradient(120% 84% at 50% 24%,transparent 52%,rgba(28,34,44,.42) 100%) !important}
 .d2 .ask{color:#182028 !important;text-shadow:none !important}
@@ -975,7 +976,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
   var(--nz-fine), var(--nz-coarse),
   radial-gradient(84% 40% at 50% -8%, rgba(255,250,240,.5), transparent 60%),
   linear-gradient(174deg,#b4ada4,#9a938a 52%,#807a72) !important;
-  background-size:180px 180px,400px 400px,auto,auto !important;
+  background-size:620px 620px,980px 980px,auto,auto !important;
   background-blend-mode:soft-light,multiply,screen,normal !important}
 .d3 .night::after{background:radial-gradient(120% 84% at 50% 24%,transparent 52%,rgba(48,44,40,.4) 100%) !important}
 .d3 .ask{color:#22201c !important} .d3 .hdr{color:#6a6258 !important}
@@ -987,6 +988,158 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
 .d3 .sh.sent.pick .esc{background-image:
   radial-gradient(62% 62% at 46% 56%, #ffb457, #e2601a 44%, #a8400e 76%) !important}
 .d3 .sh.sent.pick .sig{color:#2a1004 !important}
+
+
+/* THE MOON, de-vectorised. The drawn version was crisp in the wrong way - every
+   edge equally sharp is what makes a thing read as a diagram. A hair of blur
+   plus film grain over the top puts it back in the same world as the rest of
+   the screen, without going back to a gradient sphere. */
+.bub .art .moon, .bb .art .moon{
+  filter:blur(.4px) contrast(1.07) brightness(.98);
+  position:relative;overflow:hidden}
+.bub .art .moon::after, .bb .art .moon::after{content:"";position:absolute;inset:-2px;
+  background-image:var(--nz-fine);background-size:170px 170px;
+  mix-blend-mode:overlay;opacity:.55;border-radius:50%}
+
+/* DAWN. The red comes off the horizon, not off a disc in the sky. The sun sits
+   ON the skyline, mostly behind the village, and the glow rises from the bottom
+   edge of the frame. */
+.art.dawn{background-image:
+  var(--nz-fine), var(--nz-streak),
+  radial-gradient(120% 52% at 50% 112%, rgba(255,92,36,.95), transparent 58%),
+  radial-gradient(150% 68% at 50% 124%, rgba(186,34,22,.85), transparent 66%),
+  linear-gradient(#0a1024 0%, #241634 26%, #5e2032 50%, #8e2a22 72%, #b83a1e 100%) !important;
+  background-size:620px 620px,820px 820px,auto,auto,auto !important;
+  background-blend-mode:soft-light,overlay,screen,screen,normal !important}
+.art.dawn .risingsun{position:absolute;left:50%;bottom:30px;transform:translateX(-50%);
+  width:44px;height:44px;border-radius:50%;
+  background:radial-gradient(58% 58% at 50% 46%, #ffb070, #f0522a 56%, #c22a16);
+  box-shadow:0 0 58px 22px rgba(240,82,42,.5);z-index:0}
+.art.dawn .town{z-index:1;position:absolute}
+.art.dawn .northstar{position:absolute;right:40px;top:18px;width:2.4px;height:2.4px;
+  border-radius:50%;background:#f0f4ff;box-shadow:0 0 9px 2.5px rgba(214,228,255,.9);z-index:2}
+
+/* TALLIES: thick strokes and a count, because five scratches are not countable
+   at a glance and a number is. */
+.tal{display:flex;align-items:center;justify-content:center;gap:5px;margin-top:2px}
+.tal .marks{letter-spacing:2.5px;font:700 15px/1 'Cinzel',serif;color:#e8c56a}
+.tal .num{font:600 12px/1 'Cinzel',serif;color:#9a8a5c}
+
+/* THE PACK DOOR, without a notification dot. A dot is an iOS idiom; a wax seal
+   is not. The seal is present for everyone and only bears a mark when there is
+   something behind it. */
+.packdoor{display:flex;align-items:center;gap:10px;padding:11px 13px;border-radius:2px;
+  border:1px solid #6e2320;
+  background-image:var(--nz-fine),linear-gradient(#3d1416,#230c0e);
+  background-size:620px 620px,auto;background-blend-mode:soft-light,normal}
+.packdoor .seal{width:17px;height:17px;border-radius:50%;flex:none;
+  background:radial-gradient(60% 60% at 38% 34%, #b8483c, #7d1f1a 62%, #4e100d);
+  box-shadow:inset 0 1px 0 rgba(255,190,176,.4), 0 1px 2px rgba(0,0,0,.6)}
+.packdoor .lbl{font:600 12px/1 'Cinzel',serif;letter-spacing:.2em;text-transform:uppercase;
+  color:#e0968c;flex:1}
+.packdoor .n{font:400 12.5px/1 'EB Garamond',serif;color:#a4645b;font-style:italic}
+/* the lobby's seat door is the same object in brass, not a bar of static */
+.seatdoor{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:2px;
+  border:1px solid #7a6420;
+  background-image:linear-gradient(#4a3a16,#2a200b);
+  box-shadow:inset 0 1px 0 rgba(255,238,192,.22)}
+.seatdoor .seal{width:17px;height:17px;border-radius:50%;flex:none;
+  background:radial-gradient(60% 60% at 38% 34%, #f0d998, #b8912e 60%, #6d5316);
+  box-shadow:inset 0 1px 0 rgba(255,250,214,.6), 0 1px 2px rgba(0,0,0,.6)}
+.seatdoor .lbl{font:600 12.5px/1 'Cinzel',serif;letter-spacing:.2em;text-transform:uppercase;
+  color:#ffeec0;flex:1}
+
+
+/* CANDLELIT in the comparison structure - the flow mockups' own materials, so
+   the original can stand next to the alternatives instead of being described. */
+.cl{color:#d8cdb8;font-family:'EB Garamond',Georgia,serif}
+.cl .chrome{background:#050508} .cl .chrome i{background:#2b2b38}
+.cl .scr{background-image:
+  var(--nz-fine), var(--nz-mid), var(--nz-coarse),
+  radial-gradient(115% 62% at 24% 6%, rgba(224,176,72,.20), transparent 56%),
+  radial-gradient(85% 55% at 84% 97%, rgba(140,26,26,.20), transparent 60%),
+  linear-gradient(168deg,#141620 0%,#0a0b11 46%,#0d0e15 74%,#08090d 100%);
+  background-size:620px 620px,820px 820px,980px 980px,auto,auto,auto;
+  background-blend-mode:soft-light,overlay,multiply,screen,screen,normal}
+.cl .scr::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;
+  background:radial-gradient(128% 86% at 46% 38%, transparent 40%, rgba(2,2,5,.78) 100%)}
+.cl .hdr{color:#8a7a52;font-family:'Cinzel',serif;font-weight:600}
+.cl .ask{font:600 25px/1.14 'Cinzel',serif;color:#efe6d2;
+  text-shadow:0 1px 0 #000, 0 0 26px rgba(201,162,39,.16)}
+.cl .said{color:#9d947f;font-style:italic} .cl .said b{color:#c4362e;font-style:normal}
+.cl .rl{height:2px;background:linear-gradient(#2a2418,#0a0a0c);
+  box-shadow:0 1px 0 rgba(201,162,39,.1)}
+.cl .s .e{background-image:var(--nz-fine),var(--nz-mid),
+  linear-gradient(152deg, rgba(255,246,222,.13) 0%, transparent 34%),
+  linear-gradient(#2b2d3a,#181a24 58%,#0e0f16);
+  background-size:620px 620px,620px 620px,auto,auto;
+  background-blend-mode:soft-light,overlay,screen,normal;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.65), inset 0 7px 16px rgba(0,0,0,.55),
+             inset 0 -10px 18px rgba(0,0,0,.4)}
+.cl .s .g{color:#8d8570;font-family:'Cinzel',serif;text-shadow:0 1px 0 #000}
+.cl .s .n{color:#cdc2a9} .cl .s .t{color:#6d6553}
+.cl .s.pick .e{background-image:var(--nz-fine),var(--nz-mid),
+  linear-gradient(150deg, rgba(255,240,196,.36) 0%, rgba(255,240,196,.06) 30%, transparent 46%),
+  linear-gradient(#6a5220,#3d2f11 58%,#211806);
+  box-shadow:inset 0 0 0 1px rgba(232,197,106,.5), 0 0 26px rgba(201,162,39,.2)}
+.cl .s.pick .g{color:#ffeec0} .cl .s.pick .n{color:#f3e9d2}
+.cl .s.pack .e{background-image:var(--nz-fine),var(--nz-coarse),
+  linear-gradient(#4a1a1c,#2a0f11 58%,#170809);
+  background-size:620px 620px,980px 980px,auto;
+  background-blend-mode:soft-light,multiply,normal}
+.cl .s.pack .g{color:#d8948a} .cl .s.pack .t{color:#b03a33}
+.cl .s.dead{opacity:.42}
+.cl .ft,.cl .hint{color:#6e6655}
+.cl .bb{background:#07070a;border:1px solid #1d1e26}
+.cl .bb .art{background-image:var(--nz-fine),var(--nz-mid),
+  radial-gradient(64% 50% at 74% 16%, rgba(201,162,39,.24), transparent 58%),
+  radial-gradient(90% 62% at 26% 96%, rgba(140,26,26,.2), transparent 64%),
+  linear-gradient(174deg,#10131d,#0a0c13 54%,#06070b);
+  background-size:620px 620px,820px 820px,auto,auto,auto;
+  background-blend-mode:soft-light,overlay,screen,screen,normal}
+.cl .bb .cap{background:linear-gradient(transparent,rgba(5,5,8,.94) 58%)}
+.cl .bb .cap .k{color:#a8935c} .cl .bb .cap .t{color:#f0e6cf}
+.cl .bb .mt{background:#0a0b10;border-top:1px solid #1a1b23}
+.cl .bb .mt .a{color:#e4dcc8} .cl .bb .mt .b{color:#7e7663}
+
+/* ── THE DUNGEON: candlelit, but the wall is the stone. One tallow flame in a
+   cellar with no window, so the falloff is fast and the corners go to nothing.
+   The wall is the same procedural ashlar, pushed darker and colder so the
+   candle is the only warm thing in the frame. */
+.dg{color:#cdc0a8;font-family:'EB Garamond',Georgia,serif}
+.dg .chrome{background:#050506} .dg .chrome i{background:#2a2722}
+.dg .scr{background-image:
+  var(--nz-fine),
+  radial-gradient(64% 40% at 26% 4%, rgba(232,176,72,.34), transparent 58%),
+  url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='236' height='128'><rect width='236' height='128' fill='%231a1c20'/><polygon points='-9.3,1.5 43.7,1.6 44.6,28.4 -9.3,29.3' fill='%235a5e63'/><path d='M-7 4 L43 4' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M-7 28 L43 28' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M-7 4 L-7 27' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M18 8 l13 -1.2' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M5 18 l17 -0.7' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M15 4 l-2 12 l-2 11' stroke='%2326292d' stroke-width='1.1' fill='none'/><polygon points='49.2,1.4 85.2,2.2 84.8,30.2 48.0,31.8' fill='%2350545a'/><path d='M49 4 L83 4' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M49 30 L83 30' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M49 4 L49 29' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M54 19 l7 -0.4' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M54 23 l7 -1.0' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M55 7 l11 0.8' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M57 13 l8 -0.5' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='87.1,2.3 147.0,2.8 148.0,30.6 87.1,31.6' fill='%2361656b'/><path d='M89 4 L147 4' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M89 30 L147 30' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M89 4 L89 29' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M96 26 l24 -1.1' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M92 15 l21 0.4' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='152.6,0.6 195.2,0.7 193.2,29.9 151.9,30.2' fill='%2353575d'/><path d='M153 3 L193 3' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M153 30 L193 30' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M153 3 L153 29' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M159 26 l7 0.1' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M165 9 l15 -0.6' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M171 14 l11 -0.4' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='196.9,3.2 247.0,2.6 246.1,31.8 197.5,32.9' fill='%235c6066'/><path d='M199 4 L245 4' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M199 31 L245 31' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M199 4 L199 30' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M218 18 l7 0.3' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M213 13 l17 -0.6' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M203 27 l13 0.1' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M213 11 l12 -0.1' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='-22.3,33.7 15.1,34.0 15.2,58.5 -22.8,57.9' fill='%234c5056'/><path d='M-21 35 L15 35' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M-21 57 L15 57' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M-21 35 L-21 56' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M-12 53 l9 0.2' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M-7 54 l8 0.1' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M-3 42 l8 -1.1' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='20.5,35.3 83.5,34.5 83.6,57.5 21.2,57.6' fill='%23565a60'/><path d='M21 37 L83 37' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M21 57 L83 57' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M21 37 L21 56' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M49 40 l19 0.6' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M39 52 l20 -0.3' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M52 52 l9 -0.3' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='88.2,32.8 131.9,32.4 131.9,57.3 89.3,58.3' fill='%235e6268'/><path d='M89 35 L130 35' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M89 57 L130 57' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M89 35 L89 56' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M92 44 l8 0.2' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M105 48 l8 0.0' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='136.3,34.3 168.5,34.3 166.8,58.0 135.6,60.3' fill='%234f535a'/><path d='M136 36 L167 36' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M136 58 L167 58' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M136 36 L136 57' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M140 48 l11 -0.1' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M146 50 l12 0.8' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='170.8,32.6 229.1,32.3 231.2,59.3 172.7,57.3' fill='%23575c62'/><path d='M173 35 L229 35' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M173 57 L229 57' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M173 35 L173 56' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M186 52 l12 0.4' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M199 50 l11 0.9' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M201 54 l8 -0.3' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M197 50 l7 -0.3' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='-8.5,61.8 35.8,62.6 36.9,91.1 -6.9,91.7' fill='%235a5f65'/><path d='M-7 64 L36 64' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M-7 91 L36 91' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M-7 64 L-7 90' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M1 67 l16 -0.2' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M5 74 l6 1.0' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M11 80 l8 -0.1' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M19 64 l3 14 l-0 12' stroke='%2326292d' stroke-width='1.1' fill='none'/><polygon points='41.4,60.4 89.6,60.8 88.6,94.2 41.4,94.2' fill='%2351555c'/><path d='M42 63 L88 63' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M42 92 L88 92' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M42 63 L42 91' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M47 82 l19 0.6' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M54 84 l16 1.0' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M58 75 l19 0.7' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M56 63 l0 14 l-2 13' stroke='%2326292d' stroke-width='1.1' fill='none'/><polygon points='93.7,61.5 128.5,61.8 129.1,94.1 93.1,92.6' fill='%235a5e63'/><path d='M94 64 L127 64' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M94 92 L127 92' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M94 64 L94 91' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M107 67 l11 1.0' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M106 70 l14 0.4' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M109 69 l14 -0.9' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M97 85 l7 0.7' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='131.4,61.2 188.3,61.4 188.0,91.2 132.6,92.6' fill='%2350545a'/><path d='M133 63 L186 63' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M133 91 L186 91' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M133 63 L133 90' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M138 80 l19 -0.0' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M157 82 l10 1.0' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='191.2,63.2 243.8,63.4 242.1,92.8 190.6,92.2' fill='%2361656b'/><path d='M192 65 L242 65' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M192 91 L242 91' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M192 65 L192 90' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M216 79 l6 -0.0' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M201 77 l17 -1.1' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M201 70 l18 -0.9' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M213 70 l16 -0.9' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='-21.9,96.1 19.2,97.1 19.8,122.9 -22.6,122.3' fill='%2353575d'/><path d='M-21 98 L18 98' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M-21 121 L18 121' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M-21 98 L-21 120' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M-2 113 l16 -0.9' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M-13 109 l8 0.0' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M-6 118 l7 -0.6' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M-4 107 l11 -0.8' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='21.8,96.2 82.3,96.7 81.6,122.1 23.2,123.4' fill='%235c6066'/><path d='M24 98 L80 98' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M24 122 L80 122' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M24 98 L24 121' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M27 108 l22 -0.6' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M38 114 l19 -0.4' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M50 98 l-0 12 l2 11' stroke='%2326292d' stroke-width='1.1' fill='none'/><polygon points='84.7,97.6 122.2,98.0 124.2,123.8 85.9,125.7' fill='%234c5056'/><path d='M86 99 L122 99' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M86 124 L122 124' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M86 99 L86 123' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M102 104 l12 0.4' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M93 118 l10 1.1' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M95 115 l7 -0.5' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M98 112 l13 0.2' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='127.3,96.7 172.6,96.1 171.7,122.6 126.5,121.9' fill='%23565a60'/><path d='M128 99 L172 99' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M128 122 L172 122' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M128 99 L128 121' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M144 110 l7 -0.2' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M132 115 l8 -1.2' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M148 112 l11 0.9' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><polygon points='176.4,96.1 228.2,95.5 228.3,123.3 176.1,122.6' fill='%235e6268'/><path d='M178 97 L226 97' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1.6' fill='none'/><path d='M178 121 L226 121' stroke='%23000000' stroke-opacity='0.45' stroke-width='2.2' fill='none'/><path d='M178 97 L178 120' stroke='%23000000' stroke-opacity='0.3' stroke-width='1.6' fill='none'/><path d='M189 114 l11 -0.7' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M196 107 l16 1.0' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M196 110 l7 -0.9' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M199 102 l10 -0.9' stroke='%23000000' stroke-opacity='0.11' stroke-width='0.9' fill='none'/><path d='M210 97 l-1 12 l-1 11' stroke='%2326292d' stroke-width='1.1' fill='none'/></svg>"),
+  linear-gradient(#0e0f11,#08090a);
+  background-size:620px 620px, auto, 236px 128px, auto;
+  background-blend-mode:soft-light, screen, multiply, normal}
+.dg .scr::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;
+  background:radial-gradient(96% 62% at 26% 12%, transparent 22%, rgba(0,0,0,.9) 96%)}
+.dg .hdr{color:#93804f;font-family:'Cinzel',serif;font-weight:600}
+.dg .ask{font:600 25px/1.14 'Cinzel',serif;color:#f2e7cd;
+  text-shadow:0 1px 0 #000, 0 0 30px rgba(232,176,72,.3)}
+.dg .said{color:#968b73;font-style:italic} .dg .said b{color:#c4362e;font-style:normal}
+.dg .rl{height:2px;background:linear-gradient(#2e2517,#08080a);
+  box-shadow:0 1px 0 rgba(201,162,39,.12)}
+.dg .s .e{background-image:var(--nz-fine),
+  linear-gradient(148deg, rgba(255,238,198,.2) 0%, transparent 36%),
+  linear-gradient(#34302a,#1c1a17 58%,#0f0e0d);
+  background-size:620px 620px,auto,auto;
+  background-blend-mode:soft-light,screen,normal;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.7), inset 0 8px 18px rgba(0,0,0,.6)}
+.dg .s .g{color:#9b8f76;font-family:'Cinzel',serif;text-shadow:0 1px 0 #000}
+.dg .s .n{color:#c9bda4} .dg .s .t{color:#6b6250}
+.dg .s.pick .e{background-image:var(--nz-fine),
+  linear-gradient(148deg, rgba(255,236,186,.44) 0%, transparent 42%),
+  linear-gradient(#7a5c1e,#43310f 58%,#241a08);
+  box-shadow:inset 0 0 0 1px rgba(240,217,152,.55), 0 0 30px rgba(232,176,72,.28)}
+.dg .s.pick .g{color:#fff0c8} .dg .s.pick .n{color:#f5ecd6}
+.dg .s.pack .e{background-image:var(--nz-fine),linear-gradient(#4e1a1a,#26100f)}
+.dg .s.pack .g{color:#dc9a8e} .dg .s.pack .t{color:#b03a33}
+.dg .s.dead{opacity:.38}
+.dg .ft,.dg .hint{color:#6b6250}
 
 </style>
 </head>
@@ -1145,6 +1298,31 @@ stained glass were all tried and cut.</p>
     <div class="device ae"><div class="chrome"><i></i></div><div class="thr" style="height:280px;background:#0b0d12"><div class="m them">who even is awake</div><div class="bb"><div class="art"><div class="stars"></div><div class="moon"></div><div class="town"></div><div class="cap"><div class="k">Night III</div><div class="t">Cy closed the night</div></div></div><div class="mt"><div class="a">6 of 6 have sent</div><div class="b">Open to see the morning</div></div></div><div class="m them">oh no</div></div></div>
   </div>
 </div>
+<div class="pair">
+  <div>
+    <div class="h4"><span class="pill">03</span> The dungeon &middot; candlelit on stone</div>
+    <p class="why">The original's one tallow flame, but the wall is the procedural ashlar and the
+    room has no window. Falloff is fast and the corners go to nothing, so the candle is the only
+    warm thing in the frame.</p>
+    <div class="device dg"><div class="chrome"><i></i></div><div class="scr"><div class="in"><div class="hdr">Night III</div><div class="ask">Who do you want gone?</div><div class="said">You are a <b>wolf</b>. Tonight Cy makes the call.</div><div class="rl"></div><div class="grid"><div class="s dead"><div class="e esh"><span class="g">A</span></div><div class="n">Alex</div><div class="t">&nbsp;</div></div><div class="s sent pick"><div class="e esh"><span class="g">S</span></div><div class="n">Sveta</div><div class="t">&nbsp;</div></div><div class="s sent"><div class="e esh"><span class="g">K</span></div><div class="n">Kim</div><div class="t">&nbsp;</div></div><div class="s sent pack"><div class="e esh"><span class="g">L</span></div><div class="n">Lee</div><div class="t">Pack</div></div><div class="s sent"><div class="e esh"><span class="g">A</span></div><div class="n">Ana</div><div class="t">&nbsp;</div></div><div class="s "><div class="e esh"><span class="g">B</span></div><div class="n">Bo</div><div class="t">&nbsp;</div></div><div class="s sent you"><div class="e esh"><span class="g">C</span></div><div class="n">Cy</div><div class="t">&nbsp;</div></div></div><div class="packdoor"><span class="seal"></span><span class="lbl">The pack</span><span class="n">someone spoke</span></div><div class="hint">Tap a shield. It stages and the drawer closes.</div></div></div></div>
+    <div class="note"><b>This is the sneaky one.</b> The stone pushes the whole screen colder and
+    the single warm pool does more work than it did against flat dark - you are in a cellar with
+    the light you brought. The shields go to dark iron rather than blue-grey, which reads as
+    older.</div>
+  </div>
+  <div>
+    <div class="h4"><span class="pill n">and what it costs</span></div>
+    <p class="why">Nothing new: it is the candlelit material set with the stone tile swapped in
+    behind it and the vignette tightened. Two overrides, not a fourth style.</p>
+    <div class="note"><b>The thing to watch is the wall against the shields.</b> Both are grids.
+    The ashlar is deliberately irregular - uneven courses, offsets that do not line up, jittered
+    block heights - so the two do not beat against each other, but at small shield sizes it is
+    still the first thing to check.</div>
+    <div class="note"><b>And the light has a direction now</b>, which the flat version did not:
+    top-left, falling off to black by the bottom right. Every shield is lit from the same side,
+    so the grid reads as objects in a room rather than tiles on a page.</div>
+  </div>
+</div>
 </div>
 <p style="margin-top:22px"><b>Ash and ember is the pick</b> - and it is the one you reacted to,
 which matters more than my reasoning. <b>Moonlit</b> stays as the cold alternative, and the
@@ -1247,7 +1425,7 @@ seen in three sizes, and the bubble is seen by people who never open the app at 
             <div class="sh"><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st">&nbsp;</div></div>
             <div class="sh sent you"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">&nbsp;</div></div>
           </div>
-          <div class="packdoor"><span class="dot"></span><span class="lbl">The pack</span><span class="n">1 new</span></div>
+          <div class="packdoor"><span class="seal"></span><span class="lbl">The pack</span><span class="n">someone spoke</span></div>
           
           <div class="foot">Bo has not played. In ten minutes you may carry them.</div>
         </div>
@@ -1391,14 +1569,14 @@ different hour - which is what makes it read as the same game rather than a seco
 <div class="row">
   <div class="col">
     <div class="h4"><span class="pill">D1</span> Candlelit at noon</div>
-    <div class="device d1"><div class="chrome"><i></i></div><div class="night" style="height:440px"><div class="inner"><div class="hdr">Day IV &middot; the village speaks</div><div class="ask">Name someone.</div><div class="said">Your vote is <b>public</b>.</div><div class="rule2"></div><div class="shields" style="grid-template-columns:repeat(3,1fr)"><div class="sh sent pick"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st" style="letter-spacing:3px;font-size:13px">|||</div></div><div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st" style="letter-spacing:3px;font-size:13px">|</div></div><div class="sh"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st" style="letter-spacing:3px;font-size:13px">||</div></div><div class="sh"><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st">&nbsp;</div></div><div class="sh"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">&nbsp;</div></div></div><div class="hint">Tap a shield. You cannot change it afterwards.</div></div></div></div>
+    <div class="device d1"><div class="chrome"><i></i></div><div class="night" style="height:440px"><div class="inner"><div class="hdr">Day IV &middot; the village speaks</div><div class="ask">Name someone.</div><div class="said">Your vote is <b>public</b>.</div><div class="rule2"></div><div class="shields" style="grid-template-columns:repeat(3,1fr)"><div class="sh sent pick"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st"><span class="tal"><span class="marks">|||</span><span class="num">3</span></span></div></div><div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st"><span class="tal"><span class="marks">|</span><span class="num">1</span></span></div></div><div class="sh"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st"><span class="tal"><span class="marks">||</span><span class="num">2</span></span></div></div><div class="sh"><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st">&nbsp;</div></div><div class="sh"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">&nbsp;</div></div></div><div class="hint">Tap a shield. You cannot change it afterwards.</div></div></div></div>
     <div class="note">Warm stone with the sun on it. The shields go from cold iron to lit iron,
     which is the same object in different light - the strongest argument for deriving rather than
     inventing.</div>
   </div>
   <div class="col">
     <div class="h4"><span class="pill g">D2</span> Moonlit, overcast</div>
-    <div class="device d2"><div class="chrome"><i></i></div><div class="night" style="height:440px"><div class="inner"><div class="hdr">Day IV &middot; the village speaks</div><div class="ask">Name someone.</div><div class="said">Your vote is <b>public</b>.</div><div class="rule2"></div><div class="shields" style="grid-template-columns:repeat(3,1fr)"><div class="sh sent pick"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st" style="letter-spacing:3px;font-size:13px">|||</div></div><div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st" style="letter-spacing:3px;font-size:13px">|</div></div><div class="sh"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st" style="letter-spacing:3px;font-size:13px">||</div></div><div class="sh"><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st">&nbsp;</div></div><div class="sh"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">&nbsp;</div></div></div><div class="hint">Tap a shield. You cannot change it afterwards.</div></div></div></div>
+    <div class="device d2"><div class="chrome"><i></i></div><div class="night" style="height:440px"><div class="inner"><div class="hdr">Day IV &middot; the village speaks</div><div class="ask">Name someone.</div><div class="said">Your vote is <b>public</b>.</div><div class="rule2"></div><div class="shields" style="grid-template-columns:repeat(3,1fr)"><div class="sh sent pick"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st"><span class="tal"><span class="marks">|||</span><span class="num">3</span></span></div></div><div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st"><span class="tal"><span class="marks">|</span><span class="num">1</span></span></div></div><div class="sh"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st"><span class="tal"><span class="marks">||</span><span class="num">2</span></span></div></div><div class="sh"><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st">&nbsp;</div></div><div class="sh"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">&nbsp;</div></div></div><div class="hint">Tap a shield. You cannot change it afterwards.</div></div></div></div>
     <div class="note"><b>The full inversion</b> - pewter on blue-black becomes ink on pewter, and
     the type flips to dark. Cold daylight with no warmth in it, which suits a village that has
     just found a body.</div>
@@ -1408,7 +1586,7 @@ different hour - which is what makes it read as the same game rather than a seco
 <div class="row">
   <div class="col">
     <div class="h4"><span class="pill n">D3</span> The fire is out</div>
-    <div class="device d3"><div class="chrome"><i></i></div><div class="night" style="height:440px"><div class="inner"><div class="hdr">Day IV &middot; the village speaks</div><div class="ask">Name someone.</div><div class="said">Your vote is <b>public</b>.</div><div class="rule2"></div><div class="shields" style="grid-template-columns:repeat(3,1fr)"><div class="sh sent pick"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st" style="letter-spacing:3px;font-size:13px">|||</div></div><div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st" style="letter-spacing:3px;font-size:13px">|</div></div><div class="sh"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st" style="letter-spacing:3px;font-size:13px">||</div></div><div class="sh"><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st">&nbsp;</div></div><div class="sh"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">&nbsp;</div></div></div><div class="hint">Tap a shield. You cannot change it afterwards.</div></div></div></div>
+    <div class="device d3"><div class="chrome"><i></i></div><div class="night" style="height:440px"><div class="inner"><div class="hdr">Day IV &middot; the village speaks</div><div class="ask">Name someone.</div><div class="said">Your vote is <b>public</b>.</div><div class="rule2"></div><div class="shields" style="grid-template-columns:repeat(3,1fr)"><div class="sh sent pick"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st"><span class="tal"><span class="marks">|||</span><span class="num">3</span></span></div></div><div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st"><span class="tal"><span class="marks">|</span><span class="num">1</span></span></div></div><div class="sh"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st"><span class="tal"><span class="marks">||</span><span class="num">2</span></span></div></div><div class="sh"><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st">&nbsp;</div></div><div class="sh"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">&nbsp;</div></div></div><div class="hint">Tap a shield. You cannot change it afterwards.</div></div></div></div>
     <div class="note"><b>Ash in daylight is pale, and the ember survives it.</b> The named seat
     stays the only colour in the frame, exactly as at night - so the one rule the style has keeps
     working when everything around it changes.</div>
@@ -1433,7 +1611,7 @@ without reading a word. Same village, three states.</p>
 <div class="row">
   <div class="col">
     <div class="h4"><span class="pill">night</span> an ordinary move</div>
-    <div class="device"><div class="chrome" style="background:#050508"><i style="background:#2b2b38"></i></div>
+    <div class="device cl"><div class="chrome" style="background:#050508"><i style="background:#2b2b38"></i></div>
   <div class="thr" style="height:270px;background:#0b0d12">
     <div class="m them">so who was it</div>
     <div class="bb ">
@@ -1451,7 +1629,7 @@ without reading a word. Same village, three states.</p>
   </div>
   <div class="col">
     <div class="h4"><span class="pill g">dawn</span> the night closing</div>
-    <div class="device"><div class="chrome" style="background:#050508"><i style="background:#2b2b38"></i></div>
+    <div class="device cl"><div class="chrome" style="background:#050508"><i style="background:#2b2b38"></i></div>
   <div class="thr" style="height:270px;background:#0b0d12">
     <div class="m them">so who was it</div>
     <div class="bb ">
@@ -1469,7 +1647,7 @@ without reading a word. Same village, three states.</p>
   </div>
   <div class="col">
     <div class="h4"><span class="pill n">day</span> the vote</div>
-    <div class="device"><div class="chrome" style="background:#050508"><i style="background:#2b2b38"></i></div>
+    <div class="device cl"><div class="chrome" style="background:#050508"><i style="background:#2b2b38"></i></div>
   <div class="thr" style="height:270px;background:#0b0d12">
     <div class="m them">so who was it</div>
     <div class="bb ">
@@ -1529,13 +1707,13 @@ The day inverts every part of that, and the inversion is the design.</p>
 <div class="row">
   <div class="col">
     <div class="h4"><span class="pill">1</span> The minute after dawn</div>
-    <div class="device"><div class="chrome"><i></i></div><div class="night" style="height:430px"><div class="inner"><div class="hdr">Day IV &middot; the village speaks</div><div class="ask">Talk first.</div><div class="said">Voting opens in a minute. Sveta is gone and nobody has said why.</div><div class="rule2"></div><div class="shields" style="grid-template-columns:repeat(3,1fr)"><div class="sh sent"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st" style="color:#c9a227;letter-spacing:3px;font-size:13px">|||</div></div><div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st" style="color:#c9a227;letter-spacing:3px;font-size:13px">|</div></div><div class="sh"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st" style="color:#c9a227;letter-spacing:3px;font-size:13px">||</div></div><div class="sh"><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st">&nbsp;</div></div><div class="sh"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">&nbsp;</div></div></div><div class="hint">Nobody can vote yet. Use the thread.</div></div></div></div>
+    <div class="device cl"><div class="chrome"><i></i></div><div class="night" style="height:430px"><div class="inner"><div class="hdr">Day IV &middot; the village speaks</div><div class="ask">Talk first.</div><div class="said">Voting opens in a minute. Sveta is gone and nobody has said why.</div><div class="rule2"></div><div class="shields" style="grid-template-columns:repeat(3,1fr)"><div class="sh sent"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st"><span class="tal"><span class="marks">|||</span><span class="num">3</span></span></div></div><div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st"><span class="tal"><span class="marks">|</span><span class="num">1</span></span></div></div><div class="sh"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st"><span class="tal"><span class="marks">||</span><span class="num">2</span></span></div></div><div class="sh"><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st">&nbsp;</div></div><div class="sh"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">&nbsp;</div></div></div><div class="hint">Nobody can vote yet. Use the thread.</div></div></div></div>
     <div class="note">No shield is tappable. The tallies from yesterday are gone and today's are
     empty, so the screen has nothing to do and says so.</div>
   </div>
   <div class="col">
     <div class="h4"><span class="pill g">2</span> Your turn</div>
-    <div class="device"><div class="chrome"><i></i></div><div class="night" style="height:430px"><div class="inner"><div class="hdr">Day IV &middot; your turn</div><div class="ask">Name someone.</div><div class="said">Your vote is <b>public</b>.</div><div class="rule2"></div><div class="shields" style="grid-template-columns:repeat(3,1fr)"><div class="sh sent"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st" style="color:#c9a227;letter-spacing:3px;font-size:13px">|||</div></div><div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st" style="color:#c9a227;letter-spacing:3px;font-size:13px">|</div></div><div class="sh"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st" style="color:#c9a227;letter-spacing:3px;font-size:13px">||</div></div><div class="sh"><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st">&nbsp;</div></div><div class="sh sent pick"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">&nbsp;</div></div></div><div class="hint">Tap a shield. You cannot change it afterwards.</div></div></div></div>
+    <div class="device cl"><div class="chrome"><i></i></div><div class="night" style="height:430px"><div class="inner"><div class="hdr">Day IV &middot; your turn</div><div class="ask">Name someone.</div><div class="said">Your vote is <b>public</b>.</div><div class="rule2"></div><div class="shields" style="grid-template-columns:repeat(3,1fr)"><div class="sh sent"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st"><span class="tal"><span class="marks">|||</span><span class="num">3</span></span></div></div><div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st"><span class="tal"><span class="marks">|</span><span class="num">1</span></span></div></div><div class="sh"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st"><span class="tal"><span class="marks">||</span><span class="num">2</span></span></div></div><div class="sh"><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st">&nbsp;</div></div><div class="sh sent pick"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">&nbsp;</div></div></div><div class="hint">Tap a shield. You cannot change it afterwards.</div></div></div></div>
     <div class="note"><b>Tallies are gold and visible</b> - the thing the night could never show.
     Three for Sveta, two for Ana, one for Kim, and you can see it before you choose, which is the
     whole point of a public vote.</div>
@@ -1545,13 +1723,13 @@ The day inverts every part of that, and the inversion is the design.</p>
 <div class="row">
   <div class="col">
     <div class="h4"><span class="pill n">3</span> Somebody else's turn</div>
-    <div class="device"><div class="chrome"><i></i></div><div class="night" style="height:430px"><div class="inner"><div class="hdr">Day IV &middot; waiting on Ana</div><div class="ask">Not your turn.</div><div class="said">Four have voted. Ana is next, then you.</div><div class="rule2"></div><div class="shields" style="grid-template-columns:repeat(3,1fr)"><div class="sh sent"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st" style="color:#c9a227;letter-spacing:3px;font-size:13px">|||</div></div><div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st" style="color:#c9a227;letter-spacing:3px;font-size:13px">|</div></div><div class="sh"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st" style="color:#c9a227;letter-spacing:3px;font-size:13px">||</div></div><div class="sh"><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st">&nbsp;</div></div><div class="sh"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">&nbsp;</div></div></div><div class="hint">In ten minutes you may carry her and take your turn.</div></div></div></div>
+    <div class="device"><div class="chrome"><i></i></div><div class="night" style="height:430px"><div class="inner"><div class="hdr">Day IV &middot; waiting on Ana</div><div class="ask">Not your turn.</div><div class="said">Four have voted. Ana is next, then you.</div><div class="rule2"></div><div class="shields" style="grid-template-columns:repeat(3,1fr)"><div class="sh sent"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st"><span class="tal"><span class="marks">|||</span><span class="num">3</span></span></div></div><div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st"><span class="tal"><span class="marks">|</span><span class="num">1</span></span></div></div><div class="sh"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st"><span class="tal"><span class="marks">||</span><span class="num">2</span></span></div></div><div class="sh"><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st">&nbsp;</div></div><div class="sh"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">&nbsp;</div></div></div><div class="hint">In ten minutes you may carry her and take your turn.</div></div></div></div>
     <div class="note">The same board, no controls, and the one thing you might want to know: who
     is holding it up and when you can take it from them.</div>
   </div>
   <div class="col">
     <div class="h4"><span class="pill n">4</span> Dead, in the day</div>
-    <div class="device"><div class="chrome"><i></i></div><div class="night" style="height:430px"><div class="inner"><div class="hdr">Day IV &middot; you are out</div><div class="ask">Watching.</div><div class="said">You were killed on night 3.</div><div class="rule2"></div><div class="shields" style="grid-template-columns:repeat(3,1fr)"><div class="sh sent"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st" style="color:#c9a227;letter-spacing:3px;font-size:13px">|||</div></div><div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st" style="color:#c9a227;letter-spacing:3px;font-size:13px">|</div></div><div class="sh"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st" style="color:#c9a227;letter-spacing:3px;font-size:13px">||</div></div><div class="sh"><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st">&nbsp;</div></div><div class="sh"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">&nbsp;</div></div></div><div class="hint">You see the votes because they are public. At night you see nothing.</div></div></div></div>
+    <div class="device"><div class="chrome"><i></i></div><div class="night" style="height:430px"><div class="inner"><div class="hdr">Day IV &middot; you are out</div><div class="ask">Watching.</div><div class="said">You were killed on night 3.</div><div class="rule2"></div><div class="shields" style="grid-template-columns:repeat(3,1fr)"><div class="sh sent"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st"><span class="tal"><span class="marks">|||</span><span class="num">3</span></span></div></div><div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st"><span class="tal"><span class="marks">|</span><span class="num">1</span></span></div></div><div class="sh"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st"><span class="tal"><span class="marks">||</span><span class="num">2</span></span></div></div><div class="sh"><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st">&nbsp;</div></div><div class="sh"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">&nbsp;</div></div></div><div class="hint">You see the votes because they are public. At night you see nothing.</div></div></div></div>
     <div class="note"><b>The dead are spectators, and only in daylight.</b> They see the votes
     because the votes are public - giving them that costs nothing, since the living see it too. At
     night they see exactly what a living villager sees, which is nothing. <b>Do not create
@@ -1570,7 +1748,7 @@ count is not, so it stops working exactly where the interesting games start.</p>
 <div class="row">
   <div class="col">
     <div class="h4"><span class="pill">the villager's night</span></div>
-    <div class="device"><div class="chrome"><i></i></div><div class="night" style="height:470px"><div class="inner"><div class="hdr">Night III</div><div class="ask">You are asleep.</div><div class="said">Name someone. Nothing comes of it, and everyone does the same.</div><div class="rule2"></div><div class="shields"><div class="sh dead"><div class="esc"><span class="sig">A</span></div><div class="nm">Alex</div><div class="st">&nbsp;</div></div><div class="sh sent pick"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st">&nbsp;</div></div><div class="sh "><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st">&nbsp;</div></div><div class="sh sent you"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">&nbsp;</div></div></div><div class="packdoor"><span class="dot"></span><span class="lbl">The pack</span><span class="n">&mdash;</span></div><div class="hint">Tap a shield. It stages and the drawer closes.</div></div></div></div>
+    <div class="device"><div class="chrome"><i></i></div><div class="night" style="height:470px"><div class="inner"><div class="hdr">Night III</div><div class="ask">You are asleep.</div><div class="said">Name someone. Nothing comes of it, and everyone does the same.</div><div class="rule2"></div><div class="shields"><div class="sh dead"><div class="esc"><span class="sig">A</span></div><div class="nm">Alex</div><div class="st">&nbsp;</div></div><div class="sh sent pick"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st">&nbsp;</div></div><div class="sh "><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st">&nbsp;</div></div><div class="sh sent you"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">&nbsp;</div></div></div><div class="packdoor"><span class="seal"></span><span class="lbl">The pack</span><span class="n">quiet</span></div><div class="hint">Tap a shield. It stages and the drawer closes.</div></div></div></div>
     <div class="note"><b>"You are asleep" rather than "who did you dream about".</b> The second
     one is a question, and a question implies the answer matters. This says what is true - you are
     asleep, you still send, and so does everybody.</div>
@@ -1612,7 +1790,7 @@ screen has it.</p>
 <div class="row">
   <div class="col">
     <div class="h4"><span class="pill">1</span> The table, with the door on it</div>
-    <div class="device"><div class="chrome"><i></i></div><div class="night" style="height:470px"><div class="inner"><div class="hdr">Night III</div><div class="ask">Who do you want gone?</div><div class="said">You are a <b>wolf</b>. Tonight Cy makes the call.</div><div class="rule2"></div><div class="shields"><div class="sh dead"><div class="esc"><span class="sig">A</span></div><div class="nm">Alex</div><div class="st">&nbsp;</div></div><div class="sh sent pick"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st">&nbsp;</div></div><div class="sh sent pack"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">Pack</div></div><div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st">&nbsp;</div></div><div class="sh "><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st">&nbsp;</div></div><div class="sh sent you"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">&nbsp;</div></div></div><div class="packdoor"><span class="dot"></span><span class="lbl">The pack</span><span class="n">1 new</span></div><div class="hint">Tap a shield. It stages and the drawer closes.</div></div></div></div>
+    <div class="device"><div class="chrome"><i></i></div><div class="night" style="height:470px"><div class="inner"><div class="hdr">Night III</div><div class="ask">Who do you want gone?</div><div class="said">You are a <b>wolf</b>. Tonight Cy makes the call.</div><div class="rule2"></div><div class="shields"><div class="sh dead"><div class="esc"><span class="sig">A</span></div><div class="nm">Alex</div><div class="st">&nbsp;</div></div><div class="sh sent pick"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st">&nbsp;</div></div><div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st">&nbsp;</div></div><div class="sh sent pack"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">Pack</div></div><div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st">&nbsp;</div></div><div class="sh "><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st">&nbsp;</div></div><div class="sh sent you"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">&nbsp;</div></div></div><div class="packdoor"><span class="seal"></span><span class="lbl">The pack</span><span class="n">someone spoke</span></div><div class="hint">Tap a shield. It stages and the drawer closes.</div></div></div></div>
     <div class="note">The door carries an unread count for a wolf. <b>That count is the one thing
     on this screen that could still be a tell</b> - a villager's door can never say "1 new" - so
     either both show a count and a villager's is always zero, or neither does. Worth deciding
@@ -1620,7 +1798,7 @@ screen has it.</p>
   </div>
   <div class="col">
     <div class="h4"><span class="pill g">2</span> Behind the door, for a wolf</div>
-    <div class="device"><div class="chrome"><i></i></div><div class="night" style="height:470px"><div class="inner"><div class="hdr">The pack &middot; night III</div><div class="ask" style="font-size:21px">Only wolves<br>read this.</div><div class="rule2"></div><div class="blood"><div class="packline"><span class="who">Lee</span> &mdash; she has been too quiet.</div><div class="packline"><span class="who">Bo</span> &mdash; agreed. Sveta.</div><div class="oneline"><span class="ph">your one line tonight&hellip;</span><span class="car"></span></div></div><div class="hint">Your line and your choice ride in one message.</div></div></div></div>
+    <div class="device"><div class="chrome"><i></i></div><div class="night" style="height:470px"><div class="inner"><div class="hdr">The pack &middot; night III</div><div class="ask" style="font-size:21px">Only wolves<br>read this.</div><div class="rule2"></div><div class="blood"><div class="packline"><span class="who">Lee</span>: she has been too quiet.</div><div class="packline"><span class="who">Bo</span>: agreed. Sveta.</div><div class="oneline"><span class="ph">your one line tonight&hellip;</span><span class="car"></span></div></div><div class="hint">Your line and your choice ride in one message.</div></div></div></div>
     <div class="note"><b>One line, and it is a real box.</b> Telling somebody they have one line
     is not the same as showing them a field that holds one - the earlier draft did the first and
     called it a design.</div>
@@ -1664,8 +1842,8 @@ not be. Parchment and daylight is the cheapest way to say the phase changed.</p>
           <div class="said">She was a <b style="color:#7a1418">villager</b>.</div>
           <div class="rule2"></div>
           <div class="roll">
-            <div class="x">Alex &mdash; <span class="r">villager</span></div>
-            <div class="x">Sveta &mdash; <span class="r">villager</span></div>
+            <div class="x">Alex - <span class="r">villager</span></div>
+            <div class="x">Sveta - <span class="r">villager</span></div>
             <div>Kim</div><div>Lee</div><div>Ana</div><div>Bo</div><div>Cy</div>
           </div>
           <div class="seal" style="border-color:#8a6f2a;color:#3a2d12;
@@ -1734,7 +1912,7 @@ pointless.</p>
             <div class="sh sent you"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div></div>
             <div class="sh"><div class="esc" style="opacity:.3"><span class="sig">&middot;</span></div><div class="st">empty</div></div>
           </div>
-          <div class="packdoor" style="border-color:#6d5a1c;background-image:var(--nz-fine),linear-gradient(#3a2d12,#221a0b)"><span class="dot" style="background:#c9a227;box-shadow:0 0 10px rgba(201,162,39,.9)"></span><span class="lbl" style="color:#f0d998">Take a seat</span></div><div class="hint">Tapping stages your join and closes the drawer.</div>
+          <div class="seatdoor"><span class="seal"></span><span class="lbl">Take a seat</span></div><div class="hint">Tapping stages your join and closes the drawer.</div>
           <div class="foot">No one has a role yet. Roles are dealt when the night begins.</div>
         </div>
       </div>
