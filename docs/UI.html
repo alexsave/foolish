@@ -1,0 +1,1578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Werewolf - surface and style study</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;500;600;700&family=Cormorant+Garamond:ital,wght@0,300;0,600;1,300&display=swap" rel="stylesheet">
+<style>
+/* =====================================================================
+   PAGE CHROME is plain and modern on purpose, so it is never mistaken
+   for a design proposal. Everything inside a .device is a candidate.
+
+   Device screens are REAL SIZE: 390pt wide, which is what an extension
+   gets on a 15/16/17. If type looks small here it is small there.
+   ===================================================================== */
+:root{
+  --pg:#fbfaf8; --pg2:#f2efe9; --tx:#1b1917; --mut:#6f6960; --ln:#e2ddd4;
+  --brand:#7a1418; --gold:#9a7a1f;
+  --ui:'Inter',system-ui,-apple-system,sans-serif;
+  --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){
+  --pg:#121110; --pg2:#1a1816; --tx:#eae5dc; --mut:#948c80; --ln:#2e2a25;
+  --brand:#c4544a; --gold:#c9a227; } }
+:root[data-theme="dark"]{ --pg:#121110; --pg2:#1a1816; --tx:#eae5dc;
+  --mut:#948c80; --ln:#2e2a25; --brand:#c4544a; --gold:#c9a227; }
+
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--pg);color:var(--tx);font:16px/1.6 var(--ui);
+     -webkit-font-smoothing:antialiased}
+main{max-width:1240px;margin:0 auto;padding:0 24px 140px}
+p{max-width:73ch}
+code{font:500 .85em var(--mono);background:var(--pg2);padding:2px 6px;
+     border-radius:4px;border:1px solid var(--ln)}
+
+.mast{padding:56px 0 26px;border-bottom:1px solid var(--ln);margin-bottom:8px}
+.eyebrow{font:600 11.5px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;
+         color:var(--brand)}
+.mast h1{font:700 clamp(32px,5vw,52px)/1.06 var(--ui);letter-spacing:-.025em;margin:14px 0 14px}
+.mast .sub{color:var(--mut);font-size:17.5px;max-width:70ch}
+
+section{margin-top:84px}
+h2{font:700 clamp(23px,3vw,32px)/1.2 var(--ui);letter-spacing:-.02em;margin:0 0 10px;
+   display:flex;align-items:center;gap:12px}
+h2::before{content:"";width:7px;height:26px;background:var(--brand);border-radius:2px;flex:none}
+h3{font:600 19px/1.3 var(--ui);margin:38px 0 6px;letter-spacing:-.01em}
+.lede{color:var(--mut);font-size:17px;max-width:73ch;margin-top:0}
+
+.row{display:flex;flex-wrap:wrap;gap:30px;margin-top:28px;align-items:flex-start}
+.col{flex:1 1 372px;min-width:352px}
+.h4{font:600 16.5px/1.3 var(--ui);margin:0 0 4px;display:flex;align-items:baseline;gap:9px}
+.pill{font:700 10.5px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;
+      padding:4px 8px;border-radius:999px;background:var(--brand);color:#fff}
+.pill.g{background:var(--gold);color:#17130a}
+.pill.n{background:var(--mut)}
+.why{color:var(--mut);font-size:14.5px;margin:5px 0 0;max-width:48ch}
+.note{margin:12px 0 0;padding:11px 14px;background:var(--pg2);border:1px solid var(--ln);
+      border-radius:8px;font-size:14px;color:var(--mut)}
+.note b{color:var(--tx)}
+
+.callout{border:1px solid var(--ln);border-left:4px solid var(--brand);background:var(--pg2);
+         padding:16px 18px;border-radius:0 10px 10px 0;margin:20px 0}
+.callout h4{margin:0 0 6px;font:600 15.5px/1.3 var(--ui)}
+.callout p{margin:0;font-size:14.5px;color:var(--mut);max-width:78ch}
+.callout p+p{margin-top:8px}
+
+table{border-collapse:collapse;width:100%;margin-top:20px;font-size:14.5px}
+th,td{border-bottom:1px solid var(--ln);padding:10px 11px;text-align:left;vertical-align:top}
+th{font:700 11px/1 var(--mono);letter-spacing:.11em;text-transform:uppercase;color:var(--mut)}
+td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
+
+/* =====================================================================
+   THE PRODUCT. Nothing below here is page chrome.
+
+   MATERIALS, built the way the app builds them: no flat fills anywhere.
+   The shipped product bakes procedural wool and wood (WoolTexture.swift -
+   a weft phase, then a warp phase, plus a warm colour swing so it reads as
+   grain and not as noise). These are the CSS equivalents: fractal noise at
+   three scales, composited with blend modes, plus anisotropic turbulence
+   for anything with a direction to it.
+   ===================================================================== */
+:root{
+  /* fbm at three scales. Fine = fibre, mid = mottle, coarse = blotch. */
+  --nz-fine:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='180' height='180' filter='url(%23f)'/></svg>");
+  --nz-mid:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.055' numOctaves='5' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='300' height='300' filter='url(%23f)'/></svg>");
+  --nz-coarse:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='400'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.011' numOctaves='6' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='400' height='400' filter='url(%23f)'/></svg>");
+  /* stretched along x: this is what makes wood look like wood */
+  --nz-grain:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='200'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.004 0.085' numOctaves='5' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='400' height='200' filter='url(%23f)'/></svg>");
+}
+
+.device{width:390px;background:#07070a;border:1px solid #16161d;border-radius:4px;
+        overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,.45);margin-top:14px;
+        font-family:'EB Garamond',Georgia,serif}
+.device .chrome{height:30px;background:#050508;display:flex;align-items:center;
+                justify-content:center;border-bottom:1px solid #15151c}
+.device .chrome i{width:36px;height:3px;background:#2b2b38;border-radius:2px;display:block}
+
+/* ---------------------------------------------------------------------
+   NIGHT: damp stone under one tallow flame. Five layers.
+   --------------------------------------------------------------------- */
+.night{position:relative;color:#d8cdb8;isolation:isolate;
+  background-image:
+    var(--nz-fine),                                   /* fibre        */
+    var(--nz-mid),                                    /* mottle       */
+    var(--nz-coarse),                                 /* damp blotch  */
+    radial-gradient(115% 62% at 24% 6%, rgba(224,176,72,.20), transparent 56%),
+    radial-gradient(85% 55% at 84% 97%, rgba(140,26,26,.20), transparent 60%),
+    linear-gradient(168deg,#141620 0%,#0a0b11 46%,#0d0e15 74%,#08090d 100%);
+  background-size:180px 180px, 300px 300px, 400px 400px, auto, auto, auto;
+  background-blend-mode:soft-light, overlay, multiply, screen, screen, normal;
+}
+/* a second grain pass at a different offset kills the tiling rhythm */
+.night::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
+  background-image:var(--nz-mid);background-size:210px 210px;
+  background-position:37px 61px;opacity:.5;mix-blend-mode:overlay}
+/* vignette, warm at the top where the flame is, cold at the floor */
+.night::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
+  background:
+    radial-gradient(128% 86% at 46% 38%, transparent 40%, rgba(2,2,5,.78) 100%),
+    linear-gradient(transparent 55%, rgba(0,0,6,.35))}
+.inner{position:relative;z-index:2;padding:18px 17px 17px;display:flex;
+       flex-direction:column;gap:13px;height:100%}
+
+/* type in the product */
+.hdr{font:600 11px/1 'Cinzel',serif;letter-spacing:.34em;text-transform:uppercase;
+     color:#8a7a52}
+.ask{font:600 25px/1.14 'Cinzel',serif;letter-spacing:.005em;color:#efe6d2;
+     text-shadow:0 1px 0 #000, 0 0 26px rgba(201,162,39,.16)}
+.said{font:400 15.5px/1.45 'EB Garamond',serif;color:#9d947f;font-style:italic}
+.said b{color:#c9a227;font-style:normal;font-weight:600}
+
+/* a hairline that is not a CSS border: two rules, one bright one dark, like inlay */
+.rule2{height:2px;background:linear-gradient(#2a2418,#0a0a0c);
+       box-shadow:0 1px 0 rgba(201,162,39,.1)}
+
+/* ---- SEATS AS SHIELDS ------------------------------------------------ */
+.shields{display:grid;grid-template-columns:repeat(4,1fr);gap:9px 8px}
+.sh{position:relative;padding-top:6px;text-align:center;cursor:default}
+/* hammered iron: fine fibre + mid pitting + a raking highlight from top-left */
+.sh .esc{width:100%;aspect-ratio:1/1.16;
+  clip-path:polygon(50% 0,100% 0,100% 62%,50% 100%,0 62%,0 0);
+  background-image:
+    var(--nz-fine), var(--nz-mid),
+    linear-gradient(152deg, rgba(255,246,222,.13) 0%, transparent 34%),
+    linear-gradient(#2b2d3a,#181a24 58%,#0e0f16);
+  background-size:180px 180px, 120px 120px, auto, auto;
+  background-blend-mode:soft-light, overlay, screen, normal;
+  border-top:1px solid rgba(201,162,39,.16);
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.65), inset 0 7px 16px rgba(0,0,0,.55),
+             inset 0 -10px 18px rgba(0,0,0,.4)}
+.sh .sig{font:600 19px/1 'Cinzel',serif;color:#8d8570;letter-spacing:.02em;
+         text-shadow:0 1px 0 #000}
+.sh .nm{font:500 13px/1.2 'EB Garamond',serif;color:#cdc2a9;margin-top:5px;
+        white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sh .st{font:400 10.5px/1.2 'Cinzel',serif;letter-spacing:.11em;text-transform:uppercase;
+        color:#6d6553;margin-top:1px}
+/* sent: the iron has been touched, so it catches a little more light */
+.sh.sent .esc{background-image:
+    var(--nz-fine), var(--nz-mid),
+    linear-gradient(152deg, rgba(255,246,222,.2) 0%, transparent 38%),
+    linear-gradient(#34364a,#1d2030 58%,#12141d);
+  border-top-color:rgba(201,162,39,.32)}
+.sh.sent .st{color:#8f8256}
+/* chosen: brass, lit. Specular band across the upper third. */
+.sh.pick .esc{background-image:
+    var(--nz-fine), var(--nz-mid),
+    linear-gradient(150deg, rgba(255,240,196,.36) 0%, rgba(255,240,196,.06) 30%, transparent 46%),
+    linear-gradient(#6a5220,#3d2f11 58%,#211806);
+  background-size:180px 180px, 100px 100px, auto, auto;
+  background-blend-mode:soft-light, overlay, screen, normal;
+  border-top-color:#e8c56a;
+  box-shadow:inset 0 0 0 1px rgba(232,197,106,.5), inset 0 8px 20px rgba(0,0,0,.4),
+             0 0 26px rgba(201,162,39,.2)}
+.sh.pick .sig{color:#ffeec0;text-shadow:0 1px 2px rgba(0,0,0,.8)}
+.sh.pick .nm{color:#f3e9d2} .sh.pick .st{color:#c9a227}
+/* pack: old blood soaked into the field, coarse blotching */
+.sh.pack .esc{background-image:
+    var(--nz-fine), var(--nz-coarse),
+    linear-gradient(152deg, rgba(255,210,190,.1) 0%, transparent 34%),
+    linear-gradient(#4a1a1c,#2a0f11 58%,#170809);
+  background-size:180px 180px, 160px 160px, auto, auto;
+  background-blend-mode:soft-light, multiply, screen, normal;
+  border-top-color:rgba(196,54,46,.5)}
+.sh.pack .sig{color:#d8948a} .sh.pack .st{color:#b03a33}
+/* dead: the shield is broken */
+.sh.dead{opacity:.42}
+.sh.dead .esc{background:linear-gradient(#17171c,#0d0d11);position:relative}
+.sh.dead .esc::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(115deg,transparent 46%,#0a0a0c 46.6%,#0a0a0c 50%,transparent 50.6%),
+             linear-gradient(65deg,transparent 47%,#0a0a0c 47.6%,#0a0a0c 50.4%,transparent 51%)}
+.sh.dead .nm{text-decoration:line-through;text-decoration-color:#7a1418}
+.sh.you .nm::after{content:" \00b7 you";color:#7f7660;font-style:italic}
+
+/* ---- THE ROUND TABLE ------------------------------------------------- */
+.table{position:relative;height:300px;margin:2px auto 0;width:330px}
+/* dark oak: anisotropic turbulence IS the grain, plus concentric rings */
+.table .board{position:absolute;inset:38px;border-radius:50%;
+  background-image:
+    var(--nz-grain),
+    repeating-radial-gradient(circle at 44% 40%,
+      rgba(0,0,0,.16) 0 3px, transparent 3px 11px, rgba(0,0,0,.1) 11px 13px, transparent 13px 22px),
+    var(--nz-fine),
+    radial-gradient(62% 62% at 42% 32%, #3a2c16, #1d1509 58%, #0e0a05);
+  background-size:300px 150px, auto, 180px 180px, auto;
+  background-blend-mode:overlay, multiply, soft-light, normal;
+  box-shadow:inset 0 0 44px rgba(0,0,0,.88), inset 0 0 0 1px rgba(201,162,39,.14),
+             inset 0 10px 26px rgba(0,0,0,.5), 0 0 52px rgba(201,162,39,.08)}
+.table .flame{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  text-align:center;z-index:3}
+.table .flame .n{font:700 30px/1 'Cinzel',serif;color:#f0d998;
+                 text-shadow:0 0 22px rgba(201,162,39,.5)}
+.table .flame .l{font:400 11.5px/1.35 'Cinzel',serif;letter-spacing:.14em;
+                 text-transform:uppercase;color:#7e745a;margin-top:4px}
+.tp{position:absolute;width:62px;margin:-34px 0 0 -31px;text-align:center;z-index:4}
+.tp .esc{width:100%;aspect-ratio:1/1.16;
+  clip-path:polygon(50% 0,100% 0,100% 62%,50% 100%,0 62%,0 0);
+  background:linear-gradient(#232430,#13141c);display:flex;align-items:center;
+  justify-content:center;box-shadow:inset 0 0 0 1px rgba(0,0,0,.6)}
+.tp .sig{font:600 15px/1 'Cinzel',serif;color:#8d8570}
+.tp .nm{font:500 11.5px/1.2 'EB Garamond',serif;color:#b9af97;margin-top:3px}
+.tp.pick .esc{background:linear-gradient(#4a3a18,#241c0d);
+  box-shadow:inset 0 0 0 1px rgba(201,162,39,.5),0 0 18px rgba(201,162,39,.2)}
+.tp.pick .sig{color:#f0d998} .tp.pick .nm{color:#f0e3c8}
+.tp.pack .esc{background:linear-gradient(#3a1416,#1d0a0c)} .tp.pack .sig{color:#c07a6e}
+.tp.dead{opacity:.4} .tp.dead .nm{text-decoration:line-through}
+
+/* ---- THE PACK: blood on the wall ------------------------------------- */
+/* soaked stone: coarse blotching where the blood ran, fine grain over it */
+.blood{position:relative;border:1px solid #4a1c1c;border-radius:2px;padding:12px 13px;
+  background-image:
+    var(--nz-fine), var(--nz-coarse),
+    radial-gradient(85% 130% at 14% -6%, rgba(176,48,40,.34), transparent 58%),
+    radial-gradient(60% 90% at 88% 108%, rgba(122,18,22,.3), transparent 62%),
+    linear-gradient(162deg,#220e10,#140708 62%,#0e0506);
+  background-size:180px 180px, 260px 260px, auto, auto, auto;
+  background-blend-mode:soft-light, multiply, screen, screen, normal;
+  box-shadow:inset 0 0 28px rgba(0,0,0,.72), inset 0 1px 0 rgba(216,148,138,.08)}
+.blood .hd{font:600 10px/1 'Cinzel',serif;letter-spacing:.24em;text-transform:uppercase;
+           color:#9e2b26;margin-bottom:8px}
+.blood .ln{font:400 14.5px/1.45 'EB Garamond',serif;color:#c3ab9e;margin:4px 0}
+.blood .ln .who{color:#c9564a;font-weight:600}
+.blood .mine{border-top:1px solid #3a1616;margin-top:9px;padding-top:8px;
+             font-style:italic;color:#6f5a54;font-size:14px}
+
+/* ---- THE CANDLE (send floor) ----------------------------------------- */
+.candle{display:flex;align-items:flex-end;gap:11px}
+.candle .stick{width:15px;background:linear-gradient(#e6dcc0,#9c9179);border-radius:2px 2px 0 0;
+  box-shadow:inset -3px 0 5px rgba(0,0,0,.35)}
+.candle .fire{width:9px;height:14px;border-radius:50% 50% 45% 45%;
+  background:radial-gradient(60% 60% at 50% 70%,#fff3c4,#f0a92b 55%,#9e2b26);
+  box-shadow:0 0 16px rgba(240,169,43,.7);margin:0 auto 2px}
+.candle .txt{font:400 13.5px/1.4 'EB Garamond',serif;color:#8b8069;font-style:italic;
+             padding-bottom:3px}
+
+/* ---- THE SEAL (send) -------------------------------------------------- */
+/* cast brass: a specular band, pitting, and a lip of light along the top edge */
+.seal{margin-top:auto;position:relative;text-align:center;padding:14px;
+  font:600 15px/1 'Cinzel',serif;letter-spacing:.2em;text-transform:uppercase;
+  border:1px solid #7a6420;color:#ffeec0;border-radius:2px;
+  text-shadow:0 1px 2px rgba(0,0,0,.75);
+  background-image:
+    var(--nz-fine), var(--nz-mid),
+    linear-gradient(100deg, transparent 12%, rgba(255,244,206,.26) 34%, transparent 56%),
+    linear-gradient(#5c4818,#38290e 56%,#241a08);
+  background-size:180px 180px, 140px 140px, auto, auto;
+  background-blend-mode:soft-light, overlay, screen, normal;
+  box-shadow:inset 0 1px 0 rgba(255,238,192,.28), inset 0 -2px 6px rgba(0,0,0,.55),
+             0 0 26px rgba(201,162,39,.12)}
+/* cold iron: same pitting, no light in it */
+.seal.dead{border-color:#25252e;color:#5a5466;text-shadow:none;
+  background-image:var(--nz-fine), var(--nz-mid), linear-gradient(#1c1d27,#101018);
+  background-size:180px 180px,140px 140px,auto;
+  background-blend-mode:soft-light,overlay,normal;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.04), inset 0 -2px 6px rgba(0,0,0,.5)}
+.seal.blood{border-color:#7e2a25;color:#f2c4bb;
+  background-image:
+    var(--nz-fine), var(--nz-coarse),
+    linear-gradient(100deg, transparent 14%, rgba(255,190,176,.16) 34%, transparent 56%),
+    linear-gradient(#4d1a1c,#2a0d0f 58%,#1a0708);
+  background-size:180px 180px,240px 240px,auto,auto;
+  background-blend-mode:soft-light,multiply,screen,normal}
+.foot{font:400 12.5px/1.4 'EB Garamond',serif;color:#6e6655;text-align:center;font-style:italic}
+
+/* ---- PARCHMENT (morning) --------------------------------------------- */
+/* vellum: coarse foxing, mid mottle, fine tooth, and light from one window */
+.morn{position:relative;color:#2a2118;isolation:isolate;
+  background-image:
+    var(--nz-fine), var(--nz-mid), var(--nz-coarse),
+    radial-gradient(78% 56% at 28% 8%, rgba(255,250,226,.95), transparent 60%),
+    linear-gradient(166deg,#e6d9b8,#d2c096 56%,#bfab7e);
+  background-size:180px 180px, 280px 280px, 380px 380px, auto, auto;
+  background-blend-mode:soft-light, multiply, multiply, screen, normal}
+/* foxing spots: a second coarse pass, offset, warmer */
+.morn::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
+  background-image:var(--nz-coarse);background-size:300px 300px;
+  background-position:88px 43px;opacity:.28;mix-blend-mode:multiply}
+/* the sheet curls away at the edges */
+.morn::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
+  background:
+    radial-gradient(118% 80% at 46% 36%, transparent 44%, rgba(96,72,38,.4) 100%),
+    linear-gradient(transparent 68%, rgba(84,62,30,.22))}
+.morn .ask{color:#1e1710;text-shadow:none}
+.morn .hdr{color:#7c6134}
+.morn .said{color:#5e5139}
+.morn .rule2{background:linear-gradient(#a8946c,#7a6a48)}
+.roll{font:400 15px/1.7 'EB Garamond',serif;color:#3a2f21}
+.roll .x{text-decoration:line-through;text-decoration-color:#7a1418;color:#7a6a52}
+.roll .r{color:#7a1418;font-style:italic}
+
+/* ---- THE BUBBLE (transcript) ----------------------------------------- */
+.thread{background:#0b0d12;padding:14px 12px;display:flex;flex-direction:column;gap:9px;
+        font-family:var(--ui)}
+.msg{max-width:78%;padding:9px 13px;border-radius:17px;font-size:14.5px;line-height:1.35}
+.msg.them{align-self:flex-start;background:#23252d;color:#e6e6ea}
+.msg.us{align-self:flex-end;background:#1c6ef2;color:#fff}
+.bub{align-self:flex-end;width:248px;border-radius:17px;overflow:hidden;
+     border:1px solid #1d1e26;background:#0d0e14;font-family:'EB Garamond',serif}
+.bub .art{height:150px;position:relative;isolation:isolate;
+  background-image:
+    var(--nz-fine), var(--nz-mid), var(--nz-coarse),
+    radial-gradient(64% 50% at 74% 16%, rgba(196,54,46,.3), transparent 58%),
+    radial-gradient(90% 62% at 26% 96%, rgba(122,20,24,.22), transparent 64%),
+    linear-gradient(174deg,#10131d,#0a0c13 54%,#06070b);
+  background-size:180px 180px, 240px 240px, 320px 320px, auto, auto, auto;
+  background-blend-mode:soft-light, overlay, multiply, screen, screen, normal}
+.bub .art .moon{position:absolute;right:26px;top:18px;width:38px;height:38px;border-radius:50%;
+  background:radial-gradient(60% 60% at 38% 34%, #c4362e, #7a1418 62%, #4a0d10);
+  box-shadow:0 0 30px rgba(158,43,38,.55)}
+.bub .art .sky{position:absolute;inset:0}
+.bub .art .sky i{position:absolute;width:2px;height:2px;border-radius:50%;background:#cfc39f;opacity:.5}
+.bub .art .town{position:absolute;left:0;right:0;bottom:0;height:62px;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 250 62' preserveAspectRatio='none'><g fill='%23000'><polygon points='4,42 15,31 26,42 26,62 4,62'/><polygon points='28,46 37,37 46,46 46,62 28,62'/><polygon points='54,36 66,24 78,36 78,62 54,62'/><polygon points='62,27 66,5 70,27'/><rect x='65.2' y='0' width='1.6' height='8'/><rect x='62.8' y='2.2' width='6.4' height='1.6'/><polygon points='84,44 94,33 104,44 104,62 84,62'/><polygon points='106,48 114,40 122,48 122,62 106,62'/><polygon points='125,31 136,15 147,31'/><rect x='127.5' y='30' width='17' height='32'/><polygon points='150,42 161,31 172,42 172,62 150,62'/><polygon points='174,47 182,39 190,47 190,62 174,62'/><polygon points='194,40 206,29 218,40 218,62 194,62'/><ellipse cx='228' cy='45' rx='8.5' ry='10.5'/><rect x='227' y='48' width='2.2' height='14'/><ellipse cx='242' cy='50' rx='6.5' ry='8'/><rect x='241' y='53' width='2' height='9'/></g></svg>");background-size:100% 100%;background-repeat:no-repeat;filter:drop-shadow(0 0 9px rgba(0,0,0,.85))}
+.bub .art .cap{position:absolute;left:0;right:0;bottom:0;padding:9px 12px;
+  background:linear-gradient(transparent,rgba(5,5,8,.94) 58%)}
+.bub .art .cap .k{font:600 9.5px/1 'Cinzel',serif;letter-spacing:.26em;
+  text-transform:uppercase;color:#a8935c}
+.bub .art .cap .t{font:600 17px/1.2 'Cinzel',serif;color:#f0e6cf;margin-top:3px}
+.bub .meta{padding:8px 12px 10px;border-top:1px solid #1a1b23;background:#0a0b10}
+.bub .meta .a{font:600 13.5px/1.3 var(--ui);color:#e4dcc8}
+.bub .meta .b{font:400 12.5px/1.3 var(--ui);color:#7e7663;margin-top:2px}
+
+.tick{font-size:10.5px;color:#6a6a74;align-self:flex-end;margin-top:-4px}
+
+/* collapsed drawer */
+.collapsed{height:290px}
+.expanded{height:610px}
+.mini{height:214px}
+
+@media (max-width:860px){ .device{width:100%;max-width:390px} .col{min-width:0} }
+
+/* =====================================================================
+   THE MOON, corrected. A radial gradient with a bright spot is a rendered
+   sphere; the real thing is a FLAT disc with dark maria on it - there is no
+   visible terminator at full, which is the only phase a werewolf game wants.
+   So: flat base, turbulence mottle, three soft dark seas, no specular.
+   The sun is simpler still - blown out, no structure at all, flat white.
+   ===================================================================== */
+.bb .art .moon{
+  background-color:#d9d5c8;
+  background-image:
+    var(--nz-mid),
+    radial-gradient(26% 21% at 33% 28%, rgba(74,70,62,.55), transparent 72%),
+    radial-gradient(33% 26% at 64% 57%, rgba(74,70,62,.42), transparent 74%),
+    radial-gradient(18% 15% at 47% 76%, rgba(74,70,62,.38), transparent 72%),
+    radial-gradient(14% 12% at 72% 26%, rgba(74,70,62,.3), transparent 70%);
+  background-size:64px 64px, auto, auto, auto, auto;
+  background-blend-mode:multiply, multiply, multiply, multiply, normal;
+  box-shadow:0 0 26px rgba(214,222,236,.28);
+  border:0}
+/* per-style tints - the maria stay, only the rock changes colour */
+.mn .bb .art .moon{background-color:#e4e9f2;box-shadow:0 0 44px rgba(190,220,255,.5)}
+.il .bb .art .moon{background-color:#e0cd94;box-shadow:0 0 32px rgba(201,162,39,.45)}
+.sg .bb .art .moon{background-color:#d8a23a;box-shadow:0 0 40px rgba(232,168,42,.6)}
+.ae .bb .art .moon{background-color:#5c574e;box-shadow:0 0 18px rgba(0,0,0,.7)}
+.ar .bb .art .moon{background-color:#e2d3a0;box-shadow:0 0 34px rgba(224,201,110,.45)}
+
+.bub .art .moon{
+  background-color:#9e3b32;
+  background-image:
+    var(--nz-mid),
+    radial-gradient(26% 21% at 33% 28%, rgba(46,12,12,.6), transparent 72%),
+    radial-gradient(33% 26% at 64% 57%, rgba(46,12,12,.45), transparent 74%),
+    radial-gradient(18% 15% at 47% 76%, rgba(46,12,12,.4), transparent 72%);
+  background-size:64px 64px, auto, auto, auto;
+  background-blend-mode:multiply, multiply, multiply, normal;
+  box-shadow:0 0 34px rgba(158,43,38,.5)}
+
+/* =====================================================================
+   SHARED STRUCTURE - every style fills these; only materials differ.
+   ===================================================================== */
+.sv .device{width:390px;border-radius:4px;overflow:hidden;
+        box-shadow:0 20px 50px rgba(0,0,0,.4);margin-top:12px}
+.sv .chrome{height:28px;display:flex;align-items:center;justify-content:center}
+.sv .chrome i{width:36px;height:3px;border-radius:2px;display:block}
+.sv .scr{height:560px;position:relative;isolation:isolate}
+.sv .in{position:relative;z-index:3;padding:18px 17px 17px;display:flex;flex-direction:column;
+    gap:12px;height:100%}
+.sv .hdr{font-size:11px;letter-spacing:.32em;text-transform:uppercase}
+.sv .ask{font-size:25px;line-height:1.14}
+.sv .said{font-size:15.5px;line-height:1.42}
+.sv .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px 8px}
+.sv .s{text-align:center}
+.sv .s .e{width:100%;aspect-ratio:1/1.16;display:flex;align-items:center;justify-content:center}
+.sv .s .g{font:600 19px/1 'Cinzel',serif}
+.sv .s .n{font-size:13px;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sv .s .t{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;margin-top:1px}
+.sv .act{margin-top:auto;text-align:center;padding:14px;font-size:15px;letter-spacing:.2em;
+     text-transform:uppercase;font-family:'Cinzel',serif;font-weight:600}
+.sv .ft{font-size:12.5px;text-align:center;font-style:italic}
+.sv .esh{clip-path:polygon(50% 0,100% 0,100% 62%,50% 100%,0 62%,0 0)}
+
+/* the bubble, shared shell */
+.sv .thr{padding:13px 12px;display:flex;flex-direction:column;gap:9px;font-family:var(--ui)}
+.sv .m{max-width:76%;padding:9px 13px;border-radius:17px;font-size:14.5px;line-height:1.35}
+.sv .m.them{align-self:flex-start;background:#23252d;color:#e6e6ea}
+.sv .m.us{align-self:flex-end;background:#1c6ef2;color:#fff}
+.sv .bb{align-self:flex-end;width:250px;border-radius:17px;overflow:hidden}
+.sv .bb .art{height:146px;position:relative;isolation:isolate}
+.sv .bb .cap{position:absolute;left:0;right:0;bottom:0;padding:9px 12px}
+.sv .bb .cap .k{font:600 9.5px/1 'Cinzel',serif;letter-spacing:.26em;text-transform:uppercase}
+.sv .bb .cap .t{font:600 17px/1.2 'Cinzel',serif;margin-top:3px}
+.sv .bb .mt{padding:8px 12px 10px}
+.sv .bb .mt .a{font:600 13.5px/1.3 var(--ui)}
+.sv .bb .mt .b{font:400 12.5px/1.3 var(--ui);margin-top:2px}
+
+.sv .town{position:absolute;left:0;right:0;bottom:0;height:62px;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 250 62' preserveAspectRatio='none'><g fill='%23000'><polygon points='4,42 15,31 26,42 26,62 4,62'/><polygon points='28,46 37,37 46,46 46,62 28,62'/><polygon points='54,36 66,24 78,36 78,62 54,62'/><polygon points='62,27 66,5 70,27'/><rect x='65.2' y='0' width='1.6' height='8'/><rect x='62.8' y='2.2' width='6.4' height='1.6'/><polygon points='84,44 94,33 104,44 104,62 84,62'/><polygon points='106,48 114,40 122,48 122,62 106,62'/><polygon points='125,31 136,15 147,31'/><rect x='127.5' y='30' width='17' height='32'/><polygon points='150,42 161,31 172,42 172,62 150,62'/><polygon points='174,47 182,39 190,47 190,62 174,62'/><polygon points='194,40 206,29 218,40 218,62 194,62'/><ellipse cx='228' cy='45' rx='8.5' ry='10.5'/><rect x='227' y='48' width='2.2' height='14'/><ellipse cx='242' cy='50' rx='6.5' ry='8'/><rect x='241' y='53' width='2' height='9'/></g></svg>");background-size:100% 100%;background-repeat:no-repeat;filter:drop-shadow(0 0 9px rgba(0,0,0,.85))}
+
+/* =====================================================================
+   1. WOODCUT  -  relief print, ink on rag paper. No gradients by law.
+   ===================================================================== */
+.sv .wc{background:#e9e2cf;color:#141210;font-family:'IM Fell English',Georgia,serif}
+.sv .wc .chrome{background:#d8cfb8} .sv .wc .chrome i{background:#8f8straight}
+.sv .wc .chrome i{background:#8f856a}
+.sv .wc .scr{background-image:var(--nz-fine),var(--nz-mid),linear-gradient(#efe8d6,#e2daC4);
+  background-size:180px 180px,260px 260px,auto;
+  background-blend-mode:multiply,multiply,normal}
+/* hatching, the woodcut's only shading tool */
+.sv .wc .scr::before{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;
+  background:repeating-linear-gradient(46deg,rgba(20,18,16,.14) 0 1px,transparent 1px 5px);
+  mask-image:radial-gradient(120% 80% at 50% 42%,transparent 34%,#000 100%)}
+.sv .wc .hdr{color:#6b5f46}
+.sv .wc .ask{font:400 27px/1.1 'IM Fell English',serif;color:#141210}
+.sv .wc .said{color:#4a4133;font-style:italic}
+.sv .wc .rl{height:5px;background:linear-gradient(#141210 0 2px,transparent 2px 3px,#141210 3px 5px)}
+.sv .wc .s .e{background:#efe8d6;border:2.5px solid #141210;
+  box-shadow:3px 3px 0 #141210}
+.sv .wc .s .g{color:#141210} .sv .wc .s .n{color:#241f19;font-weight:600} .sv .wc .s .t{color:#6b5f46}
+.sv .wc .s.pick .e{background:
+  repeating-linear-gradient(46deg,#141210 0 2px,transparent 2px 4px),#efe8d6}
+.sv .wc .s.pick .g{color:#efe8d6;text-shadow:0 0 5px #141210,0 0 5px #141210}
+.sv .wc .s.pack .e{background:
+  repeating-linear-gradient(-46deg,#7a1418 0 2px,transparent 2px 5px),#efe8d6;
+  border-color:#7a1418} .sv .wc .s.pack .t{color:#7a1418}
+.sv .wc .s.dead{opacity:.5}
+.sv .wc .s.dead .e{background:
+  repeating-linear-gradient(46deg,#141210 0 1px,transparent 1px 3px),
+  repeating-linear-gradient(-46deg,#141210 0 1px,transparent 1px 3px),#efe8d6}
+.sv .wc .s.dead .n{text-decoration:line-through}
+.sv .wc .act{background:#141210;color:#efe8d6;box-shadow:4px 4px 0 rgba(20,18,16,.32)}
+.sv .wc .act.off{background:#efe8d6;color:#8f856a;border:2.5px solid #b6ab8e;box-shadow:none}
+.sv .wc .ft{color:#6b5f46}
+.sv .wc .bb{background:#e9e2cf;border:2.5px solid #141210}
+.sv .wc .bb .art{background:#efe8d6}
+.sv .wc .bb .art .moon{position:absolute;right:28px;top:16px;width:40px;height:40px;
+  border-radius:50%;background:#efe8d6;border:2.5px solid #141210}
+.sv .wc .bb .town{position:absolute;left:0;right:0;bottom:0;height:62px;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 250 62' preserveAspectRatio='none'><g fill='%23000'><polygon points='4,42 15,31 26,42 26,62 4,62'/><polygon points='28,46 37,37 46,46 46,62 28,62'/><polygon points='54,36 66,24 78,36 78,62 54,62'/><polygon points='62,27 66,5 70,27'/><rect x='65.2' y='0' width='1.6' height='8'/><rect x='62.8' y='2.2' width='6.4' height='1.6'/><polygon points='84,44 94,33 104,44 104,62 84,62'/><polygon points='106,48 114,40 122,48 122,62 106,62'/><polygon points='125,31 136,15 147,31'/><rect x='127.5' y='30' width='17' height='32'/><polygon points='150,42 161,31 172,42 172,62 150,62'/><polygon points='174,47 182,39 190,47 190,62 174,62'/><polygon points='194,40 206,29 218,40 218,62 194,62'/><ellipse cx='228' cy='45' rx='8.5' ry='10.5'/><rect x='227' y='48' width='2.2' height='14'/><ellipse cx='242' cy='50' rx='6.5' ry='8'/><rect x='241' y='53' width='2' height='9'/></g></svg>");background-size:100% 100%;background-repeat:no-repeat;filter:drop-shadow(0 0 9px rgba(0,0,0,.85))}
+.sv .wc .bb .cap{background:linear-gradient(transparent,#efe8d6 42%)}
+.sv .wc .bb .cap .k{color:#7a1418} .sv .wc .bb .cap .t{color:#141210;font-family:'IM Fell English',serif}
+.sv .wc .bb .mt{background:#141210} .sv .wc .bb .mt .a{color:#efe8d6} .sv .wc .bb .mt .b{color:#a89a78}
+
+/* =====================================================================
+   2. MOONLIT  -  cold silver, frost, one enormous moon.
+   ===================================================================== */
+.sv .mn{background:#070a12;color:#d6e0f0;font-family:'Cormorant Garamond',Georgia,serif}
+.sv .mn .chrome{background:#050810} .sv .mn .chrome i{background:#27334d}
+.sv .mn .scr{background-image:
+    var(--nz-fine),var(--nz-streak),var(--nz-coarse),
+    radial-gradient(38% 26% at 76% 12%, rgba(214,232,255,.34), transparent 62%),
+    linear-gradient(176deg,#131c30,#0a1020 52%,#060810);
+  background-size:180px 180px,300px 300px,400px 400px,auto,auto;
+  background-blend-mode:soft-light,overlay,multiply,screen,normal}
+.sv .mn .scr::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;
+  background:radial-gradient(120% 84% at 60% 30%,transparent 38%,rgba(2,4,10,.82) 100%)}
+.sv .mn .hdr{color:#6f80a2}
+.sv .mn .ask{font:600 28px/1.1 'Cormorant Garamond',serif;color:#eaf1ff;
+  text-shadow:0 0 30px rgba(180,208,255,.3)}
+.sv .mn .said{color:#8a99b8;font-style:italic}
+.sv .mn .said b{color:#cfe0ff;font-style:normal}
+.sv .mn .rl{height:1px;background:linear-gradient(90deg,transparent,rgba(190,214,255,.4),transparent)}
+.sv .mn .s .e{background-image:var(--nz-fine),
+  linear-gradient(148deg,rgba(226,240,255,.24) 0%,transparent 36%),
+  linear-gradient(#2a3category,#1a2338);
+  background-image:var(--nz-fine),
+  linear-gradient(148deg,rgba(226,240,255,.24) 0%,transparent 36%),
+  linear-gradient(#2b3550,#161d2e);
+  background-size:180px 180px,auto,auto;background-blend-mode:soft-light,screen,normal;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.6),inset 0 6px 14px rgba(0,0,0,.45)}
+.sv .mn .s .g{color:#94a6c6} .sv .mn .s .n{color:#c2cfe4} .sv .mn .s .t{color:#66759a}
+.sv .mn .s.pick .e{background-image:var(--nz-fine),
+  linear-gradient(148deg,rgba(240,250,255,.5) 0%,transparent 40%),
+  linear-gradient(#7d93bd,#3d4e75);
+  box-shadow:inset 0 0 0 1px rgba(216,234,255,.6),0 0 26px rgba(170,205,255,.35)}
+.sv .mn .s.pick .g{color:#0b1020} .sv .mn .s.pick .n{color:#eaf3ff} .sv .mn .s.pick .t{color:#b9d0f5}
+.sv .mn .s.pack .e{background-image:var(--nz-fine),linear-gradient(#4a2332,#241019);
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.6),0 0 16px rgba(150,40,70,.3)}
+.sv .mn .s.pack .g{color:#d29ab0} .sv .mn .s.pack .t{color:#b0637f}
+.sv .mn .s.dead{opacity:.34} .sv .mn .s.dead .n{text-decoration:line-through}
+.sv .mn .act{border:1px solid rgba(190,214,255,.4);color:#eaf3ff;border-radius:2px;
+  background-image:var(--nz-fine),linear-gradient(rgba(150,180,230,.2),rgba(40,56,88,.3));
+  background-size:180px 180px,auto;background-blend-mode:soft-light,normal;
+  box-shadow:0 0 26px rgba(150,190,255,.14),inset 0 1px 0 rgba(230,242,255,.22)}
+.sv .mn .act.off{border-color:#1e2740;color:#4c5group;color:#4a5878;box-shadow:none;
+  background-image:linear-gradient(#141b2c,#0d1220)}
+.sv .mn .ft{color:#5f6d8c}
+.sv .mn .bb{background:#070a12;border:1px solid #1a2butter;border:1px solid #1a2338}
+.sv .mn .bb .art{background-image:
+  var(--nz-fine),var(--nz-streak),
+  radial-gradient(40% 30% at 74% 22%, rgba(220,236,255,.4), transparent 60%),
+  linear-gradient(#141e34,#070a12);
+  background-size:180px 180px,300px 300px,auto,auto;
+  background-blend-mode:soft-light,overlay,screen,normal}
+.sv .mn .bb .art .moon{position:absolute;right:26px;top:16px;width:46px;height:46px;border-radius:50%;
+  background:radial-gradient(60% 60% at 40% 36%,#ffffff,#d4e4ff 58%,#96b0d8);
+  box-shadow:0 0 42px rgba(190,220,255,.6)}
+.sv .mn .bb .cap{background:linear-gradient(transparent,rgba(4,6,14,.94) 56%)}
+.sv .mn .bb .cap .k{color:#7f93b8} .sv .mn .bb .cap .t{color:#e8f1ff}
+.sv .mn .bb .mt{background:#060810;border-top:1px solid #16203a}
+.sv .mn .bb .mt .a{color:#d4deef} .sv .mn .bb .mt .b{color:#6b7996}
+
+/* =====================================================================
+   3. ILLUMINATED  -  vellum, gold leaf, rubrication.
+   ===================================================================== */
+.sv .il{background:#e8dcb8;color:#2a2114;font-family:'EB Garamond',Georgia,serif}
+.sv .il .chrome{background:#d6c79c} .sv .il .chrome i{background:#8a7444}
+.sv .il .scr{background-image:var(--nz-fine),var(--nz-mid),var(--nz-coarse),
+  radial-gradient(70% 50% at 26% 8%,rgba(255,251,230,.95),transparent 60%),
+  linear-gradient(168deg,#efe4c2,#ddcfa4 58%,#c9b884);
+  background-size:180px 180px,280px 280px,380px 380px,auto,auto;
+  background-blend-mode:soft-light,multiply,multiply,screen,normal}
+.sv .il .scr::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;
+  background:radial-gradient(118% 80% at 46% 38%,transparent 44%,rgba(102,78,38,.36) 100%)}
+.sv .il .in{border:0}
+.sv .il .hdr{color:#8a1f1f;letter-spacing:.3em;font-family:'Cinzel',serif;font-weight:600}
+.sv .il .ask{font:600 27px/1.12 'Cinzel',serif;color:#241a0c}
+.sv .il .ask .cap1{float:left;font-size:54px;line-height:.82;margin:2px 9px 0 0;color:#8a1f1f;
+  font-family:'Cinzel',serif;font-weight:700;text-shadow:1px 1px 0 rgba(201,162,39,.5)}
+.sv .il .said{color:#5e4e2e;font-style:italic}
+.sv .il .said b{color:#8a1f1f;font-style:normal;font-weight:600}
+.sv .il .rl{height:3px;background-image:
+  linear-gradient(90deg,transparent,#8a1f1f 12%,#8a1f1f 88%,transparent),
+  linear-gradient(#c9a227,#8a6f1c)}
+.sv .il .s .e{background-image:var(--nz-fine),
+  linear-gradient(150deg,rgba(255,248,214,.5) 0%,transparent 42%),
+  linear-gradient(#d8c084,#a98c45);
+  background-size:180px 180px,auto,auto;background-blend-mode:soft-light,screen,normal;
+  border:1.5px solid #6d5620;box-shadow:inset 0 0 0 1px rgba(255,246,206,.3)}
+.sv .il .s .g{color:#3e2f12} .sv .il .s .n{color:#33280f;font-weight:600} .sv .il .s .t{color:#7a6533}
+.sv .il .s.pick .e{background-image:var(--nz-fine),
+  linear-gradient(150deg,rgba(255,252,228,.75) 0%,transparent 44%),
+  linear-gradient(#f2dd93,#c9a227);
+  border-color:#8a1f1f;box-shadow:0 0 20px rgba(201,162,39,.5)}
+.sv .il .s.pick .g{color:#8a1f1f}
+.sv .il .s.pack .e{background-image:var(--nz-fine),linear-gradient(#a83a34,#6e1a18);
+  border-color:#4a0f0e} .sv .il .s.pack .g{color:#f2dcc8} .sv .il .s.pack .t{color:#8a1f1f}
+.sv .il .s.dead{opacity:.45} .sv .il .s.dead .n{text-decoration:line-through;
+  text-decoration-color:#8a1f1f}
+.sv .il .act{background-image:var(--nz-fine),
+  linear-gradient(100deg,transparent 12%,rgba(255,252,222,.5) 32%,transparent 54%),
+  linear-gradient(#e2c777,#b2913c);
+  background-size:180px 180px,auto,auto;background-blend-mode:soft-light,screen,normal;
+  color:#3a2a0c;border:1.5px solid #6d5620;font-family:'Cinzel',serif;
+  box-shadow:inset 0 1px 0 rgba(255,250,214,.6)}
+.sv .il .act.off{background-image:linear-gradient(#cdc0a0,#b3a689);color:#7a715c;
+  border-color:#8f836a;box-shadow:none}
+.sv .il .ft{color:#6d5c3c}
+.sv .il .bb{background:#e8dcb8;border:2px solid #6d5620}
+.sv .il .bb .art{background-image:var(--nz-fine),var(--nz-mid),
+  radial-gradient(60% 45% at 72% 18%,rgba(201,162,39,.5),transparent 60%),
+  linear-gradient(#3a2c14,#1c1408);
+  background-size:180px 180px,260px 260px,auto,auto;
+  background-blend-mode:soft-light,overlay,screen,normal}
+.sv .il .bb .art .moon{position:absolute;right:28px;top:16px;width:40px;height:40px;border-radius:50%;
+  background:radial-gradient(60% 60% at 40% 36%,#fff3c4,#c9a227 60%,#8a6f1c);
+  box-shadow:0 0 34px rgba(201,162,39,.6)}
+.sv .il .bb .cap{background:linear-gradient(transparent,rgba(20,14,6,.94) 56%)}
+.sv .il .bb .cap .k{color:#c9a227} .sv .il .bb .cap .t{color:#f4e9c6}
+.sv .il .bb .mt{background:#e8dcb8;border-top:2px solid #6d5620}
+.sv .il .bb .mt .a{color:#2a2114} .sv .il .bb .mt .b{color:#6d5c3c}
+
+/* =====================================================================
+   4. STAINED GLASS  -  lead came, jewel panes, lit from behind.
+   ===================================================================== */
+.sv .sg{background:#07070a;color:#e6e2d4;font-family:'Cinzel',serif}
+.sv .sg .chrome{background:#050506} .sv .sg .chrome i{background:#2a2a30}
+.sv .sg .scr{background-image:
+  var(--nz-streak),var(--nz-fine),
+  radial-gradient(70% 46% at 50% 4%, rgba(255,240,200,.3), transparent 58%),
+  linear-gradient(180deg,#141018,#0a0810);
+  background-size:300px 300px,180px 180px,auto,auto;
+  background-blend-mode:overlay,soft-light,screen,normal}
+/* REFINED. The old version laid a uniform grid over the whole screen, including
+   the type - which is not how a window works and made 13pt text sit behind lead.
+   Leading belongs at pane EDGES only. The screen instead gets a gothic arch and
+   an uneven light behind it. */
+.sv .sg .scr::before{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;
+  background:
+    radial-gradient(52% 30% at 50% -4%, rgba(255,238,190,.34), transparent 62%),
+    radial-gradient(26% 18% at 18% 34%, rgba(190,220,255,.1), transparent 66%),
+    radial-gradient(30% 20% at 84% 66%, rgba(255,180,140,.09), transparent 68%);
+  mask-image:linear-gradient(#000 0 0)}
+/* the arch: a stone head over the whole window */
+.sv .sg .scr::after{content:"";position:absolute;left:-6%;right:-6%;top:-16px;height:120px;z-index:2;
+  pointer-events:none;border-radius:50% 50% 0 0/100% 100% 0 0;
+  box-shadow:0 0 0 14px #06050a;opacity:.9}
+.sv .sg .hdr{color:#8a7e5c;letter-spacing:.3em}
+.sv .sg .ask{font:600 25px/1.14 'Cinzel',serif;color:#f6efd6;
+  text-shadow:0 0 24px rgba(255,214,120,.35)}
+.sv .sg .said{color:#9a9versa;color:#98907a;font-family:'EB Garamond',serif;font-style:italic}
+.sv .sg .said b{color:#e8c56a;font-style:normal}
+.sv .sg .rl{height:3px;background:#06050 8;background:#060508;
+  box-shadow:0 0 0 1px rgba(232,197,106,.16)}
+/* panes glow from behind: colour + inner light + heavy lead border */
+.sv .sg .s .e{border:3px solid #06050a;border-radius:2px;position:relative;
+  background-image:var(--nz-streak),
+    radial-gradient(60% 60% at 42% 30%, rgba(255,255,255,.34), transparent 64%),
+    linear-gradient(#2a4a78,#16294a);
+  background-size:220px 220px,auto,auto;background-blend-mode:overlay,screen,normal;
+  box-shadow:inset 0 0 18px rgba(120,180,255,.22),0 0 12px rgba(60,110,190,.18)}
+/* came lines across the pane, at an angle, the way a real light is divided */
+.sv .sg .s .e::before{content:"";position:absolute;inset:0;pointer-events:none;
+  background:
+    linear-gradient(114deg, transparent 27%, #06050a 27%, #06050a 29.6%, transparent 29.6%),
+    linear-gradient(66deg, transparent 62%, #06050a 62%, #06050a 64.4%, transparent 64.4%);
+  opacity:.85}
+/* a bubble and a streak in the glass */
+.sv .sg .s .e::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:
+    radial-gradient(3px 5px at 68% 34%, rgba(255,255,255,.4), transparent 70%),
+    linear-gradient(100deg, transparent 40%, rgba(255,255,255,.12) 48%, transparent 56%)}
+.sv .sg .s .g{color:#cfe2ff;text-shadow:0 0 10px rgba(150,200,255,.6)}
+.sv .sg .s .n{color:#cdc7b4;font-family:'EB Garamond',serif}
+.sv .sg .s .t{color:#7d765f}
+.sv .sg .s.pick .e{background-image:var(--nz-streak),
+    radial-gradient(60% 60% at 42% 30%, rgba(255,255,255,.5), transparent 62%),
+    linear-gradient(#e0a82a,#9c6410);
+  box-shadow:inset 0 0 20px rgba(255,220,140,.4),0 0 26px rgba(232,168,42,.5)}
+.sv .sg .s.pick .g{color:#2a1c04;text-shadow:none} .sv .sg .s.pick .t{color:#e8c56a}
+.sv .sg .s.pack .e{background-image:var(--nz-streak),
+    radial-gradient(60% 60% at 42% 30%, rgba(255,180,160,.34), transparent 62%),
+    linear-gradient(#9c2020,#5a0e0e);
+  box-shadow:inset 0 0 18px rgba(255,110,90,.28),0 0 18px rgba(160,30,30,.4)}
+.sv .sg .s.pack .g{color:#ffd9cf} .sv .sg .s.pack .t{color:#d06a5c}
+.sv .sg .s.dead .e{background-image:linear-gradient(#1a1a20,#101016);
+  box-shadow:inset 0 0 14px rgba(0,0,0,.8)}
+.sv .sg .s.dead .g{color:#3f3f4a;text-shadow:none} .sv .sg .s.dead{opacity:.6}
+.sv .sg .s.dead .n{text-decoration:line-through}
+.sv .sg .act{border:3px solid #06050a;border-radius:2px;color:#2a1c04;
+  background-image:var(--nz-streak),
+    radial-gradient(70% 70% at 40% 24%, rgba(255,255,255,.5), transparent 64%),
+    linear-gradient(#e0a82a,#9c6410);
+  background-size:220px 220px,auto,auto;background-blend-mode:overlay,screen,normal;
+  box-shadow:inset 0 0 20px rgba(255,220,140,.4),0 0 30px rgba(232,168,42,.4)}
+.sv .sg .act.off{background-image:linear-gradient(#1a1a20,#101016);color:#4a4a55;
+  box-shadow:inset 0 0 14px rgba(0,0,0,.8)}
+.sv .sg .ft{color:#7d765f;font-family:'EB Garamond',serif}
+.sv .sg .bb{background:#07070a;border:3px solid #06050a}
+.sv .sg .bb .art{background-image:var(--nz-streak),
+  radial-gradient(50% 40% at 74% 20%, rgba(255,226,150,.5), transparent 60%),
+  linear-gradient(#1d1630,#0a0810);
+  background-size:260px 260px,auto,auto;background-blend-mode:overlay,screen,normal}
+.sv .sg .bb .art::after{content:"";position:absolute;inset:0;
+  background:repeating-linear-gradient(90deg,rgba(6,5,8,.75) 0 3px,transparent 3px 62px),
+             repeating-linear-gradient(0deg,rgba(6,5,8,.75) 0 3px,transparent 3px 68px)}
+.sv .sg .bb .art .moon{position:absolute;right:28px;top:16px;width:42px;height:42px;border-radius:50%;
+  background:radial-gradient(60% 60% at 40% 36%,#fff6d0,#e0a82a 58%,#9c2020);
+  box-shadow:0 0 40px rgba(232,168,42,.7);z-index:2}
+.sv .sg .bb .cap{background:linear-gradient(transparent,rgba(5,4,8,.95) 55%);z-index:3}
+.sv .sg .bb .cap .k{color:#e0a82a} .sv .sg .bb .cap .t{color:#f6efd6}
+.sv .sg .bb .mt{background:#0a0810;border-top:3px solid #06050a}
+.sv .sg .bb .mt .a{color:#e6e2d4} .sv .sg .bb .mt .b{color:#7d765f}
+
+/* =====================================================================
+   5. ASH & EMBER  -  charcoal monochrome, one live coal.
+   ===================================================================== */
+.sv .ae{background:#0a0a0a;color:#cfc9c0;font-family:'EB Garamond',Georgia,serif}
+.sv .ae .chrome{background:#070707} .sv .ae .chrome i{background:#2c2a28}
+.sv .ae .scr{background-image:var(--nz-fine),var(--nz-coarse),var(--nz-streak),
+  radial-gradient(60% 36% at 50% 104%, rgba(226,96,26,.24), transparent 62%),
+  linear-gradient(#171614,#0b0b0a 60%,#080807);
+  background-size:180px 180px,400px 400px,300px 300px,auto,auto;
+  background-blend-mode:soft-light,multiply,overlay,screen,normal}
+.sv .ae .scr::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;
+  background:radial-gradient(120% 86% at 50% 82%,transparent 36%,rgba(0,0,0,.8) 100%)}
+.sv .ae .hdr{color:#6e675e}
+.sv .ae .ask{font:600 26px/1.12 'Cinzel',serif;color:#e8e2d8}
+.sv .ae .said{color:#867e73;font-style:italic} .sv .ae .said b{color:#e2601a;font-style:normal}
+.sv .ae .rl{height:1px;background:linear-gradient(90deg,transparent,#3a3733,transparent)}
+.sv .ae .s .e{background-image:var(--nz-fine),var(--nz-coarse),
+  linear-gradient(150deg,rgba(255,250,240,.08) 0%,transparent 38%),
+  linear-gradient(#23211e,#131211);
+  background-size:180px 180px,200px 200px,auto,auto;
+  background-blend-mode:soft-light,multiply,screen,normal;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.7),inset 0 6px 14px rgba(0,0,0,.5)}
+.sv .ae .s .g{color:#7d766c} .sv .ae .s .n{color:#b7b0a6} .sv .ae .s .t{color:#5f594f}
+/* chosen is a coal: lit from inside, not from a lamp */
+.sv .ae .s.pick .e{background-image:var(--nz-coarse),
+  radial-gradient(62% 62% at 46% 58%, #ffb457, #e2601a 40%, #7a2a08 72%, #2a1004);
+  background-size:160px 160px,auto;background-blend-mode:multiply,normal;
+  box-shadow:0 0 34px rgba(226,96,26,.55),inset 0 0 14px rgba(255,190,110,.4)}
+.sv .ae .s.pick .g{color:#1a0a02;text-shadow:0 1px 0 rgba(255,200,140,.45)}
+.sv .ae .s.pick .n{color:#f0d6bc} .sv .ae .s.pick .t{color:#e2601a}
+.sv .ae .s.pack .e{background-image:var(--nz-coarse),
+  radial-gradient(62% 62% at 46% 58%, #8a2418, #4a1008 52%, #1c0603);
+  box-shadow:0 0 18px rgba(138,36,24,.5)}
+.sv .ae .s.pack .g{color:#c08876} .sv .ae .s.pack .t{color:#8a2418}
+.sv .ae .s.dead{opacity:.32} .sv .ae .s.dead .n{text-decoration:line-through}
+.sv .ae .act{border:1px solid #6a3416;color:#ffd0a2;border-radius:2px;
+  background-image:var(--nz-fine),linear-gradient(#4a2008,#26100 4);
+  background-image:var(--nz-fine),linear-gradient(#4a2008,#261004);
+  background-size:180px 180px,auto;background-blend-mode:soft-light,normal;
+  box-shadow:0 0 28px rgba(226,96,26,.24),inset 0 1px 0 rgba(255,190,130,.22)}
+.sv .ae .act.off{border-color:#26241f;color:#4e4941;background-image:linear-gradient(#1a1917,#100f0e);
+  box-shadow:none}
+.sv .ae .ft{color:#6e675e}
+.sv .ae .bb{background:#0a0a0a;border:1px solid #1e1c1a}
+.sv .ae .bb .art{background-image:var(--nz-fine),var(--nz-streak),
+  radial-gradient(52% 38% at 50% 106%, rgba(226,96,26,.5), transparent 60%),
+  linear-gradient(#1a1816,#080807);
+  background-size:180px 180px,280px 280px,auto,auto;
+  background-blend-mode:soft-light,overlay,screen,normal}
+.sv .ae .bb .art .moon{position:absolute;right:28px;top:16px;width:38px;height:38px;border-radius:50%;
+  background:radial-gradient(60% 60% at 40% 36%,#4a4640,#221f1c);
+  box-shadow:0 0 18px rgba(0,0,0,.8)}
+.sv .ae .bb .cap{background:linear-gradient(transparent,rgba(6,6,6,.95) 55%)}
+.sv .ae .bb .cap .k{color:#e2601a} .sv .ae .bb .cap .t{color:#e8e2d8}
+.sv .ae .bb .mt{background:#080807;border-top:1px solid #1e1c1a}
+.sv .ae .bb .mt .a{color:#cfc9c0} .sv .ae .bb .mt .b{color:#6e675e}
+
+/* =====================================================================
+   6. ARCANA  -  indigo and gold foil, each seat a card.
+   ===================================================================== */
+.sv .ar{background:#0b0a1c;color:#ded6ee;font-family:'Cormorant Garamond',Georgia,serif}
+.sv .ar .chrome{background:#08071a} .sv .ar .chrome i{background:#2c2750}
+.sv .ar .scr{background-image:var(--nz-fine),var(--nz-mid),
+  radial-gradient(70% 44% at 50% 2%, rgba(196,168,80,.2), transparent 58%),
+  linear-gradient(172deg,#1b1740,#100d2a 56%,#09081a);
+  background-size:180px 180px,300px 300px,auto,auto;
+  background-blend-mode:soft-light,overlay,screen,normal}
+/* star field */
+.sv .ar .scr::before{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;opacity:.6;
+  background:
+    radial-gradient(1.4px 1.4px at 34px 52px,#e8dca8,transparent),
+    radial-gradient(1.2px 1.2px at 128px 30px,#cfc7e8,transparent),
+    radial-gradient(1.6px 1.6px at 240px 78px,#e8dca8,transparent),
+    radial-gradient(1.2px 1.2px at 318px 40px,#cfc7e8,transparent),
+    radial-gradient(1.4px 1.4px at 78px 180px,#e8dca8,transparent),
+    radial-gradient(1.2px 1.2px at 300px 220px,#cfc7e8,transparent),
+    radial-gradient(1.5px 1.5px at 190px 130px,#e8dca8,transparent)}
+.sv .ar .hdr{color:#9a8bc4;letter-spacing:.3em;font-family:'Cinzel',serif}
+.sv .ar .ask{font:600 28px/1.1 'Cormorant Garamond',serif;color:#f2ecd8;
+  text-shadow:0 0 26px rgba(196,168,80,.3)}
+.sv .ar .said{color:#9289b4;font-style:italic} .sv .ar .said b{color:#e0c96e;font-style:normal}
+.sv .ar .rl{height:2px;background:linear-gradient(90deg,transparent,#c4a850,transparent)}
+/* cards, not shields */
+.sv .ar .s .e{clip-path:none;border-radius:4px;aspect-ratio:1/1.42;
+  border:1.5px solid #c4a850;
+  background-image:var(--nz-fine),
+    radial-gradient(70% 50% at 50% 14%, rgba(196,168,80,.24), transparent 64%),
+    linear-gradient(#241f52,#141032);
+  background-size:180px 180px,auto,auto;background-blend-mode:soft-light,screen,normal;
+  box-shadow:inset 0 0 0 3px rgba(11,10,28,.9),inset 0 0 0 4px rgba(196,168,80,.3),
+             0 3px 10px rgba(0,0,0,.6)}
+.sv .ar .s .g{color:#e0c96e;font-family:'Cinzel',serif}
+.sv .ar .s .n{color:#cbc2e2} .sv .ar .s .t{color:#7d74a0}
+.sv .ar .s.pick .e{background-image:var(--nz-fine),
+    radial-gradient(70% 50% at 50% 14%, rgba(255,238,170,.55), transparent 62%),
+    linear-gradient(#5d4d1a,#2e2408);
+  border-color:#f2dd93;box-shadow:inset 0 0 0 3px rgba(11,10,28,.9),
+    inset 0 0 0 4px rgba(242,221,147,.6),0 0 28px rgba(224,201,110,.45)}
+.sv .ar .s.pick .g{color:#fff2c4} .sv .ar .s.pick .n{color:#f4eeda}
+.sv .ar .s.pack .e{background-image:var(--nz-fine),
+    radial-gradient(70% 50% at 50% 14%, rgba(220,90,100,.3), transparent 62%),
+    linear-gradient(#4a1430,#260a1a);border-color:#a83a5c}
+.sv .ar .s.pack .g{color:#e8a0b4} .sv .ar .s.pack .t{color:#a83a5c}
+.sv .ar .s.dead{opacity:.38} .sv .ar .s.dead .e{filter:grayscale(1)}
+.sv .ar .s.dead .n{text-decoration:line-through}
+.sv .ar .act{border:1.5px solid #c4a850;border-radius:3px;color:#0d0b20;
+  font-family:'Cinzel',serif;
+  background-image:var(--nz-fine),
+    linear-gradient(100deg,transparent 12%,rgba(255,246,206,.55) 32%,transparent 56%),
+    linear-gradient(#e0c96e,#a8873a);
+  background-size:180px 180px,auto,auto;background-blend-mode:soft-light,screen,normal;
+  box-shadow:0 0 30px rgba(224,201,110,.3),inset 0 1px 0 rgba(255,250,220,.6)}
+.sv .ar .act.off{background-image:linear-gradient(#1b1740,#100d2a);color:#5c5480;
+  border-color:#2e2856;box-shadow:none}
+.sv .ar .ft{color:#7d74a0}
+.sv .ar .bb{background:#0b0a1c;border:1.5px solid #c4a850}
+.sv .ar .bb .art{background-image:var(--nz-fine),
+  radial-gradient(46% 34% at 74% 20%, rgba(224,201,110,.45), transparent 60%),
+  linear-gradient(#211c4a,#09081a);
+  background-size:180px 180px,auto,auto;background-blend-mode:soft-light,screen,normal}
+.sv .ar .bb .art .moon{position:absolute;right:28px;top:16px;width:40px;height:40px;border-radius:50%;
+  background:radial-gradient(60% 60% at 40% 36%,#fff4cc,#e0c96e 58%,#a8873a);
+  box-shadow:0 0 38px rgba(224,201,110,.6)}
+.sv .ar .bb .cap{background:linear-gradient(transparent,rgba(7,6,20,.95) 55%)}
+.sv .ar .bb .cap .k{color:#e0c96e} .sv .ar .bb .cap .t{color:#f2ecd8}
+.sv .ar .bb .mt{background:#09081a;border-top:1px solid #2e2856}
+.sv .ar .bb .mt .a{color:#ded6ee} .sv .ar .bb .mt .b{color:#7d74a0}
+
+@media (max-width:880px){ .device{width:100%;max-width:390px} }
+
+/* =====================================================================
+   THE MOON, corrected. A radial gradient with a bright spot is a rendered
+   sphere; the real thing is a FLAT disc with dark maria on it - there is no
+   visible terminator at full, which is the only phase a werewolf game wants.
+   So: flat base, turbulence mottle, three soft dark seas, no specular.
+   The sun is simpler still - blown out, no structure at all, flat white.
+   ===================================================================== */
+.sv .bb .art .moon{
+  background-color:#d9d5c8;
+  background-image:
+    var(--nz-mid),
+    radial-gradient(26% 21% at 33% 28%, rgba(74,70,62,.55), transparent 72%),
+    radial-gradient(33% 26% at 64% 57%, rgba(74,70,62,.42), transparent 74%),
+    radial-gradient(18% 15% at 47% 76%, rgba(74,70,62,.38), transparent 72%),
+    radial-gradient(14% 12% at 72% 26%, rgba(74,70,62,.3), transparent 70%);
+  background-size:64px 64px, auto, auto, auto, auto;
+  background-blend-mode:multiply, multiply, multiply, multiply, normal;
+  box-shadow:0 0 26px rgba(214,222,236,.28);
+  border:0}
+/* per-style tints - the maria stay, only the rock changes colour */
+.sv .mn .bb .art .moon{background-color:#e4e9f2;box-shadow:0 0 44px rgba(190,220,255,.5)}
+.sv .il .bb .art .moon{background-color:#e0cd94;box-shadow:0 0 32px rgba(201,162,39,.45)}
+.sv .sg .bb .art .moon{background-color:#d8a23a;box-shadow:0 0 40px rgba(232,168,42,.6)}
+.sv .ae .bb .art .moon{background-color:#5c574e;box-shadow:0 0 18px rgba(0,0,0,.7)}
+.sv .ar .bb .art .moon{background-color:#e2d3a0;box-shadow:0 0 34px rgba(224,201,110,.45)}
+
+</style>
+</head>
+<body>
+<main>
+
+<header class="mast">
+  <div class="eyebrow">Werewolf &middot; surface study &middot; 19 September 2026</div>
+  <h1>Seven phones, one night,<br>and nobody may look different</h1>
+  <p class="sub">The protocol is settled and the kernel implements it. What a player <em>looks
+  at</em> is not. This is a menu to choose from - every option is buildable against exports that
+  already exist, drawn at real size, and costed honestly.</p>
+</header>
+
+<section id="fixed">
+<h2>What is already decided</h2>
+<p class="lede">Not design choices. These fall out of the protocol and the kernel, and every
+option below has to hold them.</p>
+
+<div class="callout">
+  <h4>Every living player sends exactly one message per night</h4>
+  <p>The whole trick. A wolf is not behaving unusually by sending, because sending is the only
+  thing anybody does. Any design that lets a villager skip, or makes a wolf's turn look different,
+  gives the game away - permanently, in the transcript.</p>
+</div>
+
+<div class="callout">
+  <h4>One bubble per player. Never two.</h4>
+  <p>The wolf line rides <b>inside</b> the same payload as the night choice, masked. Never a
+  second message: a second message is a countable bubble, and three extra bubbles on a
+  five-player night is three wolves.</p>
+</div>
+
+<div class="callout">
+  <h4>Send is refused for the first ten seconds</h4>
+  <p><code>ww_send_floor_remaining</code>. It removes the only latency tell there is - answering
+  instantly, which only a player with no decision can do. <b>Settled at ten seconds.</b></p>
+</div>
+
+<div class="callout">
+  <h4>No clocks, no timers, no server - and the window is ten minutes</h4>
+  <p>Nobody is awake to run a timer. If the next player in rotation opens after <b>ten
+  minutes</b>, they may act, and their message <b>carries the skips</b> for everyone late
+  (<code>ww_may_carry</code>, <code>ww_night_pass_for</code>). The night advances because somebody
+  played, not because a clock fired.</p>
+  <p>One minute was the original figure and it is too harsh for a game people check between
+  meetings; ten is long enough that being carried means you really were away.</p>
+</div>
+
+<div class="callout">
+  <h4>The last wolf in rotation decides, and the rotation advances</h4>
+  <p><code>ww_night_decider</code>, <code>ww_night_order</code>. If the deciding wolf is skipped,
+  the kill falls to the most recent wolf who did choose. You cannot hold the night open for one
+  player without announcing them.</p>
+</div>
+
+<div class="callout">
+  <h4>There is no seat cap</h4>
+  <p>The only ceiling is iMessage's own group size. Every layout below has to keep working as the
+  table grows, which is why a fixed geometry like the round table is a liability rather than a
+  style choice.</p>
+</div>
+
+<div class="callout">
+  <h4>The envelope stays bounded by forgetting</h4>
+  <p>A ten-player first night seals to 286 bytes and 464 base32 characters against roughly 1000
+  available. The chain grows only because it carries nights and days that are <em>already
+  resolved</em> - and a closed night is a settled fact, not a pending one. Truncating at the last
+  closed morning bounds the envelope permanently, instead of buying time with entropy coding.</p>
+</div>
+</section>
+
+<section id="look">
+<h2>The register</h2>
+<p class="lede">Villagers and wolves, torches and accusations. The surface is soot, tallow and old
+blood - not a settings screen with a dark theme. Three rules hold it together.</p>
+
+<div class="row">
+  <div class="col">
+    <div class="h4">Light comes from somewhere</div>
+    <p class="why">Every screen has one warm source, off-centre, and falls off into a vignette.
+    Nothing is evenly lit, because evenly lit is what a form looks like.</p>
+  </div>
+  <div class="col">
+    <div class="h4">Seats are shields, not rows</div>
+    <p class="why">A heraldic escutcheon with an initial. Sent lights the rim; chosen lights the
+    field; the pack is stained; the dead are <em>broken</em> - the shield cracks rather than
+    greying out.</p>
+  </div>
+  <div class="col">
+    <div class="h4">Grain, everywhere</div>
+    <p class="why">A fractal-noise overlay on every surface at low opacity. It is the single
+    cheapest thing that stops a dark screen reading as a gradient.</p>
+  </div>
+</div>
+
+<div class="callout">
+  <h4>Type: inscriptional caps over an old-style serif</h4>
+  <p>Cinzel for anything carved - the question, the seal, small-caps labels. EB Garamond for
+  anything spoken. No blackletter: it is the obvious choice and it is illegible at 13pt on a
+  phone, which is where most of this text lives. <b>Nothing below 11pt anywhere</b>, per the
+  standing rule.</p>
+</div>
+</section>
+
+<section id="styles">
+<h2>The look: four candidates</h2>
+<p class="lede">The screens further down are drawn in the candlelit treatment. These are the
+alternatives, each showing the identical night - night III, seven seats, Alex out, Sveta chosen,
+Lee in the pack - plus its bubble, because the bubble is what sells the game to people who have
+not opened it. Woodcut and arcana were tried and cut.</p>
+<div class="sv">
+<!-- ============================ 2 ============================ -->
+<section>
+<h2><span class="num">01</span> Moonlit</h2>
+<p class="lede">Cold silver instead of warm tallow. One enormous moon off the top-right, frost in
+the air, everything pewter. The opposite temperature to the candlelit study.</p>
+<div class="pair">
+  <div>
+    <div class="device mn">
+      <div class="chrome"><i></i></div>
+      <div class="scr">
+        <div class="in">
+          <div class="hdr">Night III</div>
+          <div class="ask">Who do you want gone?</div>
+          <div class="said">You are a <b>wolf</b>. Tonight Cy makes the call.</div>
+          <div class="rl"></div>
+          <div class="grid">
+            <div class="s dead"><div class="e esh"><span class="g">A</span></div><div class="n">Alex</div><div class="t">Out</div></div>
+            <div class="s pick"><div class="e esh"><span class="g">S</span></div><div class="n">Sveta</div><div class="t">Sent</div></div>
+            <div class="s"><div class="e esh"><span class="g">K</span></div><div class="n">Kim</div><div class="t">Sent</div></div>
+            <div class="s pack"><div class="e esh"><span class="g">L</span></div><div class="n">Lee</div><div class="t">Pack</div></div>
+            <div class="s"><div class="e esh"><span class="g">A</span></div><div class="n">Ana</div><div class="t">Sent</div></div>
+            <div class="s"><div class="e esh"><span class="g">B</span></div><div class="n">Bo</div><div class="t">Waiting</div></div>
+            <div class="s"><div class="e esh"><span class="g">C</span></div><div class="n">Cy</div><div class="t">You</div></div>
+          </div>
+          <div class="act">Send</div>
+          <div class="ft">Bo has not sent. You may carry them.</div>
+        </div>
+      </div>
+    </div>
+    <div class="note"><b>The most restrained, and the easiest to live in.</b> Silver on blue-black
+    is what a phone at 2am wants. The chosen seat going bright pewter is the clearest selection
+    state of the six.</div>
+  </div>
+  <div>
+    <div class="device mn">
+      <div class="chrome"><i></i></div>
+      <div class="thr" style="height:300px;background:#0b0d12">
+        <div class="m them">who even is awake</div>
+        <div class="bb">
+          <div class="art"><div class="moon"></div><div class="town"></div>
+            <div class="cap"><div class="k">Night III</div><div class="t">Cy closed the night</div></div></div>
+          <div class="mt"><div class="a">6 of 6 have sent</div><div class="b">Open to see the morning</div></div>
+        </div>
+        <div class="m them">oh no</div>
+      </div>
+    </div>
+    <div class="note">The moon does the work. It is the one motif that survives being 40pt wide.</div>
+  </div>
+</div>
+</section>
+<!-- ============================ 3 ============================ -->
+<section>
+<h2><span class="num">02</span> Illuminated</h2>
+<p class="lede">A monastery manuscript. Vellum with foxing, gold leaf on the shields, and
+rubrication - the red initial and the red rule, which is where the word <em>rubric</em> comes
+from. The most ornate option.</p>
+<div class="pair">
+  <div>
+    <div class="device il">
+      <div class="chrome"><i></i></div>
+      <div class="scr">
+        <div class="in">
+          <div class="hdr">Night III</div>
+          <div class="ask"><span class="cap1">W</span>ho do you want gone?</div>
+          <div class="said">You are a <b>wolf</b>. Tonight Cy makes the call.</div>
+          <div class="rl"></div>
+          <div class="grid">
+            <div class="s dead"><div class="e esh"><span class="g">A</span></div><div class="n">Alex</div><div class="t">Out</div></div>
+            <div class="s pick"><div class="e esh"><span class="g">S</span></div><div class="n">Sveta</div><div class="t">Sent</div></div>
+            <div class="s"><div class="e esh"><span class="g">K</span></div><div class="n">Kim</div><div class="t">Sent</div></div>
+            <div class="s pack"><div class="e esh"><span class="g">L</span></div><div class="n">Lee</div><div class="t">Pack</div></div>
+            <div class="s"><div class="e esh"><span class="g">A</span></div><div class="n">Ana</div><div class="t">Sent</div></div>
+            <div class="s"><div class="e esh"><span class="g">B</span></div><div class="n">Bo</div><div class="t">Waiting</div></div>
+            <div class="s"><div class="e esh"><span class="g">C</span></div><div class="n">Cy</div><div class="t">You</div></div>
+          </div>
+          <div class="act">Send</div>
+          <div class="ft">Bo has not sent. You may carry them.</div>
+        </div>
+      </div>
+    </div>
+    <div class="note"><b>Richest, and the only one that is light AND atmospheric.</b> The drop cap
+    is the risk: it is beautiful on the question and there is nowhere else to put one, so it can
+    look like a one-trick page.</div>
+  </div>
+  <div>
+    <div class="device il">
+      <div class="chrome"><i></i></div>
+      <div class="thr" style="height:300px;background:#0b0d12">
+        <div class="m them">who even is awake</div>
+        <div class="bb">
+          <div class="art"><div class="moon"></div><div class="town"></div>
+            <div class="cap"><div class="k">Night III</div><div class="t">Cy closed the night</div></div></div>
+          <div class="mt"><div class="a">6 of 6 have sent</div><div class="b">Open to see the morning</div></div>
+        </div>
+        <div class="m them">oh no</div>
+      </div>
+    </div>
+    <div class="note">Dark art panel over a vellum footer, framed in gold. Reads as a relic.</div>
+  </div>
+</div>
+</section>
+<!-- ============================ 4 ============================ -->
+<section>
+<h2><span class="num">03</span> Stained glass</h2>
+<p class="lede">Lead came and jewel panes, lit from behind. Every seat is a lit pane; the dead
+pane has gone out. The most literal reading of "a village church at night".</p>
+<div class="pair">
+  <div>
+    <div class="device sg">
+      <div class="chrome"><i></i></div>
+      <div class="scr">
+        <div class="in">
+          <div class="hdr">Night III</div>
+          <div class="ask">Who do you want gone?</div>
+          <div class="said">You are a <b>wolf</b>. Tonight Cy makes the call.</div>
+          <div class="rl"></div>
+          <div class="grid">
+            <div class="s dead"><div class="e esh"><span class="g">A</span></div><div class="n">Alex</div><div class="t">Out</div></div>
+            <div class="s pick"><div class="e esh"><span class="g">S</span></div><div class="n">Sveta</div><div class="t">Sent</div></div>
+            <div class="s"><div class="e esh"><span class="g">K</span></div><div class="n">Kim</div><div class="t">Sent</div></div>
+            <div class="s pack"><div class="e esh"><span class="g">L</span></div><div class="n">Lee</div><div class="t">Pack</div></div>
+            <div class="s"><div class="e esh"><span class="g">A</span></div><div class="n">Ana</div><div class="t">Sent</div></div>
+            <div class="s"><div class="e esh"><span class="g">B</span></div><div class="n">Bo</div><div class="t">Waiting</div></div>
+            <div class="s"><div class="e esh"><span class="g">C</span></div><div class="n">Cy</div><div class="t">You</div></div>
+          </div>
+          <div class="act">Send</div>
+          <div class="ft">Bo has not sent. You may carry them.</div>
+        </div>
+      </div>
+    </div>
+    <div class="note"><b>The best dead state on the page</b> - a pane that has gone dark is exactly
+    right for a player who is out. The lead grid over the whole screen is the risk: it is a lot of
+    texture behind 13pt type, and it will need testing against Dynamic Type.</div>
+  </div>
+  <div>
+    <div class="device sg">
+      <div class="chrome"><i></i></div>
+      <div class="thr" style="height:300px;background:#0b0d12">
+        <div class="m them">who even is awake</div>
+        <div class="bb">
+          <div class="art"><div class="moon"></div><div class="town"></div>
+            <div class="cap"><div class="k">Night III</div><div class="t">Cy closed the night</div></div></div>
+          <div class="mt"><div class="a">6 of 6 have sent</div><div class="b">Open to see the morning</div></div>
+        </div>
+        <div class="m them">oh no</div>
+      </div>
+    </div>
+    <div class="note">A blood-and-amber rose window behind a black skyline. The most striking
+    bubble of the six at thumbnail size.</div>
+  </div>
+</div>
+</section>
+<!-- ============================ 5 ============================ -->
+<section>
+<h2><span class="num">04</span> Ash and ember</h2>
+<p class="lede">Near-monochrome charcoal with exactly one live colour. The chosen seat is not lit
+by a lamp - it is a coal, glowing from inside. Everything else is soot.</p>
+<div class="pair">
+  <div>
+    <div class="device ae">
+      <div class="chrome"><i></i></div>
+      <div class="scr">
+        <div class="in">
+          <div class="hdr">Night III</div>
+          <div class="ask">Who do you want gone?</div>
+          <div class="said">You are a <b>wolf</b>. Tonight Cy makes the call.</div>
+          <div class="rl"></div>
+          <div class="grid">
+            <div class="s dead"><div class="e esh"><span class="g">A</span></div><div class="n">Alex</div><div class="t">Out</div></div>
+            <div class="s pick"><div class="e esh"><span class="g">S</span></div><div class="n">Sveta</div><div class="t">Sent</div></div>
+            <div class="s"><div class="e esh"><span class="g">K</span></div><div class="n">Kim</div><div class="t">Sent</div></div>
+            <div class="s pack"><div class="e esh"><span class="g">L</span></div><div class="n">Lee</div><div class="t">Pack</div></div>
+            <div class="s"><div class="e esh"><span class="g">A</span></div><div class="n">Ana</div><div class="t">Sent</div></div>
+            <div class="s"><div class="e esh"><span class="g">B</span></div><div class="n">Bo</div><div class="t">Waiting</div></div>
+            <div class="s"><div class="e esh"><span class="g">C</span></div><div class="n">Cy</div><div class="t">You</div></div>
+          </div>
+          <div class="act">Send</div>
+          <div class="ft">Bo has not sent. You may carry them.</div>
+        </div>
+      </div>
+    </div>
+    <div class="note"><b>The most disciplined, and the cheapest to extend.</b> One accent means
+    every future state has an obvious answer: it is either ember or it is ash. The pack red is the
+    only wrinkle - it has to stay dull enough not to compete with the coal.</div>
+  </div>
+  <div>
+    <div class="device ae">
+      <div class="chrome"><i></i></div>
+      <div class="thr" style="height:300px;background:#0b0d12">
+        <div class="m them">who even is awake</div>
+        <div class="bb">
+          <div class="art"><div class="moon"></div><div class="town"></div>
+            <div class="cap"><div class="k">Night III</div><div class="t">Cy closed the night</div></div></div>
+          <div class="mt"><div class="a">6 of 6 have sent</div><div class="b">Open to see the morning</div></div>
+        </div>
+        <div class="m them">oh no</div>
+      </div>
+    </div>
+    <div class="note">A dead moon over a town lit from below. The glow rising off the bottom edge
+    is the whole image.</div>
+  </div>
+</div>
+</section>
+<section>
+<h2><span class="num">&sum;</span> Side by side</h2>
+<table>
+  <tr><th>&nbsp;</th><th>Legible in sun</th><th>Fits collapsed</th><th>Dead state</th><th>Bubble at thumbnail</th><th>Risk</th></tr>
+  <tr><td><b>Moonlit</b></td><td>poor</td><td>yes</td><td>faded</td><td>the moon carries it</td><td>could feel generic</td></tr>
+  <tr><td><b>Illuminated</b></td><td>good</td><td>yes</td><td>struck through in red</td><td>reads as a relic</td><td>one-trick drop cap</td></tr>
+  <tr><td><b>Stained glass</b></td><td>poor</td><td>yes</td><td><b>the pane goes out</b></td><td>most striking</td><td>heavy texture under 13pt type</td></tr>
+  <tr><td><b>Ash and ember</b></td><td>poor</td><td>yes</td><td>cold ash</td><td>glow from below</td><td>pack red competes with the coal</td></tr>
+</table>
+<p style="margin-top:18px"><b>Ash and ember is the pick</b> - and it is the one you reacted to, which matters more than my reasoning. It is also the most disciplined: one accent means every future state has an obvious answer, it is either ember or it is ash, and it will not fight the type as the game grows a day phase and a voting screen.</p>
+<p><b>Stained glass is the one to keep developing</b> - refined below. It owns the best dead state on the page, because a pane that has gone dark needs no explaining. <b>Moonlit</b> and <b>illuminated</b> stay on the shelf as the cold and the warm alternatives.</p>
+</section>
+</div>
+</section>
+
+<section id="states">
+<h2>The three states Messages gives you</h2>
+<p class="lede">This is the part that is easy to forget and impossible to retrofit. An extension is
+seen in three sizes, and the bubble is seen by people who never open the app at all.</p>
+
+<div class="row">
+
+  <!-- 1. BUBBLE -->
+  <div class="col">
+    <div class="h4"><span class="pill">1</span> The bubble, in the transcript</div>
+    <p class="why">What everyone sees without tapping. It must say <em>something happened and it
+    was night 3</em> without saying anything a villager could not know.</p>
+    <div class="device">
+      <div class="chrome"><i></i></div>
+      <div class="thread" style="height:300px">
+        <div class="msg them">who even is awake right now</div>
+        <div class="bub">
+          <div class="art">
+            <div class="sky">
+              <i style="left:18px;top:22px"></i><i style="left:54px;top:12px"></i>
+              <i style="left:86px;top:30px"></i><i style="left:130px;top:18px"></i>
+              <i style="left:190px;top:40px"></i><i style="left:214px;top:14px"></i>
+            </div>
+            <div class="moon"></div>
+            <div class="town"></div>
+            <div class="cap">
+              <div class="k">Night III</div>
+              <div class="t">Cy closed the night</div>
+            </div>
+          </div>
+          <div class="meta">
+            <div class="a">6 of 6 have sent</div>
+            <div class="b">Open to see the morning</div>
+          </div>
+        </div>
+        <div class="tick">Delivered</div>
+        <div class="msg them">oh no</div>
+      </div>
+    </div>
+    <div class="note"><b>Every bubble must differ.</b> Landfall shipped an icon and one word, so
+    scrolling back told you nothing and VoiceOver said only the app name. The caption is
+    <b>free</b> - Messages renders it outside the image at the system's size - so it carries the
+    only reliably legible sentence.</div>
+  </div>
+
+  <!-- 2. COLLAPSED -->
+  <div class="col">
+    <div class="h4"><span class="pill g">2</span> Collapsed</div>
+    <p class="why">Keyboard height. You get roughly 390 x 290pt and the transcript stays visible
+    above. This is where most turns will actually be taken - it is one tap from the thread.</p>
+    <div class="device">
+      <div class="chrome"><i></i></div>
+      <div class="night collapsed">
+        <div class="inner">
+          <div class="hdr">Night III &middot; six awake</div>
+          <div class="ask">Who do you want gone?</div>
+          <div class="shields" style="grid-template-columns:repeat(6,1fr);gap:6px">
+            <div class="sh dead"><div class="esc"><span class="sig">A</span></div><div class="nm">Alex</div></div>
+            <div class="sh sent pick"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div></div>
+            <div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div></div>
+            <div class="sh sent pack"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div></div>
+            <div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div></div>
+            <div class="sh you"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div></div>
+          </div>
+          <div class="seal">Send</div>
+        </div>
+      </div>
+    </div>
+    <div class="note"><b>One row of six shields fits.</b> Beyond seven it wraps. There is no seat cap
+    in the game - the only ceiling is iMessage's own group size - so the muster has to keep
+    working as one row becomes two, then three, and the collapsed state has to scroll.</div>
+  </div>
+
+  <!-- 3. EXPANDED -->
+  <div class="col">
+    <div class="h4"><span class="pill n">3</span> Expanded</div>
+    <p class="why">The whole screen. Room for the pack, the candle and the roll of the dead -
+    everything that does not fit collapsed.</p>
+    <div class="device">
+      <div class="chrome"><i></i></div>
+      <div class="night expanded">
+        <div class="inner">
+          <div class="hdr">Night III</div>
+          <div class="ask">Who do you want gone?</div>
+          <div class="said">You are a <b>wolf</b>. Tonight Cy makes the call.</div>
+          <div class="rule2"></div>
+          <div class="shields">
+            <div class="sh dead"><div class="esc"><span class="sig">A</span></div><div class="nm">Alex</div><div class="st">Out</div></div>
+            <div class="sh sent pick"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st">Sent</div></div>
+            <div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st">Sent</div></div>
+            <div class="sh sent pack"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">Pack</div></div>
+            <div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st">Sent</div></div>
+            <div class="sh"><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st">Waiting</div></div>
+            <div class="sh sent you"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">Sent</div></div>
+          </div>
+          <div class="blood">
+            <div class="hd">The pack &middot; only you two read this</div>
+            <div class="ln"><span class="who">Lee</span> &mdash; she has been too quiet.</div>
+            <div class="mine">You have one line tonight.</div>
+          </div>
+          <div class="seal">Send</div>
+          <div class="foot">Bo has not sent. You may carry them.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</section>
+
+<section id="table">
+<h2>The table: two ways to draw six people</h2>
+<p class="lede">Same question, same screen for every role. What differs is the arrangement - and
+one of them makes rotation legible, which the carry and the wolf decider both depend on.</p>
+
+<div class="row">
+  <div class="col">
+    <div class="h4"><span class="pill">A</span> The muster - shields in rank</div>
+    <p class="why">A grid, four across. Scales to twelve, tolerates long names, and is close to
+    what exists today.</p>
+    <div class="device">
+      <div class="chrome"><i></i></div>
+      <div class="night" style="height:460px">
+        <div class="inner">
+          <div class="hdr">Night III</div>
+          <div class="ask">Who did you dream about?</div>
+          <div class="said">You are a <b>villager</b>.</div>
+          <div class="rule2"></div>
+          <div class="shields">
+            <div class="sh dead"><div class="esc"><span class="sig">A</span></div><div class="nm">Alex</div><div class="st">Out</div></div>
+            <div class="sh sent pick"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st">Sent</div></div>
+            <div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st">Sent</div></div>
+            <div class="sh sent"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">Sent</div></div>
+            <div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st">Sent</div></div>
+            <div class="sh"><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st">Waiting</div></div>
+            <div class="sh you"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">Choosing</div></div>
+          </div>
+          <div class="candle">
+            <div style="display:flex;flex-direction:column;align-items:center">
+              <div class="fire"></div><div class="stick" style="height:26px"></div>
+            </div>
+            <div class="txt">the night is still settling</div>
+          </div>
+          <div class="seal dead">Send</div>
+          <div class="foot">Your dream does nothing. Everybody sends.</div>
+        </div>
+      </div>
+    </div>
+    <div class="note"><b>Cheapest, and the only one that survives twelve seats.</b> But rotation
+    order is invisible, even though <code>ww_night_order</code> knows it.</div>
+  </div>
+
+  <div class="col">
+    <div class="h4"><span class="pill g">B</span> The round table</div>
+    <p class="why">Seats on a circle in <code>ww_night_order</code>, a tallow flame at the centre
+    carrying the count. Who is next stops needing a sentence.</p>
+    <div class="device">
+      <div class="chrome"><i></i></div>
+      <div class="night" style="height:460px">
+        <div class="inner">
+          <div class="hdr">Night III</div>
+          <div class="ask">Who do you want gone?</div>
+          <div class="rule2"></div>
+          <div class="table">
+            <div class="board"></div>
+            <div class="flame"><div class="n">5/6</div><div class="l">have sent<br>Bo has not</div></div>
+            <div class="tp dead" style="left:165px;top:22px"><div class="esc"><span class="sig">A</span></div><div class="nm">Alex</div></div>
+            <div class="tp pick" style="left:268px;top:92px"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div></div>
+            <div class="tp"      style="left:268px;top:212px"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div></div>
+            <div class="tp pack" style="left:165px;top:282px"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div></div>
+            <div class="tp"      style="left:62px;top:212px"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div></div>
+            <div class="tp"      style="left:62px;top:92px"><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div></div>
+          </div>
+          <div class="seal">Send</div>
+        </div>
+      </div>
+    </div>
+    <div class="note"><b>It looks like the game.</b> But it stops fitting somewhere past eight, costs the most,
+    and names longer than six characters need truncating at 62pt. Your own seat sits outside the
+    ring, which is a small lie about the geometry.</div>
+  </div>
+</div>
+
+<table>
+  <tr><th>&nbsp;</th><th>A &middot; muster</th><th>B &middot; round table</th></tr>
+  <tr><td>All seats visible at 8</td><td class="y">yes</td><td class="n">tight</td></tr>
+  <tr><td>Survives 12 seats</td><td class="y">yes</td><td class="n">no</td></tr>
+  <tr><td>Fits the collapsed drawer</td><td class="y">yes, one row</td><td class="n">no</td></tr>
+  <tr><td>Rotation legible</td><td class="n">no</td><td class="y">yes</td></tr>
+  <tr><td>Long names</td><td class="y">fine</td><td class="n">~6 chars</td></tr>
+  <tr><td>Cost from today</td><td class="y">low</td><td class="n">highest</td></tr>
+</table>
+<p style="margin-top:14px"><b>Recommendation:</b> A, and it is not close - because <em>B cannot be
+drawn in the collapsed state at all</em>, and collapsed is where a one-tap turn happens. A round
+table would mean two different night screens. Revisit if tables settle at five or six.</p>
+</section>
+
+<section id="pack">
+<h2>The pack, and the shoulder problem</h2>
+<p class="lede">Wolves get one line each per night, inside the same payload as the night choice.
+The question is not how it looks - it is whether a villager sitting next to you can tell that your
+screen has it.</p>
+
+<div class="row">
+  <div class="col">
+    <div class="h4"><span class="pill">P1</span> Written on the wall</div>
+    <p class="why">The channel sits in the flow, below the shields. Old blood on stone.</p>
+    <div class="device">
+      <div class="chrome"><i></i></div>
+      <div class="night" style="height:330px">
+        <div class="inner">
+          <div class="hdr">Night III</div>
+          <div class="ask">Who do you want gone?</div>
+          <div class="said">You are a <b>wolf</b>. Tonight <b>you</b> make the call.</div>
+          <div class="blood">
+            <div class="hd">The pack</div>
+            <div class="ln"><span class="who">Lee</span> &mdash; she has been too quiet.</div>
+            <div class="ln"><span class="who">Bo</span> &mdash; agreed. Sveta.</div>
+            <div class="mine">Your line, and the choice, ride in one message.</div>
+          </div>
+          <div class="seal blood">Seal the night</div>
+        </div>
+      </div>
+    </div>
+    <div class="note"><b>Best to play, worst to hide.</b> A villager glancing across the room sees
+    a red panel their own screen does not have.</div>
+  </div>
+
+  <div class="col">
+    <div class="h4"><span class="pill g">P2</span> A door both roles have</div>
+    <p class="why">Two doors on every screen. A villager's pack door opens onto nothing - and the
+    nothing is written, not empty.</p>
+    <div class="device">
+      <div class="chrome"><i></i></div>
+      <div class="night" style="height:330px">
+        <div class="inner">
+          <div style="display:flex;gap:8px">
+            <div class="seal dead" style="margin:0;flex:1;padding:10px;font-size:11.5px">The table</div>
+            <div class="seal blood" style="margin:0;flex:1;padding:10px;font-size:11.5px">The pack</div>
+          </div>
+          <div class="blood" style="margin-top:2px">
+            <div class="hd">The pack</div>
+            <div class="ln"><span class="who">Lee</span> &mdash; she has been too quiet.</div>
+            <div class="mine">You have one line tonight.</div>
+          </div>
+          <div style="margin-top:6px;padding:12px 13px;border:1px dashed #262a36;border-radius:2px">
+            <div class="hdr" style="color:#5d5747">What a villager sees here</div>
+            <div class="said" style="margin-top:6px">You slept, and dreamt of nothing. There is
+            no pack.</div>
+          </div>
+          <div class="seal">Send</div>
+        </div>
+      </div>
+    </div>
+    <div class="note"><b>The shoulder answer.</b> Identical chrome for every role, so the shape of
+    the screen is not a tell. It costs a tap and an empty room that exists only to be empty - the
+    honest price of the disguise.</div>
+  </div>
+</div>
+</section>
+
+<section id="morning">
+<h2>The morning</h2>
+<p class="lede">The night resolves when the last living player sends. Night is soot; morning should
+not be. Parchment and daylight is the cheapest way to say the phase changed.</p>
+
+<div class="row">
+  <div class="col">
+    <div class="h4">Morning, in the app</div>
+    <div class="device">
+      <div class="chrome"><i></i></div>
+      <div class="morn" style="height:430px">
+        <div class="inner">
+          <div class="hdr">Morning III</div>
+          <div class="ask">Sveta is gone.</div>
+          <div class="said">She was a <b style="color:#7a1418">villager</b>.</div>
+          <div class="rule2"></div>
+          <div class="roll">
+            <div class="x">Alex &mdash; <span class="r">villager</span></div>
+            <div class="x">Sveta &mdash; <span class="r">villager</span></div>
+            <div>Kim</div><div>Lee</div><div>Ana</div><div>Bo</div><div>Cy</div>
+          </div>
+          <div class="seal" style="border-color:#8a6f2a;color:#3a2d12;
+               background:linear-gradient(#d8c288,#b89e5e)">Open the day</div>
+          <div class="foot" style="color:#6d5c3c">Five remain. Two of them are not what they say.</div>
+        </div>
+      </div>
+    </div>
+    <div class="note">Only the last sender sees this when it happens. Everyone else meets the
+    morning as a bubble - which is why the bubble has to carry it.</div>
+  </div>
+
+  <div class="col">
+    <div class="h4">Morning, in the thread</div>
+    <div class="device">
+      <div class="chrome"><i></i></div>
+      <div class="thread" style="height:430px;justify-content:flex-end">
+        <div class="msg them">i sent mine ages ago</div>
+        <div class="bub">
+          <div class="art" style="background:
+               radial-gradient(75% 60% at 28% 16%, rgba(226,206,150,.35), transparent 62%),
+               linear-gradient(#2a2417,#15120c)">
+            <div class="town" style="filter:drop-shadow(0 0 8px rgba(0,0,0,.8))"></div>
+            <div class="cap">
+              <div class="k">Morning III</div>
+              <div class="t">Sveta is gone</div>
+            </div>
+          </div>
+          <div class="meta">
+            <div class="a">She was a villager</div>
+            <div class="b">Five remain &middot; open to vote</div>
+          </div>
+        </div>
+        <div class="tick">Delivered</div>
+        <div class="msg them">SVETA??</div>
+        <div class="msg us">told you</div>
+      </div>
+    </div>
+    <div class="note"><b>The thread is the game.</b> Everyone meets the morning the same way,
+    which is the principle the night already runs on - and it is one fewer screen.</div>
+  </div>
+</div>
+</section>
+
+<section id="lobby">
+<h2>The lobby, and the refusal</h2>
+<p class="lede">Built to lobby v3 already. Worth drawing because its refusals are where the rules
+become visible - and because nothing is dealt until Start, which is what makes re-creating
+pointless.</p>
+
+<div class="row">
+  <div class="col">
+    <div class="h4">Filling up</div>
+    <div class="device">
+      <div class="chrome"><i></i></div>
+      <div class="night mini" style="height:330px">
+        <div class="inner">
+          <div class="hdr">The village gathers</div>
+          <div class="ask">Four have come.</div>
+          <div class="said">Five are needed before the first night.</div>
+          <div class="rule2"></div>
+          <div class="shields" style="grid-template-columns:repeat(5,1fr);gap:7px">
+            <div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Alex</div></div>
+            <div class="sh sent"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div></div>
+            <div class="sh sent"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div></div>
+            <div class="sh sent you"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div></div>
+            <div class="sh"><div class="esc" style="opacity:.3"><span class="sig">&middot;</span></div><div class="st">empty</div></div>
+          </div>
+          <div class="seal dead">One more</div>
+          <div class="foot">No one has a role yet. Roles are dealt when the night begins.</div>
+        </div>
+      </div>
+    </div>
+    <div class="note">That footer is doing security work: it says out loud that nothing has been
+    dealt, so re-creating the game buys you nothing.</div>
+  </div>
+
+  <div class="col">
+    <div class="h4">A 1:1 chat</div>
+    <div class="device">
+      <div class="chrome"><i></i></div>
+      <div class="night" style="height:330px">
+        <div class="inner">
+          <div class="hdr">Not here</div>
+          <div class="ask">A village of two<br>is not a village.</div>
+          <div class="rule2"></div>
+          <div class="said" style="font-style:normal;color:#8d8471;line-height:1.55">
+            Werewolf needs five. Start it in a group with at least that many and it will work.</div>
+          <div class="seal dead">Nothing to begin</div>
+        </div>
+      </div>
+    </div>
+    <div class="note"><b>Say it once; never count toward it.</b> A progress indicator that can
+    never fill is worse than a plain refusal. Landfall needs this exact shape - its kernel refuses
+    under three.</div>
+  </div>
+</div>
+</section>
+
+<section id="cost">
+<h2>What each piece costs</h2>
+<table>
+  <tr><th>Piece</th><th>Option</th><th>Cost</th><th>Note</th></tr>
+  <tr><td rowspan="2">Night table</td><td>A &middot; muster</td><td class="y">low</td><td>shields are a clip-path and a fill; the layout exists</td></tr>
+  <tr><td>B &middot; round table</td><td class="n">high</td><td>and it cannot be drawn collapsed, so it needs a second screen</td></tr>
+  <tr><td rowspan="2">Pack</td><td>P1 &middot; on the wall</td><td class="y">low</td><td>close to today's panel</td></tr>
+  <tr><td>P2 &middot; two doors</td><td>medium</td><td>the empty room must not feel like a bug</td></tr>
+  <tr><td>Send floor</td><td>the candle</td><td class="y">low</td><td>reads <code>ww_send_floor_remaining</code>; no digits, so nobody counts</td></tr>
+  <tr><td>Morning</td><td>bubble, then screen</td><td class="y">low</td><td>the bubble is needed either way</td></tr>
+  <tr><td>Bubble art</td><td>skyline + moon</td><td>medium</td><td>rendered by <code>ImageRenderer</code>; must vary per night or it is the Landfall pill again</td></tr>
+  <tr><td>Day phase</td><td>not drawn</td><td class="n">unbuilt</td><td><code>ww_day_lynch</code> exists and is tested; no voting UI</td></tr>
+  <tr><td>Nicknames</td><td>not drawn</td><td class="n">unbuilt</td><td>every install currently claims "Player"</td></tr>
+</table>
+</section>
+
+<section id="open">
+<h2>Open, and not guessed at</h2>
+<ul style="max-width:73ch;line-height:1.8;color:var(--mut)">
+  <li><b style="color:var(--tx)">Ten seconds is settled</b> - the owner has confirmed the floor feels right. The carry gate moved from one minute to <b style="color:var(--tx)">ten</b>: a minute is harsh for a correspondence game somebody checks between meetings.</li>
+  <li><b style="color:var(--tx)">The URL budget has an answer: drop the history.</b> A ten-player first night seals to 286 bytes and 464 base32 characters against roughly 1000. The chain only grows because it carries every night and day already resolved - and those are settled facts, not pending ones. Once a night is closed nobody needs its records to replay: the resolved state is the state. Truncating at the last closed morning bounds the envelope permanently instead of buying time with entropy coding.</li>
+  <li><b style="color:var(--tx)">Nobody has decided what a dead player sees.</b> Spectating is in
+  the view model and has no screen, and a dead player who can still read the thread is a real
+  social problem in the physical game too.</li>
+  <li><b style="color:var(--tx)">What a dead player does</b> is the remaining unknown - see above. Seat count is <em>not</em> open: there is no game cap, only iMessage's group limit.</li>
+</ul>
+</section>
+
+</main>
+</body>
+</html>
