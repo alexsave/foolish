@@ -39,3 +39,44 @@ clean:
 	rm -rf build
 
 .PHONY: all run arena render asan clean
+
+# ---- the iOS bridge -----------------------------------------------------
+# `make ios-smoke` exercises the identical bridge with the host compiler, so
+# every invariant on it is testable WITHOUT a Mac. ios-lib needs Xcode.
+IOS_MIN_VERSION := 17.0
+IOS_SRC    := $(SRC) ios/uttt_api.c
+IOS_CFLAGS := -O2 -Isrc -Iios/include -Wall -Wextra -Werror -std=c11
+
+# $(1)=target-triple  $(2)=sdk  $(3)=out dir
+define IOS_SLICE
+	@rm -rf $(3)/obj
+	@mkdir -p $(3)/obj
+	@for s in $(IOS_SRC); do \
+	  o=$(3)/obj/$$(basename $$s .c).o; \
+	  echo "  CC[$(2)] $$s"; \
+	  xcrun -sdk $(2) clang -target $(1) $(IOS_CFLAGS) -c $$s -o $$o || exit 1; \
+	done
+	libtool -static -o $(3)/libuttt.a $(3)/obj/*.o
+endef
+
+ios-lib:
+	@echo "== device slice (arm64) =="
+	$(call IOS_SLICE,arm64-apple-ios$(IOS_MIN_VERSION),iphoneos,build/ios/device)
+	@echo "== simulator slice (arm64) =="
+	$(call IOS_SLICE,arm64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim)
+	@rm -rf ../ios/vendor/Uttt.xcframework
+	@mkdir -p ../ios/vendor
+	xcodebuild -create-xcframework \
+	  -library build/ios/device/libuttt.a -headers ios/include \
+	  -library build/ios/sim/libuttt.a    -headers ios/include \
+	  -output ../ios/vendor/Uttt.xcframework
+	@echo "wrote ../ios/vendor/Uttt.xcframework"
+
+
+build/ios_smoke: $(IOS_SRC) ios/uttt_api_smoke.c | build
+	$(CC) $(CFLAGS) -Iios/include $(IOS_SRC) ios/uttt_api_smoke.c -o $@ $(LDLIBS)
+
+ios-smoke: build/ios_smoke
+	./build/ios_smoke
+
+.PHONY: ios-smoke ios-lib

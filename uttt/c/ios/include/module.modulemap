@@ -1,0 +1,4 @@
+module CUttt {
+    header "uttt_api.h"
+    export *
+}
