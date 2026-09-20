@@ -1197,9 +1197,15 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
   color:#a8935c}
 .gb .cap .t{font:600 16.5px/1.18 'Cinzel',serif;color:#f2e8d2;margin-top:3px;
   text-shadow:0 1px 3px rgba(0,0,0,.9)}
-.gb .mt{padding:8px 12px 10px;background:#0a0b10;border-top:1px solid #1a1b23}
-.gb .mt .a{font:600 13.5px/1.3 'Inter',sans-serif;color:#e4dcc8}
-.gb .mt .b{font:400 12.5px/1.3 'Inter',sans-serif;color:#7e7663;margin-top:2px}
+/* ONE LINE. Messages renders the caption as a single line under the bubble and
+   truncates the rest, so anything that needs to be read has to be in the image.
+   The line below is drawn at the size Messages actually gives it. */
+.gb .cline{padding:6px 4px 0;font:400 12.5px/1.35 'Inter',sans-serif;color:#8b8b93;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* the count moves INTO the art, where there is room for it */
+.gb .cnt{position:absolute;right:11px;bottom:10px;z-index:4;
+  font:600 11px/1 'Cinzel',serif;letter-spacing:.14em;color:#c9bda0;
+  text-shadow:0 1px 3px rgba(0,0,0,.95)}
 /* the five skies a day can have */
 .sky-dusk{background-image:var(--nz-fine),
   radial-gradient(80% 44% at 50% 106%, rgba(196,108,52,.4), transparent 62%),
@@ -1226,6 +1232,57 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
 .gb .vill{position:absolute;left:0;right:0;bottom:0;height:70px;z-index:2}
 .gb .day .vill,.gb .sky-day .vill{opacity:.86}
 
+
+/* =====================================================================
+   THE SKY IS THE PROGRESS BAR.
+
+   The sun and the moon both RISE ON THE RIGHT and SET ON THE LEFT, and
+   where they sit is how far through the phase the village is - derived
+   from how many living players still owe a move. At 0 of 19 the moon is
+   low on the right; at 19 of 19 it is going down on the left.
+
+   So you can tell, from a thumbnail, without reading a word and without
+   counting bubbles, roughly how close the night is to breaking. It is the
+   one piece of state every player wants constantly and nobody wants to
+   ask for.
+
+   The moon is always full, because werewolves.
+   ===================================================================== */
+.gb .art .vill{position:absolute;left:0;right:0;bottom:0;height:70px;z-index:2;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 250 96' preserveAspectRatio='none'><g fill='%23000'><polygon points='4,70 15,56 26,70 26,96 4,96'/><polygon points='28,76 37,64 46,76 46,96 28,96'/><polygon points='54,62 66,46 78,62 78,96 54,96'/><polygon points='61,48 66,18 71,48'/><rect x='65.1' y='8' width='1.8' height='12'/><rect x='62.6' y='11' width='6.8' height='1.8'/><polygon points='84,72 94,58 104,72 104,96 84,96'/><polygon points='106,79 114,69 122,79 122,96 106,96'/><polygon points='124,60 136,40 148,60'/><rect x='127' y='59' width='18' height='37'/><polygon points='152,70 163,56 174,70 174,96 152,96'/><polygon points='176,78 184,68 192,78 192,96 176,96'/><polygon points='196,66 208,50 220,66 220,96 196,96'/><ellipse cx='230' cy='74' rx='9' ry='12'/><rect x='228.8' y='78' width='2.4' height='18'/><ellipse cx='243' cy='80' rx='7' ry='9'/><rect x='242' y='84' width='2' height='12'/></g></svg>");background-size:100% 100%;background-repeat:no-repeat;
+  filter:drop-shadow(0 0 8px rgba(0,0,0,.85))}
+.gb .art .stars{position:absolute;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(1.5px 1.5px at 24px 22px,#e8e4d4,transparent),
+    radial-gradient(1.2px 1.2px at 62px 12px,#cfd6e8,transparent),
+    radial-gradient(1.6px 1.6px at 104px 30px,#e8e4d4,transparent),
+    radial-gradient(1.2px 1.2px at 142px 18px,#cfd6e8,transparent),
+    radial-gradient(1.4px 1.4px at 178px 40px,#e8e4d4,transparent),
+    radial-gradient(1.1px 1.1px at 214px 16px,#cfd6e8,transparent),
+    radial-gradient(1.5px 1.5px at 44px 56px,#e8e4d4,transparent),
+    radial-gradient(1.2px 1.2px at 126px 52px,#cfd6e8,transparent);
+  opacity:.8}
+/* an orb on its arc. left/bottom are set per bubble from the phase progress. */
+.gb .orb{position:absolute;z-index:1;border-radius:50%}
+.gb .orb.moon{width:40px;height:40px;background-image:url("");
+  background-size:100% 100%;filter:blur(.4px) contrast(1.06);
+  box-shadow:0 0 30px 6px rgba(206,216,238,.26)}
+.gb .orb.sun{width:30px;height:30px;background:#fffdf6;
+  box-shadow:0 0 32px 10px rgba(255,253,240,.7)}
+.gb .orb.dusksun{width:38px;height:38px;background:#e4512a;box-shadow:none}
+/* the wolves' moon: the same face, drowned in red */
+.gb .orb.bloodmoon{width:48px;height:48px;background-image:url("");
+  background-size:100% 100%;filter:blur(.4px) sepia(1) saturate(7) hue-rotate(-28deg) brightness(.82);
+  box-shadow:0 0 54px 18px rgba(176,26,18,.75)}
+/* the two endings */
+.sky-wolves{background-image:var(--nz-fine),
+  radial-gradient(60% 48% at 62% 26%, rgba(150,22,16,.6), transparent 66%),
+  linear-gradient(#1c0c10,#130709 58%,#0a0406)}
+.sky-village{background-image:
+  radial-gradient(70% 40% at 50% 104%, rgba(255,255,255,.6), transparent 62%),
+  linear-gradient(#5aa0d8,#8fc2e2 48%,#d2e6ee)}
+.sky-village .vill{opacity:.72;filter:none !important}
+
 </style>
 </head>
 <body>
@@ -1242,64 +1299,70 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
 <section id="day24">
 <h2>A day in the thread</h2>
 <p class="lede">Every bubble a 32-player game can produce, in order, as one continuous transcript.
-This is the surface almost everyone sees almost all the time - most players will open the app a
-handful of times and read the thread constantly - so if a day of these does not read as a game,
-nothing further down matters.</p>
+This is the surface almost everyone sees almost all the time, so if a day of these does not read
+as a game, nothing further down matters.</p>
 
 <div class="row">
   <div class="col" style="flex:0 0 auto">
     <div class="tl">
   <div class="sep">Yesterday</div>
-  <div class="gb left"><div class="art sky-dusk"><div class="dusk-sun"></div><div class="vill" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 250 96' preserveAspectRatio='none'><g fill='%23000'><polygon points='4,70 15,56 26,70 26,96 4,96'/><polygon points='28,76 37,64 46,76 46,96 28,96'/><polygon points='54,62 66,46 78,62 78,96 54,96'/><polygon points='61,48 66,18 71,48'/><rect x='65.1' y='8' width='1.8' height='12'/><rect x='62.6' y='11' width='6.8' height='1.8'/><polygon points='84,72 94,58 104,72 104,96 84,96'/><polygon points='106,79 114,69 122,79 122,96 106,96'/><polygon points='124,60 136,40 148,60'/><rect x='127' y='59' width='18' height='37'/><polygon points='152,70 163,56 174,70 174,96 152,96'/><polygon points='176,78 184,68 192,78 192,96 176,96'/><polygon points='196,66 208,50 220,66 220,96 196,96'/><ellipse cx='230' cy='74' rx='9' ry='12'/><rect x='228.8' y='78' width='2.4' height='18'/><ellipse cx='243' cy='80' rx='7' ry='9'/><rect x='242' y='84' width='2' height='12'/></g></svg>');background-size:100% 100%;background-repeat:no-repeat;filter:drop-shadow(0 0 8px rgba(0,0,0,.8))"></div><div class="cap"><div class="k">The village</div><div class="t">Alex called a game</div></div></div><div class="mt"><div class="a">1 of 32 seated</div><div class="b">Five needed before the first night</div></div></div>
+  <div class="gb left"><div class="art sky-dusk"><div class="stars"></div><div class="orb moon" style="left:77.1%;bottom:29px"></div><div class="vill"></div><div class="cnt">1 / 32</div><div class="cap"><div class="k">The village</div><div class="t">Alex called a game</div></div></div><div class="cline">Five needed before the first night</div></div>
   <div class="m them">im in</div>
-  <div class="gb left"><div class="art sky-dusk"><div class="dusk-sun"></div><div class="vill" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 250 96' preserveAspectRatio='none'><g fill='%23000'><polygon points='4,70 15,56 26,70 26,96 4,96'/><polygon points='28,76 37,64 46,76 46,96 28,96'/><polygon points='54,62 66,46 78,62 78,96 54,96'/><polygon points='61,48 66,18 71,48'/><rect x='65.1' y='8' width='1.8' height='12'/><rect x='62.6' y='11' width='6.8' height='1.8'/><polygon points='84,72 94,58 104,72 104,96 84,96'/><polygon points='106,79 114,69 122,79 122,96 106,96'/><polygon points='124,60 136,40 148,60'/><rect x='127' y='59' width='18' height='37'/><polygon points='152,70 163,56 174,70 174,96 152,96'/><polygon points='176,78 184,68 192,78 192,96 176,96'/><polygon points='196,66 208,50 220,66 220,96 196,96'/><ellipse cx='230' cy='74' rx='9' ry='12'/><rect x='228.8' y='78' width='2.4' height='18'/><ellipse cx='243' cy='80' rx='7' ry='9'/><rect x='242' y='84' width='2' height='12'/></g></svg>');background-size:100% 100%;background-repeat:no-repeat;filter:drop-shadow(0 0 8px rgba(0,0,0,.8))"></div><div class="cap"><div class="k">The village</div><div class="t">Kim took a seat</div></div></div><div class="mt"><div class="a">7 of 32 seated</div><div class="b">Anyone may start it now</div></div></div>
+  <div class="gb left"><div class="art sky-dusk"><div class="stars"></div><div class="orb moon" style="left:77.1%;bottom:29px"></div><div class="vill"></div><div class="cnt">7 / 32</div><div class="cap"><div class="k">The village</div><div class="t">Kim took a seat</div></div></div><div class="cline">Anyone may start it now</div></div>
   <div class="m us">starting it</div>
-  <div class="gb"><div class="art sky-night"><div class="stars"></div><div class="moon" style="position:absolute;right:30px;top:16px;width:42px;height:42px;z-index:1"></div><div class="vill" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 250 96' preserveAspectRatio='none'><g fill='%23000'><polygon points='4,70 15,56 26,70 26,96 4,96'/><polygon points='28,76 37,64 46,76 46,96 28,96'/><polygon points='54,62 66,46 78,62 78,96 54,96'/><polygon points='61,48 66,18 71,48'/><rect x='65.1' y='8' width='1.8' height='12'/><rect x='62.6' y='11' width='6.8' height='1.8'/><polygon points='84,72 94,58 104,72 104,96 84,96'/><polygon points='106,79 114,69 122,79 122,96 106,96'/><polygon points='124,60 136,40 148,60'/><rect x='127' y='59' width='18' height='37'/><polygon points='152,70 163,56 174,70 174,96 152,96'/><polygon points='176,78 184,68 192,78 192,96 176,96'/><polygon points='196,66 208,50 220,66 220,96 196,96'/><ellipse cx='230' cy='74' rx='9' ry='12'/><rect x='228.8' y='78' width='2.4' height='18'/><ellipse cx='243' cy='80' rx='7' ry='9'/><rect x='242' y='84' width='2' height='12'/></g></svg>');background-size:100% 100%;background-repeat:no-repeat;filter:drop-shadow(0 0 8px rgba(0,0,0,.8))"></div><div class="cap"><div class="k">Night I</div><div class="t">The village sleeps</div></div></div><div class="mt"><div class="a">19 seated, 19 asleep</div><div class="b">Everyone sends once</div></div></div>
-  <div class="tick">Delivered</div>
 
-  <div class="sep">Night I &middot; nineteen bubbles</div>
-  <div class="gb left"><div class="art sky-night"><div class="stars"></div><div class="moon" style="position:absolute;right:30px;top:16px;width:42px;height:42px;z-index:1"></div><div class="vill" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 250 96' preserveAspectRatio='none'><g fill='%23000'><polygon points='4,70 15,56 26,70 26,96 4,96'/><polygon points='28,76 37,64 46,76 46,96 28,96'/><polygon points='54,62 66,46 78,62 78,96 54,96'/><polygon points='61,48 66,18 71,48'/><rect x='65.1' y='8' width='1.8' height='12'/><rect x='62.6' y='11' width='6.8' height='1.8'/><polygon points='84,72 94,58 104,72 104,96 84,96'/><polygon points='106,79 114,69 122,79 122,96 106,96'/><polygon points='124,60 136,40 148,60'/><rect x='127' y='59' width='18' height='37'/><polygon points='152,70 163,56 174,70 174,96 152,96'/><polygon points='176,78 184,68 192,78 192,96 176,96'/><polygon points='196,66 208,50 220,66 220,96 196,96'/><ellipse cx='230' cy='74' rx='9' ry='12'/><rect x='228.8' y='78' width='2.4' height='18'/><ellipse cx='243' cy='80' rx='7' ry='9'/><rect x='242' y='84' width='2' height='12'/></g></svg>');background-size:100% 100%;background-repeat:no-repeat;filter:drop-shadow(0 0 8px rgba(0,0,0,.8))"></div><div class="cap"><div class="k">Night I</div><div class="t">Dara has slept</div></div></div><div class="mt"><div class="a">4 of 19</div><div class="b">Fifteen still awake</div></div></div>
-  <div class="gb"><div class="art sky-night"><div class="stars"></div><div class="moon" style="position:absolute;right:30px;top:16px;width:42px;height:42px;z-index:1"></div><div class="vill" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 250 96' preserveAspectRatio='none'><g fill='%23000'><polygon points='4,70 15,56 26,70 26,96 4,96'/><polygon points='28,76 37,64 46,76 46,96 28,96'/><polygon points='54,62 66,46 78,62 78,96 54,96'/><polygon points='61,48 66,18 71,48'/><rect x='65.1' y='8' width='1.8' height='12'/><rect x='62.6' y='11' width='6.8' height='1.8'/><polygon points='84,72 94,58 104,72 104,96 84,96'/><polygon points='106,79 114,69 122,79 122,96 106,96'/><polygon points='124,60 136,40 148,60'/><rect x='127' y='59' width='18' height='37'/><polygon points='152,70 163,56 174,70 174,96 152,96'/><polygon points='176,78 184,68 192,78 192,96 176,96'/><polygon points='196,66 208,50 220,66 220,96 196,96'/><ellipse cx='230' cy='74' rx='9' ry='12'/><rect x='228.8' y='78' width='2.4' height='18'/><ellipse cx='243' cy='80' rx='7' ry='9'/><rect x='242' y='84' width='2' height='12'/></g></svg>');background-size:100% 100%;background-repeat:no-repeat;filter:drop-shadow(0 0 8px rgba(0,0,0,.8))"></div><div class="cap"><div class="k">Night I</div><div class="t">You have slept</div></div></div><div class="mt"><div class="a">12 of 19</div><div class="b">Seven still awake</div></div></div>
+  <div class="sep">Night I &middot; the moon crosses</div>
+  <div class="gb"><div class="art sky-night"><div class="stars"></div><div class="orb moon" style="left:86.0%;bottom:8px"></div><div class="vill"></div><div class="cnt">0 / 19</div><div class="cap"><div class="k">Night I</div><div class="t">The village sleeps</div></div></div><div class="cline">The moon is only just up</div></div>
+  <div class="tick">Delivered</div>
+  <div class="gb left"><div class="art sky-night"><div class="stars"></div><div class="orb moon" style="left:70.5%;bottom:44px"></div><div class="vill"></div><div class="cnt">4 / 19</div><div class="cap"><div class="k">Night I</div><div class="t">Dara has slept</div></div></div><div class="cline">Fifteen still awake</div></div>
+  <div class="gb"><div class="art sky-night"><div class="stars"></div><div class="orb moon" style="left:39.4%;bottom:61px"></div><div class="vill"></div><div class="cnt">12 / 19</div><div class="cap"><div class="k">Night I</div><div class="t">You have slept</div></div></div><div class="cline">Seven still awake</div></div>
   <div class="m them">this is taking forever</div>
-  <div class="gb left"><div class="art sky-night"><div class="stars"></div><div class="moon" style="position:absolute;right:30px;top:16px;width:42px;height:42px;z-index:1"></div><div class="vill" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 250 96' preserveAspectRatio='none'><g fill='%23000'><polygon points='4,70 15,56 26,70 26,96 4,96'/><polygon points='28,76 37,64 46,76 46,96 28,96'/><polygon points='54,62 66,46 78,62 78,96 54,96'/><polygon points='61,48 66,18 71,48'/><rect x='65.1' y='8' width='1.8' height='12'/><rect x='62.6' y='11' width='6.8' height='1.8'/><polygon points='84,72 94,58 104,72 104,96 84,96'/><polygon points='106,79 114,69 122,79 122,96 106,96'/><polygon points='124,60 136,40 148,60'/><rect x='127' y='59' width='18' height='37'/><polygon points='152,70 163,56 174,70 174,96 152,96'/><polygon points='176,78 184,68 192,78 192,96 176,96'/><polygon points='196,66 208,50 220,66 220,96 196,96'/><ellipse cx='230' cy='74' rx='9' ry='12'/><rect x='228.8' y='78' width='2.4' height='18'/><ellipse cx='243' cy='80' rx='7' ry='9'/><rect x='242' y='84' width='2' height='12'/></g></svg>');background-size:100% 100%;background-repeat:no-repeat;filter:drop-shadow(0 0 8px rgba(0,0,0,.8))"></div><div class="cap"><div class="k">Night I</div><div class="t">Cy closed the night</div></div></div><div class="mt"><div class="a">19 of 19</div><div class="b">Open for the morning</div></div></div>
+  <div class="gb left"><div class="art sky-night"><div class="stars"></div><div class="orb moon" style="left:12.0%;bottom:8px"></div><div class="vill"></div><div class="cnt">19 / 19</div><div class="cap"><div class="k">Night I</div><div class="t">Cy closed the night</div></div></div><div class="cline">The moon is going down</div></div>
 
   <div class="sep">Dawn</div>
-  <div class="gb left"><div class="art sky-dawn"><div class="northstar" style="z-index:3"></div><div class="risingsun" style="background:#e4512a;box-shadow:none;z-index:0"></div><div class="vill" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 250 96' preserveAspectRatio='none'><g fill='%23000'><polygon points='4,70 15,56 26,70 26,96 4,96'/><polygon points='28,76 37,64 46,76 46,96 28,96'/><polygon points='54,62 66,46 78,62 78,96 54,96'/><polygon points='61,48 66,18 71,48'/><rect x='65.1' y='8' width='1.8' height='12'/><rect x='62.6' y='11' width='6.8' height='1.8'/><polygon points='84,72 94,58 104,72 104,96 84,96'/><polygon points='106,79 114,69 122,79 122,96 106,96'/><polygon points='124,60 136,40 148,60'/><rect x='127' y='59' width='18' height='37'/><polygon points='152,70 163,56 174,70 174,96 152,96'/><polygon points='176,78 184,68 192,78 192,96 176,96'/><polygon points='196,66 208,50 220,66 220,96 196,96'/><ellipse cx='230' cy='74' rx='9' ry='12'/><rect x='228.8' y='78' width='2.4' height='18'/><ellipse cx='243' cy='80' rx='7' ry='9'/><rect x='242' y='84' width='2' height='12'/></g></svg>');background-size:100% 100%;background-repeat:no-repeat;filter:drop-shadow(0 0 8px rgba(0,0,0,.8))"></div><div class="cap"><div class="k">Morning I</div><div class="t">Sveta is gone</div></div></div><div class="mt"><div class="a">She was a villager</div><div class="b">18 remain &middot; the village may speak in a minute</div></div></div>
+  <div class="gb left"><div class="art sky-dawn"><div class="northstar" style="z-index:3"></div><div class="orb dusksun" style="left:84.5%;bottom:12px"></div><div class="vill"></div><div class="cnt">18 left</div><div class="cap"><div class="k">Morning I</div><div class="t">Sveta is gone</div></div></div><div class="cline">She was a villager</div></div>
   <div class="m them">SVETA??</div>
-  <div class="m them">she was literally telling us</div>
 
-  <div class="sep">Day I &middot; votes in turn</div>
-  <div class="gb left"><div class="art sky-day"><div class="sun-flat"></div><div class="vill" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 250 96' preserveAspectRatio='none'><g fill='%23000'><polygon points='4,70 15,56 26,70 26,96 4,96'/><polygon points='28,76 37,64 46,76 46,96 28,96'/><polygon points='54,62 66,46 78,62 78,96 54,96'/><polygon points='61,48 66,18 71,48'/><rect x='65.1' y='8' width='1.8' height='12'/><rect x='62.6' y='11' width='6.8' height='1.8'/><polygon points='84,72 94,58 104,72 104,96 84,96'/><polygon points='106,79 114,69 122,79 122,96 106,96'/><polygon points='124,60 136,40 148,60'/><rect x='127' y='59' width='18' height='37'/><polygon points='152,70 163,56 174,70 174,96 152,96'/><polygon points='176,78 184,68 192,78 192,96 176,96'/><polygon points='196,66 208,50 220,66 220,96 196,96'/><ellipse cx='230' cy='74' rx='9' ry='12'/><rect x='228.8' y='78' width='2.4' height='18'/><ellipse cx='243' cy='80' rx='7' ry='9'/><rect x='242' y='84' width='2' height='12'/></g></svg>');background-size:100% 100%;background-repeat:no-repeat;filter:drop-shadow(0 0 8px rgba(0,0,0,.8))"></div><div class="cap"><div class="k">Day I</div><div class="t">Bram named Kim</div></div></div><div class="mt"><div class="a">1 of 18 voted</div><div class="b">Hana is next</div></div></div>
-  <div class="gb"><div class="art sky-day"><div class="sun-flat"></div><div class="vill" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 250 96' preserveAspectRatio='none'><g fill='%23000'><polygon points='4,70 15,56 26,70 26,96 4,96'/><polygon points='28,76 37,64 46,76 46,96 28,96'/><polygon points='54,62 66,46 78,62 78,96 54,96'/><polygon points='61,48 66,18 71,48'/><rect x='65.1' y='8' width='1.8' height='12'/><rect x='62.6' y='11' width='6.8' height='1.8'/><polygon points='84,72 94,58 104,72 104,96 84,96'/><polygon points='106,79 114,69 122,79 122,96 106,96'/><polygon points='124,60 136,40 148,60'/><rect x='127' y='59' width='18' height='37'/><polygon points='152,70 163,56 174,70 174,96 152,96'/><polygon points='176,78 184,68 192,78 192,96 176,96'/><polygon points='196,66 208,50 220,66 220,96 196,96'/><ellipse cx='230' cy='74' rx='9' ry='12'/><rect x='228.8' y='78' width='2.4' height='18'/><ellipse cx='243' cy='80' rx='7' ry='9'/><rect x='242' y='84' width='2' height='12'/></g></svg>');background-size:100% 100%;background-repeat:no-repeat;filter:drop-shadow(0 0 8px rgba(0,0,0,.8))"></div><div class="cap"><div class="k">Day I</div><div class="t">You named Kim</div></div></div><div class="mt"><div class="a">9 of 18 voted</div><div class="b">Kim has 6 &middot; Ivo has 2</div></div></div>
-  <div class="gb left"><div class="art sky-day"><div class="sun-flat"></div><div class="vill" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 250 96' preserveAspectRatio='none'><g fill='%23000'><polygon points='4,70 15,56 26,70 26,96 4,96'/><polygon points='28,76 37,64 46,76 46,96 28,96'/><polygon points='54,62 66,46 78,62 78,96 54,96'/><polygon points='61,48 66,18 71,48'/><rect x='65.1' y='8' width='1.8' height='12'/><rect x='62.6' y='11' width='6.8' height='1.8'/><polygon points='84,72 94,58 104,72 104,96 84,96'/><polygon points='106,79 114,69 122,79 122,96 106,96'/><polygon points='124,60 136,40 148,60'/><rect x='127' y='59' width='18' height='37'/><polygon points='152,70 163,56 174,70 174,96 152,96'/><polygon points='176,78 184,68 192,78 192,96 176,96'/><polygon points='196,66 208,50 220,66 220,96 196,96'/><ellipse cx='230' cy='74' rx='9' ry='12'/><rect x='228.8' y='78' width='2.4' height='18'/><ellipse cx='243' cy='80' rx='7' ry='9'/><rect x='242' y='84' width='2' height='12'/></g></svg>');background-size:100% 100%;background-repeat:no-repeat;filter:drop-shadow(0 0 8px rgba(0,0,0,.8))"></div><div class="cap"><div class="k">Day I</div><div class="t">The village named Kim</div></div></div><div class="mt"><div class="a">Kim was a villager</div><div class="b">17 remain</div></div></div>
+  <div class="sep">Day I &middot; the sun crosses</div>
+  <div class="gb left"><div class="art sky-day"><div class="orb sun" style="left:81.6%;bottom:19px"></div><div class="vill"></div><div class="cnt">1 / 18</div><div class="cap"><div class="k">Day I</div><div class="t">Bram named Kim</div></div></div><div class="cline">Hana votes next</div></div>
+  <div class="gb"><div class="art sky-day"><div class="orb sun" style="left:49.0%;bottom:66px"></div><div class="vill"></div><div class="cnt">9 / 18</div><div class="cap"><div class="k">Day I</div><div class="t">You named Kim</div></div></div><div class="cline">Kim has six, Ivo has two</div></div>
+  <div class="gb left"><div class="art sky-day"><div class="orb sun" style="left:12.0%;bottom:8px"></div><div class="vill"></div><div class="cnt">17 left</div><div class="cap"><div class="k">Day I</div><div class="t">The village named Kim</div></div></div><div class="cline">Kim was a villager</div></div>
   <div class="m them">oh we are so bad at this</div>
 
   <div class="sep">Night II</div>
-  <div class="gb left"><div class="art sky-night"><div class="stars"></div><div class="moon" style="position:absolute;right:30px;top:16px;width:42px;height:42px;z-index:1"></div><div class="vill" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 250 96' preserveAspectRatio='none'><g fill='%23000'><polygon points='4,70 15,56 26,70 26,96 4,96'/><polygon points='28,76 37,64 46,76 46,96 28,96'/><polygon points='54,62 66,46 78,62 78,96 54,96'/><polygon points='61,48 66,18 71,48'/><rect x='65.1' y='8' width='1.8' height='12'/><rect x='62.6' y='11' width='6.8' height='1.8'/><polygon points='84,72 94,58 104,72 104,96 84,96'/><polygon points='106,79 114,69 122,79 122,96 106,96'/><polygon points='124,60 136,40 148,60'/><rect x='127' y='59' width='18' height='37'/><polygon points='152,70 163,56 174,70 174,96 152,96'/><polygon points='176,78 184,68 192,78 192,96 176,96'/><polygon points='196,66 208,50 220,66 220,96 196,96'/><ellipse cx='230' cy='74' rx='9' ry='12'/><rect x='228.8' y='78' width='2.4' height='18'/><ellipse cx='243' cy='80' rx='7' ry='9'/><rect x='242' y='84' width='2' height='12'/></g></svg>');background-size:100% 100%;background-repeat:no-repeat;filter:drop-shadow(0 0 8px rgba(0,0,0,.8))"></div><div class="cap"><div class="k">Night II</div><div class="t">The village sleeps</div></div></div><div class="mt"><div class="a">17 seated, 17 asleep</div><div class="b">Everyone sends once</div></div></div>
+  <div class="gb left"><div class="art sky-night"><div class="stars"></div><div class="orb moon" style="left:86.0%;bottom:8px"></div><div class="vill"></div><div class="cnt">0 / 17</div><div class="cap"><div class="k">Night II</div><div class="t">The village sleeps</div></div></div><div class="cline">The moon is only just up</div></div>
 
-  <div class="sep">Three days later</div>
-  <div class="gb left"><div class="art sky-over"><div class="vill" style="background-image:url('data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 250 96' preserveAspectRatio='none'><g fill='%23000'><polygon points='4,70 15,56 26,70 26,96 4,96'/><polygon points='28,76 37,64 46,76 46,96 28,96'/><polygon points='54,62 66,46 78,62 78,96 54,96'/><polygon points='61,48 66,18 71,48'/><rect x='65.1' y='8' width='1.8' height='12'/><rect x='62.6' y='11' width='6.8' height='1.8'/><polygon points='84,72 94,58 104,72 104,96 84,96'/><polygon points='106,79 114,69 122,79 122,96 106,96'/><polygon points='124,60 136,40 148,60'/><rect x='127' y='59' width='18' height='37'/><polygon points='152,70 163,56 174,70 174,96 152,96'/><polygon points='176,78 184,68 192,78 192,96 176,96'/><polygon points='196,66 208,50 220,66 220,96 196,96'/><ellipse cx='230' cy='74' rx='9' ry='12'/><rect x='228.8' y='78' width='2.4' height='18'/><ellipse cx='243' cy='80' rx='7' ry='9'/><rect x='242' y='84' width='2' height='12'/></g></svg>');background-size:100% 100%;background-repeat:no-repeat;filter:drop-shadow(0 0 8px rgba(0,0,0,.8))"></div><div class="cap"><div class="k">The end</div><div class="t">The wolves are dead</div></div></div><div class="mt"><div class="a">Lee, Nia and Wren</div><div class="b">The village survives with four</div></div></div>
+  <div class="sep">One of two endings</div>
+  <div class="gb left"><div class="art sky-wolves"><div class="stars"></div><div class="orb bloodmoon" style="left:47.5%;bottom:66px"></div><div class="vill"></div><div class="cnt">3 wolves</div><div class="cap"><div class="k">The end</div><div class="t">The wolves have it</div></div></div><div class="cline">Four villagers left, and three wolves</div></div>
+  <div class="gb left"><div class="art sky-village"><div class="orb sun" style="left:53.4%;bottom:65px"></div><div class="vill"></div><div class="cnt">11 alive</div><div class="cap"><div class="k">The end</div><div class="t">The village holds</div></div></div><div class="cline">Lee, Nia and Wren are dead</div></div>
   <div class="m us">i literally never suspected lee</div>
 </div>
   </div>
   <div class="col">
-    <div class="h4">What the sequence has to do</div>
-    <div class="note"><b>Five skies, and they carry the phase without a word.</b> Dusk while the
-    village gathers, night while it sleeps, a bloody dawn for the death, flat day for the votes,
-    and a dark red for the end. You can scroll this thread at arm's length and know what happened.</div>
-    <div class="note"><b>Nineteen night bubbles is the hard part.</b> Every living player sends
-    one, so a 19-player night is 19 near-identical cards - that is the disguise working, and it is
-    also a lot of thread. The count in the footer (<i>4 of 19</i>) is what stops them being
-    interchangeable, and it is the only thing that changes.</div>
-    <div class="note"><b>The only bubble that names a role is the morning</b>, because that is the
-    only moment a role becomes public knowledge. Night bubbles say who slept, never what they are.
-    Day bubbles say who named whom, because a vote is public by definition.</div>
-    <div class="note"><b>"You have slept" and "Dara has slept" are the same card.</b> Your own
-    move gets no special treatment beyond sitting on the right, or the thread would show which
-    bubbles were yours to anyone looking over your shoulder at a scroll.</div>
-    <div class="note"><b>The end bubble is the only one with no village in it.</b> Everything else
-    is the same silhouette under a different sky, which is what makes them read as one game rather
-    than a series of unrelated cards.</div>
+    <div class="h4">The sky is the progress bar</div>
+    <div class="note"><b>Both orbs rise on the right and set on the left, and where they sit is how
+    far through the phase the village is</b> - derived from how many living players still owe a
+    move. At 0 of 19 the moon is only just up; at 19 of 19 it is going down. You can tell from a
+    thumbnail, without reading a word and without counting bubbles, how close the night is to
+    breaking.</div>
+    <div class="note">It is the one piece of state everybody wants constantly and nobody wants to
+    ask for, and it costs nothing: the count already exists, so the orb is the same number said in
+    a way you do not have to read. <b>The moon is always full. Werewolves.</b></div>
+    <div class="note"><b>One line of caption, because that is all Messages gives you.</b> The
+    caption under a bubble is a single truncating line, so everything else has to be inside the
+    image - which is why the count sits in the bottom right of the art rather than under it.</div>
+    <div class="note"><b>The lobby has no orb position</b>, because nothing is counting down yet -
+    it gets the dusk sky and a moon that has only just risen, and the count is seats rather than
+    moves.</div>
+    <div class="note"><b>The two endings are the same picture inverted.</b> Wolves take a blood
+    moon with the red glow around it; the village takes a bright day over the rooftops. They are
+    the only two bubbles anybody screenshots, so they are worth the extra sky.</div>
+    <div class="note"><b>Nineteen near-identical night cards is the disguise working</b>, and also
+    a lot of thread. The count and the moon's position are the only things that change between
+    them, which is what stops them being interchangeable.</div>
+    <div class="note"><b>"You have slept" and "Dara has slept" are the same card.</b> Your own move
+    gets nothing beyond sitting on the right, or a scroll would show which bubbles were yours to
+    anyone reading over your shoulder.</div>
   </div>
 </div>
 </section>
