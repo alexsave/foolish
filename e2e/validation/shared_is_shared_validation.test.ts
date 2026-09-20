@@ -7,7 +7,7 @@
 // to nobody in particular.
 //
 // IT DOES NOT DRIFT ALL AT ONCE. It drifts one word at a time, and the first
-// words are already written: this move had to reword four of them, inherited
+// words are already written: this move had to reword five of them, inherited
 // from the days when these files lived under a product -
 //
 //   shared/c/sha256.h                       "...and libfoolish.a"
@@ -16,10 +16,10 @@
 //
 // None of those broke a build. That is the point: a product name in shared/ is
 // never a failure, it is a comment that is wrong for one of its two readers, and
-// then a default, and then a hardcoded bundle id. `ios/Tools/rig` is the worked
-// example of the end state - it is NOT in shared/, because ~130 product
-// references accumulated in it while it was nominally common code, and pulling
-// them back out is now its own piece of work.
+// then a default, and then a hardcoded bundle id. The rig is the worked example
+// of both ends of that: 904 lines of it had NO product reference at all and are
+// in shared/rig now, while rig.sh alone had accumulated 105 and stays with the
+// product until someone can verify it on a device.
 //
 // So the line is drawn at the cheap end, where a rename is a one-line diff.
 //
@@ -108,6 +108,14 @@ test('shared/ holds the files both products actually build', () => {
         'shared/tools/structgen/Makefile',
         'shared/tools/datagen/datagen.c',
         'shared/swift/PackedBytes.swift',
+        // The rig's measurement half: MSE, bar charts, square detection, the
+        // frame-window extractor and the accessibility driver. Zero product
+        // references between them, which is why they could move while rig.sh
+        // could not.
+        'shared/rig/lib/mse.py',
+        'shared/rig/lib/squares.py',
+        'shared/rig/lib/window.sh',
+        'shared/rig/lib/ax.py',
     ];
     const missing = expected.filter((p) => {
         try { return !statSync(join(REPO, p)).isFile(); } catch { return true; }

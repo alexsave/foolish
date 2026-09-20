@@ -4,7 +4,8 @@ Why this exists: the rig's taps used to be hard-coded screen coordinates read
 off one phone (iPhone 17), so moving to any other device - a smaller drawer, a
 different toolbar height, a phone with no home indicator - drove taps into the
 wrong controls. The accessibility tree reports frames in points on every
-device, so a rig that asks for "Foolish" or "Create game" by name is portable.
+device, so a rig that asks for an element by NAME - "Create game" - rather
+than by coordinate is portable across devices, and across products.
 
   msgax.py find "Create game"          -> "X Y" (centre, points) or exit 1
   msgax.py first [--type T] L1 L2 ...  -> the first of several labels present
@@ -15,8 +16,15 @@ import os
 import subprocess
 import sys
 
-SIM = os.environ.get("FOOLISH_SIM", "EFB2FD39-DD17-4284-9C46-013142226F6F")
-IDB = os.environ.get("FOOLISH_IDB", "idb")
+# RIG_*, because this file is shared by more than one product now. Each
+# product's own rig.sh keeps whatever env names its users already type and
+# exports these alongside them, so nothing anyone types has to change.
+#
+# No default UDID. There was one, a real device id from the machine this was
+# written on, and a default simulator is a rig that quietly drives SOMEBODY
+# ELSE'S device when the variable is unset.
+SIM = os.environ.get("RIG_SIM", "")
+IDB = os.environ.get("RIG_IDB", "idb")
 
 
 def tree():

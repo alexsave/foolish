@@ -89,6 +89,10 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
 LIB="$HERE/lib"
+# The measurement half of the rig - MSE, bar charts, square detection, the
+# frame-window extractor, the accessibility driver - has no product knowledge
+# in it and is shared with the other product. $LIB is this product's half.
+SHLIB="$REPO/shared/rig/lib"
 SIM="${FOOLISH_SIM:-}"
 IDB="${FOOLISH_IDB:-idb}"
 OUT="${FOOLISH_OUT:-$HOME/Downloads/foolish-shots}"
@@ -128,7 +132,11 @@ LOG_SUBSYSTEM="${RIG_LOG_SUBSYSTEM:-cards.foolish}"       # `rig.sh log`
 # "file has been modified since the module file was built: size changed" -
 # a failure that names a header this checkout never touched.
 DD="${FOOLISH_DD:-/tmp/foolishDD-${FOOLISH_SIM:0:8}}"
-export FOOLISH_SIM FOOLISH_IDB
+# BOTH SPELLINGS. shared/rig/lib/ax.py reads RIG_SIM/RIG_IDB, because a shared
+# file cannot be named after one product. Everything anyone types, and every
+# script in shots/, still says FOOLISH_* - so map it here, once.
+RIG_SIM="$SIM"; RIG_IDB="$IDB"
+export FOOLISH_SIM FOOLISH_IDB RIG_SIM RIG_IDB
 
 need_sim() { [ -n "$SIM" ] || { echo "set FOOLISH_SIM (rig.sh newsim prints one)" >&2; exit 2; }; }
 
@@ -156,7 +164,7 @@ screen() {
   need_sim
   [ -s "$SCRCACHE" ] && { cat "$SCRCACHE"; return; }
   mkdir -p "$(dirname "$SCRCACHE")"
-  python3 "$LIB/ax.py" screen | tee "$SCRCACHE"
+  python3 "$SHLIB/ax.py" screen | tee "$SCRCACHE"
 }
 
 # Messages' OWN chrome is found BY ACCESSIBILITY LABEL, not by a coordinate
@@ -182,11 +190,11 @@ screen() {
 # chevron), the chevron is the SMALLER element, and `find` returns the
 # smallest match - so a loose lookup for the compose field reliably tapped
 # BACK OUT OF THE THREAD, five times in a row, reporting nothing wrong.
-ax() { python3 "$LIB/ax.py" find "$1" --exact; }
+ax() { python3 "$SHLIB/ax.py" find "$1" --exact; }
 # The FIRST of several labels that is on screen, from ONE tree. A pass that asks
 # three separate times is three dumps of the same unchanged screen, and the
 # first-run sheet hunt does exactly that on every quiet pass of every run.
-ax_first() { python3 "$LIB/ax.py" first "$@"; }
+ax_first() { python3 "$SHLIB/ax.py" first "$@"; }
 
 # `idb ui describe-all` answers with the LAST FOREGROUND app's tree even when
 # something else is on screen, so a stale tree looks exactly like a live one
@@ -198,7 +206,7 @@ front() {
   xcrun simctl launch "$SIM" com.apple.MobileSMS >/dev/null 2>&1 || true
   # `ax.py screen` exits non-zero on an EMPTY tree, which is precisely
   # "Messages has not answered yet" - so that is the predicate, not two seconds.
-  poll 16 0.2 python3 "$LIB/ax.py" screen || true
+  poll 16 0.2 python3 "$SHLIB/ax.py" screen || true
 }
 
 in_thread() { ax "add" >/dev/null 2>&1; }
@@ -303,7 +311,7 @@ menu_up() { ax_first "dismiss popup" "Camera" "Photos" >/dev/null 2>&1; }
 #
 # A menu that is not on screen is a failure, not a swipe into the transcript.
 menu_swipe() {
-  local m; m=$(python3 "$LIB/ax.py" menu) \
+  local m; m=$(python3 "$SHLIB/ax.py" menu) \
     || { echo "the + app menu is not on screen - nothing to scroll" >&2; return 1; }
   swipe 0.5 $(echo "$m" | awk '{print $1, $2, $1, $3}') 0.15
 }
@@ -322,7 +330,7 @@ here_is() {
   # ONE tree, not two. This used to call `in_thread` (a describe-all) and then
   # `ax.py dump` (another describe-all) against the same unchanged screen -
   # and `here_is` is the single most-called predicate in the rig.
-  python3 "$LIB/ax.py" here "${1:-}"
+  python3 "$SHLIB/ax.py" here "${1:-}"
 }
 
 # The drawer's own top edge, found by colour - "None" when no drawer is up.
@@ -461,7 +469,7 @@ cmd_stage() {
   xcrun simctl ui "$SIM" appearance "$appear" >/dev/null
   # Poll for Messages rather than guessing six seconds at its launch.
   xcrun simctl launch "$SIM" com.apple.MobileSMS >/dev/null
-  poll 40 0.15 python3 "$LIB/ax.py" screen || true
+  poll 40 0.15 python3 "$SHLIB/ax.py" screen || true
   read -r W H < <(screen)
   # Dismiss whatever onboarding is up: both sheets put their button on the
   # bottom eighth, centred. Tapping there twice is harmless once they are gone
@@ -1459,7 +1467,7 @@ cmd_play() {
   for x in $cards; do
     tap "$x" "$y" 1.2
     after=$(python3 "$LIB/ui.py" bars)
-    newy=$(python3 "$LIB/newbar.py" "$before" "$after")
+    newy=$(python3 "$SHLIB/newbar.py" "$before" "$after")
     if [ "$newy" != "-1" ]; then
       tap $((W / 2)) "$newy" 2.5
       if ax "Send" >/dev/null 2>&1; then echo "played: attack"; return 0; fi
@@ -1963,7 +1971,7 @@ cmd_tween() {
   # …AND NOW THE WHOLE WIDTH AGAIN. The table's and the opponent's marks became
   # squares on the views themselves (lib/squares.py), and those sit wherever the
   # cards do - well right of 544px. The crop stays a knob.
-  "$LIB/window.sh" "$d/take.mp4" "$d" "${FOOLISH_TWEEN_SS:-1.3}" \
+  "$SHLIB/window.sh" "$d/take.mp4" "$d" "${FOOLISH_TWEEN_SS:-1.3}" \
                    "${FOOLISH_TWEEN_T:-2.2}" "${FOOLISH_TWEEN_CROP:-iw}" || return 1
   tp "extract frames" "$ph"; ph=$(date +%s.%N)
   python3 "$LIB/tween.py" "$d" --csv "$d/edge.csv" --quiet

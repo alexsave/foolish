@@ -14,6 +14,8 @@ import numpy as np
 from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# window.sh is shared now (it knows nothing about any game); tween is not.
+SHLIB = os.path.join(HERE, "..", "..", "..", "..", "shared", "rig", "lib")
 sys.path.insert(0, HERE)
 import tween  # noqa: E402
 
@@ -56,7 +58,7 @@ class WindowTimes(unittest.TestCase):
 
     def take(self, ss, t):
         d = tempfile.mkdtemp(dir=self.dir)
-        subprocess.run([os.path.join(HERE, "window.sh"), self.movie, d, str(ss), str(t), "544"],
+        subprocess.run([os.path.join(SHLIB, "window.sh"), self.movie, d, str(ss), str(t), "544"],
                        check=True)
         frames = sorted(glob.glob(os.path.join(d, "f*.ppm")))
         return frames, tween.frame_times(d, len(frames))

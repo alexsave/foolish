@@ -20,6 +20,7 @@ set -uo pipefail
 : "${FOOLISH_SIM:?set FOOLISH_SIM}"
 export FOOLISH_OUT="${FOOLISH_OUT:-$HOME/Downloads/foolish-shots}"
 HERE="$(cd "$(dirname "$0")" && pwd)"; RIG="$HERE/../rig.sh"; LIB="$HERE/../lib"
+SHLIB="$HERE/../../../../shared/rig/lib"  # the shared measurement half (no product knowledge in it)
 REPO="$(cd "$HERE/../../../.." && pwd)"
 NAME="${1:-throwin}"; SEATS="${2:-2}"
 G=$("$RIG" group)
@@ -62,7 +63,7 @@ while [ $i -lt 60 ]; do
   i=$((i + 1))
 done
 # The whole width: the table is centred, not at the leading edge.
-"$LIB/window.sh" "$D/take.mp4" "$D" 0.3 2.6 "$(ffprobe -v error -select_streams v:0 \
+"$SHLIB/window.sh" "$D/take.mp4" "$D" 0.3 2.6 "$(ffprobe -v error -select_streams v:0 \
   -show_entries stream=width -of csv=p=0 "$D/take.mp4")" || exit 2
 
 # ---- measure --------------------------------------------------------------
