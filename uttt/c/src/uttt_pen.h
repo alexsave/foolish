@@ -1,0 +1,86 @@
+/* The pen, in C, because both surfaces have to draw the same board.
+ *
+ * WHY THIS IS NOT IN SWIFT. Every mark is lopsided in its own way and every
+ * grid line wanders on its own, all of it derived from one seed - and the two
+ * phones looking at a bubble must produce the SAME sheet, stroke for stroke.
+ * The moment the geometry lives in a renderer, "the bubble is the game"
+ * becomes "the bubble is a picture of the game", and the reason for putting
+ * the whole history in every message goes with it.
+ *
+ * So the kernel emits a DISPLAY LIST - filled polygons with a colour - and a
+ * renderer's only job is to fill them. Core Graphics fills them on iOS and a
+ * canvas fills them in the design document; neither decides anything.
+ *
+ * The sketchy geometry is a faithful port of rough.js (MIT, Preet Shihn),
+ * down to its Lehmer generator, so a seed means the same thing here as it
+ * does in the document that was drawn with the original.
+ */
+#ifndef UTTT_PEN_H
+#define UTTT_PEN_H
+
+#include <stdint.h>
+#include <stddef.h>
+
+typedef struct { float x, y; } UtttPt;
+
+/* ---------------------------------------------------------- display list */
+typedef struct {
+    int      first;      /* index into pt[] */
+    int      n;          /* points in this polygon */
+    uint32_t rgba;       /* 0xRRGGBBAA */
+} UtttPoly;
+
+typedef struct {
+    UtttPt   *pt;    int n_pt,   cap_pt;
+    UtttPoly *poly;  int n_poly, cap_poly;
+} UtttDL;
+
+void uttt_dl_init(UtttDL *d, UtttPt *pt, int cap_pt,
+                  UtttPoly *poly, int cap_poly);
+void uttt_dl_reset(UtttDL *d);
+
+/* ---------------------------------------------------------- rough.js port */
+typedef struct {
+    float roughness;        /* 1.0 is rough.js's default          */
+    float bowing;           /* 1.0                                */
+    float max_offset;       /* maxRandomnessOffset, 2.0           */
+    float curve_tightness;  /* 0                                  */
+    float curve_fitting;    /* 0.95                               */
+    int   curve_step_count; /* 9                                  */
+    int   single;           /* disableMultiStroke                 */
+    int32_t seed;
+} UtttRough;
+
+UtttRough uttt_rough_default(int32_t seed);
+
+/* Flattened polylines. Each call appends 1..2 strokes (rough.js draws twice)
+ * and returns how many it wrote; `out` receives {first,n} spans into `pts`. */
+typedef struct { int first, n; } UtttSpan;
+
+int uttt_rough_line(UtttRough *o, float x1, float y1, float x2, float y2,
+                    UtttPt *pts, int cap, int *n_pts,
+                    UtttSpan *out, int out_cap);
+
+int uttt_rough_ellipse(UtttRough *o, float cx, float cy, float w, float h,
+                       UtttPt *pts, int cap, int *n_pts,
+                       UtttSpan *out, int out_cap);
+
+/* --------------------------------------------------------------- the pen */
+typedef struct {
+    float w, a;             /* base width and alpha                     */
+    float vel, lift, liftp; /* velocity, landing arc and its sharpness   */
+    float press, grain, dir, chat;
+    float agrain;           /* alpha driven by the same grain            */
+    float gfx, gfy;         /* grain anisotropy - the sheet's own numbers*/
+    uint32_t ink;
+} UtttPen;
+
+UtttPen uttt_pen_92(void);      /* the locked one: 9.2 */
+
+/* Lay a stroke down as a ribbon of quads, width and alpha per sample. */
+void uttt_ink(UtttDL *d, const UtttPt *pts, int n, const UtttPen *p);
+
+/* The sheet's grain, shared by the pen and by anything else that wants it. */
+float uttt_grain(float x, float y, float fx, float fy, int seed);
+
+#endif

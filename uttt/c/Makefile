@@ -1,9 +1,10 @@
 CC      ?= cc
 CFLAGS  ?= -O2 -Wall -Wextra -Werror -std=c11
 LDLIBS  := -lm
-SRC     := src/uttt.c src/uttt_code.c src/uttt_bots.c
+SRC     := src/uttt.c src/uttt_code.c src/uttt_bots.c \
+           src/uttt_pen.c src/uttt_draw.c
 
-all: build/uttt_test build/uttt_arena
+all: build/uttt_test build/uttt_arena build/uttt_render
 
 build:
 	@mkdir -p build
@@ -20,6 +21,15 @@ run: build/uttt_test
 arena: build/uttt_arena
 	./build/uttt_arena 200 200
 
+build/uttt_render: $(SRC) tests/uttt_render.c | build
+	$(CC) $(CFLAGS) $(SRC) tests/uttt_render.c -o $@ $(LDLIBS)
+
+render: build/uttt_render
+	./build/uttt_render $(PLIES)
+	@sips -s format png build/board.ppm --out build/board.png >/dev/null \
+	  && echo "build/board.png"
+
+
 asan: $(SRC) tests/uttt_test.c | build
 	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
 	  $(SRC) tests/uttt_test.c -o build/uttt_asan $(LDLIBS)
@@ -28,4 +38,4 @@ asan: $(SRC) tests/uttt_test.c | build
 clean:
 	rm -rf build
 
-.PHONY: all run arena asan clean
+.PHONY: all run arena render asan clean
