@@ -69,5 +69,5 @@ def check(path: Path):
 
 
 if __name__ == "__main__":
-    args = sys.argv[1:] or ["uttt/docs/UI.html", "lastcard/docs/UI.html"]
+    args = sys.argv[1:] or ["uttt/docs/UI.html", "pickemup/docs/UI.html"]
     sys.exit(max(check(Path(a)) for a in args))

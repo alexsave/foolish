@@ -1,4 +1,4 @@
-# lastcard
+# Pick 'Em Up
 
 A shedding game for 2 to 8: match the top card by suit or number, play your
 action cards, and get rid of your hand.
@@ -7,9 +7,12 @@ action cards, and get rid of your hand.
 see `docs/MOTION_BEFORE_FLOW.md` in the repo root for why.
 
 ```
-open lastcard/docs/UI.html
-python3 shared/tools/check_ui_doc.py lastcard/docs/UI.html
+open pickemup/docs/UI.html
+python3 shared/tools/check_ui_doc.py pickemup/docs/UI.html
 ```
+
+**Read [LEGAL.md](LEGAL.md) before touching the art.** It is the UYES
+post-mortem and the list of things that get a clone removed.
 
 ## THE NAME IS A PLACEHOLDER, AND THE REASON MATTERS
 
@@ -29,7 +32,10 @@ So: **suits are shape AND colour** - circle/teal, triangle/amber, square/violet,
 diamond/slate. That keeps us clear of the trade dress, and it is also the only
 version a colourblind player can read, which is the better reason.
 
-`lastcard` is a working title. Pick a real one before anything ships.
+`Pick 'Em Up` is a working title and **it already collides**: a shedding game of
+that name exists on TheGameCrafter, plus a *Pick 'Em Up Bitch*. Neither looks
+registered and neither is Mattel, so the risk is common-law and small - but it is
+the same genre. Search USPTO and decide before any store listing.
 
 ## Why it suits a transcript
 
