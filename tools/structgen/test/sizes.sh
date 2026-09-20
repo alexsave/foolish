@@ -9,7 +9,10 @@ sg="$root/shared/tools/structgen"
 out="$here/build/sizes"
 mkdir -p "$out"
 make -s -C "$sg" build/structgen
-BOTS="$(make -s -C "$root/c" -f Makefile -f "$sg/print.mk" sg-print-WASM_BOT_CFLAGS)"
+# --no-print-directory: `-s` does not silence "Entering directory", and this
+# output is CAPTURED into compiler flags. Harmless from a shell, five lines of
+# English in $CFLAGS the day anything calls this from a make recipe.
+BOTS="$(make -s --no-print-directory -C "$root/c" -f Makefile -f "$sg/print.mk" sg-print-WASM_BOT_CFLAGS)"
 "$sg/build/structgen" --cwd "$root/c" --header game.h --root Game --build "bots=$BOTS" --ts "$out/game_full.bots.ts"
 sz() { printf '  %-44s raw %6d\n' "$(basename "$1")" "$(wc -c < "$1")"; }
 echo "generated modules:"

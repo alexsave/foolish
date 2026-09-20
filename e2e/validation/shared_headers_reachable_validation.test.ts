@@ -180,3 +180,36 @@ test('every build system that compiles the kernel also compiles the shared sourc
         + 'leaves it - it just compiles less, and dies at the link:\n  '
         + missing.join('\n  '));
 });
+
+// ---- the source list the freshness gate is built from ------------------------
+
+test('the wasm source list is the same list when make is the caller', () => {
+    // WHY THE ENVIRONMENT IS THE TEST. scripts/wasm_stamp.sh asks the Makefiles
+    // what the wasm sources are. `make -s` silences recipes but NOT "make[1]:
+    // Entering directory '...'", and make prints those whenever MAKELEVEL is set
+    // - which it is when c/Makefile calls the script FROM A RECIPE, and is not
+    // when a person runs it in a terminal.
+    //
+    // So the script produced a clean list every time I ran it and a list with
+    // five lines of English in it every time CI did. Every path here is compared
+    // against `git diff --name-only` by check_wasm_freshness.sh, so junk in this
+    // list is a gate reasoning about files that do not exist.
+    //
+    // Running it BOTH ways and demanding the same answer is the cheapest way to
+    // stop that being a CI-only discovery.
+    const run = (env: NodeJS.ProcessEnv) =>
+        execFileSync('bash', [join(REPO, 'scripts/wasm_stamp.sh'), '--list'],
+            { cwd: REPO, encoding: 'utf8', env }).trim().split('\n');
+
+    const plain = run({ ...process.env, MAKELEVEL: undefined, MAKEFLAGS: undefined });
+    const underMake = run({ ...process.env, MAKELEVEL: '1', MAKEFLAGS: 'w' });
+
+    assert.ok(plain.length > 50, `the source list came back with only ${plain.length} entries`);
+    assert.deepEqual(underMake, plain,
+        'scripts/wasm_stamp.sh lists different sources depending on whether make is\n'
+        + 'its caller. That is "make[1]: Entering directory" landing in the list -\n'
+        + 'add --no-print-directory to the make call that grew it.');
+
+    const missing = plain.filter((p) => !existsSync(join(REPO, p)));
+    assert.deepEqual(missing, [], `these listed wasm sources do not exist:\n  ${missing.join('\n  ')}`);
+});

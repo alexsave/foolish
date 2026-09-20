@@ -24,7 +24,10 @@ CLANG="${WASM_CC:-/opt/homebrew/opt/llvm/bin/clang}"
 out="$here/build/oracle"
 rm -rf "$out" && mkdir -p "$out/node" "$out/c"
 make -s -C "$sg" build/structgen
-BOTS="$(make -s -C "$root/c" -f Makefile -f "$sg/print.mk" sg-print-WASM_BOT_CFLAGS)"
+# --no-print-directory: `-s` does not silence "Entering directory", and this
+# output is CAPTURED into compiler flags. Harmless from a shell, five lines of
+# English in $CFLAGS the day anything calls this from a make recipe.
+BOTS="$(make -s --no-print-directory -C "$root/c" -f Makefile -f "$sg/print.mk" sg-print-WASM_BOT_CFLAGS)"
 # WASM_MSG_CFLAGS, not WASM_RULES_CFLAGS. rules.wasm was retired in 81bd7715
 # and that variable went with it, so this line had been expanding to the EMPTY
 # STRING ever since: the run below compiled with no -Isrc, failed to find
@@ -32,7 +35,7 @@ BOTS="$(make -s -C "$root/c" -f Makefile -f "$sg/print.mk" sg-print-WASM_BOT_CFL
 # oracle.sh runs in no workflow. The msg module is the live second flag set -
 # a different -O, different caps - which is all this test wants from it: two
 # builds that disagree enough to catch an emitter that only works for one.
-MSG="$(make -s -C "$root/c" -f Makefile -f "$sg/print.mk" sg-print-WASM_MSG_CFLAGS)"
+MSG="$(make -s --no-print-directory -C "$root/c" -f Makefile -f "$sg/print.mk" sg-print-WASM_MSG_CFLAGS)"
 [ -n "$MSG" ] || { echo "oracle.sh: WASM_MSG_CFLAGS came back empty - has the build been renamed again?" >&2; exit 1; }
 
 run() { # name cwd build args...

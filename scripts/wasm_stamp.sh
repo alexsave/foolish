@@ -62,6 +62,17 @@ sha() {  # one file -> bare hex, on both a Mac and CI's Linux
 #     matches the stamp. Unlike the .wasm
 #     bytes this text is toolchain-independent (the hash is spelling-free and CI
 #     pins LLVM 22 for gen.sh --check), so it is safe to stamp.
+# --no-print-directory ON BOTH, and it is not decoration. `-s` silences the
+# recipes but NOT "make[1]: Entering directory '...'", and make prints those
+# whenever MAKELEVEL is set - which it is here, because c/Makefile calls this
+# script FROM A RECIPE. Five lines of English then arrived in the middle of a
+# list of source paths, prefixed into `c/Entering`, `c/make[1]:` and friends.
+#
+# It has been doing that all along and was invisible: the hash loop skips a path
+# that is not a file, so the hash stayed right, and the junk never matched a git
+# path so the freshness gate ignored it. check_paths() below is what made it
+# fatal, and that is the correct trade - a list of sources that is 5% English is
+# a list nobody can reason about.
 sources() {
   # PATHS COME BACK REPO-RELATIVE OR NOT AT ALL. The Makefile's lists are
   # relative to c/, so this prefixes them with `c/` - and since the two shared
@@ -72,7 +83,7 @@ sources() {
   # spellings of one file never match. The gate would have gone on passing while
   # quietly watching neither. So collapse `c/../` the same way the structgen
   # line below collapses its own, and assert the result below.
-  make -C c -s print-wasm-src | tr ' ' '\n' | sed '/^$/d' | sed 's|^|c/|' | sed 's|^c/\.\./||'
+  make -C c -s --no-print-directory print-wasm-src | tr ' ' '\n' | sed '/^$/d' | sed 's|^|c/|' | sed 's|^c/\.\./||'
   ls c/src/*.h c/wasm/include/* shared/c/*.h 2>/dev/null || true
   # structgen's own source and specs, because the layout hash compiled into
   # every module comes from them. NOT the modules it writes: those are build
@@ -99,7 +110,7 @@ sources() {
   # same move as `make -C c -s print-wasm-src` above: the build system is asked,
   # not mirrored. Paths come back relative to tools/structgen, hence the
   # rewrite of the ../sgcommon ones.
-  make -s -C shared/tools/structgen -f print.mk -f Makefile \
+  make -s --no-print-directory -C shared/tools/structgen -f print.mk -f Makefile \
        sg-print-SG_SRC sg-print-SG_HDR sg-print-SGC_SRC sg-print-SGC_HDR \
     | tr ' ' '\n' | sed '/^$/d' \
     | sed 's|^|shared/tools/structgen/|' | sed 's|shared/tools/structgen/\.\./|shared/tools/|'

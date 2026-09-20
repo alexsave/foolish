@@ -90,7 +90,10 @@ if [ "${1:-}" = "--print-dirs" ]; then printf '%s\n' "$OUT_DIRS"; exit 0; fi
 CLANG="${WASM_CC:-/opt/homebrew/opt/llvm/bin/clang}"
 make -s -C "$sg" build/structgen
 SG="$sg/build/structgen"
-flags() { make -s -C "$root/c" -f Makefile -f "$sg/print.mk" "sg-print-$1"; }
+# --no-print-directory: `-s` does not silence "Entering directory", and this
+# output is CAPTURED into compiler flags. Harmless from a shell, five lines of
+# English in $CFLAGS the day anything calls this from a make recipe.
+flags() { make -s --no-print-directory -C "$root/c" -f Makefile -f "$sg/print.mk" "sg-print-$1"; }
 spec() { grep -v '^[[:space:]]*#' "$here/specs/$1.args"; }
 BOTS="$(flags WASM_BOT_CFLAGS)"
 # …and the same four as absolute paths, read back from the one list above so
