@@ -1492,6 +1492,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><filter id="sharp" x="-10%" y="-10%" width="120%" height="120%"><feConvolveMatrix order="3" kernelMatrix="0 -1 0  -1 5.4 -1  0 -1 0" divisor="1.4" preserveAlpha="true"/></filter></svg>
+<div style="max-width:1300px;margin:0 auto;padding:14px 24px 0"><div style="border:1px solid var(--ln);border-left:4px solid var(--brand);background:var(--pg2);border-radius:0 8px 8px 0;padding:13px 16px;font-size:14.5px;color:var(--mut)"><b style="color:var(--tx)">Only the bubbles are live.</b> 17 sections are parked in &lt;template&gt; tags so the page stays fast - the moon gallery alone was six canvases computing a few thousand craters per pixel. Search for <code>data-section</code> to bring any of them back; unwrapping the tag is the whole job.</div></div>
 <main>
 
 <header class="mast">
@@ -1502,7 +1503,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
   already exist, drawn at real size, and costed honestly.</p>
 </header>
 
-<section id="moons">
+<template data-section="moons"><section id="moons">
 <h2>Ten moons</h2>
 <p class="lede">Two families left. The <b>ink wash</b>, which is the only drawn treatment that earned its place, in five variants - and the <b>generated</b> ones below, which compute a value per pixel on the real geography. The other eight SVG moons were tried and cut.</p>
 <h3 style="margin-top:38px">Generated, not drawn <span class="cbadge">canvas</span></h3>
@@ -1572,7 +1573,7 @@ original was that its edges were too even.</p>
     option that carries information rather than atmosphere.</div>
   </div>
 </div>
-</section>
+</section></template>
 
 <section id="day24">
 <h2>A day in the thread</h2>
@@ -1644,7 +1645,7 @@ as a game, nothing further down matters.</p>
 </div>
 </section>
 
-<section id="fixed">
+<template data-section="fixed"><section id="fixed">
 <h2>What is already decided</h2>
 <p class="lede">Not design choices. These fall out of the protocol and the kernel, and every
 option below has to hold them.</p>
@@ -1700,9 +1701,9 @@ option below has to hold them.</p>
   resolved</em> - and a closed night is a settled fact, not a pending one. Truncating at the last
   closed morning bounds the envelope permanently, instead of buying time with entropy coding.</p>
 </div>
-</section>
+</section></template>
 
-<section id="look">
+<template data-section="look"><section id="look">
 <h2>The register</h2>
 <p class="lede">Villagers and wolves, torches and accusations. The surface is soot, tallow and old
 blood - not a settings screen with a dark theme. Three rules hold it together.</p>
@@ -1733,9 +1734,9 @@ blood - not a settings screen with a dark theme. Three rules hold it together.</
   phone, which is where most of this text lives. <b>Nothing below 11pt anywhere</b>, per the
   standing rule.</p>
 </div>
-</section>
+</section></template>
 
-<section id="styles">
+<template data-section="styles"><section id="styles">
 <h2>The look: what survived</h2>
 <p class="lede">The flow mockups further down are drawn in the candlelit treatment - stone, tallow
 and brass. These are the two alternatives that earned their place, each on the identical night:
@@ -1818,9 +1819,9 @@ stained glass were all tried and cut.</p>
 which matters more than my reasoning. <b>Moonlit</b> stays as the cold alternative, and the
 <b>candlelit original</b> is what the flows below are drawn in. All three share a register, so
 elements can be combined between them rather than chosen between. A <b>stone wall</b> variant of the original is further down.</p>
-</section>
+</section></template>
 
-<section id="states">
+<template data-section="states"><section id="states">
 <h2>The three states Messages gives you</h2>
 <p class="lede">This is the part that is easy to forget and impossible to retrofit. An extension is
 seen in three sizes, and the bubble is seen by people who never open the app at all.</p>
@@ -1923,9 +1924,9 @@ seen in three sizes, and the bubble is seen by people who never open the app at 
     </div>
   </div>
 </div>
-</section>
+</section></template>
 
-<section id="twenty">
+<template data-section="twenty"><section id="twenty">
 <h2>Thirty-two, which is the real ceiling</h2>
 <p class="lede">Not a stress test - iMessage caps a group at 32, so this is the largest table that
 can ever exist. If the layout survives here it survives everywhere.</p>
@@ -1976,9 +1977,9 @@ can ever exist. If the layout survives here it survives everywhere.</p>
   the top of the range exist. Even then a single 32-player night is close to the limit, which is
   worth knowing before somebody starts one.</p>
 </div>
-</section>
+</section></template>
 
-<section id="density">
+<template data-section="density"><section id="density">
 <h2>The survivors at twenty</h2>
 <p class="lede">Density is a style test, not just a layout one - one accent gets easier to find in
 a crowd, and a texture that was atmosphere becomes noise. The two you kept, at the size a real
@@ -2001,9 +2002,9 @@ table reaches.</p>
   </div>
 </div>
 </div>
-</section>
+</section></template>
 
-<section id="brick">
+<template data-section="brick"><section id="brick">
 <h2>A stone wall for the night</h2>
 <p class="lede">Coursed rubble, laid procedurally - twenty blocks of uneven size over four uneven courses, each row offset by a different amount so no seam lines up, weathered with coarse noise and lit from one side. Same candlelit treatment otherwise, so the only variable is
 what the wall is made of.</p>
@@ -2047,9 +2048,9 @@ what the wall is made of.</p>
     it and nothing left the app.</div>
   </div>
 </div>
-</section>
+</section></template>
 
-<section id="day">
+<template data-section="day"><section id="day">
 <h2>The day, derived from the night</h2>
 <p class="lede">Market day and the assize were invented from scratch and neither earned its place.
 These are the three night treatments with the light moved: the sun overhead instead of a flame
@@ -2091,9 +2092,9 @@ different hour - which is what makes it read as the same game rather than a seco
     rather than a whole second system.</div>
   </div>
 </div>
-</section>
+</section></template>
 
-<section id="skies">
+<template data-section="skies"><section id="skies">
 <h2>Three skies</h2>
 <p class="lede">The bubble is the only thing most people see, so it should say what time it is
 without reading a word. Same village, three states.</p>
@@ -2155,9 +2156,9 @@ without reading a word. Same village, three states.</p>
   </div>
 </div>
 </div>
-</section>
+</section></template>
 
-<section id="loop">
+<template data-section="loop"><section id="loop">
 <h2>The day is the night's mirror, not its copy</h2>
 <p class="lede">The night's rule is that <b>everyone must send, because sending is the tell</b>.
 The day inverts every part of that, and the inversion is the design.</p>
@@ -2227,9 +2228,9 @@ The day inverts every part of that, and the inversion is the design.</p>
     something worth leaking.</div>
   </div>
 </div>
-</section>
+</section></template>
 
-<section id="table">
+<template data-section="table"><section id="table">
 <h2>The muster, and what a villager is told</h2>
 <p class="lede">One arrangement, at every table size: shields in rank, as many columns as the seat
 count needs. The round table was drawn and dropped - a circle is a fixed geometry and the seat
@@ -2259,9 +2260,9 @@ count is not, so it stops working exactly where the interesting games start.</p>
     watch tick, which was the point of the floor in the first place.</div>
   </div>
 </div>
-</section>
+</section></template>
 
-<section id="pack">
+<template data-section="pack"><section id="pack">
 <h2>The pack, and the shoulder problem</h2>
 <p class="lede">Wolves get one line each per night, inside the same payload as the night choice.
 The question was never how it looks - it is whether a villager sitting next to you can tell your
@@ -2313,9 +2314,9 @@ screen has it.</p>
     lie the first time somebody tapped it and nothing left.</div>
   </div>
 </div>
-</section>
+</section></template>
 
-<section id="morning">
+<template data-section="morning"><section id="morning">
 <h2>The morning</h2>
 <p class="lede">The night resolves when the last living player sends. Night is soot; morning should
 not be. Parchment and daylight is the cheapest way to say the phase changed.</p>
@@ -2376,9 +2377,9 @@ not be. Parchment and daylight is the cheapest way to say the phase changed.</p>
     which is the principle the night already runs on - and it is one fewer screen.</div>
   </div>
 </div>
-</section>
+</section></template>
 
-<section id="lobby">
+<template data-section="lobby"><section id="lobby">
 <h2>The lobby, and the refusal</h2>
 <p class="lede">Built to lobby v3 already. Worth drawing because its refusals are where the rules
 become visible - and because nothing is dealt until Start, which is what makes re-creating
@@ -2431,9 +2432,9 @@ pointless.</p>
     under three.</div>
   </div>
 </div>
-</section>
+</section></template>
 
-<section id="cost">
+<template data-section="cost"><section id="cost">
 <h2>What each piece costs</h2>
 <table>
   <tr><th>Piece</th><th>Option</th><th>Cost</th><th>Note</th></tr>
@@ -2447,9 +2448,9 @@ pointless.</p>
   <tr><td>Day phase</td><td>not drawn</td><td class="n">unbuilt</td><td><code>ww_day_lynch</code> exists and is tested; no voting UI</td></tr>
   <tr><td>Nicknames</td><td>not drawn</td><td class="n">unbuilt</td><td>every install currently claims "Player"</td></tr>
 </table>
-</section>
+</section></template>
 
-<section id="open">
+<template data-section="open"><section id="open">
 <h2>Open, and not guessed at</h2>
 <ul style="max-width:73ch;line-height:1.8;color:var(--mut)">
   <li><b style="color:var(--tx)">Ten seconds is settled</b> - the owner has confirmed the floor feels right. The carry gate moved from one minute to <b style="color:var(--tx)">ten</b>: a minute is harsh for a correspondence game somebody checks between meetings.</li>
@@ -2459,7 +2460,7 @@ pointless.</p>
   social problem in the physical game too.</li>
   <li><b style="color:var(--tx)">What a dead player does</b> is the remaining unknown - see above. Seat count is <em>not</em> open: there is no game cap, only iMessage's group limit.</li>
 </ul>
-</section>
+</section></template>
 
 </main>
 
@@ -2617,7 +2618,12 @@ pointless.</p>
       cv.width=cv.height=Math.max(340,Math.round(px*2)); draw(cv,o);
     });
   }
-  if(document.readyState!=='loading') go(); else document.addEventListener('DOMContentLoaded',go);
+  /* PARKED. The gallery is inside a <template>, so there is nothing to draw -
+     and drawing it is expensive: six canvases, a few thousand craters each,
+     evaluated per pixel at twice display resolution. Re-enable by unwrapping
+     the templates; this guard finds the canvases again on its own. */
+  function start(){ if(document.querySelector('canvas[data-moon]')) go(); }
+  if(document.readyState!=='loading') start(); else document.addEventListener('DOMContentLoaded',start);
 })();
 </script>
 
