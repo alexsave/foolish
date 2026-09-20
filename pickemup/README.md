@@ -37,6 +37,40 @@ that name exists on TheGameCrafter, plus a *Pick 'Em Up Bitch*. Neither looks
 registered and neither is Mattel, so the risk is common-law and small - but it is
 the same genre. Search USPTO and decide before any store listing.
 
+## The layout is foolish's, minus three things
+
+Measured out of the shipped Swift, not approximated. `docs/UI.html` redraws it at
+the same numbers, so the port is a subtraction:
+
+- **Delete the flipped trump** at `(18, 28)` under the deck stock, and the bare
+  60pt trump glyph that replaces it when both are gone. The deck well's ink
+  footprint drops from **94 to 54** - that is the only size that changes.
+- **Delete the top-right discard pile.** This game has one discard and it is the
+  pile you match against, so it belongs in the middle. The freed corner is where
+  the direction indicator goes.
+- **Replace the battle grid** (62x84 slots, three across) with **one big pile**,
+  centred in the board rect exactly as the grid was.
+
+Everything else is kept at foolish's values: board rect inset 8/8/14/4, deck well
+92 wide with 66x46 landscape backs leaning 1 left and 2 up per layer, seats on a
+0.42 x 0.35 ellipse, badges ~97pt tall, hand a flat row of 72pt cards with 4pt
+gaps and no overlap, pills 96x40 with their trailing edge 16 from the board edge,
+two 40x40 squares mirroring them on the left.
+
+**The role row becomes the stamp slot.** foolish reserves 40pt under every badge
+for a shield or a sword. This game has no roles and needs somewhere to say LAST,
+so it takes that 40pt and the badge keeps its exact height.
+
+### Two things to re-ask, which the redraw surfaced
+
+- **A shedding hand grows when you are losing.** Durak's shrinks. At ten cards
+  foolish splits the hand into two rows and the box goes 80 -> 166 - which in the
+  340pt collapsed drawer is over half the screen, and the pile has to live in what
+  is left. That is exactly when you most need to see the table.
+- **The thin-face rule fires constantly here.** Under 40pt wide a card drops its
+  centre glyph and shows the rank only. Thirteen cards gives 23.2pt. Durak almost
+  never reached it; this game will.
+
 ## Why it suits a transcript
 
 - **Hidden hands are the masking kernel's home turf**, and the deck is
