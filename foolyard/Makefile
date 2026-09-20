@@ -10,7 +10,13 @@ else
   LDFLAGS ?= -lm
 endif
 
-KERNEL_SRC := $(filter-out $(wildcard $(KDIR)/src/main_*.c), $(wildcard $(KDIR)/src/*.c))
+SHARED := ../shared/c
+# …AND THE SHARED HALF. This used to be one wildcard over $(KDIR)/src, which is
+# why it broke silently when sha256.c and deal_rng.c moved to shared/: a wildcard
+# does not fail when a file leaves it, it just compiles less. Both directories are
+# wildcarded so a NEW file in either is picked up the way one in src/ always was.
+KERNEL_SRC := $(filter-out $(wildcard $(KDIR)/src/main_*.c), $(wildcard $(KDIR)/src/*.c)) \
+              $(wildcard $(SHARED)/*.c)
 SIM_SRC    := $(wildcard src/*.c) $(wildcard clients/*.c)
 
 ALL_SRC := $(SIM_SRC) $(KERNEL_SRC)

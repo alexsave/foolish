@@ -17,7 +17,7 @@ comma := ,
 # hot loops instead of being cross-translation-unit calls. ~1.5x faster cordite
 # eval, bit-identical play (verified: same mean_finish / win_rate / histogram,
 # CD_DIFFTEST clean). The win grows with player count.
-CFLAGS  ?= -O3 -ffast-math -flto -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Isrc -I$(SHARED) -DACCELERATE_NEW_LAPACK
+CFLAGS  ?= -O3 -ffast-math -flto -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Isrc -DACCELERATE_NEW_LAPACK
 ifeq ($(shell uname),Darwin)
   LDFLAGS ?= -lm -flto -framework Accelerate
 else
@@ -168,7 +168,7 @@ tests: build/cnitro_tests
 # for the same reason), and that check flags the intent rather than a bug.
 ASAN_CFLAGS := -fsanitize=address,undefined -fno-sanitize=object-size \
                -fno-omit-frame-pointer -fno-sanitize-recover=undefined \
-               -g -O1 -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Isrc -I$(SHARED) -DCD_LEAFBOOK
+               -g -O1 -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Isrc -DCD_LEAFBOOK
 .PHONY: tests-asan
 tests-asan:
 	@mkdir -p build
@@ -325,7 +325,7 @@ IOS_SRC    := $(IOS_CORE_SRC) $(IOS_BOTS_SRC)
 # "Multiple commands produce". Nested, the bots map lands at
 # include/CFoolishBots/module.modulemap, and the FoolishBots target names that
 # directory in HEADER_SEARCH_PATHS (ios/project.yml).
-IOS_CFLAGS := -O2 -Isrc -I$(SHARED) -Iios/include -Iios/include-bots/CFoolishBots $(IOS_CAPS)
+IOS_CFLAGS := -O2 -Isrc -Iios/include -Iios/include-bots/CFoolishBots $(IOS_CAPS)
 
 # $(1)=target-triple  $(2)=sdk name  $(3)=output dir  $(4)=lib name  $(5)=sources
 define IOS_BUILD_SLICE
@@ -488,7 +488,7 @@ ios-goldens:
 GAMES ?= 1500
 build/l1_measure: tests/l1_measure.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/view.c src/random_strategy.c src/handwritten_strategy.c
 	@mkdir -p build
-	$(CC) -O2 -Isrc -I$(SHARED) -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LOGS=2048 \
+	$(CC) -O2 -Isrc -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LOGS=2048 \
 	  -DMAX_LEGAL_MOVES=16384 -DMAX_MOVE_CARDS=52 -DREPLAY_STATS \
 	  src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/view.c \
 	  src/random_strategy.c src/handwritten_strategy.c tests/l1_measure.c -o $@ -lm
@@ -504,7 +504,7 @@ l1-measure: build/l1_measure
 # The build_book pass compiles WITHOUT -DCD_LEAFBOOK (it builds the book by
 # direct solves); verify_book compiles WITH it to exercise the engine probe.
 LEAFBOOK_K ?= 4
-LEAFBOOK_CFLAGS := -O2 -ffast-math -Isrc -I$(SHARED) -Wno-deprecated-declarations -DCD_TT_BITS=12
+LEAFBOOK_CFLAGS := -O2 -ffast-math -Isrc -Wno-deprecated-declarations -DCD_TT_BITS=12
 .PHONY: leafbook leafbook-gate leafbook-verify
 leafbook:
 	@mkdir -p build
@@ -512,7 +512,7 @@ leafbook:
 	./build/leafbook_build > src/leafbook_data.h
 leafbook-gate:
 	@mkdir -p build
-	$(CC) -O2 -Isrc -I$(SHARED) tools/leafbook/enumerate.c -o build/leafbook_enum && ./build/leafbook_enum
+	$(CC) -O2 -Isrc tools/leafbook/enumerate.c -o build/leafbook_enum && ./build/leafbook_enum
 leafbook-verify:
 	@mkdir -p build
 	$(CC) $(LEAFBOOK_CFLAGS) -DCD_LEAFBOOK $(CORE_SRC) tools/leafbook/verify_book.c -o build/leafbook_verify -lm
@@ -670,7 +670,7 @@ endef
 # letting the local compiler decide what the shipped artifact requires.
 WASM_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory \
               -mno-nontrapping-fptoint \
-              -isystem wasm/include -Isrc -I$(SHARED) -D_Thread_local= -DMAX_LOG_PAIRS=64 \
+              -isystem wasm/include -Isrc -D_Thread_local= -DMAX_LOG_PAIRS=64 \
               -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
               -DWORLD_LOG_CAP=40 \
               -DREPLAY_REC_CAP=4096 -DWASM_REPLAY_IO_CAP=32768 -DMAX_SNAPS=16 \
@@ -1519,7 +1519,7 @@ wasm-oracle-mt: build/layout/oracle-mt.hash
 # runtime. Objects (and their .gcno/.gcda) land in covbuild/ where gcovr finds
 # them recursively. Tune the floors with COV_LINE_MIN / COV_BRANCH_MIN.
 COV_CC         ?= gcc
-COV_FLAGS      := -O0 -g --coverage -Isrc -I$(SHARED) -Wno-unused-parameter -Wno-deprecated-declarations
+COV_FLAGS      := -O0 -g --coverage -Isrc -Wno-unused-parameter -Wno-deprecated-declarations
 COV_LINE_MIN   ?= 90
 COV_BRANCH_MIN ?= 74
 # THE WHOLE SHIPPED KERNEL, not three files of it.

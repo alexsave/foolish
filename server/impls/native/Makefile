@@ -48,7 +48,13 @@ SQLITE_LDFLAGS ?= -lsqlite3
 TLS_LDFLAGS ?= -lssl -lcrypto
 
 # Every kernel source except the standalone tools (their own main()).
-KERNEL_SRC := $(filter-out $(wildcard $(KDIR)/src/main_*.c), $(wildcard $(KDIR)/src/*.c))
+SHARED := $(KDIR)/../shared/c
+# …AND THE SHARED HALF. This used to be one wildcard over $(KDIR)/src, which is
+# why it broke silently when sha256.c and deal_rng.c moved to shared/: a wildcard
+# does not fail when a file leaves it, it just compiles less. Both directories are
+# wildcarded so a NEW file in either is picked up the way one in src/ always was.
+KERNEL_SRC := $(filter-out $(wildcard $(KDIR)/src/main_*.c), $(wildcard $(KDIR)/src/*.c)) \
+              $(wildcard $(SHARED)/*.c)
 
 # Native (non-kernel) helpers shared by the server and its clients: the
 # RFC 6455 WebSocket handshake (SHA-1 + base64) and frame I/O (ws.c/ws.h),

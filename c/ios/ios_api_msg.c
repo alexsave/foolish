@@ -19,7 +19,7 @@
 #include "msg_expand.h"
 #include "anim_plan.h"
 #include "awire.h"
-#include "sha256.h"
+#include "../../shared/c/sha256.h"
 
 #include <string.h>
 

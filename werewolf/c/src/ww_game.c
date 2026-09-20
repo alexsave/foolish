@@ -1,5 +1,5 @@
 #include "ww_game.h"
-#include "deal_rng.h"
+#include "../../../shared/c/deal_rng.h"
 
 // Freestanding, like every other file the phone and the wasm build share: no
 // libc beyond the two functions clang lowers struct copies to.

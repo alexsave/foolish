@@ -8,9 +8,14 @@ CC      ?= clang
 # one copy, compiled from ../../shared/c by this product and by foolish alike.
 # Kept as a variable rather than spelled at each use so the depth of the path
 # appears once.
+#
+# There is no -I for them and there must not be: the files that include them say
+# so relatively ("../../../shared/c/deal_rng.h"), which resolves against the
+# including file and therefore needs nothing from any build system. This kernel
+# is compiled by five of them.
 SHARED  := ../../shared/c
 
-CFLAGS  ?= -O2 -Wall -Wextra -Werror -Wno-unused-parameter -Isrc -I$(SHARED)
+CFLAGS  ?= -O2 -Wall -Wextra -Werror -Wno-unused-parameter -Isrc
 LDFLAGS ?=
 
 # The kernel. Two shared primitives (deal_rng, sha256) and five werewolf files,
@@ -59,7 +64,7 @@ tests: build/ww_tests build/ios_smoke
 # objects above, because the sanitizers change codegen and mixing is how a clean
 # run comes from a stale object.
 ASAN_CFLAGS := -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
-               -Wall -Wextra -Werror -Wno-unused-parameter -Isrc -I$(SHARED)
+               -Wall -Wextra -Werror -Wno-unused-parameter -Isrc
 tests-asan:
 	@mkdir -p build
 	$(CC) $(ASAN_CFLAGS) $(CORE_SRC) tests/tests.c -o build/ww_tests_asan
@@ -77,7 +82,7 @@ tests-asan:
 IOS_MIN_VERSION := 15.0
 IOS_BRIDGE_SRC  := ios/ios_api.c
 IOS_SRC         := $(CORE_SRC) $(IOS_BRIDGE_SRC)
-IOS_CFLAGS      := -O2 -Isrc -I$(SHARED) -Iios/include -Wall -Wextra -Werror -Wno-unused-parameter
+IOS_CFLAGS      := -O2 -Isrc -Iios/include -Wall -Wextra -Werror -Wno-unused-parameter
 
 # $(1)=target-triple  $(2)=sdk name  $(3)=output dir
 define IOS_SLICE

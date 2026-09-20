@@ -11,7 +11,7 @@
 #include "awire.h"
 #include <string.h>
 
-#include "deal_rng.h"
+#include "../../shared/c/deal_rng.h"
 
 // ---------- RNG (two independent LCGs, same recurrence as TS) ----------
 //

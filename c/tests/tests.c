@@ -7,7 +7,7 @@
 //   4. Full random / handwritten games (2p and 3p) run to a single loser.
 
 #include "../src/game.h"
-#include "deal_rng.h"    // ../../shared/c, via -I in c/Makefile
+#include "../../shared/c/deal_rng.h"
 #include "../src/legal.h"
 #include "../src/awire.h"
 #include "../src/strategy.h"

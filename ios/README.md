@@ -121,7 +121,7 @@ Swift `EngineGoldenTests` then assert the built `libfoolish.a` reproduces
 `goldens.json` byte-for-byte.
 
 Some **Swift** is provable without a Mac too. The roster's names block
-(`sdk/swift/PackedBytes.swift` + `RosterWire.swift`) is Foundation-only by
+(`shared/swift/PackedBytes.swift` + `sdk/swift/RosterWire.swift`) is Foundation-only by
 design, so `npm run test:swift-parity` compiles it with a real Swift toolchain
 and asserts its bytes against the kernel's. It is a WRITER on both sides of the
 language line - Swift writes the block for an FMSG seal, C writes it inside the

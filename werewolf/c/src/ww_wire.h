@@ -47,7 +47,7 @@
 #define WW_WIRE_H
 
 #include "ww_game.h"
-#include "sha256.h"
+#include "../../../shared/c/sha256.h"
 #include <stdint.h>
 
 // Its own magic, not FMSG's 0xF7: a Durak bubble and a werewolf bubble must
