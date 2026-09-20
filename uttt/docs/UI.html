@@ -229,6 +229,11 @@ canvas.cvm{display:block;position:absolute;inset:0;width:100%;height:100%}
     linear-gradient(172deg,#fbfaf7,#f1efe9);
   background-size:460px 460px,460px 460px,auto;
   box-shadow:0 10px 30px rgba(0,0,0,.45)}
+
+.arow{margin:0 0 34px}
+.apair{display:flex;gap:26px;align-items:flex-start;flex-wrap:wrap}
+.cap2{font:600 10px/1 var(--ui);letter-spacing:.18em;text-transform:uppercase;
+  color:#7f828b;margin:0 0 7px}
 :root{--fib-h:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='460' height='460'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.82 0.012' numOctaves='2' seed='3' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='460' height='460' filter='url(%23f)' opacity='0.12'/></svg>");--fib-v:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='460' height='460'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.012 0.82' numOctaves='2' seed='8' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='460' height='460' filter='url(%23f)' opacity='0.12'/></svg>");--fib-hh:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='460' height='460'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.66 0.022' numOctaves='2' seed='5' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='460' height='460' filter='url(%23f)' opacity='0.26'/></svg>");--fib-vv:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='460' height='460'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.022 0.66' numOctaves='2' seed='12' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='460' height='460' filter='url(%23f)' opacity='0.26'/></svg>")}:root{--rule-b:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='420'><filter id='r' x='0' y='0' width='100%' height='100%'><feTurbulence type='fractalNoise' baseFrequency='0.82 0.012' numOctaves='2' seed='3' stitchTiles='stitch' result='f'/><feColorMatrix in='f' type='matrix' values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0.34 0 0 0 0.68' result='a'/><feComposite in='SourceGraphic' in2='a' operator='in' result='c'/><feTurbulence type='fractalNoise' baseFrequency='0.04 0.9' numOctaves='2' seed='6' result='g'/><feDisplacementMap in='c' in2='g' scale='0.7' xChannelSelector='R' yChannelSelector='G'/></filter><g fill='rgb(86,132,186)' filter='url(%23r)'><rect x='0' y='0' width='400' height='1.0'/><rect x='0' y='21' width='400' height='1.0'/><rect x='0' y='42' width='400' height='1.0'/><rect x='0' y='63' width='400' height='1.0'/><rect x='0' y='84' width='400' height='1.0'/><rect x='0' y='105' width='400' height='1.0'/><rect x='0' y='126' width='400' height='1.0'/><rect x='0' y='147' width='400' height='1.0'/><rect x='0' y='168' width='400' height='1.0'/><rect x='0' y='189' width='400' height='1.0'/><rect x='0' y='210' width='400' height='1.0'/><rect x='0' y='231' width='400' height='1.0'/><rect x='0' y='252' width='400' height='1.0'/><rect x='0' y='273' width='400' height='1.0'/><rect x='0' y='294' width='400' height='1.0'/><rect x='0' y='315' width='400' height='1.0'/><rect x='0' y='336' width='400' height='1.0'/><rect x='0' y='357' width='400' height='1.0'/><rect x='0' y='378' width='400' height='1.0'/><rect x='0' y='399' width='400' height='1.0'/><rect x='0' y='420' width='400' height='1.0'/></g></svg>");--rule-r:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='420'><filter id='m' x='0' y='0' width='100%' height='100%'><feTurbulence type='fractalNoise' baseFrequency='0.012 0.82' numOctaves='2' seed='8' stitchTiles='stitch' result='f'/><feColorMatrix in='f' type='matrix' values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0.38 0 0 0 0.64' result='a'/><feComposite in='SourceGraphic' in2='a' operator='in' result='c'/><feTurbulence type='fractalNoise' baseFrequency='0.9 0.03' numOctaves='2' seed='4' result='g'/><feDisplacementMap in='c' in2='g' scale='0.8' xChannelSelector='R' yChannelSelector='G'/></filter><rect x='32' y='0' width='1.0' height='420' fill='rgb(198,84,76)' filter='url(%23m)'/></svg>")}</style></head>
 <body>
 
@@ -317,7 +322,8 @@ it belongs to.</p>
 <div class="rule"></div>
 
 <div class="vsw">
-  <button data-view="board"     aria-pressed="true">The board</button>
+  <button data-view="motion2"   aria-pressed="true">Motion</button>
+  <button data-view="board"     aria-pressed="false">The board</button>
   <button data-view="canvas"    aria-pressed="false">Canvas pen</button>
   <button data-view="marks"     aria-pressed="false">100 strokes</button>
   <button data-view="paper"     aria-pressed="false">Paper</button>
@@ -326,11 +332,25 @@ it belongs to.</p>
   <button data-view="bubble"    aria-pressed="false">Bubble</button>
   <button data-view="expanded"  aria-pressed="false">Expanded</button>
   <button data-view="collapsed" aria-pressed="false">Collapsed</button>
-  <button data-view="motion"    aria-pressed="false">Motion</button>
+  <button data-view="motion"    aria-pressed="false">Motion (SVG, old)</button>
   <p class="vhint">style first, layout after</p>
 </div>
 
 <div id="mount"></div>
+
+<template data-view="motion2"><section><h2>How it moves</h2>
+<p class="lede"><b>Locked:</b> the napkin, the canvas pen at 9.2, blue X and red
+O, a dark grid, roughness falling with stroke length. Everything below is that
+design in motion, and all of it is running - nothing here is a mock.</p>
+<p class="lede"><b>The animation is the same draw, stopped early.</b> The pen is
+a ribbon of quads laid down sample by sample, so stopping at n quads gives a
+stroke that has not finished yet. A mask or a fade would give a finished stroke
+being revealed, which is a different thing and looks it.</p>
+<p class="lede">Each one twice: <b>zoomed to the block</b>, because a cell on its
+own has no context and this game is entirely about which block you are in, and
+<b>on the board</b>, where the same event has to survive being one ninth the
+size.</p>
+<div class="arow"><div class="h4"><span class="pill">01</span>A mark lands</div><div class="apair"><div><div class="cap2">zoomed</div><div class="sheet2" style="width:250px"><div class="bwrap" style="width:222px;height:222px"><canvas data-anim="{&quot;spec&quot;: {&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 12, &quot;active&quot;: 4}, &quot;a&quot;: {&quot;dur&quot;: 1500, &quot;hold&quot;: 700, &quot;mark&quot;: {&quot;at&quot;: &quot;4,8&quot;, &quot;kind&quot;: &quot;x&quot;, &quot;a&quot;: 0, &quot;b&quot;: 0.62}, &quot;zoom&quot;: 4}}" data-mode="zoom"></canvas></div></div></div><div><div class="cap2">board</div><div class="sheet2" style="width:330px"><div class="bwrap" style="width:302px;height:302px"><canvas data-anim="{&quot;spec&quot;: {&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 12, &quot;active&quot;: 4}, &quot;a&quot;: {&quot;dur&quot;: 1500, &quot;hold&quot;: 700, &quot;mark&quot;: {&quot;at&quot;: &quot;4,8&quot;, &quot;kind&quot;: &quot;x&quot;, &quot;a&quot;: 0, &quot;b&quot;: 0.62}}}" data-mode="board"></canvas></div></div></div><div class="note" style="max-width:360px;margin-top:22px"><b>The animation is the same draw, stopped early.</b> The pen is a ribbon of quads laid down sample by sample, so stopping at n quads is a stroke that has not finished - not a finished stroke being revealed, which is what a mask or a fade would give.<br><br>An X is two strokes and <b>the second starts before the first has finished</b>, 0.52 against 0.44. That overlap is the whole difference between a hand and two events.</div></div></div><div class="arow"><div class="h4"><span class="pill">02</span>And it sends them</div><div class="apair"><div><div class="cap2">zoomed</div><div class="sheet2" style="width:250px"><div class="bwrap" style="width:222px;height:222px"><canvas data-anim="{&quot;spec&quot;: {&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 12, &quot;active&quot;: 4}, &quot;a&quot;: {&quot;dur&quot;: 2400, &quot;hold&quot;: 800, &quot;mark&quot;: {&quot;at&quot;: &quot;4,8&quot;, &quot;kind&quot;: &quot;x&quot;, &quot;a&quot;: 0, &quot;b&quot;: 0.42}, &quot;hl&quot;: {&quot;from&quot;: 4, &quot;to&quot;: 8, &quot;at&quot;: 0.5}, &quot;zoom&quot;: 8}}" data-mode="zoom"></canvas></div></div></div><div><div class="cap2">board</div><div class="sheet2" style="width:330px"><div class="bwrap" style="width:302px;height:302px"><canvas data-anim="{&quot;spec&quot;: {&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 12, &quot;active&quot;: 4}, &quot;a&quot;: {&quot;dur&quot;: 2400, &quot;hold&quot;: 800, &quot;mark&quot;: {&quot;at&quot;: &quot;4,8&quot;, &quot;kind&quot;: &quot;x&quot;, &quot;a&quot;: 0, &quot;b&quot;: 0.42}, &quot;hl&quot;: {&quot;from&quot;: 4, &quot;to&quot;: 8, &quot;at&quot;: 0.5}}}" data-mode="board"></canvas></div></div></div><div class="note" style="max-width:360px;margin-top:22px"><b>The wash moves after the ink lands, never with it.</b> Two facts - what I played, then where you go - and showing them together is how you get a player who never learns the rule.<br><br>It is a highlighter because ink cannot take anything back, and <i>here</i> has to be taken back next turn.</div></div></div><div class="arow"><div class="h4"><span class="pill">03</span>Their move arrives</div><div class="apair"><div><div class="cap2">zoomed</div><div class="sheet2" style="width:250px"><div class="bwrap" style="width:222px;height:222px"><canvas data-anim="{&quot;spec&quot;: {&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 12, &quot;active&quot;: 8}, &quot;a&quot;: {&quot;dur&quot;: 2400, &quot;hold&quot;: 800, &quot;mark&quot;: {&quot;at&quot;: &quot;8,4&quot;, &quot;kind&quot;: &quot;o&quot;, &quot;a&quot;: 0.08, &quot;b&quot;: 0.55}, &quot;hl&quot;: {&quot;from&quot;: 8, &quot;to&quot;: 4, &quot;at&quot;: 0.6}, &quot;zoom&quot;: 4}}" data-mode="zoom"></canvas></div></div></div><div><div class="cap2">board</div><div class="sheet2" style="width:330px"><div class="bwrap" style="width:302px;height:302px"><canvas data-anim="{&quot;spec&quot;: {&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 12, &quot;active&quot;: 8}, &quot;a&quot;: {&quot;dur&quot;: 2400, &quot;hold&quot;: 800, &quot;mark&quot;: {&quot;at&quot;: &quot;8,4&quot;, &quot;kind&quot;: &quot;o&quot;, &quot;a&quot;: 0.08, &quot;b&quot;: 0.55}, &quot;hl&quot;: {&quot;from&quot;: 8, &quot;to&quot;: 4, &quot;at&quot;: 0.6}}}" data-mode="board"></canvas></div></div></div><div class="note" style="max-width:360px;margin-top:22px">The same two beats seen from the other side, in red. <b>This is the only one that interrupts something you were already looking at</b>, so it is the one to be careful with - the mark draws at the same speed but the wash takes longer to move, because you did not choose it.</div></div></div><div class="arow"><div class="h4"><span class="pill">04</span>A board falls</div><div class="apair"><div><div class="cap2">zoomed</div><div class="sheet2" style="width:250px"><div class="bwrap" style="width:222px;height:222px"><canvas data-anim="{&quot;spec&quot;: {&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;, &quot;1,0&quot;: &quot;x&quot;, &quot;1,4&quot;: &quot;x&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 12, &quot;active&quot;: 1}, &quot;a&quot;: {&quot;dur&quot;: 2600, &quot;hold&quot;: 900, &quot;mark&quot;: {&quot;at&quot;: &quot;1,8&quot;, &quot;kind&quot;: &quot;x&quot;, &quot;a&quot;: 0, &quot;b&quot;: 0.38}, &quot;big&quot;: {&quot;at&quot;: 1, &quot;kind&quot;: &quot;x&quot;, &quot;a&quot;: 0.46, &quot;b&quot;: 0.92}, &quot;zoom&quot;: 1}}" data-mode="zoom"></canvas></div></div></div><div><div class="cap2">board</div><div class="sheet2" style="width:330px"><div class="bwrap" style="width:302px;height:302px"><canvas data-anim="{&quot;spec&quot;: {&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;, &quot;1,0&quot;: &quot;x&quot;, &quot;1,4&quot;: &quot;x&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 12, &quot;active&quot;: 1}, &quot;a&quot;: {&quot;dur&quot;: 2600, &quot;hold&quot;: 900, &quot;mark&quot;: {&quot;at&quot;: &quot;1,8&quot;, &quot;kind&quot;: &quot;x&quot;, &quot;a&quot;: 0, &quot;b&quot;: 0.38}, &quot;big&quot;: {&quot;at&quot;: 1, &quot;kind&quot;: &quot;x&quot;, &quot;a&quot;: 0.46, &quot;b&quot;: 0.92}}}" data-mode="board"></canvas></div></div></div><div class="note" style="max-width:360px;margin-top:22px">Third in a line, then the big mark over the top. <b>Pen is purely additive</b>, so nothing is removed - the nine marks and the small hash stay exactly where they are and simply lose the glance to something larger drawn on top of them.<br><br>The big mark is <b>the settlement half</b>: it plays at Send, not at stage, because it is the consequence of the move rather than the move.</div></div></div><div class="arow"><div class="h4"><span class="pill">05</span>The line</div><div class="apair"><div><div class="cap2">zoomed</div><div class="sheet2" style="width:250px"><div class="bwrap" style="width:222px;height:222px"><canvas data-anim="{&quot;spec&quot;: {&quot;cells&quot;: {&quot;1,1&quot;: &quot;o&quot;, &quot;5,2&quot;: &quot;x&quot;, &quot;7,0&quot;: &quot;o&quot;}, &quot;won&quot;: {&quot;0&quot;: &quot;x&quot;, &quot;3&quot;: &quot;x&quot;, &quot;4&quot;: &quot;o&quot;, &quot;8&quot;: &quot;o&quot;}, &quot;seed&quot;: 35}, &quot;a&quot;: {&quot;dur&quot;: 2200, &quot;hold&quot;: 1100, &quot;meta&quot;: {&quot;line&quot;: [0, 6], &quot;by&quot;: &quot;x&quot;, &quot;a&quot;: 0.1, &quot;b&quot;: 0.85}, &quot;zoom&quot;: 0}}" data-mode="zoom"></canvas></div></div></div><div><div class="cap2">board</div><div class="sheet2" style="width:330px"><div class="bwrap" style="width:302px;height:302px"><canvas data-anim="{&quot;spec&quot;: {&quot;cells&quot;: {&quot;1,1&quot;: &quot;o&quot;, &quot;5,2&quot;: &quot;x&quot;, &quot;7,0&quot;: &quot;o&quot;}, &quot;won&quot;: {&quot;0&quot;: &quot;x&quot;, &quot;3&quot;: &quot;x&quot;, &quot;4&quot;: &quot;o&quot;, &quot;8&quot;: &quot;o&quot;}, &quot;seed&quot;: 35}, &quot;a&quot;: {&quot;dur&quot;: 2200, &quot;hold&quot;: 1100, &quot;meta&quot;: {&quot;line&quot;: [0, 6], &quot;by&quot;: &quot;x&quot;, &quot;a&quot;: 0.1, &quot;b&quot;: 0.85}}}" data-mode="board"></canvas></div></div></div><div class="note" style="max-width:360px;margin-top:22px"><b>One stroke across three boards, and the calmest thing on the sheet.</b> Roughness falls with length, so the longest mark in the game is nearly straight while a cell-sized X is scruffy - same pen, same hand.<br><br>Drawn in the winner's own ink rather than a third colour. There is no third player.</div></div></div><div class="arow"><div class="h4"><span class="pill">06</span>Undo</div><div class="apair"><div><div class="cap2">zoomed</div><div class="sheet2" style="width:250px"><div class="bwrap" style="width:222px;height:222px"><canvas data-anim="{&quot;spec&quot;: {&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 12, &quot;active&quot;: 4}, &quot;a&quot;: {&quot;dur&quot;: 1500, &quot;hold&quot;: 600, &quot;mark&quot;: {&quot;at&quot;: &quot;4,8&quot;, &quot;kind&quot;: &quot;x&quot;, &quot;a&quot;: 1, &quot;b&quot;: 0}, &quot;zoom&quot;: 4}}" data-mode="zoom"></canvas></div></div></div><div><div class="cap2">board</div><div class="sheet2" style="width:330px"><div class="bwrap" style="width:302px;height:302px"><canvas data-anim="{&quot;spec&quot;: {&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;}, &quot;won&quot;: {}, &quot;seed&quot;: 12, &quot;active&quot;: 4}, &quot;a&quot;: {&quot;dur&quot;: 1500, &quot;hold&quot;: 600, &quot;mark&quot;: {&quot;at&quot;: &quot;4,8&quot;, &quot;kind&quot;: &quot;x&quot;, &quot;a&quot;: 1, &quot;b&quot;: 0}}}" data-mode="board"></canvas></div></div></div><div class="note" style="max-width:360px;margin-top:22px"><b>The exact reverse, including the order</b> - the stroke that landed last leaves first, because a is 1 and b is 0 and the same easing runs backwards through the same ribbon.<br><br>This is the one place the additive rule is broken, and it is broken by the medium rather than by the design: an x on a staged bubble removes a move that was never sent, so nothing is being erased from the sheet - it never reached it.</div></div></div><div class="arow"><div class="h4"><span class="pill">07</span>Sent nowhere</div><div class="apair"><div><div class="cap2">zoomed</div><div class="sheet2" style="width:250px"><div class="bwrap" style="width:222px;height:222px"><canvas data-anim="{&quot;spec&quot;: {&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;}, &quot;won&quot;: {&quot;8&quot;: &quot;o&quot;}, &quot;seed&quot;: 12, &quot;active&quot;: 4}, &quot;a&quot;: {&quot;dur&quot;: 2600, &quot;hold&quot;: 900, &quot;mark&quot;: {&quot;at&quot;: &quot;4,8&quot;, &quot;kind&quot;: &quot;x&quot;, &quot;a&quot;: 0, &quot;b&quot;: 0.42}, &quot;hl&quot;: {&quot;from&quot;: 4, &quot;to&quot;: &quot;any&quot;, &quot;at&quot;: 0.52}, &quot;zoom&quot;: 8}}" data-mode="zoom"></canvas></div></div></div><div><div class="cap2">board</div><div class="sheet2" style="width:330px"><div class="bwrap" style="width:302px;height:302px"><canvas data-anim="{&quot;spec&quot;: {&quot;cells&quot;: {&quot;4,4&quot;: &quot;x&quot;, &quot;4,0&quot;: &quot;o&quot;, &quot;0,8&quot;: &quot;x&quot;, &quot;8,2&quot;: &quot;o&quot;, &quot;2,6&quot;: &quot;x&quot;, &quot;6,1&quot;: &quot;o&quot;, &quot;1,3&quot;: &quot;x&quot;, &quot;3,7&quot;: &quot;o&quot;, &quot;7,5&quot;: &quot;x&quot;}, &quot;won&quot;: {&quot;8&quot;: &quot;o&quot;}, &quot;seed&quot;: 12, &quot;active&quot;: 4}, &quot;a&quot;: {&quot;dur&quot;: 2600, &quot;hold&quot;: 900, &quot;mark&quot;: {&quot;at&quot;: &quot;4,8&quot;, &quot;kind&quot;: &quot;x&quot;, &quot;a&quot;: 0, &quot;b&quot;: 0.42}, &quot;hl&quot;: {&quot;from&quot;: 4, &quot;to&quot;: &quot;any&quot;, &quot;at&quot;: 0.52}}}" data-mode="board"></canvas></div></div></div><div class="note" style="max-width:360px;margin-top:22px">You send them to a board already won, so the wash opens to the whole sheet instead of moving to a block. <b>The most powerful move in the game gets the biggest change of state</b>, and it is the same animation with a different destination.</div></div></div></section></template>
 
 <template data-view="board"><section><h2>The board, in the locked pen</h2>
 <p class="lede"><b>9.2 is locked</b> - width 2.7, roughness 1.5, bowing 1,
@@ -1149,10 +1169,11 @@ function markIn(ctx, kind, cell, seed, over){
 }
 
 /* one # - four lines, no border, every line overshooting */
-function hashIn(ctx, x, y, S, seed, w, over, alpha){
+function hashIn(ctx, x, y, S, seed, w, over, alpha, rmul){
   const g = rough.generator();
-  const opt = { roughness: roughFor(S), bowing: bowFor(S), seed: seed,
-                maxRandomnessOffset: mroFor(S) };
+  const R = rmul == null ? 1 : rmul;
+  const opt = { roughness: roughFor(S) * R, bowing: bowFor(S) * R, seed: seed,
+                maxRandomnessOffset: mroFor(S) * R };
   const k = S / 3, o = over;
   const lines = [];
   for (const i of [1, 2]){
@@ -1194,10 +1215,10 @@ function drawBoard(cv, spec){
        ever be expressed by drawing something MORE, never by taking the grid
        away. */
     hashIn(ctx, (b % 3) * B, Math.floor(b / 3) * B, B,
-           (spec.seed || 1) * 131 + b * 17, GRID_W * .62, B * .03, .5);
+           (spec.seed || 1) * 131 + b * 17, GRID_W * .62, B * .03, .5, 1.5);
   }
-  hashIn(ctx, 0, 0, S, (spec.seed || 1) * 7 + 3, GRID_W, S * .05, .88);
-  hashIn(ctx, 0, 0, S, (spec.seed || 1) * 19 + 5, GRID_W, S * .045, .7);
+  hashIn(ctx, 0, 0, S, (spec.seed || 1) * 7 + 3, GRID_W * 1.7, S * .05, .9, 3.4);
+  hashIn(ctx, 0, 0, S, (spec.seed || 1) * 19 + 5, GRID_W * 1.5, S * .045, .72, 3.4);
 
   for (const key in (spec.cells || {})){
     const [b, c] = key.split(',').map(Number);
@@ -1221,9 +1242,10 @@ function drawBoard(cv, spec){
     const [p0, p1] = spec.meta;
     const cx = b => ((b % 3) + .5) * B, cy = b => (Math.floor(b / 3) + .5) * B;
     const ML = Math.hypot(cx(p1) - cx(p0), cy(p1) - cy(p0));
+    const MR = 4.2;              /* the one stroke drawn in triumph */
     const d = g.line(cx(p0), cy(p0), cx(p1), cy(p1),
-                     { roughness: roughFor(ML), bowing: bowFor(ML),
-                       maxRandomnessOffset: mroFor(ML),
+                     { roughness: roughFor(ML) * MR, bowing: bowFor(ML) * MR,
+                       maxRandomnessOffset: mroFor(ML) * MR,
                        seed: (spec.seed || 1) * 313 });
     const wf = () => GRID_W * 2.1, af = () => .92;
     const mi = inkFor(spec.metaBy || 'x');
@@ -1235,6 +1257,177 @@ function initBoards(root){
   root.querySelectorAll('canvas[data-board]').forEach(cv => {
     try { drawBoard(cv, JSON.parse(cv.dataset.board)); }
     catch (e) { console.error('board', e); }
+  });
+}
+
+
+/* ===================== MOTION ========================================
+   The pen is a ribbon of quads laid down sample by sample, so an animation is
+   not a fade or a scale - it is THE SAME DRAW, stopped early. inkUpTo() lays
+   the first n quads and nothing else, which is a pen that has not finished
+   the stroke rather than a finished stroke being revealed.                */
+
+function inkUpTo(ctx, pts, wf, af, colour, frac){
+  if (frac <= 0) return;
+  const n = Math.max(2, Math.ceil((pts.length - 1) * Math.min(1, frac)) + 1);
+  ink(ctx, pts.slice(0, n), wf, af, colour);
+}
+
+const ease = t => t < 0 ? 0 : t > 1 ? 1 : t * t * (3 - 2 * t);
+const seg = (t, a, b) => ease((t - a) / (b - a));
+
+/* An X is TWO strokes and the second starts before the first has finished -
+   0.52 against 0.44 - because that overlap is what makes it read as a hand
+   rather than as two events. An O is one stroke and gets the whole window. */
+function markProgress(kind, t){
+  return kind === 'x' ? [seg(t, 0, .52), seg(t, .44, 1)] : [seg(t, 0, 1)];
+}
+
+function markAnim(ctx, kind, cell, seed, t, over){
+  const o = Object.assign({}, PEN92, { seed: seed, ink: inkFor(kind),
+        rough: roughFor(cell.s) * (cell.s / REF), bow: bowFor(cell.s) }, over || {});
+  const f = penFns(o);
+  const polys = rjsGeom(kind, o);
+  /* rough.js emits each line twice; the pair is one stroke of the hand */
+  const per = kind === 'x' ? polys.length / 2 : polys.length;
+  const pr = markProgress(kind, t);
+  ctx.save();
+  ctx.translate(cell.x, cell.y);
+  ctx.scale(cell.s / 100, cell.s / 100);
+  polys.forEach((pts, i) => inkUpTo(ctx, pts, f.w, f.a, o.ink,
+        pr[Math.min(pr.length - 1, Math.floor(i / per))]));
+  ctx.restore();
+}
+
+function wash(ctx, b, S, alpha){
+  const B = S / 3;
+  ctx.fillStyle = 'rgba(214,168,54,' + alpha + ')';
+  if (b === 'any') ctx.fillRect(1, 1, S - 2, S - 2);
+  else if (b != null) ctx.fillRect((b % 3) * B + 1.2, Math.floor(b / 3) * B + 1.2,
+                                   B - 2.4, B - 2.4);
+}
+
+function boardFrame(cv, spec, A, t){
+  const dpr = Math.min(3, window.devicePixelRatio || 1);
+  const px = cv.clientWidth, S = 100;
+  if (cv.width !== px * dpr){ cv.width = px * dpr; cv.height = px * dpr; }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.setTransform(dpr * px / S, 0, 0, dpr * px / S, 0, 0);
+  const B = S / 3, C = S / 9;
+
+  if (A.hl){
+    const p = seg(t, A.hl.at, A.hl.at + .28);
+    if (A.hl.from != null) wash(ctx, A.hl.from, S, .30 * (1 - p));
+    wash(ctx, A.hl.to, S, (A.hl.to === 'any' ? .16 : .30) * p);
+  } else if (spec.active != null) wash(ctx, spec.active, S,
+                                       spec.active === 'any' ? .16 : .30);
+
+  for (let b = 0; b < 9; b++)
+    hashIn(ctx, (b % 3) * B, Math.floor(b / 3) * B, B,
+           (spec.seed || 1) * 131 + b * 17, GRID_W * .62, B * .03, .5, 1.5);
+  hashIn(ctx, 0, 0, S, (spec.seed || 1) * 7 + 3, GRID_W * 1.7, S * .05, .9, 3.4);
+  hashIn(ctx, 0, 0, S, (spec.seed || 1) * 19 + 5, GRID_W * 1.5, S * .045, .72, 3.4);
+
+  for (const key in (spec.cells || {})){
+    const [b, c] = key.split(',').map(Number);
+    const x = (b % 3) * B + (c % 3) * C, y = Math.floor(b / 3) * B + Math.floor(c / 3) * C;
+    const faded = spec.won && spec.won[b];
+    markAnim(ctx, spec.cells[key], { x: x + C * .1, y: y + C * .1, s: C * .8 },
+             (spec.seed || 1) * 1000 + b * 9 + c, 1,
+             faded ? { a: PEN92.a * .34 } : null);
+  }
+  if (A.mark){
+    const [b, c] = A.mark.at.split(',').map(Number);
+    const x = (b % 3) * B + (c % 3) * C, y = Math.floor(b / 3) * B + Math.floor(c / 3) * C;
+    markAnim(ctx, A.mark.kind, { x: x + C * .1, y: y + C * .1, s: C * .8 },
+             (spec.seed || 1) * 1000 + b * 9 + c, seg(t, A.mark.a, A.mark.b));
+  }
+  for (const b in (spec.won || {}))
+    markAnim(ctx, spec.won[b], { x: (b % 3) * B + B * .08,
+             y: Math.floor(b / 3) * B + B * .08, s: B * .84 },
+             (spec.seed || 1) * 77 + Number(b), 1, { a: .62, w: 2.2 });
+  if (A.big){
+    const b = A.big.at;
+    markAnim(ctx, A.big.kind, { x: (b % 3) * B + B * .08,
+             y: Math.floor(b / 3) * B + B * .08, s: B * .84 },
+             (spec.seed || 1) * 77 + b, seg(t, A.big.a, A.big.b),
+             { a: .62, w: 2.2 });
+  }
+  if (A.meta){
+    const g = rough.generator();
+    const [p0, p1] = A.meta.line;
+    const cx = b => ((b % 3) + .5) * B, cy = b => (Math.floor(b / 3) + .5) * B;
+    const ML = Math.hypot(cx(p1) - cx(p0), cy(p1) - cy(p0));
+    const MR = 4.2;
+    const d = g.line(cx(p0), cy(p0), cx(p1), cy(p1),
+        { roughness: roughFor(ML) * MR, bowing: bowFor(ML) * MR,
+          maxRandomnessOffset: mroFor(ML) * MR, seed: (spec.seed || 1) * 313 });
+    const wf = () => GRID_W * 2.1, af = () => .92;
+    opsToPolys(d, 24).forEach(pts => inkUpTo(ctx, pts, wf, af,
+        inkFor(A.meta.by), seg(t, A.meta.a, A.meta.b)));
+  }
+}
+
+/* the zoom is ONE BLOCK at full size - a cell on its own has no context, and
+   the whole point of this game is which block you are in */
+function zoomFrame(cv, spec, A, t){
+  const dpr = Math.min(3, window.devicePixelRatio || 1);
+  const px = cv.clientWidth, S = 100;
+  if (cv.width !== px * dpr){ cv.width = px * dpr; cv.height = px * dpr; }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.setTransform(dpr * px / S, 0, 0, dpr * px / S, 0, 0);
+  const blk = A.zoom == null ? 4 : A.zoom, C = S / 3;
+
+  if (A.hl && A.hl.to === blk) wash(ctx, 'any', S, .30 * seg(t, A.hl.at, A.hl.at + .28));
+  else if (A.hl && A.hl.from === blk) wash(ctx, 'any', S, .30 * (1 - seg(t, A.hl.at, A.hl.at + .28)));
+  else if (spec.active === blk) wash(ctx, 'any', S, .30);
+
+  hashIn(ctx, 0, 0, S, (spec.seed || 1) * 131 + blk * 17, GRID_W * 2.4, S * .03, .55, 1.5);
+  for (const key in (spec.cells || {})){
+    const [b, c] = key.split(',').map(Number);
+    if (b !== blk) continue;
+    markAnim(ctx, spec.cells[key], { x: (c % 3) * C + C * .1,
+             y: Math.floor(c / 3) * C + C * .1, s: C * .8 },
+             (spec.seed || 1) * 1000 + b * 9 + c, 1);
+  }
+  if (A.mark){
+    const [b, c] = A.mark.at.split(',').map(Number);
+    if (b === blk)
+      markAnim(ctx, A.mark.kind, { x: (c % 3) * C + C * .1,
+               y: Math.floor(c / 3) * C + C * .1, s: C * .8 },
+               (spec.seed || 1) * 1000 + b * 9 + c, seg(t, A.mark.a, A.mark.b));
+  }
+  if (A.big && A.big.at === blk)
+    markAnim(ctx, A.big.kind, { x: S * .08, y: S * .08, s: S * .84 },
+             (spec.seed || 1) * 77 + blk, seg(t, A.big.a, A.big.b),
+             { a: .62, w: 2.2 });
+}
+
+function runAnim(cv, spec, A, mode){
+  const dur = A.dur || 1800, hold = A.hold || 900;
+  let t0 = null, raf = null;
+  function frame(ts){
+    if (t0 == null) t0 = ts;
+    const e = ts - t0, t = Math.min(1, e / dur);
+    (mode === 'zoom' ? zoomFrame : boardFrame)(cv, spec, A, t);
+    if (e < dur + hold) raf = requestAnimationFrame(frame);
+    else { t0 = null; raf = requestAnimationFrame(frame); }
+  }
+  if (raf) cancelAnimationFrame(raf);
+  raf = requestAnimationFrame(frame);
+  return () => cancelAnimationFrame(raf);
+}
+
+function initAnims(root){
+  root.querySelectorAll('canvas[data-anim]').forEach(cv => {
+    try {
+      const d = JSON.parse(cv.dataset.anim);
+      runAnim(cv, d.spec, d.a, cv.dataset.mode);
+    } catch (e) { console.error('anim', e); }
   });
 }
 
@@ -1357,8 +1550,9 @@ function show(v){
   wire();
   initCanvases(mount);
   initBoards(mount);
+  initAnims(mount);
 }
 btns.forEach(b => b.onclick = () => show(b.dataset.view));
-show((location.hash || '#board').slice(1));
+show((location.hash || '#motion2').slice(1));
 </script>
 </body></html>
