@@ -1613,6 +1613,26 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
   border:1.5px solid rgba(255,196,184,.34);
   box-shadow:inset 0 0 6px rgba(0,0,0,.45)}
 
+
+/* A CHOSEN SHIELD IS NOT A GOLD SHIELD. Filling it brass made the choice look
+   like a different object - and on a vote screen that reads as a result rather
+   than as your cursor. The field stays exactly what it was; only the edge
+   brightens, which is what a selection is. */
+.sh.pick .esc, .sv .s.pick .e, .cl .s.pick .e, .dg .s.pick .e{
+  background-image:var(--nz-fine),var(--nz-mid),
+    linear-gradient(152deg, rgba(255,246,222,.16) 0%, transparent 34%),
+    linear-gradient(#2f3140,#1b1d28 58%,#101119) !important;
+  background-size:620px 620px,620px 620px,auto,auto !important;
+  background-blend-mode:soft-light,overlay,screen,normal !important;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.6), inset 0 7px 16px rgba(0,0,0,.5),
+             0 0 20px rgba(240,217,152,.16) !important}
+.sh.pick .sig, .sv .s.pick .g, .cl .s.pick .g, .dg .s.pick .g{color:#f4ecd6 !important}
+.sh.pick .nm, .sv .s.pick .n, .cl .s.pick .n, .dg .s.pick .n{color:#f4ecd6 !important}
+.sh.pick .st, .sv .s.pick .t{color:#c9bda0 !important}
+/* the traced outline is the whole selection state: brighter and a shade thicker */
+.sh.pick .esc::after, .sv .s.pick .e::after{
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 116'><path d='M1.8 1.8 L98.2 1.8 L98.2 70.6 L50 113.2 L1.8 70.6 Z' fill='none' stroke='%23fbf1d6' stroke-width='3.4' stroke-linejoin='round'/></svg>") !important}
+
 </style>
 </head>
 <body>
