@@ -27,8 +27,16 @@ int main(void)
         70,71,72,3,29,19,17,73,14,50,45,6,59,47,23,53,75,30,35,74,22,42,60,54,
         0,2,24,58,38,18,1,9,5,77 };
     const int N = (int)(sizeof mv / sizeof *mv);
-    for (int i = 0; i < N; i++)
+    /* A move can point at a block that is already won or full, and then the
+     * reply goes anywhere - which uti_forced() does NOT say, because it is
+     * the raw rule. The bubble's place line believes uti_active(), so the
+     * difference between the two has to show up somewhere. */
+    int sent_anywhere = 0;
+    for (int i = 0; i < N; i++) {
         ok(uti_play(mv[i]), "a recorded move is legal");
+        if (uti_forced() != 255 && uti_active() == 9) sent_anywhere++;
+    }
+    ok(sent_anywhere == 1, "one move in that game points at a decided block");
     ok(uti_n_plies() == N, "every move was played");
     ok(uti_over() == 2, "O wins that game");
 
