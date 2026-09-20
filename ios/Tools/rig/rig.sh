@@ -123,6 +123,18 @@ APP_BUNDLE="${RIG_APP_BUNDLE:-$SCHEME.app}"               # what `build` install
 APPEX="${RIG_APPEX:-FoolishMessages}"                     # the appex process
 MENU_NAME="${RIG_MENU_NAME:-Foolish}"                     # the row in the + menu
 LOG_SUBSYSTEM="${RIG_LOG_SUBSYSTEM:-cards.foolish}"       # `rig.sh log`
+# WHERE THE PRODUCT LIVES, which is identity too. A second product in this
+# monorepo is not at c/ and ios/ - it is at uttt/c and uttt/ios - and the rig
+# promised in its README that a second product is this block with different
+# strings. It was not: `build` and `doctor` spelled Durak's layout, so the
+# override took and then the build compiled the wrong kernel. The test below
+# the block now fails on $REPO/c and $REPO/ios anywhere else.
+KERNEL_DIR="${RIG_KERNEL_DIR:-$REPO/c}"                   # `make ios-lib` here
+IOS_DIR="${RIG_IOS_DIR:-$REPO/ios}"                       # `xcodegen` here
+# The transcript seeder, RELATIVE TO KERNEL_DIR. Durak seeds a fat board
+# through a C tool; a product that has not written one yet sets this empty and
+# `build` and `doctor` stop asking for it.
+SEEDER="${RIG_SEEDER-build/msg_wire_test}"
 # ---- end of the product block ---------------------------------------------
 
 # DerivedData is PER SIMULATOR, which is to say per task (rule 5). One shared
@@ -408,7 +420,8 @@ cmd_doctor() {
   command -v "$IDB" >/dev/null || { echo "MISSING idb - brew install facebook/fb/idb-companion && python3.12 -m venv ~/.venvs/idb && ~/.venvs/idb/bin/pip install fb-idb"; bad=1; }
   command -v ffmpeg >/dev/null || { echo "MISSING ffmpeg (only 'film'/'sheet' need it) - brew install ffmpeg"; bad=1; }
   python3 -c "import PIL, numpy" 2>/dev/null || { echo "MISSING pillow/numpy - pip3 install pillow numpy"; bad=1; }
-  [ -x "$REPO/c/build/msg_wire_test" ] || { echo "MISSING seeder - (cd c && make build/msg_wire_test)"; bad=1; }
+  [ -z "$SEEDER" ] || [ -x "$KERNEL_DIR/$SEEDER" ] || {
+    echo "MISSING seeder - (cd ${KERNEL_DIR#$REPO/} && make $SEEDER)"; bad=1; }
   if [ -n "$SIM" ]; then
     xcrun simctl list devices booted | grep -q "$SIM" \
       && echo "sim $SIM booted, $(screen) pt" || echo "sim $SIM NOT booted"
@@ -433,9 +446,9 @@ cmd_newsim() {
 
 cmd_build() {
   need_sim
-  make -C "$REPO/c" ios-lib
-  make -C "$REPO/c" build/msg_wire_test
-  (cd "$REPO/ios" && xcodegen generate)
+  make -C "$KERNEL_DIR" ios-lib
+  [ -z "$SEEDER" ] || make -C "$KERNEL_DIR" "$SEEDER"
+  (cd "$IOS_DIR" && xcodegen generate)
   # xcodegen BLANKS the entitlements files every run; without this the
   # extension loses its App Group and every seed silently does nothing.
   (cd "$REPO" && git checkout -- $(cd "$REPO" && git ls-files -- '*.entitlements'))
@@ -847,7 +860,7 @@ cmd_chain() {
     echo "  three-line window (trap 12). FOOLISH_CHAIN_SHORT=1 to override." >&2
     return 1
   fi
-  local tool="${FOOLISH_TOOL:-$REPO/c/build/msg_wire_test}"
+  local tool="${FOOLISH_TOOL:-$KERNEL_DIR/$SEEDER}"
   [ -x "$tool" ] || { echo "no seeder at $tool - (cd c && make build/msg_wire_test)" >&2; return 1; }
   # The App Group container, checked once here so a missing install says so
   # before a chain is played. Every seed below goes through `seed_open`, which

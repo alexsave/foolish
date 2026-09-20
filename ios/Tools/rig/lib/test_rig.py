@@ -432,8 +432,14 @@ class ProductIdentityLivesInOnePlace(unittest.TestCase):
     scheme and display name it knows is one named constant at the top of
     rig.sh, so a second product is a block of assignments and not a hunt."""
 
+    # WHERE the product lives is identity too, and that is the half this test
+    # missed. `build` and `doctor` said $REPO/c and $REPO/ios - Durak's layout
+    # - so RIG_KERNEL_DIR took, the rig reported no error, and the build
+    # compiled the wrong kernel into the right app. A name is easy to grep for
+    # and a path is not, which is exactly why it has to be in here.
     IDENT = re.compile(r"cards\.foolish|group\.cards|FoolishMessages|Foolish\.xcodeproj"
-                       r"|\bFoolishKit\b|\"Foolish\"")
+                       r"|\bFoolishKit\b|\"Foolish\""
+                       r"|\$REPO/c\b|\$REPO/ios\b|\$\{REPO\}/(?:c|ios)\b")
 
     def setUp(self):
         with open(os.path.join(RIG, "rig.sh")) as fh:
@@ -442,7 +448,8 @@ class ProductIdentityLivesInOnePlace(unittest.TestCase):
     def test_the_block_exists(self):
         block = "\n".join(self.src)
         for var in ("APP_ID=", "EXT_DOM=", "APP_GROUP=", "SCHEME=",
-                    "XCPROJ=", "MENU_NAME=", "APPEX=", "LOG_SUBSYSTEM="):
+                    "XCPROJ=", "MENU_NAME=", "APPEX=", "LOG_SUBSYSTEM=",
+                    "KERNEL_DIR=", "IOS_DIR=", "SEEDER="):
             self.assertIn(var, block, "no %s constant in rig.sh" % var)
 
     def test_nothing_below_the_block_spells_the_product(self):
