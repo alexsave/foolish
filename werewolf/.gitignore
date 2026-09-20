@@ -1,0 +1,17 @@
+.DS_Store
+
+# Build output. c/build is the native + bridge binaries; ios/vendor holds the
+# xcframework `make -C c ios-lib` writes, which is generated from c/src and must
+# never be committed - a stale binary in git is a kernel two people disagree about.
+c/build/
+c/covbuild/
+ios/vendor/
+
+# The Xcode project is generated from ios/project.yml by xcodegen. Hand-editing
+# either it or the workspace is how the two drift; edit project.yml.
+ios/*.xcodeproj/
+ios/*.xcworkspace/
+ios/DerivedData/
+
+# The rig's captures.
+ios/Tools/rig/shots/

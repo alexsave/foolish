@@ -151,7 +151,7 @@ test('the filter never skips anything that can change what a visitor downloads',
     const never = [
         'c/src/game.c', 'c/src/legal.h', 'c/wasm/wasm_api.c',
         'sdk/ts/wasm/bots.wasm.gz', 'sdk/ts/wire/awire.ts',
-        'tools/structgen/structgen.c', 'tools/structgen/gen.sh',
+        'shared/tools/structgen/structgen.c', 'tools/structgen/gen.sh',
         'tools/structgen/specs/view_layout.args',
         'public/oracle.wasm.gz', 'public/favicon.ico',
         'src/app/page.tsx', 'package.json', 'package-lock.json',

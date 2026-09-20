@@ -11,8 +11,9 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 RIG="$HERE/../rig.sh"
 LIB="$HERE/../lib"
+SHLIB="$HERE/../../../../shared/rig/lib"  # the shared measurement half (no product knowledge in it)
 
-read -r W H < <(python3 "$LIB/ax.py" screen)
+read -r W H < <(python3 "$SHLIB/ax.py" screen)
 
 bar_y() {
   python3 "$LIB/ui.py" bars | python3 -c "

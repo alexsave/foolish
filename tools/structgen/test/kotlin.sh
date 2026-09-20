@@ -20,10 +20,13 @@
 set -uo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 root="$(cd "$here/../.." && pwd)"
-make -s -C "$here" build/structgen
-make -s -C "$root/tools/datagen" build/datagen
-SG="$here/build/structgen"
-DG="$root/tools/datagen/build/datagen"
+# The generator is shared (shared/tools/structgen); this test, and the specs
+# and fixtures it points the generator at, are this product's.
+sg="$root/shared/tools/structgen"
+make -s -C "$sg" build/structgen
+make -s -C "$root/shared/tools/datagen" build/datagen
+SG="$sg/build/structgen"
+DG="$root/shared/tools/datagen/build/datagen"
 out="$here/build/kotlin"
 rm -rf "$out"; mkdir -p "$out"
 fails=0
@@ -121,7 +124,7 @@ expect_fail "--kotlin with no --snapshot"       "Kotlin gets value snapshots" \
 # be the same bytes. Both files are reduced to the multiset of byte offsets and
 # array strides they name - Swift spells an offset `fromByteOffset: N` or
 # `p + N`, Kotlin always `p + N` - and the two lists must be equal.
-SNAP=(--cwd "$here/test" --header snap.h --root Snap --build "android=" --target "$TRIPLE"
+SNAP=(--cwd "$sg/test" --header snap.h --root Snap --build "android=" --target "$TRIPLE"
       --snapshot Snap --snapshot-only --writer Snap
       --count Snap.pairs=n_pairs --count Snap.items=n_items --count Snap.text=n_text --count SItem.text=len)
 "$SG" "${SNAP[@]}" --swift "$out/snap.swift"

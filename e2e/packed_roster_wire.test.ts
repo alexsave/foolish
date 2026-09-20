@@ -240,7 +240,10 @@ let workdir: string | null = null;
 // updated, so the whole Swift side failed with a swiftc "no such file" that
 // named nothing about parity. `resolve` turns that into a directive.
 const SWIFT_SOURCES = [
-    'sdk/swift/PackedBytes.swift',
+    // PackedBytes is in shared/ now: it is Foundation-only and both products
+    // want a byte reader, so it moved out of sdk/swift with the rest of the
+    // product-neutral code. RosterWire stays - it knows what a roster is.
+    'shared/swift/PackedBytes.swift',
     'sdk/swift/RosterWire.swift',
 ];
 

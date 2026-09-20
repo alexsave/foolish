@@ -36,6 +36,7 @@ set -uo pipefail
 : "${FOOLISH_SIM:?set FOOLISH_SIM}"
 export FOOLISH_OUT="${FOOLISH_OUT:-$HOME/Downloads/foolish-shots}"
 HERE="$(cd "$(dirname "$0")" && pwd)"; RIG="$HERE/../rig.sh"; LIB="$HERE/../lib"
+SHLIB="$HERE/../../../../shared/rig/lib"  # the shared measurement half (no product knowledge in it)
 REPO="$(cd "$HERE/../../../.." && pwd)"
 NAME="${1:-reel}"
 G=$("$RIG" group)
@@ -57,7 +58,7 @@ xcrun simctl terminate "$FOOLISH_SIM" com.apple.MobileSMS >/dev/null 2>&1
 xcrun simctl launch "$FOOLISH_SIM" com.apple.MobileSMS >/dev/null 2>&1
 "$RIG" enter >/dev/null 2>&1 || { echo "could not enter a conversation" >&2; exit 2; }
 "$RIG" clearstage >/dev/null 2>&1 || true
-read -r W H < <(python3 "$LIB/ax.py" screen)
+read -r W H < <(python3 "$SHLIB/ax.py" screen)
 
 # ---- reading the board ----------------------------------------------------
 plank_y() { python3 "$LIB/ui.py" bars | python3 -c "

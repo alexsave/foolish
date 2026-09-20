@@ -332,6 +332,12 @@ targets:
       - path: ../sdk/swift
         excludes:
           - bots/**
+      # …and the product-neutral half, which is compiled from shared/ now. This
+      # is a SOURCE PATH, not a dependency: dropping it does not fail to link,
+      # it fails to compile the file that is missing, at whichever call site
+      # happens to be first. PackedBytes is the byte reader every fixed-layout
+      # record on this side is written with (§zero-JSON).
+      - path: ../shared/swift
       # NOTE: `- path: Entitlements` used to be here. EntitlementsService has
       # exactly one caller in the whole repo (FoolishApp/FoolishApp.swift), so
       # it moved to FoolishApp/PhoneOnly/ with the rest of the phone-only code -

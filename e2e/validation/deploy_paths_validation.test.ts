@@ -135,6 +135,59 @@ test('every static asset bundled with the functions triggers a deploy', () => {
     assert.deepEqual(uncovered, [], `bundled but not watched: ${uncovered.join(', ')}`);
 });
 
+test('every trigger path still names something that exists', () => {
+    // THE HISTORICAL BUG, GENERALISED. `supabase/**` did not fail when the tree
+    // moved to server/impls/supabase - it went on matching nothing, quietly, and
+    // the server went stale for weeks with every check green. A glob that matches
+    // no file in the repo is indistinguishable, from the workflow's side, from one
+    // that simply had no changes this push.
+    //
+    // The two tests above cannot catch it: they walk the import graph and check
+    // that what the graph reaches is covered. A glob covering something the graph
+    // never reaches - a generator, a header, a static asset - is invisible to
+    // them. That is most of this list, and all of the entries a move breaks.
+    //
+    // Now that the repo holds two products with a shared/ between them, a path
+    // can move without any import changing, so this is checked rather than
+    // remembered.
+    const dead = globs.filter((g) => {
+        const literal = g.replace(/\/?\*\*$/, '').replace(/\/[^/]*\*.*$/, '');
+        return literal !== '' && !existsSync(join(REPO, literal));
+    });
+    assert.deepEqual(dead, [],
+        'these deploy.yml trigger paths match nothing in the repo - they were\n'
+        + 'almost certainly left behind by a move, and a path that matches nothing\n'
+        + 'silently deploys nothing:\n  ' + dead.join('\n  '));
+});
+
+test('the generated-module sources are watched, wherever they now live', () => {
+    // The functions import sdk/ts/gen/*, which this workflow GENERATES from the C
+    // headers before bundling. The import graph stops at the generated module and
+    // can never reach the generator or the headers behind it, so these entries are
+    // the one part of the list nothing derives - see deploy.yml's own comment.
+    //
+    // They are asserted by ROLE rather than by spelling: each of these is a real
+    // input to `tools/structgen/gen.sh`, and each must be covered by some glob no
+    // matter which directory it is sitting in this month.
+    const sources = [
+        'tools/structgen/gen.sh',                  // the driver the deploy runs
+        'tools/structgen/specs/view_layout.args',  // this product's spec
+        'shared/tools/structgen/structgen.c',      // the generator
+        'shared/tools/structgen/sg_ts.c',          // the emitter that writes the TS
+        'shared/tools/llvm.mk',                    // how it finds libclang
+        'shared/c/sha256.h',                       // in the layout, via msg_wire.h
+        'shared/c/deal_rng.h',                     // in the layout, via game.h
+        'c/src/game.h',                            // the layout itself
+    ];
+    const missing = sources.filter((p) => !existsSync(join(REPO, p)));
+    assert.deepEqual(missing, [], 'this test names files that no longer exist - '
+        + 'it is the list that is stale, not the trigger:\n  ' + missing.join('\n  '));
+    const unwatched = sources.filter((p) => !covered(p));
+    assert.deepEqual(unwatched, [],
+        'these feed the modules the deployed functions import, but a change to\n'
+        + 'them would NOT trigger a deploy:\n  ' + unwatched.join('\n  '));
+});
+
 test('a NEW file beside a deployed one would trigger a deploy too', () => {
     // A trigger listing today's exact filenames would satisfy the test above and
     // still miss tomorrow's module. Every directory the graph reaches has to be

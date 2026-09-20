@@ -1,0 +1,176 @@
+# XcodeGen spec for Werewolf.
+#
+# The .xcodeproj is a BUILD ARTIFACT - never hand-edit it, never commit it.
+# Regenerate with `xcodegen generate` (brew install xcodegen). Every project
+# change is reviewable here, in text.
+#
+# BOOTSTRAP ORDER (from a clean checkout):
+#   1. cd ../c && make ios-lib      # builds ios/vendor/Werewolf.xcframework
+#   2. cd ../ios && xcodegen generate
+#   3. ios/scripts/mac_tests.sh
+# Step 1 must run first: WerewolfKit links vendor/Werewolf.xcframework, which is
+# not in git because it is generated.
+#
+# THREE TARGETS, and the shape is inherited from the fork for one reason worth
+# stating: an app extension cannot be distributed on its own, so the iMessage
+# game needs a codeless container to carry it. That container links the framework
+# but does not link AGAINST it - @rpath for an extension resolves into its
+# CONTAINING app's Frameworks/, so without the embed the bundle builds clean and
+# then fails to load at runtime.
+#
+# WHAT THIS PROJECT DELIBERATELY HAS NONE OF, because the fork's did and paid for
+# it: no network stack, no accounts, no bots. An iMessage werewolf game has no
+# server - the whole game is the MSMessage URL - so a dependency that talks to one
+# would be bytes on every install for code that install can never run.
+name: Werewolf
+options:
+  bundleIdPrefix: cards.werewolf
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    CODE_SIGN_STYLE: Automatic
+    # The same Apple Developer team as the tree this forked from - same developer,
+    # a new product record. It is here rather than left blank because THE APP GROUP
+    # DEPENDS ON IT: with no team, a simulator build is signed ad-hoc and its
+    # entitlements come out an empty dict, so the App Group silently does not
+    # exist. That is not only a signing detail - it is the store the solo rig's
+    # flag file lives in, so without this the rig cannot be switched on at all.
+    DEVELOPMENT_TEAM: 8N2Z544SB4
+    ITSAppUsesNonExemptEncryption: "NO"
+
+configs:
+  Debug: debug
+  Release: release
+
+targets:
+  # ---- The standalone iMessage app (its own App Store record) -------------
+  # A codeless container for WerewolfMessages.appex. No sources: a messages
+  # application never runs its own UI.
+  WerewolfMessagesApp:
+    type: application.messages
+    platform: iOS
+    entitlements:
+      path: WerewolfMessagesApp/WerewolfMessagesApp.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.cards.werewolf.msg
+    sources:
+      - path: WerewolfMessagesApp
+    dependencies:
+      - target: WerewolfMessages
+        embed: true
+      # MUST be embedded here even though this container has no code - see the
+      # @rpath note at the top. link:false because there is nothing here to link
+      # against it; it only has to CARRY the binary.
+      - target: WerewolfKit
+        embed: true
+        link: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.werewolf.msg
+        INFOPLIST_FILE: WerewolfMessagesApp/Info.plist
+        TARGETED_DEVICE_FAMILY: "1"
+        # App Store validation requires the container to carry an app icon even
+        # though a Messages-only app has no Home Screen presence. The set keeps the
+        # ordinary 20/29/40/60pt ladder beside the 1024: actool always emits a
+        # loose standalone copy of the primary icon and picks the SMALLEST
+        # applicable rendition, so with only the 1024 present that loose copy is
+        # the 1024, unthinned, at the top of the bundle.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+
+  # ---- The iMessage extension --------------------------------------------
+  WerewolfMessages:
+    type: app-extension.messages
+    platform: iOS
+    entitlements:
+      # Declared as `properties` so `xcodegen generate` REGENERATES the App Group
+      # into the file instead of blanking it. The group is where the nickname
+      # lives: the extension has no database and no background time, so this is
+      # its only durable store.
+      path: WerewolfMessages/WerewolfMessages.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.cards.werewolf.msg
+    sources:
+      - path: WerewolfMessages
+    dependencies:
+      - target: WerewolfKit
+    settings:
+      base:
+        # Prefixed by its CONTAINER, not a host app - an extension's bundle id
+        # must extend the app that embeds it.
+        PRODUCT_BUNDLE_IDENTIFIER: cards.werewolf.msg.MessagesExtension
+        INFOPLIST_FILE: WerewolfMessages/Info.plist
+        # The Messages drawer shows a WIDE (4:3) icon, a different asset from the
+        # square AppIcon. An extension without it is rejected at upload.
+        ASSETCATALOG_COMPILER_APPICON_NAME: "iMessage App Icon"
+        TARGETED_DEVICE_FAMILY: "1"
+
+  # ---- The shared framework: the kernel binding + the night screens -------
+  # Extension-safe by construction. Everything a player sees is in here, and
+  # everything a player sees is rendered from the kernel's masked view.
+  WerewolfKit:
+    type: framework
+    platform: iOS
+    sources:
+      - path: WerewolfKit
+      # The Swift kernel binding lives in the repo-root sdk/, sibling to c/ - the
+      # same place the fork put it, and for the same reason: it is the boundary,
+      # not a UI file, and a second product forking this tree needs it without
+      # taking the screens.
+      - path: ../sdk/swift
+    dependencies:
+      # The C kernel, built by `make ios-lib` in ../c. STATIC (embed:false), so
+      # the linker pulls it in per object and nothing unreferenced ships.
+      - framework: vendor/Werewolf.xcframework
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.werewolf.kit
+        GENERATE_INFOPLIST_FILE: "YES"
+        # The clang module map that lets Swift `import CWerewolf`, copied into
+        # BUILT_PRODUCTS_DIR/include by the xcframework.
+        HEADER_SEARCH_PATHS: $(inherited) $(BUILT_PRODUCTS_DIR)/include
+        TARGETED_DEVICE_FAMILY: "1"
+
+  # ---- Unit tests --------------------------------------------------------
+  # These test the SWIFT side only. Every rule is asserted in C
+  # (`make -C c tests`), so what is left here is the part C cannot see: that the
+  # screen shows what the masked view said and nothing else.
+  WerewolfTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: WerewolfTests
+    dependencies:
+      - target: WerewolfKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.werewolf.tests
+        GENERATE_INFOPLIST_FILE: "YES"
+
+schemes:
+  WerewolfMessagesApp:
+    build:
+      targets:
+        WerewolfMessagesApp: all
+        WerewolfMessages: all
+        WerewolfKit: all
+    run:
+      config: Debug
+  WerewolfTests:
+    build:
+      targets:
+        WerewolfKit: all
+        WerewolfTests: [test]
+    test:
+      config: Debug
+      targets:
+        - WerewolfTests

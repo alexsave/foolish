@@ -43,7 +43,7 @@ npm run dev          # http://localhost:3000
 ```
 
 `predev` runs `npm run gen` first, and that matters more than it looks: **a large part of the TypeScript the client imports does not exist in git.**
-[`tools/structgen`](tools/structgen) and [`tools/datagen`](tools/datagen) read the C through libclang at build time and write it.
+[`shared/tools/structgen`](shared/tools/structgen) and [`shared/tools/datagen`](shared/tools/datagen) read the C through libclang at build time and write it.
 A checkout without a working `clang` cannot build the website, which is why CI installs libclang and why [`scripts/ci_llvm.sh`](scripts/ci_llvm.sh) exists.
 
 The dev server needs a Supabase backend, configured through two client-exposed variables:
@@ -160,7 +160,7 @@ The blob commits under an optimistic-concurrency compare-and-swap, then broadcas
 The client decodes back to JavaScript only at the React render boundary.
 
 **The strings are C too.**
-[`c/i18n`](c/i18n) holds 25 languages and 388 keys as designated initializers, one file per language, and `tools/datagen` writes both the website's table and FoolishKit's from them.
+[`c/i18n`](c/i18n) holds 25 languages and 388 keys as designated initializers, one file per language, and `shared/tools/datagen` writes both the website's table and FoolishKit's from them.
 Neither host is the other's upstream, which was the whole problem before: the phone carried 25 languages in a 5,063-line Swift table while the website carried three in TypeScript, they shared ten key names, and they disagreed about sixteen of the thirty cells those ten covered.
 Per-language files rather than one grid is a bundle decision, so a visitor downloads the one language they read.
 None of it is linked into anything, because 25 languages is about 150 KB of string data and the shipped wasm has an 80 KiB budget.
@@ -177,8 +177,8 @@ Octogen is built on it and sits at the top.
 
 ## Nothing crosses a language boundary by hand
 
-`tools/structgen` asks clang for *shape* and never reads a value.
-`tools/datagen` asks for *contents* and never reads a layout.
+`shared/tools/structgen` asks clang for *shape* and never reads a value.
+`shared/tools/datagen` asks for *contents* and never reads a layout.
 Between them, the TypeScript and Swift that describe C structures and C tables are build outputs, regenerated on every lane and committed nowhere.
 
 The generated files are not in git on purpose, and the reason is a specific incident: a committed artifact under the generated directory was excused from the freshness check by one `diff -x` flag and rotted for months.
@@ -197,9 +197,9 @@ That guard exists because the alternative already happened: a kernel fix that sh
 Several things in here would be their own repository anywhere else.
 
 **structgen, and its sibling datagen.**
-[`tools/structgen`](tools/structgen) is a libclang program: it loads the kernel's headers through clang's own parser, asks the real compiler for the real layout of a struct under one target's flags, and writes TypeScript accessors over wasm32 linear memory and Swift value snapshots over the natively-linked struct.
+[`shared/tools/structgen`](shared/tools/structgen) is a libclang program: it loads the kernel's headers through clang's own parser, asks the real compiler for the real layout of a struct under one target's flags, and writes TypeScript accessors over wasm32 linear memory and Swift value snapshots over the natively-linked struct.
 The same header is a different shape on each: a pointer is 4 bytes on wasm32 and 8 on iOS, so the offsets cannot be shared, only derived.
-[`tools/datagen`](tools/datagen) is the mirror image, reading a `static const` table's initializers instead of its layout, which is what turns 25 C files of translations into 25 modules per host.
+[`shared/tools/datagen`](shared/tools/datagen) is the mirror image, reading a `static const` table's initializers instead of its layout, which is what turns 25 C files of translations into 25 modules per host.
 Between them they are the reason no offset and no string in this repo is typed twice, and they are a compiler-adjacent tool that happens to live in a card game.
 
 **The replay codec.**

@@ -8,7 +8,7 @@ them expensive: a `first` that tapped the middle of the transcript and returned
 0, and a finder whose numbers a shell cannot read. Each one is reachable from a
 canned accessibility tree or a synthetic frame, so none of them needs a device.
 
-`ax.py` is driven through its real command line, with a stub on `FOOLISH_IDB`
+`ax.py` is driven through its real command line, with a stub on `RIG_IDB`
 serving a recorded tree - the same path `rig.sh` takes, argument parsing and
 all, rather than the functions underneath it.
 """
@@ -26,6 +26,9 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 RIG = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
+# squares moved to shared/rig/lib with the rest of the measurement half.
+SHLIB = os.path.join(RIG, "..", "..", "..", "shared", "rig", "lib")
+sys.path.insert(0, SHLIB)
 import squares  # noqa: E402
 import tween  # noqa: E402
 
@@ -104,7 +107,7 @@ FIRST_RUN_SHEET = [
 def stub_idb(tree):
     """A fake `idb` that answers `ui describe-all` with `tree`.
 
-    Written to a temp dir and handed to ax.py through FOOLISH_IDB, so the test
+    Written to a temp dir and handed to ax.py through RIG_IDB, so the test
     exercises the real subprocess call, the real JSON parse and the real
     argument parsing - not a monkeypatched `tree()`.
     """
@@ -118,8 +121,8 @@ def stub_idb(tree):
 
 def ax(tree, *args):
     """`ax.py <args>` against `tree` -> (exit code, stdout stripped)."""
-    env = dict(os.environ, FOOLISH_IDB=stub_idb(tree), FOOLISH_SIM="STUB")
-    p = subprocess.run([sys.executable, os.path.join(HERE, "ax.py")] + list(args),
+    env = dict(os.environ, RIG_IDB=stub_idb(tree), RIG_SIM="STUB")
+    p = subprocess.run([sys.executable, os.path.join(SHLIB, "ax.py")] + list(args),
                        capture_output=True, text=True, env=env)
     return p.returncode, p.stdout.strip()
 
@@ -349,7 +352,8 @@ class UiSpeaksNumbersAShellCanRead(unittest.TestCase):
         from PIL import Image
         cls.work = tempfile.mkdtemp(prefix="rigui")
         Image.fromarray(synthetic_board()).save(os.path.join(cls.work, "_ui.png"))
-        env = dict(os.environ, FOOLISH_WORK=cls.work, FOOLISH_SIM="STUB")
+        env = dict(os.environ, FOOLISH_WORK=cls.work, FOOLISH_SIM="STUB",
+                   RIG_SIM="STUB")
         p = subprocess.run([sys.executable, os.path.join(HERE, "ui.py"), "all"],
                            capture_output=True, text=True, env=env)
         cls.lines = [l for l in p.stdout.splitlines() if l.strip()]

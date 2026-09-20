@@ -14,9 +14,16 @@ ruler instead (a DEBUG build with `rig.sh ruler on`):
          ruler's green bottom bar; a card is anything that is not felt, 30pt+ wide.
   table  every table pair carries a coloured square at its centre (squares.py).
 """
+import os
 import sys
 import numpy as np
 from PIL import Image
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+# The measurement half of the rig lives in shared/rig/lib - it has no product
+# knowledge, so it is shared. This file does, so it stays here and reaches.
+SHLIB = os.path.join(HERE, "..", "..", "..", "..", "shared", "rig", "lib")
+sys.path.insert(0, SHLIB)
 
 import squares
 import tween

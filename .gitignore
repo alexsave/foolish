@@ -76,6 +76,12 @@ tools/structgen/gen/
 
 # c
 c/build/
+# The shared toolchain's own build outputs - the generator and datagen binaries,
+# and the wasm/twin links gen.sh makes. Same reason as tools/structgen/gen/
+# above: built on demand by whichever libclang is on the machine, committed
+# nowhere.
+shared/tools/structgen/build/
+shared/tools/datagen/build/
 c/*.trace/
 c/tools/tt_divergence_viz/backup/
 c/tools/tt_divergence_viz/backup2/

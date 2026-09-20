@@ -13,7 +13,7 @@
 
 #include "ctl_wire.h"
 #include "persist.h"
-#include "sha256.h"     // Bucket A: HMAC-SHA256 for stateless signed session tokens
+#include "../../../shared/c/sha256.h"     // Bucket A: HMAC-SHA256 for stateless signed session tokens
 #include "snapshot.h"   // g_user_table: a new account is persisted write-behind
 
 #define TOKEN_TTL_S   (7 * 24 * 3600)          // 7 days

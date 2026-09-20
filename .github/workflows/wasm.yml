@@ -135,23 +135,23 @@ jobs:
         # returns int. structgen once called strdup, which glibc does not declare
         # under -std=c11, and every copied pointer was cut to 32 bits: the tool
         # segfaulted on its first run and only this job's Linux saw it.
-        run: make -C tools/structgen build/structgen CFLAGS="-O2 -std=c11 -Wall -Wextra -Werror"
+        run: make -C shared/tools/structgen build/structgen CFLAGS="-O2 -std=c11 -Wall -Wextra -Werror"
 
       - name: Build datagen
         # The sibling tool, on the same libclang and the same -Werror. structgen
         # reads layouts; datagen reads the contents of static tables (c/i18n, the
         # translated strings). Built here rather than only by gen.sh so a warning
         # this runner's gcc sees and the Mac's clang does not is caught by name.
-        run: make -C tools/datagen build/datagen CFLAGS="-O2 -std=c11 -Wall -Wextra -Werror"
+        run: make -C shared/tools/datagen build/datagen CFLAGS="-O2 -std=c11 -Wall -Wextra -Werror"
 
       - name: The generators are a function of the tree (two runs agree)
         run: bash tools/structgen/gen.sh --check
 
       - name: CLI refusals and the layout hash
         run: |
-          bash tools/structgen/test/cli.sh
-          bash tools/structgen/test/hash.sh
-          bash tools/datagen/test/cli.sh
+          bash shared/tools/structgen/test/cli.sh
+          bash shared/tools/structgen/test/hash.sh
+          bash shared/tools/datagen/test/cli.sh
 
       - name: Accessors against wasm32 C (verify)
         # --verify-wasm links test/verify.c into build/verify.wasm. That module is

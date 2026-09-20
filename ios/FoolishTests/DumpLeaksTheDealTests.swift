@@ -7,7 +7,7 @@
 // He is right, and the chain is short. Every MsgEnvelope carries `seed[32]`
 // (c/src/msg_wire.h), repeated by every seal; `deal_rng` makes the whole deal a
 // deterministic function of it ("a whole deal is a function of one seed... and
-// makes it reproducible from a stored seed", c/src/deal_rng.h). So the payload
+// makes it reproducible from a stored seed", shared/c/deal_rng.h). So the payload
 // is not a view of the game, it IS the game - every hand and the deck order.
 // `diagnosticPanel` printed it as selectable hex AND as a foolish.cards/m/
 // link, behind a five-second hold on the gear, in the SHIPPING build.

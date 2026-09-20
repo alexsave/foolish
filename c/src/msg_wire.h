@@ -107,7 +107,7 @@
 
 #include "game.h"
 #include "awire.h"
-#include "sha256.h"
+#include "../../shared/c/sha256.h"
 #include <stdint.h>
 
 #define MSG_MAGIC        0xF7

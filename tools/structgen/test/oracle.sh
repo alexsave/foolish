@@ -17,21 +17,35 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 root="$(cd "$here/../.." && pwd)"
+# The generator is shared (shared/tools/structgen); this test, and the specs
+# and fixtures it points the generator at, are this product's.
+sg="$root/shared/tools/structgen"
 CLANG="${WASM_CC:-/opt/homebrew/opt/llvm/bin/clang}"
 out="$here/build/oracle"
 rm -rf "$out" && mkdir -p "$out/node" "$out/c"
-make -s -C "$here" build/structgen
-BOTS="$(make -s -C "$root/c" -f Makefile -f "$here/print.mk" sg-print-WASM_BOT_CFLAGS)"
-RULES="$(make -s -C "$root/c" -f Makefile -f "$here/print.mk" sg-print-WASM_RULES_CFLAGS)"
+make -s -C "$sg" build/structgen
+# --no-print-directory: `-s` does not silence "Entering directory", and this
+# output is CAPTURED into compiler flags. Harmless from a shell, five lines of
+# English in $CFLAGS the day anything calls this from a make recipe.
+BOTS="$(make -s --no-print-directory -C "$root/c" -f Makefile -f "$sg/print.mk" sg-print-WASM_BOT_CFLAGS)"
+# WASM_MSG_CFLAGS, not WASM_RULES_CFLAGS. rules.wasm was retired in 81bd7715
+# and that variable went with it, so this line had been expanding to the EMPTY
+# STRING ever since: the run below compiled with no -Isrc, failed to find
+# game.h, and took this whole test down with it. Nothing noticed, because
+# oracle.sh runs in no workflow. The msg module is the live second flag set -
+# a different -O, different caps - which is all this test wants from it: two
+# builds that disagree enough to catch an emitter that only works for one.
+MSG="$(make -s --no-print-directory -C "$root/c" -f Makefile -f "$sg/print.mk" sg-print-WASM_MSG_CFLAGS)"
+[ -n "$MSG" ] || { echo "oracle.sh: WASM_MSG_CFLAGS came back empty - has the build been renamed again?" >&2; exit 1; }
 
 run() { # name cwd build args...
     local name="$1" dir="$2" b="$3"; shift 3
-    node "$here/structgen.mjs" --clang "$CLANG" --cwd "$dir" --build "$b" "$@" --ts "$out/node/$name.ts"
-    "$here/build/structgen" --cwd "$dir" --build "$b" "$@" --ts "$out/c/$name.ts"
+    node "$sg/structgen.mjs" --clang "$CLANG" --cwd "$dir" --build "$b" "$@" --ts "$out/node/$name.ts"
+    "$sg/build/structgen" --cwd "$dir" --build "$b" "$@" --ts "$out/c/$name.ts"
 }
-run game_rules "$root/c" "rules=$RULES" --header game.h --root Game
+run game_msg "$root/c" "msg=$MSG" --header game.h --root Game
 run game_bots "$root/c" "bots=$BOTS" --header game.h --root Game
-run kinds "$here/test" "wasm=" --header kinds.h --root Kinds
+run kinds "$sg/test" "wasm=" --header kinds.h --root Kinds
 run anim "$root/c" "bots=$BOTS" --header anim_plan.h --header legal.h \
     --root AnimPlan --root AnimBeats --root AnimEvent --root LegalMoves
 if diff -r "$out/node" "$out/c"; then

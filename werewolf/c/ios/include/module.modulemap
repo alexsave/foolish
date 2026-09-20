@@ -1,0 +1,8 @@
+// Clang module for the werewolf C bridge. Bundled into Werewolf.xcframework by
+// `make ios-lib` (xcodebuild -create-xcframework copies this whole headers
+// directory), which lets Swift `import CWerewolf` and call the wwi_* API
+// directly (sdk/swift/Kernel.swift).
+module CWerewolf {
+    header "ww_api.h"
+    export *
+}

@@ -1,0 +1,65 @@
+# werewolf's portable gate, running from the monorepo root.
+#
+# WHY THIS FILE EXISTS RATHER THAN werewolf/.github/workflows/kernel.yml, which
+# is the file it was lifted from and which is still sitting there: GitHub reads
+# workflows from the REPOSITORY ROOT'S .github/workflows only. A workflow in a
+# subdirectory is not a workflow, it is a YAML file. So the moment werewolf came
+# in under werewolf/, its entire CI silently stopped existing - no error, no
+# skipped run, just a product whose tests nobody runs any more.
+#
+# That is the same shape as the bug deploy_paths_validation.test.ts was written
+# for: not a red check, an ABSENT one. A monorepo creates it once per product
+# brought in, so it is worth being loud about here.
+#
+# werewolf/.github/workflows/kernel.yml is deliberately left in place: werewolf
+# is still its own repo at ~/Dev/werewolf until the owner retires it, and that
+# file is what gates it there.
+#
+# What this cannot run is the simulator half (werewolf/ios/scripts/mac_tests.sh),
+# for the same reason werewolf's own copy could not: macOS runners bill at 10x
+# Linux. The C suite runs first so a bridge failure names an assertion rather
+# than an hour of Swift.
+name: werewolf
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'werewolf/**'
+      # The two primitives werewolf compiles out of shared/, and the .github
+      # entry so a change to this gate runs this gate.
+      - 'shared/c/**'
+      - '.github/workflows/werewolf.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'werewolf/**'
+      - 'shared/c/**'
+      - '.github/workflows/werewolf.yml'
+  workflow_dispatch: {}
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: werewolf
+    steps:
+      - uses: actions/checkout@v4
+      # 2,390 kernel assertions plus the 115 the Swift-visible bridge answers
+      # for. Both come out of `make -C c tests`, which builds deal_rng.c and
+      # sha256.c from ../../shared/c - so this lane is also the check that the
+      # shared half still compiles for a second product, under -Werror.
+      - name: kernel + bridge
+        run: make -C c tests
+      # The sanitizers are a SEPARATE run and not a flag on the one above,
+      # because they change codegen: the point of the plain build is that the
+      # code that ships is the code that was tested, and the point of this one is
+      # that the decoder never reads past a truncated buffer. Both, every time.
+      - name: the same suite under ASan + UBSan
+        run: make -C c tests-asan
+      # The source half of the release gate. A shipped build must offer no way to
+      # choose which seat you are - in this game that is choosing to be the wolf.
+      # The binary half needs Xcode and runs from ios/scripts/mac_tests.sh.
+      - name: release gate (source)
+        run: ios/scripts/release_gate.sh

@@ -68,10 +68,19 @@ on:
       # comment is for.
       - 'c/src/**'
       - 'tools/structgen/**'
-      # tools/llvm.mk is where structgen's libclang comes from now, shared with
-      # tools/datagen. A deploy runs gen.sh, and gen.sh cannot build the
-      # generator without it.
-      - 'tools/llvm.mk'
+      # AND THE SHARED HALF OF BOTH, because this repo holds two products now.
+      # The generator, its libclang driver (llvm.mk) and datagen live in
+      # shared/tools; sha256.h and deal_rng.h - which the layout is computed
+      # THROUGH, since game.h and msg_wire.h include them - live in shared/c.
+      # Neither is under a path above any more.
+      #
+      # This is the same failure as the 'supabase/**' one at the top of this
+      # list, and a monorepo makes it likelier, not less: a path filter that
+      # matches nothing is indistinguishable from one that matches nothing
+      # RELEVANT. deploy_paths_validation.test.ts now asserts every entry here
+      # names something that exists, so a move cannot leave a dead glob behind.
+      - 'shared/c/**'
+      - 'shared/tools/**'
   workflow_dispatch: {}
 
 # Never let two deploys race; queue instead of cancelling a push mid-flight.

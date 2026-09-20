@@ -21,7 +21,7 @@
 //      doing it are named below, each with the reason, by `file#function`.
 //
 // Out of scope by path:
-//   - sdk/ts/gen/ and tools/structgen/: the generated modules, and structgen
+//   - sdk/ts/gen/, tools/structgen/ and shared/tools/: the generated modules, and structgen
 //     itself with its tests, which hold the generated accessors to the C layouts
 //     byte for byte; the one place allowed to know layouts.
 //   - c/: the kernel itself.
@@ -38,7 +38,7 @@ import ts from 'typescript';
 const REPO = resolve(import.meta.dirname, '..');
 const ROOTS = ['server', 'sdk', 'src', 'e2e', 'scripts', 'tools'];
 const SKIP_DIRS = new Set(['node_modules', 'build', '.next', 'fixtures']);
-const GENERATED = ['sdk/ts/gen/', 'tools/structgen/'];
+const GENERATED = ['sdk/ts/gen/', 'tools/structgen/', 'shared/tools/'];
 
 function sources(): string[] {
     const out: string[] = [];
@@ -165,7 +165,7 @@ test('the walk reads the product tree (the checks are not vacuous)', () => {
     for (const f of ['sdk/ts/wasm/bots.ts', 'sdk/ts/table/server_table.ts', 'src/app/providers.tsx', 'e2e/table_no_game_object.test.ts']) {
         assert.ok(files.includes(f), `the walk reaches ${f}`);
     }
-    assert.ok(!files.some((f) => f.startsWith('sdk/ts/gen/') || f.startsWith('tools/structgen/') || f.startsWith('offlinefun/') || f.startsWith('c/')), 'generated, structgen, kernel and offlinefun files are out');
+    assert.ok(!files.some((f) => f.startsWith('sdk/ts/gen/') || f.startsWith('tools/structgen/') || f.startsWith('shared/tools/') || f.startsWith('offlinefun/') || f.startsWith('c/')), 'generated, structgen, kernel and offlinefun files are out');
 });
 
 test('the detectors see what they are for', () => {
