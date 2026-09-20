@@ -71,12 +71,14 @@ def main() -> int:
             problems.append(f"line {line}: device uses the UNSCOPED structure but is inside a .sv")
 
     # --- the document has to be balanced at all --------------------------
-    body = s[s.find('<body>'):]
+    off = s.find('<body>')
+    base = s[:off].count('\n')          # absolute lines, not body-relative
+    body = s[off:]
     depth = 0
     for m in re.finditer(r'<div\b|</div>', body):
         depth += 1 if m.group(0).startswith('<div') else -1
         if depth < 0:
-            problems.append(f"an extra </div> at line {body[:m.start()].count(chr(10)) + 1}")
+            problems.append(f"an extra </div> at line {base + body[:m.start()].count(chr(10)) + 1}")
             break
     else:
         if depth:
