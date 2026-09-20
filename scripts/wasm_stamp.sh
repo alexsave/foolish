@@ -63,8 +63,17 @@ sha() {  # one file -> bare hex, on both a Mac and CI's Linux
 #     bytes this text is toolchain-independent (the hash is spelling-free and CI
 #     pins LLVM 22 for gen.sh --check), so it is safe to stamp.
 sources() {
-  make -C c -s print-wasm-src | tr ' ' '\n' | sed '/^$/d' | sed 's|^|c/|'
-  ls c/src/*.h c/wasm/include/* 2>/dev/null || true
+  # PATHS COME BACK REPO-RELATIVE OR NOT AT ALL. The Makefile's lists are
+  # relative to c/, so this prefixes them with `c/` - and since the two shared
+  # primitives moved, two of them come back as `../shared/c/*.c` and that prefix
+  # produced `c/../shared/c/sha256.c`. That path OPENS FINE, so the hash stayed
+  # honest and nothing looked wrong; but check_wasm_freshness.sh `comm`s this
+  # list against `git diff --name-only`, which says `shared/c/sha256.c`, and two
+  # spellings of one file never match. The gate would have gone on passing while
+  # quietly watching neither. So collapse `c/../` the same way the structgen
+  # line below collapses its own, and assert the result below.
+  make -C c -s print-wasm-src | tr ' ' '\n' | sed '/^$/d' | sed 's|^|c/|' | sed 's|^c/\.\./||'
+  ls c/src/*.h c/wasm/include/* shared/c/*.h 2>/dev/null || true
   # structgen's own source and specs, because the layout hash compiled into
   # every module comes from them. NOT the modules it writes: those are build
   # outputs now, ignored and absent from a fresh checkout, and hashing them
@@ -90,11 +99,13 @@ sources() {
   # same move as `make -C c -s print-wasm-src` above: the build system is asked,
   # not mirrored. Paths come back relative to tools/structgen, hence the
   # rewrite of the ../sgcommon ones.
-  make -s -C tools/structgen -f print.mk -f Makefile \
+  make -s -C shared/tools/structgen -f print.mk -f Makefile \
        sg-print-SG_SRC sg-print-SG_HDR sg-print-SGC_SRC sg-print-SGC_HDR \
     | tr ' ' '\n' | sed '/^$/d' \
-    | sed 's|^|tools/structgen/|' | sed 's|tools/structgen/\.\./|tools/|'
-  ls tools/llvm.mk tools/structgen/specs/*.args
+    | sed 's|^|shared/tools/structgen/|' | sed 's|shared/tools/structgen/\.\./|shared/tools/|'
+  # llvm.mk moved with the generator; the specs did NOT - they are this
+  # product's description of its own structs and stay beside it.
+  ls shared/tools/llvm.mk tools/structgen/specs/*.args
 }
 
 # The hash covers the source CONTENTS plus the c/Makefile lines that decide what
@@ -120,10 +131,26 @@ hash_all() {
     | cut -d' ' -f1
 }
 
+# EVERY PATH IN THE LIST MUST OPEN, FROM THE REPO ROOT. The list is compared
+# against `git diff --name-only` output, so a path that is merely openable by
+# some other spelling (`c/../shared/...`) is a path this gate has stopped
+# watching. A move is exactly when that happens, and it is silent, so it is
+# checked rather than assumed.
+check_paths() {
+  bad=$(sources | sort -u | while IFS= read -r f; do [ -e "$f" ] || echo "$f"; done)
+  [ -z "$bad" ] && return 0
+  echo "wasm_stamp.sh: these source paths do not exist from the repo root:" >&2
+  printf '  %s\n' $bad >&2
+  echo "(a path that cannot be opened here cannot be matched against git's" >&2
+  echo " paths either - check_wasm_freshness.sh would watch nothing)" >&2
+  return 1
+}
+
 case "${1:---hash}" in
-  --list) sources | sort -u ;;
-  --hash) hash_all ;;
+  --list) check_paths && sources | sort -u ;;
+  --hash) check_paths && hash_all ;;
   --write)
+    check_paths || exit 1
     h=$(hash_all)
     n=$(sources | sort -u | wc -l | tr -d ' ')
     cat > "$STAMP" <<EOF

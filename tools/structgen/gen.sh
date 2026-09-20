@@ -69,6 +69,13 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 
+# THE GENERATOR IS SHARED, ITS CONFIGURATION IS NOT. structgen and datagen build
+# for both products in this monorepo and live in shared/tools; what they are
+# POINTED AT - specs/*.args, this script, and the product test fixtures - is
+# foolish's and stays beside it. So two roots below: "$sg" is the tool, "$here"
+# is this product's configuration of it.
+sg="$root/shared/tools/structgen"
+
 # The output directories, repo-relative, as ONE fact. `gen.sh --print-dirs`
 # answers with them and needs no toolchain, so the gate that refuses a tracked
 # structgen output (e2e/validation/generated_outputs_validation.test.ts) asks
@@ -81,9 +88,9 @@ tools/structgen/gen"
 if [ "${1:-}" = "--print-dirs" ]; then printf '%s\n' "$OUT_DIRS"; exit 0; fi
 
 CLANG="${WASM_CC:-/opt/homebrew/opt/llvm/bin/clang}"
-make -s -C "$here" build/structgen
-SG="$here/build/structgen"
-flags() { make -s -C "$root/c" -f Makefile -f "$here/print.mk" "sg-print-$1"; }
+make -s -C "$sg" build/structgen
+SG="$sg/build/structgen"
+flags() { make -s -C "$root/c" -f Makefile -f "$sg/print.mk" "sg-print-$1"; }
 spec() { grep -v '^[[:space:]]*#' "$here/specs/$1.args"; }
 BOTS="$(flags WASM_BOT_CFLAGS)"
 # …and the same four as absolute paths, read back from the one list above so
@@ -173,12 +180,12 @@ set +f
 "$SG" "${ANDROID[@]}" --build "android=-O2 -Isrc" --target "$ANDROID_TRIPLE" \
   --kotlin "$kotlin/Kernel.kt" --kotlin-package cards.foolish.kernel
 
-# ---- the translated strings (tools/datagen) ---------------------------------
+# ---- the translated strings (shared/tools/datagen) --------------------------
 #
 # A SIBLING TOOL, not a structgen flag. structgen asks clang for shape - every
 # offset, size and stride - and never reads a value; datagen asks for contents
 # and never reads a layout. They share this driver, tools/llvm.mk and the
-# libclang it finds, and nothing else. See tools/datagen/datagen.c.
+# libclang it finds, and nothing else. See shared/tools/datagen/datagen.c.
 #
 # The source is c/i18n: one keys.h, one registry, and one strings_<code>.c per
 # language. NONE OF IT IS COMPILED INTO ANYTHING SHIPPED - c/i18n is outside
@@ -192,8 +199,8 @@ set +f
 # dynamic import keeps every export of its target alive in the web bundle
 # whatever the importer uses (src/wasm/msgKernel.ts learned this the expensive
 # way), so the module the site imports for a language has to BE one language.
-make -s -C "$root/tools/datagen" build/datagen
-DG="$root/tools/datagen/build/datagen"
+make -s -C "$root/shared/tools/datagen" build/datagen
+DG="$root/shared/tools/datagen/build/datagen"
 i18n_ts="$prod/i18n"; i18n_swift="$swift/i18n"; i18n_kotlin="$kotlin/i18n"
 mkdir -p "$i18n_ts" "$i18n_swift" "$i18n_kotlin"
 dg() { "$DG" --cwd "$root/c/i18n" "$@"; }
@@ -230,8 +237,8 @@ for code in $codes; do
   # Every language carries every key, so the strict form is what runs here.
   # datagen also has --require-complete-if TABLE.COLUMN, which requires only the
   # slots a companion column marks - the shape for a table that is allowed to be
-  # partly translated. Nothing needs it today (tools/datagen/test/cli.sh covers
-  # it), and the day a key lands that cannot be translated in one commit, it is
+  # partly translated. Nothing needs it today (shared/tools/datagen/test/cli.sh
+  # covers it), and the day a key lands that cannot be translated in one commit, it is
   # the flag to reach for instead of letting a hole through unnoticed.
   dg --header "strings_$code.c" --table "FS_STRINGS_$up" --labels "FS_STRINGS_$up.0=FS_KEY_NAME" \
      --require-complete --name "FoolishStrings$cap" \
@@ -240,8 +247,8 @@ for code in $codes; do
 done
 
 # Genericity fixtures (test/verify.test.ts).
-"$SG" --cwd "$here/test" --header kinds.h --root Kinds --build wasm= --const K_ --const KFLAG_ --ts "$fixtures/kinds.ts"
-"$SG" --cwd "$here/test" --header snap.h --root Snap --root SPtr --build wasm= --snapshot Snap --snapshot SPtr --snapshot-only \
+"$SG" --cwd "$sg/test" --header kinds.h --root Kinds --build wasm= --const K_ --const KFLAG_ --ts "$fixtures/kinds.ts"
+"$SG" --cwd "$sg/test" --header snap.h --root Snap --root SPtr --build wasm= --snapshot Snap --snapshot SPtr --snapshot-only \
   --count Snap.pairs=n_pairs --count Snap.items=n_items --count Snap.text=n_text --count SItem.text=len --writer Snap \
   --count SPtr.vals=n_vals --count SPtr.items=n_items --count SPtr.name=name_len --count SPtr.none=n_none --ts "$fixtures/snap.ts"
 
@@ -261,7 +268,7 @@ fi
 [ "${1:-}" = "--verify-wasm" ] || exit 0
 
 verify_link() {
-  "$CLANG" --target=wasm32 -nostdlib -ffreestanding -O1 -I"$here/test" -I"$root/c/src" -isystem "$root/c/wasm/include" \
+  "$CLANG" --target=wasm32 -nostdlib -ffreestanding -O1 -I"$here/test" -I"$sg/test" -I"$root/c/src" -isystem "$root/c/wasm/include" \
     -D_Thread_local= -DMAX_LOG_PAIRS=64 -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
     -Wl,--no-entry -Wl,--export-all "$here/test/verify.c" -o "$1"
 }

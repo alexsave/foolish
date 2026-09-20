@@ -1,2 +1,0 @@
-sg-print-%:
-	@echo $($*)

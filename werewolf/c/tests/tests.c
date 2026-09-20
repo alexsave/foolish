@@ -18,7 +18,7 @@
 #include "../src/ww_wire.h"
 #include "../src/ww_seat.h"
 #include "../src/ww_lobby.h"
-#include "../src/deal_rng.h"
+#include "deal_rng.h"   // ../../shared/c, via -I in c/Makefile
 #include <stdio.h>
 #include <string.h>
 

@@ -3,17 +3,28 @@ CC      ?= clang
 # -Werror because this kernel has no second implementation to cross-check it
 # against. The fork could catch a mistake here by disagreeing with its wasm
 # build; until this one has two engines, the compiler is the only other reader.
-CFLAGS  ?= -O2 -Wall -Wextra -Werror -Wno-unused-parameter -Isrc
+
+# The two primitives are no longer inherited COPIES - they are the monorepo's
+# one copy, compiled from ../../shared/c by this product and by foolish alike.
+# Kept as a variable rather than spelled at each use so the depth of the path
+# appears once.
+SHARED  := ../../shared/c
+
+CFLAGS  ?= -O2 -Wall -Wextra -Werror -Wno-unused-parameter -Isrc -I$(SHARED)
 LDFLAGS ?=
 
-# The kernel. Two inherited primitives (deal_rng, sha256) and five werewolf files,
+# The kernel. Two shared primitives (deal_rng, sha256) and five werewolf files,
 # and that is the whole domain: roles from a seed, the night, the envelope those
 # cross the thread in, which seat this device is on a bubble's roster, and the
 # lobby that decides when a seed becomes roles.
-CORE_SRC := src/deal_rng.c src/sha256.c \
+CORE_SRC := $(SHARED)/deal_rng.c $(SHARED)/sha256.c \
             src/ww_game.c src/ww_view.c src/ww_wire.c src/ww_seat.c \
             src/ww_lobby.c
-CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
+# By BASENAME, not by stripping a fixed prefix: the sources now come from two
+# directories, and `$(CORE_SRC:src/%.c=build/%.o)` silently left the shared ones
+# as .c paths in the link line - which links, slowly and from source, and hides
+# that the pattern rule below never fired.
+CORE_OBJ := $(addprefix build/,$(notdir $(CORE_SRC:.c=.o)))
 
 .PHONY: all tests tests-asan clean print-core ios-lib ios-smoke
 all: build/ww_tests
@@ -21,11 +32,18 @@ all: build/ww_tests
 print-core:
 	@echo $(CORE_SRC)
 
-build/%.o: src/%.c $(wildcard src/*.h)
+build/%.o: src/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h)
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c $< -o $@
 
-build/ww_tests: $(CORE_OBJ) tests/tests.c $(wildcard src/*.h)
+# The same rule for the shared half. Two rules rather than a vpath, because a
+# vpath would also make `src/sha256.c` resolve again from somewhere else the day
+# one comes back - and the whole point of the move is that there is one.
+build/%.o: $(SHARED)/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h)
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/ww_tests: $(CORE_OBJ) tests/tests.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h)
 	@mkdir -p build
 	$(CC) $(CFLAGS) tests/tests.c $(CORE_OBJ) -o $@ $(LDFLAGS)
 
@@ -41,7 +59,7 @@ tests: build/ww_tests build/ios_smoke
 # objects above, because the sanitizers change codegen and mixing is how a clean
 # run comes from a stale object.
 ASAN_CFLAGS := -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
-               -Wall -Wextra -Werror -Wno-unused-parameter -Isrc
+               -Wall -Wextra -Werror -Wno-unused-parameter -Isrc -I$(SHARED)
 tests-asan:
 	@mkdir -p build
 	$(CC) $(ASAN_CFLAGS) $(CORE_SRC) tests/tests.c -o build/ww_tests_asan
@@ -59,7 +77,7 @@ tests-asan:
 IOS_MIN_VERSION := 15.0
 IOS_BRIDGE_SRC  := ios/ios_api.c
 IOS_SRC         := $(CORE_SRC) $(IOS_BRIDGE_SRC)
-IOS_CFLAGS      := -O2 -Isrc -Iios/include -Wall -Wextra -Werror -Wno-unused-parameter
+IOS_CFLAGS      := -O2 -Isrc -I$(SHARED) -Iios/include -Wall -Wextra -Werror -Wno-unused-parameter
 
 # $(1)=target-triple  $(2)=sdk name  $(3)=output dir
 define IOS_SLICE
@@ -92,7 +110,7 @@ ios-lib:
 
 # The bridge, built and run WITHOUT a Mac: the portable proof that
 # deal -> night -> view -> seal -> replay runs through the Swift entry points.
-build/ios_smoke: $(IOS_SRC) ios/ios_api_smoke.c $(wildcard src/*.h) ios/include/ww_api.h
+build/ios_smoke: $(IOS_SRC) ios/ios_api_smoke.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) ios/include/ww_api.h
 	@mkdir -p build
 	$(CC) $(IOS_CFLAGS) $(IOS_SRC) ios/ios_api_smoke.c -o $@
 

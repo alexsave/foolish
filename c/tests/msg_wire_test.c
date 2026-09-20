@@ -29,7 +29,7 @@
 #include "../src/awire.h"
 #include "../src/bot_roster.h"
 #include "../src/msg_wire.h"
-#include "../src/sha256.h"
+#include "sha256.h"      // ../../shared/c, via -I in c/Makefile
 #include "../src/replay.h"
 #include "../src/replay_steps.h"
 #include "../wasm/wire.h"

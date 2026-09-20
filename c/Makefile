@@ -1,5 +1,10 @@
 CC      ?= clang
 
+# THE TWO SHARED PRIMITIVES. sha256 and deal_rng are compiled from ../shared/c
+# by this product and by werewolf alike - a standard and a pure function, with
+# no game in either. Everything else under src/ is foolish's.
+SHARED  := ../shared/c
+
 # A literal comma, so $(filter-out) patterns can name a -Wl,--flag. Defined here
 # rather than beside its first user: := expands immediately, so a definition
 # further down the file silently expands to nothing at every earlier use, and
@@ -12,7 +17,7 @@ comma := ,
 # hot loops instead of being cross-translation-unit calls. ~1.5x faster cordite
 # eval, bit-identical play (verified: same mean_finish / win_rate / histogram,
 # CD_DIFFTEST clean). The win grows with player count.
-CFLAGS  ?= -O3 -ffast-math -flto -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Isrc -DACCELERATE_NEW_LAPACK
+CFLAGS  ?= -O3 -ffast-math -flto -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Isrc -I$(SHARED) -DACCELERATE_NEW_LAPACK
 ifeq ($(shell uname),Darwin)
   LDFLAGS ?= -lm -flto -framework Accelerate
 else
@@ -57,7 +62,7 @@ endif
 CFLAGS += -DCD_LEAFBOOK
 
 # The engine + all heuristic / Monte-Carlo bots. Linked into every binary.
-CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.c \
+CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/replay_steps.c \
             src/replay_extras.c src/view.c src/awire.c \
             src/evwire.c src/random_strategy.c src/espresso_strategy.c \
             src/handwritten_strategy.c src/robusta_strategy.c \
@@ -72,9 +77,13 @@ CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.
             src/octogen_strategy.c src/torpex_strategy.c \
             src/torpex_value.c src/novichok_strategy.c \
             src/bot_knobs.c src/bot_roster.c src/bot_drive.c \
-            src/sha256.c src/msg_wire.c src/msg_expand.c src/anim_plan.c \
+            $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c src/anim_plan.c \
             src/analyse.c src/roster.c src/table.c src/client_table.c src/card.c
-CORE_OBJ := $(CORE_SRC:src/%.c=build/%.o)
+# BY BASENAME, not by stripping src/: the sources come from two directories now,
+# and the old `$(CORE_SRC:src/%.c=build/%.o)` left the shared pair as .c paths -
+# which still links, from source, silently, while the pattern rule below never
+# fires.
+CORE_OBJ := $(addprefix build/,$(notdir $(CORE_SRC:.c=.o)))
 
 .PHONY: all clean tests print-core print-wasm-src
 # Emit the core engine+strategy source list (used by tools/tt_divergence.sh to
@@ -96,7 +105,11 @@ all: build/cnitro_eval build/cnitro_elo build/cnitro_replay build/cnitro_showcas
 # Blanket header dependency: a struct-layout change in any header must
 # rebuild every object, or the binaries mix layouts (observed: SimState
 # edits producing garbage evals until a make clean).
-build/%.o: src/%.c $(wildcard src/*.h)
+build/%.o: src/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h)
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/%.o: $(SHARED)/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h)
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -117,7 +130,7 @@ build/cnitro_gen: $(CORE_OBJ) build/main_gen.o
 
 # Same blanket header dependency as src objects: a struct-layout change must
 # rebuild the tests or the binary mixes layouts (observed: 1-byte Card pack).
-build/tests.o: tests/tests.c $(wildcard src/*.h)
+build/tests.o: tests/tests.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h)
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -155,7 +168,7 @@ tests: build/cnitro_tests
 # for the same reason), and that check flags the intent rather than a bug.
 ASAN_CFLAGS := -fsanitize=address,undefined -fno-sanitize=object-size \
                -fno-omit-frame-pointer -fno-sanitize-recover=undefined \
-               -g -O1 -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Isrc -DCD_LEAFBOOK
+               -g -O1 -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -Isrc -I$(SHARED) -DCD_LEAFBOOK
 .PHONY: tests-asan
 tests-asan:
 	@mkdir -p build
@@ -297,9 +310,9 @@ IOS_CAPS   := -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_MOVE_CARDS=28 \
 IOS_BRIDGE_SRC := ios/ios_api.c ios/ios_api_view.c ios/ios_api_play.c \
                   ios/ios_api_anim.c ios/ios_api_replay.c \
                   ios/ios_api_identity.c ios/ios_api_msg.c
-IOS_CORE_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c \
+IOS_CORE_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c \
                 src/replay_steps.c src/replay_extras.c src/view.c src/awire.c \
-                src/evwire.c src/sha256.c src/msg_wire.c src/msg_expand.c \
+                src/evwire.c $(SHARED)/sha256.c src/msg_wire.c src/msg_expand.c \
                 src/anim_plan.c src/roster.c src/card.c src/client_table.c \
                 $(IOS_BRIDGE_SRC)
 IOS_BOTS_SRC := $(filter-out $(IOS_CORE_SRC),$(CORE_SRC)) ios/ios_bots_api.c
@@ -312,7 +325,7 @@ IOS_SRC    := $(IOS_CORE_SRC) $(IOS_BOTS_SRC)
 # "Multiple commands produce". Nested, the bots map lands at
 # include/CFoolishBots/module.modulemap, and the FoolishBots target names that
 # directory in HEADER_SEARCH_PATHS (ios/project.yml).
-IOS_CFLAGS := -O2 -Isrc -Iios/include -Iios/include-bots/CFoolishBots $(IOS_CAPS)
+IOS_CFLAGS := -O2 -Isrc -I$(SHARED) -Iios/include -Iios/include-bots/CFoolishBots $(IOS_CAPS)
 
 # $(1)=target-triple  $(2)=sdk name  $(3)=output dir  $(4)=lib name  $(5)=sources
 define IOS_BUILD_SLICE
@@ -473,11 +486,11 @@ ios-goldens:
 # turns on the (otherwise compiled-out) replay coder peak counters.
 # `make l1-measure GAMES=1500` runs the sweep across seeds.
 GAMES ?= 1500
-build/l1_measure: tests/l1_measure.c $(wildcard src/*.h) src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c src/random_strategy.c src/handwritten_strategy.c
+build/l1_measure: tests/l1_measure.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/view.c src/random_strategy.c src/handwritten_strategy.c
 	@mkdir -p build
-	$(CC) -O2 -Isrc -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LOGS=2048 \
+	$(CC) -O2 -Isrc -I$(SHARED) -DMAX_LOG_PAIRS=64 -DMAX_BATTLES=64 -DMAX_LOGS=2048 \
 	  -DMAX_LEGAL_MOVES=16384 -DMAX_MOVE_CARDS=52 -DREPLAY_STATS \
-	  src/game.c src/deal_rng.c src/legal.c src/replay.c src/view.c \
+	  src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/view.c \
 	  src/random_strategy.c src/handwritten_strategy.c tests/l1_measure.c -o $@ -lm
 .PHONY: l1-measure
 l1-measure: build/l1_measure
@@ -491,7 +504,7 @@ l1-measure: build/l1_measure
 # The build_book pass compiles WITHOUT -DCD_LEAFBOOK (it builds the book by
 # direct solves); verify_book compiles WITH it to exercise the engine probe.
 LEAFBOOK_K ?= 4
-LEAFBOOK_CFLAGS := -O2 -ffast-math -Isrc -Wno-deprecated-declarations -DCD_TT_BITS=12
+LEAFBOOK_CFLAGS := -O2 -ffast-math -Isrc -I$(SHARED) -Wno-deprecated-declarations -DCD_TT_BITS=12
 .PHONY: leafbook leafbook-gate leafbook-verify
 leafbook:
 	@mkdir -p build
@@ -499,7 +512,7 @@ leafbook:
 	./build/leafbook_build > src/leafbook_data.h
 leafbook-gate:
 	@mkdir -p build
-	$(CC) -O2 -Isrc tools/leafbook/enumerate.c -o build/leafbook_enum && ./build/leafbook_enum
+	$(CC) -O2 -Isrc -I$(SHARED) tools/leafbook/enumerate.c -o build/leafbook_enum && ./build/leafbook_enum
 leafbook-verify:
 	@mkdir -p build
 	$(CC) $(LEAFBOOK_CFLAGS) -DCD_LEAFBOOK $(CORE_SRC) tools/leafbook/verify_book.c -o build/leafbook_verify -lm
@@ -657,7 +670,7 @@ endef
 # letting the local compiler decide what the shipped artifact requires.
 WASM_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory \
               -mno-nontrapping-fptoint \
-              -isystem wasm/include -Isrc -D_Thread_local= -DMAX_LOG_PAIRS=64 \
+              -isystem wasm/include -Isrc -I$(SHARED) -D_Thread_local= -DMAX_LOG_PAIRS=64 \
               -DMAX_LEGAL_MOVES=4096 -DMAX_MOVE_CARDS=28 -DMAX_BATTLES=64 \
               -DWORLD_LOG_CAP=40 \
               -DREPLAY_REC_CAP=4096 -DWASM_REPLAY_IO_CAP=32768 -DMAX_SNAPS=16 \
@@ -760,9 +773,13 @@ WASM_API_EXPORTS := \
 # target whose prerequisite was recreated inside the same second. The file
 # targets (build/bots.wasm, used directly by tools/wasm_anatomy) keep the plain
 # mtime rules, with wasm_api.o depending on the hash file.
-STRUCTGEN_DIR  := ../tools/structgen
+# TWO DIRECTORIES, because the generator is shared and its configuration is not.
+# STRUCTGEN_DIR is the tool, built once for both products; SG_SPEC_DIR is this
+# product's description of its own structs and stays beside the product.
+STRUCTGEN_DIR  := ../shared/tools/structgen
+SG_SPEC_DIR    := ../tools/structgen/specs
 STRUCTGEN      := $(STRUCTGEN_DIR)/build/structgen
-SG_GAME_SPEC   := $(STRUCTGEN_DIR)/specs/game_layout.args
+SG_GAME_SPEC   := $(SG_SPEC_DIR)/game_layout.args
 SG_GAME_ARGS    = $(shell grep -v '^[[:space:]]*\#' $(SG_GAME_SPEC))
 
 # EVERY source and header, not structgen.c alone. structgen used to be one
@@ -815,7 +832,7 @@ sg_settle = @cmp -s $(2)/.layout build/layout/$(1).hash || { \
 # exactly the failure this file refuses to ship.
 IOS_LAYOUT_TRIPLE  := arm64-apple-ios$(IOS_MIN_VERSION)
 IOS_LAYOUT_TRIPLES := $(IOS_LAYOUT_TRIPLE) arm64-apple-ios$(IOS_MIN_VERSION)-simulator x86_64-apple-ios$(IOS_MIN_VERSION)-simulator
-SG_IOS_SPEC := $(STRUCTGEN_DIR)/specs/ios_layout.args
+SG_IOS_SPEC := $(SG_SPEC_DIR)/ios_layout.args
 SG_IOS_ARGS  = $(shell grep -v '^[[:space:]]*\#' $(SG_IOS_SPEC))
 build/layout/ios.hash: $(STRUCTGEN) $(SG_IOS_SPEC) FORCE
 	@mkdir -p build/layout && \
@@ -1097,8 +1114,8 @@ WASM_RULES_FLAGS := $(filter-out -DMAX_LEGAL_MOVES=4096,$(WASM_FLAGS)) \
 # The one decoder that stays is not a replay: replay_decode_atoms_v6 is the FMSG
 # BODY codec (msg_wire.c calls it - a chain's body IS a v6 action run), so
 # opening a bubble needs it and it is not optional at any size.
-WASM_MSG_SRC := src/game.c src/deal_rng.c src/legal.c src/view.c src/awire.c \
-                src/evwire.c src/sha256.c src/msg_wire.c src/anim_plan.c \
+WASM_MSG_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/view.c src/awire.c \
+                src/evwire.c $(SHARED)/sha256.c src/msg_wire.c src/anim_plan.c \
                 src/replay.c src/replay_extras.c \
                 wasm/wasm_api.c wasm/wasm_msg_api.c
 
@@ -1139,15 +1156,19 @@ WASM_MSG_LDFLAGS := --target=wasm32 -nostdlib $(filter -Wl%,$(WASM_MSG_FLAGS))
 WASM_MSG_POSTOPT ?= $(if $(strip $(WASM_POSTOPT)),$(WASM_POSTOPT),-Oz)
 WASM_MSG_OBJ := $(addprefix build/msgobj/,$(notdir $(WASM_MSG_SRC:.c=.o)))
 
-build/msgobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+build/msgobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build/msgobj
 	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
-build/msgobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+build/msgobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build/msgobj
 	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
-build/msgobj/wasm_api.o: wasm/wasm_api.c build/layout/msg.hash $(wildcard src/*.h) $(wildcard wasm/*.h)
+build/msgobj/wasm_api.o: wasm/wasm_api.c build/layout/msg.hash $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build/msgobj
 	$(WASM_CC) $(WASM_MSG_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/msg.hash) -c $< -o $@
+
+build/msgobj/%.o: $(SHARED)/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build/msgobj
+	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
 
 build/msg.wasm: $(WASM_MSG_OBJ) wasm/msg_exports_check.mjs Makefile
 	@mkdir -p build
@@ -1215,9 +1236,9 @@ wasm-msg-size: build/msg.wasm
 # ("No available targets are compatible with triple wasm32"). It is WASM_CC=,
 # not CC=. CI ships the committed .gz rather than rebuilding, so the committed
 # artifact is the baseline to reproduce before you touch it.
-WASM_BOT_SRC := src/game.c src/deal_rng.c src/legal.c src/replay.c src/replay_steps.c \
+WASM_BOT_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/replay_steps.c \
                 src/replay_extras.c src/view.c src/awire.c \
-                src/evwire.c src/sha256.c src/msg_wire.c src/anim_plan.c \
+                src/evwire.c $(SHARED)/sha256.c src/msg_wire.c src/anim_plan.c \
                 src/random_strategy.c \
                 src/espresso_strategy.c src/handwritten_strategy.c \
                 src/robusta_strategy.c src/firecracker_strategy.c \
@@ -1298,15 +1319,19 @@ WASM_BOT_O3_OBJ := $(addprefix build/botobj/,$(notdir $(WASM_BOT_O3_SRC:.c=.o)))
 build/botobj/%.o: WASM_BOT_FILE_OPT := -Oz
 $(WASM_BOT_O3_OBJ): WASM_BOT_FILE_OPT := -O3
 
-build/botobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+build/botobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build/botobj
 	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -c $< -o $@
-build/botobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard wasm/*.h)
+build/botobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build/botobj
 	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -c $< -o $@
-build/botobj/wasm_api.o: wasm/wasm_api.c build/layout/bots.hash $(wildcard src/*.h) $(wildcard wasm/*.h)
+build/botobj/wasm_api.o: wasm/wasm_api.c build/layout/bots.hash $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
 	@mkdir -p build/botobj
 	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -DSG_LAYOUT_HASH=$$(cat build/layout/bots.hash) -c $< -o $@
+
+build/botobj/%.o: $(SHARED)/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
+	@mkdir -p build/botobj
+	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -c $< -o $@
 
 WASM_BOTS_SHIPPED_EXPORTS = $(filter-out $(WASM_BOTS_UNSHIPPED_API),$(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS)) \
                             $(WASM_TABLE_EXPORTS) $(WASM_CLIENT_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS)
@@ -1494,7 +1519,7 @@ wasm-oracle-mt: build/layout/oracle-mt.hash
 # runtime. Objects (and their .gcno/.gcda) land in covbuild/ where gcovr finds
 # them recursively. Tune the floors with COV_LINE_MIN / COV_BRANCH_MIN.
 COV_CC         ?= gcc
-COV_FLAGS      := -O0 -g --coverage -Isrc -Wno-unused-parameter -Wno-deprecated-declarations
+COV_FLAGS      := -O0 -g --coverage -Isrc -I$(SHARED) -Wno-unused-parameter -Wno-deprecated-declarations
 COV_LINE_MIN   ?= 90
 COV_BRANCH_MIN ?= 74
 # THE WHOLE SHIPPED KERNEL, not three files of it.
@@ -1517,8 +1542,16 @@ COV_BRANCH_MIN ?= 74
 # coverage climbs; never lower one to make a red build pass.
 COV_KERNEL     := game legal replay replay_steps replay_extras view awire evwire \
                   msg_wire msg_expand anim_plan table client_table roster card \
-                  deal_rng sha256 bot_drive bot_roster analyse
-COV_FILTERS    := $(foreach f,$(COV_KERNEL),--filter 'src/$(f)\.c')
+                  bot_drive bot_roster analyse
+# deal_rng and sha256 are in the SAME gate, from their new home. They left this
+# list's `src/` prefix behind when they moved to shared/, and a filter that no
+# longer matches does not fail - gcovr simply reports the file it cannot find as
+# nothing at all, which is how a shared primitive quietly stops being measured.
+# Anchored loosely (.*) because gcovr matches these against the path it resolved,
+# which is absolute.
+COV_SHARED     := deal_rng sha256
+COV_FILTERS    := $(foreach f,$(COV_KERNEL),--filter 'src/$(f)\.c') \
+                  $(foreach f,$(COV_SHARED),--filter '.*shared/c/$(f)\.c')
 
 .PHONY: coverage
 coverage:
