@@ -35,8 +35,8 @@ def check(path: Path):
         bad.append("a <template> is never closed - its view will render as nothing")
 
     # every switcher button must have a view to mount, and vice versa
-    btn = set(re.findall(r'<button data-view="([a-z]+)"', s))
-    tpl = set(re.findall(r'<template data-view="([a-z]+)"', s))
+    btn = set(re.findall(r'<button data-view="([\w-]+)"', s))
+    tpl = set(re.findall(r'<template data-view="([\w-]+)"', s))
     for v in btn - tpl:
         bad.append(f'button "{v}" has no <template data-view="{v}"> to mount')
     for v in tpl - btn:
