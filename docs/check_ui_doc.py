@@ -26,7 +26,10 @@ import sys
 from pathlib import Path
 
 SCOPED = ('class="grid"', 'class="bb"', 'class="thr"', 'class="scr"', 'class="in"')
-UNSCOPED = ('class="shields"', 'class="inner"', 'class="night', 'class="bub"')
+# NOTE the closing quotes: an earlier version used a bare 'class="night' prefix,
+# which happily matched class="nightglow" and reported four false positives.
+UNSCOPED = ('class="shields"', 'class="inner"', 'class="night"',
+            'class="night ', 'class="bub"')
 
 DOC = Path(__file__).resolve().parent / "UI.html"
 
