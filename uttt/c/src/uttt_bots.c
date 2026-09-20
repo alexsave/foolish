@@ -2,7 +2,7 @@
 #include <string.h>
 
 const char *UTTT_BOT_NAME[BOT_COUNT] =
-    { "random", "biro", "roller", "crn", "bias", "nib" };
+    { "random", "biro", "roller", "crn", "bias", "nib", "sniper" };
 
 static uint32_t rnd(uint64_t *s, uint32_t n)
 {
@@ -70,7 +70,7 @@ static int score_move(const UtttGame *g, uint8_t mv)
  * otherwise, which keeps the sample honest while steering it somewhere
  * plausible. A purely greedy playout is deterministic and therefore not a
  * sample at all. */
-static uint8_t playout(UtttGame *g, uint64_t *rs, int biased)
+static uint8_t playout(UtttGame *g, uint64_t *rs, int biased, int *plies)
 {
     uint8_t list[81];
     for (;;) {
@@ -90,6 +90,7 @@ static uint8_t playout(UtttGame *g, uint64_t *rs, int biased)
         }
         uttt_play(g, mv);
     }
+    if (plies) *plies = g->n_plies;
     return g->over;
 }
 
@@ -128,8 +129,17 @@ static int empties(const UtttGame *g)
 }
 
 /* ---------------------------------------------------------------------- mc */
+/* `speed`: a rollout that wins is worth MORE THE SOONER IT LANDS.
+ *
+ * Every other bot here scores a playout win/draw/loss and is indifferent to
+ * how long it took - which is right, because the object of the game is to
+ * win. The sniper wants the same win in fewer moves, so its rollout is worth
+ * 200 plus whatever is left of the board when it ends. The ordering of
+ * win over draw over loss is untouched (200..280 against 100 against 0), so
+ * it never trades a win away for a short game; it only breaks ties between
+ * wins, which is the whole of the difference. */
 static uint8_t mc_move(const UtttGame *g, int budget, uint64_t *rs,
-                       int crn, int biased, int endgame)
+                       int crn, int biased, int endgame, int speed)
 {
     uint8_t list[81];
     int n = uttt_legal(g, list);
@@ -162,8 +172,10 @@ static uint8_t mc_move(const UtttGame *g, int budget, uint64_t *rs,
             uint64_t s = crn ? base : (*rs += 0x9E3779B97F4A7C15ull);
             UtttGame t = *g;
             uttt_play(&t, list[i]);
-            uint8_t w = playout(&t, &s, biased);
-            score[i] += (w == me) ? 2 : (w == UTTT_DRAW ? 1 : 0);
+            int plies = 0;
+            uint8_t w = playout(&t, &s, biased, speed ? &plies : NULL);
+            if (w == me)            score[i] += speed ? 200 + (81 - plies) : 2;
+            else if (w == UTTT_DRAW) score[i] += speed ? 100 : 1;
         }
     }
     *rs += 0x9E3779B97F4A7C15ull;
@@ -200,10 +212,11 @@ uint8_t uttt_bot_move(UtttBot bot, const UtttGame *g, int budget, uint64_t *rs)
         }
         return bl[rnd(rs, (uint32_t)nb)];
     }
-    case BOT_ROLLER: return mc_move(g, budget, rs, 0, 0, 0);
-    case BOT_CRN:    return mc_move(g, budget, rs, 1, 0, 0);
-    case BOT_BIAS:   return mc_move(g, budget, rs, 0, 1, 0);
-    case BOT_NIB:    return mc_move(g, budget, rs, 1, 1, 1);
+    case BOT_ROLLER: return mc_move(g, budget, rs, 0, 0, 0, 0);
+    case BOT_CRN:    return mc_move(g, budget, rs, 1, 0, 0, 0);
+    case BOT_BIAS:   return mc_move(g, budget, rs, 0, 1, 0, 0);
+    case BOT_NIB:    return mc_move(g, budget, rs, 1, 1, 1, 0);
+    case BOT_SNIPER: return mc_move(g, budget, rs, 1, 1, 1, 1);
     default:         return list[0];
     }
 }

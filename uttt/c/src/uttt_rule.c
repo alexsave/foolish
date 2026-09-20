@@ -114,24 +114,40 @@ int uttt_draw_rulebook(UtttDL *d, float w, float h)
     if (w < 1.f || h < 1.f) return -1;
     int over = 0;
 
+    /* EVERY NUMBER IS A FRACTION OF THE SQUARE, and the version that was not
+     * is why the book vanished at the size it actually ships in the collapsed
+     * strip. The design document draws this at 54 points and its coordinates
+     * were copied as POINTS - so at 30 the left leaf's four corners came out
+     * at x = 15, x = w/2 = 15, x = 15, x = 15. A polygon of zero width. It
+     * did not draw badly; it could not draw at all.
+     *
+     * So the shape is fractions and the PEN is what scales with the square:
+     * a hachure gap and a stroke width are lengths, and a drawing half the
+     * size wants half of each or it fills in. `k` is the size this was drawn
+     * at, and everything in points is multiplied by it. */
+    const float k = (w < h ? w : h) / 54.f;
+    const float in = 4.f * k;
+
     const UtttPt sq[4] = {
-        { 4.f, 4.f }, { w - 4.f, 4.f }, { w - 4.f, h - 4.f }, { 4.f, h - 4.f }
+        { in, in }, { w - in, in }, { w - in, h - in }, { in, h - in }
     };
-    const Rule square = { INK, EDGE, 4.2f, -41.f, 1.4f, 1.8f, 1.5f, 1.3f, 19 };
+    const Rule square = { INK, EDGE, 4.2f * k, -41.f,
+                          1.4f * k, 1.8f * k, 1.5f, 1.3f, 19 };
     over |= shape(d, sq, 4, w, h, &square);
 
     /* The book: two leaves off one spine, each hachured the other way so the
      * fold reads without a line down the middle. Drawn in the same ink as the
      * outline, over a fill thin enough to read through. */
-    const UtttPt left[4] = {
-        { 15.f, 17.f }, { w / 2.f, 20.f }, { w / 2.f, h - 15.f }, { 15.f, h - 18.f }
-    };
-    const UtttPt right[4] = {
-        { w - 15.f, 17.f }, { w / 2.f, 20.f }, { w / 2.f, h - 15.f },
-        { w - 15.f, h - 18.f }
-    };
-    const Rule leaf_l = { PAGE, PAGE, 2.6f,  38.f, .9f, 1.3f, 1.3f, 1.f, 23 };
-    const Rule leaf_r = { PAGE, PAGE, 2.6f, -38.f, .9f, 1.3f, 1.3f, 1.f, 29 };
+    const float lx = w * (15.f / 54.f), rx = w - lx, mx = w / 2.f;
+    const float ty = h * (17.f / 54.f), sy = h * (20.f / 54.f);
+    const float by = h * (39.f / 54.f), oy = h * (36.f / 54.f);
+
+    const UtttPt left[4]  = { { lx, ty }, { mx, sy }, { mx, by }, { lx, oy } };
+    const UtttPt right[4] = { { rx, ty }, { mx, sy }, { mx, by }, { rx, oy } };
+    const Rule leaf_l = { PAGE, PAGE, 2.6f * k,  38.f, .9f * k, 1.3f * k,
+                          1.3f, 1.f, 23 };
+    const Rule leaf_r = { PAGE, PAGE, 2.6f * k, -38.f, .9f * k, 1.3f * k,
+                          1.3f, 1.f, 29 };
     over |= shape(d, left,  4, w, h, &leaf_l);
     over |= shape(d, right, 4, w, h, &leaf_r);
 

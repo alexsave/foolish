@@ -46,6 +46,7 @@ typedef enum {
     BOT_CRN,          /* ...the same, with common random numbers ONLY      */
     BOT_BIAS,         /* ...the same, with biased playouts ONLY            */
     BOT_NIB,          /* CRN + biased playouts + exact endgame             */
+    BOT_SNIPER,       /* ...and a rollout worth more the sooner it wins    */
     BOT_COUNT
 } UtttBot;
 

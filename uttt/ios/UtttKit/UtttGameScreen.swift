@@ -38,7 +38,7 @@ public struct UtttGameScreen: View {
 
     /// The rules door, at each end. It stays on the collapsed strip because
     /// it is the only way to the rules.
-    private static let doorCollapsed: CGFloat = 30
+    private static let doorCollapsed: CGFloat = 38
 
     private static let label = Color(red: 0.541, green: 0.522, blue: 0.467) // #8a8577
     private static let ink   = Color(red: 0.114, green: 0.106, blue: 0.086) // #1d1b16
