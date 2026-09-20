@@ -42,6 +42,16 @@ def check(path: Path):
     for v in tpl - btn:
         bad.append(f'template "{v}" can never be reached - no button selects it')
 
+    # A data URI carries double quotes. Put one in an inline style="" and the
+    # attribute ends early, the declaration dies, and the page still renders -
+    # just wrong. Cost an hour the first time.
+    for m in re.finditer(r'style="([^"]*)"', s):
+        v = m.group(1)
+        if v.rstrip().endswith(("url(", "url(\'")) or v.count("(") != v.count(")"):
+            line = s[:m.start()].count(chr(10)) + 1
+            bad.append(f"line {line}: an inline style= is cut off mid-value "
+                       f"({v[-40:]!r}) - a double quote in a data URI?")
+
     css = "".join(re.findall(r'<style>(.*?)</style>', s, re.S))
     if css.count('{') != css.count('}'):
         bad.append(f"stylesheet braces do not balance: {css.count('{') - css.count('}'):+d}")
