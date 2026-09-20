@@ -83,7 +83,13 @@ public struct UtttBoard: View {
                                  space: CGColorSpaceCreateDeviceRGB(),
                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
         else { return nil }
-        cg.scaleBy(x: scale, y: scale)
+        /* A CGBitmapContext has its ORIGIN AT THE BOTTOM LEFT and SwiftUI
+         * does not, so a board drawn straight into one comes out mirrored
+         * top to bottom - which reads as the game having been played upside
+         * down rather than as a coordinate bug. Flip once, here, so the
+         * kernel's coordinates mean the same thing in both places. */
+        cg.translateBy(x: 0, y: side * scale)
+        cg.scaleBy(x: scale, y: -scale)
         for poly in Uttt.board(active: active, last: last) {
             guard let head = poly.points.first else { continue }
             cg.beginPath()

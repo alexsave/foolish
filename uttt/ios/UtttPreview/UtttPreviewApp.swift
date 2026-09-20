@@ -22,6 +22,13 @@ struct PreviewRoot: View {
     }
     @State private var size: Size = .expanded
     @State private var model = UtttModel(seed: 77, you: .x, solo: true)
+    @State private var loaded = false
+
+    /// The game from the design document, so the harness shows marks, a won
+    /// block and a win line rather than an empty grid.
+    static let sample = [34,67,44,80,76,43,69,62,79,63,4,40,39,31,37,16,70,71,
+        72,3,29,19,17,73,14,50,45,6,59,47,23,53,75,30,35,74,22,42,60,54,0,2,
+        24,58,38,18,1,9,5,77]
 
     var body: some View {
         VStack(spacing: 10) {
@@ -47,5 +54,12 @@ struct PreviewRoot: View {
         }
         .padding(.top, 8)
         .background(Color(white: 0.07))
+        .onAppear {
+            guard !loaded else { return }
+            loaded = true
+            Uttt.newGame(seed: 77)
+            for m in Self.sample { Uttt.play(m) }
+            model.refresh()
+        }
     }
 }

@@ -40,6 +40,10 @@ public final class UtttModel: ObservableObject {
         return active == 9 ? "Anywhere you like." : ""
     }
 
+    /// The harness loads a position behind the model's back; this is how it
+    /// tells the screen to look again.
+    public func refresh() { positionKey &+= 1 }
+
     /// A tap in the board's own 0..1 space.
     public func tap(at p: CGPoint) {
         guard !busy, Uttt.over == .none, Uttt.turn == you else { return }
