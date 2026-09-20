@@ -42,7 +42,7 @@ public final class UtttModel: ObservableObject {
     /// per-device UUID and no display name.
     public enum Headline: Equatable {
         case text(String)
-        /// Words, a drawn mark, words: "Waiting on <O>", "<X> takes it".
+        /// Words, a drawn mark, words: "Waiting on <O>", "<X> wins".
         case mark(String, Uttt.Mark, String)
     }
 
@@ -50,8 +50,8 @@ public final class UtttModel: ObservableObject {
         switch Uttt.over {
         case .draw:  return .text("Drawn")
         case .x, .o:
-            if Uttt.over == you { return .text("You take it") }
-            return .mark("", Uttt.over, " takes it")
+            if Uttt.over == you { return .text("You win") }
+            return .mark("", Uttt.over, " wins")
         case .none:
             if Uttt.turn == you { return .text("Your move") }
             return .mark("Waiting on ", Uttt.turn, "")

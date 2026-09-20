@@ -19,8 +19,35 @@ static uint32_t rnd(uint32_t n)          /* xorshift64*, no libc dependency */
 /* Two bots. `uniform` picks any legal move. `stretch` refuses to close a block
  * when it has any alternative - a closed block freezes its empty cells for the
  * rest of the game, so avoiding that is how a game gets long. */
+/* MODE 2, THE MISER: a bot that plays for a SHORT CODE rather than a win.
+ *
+ * A ply costs log2(legal moves), so a cheap game does two things at once -
+ * it keeps the opponent's choice small and it ends early. Both are the same
+ * move: send them into a block that is nearly full. Winning outright is
+ * taken when it is there, because a game that ends is a game that stops
+ * paying. A little randomness among equals, so a million games are a million
+ * games and not one game a million times.
+ *
+ * It is here rather than in uttt_bots.c because it is not a player: nobody
+ * would enjoy this and it is not trying to win. It exists to answer "how
+ * short can a real game's code get", which is the question the arena was
+ * built for. */
 static uint8_t pick(const UtttGame *g, const uint8_t *list, int n, int stretch)
 {
+    if (stretch == 2) {
+        uint8_t best[81]; int nb = 0, bestcost = 1 << 30;
+        for (int i = 0; i < n; i++) {
+            UtttGame t = *g;
+            uttt_play(&t, list[i]);
+            uint8_t reply[81];
+            int m = uttt_legal(&t, reply);
+            /* A finished game costs nothing more, so it always wins. */
+            int cost = t.over ? -1 : m;
+            if (cost < bestcost) { bestcost = cost; nb = 0; }
+            if (cost == bestcost && nb < 81) best[nb++] = list[i];
+        }
+        return nb ? best[rnd((uint32_t)nb)] : list[rnd((uint32_t)n)];
+    }
     if (!stretch) return list[rnd((uint32_t)n)];
     uint8_t safe[81]; int ns = 0;
     for (int i = 0; i < n; i++) {
@@ -101,7 +128,7 @@ static void hist(int games)
 {
     static int h[2][UTTT_MAX_PLIES + 1];
     uint8_t list[81];
-    for (int mode = 0; mode < 2; mode++) {
+    for (int mode = 0; mode < 3; mode++) {
         RS = 0x9E3779B97F4A7C15ull;
         for (int i = 0; i < games; i++) {
             UtttGame g; uttt_init(&g);
@@ -113,7 +140,7 @@ static void hist(int games)
             h[mode][g.n_plies]++;
         }
     }
-    for (int mode = 0; mode < 2; mode++) {
+    for (int mode = 0; mode < 3; mode++) {
         printf("%s[", mode ? "," : "[");
         for (int k = 0; k <= UTTT_MAX_PLIES; k++)
             printf("%s%d", k ? "," : "", h[mode][k]);
@@ -138,6 +165,7 @@ int main(int argc, char **argv)
 
     Row *ru = malloc(sizeof(Row) * (size_t)games);
     Row *rs = malloc(sizeof(Row) * (size_t)games);
+    Row *rm = malloc(sizeof(Row) * (size_t)games);
     int fails = 0, checked = 0, gmax = 0;
     uint8_t gmax_moves[UTTT_MAX_PLIES]; int gmax_n = 0; double gmax_bytes = 0;
     /* THE CHEAPEST GAME ANYBODY PLAYED, which is not the shortest one: a game
@@ -148,8 +176,8 @@ int main(int argc, char **argv)
     int gmin_bytes = 1 << 30, gmin_n = 0, gmin_win = 0;
     uint8_t gmin_moves[UTTT_MAX_PLIES];
 
-    for (int mode = 0; mode < 2; mode++) {
-        Row *rows = mode ? rs : ru;
+    for (int mode = 0; mode < 3; mode++) {
+        Row *rows = mode == 1 ? rs : mode == 2 ? rm : ru;
         for (int i = 0; i < games; i++) {
             UtttGame g; uttt_init(&g);
             uint8_t list[81];
@@ -257,6 +285,7 @@ int main(int argc, char **argv)
     fails += undo_fail;
     report("uniform bot", ru, games);
     report("stretch bot (never closes a block if it can help it)", rs, games);
+    report("miser bot (plays for the shortest code, not the win)", rm, games);
 
     printf("\nthe cheapest game seen: %d plies in %d bytes, %s wins\n",
            gmin_n, gmin_bytes,
@@ -275,6 +304,6 @@ int main(int argc, char **argv)
     printf("\n\nceiling for comparison: 81 plies is the most the board can hold,\n"
            "and log2(81!) = %.0f bits = %.0f bytes if every move were free.\n",
            fac, fac / 8);
-    free(ru); free(rs);
+    free(ru); free(rs); free(rm);
     return fails ? 1 : 0;
 }

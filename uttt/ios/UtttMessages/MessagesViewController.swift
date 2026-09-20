@@ -197,7 +197,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         let me = UtttWire.tag(participant: conversation.localParticipantIdentifier,
                               seed: seed)
         let wire = UtttWire.opening(seed: seed, creator: me)
-        stage(wire, actor: nil, in: conversation)
+        stage(wire, in: conversation)
     }
 
     /// Take the second seat. THE ROSTER SEALS HERE.
@@ -208,12 +208,19 @@ final class MessagesViewController: MSMessagesAppViewController {
         let sealed = wire.staging(joining: me)
         guard let mine = sealed.mark(of: .joiner) else { return }
 
-        /* THE CLAIM IS STAGED THE MOMENT YOU SIT DOWN, because the other
-         * player cannot see a seat that was never sent. If it turns out to be
-         * your move, the move you make replaces this bubble rather than
-         * adding a second one - the same replacement a change of mind uses. */
-        stage(sealed, actor: mine, andShowIt: false)
-        showBoard(wire, mark: mine, claiming: me)
+        /* AND ONLY IF THERE IS NOTHING ELSE TO SAY. Sitting down has to be
+         * SENT - the other player cannot see a seat that was never sent - but
+         * if the draw makes you X then your move is the next thing that
+         * happens anyway, and the claim and the move belong in one bubble.
+         * Staging an empty board first would put a message in the thread
+         * whose only content is "I am here", immediately followed by the one
+         * that says it better. */
+        if Uttt.over == .none, Uttt.turn == mine {
+            showBoard(wire, mark: mine, claiming: me)
+        } else {
+            stage(sealed, andShowIt: false)
+            showBoard(wire, mark: mine, claiming: me)
+        }
     }
 
     /// Seal the position the kernel is holding into the input field.
@@ -245,12 +252,19 @@ final class MessagesViewController: MSMessagesAppViewController {
         return s
     }
 
-    private func stage(_ wire: UtttWire, actor: Uttt.Mark?, andShowIt: Bool = true,
+    private func stage(_ wire: UtttWire, andShowIt: Bool = true,
                        in conv: MSConversation? = nil) {
         guard let conversation = conv ?? activeConversation else { return }
         let message = MSMessage(session: sessionFor(wire, conversation))
         message.url = wire.url
-        message.layout = layout(for: wire, actor: actor)
+        message.layout = layout(for: wire)
+        /* THE COLLAPSED LINE IS OURS TOO. A session folds every older bubble
+         * down to one grey row, and without this Messages writes that row
+         * itself - "+1 (555) 564-8583 sent Ultimate message", a phone number
+         * and an app's name, in a thread where every other line is about a
+         * board. */
+        message.summaryText = wire.isSealed && Uttt.plyCount == 0
+            ? UtttBubble.sealedCaption : UtttBubble.caption
         staged = wire
         draftURL = message.url
         live?.setPending(true)
@@ -310,8 +324,7 @@ final class MessagesViewController: MSMessagesAppViewController {
                  * Without this the input field briefly carries the position
                  * the player just rejected. */
                 guard Uttt.turn != mark || Uttt.over != .none else { return }
-                self.stage(wire.staging(joining: claiming), actor: mark,
-                           andShowIt: false)
+                self.stage(wire.staging(joining: claiming), andShowIt: false)
             }
             .store(in: &bag)
 
@@ -384,22 +397,13 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// thing decided here is who the sentence is about - and in this game the
     /// only name anybody has is their mark, which is the one name that reads
     /// the same on both phones.
-    private func layout(for wire: UtttWire, actor: Uttt.Mark?) -> MSMessageLayout {
-        let name = actor.map { $0 == .o ? "O" : "X" }
+    private func layout(for wire: UtttWire) -> MSMessageLayout {
         if wire.isSealed, Uttt.plyCount == 0 {
-            /* A seat claim: the one bubble that is neither a move nor the
-             * invitation, and the one caption UtttBubble has no case for.
-             *
-             * `name` IS OPTIONAL AND MUST BE UNWRAPPED. Interpolating it
-             * straight put the literal characters `Optional("X")` into a
-             * caption that goes out to another human - Swift will happily
-             * describe an optional and say nothing about it. */
             let l = MSMessageTemplateLayout()
             l.image = UtttBubble.image()
-            l.caption = name.map { "\($0) took the other side." }
-                ?? "Somebody took the other side."
+            l.caption = UtttBubble.sealedCaption
             return l
         }
-        return UtttBubble.layout(actor: name)
+        return UtttBubble.layout()
     }
 }

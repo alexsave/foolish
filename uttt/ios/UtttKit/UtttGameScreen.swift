@@ -32,9 +32,13 @@ public struct UtttGameScreen: View {
     /// what wanted them.
     private static let column: CGFloat = 38
 
-    /// Anything taller than the taller of the two collapsed heights is the
-    /// expanded sheet. There is no third size.
+    /// The height the drawer is halfway open at - the middle of the handover,
+    /// not a threshold any more. Nothing switches at it.
     private static let collapsedCeiling: CGFloat = 400
+
+    /// The rules door, at each end. It stays on the collapsed strip because
+    /// it is the only way to the rules.
+    private static let doorCollapsed: CGFloat = 30
 
     private static let label = Color(red: 0.541, green: 0.522, blue: 0.467) // #8a8577
     private static let ink   = Color(red: 0.114, green: 0.106, blue: 0.086) // #1d1b16
@@ -53,72 +57,76 @@ public struct UtttGameScreen: View {
                     UtttRulesSheet { rulesOpen = false }
                         .padding(Self.margin)
                         .transition(.opacity)
-                } else if geo.size.height <= Self.collapsedCeiling {
-                    collapsed(geo.size)
                 } else {
-                    expanded(geo.size)
+                    sheet(geo.size)
                 }
             }
         }
         .animation(.easeInOut(duration: 0.18), value: rulesOpen)
     }
 
-    // MARK: collapsed
+    // MARK: one layout, two ends of it
 
-    /// THE COLUMNS NEVER MOVE AND THE BOARD GIVES WAY. The board is
-    /// min(height - 26, width - 26 - 92): 257 on a 375-wide SE, 275 on 393,
-    /// 284 on 402, and 314 on a 440 Pro Max where the 340 starts cutting it
-    /// again. That is the right way round - a label that shifts by device is a
-    /// label you have to find, and a board that shrinks is just a smaller
-    /// board.
+    /// HOW FAR OPEN THE DRAWER IS, 0 to 1, from the height and nothing else.
     ///
-    /// No status line. The strip is the board, the side you are on, and the
-    /// wash that says where you have been sent; a headline here would be the
-    /// fourth thing in a frame that only has room for three.
-    private func collapsed(_ size: CGSize) -> some View {
-        let side = max(0, min(size.height - 2 * Self.vmargin,
-                              size.width - 2 * Self.margin - 2 * Self.column))
-        return ZStack(alignment: .topLeading) {
-            board
-                .frame(width: side, height: side)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            indicator(icon: 34, lead: 3)
-                .frame(width: Self.column)
-                .padding(.top, 4)
-        }
-        .padding(.horizontal, Self.margin)
-        .padding(.vertical, Self.vmargin)
+    /// There were two layouts here and a threshold between them, so a collapse
+    /// was a SWAP: the board jumped from one size to another while the drawer
+    /// was still moving, and the whole sheet re-laid out underneath it. The
+    /// host app's note on this is the one worth reading - a board laid out
+    /// from the `style` prop cannot follow a resize, and re-presenting at the
+    /// start of the transition is the "display rearranges right before the
+    /// collapse" jump. Its answer is a continuous fraction of the HEIGHT, and
+    /// this is the same answer with a tenth of the machinery, because this
+    /// game has exactly one thing on the sheet that moves.
+    ///
+    /// Everything below is `lerp(collapsed, expanded, t)`. Nothing switches.
+    private func openness(_ h: CGFloat) -> CGFloat {
+        let lo = Self.collapsedCeiling - 130, hi = Self.collapsedCeiling + 130
+        let x = min(1, max(0, (h - lo) / (hi - lo)))
+        return x * x * (3 - 2 * x)          // smoothstep, so the ends settle
     }
 
-    // MARK: expanded
+    private func lerp(_ a: CGFloat, _ b: CGFloat, _ t: CGFloat) -> CGFloat {
+        a + (b - a) * t
+    }
 
-    /// AND THE BOARD CANNOT USE THE EXTRA HEIGHT. It is square and the width
-    /// binds on every phone, so it tops out at 343 on an SE and 408 on a Pro
-    /// Max while the sheet runs to 830 - the 289 points a Pro Max buys you are
-    /// all vertical, and a square board has no use for vertical. It is centred
-    /// in whatever the bar and the door leave.
-    private func expanded(_ size: CGSize) -> some View {
-        // The margin plus a three-point gutter either side: 343, 361, 370, 408
-        // on the four phones, which are the design document's numbers.
-        let byWidth = size.width - 2 * (Self.margin + 3)
-        let byHeight = size.height - 2 * Self.margin - Self.barHeight - Self.doorSide
-        let side = max(0, min(byWidth, byHeight))
-        return VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 8) {
-                indicator(icon: 46, lead: 4).frame(width: 48)
-                Spacer(minLength: 0)
-                headlineView
+    private func sheet(_ size: CGSize) -> some View {
+        let t = openness(size.height)
+
+        /* THE COLLAPSED STRIP PUTS THINGS BESIDE THE BOARD AND THE EXPANDED
+         * SHEET PUTS THEM ABOVE AND BELOW IT, so the two ends are the same
+         * four things in a different arrangement rather than two layouts.
+         * The board is centred in what the four leave, and every number is
+         * one lerp. Nothing switches, so a collapse is a resize. */
+        let vpad = lerp(Self.vmargin, Self.margin, t)
+        let top  = lerp(0, Self.barHeight, t)       // the bar, when there is one
+        let bot  = lerp(0, Self.doorSide + 6, t)    // the row the door sits in
+        let col  = lerp(Self.column, 0, t)          // the "you are" column
+        let gut  = lerp(0, 3, t)
+        let door = lerp(Self.doorCollapsed, Self.doorSide, t)
+        let icon = lerp(34, 46, t)
+
+        let side = max(0, min(size.width - 2 * (Self.margin + gut) - 2 * col,
+                              size.height - 2 * vpad - top - bot))
+
+        return board
+            .frame(width: side, height: side)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.top, top)
+            .padding(.bottom, bot)
+            .overlay(alignment: .topLeading) {
+                indicator(icon: icon, lead: lerp(3, 4, t))
+                    .frame(width: max(col, icon + 2), alignment: .leading)
+                    .padding(.top, lerp(4, 0, t))
             }
-            .frame(height: Self.barHeight, alignment: .top)
-            Spacer(minLength: 0)
-            board.frame(width: side, height: side)
-            Spacer(minLength: 0)
-            HStack(spacing: 0) {
-                Spacer(minLength: 0)
-                UtttRulebookButton(side: Self.doorSide) { rulesOpen = true }
+            .overlay(alignment: .topTrailing) {
+                headlineView.opacity(Double(t)).allowsHitTesting(t > 0.5)
             }
-        }
-        .padding(Self.margin)
+            .overlay(alignment: .bottomTrailing) {
+                UtttRulebookButton(side: door) { rulesOpen = true }
+            }
+            .padding(.horizontal, Self.margin)
+            .padding(.vertical, vpad)
     }
 
     /// THE BAR'S LINE, with the other side drawn rather than spelled.

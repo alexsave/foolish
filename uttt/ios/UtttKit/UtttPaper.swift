@@ -28,17 +28,35 @@ public enum UtttPaper {
 public struct UtttSheet<Content: View>: View {
     let content: Content
     public init(@ViewBuilder content: () -> Content) { self.content = content() }
+    /// HOW FAR THE PAPER RUNS PAST THE TOP OF ITS BOX.
+    ///
+    /// The drawer resizes at the compositor's rate and SwiftUI lays out at
+    /// its own, so during a collapse the sheet's top edge is above where our
+    /// background thinks it is for a frame or two - and the gap reads as a
+    /// black band at the top of the napkin. The paper is simply taller than
+    /// the box and anchored to the BOTTOM, which is the edge that does not
+    /// move; there is nothing to synchronise because nothing has to arrive on
+    /// time.
+    private let bleed: CGFloat = 220
+
     public var body: some View {
         content.background(
             GeometryReader { geo in
-                if let img = UtttPaper.image(side: 420) {
-                    Image(decorative: img, scale: 1)
-                        .resizable()
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .clipped()
-                } else {
-                    Color(red: 0.969, green: 0.965, blue: 0.949)
+                Group {
+                    if let img = UtttPaper.image(side: 420) {
+                        Image(decorative: img, scale: 1).resizable()
+                    } else {
+                        Color(red: 0.969, green: 0.965, blue: 0.949)
+                    }
                 }
+                /* TALLER THAN THE BOX AND GROWING UPWARDS. The bottom edge
+                 * stays put - it is the one that does not move - and the top
+                 * runs off past whatever the drawer is doing. Nothing clips
+                 * it, which is the point: a background that ends exactly at
+                 * its own bounds shows black the moment the bounds are stale
+                 * by a frame. */
+                .frame(width: geo.size.width, height: geo.size.height + bleed)
+                .offset(y: -bleed)
             }
         )
     }

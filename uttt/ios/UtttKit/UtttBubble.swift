@@ -12,10 +12,12 @@ import UIKit
 /// lines: a headline, and the block the opponent has been sent to.
 ///
 /// AND IT IS BAKED. Every device in the thread shows the one image the sender
-/// drew, so the caption names the actor - "Alex sent you to the bottom-middle
-/// board" - because "you sent" would be a lie on the other phone. The image
-/// addresses the reader the way the message itself does; the sender's own copy
-/// reads as the thing they said, which is what a sent message is.
+/// drew and reads the one caption under it, so neither may say "you" and
+/// neither may name a person. There is no name to use anyway: a Messages
+/// extension gets a per-conversation UUID for each participant and no way to
+/// resolve one to a human. It does not need one - the transcript already says
+/// who did it, by which side of the thread the bubble sits on - so the caption
+/// is a statement about the board and nothing else.
 ///
 /// Nothing here computes a coordinate. The frame is split in `uttt_draw.c` and
 /// this fills in what the kernel cannot know: where a baseline falls in a font
@@ -91,26 +93,36 @@ public enum UtttBubble {
 
     /// One line, truncating, and it names who moved. A bubble is the same on
     /// every device, so this is the only sentence that can be written about it.
-    /// NIL UNTIL THE SEATS ARE DRAWN. An invitation has no actor to name -
-    /// which seat is whose is not decided until the second player takes one -
-    /// so a caption saying "O started a game" told the creator what they had
-    /// before anybody could take it from them, and an invitation you can read
-    /// your own seat off is an invitation worth deleting and re-composing.
-    /// What an unclaimed board says. NOT a sentence about seats: the whole
-    /// point of an invitation is that nothing is decided yet.
-    static let newGameCaption = "New Ultimate Tic Tac Toe game"
-
-    public static func caption(actor: String?) -> String {
-        guard let actor else { return newGameCaption }
+    /// One line, truncating, and it names NOBODY.
+    ///
+    /// There is no name to use. A Messages extension is given a
+    /// per-conversation UUID for each participant and no way to resolve one
+    /// to a person - Apple withholds it - so the only names an app can show
+    /// are ones it asked somebody to type, and this game should not have to
+    /// ask. It does not need to either: the transcript already says who did
+    /// it, by which side of the thread the bubble is on.
+    ///
+    /// So every caption is a statement about the BOARD. It reads the same to
+    /// both players, which is the other half of why it works: one bubble, one
+    /// bitmap, one sentence, identical on every device in the thread.
+    public static var caption: String {
         switch Uttt.over {
-        case .x, .o: return "\(actor) won the game."
-        case .draw:  return "\(actor) played it to a draw."
+        case .x:    return "X wins."
+        case .o:    return "O wins."
+        case .draw: return "Nine blocks, no line."
         case .none:
             if Uttt.plyCount == 0 { return newGameCaption }
-            if uti_active() == 9 { return "\(actor) sent you anywhere on the sheet." }
-            return "\(actor) sent you to the \(placeName(spoken: true)) board."
+            if uti_active() == 9 { return "Sent anywhere on the sheet." }
+            return "Sent to the \(placeName(spoken: true)) board."
         }
     }
+
+    /// What an unclaimed board says.
+    static let newGameCaption = "New Ultimate Tic Tac Toe game"
+
+    /// The moment the roster sealed: the one bubble that is neither a move
+    /// nor an invitation.
+    public static let sealedCaption = "Both seats taken."
 
     // MARK: the image
 
@@ -171,10 +183,10 @@ public enum UtttBubble {
 
     /// The layout Messages inserts. The caption is the only text outside the
     /// image, and it is the only text that can name a person.
-    public static func layout(actor: String?) -> MSMessageTemplateLayout {
+    public static func layout() -> MSMessageTemplateLayout {
         let l = MSMessageTemplateLayout()
         l.image = image()
-        l.caption = caption(actor: actor)
+        l.caption = caption
         return l
     }
 

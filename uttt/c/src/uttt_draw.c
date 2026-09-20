@@ -208,6 +208,16 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
             int a = L[i][0], z = L[i][2];
             float ax = ((a % 3) + .5f) * BL, ay = ((a / 3) + .5f) * BL;
             float zx = ((z % 3) + .5f) * BL, zy = ((z / 3) + .5f) * BL;
+            /* IT RUNS PAST BOTH BLOCKS IT ENDS ON. A line drawn centre to
+             * centre stops inside the two end blocks and reads as a
+             * measurement; the one somebody actually draws goes through them
+             * and out the far side. A sixth of the run at each end - a third
+             * longer overall - which is also what the four main grid lines
+             * do, and for the same reason. */
+            {
+                float ex = (zx - ax) / 6.f, ey = (zy - ay) / 6.f;
+                ax -= ex; ay -= ey; zx += ex; zy += ey;
+            }
             float len = sqrtf((zx-ax)*(zx-ax) + (zy-ay)*(zy-ay));
             const float W[2] = { 2.7f, 2.3f };
             const float A[2] = { .92f, .74f };
