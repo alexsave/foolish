@@ -1,0 +1,23 @@
+# structgen arguments for sdk/ts/gen/msg_layout.bots.ts: the iMessage envelope's
+# header (c/src/msg_wire.h MsgHeader), which the FMSG bridge reads after a decode
+# and fills in before a seal. A snapshot reader and a writer - plain objects
+# copied out of and back into the module, no accessor over the struct - and the
+# codec's own constants and refusal codes, so no bridge restates a cap or a
+# number. Read by tools/structgen/gen.sh with --cwd c/ and the bots build's
+# flags. The root is in game_layout.args too, so the layout hash bots.wasm is
+# checked against at load covers these readers.
+#
+# The browser reaches this module (the /m/ route decodes an envelope), which is
+# why it is not in game_layout.bots.ts - that one holds accessors over the
+# unmasked Game and e2e/security_client_boundary keeps it out of the bundle.
+--header msg_wire.h --root MsgHeader --snapshot MsgHeader --writer MsgHeader --snapshot-only
+--fields MsgEnvelope=format,flags,phase,game_id,turn,last_actor_seat,n_players,variant,round,parent8,seed,sent_at,n_new,opening,carry_key,carry_fool,n_joins,joins
+--count MsgEnvelope.joins=n_joins --count MsgJoin.name=name_len
+#
+# And the replay code's extras (replay_extras.h ReplayExtras) - the nicknames and
+# per-move timing behind the dash in a share link - which the same bridge crosses
+# with in both directions. Not the codec's own packed blob: that is a C format,
+# packed and unpacked beside it (replay_extras_pack).
+--header replay_extras.h --root ReplayExtras --snapshot ReplayExtras --writer ReplayExtras
+--count ReplayExtras.names=n_names --count ReplayExtras.gaps=n_gaps --count ReplayExtrasName.text=len
+--const MSG_ --const REPLAY_EXTRAS_ --const REPLAY_LINK_STYLE_

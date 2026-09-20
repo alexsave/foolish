@@ -1,0 +1,33 @@
+# structgen arguments for sdk/ts/gen/view_layout.bots.ts: the web client's
+# reader of its slot (c/src/client_table.h). Snapshot readers only - plain
+# objects copied out of the module, no accessor over the struct - and the
+# constants a view is read with. Read by tools/structgen/gen.sh with --cwd c/
+# and the bots build's flags. The same roots are in game_layout.args, so the
+# layout hash bots.wasm is checked against at load covers these readers too.
+# Lines starting with # are dropped; everything else is split on whitespace.
+--header client_table.h --header legal.h --header evwire.h --header anim_plan.h --header replay_steps.h --root TableView --root PushEvent --root ViewRules
+--root ReplaySummary --snapshot ReplaySummary --count ReplaySummary.elimination=num_eliminated
+# Where one chunk of replay frames lies (replay_steps.h ReplayFrameIndex): the
+# counts keep a snapshot to the frames this chunk actually holds.
+--root ReplayFrameIndex --snapshot ReplayFrameIndex
+--count ReplayFrameIndex.off=n --count ReplayFrameIndex.len=n
+# Why a replay call refused (replay.h ReplayError), for the message the web and
+# the server word from it; in this module because the browser reads codes too.
+--header replay.h --root ReplayError --snapshot ReplayError --const LOG_
+--root BoardEdit --root ClientConflict --root ConflictVerdicts
+# What a gesture on a board means (client_table.h client_play, legal.h play_*).
+# The gesture goes in through its writer and the answer comes back through its
+# reader, so no host packs a menu byte, a table byte or a card byte by hand.
+--root ClientGesture --root ClientPlay --snapshot ClientGesture --snapshot ClientPlay --writer ClientGesture
+--count ClientGesture.cards=n_cards --count ClientPlay.cards=n_cards
+--count ClientPlay.attack_cards=n_cards --count ClientPlay.coverable=n_coverable
+--const PLAY_TARGET_ --const MOVE_
+--snapshot TableView --snapshot PushEvent --snapshot ViewRules --snapshot ConflictVerdicts --snapshot BoardEdit --snapshot ClientConflict --writer TableView --snapshot-only
+--writer BoardEdit --writer ClientConflict
+--count BoardEdit.cards=n_cards --count ClientConflict.events=n_events --count ClientConflict.motions=n_motions
+--count ConflictEvent.cards=n_cards --count ConflictVerdicts.verdicts=n
+--count TableView.battles=num_battles --count TableView.seats=num_players
+--count TableView.my_hand=my_hand_count --count TableView.elimination=num_eliminated
+--count TableView.game_id=gid_len --count TableView.title=title_len
+--count ViewSeat.id=id_len --count ViewSeat.name=name_len --count PushEvent.cards=n_cards
+--const GAME_STATUS_ --const PLAYER_STATUS_ --const EVW_T_ --const EVW_LOC_ --const EVW_MSG_ --const CLIENT_ --const CARD_NONE_ --const ANIM_DEST_ --const ANIM_CONFLICT_ --const ANIM_EVT_

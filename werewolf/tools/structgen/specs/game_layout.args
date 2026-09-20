@@ -1,0 +1,60 @@
+# structgen arguments for sdk/ts/gen/game_layout.<build>.ts, and for the
+# SG_LAYOUT_HASH c/Makefile bakes into each wasm module (wasm_layout_hash).
+# Read by tools/structgen/gen.sh and c/Makefile, both with --cwd c/ and the
+# build's own flags, so the module and the wasm hash come from ONE argument list.
+# Lines starting with # are dropped; everything else is split on whitespace.
+#
+# The resident Game prefix the TS marshal reads and writes.
+--header game.h --root Game
+--fields Game=status,num_players,power_suit,first_attacker,defender,num_battles,deck_count,discard_pile_length,has_flipped,deterministic_deck,flipped,deck,table_battles,players,elimination_order,num_eliminated,good_players_mask,has_good_timestamp
+--fields Player=status,hand_count,awaiting_attack,strategy_key,hand
+--const GAME_STATUS_ --const PLAYER_STATUS_
+#
+# The C Table (c/src/table.h): what the server reads back from bots.wasm - the
+# loaded roster, a commit's spans and scalars, a decoded action request, the
+# finish order and rating changes - and the result codes it maps. Part of the
+# same hash, so a module and these readers cannot disagree about any of it.
+--header table.h --root Roster --root TableCommit --root TableRequest --root TableElo
+# The test entries' shapes (roster.h): a table as a test states it, and what
+# reading an envelope trailer said - e2e/helpers/roster_kernel.ts writes the one
+# and reads the other through these.
+--header roster.h --root RosterSpec --root RosterTrailerRead
+--writer RosterSpec --snapshot RosterSpec --snapshot RosterTrailerRead
+--count RosterSpec.seats=n --count RosterSpec.title=title_len --count RosterTrailerRead.gid=gid_len
+--count RosterSpecSeat.id=id_len --count RosterSpecSeat.name=name_len --count RosterSpecSeat.brain=brain_len
+--const TABLE_ --const ENGINE_REJECT_ --const GAME_INVALID_ --const ROSTER_E_
+#
+# The web client's slot (client_table.h): hashed here so a stale
+# view_layout.bots.ts (specs/view_layout.args) is a load-time error too.
+--header client_table.h --root TableView --root PushEvent --root ViewRules --root BoardEdit --root ClientConflict --root ConflictVerdicts
+--header replay_steps.h --root ReplaySummary --root ReplayFrameIndex
+#
+# A code's decoded log stream, record by record (replay.h, the test build's
+# wasm_replay_decoded_next): its log types and the codec's result codes.
+--header replay.h --root ReplayDecodedLog --root ReplayError
+--const LOG_ --const REPLAY_E
+#
+# The bot cycle the table drives (bot_drive.h): what a server logs of it, and
+# what a bot search saw of the session log (BeliefProbe, test observability).
+--header bot_drive.h --root BotDriveOut --root BeliefProbe
+--fields LegalMove=type,n_cards,cards,attack_cards
+--const BOT_STOP_ --const BOT_PACE_ --const MOVE_
+#
+# Test fixtures (e2e/helpers/table_fixture.ts): card notation refusals and suit
+# numbers (card.h), and the durable roster's length a sealed row carries.
+--const CARD_PARSE_E_ --const SUIT_ --const ROSTER_BYTES
+#
+# The iMessage envelope's header (msg_wire.h MsgHeader): the struct the FMSG
+# bridge reads after a decode and fills in before a seal. Its readers and writers
+# are generated into their own module (specs/msg_layout.args) because the browser
+# reaches them; the roots are here so the load-time layout hash covers them too.
+# The MsgEnvelope fields are everything but the BORROWED BODY (actions,
+# actions_len, n_actions), which no host holds.
+--header msg_wire.h --root MsgHeader
+--fields MsgEnvelope=format,flags,phase,game_id,turn,last_actor_seat,n_players,variant,round,parent8,seed,sent_at,n_new,opening,carry_key,carry_fool,n_joins,joins
+#
+# The replay code's extras (replay_extras.h ReplayExtras): the seat nicknames and
+# per-move timing a share link carries, as the struct the bridge crosses with.
+# Its reader and writer are generated into msg_layout.bots.ts (the browser reads
+# links too); the root is here for the load-time hash.
+--header replay_extras.h --root ReplayExtras

@@ -1,0 +1,13 @@
+build/
+build_prof/
+*.o
+*.bin
+
+# Profiling / coverage artifacts
+*.trace
+gmon.out
+*.gcda
+*.gcno
+*.profraw
+*.profdata
+covbuild/
