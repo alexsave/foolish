@@ -27,6 +27,12 @@ int  uti_move_at(int i);
 int  uti_block(int b);
 int  uti_cell(int i);
 
+/* Where the next mark must go: block 0..8, 9 for anywhere, -1 when the game
+ * is over. The board's wash and the bubble's place line are the same question
+ * and it is answered once, here - uti_forced() is the raw rule and says
+ * nothing about a block that has already been decided. */
+int  uti_active(void);
+
 /* the whole game, coded - and back */
 int  uti_encode(uint8_t *out, int cap);
 int  uti_decode(const uint8_t *buf, int n, int32_t seed);
@@ -52,6 +58,26 @@ int  uti_draw_mark(int mark, int32_t seed);
  * over a warm near-white. Here rather than in the renderer for the same reason
  * the marks are: both phones have to be looking at the same piece of paper. */
 void uti_paper(uint8_t *rgba, int w, int h);
+
+/* ----------------------------------------------------------- the bubble */
+/* The transcript image is 300x195 points, landscape, and baked at insert -
+ * see uttt_draw.h for why the split is the kernel's and where it stops. Flat
+ * accessors because no struct crosses this boundary.
+ *
+ * Coordinates are POINTS inside that frame, not 0..1: the frame is the one
+ * place in the app whose size is fixed by somebody else. */
+void  uti_bubble_size(float *w, float *h);
+void  uti_bubble_board(float *x, float *y, float *side);
+void  uti_bubble_text(float *x, float *y, float *w, float *h);
+
+/* line: 0 the headline, 1 the place. */
+float uti_bubble_type(int line);
+uint32_t uti_bubble_ink(int line);      /* 0xRRGGBBAA */
+float uti_bubble_lead(void);            /* points between the two lines */
+
+/* A block's name. 0..8, or 9 for "anywhere". spoken: 0 for the place line
+ * ("bottom middle"), 1 for a sentence ("the bottom-middle board"). */
+const char *uti_place_name(int block, int spoken);
 
 /* Parallel arrays describing the last uti_draw. Coordinates are 0..1. */
 const float    *uti_points(void);       /* 2 floats a point             */

@@ -174,8 +174,41 @@ int main(int argc, char **argv)
         }
     }
 
+    /* EVERY PREFIX, not just the finished game. The suite encoded only games
+     * that had been played out, so a decoder that always played to the end
+     * passed it - and no bubble in a live thread could be read back. */
+    int partial = 0, partial_fail = 0;
+    for (int t2 = 0; t2 < 200; t2++) {
+        UtttGame g; uttt_init(&g);
+        uint8_t list[81];
+        RS = 0x9E3779B97F4A7C15ull ^ ((uint64_t)t2 * 7919u);
+        for (;;) {
+            int n = uttt_legal(&g, list);
+            if (n <= 0) break;
+            uttt_play(&g, pick(&g, list, n, t2 & 1));
+            uint8_t b[64];
+            int ln = uttt_encode(&g, b, sizeof b);
+            UtttGame back;
+            partial++;
+            if (ln < 0 || !uttt_decode(&back, b, (size_t)ln)
+                || back.n_plies != g.n_plies
+                || memcmp(back.move, g.move, (size_t)g.n_plies) != 0
+                || memcmp(back.cell, g.cell, sizeof g.cell) != 0
+                || back.forced != g.forced || back.turn != g.turn
+                || back.over != g.over) {
+                if (partial_fail < 4)
+                    printf("  PARTIAL FAIL at %d plies (%d bytes)\n",
+                           g.n_plies, ln);
+                partial_fail++;
+            }
+        }
+    }
+    printf("mid-game round trip: %d positions, %d mismatches\n",
+           partial, partial_fail);
+    fails += partial_fail;
+
     printf("round trip: %d games encoded and decoded, %d mismatches\n",
-           checked, fails);
+           checked, fails - partial_fail);
     report("uniform bot", ru, games);
     report("stretch bot (never closes a block if it can help it)", rs, games);
 

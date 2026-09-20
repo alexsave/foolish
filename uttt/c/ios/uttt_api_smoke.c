@@ -41,6 +41,7 @@ int main(void)
     ok(uti_decode(buf, len, 77), "it decodes");
     ok(uti_n_plies() == plies, "the decode is the same length");
     ok(uti_over() == 2, "and the same result");
+    ok(uti_active() == -1, "a finished game sends nobody anywhere");
 
     int np = uti_draw(-1, mv[N-1], 1.f, 1.f);
     ok(np > 1000, "a finished board is thousands of polygons");
@@ -65,6 +66,36 @@ int main(void)
     uti_new(77);
     int m = uti_bot_move(20);
     ok(m >= 0 && m <= 80, "nib returns a move");
+
+    /* ---- the bubble frame. 300x195 is somebody else's number, so the only
+     * thing worth asserting is that nothing the kernel hands back falls
+     * outside it - a renderer that trusts these draws off the image. */
+    float bw = 0, bh = 0, x = 0, y = 0, s = 0, tw = 0, th = 0;
+    uti_bubble_size(&bw, &bh);
+    ok(bw == 300.f && bh == 195.f, "the bubble is 300 by 195");
+    uti_bubble_board(&x, &y, &s);
+    ok(s == 181.f, "a square tops out at 181 points");
+    ok(x >= 0 && y >= 0 && x + s <= bw && y + s <= bh, "the board is inside the frame");
+    uti_bubble_text(&x, &y, &tw, &th);
+    ok(x >= 0 && x + tw <= bw && y + th <= bh, "the text column is inside the frame");
+    ok(tw == 87.f, "and 87 points wide, which is why the place line wraps");
+    printf("  bubble %gx%g: board %g, text %g wide\n", bw, bh, s, tw);
+    ok(uti_bubble_type(0) > 0 && uti_bubble_type(1) > 0, "both lines have a size");
+    ok((uti_bubble_ink(0) & 0xffu) == 0xffu, "the headline ink is opaque");
+    ok(uti_bubble_ink(0) != uti_bubble_ink(1), "the place is a different colour");
+
+    /* ---- the place line. A new game is unforced, so it is "anywhere". */
+    ok(uti_active() == 9, "a new game may be played anywhere");
+    ok(!strcmp(uti_place_name(uti_active(), 0), "anywhere"), "and it is named so");
+    ok(uti_play(40), "a move in the centre of the centre");
+    ok(uti_active() == 4, "sends the reply to the centre block");
+    ok(!strcmp(uti_place_name(4, 0), "centre"), "the place line says centre");
+    ok(!strcmp(uti_place_name(7, 0), "bottom middle"), "block 7 is bottom middle");
+    ok(!strcmp(uti_place_name(7, 1), "bottom-middle"), "and bottom-middle in a sentence");
+    ok(uti_place_name(-1, 0)[0] == '\0' && uti_place_name(10, 0)[0] == '\0',
+       "an impossible block names nothing");
+    for (int b = 0; b <= 9; b++)
+        ok(uti_place_name(b, 0)[0] && uti_place_name(b, 1)[0], "every block is named");
 
     printf(fails ? "\n%d FAILED\n" : "\nbridge ok\n", fails);
     return fails ? 1 : 0;

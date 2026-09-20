@@ -234,3 +234,57 @@ int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float calm)
     (void)calm;
     return 0;
 }
+
+/* ------------------------------------------------------------ the bubble */
+/* Every number below is measured off the design document rather than chosen
+ * here: 10 points of side padding, a 12-point gutter, and the board takes the
+ * height because the height is what runs out first. 195 - 2*7 = 181, and
+ * 300 - 10 - 181 - 12 - 10 = 87 for the text. Eighty-seven points is why the
+ * place line is allowed to wrap and the headline is not. */
+#define BUB_W    300.f
+#define BUB_H    195.f
+#define BUB_PAD   10.f
+#define BUB_GUT   12.f
+
+UtttBubble uttt_bubble(void)
+{
+    UtttBubble b;
+    b.w = BUB_W; b.h = BUB_H;
+
+    float side = BUB_H - 2.f * 7.f;          /* 181 */
+    b.board.x = BUB_PAD;
+    b.board.y = (BUB_H - side) * .5f;
+    b.board.w = side;
+    b.board.h = side;
+
+    b.text.x = b.board.x + side + BUB_GUT;
+    b.text.y = b.board.y;
+    b.text.w = BUB_W - b.text.x - BUB_PAD;
+    b.text.h = side;
+
+    b.headline_pt = 16.f;
+    b.place_pt    = 16.f;
+    b.lead        = 1.f;
+    b.headline_rgba = 0x1d1b16ffu;
+    b.place_rgba    = INK_X;                 /* the same blue an X is drawn in */
+    return b;
+}
+
+static const char *const PLACE[10] = {
+    "top left",    "top middle",    "top right",
+    "middle left", "centre",        "middle right",
+    "bottom left", "bottom middle", "bottom right",
+    "anywhere"
+};
+static const char *const PLACE_SPOKEN[10] = {
+    "top-left",    "top-middle",    "top-right",
+    "middle-left", "centre",        "middle-right",
+    "bottom-left", "bottom-middle", "bottom-right",
+    "anywhere"
+};
+
+const char *uttt_place_name(int block, int spoken)
+{
+    if (block < 0 || block > 9) return "";
+    return spoken ? PLACE_SPOKEN[block] : PLACE[block];
+}
