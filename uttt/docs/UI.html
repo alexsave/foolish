@@ -406,14 +406,20 @@ instead of a nine-way one. <b>Plies are nearly free. Choices are not.</b></p>
 <p class="lede">A move is worth <code>log2(legal moves)</code> and nothing more.
 <b>The first move is the most expensive in the game</b> - 81 squares, 6.34 bits
 - and it is downhill from there, because the forced block cuts the choice to
-nine before anybody has thought about it. The curve below is printed by the
-kernel itself (<code>uttt_test curve</code>), so the picture and the shipped
-rules cannot drift apart.</p>
-<div class="sheet2" style="width:min(760px,100%);margin-top:18px"><canvas data-chart="{&quot;ys&quot;:[6.34, 3.151, 3.136, 3.118, 3.1, 3.083, 3.065, 3.048, 3.027, 3.011, 2.994, 2.978, 2.959, 2.946, 2.926, 2.914, 2.897, 2.882, 2.866, 2.85, 2.835, 2.823, 2.815, 2.8, 2.792, 2.779, 2.768, 2.761, 2.745, 2.741, 2.733, 2.727, 2.713, 2.719, 2.707, 2.707, 2.701, 2.695, 2.697, 2.687, 2.683, 2.676, 2.663, 2.661, 2.648, 2.647, 2.632, 2.607, 2.582, 2.563, 2.527, 2.491, 2.438, 2.38, 2.335, 2.271, 2.186, 2.108, 2.017, 1.929, 1.838, 1.714, 1.644, 1.523, 1.418, 1.306, 1.182, 1.095, 1.013, 0.885, 0.875, 0.695, 0.615, 0.564],&quot;max&quot;:6.5}" style="width:100%;height:210px"></canvas></div>
-<p class="lede" style="margin-top:14px">6.34 bits, a long shelf just above 3
-while blocks stay open, then a collapse under 1 as the sheet fills. <b>The
-endgame is nearly free</b>: by ply 70 a move is worth half a bit, because there
-is almost nothing else it could have been.</p>
+nine before anybody has thought about it.</p>
+<p class="lede">The curve is <b>100,000 games</b>, printed by the kernel itself
+(<code>uttt_test curve 100000</code>) so the picture and the shipped rules
+cannot drift apart. It stops at ply 74 because beyond that fewer than one game
+in four hundred is still running and the mean stops meaning anything. Against
+the same curve at 40,000 games the largest disagreement anywhere is
+<b>0.063 bits</b>, so the shape is settled.</p>
+<div class="sheet2" style="width:min(760px,100%);margin-top:18px"><canvas data-chart="{&quot;ys&quot;:[6.34, 3.151, 3.136, 3.118, 3.1, 3.083, 3.065, 3.048, 3.028, 3.011, 2.995, 2.978, 2.96, 2.945, 2.927, 2.913, 2.895, 2.882, 2.866, 2.853, 2.835, 2.825, 2.811, 2.799, 2.79, 2.778, 2.766, 2.76, 2.746, 2.745, 2.727, 2.727, 2.719, 2.717, 2.711, 2.706, 2.697, 2.702, 2.694, 2.685, 2.681, 2.68, 2.667, 2.665, 2.652, 2.643, 2.628, 2.607, 2.585, 2.56, 2.527, 2.491, 2.438, 2.389, 2.333, 2.266, 2.185, 2.104, 2.017, 1.928, 1.834, 1.724, 1.628, 1.512, 1.416, 1.298, 1.203, 1.11, 0.997, 0.886, 0.812, 0.721, 0.612, 0.522],&quot;max&quot;:6.5}" style="width:100%;height:210px"></canvas></div>
+<p class="lede" style="margin-top:14px">6.34 bits for the opening move, a long
+shelf just above 3 while the blocks stay open, then a collapse as the sheet
+fills. <b>The endgame is nearly free</b>: the last measurable ply is worth
+<b>0.52 bits</b>, because by then there is almost nothing else a move could
+have been. Half the game costs less than half of what the first twenty plies
+do.</p>
 
 <h2 style="margin-top:34px">Six ways to say the same thing</h2>
 <div class="barrow dim"><div class="blab">Every move, spelled out</div><div class="btrack"><div class="bfill" style="width:9.66%"></div></div><div class="bval">60 B<span>9.7%</span></div><div class="bnote">One square out of 81 is 7 bits, so 69 moves is 61 bytes. What anybody writes first, and <b>the only line here that does not fit twice over</b>.</div></div><div class="barrow "><div class="blab">The board, 2 bits a cell</div><div class="btrack"><div class="bfill" style="width:3.24%"></div></div><div class="bval">20 B<span>3.2%</span></div><div class="bnote">81 cells, three states each. No history, no turn, no forced block - just where the marks are right now.</div></div><div class="barrow hit"><div class="blab">The whole game, coded</div><div class="btrack"><div class="bfill" style="width:3.68%"></div></div><div class="bval">23 B<span>3.7%</span></div><div class="bnote">p95 out of <b>100,000 games played by the kernel in uttt/c</b>, encoded and decoded and checked move for move. Mean is 21 bytes, max seen 25.</div></div><div class="barrow hit"><div class="blab">The longest game there is</div><div class="btrack"><div class="bfill" style="width:3.52%"></div></div><div class="bval">22 B<span>3.5%</span></div><div class="bnote"><b>81 plies - every cell on the board.</b> It fits in 22, which is less than the p95, and that is not a typo.</div></div><div class="barrow "><div class="blab">If every move were free</div><div class="btrack"><div class="bfill" style="width:8.02%"></div></div><div class="bval">50 B<span>8.0%</span></div><div class="bnote">log2(81!) - an 81-move game where you could always play anywhere. <b>The forced block halves the game before anybody sits down.</b></div></div><div class="barrow bud"><div class="blab">The body budget</div><div class="btrack"><div class="bfill" style="width:100.00%"></div></div><div class="bval">625 B<span>100.0%</span></div><div class="bnote">What an FMSG body has to spend. Everything above is what it is spending it on.</div></div>
