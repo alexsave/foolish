@@ -991,6 +991,62 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
 /* votes as tally marks, scratched */
 .tally{display:inline-block;letter-spacing:1px;font-family:'Cinzel',serif;font-size:11px}
 
+
+/* CANDLELIT, in the comparison structure. Same materials as the .night/.sh
+   family the flow mockups use - this is the original standing next to the
+   alternatives rather than being described from another page. */
+.cl{color:#d8cdb8;font-family:'EB Garamond',Georgia,serif}
+.cl .chrome{background:#050508} .cl .chrome i{background:#2b2b38}
+.cl .scr{background-image:
+  var(--nz-fine), var(--nz-mid), var(--nz-coarse),
+  radial-gradient(115% 62% at 24% 6%, rgba(224,176,72,.20), transparent 56%),
+  radial-gradient(85% 55% at 84% 97%, rgba(140,26,26,.20), transparent 60%),
+  linear-gradient(168deg,#141620 0%,#0a0b11 46%,#0d0e15 74%,#08090d 100%);
+  background-size:180px 180px,300px 300px,400px 400px,auto,auto,auto;
+  background-blend-mode:soft-light,overlay,multiply,screen,screen,normal}
+.cl .scr::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;
+  background:radial-gradient(128% 86% at 46% 38%, transparent 40%, rgba(2,2,5,.78) 100%)}
+.cl .hdr{color:#8a7a52;font-family:'Cinzel',serif;font-weight:600}
+.cl .ask{font:600 25px/1.14 'Cinzel',serif;color:#efe6d2;
+  text-shadow:0 1px 0 #000, 0 0 26px rgba(201,162,39,.16)}
+.cl .said{color:#9d947f;font-style:italic} .cl .said b{color:#c9a227;font-style:normal}
+.cl .rl{height:2px;background:linear-gradient(#2a2418,#0a0a0c);
+  box-shadow:0 1px 0 rgba(201,162,39,.1)}
+.cl .s .e{background-image:var(--nz-fine),var(--nz-mid),
+  linear-gradient(152deg, rgba(255,246,222,.13) 0%, transparent 34%),
+  linear-gradient(#2b2d3a,#181a24 58%,#0e0f16);
+  background-size:180px 180px,120px 120px,auto,auto;
+  background-blend-mode:soft-light,overlay,screen,normal;
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.65), inset 0 7px 16px rgba(0,0,0,.55),
+             inset 0 -10px 18px rgba(0,0,0,.4)}
+.cl .s .g{color:#8d8570;font-family:'Cinzel',serif;text-shadow:0 1px 0 #000}
+.cl .s .n{color:#cdc2a9} .cl .s .t{color:#6d6553}
+.cl .s.pick .e{background-image:var(--nz-fine),var(--nz-mid),
+  linear-gradient(150deg, rgba(255,240,196,.36) 0%, rgba(255,240,196,.06) 30%, transparent 46%),
+  linear-gradient(#6a5220,#3d2f11 58%,#211806);
+  box-shadow:inset 0 0 0 1px rgba(232,197,106,.5), inset 0 8px 20px rgba(0,0,0,.4),
+             0 0 26px rgba(201,162,39,.2)}
+.cl .s.pick .g{color:#ffeec0} .cl .s.pick .n{color:#f3e9d2} .cl .s.pick .t{color:#c9a227}
+.cl .s.pack .e{background-image:var(--nz-fine),var(--nz-coarse),
+  linear-gradient(152deg, rgba(255,210,190,.1) 0%, transparent 34%),
+  linear-gradient(#4a1a1c,#2a0f11 58%,#170809);
+  background-size:180px 180px,160px 160px,auto,auto;
+  background-blend-mode:soft-light,multiply,screen,normal}
+.cl .s.pack .g{color:#d8948a} .cl .s.pack .t{color:#b03a33}
+.cl .s.dead{opacity:.42} .cl .s.dead .n{text-decoration:line-through}
+.cl .ft{color:#6e6655}
+.cl .bb{background:#07070a;border:1px solid #1d1e26}
+.cl .bb .art{background-image:var(--nz-fine),var(--nz-mid),var(--nz-coarse),
+  radial-gradient(64% 50% at 74% 16%, rgba(201,162,39,.24), transparent 58%),
+  radial-gradient(90% 62% at 26% 96%, rgba(140,26,26,.2), transparent 64%),
+  linear-gradient(174deg,#10131d,#0a0c13 54%,#06070b);
+  background-size:180px 180px,240px 240px,320px 320px,auto,auto,auto;
+  background-blend-mode:soft-light,overlay,multiply,screen,screen,normal}
+.cl .bb .cap{background:linear-gradient(transparent,rgba(5,5,8,.94) 58%)}
+.cl .bb .cap .k{color:#a8935c} .cl .bb .cap .t{color:#f0e6cf}
+.cl .bb .mt{background:#0a0b10;border-top:1px solid #1a1b23}
+.cl .bb .mt .a{color:#e4dcc8} .cl .bb .mt .b{color:#7e7663}
+
 </style>
 </head>
 <body>
@@ -1102,6 +1158,22 @@ and brass. These are the two alternatives that earned their place, each on the i
 night III, seven seats, Alex out, Sveta chosen, Lee in the pack. Woodcut, arcana, illuminated and
 stained glass were all tried and cut.</p>
 <div class="sv">
+<div class="pair">
+  <div>
+    <div class="h4"><span class="pill">00</span> Candlelit &middot; the original</div>
+    <p class="why">Damp stone under one tallow flame, iron shields, brass when chosen, old blood
+    for the pack. This is what the flow mockups below are drawn in - here so it can be compared
+    rather than described.</p>
+    <div class="device cl"><div class="chrome"><i></i></div><div class="scr"><div class="in"><div class="hdr">Night III</div><div class="ask">Who do you want gone?</div><div class="said">You are a <b>wolf</b>. Tonight Cy makes the call.</div><div class="rl"></div><div class="grid"><div class="s dead"><div class="e esh"><span class="g">A</span></div><div class="n">Alex</div><div class="t">Out</div></div><div class="s pick"><div class="e esh"><span class="g">S</span></div><div class="n">Sveta</div><div class="t">Sent</div></div><div class="s "><div class="e esh"><span class="g">K</span></div><div class="n">Kim</div><div class="t">Sent</div></div><div class="s pack"><div class="e esh"><span class="g">L</span></div><div class="n">Lee</div><div class="t">Pack</div></div><div class="s "><div class="e esh"><span class="g">A</span></div><div class="n">Ana</div><div class="t">Sent</div></div><div class="s "><div class="e esh"><span class="g">B</span></div><div class="n">Bo</div><div class="t">Waiting</div></div><div class="s "><div class="e esh"><span class="g">C</span></div><div class="n">Cy</div><div class="t">You</div></div></div><div class="stage">Staged &middot; <b>send it from the thread</b></div><div class="ft">Bo has not sent. You may carry them.</div></div></div></div>
+    <div class="note"><b>The warmest of the three, and the one with the most going on.</b> Two
+    light sources - tallow top-left, blood bottom-right - give it depth the other two do not have,
+    at the cost of being the busiest behind type.</div>
+  </div>
+  <div>
+    <div class="h4"><span class="pill n">candlelit</span> in the thread</div>
+    <div class="device cl"><div class="chrome"><i></i></div><div class="thr" style="height:280px;background:#0b0d12"><div class="m them">who even is awake</div><div class="bb"><div class="art"><div class="moon"></div><div class="town"></div><div class="cap"><div class="k">Night III</div><div class="t">Cy closed the night</div></div></div><div class="mt"><div class="a">6 of 6 have sent</div><div class="b">Open to see the morning</div></div></div><div class="m them">oh no</div></div></div>
+  </div>
+</div>
 <div class="pair">
   <div>
     <div class="h4"><span class="pill">01</span> Moonlit</div>
@@ -1571,6 +1643,7 @@ both medieval, neither gory. Twelve seats, two already out, tallies scratched un
 <h2>Three skies</h2>
 <p class="lede">The bubble is the only thing most people see, so it should say what time it is
 without reading a word. Same village, three states.</p>
+<div class="sv">
 <div class="row">
   <div class="col">
     <div class="h4"><span class="pill">night</span> an ordinary move</div>
@@ -1626,6 +1699,7 @@ without reading a word. Same village, three states.</p>
     sun looks like. The village goes to a light silhouette so it reads at noon instead of against
     the dark.</div>
   </div>
+</div>
 </div>
 </section>
 
