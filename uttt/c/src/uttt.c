@@ -38,6 +38,17 @@ int uttt_legal(const UtttGame *g, uint8_t *out)
     return n;
 }
 
+int uttt_undo(UtttGame *g)
+{
+    if (g->n_plies == 0) return 0;
+    uint8_t moves[UTTT_MAX_PLIES];
+    int n = g->n_plies - 1;
+    memcpy(moves, g->move, (size_t)n);
+    uttt_init(g);
+    for (int i = 0; i < n; i++) uttt_play(g, moves[i]);
+    return 1;
+}
+
 int uttt_play(UtttGame *g, uint8_t mv)
 {
     uint8_t list[81];

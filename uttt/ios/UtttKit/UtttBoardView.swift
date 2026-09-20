@@ -22,37 +22,53 @@ public struct UtttBoard: View {
         self.onTap = onTap
     }
 
+    /// HOW FAR THE PEN IS ALLOWED PAST THE BOARD, as a fraction of it.
+    ///
+    /// The four main lines overshoot the grid by design - nobody ruling a
+    /// board stops the pen neatly at the last cell - and a canvas cut tight
+    /// to the board sliced every one of them off at the same clean vertical,
+    /// which is the one thing a hand-drawn grid must never have. So the
+    /// bitmap is bigger than the board and the board sits inside it; whatever
+    /// still runs past is clipped by the SHEET, which is paper running out
+    /// rather than a box.
+    static let bleed: CGFloat = 0.115
+
     public var body: some View {
-        Canvas { ctx, size in
-            let side = min(size.width, size.height)
-            if let img = Self.cached(key: positionKey, active: active,
-                                     last: animating == nil ? last : -1,
-                                     side: side) {
-                ctx.draw(Image(decorative: img, scale: 1),
-                         in: CGRect(x: 0, y: 0, width: side, height: side))
-            }
-            if let a = animating {
-                Self.fill(Uttt.stroke(move: a.move, t: Float(a.t)),
-                          into: ctx, side: side)
+        GeometryReader { geo in
+            let side = min(geo.size.width, geo.size.height)
+            let pad  = side * Self.bleed
+            ZStack(alignment: .topLeading) {
+                Canvas { ctx, _ in
+                    if let img = Self.cached(key: positionKey, active: active,
+                                             last: animating == nil ? last : -1,
+                                             side: side) {
+                        ctx.draw(Image(decorative: img, scale: 1),
+                                 in: CGRect(x: 0, y: 0,
+                                            width: side + 2 * pad,
+                                            height: side + 2 * pad))
+                    }
+                    if let a = animating {
+                        ctx.translateBy(x: pad, y: pad)
+                        Self.fill(Uttt.stroke(move: a.move, t: Float(a.t)),
+                                  into: ctx, side: side)
+                    }
+                }
+                .frame(width: side + 2 * pad, height: side + 2 * pad)
+                .offset(x: -pad, y: -pad)
+                .allowsHitTesting(false)
+
+                // The tap map is against the BOARD, not the bled bitmap.
+                Color.clear.contentShape(Rectangle())
+                    .frame(width: side, height: side)
+                    .onTapGesture { p in
+                        guard let onTap else { return }
+                        let u = p.x / side, v = p.y / side
+                        guard u >= 0, u <= 1, v >= 0, v <= 1 else { return }
+                        onTap(CGPoint(x: u, y: v))
+                    }
             }
         }
         .aspectRatio(1, contentMode: .fit)
-        .drawingGroup()
-        .overlay(GeometryReader { geo in
-            // The board is square inside whatever box it is given, so a tap
-            // has to be mapped against the SIDE and not the box - otherwise
-            // every column is off by half the letterboxing.
-            Color.clear.contentShape(Rectangle())
-                .onTapGesture { p in
-                    guard let onTap else { return }
-                    let side = min(geo.size.width, geo.size.height)
-                    let ox = (geo.size.width  - side) / 2
-                    let oy = (geo.size.height - side) / 2
-                    let u = (p.x - ox) / side, v = (p.y - oy) / side
-                    guard u >= 0, u <= 1, v >= 0, v <= 1 else { return }
-                    onTap(CGPoint(x: u, y: v))
-                }
-        })
     }
 
     static func fill(_ polys: [Uttt.Poly], into ctx: GraphicsContext, side: CGFloat) {
@@ -73,10 +89,14 @@ public struct UtttBoard: View {
     private static var cacheSide: CGFloat = 0
     private static var cacheImage: CGImage?
 
+    /// The board at `side`, inside a bitmap bled by `bleed` on every edge, so
+    /// the grid's overshoot has somewhere to go.
     static func cached(key: Int, active: Int, last: Int, side: CGFloat) -> CGImage? {
         if key == cacheKey, side == cacheSide, let img = cacheImage { return img }
         let scale = UIScreen.main.scale
-        let px = Int(side * scale)
+        let pad = side * bleed
+        let box = side + 2 * pad
+        let px = Int(box * scale)
         guard px > 0,
               let cg = CGContext(data: nil, width: px, height: px,
                                  bitsPerComponent: 8, bytesPerRow: 0,
@@ -88,8 +108,9 @@ public struct UtttBoard: View {
          * top to bottom - which reads as the game having been played upside
          * down rather than as a coordinate bug. Flip once, here, so the
          * kernel's coordinates mean the same thing in both places. */
-        cg.translateBy(x: 0, y: side * scale)
+        cg.translateBy(x: 0, y: box * scale)
         cg.scaleBy(x: scale, y: -scale)
+        cg.translateBy(x: pad, y: pad)
         for poly in Uttt.board(active: active, last: last) {
             guard let head = poly.points.first else { continue }
             cg.beginPath()

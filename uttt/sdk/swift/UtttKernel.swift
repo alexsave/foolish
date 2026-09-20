@@ -19,6 +19,17 @@ public enum Uttt {
     @discardableResult
     public static func play(_ move: Int) -> Bool { uti_play(Int32(move)) != 0 }
 
+    /// The rulebook's text, straight from the kernel: a title and six lines.
+    /// The renderer lays them out and writes none of them.
+    public static var rulesTitle: String { String(cString: uti_rules_title()) }
+    public static var rules: [String] {
+        (0..<Int(uti_rules_count())).map { String(cString: uti_rules_line(Int32($0))) }
+    }
+
+    /// Take back the last move. False when there was none.
+    @discardableResult
+    public static func undo() -> Bool { uti_undo() != 0 }
+
     public static var legal: [UInt8] {
         var buf = [UInt8](repeating: 0, count: 81)
         let n = buf.withUnsafeMutableBufferPointer { uti_legal($0.baseAddress) }
@@ -51,7 +62,6 @@ public enum Uttt {
         }
     }
 
-    public static func botMove(budget: Int = 60) -> Int { Int(uti_bot_move(Int32(budget))) }
 
     // MARK: the drawing
 

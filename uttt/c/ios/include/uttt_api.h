@@ -19,6 +19,11 @@
 void uti_new(int32_t seed);
 int  uti_play(int mv);                  /* 1 if legal and played        */
 int  uti_legal(uint8_t *out);           /* out needs 81; returns count  */
+
+/* Take back the last move. 1 if there was one. A STAGED BUBBLE IS A DRAFT -
+ * a player who taps the wrong square taps another one instead - so this is
+ * the product's own undo, not a debugging convenience. */
+int  uti_undo(void);
 int  uti_over(void);                    /* 0, or X / O / draw           */
 int  uti_turn(void);
 int  uti_forced(void);                  /* block, or 255 for anywhere   */
@@ -37,8 +42,13 @@ int  uti_active(void);
 int  uti_encode(uint8_t *out, int cap);
 int  uti_decode(const uint8_t *buf, int n, int32_t seed);
 
-/* nib, for solo play. budget is rollouts per candidate. */
-int  uti_bot_move(int budget);
+/* NO BOT CROSSES THIS BOUNDARY. `uttt/c/src/uttt_bots.c` still holds all six
+ * of them and the arena still runs them - they are how we learned that a real
+ * game codes to about twenty-two bytes, which needed thousands of plausible
+ * games and no human. But this app is two people doing something to each
+ * other in a thread, and an opponent that is always available and never loses
+ * interest is the opposite of that. The bots are research; they do not ship.
+ */
 
 /* ---------------------------------------------------------- the drawing */
 /* Rebuild the display list for the resident game. Returns polygon count.
@@ -92,6 +102,11 @@ float uti_bubble_lead(void);            /* points between the two lines */
 /* A block's name. 0..8, or 9 for "anywhere". spoken: 0 for the place line
  * ("bottom middle"), 1 for a sentence ("the bottom-middle board"). */
 const char *uti_place_name(int block, int spoken);
+
+/* The rulebook's text. Six lines and a title - see uttt_draw.h. */
+int         uti_rules_count(void);
+const char *uti_rules_line(int i);
+const char *uti_rules_title(void);
 
 /* Parallel arrays describing the last uti_draw. Coordinates are 0..1. */
 const float    *uti_points(void);       /* 2 floats a point             */

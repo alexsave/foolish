@@ -157,10 +157,17 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
         hash_in(d, (b % 3) * BL, (b / 3) * BL, BL,
                 o->seed * 131 + b * 17,
                 base.w / 9.f / 100.f * .62f, BL * .03f, .5f, 1.5f);
+    /* THE FOUR MAIN LINES RUN LONG. Nobody ruling a board stops the pen
+     * neatly at the last cell - the line goes where the arm goes, past the
+     * corner and sometimes off the paper. A short overshoot reads as a
+     * cautious drawing; a long one reads as somebody who drew it in four
+     * strokes without looking. The renderer's own frame clips whatever runs
+     * past the edge, which is the right answer: a line that leaves the board
+     * should leave the board. */
     hash_in(d, 0, 0, S, o->seed * 7 + 3,
-            base.w / 9.f / 100.f * 1.7f, S * .05f, .9f, 3.4f);
+            base.w / 9.f / 100.f * 1.7f, S * .135f, .9f, 3.4f);
     hash_in(d, 0, 0, S, o->seed * 19 + 5,
-            base.w / 9.f / 100.f * 1.5f, S * .045f, .72f, 3.4f);
+            base.w / 9.f / 100.f * 1.5f, S * .118f, .72f, 3.4f);
 
     for (int b = 0; b < 9; b++) {
         int won = g->block[b] == UTTT_X || g->block[b] == UTTT_O;
@@ -415,3 +422,34 @@ void uttt_paper(uint8_t *rgba, int w, int h)
             p[3] = 255;
         }
 }
+
+/* ---------------------------------------------------------------- the rules */
+/* THE WHOLE GAME, IN SIX LINES, and they live here for the same reason the
+ * nine block names do: the kernel is the one thing that knows what the rules
+ * ARE, and a second copy of them in a renderer is a second rulebook that
+ * drifts. The host app keeps every user-facing string in a C table too.
+ *
+ * Six, not ten. Ultimate tic-tac-toe is a small idea wearing a complicated
+ * board, and the only line anybody actually needs is the fourth - the square
+ * you play in is the board they must play in. The rest is scaffolding for it.
+ *
+ * NO EM DASHES, NO CURLY QUOTES: these are rendered by a text engine that is
+ * handed exactly these bytes. */
+static const char *const RULES[] = {
+    "Nine little boards make one big one.",
+    "Win a little board the usual way: three of yours in a line.",
+    "Win the game by taking three little boards in a line.",
+    "The SQUARE you play in is the BOARD they have to play in next. Play bottom-left of any board, and they are sent to the bottom-left one.",
+    "If that board is already won or full, they may play anywhere.",
+    "A board that is won or full stays that way. Nobody plays in it again.",
+};
+
+int uttt_rules_count(void) { return (int)(sizeof RULES / sizeof *RULES); }
+
+const char *uttt_rules_line(int i)
+{
+    if (i < 0 || i >= uttt_rules_count()) return "";
+    return RULES[i];
+}
+
+const char *uttt_rules_title(void) { return "How it goes"; }

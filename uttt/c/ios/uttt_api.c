@@ -1,7 +1,6 @@
 #include "uttt_api.h"
 #include "../src/uttt.h"
 #include "../src/uttt_code.h"
-#include "../src/uttt_bots.h"
 #include "../src/uttt_draw.h"
 #include <string.h>
 
@@ -42,6 +41,7 @@ int uti_play(int mv)
     return uttt_play(&S.g, (uint8_t)mv);
 }
 int uti_legal(uint8_t *out)   { return uttt_legal(&S.g, out); }
+int uti_undo(void) { return uttt_undo(&S.g); }
 int uti_over(void)            { return S.g.over; }
 int uti_turn(void)            { return S.g.turn; }
 int uti_forced(void)          { return S.g.forced; }
@@ -70,10 +70,6 @@ int uti_decode(const uint8_t *buf, int n, int32_t seed)
     return 1;
 }
 
-int uti_bot_move(int budget)
-{
-    return uttt_bot_move(BOT_NIB, &S.g, budget > 0 ? budget : 60, &S.rs);
-}
 
 static int publish(void)
 {
@@ -163,6 +159,10 @@ uint32_t uti_bubble_ink(int line)
 }
 
 float uti_bubble_lead(void) { return uttt_bubble().lead; }
+
+int         uti_rules_count(void)      { return uttt_rules_count(); }
+const char *uti_rules_line(int i)      { return uttt_rules_line(i); }
+const char *uti_rules_title(void)      { return uttt_rules_title(); }
 
 const char *uti_place_name(int block, int spoken)
 {

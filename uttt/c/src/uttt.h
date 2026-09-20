@@ -41,6 +41,19 @@ int  uttt_legal(const UtttGame *g, uint8_t *out);
 /* Apply a move. Returns 1 if it was legal and was played, 0 otherwise. */
 int  uttt_play(UtttGame *g, uint8_t mv);
 
+/* Take back the last ply. Returns 1 if there was one to take back.
+ *
+ * BY REPLAYING, not by unwinding. A block closes when it is won or full and
+ * is closed FOREVER, and `over` and `forced` are derived from the whole
+ * position rather than from the last move - so an undo that tried to reverse
+ * each of those in turn would be a second, subtly different set of rules, and
+ * the two would drift. Eighty-one plies replay in microseconds; correctness
+ * is worth more than that. The history is already in `move[]`.
+ *
+ * It exists because a staged bubble is a DRAFT: a player who taps the wrong
+ * square must be able to tap another one before they send. */
+int  uttt_undo(UtttGame *g);
+
 /* Three in a line for `mark` over nine slots; slots may hold UTTT_DRAW. */
 int  uttt_line(const uint8_t *nine, uint8_t mark);
 

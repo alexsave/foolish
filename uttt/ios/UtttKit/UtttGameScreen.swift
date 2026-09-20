@@ -40,16 +40,27 @@ public struct UtttGameScreen: View {
     private static let ink   = Color(red: 0.114, green: 0.106, blue: 0.086) // #1d1b16
     private static let blue  = Color(red: 0.145, green: 0.216, blue: 0.420) // #25376b
 
+    /// THE DOOR OPENS ON THE SAME SHEET. Not a modal over a dimmed board:
+    /// the drawer is already a piece of paper in a small box, and a card
+    /// floating over it would be the only thing in the app that is not drawn
+    /// on the napkin.
+    @State private var rulesOpen = false
+
     public var body: some View {
         UtttSheet {
             GeometryReader { geo in
-                if geo.size.height <= Self.collapsedCeiling {
+                if rulesOpen {
+                    UtttRulesSheet { rulesOpen = false }
+                        .padding(Self.margin)
+                        .transition(.opacity)
+                } else if geo.size.height <= Self.collapsedCeiling {
                     collapsed(geo.size)
                 } else {
                     expanded(geo.size)
                 }
             }
         }
+        .animation(.easeInOut(duration: 0.18), value: rulesOpen)
     }
 
     // MARK: collapsed
@@ -96,11 +107,7 @@ public struct UtttGameScreen: View {
             HStack(alignment: .top, spacing: 8) {
                 indicator(icon: 46, lead: 4).frame(width: 48)
                 Spacer(minLength: 0)
-                Text(model.headline)
-                    .font(.system(size: 21, weight: .bold))
-                    .tracking(-0.315)              // -.015em
-                    .lineLimit(1)
-                    .foregroundStyle(Uttt.over == .none ? Self.ink : Self.blue)
+                headlineView
             }
             .frame(height: Self.barHeight, alignment: .top)
             Spacer(minLength: 0)
@@ -108,12 +115,40 @@ public struct UtttGameScreen: View {
             Spacer(minLength: 0)
             HStack(spacing: 0) {
                 Spacer(minLength: 0)
-                // TODO: the rulebook itself is not built. The door is drawn
-                // because the sheet has one; it opens on nothing yet.
-                UtttRulebookButton(side: Self.doorSide) {}
+                UtttRulebookButton(side: Self.doorSide) { rulesOpen = true }
             }
         }
         .padding(Self.margin)
+    }
+
+    /// THE BAR'S LINE, with the other side drawn rather than spelled.
+    ///
+    /// The mark is sized to the CAP HEIGHT of the type beside it, not to the
+    /// line box, or it sits low and reads as a separate object; and it is
+    /// nudged down by a point because a drawn circle's optical centre is not
+    /// its bounding box's. `.firstTextBaseline` does the rest.
+    @ViewBuilder private var headlineView: some View {
+        let ink = Uttt.over == .none ? Self.ink : Self.blue
+        HStack(alignment: .firstTextBaseline, spacing: 0) {
+            switch model.headline {
+            case .text(let t):
+                headlineText(t, ink)
+            case .mark(let before, let m, let after):
+                if !before.isEmpty { headlineText(before, ink) }
+                UtttMarkIcon(mark: m, seed: model.seed &* 31 &+ 7)
+                    .frame(width: 21, height: 21)
+                    .alignmentGuide(.firstTextBaseline) { $0.height - 2 }
+                if !after.isEmpty { headlineText(after, ink) }
+            }
+        }
+        .lineLimit(1)
+    }
+
+    private func headlineText(_ t: String, _ ink: Color) -> some View {
+        Text(t)
+            .font(.system(size: 21, weight: .bold))
+            .tracking(-0.315)              // -.015em
+            .foregroundStyle(ink)
     }
 
     /// "you are" over a 46-point mark, which is 19 points of label, a 4-point

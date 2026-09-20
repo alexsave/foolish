@@ -77,6 +77,13 @@ const char *uttt_place_name(int block, int spoken);
  * tools/icons.sh, which writes the PNGs the asset catalogues carry. */
 int uttt_draw_icon(UtttDL *d, float w, float h);
 
+/* THE RULES, in the kernel, for the same reason the nine block names are: it
+ * is the one thing that knows what they are, and a second copy in a renderer
+ * is a second rulebook. Six lines and a title; never NULL. */
+int         uttt_rules_count(void);
+const char *uttt_rules_line(int i);
+const char *uttt_rules_title(void);
+
 /* The sheet everything is drawn on: w*h pixels of RGBA, opaque. Here rather
  * than in a renderer because two phones have to be looking at the same piece
  * of paper - it had drifted into three copies before it moved. */

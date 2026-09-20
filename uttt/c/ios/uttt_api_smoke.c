@@ -38,6 +38,18 @@ int main(void)
     }
     ok(sent_anywhere == 1, "one move in that game points at a decided block");
     ok(uti_n_plies() == N, "every move was played");
+
+    /* UNDO IS THE PRODUCT'S, not a test hook: a staged bubble is a draft and
+     * the player has to be able to change their mind before they send. */
+    {
+        int was_over = uti_over(), last = uti_move_at(N - 1);
+        ok(uti_undo(), "the last move comes back");
+        ok(uti_n_plies() == N - 1, "and the history is one shorter");
+        ok(uti_cell(last) == 0, "the square it was on is empty again");
+        ok(uti_over() == 0, "a game undone below its winning move is not over");
+        ok(uti_play(last), "and the same move can be played again");
+        ok(uti_over() == was_over && uti_n_plies() == N, "back where we were");
+    }
     ok(uti_over() == 2, "O wins that game");
 
     uint8_t buf[64];
@@ -62,11 +74,14 @@ int main(void)
      * and every won block's grid underneath them. Play a full board out and
      * ask again, because the failure is silent. */
     {
+        /* The FIRST legal square every time, which fills the sheet without
+         * asking a bot anything - the bots are research and do not cross this
+         * boundary. */
         uti_new(77);
+        uint8_t list[81];
         int full = 0;
         while (!uti_over()) {
-            int m = uti_bot_move(1);
-            if (m < 0 || !uti_play(m)) break;
+            if (uti_legal(list) <= 0 || !uti_play(list[0])) break;
             full++;
         }
         int wp = uti_draw(-1, -1, 1.f, 1.f);
@@ -91,8 +106,6 @@ int main(void)
     ok(a == b && first == uti_points()[0], "the same seed draws the same board");
 
     uti_new(77);
-    int m = uti_bot_move(20);
-    ok(m >= 0 && m <= 80, "nib returns a move");
 
     /* ---- the bubble frame. 300x195 is somebody else's number, so the only
      * thing worth asserting is that nothing the kernel hands back falls
@@ -155,26 +168,34 @@ int main(void)
         ok(ribbons == np, "each one is a single ribbon polygon");
 
         const uint32_t *c = uti_poly_rgba();
-        int ink = 0, edge = 0, page = 0, other = 0;
-        uint32_t page_rgba = 0;
+        int ink = 0, edge = 0, book = 0, other = 0;
+        uint32_t ink_rgba = 0, book_rgba = 0;
         for (int i = 0; i < np; i++) {
-            switch (c[i] >> 8) {
-            case 0x25376bu: ink++;  break;
-            case 0x1b2a52u: edge++; break;
-            case 0xe2e8f4u: page++; page_rgba = c[i]; break;
-            default:        other++;
-            }
+            uint32_t rgb = c[i] >> 8;
+            if (rgb == 0x25376bu)      { ink++;  ink_rgba = c[i]; }
+            else if (rgb == 0x1b2a52u) {
+                /* The outline and the book are the SAME ink at different
+                 * strengths, so they are told apart by alpha rather than by
+                 * hue - which is the point: one pen, one colour. */
+                if ((c[i] & 0xffu) == 255) edge++; else { book++; book_rgba = c[i]; }
+            } else other++;
         }
-        ok(other == 0, "every stroke is one of the document's three colours");
+        ok(other == 0, "every stroke is one of the document's two inks");
         ok(ink == 34 && edge == 8, "the square is filled in ink and edged darker");
-        ok(page == 44, "and the book is one colour, both leaves and both edges");
-        /* the glyph lies ON a hachured square, so it is a wash and not a
-         * bright shape fighting the fill underneath it */
-        ok((page_rgba & 0xffu) == 140, "the page is 55 percent, not solid");
-        ok((c[0] & 0xffu) == 255, "while the square itself is opaque");
+        ok(book == 44, "and the book is one colour, both leaves and both edges");
+
+        /* THE FIGURE READS AGAINST THE GROUND, not into it. At full strength
+         * the hachure closes into a solid navy block at 54 points and a pale
+         * glyph on top of it vanishes - which is what the design document did
+         * and what Chrome renders from it. So the fill is thin enough to see
+         * the paper through and the book is the dark one. */
+        ok((ink_rgba & 0xffu) < 128, "the square's fill lets the paper through");
+        ok((book_rgba & 0xffu) > 200, "and the book is nearly solid on top of it");
+        ok((book_rgba & 0xffu) > (ink_rgba & 0xffu),
+           "the glyph is darker than the field it lies on");
 
         /* the fill is laid first so the outline lands ON it */
-        ok(c[0] == 0x25376bffu, "the first stroke down is fill, not outline");
+        ok((c[0] >> 8) == 0x25376bu, "the first stroke down is fill, not outline");
 
         const float *p = uti_points();
         int stray = 0;

@@ -209,6 +209,40 @@ int main(int argc, char **argv)
 
     printf("round trip: %d games encoded and decoded, %d mismatches\n",
            checked, fails - partial_fail);
+
+    /* UNDO, WALKED ALL THE WAY BACK. A staged bubble is a draft, so a player
+     * who taps the wrong square takes the move back and plays another - and
+     * the position they land on has to be the one they were on, not one that
+     * merely looks like it. So: play a game out, remember every position
+     * along the way, then undo to the bottom and compare each one whole.
+     *
+     * THE WHOLE STRUCT, not just the cells. A block closes forever and both
+     * `over` and `forced` are derived from the position, which is exactly
+     * where an unwind-the-last-move implementation would drift. */
+    int undone = 0, undo_fail = 0;
+    RS = 0x243F6A8885A308D3ull;
+    for (int i = 0; i < games / 10 + 1; i++) {
+        UtttGame g; uttt_init(&g);
+        UtttGame hist[UTTT_MAX_PLIES + 1];
+        uint8_t list[81];
+        int n_hist = 0;
+        hist[n_hist++] = g;
+        for (;;) {
+            int n = uttt_legal(&g, list);
+            if (n <= 0) break;
+            uttt_play(&g, pick(&g, list, n, 0));
+            hist[n_hist++] = g;
+        }
+        while (g.n_plies > 0) {
+            if (!uttt_undo(&g)) { undo_fail++; break; }
+            n_hist--;
+            if (memcmp(&g, &hist[n_hist - 1], sizeof g) != 0) undo_fail++;
+            undone++;
+        }
+        if (uttt_undo(&g)) undo_fail++;   /* nothing left to take back */
+    }
+    printf("undo: %d plies walked back, %d positions wrong\n", undone, undo_fail);
+    fails += undo_fail;
     report("uniform bot", ru, games);
     report("stretch bot (never closes a block if it can help it)", rs, games);
 

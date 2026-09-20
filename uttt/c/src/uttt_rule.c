@@ -19,9 +19,23 @@
 #include <math.h>
 
 /* docs/UI.html, initRbook(). Copied, not retyped. */
-#define INK     0x25376bffu             /* the square's fill              */
+/* FAINTER THAN THE DESIGN DOCUMENT'S, and the document is what is wrong.
+ *
+ * Its square is #25376b hachured at a gap of four with strokes 1.4 wide,
+ * drawn twice as every rough.js line is - which at the 54 points this button
+ * actually ships at closes up into a solid navy block. The pale book then
+ * sits ON that block and cannot be seen at all: Chrome renders the document's
+ * own version exactly the same way, so this was never a porting error.
+ *
+ * So the fill drops to two fifths and lets the paper back through, the
+ * outline stays solid because the edge is what makes it a button, and the
+ * book inverts - the dark ink rather than a pale page - because a glyph
+ * reads against a light field and disappears into a dark one. "Fill in the
+ * rulebook icon itself, and use a fainter colour" was the instruction; the
+ * fainter colour belonged to the square. */
+#define INK     0x25376b66u             /* the square's fill, 40%         */
 #define EDGE    0x1b2a52ffu             /* and its outline                */
-#define PAGE    0xe2e8f48cu             /* rgba(226,232,244,.55)          */
+#define PAGE    0x1b2a52d8u             /* the book, dark on the light fill */
 
 /* How finely a cubic is flattened, which is NOT a rough.js number - see
  * uttt_pen.h. MEASURED against the document, by rasterising the button at
@@ -107,8 +121,8 @@ int uttt_draw_rulebook(UtttDL *d, float w, float h)
     over |= shape(d, sq, 4, w, h, &square);
 
     /* The book: two leaves off one spine, each hachured the other way so the
-     * fold reads without a line down the middle. Faint, because it lies ON a
-     * hachured square and a bright glyph would fight the fill underneath. */
+     * fold reads without a line down the middle. Drawn in the same ink as the
+     * outline, over a fill thin enough to read through. */
     const UtttPt left[4] = {
         { 15.f, 17.f }, { w / 2.f, 20.f }, { w / 2.f, h - 15.f }, { 15.f, h - 18.f }
     };

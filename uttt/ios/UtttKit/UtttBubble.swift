@@ -84,7 +84,9 @@ public enum UtttBubble {
     /// send anybody, so it spends the line on how long it took instead.
     public static var place: String {
         if Uttt.over != .none { return "\(Uttt.plyCount) moves" }
-        return Uttt.plyCount == 0 ? "untaken" : placeName(spoken: false)
+        /* AN INVITATION HAS NOWHERE TO SEND ANYBODY. "A game?" is the whole
+         * question and a second line under it was a word looking for a job. */
+        return Uttt.plyCount == 0 ? "" : placeName(spoken: false)
     }
 
     /// One line, truncating, and it names who moved. A bubble is the same on
@@ -192,15 +194,20 @@ public enum UtttBubble {
         let opts: NSStringDrawingOptions = [.usesLineFragmentOrigin]
         let hH = ceil((headline as NSString)
             .boundingRect(with: wide, options: opts, attributes: hAttr, context: nil).height)
-        let pH = min(ceil((place as NSString)
+        /* AN EMPTY PLACE LINE TAKES NO ROOM AT ALL - not a blank line's worth.
+         * Measuring "" still returns a line height, and the headline would sit
+         * that far above the middle of a frame whose whole job is to look
+         * composed. */
+        let pH = place.isEmpty ? 0 : min(ceil((place as NSString)
             .boundingRect(with: wide, options: opts, attributes: pAttr, context: nil).height),
                      ceil(pFont.lineHeight * 2))
+        let lead0 = place.isEmpty ? 0 : CGFloat(uti_bubble_lead())
 
         /* The two lines are ONE block and the block is centred, which is not
          * the same as centring either line - the board's middle and the
          * headline's baseline have to look related or the frame reads as two
          * pictures that arrived together. */
-        let lead = CGFloat(uti_bubble_lead())
+        let lead = lead0
         var y = box.minY + (box.height - (hH + lead + pH)) / 2
         (headline as NSString).draw(
             with: CGRect(x: box.minX, y: y, width: box.width, height: hH),

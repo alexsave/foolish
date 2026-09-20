@@ -2069,13 +2069,18 @@ function initRbook(root){
     /* HACHURE, not a flat fill. The button is on the same sheet as the board
        and drawn by the same hand, so a solid rectangle would be the only
        printed thing in the frame. */
+    /* THE FILL IS 40%, and the first version of this page was wrong about
+       that. At full strength a 1.4-wide stroke every four units - drawn
+       twice, as every rough.js line is - closes up into a solid navy block at
+       the 54 POINTS this button ships at, and the pale book on top of it
+       cannot be seen at all. The paper has to come back through the fill. */
     rc.rectangle(4, 4, W - 8, H - 8, {
-      fill: '#25376b', fillStyle: 'hachure', hachureGap: 4.2, fillWeight: 1.4,
-      hachureAngle: -41, stroke: '#1b2a52', strokeWidth: 1.8,
+      fill: 'rgba(37,55,107,.4)', fillStyle: 'hachure', hachureGap: 4.2,
+      fillWeight: 1.4, hachureAngle: -41, stroke: '#1b2a52', strokeWidth: 1.8,
       roughness: 1.5, bowing: 1.3, seed: 19 });
-    /* the book is filled too, and faint - it lies ON a hachured square, so a
-       bright solid glyph would fight the fill underneath it */
-    const pg = 'rgba(226,232,244,.55)';
+    /* and the book is DARK on that light fill, not pale on a dark one - a
+       glyph reads against a light field and disappears into a dark one */
+    const pg = 'rgba(27,42,82,.85)';
     rc.polygon([[15, 17], [W/2, 20], [W/2, H - 15], [15, H - 18]],
       { fill: pg, fillStyle: 'hachure', hachureGap: 2.6, fillWeight: .9,
         hachureAngle: 38, stroke: pg, strokeWidth: 1.3, roughness: 1.3, seed: 23 });

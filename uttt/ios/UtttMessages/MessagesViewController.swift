@@ -35,10 +35,37 @@ final class MessagesViewController: MSMessagesAppViewController {
     }
 
     /// The draft was deleted, so the board it held never existed.
+    ///
+    /// ONLY IF THIS IS THE DRAFT. Staging a replacement - which is what
+    /// tapping a different square does - REPLACES the bubble in the input
+    /// field, and Messages reports the replaced one as cancelled, after the
+    /// successor has already been recorded. A handler that believed every
+    /// cancel would take back the move the player had just decided on. The
+    /// host app hit this too and its note is the one worth reading.
     override func didCancelSending(_ message: MSMessage, conversation: MSConversation) {
-        staged = nil
+        guard message.url == draftURL else { return }
+        draftURL = nil
+        live?.setPending(false)
+        /* The X IS the undo: there is no other button, and leaving the move
+         * played would put the board a ply ahead of every bubble in the
+         * thread. */
+        if Uttt.plyCount > 0, Uttt.undo() {
+            staged = staged.map { UtttWire(seed: $0.seed, creator: $0.creator,
+                                           joiner: $0.joiner, code: Uttt.code) }
+            reverted = true
+            live?.refresh()
+        } else {
+            staged = nil
+        }
         present(conversation)
     }
+
+    /// A REVERT BEATS THE SELECTION FOR ONE PRESENT. `insert()` made the
+    /// staged bubble the selection and a cancel does not always take that
+    /// back, so the ordinary "more plies wins" rule would route the surface
+    /// straight back at the bubble the human just discarded - the opposite of
+    /// an undo.
+    private var reverted = false
 
     private func present(_ conversation: MSConversation) {
         bag.removeAll()
@@ -100,6 +127,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// The draft beats the transcript, but only for the same game: tapping an
     /// older bubble, or a different game's, has to win.
     private func current(_ selected: UtttWire?) -> UtttWire? {
+        if reverted { reverted = false; return staged }
         guard let staged else { return selected }
         guard let selected else { return staged }
         guard staged.isSameGame(as: selected) else { return selected }
@@ -146,6 +174,8 @@ final class MessagesViewController: MSMessagesAppViewController {
         message.url = wire.url
         message.layout = layout(for: wire, actor: actor)
         staged = wire
+        draftURL = message.url
+        live?.setPending(true)
 #if DEBUG
         /* The seeded game's state, so the other seat finds this move. */
         if UtttDev.game != nil { UtttDev.live = wire.url.absoluteString }
@@ -171,21 +201,22 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     // MARK: the screens
 
+    /// The board on screen, so a cancel can tell it the draft is gone.
+    private weak var live: UtttModel?
+
+    /// The draft currently in the input field. Messages reports a REPLACED
+    /// bubble as cancelled, so a cancel that does not name this one is stale.
+    private var draftURL: URL?
+
     private func showBoard(_ wire: UtttWire, mark: Uttt.Mark, claiming: String?) {
         /* ONE GAME LIVES IN THE KERNEL and UtttModel's init starts a new one
          * on it, so the position goes in AFTER the model exists and the screen
          * is told to look again. Any other order shows an empty board over a
          * game in progress. */
-        /* NAMED BY THEIR MARK, because that is the only name this side has.
-         * A Messages extension cannot resolve a participant's display name -
-         * it gets a per-device UUID - so until a nickname travels on the wire,
-         * "O" is the true answer and "nib" was a bot from the demo. The
-         * bubble's own caption already speaks this vocabulary ("X started a
-         * game."), so the two surfaces agree. */
-        let model = UtttModel(seed: wire.seed, you: mark, solo: false,
-                              opponent: mark == .x ? "O" : "X")
+        let model = UtttModel(seed: wire.seed, you: mark)
         wire.load()
         model.refresh()
+        live = model
 
         /* The model does not know there is a conversation and should not. It
          * says the position changed; a position that changed is a move this
@@ -193,8 +224,16 @@ final class MessagesViewController: MSMessagesAppViewController {
         model.$positionKey
             .dropFirst()
             .sink { [weak self] _ in
-                self?.stage(wire.staging(joining: claiming), actor: mark,
-                            andShowIt: false)
+                guard let self else { return }
+                /* A REPLACEMENT RESTAGES, it does not stage a second bubble.
+                 * Uttt.plyCount going DOWN is the undo half of a change of
+                 * mind, and there is nothing to put in the field for it - the
+                 * move that replaces it arrives a beat later and stages then.
+                 * Without this the input field briefly carries the position
+                 * the player just rejected. */
+                guard Uttt.turn != mark || Uttt.over != .none else { return }
+                self.stage(wire.staging(joining: claiming), actor: mark,
+                           andShowIt: false)
             }
             .store(in: &bag)
 
@@ -217,11 +256,15 @@ final class MessagesViewController: MSMessagesAppViewController {
             return
         }
 
+        /* A CONSTANT, NOT A SEARCH - and not the bot, which is research and
+         * has no business inside the app. These are the first moves of the
+         * game the render harness draws, so a seeded screenshot here and a
+         * PPM from `make render` are the same board. */
         Uttt.newGame(seed: seed)
-        for _ in 0..<max(0, plies) {
-            guard Uttt.over == .none else { break }
-            let mv = Uttt.botMove(budget: 40)
-            guard mv >= 0, Uttt.play(mv) else { break }
+        let opening = [34, 67, 44, 80, 76, 43, 69, 62, 79, 63, 4, 40, 39, 31,
+                       37, 16, 70, 71, 72, 3, 29, 19, 17, 73, 14, 50, 45, 6]
+        for mv in opening.prefix(max(0, plies)) where Uttt.over == .none {
+            _ = Uttt.play(mv)
         }
         seatSeeded(UtttWire(seed: seed, creator: a, joiner: b, code: Uttt.code))
     }
@@ -235,7 +278,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 #endif
 
     private func showWatching(_ wire: UtttWire) {
-        let model = UtttModel(seed: wire.seed, you: .none, solo: false)
+        let model = UtttModel(seed: wire.seed, you: .none)
         wire.load()
         model.refresh()
         show(UtttWatchScreen(model: model))

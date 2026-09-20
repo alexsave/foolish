@@ -44,7 +44,7 @@ struct PreviewRoot: View {
     }
 
     @State private var size: Size = Size.launched
-    @State private var model = UtttModel(seed: 77, you: .x, solo: true)
+    @State private var model = UtttModel(seed: 77, you: .x)
     @State private var loaded = false
 
     /// Twelve moves of the game in the design document, so the harness shows
