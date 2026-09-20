@@ -263,15 +263,20 @@ UtttBubble uttt_bubble(void)
     UtttBubble b;
     b.w = BUB_W; b.h = BUB_H;
 
+    /* THE BOARD IS ON THE RIGHT, and that is not a taste. Messages stamps the
+     * app's own logo into the TOP-LEFT corner of every bubble it draws, over
+     * whatever is underneath - so a board in that corner has a badge sitting
+     * on its first block for the whole game. The text column can carry it:
+     * the headline starts below the badge and nothing is lost. */
     float side = BUB_H - 2.f * 7.f;          /* 181 */
-    b.board.x = BUB_PAD;
+    b.board.x = BUB_W - BUB_PAD - side;
     b.board.y = (BUB_H - side) * .5f;
     b.board.w = side;
     b.board.h = side;
 
-    b.text.x = b.board.x + side + BUB_GUT;
+    b.text.x = BUB_PAD;
     b.text.y = b.board.y;
-    b.text.w = BUB_W - b.text.x - BUB_PAD;
+    b.text.w = b.board.x - BUB_GUT - BUB_PAD;
     b.text.h = side;
 
     b.headline_pt = 16.f;
@@ -299,4 +304,114 @@ const char *uttt_place_name(int block, int spoken)
 {
     if (block < 0 || block > 9) return "";
     return spoken ? PLACE_SPOKEN[block] : PLACE[block];
+}
+
+/* ---------------------------------------------------------------- the icon */
+/* THE APP'S OWN FACE, drawn with the app's own pen.
+ *
+ * It is a static asset - a build-time tool rasterises this into the PNGs the
+ * asset catalogues carry - but it is still the pen, and the pen has one
+ * implementation. An icon traced by hand in a drawing program is a second pen
+ * that drifts from the first the next time the first one changes.
+ *
+ * NO BOARD IN IT. The real one is 9x9 and the smallest icon iOS asks for is
+ * 27x20 POINTS, where nine hashes are a grey smudge. */
+int uttt_draw_icon(UtttDL *d, float w, float h)
+{
+    if (w <= 0 || h <= 0) return -1;
+    const int first = d->n_pt;
+
+    /* THE LOGO IS A MONOGRAM, not a board. An X and an O the same size, on
+     * top of each other, drawn in three movements:
+     *
+     *     1. the X's north-west to south-east stroke
+     *     2. the O
+     *     3. the X's north-east to south-west stroke
+     *
+     * so the circle passes OVER the first stroke and UNDER the second, and
+     * the two marks are threaded through one another rather than stacked.
+     * That is the whole idea and it only exists because this pen is a ribbon
+     * of quads laid down in order - a renderer that stacked two finished
+     * images could not do it, and neither could an icon drawn by hand once.
+     *
+     * Drawn in a UNIT SQUARE and mapped into the frame afterwards: Apple's
+     * messages icons are landscape (27x20, 60x45) and a display list is 0..1
+     * of the FRAME, so a square asked for by one number comes out stretched.
+     * Transform the POINTS once, at the end.
+     */
+    UtttPt pts[3000]; int np = 0;
+    UtttSpan sp[6];
+
+    UtttPen p = uttt_pen_92();
+    p.w = p.w * 1.55f / 100.f;       /* a logo is one mark filling the frame,
+                                      * where a board's mark is a ninth of it */
+    /* OPAQUE, which no other mark is. At .8 the two inks blend where they
+     * cross and the threading reads as a muddy overlap instead of as one
+     * stroke passing under another. The whole point of the logo is that
+     * crossing, so it is the one place the paper does not show through. */
+    p.a = 1.f; p.agrain = .12f; p.grain = .3f;
+
+    UtttRough rx = uttt_rough_default(31 * 97 + 3);
+    rx.roughness = 1.5f * powf(8.9f / 100.f, .75f) * (100.f / 8.9f);
+    rx.bowing    = 1.0f * powf(8.9f / 100.f, .85f);
+    UtttRough ro = rx;
+    ro.seed = 52 * 97 + 3;
+
+    const float L = .3f;             /* the same lopsidedness every mark has */
+    int n1 = uttt_rough_line(&rx, 10 - L*4, 11, 94 + L*3, 92 - L*6,
+                             pts, 3000, &np, sp, 2);
+    int no = uttt_rough_ellipse(&ro, 50 + L*4, 50 - L*3, 78 - L*10, 76 + L*8,
+                                pts, 3000, &np, sp + n1, 2);
+    int n2 = uttt_rough_line(&rx, 92 + L*4, 12, 13 - L*5, 90 + L*5,
+                             pts, 3000, &np, sp + n1 + no, 2);
+    for (int i = 0; i < np; i++) { pts[i].x /= 100.f; pts[i].y /= 100.f; }
+
+    int k = 0;
+    p.ink = INK_X;
+    for (int i = 0; i < n1; i++, k++) stroke(d, pts + sp[k].first, sp[k].n, &p, 1.f);
+    p.ink = INK_O;
+    for (int i = 0; i < no; i++, k++) stroke(d, pts + sp[k].first, sp[k].n, &p, 1.f);
+    p.ink = INK_X;
+    for (int i = 0; i < n2; i++, k++) stroke(d, pts + sp[k].first, sp[k].n, &p, 1.f);
+
+    /* 70% of the short side, centred - a monogram needs air around it in a
+     * way a board does not, and the strokes overshoot their own box. */
+    const float sq = (w < h ? w : h) * .70f;
+    const float dx = (w - sq) / 2.f, dy = (h - sq) / 2.f;
+    for (int i = first; i < d->n_pt; i++) {
+        d->pt[i].x = (dx + d->pt[i].x * sq) / w;
+        d->pt[i].y = (dy + d->pt[i].y * sq) / h;
+    }
+    return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
+}
+
+/* ---------------------------------------------------------------- the sheet */
+/* THE NAPKIN, and it belongs here for the same reason the marks do: both
+ * phones have to be looking at the same piece of paper.
+ *
+ * It had drifted into three copies - the Swift bridge, the PPM harness, and
+ * the design document's canvas - which is the shape of every bug this pen has
+ * had. Crossed cellulose over a warm near-white, one shade darker down the
+ * page than up it.
+ *
+ * RGBA, 4 bytes a pixel, fully opaque: the sheet is the bottom layer and
+ * nothing is ever behind it. */
+void uttt_paper(uint8_t *rgba, int w, int h)
+{
+    if (!rgba || w <= 0 || h <= 0) return;
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            float t = (float)y / (float)h;
+            float base = .976f - t * .028f;
+            float fib = uttt_grain((float)x, (float)y, .82f, .012f, 3) * .5f
+                      + uttt_grain((float)x, (float)y, .012f, .82f, 8) * .5f;
+            float v = base + (fib - .5f) * .035f;
+            if (v < 0) v = 0;
+            if (v > 1) v = 1;
+            uint8_t *p = rgba + ((size_t)y * (size_t)w + (size_t)x) * 4;
+            p[0] = (uint8_t)(v * 255.f);
+            p[1] = (uint8_t)(v * .998f * 255.f);
+            p[2] = (uint8_t)(v * .982f * 255.f);
+            p[3] = 255;
+        }
 }

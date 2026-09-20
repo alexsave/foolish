@@ -106,6 +106,14 @@ int main(void)
     uti_bubble_text(&x, &y, &tw, &th);
     ok(x >= 0 && x + tw <= bw && y + th <= bh, "the text column is inside the frame");
     ok(tw == 87.f, "and 87 points wide, which is why the place line wraps");
+    /* MESSAGES STAMPS THE APP LOGO INTO THE TOP-LEFT CORNER of every bubble,
+     * over whatever is under it. The board cannot live there or the badge
+     * sits on its first block for the whole game, so the text column does. */
+    {
+        float bx = 0, by = 0, bs = 0;
+        uti_bubble_board(&bx, &by, &bs);
+        ok(x + tw <= bx, "the text column is left of the board, clear of the badge");
+    }
     printf("  bubble %gx%g: board %g, text %g wide\n", bw, bh, s, tw);
     ok(uti_bubble_type(0) > 0 && uti_bubble_type(1) > 0, "both lines have a size");
     ok((uti_bubble_ink(0) & 0xffu) == 0xffu, "the headline ink is opaque");

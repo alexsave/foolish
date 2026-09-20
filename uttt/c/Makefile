@@ -21,6 +21,14 @@ run: build/uttt_test
 arena: build/uttt_arena
 	./build/uttt_arena 200 200
 
+build/uttt_icon: $(SRC) tools/uttt_icon.c | build
+	$(CC) $(CFLAGS) $(SRC) tools/uttt_icon.c -o $@ $(LDLIBS)
+
+# THE ICONS THE APP SHIPS, drawn by the app's own pen rather than traced by
+# hand. Writes straight into both asset catalogues; commit what it changes.
+icons: build/uttt_icon
+	./tools/icons.sh
+
 build/uttt_render: $(SRC) tests/uttt_render.c | build
 	$(CC) $(CFLAGS) $(SRC) tests/uttt_render.c -o $@ $(LDLIBS)
 

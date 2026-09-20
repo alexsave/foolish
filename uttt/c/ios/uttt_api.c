@@ -123,24 +123,7 @@ int uti_draw_rulebook(float w, float h)
     return publish();
 }
 
-void uti_paper(uint8_t *rgba, int w, int h)
-{
-    if (!rgba || w <= 0 || h <= 0) return;
-    for (int y = 0; y < h; y++)
-        for (int x = 0; x < w; x++) {
-            float t = (float)y / (float)h;
-            float base = .976f - t * .028f;
-            float fib = uttt_grain((float)x, (float)y, .82f, .012f, 3) * .5f
-                      + uttt_grain((float)x, (float)y, .012f, .82f, 8) * .5f;
-            float v = base + (fib - .5f) * .035f;
-            if (v < 0) v = 0; if (v > 1) v = 1;
-            uint8_t *p = rgba + ((size_t)y * w + x) * 4;
-            p[0] = (uint8_t)(v * 255.f);
-            p[1] = (uint8_t)(v * .998f * 255.f);
-            p[2] = (uint8_t)(v * .982f * 255.f);
-            p[3] = 255;
-        }
-}
+void uti_paper(uint8_t *rgba, int w, int h) { uttt_paper(rgba, w, h); }
 
 /* ----------------------------------------------------------- the bubble */
 void uti_bubble_size(float *w, float *h)

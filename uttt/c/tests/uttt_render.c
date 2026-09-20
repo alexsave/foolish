@@ -71,17 +71,15 @@ static void fill_poly(const UtttPt *p, int n, uint32_t rgba)
         }
 }
 
+/* THE KERNEL'S SHEET, not a copy of it. This function used to carry its own
+ * napkin, which is how the same paper came to exist in three places. */
 static void paper(void)
 {
+    static uint8_t px[H][W][4];
+    uttt_paper(&px[0][0][0], W, H);
     for (int y = 0; y < H; y++)
-        for (int x = 0; x < W; x++) {
-            float t = (float)y / H;
-            float base = 0.976f - t * .028f;
-            float fib = uttt_grain((float)x, (float)y, .82f, .012f, 3) * .5f
-                      + uttt_grain((float)x, (float)y, .012f, .82f, 8) * .5f;
-            float v = base + (fib - .5f) * .035f;
-            fb[y][x][0] = v; fb[y][x][1] = v * .998f; fb[y][x][2] = v * .982f;
-        }
+        for (int x = 0; x < W; x++)
+            for (int c = 0; c < 3; c++) fb[y][x][c] = px[y][x][c] / 255.f;
 }
 
 static void write_ppm(void)

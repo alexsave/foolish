@@ -71,4 +71,15 @@ UtttBubble uttt_bubble(void);
  * line says "bottom middle". Never NULL. */
 const char *uttt_place_name(int block, int spoken);
 
+/* The app's own face - one hash, an X and an O - drawn with the app's own
+ * pen and centred in a `w` by `h` frame in POINTS. Polygons come back in
+ * 0..1 like everything else. This feeds a build-time tool, not the app: see
+ * tools/icons.sh, which writes the PNGs the asset catalogues carry. */
+int uttt_draw_icon(UtttDL *d, float w, float h);
+
+/* The sheet everything is drawn on: w*h pixels of RGBA, opaque. Here rather
+ * than in a renderer because two phones have to be looking at the same piece
+ * of paper - it had drifted into three copies before it moved. */
+void uttt_paper(uint8_t *rgba, int w, int h);
+
 #endif

@@ -112,7 +112,16 @@ public enum UtttBubble {
         let frame = CGRect(origin: .zero, size: size)
         let board = boardBox
         let last = Uttt.plyCount > 0 ? Uttt.move(at: Uttt.plyCount - 1) : -1
-        let polys = Uttt.board(active: Int(uti_active()), last: last)
+        /* AN EMPTY BOARD GETS NO WASH. `uti_active()` says 9 - anywhere - and
+         * mid-game that is right, so the whole sheet goes yellow and the
+         * animation expands it from the last block. On an INVITATION it is
+         * wrong twice over: nobody is on move, and a board tinted corner to
+         * corner stops reading as "you may go anywhere" and starts reading as
+         * a different piece of paper sitting next to the white one the text is
+         * on. The design document's invitation board carries no active block
+         * for exactly this reason. */
+        let active = Uttt.plyCount > 0 ? Int(uti_active()) : -1
+        let polys = Uttt.board(active: active, last: last)
 
         let fmt = UIGraphicsImageRendererFormat()
         fmt.scale = 3
