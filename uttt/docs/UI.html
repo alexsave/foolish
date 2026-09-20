@@ -2022,6 +2022,15 @@ function specOf(g, seed){
     }
   }
   if (!g.over) spec.active = (g.forced !== 255 && !g.block[g.forced]) ? g.forced : 'any';
+  if (g.over === 1 || g.over === 2){
+    for (const l of LN)
+      if (g.block[l[0]] === g.over && g.block[l[1]] === g.over
+          && g.block[l[2]] === g.over){
+        spec.meta = [l[0], l[2]];
+        spec.metaBy = g.over === 1 ? 'x' : 'o';
+        break;
+      }
+  }
   if (g.moves.length){
     const m = g.moves[g.moves.length - 1];
     spec.last = ((m / 9) | 0) + ',' + (m % 9);
@@ -2111,12 +2120,18 @@ function initPlay(root){
     const spec = specOf(before, seed);
     const bTo  = (after.forced !== 255 && !after.block[after.forced])
                  ? after.forced : (after.over ? null : 'any');
+    const fin = specOf(after, seed);
     const A = { mark: { at: ((mv/9)|0) + ',' + (mv%9),
                         kind: before.turn === 1 ? 'x' : 'o', a: 0, b: .62 },
                 hl: { from: spec.active == null ? null : spec.active,
                       to: bTo, at: .52, dur: .34 } };
     if (bTo == null) delete A.hl;
-    const dur = 1000, t0 = performance.now();
+    if (fin.meta){
+      A.meta = { line: fin.meta, by: fin.metaBy, a: .58, b: 1 };
+      /* the winning block has to land before the line that crosses it */
+      A.big = { at: (mv/9)|0, kind: A.mark.kind, a: .34, b: .7 };
+    }
+    const dur = fin.meta ? 1900 : 1000, t0 = performance.now();
     cancelAnimationFrame(raf);
     (function step(now){
       const t = Math.min(1, (now - t0) / dur);
