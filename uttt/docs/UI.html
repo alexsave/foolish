@@ -2048,7 +2048,7 @@ function specOf(g, seed){
 function initMarkIcons(root){
   root.querySelectorAll('canvas[data-mark]').forEach(cv => {
     const dpr = Math.min(3, window.devicePixelRatio || 1);
-    const px = cv.clientWidth || 34;
+    const px = cv.clientWidth || (cv.classList.contains('big') ? 46 : 34);
     cv.width = px * dpr; cv.height = px * dpr;
     const ctx = cv.getContext('2d');
     ctx.setTransform(dpr * px / 100, 0, 0, dpr * px / 100, 0, 0);
