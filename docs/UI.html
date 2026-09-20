@@ -1203,10 +1203,13 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
    The line below is drawn at the size Messages actually gives it. */
 .gb .cline{padding:6px 4px 0;font:400 12.5px/1.35 'Inter',sans-serif;color:#8b8b93;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-/* the count moves INTO the art, where there is room for it */
-.gb .cnt{position:absolute;right:11px;bottom:10px;z-index:4;
-  font:600 11px/1 'Cinzel',serif;letter-spacing:.14em;color:#c9bda0;
-  text-shadow:0 1px 3px rgba(0,0,0,.95)}
+/* The count sits TOP RIGHT. It lived bottom-right and kept colliding with the
+   headline, which grows to two lines on the longer ones - and the headline is
+   the thing you are meant to read. The top right is empty in every sky except
+   the ones where the orb is there, and the orb has moved on by then. */
+.gb .cnt{position:absolute;right:11px;top:9px;z-index:4;
+  font:600 10.5px/1 'Cinzel',serif;letter-spacing:.16em;color:#d3c8ad;
+  text-shadow:0 1px 4px rgba(0,0,0,1), 0 0 10px rgba(0,0,0,.8)}
 /* the five skies a day can have */
 .sky-dusk{background-image:var(--nz-fine),
   radial-gradient(80% 44% at 50% 106%, rgba(196,108,52,.4), transparent 62%),
