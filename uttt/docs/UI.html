@@ -2151,6 +2151,22 @@ function initPlay(root){
     });
   }
 
+  /* A HANDLE FOR THE CONSOLE. The game lives in this closure, so without
+     this there is no way to get a finished game back out of the page. */
+  window.uttt = {
+    get game(){ return g; },
+    moves(){ return g.moves.join(','); },
+    code(){ return g.moves.join(','); },
+    replay(str){
+      cancelAnimationFrame(raf);
+      g = jNew();
+      String(str).split(/[^0-9]+/).filter(Boolean)
+        .forEach(m => jPlay(g, +m));
+      busy = true; still(); say(); return g;
+    },
+    side(){ return you === 1 ? 'X' : 'O'; }
+  };
+
   cv.onclick = e => {
     if (busy || g.over || g.turn !== you) return;
     const r = cv.getBoundingClientRect();
