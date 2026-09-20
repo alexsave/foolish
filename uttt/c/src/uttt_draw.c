@@ -66,7 +66,7 @@ static void mark_in(UtttDL *d, int kind, float x, float y, float s,
     UtttPt pts[1400]; int np = 0;
     UtttSpan sp[4];
     const float s100 = s * 100.f;          /* the mark's size, board-100 */
-    UtttRough r = uttt_rough_default(seed);
+    UtttRough r = uttt_rough_default(seed * 97 + 3);
     r.roughness = 1.5f * powf(8.9f / s100, .75f) * (s100 / 8.9f);
     r.bowing    = 1.0f * powf(8.9f / s100, .85f);
 
@@ -74,12 +74,22 @@ static void mark_in(UtttDL *d, int kind, float x, float y, float s,
     p.ink = kind == UTTT_O ? INK_O : INK_X;
     p.w   = base->w * s / 100.f;           /* stroke lives in board units */
 
+    /* LOPSIDED. Nobody draws an X whose two strokes cross in the middle with
+     * equal arms; the hand starts the second one a bit off and overshoots.
+     * rough.js cannot give you that - it wobbles a line, it does not move the
+     * line - so the skew is in the endpoints, and it is the single thing that
+     * makes a small mark read as drawn rather than stamped. It was dropped in
+     * the port and the board's X's came out ruled. */
+    const float L = .3f;
     int k = 0, k2 = 0;
     if (kind == UTTT_X) {
-        k  = uttt_rough_line(&r, 10, 11, 94, 92, pts, 1400, &np, sp, 2);
-        k2 = uttt_rough_line(&r, 92, 12, 13, 90, pts, 1400, &np, sp + k, 2);
+        k  = uttt_rough_line(&r, 10 - L*4, 11, 94 + L*3, 92 - L*6,
+                             pts, 1400, &np, sp, 2);
+        k2 = uttt_rough_line(&r, 92 + L*4, 12, 13 - L*5, 90 + L*5,
+                             pts, 1400, &np, sp + k, 2);
     } else {
-        k  = uttt_rough_ellipse(&r, 50, 50, 78, 76, pts, 1400, &np, sp, 2);
+        k  = uttt_rough_ellipse(&r, 50 + L*4, 50 - L*3, 78 - L*10, 76 + L*8,
+                                pts, 1400, &np, sp, 2);
     }
     for (int i = 0; i < np; i++) {
         pts[i].x = x + pts[i].x * s / 100.f;
@@ -117,6 +127,7 @@ static void hash_in(UtttDL *d, float x, float y, float sz, int32_t seed,
         r.roughness = rough_for(sz) * rmul;
         r.bowing    = bow_for(sz) * rmul;
         r.max_offset = mro_for(sz) * rmul;
+        r.seg_line = 18;
         np = 0;
         int n = uttt_rough_line(&r, v, y - over, v, y + sz + over,
                                 pts, 2048, &np, sp, 2);
@@ -199,6 +210,7 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
                 r.roughness = rough_for(len) * 2.2f;
                 r.bowing    = bow_for(len) * 2.2f;
                 r.max_offset = mro_for(len) * 2.2f;
+                r.seg_line = 24;
                 UtttPt pts[1024]; int np = 0; UtttSpan sp[2];
                 int n = uttt_rough_line(&r, ax, ay, zx, zy, pts, 1024, &np, sp, 2);
                 UtttPen p = uttt_pen_92();

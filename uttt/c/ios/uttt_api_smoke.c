@@ -54,7 +54,26 @@ int main(void)
     int np = uti_draw(-1, mv[N-1], 1.f, 1.f);
     ok(np > 1000, "a finished board is thousands of polygons");
     ok(uti_point_count() > np, "with more points than polygons");
+    ok(!uti_draw_overflow(), "and it fits in the buffer");
     printf("  %d polygons, %d points\n", np, uti_point_count());
+
+    /* THE WORST BOARD IS NOT THE ONE ABOVE. That game ended in 50 plies with
+     * half the sheet still blank; the buffers have to hold eighty-one marks
+     * and every won block's grid underneath them. Play a full board out and
+     * ask again, because the failure is silent. */
+    {
+        uti_new(77);
+        int full = 0;
+        while (!uti_over()) {
+            int m = uti_bot_move(1);
+            if (m < 0 || !uti_play(m)) break;
+            full++;
+        }
+        int wp = uti_draw(-1, -1, 1.f, 1.f);
+        ok(!uti_draw_overflow(), "and so does a board played to the end");
+        printf("  worst board: %d plies, %d polygons, %d points\n",
+               full, wp, uti_point_count());
+    }
 
     /* every polygon has to be inside the unit square, or a renderer that
      * trusts the kernel will draw outside its own view */

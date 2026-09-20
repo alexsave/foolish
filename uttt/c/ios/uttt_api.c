@@ -6,15 +6,20 @@
 #include <string.h>
 
 /* The resident game, and the buffers the display list is built into. Sized
- * for a full board with every mark drawn, measured rather than guessed:
- * a finished 50-ply game builds 14,064 polygons from 91,416 points. */
-#define MAX_PT   140000
-#define MAX_POLY  24000
+ * for a full board with every mark drawn, MEASURED rather than guessed:
+ * `./build/uttt_render 81` prints the worst case, which today is 25,624
+ * polygons from 166,556 points. Measure it again after touching the pen -
+ * raising the flattening from 6 segments a curve to the document's 14 grew
+ * this by three quarters, and a display list that runs out does not fail, it
+ * quietly stops drawing. Everything below is the measurement plus half. */
+#define MAX_PT   260000
+#define MAX_POLY  40000
 
 static struct {
     UtttGame  g;
     int32_t   seed;
     uint64_t  rs;
+    int       overflow;
     UtttDL    dl;
     UtttPt    pt[MAX_PT];
     UtttPoly  poly[MAX_POLY];
@@ -86,9 +91,14 @@ int uti_draw(int active, int last, float mark_t, float meta_t)
     UtttDrawOpts o = uttt_draw_opts(S.seed);
     o.active = active; o.last = last;
     o.mark_t = mark_t; o.meta_t = meta_t;
-    uttt_draw_board(&S.dl, &S.g, &o);
+    S.overflow = uttt_draw_board(&S.dl, &S.g, &o) != 0;
     return publish();
 }
+
+/* A display list that runs out of room does not fail - it stops appending,
+ * and the board comes back with a few marks missing. Nothing on screen says
+ * so, which is why it gets its own question. */
+int uti_draw_overflow(void) { return S.overflow; }
 
 int uti_draw_one(int mv, float t)
 {

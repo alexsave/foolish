@@ -49,6 +49,14 @@ typedef struct {
     int   curve_step_count; /* 9                                  */
     int   single;           /* disableMultiStroke                 */
     int32_t seed;
+    /* How finely a cubic is flattened. NOT a rough.js number - rough.js hands
+     * a renderer cubics and stops. But this pen lays a quad per SAMPLE, so the
+     * sample count is what the grain and the width modulation are carried on,
+     * and the design document picked one per shape: 22 for a mark's lines, 18
+     * for a grid line, 24 for the winning line, 14 around an ellipse. Get it
+     * wrong and the geometry still matches while the texture does not. */
+    int   seg_line;         /* 22 */
+    int   seg_curve;        /* 14 */
 } UtttRough;
 
 UtttRough uttt_rough_default(int32_t seed);

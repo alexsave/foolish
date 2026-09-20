@@ -29,6 +29,7 @@ UtttRough uttt_rough_default(int32_t seed)
     o.roughness = 1.f; o.bowing = 1.f; o.max_offset = 2.f;
     o.curve_tightness = 0.f; o.curve_fitting = .95f;
     o.curve_step_count = 9; o.single = 0;
+    o.seg_line = 22; o.seg_curve = 14;
     o.seed = seed ? seed : 1;
     return o;
 }
@@ -82,7 +83,7 @@ static void rline(UtttRough *o, float x1, float y1, float x2, float y2,
     float c2y = mdy + y1 + 2*(y2-y1)*diverge + J();
     float ex  = x2 + J(), ey = y2 + J();
     #undef J
-    bez(pts, cap, n, sx, sy, c1x, c1y, c2x, c2y, ex, ey, 16);
+    bez(pts, cap, n, sx, sy, c1x, c1y, c2x, c2y, ex, ey, o->seg_line);
     sp->n = *n - sp->first;
 }
 
@@ -114,7 +115,7 @@ static void rcurve(UtttRough *o, const UtttPt *p, int np,
             float b2x = p[i+1].x + (h*p[i].x - h*p[i+2].x) / 6.f;
             float b2y = p[i+1].y + (h*p[i].y - h*p[i+2].y) / 6.f;
             bez(pts, cap, n, p[i].x, p[i].y, b1x, b1y, b2x, b2y,
-                p[i+1].x, p[i+1].y, 6);
+                p[i+1].x, p[i+1].y, o->seg_curve);
         }
     } else if (np == 3) {
         push(pts, cap, n, p[1].x, p[1].y);

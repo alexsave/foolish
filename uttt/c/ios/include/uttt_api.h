@@ -46,6 +46,11 @@ int  uti_bot_move(int budget);
  * last:   block*9+cell of the move being drawn, -1 for none. */
 int  uti_draw(int active, int last, float mark_t, float meta_t);
 
+/* Non-zero if the LAST uti_draw() ran out of buffer. A display list that
+ * fills up does not fail - it stops appending and the board comes back with
+ * marks missing - so this is the only way anyone finds out. */
+int  uti_draw_overflow(void);
+
 /* JUST the mark being drawn, so an animation does not rebuild the board.
  * 14,000 polygons is fine once and not fine sixty times a second: the caller
  * caches uti_draw()'s output as an image and composites this on top. */
