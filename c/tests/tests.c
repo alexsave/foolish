@@ -1451,6 +1451,46 @@ static void test_deal_rng_unbiased(void) {
     CHECK(ok, "deal_rng_bounded(7) is uniform (no modulo bias)");
 }
 
+// deal_rng_seed_at indexes the keystream instead of walking it: seeding at
+// block B and drawing must give exactly what seeding at 0 and throwing away
+// B*16 words gives. The point is that it is O(1) - ChaCha's counter is an
+// INPUT to the block function, not a state you have to iterate to - so the
+// test checks a block far enough out that walking it would be visible work,
+// and checks block 0 too, where seed_at must agree with plain seed.
+static void test_deal_rng_seed_at(void) {
+    unsigned char seed[32];
+    for (int i = 0; i < 32; i++) seed[i] = (unsigned char)(i * 13 + 2);
+
+    DealRng zero, at0;
+    deal_rng_seed(&zero, seed);
+    deal_rng_seed_at(&at0, seed, 0);
+    int same = 1;
+    for (int i = 0; i < 32; i++)
+        if (deal_rng_u32(&zero) != deal_rng_u32(&at0)) same = 0;
+    CHECK(same, "deal_rng_seed_at(.., 0) is deal_rng_seed");
+
+    // Block 500: walk it with the sequential API, then jump to it.
+    DealRng walked;
+    deal_rng_seed(&walked, seed);
+    for (int i = 0; i < 500 * 16; i++) (void)deal_rng_u32(&walked);
+    DealRng jumped;
+    deal_rng_seed_at(&jumped, seed, 500);
+    same = 1;
+    for (int i = 0; i < 64; i++)
+        if (deal_rng_u32(&walked) != deal_rng_u32(&jumped)) same = 0;
+    CHECK(same, "deal_rng_seed_at(.., 500) lands on the same keystream words");
+
+    // Distinct indices give distinct streams, and the jump carries past 2^32
+    // into the high counter word - a 32-bit truncation would silently alias
+    // block 2^32+7 onto block 7.
+    DealRng lo, hi;
+    deal_rng_seed_at(&lo, seed, 7);
+    deal_rng_seed_at(&hi, seed, (uint64_t)1 << 32 | 7u);
+    int differ = 0;
+    for (int i = 0; i < 16; i++) if (deal_rng_u32(&lo) != deal_rng_u32(&hi)) differ = 1;
+    CHECK(differ, "deal_rng_seed_at uses all 64 bits of the block index");
+}
+
 // Play a full handwritten-vs-handwritten game whose DECK is seed-dealt
 // (shuffle once, then pop) and hash the whole trajectory. The LCG (game_random)
 // drives only the harness's player-ordering; every engine draw — the deal and
@@ -11596,6 +11636,7 @@ int main(void) {
     test_deal_wide_reproducible();
     test_deal_wide_permutation();
     test_deal_rng_unbiased();
+    test_deal_rng_seed_at();
     test_start_game();
     test_awire_apply_roundtrip();
     test_awire_refuses_bytes_that_are_not_cards();

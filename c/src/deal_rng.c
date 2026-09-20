@@ -47,6 +47,15 @@ void deal_rng_seed(DealRng *r, const uint8_t seed[32]) {
     r->used = 16;                            // force a block on first draw
 }
 
+void deal_rng_seed_at(DealRng *r, const uint8_t seed[32], uint64_t block) {
+    deal_rng_seed(r, seed);
+    // The whole jump: write the counter words the sequential path would have
+    // arrived at. `used` is already 16, so the next draw generates block
+    // `block` rather than resuming a stale one.
+    r->state[12] = (uint32_t)(block & 0xFFFFFFFFu);
+    r->state[13] = (uint32_t)(block >> 32);
+}
+
 uint32_t deal_rng_u32(DealRng *r) {
     if (r->used >= 16) {
         deal_rng_block(r->state, r->block);
