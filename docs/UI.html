@@ -1276,7 +1276,7 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
   box-shadow:0 0 32px 10px rgba(255,253,240,.7)}
 .gb .orb.dusksun{width:38px;height:38px;background:#e4512a;box-shadow:none}
 /* the wolves' moon: the same face, drowned in red */
-.gb .orb.bloodmoon{width:62px;height:62px;left:50% !important;transform:translateX(-50%);bottom:34px !important;background-image:url("");
+.gb .orb.bloodmoon{width:62px;height:62px;left:50% !important;transform:translateX(-50%);bottom:48px !important;background-image:url("");
   background-size:100% 100%;filter:blur(.4px) sepia(1) saturate(7) hue-rotate(-28deg) brightness(.82);
   box-shadow:0 0 54px 18px rgba(176,26,18,.75)}
 /* the two endings */
@@ -2728,12 +2728,17 @@ pointless.</p>
     return cv.toDataURL('image/png');
   }
 
+  /* PARKED. The SVG ink wash is the chosen moon; this generator stays because
+     it is the better answer if the look ever goes photographic, and rebuilding
+     it from scratch costs more than leaving it here. Set --moon-generated on
+     <html> to switch back to it. */
   function go(){
     var r=document.documentElement.style;
     r.setProperty('--moon',     'url("'+render(260,[1,1,1],0)+'")');
     r.setProperty('--moon-red', 'url("'+render(280,[1.34,.42,.30],0)+'")');
   }
-  if(document.readyState!=='loading') go(); else document.addEventListener('DOMContentLoaded',go);
+  function maybe(){ if(document.documentElement.hasAttribute('data-moon-generated')) go(); }
+  if(document.readyState!=='loading') maybe(); else document.addEventListener('DOMContentLoaded',maybe);
 })();
 </script>
 
