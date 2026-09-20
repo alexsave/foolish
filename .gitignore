@@ -120,3 +120,4 @@ __pycache__/
 uttt/ios/vendor/
 uttt/ios/*.xcodeproj
 uttt/c/build/
+uttt/ios/*/*.entitlements

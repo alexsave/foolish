@@ -415,6 +415,30 @@ group_dir() {
 
 # ---------------------------------------------------------------- setup ----
 
+# IS THE APP THERE. Not `simctl get_app_container`, which is what this used to
+# ask and what made `doctor` call a working install missing.
+#
+# An iMessage-only container app is launch-PROHIBITED: it has no home-screen
+# icon and never runs its own UI, and on iOS 27 LaunchServices does not hand
+# it to simctl at all. `listapps` omits it, `get_app_container` says "No such
+# file or directory", and the game is meanwhile sitting in the `+` drawer
+# playing fine. Durak's host app is an ordinary application so it answered,
+# and the second product is the one that found this.
+#
+# The bundle on disk is the thing that is actually true, so ask that.
+app_installed() {
+  xcrun simctl get_app_container "$SIM" "$APP_ID" >/dev/null 2>&1 && return 0
+  local root="$HOME/Library/Developer/CoreSimulator/Devices/$SIM/data/Containers/Bundle/Application"
+  [ -d "$root" ] || return 1
+  local app
+  for app in "$root"/*/*.app; do
+    [ -f "$app/Info.plist" ] || continue
+    [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+         "$app/Info.plist" 2>/dev/null)" = "$APP_ID" ] && return 0
+  done
+  return 1
+}
+
 cmd_doctor() {
   local bad=0
   command -v "$IDB" >/dev/null || { echo "MISSING idb - brew install facebook/fb/idb-companion && python3.12 -m venv ~/.venvs/idb && ~/.venvs/idb/bin/pip install fb-idb"; bad=1; }
@@ -425,8 +449,8 @@ cmd_doctor() {
   if [ -n "$SIM" ]; then
     xcrun simctl list devices booted | grep -q "$SIM" \
       && echo "sim $SIM booted, $(screen) pt" || echo "sim $SIM NOT booted"
-    xcrun simctl get_app_container "$SIM" "$APP_ID" >/dev/null 2>&1 \
-      && echo "app installed" || { echo "MISSING app - rig.sh build"; bad=1; }
+    app_installed && echo "app installed" \
+      || { echo "MISSING app - rig.sh build"; bad=1; }
   else
     echo "FOOLISH_SIM unset - rig.sh newsim"
     bad=1

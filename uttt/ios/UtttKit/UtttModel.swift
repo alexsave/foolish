@@ -14,8 +14,19 @@ public final class UtttModel: ObservableObject {
     public private(set) var you: Uttt.Mark
     private var solo: Bool
 
-    public init(seed: Int32, you: Uttt.Mark = .x, solo: Bool = true) {
+    /// WHO IS ON THE OTHER SIDE, and it is not always a bot. The screens said
+    /// "nib" whenever the other side was moving, which is the name of the
+    /// demo opponent - so in a real thread every player read the name of a bot
+    /// on every one of their own turns-in-waiting. A thread passes the
+    /// participant's name; nil is the honest answer when nobody has taken the
+    /// board yet, and the copy falls back to "Waiting" rather than inventing a
+    /// pronoun for an empty chair.
+    public var opponent: String?
+
+    public init(seed: Int32, you: Uttt.Mark = .x, solo: Bool = true,
+                opponent: String? = nil) {
         self.seed = seed; self.you = you; self.solo = solo
+        self.opponent = opponent ?? (solo ? "nib" : nil)
         Uttt.newGame(seed: seed)
         if solo, Uttt.turn != you { Task { await botTurn() } }
     }
@@ -29,15 +40,28 @@ public final class UtttModel: ObservableObject {
 
     public var headline: String {
         switch Uttt.over {
-        case .draw: return "Drawn"
-        case .x, .o: return Uttt.over == you ? "You take it" : "nib takes it"
-        case .none: return Uttt.turn == you ? "Your move" : "nib"
+        case .draw:  return "Drawn"
+        case .x, .o:
+            if Uttt.over == you { return "You take it" }
+            return opponent.map { "\($0) takes it" } ?? "They take it"
+        case .none:
+            if Uttt.turn == you { return "Your move" }
+            return opponent.map { "Waiting on \($0)" } ?? "Waiting"
         }
     }
+
+    /// The line under it. When it is not your turn this is WHERE YOU SENT
+    /// THEM, which is the one thing worth reading on a board you cannot touch,
+    /// and it comes from the kernel because the names of the nine blocks are
+    /// not the screen's to invent.
     public var subline: String {
+        if Uttt.over == .draw { return "Nine blocks, no line." }
         if Uttt.over != .none { return "\(Uttt.plyCount) moves." }
-        if Uttt.turn != you { return "thinking" }
-        return active == 9 ? "Anywhere you like." : ""
+        if Uttt.turn == you { return active == 9 ? "Anywhere you like." : "" }
+        if solo { return "thinking" }
+        if active == 9 { return "Anywhere they like." }
+        let p = UtttBubble.placeName(spoken: false)
+        return p.isEmpty ? "" : p.prefix(1).uppercased() + p.dropFirst() + "."
     }
 
     /// The harness loads a position behind the model's back; this is how it

@@ -42,6 +42,18 @@ targets:
   UtttMessagesApp:
     type: application.messages
     platform: iOS
+    # AN APP WITH NO ENTITLEMENTS DOES NOT REGISTER. installd says "Install
+    # successful", LaunchServices then refuses to bind it, and every later
+    # simctl command answers "No such file or directory" about an app that is
+    # sitting in the bundle container. The log line that gives it away is
+    # `Executable for cards.uttt.msg ... had no entitlements`. xcodegen writes
+    # these from the properties below, so there is no committed file for
+    # `xcodegen generate` to blank.
+    entitlements:
+      path: UtttMessagesApp/UtttMessagesApp.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.cards.uttt.msg
     sources:
       - path: UtttMessagesApp
     dependencies:
@@ -56,11 +68,31 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.uttt.msg
         INFOPLIST_FILE: UtttMessagesApp/Info.plist
+        # The CONTAINER needs one too. It is launch-prohibited and shows no
+        # UI, but LaunchServices will not register an app with no icon -
+        # installd reports "Install successful" and the bundle is then
+        # invisible to every other simctl command.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # BOTH, and the order of that sentence is the bug. A hand-written
+        # Info.plist is NOT a whole Info.plist: CFBundleIdentifier,
+        # CFBundleExecutable, CFBundlePackageType and CFBundleVersion are
+        # synthesised, and without this the bundle builds clean and then
+        # `simctl install` says "Missing bundle ID". Xcode merges the
+        # generated keys into the file named above, so the NSExtension
+        # dictionary the appex needs survives.
+        GENERATE_INFOPLIST_FILE: "YES"
         TARGETED_DEVICE_FAMILY: "1"
 
   UtttMessages:
     type: app-extension.messages
     platform: iOS
+    # The SAME group as its container - this is where the rig's dev.* files
+    # land and where anything the two halves share would live.
+    entitlements:
+      path: UtttMessages/UtttMessages.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.cards.uttt.msg
     sources:
       - path: UtttMessages
     dependencies:
@@ -71,6 +103,13 @@ targets:
         # app that embeds it.
         PRODUCT_BUNDLE_IDENTIFIER: cards.uttt.msg.MessagesExtension
         INFOPLIST_FILE: UtttMessages/Info.plist
+        GENERATE_INFOPLIST_FILE: "YES"   # see the container target above
+        # AN iMESSAGE APP WITHOUT AN ICON DOES NOT INSTALL, and it does not
+        # say so: `simctl install` exits 0 and registers nothing, so the next
+        # command fails with "no such app" and blames itself. The catalog must
+        # be a .stickersiconset (not .appiconset) on the EXTENSION, because the
+        # `+` drawer takes its row from here.
+        ASSETCATALOG_COMPILER_APPICON_NAME: "iMessage App Icon"
         TARGETED_DEVICE_FAMILY: "1"
 
   # ---- A development harness, shipped in nothing -------------------------

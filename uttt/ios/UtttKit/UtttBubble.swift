@@ -66,19 +66,25 @@ public enum UtttBubble {
     }
 
     /// Two words. The one thing a glance needs.
+    ///
+    /// AN EMPTY BOARD IS NOT A MOVE. This said "Your move" at ply zero, which
+    /// is wrong for everybody who can see it: the sender has not been dealt a
+    /// seat yet and the recipient has not taken one, so there is no move to be
+    /// anybody's. The invitation asks the question instead.
     public static var headline: String {
         switch Uttt.over {
         case .draw: return "A draw"
         case .x:    return "X wins"
         case .o:    return "O wins"
-        case .none: return "Your move"
+        case .none: return Uttt.plyCount == 0 ? "A game?" : "Your move"
         }
     }
 
     /// The place, in blue, under the headline. A finished game has no place to
     /// send anybody, so it spends the line on how long it took instead.
     public static var place: String {
-        Uttt.over == .none ? placeName(spoken: false) : "\(Uttt.plyCount) moves"
+        if Uttt.over != .none { return "\(Uttt.plyCount) moves" }
+        return Uttt.plyCount == 0 ? "untaken" : placeName(spoken: false)
     }
 
     /// One line, truncating, and it names who moved. A bubble is the same on

@@ -159,7 +159,14 @@ final class MessagesViewController: MSMessagesAppViewController {
          * on it, so the position goes in AFTER the model exists and the screen
          * is told to look again. Any other order shows an empty board over a
          * game in progress. */
-        let model = UtttModel(seed: wire.seed, you: mark, solo: false)
+        /* NAMED BY THEIR MARK, because that is the only name this side has.
+         * A Messages extension cannot resolve a participant's display name -
+         * it gets a per-device UUID - so until a nickname travels on the wire,
+         * "O" is the true answer and "nib" was a bot from the demo. The
+         * bubble's own caption already speaks this vocabulary ("X started a
+         * game."), so the two surfaces agree. */
+        let model = UtttModel(seed: wire.seed, you: mark, solo: false,
+                              opponent: mark == .x ? "O" : "X")
         wire.load()
         model.refresh()
 
