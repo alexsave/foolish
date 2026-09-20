@@ -377,47 +377,79 @@ size.</p>
 rather than a bug: <i>"the raw body blows the size budget and always will - raw
 spends ~34 bits on an action worth ~1-2 bits."</i> The fix there was to stop
 sending state and send a replay code instead. <b>Ultimate Tic-Tac-Toe is the
-same argument with much better numbers.</b></p>
+same argument with much better numbers</b> - and these ones are not estimates.
+They come out of <code>uttt/c</code>, which plays the games, encodes every one,
+decodes it back and checks it move for move.</p>
 
 <div class="figs">
-  <div><p class="bigfig">22 bytes<small>The p95 complete game - every move ever
-  made - arithmetic-coded against the legal-move count at each ply. Measured
-  over 20,000 played games, not estimated.</small></p></div>
-  <div><p class="bigfig">3.6%<small>Of the ~625-byte body budget. The entire
-  history fits twenty-seven times over.</small></p></div>
-  <div><p class="bigfig">163 bits<small>Mean. <b>The whole game costs about
-  what one board position costs</b> - 81 cells at 2 bits is 162.</small></p></div>
+  <div><p class="bigfig">21 bytes<small>The mean complete game - every move ever
+  made. p95 is 23, the worst of 100,000 was 25.</small></p></div>
+  <div><p class="bigfig">81 plies<small>The longest game the board can hold,
+  every cell filled. <b>It fits in 22 bytes</b> - less than the p95, because
+  the longest game is not the dearest one.</small></p></div>
+  <div><p class="bigfig">0.57 B<small>Everything the coder wastes. The ideal is
+  163.4 bits; the rest is rounding up to a byte and one sentinel.</small></p></div>
 </div>
 
-<h2 style="margin-top:8px">Where the bits go</h2>
-<p class="lede">A move is worth <code>log2(legal moves)</code> and nothing more.
-<b>The first move is the most expensive one in the game</b> - 81 squares, 6.34
-bits - and it is all downhill from there, because the forced block cuts the
-choice to nine before anybody has thought about it.</p>
-<div class="sheet2" style="width:min(760px,100%);margin-top:18px"><canvas data-chart="{&quot;ys&quot;:[6.34, 3.151, 3.137, 3.117, 3.099, 3.084, 3.066, 3.047, 3.028, 3.012, 2.995, 2.98, 2.961, 2.947, 2.928, 2.912, 2.897, 2.881, 2.868, 2.855, 2.838, 2.826, 2.809, 2.799, 2.786, 2.785, 2.768, 2.765, 2.751, 2.746, 2.734, 2.733, 2.726, 2.722, 2.714, 2.702, 2.691, 2.697, 2.697, 2.69, 2.677, 2.678, 2.678, 2.663, 2.659, 2.644, 2.639, 2.612, 2.586, 2.556, 2.524, 2.482, 2.435, 2.4, 2.331, 2.253, 2.18, 2.109, 2.041, 1.936, 1.807, 1.744, 1.613, 1.549, 1.41, 1.298, 1.209, 1.104, 1.007, 0.901, 0.778, 0.676, 0.827, 0.673],&quot;max&quot;:6.5}" style="width:100%;height:210px"></canvas></div>
-<p class="lede" style="margin-top:14px">6.34 bits, then a long shelf just above
-3 while the blocks are open, then a collapse to under 1 as the sheet fills and
-most plies have two or three squares left. <b>The endgame is nearly free</b>:
-by ply 70 a move costs less than a single bit, because there is almost nothing
-else it could have been.</p>
+<h2 style="margin-top:8px">Length is cheap. Freedom is expensive.</h2>
+<p class="lede">Two bots play in the test. One picks uniformly at random. The
+other <b>refuses to close a block whenever it has any alternative</b>, because a
+block shuts the moment it is won and its empty cells are frozen for the rest of
+the game - so not winning is how a game gets long. It reaches 81; the random one
+never passes 78.</p>
+<p class="lede">And the stretched games are <b>longer AND cheaper</b>. Closing
+blocks early costs both ways: a closed block sends the next player nowhere,
+which hands them a free choice over the whole sheet - a forty-way decision
+instead of a nine-way one. <b>Plies are nearly free. Choices are not.</b></p>
 
-<h2 style="margin-top:34px">Four ways to say the same thing</h2>
-<div class="barrow dim"><div class="blab">Every move, spelled out</div><div class="btrack"><div class="bfill" style="width:9.66%"></div></div><div class="bval">60 B<span>9.7%</span></div><div class="bnote">One byte-ish per move, 7 bits for a square out of 81. What you write first, and it is <b>the only line here that does not fit twice over</b>.</div></div><div class="barrow "><div class="blab">The board, 2 bits a cell</div><div class="btrack"><div class="bfill" style="width:3.24%"></div></div><div class="bval">20 B<span>3.2%</span></div><div class="bnote">81 cells, three states each. No history, no turn, no forced block - just where the marks are.</div></div><div class="barrow hit"><div class="blab">The whole game, coded</div><div class="btrack"><div class="bfill" style="width:3.58%"></div></div><div class="bval">22 B<span>3.6%</span></div><div class="bnote"><b>Every move that was ever made</b>, arithmetic-coded against the number of legal moves at each ply. p95 over 20,000 played games.</div></div><div class="barrow bud"><div class="blab">The body budget</div><div class="btrack"><div class="bfill" style="width:100.00%"></div></div><div class="bval">625 B<span>100.0%</span></div><div class="bnote">What an FMSG body has to spend. Everything above is what it is spending it on.</div></div>
+<h2 style="margin-top:34px">Where the bits go</h2>
+<p class="lede">A move is worth <code>log2(legal moves)</code> and nothing more.
+<b>The first move is the most expensive in the game</b> - 81 squares, 6.34 bits
+- and it is downhill from there, because the forced block cuts the choice to
+nine before anybody has thought about it. The curve below is printed by the
+kernel itself (<code>uttt_test curve</code>), so the picture and the shipped
+rules cannot drift apart.</p>
+<div class="sheet2" style="width:min(760px,100%);margin-top:18px"><canvas data-chart="{&quot;ys&quot;:[6.34, 3.151, 3.136, 3.118, 3.1, 3.083, 3.065, 3.048, 3.027, 3.011, 2.994, 2.978, 2.959, 2.946, 2.926, 2.914, 2.897, 2.882, 2.866, 2.85, 2.835, 2.823, 2.815, 2.8, 2.792, 2.779, 2.768, 2.761, 2.745, 2.741, 2.733, 2.727, 2.713, 2.719, 2.707, 2.707, 2.701, 2.695, 2.697, 2.687, 2.683, 2.676, 2.663, 2.661, 2.648, 2.647, 2.632, 2.607, 2.582, 2.563, 2.527, 2.491, 2.438, 2.38, 2.335, 2.271, 2.186, 2.108, 2.017, 1.929, 1.838, 1.714, 1.644, 1.523, 1.418, 1.306, 1.182, 1.095, 1.013, 0.885, 0.875, 0.695, 0.615, 0.564],&quot;max&quot;:6.5}" style="width:100%;height:210px"></canvas></div>
+<p class="lede" style="margin-top:14px">6.34 bits, a long shelf just above 3
+while blocks stay open, then a collapse under 1 as the sheet fills. <b>The
+endgame is nearly free</b>: by ply 70 a move is worth half a bit, because there
+is almost nothing else it could have been.</p>
+
+<h2 style="margin-top:34px">Six ways to say the same thing</h2>
+<div class="barrow dim"><div class="blab">Every move, spelled out</div><div class="btrack"><div class="bfill" style="width:9.66%"></div></div><div class="bval">60 B<span>9.7%</span></div><div class="bnote">One square out of 81 is 7 bits, so 69 moves is 61 bytes. What anybody writes first, and <b>the only line here that does not fit twice over</b>.</div></div><div class="barrow "><div class="blab">The board, 2 bits a cell</div><div class="btrack"><div class="bfill" style="width:3.24%"></div></div><div class="bval">20 B<span>3.2%</span></div><div class="bnote">81 cells, three states each. No history, no turn, no forced block - just where the marks are right now.</div></div><div class="barrow hit"><div class="blab">The whole game, coded</div><div class="btrack"><div class="bfill" style="width:3.68%"></div></div><div class="bval">23 B<span>3.7%</span></div><div class="bnote">p95 out of <b>100,000 games played by the kernel in uttt/c</b>, encoded and decoded and checked move for move. Mean is 21 bytes, max seen 25.</div></div><div class="barrow hit"><div class="blab">The longest game there is</div><div class="btrack"><div class="bfill" style="width:3.52%"></div></div><div class="bval">22 B<span>3.5%</span></div><div class="bnote"><b>81 plies - every cell on the board.</b> It fits in 22, which is less than the p95, and that is not a typo.</div></div><div class="barrow "><div class="blab">If every move were free</div><div class="btrack"><div class="bfill" style="width:8.02%"></div></div><div class="bval">50 B<span>8.0%</span></div><div class="bnote">log2(81!) - an 81-move game where you could always play anywhere. <b>The forced block halves the game before anybody sits down.</b></div></div><div class="barrow bud"><div class="blab">The body budget</div><div class="btrack"><div class="bfill" style="width:100.00%"></div></div><div class="bval">625 B<span>100.0%</span></div><div class="bnote">What an FMSG body has to spend. Everything above is what it is spending it on.</div></div>
+
+<h2 style="margin-top:20px">It was rANS first</h2>
+<p class="lede">The coder started as rANS, which renormalises against
+<code>x_max = (L / n) &lt;&lt; 8</code>. That is exact <b>only when n divides
+L</b> - true for the power-of-two alphabets every reference implementation uses,
+and false here, where n is the number of legal moves and runs 1 to 81.</p>
+<p class="lede">With <code>L = 2^16</code> and <code>n = 81</code>,
+<code>floor(L/n) * n</code> is <b>65529, seven below the floor the decoder
+renormalises against</b>. The encoder could leave the state just under the
+window and the two sides would walk apart in silence. It happened about
+<b>twice in every eight thousand games</b> - a rate that passes a
+thousand-game test clean and fails in somebody's thread six months later. It
+only surfaced because the count went up after the first green run.</p>
+<p class="lede">Rounding the bound up fixed the floor and broke the ceiling
+instead. So the coder is an exact <b>mixed-radix bignum</b>: <code>v = v*n +
+i</code> walked backwards, <code>i = v%n</code> walked forwards. No
+renormalisation, no window, no state to flush - fifteen lines, and <b>two bytes
+smaller</b> than the rANS it replaced.</p>
 
 <h2 style="margin-top:20px">What that buys</h2>
 <p class="lede"><b>Every bubble can carry the entire game.</b> Not a delta, not
-a pointer, not a diff against the last one - the whole history, from the first
-move, in 22 bytes. That is the property foolish had to fight for and this game
+a pointer, not a diff against the last one - the whole history from the first
+move, in 21 bytes. That is the property foolish had to fight for and this game
 gets for nothing.</p>
 <p class="lede">Which settles three things at once. <b>There is no chain to
 walk</b>, so an extension that cannot enumerate the transcript does not care.
 <b>A late tap rebuilds perfectly</b>, because the bubble is not a summary of the
 game, it IS the game. And <b>replay is free</b> - the motion on the first tab is
-not a recording, it is the same 22 bytes played forward.</p>
+not a recording, it is the same 21 bytes played forward.</p>
 <p class="lede">The remaining 96% is not spare capacity looking for a use. It is
-the reason the format can afford to be boring: version bytes, a seat roster, a
-checksum, and room for whatever the rules grow into, without anybody ever having
-to measure again.</p>
+the reason the format can afford to be boring: a version byte, a seat roster, a
+checksum, and room for whatever the rules grow into, without anybody having to
+measure again.</p>
 </section></template>
 
 <template data-view="board"><section><h2>The board, in the locked pen</h2>

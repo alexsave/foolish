@@ -69,8 +69,38 @@ static void report(const char *name, Row *r, int n)
     free(by); free(id); free(pl);
 }
 
+/* `curve` prints the mean cost of ply k, which is what the design document
+ * draws. It comes out of this kernel so the picture and the shipped rules
+ * cannot drift apart. */
+static void curve(int games)
+{
+    static double acc[UTTT_MAX_PLIES]; static int cnt[UTTT_MAX_PLIES];
+    uint8_t list[81];
+    for (int i = 0; i < games; i++) {
+        UtttGame g; uttt_init(&g);
+        for (;;) {
+            int n = uttt_legal(&g, list);
+            if (n <= 0) break;
+            acc[g.n_plies] += log2((double)n);
+            cnt[g.n_plies]++;
+            uttt_play(&g, list[rnd((uint32_t)n)]);
+        }
+    }
+    printf("[");
+    for (int k = 0; k < UTTT_MAX_PLIES; k++) {
+        if (cnt[k] < games / 400) break;
+        printf("%s%.3f", k ? "," : "", acc[k] / cnt[k]);
+    }
+    printf("]\n");
+}
+
 int main(int argc, char **argv)
 {
+    if (argc > 1 && strcmp(argv[1], "curve") == 0) {
+        RS = 0x9E3779B97F4A7C15ull;
+        curve(argc > 2 ? atoi(argv[2]) : 20000);
+        return 0;
+    }
     int games = argc > 1 ? atoi(argv[1]) : 1000;
     RS = argc > 2 ? strtoull(argv[2], NULL, 10) : 0x9E3779B97F4A7C15ull;
 
