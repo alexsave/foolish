@@ -915,13 +915,17 @@ td.y{color:#2f7a45;font-weight:600} td.n{color:var(--brand);font-weight:600}
 .art.day .town{filter:none !important;opacity:.82}
 .art.dawn .town{filter:none !important}
 
-/* BRICK - running bond, procedurally laid, then weathered. */
+/* STONE, not brick. Cool greys rather than warm browns, and no two blocks the
+   same: the courses are uneven, each row is offset by a different amount so the
+   seams never line up, block heights jitter by a pixel or two, and twelve greys
+   cycle so neighbours never match. A running bond of identical rectangles reads
+   as wallpaper; this reads as something somebody stacked. */
 .brick{background-image:
   var(--nz-fine),
   var(--nz-coarse),
-  url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='124' height='52'><rect width='124' height='52' fill='%23241c18'/><g fill='%233a2c24'><rect x='1' y='1' width='59' height='23'/><rect x='62' y='1' width='59' height='23'/></g><g fill='%2333271f'><rect x='-30' y='27' width='59' height='23'/><rect x='32' y='27' width='59' height='23'/><rect x='94' y='27' width='59' height='23'/></g></svg>"),
-  linear-gradient(#14110f,#0b0908);
-  background-size:180px 180px, 400px 400px, 124px 52px, auto;
+  url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='212' height='118'><rect width='212' height='118' fill='%2324262a'/><rect x='-6' y='2' width='46' height='26' rx='1.5' fill='%23565a5e'/><rect x='43' y='3' width='31' height='25' rx='1.5' fill='%234e5256'/><rect x='77' y='1' width='55' height='25' rx='1.5' fill='%235d6165'/><rect x='135' y='2' width='37' height='25' rx='1.5' fill='%23515559'/><rect x='175' y='2' width='44' height='25' rx='1.5' fill='%23595d61'/><rect x='-18' y='31' width='33' height='24' rx='1.5' fill='%234a4e52'/><rect x='18' y='33' width='58' height='21' rx='1.5' fill='%2354585c'/><rect x='79' y='32' width='39' height='21' rx='1.5' fill='%235a5e62'/><rect x='121' y='33' width='29' height='21' rx='1.5' fill='%234d5155'/><rect x='153' y='31' width='52' height='22' rx='1.5' fill='%23555a5e'/><rect x='-6' y='57' width='40' height='30' rx='1.5' fill='%23585c60'/><rect x='37' y='57' width='43' height='28' rx='1.5' fill='%234f5357'/><rect x='83' y='57' width='31' height='28' rx='1.5' fill='%23565a5e'/><rect x='117' y='58' width='50' height='30' rx='1.5' fill='%234e5256'/><rect x='170' y='58' width='48' height='27' rx='1.5' fill='%235d6165'/><rect x='-18' y='90' width='37' height='24' rx='1.5' fill='%23515559'/><rect x='22' y='89' width='52' height='24' rx='1.5' fill='%23595d61'/><rect x='77' y='90' width='34' height='23' rx='1.5' fill='%234a4e52'/><rect x='114' y='89' width='41' height='23' rx='1.5' fill='%2354585c'/><rect x='158' y='90' width='45' height='26' rx='1.5' fill='%235a5e62'/></svg>"),
+  linear-gradient(#14161a,#0a0c0e);
+  background-size:180px 180px, 400px 400px, 212px 118px, auto;
   background-blend-mode:soft-light, multiply, normal, normal}
 
 
@@ -1208,8 +1212,7 @@ stained glass were all tried and cut.</p>
 <p style="margin-top:22px"><b>Ash and ember is the pick</b> - and it is the one you reacted to,
 which matters more than my reasoning. <b>Moonlit</b> stays as the cold alternative, and the
 <b>candlelit original</b> is what the flows below are drawn in. All three share a register, so
-elements can be combined between them rather than chosen between. A <b>brick</b> variant of the
-original is further down.</p>
+elements can be combined between them rather than chosen between. A <b>stone wall</b> variant of the original is further down.</p>
 </section>
 
 <section id="states">
@@ -1537,13 +1540,12 @@ table reaches.</p>
 </section>
 
 <section id="brick">
-<h2>A brick option for the night</h2>
-<p class="lede">Running bond, laid procedurally - an SVG tile of two offset courses, weathered with
-coarse noise and lit from one side. Same candlelit treatment otherwise, so the only variable is
+<h2>A stone wall for the night</h2>
+<p class="lede">Coursed rubble, laid procedurally - twenty blocks of uneven size over four uneven courses, each row offset by a different amount so no seam lines up, weathered with coarse noise and lit from one side. Same candlelit treatment otherwise, so the only variable is
 what the wall is made of.</p>
 <div class="row">
   <div class="col">
-    <div class="h4"><span class="pill">brick</span> the same night, on a wall</div>
+    <div class="h4"><span class="pill">stone</span> the same night, against a wall</div>
     <div class="device">
       <div class="chrome"><i></i></div>
       <div class="night brick" style="height:520px">
@@ -1565,9 +1567,7 @@ what the wall is made of.</p>
         </div>
       </div>
     </div>
-    <div class="note"><b>Brick reads as a cellar; stone read as a keep.</b> It is warmer and more
-    domestic, which suits a village and undercuts the castle. The risk is that a regular grid
-    behind an irregular one (the shields) fights - watch the shields against the courses.</div>
+    <div class="note"><b>Cool grey, so it sits under the candles instead of competing with them.</b> The warm brown version read as a cellar and pulled the whole screen towards orange. The thing to watch is still the same: a wall behind a row of shields is one grid behind another, and the blocks are deliberately irregular so the two do not beat against each other.</div>
   </div>
   <div class="col">
     <div class="h4"><span class="pill n">and the shield outline, fixed</span></div>
@@ -1589,7 +1589,7 @@ what the wall is made of.</p>
 <h2>The day phase wants its own register</h2>
 <p class="lede">Reusing the night set at noon makes the whole game feel like one long night. The
 day is when the village argues in daylight and then does something about it - so: two directions,
-both medieval, neither gory. Twelve seats, two already out, tallies scratched under the accused.</p>
+both medieval, neither gory. Twelve seats, two already out, tallies scratched under each name.</p>
 
 <div class="sv">
 <div class="row">
@@ -1601,8 +1601,8 @@ both medieval, neither gory. Twelve seats, two already out, tallies scratched un
   <div class="chrome" style="background:#050508"><i style="background:#2b2b38"></i></div>
   <div class="scr" style="height:560px">
     <div class="in">
-      <div class="hdr">Day IV &middot; the village gathers</div>
-      <div class="ask">Who hangs?</div>
+      <div class="hdr">Day IV &middot; the village speaks</div>
+      <div class="ask">Who do you name?</div>
       <div class="said">Three have named <b>Sveta</b>. Seven still to speak.</div>
       <div class="rl"></div>
       <div class="grid" style="grid-template-columns:repeat(4,1fr);gap:9px 8px"><div class="s dead"><div class="e esh"><span class="g">A</span></div><div class="n">Alex</div><div class="t">&nbsp;</div></div><div class="s pick"><div class="e esh"><span class="g">S</span></div><div class="n">Sveta</div><div class="t"><span class="tally">|||</span></div></div><div class="s"><div class="e esh"><span class="g">K</span></div><div class="n">Kim</div><div class="t">&nbsp;</div></div><div class="s"><div class="e esh"><span class="g">L</span></div><div class="n">Lee</div><div class="t"><span class="tally">||</span></div></div><div class="s"><div class="e esh"><span class="g">A</span></div><div class="n">Ana</div><div class="t">&nbsp;</div></div><div class="s"><div class="e esh"><span class="g">B</span></div><div class="n">Bo</div><div class="t"><span class="tally">|</span></div></div><div class="s"><div class="e esh"><span class="g">C</span></div><div class="n">Cy</div><div class="t">&nbsp;</div></div><div class="s"><div class="e esh"><span class="g">D</span></div><div class="n">Dara</div><div class="t">&nbsp;</div></div><div class="s dead"><div class="e esh"><span class="g">E</span></div><div class="n">Ez</div><div class="t">&nbsp;</div></div><div class="s"><div class="e esh"><span class="g">F</span></div><div class="n">Fen</div><div class="t">&nbsp;</div></div><div class="s"><div class="e esh"><span class="g">G</span></div><div class="n">Gus</div><div class="t">&nbsp;</div></div><div class="s"><div class="e esh"><span class="g">H</span></div><div class="n">Hana</div><div class="t">&nbsp;</div></div></div>
@@ -1610,20 +1610,19 @@ both medieval, neither gory. Twelve seats, two already out, tallies scratched un
     </div>
   </div>
 </div>
-    <div class="note"><b>The cheerful one, and that is the point.</b> A market is loud and
-    crowded and the accusation happens in the middle of it. The contrast with the night screen
+    <div class="note"><b>The cheerful one, and that is the point.</b> A market is loud and crowded, and the accusation happens in the middle of it. The contrast with the night screen
     does more work than any single element does.</div>
   </div>
   <div class="col">
     <div class="h4"><span class="pill g">D2</span> The assize</div>
-    <p class="why">Overcast, cold stone, iron. Daylight with no warmth in it. The accused turns
+    <p class="why">Overcast, cold stone, iron. Daylight with no warmth in it. The named seat turns
     the colour of old brick and nothing else in the frame is coloured at all.</p>
     <div class="device az">
   <div class="chrome" style="background:#050508"><i style="background:#2b2b38"></i></div>
   <div class="scr" style="height:560px">
     <div class="in">
       <div class="hdr">Day IV &middot; the assize</div>
-      <div class="ask">Who hangs?</div>
+      <div class="ask">Who do you name?</div>
       <div class="said">Three have named <b>Sveta</b>. Seven still to speak.</div>
       <div class="rl"></div>
       <div class="grid" style="grid-template-columns:repeat(4,1fr);gap:9px 8px"><div class="s dead"><div class="e esh"><span class="g">A</span></div><div class="n">Alex</div><div class="t">&nbsp;</div></div><div class="s pick"><div class="e esh"><span class="g">S</span></div><div class="n">Sveta</div><div class="t"><span class="tally">|||</span></div></div><div class="s"><div class="e esh"><span class="g">K</span></div><div class="n">Kim</div><div class="t">&nbsp;</div></div><div class="s"><div class="e esh"><span class="g">L</span></div><div class="n">Lee</div><div class="t"><span class="tally">||</span></div></div><div class="s"><div class="e esh"><span class="g">A</span></div><div class="n">Ana</div><div class="t">&nbsp;</div></div><div class="s"><div class="e esh"><span class="g">B</span></div><div class="n">Bo</div><div class="t"><span class="tally">|</span></div></div><div class="s"><div class="e esh"><span class="g">C</span></div><div class="n">Cy</div><div class="t">&nbsp;</div></div><div class="s"><div class="e esh"><span class="g">D</span></div><div class="n">Dara</div><div class="t">&nbsp;</div></div><div class="s dead"><div class="e esh"><span class="g">E</span></div><div class="n">Ez</div><div class="t">&nbsp;</div></div><div class="s"><div class="e esh"><span class="g">F</span></div><div class="n">Fen</div><div class="t">&nbsp;</div></div><div class="s"><div class="e esh"><span class="g">G</span></div><div class="n">Gus</div><div class="t">&nbsp;</div></div><div class="s"><div class="e esh"><span class="g">H</span></div><div class="n">Hana</div><div class="t">&nbsp;</div></div></div>
@@ -1631,7 +1630,7 @@ both medieval, neither gory. Twelve seats, two already out, tallies scratched un
     </div>
   </div>
 </div>
-    <div class="note"><b>Morbid without a drop of blood.</b> It keeps the game's register
+    <div class="note"><b>Grave without being grim.</b> It keeps the game's register
     consistent, and the single red is the same trick ash and ember plays at night - one colour
     means one thing.</div>
   </div>
@@ -1700,6 +1699,73 @@ without reading a word. Same village, three states.</p>
     the dark.</div>
   </div>
 </div>
+</div>
+</section>
+
+<section id="loop">
+<h2>The day is the night's mirror, not its copy</h2>
+<p class="lede">The night's central rule is that <b>everyone must send, because sending is the
+tell</b>. The day inverts every part of that, and the inversion is the design.</p>
+
+<div class="callout">
+  <h4>Same machinery. Opposite visibility.</h4>
+  <p>At night a choice must be hidden, so every player sends an identical-looking record and the
+  contents are masked. In the day <b>a vote is public by definition</b> - that is what a village
+  arguing in daylight <em>is</em> - so the same record carries the same shape with nothing masked
+  at all.</p>
+  <p>That means the day needs no disguise, and everything the disguise cost can be spent: votes
+  are visible as they land, a running tally sits under each name, and <b>you may change your vote
+  until the day closes</b>. None of that is safe at night; all of it is free in the day.</p>
+</div>
+
+<div class="callout">
+  <h4>What the kernel has, and what it is missing</h4>
+  <p><code>ww_day_lynch(g, target)</code> takes <b>one seat</b> - the outcome - and
+  <code>WW_REC_LYNCH</code> stores "the seat the table voted out". So the kernel models the
+  <em>result</em> of a vote and not the vote itself.</p>
+  <p><b>That is the gap.</b> Correspondence play cannot hand it a target, because there is no
+  moment when everyone is present to agree one. It needs a per-player vote record that folds to a
+  lynch the same way night records fold to a kill - and then the ten-minute carry works unchanged,
+  because it is the same machinery.</p>
+</div>
+
+<div class="row">
+  <div class="col">
+    <div class="h4"><span class="pill">the day</span> votes in the open</div>
+    <div class="device"><div class="chrome"><i></i></div><div class="night" style="height:470px"><div class="inner"><div class="hdr">Day IV &middot; six still speaking</div><div class="ask">Who do you name?</div><div class="said">Your vote is <b>public</b>. Everyone can see it, and you may change it.</div><div class="rule2"></div><div class="shields" style="grid-template-columns:repeat(3,1fr)"><div class="sh"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st">&mdash;</div></div><div class="sh sent pick"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st" style="color:#c9a227;letter-spacing:2px">|||</div></div><div class="sh"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">&mdash;</div></div><div class="sh sent"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st" style="color:#c9a227;letter-spacing:2px">|</div></div><div class="sh sent"><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st" style="color:#c9a227;letter-spacing:2px">||</div></div><div class="sh"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st">&mdash;</div></div></div><div class="stage">Voted <b>Kim</b> &middot; send it from the thread</div><div class="foot">Three of six have voted. Ana voted ten minutes ago.</div></div></div></div>
+    <div class="note"><b>Three columns, not four</b> - the day has fewer players every time, so
+    the grid can afford to be bigger. Tallies are gold and sit where the night put status. The
+    footer names <em>when</em> somebody voted, because in the day you want to know who is still
+    thinking.</div>
+  </div>
+  <div class="col">
+    <div class="h4"><span class="pill n">carried</span> what a skip looks like from inside</div>
+    <div class="device"><div class="chrome"><i></i></div><div class="night" style="height:400px"><div class="inner"><div class="hdr">Night IV &middot; while you were away</div><div class="ask">Carol played<br>your night for you.</div><div class="said">You dreamt of no one. Nothing you would have done was done.</div><div class="rule2"></div><div style="font-size:14px;line-height:1.6;color:#9d947f;font-style:italic">Ten minutes passed and the next player opened. Their message carried your silence forward so the night could close.</div><div class="stage off">The day is open. Your vote still counts.</div></div></div></div>
+    <div class="note"><b>The carry has to be legible or it feels like a bug.</b> It tells you
+    exactly what was done in your name and confirms nothing was chosen for you - and then points
+    at the thing you can still do. A wolf carried out of a kill vote should read the same way, so
+    the screen does not become a role tell.</div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="col">
+    <div class="h4"><span class="pill g">the seer</span> an answer with nowhere to appear</div>
+    <div class="device"><div class="chrome"><i></i></div><div class="night" style="height:400px"><div class="inner"><div class="hdr">Morning IV &middot; yours alone</div><div class="ask">Lee is a wolf.</div><div class="said">You asked last night. Nobody else can read this - not in the thread, not in the bytes.</div><div class="rule2"></div><div style="font-size:14px;line-height:1.7;color:#9d947f"><div>Night II &mdash; Ana &middot; <span style="color:#8fa68e">not a wolf</span></div><div>Night III &mdash; Bo &middot; <span style="color:#8fa68e">not a wolf</span></div><div>Night IV &mdash; Lee &middot; <span style="color:#c4544a">a wolf</span></div></div><div class="stage off">Saying so out loud is your own risk.</div></div></div></div>
+    <div class="note"><b>This screen is the only place a reading can exist.</b> The kernel already
+    says so - <code>n_readings</code> is <code>0 unless the viewer is the living seer</code> - so
+    the answer is derived on the seer's own device from a deal they are entitled to read, and
+    never travels. It cannot go in the thread, cannot go in a bubble, and cannot be a
+    notification.</div>
+  </div>
+  <div class="col">
+    <div class="h4"><span class="pill n">the dead</span> know nothing extra, on purpose</div>
+    <div class="device"><div class="chrome"><i></i></div><div class="night" style="height:400px"><div class="inner"><div class="hdr">You are out</div><div class="ask">Sveta took you<br>on night three.</div><div class="said">You were a <b>villager</b>.</div><div class="rule2"></div><div style="font-size:14px;line-height:1.6;color:#9d947f;font-style:italic">You can still read the thread - nothing here can stop that. But you know exactly what the living know and nothing more, so there is nothing for you to give away.</div><div class="stage off">Watching. No move to make.</div></div></div></div>
+    <div class="note"><b>The tempting design is to reward the dead with the truth.</b> Do not. You
+    cannot stop a dead player texting, so any information you give them is information that leaks.
+    Giving them exactly what the living have makes leaking worthless - which is the same principle
+    the night runs on: <em>do not create information you cannot protect</em>.</div>
+  </div>
 </div>
 </section>
 
