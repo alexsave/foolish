@@ -73,6 +73,25 @@ targets:
         INFOPLIST_FILE: UtttMessages/Info.plist
         TARGETED_DEVICE_FAMILY: "1"
 
+  # ---- A development harness, shipped in nothing -------------------------
+  # The only other way to look at a screen is to drive the real Messages app,
+  # and a design that can only be inspected by playing a game is a design
+  # nobody inspects.
+  UtttPreview:
+    type: application
+    platform: iOS
+    sources:
+      - path: UtttPreview
+    dependencies:
+      - target: UtttKit
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cards.uttt.preview
+        GENERATE_INFOPLIST_FILE: "YES"
+        INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
+        TARGETED_DEVICE_FAMILY: "1"
+
   UtttKit:
     type: framework
     platform: iOS
@@ -96,6 +115,12 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
 
 schemes:
+  UtttPreview:
+    build:
+      targets:
+        UtttPreview: all
+    run:
+      config: Debug
   UtttMessagesApp:
     build:
       targets:
