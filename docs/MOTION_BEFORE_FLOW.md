@@ -54,12 +54,16 @@ code does.
 
 ## 2. Motion is a grid, and it has to be filled in first
 
-`docs/ANIMATION_CATALOGUE.md` is the real one for foolish, and it is excellent.
-It was also written at **1.0(24)**, walked with the owner at **1.0(28)**, and
-audited for timing later still.
+Foolish has two of these and they are both good: `docs/ANIMATION_CATALOGUE.md`
+(every shape, with an honest status column) and `docs/UI_STATE_FLOWS.md` (the
+state machines, as seven mermaid diagrams - the move lifecycle `Idle / Refused
+/ Staged / Held / Undoing / Sending / Released / Retract / Sup`, arrivals on an
+open board, and the same red flight for two different reasons).
+The catalogue was written at **1.0(24)**, walked with the owner at **1.0(28)**,
+and audited for timing later still.
 Every shape in it was discovered by shipping something that felt wrong.
 
-The catalogue's own structure is the thing that should have existed on day one,
+Its structure is the thing that should have existed on day one,
 because it is not specific to Durak at all.
 **The same axes apply to any game that lives in a transcript.**
 
@@ -68,15 +72,15 @@ because it is not specific to Durak at all.
 A move does not have one animation. It has one per channel it can arrive
 through, and they are different animations for the same event.
 
-| Channel | The situation |
-|---|---|
-| **A** | My own move, staged, before Send |
-| **B** | The same move, at Send |
-| **C** | Reopening my OWN bubble cold - a replay |
-| **D** | Opening SOMEBODY ELSE'S bubble cold |
-| **E** | A move arriving on a board that is already open |
-| **Undo** | Tapping x on a staged bubble |
-| **Conflict** | A race I lost - the move I staged is no longer legal |
+| Channel | The situation | foolish's name |
+|---|---|---|
+| **A** | My own move, staged, before Send | `stagedAnimation` |
+| **B** | The same move, at Send | `releasedSettlement` |
+| **C** | Reopening my OWN bubble cold - a replay | `openReplayEvents` |
+| **D** | Opening SOMEBODY ELSE'S bubble cold | `openReplayEvents`, masked |
+| **E** | A move arriving on a board that is already open | arrival |
+| **Undo** | Tapping x on a staged bubble, or the Undo pill | `flyUndoReturn` |
+| **Conflict** | A race I lost - the move I staged is no longer legal | `anim_conflict_*` |
 
 Seven, for one move.
 A and B are two animations for a single action, and getting that split wrong is
@@ -85,6 +89,17 @@ C and D differ because a replay of my own move should not surprise me and a
 stranger's should.
 E is the only one that interrupts something the player is already looking at.
 Conflict is the only one that has to say *no* without feeling like a bug.
+
+And A/B is not the only split inside one move. Foolish cuts a move's event
+stream into an **action** half and a **settlement** half, and the cut is the
+kernel's (`evw_is_settlement`), not the board's - A plays the action, B plays
+the settlement only if the move ended a bout. Decide where your equivalent cut
+is before you decide what either half looks like.
+
+Undo has a subtlety worth stealing: **the x on a staged bubble is not the same
+event as an Undo pill.** By the time the board hears about the x, Messages has
+already removed the bubble, so it cannot be refused - only the pill asks
+permission (`UndoGate`).
 
 Fill this table in before drawing a screen.
 A cell can legitimately say "nothing moves" - that is a decision. An empty cell
@@ -101,24 +116,45 @@ unless every element has been assigned an edge to hold:
 - **Centre-anchored** - keeps its proportion, which usually reads as the least
   correct of the three and is the right answer surprisingly often.
 
+foolish spells this as a type, `CollapseRide` in `CollapseLayer.swift` -
+"where a view sits in its box as the box shrinks" - either `fraction(CGFloat)`
+or `path(rest:y:)`. One attribute per element.
+
 Foolish found this by measuring: `docs/COLLAPSE_MSE.md`.
 The box's bottom edge is meant to travel **6.7pt** during an auto-collapse and
 was leaving that band for ~400ms, because the box was top-glued to a descending
 edge while the thing inside it wanted to be bottom-glued.
-That is an anchor decision, made accidentally, that cost a measurement rig
-(`ios/Tools/rig/lib/mse.py`), a sweep harness and several builds.
+That is an anchor decision, made accidentally, that cost a measurement rig, a
+sweep harness and several builds.
 
 **Assign every element an anchor in the mockup.** It is one attribute per box
 and it is free there.
 
 ### The vocabulary
 
-Keep the list of motions small and name them, so a spec can say which one:
+Keep the list small and name them in the kernel, so a spec can say which one.
+Foolish's surface transitions are exactly three (`anim_plan.h`):
 
-**snap** (no travel, a state change), **fade**, **fly** (translate along a
-path), **rotate**, **fly+rotate** (the one that reads as a physical object
-being dealt or returned), **collapse/expand**, **hold** (a deliberate pause -
-foolish's game-over hold is one second and it is load-bearing).
+```c
+#define ANIM_TRANSITION_SNAP 0   // it is simply true now; no motion at all
+#define ANIM_TRANSITION_TURN 1   // the control that changed rotates out and back
+#define ANIM_TRANSITION_FADE 2   // one whole surface cross-fades into another
+```
+
+and its role marks have five gestures (`FRoleMotion.swift`): `flip`,
+`rotateOut`, `rotateIn`, `restore`, `none`.
+Cards get **fly** and **fly+rotate** - the one that reads as a physical object
+being dealt or returned - plus **hold**, a deliberate pause that is
+load-bearing: `boutEndHold` is `flightTime * 3` and `gameOverHold` is
+`flightTime * 2`, off a `flightTime` of 0.5s.
+
+There is also a composition default worth copying verbatim:
+**within one kernel move, everything that moves goes at once; between moves,
+one after another.**
+
+And a duration that is not a duration: `settle_ms` on a surface plan is how
+long a surface must be **on screen before it may be put away**, which is what
+stops a lobby's fade from being eaten by the collapse that follows it.
 
 Combinations are allowed and should be written as combinations.
 "Undoing a pickup flies the cards back out of my hand onto the table" is a
@@ -171,6 +207,9 @@ the rig reading that log, not from watching a screen.
 
 - `docs/ANIMATION_CATALOGUE.md` - the channels, the conflict model, the honest
   status column that says what nothing tests.
+- `docs/UI_STATE_FLOWS.md` - the same thing as state machines, in mermaid.
+- `c/src/anim_plan.h` - the transitions, beats, veil, conflict verdicts and
+  surface plans, as C the whole product shares.
 - `docs/ANIMATION_CORE_C.md` - where the animation plan lives in C.
 - `docs/ANIM_TIMING_AUDIT.md` - the instrument being wrong.
 - `docs/COLLAPSE_MSE.md` - the anchor problem, measured.

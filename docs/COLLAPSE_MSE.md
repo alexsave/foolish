@@ -8,7 +8,12 @@ This is the measurement of that, what was tried against it, and what is left.
 
 ## The measure
 
-`ios/Tools/rig/lib/mse.py` scores a set of filmed collapses.
+> **STALE, 2026-09-20.** `lib/mse.py`, `lib/msecmp.py`, `shots/mse_run.sh` and
+> `shots/mse_sweep.sh` are no longer in the tree - only `lib/tween.py` survives.
+> The measurements below stand; the commands do not run. Read this as the
+> record of what was found, not as a runbook.
+
+`ios/Tools/rig/lib/mse.py` scored a set of filmed collapses.
 Every frame is scored by how far the bottom edge is outside the band, zero inside it; the takes are averaged first and the result squared and summed, so noise that is not repeatable cancels and only the excursion the design really has survives.
 
 ```
