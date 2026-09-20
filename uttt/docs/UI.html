@@ -421,6 +421,24 @@ fills. <b>The endgame is nearly free</b>: the last measurable ply is worth
 have been. Half the game costs less than half of what the first twenty plies
 do.</p>
 
+<h2 style="margin-top:34px">How long games actually are</h2>
+<p class="lede">100,000 games per bot, printed by the kernel
+(<code>uttt_test hist 100000</code>). <span style="color:#6f86c4">Blue is the
+uniform bot</span>; <span style="color:#c08a1e">gold refuses to close a block
+when it has any choice</span>.</p>
+<div class="sheet2" style="width:min(820px,100%);margin-top:16px"><canvas data-hist="{&quot;series&quot;:[{&quot;data&quot;:[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 5, 3, 7, 8, 15, 14, 29, 36, 81, 61, 112, 109, 183, 191, 311, 354, 512, 544, 784, 831, 1219, 1220, 1836, 1872, 2710, 2645, 3568, 3780, 4642, 4703, 5734, 5747, 6520, 6106, 6614, 6118, 6103, 5197, 4744, 3860, 3210, 2414, 1853, 1299, 898, 559, 317, 164, 98, 40, 17, 1, 1, 0, 0],&quot;ink&quot;:&quot;#25376b&quot;,&quot;a&quot;:0.85},{&quot;data&quot;:[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 5, 2, 5, 6, 18, 13, 40, 24, 61, 61, 131, 134, 276, 281, 549, 629, 1102, 1362, 2399, 3156, 5411, 7033, 10272, 12181, 14172, 13746, 11760, 8157, 4652, 1904, 455],&quot;ink&quot;:&quot;#c08a1e&quot;,&quot;a&quot;:0.85}],&quot;lo&quot;:24,&quot;hi&quot;:81,&quot;max&quot;:14172,&quot;ylab&quot;:&quot;games&quot;}" style="width:100%;height:230px"></canvas></div>
+<p class="lede" style="margin-top:14px">The random bot lands on <b>61 plies</b>
+most often and never once reached 81 in a hundred thousand tries. The stretch
+bot peaks at <b>75</b> and gets the full board <b>455 times, about one game in
+220</b> - so the longest game is reachable, just not by accident.</p>
+<p class="lede"><b>The shortest random game was 26 plies.</b> That is three
+blocks won on a diagonal with nothing wasted, and it is the other end of the
+same trade: closing blocks fast is how a game ends early, and it is also what
+makes each remaining move cost more.</p>
+<p class="lede">Both distributions stop dead at 81 because the board cannot hold
+another mark - and the gold one's right edge <b>is</b> that wall, which is what
+a distribution against a hard limit looks like.</p>
+
 <h2 style="margin-top:34px">Six ways to say the same thing</h2>
 <div class="barrow dim"><div class="blab">Every move, spelled out</div><div class="btrack"><div class="bfill" style="width:9.66%"></div></div><div class="bval">60 B<span>9.7%</span></div><div class="bnote">One square out of 81 is 7 bits, so 69 moves is 61 bytes. What anybody writes first, and <b>the only line here that does not fit twice over</b>.</div></div><div class="barrow "><div class="blab">The board, 2 bits a cell</div><div class="btrack"><div class="bfill" style="width:3.24%"></div></div><div class="bval">20 B<span>3.2%</span></div><div class="bnote">81 cells, three states each. No history, no turn, no forced block - just where the marks are right now.</div></div><div class="barrow hit"><div class="blab">The whole game, coded</div><div class="btrack"><div class="bfill" style="width:3.68%"></div></div><div class="bval">23 B<span>3.7%</span></div><div class="bnote">p95 out of <b>100,000 games played by the kernel in uttt/c</b>, encoded and decoded and checked move for move. Mean is 21 bytes, max seen 25.</div></div><div class="barrow hit"><div class="blab">The longest game there is</div><div class="btrack"><div class="bfill" style="width:3.52%"></div></div><div class="bval">22 B<span>3.5%</span></div><div class="bnote"><b>81 plies - every cell on the board.</b> It fits in 22, which is less than the p95, and that is not a typo.</div></div><div class="barrow "><div class="blab">If every move were free</div><div class="btrack"><div class="bfill" style="width:8.02%"></div></div><div class="bval">50 B<span>8.0%</span></div><div class="bnote">log2(81!) - an 81-move game where you could always play anywhere. <b>The forced block halves the game before anybody sits down.</b></div></div><div class="barrow bud"><div class="blab">The body budget</div><div class="btrack"><div class="bfill" style="width:100.00%"></div></div><div class="bval">625 B<span>100.0%</span></div><div class="bnote">What an FMSG body has to spend. Everything above is what it is spending it on.</div></div>
 
@@ -1642,6 +1660,57 @@ function initCharts(root){
   });
 }
 
+
+/* A histogram in the same pen. Each column is one short rough stroke, which
+   at this width is the honest way to draw a count - a filled rectangle would
+   be the only printed thing on the sheet. */
+function penHist(cv, series, opts){
+  const dpr = Math.min(3, window.devicePixelRatio || 1);
+  const W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const pad = { l: 30, r: 10, t: 12, b: 26 };
+  const lo = opts.lo, hi = opts.hi, g = rough.generator();
+  const n = hi - lo + 1;
+  const bw = (W - pad.l - pad.r) / n;
+  const X = k => pad.l + bw * (k - lo + 0.5);
+  const Y = v => H - pad.b - (H - pad.t - pad.b) * (v / opts.max);
+
+  [[pad.l, pad.t, pad.l, H - pad.b], [pad.l, H - pad.b, W - pad.r, H - pad.b]]
+    .forEach((a, i) => {
+      const d = g.line(a[0], a[1], a[2], a[3],
+        { roughness: .8, bowing: .5, seed: 31 + i, maxRandomnessOffset: 1 });
+      opsToPolys(d, 16).forEach(pts => ink(ctx, pts, () => 1.5, () => .8, '#2f2b26'));
+    });
+
+  series.forEach((ser, si) => {
+    for (let k = lo; k <= hi; k++){
+      const v = ser.data[k] || 0;
+      if (!v) continue;
+      const x = X(k) + (si - 0.5) * bw * 0.34;
+      const d = g.line(x, H - pad.b, x, Y(v),
+        { roughness: .55, bowing: .35, seed: k * 7 + si * 991,
+          maxRandomnessOffset: .7 });
+      opsToPolys(d, 10).forEach(pts =>
+        ink(ctx, pts, () => Math.max(1.3, bw * 0.30), () => ser.a, ser.ink));
+    }
+  });
+
+  ctx.fillStyle = '#6b6659';
+  ctx.font = '600 10px ui-monospace, monospace';
+  for (let k = lo; k <= hi; k += 10) ctx.fillText(k, X(k) - 6, H - 9);
+  ctx.fillText('plies', W - pad.r - 30, H - 9);
+  ctx.fillText(opts.ylab || '', 6, pad.t + 2);
+}
+
+function initHists(root){
+  root.querySelectorAll('canvas[data-hist]').forEach(cv => {
+    try { const d = JSON.parse(cv.dataset.hist); penHist(cv, d.series, d); }
+    catch (e) { console.error('hist', e); }
+  });
+}
+
 /* ---- one parameterised pen, so a hundred recipes are a hundred rows of
    numbers rather than a hundred functions. Every term is multiplicative and
    every term is 1.0 when its coefficient is 0. ------------------------- */
@@ -1763,6 +1832,7 @@ function show(v){
   initBoards(mount);
   initAnims(mount);
   initCharts(mount);
+  initHists(mount);
 }
 btns.forEach(b => b.onclick = () => show(b.dataset.view));
 show((location.hash || '#motion2').slice(1));

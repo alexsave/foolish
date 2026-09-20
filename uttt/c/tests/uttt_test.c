@@ -94,8 +94,40 @@ static void curve(int games)
     printf("]\n");
 }
 
+/* How long games actually are, for both bots. Prints two rows of counts
+ * indexed from ply 0, so the document can draw the distribution rather than
+ * quote a mean at it. */
+static void hist(int games)
+{
+    static int h[2][UTTT_MAX_PLIES + 1];
+    uint8_t list[81];
+    for (int mode = 0; mode < 2; mode++) {
+        RS = 0x9E3779B97F4A7C15ull;
+        for (int i = 0; i < games; i++) {
+            UtttGame g; uttt_init(&g);
+            for (;;) {
+                int n = uttt_legal(&g, list);
+                if (n <= 0) break;
+                uttt_play(&g, pick(&g, list, n, mode));
+            }
+            h[mode][g.n_plies]++;
+        }
+    }
+    for (int mode = 0; mode < 2; mode++) {
+        printf("%s[", mode ? "," : "[");
+        for (int k = 0; k <= UTTT_MAX_PLIES; k++)
+            printf("%s%d", k ? "," : "", h[mode][k]);
+        printf("]");
+    }
+    printf("]\n");
+}
+
 int main(int argc, char **argv)
 {
+    if (argc > 1 && strcmp(argv[1], "hist") == 0) {
+        hist(argc > 2 ? atoi(argv[2]) : 100000);
+        return 0;
+    }
     if (argc > 1 && strcmp(argv[1], "curve") == 0) {
         RS = 0x9E3779B97F4A7C15ull;
         curve(argc > 2 ? atoi(argv[2]) : 20000);
