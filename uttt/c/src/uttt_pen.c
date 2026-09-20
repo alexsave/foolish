@@ -99,6 +99,135 @@ int uttt_rough_line(UtttRough *o, float x1, float y1, float x2, float y2,
     return k;
 }
 
+/* --------------------------------------------------------------- hachure */
+/* rough.js `polygonHachureLines`: rotate the shape so the fill lines are
+ * horizontal, walk it top to bottom in steps of the gap, keep the spans
+ * inside it, and rotate those spans back.
+ *
+ * THREE DETAILS THAT LOOK LIKE ROUNDING AND ARE NOT.
+ *  - The gap is put through Math.round, so 4.2 is a gap of FOUR and 2.6 is a
+ *    gap of THREE. Every hachure number in the design document was chosen
+ *    while looking at the rounded result, so keeping the fraction would draw
+ *    a different, denser square than the one that was approved.
+ *  - The span's x ends are rounded too, in the ROTATED frame, which is what
+ *    gives a hachure its slightly ragged ends rather than a clean bevel.
+ *  - When roughness >= 1 rough.js tosses a coin to decide whether to walk the
+ *    shape a pixel at a time and draw every gap'th line, or to walk it in
+ *    gap-sized steps and draw every one. Both give the same lines - but the
+ *    toss comes off the SHAPE'S OWN stream, so skipping it leaves every
+ *    squiggle after it one draw out of step with the document.
+ */
+static void rot(float x, float y, float c, float s, float *ox, float *oy)
+{
+    *ox = x * c - y * s;
+    *oy = x * s + y * c;
+}
+
+/* JS rounds a half UP, C rounds it AWAY FROM ZERO, and a rotated hachure has
+ * negative coordinates - so -3.5 would go to -3 there and -4 here. */
+static float jsround(float v) { return floorf(v + .5f); }
+
+typedef struct { float ymin, ymax, x, islope; } Edge;
+
+/* rough.js `straightHachureLines`, AS WRITTEN, including the part that looks
+ * like an implementation detail and is not.
+ *
+ * It is an active edge table: an edge joins the sweep at the first scan line
+ * at or below its top, carrying the x of its top vertex, and from then on its
+ * x is nudged by the slope ONCE PER STEP. So an edge that joined between two
+ * scan lines is drawn from where it would have been had it joined ON one, and
+ * the fill's ends are a little off the true outline - which is why the obvious
+ * rewrite (intersect the edge with the scan line) draws a visibly different
+ * shape near a corner. `alt` is the step, and it is either one unit with only
+ * every gap'th line drawn, or the gap itself with all of them - the same lines
+ * in exact arithmetic, DIFFERENT lines through that quantisation, which is
+ * what makes the coin toss above matter. */
+static int hachure(const UtttPt *poly, int np, int gap, int alt, float angle,
+                   UtttPt *seg, int cap)
+{
+    if (np < 3 || np > UTTT_HACHURE_POLY || cap < 2 || gap < 1 || alt < 1)
+        return 0;
+    /* the caller's hachureAngle, turned ninety degrees, is the rotation that
+     * makes the lines horizontal */
+    float a = (float)M_PI / 180.f * (angle + 90.f);
+    float c = cosf(a), s = sinf(a);
+
+    UtttPt r[UTTT_HACHURE_POLY];
+    for (int i = 0; i < np; i++) rot(poly[i].x, poly[i].y, c, s, &r[i].x, &r[i].y);
+
+    Edge e[UTTT_HACHURE_POLY];
+    int ne = 0;
+    for (int i = 0; i < np; i++) {
+        UtttPt p = r[i], q = r[(i + 1) % np];
+        if (p.y == q.y) continue;               /* a flat edge crosses nothing */
+        Edge *w = &e[ne++];
+        w->ymin = p.y < q.y ? p.y : q.y;
+        w->ymax = p.y < q.y ? q.y : p.y;
+        w->x    = p.y < q.y ? p.x : q.x;
+        w->islope = (q.x - p.x) / (q.y - p.y);
+    }
+    if (!ne) return 0;
+
+    for (int i = 1; i < ne; i++) {               /* by ymin, then x, then ymax */
+        Edge v = e[i]; int j = i - 1;
+        while (j >= 0 && (e[j].ymin > v.ymin ||
+                         (e[j].ymin == v.ymin && e[j].x > v.x) ||
+                         (e[j].ymin == v.ymin && e[j].x == v.x &&
+                          e[j].ymax > v.ymax))) { e[j + 1] = e[j]; j--; }
+        e[j + 1] = v;
+    }
+
+    Edge act[UTTT_HACHURE_POLY];
+    int  na = 0, next = 0, iter = 0, n = 0;
+    float y = e[0].ymin;
+
+    while (na || next < ne) {
+        while (next < ne && e[next].ymin <= y) act[na++] = e[next++];
+        int keep = 0;
+        for (int i = 0; i < na; i++) if (act[i].ymax > y) act[keep++] = act[i];
+        na = keep;
+        for (int i = 1; i < na; i++) {           /* by x, stable */
+            Edge v = act[i]; int j = i - 1;
+            while (j >= 0 && act[j].x > v.x) { act[j + 1] = act[j]; j--; }
+            act[j + 1] = v;
+        }
+        if ((alt != 1 || iter % gap == 0) && na > 1)
+            for (int i = 0; i + 1 < na; i += 2) {    /* pairs: a notch stays empty */
+                if (n + 2 > cap) return n;
+                rot(jsround(act[i].x),     y, c, -s, &seg[n].x,     &seg[n].y);
+                rot(jsround(act[i + 1].x), y, c, -s, &seg[n + 1].x, &seg[n + 1].y);
+                n += 2;
+            }
+        y += (float)alt;
+        for (int i = 0; i < na; i++) act[i].x += (float)alt * act[i].islope;
+        if (++iter > 20000) break;
+    }
+    return n;
+}
+
+int uttt_rough_hachure(UtttRough *o, const UtttPt *poly, int np,
+                       float gap, float angle,
+                       UtttPt *pts, int cap, int *n_pts,
+                       UtttSpan *out, int out_cap)
+{
+    int g = (int)jsround(gap < .1f ? .1f : gap);
+    if (g < 1) g = 1;                   /* a gap under a half rounds to none */
+
+    int alt = 1;                                /* the coin toss, see above */
+    if (o->roughness >= 1.f && rnd(o) > .7f) alt = g;
+
+    UtttPt seg[UTTT_HACHURE_MAX * 2];
+    int ns = hachure(poly, np, g, alt, angle, seg, UTTT_HACHURE_MAX * 2);
+
+    int k = 0;
+    for (int i = 0; i + 1 < ns; i += 2) {
+        if (k >= out_cap) break;
+        k += uttt_rough_line(o, seg[i].x, seg[i].y, seg[i + 1].x, seg[i + 1].y,
+                             pts, cap, n_pts, out + k, out_cap - k);
+    }
+    return k;
+}
+
 /* rough.js `curve`: a Catmull-Rom through the sampled points, emitted as
  * cubics. The first and last points are control only, which is why its
  * ellipse generator pads the ring at both ends. */
@@ -257,6 +386,62 @@ static void disc(UtttDL *d, float x, float y, float r, uint32_t rgba)
         d->pt[d->n_pt].y = y + sinf(a) * r;
         d->n_pt++;
     }
+}
+
+/* A flat stroke, as ONE polygon.
+ *
+ * uttt_ink cannot do this: a mark's width and alpha change ALONG it, so it
+ * lays a quad and a round join per sample and lets them overlap. That is
+ * right for a mark and wrong for a rough.js fill line, where the overlaps
+ * show up twice over - as beads at every sample, and as a translucent colour
+ * blended onto itself until it is not the colour that was asked for. A canvas
+ * strokes a line once, with butt ends, and so does this. */
+void uttt_ribbon(UtttDL *d, const UtttPt *pts, int n, float w, uint32_t rgba)
+{
+    if (n < 2 || d->n_poly >= d->cap_poly) return;
+    if (d->n_pt + 2 * n > d->cap_pt) return;
+
+    float h = w / 2.f;
+    UtttPoly *poly = &d->poly[d->n_poly++];
+    poly->first = d->n_pt;
+    poly->rgba  = rgba;
+
+    /* down one side and back the other, so the two halves meet at the ends */
+    for (int side = 0; side < 2; side++)
+        for (int k = 0; k < n; k++) {
+            int i = side ? n - 1 - k : k;
+            /* The direction at a sample is the bisector of the two segments
+             * it joins, and the two have to be made UNIT FIRST. Averaging
+             * them raw weights the longer one, and where a rough.js line
+             * hooks back on itself - which it does, at an end whose control
+             * point landed behind its start - the raw sum very nearly
+             * cancels, so the ribbon takes its width from a direction that
+             * is pure rounding error and grows a spike. */
+            float ax = 0, ay = 0, bx = 0, by = 0, L;
+            if (i > 0) {
+                ax = pts[i].x - pts[i-1].x; ay = pts[i].y - pts[i-1].y;
+                L = sqrtf(ax*ax + ay*ay);
+                if (L > 1e-9f) { ax /= L; ay /= L; } else { ax = ay = 0; }
+            }
+            if (i < n - 1) {
+                bx = pts[i+1].x - pts[i].x; by = pts[i+1].y - pts[i].y;
+                L = sqrtf(bx*bx + by*by);
+                if (L > 1e-9f) { bx /= L; by /= L; } else { bx = by = 0; }
+            }
+            float dx = ax + bx, dy = ay + by;
+            L = sqrtf(dx*dx + dy*dy);
+            if (L < 1e-3f) {            /* a cusp: follow the way out of it */
+                dx = bx ? bx : ax; dy = bx ? by : ay;
+                L = sqrtf(dx*dx + dy*dy);
+            }
+            if (L < 1e-9f) { dx = 1; dy = 0; L = 1; }
+            dx /= L; dy /= L;
+            float s = side ? -h : h;
+            d->pt[d->n_pt].x = pts[i].x - dy * s;
+            d->pt[d->n_pt].y = pts[i].y + dx * s;
+            d->n_pt++;
+        }
+    poly->n = d->n_pt - poly->first;
 }
 
 void uttt_ink(UtttDL *d, const UtttPt *pts, int n, const UtttPen *p)

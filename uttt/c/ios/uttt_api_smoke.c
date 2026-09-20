@@ -124,6 +124,79 @@ int main(void)
     for (int b = 0; b <= 9; b++)
         ok(uti_place_name(b, 0)[0] && uti_place_name(b, 1)[0], "every block is named");
 
+    /* ---- the rulebook door. Its shape is rough.js's and its numbers are
+     * docs/UI.html's, so what is worth asserting is the handful of things a
+     * renderer would silently get wrong if the geometry ever came back to
+     * Swift: how many strokes there are, that they are the document's
+     * colours, that the fill is painted under its own outline, and that the
+     * button is NOT a scale-free drawing. */
+    {
+        int np = uti_draw_rulebook(54, 54);
+        /* 17 hachure lines in the square and 7 in each leaf, every one of
+         * them drawn twice, plus 4 edges drawn twice around each of the
+         * three shapes: (17 + 7 + 7 + 4 + 4 + 4) * 2. */
+        ok(np == 86, "the button is 86 strokes at 54 points");
+        printf("  rulebook: %d strokes, %d points\n", np, uti_point_count());
+
+        /* ONE POLYGON PER STROKE, which is what a canvas does when it strokes
+         * a path - a stroke laid as overlapping quads blends with itself and
+         * a 55% page comes out at 80%. */
+        int ribbons = 0;
+        for (int i = 0; i < np; i++)
+            if (uti_poly_n()[i] >= 4 && uti_poly_n()[i] % 2 == 0) ribbons++;
+        ok(ribbons == np, "each one is a single ribbon polygon");
+
+        const uint32_t *c = uti_poly_rgba();
+        int ink = 0, edge = 0, page = 0, other = 0;
+        uint32_t page_rgba = 0;
+        for (int i = 0; i < np; i++) {
+            switch (c[i] >> 8) {
+            case 0x25376bu: ink++;  break;
+            case 0x1b2a52u: edge++; break;
+            case 0xe2e8f4u: page++; page_rgba = c[i]; break;
+            default:        other++;
+            }
+        }
+        ok(other == 0, "every stroke is one of the document's three colours");
+        ok(ink == 34 && edge == 8, "the square is filled in ink and edged darker");
+        ok(page == 44, "and the book is one colour, both leaves and both edges");
+        /* the glyph lies ON a hachured square, so it is a wash and not a
+         * bright shape fighting the fill underneath it */
+        ok((page_rgba & 0xffu) == 140, "the page is 55 percent, not solid");
+        ok((c[0] & 0xffu) == 255, "while the square itself is opaque");
+
+        /* the fill is laid first so the outline lands ON it */
+        ok(c[0] == 0x25376bffu, "the first stroke down is fill, not outline");
+
+        const float *p = uti_points();
+        int stray = 0;
+        for (int i = 0; i < uti_point_count() * 2; i++)
+            if (p[i] < -0.05f || p[i] > 1.05f) stray++;
+        ok(stray == 0, "no stroke leaves the button");
+
+        /* EVERY coordinate, not the first one: the first hachure line is the
+         * scan through the top corner, which is a point rather than a line,
+         * and a line of no length is jittered by nothing - so p[0] is the
+         * same number whatever the seed does and would witness nothing. */
+        double sum = 0;
+        for (int i = 0; i < uti_point_count() * 2; i++) sum += p[i];
+        int pc = uti_point_count();
+        int again = uti_draw_rulebook(54, 54);
+        double sum2 = 0;
+        for (int i = 0; i < uti_point_count() * 2; i++) sum2 += uti_points()[i];
+        ok(again == np && uti_point_count() == pc && sum2 == sum,
+           "the same button draws the same way twice");
+
+        /* NOT SCALE-FREE, and this is the whole reason the entry takes a
+         * size: rough.js rounds a hachure gap to a whole unit, so a bigger
+         * button is filled with MORE lines rather than the same lines
+         * stretched. Draw it at 54 and hand a renderer a scaled copy and the
+         * fill is wrong at every other size. */
+        int big = uti_draw_rulebook(108, 108);
+        ok(big > np, "a bigger button gets more hachure, not bigger hachure");
+        printf("  rulebook at 108 points: %d strokes\n", big);
+    }
+
     printf(fails ? "\n%d FAILED\n" : "\nbridge ok\n", fails);
     return fails ? 1 : 0;
 }

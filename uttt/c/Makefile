@@ -2,7 +2,7 @@ CC      ?= cc
 CFLAGS  ?= -O2 -Wall -Wextra -Werror -std=c11
 LDLIBS  := -lm
 SRC     := src/uttt.c src/uttt_code.c src/uttt_bots.c \
-           src/uttt_pen.c src/uttt_draw.c
+           src/uttt_pen.c src/uttt_draw.c src/uttt_rule.c
 
 all: build/uttt_test build/uttt_arena build/uttt_render
 
@@ -30,6 +30,10 @@ render: build/uttt_render
 	  && echo "build/board.png"
 
 
+# The pen against the pen it was copied from. Needs node; not in `all`.
+rough-diff: build/uttt_render
+	node tests/rough_diff.mjs
+
 asan: $(SRC) tests/uttt_test.c | build
 	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
 	  $(SRC) tests/uttt_test.c -o build/uttt_asan $(LDLIBS)
@@ -38,7 +42,7 @@ asan: $(SRC) tests/uttt_test.c | build
 clean:
 	rm -rf build
 
-.PHONY: all run arena render asan clean
+.PHONY: all run arena render rough-diff asan clean
 
 # ---- the iOS bridge -----------------------------------------------------
 # `make ios-smoke` exercises the identical bridge with the host compiler, so

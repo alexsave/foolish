@@ -4,11 +4,27 @@
 make -C uttt/c run        1000 games, encoded, decoded, checked
 make -C uttt/c asan       the same under ASan + UBSan
 ./uttt/c/build/uttt_test 50000 12345     more games, different seed
+
+make -C uttt/c render     the board, to build/board.png, without Xcode
+./uttt/c/build/uttt_render rulebook 54   just the door, blown up
+make -C uttt/c rough-diff the pen, held against rough.js itself (needs node)
+make -C uttt/c ios-smoke  every entry point Swift calls, without a Mac
 ```
 
-Three files. `uttt.c` is the rules and nothing else. `uttt_code.c` turns a
+`uttt.c` is the rules and nothing else. `uttt_code.c` turns a
 played game into bytes and back. `uttt_test.c` plays games with two bots,
 round-trips every one, and reports what it cost.
+
+The other half of the kernel is the DRAWING, which is here rather than in a
+renderer because two phones looking at one bubble have to produce the same
+sheet stroke for stroke - `uttt_pen.h` argues that at length.
+`uttt_pen.c` is rough.js transcribed into C, `uttt_draw.c` is the board and
+`uttt_rule.c` is the rulebook door, and all three emit filled polygons in a
+unit square that a renderer only has to fill.
+`rough_diff.mjs` is what keeps the transcription honest: it runs the vendored
+rough.js the design document is drawn with and compares it sample by sample
+with what the C emits, which is the only check that can see a drift that still
+looks like a drawing.
 
 ## The answer to "how long can it get"
 

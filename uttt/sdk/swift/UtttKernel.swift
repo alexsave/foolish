@@ -101,4 +101,12 @@ public enum Uttt {
     public static func mark(_ m: Mark, seed: Int32) -> [Poly] {
         harvest(uti_draw_mark(Int32(m.rawValue), seed))
     }
+
+    /// The rulebook door. It takes the size the button HAS, in points, because
+    /// the kernel's hachure is not scale-free - a bigger button is filled with
+    /// more lines rather than the same ones stretched - and it hands back
+    /// 0..1 polygons like everything else here.
+    public static func rulebook(w: CGFloat, h: CGFloat) -> [Poly] {
+        harvest(uti_draw_rulebook(Float(w), Float(h)))
+    }
 }

@@ -29,6 +29,14 @@ int uttt_draw_cell(UtttDL *d, int mark, int mv, int32_t seed, float t);
 /* One mark on its own, for the "you are" indicator. */
 int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float calm);
 
+/* The rulebook door - a hachured square with a book on it. Lives in
+ * uttt_rule.c. Returns 0, or -1 if it ran out of room.
+ *
+ * It takes the size the button HAS, in points, because rough.js rounds a
+ * hachure gap to a whole unit and the shape is therefore not scale-free; the
+ * polygons still come back in 0..1 like everything else. */
+int uttt_draw_rulebook(UtttDL *d, float w, float h);
+
 /* ------------------------------------------------------------ the bubble */
 /* MSMessageTemplateLayout bakes ONE image at insert - 300 by 195 points,
  * landscape, aspect 1.54 - and every device in the thread shows that same

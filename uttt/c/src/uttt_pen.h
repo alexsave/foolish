@@ -73,6 +73,22 @@ int uttt_rough_ellipse(UtttRough *o, float cx, float cy, float w, float h,
                        UtttPt *pts, int cap, int *n_pts,
                        UtttSpan *out, int out_cap);
 
+/* rough.js `hachureFill`: a shape filled with parallel rough lines, `gap`
+ * apart, at `angle` degrees. The polygon is NOT closed by the caller - the
+ * last point joins the first, as it does for a rough.js polygon.
+ *
+ * The gap and the angle are in the polygon's own units and degrees, which is
+ * why this takes both rather than a pre-rotated shape: rough.js rounds the
+ * gap to a whole unit, so a fill is not scale-free and a caller that wants
+ * the document's fill has to work in the document's units. */
+enum { UTTT_HACHURE_POLY = 16,   /* points in a fillable polygon */
+       UTTT_HACHURE_MAX  = 128 };/* scan lines before it gives up */
+
+int uttt_rough_hachure(UtttRough *o, const UtttPt *poly, int np,
+                       float gap, float angle,
+                       UtttPt *pts, int cap, int *n_pts,
+                       UtttSpan *out, int out_cap);
+
 /* --------------------------------------------------------------- the pen */
 typedef struct {
     float w, a;             /* base width and alpha                     */
@@ -87,6 +103,12 @@ UtttPen uttt_pen_92(void);      /* the locked one: 9.2 */
 
 /* Lay a stroke down as a ribbon of quads, width and alpha per sample. */
 void uttt_ink(UtttDL *d, const UtttPt *pts, int n, const UtttPen *p);
+
+/* Lay a stroke down as ONE polygon of constant width - what a canvas does
+ * when it strokes a path, and what a translucent line needs, because a stroke
+ * made of overlapping quads blends with itself and comes out darker than the
+ * colour it was given. */
+void uttt_ribbon(UtttDL *d, const UtttPt *pts, int n, float w, uint32_t rgba);
 
 /* The sheet's grain, shared by the pen and by anything else that wants it. */
 float uttt_grain(float x, float y, float fx, float fy, int seed);

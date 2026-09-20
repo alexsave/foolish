@@ -116,6 +116,13 @@ int uti_draw_mark(int mark, int32_t seed)
     return publish();
 }
 
+int uti_draw_rulebook(float w, float h)
+{
+    uttt_dl_reset(&S.dl);
+    uttt_draw_rulebook(&S.dl, w, h);
+    return publish();
+}
+
 void uti_paper(uint8_t *rgba, int w, int h)
 {
     if (!rgba || w <= 0 || h <= 0) return;

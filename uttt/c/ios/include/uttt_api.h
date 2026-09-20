@@ -59,6 +59,15 @@ int  uti_draw_one(int mv, float t);
 /* One mark on its own, for the side indicator. */
 int  uti_draw_mark(int mark, int32_t seed);
 
+/* The rulebook door - the one button on the expanded sheet, a hachured square
+ * with a book on it. Takes the size the button HAS, IN POINTS, because
+ * rough.js rounds a hachure gap to a whole unit and the shape is therefore
+ * not scale-free; the polygons still come back in 0..1 like everything else,
+ * so the caller fills them exactly as it fills the board. Sized for a button:
+ * past about 125 points the fill runs out of strokes and comes back short,
+ * the same way the board does. */
+int  uti_draw_rulebook(float w, float h);
+
 /* The sheet itself. Fills w*h RGBA bytes with the napkin - crossed cellulose
  * over a warm near-white. Here rather than in the renderer for the same reason
  * the marks are: both phones have to be looking at the same piece of paper. */
