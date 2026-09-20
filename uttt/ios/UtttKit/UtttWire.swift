@@ -106,8 +106,28 @@ public struct UtttWire: Equatable {
     /// The cost is a reinstall: a new UUID matches neither seat and its owner
     /// becomes a spectator in their own game. Closing that needs a secret that
     /// outlives the install - the keychain - and is a separate piece of work.
+#if DEBUG
+    /// The tag a device would get if `dev.seat` held `word`. Lets a seeded
+    /// game name both seats without two devices.
+    public static func tagForDev(_ word: String, seed: Int32) -> String {
+        var d = Data("uttt.seat.1|\(seed)|".utf8)
+        d.append(contentsOf: Data("dev:\(word)".utf8))
+        return b64(Data(SHA256.hash(data: d).prefix(9)))
+    }
+#endif
+
     public static func tag(participant: UUID, seed: Int32) -> String {
         var d = Data("uttt.seat.1|\(seed)|".utf8)
+#if DEBUG
+        /* THE ONE PLACE A DEVICE SAYS WHO IT IS, which is why the override is
+         * here and nowhere else. One simulator has one participant per
+         * conversation, so without this the game stops at the invitation and
+         * every screen past the lobby is unreachable. See UtttDev. */
+        if let word = UtttDev.seat {
+            d.append(contentsOf: Data("dev:\(word)".utf8))
+            return b64(Data(SHA256.hash(data: d).prefix(9)))
+        }
+#endif
         withUnsafeBytes(of: participant.uuid) { d.append(contentsOf: $0) }
         return b64(Data(SHA256.hash(data: d).prefix(9)))
     }

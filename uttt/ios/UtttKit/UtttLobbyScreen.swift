@@ -86,7 +86,10 @@ public struct UtttLobbyScreen: View {
     private var subline: String {
         switch stance {
         case .start:
-            return "Send an empty board. Whoever answers it first takes the other side."
+            /* NOT "Send an empty board" - the button under this line says
+             * that, and a subtitle that narrates the button is a line nobody
+             * reads twice. This says the one thing the button cannot. */
+            return "Whoever answers it first takes the other side."
         case .waiting:
             return "Nobody has taken the other side yet."
         case .open:

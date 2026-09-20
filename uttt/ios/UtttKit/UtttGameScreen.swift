@@ -15,11 +15,22 @@ public struct UtttGameScreen: View {
     /// The sheet's margin, the same on every edge at both sizes.
     private static let margin: CGFloat = 13
 
-    /// TWO 46-POINT COLUMNS, ONE EITHER SIDE, in the collapsed strip. The left
-    /// one carries "you are" and the right one carries nothing - it exists so
-    /// the board sits in the middle of the SHEET rather than in the middle of
-    /// what is left over, which are different places and the eye knows it.
-    private static let column: CGFloat = 46
+    /// EXCEPT ABOVE AND BELOW THE COLLAPSED STRIP, where height is what runs
+    /// out. Messages gives an iPhone SE about 231 points of drawer, not the
+    /// 340 the design document measured on a taller phone, so on the smallest
+    /// device the board is limited by the height and every point of vertical
+    /// margin comes straight off it.
+    private static let vmargin: CGFloat = 8
+
+    /// TWO COLUMNS, ONE EITHER SIDE, in the collapsed strip. The left one
+    /// carries "you are" and the right one carries nothing - it exists so the
+    /// board sits in the middle of the SHEET rather than in the middle of what
+    /// is left over, which are different places and the eye knows it.
+    ///
+    /// 38, not 46: the mark inside is 34 and the two stacked words are about
+    /// 30, so the extra twelve points were air on both sides and the board is
+    /// what wanted them.
+    private static let column: CGFloat = 38
 
     /// Anything taller than the taller of the two collapsed heights is the
     /// expanded sheet. There is no third size.
@@ -54,7 +65,7 @@ public struct UtttGameScreen: View {
     /// wash that says where you have been sent; a headline here would be the
     /// fourth thing in a frame that only has room for three.
     private func collapsed(_ size: CGSize) -> some View {
-        let side = max(0, min(size.height - 2 * Self.margin,
+        let side = max(0, min(size.height - 2 * Self.vmargin,
                               size.width - 2 * Self.margin - 2 * Self.column))
         return ZStack(alignment: .topLeading) {
             board
@@ -64,7 +75,8 @@ public struct UtttGameScreen: View {
                 .frame(width: Self.column)
                 .padding(.top, 4)
         }
-        .padding(Self.margin)
+        .padding(.horizontal, Self.margin)
+        .padding(.vertical, Self.vmargin)
     }
 
     // MARK: expanded

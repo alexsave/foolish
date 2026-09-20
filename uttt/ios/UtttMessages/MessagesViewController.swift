@@ -43,6 +43,19 @@ final class MessagesViewController: MSMessagesAppViewController {
     private func present(_ conversation: MSConversation) {
         bag.removeAll()
 
+#if DEBUG
+        /* STRAIGHT TO THE BOARD. One simulator cannot play a two-handed game
+         * in a transcript - see UtttDev - so with `dev.game` set the lobby,
+         * the invitation and the tap on a bubble are all skipped and the
+         * position is built here. Absent in every ordinary run, including an
+         * ordinary DEBUG one, and gone entirely from a shipping build. */
+        if conversation.selectedMessage == nil, staged == nil,
+           let plies = UtttDev.game {
+            showSeeded(plies)
+            return
+        }
+#endif
+
         guard let wire = current(UtttWire.read(conversation.selectedMessage?.url)) else {
             show(UtttLobbyScreen(stance: .start) { [weak self] in self?.start() })
             return
@@ -133,6 +146,10 @@ final class MessagesViewController: MSMessagesAppViewController {
         message.url = wire.url
         message.layout = layout(for: wire, actor: actor)
         staged = wire
+#if DEBUG
+        /* The seeded game's state, so the other seat finds this move. */
+        if UtttDev.game != nil { UtttDev.live = wire.url.absoluteString }
+#endif
         conversation.insert(message) { _ in }
 
         /* AN EXTENSION CANNOT SEND. insert() only puts the bubble in the input
@@ -183,6 +200,39 @@ final class MessagesViewController: MSMessagesAppViewController {
 
         show(UtttGameScreen(model: model))
     }
+
+#if DEBUG
+    /// A game `plies` moves in, both seats taken, seated as `dev.seat` says.
+    private func showSeeded(_ plies: Int) {
+        let seed = UtttDev.seed
+        let a = UtttWire.tagForDev("a", seed: seed)
+        let b = UtttWire.tagForDev("b", seed: seed)
+
+        /* WHERE THE GAME ACTUALLY IS, if anybody has moved. Rebuilding the
+         * opening here would undo the other seat's move every time the seat
+         * flipped, and the board would never leave ply `plies`. */
+        if let live = UtttDev.live, let wire = UtttWire.read(URL(string: live)),
+           wire.seed == seed, wire.load() {
+            seatSeeded(wire)
+            return
+        }
+
+        Uttt.newGame(seed: seed)
+        for _ in 0..<max(0, plies) {
+            guard Uttt.over == .none else { break }
+            let mv = Uttt.botMove(budget: 40)
+            guard mv >= 0, Uttt.play(mv) else { break }
+        }
+        seatSeeded(UtttWire(seed: seed, creator: a, joiner: b, code: Uttt.code))
+    }
+
+    /// Open a seeded game from whichever chair `dev.seat` is sitting in.
+    private func seatSeeded(_ wire: UtttWire) {
+        let me = UtttWire.tag(participant: UUID(), seed: wire.seed)
+        let seat = wire.seat(of: me) ?? .creator
+        showBoard(wire, mark: wire.mark(of: seat), claiming: nil)
+    }
+#endif
 
     private func showWatching(_ wire: UtttWire) {
         let model = UtttModel(seed: wire.seed, you: .none, solo: false)

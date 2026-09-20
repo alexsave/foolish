@@ -66,6 +66,8 @@ for an attacker's.
 
 **1. Do not restart Messages mid-shoot.**
 The simulator's Messages keeps its conversations **in memory**.
+(Which is why `rig.sh wipe messages` is nothing but that restart - there is no
+file to delete, and a second product spent a while looking for one.)
 A fresh device has no `Library/SMS/sms.db` at all; a message sent from the UI
 lands in no file anywhere on disk; rows injected into `sms.db` are never read.
 So the transcript that `session` types is gone the moment the app is relaunched.
