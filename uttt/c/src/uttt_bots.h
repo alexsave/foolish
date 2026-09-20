@@ -47,6 +47,7 @@ typedef enum {
     BOT_BIAS,         /* ...the same, with biased playouts ONLY            */
     BOT_NIB,          /* CRN + biased playouts + exact endgame             */
     BOT_SNIPER,       /* ...and a rollout worth more the sooner it wins    */
+                      /* MEASURED, AND IT DOES NOT WORK - see below.       */
     BOT_COUNT
 } UtttBot;
 
@@ -55,6 +56,33 @@ extern const char *UTTT_BOT_NAME[BOT_COUNT];
 /* BOT_CRN and BOT_BIAS exist to answer "which of nib's three ideas is doing
  * the work". Bundling them and reporting the bundle is how a codebase ends up
  * carrying two that do nothing. */
+
+/* AND `sniper` IS A NEGATIVE RESULT, kept for the same reason.
+ *
+ * It is nib with one change: a rollout that wins is worth 200 + (81 - plies)
+ * instead of a flat 2, so a faster win outranks a slower one while never
+ * outranking a draw. The idea was a bot that beats you in as few moves as it
+ * can. 120 games a pairing at 40 rollouts, mean ply count of the games each
+ * one WON:
+ *
+ *     opponent    nib      sniper
+ *     random      44.2     43.8
+ *     biro        38.4     37.2
+ *     roller      44.8     44.2
+ *     crn         44.7     44.9
+ *     bias        52.7     52.3
+ *
+ * HALF A PLY, for about two points of strength (73.3% against nib's 75.5%
+ * across the ladder, and nib takes the head-to-head 55.8%). The bonus only
+ * re-ranks candidates whose win COUNTS are equal, and at forty rollouts that
+ * is rare - the ranking is dominated by whether a line wins at all, which is
+ * correct and is why the bonus cannot reach it.
+ *
+ * Winning sooner is not a choice between two winning moves. It needs a
+ * forced-win search that prefers the SHALLOWEST mate, which is a different
+ * thing from a rollout weight - the exact endgame below is already that
+ * search, and it only runs under eleven empty cells. Anybody tempted to try
+ * the rollout weight again should read this table first. */
 
 /* Pick a move. `budget` is rollouts per candidate for the searching bots and
  * is ignored by the others. `rs` is the caller's RNG state, advanced. */
