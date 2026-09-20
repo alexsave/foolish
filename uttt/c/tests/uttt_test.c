@@ -140,6 +140,13 @@ int main(int argc, char **argv)
     Row *rs = malloc(sizeof(Row) * (size_t)games);
     int fails = 0, checked = 0, gmax = 0;
     uint8_t gmax_moves[UTTT_MAX_PLIES]; int gmax_n = 0; double gmax_bytes = 0;
+    /* THE CHEAPEST GAME ANYBODY PLAYED, which is not the shortest one: a game
+     * ends in as few as seventeen plies, but what a code costs is the sum of
+     * log2(legal moves) at every ply, and the early plies are the expensive
+     * ones. Ties go to the shorter game, because two codes of the same size
+     * are the same size and the fewer moves is the better demo. */
+    int gmin_bytes = 1 << 30, gmin_n = 0, gmin_win = 0;
+    uint8_t gmin_moves[UTTT_MAX_PLIES];
 
     for (int mode = 0; mode < 2; mode++) {
         Row *rows = mode ? rs : ru;
@@ -170,6 +177,11 @@ int main(int argc, char **argv)
             if (g.n_plies > gmax) {
                 gmax = g.n_plies; gmax_n = g.n_plies; gmax_bytes = len;
                 memcpy(gmax_moves, g.move, (size_t)g.n_plies);
+            }
+            if (len < gmin_bytes ||
+                (len == gmin_bytes && g.n_plies < gmin_n)) {
+                gmin_bytes = len; gmin_n = g.n_plies; gmin_win = g.over;
+                memcpy(gmin_moves, g.move, (size_t)g.n_plies);
             }
         }
     }
@@ -245,6 +257,15 @@ int main(int argc, char **argv)
     fails += undo_fail;
     report("uniform bot", ru, games);
     report("stretch bot (never closes a block if it can help it)", rs, games);
+
+    printf("\nthe cheapest game seen: %d plies in %d bytes, %s wins\n",
+           gmin_n, gmin_bytes,
+           gmin_win == UTTT_X ? "X" : gmin_win == UTTT_O ? "O" : "nobody");
+    printf("  moves:");
+    for (int i = 0; i < gmin_n; i++) printf("%s%d", i % 27 ? " " : "\n   ", gmin_moves[i]);
+    printf("\n  one line:");
+    for (int i = 0; i < gmin_n; i++) printf(" %d", gmin_moves[i]);
+    printf("\n");
 
     printf("\nthe longest game seen: %d plies in %.0f bytes\n", gmax_n, gmax_bytes);
     printf("  moves:");

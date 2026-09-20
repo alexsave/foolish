@@ -66,13 +66,31 @@ public struct UtttWire: Equatable {
         Int32(truncatingIfNeeded: Int(date.timeIntervalSince1970))
     }
 
-    /// X ALWAYS GOES FIRST, and the seed says which seat is X.
+    /// X ALWAYS GOES FIRST, AND NOBODY IS X UNTIL TWO PEOPLE ARE SEATED.
     ///
-    /// One bit of a second at which nobody had met their opponent yet. The
-    /// joiner cannot re-roll it: they join, and it is either their turn or it
-    /// is not, whenever they sent.
-    public func mark(of seat: Seat) -> Uttt.Mark {
-        let creatorIsX = (seed & 1) == 0
+    /// This used to be one bit of the seed, and that was a hole: the seed is
+    /// the moment the creator composed the board, so the creator could delete
+    /// the draft, compose another, and keep composing until the bit came up
+    /// the way they wanted. An invitation that already decides who moves
+    /// first is an invitation worth re-rolling, and the design document says
+    /// so in as many words - "nothing about the game is decided yet, nobody
+    /// is X, so there is nothing to re-roll for".
+    ///
+    /// So it comes from BOTH seat tags. The creator can re-roll the seed all
+    /// day and still cannot predict it, because half of it is a hash of a
+    /// device they have not met yet; the joiner cannot re-roll at all,
+    /// because the creator's half is already fixed and their own tag is their
+    /// device's.
+    ///
+    /// Nil while the second seat is open: there is no answer yet, and a
+    /// screen that invents one is the hole again.
+    public func mark(of seat: Seat) -> Uttt.Mark? {
+        guard let joiner else { return nil }
+        var d = Data("uttt.first.1|".utf8)
+        d.append(contentsOf: Data(creator.utf8))
+        d.append(0x7c)
+        d.append(contentsOf: Data(joiner.utf8))
+        let creatorIsX = (Array(SHA256.hash(data: d)).first ?? 0) & 1 == 0
         return (seat == .creator) == creatorIsX ? .x : .o
     }
 
@@ -166,24 +184,36 @@ public struct UtttWire: Equatable {
 
     // MARK: the URL
 
-    /// `uttt://g?v=1&s=<seed>&a=<tag>&b=<tag>&g=<code>`
+    /// `?v=1&s=<seed>&a=<tag>&b=<tag>&g=<code>` - a query and nothing else.
     ///
-    /// A private scheme rather than an https link to a page that does not
-    /// exist. The URL is the payload, not a destination - Messages shows the
-    /// layout, and a recipient without the app is offered the App Store - so a
-    /// link pointing at a 404 would be a promise the project does not keep.
+    /// NO SCHEME, BECAUSE MESSAGES DROPS ONE IT WILL NOT VOUCH FOR. This was
+    /// `uttt://g?...` and the assignment `message.url = wire.url` came back
+    /// NIL on the very next line - silently, with the bubble still sending
+    /// and its layout still intact, so every symptom pointed somewhere else:
+    /// the tap that opened it handed the extension a message with no payload
+    /// on it and the app started a new game instead of continuing the one on
+    /// screen. Measured, five forms, at the moment of assignment:
+    ///
+    ///     uttt://g?v=1&s=2                 dropped
+    ///     uttt:?v=1&s=2                    dropped
+    ///     ?v=1&s=2                         kept
+    ///     foolish.cards/u?v=1&s=2          kept
+    ///     https://foolish.cards/u?v=1&s=2  kept
+    ///
+    /// So a private scheme is out. An https link would work - the host app
+    /// uses one - but it would be a destination this project does not serve,
+    /// and the URL here is the PAYLOAD, not somewhere to go. A bare query is
+    /// what Apple's own sample carries and it promises nothing.
     public var url: URL {
         var c = URLComponents()
-        c.scheme = "uttt"
-        c.host = "g"
         var q = [URLQueryItem(name: "v", value: String(Self.version)),
                  URLQueryItem(name: "s", value: String(seed)),
                  URLQueryItem(name: "a", value: creator)]
         if let joiner { q.append(URLQueryItem(name: "b", value: joiner)) }
         if !code.isEmpty { q.append(URLQueryItem(name: "g", value: Self.b64(code))) }
         c.queryItems = q
-        // Components carrying a scheme, a host and query items always resolve;
-        // the fallback is here so a shipped extension has no force-unwrap.
+        // Query items alone always resolve; the fallback is here so a shipped
+        // extension has no force-unwrap.
         return c.url ?? URL(fileURLWithPath: "uttt")
     }
 

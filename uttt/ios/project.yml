@@ -30,6 +30,11 @@ settings:
     MARKETING_VERSION: "0.1"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
+    # A WARNING THAT SHIPS IS A DEFECT. Swift warns when an optional is
+    # interpolated into a string, and that warning scrolled past in a build
+    # log while the characters `Optional("X")` went out in a caption to
+    # another human. There is no warning in this target worth keeping.
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: "YES"
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: 8N2Z544SB4
     ITSAppUsesNonExemptEncryption: "NO"

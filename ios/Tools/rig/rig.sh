@@ -30,6 +30,7 @@
 #                                 next send shares that message's MSSession
 #   rig.sh seat [a|b]             which player this device is (DEBUG builds)
 #   rig.sh devgame [N]            open straight into a game N moves in
+#   rig.sh picker [on|off]        ask which player this device is on every open
 #   rig.sh wipe [messages|state]  a clean slate: conversations, App Group, or both
 #   rig.sh clearstage [stay]      dismiss a staged bubble left in the compose
 #                                 field (then `back`, so the tap it just made
@@ -802,6 +803,26 @@ cmd_seat() {
 # of each is the same position from both chairs. The host app spells this
 # `dev.fatboard`, for the same reason - a state that takes minutes of careful
 # tapping to reach is a state nobody checks.
+# ASK WHO THIS DEVICE IS whenever a bubble is opened (DEBUG builds).
+#
+#   rig.sh picker on | off
+#
+# The extension decides which seat it holds by hashing the conversation's
+# local participant - one per conversation, which is why one phone cannot
+# hold two players. With this on, opening a bubble asks first and writes the
+# answer to `dev.seat`, which overrides that hash at the single place it is
+# taken. After the answer the game plays exactly as it would on two phones.
+cmd_picker() {
+  need_sim
+  local g; g=$(group_dir)
+  case "$g" in /nonexistent/*) return 1 ;; esac
+  if [ "${1:-on}" = off ]; then
+    rm -f "$g/dev.picker"; echo "picker: off"
+  else
+    : > "$g/dev.picker"; echo "picker: on - every opened bubble asks"
+  fi
+}
+
 cmd_devgame() {
   need_sim
   local g; g=$(group_dir)
@@ -2170,6 +2191,7 @@ case "${1:-}" in
   wipe)     shift; cmd_wipe "$@" ;;
   seat)     shift; cmd_seat "$@" ;;
   devgame)  shift; cmd_devgame "$@" ;;
+  picker)   shift; cmd_picker "$@" ;;
   enter)    shift; cmd_enter "$@" ;;
   open)     shift; cmd_open "$@" ;;
   tapopen)  shift; cmd_tapopen "$@" ;;

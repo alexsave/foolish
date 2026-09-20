@@ -433,13 +433,17 @@ void uttt_paper(uint8_t *rgba, int w, int h)
  * board, and the only line anybody actually needs is the fourth - the square
  * you play in is the board they must play in. The rest is scaffolding for it.
  *
- * NO EM DASHES, NO CURLY QUOTES: these are rendered by a text engine that is
+ * AND NOTHING IS SHOUTED. The fourth line carried two words in capitals to
+ * carry that distinction, which is a typographer doing the writer's job: if
+ * the sentence needs shouting it is the wrong sentence.
+ *
+ * No em dashes, no curly quotes: these are rendered by a text engine that is
  * handed exactly these bytes. */
 static const char *const RULES[] = {
     "Nine little boards make one big one.",
     "Win a little board the usual way: three of yours in a line.",
     "Win the game by taking three little boards in a line.",
-    "The SQUARE you play in is the BOARD they have to play in next. Play bottom-left of any board, and they are sent to the bottom-left one.",
+    "The square you play in is the board they have to play in next. Play bottom-left of any board, and they are sent to the bottom-left one.",
     "If that board is already won or full, they may play anywhere.",
     "A board that is won or full stays that way. Nobody plays in it again.",
 };

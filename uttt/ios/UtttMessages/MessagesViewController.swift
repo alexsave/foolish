@@ -25,12 +25,29 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     // MARK: the conversation
 
+#if DEBUG
+    /// Cleared on every activation, so each opened bubble asks again.
+    private var seatChosen = false
+#endif
+
     override func willBecomeActive(with conversation: MSConversation) {
         super.willBecomeActive(with: conversation)
+#if DEBUG
+        seatChosen = false
+#endif
         present(conversation)
     }
 
+    /// A DIFFERENT BUBBLE WAS TAPPED while we were already up. The cold case
+    /// arrives through `willBecomeActive` instead, with the same URL on the
+    /// conversation, so both ends route through `present` and there is only
+    /// one adoption path.
     override func didSelect(_ message: MSMessage, conversation: MSConversation) {
+        present(conversation)
+    }
+
+    /// A move from the other player, which does NOT become the selection.
+    override func didReceive(_ message: MSMessage, conversation: MSConversation) {
         present(conversation)
     }
 
@@ -71,6 +88,25 @@ final class MessagesViewController: MSMessagesAppViewController {
         bag.removeAll()
 
 #if DEBUG
+        /* ASKED ONCE PER OPENING, and then never seen again. One phone cannot
+         * hold two participants, so with `dev.picker` set the first thing an
+         * opened bubble does is ask which of the two people is holding it -
+         * and after that the game plays exactly as it would on two phones,
+         * with no debug anything on any screen. */
+        if UtttDev.picker, !seatChosen {
+            show(UtttSeatChoice { [weak self] word in
+                guard let self else { return }
+                UtttDev.setSeat(word)
+                self.seatChosen = true
+                if let c = self.activeConversation ?? self.staged.map({ _ in conversation }) {
+                    DispatchQueue.main.async { self.present(c) }
+                }
+            })
+            return
+        }
+#endif
+
+#if DEBUG
         /* STRAIGHT TO THE BOARD. One simulator cannot play a two-handed game
          * in a transcript - see UtttDev - so with `dev.game` set the lobby,
          * the invitation and the tap on a bubble are all skipped and the
@@ -83,8 +119,14 @@ final class MessagesViewController: MSMessagesAppViewController {
         }
 #endif
 
+        /* OPENING THE APP IS THE INVITATION. There is no "Send a board"
+         * button any more: coming in through the + menu with no bubble to
+         * read is somebody saying they want a game, so the board goes into
+         * the input field there and then and the drawer stays COMPACT with
+         * what it has just done on it. A door that asks a second time is a
+         * door in the way. */
         guard let wire = current(UtttWire.read(conversation.selectedMessage?.url)) else {
-            show(UtttLobbyScreen(stance: .start) { [weak self] in self?.start() })
+            start(in: conversation)
             return
         }
         staged = wire
@@ -103,19 +145,26 @@ final class MessagesViewController: MSMessagesAppViewController {
 
         switch wire.seat(of: me) {
         case .some(.creator) where !wire.isSealed:
-            // You put the board down. Nobody has picked it up, and X cannot
-            // open against an empty chair.
-            show(UtttLobbyScreen(stance: .waiting(wire.mark(of: .creator)),
-                                 seed: wire.seed, act: {}))
+            /* You put the board down and nobody has picked it up. NO MARK ON
+             * THIS SCREEN: which seat you have is not decided until the other
+             * chair is filled, and a waiting screen that showed one would be
+             * telling you what you would get if you re-rolled. */
+            show(UtttLobbyScreen(stance: .waiting(nil), seed: wire.seed, act: {}))
 
         case .some(let seat):
-            showBoard(wire, mark: wire.mark(of: seat), claiming: nil)
+            guard let mark = wire.mark(of: seat) else {
+                show(UtttLobbyScreen(stance: .waiting(nil), seed: wire.seed, act: {}))
+                return
+            }
+            showBoard(wire, mark: mark, claiming: nil)
 
         case .none where !wire.isSealed:
-            let mine = wire.mark(of: .joiner)
-            show(UtttLobbyScreen(stance: .open(mine), seed: wire.seed) {
-                [weak self] in self?.join(wire, as: me)
-            })
+            /* OPENING THE BOARD IS TAKING THE SEAT. There was a screen here
+             * that said "there is a seat" over a button that said "take it",
+             * which is a door in front of a door: you tapped the bubble, so
+             * you want the game. The roster seals, the claim goes into the
+             * input field, and the board is what you are looking at. */
+            join(wire, as: me)
 
         case .none:
             // THE ROSTER SEALED AT TWO. This is a group chat and you are not
@@ -138,29 +187,33 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     /// Put an empty board on the table. THIS MOMENT IS THE SEED, and every
     /// bubble in the game carries it from here on.
-    private func start() {
-        guard let conversation = activeConversation else { return }
+    private func start(in conversation: MSConversation) {
+        /* THE CONVERSATION IS THE ARGUMENT, not `activeConversation`. Inside
+         * `willBecomeActive(with:)` the property is not set yet, so a
+         * `guard let conversation = activeConversation` here returned quietly
+         * and the drawer came up empty with no bubble and no error - which
+         * looks exactly like a crashed extension. */
         let seed = UtttWire.seedNow()
         let me = UtttWire.tag(participant: conversation.localParticipantIdentifier,
                               seed: seed)
         let wire = UtttWire.opening(seed: seed, creator: me)
-        stage(wire, actor: wire.mark(of: .creator))
+        stage(wire, actor: nil, in: conversation)
     }
 
     /// Take the second seat. THE ROSTER SEALS HERE.
+    /// THE ROSTER SEALS HERE, and only here does anybody learn a seat: the
+    /// marks come from both tags, so the second one has to exist first.
     private func join(_ wire: UtttWire, as me: String) {
-        let mine = wire.mark(of: .joiner)
         wire.load()
-        if Uttt.over == .none, Uttt.turn == mine {
-            /* Your turn the moment you sit down, so the seat claim and the
-             * opening move are one bubble. The thread pays for one message
-             * instead of two, and nothing else changes. */
-            showBoard(wire, mark: mine, claiming: me)
-        } else {
-            // Not your turn, and there is still nothing to do but say so out
-            // loud - the other player cannot see a seat that was never sent.
-            stage(wire.staging(joining: me), actor: mine)
-        }
+        let sealed = wire.staging(joining: me)
+        guard let mine = sealed.mark(of: .joiner) else { return }
+
+        /* THE CLAIM IS STAGED THE MOMENT YOU SIT DOWN, because the other
+         * player cannot see a seat that was never sent. If it turns out to be
+         * your move, the move you make replaces this bubble rather than
+         * adding a second one - the same replacement a change of mind uses. */
+        stage(sealed, actor: mine, andShowIt: false)
+        showBoard(wire, mark: mine, claiming: me)
     }
 
     /// Seal the position the kernel is holding into the input field.
@@ -168,9 +221,34 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// `andShowIt` is false for a move, which was made on a board that is
     /// already showing the result of it, and true for everything else - where
     /// the screen that was tapped is not the screen that should follow.
-    private func stage(_ wire: UtttWire, actor: Uttt.Mark, andShowIt: Bool = true) {
-        guard let conversation = activeConversation else { return }
-        let message = MSMessage()
+    /// ONE MSSession PER GAME, which is two things at once.
+    ///
+    /// Messages collapses every older bubble of a session down to its caption
+    /// and keeps only the newest interactive, so a twenty-six move game is
+    /// one live board in the transcript instead of twenty-six - which is what
+    /// the thread wants anyway.
+    ///
+    /// And a message in a session is a message Messages will hand back:
+    /// without one, tapping our own sent bubble opened the extension EXPANDED
+    /// (so the tap was routed as a bubble open) with `selectedMessage` nil,
+    /// and the app had no way to know which game had been tapped. The host
+    /// app has always set one; this is the same answer.
+    private var session: MSSession?
+    private var sessionGame: UtttWire?
+
+    private func sessionFor(_ wire: UtttWire, _ conversation: MSConversation) -> MSSession {
+        if let s = session, let g = sessionGame, g.isSameGame(as: wire) { return s }
+        // A bubble we are continuing carries its own; a brand new game gets a
+        // brand new one, or the last game's final board folds into it.
+        let s = conversation.selectedMessage?.session ?? MSSession()
+        session = s; sessionGame = wire
+        return s
+    }
+
+    private func stage(_ wire: UtttWire, actor: Uttt.Mark?, andShowIt: Bool = true,
+                       in conv: MSConversation? = nil) {
+        guard let conversation = conv ?? activeConversation else { return }
+        let message = MSMessage(session: sessionFor(wire, conversation))
         message.url = wire.url
         message.layout = layout(for: wire, actor: actor)
         staged = wire
@@ -273,7 +351,8 @@ final class MessagesViewController: MSMessagesAppViewController {
     private func seatSeeded(_ wire: UtttWire) {
         let me = UtttWire.tag(participant: UUID(), seed: wire.seed)
         let seat = wire.seat(of: me) ?? .creator
-        showBoard(wire, mark: wire.mark(of: seat), claiming: nil)
+        guard let mark = wire.mark(of: seat) else { return }
+        showBoard(wire, mark: mark, claiming: nil)
     }
 #endif
 
@@ -305,14 +384,20 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// thing decided here is who the sentence is about - and in this game the
     /// only name anybody has is their mark, which is the one name that reads
     /// the same on both phones.
-    private func layout(for wire: UtttWire, actor: Uttt.Mark) -> MSMessageLayout {
-        let name = actor == .o ? "O" : "X"
+    private func layout(for wire: UtttWire, actor: Uttt.Mark?) -> MSMessageLayout {
+        let name = actor.map { $0 == .o ? "O" : "X" }
         if wire.isSealed, Uttt.plyCount == 0 {
-            // A seat claim: the one bubble that is neither a move nor the
-            // invitation, and the one caption UtttBubble has no case for.
+            /* A seat claim: the one bubble that is neither a move nor the
+             * invitation, and the one caption UtttBubble has no case for.
+             *
+             * `name` IS OPTIONAL AND MUST BE UNWRAPPED. Interpolating it
+             * straight put the literal characters `Optional("X")` into a
+             * caption that goes out to another human - Swift will happily
+             * describe an optional and say nothing about it. */
             let l = MSMessageTemplateLayout()
             l.image = UtttBubble.image()
-            l.caption = "\(name) took the other side."
+            l.caption = name.map { "\($0) took the other side." }
+                ?? "Somebody took the other side."
             return l
         }
         return UtttBubble.layout(actor: name)

@@ -32,6 +32,7 @@ public enum UtttDev {
     private static let seatFile = "dev.seat"
     private static let gameFile = "dev.game"
     private static let liveFile = "dev.live"
+    private static let pickerFile = "dev.picker"
 
     /// The word the rig wrote, or nil in every ordinary run - including an
     /// ordinary DEBUG one, because the file is absent until somebody writes it.
@@ -43,6 +44,24 @@ public enum UtttDev {
         else { return nil }
         let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         return s.isEmpty ? nil : s
+    }
+
+    /// Ask who this device is every time a bubble is opened. Off unless the
+    /// rig writes the file, and absent from a shipping build entirely.
+    public static var picker: Bool {
+        guard let u = url(pickerFile) else { return false }
+        return FileManager.default.fileExists(atPath: u.path)
+    }
+
+    /// Set the seat from inside the app, which is what the on-screen picker
+    /// does. The rig writes the same file from outside.
+    public static func setSeat(_ word: String?) {
+        guard let u = url(seatFile) else { return }
+        if let word, !word.isEmpty {
+            try? word.write(to: u, atomically: true, encoding: .utf8)
+        } else {
+            try? FileManager.default.removeItem(at: u)
+        }
     }
 
     /// How many moves into a game to open, or nil for the ordinary flow.

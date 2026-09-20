@@ -13,9 +13,9 @@ public struct UtttLobbyScreen: View {
         /// moment it does is the seed.
         case start
         /// You sent the board. Nobody has answered it.
-        case waiting(Uttt.Mark)
+        case waiting(Uttt.Mark?)
         /// The second seat is open and it would be yours.
-        case open(Uttt.Mark)
+        case open(Uttt.Mark?)
         /// A bubble this build cannot read.
         case unreadable
     }
@@ -91,9 +91,12 @@ public struct UtttLobbyScreen: View {
              * reads twice. This says the one thing the button cannot. */
             return "Whoever answers it first takes the other side."
         case .waiting:
+            /* NO MARK, and no hint of one. Which seat is whose is not decided
+             * until both are filled, so there is nothing here to re-roll for
+             * - which is the whole security property. */
             return "Nobody has taken the other side yet."
         case .open:
-            return "Two have to play, and so far only one has."
+            return "Take it and the sides are drawn. Neither of you picks."
         case .unreadable:
             return "That board came from a newer version of the app."
         }

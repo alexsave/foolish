@@ -91,12 +91,22 @@ public enum UtttBubble {
 
     /// One line, truncating, and it names who moved. A bubble is the same on
     /// every device, so this is the only sentence that can be written about it.
-    public static func caption(actor: String) -> String {
+    /// NIL UNTIL THE SEATS ARE DRAWN. An invitation has no actor to name -
+    /// which seat is whose is not decided until the second player takes one -
+    /// so a caption saying "O started a game" told the creator what they had
+    /// before anybody could take it from them, and an invitation you can read
+    /// your own seat off is an invitation worth deleting and re-composing.
+    /// What an unclaimed board says. NOT a sentence about seats: the whole
+    /// point of an invitation is that nothing is decided yet.
+    static let newGameCaption = "New Ultimate Tic Tac Toe game"
+
+    public static func caption(actor: String?) -> String {
+        guard let actor else { return newGameCaption }
         switch Uttt.over {
         case .x, .o: return "\(actor) won the game."
         case .draw:  return "\(actor) played it to a draw."
         case .none:
-            if Uttt.plyCount == 0 { return "\(actor) started a game." }
+            if Uttt.plyCount == 0 { return newGameCaption }
             if uti_active() == 9 { return "\(actor) sent you anywhere on the sheet." }
             return "\(actor) sent you to the \(placeName(spoken: true)) board."
         }
@@ -161,7 +171,7 @@ public enum UtttBubble {
 
     /// The layout Messages inserts. The caption is the only text outside the
     /// image, and it is the only text that can name a person.
-    public static func layout(actor: String) -> MSMessageTemplateLayout {
+    public static func layout(actor: String?) -> MSMessageTemplateLayout {
         let l = MSMessageTemplateLayout()
         l.image = image()
         l.caption = caption(actor: actor)
