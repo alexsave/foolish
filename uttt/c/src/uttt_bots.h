@@ -20,11 +20,24 @@
  *   A technique that was the largest single win in one game is a rounding
  *   error in another, and the only way to know which is to run it.
  *
- *   BIASED PLAYOUTS ARE THE WHOLE GAME. `bias` - the same flat Monte Carlo
- *   with the heuristic steering three playout moves in four - beats plain
- *   rollouts decisively and is level with everything else stacked on top.
- *   A wide sample of PLAUSIBLE games is worth far more than a wide sample of
- *   random ones.
+ *   BIASED PLAYOUTS ARE THE WHOLE GAME - FOR THE FLAT SEARCH. `bias` - the
+ *   same flat Monte Carlo with the heuristic steering three playout moves
+ *   in four - beats plain rollouts decisively and is level with everything
+ *   else stacked on top. A wide sample of PLAUSIBLE games is worth far more
+ *   than a wide sample of random ones.
+ *
+ *   IN THE TREE IT IS A DIFFERENT TRADE, and the difference is per-second
+ *   rather than per-rollout. Steering costs about 38% of the playout, and
+ *   quill measured at both prices:
+ *
+ *       random vs biased, SAME rollouts, 2500 games   47.2%   -2.8 sigma
+ *       random at 64 vs biased at 40, SAME time, 1200 53.8%   +2.6 sigma
+ *
+ *   So the bias earns its keep per rollout and loses it per second: the
+ *   tree would rather have more plain playouts than fewer good ones,
+ *   because it is already choosing WHERE to spend them and the flat search
+ *   is not. Worth re-reading before anything is called "the whole game"
+ *   again - which search is being talked about decides the answer.
  *
  *   AN EXACT ENDGAME. Below a handful of empty cells, stop guessing and solve
  *   it. A rollout that could have been a proof is a rollout wasted - though
@@ -229,9 +242,53 @@ typedef struct {
     int closer;         /* per square they could close the target with     */
     int meta_gift;      /* ...and taking that target completes their line  */
     int bias_one_in;    /* a playout move is random one time in this many  */
+    int leaf_cutoff;    /* the TREE's playouts stop after this many plies  */
     int cell_w[9];      /* where in a block, doubled: it picks the target  */
     int block_w[9];     /* which block                                     */
 } UtttWeights;
+
+/* THE TREE STOPS ITS PLAYOUTS EARLY, and it was the largest single win of
+ * the three things tried after sniper.
+ *
+ * A playout used to be carried to a result. Now the tree's leaves stop after
+ * `leaf_cutoff` plies and `leaf_eval` scores the position they reached,
+ * still on the 0..200 scale, so a leaf reports a shade rather than a
+ * verdict. Quill against the version that plays them out, same rollouts,
+ * same everything else, 400 games:
+ *
+ *     55.6%   +2.3 sigma   and 47.6s against 86.4s
+ *
+ * Stronger AND 45% faster, which is not the usual shape of a result. The
+ * reason it is not a trade is that a leaf in a TREE does not have to be
+ * right, it has to RANK - the tree below it supplies the rest - and a
+ * verdict from thirty plies of random play is a worse ranking than a count
+ * of blocks from twelve. The flat bots get none of this and pass 0: with
+ * one number a candidate and nothing underneath, a short playout is a guess
+ * built on a guess. See `playout` for why the cut is an argument there and
+ * not a weight read in place.
+ *
+ * This is the same shape as the bias result at the top of the file, and
+ * they point the same way: the tree wants MORE and CHEAPER looks, the flat
+ * search wants FEWER and BETTER ones.
+ *
+ * THE LADDER EITHER SIDE OF IT, 200 games a pairing at 400 rollouts. Read
+ * the head to head above in preference to this: these are 200-game rows
+ * against a moving opponent, worth about two points of standard error, and
+ * only the nib column is outside it.
+ *
+ *     opponent   playouts run out   stopped at twelve
+ *     bias             95.2%              93.8%
+ *     nib              89.8%              93.8%
+ *     sniper           92.5%              91.8%
+ *
+ * AND ONE THING HERE IS NOT MEASURED. Dropping symmetric duplicates at the
+ * root is proved to be move-equivalent - the eight transforms are checked by
+ * replay over 20,000 games - and it can only sharpen an estimate, since it
+ * spends a fixed allowance on 15 real first moves instead of 81 with seven
+ * copies of each. But its own contribution to the win rate was never
+ * isolated: it only touches the first ply or two, so separating it needs
+ * thousands of games, and the run was abandoned for the measurements above.
+ * Believed good on the argument, not on a number. */
 
 /* THE ONE CONSTANT A TOURNAMENT MOVED, and what it cost to find out.
  *
@@ -279,6 +336,22 @@ int uttt_mate_in(const UtttGame *g, long nodes, uint8_t *out);
  * playouts: +1 win, 0 draw, -1 loss, 2 nothing. A proof, never a guess,
  * which is what lets a test hold it against the exhaustive solver. */
 int uttt_tree_proof(const UtttGame *g, long playouts, uint64_t *rs);
+
+/* The bots' own depth-limited exact solver, exported so a test can hold it
+ * against an exhaustive one. +1 win, 0 draw, -1 loss for the side to move,
+ * and 2 when `depth` plies were not enough to settle it. */
+int uttt_solve(const UtttGame *g, int depth);
+
+/* How many empty squares the bots will still switch to exact play at. The
+ * shipped value is the one in uttt_bots.c; this moves it so a test or a
+ * head-to-head can hold two settings against each other. */
+void uttt_solve_gate(int empties);
+
+/* How many nodes exact play may spend on one move. */
+void uttt_solve_budget(long nodes);
+
+/* Whether the root drops moves that a symmetry makes duplicates of others. */
+void uttt_root_symmetry(int on);
 
 /* Pick a move. `budget` is rollouts per candidate for the searching bots and
  * is ignored by the others. `rs` is the caller's RNG state, advanced. */

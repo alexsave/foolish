@@ -1,6 +1,7 @@
 #include "uttt_bots.h"
 #include <math.h>
 #include <string.h>
+#include <stdlib.h>
 
 const char *UTTT_BOT_NAME[BOT_COUNT] =
     { "random", "biro", "roller", "crn", "bias", "nib", "sniper", "quill" };
@@ -23,7 +24,7 @@ static uint32_t rnd(uint64_t *s, uint32_t n)
 
 static UtttWeights W = {
     .win_block = 120, .deny_block = 70, .decided_target = -55,
-    .closer = -25, .meta_gift = -400, .bias_one_in = 4,
+    .closer = -25, .meta_gift = -400, .bias_one_in = 4, .leaf_cutoff = 12,
     .cell_w  = { 3, 2, 3,  2, 4, 2,  3, 2, 3 },
     .block_w = { 3, 2, 3,  2, 4, 2,  3, 2, 3 },
 };
@@ -32,7 +33,7 @@ UtttWeights uttt_weights_default(void)
 {
     UtttWeights d = {
         .win_block = 120, .deny_block = 70, .decided_target = -55,
-        .closer = -25, .meta_gift = -400, .bias_one_in = 4,
+        .closer = -25, .meta_gift = -400, .bias_one_in = 4, .leaf_cutoff = 12,
         .cell_w  = { 3, 2, 3,  2, 4, 2,  3, 2, 3 },
         .block_w = { 3, 2, 3,  2, 4, 2,  3, 2, 3 },
     };
@@ -94,6 +95,58 @@ static int score_move(const UtttGame *g, uint8_t mv)
     return s;
 }
 
+/* --------------------------------------------------------------- the leaf
+ * WHAT A POSITION IS WORTH, WITHOUT PLAYING IT OUT.
+ *
+ * Every rollout here runs to the end of the game because nobody trusts a
+ * UTTT evaluator - that is the note at the top of this file and it is why
+ * the bots are Monte Carlo at all. But a rollout that runs forty plies to
+ * learn one bit is expensive, and the standard next move in this family is
+ * to stop early and ask a cheap question instead.
+ *
+ * This is that question, deliberately crude: the blocks are the game, so
+ * count them, weighted by where they sit, and give partial credit for a
+ * block that is nearly taken. Returns 0..200 from `me`'s side - 0 a loss,
+ * 100 even, 200 a win - which is the scale a finished game already uses.
+ *
+ * It is NOT meant to be good. It is meant to be good enough that stopping a
+ * playout early and spending the savings on more playouts comes out ahead,
+ * and whether it does is a measurement, not an opinion. */
+static int leaf_eval(const UtttGame *g, uint8_t me)
+{
+    if (g->over)
+        return g->over == UTTT_DRAW ? 100 : (g->over == me ? 200 : 0);
+
+    const int opp = (me == UTTT_X ? UTTT_O : UTTT_X) - 1;
+    const int mine = me - 1;
+    int s = 0;
+
+    for (int b = 0; b < 9; b++) {
+        int w = W.block_w[b];
+        if ((g->bm[mine] >> b) & 1u)      s += 10 * w;
+        else if ((g->bm[opp] >> b) & 1u)  s -= 10 * w;
+        else if ((g->live >> b) & 1u) {
+            /* a block nobody has yet: who is closer to taking it */
+            unsigned open = uttt_open_cells(g, b);
+            int mc = __builtin_popcount(uttt_mask_wins(g->cm[mine][b]) & open);
+            int oc = __builtin_popcount(uttt_mask_wins(g->cm[opp][b]) & open);
+            s += (mc - oc) * w;
+        }
+    }
+    /* A line of blocks is the whole object, so weigh the near-lines too. */
+    for (int i = 0; i < 8; i++) {
+        unsigned line = uttt_line_mask(i);
+        int mb = __builtin_popcount(g->bm[mine] & line);
+        int ob = __builtin_popcount(g->bm[opp] & line);
+        if (ob == 0) s += mb * mb * 6;
+        if (mb == 0) s -= ob * ob * 6;
+    }
+
+    /* squash into 0..200 without a branch per side */
+    int v = 100 + s;
+    return v < 2 ? 2 : v > 198 ? 198 : v;
+}
+
 /* ------------------------------------------------------------------ playout
  * `biased` picks the best-scoring move most of the time and a random one
  * otherwise, which keeps the sample honest while steering it somewhere
@@ -110,9 +163,23 @@ static int score_move(const UtttGame *g, uint8_t mv)
  * way; and the random draws happen in the same places, so the same stream
  * gives the same game. Every bot's play is byte-identical across this
  * change, which is what `/tmp` fingerprints and the ladders confirmed. */
-static uint8_t playout(UtttGame *g, uint64_t *rs, int biased, int *plies)
+static int playout(UtttGame *g, uint64_t *rs, int biased, uint8_t me,
+                   int cutoff)
 {
+    /* THE SCALE IS 0..200, not win/draw/loss, so a playout that STOPS EARLY
+     * can report a shade instead of a verdict. With `cutoff` at zero this
+     * still only ever returns 0, 100 or 200.
+     *
+     * THE CUT IS THE TREE'S, NOT THE FLAT SEARCH'S, which is why it arrives
+     * as an argument rather than being read from the weights here. The flat
+     * bots have one number a candidate and nothing under it: cut their
+     * playouts short and they are guessing from a guess. The tree has the
+     * rest of itself underneath, so a leaf only has to rank its siblings,
+     * and it can buy far more of them with what it saves. Every flat bot
+     * passes 0 and plays the game it played before, to the byte. */
+    const int stop = cutoff ? g->n_plies + cutoff : 0;
     for (;;) {
+        if (stop && g->n_plies >= stop) return leaf_eval(g, me);
         unsigned blocks = uttt_legal_blocks(g);
         if (!blocks) break;
 
@@ -154,33 +221,247 @@ static uint8_t playout(UtttGame *g, uint64_t *rs, int biased, int *plies)
         }
         uttt_play(g, mv);
     }
-    if (plies) *plies = g->n_plies;
-    return g->over;
+    return g->over == UTTT_DRAW ? 100 : (g->over == me ? 200 : 0);
 }
 
 /* ------------------------------------------------------------ exact endgame
  * Below a few empty cells the tree is small enough to prove. Returns +1 / 0 /
  * -1 for the side to move at the root of this call. */
-static int solve(UtttGame *g, int depth_left)
+/* A TRANSPOSITION TABLE, because this game transposes constantly. The same
+ * position arrives by many orders of moves - the block you are sent to
+ * depends only on the last square, so whole permutations of earlier play
+ * converge - and without a table every one of them is proved again.
+ *
+ * A PROVED RESULT IS ABSOLUTE and can be kept forever: "this position is a
+ * win for the side to move" does not depend on how much depth was left when
+ * it was established. An UNKNOWN is the opposite - it only means "not proved
+ * within THIS much depth" - so it records the depth it failed at and is
+ * reused only for a search no deeper.
+ *
+ * Allocated on first use rather than declared, so a library that links these
+ * bots and never calls them carries no table. */
+#define TT_BITS 18
+#define TT_SIZE (1u << TT_BITS)
+/* ONLY PROVED RESULTS GO IN. A proof is absolute - "this position is a win
+ * for the side to move" does not depend on how the search reached it or on
+ * what was left to spend - so an entry never expires and needs no depth
+ * beside it. An UNKNOWN is the opposite: it means only "not settled within
+ * the nodes that were left", which is a fact about a budget rather than
+ * about the position, and storing it would let one starved search silence
+ * every later one. */
+typedef struct { uint64_t key; int8_t val; } TtEntry;
+static TtEntry *tt;
+
+/* THE EIGHT SYMMETRIES. The board is a 3x3 of 3x3s, and the rule that sends
+ * you to the block matching your square is itself symmetric, so any rotation
+ * or reflection of the small grid applied to the OUTER grid and to every
+ * INNER grid at once maps a legal game onto a legal game. Eight of them:
+ * four rotations and four reflections. SYM9[s] permutes a whole 9-bit block
+ * mask in one lookup, so a transform is table reads, not bit twiddling.
+ *
+ * WHERE THIS PAYS AND WHERE IT CANNOT. The obvious use is the solver's
+ * table: hash the smallest of all eight transforms and an orbit of eight
+ * positions shares one entry. Measured, it merged 2,720 of 4.4 million
+ * positions - 0.06% - and cost 3.7x in hashing for it.
+ *
+ * That is not a tuning failure, it is structural. The mirror of a node
+ * extends the mirror of the ROOT. From the empty board the mirror of the
+ * root IS the root, so every orbit member is reachable and collapses; from
+ * a specific endgame position it is a different root, so no other orbit
+ * member is ever reached and there is nothing to merge. Enumerated, raw
+ * positions against canonical ones:
+ *
+ *     from the empty board       ply 1  5.40x   ply 4  7.92x
+ *     from a real 55-ply root    ply 1  1.00x   ply 6  1.00x
+ *
+ * Exactly 1.00x, at every depth - the signature of impossible rather than
+ * rare. So symmetry belongs at the OPENING, where the root is its own
+ * mirror, and that is what `root_dedupe` below uses it for. */
+static const uint8_t SYM[8][9] = {
+    {0,1,2,3,4,5,6,7,8},   /* identity        */
+    {6,3,0,7,4,1,8,5,2},   /* rotate 90       */
+    {8,7,6,5,4,3,2,1,0},   /* rotate 180      */
+    {2,5,8,1,4,7,0,3,6},   /* rotate 270      */
+    {2,1,0,5,4,3,8,7,6},   /* flip horizontal */
+    {6,7,8,3,4,5,0,1,2},   /* flip vertical   */
+    {0,3,6,1,4,7,2,5,8},   /* transpose       */
+    {8,5,2,7,4,1,6,3,0},   /* anti-transpose  */
+};
+static uint16_t SYM9[8][512];
+static int sym_ready;
+
+static void build_sym(void)
+{
+    for (int s = 0; s < 8; s++)
+        for (int m = 0; m < 512; m++) {
+            uint16_t o = 0;
+            for (int i = 0; i < 9; i++)
+                if (m & (1 << i)) o |= (uint16_t)(1 << SYM[s][i]);
+            SYM9[s][m] = o;
+        }
+    sym_ready = 1;
+}
+
+/* Does transform `s` map this position onto itself? */
+static int sym_fixes(const UtttGame *g, int s)
+{
+    const uint8_t *p = SYM[s];
+    const uint16_t *t = SYM9[s];
+    for (int b = 0; b < 9; b++) {
+        if (t[g->cm[0][b]] != g->cm[0][p[b]]) return 0;
+        if (t[g->cm[1][b]] != g->cm[1][p[b]]) return 0;
+    }
+    if (t[g->bm[0]] != g->bm[0] || t[g->bm[1]] != g->bm[1]) return 0;
+    if (t[g->bdrawn] != g->bdrawn) return 0;
+    if (g->forced != UTTT_ANY && p[g->forced] != g->forced) return 0;
+    return 1;
+}
+
+/* TWO MOVES ARE ONE MOVE when a transform that fixes the position maps one
+ * onto the other - playing either leads to the same game wearing a different
+ * coat. Dropping the copies spends a fixed allowance of rollouts on real
+ * alternatives. On the empty board that is 81 choices down to 15.
+ *
+ * It is an opening device and it stops paying almost at once, because a move
+ * does not only place a stone, it also names the block the reply must go in,
+ * and that alone breaks most of what symmetry is left. Over 20,000 random
+ * games, positions still equal to some mirror of themselves:
+ *
+ *     ply 0   100.0%    81.0 -> 15.0 moves   5.40x
+ *     ply 1    41.4%     8.7 ->  5.6         1.55x
+ *     ply 2    13.9%
+ *     ply 4     1.2%
+ *     ply 8     never again
+ *
+ * Which is why the check runs first and leaves immediately: after the
+ * opening it is seven comparisons that find nothing. */
+static int use_root_sym = 1;
+
+static int root_dedupe(const UtttGame *g, uint8_t *list, int n)
+{
+    if (!use_root_sym || n < 2) return n;
+    if (!sym_ready) build_sym();
+    int fix[8], nf = 0;
+    for (int s = 1; s < 8; s++)
+        if (sym_fixes(g, s)) fix[nf++] = s;
+    if (!nf) return n;
+
+    int out = 0;
+    for (int i = 0; i < n; i++) {
+        int dup = 0;
+        for (int k = 0; k < nf && !dup; k++) {
+            const uint8_t *p = SYM[fix[k]];
+            uint8_t m2 = (uint8_t)(p[list[i] / 9] * 9 + p[list[i] % 9]);
+            for (int j = 0; j < out; j++)
+                if (list[j] == m2) { dup = 1; break; }
+        }
+        if (!dup) list[out++] = list[i];
+    }
+    return out;
+}
+
+static uint64_t pos_key(const UtttGame *g)
+{
+    uint64_t h = 1469598103934665603ull;
+    const uint8_t *p = (const uint8_t *)g->cm;
+    for (size_t i = 0; i < sizeof g->cm; i++) h = (h ^ p[i]) * 1099511628211ull;
+    h = (h ^ g->bm[0])  * 1099511628211ull;
+    h = (h ^ g->bm[1])  * 1099511628211ull;
+    h = (h ^ g->bdrawn) * 1099511628211ull;
+    h = (h ^ g->forced) * 1099511628211ull;
+    h = (h ^ g->turn)   * 1099511628211ull;
+    /* Never 0: an untouched table slot is all zeroes, and a position whose
+     * key happened to be 0 would read that empty slot back as its own
+     * entry - a proved draw, for free, wrongly. */
+    return h ? h : 1;
+}
+
+/* WHAT EXACT PLAY IS ALLOWED TO SPEND. Counted in nodes, not in empty
+ * squares, and that correction was worth making twice over.
+ *
+ * The gate used to be "11 empty squares or fewer". Raising it by measuring
+ * how long the solver took on positions at each emptiness said 24 was free,
+ * at 5.8ms - and in real games a gate of 19 could not finish ten of them.
+ * The bench was drawing its positions from RANDOM play, and random play
+ * closes blocks fast; a closed block is a whole branch the solver never
+ * walks. Bots keep blocks alive. So two positions with 22 empty squares can
+ * differ by orders of magnitude in the size of the tree above them, and
+ * emptiness never sees the difference.
+ *
+ * A node count does, because it is the thing that actually runs out. The
+ * search stops when the budget is gone and says so, the table keeps every
+ * proof it managed on the way, and the next move in the same game starts
+ * from what the last one established. `uttt_mate_in` is budgeted the same
+ * way and for the same reason.
+ *
+ * WHAT EACH BUDGET BUYS, on positions out of real quill games:
+ *
+ *       2,000 nodes   0.09 ms   settled 44.8%   perfect from 22 empties
+ *      20,000         0.70      settled 50.8%   perfect from 24
+ *     300,000         7.98      settled 63.9%   79% even at 30
+ *
+ * 20,000 is the shipped figure: it more than doubles the distance from the
+ * end at which play is exact - the old gate was ELEVEN squares - for about
+ * 6% more time a game.
+ *
+ * AND IT IS WORTH NO POINTS. Against the old gate, same bot and the same
+ * rollouts, 400 games: 49.4%, -0.3 sigma, for 3.3% more time. 300,000
+ * nodes reads the same over 200 games. Quill's tree already proves most of
+ * what this proves, by itself, from the same
+ * playouts - it settles 986 of 2000 endgame positions with no solver in
+ * front of it at all - and in a position that is already won or already
+ * drawn, replacing a good move with a perfect one changes no results. This
+ * is bought for exactness, not for Elo, and the next person to wonder why
+ * a stronger endgame did not show up in the ladder can stop here. */
+#define SOLVE_NODES 20000L
+static long solve_nodes = SOLVE_NODES;
+/* A cheap filter so the opening does not pay the budget to learn nothing:
+ * with this many squares still empty a proof is hopeless anyway. */
+#define SOLVE_EMPTIES 30
+static int solve_gate = SOLVE_EMPTIES;
+
+static int solve(UtttGame *g, int depth_left, long *nodes)
 {
     if (g->over)
         return g->over == UTTT_DRAW ? 0 : (g->over == g->turn ? 1 : -1);
-    if (depth_left <= 0) return 2;                 /* unknown */
+    if (depth_left <= 0) return 2;
+    if (--*nodes <= 0) return 2;                   /* out of budget */
+
+    if (!tt) {
+        tt = calloc(TT_SIZE, sizeof *tt);
+        if (!tt) return 2;
+    }
+    uint64_t key = pos_key(g);
+    TtEntry *e = &tt[key & (TT_SIZE - 1)];
+    if (e->key == key) return e->val;
 
     uint8_t list[81];
     int n = uttt_legal(g, list);
-    int best = -2;
+
+    /* best first: a proof that ends early is a proof that costs nothing */
+    int sc[81];
+    for (int i = 0; i < n; i++) sc[i] = score_move(g, list[i]);
+    for (int i = 1; i < n; i++) {
+        uint8_t m = list[i]; int v = sc[i], j = i - 1;
+        while (j >= 0 && sc[j] < v) { list[j + 1] = list[j]; sc[j + 1] = sc[j]; j--; }
+        list[j + 1] = m; sc[j + 1] = v;
+    }
+
+    int best = -2, unknown = 0;
     for (int i = 0; i < n; i++) {
         UtttGame t = *g;
         uttt_play(&t, list[i]);
-        int v = solve(&t, depth_left - 1);
-        if (v == 2) return 2;                      /* cannot prove the branch */
-        v = -v;                                    /* it was the other side's */
+        int v = solve(&t, depth_left - 1, nodes);
+        if (v == 2) { unknown = 1; continue; }
+        v = -v;
         if (v > best) best = v;
-        if (best == 1) break;
+        if (best == 1) break;                      /* a win is a win */
     }
-    return best;
+    int out = (best == 1) ? 1 : (unknown ? 2 : best);
+    if (out != 2) { e->key = key; e->val = (int8_t)out; }
+    return out;
 }
+
 
 /* EIGHTY-ONE QUESTIONS BECOME NINE POPCOUNTS. Asking a square at a time was
  * fine when a square was a byte; now it is a bit, and the whole block
@@ -349,12 +630,53 @@ int uttt_mate_in(const UtttGame *g, long nodes, uint8_t *out)
  *
  * Only when a whole line can be seen to the end. The moment the proof runs
  * out this is nib exactly, so a short game is never bought with a win. */
+/* EXACT PLAY AT THE ROOT, on one budget shared by every candidate. Returns
+ * 1 and fills `out` when it settled the position.
+ *
+ * A proved win ends it on the spot - nothing beats winning, so the rest of
+ * the list does not matter and neither does what is left to spend. Anything
+ * short of that needs the whole list known before it can be trusted: a move
+ * proved to draw is only the best move if no unproved sibling would have
+ * won, so one unknown sends the decision back to the search that can live
+ * with not knowing.
+ *
+ * A PROVED LOSS IS NOT A MOVE. When every reply loses, perfect play has
+ * nothing left to say and picking the first proved move amounts to
+ * resigning in place. The opponent still has to find the win, so the search
+ * is the better adviser: it steers toward the line where most of their
+ * replies throw it away. This never mattered while exact play began eleven
+ * squares from the end, where a lost position is lost in practice too. It
+ * matters a great deal starting thirty squares out, which is most of a
+ * game, and it is what the first budgeted measurement was losing on. */
+static int solve_root(const UtttGame *g, const uint8_t *list, int n,
+                      uint8_t *out)
+{
+    if (empties(g) > solve_gate) return 0;
+    long left = solve_nodes;
+    int bestv = -2, unknown = 0;
+    uint8_t bestm = list[0];
+    for (int i = 0; i < n; i++) {
+        UtttGame t = *g;
+        uttt_play(&t, list[i]);
+        int v = solve(&t, 81, &left);
+        if (v == 2) { unknown = 1; continue; }
+        v = -v;
+        if (v > bestv) { bestv = v; bestm = list[i]; }
+        if (bestv == 1) { *out = bestm; return 1; }
+    }
+    if (unknown || bestv <= -2) return 0;
+    if (bestv < 0) return 0;                  /* lost anyway - go make it hard */
+    *out = bestm;
+    return 1;
+}
+
 static uint8_t mc_move(const UtttGame *g, int budget, uint64_t *rs,
                        int crn, int biased, int endgame, int speed)
 {
     uint8_t list[81];
     int n = uttt_legal(g, list);
     if (n <= 0) return 0;
+    n = root_dedupe(g, list, n);
     if (n == 1) return list[0];
 
     /* THE PROOF COMES FIRST. A line that ends the game is worth more than
@@ -374,17 +696,9 @@ static uint8_t mc_move(const UtttGame *g, int budget, uint64_t *rs,
         if (uttt_mate_in(g, 2000L, &mv)) return mv;
     }
 
-    if (endgame && empties(g) <= 11) {
-        int bestv = -2; uint8_t bestm = list[0];
-        for (int i = 0; i < n; i++) {
-            UtttGame t = *g;
-            uttt_play(&t, list[i]);
-            int v = solve(&t, 12);
-            if (v == 2) { bestv = -2; break; }      /* fall through to MC */
-            v = -v;
-            if (v > bestv) { bestv = v; bestm = list[i]; }
-        }
-        if (bestv > -2) return bestm;
+    if (endgame) {
+        uint8_t sm = 0;
+        if (solve_root(g, list, n, &sm)) return sm;
     }
 
     const uint8_t me = g->turn;
@@ -400,8 +714,7 @@ static uint8_t mc_move(const UtttGame *g, int budget, uint64_t *rs,
             uint64_t s = crn ? base : (*rs += 0x9E3779B97F4A7C15ull);
             UtttGame t = *g;
             uttt_play(&t, list[i]);
-            uint8_t w = playout(&t, &s, biased, NULL);
-            score[i] += (w == me) ? 2 : (w == UTTT_DRAW ? 1 : 0);
+            score[i] += playout(&t, &s, biased, me, 0);
         }
     }
     *rs += 0x9E3779B97F4A7C15ull;
@@ -495,6 +808,10 @@ static int tree_expand(uint32_t node, const UtttGame *g, uint32_t *used)
 {
     uint8_t list[81];
     int n = uttt_legal(g, list);
+    /* At the root only, where the opening still has symmetry to give and
+     * where the saving is spent on every rollout that follows. Deeper the
+     * check costs seven comparisons a node and finds nothing. */
+    if (node == 0) n = root_dedupe(g, list, n);
     if (n <= 0 || *used + (uint32_t)n > TREE_POOL) return 0;
     TreeNode *nd = &tree_pool[node];
     nd->first = *used; nd->nchild = (uint8_t)n; *used += (uint32_t)n;
@@ -560,7 +877,7 @@ static uint32_t tree_select(uint32_t node, uint64_t *rs)
         if (c->pv == PV_DRAW) {
             u = 0.5 + TREE_C * sqrt(lnN / (c->visits + 1.0));
         } else {
-            double mean = c->visits ? (double)c->score / (2.0 * c->visits)
+            double mean = c->visits ? (double)c->score / (200.0 * c->visits)
                                     : TREE_FPU;
             u = mean + TREE_C * sqrt(lnN / (c->visits + 1.0))
                      + TREE_PB * c->prior / (c->visits + 1.0);
@@ -647,14 +964,16 @@ static void tree_search(const UtttGame *g, long playouts, uint64_t *rs,
         }
 
         /* THE RESULT: a proof where there is one, a playout otherwise. */
-        uint8_t w;
+        /* 0..200 from the side to move AT THE LEAF; each node flips it. */
+        const uint8_t leaf_turn = t.turn;
+        int val;
         const TreeNode *leaf = &tree_pool[node];
-        if (leaf->pv == PV_WIN)       w = t.turn;
-        else if (leaf->pv == PV_LOSS) w = (uint8_t)(t.turn == UTTT_X ? UTTT_O : UTTT_X);
-        else if (leaf->pv == PV_DRAW) w = UTTT_DRAW;
+        if (leaf->pv == PV_WIN)       val = 200;
+        else if (leaf->pv == PV_LOSS) val = 0;
+        else if (leaf->pv == PV_DRAW) val = 100;
         else {
             uint64_t s = (*rs += 0x9E3779B97F4A7C15ull);
-            w = playout(&t, &s, 1, NULL);
+            val = playout(&t, &s, 1, leaf_turn, W.leaf_cutoff);
         }
 
         /* BACK UP the score, then the proof. A node's score belongs to the
@@ -666,7 +985,7 @@ static void tree_search(const UtttGame *g, long playouts, uint64_t *rs,
             if (d > 0) {
                 uint8_t mover = u.turn;
                 uttt_play(&u, nd->mv);
-                nd->score += (w == mover) ? 2 : (w == UTTT_DRAW ? 1 : 0);
+                nd->score += (mover == leaf_turn) ? val : 200 - val;
             }
         }
         for (int d = depth - 1; d >= 0; d--) tree_prove(path[d]);
@@ -701,22 +1020,15 @@ static uint8_t tree_move(const UtttGame *g, int budget, uint64_t *rs)
     uint8_t list[81];
     int n = uttt_legal(g, list);
     if (n <= 0) return 0;
+    n = root_dedupe(g, list, n);
     if (n == 1) return list[0];
 
     /* THE SNIPER'S ROOT, unchanged. */
     uint8_t mv = 0;
     if (uttt_mate_in(g, 2000L, &mv)) return mv;
-    if (empties(g) <= 11) {
-        int bestv = -2; uint8_t bestm = list[0];
-        for (int i = 0; i < n; i++) {
-            UtttGame t = *g;
-            uttt_play(&t, list[i]);
-            int v = solve(&t, 12);
-            if (v == 2) { bestv = -2; break; }
-            v = -v;
-            if (v > bestv) { bestv = v; bestm = list[i]; }
-        }
-        if (bestv > -2) return bestm;
+    {
+        uint8_t sm = 0;
+        if (solve_root(g, list, n, &sm)) return sm;
     }
 
     /* THE SAME ALLOWANCE AS THE FLAT SEARCH: `budget` a legal move. */
@@ -773,3 +1085,18 @@ uint8_t uttt_bot_move(UtttBot bot, const UtttGame *g, int budget, uint64_t *rs)
     default:         return list[0];
     }
 }
+
+int uttt_solve(const UtttGame *g, int depth)
+{
+    UtttGame t = *g;
+    long left = solve_nodes;
+    return solve(&t, depth, &left);
+}
+
+/* For the measurement only: flip canonical-by-symmetry hashing on or off and
+ * empty the table, so one binary can run both sides of the comparison. */
+void uttt_solve_gate(int empties) { solve_gate = empties; }
+void uttt_solve_budget(long nodes) { solve_nodes = nodes; }
+void uttt_root_symmetry(int on) { use_root_sym = on; }
+
+

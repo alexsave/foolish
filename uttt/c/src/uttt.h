@@ -134,4 +134,7 @@ int  uttt_mask_line(unsigned mask);
  * squares that are still empty. */
 unsigned uttt_mask_wins(unsigned mask);
 
+/* The i-th of the eight lines, as a nine-bit mask. */
+unsigned uttt_line_mask(int i);
+
 #endif

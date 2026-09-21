@@ -50,6 +50,11 @@ static void build_has_line(void)
     has_line_ready = 1;
 }
 
+unsigned uttt_line_mask(int i)
+{
+    return (i >= 0 && i < 8) ? LINE_MASKS[i] : 0u;
+}
+
 unsigned uttt_mask_wins(unsigned mask)
 {
     if (!has_line_ready) build_has_line();

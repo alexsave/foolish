@@ -81,6 +81,7 @@ int main(int argc, char **argv)
     long budget = argc > 2 ? atol(argv[2]) : 40000000L;
     int checked = 0, false_pos = 0, missed = 0, found = 0, wins = 0, wrong_len = 0;
     int tree_proved = 0, tree_wrong = 0;
+    int solve_wrong = 0, solve_unproved = 0;
     uint64_t trs = 0x9E3779B97F4A7C15ull;
     int hist[16]; memset(hist, 0, sizeof hist);
     while (checked < want) {
@@ -97,6 +98,14 @@ int main(int argc, char **argv)
 
         UtttGame t = g;
         int truth = solve(&t);                 /* exhaustive, no budget */
+
+        /* THE BOTS' OWN SOLVER against that same exhaustive answer. It
+         * carries a transposition table across every position in this run,
+         * so a key that collides, or an entry kept at a depth it was not
+         * proved to, shows up here as a verdict that does not match. */
+        int sv = uttt_solve(&g, empties(&g));
+        if (sv == 2) solve_unproved++;
+        else if (sv != truth) solve_wrong++;
         uint8_t mv = 0;
         int d = uttt_mate_in(&g, budget, &mv);
 
@@ -133,6 +142,8 @@ int main(int argc, char **argv)
     printf("  proved %d of them, %d claimed falsely, %d real wins not proved\n",
            found, false_pos, missed);
     printf("  %d disagreed with the exhaustive distance\n", wrong_len);
+    printf("the bots' solver with its table: %d wrong, %d left unproved of %d\n",
+           solve_wrong, solve_unproved, checked);
     printf("  proved distances:");
     for (int i = 1; i < 16; i += 2) if (hist[i]) printf(" %d:%d", i, hist[i]);
     printf("\n");
