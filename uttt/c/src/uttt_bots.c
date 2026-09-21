@@ -112,6 +112,52 @@ static int score_move(const UtttGame *g, uint8_t mv)
  * It is NOT meant to be good. It is meant to be good enough that stopping a
  * playout early and spending the savings on more playouts comes out ahead,
  * and whether it does is a measurement, not an opinion. */
+/* AN AFTERNOON SPENT TRYING TO IMPROVE THIS, AND NOTHING TO SHOW FOR IT.
+ * Recorded because the ideas are the obvious ones and somebody will have
+ * them again.
+ *
+ * THE GAPS ARE REAL. This function never reads `forced` or `turn`, so a
+ * position where the mover has the run of the whole sheet scores the same
+ * as one where they are nailed into a dead block - in a game that is
+ * entirely about constraint, and after two of three lost human games turned
+ * on exactly that. It also pays for progress along a meta-line containing a
+ * DRAWN block, which nobody can ever complete.
+ *
+ * FIXING THEM PREDICTS BETTER AND PLAYS NO BETTER. Scored against ground
+ * truth on 400 leaf positions (correlation with the eventual result):
+ *
+ *     this function                        r = 0.418
+ *     + skip meta-lines holding a draw         0.419   (nothing)
+ *     + block value from its meta-lines        0.399   (WORSE than block_w)
+ *     + constraint of the side to move         0.447
+ *     + constraint, tuned hard                 0.513
+ *
+ * and then, in games:
+ *
+ *     constraint 8/12    self-play 2500   +0.7 sigma
+ *     constraint 8/12    self-play  800   +0.8
+ *     constraint 8/12    vs sniper   500  +0.5
+ *     constraint 8/12    vs sniper  1500  -0.7   <- the biggest, and negative
+ *     constraint 76/40   vs sniper   700  -1.3
+ *     constraint 76/40   self-play 3000   -0.8
+ *
+ * A QUARTER MORE CORRELATION IS WORTH NOTHING, and tuning FOR correlation is
+ * worth less than nothing - the two settings that fit the truth best are the
+ * two that lost. So outcome correlation is a filter for ideas here, never an
+ * objective; a leaf in a tree is asked to rank siblings, not to be right,
+ * and those are different jobs.
+ *
+ * One trap worth naming: the first version of that measurement scored every
+ * position from X's side while the mover varied. The tree never does that -
+ * the cutoff is twelve plies, an even number, so `me` is always the mover.
+ * Measuring in the wrong regime flattered every turn-dependent term, and
+ * reversed the ranking of the best-looking idea. Whatever replaces this
+ * function, measure it the way the tree calls it.
+ *
+ * What was NOT tried and might still be worth a day: a leaf that reads the
+ * position after the mover's best reply rather than the position as it
+ * stands, which is the one thing here that would change what it is ranking
+ * rather than how finely. */
 static int leaf_eval(const UtttGame *g, uint8_t me)
 {
     if (g->over)
