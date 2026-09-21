@@ -216,6 +216,56 @@ extern const char *UTTT_BOT_NAME[BOT_COUNT];
  * ones the playouts merely like, and against a greedy opponent the flat
  * search's optimism was the better bet. */
 
+/* THE HEURISTIC'S NUMBERS, so a tournament can play them against each other.
+ *
+ * `score_move` is the playout policy and the tree's prior, and its constants
+ * were hand-picked and never measured. Making them settable lets one binary
+ * play one set against another; the winner gets baked back in as literals so
+ * the shipped code pays nothing for the flexibility. */
+typedef struct {
+    int win_block;      /* the move takes a block                          */
+    int deny_block;     /* it takes a block they wanted                    */
+    int decided_target; /* it sends them to a block already settled        */
+    int closer;         /* per square they could close the target with     */
+    int meta_gift;      /* ...and taking that target completes their line  */
+    int bias_one_in;    /* a playout move is random one time in this many  */
+    int cell_w[9];      /* where in a block, doubled: it picks the target  */
+    int block_w[9];     /* which block                                     */
+} UtttWeights;
+
+/* THE ONE CONSTANT A TOURNAMENT MOVED, and what it cost to find out.
+ *
+ * `closer` was -45 and is -25. Two hill climbs on `bias`, sixty rounds each,
+ * promoted the same parameter in the same direction and nothing else; a
+ * third promoted nothing. Head to head against the old value:
+ *
+ *     bot      games   with -25    sigma
+ *     bias      2000     53.9%      +3.5
+ *     nib       1500     54.2%      +3.3
+ *     sniper     600     55.2%      +2.5
+ *     crn       1500     49.7%      -0.2     <- control: unbiased playouts,
+ *     quill     2500     49.8%      -0.2        never calls score_move
+ *
+ * `crn` is why the rest is believable: its playouts are uniform, so it never
+ * asks the heuristic anything, and it sat on fifty. The three that do ask
+ * all moved together.
+ *
+ * AND QUILL DOES NOT CARE. Two more climbs, run on quill itself, promoted
+ * NOTHING in a hundred mutations - one of them found this very change at
+ * 56.8% and watched it fall to 49.7% on the confirmation match. Once UCT has
+ * a few dozen visits on a node the counts swamp the prior, so a tree
+ * consults the heuristic far less than a flat search that asks it for every
+ * move of every rollout. The constants are worth tuning for the flat bots
+ * and are not where the tree's strength is hiding.
+ *
+ * EVERY PROMOTION WAS CONFIRMED ON A SECOND, FRESH STREAM before being
+ * taken. At three hundred games a coin flip clears a two-sigma bar one time
+ * in forty, and sixty rounds would hand out a free promotion; asking twice
+ * makes it one in sixteen hundred. Five candidates died at that gate,
+ * including one that read 57.0% and then 44.5%. */
+UtttWeights uttt_weights_default(void);
+void        uttt_weights_set(const UtttWeights *w);
+
 /* THE SHORTEST FORCED WIN for the side to move, in plies, or 0 if there is
  * none inside `nodes`. `out` receives the move when there is one.
  *

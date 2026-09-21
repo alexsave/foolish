@@ -21,8 +21,25 @@ static uint32_t rnd(uint64_t *s, uint32_t n)
  * Scores a MOVE, not a position. Cheap on purpose: it is also the playout
  * policy for the strongest bot, where it runs millions of times. */
 
-static const int CELL_W[9]  = { 3, 2, 3,  2, 4, 2,  3, 2, 3 };
-static const int BLOCK_W[9] = { 3, 2, 3,  2, 4, 2,  3, 2, 3 };
+static UtttWeights W = {
+    .win_block = 120, .deny_block = 70, .decided_target = -55,
+    .closer = -25, .meta_gift = -400, .bias_one_in = 4,
+    .cell_w  = { 3, 2, 3,  2, 4, 2,  3, 2, 3 },
+    .block_w = { 3, 2, 3,  2, 4, 2,  3, 2, 3 },
+};
+
+UtttWeights uttt_weights_default(void)
+{
+    UtttWeights d = {
+        .win_block = 120, .deny_block = 70, .decided_target = -55,
+        .closer = -25, .meta_gift = -400, .bias_one_in = 4,
+        .cell_w  = { 3, 2, 3,  2, 4, 2,  3, 2, 3 },
+        .block_w = { 3, 2, 3,  2, 4, 2,  3, 2, 3 },
+    };
+    return d;
+}
+
+void uttt_weights_set(const UtttWeights *w) { W = *w; }
 
 /* BOTH OF THESE WERE A NINE-BYTE COPY AND A NINE-BYTE SCAN to ask one
  * question about one block. They are the playout policy of the strongest
@@ -46,17 +63,17 @@ static int score_move(const UtttGame *g, uint8_t mv)
     int b = mv / 9, c = mv % 9, s = 0;
 
     if (meta_would_win(g, mv, me)) return 1 << 20;     /* it ends the game */
-    if (wins_block(g, mv, me))     s += 120;
-    if (wins_block(g, mv, opp))    s += 70;            /* deny it */
+    if (wins_block(g, mv, me))     s += W.win_block;
+    if (wins_block(g, mv, opp))    s += W.deny_block;  /* deny it */
 
-    s += CELL_W[c] * 2 + BLOCK_W[b];
+    s += W.cell_w[c] * 2 + W.block_w[b];
 
     /* WHERE IT SENDS THEM is most of the game. A decided target hands them a
      * free choice over the whole sheet, which is the worst thing you can give
      * anybody in this game - and it is exactly what the encoder measured as
      * expensive. */
     if (!((g->live >> c) & 1u)) {
-        s -= 55;
+        s += W.decided_target;
     } else {
         /* DO NOT SEND THEM SOMEWHERE THEY CAN CLOSE - and this was a walk
          * over nine squares asking two questions about each, which made it
@@ -70,8 +87,8 @@ static int score_move(const UtttGame *g, uint8_t mv)
         const unsigned open = ~(unsigned)(g->cm[0][c] | g->cm[1][c]) & 0x1ffu;
         const unsigned closers = uttt_mask_wins(g->cm[opp - 1][c]) & open;
         if (closers) {
-            if (uttt_mask_line(g->bm[opp - 1] | (1u << c))) s -= 400;
-            else s -= 45 * __builtin_popcount(closers);
+            if (uttt_mask_line(g->bm[opp - 1] | (1u << c))) s += W.meta_gift;
+            else s += W.closer * __builtin_popcount(closers);
         }
     }
     return s;
@@ -110,7 +127,7 @@ static uint8_t playout(UtttGame *g, uint64_t *rs, int biased, int *plies)
         if (n <= 0) break;
 
         uint8_t mv = 0;
-        if (!biased || rnd(rs, 4) == 0) {
+        if (!biased || rnd(rs, (uint32_t)W.bias_one_in) == 0) {
             /* the k-th legal move, blocks then cells, both ascending */
             int k = (int)rnd(rs, (uint32_t)n);
             for (unsigned bb = blocks; bb; bb &= bb - 1) {
