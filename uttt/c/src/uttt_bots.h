@@ -78,20 +78,29 @@ extern const char *UTTT_BOT_NAME[BOT_COUNT];
  * sooner is not a choice between two winning moves.
  *
  * THE VERSION THAT DOES. nib, plus `uttt_mate_in` before the rollouts: a
- * proved forced win, shortest first, or nothing. 60 games a pairing:
+ * proved forced win, shortest first, or nothing. 300 games a pairing, 40
+ * rollouts, both bots measured the same way:
  *
- *     opponent    nib      sniper     sniper wins in / nib wins in
- *     roller      76.2%    81.7%      44.5 / 44.8
- *     crn         70.4%    75.8%      44.9 / 44.7
- *     bias        50.4%    68.3%      49.7 / 52.7
- *     nib           -      60.0%      50.7
+ *     opponent     nib     sniper      nib wins in / sniper wins in
+ *     random      99.7%    100.0%       44.2 / 43.1
+ *     biro       100.0%    100.0%       38.6 / 37.9
+ *     roller      75.5%     79.7%       45.6 / 45.0
+ *     crn         76.3%     77.8%       46.2 / 45.2
+ *     bias        53.2%     64.8%       52.2 / 51.7
+ *     nib            -      58.5%          -  / 51.6
  *
- * Stronger AND sooner, which is the part worth understanding: a search that
- * ends the game when it can see the end is not a stylistic choice, it is
- * simply better play. The rollouts never know they have a forced win; they
- * only know that a lot of games from here came out well.
+ * And from the other side, nib scored 40.0% against the sniper over its own
+ * 300 - so 58.5% and 60.0%, measured independently. The standard error at
+ * this sample is 2.8 points, which puts both around three sigma. THIS ONE IS
+ * SETTLED, unlike the sixty-game read it replaces.
  *
- * (Sixty games is about 1.6 sigma on that 60% - suggestive, not settled.) */
+ * Stronger AND about a ply sooner everywhere, and the part worth
+ * understanding is that those are the same fact. A search that ends the game
+ * when it can see the end is not a stylistic choice, it is better play. The
+ * rollouts never know they have a forced win; they only know that a lot of
+ * games from here came out well.
+ *
+ * SNIPER IS THE TOP OF THE LADDER. Anything new is measured against it. */
 
 /* THE SHORTEST FORCED WIN for the side to move, in plies, or 0 if there is
  * none inside `nodes`. `out` receives the move when there is one.
