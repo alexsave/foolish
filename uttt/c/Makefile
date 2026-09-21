@@ -1,5 +1,26 @@
 CC      ?= cc
-CFLAGS  ?= -O2 -Wall -Wextra -Werror -std=c11
+# -O3 AND LINK-TIME OPTIMISATION, and it is the -flto that does the work.
+# Measured on quill at 40 rollouts, three runs each, idle machine:
+#
+#     -O2                                   1.807 ms a move
+#     -Os                                   1.807
+#     -O3                                   1.670
+#     -O3 -mcpu=native                      1.670    (nothing)
+#     -O3 -funroll-loops                    1.670    (nothing)
+#     -O3 -ffast-math                       1.660    (nothing, and see below)
+#     -O3 -flto                             1.483    <- 1.22x over -O2
+#     -Ofast -mcpu=native -flto             1.470
+#
+# The whole win is cross-file inlining: the hot functions live in uttt.c and
+# their callers in uttt_bots.c, so without -flto the compiler cannot see a
+# table lookup on the other side of a call.
+#
+# NO FAST MATH. It is worth 0.9% and this codebase cannot pay for it: the pen
+# is a transcription of rough.js and `make rough-diff` holds it to six
+# decimal places, because two phones looking at one bubble have to produce
+# the same sheet stroke for stroke. Reassociating float arithmetic is exactly
+# how that stops being true, quietly, on one compiler and not another.
+CFLAGS  ?= -O3 -flto -Wall -Wextra -Werror -std=c11
 LDLIBS  := -lm
 SRC     := src/uttt.c src/uttt_code.c src/uttt_bots.c \
            src/uttt_pen.c src/uttt_draw.c src/uttt_rule.c
