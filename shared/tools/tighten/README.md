@@ -242,7 +242,7 @@ The header comments record the scan the EDL came out of, so an EDL you find late
 
 ## A worked example
 
-The recording is a 19:46 iPhone screen recording of a game of Durak, 1290x2796, HEVC, 60fps, 744 MB.
+The recording is a 19:46 iPhone screen recording of a card game, 1290x2796, HEVC, 60fps, 744 MB.
 
 ```
 $ tighten scan ScreenRecording.MP4 -o cut.edl

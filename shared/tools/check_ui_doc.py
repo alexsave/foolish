@@ -6,8 +6,8 @@
 WHY THIS EXISTS. These documents are one big HTML file that gets forty rounds of
 edits, and the failure mode is silent: markup that does not balance still renders,
 just wrong, and an unterminated url() in a stylesheet takes every declaration
-after it down with no error anywhere. The werewolf study shipped the same class
-of bug three times before it had a checker.
+after it down with no error anywhere. An earlier study in this repo shipped the
+same class of bug three times before it had a checker.
 
 Product-neutral on purpose - it names no game, so it lives in shared/.
 """
