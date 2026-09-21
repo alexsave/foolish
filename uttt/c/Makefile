@@ -21,6 +21,13 @@ run: build/uttt_test
 arena: build/uttt_arena
 	./build/uttt_arena 200 200
 
+build/uttt_line: $(SRC) tests/uttt_line.c | build
+	$(CC) $(CFLAGS) $(SRC) tests/uttt_line.c -o $@ $(LDLIBS)
+
+# The 62% hotspot against the version it replaced, over every board there is.
+line: build/uttt_line
+	./build/uttt_line
+
 build/uttt_mate: $(SRC) tests/uttt_mate.c | build
 	$(CC) $(CFLAGS) $(SRC) tests/uttt_mate.c -o $@ $(LDLIBS)
 

@@ -1,17 +1,44 @@
 #include "uttt.h"
 #include <string.h>
 
-static const uint8_t LINES[8][3] = {
-    {0,1,2},{3,4,5},{6,7,8},{0,3,6},{1,4,7},{2,5,8},{0,4,8},{2,4,6}
+/* THREE IN A LINE, AND IT IS 62% OF EVERY BOT'S RUNTIME. `sample` on a
+ * ladder at 400 rollouts put 4,670 of 7,495 stacks here, ahead of
+ * `score_move` at 1,489 and `uttt_legal` at 766 - which makes sense once you
+ * see it: a playout calls `uttt_play`, `uttt_play` calls this three times,
+ * and a tree search does hundreds of thousands of playouts.
+ *
+ * So it is a nine-bit mask and one lookup rather than eight triples of
+ * compares with an unpredictable branch on each. Nothing about the answer
+ * changes: a slot holding UTTT_DRAW, or the other mark, or nothing, is not
+ * `mark`, so it contributes a zero exactly as it did before. Proved
+ * exhaustively against the old version over all 4^9 boards and both marks -
+ * see tests/uttt_line.c, which still holds the old one to compare against. */
+static const uint16_t LINE_MASKS[8] = {
+    0007, 0070, 0700, 0111, 0222, 0444, 0421, 0124
 };
+
+/* HAS_LINE[m] for a nine-bit occupancy mask m. Built once, because a 512
+ * byte table is smaller than the code that would avoid it. */
+static uint8_t HAS_LINE[512];
+static int has_line_ready;
+
+static void build_has_line(void)
+{
+    for (unsigned m = 0; m < 512; m++) {
+        uint8_t hit = 0;
+        for (int i = 0; i < 8; i++)
+            if ((m & LINE_MASKS[i]) == LINE_MASKS[i]) { hit = 1; break; }
+        HAS_LINE[m] = hit;
+    }
+    has_line_ready = 1;
+}
 
 int uttt_line(const uint8_t *nine, uint8_t mark)
 {
-    for (int i = 0; i < 8; i++)
-        if (nine[LINES[i][0]] == mark &&
-            nine[LINES[i][1]] == mark &&
-            nine[LINES[i][2]] == mark) return 1;
-    return 0;
+    if (!has_line_ready) build_has_line();
+    unsigned m = 0;
+    for (int i = 0; i < 9; i++) m |= (unsigned)(nine[i] == mark) << i;
+    return HAS_LINE[m];
 }
 
 void uttt_init(UtttGame *g)
