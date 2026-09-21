@@ -48,9 +48,12 @@ Most "isomorphic" code sharing degrades into two implementations that drift; a c
 A rule this strong survives only if something fails when it is broken, and the something has to be cheap enough to run on every commit.
 
 - `e2e/no_ts_game_shape.test.ts` parses the host source and fails if any file outside the generated directory declares an interface with two or more of the domain's own field names, or reads a kernel buffer with a `DataView` or a bit shift.
-  Its shrink-only allowlist - the list of hand-packed entry points it was willing to tolerate - is empty, and the test asserts that it is empty rather than asserting a ceiling.
+  It carries two lists, and keeping them apart is the point.
+  `NOT_YET_GENERATED` is the shrink-only allowlist - the hand-packed entry points it was willing to tolerate - and it is empty, with the test asserting that it is empty rather than asserting a ceiling.
+  `INDEPENDENT_READERS` is two permanent entries for the security scan's deliberate second implementation, which is a different thing from a residue and is described under "What did NOT move" below.
   Adding a two-byte read to a host file turns it red and names the file and the offending token.
-- `e2e/table_no_game_object.test.ts` walks the import graph and fails if any server file imports the retired game, public-game, personal-game or player types, so the shape cannot come back through a type alias.
+- `e2e/table_no_game_object.test.ts` asserts three things: that the deleted modules stay deleted, that the bridges export no name which takes a `Game` or makes a `PersonalGame`, and that nowhere in the edge functions' module graph does TypeScript resolve a seat from a player id.
+  The shape cannot come back through a type alias, and it cannot come back through one helper either.
 
 Anything the team writes later that restates the domain in the host language is caught by a test that nobody has to remember to run.
 That is the pattern, and it generalizes past this repo: if a boundary matters, spend the afternoon writing the static check that guards it, because a convention is a boundary that decays at the rate people join the project.
@@ -67,7 +70,7 @@ The host knows column names, an RPC name, a topic format, and that a span is an 
 |---|---|---|---|
 | **Core** | pure `reduce(state, command) -> events`, plus validation and authorization | `game.c`, `legal.c`, `table.c` | your domain model and business rules |
 | **Contract** | the byte layouts for state, commands, events and views | the C headers themselves | one schema, and it is source code, not a sidecar IDL |
-| **Bindings** | host access to the contract, generated from the contract | `tools/structgen` -> `sdk/ts/gen/*.ts`, `sdk/swift/gen/*.swift` | generated, never hand-written |
+| **Bindings** | host access to the contract, generated from the contract | `shared/tools/{structgen,datagen}` -> `sdk/{ts,swift,kotlin}/gen/` | generated, never hand-written |
 | **Projections** | `project(state, viewer) -> bytes`, the only serializer; redaction lives here | `view.c`, `client_table.c` | per-role and per-tenant views, masking |
 | **Shell** | HTTP, DB, sockets, auth, rendering, external APIs - all impure, all thin | edge functions, React, SwiftUI, the native server | per-environment plumbing |
 
@@ -93,7 +96,8 @@ What specialization survives is sharper than what it replaced:
 
 **2. Generated bindings as the replacement for hand-written marshalling.**
 
-`tools/structgen` is a small C program that links libclang, split by domain: the clang traversal that asks for shape, the model it builds, and one unit per emitter.
+`shared/tools/structgen` is a small C program that links libclang, split by domain: the clang traversal that asks for shape, the model it builds, and one unit per emitter.
+It lives under `shared/` because two products now build from it, and what stays product-side is only configuration: `tools/structgen/gen.sh` is this product's driver, its specs and its fixtures.
 It parses the real headers for one target under one build's flags and emits, from the layout clang computed:
 
 - per-field accessors over the host's view of the struct;
@@ -102,15 +106,22 @@ It parses the real headers for one target under one build's flags and emits, fro
 - the enum constants and object-like integer defines under a named prefix, so no host copies a status number or an error code;
 - a **layout hash** over field path, offset, size, kind and bit range - never over type spellings, so renaming a typedef does not churn it.
 
-Three emitters run off that one clang-derived model: TypeScript accessors and snapshots over linear memory, Swift value types over the struct's own address for a host that links the kernel natively, and the hash itself.
-The hash is **per target**, because the same structs do not have the same layout everywhere: the shared roots hash to `0x2c3f0c6d` for `wasm32` and `0xfeacf389` for `arm64-apple-ios15.0`.
+Four emitters run off that one clang-derived model: TypeScript accessors and snapshots over linear memory, Swift value types over the struct's own address for a host that links the kernel natively, Kotlin readers for a JVM host, and the hash itself.
+The Kotlin emitter is the honest edge of this and is worth naming as such: it generates, and its output is held to a recorded expectation, but nothing compiles it.
+There is no `kotlinc` on the machines that run these tests, so it is a prospective host rather than a shipped one, and the test that covers it says so in its own first lines rather than implying coverage it does not have.
+
+The hash is **per target**, because the same structs do not have the same layout everywhere: the shared roots hash to one value for `wasm32` and a different one for `arm64-apple-ios15.0`.
 A run that ignored that difference would have generated a plausible lie.
+The literal hashes are deliberately not quoted here - they are build outputs that move with every layout change, and an earlier version of this document quoted two that are both now wrong.
+`sdk/ts/gen/layout_hash.bots.ts` is where the current one lives.
 
 The hash is what makes the pair safe to ship:
 
 - the browser compares the module's own `wasm_layout_hash()` against the generated constant at instantiate and throws on a mismatch;
-- iOS has no instantiate, so `make ios-lib` bakes the hash into the static library and `KernelLayout.verified` compares them before the first call, for all three slices, because one stamped hash must not be right on two architectures and wrong on the third;
-- `tools/structgen/gen.sh --check` in CI regenerates everything and fails on any diff, so a header edit without a regeneration cannot merge.
+- iOS has no instantiate, so `make ios-lib` bakes the hash into the static library and `KernelLayout.verified` compares the two before the first call;
+- the three iOS slices are a **separate and earlier** gate, in the makefile rather than at runtime: the layout hash is computed for device `arm64` and for both simulator architectures and the build fails unless all three agree, because one stamped hash must not be right on two architectures and wrong on the third;
+- `tools/structgen/gen.sh --check` regenerates everything **twice, as two processes into two temporary trees**, and refuses a difference, so a header edit without a regeneration cannot merge.
+  It does not diff a committed copy, and the reason is Part 2's rule about artifacts nothing compares.
 
 The generic tests are the honest part: C compiled from the same headers fills a fixture through its own field names, the host reads it back through the generated readers, and the two agreeing is the statement that every emitted offset is the offset `offsetof` would give.
 The Swift suite went red by assertion first, with 34 failures against readers that returned zeros.
@@ -121,7 +132,23 @@ The Component Model with `jco` needed about 15 times the glue for the same two f
 Emscripten's `embind` brings a JavaScript runtime, an allocator and a libc into a module whose whole point is that it has none of those, and the same two functions cost 22 imports where the kernel has none, 11.8 times the module, and 34 to 38 times the round trip.
 The conclusion worth carrying to another project: a tool of this kind is a **`bindgen`**, not an **`emcc`**.
 It should read the types you already wrote and emit host-side access to them; it should not bring a runtime, a memory model or an ABI of its own.
-At about 1,570 lines for three emitters it is a few days of work, not a quarter, and libclang is the right parser precisely because it is the same front end that laid the struct out.
+At 1,372 lines across four emitters, inside a generator of 2,318, it is a few days of work and not a quarter, and libclang is the right parser precisely because it is the same front end that laid the struct out.
+
+*The sibling that reads contents instead of shape.*
+
+The second generator is the part of this pattern that was least obvious in advance, and it is the one most worth stealing.
+`shared/tools/datagen` runs on the same libclang and answers a different question: structgen asks for **shape** - every offset, size, bitfield position and array stride, and it never reads a value - while datagen asks for **contents**, what the initializer of a file-scope `static const` table actually says, and it never reads a layout.
+Neither can answer the other's question, which is why they are two programs rather than two flags: running them together would mean computing a layout hash over data that has no layout.
+
+What that bought here is the product's entire string catalogue.
+`c/i18n` holds 25 languages and 388 keys as C designated initializers, one file per language, and datagen emits the website's table, FoolishKit's and the Kotlin one from it.
+Before that, the phone carried 25 languages in a 5,063-line Swift table while the website carried three in TypeScript; they shared ten key names and disagreed about sixteen of the thirty cells those ten covered.
+Neither host was the other's upstream, and that is the shape of every duplication this pattern exists to delete - it just happened to be data rather than code, which is exactly why the shape-only generator could not reach it.
+
+One mechanism inside datagen generalizes past translations.
+Splitting a table across 25 files means nothing in C makes them carry the same keys any more, so the compile error that would have caught a hole is gone.
+`--require-complete` stands in for it: every slot of the index space must be filled, and a gap fails the build naming each one.
+Whenever you split a thing that the compiler used to check whole, something has to inherit the check.
 
 **3. The import-free kernel, as a deliberate property with both sides written down.**
 
@@ -176,7 +203,8 @@ The generator enforces the third rule and one more that only a machine would hav
 A reader is happy with that pairing and a writer is not.
 That refusal cost one planned deletion and is the correct trade: a payload that is correctly formed and wrong is worse than a file that stayed hand-written.
 
-There is a fourth case worth naming, because four Swift files stayed hand-written on purpose.
+There is a fourth case worth naming, because a handful of Swift files stayed hand-written on purpose - currently about five, spread across `sdk/swift/`, `ios/FoolishNet/` and the monorepo's `shared/swift/`.
+"About" is the honest word: no gate pins that set or its size, so it is the one count in this document that drifts without anything going red.
 When the bytes are a **form something travels in** rather than a struct anybody holds - a menu handed straight back to the kernel, a server's HTTP request envelope, a decoder's variable-length record stream - copying them into a value type is the wrong shape, and the property that mattered is not "no bytes here" but "no layout stated twice".
 
 **5. Per-viewer masking computed inside the kernel.**
@@ -230,7 +258,7 @@ A cache is a second opinion, and two opinions in a racing system is a bug genera
 
 **10. Procedural, asset-free rendering.**
 
-Zero texture files; the wool, wood grain and concrete are computed in the browser and cached in IndexedDB.
+One texture file; the wool, wood grain and concrete are computed in the browser and cached in IndexedDB, and the single exception is a Khokhloma card-back pattern that is a real PNG.
 You ship the generator, not the pixels.
 
 ### What did NOT move, and why
@@ -257,9 +285,9 @@ Each item below names the test seam that found it or now holds it.
 1. **A state-writing database function was callable by anonymous users.**
    A migration dropped and recreated it without repeating an earlier lockdown loop, and a newly created function is executable by `PUBLIC`.
    The suite that should have caught it read only the from-scratch schema file, which did re-run the lockdown, so CI was green while the migrated database was open.
-   Found by a test that **replays the migration history in order** and asserts after each step that no privileged function is executable by a client role (`e2e/db_migration_grants.test.ts`, now `e2e/db_platform_grants.test.ts` over seed.sql since the migration history was collapsed into it), which is now a standing gate.
-   The relock is a migration on this branch and the deploy is the owner's, so the finding is closed in the repo and open on the deployed database until then.
-   Generalization: a schema file and a migration chain are two implementations of one schema, and they drift; hold them equal object by object.
+   Found by a test that **replayed the migration history in order** and asserted after each step that no privileged function was executable by a client role.
+   Both the finding and the mechanism that found it have since moved: the migration history was collapsed into `seed.sql` (Part 2), so the replay is gone with it, and `e2e/db_platform_grants.test.ts` now loads `seed.sql` under a client's default privileges and holds the same property over the one schema there is.
+   Generalization, which outlived the mechanism by one step: a schema file and a migration chain are two implementations of one schema and they drift, so while both exist you hold them equal object by object - and collapsing to one is the move that retires the drift instead of policing it.
 2. **A forged-row path into other players' ratings.**
    Default table grants let any authenticated user insert a game row with a fabricated roster, then drive it to a finish that scored into other players' ELO.
    Found while tracing who may write the table the migration was rewriting; pinned by table-level grant assertions in `e2e/db_grants.test.ts`, and closed by construction once a row's shape is the kernel's and writes go through one privileged function.
@@ -281,7 +309,7 @@ Each item below names the test seam that found it or now holds it.
 6. **A realtime policy that refused everyone.**
    A per-user channel policy compared a topic segment split on hyphens with a user id that is itself a hyphenated UUID, so every join was refused - fail-closed, not a leak, but the feature was dead.
    Beside it, three policies for a topic nobody joins let two addresses with the same local part read each other's messages.
-   The policies now rebuild the exact topic from the caller's membership row, and a test holds the whole policy set from a frozen copy of the deployed set through both migrations to the schema file's.
+   The policies now rebuild the exact topic from the caller's membership row, and `e2e/realtime_channel_auth.test.ts` holds the whole policy set by reading `pg_policies` directly, the migration path it used to walk having gone the way of the rest.
 
 **Correctness**
 
@@ -340,17 +368,29 @@ Once the Core is pure, deterministic and event-sourced, several hard features ar
 /core        pure reducer + validation + authorization + projections. NO I/O.
              Compiles to native and to wasm. THE HEADERS ARE THE SCHEMA.
 /core/test   invariants, property and fuzz tests, golden transcripts, cross-build agreement
-/tools/gen   the binding generator: parses /core's headers, emits per-host access + a layout hash
-/gen         GENERATED host bindings, one module per (build, host language). Never edited.
+/shared      what more than one product uses: the generators, and any C primitive
+             that is nobody's domain. NOTHING HERE MAY NAME A PRODUCT.
+/tools/gen   this product's DRIVER for the shared generators: specs, fixtures, gen.sh
+/gen         GENERATED host bindings, one module per (build, host language).
+             Never edited, and NOT COMMITTED - see below.
 /server      imperative shell: HTTP, auth, persistence, the effect runner
 /client      the core (validate + optimistic predict) + a thin rendering skin
 /read        CQRS projections for queries that do not belong in the write model
 /ops         proxy, migrations, deploy
 ```
 
-The rule that keeps it coherent: the wire format is defined **once, in the Core's own headers**, and every other language gets it by generation.
+The `/shared` row arrived late here, when a second product started building from the same generators, and it came with a gate rather than a convention: **no file under `shared/` may name a product.**
+That rule drifts one word at a time - four product names were already sitting in shared files when the gate was written, none of which broke anything, which is exactly why a human reviewer would never have caught the fifth.
+
+The rule that keeps the whole thing coherent: the wire format is defined **once, in the Core's own headers**, and every other language gets it by generation.
 The old form of this rule was "one schema mirrored into exactly one host file with a golden test asserting agreement"; the mirror is what the generator deletes.
-`/gen` is a build output that happens to be committed, and CI regenerates it and fails on a diff.
+
+**`/gen` is not committed, and getting there took two tries.**
+The first version committed the generated modules and had CI regenerate and diff them, which is the obvious design and is what an earlier draft of this document recommended.
+It failed in the way described under "an artifact nothing compares" below: one generated artifact was excused from the diff by a single exclusion flag and rotted for months.
+The second version does not ask "does the committed copy match".
+It generates **twice, as two separate processes into two temporary trees**, and refuses a difference - which also catches a generator that is not deterministic, a failure the committed-copy design cannot see at all.
+The generated directories are gitignored, and a separate gate refuses a tracked file under any of them, reading the directory list out of `gen.sh` rather than keeping a second copy of it.
 
 ### The C-first insight: the parity tax mostly evaporates
 
@@ -416,6 +456,8 @@ Second, a self-test that runs at startup is worth its weight, and a self-test no
   Build a REPL on day one; a fuzzer that throws random commands and asserts invariants is your executable spec and never goes away.
 - **Phase 2 - the binding generator.** Before the second language exists.
   It is the cheapest it will ever be, and every hand-written marshal you do not write is one you do not have to delete later.
+  Expect it to split in two along the shape-versus-contents line: one tool that reads your structs' layout, and eventually a second that reads your static tables' values.
+  They cannot be one tool, because a layout hash over data that has no layout is meaningless, and the second one is what stops your string catalogue, your error table and your config defaults from being retyped per host.
 - **Phase 3 - serialization and masking.** Round-trip identity, masked-blob property tests, golden transcripts.
 - **Phase 4 - the server, request and response first.** Link the Core, embedded store, per-entity lock, WAL and snapshot durability, two clients playing a full game over `curl`.
 - **Phase 5 - realtime.** Per-viewer masked event streams, stale broadcasts dropped by version.
@@ -443,12 +485,19 @@ This repo's migration was about a hundred commits across eleven phases, some of 
 - **Run the one full end-to-end suite at the end, not per phase.**
   Per phase, run that phase's targeted files plus the fast gates (the Core's suites, the generator's suites, artifact freshness, both typecheckers, the memory test).
   The full suite belongs on the tree that will actually ship.
-- **Refuse things, with measurements.**
+- **Refuse things, with measurements - and keep the measurement, because it is usually a runbook in disguise.**
   Two refusals shaped this migration more than most of its features.
   One was the binding-generator comparison above: the off-the-shelf options were measured and rejected on numbers, not taste.
   The other was a proposal to collapse the migration history into a single baseline.
   It was refused **after** a throwaway database was built and the deployment CLI was actually run against it: with the history intact the push reported up to date, and with the files collapsed it failed with a missing-migrations error whose own suggested repair deletes the tracking rows rather than inserting them - which would have stopped the next deploy dead.
-  A hunch would have produced a debate; twenty minutes of measurement produced a decision, a written record, and a standing test that holds the schema file and the migration chain equal object for object (1,390 catalog items, an empty diff).
+  A hunch would have produced a debate; twenty minutes of measurement produced a decision and a written record.
+
+  **The collapse then happened anyway, some weeks later, and that is the part worth carrying.**
+  All 39 migrations are deleted, `seed.sql` is the whole schema, and a merge to `main` now runs no SQL at all because the deploy skips its schema step when no `.sql` file is present.
+  What made it safe was not a change of mind but the earlier measurement, promoted from a veto to an instruction: because the exact failure was known - the push refuses while a remote version has no local file - the collapse could ship with a one-time `migration repair` listing all 39 versions, written down for whoever adds the *first* new migration, and verified against a real database still carrying the 39 rows.
+  The generalization: **a refusal backed by a measurement has a shelf life, and a refusal backed by a hunch does not.**
+  The measured one told you precisely which obstacle stood in the way, so it converted into a procedure the moment someone wanted the change badly enough.
+  Had the original objection been "this feels risky", there would have been nothing to convert, and the collapse would either never have happened or would have happened blind.
 
 ### The fit spectrum (be honest)
 
@@ -463,22 +512,29 @@ Server authority *and* client optimism, or online *and* offline, or app *and* wo
 
 One extra signal this migration produced: the payoff also scales with **how many hosts you have**.
 The break-even for the binding generator arrived at the second language, and the third host paid for the whole thing, because a change to an animation struct now updates the browser and the phone by rerunning one script.
+Past that point the marginal host is nearly free, and the evidence is that a fourth emitter was written for a JVM host that **does not exist** - a few hundred lines, on the chance that it will, because adding it later costs the same and adding it now costs nothing to maintain.
+That is the shape of the curve: the first host is all cost, the second repays it, and the fourth is cheap enough to build speculatively.
 
 ### The taxes, refreshed with what this actually cost
 
 **Size.**
 Moving this much logic into the kernel grew the shipped kernel and shrank the shipped host code, and both were measured every phase.
 
-| | Baseline | End of this migration |
-|---|---|---|
-| kernel module, gzipped | 65,307 B | 80,913 B |
-| the two deleted role-specific modules | 18,549 B | 0 |
-| web bundle, first-load union, gzipped | 330,504 B | 304,551 B |
+| | Baseline | End of the migration | As measured 2026-09-20 |
+|---|---|---|---|
+| kernel module, gzipped | 65,307 B | 80,913 B | 81,317 B |
+| the two deleted role-specific modules | 18,549 B | 0 | 0 |
+| web bundle, first-load union, gzipped | 330,504 B | 304,551 B | 312,530 B |
 
-Both end-state figures are the tree as it stands, not a number carried forward: the kernel is the committed `sdk/ts/wasm/bots.wasm.gz`, and the bundle is `node scripts/measure_web_bundle.mjs`, which gave 304,551 B identically over two builds.
-That is 315 B under the 304,866 B Phase 10 recorded, from the three code commits that landed after it.
+The kernel is the committed `sdk/ts/wasm/bots.wasm.gz`; the bundle is `scripts/measure_web_bundle.mjs`.
+The kernel grew about 24 percent and the shipped web bundle fell about 5 percent, so total shipped bytes still fell, but the margin is narrower than the one this document originally recorded and it has been moving the wrong way.
 
-The kernel grew about 24 percent and the shipped web bundle fell about 8 percent, so total shipped bytes fell.
+Two things about that third column are worth more than the numbers in it.
+The first is that the kernel figure is now **603 bytes** under the budget its own memory test asserts, so the next feature of any size turns that test red - and the budget was *raised* to accommodate the growth rather than re-pinned lower after each win, which is the opposite of the ratchet Part 3 recommends.
+The second is that the bundle figure had to be taken by hand.
+The measurement script's default mode copies the tree using a file list that excludes ignored files and then builds it directly, which stopped working the moment the generated modules became gitignored: the copy omits them, the build cannot resolve them, and the number cannot be taken at all.
+Only the in-place mode still runs, and only after a manual regeneration.
+That is this document's own "an artifact nothing compares" failure repeating one level up - not a stale artifact this time but a **stale gate**, and the reason it went unnoticed for a month is that a measurement nobody can run looks exactly like a measurement nobody needed.
 That is not an accident of this domain; it is what happens when the code you delete is marshalling code, whose size is proportional to the number of fields, while the code you add is a rule, whose size is proportional to the number of decisions.
 
 **The owner's priority order, applied without exception:**
@@ -526,12 +582,18 @@ Measure what actually gates the user, spend effort only there, and recognize whe
 A constraint checked at runtime is a bug waiting to happen; a constraint the toolchain enforces cannot regress.
 
 - Anchors: static assertions that fail the link if an arena overlay overflows; pinned linear memory (`--initial-memory == --max-memory`) on the modules whose budget is fixed, so a buffer over budget fails the *link*; a memory test that asserts the module's initial page count and names every buffer that justifies a raise; caps sized from a measurement harness with clean overflow, so exceeding one drops an animation frame and never corrupts.
-- Newer anchors from this migration, all of them the same move applied to *correctness* rather than to size: the layout hash the artifact carries, so a mismatched pair refuses to run; the regeneration check that fails CI on a diff; the static import boundary; the export-list test; the catalog-equality test between schema file and migration chain.
+- Newer anchors from this migration, all of them the same move applied to *correctness* rather than to size: the layout hash the artifact carries, so a mismatched pair refuses to run; the double-generation check that refuses a difference between two runs; the static import boundary; the export-list test; the rule that no file under `shared/` may name a product.
+- **And the anchor that argues against all of them, because a gate can fail silently too.**
+  A freshness gate here listed the paths it watched, and one of them was spelled relative to a subdirectory, so it came out as `c/../shared/c/sha256.c` - a path that **opens perfectly well** and never matches the spelling the version-control diff produces.
+  The gate went on passing while watching nothing.
+  The fix was not the path but the class: the checker now refuses any listed path it cannot open from the repository root, and it caught that exact bug on its first run.
+  The same shape turned up twice more the same week - a deploy trigger whose glob matched nothing, which is indistinguishable from a glob with no changes, and a test script naming a compiler flag variable that had been retired, which expanded to the empty string and took the test down in a lane no workflow ran.
 - Generalized:
   - Budgets enforced by CI, so a regression fails the build rather than appearing in a graph.
   - Make the safe path the only representable path.
   - Let overflow degrade cleanly and choose where the failure lands.
-  - **A rule with no gate is a rule with a half-life.**
+  - **A rule with no gate is a rule with a half-life** - and a gate with no gate of its own is a rule you have stopped checking without noticing.
+    Anything that names a path, a glob or a variable should fail when that name resolves to nothing, because "matched nothing" and "found no problem" are the same colour on every dashboard ever built.
 
 ### 3. Specialize the artifact - ship only what the call site runs
 
@@ -586,6 +648,8 @@ If work already happened, do not repeat it across a boundary.
 - **Every one is gated by correctness tests.**
   A faster wrong answer is worthless.
 - **Done in the right order:** correctness first, then measure the binding constraint, then specialize and shrink, then re-pin the budget lower after each win so the ratchet only turns one way.
+  This is the rule this repo has kept worst, and it is recorded here rather than quietly dropped: the wasm budget was raised to fit growth instead of re-pinned after each win, and it now sits 603 bytes from red (Part 2, the taxes table).
+  A ratchet that can turn both ways is a graph with extra steps.
 
 ### The playbook, in one line
 
@@ -602,11 +666,17 @@ Stated plainly, because a doctrine document that only describes its successes is
   Of the rest, **optimistic timing** landed in part - a predicted flight is a step in the kernel's plan with the kernel's duration, and the board it leaves lands with it - but C still has no answer for what a confirming message does to a flight already in progress, so the host drops the confirmation and lets the prediction run out.
   **The refusal return flight** has no place in the plan at all: a refused move's cards are appended to the tail of whatever is running rather than emitted as steps.
   **The monotonic version watermark** is still a `Math.max` in a React effect rather than a kernel rule.
-- **A few host files still read a variable-length wire**, on iOS, where the bytes are a form something travels in rather than a struct anybody holds (Part 1, piece 4).
-  None of them is a layout stated twice, which is the property that mattered, but each is a candidate for a later pass.
+- **A few host files still read a variable-length wire**, in Swift, where the bytes are a form something travels in rather than a struct anybody holds (Part 1, piece 4).
+  None of them is a layout stated twice, which is the property that mattered, but each is a candidate for a later pass - and, unlike every other boundary in this document, **no gate pins the set**, so it can grow without anything going red.
+  That is the clearest remaining gap between what this document preaches and what the repo enforces.
 - **Two host wrappers remain hand-written** over the generated modules - one per side of the boundary, thin, synchronous, with no field knowledge beyond the names the generator emitted.
   They are the smallest honest residue, not zero.
-- **The plan's own remaining work is listed in `docs/C_GAME_SHAPE_MIGRATION.md` section 7**, including the rebase onto the main line and the deploy ordering for the three durable-store steps, which are the parts a reader should check before treating this document's end state as shipped.
+- **The web bundle measurement does not run in its default mode**, and has not since the generated modules became gitignored (Part 2, the taxes table).
+  The budget is therefore unenforced at the moment this sentence was written, which is worse than the bundle having grown, because the growth is a number and the broken gate is a blind spot.
+- **The wasm size budget was raised rather than re-pinned**, and sits 603 bytes from red.
+  Part 3 recommends the opposite and this repo did not do it.
 - **Verification is uneven by host.**
   The kernel, the web and the database have suites that run on every commit; the phone's animation behaviour is proved by the kernel's tests, a compile, and one simulator pass per round rather than by continuous integration.
-- **One artifact rotted inside a single phase** because it was excluded from its own freshness check, which is the best evidence in this document that the gates are the load-bearing part and not the prose.
+  The Kotlin emitter is a step further out still: it generates, and nothing anywhere compiles the result.
+- **One artifact rotted inside a single phase** because it was excluded from its own freshness check, and a gate later watched a path that could never match, and a test lived in no workflow at all.
+  Those three are the best evidence in this document that the gates are the load-bearing part and not the prose - and that gates need their own.
