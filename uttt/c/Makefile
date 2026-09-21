@@ -25,7 +25,9 @@ build/uttt_mate: $(SRC) tests/uttt_mate.c | build
 	$(CC) $(CFLAGS) $(SRC) tests/uttt_mate.c -o $@ $(LDLIBS)
 
 # The mate search against an exhaustive one. Both the verdict and the
-# distance, on positions deep enough to tell a min from a max.
+# distance, on positions deep enough to tell a min from a max. And quill's
+# tree proofs against the same solver: it may say nothing, never something
+# false.
 mate: build/uttt_mate
 	./build/uttt_mate 2000
 

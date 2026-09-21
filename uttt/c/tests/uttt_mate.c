@@ -1,5 +1,6 @@
 /* The mate search against an exhaustive one: two independent answers to one
- * question, which is the only kind of check worth having for a proof.
+ * question, which is the only kind of check worth having for a proof. And
+ * quill's tree against the same solver, since its proofs are the third.
  *
  *     make -C uttt/c mate
  *
@@ -79,6 +80,8 @@ int main(int argc, char **argv)
     int want = argc > 1 ? atoi(argv[1]) : 400;
     long budget = argc > 2 ? atol(argv[2]) : 40000000L;
     int checked = 0, false_pos = 0, missed = 0, found = 0, wins = 0, wrong_len = 0;
+    int tree_proved = 0, tree_wrong = 0;
+    uint64_t trs = 0x9E3779B97F4A7C15ull;
     int hist[16]; memset(hist, 0, sizeof hist);
     while (checked < want) {
         UtttGame g; uttt_init(&g);
@@ -115,6 +118,15 @@ int main(int argc, char **argv)
         else if (!d && ex < MATE_NONE) wrong_len++;
         else if (d && d != ex) wrong_len++;
         if (d && d < 16) hist[d]++;
+
+        /* AND THE TREE'S PROOF, a third answer to the same question. The
+         * tree may say nothing; what it may not do is say something the
+         * exhaustive solver disagrees with - a win, a draw OR a loss. */
+        int tp = uttt_tree_proof(&g, 400L, &trs);
+        if (tp != 2) {
+            tree_proved++;
+            if (tp != truth) tree_wrong++;
+        }
     }
     printf("mate search vs an exhaustive solver: %d positions, %d are wins\n",
            checked, wins);
@@ -124,5 +136,10 @@ int main(int argc, char **argv)
     printf("  proved distances:");
     for (int i = 1; i < 16; i += 2) if (hist[i]) printf(" %d:%d", i, hist[i]);
     printf("\n");
-    return (false_pos || wrong_len) ? 1 : 0;
+    /* A tree that proves nothing cannot be wrong, and cannot be tested. */
+    int tree_too_shy = tree_proved * 4 < checked;
+    printf("quill's tree at 400 playouts: proved %d of %d, %d wrong%s\n",
+           tree_proved, checked, tree_wrong,
+           tree_too_shy ? " - TOO FEW TO TRUST" : "");
+    return (false_pos || wrong_len || tree_wrong || tree_too_shy) ? 1 : 0;
 }

@@ -1,8 +1,9 @@
 #include "uttt_bots.h"
+#include <math.h>
 #include <string.h>
 
 const char *UTTT_BOT_NAME[BOT_COUNT] =
-    { "random", "biro", "roller", "crn", "bias", "nib", "sniper" };
+    { "random", "biro", "roller", "crn", "bias", "nib", "sniper", "quill" };
 
 static uint32_t rnd(uint64_t *s, uint32_t n)
 {
@@ -344,6 +345,255 @@ static uint8_t mc_move(const UtttGame *g, int budget, uint64_t *rs,
     return bm;
 }
 
+/* -------------------------------------------------------------------- tree
+ * UCT: the same biased playouts, spent by a TREE instead of a flat loop.
+ *
+ * Flat Monte Carlo gives every candidate the same forty playouts, so a move
+ * that lost its first ten still gets thirty more, and nothing below the
+ * first ply is ever remembered from one playout to the next. A tree keeps
+ * the statistics of every position it has passed through and spends the
+ * next playout where the numbers say the game is still undecided - which is
+ * both fewer playouts on the losers and a search that reaches two, three,
+ * four plies down the lines that matter.
+ *
+ * The playout count is IDENTICAL to sniper's: `budget` a legal move. This
+ * is a comparison of how the playouts are spent, not how many.
+ *
+ * Three things ride on the tree:
+ *
+ *   PRIORS. Every child is born with the heuristic's opinion of its move,
+ *   which decays as real visits arrive. A tree at a few hundred playouts is
+ *   mostly frontier, and a frontier ordered by the heuristic is the biased
+ *   playout's lesson applied to the tree itself.
+ *
+ *   PROOFS. A terminal child is a fact and is marked as one, and a node
+ *   whose children are all facts becomes a fact too. A proved win is taken
+ *   and a proved loss is never selected again, so the tree cannot talk
+ *   itself into a line the opponent can simply end - which is the whole
+ *   difference between this and averaging.
+ *
+ *   THE ROOT IS STILL THE SNIPER'S. The mate search and the exact endgame
+ *   run first, exactly as they do for sniper. What is new is only what
+ *   happens when neither can answer. */
+/* Measured, 300 games a pairing against sniper; the table is in uttt_bots.h.
+ * Less exploration and a heavier prior were both worth points; the heavier
+ * prior only at this exploration. */
+#define TREE_C      0.5     /* exploration                                    */
+#define TREE_PB     1.5     /* progressive bias: prior weight at zero visits  */
+#define TREE_FPU    0.55    /* an unvisited child is worth about a coin flip  */
+
+enum { PV_UNKNOWN = 0, PV_WIN = 1, PV_LOSS = 2, PV_DRAW = 3 };
+
+typedef struct {
+    uint32_t visits;
+    uint32_t score;       /* 2 a win, 1 a draw, for the player who MOVED here */
+    uint32_t first;       /* index of the first child, when expanded         */
+    float    prior;       /* the heuristic's opinion, in about [-1, 0.5]     */
+    uint8_t  mv;
+    uint8_t  nchild;      /* 0 = not expanded                                */
+    uint8_t  pv;          /* for the player TO MOVE at this node             */
+} TreeNode;
+
+#define TREE_POOL 400000
+static TreeNode tree_pool[TREE_POOL];
+
+static float tree_prior(const UtttGame *g, uint8_t mv)
+{
+    int h = score_move(g, mv);
+    if (h > 200) h = 200;
+    if (h < -400) h = -400;
+    return (float)h / 400.0f;
+}
+
+/* Give a node its children. Terminal ones are marked on the spot. Returns 0
+ * when the pool is full, in which case the node stays a leaf. */
+static int tree_expand(uint32_t node, const UtttGame *g, uint32_t *used)
+{
+    uint8_t list[81];
+    int n = uttt_legal(g, list);
+    if (n <= 0 || *used + (uint32_t)n > TREE_POOL) return 0;
+    TreeNode *nd = &tree_pool[node];
+    nd->first = *used; nd->nchild = (uint8_t)n; *used += (uint32_t)n;
+    for (int i = 0; i < n; i++) {
+        TreeNode *c = &tree_pool[nd->first + i];
+        memset(c, 0, sizeof *c);
+        c->mv = list[i];
+        c->prior = tree_prior(g, list[i]);
+        UtttGame t = *g;
+        uttt_play(&t, list[i]);
+        /* The mover cannot lose by moving: it is a win for them, or a draw. */
+        if (t.over) c->pv = (t.over == g->turn) ? PV_LOSS : PV_DRAW;
+    }
+    return 1;
+}
+
+/* Re-derive a node's proof from its children. */
+static void tree_prove(uint32_t node)
+{
+    TreeNode *nd = &tree_pool[node];
+    if (nd->pv != PV_UNKNOWN || nd->nchild == 0) return;
+    int all_win = 1, any_draw = 0;
+    for (int i = 0; i < nd->nchild; i++) {
+        uint8_t cpv = tree_pool[nd->first + i].pv;
+        if (cpv == PV_LOSS) { nd->pv = PV_WIN; return; }   /* they lose */
+        if (cpv == PV_DRAW) any_draw = 1;
+        if (cpv != PV_WIN) all_win = 0;
+    }
+    if (all_win) nd->pv = any_draw ? PV_DRAW : PV_LOSS;
+}
+
+/* The child to descend into. Proved losses (for us) are skipped; a proved
+ * win never reaches here because the node itself would already be proved. */
+static uint32_t tree_select(uint32_t node, uint64_t *rs)
+{
+    const TreeNode *nd = &tree_pool[node];
+    double lnN = log((double)nd->visits + 1.0);
+    double best = -1e9; uint32_t bi = nd->first; int nb = 0;
+    for (int i = 0; i < nd->nchild; i++) {
+        const TreeNode *c = &tree_pool[nd->first + i];
+        double u;
+        if (c->pv == PV_WIN) continue;                   /* we lose there */
+        if (c->pv == PV_DRAW) {
+            u = 0.5 + TREE_C * sqrt(lnN / (c->visits + 1.0));
+        } else {
+            double mean = c->visits ? (double)c->score / (2.0 * c->visits)
+                                    : TREE_FPU;
+            u = mean + TREE_C * sqrt(lnN / (c->visits + 1.0))
+                     + TREE_PB * c->prior / (c->visits + 1.0);
+        }
+        if (u > best + 1e-9) { best = u; bi = nd->first + (uint32_t)i; nb = 1; }
+        else if (u > best - 1e-9 && rnd(rs, (uint32_t)++nb) == 0)
+            bi = nd->first + (uint32_t)i;
+    }
+    return bi;
+}
+
+/* Grow the tree from `g` for `playouts` playouts, or until the root is a
+ * proof. The pool holds the result. */
+static void tree_search(const UtttGame *g, long playouts, uint64_t *rs)
+{
+    uint32_t used = 1;
+    memset(&tree_pool[0], 0, sizeof tree_pool[0]);
+    tree_expand(0, g, &used);
+
+
+    uint32_t path[UTTT_MAX_PLIES + 1];
+    for (long r = 0; r < playouts && tree_pool[0].pv == PV_UNKNOWN; r++) {
+        UtttGame t = *g;
+        int depth = 0;
+        uint32_t node = 0;
+        path[depth++] = node;
+
+        /* DESCEND until a proof, an unexpanded node, or a fresh child. */
+        for (;;) {
+            TreeNode *nd = &tree_pool[node];
+            if (nd->pv != PV_UNKNOWN) break;
+            if (nd->nchild == 0) {
+                if (nd->visits == 0 || !tree_expand(node, &t, &used)) break;
+                tree_prove(node);
+                if (nd->pv != PV_UNKNOWN) break;
+            }
+            node = tree_select(node, rs);
+            uttt_play(&t, tree_pool[node].mv);
+            path[depth++] = node;
+            if (tree_pool[node].visits == 0) break;
+        }
+
+        /* THE RESULT: a proof where there is one, a playout otherwise. */
+        uint8_t w;
+        const TreeNode *leaf = &tree_pool[node];
+        if (leaf->pv == PV_WIN)       w = t.turn;
+        else if (leaf->pv == PV_LOSS) w = (uint8_t)(t.turn == UTTT_X ? UTTT_O : UTTT_X);
+        else if (leaf->pv == PV_DRAW) w = UTTT_DRAW;
+        else {
+            uint64_t s = (*rs += 0x9E3779B97F4A7C15ull);
+            w = playout(&t, &s, 1, NULL);
+        }
+
+        /* BACK UP the score, then the proof. A node's score belongs to the
+         * player who moved into it; the root belongs to nobody. */
+        UtttGame u = *g;
+        for (int d = 0; d < depth; d++) {
+            TreeNode *nd = &tree_pool[path[d]];
+            nd->visits++;
+            if (d > 0) {
+                uint8_t mover = u.turn;
+                uttt_play(&u, nd->mv);
+                nd->score += (w == mover) ? 2 : (w == UTTT_DRAW ? 1 : 0);
+            }
+        }
+        for (int d = depth - 1; d >= 0; d--) tree_prove(path[d]);
+    }
+    *rs += 0x9E3779B97F4A7C15ull;
+}
+
+/* What the tree can PROVE about the side to move from `g`, after
+ * `playouts` playouts: +1 a win, 0 a draw, -1 a loss, 2 nothing yet.
+ *
+ * Exposed for the same reason `uttt_mate_in` is: a proof is a fact, and a
+ * test can hold it against the exhaustive solver. */
+int uttt_tree_proof(const UtttGame *g, long playouts, uint64_t *rs)
+{
+    if (g->over || uttt_legal(g, (uint8_t[81]){0}) <= 0) return 2;
+    tree_search(g, playouts, rs);
+    switch (tree_pool[0].pv) {
+    case PV_WIN:  return 1;
+    case PV_LOSS: return -1;
+    case PV_DRAW: return 0;
+    default:      return 2;
+    }
+}
+
+static uint8_t tree_move(const UtttGame *g, int budget, uint64_t *rs)
+{
+    uint8_t list[81];
+    int n = uttt_legal(g, list);
+    if (n <= 0) return 0;
+    if (n == 1) return list[0];
+
+    /* THE SNIPER'S ROOT, unchanged. */
+    uint8_t mv = 0;
+    if (uttt_mate_in(g, 2000L, &mv)) return mv;
+    if (empties(g) <= 11) {
+        int bestv = -2; uint8_t bestm = list[0];
+        for (int i = 0; i < n; i++) {
+            UtttGame t = *g;
+            uttt_play(&t, list[i]);
+            int v = solve(&t, 12);
+            if (v == 2) { bestv = -2; break; }
+            v = -v;
+            if (v > bestv) { bestv = v; bestm = list[i]; }
+        }
+        if (bestv > -2) return bestm;
+    }
+
+    /* THE SAME ALLOWANCE AS THE FLAT SEARCH: `budget` a legal move. */
+    tree_search(g, (long)budget * n, rs);
+
+    /* THE ANSWER. A proved win if the tree found one; otherwise the most
+     * visited child that is not a proved loss, and on equal visits the
+     * better score, and on equal score the heuristic - the same tie-break
+     * as the flat search, for the same reason. */
+    const TreeNode *root = &tree_pool[0];
+    uint32_t bi = root->first;
+    int b_alive = -1; long b_v = -1; double b_s = -1; int b_h = 0;
+    for (int i = 0; i < root->nchild; i++) {
+        const TreeNode *c = &tree_pool[root->first + i];
+        if (c->pv == PV_LOSS) return c->mv;             /* proved win */
+        int alive = c->pv != PV_WIN;                     /* not a proved loss */
+        long v = (long)c->visits;
+        double s = c->visits ? (double)c->score / (2.0 * c->visits)
+                             : (c->pv == PV_DRAW ? 0.5 : 0.0);
+        int h = score_move(g, c->mv);
+        if (alive > b_alive || (alive == b_alive && (v > b_v ||
+            (v == b_v && (s > b_s || (s == b_s && h > b_h)))))) {
+            bi = root->first + (uint32_t)i;
+            b_alive = alive; b_v = v; b_s = s; b_h = h;
+        }
+    }
+    return tree_pool[bi].mv;
+}
+
 uint8_t uttt_bot_move(UtttBot bot, const UtttGame *g, int budget, uint64_t *rs)
 {
     uint8_t list[81];
@@ -367,6 +617,7 @@ uint8_t uttt_bot_move(UtttBot bot, const UtttGame *g, int budget, uint64_t *rs)
     case BOT_BIAS:   return mc_move(g, budget, rs, 0, 1, 0, 0);
     case BOT_NIB:    return mc_move(g, budget, rs, 1, 1, 1, 0);
     case BOT_SNIPER: return mc_move(g, budget, rs, 1, 1, 1, 1);
+    case BOT_QUILL:  return tree_move(g, budget, rs);
     default:         return list[0];
     }
 }
