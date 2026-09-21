@@ -128,16 +128,151 @@ static int empties(const UtttGame *g)
     return e;
 }
 
-/* ---------------------------------------------------------------------- mc */
-/* `speed`: a rollout that wins is worth MORE THE SOONER IT LANDS.
+/* ------------------------------------------------------------ shallowest mate
+ * A FORCED WIN, PROVED, and the shortest one there is.
  *
- * Every other bot here scores a playout win/draw/loss and is indifferent to
- * how long it took - which is right, because the object of the game is to
- * win. The sniper wants the same win in fewer moves, so its rollout is worth
- * 200 plus whatever is left of the board when it ends. The ordering of
- * win over draw over loss is untouched (200..280 against 100 against 0), so
- * it never trades a win away for a short game; it only breaks ties between
- * wins, which is the whole of the difference. */
+ * This is what "win in as few moves as possible" actually needs, and it is
+ * not a weight on a rollout - the negative result in uttt_bots.h is the
+ * afternoon that established as much. A rollout weight can only re-rank
+ * candidates that a search already thinks are equal; winning sooner means
+ * PROVING a line the opponent cannot escape and preferring the shortest
+ * proof.
+ *
+ * AN AND/OR SEARCH, NOT A MINIMAX. Our nodes are OR - one move that forces a
+ * win is enough. Theirs are AND - every reply has to still lose, and one
+ * escape kills the line. There is no evaluation function anywhere in it,
+ * which is the point: it returns a number of plies or it returns nothing,
+ * and a "nothing" is honest rather than a guess dressed as a score.
+ *
+ * A draw is a failure here. A line that forces a draw is not a win, and the
+ * bot that owns this search falls back to Monte Carlo the moment the proof
+ * runs out - so it never trades a win for a short game, it just takes the
+ * short one when it can see the whole thing.
+ *
+ * ITERATIVE DEEPENING IS WHAT MAKES IT SHALLOWEST. Odd depths only, because
+ * a forced win always ends on our move: the first depth that answers is the
+ * shortest mate, so there is nothing to compare afterwards.
+ *
+ * The node budget is the only thing stopping it. Depth grows as b^d with b
+ * around six, so an unbounded search on an open board does not return; the
+ * budget turns "no mate" and "no time" into the same answer, which for a bot
+ * choosing a move is the same answer anyway. */
+#define MATE_NONE 9999
+
+static int mate_in(UtttGame *g, int depth, long *nodes);
+
+/* One OR node. `out` receives the move when a mate is found. */
+static int mate_root(UtttGame *g, int depth, long *nodes, uint8_t *out)
+{
+    if (depth <= 0 || (*nodes -= 1) <= 0) return MATE_NONE;
+
+    uint8_t list[81];
+    int n = uttt_legal(g, list);
+    if (n <= 0) return MATE_NONE;
+    const uint8_t me = g->turn;
+    int best = MATE_NONE;
+
+    for (int i = 0; i < n; i++) {
+        UtttGame t = *g;
+        uttt_play(&t, list[i]);
+        if (t.over) {
+            /* Over on our own move: a win is mate in one, a draw is not a
+             * win, and we cannot lose by moving. */
+            if (t.over == me && best > 1) { best = 1; if (out) *out = list[i]; }
+            continue;
+        }
+        /* EVERY reply has to still lose. One escape and the line is not a
+         * proof, which is the whole difference between this and a search
+         * that averages. */
+        uint8_t rl[81];
+        int m = uttt_legal(&t, rl);
+        int worst = 0;
+        for (int j = 0; j < m; j++) {
+            UtttGame u = t;
+            uttt_play(&u, rl[j]);
+            if (u.over) { worst = MATE_NONE; break; }   /* they won, or drew */
+            /* No line longer than the best already found is worth proving. */
+            int cap = (best < MATE_NONE ? best - 2 : depth) - 2;
+            int v = mate_in(&u, cap < depth - 2 ? cap : depth - 2, nodes);
+            if (v >= MATE_NONE) { worst = MATE_NONE; break; }
+            if (v > worst) worst = v;
+        }
+        if (worst < MATE_NONE && 2 + worst < best) {
+            best = 2 + worst;
+            if (out) *out = list[i];
+        }
+    }
+    return best;
+}
+
+static int mate_in(UtttGame *g, int depth, long *nodes)
+{
+    return mate_root(g, depth, nodes, NULL);
+}
+
+/* COULD A MATE IN `depth` EVEN EXIST? How many blocks the side to move
+ * still needs on their best line, against how many moves they get.
+ *
+ * A win ends on three blocks in a line, so a line with anything of the
+ * opponent's in it - or anything drawn - is dead and every line being dead
+ * means no forced win at any depth. On a live line they must take every
+ * block they do not already hold, and each one costs at least one of their
+ * moves; `depth` plies give them (depth + 1) / 2. If no line is within
+ * reach, the answer is no and it took nine comparisons to say so.
+ *
+ * WHY THIS EXISTS AT ALL. Measured at 160,000 nodes, per move, ungated:
+ *
+ *     plies into the game     0      10     20     30     40     50
+ *     cost                  422ms  439ms  279ms  219ms  131ms  0.19ms
+ *     mate found             0/20   0/20   0/20   0/20   0/20   20/20
+ *
+ * Four hundred milliseconds to prove there was nothing to find, on every
+ * move, for the whole opening.
+ *
+ * MY FIRST GATE WANTED TWO BLOCKS OF A LINE ALREADY OWNED and it was wrong:
+ * a mate in three can start from ONE, by taking two blocks that are both a
+ * cell from falling. It rejected real wins. The depth is what makes it
+ * sound - the same question, asked of the search's own horizon. */
+static int line_in_reach(const UtttGame *g, int depth)
+{
+    static const uint8_t L[8][3] = {
+        {0,1,2},{3,4,5},{6,7,8},{0,3,6},{1,4,7},{2,5,8},{0,4,8},{2,4,6} };
+    const uint8_t me = g->turn;
+    const int moves = (depth + 1) / 2;
+    for (int i = 0; i < 8; i++) {
+        int need = 0, dead = 0;
+        for (int j = 0; j < 3; j++) {
+            uint8_t b = g->block[L[i][j]];
+            if (b == me) continue;
+            if (b == UTTT_OPEN) need++;
+            else { dead = 1; break; }
+        }
+        if (!dead && need <= moves) return 1;
+    }
+    return 0;
+}
+
+/* The shortest forced win, or 0 if there is none inside the budget. */
+int uttt_mate_in(const UtttGame *g, long nodes, uint8_t *out)
+{
+    for (int d = 1; d <= 13; d += 2) {
+        if (!line_in_reach(g, d)) continue;
+        UtttGame t = *g;
+        long left = nodes;
+        uint8_t mv = 0;
+        int v = mate_root(&t, d, &left, &mv);
+        nodes -= (nodes - left);
+        if (v < MATE_NONE) { *out = mv; return v; }
+        if (nodes <= 0) break;
+    }
+    return 0;
+}
+
+/* ---------------------------------------------------------------------- mc */
+/* `speed`: look for a proved forced win FIRST and take the shortest one.
+ *
+ * Only when a whole line can be seen to the end. The moment the proof runs
+ * out this is nib exactly, so a short game is never bought with a win. */
 static uint8_t mc_move(const UtttGame *g, int budget, uint64_t *rs,
                        int crn, int biased, int endgame, int speed)
 {
@@ -145,6 +280,23 @@ static uint8_t mc_move(const UtttGame *g, int budget, uint64_t *rs,
     int n = uttt_legal(g, list);
     if (n <= 0) return 0;
     if (n == 1) return list[0];
+
+    /* THE PROOF COMES FIRST. A line that ends the game is worth more than
+     * any number of rollouts that only suggest it might. */
+    if (speed) {
+        /* A FLAT BUDGET, not one scaled off the rollout count: what a proof
+         * costs has nothing to do with how many playouts somebody asked for.
+         *
+         * Two thousand nodes, measured. Worst case about three milliseconds
+         * a move through the middlegame and a fifth of one in the endgame,
+         * where it finds every mate a budget twenty thousand times larger
+         * finds. Above this the money goes entirely on proving ABSENCE
+         * deeper, which is worth nothing to a bot that has a Monte Carlo
+         * search to fall back on - at 160,000 the same search cost 420ms a
+         * move through the whole opening and returned nothing every time. */
+        uint8_t mv = 0;
+        if (uttt_mate_in(g, 2000L, &mv)) return mv;
+    }
 
     if (endgame && empties(g) <= 11) {
         int bestv = -2; uint8_t bestm = list[0];
@@ -172,10 +324,8 @@ static uint8_t mc_move(const UtttGame *g, int budget, uint64_t *rs,
             uint64_t s = crn ? base : (*rs += 0x9E3779B97F4A7C15ull);
             UtttGame t = *g;
             uttt_play(&t, list[i]);
-            int plies = 0;
-            uint8_t w = playout(&t, &s, biased, speed ? &plies : NULL);
-            if (w == me)            score[i] += speed ? 200 + (81 - plies) : 2;
-            else if (w == UTTT_DRAW) score[i] += speed ? 100 : 1;
+            uint8_t w = playout(&t, &s, biased, NULL);
+            score[i] += (w == me) ? 2 : (w == UTTT_DRAW ? 1 : 0);
         }
     }
     *rs += 0x9E3779B97F4A7C15ull;

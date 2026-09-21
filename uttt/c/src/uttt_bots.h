@@ -46,8 +46,7 @@ typedef enum {
     BOT_CRN,          /* ...the same, with common random numbers ONLY      */
     BOT_BIAS,         /* ...the same, with biased playouts ONLY            */
     BOT_NIB,          /* CRN + biased playouts + exact endgame             */
-    BOT_SNIPER,       /* ...and a rollout worth more the sooner it wins    */
-                      /* MEASURED, AND IT DOES NOT WORK - see below.       */
+    BOT_SNIPER,       /* ...and a proved forced win, shortest, first       */
     BOT_COUNT
 } UtttBot;
 
@@ -57,32 +56,51 @@ extern const char *UTTT_BOT_NAME[BOT_COUNT];
  * the work". Bundling them and reporting the bundle is how a codebase ends up
  * carrying two that do nothing. */
 
-/* AND `sniper` IS A NEGATIVE RESULT, kept for the same reason.
+/* AND `sniper` IS A PROOF, NOT A PREFERENCE - after one afternoon spent
+ * learning it could not be a preference.
  *
- * It is nib with one change: a rollout that wins is worth 200 + (81 - plies)
- * instead of a flat 2, so a faster win outranks a slower one while never
- * outranking a draw. The idea was a bot that beats you in as few moves as it
- * can. 120 games a pairing at 40 rollouts, mean ply count of the games each
- * one WON:
+ * THE VERSION THAT DID NOT WORK. nib with a winning rollout worth
+ * 200 + (81 - plies) instead of a flat 2, so a faster win outranks a slower
+ * one and never outranks a draw. Mean ply count of the games each bot won,
+ * 120 a pairing:
  *
- *     opponent    nib      sniper
+ *     opponent    nib      rollout-weight sniper
  *     random      44.2     43.8
  *     biro        38.4     37.2
  *     roller      44.8     44.2
  *     crn         44.7     44.9
  *     bias        52.7     52.3
  *
- * HALF A PLY, for about two points of strength (73.3% against nib's 75.5%
- * across the ladder, and nib takes the head-to-head 55.8%). The bonus only
- * re-ranks candidates whose win COUNTS are equal, and at forty rollouts that
- * is rare - the ranking is dominated by whether a line wins at all, which is
- * correct and is why the bonus cannot reach it.
+ * Half a ply, for two points of strength. The weight can only re-rank
+ * candidates whose win COUNTS are equal, and at forty rollouts that is rare
+ * - the ranking is dominated by whether a line wins at all, which is correct
+ * and is exactly what keeps the weight from reaching anything. Winning
+ * sooner is not a choice between two winning moves.
  *
- * Winning sooner is not a choice between two winning moves. It needs a
- * forced-win search that prefers the SHALLOWEST mate, which is a different
- * thing from a rollout weight - the exact endgame below is already that
- * search, and it only runs under eleven empty cells. Anybody tempted to try
- * the rollout weight again should read this table first. */
+ * THE VERSION THAT DOES. nib, plus `uttt_mate_in` before the rollouts: a
+ * proved forced win, shortest first, or nothing. 60 games a pairing:
+ *
+ *     opponent    nib      sniper     sniper wins in / nib wins in
+ *     roller      76.2%    81.7%      44.5 / 44.8
+ *     crn         70.4%    75.8%      44.9 / 44.7
+ *     bias        50.4%    68.3%      49.7 / 52.7
+ *     nib           -      60.0%      50.7
+ *
+ * Stronger AND sooner, which is the part worth understanding: a search that
+ * ends the game when it can see the end is not a stylistic choice, it is
+ * simply better play. The rollouts never know they have a forced win; they
+ * only know that a lot of games from here came out well.
+ *
+ * (Sixty games is about 1.6 sigma on that 60% - suggestive, not settled.) */
+
+/* THE SHORTEST FORCED WIN for the side to move, in plies, or 0 if there is
+ * none inside `nodes`. `out` receives the move when there is one.
+ *
+ * Exposed because it is the one thing in this file that is a FACT rather
+ * than an opinion - it proves a line or says nothing - and because a test
+ * can check it against the exact endgame solver, which is two independent
+ * implementations of the same question. */
+int uttt_mate_in(const UtttGame *g, long nodes, uint8_t *out);
 
 /* Pick a move. `budget` is rollouts per candidate for the searching bots and
  * is ignored by the others. `rs` is the caller's RNG state, advanced. */

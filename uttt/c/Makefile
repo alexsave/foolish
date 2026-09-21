@@ -4,7 +4,7 @@ LDLIBS  := -lm
 SRC     := src/uttt.c src/uttt_code.c src/uttt_bots.c \
            src/uttt_pen.c src/uttt_draw.c src/uttt_rule.c
 
-all: build/uttt_test build/uttt_arena build/uttt_render
+all: build/uttt_test build/uttt_arena build/uttt_render build/uttt_mate
 
 build:
 	@mkdir -p build
@@ -20,6 +20,14 @@ run: build/uttt_test
 
 arena: build/uttt_arena
 	./build/uttt_arena 200 200
+
+build/uttt_mate: $(SRC) tests/uttt_mate.c | build
+	$(CC) $(CFLAGS) $(SRC) tests/uttt_mate.c -o $@ $(LDLIBS)
+
+# The mate search against an exhaustive one. Both the verdict and the
+# distance, on positions deep enough to tell a min from a max.
+mate: build/uttt_mate
+	./build/uttt_mate 2000
 
 build/uttt_icon: $(SRC) tools/uttt_icon.c | build
 	$(CC) $(CFLAGS) $(SRC) tools/uttt_icon.c -o $@ $(LDLIBS)
