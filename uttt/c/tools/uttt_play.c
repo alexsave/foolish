@@ -46,6 +46,17 @@ static void put_mark(uint8_t m, const char *empty)
     else                  printf("%s", empty);
 }
 
+/* A WON BOARD IS DRAWN AS ONE BIG MARK ACROSS ITS NINE SQUARES. Once a
+ * board is decided nothing can be played in it again and the individual
+ * stones stop mattering, so it shows what it BECAME rather than how it got
+ * there. That is also what you are really reading when you scan the sheet:
+ * not sixty-odd squares, but nine results and whether three of them line up.
+ *
+ * Nine characters each, in reading order, blanks where the glyph is open. */
+static const char *BIG_X = "X X X X X";    /* the two diagonals */
+static const char *BIG_O = "OOOO OOOO";    /* the ring          */
+static const char *BIG_D = "#########";    /* filled, nobody    */
+
 static void draw(const UtttGame *g, int last)
 {
     unsigned live = g->over ? 0u : uttt_legal_blocks(g);
@@ -58,8 +69,18 @@ static void draw(const UtttGame *g, int last)
             int mv = rc_to_move(r, col);
             uint8_t m = uttt_cell(g, mv);
             int playable = (live >> (mv / 9)) & 1u;
+            uint8_t won = uttt_block(g, mv / 9);
 
-            if (m == UTTT_OPEN && playable)
+            if (won != UTTT_OPEN) {
+                const char *glyph = won == UTTT_X ? BIG_X
+                                  : won == UTTT_O ? BIG_O : BIG_D;
+                char ch = glyph[mv % 9];
+                if (ch == ' ') printf(" ");
+                else if (won == UTTT_X) printf("%s%s%c%s", c(BOLD), c(XCOL), ch, c(OFF));
+                else if (won == UTTT_O) printf("%s%s%c%s", c(BOLD), c(OCOL), ch, c(OFF));
+                else printf("%s%c%s", c(DIM), ch, c(OFF));
+            }
+            else if (m == UTTT_OPEN && playable)
                 printf("%s+%s", c(HI), c(OFF));
             else if (m == UTTT_OPEN)
                 printf("%s.%s", c(DIM), c(OFF));
@@ -90,6 +111,24 @@ static void draw(const UtttGame *g, int last)
         else printf(" ");
     }
     printf("\n");
+}
+
+static const char *BOARD_NAME[9] = {
+    "top-left", "top", "top-right", "left", "centre", "right",
+    "bottom-left", "bottom", "bottom-right"
+};
+
+/* Which board, if any, changed hands on that move. -1 for none. */
+static int board_taken(const uint8_t *before, const UtttGame *g)
+{
+    for (int b = 0; b < 9; b++)
+        if (before[b] == UTTT_OPEN && uttt_block(g, b) != UTTT_OPEN) return b;
+    return -1;
+}
+
+static void snapshot(const UtttGame *g, uint8_t *out)
+{
+    for (int b = 0; b < 9; b++) out[b] = uttt_block(g, b);
 }
 
 static int read_move(const UtttGame *g, uint8_t *out)
@@ -165,6 +204,8 @@ int main(int argc, char **argv)
         uint8_t list[81];
         if (uttt_legal(&g, list) <= 0) break;
 
+        uint8_t was[9]; snapshot(&g, was);
+
         if (g.turn == UTTT_X) {
             clock_t t0 = clock();
             uint8_t mv = uttt_bot_move(BOT_QUILL, &g, budget, &rs);
@@ -173,9 +214,16 @@ int main(int argc, char **argv)
             last = mv;
             /* The board is drawn once a cycle, by the side that has to look
              * at it, and this goes underneath it rather than above. */
-            snprintf(said, sizeof said, "  quill plays row %d col %d  %s(%.2fs)%s",
+            int got = board_taken(was, &g);
+            snprintf(said, sizeof said, "  quill plays row %d col %d  %s(%.2fs)%s%s%s",
                      (mv / 9 / 3) * 3 + (mv % 9) / 3 + 1,
-                     (mv / 9 % 3) * 3 + (mv % 9) % 3 + 1, c(DIM), dt, c(OFF));
+                     (mv / 9 % 3) * 3 + (mv % 9) % 3 + 1, c(DIM), dt, c(OFF),
+                     got >= 0 ? "\n  >>> quill TAKES THE " : "",
+                     got >= 0 ? BOARD_NAME[got] : "");
+            if (got >= 0) {
+                size_t l = strlen(said);
+                snprintf(said + l, sizeof said - l, " BOARD");
+            }
         } else {
             draw(&g, last);
             if (said[0]) { printf("\n%s\n", said); said[0] = 0; }
@@ -190,6 +238,9 @@ int main(int argc, char **argv)
             } else if (!read_move(&g, &mv)) { printf("\n  bye.\n"); return 0; }
             uttt_play(&g, mv);
             last = mv;
+            int got = board_taken(was, &g);
+            if (got >= 0)
+                printf("\n  >>> you TAKE THE %s BOARD\n", BOARD_NAME[got]);
         }
     }
 
