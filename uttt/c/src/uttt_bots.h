@@ -135,6 +135,14 @@ extern const char *UTTT_BOT_NAME[BOT_COUNT];
  * round robin, on different seed streams; the honest number is somewhere
  * in the high sixties, and every reading of it is past three sigma.
  *
+ * CHECKED FROM OUTSIDE THE TUNING, on a fifth stream none of the work above
+ * used: 200 games, quill 70.5%, 49.1s against 49.7s. Standard error 3.2 at
+ * that sample, so six sigma, and the time is matched. That is the TOP of the
+ * range rather than the bottom. Five readings across four streams now -
+ * 62.5, 64.5, 66.8, 70.5, 73.3 - which is a wide band for a settled number
+ * and a very clear answer to whether there is an edge at all. Anyone
+ * re-tuning this should quote a range, not the reading they liked.
+ *
  * And from the other side, sniper scored 33.2% over its own 300 against
  * quill - so quill at 66.8% measured independently, both well past three
  * sigma. In the round robin (`uttt_arena 100 40`) quill takes 62.5% off
