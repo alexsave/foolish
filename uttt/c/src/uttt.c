@@ -156,11 +156,7 @@ int uttt_play(UtttGame *g, uint8_t mv)
 
     if (uttt_mask_line(g->bm[0]))      g->over = UTTT_X;
     else if (uttt_mask_line(g->bm[1])) g->over = UTTT_O;
-    else {
-        int any_open = 0;
-        for (int i = 0; i < 9; i++) if (g->block[i] == UTTT_OPEN) any_open = 1;
-        if (!any_open) g->over = UTTT_DRAW;
-    }
+    else if (!g->live)                 g->over = UTTT_DRAW;
 
     g->forced = (uint8_t)c;
     g->turn   = (uint8_t)(g->turn == UTTT_X ? UTTT_O : UTTT_X);

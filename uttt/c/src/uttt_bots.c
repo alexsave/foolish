@@ -208,41 +208,50 @@ static int mate_root(UtttGame *g, int depth, long *nodes, uint8_t *out)
 {
     if (depth <= 0 || (*nodes -= 1) <= 0) return MATE_NONE;
 
-    uint8_t list[81];
-    int n = uttt_legal(g, list);
-    if (n <= 0) return MATE_NONE;
+    /* MASKS, NOT A LIST. This is a proof search: it walks every move of
+     * every position it visits, and it visits thousands per move, so the
+     * eighty-one byte buffer was being filled and thrown away at every
+     * node of the tree. */
+    unsigned blocks = uttt_legal_blocks(g);
+    if (!blocks) return MATE_NONE;
     const uint8_t me = g->turn;
     int best = MATE_NONE;
 
-    for (int i = 0; i < n; i++) {
+    for (unsigned bb = blocks; bb; bb &= bb - 1) {
+      int b0 = __builtin_ctz(bb);
+      for (unsigned o = uttt_open_cells(g, b0); o; o &= o - 1) {
+        uint8_t mv = (uint8_t)(b0 * 9 + __builtin_ctz(o));
         UtttGame t = *g;
-        uttt_play(&t, list[i]);
+        uttt_play(&t, mv);
         if (t.over) {
             /* Over on our own move: a win is mate in one, a draw is not a
              * win, and we cannot lose by moving. */
-            if (t.over == me && best > 1) { best = 1; if (out) *out = list[i]; }
+            if (t.over == me && best > 1) { best = 1; if (out) *out = mv; }
             continue;
         }
         /* EVERY reply has to still lose. One escape and the line is not a
          * proof, which is the whole difference between this and a search
          * that averages. */
-        uint8_t rl[81];
-        int m = uttt_legal(&t, rl);
+        unsigned rblocks = uttt_legal_blocks(&t);
         int worst = 0;
-        for (int j = 0; j < m; j++) {
+        for (unsigned rb = rblocks; rb && worst < MATE_NONE; rb &= rb - 1) {
+          int b1 = __builtin_ctz(rb);
+          for (unsigned ro = uttt_open_cells(&t, b1); ro; ro &= ro - 1) {
             UtttGame u = t;
-            uttt_play(&u, rl[j]);
+            uttt_play(&u, (uint8_t)(b1 * 9 + __builtin_ctz(ro)));
             if (u.over) { worst = MATE_NONE; break; }   /* they won, or drew */
             /* No line longer than the best already found is worth proving. */
             int cap = (best < MATE_NONE ? best - 2 : depth) - 2;
             int v = mate_in(&u, cap < depth - 2 ? cap : depth - 2, nodes);
             if (v >= MATE_NONE) { worst = MATE_NONE; break; }
             if (v > worst) worst = v;
+          }
         }
         if (worst < MATE_NONE && 2 + worst < best) {
             best = 2 + worst;
-            if (out) *out = list[i];
+            if (out) *out = mv;
         }
+      }
     }
     return best;
 }
