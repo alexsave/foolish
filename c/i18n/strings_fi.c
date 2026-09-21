@@ -235,7 +235,6 @@ const char *const FS_STRINGS_FI[FS_K_COUNT] = {
     [FS_K_OFFLINE                  ] = "Offline-tila",
     [FS_K_ORACLE_ANALYZING         ] = "Analysoidaan… {n} maailmaa · {rate}/s",
     [FS_K_ORACLE_APPROX            ] = "Likimääräinen tilanne (osa piilokorteista on päätelty).",
-    [FS_K_ORACLE_BASIS             ] = "Perustuu julkisesti näkyviin tapahtumiin.",
     [FS_K_ORACLE_BELIEF_FLOOR      ] = "P{n}:llä ei ole muun maan korttia alle {v}",
     [FS_K_ORACLE_BELIEF_NONE       ] = "Ei vielä varmoja päätelmiä - mikä tahansa näkemätön kortti on mahdollinen",
     [FS_K_ORACLE_BELIEF_PINNED     ] = "P{n}:llä tiedetään olevan {cards}",

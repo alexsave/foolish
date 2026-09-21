@@ -235,7 +235,6 @@ const char *const FS_STRINGS_RO[FS_K_COUNT] = {
     [FS_K_OFFLINE                  ] = "Fără conexiune",
     [FS_K_ORACLE_ANALYZING         ] = "Analizez… {n} lumi · {rate}/s",
     [FS_K_ORACLE_APPROX            ] = "Poziție aproximativă (unele cărți ascunse sunt deduse).",
-    [FS_K_ORACLE_BASIS             ] = "Pe baza a ceea ce se vede public.",
     [FS_K_ORACLE_BELIEF_FLOOR      ] = "P{n} nu are nicio carte non-atu sub {v}",
     [FS_K_ORACLE_BELIEF_NONE       ] = "Încă nicio deducție sigură - orice carte nevăzută este posibilă",
     [FS_K_ORACLE_BELIEF_PINNED     ] = "Se știe sigur că P{n} are {cards}",

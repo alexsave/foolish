@@ -235,7 +235,6 @@ const char *const FS_STRINGS_CS[FS_K_COUNT] = {
     [FS_K_OFFLINE                  ] = "Offline",
     [FS_K_ORACLE_ANALYZING         ] = "Analyzuji… {n} světů · {rate}/s",
     [FS_K_ORACLE_APPROX            ] = "Přibližná pozice (část skrytých karet je jen odvozená).",
-    [FS_K_ORACLE_BASIS             ] = "Vychází z veřejně viditelného záznamu.",
     [FS_K_ORACLE_BELIEF_FLOOR      ] = "P{n} nemá mimo trumf nic pod {v}",
     [FS_K_ORACLE_BELIEF_NONE       ] = "Zatím žádná jistota - možná je každá neviděná karta",
     [FS_K_ORACLE_BELIEF_PINNED     ] = "P{n} jistě drží {cards}",

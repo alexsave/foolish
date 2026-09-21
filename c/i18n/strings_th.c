@@ -235,7 +235,6 @@ const char *const FS_STRINGS_TH[FS_K_COUNT] = {
     [FS_K_OFFLINE                  ] = "ออฟไลน์",
     [FS_K_ORACLE_ANALYZING         ] = "กำลังวิเคราะห์… {n} โลก · {rate}/วิ",
     [FS_K_ORACLE_APPROX            ] = "ตำแหน่งโดยประมาณ (อนุมานไพ่ที่ซ่อนอยู่บางใบ)",
-    [FS_K_ORACLE_BASIS             ] = "อ้างอิงจากข้อมูลที่ทุกคนเห็นได้",
     [FS_K_ORACLE_BELIEF_FLOOR      ] = "P{n} ไม่มีไพ่นอกทรัมป์ที่ต่ำกว่า {v}",
     [FS_K_ORACLE_BELIEF_NONE       ] = "ยังสรุปอะไรแน่นอนไม่ได้ - ไพ่ที่ยังไม่เห็นเป็นไปได้ทุกใบ",
     [FS_K_ORACLE_BELIEF_PINNED     ] = "รู้แน่ว่า P{n} ถือ {cards}",

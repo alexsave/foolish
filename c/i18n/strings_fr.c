@@ -235,7 +235,6 @@ const char *const FS_STRINGS_FR[FS_K_COUNT] = {
     [FS_K_OFFLINE                  ] = "Hors ligne",
     [FS_K_ORACLE_ANALYZING         ] = "Analyse… {n} mondes · {rate}/s",
     [FS_K_ORACLE_APPROX            ] = "Position approximative (certaines cartes cachées sont déduites).",
-    [FS_K_ORACLE_BASIS             ] = "D'après les informations publiquement visibles.",
     [FS_K_ORACLE_BELIEF_FLOOR      ] = "P{n} n'a aucune carte hors atout en dessous de {v}",
     [FS_K_ORACLE_BELIEF_NONE       ] = "Aucune déduction certaine pour l'instant - toute carte non vue est possible",
     [FS_K_ORACLE_BELIEF_PINNED     ] = "P{n} détient forcément {cards}",

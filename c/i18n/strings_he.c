@@ -235,7 +235,6 @@ const char *const FS_STRINGS_HE[FS_K_COUNT] = {
     [FS_K_OFFLINE                  ] = "לא מקוון",
     [FS_K_ORACLE_ANALYZING         ] = "מנתח… {n} עולמות · {rate} לשנייה",
     [FS_K_ORACLE_APPROX            ] = "מצב משוער (חלק מהקלפים המוסתרים הוסקו).",
-    [FS_K_ORACLE_BASIS             ] = "מבוסס על המידע הגלוי לכולם.",
     [FS_K_ORACLE_BELIEF_FLOOR      ] = "ל-P{n} אין קלף שאינו שליט מתחת ל-{v}",
     [FS_K_ORACLE_BELIEF_NONE       ] = "עדיין אין מסקנות ודאיות - כל קלף שלא נראה אפשרי",
     [FS_K_ORACLE_BELIEF_PINNED     ] = "ידוע ש-P{n} מחזיק {cards}",
