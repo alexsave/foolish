@@ -67,6 +67,51 @@ A "20% Battery, tap to turn on Low Power Mode" banner is on screen from 915.2s t
 It hangs below the status bar, so the 180px crop only takes its top half.
 That window has to be cut out rather than cropped away.
 
+## Why the README shows a GIF and not the video
+
+GitHub will not play an mp4 in a README unless it is hosted on a very short list of its
+own domains, and the reason is a Content-Security-Policy header rather than anything about
+the file.
+`curl -sI https://github.com/<owner>/<repo>` and read `media-src`; today it is:
+
+```
+media-src github.com user-images.githubusercontent.com secured-user-images.githubusercontent.com
+          private-user-images.githubusercontent.com
+          github-production-user-asset-6210df.s3.amazonaws.com
+          gist.github.com github.githubassets.com
+```
+
+`raw.githubusercontent.com` and `release-assets.githubusercontent.com` are both in `img-src`
+and **neither is in `media-src`**.
+So a committed mp4 and a release asset are equally useless to a `<video>` tag: the browser
+refuses the request before the content type matters.
+Both of those also serve `application/octet-stream` rather than `video/mp4`, which would
+have been a second problem had the first not stopped it.
+
+The only URL that works is the one GitHub mints when you drag a file into a comment box,
+`https://github.com/user-attachments/assets/...`, because it redirects into the S3 bucket
+that is on the list.
+There is no API for creating one, so it cannot be scripted.
+
+A GIF has no such restriction: images go through `camo.githubusercontent.com`, they render
+inline, and an animated one autoplays and loops without controls.
+That is what the README uses, and it is why the clip there is one 12 second exchange rather
+than the whole 56 seconds.
+
+`foolish-showcase.gif` is take one, 400px wide at 15fps, with a diff-based palette:
+
+```
+ffmpeg -ss 125.80 -t 11.80 -i SOURCE.MP4 -vf \
+  "fps=15,crop=1290:2616:0:180,scale=400:-2:flags=lanczos,split[a][b];\
+   [a]palettegen=max_colors=256:stats_mode=diff[p];\
+   [b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" \
+  -loop 0 foolish-showcase.gif
+```
+
+`stats_mode=diff` and `diff_mode=rectangle` are what keep it to 2.3 MB.
+The table does not move between frames, so both of them spend the palette and the frame
+area on the cards that do.
+
 ## The whole game
 
 `tighten` will also render the entire game with the waiting removed, which comes to about
