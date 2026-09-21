@@ -61,6 +61,10 @@ export interface ReplayFrame {
     seat: number | null;
     /** The cards this step moved, for the status line. */
     cards: Card[];
+    /** How many of `cards` the MOVE NAMED, as the kernel counts them: the cards
+     *  the seat CHOSE. 0 for a pickup, whose step carries the pile it swept.
+     *  A reader that treats this step as a decision slices `cards` to this. */
+    named: number;
     /** The attack card being covered (COVER only). */
     target: Card | null;
     /** Cards moved but not shown individually (the discard count, hidden draws). */
@@ -179,6 +183,7 @@ export function buildReplayFrames(
             kind: info.kind,
             seat: info.seat < 0 ? null : info.seat,
             cards: ev?.cards?.map((c) => ({ ...c })) ?? [],
+            named: info.named,
             target: ev?.target_card ? { ...ev.target_card } : null,
             count: ev?.cards?.length ?? 0,
             seq: {

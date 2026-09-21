@@ -402,8 +402,22 @@ static void rs_step_index(const Game *g, int viewer, void *u) {
     const int kind = g_rs_cur ? g_rs_cur->kind : REPLAY_ATOM_DEAL;
     const int seat = (g_rs_cur && g_rs_cur->kind != REPLAY_ATOM_ROUND_END
                       && g_rs_cur->seat >= 0) ? g_rs_cur->seat : RS_SEAT_NONE;
+    // How many of the step's cards the MOVE named. A pickup takes whatever is
+    // on the table and a good names nothing: the act IS the choice, so neither
+    // names a card, however many the step moves. Everything else named what it
+    // played.
+    int named = 0;
+    if (g_rs_cur) {
+        switch (g_rs_cur->kind) {
+            case REPLAY_ATOM_ATTACK:
+            case REPLAY_ATOM_COVER:
+            case REPLAY_ATOM_PASS: named = g_rs_cur->n_cards; break;
+            default: named = 0; break;      // pickup, good, draw, round end
+        }
+    }
     x->out[x->len++] = (unsigned char)kind;
     x->out[x->len++] = (unsigned char)seat;
+    x->out[x->len++] = (unsigned char)named;
 }
 
 int replay_steps_index_v6(const unsigned char *code, int code_len,

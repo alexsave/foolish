@@ -45,12 +45,23 @@ export function findDecisionIndex(frames: ReplayFrame[], stepIdx: number): numbe
 /** Canonical key + human label of a recorded move. */
 function recordedMove(frame: ReplayFrame, trump: number): { key: string; label: string } {
     const type = KIND_TO_MTYPE[frame.kind] ?? 'wait';
-    const cards = frame.cards.map((c) => oracleCardToken(c, trump));
-    const targets = frame.target ? [oracleCardToken(frame.target, trump)] : [];
+    // THE KERNEL SAYS HOW MANY CARDS THE MOVE NAMED (replay_steps.h, the step
+    // index's third byte). A step's cards are not always its move's: a pickup
+    // carries the pile it swept, which nobody chose. Slicing to the kernel's
+    // count is what stops this side inventing a second answer to a question the
+    // kernel already answers for octogen's dump - they disagreed about pickup,
+    // and every recorded pickup read as "not considered" because of it.
+    const named = frame.cards.slice(0, frame.named);
+    const cards = named.map((c) => oracleCardToken(c, trump));
+    const targets = frame.named > 0 && frame.target ? [oracleCardToken(frame.target, trump)] : [];
     const key = canonicalMoveKey(type, cards, targets);
     let label: string;
     if (type === 'cover') {
-        label = `cover ${cards.join(' ')}->${targets[0] ?? '?'}`;
+        // The same arrow the candidate rows draw (OracleOverlay moveTitleText):
+        // it is a cell on the 15-segment array, where "->" is a dash and a '>'
+        // the font has no glyph for, so the header fell out to plain text for
+        // two characters in the middle of a readout.
+        label = `cover ${cards.join(' ')}→${targets[0] ?? '?'}`;
     } else if (type === 'pickup') label = 'pickup';
     else if (type === 'good') label = 'good';
     else label = `${type} ${cards.join(' ')}`.trim();
