@@ -9,7 +9,12 @@ static uint32_t rnd(uint64_t *s, uint32_t n)
 {
     uint64_t x = *s;
     x ^= x >> 12; x ^= x << 25; x ^= x >> 27; *s = x;
-    return (uint32_t)(((x * 2685821657736338717ull) >> 33) % n);
+    uint32_t v = (uint32_t)((x * 2685821657736338717ull) >> 33);
+    /* A POWER OF TWO IS A MASK, and the commonest call here asks for four.
+     * `% n` with a runtime n is a hardware divide - the only one left in
+     * this binary - and it fired twice per playout step. */
+    if ((n & (n - 1)) == 0) return v & (n - 1);
+    return v % n;
 }
 
 /* ---------------------------------------------------------------- heuristic
