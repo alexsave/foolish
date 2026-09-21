@@ -33,57 +33,18 @@ const KIND_TO_MTYPE: Record<number, string> = {
     [REPLAY_STEP.GOOD]: 'good',
 };
 
-// A COVER RUN IS ONE MOVE. The replay wire groups an attack and a pass - both
-// have a continuation loop - but a cover is coded one pair at a time
-// (c/src/replay.c atom_cover), so a defender who takes three attacks in one
-// move comes back as three steps. Measured on a shared 65-step game: attacks
-// arrive carrying 1, 2 or 3 cards, and all 21 covers arrive carrying exactly 1.
-//
-// The kernel already reconstructs this rather than storing it. iMessage animates
-// a TURN, and finds one by walking back over consecutive steps of the same actor
-// (c/ios/ios_api_replay.c: "back over every step that seat played immediately
-// before it"). That is the rule below, applied to covers only - the one kind the
-// wire is known to split. Grouping any other kind would be inventing a move.
-//
-// Honest about what it cannot know: two covers in a row genuinely could have
-// been one multi-cover or two separate ones, and the wire dropped the bit that
-// would say. A seat that takes several attacks with nobody acting in between
-// played one move in every case this can actually produce - a bot picks one move
-// from a menu that offers the multi-cover, and the board does not hand the turn
-// back mid-cover - so grouping is right where it is not provable.
-const isCoverBy = (f: ReplayFrame | undefined, seat: number | null): boolean =>
-    !!f && f.kind === REPLAY_STEP.COVER && f.seat === seat;
-
-/** The first step of the cover run `j` sits in - `j` itself for anything else. */
-function coverRunStart(frames: ReplayFrame[], j: number): number {
-    if (frames[j].kind !== REPLAY_STEP.COVER) return j;
-    let i = j;
-    while (i > 1 && isCoverBy(frames[i - 1], frames[j].seat)) i--;
-    return i;
-}
-
-/** The last step of the cover run that starts at `i`. */
-function coverRunEnd(frames: ReplayFrame[], i: number): number {
-    if (frames[i].kind !== REPLAY_STEP.COVER) return i;
-    let k = i;
-    while (k + 1 < frames.length && isCoverBy(frames[k + 1], frames[i].seat)) k++;
-    return k;
-}
-
 /** The decision step under the cursor: the nearest decision at or before the
- *  paused step, and for a cover the step its whole run STARTS at, so every step
- *  of one multi-cover names the same decision and the board it was decided on. */
+ *  paused step. Returns null when none exists (Oracle button disabled).
+ *  A multi-cover is ONE step by the time it gets here - buildReplayFrames
+ *  merges the run the wire split - so there is nothing to group again. */
 export function findDecisionIndex(frames: ReplayFrame[], stepIdx: number): number | null {
     for (let j = Math.min(stepIdx, frames.length - 1); j >= 1; j--) {
-        if (frames[j].seat !== null && ORACLE_DECISION_KINDS.has(frames[j].kind)) {
-            return coverRunStart(frames, j);
-        }
+        if (frames[j].seat !== null && ORACLE_DECISION_KINDS.has(frames[j].kind)) return j;
     }
     return null;
 }
 
-/** Canonical key + human label of the move recorded at step `j` - for a cover,
- *  every pair of its run (see coverRunStart). */
+/** Canonical key + human label of the move recorded at step `j`. */
 function recordedMove(frames: ReplayFrame[], j: number, trump: number): { key: string; label: string } {
     const frame = frames[j];
     const type = KIND_TO_MTYPE[frame.kind] ?? 'wait';
@@ -93,13 +54,17 @@ function recordedMove(frames: ReplayFrame[], j: number, trump: number): { key: s
     // count is what stops this side inventing a second answer to a question the
     // kernel already answers for octogen's dump - they disagreed about pickup,
     // and every recorded pickup read as "not considered" because of it.
-    const last = type === 'cover' ? coverRunEnd(frames, j) : j;
+    // A cover names its pairs; everything else names the cards the kernel counted.
     const cards: string[] = [];
     const targets: string[] = [];
-    for (let k = j; k <= last; k++) {
-        const f = frames[k];
-        for (const c of f.cards.slice(0, f.named)) cards.push(oracleCardToken(c, trump));
-        if (f.named > 0 && f.target) targets.push(oracleCardToken(f.target, trump));
+    if (type === 'cover' && frame.pairs?.length) {
+        for (const p of frame.pairs) {
+            cards.push(oracleCardToken(p.card, trump));
+            targets.push(oracleCardToken(p.target, trump));
+        }
+    } else {
+        for (const c of frame.cards.slice(0, frame.named)) cards.push(oracleCardToken(c, trump));
+        if (frame.named > 0 && frame.target) targets.push(oracleCardToken(frame.target, trump));
     }
     const key = canonicalMoveKey(type, cards, targets);
     let label: string;
@@ -135,9 +100,13 @@ export function buildOracleJob(
     const seat = move.seat;
     if (seat == null) return null;
 
-    const state = replayStepMaskedState(code, j, seat);
+    // The KERNEL's step, not this array's index: a merged cover run makes them
+    // differ (buildReplayFrames mergeCoverRuns), and both of these address the
+    // wire. The run's FIRST wire step is the one the move was decided on.
+    const wireStep = move.step;
+    const state = replayStepMaskedState(code, wireStep, seat);
     if (!state) return null;
-    const logsWire = memoryOn ? replayStepLogs(code, j) : new Uint8Array(0);
+    const logsWire = memoryOn ? replayStepLogs(code, wireStep) : new Uint8Array(0);
     if (!logsWire) return null;
 
     const rec = recordedMove(frames, j, pre.powerSuit);
