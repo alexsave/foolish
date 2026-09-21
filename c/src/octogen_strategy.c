@@ -1170,9 +1170,19 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
 
 #define OG_MAX_CANDS 26
 // Cover candidates are kept PER WIDTH: this many distinct widths, this many of
-// each. Twelve places where there were ten, and no width can crowd out another.
+// each, bounded overall by OG_MAX_CANDS. A defender has no attack candidates to
+// share the table with, so covers can have nearly all of it, and 4 x 6 takes
+// every cover on a board that has 24 or fewer - which is almost all of them.
+// Measured over a shared 2p replay and 3p/4p/8p bot games, legal covers per
+// defender decision run at a median of 3-6; the tail is long (p90 10-48, one
+// 4p board at 277), so this is a budget, not a promise.
+//
+// It was ten places shared across every width, which is how the panel came to
+// print "not considered" under a triple cover that had just been animated: four
+// triples existed, three were kept, and the one dropped - the dearest, two 9s
+// and an Ace - was the one played.
 #define OG_COV_SIZES    4
-#define OG_COV_PER_SIZE 3
+#define OG_COV_PER_SIZE 6
 
 typedef struct {
     int idx[OG_MAX_CANDS];
