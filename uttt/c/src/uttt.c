@@ -75,23 +75,30 @@ void uttt_init(UtttGame *g)
     memset(g, 0, sizeof *g);
     g->forced = UTTT_ANY;
     g->turn   = UTTT_X;
+    g->live   = 0x1ff;
+}
+
+unsigned uttt_legal_blocks(const UtttGame *g)
+{
+    if (g->over) return 0;
+    if (g->forced != UTTT_ANY && ((g->live >> g->forced) & 1u))
+        return 1u << g->forced;
+    return g->live;
+}
+
+unsigned uttt_open_cells(const UtttGame *g, int b)
+{
+    return ~(unsigned)(g->cm[0][b] | g->cm[1][b]) & 0x1ffu;
 }
 
 int uttt_legal(const UtttGame *g, uint8_t *out)
 {
     int n = 0;
-    if (g->over) return 0;
-
-    int lo = 0, hi = 9;
-    if (g->forced != UTTT_ANY && g->block[g->forced] == UTTT_OPEN) {
-        lo = g->forced; hi = g->forced + 1;
-    }
-    /* THE EMPTY CELLS OF A BLOCK ARE ONE WORD, and walking their bits beats
-     * nine byte loads and nine branches - this was the largest single cost
-     * in a bot's profile once `uttt_line` stopped being it. */
-    for (int b = lo; b < hi; b++) {
-        if (g->block[b] != UTTT_OPEN) continue;
-        unsigned open = ~(unsigned)(g->cm[0][b] | g->cm[1][b]) & 0x1ffu;
+    unsigned blocks = uttt_legal_blocks(g);
+    while (blocks) {
+        int b = __builtin_ctz(blocks);
+        blocks &= blocks - 1;
+        unsigned open = uttt_open_cells(g, b);
         while (open) {
             int c = __builtin_ctz(open);
             open &= open - 1;
@@ -141,8 +148,10 @@ int uttt_play(UtttGame *g, uint8_t mv)
     if (uttt_mask_line(g->cm[me][b])) {
         g->block[b] = g->turn;
         g->bm[me] |= (uint16_t)(1u << b);
+        g->live   &= (uint16_t)~(1u << b);
     } else if ((g->cm[0][b] | g->cm[1][b]) == 0x1ffu) {
         g->block[b] = UTTT_DRAW;
+        g->live   &= (uint16_t)~(1u << b);
     }
 
     if (uttt_mask_line(g->bm[0]))      g->over = UTTT_X;

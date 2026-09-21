@@ -27,6 +27,24 @@ static int slow_line(const uint8_t *nine, uint8_t mark)
     return 0;
 }
 
+/* The legal-move list the old way: walk the board a byte at a time. Kept
+ * verbatim so the bitmask version has something to be checked against. */
+static int slow_legal(const UtttGame *g, uint8_t *out)
+{
+    int n = 0;
+    if (g->over) return 0;
+    int lo = 0, hi = 9;
+    if (g->forced != UTTT_ANY && g->block[g->forced] == UTTT_OPEN) {
+        lo = g->forced; hi = g->forced + 1;
+    }
+    for (int b = lo; b < hi; b++) {
+        if (g->block[b] != UTTT_OPEN) continue;
+        for (int c = 0; c < 9; c++)
+            if (g->cell[b * 9 + c] == UTTT_OPEN) out[n++] = (uint8_t)(b * 9 + c);
+    }
+    return n;
+}
+
 /* uttt_play accepts exactly the moves uttt_legal lists, and no others.
  *
  * `uttt_play` used to answer this BY calling `uttt_legal` and scanning the
@@ -41,9 +59,13 @@ static long check_legality(long games, long *positions)
     for (long k = 0; k < games; k++) {
         UtttGame g; uttt_init(&g);
         for (;;) {
-            uint8_t list[81];
+            uint8_t list[81], slow[81];
             int n = uttt_legal(&g, list);
+            int sn = slow_legal(&g, slow);
             (*positions)++;
+            /* the masks and the byte walk must agree exactly, in order */
+            if (sn != n) bad++;
+            else for (int i = 0; i < n; i++) if (list[i] != slow[i]) { bad++; break; }
             /* the truth, as a set */
             int legal[81] = {0};
             for (int i = 0; i < n; i++) legal[list[i]] = 1;
@@ -80,7 +102,8 @@ int main(void)
 
     long positions = 0;
     long legal_bad = check_legality(400, &positions);
-    printf("uttt_play: %ld positions x 81 squares against uttt_legal, "
-           "%ld disagree\n", positions, legal_bad);
+    printf("uttt_legal and uttt_play: %ld positions, the move list against a "
+           "byte walk and\n  all 81 squares against the list, %ld disagree\n",
+           positions, legal_bad);
     return (bad || legal_bad) ? 1 : 0;
 }

@@ -77,21 +77,56 @@ static int score_move(const UtttGame *g, uint8_t mv)
  * otherwise, which keeps the sample honest while steering it somewhere
  * plausible. A purely greedy playout is deterministic and therefore not a
  * sample at all. */
+/* NO LIST. A playout picks one move per step and throws the rest away, so
+ * the eighty-one byte buffer was eighty bytes of waste every step - and a
+ * playout is where a Monte Carlo bot spends its life. Both branches walk the
+ * kernel's masks straight.
+ *
+ * THE ORDER IS PART OF THE CONTRACT, not an implementation detail. Blocks
+ * ascending, cells ascending, is exactly what `uttt_legal` would have
+ * produced, so the k-th move is the same move and a tie is broken the same
+ * way; and the random draws happen in the same places, so the same stream
+ * gives the same game. Every bot's play is byte-identical across this
+ * change, which is what `/tmp` fingerprints and the ladders confirmed. */
 static uint8_t playout(UtttGame *g, uint64_t *rs, int biased, int *plies)
 {
-    uint8_t list[81];
     for (;;) {
-        int n = uttt_legal(g, list);
+        unsigned blocks = uttt_legal_blocks(g);
+        if (!blocks) break;
+
+        /* how many moves there are, and the open cells of each live block */
+        unsigned openm[9];
+        int n = 0;
+        for (unsigned bb = blocks; bb; bb &= bb - 1) {
+            int b = __builtin_ctz(bb);
+            openm[b] = uttt_open_cells(g, b);
+            n += __builtin_popcount(openm[b]);
+        }
         if (n <= 0) break;
-        uint8_t mv;
+
+        uint8_t mv = 0;
         if (!biased || rnd(rs, 4) == 0) {
-            mv = list[rnd(rs, (uint32_t)n)];
+            /* the k-th legal move, blocks then cells, both ascending */
+            int k = (int)rnd(rs, (uint32_t)n);
+            for (unsigned bb = blocks; bb; bb &= bb - 1) {
+                int b = __builtin_ctz(bb);
+                int cnt = __builtin_popcount(openm[b]);
+                if (k >= cnt) { k -= cnt; continue; }
+                unsigned o = openm[b];
+                while (k--) o &= o - 1;
+                mv = (uint8_t)(b * 9 + __builtin_ctz(o));
+                break;
+            }
         } else {
             int best = -(1 << 30), nb = 0; uint8_t bl[81];
-            for (int i = 0; i < n; i++) {
-                int sc = score_move(g, list[i]);
-                if (sc > best) { best = sc; nb = 0; }
-                if (sc == best) bl[nb++] = list[i];
+            for (unsigned bb = blocks; bb; bb &= bb - 1) {
+                int b = __builtin_ctz(bb);
+                for (unsigned o = openm[b]; o; o &= o - 1) {
+                    uint8_t m = (uint8_t)(b * 9 + __builtin_ctz(o));
+                    int sc = score_move(g, m);
+                    if (sc > best) { best = sc; nb = 0; }
+                    if (sc == best) bl[nb++] = m;
+                }
             }
             mv = bl[rnd(rs, (uint32_t)nb)];
         }

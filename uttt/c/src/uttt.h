@@ -41,9 +41,20 @@ typedef struct {
      * were asking a question about a whole block one byte at a time. */
     uint16_t cm[2][9];
     uint16_t bm[2];
+    uint16_t live;                  /* blocks still open, one bit each     */
 } UtttGame;
 
 void uttt_init(UtttGame *g);
+
+/* THE LEGAL MOVES AS TWO MASKS, for callers that would rather walk bits
+ * than a list. `uttt_legal` is written in terms of these, so there is one
+ * definition of what is legal and not two that can drift.
+ *
+ * A playout picks one move and throws the rest away, so building an
+ * eighty-one byte list for it is eighty bytes of waste per step - and a
+ * playout is where a Monte Carlo bot spends its life. */
+unsigned uttt_legal_blocks(const UtttGame *g);   /* 9 bits, 0 when none */
+unsigned uttt_open_cells(const UtttGame *g, int b);
 
 /* Every legal move, as block*9+index. Returns the count, 0 when the game is
  * over. THE ORDER IS PART OF THE FORMAT - the coder stores an index into this
