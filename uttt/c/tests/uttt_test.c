@@ -53,7 +53,7 @@ static uint8_t pick(const UtttGame *g, const uint8_t *list, int n, int stretch)
     for (int i = 0; i < n; i++) {
         UtttGame t = *g;
         uttt_play(&t, list[i]);
-        if (t.block[list[i] / 9] == UTTT_OPEN) safe[ns++] = list[i];
+        if (uttt_block(&t, list[i] / 9) == UTTT_OPEN) safe[ns++] = list[i];
     }
     return ns ? safe[rnd((uint32_t)ns)] : list[rnd((uint32_t)n)];
 }
@@ -195,7 +195,7 @@ int main(int argc, char **argv)
             if (!uttt_decode(&back, buf, (size_t)len)) { fails++; continue; }
             if (back.n_plies != g.n_plies ||
                 memcmp(back.move, g.move, (size_t)g.n_plies) != 0 ||
-                memcmp(back.cell, g.cell, sizeof g.cell) != 0 ||
+                memcmp(back.cm, g.cm, sizeof g.cm) != 0 ||
                 back.over != g.over) { fails++; continue; }
             checked++;
 
@@ -233,7 +233,7 @@ int main(int argc, char **argv)
             if (ln < 0 || !uttt_decode(&back, b, (size_t)ln)
                 || back.n_plies != g.n_plies
                 || memcmp(back.move, g.move, (size_t)g.n_plies) != 0
-                || memcmp(back.cell, g.cell, sizeof g.cell) != 0
+                || memcmp(back.cm, g.cm, sizeof g.cm) != 0
                 || back.forced != g.forced || back.turn != g.turn
                 || back.over != g.over) {
                 if (partial_fail < 4)

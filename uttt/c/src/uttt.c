@@ -135,22 +135,20 @@ int uttt_play(UtttGame *g, uint8_t mv)
      * unvalidated version of this to hold wrong. */
     if (mv > 80 || g->over) return 0;
     int b = mv / 9, c = mv % 9;
-    if (g->block[b] != UTTT_OPEN) return 0;
-    if (g->cell[mv] != UTTT_OPEN) return 0;
-    if (g->forced != UTTT_ANY && g->block[g->forced] == UTTT_OPEN
+    if (!((g->live >> b) & 1u)) return 0;
+    if (((g->cm[0][b] | g->cm[1][b]) >> c) & 1u) return 0;
+    if (g->forced != UTTT_ANY && ((g->live >> g->forced) & 1u)
         && b != g->forced) return 0;
 
     const int me = g->turn - 1;
-    g->cell[mv] = g->turn;
     g->cm[me][b] |= (uint16_t)(1u << c);
     g->move[g->n_plies++] = mv;
 
     if (uttt_mask_line(g->cm[me][b])) {
-        g->block[b] = g->turn;
         g->bm[me] |= (uint16_t)(1u << b);
         g->live   &= (uint16_t)~(1u << b);
     } else if ((g->cm[0][b] | g->cm[1][b]) == 0x1ffu) {
-        g->block[b] = UTTT_DRAW;
+        g->bdrawn |= (uint16_t)(1u << b);
         g->live   &= (uint16_t)~(1u << b);
     }
 

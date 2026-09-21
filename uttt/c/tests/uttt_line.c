@@ -34,13 +34,13 @@ static int slow_legal(const UtttGame *g, uint8_t *out)
     int n = 0;
     if (g->over) return 0;
     int lo = 0, hi = 9;
-    if (g->forced != UTTT_ANY && g->block[g->forced] == UTTT_OPEN) {
+    if (g->forced != UTTT_ANY && uttt_block(g, g->forced) == UTTT_OPEN) {
         lo = g->forced; hi = g->forced + 1;
     }
     for (int b = lo; b < hi; b++) {
-        if (g->block[b] != UTTT_OPEN) continue;
+        if (uttt_block(g, b) != UTTT_OPEN) continue;
         for (int c = 0; c < 9; c++)
-            if (g->cell[b * 9 + c] == UTTT_OPEN) out[n++] = (uint8_t)(b * 9 + c);
+            if (uttt_cell(g, b * 9 + c) == UTTT_OPEN) out[n++] = (uint8_t)(b * 9 + c);
     }
     return n;
 }

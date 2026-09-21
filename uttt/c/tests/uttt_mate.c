@@ -73,7 +73,7 @@ static int exact_mate(UtttGame *g)
 }
 
 static int empties(const UtttGame *g)
-{ int e = 0; for (int i = 0; i < 81; i++) if (!g->cell[i]) e++; return e; }
+{ int e = 0; for (int i = 0; i < 81; i++) if (!uttt_cell(g, i)) e++; return e; }
 
 int main(int argc, char **argv)
 {

@@ -170,9 +170,9 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
             base.w / 9.f / 100.f * 1.5f, S * .118f, .72f, 3.4f);
 
     for (int b = 0; b < 9; b++) {
-        int won = g->block[b] == UTTT_X || g->block[b] == UTTT_O;
+        int won = uttt_block(g, b) == UTTT_X || uttt_block(g, b) == UTTT_O;
         for (int c = 0; c < 9; c++) {
-            int v = g->cell[b * 9 + c];
+            int v = uttt_cell(g, b * 9 + c);
             if (!v) continue;
             float x = (b % 3) * BL + (c % 3) * CE;
             float y = (b / 3) * BL + (c / 3) * CE;
@@ -191,7 +191,7 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
         }
         if (won) {
             UtttPen p = base; p.a = .62f; p.w = 2.2f;
-            mark_in(d, g->block[b], (b % 3) * BL + BL * .08f,
+            mark_in(d, uttt_block(g, b), (b % 3) * BL + BL * .08f,
                     (b / 3) * BL + BL * .08f, BL * .84f,
                     o->seed * 77 + b, 1.f, &p);
         }
@@ -203,8 +203,9 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
         static const uint8_t L[8][3] = {
             {0,1,2},{3,4,5},{6,7,8},{0,3,6},{1,4,7},{2,5,8},{0,4,8},{2,4,6} };
         for (int i = 0; i < 8; i++) {
-            if (g->block[L[i][0]] != g->over || g->block[L[i][1]] != g->over
-             || g->block[L[i][2]] != g->over) continue;
+            if (uttt_block(g, L[i][0]) != g->over
+             || uttt_block(g, L[i][1]) != g->over
+             || uttt_block(g, L[i][2]) != g->over) continue;
             int a = L[i][0], z = L[i][2];
             float ax = ((a % 3) + .5f) * BL, ay = ((a / 3) + .5f) * BL;
             float zx = ((z % 3) + .5f) * BL, zy = ((z / 3) + .5f) * BL;

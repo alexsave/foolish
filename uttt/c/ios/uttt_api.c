@@ -47,13 +47,13 @@ int uti_turn(void)            { return S.g.turn; }
 int uti_forced(void)          { return S.g.forced; }
 int uti_n_plies(void)         { return S.g.n_plies; }
 int uti_move_at(int i)        { return (i >= 0 && i < S.g.n_plies) ? S.g.move[i] : -1; }
-int uti_block(int b)          { return (b >= 0 && b < 9) ? S.g.block[b] : -1; }
-int uti_cell(int i)           { return (i >= 0 && i < 81) ? S.g.cell[i] : -1; }
+int uti_block(int b)          { return (b >= 0 && b < 9) ? uttt_block(&S.g, b) : -1; }
+int uti_cell(int i)           { return (i >= 0 && i < 81) ? uttt_cell(&S.g, i) : -1; }
 
 int uti_active(void)
 {
     if (S.g.over) return -1;
-    if (S.g.forced != UTTT_ANY && S.g.block[S.g.forced] == UTTT_OPEN)
+    if (S.g.forced != UTTT_ANY && uttt_block(&S.g, S.g.forced) == UTTT_OPEN)
         return S.g.forced;
     return 9;
 }
@@ -100,7 +100,8 @@ int uti_draw_one(int mv, float t)
 {
     if (mv < 0 || mv > 80) return 0;
     uttt_dl_reset(&S.dl);
-    uttt_draw_cell(&S.dl, S.g.cell[mv] ? S.g.cell[mv] : S.g.turn,
+    uint8_t at = uttt_cell(&S.g, mv);
+    uttt_draw_cell(&S.dl, at ? at : S.g.turn,
                    mv, S.seed, t);
     return publish();
 }

@@ -21,28 +21,52 @@
 #define UTTT_ANY    255        /* "you may play in any open block" */
 #define UTTT_MAX_PLIES 81
 
+/* THE POSITION IS BITS, AND ONLY BITS.
+ *
+ * It used to be bytes - `cell[81]` and `block[9]` - with the bitboards added
+ * beside them for speed, and the comment there said they were "derived, not
+ * authoritative". That is two representations of one truth, which is this
+ * codebase's favourite bug: they cannot disagree today because one function
+ * writes both, and that is exactly the kind of guarantee that stops being
+ * true the first time somebody adds a second writer.
+ *
+ * So the bytes are gone and `uttt_cell` and `uttt_block` compute them. Nine
+ * bits a block, one word per mark: cm[X-1][b] is which cells of block b are
+ * X's, bm[X-1] is which blocks are X's, bdrawn is which filled without a
+ * line, live is which are still open.
+ *
+ * 218 bytes to 128, which a search copies per node. */
 typedef struct {
-    uint8_t cell[81];          /* block*9 + index, UTTT_OPEN / X / O        */
-    uint8_t block[9];          /* UTTT_OPEN / X / O / UTTT_DRAW             */
+    uint16_t cm[2][9];         /* cells of each block, per mark            */
+    uint16_t bm[2];            /* blocks won, per mark                     */
+    uint16_t bdrawn;           /* blocks that filled without a line        */
+    uint16_t live;             /* blocks still open                        */
+
     uint8_t forced;            /* block index, or UTTT_ANY                  */
     uint8_t turn;              /* UTTT_X or UTTT_O                          */
     uint8_t over;              /* 0, or UTTT_X / UTTT_O / UTTT_DRAW         */
     uint8_t n_plies;
-    uint8_t move[UTTT_MAX_PLIES];   /* the history: block*9 + index         */
 
-    /* THE SAME POSITION AS BITS, kept alongside the bytes rather than
-     * instead of them. Nine bits a block, one word per mark: cm[X-1][b] is
-     * which cells of block b are X's, bm[X-1] is which blocks are X's.
-     *
-     * DERIVED, NOT AUTHORITATIVE - uttt_play maintains them and nothing else
-     * writes them, so `cell` and `block` stay the thing everybody else reads
-     * and the wire format is untouched. They exist because uttt_legal and
-     * the bots' heuristic were 56% of a bot's runtime between them, and both
-     * were asking a question about a whole block one byte at a time. */
-    uint16_t cm[2][9];
-    uint16_t bm[2];
-    uint16_t live;                  /* blocks still open, one bit each     */
+    uint8_t move[UTTT_MAX_PLIES];   /* the history: block*9 + index         */
 } UtttGame;
+
+/* What is in a square: UTTT_OPEN, UTTT_X or UTTT_O. */
+static inline uint8_t uttt_cell(const UtttGame *g, int i)
+{
+    int b = i / 9, c = i % 9;
+    if ((g->cm[0][b] >> c) & 1u) return UTTT_X;
+    if ((g->cm[1][b] >> c) & 1u) return UTTT_O;
+    return UTTT_OPEN;
+}
+
+/* What became of a block: UTTT_OPEN, UTTT_X, UTTT_O or UTTT_DRAW. */
+static inline uint8_t uttt_block(const UtttGame *g, int b)
+{
+    if ((g->bm[0] >> b) & 1u)   return UTTT_X;
+    if ((g->bm[1] >> b) & 1u)   return UTTT_O;
+    if ((g->bdrawn >> b) & 1u)  return UTTT_DRAW;
+    return UTTT_OPEN;
+}
 
 /* 218 BYTES, AND EIGHTY-TWO OF THEM ARE A HISTORY NO SEARCH READS. That
  * looks like an obvious waste - a tree copies a game per node - and it was

@@ -55,7 +55,7 @@ static int score_move(const UtttGame *g, uint8_t mv)
      * free choice over the whole sheet, which is the worst thing you can give
      * anybody in this game - and it is exactly what the encoder measured as
      * expensive. */
-    if (g->block[c] != UTTT_OPEN) {
+    if (!((g->live >> c) & 1u)) {
         s -= 55;
     } else {
         /* DO NOT SEND THEM SOMEWHERE THEY CAN CLOSE - and this was a walk
@@ -165,13 +165,16 @@ static int solve(UtttGame *g, int depth_left)
     return best;
 }
 
+/* EIGHTY-ONE QUESTIONS BECOME NINE POPCOUNTS. Asking a square at a time was
+ * fine when a square was a byte; now it is a bit, and the whole block
+ * answers at once. */
 static int empties(const UtttGame *g)
 {
     int e = 0;
-    for (int b = 0; b < 9; b++)
-        if (g->block[b] == UTTT_OPEN)
-            for (int c = 0; c < 9; c++)
-                if (g->cell[b * 9 + c] == UTTT_OPEN) e++;
+    for (unsigned live = g->live; live; live &= live - 1) {
+        int b = __builtin_ctz(live);
+        e += __builtin_popcount(uttt_open_cells(g, b));
+    }
     return e;
 }
 
@@ -298,9 +301,9 @@ static int line_in_reach(const UtttGame *g, int depth)
     for (int i = 0; i < 8; i++) {
         int need = 0, dead = 0;
         for (int j = 0; j < 3; j++) {
-            uint8_t b = g->block[L[i][j]];
-            if (b == me) continue;
-            if (b == UTTT_OPEN) need++;
+            unsigned bit = 1u << L[i][j];
+            if (g->bm[me - 1] & bit) continue;
+            if (g->live & bit) need++;
             else { dead = 1; break; }
         }
         if (!dead && need <= moves) return 1;

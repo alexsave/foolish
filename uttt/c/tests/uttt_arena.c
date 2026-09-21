@@ -51,14 +51,14 @@ static void profile(int games, int budget)
                 /* A GIFT is a move whose target block is already decided: the
                  * opponent may then play anywhere, which is the single most
                  * valuable thing you can hand them. */
-                if (g.block[mv % 9] != UTTT_OPEN) gifts++;
+                if (uttt_block(&g, mv % 9) != UTTT_OPEN) gifts++;
                 decided++;
                 uttt_play(&g, mv);
             }
             plies += g.n_plies;
             if (g.over == UTTT_DRAW) draws++;
             for (int b = 0; b < 9; b++)
-                if (g.block[b] == UTTT_X || g.block[b] == UTTT_O) blocks++;
+                if (uttt_block(&g, b) == UTTT_X || uttt_block(&g, b) == UTTT_O) blocks++;
             uint8_t buf[64];
             int len = uttt_encode(&g, buf, sizeof buf);
             if (len > 0) bytes += len;

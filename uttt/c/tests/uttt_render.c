@@ -171,7 +171,7 @@ int main(int argc, char **argv)
     o.last = upto ? moves[upto - 1] : -1;
     if (!g.over) {
         int f = g.forced;
-        o.active = (f != UTTT_ANY && g.block[f] == UTTT_OPEN) ? f : 9;
+        o.active = (f != UTTT_ANY && uttt_block(&g, f) == UTTT_OPEN) ? f : 9;
     }
     int rc = uttt_draw_board(&d, &g, &o);
     fprintf(stderr, "polys %d  points %d  overflow %s\n",
