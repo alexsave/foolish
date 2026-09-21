@@ -119,3 +119,7 @@ isolate-*.log
 # Python bytecode from the QA tooling - never a repo artifact.
 __pycache__/
 *.pyc
+uttt/ios/vendor/
+uttt/ios/*.xcodeproj
+uttt/c/build/
+uttt/ios/*/*.entitlements

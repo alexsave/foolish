@@ -22,12 +22,21 @@ python3 ios/Tools/rig/lib/test_window.py   # tween's frame times, against a movi
 
 One block at the top of `rig.sh`, between `APP_ID=` and
 `# ---- end of the product block`, holds every bundle id, App Group, scheme,
-Xcode project, appex name, `+`-menu row name and log subsystem the rig knows.
+Xcode project, appex name, `+`-menu row name and log subsystem the rig knows -
+and, since a monorepo's second product is not at `c/` and `ios/`, where its
+kernel and its Xcode project live and what its transcript seeder is called.
 Nothing below it spells any of them again, and `lib/test_rig.py` fails if
 something starts to.
 A second product is that block with different strings - each constant takes a
 `RIG_*` override from the environment - and deliberately nothing more: there is
 no plugin system here and there should not be one.
+`uttt/ios/Tools/rig.env` is a worked example: `source` it and every command
+below drives Ultimate Tic-Tac-Toe instead.
+The path constants are the ones that got away the first time. `build` and
+`doctor` spelled `$REPO/c` and `$REPO/ios`, so the overrides took, nothing
+errored, and the build compiled Durak's kernel into the other app - a name is
+easy to grep for and a path is not, which is why `test_rig.py` now fails on
+both.
 The scratch paths (`FOOLISH_OUT`, `FOOLISH_DD`, `FOOLISH_WORK`) are NOT in the
 block, because `lib/ui.py` carries its own copy of the `FOOLISH_WORK` default
 and a rig that changed one of the two would write the screenshot somewhere the
@@ -57,6 +66,8 @@ for an attacker's.
 
 **1. Do not restart Messages mid-shoot.**
 The simulator's Messages keeps its conversations **in memory**.
+(Which is why `rig.sh wipe messages` is nothing but that restart - there is no
+file to delete, and a second product spent a while looking for one.)
 A fresh device has no `Library/SMS/sms.db` at all; a message sent from the UI
 lands in no file anywhere on disk; rows injected into `sms.db` are never read.
 So the transcript that `session` types is gone the moment the app is relaunched.

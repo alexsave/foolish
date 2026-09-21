@@ -28,6 +28,10 @@
 #                                 caption / caption / caption / one bubble
 #   rig.sh tapopen [thread]       open it by TAPPING the newest bubble, so the
 #                                 next send shares that message's MSSession
+#   rig.sh seat [a|b]             which player this device is (DEBUG builds)
+#   rig.sh devgame [N]            open straight into a game N moves in
+#   rig.sh picker [on|off]        ask which player this device is on every open
+#   rig.sh wipe [messages|state]  a clean slate: conversations, App Group, or both
 #   rig.sh clearstage [stay]      dismiss a staged bubble left in the compose
 #                                 field (then `back`, so the tap it just made
 #                                 does not leave the drawer 16pt short - trap 11;
@@ -123,6 +127,18 @@ APP_BUNDLE="${RIG_APP_BUNDLE:-$SCHEME.app}"               # what `build` install
 APPEX="${RIG_APPEX:-FoolishMessages}"                     # the appex process
 MENU_NAME="${RIG_MENU_NAME:-Foolish}"                     # the row in the + menu
 LOG_SUBSYSTEM="${RIG_LOG_SUBSYSTEM:-cards.foolish}"       # `rig.sh log`
+# WHERE THE PRODUCT LIVES, which is identity too. A second product in this
+# monorepo is not at c/ and ios/ - it is at uttt/c and uttt/ios - and the rig
+# promised in its README that a second product is this block with different
+# strings. It was not: `build` and `doctor` spelled Durak's layout, so the
+# override took and then the build compiled the wrong kernel. The test below
+# the block now fails on $REPO/c and $REPO/ios anywhere else.
+KERNEL_DIR="${RIG_KERNEL_DIR:-$REPO/c}"                   # `make ios-lib` here
+IOS_DIR="${RIG_IOS_DIR:-$REPO/ios}"                       # `xcodegen` here
+# The transcript seeder, RELATIVE TO KERNEL_DIR. Durak seeds a fat board
+# through a C tool; a product that has not written one yet sets this empty and
+# `build` and `doctor` stop asking for it.
+SEEDER="${RIG_SEEDER-build/msg_wire_test}"
 # ---- end of the product block ---------------------------------------------
 
 # DerivedData is PER SIMULATOR, which is to say per task (rule 5). One shared
@@ -403,17 +419,42 @@ group_dir() {
 
 # ---------------------------------------------------------------- setup ----
 
+# IS THE APP THERE. Not `simctl get_app_container`, which is what this used to
+# ask and what made `doctor` call a working install missing.
+#
+# An iMessage-only container app is launch-PROHIBITED: it has no home-screen
+# icon and never runs its own UI, and on iOS 27 LaunchServices does not hand
+# it to simctl at all. `listapps` omits it, `get_app_container` says "No such
+# file or directory", and the game is meanwhile sitting in the `+` drawer
+# playing fine. Durak's host app is an ordinary application so it answered,
+# and the second product is the one that found this.
+#
+# The bundle on disk is the thing that is actually true, so ask that.
+app_installed() {
+  xcrun simctl get_app_container "$SIM" "$APP_ID" >/dev/null 2>&1 && return 0
+  local root="$HOME/Library/Developer/CoreSimulator/Devices/$SIM/data/Containers/Bundle/Application"
+  [ -d "$root" ] || return 1
+  local app
+  for app in "$root"/*/*.app; do
+    [ -f "$app/Info.plist" ] || continue
+    [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+         "$app/Info.plist" 2>/dev/null)" = "$APP_ID" ] && return 0
+  done
+  return 1
+}
+
 cmd_doctor() {
   local bad=0
   command -v "$IDB" >/dev/null || { echo "MISSING idb - brew install facebook/fb/idb-companion && python3.12 -m venv ~/.venvs/idb && ~/.venvs/idb/bin/pip install fb-idb"; bad=1; }
   command -v ffmpeg >/dev/null || { echo "MISSING ffmpeg (only 'film'/'sheet' need it) - brew install ffmpeg"; bad=1; }
   python3 -c "import PIL, numpy" 2>/dev/null || { echo "MISSING pillow/numpy - pip3 install pillow numpy"; bad=1; }
-  [ -x "$REPO/c/build/msg_wire_test" ] || { echo "MISSING seeder - (cd c && make build/msg_wire_test)"; bad=1; }
+  [ -z "$SEEDER" ] || [ -x "$KERNEL_DIR/$SEEDER" ] || {
+    echo "MISSING seeder - (cd ${KERNEL_DIR#$REPO/} && make $SEEDER)"; bad=1; }
   if [ -n "$SIM" ]; then
     xcrun simctl list devices booted | grep -q "$SIM" \
       && echo "sim $SIM booted, $(screen) pt" || echo "sim $SIM NOT booted"
-    xcrun simctl get_app_container "$SIM" "$APP_ID" >/dev/null 2>&1 \
-      && echo "app installed" || { echo "MISSING app - rig.sh build"; bad=1; }
+    app_installed && echo "app installed" \
+      || { echo "MISSING app - rig.sh build"; bad=1; }
   else
     echo "FOOLISH_SIM unset - rig.sh newsim"
     bad=1
@@ -433,9 +474,9 @@ cmd_newsim() {
 
 cmd_build() {
   need_sim
-  make -C "$REPO/c" ios-lib
-  make -C "$REPO/c" build/msg_wire_test
-  (cd "$REPO/ios" && xcodegen generate)
+  make -C "$KERNEL_DIR" ios-lib
+  [ -z "$SEEDER" ] || make -C "$KERNEL_DIR" "$SEEDER"
+  (cd "$IOS_DIR" && xcodegen generate)
   # xcodegen BLANKS the entitlements files every run; without this the
   # extension loses its App Group and every seed silently does nothing.
   (cd "$REPO" && git checkout -- $(cd "$REPO" && git ls-files -- '*.entitlements'))
@@ -454,6 +495,14 @@ cmd_build() {
   # Install OVER the old build. `simctl uninstall` destroys the App Group and
   # the appex's Preferences container, and both come back with fresh UUIDs.
   xcrun simctl install "$SIM" "$DD/Build/Products/Debug-iphonesimulator/$APP_BUNDLE"
+  # AND RESTART MESSAGES, which is the one place in this rig where that is the
+  # right thing to do. A live MobileSMS holds the appex by a PlugInKit UUID
+  # that the install has just replaced, so the next tap opens a blank grey
+  # drawer and the log says "no such plugin (uuid not found)" - a failure that
+  # looks exactly like a crash in the extension and is not one. The documented
+  # order is build, then stage, then session, so nothing is lost here; the
+  # rule about not restarting Messages is about the middle of a SHOOT.
+  xcrun simctl terminate "$SIM" com.apple.MobileSMS >/dev/null 2>&1 || true
   echo "installed on $SIM"
 }
 
@@ -696,6 +745,122 @@ say() {  # say <thread-substring> <text>
   poll 40 0.2 sent_done || true
 }
 
+# A CLEAN SLATE, because a transcript is not scenery you can ignore.
+#
+#   rig.sh wipe            everything below
+#   rig.sh wipe messages   the conversations only
+#   rig.sh wipe state      the App Group only
+#
+# TWO STORES, and they are cleared in completely different ways.
+#
+# The conversations are IN MEMORY. There is no sms.db to delete - point 1 of
+# the README - so the wipe is simply the thing that shoot runs are told never
+# to do: restart Messages. Relaunching brings back the two stub threads with
+# nothing in them, which is exactly what `session` wants to type into. (This
+# also clears a staged bubble whose appex was replaced underneath it, which
+# otherwise leaves Messages holding a plugin UUID that no longer exists and a
+# blank grey drawer that says nothing about why.)
+#
+# The game lives in the App Group's Preferences, and `cfprefsd` serves that
+# from memory too - but it also WRITES ITS CACHE BACK, so deleting the plist
+# under a booted device does nothing at all. The device has to be shut down
+# for the delete to stick, which is why this one reboots.
+# WHO THIS DEVICE IS, for a game that needs two people and has one simulator.
+#
+#   rig.sh seat a        this device is one player
+#   rig.sh seat b        this device is the other
+#   rig.sh seat          clear it - back to the real participant
+#
+# A two-player game in a transcript cannot otherwise be played on one device:
+# Messages gives a conversation exactly ONE local participant, and an app
+# bubble cannot be forwarded into the other stub thread. So the invitation
+# goes out and nothing ever happens, and every screen past the lobby is
+# unreachable. Writing a word here makes the extension answer "is this me?"
+# from the word instead of from the participant, so the same simulator takes
+# both seats, one tap apart.
+#
+# DEBUG builds only, and the extension re-reads the file every time rather
+# than caching it, because the whole point is that it changes between two
+# drawer openings a second apart. The host app spells this `dev.seat` too.
+cmd_seat() {
+  need_sim
+  local g; g=$(group_dir)
+  case "$g" in /nonexistent/*) return 1 ;; esac
+  if [ $# -eq 0 ] || [ -z "$1" ]; then
+    rm -f "$g/dev.seat"; echo "seat: cleared - the real participant again"
+  else
+    printf '%s' "$1" > "$g/dev.seat"; echo "seat: this device is now '$1'"
+  fi
+}
+
+# STRAIGHT TO THE BOARD, skipping the lobby, the invitation and the tap.
+#
+#   rig.sh devgame 20     open a game twenty moves in
+#   rig.sh devgame        back to the ordinary flow
+#
+# Pairs with `seat`: the seeded game seats both players from the dev words, so
+# `seat a` and `seat b` are the two sides of the same board and a screenshot
+# of each is the same position from both chairs. The host app spells this
+# `dev.fatboard`, for the same reason - a state that takes minutes of careful
+# tapping to reach is a state nobody checks.
+# ASK WHO THIS DEVICE IS whenever a bubble is opened (DEBUG builds).
+#
+#   rig.sh picker on | off
+#
+# The extension decides which seat it holds by hashing the conversation's
+# local participant - one per conversation, which is why one phone cannot
+# hold two players. With this on, opening a bubble asks first and writes the
+# answer to `dev.seat`, which overrides that hash at the single place it is
+# taken. After the answer the game plays exactly as it would on two phones.
+cmd_picker() {
+  need_sim
+  local g; g=$(group_dir)
+  case "$g" in /nonexistent/*) return 1 ;; esac
+  if [ "${1:-on}" = off ]; then
+    rm -f "$g/dev.picker"; echo "picker: off"
+  else
+    : > "$g/dev.picker"; echo "picker: on - every opened bubble asks"
+  fi
+}
+
+cmd_devgame() {
+  need_sim
+  local g; g=$(group_dir)
+  case "$g" in /nonexistent/*) return 1 ;; esac
+  if [ $# -eq 0 ] || [ -z "$1" ]; then
+    rm -f "$g/dev.game" "$g/dev.live"
+    echo "devgame: cleared - the ordinary flow again"
+  else
+    # dev.live is where the seeded game HAS GOT TO, written back after every
+    # move. Setting a new opening has to drop it or the board comes up where
+    # the last run left it instead of where this one asked for.
+    printf '%s' "$1" > "$g/dev.game"; rm -f "$g/dev.live"
+    echo "devgame: opening $1 moves in"
+  fi
+}
+
+cmd_wipe() {
+  need_sim
+  local what="${1:-all}"
+
+  if [ "$what" = all ] || [ "$what" = messages ]; then
+    xcrun simctl terminate "$SIM" com.apple.MobileSMS >/dev/null 2>&1 || true
+    echo "wiped: every conversation (they only ever lived in Messages' memory)"
+  fi
+
+  if [ "$what" = all ] || [ "$what" = state ]; then
+    local g; g=$(group_dir)
+    case "$g" in /nonexistent/*) echo "no App Group - nothing to wipe" ;; *)
+      xcrun simctl shutdown "$SIM" >/dev/null 2>&1 || true
+      rm -f "$g"/Library/Preferences/*.plist
+      xcrun simctl boot "$SIM" >/dev/null 2>&1 || true
+      xcrun simctl bootstatus "$SIM" -b >/dev/null 2>&1 || true
+      echo "wiped: the App Group, and the device rebooted so cfprefsd lets go"
+    ;; esac
+  fi
+  front
+}
+
 cmd_session() {
   need_sim
   front
@@ -847,7 +1012,7 @@ cmd_chain() {
     echo "  three-line window (trap 12). FOOLISH_CHAIN_SHORT=1 to override." >&2
     return 1
   fi
-  local tool="${FOOLISH_TOOL:-$REPO/c/build/msg_wire_test}"
+  local tool="${FOOLISH_TOOL:-$KERNEL_DIR/$SEEDER}"
   [ -x "$tool" ] || { echo "no seeder at $tool - (cd c && make build/msg_wire_test)" >&2; return 1; }
   # The App Group container, checked once here so a missing install says so
   # before a chain is played. Every seed below goes through `seed_open`, which
@@ -2023,6 +2188,10 @@ case "${1:-}" in
   nickname) shift; cmd_nickname "$@" ;;
   setname)  shift; cmd_setname "$@" ;;
   session)  shift; cmd_session "$@" ;;
+  wipe)     shift; cmd_wipe "$@" ;;
+  seat)     shift; cmd_seat "$@" ;;
+  devgame)  shift; cmd_devgame "$@" ;;
+  picker)   shift; cmd_picker "$@" ;;
   enter)    shift; cmd_enter "$@" ;;
   open)     shift; cmd_open "$@" ;;
   tapopen)  shift; cmd_tapopen "$@" ;;
