@@ -44,6 +44,24 @@ typedef struct {
     uint16_t live;                  /* blocks still open, one bit each     */
 } UtttGame;
 
+/* 218 BYTES, AND EIGHTY-TWO OF THEM ARE A HISTORY NO SEARCH READS. That
+ * looks like an obvious waste - a tree copies a game per node - and it was
+ * worth 2.3%, measured, which is not enough to carry a struct whose `move`
+ * array is silently garbage in the ten places a search would have used the
+ * cheap copy.
+ *
+ * The padding experiment that suggested otherwise was measuring something
+ * else: eighty spare bytes appended to the struct cost 7%, but skipping
+ * eighty real bytes in ten copies saved 2.3%. The difference is that the
+ * copies are not where the time goes - `score_move` and `uttt_play` are, and
+ * they touch a handful of fields rather than the whole thing.
+ *
+ * `cell` and `block` are the other ninety bytes, and they are now derivable
+ * from `cm` and `bm`. Removing them would be a real tidy-up - two
+ * representations of one truth is this codebase's favourite bug - but on
+ * this evidence it is a tidy-up, not a speed-up, and it would touch the
+ * coder, the renderer, the iOS bridge and four tests to get there. */
+
 void uttt_init(UtttGame *g);
 
 /* THE LEGAL MOVES AS TWO MASKS, for callers that would rather walk bits
