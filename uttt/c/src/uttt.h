@@ -29,6 +29,18 @@ typedef struct {
     uint8_t over;              /* 0, or UTTT_X / UTTT_O / UTTT_DRAW         */
     uint8_t n_plies;
     uint8_t move[UTTT_MAX_PLIES];   /* the history: block*9 + index         */
+
+    /* THE SAME POSITION AS BITS, kept alongside the bytes rather than
+     * instead of them. Nine bits a block, one word per mark: cm[X-1][b] is
+     * which cells of block b are X's, bm[X-1] is which blocks are X's.
+     *
+     * DERIVED, NOT AUTHORITATIVE - uttt_play maintains them and nothing else
+     * writes them, so `cell` and `block` stay the thing everybody else reads
+     * and the wire format is untouched. They exist because uttt_legal and
+     * the bots' heuristic were 56% of a bot's runtime between them, and both
+     * were asking a question about a whole block one byte at a time. */
+    uint16_t cm[2][9];
+    uint16_t bm[2];
 } UtttGame;
 
 void uttt_init(UtttGame *g);
@@ -56,5 +68,9 @@ int  uttt_undo(UtttGame *g);
 
 /* Three in a line for `mark` over nine slots; slots may hold UTTT_DRAW. */
 int  uttt_line(const uint8_t *nine, uint8_t mark);
+
+/* The same question asked of a nine-bit mask, which is how the hot paths ask
+ * it. One lookup. */
+int  uttt_mask_line(unsigned mask);
 
 #endif

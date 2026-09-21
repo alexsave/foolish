@@ -19,21 +19,19 @@ static uint32_t rnd(uint64_t *s, uint32_t n)
 static const int CELL_W[9]  = { 3, 2, 3,  2, 4, 2,  3, 2, 3 };
 static const int BLOCK_W[9] = { 3, 2, 3,  2, 4, 2,  3, 2, 3 };
 
+/* BOTH OF THESE WERE A NINE-BYTE COPY AND A NINE-BYTE SCAN to ask one
+ * question about one block. They are the playout policy of the strongest
+ * bot, so they run millions of times a move; now they are an OR and a table
+ * lookup against the bitboards the kernel already keeps. */
 static int wins_block(const UtttGame *g, uint8_t mv, uint8_t mark)
 {
-    uint8_t nine[9];
-    memcpy(nine, &g->cell[(mv / 9) * 9], 9);
-    nine[mv % 9] = mark;
-    return uttt_line(nine, mark);
+    return uttt_mask_line(g->cm[mark - 1][mv / 9] | (1u << (mv % 9)));
 }
 
 static int meta_would_win(const UtttGame *g, uint8_t mv, uint8_t mark)
 {
     if (!wins_block(g, mv, mark)) return 0;
-    uint8_t nine[9];
-    memcpy(nine, g->block, 9);
-    nine[mv / 9] = mark;
-    return uttt_line(nine, mark);
+    return uttt_mask_line(g->bm[mark - 1] | (1u << (mv / 9)));
 }
 
 static int score_move(const UtttGame *g, uint8_t mv)

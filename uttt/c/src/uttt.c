@@ -33,6 +33,12 @@ static void build_has_line(void)
     has_line_ready = 1;
 }
 
+int uttt_mask_line(unsigned mask)
+{
+    if (!has_line_ready) build_has_line();
+    return HAS_LINE[mask & 0x1ffu];
+}
+
 int uttt_line(const uint8_t *nine, uint8_t mark)
 {
     if (!has_line_ready) build_has_line();
@@ -57,10 +63,17 @@ int uttt_legal(const UtttGame *g, uint8_t *out)
     if (g->forced != UTTT_ANY && g->block[g->forced] == UTTT_OPEN) {
         lo = g->forced; hi = g->forced + 1;
     }
+    /* THE EMPTY CELLS OF A BLOCK ARE ONE WORD, and walking their bits beats
+     * nine byte loads and nine branches - this was the largest single cost
+     * in a bot's profile once `uttt_line` stopped being it. */
     for (int b = lo; b < hi; b++) {
         if (g->block[b] != UTTT_OPEN) continue;
-        for (int c = 0; c < 9; c++)
-            if (g->cell[b * 9 + c] == UTTT_OPEN) out[n++] = (uint8_t)(b * 9 + c);
+        unsigned open = ~(unsigned)(g->cm[0][b] | g->cm[1][b]) & 0x1ffu;
+        while (open) {
+            int c = __builtin_ctz(open);
+            open &= open - 1;
+            out[n++] = (uint8_t)(b * 9 + c);
+        }
     }
     return n;
 }
@@ -84,19 +97,20 @@ int uttt_play(UtttGame *g, uint8_t mv)
     if (!ok) return 0;
 
     int b = mv / 9, c = mv % 9;
+    const int me = g->turn - 1;
     g->cell[mv] = g->turn;
+    g->cm[me][b] |= (uint16_t)(1u << c);
     g->move[g->n_plies++] = mv;
 
-    if (uttt_line(&g->cell[b * 9], g->turn)) {
+    if (uttt_mask_line(g->cm[me][b])) {
         g->block[b] = g->turn;
-    } else {
-        int full = 1;
-        for (int i = 0; i < 9; i++) if (g->cell[b * 9 + i] == UTTT_OPEN) full = 0;
-        if (full) g->block[b] = UTTT_DRAW;
+        g->bm[me] |= (uint16_t)(1u << b);
+    } else if ((g->cm[0][b] | g->cm[1][b]) == 0x1ffu) {
+        g->block[b] = UTTT_DRAW;
     }
 
-    if (uttt_line(g->block, UTTT_X))      g->over = UTTT_X;
-    else if (uttt_line(g->block, UTTT_O)) g->over = UTTT_O;
+    if (uttt_mask_line(g->bm[0]))      g->over = UTTT_X;
+    else if (uttt_mask_line(g->bm[1])) g->over = UTTT_O;
     else {
         int any_open = 0;
         for (int i = 0; i < 9; i++) if (g->block[i] == UTTT_OPEN) any_open = 1;
