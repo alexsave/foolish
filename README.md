@@ -3,6 +3,12 @@
 A дурак (Durak) card game.
 Play it in a browser at **[www.foolish.cards](https://www.foolish.cards)**, or inside an iMessage thread with **Foolish for iMessage** on the App Store.
 
+<video src="https://github.com/alexsave/foolish/releases/download/v2.0.0/foolish-showcase.mp4" controls muted loop playsinline width="340"></video>
+
+Fifty six seconds of one real game, played with a friend inside an iMessage thread.
+She types, her card animates onto your open board, you answer, and your move animates back into the conversation.
+([download](https://github.com/alexsave/foolish/releases/download/v2.0.0/foolish-showcase.mp4) if your viewer does not play it inline; [how it was cut](media/README.md))
+
 That is the product.
 The repository is a stranger thing, and this file exists because the previous version of it described a Next.js app with three languages and a C folder for bot research.
 None of that is true any more.
