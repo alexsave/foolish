@@ -394,8 +394,17 @@ typedef struct {
     uint8_t  pv;          /* for the player TO MOVE at this node             */
 } TreeNode;
 
-#define TREE_POOL 400000
-static TreeNode tree_pool[TREE_POOL];
+/* TWO POOLS, because the tree is KEPT between moves. The subtree under the
+ * move we played and the reply we got is next move's starting point, and
+ * re-rooting it means copying it out of one pool into the other so the
+ * discarded siblings are gone rather than leaked. A cache of playouts
+ * already spent: the allowance is the same, the tree just starts fuller. */
+#define TREE_POOL 250000
+static TreeNode tree_pool_a[TREE_POOL], tree_pool_b[TREE_POOL];
+static TreeNode *tree_pool = tree_pool_a;
+static uint8_t  tree_cache_move[UTTT_MAX_PLIES];
+static int      tree_cache_plies = -1;     /* the history the pool was built at */
+static uint32_t tree_cache_used;
 
 static float tree_prior(const UtttGame *g, uint8_t mv)
 {
@@ -470,11 +479,54 @@ static uint32_t tree_select(uint32_t node, uint64_t *rs)
 
 /* Grow the tree from `g` for `playouts` playouts, or until the root is a
  * proof. The pool holds the result. */
-static void tree_search(const UtttGame *g, long playouts, uint64_t *rs)
+/* Copy the subtree at src[si] into dst[di], children after it. */
+static void tree_copy(TreeNode *dst, uint32_t *dused, const TreeNode *src,
+                      uint32_t si, uint32_t di)
 {
+    dst[di] = src[si];
+    if (!src[si].nchild) return;
+    uint32_t f = *dused; *dused += src[si].nchild;
+    dst[di].first = f;
+    for (int i = 0; i < src[si].nchild; i++)
+        tree_copy(dst, dused, src, src[si].first + i, f + i);
+}
+
+/* Re-root the kept tree at `g`, if `g` continues the history it was built
+ * at and every ply since is a child the tree had. Returns the pool's used
+ * count, or 0 when there is nothing to keep. */
+static uint32_t tree_reroot(const UtttGame *g)
+{
+    int k = g->n_plies - tree_cache_plies;
+    if (tree_cache_plies < 0 || k <= 0 ||
+        memcmp(g->move, tree_cache_move, (size_t)tree_cache_plies) != 0)
+        return 0;
+    uint32_t node = 0;
+    for (int i = 0; i < k; i++) {
+        const TreeNode *nd = &tree_pool[node];
+        uint32_t next = 0;
+        for (int c = 0; c < nd->nchild; c++)
+            if (tree_pool[nd->first + c].mv == g->move[tree_cache_plies + i])
+                next = nd->first + (uint32_t)c;
+        if (!next) return 0;
+        node = next;
+    }
+    if (!tree_pool[node].nchild) return 0;
+    TreeNode *other = tree_pool == tree_pool_a ? tree_pool_b : tree_pool_a;
     uint32_t used = 1;
-    memset(&tree_pool[0], 0, sizeof tree_pool[0]);
-    tree_expand(0, g, &used);
+    tree_copy(other, &used, tree_pool, node, 0);
+    tree_pool = other;
+    return used;
+}
+
+static void tree_search(const UtttGame *g, long playouts, uint64_t *rs,
+                        int keep)
+{
+    uint32_t used = keep ? tree_reroot(g) : 0;
+    if (!used) {
+        used = 1;
+        memset(&tree_pool[0], 0, sizeof tree_pool[0]);
+        tree_expand(0, g, &used);
+    }
 
 
     uint32_t path[UTTT_MAX_PLIES + 1];
@@ -525,6 +577,11 @@ static void tree_search(const UtttGame *g, long playouts, uint64_t *rs)
         for (int d = depth - 1; d >= 0; d--) tree_prove(path[d]);
     }
     *rs += 0x9E3779B97F4A7C15ull;
+
+    /* Remember what this tree is a tree OF, for next time. */
+    tree_cache_plies = keep ? g->n_plies : -1;
+    memcpy(tree_cache_move, g->move, (size_t)g->n_plies);
+    tree_cache_used = used;
 }
 
 /* What the tree can PROVE about the side to move from `g`, after
@@ -535,7 +592,7 @@ static void tree_search(const UtttGame *g, long playouts, uint64_t *rs)
 int uttt_tree_proof(const UtttGame *g, long playouts, uint64_t *rs)
 {
     if (g->over || uttt_legal(g, (uint8_t[81]){0}) <= 0) return 2;
-    tree_search(g, playouts, rs);
+    tree_search(g, playouts, rs, 0);
     switch (tree_pool[0].pv) {
     case PV_WIN:  return 1;
     case PV_LOSS: return -1;
@@ -568,7 +625,7 @@ static uint8_t tree_move(const UtttGame *g, int budget, uint64_t *rs)
     }
 
     /* THE SAME ALLOWANCE AS THE FLAT SEARCH: `budget` a legal move. */
-    tree_search(g, (long)budget * n, rs);
+    tree_search(g, (long)budget * n, rs, 1);
 
     /* THE ANSWER. A proved win if the tree found one; otherwise the most
      * visited child that is not a proved loss, and on equal visits the

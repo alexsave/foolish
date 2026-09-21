@@ -149,14 +149,31 @@ extern const char *UTTT_BOT_NAME[BOT_COUNT];
  * sniper and 86.3% overall to sniper's 73.3%, at 124.0s of thinking to
  * sniper's 125.0s.
  *
- * THE ALLOWANCE CURVE, 300 games each, quill's rollouts against sniper's:
+ * THE ALLOWANCE CURVE, 300 games each, quill's rollouts against sniper's,
+ * measured BEFORE the tree was kept between moves (next paragraph):
  *
- *     quill / sniper     20/20    40/40    80/80    120/40    40/120
- *     quill scores       64.5%    64.5%    75.8%    88.3%     59.5%
+ *     quill / sniper     20/20    40/40    80/80    120/120   120/40    40/120
+ *     quill scores       64.5%    64.5%    75.8%    82.3%     88.3%     59.5%
  *
  * The tree's edge GROWS with the allowance, which is what a search that
  * concentrates should do and a flat one cannot; and at a third of sniper's
  * playouts it is still ahead.
+ *
+ * AND THE TREE IS KEPT BETWEEN MOVES. The subtree under the move we played
+ * and the reply we got is next move's starting point, re-rooted by copying
+ * it into the other of two pools. The allowance is unchanged; the tree
+ * just starts a hundred-odd playouts full instead of empty. Same 300 games,
+ * same thinking time:
+ *
+ *     quill / sniper        40/40    80/80    120/120   200/200   400/400
+ *     fresh tree each move  64.5%    75.8%    82.3%     82.0%     90.8%
+ *     tree kept             73.0%    79.2%    81.8%     85.8%     90.2%
+ *
+ * Worth most exactly where the allowance is smallest, which is where a
+ * hundred remembered playouts are the biggest share of the budget. It is a
+ * cache and nothing more: the tree it keeps is the tree it would have
+ * built, and `uttt_tree_proof` always starts fresh so the test is of the
+ * search and not of what happened to be remembered.
  *
  * TUNING, 300 games against sniper each, 40 rollouts, identical time. The
  * standard error is 2.8 points, so read the direction and not the digit:
