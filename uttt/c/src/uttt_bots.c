@@ -154,10 +154,41 @@ static int score_move(const UtttGame *g, uint8_t mv)
  * reversed the ranking of the best-looking idea. Whatever replaces this
  * function, measure it the way the tree calls it.
  *
- * What was NOT tried and might still be worth a day: a leaf that reads the
- * position after the mover's best reply rather than the position as it
- * stands, which is the one thing here that would change what it is ranking
- * rather than how finely. */
+ * THEN THE ONE-PLY LEAF WAS TRIED - score the position after the mover's
+ * best reply rather than the position as it stands - and it is the most
+ * interesting failure of the lot. It predicts far better (r = 0.558 against
+ * 0.418) with a tighter error, and it LOST by 2.4 points. Subtracting a
+ * constant so its mean error matched the old leaf's recovered 2.8 points
+ * and landed it level. Same information, same search, re-centred.
+ *
+ * WHICH SAYS THE LEAF'S LEAN IS WHAT THE TREE MINDS, not its accuracy. A
+ * node is backed up as `val` or `200 - val` depending on who moved, so a
+ * constant becomes +c at one depth and -c at the next: a depth-parity
+ * distortion that no amount of averaging removes, where honest noise
+ * averages away over visits. A max over replies acquires exactly that lean,
+ * which is why it went backwards.
+ *
+ * LEANING THIS LEAF ON PURPOSE, against sniper, 800 games a point:
+ *
+ *     more optimistic  -24   71.9%
+ *                      -12   74.4%
+ *     as it ships        0   77.4%
+ *                      +12   79.7%
+ *                      +24   80.4%
+ *                      +36   76.8%
+ *                      +80   72.1%
+ *
+ * The optimistic half of that is large, repeatable and agrees with the
+ * one-ply result: do not make this function cheerier. The +24 peak did NOT
+ * survive confirmation - it repeated against `bias` (+2.8) but not against
+ * `nib` (+0.3), and leaned-against-unleaned over 1600 games read 48.8%,
+ * slightly the wrong way. So the shipped lean stays where it is, and
+ * anybody moving it should settle it head to head, which is the only test
+ * here sensitive enough to see a point.
+ *
+ * Still untried: the one-ply leaf costs 1.39x and, debiased, plays level.
+ * Since rollouts themselves buy almost nothing, that time is nearly free -
+ * it is a better leaf waiting for a reason to be worth it. */
 static int leaf_eval(const UtttGame *g, uint8_t me)
 {
     if (g->over)
