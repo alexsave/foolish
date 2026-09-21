@@ -1169,6 +1169,10 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
 // ---------- candidate selection -------------------------------------------
 
 #define OG_MAX_CANDS 26
+// Cover candidates are kept PER WIDTH: this many distinct widths, this many of
+// each. Twelve places where there were ten, and no width can crowd out another.
+#define OG_COV_SIZES    4
+#define OG_COV_PER_SIZE 3
 
 typedef struct {
     int idx[OG_MAX_CANDS];
@@ -1432,7 +1436,27 @@ static void og_pick_candidates(const Game *g, const LegalMoves *moves,
     int power = g->power_suit;
 
     int atk[12];  double atk_k[12];  int n_atk = 0;
-    int cov[10];  double cov_k[10];  int n_cov = 0;
+    // COVERS ARE RANKED WITHIN THEIR SIZE, NOT AGAINST IT. The key below is a
+    // PRODUCT of card scores, so every extra card multiplies it: with scores in
+    // the 6-14 range a single cover keys around 10, a double around 100 and a
+    // triple in the hundreds or thousands. Ranked into one list that keeps the
+    // smallest, a wide cover could never place - a defender facing three
+    // attacks was offered singles and doubles and never the move that takes all
+    // three, even when that is the move it went on to play. The Oracle showed
+    // it plainly: the recorded triple cover was not on the panel at all.
+    //
+    // Bucketing by size keeps the intent (spend the cheapest cards) without
+    // letting size decide the comparison, which a product cannot help doing.
+    // A sum or a mean would only move that arbitrariness around: covering
+    // three attacks and covering one are different commitments, not cheaper
+    // and dearer versions of one, so they are ranked apart and each size gets
+    // its own places.
+    // One ranked list PER WIDTH, flat: width b keeps OG_COV_PER_SIZE at
+    // cov[b * OG_COV_PER_SIZE ...]. og_ranked_insert works on any slice.
+    int cov[OG_COV_SIZES * OG_COV_PER_SIZE];
+    double cov_k[OG_COV_SIZES * OG_COV_PER_SIZE];
+    int n_cov[OG_COV_SIZES];
+    for (int i = 0; i < OG_COV_SIZES; i++) n_cov[i] = 0;
     int pas[3];   double pas_k[3];   int n_pas = 0;
     int good_idx = -1, pickup_idx = -1;
 
@@ -1450,7 +1474,10 @@ static void og_pick_candidates(const Game *g, const LegalMoves *moves,
             case MOVE_COVER: {
                 double prod = 1.0;
                 for (int j = 0; j < m->n_cards; j++) prod *= (double)og_card_score(m->cards[j], power);
-                og_ranked_insert(cov, cov_k, &n_cov, 10, i,
+                int b = m->n_cards - 1;             // width 1 -> list 0
+                if (b >= OG_COV_SIZES) b = OG_COV_SIZES - 1;
+                const int o = b * OG_COV_PER_SIZE;
+                og_ranked_insert(cov + o, cov_k + o, &n_cov[b], OG_COV_PER_SIZE, i,
                                  prod - (double)m->n_cards * 0.5);
                 break;
             }
@@ -1468,7 +1495,9 @@ static void og_pick_candidates(const Game *g, const LegalMoves *moves,
 
     out->n = 0;
     for (int i = 0; i < n_atk && out->n < OG_MAX_CANDS; i++) out->idx[out->n++] = atk[i];
-    for (int i = 0; i < n_cov && out->n < OG_MAX_CANDS; i++) out->idx[out->n++] = cov[i];
+    for (int b = 0; b < OG_COV_SIZES; b++)
+        for (int r = 0; r < n_cov[b] && out->n < OG_MAX_CANDS; r++)
+            out->idx[out->n++] = cov[b * OG_COV_PER_SIZE + r];
     for (int i = 0; i < n_pas && out->n < OG_MAX_CANDS; i++) out->idx[out->n++] = pas[i];
     if (good_idx >= 0 && out->n < OG_MAX_CANDS)   out->idx[out->n++] = good_idx;
     if (pickup_idx >= 0 && out->n < OG_MAX_CANDS) out->idx[out->n++] = pickup_idx;
