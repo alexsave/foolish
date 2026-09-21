@@ -511,6 +511,26 @@ static void tree_prove(uint32_t node)
 
 /* The child to descend into. Proved losses (for us) are skipped; a proved
  * win never reaches here because the node itself would already be proved. */
+/* WHY THERE IS NO log() CACHE HERE, having built one and thrown it away.
+ *
+ * The UCT term below wants log(visits + 1) and `visits` is an integer, so
+ * libm is asked the same few thousand questions over and over - and an
+ * instruction-level sample said the return from `bl _log` was 5.9% of the
+ * runtime. A cache of what log() returned would be the same BITS, so the
+ * bots would play the same games; it looked free.
+ *
+ * It bought nothing. 1.41 ms a move to 1.40 at forty rollouts, and 9.25 to
+ * 9.25 at four hundred, where the tree is ten times the size and this is
+ * called ten times as often.
+ *
+ * THE LESSON IS ABOUT THE MEASUREMENT, not about log(). Those instruction
+ * counts are where the program counter was CAUGHT, and on this hardware it
+ * is caught at the instruction after a `bl` far more often than that call
+ * costs - the three hottest addresses in the whole binary were the return
+ * sites of uttt_play, mate_root and log, at 59.8%, 26.8% and 5.9%. Return
+ * site attribution is not cost attribution. Anything found that way has to
+ * be confirmed by removing it and timing what is left.
+ */
 static uint32_t tree_select(uint32_t node, uint64_t *rs)
 {
     const TreeNode *nd = &tree_pool[node];
