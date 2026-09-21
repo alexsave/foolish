@@ -281,14 +281,19 @@ typedef struct {
  *     nib              89.8%              93.8%
  *     sniper           92.5%              91.8%
  *
- * AND ONE THING HERE IS NOT MEASURED. Dropping symmetric duplicates at the
- * root is proved to be move-equivalent - the eight transforms are checked by
- * replay over 20,000 games - and it can only sharpen an estimate, since it
- * spends a fixed allowance on 15 real first moves instead of 81 with seven
- * copies of each. But its own contribution to the win rate was never
- * isolated: it only touches the first ply or two, so separating it needs
- * thousands of games, and the run was abandoned for the measurements above.
- * Believed good on the argument, not on a number. */
+ * DROPPING SYMMETRIC DUPLICATES AT THE ROOT is proved move-equivalent - the
+ * eight transforms are checked by replay over 20,000 games - and it spends a
+ * fixed allowance on 15 real first moves instead of 81 with seven copies of
+ * each. On against off, 4000 games apiece at 40 rollouts:
+ *
+ *     quill    50.6%   +0.7 sigma
+ *     bias     50.6%   +0.8 sigma
+ *
+ * Neither is significant by itself and nobody should quote them as if they
+ * were. Two independent bots landing on the same side of even is the whole
+ * of the evidence, and it is weak on purpose: the reduction can only touch
+ * the first ply or two, so there is very little there to find. It is kept
+ * for being free and right rather than for the tenth of a point. */
 
 /* THE ONE CONSTANT A TOURNAMENT MOVED, and what it cost to find out.
  *

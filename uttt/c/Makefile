@@ -67,6 +67,14 @@ build/uttt_icon: $(SRC) tools/uttt_icon.c | build
 icons: build/uttt_icon
 	./tools/icons.sh
 
+build/uttt_play: $(SRC) tools/uttt_play.c | build
+	$(CC) $(CFLAGS) $(SRC) tools/uttt_play.c -o $@ $(LDLIBS)
+
+# PLAY THE THING. quill, first move, as hard as it gets without waiting.
+ROLLOUTS ?= 400
+play: build/uttt_play
+	./build/uttt_play $(ROLLOUTS)
+
 build/uttt_render: $(SRC) tests/uttt_render.c | build
 	$(CC) $(CFLAGS) $(SRC) tests/uttt_render.c -o $@ $(LDLIBS)
 
@@ -88,7 +96,7 @@ asan: $(SRC) tests/uttt_test.c | build
 clean:
 	rm -rf build
 
-.PHONY: all run arena render rough-diff asan clean
+.PHONY: all run arena play render rough-diff asan clean
 
 # ---- the iOS bridge -----------------------------------------------------
 # `make ios-smoke` exercises the identical bridge with the host compiler, so

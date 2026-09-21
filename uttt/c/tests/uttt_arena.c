@@ -3,6 +3,23 @@
  *
  *     make -C uttt/c arena                 200 games a pairing
  *     ./uttt/c/build/uttt_arena 400 300    400 games, 300 rollouts a candidate
+ *     ./uttt/c/build/uttt_arena 400 300 8  ...across eight processes
+ *
+ * THE THIRD ARGUMENT IS WHY A LADDER STOPPED TAKING AN HOUR. Every game
+ * already derives its own seed from (a, b, index), so games are independent
+ * and reproducible, and a run can be cut into shards that pool exactly: the
+ * k-th worker plays the games whose index is k modulo the worker count, in
+ * EVERY pairing, so each one does the same slice of the cheap matchups and
+ * the dear ones and they finish together. Splitting by PAIRING instead would
+ * hand one worker random-against-random and another quill-against-sniper.
+ *
+ * It is processes rather than threads because the bots keep state in globals
+ * - the weights, the solver's table, the tree pool - and fork gives each
+ * worker its own copy of all of it for nothing. The same reason says do not
+ * reach for threads here later.
+ *
+ * Seconds are CPU, not wall clock, so they still add up across workers and
+ * still say what they said before.
  */
 #include "../src/uttt_bots.h"
 #include "../src/uttt_code.h"
@@ -10,6 +27,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+/* What one worker owes the parent: unnormalised scores, plus the thinking. */
+typedef struct {
+    double sum[BOT_COUNT][BOT_COUNT];
+    double secs[BOT_COUNT];
+} Tally;
 
 static uint64_t seed_of(int a, int b, int g)
 {
@@ -91,27 +116,74 @@ int main(int argc, char **argv)
     printf("round robin: %d games a pairing (half as X, half as O), "
            "%d rollouts a candidate\n\n", games, budget);
 
+    int jobs = argc > 3 ? atoi(argv[3]) : 1;
+    if (jobs < 1) jobs = 1;
+
     double win[BOT_COUNT][BOT_COUNT];   /* score for row against column */
     memset(win, 0, sizeof win);
-    double secs[BOT_COUNT]; memset(secs, 0, sizeof secs);
-    long   moves[BOT_COUNT]; memset(moves, 0, sizeof moves);
+    Tally all; memset(&all, 0, sizeof all);
 
+    int pipes[64][2], nw = jobs > 64 ? 64 : jobs;
+    for (int k = 0; k < nw; k++) {
+        if (nw > 1) {
+            if (pipe(pipes[k]) != 0) { perror("pipe"); return 1; }
+            pid_t pid = fork();
+            if (pid < 0) { perror("fork"); return 1; }
+            if (pid > 0) { close(pipes[k][1]); continue; }
+            close(pipes[k][0]);
+        }
+
+        /* the worker (or, at one job, this process) */
+        Tally t; memset(&t, 0, sizeof t);
+        for (int a = 0; a < BOT_COUNT; a++)
+            for (int b = a + 1; b < BOT_COUNT; b++)
+                for (int i = 0; i < games; i++) {
+                    if (nw > 1 && i % nw != k) continue;
+                    /* THE SAME SEED FOR BOTH COLOURS. Half the games have a
+                     * as X and half have b as X, and the pair shares a seed,
+                     * so a lucky opening cannot favour one of them. */
+                    UtttBot x = (i & 1) ? b : a, o = (i & 1) ? a : b;
+                    clock_t t0 = clock();
+                    uint8_t w = duel(x, o, budget, seed_of(a, b, i / 2), NULL);
+                    double dt = (double)(clock() - t0) / CLOCKS_PER_SEC;
+                    t.secs[a] += dt / 2; t.secs[b] += dt / 2;
+                    if (w == UTTT_DRAW) t.sum[a][b] += 0.5;
+                    else if ((int)(w == UTTT_X ? x : o) == a) t.sum[a][b] += 1;
+                }
+
+        if (nw == 1) { all = t; break; }
+        ssize_t off = 0, n;
+        while (off < (ssize_t)sizeof t &&
+               (n = write(pipes[k][1], (char *)&t + off, sizeof t - off)) > 0)
+            off += n;
+        close(pipes[k][1]);
+        _exit(0);
+    }
+
+    if (nw > 1) {
+        for (int k = 0; k < nw; k++) {
+            Tally t; ssize_t off = 0, n;
+            while (off < (ssize_t)sizeof t &&
+                   (n = read(pipes[k][0], (char *)&t + off, sizeof t - off)) > 0)
+                off += n;
+            close(pipes[k][0]);
+            if (off != (ssize_t)sizeof t) {
+                fprintf(stderr, "worker %d returned %zd of %zu bytes\n",
+                        k, off, sizeof t);
+                return 1;
+            }
+            for (int a = 0; a < BOT_COUNT; a++) {
+                all.secs[a] += t.secs[a];
+                for (int b = 0; b < BOT_COUNT; b++) all.sum[a][b] += t.sum[a][b];
+            }
+        }
+        while (wait(NULL) > 0) { }
+    }
+
+    double *secs = all.secs;
     for (int a = 0; a < BOT_COUNT; a++)
         for (int b = a + 1; b < BOT_COUNT; b++) {
-            double sa = 0;
-            for (int i = 0; i < games; i++) {
-                /* THE SAME SEED FOR BOTH COLOURS. Half the games have a as X
-                 * and half have b as X, and the pair shares a seed, so a
-                 * lucky opening cannot favour one of them. */
-                UtttBot x = (i & 1) ? b : a, o = (i & 1) ? a : b;
-                clock_t t0 = clock();
-                uint8_t w = duel(x, o, budget, seed_of(a, b, i / 2), NULL);
-                double dt = (double)(clock() - t0) / CLOCKS_PER_SEC;
-                secs[a] += dt / 2; secs[b] += dt / 2;
-                if (w == UTTT_DRAW) sa += 0.5;
-                else if ((int)(w == UTTT_X ? x : o) == a) sa += 1;
-            }
-            win[a][b] = sa / games;
+            win[a][b] = all.sum[a][b] / games;
             win[b][a] = 1 - win[a][b];
         }
 
@@ -133,6 +205,5 @@ int main(int argc, char **argv)
     for (int a = 0; a < BOT_COUNT; a++)
         printf("  %-9s %6.1fs\n", UTTT_BOT_NAME[a], secs[a]);
 
-    (void)moves;
     return 0;
 }
