@@ -73,4 +73,12 @@ int  uttt_line(const uint8_t *nine, uint8_t mark);
  * it. One lookup. */
 int  uttt_mask_line(unsigned mask);
 
+/* WHICH EMPTY SQUARES WOULD COMPLETE A LINE for a player holding `mask` -
+ * itself a nine-bit mask, and never including a square they already hold.
+ *
+ * It is the same table read the other way round, and it turns "can they
+ * close this block" from a walk over nine squares into one AND against the
+ * squares that are still empty. */
+unsigned uttt_mask_wins(unsigned mask);
+
 #endif

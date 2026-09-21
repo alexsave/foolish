@@ -20,6 +20,11 @@ static const uint16_t LINE_MASKS[8] = {
 /* HAS_LINE[m] for a nine-bit occupancy mask m. Built once, because a 512
  * byte table is smaller than the code that would avoid it. */
 static uint8_t HAS_LINE[512];
+
+/* WIN_CELLS[m]: the empty squares that would give `m` a line. Built from the
+ * same eight masks, read the other way round - a line missing exactly one of
+ * its three squares contributes that square. */
+static uint16_t WIN_CELLS[512];
 static int has_line_ready;
 
 static void build_has_line(void)
@@ -30,7 +35,25 @@ static void build_has_line(void)
             if ((m & LINE_MASKS[i]) == LINE_MASKS[i]) { hit = 1; break; }
         HAS_LINE[m] = hit;
     }
+    /* SECOND PASS, because this one reads the first. A square wins for `m`
+     * if `m` plus that square has a line - which is the same question
+     * `wins_block` asks, so the two cannot drift. Nine squares by five
+     * hundred masks is four and a half thousand iterations, once. */
+    for (unsigned m = 0; m < 512; m++) {
+        unsigned wins = 0;
+        for (int c = 0; c < 9; c++) {
+            if (m & (1u << c)) continue;
+            if (HAS_LINE[m | (1u << c)]) wins |= 1u << c;
+        }
+        WIN_CELLS[m] = (uint16_t)wins;
+    }
     has_line_ready = 1;
+}
+
+unsigned uttt_mask_wins(unsigned mask)
+{
+    if (!has_line_ready) build_has_line();
+    return WIN_CELLS[mask & 0x1ffu];
 }
 
 int uttt_mask_line(unsigned mask)
@@ -91,12 +114,25 @@ int uttt_undo(UtttGame *g)
 
 int uttt_play(UtttGame *g, uint8_t mv)
 {
-    uint8_t list[81];
-    int n = uttt_legal(g, list), ok = 0;
-    for (int i = 0; i < n; i++) if (list[i] == mv) { ok = 1; break; }
-    if (!ok) return 0;
-
+    /* LEGALITY IS THREE QUESTIONS, not a list of every answer.
+     *
+     * This used to generate all the legal moves into an eighty-one byte
+     * buffer and scan it for `mv`, on every play - including inside a
+     * playout, where the move had just come out of exactly that list. It was
+     * 24% of a bot's runtime, second only to the heuristic.
+     *
+     * The three questions are the same three `uttt_legal` walks the board to
+     * express: the block is open, the square is empty, and either you were
+     * sent nowhere in particular or you were sent here. Same answer, no
+     * list - and the check stays in `uttt_play`, so nothing anywhere gets an
+     * unvalidated version of this to hold wrong. */
+    if (mv > 80 || g->over) return 0;
     int b = mv / 9, c = mv % 9;
+    if (g->block[b] != UTTT_OPEN) return 0;
+    if (g->cell[mv] != UTTT_OPEN) return 0;
+    if (g->forced != UTTT_ANY && g->block[g->forced] == UTTT_OPEN
+        && b != g->forced) return 0;
+
     const int me = g->turn - 1;
     g->cell[mv] = g->turn;
     g->cm[me][b] |= (uint16_t)(1u << c);

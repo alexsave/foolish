@@ -53,12 +53,20 @@ static int score_move(const UtttGame *g, uint8_t mv)
     if (g->block[c] != UTTT_OPEN) {
         s -= 55;
     } else {
-        /* do not send them somewhere they can close */
-        for (int k = 0; k < 9; k++) {
-            uint8_t t = (uint8_t)(c * 9 + k);
-            if (g->cell[t] != UTTT_OPEN) continue;
-            if (meta_would_win(g, t, opp)) { s -= 400; break; }
-            if (wins_block(g, t, opp))     { s -= 45; }
+        /* DO NOT SEND THEM SOMEWHERE THEY CAN CLOSE - and this was a walk
+         * over nine squares asking two questions about each, which made it
+         * 35% of a bot's runtime.
+         *
+         * The squares that would close block c for them are one lookup, and
+         * intersecting that with the squares still empty is one AND. The
+         * count is what the loop was really after: one such square is worth
+         * a penalty, and if taking the block would also complete their LINE
+         * of blocks then it does not matter how many there are. */
+        const unsigned open = ~(unsigned)(g->cm[0][c] | g->cm[1][c]) & 0x1ffu;
+        const unsigned closers = uttt_mask_wins(g->cm[opp - 1][c]) & open;
+        if (closers) {
+            if (uttt_mask_line(g->bm[opp - 1] | (1u << c))) s -= 400;
+            else s -= 45 * __builtin_popcount(closers);
         }
     }
     return s;

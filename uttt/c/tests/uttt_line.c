@@ -1,6 +1,10 @@
-/* The fast `uttt_line` against the obvious one, over every board there is.
+/* The kernel's fast paths against the obvious ones.
  *
  *     make -C uttt/c line
+ *
+ * Two of them. `uttt_line` over every board there is, and `uttt_play`'s
+ * legality rule against the list `uttt_legal` builds - because both were
+ * rewritten for speed and both decide what the game IS.
  *
  * 4^9 boards times two marks is 524,288 cases and it runs in a blink, so
  * there is no reason to sample. `uttt_line` is 62% of a bot's runtime and it
@@ -23,6 +27,42 @@ static int slow_line(const uint8_t *nine, uint8_t mark)
     return 0;
 }
 
+/* uttt_play accepts exactly the moves uttt_legal lists, and no others.
+ *
+ * `uttt_play` used to answer this BY calling `uttt_legal` and scanning the
+ * result, which made the two trivially consistent and cost 24% of a bot's
+ * runtime. Now it answers in three comparisons, so the agreement has to be
+ * checked rather than assumed - over every square of every position, not
+ * just the legal ones. */
+static long check_legality(long games, long *positions)
+{
+    uint64_t rs = 0x6A09E667F3BCC909ull;
+    long bad = 0;
+    for (long k = 0; k < games; k++) {
+        UtttGame g; uttt_init(&g);
+        for (;;) {
+            uint8_t list[81];
+            int n = uttt_legal(&g, list);
+            (*positions)++;
+            /* the truth, as a set */
+            int legal[81] = {0};
+            for (int i = 0; i < n; i++) legal[list[i]] = 1;
+            for (int mv = 0; mv < 81; mv++) {
+                UtttGame t = g;
+                int took = uttt_play(&t, (uint8_t)mv);
+                if (took != legal[mv]) bad++;
+            }
+            /* and one past the end, which a byte can hold and a board cannot */
+            UtttGame t = g;
+            if (uttt_play(&t, 81) || uttt_play(&t, 255)) bad++;
+            if (n <= 0) break;
+            rs ^= rs << 13; rs ^= rs >> 7; rs ^= rs << 17;
+            uttt_play(&g, list[rs % (uint64_t)n]);
+        }
+    }
+    return bad;
+}
+
 int main(void)
 {
     long cases = 0, bad = 0;
@@ -37,5 +77,10 @@ int main(void)
     }
     printf("uttt_line: %ld boards checked against the old one, %ld disagree\n",
            cases, bad);
-    return bad ? 1 : 0;
+
+    long positions = 0;
+    long legal_bad = check_legality(400, &positions);
+    printf("uttt_play: %ld positions x 81 squares against uttt_legal, "
+           "%ld disagree\n", positions, legal_bad);
+    return (bad || legal_bad) ? 1 : 0;
 }
