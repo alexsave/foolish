@@ -82,6 +82,8 @@ c/build/
 # nowhere.
 shared/tools/structgen/build/
 shared/tools/datagen/build/
+# And tighten's, which is one C file and a `make` away on any machine.
+shared/tools/tighten/build/
 c/*.trace/
 c/tools/tt_divergence_viz/backup/
 c/tools/tt_divergence_viz/backup2/

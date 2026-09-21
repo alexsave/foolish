@@ -1,0 +1,20 @@
+# tighten edl - in and out points in seconds, one segment a line.
+#
+# The three takes of media/foolish-showcase.mp4, in order. Each is a single
+# continuous stretch of the source with nothing cut out of the middle of it.
+#
+# Source: a 19m46s iPhone screen recording of one game of Foolish played with
+# Eva inside Messages. It is not in the repo; it was 744 MB.
+#
+# See README.md in this directory for the crop, the fades and the two places in
+# the source that must not be shown.
+
+  125.80   153.20   # 27.40s  her three dots; her 6 of diamonds thrown in and
+                    #         animating down the board; you pick the king of
+                    #         diamonds and cover with it; you send; the board
+                    #         expands to full screen; the pickup sweep and the
+                    #         refill. One take, no cut.
+  692.00   703.00   # 11.00s  her three dots; her ace covers your 7 of spades;
+                    #         you throw in a 7 of hearts; you send.
+  778.80   794.50   # 15.70s  her three dots; her cover; you call Good; the bout
+                    #         sweeps off the table and sends.
