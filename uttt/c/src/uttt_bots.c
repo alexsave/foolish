@@ -787,6 +787,32 @@ typedef struct {
  * re-rooting it means copying it out of one pool into the other so the
  * discarded siblings are gone rather than leaked. A cache of playouts
  * already spent: the allowance is the same, the tree just starts fuller. */
+/* THE POOL FILLS, AND IT DOES NOT MATTER. Worth knowing before anyone
+ * spends an afternoon on it, because the first measurement looks damning.
+ *
+ * The tree stops growing the moment this is full, and it fills early:
+ *
+ *       400 rollouts a candidate      6,000 playouts     11,873 nodes
+ *     1,600                          24,000             71,620
+ *     6,400                          96,000            222,737
+ *    25,600                         384,000            250,000  FULL
+ * 1,048,576                      15,728,640            250,000  FULL
+ *
+ * So at a million rollouts the search pours fifteen million playouts into a
+ * tree that has been frozen since about twenty-five thousand. That looks
+ * exactly like the reason more thinking stops helping - and it is not.
+ * Raised to 4,000,000 nodes and played against this at a budget where this
+ * one provably saturates: 49.2%, -0.1 sigma over 60 games, 51 of them drawn.
+ * Sixteen times the tree is worth nothing at all.
+ *
+ * Which matches the rollouts themselves: 6,400 against 400 is +0.2 sigma,
+ * 40,000 against 6,400 is +0.6 sigma. Neither the size of the tree nor the
+ * number of playouts is what limits this bot.
+ *
+ * WHAT IS LEFT IS THE LEAF. Every node, however many there are, is scored
+ * by twelve plies of playout and `leaf_eval`. More of them samples the same
+ * biased estimate more finely; it cannot make the estimate better. Anyone
+ * wanting a stronger quill should start there and not here. */
 #define TREE_POOL 250000
 static TreeNode tree_pool_a[TREE_POOL], tree_pool_b[TREE_POOL];
 static TreeNode *tree_pool = tree_pool_a;
