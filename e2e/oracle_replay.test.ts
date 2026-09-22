@@ -56,7 +56,18 @@ const WIDE: [string, string[], number][] =
     [['5p-random', Array(5).fill('random'), 105], ['8p-random', Array(8).fill('random'), 101]];
 // A MIXED TABLE, because a pass needs a defender who holds several of one value
 // and an attacker willing to send it. Six seats of one bot rarely stage that;
-// these six do, at seed 750, and §12.2-1c is what they are here for.
+// these six do, and §12.2-1c is what they are here for.
+//
+// THE SEED MOVED 750 -> 752 WHEN A GOOD BECAME A MOVE, and the case below is the
+// one that noticed, exactly as its own closing comment said it would ("if the
+// deal or the bot cycle ever stops producing one"). Nothing about the deal or
+// the rules changed: classify() (c/src/bot_drive.c) stopped bundling a silent
+// `good` into the cycle that follows it, so a good now ENDS its cycle, the next
+// cycle re-collects and re-shuffles the eligible seats, and from the first good
+// onward these six bots play a different (equally legal) game. Seed 750's board
+// no longer stages a defender holding three of the attack's value; 752 does,
+// with seven legal passes at its widest over five pass decisions - measured, not
+// guessed, and the assertion at the bottom is what holds it there.
 const PASS_BOARD = ['handwritten', 'octogen', 'random', 'handwritten', 'octogen', 'random'];
 /** REPLAY_STEP id -> its name, so a failure names the move type it broke on. */
 const STEP_NAME: Record<number, string> =
@@ -211,7 +222,7 @@ test('§12.2-1c every pass a hand can make is on the panel', async () => {
     // just animated, and octogen, sharing this selection, could not have chosen
     // it either.
     const inst = await freshInstance();
-    const { code, frames, id } = await fixture('6p-pass', PASS_BOARD, 750);
+    const { code, frames, id } = await fixture('6p-pass', PASS_BOARD, 752);
     let widest = 0, walked = 0;
     for (let j = 1; j < frames.length; j++) {
         if (findDecisionIndex(frames, j) !== j) continue;

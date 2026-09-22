@@ -143,7 +143,12 @@ class Server {
         assert.ok(typeof p !== 'number', `commit products: ${p}`);
         const seats = t.seats();
         const pushes: [string, Uint8Array][] = [];
-        if (p.nEvents > 0) {
+        // THE ADAPTER'S GATE, and not `nEvents > 0` alone: a `good` flies no
+        // card, so it emits no event, and that lone test threw its push away
+        // (server/impls/supabase/functions/_shared/adapter/table_io.ts). A
+        // stale mirror here would leave the page's empty-stream path untested
+        // by the one suite that reads what the page actually drew.
+        if (p.nEvents > 0 || p.goodsChanged) {
             for (let s = 0; s < seats.length; s++) {
                 if (seats[s].brain) continue;
                 const b = t.push(this.gid, s);
@@ -496,6 +501,13 @@ const cards = (text: string) => text.split(' ').map((t) => {
     return { suit, value };
 });
 
+/** One seat's role coin, and the two things a case reads off it. */
+const coinOf = (s: Stage, seat: number) => s.host.querySelector(`[data-role-seat="${seat}"]`);
+const markOf = (s: Stage, seat: number) => coinOf(s, seat)?.getAttribute('data-role-mark') ?? null;
+/** The coin's width about its centre: 1 face-on, ~0 edge-on, mid-turn between. */
+const scaleOf = (s: Stage, seat: number) =>
+    Number(coinOf(s, seat)?.getAttribute('style')?.match(/scaleX\(([^)]*)\)/)?.[1] ?? NaN);
+
 /** A tap's promise, whose rejection (a refused move) is the page's to handle. */
 const tap = (p: Promise<unknown>) => { p.catch(() => {}); };
 
@@ -801,6 +813,169 @@ test('good: my good closes the bout', async () => {
         await answer(s, 'server applies');
         await s.advance(60);
         await deliver(s, 'push: the bout closes');
+    });
+});
+
+test('my own good turns my badge as I tap it, and the confirmation finds nothing left to turn', async () => {
+    // THE OTHER HALF OF "A GOOD IS A MOVE", and the half no server fix reaches.
+    // Everything else on this branch makes ANOTHER player's good arrive as its
+    // own push; my own still waited for the round trip and then flipped.
+    //
+    // iMessage has no such lag because it flips the mark when the move is STAGED
+    // into the bubble - "so by the time the settlement is released there is no
+    // difference left to find" (MessageTableView+Sequence.swift, round 21). THE
+    // WEB HAS NO STAGING: a Messages extension stages and then sends as two
+    // acts, and that split is the platform's, not a design (the owner: "in the
+    // web there is no staged + actually sent distinction. Really more of an
+    // iMessage quirk"). Here the tap IS the send, so the flip goes at the
+    // optimistic submit. Same property on screen, different machinery.
+    //
+    // THE PROPERTY, IN TWO PARTS, and the second is what this case is really for:
+    // the check is up the moment I act, and when the server's answer and its push
+    // arrive there is NOTHING LEFT TO ANIMATE. That falls out of the kernel, not
+    // out of a special case: `anim_goods_opening` adds only the goods the shown
+    // roles do not already wear, so a confirmation of a badge already turned
+    // returns null and the coin does not turn twice.
+    //
+    // Anna has not said good, so mine closes nothing: my own push carries no
+    // events at all, which is the sharpest possible form of "nothing left".
+    const board = three().hand(0, 'Ad Qd 6d').hand(1, '9c Tc Jd').hand(2, 'Js Qs Ks').table('7h/9h')
+        .attacker(0).defender(2).goodTimestamp().build();
+    await play('my_good_optimistic', 135, 'a-my-good', board, async (s, srv) => {
+        assert.equal(markOf(s, 1), 'sword', 'I am an attacker to begin with');
+        await s.step('tap good', () => tap(probe.anim.good()));
+        await s.advance(90);
+        assert.ok(scaleOf(s, 1) < 0.5, `my coin is already turning on the tap (scaleX ${scaleOf(s, 1)})`);
+        await s.advance(210);
+        assert.equal(markOf(s, 1), 'check', 'the check is up before the server has answered');
+        assert.equal(scaleOf(s, 1), 1, 'and the coin has come to rest');
+
+        await answer(s, 'server applies my good');
+        await s.advance(120);
+        assert.equal(markOf(s, 1), 'check', 'the answer changes nothing');
+        assert.equal(scaleOf(s, 1), 1, 'and turns nothing: the coin never moves again');
+
+        const mine = srv.take(ME);
+        assert.equal(mine.bytes[3], 0, 'my own push carries no events - there was no card to fly');
+        await deliver(s, 'push: my own good, confirmed', mine);
+        await s.advance(300);
+        assert.equal(markOf(s, 1), 'check', 'the push confirms what is already on screen');
+        assert.equal(scaleOf(s, 1), 1, 'and anim_goods_opening finds nothing to add, so the badge does not flip twice');
+    });
+});
+
+test('a good the server refuses takes its own check back off', async () => {
+    // THE REVERT IS NOT OPTIONAL, and it matters MORE here than on iMessage. A
+    // staged move can be un-staged by hand before it is ever sent; the web's tap
+    // IS the send, so a refusal is the only way back, and a good that flipped
+    // optimistically and was then refused would strand a check on a seat that
+    // never said it.
+    //
+    // Boris takes the table before my good reaches the server. The kernel offers
+    // a good over an uncovered table (c/src/legal.c: "GOOD IS ALWAYS HERE WHILE
+    // THE SEAT HAS NOT SAID IT, uncovered table or not"), so my own gate lets the
+    // prediction through on the board I can see - and the board the server holds
+    // has moved on, which is the whole point.
+    const board = three().hand(0, 'Ad Qd 6d').hand(1, '9c Tc Jd').hand(2, 'Js Qs Ks').table('7h')
+        .attacker(0).defender(2).build();
+    await play('my_good_refused', 136, 'a-my-good-no', board, async (s, srv) => {
+        await s.step('Boris takes the table on the server', () => { srv.act(BORIS, encodeAction({ kind: 'pickup' })); });
+        await s.step('tap good', () => tap(probe.anim.good()));
+        await s.advance(210);
+        assert.equal(markOf(s, 1), 'check', 'the check went up on the board I could see');
+        await answer(s, 'server refuses mine');
+        await s.advance(300);
+        assert.equal(markOf(s, 1), 'sword', 'and the refusal took it back off');
+        await deliver(s, 'push: Boris\'s pickup');
+        await s.advance(900);
+        assert.notEqual(markOf(s, 1), 'check', 'and the board that follows does not put it back');
+    });
+});
+
+test('another player\'s good is the whole stream: the badge turns on its own push', async () => {
+    // THE CASE THE SERVER NEVER USED TO SEND. A `good` flies no card, so the
+    // kernel emits no event for it, and the adapter's `nEvents > 0` gate threw
+    // the push away: the check only reached a screen folded into whatever moved
+    // next ("all the goods are just getting lumped in with whatever animation
+    // causing move follows"). TableCommit.goods_changed broadcasts it now, and
+    // what lands is a push with an EMPTY event stream whose trailer board is the
+    // entire move.
+    //
+    // Which is why the page plays it ABOVE its empty-stream guard
+    // (AnimationContext, `nonOptimisticEvents.length === 0`) rather than below:
+    // everything below that guard is reached only by a stream with steps in it.
+    // iMessage made the same call and says why - it seeds its roles "AHEAD OF
+    // THE EMPTY-STREAM GUARD, because the stream that needs it most is the empty
+    // one: a `good` that does not close the bout emits no step, so the
+    // difference between these two role states is the ENTIRE move"
+    // (ios/FoolishKit/Boards/MessageTableView+Sequence.swift).
+    //
+    // Anna has NOT said good, so Boris's closes nothing: no transition, no
+    // sweep, no card. The badge is the only thing that may move, and the golden
+    // holds the frames either side of it.
+    const board = three().hand(0, 'Ad Qd 6d').hand(1, '9c Tc Jd').hand(2, 'Js Qs Ks').table('7h/9h')
+        .attacker(0).defender(1).goodTimestamp().build();
+    await play('bot_good_alone', 133, 'a-good-alone', board, async (s, srv) => {
+        assert.equal(markOf(s, 2), 'sword', 'Boris is an attacker to begin with');
+        await s.step('Boris says good on the server', () => { srv.act(BORIS, encodeAction({ kind: 'good' })); });
+        const good = srv.take(ME);
+        assert.equal(good.bytes[3], 0, 'his push carries no events at all - there is no card to fly');
+        assert.equal(markOf(s, 2), 'sword', 'and nothing on my screen has moved yet: the push has not been delivered');
+        await deliver(s, 'push: Boris says good', good);
+        // THE BADGE TURNS, it does not snap. A coin flip is one thing with two
+        // faces, so the old face is still up while the coin collapses onto its
+        // edge and the new one stands up behind it (src/state/roleMotion.ts
+        // coinFrameAt) - which is the whole reason this is a MOVE and not a
+        // state update, and the reason the push has to arrive on its own.
+        assert.equal(markOf(s, 2), 'sword', 'the old face is still up at the moment the push lands');
+        await s.advance(90);
+        assert.equal(markOf(s, 2), 'sword', 'and still up as the coin goes over');
+        assert.ok(scaleOf(s, 2) < 0.5, `the coin is edge-on: it is turning (scaleX ${scaleOf(s, 2)})`);
+        // A flip happens where the seat stands, so no ghost is ever in the air.
+        assert.equal(s.host.querySelector('[data-role-flight]'), null, 'and nothing flew to do it');
+        await s.advance(120);
+        assert.equal(markOf(s, 2), 'check', 'the check is up - on THIS push, not on the next move to carry a card');
+        await s.advance(600);
+        assert.equal(markOf(s, 2), 'check', 'and it stays up');
+    });
+});
+
+test('a good that lands while a card of mine is still in the air turns the badge at once', async () => {
+    // THE CASE THAT NEEDS THE LEAD, and the reason the good is played ABOVE the
+    // empty-stream guard rather than left to the board-changed effect below it.
+    //
+    // That effect is a BYSTANDER write, and `anim_shown_ledger_allows` refuses a
+    // bystander outright while a sequence is still walking the marks forward
+    // (c/src/anim_plan.c) - correctly, because a board arriving underneath a
+    // running choreography would jump the badges. So a good delivered mid-flight
+    // has no bystander to fall back on: without a lead of its own it waits for
+    // the closing beat of whatever is flying, which is the owner's symptom
+    // exactly - "all the goods are just getting lumped in with whatever
+    // animation causing move follows".
+    //
+    // My cover is in the air when Boris's good arrives. Anna has not said good,
+    // so his closes nothing and his push carries no events at all.
+    const board = three().hand(0, 'Ad Qd 6d').hand(1, '9h 9c Tc').hand(2, 'Js Qs Ks')
+        .table('7h').attacker(0).defender(1).build();
+    await play('good_during_flight', 134, 'a-good-flight', board, async (s, srv) => {
+        s.track('9h', '7h');
+        await s.step('tap cover 9h on 7h', () => tap(probe.anim.cover(cards('9h'), cards('7h'))));
+        await s.advance(60);
+        await answer(s, 'server applies my cover');
+        // My cover's own confirming push is queued behind nothing and is NOT
+        // delivered here: it is every event this client already animated, so it
+        // would take the dedup branch and prove nothing about an empty stream.
+        srv.take(ME);
+        await s.step('Boris says good on the server, behind my cover',
+            () => { srv.act(BORIS, encodeAction({ kind: 'good' })); });
+        const good = srv.take(ME);
+        assert.equal(good.bytes[3], 0, 'his push carries no events - there is no card to fly');
+        assert.ok(probe.anim.isAnimating, 'and my own cover is still in the air as it arrives');
+        await deliver(s, 'push: Boris says good, mid-flight', good);
+        await s.advance(210);
+        assert.equal(markOf(s, 2), 'check', 'his badge turned during my flight, not after it');
+        await s.advance(600);
+        assert.equal(markOf(s, 2), 'check', 'and it stayed turned once my sequence settled');
     });
 });
 

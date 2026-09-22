@@ -266,7 +266,12 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
         if (typeof p === 'number') throw new Error(`game ${row.id}: no commit products (${p})`);
         const seats = t.seats();
         const pushes: Push[] = [];
-        if (p.nEvents > 0) {
+        // The real adapter's gate, and it is NOT `nEvents > 0` alone any more
+        // (server/impls/supabase/functions/_shared/adapter/table_io.ts): a
+        // `good` flies no card, so it emits no event, and that lone test threw
+        // its push away. This harness mirrors the adapter deliberately, so a
+        // stale mirror here would hide the fix from every browser run.
+        if (p.nEvents > 0 || p.goodsChanged) {
             for (let s = 0; s < seats.length; s++) {
                 if (seats[s].brain) continue;
                 const b = t.push(row.id, s);
@@ -351,7 +356,10 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
         if (typeof p === 'number') return;
         const seats = t.seats();
         const pushes: Push[] = [];
-        if (p.nEvents > 0) {
+        // Same gate as the move path above, and the lane the bug lived in: a bot
+        // that says good and nothing else is the whole cycle, so `nEvents > 0`
+        // dropped the only push that carried it (bot_actions.ts runCycle).
+        if (p.nEvents > 0 || p.goodsChanged) {
             for (let s = 0; s < seats.length; s++) {
                 if (seats[s].brain) continue;
                 const b = t.push(gameId, s);
@@ -805,6 +813,74 @@ const SCENARIOS: Record<string, () => Scenario> = {
             .status(PLAYING).deterministic().trump('Kc').deck('8s 9s Ts Js')
             .hand(0, '8c 9c Tc Ad').hand(1, '8h 9h Th Jh').hand(2, '7s Qd 6d Ks')
             .table('7h').attacker(0).defender(1).good(0).build(),
+    }),
+
+    /**
+     * A BOT'S GOOD, ALONE, AND THE MOVE THAT USED TO CARRY IT.
+     *
+     * The scenario the owner's finding is about: "if a bot just says 'good', we
+     * don't send anything back to the client... right now all the goods are just
+     * getting lumped in with whatever 'animation causing move' follows."
+     *
+     * NOTHING IS ELIGIBLE UNTIL I OPEN THE BOUT, which is what makes this
+     * measurable in a browser: with an empty table only the first attacker has a
+     * move (c/src/legal.c calc_moves - a non-defender needs `num_battles > 0`),
+     * so the bots sit still until the page is up and watching. ME (seat 0) leads,
+     * ANNA (seat 1) defends and is a human who does nothing, and seats 2 and 3
+     * are bot ATTACKERS holding no seven - so once 7h is down, `good` is each
+     * one's whole menu and neither good closes anything (the table is uncovered
+     * and ME has not said good either).
+     *
+     * Each of those goods commits with NO EVENT AT ALL. Before
+     * TableCommit.goods_changed the `nEvents > 0` gate dropped both pushes and
+     * the checks sat in the database, invisible, until some later move's push
+     * carried the mask in with it - so ANNA covering 7h with Th (a cover moves a
+     * card and clears no goods) turns both badges at once, a whole move late.
+     * That is the "lumped in" symptom, staged, and the two arrival times are the
+     * before and after of this branch.
+     *
+     *   POST /__control/act {user:'u-me',   gameId:'botgood', move:{kind:'attack', cards:'7h'}}
+     *   POST /__control/act {user:'u-anna', gameId:'botgood',
+     *                        move:{kind:'cover', cards:'Th', attack_cards:'7h'}}
+     */
+    bot_good_alone: () => ({
+        gameId: 'botgood',
+        users: ['ME', 'ANNA'],
+        board: fixture().title('A bot says good').seats([
+            seat('ME'),
+            seat('ANNA'),
+            { id: 'bot-cordite-1', name: '\u{1F916}Cordite', brain: 'cordite' },
+            { id: 'bot-cordite-2', name: '\u{1F916}Cordite II', brain: 'cordite' },
+        ])
+            .status(PLAYING).deterministic().trump('Kc').deck('6h 6s 6d 6c')
+            .hand(0, '7h 8c 9c Ad').hand(1, 'Th Jh Qh Ah')
+            .hand(2, '8d 9d Td Kd').hand(3, '8s 9s Ts Ks')
+            .attacker(0).defender(1).build(),
+    }),
+
+    /**
+     * MY OWN GOOD, for watching the badge turn under my own thumb.
+     *
+     * The other half of "a good is a move", and the half no server change
+     * reaches: another player's good now arrives as its own push, but my own
+     * used to wait for the round trip before anything moved. The web has no
+     * staging to flip it at (that split is a Messages-extension quirk), so the
+     * flip goes at the optimistic submit - the tap - and this is the board that
+     * offers me the button.
+     *
+     * The table is fully covered, so Good is my whole menu (the human narrowing
+     * in play_human_menu offers no good over an uncovered attack); BORIS is a
+     * human who does nothing, so my good closes nothing and commits with no
+     * event at all; and nobody here holds a seven or an eight, so the bout
+     * cannot be reopened under the measurement.
+     */
+    my_good: () => ({
+        gameId: 'mygood',
+        users: ['ME', 'ANNA', 'BORIS'],
+        board: fixture().title('My own good').seats([seat('ME'), seat('ANNA'), seat('BORIS')])
+            .status(PLAYING).deterministic().trump('Kc').deck('6h 6s 6d 6c')
+            .hand(0, '9c Tc Jc Ad').hand(1, 'Jh Qh Kh Ah').hand(2, '9d Td Jd Kd')
+            .table('7h/8h').attacker(0).defender(1).goodTimestamp().build(),
     }),
 
     /** Three humans, nothing on the table: sign in as any of them in three tabs. */

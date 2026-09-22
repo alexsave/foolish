@@ -460,6 +460,44 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         // If ALL events were optimistic, just update state and return
         if (nonOptimisticEvents.length === 0) {
+            // A GOOD CAN BE THE WHOLE STREAM, AND THIS IS THE WEB'S EMPTY-STREAM
+            // GUARD - so the good has to be played ABOVE it, not below.
+            //
+            // There is no ANIM_EVT_GOOD: a good flies no card, so it emits no
+            // event. The server used to drop its push for exactly that reason
+            // (`nEvents > 0`) and the mark only reached a screen folded into
+            // whatever moved next; TableCommit.goods_changed sends it now, and
+            // what arrives is a push whose `events` are EMPTY and whose trailer
+            // board is the entire move. Everything below this guard - the
+            // opening role beat included - is reached only by a stream with
+            // steps in it, so a good that arrives alone would fall straight
+            // through to `updateGameState` and be left to the bystander effect,
+            // which `anim_shown_ledger_allows` refuses outright while another
+            // sequence is still walking the marks forward.
+            //
+            // iMessage made this exact call first and says why, from the other
+            // side: it seeds its roles "AHEAD OF THE EMPTY-STREAM GUARD, because
+            // the stream that needs it most is the empty one: a `good` that does
+            // not close the bout emits no step, so the difference between these
+            // two role states is the ENTIRE move" (MessageTableView+Sequence.swift).
+            //
+            // ADDED goods only - `animRolesGoodsOpening` is the kernel's rule and
+            // answers null for anything else, which is right: a good being taken
+            // away is a consequence of the card that cleared it, and that card is
+            // an event, so such a push is never one of these.
+            if (message.events.length === 0 && message.game) {
+                const shown = roleMotionRef.current.read();
+                const opening = shown ? animRolesGoodsOpening(shown.roles, message.game.goodMask) : null;
+                // The seats do not change, only what they are wearing: the same
+                // coin flip in place the opening beat of a real stream makes.
+                if (opening) roleMotionRef.current.syncRoles(opening);
+                // A sequence still in flight settles on the board in this ref at
+                // its closing beat. This push's board is strictly newer than that
+                // one (the version gate above guarantees it), so leaving the old
+                // board there would have the closing beat take the check back off
+                // the badge it was just put on.
+                if (sequenceFinalRef.current) sequenceFinalRef.current = message.game;
+            }
             if (message.game) {
                 updateGameState(message.game.gameId, message.game);
             }
@@ -512,26 +550,13 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         // event-0 mask (the kernel's AnimBeats.first_good_mask), and the rule
         // that only ADDED goods lead is the kernel's too.
         //
-        // AND A GOOD CAN NOW BE THE WHOLE STREAM. There is still no
-        // ANIM_EVT_GOOD - a good flies no card, so it emits no event - but the
-        // server no longer drops the push for that: TableCommit.goods_changed
-        // says the goods moved and the broadcast goes out with `events` EMPTY
-        // (server/impls/supabase/functions/_shared/adapter/table_io.ts).
-        //
-        // So `events[0]` is not always there any more, and reading `.goodMask`
-        // off `undefined` would have thrown on the first such push - or, worse,
-        // silently answered ANIM_NO_MASK and dropped the only move the stream
-        // carried. The final board is the right source when the stream has no
-        // steps: with nothing to animate, the board the message settles on IS
-        // the move. iMessage reaches the same answer from the other side, seeding
-        // its roles "AHEAD OF THE EMPTY-STREAM GUARD, because the stream that
-        // needs it most is the empty one" (MessageTableView+Sequence.swift).
+        // A GOOD THAT ARRIVES ALONE never reaches this line: it has no `events[0]`
+        // to take a mask from, and it is played at the empty-stream guard above,
+        // where iMessage plays it too. `events[0]` is therefore still always
+        // there by the time this runs.
         const openingShown = roleMotionRef.current.read();
-        const openingMask = message.events.length > 0
-            ? stepGoodMask(message.events[0])
-            : (message.game ? message.game.goodMask : ANIM_NO_MASK);
         const opening = openingShown
-            ? animRolesGoodsOpening(openingShown.roles, openingMask)
+            ? animRolesGoodsOpening(openingShown.roles, stepGoodMask(message.events[0]))
             : null;
         // The seats do not change here, only what they are wearing, so nothing
         // flies: this is the coin flip each badge makes where it stands.
@@ -1149,7 +1174,88 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         }
     };
 
-    const good = async (): Promise<{ game_id: string }> => await serverActions.good();
+    /**
+     * MY OWN GOOD, FLIPPED THE INSTANT I TAP.
+     *
+     * The three lines above this one used to be one: `await serverActions.good()`.
+     * Everything else on the branch makes ANOTHER player's good arrive as its own
+     * push; none of it helps my own, which still waited for the round trip and
+     * then flipped - the same lag the owner named, wearing the one hat the server
+     * fix does not take off.
+     *
+     * WHAT IS BEING REPRODUCED IS THE VISIBLE PROPERTY, NOT THE MECHANISM.
+     * iMessage flips this badge when the move is STAGED into the bubble, and says
+     * so in the round-21 block of MessageTableView+Sequence.swift: "that board
+     * flipped the mark when the move was staged (the owner: 'we shouldn't show
+     * the good animation as staging it should've already shown it'), so by the
+     * time the settlement is released there is no difference left to find."
+     * THE WEB HAS NO STAGING. A Messages extension stages a move into a bubble
+     * and sends it as a separate act; that split is the platform's, not a design
+     * (the owner: "in the web there is no staged + actually sent distinction.
+     * Really more of an iMessage quirk"). Here the tap IS the send, so the only
+     * moment available is the optimistic submit, and that is where the flip goes.
+     * Same result on screen, different machinery - do not go looking for a
+     * staging concept in src/, there is none.
+     *
+     * The property both hosts end up with: the check is up the moment I act, and
+     * when the confirmation lands there is no difference left to animate. That
+     * second half is the kernel's doing and not a special case here -
+     * `anim_goods_opening` adds only the goods the shown roles DO NOT already
+     * wear, so the push that confirms my own good finds nothing to add and the
+     * badge does not turn twice.
+     *
+     * SAME POSTURE AS EVERY OTHER OPTIMISTIC MOVE (attack, pass, pickup, cover):
+     * send first, because the server is authoritative; predict only what the
+     * kernel's own gate says is legal; and put it back if the server refuses.
+     * The revert matters MORE here than on iMessage, not less: a staged move can
+     * be un-staged by hand before it is ever sent, but the web's tap is the send,
+     * so a refusal is the only way back and a good that flipped and was then
+     * refused would strand a check on a seat that never said it.
+     */
+    const good = async (): Promise<{ game_id: string }> => {
+        const game = game_id ? games[game_id] : undefined;
+        const seat = seatOf(game);
+        // The same awire bytes the request carries, put through the kernel's gate
+        // (c/src/legal.c, via validateActionWire) before anything is drawn. A
+        // spectator has no seat and predicts nothing.
+        const wire = encodeAction({ kind: 'good' });
+        const serverPromise = serverActions.good();
+
+        let flipped = false;
+        if (game && seat !== undefined) {
+            let legal = true;
+            try { validateActionWire(game, wire); } catch { legal = false; }
+            const shown = legal ? roleMotionRef.current.read() : null;
+            // The kernel decides what the badges become; this file only asks.
+            const opening = shown
+                ? animRolesGoodsOpening(shown.roles, shown.roles.goodMask | (1 << seat))
+                : null;
+            if (opening) {
+                // A coin turning where it stands - nothing flies, exactly as the
+                // same call does for a good that arrives on a push.
+                roleMotionRef.current.syncRoles(opening);
+                flipped = true;
+            }
+        }
+
+        try {
+            return await serverPromise;
+        } catch (error) {
+            // REFUSED: take the check back off. Asked of the kernel again rather
+            // than remembered, so a board that has moved on underneath the
+            // refusal answers for itself - if my bit is no longer shown (a round
+            // transition swept every good while the request was in the air),
+            // `anim_goods_cleared` finds nothing removed and returns null.
+            if (flipped && seat !== undefined) {
+                const shown = roleMotionRef.current.read();
+                const cleared = shown
+                    ? animRolesGoodsCleared(shown.roles, shown.roles.goodMask & ~(1 << seat))
+                    : null;
+                if (cleared) roleMotionRef.current.syncRoles(cleared);
+            }
+            throw error;
+        }
+    };
 
     // The frame loop drops itself on unmount; the bump timer is this file's.
     useEffect(() => {

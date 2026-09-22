@@ -300,6 +300,14 @@ int table_commit_products(const Table *t, const char *game_id, int gid_len, uint
     // good that is CLEARED both count: the client animates them differently
     // (anim_goods_opening leads the stream, anim_goods_cleared rides with the
     // card that cleared it) but both are a change a viewer must be told about.
+    //
+    // A COMPARISON AND NOT A "SOMEBODY SAID GOOD" BIT, and the difference shows
+    // in one case: a good that closes the bout is set by handle_good and then
+    // cleared by the round transition handle_good runs itself, both inside this
+    // one operation, so the two ends match and this is FALSE. That is the right
+    // answer - no badge ever wore that check, so no viewer has one to be told
+    // about - and the operation is broadcast anyway, by the sweep's events.
+    // What a push must carry is the difference a viewer would SEE.
     out->goods_changed = (t->g->good_players_mask != t->pre_good_mask);
     const int n_events = event_count(t);
     out->n_events = (uint8_t)(n_events > 255 ? 255 : n_events);
