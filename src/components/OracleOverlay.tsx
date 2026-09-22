@@ -12,7 +12,7 @@
  * progress bars.
  * ========================================================================== */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ViewCard as Card } from '../state/view';
 import { useLocalization } from '../contexts/LocalizationContext';
 import { SegmentText } from './SegmentDisplay';
@@ -488,6 +488,33 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry }: Pr
     // over at most 6 clusters, not a second analysis).
     const [openKey, setOpenKey] = useState<string | null>(null);
 
+    /* THE PANEL IS ABOUT THE MOVE THAT WAS PLAYED, so that row is the one it
+     * has to put in front of you. Rows are sorted by estimate and the played
+     * move is wherever it deserves to be, which on a wide board is a long way
+     * down: one 8p defence here ranks 129 replies, twelve of which fit, so the
+     * row the panel exists to show sat 116 rows below the fold. Widening the
+     * candidate table to 128 (c/src/octogen_strategy.c) is what made that the
+     * common case rather than the rare one.
+     *
+     * Once per decision, not once per publish: the list re-sorts as estimates
+     * sharpen, and scrolling the page out from under someone who is reading it
+     * would be worse than the problem. `block: 'nearest'` leaves a row that is
+     * already visible exactly where it is, so the best move staying on top
+     * scrolls nothing at all. */
+    const playedRef = useRef<HTMLDivElement | null>(null);
+    const scrolledFor = useRef<string | null>(null);
+    const decisionId = snapshot?.decisionId ?? null;
+    useEffect(() => {
+        if (!decisionId || scrolledFor.current === decisionId) return;
+        const el = playedRef.current;
+        if (!el) return;
+        scrolledFor.current = decisionId;
+        // Guarded: the DOM the e2e suite renders into has no scrollIntoView,
+        // and a panel that throws on mount is a worse failure than a row that
+        // did not scroll.
+        if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' });
+    }, [decisionId, snapshot]);
+
     const scored = useMemo(
         () => (snapshot?.candidates ?? []).filter((c) => c.mean != null).map((c) => c.mean!),
         [snapshot],
@@ -620,9 +647,11 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry }: Pr
                             const bestCand = s.candidates.find((x) => x.mean != null) ?? null;
                             return (
                                 <React.Fragment key={c.key}>
+                                    <div ref={c.played ? playedRef : undefined} data-played={c.played ? '' : undefined}>
                                     {exact
                                         ? <VerdictRow c={c} t={t} open={open} onClick={onClick} />
                                         : <McRow c={c} best={best} worst={worst} bestAdj={bestAdj} t={t} open={open} onClick={onClick} />}
+                                    </div>
                                     {open && <WhyPanel c={c} bestCand={bestCand} s={s} t={t as unknown as TFn} />}
                                 </React.Fragment>
                             );
