@@ -74,7 +74,12 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 // pull request, which is a better instrument for a few hundred bytes than a
 // boolean ever was. Each gz ceiling here is deliberately wide of its measured
 // value: it catches a base64 embed coming back or a blowup, not a drift.
-const BOTS_RAW_MAX = 192_000;       // 191,915 B today: 85 B of room
+// RAISED for the beats model (docs/WEB_ANIM_PARITY.md section 3), which is what
+// bought the bytes: anim_build_plan now lays its clock out beat by beat rather
+// than at i*(TIME+GAP), the grouping rule came out as a shared `beat_shape` both
+// it and anim_build_beats call, AnimPlanStep grew beat_first/beat_n/hold_ms, and
+// anim_step_duration_ms answers 0 for ANIM_EVT_OUT. +753 B on this link.
+const BOTS_RAW_MAX = 192_750;       // 192,668 B today: 82 B of room
 const BOTS_GZ_MAX = 84 * 1024;      // 82,043 B shipped today; clears the worst
                                     // compressor above (82,468) by 3,548 B
 // The BROWSER's link, and the one the download budget is about. Pinned at the
@@ -82,7 +87,14 @@ const BOTS_GZ_MAX = 84 * 1024;      // 82,043 B shipped today; clears the worst
 // line: Part 3 of docs/ARCHITECTURE_AS_A_PATTERN.md says to re-pin lower after
 // each win so the ratchet turns one way, and leaving this at 80 KiB would have
 // banked a 62% cut as 50 KB of silent headroom to spend again.
-const WEB_RAW_MAX = 68_000;         // 67,298 B today: 702 B of room
+// RAISED for the same beats work, which the browser's link carries too - the web
+// is the client that asks for the plan. +805 B, measured as a same-compiler delta
+// (build with and without the change on one machine) rather than read off CI,
+// because this container's clang 18 and CI's pinned clang 22 do not agree on the
+// absolute size: the same delta measured 754 B here for bots.wasm against the
+// 753 B CI reports, which is why the number below is trusted to a few bytes.
+// CI is the only place it can be confirmed; see the toolchain note above.
+const WEB_RAW_MAX = 68_300;         // ~68,103 B expected: ~197 B of room
 const WEB_GZ_MAX = 33 * 1024;       // 31,050 B today; 2,742 B of room, which is
                                     // 4.7x the 576 B compressor spread above
 test('the kernel ships as small gzip static assets (not base64 embeds)', () => {
