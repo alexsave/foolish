@@ -1237,6 +1237,20 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 -- `prod` schedule at 2-4 players and is about HALF of it at 6-8 — so "Max" was
 -- the weaker bot in the larger games. One cordite, on the prod budget.
 
+-- Robusta strategy bots - the ladder's Seoul, tier 5. The first Monte-Carlo
+-- bot: public-info sampled worlds, no belief and no solver. It was offline-only
+-- until 2026-09-22, which left the site jumping New York (tier 3) straight to
+-- Madrid (tier 6) and one of the ladder's seven cities unreachable. The shipped
+-- bots.wasm has always LINKED it for free - firecracker is robusta's MC, so the
+-- code is there either way - which is what made seeding it a one-flag change.
+('Robusta 1', 'robusta'),
+('Robusta 2', 'robusta'),
+('Robusta 3', 'robusta'),
+('Robusta 4', 'robusta'),
+('Robusta 5', 'robusta'),
+('Robusta 6', 'robusta'),
+('Robusta 7', 'robusta'),
+
 -- Firecracker strategy bots — shipped ladder "Medium" rung (Durak Bot Ordnance
 -- Chart). Public-info Monte Carlo: robusta's sampled-world MC with espresso as
 -- the rollout policy. Honest (never reads real hidden hands).
