@@ -1433,7 +1433,12 @@ wasm-bots: build/layout/bots.hash
 # Two links of one object set cannot: any function present in both is the same
 # bytes, because it came out of the same .o.
 #
-# WHAT IT BUYS, measured on this Mac (clang 22.1.8 + binaryen 130, the pin):
+# WHAT IT BUYS, measured on this Mac (clang 22.1.8 + binaryen 130) when the
+# split landed. These are a snapshot of one host and they go stale - build the
+# module before quoting them, and see e2e/mem/wasm_memory.test.ts for the pins
+# and the ~290 B spread between hosts. Copying the bots.wasm line out of here
+# instead of building it is how a change landed 186 B over a pin it was measured
+# against:
 #
 #   bots.wasm   191,490 B raw   81,902 B gz   37 pages (2,424,832 B)
 #   web.wasm     67,311 B raw   31,219 B gz   26 pages (1,703,936 B)

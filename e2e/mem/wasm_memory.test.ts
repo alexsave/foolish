@@ -66,24 +66,48 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 // was exceeded by 123 B.
 //
 // THAT LINE IS NOW MET WITH ROOM, and not by shrinking the kernel: the browser
-// stopped downloading the server's link of it. web.wasm.gz is 31,050 B, so the
-// download the 80 KiB budget was always about clears it by 50,870 B. The RAW
-// pins below are what measure drift, because raw bytes are stable everywhere;
-// the download number stays TRACKED as well as pinned - scripts/collect_metrics.mjs
+// stopped downloading the server's link of it. web.wasm.gz is ~31 KB, so the
+// download the 80 KiB budget was always about clears it by about 50 KB. The
+// download number stays TRACKED as well as pinned - scripts/collect_metrics.mjs
 // reports each module's gzip size and metrics.yml diffs it head-vs-base on every
 // pull request, which is a better instrument for a few hundred bytes than a
-// boolean ever was. Each gz ceiling here is deliberately wide of its measured
+// boolean ever was. Each ceiling here is deliberately wide of its measured
 // value: it catches a base64 embed coming back or a blowup, not a drift.
-const BOTS_RAW_MAX = 192_000;       // 191,915 B today: 85 B of room
-const BOTS_GZ_MAX = 84 * 1024;      // 82,043 B shipped today; clears the worst
-                                    // compressor above (82,468) by 3,548 B
+//
+// RAW BYTES ARE NOT STABLE ACROSS HOSTS EITHER, which is what this comment used
+// to say they were, and the difference is smaller than the compressor spread but
+// bigger than the margin it was left. One tree, one nominal toolchain version,
+// both with binaryen 130:
+//
+//   macOS arm64, Homebrew clang 22.1.8              192,186 B raw
+//   Linux x86_64, apt.llvm.org clang 22.1.8         ~191,900 B raw  (-~290 B)
+//
+// Same version string, different builds of it: apt.llvm.org's llvm-22 is a
+// rolling snapshot inside the major (`++20260714014902+ca7933e47d3a`) and
+// scripts/ci_llvm.sh pins LLVM_VERSION to the MAJOR, while a Mac follows its own
+// Homebrew bottle. The two agreed when scripts/wasm_build.sh measured them and
+// have since drifted apart.
+//
+// So the pins are set wide of the WORST host, the way the gz pins already were,
+// rather than at the smallest measurement plus a sliver. At 192,000 the gate
+// was red on a Mac and green in CI for the same commit, which is the one thing
+// a gate must never do: an octogen change that cost 445 B landed under a pin it
+// was already over, because the number it was compared against (191,490) had
+// been copied from a c/Makefile comment rather than built.
+const BOTS_RAW_MAX = 193_000;       // 192,186 B on the widest host: 814 B of
+                                    // room, ~2.8x the measured host spread
+const BOTS_GZ_MAX = 84 * 1024;      // 82,502 B on the widest host; clears the
+                                    // worst compressor above by 3,089 B
 // The BROWSER's link, and the one the download budget is about. Pinned at the
 // measured size plus room for the compressor spread, NOT at the old 80 KiB
 // line: Part 3 of docs/ARCHITECTURE_AS_A_PATTERN.md says to re-pin lower after
 // each win so the ratchet turns one way, and leaving this at 80 KiB would have
 // banked a 62% cut as 50 KB of silent headroom to spend again.
-const WEB_RAW_MAX = 68_000;         // 67,298 B today: 702 B of room
-const WEB_GZ_MAX = 33 * 1024;       // 31,050 B today; 2,742 B of room, which is
+const WEB_RAW_MAX = 68_000;         // 67,304 B on the widest host: 696 B of
+                                    // room. The browser's link barely moves
+                                    // between hosts (~27 B) because wasm-ld
+                                    // drops the bot brains from it entirely.
+const WEB_GZ_MAX = 33 * 1024;       // 31,073 B today; 2,719 B of room, which is
                                     // 4.7x the 576 B compressor spread above
 test('the kernel ships as small gzip static assets (not base64 embeds)', () => {
     for (const [rel, rawMax, gzMax] of [
