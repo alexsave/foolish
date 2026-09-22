@@ -1183,6 +1183,10 @@ export const ANIM_STEP_NONE = A.ANIM_STEP_NONE;
 export const ANIM_NEVER = A.ANIM_NEVER;
 export const ANIM_TIME_MS = A.ANIM_TIME_MS;
 export const ANIM_GAP_MS = A.ANIM_GAP_MS;
+/** The rest after a bout-ending cover (anim_plan.h ANIM_BOUT_END_HOLD_MS). The
+ *  plan has already put it inside the next beat's startMs; it is re-exported so
+ *  a caller can NAME the pause, never so it can add one of its own. */
+export const ANIM_BOUT_END_HOLD_MS = A.ANIM_BOUT_END_HOLD_MS;
 
 /** One decoded event as the plan sees it (anim_plan.h AnimPlanEvent). */
 export interface AnimPlanEventIn {
@@ -1203,10 +1207,15 @@ export interface AnimCountsSnap {
     nBattles: number; battles: number[]; paired: boolean; flipped: Card | null;
 }
 
-/** One planned step (anim_plan.h AnimPlanStep). */
+/** One planned step (anim_plan.h AnimPlanStep). `beatFirst`/`beatN` are the
+ *  span of steps this one flies WITH - the kernel spends one COVER event per
+ *  card, so a two-card cover is two steps and one beat - and `holdMs` is the
+ *  rest the sequence takes after that beat lands, already inside the next
+ *  beat's `startMs`. */
 export interface AnimPlanStepSnap {
     type: number; seat: number; from: number; to: number; nCards: number;
     durationMs: number; startMs: number;
+    beatFirst: number; beatN: number; holdMs: number;
     deck: number; discard: number; hand: number[];
     inFlightFromDeck: number; inFlightToFlipped: number;
     reveals: bigint;
@@ -1381,6 +1390,9 @@ function readPlan(ex: BotsExports): AnimPlanSnap {
             nCards: A.AnimPlanStep_get_n_cards(m, s),
             durationMs: A.AnimPlanStep_get_duration_ms(m, s),
             startMs: A.AnimPlanStep_get_start_ms(m, s),
+            beatFirst: A.AnimPlanStep_get_beat_first(m, s),
+            beatN: A.AnimPlanStep_get_beat_n(m, s),
+            holdMs: A.AnimPlanStep_get_hold_ms(m, s),
             deck: A.AnimPlanStep_get_deck(m, s),
             discard: A.AnimPlanStep_get_discard(m, s),
             hand,

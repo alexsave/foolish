@@ -480,6 +480,35 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         board: () => currentGameRef.current,
         placesOf: (step) => flightPlaces(step.from_location, step.to_location, step.seat),
         keyOf: (card, place) => getCardKeyOwner(card, place),
+        // ONE MOVE, ONE MOVEMENT. The kernel spends one COVER event per card, so
+        // a defender who covered two attacks in one move arrives as two steps
+        // and the plan opens both at the same instant (AnimPlanStep.beat_n).
+        // This is what the page draws for that instant: the steps' cards in one
+        // flight, each still aimed at the pile the kernel named it for -
+        // `target_cards` is the per-card form the overlay already reads for a
+        // multi-card cover of my own, and it is the only form that survives the
+        // merge, because `target_card` and `battle_index` describe ONE event.
+        // The board is the LAST step's: the boards inside one move are boards
+        // nobody was ever shown.
+        //
+        // RENDERING ONLY. Every step of the beat still has its own landing
+        // taken, in order, so `commit_board`, `commit_if` and the sequence
+        // countdown are untouched by this.
+        mergeBeat: (steps) => {
+            const cards = steps.flatMap((s) => s.cards ?? []);
+            const targets = steps.flatMap((s) => (s.cards ?? []).map(() => s.target_card));
+            const named = targets.filter((t): t is Card => t !== undefined);
+            return {
+                ...steps[0],
+                cards,
+                // All or nothing: a half-named list would slide every card after
+                // the gap onto the wrong pile, where no list at all leaves the
+                // overlay's own last-resort guess exactly as it was.
+                target_cards: named.length === cards.length ? named : undefined,
+                battle_index: undefined,
+                game_state: steps[steps.length - 1].game_state ?? steps[0].game_state,
+            };
+        },
         onLanded: (step) => {
             // A PREDICTION'S BOARD IS MADE AT ITS LANDING, from whatever is on
             // screen then - a broadcast can commit fresher state inside the
