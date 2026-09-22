@@ -32,6 +32,9 @@ import type { Duplex } from 'node:stream';
 /** RFC 6455 section 1.3. */
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
+/** A channel's name without realtime-js's namespace ("realtime:gu-x" -> "gu-x"). */
+export const bareTopic = (topic: string): string => (topic.startsWith('realtime:') ? topic.slice('realtime:'.length) : topic);
+
 /** One Phoenix message, in the order the array carries it. */
 export interface PhxMessage {
     joinRef: string | null;
@@ -44,8 +47,14 @@ export interface PhxMessage {
 /** One connected client, and what it has joined. */
 export class PhxSocket {
     readonly id = randomUUID();
-    /** Topics this socket has joined, to the join_ref it joined with. */
-    readonly joined = new Map<string, string | null>();
+    /**
+     * Topics this socket has joined, by their BARE name, to the name the wire
+     * uses. realtime-js namespaces every channel ("realtime:gu-<game>-<user>"),
+     * so a backend that pushed to the name it was asked for would push to
+     * nobody at all; the bare name is what a caller knows, the wire name is
+     * what must go back out.
+     */
+    readonly joined = new Map<string, string>();
     /** The access token the client last presented (a join payload's, or an access_token push). */
     token: string | null = null;
     closed = false;
@@ -90,9 +99,10 @@ export class PhxHub {
 
     constructor(private readonly handlers: PhxHandlers) {}
 
-    /** Every socket that has joined `topic`. */
+    /** Every socket that has joined `topic` (by its bare name). */
     subscribers(topic: string): PhxSocket[] {
-        return [...this.sockets].filter((s) => !s.closed && s.joined.has(topic));
+        const bare = bareTopic(topic);
+        return [...this.sockets].filter((s) => !s.closed && s.joined.has(bare));
     }
 
     /**
@@ -104,7 +114,7 @@ export class PhxHub {
     broadcast(topic: string, event: string, payload: unknown): number {
         const subs = this.subscribers(topic);
         for (const s of subs) {
-            s.send([null, null, topic, 'broadcast', { type: 'broadcast', event, payload }]);
+            s.send([null, null, s.joined.get(bareTopic(topic))!, 'broadcast', { type: 'broadcast', event, payload }]);
             this.handlers.log?.('out', topic, `broadcast:${event}`);
         }
         return subs.length;
@@ -114,7 +124,7 @@ export class PhxHub {
     postgresChanges(topic: string, ids: number[], data: unknown): number {
         const subs = this.subscribers(topic);
         for (const s of subs) {
-            s.send([null, null, topic, 'postgres_changes', { ids, data }]);
+            s.send([null, null, s.joined.get(bareTopic(topic))!, 'postgres_changes', { ids, data }]);
             this.handlers.log?.('out', topic, 'postgres_changes');
         }
         return subs.length;
@@ -211,12 +221,12 @@ function deliver(sock: PhxSocket, hub: PhxHub, handlers: PhxHandlers, text: stri
             if (typeof token === 'string') sock.token = token;
             const refused = handlers.onJoin?.(sock, msg) ?? null;
             if (refused) { sock.reply(msg, 'error', refused); return; }
-            sock.joined.set(msg.topic, msg.joinRef);
+            sock.joined.set(bareTopic(msg.topic), msg.topic);
             sock.reply(msg, 'ok', joinResponse(msg));
             return;
         }
         case 'phx_leave':
-            sock.joined.delete(msg.topic);
+            sock.joined.delete(bareTopic(msg.topic));
             sock.reply(msg, 'ok');
             sock.send([msg.joinRef, null, msg.topic, 'phx_close', {}]);
             return;
