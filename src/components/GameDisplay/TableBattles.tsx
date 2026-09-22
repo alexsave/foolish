@@ -77,16 +77,23 @@ export const TableBattles = () => {
     // AnimPlanStep.duration_ms), how long the ROW's own move lasts, and the row
     // itself while the kernel is holding it back. See `coveringNow` and the
     // glide below.
-    const { currentAnimation, isAnimating, flightMs, rowMs, heldPiles } = useAnimation();
+    const { currentAnimation, isAnimating, flightMs, rowMs, heldPiles, arrivingPiles } = useAnimation();
 
-    // THE ROW THIS GRID DRAWS. The board's, except that a pile this run is
-    // still carrying gets no cell until it lands - a move that ADDS a pile (a
-    // pass, a throw-in) can reach a board that already holds it, and the grid
-    // centres its cells, so every pile already down would sit half a slot plus
-    // its gap to the side from the first painted frame, with a cold open having
-    // no previous layout to move it back from
-    // (src/state/animPlan.ts heldRow, c/src/anim_plan.h AnimCounts).
-    const battles: readonly ViewBattle[] = shownRow(game?.battles ?? EMPTY_ROW, heldPiles);
+    // THE ROW THIS GRID DRAWS, which is the row the RUN is at and not the row
+    // the board is at. Two corrections, both the kernel's and both through
+    // `shownRow` (src/state/animPlan.ts):
+    //
+    //  - a pile of a step that has NOT OPENED gets no cell. A move that ADDS a
+    //    pile (a pass, a throw-in) can reach a board that already holds it, and
+    //    the grid centres its cells, so every pile already down would sit half a
+    //    slot plus its gap to the side from the first painted frame, with a cold
+    //    open having no previous layout to move it back from (`heldPiles`,
+    //    c/src/anim_plan.h AnimCounts).
+    //  - a pile of a step that HAS opened takes its cell AT ONCE, while its card
+    //    is still crossing the board, so the row grows around it as it comes
+    //    down rather than after it arrives (`arrivingPiles`). The card itself is
+    //    veiled for the length of the flight, so the cell is there and empty.
+    const battles: readonly ViewBattle[] = shownRow(game?.battles ?? EMPTY_ROW, heldPiles, arrivingPiles);
 
     // What a drop would do if it landed right now, and how many empty slots the
     // grid has to hold open for it - the cards the kernel's move actually lays.
@@ -102,15 +109,24 @@ export const TableBattles = () => {
 
     // ---- THE ROW GLIDES, IT DOES NOT TELEPORT --------------------------------
     //
-    // The cells are centred, so a pile landing beside them moves every one of
+    // The cells are centred, so a pile arriving beside them moves every one of
     // them - 40px at this card size - and CSS cannot transition a flex reflow:
-    // the row simply appeared in its new arrangement on the frame the board
-    // committed. iMessage never needed code for this (SwiftUI interpolates from
+    // the row simply appeared in its new arrangement on the frame the row
+    // changed. iMessage never needed code for this (SwiftUI interpolates from
     // the layout already on screen); a browser does, and what it needs is a
     // FLIP - pin each cell where it is DRAWN, then let it travel to where the
-    // new layout put it, over the plan's own duration for the landing that
-    // moved it (`rowMs`). The interpolation and the screen coordinates are the
-    // host's half of the boundary; the length of the move is the kernel's.
+    // new layout put it, over the plan's own duration for the step that moved
+    // it (`rowMs`). The interpolation and the screen coordinates are the host's
+    // half of the boundary; the length of the move is the kernel's.
+    //
+    // AND IT RUNS WITH THE FLIGHT, NOT AFTER IT. The row change is cut when the
+    // step OPENS (`arrivingPiles` gives the incoming pile its cell then), so
+    // this glide and the card's own flight start in the same commit, run on the
+    // same curve for the same number of milliseconds, and settle together. The
+    // owner asked for exactly that on the iMessage board and it is written down
+    // there in their words: "the cards on the table should start as they were
+    // before the move, and rearrange as the move comes in"
+    // (ios/FoolishKit/Boards/MessageTableView+Sequence.swift).
     const cellsRef = useRef(new Map<string, HTMLDivElement>());
     const restRef = useRef(new Map<string, { x: number; y: number }>());
     const rowMsRef = useRef(0);

@@ -106,14 +106,15 @@ export const AnimationOverlay = () => {
     // `flightMs` is the kernel's duration for the step on screen (its plan's
     // AnimPlanStep.duration_ms), not a constant this file keeps: the curve and
     // the interpolation are rendering, the length of the flight is not.
-    const { currentAnimation, isAnimating, flightMs, heldPiles } = useAnimation();
+    const { currentAnimation, isAnimating, flightMs, heldPiles, arrivingPiles } = useAnimation();
     const { view: game } = useServer();
-    // THE ROW THE GRID IS ACTUALLY DRAWING. The board's, minus any pile this
-    // run is still carrying (TableBattles, and src/state/animPlan.ts heldPiles).
+    // THE ROW THE GRID IS ACTUALLY DRAWING. The board's, minus the piles of the
+    // steps this run has not started and plus the piles of the step it is flying
+    // now (TableBattles, and src/state/animPlan.ts heldPiles / arrivingPiles).
     // Everything in this file that counts slots, picks a pile or asks how a card
     // is lying has to ask the row on SCREEN - aiming at a cell the grid is not
     // drawing is aiming at nothing.
-    const shownBattles = shownRow(game?.battles ?? EMPTY_ROW, heldPiles);
+    const shownBattles = shownRow(game?.battles ?? EMPTY_ROW, heldPiles, arrivingPiles);
     const overlayRef = useRef<HTMLDivElement>(null);
 
     // Invalidate the table-slot geometry cache on resize (Stage 9). The cache key
@@ -340,8 +341,31 @@ export const AnimationOverlay = () => {
         // Check if cards are sanitized (refill from other players)
         const isSanitized = cards.every(card => card.suit === -1 && card.value === -1);
 
+        // WHERE THIS CARD'S CELL ALREADY IS, if the grid has one for it.
+        //
+        // The grid gives an incoming pile its cell when the step OPENS, not when
+        // it lands (src/state/animPlan.ts arrivingPiles), so by the time this
+        // effect runs the post-move row is laid out and this card's own slot is
+        // a thing on screen to measure. That IS the analytical answer iMessage
+        // aims a flight with: the browser has resolved the row the landing will
+        // confirm, and `restingCentre` takes the glide that is carrying the
+        // other cells there back off, so what comes out is where the cell COMES
+        // TO REST and not where it is drawn half a flight early.
+        const laidOnTable = (card: Card): HTMLElement | null =>
+            document.querySelector(`[data-location="table"] [data-card="${card.suit}-${card.value}"]`) as HTMLElement | null;
+        // Every card of this step already has one - so the placeholder measure
+        // below has nothing left to answer, and inserting placeholders into a
+        // row that already holds these cells would measure a row one slot too
+        // long. It stays for the case that has no cell: a step the grid is not
+        // laying a pile out for (a prediction with no board of its own that the
+        // row cannot place, a fallback path).
+        const allLaid = type === 'attack_pass' && to_location === 'table'
+            && cards.every((c) => laidOnTable(c) !== null);
+
         // Measure placeholder positions for precise targeting
-        const measuredPositions = measurePlaceholderPositions(type, cards, player_id);
+        const measuredPositions = allLaid
+            ? new Map<string, { x: number; y: number }>()
+            : measurePlaceholderPositions(type, cards, player_id);
         
         if (isSanitized) {
             // Render single CardBack for sanitized refill
@@ -548,10 +572,19 @@ export const AnimationOverlay = () => {
                 if (type === 'attack_pass') {
                     const slot = shownBattles.length + index;
                     return flat(spotFrom([
-                        // The board already shows the card - a confirmation
-                        // that beat its own flight - so that IS the landing.
+                        // THE CELL THE GRID HAS ALREADY LAID OUT FOR THIS CARD,
+                        // which is now the ordinary case and not the rare one:
+                        // the row makes room for a pile when its step opens, so
+                        // the slot this card is flying into exists before the
+                        // flight does (`allLaid` above; iMessage says the same
+                        // of its own table flights, "the cell this card is
+                        // flying into does not exist until the step advances the
+                        // row - one paint before this builder first runs",
+                        // ios/FoolishKit/Boards/MessageTableView+OpenReplay.swift).
+                        // A board that got ahead of its own flight reaches the
+                        // same line by the other road and wants the same answer.
                         () => {
-                            const laid = document.querySelector(`[data-location="table"] [data-card="${card.suit}-${card.value}"]`) as HTMLElement | null;
+                            const laid = laidOnTable(card);
                             return laid ? restingCentre(laid) : null;
                         },
                         () => measuredPositions.get(`${index}`),
@@ -601,7 +634,7 @@ export const AnimationOverlay = () => {
                 // area don't fully overlap; measured targets (table slots, hand
                 // slots) are exact - offsetting them would re-introduce drift.
                 const preciselyMeasured = (to_location === 'hand' && handSlots[index] !== undefined) ||
-                    (type === 'attack_pass' && measuredPositions.get(`${index}`) !== undefined);
+                    (type === 'attack_pass' && (allLaid || measuredPositions.get(`${index}`) !== undefined));
                 if (!preciselyMeasured) {
                     const stackOffset = index * 3;
                     endPos.x += stackOffset;

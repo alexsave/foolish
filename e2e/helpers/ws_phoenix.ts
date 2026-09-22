@@ -196,7 +196,7 @@ export function attachPhoenix(server: Server, path: string, handlers: PhxHandler
                 if (!read.fin) continue;
                 const body = partial ? Buffer.concat([...partial.chunks, ...(read.opcode === 0x0 ? [] : [read.payload])]) : read.payload;
                 partial = null;
-                deliver(client, hub, handlers, body.toString('utf8'));
+                deliver(client, handlers, body.toString('utf8'));
             }
         });
         sock.on('error', finish);
@@ -206,7 +206,7 @@ export function attachPhoenix(server: Server, path: string, handlers: PhxHandler
     return hub;
 }
 
-function deliver(sock: PhxSocket, hub: PhxHub, handlers: PhxHandlers, text: string): void {
+function deliver(sock: PhxSocket, handlers: PhxHandlers, text: string): void {
     let parsed: unknown;
     try { parsed = JSON.parse(text); } catch { return; }
     if (!Array.isArray(parsed) || parsed.length < 5) return;
@@ -244,7 +244,6 @@ function deliver(sock: PhxSocket, hub: PhxHub, handlers: PhxHandlers, text: stri
             handlers.onMessage?.(sock, msg);
             if (msg.ref) sock.reply(msg, 'ok');
     }
-    void hub;
 }
 
 /**

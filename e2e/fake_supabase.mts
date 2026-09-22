@@ -47,7 +47,7 @@
  *   const be = await startFakeSupabase({ port: 54321 });
  *   const game = be.scenario('throw_in_race');       // -> { gameId, users }
  *   be.hold('u-me', true);                           // stop delivering my pushes
- *   be.act('u-boris', game.gameId, { kind: 'attack', cards: [{suit:0,value:6}] });
+ *   be.act('u-boris', game.gameId, { kind: 'attack', cards: '7s' });
  *   be.release('u-me', 1);                           // deliver exactly one
  *
  * and over HTTP, for a Playwright script that has no Node import of the repo:
@@ -72,7 +72,7 @@ import { bytesToBase64, bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
 import { TABLE_DEAL_SEED_BYTES, type TableProducts, type TableSeat } from '../sdk/ts/table/server_table.ts';
 import { clientTable } from '../sdk/ts/table/client_table.ts';
 import { fixture, fixtureTable, parseCardText, PLAYING, type FixtureSeat, type TableFixture } from './helpers/table_fixture.ts';
-import { attachPhoenix, type PhxHub, type PhxSocket } from './helpers/ws_phoenix.ts';
+import { attachPhoenix, type PhxHub } from './helpers/ws_phoenix.ts';
 
 const WEBSITE_DOMAIN = 'foolish.cards';   // src/constants/constants.ts
 
@@ -198,7 +198,7 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
 
     const server = createServer((req, res) => { void handle(req, res); });
     const hub = attachPhoenix(server, '/realtime/v1/websocket', {
-        onJoin: (sock, msg) => { note(`ws join ${msg.topic}`); void sock; return null; },
+        onJoin: (_sock, msg) => { note(`ws join ${msg.topic}`); return null; },
         onClose: () => note('ws close'),
     });
 

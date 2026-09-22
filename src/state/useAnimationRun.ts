@@ -19,7 +19,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ANIM_STEP_NONE, type AnimPlanSnap } from '@sdk/ts/wasm/bots.ts';
-import { frameAt, heldPiles, NO_HELD, planFor, sameHeld, type AnimStep } from './animPlan';
+import {
+    arrivingPiles, frameAt, heldPiles, NO_ARRIVING, NO_HELD, planFor, sameArriving, sameHeld,
+    type AnimStep, type ArrivingPile,
+} from './animPlan';
 import type { TableView } from './view';
 
 /** What the page draws for one card at one place while its flight is up. */
@@ -64,6 +67,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
     const [flightMs, setFlightMs] = useState(0);
     const [rowMs, setRowMs] = useState(0);
     const [heldSet, setHeld] = useState<ReadonlySet<number>>(NO_HELD);
+    const [arriving, setArriving] = useState<readonly ArrivingPile[]>(NO_ARRIVING);
     const [inFlightFromDeck, setInFlightFromDeck] = useState(0);
     const [inFlightToFlipped, setInFlightToFlipped] = useState(0);
     const [animatingCards, setAnimatingCards] = useState<Map<string, CardFlight>>(new Map());
@@ -82,16 +86,27 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
     // How many of the run's steps have had their landing taken. The kernel's
     // AnimFrame.landed is the truth; this is how far React has caught up to it.
     const landedRef = useRef(0);
-    // THE PLAN'S DURATION FOR THE LANDING THE ROW IS ON. The grid's own layout
-    // change happens at a LANDING, and a landing falls in the gap between two
-    // flights, where `flightMs` is already 0 (anim_plan_at answers
-    // ANIM_STEP_NONE there) - so the number the row's transition is written
-    // with cannot be that one. It is the duration of the step whose landing
-    // moved the row, which is the same treatment iMessage's ShownLedger states:
-    // the row is "advanced one step per landing flight, WITH THE PLAN'S OWN
-    // DURATION ON IT". 0 until a run's first landing and after a seek, because
-    // neither of those is a card arriving.
+    // THE PLAN'S DURATION FOR THE STEP THE ROW IS MAKING ROOM FOR. The grid's
+    // layout change happens at a step's START now, not at its landing
+    // (`arrivingPiles`), so the row and the flight are one movement over one
+    // number: the duration of the step whose card is in the air. It is still
+    // not `flightMs` at the moment it is read - the row also moves at a landing
+    // (a board that got ahead releasing its held pile, a sweep taking cells
+    // away), and a landing falls in the gap between two flights where
+    // anim_plan_at answers ANIM_STEP_NONE and `flightMs` is already 0. This
+    // holds the last step to have OPENED, which is that step either way.
+    //
+    // iMessage writes the same number at the same moment: the row is advanced
+    // "with the plan's own duration on it" (ShownLedger.swift), inside
+    // `withAnimation(.timingCurve(..., duration: flightTime))`, in the same
+    // breath as the flight and before it (MessageTableView+Sequence.swift).
+    // 0 before a run's first step opens and after a seek.
     const rowMsRef = useRef(0);
+    // How many of the run's steps have OPENED - the kernel's own layout
+    // (AnimPlanStep.start_ms) counted against the run's clock, not a second
+    // schedule. A step that has opened has its cards in the air, so its pile
+    // has earned its slot; every step behind it has not.
+    const startedRef = useRef(0);
     const frameHandleRef = useRef<number | null>(null);
     // The merged step a multi-step beat draws as, held so the page is handed
     // the SAME object every frame: `currentAnimation` is compared by identity
@@ -162,23 +177,44 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         if (origin === null) return;
         const run = runRef.current;
         const plan = planFor(run, hooksRef.current.board());
-        const frame = frameAt(performance.now() - origin);
+        const nowMs = performance.now() - origin;
+        const frame = frameAt(nowMs);
 
         while (landedRef.current < frame.landed && landedRef.current < run.length) {
-            rowMsRef.current = plan.steps[landedRef.current]?.durationMs ?? 0;
             hooksRef.current.onLanded(run[landedRef.current++]);
+        }
+
+        // WHICH STEPS HAVE OPENED. The plan lays every step's `start_ms` out
+        // against the same clock this frame was sampled at, so this is the
+        // kernel's answer re-read and not a second one: a step whose start has
+        // passed has its cards in the air, and the steps of one beat open at
+        // the same millisecond and are counted together by that alone.
+        while (startedRef.current < run.length
+               && (plan.steps[startedRef.current]?.startMs ?? Number.MAX_SAFE_INTEGER) <= nowMs) {
+            // THE ROW MOVES WITH THE CARD, so it moves over the card's own
+            // duration and it starts when the card does.
+            rowMsRef.current = plan.steps[startedRef.current]?.durationMs ?? 0;
+            startedRef.current++;
         }
         setRowMs((prev) => (prev === rowMsRef.current ? prev : rowMsRef.current));
 
-        // THE PILES THE GRID MUST NOT MAKE ROOM FOR YET (animPlan.heldPiles). The
-        // steps behind `landed` are the ones still in the air - a step that has
-        // landed has had its board committed, and its pile has earned its slot.
+        // THE PILES THE GRID MUST NOT MAKE ROOM FOR YET (animPlan.heldPiles) -
+        // the steps that have not OPENED. A step whose flight is up has already
+        // earned its slot; the grid makes room for it while the card crosses.
         // A SET AND NOT A ROW, deliberately: the grid takes these out of
         // whatever board it is drawing at the instant it draws it, so a board
         // committed between two frames is answered in the commit that carries
         // it rather than one frame later.
-        const held = heldPiles(plan.pre, run.slice(frame.landed));
+        const held = heldPiles(plan.pre, run.slice(startedRef.current));
         setHeld((prev) => (sameHeld(prev, held) ? prev : held));
+
+        // …AND THE PILES IT MUST MAKE ROOM FOR NOW: the steps that have opened
+        // and not landed, whose cards are crossing the board at this instant
+        // (animPlan.arrivingPiles). The row grows around them as they come
+        // down, which is round 7's "it should be at the same TIME" read onto
+        // the table (ios/FoolishKit/Boards/MessageTableView+Sequence.swift).
+        const coming = arrivingPiles(run.slice(frame.landed, startedRef.current));
+        setArriving((prev) => (sameArriving(prev, coming) ? prev : coming));
 
         // WHAT FLIES IS A BEAT, NOT A STEP, and the kernel says which is which
         // (AnimPlanStep.beat_first / beat_n). The plan opens every step of one
@@ -206,9 +242,11 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
             originRef.current = null;
             landedRef.current = 0;
             beatRef.current = null;
+            startedRef.current = 0;
             setCurrentAnimation(null);
             setFlightMs(0);
             setHeld(NO_HELD);
+            setArriving(NO_ARRIVING);
             // `rowMs` is NOT cleared here, and that is deliberate: the run's
             // last landing moves the row in this very frame and is entitled to
             // the same glide every earlier one had. The next run zeroes it as
@@ -237,6 +275,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         if (originRef.current !== null) return;
         originRef.current = performance.now();
         landedRef.current = 0;
+        startedRef.current = 0;
         rowMsRef.current = 0;
         setRowMs(0);
         setIsAnimating(true);
@@ -257,12 +296,14 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         runRef.current = [];
         originRef.current = null;
         landedRef.current = 0;
+        startedRef.current = 0;
         rowMsRef.current = 0;
         beatRef.current = null;
         setCurrentAnimation(null);
         setFlightMs(0);
         setRowMs(0);
         setHeld(NO_HELD);
+        setArriving(NO_ARRIVING);
         setIsAnimating(false);
         setInFlightFromDeck(0);
         setInFlightToFlipped(0);
@@ -278,6 +319,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
 
     return {
         isAnimating, currentAnimation, flightMs, rowMs, heldPiles: heldSet,
+        arrivingPiles: arriving,
         inFlightFromDeck, inFlightToFlipped, animatingCards, enqueue, reset,
     };
 }
