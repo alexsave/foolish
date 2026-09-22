@@ -184,7 +184,7 @@ export const Leaderboard: React.FC = () => {
 
                                 <div className="flex flex-col min-w-0">
                                     <span className={`result-card__name ${isCurrentUser ? 'result-card__name--current' : ''}`}>
-                                        <SovietIcon name={entry.is_ai ? 'bot' : 'person'} size={14} /> {botDisplayName(entry.name, t)}
+                                        <SovietIcon name={entry.is_ai ? 'bot' : 'person'} size={14} /> {botDisplayName(entry.name)}
                                     </span>
                                     {isCurrentUser && (
                                         <span className="result-card__you">

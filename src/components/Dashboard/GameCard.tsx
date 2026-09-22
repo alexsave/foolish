@@ -73,7 +73,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game }) => {
                             <span key={idx} className="game-card__player">
                                 <SovietIcon name={player.isAi ? 'bot' : 'person'} size={14} />
                                 <span className={`game-card__player-name ${isCurrentUser ? 'game-card__player-name--current' : ''}`}>
-                                    {botDisplayName(player.name, t)}
+                                    {botDisplayName(player.name)}
                                 </span>
 
                                 {isWaiting && (

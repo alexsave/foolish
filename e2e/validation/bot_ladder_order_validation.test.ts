@@ -6,10 +6,10 @@
 // order seed.sql happens to INSERT, backwards - the picker opened on Moscow 7
 // and walked out through the families in reverse.
 //
-// THREE SOURCES MEET HERE and none of them is restated in TypeScript: the rows
-// come from seed.sql, the strength order from `tier` in c/src/bot_roster.c, and
-// the names from `bot.<key>` in c/i18n. The comparator the lobby uses
-// (src/common/botLadder.ts) is handed the tiers, so this drives the real one
+// TWO SOURCES MEET HERE and neither is restated in TypeScript: the rows come
+// from seed.sql (where the nickname IS the city - there is no display map) and
+// the strength order from `tier` in c/src/bot_roster.c. The comparator the lobby
+// uses (src/common/botLadder.ts) is handed the tiers, so this drives the real one
 // over the real data rather than a fixture that could agree with a bug.
 //
 // Pure test - no Postgres, no network, no compiler, no wasm.
@@ -19,7 +19,6 @@ import { readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { sortBotsByLadder, instanceOf } from '../../src/common/botLadder.ts';
 import { botDisplayName } from '../../src/common/botName.ts';
-import type { StringId } from '../../src/localization/strings.ts';
 
 const REPO = resolve(import.meta.dirname, '../..');
 const read = (p: string) => readFileSync(join(REPO, p), 'utf8');
@@ -49,22 +48,15 @@ function seededRows(): { nickname: string; strategy_key: string }[] {
     return out;
 }
 
-async function english(): Promise<(id: StringId) => string> {
-    const mod = await import(join(REPO, 'sdk/ts/gen/i18n/strings.en.ts'));
-    const t = mod[Object.keys(mod).find((k) => k.startsWith('FoolishStrings'))!];
-    return (id: StringId) => t[id] ?? '';
-}
-
-test('the picker opens on the weakest bot and ends on the strongest', async () => {
+test('the picker opens on the weakest bot and ends on the strongest', () => {
     const tier = tiers();
-    const t = await english();
     // Shuffled deterministically: the input order must not survive into the
     // output, or the test would pass on a comparator that returns 0.
     const rows = seededRows();
     const shuffled = [...rows].sort((a, b) =>
         a.nickname.length - b.nickname.length || b.nickname.localeCompare(a.nickname));
 
-    const shown = sortBotsByLadder(shuffled, (k) => tier.get(k)).map((r) => botDisplayName(r.nickname, t));
+    const shown = sortBotsByLadder(shuffled, (k) => tier.get(k)).map((r) => botDisplayName(r.nickname));
 
     assert.equal(shown[0], 'Miami 1', `the picker opens on ${shown[0]}, not the weakest rung`);
     assert.equal(shown[shown.length - 1], 'Moscow 7', `the picker ends on ${shown[shown.length - 1]}`);
@@ -86,12 +78,12 @@ test('the picker opens on the weakest bot and ends on the strongest', async () =
 test('a bot whose strategy the kernel does not rank sorts last, not into the middle', () => {
     const tier = tiers();
     const rows = [
-        { nickname: '%Octogen 1', strategy_key: 'octogen' },
+        { nickname: '%Moscow 1', strategy_key: 'octogen' },
         { nickname: '%Mystery 1', strategy_key: 'not_in_the_roster' },
-        { nickname: '%Random 1', strategy_key: 'random' },
+        { nickname: '%Miami 1', strategy_key: 'random' },
     ];
     const order = sortBotsByLadder(rows, (k) => tier.get(k)).map((r) => r.nickname);
-    assert.deepEqual(order, ['%Random 1', '%Octogen 1', '%Mystery 1'],
+    assert.deepEqual(order, ['%Miami 1', '%Moscow 1', '%Mystery 1'],
         'an unranked strategy belongs at the end of the picker, where it is visible');
 });
 
@@ -101,15 +93,16 @@ test('instance numbers sort numerically, not as text', () => {
     // mutation check proved it: deleting the numeric compare left it passing.
     // Ten of a family is what separates them, and is the day this matters.
     const tier = tiers();
-    const rows = [2, 10, 1, 11, 3].map((n) => ({ nickname: `%Cordite ${n}`, strategy_key: 'cordite' }));
+    const rows = [2, 10, 1, 11, 3].map((n) => ({ nickname: `%St. Petersburg ${n}`, strategy_key: 'cordite' }));
     const order = sortBotsByLadder(rows, (k) => tier.get(k)).map((r) => r.nickname);
-    assert.deepEqual(order, ['%Cordite 1', '%Cordite 2', '%Cordite 3', '%Cordite 10', '%Cordite 11'],
-        'Cordite 10 must come after Cordite 3, which text order gets wrong');
+    assert.deepEqual(order, ['%St. Petersburg 1', '%St. Petersburg 2', '%St. Petersburg 3',
+        '%St. Petersburg 10', '%St. Petersburg 11'],
+        'St. Petersburg 10 must come after St. Petersburg 3, which text order gets wrong');
 });
 
 test('the instance number is the trailing one, and a name without one sorts last', () => {
-    assert.equal(instanceOf('%Cordite 3'), 3);
-    assert.equal(instanceOf('%Simple Heuristic 12'), 12);
+    assert.equal(instanceOf('%Moscow 3'), 3);
+    assert.equal(instanceOf('%St. Petersburg 12'), 12);
     assert.equal(instanceOf('%0x00C0FFEE'), Number.MAX_SAFE_INTEGER);
     assert.equal(instanceOf('%Moscow'), Number.MAX_SAFE_INTEGER);
 });

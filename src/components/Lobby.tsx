@@ -86,7 +86,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
             />
             <p className="player-card__name">
                 {player.isAi && <><SovietIcon name="bot" size={14} /> </>}
-                {botDisplayName(player.name, t)}
+                {botDisplayName(player.name)}
             </p>
             <div className="player-card__status">
                 <SovietIcon name={isReady ? 'ready' : 'not-ready'} size={16} />
@@ -609,7 +609,7 @@ export const Lobby = () => {
                         {useWoodTexture && <div className="btn-add-bot__texture" style={buttonTextureStyle} />}
                         <p className="btn-add-bot__text">
                             {selectedBot
-                                ? t('add_bot_named', { name: botDisplayName(selectedBot.nickname, t) })
+                                ? t('add_bot_named', { name: botDisplayName(selectedBot.nickname) })
                                 : t('add_bot')}
                         </p>
                     </div>

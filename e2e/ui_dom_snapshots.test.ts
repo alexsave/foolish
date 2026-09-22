@@ -281,9 +281,9 @@ async function screen(name: string, seed: number, setup: () => void, page: () =>
 // ---- the screens ----------------------------------------------------------------------
 
 const bots = [
-    { id: 'b-cordite-01', nickname: '%Cordite', strategy_key: 'cordite' },
-    { id: 'b-robusta-02', nickname: '%Robusta', strategy_key: 'robusta' },
-    { id: 'b-powder-003', nickname: '%Blackpowder', strategy_key: 'blackpowder' },
+    { id: 'b-cordite-01', nickname: '%St. Petersburg 1', strategy_key: 'cordite' },
+    { id: 'b-robusta-02', nickname: '%Seoul 2', strategy_key: 'robusta' },
+    { id: 'b-powder-003', nickname: '%Vienna 3', strategy_key: 'blackpowder' },
 ];
 
 test('lobby, 1 seat: the creator alone', async () => {
@@ -298,7 +298,7 @@ test('lobby, 1 seat: the creator alone', async () => {
 test('lobby, 3 seats: a human, a ready bot, another human', async () => {
     const gid = 'lob3';
     const board = fixture().title('Дмитрий\'s Game')
-        .seats([seat(ME, 'Me'), seat('b-cordite-01', 'Cordite', 'cordite'), seat('u-dmitry-01', 'Дмитрий')]).build();
+        .seats([seat(ME, 'Me'), seat('b-cordite-01', 'St. Petersburg 1', 'cordite'), seat('u-dmitry-01', 'Дмитрий')]).build();
     await screen('lobby_3', 12, () => {
         rows.playerViews.set(gid, envelope(gid, board, 0));
         rows.bots = bots;
@@ -307,9 +307,9 @@ test('lobby, 3 seats: a human, a ready bot, another human', async () => {
 
 test('lobby, 8 seats: full, with bots', async () => {
     const gid = 'lob8';
-    const seats = [seat(ME, 'Me'), seat('u-anna-0001', 'Anna'), seat('b-cordite-01', 'Cordite', 'cordite'),
-        seat('u-boris-001', 'Boris'), seat('b-robusta-02', 'Robusta', 'robusta'), seat('u-vera-0001', 'Vera'),
-        seat('b-powder-003', 'Blackpowder', 'blackpowder'), seat('u-gleb-0001', 'Gleb')];
+    const seats = [seat(ME, 'Me'), seat('u-anna-0001', 'Anna'), seat('b-cordite-01', 'St. Petersburg 1', 'cordite'),
+        seat('u-boris-001', 'Boris'), seat('b-robusta-02', 'Seoul 2', 'robusta'), seat('u-vera-0001', 'Vera'),
+        seat('b-powder-003', 'Vienna 3', 'blackpowder'), seat('u-gleb-0001', 'Gleb')];
     const board = fixture().title('Full table').seats(seats).seatStatus(1, READY).build();
     await screen('lobby_8', 13, () => {
         rows.playerViews.set(gid, envelope(gid, board, 0));
@@ -340,7 +340,7 @@ test('2 seats, mid-bout, as the defender', async () => {
 test('4 seats, right after a pickup', async () => {
     const gid = 'four';
     const board = fixture().title('After the pickup')
-        .seats([seat(ME, 'Me'), seat('u-anna-0001', 'Anna'), seat('b-cordite-01', 'Cordite', 'cordite'), seat('u-boris-001', 'Boris')])
+        .seats([seat(ME, 'Me'), seat('u-anna-0001', 'Anna'), seat('b-cordite-01', 'St. Petersburg 1', 'cordite'), seat('u-boris-001', 'Boris')])
         .status(PLAYING).trump('Qh').deck('7s 8s 9s Ts Js Qs Ks As')
         .hand(0, '7c 8c 9c Tc Jc').hand(1, '6h 7h 8h 9h Th 6d').hand(2, 'Qc Kc Ac 7d 8d 9d').hand(3, 'Td Jd Qd Kd Ad Jh')
         .table('6c/Kh', '6s').attacker(0).defender(1).discard(4).build();
@@ -353,9 +353,9 @@ test('4 seats, right after a pickup', async () => {
 });
 
 function eightSeats() {
-    const seats = [seat(ME, 'Me'), seat('u-anna-0001', 'Anna'), seat('b-cordite-01', 'Cordite', 'cordite'),
-        seat('u-boris-001', 'Boris'), seat('b-robusta-02', 'Robusta', 'robusta'), seat('u-vera-0001', 'Vera'),
-        seat('b-powder-003', 'Blackpowder', 'blackpowder'), seat('u-gleb-0001', 'Gleb')];
+    const seats = [seat(ME, 'Me'), seat('u-anna-0001', 'Anna'), seat('b-cordite-01', 'St. Petersburg 1', 'cordite'),
+        seat('u-boris-001', 'Boris'), seat('b-robusta-02', 'Seoul 2', 'robusta'), seat('u-vera-0001', 'Vera'),
+        seat('b-powder-003', 'Vienna 3', 'blackpowder'), seat('u-gleb-0001', 'Gleb')];
     return fixture().title('Eight').seats(seats).status(PLAYING).trump('2d').deck('3s 4s 5s 6s')
         .hand(0, 'As Ks Qs Js Ts 9s').hand(1, 'Ah Kh Qh Jh Th 9h').hand(2, 'Ac Kc Qc Jc Tc 9c').hand(3, 'Ad Kd Qd Jd Td 9d')
         .hand(4, '8s 8h 8c 8d 7h 7c').hand(5, '6h 6c 6d 5h 5c 7s').hand(6, '4h 4c 4d 3h 3c 3d').hand(7, '2s 2c 7d')
@@ -395,7 +395,7 @@ test('a said good, as the attacker who said it', async () => {
 
 test('the win screen', async () => {
     const gid = 'done';
-    const board = fixture().title('Finished').seats([seat(ME, 'Me'), seat('b-cordite-01', 'Cordite', 'cordite'), seat('u-anna-0001', 'Anna')])
+    const board = fixture().title('Finished').seats([seat(ME, 'Me'), seat('b-cordite-01', 'St. Petersburg 1', 'cordite'), seat('u-anna-0001', 'Anna')])
         .status(GAME_OVER).powerSuit(1).hand(1, '6s 7s').seatStatus(0, OUT).seatStatus(1, IN).seatStatus(2, OUT)
         .eliminated(2, 0).discard(34).build();
     await screen('win_screen', 61, () => {
@@ -406,7 +406,7 @@ test('the win screen', async () => {
 });
 
 test('the dashboard', async () => {
-    const lobby = fixture().title('Waiting room').seats([seat(ME, 'Me'), seat('b-cordite-01', 'Cordite', 'cordite')]).build();
+    const lobby = fixture().title('Waiting room').seats([seat(ME, 'Me'), seat('b-cordite-01', 'St. Petersburg 1', 'cordite')]).build();
     await screen('dashboard', 71, () => {
         rows.dashboard = [envelope('dash1', twoSeatBout(), 0), envelope('dash2', lobby, 0), envelope('dash3', eightSeats(), 0)];
     }, () => gamePage('', ME));
@@ -419,11 +419,15 @@ test('the match history', async () => {
     const { seededCode } = await import('./helpers/seeded_codes.ts');
     const { replaySummary } = await import('../sdk/ts/wasm/bots.ts');
     const { encodeExtrasBytes } = await import('../server/api/common/replay/extras.ts');
+    // BOTH ERAS OF BOT NAME, on purpose, because the history screen is where they
+    // coexist. A blob stores the name the bot had when the game was played and the
+    // screen renders it as stored - there is no display map - so '%Cordite' is an
+    // old game and '%Moscow 4' is one played since the roster became its cities.
     const games: { np: number; seed: number; me: number; names: string[] | null }[] = [
         { np: 3, seed: 41, me: 1, names: ['Ada', 'Me', '%Cordite'] },
         { np: 4, seed: 42, me: 0, names: null },
         { np: 2, seed: 7, me: 1, names: ['Boris', 'Me'] },
-        { np: 8, seed: 43, me: 5, names: ['A', 'B', 'C', 'D', 'E', 'Me', 'G', 'H'] },
+        { np: 8, seed: 43, me: 5, names: ['A', 'B', 'C', 'D', 'E', 'Me', '%Moscow 4', 'H'] },
     ];
     const snapshots: Rows['snapshots'] = [];
     for (const [i, x] of games.entries()) {

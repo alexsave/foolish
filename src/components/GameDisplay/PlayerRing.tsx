@@ -194,7 +194,7 @@ export const PlayerRing = () => {
                             justifyContent: 'center',
                             position: 'relative'
                         }}>
-                            {botDisplayName(player.name, t)}
+                            {botDisplayName(player.name)}
 
                             {bubble && (
                                 <div className={`chat-bubble ${!styles.icons.useEmojiIcons ? 'chat-bubble--soviet' : ''}`}>
