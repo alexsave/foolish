@@ -29,10 +29,18 @@ import { resolve } from 'node:path';
 
 if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {}; }
 
-// bots.wasm ships as a gzip STATIC ASSET (bots.wasm.gz) - a real binary, so
-// concern #1 (parse-time concat blowup) is gone by construction. It is the only
-// kernel module the hosts load: the rules.wasm and guards.wasm embeds are gone
-// (docs/C_GAME_SHAPE_MIGRATION.md Q10), and their pins with them.
+// The kernel ships as gzip STATIC ASSETS - real binaries, so concern #1
+// (parse-time concat blowup) is gone by construction. There are TWO of them,
+// and they are two LINKS of one object set rather than two kernels
+// (c/Makefile, WASM_WEB_NAMES; e2e/wasm_web_link.test.ts holds them to one
+// layout hash, one export surface and one answer):
+//
+//   bots.wasm.gz   the server-side link. The edge functions and Node read it
+//                  off disk. Nobody downloads it.
+//   web.wasm.gz    the browser's link, fetched on first visit. The same objects
+//                  minus every export the browser does not call, so wasm-ld
+//                  drops the Monte-Carlo brains, cordite's solver working set
+//                  and the whole C Table.
 //
 // WHAT THIS GATE MEASURES, AND WHY IT IS NOT THE GZIP SIZE ANY MORE.
 //
@@ -44,9 +52,8 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 //
 // The compiler is not the problem. With the toolchain pinned (clang 22.1.8 +
 // binaryen 130, scripts/ci_llvm.sh) the RAW module is byte-identical on macOS
-// arm64, Linux arm64 and Linux x86_64 - all md5 ac53b4dc5484aabad381d2d7bc451088,
-// 191,485 B. The COMPRESSOR is the problem. gzip -9 -n over that one identical
-// module gives:
+// arm64, Linux arm64 and Linux x86_64. The COMPRESSOR is the problem. gzip -9 -n
+// over one identical 191,485 B bots.wasm gave:
 //
 //   Apple gzip 487.0.1 (macOS)    81,892 B    <- what the committed file was
 //   GNU gzip 1.12 (ubuntu)        82,043 B    +151 B  <- what CI ships
@@ -55,47 +62,75 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 //
 // A 576 B spread, against 28 B of headroom under 81,920. The budget's noise was
 // twenty times its margin, so the same kernel passed or failed on which machine
-// asked. Note what that table also says: on the toolchain that actually ships
-// the bytes, the 80 KiB line is ALREADY EXCEEDED by 123 B, and was before this
-// test changed - moving the build to CI revealed that, it did not cause it.
-// Getting back under 80 KiB is a kernel-size decision for the owner, not
-// something a test can assert its way to.
+// asked - and on the toolchain that actually shipped the bytes the 80 KiB line
+// was exceeded by 123 B.
 //
-// So this gate holds the RAW module, which is stable to the byte everywhere, and
-// the download number it was a proxy for is TRACKED rather than asserted:
-// scripts/collect_metrics.mjs reports each module's gzip size and metrics.yml
-// diffs it head-vs-base on every pull request, which is a better instrument for
-// a few hundred bytes than a boolean ever was. The gzip check that remains is
-// deliberately wide - it catches a base64 embed coming back or a blowup, not a
-// drift.
-const BOTS_RAW_MAX = 192_000;       // 191,485 B today: 515 B of room
+// THAT LINE IS NOW MET WITH ROOM, and not by shrinking the kernel: the browser
+// stopped downloading the server's link of it. web.wasm.gz is 31,050 B, so the
+// download the 80 KiB budget was always about clears it by 50,870 B. The RAW
+// pins below are what measure drift, because raw bytes are stable everywhere;
+// the download number stays TRACKED as well as pinned - scripts/collect_metrics.mjs
+// reports each module's gzip size and metrics.yml diffs it head-vs-base on every
+// pull request, which is a better instrument for a few hundred bytes than a
+// boolean ever was. Each gz ceiling here is deliberately wide of its measured
+// value: it catches a base64 embed coming back or a blowup, not a drift.
+const BOTS_RAW_MAX = 192_000;       // 191,490 B today: 510 B of room
 const BOTS_GZ_MAX = 84 * 1024;      // 82,043 B shipped today; clears the worst
                                     // compressor above (82,468) by 3,548 B
-test('bots.wasm ships as a small gzip static asset (not a base64 embed)', () => {
-    const buf = readFileSync(resolve('sdk/ts/wasm/bots.wasm.gz'));
-    assert.equal(buf[0], 0x1f, 'bots.wasm.gz is not gzip');
-    assert.equal(buf[1], 0x8b, 'bots.wasm.gz is not gzip');
+// The BROWSER's link, and the one the download budget is about. Pinned at the
+// measured size plus room for the compressor spread, NOT at the old 80 KiB
+// line: Part 3 of docs/ARCHITECTURE_AS_A_PATTERN.md says to re-pin lower after
+// each win so the ratchet turns one way, and leaving this at 80 KiB would have
+// banked a 62% cut as 50 KB of silent headroom to spend again.
+const WEB_RAW_MAX = 68_000;         // 67,298 B today: 702 B of room
+const WEB_GZ_MAX = 33 * 1024;       // 31,050 B today; 2,742 B of room, which is
+                                    // 4.7x the 576 B compressor spread above
+test('the kernel ships as small gzip static assets (not base64 embeds)', () => {
+    for (const [rel, rawMax, gzMax] of [
+        ['sdk/ts/wasm/bots.wasm.gz', BOTS_RAW_MAX, BOTS_GZ_MAX],
+        ['sdk/ts/wasm/web.wasm.gz', WEB_RAW_MAX, WEB_GZ_MAX],
+    ] as const) {
+        const buf = readFileSync(resolve(rel));
+        assert.equal(buf[0], 0x1f, `${rel} is not gzip`);
+        assert.equal(buf[1], 0x8b, `${rel} is not gzip`);
 
-    // The raw size comes from inflating the shipped file rather than reading
-    // c/build/bots.wasm, so this test still has exactly ONE input. A second
-    // path would be a second thing that can be stale, and c/build is wiped by
-    // any `--check` run.
-    const raw = gunzipSync(buf);
-    assert.ok(raw.length <= BOTS_RAW_MAX,
-        `bots.wasm is ${raw.length} B raw, over the ${BOTS_RAW_MAX} B pin.\n`
-        + 'This is the kernel getting bigger, and it is measured on the raw module\n'
-        + 'because that is byte-identical on every platform this repo builds on -\n'
-        + 'see the note above this test. Going UP is a regression: find what was\n'
-        + 'added. If it is deliberate, raise this pin IN THE SAME COMMIT and say\n'
-        + 'what bought the bytes, then check the gzip delta metrics.yml posts on\n'
-        + 'the pull request - that is the number a visitor actually downloads.');
+        // The raw size comes from inflating the shipped file rather than reading
+        // c/build, so this test still has exactly ONE input per module. A second
+        // path would be a second thing that can be stale, and c/build is wiped by
+        // any `--check` run.
+        const raw = gunzipSync(buf);
+        assert.ok(raw.length <= rawMax,
+            `${rel} is ${raw.length} B raw, over the ${rawMax} B pin.\n`
+            + 'This is the kernel getting bigger, and it is measured on the raw module\n'
+            + 'because that is byte-identical on every platform this repo builds on -\n'
+            + 'see the note above this test. Going UP is a regression: find what was\n'
+            + 'added. If it is deliberate, raise this pin IN THE SAME COMMIT and say\n'
+            + 'what bought the bytes, then check the gzip delta metrics.yml posts on\n'
+            + 'the pull request - that is the number a visitor actually downloads.\n'
+            + 'On web.wasm, check FIRST whether a new export in c/Makefile WASM_WEB_NAMES\n'
+            + 'rooted code the browser does not run.');
 
-    assert.ok(buf.length <= BOTS_GZ_MAX,
-        `bots.wasm.gz is ${buf.length} B, over the ${BOTS_GZ_MAX} B ceiling.\n`
-        + 'This ceiling is wide on purpose (the compressor alone moves this number\n'
-        + `by up to 576 B) - it is here to catch a base64 embed coming back or a\n`
-        + 'blowup, so being over it means something large arrived, not that the\n'
-        + 'kernel drifted. The raw pin above is the one that measures drift.');
+        assert.ok(buf.length <= gzMax,
+            `${rel} is ${buf.length} B, over the ${gzMax} B ceiling.\n`
+            + 'This ceiling is wide on purpose (the compressor alone moves this number\n'
+            + `by up to 576 B) - it is here to catch a base64 embed coming back or a\n`
+            + 'blowup, so being over it means something large arrived, not that the\n'
+            + 'kernel drifted. The raw pin above is the one that measures drift.');
+    }
+});
+
+test('the browser downloads a fraction of the server-side kernel', () => {
+    // The point of the split, asserted rather than described. Not a tight
+    // ratio - it is here so that folding the server's surface back into the
+    // browser's link (a wasm_table_* export added to WASM_WEB_NAMES "just to
+    // try something") shows up as a failure rather than as a slower first paint
+    // nobody attributes.
+    const web = readFileSync(resolve('sdk/ts/wasm/web.wasm.gz')).length;
+    const bots = readFileSync(resolve('sdk/ts/wasm/bots.wasm.gz')).length;
+    assert.ok(web * 2 < bots,
+        `web.wasm.gz is ${web} B against bots.wasm.gz's ${bots} B - the browser's link has\n`
+        + 'stopped being a fraction of the server\'s. Something large was added to\n'
+        + 'c/Makefile WASM_WEB_NAMES, or the server\'s link lost most of its own surface.');
 });
 
 const PAGE = 65536;
@@ -178,6 +213,29 @@ test("bots.wasm declared INITIAL memory is 37 pages (static buffers, not the run
     const wasm = new Uint8Array(gunzipSync(readFileSync(resolve('sdk/ts/wasm/bots.wasm.gz'))));
     const { min } = memLimits(wasm);
     assert.equal(min, 37, `bots.wasm initial memory is ${min} pages (${min * PAGE}B); expected 37: the deliberate static buffers (g_io 400 KiB, the cordite solver working set, the move enumerators, the resident and replay Games, the FMSG seal and rebase scratch games) plus the bridge's generated structs (ReplayExtras 8,744 B, RosterSpec 3,448 B, ReplayFrameIndex 1,032 B, MsgHeader 656 B). Going UP is a regression: 55,112 B of static room are left under the 37-page line, so look for a new buffer below __heap_base. Going DOWN means something was freed - lower this pin and take the page back.`);
+});
+
+test("web.wasm declared INITIAL memory is 26 pages - 11 fewer than the server's link", () => {
+    // A LINKER FACT, not a second budget. wasm-ld keeps a static only if
+    // something an export reaches refers to it, so dropping the bot bridge and
+    // the C Table from the browser's export list drops their buffers with their
+    // code: the cordite solver working set, the world-log slots, g_io's 400 KiB
+    // log-import staging (the session log the belief bots filter - a browser
+    // imports no logs) and the table's own scratch. 37 - 26 = 11 pages, 720,896 B
+    // of linear memory a tab no longer reserves, on top of the 50,852 B of
+    // download and the 124,192 B of module it no longer compiles.
+    //
+    // Pinned rather than merely reported for the reason the bots pin exists:
+    // going UP means a browser call site pulled a server-sized buffer across,
+    // which is the moment to ask whether the call belongs there at all. Going
+    // DOWN is a win - re-pin it here and say what was freed.
+    const wasm = new Uint8Array(gunzipSync(readFileSync(resolve('sdk/ts/wasm/web.wasm.gz'))));
+    const { min } = memLimits(wasm);
+    assert.equal(min, 26,
+        `web.wasm initial memory is ${min} pages (${min * PAGE} B); expected 26. `
+        + 'Up means the browser\'s link started keeping a static it used to drop - look at what '
+        + 'was added to c/Makefile WASM_WEB_NAMES, because an export is a GC root and roots the '
+        + 'data its code reads. Down means something was freed: lower this pin in the same commit.');
 });
 
 test('loading the bot kernel (read + gunzip + instantiate) fits a 64MB-old-space node', () => {

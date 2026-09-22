@@ -68,10 +68,35 @@ async function readAssetAsync(name: WasmModuleName): Promise<Uint8Array | null> 
     return null;                                 // browser
 }
 
-export type WasmModuleName = 'rules' | 'bots';
+export type WasmModuleName = 'rules' | 'bots' | 'web';
 
 export function wasmAssetUrl(name: WasmModuleName): URL {
     return new URL(`./${name}.wasm.gz`, import.meta.url);
+}
+
+/**
+ * WHICH LINK OF THE ONE KERNEL THIS RUNTIME LOADS.
+ *
+ * Not two kernels: `bots.wasm` and `web.wasm` are the same object files under
+ * two `-Wl,--export=` allow-lists (c/Makefile, WASM_WEB_NAMES), so they carry
+ * one set of rules, one layout hash, and identical bytes for every function
+ * they share. What differs is what an export keeps alive - the browser's link
+ * sheds the Monte-Carlo brains and the whole C Table it never calls, which is
+ * 82 KB of download against 31 KB.
+ *
+ * THE TEST IS THE FILESYSTEM, not a browser sniff, and that is not a
+ * coincidence: the runtimes that read the module off disk (the Deno edge
+ * functions, Node's suites and tools) are exactly the ones that play the table
+ * and run the bot loop, and the runtime that has to fetch it is exactly the one
+ * that does neither. Asking the same question the loader above already asks
+ * keeps the two answers from drifting apart.
+ */
+export function kernelModule(): WasmModuleName {
+    // deno-lint-ignore no-explicit-any
+    const g = globalThis as any;
+    if (g.Deno?.readFileSync) return 'bots';
+    if (typeof process !== 'undefined' && process.versions?.node) return 'bots';
+    return 'web';
 }
 
 /** Synchronous load. Server only — a browser has no filesystem, so it must

@@ -2,9 +2,17 @@
 # Build the shipped wasm modules. THE ONE ENTRY POINT, and the one list of what
 # "the shipped modules" are.
 #
-#   bots    sdk/ts/wasm/bots.wasm.gz   the kernel every host loads - the browser
-#                                      by fetching it, the edge functions as a
-#                                      static asset, Node's suites off disk
+#   bots    sdk/ts/wasm/bots.wasm.gz   the kernel, linked for the SERVER: the
+#                                      edge functions as a static asset, Node's
+#                                      suites off disk
+#           sdk/ts/wasm/web.wasm.gz    the SAME OBJECTS linked for the BROWSER,
+#                                      which fetches it. One export allow-list
+#                                      smaller, so wasm-ld drops the bots and
+#                                      the C Table: 31 KB gz against 82 KB. Same
+#                                      group as bots because it is the same
+#                                      compile - only the link differs, and a
+#                                      lane that builds one must build both or
+#                                      the pair can come apart.
 #   oracle  public/oracle.wasm.gz      the client-side replay analyser (Mode A)
 #           public/oracle-mt.wasm.gz   the same analyser's shared-memory Mode B
 #
@@ -102,6 +110,7 @@ cd "$(dirname "$0")/.."
 # that audited them.
 ARTIFACTS=(
   "bots|sdk/ts/wasm/bots.wasm.gz|wasm-bots"
+  "bots|sdk/ts/wasm/web.wasm.gz|wasm-web"
   "oracle|public/oracle.wasm.gz|wasm-oracle"
   "oracle|public/oracle-mt.wasm.gz|wasm-oracle-mt"
 )
