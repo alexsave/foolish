@@ -857,6 +857,21 @@ $(STRUCTGEN): $(wildcard $(STRUCTGEN_DIR)/*.c) $(wildcard $(STRUCTGEN_DIR)/*.h) 
               $(STRUCTGEN_DIR)/Makefile $(STRUCTGEN_DIR)/../llvm.mk
 	$(MAKE) -C $(STRUCTGEN_DIR) build/structgen
 
+# $(call sg_hash,...) IS NOT SAFE AGAINST A SECOND MAKE IN THE SAME TREE, and
+# that is worth knowing before it costs someone an afternoon. It writes its
+# scratch to fixed paths - $@.new, and $@.ts / $@.hash.ts when there is a stem -
+# and ends by removing them. Two make processes in c/ that both reach a hash
+# target therefore race: one creates $@.new, the other's `rm -f $@.new` takes it
+# away, and the first dies with "cat: build/layout/bots.hash.new: No such file or
+# directory" followed by "mv: cannot stat". It is not a flake and it is not a
+# bad hash - it is two builds sharing one temp file. Hit repeatedly on a shared
+# box where several agents were building this tree at once; hit on bots.hash,
+# which nothing had changed. THIS IS PRE-EXISTING (every sg_hash caller has it,
+# and build/layout/ios.hash has its own copy of the same pattern) and it is NOT
+# fixed here: a per-process temp has to be threaded through sg_hash and sg_sync
+# together, and the ios copy of it can only be tested on a Mac. Left as a note
+# rather than a half-fix. One build at a time in one tree, or expect this.
+#
 # $(call sg_hash,<build name>,<cflags>,<ts stem, or empty>): with a stem, also
 # writes ../sdk/ts/gen/game_layout.<stem>.ts and ../sdk/ts/gen/layout_hash.<stem>.ts.
 sg_gen   = ../sdk/ts/gen
@@ -1647,11 +1662,14 @@ WASM_ORACLE_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
 #
 # SORTED, and byte-identity depends on it: object order on the link line decides
 # function order in the module. The loop linked `build/botoracle/*.o`, a shell
-# glob, which is sorted; $(sort) reproduces exactly that order, so these rules
-# write the same module the loop wrote. $(sort) is also the better of the two -
-# a glob sorts under LC_COLLATE, so on a machine in a UTF-8 locale the loop's
-# link order was not the ASCII one at all (replay.o / replay_extras.o are the
-# pair that separates them), while make's sort is ASCII everywhere.
+# glob, and a glob is sorted; $(sort) reproduces that order, which is why these
+# rules write the same module the loop wrote - verified byte for byte, raw and
+# .gz, on all four modules. $(sort) is also the steadier of the two: a glob sorts
+# under LC_COLLATE, so its order is the machine's locale's and not necessarily
+# ASCII, while make's sort is ASCII everywhere. (Checked on a POSIX-locale Linux
+# box, where the two coincide; a machine whose collation differs would have got
+# different oracle bytes out of the loop than out of these rules, and the rules
+# are the side that cannot drift.)
 #
 # And the EXPLICIT LIST is what the glob could not be: a source removed from
 # WASM_BOT_SRC leaves its object behind in the directory, and a glob would keep

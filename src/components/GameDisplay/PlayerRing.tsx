@@ -88,14 +88,20 @@ const CardsVisual = ({ player, handKey, selfHandLength, isSelf }: { player: View
     );
 };
 
-/** THE ONE MARK a seat wears, from the kernel's answers about it. Never two: a
- *  defender's Good is rejected by the kernel (game.c handle_good), and the
- *  first-attacker badge is only marked on an empty table, where nobody has said
- *  Good yet - so the three are already disjoint and this ranks nothing the engine
- *  can actually produce at once. It is the same function as FoolishKit's
- *  `RoleMarkKind.worn` (ios/FoolishKit/Boards/FRoleMotion.swift), which is a host
- *  function there too, and for the same reason: one place, so a seat's mark
- *  cannot be ranked one way here and another way on a second surface.
+/** THE ONE MARK a seat wears, from the kernel's answers about it.
+ *
+ *  NEVER TWO, and that is the point of ranking them here rather than letting two
+ *  components each decide. The website used to draw the sword in this ring and
+ *  the shield in a component of its own, so nothing stopped one seat wearing
+ *  both - and on a finished game it did: e2e/fixtures/ui_dom/replay_named_end
+ *  recorded Ada with the sword in her own slot and the shield floating beside it,
+ *  because at game over the kernel's two badges can name the same seat. iMessage
+ *  has the rule as a single function (`RoleMarkKind.worn`, ios/FoolishKit/Boards/
+ *  FRoleMotion.swift: "a seat is never two of these at once"), which is a HOST
+ *  function there too, so this is that function and not a second opinion.
+ *
+ *  Said good beats the shield beats the sword, and an out seat wears nothing
+ *  (FSeatBadge turns an out seat's badge edge-on; selfRoleMark is `isOut ? nil`).
  *
  *  WHAT IS MISSING, and it needs the kernel: a THROW-IN attacker's plain sword.
  *  `first_attacker_badge` answers "who leads the NEXT bout" and goes to -1 the

@@ -64,25 +64,45 @@
 #
 # EVERY group is ~0s warm now. It used to be only `wasm-bots`: `wasm-oracle` and
 # `wasm-oracle-mt` were phony targets whose recipes looped over all 34 sources in
-# the shell, so they recompiled everything on every run - measured on this Mac,
+# the shell, so they recompiled everything on every run - measured on a Mac,
 # warm: bots ~0s, oracle 6.3s, oracle-mt ~7s. Both have per-object make rules
-# now, like bots. Measured on Linux (clang 18, so absolute sizes are not CI's),
-# warm `npm run gen && npm run wasm`: 15.9s before, 2.3s after, and 1.6s of what
-# is left is `npm run gen` plus npm's own startup - `npm run wasm` alone is 0.7s.
+# now, like bots.
+#
+# MEASURED PER TARGET, which is the number to trust (Linux, clang 18, so the
+# absolute sizes are not CI's; three warm runs each):
+#
+#   wasm-bots        0.19s  0.22s  0.23s
+#   wasm-web         0.19s  0.19s  0.23s
+#   wasm-oracle      0.18s  0.19s  0.18s
+#   wasm-oracle-mt   0.18s  0.22s  0.18s
+#
+# against 7.4s for wasm-oracle and 7.3s for wasm-oracle-mt with their object
+# directories emptied first - and an emptied directory is exactly what the shell
+# loop gave itself on every single run, so those two are what the loop cost warm
+# on this machine.
+#
+# End to end, warm `npm run gen && npm run wasm` went 15.9s -> 2.5s, of which
+# 1.7s is `npm run gen`; this script alone is 0.7-0.8s. Take the end-to-end
+# figures more loosely than the per-target ones: they were measured on a shared
+# box with several agents compiling, and the same command has been seen at 3.4s
+# and at 8.5s there. A warm run can also be a COLD one through no fault of the
+# caller - the object rules carry a blanket header dependency, so an edit to any
+# header under c/src, c/wasm, c/wasm/include or shared/c rebuilds every wasm
+# object, which is the point of it.
 #
 # NOTHING WAS TRADED FOR IT. The modules are byte-identical across the change,
 # all four raw and all four .gz (the rules link the same objects in the same
 # order the shell glob did - c/Makefile's wasm-oracle block says why that order
 # has to be $(sort)ed). And it is make rules, not a cache: every object is still
 # compared against its source and against every header, so there is no staleness
-# window and no cache to invalidate. The build step stays the contract; it just
-# stopped costing anything.
+# window and no cache to invalidate. --check below still wipes c/build between
+# its two builds, so both of them still compile all 103 objects from nothing.
+# The build step stays the contract; it just stopped costing anything.
 #
 # So the GROUPS are a COLD-build argument now rather than a warm one, and still a
-# real one: from an empty c/build the Oracle pair is ~13s of compiling that a
+# real one: from an empty c/build the Oracle pair is ~15s of compiling that a
 # lane which cannot load an Oracle module has no use for, and a first-run tax is
-# how a build step gets deleted. package.json's `//wasm` note keeps that split
-# (its text still calls these object rules a follow-up - they are done).
+# how a build step gets deleted. package.json's `//wasm` note keeps that split.
 #
 # Usage:
 #   scripts/wasm_build.sh                 build every group
