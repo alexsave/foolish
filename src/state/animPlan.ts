@@ -91,6 +91,9 @@ export const sameHeld = (a: ReadonlySet<number>, b: ReadonlySet<number>): boolea
  * (src/state/optimisticOverlay.ts). Those piles are on the table because
  * nothing is flying them; taking their slot away for the length of somebody
  * else's flight would be the flicker the optimistic overlay exists to prevent.
+ * It is also what keeps this off a SWEEP: the row a pickup is about to take is
+ * `pre`'s own answer, cover and all, so a card flying home to a table it never
+ * left keeps the cell it is lying in.
  */
 export function heldPiles(pre: AnimCountsSnap, flying: readonly AnimStep[]): ReadonlySet<number> {
     const air = new Set<number>();
@@ -99,9 +102,13 @@ export function heldPiles(pre: AnimCountsSnap, flying: readonly AnimStep[]): Rea
         for (const c of s.cards ?? []) air.add(idOf(c));
     }
     if (air.size === 0) return NO_HELD;
-    // An unpaired row is the flat one-cell-per-card reading of a pickup and
-    // vouches for nothing (AnimPreTable.paired).
-    if (pre.paired) for (const id of pre.battles) air.delete(id);
+    // `paired` is NOT asked. It says whether the row's PAIRING came off a real
+    // board or is "the flat one-cell-per-card reading of a pickup - the same
+    // cards in a shape nobody vouched for" (AnimPreTable). This asks only
+    // whether a card was on the row, never in what shape, and the flat reading
+    // answers that exactly: without it a stream that SWEEPS the table would
+    // hold back the very piles it is about to take.
+    for (const id of pre.battles) air.delete(id);
     return air.size === 0 ? NO_HELD : air;
 }
 
