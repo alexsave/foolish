@@ -235,7 +235,6 @@ const char *const FS_STRINGS_ZH[FS_K_COUNT] = {
     [FS_K_OFFLINE                  ] = "单机",
     [FS_K_ORACLE_ANALYZING         ] = "分析中… {n} 个世界 · {rate}/秒",
     [FS_K_ORACLE_APPROX            ] = "近似局面（部分暗牌是推断出来的）。",
-    [FS_K_ORACLE_BASIS             ] = "基于公开可见的牌局记录。",
     [FS_K_ORACLE_BELIEF_FLOOR      ] = "P{n} 手里没有低于 {v} 的非主牌",
     [FS_K_ORACLE_BELIEF_NONE       ] = "还没有确凿的推断 - 任何没露过面的牌都有可能",
     [FS_K_ORACLE_BELIEF_PINNED     ] = "已确定 P{n} 手里有 {cards}",

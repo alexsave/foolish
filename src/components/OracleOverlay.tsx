@@ -38,13 +38,20 @@ function tokenToCard(token: string): Card | null {
     if (suit < 0 || value == null) return null;
     return { suit, value };
 }
-// The whole move - attacking cards, an optional "→" and the covered/target
-// cards, or the bare move type for card-less moves (pass/pickup/good/wait) -
-// as one string for a single fixed-width segment display per row. Suits are
-// the ♠♥♣♦ characters SegmentText renders as small icons (see SuitGlyph in
-// SegmentDisplay.tsx) rather than letters - still one array element each,
-// so the fixed-length budget and blank padding are unaffected. Also tracks
-// which indices are red-suit (♥/♦) so the display can tint just those.
+// What a move that carries cards IS, in three cells. A pass throws cards the
+// same way an attack plays them, so "8♦" alone says nothing about which of the
+// two just happened; the tag is the only thing on the row that distinguishes
+// them. Card-less moves (pickup/good) already read as their own name and get
+// no tag.
+const MTYPE_TAG: Record<string, string> = { attack: 'ATK', cover: 'CVR', pass: 'PAS' };
+
+// The whole move - the cards, a cover's pairing, and the type tag, or the bare
+// move type for card-less moves (pass/pickup/good/wait) - as one string for a
+// single fixed-width segment display per row. Suits are the ♠♥♣♦ characters
+// SegmentText renders as small icons (see SuitGlyph in SegmentDisplay.tsx)
+// rather than letters - still one array element each, so the fixed-length
+// budget and blank padding are unaffected. Also tracks which indices are
+// red-suit (♥/♦) so the display can tint just those.
 function moveTitleText(c: OracleCandidate): { text: string; redAt: Set<number> } {
     const redAt = new Set<number>();
     let text = '';
@@ -56,13 +63,31 @@ function moveTitleText(c: OracleCandidate): { text: string; redAt: Set<number> }
         text += '♠♥♣♦'[card.suit];
     };
     if (!c.cards.length) { text = c.type === 'pass' ? 'PASS' : c.type; return { text, redAt }; }
-    c.cards.forEach(pushCard);
-    if (c.target?.length) { text += '→'; c.target.forEach(pushCard); }
+    const target = c.target ?? [];
+    // A COVER IS PAIRWISE. The kernel keeps a cover's targets "in cards' order"
+    // (c/src/oracle_mt.h OgMtCand), so card i is the one that takes attack i -
+    // and a double cover reads "Q♥→J♦ Q♠→J♣", which says which card took which,
+    // rather than "Q♥Q♠→J♦J♣", which leaves the reader to guess the pairing.
+    // Any other shape (an attack, or a length the kernel did not pair up) falls
+    // back to the flat form rather than invent a pairing that is not there.
+    if (target.length > 0 && target.length === c.cards.length) {
+        c.cards.forEach((tok, i) => {
+            if (i > 0) text += ' ';
+            pushCard(tok);
+            text += '→';
+            pushCard(target[i]);
+        });
+    } else {
+        c.cards.forEach(pushCard);
+        if (target.length) { text += '→'; target.forEach(pushCard); }
+    }
+    const tag = MTYPE_TAG[c.type];
+    if (tag) text += ` ${tag}`;
     return { text, redAt };
 }
-// Fixed character budget for the move-title strip: worst realistic case is
-// three attacking tens covering three cards - 3×"10S" (9) + "→" (1) +
-// 3×"XS" (6) = 16.
+// Minimum character budget for the move-title strip - short titles pad out to
+// it so the column lines up; a longer one simply runs longer, as it always
+// has. A single cover plus its tag ("Q♥→J♦ CVR") is 11, a double cover 19.
 const MOVE_TITLE_LEN = 16;
 const SUIT_RED = '#E8674F';
 
@@ -86,6 +111,13 @@ const AMBER = '#FFA53C';
 const TEAL = '#5EEAD4';
 const CARD_COLOR = '#E8E3D2';
 const LCD_MONO = "'Consolas', 'Menlo', 'SFMono-Regular', monospace";
+
+// Digit grouping for a readout with no comma on it: the 15-segment font has no
+// ',' cell, so toLocaleString's separator would drop out of the array into the
+// plain-text fallback once every three digits. A space IS a cell, and a space
+// is what the hardware this panel imitates used.
+const ledNumber = (n: number | undefined): string =>
+    String(Math.max(0, Math.round(n ?? 0))).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 
 const ledText = (color: string): React.CSSProperties => ({
     fontFamily: LCD_MONO,
@@ -474,9 +506,12 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry }: Pr
         if (s.status === 'converged') return <LedChip color="#7FB6E8" text={t('oracle_converged')} />;
         if (s.status === 'forced') return <span style={{ ...ledText('rgba(190,190,200,0.75)'), fontSize: '0.6rem' }}>{t('oracle_forced_move')}</span>;
         if (running) return (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.66rem', ...ledText(AMBER) }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
                 <Spinner />
-                {t('oracle_analyzing', { n: (s.totalWorlds || 0).toLocaleString(), rate: (s.worldsPerSec || 0).toLocaleString() })}
+                <SegmentText
+                    text={t('oracle_analyzing', { n: ledNumber(s.totalWorlds), rate: ledNumber(s.worldsPerSec) })}
+                    color={AMBER} height={8} gap={1.2}
+                />
             </span>
         );
         return null;
@@ -556,8 +591,12 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry }: Pr
                 )}
             </div>
 
-            {/* body */}
-            <div style={{ position: 'relative', overflowY: 'auto', padding: '6px 6px 8px' }}>
+            {/* body - the candidate list can run past the panel's 70vh, so it
+                scrolls. data-chat-scrollable is the OPT-IN: usePreventScroll
+                refuses every touchmove on the site so a dragged card cannot drag
+                the page, and a region that genuinely scrolls has to say so or a
+                finger does nothing to it (src/hooks/usePreventScroll.ts). */}
+            <div data-chat-scrollable style={{ position: 'relative', overflowY: 'auto', padding: '6px 6px 8px' }}>
                 {!s || s.status === 'loading' ? (
                     <div style={{ padding: 16, textAlign: 'center', fontSize: '0.74rem', ...ledText(AMBER) }}>
                         <Spinner /> …
@@ -605,7 +644,6 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry }: Pr
                             {!s.approx && s.deckAlive === false && !s.memoryOn && exact === false && s.regime === 'mc' && (
                                 <Footnote text={t('oracle_memory_off_endgame')} />
                             )}
-                            <Footnote text={t('oracle_basis')} muted />
                         </div>
                     </>
                 )}
@@ -614,8 +652,8 @@ export const OracleOverlay = ({ snapshot, onClose, onToggleMemory, onRetry }: Pr
     );
 };
 
-const Footnote = ({ text, muted }: { text: string; muted?: boolean }) => (
-    <div style={{ fontSize: '0.6rem', ...ledText('rgba(200,200,210,0.7)'), fontWeight: 500, opacity: muted ? 0.6 : 0.9 }}>{text}</div>
+const Footnote = ({ text }: { text: string }) => (
+    <div style={{ fontSize: '0.6rem', ...ledText('rgba(200,200,210,0.7)'), fontWeight: 500, opacity: 0.9 }}>{text}</div>
 );
 
 const Spinner = () => (

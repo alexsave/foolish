@@ -235,7 +235,6 @@ const char *const FS_STRINGS_DE[FS_K_COUNT] = {
     [FS_K_OFFLINE                  ] = "Offline",
     [FS_K_ORACLE_ANALYZING         ] = "Analysiere… {n} Welten · {rate}/s",
     [FS_K_ORACLE_APPROX            ] = "Ungefähre Stellung (einige verdeckte Karten erschlossen).",
-    [FS_K_ORACLE_BASIS             ] = "Auf Basis des öffentlich sichtbaren Verlaufs.",
     [FS_K_ORACLE_BELIEF_FLOOR      ] = "P{n} hat keine Nicht-Trumpfkarte unter {v}",
     [FS_K_ORACLE_BELIEF_NONE       ] = "Noch keine sicheren Schlüsse - jede ungesehene Karte ist möglich",
     [FS_K_ORACLE_BELIEF_PINNED     ] = "P{n} hält sicher {cards}",

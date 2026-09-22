@@ -92,26 +92,136 @@ function inset(a: Pt, b: Pt, m: number): [Pt, Pt] {
     return [[a[0] + dx * m, a[1] + dy * m], [b[0] - dx * m, b[1] - dy * m]];
 }
 
-function Glyph({ ch, height, color, dim }: { ch: string; height: number; color: string; dim: string }) {
-    const on = new Set(FONT[ch] ?? []);
-    const w = height * (W / H);
+/* ---------------------------- the cell run -------------------------------
+ * ONE <svg> AND ONE FILTER PER RUN, not per segment. The glow is a CSS
+ * `drop-shadow`, and Chrome gives every filtered element its own render
+ * surface: with the filter on each lit <line> the Oracle panel carried 912 of
+ * them, and any single change inside the panel re-ran all 912 filter passes.
+ * Measured on the replay screen with the oracle deliberating, production
+ * builds, same decision, 6 s samples: 1,163-1,289 filtered elements gave
+ * 15-31 fps, a p95 frame of 50-350 ms and 9-14 frames over 100 ms; 47 of them
+ * give 48-55 fps, a p95 of 19-50 ms and NONE over 100 ms. The element count is
+ * untouched either way - the same 6,098 <line>s are on screen - so the whole
+ * difference is how many render surfaces Chrome has to re-run. An isolated
+ * bench of the three shapes agrees: per-line 12.7 fps / p95 433 ms, per-glyph
+ * 53.7 / 98 ms, per-run 60.3 / 18.6 ms, the last identical to no filter at all.
+ *
+ * The glow is UNCHANGED, not cheapened. Every cell still lives in the same
+ * 30x50-per-cell user space at the same scale, so `2px` of blur is the same
+ * 2 user units it always was; all that moves is WHERE the filter is attached.
+ * Lit segments are grouped by colour because `colorAt` may tint a cell.
+ */
+
+/** One position on the readout. `gap` is a space: it advances and draws nothing. */
+type Cell =
+    | { k: 'glyph'; ch: string; color: string }
+    | { k: 'suit'; suit: number; color: string }
+    | { k: 'dot'; color: string }
+    | { k: 'gap' };
+
+/** Cell advance in viewBox units. A glyph cell is W wide; a space or a decimal
+ *  point is the narrow cell, which is `height * 0.32` PX - and px converts to
+ *  user units through the cell scale (height / H), so it is H * 0.32 here, not
+ *  W * 0.32. Getting that wrong shifts every cell after a space by ~1.3 px. */
+const advanceOf = (c: Cell): number => (c.k === 'dot' || c.k === 'gap' ? H * 0.32 : W);
+
+/** The 15 ghost segments every cell shows, as the dim background of the array. */
+function segsOf(x: number, keyPrefix: string, onSegs: Set<Seg> | null, color: string,
+                dim: string, litInto: React.ReactNode[], dimInto: React.ReactNode[]): void {
+    for (const seg of ALL_SEGS) {
+        const [p1, p2] = LINES[seg].map((k) => P[k]) as [Pt, Pt];
+        const [a, b] = inset(p1, p2, 0.12);
+        const on = onSegs?.has(seg) ?? false;
+        (on ? litInto : dimInto).push(
+            <line
+                key={`${keyPrefix}${seg}`}
+                x1={a[0] + x} y1={a[1]} x2={b[0] + x} y2={b[1]}
+                stroke={on ? color : dim}
+                strokeWidth={on ? 2.6 : 2}
+                strokeLinecap="round"
+            />,
+        );
+    }
+}
+
+/** The suit's own art (♠♥♣♦), drawn over its cell's ghost segments. */
+function suitArt(suit: number, color: string): React.ReactNode {
+    const stroke = { stroke: color, strokeWidth: 1.3, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, fill: 'none' };
+    if (suit === 0) { // spade — triangle + stem
+        return (
+            <>
+                <path d="M6 1 L11 9.5 L1 9.5 Z" {...stroke} />
+                <line x1={6} y1={9.5} x2={6} y2={11.5} stroke={color} strokeWidth={1.3} strokeLinecap="round" />
+            </>
+        );
+    }
+    if (suit === 1) { // heart — two dots + converging V
+        return (
+            <>
+                <circle cx={3.4} cy={3.6} r={1.6} fill={color} />
+                <circle cx={8.6} cy={3.6} r={1.6} fill={color} />
+                <path d="M1.8 5.2 L6 11.5 L10.2 5.2" {...stroke} />
+            </>
+        );
+    }
+    if (suit === 2) { // club — trefoil dots + stem
+        return (
+            <>
+                <circle cx={6} cy={3.2} r={1.9} fill={color} />
+                <circle cx={2.6} cy={7} r={1.9} fill={color} />
+                <circle cx={9.4} cy={7} r={1.9} fill={color} />
+                <line x1={6} y1={8} x2={6} y2={11.5} stroke={color} strokeWidth={1.3} strokeLinecap="round" />
+            </>
+        );
+    }
+    return <path d="M6 1 L11 6 L6 11 L1 6 Z" {...stroke} />; // diamond — rotated square
+}
+
+/** A contiguous stretch of readout cells as ONE <svg>: the ghost segments in a
+ *  single unfiltered group, and the lit ones in one filtered group per colour. */
+function CellRun({ cells, height, dim, gap }: { cells: Cell[]; height: number; dim: string; gap: number }) {
+    const scale = height / H;
+    // The flex gap used to sit between sibling cells; inside one <svg> it has to
+    // be spent as advance, in the same user units as everything else.
+    const gapVB = scale > 0 ? gap / scale : 0;
+
+    const dimSegs: React.ReactNode[] = [];
+    const litByColor = new Map<string, React.ReactNode[]>();
+    const litInto = (color: string): React.ReactNode[] => {
+        const a = litByColor.get(color);
+        if (a) return a;
+        const made: React.ReactNode[] = [];
+        litByColor.set(color, made);
+        return made;
+    };
+
+    let x = 0;
+    cells.forEach((c, i) => {
+        if (c.k === 'glyph') {
+            segsOf(x, `g${i}`, new Set(FONT[c.ch] ?? []), c.color, dim, litInto(c.color), dimSegs);
+        } else if (c.k === 'suit') {
+            segsOf(x, `s${i}`, null, c.color, dim, litInto(c.color), dimSegs);
+            litInto(c.color).push(
+                <g key={`a${i}`} transform={`translate(${x + 1.8},11.8) scale(2.2)`}>{suitArt(c.suit, c.color)}</g>,
+            );
+        } else if (c.k === 'dot') {
+            litInto(c.color).push(
+                <circle key={`d${i}`} cx={x + H * 0.16} cy={H - PAD} r={H * 0.09} fill={c.color} />,
+            );
+        }
+        x += advanceOf(c) + gapVB;
+    });
+    const totalVB = Math.max(0, x - gapVB);
+
     return (
-        <svg width={w} height={height} viewBox={`0 0 ${W} ${H}`} style={{ flex: 'none', overflow: 'visible' }}>
-            {ALL_SEGS.map((seg) => {
-                const [p1, p2] = LINES[seg].map((k) => P[k]) as [Pt, Pt];
-                const [a, b] = inset(p1, p2, 0.12);
-                const lit = on.has(seg);
-                return (
-                    <line
-                        key={seg}
-                        x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]}
-                        stroke={lit ? color : dim}
-                        strokeWidth={lit ? 2.6 : 2}
-                        strokeLinecap="round"
-                        style={lit ? { filter: `drop-shadow(0 0 2px ${color}99)` } : undefined}
-                    />
-                );
-            })}
+        <svg
+            width={totalVB * scale} height={height} viewBox={`0 0 ${totalVB} ${H}`}
+            style={{ flex: 'none', overflow: 'visible' }}
+        >
+            <g>{dimSegs}</g>
+            {[...litByColor].map(([color, nodes]) => (
+                <g key={color} style={{ filter: `drop-shadow(0 0 2px ${color}99)` }}>{nodes}</g>
+            ))}
         </svg>
     );
 }
@@ -123,59 +233,6 @@ function Glyph({ ch, height, color, dim }: { ch: string; height: number; color: 
 // suit still reads as one more position on the LED array, not a pasted-in
 // icon that breaks the strip.
 const SUIT_CHARS = ['♠', '♥', '♣', '♦'];
-function SuitGlyph({ suit, height, color, dim }: { suit: number; height: number; color: string; dim: string }) {
-    const w = height * (W / H);
-    const glow = { filter: `drop-shadow(0 0 2px ${color}99)` };
-    const stroke = { stroke: color, strokeWidth: 1.3, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, fill: 'none' };
-    let inner: React.ReactNode;
-    if (suit === 0) { // spade — triangle + stem
-        inner = (
-            <>
-                <path d="M6 1 L11 9.5 L1 9.5 Z" {...stroke} style={glow} />
-                <line x1={6} y1={9.5} x2={6} y2={11.5} stroke={color} strokeWidth={1.3} strokeLinecap="round" style={glow} />
-            </>
-        );
-    } else if (suit === 1) { // heart — two dots + converging V
-        inner = (
-            <>
-                <circle cx={3.4} cy={3.6} r={1.6} fill={color} style={glow} />
-                <circle cx={8.6} cy={3.6} r={1.6} fill={color} style={glow} />
-                <path d="M1.8 5.2 L6 11.5 L10.2 5.2" {...stroke} style={glow} />
-            </>
-        );
-    } else if (suit === 2) { // club — trefoil dots + stem
-        inner = (
-            <>
-                <circle cx={6} cy={3.2} r={1.9} fill={color} style={glow} />
-                <circle cx={2.6} cy={7} r={1.9} fill={color} style={glow} />
-                <circle cx={9.4} cy={7} r={1.9} fill={color} style={glow} />
-                <line x1={6} y1={8} x2={6} y2={11.5} stroke={color} strokeWidth={1.3} strokeLinecap="round" style={glow} />
-            </>
-        );
-    } else { // diamond — rotated square outline
-        inner = <path d="M6 1 L11 6 L6 11 L1 6 Z" {...stroke} style={glow} />;
-    }
-    return (
-        <svg width={w} height={height} viewBox={`0 0 ${W} ${H}`} style={{ flex: 'none', overflow: 'visible' }}>
-            {ALL_SEGS.map((seg) => {
-                const [p1, p2] = LINES[seg].map((k) => P[k]) as [Pt, Pt];
-                const [a, b] = inset(p1, p2, 0.12);
-                return <line key={seg} x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke={dim} strokeWidth={2} strokeLinecap="round" />;
-            })}
-            <g transform="translate(1.8,11.8) scale(2.2)">{inner}</g>
-        </svg>
-    );
-}
-
-function Dot({ height, color }: { height: number; color: string }) {
-    const w = height * 0.32;
-    const r = height * 0.09;
-    return (
-        <svg width={w} height={height} viewBox={`0 0 ${W * 0.32} ${H}`} style={{ flex: 'none', overflow: 'visible' }}>
-            <circle cx={W * 0.16} cy={H - PAD} r={r * (H / height)} fill={color} style={{ filter: `drop-shadow(0 0 2px ${color}99)` }} />
-        </svg>
-    );
-}
 
 interface SegmentTextProps {
     text: string;
@@ -202,9 +259,18 @@ export function SegmentText({
 }: SegmentTextProps) {
     const chars = text.toUpperCase().split('');
     const nodes: React.ReactNode[] = [];
+    // Cells accumulate into a run; a plain-text fallback span closes it, because
+    // that text is HTML and cannot live inside the run's <svg>.
+    let run: Cell[] = [];
     let plainBuf = '';
+    const flushRun = (key: string) => {
+        if (run.length === 0) return;
+        nodes.push(<CellRun key={`r${key}`} cells={run} height={height} dim={dim} gap={gap} />);
+        run = [];
+    };
     const flushPlain = (key: string) => {
         if (!plainBuf) return;
+        flushRun(key);
         nodes.push(
             <span
                 key={key}
@@ -220,11 +286,11 @@ export function SegmentText({
         plainBuf = '';
     };
     chars.forEach((ch, i) => {
-        if (ch === ' ') { flushPlain(`p${i}`); nodes.push(<span key={`sp${i}`} style={{ display: 'inline-block', width: height * 0.32 }} />); return; }
-        if (ch === '.') { flushPlain(`p${i}`); nodes.push(<Dot key={i} height={height} color={color} />); return; }
+        if (ch === ' ') { flushPlain(`p${i}`); run.push({ k: 'gap' }); return; }
+        if (ch === '.') { flushPlain(`p${i}`); run.push({ k: 'dot', color }); return; }
         const suit = SUIT_CHARS.indexOf(ch);
-        if (suit >= 0) { flushPlain(`p${i}`); nodes.push(<SuitGlyph key={i} suit={suit} height={height} color={colorAt?.(i) ?? color} dim={dim} />); return; }
-        if (FONT[ch]) { flushPlain(`p${i}`); nodes.push(<Glyph key={i} ch={ch} height={height} color={colorAt?.(i) ?? color} dim={dim} />); return; }
+        if (suit >= 0) { flushPlain(`p${i}`); run.push({ k: 'suit', suit, color: colorAt?.(i) ?? color }); return; }
+        if (FONT[ch]) { flushPlain(`p${i}`); run.push({ k: 'glyph', ch, color: colorAt?.(i) ?? color }); return; }
         plainBuf += ch;
     });
     flushPlain('pEnd');
@@ -232,8 +298,9 @@ export function SegmentText({
     // or decimal points (e.g. "EF 5.60 ±0.08") renders those as their own
     // (narrower) nodes above, so they still count toward the fixed length.
     for (let i = chars.length; length != null && i < length; i += 1) {
-        nodes.push(<Glyph key={`blank${i}`} ch="" height={height} color={color} dim={dim} />);
+        run.push({ k: 'glyph', ch: '', color });
     }
+    flushRun('End');
     return (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap, ...style }}>
             {nodes}

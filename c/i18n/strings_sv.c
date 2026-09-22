@@ -235,7 +235,6 @@ const char *const FS_STRINGS_SV[FS_K_COUNT] = {
     [FS_K_OFFLINE                  ] = "Offline",
     [FS_K_ORACLE_ANALYZING         ] = "Analyserar… {n} världar · {rate}/s",
     [FS_K_ORACLE_APPROX            ] = "Ungefärlig ställning (några dolda kort är härledda).",
-    [FS_K_ORACLE_BASIS             ] = "Bygger på det som syns offentligt.",
     [FS_K_ORACLE_BELIEF_FLOOR      ] = "P{n} har inget kort utanför trumf under {v}",
     [FS_K_ORACLE_BELIEF_NONE       ] = "Inga säkra slutsatser än - varje osett kort är möjligt",
     [FS_K_ORACLE_BELIEF_PINNED     ] = "P{n} har säkert {cards}",

@@ -54,7 +54,12 @@ const StepMessage = ({ frame, names }: {
         case REPLAY_STEP.COVER:
             return (
                 <span>
-                    {who} <Text id="replay_cover" />: {cards(frame.cards)} → {frame.target && cards([frame.target])}
+                    {who} <Text id="replay_cover" />:{' '}
+                    {(frame.pairs ?? []).map((p, i) => (
+                        <React.Fragment key={i}>
+                            {i > 0 && '  '}{cards([p.card])} → {cards([p.target])}
+                        </React.Fragment>
+                    ))}
                 </span>
             );
         case REPLAY_STEP.PASS:

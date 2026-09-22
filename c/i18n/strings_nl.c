@@ -235,7 +235,6 @@ const char *const FS_STRINGS_NL[FS_K_COUNT] = {
     [FS_K_OFFLINE                  ] = "Offline",
     [FS_K_ORACLE_ANALYZING         ] = "Analyseren… {n} werelden · {rate}/s",
     [FS_K_ORACLE_APPROX            ] = "Benaderde stand (sommige verborgen kaarten zijn afgeleid).",
-    [FS_K_ORACLE_BASIS             ] = "Op basis van wat openbaar zichtbaar is.",
     [FS_K_ORACLE_BELIEF_FLOOR      ] = "P{n} heeft geen kaart buiten troef lager dan {v}",
     [FS_K_ORACLE_BELIEF_NONE       ] = "Nog niets hard af te leiden - elke ongeziene kaart is mogelijk",
     [FS_K_ORACLE_BELIEF_PINNED     ] = "P{n} heeft zeker {cards}",

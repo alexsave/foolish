@@ -1169,6 +1169,20 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
 // ---------- candidate selection -------------------------------------------
 
 #define OG_MAX_CANDS 26
+// Cover candidates are kept PER WIDTH: this many distinct widths, this many of
+// each, bounded overall by OG_MAX_CANDS. A defender has no attack candidates to
+// share the table with, so covers can have nearly all of it, and 4 x 6 takes
+// every cover on a board that has 24 or fewer - which is almost all of them.
+// Measured over a shared 2p replay and 3p/4p/8p bot games, legal covers per
+// defender decision run at a median of 3-6; the tail is long (p90 10-48, one
+// 4p board at 277), so this is a budget, not a promise.
+//
+// It was ten places shared across every width, which is how the panel came to
+// print "not considered" under a triple cover that had just been animated: four
+// triples existed, three were kept, and the one dropped - the dearest, two 9s
+// and an Ace - was the one played.
+#define OG_COV_SIZES    4
+#define OG_COV_PER_SIZE 10
 
 typedef struct {
     int idx[OG_MAX_CANDS];
@@ -1432,7 +1446,27 @@ static void og_pick_candidates(const Game *g, const LegalMoves *moves,
     int power = g->power_suit;
 
     int atk[12];  double atk_k[12];  int n_atk = 0;
-    int cov[10];  double cov_k[10];  int n_cov = 0;
+    // COVERS ARE RANKED WITHIN THEIR SIZE, NOT AGAINST IT. The key below is a
+    // PRODUCT of card scores, so every extra card multiplies it: with scores in
+    // the 6-14 range a single cover keys around 10, a double around 100 and a
+    // triple in the hundreds or thousands. Ranked into one list that keeps the
+    // smallest, a wide cover could never place - a defender facing three
+    // attacks was offered singles and doubles and never the move that takes all
+    // three, even when that is the move it went on to play. The Oracle showed
+    // it plainly: the recorded triple cover was not on the panel at all.
+    //
+    // Bucketing by size keeps the intent (spend the cheapest cards) without
+    // letting size decide the comparison, which a product cannot help doing.
+    // A sum or a mean would only move that arbitrariness around: covering
+    // three attacks and covering one are different commitments, not cheaper
+    // and dearer versions of one, so they are ranked apart and each size gets
+    // its own places.
+    // One ranked list PER WIDTH, flat: width b keeps OG_COV_PER_SIZE at
+    // cov[b * OG_COV_PER_SIZE ...]. og_ranked_insert works on any slice.
+    int cov[OG_COV_SIZES * OG_COV_PER_SIZE];
+    double cov_k[OG_COV_SIZES * OG_COV_PER_SIZE];
+    int n_cov[OG_COV_SIZES];
+    for (int i = 0; i < OG_COV_SIZES; i++) n_cov[i] = 0;
     int pas[3];   double pas_k[3];   int n_pas = 0;
     int good_idx = -1, pickup_idx = -1;
 
@@ -1450,7 +1484,11 @@ static void og_pick_candidates(const Game *g, const LegalMoves *moves,
             case MOVE_COVER: {
                 double prod = 1.0;
                 for (int j = 0; j < m->n_cards; j++) prod *= (double)og_card_score(m->cards[j], power);
-                og_ranked_insert(cov, cov_k, &n_cov, 10, i,
+                int b = m->n_cards - 1;             // width 1 -> list 0
+                if (b < 0) b = 0;                   // never index behind cov[]
+                if (b >= OG_COV_SIZES) b = OG_COV_SIZES - 1;
+                const int o = b * OG_COV_PER_SIZE;
+                og_ranked_insert(cov + o, cov_k + o, &n_cov[b], OG_COV_PER_SIZE, i,
                                  prod - (double)m->n_cards * 0.5);
                 break;
             }
@@ -1468,7 +1506,27 @@ static void og_pick_candidates(const Game *g, const LegalMoves *moves,
 
     out->n = 0;
     for (int i = 0; i < n_atk && out->n < OG_MAX_CANDS; i++) out->idx[out->n++] = atk[i];
-    for (int i = 0; i < n_cov && out->n < OG_MAX_CANDS; i++) out->idx[out->n++] = cov[i];
+    // ROUND-ROBIN, not width by width. Taking width 1 to its cap before looking
+    // at width 2 throttles the commonest board there is - one uncovered attack,
+    // where every cover is a single and the cap is the only thing that applies -
+    // while a board with three attacks still has to wait its turn. Interleaving
+    // gives each width its best first, and a board with only one width in play
+    // simply keeps drawing from it until the table is full.
+    // AND COVERS DO NOT GET THE WHOLE TABLE. pass / good / pickup are emitted
+    // after the covers and there are never more than a handful of them, but a
+    // defender facing a wide board ranks up to OG_COV_SIZES * OG_COV_PER_SIZE
+    // of them, which is more than OG_MAX_CANDS on its own. Unreserved, the
+    // covers filled it: a recorded PASS at a 4p board came back "not
+    // considered" behind 24 covers, and the same board could not have offered
+    // PICKUP at all - octogen cannot choose a move that is not a candidate, so
+    // that is a play defect and not only a panel one. The tail is tiny and
+    // always matters; it is reserved before the covers spend anything.
+    // n_pas is at most 3 and the two flags at most 1 each, so tail <= 5 against
+    // an OG_MAX_CANDS of 26 and the reserve can never go negative.
+    const int tail = n_pas + (good_idx >= 0) + (pickup_idx >= 0);
+    for (int r = 0; r < OG_COV_PER_SIZE; r++)
+        for (int b = 0; b < OG_COV_SIZES && out->n + tail < OG_MAX_CANDS; b++)
+            if (r < n_cov[b]) out->idx[out->n++] = cov[b * OG_COV_PER_SIZE + r];
     for (int i = 0; i < n_pas && out->n < OG_MAX_CANDS; i++) out->idx[out->n++] = pas[i];
     if (good_idx >= 0 && out->n < OG_MAX_CANDS)   out->idx[out->n++] = good_idx;
     if (pickup_idx >= 0 && out->n < OG_MAX_CANDS) out->idx[out->n++] = pickup_idx;

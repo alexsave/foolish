@@ -235,7 +235,6 @@ const char *const FS_STRINGS_AR[FS_K_COUNT] = {
     [FS_K_OFFLINE                  ] = "بدون اتصال",
     [FS_K_ORACLE_ANALYZING         ] = "جارٍ التحليل… {n} عالم · {rate} في الثانية",
     [FS_K_ORACLE_APPROX            ] = "وضع تقريبي (استُنتجت بعض الأوراق المخفية).",
-    [FS_K_ORACLE_BASIS             ] = "بناءً على السجل الظاهر للجميع.",
     [FS_K_ORACLE_BELIEF_FLOOR      ] = "اللاعب {n} لا يملك ورقة غير حكم أقل من {v}",
     [FS_K_ORACLE_BELIEF_NONE       ] = "لا استنتاجات مؤكدة بعد - كل ورقة لم تُرَ ممكنة",
     [FS_K_ORACLE_BELIEF_PINNED     ] = "من المؤكد أن اللاعب {n} يملك {cards}",

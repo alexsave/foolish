@@ -269,6 +269,24 @@ export const ORACLE_HARD_CAP_MS = 180_000;
  *  shrink (more worlds only sharpen the estimate — never worse). §9.3. */
 export const ORACLE_MIN_FOCUS_MS = 3_500;
 
+/** Minimum wall time between two published snapshots while a run is in flight.
+ *  The fleet posts a batch every few milliseconds and the overlay is a ~6,000
+ *  node LED array, so asking for a publish per animation frame asks React and
+ *  the compositor to redraw the whole panel 60 times a second to move an error
+ *  bar by less than a pixel. Measured over 6 s of deliberation (production
+ *  build, replay screen), this interval roughly halves what that costs: the
+ *  renderer main thread drops from 1,377 ms busy to 610 ms, the GPU process
+ *  from 3,651 ms to 1,839 ms, and Paint from 152 ms to 76 ms.
+ *
+ *  It does not make the sharpening any coarser - it makes it FINER. Asking for
+ *  a frame the machine cannot afford means the panel actually repainted 3.8
+ *  times a second, with a median 299 ms between updates; asking at this
+ *  interval it repaints 8.4 times a second, with a median gap of 84 ms.
+ *
+ *  It is a floor, not a schedule: publishes still land on an animation frame,
+ *  and a terminal snapshot (converged/exact/forced/error) ignores it entirely. */
+export const ORACLE_PUBLISH_MS = 80;
+
 /** Focus animation: SE at which a row is "fully in focus" (§9.3). */
 export const ORACLE_SE0 = 0.25;
 

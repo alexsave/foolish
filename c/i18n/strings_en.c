@@ -235,7 +235,6 @@ const char *const FS_STRINGS_EN[FS_K_COUNT] = {
     [FS_K_OFFLINE                  ] = "Offline",
     [FS_K_ORACLE_ANALYZING         ] = "Analyzing… {n} worlds · {rate}/s",
     [FS_K_ORACLE_APPROX            ] = "Approximate position (some hidden cards inferred).",
-    [FS_K_ORACLE_BASIS             ] = "Based on the publicly visible record.",
     [FS_K_ORACLE_BELIEF_FLOOR      ] = "P{n} holds no off-trump card below {v}",
     [FS_K_ORACLE_BELIEF_NONE       ] = "No hard deductions yet - every unseen card is possible",
     [FS_K_ORACLE_BELIEF_PINNED     ] = "P{n} is known to hold {cards}",

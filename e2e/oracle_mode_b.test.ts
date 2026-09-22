@@ -42,22 +42,31 @@ import { seededCode } from './helpers/seeded_codes.ts';
 
 const ORACLE_BYTES = gunzip(new Uint8Array(readFileSync('public/oracle.wasm.gz')));
 
-/* The two fixtures, pinned by step index rather than by "40% of the way
- * through". Both are asserted to have the SHAPE the test needs, so a kernel
- * change that moves them fails loudly instead of quietly leaving a
- * two-candidate decision that every assertion below would pass on. The indices
- * come from a sweep of the played game (candidates + solver-applied per step).
+/* The two fixtures, pinned by step rather than by "40% of the way through".
+ * Both are asserted to have the SHAPE the test needs, so a kernel change that
+ * moves them fails loudly instead of quietly leaving a two-candidate decision
+ * that every assertion below would pass on. The steps come from a sweep of the
+ * played game (candidates + solver-applied per step).
  *
- *   MC     np=2 seed=7 step 39 - deck ALIVE,  ~14 candidates, endgame solver OFF
- *   EXACT  np=2 seed=7 step 49 - deck DEAD,   ~14 candidates, endgame solver ON
+ *   MC     np=2 seed=7 step 39 - deck ALIVE, 23 candidates, endgame solver OFF
+ *   EXACT  np=2 seed=7 step 49 - deck DEAD,  14 candidates, endgame solver ON
+ *
+ * THE KERNEL'S STEP, NOT THE FRAME ARRAY'S INDEX. They used to be the same
+ * number and this file pinned the index. They stopped being the same when
+ * buildReplayFrames began merging a multi-cover run into one frame: the 2p
+ * seed-7 game went from 61 frames to 52, every decision after the first merged
+ * cover slid down, and index 49 landed on a three-way attack instead of the
+ * fourteen-candidate endgame this suite exists to exercise. That read as an
+ * octogen regression for a while. The step is the wire's own and no host-side
+ * grouping can move it, so pin that and look the frame up.
  */
-const FIX_MC = { np: 2, seed: 7, idx: 39 };
-const FIX_EXACT = { np: 2, seed: 7, idx: 49 };
+const FIX_MC = { np: 2, seed: 7, step: 39 };
+const FIX_EXACT = { np: 2, seed: 7, step: 49 };
 
 type Played = { code: Uint8Array; frames: ReturnType<typeof buildReplayFrames> };
 const gameCache = new Map<string, Played>();
 
-async function jobAt(np: number, seed: number, idx: number): Promise<OracleJob> {
+async function jobAt(np: number, seed: number, step: number): Promise<OracleJob> {
     const key = `${np}:${seed}`;
     let hit = gameCache.get(key);
     if (!hit) {
@@ -65,12 +74,14 @@ async function jobAt(np: number, seed: number, idx: number): Promise<OracleJob> 
         hit = { code, frames: buildReplayFrames(code, 'g', null) };
         gameCache.set(key, hit);
     }
-    const job = buildOracleJob(hit.frames, hit.code, idx, true, `mt-${np}-${seed}-${idx}`);
-    assert.ok(job, `step ${idx} of the ${np}p seed-${seed} game is a decision`);
+    const idx = hit.frames.findIndex((f) => f.step === step);
+    assert.ok(idx >= 0, `the ${np}p seed-${seed} game still has wire step ${step}`);
+    const job = buildOracleJob(hit.frames, hit.code, idx, true, `mt-${np}-${seed}-${step}`);
+    assert.ok(job, `step ${step} of the ${np}p seed-${seed} game is a decision`);
     return job!;
 }
-const mcJob = () => jobAt(FIX_MC.np, FIX_MC.seed, FIX_MC.idx);
-const exactJob = () => jobAt(FIX_EXACT.np, FIX_EXACT.seed, FIX_EXACT.idx);
+const mcJob = () => jobAt(FIX_MC.np, FIX_MC.seed, FIX_MC.step);
+const exactJob = () => jobAt(FIX_EXACT.np, FIX_EXACT.seed, FIX_EXACT.step);
 
 /** Mode A over one instance: batch until every candidate has `minN` worlds, or
  *  the batch cap runs out. Returns the live accumulator.

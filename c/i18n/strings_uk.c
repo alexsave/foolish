@@ -235,7 +235,6 @@ const char *const FS_STRINGS_UK[FS_K_COUNT] = {
     [FS_K_OFFLINE                  ] = "Без мережі",
     [FS_K_ORACLE_ANALYZING         ] = "Аналіз… {n} світів · {rate}/с",
     [FS_K_ORACLE_APPROX            ] = "Приблизна оцінка (частину прихованих карт виведено).",
-    [FS_K_ORACLE_BASIS             ] = "На основі відкритої історії ходів.",
     [FS_K_ORACLE_BELIEF_FLOOR      ] = "У P{n} немає некозирної карти, молодшої за {v}",
     [FS_K_ORACLE_BELIEF_NONE       ] = "Точних висновків ще немає - можлива будь-яка небачена карта",
     [FS_K_ORACLE_BELIEF_PINNED     ] = "Відомо, що P{n} тримає {cards}",

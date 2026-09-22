@@ -11,20 +11,27 @@ import { gunzip } from '@sdk/ts/wasm/gunzip.ts';
 import { OracleAccumulator } from './accumulator';
 import {
     OracleJob, OracleSnapshot, OracleStatus, WorkerToMain,
-    oracleWorkerCount, ORACLE_HARD_CAP_MS, ORACLE_MIN_FOCUS_MS,
+    oracleWorkerCount, ORACLE_HARD_CAP_MS, ORACLE_MIN_FOCUS_MS, ORACLE_PUBLISH_MS,
 } from './types';
 
 const ORACLE_WASM_URL = '/oracle.wasm.gz';
 type Subscriber = (s: OracleSnapshot) => void;
 
-// Coalesce publishes to one per animation frame: 8 workers post batches far
-// faster than React should render, so a rAF loop collapses every batch that
-// landed since the last frame into a single re-render — smooth "come into
-// focus" without melting React (never a setState per worker message).
+// Coalesce publishes to one per animation frame, and no more than one per
+// ORACLE_PUBLISH_MS: 8 workers post batches far faster than React should
+// render, so a rAF loop collapses every batch that landed since the last frame
+// into a single re-render (never a setState per worker message) - and the
+// interval on top of it stops the panel repainting at display rate to move an
+// error bar by a sub-pixel amount. The rAF stays underneath the interval so a
+// publish still lands on a frame boundary rather than mid-composite.
 const raf: (cb: () => void) => number =
     typeof requestAnimationFrame !== 'undefined'
         ? (cb) => requestAnimationFrame(() => cb())
         : (cb) => setTimeout(cb, 16) as unknown as number;
+const now: () => number =
+    typeof performance !== 'undefined' && typeof performance.now === 'function'
+        ? () => performance.now()
+        : () => Date.now();
 const cancelRaf: (id: number) => void =
     typeof cancelAnimationFrame !== 'undefined'
         ? (id) => cancelAnimationFrame(id)
@@ -44,6 +51,7 @@ export class OracleController {
     private startMs = 0;
     private rafId: number | null = null;
     private dirty = false;
+    private lastFlushMs = 0;             // monotonic; paces the coalesced stream
 
     private subs = new Set<Subscriber>();
 
@@ -228,20 +236,36 @@ export class OracleController {
 
     private flush(): void {
         this.dirty = false;
+        this.lastFlushMs = now();
         const snap = this.snapshot();
         this.subs.forEach((cb) => cb(snap));
+    }
+
+    /** Ask for the next frame, and re-ask on any frame that arrives too soon
+     *  after the last publish. Re-arming rather than sleeping on a timer keeps
+     *  every publish on a frame boundary however long the interval is. */
+    private armFrame(): void {
+        this.rafId = raf(() => {
+            this.rafId = null;
+            if (!this.dirty) return;
+            if (now() - this.lastFlushMs < ORACLE_PUBLISH_MS) { this.armFrame(); return; }
+            this.flush();
+        });
     }
 
     private publish(force: boolean): void {
         if (!this.job) return;
         if (force) {
+            // A terminal snapshot, a new run, or an error: show it now. The
+            // interval paces the stream, it must never delay its end.
             if (this.rafId != null) { cancelRaf(this.rafId); this.rafId = null; }
             this.flush();
             return;
         }
-        // Coalesce: mark dirty and render on the next animation frame.
+        // Coalesce: mark dirty and render on the next animation frame that is
+        // at least ORACLE_PUBLISH_MS after the last one.
         this.dirty = true;
         if (this.rafId != null) return;
-        this.rafId = raf(() => { this.rafId = null; if (this.dirty) this.flush(); });
+        this.armFrame();
     }
 }

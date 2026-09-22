@@ -235,7 +235,6 @@ const char *const FS_STRINGS_RU[FS_K_COUNT] = {
     [FS_K_OFFLINE                  ] = "Офлайн",
     [FS_K_ORACLE_ANALYZING         ] = "Анализ… {n} миров · {rate}/с",
     [FS_K_ORACLE_APPROX            ] = "Приблизительная позиция (часть скрытых карт выведена).",
-    [FS_K_ORACLE_BASIS             ] = "На основе публично видимой записи.",
     [FS_K_ORACLE_BELIEF_FLOOR      ] = "У P{n} нет некозырных карт ниже {v}",
     [FS_K_ORACLE_BELIEF_NONE       ] = "Пока нет твёрдых выводов - возможна любая невидимая карта",
     [FS_K_ORACLE_BELIEF_PINNED     ] = "Известно, что у P{n} на руках {cards}",

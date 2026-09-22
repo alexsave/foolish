@@ -129,7 +129,35 @@ test('the status line asks the kernel what happened, and gets the real game back
             const kinds = (k: number) => frames.filter(f => f.kind === k).length;
             assert.equal(kinds(REPLAY_STEP.PASS), count('pass'), `${np}p: passes are passes`);
             assert.equal(kinds(REPLAY_STEP.ATTACK), count('attack'), `${np}p: attacks are attacks`);
-            assert.equal(kinds(REPLAY_STEP.COVER), count('cover'), `${np}p: covers are covers`);
+            // A COVER FRAME IS A MOVE, NOT A PAIR. Live play pushes one cover
+            // event per pair, and the replay wire codes one step per pair, but
+            // buildReplayFrames merges a defender's consecutive covers back
+            // into the single move they were. So the pairs must still all be
+            // there - none invented, none dropped - while the frames that carry
+            // them are fewer.
+            const coverFrames = frames.filter((f) => f.kind === REPLAY_STEP.COVER);
+            const pairs = coverFrames.reduce((n, f) => n + (f.pairs?.length ?? 0), 0);
+            assert.equal(pairs, count('cover'), `${np}p: every cover pair survives merging`);
+            assert.equal(coverFrames.reduce((n, f) => n + f.moves, 0), count('cover'),
+                `${np}p: a merged frame counts the moves it merged`);
+            assert.ok(coverFrames.length <= count('cover'), `${np}p: merging never adds frames`);
+            // Each frame's own cards and events agree with its pair count, so a
+            // merge cannot quietly lose the second card of a double cover.
+            for (const f of coverFrames) {
+                assert.equal(f.cards.length, f.pairs?.length ?? 0, `${np}p: a cover frame's cards are its pairs`);
+                assert.equal(f.seq.events.filter((e: { type: string }) => e.type === 'cover').length,
+                    f.pairs?.length ?? 0, `${np}p: a cover frame animates every pair`);
+                // ONE target on a frame that covered several attacks has to be
+                // the FIRST pair's, because `target` is what pairs with
+                // cards[0]. The merge used to spread the run's LAST frame, so
+                // the two disagreed, and every reader that pairs cards[0] with
+                // target - the tutorial's trump-cover lesson did - compared one
+                // pair's card against another pair's attack.
+                assert.deepEqual(f.target, f.pairs?.[0]?.target ?? null,
+                    `${np}p: a cover frame's target is its first pair's`);
+                assert.deepEqual(f.cards[0], f.pairs?.[0]?.card ?? null,
+                    `${np}p: a cover frame's first card is its first pair's`);
+            }
             assert.equal(kinds(REPLAY_STEP.PICKUP), count('pickup'), `${np}p: pickups are pickups`);
 
             assert.equal(frames[0].kind, REPLAY_STEP.DEAL, 'step 0 is the deal');
