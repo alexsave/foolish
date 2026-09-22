@@ -1,8 +1,8 @@
 0 ec99abb05961a5d8fdfd2c82 mounted
 0 cab0f7b76a746b705b896fdf tap attack 6s
 25 f12cfd6aef600b82e913ed46 timer@25
-512 8c1dd685cc9b63afc0567108 timer@512
-800 870736ecea4d25b12e5ef13f push: my attack
+512 c1f383ce964da2bc2a3b004f timer@512
+800 79bda6907bad7783f2c1da4c push: my attack
 820 16fab2d06f2b2d882f698285 push: Anna's pickup
 845 13cd37492fc24ba7e50b841f timer@845
 1332 e5aef60f320518febeadec63 timer@1332
