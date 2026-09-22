@@ -73,6 +73,23 @@
 #                                         asks what is generated instead of
 #                                         keeping a second list.
 #   scripts/wasm_build.sh --print-groups   the group names
+#   scripts/wasm_build.sh --check         build TWICE, as two separate
+#                                         processes, and refuse a difference.
+#                                         This is what replaced the freshness
+#                                         gate, and it is strictly stronger: the
+#                                         old check could only ask "was a
+#                                         committed copy touched after the C
+#                                         was", which any edit to the .gz
+#                                         satisfied; this asks "is the module a
+#                                         function of this tree and nothing
+#                                         else", which is the property that
+#                                         makes building it in CI safe at all.
+#                                         Same check gen.sh --check makes of the
+#                                         generated modules, for the same reason:
+#                                         a build that wrote a timestamp, an
+#                                         address or an uninitialised pad would
+#                                         hand two lanes of one commit two
+#                                         different kernels.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -100,8 +117,10 @@ rows() {
 }
 
 want=""
+check=0
 case "${1:-}" in
   --print-groups) printf '%s\n' "${WASM_GROUPS[@]}"; exit 0 ;;
+  --check) check=1 ;;
   --print-paths)
     if [ -n "${2:-}" ]; then
       printf '%s\n' "${WASM_GROUPS[@]}" | grep -qx "$2" || { echo "wasm_build.sh: no such group '$2'" >&2; exit 2; }
@@ -143,7 +162,71 @@ VARS=()
 # same reason scripts/ci_llvm.sh names gcc explicitly.
 [ -n "${CC:-}" ] && VARS+=("CC=$CC")
 
-# ONE make invocation for all the targets, not one each: they share ~100
-# translation units' worth of headers and the layout-hash step, and make is what
-# knows that.
-exec make -s -C c "${VARS[@]}" "${TARGETS[@]}"
+if [ "$check" = 0 ]; then
+  # ONE make invocation for all the targets, not one each: they share ~100
+  # translation units' worth of headers and the layout-hash step, and make is
+  # what knows that.
+  exec make -s -C c "${VARS[@]}" "${TARGETS[@]}"
+fi
+
+# ---- --check: two builds of one tree must agree ----------------------------
+#
+# Two independent PROCESSES, not two passes in one, for the reason gen.sh gives:
+# whatever a run leaves behind in memory must not be what makes the second agree
+# with the first. c/build is wiped between them so the second is a real compile
+# and not make deciding there is nothing to do.
+#
+# BOTH BUILDS WRITE THE SAME PATHS, and that is deliberate. wasm-ld records a
+# `name` custom section whose module-name subsection is the OUTPUT FILE'S
+# BASENAME, so comparing a build written to `bots.wasm` against one written to a
+# mktemp name reports a difference that is only the filename - it cost this repo
+# a red check on every Linux CI run once already. Here the second build
+# overwrites the first's paths and the copies are taken away to a temp dir, so
+# the only thing left that can differ is what this check is for.
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+PATHS=()
+while IFS= read -r p; do [ -n "$p" ] && PATHS+=("$p"); done < <(rows "$want" | cut -d'|' -f2)
+# The RAW modules too, not just the .gz. The .gz is a function of the raw bytes
+# and the compressor, so a raw comparison is the sharper one: it isolates the
+# compiler from `gzip`, which is the distinction this whole arrangement rests on.
+RAW=()
+while IFS= read -r p; do RAW+=("c/build/$(basename "${p%.gz}")"); done < <(printf '%s\n' "${PATHS[@]}")
+
+build_once() { rm -rf c/build; make -s -C c "${VARS[@]}" "${TARGETS[@]}" >/dev/null; }
+
+echo "wasm --check: first build"
+build_once
+mkdir -p "$tmp/a"
+for f in "${PATHS[@]}" "${RAW[@]}"; do cp "$f" "$tmp/a/$(basename "$f")"; done
+
+echo "wasm --check: second build"
+build_once
+
+bad=0
+for f in "${PATHS[@]}" "${RAW[@]}"; do
+  if cmp -s "$f" "$tmp/a/$(basename "$f")"; then
+    printf '  same  %8d B  %s\n' "$(wc -c < "$f")" "$f"
+  else
+    printf '  DIFFER %s (%d B then %d B)\n' "$f" "$(wc -c < "$tmp/a/$(basename "$f")")" "$(wc -c < "$f")"
+    bad=1
+  fi
+done
+
+if [ "$bad" = 0 ]; then
+  echo "wasm: reproducible - two builds of this tree wrote the same modules"
+  exit 0
+fi
+cat >&2 <<'MSG'
+
+::error::the wasm build is NOT a function of this tree - two builds of one
+commit disagree
+
+This is the property that lets CI build the shipped modules instead of a human
+committing them, so it is a real failure and not a flake. Look for a __DATE__,
+an address, an uninitialised pad, or an ordering that depends on a hash table's
+memory layout. scripts/wasm_build.sh's header has the cross-platform
+measurements this check defends.
+MSG
+exit 1
