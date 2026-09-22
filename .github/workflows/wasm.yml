@@ -127,10 +127,13 @@ jobs:
     # Ubuntu's own clang 18 - and the layout hash is independent of the libclang
     # version by construction, which is the second line of defence, pinned by
     # test/hash.sh.
+    #
+    # The pin used to be installed by a bespoke step here, because this was the
+    # only job that wanted 22 while scripts/ci_llvm.sh installed 18. That script
+    # IS the pin now - the shipped wasm modules are built from it, so it had to
+    # be - and two copies of one install is a thing that drifts, so this job
+    # calls it like every other lane.
     runs-on: ubuntu-latest
-    env:
-      LLVM_PREFIX: /usr/lib/llvm-22
-      WASM_CC: /usr/lib/llvm-22/bin/clang
     steps:
       - uses: actions/checkout@v4
 
@@ -141,12 +144,8 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: LLVM 22 (apt.llvm.org)
-        run: |
-          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
-          sudo bash /tmp/llvm.sh 22
-          sudo apt-get install -y --no-install-recommends libclang-22-dev lld-22
-          "$WASM_CC" --version | head -1
+      - name: Toolchain (the pinned clang and binaryen)
+        run: . scripts/ci_llvm.sh
 
       - name: Build structgen
         # -Werror: gcc 13 here only warns on an undeclared function and assumes it

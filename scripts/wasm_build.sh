@@ -39,17 +39,18 @@
 # modules can be built by the lane that ships them and there is nothing left to
 # keep fresh.
 #
-# WHICH IS WHY THE TOOLCHAIN IS PINNED rather than inherited - scripts/ci_wasm.sh
-# installs it, and the version really does decide the module:
+# WHICH IS WHY THE TOOLCHAIN IS PINNED rather than inherited - scripts/ci_llvm.sh
+# installs it, scripts/ci_wasm.sh is that plus this script, and the version
+# really does decide the module:
 #
 #   clang 22.1.8 + binaryen 130   191,485 B raw   the pin
 #   clang 22.1.8 + binaryen 108   191,729 B raw   +244 B
 #   clang 18.1.3 + binaryen 108   194,997 B raw   +3,512 B
 #
-# clang 18 is what scripts/ci_llvm.sh installs for libclang, and on the shipped
-# module it costs 3.5 KB of kernel and ~1.7 KB of download. A lane that builds a
-# module someone downloads uses the pin; a lane that only needs libclang does
-# not care, and that script is left exactly as it was.
+# clang 18 is what scripts/ci_llvm.sh used to install, back when the only wasm it
+# ever built was the throwaway test module and its version was therefore free.
+# On the shipped module it costs 3.5 KB of kernel and ~1.7 KB of download, so
+# that script raised its pin to 22 and is now the repo's one wasm toolchain.
 #
 # WHY A CALLER MAY ASK FOR ONE GROUP. `wasm-bots` has real per-object make rules
 # and is ~0s when nothing changed; `wasm-oracle` and `wasm-oracle-mt` are phony
