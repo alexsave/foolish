@@ -27,6 +27,7 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import type { IncomingMessage, Server } from 'node:http';
+import type { Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
 
 /** RFC 6455 section 1.3. */
@@ -162,14 +163,17 @@ export function attachPhoenix(server: Server, path: string, handlers: PhxHandler
         ];
         if (offered.includes('phoenix')) lines.push('Sec-WebSocket-Protocol: phoenix');
         sock.write(lines.join('\r\n') + '\r\n\r\n');
-        sock.setNoDelay(true);
+        // A push is one small frame and the trace times it: Nagle would hold it
+        // back for the next write that never comes. `upgrade` hands a net.Socket,
+        // which the http types widen to Duplex.
+        (sock as Socket).setNoDelay?.(true);
 
         const client = new PhxSocket(sock, url);
         hub.sockets.add(client);
 
-        let buf = head && head.length > 0 ? Buffer.from(head) : Buffer.alloc(0);
+        let buf: Buffer<ArrayBufferLike> = head && head.length > 0 ? Buffer.from(head) : Buffer.alloc(0);
         // A message split across frames: opcode of the first, bytes so far.
-        let partial: { opcode: number; chunks: Buffer[] } | null = null;
+        let partial: { opcode: number; chunks: Buffer<ArrayBufferLike>[] } | null = null;
 
         const finish = () => {
             if (client.closed) return;
@@ -279,10 +283,10 @@ function frame(text: string, opcode = 0x1): Buffer {
     return Buffer.concat([header, body]);
 }
 
-interface Unframed { fin: boolean; opcode: number; payload: Buffer; rest: Buffer }
+interface Unframed { fin: boolean; opcode: number; payload: Buffer<ArrayBufferLike>; rest: Buffer<ArrayBufferLike> }
 
 /** One client frame off the front of `buf`, or null while it is short. */
-function unframe(buf: Buffer): Unframed | null {
+function unframe(buf: Buffer<ArrayBufferLike>): Unframed | null {
     if (buf.length < 2) return null;
     const fin = (buf[0] & 0x80) !== 0;
     const opcode = buf[0] & 0x0f;

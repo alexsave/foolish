@@ -13,7 +13,15 @@ name: wasm
 #      and the solver seat fix, so the live Infinite Oracle served one of the two
 #      seats the opposite endgame verdict. It shipped, and nothing noticed.
 #
-# Case 1 is `build`, which compiles every wasm target the Makefile declares.
+# Case 1 is `compile`, which builds every wasm target the Makefile declares.
+#
+# NOT `build`, which is what it was called until this comment was written, and
+# the rename is worth a line. web.yml's site gate is also a job called `build`,
+# and a job's name is what a pull request's check list and a branch-protection
+# rule see - so two unrelated jobs were sharing one check name, in two lanes that
+# can fail for entirely different reasons. "build failed" named neither of them.
+# The names are distinct now; anything that names one by hand (a required status
+# check in branch protection, say) has to be updated to match.
 #
 # CASE 2 IS GONE AT THE ROOT, and the job that used to guard it with it. The
 # modules are not committed any more (scripts/wasm_build.sh): the lanes that load
@@ -40,7 +48,7 @@ on:
     branches: [main]
 
 jobs:
-  build:
+  compile:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -140,6 +148,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          # `cache: npm` caches ~/.npm, the download cache, keyed on
+          # package-lock.json. It changes nothing about what `npm install`
+          # RESOLVES - the lockfile still decides that - so it cannot hand two
+          # lanes of one commit different dependencies, and on a miss the
+          # install is exactly today's. Nine jobs a push install this same
+          # tree from this same lockfile; only the fetching is shared.
+          cache: npm
 
       - name: Install dependencies
         run: npm install
@@ -200,11 +215,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          # `cache: npm` caches ~/.npm, the download cache, keyed on
+          # package-lock.json. It changes nothing about what `npm install`
+          # RESOLVES - the lockfile still decides that - so it cannot hand two
+          # lanes of one commit different dependencies, and on a miss the
+          # install is exactly today's. Nine jobs a push install this same
+          # tree from this same lockfile; only the fetching is shared.
+          cache: npm
 
       - name: Install dependencies
         run: npm install
 
-      # THE PIN, not the distro clang the `build` job uses. This job is about
+      # THE PIN, not the distro clang the `compile` job uses. This job is about
       # the bytes that ship, so it builds them the way they ship.
       - name: Toolchain (the pinned clang and binaryen)
         run: . scripts/ci_llvm.sh
