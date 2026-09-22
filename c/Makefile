@@ -1731,18 +1731,42 @@ WASM_ORACLE_MT_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
   -Wl,--export=wasm_mt_forced -Wl,--export=wasm_mt_candidates \
   -Wl,--export=wasm_mt_mismatch -Wl,--export=wasm_mt_canary \
   -Wl,--export=wasm_mt_solver -Wl,--export=wasm_mt_verdict -Wl,--export=wasm_mt_defuse
+# The same rules as wasm-oracle just above, and everything said there applies
+# here - read that block first. The differences are only these: the source list
+# carries wasm/wasm_oracle_mt.c as well, the flags are the THREADED ones
+# (WASM_ORACLE_MT_CFLAGS: real TLS, -matomics, no CD_WASM_OVERLAY), and those
+# flags make build/botoraclemt a third object directory that must never mix with
+# the other two. Mixing here would be the worst of the three to debug: an object
+# compiled with -D_Thread_local= stripped into the threaded module is a data
+# race, not a link error.
+WASM_ORACLE_MT_OBJ    := $(sort $(addprefix build/botoraclemt/,$(notdir $(WASM_ORACLE_MT_SRC:.c=.o))))
+WASM_ORACLE_MT_O3_OBJ := $(addprefix build/botoraclemt/,$(notdir $(WASM_BOT_O3_SRC:.c=.o)))
+
+build/botoraclemt/%.o: WASM_ORACLE_MT_FILE_OPT := -Oz
+$(WASM_ORACLE_MT_O3_OBJ): WASM_ORACLE_MT_FILE_OPT := -O3
+
+build/botoraclemt/%.o: src/%.c build/layout/oracle-mt.hash $(WASM_HDRS)
+	@mkdir -p build/botoraclemt
+	$(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $(WASM_ORACLE_MT_FILE_OPT) -c $< -o $@
+build/botoraclemt/%.o: wasm/%.c build/layout/oracle-mt.hash $(WASM_HDRS)
+	@mkdir -p build/botoraclemt
+	$(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $(WASM_ORACLE_MT_FILE_OPT) -c $< -o $@
+build/botoraclemt/%.o: $(SHARED)/%.c build/layout/oracle-mt.hash $(WASM_HDRS)
+	@mkdir -p build/botoraclemt
+	$(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $(WASM_ORACLE_MT_FILE_OPT) -c $< -o $@
+
+# wasm-opt runs with --enable-threads here and writes the module in place, which
+# is not $(call wasm_postopt,...) - keep the line as the loop had it.
+build/oracle-mt.wasm: $(WASM_ORACLE_MT_OBJ) Makefile
+	@mkdir -p build
+	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_ORACLE_MT_LDFLAGS) \
+	          $(WASM_ORACLE_MT_EXPORTS) $(WASM_ORACLE_MT_OBJ) -o $@
+	$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) --enable-threads $(WASM_BOTS_POSTOPT) $@ -o $@
+
 .PHONY: wasm-oracle-mt
 wasm-oracle-mt: wasm-cc-check build/layout/oracle-mt.hash
-	@mkdir -p build/botoraclemt
-	@for src in $(WASM_ORACLE_MT_SRC); do \
-	  base=$$(basename $$src .c); opt=-Oz; \
-	  case " $(WASM_BOT_O3_SRC) " in *" $$src "*) opt=-O3;; esac; \
-	  echo "  CC(oracle-mt) $$src [$$opt]"; \
-	  $(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $$opt -c $$src -o build/botoraclemt/$$base.o || exit 1; \
-	done
-	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_ORACLE_MT_LDFLAGS) \
-	          $(WASM_ORACLE_MT_EXPORTS) build/botoraclemt/*.o -o build/oracle-mt.wasm
-	$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) --enable-threads $(WASM_BOTS_POSTOPT) build/oracle-mt.wasm -o build/oracle-mt.wasm
+	$(call sg_settle,oracle-mt,build/botoraclemt,build/oracle-mt.wasm)
+	@$(MAKE) --no-print-directory build/oracle-mt.wasm
 	gzip -9 -n -c build/oracle-mt.wasm > ../public/oracle-mt.wasm.gz
 	@echo "built ../public/oracle-mt.wasm.gz ($$(wc -c < ../public/oracle-mt.wasm.gz) B gz, $$(wc -c < build/oracle-mt.wasm) B raw)"
 
