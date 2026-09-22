@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useServer } from '../contexts/ServerContext';
+import { useLocalization } from '../contexts/LocalizationContext';
 import { GAME_STATUS } from '../state/view';
 import supabase from '../backend/Connector';
 import { TexturedSurface, useTexture, getTextureStyle } from './TexturedSurface';
@@ -26,6 +27,7 @@ interface PlayerResult {
 export const WinScreen: React.FC = () => {
     const { view: game, continueGame } = useServer();
     const { woodUrl } = useTexture();
+    const { t } = useLocalization();
     const [playerResults, setPlayerResults] = useState<Map<string, PlayerResult>>(new Map());
     const [loading, setLoading] = useState(true);
 
@@ -88,7 +90,9 @@ export const WinScreen: React.FC = () => {
                     results.set(player.id, {
                         player_id: player.id,
                         seat: row.seat,
-                        name: botDisplayName(player.name),
+                        // Stored, not rendered: botDisplayName runs below, so
+                        // a language switch re-renders the city.
+                        name: player.name,
                         rank: row.place,
                         old_elo: eloData.previous_elo,
                         new_elo: eloData.elo_rating,
@@ -162,7 +166,7 @@ export const WinScreen: React.FC = () => {
 
                                 <div className="flex items-baseline gap-sm min-w-0">
                                     <span className={`result-card__name ${isCurrentUser ? 'result-card__name--current' : ''}`}>
-                                        {result.name}
+                                        {botDisplayName(result.name, t)}
                                     </span>
                                     {isCurrentUser && (
                                         <span className="result-card__you">(<Text id="you" />)</span>

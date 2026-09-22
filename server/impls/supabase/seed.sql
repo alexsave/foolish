@@ -1183,10 +1183,24 @@ END $$;
 
 INSERT INTO bots (nickname, strategy_key) VALUES
 -- Handwritten strategy bots (rule-based)
+--
+-- SEVEN OF EVERY FAMILY, which is what makes a full table of one bot possible:
+-- eight seats is a human plus seven opponents, so a rung with fewer than seven
+-- rows cannot fill one. Every seeded family below is seven for that reason, and
+-- e2e/validation/bot_city_names_validation.test.ts holds it.
+--
+-- The `0x00C0FFEE` row is gone (it was the second Handwritten). It predates the
+-- city ladder and was the one seeded nickname that is not a rung's name at all,
+-- so on a board of Miami / New York / Madrid it read as a bug rather than as a
+-- joke. The nickname parser still passes a leading `0x...` through verbatim,
+-- because old replay blobs carry it embedded at encode time.
 ('Handwritten 1', 'handwritten'),
-('0x00C0FFEE', 'handwritten'),
+('Handwritten 2', 'handwritten'),
 ('Handwritten 3', 'handwritten'),
 ('Handwritten 4', 'handwritten'),
+('Handwritten 5', 'handwritten'),
+('Handwritten 6', 'handwritten'),
+('Handwritten 7', 'handwritten'),
 
 -- Random strategy bots (chaotic)
 ('Random 1', 'random'),
@@ -1197,10 +1211,12 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 ('Random 6', 'random'),
 ('Random 7', 'random'),
 
--- Simple heuristic strategy bots (logical rule-based)
-('Simple Heuristic 1', 'simple_heuristic'),
-('Simple Heuristic 2', 'simple_heuristic'),
-('Simple Heuristic 3', 'simple_heuristic'),
+-- NOTE: simple_heuristic is NOT seeded, though the kernel dispatches it fine.
+-- The site renders a bot seat as its rung's city (docs/IOS_BOT_NAMING.md), the
+-- ladder is seven cities, and this rung has none - a seeded row would put
+-- "Simple Heuristic 2" on a board between Miami and Madrid. It stays an
+-- offline-only rung in c/src/bot_roster.c (`offline` 1, `seeded` 0); migration
+-- 20260922120000_city_ladder_bot_rows took its three rows off hosted.
 
 -- NOTE: champion, ultimate_champion, hacker, espresso, semtex and semtex_max
 -- are intentionally NOT seeded. Those strategies are not compiled into / not
@@ -1208,8 +1224,8 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 -- c/wasm/wasm_bots_api.c), so a bot carrying one of those keys silently
 -- falls back to `random` — a bot that plays nothing like its name and pollutes
 -- the Elo leaderboard. Only strategy keys the wasm actually dispatches are
--- seeded: random, simple_heuristic, handwritten (→handwritten_prod),
--- firecracker, blackpowder, cordite, octogen.
+-- seeded: random, handwritten (→handwritten_prod), firecracker, blackpowder,
+-- cordite, octogen.
 --
 -- The seeded set must equal the `seeded` column of the C bot roster
 -- (c/src/bot_roster.c) — that table is the canonical roster
@@ -1227,6 +1243,10 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 ('Firecracker 1', 'firecracker'),
 ('Firecracker 2', 'firecracker'),
 ('Firecracker 3', 'firecracker'),
+('Firecracker 4', 'firecracker'),
+('Firecracker 5', 'firecracker'),
+('Firecracker 6', 'firecracker'),
+('Firecracker 7', 'firecracker'),
 
 -- Blackpowder strategy bots — shipped ladder "Hard" rung. The first
 -- belief-constrained Monte Carlo (cordite's predecessor): card memory rebuilt
@@ -1235,12 +1255,20 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 ('Blackpowder 1', 'blackpowder'),
 ('Blackpowder 2', 'blackpowder'),
 ('Blackpowder 3', 'blackpowder'),
+('Blackpowder 4', 'blackpowder'),
+('Blackpowder 5', 'blackpowder'),
+('Blackpowder 6', 'blackpowder'),
+('Blackpowder 7', 'blackpowder'),
 
 -- Cordite strategy bots (belief-constrained Monte Carlo, no cheating —
 -- beats every other bot at every player count 2-8; see c/CORDITE.md)
 ('Cordite 1', 'cordite'),
 ('Cordite 2', 'cordite'),
 ('Cordite 3', 'cordite'),
+('Cordite 4', 'cordite'),
+('Cordite 5', 'cordite'),
+('Cordite 6', 'cordite'),
+('Cordite 7', 'cordite'),
 
 -- (semtex / semtex_max are not seeded — not dispatched by bots.wasm; see the
 -- note above. Octogen is semtex's shipped successor and IS dispatched.)
@@ -1249,7 +1277,11 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 -- semtex, strictly better in deep heads-up endgames — see c/OCTOGEN.md)
 ('Octogen 1', 'octogen'),
 ('Octogen 2', 'octogen'),
-('Octogen 3', 'octogen');
+('Octogen 3', 'octogen'),
+('Octogen 4', 'octogen'),
+('Octogen 5', 'octogen'),
+('Octogen 6', 'octogen'),
+('Octogen 7', 'octogen');
 
 -- Bots carry the reserved '%' prefix so bot-vs-human is recoverable from the
 -- name-only replay codec. Done as an UPDATE (rather than prefixing every literal

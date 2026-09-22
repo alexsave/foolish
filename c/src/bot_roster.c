@@ -30,6 +30,15 @@ void og_reload_flags(void);
 
 // Tier order is the strength ladder in docs/IOS_BOT_NAMING.md §1 (the offline
 // picker renders it as the road to Moscow, weakest first).
+
+// SEEDED IS NARROWER THAN OFFLINE, and simple_heuristic is why. A seeded bot is
+// dealt onto the website, where a seat shows the rung's city and nothing else,
+// so a rung with no city in the naming doc's ladder cannot be seeded: it would
+// put "Simple Heuristic 2" on a board between Miami and Madrid. The ladder is
+// seven cities (docs/IOS_BOT_NAMING.md, and the table in docs/ARCHITECTURE.html
+// §7), the rung kept its brain and its tier, and it lost only the site. Held by
+// e2e/validation/bot_city_names_validation.test.ts: every seeded key must have a
+// `bot.<key>` string in all twenty-five languages.
 //
 // Two notes on the strat ids, both of which were live bugs before this table:
 //
@@ -50,7 +59,7 @@ void og_reload_flags(void);
 static const BotRosterEntry ROSTER[] = {
     //  key                 strat                    knobs             logs seeded offline tier
     { "random",           STRAT_RANDOM,           "",                   0,   1,     1,     1  },
-    { "simple_heuristic", STRAT_SIMPLE_HEURISTIC, "",                   0,   1,     1,     2  },
+    { "simple_heuristic", STRAT_SIMPLE_HEURISTIC, "",                   0,   0,     1,     2  },
     { "handwritten",      STRAT_HANDWRITTEN_PROD, "",                   0,   1,     1,     3  },
     { "espresso",         STRAT_ESPRESSO_PROD,    "",                   1,   0,     1,     4  },
     { "robusta",          STRAT_ROBUSTA,          "",                   1,   0,     1,     5  },

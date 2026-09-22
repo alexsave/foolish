@@ -291,9 +291,9 @@ final class LocalizationTests: XCTestCase {
     /// and Vienna exactly as English does, and "Max" is a name in every language
     /// here.
     private static let mayMatchEnglish: Set<String> = [
-        "ios.bot.random", "ios.bot.handwritten", "ios.bot.robusta",
-        "ios.bot.firecracker", "ios.bot.blackpowder", "ios.bot.cordite",
-        "ios.bot.octogen", "ios.bot.max",
+        "bot.random", "bot.handwritten", "bot.robusta",
+        "bot.firecracker", "bot.blackpowder", "bot.cordite",
+        "bot.octogen", "bot.max",
         // Digits, in every language that writes them as digits.
         "ios.rank.ten",
         // Chinese card players say the letters (A/K/Q/J), exactly as printed on
@@ -446,9 +446,9 @@ final class LocalizationTests: XCTestCase {
         "ios.suit.diamonds", "ios.rank.ace", "ios.rank.king",
         "ios.rank.queen", "ios.rank.jack", "ios.rank.ten", "ios.tut_next",
         "ios.tut_done", "ios.tut_1", "ios.tut_2", "ios.tut_3", "ios.tut_4",
-        "ios.tut_5", "ios.bot.random", "ios.bot.handwritten",
-        "ios.bot.robusta", "ios.bot.firecracker", "ios.bot.blackpowder",
-        "ios.bot.cordite", "ios.bot.octogen", "ios.bot.max", "ios.bot.km",
-        "ios.bot.km0",
+        "ios.tut_5", "bot.random", "bot.handwritten",
+        "bot.robusta", "bot.firecracker", "bot.blackpowder",
+        "bot.cordite", "bot.octogen", "bot.max", "bot.km",
+        "bot.km0",
     ]
 }

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import supabase from '../backend/Connector';
 import { useAuth } from '../contexts/AuthContext';
+import { useLocalization } from '../contexts/LocalizationContext';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { BackButton } from './BackButton';
 import { LanguageSwitcher } from './LanguageSwitcher';
@@ -43,6 +44,7 @@ const BOARD_SIZE = 100;
 
 export const Leaderboard: React.FC = () => {
     const { user_id } = useAuth();
+    const { t } = useLocalization();
     const { woodUrl } = useTexture();
     const [entries, setEntries] = useState<Entry[] | null>(null);
     const [failed, setFailed] = useState(false);
@@ -82,7 +84,10 @@ export const Leaderboard: React.FC = () => {
                     })),
                     ...(bots.data ?? []).map((r) => ({
                         id: r.id as string,
-                        name: botDisplayName(r.nickname as string),
+                        // The stored nickname, prefix and all - rendered
+                        // through botDisplayName below, not here, so a
+                        // language switch re-renders the city.
+                        name: r.nickname as string,
                         is_ai: true,
                         elo: r.elo_rating as number,
                         games: r.games_played as number,
@@ -179,7 +184,7 @@ export const Leaderboard: React.FC = () => {
 
                                 <div className="flex flex-col min-w-0">
                                     <span className={`result-card__name ${isCurrentUser ? 'result-card__name--current' : ''}`}>
-                                        <SovietIcon name={entry.is_ai ? 'bot' : 'person'} size={14} /> {entry.name}
+                                        <SovietIcon name={entry.is_ai ? 'bot' : 'person'} size={14} /> {botDisplayName(entry.name, t)}
                                     </span>
                                     {isCurrentUser && (
                                         <span className="result-card__you">

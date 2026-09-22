@@ -1,25 +1,41 @@
-# iOS bot names — the Russia map (explosives → cities), with localization
+# Bot names - the road to Moscow (explosives → cities), with localization
 
-> **UPDATED (2026-07-16, owner): the shipped offline ladder is 7 WORLD cities,
-> not the 10 Russia cities below.** The picker shows exactly 7 difficulty tiers,
-> weakest → strongest: **Miami (random) · New York (handwritten) · Seoul
-> (robusta) · Madrid (firecracker) · Vienna (blackpowder) · St. Petersburg
-> (cordite) · Moscow (octogen)** — an international "road to Moscow" instead of
-> the all-Russia list. The 3 intermediate strategies (simple_heuristic,
-> espresso, gunpowder) are dropped from the picker. Implementation:
-> `BotNames.ladder` (order + strategy keys), `ios.bot.*` strings (7 cities in
-> en/ru/ko), km flavor line kept. The mechanism, `%`-nickname parser, age-rating
-> rationale, and localization rules below are UNCHANGED and still govern — only
-> the specific city list shrank and went international. The full Russia table
-> stays here as reference / for any future re-expansion.
+*The filename says iOS because that is where the map shipped first.
+It is the product's map now: both hosts render it, from one table.*
+
+> **UPDATED (2026-07-16, owner): the shipped ladder is 7 WORLD cities, not the 10 Russia cities below.**
+> Exactly 7 difficulty tiers, weakest → strongest: **Miami (random) · New York (handwritten) · Seoul (robusta) · Madrid (firecracker) · Vienna (blackpowder) · St. Petersburg (cordite) · Moscow (octogen)** - an international "road to Moscow" instead of the all-Russia list.
+> The 3 intermediate strategies (simple_heuristic, espresso, gunpowder) are dropped from the ladder.
+> Implementation: `BotNames.ladder` (order + strategy keys), `bot.*` strings (7 cities in all 25 languages), km flavor line kept.
+> The mechanism, `%`-nickname parser, age-rating rationale, and localization rules below are UNCHANGED and still govern - only the specific city list shrank and went international.
+> The full Russia table stays here as reference / for any future re-expansion.
+
+> **UPDATED (2026-09-22, owner): THE WEBSITE RENDERS THIS MAP TOO.**
+> The seven cities above are unchanged and now govern both hosts.
+> What changed with them:
+> **(a)** The keys lost their `ios.` prefix - they are `bot.<strategy key>` in `c/i18n`, because a key the website reads is not an iOS key.
+> `BotNames.swift` and `src/common/botName.ts` both look up the same ten.
+> **(b) The site's seeded roster is the ladder, and nothing else.**
+> `simple_heuristic` is off it: it was the one seeded family with no city, and a seat reading "Simple Heuristic 2" between Miami and Madrid is the thing this map exists to prevent.
+> It keeps its brain, its tier and its offline flag; `seeded` is 0 in `c/src/bot_roster.c`.
+> `%0x00C0FFEE` is off it too - it predates the ladder and is the one seeded nickname that is not a rung's name, so among cities it reads as a bug rather than as a joke.
+> The parser still passes a leading `0x…` through verbatim for old replay blobs.
+> **(c) Seven rows per family**, because eight seats is a human plus seven opponents and a full table of one rung was impossible below that.
+> The site seats six of the seven rungs, seven deep: Miami, New York, Madrid, Vienna, St. Petersburg, Moscow.
+> Seoul (`robusta`) stays offline-only.
+> Migration `20260922120000_city_ladder_bot_rows` takes hosted there.
+> The shipped `bots.wasm` still LINKS simple_heuristic on purpose, so a game already holding such a seat finishes playing.
+> The gate is `e2e/validation/bot_city_names_validation.test.ts`: every seeded key must have a `bot.<key>` string in all 25 languages, and no seeded nickname may render as an explosive in any of them.
 
 
-*Design doc + implementation spec (NOT yet implemented — this is the work
-order). Merged 2026-07-15 from two independent design passes; where they
+*Design doc + implementation spec. Shipped on both hosts: iOS in July 2026
+(`ios/FoolishApp/PhoneOnly/BotNames.swift`), the website in September
+(`src/common/botName.ts`). Merged 2026-07-15 from two independent design passes; where they
 clashed, the better idea won (clash log in §8). The iOS app renames the bot
 roster from explosives to Russian cities and Russian-diaspora hubs so the
-App Store age-rating questionnaire stays boring. **The website keeps the
-explosive names.** Strategy KEYS never change anywhere — this is a
+App Store age-rating questionnaire stays boring. **The website renders the same
+map since 2026-09-22 (see the second note above).** Strategy KEYS never change
+anywhere - this is a
 render-time display map, implemented entirely client-side; nothing here may
 leak into stored names, replay blobs, or the wire.*
 
@@ -41,6 +57,11 @@ The table covers the full **offline strategy roster** (10 rungs — the C
 table in `c/ios/ios_api.c:37-48` exposes `random … octogen`, which is
 wider than the website's *seeded* roster; see §2).
 
+**Read it as the original all-Russia scheme, not as what ships.**
+The shipped ladder is the seven cities in the notes at the top of this file.
+Three rows below are not in it at all - `simple_heuristic`, `espresso` and `gunpowder` - and their cities are unused: the ladder has seven rungs, and the website seeds only rungs that have one.
+The Russia table's distances do not compose with the international ones either - Khabarovsk (6,140 km) would sit inside Seoul (6,600) and Samara (860) inside Vienna (1,660) - so a future re-expansion picks distances again rather than lifting these.
+
 | # | Strategy key | en | ru | ko | ~km | Why this city |
 |---|---|---|---|---|---|---|
 | 1 | `random` | Miami | Майами | 마이애미 | 9,100 | Sunny Isles Beach = "Little Moscow", the farthest diaspora outpost; beach chaos for the chaos bot |
@@ -56,7 +77,7 @@ wider than the website's *seeded* roster; see §2).
 
 Max tiers compose: `Cordite Max` / `Octogen Max` render as
 `St. Petersburg Max` / `Москва Макс` / `모스크바 맥스` (localized "Max"
-suffix, key `ios.bot.max`). **No live bot carries a Max key any more** — the
+suffix, key `bot.max`). **No live bot carries a Max key any more** - the
 tiers were retired in July 2026 (migration `20260715120000_drop_max_bot_tiers`;
 `octogen_max` was a plain alias of `octogen`, and `cordite_max`'s flat world
 budget was *weaker* than plain cordite at 6-8 players — see
@@ -65,8 +86,8 @@ budget was *weaker* than plain cordite at 6-8 players — see
 reason the base table keeps Espresso/Robusta/Gunpowder. Instance numbers carry
 over verbatim:
 `%Octogen 2` → **⚙ Moscow 2** (ko: **⚙ 모스크바 2**). The easter egg
-`%0x00C0FFEE` renders unchanged everywhere — hex is culture-neutral and
-beloved.
+`%0x00C0FFEE` renders unchanged everywhere - hex is culture-neutral, and while
+the row itself left the site on 2026-09-22, replay blobs still carry the name.
 
 Notes on the picks (verified research, §6–§7):
 
@@ -98,7 +119,7 @@ are in play — the mapping must serve both:
 | Source | Shape | Roster |
 |---|---|---|
 | Offline picker / offline seats | strategy key from `EngineC.roster()` (`fio_strategy_name`) | all 10 rungs above |
-| Online nicknames (DB rows) | raw string `"% <Base> [Max] <n>"` in `players[].name` — there is NO strategy enum on the wire (`sdk/ts/wire/view.ts:29-30`; `strategy_key` is server-only) | the *seeded* subset = the C roster's `seeded` column (`c/src/bot_roster.c`): Random ×7, Simple Heuristic ×3, Handwritten ×4 (incl. `0x00C0FFEE`), Firecracker ×3, Blackpowder ×3, Cordite ×3, Octogen ×3 (`server/impls/supabase/seed.sql`). The `[Max]` slot no longer occurs on live rows — only in old replay blobs. |
+| Online nicknames (DB rows) | raw string `"% <Base> [Max] <n>"` in `players[].name` - there is NO strategy enum on the wire (`sdk/ts/wire/view.ts:29-30`; `strategy_key` is server-only) | the *seeded* subset = the C roster's `seeded` column (`c/src/bot_roster.c`): Random, Handwritten, Firecracker, Blackpowder, Cordite and Octogen, **×7 each** (`server/impls/supabase/seed.sql`) - seven so that one human plus seven of one rung fills an eight-seat table. Simple Heuristic ×3 and `0x00C0FFEE` were here until 2026-09-22. The `[Max]` slot no longer occurs on live rows - only in old replay blobs. |
 | Replay blobs / history | names embedded at encode time | anything ever seeded — **including dropped families** (`Espresso` rows existed before migration `20260711130000_drop_non_wasm_bots`), so the nickname parser keeps Espresso/Robusta/Gunpowder in its base table for historical replays |
 
 **Rule: strategy-derived bot names are treated as KEYS and localized at
@@ -118,7 +139,7 @@ public enum BotNames {
     /// Roster strategy key (EngineC.roster() name, e.g. "octogen") →
     /// localized display name. Unknown keys degrade to .capitalized.
     public static func display(strategy key: String) -> String {
-        let lookup = "ios.bot.\(key)"
+        let lookup = "bot.\(key)"
         let s = FStrings.t(lookup)
         return s == lookup ? key.capitalized : s
     }
@@ -139,11 +160,11 @@ public enum BotNames {
 }
 ```
 
-**Strings**: add the `ios.bot.*` keys to FStrings/xcstrings (en/ru/ko in the
+**Strings**: add the `bot.*` keys to FStrings/xcstrings (en/ru/ko in the
 same commit, per the §16.E4 identical-key-sets rule): the ten city names
-from §1, plus `ios.bot.max` ("Max"/"Макс"/"맥스"),
-`ios.bot.km` ("{km} km from Moscow"/"{km} км от Москвы"/"모스크바에서 {km} km"),
-`ios.bot.km0` ("The Kremlin itself"/"Сам Кремль"/"크렘린 그 자체").
+from §1, plus `bot.max` ("Max"/"Макс"/"맥스"),
+`bot.km` ("{km} km from Moscow"/"{km} км от Москвы"/"모스크바에서 {km} km"),
+`bot.km0` ("The Kremlin itself"/"Сам Кремль"/"크렘린 그 자체").
 
 **Wiring** (all display-side, no engine changes):
 
@@ -171,7 +192,7 @@ rows, iMessage lobby labels, native leaderboard. (iMessage v1 ships no bots.)
 ## 4. The alternative considered: Russian first names
 
 Owner-suggested alternative (Vladimir top dog), fully designed so it can be
-swapped in by editing one table (the `ios.bot.*` values):
+swapped in by editing one table (the `bot.*` values):
 
 | Strategy | Name (en / ru / ko) | Logic |
 |---|---|---|
@@ -277,11 +298,20 @@ Miami are verbatim everywhere.
 
 ## 9. What does NOT change
 
-- Website: explosive names stay (`server/impls/supabase/seed.sql` nicknames, leaderboard,
-  web replays). The explosive ladder is the research lab's identity.
-  (Separate web tidy, tracked in `docs/C_CORE_CONSOLIDATION.md`: the live
-  board currently shows the raw `%` prefix — `PlayerRing.tsx:184`.)
-- Strategy keys in C, TS, DB, wire formats, replay blobs: untouched.
+- **What is STORED.** Strategy keys in C, TS, DB, wire formats and replay
+  blobs: untouched. `bots.nickname` is still `%Cordite 1`. The rename is a
+  render, so a replay code is byte-identical in every locale, a DB row never
+  carries a localized string, and switching the site's language re-renders every
+  seat. Never reverse-map (§2).
 - The `%` bot-name prefix and numbering: untouched (load-bearing for the
   name-only replay codec's bot-vs-human recovery; enforced by the
-  `enforce_username_not_bot` trigger).
+  `enforce_username_not_bot` trigger). The site strips it for display and marks
+  the seat with the bot icon instead.
+- **The research lab's identity.** `c/src/*_strategy.c`, `c/CORDITE.md`,
+  `c/OCTOGEN.md`, the bot names in every research doc and benchmark: the
+  explosive ladder is what the kernel's own files are called, and nothing here
+  touches them. The cities are what a player is shown.
+
+*(The web tidy `docs/C_CORE_CONSOLIDATION.md` §4 tracked - the live board
+showing a raw `%` prefix - is done: every web surface goes through
+`botDisplayName`, which strips the prefix and returns the city.)*
