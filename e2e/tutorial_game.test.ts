@@ -27,6 +27,7 @@ import assert from 'node:assert/strict';
 import { bigintToBytes } from '../server/api/common/replay/codec.ts';
 import { buildReplayFrames, REPLAY_STEP, ReplayFrame } from '../src/replay/frames.ts';
 import { TUTORIAL_MOVES_CODE, TUTORIAL_NAMES } from '../src/components/tutorialGame.ts';
+import { buildBeats } from '../src/components/tutorialBeats.ts';
 import { PLAYER_STATUS } from '../src/state/view.ts';
 
 // The ONE replay format: inline reveals, hidden-state-lossless, partial-game
@@ -185,6 +186,83 @@ test('walking the tutorial the way a learner does reaches the end', async () => 
     assert.equal(i, frames.length - 1, 'the walkthrough reaches the last step');
     assert.ok(prompts >= 5, `the learner is asked to act ${prompts} times`);
 });
+
+test('the tutorial narrates the trump cover, and every concept exactly once', async () => {
+    // THE GAME CONTAINING A TRUMP COVER IS NOT THE SAME CLAIM AS THE TUTORIAL
+    // SAYING SO. The test above looks for one with `cards[0]` against `target`,
+    // which is the very read buildBeats warns against: a step is one ACTION and
+    // a multi-cover takes several attacks in it, so cards[0] and target are not
+    // always a pair. Read that way the two can even come from different pairs.
+    // So a learner could be shown a trump cover with no beat explaining it, or
+    // the beat could fire on a step that has no such pair, and nothing here
+    // would have noticed. This asks the builder itself.
+    const { summary, frames } = await load();
+    const beats = buildBeats(frames, summary, [...TUTORIAL_NAMES]);
+    const ps = summary.powerSuit;
+
+    // Head or rider: a collapsed beat teaches its extras in the same sentence,
+    // so what matters is that the learner is TOLD on that step, not which slot
+    // the key sits in.
+    const teaches = (b: typeof beats[number], k: string) => b.key === k || (b.extras ?? []).includes(k as never);
+    const trump = beats.find((b) => teaches(b, 'tut_trump_cover'));
+    assert.ok(trump, `the tutorial teaches the trump cover (beats: ${beats.map((b) => [b.key, ...(b.extras ?? [])].join('+')).join(', ')})`);
+    const f = frames[trump!.at];
+    assert.equal(f.kind, REPLAY_STEP.COVER, 'the trump-cover beat sits on a cover');
+    assert.ok((f.pairs ?? []).some((pr) => pr.card.suit === ps && pr.target.suit !== ps),
+        'the step the beat names really spends a trump on a plain attack');
+
+    // AT MOST ONE BEAT SHOWS AT A TIME - the component picks the latest at or
+    // before the cursor - so a concept taught twice is a beat the learner never
+    // sees, and two beats on one step is the same bug wearing a different hat.
+    const keys = beats.flatMap((b) => [b.key, ...(b.extras ?? [])]);
+    assert.equal(new Set(keys).size, keys.length, `each concept is taught once: ${keys.join(', ')}`);
+    const ats = beats.map((b) => b.at);
+    assert.deepEqual(ats, [...ats].sort((a, b) => a - b), 'beats are in step order');
+    assert.equal(new Set(ats).size, ats.length, 'no two beats land on one step');
+
+    // The moves the tutorial prompts for are the ones it explains.
+    for (const k of ['tut_cover', 'tut_pass', 'tut_pickup', 'tut_throw_in', 'tut_draw'] as const) {
+        assert.ok(keys.includes(k), `the tutorial teaches ${k}`);
+    }
+});
 }
+
+test('the trump-cover beat reads the PAIR, not the first card against the first target', () => {
+    // A SYNTHETIC STEP, because the frozen tutorial cannot ask this question.
+    // Its trump cover is a single pair, so `cards[0]` and `target` happen to BE
+    // that pair and the wrong read passes - confirmed by mutating the builder
+    // back to it and watching the fixture stay green. The read only matters on
+    // a step that covers two attacks at once, which is a shape the tutorial
+    // does not contain and a real game produces constantly.
+    //
+    // Here the trump is spent on the SECOND pair: cards[0] is a plain 9 on a
+    // plain 7, and the trump 6 covers the 5. Reading cards[0] against target
+    // sees no trump and teaches nothing; worse, it is comparing one pair's card
+    // with another pair's attack, which can also invent a trump cover that was
+    // never played.
+    const S = { C: 0, D: 1, H: 2, S: 3 };
+    const ps = S.S;
+    const card = (value: number, suit: number) => ({ value, suit });
+    const step = {
+        kind: REPLAY_STEP.COVER,
+        seat: LEARNER,
+        cards: [card(9, S.H), card(6, ps)],
+        target: card(7, S.H),
+        pairs: [
+            { card: card(9, S.H), target: card(7, S.H) },
+            { card: card(6, ps), target: card(5, S.D) },
+        ],
+        seq: { events: [] },
+        game: { battles: [], deckCount: 12, hasFlipped: false, seats: [] },
+    };
+    const deal = { ...step, kind: REPLAY_STEP.DEAL, cards: [], target: null, pairs: [] };
+    const frames = [deal, step] as unknown as ReplayFrame[];
+    const summary = { powerSuit: ps, firstAttacker: LEARNER, fool: 1 } as never;
+
+    const beats = buildBeats(frames, summary, ['You', 'Ada', 'Bo']);
+    const keys = beats.flatMap((b) => [b.key, ...(b.extras ?? [])]);
+    assert.ok(keys.includes('tut_trump_cover'),
+        `a trump on the second pair is still a trump cover (beats: ${keys.join(', ')})`);
+});
 
 if (!process.env.VALIDATION_ONLY) registerTutorialValidation();
