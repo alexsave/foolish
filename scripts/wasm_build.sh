@@ -60,15 +60,29 @@
 # On the shipped module it costs 3.5 KB of kernel and ~1.7 KB of download, so
 # that script raised its pin to 22 and is now the repo's one wasm toolchain.
 #
-# WHY A CALLER MAY ASK FOR ONE GROUP. `wasm-bots` has real per-object make rules
-# and is ~0s when nothing changed; `wasm-oracle` and `wasm-oracle-mt` are phony
-# targets whose recipes loop over all 34 sources in the shell, so they recompile
-# everything every run - measured on this Mac, warm: bots ~0s, oracle 6.3s,
-# oracle-mt ~7s. A lane that cannot load an Oracle module should not pay 13s for
-# one, because a 13s tax on `npm run typecheck` is how a build step gets deleted.
-# Giving those two recipes object rules would make the whole thing ~0s warm and
-# is worth doing; it is a separate change, and this comment is the measurement it
-# should start from.
+# WHY A CALLER MAY ASK FOR ONE GROUP, and what changed about the answer.
+#
+# EVERY group is ~0s warm now. It used to be only `wasm-bots`: `wasm-oracle` and
+# `wasm-oracle-mt` were phony targets whose recipes looped over all 34 sources in
+# the shell, so they recompiled everything on every run - measured on this Mac,
+# warm: bots ~0s, oracle 6.3s, oracle-mt ~7s. Both have per-object make rules
+# now, like bots. Measured on Linux (clang 18, so absolute sizes are not CI's),
+# warm `npm run gen && npm run wasm`: 15.9s before, 2.3s after, and 1.6s of what
+# is left is `npm run gen` plus npm's own startup - `npm run wasm` alone is 0.7s.
+#
+# NOTHING WAS TRADED FOR IT. The modules are byte-identical across the change,
+# all four raw and all four .gz (the rules link the same objects in the same
+# order the shell glob did - c/Makefile's wasm-oracle block says why that order
+# has to be $(sort)ed). And it is make rules, not a cache: every object is still
+# compared against its source and against every header, so there is no staleness
+# window and no cache to invalidate. The build step stays the contract; it just
+# stopped costing anything.
+#
+# So the GROUPS are a COLD-build argument now rather than a warm one, and still a
+# real one: from an empty c/build the Oracle pair is ~13s of compiling that a
+# lane which cannot load an Oracle module has no use for, and a first-run tax is
+# how a build step gets deleted. package.json's `//wasm` note keeps that split
+# (its text still calls these object rules a follow-up - they are done).
 #
 # Usage:
 #   scripts/wasm_build.sh                 build every group
