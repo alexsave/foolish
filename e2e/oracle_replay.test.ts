@@ -54,6 +54,10 @@ const SHAPES: [string, string[], number][] =
 // otherwise only meet in front of a human.
 const WIDE: [string, string[], number][] =
     [['5p-random', Array(5).fill('random'), 105], ['8p-random', Array(8).fill('random'), 101]];
+// A MIXED TABLE, because a pass needs a defender who holds several of one value
+// and an attacker willing to send it. Six seats of one bot rarely stage that;
+// these six do, at seed 750, and §12.2-1c is what they are here for.
+const PASS_BOARD = ['handwritten', 'octogen', 'random', 'handwritten', 'octogen', 'random'];
 /** REPLAY_STEP id -> its name, so a failure names the move type it broke on. */
 const STEP_NAME: Record<number, string> =
     Object.fromEntries(Object.entries(REPLAY_STEP).map(([k, v]) => [v as number, k]));
@@ -109,45 +113,33 @@ test('§12.2-1 reconstruction: every decision imports to a well-formed deliberat
     console.log(`  §12.2-1: validated ${decisions} decisions across 3 replays`);
 });
 
-// THE PROMISE IS THAT WIDTH NEVER DECIDES, NOT THAT EVERY MOVE FITS.
+// THE PROMISE IS THAT WIDTH NEVER DECIDES, AND THE ONLY EXCUSE IS A FULL TABLE.
 // og_pick_candidates ranks attacks and covers into one list PER WIDTH and takes
 // them round-robin, so a move is never dropped for being wide or for being
-// narrow. Inside a width the ranking is by cost and the list is finite
-// (OG_W_PER_SIZE), so a dear move on a huge hand can still fall off the end:
-// one 5p board here holds twenty-two cards and offers twenty-two single
-// attacks for sixteen places, and the trump 9 it played is the seventeenth
-// cheapest. That is a budget being spent, and it is the only excuse this test
-// accepts.
+// narrow. For an oracle build those per-width lists are as deep as the whole
+// table and a pass keeps all fifteen a hand can ever offer, so neither is a cap
+// any more - they order, they do not budget. The one thing that can still drop
+// a recorded move is OG_MAX_CANDS itself, on a board that offered more replies
+// than the table has places.
 //
-// So a recorded move that is not a candidate fails UNLESS the list already
-// holds a full bucket of its own kind and width. That excuse is nowhere near
-// wide enough to swallow the defect this was written for. Over 1,542 decisions
-// of 12 bot games before the per-width ranking, 38 recorded moves were not
-// candidates, and on 17 of them the played move was NARROWER than every
-// candidate of its kind - which means its own width held not a full bucket but
-// an EMPTY one. The width was never reached, not spent.
+// It was three caps and three excuses, and each one hid a real defect behind a
+// legitimate-looking budget. Sixteen places per width dropped a played double
+// on a board that left eighteen of its sixty-four places EMPTY, because only
+// the double bucket was full. Six pass places dropped a played single pass out
+// of seven legal ones. Both read as "budget spent" to the rule this test used
+// to apply. Walking 3,687 decisions of 38 bot games and two shared human
+// replays, that rule excused 8 misses; under one cap there are none.
 //
-// These two numbers are the C constants for an oracle build
-// (c/src/octogen_strategy.c, -DFOOLISH_ORACLE_BUILD). If they move there they
-// must move here, and the test failing is how you find out.
-const ORACLE_PER_WIDTH = 16;    // OG_W_PER_SIZE
-const ORACLE_PASS_KEEP = 6;     // OG_PAS_KEEP
+// This is the C constant for an oracle build (c/src/octogen_strategy.c,
+// -DFOOLISH_ORACLE_BUILD). If it moves there it must move here, and the test
+// failing is how you find out.
+const ORACLE_MAX_CANDS = 128;   // OG_MAX_CANDS
 
-/** How full the recorded move's own bucket is, or null when its bucket is not
- *  full and the miss is therefore a defect rather than a budget. */
-function bucketOf(recorded: string, keys: string[]): number | null {
-    const [type, cards] = recorded.split('|');
-    const width = cards.split(',').filter(Boolean).length;
-    const peers = keys.filter((k) => {
-        const [t, c] = k.split('|');
-        if (t !== type) return false;
-        // pass keeps ONE list, not one per width: OG_PAS_KEEP places in total.
-        return type === 'pass' || c.split(',').filter(Boolean).length === width;
-    }).length;
-    const cap = type === 'pass' ? ORACLE_PASS_KEEP
-        : (type === 'attack' || type === 'cover') ? ORACLE_PER_WIDTH
-        : 0;   // pickup and good are single moves and are always reserved
-    return cap > 0 && peers >= cap ? peers : null;
+/** How many candidates the table holds when the recorded move is not among
+ *  them, or null when the table was not full and the miss is a defect rather
+ *  than a budget. */
+function tableFull(keys: string[]): number | null {
+    return keys.length >= ORACLE_MAX_CANDS ? keys.length : null;
 }
 
 test('§12.2-1b the recorded move is one of the candidates, at every decision', async () => {
@@ -183,7 +175,7 @@ test('§12.2-1b the recorded move is one of the candidates, at every decision', 
             total[kind] = (total[kind] ?? 0) + 1;
             if (!acc.hasKey(job.recordedKey)) {
                 const keys = acc.candidates(false).map((c) => c.key);
-                const full = bucketOf(job.recordedKey, keys);
+                const full = tableFull(keys);
                 if (full == null) {
                     missing[kind] = (missing[kind] ?? 0) + 1;
                     assert.fail(`${id} step ${j}: recorded ${kind} ${JSON.stringify(job.recordedKey)} `
@@ -203,6 +195,46 @@ test('§12.2-1b the recorded move is one of the candidates, at every decision', 
     const cut = Object.keys(budgeted).sort().map((k) => `${k} ${budgeted[k]}`).join(', ') || 'none';
     console.log(`  §12.2-1b: recorded move found at every decision (${counts}); cut by a full bucket: ${cut}`);
     assert.deepEqual(missing, {});
+});
+
+test('§12.2-1c every pass a hand can make is on the panel', async () => {
+    // A PASS IS NOT RANKED AGAINST A BUDGET, because there is no budget it can
+    // exceed. A pass spends cards of the attack's value, a hand holds at most
+    // four of any value, so the legal passes are the non-empty subsets of those:
+    // fifteen at the very most, and an oracle build keeps fifteen.
+    //
+    // Six places is what it kept, and passes rank width-first, so the singles
+    // are what fell off. This 6p board is the case in miniature: a defender
+    // holding 3C, 3H and 3S facing an attack of 3s has seven legal passes, the
+    // panel listed the wider six, and the one it dropped - `pass|3C|` - is the
+    // one that was played. It printed "not considered" under a move it had
+    // just animated, and octogen, sharing this selection, could not have chosen
+    // it either.
+    const inst = await freshInstance();
+    const { code, frames, id } = await fixture('6p-pass', PASS_BOARD, 750);
+    let widest = 0, walked = 0;
+    for (let j = 1; j < frames.length; j++) {
+        if (findDecisionIndex(frames, j) !== j) continue;
+        if (frames[j].kind !== REPLAY_STEP.PASS) continue;
+        const job = buildOracleJob(frames, code, j, true, id);
+        if (!job) continue;
+        inst.writeEnv({ ...ENV_BASE, OG_W1: '8' });
+        const r = inst.analyzeOnce(job, 0x9e37 + j);
+        if (!('record' in r)) continue;
+        walked++;
+        const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey });
+        acc.add((r as { record: any }).record, (r as { paths?: ArrayBuffer }).paths);
+        const passes = acc.candidates(false).filter((c) => String(c.key).startsWith('pass|')).length;
+        widest = Math.max(widest, passes);
+        assert.ok(acc.hasKey(job.recordedKey),
+            `${id} step ${j}: recorded ${JSON.stringify(job.recordedKey)} is not among `
+            + JSON.stringify(acc.candidates(false).map((c) => c.key)));
+    }
+    // AND THE BOARD IS STILL THE BOARD. Seven legal passes is what makes this
+    // game worth walking; if the deal or the bot cycle ever stops producing one,
+    // the assertion above would pass while proving nothing.
+    assert.ok(widest >= 7, `the 6p pass board no longer offers more than six passes (widest ${widest} over ${walked} pass decisions)`);
+    console.log(`  §12.2-1c: ${walked} pass decisions, widest board offered ${widest} passes`);
 });
 
 test('§12.2-2 batching: keys stable, n increases, worlds vary across seeds', async () => {

@@ -15,7 +15,7 @@
 // Matches OG_MAX_CANDS for an oracle build (octogen_strategy.c): this header is
 // only compiled under -DFOOLISH_ORACLE_MT, which is an oracle build by
 // definition, so it never widens the shipped bot's tables.
-#define OG_MT_MAX_CANDS 64
+#define OG_MT_MAX_CANDS 128
 #define OG_MT_MAX_CARDS 12          // candidate moves never exceed this in practice
 
 // One candidate's move descriptor. The host reads the table back through the

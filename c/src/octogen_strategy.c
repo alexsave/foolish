@@ -1175,14 +1175,22 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
 // game is on a clock, and a wider table would only split the same world budget
 // thinner and play weaker for it.
 //
-// So the oracle builds (-DFOOLISH_ORACLE_BUILD, c/Makefile) get 64 and the
+// So the oracle builds (-DFOOLISH_ORACLE_BUILD, c/Makefile) get 128 and the
 // shipped bot keeps the 26 it has always searched. A build flag rather than a
 // runtime knob because the number sizes static tables: sizing them at 64
 // everywhere and capping at runtime cost bots.wasm.gz ten bytes MORE than its
 // 81,920 budget allows, for a width that build can never use.
+//
+// 128 IS WHERE THE MISSES STOP, and that is measured rather than chosen. Walking
+// every decision of 38 bot games plus two shared human replays - 3,687 decisions
+// - the 64-wide table said "not considered" under a move that had just been
+// played 3 times; 128 says it 0 times. The whole cost is on the handful of
+// boards that are genuinely that wide: mean candidates per decision go 7.9 to
+// 9.1, and only a board that already had more than 64 legal replies pays for
+// the rest.
 #ifndef OG_MAX_CANDS
 #ifdef FOOLISH_ORACLE_BUILD
-#define OG_MAX_CANDS 64
+#define OG_MAX_CANDS 128
 #else
 #define OG_MAX_CANDS 26
 #endif
@@ -1197,20 +1205,41 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
 // triples existed, three were kept, and the one dropped - the dearest, two 9s
 // and an Ace - was the one played.
 //
-// The shipped bot ranks only its covers here. An ORACLE build ranks its attacks
-// here too and takes sixteen of each width, which fills its 64-wide table
-// exactly; see og_pick_candidates for why the two builds differ and what it
-// cost to measure.
+// The shipped bot ranks only its covers here, ten places per width. An ORACLE
+// build ranks its attacks here too and gives every width as many places as the
+// whole table has: the per-width list stops being a second, smaller cap and
+// goes back to being only an ordering, which is all it was ever for. The
+// round-robin emit below is what actually bounds the table, and it is fair
+// across widths, so nothing is dropped for its width while places go unused.
+//
+// Sixteen places per width was not fair in that sense, because whether sixteen
+// was enough depended on what ELSE was on the board. A 22-card hand facing two
+// attacks ranked 11 singles, 16 doubles, 16 triples and 2 quads - 46 of a
+// 64-wide table, with 18 places going spare - and still dropped the double the
+// defender had played, because its own bucket was the full one. See
+// og_pick_candidates for why the two builds differ and what it cost to measure.
 #define OG_W_SIZES 4
 #ifdef FOOLISH_ORACLE_BUILD
-#define OG_W_PER_SIZE 16
+#define OG_W_PER_SIZE OG_MAX_CANDS
 #else
 #define OG_W_PER_SIZE 10
 #define OG_ATK_KEEP   12
 #endif
 // Pass candidates. Ranked width-first like attacks, so the widest pass is always
 // among them; the cap is what bounds the reserve the covers leave room for.
+//
+// An ORACLE build keeps every pass there can be. A pass spends cards of the
+// attack's value and a hand holds at most four of one value, so the legal
+// passes are the non-empty subsets of those: at most 2^4 - 1 = 15, and fifteen
+// places can never drop one. Six could, and did - a 6p game recorded PASS 3C
+// with seven passes legal, and the panel said "not considered" under a move
+// the defender had just made, because width-first ranking puts every single
+// behind every wider pass.
+#ifdef FOOLISH_ORACLE_BUILD
+#define OG_PAS_KEEP    15
+#else
 #define OG_PAS_KEEP     6
+#endif
 
 typedef struct {
     int idx[OG_MAX_CANDS];
@@ -1634,7 +1663,8 @@ static void og_pick_candidates(const Game *g, const LegalMoves *moves,
     // that is a play defect and not only a panel one. The tail is tiny and
     // always matters; it is reserved before the covers spend anything.
     // n_pas is at most OG_PAS_KEEP and the two flags at most 1 each, so tail is
-    // at most 8 against an OG_MAX_CANDS of 26 and the reserve cannot go negative.
+    // at most 8 against the shipped bot's OG_MAX_CANDS of 26 and at most 17
+    // against an oracle build's 128: the reserve cannot go negative in either.
     const int tail = n_pas + (good_idx >= 0) + (pickup_idx >= 0);
     for (int r = 0; r < OG_W_PER_SIZE; r++)
         for (int b = 0; b < OG_W_SIZES && out->n + tail < OG_MAX_CANDS; b++)
