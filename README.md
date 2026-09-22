@@ -269,8 +269,10 @@ A merge to `main` always deploys production, and [`scripts/web_deploy_scope.sh`]
 The Supabase side deploys through [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml).
 The 39 migrations were folded into `seed.sql`, so a merge to `main` runs no SQL.
 
-The shipped wasm is still built by hand on a Mac and committed; CI compiles every target but never rebuilds the shipped bytes.
-[`scripts/check_wasm_freshness.sh`](scripts/check_wasm_freshness.sh) is what keeps that honest, and it exists because `public/oracle.wasm.gz` once sat unrebuilt for three weeks and served one seat the opposite endgame verdict.
+The shipped wasm is a **build output**, like `sdk/ts/gen`: [`scripts/wasm_build.sh`](scripts/wasm_build.sh) is the one entry point, every lane that loads a module builds it, and nothing is committed.
+It used to be built by hand on a Mac and committed, which needed two gates to hold it up - a freshness check that compared commit *order* because it could not compare bytes, and a `WASM_STAMP` committed beside the artifacts to prove a human had run `make`.
+Neither caught the drift it was written for: `public/oracle.wasm.gz` sat unrebuilt for three weeks and served one seat the opposite endgame verdict, and it was behind again by exactly one raw byte on the day they were deleted.
+What made the change safe is a measurement - with the toolchain pinned (clang 22.1.8 + binaryen 130, [`scripts/ci_llvm.sh`](scripts/ci_llvm.sh)) the raw module is byte-identical on macOS arm64, Linux arm64 and Linux x86_64 - so `wasm_build.sh --check` can build twice and refuse a difference, which is a stronger question than any freshness gate could ask.
 
 ---
 

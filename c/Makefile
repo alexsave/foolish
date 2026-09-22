@@ -91,7 +91,7 @@ CORE_OBJ := $(addprefix build/,$(notdir $(CORE_SRC:.c=.o)))
 print-core:
 	@echo $(CORE_SRC)
 # Emit every C source compiled into a SHIPPED wasm module, for
-# scripts/check_wasm_freshness.sh. Read out of the real WASM_*_SRC lists rather
+# scripts/wasm_stamp.sh. Read out of the real WASM_*_SRC lists rather
 # than copied into the script: a second copy of this list is how the artifact
 # and the sources it is built from drift apart in the first place. Not the same
 # set as CORE_SRC - the native CLI mains (main_elo.c, main_showcase.c) are in
@@ -1226,16 +1226,27 @@ wasm-msg-size: build/msg.wasm
 # the knobs the roster already specifies. Folding the two is one change,
 # because it rewrites bots.wasm.gz.
 #
-# There is NO toolchain skew, and the old warning here that there was one is
-# retracted: from a clean tree, `make wasm-bots
-# WASM_CC=/opt/homebrew/opt/llvm/bin/clang` (Homebrew LLVM 22.1.8, wasm-opt
-# 130) reproduces the committed bots.wasm.gz md5-identically — re-verified
-# July 2026. A byte delta therefore means YOUR CHANGE, not the compiler.
-# The trap that keeps manufacturing this phantom: WASM_CC defaults to plain
+# There is NO toolchain skew in the RAW module, and it is measured rather than
+# asserted: with clang 22.1.8 + binaryen 130, build/bots.wasm comes out
+# byte-identical on macOS arm64 (Homebrew), Linux arm64 and Linux x86_64
+# (apt.llvm.org) - all md5 ac53b4dc5484aabad381d2d7bc451088, 191,485 B. A raw
+# byte delta therefore means YOUR CHANGE, not the compiler, and
+# `scripts/wasm_build.sh --check` is the gate that keeps that true.
+#
+# THE .gz IS A DIFFERENT STORY, and it is the compressor rather than the
+# compiler: gzip -9 -n over that one identical module gives 81,892 B from Apple
+# gzip, 82,043 B from GNU gzip and 82,468 B from node 20's zlib. So compare raw
+# modules, never .gz sizes, and see e2e/mem/wasm_memory.test.ts for why the size
+# gate moved onto the raw one.
+#
+# The trap that keeps manufacturing a phantom skew: WASM_CC defaults to plain
 # `clang`, which on macOS is APPLE clang and cannot target wasm32 at all
 # ("No available targets are compatible with triple wasm32"). It is WASM_CC=,
-# not CC=. CI ships the committed .gz rather than rebuilding, so the committed
-# artifact is the baseline to reproduce before you touch it.
+# not CC=.
+#
+# Nothing here is committed any more - CI builds the shipped modules in the lane
+# that ships them (scripts/wasm_build.sh), so there is no committed artifact to
+# reproduce as a baseline.
 WASM_BOT_SRC := src/game.c $(SHARED)/deal_rng.c src/legal.c src/replay.c src/replay_steps.c \
                 src/replay_extras.c src/view.c src/awire.c \
                 src/evwire.c $(SHARED)/sha256.c src/msg_wire.c src/anim_plan.c \
@@ -1409,7 +1420,6 @@ wasm-bots: build/layout/bots.hash
 	$(call sg_settle,bots,build/botobj,build/bots.wasm)
 	@$(MAKE) --no-print-directory build/bots.wasm
 	gzip -9 -n -c build/bots.wasm > ../sdk/ts/wasm/bots.wasm.gz
-	@bash ../scripts/wasm_stamp.sh --write
 
 # The test build (WASM_TEST_EXPORTS above): never committed, never shipped.
 # build/bots_test.stamp records the wasm source hash it was built from
@@ -1458,7 +1468,6 @@ wasm-oracle: build/layout/oracle.hash
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),build/oracle.wasm)
 	gzip -9 -n -c build/oracle.wasm > ../public/oracle.wasm.gz
 	@echo "built ../public/oracle.wasm.gz ($$(wc -c < ../public/oracle.wasm.gz) B gz, $$(wc -c < build/oracle.wasm) B raw)"
-	@bash ../scripts/wasm_stamp.sh --write
 
 # ---------------------------------------------------------------------------
 # oracle-mt.wasm - Mode B (docs/INFINITE_ORACLE_DESIGN.md §8b): the same octogen
@@ -1509,7 +1518,6 @@ wasm-oracle-mt: build/layout/oracle-mt.hash
 	$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) --enable-threads $(WASM_BOTS_POSTOPT) build/oracle-mt.wasm -o build/oracle-mt.wasm
 	gzip -9 -n -c build/oracle-mt.wasm > ../public/oracle-mt.wasm.gz
 	@echo "built ../public/oracle-mt.wasm.gz ($$(wc -c < ../public/oracle-mt.wasm.gz) B gz, $$(wc -c < build/oracle-mt.wasm) B raw)"
-	@bash ../scripts/wasm_stamp.sh --write
 
 # ---------------------------------------------------------------------------
 # Coverage gate (CI: ../.github/workflows/coverage.yml). Instruments the engine

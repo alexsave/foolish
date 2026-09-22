@@ -100,9 +100,17 @@ macOS is Apple clang and cannot target wasm32 at all:
 make wasm-bots WASM_CC=/opt/homebrew/opt/llvm/bin/clang
 ```
 
-Builds are byte-reproducible, so rebuilding and getting a different
-`sdk/ts/wasm/bots.wasm.gz` means your change moved it, not the toolchain.
-CI never rebuilds the wasm - it ships the committed `.gz`.
+Builds are byte-reproducible for a pinned toolchain, and measurably so: the raw
+`build/bots.wasm` is byte-identical on macOS arm64, Linux arm64 and Linux x86_64
+with clang 22.1.8 + binaryen 130. So a different `build/bots.wasm` means your
+change moved it, not the machine. `scripts/wasm_build.sh --check` is the gate,
+and `.gz` sizes are the one thing that does still vary by machine - the
+compressor moves them by up to 576 B on identical input, which is why
+`e2e/mem/wasm_memory.test.ts` pins the raw size instead.
+
+Nothing here is committed. `sdk/ts/wasm/bots.wasm.gz` and the two
+`public/oracle*.wasm.gz` are gitignored build outputs, and CI builds them in the
+lane that ships them (`scripts/wasm_build.sh`, `scripts/ci_llvm.sh`).
 
 
 ### The arena fingerprint - a cheap "did bot behaviour drift?" check

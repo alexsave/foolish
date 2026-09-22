@@ -285,6 +285,13 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # --use-api` (no Docker). rules/guards inflate from gzip+base64 embeds via the
 # vendored sdk/ts/wasm/gunzip.ts (relative import — no import_map needed).
 #
+# THE FILE THESE PATHS NAME IS A BUILD OUTPUT, not a committed artifact
+# (scripts/wasm_build.sh). .github/workflows/deploy.yml builds it before
+# `functions deploy`, so what is bundled is the kernel of the commit being
+# deployed. Nothing about the paths below changed - the file lands in exactly the
+# same place - but a deploy that skipped that build step would ship a function
+# with no kernel at all rather than a stale one.
+#
 # A10 DEPLOY-GATE: the SDK now lives at repo-root sdk/ (not under supabase/),
 # so these static_files paths and the edge functions' `../../../../../sdk/ts/...`
 # imports escape the supabase/ project dir. Local build/tsc/tests all pass,

@@ -11,8 +11,9 @@ this note implements and validates offline. For a 12-card endgame the reachable 
 ~37 M positions / ~110 M edges (multiple GB) — feasible on a server, **infeasible in a
 browser tab**, which is where the oracle runs. So the MC fallback is working as designed,
 and no shipped module changes. All investigation was oracle/offline-only; the server
-`bots.wasm` / `rules.wasm` / `guards.wasm` and committed `public/oracle.wasm.gz` are
-untouched and byte-identical.
+`bots.wasm` / `rules.wasm` / `guards.wasm` and `public/oracle.wasm.gz` are
+untouched and byte-identical. (Those modules were committed artifacts when this was
+written; they are build outputs now - `scripts/wasm_build.sh`.)
 
 ## The position
 

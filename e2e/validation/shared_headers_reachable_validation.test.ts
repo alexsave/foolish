@@ -191,9 +191,10 @@ test('the wasm source list is the same list when make is the caller', () => {
     // when a person runs it in a terminal.
     //
     // So the script produced a clean list every time I ran it and a list with
-    // five lines of English in it every time CI did. Every path here is compared
-    // against `git diff --name-only` by check_wasm_freshness.sh, so junk in this
-    // list is a gate reasoning about files that do not exist.
+    // five lines of English in it every time CI did. The hash skips a path that
+    // is not a file, so junk in this list is a source the hash has quietly
+    // stopped covering - and that hash is what decides whether the uncommitted
+    // test module gets rebuilt (e2e/helpers/bots_test_wasm.ts).
     //
     // Running it BOTH ways and demanding the same answer is the cheapest way to
     // stop that being a CI-only discovery.

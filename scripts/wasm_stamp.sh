@@ -1,34 +1,36 @@
 #!/usr/bin/env bash
-# The wasm source set, and its hash - the one derivation both the make targets
-# and scripts/check_wasm_freshness.sh read.
+# THE WASM SOURCE SET, and its hash. The repo's one answer to "which files is a
+# wasm module built from", derived from the build system rather than mirrored.
 #
-# WHY THIS FILE EXISTS. The freshness gate's rule used to be "a branch that
-# touches a wasm source must also update a committed artifact", which cannot
-# express the case that turned up on the 1.1(52) release branch: the kernel
-# change was REAL (four new functions in msg_wire.c), the rebuild was real, and
-# the shipped bytes did not move by one byte - the new symbols are reachable
-# from no wasm export, so the linker drops them. There was nothing to commit,
-# and no way to prove the build had been run. The alternatives were both bad:
-# exempt msg_wire.c forever (blinding the gate to the drift it exists to catch)
-# or commit an artifact nobody rebuilt.
+# WHO READS IT NOW:
+#   c/Makefile             writes the hash into c/build/bots_test.stamp
+#   e2e/helpers/bots_test_wasm.ts   compares that stamp to decide whether the
+#                          uncommitted test module needs rebuilding
 #
-# So the artifacts now carry a STAMP of the sources they were last built from.
-# "I ran the build" becomes a fact in the diff whether or not the bytes moved,
-# and the gate gets STRONGER rather than weaker: commit order could be satisfied
-# by any artifact touch, while the stamp is only satisfied by the sources that
-# are actually in the tree.
+# WHAT IT USED TO ALSO DO, and no longer does: `--write` wrote the hash into a
+# COMMITTED file, sdk/ts/wasm/WASM_STAMP, next to three committed .wasm.gz
+# artifacts. Its job was to let a human prove they had run make, for the case
+# that turned up on the 1.1(52) release branch - a real kernel change (four new
+# functions in msg_wire.c) whose shipped bytes did not move, because no wasm
+# export reaches them and the linker drops them. There was nothing to commit and
+# no way to say "I built this", so the stamp became the proof.
 #
-# The stamp is over SOURCES, not over output bytes, and that is deliberate - the
-# same reason check_wasm_freshness.sh gives for not diffing bytes: a rebuild on a
-# different toolchain legitimately produces different bytes (measured on this
-# repo: bots.wasm.gz moved 83 B on an untouched tree across clang versions), so a
-# byte stamp would be red on every machine but one. Sources are the thing every
-# machine agrees on.
+# That whole problem was downstream of one thing: the artifacts were committed
+# and built by hand. They are neither now (scripts/wasm_build.sh), so there is no
+# human to take at their word and nothing to prove - a lane that runs the build
+# itself does not need a note saying somebody ran the build. `--write`,
+# WASM_STAMP and scripts/check_wasm_freshness.sh went together, because they were
+# three parts of one workaround.
+#
+# The hash survives because it answers a question the build still asks, and it is
+# a good answer: it is over SOURCES, not output bytes, so it is identical from
+# every toolchain (measured e3fa5e8b... from clang 18 on Linux, clang 22 on Linux
+# and clang 22 on macOS, on one tree). That is what makes it usable as a
+# rebuild key on any machine.
 #
 # Usage:
 #   scripts/wasm_stamp.sh --list    # the source set, one path per line
 #   scripts/wasm_stamp.sh --hash    # sha256 over that set's contents
-#   scripts/wasm_stamp.sh --write   # write sdk/ts/wasm/WASM_STAMP
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -40,16 +42,13 @@ cd "$(dirname "$0")/.."
 # so the stamp means the same thing everywhere.
 export LC_ALL=C
 
-STAMP=sdk/ts/wasm/WASM_STAMP
-
 sha() {  # one file -> bare hex, on both a Mac and CI's Linux
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
   else shasum -a 256 "$1" | cut -d' ' -f1; fi
 }
 
 # The .c list comes out of the Makefile's own WASM_*_SRC variables - not a
-# second copy of them - plus every header they can include. Same derivation
-# check_wasm_freshness.sh used to do inline; it calls --list now.
+# second copy of them - plus every header they can include.
 #
 # Two more inputs, and two OUTPUTS, since the layout handshake (c/Makefile
 # "Layout hash"):
@@ -59,9 +58,9 @@ sha() {  # one file -> bare hex, on both a Mac and CI's Linux
 #     make targets; layout_hash.*.ts is what the hosts check each module against
 #     (LAYOUT_HASH). They count as wasm outputs: hashing their text here means a
 #     module regenerated without a wasm rebuild, or hand-edited, no longer
-#     matches the stamp. Unlike the .wasm
-#     bytes this text is toolchain-independent (the hash is spelling-free and CI
-#     pins LLVM 22 for gen.sh --check), so it is safe to stamp.
+#     matches the stamp. Unlike the .wasm bytes this text is
+#     toolchain-independent (the hash is spelling-free and CI pins LLVM 22 for
+#     gen.sh --check), so it is safe to hash.
 # --no-print-directory ON BOTH, and it is not decoration. `-s` silences the
 # recipes but NOT "make[1]: Entering directory '...'", and make prints those
 # whenever MAKELEVEL is set - which it is here, because c/Makefile calls this
@@ -69,28 +68,27 @@ sha() {  # one file -> bare hex, on both a Mac and CI's Linux
 # list of source paths, prefixed into `c/Entering`, `c/make[1]:` and friends.
 #
 # It has been doing that all along and was invisible: the hash loop skips a path
-# that is not a file, so the hash stayed right, and the junk never matched a git
-# path so the freshness gate ignored it. check_paths() below is what made it
-# fatal, and that is the correct trade - a list of sources that is 5% English is
-# a list nobody can reason about.
+# that is not a file, so the hash stayed right and nothing looked wrong.
+# check_paths() below is what made it fatal, and that is the correct trade - a
+# list of sources that is 5% English is a list nobody can reason about.
 sources() {
   # PATHS COME BACK REPO-RELATIVE OR NOT AT ALL. The Makefile's lists are
   # relative to c/, so this prefixes them with `c/` - and since the two shared
   # primitives moved, two of them come back as `../shared/c/*.c` and that prefix
   # produced `c/../shared/c/sha256.c`. That path OPENS FINE, so the hash stayed
-  # honest and nothing looked wrong; but check_wasm_freshness.sh `comm`s this
-  # list against `git diff --name-only`, which says `shared/c/sha256.c`, and two
-  # spellings of one file never match. The gate would have gone on passing while
-  # quietly watching neither. So collapse `c/../` the same way the structgen
-  # line below collapses its own, and assert the result below.
+  # honest and nothing looked wrong; but two spellings of one file never match
+  # when this list is compared against anything else that names it, and the now
+  # deleted freshness gate compared it against `git diff --name-only`. Collapse
+  # `c/../` the same way the structgen line below collapses its own, and assert
+  # the result below.
   make -C c -s --no-print-directory print-wasm-src | tr ' ' '\n' | sed '/^$/d' | sed 's|^|c/|' | sed 's|^c/\.\./||'
   ls c/src/*.h c/wasm/include/* shared/c/*.h 2>/dev/null || true
   # structgen's own source and specs, because the layout hash compiled into
   # every module comes from them. NOT the modules it writes: those are build
   # outputs now, ignored and absent from a fresh checkout, and hashing them
-  # would (a) make this script need libclang, which the freshness job
-  # deliberately does not install, and (b) add nothing - they are a function of
-  # these two plus the headers above plus the WASM_* lines hash_all already
+  # would (a) make this script need libclang, which a caller that only wants
+  # the source list should not need, and (b) add nothing - they are a function
+  # of these two plus the headers above plus the WASM_* lines hash_all already
   # reads out of c/Makefile.
   #
   # ASK STRUCTGEN'S MAKEFILE WHAT STRUCTGEN IS MADE OF, rather than naming its
@@ -99,7 +97,7 @@ sources() {
   # and each time it moved, this list stayed still: measured, appending a line
   # to sg_hash.c left this hash byte-identical while appending one to
   # structgen.c moved it, so the emitter that writes the layout hash could
-  # change and a committed wasm would still read fresh. That is the precise
+  # change and a stale module would still read current. That is the precise
   # hole this script exists to close, reopened by a refactor rather than by any
   # edit to the kernel - twice in one afternoon, because a list of files is a
   # copy of a fact that lives somewhere else.
@@ -122,7 +120,7 @@ sources() {
 # The hash covers the source CONTENTS plus the c/Makefile lines that decide what
 # the modules are (the WASM_* assignments: flags, caps, source lists). A new
 # make target or a comment in that file is not a kernel change and must not
-# demand a rebuild - the same line-level rule the gate already applied.
+# demand a rebuild.
 #
 # …AND THE --export= LINES, because an export list is a MULTI-LINE value and the
 # assignment pattern only ever saw its first line. WASM_API_EXPORTS is fifty
@@ -142,41 +140,24 @@ hash_all() {
     | cut -d' ' -f1
 }
 
-# EVERY PATH IN THE LIST MUST OPEN, FROM THE REPO ROOT. The list is compared
-# against `git diff --name-only` output, so a path that is merely openable by
-# some other spelling (`c/../shared/...`) is a path this gate has stopped
-# watching. A move is exactly when that happens, and it is silent, so it is
-# checked rather than assumed.
+# EVERY PATH IN THE LIST MUST OPEN, FROM THE REPO ROOT. hash_all skips a path
+# that is not a file, so a path that is merely openable by some other spelling
+# (`c/../shared/...`) is a source this hash has quietly stopped covering - and
+# the hash is what decides whether the test module gets rebuilt. A move is
+# exactly when that happens, and it is silent, so it is checked rather than
+# assumed.
 check_paths() {
   bad=$(sources | sort -u | while IFS= read -r f; do [ -e "$f" ] || echo "$f"; done)
   [ -z "$bad" ] && return 0
   echo "wasm_stamp.sh: these source paths do not exist from the repo root:" >&2
   printf '  %s\n' $bad >&2
-  echo "(a path that cannot be opened here cannot be matched against git's" >&2
-  echo " paths either - check_wasm_freshness.sh would watch nothing)" >&2
+  echo "(a path that cannot be opened here is skipped by the hash, so an edit to" >&2
+  echo " it would not rebuild anything keyed on this - see the header)" >&2
   return 1
 }
 
 case "${1:---hash}" in
   --list) check_paths && sources | sort -u ;;
   --hash) check_paths && hash_all ;;
-  --write)
-    check_paths || exit 1
-    h=$(hash_all)
-    n=$(sources | sort -u | wc -l | tr -d ' ')
-    cat > "$STAMP" <<EOF
-# The wasm source set the committed artifacts were last built from.
-#
-# Written by the wasm make targets (make -C c wasm-bots
-# wasm-oracle wasm-oracle-mt), read by scripts/check_wasm_freshness.sh. It is
-# how a rebuild that changes no shipped byte still proves it happened - see the
-# header of scripts/wasm_stamp.sh.
-#
-# Do not hand-edit. If this line disagrees with the tree, the artifacts beside
-# it were built from different C than the C you are looking at.
-sources $n
-sha256 $h
-EOF
-    echo "wasm stamp: $h ($n sources)" ;;
-  *) echo "usage: $0 [--list|--hash|--write]" >&2; exit 2 ;;
+  *) echo "usage: $0 [--list|--hash]" >&2; exit 2 ;;
 esac

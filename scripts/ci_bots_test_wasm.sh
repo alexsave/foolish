@@ -7,10 +7,11 @@
 # committed, so a job that runs table_fixture/roster_kernel suites builds it
 # here, once, instead of every test process discovering it is missing.
 #
-# The toolchain itself comes from scripts/ci_llvm.sh - which lane needs a
-# compiler is a bigger question than which lane needs this module, and other
-# lanes now need the one without the other (generation is part of every build).
-# That script also exports WASM_CC, LLVM_PREFIX and PATH for the rest of the job.
+# The toolchain comes from scripts/ci_llvm.sh - the same pinned clang and
+# binaryen that build the SHIPPED modules, which is why that script raised its
+# pin to 22 when they became build outputs. e2e/bots_test_build.test.ts compares
+# this module's export list against the shipped one, and two modules built by
+# two compilers is a difference nobody wants to have to reason about.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # shellcheck source=scripts/ci_llvm.sh

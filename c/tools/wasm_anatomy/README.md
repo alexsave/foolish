@@ -36,8 +36,11 @@ Per module, seven views:
 
 ## Accuracy
 
-The bytes analyzed are **byte-identical to the shipped artifacts** — the build
-verifies `build/bots.wasm` reproduces the committed `bots.wasm.gz` exactly. Function *names* are recovered from a
+The bytes analyzed are **byte-identical to the shipped artifact** — this tool
+builds `build/bots.wasm` itself, from the same make target that produces
+`sdk/ts/wasm/bots.wasm.gz`, and that module is a build output rather than a
+committed file (`scripts/wasm_build.sh`), so there is no second copy for it to
+agree or disagree with. Function *names* are recovered from a
 name-preserving companion build (the same link, minus `-Wl,--strip-all`), whose
 CODE section is identical, so names map 1:1 onto the shipped bytes. The
 disassembler is self-contained (MVP + sign-extension + bulk-memory; the modules

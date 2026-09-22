@@ -86,7 +86,7 @@ apart quietly.
 **Never run two suites at once** - `resetDb()` TRUNCATEs shared tables and will
 corrupt the other run.
 Don't rebuild `bots.wasm.gz` while a suite is running either; the suite loads the
-`.gz`.
+`.gz` off disk, and the pre-hooks (`npm run wasm`) rewrite it in place.
 
 ## One database per file, and the two lanes that follow
 

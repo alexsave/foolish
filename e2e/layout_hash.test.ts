@@ -10,14 +10,22 @@
 // rebuilt": the load must throw, name the module and the generated file, and
 // leave the host retryable, so the real hash then loads normally.
 //
-// THE THIRD TEST CARRIES MORE WEIGHT THAN IT USED TO. sdk/ts/gen is no longer
-// committed - every build regenerates it - while bots.wasm.gz and the two
-// oracle modules still are. So the two halves no longer go stale together: a
-// header edit moves the generated side immediately and leaves the committed
-// modules where they were, and this is the test that says so. It was measured,
-// not assumed: widening one field of Game (`int8_t num_battles` -> int32_t) and
-// regenerating moved LAYOUT_HASH from 0xd61d98ee to 0x9b485bb8, and the load of
-// the committed bots.wasm.gz threw
+// THE THIRD TEST USED TO CARRY MORE WEIGHT THAN IT DOES NOW, and the reason is
+// worth keeping. sdk/ts/gen stopped being committed first, while bots.wasm.gz
+// and the two oracle modules stayed in git, and for that stretch the two halves
+// of the handshake could not go stale together: a header edit moved the
+// generated side immediately and left the committed modules where they were.
+// This was the test that said so.
+//
+// Both halves are build outputs now (scripts/wasm_build.sh), so one lane
+// produces both from one tree and the skew this test watches for is much harder
+// to reach - it takes a build that ran the generator and not the compiler. The
+// test stays, because "harder to reach" is not "unreachable" and this is the
+// check that turns a skew into a load-time refusal instead of a wrong offset.
+//
+// It was measured, not assumed: widening one field of Game (`int8_t
+// num_battles` -> int32_t) and regenerating moved LAYOUT_HASH from 0xd61d98ee
+// to 0x9b485bb8, and the load of the stale bots.wasm.gz threw
 //
 //   bots.wasm was built for Game layout 0xd61d98ee, but
 //   sdk/ts/gen/layout_hash.bots.ts describes 0x…: the module and the generated

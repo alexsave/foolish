@@ -50,10 +50,14 @@ on:
       # missed deploy is a server running code nobody merged.
       - 'sdk/ts/**'
       - 'server/api/**'
-      # Kept explicit even though 'sdk/ts/**' covers it: bots.wasm.gz is not
-      # imported, it is BUNDLED as a static asset (config.toml static_files), so
-      # a kernel rebuild alone must redeploy.
-      - 'sdk/ts/wasm/bots.wasm.gz'
+      # bots.wasm.gz used to be listed here explicitly, because it is not
+      # imported but BUNDLED as a static asset (config.toml static_files) and a
+      # kernel rebuild alone had to redeploy. It is a build output now, so that
+      # entry could never fire again - nothing commits it - and what actually
+      # has to trigger a deploy is the C it is built FROM. That is 'c/src/**'
+      # and the shared entries below, which are already here for sdk/ts/gen and
+      # now carry this too.
+      #
       # THE SOURCES OF sdk/ts/gen, which the import graph cannot see. The
       # functions import those modules and this workflow generates them from the
       # C headers before bundling, so a header or a spec change is a change to
@@ -125,6 +129,18 @@ jobs:
           # so within this one the toolchain has to land in this shell.
           . scripts/ci_llvm.sh
           bash tools/structgen/gen.sh
+
+      # …AND THE KERNEL ITSELF, which this lane did not have to do while
+      # bots.wasm.gz was committed and `functions deploy` just shipped whatever
+      # came out of git. It is a build output now, so THIS is the step that
+      # decides what the five edge functions carry as their static asset
+      # (server/impls/supabase/config.toml static_files). Without it the deploy
+      # would ship a function whose kernel is missing, not a stale one.
+      #
+      # bots only: no edge function loads an Oracle module, and the two of them
+      # cost ~13s to compile (scripts/wasm_build.sh's header has the numbers).
+      - name: The kernel the functions ship as a static asset
+        run: bash scripts/wasm_build.sh bots
 
       - name: Link project
         run: supabase link --project-ref "$SUPABASE_PROJECT_REF" --workdir server/impls
