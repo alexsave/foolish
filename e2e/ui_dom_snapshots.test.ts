@@ -51,7 +51,20 @@ try { Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigat
 g.IS_REACT_ACT_ENVIRONMENT = true;
 g.self ??= dom.window;   // next/link reads it (the invalid-replay page links home)
 g.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} };
-dom.window.matchMedia ??= ((q: string) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} })) as any;
+// REDUCE MOTION IS ON for these shots, and that is the whole point of them: a
+// DOM snapshot is a screen AT REST, and a gesture caught halfway through is not
+// a state anybody chose - it is whatever millisecond the machine happened to
+// reach. The role marks turn like a coin now (src/components/RoleCoin.tsx), and
+// with motion allowed `replay_bout3_revealed` recorded a shield at
+// scaleX(0.45239896) and then failed on the next run at scaleX(0.44829558).
+// Under Reduce Motion every gesture is an instant swap, exactly as it is on
+// iMessage, so each screen here is the mark the board settles on. The MOTION is
+// held frame by frame in e2e/ui_animation_trace.test.ts, which runs on a virtual
+// clock and can say when each frame was drawn.
+dom.window.matchMedia ??= ((q: string) => ({
+    matches: /prefers-reduced-motion/.test(q), media: q,
+    addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
+})) as any;
 g.matchMedia = dom.window.matchMedia;
 // jsdom has no canvas: texture generators see null contexts and fall back.
 (dom.window.HTMLCanvasElement.prototype as any).getContext = () => null;
