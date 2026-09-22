@@ -228,6 +228,9 @@ difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/sol
 #   make analyse          build/cnitro_analyse, the CLI (--threads=N fans the
 #                         world loop over N pthreads; same bytes at any N)
 #   make analyse-test     build + run tests/analyse_test.c on the recorded game
+#   make winprob          build/cnitro_winprob, the win-probability strip: the
+#                         same rebuild, belief and playout, measured for EVERY
+#                         seat at EVERY step rather than per decision
 # The ONE native product that really does run the engine on several threads, so
 # it is the one that keeps real thread-local storage: --threads=N fans the world
 # loop over N pthreads and every world plays games through game.c's RNG and the
@@ -235,10 +238,13 @@ difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/sol
 # 15% it costs on Darwin (see OMP above); here the qualifier is load-bearing and
 # is filtered back in. Same idiom as WASM_ORACLE_MT_CFLAGS.
 ANALYSE_CFLAGS = $(filter-out -D_Thread_local=,$(CFLAGS)) $(IOS_CAPS)
-.PHONY: analyse analyse-test
+.PHONY: analyse analyse-test winprob
 analyse:
 	@mkdir -p build
 	$(CC) $(ANALYSE_CFLAGS) $(CORE_SRC) src/main_analyse.c -o build/cnitro_analyse $(LDFLAGS)
+winprob:
+	@mkdir -p build
+	$(CC) $(ANALYSE_CFLAGS) $(CORE_SRC) src/main_winprob.c -o build/cnitro_winprob $(LDFLAGS)
 analyse-test:
 	@mkdir -p build
 	$(CC) $(ANALYSE_CFLAGS) $(CORE_SRC) tests/analyse_test.c -o build/analyse_test $(LDFLAGS)

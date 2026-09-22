@@ -228,6 +228,16 @@ void analyse_install_world(Game *g, int seat, const AnalyseBelief *B, const Card
 // analyse_install_world takes. Same seed, same world; the whole pool, always.
 void analyse_sample_world(const AnalyseBelief *B, uint32_t seed, Card *perm);
 
+// Play `g` out to the end with `strat` (a bot_roster index) at EVERY seat,
+// through bot_drive, the one bot cycle every host uses. Returns 1 when the
+// board finished and 0 when it stalled; on 1 the finish order is on the board
+// and analyse_finish_of reads it. Seeded by the caller (game_rng_set,
+// random_strategy_set_seed) - two calls with the same seeds give the same game.
+int analyse_playout_board(Game *g, int strat);
+
+// A seat's finish position on a finished board: 1 = first out, N = the fool.
+int analyse_finish_of(const Game *g, int seat);
+
 // P(k trumps in a hand of CARDS_PER_PLAYER dealt from a deck of `deck` cards
 // holding `trumps` trumps), and P(at most k). Exact.
 double analyse_hypergeom(int deck, int trumps, int k);

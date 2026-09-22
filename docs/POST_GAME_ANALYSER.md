@@ -169,6 +169,33 @@ What this says about the product question, recorded and not decided: an octogen-
 The world loop is embarrassingly parallel and the result is identical at any thread count, so a client-side build inherits whatever threads the host has.
 Every bot's scratch, the solver's table, the engine's RNGs, `bot_drive`'s menu scratch and the last kernel globals (`engine_last_reject`, `engine_snap_hook`, the dropped-log sink) are per thread on main since PR #118, which is what the one-thread-equals-four test rests on.
 
+## The win-probability strip
+
+The analyser answers "was THIS move a mistake".
+The other question a finished game invites is "who was winning, and when", for every seat at once, and that is a different shape of work: one board per STEP rather than one per decision, no candidates, and every seat measured from the same playout.
+`c/src/main_winprob.c` (`make -C c winprob`) is that pass, over the analyser's own pieces rather than a second copy of them - the real rebuild, `analyse_belief`, its world sampler and installer, and `analyse_playout_board`, which is the one "play this board out with real bots" in the tree and is what `an_playout` now calls too.
+
+    ./c/build/cnitro_winprob --code=<code or foolish.cards link> --engine=robusta \
+        --worlds=300 --belief-worlds=24 --threads=8 --tsv=strip.tsv
+    python3 c/tools/winprob/plot_winprob.py strip.tsv strip.png
+
+It measures two things, because "chance of winning" is two questions:
+
+**Truth.**
+The rebuilt board already holds every hidden hand and the real remaining stock, so a playout from it IS the true position, handed to bots.
+One playout scores every seat at once (exactly one of them is the fool), so the seats' fool probabilities sum to 1 at every step and the eight curves are commensurable - this is the eval bar.
+
+**Belief.**
+The same number computed inside each seat's own information set, from `analyse_belief`: worlds sampled from what that seat could honestly know, installed, played out.
+These sum to nothing, and that is the point - eight seats holding eight different pictures of one board - and the gap between a seat's two curves is what it could not see.
+
+Everything in "what it cannot see" above applies here in full, and one thing more: the strip has no proof region at all.
+It never solves, so every number is a frequency against this engine's play, including in the endgame where the analyser would have proved it.
+
+Cost is the analyser's, per step rather than per decision, and it is front-loaded: a playout from the opening of an 8-player game plays ~145 decisions and one from the last bout plays two, so the first ten steps of a game can be a third of the bill.
+The 8-seat game in the sample link below, robusta, 300 truth + 24 belief worlds per seat per step, 146 steps: ~65,000 playouts, about 50 CPU-minutes, ~16 minutes on this Mac's 8 cores (the 3.2x rather than 8x is four of those cores being efficiency cores).
+A handwritten strip of the same game is 8,600 playouts and 220 ms, and is worth running first to see the shape before spending the minutes.
+
 ## The sample game
 
 `c/tests/analyse_test.c` carries the recorded game as its deal and its move list and encodes it to a v6 code at test time (a frozen code would rot with the format; a deal and a move list do not).
