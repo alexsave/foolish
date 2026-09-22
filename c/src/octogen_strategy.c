@@ -1182,7 +1182,7 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
 // triples existed, three were kept, and the one dropped - the dearest, two 9s
 // and an Ace - was the one played.
 #define OG_COV_SIZES    4
-#define OG_COV_PER_SIZE 6
+#define OG_COV_PER_SIZE 10
 
 typedef struct {
     int idx[OG_MAX_CANDS];
@@ -1485,6 +1485,7 @@ static void og_pick_candidates(const Game *g, const LegalMoves *moves,
                 double prod = 1.0;
                 for (int j = 0; j < m->n_cards; j++) prod *= (double)og_card_score(m->cards[j], power);
                 int b = m->n_cards - 1;             // width 1 -> list 0
+                if (b < 0) b = 0;                   // never index behind cov[]
                 if (b >= OG_COV_SIZES) b = OG_COV_SIZES - 1;
                 const int o = b * OG_COV_PER_SIZE;
                 og_ranked_insert(cov + o, cov_k + o, &n_cov[b], OG_COV_PER_SIZE, i,
@@ -1505,9 +1506,27 @@ static void og_pick_candidates(const Game *g, const LegalMoves *moves,
 
     out->n = 0;
     for (int i = 0; i < n_atk && out->n < OG_MAX_CANDS; i++) out->idx[out->n++] = atk[i];
-    for (int b = 0; b < OG_COV_SIZES; b++)
-        for (int r = 0; r < n_cov[b] && out->n < OG_MAX_CANDS; r++)
-            out->idx[out->n++] = cov[b * OG_COV_PER_SIZE + r];
+    // ROUND-ROBIN, not width by width. Taking width 1 to its cap before looking
+    // at width 2 throttles the commonest board there is - one uncovered attack,
+    // where every cover is a single and the cap is the only thing that applies -
+    // while a board with three attacks still has to wait its turn. Interleaving
+    // gives each width its best first, and a board with only one width in play
+    // simply keeps drawing from it until the table is full.
+    // AND COVERS DO NOT GET THE WHOLE TABLE. pass / good / pickup are emitted
+    // after the covers and there are never more than a handful of them, but a
+    // defender facing a wide board ranks up to OG_COV_SIZES * OG_COV_PER_SIZE
+    // of them, which is more than OG_MAX_CANDS on its own. Unreserved, the
+    // covers filled it: a recorded PASS at a 4p board came back "not
+    // considered" behind 24 covers, and the same board could not have offered
+    // PICKUP at all - octogen cannot choose a move that is not a candidate, so
+    // that is a play defect and not only a panel one. The tail is tiny and
+    // always matters; it is reserved before the covers spend anything.
+    // n_pas is at most 3 and the two flags at most 1 each, so tail <= 5 against
+    // an OG_MAX_CANDS of 26 and the reserve can never go negative.
+    const int tail = n_pas + (good_idx >= 0) + (pickup_idx >= 0);
+    for (int r = 0; r < OG_COV_PER_SIZE; r++)
+        for (int b = 0; b < OG_COV_SIZES && out->n + tail < OG_MAX_CANDS; b++)
+            if (r < n_cov[b]) out->idx[out->n++] = cov[b * OG_COV_PER_SIZE + r];
     for (int i = 0; i < n_pas && out->n < OG_MAX_CANDS; i++) out->idx[out->n++] = pas[i];
     if (good_idx >= 0 && out->n < OG_MAX_CANDS)   out->idx[out->n++] = good_idx;
     if (pickup_idx >= 0 && out->n < OG_MAX_CANDS) out->idx[out->n++] = pickup_idx;
