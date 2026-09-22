@@ -10,6 +10,7 @@ import { useAnimation } from "../../contexts/AnimationContext";
 // from under it are one movement, so they are written with one curve.
 import { EASE, FLIGHT_ARM_MS } from "./FlightCard";
 import { covered, sameCard, type ViewBattle, type ViewCard } from "../../state/view";
+import { shownRow } from "../../state/animPlan";
 import { MOVE_ATTACK, MOVE_COVER, MOVE_PASS } from "@sdk/ts/gen/view_layout.bots.ts";
 import type { ClientPlay } from "@sdk/ts/table/client_table.ts";
 
@@ -29,6 +30,10 @@ const COVER_ROTATION: string = COVER_ROTATION_RAD + 'rad';
 const cellKey = (b: ViewBattle): string => b.attack.value + ' ' + b.attack.suit;
 
 const STILL = { x: 0, y: 0 };
+
+/** A board that is not there yet has no row; one object, so the grid's own
+ *  memoisation is not broken by a fresh empty array every render. */
+const EMPTY_ROW: readonly ViewBattle[] = [];
 
 /** The translate a cell is drawn with AT THIS INSTANT. Read off the COMPUTED
  *  style, never the inline one: while a glide is running the inline transform
@@ -72,7 +77,7 @@ export const TableBattles = () => {
     // AnimPlanStep.duration_ms), how long the ROW's own move lasts, and the row
     // itself while the kernel is holding it back. See `coveringNow` and the
     // glide below.
-    const { currentAnimation, isAnimating, flightMs, rowMs, heldBattles } = useAnimation();
+    const { currentAnimation, isAnimating, flightMs, rowMs, heldPiles } = useAnimation();
 
     // THE ROW THIS GRID DRAWS. The board's, except that a pile this run is
     // still carrying gets no cell until it lands - a move that ADDS a pile (a
@@ -81,7 +86,7 @@ export const TableBattles = () => {
     // its gap to the side from the first painted frame, with a cold open having
     // no previous layout to move it back from
     // (src/state/animPlan.ts heldRow, c/src/anim_plan.h AnimCounts).
-    const battles: readonly ViewBattle[] = heldBattles ?? game?.battles ?? [];
+    const battles: readonly ViewBattle[] = shownRow(game?.battles ?? EMPTY_ROW, heldPiles);
 
     // What a drop would do if it landed right now, and how many empty slots the
     // grid has to hold open for it - the cards the kernel's move actually lays.

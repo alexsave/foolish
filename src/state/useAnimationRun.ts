@@ -19,8 +19,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ANIM_STEP_NONE, type AnimPlanSnap } from '@sdk/ts/wasm/bots.ts';
-import { frameAt, heldRow, planFor, sameRow, type AnimStep } from './animPlan';
-import type { TableView, ViewBattle } from './view';
+import { frameAt, heldPiles, NO_HELD, planFor, sameHeld, type AnimStep } from './animPlan';
+import type { TableView } from './view';
 
 /** What the page draws for one card at one place while its flight is up. */
 export interface CardFlight {
@@ -63,7 +63,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
     const [currentAnimation, setCurrentAnimation] = useState<S | null>(null);
     const [flightMs, setFlightMs] = useState(0);
     const [rowMs, setRowMs] = useState(0);
-    const [heldBattles, setHeldBattles] = useState<ViewBattle[] | null>(null);
+    const [heldSet, setHeld] = useState<ReadonlySet<number>>(NO_HELD);
     const [inFlightFromDeck, setInFlightFromDeck] = useState(0);
     const [inFlightToFlipped, setInFlightToFlipped] = useState(0);
     const [animatingCards, setAnimatingCards] = useState<Map<string, CardFlight>>(new Map());
@@ -170,13 +170,15 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         }
         setRowMs((prev) => (prev === rowMsRef.current ? prev : rowMsRef.current));
 
-        // THE ROW THE GRID DRAWS: the board's, with no cell yet given to a pile
-        // this run is still carrying (animPlan.heldRow). The steps behind
-        // `landed` are the ones still in the air - a step that has landed has
-        // had its board committed, and its pile has earned its slot. Null - the
-        // usual answer - leaves the grid on the board exactly as before.
-        const held = heldRow(plan.pre, hooksRef.current.board(), run.slice(frame.landed));
-        setHeldBattles((prev) => (sameRow(prev, held) ? prev : held));
+        // THE PILES THE GRID MUST NOT MAKE ROOM FOR YET (animPlan.heldPiles). The
+        // steps behind `landed` are the ones still in the air - a step that has
+        // landed has had its board committed, and its pile has earned its slot.
+        // A SET AND NOT A ROW, deliberately: the grid takes these out of
+        // whatever board it is drawing at the instant it draws it, so a board
+        // committed between two frames is answered in the commit that carries
+        // it rather than one frame later.
+        const held = heldPiles(plan.pre, run.slice(frame.landed));
+        setHeld((prev) => (sameHeld(prev, held) ? prev : held));
 
         // WHAT FLIES IS A BEAT, NOT A STEP, and the kernel says which is which
         // (AnimPlanStep.beat_first / beat_n). The plan opens every step of one
@@ -209,7 +211,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
             // `rowMs` is NOT cleared here. The last landing moves the row in
             // this very frame, and it is entitled to the same glide every
             // earlier one had; the next run zeroes it when it starts.
-            setHeldBattles(null);
+            setHeld(NO_HELD);
             setIsAnimating(false);
             setInFlightFromDeck(0);
             setInFlightToFlipped(0);
@@ -259,7 +261,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         setCurrentAnimation(null);
         setFlightMs(0);
         setRowMs(0);
-        setHeldBattles(null);
+        setHeld(NO_HELD);
         setIsAnimating(false);
         setInFlightFromDeck(0);
         setInFlightToFlipped(0);
@@ -274,7 +276,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
     }, []);
 
     return {
-        isAnimating, currentAnimation, flightMs, rowMs, heldBattles,
+        isAnimating, currentAnimation, flightMs, rowMs, heldPiles: heldSet,
         inFlightFromDeck, inFlightToFlipped, animatingCards, enqueue, reset,
     };
 }

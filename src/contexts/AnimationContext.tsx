@@ -7,7 +7,7 @@ import { validateActionWire } from '../utils/gameValidation';
 import { encodeAction } from '@sdk/ts/wire/awire.ts';
 import { clientTable } from '@sdk/ts/table/client_table.ts';
 import { pushToSequence } from '../state/pushSequence';
-import { rulesOf, tableCards, type TableView, type ViewBattle, type ViewCard } from '../state/view';
+import { rulesOf, tableCards, type TableView, type ViewCard } from '../state/view';
 import { optimisticBoard, turnedBoard, withdrawn } from '../state/clientBoards';
 import { base64ToBytes } from '@sdk/ts/wire/bytes.ts';
 import { getCardKeyOwner, getCardKey } from '../utils/animationUtils';
@@ -63,11 +63,12 @@ interface AnimationContextType {
      *  between two flights, where that one is already 0. 0 before a run's first
      *  landing and after a seek, which are both meant to be instant. */
     rowMs: number;
-    /** THE ROW THE GRID DRAWS INSTEAD OF THE BOARD'S: the board's row with no
-     *  cell yet given to a pile this run is still carrying
-     *  (src/state/animPlan.ts heldRow). Null - the usual answer - means the
-     *  board on screen is already the right row. */
-    heldBattles: ViewBattle[] | null;
+    /** THE PILES THE GRID MUST NOT MAKE ROOM FOR YET - the cards this run is
+     *  still carrying to the table, which get no cell until they land
+     *  (src/state/animPlan.ts heldPiles, drawn through `shownRow`). Empty on
+     *  every frame with nothing in the air, and the same object each time, so
+     *  it compares by identity. */
+    heldPiles: ReadonlySet<number>;
     // Cards currently flying from the deck pile. Drives the visible pile size.
     // Drops BEFORE the animation starts and resets when the snapshot commits.
     inFlightFromDeck: number;
@@ -484,7 +485,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // tracking it releases, when a sequence's final board is the truth - because
     // that is about the game, and the loop is about time.
     const {
-        isAnimating, currentAnimation, flightMs, rowMs, heldBattles,
+        isAnimating, currentAnimation, flightMs, rowMs, heldPiles,
         inFlightFromDeck, inFlightToFlipped, animatingCards, enqueue, reset: resetRun,
     } = useAnimationRun<ClientAnimationEvent>({
         board: () => currentGameRef.current,
@@ -1021,7 +1022,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             currentAnimation,
             flightMs,
             rowMs,
-            heldBattles,
+            heldPiles,
             inFlightFromDeck,
             inFlightToFlipped,
             getCardAnimationState,

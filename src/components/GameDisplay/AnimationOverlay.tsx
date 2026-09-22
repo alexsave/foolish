@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useState, useRef } from 'react';
 import { useAnimation } from '../../contexts/AnimationContext';
-import { covered, sameCard, seatKey, type ViewCard as Card } from '../../state/view';
+import { covered, sameCard, seatKey, type ViewBattle as Battle, type ViewCard as Card } from '../../state/view';
 import { FlightCard, FLIGHT_ARM_MS, type AnimatedCard } from './FlightCard';
 import { useServer } from '../../contexts/ServerContext';
 // The kernel's can_cover: bots.wasm is loaded before any screen that reaches this
 // renders - /, /[game_id], /dashboard, /history and /tutorial are each wrapped in
 // KernelGate (src/components/KernelGate.tsx), the replay and the tutorial included.
 import { canCoverPair } from '../../utils/gameValidation';
+import { shownRow } from '../../state/animPlan';
 // The angle the battle grid lays a cover across its attack at: a flight has to
 // land where the grid will DRAW the card, and the grid is where that is stated.
 // `glideOffset` is the other half of that: while the row is still sliding to
@@ -32,6 +33,9 @@ const tableSlotKey = (totalSlots: number, slotIndex: number): string =>
 // server refused lands on the table in flight only - no board ever lays it - so its
 // return flight starts from the spot the outbound flight left it at.
 const tableLandings = new Map<string, { x: number; y: number }>();
+
+/** A board that is not there yet has no row. */
+const EMPTY_ROW: readonly Battle[] = [];
 
 /** A point on screen, in viewport coordinates. */
 type Spot = { x: number; y: number };
@@ -102,14 +106,14 @@ export const AnimationOverlay = () => {
     // `flightMs` is the kernel's duration for the step on screen (its plan's
     // AnimPlanStep.duration_ms), not a constant this file keeps: the curve and
     // the interpolation are rendering, the length of the flight is not.
-    const { currentAnimation, isAnimating, flightMs, heldBattles } = useAnimation();
+    const { currentAnimation, isAnimating, flightMs, heldPiles } = useAnimation();
     const { view: game } = useServer();
     // THE ROW THE GRID IS ACTUALLY DRAWING. The board's, minus any pile this
     // run is still carrying (TableBattles, and src/state/animPlan.ts heldRow).
     // Everything in this file that counts slots,
     // picks a pile or asks how a card is lying has to ask the row on screen -
     // aiming at a cell the grid is not drawing is aiming at nothing.
-    const shownBattles = heldBattles ?? game?.battles ?? [];
+    const shownBattles = shownRow(game?.battles ?? EMPTY_ROW, heldPiles);
     const overlayRef = useRef<HTMLDivElement>(null);
 
     // Invalidate the table-slot geometry cache on resize (Stage 9). The cache key
