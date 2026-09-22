@@ -163,7 +163,12 @@ async function runCycle(
             if (typeof p === 'number') throw refusal(gameId, 'commit products', p);
             products = p;
             seats = table.seats();
-            if (p.nEvents > 0) {
+            // See the note in table_io.ts: a bot's `good` emits no event, so
+            // `nEvents > 0` alone never broadcast it and the check only appeared
+            // when some later move carried the mask in with it. This is the lane
+            // that showed it worst, because a bot says good with nothing else
+            // happening in the same breath.
+            if (p.nEvents > 0 || p.goodsChanged) {
                 for (const viewer of [...seats.flatMap((s, i) => (s.brain ? [] : [i])), -1]) {
                     const push = table.push(gameId, viewer);
                     if (typeof push === 'number') throw refusal(gameId, 'push', push);

@@ -98,7 +98,7 @@ test('packed pipeline: legal awire moves apply, bump the version, rewrite the bl
         pickup: 'pickup',
     };
 
-    let applied = 0, broadcasted = 0;
+    let applied = 0, broadcasted = 0, plainGoods = 0;
     for (let step = 0; step < 14; step++) {
         const prev = await mustReadTable(gameId);
         if (prev.status !== L.GAME_STATUS_PLAYING) break;
@@ -121,12 +121,19 @@ test('packed pipeline: legal awire moves apply, bump the version, rewrite the bl
         assert.ok(chk.ok, `card conservation after packed ${pm.kind} at step ${step}: ${chk.detail}`);
 
         const fresh = animations(logStart);
-        if (fresh.length === 0) {
-            // A move producing zero events broadcasts nothing - only a plain good.
-            assert.equal(pm.kind, 'good', `only a plain good may broadcast nothing (step ${step} ${pm.kind})`);
-        } else {
+        {
+            // EVERY APPLIED MOVE IS BROADCAST, and a plain good is the one that
+            // used not to be. This branch used to open with its opposite - "a
+            // move producing zero events broadcasts nothing - only a plain good"
+            // - which was the adapter's `nEvents > 0` gate written down as an
+            // expectation. A good flies no card and so emits no event, and that
+            // gate threw its push away; TableCommit.goods_changed sends it now,
+            // and what goes out is a push whose stream is EMPTY and whose
+            // trailer board carries the mask. There is no move left that a
+            // client is told nothing about.
             broadcasted++;
-            assert.equal(fresh.length, seats.length + 1, 'one payload per human + one spectator payload');
+            assert.equal(fresh.length, seats.length + 1,
+                `one payload per human + one spectator payload (step ${step} ${pm.kind})`);
             const chans = new Set(fresh.map((f) => f.channel));
             for (const p of seats) assert.ok(chans.has(`gu-${gameId}-${p.id}`), `payload for human ${p.name}`);
             assert.ok(chans.has(`game-${gameId}`), 'spectator payload');
@@ -144,7 +151,26 @@ test('packed pipeline: legal awire moves apply, bump the version, rewrite the bl
                     'and everything before it is the as2 sequence');
                 const expectSeat = f.channel === `game-${gameId}` ? -1 : seats.findIndex((p) => f.channel === `gu-${gameId}-${p.id}`);
                 assert.equal(decoded!.viewerSeat, expectSeat, 'stream is personalized to its channel');
-                assert.ok(decoded!.events.length > 0, 'broadcast carries events');
+                // A PLAIN GOOD IS THE ONE EMPTY STREAM, and the two kinds of
+                // good are told apart here the way classify() tells them apart
+                // in c/src/bot_drive.c - by whether the operation closed the
+                // bout. The board the push settles on says it plainest: a good
+                // that closed it swept the table, so there are no battles left.
+                //
+                //   plain good  - no card flew, so the stream is EMPTY and the
+                //                 move is entirely in the trailer board's mask.
+                //                 This is the case that used to be broadcast to
+                //                 nobody, and the exact assertion is the point.
+                //   closing good - it carries the sweep it caused, like any move.
+                const closedTheBout = decoded!.game.battles.length === 0;
+                if (pm.kind === 'good' && !closedTheBout) {
+                    assert.equal(decoded!.events.length, 0, 'a plain good flies no card: its stream is empty');
+                    assert.ok((decoded!.game.goodMask & (1 << pm.seat)) !== 0,
+                        `and the trailer board carries the check it put on seat ${pm.seat}`);
+                    plainGoods++;
+                } else {
+                    assert.ok(decoded!.events.length > 0, 'broadcast carries events');
+                }
                 for (const ev of decoded!.events) {
                     assert.ok(KNOWN_EVENT_TYPES.has(ev.type), `known event type ${ev.type}`);
                     if (ev.seat !== undefined) {
@@ -164,6 +190,7 @@ test('packed pipeline: legal awire moves apply, bump the version, rewrite the bl
     }
     assert.ok(applied >= 6, `exercised enough packed moves (${applied}, seed=${rng.seed})`);
     assert.ok(broadcasted >= 3, `enough eventful broadcasts (${broadcasted}, seed=${rng.seed})`);
+    console.error(`[packed_action] ${applied} moves applied, ${broadcasted} broadcast, ${plainGoods} of them a plain good's empty stream`);
 });
 
 test('packed pipeline: an illegal move is REJECTED with a reject code - no version bump, no blob write, no broadcast', async () => {

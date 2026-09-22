@@ -373,7 +373,16 @@ function section(table: ServerTable, row: TableRow, op: TableOp, dealSeed: Uint8
     }
     const seats = table.seats();
     const pushes: { viewer: number; bytes: Uint8Array }[] = [];
-    if (products.nEvents > 0) {
+    // NOT `nEvents > 0` ALONE, and that lone test is the bug this replaced. A
+    // `good` emits no event - the kernel has no card to fly - so every good that
+    // did not also close the bout was silently never broadcast, and the mark only
+    // reached a client folded into whatever moved next. The owner, on finding it:
+    // "goods are now animation-causing moves."
+    //
+    // `goodsChanged` is the kernel's own answer (TableCommit.goods_changed), not
+    // a re-derivation here: this file used to decide it, badly, and c/src/
+    // bot_drive.c had copied the bad decision back into the kernel to match.
+    if (products.nEvents > 0 || products.goodsChanged) {
         for (let s = 0; s < seats.length; s++) {
             if (seats[s].brain) continue;   // a bot has no client
             pushes.push({ viewer: s, bytes: pushOrThrow(table.push(op.gameId, s)) });

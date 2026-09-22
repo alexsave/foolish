@@ -221,9 +221,23 @@ export const PlayerRing = () => {
 
                             TODO(ios-parity): iMessage shifts the defender shield
                             the moment a pass is STAGED (before defender_move
-                            lands) - that immediacy feels good; here a staged pass
-                            flies its shield at the prediction's closing beat
-                            instead. */}
+                            lands) - that immediacy feels good; here a pass I have
+                            played flies its shield at the prediction's closing
+                            beat instead.
+
+                            THE WEB HAS NO STAGING - a Messages extension stages a
+                            move into a bubble and sends it as a separate act, and
+                            that split is the platform's, not a design. The web's
+                            equivalent moment is the OPTIMISTIC SUBMIT, which is
+                            where a good now flips its own check
+                            (AnimationContext's `good`). A pass cannot follow it
+                            there yet for a reason that is not about where the
+                            call goes: `anim_goods_opening` needs only a mask this
+                            client already knows (its own seat's bit), while
+                            `anim_pass_hand_off` needs the FINAL board's defender,
+                            and an optimistic step carries no final board. Who
+                            defends next is the kernel's to say, so this waits on
+                            asking it rather than on deriving it here. */}
                         <RoleCoin
                             seat={index}
                             kind={mark}

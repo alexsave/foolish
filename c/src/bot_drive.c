@@ -122,17 +122,30 @@ static BoardMark mark(const Game *g) {
 
 // Did applying this move put anything on screen?
 //
-// This mirrors the server's test — `isPassive && moveEvents === 0` — without
-// building the event stream: only `good` (and the never-enumerated `wait`) can
-// be silent, and the one thing that makes a `good` visible is the round
-// transition it can trigger (handle_good runs execute_round_transition itself
-// once everyone is good and everything is covered), which moves the table to
-// the discard, changes the defender and refills hands.
+// A `good` IS A MOVE and always pays for its own beat now. It used to be
+// classed BOT_PACE_BUNDLED_PASSIVE whenever it did not also close the bout,
+// and this comment used to explain that as mirroring "the server's test —
+// `isPassive && moveEvents === 0`". That was the wrong direction of travel:
+// the test lived in the TypeScript adapter, the kernel copied it, and between
+// them they decided that a move the kernel has no CARD for is a move nobody
+// needs to see. The owner's verdict: "goods are now animation-causing moves."
+//
+// What made it look defensible is that a good emits no event, so the adapter's
+// `n_events > 0` broadcast gate dropped its push and there was genuinely
+// nothing on screen to pace. TableCommit.goods_changed now carries the change
+// instead (c/src/table.h), the adapter sends that push, and the badge turning
+// is the thing this beat is for. iMessage has animated it since round 21
+// ("A GOOD IS A MOVE, SO IT PLAYS FIRST") and was only ever waiting on the wire.
+//
+// ROUND TRANSITION still outranks it: a good that empties the table is paced by
+// the sweep it caused, not by the badge. `wait` is unchanged and still silent —
+// it is never enumerated as a legal move and changes nothing a viewer can see.
 static int classify(int move_type, const BoardMark *before, const Game *after) {
     if (move_type != MOVE_GOOD && move_type != MOVE_WAIT) return BOT_PACE_MOVE;
     if (after->discard_pile_length != before->discard
         || after->defender != before->defender
         || after->num_battles != before->battles) return BOT_PACE_ROUND_TRANSITION;
+    if (move_type == MOVE_GOOD) return BOT_PACE_MOVE;
     return BOT_PACE_BUNDLED_PASSIVE;
 }
 
