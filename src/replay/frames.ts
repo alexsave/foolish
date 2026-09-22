@@ -220,6 +220,33 @@ export function buildReplayFrames(
     return mergeCoverRuns(built, opts.moveGaps ?? null);
 }
 
+// WHAT IT WOULD TAKE TO STOP READING THE CLOCK, if this ever needs to.
+//
+// The clock is a PROXY. The fact is the commit boundary: the server knows which
+// pairs were one operation (table_commit_products stamps them together) and
+// keeps none of it except as a timestamp. Two ways to keep the fact itself:
+//
+//   In the EXTRAS, under a new flag bit - one bit per info move, "starts a new
+//   operation". No version byte moves: replay_extras_decode ignores flag bits it
+//   does not know and never reads past the sections it wants, so old readers
+//   tolerate a new one. This is the cheap door, and it is the only one that also
+//   fixes the links that carry no times at all (an iOS share carries names only,
+//   fio_replay_share_link). The cost is that every producer has to write it and
+//   the clock path has to stay for every code cut before it did.
+//
+//   In the MOVES half, as a cover continuation mirroring atom_attack/atom_pass.
+//   That is the honest home - a cover run IS one move, and the body is where a
+//   move lives - and it needs the version byte (v11): it changes the mixed-radix
+//   integer for every cover, so every v10 code decodes wrongly. 46b32c1f and
+//   c/ios/ios_api_replay.c both reached that conclusion before this did.
+//
+// Neither is EASIER than reading the clock, which is why the clock is what ships.
+// The reason to move is not effort, it is that the gate below silently depends on
+// an invariant two layers away - one commit, one now_ms - that nothing in this
+// file can see and no test here pins. If table.c ever stamps per record instead
+// of per commit, every cover run merges again and only a replay with real times
+// in it would notice.
+
 /** ZERO, exactly. Not a tolerance - an identity. table_commit_products stamps
  *  every record of one committed operation with the same `now_ms` (c/src/table.c),
  *  and table_replay_extras derives one gap per record from those stamps, so two

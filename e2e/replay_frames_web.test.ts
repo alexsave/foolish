@@ -307,3 +307,62 @@ test('a cover run is merged only when its pairs were one send', async () => {
         assert.equal(f.pairs?.length ?? 0, 1, 'a 30s gap is two sends, never one move');
     }
 });
+
+test('one committed operation is one clock stamp, which is what the merge reads', async () => {
+    // THE INVARIANT THE COVER MERGE STANDS ON, pinned where it can be seen.
+    // frames.ts merges a run of cover steps only when the gap between them is
+    // exactly zero, and that is only meaningful because table_commit_products
+    // stamps every record of ONE committed operation with the same now_ms
+    // (c/src/table.c) and table_replay_extras derives one gap per record from
+    // those stamps. Nothing in frames.ts can see that, and if table.c ever
+    // stamped per record instead of per commit the merge would quietly join
+    // every cover run again. So the rule is checked here, against a real table.
+    const { dealBotTable, botCycle, seedBytes } = await import('./helpers/bot_table.ts');
+    const { fixtureTable } = await import('./helpers/table_fixture.ts');
+    const { clientTable } = await import('../sdk/ts/table/client_table.ts');
+    const { EVW_T_COVER } = await import('../sdk/ts/gen/view_layout.bots.ts');
+    const { kernelReplayExtrasDecode, replaySummary } = await import('../sdk/ts/wasm/bots.ts');
+    const { replayCodeOf } = await import('./helpers/bot_table.ts');
+    const L = await import('../sdk/ts/gen/game_layout.bots.ts');
+
+    const table = fixtureTable();
+    let row: any = dealBotTable(['handwritten', 'handwritten'], seedBytes(2, 7), { table });
+    const coverOps: number[] = [];               // cover events per committed push
+    const readPush = (r: any) => {
+        const b = table.push(r.gameId, -1);
+        if (typeof b === 'number') return;
+        const rd = clientTable().readPush(b, { as3: true, identity: 'none' });
+        if (!rd) return;
+        const n = rd.steps.filter((s: any) => s.event.type === EVW_T_COVER).length;
+        if (n > 0) coverOps.push(n);
+    };
+    readPush(row);
+    for (let i = 0; i < 4000 && row.status === L.GAME_STATUS_PLAYING; i++) {
+        const c = botCycle(row, { table });
+        if (c.drive.n === 0) break;
+        row = c.row;
+        readPush(row);
+    }
+
+    const code = replayCodeOf(row, seedBytes(2, 7), { table });
+    const extras = table.replayExtras(row.log);
+    assert.ok(typeof extras !== 'number', 'the table produced an extras blob');
+    const sum = replaySummary(code)!;
+    const decoded = kernelReplayExtrasDecode(extras as Uint8Array, sum.numPlayers, sum.moves);
+    const gaps: number[] = decoded.moveGaps ?? [];
+    assert.ok(gaps.length > 0, 'the extras carry times');
+
+    // Every pair PAST THE FIRST of a multi-pair cover shares its operation's
+    // stamp, so it contributes exactly one zero gap. Nothing else may.
+    const expectedZeros = coverOps.reduce((n, k) => n + (k - 1), 0);
+    const zeros = gaps.filter((g) => g === 0).length;
+    assert.ok(coverOps.some((k) => k > 1), 'the fixture actually contains a multi-pair cover');
+    assert.equal(zeros, expectedZeros,
+        `a zero gap is one commit: expected ${expectedZeros} from ${coverOps.filter(k => k > 1).length} multi-pair covers`);
+
+    // And a separate operation is never zero - there is no near-miss band, so
+    // the merge's "=== 0" needs no tolerance.
+    const nonzero = gaps.filter((g) => g > 0);
+    assert.ok(Math.min(...nonzero) > 0.1,
+        `separate operations are far from zero (min ${Math.min(...nonzero)}s)`);
+});
