@@ -24,15 +24,6 @@ import { FoolishLanguages } from '@sdk/ts/gen/i18n/languages';
 /** Every key that exists, as a union - derived from the C, never restated. */
 export type StringId = (typeof FoolishStringKeys)[number];
 
-const IDS: ReadonlySet<string> = new Set(FoolishStringKeys);
-
-/** Is `s` a key the C declares? For the one caller that composes a key out of
- *  kernel data rather than writing it down - a bot's city is `bot.<strategy
- *  key>` (src/common/botName.ts), and which rungs have one is a fact of
- *  c/i18n, not a list TypeScript should keep a second copy of. Everywhere else,
- *  write the literal and let tsc check it. */
-export const isStringId = (s: string): s is StringId => IDS.has(s);
-
 /** A language's table. Partial only in type: every language carries every key
  *  (`datagen --require-complete`), and `translate` still falls back rather than
  *  render `undefined` if that ever stops being true. */

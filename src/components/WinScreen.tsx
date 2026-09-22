@@ -166,7 +166,7 @@ export const WinScreen: React.FC = () => {
 
                                 <div className="flex items-baseline gap-sm min-w-0">
                                     <span className={`result-card__name ${isCurrentUser ? 'result-card__name--current' : ''}`}>
-                                        {botDisplayName(result.name, t)}
+                                        {botDisplayName(result.name)}
                                     </span>
                                     {isCurrentUser && (
                                         <span className="result-card__you">(<Text id="you" />)</span>

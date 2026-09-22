@@ -10,6 +10,11 @@
 // the picker points at. This test clicks during the load and asserts a specific
 // bot id is sent (never undefined).
 //
+// It also pins WHICH bot that is. The picker walks the ladder - weakest rung
+// first, then instance number, from the kernel's `tier` - so a parked click adds
+// the bot the picker opens on. That used to be whichever row was newest, which
+// is seed.sql's insert order backwards.
+//
 // Needs --experimental-test-module-mocks (see the test:e2e script).
 
 import { test, mock, before, after } from 'node:test';
@@ -29,10 +34,14 @@ g.MouseEvent = dom.window.MouseEvent;
 g.IS_REACT_ACT_ENVIRONMENT = true;
 
 
-// Roster the picker fetches, newest first. Real bot ids on every row.
+// Roster the picker fetches. Deliberately NOT in ladder order and not in insert
+// order either: the picker sorts it by the kernel's tier
+// (src/common/botLadder.ts), so handwritten (tier 3) must come out ahead of
+// cordite (tier 9) whatever order the rows arrive in. Real bot ids on every row.
 const ROSTER = [
-    { id: 'bot-newest', nickname: '%Cordite', strategy_key: 'cordite' },
-    { id: 'bot-old', nickname: '%Handwritten', strategy_key: 'handwritten' },
+    { id: 'bot-cordite-2', nickname: '%Cordite 2', strategy_key: 'cordite' },
+    { id: 'bot-handwritten-3', nickname: '%Handwritten 3', strategy_key: 'handwritten' },
+    { id: 'bot-handwritten-1', nickname: '%Handwritten 1', strategy_key: 'handwritten' },
 ];
 
 // Controls WHEN the roster fetch resolves, so the test can click mid-load.
@@ -44,11 +53,11 @@ const addBotCalls: Array<string | undefined> = [];
 // Minimal supabase whose bots query resolves only after `releaseRoster()`.
 const supabaseMock = {
     from: () => ({
+        // No .order(): the ladder is the kernel's tier, not a column, so the
+        // query is a plain select and the component sorts what comes back.
         select: () => ({
-            order: () => ({
-                then: (cb: (r: { data: any; error: any }) => void) =>
-                    rosterGate.then(() => cb({ data: ROSTER, error: null })),
-            }),
+            then: (cb: (r: { data: any; error: any }) => void) =>
+                rosterGate.then(() => cb({ data: ROSTER, error: null })),
         }),
     }),
 };
@@ -118,8 +127,12 @@ test('lobby: clicking Add Bot before the roster loads adds a SPECIFIC bot, not a
     await act(async () => { await rosterGate; await Promise.resolve(); await Promise.resolve(); });
 
     // Now exactly one add happened, for the SPECIFIC newest bot — never undefined.
+    // …and for the bot the ladder opens on: weakest rung, lowest instance number.
+    // Handwritten 1 arrives LAST in the mock's rows, so this also pins that the
+    // picker orders by tier rather than by arrival.
     assert.equal(addBotCalls.length, 1, 'the parked click resolved to exactly one add');
-    assert.equal(addBotCalls[0], 'bot-newest', 'added the specific (newest) bot, not a random server pick');
+    assert.equal(addBotCalls[0], 'bot-handwritten-1',
+        'added the bot the ladder opens on (weakest rung, first instance), not a random server pick');
 
     root.unmount();
 });

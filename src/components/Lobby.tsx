@@ -34,6 +34,8 @@ import { useLocalization } from "../contexts/LocalizationContext";
 import { SovietIcon } from "./SovietIcon";
 import { useStyles } from "../contexts/StyleContext";
 import { botDisplayName } from "../common/botName";
+import { sortBotsByLadder } from "../common/botLadder";
+import { kernelBotRoster } from "@sdk/ts/wasm/bots.ts";
 
 interface BotOption {
     id: string;
@@ -84,7 +86,7 @@ const PlayerCard: React.FC<PlayerCardProps> = ({
             />
             <p className="player-card__name">
                 {player.isAi && <><SovietIcon name="bot" size={14} /> </>}
-                {botDisplayName(player.name, t)}
+                {botDisplayName(player.name)}
             </p>
             <div className="player-card__status">
                 <SovietIcon name={isReady ? 'ready' : 'not-ready'} size={16} />
@@ -230,20 +232,26 @@ export const Lobby = () => {
         };
     }, []);
 
-    // Load the bot roster once for the lobby picker, newest first so the default
-    // selection lands on the most recently created bot. The bots table is
-    // read-only to authenticated users (RLS). GPT bots are gated to one user
-    // server-side, so we don't surface them in the picker.
+    // Load the bot roster once for the lobby picker, in LADDER order: weakest to
+    // strongest, and within a rung by instance number, so the picker walks
+    // Miami 1 … Miami 7, New York 1 … Moscow 7 and opens on the weakest bot.
+    // The order is the kernel's `tier` (c/src/bot_roster.c), looked up through
+    // kernelBotRoster() rather than restated here; src/common/botLadder.ts holds
+    // the comparator. It used to be `created_at` descending, which is the order
+    // seed.sql inserts, backwards - the picker opened on Moscow 7 and walked out
+    // through the families in reverse. The bots table is read-only to
+    // authenticated users (RLS). GPT bots are gated to one user server-side, so
+    // we don't surface them in the picker.
     useEffect(() => {
         let cancelled = false;
         supabase
             .from('bots')
             .select('id, nickname, strategy_key')
-            .order('created_at', { ascending: false })
             .then(({ data, error }) => {
                 if (cancelled) return;
                 if (!error && data) {
-                    setAllBots(data);
+                    const tier = new Map(kernelBotRoster().map((e) => [e.key, e.tier]));
+                    setAllBots(sortBotsByLadder(data, (key) => tier.get(key)));
                 }
                 // Mark the roster settled even on error, so a deferred add doesn't
                 // wait forever — it falls back to the server's pick only when the
@@ -601,7 +609,7 @@ export const Lobby = () => {
                         {useWoodTexture && <div className="btn-add-bot__texture" style={buttonTextureStyle} />}
                         <p className="btn-add-bot__text">
                             {selectedBot
-                                ? t('add_bot_named', { name: botDisplayName(selectedBot.nickname, t) })
+                                ? t('add_bot_named', { name: botDisplayName(selectedBot.nickname) })
                                 : t('add_bot')}
                         </p>
                     </div>

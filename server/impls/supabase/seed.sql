@@ -1182,111 +1182,85 @@ END $$;
 -- =============================================================================
 
 INSERT INTO bots (nickname, strategy_key) VALUES
--- Handwritten strategy bots (rule-based)
+-- THE ROSTER IS NAMED AFTER CITIES WHERE IT IS STORED. A bot's nickname IS its
+-- city on the road to Moscow (docs/IOS_BOT_NAMING.md) - there is no display map
+-- anywhere, so what a page shows is what this table says, and what a replay blob
+-- embeds is what that replay shows. An old replay code that stored '%Octogen 1'
+-- renders '%Octogen 1', because that is the bot that played it.
 --
--- SEVEN OF EVERY FAMILY, which is what makes a full table of one bot possible:
--- eight seats is a human plus seven opponents, so a rung with fewer than seven
--- rows cannot fill one. Every seeded family below is seven for that reason, and
--- e2e/validation/bot_city_names_validation.test.ts holds it.
+-- The strategy_key never changes: the kernel's brains keep the ordnance names
+-- they are called by in c/src (cordite_strategy.c, octogen_strategy.c), and the
+-- key is what c/src/bot_roster.c dispatches on. Only the player-facing nickname
+-- is a city.
 --
--- The `0x00C0FFEE` row is gone (it was the second Handwritten). It predates the
--- city ladder and was the one seeded nickname that is not a rung's name at all,
--- so on a board of Miami / New York / Madrid it read as a bug rather than as a
--- joke. The nickname parser still passes a leading `0x...` through verbatim,
--- because old replay blobs carry it embedded at encode time.
-('Handwritten 1', 'handwritten'),
-('Handwritten 2', 'handwritten'),
-('Handwritten 3', 'handwritten'),
-('Handwritten 4', 'handwritten'),
-('Handwritten 5', 'handwritten'),
-('Handwritten 6', 'handwritten'),
-('Handwritten 7', 'handwritten'),
+-- SEVEN OF EVERY FAMILY, in ladder order. Eight seats is a human plus seven
+-- opponents, so seven is what it takes to fill a table with one city. Held by
+-- e2e/validation/bot_city_names_validation.test.ts, which also refuses an
+-- ordnance name in this table.
 
--- Random strategy bots (chaotic)
-('Random 1', 'random'),
-('Random 2', 'random'),
-('Random 3', 'random'),
-('Random 4', 'random'),
-('Random 5', 'random'),
-('Random 6', 'random'),
-('Random 7', 'random'),
+-- Miami - Uniform over the legal-move list. Tier 1.
+('Miami 1', 'random'),
+('Miami 2', 'random'),
+('Miami 3', 'random'),
+('Miami 4', 'random'),
+('Miami 5', 'random'),
+('Miami 6', 'random'),
+('Miami 7', 'random'),
 
--- NOTE: simple_heuristic is NOT seeded, though the kernel dispatches it fine.
--- The site renders a bot seat as its rung's city (docs/IOS_BOT_NAMING.md), the
--- ladder is seven cities, and this rung has none - a seeded row would put
--- "Simple Heuristic 2" on a board between Miami and Madrid. It stays an
--- offline-only rung in c/src/bot_roster.c (`offline` 1, `seeded` 0); migration
--- 20260922120000_city_ladder_bot_rows took its three rows off hosted.
+-- New York - Lowest-first heuristic, an exact mirror of the retired TS bot. Tier 3.
+('New York 1', 'handwritten'),
+('New York 2', 'handwritten'),
+('New York 3', 'handwritten'),
+('New York 4', 'handwritten'),
+('New York 5', 'handwritten'),
+('New York 6', 'handwritten'),
+('New York 7', 'handwritten'),
 
--- NOTE: champion, ultimate_champion, hacker, espresso, semtex and semtex_max
--- are intentionally NOT seeded. Those strategies are not compiled into / not
--- dispatched by the production bots.wasm (see wasm_choose_move in
--- c/wasm/wasm_bots_api.c), so a bot carrying one of those keys silently
--- falls back to `random` — a bot that plays nothing like its name and pollutes
--- the Elo leaderboard. Only strategy keys the wasm actually dispatches are
--- seeded: random, handwritten (→handwritten_prod), firecracker, blackpowder,
--- cordite, octogen.
---
--- The seeded set must equal the `seeded` column of the C bot roster
--- (c/src/bot_roster.c) — that table is the canonical roster
--- (docs/C_CORE_CONSOLIDATION.md F1).
---
--- The `_max` tiers were retired (migration 20260715120000_drop_max_bot_tiers):
--- octogen_max was a plain alias of octogen (identical knobs), and cordite_max's
--- CD_BUDGET=max is a FLAT world budget that only exceeds the player-count-aware
--- `prod` schedule at 2-4 players and is about HALF of it at 6-8 — so "Max" was
--- the weaker bot in the larger games. One cordite, on the prod budget.
+-- Seoul - The first Monte Carlo: public-info sampled worlds, no belief, no solver. Tier 5.
+('Seoul 1', 'robusta'),
+('Seoul 2', 'robusta'),
+('Seoul 3', 'robusta'),
+('Seoul 4', 'robusta'),
+('Seoul 5', 'robusta'),
+('Seoul 6', 'robusta'),
+('Seoul 7', 'robusta'),
 
--- Firecracker strategy bots — shipped ladder "Medium" rung (Durak Bot Ordnance
--- Chart). Public-info Monte Carlo: robusta's sampled-world MC with espresso as
--- the rollout policy. Honest (never reads real hidden hands).
-('Firecracker 1', 'firecracker'),
-('Firecracker 2', 'firecracker'),
-('Firecracker 3', 'firecracker'),
-('Firecracker 4', 'firecracker'),
-('Firecracker 5', 'firecracker'),
-('Firecracker 6', 'firecracker'),
-('Firecracker 7', 'firecracker'),
+-- Madrid - Robusta's MC with espresso as the rollout policy. Honest - never reads a hidden hand. Tier 6.
+('Madrid 1', 'firecracker'),
+('Madrid 2', 'firecracker'),
+('Madrid 3', 'firecracker'),
+('Madrid 4', 'firecracker'),
+('Madrid 5', 'firecracker'),
+('Madrid 6', 'firecracker'),
+('Madrid 7', 'firecracker'),
 
--- Blackpowder strategy bots — shipped ladder "Hard" rung. The first
--- belief-constrained Monte Carlo (cordite's predecessor): card memory rebuilt
--- from the public log, void-constraint belief mixture, and an exact endgame
--- solver. Public info only.
-('Blackpowder 1', 'blackpowder'),
-('Blackpowder 2', 'blackpowder'),
-('Blackpowder 3', 'blackpowder'),
-('Blackpowder 4', 'blackpowder'),
-('Blackpowder 5', 'blackpowder'),
-('Blackpowder 6', 'blackpowder'),
-('Blackpowder 7', 'blackpowder'),
+-- Vienna - The first belief-constrained MC: card memory from the public log, void-constraint mixture, exact endgame solver. Tier 8.
+('Vienna 1', 'blackpowder'),
+('Vienna 2', 'blackpowder'),
+('Vienna 3', 'blackpowder'),
+('Vienna 4', 'blackpowder'),
+('Vienna 5', 'blackpowder'),
+('Vienna 6', 'blackpowder'),
+('Vienna 7', 'blackpowder'),
 
--- Cordite strategy bots (belief-constrained Monte Carlo, no cheating —
--- beats every other bot at every player count 2-8; see c/CORDITE.md)
-('Cordite 1', 'cordite'),
-('Cordite 2', 'cordite'),
-('Cordite 3', 'cordite'),
-('Cordite 4', 'cordite'),
-('Cordite 5', 'cordite'),
-('Cordite 6', 'cordite'),
-('Cordite 7', 'cordite'),
+-- St. Petersburg - Bitboard rollouts, common random numbers, loss-avoiding root solver, rank-floor inference. Tier 9.
+('St. Petersburg 1', 'cordite'),
+('St. Petersburg 2', 'cordite'),
+('St. Petersburg 3', 'cordite'),
+('St. Petersburg 4', 'cordite'),
+('St. Petersburg 5', 'cordite'),
+('St. Petersburg 6', 'cordite'),
+('St. Petersburg 7', 'cordite'),
 
--- (semtex / semtex_max are not seeded — not dispatched by bots.wasm; see the
--- note above. Octogen is semtex's shipped successor and IS dispatched.)
+-- Moscow - Cordite's line with a wider exact-solve window; provably never worse. Tier 10.
+('Moscow 1', 'octogen'),
+('Moscow 2', 'octogen'),
+('Moscow 3', 'octogen'),
+('Moscow 4', 'octogen'),
+('Moscow 5', 'octogen'),
+('Moscow 6', 'octogen'),
+('Moscow 7', 'octogen');
 
--- Octogen (semtex + extended exact-solve window; provably never worse than
--- semtex, strictly better in deep heads-up endgames — see c/OCTOGEN.md)
-('Octogen 1', 'octogen'),
-('Octogen 2', 'octogen'),
-('Octogen 3', 'octogen'),
-('Octogen 4', 'octogen'),
-('Octogen 5', 'octogen'),
-('Octogen 6', 'octogen'),
-('Octogen 7', 'octogen');
-
--- Bots carry the reserved '%' prefix so bot-vs-human is recoverable from the
--- name-only replay codec. Done as an UPDATE (rather than prefixing every literal
--- above) so the list stays readable; idempotent via the left() check. The hosted
--- database was given the same rename by migration 20260615120000.
 UPDATE bots SET nickname = '%' || nickname WHERE left(nickname, 1) <> '%';
 
 

@@ -268,7 +268,7 @@ export const MatchHistory: React.FC = () => {
                                             <span key={seat} style={{ marginRight: 6, fontWeight: seat === entry.mySeat ? 'bold' : 'normal' }}>
                                                 {isBotName(name) && <SovietIcon name="bot" size={11} />}
                                                 {seat === entry.foolSeat && <SovietIcon name="fool" size={11} />}
-                                                {botDisplayName(name, t)}
+                                                {botDisplayName(name)}
                                             </span>
                                         ))}
                                     </span>

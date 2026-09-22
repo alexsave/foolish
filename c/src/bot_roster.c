@@ -62,7 +62,7 @@ static const BotRosterEntry ROSTER[] = {
     { "simple_heuristic", STRAT_SIMPLE_HEURISTIC, "",                   0,   0,     1,     2  },
     { "handwritten",      STRAT_HANDWRITTEN_PROD, "",                   0,   1,     1,     3  },
     { "espresso",         STRAT_ESPRESSO_PROD,    "",                   1,   0,     1,     4  },
-    { "robusta",          STRAT_ROBUSTA,          "",                   1,   0,     1,     5  },
+    { "robusta",          STRAT_ROBUSTA,          "",                   1,   1,     1,     5  },
     { "firecracker",      STRAT_FIRECRACKER,      "",                   1,   1,     1,     6  },
     { "gunpowder",        STRAT_GUNPOWDER,        "",                   1,   0,     1,     7  },
     { "blackpowder",      STRAT_BLACKPOWDER,      "",                   1,   1,     1,     8  },
