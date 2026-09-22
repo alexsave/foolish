@@ -1469,6 +1469,45 @@ static void og_ranked_insert(int *idxs, double *keys, int *n, int cap,
     if (*n < cap) (*n)++;
 }
 
+#ifdef FOOLISH_ORACLE_BUILD
+// TWO COVERS THAT SPEND THE SAME CARDS ON THE SAME ATTACKS ARE ONE MOVE, and
+// legal move generation emits them separately. Give a defender two trumps and
+// two uncovered attacks and it enumerates JD*->9C with QD*->9H and JD*->9H with
+// QD*->9C: different LegalMoves, identical commitment, and both end the bout
+// with the same four cards in the discard. The panel already knows they are one
+// - the accumulator keys on the sorted cards and the sorted targets, so it
+// folds them - but by then the damage is done, because each of them took a
+// candidate place and a share of the worlds. One 5p board ranked 45 candidates
+// that were 24 distinct moves: nearly half the deliberation spent twice on the
+// same answer, and one candidate in three on that board is a repeat.
+//
+// Only an ORACLE build drops them. It is pre-existing and it is not this
+// commit's to change for the shipped bot: at 26 candidates the bot duplicates
+// too (53 of 1,110 surveyed decisions carry a repeat before any of this, 66
+// after the wider table), but de-duplicating alters which moves it searches and
+// therefore how it plays, and that is a measurement this commit has not made.
+static bool og_same_cards(const Card *x, const Card *y, int n) {
+    bool used[MAX_MOVE_CARDS] = { false };
+    if (n > MAX_MOVE_CARDS) return false;
+    for (int i = 0; i < n; i++) {
+        int j = 0;
+        while (j < n && (used[j] || x[i].suit != y[j].suit || x[i].value != y[j].value)) j++;
+        if (j == n) return false;
+        used[j] = true;
+    }
+    return true;
+}
+
+/** Same move by the canonical key the panel uses: same type, same cards as a
+ *  multiset, and for a cover the same targets as a multiset. */
+static bool og_same_key(const LegalMove *a, const LegalMove *b) {
+    if (a->type != b->type || a->n_cards != b->n_cards) return false;
+    if (!og_same_cards(a->cards, b->cards, a->n_cards)) return false;
+    return a->type != MOVE_COVER
+        || og_same_cards(a->attack_cards, b->attack_cards, a->n_cards);
+}
+#endif
+
 static void og_pick_candidates(const Game *g, const LegalMoves *moves,
                                const bool *excluded, Candidates *out) {
     int power = g->power_suit;
@@ -1566,6 +1605,12 @@ static void og_pick_candidates(const Game *g, const LegalMoves *moves,
         if (b < 0) b = 0;                   // never index behind wid[]
         if (b >= OG_W_SIZES) b = OG_W_SIZES - 1;
         const int o = b * OG_W_PER_SIZE;
+#ifdef FOOLISH_ORACLE_BUILD
+        bool dup = false;                   // see og_same_key above
+        for (int k = 0; k < n_wid[b] && !dup; k++)
+            dup = og_same_key(m, &moves->moves[wid[o + k]]);
+        if (dup) continue;
+#endif
         og_ranked_insert(wid + o, wid_k + o, &n_wid[b], OG_W_PER_SIZE, i, key);
     }
 
