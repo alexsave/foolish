@@ -64,11 +64,12 @@
  * card_list_parse through the fixture builder - no card layout is written here.
  * ========================================================================== */
 
-import { createHash, randomUUID, webcrypto } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { encodeAction, type AwireMove } from '../sdk/ts/wire/awire.ts';
 import { bytesToBase64, bytesToBareHex } from '../sdk/ts/wire/bytes.ts';
+import { derivedUuid } from '../sdk/ts/wire/detid.ts';
 import { TABLE_DEAL_SEED_BYTES, type TableProducts, type TableSeat } from '../sdk/ts/table/server_table.ts';
 import { clientTable } from '../sdk/ts/table/client_table.ts';
 import { fixture, fixtureTable, parseCardText, PLAYING, type FixtureSeat, type TableFixture } from './helpers/table_fixture.ts';
@@ -87,6 +88,27 @@ export interface FakeUser { id: string; name: string; email: string }
 
 const emailFor = (name: string): string =>
     `${createHash('sha256').update(name.toUpperCase(), 'utf8').digest('hex').slice(0, 16)}@${WEBSITE_DOMAIN}`;
+
+// ---- ids and seeds: derived here, drawn on the real server --------------------
+//
+// The server this file stands in for draws real entropy in three places, and
+// each one has an entry in scripts/check_determinism.mjs's ALLOW saying why:
+// the game id doubles as the code a stranger types to join, so it must be
+// unguessable; the broadcast envelope's `s` is a dedupe key; the deal seed is
+// THE draw, the one the whole game replays from.
+//
+// Not one of those reasons survives the move into a test harness. Nobody joins
+// this backend by guessing, and a fake server that deals a different game on
+// every run is a harness that hands a red CI log no repro line - the exact
+// thing the gate exists to prevent. So all three are functions of their inputs
+// here, and two runs of the same scenario are the same game.
+
+/** The deal seed table_io.ts draws from crypto: 32 bytes, from the row instead. */
+const dealSeedFor = (gameId: string, version: number): Uint8Array =>
+    new Uint8Array(createHash('sha256')
+        .update(`e2e/fake_supabase:deal#${gameId}#${version}`, 'utf8')
+        .digest()
+        .subarray(0, TABLE_DEAL_SEED_BYTES));
 
 const userFor = (name: string): FakeUser => ({ id: `u-${name.toLowerCase()}`, name: name.toUpperCase(), email: emailFor(name) });
 
@@ -188,6 +210,20 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
     const holding = new Set<string>();
     const botTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+    // Per server, not per module, and zeroed by reset() below: a harness that
+    // starts over deals the same game again.
+    let pushN = 0;
+    let gameN = 0;
+    /** The broadcast envelope's `s`: distinct per push, identical across runs. */
+    const pushSeq = (): string => derivedUuid('e2e/fake_supabase:push', pushN++);
+    /** A game id in create/index.ts's shape - the first 6 of a UUID. */
+    const nextGameId = (): string => {
+        for (;;) {
+            const id = derivedUuid('e2e/fake_supabase:game', gameN++).slice(0, 6);
+            if (!rows.has(id)) return id;
+        }
+    };
+
     const register = (name: string): FakeUser => {
         const u = userFor(name);
         users.set(u.id, u);
@@ -216,8 +252,7 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
         if (loaded < 0) throw new Error(`game ${row.id} does not load (${loaded})`);
         const seeded = t.setDealSeed(row.seedHex);
         if (seeded < 0) throw new Error(`game ${row.id}: deal seed refused (${seeded})`);
-        const seed = new Uint8Array(TABLE_DEAL_SEED_BYTES);
-        webcrypto.getRandomValues(seed);
+        const seed = dealSeedFor(row.id, row.version);
 
         const rc = act(t, seed);
         const seat = viewerId === null ? -1 : t.seatOf(viewerId);
@@ -236,10 +271,10 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
                 if (seats[s].brain) continue;
                 const b = t.push(row.id, s);
                 if (typeof b === 'number') throw new Error(`game ${row.id}: push refused (${b})`);
-                pushes.push({ topic: `gu-${row.id}-${seats[s].id}`, owner: seats[s].id, seq: randomUUID(), version: row.version + 1, bytes: b });
+                pushes.push({ topic: `gu-${row.id}-${seats[s].id}`, owner: seats[s].id, seq: pushSeq(), version: row.version + 1, bytes: b });
             }
             const spec = t.push(row.id, -1);
-            if (typeof spec !== 'number') pushes.push({ topic: `game-${row.id}`, owner: null, seq: randomUUID(), version: row.version + 1, bytes: spec });
+            if (typeof spec !== 'number') pushes.push({ topic: `game-${row.id}`, owner: null, seq: pushSeq(), version: row.version + 1, bytes: spec });
         }
         const envelope = (seat >= 0 ? p.views[seat] : null) ?? p.spectator;
         commitRow(row, p, seats, p.dealtNow ? seed : null);
@@ -320,10 +355,10 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
             for (let s = 0; s < seats.length; s++) {
                 if (seats[s].brain) continue;
                 const b = t.push(gameId, s);
-                if (typeof b !== 'number') pushes.push({ topic: `gu-${gameId}-${seats[s].id}`, owner: seats[s].id, seq: randomUUID(), version: row.version + 1, bytes: b });
+                if (typeof b !== 'number') pushes.push({ topic: `gu-${gameId}-${seats[s].id}`, owner: seats[s].id, seq: pushSeq(), version: row.version + 1, bytes: b });
             }
             const spec = t.push(gameId, -1);
-            if (typeof spec !== 'number') pushes.push({ topic: `game-${gameId}`, owner: null, seq: randomUUID(), version: row.version + 1, bytes: spec });
+            if (typeof spec !== 'number') pushes.push({ topic: `game-${gameId}`, owner: null, seq: pushSeq(), version: row.version + 1, bytes: spec });
         }
         const delay = t.cycleDelayMs();
         commitRow(row, p, seats, null);
@@ -499,7 +534,7 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
         const isJson = String(req.headers['content-type'] ?? '').includes('json');
 
         if (name === 'create') {
-            const gameId = randomUUID().slice(0, 6);
+            const gameId = nextGameId();
             const t = fixtureTable();
             const rc = t.create(me.id, me.name);
             if (rc < 0) return json(res, 400, { error: `create refused (${rc})` });
@@ -627,6 +662,7 @@ export async function startFakeSupabase(opts: FakeOptions = {}): Promise<FakeBac
             for (const timer of botTimers.values()) clearTimeout(timer);
             botTimers.clear();
             trace.length = 0;
+            pushN = 0; gameN = 0;
         },
         stop: () => new Promise<void>((resolve) => {
             for (const timer of botTimers.values()) clearTimeout(timer);

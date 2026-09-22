@@ -25,13 +25,19 @@
 // Nothing here knows anything about the game: it moves JSON between sockets and
 // a hub. The backend decides what to send.
 
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import type { IncomingMessage, Server } from 'node:http';
 import type { Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
+import { derivedUuid } from '../../sdk/ts/wire/detid.ts';
 
 /** RFC 6455 section 1.3. */
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+
+// A socket id is only ever compared to another socket id - it never reaches the
+// wire and nothing guesses it - so it is counted, not drawn. Module-level rather
+// than per-hub because two hubs in one process must still not share an id.
+let socketN = 0;
 
 /** A channel's name without realtime-js's namespace ("realtime:gu-x" -> "gu-x"). */
 export const bareTopic = (topic: string): string => (topic.startsWith('realtime:') ? topic.slice('realtime:'.length) : topic);
@@ -47,7 +53,7 @@ export interface PhxMessage {
 
 /** One connected client, and what it has joined. */
 export class PhxSocket {
-    readonly id = randomUUID();
+    readonly id = derivedUuid('e2e/helpers/ws_phoenix', socketN++);
     /**
      * Topics this socket has joined, by their BARE name, to the name the wire
      * uses. realtime-js namespaces every channel ("realtime:gu-<game>-<user>"),
