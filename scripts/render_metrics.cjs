@@ -92,7 +92,9 @@ function e2eRows(base, head) {
 }
 
 function sizeRows(base, head) {
-  return ['rules', 'guards', 'bots', 'oracle', 'oracle-mt'].map((m) => {
+  // `web` first: it is the link a visitor downloads, and so the only size row
+  // on this table that is a user-facing number rather than a deploy one.
+  return ['web', 'rules', 'guards', 'bots', 'oracle', 'oracle-mt'].map((m) => {
     const b = base?.size?.[m], h = head?.size?.[m];
     return `| \`${m}.wasm\` | ${kb(b?.raw)} / ${kb(b?.gz)} | ${kb(h?.raw)} / ${kb(h?.gz)} | ${deltaCell(b?.gz, h?.gz, { fmt: kb })} |`;
   }).join('\n');
@@ -116,7 +118,7 @@ function memRow(label, bBytes, hBytes) {
 // pinned module (--initial-memory == --max-memory) is flagged 📌.
 function declaredMemRows(base, head) {
   const pageStr = (lm) => lm == null ? 'n/a' : `${lm.pages} pg · ${kb(lm.bytes)}${lm.pinned ? ' 📌' : ''}`;
-  return ['rules', 'guards', 'bots'].map((m) => {
+  return ['web', 'rules', 'guards', 'bots'].map((m) => {
     const b = base?.linearMemory?.[m], h = head?.linearMemory?.[m];
     return `| \`${m}.wasm\` | ${pageStr(b)} | ${pageStr(h)} | ${deltaCell(b?.bytes, h?.bytes, { fmt: kb })} |`;
   }).join('\n');

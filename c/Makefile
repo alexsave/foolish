@@ -1402,13 +1402,11 @@ build/named/bots.named.wasm: $(WASM_BOT_OBJ) Makefile
 # bots.wasm ships as ONE gzip STATIC ASSET (config.toml static_files + deploy
 # --use-api, no Docker) — a real binary, not a base64 .ts embed.
 #
-# EVERY host reads this one file. The server (Deno edge / Node) with
-# fs/readFileSync; the browser by FETCHING it, because it has neither — see
-# sdk/ts/wasm/wasm_asset.ts. The browser needs the big module for two reasons
-# that arrived together: FMSG's decode/seal live only here (sealing reads a
-# resident session log rules.wasm cannot hold, and /m/ is a web page), and A5's
-# replay_steps does too (~272 KB of decoded actions vs a 196,608 B pin). One
-# module behind every host is the steer.
+# It is the SERVER-SIDE link: the edge functions and Node read it off the
+# filesystem (fs/readFileSync — see sdk/ts/wasm/wasm_asset.ts), and the e2e
+# suites drive it through every entry a test binds. The browser reads
+# web.wasm.gz below instead, which is the same objects under a smaller export
+# allow-list; no host downloads THIS module over a network.
 #
 # There was briefly a base64 twin here for the browser. It is deliberately gone:
 # a second carrier of the same bytes is exactly how rules_wasm.ts went stale for
@@ -1420,6 +1418,114 @@ wasm-bots: build/layout/bots.hash
 	$(call sg_settle,bots,build/botobj,build/bots.wasm)
 	@$(MAKE) --no-print-directory build/bots.wasm
 	gzip -9 -n -c build/bots.wasm > ../sdk/ts/wasm/bots.wasm.gz
+
+# ---------------------------------------------------------------------------
+# web.wasm — THE BROWSER'S LINK OF THE SAME KERNEL.
+#
+# Not a second kernel. Byte-for-byte the same OBJECTS as build/bots.wasm
+# ($(WASM_BOT_OBJ)), the same compile flags, the same layout hash, the same
+# wasm-opt pass. The ONLY difference is which names are exported, and an export
+# is a GC root: wasm-ld drops every function no exported name reaches. That is
+# the doctrine's "per call site, by export allow-list"
+# (docs/ARCHITECTURE_AS_A_PATTERN.md Part 1 piece 1, Part 3 move 3) rather than
+# the "per role" split that killed guards.wasm and rules.wasm — those were three
+# SOURCES answering one question, and two of them could answer it differently.
+# Two links of one object set cannot: any function present in both is the same
+# bytes, because it came out of the same .o.
+#
+# WHAT IT BUYS, measured on this Mac (clang 22.1.8 + binaryen 130, the pin):
+#
+#   bots.wasm   191,490 B raw   81,902 B gz   37 pages (2,424,832 B)
+#   web.wasm     67,311 B raw   31,219 B gz   26 pages (1,703,936 B)
+#
+# -50,683 B of download on every first visit (-62%), -124,179 B of module for
+# the browser to compile, and -720,896 B of linear memory in the tab. What the
+# browser was paying for and never ran: the four Monte-Carlo brains and cordite's
+# solver working set and leaf book (~92 KB of the 182 KB CODE section), plus the
+# whole C Table — wasm_table_bot_drive ALONE is 40,716 B of code, 22% of the old
+# module. The bot loop runs in the Supabase edge functions, and the in-browser
+# Infinite Oracle is already its own module (oracle.wasm / oracle-mt.wasm), so
+# every one of those bytes was downloaded and never called.
+#
+# THE LIST BELOW IS THE BROWSER'S REACH SET, MEASURED, NOT GUESSED.
+# e2e/wasm_web_link.test.ts bundles every browser entry with esbuild (the same
+# machinery as e2e/security_client_boundary.test.ts, tree shaking on), collects
+# every wasm_* name that survives, and fails if one of them is missing here — so
+# a new browser call site that this list does not carry is a red build and never
+# a "not a function" in production. The same test fails if a name here is NOT
+# reachable, so the list cannot rot upward either.
+#
+# Names deliberately absent, and why: every wasm_table_* (the server plays the
+# table), the bot bridge (wasm_choose_move and friends run on the edge, and the
+# Oracle's copies live in oracle.wasm), the durable state codec
+# (wasm_export_state / wasm_state_serialize / wasm_state_deserialize, which
+# e2e/security_client_boundary.test.ts denies the browser — they are now absent
+# from the module rather than merely unreferenced by the bundle), and the
+# test-only entries (wasm_msg_seal, wasm_legal_moves, wasm_anim_build_beats,
+# wasm_replay_extras_encode, wasm_replay_link_parse …) which run on Node against
+# bots.wasm.
+WASM_WEB_NAMES := \
+  wasm_init wasm_io_ptr wasm_io_cap wasm_layout_hash wasm_can_cover \
+  wasm_replay_io_ptr wasm_replay_io_cap wasm_replay_error_ptr \
+  wasm_bot_roster_dump \
+  wasm_msg_decode wasm_msg_header_ptr \
+  wasm_anim_set_transport wasm_anim_event_key \
+  wasm_anim_should_drop_stale wasm_anim_stale_optimistic \
+  wasm_anim_finish_rows wasm_anim_hand_laid_out wasm_anim_reversal_order \
+  wasm_anim_build_plan wasm_anim_plan_ptr wasm_anim_plan_at wasm_anim_frame_ptr \
+  wasm_replay_b32_encode wasm_replay_b32_decode wasm_replay_link \
+  wasm_replay_extras_ptr wasm_replay_extras_decode \
+  wasm_replay_events wasm_replay_events_index_ptr \
+  wasm_replay_step_count wasm_replay_step_index
+
+# Picked OUT of the shipped list rather than spelled a second time, so a name
+# cannot be in the browser's module and not in the server's — that would be the
+# beginning of two export surfaces with two meanings.
+WASM_WEB_EXPORTS = $(WASM_CLIENT_EXPORTS) $(WASM_REPLAY_WEB_EXPORTS) \
+                   $(filter $(addprefix -Wl$(comma)--export=,$(WASM_WEB_NAMES)),$(WASM_BOTS_SHIPPED_EXPORTS))
+
+# AND THE GATE ON THE FILTER ITSELF. $(filter) over a name the shipped list does
+# not have expands to NOTHING, which is the "matched nothing looks exactly like
+# found no problem" failure docs/ARCHITECTURE_AS_A_PATTERN.md Part 3 move 2
+# names three times over. A typo here, or a name retired into
+# WASM_BOTS_UNSHIPPED_API, would silently shrink the browser's module and the
+# first symptom would be a TypeError in someone's tab.
+WASM_WEB_MISSING = $(filter-out $(WASM_WEB_EXPORTS),$(addprefix -Wl$(comma)--export=,$(WASM_WEB_NAMES)))
+
+build/web.wasm: $(WASM_BOT_OBJ) Makefile
+	@mkdir -p build
+	@[ -z "$(WASM_WEB_MISSING)" ] || { \
+	  echo "c/Makefile: WASM_WEB_NAMES names exports the shipped link does not have:"; \
+	  for n in $(WASM_WEB_MISSING); do echo "  $$n"; done; \
+	  echo "Either the name is misspelled, or it is in WASM_BOTS_UNSHIPPED_API."; exit 1; }
+	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_BOT_LDFLAGS) \
+	          $(WASM_WEB_EXPORTS) $(WASM_BOT_OBJ) -o $@
+	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),$@)
+
+.PHONY: wasm-web wasm-web-size
+wasm-web: build/layout/bots.hash
+	$(call sg_settle,bots,build/botobj,build/web.wasm)
+	@$(MAKE) --no-print-directory build/web.wasm
+	gzip -9 -n -c build/web.wasm > ../sdk/ts/wasm/web.wasm.gz
+
+# The name-preserving companion, same arrangement as bots' above: same objects,
+# same link, same wasm-opt pass, minus --strip-all, so tools/wasm_anatomy can
+# map names onto the shipped bytes. It is what makes "which .c file are these
+# 67 KB" an answerable question for the browser's link and not just the
+# server's - and answering it for both side by side is how WASM_WEB_NAMES was
+# arrived at.
+build/named/web.named.wasm: $(WASM_BOT_OBJ) Makefile
+	@mkdir -p build/named
+	$(WASM_CC) --target=wasm32 -nostdlib $(filter-out -Wl$(comma)--strip-all,$(WASM_BOT_LDFLAGS)) \
+	          $(WASM_WEB_EXPORTS) $(WASM_BOT_OBJ) -o $@
+	$(if $(strip $(WASM_BOTS_POSTOPT)),$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) $(WASM_BOTS_POSTOPT) --debuginfo $@ -o $@,:)
+
+# The number the download budget is about.
+wasm-web-size: build/web.wasm
+	@printf 'web.wasm    raw %7d  gzip %7d\n' \
+	  $$(wc -c < build/web.wasm) $$(gzip -9 -c build/web.wasm | wc -c)
+	@[ -f build/bots.wasm ] && printf 'bots.wasm   raw %7d  gzip %7d\n' \
+	  $$(wc -c < build/bots.wasm) $$(gzip -9 -c build/bots.wasm | wc -c) || true
 
 # The test build (WASM_TEST_EXPORTS above): never committed, never shipped.
 # build/bots_test.stamp records the wasm source hash it was built from
