@@ -71,9 +71,9 @@ Most languages spell those three differently, so they are three keys, and a tuto
 
 `c/i18n` is outside `c/src` and appears in no `*_SRC` list in `c/Makefile`, on purpose.
 Twenty-five languages is around 150 KB of string data, against kernel modules that are pinned to within a kilobyte of what they measure.
-The module a visitor downloads is `web.wasm.gz` now rather than `bots.wasm.gz` - the browser stopped downloading the server's link of the kernel - and both are pinned on RAW size rather than gzip, because the compressor alone moves the gzip number by up to 576 B on identical input and the raw number moves about 290 B between hosts.
+The module a visitor downloads is `web.wasm.gz` now rather than `bots.wasm.gz` - the browser stopped downloading the server's link of the kernel - and both are pinned on RAW size rather than gzip, because the compressor alone moves the gzip number by up to 576 B on identical input while the raw bytes are the same everywhere the pinned toolchain is.
 `e2e/mem/wasm_memory.test.ts` has the measurements and the pins; `metrics.yml` tracks the download size head-vs-base on every pull request.
-Build the module before quoting a size from any of it, including from here.
+Build the module before quoting a size from any of it, including from here, and build it with the pinned compiler: `c/Makefile` refuses Apple clang now, because it targets wasm32 happily and produces 271 B of difference.
 
 That is a property of a build script, and a build script is a thing somebody edits, so the gate checks the artifact instead:
 `e2e/validation/i18n_source_of_truth.test.ts` decompresses the shipped module and looks for the strings.
