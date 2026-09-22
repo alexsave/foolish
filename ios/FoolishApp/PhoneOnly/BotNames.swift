@@ -1,4 +1,4 @@
-// BotNames.swift — this app's reader of the "road to Moscow" display map
+// BotNames.swift - this app's reader of the "road to Moscow" display map
 // (docs/IOS_BOT_NAMING.md). The bot roster is named after explosives everywhere
 // it is STORED (C keys, DB nicknames, replay blobs, the wire) and renamed to
 // world cities only at RENDER time, so the App-Store age-rating questionnaire
@@ -6,7 +6,7 @@
 // Moscow).
 //
 // THE CITIES ARE NOT HERE. They are `bot.<strategy_key>` in c/i18n, which the
-// website reads through the same keys (src/common/botName.ts) — the map is the
+// website reads through the same keys (src/common/botName.ts) - the map is the
 // product's, not this platform's, so neither host can drift from the other.
 //
 // Three entry points; every surface (table, picker, win line, future watch /
