@@ -74,6 +74,26 @@ sdk/swift/gen/
 sdk/kotlin/gen/
 tools/structgen/gen/
 
+# The shipped wasm modules, for the same reason one step further along. These
+# WERE committed, and the arrangement needed two gates to hold it up: a
+# freshness check that compared commit ORDER because it could not compare bytes,
+# and a WASM_STAMP committed beside them to prove a human had run make. Neither
+# stopped the drift they were written for - public/oracle.wasm.gz shipped one of
+# two seats the opposite endgame verdict for three weeks, and was behind again by
+# exactly one raw byte on the day they were deleted.
+#
+# What changed is a measurement, not an opinion: with the toolchain pinned
+# (clang 22.1.8 + binaryen 130, scripts/ci_wasm.sh) c/build/bots.wasm is
+# byte-identical on macOS arm64, Linux arm64 and Linux x86_64, so the lane that
+# ships a module can build it and there is nothing left to keep fresh.
+#
+# e2e/validation/wasm_outputs_validation.test.ts refuses a tracked one and reads
+# the path list out of scripts/wasm_build.sh rather than restating it here, so a
+# new module is covered the day it lands.
+sdk/ts/wasm/bots.wasm.gz
+public/oracle.wasm.gz
+public/oracle-mt.wasm.gz
+
 # c
 c/build/
 # The shared toolchain's own build outputs - the generator and datagen binaries,

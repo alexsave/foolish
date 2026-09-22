@@ -1409,7 +1409,6 @@ wasm-bots: build/layout/bots.hash
 	$(call sg_settle,bots,build/botobj,build/bots.wasm)
 	@$(MAKE) --no-print-directory build/bots.wasm
 	gzip -9 -n -c build/bots.wasm > ../sdk/ts/wasm/bots.wasm.gz
-	@bash ../scripts/wasm_stamp.sh --write
 
 # The test build (WASM_TEST_EXPORTS above): never committed, never shipped.
 # build/bots_test.stamp records the wasm source hash it was built from
@@ -1458,7 +1457,6 @@ wasm-oracle: build/layout/oracle.hash
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),build/oracle.wasm)
 	gzip -9 -n -c build/oracle.wasm > ../public/oracle.wasm.gz
 	@echo "built ../public/oracle.wasm.gz ($$(wc -c < ../public/oracle.wasm.gz) B gz, $$(wc -c < build/oracle.wasm) B raw)"
-	@bash ../scripts/wasm_stamp.sh --write
 
 # ---------------------------------------------------------------------------
 # oracle-mt.wasm - Mode B (docs/INFINITE_ORACLE_DESIGN.md §8b): the same octogen
@@ -1509,7 +1507,6 @@ wasm-oracle-mt: build/layout/oracle-mt.hash
 	$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) --enable-threads $(WASM_BOTS_POSTOPT) build/oracle-mt.wasm -o build/oracle-mt.wasm
 	gzip -9 -n -c build/oracle-mt.wasm > ../public/oracle-mt.wasm.gz
 	@echo "built ../public/oracle-mt.wasm.gz ($$(wc -c < ../public/oracle-mt.wasm.gz) B gz, $$(wc -c < build/oracle-mt.wasm) B raw)"
-	@bash ../scripts/wasm_stamp.sh --write
 
 # ---------------------------------------------------------------------------
 # Coverage gate (CI: ../.github/workflows/coverage.yml). Instruments the engine
