@@ -263,3 +263,47 @@ test('a replay\'s seats are named by its extras, and carry no invented player id
         }
     }
 });
+
+test('a cover run is merged only when its pairs were one send', async () => {
+    // A run of consecutive covers by one seat is NOT always one move. A
+    // defender may cover, send, and cover again later - and the replay wire
+    // codes a cover one pair at a time, so both shapes arrive as the same
+    // consecutive steps. The clock is what separates them: the extras hold a
+    // gap per timed step, pairs committed together carry 0.000, and a second
+    // send carries however long the sender took.
+    //
+    // Merging on adjacency alone invented a triple cover out of three separate
+    // sends (gaps 8.434s and 3.662s) on a real 2p game, and the Oracle then
+    // reported a move nobody played.
+    const { code } = playSeeded(2, 500 + 2);
+    const frames = buildReplayFrames(code, 'g', null);
+    const runs: number[] = [];
+    for (let i = 1; i < frames.length; i++) {
+        if (frames[i].kind === REPLAY_STEP.COVER && frames[i - 1].kind === REPLAY_STEP.COVER
+            && frames[i].seat === frames[i - 1].seat) runs.push(i);
+    }
+
+    // With NO gaps, nothing is merged: an unknown send boundary must not be
+    // guessed at, because inventing a move is worse than showing two real ones.
+    for (const f of frames) {
+        if (f.kind !== REPLAY_STEP.COVER) continue;
+        assert.equal(f.pairs?.length ?? 0, 1,
+            'without the extras\' times, a cover step stays one pair');
+        assert.equal(f.moves, 1, 'and counts as the one move it is');
+    }
+
+    // Same code, but every adjacent pair declared same-send: now they merge.
+    const nTimed = frames.filter((f) => [REPLAY_STEP.ATTACK, REPLAY_STEP.COVER,
+        REPLAY_STEP.PASS, REPLAY_STEP.PICKUP].includes(f.kind)).length;
+    const together = buildReplayFrames(code, 'g', null, { moveGaps: new Array(nTimed).fill(0) });
+    const merged = together.filter((f) => f.kind === REPLAY_STEP.COVER && (f.pairs?.length ?? 0) > 1);
+    assert.ok(runs.length === 0 || merged.length > 0,
+        'with every gap at zero, an adjacent cover run is one move');
+
+    // And declared far apart: never merged, however adjacent.
+    const apart = buildReplayFrames(code, 'g', null, { moveGaps: new Array(nTimed).fill(30) });
+    for (const f of apart) {
+        if (f.kind !== REPLAY_STEP.COVER) continue;
+        assert.equal(f.pairs?.length ?? 0, 1, 'a 30s gap is two sends, never one move');
+    }
+});

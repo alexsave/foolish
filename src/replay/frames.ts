@@ -134,6 +134,10 @@ export interface ReplayFramesOpts {
     /** The loser's seat, marked in the closing board's name — the one thing the
      *  board itself does not carry. */
     fool?: number | null;
+    /** The extras' per-move gaps, in seconds, one per timed step. They are what
+     *  tells one multi-cover apart from several single ones - see mergeCoverRuns.
+     *  Absent on a replay cut without times, and then no cover run is merged. */
+    moveGaps?: number[] | null;
 }
 
 /** Every step of a v6 code, as the frames live play broadcasts. */
@@ -213,7 +217,31 @@ export function buildReplayFrames(
             game,
         };
     });
-    return mergeCoverRuns(built);
+    return mergeCoverRuns(built, opts.moveGaps ?? null);
+}
+
+/** ZERO, exactly. Not a tolerance - an identity. table_commit_products stamps
+ *  every record of one committed operation with the same `now_ms` (c/src/table.c),
+ *  and table_replay_extras derives one gap per record from those stamps, so two
+ *  cover pairs of the SAME send are the same millisecond and their gap decodes
+ *  to 0.0. A 1 ms difference already survives the extras' quantisation for any
+ *  game shorter than about eight days. So a non-zero gap is a different commit,
+ *  and there is no band of "close enough" in between to pick a threshold from. */
+const SAME_SEND_S = 0;
+
+/** Each frame's own gap from the one before it, or null where it has none. The
+ *  extras hold one gap per TIMED step and nothing for the derived ones, so they
+ *  have to be walked in step order rather than indexed by frame. */
+function timedGaps(frames: ReplayFrame[], moveGaps: number[] | null): (number | null)[] {
+    const out: (number | null)[] = new Array(frames.length).fill(null);
+    if (!moveGaps) return out;
+    let g = 0;
+    for (let i = 0; i < frames.length; i++) {
+        if (!TIMED_KINDS.includes(frames[i].kind)) continue;
+        out[i] = g < moveGaps.length ? moveGaps[g] : null;
+        g++;
+    }
+    return out;
 }
 
 // ONE MOVE IS ONE STEP. The replay coder groups an attack and a pass - both
@@ -229,13 +257,27 @@ export function buildReplayFrames(
 // board plays a double cover as one move, the scrubber counts it once, and the
 // Oracle deliberates it once. Anything downstream that used to see two steps
 // now sees one, which is what the game did.
-function mergeCoverRuns(frames: ReplayFrame[]): ReplayFrame[] {
+function mergeCoverRuns(frames: ReplayFrame[], moveGaps: number[] | null): ReplayFrame[] {
+    // WHICH CONSECUTIVE COVERS WERE ONE SEND. The clock says, and it says it
+    // sharply: the pairs of one operation are committed in the same instant, and
+    // two sends are a human or a bot thinking in between. Measured on a shared
+    // 2p replay - within a run 0.000s four times over and 8.434s once; the gap
+    // that OPENS any cover, which is always a separate operation, never came in
+    // under 0.300s. So the 0.000 is not a small gap, it is the same commit.
+    //
+    // This matters because a run of consecutive covers by one seat is NOT
+    // always one move. A defender may cover, send, and cover again later -
+    // which is exactly what happened at the one run this gate now refuses, and
+    // merging it invented a triple cover nobody played.
+    const gapOf = timedGaps(frames, moveGaps);
+    const sameSend = (k: number): boolean => gapOf[k] !== null && gapOf[k]! <= SAME_SEND_S;
     const out: ReplayFrame[] = [];
     for (let i = 0; i < frames.length; i++) {
         const f = frames[i];
         let j = i;
         while (j + 1 < frames.length && frames[j + 1].kind === REPLAY_STEP.COVER
-               && frames[j + 1].seat === f.seat && f.kind === REPLAY_STEP.COVER) j++;
+               && frames[j + 1].seat === f.seat && f.kind === REPLAY_STEP.COVER
+               && sameSend(j + 1)) j++;
         if (j === i) { out.push(f); continue; }
         const run = frames.slice(i, j + 1);
         const last = run[run.length - 1];
