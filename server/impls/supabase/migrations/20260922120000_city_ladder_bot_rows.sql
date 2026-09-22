@@ -21,6 +21,16 @@
 --    seven opponents, so seven is what it takes to fill a table with one rung -
 --    a thing you could do with Miami and with nothing else before this.
 --
+-- 4. Every Elo rating on the site resets to the base, humans included. The
+--    leaderboard is ONE ladder rated by the same per-game pairwise Elo
+--    (updateEloRatings in functions/_shared/utils.ts), so a rating is a claim
+--    about the population it was earned against - and this migration replaces
+--    that population: two families leave, four go from three rows to seven, and
+--    24 of the 42 bots have never played a hand. Keeping the old numbers would
+--    rank humans against opponents that no longer exist and seat fresh 1000s
+--    beside veterans on the same board. A wipe is the honest reading, and it is
+--    the owner's call (2026-09-22).
+--
 -- READ server/impls/supabase/migrations/README.md BEFORE DEPLOYING. This is the
 -- first migration since the history collapsed into seed.sql, so hosted's
 -- schema_migrations still records the 39 deleted versions and `supabase db push`
@@ -96,3 +106,10 @@ FROM (VALUES
     ('%Octogen 7', 'octogen')
 ) AS v(nickname, strategy_key)
 WHERE NOT EXISTS (SELECT 1 FROM bots b WHERE b.nickname = v.nickname);
+
+-- The base is the column default and finalize.ts's BASE_RATING, both 1000.
+-- games_played goes to 0 with it, which is also what hides a row from the
+-- leaderboard until it plays again (both queries filter games_played > 0), so
+-- the board reads empty rather than showing a field of identical 1000s.
+UPDATE bots SET elo_rating = 1000, previous_elo = 1000, games_played = 0;
+UPDATE user_elo_ratings SET elo_rating = 1000, previous_elo = 1000, games_played = 0;
