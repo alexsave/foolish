@@ -247,6 +247,11 @@ function mergeCoverRuns(frames: ReplayFrame[]): ReplayFrame[] {
             // that is the one the whole move was decided on, and it is what the
             // kernel's step-addressed calls have to be given.
             step: run[0].step,
+            // `target` pairs with cards[0], so it is the FIRST pair's - spreading
+            // `last` would leave a reader comparing one pair's card against
+            // another pair's attack. Anything that wants the whole move reads
+            // `pairs`; this keeps the single-pair shape honest for what does not.
+            target: run[0].target ? { ...run[0].target } : null,
             cards: run.flatMap((r) => r.cards.map((c) => ({ ...c }))),
             named: run.reduce((n, r) => n + r.named, 0),
             count: run.reduce((n, r) => n + r.count, 0),

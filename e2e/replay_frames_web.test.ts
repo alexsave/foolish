@@ -147,6 +147,16 @@ test('the status line asks the kernel what happened, and gets the real game back
                 assert.equal(f.cards.length, f.pairs?.length ?? 0, `${np}p: a cover frame's cards are its pairs`);
                 assert.equal(f.seq.events.filter((e: { type: string }) => e.type === 'cover').length,
                     f.pairs?.length ?? 0, `${np}p: a cover frame animates every pair`);
+                // ONE target on a frame that covered several attacks has to be
+                // the FIRST pair's, because `target` is what pairs with
+                // cards[0]. The merge used to spread the run's LAST frame, so
+                // the two disagreed, and every reader that pairs cards[0] with
+                // target - the tutorial's trump-cover lesson did - compared one
+                // pair's card against another pair's attack.
+                assert.deepEqual(f.target, f.pairs?.[0]?.target ?? null,
+                    `${np}p: a cover frame's target is its first pair's`);
+                assert.deepEqual(f.cards[0], f.pairs?.[0]?.card ?? null,
+                    `${np}p: a cover frame's first card is its first pair's`);
             }
             assert.equal(kinds(REPLAY_STEP.PICKUP), count('pickup'), `${np}p: pickups are pickups`);
 

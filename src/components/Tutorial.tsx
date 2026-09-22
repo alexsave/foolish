@@ -113,8 +113,13 @@ function buildBeats(frames: ReplayFrame[], summary: ReplaySummary, names: string
                 break;
             case REPLAY_STEP.COVER: {
                 if (once('cover')) beats.push({ at: i, key: 'tut_cover', extra: 'tut_stack_rule' });
-                const cov = f.cards[0], tgt = f.target;
-                if (cov && tgt && cov.suit === ps && tgt.suit !== ps && once('trumpCover'))
+                // EVERY pair of the move: one step can take several attacks
+                // (buildReplayFrames merges a multi-cover the wire split), and
+                // the trump may be spent on any of them - reading cards[0]
+                // against a single target would miss it and, worse, compare one
+                // pair's card with another pair's attack.
+                if ((f.pairs ?? []).some((pr) => pr.card.suit === ps && pr.target.suit !== ps)
+                    && once('trumpCover'))
                     beats.push({ at: i, key: 'tut_trump_cover' });
                 break;
             }
