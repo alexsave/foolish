@@ -7,6 +7,9 @@ import { useServer } from '../../contexts/ServerContext';
 // renders - /, /[game_id], /dashboard, /history and /tutorial are each wrapped in
 // KernelGate (src/components/KernelGate.tsx), the replay and the tutorial included.
 import { canCoverPair } from '../../utils/gameValidation';
+// The angle the battle grid lays a cover across its attack at: a flight has to
+// land where the grid will DRAW the card, and the grid is where that is stated.
+import { COVER_ROTATION_RAD } from './TableBattles';
 
 // Table-slot geometry cache (Stage 9). The on-table battle layout is a function of
 // only (how many battle slots there are, the viewport size) - the 4th slot in a
@@ -282,9 +285,12 @@ export const AnimationOverlay = () => {
             return;
         }
 
-        // target_card and battle_index are kept in the destructure for future
-        // multi-card cover handling; currently unused.
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        // `target_card` and `battle_index` are the KERNEL's answer to "which
+        // attack does this cover answer, and in which slot" - evwire carries both
+        // on every COVER event and src/state/pushSequence.ts puts them on the
+        // step. They are read below (`coverTarget`, `landsOnTable`); nothing in
+        // this file decides a target any more except for an event that carries
+        // none at all.
         const { type, cards, from_location, to_location, seat, target_card, target_cards, battle_index, is_revert } = currentAnimation;
         // The page names a seat's hand by its player id (data-player-id): the id the
         // event's own board gives its seat, or the board on screen's for a flight
@@ -336,24 +342,39 @@ export const AnimationOverlay = () => {
                 ? measureHandSlotPositions(cards.length, player_id)
                 : [];
 
-            // For cover animations, keep track of which attack cards have been targeted
+            // For the guess of last resort below: the attacks this batch claimed.
             const targetedAttackCards = new Set<string>();
 
-            // WHICH ATTACK THIS COVER CARD IS FOR.
+            // WHICH ATTACK THIS COVER CARD IS FOR - THE KERNEL'S ANSWER.
             //
-            // The event says so outright when it carries target_cards (a
-            // multi-card cover names its pairs). When it does not, the board
-            // has to work it out the way the kernel did: the first uncovered
-            // battle this card can legally cover. `canCoverPair` is the
-            // kernel's can_cover, so this asks the engine rather than
-            // re-deciding the rule.
+            // Every cover the kernel pushes names it: evwire writes the covered
+            // attack and its battle index on the event (c/src/evwire.c's
+            // ENGINE_HOOK_COVER, one event per pair), and pushSequence.ts puts
+            // both on the step as `target_card` and `battle_index`. A multi-card
+            // cover of MY OWN is predicted before any push exists, and names its
+            // pairs in `target_cards` instead.
             //
-            // STATEFUL, and deliberately so: two cover cards in one flight
-            // must not both aim at the same attack, so a battle claimed here
-            // is struck off for the rest of the batch. That is why this is
+            // iMessage answers the same question the same way: it finds the
+            // flying card in the board the kernel handed it and flies to THAT
+            // battle's cell (`openReplayFlights`,
+            // ios/FoolishKit/Boards/MessageTableView+OpenReplay.swift). It never
+            // re-runs the legality rule to pick a pile, and neither does this.
+            //
+            // The legality guess is the LAST resort, for an event carrying
+            // neither - and it is only ever a guess: it takes the FIRST uncovered
+            // battle this card could legally cover, which is the wrong pile
+            // whenever more than one is coverable (a trump over several attacks,
+            // equal ranks). `canCoverPair` is the kernel's can_cover, so even the
+            // guess asks the engine for the rule; what it cannot ask is which
+            // pile the player chose.
+            //
+            // STATEFUL, and deliberately so: two guessed cover cards in one
+            // flight must not both aim at the same attack, so a battle claimed
+            // here is struck off for the rest of the batch. That is why this is
             // called once per card, in order, rather than mapped lazily.
             const coverTarget = (c: Card, i: number): Card | null => {
                 if (target_cards && target_cards[i]) return target_cards[i];
+                if (target_card) return target_card;
                 if (!game?.battles) return null;
 
                 const battle = game.battles
@@ -406,24 +427,56 @@ export const AnimationOverlay = () => {
                 },
             ], getFallbackPosition('flipped', player_id));
 
+            // THE ATTACK THIS COVER LANDS ON, as an element to measure.
+            //
+            // The kernel's battle slot first - it names the slot outright and
+            // TableBattles tags the attack with it - then the target card's own
+            // rect, which survives a board whose slots have shifted under the
+            // flight. Neither query falls back to "some other battle": an attack
+            // this screen cannot show is the unmeasured case, and aiming at
+            // battle 0 because battle 3 has not rendered is the very mistake
+            // this path is here to stop. `battle_index` belongs to an event that
+            // carries ONE cover card (evwire emits one COVER event per pair), so
+            // a multi-card prediction uses its per-card targets instead.
+            const attackUnder = (target: Card | null): HTMLElement | null =>
+                (cards.length === 1 && battle_index !== undefined
+                    ? document.querySelector(`[data-location="table"] [data-battle-index="${battle_index}"]`) as HTMLElement | null
+                    : null)
+                ?? (target
+                    ? document.querySelector(`[data-location="table"] [data-card="${target.suit}-${target.value}"]`) as HTMLElement | null
+                    : null);
+
+            // WHERE THE GRID WILL DRAW THE COVER, given that attack. A cover
+            // shares its attack's slot and its bottom edge and is laid across it
+            // at COVER_ROTATION_RAD about `center bottom` (TableBattles), so the
+            // cover's centre is the attack's centre turned through that angle
+            // about that point. Measured off the attack's own rect and the grid's
+            // own constant - this file keeps no offset of its own. Aiming at the
+            // attack's centre instead leaves the settle the flight is supposed to
+            // remove: measured in a browser, a cover drawn at (687, 425) over an
+            // attack whose uncovered centre is (680, 424).
+            const laidAcross = (attack: HTMLElement): Spot => {
+                const r = attack.getBoundingClientRect();
+                return {
+                    x: r.left + r.width / 2 + Math.sin(COVER_ROTATION_RAD) * (r.height / 2),
+                    y: r.bottom - Math.cos(COVER_ROTATION_RAD) * (r.height / 2),
+                };
+            };
+
             // The table is the one destination that cares HOW the card got
             // there: a cover aims at the attack it answers, an attack aims
             // at the slot it will occupy, anything else aims at the table.
             const landsOnTable = (card: Card, index: number): Spot => {
                 if (type === 'cover') {
-                    const target = coverTarget(card, index);
-                    // A known target is aimed at exactly; without one we aim
-                    // at the table and fan the cards 70px apart so
+                    const attack = attackUnder(coverTarget(card, index));
+                    // An attack we could measure is aimed at exactly; without one
+                    // we aim at the table and fan the cards 70px apart so
                     // simultaneous covers do not stack on one point. The fan
-                    // belongs ONLY to the untargeted case.
-                    return target
-                        ? spotFrom(
-                            [() => findElementByLocation('table', undefined, target.suit, target.value)],
-                            getFallbackPosition('table', player_id))
-                        : spotFrom([() => {
-                            const table = findElementByLocation('table');
-                            return table ? shifted(centreOf(table), index * 70, 0) : null;
-                        }], getFallbackPosition('table', player_id));
+                    // belongs ONLY to the unmeasured case.
+                    return attack ? laidAcross(attack) : spotFrom([() => {
+                        const table = findElementByLocation('table');
+                        return table ? shifted(centreOf(table), index * 70, 0) : null;
+                    }], getFallbackPosition('table', player_id));
                 }
 
                 if (type === 'attack_pass') {

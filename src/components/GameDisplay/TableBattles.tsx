@@ -8,7 +8,15 @@ import { covered, sameCard } from "../../state/view";
 import { MOVE_ATTACK, MOVE_COVER, MOVE_PASS } from "@sdk/ts/gen/view_layout.bots.ts";
 import type { ClientPlay } from "@sdk/ts/table/client_table.ts";
 
-const COVER_ROTATION: string = (Math.PI/ 16) + 'rad';
+/** The angle a cover is laid across its attack at, in radians, about the card's
+ *  `center bottom`. Exported because the flight that brings the cover in has to
+ *  land where this grid will draw it: a cover shares its attack's slot and its
+ *  bottom edge, so turning the attack's centre through this angle about that
+ *  point IS the cover's centre (AnimationOverlay's `laidAcross`). The overlay
+ *  reads the constant rather than keeping an offset of its own. */
+export const COVER_ROTATION_RAD: number = Math.PI / 16;
+
+const COVER_ROTATION: string = COVER_ROTATION_RAD + 'rad';
 
 export const TableBattles = () => {
     const game = useServer().view;
