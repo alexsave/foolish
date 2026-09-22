@@ -235,7 +235,6 @@ const char *const FS_STRINGS_KO[FS_K_COUNT] = {
     [FS_K_OFFLINE                  ] = "오프라인",
     [FS_K_ORACLE_ANALYZING         ] = "분석 중… {n}개 월드 · 초당 {rate}",
     [FS_K_ORACLE_APPROX            ] = "근사 포지션 (일부 숨겨진 카드는 추론됨).",
-    [FS_K_ORACLE_BASIS             ] = "공개된 기록을 기반으로 함.",
     [FS_K_ORACLE_BELIEF_FLOOR      ] = "P{n}에게는 {v} 미만의 비트럼프 카드가 없음",
     [FS_K_ORACLE_BELIEF_NONE       ] = "아직 확정된 추론 없음 - 모든 미확인 카드가 가능합니다",
     [FS_K_ORACLE_BELIEF_PINNED     ] = "P{n}이(가) 가진 것으로 확인된 카드: {cards}",

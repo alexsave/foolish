@@ -235,7 +235,6 @@ const char *const FS_STRINGS_VI[FS_K_COUNT] = {
     [FS_K_OFFLINE                  ] = "Ngoại tuyến",
     [FS_K_ORACLE_ANALYZING         ] = "Đang phân tích… {n} thế bài · {rate}/s",
     [FS_K_ORACLE_APPROX            ] = "Thế bài gần đúng (một số lá giấu được suy ra).",
-    [FS_K_ORACLE_BASIS             ] = "Dựa trên những gì ai cũng nhìn thấy được.",
     [FS_K_ORACLE_BELIEF_FLOOR      ] = "P{n} không cầm lá ngoài chất chủ nào dưới {v}",
     [FS_K_ORACLE_BELIEF_NONE       ] = "Chưa suy ra được gì chắc chắn - mọi lá chưa thấy đều có thể",
     [FS_K_ORACLE_BELIEF_PINNED     ] = "Biết chắc P{n} đang cầm {cards}",

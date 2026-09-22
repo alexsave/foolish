@@ -235,7 +235,6 @@ const char *const FS_STRINGS_ID[FS_K_COUNT] = {
     [FS_K_OFFLINE                  ] = "Offline",
     [FS_K_ORACLE_ANALYZING         ] = "Menganalisis… {n} dunia · {rate}/dtk",
     [FS_K_ORACLE_APPROX            ] = "Posisi perkiraan (sebagian kartu tersembunyi disimpulkan).",
-    [FS_K_ORACLE_BASIS             ] = "Berdasarkan catatan yang terlihat semua orang.",
     [FS_K_ORACLE_BELIEF_FLOOR      ] = "P{n} tidak punya kartu non-truf di bawah {v}",
     [FS_K_ORACLE_BELIEF_NONE       ] = "Belum ada kesimpulan pasti - setiap kartu tak terlihat masih mungkin",
     [FS_K_ORACLE_BELIEF_PINNED     ] = "P{n} dipastikan pegang {cards}",

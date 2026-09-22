@@ -118,6 +118,20 @@ int replay_steps_count_v6(const unsigned char *code, int code_len,
 //                atom and never an action, so the two never collide.
 //   u8  seat     the acting seat, or RS_SEAT_NONE for the deal and ROUND_END
 //                (nobody in particular closes a bout).
+//   u8  named    how many of this step's cards the MOVE NAMED - the cards the
+//                seat CHOSE, which is not always the cards the step moved. A
+//                pickup's step carries the whole pile it swept and a good's
+//                carries none, because that is what a status line narrates;
+//                neither is a card anybody picked, so for both this is 0.
+//
+// That last byte is here for the same reason the first one is. A reader that
+// treats a recorded move as a CHOICE - naming it, keying it, matching it
+// against a menu - needs the choice, and the step's cards are not always it.
+// Deciding that from the kind, host-side, is a projection: it is the kernel
+// that knows what a move IS. The web's Oracle made that call for itself, got
+// pickup wrong, and keyed every recorded pickup on the pile it swept while
+// octogen's own dump keyed it on the act - so no pickup ever matched, and the
+// panel printed "not considered" under a pickup row it had just ranked BEST.
 //
 // A scrubber needs the kind and the seat to say what just happened, and it
 // cannot honestly get them from the frames: an attack and a pass are the same
@@ -134,7 +148,7 @@ int replay_steps_count_v6(const unsigned char *code, int code_len,
 // count against a fourth private stream would only look like a mapping.
 //
 // Returns bytes written (steps * RS_INDEX_STRIDE) or -REPLAY_E*.
-#define RS_INDEX_STRIDE 2
+#define RS_INDEX_STRIDE 3
 #define RS_SEAT_NONE    0xFF
 int replay_steps_index_v6(const unsigned char *code, int code_len,
                           ReplayHeader *hdr, unsigned char *out, int out_cap);

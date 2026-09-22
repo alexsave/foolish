@@ -796,12 +796,17 @@ export const REPLAY_STEP = {
 } as const;
 
 export const REPLAY_STEP_SEAT_NONE = 0xff;
+/** Bytes per step index record (c/src/replay_steps.h RS_INDEX_STRIDE). */
+const RS_INDEX_STRIDE = 3;
 
 export interface ReplayStepInfo {
     /** REPLAY_STEP.* — the action this step played. */
     kind: number;
     /** The acting seat, or -1 (the deal, and round ends nobody in particular closes). */
     seat: number;
+    /** How many of this step's cards the MOVE NAMED - 0 for a pickup or a good,
+     *  whose step carries cards nobody chose. See replay_steps.h. */
+    named: number;
 }
 
 /**
@@ -818,9 +823,9 @@ export function replayStepIndex(code: Uint8Array): ReplayStepInfo[] {
     const buf = mem(ex);
     const base = ex.wasm_io_ptr();
     const out: ReplayStepInfo[] = [];
-    for (let q = base; q < base + len; q += 2) {
+    for (let q = base; q < base + len; q += RS_INDEX_STRIDE) {
         const seat = buf[q + 1];
-        out.push({ kind: buf[q], seat: seat === REPLAY_STEP_SEAT_NONE ? -1 : seat });
+        out.push({ kind: buf[q], seat: seat === REPLAY_STEP_SEAT_NONE ? -1 : seat, named: buf[q + 2] });
     }
     return out;
 }

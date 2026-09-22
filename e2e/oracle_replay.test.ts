@@ -26,7 +26,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import { gunzip } from '../sdk/ts/wasm/gunzip.ts';
-import { buildReplayFrames } from '../src/replay/frames.ts';
+import { buildReplayFrames, REPLAY_STEP } from '../src/replay/frames.ts';
 import { buildOracleJob, findDecisionIndex } from '../src/oracle/replayOracleInput.ts';
 import { OracleInstance } from '../src/oracle/oracleBridge.ts';
 import { OracleAccumulator } from '../src/oracle/accumulator.ts';
@@ -38,6 +38,9 @@ const ENV_BASE = { OG_KEEP1: '26', OG_KEEP2: '26', OG_W2: '1', OG_W3: '0', OG_EX
 // The three shapes that stress the marshal differently: heads-up-ish, the
 // 4-player middle, and a full 8-way table (52-card deck, most eliminations).
 const SHAPES: [string, number, number][] = [['3p', 3, 41], ['4p', 4, 42], ['8p', 8, 43]];
+/** REPLAY_STEP id -> its name, so a failure names the move type it broke on. */
+const STEP_NAME: Record<number, string> =
+    Object.fromEntries(Object.entries(REPLAY_STEP).map(([k, v]) => [v as number, k]));
 
 interface Fixture { code: Uint8Array; frames: ReturnType<typeof buildReplayFrames>; id: string }
 const cache = new Map<string, Fixture>();
@@ -88,6 +91,54 @@ test('§12.2-1 reconstruction: every decision imports to a well-formed deliberat
     }
     assert.ok(decisions > 30, `covered ${decisions} decisions`);
     console.log(`  §12.2-1: validated ${decisions} decisions across 3 replays`);
+});
+
+test('§12.2-1b the recorded move is one of the candidates, at every decision', async () => {
+    // The panel names the move that was actually played by looking its canonical
+    // key up among the candidates (accumulator: `played: a.key === recordedKey`),
+    // and when the lookup misses it prints "<move> - not considered" under the
+    // rows. So a key built on one side that the other side can never emit is not
+    // a near miss - it is the panel confidently saying the opposite of the truth.
+    //
+    // That is what shipped for pickup. A replay frame for a pickup carries the
+    // cards swept off the table, so the recorded key came out
+    // `pickup|10H,10S*,7C,...|` while the dump only ever emits `pickup||`: the
+    // pickup row sat at the top of the panel marked BEST while the footer said
+    // it was never considered. 19 of 19 pickups, against 0 of 96 attacks, 0 of
+    // 97 covers and 0 of 13 passes - which is why this walks EVERY decision and
+    // counts per move type rather than sampling one.
+    const inst = await freshInstance();
+    const missing: Record<string, number> = {};
+    const total: Record<string, number> = {};
+    for (const [label, np, seed] of SHAPES) {
+        const { code, frames, id } = await fixture(label, np, seed);
+        for (let j = 1; j < frames.length; j++) {
+            if (findDecisionIndex(frames, j) !== j) continue;   // the decision itself
+            const job = buildOracleJob(frames, code, j, true, id);
+            if (!job) continue;
+            inst.writeEnv({ ...ENV_BASE, OG_W1: '8' });
+            const r = inst.analyzeOnce(job, 0x9e37 + j);
+            if (!('record' in r)) continue;
+            const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey });
+            acc.add((r as { record: any }).record, (r as { paths?: ArrayBuffer }).paths);
+            const kind = STEP_NAME[frames[j].kind] ?? String(frames[j].kind);
+            total[kind] = (total[kind] ?? 0) + 1;
+            if (!acc.hasKey(job.recordedKey)) {
+                missing[kind] = (missing[kind] ?? 0) + 1;
+                assert.fail(`${id} step ${j}: recorded ${kind} ${JSON.stringify(job.recordedKey)} `
+                    + `is not among ${JSON.stringify(acc.candidates(false).map((c) => c.key))}`);
+            }
+        }
+    }
+    // Every decision kind the Oracle deliberates has to be exercised, or a
+    // regression in the one that is missing passes unnoticed - which is exactly
+    // how the pickup bug survived.
+    for (const kind of ['ATTACK', 'COVER', 'PASS', 'PICKUP']) {
+        assert.ok((total[kind] ?? 0) > 0, `no ${kind} decision covered - the fixtures stopped exercising it`);
+    }
+    const counts = Object.keys(total).sort().map((k) => `${k} ${total[k]}`).join(', ');
+    console.log(`  §12.2-1b: recorded move found at every decision (${counts})`);
+    assert.deepEqual(missing, {});
 });
 
 test('§12.2-2 batching: keys stable, n increases, worlds vary across seeds', async () => {

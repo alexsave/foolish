@@ -61,6 +61,22 @@ export interface ReplayFrame {
     seat: number | null;
     /** The cards this step moved, for the status line. */
     cards: Card[];
+    /** How many of `cards` the MOVE NAMED, as the kernel counts them: the cards
+     *  the seat CHOSE. 0 for a pickup, whose step carries the pile it swept.
+     *  A reader that treats this step as a decision slices `cards` to this. */
+    named: number;
+    /** A COVER's (card, attack) pairs - one normally, several where the wire
+     *  split one multi-cover into consecutive steps and this frame merged them
+     *  back. Absent for every other kind. */
+    pairs?: { card: Card; target: Card }[];
+    /** How many recorded MOVES this step is: 1, except a merged cover run.
+     *  The extras' gaps are one per move, so the clock counts these, not steps. */
+    moves: number;
+    /** This frame's index in the KERNEL's step stream, which a merged cover run
+     *  makes different from its index here. Every call that addresses the wire
+     *  by step - replayStepMaskedState, replayStepLogs - takes this, not the
+     *  array position. */
+    step: number;
     /** The attack card being covered (COVER only). */
     target: Card | null;
     /** Cards moved but not shown individually (the discard count, hidden draws). */
@@ -147,7 +163,7 @@ export function buildReplayFrames(
     // eye's whole source of truth — see the header.
     const perSeat = Array.from({ length: n }, (_, s) => replayEventFrames(code, s));
 
-    return main.map((bytes, i) => {
+    const built: ReplayFrame[] = main.map((bytes, i): ReplayFrame => {
         const seq = readFrame(bytes, seats);
         if (!seq) throw new Error(`replay: step ${i} did not decode`);
 
@@ -179,6 +195,12 @@ export function buildReplayFrames(
             kind: info.kind,
             seat: info.seat < 0 ? null : info.seat,
             cards: ev?.cards?.map((c) => ({ ...c })) ?? [],
+            named: info.named,
+            moves: 1,
+            step: i,
+            ...(info.kind === REPLAY_STEP.COVER && ev?.cards?.[0] && ev?.target_card
+                ? { pairs: [{ card: { ...ev.cards[0] }, target: { ...ev.target_card } }] }
+                : null),
             target: ev?.target_card ? { ...ev.target_card } : null,
             count: ev?.cards?.length ?? 0,
             seq: {
@@ -191,6 +213,55 @@ export function buildReplayFrames(
             game,
         };
     });
+    return mergeCoverRuns(built);
+}
+
+// ONE MOVE IS ONE STEP. The replay coder groups an attack and a pass - both
+// have a continuation loop - but codes a cover one pair at a time
+// (c/src/replay.c atom_cover), so a defender who takes three attacks in one
+// move comes back as three steps. Measured on a 65-step game: attacks arrive
+// carrying 1, 2 or 3 cards, and all 21 covers arrive carrying exactly 1.
+//
+// The kernel reconstructs this rather than storing it, and iMessage has been
+// reading it that way all along: it animates a TURN, found by walking back over
+// consecutive steps of the same actor (c/ios/ios_api_replay.c). The same rule
+// here, for covers only - the one kind the wire is known to split - so the
+// board plays a double cover as one move, the scrubber counts it once, and the
+// Oracle deliberates it once. Anything downstream that used to see two steps
+// now sees one, which is what the game did.
+function mergeCoverRuns(frames: ReplayFrame[]): ReplayFrame[] {
+    const out: ReplayFrame[] = [];
+    for (let i = 0; i < frames.length; i++) {
+        const f = frames[i];
+        let j = i;
+        while (j + 1 < frames.length && frames[j + 1].kind === REPLAY_STEP.COVER
+               && frames[j + 1].seat === f.seat && f.kind === REPLAY_STEP.COVER) j++;
+        if (j === i) { out.push(f); continue; }
+        const run = frames.slice(i, j + 1);
+        const last = run[run.length - 1];
+        // The board is the one the LAST pair left; the events are every pair's,
+        // in play order, so both cards fly on the one step.
+        out.push({
+            ...last,
+            // The board is the last pair's, but the STEP is the first pair's:
+            // that is the one the whole move was decided on, and it is what the
+            // kernel's step-addressed calls have to be given.
+            step: run[0].step,
+            // `target` pairs with cards[0], so it is the FIRST pair's - spreading
+            // `last` would leave a reader comparing one pair's card against
+            // another pair's attack. Anything that wants the whole move reads
+            // `pairs`; this keeps the single-pair shape honest for what does not.
+            target: run[0].target ? { ...run[0].target } : null,
+            cards: run.flatMap((r) => r.cards.map((c) => ({ ...c }))),
+            named: run.reduce((n, r) => n + r.named, 0),
+            count: run.reduce((n, r) => n + r.count, 0),
+            pairs: run.flatMap((r) => r.pairs ?? []),
+            moves: run.reduce((n, r) => n + r.moves, 0),
+            seq: { ...last.seq, events: run.flatMap((r) => r.seq.events) },
+        });
+        i = j;
+    }
+    return out;
 }
 
 /**
@@ -237,7 +308,9 @@ export function buildReverseFrames(frames: ReplayFrame[]): (AnimationSequenceMes
                 event = {
                     type: 'pickup',
                     seat: fe.seat,
-                    cards: fe.cards,
+                    // A merged cover run played several cards on this one step,
+                    // and every one of them has to come back.
+                    cards: fe.type === 'cover' ? frames[i].cards : fe.cards,
                     from_location: 'table',
                     to_location: 'hand',
                     game_state: prev,
@@ -312,7 +385,11 @@ export function stepTimes(
     let t = startTime;
     let g = 0;
     return frames.map((f) => {
-        if (TIMED_KINDS.includes(f.kind) && g < moveGaps.length) t += moveGaps[g++];
+        // A merged cover run is several recorded moves on one step, and the
+        // extras hold one gap per move: spend them all or every later step drifts.
+        if (TIMED_KINDS.includes(f.kind)) {
+            for (let k = 0; k < f.moves && g < moveGaps.length; k++) t += moveGaps[g++];
+        }
         return t;
     });
 }

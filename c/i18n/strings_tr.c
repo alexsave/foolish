@@ -235,7 +235,6 @@ const char *const FS_STRINGS_TR[FS_K_COUNT] = {
     [FS_K_OFFLINE                  ] = "Çevrimdışı",
     [FS_K_ORACLE_ANALYZING         ] = "İnceleniyor… {n} dünya · {rate}/sn",
     [FS_K_ORACLE_APPROX            ] = "Yaklaşık konum (bazı gizli kartlar çıkarımla bulundu).",
-    [FS_K_ORACLE_BASIS             ] = "Herkese açık kayda dayanıyor.",
     [FS_K_ORACLE_BELIEF_FLOOR      ] = "P{n} elinde {v} altında koz dışı kart tutmuyor",
     [FS_K_ORACLE_BELIEF_NONE       ] = "Henüz kesin çıkarım yok - görülmemiş her kart mümkün",
     [FS_K_ORACLE_BELIEF_PINNED     ] = "P{n} elinde kesin olarak {cards} var",

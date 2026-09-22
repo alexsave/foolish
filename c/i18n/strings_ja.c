@@ -235,7 +235,6 @@ const char *const FS_STRINGS_JA[FS_K_COUNT] = {
     [FS_K_OFFLINE                  ] = "オフライン",
     [FS_K_ORACLE_ANALYZING         ] = "解析中… {n} 世界 · {rate}/秒",
     [FS_K_ORACLE_APPROX            ] = "おおよその局面です（一部の非公開カードは推定）。",
-    [FS_K_ORACLE_BASIS             ] = "公開されている記録に基づいています。",
     [FS_K_ORACLE_BELIEF_FLOOR      ] = "P{n} は {v} より小さい切り札以外のカードを持っていません",
     [FS_K_ORACLE_BELIEF_NONE       ] = "まだ確定した推論はありません - 未確認のカードはすべてあり得ます",
     [FS_K_ORACLE_BELIEF_PINNED     ] = "P{n} が {cards} を持っていると分かっています",

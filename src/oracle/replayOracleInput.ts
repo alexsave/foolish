@@ -34,7 +34,9 @@ const KIND_TO_MTYPE: Record<number, string> = {
 };
 
 /** The decision step under the cursor: the nearest decision at or before the
- *  paused step. Returns null when none exists (Oracle button disabled). */
+ *  paused step. Returns null when none exists (Oracle button disabled).
+ *  A multi-cover is ONE step by the time it gets here - buildReplayFrames
+ *  merges the run the wire split - so there is nothing to group again. */
 export function findDecisionIndex(frames: ReplayFrame[], stepIdx: number): number | null {
     for (let j = Math.min(stepIdx, frames.length - 1); j >= 1; j--) {
         if (frames[j].seat !== null && ORACLE_DECISION_KINDS.has(frames[j].kind)) return j;
@@ -42,15 +44,36 @@ export function findDecisionIndex(frames: ReplayFrame[], stepIdx: number): numbe
     return null;
 }
 
-/** Canonical key + human label of a recorded move. */
-function recordedMove(frame: ReplayFrame, trump: number): { key: string; label: string } {
+/** Canonical key + human label of the move recorded at step `j`. */
+function recordedMove(frames: ReplayFrame[], j: number, trump: number): { key: string; label: string } {
+    const frame = frames[j];
     const type = KIND_TO_MTYPE[frame.kind] ?? 'wait';
-    const cards = frame.cards.map((c) => oracleCardToken(c, trump));
-    const targets = frame.target ? [oracleCardToken(frame.target, trump)] : [];
+    // THE KERNEL SAYS HOW MANY CARDS THE MOVE NAMED (replay_steps.h, the step
+    // index's third byte). A step's cards are not always its move's: a pickup
+    // carries the pile it swept, which nobody chose. Slicing to the kernel's
+    // count is what stops this side inventing a second answer to a question the
+    // kernel already answers for octogen's dump - they disagreed about pickup,
+    // and every recorded pickup read as "not considered" because of it.
+    // A cover names its pairs; everything else names the cards the kernel counted.
+    const cards: string[] = [];
+    const targets: string[] = [];
+    if (type === 'cover' && frame.pairs?.length) {
+        for (const p of frame.pairs) {
+            cards.push(oracleCardToken(p.card, trump));
+            targets.push(oracleCardToken(p.target, trump));
+        }
+    } else {
+        for (const c of frame.cards.slice(0, frame.named)) cards.push(oracleCardToken(c, trump));
+        if (frame.named > 0 && frame.target) targets.push(oracleCardToken(frame.target, trump));
+    }
     const key = canonicalMoveKey(type, cards, targets);
     let label: string;
     if (type === 'cover') {
-        label = `cover ${cards.join(' ')}->${targets[0] ?? '?'}`;
+        // The same arrow the candidate rows draw (OracleOverlay moveTitleText):
+        // it is a cell on the 15-segment array, where "->" is a dash and a '>'
+        // the font has no glyph for, so the header fell out to plain text for
+        // two characters in the middle of a readout.
+        label = `cover ${cards.map((c, k) => `${c}→${targets[k] ?? '?'}`).join(' ')}`;
     } else if (type === 'pickup') label = 'pickup';
     else if (type === 'good') label = 'good';
     else label = `${type} ${cards.join(' ')}`.trim();
@@ -77,12 +100,16 @@ export function buildOracleJob(
     const seat = move.seat;
     if (seat == null) return null;
 
-    const state = replayStepMaskedState(code, j, seat);
+    // The KERNEL's step, not this array's index: a merged cover run makes them
+    // differ (buildReplayFrames mergeCoverRuns), and both of these address the
+    // wire. The run's FIRST wire step is the one the move was decided on.
+    const wireStep = move.step;
+    const state = replayStepMaskedState(code, wireStep, seat);
     if (!state) return null;
-    const logsWire = memoryOn ? replayStepLogs(code, j) : new Uint8Array(0);
+    const logsWire = memoryOn ? replayStepLogs(code, wireStep) : new Uint8Array(0);
     if (!logsWire) return null;
 
-    const rec = recordedMove(move, pre.powerSuit);
+    const rec = recordedMove(frames, j, pre.powerSuit);
     return {
         decisionId: `${gameId}:${j}:${memoryOn ? 1 : 0}`,
         seat,
