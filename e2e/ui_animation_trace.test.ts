@@ -631,6 +631,33 @@ async function tapCard(s: Stage, card: string): Promise<void> {
     await s.step(`release ${card}`, () => { dom.window.document.dispatchEvent(new dom.window.MouseEvent('mouseup', { bubbles: true })); });
 }
 
+// ---- the battle grid, as it is DRAWN and as the board holds it -------------------
+//
+// Two rows, deliberately read from two different places. `gridCells` is what
+// TableBattles painted - `shownRow`'s answer (src/state/animPlan.ts), the
+// board's row with the piles this run is still carrying taken out of it.
+// `storeRow` is the board the page was drawn FROM. Everywhere but a run whose
+// board has got ahead of its own flight the two are the same string, and the
+// one case below is about the frames where they are not.
+
+/** A card as the kernel writes it ("7h"), from the page's own `data-card`. */
+const notate = (data: string): string => {
+    const [suit, value] = data.split('-').map(Number);
+    return `${'23456789TJQKA'[value - 1] ?? '?'}${'shcd'[suit] ?? '?'}`;
+};
+
+/** The cells the grid has, in row order; a covered pile is "attack/cover". */
+const gridCells = (host: HTMLElement): string[] =>
+    Array.from(host.querySelectorAll<HTMLElement>('[data-table-container] [data-location="table"]'))
+        .map((cell) => Array.from(cell.querySelectorAll<HTMLElement>('[data-card]'))
+            .map((el) => notate(el.getAttribute('data-card') ?? '')).join('/'));
+
+/** The same row off the store's board, so a cell the grid is withholding shows as a difference. */
+const storeRow = (): string[] => (JSON.parse(probe.store).view.battles as any[])
+    .map((b) => (b.defense.suit === V.CARD_NONE_SUIT && b.defense.value === V.CARD_NONE_VALUE
+        ? [b.attack] : [b.attack, b.defense])
+        .map((c: any) => `${'23456789TJQKA'[c.value - 1] ?? '?'}${'shcd'[c.suit] ?? '?'}`).join('/'));
+
 // ---- the cases ------------------------------------------------------------------------------
 
 test('attack: my card flies to the table, the server confirms it', async () => {
@@ -775,6 +802,78 @@ test('throw-in while my move is pending: another attacker lands first', async ()
         await answer(s, 'server applies mine');
         await s.advance(150);
         await deliver(s, 'push: my throw-in');
+    });
+});
+
+test('a board that got ahead of its own flight: the arrived pile gets no cell until it lands, and my pending pile keeps its own', async () => {
+    // THE ONE THING `heldPiles` EXISTS FOR (src/state/animPlan.ts), asserted
+    // rather than hashed. Everywhere else in this file - and on the replay
+    // screen, which is where the row freeze was measured - a step's board is
+    // committed at that step's LANDING, so the board is never ahead of the
+    // flight and the held set stays empty. This case puts it ahead, the way a
+    // live game does:
+    //
+    //   Boris throws in 7s first, so his push is the OLDER of the two;
+    //   I throw in 7d, which the server applies behind it;
+    //   Boris's push is delivered and 7s starts to fly;
+    //   MY OWN push is delivered while it is still in the air - and every one
+    //   of its events is a motion this client already animated, so
+    //   AnimationContext takes the dedup branch and commits its board AT ONCE
+    //   (withoutConfirmedMotions -> updateGameState). That board is the
+    //   server's, so it holds 7s, and 7s has not landed.
+    //
+    // Measured in Chromium against a live game on the same board
+    // (e2e/fake_supabase.mts, scenario throw_in_race): with the held set the
+    // grid keeps two cells for the 240ms between that push and the landing and
+    // then takes the third; with `heldPiles` stubbed to the empty set, the cell
+    // appears on the push's own frame, 7s is drawn twice (a static pile at
+    // x=640 and a flying ghost at 720,450) and the two piles already down
+    // teleport 40px each in one frame instead of gliding.
+    //
+    // The two halves this pins, in the two rows:
+    //   - the ARRIVED pile: on the board, off the grid, until its flight lands;
+    //   - MY OWN pending 7d: on the board AND on the grid throughout somebody
+    //     else's flight. A pile nothing is flying never loses its slot.
+    // The same board e2e/fake_supabase.mts's `throw_in_race` scenario deals, so
+    // the case below and the browser run are one experiment: everyone holds a
+    // seven, and Anna's hand is long enough to be attacked three times.
+    const board = threeMeFirst().deck('6s 8s 9s Ts')
+        .hand(0, '7d Tc Jd Ad').hand(1, '8h 9h Th Jh Qh').hand(2, '7s Qd 6d 6c')
+        .table('7h').attacker(0).defender(1).build();
+    await play('held_pile_board_ahead', 132, 'a-held-pile', board, async (s, srv) => {
+        await s.step('Boris throws in 7s on the server, before my move reaches it',
+            () => { srv.act(BORIS, encodeAction({ kind: 'attack', cards: cards('7s') })); });
+        const boris = srv.take(ME);
+
+        await s.step('tap attack 7d', () => tap(probe.anim.attack(cards('7d'))));
+        await s.advance(120);
+        await answer(s, 'server applies mine, behind Boris\'s');
+        const mine = srv.take(ME);
+
+        // My own prediction lands and takes a cell, as any landed pile does.
+        await s.advance(600);
+        assert.deepEqual(gridCells(s.host), ['7h', '7d'], 'my prediction has landed and holds a cell');
+        assert.deepEqual(storeRow(), ['7h', '7d'], 'and the board it was drawn from says the same');
+
+        // Boris's card is in the air. My pending 7d is not: nothing is flying it.
+        await deliver(s, 'push: Boris\'s throw-in', boris);
+        s.track('7s');
+        await s.advance(100);
+        assert.equal(flights(s.host).length, 1, '7s is in the air');
+        assert.deepEqual(gridCells(s.host), ['7h', '7d'], 'my pending pile keeps its cell through somebody else\'s flight');
+
+        // The confirmation of a card that is already on my table: nothing to
+        // animate, so its board - the server's, holding 7s - commits at once.
+        await deliver(s, 'push: my own throw-in, confirming a card already on the table', mine);
+        assert.deepEqual(storeRow(), ['7h', '7s', '7d'], 'the board has got ahead of the flight: it holds 7s');
+        assert.equal(flights(s.host).length, 1, 'and 7s is still in the air');
+        assert.deepEqual(gridCells(s.host), ['7h', '7d'], 'so the grid gives 7s no cell, and the piles already down do not move');
+
+        // ...and the cell arrives with the card, not before it.
+        await s.advance(600);
+        assert.deepEqual(flights(s.host), [], '7s has landed');
+        assert.deepEqual(gridCells(s.host), ['7h', '7s', '7d'], 'and only now does the grid make room for it');
+        assert.deepEqual(storeRow(), ['7h', '7s', '7d'], 'the grid and the board agree again');
     });
 });
 
