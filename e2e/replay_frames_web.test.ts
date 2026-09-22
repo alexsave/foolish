@@ -263,3 +263,110 @@ test('a replay\'s seats are named by its extras, and carry no invented player id
         }
     }
 });
+
+test('a cover run is merged only when its pairs were one send', async () => {
+    // A run of consecutive covers by one seat is NOT always one move. A
+    // defender may cover, send, and cover again later - and the replay wire
+    // codes a cover one pair at a time, so both shapes arrive as the same
+    // consecutive steps. The clock is what separates them: the extras hold a
+    // gap per timed step, pairs committed together carry 0.000, and a second
+    // send carries however long the sender took.
+    //
+    // Merging on adjacency alone invented a triple cover out of three separate
+    // sends (gaps 8.434s and 3.662s) on a real 2p game, and the Oracle then
+    // reported a move nobody played.
+    const { code } = playSeeded(2, 500 + 2);
+    const frames = buildReplayFrames(code, 'g', null);
+    const runs: number[] = [];
+    for (let i = 1; i < frames.length; i++) {
+        if (frames[i].kind === REPLAY_STEP.COVER && frames[i - 1].kind === REPLAY_STEP.COVER
+            && frames[i].seat === frames[i - 1].seat) runs.push(i);
+    }
+
+    // With NO gaps, nothing is merged: an unknown send boundary must not be
+    // guessed at, because inventing a move is worse than showing two real ones.
+    for (const f of frames) {
+        if (f.kind !== REPLAY_STEP.COVER) continue;
+        assert.equal(f.pairs?.length ?? 0, 1,
+            'without the extras\' times, a cover step stays one pair');
+        assert.equal(f.moves, 1, 'and counts as the one move it is');
+    }
+
+    // Same code, but every adjacent pair declared same-send: now they merge.
+    // `number[]`, not the literal union an inline array infers: REPLAY_STEP's
+    // members are `as const`, so [ATTACK, COVER, PASS, PICKUP] types as
+    // (2|3|4|5)[] and .includes refuses a plain `kind`. tsc catches it, the
+    // test runner does not, and `npm run typecheck` is a CI lane of its own.
+    const TIMED: number[] = [REPLAY_STEP.ATTACK, REPLAY_STEP.COVER, REPLAY_STEP.PASS, REPLAY_STEP.PICKUP];
+    const nTimed = frames.filter((f) => TIMED.includes(f.kind)).length;
+    const together = buildReplayFrames(code, 'g', null, { moveGaps: new Array(nTimed).fill(0) });
+    const merged = together.filter((f) => f.kind === REPLAY_STEP.COVER && (f.pairs?.length ?? 0) > 1);
+    assert.ok(runs.length === 0 || merged.length > 0,
+        'with every gap at zero, an adjacent cover run is one move');
+
+    // And declared far apart: never merged, however adjacent.
+    const apart = buildReplayFrames(code, 'g', null, { moveGaps: new Array(nTimed).fill(30) });
+    for (const f of apart) {
+        if (f.kind !== REPLAY_STEP.COVER) continue;
+        assert.equal(f.pairs?.length ?? 0, 1, 'a 30s gap is two sends, never one move');
+    }
+});
+
+test('one committed operation is one clock stamp, which is what the merge reads', async () => {
+    // THE INVARIANT THE COVER MERGE STANDS ON, pinned where it can be seen.
+    // frames.ts merges a run of cover steps only when the gap between them is
+    // exactly zero, and that is only meaningful because table_commit_products
+    // stamps every record of ONE committed operation with the same now_ms
+    // (c/src/table.c) and table_replay_extras derives one gap per record from
+    // those stamps. Nothing in frames.ts can see that, and if table.c ever
+    // stamped per record instead of per commit the merge would quietly join
+    // every cover run again. So the rule is checked here, against a real table.
+    const { dealBotTable, botCycle, seedBytes } = await import('./helpers/bot_table.ts');
+    const { fixtureTable } = await import('./helpers/table_fixture.ts');
+    const { clientTable } = await import('../sdk/ts/table/client_table.ts');
+    const { EVW_T_COVER } = await import('../sdk/ts/gen/view_layout.bots.ts');
+    const { kernelReplayExtrasDecode, replaySummary } = await import('../sdk/ts/wasm/bots.ts');
+    const { replayCodeOf } = await import('./helpers/bot_table.ts');
+    const L = await import('../sdk/ts/gen/game_layout.bots.ts');
+
+    const table = fixtureTable();
+    let row: any = dealBotTable(['handwritten', 'handwritten'], seedBytes(2, 7), { table });
+    const coverOps: number[] = [];               // cover events per committed push
+    const readPush = (r: any) => {
+        const b = table.push(r.gameId, -1);
+        if (typeof b === 'number') return;
+        const rd = clientTable().readPush(b, { as3: true, identity: 'none' });
+        if (!rd) return;
+        const n = rd.steps.filter((s: any) => s.event.type === EVW_T_COVER).length;
+        if (n > 0) coverOps.push(n);
+    };
+    readPush(row);
+    for (let i = 0; i < 4000 && row.status === L.GAME_STATUS_PLAYING; i++) {
+        const c = botCycle(row, { table });
+        if (c.drive.n === 0) break;
+        row = c.row;
+        readPush(row);
+    }
+
+    const code = replayCodeOf(row, seedBytes(2, 7), { table });
+    const extras = table.replayExtras(row.log);
+    assert.ok(typeof extras !== 'number', 'the table produced an extras blob');
+    const sum = replaySummary(code)!;
+    const decoded = kernelReplayExtrasDecode(extras as Uint8Array, sum.numPlayers, sum.moves);
+    const gaps: number[] = decoded.moveGaps ?? [];
+    assert.ok(gaps.length > 0, 'the extras carry times');
+
+    // Every pair PAST THE FIRST of a multi-pair cover shares its operation's
+    // stamp, so it contributes exactly one zero gap. Nothing else may.
+    const expectedZeros = coverOps.reduce((n, k) => n + (k - 1), 0);
+    const zeros = gaps.filter((g) => g === 0).length;
+    assert.ok(coverOps.some((k) => k > 1), 'the fixture actually contains a multi-pair cover');
+    assert.equal(zeros, expectedZeros,
+        `a zero gap is one commit: expected ${expectedZeros} from ${coverOps.filter(k => k > 1).length} multi-pair covers`);
+
+    // And a separate operation is never zero - there is no near-miss band, so
+    // the merge's "=== 0" needs no tolerance.
+    const nonzero = gaps.filter((g) => g > 0);
+    assert.ok(Math.min(...nonzero) > 0.1,
+        `separate operations are far from zero (min ${Math.min(...nonzero)}s)`);
+});
