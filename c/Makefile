@@ -538,7 +538,51 @@ leafbook-verify:
 # the resulting module via sdk/ts/wasm/. `-D_Thread_local=`
 # strips TLS (single-threaded module); the bridge sets the production
 # deck-size boundary at init (see card.h).
-WASM_CC    ?= clang
+# THE COMPILER IS PART OF THE MODULE, so picking it up off PATH is picking up
+# whatever is there. On a Mac that is Apple clang, and the old protection was
+# that Apple clang could not target wasm32 AT ALL, so the wrong one failed
+# loudly. That protection expired: Apple clang 21 targets wasm32 fine and
+# builds a module 271 B LARGER than the pinned toolchain's, silently. Against a
+# pin with 85 B of room, a developer running the documented command on a Mac
+# now gets a red size gate and a kernel CI never built, with nothing saying
+# which compiler asked.
+#
+# So macOS defaults to the pinned Homebrew LLVM when it is installed, and
+# wasm-cc-check below refuses Apple clang outright rather than letting it ship
+# a different answer. Setting WASM_CC= explicitly still wins, for whoever needs
+# to measure exactly this.
+ifeq ($(origin WASM_CC),undefined)
+  ifneq ($(wildcard /opt/homebrew/opt/llvm/bin/clang),)
+    WASM_CC := /opt/homebrew/opt/llvm/bin/clang
+  else
+    WASM_CC := clang
+  endif
+endif
+
+# Every wasm target depends on this. It is a guard and not advice, because the
+# failure it catches does not look like a failure: the build succeeds and the
+# bytes are wrong.
+.PHONY: wasm-cc-check
+wasm-cc-check:
+	@v="$$($(WASM_CC) --version 2>/dev/null | head -1)"; \
+	case "$$v" in \
+	  "") echo "wasm: WASM_CC=$(WASM_CC) is not runnable" >&2; exit 1;; \
+	  *"Apple clang"*) \
+	    echo "wasm: WASM_CC=$(WASM_CC) is $$v" >&2; \
+	    echo "wasm: Apple clang targets wasm32 but does NOT produce the pinned module" >&2; \
+	    echo "wasm: (measured: 271 B larger than Homebrew clang 22 on the same tree)" >&2; \
+	    echo "wasm: install the pinned toolchain (brew install llvm binaryen) or pass WASM_CC=" >&2; \
+	    exit 1;; \
+	esac; \
+	case "$$v" in \
+	  *"clang version $(WASM_LLVM_MAJOR)."*) ;; \
+	  *) echo "wasm: WASM_CC is $$v, not the pinned clang $(WASM_LLVM_MAJOR) - sizes will differ from CI" >&2;; \
+	esac
+# The pinned major, matching scripts/ci_llvm.sh LLVM_VERSION. A warning and not
+# a refusal: a different clang 22 point release is a few bytes, a different
+# MAJOR is kilobytes (clang 18 cost 3.5 KB), and both are worth saying out loud
+# without stopping someone who knows why they are doing it.
+WASM_LLVM_MAJOR ?= 22
 # Optimize for SIZE (-Oz), not speed (-O3). Measured: -Oz cuts every module
 # ~40% (bots 194->116KB, rules 49->27KB, guards 20->12KB embedded b64 drops
 # ~105KB) for ~0 warm-perf cost — cordite's hot loop is bitboard popcount/ctz
@@ -1177,7 +1221,7 @@ build/msg.wasm: $(WASM_MSG_OBJ) wasm/msg_exports_check.mjs Makefile
 	node wasm/msg_exports_check.mjs $@
 
 .PHONY: wasm-msg wasm-msg-size
-wasm-msg: build/layout/msg.hash
+wasm-msg: wasm-cc-check build/layout/msg.hash
 	$(call sg_settle,msg,build/msgobj,build/msg.wasm)
 	@$(MAKE) --no-print-directory build/msg.wasm
 
@@ -1226,23 +1270,25 @@ wasm-msg-size: build/msg.wasm
 # the knobs the roster already specifies. Folding the two is one change,
 # because it rewrites bots.wasm.gz.
 #
-# THE RAW MODULE SKEWS LESS THAN THE .gz, AND IT DOES SKEW. The measurement,
-# the hosts it was taken on and what has happened to it since live in ONE place,
-# scripts/wasm_build.sh, rather than being restated here where the two copies
-# can disagree - and they did, which is how a change landed over a size pin
-# believing the number it was compared against had been built.
+# There is NO toolchain skew in the RAW module, and it is measured rather than
+# asserted: with clang 22.1.8 + binaryen 130, build/bots.wasm comes out
+# byte-identical on macOS arm64 (Homebrew), Linux arm64 and Linux x86_64
+# (apt.llvm.org) - all md5 ac53b4dc5484aabad381d2d7bc451088, 191,485 B. A raw
+# byte delta therefore means YOUR CHANGE, not the compiler, and
+# `scripts/wasm_build.sh --check` is the gate that keeps that true.
 #
-# What matters at this line: a raw byte delta is USUALLY your change and is not
-# always, because the pinned toolchain is pinned by version and not by build. So
-# compare raw modules rather than .gz (the compressor alone moves the .gz by up
-# to 576 B on one identical module), compare them built on ONE machine, and when
-# a number decides something, build it - `scripts/wasm_build.sh --check` is the
-# gate, and e2e/mem/wasm_memory.test.ts holds the pins and the spread.
+# THE .gz IS A DIFFERENT STORY, and it is the compressor rather than the
+# compiler: gzip -9 -n over that one identical module gives 81,892 B from Apple
+# gzip, 82,043 B from GNU gzip and 82,468 B from node 20's zlib. So compare raw
+# modules, never .gz sizes, and see e2e/mem/wasm_memory.test.ts for why the size
+# gate moved onto the raw one.
 #
-# The trap that keeps manufacturing a phantom skew: WASM_CC defaults to plain
-# `clang`, which on macOS is APPLE clang and cannot target wasm32 at all
-# ("No available targets are compatible with triple wasm32"). It is WASM_CC=,
-# not CC=.
+# The trap that used to manufacture a phantom skew: WASM_CC is the knob, not CC.
+# It used to announce itself - Apple clang could not target wasm32 at all ("No
+# available targets are compatible with triple wasm32") - and it stopped, because
+# Apple clang 21 targets wasm32 and just builds something 271 B bigger. See
+# WASM_CC and wasm-cc-check above: macOS now defaults to the Homebrew LLVM and
+# the build refuses Apple clang rather than quietly disagreeing with CI.
 #
 # Nothing here is committed any more - CI builds the shipped modules in the lane
 # that ships them (scripts/wasm_build.sh), so there is no committed artifact to
@@ -1414,7 +1460,7 @@ build/named/bots.named.wasm: $(WASM_BOT_OBJ) Makefile
 # change invisible to every TS test that loaded the stale one. It also put 80 KB
 # of single-line base64, rewritten on every kernel build, into git. The price is
 # that the browser's door is async (ensureBotsAsync); that is the cheaper half.
-wasm-bots: build/layout/bots.hash
+wasm-bots: wasm-cc-check build/layout/bots.hash
 	$(call sg_settle,bots,build/botobj,build/bots.wasm)
 	@$(MAKE) --no-print-directory build/bots.wasm
 	gzip -9 -n -c build/bots.wasm > ../sdk/ts/wasm/bots.wasm.gz
@@ -1433,12 +1479,7 @@ wasm-bots: build/layout/bots.hash
 # Two links of one object set cannot: any function present in both is the same
 # bytes, because it came out of the same .o.
 #
-# WHAT IT BUYS, measured on this Mac (clang 22.1.8 + binaryen 130) when the
-# split landed. These are a snapshot of one host and they go stale - build the
-# module before quoting them, and see e2e/mem/wasm_memory.test.ts for the pins
-# and the ~290 B spread between hosts. Copying the bots.wasm line out of here
-# instead of building it is how a change landed 186 B over a pin it was measured
-# against:
+# WHAT IT BUYS, measured on this Mac (clang 22.1.8 + binaryen 130, the pin):
 #
 #   bots.wasm   191,490 B raw   81,902 B gz   37 pages (2,424,832 B)
 #   web.wasm     67,311 B raw   31,219 B gz   26 pages (1,703,936 B)
@@ -1508,7 +1549,7 @@ build/web.wasm: $(WASM_BOT_OBJ) Makefile
 	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),$@)
 
 .PHONY: wasm-web wasm-web-size
-wasm-web: build/layout/bots.hash
+wasm-web: wasm-cc-check build/layout/bots.hash
 	$(call sg_settle,bots,build/botobj,build/web.wasm)
 	@$(MAKE) --no-print-directory build/web.wasm
 	gzip -9 -n -c build/web.wasm > ../sdk/ts/wasm/web.wasm.gz
@@ -1543,7 +1584,7 @@ build/bots_test.wasm: $(WASM_BOT_OBJ) Makefile
 	mv $@.tmp $@
 
 .PHONY: wasm-bots-test
-wasm-bots-test: build/layout/bots.hash
+wasm-bots-test: wasm-cc-check build/layout/bots.hash
 	$(call sg_settle,bots,build/botobj,build/bots_test.wasm)
 	@$(MAKE) --no-print-directory build/bots_test.wasm
 	@bash ../scripts/wasm_stamp.sh --hash > build/bots_test.stamp.tmp && mv build/bots_test.stamp.tmp build/bots_test.stamp
@@ -1566,7 +1607,7 @@ WASM_ORACLE_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
   -Wl,--export=wasm_og_explain_reset -Wl,--export=wasm_og_reload_flags \
   -Wl,--export=wasm_og_paths_ptr -Wl,--export=wasm_og_paths_len
 .PHONY: wasm-oracle
-wasm-oracle: build/layout/oracle.hash
+wasm-oracle: wasm-cc-check build/layout/oracle.hash
 	@mkdir -p build/botoracle
 	@for src in $(WASM_BOT_SRC); do \
 	  base=$$(basename $$src .c); opt=-Oz; \
@@ -1616,7 +1657,7 @@ WASM_ORACLE_MT_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
   -Wl,--export=wasm_mt_mismatch -Wl,--export=wasm_mt_canary \
   -Wl,--export=wasm_mt_solver -Wl,--export=wasm_mt_verdict -Wl,--export=wasm_mt_defuse
 .PHONY: wasm-oracle-mt
-wasm-oracle-mt: build/layout/oracle-mt.hash
+wasm-oracle-mt: wasm-cc-check build/layout/oracle-mt.hash
 	@mkdir -p build/botoraclemt
 	@for src in $(WASM_ORACLE_MT_SRC); do \
 	  base=$$(basename $$src .c); opt=-Oz; \

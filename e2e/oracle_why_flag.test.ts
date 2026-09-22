@@ -163,3 +163,61 @@ test('flag on: clicking a candidate opens its measured proof', async () => {
     assert.equal(host.querySelector('[data-testid="oracle-why"]'), null, 'a second click closes it');
     await unmount();
 });
+
+/* -----------------------------------------------------------------------------
+ * The played row is findable, which is a different file's subject but this
+ * file's jsdom harness. Rather than stand a second one up to render the same
+ * overlay, the marker test rides this one.
+ * -------------------------------------------------------------------------- */
+test('exactly one row is marked as the move that was played', async () => {
+    // THE PANEL IS ABOUT THE MOVE THAT WAS PLAYED, and rows are sorted by
+    // estimate, so that row is wherever it deserves to be. On a wide board it
+    // is a long way down: one 8p defence ranks 129 replies against twelve that
+    // fit the panel, so the row the whole panel exists to show sat 116 rows
+    // below the fold. The overlay scrolls it into view once per decision, and
+    // `data-played` is how it finds it - a marker with no marker is a scroll
+    // that silently does nothing.
+    const { host, unmount } = await overlay();
+    const marked = host.querySelectorAll('[data-played]');
+    assert.equal(marked.length, 1, 'one row carries the played marker');
+    // ...and it wraps a row that actually drew. A row's text is empty by
+    // construction - the labels are 15-segment glyphs, so every character is
+    // an <svg> and textContent sees nothing - which is exactly why this looks
+    // for the drawn glyphs instead.
+    assert.ok(marked[0].querySelector('svg'), 'the marked row drew its glyphs');
+    // The fixture's played move is the FIRST candidate, so the marker must be
+    // on the first rendered row and not merely somewhere.
+    const rows = [...host.querySelectorAll('[data-testid="oracle-row"]')];
+    assert.ok(rows.length >= 2, `both candidate rows render (${rows.length})`);
+    assert.ok(marked[0].contains(rows[0]), 'the marker wraps the played candidate, which is first here');
+    assert.ok(!marked[0].contains(rows[1]), 'and not the one that was not played');
+    await unmount();
+});
+
+test('the played row is scrolled into view once, and it is the played row', async () => {
+    // SCROLLING IS A BROWSER BEHAVIOUR AND THIS IS JSDOM, which has no
+    // scrollIntoView at all - the first cut of this change threw on mount here,
+    // which is how the guard in the overlay got written. Defining one makes the
+    // call observable: what has to hold is that it fires on the MARKED row and
+    // fires ONCE for a decision, because the list re-sorts with every published
+    // batch as the estimates sharpen and a panel that re-scrolls on each of
+    // them would yank the page away from someone reading it.
+    const proto = (dom.window as any).Element.prototype;
+    const had = Object.prototype.hasOwnProperty.call(proto, 'scrollIntoView');
+    const prev = proto.scrollIntoView;
+    const calls: { el: Element; opts: unknown }[] = [];
+    proto.scrollIntoView = function (this: Element, opts: unknown) { calls.push({ el: this, opts }); };
+    try {
+        const { host, unmount } = await overlay();
+        assert.equal(calls.length, 1, `scrolled exactly once (${calls.length})`);
+        const marked = host.querySelector('[data-played]');
+        assert.ok(marked, 'the played row is marked');
+        assert.equal(calls[0].el, marked, 'the row it scrolled to is the played one');
+        // `nearest` is the difference between "make sure it is on screen" and
+        // "drag it to the top even though it already was on screen".
+        assert.deepEqual(calls[0].opts, { block: 'nearest' }, 'it does not move a row that is already visible');
+        await unmount();
+    } finally {
+        if (had) proto.scrollIntoView = prev; else delete proto.scrollIntoView;
+    }
+});
