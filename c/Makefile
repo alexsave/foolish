@@ -747,6 +747,20 @@ WASM_FLAGS := --target=wasm32 $(WASM_OPT) -nostdlib -ffreestanding -mbulk-memory
 # to a wrong value at only ~1e-5/game, an order of magnitude below octogen's ~4e-4
 # inherent floor). Net solver table: 128 KiB (TT13) -> 64 KiB (TT12+2WAY) -> 32 KiB.
 
+# THE BLANKET HEADER DEPENDENCY every wasm object rule below carries, named
+# once instead of spelled out at each of them. Same rule as the native
+# build/%.o objects: a struct-layout change in ANY header must rebuild every
+# object, or one module links two layouts.
+#
+# wasm/include is in it and was NOT in the copies this replaces. That directory
+# is the freestanding libc shim set (-isystem wasm/include, see WASM_FLAGS):
+# string.h there declares the memcpy/memset every translation unit calls, and
+# an edit to it rebuilt nothing. The gap was harmless while only two object
+# directories had rules; the oracle rules below would have widened it to four,
+# so it is closed here rather than copied twice more.
+WASM_HDRS := $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h) \
+             $(wildcard wasm/include/*.h)
+
 # Explicit export allow-list — only the memory (above) + wasm_* API the TS
 # bridge actually calls (engine.ts / bots.ts). This REPLACES -Wl,--export-all,
 # which exported every internal C symbol by name (41 in rules.wasm, 98 in
@@ -843,6 +857,21 @@ $(STRUCTGEN): $(wildcard $(STRUCTGEN_DIR)/*.c) $(wildcard $(STRUCTGEN_DIR)/*.h) 
               $(STRUCTGEN_DIR)/Makefile $(STRUCTGEN_DIR)/../llvm.mk
 	$(MAKE) -C $(STRUCTGEN_DIR) build/structgen
 
+# $(call sg_hash,...) IS NOT SAFE AGAINST A SECOND MAKE IN THE SAME TREE, and
+# that is worth knowing before it costs someone an afternoon. It writes its
+# scratch to fixed paths - $@.new, and $@.ts / $@.hash.ts when there is a stem -
+# and ends by removing them. Two make processes in c/ that both reach a hash
+# target therefore race: one creates $@.new, the other's `rm -f $@.new` takes it
+# away, and the first dies with "cat: build/layout/bots.hash.new: No such file or
+# directory" followed by "mv: cannot stat". It is not a flake and it is not a
+# bad hash - it is two builds sharing one temp file. Hit repeatedly on a shared
+# box where several agents were building this tree at once; hit on bots.hash,
+# which nothing had changed. THIS IS PRE-EXISTING (every sg_hash caller has it,
+# and build/layout/ios.hash has its own copy of the same pattern) and it is NOT
+# fixed here: a per-process temp has to be threaded through sg_hash and sg_sync
+# together, and the ios copy of it can only be tested on a Mac. Left as a note
+# rather than a half-fix. One build at a time in one tree, or expect this.
+#
 # $(call sg_hash,<build name>,<cflags>,<ts stem, or empty>): with a stem, also
 # writes ../sdk/ts/gen/game_layout.<stem>.ts and ../sdk/ts/gen/layout_hash.<stem>.ts.
 sg_gen   = ../sdk/ts/gen
@@ -1200,17 +1229,17 @@ WASM_MSG_LDFLAGS := --target=wasm32 -nostdlib $(filter -Wl%,$(WASM_MSG_FLAGS))
 WASM_MSG_POSTOPT ?= $(if $(strip $(WASM_POSTOPT)),$(WASM_POSTOPT),-Oz)
 WASM_MSG_OBJ := $(addprefix build/msgobj/,$(notdir $(WASM_MSG_SRC:.c=.o)))
 
-build/msgobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
+build/msgobj/%.o: src/%.c $(WASM_HDRS)
 	@mkdir -p build/msgobj
 	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
-build/msgobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
+build/msgobj/%.o: wasm/%.c $(WASM_HDRS)
 	@mkdir -p build/msgobj
 	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
-build/msgobj/wasm_api.o: wasm/wasm_api.c build/layout/msg.hash $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
+build/msgobj/wasm_api.o: wasm/wasm_api.c build/layout/msg.hash $(WASM_HDRS)
 	@mkdir -p build/msgobj
 	$(WASM_CC) $(WASM_MSG_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/msg.hash) -c $< -o $@
 
-build/msgobj/%.o: $(SHARED)/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
+build/msgobj/%.o: $(SHARED)/%.c $(WASM_HDRS)
 	@mkdir -p build/msgobj
 	$(WASM_CC) $(WASM_MSG_CFLAGS) -c $< -o $@
 
@@ -1376,17 +1405,17 @@ WASM_BOT_O3_OBJ := $(addprefix build/botobj/,$(notdir $(WASM_BOT_O3_SRC:.c=.o)))
 build/botobj/%.o: WASM_BOT_FILE_OPT := -Oz
 $(WASM_BOT_O3_OBJ): WASM_BOT_FILE_OPT := -O3
 
-build/botobj/%.o: src/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
+build/botobj/%.o: src/%.c $(WASM_HDRS)
 	@mkdir -p build/botobj
 	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -c $< -o $@
-build/botobj/%.o: wasm/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
+build/botobj/%.o: wasm/%.c $(WASM_HDRS)
 	@mkdir -p build/botobj
 	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -c $< -o $@
-build/botobj/wasm_api.o: wasm/wasm_api.c build/layout/bots.hash $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
+build/botobj/wasm_api.o: wasm/wasm_api.c build/layout/bots.hash $(WASM_HDRS)
 	@mkdir -p build/botobj
 	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -DSG_LAYOUT_HASH=$$(cat build/layout/bots.hash) -c $< -o $@
 
-build/botobj/%.o: $(SHARED)/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h) $(wildcard wasm/*.h)
+build/botobj/%.o: $(SHARED)/%.c $(WASM_HDRS)
 	@mkdir -p build/botobj
 	$(WASM_CC) $(WASM_BOT_CFLAGS) $(WASM_BOT_FILE_OPT) -c $< -o $@
 
@@ -1606,18 +1635,82 @@ WASM_ORACLE_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
   -Wl,--export=wasm_og_explain_ptr -Wl,--export=wasm_og_explain_len \
   -Wl,--export=wasm_og_explain_reset -Wl,--export=wasm_og_reload_flags \
   -Wl,--export=wasm_og_paths_ptr -Wl,--export=wasm_og_paths_len
+# ONE MAKE RULE PER OBJECT, the same shape wasm-bots has had all along. This
+# recipe used to be a shell `for` loop over all 34 sources inside a .PHONY
+# target, so every `npm run wasm` recompiled the whole oracle whether or not
+# anything had changed - and the gen+wasm pair is a pre-hook on nearly every
+# script in package.json. Measured on this tree: `npm run gen && npm run wasm`
+# was 15.9s warm with the loops and is 2.4s with these rules, while
+# `npm run wasm:bots` (rules already) was 0.4s. scripts/wasm_build.sh's header
+# and package.json's `//wasm` note carry the older Mac measurements that asked
+# for this change.
+#
+# NOTHING IS CACHED AND NOTHING IS ALLOWED TO GO STALE by this: make compares
+# each object against the source and the headers ($(WASM_HDRS)) it was built
+# from, which is a stronger contract than "recompile everything", not a weaker
+# one - the loop had no idea what an object was built from either, it just
+# overwrote it.
+#
+# ITS OWN OBJECT DIRECTORY, and that is load-bearing rather than tidy. These are
+# the bots sources at DIFFERENT flags (TT20 instead of TT12, -DOG_EXPLAIN_BUILD,
+# -DFOOLISH_ORACLE_BUILD - see WASM_ORACLE_CFLAGS above), and an object built at
+# one flag set that is reachable from a link of the other links silently and
+# wrongly. So each flag set keeps its own directory - build/botobj,
+# build/botoracle, build/botoraclemt, build/msgobj - and no rule writes across
+# them. That is the split that already existed; rules make it matter more,
+# because now an object SURVIVES between runs.
+#
+# SORTED, and byte-identity depends on it: object order on the link line decides
+# function order in the module. The loop linked `build/botoracle/*.o`, a shell
+# glob, and a glob is sorted; $(sort) reproduces that order, which is why these
+# rules write the same module the loop wrote - verified byte for byte, raw and
+# .gz, on all four modules. $(sort) is also the steadier of the two: a glob sorts
+# under LC_COLLATE, so its order is the machine's locale's and not necessarily
+# ASCII, while make's sort is ASCII everywhere. (Checked on a POSIX-locale Linux
+# box, where the two coincide; a machine whose collation differs would have got
+# different oracle bytes out of the loop than out of these rules, and the rules
+# are the side that cannot drift.)
+#
+# And the EXPLICIT LIST is what the glob could not be: a source removed from
+# WASM_BOT_SRC leaves its object behind in the directory, and a glob would keep
+# linking it. Same failure the iOS archive rules sweep for with `rm -rf`.
+WASM_ORACLE_OBJ    := $(sort $(addprefix build/botoracle/,$(notdir $(WASM_BOT_SRC:.c=.o))))
+WASM_ORACLE_O3_OBJ := $(addprefix build/botoracle/,$(notdir $(WASM_BOT_O3_SRC:.c=.o)))
+
+# Per-file opt, exactly as the loop chose it: -Oz for everything, -O3 for the
+# profiled MC core (WASM_BOT_O3_SRC). Target-specific beats pattern-specific.
+build/botoracle/%.o: WASM_ORACLE_FILE_OPT := -Oz
+$(WASM_ORACLE_O3_OBJ): WASM_ORACLE_FILE_OPT := -O3
+
+# EVERY object here bakes -DSG_LAYOUT_HASH, because the loop passed it to every
+# compile - so every object names build/layout/oracle.hash as a prerequisite.
+# (bots gives the define to wasm_api.o alone, which is why only that object
+# depends on the hash there.) The hash file's mtime moves only when its CONTENT
+# does, so this costs nothing on a warm build. sg_settle below is the other half
+# of it, for the same-second and mtime-went-backwards traps the layout notes
+# describe.
+build/botoracle/%.o: src/%.c build/layout/oracle.hash $(WASM_HDRS)
+	@mkdir -p build/botoracle
+	$(WASM_CC) $(WASM_ORACLE_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle.hash) $(WASM_ORACLE_FILE_OPT) -c $< -o $@
+build/botoracle/%.o: wasm/%.c build/layout/oracle.hash $(WASM_HDRS)
+	@mkdir -p build/botoracle
+	$(WASM_CC) $(WASM_ORACLE_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle.hash) $(WASM_ORACLE_FILE_OPT) -c $< -o $@
+build/botoracle/%.o: $(SHARED)/%.c build/layout/oracle.hash $(WASM_HDRS)
+	@mkdir -p build/botoracle
+	$(WASM_CC) $(WASM_ORACLE_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle.hash) $(WASM_ORACLE_FILE_OPT) -c $< -o $@
+
+# Makefile is a prerequisite for the reason build/bots.wasm names it: the export
+# list IS this file, and the link had been .PHONY (so always run) until now.
+build/oracle.wasm: $(WASM_ORACLE_OBJ) Makefile
+	@mkdir -p build
+	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_ORACLE_LDFLAGS) \
+	          $(WASM_ORACLE_EXPORTS) $(WASM_ORACLE_OBJ) -o $@
+	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),$@)
+
 .PHONY: wasm-oracle
 wasm-oracle: wasm-cc-check build/layout/oracle.hash
-	@mkdir -p build/botoracle
-	@for src in $(WASM_BOT_SRC); do \
-	  base=$$(basename $$src .c); opt=-Oz; \
-	  case " $(WASM_BOT_O3_SRC) " in *" $$src "*) opt=-O3;; esac; \
-	  echo "  CC(oracle) $$src [$$opt]"; \
-	  $(WASM_CC) $(WASM_ORACLE_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle.hash) $$opt -c $$src -o build/botoracle/$$base.o || exit 1; \
-	done
-	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_ORACLE_LDFLAGS) \
-	          $(WASM_ORACLE_EXPORTS) build/botoracle/*.o -o build/oracle.wasm
-	$(call wasm_postopt,$(WASM_BOTS_POSTOPT),build/oracle.wasm)
+	$(call sg_settle,oracle,build/botoracle,build/oracle.wasm)
+	@$(MAKE) --no-print-directory build/oracle.wasm
 	gzip -9 -n -c build/oracle.wasm > ../public/oracle.wasm.gz
 	@echo "built ../public/oracle.wasm.gz ($$(wc -c < ../public/oracle.wasm.gz) B gz, $$(wc -c < build/oracle.wasm) B raw)"
 
@@ -1656,18 +1749,42 @@ WASM_ORACLE_MT_EXPORTS := $(WASM_API_EXPORTS) $(WASM_BOTS_API_EXPORTS) \
   -Wl,--export=wasm_mt_forced -Wl,--export=wasm_mt_candidates \
   -Wl,--export=wasm_mt_mismatch -Wl,--export=wasm_mt_canary \
   -Wl,--export=wasm_mt_solver -Wl,--export=wasm_mt_verdict -Wl,--export=wasm_mt_defuse
+# The same rules as wasm-oracle just above, and everything said there applies
+# here - read that block first. The differences are only these: the source list
+# carries wasm/wasm_oracle_mt.c as well, the flags are the THREADED ones
+# (WASM_ORACLE_MT_CFLAGS: real TLS, -matomics, no CD_WASM_OVERLAY), and those
+# flags make build/botoraclemt a third object directory that must never mix with
+# the other two. Mixing here would be the worst of the three to debug: an object
+# compiled with -D_Thread_local= stripped into the threaded module is a data
+# race, not a link error.
+WASM_ORACLE_MT_OBJ    := $(sort $(addprefix build/botoraclemt/,$(notdir $(WASM_ORACLE_MT_SRC:.c=.o))))
+WASM_ORACLE_MT_O3_OBJ := $(addprefix build/botoraclemt/,$(notdir $(WASM_BOT_O3_SRC:.c=.o)))
+
+build/botoraclemt/%.o: WASM_ORACLE_MT_FILE_OPT := -Oz
+$(WASM_ORACLE_MT_O3_OBJ): WASM_ORACLE_MT_FILE_OPT := -O3
+
+build/botoraclemt/%.o: src/%.c build/layout/oracle-mt.hash $(WASM_HDRS)
+	@mkdir -p build/botoraclemt
+	$(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $(WASM_ORACLE_MT_FILE_OPT) -c $< -o $@
+build/botoraclemt/%.o: wasm/%.c build/layout/oracle-mt.hash $(WASM_HDRS)
+	@mkdir -p build/botoraclemt
+	$(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $(WASM_ORACLE_MT_FILE_OPT) -c $< -o $@
+build/botoraclemt/%.o: $(SHARED)/%.c build/layout/oracle-mt.hash $(WASM_HDRS)
+	@mkdir -p build/botoraclemt
+	$(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $(WASM_ORACLE_MT_FILE_OPT) -c $< -o $@
+
+# wasm-opt runs with --enable-threads here and writes the module in place, which
+# is not $(call wasm_postopt,...) - keep the line as the loop had it.
+build/oracle-mt.wasm: $(WASM_ORACLE_MT_OBJ) Makefile
+	@mkdir -p build
+	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_ORACLE_MT_LDFLAGS) \
+	          $(WASM_ORACLE_MT_EXPORTS) $(WASM_ORACLE_MT_OBJ) -o $@
+	$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) --enable-threads $(WASM_BOTS_POSTOPT) $@ -o $@
+
 .PHONY: wasm-oracle-mt
 wasm-oracle-mt: wasm-cc-check build/layout/oracle-mt.hash
-	@mkdir -p build/botoraclemt
-	@for src in $(WASM_ORACLE_MT_SRC); do \
-	  base=$$(basename $$src .c); opt=-Oz; \
-	  case " $(WASM_BOT_O3_SRC) " in *" $$src "*) opt=-O3;; esac; \
-	  echo "  CC(oracle-mt) $$src [$$opt]"; \
-	  $(WASM_CC) $(WASM_ORACLE_MT_CFLAGS) -DSG_LAYOUT_HASH=$$(cat build/layout/oracle-mt.hash) $$opt -c $$src -o build/botoraclemt/$$base.o || exit 1; \
-	done
-	$(WASM_CC) --target=wasm32 -nostdlib $(WASM_ORACLE_MT_LDFLAGS) \
-	          $(WASM_ORACLE_MT_EXPORTS) build/botoraclemt/*.o -o build/oracle-mt.wasm
-	$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) --enable-threads $(WASM_BOTS_POSTOPT) build/oracle-mt.wasm -o build/oracle-mt.wasm
+	$(call sg_settle,oracle-mt,build/botoraclemt,build/oracle-mt.wasm)
+	@$(MAKE) --no-print-directory build/oracle-mt.wasm
 	gzip -9 -n -c build/oracle-mt.wasm > ../public/oracle-mt.wasm.gz
 	@echo "built ../public/oracle-mt.wasm.gz ($$(wc -c < ../public/oracle-mt.wasm.gz) B gz, $$(wc -c < build/oracle-mt.wasm) B raw)"
 

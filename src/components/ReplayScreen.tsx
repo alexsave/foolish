@@ -71,7 +71,8 @@ const buildReplayData = async (code: string) => {
 
 export const ReplayScreen = ({ code }: { code: string }) => {
     // Client-only: the game display reads window dimensions during render
-    // (DefenderShield), so skip SSR/prerender entirely.
+    // (Chat's viewport state, the animation overlay's slot keys), so skip
+    // SSR/prerender entirely.
     const [mounted, setMounted] = useState(false);
     useEffect(() => setMounted(true), []);
 

@@ -24,6 +24,7 @@ import { shouldDropStaleSequence } from '../state/clientReconcile';
 import { noteAuthoritativeVersion } from '../state/authoritativeVersion';
 import { animEventKey } from '@sdk/ts/wasm/bots.ts';
 import { useAnimationRun } from '../state/useAnimationRun';
+import type { ArrivingPile } from '../state/animPlan';
 
 // Bot bump timeout - 20 seconds of no animations (currently unused)
 // const BOT_BUMP_TIMEOUT = 20000;
@@ -59,16 +60,23 @@ interface AnimationContextType {
      *  the overlay's CSS transition is written with. 0 when nothing is flying. */
     flightMs: number;
     /** How long the BATTLE ROW's own layout change lasts - the plan's duration
-     *  for the landing that moved it. Not `flightMs`: a landing falls in the gap
-     *  between two flights, where that one is already 0. 0 before a run's first
-     *  landing and after a seek, which are both meant to be instant. */
+     *  for the step whose card the row is making room for. Not `flightMs` at the
+     *  moment it is read: the row also moves at a landing, which falls in the gap
+     *  between two flights where that one is already 0. 0 before a run's first
+     *  step opens and after a seek, which are both meant to be instant. */
     rowMs: number;
-    /** THE PILES THE GRID MUST NOT MAKE ROOM FOR YET - the cards this run is
-     *  still carrying to the table, which get no cell until they land
+    /** THE PILES THE GRID MUST NOT MAKE ROOM FOR YET - the cards of the steps
+     *  this run has not started, which get no cell until their own flight opens
      *  (src/state/animPlan.ts heldPiles, drawn through `shownRow`). Empty on
      *  every frame with nothing in the air, and the same object each time, so
      *  it compares by identity. */
     heldPiles: ReadonlySet<number>;
+    /** …AND THE PILES IT MUST MAKE ROOM FOR NOW - the cards a step that HAS
+     *  started is bringing down, which take their cell while they are still in
+     *  the air so the row grows around them as they come (src/state/animPlan.ts
+     *  arrivingPiles, drawn through the same `shownRow`). This is the table's
+     *  half of iMessage's round 7, "it should be at the same TIME". */
+    arrivingPiles: readonly ArrivingPile[];
     // Cards currently flying from the deck pile. Drives the visible pile size.
     // Drops BEFORE the animation starts and resets when the snapshot commits.
     inFlightFromDeck: number;
@@ -485,7 +493,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // tracking it releases, when a sequence's final board is the truth - because
     // that is about the game, and the loop is about time.
     const {
-        isAnimating, currentAnimation, flightMs, rowMs, heldPiles,
+        isAnimating, currentAnimation, flightMs, rowMs, heldPiles, arrivingPiles,
         inFlightFromDeck, inFlightToFlipped, animatingCards, enqueue, reset: resetRun,
     } = useAnimationRun<ClientAnimationEvent>({
         board: () => currentGameRef.current,
@@ -1023,6 +1031,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             flightMs,
             rowMs,
             heldPiles,
+            arrivingPiles,
             inFlightFromDeck,
             inFlightToFlipped,
             getCardAnimationState,

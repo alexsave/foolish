@@ -77,6 +77,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          # `cache: npm` caches ~/.npm, the download cache, keyed on
+          # package-lock.json. It changes nothing about what `npm install`
+          # RESOLVES - the lockfile still decides that - so it cannot hand two
+          # lanes of one commit different dependencies, and on a miss the
+          # install is exactly today's. Nine jobs a push install this same
+          # tree from this same lockfile; only the fetching is shared.
+          cache: npm
 
       - name: Install dependencies
         run: npm install
@@ -290,6 +297,13 @@ jobs:
         if: steps.creds.outputs.ready == 'true'
         with:
           node-version: 20
+          # `cache: npm` caches ~/.npm, the download cache, keyed on
+          # package-lock.json. It changes nothing about what `npm install`
+          # RESOLVES - the lockfile still decides that - so it cannot hand two
+          # lanes of one commit different dependencies, and on a miss the
+          # install is exactly today's. Nine jobs a push install this same
+          # tree from this same lockfile; only the fetching is shared.
+          cache: npm
 
       - name: Install dependencies
         if: steps.creds.outputs.ready == 'true'

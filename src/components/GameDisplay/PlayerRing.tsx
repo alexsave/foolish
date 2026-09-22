@@ -1,10 +1,10 @@
 import { useServer } from "../../contexts/ServerContext";
-import { rulesOf, seatKey, type TableView, type ViewSeat } from "../../state/view";
+import { PLAYER_STATUS, rulesOf, seatKey, type TableView, type ViewSeat } from "../../state/view";
 import { useFernFractal } from "../../utils/fernFractal";
 import { useStyles } from "../../contexts/StyleContext";
 import { useLocalization } from "../../contexts/LocalizationContext";
 import { useState, useEffect, useRef } from "react";
-import { SovietIcon } from "../SovietIcon";
+import { RoleMarkSize, RoleMarkView, type RoleMarkKind } from "../RoleMark";
 import { SovietCardBack } from "./SovietCardBack";
 import { botDisplayName } from "../../common/botName";
 
@@ -88,15 +88,50 @@ const CardsVisual = ({ player, handKey, selfHandLength, isSelf }: { player: View
     );
 };
 
+/** THE ONE MARK a seat wears, from the kernel's answers about it.
+ *
+ *  NEVER TWO, and that is the point of ranking them here rather than letting two
+ *  components each decide. The website used to draw the sword in this ring and
+ *  the shield in a component of its own, so nothing stopped one seat wearing
+ *  both - and on a finished game it did: e2e/fixtures/ui_dom/replay_named_end
+ *  recorded Ada with the sword in her own slot and the shield floating beside it,
+ *  because at game over the kernel's two badges can name the same seat. iMessage
+ *  has the rule as a single function (`RoleMarkKind.worn`, ios/FoolishKit/Boards/
+ *  FRoleMotion.swift: "a seat is never two of these at once"), which is a HOST
+ *  function there too, so this is that function and not a second opinion.
+ *
+ *  Said good beats the shield beats the sword, and an out seat wears nothing
+ *  (FSeatBadge turns an out seat's badge edge-on; selfRoleMark is `isOut ? nil`).
+ *
+ *  WHAT IS MISSING, and it needs the kernel: a THROW-IN attacker's plain sword.
+ *  `first_attacker_badge` answers "who leads the NEXT bout" and goes to -1 the
+ *  moment the table opens, so mid-bout this draws no sword at all, while the
+ *  iMessage board gives every eligible attacker one and tints only the opener's.
+ *  The rule is the kernel's `turn_may_act` (c/src/game.h) and it is not reachable
+ *  from a board: it wants a per-seat mark on ViewRules. Deriving it here instead
+ *  would be a TypeScript copy of a C rule, so it is not derived here. */
+const markOf = (game: TableView, seat: number, player: ViewSeat): RoleMarkKind | null => {
+    if (player.status === PLAYER_STATUS.OUT) return null;
+    const rules = rulesOf(game);
+    if ((game.goodMask >> seat) & 1) return 'check';
+    if (rules.defenderBadge === seat) return 'shield';
+    if (rules.firstAttackerBadge === seat) return 'leadSword';
+    return null;
+};
+
 export const PlayerRing = () => {
     const { t } = useLocalization();
     const game = useServer().view as TableView;
     const { chatMessages } = useServer();
     const styles = useStyles();
     const self_index = game.mySeat;
-    // The sword's seat is the kernel's (client_view_rules): the next bout's lead,
-    // on an empty table, once the deal has turned the trump.
-    const swordSeat = rulesOf(game).firstAttackerBadge;
+    // The marks a seat can wear, named the way FoolishKit names them.
+    const markLabel: Record<RoleMarkKind, string> = {
+        shield: t('ios.a11y.defending'),
+        sword: t('ios.a11y.attacking'),
+        leadSword: t('ios.a11y.attackfirst'),
+        check: t('ios.a11y.saidgood'),
+    };
 
     const [chatBubbles, setChatBubbles] = useState<{ [playerId: string]: { message: string; timestamp: number } }>({});
     const lastMessageIdRef = useRef<number | null>(null);
@@ -146,6 +181,7 @@ export const PlayerRing = () => {
                 const y = ((Math.cos(radians) * 35) + 50) + '%';
                 const key = seatKey(game, index);
                 const bubble = chatBubbles[key];
+                const mark = markOf(game, index, player);
 
                 return (
                     <div key={key} style={{
@@ -159,25 +195,36 @@ export const PlayerRing = () => {
                         height: '80px',
                         transform: 'translate(-50%, -50%)'
                     }}>
-                        {/* TODO(ios-parity): iMessage board shifts the defender shield
-                            the moment a pass is staged (before defender_move lands) —
-                            that immediacy feels good; consider mirroring. (This ring
-                            only draws the first-attacker sword above; the web
-                            defender shield itself is the kernel's defender badge in
-                            DefenderShield.tsx, rendered as a sibling in GameBoard.) */}
-                        {index === swordSeat ? (
-                            <div style={{
-                                fontSize: '16px',
-                                height: '20px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center'
-                            }}>
-                                <SovietIcon name="sword" size={16} />
-                            </div>
-                        ) : (
-                            <div style={{ height: '20px' }} />
-                        )}
+                        {/* THE SEAT'S ROLE ROW (FSeatBadge.roleRow): a CONSTANT box,
+                            always present whether or not this seat wears a mark, so
+                            the name and the mini hand below it have nothing to
+                            re-lay-out when a mark arrives or leaves. Tall enough for
+                            the largest glyph in the family, or it clips the sword's
+                            corners (RoleMarkSize.rowHeight).
+
+                            WHERE IT SITS is the one thing not taken from iMessage:
+                            FSeatBadge stacks name, mini fan, then the role row, and
+                            this ring keeps the slot the website already had, above
+                            the name. The seat box here is 80px with the mini hand
+                            overflowing it, so moving the row under the fan is a
+                            layout change with its own screens to check (the self
+                            seat sits just above the action bar); the glyphs are the
+                            spec, the stacking order is deliberately left alone.
+
+                            TODO(ios-parity): iMessage board shifts the defender shield
+                            the moment a pass is staged (before defender_move lands) -
+                            that immediacy feels good; consider mirroring. And the
+                            marks do not MOVE here yet: on iMessage a mark turns like a
+                            coin when it changes and FLIES to the seat that takes it
+                            over (ios/FoolishKit/Boards/FRoleMotion.swift). */}
+                        <div style={{
+                            height: `${RoleMarkSize.rowHeight}px`,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                        }}>
+                            {mark && <RoleMarkView kind={mark} label={markLabel[mark]} />}
+                        </div>
 
                         <div style={{
                             margin: 0,

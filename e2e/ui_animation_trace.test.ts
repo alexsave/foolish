@@ -631,6 +631,48 @@ async function tapCard(s: Stage, card: string): Promise<void> {
     await s.step(`release ${card}`, () => { dom.window.document.dispatchEvent(new dom.window.MouseEvent('mouseup', { bubbles: true })); });
 }
 
+// ---- the battle grid, as it is DRAWN and as the board holds it -------------------
+//
+// Two rows, deliberately read from two different places. `gridCells` is what
+// TableBattles painted - `shownRow`'s answer (src/state/animPlan.ts), the
+// board's row with the piles this run is still carrying taken out of it.
+// `storeRow` is the board the page was drawn FROM. Everywhere but a run whose
+// board has got ahead of its own flight the two are the same string, and the
+// one case below is about the frames where they are not.
+
+/** A card as the kernel writes it ("7h"), from the page's own `data-card`. */
+const notate = (data: string): string => {
+    const [suit, value] = data.split('-').map(Number);
+    return `${'23456789TJQKA'[value - 1] ?? '?'}${'shcd'[suit] ?? '?'}`;
+};
+
+/** The cells the grid has, in row order; a covered pile is "attack/cover". A
+ *  CELL, not a card: a pile whose card is still in the air has its slot here
+ *  with the card's own element in it, and `drawnCells` below is the one that
+ *  says whether that card is being painted. */
+const gridCells = (host: HTMLElement): string[] =>
+    Array.from(host.querySelectorAll<HTMLElement>('[data-table-container] [data-location="table"]'))
+        .map((cell) => Array.from(cell.querySelectorAll<HTMLElement>('[data-card]'))
+            .map((el) => notate(el.getAttribute('data-card') ?? '')).join('/'));
+
+/** The same cells, counting only the cards the page is actually PAINTING - the
+ *  veil hides a card at the place it is landing on for as long as its flight is
+ *  up (src/contexts/AnimationContext.tsx flightPlaces, CardFace), so a slot the
+ *  grid has opened for a card still in the air reads as an empty string here.
+ *  Two different claims, and since the row now makes room for a pile while its
+ *  card is crossing the board they have to be asked separately. */
+const drawnCells = (host: HTMLElement): string[] =>
+    Array.from(host.querySelectorAll<HTMLElement>('[data-table-container] [data-location="table"]'))
+        .map((cell) => Array.from(cell.querySelectorAll<HTMLElement>('[data-card]'))
+            .filter((el) => el.style.visibility !== 'hidden')
+            .map((el) => notate(el.getAttribute('data-card') ?? '')).join('/'));
+
+/** The same row off the store's board, so a cell the grid is withholding shows as a difference. */
+const storeRow = (): string[] => (JSON.parse(probe.store).view.battles as any[])
+    .map((b) => (b.defense.suit === V.CARD_NONE_SUIT && b.defense.value === V.CARD_NONE_VALUE
+        ? [b.attack] : [b.attack, b.defense])
+        .map((c: any) => `${'23456789TJQKA'[c.value - 1] ?? '?'}${'shcd'[c.suit] ?? '?'}`).join('/'));
+
 // ---- the cases ------------------------------------------------------------------------------
 
 test('attack: my card flies to the table, the server confirms it', async () => {
@@ -775,6 +817,124 @@ test('throw-in while my move is pending: another attacker lands first', async ()
         await answer(s, 'server applies mine');
         await s.advance(150);
         await deliver(s, 'push: my throw-in');
+    });
+});
+
+test('a pile makes room for itself while its card is in the air, and a pile whose step has not opened gets nothing', async () => {
+    // WHAT `heldPiles` AND `arrivingPiles` EACH EXIST FOR (src/state/animPlan.ts),
+    // asserted rather than hashed, and the two rules read against each other
+    // because they answer the same question about different piles.
+    //
+    // THE ROW IS THE RUN'S, NOT THE BOARD'S. iMessage holds it in
+    // `ShownLedger.battles`, seeded to the row before the whole stream
+    // (`AnimPlan.pre.battles`) and advanced ONE STEP AT A TIME - and each
+    // advance is cut when that step OPENS, before its flights are even built:
+    // `ledger.write(.sequence) { $0.battles = s.battles }` inside
+    // `withAnimation(.timingCurve(..., duration: flightTime))`, in the same
+    // breath as the flight (ios/FoolishKit/Boards/MessageTableView+Sequence.swift,
+    // "…AND THE ROW GROWS AS THIS STEP'S CARDS COME DOWN ONTO IT"). So:
+    //
+    //   - a pile whose step HAS OPENED has its cell, and the piles already down
+    //     slide over to make room WHILE its card crosses the board. The card in
+    //     that cell is NOT painted - the veil holds it until the landing and the
+    //     overlay ghost carries the motion - which is why the two rows below are
+    //     read by two different helpers.
+    //   - a pile whose step has NOT OPENED has nothing at all. The grid centres
+    //     its cells, so a board that arrives holding a pile two flights down the
+    //     run would put every pile already down half a slot plus its gap to the
+    //     side, with a cold open having no previous layout to move it back from
+    //     (c/src/anim_plan.h AnimCounts).
+    //
+    // The stage puts BOTH on screen at once, which the earlier form of this case
+    // could not: it staged one in-flight pile, so "not landed" and "not opened"
+    // named the same pile and either rule could have been the one holding.
+    //
+    //   Boris throws in 7s and then 7c, so his two pushes are the OLDEST;
+    //   I throw in 7d, which the server applies behind them both;
+    //   Boris's FIRST push is delivered and 7s starts to fly;
+    //   his SECOND is delivered into the same run, where 7c waits its turn;
+    //   MY OWN push is delivered while 7s is still in the air - and every one
+    //   of its events is a motion this client already animated, so
+    //   AnimationContext takes the dedup branch and commits its board AT ONCE
+    //   (withoutConfirmedMotions -> updateGameState). That board holds 7s,
+    //   which is in the air, AND 7c, whose step has not opened.
+    //
+    // The three rules this pins, in the three rows:
+    //   - the OPENED pile 7s: a cell on the grid, its card not painted;
+    //   - the UNOPENED pile 7c: on the board, off the grid entirely;
+    //   - MY OWN pending 7d: on the board AND on the grid AND painted, right
+    //     through somebody else's flight. A pile nothing is flying never loses
+    //     its slot; that is the flicker the optimistic overlay exists to prevent.
+    // The same board e2e/fake_supabase.mts's `throw_in_race` scenario deals, so
+    // the case below and the browser run are one experiment: everyone holds a
+    // seven, and Anna's hand is long enough to be attacked three times.
+    const board = threeMeFirst().deck('6s 8s 9s Ts')
+        .hand(0, '7d Tc Jd Ad').hand(1, '8h 9h Th Jh Qh').hand(2, '7s 7c 6d 6c')
+        .table('7h').attacker(0).defender(1).build();
+    await play('held_pile_board_ahead', 132, 'a-held-pile', board, async (s, srv) => {
+        await s.step('Boris throws in 7s on the server, before my move reaches it',
+            () => { srv.act(BORIS, encodeAction({ kind: 'attack', cards: cards('7s') })); });
+        const borisFirst = srv.take(ME);
+        await s.step('…and 7c behind it, still before my move reaches it',
+            () => { srv.act(BORIS, encodeAction({ kind: 'attack', cards: cards('7c') })); });
+        const borisSecond = srv.take(ME);
+
+        await s.step('tap attack 7d', () => tap(probe.anim.attack(cards('7d'))));
+        await s.advance(120);
+        await answer(s, 'server applies mine, behind both of Boris\'s');
+        const mine = srv.take(ME);
+
+        // My own prediction lands and takes a cell, as any landed pile does.
+        await s.advance(600);
+        assert.deepEqual(gridCells(s.host), ['7h', '7d'], 'my prediction has landed and holds a cell');
+        assert.deepEqual(storeRow(), ['7h', '7d'], 'and the board it was drawn from says the same');
+
+        // 7s is in the air, so the row makes room for it AS it comes down - the
+        // cell is open at the pile's own place in the row, and the card in it is
+        // not painted. My pending 7d is not flying and keeps both.
+        await deliver(s, 'push: Boris\'s first throw-in', borisFirst);
+        s.track('7s');
+        await s.advance(100);
+        assert.equal(flights(s.host).length, 1, '7s is in the air');
+        assert.deepEqual(gridCells(s.host), ['7h', '7s', '7d'],
+            'the row has already made room for 7s, at the place its own step\'s board gives it');
+        assert.deepEqual(drawnCells(s.host), ['7h', '', '7d'],
+            'and the card is not painted there: the ghost is carrying it');
+
+        // The second throw-in joins the run behind 7s. Its step has not opened,
+        // so its pile gets nothing - not a cell, not a place in the row. The 30ms
+        // is a FRAME, not a wait: the held set is the run's own answer and the
+        // run answers once per animation frame, which a browser gives it for
+        // free and a fake clock has to be walked to.
+        await deliver(s, 'push: Boris\'s second throw-in, into the same run', borisSecond);
+        await s.advance(30);
+        assert.deepEqual(gridCells(s.host), ['7h', '7s', '7d'], '7c waits its turn: no cell for a step that has not opened');
+
+        // The confirmation of a card that is already on my table: nothing to
+        // animate, so its board - the server's, holding 7s AND 7c - commits at
+        // once, and the grid still refuses 7c its slot.
+        await deliver(s, 'push: my own throw-in, confirming a card already on the table', mine);
+        await s.advance(30);
+        assert.deepEqual(storeRow(), ['7h', '7s', '7c', '7d'], 'the board has got ahead of the run: it holds both of Boris\'s');
+        assert.equal(flights(s.host).length, 1, 'and 7s is still in the air');
+        assert.deepEqual(gridCells(s.host), ['7h', '7s', '7d'],
+            'so the grid gives 7c no cell, and the piles already down do not move for it');
+        assert.deepEqual(drawnCells(s.host), ['7h', '', '7d'], '7s is still the ghost\'s to draw');
+
+        // 7s lands into the slot that was waiting for it - no new cell, nothing
+        // re-orders - and only then does 7c open and take one of its own, on the
+        // same terms: a slot the row makes room for while the card is still up.
+        await s.advance(600);
+        assert.equal(flights(s.host).length, 1, '7c is in the air now, and it alone');
+        assert.deepEqual(gridCells(s.host), ['7h', '7s', '7c', '7d'], 'the row has made room for 7c as its step opened');
+        assert.deepEqual(drawnCells(s.host), ['7h', '7s', '', '7d'],
+            '7s has landed into the cell the row had already made for it; 7c is the ghost\'s');
+
+        await s.advance(1200);
+        assert.deepEqual(flights(s.host), [], 'everything has landed');
+        assert.deepEqual(gridCells(s.host), ['7h', '7s', '7c', '7d'], 'and 7c has its cell too');
+        assert.deepEqual(drawnCells(s.host), ['7h', '7s', '7c', '7d'], 'every pile painted');
+        assert.deepEqual(storeRow(), ['7h', '7s', '7c', '7d'], 'the grid and the board agree again');
     });
 });
 

@@ -230,6 +230,18 @@ class Builder {
 /** A new fixture: an empty WAITING table until the calls say otherwise. */
 export function fixture(): Builder { return new Builder(); }
 
+/**
+ * Card TEXT ("7d Ts") as the cards a move names, through the kernel's own
+ * card_list_parse - the same grammar every fixture above is written in. A caller
+ * that has to hand a move to `encodeAction` needs this and nothing else about a
+ * card; the suit and value below are the wire's own (Card_unpack_*), read back
+ * through the generated accessors.
+ */
+export function parseCardText(text: string, cap = L.Game_deck_LEN): { suit: number; value: number }[] {
+    const { cards } = parseCards('cards', text, cap, false);
+    return cards.map((raw) => ({ suit: L.Card_unpack_suit(raw), value: L.Card_unpack_value(raw) }));
+}
+
 /** Writes byte strings back to back at the IO buffer; returns their lengths. */
 function put(...parts: Uint8Array[]): number[] {
     const { ex } = k();

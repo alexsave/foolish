@@ -3,8 +3,8 @@
  * =============================================================================
  * docs/C_GAME_SHAPE_MIGRATION.md Phase 6a. The web's components used to decide,
  * each in its own file, whether the viewer is offered Good (ActionButtons,
- * KeyboardPlayMode), which seat the sword marks (PlayerRing), where the shield
- * stands (DefenderShield) and what the stock shows while cards fly out of it
+ * KeyboardPlayMode), which seat the sword marks and where the shield stands
+ * (PlayerRing's role row) and what the stock shows while cards fly out of it
  * (DeckAndFlipped). Those are rules, so they are C now (c/src/client_table.h
  * client_view_rules), asked through the client slot about any board a screen
  * holds (sdk/ts/table/client_table.ts rules): the slot's own, or one the host

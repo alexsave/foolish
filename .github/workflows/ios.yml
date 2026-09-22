@@ -12,9 +12,26 @@ name: ios
 # The Xcode build+test half (FoolishTests, HarnessTests) is deliberately NOT
 # here - see the note at the bottom of this file.
 
+# ONE RUN PER COMMIT, and the `push:` list is where that is decided.
+#
+# `claude/**` used to sit beside `main` here, and it made this the only workflow
+# in the repo that ran TWICE over the same sha: a push to an agent branch with an
+# open pull request fires both events, so both jobs ran twice, and the PR's check
+# list carried two `bridge-linux` and two `swift-parity` entries from two
+# different run ids. Measured on #226's last push (563eac6c): run 35763974025
+# (push) and run 35763979518 (pull_request), same commit, same two jobs, both
+# green, 178 runner-seconds duplicated out of the ~2000 that push cost in total.
+# Every other workflow already scoped `push` to `main` for exactly this reason.
+#
+# WHAT THE BRANCH ENTRY BOUGHT is not lost, only deferred. It ran these checks on
+# an agent branch before that branch had a pull request; `pull_request` fires on
+# `opened` against the head as it stands at that moment, so opening the PR runs
+# them over everything pushed up to then. Nothing reaches main unchecked either
+# way, which is the property this lane exists for - the difference is only how
+# early a pre-PR commit hears about a broken bridge.
 on:
   push:
-    branches: [main, "claude/**"]
+    branches: [main]
   pull_request:
     branches: [main]
 
