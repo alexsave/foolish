@@ -74,6 +74,7 @@ static void scope_open(Table *t, int actor) {
     t->ended = t->dealt_now = t->roster_changed = t->lobby_event = false;
     t->pre_has_flip = t->g->has_flipped;
     t->pre_flip = t->g->flipped;
+    t->pre_good_mask = t->g->good_players_mask;
     t->actor = (int8_t)actor;
     t->log_start = t->g->num_logs;
     t->reject = 0;
@@ -295,6 +296,11 @@ int table_commit_products(const Table *t, const char *game_id, int gid_len, uint
     out->ended = t->ended;
     out->dealt_now = t->dealt_now;
     out->roster_changed = t->roster_changed;
+    // Compared against the mask scope_open saved, so a good that is SET and a
+    // good that is CLEARED both count: the client animates them differently
+    // (anim_goods_opening leads the stream, anim_goods_cleared rides with the
+    // card that cleared it) but both are a change a viewer must be told about.
+    out->goods_changed = (t->g->good_players_mask != t->pre_good_mask);
     const int n_events = event_count(t);
     out->n_events = (uint8_t)(n_events > 255 ? 255 : n_events);
 

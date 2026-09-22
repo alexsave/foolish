@@ -512,14 +512,26 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         // event-0 mask (the kernel's AnimBeats.first_good_mask), and the rule
         // that only ADDED goods lead is the kernel's too.
         //
-        // This is also the only way another player's good ever reaches a screen.
-        // There is no ANIM_EVT_GOOD: a silent good changes no card, so the
-        // server pushes nothing for it (products.nEvents === 0) and the mask
-        // arrives as metadata on the NEXT stream. Before this, the website drew
-        // it whenever some later move's board happened to land.
+        // AND A GOOD CAN NOW BE THE WHOLE STREAM. There is still no
+        // ANIM_EVT_GOOD - a good flies no card, so it emits no event - but the
+        // server no longer drops the push for that: TableCommit.goods_changed
+        // says the goods moved and the broadcast goes out with `events` EMPTY
+        // (server/impls/supabase/functions/_shared/adapter/table_io.ts).
+        //
+        // So `events[0]` is not always there any more, and reading `.goodMask`
+        // off `undefined` would have thrown on the first such push - or, worse,
+        // silently answered ANIM_NO_MASK and dropped the only move the stream
+        // carried. The final board is the right source when the stream has no
+        // steps: with nothing to animate, the board the message settles on IS
+        // the move. iMessage reaches the same answer from the other side, seeding
+        // its roles "AHEAD OF THE EMPTY-STREAM GUARD, because the stream that
+        // needs it most is the empty one" (MessageTableView+Sequence.swift).
         const openingShown = roleMotionRef.current.read();
+        const openingMask = message.events.length > 0
+            ? stepGoodMask(message.events[0])
+            : (message.game ? message.game.goodMask : ANIM_NO_MASK);
         const opening = openingShown
-            ? animRolesGoodsOpening(openingShown.roles, stepGoodMask(message.events[0]))
+            ? animRolesGoodsOpening(openingShown.roles, openingMask)
             : null;
         // The seats do not change here, only what they are wearing, so nothing
         // flies: this is the coin flip each badge makes where it stands.

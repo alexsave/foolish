@@ -129,6 +129,7 @@ typedef struct {
     bool        lobby_event;    // this operation is a lobby edit its pushes announce
     bool        pre_has_flip;   // the face-up trump before the operation (DRAW privacy)
     Card        pre_flip;
+    uint32_t    pre_good_mask;  // good_players_mask before the operation (goods_changed)
     int8_t      actor;          // the acting seat, -1 for none
     int32_t     log_start;      // the operation's first log record
     int32_t     log_len;        // records the ROW's session log holds (table_set_session_log), loaded or not
@@ -234,13 +235,33 @@ typedef struct {
     int8_t  status;        // GAME_STATUS_*: the row's status column (the blob is authoritative)
     int8_t  fool;          // the fool's seat once the game is over, else -1
     int8_t  num_players;
-    uint8_t n_events;      // events each push carries; 0 means there is nothing to broadcast
+    // Events each push carries. 0 USED TO MEAN "nothing to broadcast", and that
+    // was wrong: see goods_changed below.
+    uint8_t n_events;
     bool    needs_bots;
     bool    closed_round;  // the operation's records hold a PICKUP or DISCARD (and it dealt nothing)
     bool    logs_reset;    // the operation dealt: its records start a new session log
     bool    ended;
     bool    dealt_now;
     bool    roster_changed;
+    // THE OPERATION MOVED THE GOODS, which a push must carry even when the
+    // operation moved no card. A `good` emits no event - the kernel has no card
+    // to fly - so for years the adapter's `n_events > 0` test dropped the push
+    // entirely and the mark only arrived folded into whatever moved next.
+    //
+    // That test was never the kernel's. It came from the TypeScript server
+    // (`isPassive && moveEvents === 0`) and c/src/bot_drive.c's classify() was
+    // then written to MIRROR it, so the kernel ended up mirroring a mirror.
+    // Meanwhile the iMessage client has always been built for exactly the push
+    // this enables - ios/FoolishKit/Boards/MessageTableView+Sequence.swift seeds
+    // its roles "AHEAD OF THE EMPTY-STREAM GUARD, because the stream that needs
+    // it most is the empty one: a `good` that does not close the bout emits no
+    // step, so the difference between these two role states is the ENTIRE move."
+    // It never received one, because the server never sent one.
+    //
+    // A good being SET is somebody's move (round 21, same file: "A GOOD IS A
+    // MOVE, SO IT PLAYS FIRST"), and a move is worth a broadcast.
+    bool    goods_changed;
     Span    state;         // durable state blob
     Span    roster;        // durable roster (ROSTER_BYTES)
     Span    logs;          // session-log records, u48 LE ms timestamp each; len 0 when none
