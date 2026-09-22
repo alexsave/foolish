@@ -68,7 +68,7 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 // a few hundred bytes than a boolean ever was. The gzip check that remains is
 // deliberately wide - it catches a base64 embed coming back or a blowup, not a
 // drift.
-const BOTS_RAW_MAX = 192_000;       // 191,485 B today: 515 B of room
+const BOTS_RAW_MAX = 192_000;       // 191,915 B today: 85 B of room
 const BOTS_GZ_MAX = 84 * 1024;      // 82,043 B shipped today; clears the worst
                                     // compressor above (82,468) by 3,548 B
 test('bots.wasm ships as a small gzip static asset (not a base64 embed)', () => {
