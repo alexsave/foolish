@@ -25,6 +25,12 @@ import { noteAuthoritativeVersion } from '../state/authoritativeVersion';
 import { animEventKey } from '@sdk/ts/wasm/bots.ts';
 import { useAnimationRun } from '../state/useAnimationRun';
 import type { ArrivingPile } from '../state/animPlan';
+import { ROLE_CLAIM, useRoleMotion, type RoleHandOff } from '../state/useRoleMotion';
+import { rolesOf } from '../state/roleLedger';
+import type { ShownBoard } from '../state/roleLedger';
+import {
+    ANIM_NO_MASK, animRolesGoodsCleared, animRolesGoodsOpening, animRolesPassHandOff,
+} from '@sdk/ts/wasm/bots.ts';
 
 // Bot bump timeout - 20 seconds of no animations (currently unused)
 // const BOT_BUMP_TIMEOUT = 20000;
@@ -101,6 +107,21 @@ interface AnimationContextType {
      *  states. Used by the replay player when seeking; a live game never
      *  needs it (the server stream is the only truth there). */
     resetAnimations: () => void;
+    // ---- the role marks (src/state/useRoleMotion.ts) -------------------------
+    /** WHAT THE BADGES ARE WEARING - the frozen ledger, not the live board. A
+     *  sequence walks it forward beat by beat, so a bout end does not re-cast
+     *  every sword a beat before the sequence that earns it has played. Null
+     *  until a board has shown anything. */
+    shownRoles: ShownBoard | null;
+    /** The marks in the air, and the seats they left and are going to. */
+    roleHandOff: RoleHandOff;
+    /** A seat publishes the box its mark is drawn in, so a mark can fly to it. */
+    publishRolePad: (seat: number, el: HTMLElement | null) => void;
+    /** The flights layer's two reports: a ghost drew a frame, and every ghost
+     *  has landed. The ghosts end a hand-off, because they run on the frames
+     *  that draw them and a wall-clock timer does not. */
+    noteRoleFlightFrame: () => void;
+    landRoleHandOff: () => void;
 }
 
 // Exported so the tutorial can re-provide a value that overrides the action
@@ -232,6 +253,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         currentGameRef.current = url_game_id ? games[url_game_id] : undefined;
         gamesRef.current = games;
     }, [url_game_id, games]);
+
 
     // Start bot bump timer when component mounts and game is loaded
     useEffect(() => {
@@ -479,6 +501,30 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
         };
         remainingSequenceEventsRef.current = message.events.length + revertEvents.length;
 
+        // The board this stream SETTLES on, for the one rule that cannot be
+        // answered from the stream: a pass writes no event for the hand-over.
+        sequenceFinalRef.current = message.game ?? null;
+
+        // A GOOD BEING SET LEADS THE STREAM. It is somebody's move, and the
+        // transition, the discard and the deal behind it are its consequences -
+        // flip it late and an attacker's check would snap on after the cards it
+        // caused had already been swept. `firstGoodMask` is the stream's own
+        // event-0 mask (the kernel's AnimBeats.first_good_mask), and the rule
+        // that only ADDED goods lead is the kernel's too.
+        //
+        // This is also the only way another player's good ever reaches a screen.
+        // There is no ANIM_EVT_GOOD: a silent good changes no card, so the
+        // server pushes nothing for it (products.nEvents === 0) and the mask
+        // arrives as metadata on the NEXT stream. Before this, the website drew
+        // it whenever some later move's board happened to land.
+        const openingShown = roleMotionRef.current.read();
+        const opening = openingShown
+            ? animRolesGoodsOpening(openingShown.roles, stepGoodMask(message.events[0]))
+            : null;
+        // The seats do not change here, only what they are wearing, so nothing
+        // flies: this is the coin flip each badge makes where it stands.
+        if (opening) roleMotionRef.current.syncRoles(opening);
+
         // Nothing doomed: the push plays as it came. Otherwise every return
         // flight goes first, over the board it must be drawn against
         // (src/state/revertFlights.ts).
@@ -487,6 +533,39 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             : revertsFirst(message, revertEvents, passIsInvalid));
     };
 
+
+    // ---- THE ROLE MARKS, and the three moments they move at ------------------
+    //
+    // The ledger and the hand-off live in src/state/useRoleMotion.ts; WHICH
+    // marks change at WHICH point of a sequence is the kernel's, and this file
+    // is where each of its three answers is asked, because this is where the
+    // sequence is. c/src/anim_plan.h states the rule the three firing points
+    // below are:
+    //
+    //   a good being SET leads the stream - it is somebody's move, and the
+    //     transition, the discard and the deal behind it are its consequences;
+    //   a good being CLEARED runs parallel with the throw-in that cleared it,
+    //     since the card and the marks are one event and neither leads;
+    //   a PASS hands the shield over WITH the transfer card;
+    //   everything else waits for the closing beat at the end of the sequence.
+    //
+    // iMessage fires them in exactly these four places
+    // (MessageTableView+Sequence.swift: the top of `runEventStream`, beside each
+    // beat's own flights, and the closing beat at the bottom).
+    const roleMotion = useRoleMotion();
+    const roleMotionRef = useRef(roleMotion);
+    roleMotionRef.current = roleMotion;
+    // The board a running sequence SETTLES on. A pass is snapshotted before the
+    // hand-over and writes no event for it, so the new defender appears nowhere
+    // in the stream - only on the final board, which is why
+    // `anim_pass_hand_off` takes it as an argument.
+    const sequenceFinalRef = useRef<TableView | null>(null);
+
+    /** The good mask a step's own board carries, or ANIM_NO_MASK for a step that
+     *  carried no board - the one value a mask may not take, and the value both
+     *  goods rules answer 0 for. */
+    const stepGoodMask = (step: ClientAnimationEvent): number =>
+        step.game_state ? step.game_state.goodMask : ANIM_NO_MASK;
 
     // ONE FRAME LOOP, and the kernel answers it (src/state/useAnimationRun.ts).
     // What is left here is what a landing MEANS - which board it commits, what
@@ -549,7 +628,47 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
                 remainingSequenceEventsRef.current--;
             }
         },
+        // A STEP'S CARDS ARE IN THE AIR AS OF THIS FRAME, which is when the marks
+        // that move WITH a card move. Both rules are fired and not awaited: the
+        // badge's turn and the card's flight are one event and start in the same
+        // instant, the shorter of the two simply finishing first.
+        onOpened: (step) => {
+            const roles = roleMotionRef.current;
+            const shown = roles.read();
+            if (!shown) return;
+            // THE GOODS THIS STEP CLEARS TURN NOW, WITH ITS CARD. Gated on the
+            // step actually PUTTING A CARD DOWN (the kernel's ANIM_BEAT_PLACED
+            // read off the step's own destination): a throw-in is the only thing
+            // that clears a good this way, and a mask that changes for any other
+            // reason still belongs to the closing beat with the rest of the
+            // consequences.
+            if (step.to_location === 'table') {
+                const cleared = animRolesGoodsCleared(shown.roles, stepGoodMask(step));
+                if (cleared) roles.syncRoles(cleared, { tableOpen: true });
+            }
+            // AND A TRANSFER HANDS THE SHIELD OVER WITH ITS CARD. The kernel
+            // tells a pass from an attack, because on the wire they are the same
+            // event and only the rules say which is which; the web names the
+            // seats that laid cards and asks.
+            if (step.type === 'attack_pass' && step.seat !== undefined) {
+                const final = sequenceFinalRef.current;
+                const handOff = final
+                    ? animRolesPassHandOff(shown.roles, 1 << step.seat, rolesOf(final).defender)
+                    : null;
+                // The two swords need no line of their own: the coins turn them
+                // off the departing / arriving seats this sync publishes.
+                if (handOff) roles.syncRoles(handOff, { tableOpen: true });
+            }
+        },
         onIdle: () => {
+            // THE CLOSING BEAT: everything the three rules above did not already
+            // move. By now the sweep has landed and the board is the one the
+            // sequence settles on, so this is the hand-off - the shield to the
+            // next defender, the opening sword to the next seat to swing - and
+            // the rotate-out of every sword that nobody took over.
+            roleMotionRef.current.syncFromView(
+                sequenceFinalRef.current ?? currentGameRef.current, ROLE_CLAIM.handOff, false);
+            sequenceFinalRef.current = null;
             // Allows future legitimate duplicates of a sequence already played.
             if (processedEventContent.current.size > 0) processedEventContent.current.clear();
             if (pendingCompletionCallbackRef.current && remainingSequenceEventsRef.current === 0) {
@@ -568,6 +687,19 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             }
         },
     });
+
+    // A BOARD THAT CHANGED WITH NO SEQUENCE OF ITS OWN still moves the roles: a
+    // first load, a resync, a move whose whole stream this client had already
+    // animated as a prediction. A sequence syncs its own roles at its closing
+    // beat, so this write is a BYSTANDER's - and whether a bystander may write
+    // while a sequence runs is `anim_shown_ledger_allows`, asked rather than
+    // decided here (src/state/useRoleMotion.ts). iMessage has the same pair: a
+    // board's `onChange` syncs the roles when the change carried no sequence.
+    useEffect(() => {
+        roleMotion.syncFromView(url_game_id ? games[url_game_id] : undefined,
+                                ROLE_CLAIM.bystander, isAnimating);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [url_game_id, games, isAnimating]);
 
     // Queue a single animation
     const queueAnimation = (event: ClientAnimationEvent) => enqueue([event]);
@@ -1035,6 +1167,11 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             inFlightFromDeck,
             inFlightToFlipped,
             getCardAnimationState,
+            shownRoles: roleMotion.shown,
+            roleHandOff: roleMotion.handOff,
+            publishRolePad: roleMotion.publishPad,
+            noteRoleFlightFrame: roleMotion.noteFlightFrame,
+            landRoleHandOff: roleMotion.landHandOff,
             attack,
             pass,
             pickup,

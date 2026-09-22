@@ -45,6 +45,13 @@ export interface AnimationRunHooks<S extends RunStep> {
     board: () => TableView | undefined;
     /** One step has landed. The provider decides what that is worth. */
     onLanded: (step: S) => void;
+    /** One step has OPENED: its cards are in the air as of this frame. The role
+     *  marks a move carries turn HERE and not at the landing - a good cleared by
+     *  a throw-in and the shield a transfer hands on are the same event as the
+     *  card, and neither leads (c/src/anim_plan.h "the role beat", and
+     *  ios/FoolishKit/Boards/MessageTableView+Sequence.swift, which fires both
+     *  beside the beat's own flights). */
+    onOpened?: (step: S) => void;
     /** Every step has landed and the run is over. */
     onIdle: () => void;
     /** Steps were added to the run. */
@@ -194,6 +201,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
             // THE ROW MOVES WITH THE CARD, so it moves over the card's own
             // duration and it starts when the card does.
             rowMsRef.current = plan.steps[startedRef.current]?.durationMs ?? 0;
+            hooksRef.current.onOpened?.(run[startedRef.current]);
             startedRef.current++;
         }
         setRowMs((prev) => (prev === rowMsRef.current ? prev : rowMsRef.current));

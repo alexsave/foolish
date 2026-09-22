@@ -189,8 +189,8 @@ All three are the beats model, all three are iMessage rules, and the web has non
 | A cover that ended its bout rests before the sweep takes the table away | `ANIM_BEAT_HOLDS` (`c/src/anim_plan.h:420`), `anim_build_beats` | **nothing.** The sweep follows at the next 500 ms tick like any other step. |
 | An `out` is a notice with no cards and no time, so a beat that MOVED something adopts the out notices trailing it and collapses those badges with its own card motion | `ANIM_BEAT_MOVED`, `outs_mask` (`c/src/anim_plan.h:421,426`) | **nothing.** An `out` event goes through the queue as its own 500 ms step with no cards, which is 500 ms of stillness. `src/state/pushSequence.ts` does not even give it a card list. |
 | The cards a beat, and the whole stream, puts DOWN, so a later sweep is drawn from these | `ANIM_BEAT_PLACED`, `AnimBeat.placed_ids`, `AnimBeats.placed_ids` (`c/src/anim_plan.h:422,434,441`) | **nothing.** |
-| A good being SET leads the stream; a good being CLEARED runs parallel with the throw-in that cleared it; a PASS hands the shield over WITH the transfer card; everything else waits for the closing beat | `AnimRoles` + `anim_goods_opening` / `anim_goods_cleared` / `anim_pass_hand_off` (`c/src/anim_plan.h:471-483`) | **nothing.** The web's marks come off whatever board the current step committed, so all three timings are "whenever the step that carried the board lands". |
-| Who may write the shown badges | `anim_shown_ledger_allows` (`c/src/anim_plan.h:1080`) | **nothing.** Any code path may call `updateGameState`. |
+| A good being SET leads the stream; a good being CLEARED runs parallel with the throw-in that cleared it; a PASS hands the shield over WITH the transfer card; everything else waits for the closing beat | `AnimRoles` + `anim_goods_opening` / `anim_goods_cleared` / `anim_pass_hand_off` (`c/src/anim_plan.h:471-483`) | **the web asks now** (2026-09-22). Four wasm entries (`wasm_anim_roles_*`, `wasm_anim_shown_ledger_allows`), a shown-roles ledger in `src/state/roleLedger.ts` and `src/state/useRoleMotion.ts`, and the three firing points in `src/contexts/AnimationContext.tsx` - the stream's head, each step's OPENING (`useAnimationRun`'s new `onOpened`), and the closing beat at `onIdle`. Before it, the row below this one was literally true: every mark came off whatever board the last step committed. |
+| Who may write the shown badges | `anim_shown_ledger_allows` (`c/src/anim_plan.h:1080`) | **the web asks now** for the marks (`useRoleMotion.syncFromView`, with `ANIM_CLAIM_BYSTANDER` while a run is in flight). Everything else a board carries is still whoever calls `updateGameState`. |
 | Which table the grid paints, and whether it is a sweep | `anim_shown_table` (`c/src/anim_plan.h:1047`) | `src/components/GameDisplay/AnimationOverlay.tsx:270` picks `currentAnimation.game_state ?? game`, which is the "live outranks pending" bug `anim_plan.h:1022-1031` says was written down as the rule and is wrong. |
 
 ## 13. Summary: what step 2 must add to C
@@ -201,7 +201,7 @@ C already answers, and the web only has to start asking:
 - the count-freeze including the row and the flipped trump (`AnimCounts`, `anim_pre_stream_table`);
 - the veil identities (`AnimPlan.veil_ids` and the `anim_veil_*` family);
 - beat grouping, the hold, the out-collapse, the placed set and the badge-drop rule (`anim_build_beats`, `AnimBeat`);
-- the role hand-off timings (`anim_goods_opening`, `anim_goods_cleared`, `anim_pass_hand_off`);
+- ~~the role hand-off timings (`anim_goods_opening`, `anim_goods_cleared`, `anim_pass_hand_off`)~~ - bridged and asked, 2026-09-22;
 - the dedup key (`anim_event_key`) in place of the JSON-string map;
 - the conflict verdict for all four refusal shapes (`anim_conflict_verdict`, already reachable);
 - the reversal's order (`anim_conflict_reversal`), once it is widened past the chain transport;

@@ -1,10 +1,13 @@
 import { useServer } from "../../contexts/ServerContext";
-import { PLAYER_STATUS, rulesOf, seatKey, type TableView, type ViewSeat } from "../../state/view";
+import { seatKey, type TableView, type ViewSeat } from "../../state/view";
 import { useFernFractal } from "../../utils/fernFractal";
 import { useStyles } from "../../contexts/StyleContext";
 import { useLocalization } from "../../contexts/LocalizationContext";
 import { useState, useEffect, useRef } from "react";
-import { RoleMarkSize, RoleMarkView, type RoleMarkKind } from "../RoleMark";
+import { type RoleMarkKind } from "../RoleMark";
+import { RoleCoin } from "../RoleCoin";
+import { useAnimation } from "../../contexts/AnimationContext";
+import { markWorn, shownBoardOf } from "../../state/roleLedger";
 import { SovietCardBack } from "./SovietCardBack";
 import { botDisplayName } from "../../common/botName";
 
@@ -88,37 +91,30 @@ const CardsVisual = ({ player, handKey, selfHandLength, isSelf }: { player: View
     );
 };
 
-/** THE ONE MARK a seat wears, from the kernel's answers about it.
+/** THE ONE MARK a seat wears is src/state/roleLedger.ts's `markWorn`, and it is
+ *  asked of the LEDGER, not of the board.
  *
- *  NEVER TWO, and that is the point of ranking them here rather than letting two
- *  components each decide. The website used to draw the sword in this ring and
+ *  NEVER TWO, and that is why the ranking is one function rather than two
+ *  components each deciding. The website used to draw the sword in this ring and
  *  the shield in a component of its own, so nothing stopped one seat wearing
  *  both - and on a finished game it did: e2e/fixtures/ui_dom/replay_named_end
- *  recorded Ada with the sword in her own slot and the shield floating beside it,
- *  because at game over the kernel's two badges can name the same seat. iMessage
- *  has the rule as a single function (`RoleMarkKind.worn`, ios/FoolishKit/Boards/
- *  FRoleMotion.swift: "a seat is never two of these at once"), which is a HOST
- *  function there too, so this is that function and not a second opinion.
+ *  recorded Ada with the sword in her own slot and the shield floating beside
+ *  it, because at game over the kernel's two badges can name the same seat.
+ *  iMessage has the rule as a single function (`RoleMarkKind.worn`), which is a
+ *  HOST function there too.
  *
- *  Said good beats the shield beats the sword, and an out seat wears nothing
- *  (FSeatBadge turns an out seat's badge edge-on; selfRoleMark is `isOut ? nil`).
+ *  WHY THE LEDGER AND NOT `rulesOf(game)`. `first_attacker_badge` answers "who
+ *  leads the NEXT bout" and goes to -1 the moment the table opens, so this ring
+ *  drew NO sword at all for the whole of every open bout - measured in a real
+ *  browser over a four-move bout, 32 frames of sword out of 648. The rule
+ *  iMessage draws the sword by is `showsSword` (MessageTableView+Roles.swift),
+ *  which is a host rule there and is NOT the kernel's `turn_may_act`: it keeps
+ *  an attacker's sword until THEY say good, and it asks the roles the board is
+ *  SHOWING rather than the ones the kernel has moved on to. Neither of those is
+ *  a fact about a board, which is why the answer is not a field of one.
  *
- *  WHAT IS MISSING, and it needs the kernel: a THROW-IN attacker's plain sword.
- *  `first_attacker_badge` answers "who leads the NEXT bout" and goes to -1 the
- *  moment the table opens, so mid-bout this draws no sword at all, while the
- *  iMessage board gives every eligible attacker one and tints only the opener's.
- *  The rule is the kernel's `turn_may_act` (c/src/game.h) and it is not reachable
- *  from a board: it wants a per-seat mark on ViewRules. Deriving it here instead
- *  would be a TypeScript copy of a C rule, so it is not derived here. */
-const markOf = (game: TableView, seat: number, player: ViewSeat): RoleMarkKind | null => {
-    if (player.status === PLAYER_STATUS.OUT) return null;
-    const rules = rulesOf(game);
-    if ((game.goodMask >> seat) & 1) return 'check';
-    if (rules.defenderBadge === seat) return 'shield';
-    if (rules.firstAttackerBadge === seat) return 'leadSword';
-    return null;
-};
-
+ *  A seat that is not in the ledger yet (a first paint) wears whatever the live
+ *  board says, so the very first frame is not blank. */
 export const PlayerRing = () => {
     const { t } = useLocalization();
     const game = useServer().view as TableView;
@@ -132,6 +128,13 @@ export const PlayerRing = () => {
         leadSword: t('ios.a11y.attackfirst'),
         check: t('ios.a11y.saidgood'),
     };
+
+    // The marks lag the board: what they are WEARING is the ledger's, walked
+    // forward beat by beat by the sequence that earns each change
+    // (src/state/useRoleMotion.ts). `shownBoardOf(game)` is the seed for a screen
+    // whose ledger has not been written yet.
+    const { shownRoles, roleHandOff, publishRolePad } = useAnimation();
+    const shownBoard = shownRoles ?? shownBoardOf(game);
 
     const [chatBubbles, setChatBubbles] = useState<{ [playerId: string]: { message: string; timestamp: number } }>({});
     const lastMessageIdRef = useRef<number | null>(null);
@@ -181,7 +184,7 @@ export const PlayerRing = () => {
                 const y = ((Math.cos(radians) * 35) + 50) + '%';
                 const key = seatKey(game, index);
                 const bubble = chatBubbles[key];
-                const mark = markOf(game, index, player);
+                const mark = markWorn(shownBoard, index, player);
 
                 return (
                     <div key={key} style={{
@@ -195,36 +198,40 @@ export const PlayerRing = () => {
                         height: '80px',
                         transform: 'translate(-50%, -50%)'
                     }}>
-                        {/* THE SEAT'S ROLE ROW (FSeatBadge.roleRow): a CONSTANT box,
-                            always present whether or not this seat wears a mark, so
-                            the name and the mini hand below it have nothing to
-                            re-lay-out when a mark arrives or leaves. Tall enough for
-                            the largest glyph in the family, or it clips the sword's
-                            corners (RoleMarkSize.rowHeight).
+                        {/* THE SEAT'S ROLE ROW (FSeatBadge.roleRow), which is a
+                            COIN: it turns when the mark changes and it blanks
+                            while its mark is in the air as a flight ghost
+                            (src/components/RoleCoin.tsx). A CONSTANT box, always
+                            present whether or not this seat wears a mark, so the
+                            name and the mini hand below it have nothing to
+                            re-lay-out when a mark arrives or leaves - and so this
+                            seat always has a landing pad to publish, which is
+                            what lets a mark fly to a seat that is wearing
+                            nothing.
 
-                            WHERE IT SITS is the one thing not taken from iMessage:
-                            FSeatBadge stacks name, mini fan, then the role row, and
-                            this ring keeps the slot the website already had, above
-                            the name. The seat box here is 80px with the mini hand
-                            overflowing it, so moving the row under the fan is a
-                            layout change with its own screens to check (the self
-                            seat sits just above the action bar); the glyphs are the
-                            spec, the stacking order is deliberately left alone.
+                            WHERE IT SITS is the one thing not taken from
+                            iMessage: FSeatBadge stacks name, mini fan, then the
+                            role row, and this ring keeps the slot the website
+                            already had, above the name. The seat box here is 80px
+                            with the mini hand overflowing it, so moving the row
+                            under the fan is a layout change with its own screens
+                            to check (the self seat sits just above the action
+                            bar); the glyphs and the motion are the spec, the
+                            stacking order is deliberately left alone.
 
-                            TODO(ios-parity): iMessage board shifts the defender shield
-                            the moment a pass is staged (before defender_move lands) -
-                            that immediacy feels good; consider mirroring. And the
-                            marks do not MOVE here yet: on iMessage a mark turns like a
-                            coin when it changes and FLIES to the seat that takes it
-                            over (ios/FoolishKit/Boards/FRoleMotion.swift). */}
-                        <div style={{
-                            height: `${RoleMarkSize.rowHeight}px`,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center'
-                        }}>
-                            {mark && <RoleMarkView kind={mark} label={markLabel[mark]} />}
-                        </div>
+                            TODO(ios-parity): iMessage shifts the defender shield
+                            the moment a pass is STAGED (before defender_move
+                            lands) - that immediacy feels good; here a staged pass
+                            flies its shield at the prediction's closing beat
+                            instead. */}
+                        <RoleCoin
+                            seat={index}
+                            kind={mark}
+                            departing={roleHandOff.departing.has(index)}
+                            arriving={roleHandOff.arriving.has(index)}
+                            labelOf={(k) => markLabel[k]}
+                            publishPad={publishRolePad}
+                        />
 
                         <div style={{
                             margin: 0,

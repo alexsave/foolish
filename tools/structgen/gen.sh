@@ -126,6 +126,7 @@ set +f
   --const ANIM_TIME_MS --const ANIM_GAP_MS --const ANIM_BOUT_END_HOLD_MS \
   --const ANIM_STEP_NONE --const ANIM_NEVER \
   --const ANIM_EVT_ --const ANIM_LOC_ --const ANIM_CONFLICT_ --const ANIM_SEAT_NONE \
+  --const ANIM_NO_MASK --const ANIM_CLAIM_ \
   --ts "$prod/anim.bots.ts"
 
 # The web client's reader of its slot (c/src/client_table.h): snapshot readers

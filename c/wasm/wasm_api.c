@@ -1238,6 +1238,73 @@ int wasm_anim_build_beats(int n_events) {
     return anim_build_beats(events, n_events, &g_anim_beats);
 }
 
+// ---------- the role beat (anim_plan.h "the role beat") ------------------------
+//
+// WHICH MARKS CHANGE AT WHICH POINT OF A SEQUENCE. The three rules are already
+// there and iOS has reached them natively since round 28 (c/ios/ios_api_anim.c
+// fio_roles_*); the web had no way to ask at all, so every mark it drew came off
+// whatever board the last step committed - the defect docs/ANIM_TIMING_AUDIT.md
+// section 12 names. Nothing about the rules changes here: this is the bridge the
+// audit's own summary says the web "only has to start asking".
+//
+// `shown` is what the badges are WEARING - the host's frozen ledger, not the
+// resident game - and it crosses as three scalars for that reason: a caller that
+// could pass a board would pass the wrong one.
+//
+// g_io out (all three entries, on a 1): u8 defender, u8 first_attacker, u8
+// good_mask, with ANIM_W_NONE for "no seat". Returns 1 when the marks change, 0
+// when nothing does, or a negative ANIM_E*.
+static int wasm_roles_answer(int changed, const AnimRoles *r) {
+    if (!changed) return 0;
+    g_io[0] = (r->defender < 0) ? ANIM_W_NONE : (unsigned char)r->defender;
+    g_io[1] = (r->first_attacker < 0) ? ANIM_W_NONE : (unsigned char)r->first_attacker;
+    g_io[2] = (unsigned char)(r->good_mask & 0xFF);
+    return 1;
+}
+
+// A seat as the three entries below take it: ANIM_W_NONE is "no seat".
+static int wasm_roles_seat(int seat) { return seat == (int)ANIM_W_NONE ? -1 : seat; }
+
+// A good being SET leads the stream - `first_good_mask` is the stream's own
+// event 0 mask (AnimBeats.first_good_mask), ANIM_NO_MASK for a step with none.
+int wasm_anim_roles_goods_opening(int shown_defender, int shown_first_attacker,
+                                  int shown_good_mask, int first_good_mask) {
+    const AnimRoles shown = { wasm_roles_seat(shown_defender),
+                              wasm_roles_seat(shown_first_attacker), shown_good_mask };
+    AnimRoles r;
+    return wasm_roles_answer(anim_goods_opening(shown, first_good_mask, &r), &r);
+}
+
+// A good being CLEARED runs parallel with the throw-in that cleared it -
+// `step_good_mask` is that beat's own mask (AnimBeat.good_mask).
+int wasm_anim_roles_goods_cleared(int shown_defender, int shown_first_attacker,
+                                  int shown_good_mask, int step_good_mask) {
+    const AnimRoles shown = { wasm_roles_seat(shown_defender),
+                              wasm_roles_seat(shown_first_attacker), shown_good_mask };
+    AnimRoles r;
+    return wasm_roles_answer(anim_goods_cleared(shown, step_good_mask, &r), &r);
+}
+
+// A PASS hands the shield over WITH the transfer card. `final_defender` is the
+// stream's FINAL board's defender, because a pass is snapshotted before the
+// hand-over and writes no event for it.
+int wasm_anim_roles_pass_hand_off(int shown_defender, int shown_first_attacker,
+                                  int shown_good_mask, int attack_pass_seats,
+                                  int final_defender) {
+    const AnimRoles shown = { wasm_roles_seat(shown_defender),
+                              wasm_roles_seat(shown_first_attacker), shown_good_mask };
+    AnimRoles r;
+    return wasm_roles_answer(
+        anim_pass_hand_off(shown, (unsigned)attack_pass_seats,
+                           wasm_roles_seat(final_defender), &r), &r);
+}
+
+// MAY THIS WRITER TOUCH THE SHOWN BADGES (anim_plan.h anim_shown_ledger_allows)?
+// ANIM_CLAIM_* in, 1 or 0 out.
+int wasm_anim_shown_ledger_allows(int claim, int sequencing) {
+    return anim_shown_ledger_allows(claim, sequencing);
+}
+
 // THE FINISH ORDER (anim_plan.h anim_finish_rows), for the end screen. g_io in:
 //   [0 .. n_elim)  the elimination seats, first out first.
 // Scalars: game_over is the fool's seat (negative while the game runs),

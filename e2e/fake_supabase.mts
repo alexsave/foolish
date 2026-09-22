@@ -762,12 +762,60 @@ const SCENARIOS: Record<string, () => Scenario> = {
             .attacker(0).defender(1).build(),
     }),
 
+    /**
+     * A PASS, staged, so the shield's flight can be watched in a real browser.
+     * ME leads (seat 0) and has already put a 7 down; ANNA defends (seat 1) and
+     * holds a 7 of her own, so her only interesting move is the transfer that
+     * hands the bout to BORIS (seat 2). That is the one hand-off nothing else
+     * animates - the shield crosses the table WITH the transfer card, the
+     * previous defender's sword rotates in behind it, and the next defender's
+     * own sword turns away as the shield lands on it (the owner's round 20:
+     * "For the next defender, the shield flies onto their sword. For the
+     * previous defender, the shield flies away and their sword rotates in").
+     *
+     *   POST /__control/act {user:'u-anna', gameId:'pass01',
+     *                        move:{kind:'pass', cards:'7c'}}
+     */
+    pass_table: () => ({
+        gameId: 'pass01',
+        users: ['ME', 'ANNA', 'BORIS'],
+        board: fixture().title('A pass').seats([seat('ME'), seat('ANNA'), seat('BORIS')])
+            .status(PLAYING).deterministic().trump('Kd').deck('8s 9s Ts Js Qs 6s 8d 9d')
+            .hand(0, '6h Tc Jd Ad Qc').hand(1, '7c 9h Th Jh Qh').hand(2, '7s Qd 6d 6c Ks')
+            .table('7h').attacker(0).defender(1).build(),
+    }),
+
+    /**
+     * A GOOD, AND THE THROW-IN THAT TAKES IT BACK, so the check's coin can be
+     * watched both ways in a real browser. ME (seat 0) opened the bout and has
+     * already said good, so ME wears the check; ANNA (seat 1) defends; BORIS
+     * (seat 2) holds a seven and can throw one in, which re-opens the bout and
+     * clears every good on the table.
+     *
+     * The kernel's rule is that the clearing runs WITH the card that cleared it
+     * (`anim_goods_cleared`), never a beat behind it:
+     *
+     *   POST /__control/act {user:'u-boris', gameId:'good01',
+     *                        move:{kind:'attack', cards:'7s'}}
+     */
+    good_then_throw_in: () => ({
+        gameId: 'good01',
+        users: ['ME', 'ANNA', 'BORIS'],
+        board: fixture().title('A good, taken back').seats([seat('ME'), seat('ANNA'), seat('BORIS')])
+            .status(PLAYING).deterministic().trump('Kc').deck('8s 9s Ts Js')
+            .hand(0, '8c 9c Tc Ad').hand(1, '8h 9h Th Jh').hand(2, '7s Qd 6d Ks')
+            .table('7h').attacker(0).defender(1).good(0).build(),
+    }),
+
     /** Three humans, nothing on the table: sign in as any of them in three tabs. */
     open_table: () => ({
         gameId: 'open01',
         users: ['ME', 'ANNA', 'BORIS'],
         board: fixture().title('Open table').seats([seat('ME'), seat('ANNA'), seat('BORIS')])
-            .status(PLAYING).deterministic().trump('Kc').deck('8s 9s Ts Js Qs 6s 7s 8d 9d')
+            // 7s is BORIS's, so the stock must not hold it too: the seal refuses a
+            // duplicate card (GAME_INVALID_DUPLICATE_CARD) and this scenario could
+            // not be built at all.
+            .status(PLAYING).deterministic().trump('Kc').deck('8s 9s Ts Js Qs 6s 8d 9d')
             .hand(0, '6h 7d Tc Jd Ad Qc').hand(1, '8h 9h Th Jh Qh Ah').hand(2, '7s Qd 6d 6c Kd Ks')
             .attacker(0).defender(1).build(),
     }),

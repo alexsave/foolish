@@ -158,7 +158,15 @@ the beats model, not an origin reset.
 - the pre-stream battle row (`AnimCounts.battles`, reachable as `AnimPlanSnap.pre`);
 - which row the grid paints and whether it is a sweep (`anim_shown_table`);
 - beat grouping, the bout-end hold, the out-collapse, the placed set and the
-  badge-drops-as-cards-leave rule (`anim_build_beats`, `AnimBeat`).
+  badge-drops-as-cards-leave rule (`anim_build_beats`, `AnimBeat`);
+- ~~the three role-beat timings~~ - `wasm_anim_roles_goods_opening` /
+  `_goods_cleared` / `_pass_hand_off` and `wasm_anim_shown_ledger_allows` landed
+  2026-09-22, and the web asks them from `src/contexts/AnimationContext.tsx`
+  over the shown-roles ledger in `src/state/roleLedger.ts`. The MOTION they time
+  (the coin, the half flip, the flight) is the host's and is a port of
+  `ios/FoolishKit/Boards/FRoleMotion.swift`: `src/state/roleMotion.ts`,
+  `src/components/RoleCoin.tsx`,
+  `src/components/GameDisplay/RoleFlightsLayer.tsx`.
 
 ## What is NOT settled here
 
@@ -168,6 +176,13 @@ the beats model, not an origin reset.
   pattern's own rule, but iOS calls `fio_anim_plan` and `fio_anim_beats` separately and
   paces itself with its own awaits, so changing the plan's layout has blast radius that
   has not been measured. Whoever takes it must check `c/ios/ios_api.c` first.
+- A ~3.4 SECOND MAIN-THREAD STALL early in the page's life, present on main and
+  measured at the same point of every trace (max frame gap 3328ms before the
+  role-motion branch, 3424ms after). Nothing is drawn through it, so a move made
+  in the first few seconds can have its whole animation happen invisibly - which
+  is why the role flight is frame-clocked rather than run off a wall-clock timer.
+  Not root-caused. It is the largest remaining reason a player might say they
+  "did not see" an animation.
 - A cold-start deal on `/tutorial` was observed behaving differently across three
   identical runs - once the cards flew, once they sat at the deck for 1.95s and vanished
   without moving, once no flight was drawn at all. Not root-caused, not reproduced on the
