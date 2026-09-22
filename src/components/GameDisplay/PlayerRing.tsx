@@ -202,6 +202,15 @@ export const PlayerRing = () => {
                             the largest glyph in the family, or it clips the sword's
                             corners (RoleMarkSize.rowHeight).
 
+                            WHERE IT SITS is the one thing not taken from iMessage:
+                            FSeatBadge stacks name, mini fan, then the role row, and
+                            this ring keeps the slot the website already had, above
+                            the name. The seat box here is 80px with the mini hand
+                            overflowing it, so moving the row under the fan is a
+                            layout change with its own screens to check (the self
+                            seat sits just above the action bar); the glyphs are the
+                            spec, the stacking order is deliberately left alone.
+
                             TODO(ios-parity): iMessage board shifts the defender shield
                             the moment a pass is staged (before defender_move lands) -
                             that immediacy feels good; consider mirroring. And the
