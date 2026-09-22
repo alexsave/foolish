@@ -1187,20 +1187,27 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
 #define OG_MAX_CANDS 26
 #endif
 #endif
-// Cover candidates are kept PER WIDTH: this many distinct widths, this many of
-// each, bounded overall by OG_MAX_CANDS. A defender has no attack candidates to
-// share the table with, so covers can have nearly all of it, and 4 x 6 takes
-// every cover on a board that has 24 or fewer - which is almost all of them.
-// Measured over a shared 2p replay and 3p/4p/8p bot games, legal covers per
-// defender decision run at a median of 3-6; the tail is long (p90 10-48, one
-// 4p board at 277), so this is a budget, not a promise.
+// The per-width table: this many distinct widths, this many places each,
+// bounded overall by OG_MAX_CANDS. Measured over a shared 2p replay and 3p/4p/8p
+// bot games, legal covers per defender decision run at a median of 3-6; the tail
+// is long (p90 10-48, one 4p board at 277), so this is a budget, not a promise.
 //
 // It was ten places shared across every width, which is how the panel came to
 // print "not considered" under a triple cover that had just been animated: four
 // triples existed, three were kept, and the one dropped - the dearest, two 9s
 // and an Ace - was the one played.
-#define OG_COV_SIZES    4
-#define OG_COV_PER_SIZE 10
+//
+// The shipped bot ranks only its covers here. An ORACLE build ranks its attacks
+// here too and takes sixteen of each width, which fills its 64-wide table
+// exactly; see og_pick_candidates for why the two builds differ and what it
+// cost to measure.
+#define OG_W_SIZES 4
+#ifdef FOOLISH_ORACLE_BUILD
+#define OG_W_PER_SIZE 16
+#else
+#define OG_W_PER_SIZE 10
+#define OG_ATK_KEEP   12
+#endif
 // Pass candidates. Ranked width-first like attacks, so the widest pass is always
 // among them; the cap is what bounds the reserve the covers leave room for.
 #define OG_PAS_KEEP     6
@@ -1466,8 +1473,7 @@ static void og_pick_candidates(const Game *g, const LegalMoves *moves,
                                const bool *excluded, Candidates *out) {
     int power = g->power_suit;
 
-    int atk[12];  double atk_k[12];  int n_atk = 0;
-    // COVERS ARE RANKED WITHIN THEIR SIZE, NOT AGAINST IT. The key below is a
+    // MOVES ARE RANKED WITHIN THEIR WIDTH, NOT AGAINST IT. A cover's key is a
     // PRODUCT of card scores, so every extra card multiplies it: with scores in
     // the 6-14 range a single cover keys around 10, a double around 100 and a
     // triple in the hundreds or thousands. Ranked into one list that keeps the
@@ -1476,41 +1482,65 @@ static void og_pick_candidates(const Game *g, const LegalMoves *moves,
     // three, even when that is the move it went on to play. The Oracle showed
     // it plainly: the recorded triple cover was not on the panel at all.
     //
-    // Bucketing by size keeps the intent (spend the cheapest cards) without
-    // letting size decide the comparison, which a product cannot help doing.
+    // Bucketing by width keeps the intent (spend the cheapest cards) without
+    // letting width decide the comparison, which a product cannot help doing.
     // A sum or a mean would only move that arbitrariness around: covering
     // three attacks and covering one are different commitments, not cheaper
-    // and dearer versions of one, so they are ranked apart and each size gets
+    // and dearer versions of one, so they are ranked apart and each width gets
     // its own places.
-    // One ranked list PER WIDTH, flat: width b keeps OG_COV_PER_SIZE at
-    // cov[b * OG_COV_PER_SIZE ...]. og_ranked_insert works on any slice.
-    int cov[OG_COV_SIZES * OG_COV_PER_SIZE];
-    double cov_k[OG_COV_SIZES * OG_COV_PER_SIZE];
-    int n_cov[OG_COV_SIZES];
-    for (int i = 0; i < OG_COV_SIZES; i++) n_cov[i] = 0;
+    // One ranked list PER WIDTH, flat: width b keeps OG_W_PER_SIZE at
+    // wid[b * OG_W_PER_SIZE ...]. og_ranked_insert works on any slice.
+    int wid[OG_W_SIZES * OG_W_PER_SIZE];
+    double wid_k[OG_W_SIZES * OG_W_PER_SIZE];
+    int n_wid[OG_W_SIZES];
+    for (int i = 0; i < OG_W_SIZES; i++) n_wid[i] = 0;
+#ifndef FOOLISH_ORACLE_BUILD
+    // ATTACKS KEEP THEIR FLAT, WIDEST-FIRST LIST IN A SHIPPED BUILD, and that
+    // is a measurement rather than an oversight. Ranking them per width like
+    // the covers is unarguably better COVERAGE - it is what lets the Oracle
+    // score a single-card attack from a hand holding four 3s, four 9s, four
+    // 10s and four Ks, a move the flat list cannot even offer - but the width
+    // term it removes is also octogen's prior that dumping cards is worth
+    // something, and the MC is not strong enough to rediscover it. Against
+    // handwritten over 500 games a side at one seed range, mean finish went
+    // pc3 1.438 -> 1.462, pc4 1.806 -> 1.964, pc5 2.442 -> 2.598, pc6
+    // 2.808 -> 2.904, with pc4's win rate 46.2% -> 38.2%; holding the emitted
+    // count down to the old twelve did not recover it (pc4 2.002), so what is
+    // worth the 0.15 of a finish is the prior and not the width of the search.
+    //
+    // So the two builds rank attacks differently, on purpose. The oracle is not
+    // playing: it has to be able to score the move a human or another bot
+    // actually made, and a candidate list is the only place that move can be
+    // scored from. The bot is playing, and it plays this better.
+    int atk[OG_ATK_KEEP];  double atk_k[OG_ATK_KEEP];  int n_atk = 0;
+#endif
     int pas[OG_PAS_KEEP];  double pas_k[OG_PAS_KEEP];  int n_pas = 0;
     int good_idx = -1, pickup_idx = -1;
 
     for (int i = 0; i < moves->n; i++) {
         if (excluded[i]) continue;
         const LegalMove *m = &moves->moves[i];
+        double key;
         switch (m->type) {
             case MOVE_ATTACK: {
                 int sum = 0;
                 for (int j = 0; j < m->n_cards; j++) sum += og_card_score(m->cards[j], power);
-                og_ranked_insert(atk, atk_k, &n_atk, 12, i,
-                                 -(double)m->n_cards * 10000.0 + (double)sum);
+#ifdef FOOLISH_ORACLE_BUILD
+                key = (double)sum;
                 break;
+#else
+                og_ranked_insert(atk, atk_k, &n_atk, OG_ATK_KEEP, i,
+                                 -(double)m->n_cards * 10000.0 + (double)sum);
+                continue;
+#endif
             }
             case MOVE_COVER: {
                 double prod = 1.0;
                 for (int j = 0; j < m->n_cards; j++) prod *= (double)og_card_score(m->cards[j], power);
-                int b = m->n_cards - 1;             // width 1 -> list 0
-                if (b < 0) b = 0;                   // never index behind cov[]
-                if (b >= OG_COV_SIZES) b = OG_COV_SIZES - 1;
-                const int o = b * OG_COV_PER_SIZE;
-                og_ranked_insert(cov + o, cov_k + o, &n_cov[b], OG_COV_PER_SIZE, i,
-                                 prod - (double)m->n_cards * 0.5);
+                // The -(n * 0.5) this key used to carry is gone: inside a
+                // bucket n_cards is fixed, so it was the same constant added to
+                // every key in the same list and could not order anything.
+                key = prod;
                 break;
             }
             case MOVE_PASS: {
@@ -1526,26 +1556,33 @@ static void og_pick_candidates(const Game *g, const LegalMoves *moves,
                 for (int j = 0; j < m->n_cards; j++) sum += og_card_score(m->cards[j], power);
                 og_ranked_insert(pas, pas_k, &n_pas, OG_PAS_KEEP, i,
                                  -(double)m->n_cards * 10000.0 + (double)sum);
-                break;
+                continue;
             }
-            case MOVE_GOOD:   good_idx = i;   break;
-            case MOVE_PICKUP: pickup_idx = i; break;
-            default: break;
+            case MOVE_GOOD:   good_idx = i;   continue;
+            case MOVE_PICKUP: pickup_idx = i; continue;
+            default: continue;
         }
+        int b = m->n_cards - 1;             // width 1 -> list 0
+        if (b < 0) b = 0;                   // never index behind wid[]
+        if (b >= OG_W_SIZES) b = OG_W_SIZES - 1;
+        const int o = b * OG_W_PER_SIZE;
+        og_ranked_insert(wid + o, wid_k + o, &n_wid[b], OG_W_PER_SIZE, i, key);
     }
 
     out->n = 0;
+#ifndef FOOLISH_ORACLE_BUILD
     for (int i = 0; i < n_atk && out->n < OG_MAX_CANDS; i++) out->idx[out->n++] = atk[i];
+#endif
     // ROUND-ROBIN, not width by width. Taking width 1 to its cap before looking
     // at width 2 throttles the commonest board there is - one uncovered attack,
     // where every cover is a single and the cap is the only thing that applies -
     // while a board with three attacks still has to wait its turn. Interleaving
     // gives each width its best first, and a board with only one width in play
     // simply keeps drawing from it until the table is full.
-    // AND COVERS DO NOT GET THE WHOLE TABLE. pass / good / pickup are emitted
-    // after the covers and there are never more than a handful of them, but a
-    // defender facing a wide board ranks up to OG_COV_SIZES * OG_COV_PER_SIZE
-    // of them, which is more than OG_MAX_CANDS on its own. Unreserved, the
+    // AND THE TABLE IS NOT THE WHOLE LIST. pass / good / pickup are emitted
+    // after it and there are never more than a handful of them, but a defender
+    // facing a wide board ranks up to OG_W_SIZES * OG_W_PER_SIZE covers,
+    // which is more than OG_MAX_CANDS on its own. Unreserved, the
     // covers filled it: a recorded PASS at a 4p board came back "not
     // considered" behind 24 covers, and the same board could not have offered
     // PICKUP at all - octogen cannot choose a move that is not a candidate, so
@@ -1554,9 +1591,9 @@ static void og_pick_candidates(const Game *g, const LegalMoves *moves,
     // n_pas is at most OG_PAS_KEEP and the two flags at most 1 each, so tail is
     // at most 8 against an OG_MAX_CANDS of 26 and the reserve cannot go negative.
     const int tail = n_pas + (good_idx >= 0) + (pickup_idx >= 0);
-    for (int r = 0; r < OG_COV_PER_SIZE; r++)
-        for (int b = 0; b < OG_COV_SIZES && out->n + tail < OG_MAX_CANDS; b++)
-            if (r < n_cov[b]) out->idx[out->n++] = cov[b * OG_COV_PER_SIZE + r];
+    for (int r = 0; r < OG_W_PER_SIZE; r++)
+        for (int b = 0; b < OG_W_SIZES && out->n + tail < OG_MAX_CANDS; b++)
+            if (r < n_wid[b]) out->idx[out->n++] = wid[b * OG_W_PER_SIZE + r];
     for (int i = 0; i < n_pas && out->n < OG_MAX_CANDS; i++) out->idx[out->n++] = pas[i];
     if (good_idx >= 0 && out->n < OG_MAX_CANDS)   out->idx[out->n++] = good_idx;
     if (pickup_idx >= 0 && out->n < OG_MAX_CANDS) out->idx[out->n++] = pickup_idx;

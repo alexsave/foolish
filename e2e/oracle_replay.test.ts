@@ -37,7 +37,23 @@ const ENV_BASE = { OG_KEEP1: '26', OG_KEEP2: '26', OG_W2: '1', OG_W3: '0', OG_EX
 
 // The three shapes that stress the marshal differently: heads-up-ish, the
 // 4-player middle, and a full 8-way table (52-card deck, most eliminations).
-const SHAPES: [string, number, number][] = [['3p', 3, 41], ['4p', 4, 42], ['8p', 8, 43]];
+const hw = (n: number): string[] => Array(n).fill('handwritten');
+const SHAPES: [string, string[], number][] =
+    [['3p', hw(3), 41], ['4p', hw(4), 42], ['8p', hw(8), 43]];
+// THE SHAPES ABOVE ARE ALL HANDWRITTEN, AND A TABLE OF ONE BOT PLAYS ONE KIND
+// OF BOARD. handwritten never picks up more than it must, so no seat in those
+// three games ever holds the twenty-card hand that a run of pickups builds -
+// and a rich hand is exactly where a candidate list runs out of places. Over
+// the three of them the candidate check below was green while octogen could
+// not offer a single-card attack from a hand holding four 3s, four 9s, four
+// 10s and four Ks: nothing in the suite was ever dealt that hand.
+//
+// `random` is dealt it constantly, because it picks up for no reason. These
+// two games are in the survey for their BOARDS, not their play: they are the
+// cheapest way to hold octogen's candidate selection against hands it would
+// otherwise only meet in front of a human.
+const WIDE: [string, string[], number][] =
+    [['5p-random', Array(5).fill('random'), 105], ['8p-random', Array(8).fill('random'), 101]];
 /** REPLAY_STEP id -> its name, so a failure names the move type it broke on. */
 const STEP_NAME: Record<number, string> =
     Object.fromEntries(Object.entries(REPLAY_STEP).map(([k, v]) => [v as number, k]));
@@ -45,10 +61,10 @@ const STEP_NAME: Record<number, string> =
 interface Fixture { code: Uint8Array; frames: ReturnType<typeof buildReplayFrames>; id: string }
 const cache = new Map<string, Fixture>();
 
-async function fixture(label: string, np: number, s: number): Promise<Fixture> {
+async function fixture(label: string, brains: string[], s: number): Promise<Fixture> {
     const hit = cache.get(label);
     if (hit) return hit;
-    const played = playBotTable(Array(np).fill('handwritten'), seedBytes(np, s));
+    const played = playBotTable(brains, seedBytes(brains.length, s));
     const frames = buildReplayFrames(played.code, 'g', null);
     const f = { code: played.code, frames, id: label };
     cache.set(label, f);
@@ -63,8 +79,8 @@ async function freshInstance() {
 test('§12.2-1 reconstruction: every decision imports to a well-formed deliberation', async () => {
     const inst = await freshInstance();
     let decisions = 0;
-    for (const [label, np, seed] of SHAPES) {
-        const { code, frames, id } = await fixture(label, np, seed);
+    for (const [label, brains, seed] of SHAPES) {
+        const { code, frames, id } = await fixture(label, brains, seed);
         const seen = new Set<number>();
         for (let idx = 0; idx < frames.length; idx++) {
             const j = findDecisionIndex(frames, idx);
@@ -93,6 +109,47 @@ test('§12.2-1 reconstruction: every decision imports to a well-formed deliberat
     console.log(`  §12.2-1: validated ${decisions} decisions across 3 replays`);
 });
 
+// THE PROMISE IS THAT WIDTH NEVER DECIDES, NOT THAT EVERY MOVE FITS.
+// og_pick_candidates ranks attacks and covers into one list PER WIDTH and takes
+// them round-robin, so a move is never dropped for being wide or for being
+// narrow. Inside a width the ranking is by cost and the list is finite
+// (OG_W_PER_SIZE), so a dear move on a huge hand can still fall off the end:
+// one 5p board here holds twenty-two cards and offers twenty-two single
+// attacks for sixteen places, and the trump 9 it played is the seventeenth
+// cheapest. That is a budget being spent, and it is the only excuse this test
+// accepts.
+//
+// So a recorded move that is not a candidate fails UNLESS the list already
+// holds a full bucket of its own kind and width. That excuse is nowhere near
+// wide enough to swallow the defect this was written for. Over 1,542 decisions
+// of 12 bot games before the per-width ranking, 38 recorded moves were not
+// candidates, and on 17 of them the played move was NARROWER than every
+// candidate of its kind - which means its own width held not a full bucket but
+// an EMPTY one. The width was never reached, not spent.
+//
+// These two numbers are the C constants for an oracle build
+// (c/src/octogen_strategy.c, -DFOOLISH_ORACLE_BUILD). If they move there they
+// must move here, and the test failing is how you find out.
+const ORACLE_PER_WIDTH = 16;    // OG_W_PER_SIZE
+const ORACLE_PASS_KEEP = 6;     // OG_PAS_KEEP
+
+/** How full the recorded move's own bucket is, or null when its bucket is not
+ *  full and the miss is therefore a defect rather than a budget. */
+function bucketOf(recorded: string, keys: string[]): number | null {
+    const [type, cards] = recorded.split('|');
+    const width = cards.split(',').filter(Boolean).length;
+    const peers = keys.filter((k) => {
+        const [t, c] = k.split('|');
+        if (t !== type) return false;
+        // pass keeps ONE list, not one per width: OG_PAS_KEEP places in total.
+        return type === 'pass' || c.split(',').filter(Boolean).length === width;
+    }).length;
+    const cap = type === 'pass' ? ORACLE_PASS_KEEP
+        : (type === 'attack' || type === 'cover') ? ORACLE_PER_WIDTH
+        : 0;   // pickup and good are single moves and are always reserved
+    return cap > 0 && peers >= cap ? peers : null;
+}
+
 test('§12.2-1b the recorded move is one of the candidates, at every decision', async () => {
     // The panel names the move that was actually played by looking its canonical
     // key up among the candidates (accumulator: `played: a.key === recordedKey`),
@@ -109,9 +166,10 @@ test('§12.2-1b the recorded move is one of the candidates, at every decision', 
     // counts per move type rather than sampling one.
     const inst = await freshInstance();
     const missing: Record<string, number> = {};
+    const budgeted: Record<string, number> = {};
     const total: Record<string, number> = {};
-    for (const [label, np, seed] of SHAPES) {
-        const { code, frames, id } = await fixture(label, np, seed);
+    for (const [label, brains, seed] of [...SHAPES, ...WIDE]) {
+        const { code, frames, id } = await fixture(label, brains, seed);
         for (let j = 1; j < frames.length; j++) {
             if (findDecisionIndex(frames, j) !== j) continue;   // the decision itself
             const job = buildOracleJob(frames, code, j, true, id);
@@ -124,9 +182,14 @@ test('§12.2-1b the recorded move is one of the candidates, at every decision', 
             const kind = STEP_NAME[frames[j].kind] ?? String(frames[j].kind);
             total[kind] = (total[kind] ?? 0) + 1;
             if (!acc.hasKey(job.recordedKey)) {
-                missing[kind] = (missing[kind] ?? 0) + 1;
-                assert.fail(`${id} step ${j}: recorded ${kind} ${JSON.stringify(job.recordedKey)} `
-                    + `is not among ${JSON.stringify(acc.candidates(false).map((c) => c.key))}`);
+                const keys = acc.candidates(false).map((c) => c.key);
+                const full = bucketOf(job.recordedKey, keys);
+                if (full == null) {
+                    missing[kind] = (missing[kind] ?? 0) + 1;
+                    assert.fail(`${id} step ${j}: recorded ${kind} ${JSON.stringify(job.recordedKey)} `
+                        + `is not among ${JSON.stringify(keys)}`);
+                }
+                budgeted[kind] = (budgeted[kind] ?? 0) + 1;
             }
         }
     }
@@ -137,13 +200,14 @@ test('§12.2-1b the recorded move is one of the candidates, at every decision', 
         assert.ok((total[kind] ?? 0) > 0, `no ${kind} decision covered - the fixtures stopped exercising it`);
     }
     const counts = Object.keys(total).sort().map((k) => `${k} ${total[k]}`).join(', ');
-    console.log(`  §12.2-1b: recorded move found at every decision (${counts})`);
+    const cut = Object.keys(budgeted).sort().map((k) => `${k} ${budgeted[k]}`).join(', ') || 'none';
+    console.log(`  §12.2-1b: recorded move found at every decision (${counts}); cut by a full bucket: ${cut}`);
     assert.deepEqual(missing, {});
 });
 
 test('§12.2-2 batching: keys stable, n increases, worlds vary across seeds', async () => {
     const inst = await freshInstance();
-    const { code, frames, id } = await fixture('4p', 4, 42);
+    const { code, frames, id } = await fixture('4p', hw(4), 42);
     const idx = Math.floor(frames.length * 0.4);
     const job = buildOracleJob(frames, code, idx, true, id)!;
     assert.ok(job);
@@ -174,7 +238,7 @@ test('§12.2-2 batching: keys stable, n increases, worlds vary across seeds', as
 
 test('§12.2-4 memory toggle: ON proves an endgame verdict that OFF cannot', async () => {
     const inst = await freshInstance();
-    const { code, frames, id } = await fixture('3p', 3, 41);
+    const { code, frames, id } = await fixture('3p', hw(3), 41);
     // find a late heads-up decision where memory ON reaches the exact solver
     let found = false;
     for (let idx = frames.length - 1; idx >= frames.length - 12 && !found; idx--) {
@@ -202,7 +266,7 @@ test('§12.2-4 memory toggle: ON proves an endgame verdict that OFF cannot', asy
 
 test('§12.2-5 exact regime: a proven win/loss verdict appears near the end', async () => {
     const inst = await freshInstance();
-    const { code, frames, id } = await fixture('3p', 3, 41);
+    const { code, frames, id } = await fixture('3p', hw(3), 41);
     let sawExact = false;
     for (let idx = frames.length - 1; idx >= frames.length - 8; idx--) {
         const j = findDecisionIndex(frames, idx);
@@ -233,7 +297,7 @@ test('§12.2-7 why sidecar: binary paths decode, merge, and template into a proo
             Object.entries(params ?? {}).map(([k, v]) => [k, String(v)])));
 
     const inst = await freshInstance();
-    const { code, frames, id } = await fixture('4p', 4, 42);
+    const { code, frames, id } = await fixture('4p', hw(4), 42);
     const idx = Math.floor(frames.length * 0.4);
     const job = buildOracleJob(frames, code, idx, true, id)!;
     const acc = new OracleAccumulator({ deckAlive: job.deckAlive, recordedKey: job.recordedKey });
@@ -305,7 +369,7 @@ test('§12.2-7 why sidecar: binary paths decode, merge, and template into a proo
 
 test('§12.2-6 env reload: raising OG_W1 grows nsim between batches', async () => {
     const inst = await freshInstance();
-    const { code, frames, id } = await fixture('4p', 4, 42);
+    const { code, frames, id } = await fixture('4p', hw(4), 42);
     const idx = Math.floor(frames.length * 0.4);
     const job = buildOracleJob(frames, code, idx, true, id)!;
     const nsimAt = (w1: string) => {
