@@ -744,7 +744,12 @@ test('a rejected move whose push never arrives: the card goes home and stays the
         await s.advance(25);
         // ... to its own place in my hand, which kept it (hidden) all along.
         const home = handCard(s.host, '6s').getBoundingClientRect();
-        assert.deepEqual(flights(s.host), [{ left: home.left + home.width / 2 - 35, top: home.top + home.height / 2 - 45, scale: 1.8, red: true }],
+        // A flight is hung by its CENTRE: `left`/`top` ARE the point the overlay
+        // measured, and FlightCard's own `translate(-50%, -50%)` takes off the
+        // half card. This used to subtract a half card here too, from a 70x90
+        // card that does not exist - CardFace draws 50x70 - so the expectation
+        // and the code were wrong by the same 10px in the same direction.
+        assert.deepEqual(flights(s.host), [{ left: home.left + home.width / 2, top: home.top + home.height / 2, scale: 1.8, red: true }],
             'and lands on its own place in my hand');
         await s.advance(2500);
         const view = JSON.parse(probe.store).view;
