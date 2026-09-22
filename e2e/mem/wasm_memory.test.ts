@@ -74,29 +74,33 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 // pull request, which is a better instrument for a few hundred bytes than a
 // boolean ever was. Each gz ceiling here is deliberately wide of its measured
 // value: it catches a base64 embed coming back or a blowup, not a drift.
-// RAISED for the beats model (docs/WEB_ANIM_PARITY.md section 3), which is what
-// bought the bytes: anim_build_plan now lays its clock out beat by beat rather
-// than at i*(TIME+GAP), the grouping rule came out as a shared `beat_shape` both
-// it and anim_build_beats call, AnimPlanStep grew beat_first/beat_n/hold_ms, and
-// anim_step_duration_ms answers 0 for ANIM_EVT_OUT. +753 B on this link.
-const BOTS_RAW_MAX = 192_750;       // 192,668 B today: 82 B of room
-const BOTS_GZ_MAX = 84 * 1024;      // 82,043 B shipped today; clears the worst
-                                    // compressor above (82,468) by 3,548 B
-// The BROWSER's link, and the one the download budget is about. Pinned at the
-// measured size plus room for the compressor spread, NOT at the old 80 KiB
-// line: Part 3 of docs/ARCHITECTURE_AS_A_PATTERN.md says to re-pin lower after
-// each win so the ratchet turns one way, and leaving this at 80 KiB would have
-// banked a 62% cut as 50 KB of silent headroom to spend again.
-// RAISED for the same beats work, which the browser's link carries too - the web
-// is the client that asks for the plan. +805 B, measured as a same-compiler delta
-// (build with and without the change on one machine) rather than read off CI,
-// because this container's clang 18 and CI's pinned clang 22 do not agree on the
-// absolute size: the same delta measured 754 B here for bots.wasm against the
-// 753 B CI reports, which is why the number below is trusted to a few bytes.
-// CI is the only place it can be confirmed; see the toolchain note above.
-const WEB_RAW_MAX = 68_300;         // ~68,103 B expected: ~197 B of room
-const WEB_GZ_MAX = 33 * 1024;       // 31,050 B today; 2,742 B of room, which is
-                                    // 4.7x the 576 B compressor spread above
+//
+// THE RAW PINS ARE BLOWUP DETECTORS, NOT A RATCHET. Owner's call, after the
+// beats model tripped a 192,000 B pin by 668 B and the fix was two pins and a
+// paragraph: "as long as the wasm doesn't double in size, it's blocking us from
+// shipping fixes and features". So these sit at 2x the measured module and catch
+// what the gz ceilings below catch - a base64 embed coming back, a runtime
+// arriving, a buffer sized from a variable that turned out not to be constant -
+// and nothing smaller.
+//
+// DRIFT IS STILL WATCHED, just not here and not as a gate. scripts/collect_metrics.mjs
+// reports each module's gzip size and metrics.yml diffs it head-vs-base on every
+// pull request, which the note above already calls "a better instrument for a few
+// hundred bytes than a boolean ever was". What is given up is the one-way ratchet
+// of Part 3 of docs/ARCHITECTURE_AS_A_PATTERN.md - the discipline that banked the
+// browser's 62% cut as a lower pin instead of headroom to spend again. Re-pinning
+// after a deliberate win is now something a person chooses to do, not something
+// CI makes them do. It also makes this gate runnable off CI again: at 192,000 B
+// it was red on any toolchain but the pinned one (this repo's own container,
+// clang 18, builds a 196,196 B bots.wasm), so the only machine that could answer
+// it was the one you were waiting on.
+const BOTS_RAW_MAX = 385_000;       // 192,668 B today (clang 22, CI); 2x that
+const BOTS_GZ_MAX = 165 * 1024;     // 82,043 B shipped today; 2x, same rule
+// The BROWSER's link, and the one the download budget is about. Same rule again:
+// it had 702 B of raw room and 2,742 B of gz room, which is about one feature,
+// and 576 B of the gz figure is compressor spread rather than kernel.
+const WEB_RAW_MAX = 137_000;        // ~68,100 B today; 2x that
+const WEB_GZ_MAX = 61 * 1024;       // 31,050 B today; 2x
 test('the kernel ships as small gzip static assets (not base64 embeds)', () => {
     for (const [rel, rawMax, gzMax] of [
         ['sdk/ts/wasm/bots.wasm.gz', BOTS_RAW_MAX, BOTS_GZ_MAX],
