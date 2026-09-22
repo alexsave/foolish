@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useState, useRef } from 'react';
 import { useAnimation } from '../../contexts/AnimationContext';
-import { covered, seatKey, type ViewCard as Card } from '../../state/view';
+import { covered, sameCard, seatKey, type ViewCard as Card } from '../../state/view';
 import { FlightCard, type AnimatedCard } from './FlightCard';
 import { useServer } from '../../contexts/ServerContext';
 // The kernel's can_cover: bots.wasm is loaded before any screen that reaches this
@@ -72,6 +72,13 @@ const spotFrom = (chain: Array<() => Candidate>, floor: Spot): Spot => {
 
 /** `spot` moved by (dx, dy). Returns a new object: callers mutate their result. */
 const shifted = (spot: Spot, dx: number, dy: number): Spot => ({ x: spot.x + dx, y: spot.y + dy });
+
+/** Where a flight ends AND at what angle the place it ends at draws the card:
+ *  a cover comes down laid across its attack, everything else lands flat. */
+type Landing = { spot: Spot; angle: number };
+
+/** A landing the place draws upright, which is every landing but a cover's. */
+const flat = (spot: Spot): Landing => ({ spot, angle: 0 });
 
 
 export const AnimationOverlay = () => {
@@ -392,7 +399,22 @@ export const AnimationOverlay = () => {
             // move the server refused was never laid on the board - only a
             // flight put it there - so its return starts at the spot, and
             // the scale, that flight left it at.
-            const liftoff = (card: Card): { spot: Spot; fromLanding: boolean } => {
+            //
+            // A card lying on the table is drawn at the grid's own tilt - the
+            // cover laid across at +COVER_ROTATION_RAD, the attack under it
+            // turned -COVER_ROTATION_RAD (TableBattles) - so a card leaving the
+            // table lifts off at that tilt and flattens as it flies, instead of
+            // snapping upright the instant the flight replaces it. iMessage
+            // carries the same value as its flight's `fromAngle`
+            // (ios/FoolishKit/Boards/MessageTableView+OpenReplay.swift).
+            const tableTilt = (card: Card): number => {
+                const battle = game?.battles.find((b) => sameCard(b.attack, card)
+                    || (covered(b) && sameCard(b.defense, card)));
+                if (!battle || !covered(battle)) return 0;
+                return sameCard(battle.attack, card) ? -COVER_ROTATION_RAD : COVER_ROTATION_RAD;
+            };
+
+            const liftoff = (card: Card): { spot: Spot; fromLanding: boolean; angle: number } => {
                 let sourceElement: HTMLElement | null = null;
                 let remembered: Spot | undefined;
 
@@ -410,6 +432,7 @@ export const AnimationOverlay = () => {
                     spot: spotFrom([() => sourceElement, () => remembered],
                         getFallbackPosition(from_location || 'hand', player_id)),
                     fromLanding: !sourceElement && !!remembered,
+                    angle: from_location === 'table' && sourceElement ? tableTilt(card) : 0,
                 };
             };
 
@@ -466,22 +489,29 @@ export const AnimationOverlay = () => {
             // The table is the one destination that cares HOW the card got
             // there: a cover aims at the attack it answers, an attack aims
             // at the slot it will occupy, anything else aims at the table.
-            const landsOnTable = (card: Card, index: number): Spot => {
+            // A cover is also the one landing that is not flat - it comes down
+            // laid across, so the flight turns into that angle on the way in.
+            const landsOnTable = (card: Card, index: number): Landing => {
                 if (type === 'cover') {
                     const attack = attackUnder(coverTarget(card, index));
                     // An attack we could measure is aimed at exactly; without one
                     // we aim at the table and fan the cards 70px apart so
                     // simultaneous covers do not stack on one point. The fan
-                    // belongs ONLY to the unmeasured case.
-                    return attack ? laidAcross(attack) : spotFrom([() => {
-                        const table = findElementByLocation('table');
-                        return table ? shifted(centreOf(table), index * 70, 0) : null;
-                    }], getFallbackPosition('table', player_id));
+                    // belongs ONLY to the unmeasured case, and a card we could
+                    // not place is not laid across anything either.
+                    if (attack) return { spot: laidAcross(attack), angle: COVER_ROTATION_RAD };
+                    return {
+                        spot: spotFrom([() => {
+                            const table = findElementByLocation('table');
+                            return table ? shifted(centreOf(table), index * 70, 0) : null;
+                        }], getFallbackPosition('table', player_id)),
+                        angle: 0,
+                    };
                 }
 
                 if (type === 'attack_pass') {
                     const slot = (game?.battles.length || 0) + index;
-                    return spotFrom([
+                    return flat(spotFrom([
                         // The board already shows the card - a confirmation
                         // that beat its own flight - so that IS the landing.
                         () => document.querySelector(`[data-location="table"] [data-card="${card.suit}-${card.value}"]`) as HTMLElement | null,
@@ -489,11 +519,11 @@ export const AnimationOverlay = () => {
                         () => findElementByLocation('table', undefined, undefined, undefined, slot),
                         // The 60px fan is the FLOOR's alone: a drop zone we
                         // actually found is already in the right place.
-                    ], shifted(getFallbackPosition('table', player_id), slot * 60, 0));
+                    ], shifted(getFallbackPosition('table', player_id), slot * 60, 0)));
                 }
 
-                return spotFrom([() => findElementByLocation('table')],
-                    getFallbackPosition('table', player_id));
+                return flat(spotFrom([() => findElementByLocation('table')],
+                    getFallbackPosition('table', player_id)));
             };
 
             // The card's own place when the hand already holds it (a refused
@@ -513,15 +543,15 @@ export const AnimationOverlay = () => {
                 [() => (to_location === 'discard' ? findElementByLocation('discard') : null)],
                 getFallbackPosition(to_location || 'table', player_id));
 
-            const landingFor = (card: Card, index: number): Spot =>
-                to_location === 'flipped' ? landsFlipped()
+            const landingFor = (card: Card, index: number): Landing =>
+                to_location === 'flipped' ? flat(landsFlipped())
                     : to_location === 'table' ? landsOnTable(card, index)
-                        : to_location === 'hand' ? landsInHand(card, index)
-                            : landsElsewhere();
+                        : to_location === 'hand' ? flat(landsInHand(card, index))
+                            : flat(landsElsewhere());
 
             cards.forEach((card, index) => {
-                const { spot: startPos, fromLanding } = liftoff(card);
-                const endPos = landingFor(card, index);
+                const { spot: startPos, fromLanding, angle: fromAngle } = liftoff(card);
+                const { spot: endPos, angle } = landingFor(card, index);
 
                 // Small offset so simultaneous cards into the same UNMEASURED
                 // area don't fully overlap; measured targets (table slots, hand
@@ -538,6 +568,8 @@ export const AnimationOverlay = () => {
 
                 newAnimatedCards.push({
                     fromLanding,
+                    angle,
+                    fromAngle,
                     id: `${card.suit}-${card.value}-${player_id}-${Date.now()}-${index}`,
                     card,
                     startPosition: startPos,

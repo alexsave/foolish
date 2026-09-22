@@ -4,7 +4,11 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useGame } from "../../contexts/GameContext";
 import { useDrag } from "../../contexts/DragContext";
 import { useTutorialHint } from "../../contexts/TutorialHintContext";
-import { covered, sameCard } from "../../state/view";
+import { useAnimation } from "../../contexts/AnimationContext";
+// The flight's own timing curve: the card coming down and the card turning out
+// from under it are one movement, so they are written with one curve.
+import { EASE } from "./FlightCard";
+import { covered, sameCard, type ViewCard } from "../../state/view";
 import { MOVE_ATTACK, MOVE_COVER, MOVE_PASS } from "@sdk/ts/gen/view_layout.bots.ts";
 import type { ClientPlay } from "@sdk/ts/table/client_table.ts";
 
@@ -25,6 +29,9 @@ export const TableBattles = () => {
     const { coverMap, setCoverMap, isSelectingCover, selectedCards } = useGame();
     const { isDraggingForGameAction, draggedCard, currentCursorPos, determineGameAction } = useDrag();
     const hint = useTutorialHint();
+    // The flight on screen, and how long the kernel says it lasts (its plan's
+    // AnimPlanStep.duration_ms). The grid needs both: see `coveringNow`.
+    const { currentAnimation, isAnimating, flightMs } = useAnimation();
 
     // Handle case where game is not loaded yet
     if (!game) {
@@ -42,6 +49,28 @@ export const TableBattles = () => {
     const isCardBeingCovered = (attackCard: { suit: number; value: number }) =>
         currentAction?.moveType === MOVE_COVER
         && currentAction.attackCards.some((c) => sameCard(c, attackCard));
+
+    // IS A COVER IN THE AIR FOR THIS BATTLE RIGHT NOW?
+    //
+    // The attack turns out of the way as the card covering it LEAVES THE HAND,
+    // not once that card has landed: the two rotate together, over the one
+    // flight, on the one curve. iMessage wrote this rule down after the same bug
+    // - `coverTilted` is true while the cover is `flyingNow`, animated
+    // `.timingCurve(0.25, 0.46, 0.45, 0.94, duration: flightTime)`
+    // (ios/FoolishKit/Boards/FBattleGrid.swift) - while the web had the attack
+    // starting its turn only after the landing, riding CardFace's generic 0.2s
+    // hover transition, which nobody chose for this.
+    //
+    // WHICH battle is the KERNEL's answer and not a guess: a pushed cover names
+    // the attack it answers and its battle index (evwire -> pushSequence), and my
+    // own predicted multi-cover names its pairs.
+    const coveringNow = (attack: ViewCard, index: number): boolean => {
+        const flight = currentAnimation;
+        if (!isAnimating || !flight || flight.type !== 'cover') return false;
+        if (flight.target_card) return sameCard(flight.target_card, attack);
+        if (flight.target_cards) return flight.target_cards.some((c) => sameCard(c, attack));
+        return flight.battle_index === index;
+    };
 
     // How many empty drop zones an attack or a pass would need: the cards the
     // kernel's move actually lays.
@@ -91,16 +120,25 @@ export const TableBattles = () => {
 
             // Determine if this battle is covered
             const isCovered = covered(battle);
+            // ...and whether it is turning out of the way of a cover that is
+            // still in the air (see `coveringNow`): the tilt starts with the
+            // flight, not with the landing.
+            const tilted = isCovered || coveringNow(battle.attack, index);
 
             // Card styles with rotation around bottom center
             const attackCardStyle: React.CSSProperties = {
                 position: 'absolute',
                 bottom: '5px', // Position at bottom of container
                 left: '50%', // Center horizontally
-                transform: isCovered 
-                    ? `translateX(-50%) rotate(-${COVER_ROTATION})` 
+                transform: tilted
+                    ? `translateX(-50%) rotate(-${COVER_ROTATION})`
                     : 'translateX(-50%)', // Just center if not covered
                 transformOrigin: 'center bottom', // Rotate around bottom center of card
+                // The cover's own flight, exactly: the kernel's duration for the
+                // step on screen and the flight's own curve, so the two cards
+                // turn at the same speed. 0ms when nothing is flying, which is
+                // the only time this tilt changes without a card causing it.
+                transition: `transform ${flightMs}ms ${EASE}`,
                 zIndex: isCovered ? 1 : 2, // Attack goes behind when covered
             };
 
