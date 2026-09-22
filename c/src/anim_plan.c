@@ -44,11 +44,89 @@ static uint64_t ap_bit(int id) {
 // ---- timing policy --------------------------------------------------------
 
 int anim_step_duration_ms(int event_type) {
-    // Every kernel event paces at ANIMATION_TIME today; a revert is a client
-    // synthesis that flies the same distance and gets the same beat. The switch
-    // is the seam a future per-type rule lands in — a platform asks here.
-    (void)event_type;
+    // AN `out` IS A NOTICE: no cards, no flight, NO TIME. It is the one type
+    // that does not pace at ANIMATION_TIME, and the beats section says why -
+    // the beat that MOVED something adopts the outs trailing it and collapses
+    // those badges with its own card motion, so an out left to spend a step of
+    // its own is half a second of a board where nothing happens. iOS reaches
+    // the same answer by building no flights for it and returning from
+    // playStep immediately (MessageTableView+Sequence.swift).
+    if (event_type == ANIM_EVT_OUT) return 0;
+    // Everything else paces at ANIMATION_TIME; a revert is a client synthesis
+    // that flies the same distance and gets the same beat. A magic transition
+    // keeps its time deliberately: it carries no card but it IS a message the
+    // board shows, and a beat nobody has to watch a card cross still has to
+    // last long enough to be read (the same argument ANIM_SURFACE_HOLD_MS makes).
     return ANIM_TIME_MS;
+}
+
+// ---- the beat shape: the grouping and the hold, once ----------------------
+//
+// EXTRACTED SO THE PLAN AND THE BEATS CANNOT DISAGREE. anim_build_beats answers
+// the whole beat model; anim_build_plan needs two facts out of it - where each
+// beat begins, and which beat rests - to lay its steps out in beats. A second
+// copy of the grouping rule inside the plan is exactly the "told two different
+// things" anim_plan.h's beats section names, and it would show as a two-card
+// cover whose second card flies on its own clock.
+//
+// TYPES AND SEATS ONLY, which is all either rule needs. The cards decide what a
+// beat CARRIES (its placed ids, the outs it adopts, its good mask); they never
+// decide where it starts or whether it holds. That is what lets the plan call
+// this without the good masks it has no field for.
+typedef struct {
+    int           n_beats;
+    unsigned char first[ANIM_MAX_BEATS];   // each beat's first event index
+    unsigned char holds[ANIM_MAX_BEATS];   // 1 => the sequence rests after it
+} BeatShape;
+
+static int beat_shape(const int *types, const int *seats, int n, BeatShape *s) {
+    if (!s || n < 0) return ANIM_EBADARG;
+    // REFUSED, never truncated: half a sequence played as a whole one is worse
+    // than none. The cap is ANIM_MAX_STEPS' twin for exactly this reason.
+    if (n > ANIM_MAX_BEATS) return ANIM_ECAP;
+    if (n > 0 && (!types || !seats)) return ANIM_EBADARG;
+    s->n_beats = 0;
+
+    // Grouping. ONLY consecutive covers by one seat merge: an attack or a pass
+    // already carries every card of its move in one event, deals and refills are
+    // per seat, and a bout's closing discard/refill are the cover's consequences
+    // rather than part of the same movement - they keep their own beats, which is
+    // what makes the counts settle in the right order. Consecutive, so a bout
+    // boundary splits a run: the discard between two covers ends it.
+    for (int i = 0; i < n; i++) {
+        const int g = s->n_beats;
+        if (g > 0 && types[i] == ANIM_EVT_COVER
+            && types[s->first[g - 1]] == ANIM_EVT_COVER
+            && seats[s->first[g - 1]] == seats[i]) continue;   // merged into g-1
+        s->first[g] = (unsigned char)i;
+        s->holds[g] = 0;
+        s->n_beats++;
+    }
+
+    // The hold: a COVER whose bout end follows. Not merely the next beat -
+    // a bout that ends because the defender's last card went down puts their
+    // OUT (and, at the end of a game, a magic transition) between the cover
+    // and the trash, and those are notices, so they neither separate the
+    // cover from its consequence nor earn a hold of their own. Anything that
+    // DOES move a card ends the scan: a refill or a pickup after a cover
+    // means the table did not close on it, and holding there would stall a
+    // sequence that is still going somewhere.
+    for (int g = 0; g < s->n_beats; g++) {
+        if (types[s->first[g]] != ANIM_EVT_COVER) continue;
+        for (int j = g + 1; j < s->n_beats; j++) {
+            const int t = types[s->first[j]];
+            if (t == ANIM_EVT_DISCARD || t == ANIM_EVT_CARDS_TO_TRASH) { s->holds[g] = 1; break; }
+            if (t == ANIM_EVT_OUT || t == ANIM_EVT_MAGIC_TRANSITION
+                || t == ANIM_EVT_FLIPPED) continue;
+            break;
+        }
+    }
+    return s->n_beats;
+}
+
+// One beat's span, from the shape: [first[g], end).
+static int beat_end(const BeatShape *s, int g, int n_events) {
+    return (g + 1 < s->n_beats) ? (int)s->first[g + 1] : n_events;
 }
 
 // ---- plan building --------------------------------------------------------
@@ -241,10 +319,62 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
         }
     }
 
-    // Forward walk from the freeze -> each step's post counts + timing + veil.
+    // …AND THE CLOCK, laid out in BEATS rather than in steps. The grouping is
+    // the beats' own (beat_shape, the one the beats entry uses), so the plan
+    // and anim_build_beats cannot name different boundaries: consecutive covers
+    // by one seat open together, a beat of pure notices takes no time, and a
+    // bout-ending cover pushes what follows out by ANIM_BOUT_END_HOLD_MS. A
+    // host sampling anim_plan_at per frame then needs no scheduler of its own -
+    // the rest comes out of the sampler, which is the whole reason it is here
+    // rather than in a setTimeout on the other side of the boundary.
+    //
+    // ARRAYS ZEROED WHOLE for the same reason pre_evs above is: only the first
+    // n_events entries are read, but they cross into beat_shape as one object
+    // and an array a rule walks should not have an undefined tail. ~1 KB of
+    // frame on wasm32, against the ~2.5 KB the row adapter already spends.
+    {
+        int types[ANIM_MAX_STEPS] = {0}, seats[ANIM_MAX_STEPS] = {0};
+        for (int i = 0; i < n_events; i++) {
+            types[i] = events[i].type;
+            seats[i] = events[i].seat;
+        }
+        BeatShape shape;
+        const int nb = beat_shape(types, seats, n_events, &shape);
+        if (nb < 0) return nb;
+
+        int open = 0;   // when the next beat opens, from the sequence's start
+        for (int g = 0; g < nb; g++) {
+            const int first = (int)shape.first[g];
+            const int end = beat_end(&shape, g, n_events);
+            // ONE duration for the whole beat: its cards fly together, so they
+            // land together. The longest of them is the beat's, which today is
+            // ANIM_TIME_MS for anything that moves and 0 for a beat of notices.
+            int dur = 0;
+            for (int i = first; i < end; i++) {
+                const int d = anim_step_duration_ms(events[i].type);
+                if (d > dur) dur = d;
+            }
+            const int hold = shape.holds[g] ? ANIM_BOUT_END_HOLD_MS : 0;
+            for (int i = first; i < end; i++) {
+                AnimPlanStep *st = &out->steps[i];
+                st->start_ms = open;
+                st->duration_ms = dur;
+                st->beat_first = first;
+                st->beat_n = end - first;
+                st->hold_ms = hold;
+            }
+            // A beat that took no time waits no gap either - a notice rides the
+            // landing of the beat that caused it rather than opening a slot of
+            // its own. Then the rest, which is already the next beat's start.
+            if (dur > 0) open += dur + ANIM_GAP_MS;
+            open += hold;
+        }
+    }
+
+    // Forward walk from the freeze -> each step's post counts + veil. The
+    // timing is already on the steps, laid out beat by beat above.
     unsigned char veil_seen[KEYSET_N];   // dense-id presence, dedups the veil
     keyset_clear(veil_seen);
-    const int stride = ANIM_TIME_MS + ANIM_GAP_MS;
     for (int i = 0; i < n_events; i++) {
         const AnimPlanEvent *ev = &events[i];
         // A step's post counts ARE its own board; the delta only carries the
@@ -258,8 +388,6 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
         st->from = ev->from;
         st->to = ev->to;
         st->n_cards = ev->n_cards;
-        st->duration_ms = anim_step_duration_ms(ev->type);
-        st->start_ms = i * stride;
         st->deck = cur.deck;
         st->discard = cur.discard;
         for (int s = 0; s < n_players; s++) st->hand[s] = cur.hand[s];
@@ -296,7 +424,11 @@ int anim_build_plan(const AnimPlanEvent *events, int n_events, int n_players,
         }
     }
     // Wall time: last step's start + its duration (the trailing gap is dead air
-    // the queue does not wait on).
+    // the queue does not wait on, and a trailing HOLD is too - a hold exists to
+    // let the table be read before the sweep, and a stream with nothing after
+    // the cover has no sweep to hold against. anim_build_beats only ever sets
+    // ANIM_BEAT_HOLDS when a discard or a trash follows, so the last beat of a
+    // plan cannot be the one holding; this is the belt to that braces).
     out->total_ms = n_events > 0
         ? out->steps[n_events - 1].start_ms + out->steps[n_events - 1].duration_ms
         : 0;
@@ -438,24 +570,26 @@ int anim_build_beats(const AnimBeatEvent *events, int n_events, AnimBeats *out) 
     out->placed_ids = 0;
     out->first_good_mask = n_events > 0 ? events[0].good_mask : ANIM_NO_MASK;
 
-    // Grouping. ONLY consecutive covers by one seat merge: an attack or a pass
-    // already carries every card of its move in one event, deals and refills are
-    // per seat, and a bout's closing discard/refill are the cover's consequences
-    // rather than part of the same movement - they keep their own beats, which is
-    // what makes the counts settle in the right order. Consecutive, so a bout
-    // boundary splits a run: the discard between two covers ends it.
-    for (int i = 0; i < n_events; i++) {
-        AnimBeat *last = out->n_beats > 0 ? &out->beats[out->n_beats - 1] : 0;
-        if (last && events[i].type == ANIM_EVT_COVER
-            && last->type == ANIM_EVT_COVER && last->seat == events[i].seat) {
-            last->n_events++;
-        } else {
-            AnimBeat *b = &out->beats[out->n_beats++];
-            b->first = i;
-            b->n_events = 1;
-            b->type = events[i].type;
-            b->seat = events[i].seat;
-            b->flags = 0;
+    // Grouping and the hold, from the ONE rule (beat_shape). anim_build_plan
+    // reads the same answer to lay its clock out; a second copy here is how the
+    // two would come to name different boundaries.
+    {
+        int types[ANIM_MAX_BEATS] = {0}, seats[ANIM_MAX_BEATS] = {0};
+        for (int i = 0; i < n_events; i++) {
+            types[i] = events[i].type;
+            seats[i] = events[i].seat;
+        }
+        BeatShape shape;
+        const int nb = beat_shape(types, seats, n_events, &shape);
+        if (nb < 0) return nb;
+        out->n_beats = nb;
+        for (int g = 0; g < nb; g++) {
+            AnimBeat *b = &out->beats[g];
+            b->first = (int)shape.first[g];
+            b->n_events = beat_end(&shape, g, n_events) - b->first;
+            b->type = events[b->first].type;
+            b->seat = events[b->first].seat;
+            b->flags = shape.holds[g] ? ANIM_BEAT_HOLDS : 0;
             b->outs_mask = 0;
             b->attack_pass_seats = 0;
             b->placed_ids = 0;
@@ -483,40 +617,19 @@ int anim_build_beats(const AnimBeatEvent *events, int n_events, AnimBeats *out) 
         out->placed_ids |= b->placed_ids;
     }
 
-    // The outs a beat adopts, and the hold after it. Both look FORWARD, so they
-    // run once the beats above exist.
+    // The outs a beat adopts. Looks FORWARD, so it runs once the beats above
+    // exist. (The hold is the shape's, above - it is the half anim_build_plan
+    // needs too, and it reads nothing but types.)
+    //
+    // Only a beat that actually moved something may adopt what follows it - an
+    // out belongs to the move that caused it, never to one two beats later -
+    // and the lookahead stops at the first beat that is not purely notices.
     for (int g = 0; g < out->n_beats; g++) {
         AnimBeat *b = &out->beats[g];
-
-        // Only a beat that actually moved something may adopt what follows it -
-        // an out belongs to the move that caused it, never to one two beats
-        // later - and the lookahead stops at the first beat that is not purely
-        // notices.
-        if (b->flags & ANIM_BEAT_MOVED) {
-            for (int j = g + 1; j < out->n_beats; j++) {
-                if (!is_out_only(&out->beats[j], events)) break;
-                b->outs_mask |= out->beats[j].outs_mask;
-            }
-        }
-
-        // The hold: a COVER whose bout end follows. Not merely the next beat -
-        // a bout that ends because the defender's last card went down puts their
-        // OUT (and, at the end of a game, a magic transition) between the cover
-        // and the trash, and those are notices, so they neither separate the
-        // cover from its consequence nor earn a hold of their own. Anything that
-        // DOES move a card ends the scan: a refill or a pickup after a cover
-        // means the table did not close on it, and holding there would stall a
-        // sequence that is still going somewhere.
-        if (b->type != ANIM_EVT_COVER) continue;
+        if (!(b->flags & ANIM_BEAT_MOVED)) continue;
         for (int j = g + 1; j < out->n_beats; j++) {
-            const int t = out->beats[j].type;
-            if (t == ANIM_EVT_DISCARD || t == ANIM_EVT_CARDS_TO_TRASH) {
-                b->flags |= ANIM_BEAT_HOLDS;
-                break;
-            }
-            if (t == ANIM_EVT_OUT || t == ANIM_EVT_MAGIC_TRANSITION
-                || t == ANIM_EVT_FLIPPED) continue;
-            break;
+            if (!is_out_only(&out->beats[j], events)) break;
+            b->outs_mask |= out->beats[j].outs_mask;
         }
     }
     return out->n_beats;
