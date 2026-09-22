@@ -1,25 +1,25 @@
 // Loads a kernel module's raw wasm bytes.
 //
-// TWO sources, one module, chosen by what the runtime can actually do:
+// TWO sources, chosen by what the runtime can actually do:
 //
 //   * a gzip STATIC ASSET next to this file, on the server. Deployed with
 //     `supabase functions deploy --use-api` (no Docker) via config.toml
-//     static_files: the .wasm.gz ships as a real binary (bots 57KB vs a 78KB
-//     base64 embed) and is never base64-expanded. Read synchronously (Deno
-//     edge: Deno.readFileSync; Node tests: node:fs).
-//   * the SAME .gz FETCHED over the network, in the browser, which has no
-//     filesystem. `new URL('./bots.wasm.gz', import.meta.url)` makes the
-//     bundler emit it as a real asset, so there is one file, tracked once, in
-//     its natural binary form. Deliberately NOT a base64 embed like
-//     rules/guards: 78 KB of single-line base64 rewritten on every kernel
-//     rebuild is a miserable thing to keep in git, and a second carrier of the
-//     same bytes is exactly how rules_wasm.ts went stale.
+//     static_files: the .wasm.gz ships as a real binary and is never
+//     base64-expanded. Read synchronously (Deno edge: Deno.readFileSync; Node
+//     tests: node:fs).
+//   * a .gz FETCHED over the network, in the browser, which has no filesystem.
+//     `new URL('./<name>.wasm.gz', import.meta.url)` makes the bundler emit it
+//     as a real asset, so there is one file, tracked once, in its natural
+//     binary form. Deliberately NOT a base64 embed like rules/guards: 78 KB of
+//     single-line base64 rewritten on every kernel build is a miserable thing
+//     to keep in git, and a second carrier of the same bytes is exactly how
+//     rules_wasm.ts went stale.
 //
-// The browser path exists because the client runs the WHOLE kernel now, not a
-// rules subset: replaying a shared code rebuilds the game and plays it through
-// the real engine (A5), and replay_steps.c cannot live in rules.wasm — its
-// decoded-action buffer alone is ~272 KB against rules.wasm's linear memory,
-// PINNED at 196,608 B. One big module everywhere; split later (A10).
+// And TWO LINKS of one kernel, which is a different axis and is kernelModule()
+// below. The browser ran the whole thing for a while - one big module
+// everywhere, with the split left to A10 - and paid 82 KB for a download that
+// never called the C Table or a bot. It fetches web.wasm.gz now: the same
+// objects, the same layout hash, a smaller export allow-list, 31 KB.
 import { gunzip } from './gunzip.ts';
 
 // Reading the asset without a STATIC `node:fs` import, which a browser bundle
@@ -90,6 +90,21 @@ export function wasmAssetUrl(name: WasmModuleName): URL {
  * and run the bot loop, and the runtime that has to fetch it is exactly the one
  * that does neither. Asking the same question the loader above already asks
  * keeps the two answers from drifting apart.
+ *
+ * `process.versions?.node` IS SAFE IN THE BROWSER, and it was worth checking
+ * rather than assuming, because Next bundles a `process` shim for client code
+ * and a truthy answer here would silently hand every visitor the server's
+ * module again - 82 KB instead of 31, with nothing broken to notice. Read out
+ * of a real `next build` (Next 16.2.6, Turbopack): the client shim is used only
+ * when there is no real global `process`, and it sets `versions = {}`, so the
+ * `?.node` is undefined and the browser answers 'web'. The same build emits
+ * both modules to .next/static/media and the chunk that asks resolves each by
+ * name, so the fetch that follows is for the one this returns.
+ *
+ * The Deno edge branch is first for a reason beyond order: config.toml stages
+ * bots.wasm.gz and nothing else, so an edge answer of 'web' is a 500 on the
+ * first request after a deploy. e2e/validation/deploy_paths_validation.test.ts
+ * fakes a Deno global and pins it.
  */
 export function kernelModule(): WasmModuleName {
     // deno-lint-ignore no-explicit-any

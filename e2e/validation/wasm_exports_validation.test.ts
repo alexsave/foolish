@@ -62,9 +62,13 @@ import {
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
-/** The committed modules, by the id BINDER_MODULES uses. bots-test is not one: it is built on demand. */
+/** The built modules, by the id BINDER_MODULES uses. bots-test is not one: it is built on demand. */
 const COMMITTED: Record<string, string> = {
     'bots': 'sdk/ts/wasm/bots.wasm.gz',
+    // The browser's link of the same objects. A binder declared against it may
+    // only name entries BOTH links export, which is what makes the arity check
+    // below bite for the gate that compares them.
+    'web': 'sdk/ts/wasm/web.wasm.gz',
     'oracle': 'public/oracle.wasm.gz',
     'oracle-mt': 'public/oracle-mt.wasm.gz',
 };

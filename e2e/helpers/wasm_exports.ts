@@ -163,7 +163,7 @@ export interface Binder {
 }
 
 /** The kernel modules a binder can be bound to. */
-export type ModuleId = 'bots' | 'bots-test' | 'oracle' | 'oracle-mt';
+export type ModuleId = 'bots' | 'web' | 'bots-test' | 'oracle' | 'oracle-mt';
 
 /**
  * Which module each binding interface talks to.
@@ -182,6 +182,13 @@ export const BINDER_MODULES: Readonly<Record<string, ModuleId>> = {
     'sdk/ts/wasm/bots.ts#BotsExports': 'bots',
     'sdk/ts/table/server_table.ts#TableExports': 'bots',
     'sdk/ts/table/client_table.ts#ClientExports': 'bots',
+    // The BROWSER's link of those same objects (c/Makefile, WASM_WEB_NAMES).
+    // The four binders above are declared against `bots` because that is the
+    // superset - BotsExports names test-only entries that run on Node - and the
+    // browser reaches them through the subset. What is bound to `web` is the
+    // gate that holds the two links to one answer, which instantiates BOTH and
+    // so may only name entries both export.
+    'e2e/wasm_web_link.test.ts#RawKernel': 'web',
     // The TEST build: the shipped module's link plus c/Makefile's
     // WASM_TEST_EXPORTS (e2e/bots_test_build.test.ts proves that equality).
     // Never committed, so the fast lane checks these by name and

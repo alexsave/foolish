@@ -137,7 +137,7 @@ interface RawKernel {
     wasm_replay_b32_decode(len: number): number;
     wasm_replay_summary(len: number): number;
     wasm_replay_step_count(len: number): number;
-    wasm_replay_step_index(len: number, step: number): number;
+    wasm_replay_step_index(len: number): number;
     wasm_replay_step_masked_state(len: number, step: number, viewer: number): number;
     wasm_replay_step_logs(len: number, step: number): number;
 }
@@ -215,12 +215,18 @@ test('both links answer the same replay code identically, step by step', () => {
     put(web); assert.equal(web.wasm_replay_step_count(moves.length), steps, 'different step counts');
     assert.ok(steps > 20, `the tutorial game should have tens of steps, got ${steps}`);
 
+    // The step index: what every step IS, in one buffer.
+    put(bots); const ia = bots.wasm_replay_step_index(moves.length);
+    put(web); const ib = web.wasm_replay_step_index(moves.length);
+    assert.equal(ib, ia, 'different step-index lengths');
+    assert.ok(ia > 0, 'the step index did not decode');
+    assert.deepEqual(
+        [...bytesOf(web).slice(web.wasm_io_ptr(), web.wasm_io_ptr() + ib)],
+        [...bytesOf(bots).slice(bots.wasm_io_ptr(), bots.wasm_io_ptr() + ia)],
+        'the two links disagree about what the steps of one code are');
+
     let masked = 0, logged = 0;
     for (let step = 0; step < steps; step++) {
-        put(bots); const ia = bots.wasm_replay_step_index(moves.length, step);
-        put(web); const ib = web.wasm_replay_step_index(moves.length, step);
-        assert.equal(ib, ia, `step ${step}: different step index`);
-
         for (let viewer = 0; viewer < 3; viewer++) {
             put(bots); const la = bots.wasm_replay_step_masked_state(moves.length, step, viewer);
             put(web); const lb = web.wasm_replay_step_masked_state(moves.length, step, viewer);
