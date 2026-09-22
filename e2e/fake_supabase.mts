@@ -767,7 +767,10 @@ const SCENARIOS: Record<string, () => Scenario> = {
         gameId: 'open01',
         users: ['ME', 'ANNA', 'BORIS'],
         board: fixture().title('Open table').seats([seat('ME'), seat('ANNA'), seat('BORIS')])
-            .status(PLAYING).deterministic().trump('Kc').deck('8s 9s Ts Js Qs 6s 7s 8d 9d')
+            // 7s is BORIS's, so the stock must not hold it too: the seal refuses a
+            // duplicate card (GAME_INVALID_DUPLICATE_CARD) and this scenario could
+            // not be built at all.
+            .status(PLAYING).deterministic().trump('Kc').deck('8s 9s Ts Js Qs 6s 8d 9d')
             .hand(0, '6h 7d Tc Jd Ad Qc').hand(1, '8h 9h Th Jh Qh Ah').hand(2, '7s Qd 6d 6c Kd Ks')
             .attacker(0).defender(1).build(),
     }),

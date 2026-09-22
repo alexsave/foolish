@@ -185,6 +185,11 @@ interface BotsExports extends EngineExports {
     wasm_anim_plan_at(nowMs: number): number;
     wasm_anim_build_beats(nEvents: number): number;
     wasm_anim_reversal_order(): number;
+    wasm_anim_roles_goods_opening(d: number, fa: number, gm: number, firstGoodMask: number): number;
+    wasm_anim_roles_goods_cleared(d: number, fa: number, gm: number, stepGoodMask: number): number;
+    wasm_anim_roles_pass_hand_off(d: number, fa: number, gm: number,
+                                  attackPassSeats: number, finalDefender: number): number;
+    wasm_anim_shown_ledger_allows(claim: number, sequencing: number): number;
 }
 
 // ANIM_TRANSPORT_* (c/src/anim_plan.h).
@@ -998,6 +1003,76 @@ export function animStaleOptimisticOnTable(optCards: Card[], tableCards: Card[],
     const rel: number[] = [];
     for (let i = 0; i < n; i++) rel.push(out[ob + i]);
     return rel;
+}
+
+// ---- the role beat (anim_plan.h "the role beat") -----------------------------
+//
+// WHICH MARKS CHANGE AT WHICH POINT OF A SEQUENCE, which is three timings and
+// not one: a good being SET leads the stream, a good being CLEARED runs with the
+// throw-in that cleared it, a PASS hands the shield over with the transfer card,
+// and everything else waits for the closing beat. The rules are the kernel's
+// (anim_goods_opening / anim_goods_cleared / anim_pass_hand_off) and iOS has
+// reached them since round 28; these four are the same C, reached from a
+// browser.
+//
+// `shown` is WHAT THE BADGES ARE WEARING and not the live board - the host's
+// frozen ledger (src/state/roleLedger.ts), which is why it crosses as a value.
+
+/** The three facts a role mark is drawn from (anim_plan.h AnimRoles). A seat is
+ *  -1 for none, and `goodMask` is one bit per seat. */
+export interface AnimRoles { defender: number; firstAttacker: number; goodMask: number }
+
+/** "This step carried no board", the one value a good mask may not take
+ *  (anim_plan.h ANIM_NO_MASK). Both goods rules answer 0 for it. */
+export const ANIM_NO_MASK = A.ANIM_NO_MASK;
+/** Who is writing the shown badges (anim_plan.h ANIM_CLAIM_*). */
+export const ANIM_CLAIM_SEQUENCE = A.ANIM_CLAIM_SEQUENCE;
+export const ANIM_CLAIM_ARMING = A.ANIM_CLAIM_ARMING;
+export const ANIM_CLAIM_HAND_OFF = A.ANIM_CLAIM_HAND_OFF;
+export const ANIM_CLAIM_BYSTANDER = A.ANIM_CLAIM_BYSTANDER;
+
+/** The three bytes every role entry leaves in g_io, or null for "nothing changed". */
+function rolesAnswer(ex: BotsExports, rc: number): AnimRoles | null {
+    if (rc < 0) throw new Error(`anim roles error ${rc}`);
+    if (rc === 0) return null;
+    const buf = mem(ex);
+    const p = ex.wasm_io_ptr();
+    const seat = (b: number) => (b === 0xff ? -1 : b);
+    return { defender: seat(buf[p]), firstAttacker: seat(buf[p + 1]), goodMask: buf[p + 2] };
+}
+
+/** THE STATE A STREAM SHOULD OPEN ON (anim_goods_opening), or null for "start
+ *  playing straight away". `firstGoodMask` is the stream's event-0 mask. */
+export function animRolesGoodsOpening(shown: AnimRoles, firstGoodMask: number): AnimRoles | null {
+    const ex = bots();
+    return rolesAnswer(ex, ex.wasm_anim_roles_goods_opening(
+        shown.defender, shown.firstAttacker, shown.goodMask, firstGoodMask));
+}
+
+/** THE MIRROR IMAGE (anim_goods_cleared), played with the throw-in that cleared
+ *  it. `stepGoodMask` is that beat's own mask. */
+export function animRolesGoodsCleared(shown: AnimRoles, stepGoodMask: number): AnimRoles | null {
+    const ex = bots();
+    return rolesAnswer(ex, ex.wasm_anim_roles_goods_cleared(
+        shown.defender, shown.firstAttacker, shown.goodMask, stepGoodMask));
+}
+
+/** A PASS (anim_pass_hand_off): the shield travels with the transfer card.
+ *  `attackPassSeats` is the bit per seat that laid cards in this beat, and the
+ *  kernel - not the wire - decides which of them was a transfer.
+ *  `finalDefender` is the stream's FINAL board's defender, the only place a
+ *  pass's new defender ever appears. */
+export function animRolesPassHandOff(shown: AnimRoles, attackPassSeats: number,
+                                     finalDefender: number): AnimRoles | null {
+    const ex = bots();
+    return rolesAnswer(ex, ex.wasm_anim_roles_pass_hand_off(
+        shown.defender, shown.firstAttacker, shown.goodMask, attackPassSeats, finalDefender));
+}
+
+/** MAY THIS WRITER TOUCH THE SHOWN BADGES (anim_shown_ledger_allows)? A
+ *  bystander may not, while a sequence is running; everyone else may. */
+export function animShownLedgerAllows(claim: number, sequencing: boolean): boolean {
+    return bots().wasm_anim_shown_ledger_allows(claim, sequencing ? 1 : 0) !== 0;
 }
 
 /** One row of the end screen's finish order (anim_plan.h AnimFinishRow). */

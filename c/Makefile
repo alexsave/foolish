@@ -990,6 +990,8 @@ WASM_BOTS_API_EXPORTS := \
   -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr -Wl,--export=wasm_anim_beats_ptr \
   -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_plan_at -Wl,--export=wasm_anim_build_beats \
   -Wl,--export=wasm_anim_reversal_order \
+  -Wl,--export=wasm_anim_roles_goods_opening -Wl,--export=wasm_anim_roles_goods_cleared \
+  -Wl,--export=wasm_anim_roles_pass_hand_off -Wl,--export=wasm_anim_shown_ledger_allows \
   -Wl,--export=wasm_belief_probe_reset -Wl,--export=wasm_belief_probe_dump -Wl,--export=wasm_belief_probe_ptr
 
 # The C Roster (src/roster.h), in the TEST build only (WASM_TEST_EXPORTS below):
@@ -1207,7 +1209,9 @@ WASM_MSG_EXPORTS := \
   -Wl,--export=wasm_anim_set_transport -Wl,--export=wasm_anim_transport \
   -Wl,--export=wasm_anim_plan_ptr -Wl,--export=wasm_anim_frame_ptr -Wl,--export=wasm_anim_beats_ptr \
   -Wl,--export=wasm_anim_build_plan -Wl,--export=wasm_anim_plan_at -Wl,--export=wasm_anim_build_beats \
-  -Wl,--export=wasm_anim_reversal_order
+  -Wl,--export=wasm_anim_reversal_order \
+  -Wl,--export=wasm_anim_roles_goods_opening -Wl,--export=wasm_anim_roles_goods_cleared \
+  -Wl,--export=wasm_anim_roles_pass_hand_off -Wl,--export=wasm_anim_shown_ledger_allows
 
 # The rules API, minus the one export that would drag a replay DECODER in.
 # (wasm_replay_decode is declared in wasm_api.c, which this target shares with
@@ -1548,6 +1552,8 @@ WASM_WEB_NAMES := \
   wasm_anim_should_drop_stale wasm_anim_stale_optimistic \
   wasm_anim_finish_rows wasm_anim_hand_laid_out wasm_anim_reversal_order \
   wasm_anim_build_plan wasm_anim_plan_ptr wasm_anim_plan_at wasm_anim_frame_ptr \
+  wasm_anim_roles_goods_opening wasm_anim_roles_goods_cleared \
+  wasm_anim_roles_pass_hand_off wasm_anim_shown_ledger_allows \
   wasm_replay_b32_encode wasm_replay_b32_decode wasm_replay_link \
   wasm_replay_extras_ptr wasm_replay_extras_decode \
   wasm_replay_events wasm_replay_events_index_ptr \
