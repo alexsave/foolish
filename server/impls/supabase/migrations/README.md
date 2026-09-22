@@ -20,6 +20,27 @@ Write it **twice**, in the same commit:
 
 The deploy workflow's schema step then sees a `.sql` file, runs `supabase db push`, and applies it before the functions that depend on it deploy.
 
+Every file here must be ONE GUARDED BLOCK, and this one was learned the hard way in CI:
+
+```sql
+DO $$
+BEGIN
+    IF to_regclass('public.bots') IS NULL THEN
+        RAISE NOTICE 'this database is built from seed.sql, which already holds the end state';
+        RETURN;
+    END IF;
+    -- the delta
+END $$;
+```
+
+`supabase start` and `supabase db reset` apply migrations BEFORE seed.sql.
+seed.sql is the schema, so on every database except hosted a file here runs before the tables it edits exist, and an unguarded delta fails with `relation "bots" does not exist`.
+The first migration written after the collapse did exactly that to the `edge-serve` lane.
+Hosted is the only database with anything here to change - everywhere else seed.sql already produces the end state - so a delta declines to run when the schema is absent rather than erroring.
+
+`[db.migrations] enabled = false` in `config.toml` does not solve it: that switch skips migrations on `db push` too, which is how `deploy.yml` reaches hosted.
+`e2e/validation/migration_guard_validation.test.ts` holds the rule, so it is checked rather than remembered.
+
 Two things about the filename, both learned the hard way on hosted:
 
 - The timestamp decides the order. `supabase db push` applies in filename order and keys its history on the version string, so a file that depends on another must sort after it.
