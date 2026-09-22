@@ -18,8 +18,8 @@
 // game and not about time.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ANIM_STEP_NONE } from '@sdk/ts/wasm/bots.ts';
-import { frameAt, planFor, type AnimStep } from './animPlan';
+import { ANIM_STEP_NONE, type AnimPlanSnap } from '@sdk/ts/wasm/bots.ts';
+import { frameAt, heldPiles, NO_HELD, planFor, sameHeld, type AnimStep } from './animPlan';
 import type { TableView } from './view';
 
 /** What the page draws for one card at one place while its flight is up. */
@@ -48,6 +48,12 @@ export interface AnimationRunHooks<S extends RunStep> {
     onQueued: (steps: S[]) => void;
     /** The places a step's cards are hidden at while it flies (rendering). */
     placesOf: (step: S) => (number | string)[];
+    /** The ONE flight a beat's steps make together, for the beats the kernel
+     *  merges (consecutive covers by one seat - the kernel spends one COVER
+     *  event per card, and one move must move as one). Rendering only: a
+     *  landing is still taken per step, in order, so what a landing MEANS is
+     *  untouched by the merge. Never called for a beat of one step. */
+    mergeBeat: (steps: S[]) => S;
     /** The key the page names one card at one place by (rendering). */
     keyOf: (card: { suit: number; value: number }, place: number | string) => string;
 }
@@ -56,6 +62,8 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
     const [isAnimating, setIsAnimating] = useState(false);
     const [currentAnimation, setCurrentAnimation] = useState<S | null>(null);
     const [flightMs, setFlightMs] = useState(0);
+    const [rowMs, setRowMs] = useState(0);
+    const [heldSet, setHeld] = useState<ReadonlySet<number>>(NO_HELD);
     const [inFlightFromDeck, setInFlightFromDeck] = useState(0);
     const [inFlightToFlipped, setInFlightToFlipped] = useState(0);
     const [animatingCards, setAnimatingCards] = useState<Map<string, CardFlight>>(new Map());
@@ -74,7 +82,24 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
     // How many of the run's steps have had their landing taken. The kernel's
     // AnimFrame.landed is the truth; this is how far React has caught up to it.
     const landedRef = useRef(0);
+    // THE PLAN'S DURATION FOR THE LANDING THE ROW IS ON. The grid's own layout
+    // change happens at a LANDING, and a landing falls in the gap between two
+    // flights, where `flightMs` is already 0 (anim_plan_at answers
+    // ANIM_STEP_NONE there) - so the number the row's transition is written
+    // with cannot be that one. It is the duration of the step whose landing
+    // moved the row, which is the same treatment iMessage's ShownLedger states:
+    // the row is "advanced one step per landing flight, WITH THE PLAN'S OWN
+    // DURATION ON IT". 0 until a run's first landing and after a seek, because
+    // neither of those is a card arriving.
+    const rowMsRef = useRef(0);
     const frameHandleRef = useRef<number | null>(null);
+    // The merged step a multi-step beat draws as, held so the page is handed
+    // the SAME object every frame: `currentAnimation` is compared by identity
+    // (a new object per frame would re-run the overlay's layout effect, which
+    // is what re-arms the flight, 60 times a second). Keyed by the beat's span
+    // and dropped when the run ends, because a later run's first beat has the
+    // same span and different cards.
+    const beatRef = useRef<{ key: string; step: S } | null>(null);
 
     // The hooks are read through a ref so the loop never holds a stale closure:
     // it is armed once per frame and the provider re-renders under it.
@@ -104,6 +129,20 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         return veil;
     };
 
+    // The steps of one beat, as the one step the page draws. A beat of one is
+    // that step itself - the common case, and no object is made for it.
+    const beatAt = (run: S[], plan: AnimPlanSnap, i: number): S | null => {
+        const st = plan.steps[i];
+        const first = st?.beatFirst ?? i;
+        const group = run.slice(first, first + (st?.beatN ?? 1));
+        if (group.length <= 1) return group[0] ?? null;
+        const key = `${first}:${group.length}`;
+        if (beatRef.current?.key === key) return beatRef.current.step;
+        const step = hooksRef.current.mergeBeat(group);
+        beatRef.current = { key, step };
+        return step;
+    };
+
     const tickRef = useRef<() => void>(() => {});
 
     // ONE FRAME. Ask the kernel where the run stands, then do what it says.
@@ -126,10 +165,29 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         const frame = frameAt(performance.now() - origin);
 
         while (landedRef.current < frame.landed && landedRef.current < run.length) {
+            rowMsRef.current = plan.steps[landedRef.current]?.durationMs ?? 0;
             hooksRef.current.onLanded(run[landedRef.current++]);
         }
+        setRowMs((prev) => (prev === rowMsRef.current ? prev : rowMsRef.current));
 
-        const flying = frame.step === ANIM_STEP_NONE ? null : run[frame.step] ?? null;
+        // THE PILES THE GRID MUST NOT MAKE ROOM FOR YET (animPlan.heldPiles). The
+        // steps behind `landed` are the ones still in the air - a step that has
+        // landed has had its board committed, and its pile has earned its slot.
+        // A SET AND NOT A ROW, deliberately: the grid takes these out of
+        // whatever board it is drawing at the instant it draws it, so a board
+        // committed between two frames is answered in the commit that carries
+        // it rather than one frame later.
+        const held = heldPiles(plan.pre, run.slice(frame.landed));
+        setHeld((prev) => (sameHeld(prev, held) ? prev : held));
+
+        // WHAT FLIES IS A BEAT, NOT A STEP, and the kernel says which is which
+        // (AnimPlanStep.beat_first / beat_n). The plan opens every step of one
+        // beat at the same instant; if the page then drew only run[frame.step]
+        // the second card of a two-card cover would never be drawn at all. The
+        // grouping and the timing come from the one answer for exactly this
+        // reason - a host that merged on a rule of its own could merge
+        // somewhere the clock did not.
+        const flying = frame.step === ANIM_STEP_NONE ? null : beatAt(run, plan, frame.step);
         setCurrentAnimation((prev) => (prev === flying ? prev : flying));
         setFlightMs(frame.step === ANIM_STEP_NONE ? 0 : plan.steps[frame.step]?.durationMs ?? 0);
         // The stock shrinks as cards LEAVE it, not as they land, and a card bound
@@ -147,8 +205,14 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
             runRef.current = [];
             originRef.current = null;
             landedRef.current = 0;
+            beatRef.current = null;
             setCurrentAnimation(null);
             setFlightMs(0);
+            setHeld(NO_HELD);
+            // `rowMs` is NOT cleared here, and that is deliberate: the run's
+            // last landing moves the row in this very frame and is entitled to
+            // the same glide every earlier one had. The next run zeroes it as
+            // it starts, and a seek's `reset` zeroes it outright.
             setIsAnimating(false);
             setInFlightFromDeck(0);
             setInFlightToFlipped(0);
@@ -173,6 +237,8 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         if (originRef.current !== null) return;
         originRef.current = performance.now();
         landedRef.current = 0;
+        rowMsRef.current = 0;
+        setRowMs(0);
         setIsAnimating(true);
         // The first frame is asked for NOW rather than on the next paint: a
         // caller that queued a step and then read `currentAnimation` in the same
@@ -191,8 +257,12 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
         runRef.current = [];
         originRef.current = null;
         landedRef.current = 0;
+        rowMsRef.current = 0;
+        beatRef.current = null;
         setCurrentAnimation(null);
         setFlightMs(0);
+        setRowMs(0);
+        setHeld(NO_HELD);
         setIsAnimating(false);
         setInFlightFromDeck(0);
         setInFlightToFlipped(0);
@@ -207,7 +277,7 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
     }, []);
 
     return {
-        isAnimating, currentAnimation, flightMs, inFlightFromDeck, inFlightToFlipped,
-        animatingCards, enqueue, reset,
+        isAnimating, currentAnimation, flightMs, rowMs, heldPiles: heldSet,
+        inFlightFromDeck, inFlightToFlipped, animatingCards, enqueue, reset,
     };
 }

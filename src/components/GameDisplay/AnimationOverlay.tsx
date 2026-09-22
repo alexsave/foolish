@@ -1,12 +1,18 @@
 import { useEffect, useLayoutEffect, useState, useRef } from 'react';
 import { useAnimation } from '../../contexts/AnimationContext';
-import { covered, seatKey, type ViewCard as Card } from '../../state/view';
-import { FlightCard, type AnimatedCard } from './FlightCard';
+import { covered, sameCard, seatKey, type ViewBattle as Battle, type ViewCard as Card } from '../../state/view';
+import { FlightCard, FLIGHT_ARM_MS, type AnimatedCard } from './FlightCard';
 import { useServer } from '../../contexts/ServerContext';
 // The kernel's can_cover: bots.wasm is loaded before any screen that reaches this
 // renders - /, /[game_id], /dashboard, /history and /tutorial are each wrapped in
 // KernelGate (src/components/KernelGate.tsx), the replay and the tutorial included.
 import { canCoverPair } from '../../utils/gameValidation';
+import { shownRow } from '../../state/animPlan';
+// The angle the battle grid lays a cover across its attack at: a flight has to
+// land where the grid will DRAW the card, and the grid is where that is stated.
+// `glideOffset` is the other half of that: while the row is still sliding to
+// make room for the pile that just landed, a cell is not yet where it is going.
+import { COVER_ROTATION_RAD, glideOffset } from './TableBattles';
 
 // Table-slot geometry cache (Stage 9). The on-table battle layout is a function of
 // only (how many battle slots there are, the viewport size) - the 4th slot in a
@@ -28,6 +34,9 @@ const tableSlotKey = (totalSlots: number, slotIndex: number): string =>
 // return flight starts from the spot the outbound flight left it at.
 const tableLandings = new Map<string, { x: number; y: number }>();
 
+/** A board that is not there yet has no row. */
+const EMPTY_ROW: readonly Battle[] = [];
+
 /** A point on screen, in viewport coordinates. */
 type Spot = { x: number; y: number };
 
@@ -38,6 +47,20 @@ type Candidate = HTMLElement | Spot | null | undefined;
 const centreOf = (element: HTMLElement): Spot => {
     const rect = element.getBoundingClientRect();
     return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+};
+
+// WHERE A TABLE ELEMENT WILL COME TO REST, which is not where it is drawn while
+// the battle row is gliding (TableBattles' FLIP: the piles already down slide
+// aside over the plan's own duration to make room for the one that just
+// landed). A flight is measured at the START of its beat and lands at the end
+// of it, by which time that slide is over - so a LANDING is aimed here, and a
+// card LIFTING OFF keeps `centreOf`, because it leaves from where the eye has
+// it. Zero for every element outside a gliding cell, which is all of them
+// whenever nothing is moving.
+const restingCentre = (element: HTMLElement): Spot => {
+    const c = centreOf(element);
+    const off = glideOffset(element);
+    return { x: c.x - off.x, y: c.y - off.y };
 };
 
 const isElement = (c: Candidate): c is HTMLElement =>
@@ -70,14 +93,27 @@ const spotFrom = (chain: Array<() => Candidate>, floor: Spot): Spot => {
 /** `spot` moved by (dx, dy). Returns a new object: callers mutate their result. */
 const shifted = (spot: Spot, dx: number, dy: number): Spot => ({ x: spot.x + dx, y: spot.y + dy });
 
+/** Where a flight ends AND at what angle the place it ends at draws the card:
+ *  a cover comes down laid across its attack, everything else lands flat. */
+type Landing = { spot: Spot; angle: number };
+
+/** A landing the place draws upright, which is every landing but a cover's. */
+const flat = (spot: Spot): Landing => ({ spot, angle: 0 });
+
 
 export const AnimationOverlay = () => {
     const [animatedCards, setAnimatedCards] = useState<AnimatedCard[]>([]);
     // `flightMs` is the kernel's duration for the step on screen (its plan's
     // AnimPlanStep.duration_ms), not a constant this file keeps: the curve and
     // the interpolation are rendering, the length of the flight is not.
-    const { currentAnimation, isAnimating, flightMs } = useAnimation();
+    const { currentAnimation, isAnimating, flightMs, heldPiles } = useAnimation();
     const { view: game } = useServer();
+    // THE ROW THE GRID IS ACTUALLY DRAWING. The board's, minus any pile this
+    // run is still carrying (TableBattles, and src/state/animPlan.ts heldPiles).
+    // Everything in this file that counts slots, picks a pile or asks how a card
+    // is lying has to ask the row on SCREEN - aiming at a cell the grid is not
+    // drawing is aiming at nothing.
+    const shownBattles = shownRow(game?.battles ?? EMPTY_ROW, heldPiles);
     const overlayRef = useRef<HTMLDivElement>(null);
 
     // Invalidate the table-slot geometry cache on resize (Stage 9). The cache key
@@ -137,7 +173,7 @@ export const AnimationOverlay = () => {
         const positions = new Map<string, { x: number; y: number }>();
 
         if (type === 'attack_pass') {
-            const currentBattleCount = game?.battles.length || 0;
+            const currentBattleCount = shownBattles.length;
             // After this attack lands the table has currentBattleCount + cards.length
             // slots; each new card targets the slot at (currentBattleCount + index).
             const totalSlots = currentBattleCount + cards.length;
@@ -282,9 +318,12 @@ export const AnimationOverlay = () => {
             return;
         }
 
-        // target_card and battle_index are kept in the destructure for future
-        // multi-card cover handling; currently unused.
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        // `target_card` and `battle_index` are the KERNEL's answer to "which
+        // attack does this cover answer, and in which slot" - evwire carries both
+        // on every COVER event and src/state/pushSequence.ts puts them on the
+        // step. They are read below (`coverTarget`, `landsOnTable`); nothing in
+        // this file decides a target any more except for an event that carries
+        // none at all.
         const { type, cards, from_location, to_location, seat, target_card, target_cards, battle_index, is_revert } = currentAnimation;
         // The page names a seat's hand by its player id (data-player-id): the id the
         // event's own board gives its seat, or the board on screen's for a flight
@@ -336,27 +375,42 @@ export const AnimationOverlay = () => {
                 ? measureHandSlotPositions(cards.length, player_id)
                 : [];
 
-            // For cover animations, keep track of which attack cards have been targeted
+            // For the guess of last resort below: the attacks this batch claimed.
             const targetedAttackCards = new Set<string>();
 
-            // WHICH ATTACK THIS COVER CARD IS FOR.
+            // WHICH ATTACK THIS COVER CARD IS FOR - THE KERNEL'S ANSWER.
             //
-            // The event says so outright when it carries target_cards (a
-            // multi-card cover names its pairs). When it does not, the board
-            // has to work it out the way the kernel did: the first uncovered
-            // battle this card can legally cover. `canCoverPair` is the
-            // kernel's can_cover, so this asks the engine rather than
-            // re-deciding the rule.
+            // Every cover the kernel pushes names it: evwire writes the covered
+            // attack and its battle index on the event (c/src/evwire.c's
+            // ENGINE_HOOK_COVER, one event per pair), and pushSequence.ts puts
+            // both on the step as `target_card` and `battle_index`. A multi-card
+            // cover of MY OWN is predicted before any push exists, and names its
+            // pairs in `target_cards` instead.
             //
-            // STATEFUL, and deliberately so: two cover cards in one flight
-            // must not both aim at the same attack, so a battle claimed here
-            // is struck off for the rest of the batch. That is why this is
+            // iMessage answers the same question the same way: it finds the
+            // flying card in the board the kernel handed it and flies to THAT
+            // battle's cell (`openReplayFlights`,
+            // ios/FoolishKit/Boards/MessageTableView+OpenReplay.swift). It never
+            // re-runs the legality rule to pick a pile, and neither does this.
+            //
+            // The legality guess is the LAST resort, for an event carrying
+            // neither - and it is only ever a guess: it takes the FIRST uncovered
+            // battle this card could legally cover, which is the wrong pile
+            // whenever more than one is coverable (a trump over several attacks,
+            // equal ranks). `canCoverPair` is the kernel's can_cover, so even the
+            // guess asks the engine for the rule; what it cannot ask is which
+            // pile the player chose.
+            //
+            // STATEFUL, and deliberately so: two guessed cover cards in one
+            // flight must not both aim at the same attack, so a battle claimed
+            // here is struck off for the rest of the batch. That is why this is
             // called once per card, in order, rather than mapped lazily.
             const coverTarget = (c: Card, i: number): Card | null => {
                 if (target_cards && target_cards[i]) return target_cards[i];
-                if (!game?.battles) return null;
+                if (target_card) return target_card;
+                if (!game) return null;
 
-                const battle = game.battles
+                const battle = shownBattles
                     .filter((b) => !covered(b))
                     .find((b) => canCoverPair(b.attack, c, game.powerSuit)
                         && !targetedAttackCards.has(`${b.attack.suit}-${b.attack.value}`));
@@ -371,7 +425,22 @@ export const AnimationOverlay = () => {
             // move the server refused was never laid on the board - only a
             // flight put it there - so its return starts at the spot, and
             // the scale, that flight left it at.
-            const liftoff = (card: Card): { spot: Spot; fromLanding: boolean } => {
+            //
+            // A card lying on the table is drawn at the grid's own tilt - the
+            // cover laid across at +COVER_ROTATION_RAD, the attack under it
+            // turned -COVER_ROTATION_RAD (TableBattles) - so a card leaving the
+            // table lifts off at that tilt and flattens as it flies, instead of
+            // snapping upright the instant the flight replaces it. iMessage
+            // carries the same value as its flight's `fromAngle`
+            // (ios/FoolishKit/Boards/MessageTableView+OpenReplay.swift).
+            const tableTilt = (card: Card): number => {
+                const battle = shownBattles.find((b) => sameCard(b.attack, card)
+                    || (covered(b) && sameCard(b.defense, card)));
+                if (!battle || !covered(battle)) return 0;
+                return sameCard(battle.attack, card) ? -COVER_ROTATION_RAD : COVER_ROTATION_RAD;
+            };
+
+            const liftoff = (card: Card): { spot: Spot; fromLanding: boolean; angle: number } => {
                 let sourceElement: HTMLElement | null = null;
                 let remembered: Spot | undefined;
 
@@ -389,6 +458,7 @@ export const AnimationOverlay = () => {
                     spot: spotFrom([() => sourceElement, () => remembered],
                         getFallbackPosition(from_location || 'hand', player_id)),
                     fromLanding: !sourceElement && !!remembered,
+                    angle: from_location === 'table' && sourceElement ? tableTilt(card) : 0,
                 };
             };
 
@@ -406,41 +476,98 @@ export const AnimationOverlay = () => {
                 },
             ], getFallbackPosition('flipped', player_id));
 
+            // THE ATTACK THIS COVER LANDS ON, as an element to measure.
+            //
+            // The kernel's battle slot first - it names the slot outright and
+            // TableBattles tags the attack with it - then the target card's own
+            // rect, which survives a board whose slots have shifted under the
+            // flight. Neither query falls back to "some other battle": an attack
+            // this screen cannot show is the unmeasured case, and aiming at
+            // battle 0 because battle 3 has not rendered is the very mistake
+            // this path is here to stop. `battle_index` belongs to an event that
+            // carries ONE cover card (evwire emits one COVER event per pair), so
+            // a multi-card prediction uses its per-card targets instead.
+            const attackUnder = (target: Card | null): HTMLElement | null =>
+                (cards.length === 1 && battle_index !== undefined
+                    ? document.querySelector(`[data-location="table"] [data-battle-index="${battle_index}"]`) as HTMLElement | null
+                    : null)
+                ?? (target
+                    ? document.querySelector(`[data-location="table"] [data-card="${target.suit}-${target.value}"]`) as HTMLElement | null
+                    : null);
+
+            // WHERE THE GRID WILL DRAW THE COVER, given that attack. A cover
+            // shares its attack's slot and its bottom edge and is laid across it
+            // at COVER_ROTATION_RAD about `center bottom` (TableBattles), so the
+            // cover's centre is the attack's centre turned through that angle
+            // about that point. Measured off the attack's own rect and the grid's
+            // own constant - this file keeps no offset of its own. Aiming at the
+            // attack's centre instead leaves the settle the flight is supposed to
+            // remove: measured in a browser, a cover drawn at (687, 425) over an
+            // attack whose uncovered centre is (680, 424).
+            //
+            // MEASURED AT REST AND UPRIGHT, and it has to be both. The rect is
+            // the axis-aligned bounding box, so it is the attack's own box only
+            // while the grid is drawing the card straight; the counter-tilt
+            // waits FLIGHT_ARM_MS before it starts (TableBattles), which is
+            // after this layout effect has run, so what is measured here is the
+            // untilted box. `glideOffset` takes off the other displacement - a
+            // row still sliding under the flight - because the cover lands when
+            // that slide has finished.
+            const laidAcross = (attack: HTMLElement): Spot => {
+                const r = attack.getBoundingClientRect();
+                const off = glideOffset(attack);
+                return {
+                    x: r.left - off.x + r.width / 2 + Math.sin(COVER_ROTATION_RAD) * (r.height / 2),
+                    y: r.bottom - off.y - Math.cos(COVER_ROTATION_RAD) * (r.height / 2),
+                };
+            };
+
             // The table is the one destination that cares HOW the card got
             // there: a cover aims at the attack it answers, an attack aims
             // at the slot it will occupy, anything else aims at the table.
-            const landsOnTable = (card: Card, index: number): Spot => {
+            // A cover is also the one landing that is not flat - it comes down
+            // laid across, so the flight turns into that angle on the way in.
+            const landsOnTable = (card: Card, index: number): Landing => {
                 if (type === 'cover') {
-                    const target = coverTarget(card, index);
-                    // A known target is aimed at exactly; without one we aim
-                    // at the table and fan the cards 70px apart so
+                    const attack = attackUnder(coverTarget(card, index));
+                    // An attack we could measure is aimed at exactly; without one
+                    // we aim at the table and fan the cards 70px apart so
                     // simultaneous covers do not stack on one point. The fan
-                    // belongs ONLY to the untargeted case.
-                    return target
-                        ? spotFrom(
-                            [() => findElementByLocation('table', undefined, target.suit, target.value)],
-                            getFallbackPosition('table', player_id))
-                        : spotFrom([() => {
+                    // belongs ONLY to the unmeasured case, and a card we could
+                    // not place is not laid across anything either.
+                    if (attack) return { spot: laidAcross(attack), angle: COVER_ROTATION_RAD };
+                    return {
+                        spot: spotFrom([() => {
                             const table = findElementByLocation('table');
-                            return table ? shifted(centreOf(table), index * 70, 0) : null;
-                        }], getFallbackPosition('table', player_id));
+                            return table ? shifted(restingCentre(table), index * 70, 0) : null;
+                        }], getFallbackPosition('table', player_id)),
+                        angle: 0,
+                    };
                 }
 
                 if (type === 'attack_pass') {
-                    const slot = (game?.battles.length || 0) + index;
-                    return spotFrom([
+                    const slot = shownBattles.length + index;
+                    return flat(spotFrom([
                         // The board already shows the card - a confirmation
                         // that beat its own flight - so that IS the landing.
-                        () => document.querySelector(`[data-location="table"] [data-card="${card.suit}-${card.value}"]`) as HTMLElement | null,
+                        () => {
+                            const laid = document.querySelector(`[data-location="table"] [data-card="${card.suit}-${card.value}"]`) as HTMLElement | null;
+                            return laid ? restingCentre(laid) : null;
+                        },
                         () => measuredPositions.get(`${index}`),
-                        () => findElementByLocation('table', undefined, undefined, undefined, slot),
+                        () => {
+                            const drop = findElementByLocation('table', undefined, undefined, undefined, slot);
+                            return drop ? restingCentre(drop) : null;
+                        },
                         // The 60px fan is the FLOOR's alone: a drop zone we
                         // actually found is already in the right place.
-                    ], shifted(getFallbackPosition('table', player_id), slot * 60, 0));
+                    ], shifted(getFallbackPosition('table', player_id), slot * 60, 0)));
                 }
 
-                return spotFrom([() => findElementByLocation('table')],
-                    getFallbackPosition('table', player_id));
+                return flat(spotFrom([() => {
+                    const table = findElementByLocation('table');
+                    return table ? restingCentre(table) : null;
+                }], getFallbackPosition('table', player_id)));
             };
 
             // The card's own place when the hand already holds it (a refused
@@ -460,15 +587,15 @@ export const AnimationOverlay = () => {
                 [() => (to_location === 'discard' ? findElementByLocation('discard') : null)],
                 getFallbackPosition(to_location || 'table', player_id));
 
-            const landingFor = (card: Card, index: number): Spot =>
-                to_location === 'flipped' ? landsFlipped()
+            const landingFor = (card: Card, index: number): Landing =>
+                to_location === 'flipped' ? flat(landsFlipped())
                     : to_location === 'table' ? landsOnTable(card, index)
-                        : to_location === 'hand' ? landsInHand(card, index)
-                            : landsElsewhere();
+                        : to_location === 'hand' ? flat(landsInHand(card, index))
+                            : flat(landsElsewhere());
 
             cards.forEach((card, index) => {
-                const { spot: startPos, fromLanding } = liftoff(card);
-                const endPos = landingFor(card, index);
+                const { spot: startPos, fromLanding, angle: fromAngle } = liftoff(card);
+                const { spot: endPos, angle } = landingFor(card, index);
 
                 // Small offset so simultaneous cards into the same UNMEASURED
                 // area don't fully overlap; measured targets (table slots, hand
@@ -485,6 +612,8 @@ export const AnimationOverlay = () => {
 
                 newAnimatedCards.push({
                     fromLanding,
+                    angle,
+                    fromAngle,
                     id: `${card.suit}-${card.value}-${player_id}-${Date.now()}-${index}`,
                     card,
                     startPosition: startPos,
@@ -509,7 +638,7 @@ export const AnimationOverlay = () => {
             setAnimatedCards(prev => prev.map(animatedCard => (animatedCard.flight === flight
                 ? { ...animatedCard, progress: 1 } // This triggers the CSS transition
                 : animatedCard)));
-        }, 25);
+        }, FLIGHT_ARM_MS);
         return () => clearTimeout(begin);
 
         // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -15,9 +15,9 @@
 
 import {
     ANIM_EVT, ANIM_LOC, animBuildPlan, animPlanAt,
-    type AnimFrameSnap, type AnimPlanEventIn, type AnimPlanSnap,
+    type AnimCountsSnap, type AnimFrameSnap, type AnimPlanEventIn, type AnimPlanSnap,
 } from '@sdk/ts/wasm/bots.ts';
-import { covered, type TableView, type ViewCard } from './view';
+import { covered, sameCard, NO_CARD, type TableView, type ViewBattle, type ViewCard } from './view';
 
 /** anim_plan.h ANIM_TABLE_NONE: a battle with no cover on it. */
 const TABLE_NONE = 0xfe;
@@ -48,6 +48,86 @@ export const rowOf = (view: TableView): number[] => {
     }
     return row;
 };
+
+/** The same row, cell for cell. */
+const sameRow = (a: readonly ViewBattle[], b: readonly ViewBattle[]): boolean =>
+    a === b || (a.length === b.length
+        && a.every((x, i) => sameCard(x.attack, b[i].attack) && sameCard(x.defense, b[i].defense)));
+
+/** No pile is being held back - the answer for every frame with nothing in the
+ *  air, handed out as one object so a consumer can compare it by identity. */
+export const NO_HELD: ReadonlySet<number> = new Set<number>();
+
+/** The same set, member for member. */
+export const sameHeld = (a: ReadonlySet<number>, b: ReadonlySet<number>): boolean =>
+    a === b || (a.size === b.size && [...a].every((x) => b.has(x)));
+
+/**
+ * THE PILES THE GRID MUST NOT MAKE ROOM FOR YET: the cards this run is still
+ * carrying to the table, minus any the row already held when the stream opened.
+ *
+ * The grid centres its cells, so a board that ALREADY holds the pile now in
+ * flight draws every other pile half a slot plus its gap to the side - and on a
+ * COLD OPEN nothing ever moves it back, because there is no previous layout to
+ * interpolate away from. c/src/anim_plan.h's AnimCounts is written about that
+ * exact defect ("a card 36pt to the side of where it belonged on the very first
+ * painted frame, and never moving"), and iMessage holds the row for it
+ * (ShownLedger.battles, seeded from `AnimPlan.pre.battles` and advanced one
+ * landing at a time). This client advances the row the same way - it commits a
+ * step's board at that step's landing - so what is left to answer is only the
+ * board that runs AHEAD of its own flight: a confirmation that beat the card it
+ * confirms, an optimistic board laid before the run reaches it.
+ *
+ * TWO ANSWERS DECIDE A CELL, and both are the kernel's: the run's own steps
+ * name the cards they are putting on the table, and `AnimCounts.battles` - the
+ * plan's pre-stream row, `anim_pre_stream_table` - names the piles that were
+ * already down when the stream opened. A pile is held back only when the first
+ * says its card is still in the air AND the second does not vouch for it having
+ * been there before.
+ *
+ * THE SECOND TEST IS WHAT KEEPS THIS OFF MY OWN PENDING CARDS. A board on this
+ * client is the server's plus whatever I have played and not had confirmed
+ * (src/state/optimisticOverlay.ts). Those piles are on the table because
+ * nothing is flying them; taking their slot away for the length of somebody
+ * else's flight would be the flicker the optimistic overlay exists to prevent.
+ * It is also what keeps this off a SWEEP: the row a pickup is about to take is
+ * `pre`'s own answer, cover and all, so a card flying home to a table it never
+ * left keeps the cell it is lying in.
+ */
+export function heldPiles(pre: AnimCountsSnap, flying: readonly AnimStep[]): ReadonlySet<number> {
+    const air = new Set<number>();
+    for (const s of flying) {
+        if (s.to_location !== 'table') continue;
+        for (const c of s.cards ?? []) air.add(idOf(c));
+    }
+    if (air.size === 0) return NO_HELD;
+    // `paired` is NOT asked. It says whether the row's PAIRING came off a real
+    // board or is "the flat one-cell-per-card reading of a pickup - the same
+    // cards in a shape nobody vouched for" (AnimPreTable). This asks only
+    // whether a card was on the row, never in what shape, and the flat reading
+    // answers that exactly: without it a stream that SWEEPS the table would
+    // hold back the very piles it is about to take.
+    for (const id of pre.battles) air.delete(id);
+    return air.size === 0 ? NO_HELD : air;
+}
+
+/**
+ * THE ROW THE GRID DRAWS: the board's, with the cells of `held` taken out (and
+ * a cover that is still in the air taken off the attack it has not reached).
+ * The board's own array comes back untouched when nothing is held, which is
+ * every frame but the ones `heldPiles` is about.
+ */
+export function shownRow(
+    battles: readonly ViewBattle[], held: ReadonlySet<number>,
+): readonly ViewBattle[] {
+    if (held.size === 0 || battles.length === 0) return battles;
+    const row: ViewBattle[] = [];
+    for (const b of battles) {
+        if (held.has(idOf(b.attack))) continue;               // no slot until it lands
+        row.push(covered(b) && held.has(idOf(b.defense)) ? { attack: b.attack, defense: NO_CARD } : b);
+    }
+    return sameRow(row, battles) ? battles : row;
+}
 
 const countsOf = (view: TableView) => ({
     deck: view.deckCount,

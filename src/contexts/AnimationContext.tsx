@@ -58,6 +58,17 @@ interface AnimationContextType {
     /** How long the flight on screen lasts, from the kernel's plan: the number
      *  the overlay's CSS transition is written with. 0 when nothing is flying. */
     flightMs: number;
+    /** How long the BATTLE ROW's own layout change lasts - the plan's duration
+     *  for the landing that moved it. Not `flightMs`: a landing falls in the gap
+     *  between two flights, where that one is already 0. 0 before a run's first
+     *  landing and after a seek, which are both meant to be instant. */
+    rowMs: number;
+    /** THE PILES THE GRID MUST NOT MAKE ROOM FOR YET - the cards this run is
+     *  still carrying to the table, which get no cell until they land
+     *  (src/state/animPlan.ts heldPiles, drawn through `shownRow`). Empty on
+     *  every frame with nothing in the air, and the same object each time, so
+     *  it compares by identity. */
+    heldPiles: ReadonlySet<number>;
     // Cards currently flying from the deck pile. Drives the visible pile size.
     // Drops BEFORE the animation starts and resets when the snapshot commits.
     inFlightFromDeck: number;
@@ -474,12 +485,41 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
     // tracking it releases, when a sequence's final board is the truth - because
     // that is about the game, and the loop is about time.
     const {
-        isAnimating, currentAnimation, flightMs, inFlightFromDeck, inFlightToFlipped,
-        animatingCards, enqueue, reset: resetRun,
+        isAnimating, currentAnimation, flightMs, rowMs, heldPiles,
+        inFlightFromDeck, inFlightToFlipped, animatingCards, enqueue, reset: resetRun,
     } = useAnimationRun<ClientAnimationEvent>({
         board: () => currentGameRef.current,
         placesOf: (step) => flightPlaces(step.from_location, step.to_location, step.seat),
         keyOf: (card, place) => getCardKeyOwner(card, place),
+        // ONE MOVE, ONE MOVEMENT. The kernel spends one COVER event per card, so
+        // a defender who covered two attacks in one move arrives as two steps
+        // and the plan opens both at the same instant (AnimPlanStep.beat_n).
+        // This is what the page draws for that instant: the steps' cards in one
+        // flight, each still aimed at the pile the kernel named it for -
+        // `target_cards` is the per-card form the overlay already reads for a
+        // multi-card cover of my own, and it is the only form that survives the
+        // merge, because `target_card` and `battle_index` describe ONE event.
+        // The board is the LAST step's: the boards inside one move are boards
+        // nobody was ever shown.
+        //
+        // RENDERING ONLY. Every step of the beat still has its own landing
+        // taken, in order, so `commit_board`, `commit_if` and the sequence
+        // countdown are untouched by this.
+        mergeBeat: (steps) => {
+            const cards = steps.flatMap((s) => s.cards ?? []);
+            const targets = steps.flatMap((s) => (s.cards ?? []).map(() => s.target_card));
+            const named = targets.filter((t): t is Card => t !== undefined);
+            return {
+                ...steps[0],
+                cards,
+                // All or nothing: a half-named list would slide every card after
+                // the gap onto the wrong pile, where no list at all leaves the
+                // overlay's own last-resort guess exactly as it was.
+                target_cards: named.length === cards.length ? named : undefined,
+                battle_index: undefined,
+                game_state: steps[steps.length - 1].game_state ?? steps[0].game_state,
+            };
+        },
         onLanded: (step) => {
             // A PREDICTION'S BOARD IS MADE AT ITS LANDING, from whatever is on
             // screen then - a broadcast can commit fresher state inside the
@@ -981,6 +1021,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             isAnimating,
             currentAnimation,
             flightMs,
+            rowMs,
+            heldPiles,
             inFlightFromDeck,
             inFlightToFlipped,
             getCardAnimationState,

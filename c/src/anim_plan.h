@@ -74,6 +74,32 @@
 #define ANIM_TIME_MS 500
 #define ANIM_GAP_MS  25
 
+// THE BOUT-END HOLD: the rest a sequence takes after a cover that ENDED its
+// bout, before the sweep takes the table away. The one gap in a sequence that
+// is not ANIM_GAP_MS, and the only one that exists so that nothing moves - the
+// card that decided the bout is on the table for about a frame otherwise, and a
+// board is only readable when the eye stops.
+//
+// AGAINST ANIM_TIME_MS, never a bare 1500, for the reason every other duration
+// in this file is: a filmed or slowed sequence keeps its proportions instead of
+// the hold shrinking to nothing as the flights stretch. Three flights' worth is
+// deliberately longer than anything else here.
+//
+// THE NUMBER IS THE OWNER'S, ASKED FOR TWICE. Round 16 ("when you cover and
+// cause the deck to discard (last defense), it should give some time to let
+// people see what you covered with") put it at 0.9x a flight; round 20 took it
+// to 3x ("for last defense, still not enough of a pause in animation when they
+// cover. Both for finish and for the other one. Make it like 1.5 second").
+// "Both" is the two ends anim_build_beats scans for - the bout that closes into
+// the DISCARD and the last one of a game, which closes into the TRASH.
+//
+// WHICH beat rests is ANIM_BEAT_HOLDS (anim_build_beats); HOW LONG is here,
+// because "for how long" is this layer's half of the boundary. iOS reads it as
+// BoardFlight.boutEndHold (flightTime * 3) and sleeps it between beats; a host
+// with a frame loop never sees it at all - anim_build_plan has already pushed
+// the next beat's start_ms out by it, so the rest comes out of the sampler.
+#define ANIM_BOUT_END_HOLD_MS (ANIM_TIME_MS * 3)
+
 // ---------- event types (mirror ANIMATION_EVENT_TYPE / EVW_T_*) -----------
 #define ANIM_EVT_MAGIC_TRANSITION 0
 #define ANIM_EVT_DEAL             1
@@ -262,13 +288,42 @@ typedef struct {
 
 // One planned step: the event's identity plus its timing and the board counts
 // the display jumps to as this step's flight lands.
+//
+// THE TIMING IS LAID OUT IN BEATS, NOT IN STEPS, and for eleven rounds it was
+// not. A stream's events are not its beats (see the beats section below): the
+// kernel spends one COVER event per card, an `out` is a notice that moves
+// nothing, and a cover that ended its bout has to rest before the sweep. Laying
+// every step out at i x (ANIM_TIME_MS + ANIM_GAP_MS) said the opposite of all
+// three - a two-card cover crawled across the table one card at a time, an
+// `out` burned a silent half second, and the sweep took the table away 25ms
+// after the card that won it landed. A host that asked for the beats separately
+// and then re-paced the plan itself would be the "told two different things"
+// the beats section warns about, so the plan is laid out beat by beat here and
+// a host that re-asks it per frame (anim_plan_at) gets the pacing for free.
 typedef struct {
     int type;
     int seat;
     int from, to;
     int n_cards;
-    int duration_ms;   // ANIM_TIME_MS
-    int start_ms;      // cumulative offset: step i starts at i*(ANIM_TIME_MS+ANIM_GAP_MS)
+    // The flight this step's BEAT gets: ANIM_TIME_MS, or 0 for a beat that is
+    // pure notice (anim_step_duration_ms). Every step of one beat shares it.
+    int duration_ms;
+    // When this step opens, from the sequence's start. Every step of one beat
+    // shares it - that is what "fly together" means - and a beat opens after
+    // the one before it landed, its gap, and its hold if it earned one.
+    int start_ms;
+    // THE BEAT THIS STEP BELONGS TO, as the span [beat_first, beat_first +
+    // beat_n) over the plan's own steps. The host needs the grouping and the
+    // timing from the SAME answer: a caller that draws steps[i] as a flight and
+    // pages through `landed` has to merge its own list exactly where the plan
+    // merged the clock, or it will draw one card of a two-card cover.
+    int beat_first;
+    int beat_n;
+    // The rest that follows this beat's landing before the next one opens:
+    // ANIM_BOUT_END_HOLD_MS for a bout-ending cover (ANIM_BEAT_HOLDS), 0 for
+    // everything else. Already inside the NEXT beat's start_ms - it is carried
+    // here so a caller can say why the clock jumped, never so it can add it.
+    int hold_ms;
     // Post-step counts (the display advances to these as the flight lands).
     int deck;
     int discard;
@@ -329,9 +384,11 @@ typedef struct {
 } AnimPlanEvent;
 
 // ---- timing policy: the one place a duration is decided -------------------
-// Every event currently paces at ANIM_TIME_MS. A dedicated function (rather than
-// inlining the constant) is the seam a per-event-type rule would land in — a
-// platform asks here instead of inventing pacing.
+// Every event that MOVES something paces at ANIM_TIME_MS. An `out` is the one
+// that does not: it is a notice - no cards, no flight, no time - so it answers
+// 0, and a beat made only of notices takes none of the sequence's clock. That
+// is the per-event-type rule this seam was left for; a platform asks here
+// instead of inventing pacing.
 int anim_step_duration_ms(int event_type);
 
 // ---- plan building --------------------------------------------------------
@@ -341,6 +398,16 @@ int anim_step_duration_ms(int event_type);
 // freezes the DISPLAY back to the pre-sequence values and reveals forward per
 // step. `final_flipped` is CARD_NONE when that board has no flipped trump left,
 // and is read ONLY on the boardless fallback below.
+//
+// THE CLOCK IT LAYS OUT IS THE BEATS', and it derives them from the same rule
+// anim_build_beats does (one static, called by both) rather than from a second
+// copy of it. The grouping needs only the events' types and seats, which this
+// entry already has, so a caller gets the shape and the timing from ONE answer:
+// consecutive covers by one seat share a start_ms, a beat of pure notices takes
+// no time at all, and a bout-ending cover pushes the sweep out by
+// ANIM_BOUT_END_HOLD_MS. A caller wanting the rest of the beat model - the
+// placed set, the outs a beat adopts, the good masks - asks anim_build_beats;
+// the two cannot disagree about where a beat begins or which one rests.
 //
 // THE FREEZE ANCHORS ON THE FIRST EVENT'S OWN BOARD AND UNDOES EXACTLY ONE
 // EVENT. events[0]'s snapshot IS the board one event in, so one undo reaches
@@ -461,6 +528,12 @@ int anim_plan_at(const AnimPlan *plan, int now_ms, AnimFrame *out);
 //
 // One entry answers all of them together, because a client that asked for a
 // beat's grouping and its hold separately could be told two different things.
+//
+// …AND THE PLAN IS THAT ENTRY TOO, for the half a host with a frame loop needs.
+// iOS walks these beats itself and sleeps between them; a host that samples
+// anim_plan_at every frame and schedules nothing cannot, so anim_build_plan
+// lays its steps out in beats (AnimPlanStep.beat_first / beat_n / hold_ms) off
+// the SAME grouping this entry uses. Two readings of one rule, never two rules.
 
 // The SAME cap as ANIM_MAX_STEPS, so a stream the beats accept always has a
 // plan: a bubble carries everything its sender staged. A stream over the cap is

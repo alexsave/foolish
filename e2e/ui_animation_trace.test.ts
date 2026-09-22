@@ -657,6 +657,75 @@ test('cover: my card covers the attack, the server confirms it', async () => {
     });
 });
 
+test('a LAST DEFENCE rests before the sweep takes the table', async () => {
+    // THE 1500ms THE OWNER ASKED FOR TWICE, and the one gap in a sequence that is
+    // not ANIM_GAP_MS. `8h` is my whole hand, so covering with it empties it and
+    // the bout closes on the cover (game.c handle_cover's `def->hand_count == 0`
+    // branch - the "last defense" the owner named): the push carries the cover,
+    // the discard that sweeps the table and the refills behind it, and the
+    // kernel's plan puts ANIM_BOUT_END_HOLD_MS between the cover LANDING and the
+    // sweep OPENING (anim_plan.h ANIM_BEAT_HOLDS, anim_build_plan's beat layout).
+    //
+    // HERE BECAUSE NOTHING ELSE IN THIS FILE REACHES IT. Every other case is a
+    // stream with no bout-ending cover in it - a good closes the bout in the
+    // `good` case, a pickup sweeps in `pickup` - so before this one the hold had
+    // no frame times gating it at all. Measured in a browser before it existed,
+    // the sweep took the table away 36ms after the card that won it landed
+    // (docs/WEB_ANIM_PARITY.md section 3).
+    const board = two(1).hand(0, '9c Tc Jd Qd').hand(1, '8h').table('6h')
+        .attacker(0).defender(1).build();
+    await play('cover_ends_bout', 130, 'a-bout-end', board, async (s) => {
+        await s.step('tap cover 8h on 6h', () => tap(probe.anim.cover(cards('8h'), cards('6h'))));
+        await s.advance(150);
+        await answer(s, 'server applies');
+        await s.advance(100);
+        await deliver(s, 'push: the last defence closes the bout');
+    });
+});
+
+test('the defender covers both attacks at once, and both cards fly together', async () => {
+    // ONE MOVE IS ONE MOVEMENT. The kernel spends one COVER event per card, so
+    // Anna covering two attacks in a single action reaches me as TWO cover
+    // events by one seat - and anim_build_plan opens both at the same
+    // millisecond (AnimPlanStep.beat_n), where before this they crawled across
+    // the table one 525ms flight after the other. The page draws the beat, not
+    // the step: useAnimationRun merges the run the same way the plan merged the
+    // clock, and each card keeps the pile the kernel named it for.
+    //
+    // Anna's move, not mine, on purpose: a multi-card cover of MY OWN is
+    // predicted as one event before any push exists, so it never reaches the
+    // merge. Every cover that ARRIVES does.
+    const board = two(0).hand(0, '9c Tc Jd Qd').hand(1, '8h 9h Ks').table('6h', '7h')
+        .attacker(0).defender(1).build();
+    await play('cover_both_at_once', 131, 'a-double-cover', board, async (s, srv) => {
+        await s.step('Anna covers both on the server', () => {
+            srv.act(ANNA, encodeAction({ kind: 'cover', cards: cards('8h 9h'), attack_cards: cards('6h 7h') }));
+        });
+        await s.advance(100);
+        await deliver(s, 'push: Anna covers both attacks');
+    });
+});
+
+test('the `out` that ends the game costs the sequence no time of its own', async () => {
+    // AN OUT IS A NOTICE - no cards, no flight, no time - and it used to burn a
+    // whole silent half second in the middle of a sequence (anim_plan.h's beats
+    // section; anim_step_duration_ms answers 0 for it). The deck is empty, so my
+    // last defence sweeps the table, the refill hands out nothing, I go out and
+    // the game ends: cover, discard, refill, OUT, defender_move, transition. The
+    // out lands in the gap the refill already had and the beat behind it opens
+    // where it would have with no out in the stream at all - the frames below
+    // are half a second shorter than they were.
+    const board = two(1).hand(0, '9c Tc Jd Qd').hand(1, '8h').table('6h').deck('')
+        .attacker(0).defender(1).build();
+    await play('out_costs_nothing', 140, 'an-out', board, async (s) => {
+        await s.step('tap cover 8h on 6h', () => tap(probe.anim.cover(cards('8h'), cards('6h'))));
+        await s.advance(150);
+        await answer(s, 'server applies');
+        await s.advance(100);
+        await deliver(s, 'push: the last defence ends the game');
+    });
+});
+
 test('pass: I hand the attack on with a card of its rank', async () => {
     const board = three().hand(0, '9c Tc Jd Qd').hand(1, '7d 8d Ad').hand(2, '6s Js Qs Ks As').table('7h').attacker(0).defender(1).build();
     await play('pass', 103, 'a-pass', board, async (s) => {
@@ -744,7 +813,12 @@ test('a rejected move whose push never arrives: the card goes home and stays the
         await s.advance(25);
         // ... to its own place in my hand, which kept it (hidden) all along.
         const home = handCard(s.host, '6s').getBoundingClientRect();
-        assert.deepEqual(flights(s.host), [{ left: home.left + home.width / 2 - 35, top: home.top + home.height / 2 - 45, scale: 1.8, red: true }],
+        // A flight is hung by its CENTRE: `left`/`top` ARE the point the overlay
+        // measured, and FlightCard's own `translate(-50%, -50%)` takes off the
+        // half card. This used to subtract a half card here too, from a 70x90
+        // card that does not exist - CardFace draws 50x70 - so the expectation
+        // and the code were wrong by the same 10px in the same direction.
+        assert.deepEqual(flights(s.host), [{ left: home.left + home.width / 2, top: home.top + home.height / 2, scale: 1.8, red: true }],
             'and lands on its own place in my hand');
         await s.advance(2500);
         const view = JSON.parse(probe.store).view;
