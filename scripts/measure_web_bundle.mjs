@@ -50,6 +50,39 @@ export const ROUTES = [
 // small; anything else missing from the copy fails the build loudly.
 const STAGE_SKIP = ['ios/', 'docs/'];
 
+// …AND THE BUILD OUTPUTS, which `git ls-files --exclude-standard` cannot see.
+//
+// This file stages by asking git for the tracked and untracked-but-not-ignored
+// files, and everything the web build needs used to be one of those. Two
+// cutovers since then have moved things the bundle genuinely imports into the
+// IGNORED set - sdk/ts/gen (tools/structgen) and the three shipped wasm modules
+// (scripts/wasm_build.sh) - and an ignored file is simply absent from the staged
+// tree. `next build` is invoked directly here, not through `npm run build`, so
+// no pre-hook regenerates them on the other side either: the staged build would
+// fail on a missing import, or succeed while measuring a bundle with no kernel
+// in it.
+//
+// So each builder is asked what it writes, and those paths are staged on top of
+// git's answer. Asking rather than listing is the same move the rest of the repo
+// makes (e2e/validation/{generated,wasm}_outputs_validation.test.ts read these
+// same two flags), so a new output is staged the day it lands.
+function extraStagePaths(root) {
+    const ask = (cmd, args) => {
+        try {
+            return execFileSync('bash', [join(root, cmd), ...args], { cwd: root, encoding: 'utf8' })
+                .split('\n').map((s) => s.trim()).filter(Boolean);
+        } catch {
+            // A checkout that predates one of these scripts has nothing extra
+            // to stage from it - the outputs are still committed there.
+            return [];
+        }
+    };
+    return [
+        ...ask('tools/structgen/gen.sh', ['--print-dirs']),
+        ...ask('scripts/wasm_build.sh', ['--print-paths']),
+    ];
+}
+
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const BUILD_ENV = {
@@ -69,6 +102,16 @@ function stage(root) {
         const dst = join(dir, rel);
         mkdirSync(dirname(dst), { recursive: true });
         cpSync(src, dst, { dereference: false });
+    }
+    // The ignored build outputs, on top of git's answer. A path that does not
+    // exist yet is skipped rather than fatal: this runs on a base checkout too,
+    // and whether an output is committed there or built is exactly what differs.
+    for (const rel of extraStagePaths(root)) {
+        const src = join(root, rel);
+        if (!existsSync(src)) continue;
+        const dst = join(dir, rel);
+        mkdirSync(dirname(dst), { recursive: true });
+        cpSync(src, dst, { recursive: true, dereference: false });
     }
     const modules = realpathSync(join(root, 'node_modules'));
     const cp = process.platform === 'darwin'

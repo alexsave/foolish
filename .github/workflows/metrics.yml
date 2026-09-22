@@ -126,6 +126,26 @@ jobs:
           bash pr/tools/structgen/gen.sh
           bash base/tools/structgen/gen.sh
 
+      # THE SHIPPED WASM MODULES, both sides, for the same reason and with the
+      # same caveat. collect_metrics.mjs reports each one's gzip size and reads
+      # bots.wasm's linear memory, so an unbuilt side measures nothing - and
+      # since the gzip size is no longer asserted by a test (the compressor moves
+      # it by up to 576 B on identical input, see e2e/mem/wasm_memory.test.ts),
+      # THIS is now where a download-size regression gets noticed. It is the
+      # instrument, so it has to have something to measure.
+      #
+      # A BASE THAT PREDATES THE CUTOVER still has the three .gz committed and no
+      # builder to run, which is the same "the base branch may predate them"
+      # shape as the sync step above.
+      - name: Shipped wasm modules (both sides)
+        run: |
+          bash pr/scripts/wasm_build.sh
+          if [ -f base/scripts/wasm_build.sh ]; then
+            bash base/scripts/wasm_build.sh
+          else
+            echo "base predates scripts/wasm_build.sh - its modules are committed there"
+          fi
+
       - name: Collect base metrics
         working-directory: base
         run: node scripts/collect_metrics.mjs > "$GITHUB_WORKSPACE/base.json"

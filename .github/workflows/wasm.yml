@@ -13,10 +13,25 @@ name: wasm
 #      and the solver seat fix, so the live Infinite Oracle served one of the two
 #      seats the opposite endgame verdict. It shipped, and nothing noticed.
 #
-# So: `build` compiles every wasm target the Makefile declares (case 1), and
-# `freshness` refuses a kernel change that leaves the committed artifacts behind
-# (case 2). Neither runs the modules - c-engine and the e2e suites do that; this
-# job's whole job is that they COMPILE and that what ships is what was written.
+# Case 1 is `build`, which compiles every wasm target the Makefile declares.
+#
+# CASE 2 IS GONE AT THE ROOT, and the job that used to guard it with it. The
+# modules are not committed any more (scripts/wasm_build.sh): the lanes that load
+# one build it, so there is no second copy that can be behind the kernel and
+# nothing for a freshness gate to compare. What replaced `freshness` is
+# `reproducible`, which asks a stronger question - is the module a function of
+# this tree at all - because that is the property the new arrangement rests on.
+#
+# The old gate is worth remembering for what it could NOT do. It compared commit
+# ORDER, since a rebuild of untouched main already differed byte-wise on a
+# different machine, so it was satisfied by any edit to a .gz and it never had to
+# be right about bytes. On the day it was deleted it still reported
+# oracle.wasm.gz and oracle-mt.wasm.gz BEHIND, and a rebuild showed the drift was
+# exactly one raw byte.
+#
+# No job here RUNS the modules - c-engine and the e2e suites do that; this
+# workflow's whole job is that they COMPILE, and that two builds of one commit
+# produce one kernel.
 
 on:
   push:
@@ -81,11 +96,14 @@ jobs:
           fi
 
       - name: What the build produced
-        # The bytes are NOT compared against the committed ones and must not be:
-        # a rebuild of unmodified main already differs (measured 2026-09-06,
-        # bots.wasm.gz 67049 -> 67132 B), because the committed artifact was
-        # built by whatever toolchain its author had. Sizes are printed so a
-        # sudden jump is at least visible to a human.
+        # Sizes only, and this job compares them against nothing. It builds with
+        # the DISTRO clang rather than the pin (see the Toolchain step), so its
+        # bytes are not the bytes anything ships - what it proves is that every
+        # target compiles. The size gate on the shipped module is
+        # e2e/mem/wasm_memory.test.ts, in a lane that uses the pin.
+        #
+        # `git status` here should now be silent: the three .gz it used to list
+        # as modified are gitignored build outputs.
         if: always()
         run: |
           ls -l c/build/*.wasm 2>/dev/null || true
@@ -163,15 +181,34 @@ jobs:
           bash tools/structgen/gen.sh --verify-wasm
           TSX_TSCONFIG_PATH=e2e/tsconfig.json node --import tsx --test tools/structgen/test/verify.test.ts
 
-  freshness:
+  # Is the shipped module a function of this tree, and of nothing else?
+  #
+  # This is the job that makes "CI builds it" safe, and it is the same check
+  # tools/structgen/gen.sh --check makes of the generated modules, for the same
+  # reason: a build that wrote a timestamp, an address, an uninitialised pad or
+  # an order that depended on a hash table's memory layout would hand two lanes
+  # of one commit two different kernels, and only the LAYOUT_HASH handshake would
+  # ever notice - and only if the layout happened to be what moved.
+  #
+  # It needs no history and no base ref, unlike the freshness gate it replaced:
+  # the question is about this tree, not about the order two files were committed
+  # in.
+  reproducible:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          # The check reads commit ORDER, so it needs history, not a shallow tip.
-          fetch-depth: 0
 
-      - name: Committed artifacts vs the kernel they are built from
-        run: |
-          git fetch --no-tags --quiet origin main
-          bash scripts/check_wasm_freshness.sh origin/main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      # THE PIN, not the distro clang the `build` job uses. This job is about
+      # the bytes that ship, so it builds them the way they ship.
+      - name: Toolchain (the pinned clang and binaryen)
+        run: . scripts/ci_llvm.sh
+
+      - name: Two builds of this commit must write one kernel
+        run: bash scripts/wasm_build.sh --check

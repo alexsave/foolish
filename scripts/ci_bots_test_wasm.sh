@@ -7,17 +7,15 @@
 # committed, so a job that runs table_fixture/roster_kernel suites builds it
 # here, once, instead of every test process discovering it is missing.
 #
-# The toolchain comes from scripts/ci_wasm_toolchain.sh - the SAME pinned clang
-# and binaryen that build the shipped modules. It used to come from
-# scripts/ci_llvm.sh, which installs clang 18 for libclang; that was fine while
-# the shipped modules were committed and this was the only wasm anything built,
-# and it is not fine now that a lane holds both. e2e/bots_test_build.test.ts
-# compares this module's export list against the shipped one, and two modules
-# built by two compilers is a difference nobody wants to have to reason about.
+# The toolchain comes from scripts/ci_llvm.sh - the same pinned clang and
+# binaryen that build the SHIPPED modules, which is why that script raised its
+# pin to 22 when they became build outputs. e2e/bots_test_build.test.ts compares
+# this module's export list against the shipped one, and two modules built by
+# two compilers is a difference nobody wants to have to reason about.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# shellcheck source=scripts/ci_wasm_toolchain.sh
-. scripts/ci_wasm_toolchain.sh
+# shellcheck source=scripts/ci_llvm.sh
+. scripts/ci_llvm.sh
 LLVM="$LLVM_PREFIX"
 make -C c WASM_CC="$LLVM/bin/clang" LLVM_PREFIX="$LLVM" CC="$LLVM/bin/clang" wasm-bots-test
 echo "built c/build/bots_test.wasm ($(wc -c < c/build/bots_test.wasm) B) for sources $(cat c/build/bots_test.stamp)"

@@ -27,6 +27,11 @@ name: web
 #            this lane reviewable: a URL, from a real deploy, before the
 #            production path depends on it.
 #
+# THE WASM MODULES ARE BUILT HERE TOO, for exactly the reason above: they stopped
+# being committed (scripts/wasm_build.sh), so the same argument that moved the
+# build off Vercel now covers three more artifacts. Vercel's image has no clang,
+# no wasm-ld and no binaryen, so it could not produce them at all.
+#
 # ONE THING THE OWNER STILL HAS TO DO, and it is not optional:
 #
 #   Turn OFF Vercel's automatic deployments for this project. The live setting
@@ -77,15 +82,30 @@ jobs:
         run: npm install
 
       # libclang, then the modules themselves. Generated EXPLICITLY rather than
-      # through an npm hook, because `npm run build` is also what Vercel's own
-      # automatic builds run, and those happen in an image with no libclang -
-      # so until the owner turns them off, adding a prebuild hook would take
-      # their side down rather than ours.
+      # left to the npm pre-hook, so this job's log says which step produced
+      # what and a failure names the generator rather than `npm run build`.
+      #
+      # The hook exists either way - package.json's `prebuild` is `npm run gen
+      # && npm run wasm` - and that is deliberate now rather than a hazard. The
+      # note that used to be here said a prebuild hook would take Vercel's own
+      # automatic builds down, in an image with no libclang. That is still true
+      # and is no longer a reason to avoid one: those builds cannot work at all
+      # while sdk/ts/gen is uncommitted, which it already is, so they are off.
       - name: Toolchain (libclang, for the generated modules)
         run: bash scripts/ci_llvm.sh
 
       - name: Generated modules
         run: bash tools/structgen/gen.sh
+
+      # AND THE WASM MODULES, which this lane did not have to build while they
+      # were committed. All three: the browser fetches bots.wasm.gz as a bundler
+      # asset (sdk/ts/wasm/wasm_asset.ts resolves it with `new URL`, so it has to
+      # exist on disk when next build runs), and public/oracle.wasm.gz and
+      # public/oracle-mt.wasm.gz are served straight out of public/ - a missing
+      # one is a 404 in the Oracle rather than a build failure, which is the
+      # worse direction.
+      - name: Shipped wasm modules
+        run: bash scripts/wasm_build.sh
 
       # PLACEHOLDER SUPABASE ENV, and the reason is worth stating: `next build`
       # prerenders /_not-found and friends, and the module that creates the
@@ -298,6 +318,7 @@ jobs:
         if: steps.creds.outputs.ready == 'true'
         run: |
           bash tools/structgen/gen.sh
+          bash scripts/wasm_build.sh
           vercel pull --yes --environment=${{ steps.target.outputs.env }} --token="$VERCEL_TOKEN"
           vercel build ${{ steps.target.outputs.prod }} --token="$VERCEL_TOKEN"
 

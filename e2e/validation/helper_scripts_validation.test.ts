@@ -73,22 +73,35 @@ const REPO = resolve(import.meta.dirname, '../..');
  *
  * A rename INSIDE a generated module is caught where it belongs, by
  * `gen.sh --check` and the structgen validation, not here.
+ *
+ * THE SAME EXEMPTION COVERS THE SHIPPED WASM MODULES, which became build
+ * outputs the same way (scripts/wasm_build.sh). Three scripts name them as
+ * literals - scripts/oracle_bench.mts and scripts/collect_metrics.mjs read
+ * public/oracle*.wasm.gz, and wasm_build.sh itself lists all three - so without
+ * this they would be existence-checked, and on a fresh checkout that has built
+ * nothing they are absent. That is exactly the "green here, red on a fresh
+ * runner" failure the paragraph above refuses to accept for generated modules.
+ *
+ * They are FILES rather than directories, so they are matched exactly and not by
+ * prefix: a neighbour like public/oracle.wasm.gz.bak is a real missing path.
  */
-function generatedRoots(): string[] {
+function askBuilder(script: string, flag: string): string[] {
     let printed: string;
     try {
-        printed = execFileSync('bash', [join(REPO, 'tools/structgen/gen.sh'), '--print-dirs'],
+        printed = execFileSync('bash', [join(REPO, script), flag],
             { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
     } catch {
         return [];      // the assertion below says so, rather than a load-time throw
     }
     return printed.split('\n').map((s) => s.trim()).filter(Boolean).map((d) => resolve(REPO, d));
 }
-const GENERATED_ROOTS: string[] = generatedRoots();
+const GENERATED_ROOTS: string[] = askBuilder('tools/structgen/gen.sh', '--print-dirs');
+const BUILT_FILES: string[] = askBuilder('scripts/wasm_build.sh', '--print-paths');
 
 /** Is this path a build output some lane generates, rather than a source file? */
 function isGenerated(abs: string): boolean {
-    return GENERATED_ROOTS.some((root) => abs === root || abs.startsWith(root + '/'));
+    return GENERATED_ROOTS.some((root) => abs === root || abs.startsWith(root + '/'))
+        || BUILT_FILES.includes(abs);
 }
 
 /**
@@ -317,6 +330,25 @@ test('the generated-output exemption is only as wide as gen.sh declares', () => 
     }
     assert.equal(isGenerated(join(REPO, 'sdk/ts/wasm/bots.ts')), false,
         'a hand-written module is being treated as generated');
+});
+
+// The same, for the half of the exemption that covers built FILES. It is the
+// narrower half by construction - an exact match, not a prefix - and that is
+// what is asserted, because a prefix here would exempt every sibling of a
+// shipped module.
+test('the built-module exemption is only as wide as wasm_build.sh declares', () => {
+    assert.ok(BUILT_FILES.length >= 3,
+        `wasm_build.sh --print-paths answered with ${BUILT_FILES.length} paths - `
+        + 'an empty answer would exempt nothing and the shipped modules would be '
+        + 'existence-checked on a checkout that has built nothing');
+    for (const f of BUILT_FILES) {
+        assert.ok(f.startsWith(REPO + '/'), `built module outside the repo: ${f}`);
+        assert.equal(isGenerated(f), true, `${f} does not exempt itself`);
+        // Exact, not prefix: these are files, so nothing lives "under" them.
+        assert.equal(isGenerated(f + '.bak'), false, `${f}.bak leaked into the exemption`);
+    }
+    assert.equal(isGenerated(join(REPO, 'sdk/ts/wasm/wasm_asset.ts')), false,
+        'the hand-written loader is being treated as a built module');
 });
 
 test('an archived helper says why it is kept', () => {
