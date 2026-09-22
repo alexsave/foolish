@@ -9,7 +9,6 @@ import { animHandLaidOut } from '@sdk/ts/wasm/bots.ts';
 import { ReplayGameState } from '../../replay/frames';
 import { CardFace } from '../GameDisplay/CardFace';
 import { InlineCard, InlineCardBack, ScaledCard } from './InlineCards';
-import { seatName } from './seatName';
 
 /**
  * Reveal-hands overlay: every player's current hand face-up, positioned on

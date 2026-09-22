@@ -1064,7 +1064,7 @@ body above, they win:
   (opponent *arc* with zigzag at 6+ seats, one-tap roster sheet, fan scrub
   for big hands), and reverses one §5 decision: the table wears the
   website's wool/wood/fern materials, not flat felt.
-- **`docs/IOS_BOT_NAMING.md`** — iOS-only display mapping of the explosive
+- **`docs/IOS_BOT_NAMING.md`** — the display mapping (both hosts since 2026-09-22) of the explosive
   bot names to Russian cities: the 10-rung km-to-Moscow ladder
   (octogen → Moscow), localized (en/ru/ko now, verified exonym table for
   later locales), `BotNames.swift` spec. Also fixes the raw-`%` name bug on

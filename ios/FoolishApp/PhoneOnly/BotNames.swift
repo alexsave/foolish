@@ -1,8 +1,13 @@
-// BotNames.swift — the iOS-only "road to Moscow" display map (docs/IOS_BOT_NAMING.md).
-// The bot roster is named after explosives everywhere it is STORED (C keys, DB
-// nicknames, replay blobs, the wire) and renamed to Russian cities only at
-// RENDER time here, so the App-Store age-rating questionnaire stays boring and
-// the strength ladder reads as a journey home (Miami → … → Moscow).
+// BotNames.swift — this app's reader of the "road to Moscow" display map
+// (docs/IOS_BOT_NAMING.md). The bot roster is named after explosives everywhere
+// it is STORED (C keys, DB nicknames, replay blobs, the wire) and renamed to
+// world cities only at RENDER time, so the App-Store age-rating questionnaire
+// stays boring and the strength ladder reads as a journey home (Miami → … →
+// Moscow).
+//
+// THE CITIES ARE NOT HERE. They are `bot.<strategy_key>` in c/i18n, which the
+// website reads through the same keys (src/common/botName.ts) — the map is the
+// product's, not this platform's, so neither host can drift from the other.
 //
 // Three entry points; every surface (table, picker, win line, future watch /
 // iMessage) calls these and never re-derives a name. Strategy keys are treated
@@ -24,7 +29,7 @@ public enum BotNames {
     /// Roster strategy key (`EngineC.roster()` name, e.g. "octogen") → localized
     /// display name. Unknown keys degrade to `.capitalized`.
     public static func display(strategy key: String) -> String {
-        let lookup = "ios.bot.\(key)"
+        let lookup = "bot.\(key)"
         let s = FStrings.t(lookup)
         return s == lookup ? key.capitalized : s
     }
@@ -35,7 +40,7 @@ public enum BotNames {
     /// gunpowder) are not surfaced. Values are strategy keys (EngineC.roster()).
     public static let ladder: [String] = [
         "random",       // Miami
-        "handwritten",  // New York
+        "handwritten",  // Brighton Beach
         "robusta",      // Seoul
         "firecracker",  // Madrid
         "blackpowder",  // Vienna
@@ -46,7 +51,7 @@ public enum BotNames {
     /// Air distance to the Kremlin per rung. Drives the picker flavor line;
     /// strictly monotonic so it doubles as the strength order.
     private static let km: [String: Int] = [
-        "random": 9_600, "handwritten": 7_500, "robusta": 6_600,
+        "random": 9_600, "handwritten": 7_520, "robusta": 6_600,
         "firecracker": 3_440, "blackpowder": 1_660, "cordite": 635, "octogen": 0,
     ]
 
@@ -54,11 +59,11 @@ public enum BotNames {
     /// itself" for Moscow. `nil` for keys with no rung (humans, unknowns).
     public static func flavorLine(strategy key: String) -> String? {
         guard let d = km[key] else { return nil }
-        if d == 0 { return FStrings.t("ios.bot.km0") }
+        if d == 0 { return FStrings.t("bot.km0") }
         let fmt = NumberFormatter()
         fmt.numberStyle = .decimal   // localized grouping separator
         let n = fmt.string(from: NSNumber(value: d)) ?? String(d)
-        return FStrings.t("ios.bot.km", ["km": n])
+        return FStrings.t("bot.km", ["km": n])
     }
 
     /// Website / replay nicknames: `"% <Base> [Max] [<n>]"` → localized,
@@ -89,7 +94,7 @@ public enum BotNames {
 
         guard let key = baseToKey[body.lowercased()] else { return raw }  // unknown base
         var out = display(strategy: key)
-        if isMax { out += " " + FStrings.t("ios.bot.max") }
+        if isMax { out += " " + FStrings.t("bot.max") }
         return out + suffix
     }
 

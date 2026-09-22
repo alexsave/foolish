@@ -674,6 +674,10 @@ deletion work.
 - Display-name tidies found in passing: iOS renders raw `%` nicknames
   online (fixed by `BotNames.swift`, see the naming doc); the web live
   board does too (`PlayerRing.tsx:184`) — cheap web tidy.
+  **Both done.** The web tidy landed 2026-09-22 as the larger change the naming
+  doc describes: every web surface renders a bot through `botDisplayName`
+  (`src/common/botName.ts`), which strips the `%` and returns the rung's city
+  from the same `bot.<key>` strings in `c/i18n` that `BotNames.swift` reads.
 
 ## 5. Explicit non-goals (stays per-platform, on purpose)
 

@@ -1197,10 +1197,12 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 ('Random 6', 'random'),
 ('Random 7', 'random'),
 
--- Simple heuristic strategy bots (logical rule-based)
-('Simple Heuristic 1', 'simple_heuristic'),
-('Simple Heuristic 2', 'simple_heuristic'),
-('Simple Heuristic 3', 'simple_heuristic'),
+-- NOTE: simple_heuristic is NOT seeded, though the kernel dispatches it fine.
+-- The site renders a bot seat as its rung's city (docs/IOS_BOT_NAMING.md), the
+-- ladder is seven cities, and this rung has none - a seeded row would put
+-- "Simple Heuristic 2" on a board between Miami and Madrid. It stays an
+-- offline-only rung in c/src/bot_roster.c (`offline` 1, `seeded` 0); migration
+-- 20260922120000_unseed_simple_heuristic_bots took its three rows off hosted.
 
 -- NOTE: champion, ultimate_champion, hacker, espresso, semtex and semtex_max
 -- are intentionally NOT seeded. Those strategies are not compiled into / not
@@ -1208,8 +1210,8 @@ INSERT INTO bots (nickname, strategy_key) VALUES
 -- c/wasm/wasm_bots_api.c), so a bot carrying one of those keys silently
 -- falls back to `random` — a bot that plays nothing like its name and pollutes
 -- the Elo leaderboard. Only strategy keys the wasm actually dispatches are
--- seeded: random, simple_heuristic, handwritten (→handwritten_prod),
--- firecracker, blackpowder, cordite, octogen.
+-- seeded: random, handwritten (→handwritten_prod), firecracker, blackpowder,
+-- cordite, octogen.
 --
 -- The seeded set must equal the `seeded` column of the C bot roster
 -- (c/src/bot_roster.c) — that table is the canonical roster

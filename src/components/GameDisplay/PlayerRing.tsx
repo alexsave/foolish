@@ -2,6 +2,7 @@ import { useServer } from "../../contexts/ServerContext";
 import { rulesOf, seatKey, type TableView, type ViewSeat } from "../../state/view";
 import { useFernFractal } from "../../utils/fernFractal";
 import { useStyles } from "../../contexts/StyleContext";
+import { useLocalization } from "../../contexts/LocalizationContext";
 import { useState, useEffect, useRef } from "react";
 import { SovietIcon } from "../SovietIcon";
 import { SovietCardBack } from "./SovietCardBack";
@@ -88,6 +89,7 @@ const CardsVisual = ({ player, handKey, selfHandLength, isSelf }: { player: View
 };
 
 export const PlayerRing = () => {
+    const { t } = useLocalization();
     const game = useServer().view as TableView;
     const { chatMessages } = useServer();
     const styles = useStyles();
@@ -192,7 +194,7 @@ export const PlayerRing = () => {
                             justifyContent: 'center',
                             position: 'relative'
                         }}>
-                            {botDisplayName(player.name)}
+                            {botDisplayName(player.name, t)}
 
                             {bubble && (
                                 <div className={`chat-bubble ${!styles.icons.useEmojiIcons ? 'chat-bubble--soviet' : ''}`}>

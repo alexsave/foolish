@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import supabase from '../backend/Connector';
 import { useAuth } from '../contexts/AuthContext';
+import { useLocalization } from '../contexts/LocalizationContext';
 import { WoolBackgroundLayer } from './WoolBackgroundLayer';
 import { BackButton } from './BackButton';
 import { LanguageSwitcher } from './LanguageSwitcher';
@@ -54,6 +55,7 @@ const parseUtcTimestamp = (ts: string): Date =>
 export const MatchHistory: React.FC = () => {
     const router = useRouter();
     const { user_id } = useAuth();
+    const { t } = useLocalization();
     const { woodUrl } = useTexture();
     const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
     const [elo, setElo] = useState<{ rating: number } | null>(null);
@@ -266,7 +268,7 @@ export const MatchHistory: React.FC = () => {
                                             <span key={seat} style={{ marginRight: 6, fontWeight: seat === entry.mySeat ? 'bold' : 'normal' }}>
                                                 {isBotName(name) && <SovietIcon name="bot" size={11} />}
                                                 {seat === entry.foolSeat && <SovietIcon name="fool" size={11} />}
-                                                {botDisplayName(name)}
+                                                {botDisplayName(name, t)}
                                             </span>
                                         ))}
                                     </span>

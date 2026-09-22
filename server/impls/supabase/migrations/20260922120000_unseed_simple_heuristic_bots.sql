@@ -1,0 +1,32 @@
+-- Take the simple_heuristic bots off the site.
+--
+-- The website now renders a bot seat as its rung's city on the road to Moscow
+-- (docs/IOS_BOT_NAMING.md; src/common/botName.ts does the rendering). The ladder
+-- is seven cities, and simple_heuristic is not one of them - it was dropped from
+-- the player-facing ladder when that went international, and the table in
+-- docs/ARCHITECTURE.html §7 has not listed it since. A seeded row with no city
+-- renders as "Simple Heuristic 2" on a board between Miami and Madrid, so the
+-- rung keeps its brain, its tier and its offline flag and loses the site:
+-- c/src/bot_roster.c `seeded` 0, no rows in seed.sql, these rows gone here.
+--
+-- READ server/impls/supabase/migrations/README.md BEFORE DEPLOYING THIS. It is
+-- the first migration since the history collapsed into seed.sql, so hosted's
+-- schema_migrations still records the 39 deleted versions and `supabase db push`
+-- refuses to run until they are repaired once, by hand, from a terminal. The
+-- README has the exact command.
+--
+-- WHAT THIS DOES TO A GAME IN FLIGHT. Nothing to its play: a seat's brain lives
+-- in the kernel's roster blob (games.roster), written when the bot was added, and
+-- the bot heartbeat drives the kernel from that row alone - it never reads this
+-- table. bot_hands rows cascade away, which nothing reads either. The one visible
+-- effect is that such a game's final Elo update is skipped: finalize.ts raises
+-- when a seated bot has no row, inside the catch that exists so a game never
+-- breaks over ratings. That is bounded by the games already in flight at deploy,
+-- which is why the rows go rather than the brain: the shipped bots.wasm still
+-- links simple_heuristic, so those games finish playing normally.
+--
+-- The bots' own Elo history goes with the rows. It is three bot rows on a ladder
+-- the site no longer offers; the humans' ratings are in user_elo_ratings and are
+-- untouched.
+
+DELETE FROM bots WHERE strategy_key = 'simple_heuristic';

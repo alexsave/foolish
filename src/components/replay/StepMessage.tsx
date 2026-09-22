@@ -5,6 +5,7 @@
 import React from 'react';
 import type { ViewCard as Card } from '../../state/view';
 import { Text } from '../Text';
+import { useLocalization } from '../../contexts/LocalizationContext';
 import { SovietIcon } from '../SovietIcon';
 import { ReplayFrame, REPLAY_STEP } from '../../replay/frames';
 import { InlineCard } from './InlineCards';
@@ -21,6 +22,7 @@ import { seatName } from './seatName';
 const StepMessage = ({ frame, names }: {
     frame: ReplayFrame; names: string[] | null;
 }) => {
+    const { t } = useLocalization();
     const cards = (cs: Card[]) => (
         <span style={{ display: 'inline-flex', gap: 3, verticalAlign: 'middle' }}>
             {cs.map((c, i) => (
@@ -28,7 +30,7 @@ const StepMessage = ({ frame, names }: {
             ))}
         </span>
     );
-    const who = frame.seat !== null ? <b>{seatName(frame.seat, names)}</b> : null;
+    const who = frame.seat !== null ? <b>{seatName(frame.seat, names, t)}</b> : null;
 
     switch (frame.kind) {
         case REPLAY_STEP.DEAL:
@@ -88,11 +90,13 @@ const StepMessage = ({ frame, names }: {
 
 /* The closing line: who was left holding cards. The board carries the 🃏 on the
  * fool's name; this says it in words, on the last step only. */
-const FoolMessage = ({ fool, names }: { fool: number | null; names: string[] | null }) =>
-    fool === null ? null : (
+const FoolMessage = ({ fool, names }: { fool: number | null; names: string[] | null }) => {
+    const { t } = useLocalization();
+    return fool === null ? null : (
         <span>
-            🃏 <b>{seatName(fool, names)}</b> <Text id="is_the_fool" />
+            🃏 <b>{seatName(fool, names, t)}</b> <Text id="is_the_fool" />
         </span>
     );
+};
 
 export { StepMessage, FoolMessage };
