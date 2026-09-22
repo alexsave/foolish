@@ -104,7 +104,7 @@ int main(int argc, char **argv) {
     p.deep_worlds = parse_int(get_arg(argc, argv, "deep-worlds", 0), p.deep_worlds);
     p.threads = parse_int(get_arg(argc, argv, "threads", 0), 0);
     const char *raw = get_arg(argc, argv, "raw", 0);
-    int quiet = get_arg(argc, argv, "quiet", 0) != 0;
+    int quiet = has_flag(argc, argv, "quiet");
 
     static unsigned char code[REPLAY_MAX_INT_BYTES];
     int code_len = replay_b32_decode(code_s, code, (int)sizeof code);

@@ -2,10 +2,12 @@
 """Plot the win-probability strip cnitro_winprob writes.
 
     make -C c winprob
-    ./c/build/cnitro_winprob --code=<link> --threads=8 --tsv=strip.tsv
-    python3 c/tools/winprob/plot_winprob.py strip.tsv out.png
+    ./c/build/cnitro_winprob --code=<link> --threads=8 --bin=strip.bin
+    python3 c/tools/winprob/plot_winprob.py strip.bin out.png
 
-Two panels over one x axis (never two y scales on one panel):
+The input is the packed file, read through winprob_bin.py - the same layout
+c/src/winprob.h documents and winprob_packed writes. Two panels over one x
+axis (never two y scales on one panel):
 
   TRUTH   the position as it really was - every hidden hand and the real
           remaining stock are in the rebuilt board, so a playout from it is
@@ -17,17 +19,19 @@ Two panels over one x axis (never two y scales on one panel):
           two curves is what it could not see.
 
 Colours are the dataviz reference palette's dark categorical slots, assigned
-to seats in fixed slot order and never cycled (there are exactly eight seats
-in this game and eight slots). Identity is never colour-alone: every line is
-direct-labelled at the point it leaves the game.
+to seats in fixed slot order and never cycled. Identity is never colour-alone:
+every line is direct-labelled in the right margin, in finishing order.
 """
 
 import sys
-from collections import defaultdict
+from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from winprob_bin import read          # noqa: E402
 
 # dataviz reference palette, dark steps (references/palette.md)
 SERIES = ["#3987e5", "#d95926", "#199e70", "#c98500",
@@ -38,45 +42,6 @@ GRID, BASELINE = "#2c2c2a", "#383835"
 CRITICAL = "#d03b3b"
 ORD = {1: "1st", 2: "2nd", 3: "3rd", 4: "4th", 5: "5th",
        6: "6th", 7: "7th", 8: "8th", 0: "-"}
-
-
-def read_strip(path):
-    meta = {"name": {}, "out": [], "belieffail": []}
-    pos, wp = [], defaultdict(dict)
-    for line in open(path, encoding="utf-8"):
-        if line.startswith("#") or not line.strip():
-            continue
-        f = line.rstrip("\n").split("\t")
-        k = f[0]
-        if k == "name":
-            meta["name"][int(f[1])] = f[2]
-        elif k == "out":
-            meta["out"].append(int(f[2]))
-        elif k == "pos":
-            pos.append({"idx": int(f[1]), "step": int(f[2]), "seat": int(f[3]),
-                        "deck": int(f[4]), "move": f[5],
-                        "hand": [int(x) for x in f[6:]]})
-        elif k == "belieffail":
-            meta["belieffail"].append((int(f[1]), int(f[2])))
-        elif k == "wp":
-            idx, view, seat = int(f[1]), f[2], int(f[3])
-            wp[view].setdefault(idx, {})[seat] = {
-                "fool": int(f[4]) / 10000.0, "mean": int(f[5]) / 1000.0, "n": int(f[6])}
-        else:
-            meta[k] = f[1] if len(f) == 2 else f[1:]
-    return meta, pos, wp
-
-
-def series(wp_view, n_pos, seat):
-    """(x, y) of P(not fool) for one seat, with gaps where nothing was measured."""
-    xs, ys = [], []
-    for i in range(n_pos):
-        row = wp_view.get(i, {}).get(seat)
-        if row is None:
-            continue
-        xs.append(i)
-        ys.append(100.0 * (1.0 - row["fool"]))
-    return xs, ys
 
 
 def smooth(ys, k=3):
@@ -100,7 +65,6 @@ def place_labels(ys, gap):
         a, b = order[k - 1], order[k]
         if out[a] - out[b] < gap:
             out[b] = out[a] - gap
-    # Pull the stack back inside the axis if it ran off the bottom.
     low = min(out[i] for i in order)
     if low < 0:
         for i in order:
@@ -108,26 +72,24 @@ def place_labels(ys, gap):
     return out
 
 
-def exit_index(pos, seat):
-    """The first position at which the seat is out, or None."""
-    for p in pos:
-        if p["hand"][seat] < 0:
-            return p["idx"]
+def exit_index(strip, seat):
+    """The first step at which the seat is out, or None."""
+    for st in strip.steps:
+        if st.hand[seat] is None:
+            return st.index
     return None
 
 
-def main(tsv, png):
-    meta, pos, wp = read_strip(tsv)
-    n_pos = len(pos)
-    np_ = int(meta["players"])
-    fool = int(meta["fool"])
-    names = [meta["name"].get(s, f"P{s+1}") for s in range(np_)]
-    order = meta["out"]                      # seats, in the order they went out
-    place = {s: i + 1 for i, s in enumerate(order)}
-    place[fool] = np_
-    exits = {s: exit_index(pos, s) for s in range(np_)}
+def main(binpath, png, engine="the bot"):
+    strip = read(binpath)
+    n_pos = len(strip.steps)
+    np_ = strip.n_players
+    fool = strip.fool
+    names = [st.name or f"seat {st.index}" for st in strip.seats]
+    place = {st.index: (st.place or 0) for st in strip.seats}
+    exits = {s: exit_index(strip, s) for s in range(np_)}
 
-    have_belief = bool(wp.get("belief"))
+    have_belief = any(any(p is not None for p in st.belief_fool) for st in strip.steps)
     fig, axes = plt.subplots(2 if have_belief else 1, 1, figsize=(15, 9.0),
                              sharex=True, height_ratios=[3, 2] if have_belief else None)
     axes = list(axes) if have_belief else [axes]
@@ -161,9 +123,11 @@ def main(tsv, png):
 
         ends = {}
         for seat in range(np_):
-            xs, ys = series(wp[view], n_pos, seat)
-            if not xs:
+            pts = strip.win(view, seat)
+            if not pts:
                 continue
+            xs = [x for x, _ in pts]
+            ys = [y for _, y in pts]
             ys = smooth(ys, 3 if view == "truth" else 5)
             colour = SERIES[seat % len(SERIES)]
             lead = seat == fool or seat == 0
@@ -205,17 +169,18 @@ def main(tsv, png):
     # The point of no return: the last position at which the seat that lost
     # was still even money, and the move that ended that. One annotation, on
     # the panel that can carry it - never a label per point.
-    xs, ys = series(wp["truth"], n_pos, fool)
-    ys = smooth(ys, 3)
+    pts = strip.win("truth", fool)
+    xs = [x for x, _ in pts]
+    ys = smooth([y for _, y in pts], 3)
     even = [i for i in range(len(xs)) if ys[i] >= 50.0]
     if even and even[-1] + 1 < len(xs):
         i = even[-1] + 1
         di, dy = xs[i], ys[i]
-        mv = pos[di]
-        who = names[mv["seat"]] if mv["seat"] >= 0 else "the deal"
+        mv = strip.steps[di]
+        who = names[mv.seat] if mv.seat is not None else "the deal"
         right = di > 0.62 * n_pos
         axes[0].annotate(
-            f"move {mv['step']}  ·  {who} plays {mv['move']}\n"
+            f"move {mv.move}  ·  {who} plays {mv.label()}\n"
             f"{names[fool]}'s last even-money position",
             xy=(di, dy), xytext=(-16 if right else 16, 38),
             textcoords="offset points", color=INK2, fontsize=10,
@@ -232,18 +197,18 @@ def main(tsv, png):
     ax = axes[-1]
     ax.set_xlabel("move of the game", color=MUTED, fontsize=10, labelpad=8)
 
-    title = (f"Chance of not being the fool  ·  {np_} seats, trump {meta['trump']}, "
+    title = (f"Chance of not being the fool  ·  {np_} seats, trump {strip.trump}, "
              f"{names[fool]} lost")
     fig.suptitle(title, color=INK, fontsize=19, x=0.045, ha="left", y=0.982, weight="bold")
     fig.text(0.045, 0.938,
-             f"every position played out by {meta['engine']} at every seat  ·  "
-             f"{meta['worlds'][0]} true worlds and {meta['worlds'][1]} belief worlds per seat per move  ·  "
-             f"{int(meta['playouts']):,} playouts",
+             f"every position played to the end by {engine} at every seat  ·  "
+             f"{strip.worlds} true worlds and {strip.belief_worlds} belief worlds "
+             f"per seat per move  ·  {strip.playouts:,} playouts",
              color=MUTED, fontsize=10.5, ha="left")
 
-    if meta["belieffail"]:
-        print(f"note: {len(meta['belieffail'])} (position, seat) beliefs broke "
-              f"conservation and carry no point")
+    if strip.belief_failed:
+        print("note: a seat's belief broke conservation somewhere; "
+              "those seats carry no point there")
 
     fig.tight_layout(rect=(0.03, 0.02, 0.875, 0.925))
     fig.savefig(png, dpi=160, facecolor=PLANE)
@@ -254,4 +219,6 @@ if __name__ == "__main__":
     if len(sys.argv) < 3:
         print(__doc__)
         sys.exit(2)
-    main(sys.argv[1], sys.argv[2])
+    # The engine is a roster INDEX in the file; the roster itself is C, so the
+    # name is passed in rather than guessed here.
+    main(sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "the bot")

@@ -230,7 +230,8 @@ difftests: build/sim_difftest build/apply_difftest build/msg_wire_test build/sol
 #   make analyse-test     build + run tests/analyse_test.c on the recorded game
 #   make winprob          build/cnitro_winprob, the win-probability strip: the
 #                         same rebuild, belief and playout, measured for EVERY
-#                         seat at EVERY step rather than per decision
+#                         seat at EVERY step rather than per decision. --bin
+#                         writes the packed bytes winprob.h describes.
 # The ONE native product that really does run the engine on several threads, so
 # it is the one that keeps real thread-local storage: --threads=N fans the world
 # loop over N pthreads and every world plays games through game.c's RNG and the
@@ -242,9 +243,11 @@ ANALYSE_CFLAGS = $(filter-out -D_Thread_local=,$(CFLAGS)) $(IOS_CAPS)
 analyse:
 	@mkdir -p build
 	$(CC) $(ANALYSE_CFLAGS) $(CORE_SRC) src/main_analyse.c -o build/cnitro_analyse $(LDFLAGS)
+# src/winprob.c is NOT in CORE_SRC: it is a dev tool over the analyser's
+# pieces, and nothing on a phone or in a wasm module should carry its bytes.
 winprob:
 	@mkdir -p build
-	$(CC) $(ANALYSE_CFLAGS) $(CORE_SRC) src/main_winprob.c -o build/cnitro_winprob $(LDFLAGS)
+	$(CC) $(ANALYSE_CFLAGS) $(CORE_SRC) src/winprob.c src/main_winprob.c -o build/cnitro_winprob $(LDFLAGS)
 analyse-test:
 	@mkdir -p build
 	$(CC) $(ANALYSE_CFLAGS) $(CORE_SRC) tests/analyse_test.c -o build/analyse_test $(LDFLAGS)

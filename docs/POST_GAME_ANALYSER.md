@@ -40,6 +40,7 @@ The pipeline, in the order the handoff laid it out.
 
 **Rebuild.**
 A v6 code is hidden-state-lossless, so the whole game is rebuilt through the real engine: `replay_deal_v6` gives the deck and the recorded actions, `replay_deal_start` deals it under the code's rules and checks the rebuilt deal against the recorded opener, `replay_action_apply` plays each action.
+"v6" throughout this document is the DECODER FAMILY, not the version byte: codes are cut under version 10 today, and `docs/REPLAY_FORMAT6_HIDDEN_STATE.md` says so at its top.
 There is no second deck rebuild and no second ROUND_END translation; the analyser branches the same game the replay screen shows.
 A ROUND_END is a decision for every attacker still to declare (throw in, or close the bout), taken in seat order before the transition.
 
@@ -173,11 +174,13 @@ Every bot's scratch, the solver's table, the engine's RNGs, `bot_drive`'s menu s
 
 The analyser answers "was THIS move a mistake".
 The other question a finished game invites is "who was winning, and when", for every seat at once, and that is a different shape of work: one board per STEP rather than one per decision, no candidates, and every seat measured from the same playout.
-`c/src/main_winprob.c` (`make -C c winprob`) is that pass, over the analyser's own pieces rather than a second copy of them - the real rebuild, `analyse_belief`, its world sampler and installer, and `analyse_playout_board`, which is the one "play this board out with real bots" in the tree and is what `an_playout` now calls too.
+`c/src/winprob.{h,c}` is that pass, over the analyser's own pieces rather than a second copy of them - the real rebuild, `analyse_belief`, its world sampler and installer, and `analyse_playout_board`, which is the one "play this board out with real bots" in the tree and is what `an_playout` now calls too.
+It is deliberately NOT in `CORE_SRC`: nothing on a phone or in a wasm module should carry its bytes.
 
+    make -C c winprob
     ./c/build/cnitro_winprob --code=<code or foolish.cards link> --engine=robusta \
-        --worlds=300 --belief-worlds=24 --threads=8 --tsv=strip.tsv
-    python3 c/tools/winprob/plot_winprob.py strip.tsv strip.png
+        --worlds=300 --belief-worlds=24 --threads=8 --bin=strip.bin
+    python3 c/tools/winprob/plot_winprob.py strip.bin strip.png robusta
 
 It measures two things, because "chance of winning" is two questions:
 
@@ -192,9 +195,30 @@ These sum to nothing, and that is the point - eight seats holding eight differen
 Everything in "what it cannot see" above applies here in full, and one thing more: the strip has no proof region at all.
 It never solves, so every number is a frequency against this engine's play, including in the endgame where the analyser would have proved it.
 
+### The file
+
+`--bin` writes the packed bytes `winprob.h` documents: a fixed-stride header and one fixed-stride record per step, little-endian, probabilities x10000 and finish positions x1000, nothing floating and no JSON anywhere near it.
+Both strides are IN the header, so a consumer seeks to step i rather than walking to it, and an 8-seat 146-step game is 13,422 bytes.
+Every record carries, per seat, the fool probability and the mean finish position in both views, plus the hand size, and per step the move that led there (kind, cards, target) so a label needs nothing else.
+`WINPROB_NONE` is the "not measured" hole: a finished board, a seat already out of the belief view, or a belief that broke conservation.
+
+The reader is beside the writer (`winprob_read_header`, `winprob_read_step`), and `c/tools/winprob/winprob_bin.py` is the same reader in Python, which is what the plotter uses.
+Everything the CLI prints - the summary, the sparklines, the `--tsv` dump - is read back through the reader, so the text can never drift from the file.
+
+Two things are checked on every run rather than trusted.
+The writer and the strides the reader seeks by are two statements of one layout, so they are held against each other at the moment the answer is known (`WINPROB_ELAYOUT`); a one-byte drift in either is refused rather than silently misaligning every step.
+And one playout has exactly one fool, so a step's truth probabilities must sum to 1 up to each seat's own rounding - the CLI prints the worst step's sum, and a sum that drifts further means the seats were scored from different playout sets.
+
+`c/tools/winprob/checks.sh <code>` is the rest: one thread against eight, the same run twice, a different seed, and a truncated file.
+Each was mutation-checked - the strategy RNG seeded per worker thread, the reader's length check removed, the step stride moved by one byte - seen to fail, and reverted.
+Note which seed matters: the truth view of a deterministic engine does not read `game_rng`, so a mutation there changes nothing; `random_strategy_set_seed` is the stream a playout actually consumes.
+
+### Cost
+
 Cost is the analyser's, per step rather than per decision, and it is front-loaded: a playout from the opening of an 8-player game plays ~145 decisions and one from the last bout plays two, so the first ten steps of a game can be a third of the bill.
-The 8-seat game in the sample link below, robusta, 300 truth + 24 belief worlds per seat per step, 146 steps: ~65,000 playouts, about 50 CPU-minutes, ~16 minutes on this Mac's 8 cores (the 3.2x rather than 8x is four of those cores being efficiency cores).
-A handwritten strip of the same game is 8,600 playouts and 220 ms, and is worth running first to see the shape before spending the minutes.
+The 8-seat game this was built on, robusta, 300 truth + 24 belief worlds per seat per step, 146 steps: 60,516 playouts, 4m18s on this Mac's 8 cores and about 24 CPU-minutes behind it (the 5.5x rather than 8x is four of those cores being efficiency cores, and it drops to ~3x when anything else is running).
+A handwritten strip of the same game is 11,472 playouts and 163 ms, and is worth running first to see the shape before spending the minutes.
+`--engine=octogen` is the Infinite Oracle's own brain at every seat; at 531 ms a playout (the table above) that is hours for one game, which is why robusta is the default.
 
 ## The sample game
 
