@@ -117,6 +117,11 @@ interface AnimationContextType {
     roleHandOff: RoleHandOff;
     /** A seat publishes the box its mark is drawn in, so a mark can fly to it. */
     publishRolePad: (seat: number, el: HTMLElement | null) => void;
+    /** The flights layer's two reports: a ghost drew a frame, and every ghost
+     *  has landed. The ghosts end a hand-off, because they run on the frames
+     *  that draw them and a wall-clock timer does not. */
+    noteRoleFlightFrame: () => void;
+    landRoleHandOff: () => void;
 }
 
 // Exported so the tutorial can re-provide a value that overrides the action
@@ -1165,6 +1170,8 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
             shownRoles: roleMotion.shown,
             roleHandOff: roleMotion.handOff,
             publishRolePad: roleMotion.publishPad,
+            noteRoleFlightFrame: roleMotion.noteFlightFrame,
+            landRoleHandOff: roleMotion.landHandOff,
             attack,
             pass,
             pickup,

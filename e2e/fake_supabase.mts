@@ -762,6 +762,29 @@ const SCENARIOS: Record<string, () => Scenario> = {
             .attacker(0).defender(1).build(),
     }),
 
+    /**
+     * A PASS, staged, so the shield's flight can be watched in a real browser.
+     * ME leads (seat 0) and has already put a 7 down; ANNA defends (seat 1) and
+     * holds a 7 of her own, so her only interesting move is the transfer that
+     * hands the bout to BORIS (seat 2). That is the one hand-off nothing else
+     * animates - the shield crosses the table WITH the transfer card, the
+     * previous defender's sword rotates in behind it, and the next defender's
+     * own sword turns away as the shield lands on it (the owner's round 20:
+     * "For the next defender, the shield flies onto their sword. For the
+     * previous defender, the shield flies away and their sword rotates in").
+     *
+     *   POST /__control/act {user:'u-anna', gameId:'pass01',
+     *                        move:{kind:'pass', cards:'7c'}}
+     */
+    pass_table: () => ({
+        gameId: 'pass01',
+        users: ['ME', 'ANNA', 'BORIS'],
+        board: fixture().title('A pass').seats([seat('ME'), seat('ANNA'), seat('BORIS')])
+            .status(PLAYING).deterministic().trump('Kd').deck('8s 9s Ts Js Qs 6s 8d 9d')
+            .hand(0, '6h Tc Jd Ad Qc').hand(1, '7c 9h Th Jh Qh').hand(2, '7s Qd 6d 6c Ks')
+            .table('7h').attacker(0).defender(1).build(),
+    }),
+
     /** Three humans, nothing on the table: sign in as any of them in three tabs. */
     open_table: () => ({
         gameId: 'open01',

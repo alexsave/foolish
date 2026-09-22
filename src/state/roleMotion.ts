@@ -77,12 +77,21 @@ export const ROLE_MAKE_WAY_DELAY_MS = Math.max(0, ROLE_FLIGHT_MS - ROLE_FLIP_HAL
  *  distance. `RoleCoinMotion.passSwordDelay`. */
 export const ROLE_PASS_SWORD_DELAY_MS = ROLE_FLIGHT_MS / 3;
 
-/** A gesture's own clock only moves on frames that DREW it, and a gap between
- *  two drawn frames is worth at most this - ONE frame at 60Hz. The owner,
- *  measuring an eight-seat Undo where the sword went 35 -> 10 -> 0 in two
+/** A ROLE GESTURE'S OWN CLOCK only moves on frames that DREW it, and a gap
+ *  between two drawn frames is worth at most this - ONE frame at 60Hz. The
+ *  owner, measuring an eight-seat Undo where the sword went 35 -> 10 -> 0 in two
  *  frames: "NO JUMPS IN ROTATION!" A slow board stretches the turn instead of
- *  eating it. `RoleCoinClock.cap`. */
-export const ROLE_COIN_FRAME_CAP_MS = 1000 / 60;
+ *  eating it. `RoleCoinClock.cap`.
+ *
+ *  THE FLIGHT IS ON THE SAME CLOCK, which iMessage does not need to say: there
+ *  `roleProgress` is a SwiftUI `withAnimation`, and CoreAnimation runs it off
+ *  the main thread, so a main-thread stall cannot eat it. On the web the same
+ *  tween is requestAnimationFrame, which a stall eats whole - measured in
+ *  Chromium against a production build, where a ~3.4s stall early in the page's
+ *  life (present on main too, and not this change's) swallowed an entire shield
+ *  hand-off: one frame of ghost at the take-off pad and then the roles settled.
+ *  Capping the flight's step is what CoreAnimation gives iMessage for free. */
+export const ROLE_FRAME_CAP_MS = 1000 / 60;
 
 /** The width a coin edge-on is drawn at. Never a true zero: a scale of 0
  *  collapses the box some browsers then decline to paint at all, and the mark

@@ -59,7 +59,10 @@ export interface GameBoardProps {
 /** The role hand-off's ghosts. Its own component so reading the animation
  *  context - which changes on every frame of a card flight - does not re-render
  *  the whole board with it. */
-const RoleFlights = () => <RoleFlightsLayer flights={useAnimation().roleHandOff.flights} />;
+const RoleFlights = () => {
+    const { roleHandOff, noteRoleFlightFrame, landRoleHandOff } = useAnimation();
+    return <RoleFlightsLayer flights={roleHandOff.flights} onDrawn={noteRoleFlightFrame} onLanded={landRoleHandOff} />;
+};
 
 export const GameBoard = ({
     interactive = false,

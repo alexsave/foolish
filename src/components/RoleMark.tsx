@@ -120,7 +120,11 @@ export const RoleMarkView = ({ kind, scale = 1, label }: { kind: RoleMarkKind; s
     const glyph = kind === 'shield' ? <Shield size={RoleMarkSize.shield * scale} />
         : kind === 'check' ? <Check size={RoleMarkSize.check * scale} />
             : <Sword size={RoleMarkSize.sword * scale} fill={kind === 'leadSword' ? RoleInk.lead : RoleInk.fill} />;
-    return (
-        <span role="img" aria-label={label} style={{ display: 'inline-flex', lineHeight: 0 }}>{glyph}</span>
-    );
+    // NO LABEL MEANS DECORATION, not an unnamed image: a flight ghost is the mark
+    // a seat already announces, drawn a second time in the air, and a `role="img"`
+    // with no accessible name would put an anonymous graphic in the reading order
+    // for every hand-off.
+    return label === undefined
+        ? <span aria-hidden="true" style={{ display: 'inline-flex', lineHeight: 0 }}>{glyph}</span>
+        : <span role="img" aria-label={label} style={{ display: 'inline-flex', lineHeight: 0 }}>{glyph}</span>;
 };

@@ -19,21 +19,32 @@
 import { useEffect, useRef, useState } from 'react';
 import { RoleMarkView } from '../RoleMark';
 import {
-    ROLE_FLIGHT_ARM_MS, ROLE_FLIGHT_MS, flightLift, flightPointAt, flightScale,
-    roleFlightEase, type RoleFlight,
+    ROLE_FLIGHT_ARM_MS, ROLE_FLIGHT_MS, ROLE_FRAME_CAP_MS, flightLift, flightPointAt,
+    flightScale, roleFlightEase, type RoleFlight,
 } from '../../state/roleMotion';
 
 /** One mark in the air. Its own frame loop, because the path is a quadratic
  *  bezier with a scale that peaks in the middle - neither of which a CSS
  *  transition can be handed - and because the frames that DRAW it are the only
- *  honest clock for it (see RoleCoin). */
-const Ghost = ({ flight }: { flight: RoleFlight }) => {
+ *  honest clock for it: a gap between two drawn frames is worth at most one
+ *  frame at 60Hz, so a stalled board STRETCHES the flight instead of eating it
+ *  (ROLE_FRAME_CAP_MS, and see RoleCoin for the same clock and the owner's "NO
+ *  JUMPS IN ROTATION!"). */
+const Ghost = ({ flight, onDrawn, onLanded }: {
+    flight: RoleFlight;
+    onDrawn: () => void;
+    onLanded: () => void;
+}) => {
     const ref = useRef<HTMLDivElement | null>(null);
     const [visible, setVisible] = useState(true);
+    // Read through refs so a re-render of the layer cannot restart the flight.
+    const cb = useRef({ onDrawn, onLanded });
+    cb.current = { onDrawn, onLanded };
 
     useEffect(() => {
         let handle = 0;
-        let started: number | null = null;
+        let last: number | null = null;
+        let elapsed = 0;
         const write = (p: number) => {
             const el = ref.current;
             if (!el) return;
@@ -49,18 +60,15 @@ const Ghost = ({ flight }: { flight: RoleFlight }) => {
             el.style.filter = `drop-shadow(0 ${6 * lift}px ${8 * lift}px rgba(0,0,0,${0.45 * lift}))`;
         };
         const step = (t: number) => {
+            if (last !== null) elapsed += Math.min(Math.max(0, t - last), ROLE_FRAME_CAP_MS);
+            last = t;
+            cb.current.onDrawn();
             // ONE PAINT AT THE TAKE-OFF PAD before the tween starts - the same
             // beat a card gets (FlightCard.FLIGHT_ARM_MS), and for the same
             // reason: an animation that starts in the frame its view is created
             // in has nothing to interpolate from.
-            if (started === null) started = t;
-            const elapsed = t - started - ROLE_FLIGHT_ARM_MS;
-            if (elapsed < 0) {
-                write(0);
-                handle = requestAnimationFrame(step);
-                return;
-            }
-            const p = Math.min(1, elapsed / ROLE_FLIGHT_MS);
+            const since = elapsed - ROLE_FLIGHT_ARM_MS;
+            const p = since <= 0 ? 0 : Math.min(1, since / ROLE_FLIGHT_MS);
             write(roleFlightEase(p));
             if (p >= 1) {
                 // The ghost is taken away the instant it lands, and the seat it
@@ -68,6 +76,7 @@ const Ghost = ({ flight }: { flight: RoleFlight }) => {
                 // turn is the only spin that makes that hand-over seamless,
                 // because 360 and 0 are the same angle.
                 setVisible(false);
+                cb.current.onLanded();
                 return;
             }
             handle = requestAnimationFrame(step);
@@ -96,8 +105,25 @@ const Ghost = ({ flight }: { flight: RoleFlight }) => {
     );
 };
 
-export const RoleFlightsLayer = ({ flights }: { flights: readonly RoleFlight[] }) => {
+export const RoleFlightsLayer = ({ flights, onDrawn, onLanded }: {
+    flights: readonly RoleFlight[];
+    /** A ghost drew a frame. The hand-off's watchdog uses it to tell "still
+     *  flying" from "never drawn at all". */
+    onDrawn: () => void;
+    /** EVERY ghost has landed, which is what ends the hand-off: the seats it
+     *  emptied get their marks back on the frame the last ghost is taken away
+     *  in. Driven by the ghosts and not by a wall-clock timer, so a board that
+     *  stalls mid-flight finishes the flight rather than losing it. */
+    onLanded: () => void;
+}) => {
+    const landed = useRef(0);
+    const key = flights.map((f) => f.id).join(' ');
+    useEffect(() => { landed.current = 0; }, [key]);
     if (flights.length === 0) return null;
+    const one = () => {
+        landed.current += 1;
+        if (landed.current >= flights.length) onLanded();
+    };
     return (
         <div
             style={{
@@ -113,7 +139,7 @@ export const RoleFlightsLayer = ({ flights }: { flights: readonly RoleFlight[] }
                 userSelect: 'none',
             }}
         >
-            {flights.map((f) => <Ghost key={f.id} flight={f} />)}
+            {flights.map((f) => <Ghost key={f.id} flight={f} onDrawn={onDrawn} onLanded={one} />)}
         </div>
     );
 };

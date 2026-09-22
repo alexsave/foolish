@@ -59,6 +59,11 @@ export interface RoleMotion {
     /** A seat publishes the box its mark is drawn in, so a shield can fly from
      *  an opponent to me and back. Call with null when the seat unmounts. */
     publishPad: (seat: number, el: HTMLElement | null) => void;
+    /** A ghost drew a frame: the hand-off is being watched, not lost. */
+    noteFlightFrame: () => void;
+    /** EVERY ghost has landed - the end of the hand-off, and the frame the seats
+     *  it emptied get their marks back in. */
+    landHandOff: () => void;
     /** Hand the roles over to `target`, flying whatever actually moved. Returns
      *  true when a mark took off. */
     syncRoles: (target: ShownRoles, opts?: { tableOpen?: boolean; animated?: boolean }) => boolean;
@@ -80,8 +85,28 @@ export function useRoleMotion(): RoleMotion {
     // its ghosts taken down by the timer of the one before it.
     const tokenRef = useRef(0);
     const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    /** A ghost has drawn a frame since the last watchdog tick. */
+    const drawnRef = useRef(false);
 
     useEffect(() => () => { if (timerRef.current !== null) clearTimeout(timerRef.current); }, []);
+
+    const landHandOff = useCallback(() => {
+        if (timerRef.current !== null) { clearTimeout(timerRef.current); timerRef.current = null; }
+        setHandOff((prev) => (prev === NO_HAND_OFF ? prev : NO_HAND_OFF));
+    }, []);
+
+    const noteFlightFrame = useCallback(() => { drawnRef.current = true; }, []);
+
+    /** Re-arm the watchdog. It ends a hand-off only when nothing drew it. */
+    const watch = (mine: number) => {
+        if (timerRef.current !== null) clearTimeout(timerRef.current);
+        timerRef.current = setTimeout(() => {
+            timerRef.current = null;
+            if (mine !== tokenRef.current) return;
+            if (drawnRef.current) { drawnRef.current = false; return watch(mine); }
+            setHandOff(NO_HAND_OFF);
+        }, ROLE_FLIGHT_ARM_MS + ROLE_FLIGHT_MS);
+    };
 
     const publishPad = useCallback((seat: number, el: HTMLElement | null) => {
         if (el) padsRef.current.set(seat, el);
@@ -127,12 +152,19 @@ export function useRoleMotion(): RoleMotion {
             departing: new Set(flights.map((f) => f.fromSeat)),
             arriving: new Set(flights.map((f) => f.toSeat)),
         });
-        if (timerRef.current !== null) clearTimeout(timerRef.current);
-        timerRef.current = setTimeout(() => {
-            timerRef.current = null;
-            if (mine !== tokenRef.current) return;
-            setHandOff(NO_HAND_OFF);
-        }, ROLE_FLIGHT_ARM_MS + ROLE_FLIGHT_MS);
+        // THE GHOSTS END THE HAND-OFF, not a timer: they run on the frames that
+        // DRAW them, so a board that stalls mid-flight finishes the flight
+        // instead of losing it, and the seats stay blank for exactly as long as
+        // a mark is in the air over them.
+        //
+        // What is left on a clock is a WATCHDOG for the one case the ghosts
+        // cannot answer - never having been drawn at all (the layer is not
+        // mounted, the tab was in the background for the whole flight). It asks
+        // only that question: a hand-off whose ghosts ARE drawing is left to
+        // them and the watch is re-armed, and one that has drawn nothing by the
+        // time the flight should have ended is over.
+        drawnRef.current = false;
+        watch(mine);
         return true;
     }, []);
 
@@ -149,5 +181,5 @@ export function useRoleMotion(): RoleMotion {
     }, [syncRoles]);
 
     const read = useCallback(() => shownRef.current, []);
-    return { shown, read, handOff, publishPad, syncRoles, syncFromView };
+    return { shown, read, handOff, publishPad, noteFlightFrame, landHandOff, syncRoles, syncFromView };
 }

@@ -18,13 +18,13 @@
 // does not go to width zero", and "NO JUMPS IN ROTATION!". requestAnimationFrame
 // is the same clock SwiftUI's `TimelineView(.animation)` is, and a gap between
 // two drawn frames is worth at most one frame at 60Hz
-// (ROLE_COIN_FRAME_CAP_MS) - so a slow board stretches the turn instead of
+// (ROLE_FRAME_CAP_MS) - so a slow board stretches the turn instead of
 // eating it.
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { RoleMarkSize, RoleMarkView, type RoleMarkKind } from './RoleMark';
 import {
-    ROLE_COIN_FRAME_CAP_MS, ROLE_MAKE_WAY_DELAY_MS, ROLE_PASS_SWORD_DELAY_MS,
+    ROLE_FRAME_CAP_MS, ROLE_MAKE_WAY_DELAY_MS, ROLE_PASS_SWORD_DELAY_MS,
     coinFrameAt, coinTotalMs, resolveGesture, type RoleCoinPhase,
 } from '../state/roleMotion';
 
@@ -188,7 +188,7 @@ export const RoleCoin = ({ seat, kind, departing = false, arriving = false, labe
         let elapsed = 0;
         const total = coinTotalMs(phase);
         const step = (t: number) => {
-            if (last !== null) elapsed += Math.min(Math.max(0, t - last), ROLE_COIN_FRAME_CAP_MS);
+            if (last !== null) elapsed += Math.min(Math.max(0, t - last), ROLE_FRAME_CAP_MS);
             last = t;
             const f = coinFrameAt(phase, elapsed);
             scaleRef.current = f.scale;
@@ -219,9 +219,18 @@ export const RoleCoin = ({ seat, kind, departing = false, arriving = false, labe
     // below it must not twitch), and - the reason it matters here - it always has
     // a frame to publish, so a flight can take off from a seat that is not
     // currently wearing anything.
+    // A STABLE ref callback. An inline one is a new function every render, which
+    // React answers by detaching (null) and re-attaching the node each time - and
+    // each detach takes this seat's landing pad off the board for the length of a
+    // commit.
+    const mount = useCallback((el: HTMLDivElement | null) => {
+        boxRef.current = el;
+        publishPad(seat, el);
+    }, [seat, publishPad]);
+
     return (
         <div
-            ref={(el) => { boxRef.current = el; publishPad(seat, el); }}
+            ref={mount}
             data-role-seat={seat}
             data-role-mark={face ?? ''}
             style={{
