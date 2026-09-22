@@ -1168,7 +1168,25 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
 
 // ---------- candidate selection -------------------------------------------
 
+// HOW MANY MOVES ONE DECISION HOLDS, and it is not the same number for the two
+// things that ask. The Infinite Oracle is not on a clock - it runs to
+// convergence or ORACLE_HARD_CAP_MS - so a wider table costs it only a longer
+// "coming into focus", which is the feature. A bot picking a move in a live
+// game is on a clock, and a wider table would only split the same world budget
+// thinner and play weaker for it.
+//
+// So the oracle builds (-DFOOLISH_ORACLE_BUILD, c/Makefile) get 64 and the
+// shipped bot keeps the 26 it has always searched. A build flag rather than a
+// runtime knob because the number sizes static tables: sizing them at 64
+// everywhere and capping at runtime cost bots.wasm.gz ten bytes MORE than its
+// 81,920 budget allows, for a width that build can never use.
+#ifndef OG_MAX_CANDS
+#ifdef FOOLISH_ORACLE_BUILD
+#define OG_MAX_CANDS 64
+#else
 #define OG_MAX_CANDS 26
+#endif
+#endif
 // Cover candidates are kept PER WIDTH: this many distinct widths, this many of
 // each, bounded overall by OG_MAX_CANDS. A defender has no attack candidates to
 // share the table with, so covers can have nearly all of it, and 4 x 6 takes
@@ -1183,6 +1201,9 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
 // and an Ace - was the one played.
 #define OG_COV_SIZES    4
 #define OG_COV_PER_SIZE 10
+// Pass candidates. Ranked width-first like attacks, so the widest pass is always
+// among them; the cap is what bounds the reserve the covers leave room for.
+#define OG_PAS_KEEP     6
 
 typedef struct {
     int idx[OG_MAX_CANDS];
@@ -1467,7 +1488,7 @@ static void og_pick_candidates(const Game *g, const LegalMoves *moves,
     double cov_k[OG_COV_SIZES * OG_COV_PER_SIZE];
     int n_cov[OG_COV_SIZES];
     for (int i = 0; i < OG_COV_SIZES; i++) n_cov[i] = 0;
-    int pas[3];   double pas_k[3];   int n_pas = 0;
+    int pas[OG_PAS_KEEP];  double pas_k[OG_PAS_KEEP];  int n_pas = 0;
     int good_idx = -1, pickup_idx = -1;
 
     for (int i = 0; i < moves->n; i++) {
@@ -1493,9 +1514,18 @@ static void og_pick_candidates(const Game *g, const LegalMoves *moves,
                 break;
             }
             case MOVE_PASS: {
+                // WIDTH FIRST, exactly as the attack above it. A pass was keyed
+                // on the SUM of its cards into three slots, and a sum grows with
+                // every card, so a pass of three twos always sorted behind every
+                // pass of one and never placed: a real 8p game recorded PASS
+                // 2D 2S 2H and the panel said "not considered", which means
+                // octogen could not have chosen it either. Covers had the same
+                // defect through a product; this is the same defect through a
+                // sum, in the branch that fix did not touch.
                 int sum = 0;
                 for (int j = 0; j < m->n_cards; j++) sum += og_card_score(m->cards[j], power);
-                og_ranked_insert(pas, pas_k, &n_pas, 3, i, (double)sum);
+                og_ranked_insert(pas, pas_k, &n_pas, OG_PAS_KEEP, i,
+                                 -(double)m->n_cards * 10000.0 + (double)sum);
                 break;
             }
             case MOVE_GOOD:   good_idx = i;   break;
@@ -1521,8 +1551,8 @@ static void og_pick_candidates(const Game *g, const LegalMoves *moves,
     // PICKUP at all - octogen cannot choose a move that is not a candidate, so
     // that is a play defect and not only a panel one. The tail is tiny and
     // always matters; it is reserved before the covers spend anything.
-    // n_pas is at most 3 and the two flags at most 1 each, so tail <= 5 against
-    // an OG_MAX_CANDS of 26 and the reserve can never go negative.
+    // n_pas is at most OG_PAS_KEEP and the two flags at most 1 each, so tail is
+    // at most 8 against an OG_MAX_CANDS of 26 and the reserve cannot go negative.
     const int tail = n_pas + (good_idx >= 0) + (pickup_idx >= 0);
     for (int r = 0; r < OG_COV_PER_SIZE; r++)
         for (int b = 0; b < OG_COV_SIZES && out->n + tail < OG_MAX_CANDS; b++)
