@@ -657,6 +657,32 @@ test('cover: my card covers the attack, the server confirms it', async () => {
     });
 });
 
+test('a LAST DEFENCE rests before the sweep takes the table', async () => {
+    // THE 1500ms THE OWNER ASKED FOR TWICE, and the one gap in a sequence that is
+    // not ANIM_GAP_MS. `8h` is my whole hand, so covering with it empties it and
+    // the bout closes on the cover (game.c handle_cover's `def->hand_count == 0`
+    // branch - the "last defense" the owner named): the push carries the cover,
+    // the discard that sweeps the table and the refills behind it, and the
+    // kernel's plan puts ANIM_BOUT_END_HOLD_MS between the cover LANDING and the
+    // sweep OPENING (anim_plan.h ANIM_BEAT_HOLDS, anim_build_plan's beat layout).
+    //
+    // HERE BECAUSE NOTHING ELSE IN THIS FILE REACHES IT. Every other case is a
+    // stream with no bout-ending cover in it - a good closes the bout in the
+    // `good` case, a pickup sweeps in `pickup` - so before this one the hold had
+    // no frame times gating it at all. Measured in a browser before it existed,
+    // the sweep took the table away 36ms after the card that won it landed
+    // (docs/WEB_ANIM_PARITY.md section 3).
+    const board = two(1).hand(0, '9c Tc Jd Qd').hand(1, '8h').table('6h')
+        .attacker(0).defender(1).build();
+    await play('cover_ends_bout', 118, 'a-bout-end', board, async (s) => {
+        await s.step('tap cover 8h on 6h', () => tap(probe.anim.cover(cards('8h'), cards('6h'))));
+        await s.advance(150);
+        await answer(s, 'server applies');
+        await s.advance(100);
+        await deliver(s, 'push: the last defence closes the bout');
+    });
+});
+
 test('pass: I hand the attack on with a card of its rank', async () => {
     const board = three().hand(0, '9c Tc Jd Qd').hand(1, '7d 8d Ad').hand(2, '6s Js Qs Ks As').table('7h').attacker(0).defender(1).build();
     await play('pass', 103, 'a-pass', board, async (s) => {
