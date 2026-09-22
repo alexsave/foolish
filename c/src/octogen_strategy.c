@@ -1178,8 +1178,11 @@ static int og_try_endgame_solve(const Game *g, int bot_idx,
 // So the oracle builds (-DFOOLISH_ORACLE_BUILD, c/Makefile) get 128 and the
 // shipped bot keeps the 26 it has always searched. A build flag rather than a
 // runtime knob because the number sizes static tables: sizing them at 64
-// everywhere and capping at runtime cost bots.wasm.gz ten bytes MORE than its
-// 81,920 budget allows, for a width that build can never use.
+// everywhere and capping at runtime cost bots.wasm.gz ten bytes MORE than the
+// 81,920 B gz budget of the day allowed, for a width that build can never use.
+// That budget is gone - the browser stopped downloading this link at all - but
+// the reason to keep the tables out of the shipped module did not go with it,
+// and the raw pin in e2e/mem/wasm_memory.test.ts is what measures it now.
 //
 // 128 IS WHERE THE MISSES STOP, and that is measured rather than chosen. Walking
 // every decision of 38 bot games plus two shared human replays - 3,687 decisions

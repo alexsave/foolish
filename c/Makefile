@@ -1226,18 +1226,18 @@ wasm-msg-size: build/msg.wasm
 # the knobs the roster already specifies. Folding the two is one change,
 # because it rewrites bots.wasm.gz.
 #
-# There is NO toolchain skew in the RAW module, and it is measured rather than
-# asserted: with clang 22.1.8 + binaryen 130, build/bots.wasm comes out
-# byte-identical on macOS arm64 (Homebrew), Linux arm64 and Linux x86_64
-# (apt.llvm.org) - all md5 ac53b4dc5484aabad381d2d7bc451088, 191,485 B. A raw
-# byte delta therefore means YOUR CHANGE, not the compiler, and
-# `scripts/wasm_build.sh --check` is the gate that keeps that true.
+# THE RAW MODULE SKEWS LESS THAN THE .gz, AND IT DOES SKEW. The measurement,
+# the hosts it was taken on and what has happened to it since live in ONE place,
+# scripts/wasm_build.sh, rather than being restated here where the two copies
+# can disagree - and they did, which is how a change landed over a size pin
+# believing the number it was compared against had been built.
 #
-# THE .gz IS A DIFFERENT STORY, and it is the compressor rather than the
-# compiler: gzip -9 -n over that one identical module gives 81,892 B from Apple
-# gzip, 82,043 B from GNU gzip and 82,468 B from node 20's zlib. So compare raw
-# modules, never .gz sizes, and see e2e/mem/wasm_memory.test.ts for why the size
-# gate moved onto the raw one.
+# What matters at this line: a raw byte delta is USUALLY your change and is not
+# always, because the pinned toolchain is pinned by version and not by build. So
+# compare raw modules rather than .gz (the compressor alone moves the .gz by up
+# to 576 B on one identical module), compare them built on ONE machine, and when
+# a number decides something, build it - `scripts/wasm_build.sh --check` is the
+# gate, and e2e/mem/wasm_memory.test.ts holds the pins and the spread.
 #
 # The trap that keeps manufacturing a phantom skew: WASM_CC defaults to plain
 # `clang`, which on macOS is APPLE clang and cannot target wasm32 at all
@@ -1433,7 +1433,12 @@ wasm-bots: build/layout/bots.hash
 # Two links of one object set cannot: any function present in both is the same
 # bytes, because it came out of the same .o.
 #
-# WHAT IT BUYS, measured on this Mac (clang 22.1.8 + binaryen 130, the pin):
+# WHAT IT BUYS, measured on this Mac (clang 22.1.8 + binaryen 130) when the
+# split landed. These are a snapshot of one host and they go stale - build the
+# module before quoting them, and see e2e/mem/wasm_memory.test.ts for the pins
+# and the ~290 B spread between hosts. Copying the bots.wasm line out of here
+# instead of building it is how a change landed 186 B over a pin it was measured
+# against:
 #
 #   bots.wasm   191,490 B raw   81,902 B gz   37 pages (2,424,832 B)
 #   web.wasm     67,311 B raw   31,219 B gz   26 pages (1,703,936 B)

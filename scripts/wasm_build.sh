@@ -35,17 +35,28 @@
 # produced the committed bytes is not the toolchain any given machine has, so a
 # byte gate would be red forever". That is true of the toolchain VERSION and
 # false of the MACHINE, and nobody had separated the two. From one tree,
-# c/build/bots.wasm is BYTE-IDENTICAL on all three of
+# c/build/bots.wasm was BYTE-IDENTICAL on all three of
 #
 #   macOS arm64, Homebrew clang 22.1.8 + binaryen 130
 #   Linux arm64, apt.llvm.org clang 22.1.8 + binaryen 130
 #   Linux x86_64, apt.llvm.org clang 22.1.8 + binaryen 130   <- ubuntu-latest
 #
-# all md5 ac53b4dc5484aabad381d2d7bc451088, 191,485 B, and the same holds for
-# oracle.wasm (177,835 B) and oracle-mt.wasm (1,091,163 B). A PINNED toolchain
-# is reproducible across operating systems AND across host architectures, so the
-# modules can be built by the lane that ships them and there is nothing left to
-# keep fresh.
+# all md5 ac53b4dc5484aabad381d2d7bc451088, 191,485 B, and the same held for
+# oracle.wasm (177,835 B) and oracle-mt.wasm (1,091,163 B). That is why the
+# modules can be built by the lane that ships them: nothing is left to keep
+# fresh, whichever lane builds it.
+#
+# AND IT IS A MEASUREMENT, NOT A GUARANTEE - it has since drifted by ~290 B on
+# bots.wasm (macOS 192,186 vs Linux x86_64 ~191,900), because THIS pin is by
+# nominal version while scripts/ci_llvm.sh pins LLVM_VERSION to the MAJOR and
+# apt.llvm.org rolls snapshots inside it (`Ubuntu clang version 22.1.8
+# (++20260714014902+ca7933e47d3a)`), while a Mac follows its own Homebrew
+# bottle. Identical output needs the same BUILD of clang, which neither side
+# pins. Nothing downstream depends on the bytes matching - each lane builds what
+# it ships and the layout hash is what has to agree - so the size gates in
+# e2e/mem/wasm_memory.test.ts carry the spread instead, pinned wide of the
+# widest host. Pin the exact clang build on both sides if you ever need the
+# md5s back.
 #
 # WHICH IS WHY THE TOOLCHAIN IS PINNED rather than inherited - scripts/ci_llvm.sh
 # installs it, scripts/ci_wasm.sh is that plus this script, and the version
