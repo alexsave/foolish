@@ -9,7 +9,9 @@ import { useServer } from '../../contexts/ServerContext';
 import { canCoverPair } from '../../utils/gameValidation';
 // The angle the battle grid lays a cover across its attack at: a flight has to
 // land where the grid will DRAW the card, and the grid is where that is stated.
-import { COVER_ROTATION_RAD } from './TableBattles';
+// `glideOffset` is the other half of that: while the row is still sliding to
+// make room for the pile that just landed, a cell is not yet where it is going.
+import { COVER_ROTATION_RAD, glideOffset } from './TableBattles';
 
 // Table-slot geometry cache (Stage 9). The on-table battle layout is a function of
 // only (how many battle slots there are, the viewport size) - the 4th slot in a
@@ -41,6 +43,20 @@ type Candidate = HTMLElement | Spot | null | undefined;
 const centreOf = (element: HTMLElement): Spot => {
     const rect = element.getBoundingClientRect();
     return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+};
+
+// WHERE A TABLE ELEMENT WILL COME TO REST, which is not where it is drawn while
+// the battle row is gliding (TableBattles' FLIP: the piles already down slide
+// aside over the plan's own duration to make room for the one that just
+// landed). A flight is measured at the START of its beat and lands at the end
+// of it, by which time that slide is over - so a LANDING is aimed here, and a
+// card LIFTING OFF keeps `centreOf`, because it leaves from where the eye has
+// it. Zero for every element outside a gliding cell, which is all of them
+// whenever nothing is moving.
+const restingCentre = (element: HTMLElement): Spot => {
+    const c = centreOf(element);
+    const off = glideOffset(element);
+    return { x: c.x - off.x, y: c.y - off.y };
 };
 
 const isElement = (c: Candidate): c is HTMLElement =>
@@ -86,8 +102,14 @@ export const AnimationOverlay = () => {
     // `flightMs` is the kernel's duration for the step on screen (its plan's
     // AnimPlanStep.duration_ms), not a constant this file keeps: the curve and
     // the interpolation are rendering, the length of the flight is not.
-    const { currentAnimation, isAnimating, flightMs } = useAnimation();
+    const { currentAnimation, isAnimating, flightMs, heldBattles } = useAnimation();
     const { view: game } = useServer();
+    // THE ROW THE GRID IS ACTUALLY DRAWING. The board's, minus any pile this
+    // run is still carrying (TableBattles, and src/state/animPlan.ts heldRow).
+    // Everything in this file that counts slots,
+    // picks a pile or asks how a card is lying has to ask the row on screen -
+    // aiming at a cell the grid is not drawing is aiming at nothing.
+    const shownBattles = heldBattles ?? game?.battles ?? [];
     const overlayRef = useRef<HTMLDivElement>(null);
 
     // Invalidate the table-slot geometry cache on resize (Stage 9). The cache key
@@ -147,7 +169,7 @@ export const AnimationOverlay = () => {
         const positions = new Map<string, { x: number; y: number }>();
 
         if (type === 'attack_pass') {
-            const currentBattleCount = game?.battles.length || 0;
+            const currentBattleCount = shownBattles.length;
             // After this attack lands the table has currentBattleCount + cards.length
             // slots; each new card targets the slot at (currentBattleCount + index).
             const totalSlots = currentBattleCount + cards.length;
@@ -382,9 +404,9 @@ export const AnimationOverlay = () => {
             const coverTarget = (c: Card, i: number): Card | null => {
                 if (target_cards && target_cards[i]) return target_cards[i];
                 if (target_card) return target_card;
-                if (!game?.battles) return null;
+                if (!game) return null;
 
-                const battle = game.battles
+                const battle = shownBattles
                     .filter((b) => !covered(b))
                     .find((b) => canCoverPair(b.attack, c, game.powerSuit)
                         && !targetedAttackCards.has(`${b.attack.suit}-${b.attack.value}`));
@@ -408,7 +430,7 @@ export const AnimationOverlay = () => {
             // carries the same value as its flight's `fromAngle`
             // (ios/FoolishKit/Boards/MessageTableView+OpenReplay.swift).
             const tableTilt = (card: Card): number => {
-                const battle = game?.battles.find((b) => sameCard(b.attack, card)
+                const battle = shownBattles.find((b) => sameCard(b.attack, card)
                     || (covered(b) && sameCard(b.defense, card)));
                 if (!battle || !covered(battle)) return 0;
                 return sameCard(battle.attack, card) ? -COVER_ROTATION_RAD : COVER_ROTATION_RAD;
@@ -478,11 +500,21 @@ export const AnimationOverlay = () => {
             // attack's centre instead leaves the settle the flight is supposed to
             // remove: measured in a browser, a cover drawn at (687, 425) over an
             // attack whose uncovered centre is (680, 424).
+            //
+            // MEASURED AT REST AND UPRIGHT, and it has to be both. The rect is
+            // the axis-aligned bounding box, so it is the attack's own box only
+            // while the grid is drawing the card straight; the counter-tilt
+            // waits FLIGHT_ARM_MS before it starts (TableBattles), which is
+            // after this layout effect has run, so what is measured here is the
+            // untilted box. `glideOffset` takes off the other displacement - a
+            // row still sliding under the flight - because the cover lands when
+            // that slide has finished.
             const laidAcross = (attack: HTMLElement): Spot => {
                 const r = attack.getBoundingClientRect();
+                const off = glideOffset(attack);
                 return {
-                    x: r.left + r.width / 2 + Math.sin(COVER_ROTATION_RAD) * (r.height / 2),
-                    y: r.bottom - Math.cos(COVER_ROTATION_RAD) * (r.height / 2),
+                    x: r.left - off.x + r.width / 2 + Math.sin(COVER_ROTATION_RAD) * (r.height / 2),
+                    y: r.bottom - off.y - Math.cos(COVER_ROTATION_RAD) * (r.height / 2),
                 };
             };
 
@@ -503,27 +535,35 @@ export const AnimationOverlay = () => {
                     return {
                         spot: spotFrom([() => {
                             const table = findElementByLocation('table');
-                            return table ? shifted(centreOf(table), index * 70, 0) : null;
+                            return table ? shifted(restingCentre(table), index * 70, 0) : null;
                         }], getFallbackPosition('table', player_id)),
                         angle: 0,
                     };
                 }
 
                 if (type === 'attack_pass') {
-                    const slot = (game?.battles.length || 0) + index;
+                    const slot = shownBattles.length + index;
                     return flat(spotFrom([
                         // The board already shows the card - a confirmation
                         // that beat its own flight - so that IS the landing.
-                        () => document.querySelector(`[data-location="table"] [data-card="${card.suit}-${card.value}"]`) as HTMLElement | null,
+                        () => {
+                            const laid = document.querySelector(`[data-location="table"] [data-card="${card.suit}-${card.value}"]`) as HTMLElement | null;
+                            return laid ? restingCentre(laid) : null;
+                        },
                         () => measuredPositions.get(`${index}`),
-                        () => findElementByLocation('table', undefined, undefined, undefined, slot),
+                        () => {
+                            const drop = findElementByLocation('table', undefined, undefined, undefined, slot);
+                            return drop ? restingCentre(drop) : null;
+                        },
                         // The 60px fan is the FLOOR's alone: a drop zone we
                         // actually found is already in the right place.
                     ], shifted(getFallbackPosition('table', player_id), slot * 60, 0)));
                 }
 
-                return flat(spotFrom([() => findElementByLocation('table')],
-                    getFallbackPosition('table', player_id)));
+                return flat(spotFrom([() => {
+                    const table = findElementByLocation('table');
+                    return table ? restingCentre(table) : null;
+                }], getFallbackPosition('table', player_id)));
             };
 
             // The card's own place when the hand already holds it (a refused
