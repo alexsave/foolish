@@ -1508,6 +1508,18 @@ wasm-web: build/layout/bots.hash
 	@$(MAKE) --no-print-directory build/web.wasm
 	gzip -9 -n -c build/web.wasm > ../sdk/ts/wasm/web.wasm.gz
 
+# The name-preserving companion, same arrangement as bots' above: same objects,
+# same link, same wasm-opt pass, minus --strip-all, so tools/wasm_anatomy can
+# map names onto the shipped bytes. It is what makes "which .c file are these
+# 67 KB" an answerable question for the browser's link and not just the
+# server's - and answering it for both side by side is how WASM_WEB_NAMES was
+# arrived at.
+build/named/web.named.wasm: $(WASM_BOT_OBJ) Makefile
+	@mkdir -p build/named
+	$(WASM_CC) --target=wasm32 -nostdlib $(filter-out -Wl$(comma)--strip-all,$(WASM_BOT_LDFLAGS)) \
+	          $(WASM_WEB_EXPORTS) $(WASM_BOT_OBJ) -o $@
+	$(if $(strip $(WASM_BOTS_POSTOPT)),$(WASM_OPT_BIN) $(WASM_OPT_FEATURES) $(WASM_BOTS_POSTOPT) --debuginfo $@ -o $@,:)
+
 # The number the download budget is about.
 wasm-web-size: build/web.wasm
 	@printf 'web.wasm    raw %7d  gzip %7d\n' \
