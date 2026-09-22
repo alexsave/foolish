@@ -785,6 +785,28 @@ const SCENARIOS: Record<string, () => Scenario> = {
             .table('7h').attacker(0).defender(1).build(),
     }),
 
+    /**
+     * A GOOD, AND THE THROW-IN THAT TAKES IT BACK, so the check's coin can be
+     * watched both ways in a real browser. ME (seat 0) opened the bout and has
+     * already said good, so ME wears the check; ANNA (seat 1) defends; BORIS
+     * (seat 2) holds a seven and can throw one in, which re-opens the bout and
+     * clears every good on the table.
+     *
+     * The kernel's rule is that the clearing runs WITH the card that cleared it
+     * (`anim_goods_cleared`), never a beat behind it:
+     *
+     *   POST /__control/act {user:'u-boris', gameId:'good01',
+     *                        move:{kind:'attack', cards:'7s'}}
+     */
+    good_then_throw_in: () => ({
+        gameId: 'good01',
+        users: ['ME', 'ANNA', 'BORIS'],
+        board: fixture().title('A good, taken back').seats([seat('ME'), seat('ANNA'), seat('BORIS')])
+            .status(PLAYING).deterministic().trump('Kc').deck('8s 9s Ts Js')
+            .hand(0, '8c 9c Tc Ad').hand(1, '8h 9h Th Jh').hand(2, '7s Qd 6d Ks')
+            .table('7h').attacker(0).defender(1).good(0).build(),
+    }),
+
     /** Three humans, nothing on the table: sign in as any of them in three tabs. */
     open_table: () => ({
         gameId: 'open01',
