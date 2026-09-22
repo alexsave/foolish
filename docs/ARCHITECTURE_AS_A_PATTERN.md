@@ -392,6 +392,19 @@ The second version does not ask "does the committed copy match".
 It generates **twice, as two separate processes into two temporary trees**, and refuses a difference - which also catches a generator that is not deterministic, a failure the committed-copy design cannot see at all.
 The generated directories are gitignored, and a separate gate refuses a tracked file under any of them, reading the directory list out of `gen.sh` rather than keeping a second copy of it.
 
+**And the compiled artifacts went the same way, which took a measurement rather than a third try.**
+The three shipped wasm modules were committed long after `/gen` stopped being, and the reason given was specific: a rebuild of untouched `main` already differed byte-wise from the committed file, so a byte gate "would be red forever and switched off within a week".
+What went in its place was a freshness check over commit **order** plus a source hash committed beside the artifacts to prove a human had run `make` - two gates, holding up one workaround.
+The reason turned out to be half true.
+The bytes are a function of the toolchain **version**, not of the machine: with clang and binaryen pinned, the raw module is byte-identical on macOS arm64, Linux arm64 and Linux x86_64.
+Nobody had separated those two claims, and separating them is the whole change.
+So the modules are build outputs now, the lane that ships one builds it, and `wasm_build.sh --check` builds twice and refuses a difference - the same check as `gen.sh --check`, asking the stronger question the freshness gate could not: is the artifact a function of this tree at all.
+The generalizable part is not "pin your compiler". It is that **"the bytes are not reproducible" is a claim worth measuring before you design around it**, because the gates you build to work around it cost more than the pin does.
+One detail is worth carrying, because it is the part that does not pin cleanly: the **compressor** is not reproducible even when the compiler is.
+`gzip -9 -n` over one identical module gave three different sizes across Apple gzip, GNU gzip and two versions of node's zlib, spanning 576 bytes - against a size budget that had 28 bytes of headroom.
+A budget whose noise is twenty times its margin is not a budget, so the gate moved onto the raw artifact, which is stable, and the compressed size became a **tracked metric** diffed head-versus-base on every pull request rather than a boolean.
+Gate the quantity that is stable; track the quantity the user actually experiences.
+
 ### The C-first insight: the parity tax mostly evaporates
 
 If the kernel comes *first*, there is no host oracle to match - **the kernel is the spec**.
@@ -430,6 +443,10 @@ A convention in a README is a gate with a human in the loop.
 A generated wasm fixture was excluded from its own freshness diff because two machines' compilers write different bytes, and it silently rotted inside a single phase - every data address in it had shifted.
 The exclusion was the bug.
 Either compare the artifact or build it on demand; do not commit a thing whose staleness nothing can detect.
+The three shipped wasm modules proved the rule twice over before they moved.
+They were committed, and the gate written to watch them could not compare bytes, so it compared the ORDER two files were committed in - a question any edit to the artifact satisfies.
+It reported one of them stale for weeks while that module served one of two seats the opposite endgame verdict, and it still reported two of them "BEHIND" on the day it was deleted; rebuilding showed the actual drift was **one raw byte**, which is not something review finds.
+The lesson is sharper than "keep artifacts fresh": a gate that cannot ask the real question will keep answering a cheaper one, and the cheaper answer reads like coverage.
 
 ### The C-server unlock: in-memory authoritative state
 
@@ -526,7 +543,7 @@ Moving this much logic into the kernel grew the shipped kernel and shrank the sh
 | the two deleted role-specific modules | 18,549 B | 0 | 0 |
 | web bundle, first-load union, gzipped | 330,504 B | 304,551 B | 312,530 B |
 
-The kernel is the committed `sdk/ts/wasm/bots.wasm.gz`; the bundle is `scripts/measure_web_bundle.mjs`.
+The kernel is `sdk/ts/wasm/bots.wasm.gz` (a build output, see above); the bundle is `scripts/measure_web_bundle.mjs`.
 The kernel grew about 24 percent and the shipped web bundle fell about 5 percent, so total shipped bytes still fell, but the margin is narrower than the one this document originally recorded and it has been moving the wrong way.
 
 Two things about that third column are worth more than the numbers in it.

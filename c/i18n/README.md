@@ -70,7 +70,8 @@ Most languages spell those three differently, so they are three keys, and a tuto
 ## Nothing here ships
 
 `c/i18n` is outside `c/src` and appears in no `*_SRC` list in `c/Makefile`, on purpose.
-Twenty-five languages is around 150 KB of string data, and `sdk/ts/wasm/bots.wasm.gz` is downloaded by every visitor to the site against an 80 KiB cap with a few hundred bytes of headroom (`e2e/mem/wasm_memory.test.ts`).
+Twenty-five languages is around 150 KB of string data, and `sdk/ts/wasm/bots.wasm.gz` is downloaded by every visitor to the site against a budget with a few hundred bytes of headroom.
+That budget is pinned on the module's RAW size rather than its gzip size, because the compressor alone moves the gzip number by up to 576 B on identical input - `e2e/mem/wasm_memory.test.ts` has the measurements, and `metrics.yml` tracks the download size head-vs-base on every pull request.
 
 That is a property of a build script, and a build script is a thing somebody edits, so the gate checks the artifact instead:
 `e2e/validation/i18n_source_of_truth.test.ts` decompresses the shipped module and looks for the strings.

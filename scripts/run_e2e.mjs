@@ -45,9 +45,10 @@
  * starts each lane's files in it. It is a HINT and nothing else: a file missing
  * from it runs first (pessimistic - an unmeasured file may be the next 80s one),
  * a file in it that no longer exists is ignored, and a stale order costs
- * makespan and can never cost correctness. That is the same bargain as
- * sdk/ts/wasm/WASM_STAMP: a measured fact written down by the tool that measured
- * it, never by hand. The key is CPU time, not elapsed - see
+ * makespan and can never cost correctness. It is a measured fact written down by
+ * the tool that measured it, never by hand - the same bargain
+ * sdk/ts/wasm/WASM_STAMP used to make before the shipped modules stopped being
+ * committed and it was deleted with them. The key is CPU time, not elapsed - see
  * scripts/e2e_order_probe.mjs for why.
  *
  * The width moves 4 -> 5 with it, and stops there. Wider was tried properly,
