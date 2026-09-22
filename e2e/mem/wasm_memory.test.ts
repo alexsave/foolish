@@ -74,7 +74,7 @@ if (!process.env.E2E_VERBOSE) { console.log = () => {}; console.warn = () => {};
 // pull request, which is a better instrument for a few hundred bytes than a
 // boolean ever was. Each gz ceiling here is deliberately wide of its measured
 // value: it catches a base64 embed coming back or a blowup, not a drift.
-const BOTS_RAW_MAX = 192_000;       // 191,490 B today: 510 B of room
+const BOTS_RAW_MAX = 192_000;       // 191,915 B today: 85 B of room
 const BOTS_GZ_MAX = 84 * 1024;      // 82,043 B shipped today; clears the worst
                                     // compressor above (82,468) by 3,548 B
 // The BROWSER's link, and the one the download budget is about. Pinned at the
