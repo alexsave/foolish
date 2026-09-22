@@ -7,7 +7,7 @@ import { useTutorialHint } from "../../contexts/TutorialHintContext";
 import { useAnimation } from "../../contexts/AnimationContext";
 // The flight's own timing curve: the card coming down and the card turning out
 // from under it are one movement, so they are written with one curve.
-import { EASE } from "./FlightCard";
+import { EASE, FLIGHT_ARM_MS } from "./FlightCard";
 import { covered, sameCard, type ViewCard } from "../../state/view";
 import { MOVE_ATTACK, MOVE_COVER, MOVE_PASS } from "@sdk/ts/gen/view_layout.bots.ts";
 import type { ClientPlay } from "@sdk/ts/table/client_table.ts";
@@ -135,10 +135,21 @@ export const TableBattles = () => {
                     : 'translateX(-50%)', // Just center if not covered
                 transformOrigin: 'center bottom', // Rotate around bottom center of card
                 // The cover's own flight, exactly: the kernel's duration for the
-                // step on screen and the flight's own curve, so the two cards
-                // turn at the same speed. 0ms when nothing is flying, which is
-                // the only time this tilt changes without a card causing it.
-                transition: `transform ${flightMs}ms ${EASE}`,
+                // step on screen, the flight's own curve, and the same beat the
+                // flight waits before it is armed (FLIGHT_ARM_MS - the overlay
+                // paints the card where it stands for one frame first), so the
+                // two cards turn at the same speed AND start together. 0ms when
+                // nothing is flying, which is the only time this tilt changes
+                // without a card causing it.
+                //
+                // Written out rather than left to CardFace's generic
+                // `transform 0.2s ease-in-out, opacity 0.2s, box-shadow 0.2s`,
+                // which is a hover/selection transition the tilt was only
+                // riding. The selection's box-shadow keeps its own; opacity is
+                // deliberately not here, because the veil must SNAP - a table
+                // card fading out beside its own flying ghost reads as the card
+                // dissolving (the same rule iMessage's FBattleGrid states).
+                transition: `transform ${flightMs}ms ${EASE} ${flightMs > 0 ? FLIGHT_ARM_MS : 0}ms, box-shadow 0.2s ease-in-out`,
                 zIndex: isCovered ? 1 : 2, // Attack goes behind when covered
             };
 

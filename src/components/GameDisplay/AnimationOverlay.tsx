@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useState, useRef } from 'react';
 import { useAnimation } from '../../contexts/AnimationContext';
 import { covered, sameCard, seatKey, type ViewCard as Card } from '../../state/view';
-import { FlightCard, type AnimatedCard } from './FlightCard';
+import { FlightCard, FLIGHT_ARM_MS, type AnimatedCard } from './FlightCard';
 import { useServer } from '../../contexts/ServerContext';
 // The kernel's can_cover: bots.wasm is loaded before any screen that reaches this
 // renders - /, /[game_id], /dashboard, /history and /tutorial are each wrapped in
@@ -594,7 +594,7 @@ export const AnimationOverlay = () => {
             setAnimatedCards(prev => prev.map(animatedCard => (animatedCard.flight === flight
                 ? { ...animatedCard, progress: 1 } // This triggers the CSS transition
                 : animatedCard)));
-        }, 25);
+        }, FLIGHT_ARM_MS);
         return () => clearTimeout(begin);
 
         // eslint-disable-next-line react-hooks/exhaustive-deps
