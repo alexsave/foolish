@@ -109,10 +109,10 @@ export const AnimationOverlay = () => {
     const { currentAnimation, isAnimating, flightMs, heldPiles } = useAnimation();
     const { view: game } = useServer();
     // THE ROW THE GRID IS ACTUALLY DRAWING. The board's, minus any pile this
-    // run is still carrying (TableBattles, and src/state/animPlan.ts heldRow).
-    // Everything in this file that counts slots,
-    // picks a pile or asks how a card is lying has to ask the row on screen -
-    // aiming at a cell the grid is not drawing is aiming at nothing.
+    // run is still carrying (TableBattles, and src/state/animPlan.ts heldPiles).
+    // Everything in this file that counts slots, picks a pile or asks how a card
+    // is lying has to ask the row on SCREEN - aiming at a cell the grid is not
+    // drawing is aiming at nothing.
     const shownBattles = shownRow(game?.battles ?? EMPTY_ROW, heldPiles);
     const overlayRef = useRef<HTMLDivElement>(null);
 

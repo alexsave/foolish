@@ -49,10 +49,9 @@ export const rowOf = (view: TableView): number[] => {
     return row;
 };
 
-/** The same row, cell for cell. `null` is "no row of my own", so two nulls are
- *  the same answer and a row is never equal to one. */
-export const sameRow = (a: readonly ViewBattle[] | null, b: readonly ViewBattle[] | null): boolean =>
-    a === b || (!!a && !!b && a.length === b.length
+/** The same row, cell for cell. */
+const sameRow = (a: readonly ViewBattle[], b: readonly ViewBattle[]): boolean =>
+    a === b || (a.length === b.length
         && a.every((x, i) => sameCard(x.attack, b[i].attack) && sameCard(x.defense, b[i].defense)));
 
 /** No pile is being held back - the answer for every frame with nothing in the

@@ -131,7 +131,9 @@ export const TableBattles = () => {
     // zones a drag is holding open beside them. The effect is inert on every
     // other render - a drag publishes a cursor position on every pointer move,
     // and a forced reflow per pointer move is not free.
-    const layoutKey = battles.map(cellKey).join('|') + '#' + emptyDropZones;
+    const rowKey = battles.map(cellKey).join('|');
+    const layoutKey = rowKey + '#' + emptyDropZones;
+    const rowKeyRef = useRef<string | null>(null);
 
     useLayoutEffect(() => {
         const cells = cellsRef.current;
@@ -172,6 +174,12 @@ export const TableBattles = () => {
             el.style.transform = `translate(${dx}px, ${dy}px)`;
             moved.push(el);
         }
+        // THE PLAN'S DURATION IS FOR A LANDING, and only for a landing. The
+        // other thing that moves these cells is a drag holding drop zones open
+        // beside them, which is a gesture preview and not a card arriving: the
+        // row makes room for it at once, exactly as it always has.
+        const wasRow = rowKeyRef.current;
+        rowKeyRef.current = rowKey;
         if (moved.length === 0) return;
 
         // One forced reflow, so the pinned place is the style the transition
@@ -179,13 +187,13 @@ export const TableBattles = () => {
         // (intentional unused read).
         // eslint-disable-next-line @typescript-eslint/no-unused-expressions
         moved[0].offsetHeight;
-        const ms = rowMsRef.current;
+        const ms = wasRow === rowKey ? 0 : rowMsRef.current;
         for (const el of moved) {
             el.style.transition = `transform ${ms}ms ${EASE}`;
             el.style.transform = '';
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [layoutKey]);
+    }, [layoutKey, rowKey]);
 
     // Handle case where game is not loaded yet
     if (!game) {

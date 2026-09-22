@@ -89,8 +89,8 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
     // with cannot be that one. It is the duration of the step whose landing
     // moved the row, which is the same treatment iMessage's ShownLedger states:
     // the row is "advanced one step per landing flight, WITH THE PLAN'S OWN
-    // DURATION ON IT". 0 until a run's first landing, so arming the freeze and
-    // seeking are both instant, which is what they are.
+    // DURATION ON IT". 0 until a run's first landing and after a seek, because
+    // neither of those is a card arriving.
     const rowMsRef = useRef(0);
     const frameHandleRef = useRef<number | null>(null);
     // The merged step a multi-step beat draws as, held so the page is handed
@@ -208,10 +208,11 @@ export function useAnimationRun<S extends RunStep>(hooks: AnimationRunHooks<S>) 
             beatRef.current = null;
             setCurrentAnimation(null);
             setFlightMs(0);
-            // `rowMs` is NOT cleared here. The last landing moves the row in
-            // this very frame, and it is entitled to the same glide every
-            // earlier one had; the next run zeroes it when it starts.
             setHeld(NO_HELD);
+            // `rowMs` is NOT cleared here, and that is deliberate: the run's
+            // last landing moves the row in this very frame and is entitled to
+            // the same glide every earlier one had. The next run zeroes it as
+            // it starts, and a seek's `reset` zeroes it outright.
             setIsAnimating(false);
             setInFlightFromDeck(0);
             setInFlightToFlipped(0);
