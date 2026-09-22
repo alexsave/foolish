@@ -293,8 +293,12 @@ test('a cover run is merged only when its pairs were one send', async () => {
     }
 
     // Same code, but every adjacent pair declared same-send: now they merge.
-    const nTimed = frames.filter((f) => [REPLAY_STEP.ATTACK, REPLAY_STEP.COVER,
-        REPLAY_STEP.PASS, REPLAY_STEP.PICKUP].includes(f.kind)).length;
+    // `number[]`, not the literal union an inline array infers: REPLAY_STEP's
+    // members are `as const`, so [ATTACK, COVER, PASS, PICKUP] types as
+    // (2|3|4|5)[] and .includes refuses a plain `kind`. tsc catches it, the
+    // test runner does not, and `npm run typecheck` is a CI lane of its own.
+    const TIMED: number[] = [REPLAY_STEP.ATTACK, REPLAY_STEP.COVER, REPLAY_STEP.PASS, REPLAY_STEP.PICKUP];
+    const nTimed = frames.filter((f) => TIMED.includes(f.kind)).length;
     const together = buildReplayFrames(code, 'g', null, { moveGaps: new Array(nTimed).fill(0) });
     const merged = together.filter((f) => f.kind === REPLAY_STEP.COVER && (f.pairs?.length ?? 0) > 1);
     assert.ok(runs.length === 0 || merged.length > 0,
