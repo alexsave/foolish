@@ -1,10 +1,10 @@
 import { useServer } from "../../contexts/ServerContext";
-import { rulesOf, seatKey, type TableView, type ViewSeat } from "../../state/view";
+import { PLAYER_STATUS, rulesOf, seatKey, type TableView, type ViewSeat } from "../../state/view";
 import { useFernFractal } from "../../utils/fernFractal";
 import { useStyles } from "../../contexts/StyleContext";
 import { useLocalization } from "../../contexts/LocalizationContext";
 import { useState, useEffect, useRef } from "react";
-import { SovietIcon } from "../SovietIcon";
+import { RoleMarkSize, RoleMarkView, type RoleMarkKind } from "../RoleMark";
 import { SovietCardBack } from "./SovietCardBack";
 import { botDisplayName } from "../../common/botName";
 
@@ -88,15 +88,44 @@ const CardsVisual = ({ player, handKey, selfHandLength, isSelf }: { player: View
     );
 };
 
+/** THE ONE MARK a seat wears, from the kernel's answers about it. Never two: a
+ *  defender's Good is rejected by the kernel (game.c handle_good), and the
+ *  first-attacker badge is only marked on an empty table, where nobody has said
+ *  Good yet - so the three are already disjoint and this ranks nothing the engine
+ *  can actually produce at once. It is the same function as FoolishKit's
+ *  `RoleMarkKind.worn` (ios/FoolishKit/Boards/FRoleMotion.swift), which is a host
+ *  function there too, and for the same reason: one place, so a seat's mark
+ *  cannot be ranked one way here and another way on a second surface.
+ *
+ *  WHAT IS MISSING, and it needs the kernel: a THROW-IN attacker's plain sword.
+ *  `first_attacker_badge` answers "who leads the NEXT bout" and goes to -1 the
+ *  moment the table opens, so mid-bout this draws no sword at all, while the
+ *  iMessage board gives every eligible attacker one and tints only the opener's.
+ *  The rule is the kernel's `turn_may_act` (c/src/game.h) and it is not reachable
+ *  from a board: it wants a per-seat mark on ViewRules. Deriving it here instead
+ *  would be a TypeScript copy of a C rule, so it is not derived here. */
+const markOf = (game: TableView, seat: number, player: ViewSeat): RoleMarkKind | null => {
+    if (player.status === PLAYER_STATUS.OUT) return null;
+    const rules = rulesOf(game);
+    if ((game.goodMask >> seat) & 1) return 'check';
+    if (rules.defenderBadge === seat) return 'shield';
+    if (rules.firstAttackerBadge === seat) return 'leadSword';
+    return null;
+};
+
 export const PlayerRing = () => {
     const { t } = useLocalization();
     const game = useServer().view as TableView;
     const { chatMessages } = useServer();
     const styles = useStyles();
     const self_index = game.mySeat;
-    // The sword's seat is the kernel's (client_view_rules): the next bout's lead,
-    // on an empty table, once the deal has turned the trump.
-    const swordSeat = rulesOf(game).firstAttackerBadge;
+    // The marks a seat can wear, named the way FoolishKit names them.
+    const markLabel: Record<RoleMarkKind, string> = {
+        shield: t('ios.a11y.defending'),
+        sword: t('ios.a11y.attacking'),
+        leadSword: t('ios.a11y.attackfirst'),
+        check: t('ios.a11y.saidgood'),
+    };
 
     const [chatBubbles, setChatBubbles] = useState<{ [playerId: string]: { message: string; timestamp: number } }>({});
     const lastMessageIdRef = useRef<number | null>(null);
@@ -146,6 +175,7 @@ export const PlayerRing = () => {
                 const y = ((Math.cos(radians) * 35) + 50) + '%';
                 const key = seatKey(game, index);
                 const bubble = chatBubbles[key];
+                const mark = markOf(game, index, player);
 
                 return (
                     <div key={key} style={{
@@ -159,25 +189,27 @@ export const PlayerRing = () => {
                         height: '80px',
                         transform: 'translate(-50%, -50%)'
                     }}>
-                        {/* TODO(ios-parity): iMessage board shifts the defender shield
-                            the moment a pass is staged (before defender_move lands) —
-                            that immediacy feels good; consider mirroring. (This ring
-                            only draws the first-attacker sword above; the web
-                            defender shield itself is the kernel's defender badge in
-                            DefenderShield.tsx, rendered as a sibling in GameBoard.) */}
-                        {index === swordSeat ? (
-                            <div style={{
-                                fontSize: '16px',
-                                height: '20px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center'
-                            }}>
-                                <SovietIcon name="sword" size={16} />
-                            </div>
-                        ) : (
-                            <div style={{ height: '20px' }} />
-                        )}
+                        {/* THE SEAT'S ROLE ROW (FSeatBadge.roleRow): a CONSTANT box,
+                            always present whether or not this seat wears a mark, so
+                            the name and the mini hand below it have nothing to
+                            re-lay-out when a mark arrives or leaves. Tall enough for
+                            the largest glyph in the family, or it clips the sword's
+                            corners (RoleMarkSize.rowHeight).
+
+                            TODO(ios-parity): iMessage board shifts the defender shield
+                            the moment a pass is staged (before defender_move lands) -
+                            that immediacy feels good; consider mirroring. And the
+                            marks do not MOVE here yet: on iMessage a mark turns like a
+                            coin when it changes and FLIES to the seat that takes it
+                            over (ios/FoolishKit/Boards/FRoleMotion.swift). */}
+                        <div style={{
+                            height: `${RoleMarkSize.rowHeight}px`,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                        }}>
+                            {mark && <RoleMarkView kind={mark} label={markLabel[mark]} />}
+                        </div>
 
                         <div style={{
                             margin: 0,

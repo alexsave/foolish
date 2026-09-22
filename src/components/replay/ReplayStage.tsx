@@ -66,7 +66,7 @@ const btn = (label: React.ReactNode, onClick: () => void, title?: string, active
 
 // The board lives in its own positioned region inset from the transport
 // controls (in the bottom-right corner) and the top status bar:
-// PlayerRing/DefenderShield/RevealedHands use percentage positions, which
+// PlayerRing/RevealedHands use percentage positions, which
 // resolve against the inset wrapper, so no seat is buried under a control.
 const boardInset: React.CSSProperties = {
     position: 'absolute',
