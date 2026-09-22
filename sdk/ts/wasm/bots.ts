@@ -8,7 +8,7 @@
 // roster, the replay codec and its extras and links, the iMessage envelope, the
 // one-tap cover resolver and the animation rules. Loaded lazily and cached.
 
-import { loadWasmGz, loadWasmGzAsync } from './wasm_asset.ts';
+import { kernelModule, loadWasmGz, loadWasmGzAsync } from './wasm_asset.ts';
 import { LAYOUT_HASH as BOTS_LAYOUT_HASH } from '../gen/layout_hash.bots.ts';
 import { assertLayoutHash } from './layout_hash.ts';
 import { memOf as viewMemOf, readTableView, readReplaySummary, readReplayError, readReplayFrameIndex, TableView_Snap, ReplaySummary_Snap, ReplayError_Snap } from '../gen/view_layout.bots.ts';
@@ -285,17 +285,16 @@ export function __botsWasmBytes(): number {
 export function __ensureBots(): void { bots(); }
 
 /**
- * Prepare bots.wasm where it cannot be read synchronously — i.e. the browser,
+ * Prepare the kernel where it cannot be read synchronously — i.e. the browser,
  * which has no filesystem and must FETCH the .gz. Await this once before any
  * bots() call; on the server it is a no-op fast path (fs is synchronous).
  *
- * The browser needs the big module for two independent reasons, and both landed
- * the same day:
- *   * FMSG - the iMessage envelope - seals from a resident session log, and /m/
- *     is a web page; and
- *   * A5 - replaying a shared code rebuilds the game and plays it through the
- *     real engine (replay_steps.c).
- * One module behind every host is the steer (A10). This is the web's way in.
+ * WHICH module: kernelModule() answers, and in the browser the answer is
+ * web.wasm — the same objects as bots.wasm under a smaller export allow-list,
+ * so the browser gets the client slot, the animation plan, the replay reader
+ * and the FMSG decode it calls, and none of the C Table or the Monte-Carlo
+ * brains it does not. One source, one layout hash, two links (c/Makefile,
+ * WASM_WEB_NAMES; the reach set is pinned by e2e/wasm_web_link.test.ts).
  *
  * Deliberately a fetched ASSET rather than a base64 twin of the same bytes: a
  * second carrier of one kernel goes stale while the other is rebuilt, and 80 KB
@@ -304,7 +303,7 @@ export function __ensureBots(): void { bots(); }
  */
 export async function ensureBotsAsync(): Promise<void> {
     if (exportsCache) return;
-    await loadWasmGzAsync('bots');   // caches the inflated bytes for bots()
+    await loadWasmGzAsync(kernelModule());   // caches the inflated bytes for bots()
     bots();
 }
 
@@ -315,10 +314,15 @@ export function __clientKernelExports(): WebAssembly.Exports {
 
 function bots(): BotsExports {
     if (exportsCache) return exportsCache;
-    const module = new WebAssembly.Module(loadWasmGz('bots') as BufferSource);
+    const name = kernelModule();
+    const module = new WebAssembly.Module(loadWasmGz(name) as BufferSource);
     const instance = new WebAssembly.Instance(module, {});
     const ex = instance.exports as unknown as BotsExports;
-    assertLayoutHash('bots.wasm', ex, BOTS_LAYOUT_HASH, 'sdk/ts/gen/layout_hash.bots.ts');
+    // ONE hash for both links, because they are one compile: the constant is
+    // generated from the bots build's flags and web.wasm is those same objects.
+    // A mismatch here means the two came from different trees, which is the one
+    // way a per-call-site link could ever become a second kernel.
+    assertLayoutHash(`${name}.wasm`, ex, BOTS_LAYOUT_HASH, 'sdk/ts/gen/layout_hash.bots.ts');
     ex.wasm_init();
     // THE TRANSPORT, said once (anim_plan.h). Every host that reaches the
     // kernel through this module is the server shape: a card's confirmation is
