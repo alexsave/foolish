@@ -5,7 +5,7 @@ product's map now: both hosts render it, from one table.*
 
 > **UPDATED (2026-07-16, owner): the shipped ladder is 7 WORLD cities, not the
 > 10 Russia cities below.** Exactly 7 difficulty tiers, weakest → strongest:
-> **Miami (random) · Brighton Beach (handwritten) · Seoul (robusta) · Madrid
+> **Miami (random) · New York (handwritten) · Seoul (robusta) · Madrid
 > (firecracker) · Vienna (blackpowder) · St. Petersburg (cordite) · Moscow
 > (octogen)** — an international "road to Moscow" instead of the all-Russia
 > list. The 3 intermediate strategies (simple_heuristic, espresso, gunpowder)
@@ -16,21 +16,26 @@ product's map now: both hosts render it, from one table.*
 > city list shrank and went international. The full Russia table stays here as
 > reference / for any future re-expansion.
 
-> **UPDATED (2026-09-22, owner): THE WEBSITE RENDERS THIS MAP TOO, and the
-> ladder is seven rungs on both hosts.** Three things changed with it.
+> **UPDATED (2026-09-22, owner): THE WEBSITE RENDERS THIS MAP TOO.** The seven
+> cities above are unchanged and now govern both hosts. What changed with them:
 > **(a)** The keys lost their `ios.` prefix — they are `bot.<strategy key>` in
 > `c/i18n`, because a key the website reads is not an iOS key. `BotNames.swift`
-> and `src/common/botName.ts` both look up the same eleven.
-> **(b) handwritten took Brighton Beach**, the diaspora name for the rung New
-> York held (~7,520 km, still strictly between Miami and Seoul). Which freed the
-> ladder from needing an eighth city, and therefore:
-> **(c) `simple_heuristic` is off the website.** It was the one seeded family
-> with no city, and a seat reading "Simple Heuristic 2" between Miami and Madrid
-> is the thing this map exists to prevent. It keeps its brain, its tier and its
-> offline flag; `seeded` is 0 in `c/src/bot_roster.c`, its rows are gone from
-> `seed.sql`, and migration `20260922120000_unseed_simple_heuristic_bots` took
-> them off hosted. The shipped `bots.wasm` still LINKS the brain on purpose, so
-> games already holding such a seat finish playing.
+> and `src/common/botName.ts` both look up the same ten.
+> **(b) The site's seeded roster is the ladder, and nothing else.**
+> `simple_heuristic` is off it: it was the one seeded family with no city, and a
+> seat reading "Simple Heuristic 2" between Miami and Madrid is the thing this
+> map exists to prevent. It keeps its brain, its tier and its offline flag;
+> `seeded` is 0 in `c/src/bot_roster.c`. `%0x00C0FFEE` is off it too — it
+> predates the ladder and is the one seeded nickname that is not a rung's name,
+> so among cities it reads as a bug rather than as a joke. The parser still
+> passes a leading `0x…` through verbatim for old replay blobs.
+> **(c) Seven rows per family**, because eight seats is a human plus seven
+> opponents and a full table of one rung was impossible below that. The site
+> seats six of the seven rungs, seven deep: Miami, New York, Madrid, Vienna,
+> St. Petersburg, Moscow. Seoul (`robusta`) stays offline-only.
+> Migration `20260922120000_city_ladder_bot_rows` takes hosted there. The shipped
+> `bots.wasm` still LINKS simple_heuristic on purpose, so a game already holding
+> such a seat finishes playing.
 > The gate is `e2e/validation/bot_city_names_validation.test.ts`: every seeded
 > key must have a `bot.<key>` string in all 25 languages, and no seeded nickname
 > may render as an explosive in any of them.
@@ -66,14 +71,13 @@ table in `c/ios/ios_api.c:37-48` exposes `random … octogen`, which is
 wider than the website's *seeded* roster; see §2).
 
 **Read it as the original all-Russia scheme, not as what ships.** The shipped
-ladder is the seven cities in the notes at the top of this file, and two rows
-below differ from it: **Brighton Beach belongs to `handwritten`** now (it took
-the NYC rung on 2026-09-22, which is what let the ladder stay at seven), and
-`simple_heuristic` has no city and is therefore not seeded. The Russia table's
-own distances do not compose with the international ones either — Khabarovsk
-(6,140 km) would sit inside Seoul (6,600) and Samara (860) inside Vienna
-(1,660) — so a future re-expansion picks distances again rather than lifting
-these.
+ladder is the seven cities in the notes at the top of this file. Three rows
+below are not in it at all — `simple_heuristic`, `espresso` and `gunpowder` —
+and their cities are unused: the ladder has seven rungs, and the website seeds
+only rungs that have one. The Russia table's distances do not compose with the
+international ones either — Khabarovsk (6,140 km) would sit inside Seoul
+(6,600) and Samara (860) inside Vienna (1,660) — so a future re-expansion picks
+distances again rather than lifting these.
 
 | # | Strategy key | en | ru | ko | ~km | Why this city |
 |---|---|---|---|---|---|---|
@@ -99,8 +103,8 @@ budget was *weaker* than plain cordite at 6-8 players — see
 reason the base table keeps Espresso/Robusta/Gunpowder. Instance numbers carry
 over verbatim:
 `%Octogen 2` → **⚙ Moscow 2** (ko: **⚙ 모스크바 2**). The easter egg
-`%0x00C0FFEE` renders unchanged everywhere — hex is culture-neutral and
-beloved.
+`%0x00C0FFEE` renders unchanged everywhere — hex is culture-neutral, and while
+the row itself left the site on 2026-09-22, replay blobs still carry the name.
 
 Notes on the picks (verified research, §6–§7):
 
@@ -132,7 +136,7 @@ are in play — the mapping must serve both:
 | Source | Shape | Roster |
 |---|---|---|
 | Offline picker / offline seats | strategy key from `EngineC.roster()` (`fio_strategy_name`) | all 10 rungs above |
-| Online nicknames (DB rows) | raw string `"% <Base> [Max] <n>"` in `players[].name` — there is NO strategy enum on the wire (`sdk/ts/wire/view.ts:29-30`; `strategy_key` is server-only) | the *seeded* subset = the C roster's `seeded` column (`c/src/bot_roster.c`): Random ×7, Handwritten ×4 (incl. `0x00C0FFEE`), Firecracker ×3, Blackpowder ×3, Cordite ×3, Octogen ×3 (`server/impls/supabase/seed.sql`). Simple Heuristic ×3 was here until 2026-09-22, when the rung lost its city and therefore the site. The `[Max]` slot no longer occurs on live rows — only in old replay blobs. |
+| Online nicknames (DB rows) | raw string `"% <Base> [Max] <n>"` in `players[].name` — there is NO strategy enum on the wire (`sdk/ts/wire/view.ts:29-30`; `strategy_key` is server-only) | the *seeded* subset = the C roster's `seeded` column (`c/src/bot_roster.c`): Random, Handwritten, Firecracker, Blackpowder, Cordite and Octogen, **×7 each** (`server/impls/supabase/seed.sql`) — seven so that one human plus seven of one rung fills an eight-seat table. Simple Heuristic ×3 and `0x00C0FFEE` were here until 2026-09-22. The `[Max]` slot no longer occurs on live rows — only in old replay blobs. |
 | Replay blobs / history | names embedded at encode time | anything ever seeded — **including dropped families** (`Espresso` rows existed before migration `20260711130000_drop_non_wasm_bots`), so the nickname parser keeps Espresso/Robusta/Gunpowder in its base table for historical replays |
 
 **Rule: strategy-derived bot names are treated as KEYS and localized at

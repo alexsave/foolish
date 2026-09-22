@@ -40,7 +40,7 @@ public enum BotNames {
     /// gunpowder) are not surfaced. Values are strategy keys (EngineC.roster()).
     public static let ladder: [String] = [
         "random",       // Miami
-        "handwritten",  // Brighton Beach
+        "handwritten",  // New York
         "robusta",      // Seoul
         "firecracker",  // Madrid
         "blackpowder",  // Vienna
@@ -51,7 +51,7 @@ public enum BotNames {
     /// Air distance to the Kremlin per rung. Drives the picker flavor line;
     /// strictly monotonic so it doubles as the strength order.
     private static let km: [String: Int] = [
-        "random": 9_600, "handwritten": 7_520, "robusta": 6_600,
+        "random": 9_600, "handwritten": 7_500, "robusta": 6_600,
         "firecracker": 3_440, "blackpowder": 1_660, "cordite": 635, "octogen": 0,
     ]
 

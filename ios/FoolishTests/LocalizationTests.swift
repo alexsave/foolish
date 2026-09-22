@@ -287,7 +287,7 @@ final class LocalizationTests: XCTestCase {
     }
 
     /// Proper nouns and words that are genuinely identical in another language.
-    /// Bot names are cities: Vietnamese writes Miami, Brighton Beach, Seoul, Madrid
+    /// Bot names are cities: Vietnamese writes Miami, New York, Seoul, Madrid
     /// and Vienna exactly as English does, and "Max" is a name in every language
     /// here.
     private static let mayMatchEnglish: Set<String> = [

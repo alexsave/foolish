@@ -54,18 +54,24 @@ function seededKeys(): string[] {
     return out;
 }
 
-/** The nicknames seed.sql actually inserts, as the site stores them. */
-function seededNicknames(): string[] {
+/** The rows seed.sql actually inserts: stored nickname and strategy key. */
+function seededRows(): { nickname: string; key: string }[] {
     // Strip `--` comments first: the prose between the rows carries semicolons
     // and apostrophes, either of which ends the statement early and silently.
     const src = read('server/impls/supabase/seed.sql').replace(/--[^\n]*/g, '');
     const at = src.indexOf('INSERT INTO bots');
     const stmt = src.slice(at, src.indexOf(';', at));
-    const out: string[] = [];
-    for (const m of stmt.matchAll(/\(\s*'([^']*)'\s*,\s*'[^']+'\s*\)/g)) out.push(`%${m[1]}`);
-    assert.ok(out.length >= 10, `parsed only ${out.length} seeded nicknames - parser drifted?`);
+    const out: { nickname: string; key: string }[] = [];
+    for (const m of stmt.matchAll(/\(\s*'([^']*)'\s*,\s*'([^']+)'\s*\)/g)) {
+        out.push({ nickname: `%${m[1]}`, key: m[2] });
+    }
+    assert.ok(out.length >= 10, `parsed only ${out.length} seeded rows - parser drifted?`);
     return out;
 }
+
+// A table is eight seats, so filling one with a single rung takes a human and
+// seven copies of that bot. Fewer rows and the lobby runs out mid-fill.
+const SEATS_TO_FILL = 7;
 
 // The word list is the point of the exercise, so it is spelled out rather than
 // derived from the roster: a rung renamed in C must not quietly stop being
@@ -92,8 +98,17 @@ test('every seeded bot has a city, in every language', async () => {
         + '(`seeded` 0 in c/src/bot_roster.c and no rows in seed.sql).');
 });
 
+test('every seeded family can fill a table on its own', () => {
+    const count = new Map<string, number>();
+    for (const r of seededRows()) count.set(r.key, (count.get(r.key) ?? 0) + 1);
+    const short = [...count].filter(([, n]) => n < SEATS_TO_FILL).map(([k, n]) => `${k}: ${n}`);
+    assert.deepEqual(short, [], 'these seeded bots cannot fill an eight-seat table on their own '
+        + `(a human plus ${SEATS_TO_FILL}), so the lobby runs out of them mid-fill:\n  `
+        + `${short.join('\n  ')}\n`);
+});
+
 test('no seeded nickname renders as an explosive, in any language', async () => {
-    const stored = seededNicknames();
+    const stored = seededRows().map((r) => r.nickname);
     const leaks: string[] = [];
     for (const code of await languages()) {
         const t = await table(code);
@@ -119,6 +134,7 @@ test('the display map keeps the tail of a stored name, and leaves a human alone'
     assert.equal(botDisplayName('%Octogen 2', tr), 'Moscow 2');
     assert.equal(botDisplayName('%Cordite Max 1', tr), 'St. Petersburg Max 1');
     assert.equal(botDisplayName('%Semtex 3', tr), 'Moscow 3', 'the retired family renders as its successor\'s city');
+    // The hex bot left the site in September; old replay blobs still carry it.
     assert.equal(botDisplayName('%0x00C0FFEE', tr), '0x00C0FFEE');
     assert.equal(botDisplayName('Anna', tr), 'Anna');
     assert.equal(botDisplayName('%Espresso 1', tr), 'Espresso 1', 'an offline-only rung has no city and is not seeded');

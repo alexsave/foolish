@@ -31,8 +31,9 @@ export const isBotName = (name: string): boolean =>
 // THE ROSTER IS NAMED AFTER EXPLOSIVES EVERYWHERE IT IS STORED - the C strategy
 // keys, bots.nickname, the names inside a replay blob, the wire - and renders as
 // a city whose distance to Moscow falls as the bot gets stronger. Seven rungs:
-// Miami, Brighton Beach, Seoul, Madrid, Vienna, St. Petersburg, Moscow. The site
-// seats six of them - Seoul (robusta) is an offline-only rung and is not seeded.
+// Miami, New York, Seoul, Madrid, Vienna, St. Petersburg, Moscow. The site seats
+// six of them, seven bots deep each - Seoul (robusta) is an offline-only rung
+// and is not seeded, so a full eight-seat table is you plus seven of one city.
 //
 // The cities are NOT in this file. They are `bot.<strategy key>` in c/i18n, the
 // same twenty-five-language table the phone app reads (ios/FoolishApp/PhoneOnly/
@@ -66,8 +67,9 @@ const RETIRED: Record<string, string> = { semtex: 'octogen' };
  *
  *  The stored form is `% <Base> [Max] [<n>]`, and the tail survives the rename:
  *  `% Octogen 2` -> `Moscow 2`, `% Cordite Max 1` -> `St. Petersburg Max 1`
- *  (the Max tiers are retired but still sit in old replay blobs). `% 0x00C0FFEE`
- *  is left verbatim - hex is culture-neutral and beloved. A base with no city in
+ *  (the Max tiers are retired but still sit in old replay blobs). A `% 0x…` name
+ *  is left verbatim: the hex bot is no longer seeded, but old replay blobs carry
+ *  it embedded at encode time. A base with no city in
  *  c/i18n renders as stored: that is every offline-only rung the site cannot
  *  seat, which is why the roster gate in e2e/validation watches the seeded set. */
 export const botDisplayName = (stored: string, t: Translate): string => {
