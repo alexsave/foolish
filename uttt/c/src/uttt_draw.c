@@ -164,6 +164,10 @@ static void big_mark(UtttDL *d, const UtttGame *g, int b, int32_t seed, float t)
             (b / 3) * BL + BL * .08f, BL * .84f, seed * 77 + b, t, &p);
 }
 
+/* The four major grid lines' first (heavier) pass, in hundredths of a ninth
+ * of the pen: the unit the win line's weight is stated in. */
+#define GRID_MAJOR_W 1.7f
+
 static void win_line(UtttDL *d, const UtttGame *g, int32_t seed, float t)
 {
     /* the win line: the only mark that crosses a thick line, in the winner's
@@ -189,7 +193,14 @@ static void win_line(UtttDL *d, const UtttGame *g, int32_t seed, float t)
                 ax -= ex; ay -= ey; zx += ex; zy += ey;
             }
             float len = sqrtf((zx-ax)*(zx-ax) + (zy-ay)*(zy-ay));
-            const float W[2] = { 2.7f, 2.3f };
+            /* TWICE THE MAJOR LINE AND MORE (owner, 2026-09-23: "winning
+             * diagonal needs to be thicker"). It was 2.7 and 2.3, half again
+             * the major lines' 1.7 (UI.html 08), and read as one more line
+             * among the ones it crosses. Now 3x and 2.5x the major pen (measured
+             * on the ribbons: twice the major line's ink width), so
+             * the stroke that ends the game is the heaviest ink on the sheet
+             * by a clear margin - a width only, the same points. */
+            const float W[2] = { GRID_MAJOR_W * 3.0f, GRID_MAJOR_W * 2.5f };
             const float A[2] = { .92f, .74f };
             const int32_t SD[2] = { 313, 977 };
             for (int q = 0; q < 2; q++) {
@@ -236,7 +247,7 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
      * past the edge, which is the right answer: a line that leaves the board
      * should leave the board. */
     hash_in(d, 0, 0, S, o->seed * 7 + 3,
-            base.w / 9.f / 100.f * 1.7f, S * .135f * o->reach, .9f, 3.4f);
+            base.w / 9.f / 100.f * GRID_MAJOR_W, S * .135f * o->reach, .9f, 3.4f);
     hash_in(d, 0, 0, S, o->seed * 19 + 5,
             base.w / 9.f / 100.f * 1.5f, S * .118f * o->reach, .72f, 3.4f);
 

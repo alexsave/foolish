@@ -21,6 +21,31 @@ static int same_rect(const float *a, const float *b)
 static UtttPt PT[400000];
 static UtttPoly PO[60000];
 
+/* A display list's ribbon width: each polygon's area over half its perimeter,
+ * weighted by area, over the polygons at or above the `top` share of the
+ * widest (0: all of them) - the heavy strokes of a sheet. */
+static double ribbon_width(const UtttDL *d, float top)
+{
+    double wmax = 0, sa = 0, sw = 0;
+    for (int pass = 0; pass < 2; pass++)
+        for (int i = 0; i < d->n_poly; i++) {
+            const UtttPoly *p = &d->poly[i];
+            double a = 0, per = 0;
+            for (int k = 0; k < p->n; k++) {
+                const UtttPt *u = &d->pt[p->first + k], *v = &d->pt[p->first + (k + 1) % p->n];
+                a += (double)u->x * v->y - (double)v->x * u->y;
+                per += hypot(v->x - u->x, v->y - u->y);
+            }
+            a = fabs(a) / 2;
+            if (per <= 0) continue;
+            double wd = 2 * a / per;
+            if (pass == 0) { if (wd > wmax) wmax = wd; continue; }
+            if (wd < top * wmax) continue;
+            sa += a; sw += a * wd;
+        }
+    return sa > 0 ? sw / sa : 0;
+}
+
 int main(void)
 {
     UtttGame g; uttt_init(&g);
@@ -162,6 +187,28 @@ int main(void)
         uttt_draw_settle(&d, &w, 7, 1.f, 1.f);
         OK(under + last + d.n_poly == whole && d.n_poly > 0,
            "settle: the cache, the last mark and the settlement are the whole board");
+    }
+
+    /* THE WIN LINE IS THE HEAVIEST INK ON THE SHEET (owner, 2026-09-23:
+     * "winning diagonal needs to be thicker"): its width, area over half the
+     * perimeter of each ribbon and weighted by area, is at least twice the
+     * major grid lines' - the widest ribbons of an empty board. */
+    {
+        static const uint8_t diag[] = { 79, 63, 5, 45, 8, 76, 42, 61, 70, 71, 78, 55, 15,
+                                        58, 36, 1, 11, 24, 4, 40, 39, 31, 80, 35, 0 };
+        UtttGame w; uttt_init(&w);
+        for (unsigned i = 0; i < sizeof diag && !w.over; i++) uttt_play(&w, diag[i]);
+        UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
+        uttt_draw_settle(&d, &w, 7, 0.f, 1.f);
+        double line = ribbon_width(&d, 0.f);
+        UtttGame e; uttt_init(&e);
+        uttt_dl_init(&d, PT, 400000, PO, 60000);
+        UtttDrawOpts o = uttt_draw_opts(7);
+        o.active = -1;
+        uttt_draw_board(&d, &e, &o);
+        double major = ribbon_width(&d, .9f);
+        printf("  win line %.5f, major grid %.5f (x%.2f)\n", line, major, line / major);
+        OK(line > 0 && major > 0 && line >= 2.0 * major, "the win line is at least twice the major grid line");
     }
 
     /* THE MAIN LINES STOP NEAR THE BOARD, as UI.html draws them (5%) */
