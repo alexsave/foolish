@@ -256,10 +256,24 @@ public struct UtttMarkIcon: View {
 }
 
 /// The board the player plays on: the cached board under the motion, and
-/// over it whatever the kernel's frame says - the travelling highlighter,
-/// and the last move's ink. Draws; decides nothing.
+/// over it whatever the kernel's frame says - the highlighter, the last
+/// move's ink, its settlement and the outline of the block it sends to.
+/// Draws; decides nothing.
+///
+/// NOTHING HERE RE-RENDERS A DRAWING PER FRAME THAT HAS NOT CHANGED
+/// (TESTFLIGHT_PLAN.md 12). This view used to observe the clock itself, so
+/// every display frame re-ran its whole body - the 81 VoiceOver squares, the
+/// cache's stamp - and re-rendered two board-sized Canvases through
+/// RenderBox on the main thread, the wash's included. A `sample` of a stage on
+/// the SE simulator put 283 of 543 busy main-thread samples in RenderBox
+/// waiting on Metal (`waitUntilScheduled`), and the ink's 740 ms plan drew 6
+/// frames. Now the clock is observed only by three small layers: the wash is
+/// a coloured rect (a layer the compositor moves, no drawing), and the ink
+/// and the outline are Canvases that redraw only when their own `t` changes
+/// - so the highlighter's travel, the whole of the post-settlement, draws
+/// nothing at all.
 public struct UtttLiveBoard: View {
-    @ObservedObject var clock: UtttMotionClock
+    let clock: UtttMotionClock
     public let positionKey: Int
     public let onTap: ((CGPoint) -> Void)?
 
@@ -274,26 +288,18 @@ public struct UtttLiveBoard: View {
         GeometryReader { geo in
             let side = min(geo.size.width, geo.size.height)
             let pad  = side * UtttBoard.bleed
-            let f = clock.frame
             let _ = (landed, positionKey)   // an off-main paint landed, a move
             ZStack(alignment: .topLeading) {
-                Canvas { ctx, _ in
-                    _ = landed; _ = positionKey
-                    ctx.translateBy(x: pad, y: pad)
-                    /* the highlighter first: it is under the ink */
-                    if f.wash.2 > 0 {
-                        ctx.fill(Path(Self.rect(f.wash, side)), with: .color(Self.color(f.wash_rgba)))
-                    }
-                }
-                .frame(width: side + 2 * pad, height: side + 2 * pad)
-                .offset(x: -pad, y: -pad)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
+                /* the highlighter first: it is under the ink */
+                UtttWashLayer(clock: clock, side: side)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
 
-                /* THE CACHED BOARD IS AN IMAGE VIEW, NOT A DRAW INTO THE
+                /* THE CACHED BOARD IS AN IMAGE VIEW, NOT A DRAW INTO A
                  * CANVAS: a view's picture is a texture the compositor scales,
                  * so a drawer move that resizes the board every frame costs a
-                 * transform, where the Canvas re-rendered the whole bitmap. */
+                 * transform. It is fetched for every new position (the model's
+                 * `positionKey`, which every run of the clock bumps). */
                 if let img = UtttBoard.cachedUnder(side: side) {
                     Image(decorative: img, scale: 1)
                         .resizable()
@@ -302,20 +308,10 @@ public struct UtttLiveBoard: View {
                         .offset(x: -pad, y: -pad)
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
-                    /* the last mark only once the board it lands on is up */
-                    Canvas { ctx, _ in
-                        ctx.translateBy(x: pad, y: pad)
-                        UtttBoard.fill(Uttt.lastStroke(t: f.mark_t), into: ctx, side: side)
-                        /* THE SETTLEMENT over it: the big mark falls, then
-                         * the line (UI.html 04, 05) - at Send, or after the
-                         * ink of a move that arrived. */
-                        UtttBoard.fill(Uttt.settleStroke(fall: f.fall_t, line: f.line_t),
-                                       into: ctx, side: side)
-                    }
-                    .frame(width: side + 2 * pad, height: side + 2 * pad)
-                    .offset(x: -pad, y: -pad)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
+                    /* the strokes only once the board they land on is up */
+                    UtttStrokeLayer(clock: clock, side: side, pad: pad, key: positionKey)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
 
                 Color.clear.contentShape(Rectangle())
@@ -330,7 +326,7 @@ public struct UtttLiveBoard: View {
 
                 UtttSquares(side: side, positionKey: positionKey, onTap: onTap)
 #if DEBUG
-                if UtttRuler.on { Self.rulerMarks(f, side: side) }
+                if UtttRuler.on { UtttRulerMarks(clock: clock, side: side) }
 #endif
             }
         }
@@ -338,43 +334,127 @@ public struct UtttLiveBoard: View {
         .onReceive(NotificationCenter.default.publisher(for: UtttBoard.rendered)) { _ in landed &+= 1 }
     }
 
-#if DEBUG
-    /// The ruler's two marks inside the board (UtttRuler): pink on the
-    /// highlighter's centre, violet on the centre of the pen stroke drawn so
-    /// far. Positioned in the same board space the Canvas draws in.
-    @ViewBuilder
-    private static func rulerMarks(_ f: UtiFrame, side: CGFloat) -> some View {
-        let dot = MotionRuler.side
-        if f.wash.2 > 0 {
-            let w = rect(f.wash, side)
-            Color.clear.frame(width: dot, height: dot)
-                .motionSquare(.pink, on: true)
-                .position(x: w.midX, y: w.midY)
-                .allowsHitTesting(false)
-        }
-        let pts = Uttt.lastStroke(t: f.mark_t).flatMap(\.points)
-        if let x0 = pts.map(\.x).min(), let x1 = pts.map(\.x).max(),
-           let y0 = pts.map(\.y).min(), let y1 = pts.map(\.y).max() {
-            Color.clear.frame(width: dot, height: dot)
-                .motionSquare(.violet, on: true)
-                .position(x: (x0 + x1) / 2 * side, y: (y0 + y1) / 2 * side)
-                .allowsHitTesting(false)
-        }
-    }
-#endif
-
-    private static func rect(_ r: (Float, Float, Float, Float), _ side: CGFloat) -> CGRect {
+    static func rect(_ r: (Float, Float, Float, Float), _ side: CGFloat) -> CGRect {
         CGRect(x: CGFloat(r.0) * side, y: CGFloat(r.1) * side,
                width: CGFloat(r.2) * side, height: CGFloat(r.3) * side)
     }
 
-    private static func color(_ c: UInt32) -> Color {
+    static func color(_ c: UInt32) -> Color {
         Color(.sRGB, red: Double((c >> 24) & 0xff) / 255,
               green: Double((c >> 16) & 0xff) / 255,
               blue: Double((c >> 8) & 0xff) / 255,
               opacity: Double(c & 0xff) / 255)
     }
 }
+
+/// THE HIGHLIGHTER: one coloured rect where the kernel's frame puts it. A
+/// plain colour is a layer the compositor moves and fades - nothing is drawn
+/// when it travels.
+struct UtttWashLayer: View {
+    @ObservedObject var clock: UtttMotionClock
+    let side: CGFloat
+
+    var body: some View {
+        let f = clock.frame
+        if f.wash.2 > 0 {
+            let r = UtttLiveBoard.rect(f.wash, side)
+            UtttLiveBoard.color(f.wash_rgba)
+                .frame(width: r.width, height: r.height)
+                .offset(x: r.minX, y: r.minY)
+        }
+    }
+}
+
+/// THE STROKES THAT MOVE: the last mark and its settlement in one Canvas, the
+/// outline in another under its own opacity. Each Canvas is `Equatable` on
+/// the numbers it draws from, so a frame that changes none of them - the
+/// highlighter travelling, the outline fading at Send - redraws neither.
+struct UtttStrokeLayer: View {
+    @ObservedObject var clock: UtttMotionClock
+    let side: CGFloat
+    let pad: CGFloat
+    let key: Int
+
+    var body: some View {
+        let f = clock.frame
+        ZStack(alignment: .topLeading) {
+            UtttInkCanvas(mark: f.mark_t, fall: f.fall_t, line: f.line_t,
+                          side: side, pad: pad, key: key)
+                .equatable()
+            if f.outline >= 0 {
+                UtttOutlineCanvas(block: f.outline, t: f.outline_t,
+                                  side: side, pad: pad, key: key)
+                    .equatable()
+                    .opacity(Double(f.outline_a))
+            }
+        }
+    }
+}
+
+struct UtttInkCanvas: View, Equatable {
+    let mark: Float, fall: Float, line: Float
+    let side: CGFloat, pad: CGFloat
+    let key: Int
+
+    var body: some View {
+        Canvas { ctx, _ in
+            ctx.translateBy(x: pad, y: pad)
+            UtttBoard.fill(Uttt.lastStroke(t: mark), into: ctx, side: side)
+            /* THE SETTLEMENT over it: the big mark, then the line (UI.html
+             * 04, 05) - after the ink, at stage and on an opened bubble. */
+            UtttBoard.fill(Uttt.settleStroke(fall: fall, line: line), into: ctx, side: side)
+        }
+        .frame(width: side + 2 * pad, height: side + 2 * pad)
+        .offset(x: -pad, y: -pad)
+    }
+}
+
+struct UtttOutlineCanvas: View, Equatable {
+    let block: Int32, t: Float
+    let side: CGFloat, pad: CGFloat
+    let key: Int
+
+    var body: some View {
+        Canvas { ctx, _ in
+            ctx.translateBy(x: pad, y: pad)
+            UtttBoard.fill(Uttt.outlineStroke(block: block, t: t), into: ctx, side: side)
+        }
+        .frame(width: side + 2 * pad, height: side + 2 * pad)
+        .offset(x: -pad, y: -pad)
+    }
+}
+
+#if DEBUG
+/// The ruler's two marks inside the board (UtttRuler): pink on the
+/// highlighter's centre, violet on the centre of the pen stroke drawn so
+/// far. Positioned in the same board space the Canvas draws in.
+struct UtttRulerMarks: View {
+    @ObservedObject var clock: UtttMotionClock
+    let side: CGFloat
+
+    var body: some View {
+        let f = clock.frame
+        let dot = MotionRuler.side
+        ZStack(alignment: .topLeading) {
+            if f.wash.2 > 0 {
+                let w = UtttLiveBoard.rect(f.wash, side)
+                Color.clear.frame(width: dot, height: dot)
+                    .motionSquare(.pink, on: true)
+                    .position(x: w.midX, y: w.midY)
+            }
+            let pts = Uttt.lastStroke(t: f.mark_t).flatMap(\.points)
+            if let x0 = pts.map(\.x).min(), let x1 = pts.map(\.x).max(),
+               let y0 = pts.map(\.y).min(), let y1 = pts.map(\.y).max() {
+                Color.clear.frame(width: dot, height: dot)
+                    .motionSquare(.violet, on: true)
+                    .position(x: (x0 + x1) / 2 * side, y: (y0 + y1) / 2 * side)
+            }
+        }
+        .frame(width: side, height: side, alignment: .topLeading)
+        .allowsHitTesting(false)
+    }
+}
+#endif
 
 /// WHAT VOICEOVER FINDS ON THE BOARD: one element per square, where the
 /// square is. The rectangle and the words are both the kernel's

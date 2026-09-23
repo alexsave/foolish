@@ -6,7 +6,15 @@ import SwiftUI
 /// been drawn.
 @MainActor
 public final class UtttModel: ObservableObject {
+    /// The position changed and this device can no longer move in it: the
+    /// host stages on this. Bumped once a move's ink is down.
     @Published public private(set) var positionKey = 0
+    /// EVERY POSITION THE BOARD SHOWS, bumped the moment the kernel's game
+    /// changes - before a move's ink starts, not after it lands - so the
+    /// cached board under the ink is always the one the ink belongs to. The
+    /// board is keyed on this and not on the clock, so it is not rebuilt
+    /// every display frame (UtttLiveBoard).
+    @Published public private(set) var boardKey = 0
     /// The one motion loop: what the board looks like this frame is the
     /// kernel's answer to (plan, clock), and nothing here times anything.
     public let clock = UtttMotionClock()
@@ -71,6 +79,7 @@ public final class UtttModel: ObservableObject {
 
     /// Run the clock through `ch` with the words held until the ink lands.
     private func run(_ ch: Uttt.Channel, then: (() -> Void)? = nil) {
+        boardKey &+= 1
         inked = false
         clock.run(ch) { [weak self] in
             self?.inked = true
@@ -82,6 +91,7 @@ public final class UtttModel: ObservableObject {
     /// tells the screen to look again.
     public func refresh() {
         positionKey &+= 1
+        boardKey &+= 1
         inked = true
         clock.run(.still)
     }
@@ -102,46 +112,43 @@ public final class UtttModel: ObservableObject {
     @Published public private(set) var pending = false
 
     /// A tap in the board's own 0..1 space. WHICH SQUARE is the kernel's
-    /// answer, from the same geometry it draws the board with.
+    /// answer, from the same geometry it draws the board with, and so is
+    /// whether it may be played.
+    ///
+    /// A TAP THAT IS NOT A MOVE DOES NOTHING - no redraw, no replay, no
+    /// restage (owner, 2026-09-23): outside the block in play, an occupied
+    /// square, the gap between squares, the same square again.
     public func tap(at p: CGPoint) {
-        guard !busy, Uttt.over == .none else { return }
-        guard Uttt.canMove || pending else { return }
-        guard let mv = Uttt.hit(p) else { return }
-
+        guard !busy, let mv = Uttt.hit(p) else { return }
         if pending {
-            /* THE SAME SQUARE IS NOT A CHANGE OF MIND, and re-staging the
-             * identical bubble would make Messages cancel and re-insert for
-             * nothing. */
-            guard mv != Uttt.move(at: Uttt.plyCount - 1) else { return }
+            /* A CHANGE OF MIND: another free square where the draft was
+             * played. The kernel's question, and a winning draft can be
+             * changed like any other. */
+            guard Uttt.canReplace(mv) else { return }
             Task { await replace(with: mv) }
             return
         }
-        guard Uttt.legal.contains(UInt8(mv)) else { return }
+        guard Uttt.over == .none, Uttt.canMove, Uttt.legal.contains(UInt8(mv)) else { return }
         Task { await playerMove(mv) }
     }
 
     /// Take the staged move back and play another one.
     ///
-    /// FOUR BEATS, IN THIS ORDER, because that is the order a hand does it
-    /// in: the wash comes back to the block you were sent to, the ink leaves
-    /// the square you regret, the new mark draws, and only then does the wash
-    /// go where the new move sends them. Doing the undo and the redraw as one
-    /// swap reads as a glitch; doing it in four reads as somebody rubbing
-    /// something out.
+    /// IN ONE STEP (owner, 2026-09-23): the old mark - and the big mark, if
+    /// it had won its block - is gone at once and the new one draws in, with
+    /// its own settlement and its outline. Nothing is un-drawn and the
+    /// highlighter never moves (it is on the block both drafts were played
+    /// in). The undo and the play are one kernel change before the next
+    /// frame, so the board never shows the position between them.
     private func replace(with mv: Int) async {
         busy = true
-        Uttt.undoMine()
-        refresh()                         // the wash is back where it was
-        try? await Task.sleep(nanoseconds: 170_000_000)
-        guard Uttt.legal.contains(UInt8(mv)) else {
-            // Not a legal square in the position we just came back to. Put
-            // the move we took back where it was and pretend nothing happened.
-            Uttt.playAsMe(lastPlayed)
-            refresh()
+        guard Uttt.undoMine() else { busy = false; return }
+        guard Uttt.playAsMe(mv) else {
+            /* canReplace said yes; put the draft back rather than lose it */
+            if lastPlayed >= 0 { _ = Uttt.playAsMe(lastPlayed) }
             busy = false
             return
         }
-        Uttt.playAsMe(mv)
         lastPlayed = mv
         await draw(mv)
         positionKey &+= 1

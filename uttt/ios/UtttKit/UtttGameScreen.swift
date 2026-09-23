@@ -24,30 +24,19 @@ public struct UtttGameScreen: View {
         self.onDoor = onDoor
     }
 
-    /// The margin of the rules sheet, the same on every edge.
-    private static let margin: CGFloat = 13
-
     private static let label = Color(red: 0.541, green: 0.522, blue: 0.467) // #8a8577
     private static let ink   = Color(red: 0.114, green: 0.106, blue: 0.087) // #1d1b16
     private static let blue  = Color(red: 0.145, green: 0.216, blue: 0.420) // #25376b
 
-    /// THE DOOR OPENS ON THE SAME SHEET. Not a modal over a dimmed board:
-    /// the drawer is already a piece of paper in a small box, and a card
-    /// floating over it would be the only thing in the app that is not drawn
-    /// on the napkin.
+    /// THE RULES ARE A SHEET OF THEIR OWN over the game (`rulebook`), so a
+    /// swipe down on them closes the rules, not the Messages drawer.
     @State private var rulesOpen = false
 
     public var body: some View {
         UtttSheet {
-            if rulesOpen {
-                UtttRulesSheet { rulesOpen = false }
-                    .padding(Self.margin)
-                    .transition(.opacity)
-            } else {
-                UtttDrawerSheet { size, from in sheet(size, from: from) }
-            }
+            UtttDrawerSheet { size, from in sheet(size, from: from) }
         }
-        .animation(.easeInOut(duration: 0.18), value: rulesOpen)
+        .rulebook($rulesOpen)
     }
 
     // MARK: one layout, from compact to expanded
@@ -196,7 +185,7 @@ public struct UtttGameScreen: View {
     // MARK: the pieces
 
     private var board: some View {
-        UtttLiveBoard(clock: model.clock, positionKey: model.positionKey,
+        UtttLiveBoard(clock: model.clock, positionKey: model.boardKey,
                       onTap: { model.tap(at: $0) })
     }
 

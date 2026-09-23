@@ -125,22 +125,15 @@ public struct UtttWatchScreen: View {
         self.onDoor = onDoor
     }
 
-    /// The rules open on the same sheet, as they do on the play surface:
+    /// The rules open as they do on the play surface, a sheet of their own:
     /// a spectator can read them too.
     @State private var rulesOpen = false
 
-
     public var body: some View {
         UtttSheet {
-            if rulesOpen {
-                UtttRulesSheet { rulesOpen = false }
-                    .padding(13)
-                    .transition(.opacity)
-            } else {
-                UtttDrawerSheet { size, _ in watch(size) }
-            }
+            UtttDrawerSheet { size, _ in watch(size) }
         }
-        .animation(.easeInOut(duration: 0.18), value: rulesOpen)
+        .rulebook($rulesOpen)
     }
 
     /// The play surface's one layout (`Uttt.sheet`), with the header line in
