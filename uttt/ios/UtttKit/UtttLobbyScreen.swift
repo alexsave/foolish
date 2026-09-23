@@ -69,13 +69,11 @@ public struct UtttLobbyScreen: View {
                 .font(.system(size: 21, weight: .bold))
                 .tracking(-0.315)
                 .foregroundStyle(UtttInk.ink)
-                .lineLimit(column ? 2 : 1)
-                .minimumScaleFactor(0.6)
+                .wordsWrap(headline, column: column)
             Text(subline)
                 .font(.system(size: 14))
                 .foregroundStyle(UtttInk.muted)
-                .lineLimit(column ? nil : 1)
-                .minimumScaleFactor(0.6)
+                .wordsWrap(subline, column: column)
         }
     }
 
@@ -166,7 +164,7 @@ public struct UtttWatchScreen: View {
                     if L.words_side != 0 {
                         VStack(alignment: .leading, spacing: 3) {
                             label.lineLimit(1).minimumScaleFactor(0.5)
-                            said.lineLimit(3).minimumScaleFactor(0.6)
+                            said.wordsWrap(line, column: true)
                         }
                         .inWords(L, alignment: .topLeading)
                     } else {

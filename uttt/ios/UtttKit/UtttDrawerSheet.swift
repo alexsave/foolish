@@ -47,6 +47,14 @@ extension View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+    /// WRAPPED AT SPACES ONLY: as many lines as the words, so a line breaks
+    /// between words and a word wider than the column scales down to it
+    /// rather than breaking mid-word ("Diagona / l"). One line in the band.
+    func wordsWrap(_ s: String, column: Bool) -> some View {
+        lineLimit(column ? max(1, s.split(separator: " ").count) : 1)
+            .minimumScaleFactor(0.5)
+    }
+
     /// Set in the layout's box of words: `x, y, w, h` from `UtiSheet.words`,
     /// the content wrapped to its width and pinned to `alignment`.
     func inWords(_ L: UtiSheet, alignment: Alignment) -> some View {

@@ -97,8 +97,7 @@ public struct UtttGameScreen: View {
                             .font(.system(size: 14))
                             .foregroundStyle(UtttInk.muted)
                             .multilineTextAlignment(.trailing)
-                            .lineLimit(column ? nil : 1)
-                            .minimumScaleFactor(0.6)
+                            .wordsWrap(model.subline, column: column)
                             .motionSquare(.lime, on: r)
                     }
                 }
@@ -137,8 +136,7 @@ public struct UtttGameScreen: View {
         case .text(let t):
             headlineText(t, ink)
                 .multilineTextAlignment(.trailing)
-                .lineLimit(column ? 3 : 1)
-                .minimumScaleFactor(0.5)
+                .wordsWrap(t, column: column)
         case .mark(let before, let m, let after):
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 if !before.isEmpty { headlineText(before, ink) }
