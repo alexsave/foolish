@@ -206,9 +206,28 @@ public enum Uttt {
         public static let headlineSpoken = Say(key: UTI_SAY_HEADLINE_SPOKEN)
         public static let youAreSpoken = Say(key: UTI_SAY_YOU_ARE_SPOKEN)
         public static let doorRules = Say(key: UTI_SAY_DOOR_RULES)
+        public static let sendHint = Say(key: UTI_SAY_SEND_HINT)
+        public static let doorSend = Say(key: UTI_SAY_DOOR_SEND)
     }
 
     public static func say(_ s: Say) -> String { String(cString: uti_say(s.key)) }
+
+    // MARK: getting a staged bubble into the field (uttt_msg.h)
+
+    /// How long a staged bubble sits unsent before the send hint shows.
+    public static var sendHintSeconds: Double { Double(uti_send_hint_ms()) / 1000 }
+    /// How long an insert may go unanswered before its silence means something.
+    public static var insertSilenceSeconds: Double { Double(uti_insert_silence_ms()) / 1000 }
+
+    /// What an insert's silence means on try `attempt` (1-based).
+    public enum InsertSilence { case listen, retry, door }
+    public static func insertSilence(attempt: Int, compact: Bool) -> InsertSilence {
+        switch uti_insert_silence(Int32(attempt), compact ? 1 : 0) {
+        case UTI_INSERT_RETRY: return .retry
+        case UTI_INSERT_DOOR:  return .door
+        default:               return .listen
+        }
+    }
 
     /// The mark the bubble's headline draws before its words, or `.none`.
     public static var bubbleMark: Mark { Mark(rawValue: UInt8(uti_say_bubble_mark())) ?? .none }

@@ -159,6 +159,9 @@ targets:
       - path: ../sdk/swift
       # The product-free debug ruler (DEBUG-only; UtttRuler places it).
       - path: ../../shared/swift/MotionRuler.swift
+      # The staged-but-unsent reminder at Messages' Send button, shared with
+      # the sister product; the caption and the fuse are the kernel's.
+      - path: ../../shared/swift/MessagesKit/SendHint.swift
     dependencies:
       # STATIC (embed:false), so the linker pulls it in per object and nothing
       # unreferenced ships.

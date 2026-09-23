@@ -28,6 +28,22 @@ final class MessagesViewController: MSMessagesAppViewController {
     private var host: UIHostingController<AnyView>?
     private var bag = Set<AnyCancellable>()
 
+    /// THE SEND HINT AND THE SEND DOOR, over whatever screen is up (see
+    /// UtttSendOverlay for why over and not in). Its own host, above every
+    /// screen `attach` puts in, and never swapped.
+    private let sendState = UtttSendState()
+    private var overlay: UIHostingController<UtttSendOverlay>?
+    private let overlayBox = UtttSendOverlayBox()
+
+    /// The insert the send door re-issues: the bubble, and the stage it
+    /// belongs to - a newer stage or a cancel makes it void.
+    private var doorInsert: (message: MSMessage, generation: Int, conversation: MSConversation)?
+
+    /// The stage whose insert Messages answered with a yes. Every watchdog of
+    /// that stage stands down at once, including one armed by an earlier try
+    /// whose answer arrived late.
+    private var landedGeneration = -1
+
     /// The bubble sitting in the input field, which nobody has sent yet.
     ///
     /// Messages can re-present the extension while a draft is waiting on the
@@ -86,12 +102,28 @@ final class MessagesViewController: MSMessagesAppViewController {
         UtttLog.note("load")
         /* CLEAR UNTIL IT APPEARS - see `appeared`. */
         view.backgroundColor = .clear
+
+        let vc = UIHostingController(rootView: UtttSendOverlay(state: sendState) { [weak self] in
+            self?.sendDoorTapped()
+        })
+        addChild(vc)
+        vc.view.backgroundColor = .clear
+        overlayBox.frame = view.bounds
+        overlayBox.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        vc.view.frame = overlayBox.bounds
+        vc.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        overlayBox.addSubview(vc.view)
+        overlayBox.state = sendState
+        view.addSubview(overlayBox)
+        vc.didMove(toParent: self)
+        overlay = vc
     }
 
     override func willBecomeActive(with conversation: MSConversation) {
         super.willBecomeActive(with: conversation)
         UtttLog.note("active", "\(styleName), selected \(conversation.selectedMessage != nil)")
         becameActiveAt = Date()
+        sendState.compact = presentationStyle == .compact
         arrived = nil
         draftIsNewGame = false
         unbound = conversation.selectedMessage == nil
@@ -277,6 +309,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         }
         freshSession = false
         live?.setPending(false)
+        sendState.staged = false
+        sendState.door = false
+        doorInsert = nil
         let wasUnbound = unbound
         present(conversation)
 
@@ -324,6 +359,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         staged = nil
         stageGeneration += 1           // a stage still waiting to insert is void
         live?.setPending(false)
+        sendState.staged = false
+        sendState.door = false
+        doorInsert = nil
 
         /* THE X IS THE UNDO - the only one there is, by the owner's decision
          * (no undo button, no take-back door): Messages' own X on the draft
@@ -352,11 +390,15 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func willTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.willTransition(to: presentationStyle)
         UtttLog.note("will-style", Self.name(presentationStyle))
+        /* THE HINT GOES AS THE DRAWER STARTS TO GROW, not once it has: the
+         * Send button is only above a compact drawer. */
+        sendState.compact = presentationStyle == .compact
     }
 
     override func didTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.didTransition(to: presentationStyle)
         UtttLog.note("style", Self.name(presentationStyle))
+        sendState.compact = presentationStyle == .compact
         let waiters = transitionWaiters
         transitionWaiters.removeAll()
         for seq in waiters.keys.sorted() { waiters[seq]?.resume() }
@@ -564,6 +606,11 @@ final class MessagesViewController: MSMessagesAppViewController {
     private func stage(_ wire: UtttWire, in conversation: MSConversation) {
         stageGeneration += 1
         let generation = stageGeneration
+        /* A NEW STAGE STARTS THE HINT'S WAIT AGAIN, and takes down a door left
+         * by the stage it replaces. The hint comes back once this one lands. */
+        sendState.staged = false
+        sendState.door = false
+        doorInsert = nil
 
         /* BAKED NOW, from the message being staged, before anything can load
          * a different one into the kernel's one resident slot. */
@@ -640,28 +687,39 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// own error and tried once more a beat later; if that fails too the
     /// draft is treated exactly as a cancelled one - the board goes back, so
     /// it never shows a move the input field does not hold.
+    ///
+    /// AND A SILENT ONE IS A REFUSAL TOO. ChatKit drops an insert that arrives
+    /// before the host counts the drawer as presenting and never calls back
+    /// (docs/INSERT_GATING.md), so every try arms a watchdog, and what its
+    /// silence means is the kernel's (utm_insert_silence): in the compact
+    /// drawer, try again every half second up to ten times; expanded, where
+    /// the host parks an accepted insert's answer on purpose, keep listening
+    /// and count nothing; out of tries, hand the human the send door.
     private func insert(_ message: MSMessage, generation: Int,
                         in conversation: MSConversation, attempt: Int) {
         /* THE ACTIVE CONVERSATION when there is one - foolish's stage uses
          * nothing else - and the one we were handed only as a fallback. */
         let target = activeConversation ?? conversation
         UtttLog.note("insert", "attempt \(attempt)\(activeConversation == nil ? " (no active conversation)" : "")")
-        /* A DROPPED INSERT NEVER CALLS BACK (device log 2026-09-23), so a
-         * silence is a failure too: no answer in 1.2s is retried. */
+        sendState.door = false
         var answered = false
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-            guard let self, !answered, self.stageGeneration == generation, attempt < 4 else { return }
-            UtttLog.fault("insert", "attempt \(attempt) got no answer; retrying")
-            answered = true
-            self.insert(message, generation: generation, in: conversation, attempt: attempt + 1)
-        }
-        target.insert(message) { [weak self] error in
+        watchSilence(of: message, generation: generation, in: conversation,
+                     attempt: attempt) { answered }
+        let answer: (Error?) -> Void = { [weak self] error in
             DispatchQueue.main.async {
-                if answered { UtttLog.note("insert", "late answer for attempt \(attempt)"); }
+                if answered { UtttLog.note("insert", "late answer for attempt \(attempt)") }
                 answered = true
                 guard let self else { return }
                 guard let error else {
                     UtttLog.note("inserted")
+                    guard self.stageGeneration == generation else { return }
+                    /* IN THE FIELD: every watchdog of this stage stands down,
+                     * and the hint's wait starts now. */
+                    self.landedGeneration = generation
+                    self.doorInsert = nil
+                    self.sendState.door = false
+                    self.sendState.restart += 1
+                    self.sendState.staged = true
                     return
                 }
                 UtttLog.fault("insert", "attempt \(attempt) failed: \(error.localizedDescription)")
@@ -678,6 +736,54 @@ final class MessagesViewController: MSMessagesAppViewController {
                 self.didCancelSending(message, conversation: conversation)
             }
         }
+#if DEBUG
+        /* `dev.dropinsert`: swallowed with no answer, as ChatKit's gate does. */
+        if UtttDev.dropInsert {
+            UtttLog.note("insert", "dev.dropinsert - swallowed")
+            return
+        }
+#endif
+        target.insert(message, completionHandler: answer)
+    }
+
+    /// One try's watchdog: after the kernel's silence, if nobody answered and
+    /// the stage is still current and not landed, ask the kernel what the
+    /// silence means. Every firing is logged, so a device log shows how many
+    /// tries the host needed.
+    private func watchSilence(of message: MSMessage, generation: Int,
+                              in conversation: MSConversation, attempt: Int,
+                              answered: @escaping () -> Bool) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + Uttt.insertSilenceSeconds) { [weak self] in
+            guard let self, !answered(), self.stageGeneration == generation,
+                  self.landedGeneration != generation else { return }
+            let compact = self.presentationStyle == .compact
+            switch Uttt.insertSilence(attempt: attempt, compact: compact) {
+            case .listen:
+                UtttLog.note("insert", "attempt \(attempt) unanswered while \(self.styleName); listening")
+                self.watchSilence(of: message, generation: generation, in: conversation,
+                                  attempt: attempt, answered: answered)
+            case .retry:
+                UtttLog.fault("insert", "attempt \(attempt) got no answer; retrying")
+                self.insert(message, generation: generation, in: conversation, attempt: attempt + 1)
+            case .door:
+                UtttLog.fault("insert", "attempt \(attempt) got no answer; \(attempt) unanswered, offering the send door")
+                self.doorInsert = (message, generation, conversation)
+                self.sendState.door = true
+            }
+        }
+    }
+
+    /// THE SEND DOOR, tapped: the same bubble, inserted again from a drawer
+    /// that is by now certainly presenting. Its tries count from one.
+    private func sendDoorTapped() {
+        guard let d = doorInsert, d.generation == stageGeneration else {
+            UtttLog.note("door", "send tapped for a stage that is gone")
+            sendState.door = false
+            return
+        }
+        UtttLog.note("door", "send tapped")
+        doorInsert = nil
+        insert(d.message, generation: d.generation, in: d.conversation, attempt: 1)
     }
 
     private var transitionWaiters: [Int: CheckedContinuation<Void, Never>] = [:]
@@ -787,8 +893,21 @@ final class MessagesViewController: MSMessagesAppViewController {
         /* PAPER, NOT CLEAR, for the frame between a swap and the first layout
          * of the new screen - a clear host is the dark drawer showing through. */
         vc.view.backgroundColor = UtttPaper.flat
-        view.addSubview(vc.view)
+        /* UNDER THE SEND OVERLAY, which stays on top of every screen. */
+        view.insertSubview(vc.view, belowSubview: overlayBox)
         vc.didMove(toParent: self)
         host = vc
+    }
+}
+
+/// The send overlay's container: it lets every touch through to the screen
+/// under it except one on the send door, which is the only thing in the
+/// overlay that is a control.
+final class UtttSendOverlayBox: UIView {
+    weak var state: UtttSendState?
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard state?.door == true, point.y >= bounds.height - UtttSendOverlay.doorStrip else { return nil }
+        return super.hitTest(point, with: event)
     }
 }
