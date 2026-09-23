@@ -48,9 +48,12 @@ public struct UtttLobbyScreen: View {
                  * board tinted corner to corner reads as a different piece of
                  * paper. An unreadable bubble has no board to show. */
                 if stance != .unreadable {
+                    /* ROOM FOR THE OVERSHOOT: the grid's main lines run past
+                     * the board by about a tenth of it, and at 10 points they
+                     * ran up into the line of type above. */
                     UtttBoard(active: -1, last: -1, positionKey: 0)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding(.top, 10)
+                        .padding(.vertical, 26)
                         .allowsHitTesting(false)
                 } else {
                     Spacer(minLength: 0)
