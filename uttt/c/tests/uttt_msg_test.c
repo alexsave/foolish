@@ -116,7 +116,8 @@ static void test_games(int games)
             const uint8_t *who = m.game.n_plies % 2 == 0 ? b : a;
             const uint8_t *other = who == b ? a : b;
             OK(!utm_play(&m, other, mv), "play: out of turn is refused");
-            OK(utm_play(&m, who, mv), "play: the player on move may play");
+            /* a refused move ends the game here rather than looping on it */
+            if (!utm_play(&m, who, mv)) { OK(0, "play: the player on move may play"); break; }
             round_trip(&m, "wire: every ply encodes");
             char t[UTM_MAX_TEXT];
             int tn = utm_text_encode(&m, t, sizeof t);
