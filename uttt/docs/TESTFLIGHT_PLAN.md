@@ -108,6 +108,33 @@ WP1-WP3 are the TestFlight critical path; WP4-WP6 are spec fidelity and can foll
 - Swift: `UtttWire.swift` shrinks to a wrapper over the C entries; the DEBUG `dev:` override stays in Swift but only chooses the bytes fed to the C tag function.
 - Done when: `grep -n "SHA256\|base64\|URLQueryItem\|queryItems" uttt/ios` finds nothing; the C test round-trips 10,000 games through encode, text, decode at every ply; every seat verdict has a test; each test is mutation-checked (break the rule, see the named assertion go red, restore).
 
+#### WP1 - done (2026-09-22)
+
+- `uttt/c/src/uttt_msg.{h,c}`: format 1 is magic `0xB7`, format, seed (i32 BE), flags (bit 0 sealed), O tag (the creator, 9 bytes), X tag (the joiner, only when sealed), a 2-byte SHA-256 check, then the `uttt_encode` game.
+  The text is `?m=<base32>` (a bare query, since Messages drops unknown schemes); the longest link over 10,000 random games is 87 characters.
+- The check exists because a cut-short mixed-radix code decodes into a different game rather than failing; the test flips every bit and truncates at every length, and all are refused.
+- Seat tags are `SHA-256("uttt.seat.1|" || seed BE || participant id bytes)[0..9]`, from `shared/c/sha256.c`, pinned by a golden vector.
+- The joiner is X and moves first, so taking the seat and the first move are one message: decode refuses an unsealed message with plies and a sealed one without, and `utm_undo` of the joining move unseals.
+  This removes the claim-only bubble, so blocker 1 cannot happen.
+- Verdicts: `utm_seat` gives X, O, WAITING (my invitation), OPEN (X is mine to take) or SPECTATOR; `utm_can_move`, `utm_play` and `utm_undo` (my own last move only).
+  Reinstall follows foolish's exact-or-spectator rule: a sealed game gives SPECTATOR, and an open invitation gives OPEN, the same as for anyone else.
+- `utm_prefer(mine, tapped)`: a different game gives the tapped one; a sealed game beats its invitation; more plies wins (Rule P's turn rule); at equal plies on one roster the device's own draft wins; for two joiners the lower `SHA-256("uttt.join.1|" seed, X tag, first move)` wins, and that key is fixed for the life of a fork.
+- `uttt_hit(u, v)` (in `uttt_draw.c`, from the same `BL`/`CE` the board is drawn with) and `uttt_active` (one owner for "where next").
+- `uttt/c/src/uttt_say.{h,c}`: every bubble, screen, lobby and spectator sentence, with the Swift English kept except the waiting subline, which now follows UI.html ("Nobody has taken it yet.").
+  None of the captions uses `$<uuid>` substitution yet, because Swift did not; that is WP4.
+- `shared/c/b32.{h,c}`: RFC 4648 base32 with no product name in it, and with a 12-bit accumulator mask (foolish's `replay_b32_*` shifts a signed int without a bound).
+  **Left for later:** foolish still has its own copy in `c/src/replay.c`; collapsing it means adding `$(SHARED)/b32.c` to about six foolish build lists (CORE_SRC, IOS_CORE_SRC, l1_measure, WASM_BOT_SRC, rust/Makefile), which was not safe to do without its CI tonight.
+- Bridge (`uttt_api.h`): `uti_me`, `uti_msg_open/read/check/text/seat/mark/sealed/seed/can_move/play/undo/prefer/same_game/seat_ids`, `uti_hit`, `uti_say`, `uti_say_mark`, with `UTI_SEAT_*`/`UTI_SAY_*` macros held to the kernel's by `_Static_assert`.
+  The resident game is now the resident message's game, `S.seed` and the dead `S.rs` are gone, and every draw fully initialises its display list.
+- Swift: `UtttWire` is an opaque kernel string; `UtttModel` taps through `uti_hit` and plays through `uti_msg_play`; the view controller routes on `Uttt.seat` (`.open` opens the board as X with nothing staged until the move); `join()`, `sealedCaption` and the `.start`/`.open` lobby stances are deleted; insert errors are logged.
+  `grep -rn "SHA256\|base64\|URLQueryItem\|queryItems\|CryptoKit\|URLComponents\|JSON" uttt/ios uttt/sdk --include=*.swift` finds nothing.
+  DEBUG `dev.seat` only picks the identity bytes (`UtttDev.identity`), and a Release build's `strings` still show no `dev.`, "Who are you" or App Group string.
+- Tests: `tests/uttt_msg_test.c`, wired into `make run` (10,000 games, 590,089 plies, ~3.6M checks) and `make asan`; `ios-smoke` drives the bridge end to end as three identities.
+  All 21 mutations went red on the named assertion: the b32 mask, the check, both roster rules, X != O, the seal on join, the spectator verdict, the unseal on undo, undo ownership, the join-key order, the draft rule, the plies rule, the different-game rule, the tag salt, the `&` stop, WAITING having no mark, the hit clamp and bounds, the em-dash scan, capitalisation, and the headline mark.
+  One of them first exposed a test that looped forever when the seal broke; the test now fails instead.
+- End to end on a fresh `rig.sh newsim` simulator (screenshots in the session scratchpad `wp1/`, 00-16): create as a, send, tap as b, which opens as X with "Your move", and the first move stages the sealing bubble "Sent to the centre board."; send, tap as a, which opens as O and replies; a change of mind replaces the draft; send; b plays ply 3; the draft's X cancels and reverts it; replay and send.
+- Seen along the way and left to WP2/WP4: the picker is not re-asked while the extension stays active (`didSelect`), the ghost headline on the collapsed strip, the expanded screen has no subline, and a cold appex launch shows a blank dark drawer for about 4 seconds before the board.
+
 ### WP2 - The join and the lobby work in Messages (critical path)
 
 - Rebuild `present()` on the WP1 verdicts: invitation on open, joiner sees the board with "First move is yours" and the whole sheet washed, their first move stages the sealing bubble, creator's waiting screen gets "Take it back" (clears the draft or, once sent, does nothing destructive).
