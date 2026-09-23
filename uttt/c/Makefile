@@ -24,7 +24,7 @@ CFLAGS  ?= -O3 -flto -Wall -Wextra -Werror -std=c11
 LDLIBS  := -lm
 SHARED  := ../../shared/c
 SRC     := src/uttt.c src/uttt_code.c src/uttt_bots.c src/uttt_msg.c src/uttt_say.c \
-           src/uttt_pen.c src/uttt_draw.c src/uttt_rule.c \
+           src/uttt_pen.c src/uttt_draw.c src/uttt_anim.c src/uttt_rule.c \
            $(SHARED)/sha256.c $(SHARED)/b32.c
 
 all: build/uttt_test build/uttt_msg_test build/uttt_arena build/uttt_render build/uttt_mate
@@ -43,9 +43,13 @@ build/uttt_msg_test: $(SRC) tests/uttt_msg_test.c | build
 
 # The message: every ply of 10,000 games through bytes and text, the seat
 # truth table, two joiners, the tap map and every sentence.
-run: build/uttt_test build/uttt_msg_test
+run: build/uttt_test build/uttt_msg_test build/uttt_anim_test
 	./build/uttt_test 1000
 	./build/uttt_msg_test 10000
+	./build/uttt_anim_test
+
+build/uttt_anim_test: $(SRC) tests/uttt_anim_test.c | build
+	$(CC) $(CFLAGS) $(SRC) tests/uttt_anim_test.c -o $@ $(LDLIBS)
 
 arena: build/uttt_arena
 	./build/uttt_arena 200 200
@@ -103,6 +107,9 @@ asan: $(SRC) tests/uttt_test.c | build
 	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
 	  $(SRC) tests/uttt_msg_test.c -o build/uttt_msg_asan $(LDLIBS)
 	./build/uttt_msg_asan 1000
+	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
+	  $(SRC) tests/uttt_anim_test.c -o build/uttt_anim_asan $(LDLIBS)
+	./build/uttt_anim_asan
 
 clean:
 	rm -rf build

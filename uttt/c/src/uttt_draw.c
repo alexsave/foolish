@@ -1,4 +1,5 @@
 #include "uttt_draw.h"
+#include "uttt_anim.h"
 #include <math.h>
 #include <string.h>
 
@@ -9,7 +10,6 @@
 #define INK_X   0x25376bffu
 #define INK_O   0xa8321fffu
 #define INK_GR  0x2f2b26ffu
-#define WASH    0xd6a836ffu
 
 /* One pen at two scales. A mark is drawn inside a CELL and the grid across the
  * whole BOARD, which is nine cells - so the same ball that is 2.7 units wide
@@ -29,7 +29,7 @@ UtttDrawOpts uttt_draw_opts(int32_t seed)
     UtttDrawOpts o;
     o.seed = seed ? seed : 1;
     o.active = -1; o.last = -1; o.mark_t = 1.f; o.meta_t = 1.f;
-    o.reach = 1.f;
+    o.reach = UTTT_REACH;
     return o;
 }
 
@@ -140,18 +140,31 @@ static void hash_in(UtttDL *d, float x, float y, float sz, int32_t seed,
     }
 }
 
+/* THE LAST MARK IS HEAVIER: gone over twice rather than boxed, so it says
+ * "this one" without adding a shape the game does not otherwise have. */
+static void last_mark(UtttDL *d, int v, int mv, int32_t seed, float t)
+{
+    int b = mv / 9, c = mv % 9;
+    float x = (b % 3) * BL + (c % 3) * CE + CE * .1f;
+    float y = (b / 3) * BL + (c / 3) * CE + CE * .1f;
+    UtttPen p = uttt_pen_92();
+    const float w = p.w;
+    p.w = w * 2.2f; p.a = 1.f; p.grain = .22f;
+    mark_in(d, v, x, y, CE * .8f, seed * 1000 + mv, t, &p);
+    p.w = w * 1.9f; p.a = .85f;
+    mark_in(d, v, x, y, CE * .8f, seed * 1000 + mv + 613, t, &p);
+}
+
 int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
 {
     UtttPen base = uttt_pen_92();
 
     /* the block you are sent to, in highlighter - ink cannot say "here"
      * without also saying something it can never take back */
-    if (o->active == 9) {
-        rect(d, .01f, .01f, S - .02f, S - .02f, (WASH & 0xffffff00u) | 43u);
-    } else if (o->active >= 0 && o->active < 9) {
-        rect(d, (o->active % 3) * BL + .012f,
-                (o->active / 3) * BL + .012f, BL - .024f, BL - .024f,
-             (WASH & 0xffffff00u) | 77u);
+    {
+        float r[4], a;
+        if (uttt_wash_rect(o->active, r, &a))
+            rect(d, r[0], r[1], r[2], r[3], uttt_wash_rgba(a));
     }
 
     for (int b = 0; b < 9; b++)
@@ -178,17 +191,11 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
             float x = (b % 3) * BL + (c % 3) * CE;
             float y = (b / 3) * BL + (c / 3) * CE;
             int is_last = (b * 9 + c) == o->last;
+            if (is_last) { last_mark(d, v, b * 9 + c, o->seed, o->mark_t); continue; }
             UtttPen p = base;
-            if (won && !is_last) p.a = base.a * .34f;
-            if (is_last) { p.w = base.w * 2.2f; p.a = 1.f; p.grain = .22f; }
+            if (won) p.a = base.a * .34f;
             mark_in(d, v, x + CE * .1f, y + CE * .1f, CE * .8f,
-                    o->seed * 1000 + b * 9 + c,
-                    is_last ? o->mark_t : 1.f, &p);
-            if (is_last) {
-                p.w = base.w * 1.9f; p.a = .85f;
-                mark_in(d, v, x + CE * .1f, y + CE * .1f, CE * .8f,
-                        o->seed * 1000 + b * 9 + c + 613, o->mark_t, &p);
-            }
+                    o->seed * 1000 + b * 9 + c, 1.f, &p);
         }
         if (won) {
             UtttPen p = base; p.a = .62f; p.w = 2.2f;
@@ -242,6 +249,14 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
             break;
         }
     }
+    return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
+}
+
+int uttt_draw_last(UtttDL *d, const UtttGame *g, int32_t seed, float t)
+{
+    if (g->n_plies == 0) return -1;
+    int mv = g->move[g->n_plies - 1];
+    last_mark(d, uttt_cell(g, mv), mv, seed ? seed : 1, t);
     return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
 }
 
@@ -307,7 +322,7 @@ int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float calm)
 #define BUB_H     195.f
 #define BUB_PAD    10.f
 #define BUB_GUT    12.f
-#define BUB_REACH  (.05f / .135f)   /* the design's 5% over the pen's 13.5% */
+#define BUB_REACH  UTTT_REACH       /* the design's 5% over the pen's 13.5% */
 #define BUB_EDGE    4.f             /* where the longest line stops         */
 
 UtttBubble uttt_bubble(void)

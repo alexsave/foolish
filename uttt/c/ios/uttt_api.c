@@ -2,6 +2,7 @@
 #include "../src/uttt.h"
 #include "../src/uttt_code.h"
 #include "../src/uttt_draw.h"
+#include "../src/uttt_anim.h"
 #include "../src/uttt_msg.h"
 #include "../src/uttt_say.h"
 #include <string.h>
@@ -31,6 +32,11 @@ _Static_assert(UTI_SAY_YOU_ARE_1 == UTTT_SAY_YOU_ARE_1, "say YOU_ARE_1");
 _Static_assert(UTI_SAY_YOU_ARE_2 == UTTT_SAY_YOU_ARE_2, "say YOU_ARE_2");
 _Static_assert(UTI_SAY_DOOR_AGAIN == UTTT_SAY_DOOR_AGAIN, "say DOOR_AGAIN");
 _Static_assert(UTI_SAY_DOOR_AGAIN + 1 == UTTT_SAY_COUNT, "every key has a host name");
+_Static_assert(UTI_CH_STILL == UTTT_CH_STILL && UTI_CH_STAGE == UTTT_CH_STAGE
+            && UTI_CH_REPLAY == UTTT_CH_REPLAY && UTI_CH_THEIRS == UTTT_CH_THEIRS
+            && UTI_CH_ARRIVAL == UTTT_CH_ARRIVAL, "motion channels");
+_Static_assert(sizeof(UtiMotion) == sizeof(UtttMotion), "motion plan layout");
+_Static_assert(sizeof(UtiFrame) == sizeof(UtttFrame), "motion frame layout");
 _Static_assert(UTI_MSG_TEXT_MAX >= UTM_MAX_TEXT, "the longest link fits the host buffer");
 
 /* The resident game, and the buffers the display list is built into. Sized
@@ -140,6 +146,48 @@ int uti_draw_bubble(int active, int last)
  * and the board comes back with a few marks missing. Nothing on screen says
  * so, which is why it gets its own question. */
 int uti_draw_overflow(void) { return S.overflow; }
+
+int uti_draw_under(void)
+{
+    dl_fresh();
+    UtttDrawOpts o = uttt_draw_opts(S.m.seed);
+    o.active = -1;
+    o.last = S.m.game.n_plies ? S.m.game.move[S.m.game.n_plies - 1] : -1;
+    o.mark_t = 0.f;
+    S.overflow = uttt_draw_board(&S.dl, &S.m.game, &o) != 0;
+    return publish();
+}
+
+int uti_draw_last(float t)
+{
+    dl_fresh();
+    if (uttt_draw_last(&S.dl, &S.m.game, S.m.seed, t) < 0 && S.m.game.n_plies) S.overflow = 1;
+    return publish();
+}
+
+/* WHICH DOOR AN OPENED BUBBLE CAME THROUGH is a seat question: my own move
+ * replays quietly (C), anybody else's gets the pulse (D). */
+UtiMotion uti_motion(int ch)
+{
+    if (ch == UTI_CH_OPEN) {
+        const UtttGame *g = &S.m.game;
+        int mine = g->n_plies && uti_msg_mark()
+                && uttt_cell(g, g->move[g->n_plies - 1]) == uti_msg_mark();
+        ch = mine ? UTTT_CH_REPLAY : UTTT_CH_THEIRS;
+    }
+    UtttMotion m = uttt_motion(&S.m.game, ch);
+    UtiMotion u;
+    memcpy(&u, &m, sizeof u);
+    return u;
+}
+
+void uti_motion_at(const UtiMotion *m, int32_t now_ms, UtiFrame *f)
+{
+    UtttMotion k; UtttFrame fr;
+    memcpy(&k, m, sizeof k);
+    uttt_motion_at(&k, now_ms, &fr);
+    memcpy(f, &fr, sizeof *f);
+}
 
 int uti_draw_one(int mv, float t)
 {

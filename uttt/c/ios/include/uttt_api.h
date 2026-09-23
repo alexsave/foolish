@@ -160,6 +160,43 @@ int  uti_draw(int active, int last, float mark_t, float meta_t);
  * marks missing - so this is the only way anyone finds out. */
 int  uti_draw_overflow(void);
 
+/* ---- motion: what the board looks like t milliseconds into a move ----
+ * The kernel's plan (src/uttt_anim.h) as plain values. The host runs one
+ * display-link loop: it asks uti_motion_at for the frame at the clock and
+ * draws it, and schedules nothing. docs/UI.html, "How it moves". */
+#define UTI_CH_STILL    0   /* nothing moves                                */
+#define UTI_CH_STAGE    1   /* A: I tapped a square                         */
+#define UTI_CH_REPLAY   2   /* C: my own bubble, reopened - no pulse        */
+#define UTI_CH_THEIRS   3   /* D: a bubble of theirs, opened                */
+#define UTI_CH_ARRIVAL  4   /* E: their move landed while I was looking     */
+#define UTI_CH_OPEN     5   /* a bubble opened: C or D, the kernel decides  */
+
+typedef struct {
+    int32_t ch, mv, mark, from, to;
+    int32_t ink_ms, wash_at, wash_ms, pulse_at, end_ms;
+} UtiMotion;
+
+typedef struct {
+    float    mark_t;        /* how far the last mark is drawn, 0..1          */
+    float    wash[4];       /* x, y, w, h on the board's 0..1; w 0 = none    */
+    uint32_t wash_rgba;
+    float    pulse[4];      /* the ring's inner rect; w 0 = no ring          */
+    float    pulse_spread;  /* how far it stands out, board units            */
+    uint32_t pulse_rgba;
+    int32_t  landed;        /* the ink is down: the drawer may move now      */
+    int32_t  running;       /* 0: nothing changes again, stop the loop       */
+} UtiFrame;
+
+/* The plan for the resident game's last move arriving through `ch`. */
+UtiMotion uti_motion(int ch);
+void      uti_motion_at(const UtiMotion *m, int32_t now_ms, UtiFrame *f);
+
+/* The board with the last move's mark LEFT OUT and no wash - what a host
+ * caches while the motion draws the rest over it. */
+int  uti_draw_under(void);
+/* The last move's heavy mark alone, drawn to `t`. */
+int  uti_draw_last(float t);
+
 /* JUST the mark being drawn, so an animation does not rebuild the board.
  * 14,000 polygons is fine once and not fine sixty times a second: the caller
  * caches uti_draw()'s output as an image and composites this on top. */

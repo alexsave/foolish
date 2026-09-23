@@ -17,15 +17,25 @@ typedef struct {
     float   mark_t;      /* 0..1, how far the last mark has been drawn      */
     float   meta_t;      /* 0..1, the win line                              */
     float   reach;       /* how far the four main lines run past the board,
-                            as a fraction of the pen's own overshoot: 1 on
-                            the drawer, where the sheet is paper running out,
-                            and less in the bubble (UtttBubble.reach)       */
+                            as a fraction of the pen's own 13.5% overshoot;
+                            UTTT_REACH by default, everywhere               */
 } UtttDrawOpts;
+
+/* UI.html's main lines run 5% of the board past it (hashIn(..., S * .05)),
+ * in every frame it draws - bubble, collapsed and expanded alike. The pen's
+ * own overshoot is 13.5%, which ran the drawer's lines ~55 points off both
+ * sides of the sheet; the design stops them just past the board. */
+#define UTTT_REACH (.05f / .135f)
 
 UtttDrawOpts uttt_draw_opts(int32_t seed);
 
 /* Build the board. Returns 0, or -1 if it ran out of room. */
 int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o);
+
+/* THE LAST MOVE'S HEAVY MARK ON ITS OWN, drawn to `t`. A board drawn with
+ * `last` set and mark_t 0 is every stroke but this one, so a renderer can
+ * cache that and draw only this over it while it moves. -1 on no moves. */
+int uttt_draw_last(UtttDL *d, const UtttGame *g, int32_t seed, float t);
 
 /* One cell's mark, partially drawn - the animating stroke on its own. */
 int uttt_draw_cell(UtttDL *d, int mark, int mv, int32_t seed, float t);
