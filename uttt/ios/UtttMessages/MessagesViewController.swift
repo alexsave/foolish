@@ -103,7 +103,7 @@ final class MessagesViewController: MSMessagesAppViewController {
          * two signals cannot leave the drawer blank or the invitation unstaged
          * - it is logged, and everything waiting runs anyway. */
         let activation = becameActiveAt
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
             guard let self, self.becameActiveAt == activation, !self.ready else { return }
             UtttLog.fault("ready", "no \(self.appeared ? "" : "viewDidAppear ")\(self.conversationActive ? "" : "didBecomeActive")after 1.5s; going ahead")
             self.appeared = true
@@ -159,7 +159,15 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         UtttLog.note("appear", "\(Int(view.bounds.width))x\(Int(view.bounds.height))")
-        appeared = true
+        /* ON A PHONE THE FIRST viewDidAppear IS AT THE WHOLE WINDOW (430x932),
+         * a second before the drawer is up (430x343), and an insert issued in
+         * between is dropped by Messages with no completion at all - device
+         * log 2026-09-23. Only a drawer-sized appearance counts as up. */
+        if let window = view.window, view.bounds.height >= window.bounds.height - 40 {
+            UtttLog.note("appear", "window-sized; not up yet")
+        } else {
+            appeared = true
+        }
         view.backgroundColor = UtttPaper.flat
         if let screen = pendingScreen {
             pendingScreen = nil
@@ -638,8 +646,19 @@ final class MessagesViewController: MSMessagesAppViewController {
          * nothing else - and the one we were handed only as a fallback. */
         let target = activeConversation ?? conversation
         UtttLog.note("insert", "attempt \(attempt)\(activeConversation == nil ? " (no active conversation)" : "")")
+        /* A DROPPED INSERT NEVER CALLS BACK (device log 2026-09-23), so a
+         * silence is a failure too: no answer in 1.2s is retried. */
+        var answered = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            guard let self, !answered, self.stageGeneration == generation, attempt < 4 else { return }
+            UtttLog.fault("insert", "attempt \(attempt) got no answer; retrying")
+            answered = true
+            self.insert(message, generation: generation, in: conversation, attempt: attempt + 1)
+        }
         target.insert(message) { [weak self] error in
             DispatchQueue.main.async {
+                if answered { UtttLog.note("insert", "late answer for attempt \(attempt)"); }
+                answered = true
                 guard let self else { return }
                 guard let error else {
                     UtttLog.note("inserted")
