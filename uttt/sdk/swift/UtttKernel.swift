@@ -78,6 +78,8 @@ public enum Uttt {
         case waiting
         /// Somebody's invitation: X is mine to take, with my first move.
         case open
+        /// An invitation its creator took back. Nobody can sit down at it.
+        case closed
 
         init(_ v: Int32) {
             switch v {
@@ -85,6 +87,7 @@ public enum Uttt {
             case UTI_SEAT_O:       self = .o
             case UTI_SEAT_WAITING: self = .waiting
             case UTI_SEAT_OPEN:    self = .open
+            case UTI_SEAT_CLOSED:  self = .closed
             default:               self = .spectator
             }
         }
@@ -139,6 +142,22 @@ public enum Uttt {
     @discardableResult
     public static func undoMine() -> Bool { uti_msg_undo() != 0 }
 
+    /// Take back my own invitation. The resident message is then the
+    /// take-back, ready to stage. False unless it is mine and nobody took it.
+    @discardableResult
+    public static func takeBack() -> Bool { uti_msg_take_back() != 0 }
+
+    /// The one door a screen may offer, and whether it may offer one at all.
+    /// Only the host knows `sent`; the rule is the kernel's (utm_door).
+    public enum Door { case none, takeBack, again }
+    public static func door(sent: Bool) -> Door {
+        switch uti_msg_door(sent ? 1 : 0) {
+        case UTI_DOOR_TAKE_BACK: return .takeBack
+        case UTI_DOOR_AGAIN:     return .again
+        default:                 return .none
+        }
+    }
+
     /// Which to show: true for `mine` (the staged draft), false for `tapped`.
     public static func prefersMine(_ mine: String, over tapped: String) -> Bool {
         uti_msg_prefer(mine, tapped) <= 0
@@ -185,6 +204,10 @@ public enum Uttt {
         public static let unreadableSubline = Say(key: UTI_SAY_UNREADABLE_SUBLINE)
         public static let youAre1 = Say(key: UTI_SAY_YOU_ARE_1)
         public static let youAre2 = Say(key: UTI_SAY_YOU_ARE_2)
+        public static let closedHeadline = Say(key: UTI_SAY_CLOSED_HEADLINE)
+        public static let closedSubline = Say(key: UTI_SAY_CLOSED_SUBLINE)
+        public static let doorTakeBack = Say(key: UTI_SAY_DOOR_TAKE_BACK)
+        public static let doorAgain = Say(key: UTI_SAY_DOOR_AGAIN)
     }
 
     public static func say(_ s: Say) -> String { String(cString: uti_say(s.key)) }

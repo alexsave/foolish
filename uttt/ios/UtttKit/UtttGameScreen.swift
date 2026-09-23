@@ -10,7 +10,18 @@ import SwiftUI
 /// inside it, which is why the only number this file computes is the board's.
 public struct UtttGameScreen: View {
     @StateObject private var model: UtttModel
-    public init(model: UtttModel) { _model = StateObject(wrappedValue: model) }
+    private let door: Uttt.Door
+    private let onDoor: () -> Void
+
+    /// `door` is the kernel's answer for this board (utm_door) - at the end of
+    /// a game, Again. It stands in the expanded view only (docs/UI.html 08:
+    /// "starting a game from the strip you land on by accident is how you
+    /// start a game by accident").
+    public init(model: UtttModel, door: Uttt.Door = .none, onDoor: @escaping () -> Void = {}) {
+        _model = StateObject(wrappedValue: model)
+        self.door = door
+        self.onDoor = onDoor
+    }
 
     /// The sheet's margin, the same on every edge at both sizes.
     private static let margin: CGFloat = 13
@@ -81,7 +92,11 @@ public struct UtttGameScreen: View {
     ///
     /// Everything below is `lerp(collapsed, expanded, t)`. Nothing switches.
     private func openness(_ h: CGFloat) -> CGFloat {
-        let lo = Self.collapsedCeiling - 130, hi = Self.collapsedCeiling + 130
+        /* THE COLLAPSED END IS 360, above the tallest compact drawer Messages
+         * hands out (340, 323 with the keyboard up). The window used to start
+         * at 270, so the real compact height sat 18% of the way open and drew
+         * the headline as a ghost over the board. */
+        let lo: CGFloat = 360, hi = Self.collapsedCeiling + 130
         let x = min(1, max(0, (h - lo) / (hi - lo)))
         return x * x * (3 - 2 * x)          // smoothstep, so the ends settle
     }
@@ -120,10 +135,27 @@ public struct UtttGameScreen: View {
                     .padding(.top, lerp(4, 0, t))
             }
             .overlay(alignment: .topTrailing) {
-                headlineView.opacity(Double(t)).allowsHitTesting(t > 0.5)
+                VStack(alignment: .trailing, spacing: 3) {
+                    headlineView
+                    /* The line under it: where you sent them, or at the end
+                     * the winning line spoken (docs/UI.html 04, 06, 07). */
+                    if !model.subline.isEmpty {
+                        Text(model.subline)
+                            .font(.system(size: 14))
+                            .foregroundStyle(UtttInk.muted)
+                            .lineLimit(1)
+                    }
+                }
+                .opacity(Double(t)).allowsHitTesting(t > 0.5)
             }
             .overlay(alignment: .bottomTrailing) {
-                UtttRulebookButton(side: door) { rulesOpen = true }
+                HStack(alignment: .center, spacing: 10) {
+                    if let title = UtttDoorButton.title(self.door), t > 0.5 {
+                        UtttDoorButton(title: title, ghost: self.door == .takeBack, act: onDoor)
+                            .opacity(Double((t - 0.5) * 2))
+                    }
+                    UtttRulebookButton(side: door) { rulesOpen = true }
+                }
             }
             .padding(.horizontal, Self.margin)
             .padding(.vertical, vpad)

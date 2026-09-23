@@ -85,15 +85,31 @@ public struct UtttBoard: View {
     }
 
     // MARK: the one-entry cache
-    private static var cacheKey: Int = .min
+
+    /// WHAT THE CACHED IMAGE IS OF: the game itself, not a counter.
+    ///
+    /// It was keyed on `positionKey` alone, which every new model starts at
+    /// the same small number - so opening a second game while the extension
+    /// stayed up (a bubble tapped with the drawer open, Again, a take-back)
+    /// could be handed the PREVIOUS game's picture at the same size. The seed,
+    /// the game's own bytes, the wash and the heavy mark are everything the
+    /// kernel draws from, so they are the key.
+    private static var cacheStamp = ""
     private static var cacheSide: CGFloat = 0
     private static var cacheImage: CGImage?
+
+    private static func stamp(active: Int, last: Int) -> String {
+        let code = Uttt.code.map { String(format: "%02x", $0) }.joined()
+        return "\(Uttt.seed)|\(code)|\(active)|\(last)"
+    }
 
     /// The board at `side`, inside a bitmap bled by `bleed` on every edge, so
     /// the grid's overshoot has somewhere to go.
     static func cached(key: Int, active: Int, last: Int, side: CGFloat) -> CGImage? {
-        if key == cacheKey, side == cacheSide, let img = cacheImage { return img }
-        UtttLog.note("raster", "side \(Int(side))")
+        _ = key                     // SwiftUI's reason to redraw, not the cache's
+        let st = stamp(active: active, last: last)
+        if st == cacheStamp, side == cacheSide, let img = cacheImage { return img }
+        UtttLog.note("raster", "side \(Int(side)) plies \(Uttt.plyCount)")
         defer { UtttLog.note("raster done") }
         let scale = UIScreen.main.scale
         let pad = side * bleed
@@ -124,7 +140,7 @@ public struct UtttBoard: View {
             cg.setFillColor(poly.color)
             cg.fillPath()
         }
-        cacheKey = key; cacheSide = side; cacheImage = cg.makeImage()
+        cacheStamp = st; cacheSide = side; cacheImage = cg.makeImage()
         return cacheImage
     }
 }
