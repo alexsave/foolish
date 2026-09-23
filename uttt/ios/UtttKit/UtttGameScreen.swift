@@ -87,6 +87,9 @@ public struct UtttGameScreen: View {
         let icon = CGFloat(L.icon)
 
         let side = CGFloat(L.board.2)
+#if DEBUG
+        if r { UtttLog.note("sheet-play", String(format: "h %.1f from %.1f board y %.1f side %.1f", size.height, from ?? -1, L.board.1, L.board.2)) }
+#endif
         return board
             .frame(width: side, height: side)
             .boardRuler()

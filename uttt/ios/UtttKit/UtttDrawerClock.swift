@@ -90,7 +90,10 @@ public extension CollapseSlide {
     /// (uttt_anim.h UTTT_COLLAPSE_*): the host's spring, pushed from the
     /// whole travel to nothing.
     static func uttt() -> CollapseSlide {
-        CollapseSlide(duration: Double(uti_collapse_ms()) / 1000,
+#if DEBUG
+        if UtttRuler.on { CollapseSlide.probe = { UtttLog.note("slide", $0) } }
+#endif
+        return CollapseSlide(duration: Double(uti_collapse_ms()) / 1000,
                       steps: Int(uti_collapse_steps()),
                       flip: CGFloat(uti_collapse_flip())) { travel, t in
             CGFloat(uti_collapse_push(Float(travel), Int32((t * 1000).rounded())))

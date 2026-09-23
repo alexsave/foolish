@@ -95,6 +95,62 @@ public final class CollapseSlide: ObservableObject {
 
     static let key = "messageskit.collapse.slide"
 
+    #if DEBUG
+    /// DEBUG ONLY: where the slide's own record goes (every begin, install,
+    /// rider layout and end, and each rider's layers every display frame of
+    /// a run), with the time since the run began. A product sets it while
+    /// its ruler is on, so a filmed frame can be read against what the
+    /// layers were given.
+    public static var probe: ((String) -> Void)?
+    private var probeLink: CADisplayLink?
+    private func note(_ s: @autoclosure () -> String) {
+        guard let p = Self.probe else { return }
+        let t = run.map { (CACurrentMediaTime() - $0.began) * 1000 } ?? -1
+        p(String(format: "%+.1fms ", t) + s())
+    }
+    private func startProbe() {
+        guard Self.probe != nil, probeLink == nil else { return }
+        let l = CADisplayLink(target: ProbeTick(self), selector: #selector(ProbeTick.fire(_:)))
+        l.add(to: .main, forMode: .common)
+        probeLink = l
+    }
+    fileprivate func probeFrame() {
+        guard run != nil else { probeLink?.invalidate(); probeLink = nil; return }
+        for e in entries.values { if let v = e.view { note("frame " + Self.describe(v.layer)) } }
+    }
+    static func describe(_ l: CALayer) -> String {
+        let p = l.presentation()
+        let pt = p?.transform ?? l.transform
+        var out = String(format: "%p b=%@ pos=%@ pres.pos=%@ pres.ty=%.1f pres.sy=%.3f keys=%@",
+                         unsafeBitCast(l, to: Int.self),
+                         NSCoder.string(for: l.bounds), NSCoder.string(for: l.position),
+                         NSCoder.string(for: p?.position ?? .zero), pt.m42, pt.m22,
+                         (l.animationKeys() ?? []).joined(separator: ","))
+        /* The content SwiftUI drew inside the rider: every layer of it with
+         * a picture at least 100pt wide, in the rider's coordinates. */
+        func walk(_ c: CALayer, _ depth: Int) {
+            for s in c.sublayers ?? [] {
+                if s.bounds.width >= 100, s.contents != nil || s.sublayers == nil {
+                    let f = s.convert(s.bounds, to: l)
+                    out += String(format: " | d%d %@ keys=%@", depth, NSCoder.string(for: f),
+                                  (s.animationKeys() ?? []).joined(separator: ","))
+                }
+                if depth < 8 { walk(s, depth + 1) }
+            }
+        }
+        walk(l, 0)
+        return out
+    }
+    private final class ProbeTick: NSObject {
+        weak var slide: CollapseSlide?
+        init(_ s: CollapseSlide) { slide = s }
+        @objc func fire(_ l: CADisplayLink) {
+            guard let slide else { l.invalidate(); return }
+            MainActor.assumeIsolated { slide.probeFrame() }
+        }
+    }
+    #endif
+
     public init(duration: Double, steps: Int, flip: CGFloat,
                 push: @escaping (CGFloat, Double) -> CGFloat) {
         self.duration = duration
@@ -141,6 +197,10 @@ public final class CollapseSlide: ObservableObject {
         NSLog("collapse-slide begin %.1f -> %.1f", previous, height)
         #endif
         begin(from: previous, to: height)
+        #if DEBUG
+        note("begin \(previous) -> \(height)")
+        startProbe()
+        #endif
         return true
     }
 
@@ -183,6 +243,9 @@ public final class CollapseSlide: ObservableObject {
         release?.cancel()
         release = nil
         guard run != nil else { return }
+        #if DEBUG
+        note("end")
+        #endif
         run = nil
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -199,6 +262,9 @@ public final class CollapseSlide: ObservableObject {
 
     func update(_ view: UIView, ride: @escaping (CGFloat) -> CollapseRidePose) {
         let id = ObjectIdentifier(view)
+        #if DEBUG
+        if run != nil { note("update " + Self.describe(view.layer)) }
+        #endif
         entries[id] = Entry(view: view, ride: ride, built: entries[id]?.built)
     }
 
@@ -209,6 +275,9 @@ public final class CollapseSlide: ObservableObject {
     /// its animation rebuilt, in phase, in the same layout pass.
     func laidOut(_ view: UIView) {
         let id = ObjectIdentifier(view)
+        #if DEBUG
+        if run != nil { note("laidOut " + Self.describe(view.layer)) }
+        #endif
         guard let run, let e = entries[id], e.built != view.bounds else { return }
         install(run, on: view.layer, ride: e.ride)
         entries[id]?.built = view.bounds
@@ -240,7 +309,11 @@ public final class CollapseSlide: ObservableObject {
          * flew to the sheet's top left) - so a rider is placed inside. */
         let b = layer.bounds, ap = layer.anchorPoint
         #if DEBUG
-        NSLog("collapse-slide rider %@ at %@", NSCoder.string(for: b), NSCoder.string(for: layer.position))
+        note(String(format: "install %p b=%@ pos=%@ pose0 dy=%.1f sc=%.3f poseEnd dy=%.1f sc=%.3f",
+                    unsafeBitCast(layer, to: Int.self),
+                    NSCoder.string(for: b), NSCoder.string(for: layer.position),
+                    poses.first?.dy ?? 0, poses.first?.scale ?? 1,
+                    poses.last?.dy ?? 0, poses.last?.scale ?? 1))
         #endif
         t.values = poses.map { p -> NSValue in
             let pv = p.pivot ?? CGPoint(x: b.midX, y: b.midY)
