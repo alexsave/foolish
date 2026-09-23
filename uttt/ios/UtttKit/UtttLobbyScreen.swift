@@ -55,13 +55,15 @@ public struct UtttLobbyScreen: View {
     }
 
     /// THE COMPACT STRIP PUTS THE WORDS BESIDE THE BOARD, the way the play
-    /// surface puts "you are" beside it: stacked, they left a 165-point board
+    /// surface puts "you are" beside it: stacked, they left a 112-point board
     /// in 309 points of drawer.
     private var compact: some View {
         HStack(alignment: .top, spacing: 12) {
-            words.frame(width: 168, alignment: .leading)
+            words.frame(width: 150, alignment: .leading)
+            /* The overshoot needs room on every side, or it runs into the
+             * drawer's edge and the grab handle. */
             if stance != .unreadable {
-                board.padding(.vertical, 14)
+                board.padding(22)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
