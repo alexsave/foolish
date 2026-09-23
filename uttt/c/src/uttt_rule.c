@@ -177,6 +177,10 @@ int uttt_draw_door(UtttDL *d, float w, float h)
     const UtttPt bar[4] = {
         { in, in }, { w - in, in }, { w - in, h - in }, { in, h - in }
     };
-    const Rule door = { INK, EDGE, 4.2f, -41.f, 1.4f, 1.8f, 1.5f, 1.3f, 37 };
+    /* The edge is heavier than the rulebook's 1.8: a long, nearly straight
+     * rough line lays its two passes almost on top of each other, so at 1.8
+     * the bar's top and bottom read as the last hachure rather than as the
+     * box's edge (owner: "a hatched band with no edges"). */
+    const Rule door = { INK, EDGE, 4.2f, -41.f, 1.4f, 2.6f, 1.5f, 1.3f, 37 };
     return shape(d, bar, 4, w, h, &door) ? -1 : 0;
 }

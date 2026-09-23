@@ -17,7 +17,11 @@ public struct UtttRulebookButton: View {
     public let side: CGFloat
     private let action: () -> Void
 
-    public init(side: CGFloat = 54, action: @escaping () -> Void = {}) {
+    /// The door's size on the expanded sheet - and the Again bar's height,
+    /// which stands beside it and must match it (owner).
+    public static let expandedSide: CGFloat = 54
+
+    public init(side: CGFloat = expandedSide, action: @escaping () -> Void = {}) {
         self.side = side
         self.action = action
     }

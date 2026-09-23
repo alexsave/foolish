@@ -130,16 +130,12 @@ public struct UtttGameScreen: View {
                               avail))
 
         /* THE EXPANDED BOARD SITS HIGH, NOT CENTRED (UI.html "Expanded, on
-         * four real phones": the board's top at about 143 of 830 points, the
-         * "you are" mark centred in the row above it, and the spare height
-         * all at the bottom with the doors). Collapsed it is centred in what
-         * is left, as it always was; the offset is one lerp between the two,
-         * so a collapse is still a resize and nothing switches. */
+         * four real phones": the board just under the header and the spare
+         * height all at the bottom with the doors). Collapsed it is centred
+         * in what is left, as it always was; the offset is one lerp between
+         * the two, so a collapse is still a resize and nothing switches. */
         let free = max(0, avail - side)
-        let lift = lerp(free / 2, min(free, Self.markRow), t)
-        let inner = size.width - 2 * Self.margin
-        let markX = lerp(0, (inner - icon) / 2, t)
-        let markY = lerp(Self.labelHeight + 3 + 4, Self.barHeight, t)   // under the label; then the row above the board
+        let lift = lerp(free / 2, min(free, Self.boardGap), t)
 
         return board
             .frame(width: side, height: side)
@@ -147,14 +143,9 @@ public struct UtttGameScreen: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .padding(.bottom, bot)
             .overlay(alignment: .topLeading) {
-                youAre
-                    .frame(width: 34)
+                indicator(icon: icon, lead: lerp(3, 4, t))
+                    .frame(width: max(col, icon + 2), alignment: .leading)
                     .padding(.top, lerp(4, 0, t))
-            }
-            .overlay(alignment: .topLeading) {
-                UtttMarkIcon(mark: model.you, seed: model.seed &+ 4)
-                    .frame(width: icon, height: icon)
-                    .offset(x: markX, y: markY)
             }
             .overlay(alignment: .topTrailing) {
                 VStack(alignment: .trailing, spacing: 3) {
@@ -173,7 +164,7 @@ public struct UtttGameScreen: View {
             .overlay(alignment: .bottomTrailing) {
                 HStack(alignment: .center, spacing: 10) {
                     if let title = UtttDoorButton.title(self.door), t > 0.5 {
-                        UtttDoorButton(title: title, act: onDoor)
+                        UtttDoorButton(title: title, height: door, act: onDoor)
                             .opacity(Double((t - 0.5) * 2))
                     }
                     UtttRulebookButton(side: door) { rulesOpen = true }
@@ -216,17 +207,14 @@ public struct UtttGameScreen: View {
     /// "you are" over a 46-point mark, which is 19 points of label, a 4-point
     /// lead and the mark.
     private static let barHeight: CGFloat = 72
-    private static let doorSide: CGFloat = 54
+    private static let doorSide = UtttRulebookButton.expandedSide
 
-    /// The row between the bar and the expanded board that the "you are"
-    /// mark is centred in: the 46-point mark and an 18-point gap - 12 of air
-    /// plus the 5% the main lines run above the board - which puts the
-    /// board's top at 13 + 72 + 64 = 149 points, where UI.html has it (~143)
-    /// give or take the overshoot. An SE has 66 points spare, so it fits.
-    private static let markRow: CGFloat = 64
-
-    /// "you are", two 9.5-point lines at line-height 1.
-    private static let labelHeight: CGFloat = 19
+    /// The air between the bar and the expanded board: 12 points plus the
+    /// 5% the main lines run above the board, so the tips clear the "you
+    /// are" mark. UI.html centres that mark in a row above the board; the
+    /// owner keeps it under its label, as on the strip, so the row goes and
+    /// the board comes up under the bar.
+    private static let boardGap: CGFloat = 30
 
     // MARK: the pieces
 
@@ -238,15 +226,17 @@ public struct UtttGameScreen: View {
     /// THE SIDE INDICATOR IS A DRAWN MARK, not a glyph - the same X that is
     /// about to land on the board, out of the same pen. Setting it in a font
     /// made it the only thing in the frame that did not come off the nib.
-    /// The label stays in the corner at both heights; the mark sits under it
-    /// on the collapsed strip and moves to the middle of the row above the
-    /// expanded board (see `markRow`).
-    private var youAre: some View {
-        // Two lines, set on a 9.5-point body - line-height 1, so they read
-        // as one two-line label rather than two labels.
-        VStack(spacing: -2.8) {
-            line(Uttt.say(.youAre1))
-            line(Uttt.say(.youAre2))
+    private func indicator(icon: CGFloat, lead: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            // Two lines, set on a 9.5-point body - line-height 1, so they read
+            // as one two-line label rather than two labels.
+            VStack(spacing: -2.8) {
+                line(Uttt.say(.youAre1))
+                line(Uttt.say(.youAre2))
+            }
+            UtttMarkIcon(mark: model.you, seed: model.seed &+ 4)
+                .frame(width: icon, height: icon)
+                .padding(.top, lead)
         }
     }
 

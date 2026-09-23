@@ -183,11 +183,17 @@ enum UtttInk {
 /// has and sets the label on top in the outline's dark ink.
 public struct UtttDoorButton: View {
     let title: String
+    let height: CGFloat
     let act: () -> Void
 
-    /// The bar's height: the spec's 13-point padding either side of a
-    /// 14-point line, plus the drawn edge.
-    static let height: CGFloat = 46
+    /// `height` is the rulebook door's side, whatever it is at this moment of
+    /// a resize: the two stand side by side and are the same height (owner).
+    public init(title: String, height: CGFloat = UtttRulebookButton.expandedSide,
+                act: @escaping () -> Void) {
+        self.title = title
+        self.height = height
+        self.act = act
+    }
 
     /// ABOVE THIS HEIGHT THE DRAWER IS EXPANDED. Messages hands the compact
     /// drawer 340 points at the most (323 with the keyboard up) and the
@@ -210,7 +216,7 @@ public struct UtttDoorButton: View {
                 .tracking(0.56)                         // .04em
                 .foregroundStyle(UtttInk.doorInk)
                 .frame(maxWidth: .infinity)
-                .frame(height: Self.height)
+                .frame(height: height)
                 .background(
                     Canvas { ctx, size in
                         UtttBoard.fill(Uttt.door(w: size.width, h: size.height),
