@@ -105,8 +105,11 @@ public struct MotionRulerEdges: View {
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                 .clipped()
                 // THE INSTRUMENT IS NEVER ANIMATED: a bar tweened by the
-                // host's animation measures the tween, not the box.
-                .transaction(value: geo.size.height) { $0.animation = nil }
+                // host's animation measures the tween, not the box. Every
+                // transaction, not just a height change's: nothing in here is
+                // ever meant to tween, and the value-scoped form is iOS 17
+                // while a product that compiles this file still targets 16.
+                .transaction { $0.animation = nil }
             }
             .allowsHitTesting(false)
             .accessibilityHidden(true)
