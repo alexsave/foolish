@@ -143,4 +143,11 @@ unsigned uttt_mask_wins(unsigned mask);
 /* The i-th of the eight lines, as a nine-bit mask. */
 unsigned uttt_line_mask(int i);
 
+/* WHICH LINE OF BLOCKS WON the game: 0..7 as uttt_line_mask numbers them (the
+ * three rows, the three columns, then the diagonal from the top left and the
+ * one from the top right), or -1 when the game is not won. A win can complete
+ * two lines at once; the lower number is the answer, so every device says the
+ * same one. */
+int  uttt_won_line(const UtttGame *g);
+
 #endif

@@ -19,12 +19,15 @@ enum {
     /* the bubble: baked into the image and its caption, same on every phone */
     UTTT_SAY_BUBBLE_HEADLINE = 0,  /* "A game?", "Your move", "X wins"      */
     UTTT_SAY_BUBBLE_PLACE,         /* "bottom middle", "58 moves", ""       */
-    UTTT_SAY_CAPTION,              /* "Sent to the bottom-middle board."    */
+    UTTT_SAY_CAPTION,              /* "Sent to the bottom-middle board.",
+                                      "X won on the diagonal. 58 moves."    */
 
     /* the play surface, drawn for `seat` (UTM_SEAT_*) */
     UTTT_SAY_HEADLINE_PRE,         /* words before the drawn mark           */
     UTTT_SAY_HEADLINE_POST,        /* words after it (UTTT_SAY_HEADLINE_MARK) */
-    UTTT_SAY_SUBLINE,              /* "Anywhere you like.", "Top left."     */
+    UTTT_SAY_SUBLINE,              /* "Anywhere you like.", "Top left.",
+                                      at the end the winning line spoken:
+                                      "Top left, centre, bottom right."     */
 
     /* the spectator's one line */
     UTTT_SAY_WATCH_LABEL,          /* "watching"                            */
@@ -39,6 +42,14 @@ enum {
     /* the "you are" indicator, two lines over the drawn mark */
     UTTT_SAY_YOU_ARE_1,
     UTTT_SAY_YOU_ARE_2,
+
+    /* an invitation its creator took back (UTM_SEAT_CLOSED) */
+    UTTT_SAY_CLOSED_HEADLINE,
+    UTTT_SAY_CLOSED_SUBLINE,
+
+    /* the one door a screen may offer (utm_door) */
+    UTTT_SAY_DOOR_TAKE_BACK,
+    UTTT_SAY_DOOR_AGAIN,
 
     UTTT_SAY_COUNT
 };

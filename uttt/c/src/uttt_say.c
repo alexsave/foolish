@@ -25,6 +25,30 @@ int uttt_say_headline_mark(const UtttGame *g, int seat)
     return g->turn == you ? 0 : g->turn;
 }
 
+/* HOW A WINNING LINE IS SAID in a caption, numbered as uttt_line_mask. */
+static const char *const LINE_SAID[8] = {
+    "across the top", "across the middle", "across the bottom",
+    "down the left", "down the middle", "down the right",
+    "on the diagonal", "on the diagonal",
+};
+
+/* "Top left, centre, bottom right." - the three blocks of the winning line,
+ * in board order, which is the order a finger traces it. */
+static int say_line(const UtttGame *g, char *out, int cap)
+{
+    int i = uttt_won_line(g);
+    if (i < 0) return put(out, cap, "");
+    unsigned m = uttt_line_mask(i);
+    const char *b[3];
+    int k = 0;
+    for (int blk = 0; blk < 9 && k < 3; blk++)
+        if ((m >> blk) & 1u) b[k++] = uttt_place_name(blk, 0);
+    int n = snprintf(out, (size_t)cap, "%s, %s, %s.", b[0], b[1], b[2]);
+    if (n < 0 || n >= cap) return -1;
+    if (out[0] >= 'a' && out[0] <= 'z') out[0] = (char)(out[0] - 'a' + 'A');
+    return n;
+}
+
 int uttt_say(int key, const UtttGame *g, int seat, char *out, int cap)
 {
     if (!out || cap < 1) return -1;
@@ -33,6 +57,7 @@ int uttt_say(int key, const UtttGame *g, int seat, char *out, int cap)
 
     switch (key) {
     case UTTT_SAY_BUBBLE_HEADLINE:
+        if (seat == UTM_SEAT_CLOSED) return put(out, cap, "Taken back");
         /* AN EMPTY BOARD IS NOT A MOVE. Nobody has a seat yet, so there is no
          * move to be anybody's; the invitation asks the question instead. */
         switch (g->over) {
@@ -43,6 +68,7 @@ int uttt_say(int key, const UtttGame *g, int seat, char *out, int cap)
         }
 
     case UTTT_SAY_BUBBLE_PLACE:
+        if (seat == UTM_SEAT_CLOSED) return put(out, cap, "");
         /* A finished game has nowhere to send anybody, so the line says how
          * long it took; an invitation has nowhere either, and says nothing. */
         if (g->over) return putf(cap, snprintf(out, (size_t)cap, "%d moves", g->n_plies));
@@ -50,10 +76,19 @@ int uttt_say(int key, const UtttGame *g, int seat, char *out, int cap)
         return put(out, cap, uttt_place_name(a, 0));
 
     case UTTT_SAY_CAPTION:
+        if (seat == UTM_SEAT_CLOSED) return put(out, cap, "Game taken back.");
         switch (g->over) {
-        case UTTT_X:    return put(out, cap, "X wins.");
-        case UTTT_O:    return put(out, cap, "O wins.");
-        case UTTT_DRAW: return put(out, cap, "Nine blocks, no line.");
+        case UTTT_X: case UTTT_O: {
+            /* docs/UI.html 05: "Alex won on the diagonal. 58 moves." The
+             * name is WP4's ($<uuid> substitution); the mark stands in. */
+            int i = uttt_won_line(g);
+            return putf(cap, snprintf(out, (size_t)cap, "%s won %s. %d moves.",
+                                      g->over == UTTT_X ? "X" : "O",
+                                      i < 0 ? "" : LINE_SAID[i], g->n_plies));
+        }
+        case UTTT_DRAW:
+            return putf(cap, snprintf(out, (size_t)cap, "Drawn. Nine blocks, no line. %d moves.",
+                                      g->n_plies));
         default: break;
         }
         if (!g->n_plies) return put(out, cap, "New Ultimate Tic Tac Toe game");
@@ -75,7 +110,7 @@ int uttt_say(int key, const UtttGame *g, int seat, char *out, int cap)
         /* When it is not your turn this is WHERE YOU SENT THEM, the one thing
          * worth reading on a board you cannot touch. */
         if (g->over == UTTT_DRAW) return put(out, cap, "Nine blocks, no line.");
-        if (g->over) return putf(cap, snprintf(out, (size_t)cap, "%d moves.", g->n_plies));
+        if (g->over) return say_line(g, out, cap);
         if (g->turn == you) return put(out, cap, a == 9 ? "Anywhere you like." : "");
         if (a == 9) return put(out, cap, "Anywhere they like.");
         {
@@ -107,6 +142,14 @@ int uttt_say(int key, const UtttGame *g, int seat, char *out, int cap)
         return put(out, cap, "Can't read that");
     case UTTT_SAY_UNREADABLE_SUBLINE:
         return put(out, cap, "That board came from a newer version of the app.");
+
+    case UTTT_SAY_CLOSED_HEADLINE:
+        return put(out, cap, "Taken back");
+    case UTTT_SAY_CLOSED_SUBLINE:
+        return put(out, cap, "Nobody can take this one.");
+
+    case UTTT_SAY_DOOR_TAKE_BACK: return put(out, cap, "Take it back");
+    case UTTT_SAY_DOOR_AGAIN:     return put(out, cap, "Again");
 
     case UTTT_SAY_YOU_ARE_1: return put(out, cap, "you");
     case UTTT_SAY_YOU_ARE_2: return put(out, cap, "are");
