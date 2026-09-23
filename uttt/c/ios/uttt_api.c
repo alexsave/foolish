@@ -303,6 +303,27 @@ int uti_draw_door(float w, float h)
 
 void uti_paper(uint8_t *rgba, int w, int h) { uttt_paper(rgba, w, h); }
 
+/* THE SAME PAPER in the compositor's own layout - BGRA, rows `stride` bytes
+ * apart - so the host paints it straight into the one surface it shows
+ * (UtttBitmap) and keeps no second copy. The paper is opaque, so premultiplied
+ * and straight are the same bytes. Bytes past each row's pixels are left as
+ * they were. */
+void uti_paper_bgra(uint8_t *dst, int w, int h, int stride)
+{
+    if (!dst || w <= 0 || h <= 0 || stride < w * 4) return;
+    uint8_t *px = malloc((size_t)w * (size_t)h * 4);
+    if (!px) return;
+    uttt_paper(px, w, h);
+    for (int y = 0; y < h; y++) {
+        const uint8_t *s = px + (size_t)y * (size_t)w * 4;
+        uint8_t *d = dst + (size_t)y * (size_t)stride;
+        for (int x = 0; x < w; x++, s += 4, d += 4) {
+            d[0] = s[2]; d[1] = s[1]; d[2] = s[0]; d[3] = s[3];
+        }
+    }
+    free(px);
+}
+
 /* ----------------------------------------------------------- the bubble */
 void uti_bubble_size(float *w, float *h)
 {

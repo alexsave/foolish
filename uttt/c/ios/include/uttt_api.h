@@ -296,6 +296,8 @@ int  uti_draw_door(float w, float h);
  * over a warm near-white. Here rather than in the renderer for the same reason
  * the marks are: both phones have to be looking at the same piece of paper. */
 void uti_paper(uint8_t *rgba, int w, int h);
+/* The same paper as BGRA rows `stride` bytes apart, for a compositor surface. */
+void uti_paper_bgra(uint8_t *dst, int w, int h, int stride);
 
 /* ----------------------------------------------------------- the bubble */
 /* The transcript image is 300x195 points, landscape, and baked at insert -

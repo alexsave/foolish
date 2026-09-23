@@ -125,6 +125,27 @@ int main(void)
         uti_taken_free(none);
     }
 
+    /* THE COMPOSITOR'S PAPER IS THE SAME PAPER: every pixel of the BGRA
+     * rows is the RGBA paper's with red and blue swapped, and the padding a
+     * surface's stride leaves past each row is not written. */
+    {
+        enum { PW = 37, PH = 23, STRIDE = PW * 4 + 12 };
+        static uint8_t rgba[PW * PH * 4], bgra[STRIDE * PH];
+        memset(bgra, 0xab, sizeof bgra);
+        uti_paper(rgba, PW, PH);
+        uti_paper_bgra(bgra, PW, PH, STRIDE);
+        int same = 1, pad = 1;
+        for (int y = 0; y < PH; y++) {
+            for (int x = 0; x < PW; x++) {
+                const uint8_t *s = rgba + (y * PW + x) * 4, *d = bgra + y * STRIDE + x * 4;
+                if (d[0] != s[2] || d[1] != s[1] || d[2] != s[0] || d[3] != s[3]) same = 0;
+            }
+            for (int k = PW * 4; k < STRIDE; k++) if (bgra[y * STRIDE + k] != 0xab) pad = 0;
+        }
+        ok(same, "the BGRA paper is the RGBA paper, red and blue swapped");
+        ok(pad, "and the stride's padding is left alone");
+    }
+
     uti_new(77);
 
     /* ---- the bubble frame. 300x195 is somebody else's number, so the only

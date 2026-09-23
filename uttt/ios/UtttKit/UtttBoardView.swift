@@ -40,17 +40,9 @@ public struct UtttBoard: View {
             let side = min(geo.size.width, geo.size.height)
             let pad  = side * Self.bleed
             ZStack(alignment: .topLeading) {
-                Canvas { ctx, _ in
-                    _ = landed
-                    if let img = Self.cached(key: positionKey, active: active,
-                                             last: last,
-                                             side: side) {
-                        ctx.draw(Image(decorative: img, scale: 1),
-                                 in: CGRect(x: 0, y: 0,
-                                            width: side + 2 * pad,
-                                            height: side + 2 * pad))
-                    }
-                }
+                let _ = landed
+                UtttSurface(bitmap: Self.cached(key: positionKey, active: active,
+                                                last: last, side: side))
                 .frame(width: side + 2 * pad, height: side + 2 * pad)
                 .offset(x: -pad, y: -pad)
                 .allowsHitTesting(false)
@@ -105,7 +97,7 @@ public struct UtttBoard: View {
     /// kernel draws from, so they are the key.
     private static var cacheStamp = ""
     private static var cacheSide: CGFloat = 0
-    private static var cacheImage: CGImage?
+    private static var cacheImage: UtttBitmap?
 
     private static func stamp(active: Int, last: Int) -> String {
         let code = Uttt.code.map { String(format: "%02x", $0) }.joined()
@@ -127,7 +119,7 @@ public struct UtttBoard: View {
     /// few frames later, while the drawer is still settling. Only the FIRST:
     /// after that a stale image is on screen, and swapping a finished move's
     /// image in late would flash the move out and back in.
-    static func cached(key: Int, active: Int, last: Int, side: CGFloat) -> CGImage? {
+    static func cached(key: Int, active: Int, last: Int, side: CGFloat) -> UtttBitmap? {
         _ = key                     // SwiftUI's reason to redraw, not the cache's
         return cached(stamp: stamp(active: active, last: last), side: side) {
             Uttt.boardPolys(active: active, last: last)
@@ -137,7 +129,7 @@ public struct UtttBoard: View {
     /// THE BOARD UNDER THE MOTION: every stroke but the last move's mark and
     /// no wash, so the ink and the travelling highlighter can be
     /// drawn over it every frame without touching fourteen thousand polygons.
-    static func cachedUnder(side: CGFloat) -> CGImage? {
+    static func cachedUnder(side: CGFloat) -> UtttBitmap? {
         cached(stamp: stamp(active: -2, last: -2), side: side) { Uttt.underPolys() }
     }
 
@@ -146,7 +138,7 @@ public struct UtttBoard: View {
     static var underReady: Bool { cacheStamp == stamp(active: -2, last: -2) && cacheImage != nil }
 
     private static func cached(stamp st: String, side: CGFloat,
-                               polys make: () -> Uttt.BoardPolys) -> CGImage? {
+                               polys make: () -> Uttt.BoardPolys) -> UtttBitmap? {
         if st == cacheStamp, let img = cacheImage {
             if side == cacheSide { return img }
             /* THE SAME BOARD AT A NEW SIZE: the drawer is being dragged, or
@@ -210,32 +202,25 @@ public struct UtttBoard: View {
     }
 
     /// Pure: the polygons into a new bitmap. Safe on any thread.
-    private static func render(_ polys: Uttt.BoardPolys, side: CGFloat, scale: CGFloat) -> CGImage? {
+    private static func render(_ polys: Uttt.BoardPolys, side: CGFloat, scale: CGFloat) -> UtttBitmap? {
         let pad = side * bleed
         let box = side + 2 * pad
         let px = Int(box * scale)
-        guard px > 0,
-              let cg = CGContext(data: nil, width: px, height: px,
-                                 bitsPerComponent: 8, bytesPerRow: 0,
-                                 space: CGColorSpaceCreateDeviceRGB(),
-                                 /* THE COMPOSITOR'S OWN LAYOUT, BGRA little-endian:
-                                  * an RGBA bitmap was converted channel by channel
-                                  * every time it was drawn at a new size, which is
-                                  * every frame of a drawer move (vImage permute,
-                                  * the top of the stack in a `sample` of one). */
-                                 bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
-                                     | CGBitmapInfo.byteOrder32Little.rawValue)
-        else { return nil }
-        /* A CGBitmapContext has its ORIGIN AT THE BOTTOM LEFT and SwiftUI
-         * does not, so a board drawn straight into one comes out mirrored
-         * top to bottom - which reads as the game having been played upside
-         * down rather than as a coordinate bug. Flip once, here, so the
-         * kernel's coordinates mean the same thing in both places. */
-        cg.translateBy(x: 0, y: box * scale)
-        cg.scaleBy(x: scale, y: -scale)
-        cg.translateBy(x: pad, y: pad)
-        Uttt.fill(polys, into: cg, side: side)
-        return cg.makeImage()
+        /* THE COMPOSITOR'S OWN LAYOUT, BGRA little-endian, and its own memory
+         * (UtttBitmap): an RGBA bitmap was converted channel by channel every
+         * time it was drawn at a new size, and a CGImage was copied whole into
+         * the render server. */
+        return UtttBitmap(width: px, height: px) { cg in
+            /* A CGBitmapContext has its ORIGIN AT THE BOTTOM LEFT and SwiftUI
+             * does not, so a board drawn straight into one comes out mirrored
+             * top to bottom - which reads as the game having been played upside
+             * down rather than as a coordinate bug. Flip once, here, so the
+             * kernel's coordinates mean the same thing in both places. */
+            cg.translateBy(x: 0, y: box * scale)
+            cg.scaleBy(x: scale, y: -scale)
+            cg.translateBy(x: pad, y: pad)
+            Uttt.fill(polys, into: cg, side: side)
+        }
     }
 }
 
@@ -362,9 +347,7 @@ public struct UtttLiveBoard: View {
                  * transform. It is fetched for every new position (the model's
                  * `positionKey`, which every run of the clock bumps). */
                 if let img = UtttBoard.cachedUnder(side: side) {
-                    Image(decorative: img, scale: 1)
-                        .resizable()
-                        .interpolation(.high)
+                    UtttSurface(bitmap: img)
                         .frame(width: side + 2 * pad, height: side + 2 * pad)
                         .offset(x: -pad, y: -pad)
                         .allowsHitTesting(false)
