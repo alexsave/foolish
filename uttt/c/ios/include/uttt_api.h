@@ -156,6 +156,10 @@ const char *uti_say(int key);
 
 /* The mark drawn in the play-surface headline, or 0: "Waiting on <O>". */
 int  uti_say_mark(void);
+/* The same two, of the position one ply back: what a screen says until the
+ * last move's ink has landed. */
+const char *uti_say_before(int key);
+int  uti_say_mark_before(void);
 
 /* uti_say, with `who` standing for the SENDER of the bubble being written:
  * "$" and the local participant's UUID, which Messages shows as a name.
@@ -230,6 +234,13 @@ float uti_drawer_at(const UtiDrawer *d, int32_t now_ms, int32_t *moving);
  * reporting it: a layout pass sees a new height before the host's change
  * callback does, and must not draw that one frame at the raw height. */
 float uti_drawer_peek(const UtiDrawer *d, float h, int32_t now_ms, int32_t *moving);
+/* The layout at rest at `h` at once (the auto-collapse's slide), and the
+ * slide's push `t_ms` into a travel (src/uttt_anim.h UTTT_COLLAPSE_*). */
+void  uti_drawer_rest(UtiDrawer *d, float h);
+float uti_collapse_push(float travel, int32_t t_ms);
+int32_t uti_collapse_ms(void);
+int32_t uti_collapse_steps(void);
+float uti_collapse_flip(void);
 
 /* ---- one layout for every screen (src/uttt_anim.h UtttSheet) ----
  * The board's square centred on the sheet at every height and every screen,
@@ -241,12 +252,13 @@ float uti_drawer_peek(const UtiDrawer *d, float h, int32_t now_ms, int32_t *movi
 #define UTI_SHEET_WAIT   2
 typedef struct {
     float   w, h;
-    int32_t kind, words;
+    int32_t kind, words, hint;
 } UtiSheetIn;
 typedef struct {
     float t, board[3], hpad, vpad, col, bar, foot, door, icon, icon_lead,
           icon_top, words_alpha, door_alpha, words[4];
     int32_t words_side;
+    float band[4], band_alpha;
 } UtiSheet;
 UtiSheet uti_sheet(UtiSheetIn in);
 

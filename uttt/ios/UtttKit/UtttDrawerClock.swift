@@ -34,8 +34,22 @@ public final class UtttDrawerClock: ObservableObject {
         return CGFloat(uti_drawer_peek(&d, Float(handed), ms(CACurrentMediaTime()), &moving))
     }
 
+    /// The last height Messages handed, so a drop can be judged against it.
+    public private(set) var handed: CGFloat = 0
+
+    /// The auto-collapse flipped: lay out at `h` from this frame, no spring -
+    /// the slide's push does the moving (UtttDrawerSheet, CollapseSlide).
+    public func rest(_ h: CGFloat) {
+        handed = h
+        uti_drawer_rest(&d, Float(h))
+        link?.invalidate()
+        link = nil
+        frame &+= 1
+    }
+
     /// Every height Messages hands the sheet.
     public func report(_ h: CGFloat) {
+        handed = h
         uti_drawer_report(&d, Float(h), ms(CACurrentMediaTime()))
         var moving: Int32 = 0
         _ = uti_drawer_at(&d, ms(CACurrentMediaTime()), &moving)
@@ -67,6 +81,19 @@ public final class UtttDrawerClock: ObservableObject {
         @objc func fire(_ l: CADisplayLink) {
             guard let clock else { l.invalidate(); return }
             MainActor.assumeIsolated { clock.tick(l) }
+        }
+    }
+}
+
+public extension CollapseSlide {
+    /// The auto-collapse's slide, on the kernel's curve and numbers
+    /// (uttt_anim.h UTTT_COLLAPSE_*): the host's spring, pushed from the
+    /// whole travel to nothing.
+    static func uttt() -> CollapseSlide {
+        CollapseSlide(duration: Double(uti_collapse_ms()) / 1000,
+                      steps: Int(uti_collapse_steps()),
+                      flip: CGFloat(uti_collapse_flip())) { travel, t in
+            CGFloat(uti_collapse_push(Float(travel), Int32((t * 1000).rounded())))
         }
     }
 }

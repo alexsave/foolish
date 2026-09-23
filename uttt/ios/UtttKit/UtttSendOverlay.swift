@@ -48,9 +48,13 @@ public struct UtttSendOverlay: View {
             SendHint(staged: state.staged && !state.door, visible: state.compact,
                      caption: Uttt.say(.sendHint),
                      fuse: Uttt.sendHintSeconds, restart: state.restart,
-                     /* BLACK, not the sister product's white: this is light
-                      * paper, and a white ring vanishes into it (owner). */
-                     outline: .black)
+                     /* WHITE WORDS RINGED IN THE SEND BLUE (owner, 2026-09-23),
+                      * arrow and caption alike: a white ring vanished into
+                      * the paper and a black one read as a stamp. */
+                     ink: .white,
+                     /* DOWN IN THE FRAME IT IS SENT, or the drawer starts to
+                      * grow - a fade let it linger up to 2s on the film. */
+                     hidesAtOnce: true)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                 .padding(.top, Self.hintTop)
 

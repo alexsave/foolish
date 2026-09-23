@@ -26,6 +26,10 @@ import UtttKit
 final class MessagesViewController: MSMessagesAppViewController {
 
     private var host: UIHostingController<AnyView>?
+
+    /// THE AUTO-COLLAPSE, on the render server (CollapseSlide): armed right
+    /// before this controller asks for compact, and every screen rides it.
+    private let slide = CollapseSlide.uttt()
     private var bag = Set<AnyCancellable>()
 
     /// THE SEND HINT AND THE SEND DOOR, over whatever screen is up (see
@@ -114,6 +118,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         vc.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         overlayBox.addSubview(vc.view)
         overlayBox.state = sendState
+        overlayBox.onGrow = { [weak self] in self?.hideHintNow() }
         view.addSubview(overlayBox)
         vc.didMove(toParent: self)
         overlay = vc
@@ -359,6 +364,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         }
         freshSession = false
         live?.setPending(false)
+        hideHintNow()
         sendState.staged = false
         sendState.door = false
         doorInsert = nil
@@ -442,13 +448,39 @@ final class MessagesViewController: MSMessagesAppViewController {
         UtttLog.note("will-style", Self.name(presentationStyle))
         /* THE HINT GOES AS THE DRAWER STARTS TO GROW, not once it has: the
          * Send button is only above a compact drawer. */
+        if presentationStyle != .compact { hideHintNow() }
         sendState.compact = presentationStyle == .compact
+    }
+
+    /// THE HINT DOWN IN THIS FRAME. A send, or a drawer that has started to
+    /// grow: SwiftUI would take it down at its next render, and a send is the
+    /// moment this process is busiest (the re-present) - filmed lingering
+    /// 0.8-2s after the arrow and ~1s into a drag. The overlay's layer is
+    /// hidden and committed now; it comes back when the drawer is compact
+    /// and a bubble is staged again (`showHintLayer`).
+    private func showHintLayer() {
+        overlayBox.hintLayerShown = true
+        overlayBox.rest = overlayBox.bounds.height
+        sendState.compact = true
+        overlay?.view.layer.opacity = 1
+    }
+
+    private func hideHintNow() {
+        guard overlayBox.hintLayerShown else { return }
+        overlayBox.hintLayerShown = false
+        sendState.compact = false
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        overlay?.view.layer.opacity = 0
+        CATransaction.commit()
+        CATransaction.flush()
     }
 
     override func didTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.didTransition(to: presentationStyle)
         UtttLog.note("style", Self.name(presentationStyle))
         sendState.compact = presentationStyle == .compact
+        if presentationStyle == .compact { showHintLayer() }
         let waiters = transitionWaiters
         transitionWaiters.removeAll()
         for seq in waiters.keys.sorted() { waiters[seq]?.resume() }
@@ -709,6 +741,10 @@ final class MessagesViewController: MSMessagesAppViewController {
             return
         }
         UtttLog.note("stage", "collapsing first")
+        /* THE INK HAS LANDED - stage runs from the model's position change,
+         * which comes once the kernel's frame says so - so the drawer moves
+         * now, and never during (UI.html). */
+        slide.arm()
         requestPresentationStyle(.compact)
         /* THE PAINT AND THE COLLAPSE RUN TOGETHER, and the transition is
          * waited for from NOW: waiting for it after the paint missed a
@@ -720,6 +756,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         }
         Task { @MainActor [weak self] in
             await self?.awaitTransitionSettled()
+            self?.slide.disarm()
             let img: UIImage
             if let ready = image { img = ready } else {
                 img = await withCheckedContinuation { imageWaiter = $0 }
@@ -770,6 +807,7 @@ final class MessagesViewController: MSMessagesAppViewController {
                     self.sendState.door = false
                     self.sendState.restart += 1
                     self.sendState.staged = true
+                    if self.presentationStyle == .compact { self.showHintLayer() }
                     return
                 }
                 UtttLog.fault("insert", "attempt \(attempt) failed: \(error.localizedDescription)")
@@ -819,6 +857,7 @@ final class MessagesViewController: MSMessagesAppViewController {
                 UtttLog.fault("insert", "attempt \(attempt) got no answer; \(attempt) unanswered, offering the send door")
                 self.doorInsert = (message, generation, conversation)
                 self.sendState.door = true
+                if compact { self.showHintLayer() }
             }
         }
     }
@@ -887,7 +926,11 @@ final class MessagesViewController: MSMessagesAppViewController {
                 /* THE END OF THE GAME re-presents, for the door the playing
                  * screen did not have: Again. */
                 if Uttt.over != .none {
-                    DispatchQueue.main.async { self.present(conversation) }
+                    /* Not in the middle of the slide: a new screen there
+                     * lands on a host with no push. */
+                    DispatchQueue.main.async {
+                        self.slide.whenStill { self.present(conversation) }
+                    }
                 }
             }
             .store(in: &bag)
@@ -936,7 +979,8 @@ final class MessagesViewController: MSMessagesAppViewController {
         host?.view.removeFromSuperview()
         host?.removeFromParent()
 
-        let vc = UIHostingController(rootView: screen)
+        slide.end()
+        let vc = UIHostingController(rootView: AnyView(screen.environment(\.collapseSlide, slide)))
         addChild(vc)
         vc.view.frame = view.bounds
         vc.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -947,6 +991,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         view.insertSubview(vc.view, belowSubview: overlayBox)
         vc.didMove(toParent: self)
         host = vc
+        slide.host = vc.view
     }
 }
 
@@ -955,6 +1000,21 @@ final class MessagesViewController: MSMessagesAppViewController {
 /// overlay that is a control.
 final class UtttSendOverlayBox: UIView {
     weak var state: UtttSendState?
+
+    /// Whether the overlay's layer is up (see `hideHintNow`).
+    var hintLayerShown = true
+    /// Called the frame the drawer is laid out taller than it rested: a drag
+    /// on the handle hands a new height every frame, and willTransition only
+    /// comes at the release.
+    var onGrow: (() -> Void)?
+    var rest: CGFloat = 0
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let h = bounds.height
+        if rest == 0 || state?.compact == true && h < rest { rest = h }
+        if h > rest + 4 { onGrow?() } else if state?.compact == true { rest = h }
+    }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard state?.door == true, point.y >= bounds.height - UtttSendOverlay.doorStrip else { return nil }

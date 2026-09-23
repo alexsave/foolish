@@ -51,21 +51,38 @@ public final class UtttModel: ObservableObject {
         case mark(String, Uttt.Mark, String)
     }
 
+    /// THE WORDS WAIT FOR THE INK (UI.html: "Your move" once their mark has
+    /// landed, not before it is drawn - sheet 5). False from the moment a
+    /// move starts to draw until the kernel's frame says it has landed; the
+    /// words meanwhile are the position one ply back.
+    @Published public private(set) var inked = true
+
     /// The words are the kernel's; this only says where the drawn mark goes.
     public var headline: Headline {
-        let pre = Uttt.say(.headlinePre), post = Uttt.say(.headlinePost)
-        let m = Uttt.sayMark
+        let pre = inked ? Uttt.say(.headlinePre) : Uttt.sayBefore(.headlinePre)
+        let post = inked ? Uttt.say(.headlinePost) : Uttt.sayBefore(.headlinePost)
+        let m = inked ? Uttt.sayMark : Uttt.sayMarkBefore
         return m == .none ? .text(pre + post) : .mark(pre, m, post)
     }
 
     /// The line under it. When it is not your turn this is WHERE YOU SENT
     /// THEM, which is the one thing worth reading on a board you cannot touch.
-    public var subline: String { Uttt.say(.subline) }
+    public var subline: String { inked ? Uttt.say(.subline) : Uttt.sayBefore(.subline) }
+
+    /// Run the clock through `ch` with the words held until the ink lands.
+    private func run(_ ch: Uttt.Channel, then: (() -> Void)? = nil) {
+        inked = false
+        clock.run(ch) { [weak self] in
+            self?.inked = true
+            then?()
+        }
+    }
 
     /// The harness loads a position behind the model's back; this is how it
     /// tells the screen to look again.
     public func refresh() {
         positionKey &+= 1
+        inked = true
         clock.run(.still)
     }
 
@@ -73,7 +90,7 @@ public final class UtttModel: ObservableObject {
     /// move that landed while this board was up (E).
     public func show(_ ch: Uttt.Channel) {
         positionKey &+= 1
-        clock.run(ch)
+        run(ch)
     }
 
     /// A MOVE THAT IS STAGED IS STILL A DRAFT. It sits in the input field
@@ -156,7 +173,7 @@ public final class UtttModel: ObservableObject {
     private func draw(_ mv: Int) async {
         _ = mv
         await withCheckedContinuation { (k: CheckedContinuation<Void, Never>) in
-            clock.run(.stage) { k.resume() }
+            run(.stage) { k.resume() }
         }
     }
 }

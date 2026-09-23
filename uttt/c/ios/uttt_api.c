@@ -224,10 +224,25 @@ float uti_drawer_peek(const UtiDrawer *d, float h, int32_t now_ms, int32_t *movi
     return uttt_drawer_at(&k, now_ms, moving);
 }
 
+void uti_drawer_rest(UtiDrawer *d, float h)
+{
+    UtttDrawer k;
+    memcpy(&k, d, sizeof k);
+    uttt_drawer_rest(&k, h);
+    memcpy(d, &k, sizeof k);
+}
+
+float   uti_collapse_push(float travel, int32_t t_ms) { return uttt_collapse_push(travel, t_ms); }
+int32_t uti_collapse_ms(void)    { return UTTT_COLLAPSE_MS; }
+int32_t uti_collapse_steps(void) { return UTTT_COLLAPSE_STEPS; }
+float   uti_collapse_flip(void)  { return UTTT_COLLAPSE_FLIP; }
+
 _Static_assert(sizeof(UtiSheetIn) == sizeof(UtttSheetIn), "UtiSheetIn mirrors UtttSheetIn");
 _Static_assert(sizeof(UtiSheet) == sizeof(UtttSheet), "UtiSheet mirrors UtttSheet");
 _Static_assert(offsetof(UtiSheet, words) == offsetof(UtttSheet, words)
                && offsetof(UtiSheet, words_side) == offsetof(UtttSheet, words_side)
+               && offsetof(UtiSheet, band_alpha) == offsetof(UtttSheet, band_alpha)
+               && offsetof(UtiSheetIn, hint) == offsetof(UtttSheetIn, hint)
                && offsetof(UtiSheetIn, words) == offsetof(UtttSheetIn, words), "the sheet's fields line up");
 _Static_assert(UTI_SHEET_PLAY == UTTT_SHEET_PLAY && UTI_SHEET_WATCH == UTTT_SHEET_WATCH
                && UTI_SHEET_WAIT == UTTT_SHEET_WAIT, "sheet kinds");
@@ -439,6 +454,25 @@ const char *uti_say(int key)
 }
 
 int uti_say_mark(void) { return uttt_say_headline_mark(&S.m.game, uti_msg_seat()); }
+
+/* THE WORDS WAIT FOR THE INK (UI.html: the headline turns when the mark has
+ * landed). Until the motion's frame says `landed`, a screen speaks of the
+ * position before the last move - the same seat, one ply back. */
+const char *uti_say_before(int key)
+{
+    UtttGame g = S.m.game;
+    uttt_undo(&g);
+    if (uttt_say(key, &g, uti_msg_seat(), S.said, sizeof S.said) < 0)
+        S.said[0] = 0;
+    return S.said;
+}
+
+int uti_say_mark_before(void)
+{
+    UtttGame g = S.m.game;
+    uttt_undo(&g);
+    return uttt_say_headline_mark(&g, uti_msg_seat());
+}
 
 const char *uti_say_by(int key, const char *who)
 {

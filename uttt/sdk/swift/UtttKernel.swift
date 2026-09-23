@@ -234,6 +234,10 @@ public enum Uttt {
 
     /// The mark drawn inside the play-surface headline, or `.none`.
     public static var sayMark: Mark { Mark(rawValue: UInt8(uti_say_mark())) ?? .none }
+    /// `say` and `sayMark` of the position one ply back: what a screen says
+    /// until the last move's ink has landed.
+    public static func sayBefore(_ s: Say) -> String { String(cString: uti_say_before(s.key)) }
+    public static var sayMarkBefore: Mark { Mark(rawValue: UInt8(uti_say_mark_before())) ?? .none }
 
     // MARK: the drawing
 
@@ -375,9 +379,12 @@ public enum Uttt {
     /// the sheet and as large as it allows, everything else fitted around.
     /// `words` says the strip carries words (false only for a live seat);
     /// where they go is the layout's `words` box.
-    public static func sheet(_ kind: SheetKind, size: CGSize, words: Bool = true) -> UtiSheet {
+    /// `hint`: a bubble waits in the field, so the send hint may stand in
+    /// the top right corner and the right column starts under it.
+    public static func sheet(_ kind: SheetKind, size: CGSize, words: Bool = true,
+                             hint: Bool = false) -> UtiSheet {
         uti_sheet(UtiSheetIn(w: Float(size.width), h: Float(size.height),
-                             kind: kind.rawValue, words: words ? 1 : 0))
+                             kind: kind.rawValue, words: words ? 1 : 0, hint: hint ? 1 : 0))
     }
 
     /// The last move's heavy mark, drawn to `t`: what moves over the cache.

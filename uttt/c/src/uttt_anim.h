@@ -126,6 +126,37 @@ void  uttt_drawer_report(UtttDrawer *d, float h, int32_t now_ms);
  * until the next report. Pure. */
 float uttt_drawer_at(const UtttDrawer *d, int32_t now_ms, int32_t *moving);
 
+/* Put the layout at rest at `h` now, no spring: the auto-collapse's slide
+ * lays out at the compact height from its first frame (below). */
+void  uttt_drawer_rest(UtttDrawer *d, float h);
+
+/* THE AUTO-COLLAPSE IS A SLIDE ON THE COMPOSITOR, not a layout per frame.
+ *
+ * foolish's finding (ios/FoolishKit/Messages/CollapseLayer.swift, and
+ * docs/COLLAPSE_MSE.md): the host moves the extension's view at the
+ * composite rate (~90 Hz on the simulator) while the extension renders at
+ * ~60, so any layout that follows the drawer per frame is a render behind on
+ * a third of the frames - at 3.6 pt/ms that is ~30 points. So once the
+ * collapse flips, the sheet is laid out at the COMPACT height for the whole
+ * slide and a Core Animation keyframe animation pushes it down by the
+ * drawer's remaining travel, so its bottom edge never moves; each element
+ * takes its share of the push back on a layer of its own - the header all
+ * of it, the board half of it while it scales about its centre, the doors
+ * none - evaluated by the render server on the same frame.
+ *
+ * The push is the host's own spring (UTTT_DRAWER_RESPONSE_MS, critically
+ * damped) from the whole travel down to nothing over UTTT_COLLAPSE_MS, in
+ * UTTT_COLLAPSE_STEPS linear keyframes. A drop of more than
+ * UTTT_COLLAPSE_FLIP points while an auto-collapse is armed is the flip;
+ * anything else - a finger on the handle - is followed by the layout. */
+#define UTTT_COLLAPSE_MS     600
+#define UTTT_COLLAPSE_STEPS  120
+#define UTTT_COLLAPSE_FLIP   60.f
+
+/* How far the compact sheet is pushed down `t_ms` into a slide of `travel`
+ * points: travel at 0, falling on the host's curve, 0 at UTTT_COLLAPSE_MS. */
+float uttt_collapse_push(float travel, int32_t t_ms);
+
 /* ONE LAYOUT FOR EVERY SCREEN, a pure function of the drawer's height.
  *
  * docs/UI.html, "What holds which edge": the header line holds the top, the
@@ -155,6 +186,8 @@ typedef struct {
     int32_t kind;          /* UTTT_SHEET_*                                   */
     int32_t words;         /* the strip carries words: 0 only for a live
                               seat, whose headline waits for the band       */
+    int32_t hint;          /* a bubble waits in the field: the send hint may
+                              stand in the top right corner                 */
 } UtttSheetIn;
 
 typedef struct {
@@ -168,13 +201,15 @@ typedef struct {
     float icon;            /* the "you are" mark's side                      */
     float icon_lead;       /* the gap between its label and the mark         */
     float icon_top;        /* how far the indicator sits below the margin    */
-    float words_alpha;     /* the headline: faded in with t on a live seat   */
+    float words_alpha;     /* the column copy of the words (`words`)         */
     float door_alpha;      /* the Again door: expanded only                  */
-    float words[4];        /* x, y, w, h: the box the screen's words are set
-                              in, wrapped to its width                      */
-    int32_t words_side;    /* 1: a column beside the board (the strip), the
-                              play screen's on the right, the others' on the
-                              left; 0: the header band across the top       */
+    float words[4];        /* x, y, w, h: the COLUMN beside the ink the
+                              words are set in, wrapped to its width - the
+                              play screen's on the right, the others' left  */
+    int32_t words_side;    /* always 1: `words` is a column                 */
+    float band[4];         /* x, y, w, h: the header band's copy of them    */
+    float band_alpha;      /* its alpha. A copy shows only where it fits, so
+                              a drag crossfades the two, never squeezes one */
 } UtttSheet;
 
 /* The drawer heights the openness runs between: 360, above the tallest

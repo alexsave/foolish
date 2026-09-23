@@ -1,3 +1,4 @@
+import CUttt
 import SwiftUI
 
 /// The play surface, at the two sizes Messages gives it.
@@ -43,7 +44,7 @@ public struct UtttGameScreen: View {
                     .padding(Self.margin)
                     .transition(.opacity)
             } else {
-                UtttDrawerSheet { size in sheet(size) }
+                UtttDrawerSheet { size, from in sheet(size, from: from) }
             }
         }
         .animation(.easeInOut(duration: 0.18), value: rulesOpen)
@@ -59,7 +60,7 @@ public struct UtttGameScreen: View {
     /// the top, the doors the bottom, and the board THE CENTRE - "348 to 214
     /// is a scale, not a slide". So the board's centre is the sheet's at every
     /// height, and everything else is placed at an edge around it.
-    private func sheet(_ size: CGSize) -> some View {
+    private func sheet(_ size: CGSize, from: CGFloat?) -> some View {
         /* AT THE END THE STRIP CARRIES THE VERDICT (UI.html 08: "the verdict
          * and the board"), in the right column beside the board, over the
          * rulebook - the board is as large as the sheet allows and the words
@@ -67,43 +68,64 @@ public struct UtttGameScreen: View {
          * no words - the wash says it - and the headline fades in with the
          * band. */
         let end = Uttt.over != .none
-        let L = Uttt.sheet(.play, size: size, words: end)
-        let column = L.words_side != 0
+        let hint = model.pending
+        let L = Uttt.sheet(.play, size: size, words: end, hint: hint)
+        /* THROUGH AN AUTO-COLLAPSE (CollapseSlide) the sheet is laid out at
+         * the compact height and pushed; each rider below walks the path the
+         * layout would have walked, as a function of the push `s` - the
+         * drawer is `size.height + s` tall - from the kernel's own layout. */
+        let at = { (s: CGFloat) -> UtiSheet in
+            Uttt.sheet(.play, size: CGSize(width: size.width, height: size.height + s),
+                       words: end, hint: hint)
+        }
+        /* The band's words are hidden on the strip, so through a slide they
+         * are set as the slide's first frame had them and fade on their layer. */
+        let B = from.map { Uttt.sheet(.play, size: CGSize(width: size.width, height: $0),
+                                      words: end, hint: hint) } ?? L
         let r = UtttRuler.on
         let hpad = CGFloat(L.hpad), vpad = CGFloat(L.vpad)
         let icon = CGFloat(L.icon)
 
+        let side = CGFloat(L.board.2)
         return board
-            .frame(width: CGFloat(L.board.2), height: CGFloat(L.board.2))
+            .frame(width: side, height: side)
             .boardRuler()
+            /* THE BOARD HOLDS THE CENTRE AND SCALES about it. */
+            .collapseRide { s in
+                let A = at(s)
+                return CollapseRidePose(
+                    dy: CGFloat(A.board.1 + A.board.2 / 2 - L.board.1 - L.board.2 / 2),
+                    scale: side > 0 ? CGFloat(A.board.2) / side : 1)
+            }
             .placed(x: L.board.0, y: L.board.1)
             .overlay(alignment: .topLeading) {
                 indicator(icon: icon, lead: CGFloat(L.icon_lead))
                     .frame(width: max(CGFloat(L.col), icon + 2), alignment: .leading)
                     .padding(.leading, hpad)
                     .padding(.top, vpad + CGFloat(L.icon_top))
-            }
-            .overlay(alignment: .topLeading) {
-                VStack(alignment: .trailing, spacing: 3) {
-                    headlineView(column: column)
-                        .motionSquare(.yellow, on: r)
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(Uttt.say(.headlineSpoken))
-                        .accessibilityAddTraits(.isHeader)
-                    /* The line under it: where you sent them, or at the end
-                     * the winning line spoken (docs/UI.html 04, 06, 07). */
-                    if !model.subline.isEmpty {
-                        Text(model.subline)
-                            .font(.system(size: 14))
-                            .foregroundStyle(UtttInk.muted)
-                            .multilineTextAlignment(.trailing)
-                            .wordsWrap(model.subline, column: column)
-                            .motionSquare(.lime, on: r)
+                    /* THE HEADER HOLDS THE TOP. */
+                    .collapseRide { s in
+                        CollapseRidePose(dy: CGFloat(at(s).icon_top - L.icon_top))
                     }
+            }
+            /* THE WORDS TWICE, in the column beside the ink and in the
+             * band, each shown only where it fits (uttt_sheet) - so a drag
+             * crossfades them and never squeezes them to "Wai...". */
+            .overlay(alignment: .topLeading) {
+                ZStack(alignment: .topLeading) {
+                    words(column: true, r: false)
+                        .inWords(L, alignment: .topTrailing)
+                        .collapseRide { s in
+                            CollapseRidePose(dy: 0, alpha: L.words_alpha > 0
+                                             ? CGFloat(at(s).words_alpha / L.words_alpha) : 1)
+                        }
+                    words(column: false, r: r)
+                        .inBand(B, alignment: .topTrailing)
+                        .collapseRide { s in
+                            CollapseRidePose(dy: 0, alpha: B.band_alpha > 0
+                                             ? CGFloat(at(s).band_alpha / B.band_alpha) : 1)
+                        }
                 }
-                .inWords(L, alignment: .topTrailing)
-                .opacity(Double(L.words_alpha)).allowsHitTesting(L.words_alpha > 0.5)
-                .accessibilityHidden(L.words_alpha < 0.5)
             }
             .overlay(alignment: .bottomTrailing) {
                 HStack(alignment: .center, spacing: 10) {
@@ -118,6 +140,27 @@ public struct UtttGameScreen: View {
                 .padding(.trailing, hpad)
                 .padding(.bottom, vpad)
             }
+    }
+
+    /// The headline and the line under it, in one of the two places.
+    private func words(column: Bool, r: Bool) -> some View {
+        VStack(alignment: .trailing, spacing: 3) {
+            headlineView(column: column)
+                .motionSquare(.yellow, on: r)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Uttt.say(.headlineSpoken))
+                .accessibilityAddTraits(.isHeader)
+            /* The line under it: where you sent them, or at the end
+             * the winning line spoken (docs/UI.html 04, 06, 07). */
+            if !model.subline.isEmpty {
+                Text(model.subline)
+                    .font(.system(size: 14))
+                    .foregroundStyle(UtttInk.muted)
+                    .multilineTextAlignment(.trailing)
+                    .wordsWrap(model.subline, column: column)
+                    .motionSquare(.lime, on: r)
+            }
+        }
     }
 
     /// THE BAR'S LINE, with the other side drawn rather than spelled.

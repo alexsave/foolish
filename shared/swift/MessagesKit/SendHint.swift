@@ -36,6 +36,18 @@ private extension HorizontalAlignment {
     static let sendAxis = HorizontalAlignment(SendAxis.self)
 }
 
+/// HOW THE HINT IS INKED. The sister product's felt takes the send blue with a
+/// ring of `outline` round it; light paper takes the reverse (uttt, owner
+/// 2026-09-23): WHITE glyph and words with the send blue as the ring, so the
+/// hint reads as Messages' own Send circle turned inside out, and a ring the
+/// colour of the paper never sits on the paper.
+public enum SendHintInk: Equatable {
+    /// Send-blue glyph and words, ringed in `outline`.
+    case blue(outline: Color)
+    /// White glyph and words, ringed in the send blue.
+    case white
+}
+
 /// A WHITE outline stamped around a glyph or a label, so it carries on a busy
 /// surface whatever the texture is doing underneath it.
 ///
@@ -89,18 +101,37 @@ public struct SendHintArrow: View {
     /// the drawer is expanded): freezes the TimelineView so an invisible arrow
     /// doesn't burn frames inside a Messages extension.
     var paused = false
-    /// The outline's colour (`SendHintRing`).
-    let outline: Color
+    /// The inks (`SendHintInk`): the glyph's and the ring's colours.
+    let ink: SendHintInk
     @Environment(\.colorScheme) private var scheme
 
     public init(caption: String, font: Font = SendHint.captionFont,
                 screenAxis: CGFloat = SendHint.axisFromScreenTrailing, paused: Bool = false,
                 outline: Color = .white) {
+        self.init(caption: caption, font: font, screenAxis: screenAxis, paused: paused,
+                  ink: .blue(outline: outline))
+    }
+
+    public init(caption: String, font: Font = SendHint.captionFont,
+                screenAxis: CGFloat = SendHint.axisFromScreenTrailing, paused: Bool = false,
+                ink: SendHintInk) {
         self.caption = caption
         self.font = font
         self.screenAxis = screenAxis
         self.paused = paused
-        self.outline = outline
+        self.ink = ink
+    }
+
+    /// The glyph's colour and the ring's, for this appearance.
+    private var fill: Color {
+        if case .white = ink { return .white }
+        return sendBlue
+    }
+    private var outline: Color {
+        switch ink {
+        case .blue(let o): return o
+        case .white:       return sendBlue
+        }
     }
 
     /// Messages fills its Send circle with the system blue, so match it
@@ -185,7 +216,7 @@ public struct SendHintArrow: View {
             }
             .offset(y: -lift)
         }
-        .foregroundColor(sendBlue)
+        .foregroundColor(fill)
         .accessibilityHidden(true)   // decorative; the staged state reads elsewhere
     }
 }
@@ -216,7 +247,10 @@ public struct SendHint: View {
     let centerFromTrailing: CGFloat
     let fuse: Double
     let restart: Int
-    let outline: Color
+    let ink: SendHintInk
+    /// Hide with no fade: a send, a cancel or a drawer starting to grow takes
+    /// the hint down in the frame it happens (uttt; the sister product fades).
+    let hidesAtOnce: Bool
     @State private var shown = false
 
     /// - Parameters:
@@ -228,6 +262,17 @@ public struct SendHint: View {
                 centerFromTrailing: CGFloat = SendHint.axisFromScreenTrailing,
                 fuse: Double = SendHint.defaultFuse, restart: Int = 0,
                 outline: Color = .white) {
+        self.init(staged: staged, visible: visible, caption: caption, font: font,
+                  screenAxis: screenAxis, centerFromTrailing: centerFromTrailing,
+                  fuse: fuse, restart: restart, ink: .blue(outline: outline), hidesAtOnce: false)
+    }
+
+    public init(staged: Bool, visible: Bool, caption: String,
+                font: Font = SendHint.captionFont,
+                screenAxis: CGFloat = SendHint.axisFromScreenTrailing,
+                centerFromTrailing: CGFloat = SendHint.axisFromScreenTrailing,
+                fuse: Double = SendHint.defaultFuse, restart: Int = 0,
+                ink: SendHintInk, hidesAtOnce: Bool) {
         self.staged = staged
         self.visible = visible
         self.caption = caption
@@ -236,15 +281,18 @@ public struct SendHint: View {
         self.centerFromTrailing = centerFromTrailing
         self.fuse = fuse
         self.restart = restart
-        self.outline = outline
+        self.ink = ink
+        self.hidesAtOnce = hidesAtOnce
     }
 
     private struct Fuse: Hashable { let staged: Bool; let restart: Int }
 
     public var body: some View {
-        let on = shown && visible
+        // Down in the same frame as the send when it hides at once, not a
+        // runloop later when the fuse task has noticed.
+        let on = shown && visible && (staged || !hidesAtOnce)
         SendHintArrow(caption: caption, font: font, screenAxis: screenAxis, paused: !on,
-                      outline: outline)
+                      ink: ink)
             .alignmentGuide(.trailing) { d in
                 d[HorizontalAlignment.sendAxis] + centerFromTrailing
             }
@@ -257,7 +305,7 @@ public struct SendHint: View {
             // BOTH directions animate - a one-way withAnimation faded it in but
             // let a style change snap it off (or on) instantly. Scoped to `on`
             // so nothing else rides it.
-            .animation(.easeInOut(duration: 0.35), value: on)
+            .animation(on || !hidesAtOnce ? .easeInOut(duration: 0.35) : nil, value: on)
             .allowsHitTesting(false)
             .task(id: Fuse(staged: staged, restart: restart)) {
                 // A restart hides what a previous fuse showed; a fresh stage

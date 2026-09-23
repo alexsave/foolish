@@ -218,6 +218,24 @@ float uttt_drawer_at(const UtttDrawer *d, int32_t now_ms, int32_t *moving)
     return d->target + x;
 }
 
+void uttt_drawer_rest(UtttDrawer *d, float h)
+{
+    *d = (UtttDrawer){ .target = h, .seen = 1 };
+}
+
+float uttt_collapse_push(float travel, int32_t t_ms)
+{
+    if (t_ms <= 0) return travel;
+    if (t_ms >= UTTT_COLLAPSE_MS) return 0.f;
+    double w = 2.0 * 3.14159265358979 / UTTT_DRAWER_RESPONSE_MS, t = (double)t_ms;
+    double left = (1.0 + w * t) * exp(-w * t);      /* 1 - the host's progress */
+    /* THE LAST KEYFRAME IS EXACTLY ZERO, and the curve reaches it without a
+     * step: what is left at the end (under 0.3%) is faded out linearly over
+     * the slide, so the release - the animation removed - moves nothing. */
+    double tail = (1.0 + w * UTTT_COLLAPSE_MS) * exp(-w * UTTT_COLLAPSE_MS);
+    return (float)(travel * (left - tail * t / UTTT_COLLAPSE_MS));
+}
+
 /* ---- one layout for every screen (uttt_anim.h UtttSheet) ---------------- */
 
 static float lerpf(float a, float b, float t) { return a + (b - a) * t; }
@@ -240,6 +258,21 @@ static float clampf(float x, float lo, float hi) { return x < lo ? lo : x > hi ?
 #define SHEET_DOOR_GAP    6.f
 #define SHEET_BAR        72.f
 #define SHEET_WORDS_AIR   6.f     /* between a box of words and the ink       */
+/* WORDS NEVER SQUEEZE (owner, sheet 7: "Wai..." mid-drag). There are two
+ * places for them, the column beside the ink and the band above it, and a
+ * copy in each; a copy is shown only where it fits, fading out as its box
+ * falls below what it needs and in as it grows past it. So a drag crossfades
+ * the words between the two places and never sets them in a box too small -
+ * there is no height at which the words switch places in one frame. */
+#define SHEET_COLUMN_NEED 30.f    /* a column narrower than this shows nothing */
+#define SHEET_BAND_NEED   38.f    /* the headline and its line need this band */
+#define SHEET_WORDS_RAMP  14.f    /* over which each copy fades               */
+/* THE SEND HINT'S CORNER. Messages' Send button is above the drawer's top
+ * right, and the hint (shared/swift/MessagesKit/SendHint.swift: a 29-point
+ * arrow lifted 9 into the margin, 3 of air and a 15-point caption, from 14
+ * under the top) stands in that corner while a bubble waits in the field -
+ * so the strip's right column starts under it rather than behind it. */
+#define SHEET_HINT_ROOM  56.f
 
 void uttt_sheet(const UtttSheetIn *in, UtttSheet *o)
 {
@@ -267,7 +300,6 @@ void uttt_sheet(const UtttSheetIn *in, UtttSheet *o)
     /* A live seat's strip says nothing - the wash says it - and its headline
      * fades in with the band; an ended seat's verdict, the waiting words and
      * the spectator's line are shown at every height. */
-    o->words_alpha = (seat && !in->words) ? t : 1.f;
 
     /* THE SIDE: the width less the columns, leaving the main lines room to
      * run 5% past the board; the height less the margins and the bands.
@@ -277,32 +309,37 @@ void uttt_sheet(const UtttSheetIn *in, UtttSheet *o)
     float tall = in->h - 2.f * o->vpad - 2.f * fmaxf(o->bar, o->foot);
     float side = fmaxf(fminf(wide, tall), 0.f);
 
-    /* THE WORDS. Beside the ink on the strip - the play screen's verdict in
-     * the right column over the rulebook, where the expanded band puts its
-     * headline; the waiting words and the spectator's line in the left - and
-     * in the band across the top once the sheet is half open. */
+    /* THE WORDS, in two copies (SHEET_COLUMN_NEED): beside the ink - the
+     * play screen's verdict in the right column over the rulebook, the
+     * waiting words and the spectator's line in the left - and in the band
+     * across the top. A live seat's strip says nothing (the wash says it), so
+     * its headline has the band copy only. */
     float ink_l = (in->w - side * (1.f + 2.f * reach)) * .5f;
     float ink_r = in->w - ink_l;
-    if (t < .5f) {
-        o->words_side = 1;
-        o->words[1] = o->vpad;
-        if (seat) {
-            o->words[0] = ink_r + SHEET_WORDS_AIR;
-            o->words[2] = in->w - SHEET_MARGIN - o->words[0];
-            o->words[3] = in->h - 2.f * o->vpad - o->door - SHEET_DOOR_GAP;
-        } else {
-            o->words[0] = SHEET_MARGIN;
-            o->words[2] = ink_l - SHEET_WORDS_AIR - SHEET_MARGIN;
-            o->words[3] = in->h - 2.f * o->vpad;
-        }
-        o->words[2] = fmaxf(o->words[2], 0.f);
+    int strip = !(seat && !in->words);
+    o->words_side = 1;
+    o->words[1] = o->vpad;
+    if (seat) {
+        float room = in->hint ? SHEET_HINT_ROOM : 0.f;
+        o->words[0] = fminf(ink_r + SHEET_WORDS_AIR, in->w - SHEET_MARGIN);
+        o->words[1] += room;
+        o->words[2] = in->w - SHEET_MARGIN - o->words[0];
+        o->words[3] = in->h - 2.f * o->vpad - o->door - SHEET_DOOR_GAP - room;
     } else {
-        o->words_side = 0;
         o->words[0] = SHEET_MARGIN;
-        o->words[1] = o->vpad;
-        o->words[2] = in->w - 2.f * SHEET_MARGIN;
-        o->words[3] = o->bar;
+        o->words[2] = ink_l - SHEET_WORDS_AIR - SHEET_MARGIN;
+        o->words[3] = in->h - 2.f * o->vpad;
     }
+    o->words[2] = fmaxf(o->words[2], 0.f);
+    o->words[3] = fmaxf(o->words[3], 0.f);
+    o->band[0] = SHEET_MARGIN;
+    o->band[1] = o->vpad;
+    o->band[2] = in->w - 2.f * SHEET_MARGIN;
+    o->band[3] = o->bar;
+    float band = clampf((o->bar - SHEET_BAND_NEED) / SHEET_WORDS_RAMP, 0.f, 1.f);
+    float col  = clampf((o->words[2] - SHEET_COLUMN_NEED) / SHEET_WORDS_RAMP, 0.f, 1.f);
+    o->band_alpha  = band;
+    o->words_alpha = strip ? col * (1.f - band) : 0.f;
 
     o->board[0] = (in->w - side) * .5f;
     o->board[1] = (in->h - side) * .5f;

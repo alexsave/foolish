@@ -81,26 +81,39 @@ public enum MotionRuler {
 /// Attach it to the container that RESIZES, so it measures that box.
 public struct MotionRulerEdges: View {
     let on: Bool
-    public init(on: Bool) { self.on = on }
+    /// The red top bar with the band strip and the clock, and the green
+    /// bottom bar. Both by default; a product whose top and bottom ride
+    /// different layers through a collapse draws each half on its own.
+    let top: Bool
+    let bottom: Bool
+    public init(on: Bool, top: Bool = true, bottom: Bool = true) {
+        self.on = on
+        self.top = top
+        self.bottom = bottom
+    }
 
     public var body: some View {
         if on {
             GeometryReader { geo in
                 let n = max(1, Int((geo.size.height / MotionRuler.band).rounded(.up)))
                 ZStack(alignment: .topLeading) {
-                    ForEach(0..<n, id: \.self) { i in
-                        MotionRuler.bandColour(i)
-                            .frame(width: MotionRuler.strip, height: MotionRuler.band)
-                            .offset(y: CGFloat(i) * MotionRuler.band)
+                    if top {
+                        ForEach(0..<n, id: \.self) { i in
+                            MotionRuler.bandColour(i)
+                                .frame(width: MotionRuler.strip, height: MotionRuler.band)
+                                .offset(y: CGFloat(i) * MotionRuler.band)
+                        }
+                        MotionRuler.pure(1, 0, 0)
+                            .frame(width: geo.size.width, height: MotionRuler.edge)
+                        MotionRulerClock()
+                            .offset(x: MotionRuler.strip + MotionRuler.clockGap,
+                                    y: MotionRuler.edge)
                     }
-                    MotionRuler.pure(1, 0, 0)
-                        .frame(width: geo.size.width, height: MotionRuler.edge)
-                    MotionRulerClock()
-                        .offset(x: MotionRuler.strip + MotionRuler.clockGap,
-                                y: MotionRuler.edge)
-                    MotionRuler.pure(0, 1, 0)
-                        .frame(width: geo.size.width, height: MotionRuler.edge)
-                        .offset(y: geo.size.height - MotionRuler.edge)
+                    if bottom {
+                        MotionRuler.pure(0, 1, 0)
+                            .frame(width: geo.size.width, height: MotionRuler.edge)
+                            .offset(y: geo.size.height - MotionRuler.edge)
+                    }
                 }
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                 .clipped()
@@ -171,7 +184,7 @@ public enum MotionRuler {
 }
 
 public struct MotionRulerEdges: View {
-    public init(on: Bool) {}
+    public init(on: Bool, top: Bool = true, bottom: Bool = true) {}
     public var body: some View { EmptyView() }
 }
 

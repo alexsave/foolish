@@ -1,3 +1,4 @@
+import Combine
 import CoreGraphics
 import CUttt
 import SwiftUI
@@ -47,16 +48,31 @@ public struct UtttSheet<Content: View>: View {
     /// the box and anchored to the BOTTOM, which is the edge that does not
     /// move; there is nothing to synchronise because nothing has to arrive on
     /// time.
-    private let bleed: CGFloat = 220
+    /// THE PAPER IS ONE SIZE, bottom-anchored: this tall at every drawer
+    /// height, so its grain never stretches as the drawer moves, and taller
+    /// than any drawer plus the longest auto-collapse push (CollapseSlide
+    /// lays the sheet out compact and pushes it down by the travel left; the
+    /// paper above the pushed sheet is this same sheet's top).
+    private let paper: CGFloat = 1600
+    @Environment(\.collapseSlide) private var slide
+    @State private var travel: CGFloat = 0
 
     public var body: some View {
         content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             /* THE BOARD'S OVERSHOOT STOPS AT THE SHEET'S OWN EDGE. The grid's
              * main lines run past the board by design and its bitmap is bled
              * to let them; without a clip here they ran on past the top of the
-             * drawer and up through Messages' grab handle. */
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipped()
+             * drawer and up through Messages' grab handle. THROUGH A SLIDE the
+             * edge is the drawer's, `travel` above the compact sheet's top,
+             * where the header and the board's upper half ride. */
+            .mask(alignment: .bottom) {
+                GeometryReader { geo in
+                    Rectangle()
+                        .frame(width: geo.size.width, height: geo.size.height + travel)
+                        .offset(y: -travel)
+                }
+            }
             .background(
             GeometryReader { geo in
                 Group {
@@ -72,12 +88,17 @@ public struct UtttSheet<Content: View>: View {
                  * it, which is the point: a background that ends exactly at
                  * its own bounds shows black the moment the bounds are stale
                  * by a frame. */
-                .frame(width: geo.size.width, height: geo.size.height + bleed)
-                .offset(y: -bleed)
+                .frame(width: geo.size.width, height: max(paper, geo.size.height))
+                .offset(y: geo.size.height - max(paper, geo.size.height))
             }
             /* EDGE TO EDGE: the paper runs under the home indicator too. The
              * content keeps to the safe area; the sheet does not. */
             .ignoresSafeArea()
         )
+        .onReceive(slide?.$run.eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { r in
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) { travel = r?.travel ?? 0 }
+        }
     }
 }

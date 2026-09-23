@@ -250,12 +250,12 @@ int main(void)
             { UTTT_SHEET_WAIT, 1 },           /* the waiting words            */
         };
         float reach = .135f * UTTT_REACH;
-        int centred = 1, clear = 1, onsheet = 1, grows = 1;
+        int centred = 1, clear = 1, onsheet = 1, grows = 1, squeezed = 0, jumps = 0;
         float worst = 0.f;
         for (int wi = 0; wi < 3; wi++)
         for (int ki = 0; ki < 4; ki++) {
             UtttSheetIn in = { .w = W[wi], .kind = K[ki].kind, .words = K[ki].words };
-            float prev = -1.f;
+            float prev = -1.f, pa = -1.f, pb = -1.f;
             for (float h = 220.f; h <= 900.f; h += .25f) {
                 UtttSheet o;
                 in.h = h;
@@ -271,13 +271,17 @@ int main(void)
                 /* the words' box: beside the ink on the strip, above the
                  * square in the band, and on the sheet either way */
                 float il = (in.w - s * (1.f + 2.f * reach)) / 2, ir = in.w - il;
-                const float *b = o.words;
+                const float *b = o.words, *bb = o.band;
                 if (b[0] < o.hpad - 1e-3f || b[0] + b[2] > in.w - o.hpad + 1e-3f || b[2] < 0.f) clear = 0;
-                if (o.words_side) {
-                    if (b[0] + b[2] > il + 1e-3f && b[0] < ir - 1e-3f) clear = 0;
-                } else if (b[1] + b[3] > o.board[1] + 1e-3f) {
-                    clear = 0;
-                }
+                if (o.words_alpha > 0.f && b[0] + b[2] > il + 1e-3f && b[0] < ir - 1e-3f) clear = 0;
+                if (o.band_alpha > 0.f && bb[1] + bb[3] > o.board[1] + 1e-3f) clear = 0;
+                /* NEVER SQUEEZED: a copy that shows has the room it needs,
+                 * and the two copies fade rather than jump between heights */
+                if (o.words_alpha > 0.f && b[2] < 30.f) squeezed = 1;
+                if (o.band_alpha > 0.f && bb[3] < 38.f) squeezed = 1;
+                if (pa >= 0.f && (fabsf(o.words_alpha - pa) > .02f || fabsf(o.band_alpha - pb) > .02f))
+                    jumps = 1;
+                pa = o.words_alpha; pb = o.band_alpha;
             }
         }
         printf("  sheet: largest side step per quarter point of drawer %.3f pt\n", worst);
@@ -286,6 +290,8 @@ int main(void)
         OK(grows, "on the strip a taller drawer never gives a smaller board");
         OK(onsheet, "its lines stay on the sheet");
         OK(clear, "and its words sit beside it on the strip and above it in the band");
+        OK(!squeezed, "a copy of the words shows only in a box with the room it needs");
+        OK(!jumps, "and the words crossfade between column and band, never switch in a step");
 
         /* AS LARGE AS THE SHEET ALLOWS, on every screen, words or none: on
          * the strip the drawer's height less the grab handle's margins (or
@@ -321,7 +327,45 @@ int main(void)
         uttt_sheet(&(UtttSheetIn){ .w = 375.f, .h = 541.f, .kind = UTTT_SHEET_PLAY }, &e);
         printf("  sheet: SE compact board %.1f, expanded %.1f\n", c.board[2], e.board[2]);
         OK(c.t == 0.f && e.t == 1.f, "340 is the compact end and 541 the expanded one");
-        OK(c.words_alpha == 0.f && e.words_alpha == 1.f, "a live strip hides the headline, the band shows it");
+        OK(c.words_alpha == 0.f && c.band_alpha == 0.f && e.band_alpha == 1.f && e.words_alpha == 0.f,
+           "a live strip hides the headline, the band shows it");
+
+        /* THE SEND HINT'S CORNER (sheet 6: its ring over "You win"): with a
+         * bubble in the field the strip's right column starts under the
+         * hint, and without one it starts at the margin. */
+        UtttSheet hn, h0;
+        uttt_sheet(&(UtttSheetIn){ .w = 440.f, .h = 274.f, .kind = UTTT_SHEET_PLAY, .words = 1, .hint = 1 }, &hn);
+        uttt_sheet(&(UtttSheetIn){ .w = 440.f, .h = 274.f, .kind = UTTT_SHEET_PLAY, .words = 1 }, &h0);
+        OK(hn.words[1] >= 14.f + 29.f + 3.f + 9.f && h0.words[1] == h0.vpad
+           && fabsf(hn.words[1] + hn.words[3] - h0.words[1] - h0.words[3]) < 1e-3f && hn.words_alpha == 1.f,
+           "a staged bubble's hint never stands over the strip's verdict");
+    }
+
+    /* THE SLIDE: the whole travel at the start, nothing at the end, never
+     * back up, and on the host's own curve (a critically damped spring on
+     * the drawer's response) to within the tail it gives away. */
+    {
+        int mono = 1, host = 1;
+        float prev = 1e9f;
+        for (int t = 0; t <= UTTT_COLLAPSE_MS; t++) {
+            float p = uttt_collapse_push(500.f, t);
+            if (p > prev + 1e-4f) mono = 0;
+            prev = p;
+            double w = 2.0 * 3.14159265358979 / UTTT_DRAWER_RESPONSE_MS;
+            double want = 500.0 * (1.0 + w * t) * exp(-w * t);
+            if (fabs(p - want) > 1.5) host = 0;
+        }
+        OK(uttt_collapse_push(500.f, 0) == 500.f && uttt_collapse_push(500.f, UTTT_COLLAPSE_MS) == 0.f
+           && fabsf(uttt_collapse_push(500.f, UTTT_COLLAPSE_MS - 1)) < .05f,
+           "the slide starts at the whole travel and ends at nothing, with no step at the release");
+        OK(mono, "and never pushes back up");
+        OK(host, "and rides the host's spring to within a point and a half");
+        UtttDrawer d = {0};
+        uttt_drawer_report(&d, 830.f, 0);
+        uttt_drawer_report(&d, 274.f, 10);
+        uttt_drawer_rest(&d, 274.f);
+        int32_t mv = 1;
+        OK(uttt_drawer_at(&d, 11, &mv) == 274.f && mv == 0, "a slide lays the sheet out at rest at the compact height");
     }
 
     printf("uttt_anim: %d checks, %d failed\n", checks, fails);

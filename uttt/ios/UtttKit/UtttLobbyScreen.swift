@@ -28,7 +28,7 @@ public struct UtttLobbyScreen: View {
 
     public var body: some View {
         UtttSheet {
-            UtttDrawerSheet { size in sheet(size) }
+            UtttDrawerSheet { size, from in sheet(size, from: from) }
         }
     }
 
@@ -41,7 +41,7 @@ public struct UtttLobbyScreen: View {
     /// the board from beside the words to under them, 198 to 377 points in
     /// one frame (measured with the ruler), and the strip's board sat 80
     /// points right of centre.
-    private func sheet(_ size: CGSize) -> some View {
+    private func sheet(_ size: CGSize, from _: CGFloat?) -> some View {
         let L = Uttt.sheet(.wait, size: size)
         return ZStack(alignment: .topLeading) {
             if stance != .unreadable {
@@ -58,8 +58,10 @@ public struct UtttLobbyScreen: View {
              * it on the strip, wrapped onto as many lines as that takes (the
              * board no longer shrinks under them), and across the top once
              * the sheet opens, where UI.html 02 sets them. */
-            words(column: L.words_side != 0)
+            words(column: true)
                 .inWords(L, alignment: .topLeading)
+            words(column: false)
+                .inBand(L, alignment: .topLeading)
         }
     }
 
@@ -130,7 +132,7 @@ public struct UtttWatchScreen: View {
                     .padding(13)
                     .transition(.opacity)
             } else {
-                UtttDrawerSheet { size in watch(size) }
+                UtttDrawerSheet { size, _ in watch(size) }
             }
         }
         .animation(.easeInOut(duration: 0.18), value: rulesOpen)
@@ -160,21 +162,18 @@ public struct UtttWatchScreen: View {
                     .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(UtttInk.ink)
                     .accessibilityAddTraits(.isHeader)
-                Group {
-                    if L.words_side != 0 {
-                        VStack(alignment: .leading, spacing: 3) {
-                            label.lineLimit(1).minimumScaleFactor(0.5)
-                            said.wordsWrap(line, column: true)
-                        }
-                        .inWords(L, alignment: .topLeading)
-                    } else {
-                        HStack(alignment: .firstTextBaseline) {
-                            label
-                            Spacer()
-                            said
-                        }
-                        .inWords(L, alignment: .top)
+                ZStack(alignment: .topLeading) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        label.lineLimit(1).minimumScaleFactor(0.5)
+                        said.wordsWrap(line, column: true)
                     }
+                    .inWords(L, alignment: .topLeading)
+                    HStack(alignment: .firstTextBaseline) {
+                        label
+                        Spacer()
+                        said
+                    }
+                    .inBand(L, alignment: .top)
                 }
             }
             .overlay(alignment: .bottomTrailing) {

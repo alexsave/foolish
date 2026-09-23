@@ -162,6 +162,9 @@ targets:
       # The staged-but-unsent reminder at Messages' Send button, shared with
       # the sister product; the caption and the fuse are the kernel's.
       - path: ../../shared/swift/MessagesKit/SendHint.swift
+      # The auto-collapse on Core Animation layers, ported from the sister
+      # product's CollapseLayer; the curve and every number are the kernel's.
+      - path: ../../shared/swift/MessagesKit/CollapseSlide.swift
     dependencies:
       # STATIC (embed:false), so the linker pulls it in per object and nothing
       # unreferenced ships.
