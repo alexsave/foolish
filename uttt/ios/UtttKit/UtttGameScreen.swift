@@ -23,36 +23,11 @@ public struct UtttGameScreen: View {
         self.onDoor = onDoor
     }
 
-    /// The sheet's margin, the same on every edge at both sizes.
+    /// The margin of the rules sheet, the same on every edge.
     private static let margin: CGFloat = 13
 
-    /// EXCEPT ABOVE AND BELOW THE COLLAPSED STRIP, where height is what runs
-    /// out. Messages gives an iPhone SE about 231 points of drawer, not the
-    /// 340 the design document measured on a taller phone, so on the smallest
-    /// device the board is limited by the height and every point of vertical
-    /// margin comes straight off it.
-    private static let vmargin: CGFloat = 8
-
-    /// TWO COLUMNS, ONE EITHER SIDE, in the collapsed strip. The left one
-    /// carries "you are" and the right one carries nothing - it exists so the
-    /// board sits in the middle of the SHEET rather than in the middle of what
-    /// is left over, which are different places and the eye knows it.
-    ///
-    /// 38, not 46: the mark inside is 34 and the two stacked words are about
-    /// 30, so the extra twelve points were air on both sides and the board is
-    /// what wanted them.
-    private static let column: CGFloat = 38
-
-    /// The height the drawer is halfway open at - the middle of the handover,
-    /// not a threshold any more. Nothing switches at it.
-    private static let collapsedCeiling: CGFloat = 400
-
-    /// The rules door, at each end. It stays on the collapsed strip because
-    /// it is the only way to the rules.
-    private static let doorCollapsed: CGFloat = 38
-
     private static let label = Color(red: 0.541, green: 0.522, blue: 0.467) // #8a8577
-    private static let ink   = Color(red: 0.114, green: 0.106, blue: 0.086) // #1d1b16
+    private static let ink   = Color(red: 0.114, green: 0.106, blue: 0.087) // #1d1b16
     private static let blue  = Color(red: 0.145, green: 0.216, blue: 0.420) // #25376b
 
     /// THE DOOR OPENS ON THE SAME SHEET. Not a modal over a dimmed board:
@@ -61,130 +36,57 @@ public struct UtttGameScreen: View {
     /// on the napkin.
     @State private var rulesOpen = false
 
-    /// The height the sheet is laid out at (UtttDrawerClock).
-    @StateObject private var drawer = UtttDrawerClock()
+    /// The verdict's box as set, so the kernel can fit the board around it.
+    @State private var words: CGSize = .zero
+
+    /// The air between the words and the board, below the words' own lines.
+    private static let wordsAir: CGFloat = 6
 
     public var body: some View {
         UtttSheet {
-            GeometryReader { geo in
-                if rulesOpen {
-                    UtttRulesSheet { rulesOpen = false }
-                        .padding(Self.margin)
-                        .transition(.opacity)
-                } else {
-                    /* A NEW HEIGHT IS LAID OUT AT ONCE, never tweened by
-                     * the host's animation. Messages resizes the drawer
-                     * inside a UIKit animation block, and the hosting
-                     * controller bridges that into SwiftUI: every element
-                     * then crept on a slow curve while the drawer slid, and
-                     * landed in two steps after the drawer had stopped
-                     * (measured with the ruler: 100pt and 25pt snaps at
-                     * +0.35s and +0.5s). Every number on the sheet is
-                     * already a function of the height, so the height is
-                     * the only animation it needs. */
-                    /* AND NOT AT THE HEIGHT MESSAGES HANDED, which arrives
-                     * in steps (one height 20ms before an auto-collapse
-                     * slides, one every ~200ms while a released drag
-                     * settles): at the kernel's drawer height, a spring on
-                     * the host's response toward it. See UtttDrawerClock. */
-                    let _ = drawer.frame
-                    let h = drawer.layout(for: geo.size.height)
-                    sheet(CGSize(width: geo.size.width, height: h))
-                        .frame(width: geo.size.width, height: h)
-                        .transaction(value: h) { $0.animation = nil }
-                }
+            if rulesOpen {
+                UtttRulesSheet { rulesOpen = false }
+                    .padding(Self.margin)
+                    .transition(.opacity)
+            } else {
+                UtttDrawerSheet { size in sheet(size) }
             }
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { drawer.report($0) }
-            .overlay { MotionRulerEdges(on: UtttRuler.on) }
-#if DEBUG
-            /* With the ruler on, every height the sheet is handed, so a
-             * filmed take can be read against what the layout was given. */
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
-                if UtttRuler.on { UtttLog.note("ruler-height", String(format: "%.1f clock %d", h, MotionRuler.clockMs)) }
-            }
-#endif
         }
         .animation(.easeInOut(duration: 0.18), value: rulesOpen)
     }
 
-    // MARK: one layout, two ends of it
+    // MARK: one layout, from compact to expanded
 
-    /// HOW FAR OPEN THE DRAWER IS, 0 to 1, from the height and nothing else.
-    ///
-    /// There were two layouts here and a threshold between them, so a collapse
-    /// was a SWAP: the board jumped from one size to another while the drawer
-    /// was still moving, and the whole sheet re-laid out underneath it. The
-    /// host app's note on this is the one worth reading - a board laid out
-    /// from the `style` prop cannot follow a resize, and re-presenting at the
-    /// start of the transition is the "display rearranges right before the
-    /// collapse" jump. Its answer is a continuous fraction of the HEIGHT, and
-    /// this is the same answer with a tenth of the machinery, because this
-    /// game has exactly one thing on the sheet that moves.
-    ///
-    /// Everything below is `lerp(collapsed, expanded, t)`. Nothing switches.
-    private func openness(_ h: CGFloat) -> CGFloat {
-        /* THE COLLAPSED END IS 360, above the tallest compact drawer Messages
-         * hands out (340, 323 with the keyboard up). The window used to start
-         * at 270, so the real compact height sat 18% of the way open and drew
-         * the headline as a ghost over the board. */
-        let lo: CGFloat = 360, hi = Self.collapsedCeiling + 130
-        let x = min(1, max(0, (h - lo) / (hi - lo)))
-        return x * x * (3 - 2 * x)          // smoothstep, so the ends settle
-    }
-
-    private func lerp(_ a: CGFloat, _ b: CGFloat, _ t: CGFloat) -> CGFloat {
-        a + (b - a) * t
-    }
-
+    /// EVERY NUMBER ON THIS SHEET IS THE KERNEL'S, for the height the drawer
+    /// is at (`Uttt.sheet`, uttt_anim.c). There were two layouts here once and
+    /// a threshold between them, so a collapse was a swap; then one layout of
+    /// lerps that still moved the board off the sheet's centre whenever words
+    /// sat above it. docs/UI.html, "What holds which edge": the header holds
+    /// the top, the doors the bottom, and the board THE CENTRE - "348 to 214
+    /// is a scale, not a slide". So the board's centre is the sheet's at every
+    /// height, and everything else is placed at an edge around it.
     private func sheet(_ size: CGSize) -> some View {
-        let t = openness(size.height)
-
-        /* THE COLLAPSED STRIP PUTS THINGS BESIDE THE BOARD AND THE EXPANDED
-         * SHEET PUTS THEM ABOVE AND BELOW IT, so the two ends are the same
-         * four things in a different arrangement rather than two layouts.
-         * The board is centred in what the four leave, and every number is
-         * one lerp. Nothing switches, so a collapse is a resize. */
-        let vpad = lerp(Self.vmargin, Self.margin, t)
         /* AT THE END THE STRIP CARRIES THE VERDICT (UI.html 08: "the verdict
-         * and the board"), in the place the expanded sheet puts it - the top
-         * right, over the board - so a collapse is still a resize. The board
-         * gives up the verdict's height; while the game runs the strip keeps
-         * it, because there the words say nothing the wash does not. */
-        let end  = Uttt.over != .none
-        let top  = lerp(end ? Self.verdictBar : 0, Self.barHeight, t)
-        let bot  = lerp(0, Self.doorSide + 6, t)    // the row the door sits in
-        let col  = lerp(Self.column, 0, t)          // the "you are" column
-        let gut  = lerp(0, 3, t)
-        let door = lerp(Self.doorCollapsed, Self.doorSide, t)
-        let icon = lerp(34, 46, t)
-
-        /* THE LINES STOP ON THE SHEET: the main lines run 5% past the board
-         * (UI.html), so the width the board may take leaves room for them -
-         * on a Pro Max the tips land about 16 points in, as in the spec. */
-        let avail = size.height - 2 * vpad - top - bot
-        let side = max(0, min((size.width - 2 * (Self.margin + gut) - 2 * col)
-                                  / (1 + 2 * Uttt.boardReach),
-                              avail))
-
-        /* THE EXPANDED BOARD SITS HIGH, NOT CENTRED (UI.html "Expanded, on
-         * four real phones": the board just under the header and the spare
-         * height all at the bottom with the doors). Collapsed it is centred
-         * in what is left, as it always was; the offset is one lerp between
-         * the two, so a collapse is still a resize and nothing switches. */
-        let free = max(0, avail - side)
-        let lift = lerp(free / 2, min(free, Self.boardGap), t)
-
+         * and the board"), top right where the expanded sheet puts it; the
+         * board keeps its centre and gives up only what it must to clear it.
+         * While the game runs the strip carries no words - the wash says it -
+         * and the headline fades in with the bar. */
+        let end = Uttt.over != .none
+        let box = end ? CGSize(width: words.width, height: words.height + Self.wordsAir) : .zero
+        let L = Uttt.sheet(.play, size: size, words: box)
         let r = UtttRuler.on
+        let hpad = CGFloat(L.hpad), vpad = CGFloat(L.vpad)
+        let icon = CGFloat(L.icon)
+
         return board
-            .frame(width: side, height: side)
+            .frame(width: CGFloat(L.board.2), height: CGFloat(L.board.2))
             .boardRuler()
-            .padding(.top, top + lift)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .padding(.bottom, bot)
+            .placed(x: L.board.0, y: L.board.1)
             .overlay(alignment: .topLeading) {
-                indicator(icon: icon, lead: lerp(3, 4, t))
-                    .frame(width: max(col, icon + 2), alignment: .leading)
-                    .padding(.top, lerp(4, 0, t))
+                indicator(icon: icon, lead: CGFloat(L.icon_lead))
+                    .frame(width: max(CGFloat(L.col), icon + 2), alignment: .leading)
+                    .padding(.leading, hpad)
+                    .padding(.top, vpad + CGFloat(L.icon_top))
             }
             .overlay(alignment: .topTrailing) {
                 VStack(alignment: .trailing, spacing: 3) {
@@ -203,22 +105,26 @@ public struct UtttGameScreen: View {
                             .motionSquare(.lime, on: r)
                     }
                 }
-                .opacity(end ? 1 : Double(t)).allowsHitTesting(t > 0.5)
-                .accessibilityHidden(!end && t < 0.5)
+                .fixedSize()
+                .measured($words)
+                .opacity(Double(L.words_alpha)).allowsHitTesting(L.words_alpha > 0.5)
+                .accessibilityHidden(L.words_alpha < 0.5)
+                .padding(.trailing, hpad)
+                .padding(.top, vpad)
             }
             .overlay(alignment: .bottomTrailing) {
                 HStack(alignment: .center, spacing: 10) {
-                    if let title = UtttDoorButton.title(self.door), t > 0.5 {
-                        UtttDoorButton(title: title, height: door, act: onDoor)
+                    if let title = UtttDoorButton.title(self.door), L.door_alpha > 0 {
+                        UtttDoorButton(title: title, height: CGFloat(L.door), act: onDoor)
                             .motionSquare(.violet, on: r)
-                            .opacity(Double((t - 0.5) * 2))
+                            .opacity(Double(L.door_alpha))
                     }
-                    UtttRulebookButton(side: door) { rulesOpen = true }
+                    UtttRulebookButton(side: CGFloat(L.door)) { rulesOpen = true }
                         .motionSquare(.blue, on: r)
                 }
+                .padding(.trailing, hpad)
+                .padding(.bottom, vpad)
             }
-            .padding(.horizontal, Self.margin)
-            .padding(.vertical, vpad)
     }
 
     /// THE BAR'S LINE, with the other side drawn rather than spelled.
@@ -251,23 +157,6 @@ public struct UtttGameScreen: View {
             .foregroundStyle(ink)
     }
 
-    /// "you are" over a 46-point mark, which is 19 points of label, a 4-point
-    /// lead and the mark.
-    private static let barHeight: CGFloat = 72
-
-    /// The verdict's two lines on the collapsed strip - a 21-point headline,
-    /// the 3-point lead and the 14-point line - and 6 points of air before
-    /// the board's overshoot. The overshoot is inside the board's own
-    /// frame's reach, so this is the words, not a guess at the ink.
-    private static let verdictBar: CGFloat = 50
-    private static let doorSide = UtttRulebookButton.expandedSide
-
-    /// The air between the bar and the expanded board: 12 points plus the
-    /// 5% the main lines run above the board, so the tips clear the "you
-    /// are" mark. UI.html centres that mark in a row above the board; the
-    /// owner keeps it under its label, as on the strip, so the row goes and
-    /// the board comes up under the bar.
-    private static let boardGap: CGFloat = 30
 
     // MARK: the pieces
 

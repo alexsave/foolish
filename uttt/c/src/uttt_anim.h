@@ -126,4 +126,58 @@ void  uttt_drawer_report(UtttDrawer *d, float h, int32_t now_ms);
  * until the next report. Pure. */
 float uttt_drawer_at(const UtttDrawer *d, int32_t now_ms, int32_t *moving);
 
+/* ONE LAYOUT FOR EVERY SCREEN, a pure function of the drawer's height.
+ *
+ * docs/UI.html, "What holds which edge": the header line holds the top, the
+ * turn strip and the doors hold the bottom, and THE BOARD HOLDS THE CENTRE -
+ * "348 to 214 is a scale, not a slide. It is the only element that
+ * resizes." So the board's centre is the sheet's centre at every height,
+ * compact, expanded and every frame of a drag between, on every screen
+ * (waiting, play, end, spectator), and its side is a continuous function of
+ * the height: min and max of lerps on the openness, never a branch on it.
+ *
+ * Everything else is fitted AROUND the centred board. The words a screen
+ * puts at the top (the waiting lines, the verdict, the spectator's line)
+ * are a box the host measures; the board gives up only what it must so its
+ * square does not run into that box - beside it when the board is narrow
+ * enough, under it otherwise - and the same room at the bottom, so the
+ * centre stays the centre. At the expanded end the header bar and the door
+ * row are full-width bands, reserved the same way. */
+enum {
+    UTTT_SHEET_PLAY  = 0,  /* a seat: "you are" column, doors, headline     */
+    UTTT_SHEET_WATCH = 1,  /* a spectator: the rulebook column, doors       */
+    UTTT_SHEET_WAIT  = 2,  /* the waiting (first-open) screen: words only   */
+};
+
+typedef struct {
+    float w, h;            /* the sheet, laid out at the drawer's height     */
+    float words_w, words_h;/* the box of words the strip carries at its top
+                              (0, 0 for none); on the expanded sheet the
+                              header bar replaces it                        */
+    int32_t kind;          /* UTTT_SHEET_*                                   */
+} UtttSheetIn;
+
+typedef struct {
+    float t;               /* how far open, 0 compact .. 1 expanded          */
+    float board[3];        /* x, y (top left) and side, sheet points         */
+    float hpad, vpad;      /* the sheet's margins                            */
+    float col;             /* the side columns ("you are", the rulebook)     */
+    float bar;             /* the header band's height                       */
+    float foot;            /* the door row's height                          */
+    float door;            /* the rulebook door's side                       */
+    float icon;            /* the "you are" mark's side                      */
+    float icon_lead;       /* the gap between its label and the mark         */
+    float icon_top;        /* how far the indicator sits below the margin    */
+    float words_alpha;     /* the headline: faded in with t on a live seat   */
+    float door_alpha;      /* the Again door: expanded only                  */
+} UtttSheet;
+
+/* The drawer heights the openness runs between: 360, above the tallest
+ * compact drawer (340, 323 with the keyboard), and 530, below the shortest
+ * expanded one (541, an SE). */
+#define UTTT_SHEET_LO 360.f
+#define UTTT_SHEET_HI 530.f
+
+void uttt_sheet(const UtttSheetIn *in, UtttSheet *out);
+
 #endif

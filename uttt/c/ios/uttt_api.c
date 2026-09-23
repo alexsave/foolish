@@ -219,6 +219,22 @@ float uti_drawer_peek(const UtiDrawer *d, float h, int32_t now_ms, int32_t *movi
     return uttt_drawer_at(&k, now_ms, moving);
 }
 
+_Static_assert(sizeof(UtiSheetIn) == sizeof(UtttSheetIn), "UtiSheetIn mirrors UtttSheetIn");
+_Static_assert(sizeof(UtiSheet) == sizeof(UtttSheet), "UtiSheet mirrors UtttSheet");
+_Static_assert(UTI_SHEET_PLAY == UTTT_SHEET_PLAY && UTI_SHEET_WATCH == UTTT_SHEET_WATCH
+               && UTI_SHEET_WAIT == UTTT_SHEET_WAIT, "sheet kinds");
+
+UtiSheet uti_sheet(UtiSheetIn in)
+{
+    UtttSheetIn k;
+    UtttSheet o;
+    UtiSheet r;
+    memcpy(&k, &in, sizeof k);
+    uttt_sheet(&k, &o);
+    memcpy(&r, &o, sizeof r);
+    return r;
+}
+
 int uti_draw_mark(int mark, int32_t seed)
 {
     dl_fresh();

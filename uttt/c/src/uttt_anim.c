@@ -1,4 +1,5 @@
 #include "uttt_anim.h"
+#include "uttt_draw.h"
 #include <math.h>
 
 #define BL (1.f / 3.f)
@@ -215,4 +216,82 @@ float uttt_drawer_at(const UtttDrawer *d, int32_t now_ms, int32_t *moving)
     drawer_spring(d, now_ms, &x, &v);
     if (moving) *moving = 1;
     return d->target + x;
+}
+
+/* ---- one layout for every screen (uttt_anim.h UtttSheet) ---------------- */
+
+static float lerpf(float a, float b, float t) { return a + (b - a) * t; }
+static float clampf(float x, float lo, float hi) { return x < lo ? lo : x > hi ? hi : x; }
+
+/* The numbers the two ends are drawn with. The strip's margin is smaller
+ * above and below because height is what runs out there; the columns are
+ * one either side on the strip so the board sits in the middle of the SHEET
+ * and not of what is left over ("you are" in the left, the rulebook in the
+ * right); the header bar is "you are" over a 46-point mark. */
+#define SHEET_MARGIN     13.f
+#define SHEET_VMARGIN     8.f
+#define SHEET_COLUMN     38.f
+#define SHEET_GUTTER      3.f
+#define SHEET_DOOR_LO    38.f
+#define SHEET_DOOR_HI    54.f     /* UtttRulebookButton.expandedSide          */
+#define SHEET_DOOR_GAP    6.f
+#define SHEET_BAR        72.f
+#define SHEET_WORDS_AIR   6.f     /* between a box of words and the ink       */
+
+void uttt_sheet(const UtttSheetIn *in, UtttSheet *o)
+{
+    float x = clampf((in->h - UTTT_SHEET_LO) / (UTTT_SHEET_HI - UTTT_SHEET_LO), 0.f, 1.f);
+    float t = x * x * (3.f - 2.f * x);              /* smoothstep: the ends settle */
+    float reach = .135f * UTTT_REACH;               /* UI.html's 5% overshoot     */
+    int seat = in->kind == UTTT_SHEET_PLAY, doors = in->kind != UTTT_SHEET_WAIT;
+
+    *o = (UtttSheet){ .t = t };
+    o->hpad = SHEET_MARGIN;
+    o->vpad = lerpf(SHEET_VMARGIN, SHEET_MARGIN, t);
+    o->col  = doors ? lerpf(SHEET_COLUMN, 0.f, t) : 0.f;
+    o->door = lerpf(SHEET_DOOR_LO, SHEET_DOOR_HI, t);
+    o->foot = doors ? lerpf(0.f, SHEET_DOOR_HI + SHEET_DOOR_GAP, t) : 0.f;
+    o->icon = lerpf(34.f, 46.f, t);
+    o->icon_lead = lerpf(3.f, 4.f, t);
+    o->icon_top  = lerpf(4.f, 0.f, t);
+    o->door_alpha = doors ? clampf((t - .5f) * 2.f, 0.f, 1.f) : 0.f;
+
+    /* THE WORDS AT THE TOP. A seat's strip carries only what it measured
+     * (the verdict at the end, nothing while the game runs, when the
+     * headline fades in with the bar); opening, the header bar - "you are"
+     * on the left, the headline on the right - spans the sheet. A spectator's
+     * line spans it at both ends. */
+    float full = in->w - 2.f * SHEET_MARGIN;
+    float ww = in->words_w, wh = in->words_h;
+    if (seat) {
+        ww = lerpf(ww, full, t);
+        wh = lerpf(wh, SHEET_BAR, t);
+    } else if (in->kind == UTTT_SHEET_WATCH && wh > 0.f) {
+        ww = full;
+    }
+    o->bar = wh;
+    o->words_alpha = (seat && in->words_h <= 0.f) ? t : 1.f;
+
+    /* THE SIDE. The width, less the columns, leaving the main lines room to
+     * run 5% past the board on the sheet; the height, less the margins. */
+    float gut   = lerpf(0.f, SHEET_GUTTER, t);
+    float avail = in->h - 2.f * o->vpad;
+    float side  = (in->w - 2.f * (SHEET_MARGIN + gut) - 2.f * o->col) / (1.f + 2.f * reach);
+    side = fminf(side, avail);
+    /* Clear of the words: beside them (the ink's edge short of their box by
+     * the air) or under them (the square's top below their box, which
+     * carries its own air), whichever leaves more board. The same room at
+     * the bottom, or the centre would not be the centre. */
+    if (ww > 0.f && wh > 0.f) {
+        float beside = (in->w - 2.f * SHEET_MARGIN - 2.f * ww - 2.f * SHEET_WORDS_AIR)
+                       / (1.f + 2.f * reach);
+        float under = avail - 2.f * wh;
+        side = fminf(side, fmaxf(beside, under));
+    }
+    side = fminf(side, avail - 2.f * o->foot);       /* the door row, the same */
+    side = fmaxf(side, 0.f);
+
+    o->board[0] = (in->w - side) * .5f;
+    o->board[1] = (in->h - side) * .5f;
+    o->board[2] = side;
 }

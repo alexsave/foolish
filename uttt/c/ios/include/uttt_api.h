@@ -218,6 +218,23 @@ float uti_drawer_at(const UtiDrawer *d, int32_t now_ms, int32_t *moving);
  * callback does, and must not draw that one frame at the raw height. */
 float uti_drawer_peek(const UtiDrawer *d, float h, int32_t now_ms, int32_t *moving);
 
+/* ---- one layout for every screen (src/uttt_anim.h UtttSheet) ----
+ * The board's square centred on the sheet at every height and every screen,
+ * scaled continuously with the drawer; the words, columns and doors fitted
+ * around it. The host measures its box of words and places what it is told. */
+#define UTI_SHEET_PLAY   0
+#define UTI_SHEET_WATCH  1
+#define UTI_SHEET_WAIT   2
+typedef struct {
+    float   w, h, words_w, words_h;
+    int32_t kind;
+} UtiSheetIn;
+typedef struct {
+    float t, board[3], hpad, vpad, col, bar, foot, door, icon, icon_lead,
+          icon_top, words_alpha, door_alpha;
+} UtiSheet;
+UtiSheet uti_sheet(UtiSheetIn in);
+
 /* The board with the last move's mark LEFT OUT and no wash - what a host
  * caches while the motion draws the rest over it. */
 int  uti_draw_under(void);

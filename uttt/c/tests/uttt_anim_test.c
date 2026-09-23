@@ -168,6 +168,60 @@ int main(void)
            "a small height mid-spring re-aims it rather than jumping to it");
     }
 
+    /* ONE LAYOUT, EVERY SCREEN: the board's centre is the sheet's centre at
+     * every height, its side never steps as the drawer moves, and it stays
+     * clear of the words and on the sheet (docs/UI.html "What holds which
+     * edge": the board holds the centre and is the only thing that resizes). */
+    {
+        static const float W[] = { 375.f, 393.f, 440.f };
+        static const struct { int kind; float ww, wh; } K[] = {
+            { UTTT_SHEET_PLAY, 0, 0 },        /* a live game                  */
+            { UTTT_SHEET_PLAY, 82, 50 },      /* the end: "You win / Diagonal" */
+            { UTTT_SHEET_WATCH, 0, 28 },      /* the spectator's line         */
+            { UTTT_SHEET_WAIT, 168, 50 },     /* the waiting words            */
+        };
+        float reach = .135f * UTTT_REACH;
+        int centred = 1, clear = 1, onsheet = 1, grows = 1;
+        float worst = 0.f;
+        for (int wi = 0; wi < 3; wi++)
+        for (int ki = 0; ki < 4; ki++) {
+            UtttSheetIn in = { .w = W[wi], .words_w = K[ki].ww, .words_h = K[ki].wh, .kind = K[ki].kind };
+            float prev = -1.f;
+            for (float h = 220.f; h <= 900.f; h += .25f) {
+                UtttSheet o;
+                in.h = h;
+                uttt_sheet(&in, &o);
+                float s = o.board[2];
+                if (fabsf(o.board[0] + s / 2 - in.w / 2) > 1e-3f
+                    || fabsf(o.board[1] + s / 2 - h / 2) > 1e-3f) centred = 0;
+                if (prev >= 0.f && fabsf(s - prev) > worst) worst = fabsf(s - prev);
+                if (prev >= 0.f && s < prev - 1e-3f && o.t == 0.f) grows = 0;
+                prev = s;
+                if (s * (1.f + 2.f * reach) > in.w - 2.f * o.hpad + 1e-3f || s > h - 2.f * o.vpad + 1e-3f)
+                    onsheet = 0;
+                /* clear of the strip's words: beside them or under them */
+                if (o.t == 0.f && in.words_h > 0.f) {
+                    float bx = in.words_w > 0.f ? in.words_w : in.w - 2.f * o.hpad;
+                    int beside = o.board[0] + s * (1.f + reach) <= in.w - o.hpad - bx + 1e-3f;
+                    int under  = o.board[1] >= o.vpad + in.words_h - 1e-3f;
+                    if (!beside && !under) clear = 0;
+                }
+            }
+        }
+        printf("  sheet: largest side step per quarter point of drawer %.3f pt\n", worst);
+        OK(centred, "every screen's board is centred on the sheet at every height");
+        OK(worst < .6f, "and its side never steps as the drawer moves");
+        OK(grows, "on the strip a taller drawer never gives a smaller board");
+        OK(onsheet, "its lines stay on the sheet");
+        OK(clear, "and it clears the strip's words, beside or under them");
+        UtttSheet c, e;
+        uttt_sheet(&(UtttSheetIn){ .w = 375.f, .h = 340.f, .kind = UTTT_SHEET_PLAY }, &c);
+        uttt_sheet(&(UtttSheetIn){ .w = 375.f, .h = 541.f, .kind = UTTT_SHEET_PLAY }, &e);
+        printf("  sheet: SE compact board %.1f, expanded %.1f\n", c.board[2], e.board[2]);
+        OK(c.t == 0.f && e.t == 1.f, "340 is the compact end and 541 the expanded one");
+        OK(c.words_alpha == 0.f && e.words_alpha == 1.f, "a live strip hides the headline, the bar shows it");
+    }
+
     printf("uttt_anim: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

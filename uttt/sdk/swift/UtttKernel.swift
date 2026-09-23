@@ -349,6 +349,18 @@ public enum Uttt {
     /// How far the main lines run past the board, per side, as a fraction of it.
     public static var boardReach: CGFloat { CGFloat(uti_board_reach()) }
 
+    /// Which screen a sheet layout is for (UTTT_SHEET_*).
+    public enum SheetKind: Int32 { case play = 0, watch = 1, wait = 2 }
+
+    /// ONE LAYOUT FOR EVERY SCREEN at a drawer height: the board centred on
+    /// the sheet and scaled with it, everything else fitted around. `words`
+    /// is the box of words the strip carries at its top, measured by the host.
+    public static func sheet(_ kind: SheetKind, size: CGSize, words: CGSize = .zero) -> UtiSheet {
+        uti_sheet(UtiSheetIn(w: Float(size.width), h: Float(size.height),
+                             words_w: Float(words.width), words_h: Float(words.height),
+                             kind: kind.rawValue))
+    }
+
     /// The last move's heavy mark, drawn to `t`: what moves over the cache.
     public static func lastStroke(t: Float) -> [Poly] { harvest(uti_draw_last(t)) }
 

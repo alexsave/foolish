@@ -25,62 +25,46 @@ public struct UtttLobbyScreen: View {
 
     public init(stance: Stance) { self.stance = stance }
 
+    /// The words' box as set, so the kernel can fit the board around it.
+    @State private var box: CGSize = .zero
+
     public var body: some View {
         UtttSheet {
-            GeometryReader { geo in
-                if geo.size.height > UtttDoorButton.expandedFrom {
-                    expanded(geo.size.width)
-                } else {
-                    compact
-                }
-            }
-            .overlay { MotionRulerEdges(on: UtttRuler.on) }
+            UtttDrawerSheet { size in sheet(size) }
         }
     }
 
-    /// docs/UI.html 02 as drawn: the words and the board under them.
-    private func expanded(_ width: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            words
+    /// docs/UI.html 02: the words and the empty board. ONE LAYOUT AT EVERY
+    /// HEIGHT, the play surface's (`Uttt.sheet`): the board's centre is the
+    /// sheet's centre and it scales with the drawer, compact to expanded,
+    /// with the words at the top left and the board clear of them - beside
+    /// them when it is small enough, under them otherwise. There were two
+    /// layouts here and a switch at 440 points, so a drag across it jumped
+    /// the board from beside the words to under them, 198 to 377 points in
+    /// one frame (measured with the ruler), and the strip's board sat 80
+    /// points right of centre.
+    private func sheet(_ size: CGSize) -> some View {
+        let L = Uttt.sheet(.wait, size: size,
+                           words: CGSize(width: box.width, height: box.height + 6))
+        return ZStack(alignment: .topLeading) {
             if stance != .unreadable {
-                /* ROOM FOR THE OVERSHOOT: the grid's main lines run past the
-                 * board by 5% of it (Uttt.boardReach) on every side, so the
-                 * board is narrower than the sheet by that much, or the lines
-                 * run off its left and right edges; and at 10 points above
-                 * they ran up into the line of type. High, like the play
-                 * surface, with the spare height below. */
-                let side = (width - 26) / (1 + 2 * Uttt.boardReach)
-                board.frame(width: side, height: side)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 26)
-                Spacer(minLength: 0)
+                board
+                    .frame(width: CGFloat(L.board.2), height: CGFloat(L.board.2))
+                    .boardRuler()
+                    .placed(x: L.board.0, y: L.board.1)
             } else {
-                Spacer(minLength: 0)
+                Color.clear
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(13)
-    }
-
-    /// THE COMPACT STRIP PUTS THE WORDS BESIDE THE BOARD, the way the play
-    /// surface puts "you are" beside it: stacked, they left a 112-point board
-    /// in 309 points of drawer.
-    private var compact: some View {
-        HStack(alignment: .top, spacing: 12) {
+        .overlay(alignment: .topLeading) {
             /* THE WORDS TAKE THEIR OWN WIDTH. A fixed 150 broke "Nobody has
              * taken it yet." after "taken", leaving "it yet." alone on a
-             * second line; UI.html 02 sets it as one line under the headline,
-             * and the board gives way instead. */
-            words.fixedSize(horizontal: true, vertical: false)
-            /* The overshoot needs room on every side, or it runs into the
-             * drawer's edge and the grab handle. */
-            if stance != .unreadable {
-                board.padding(22)
-            }
+             * second line; UI.html 02 sets it as one line under the headline. */
+            words.fixedSize()
+                .measured($box)
+                .padding(.leading, CGFloat(L.hpad))
+                .padding(.top, CGFloat(L.vpad))
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(.horizontal, 13)
-        .padding(.vertical, 10)
     }
 
     private var words: some View {
@@ -93,7 +77,7 @@ public struct UtttLobbyScreen: View {
             Text(subline)
                 .font(.system(size: 14))
                 .foregroundStyle(UtttInk.muted)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(1)
         }
     }
 
@@ -101,8 +85,6 @@ public struct UtttLobbyScreen: View {
      * corner to corner reads as a different piece of paper. */
     private var board: some View {
         UtttBoard(active: -1, last: -1, positionKey: 0)
-            .boardRuler()
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .allowsHitTesting(false)
     }
 
@@ -144,75 +126,66 @@ public struct UtttWatchScreen: View {
     /// a spectator can read them too.
     @State private var rulesOpen = false
 
-    /// The side columns on the strip, the play surface's: the rulebook door
-    /// stands in the right one, so the board leaves room for it.
-    private static let column: CGFloat = 38
+    /// The header line's box as set, so the kernel can fit the board under it.
+    @State private var box: CGSize = .zero
 
     public var body: some View {
         UtttSheet {
-            GeometryReader { geo in
-                if rulesOpen {
-                    UtttRulesSheet { rulesOpen = false }
-                        .padding(13)
-                        .transition(.opacity)
-                } else {
-                    watch(geo.size)
-                }
+            if rulesOpen {
+                UtttRulesSheet { rulesOpen = false }
+                    .padding(13)
+                    .transition(.opacity)
+            } else {
+                UtttDrawerSheet { size in watch(size) }
             }
-            .overlay { MotionRulerEdges(on: UtttRuler.on) }
         }
         .animation(.easeInOut(duration: 0.18), value: rulesOpen)
     }
 
+    /// The play surface's one layout (`Uttt.sheet`), with the header line in
+    /// place of the bar: the board centred and scaled with the drawer, the
+    /// rulebook in the right column on the strip and beside Again at the
+    /// bottom when expanded. There was a switch at 440 points here too.
     private func watch(_ size: CGSize) -> some View {
-        /* THE BOARD LEAVES ROOM FOR ITS OVERSHOOT, as the play surface's
-         * does: the main lines run 5% past it, so a board as wide as the
-         * sheet ran them off both edges. Expanded it sits high under the
-         * header, spare height at the bottom with the doors; on the strip
-         * the rulebook door takes the right column, as it does there. */
-        let expanded = size.height > UtttDoorButton.expandedFrom
-        let doorRow = expanded ? UtttRulebookButton.expandedSide + 6 : 0
-        let cols = expanded ? 0 : 2 * Self.column
-        let side = max(0, min((size.width - 26 - cols) / (1 + 2 * Uttt.boardReach),
-                              size.height - 26 - 30 - doorRow))
-        return VStack(spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(Uttt.say(.watchLabel))
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .tracking(1.9)
-                    .textCase(.uppercase)
-                    .foregroundStyle(UtttInk.label)
-                Spacer()
-                Text(line)
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(UtttInk.ink)
-                    .accessibilityAddTraits(.isHeader)
-            }
-            Spacer(minLength: 6).frame(maxHeight: expanded ? 30 : .infinity)
-            UtttBoard(active: model.active, last: model.last,
-                      positionKey: model.positionKey)
-                .frame(width: side, height: side)
-                .boardRuler()
-            Spacer(minLength: 6)
-            /* Again belongs to the expanded view (UI.html 08); the rulebook
-             * stands beside it at its height, as on the play surface. */
-            if expanded {
-                HStack(alignment: .center, spacing: 10) {
-                    if let title = UtttDoorButton.title(door) {
-                        UtttDoorButton(title: title, act: onDoor)
-                    } else {
-                        Spacer(minLength: 0)
-                    }
-                    UtttRulebookButton { rulesOpen = true }
+        let L = Uttt.sheet(.watch, size: size,
+                           words: CGSize(width: box.width, height: box.height + 6))
+        let hpad = CGFloat(L.hpad), vpad = CGFloat(L.vpad)
+        return UtttBoard(active: model.active, last: model.last,
+                         positionKey: model.positionKey)
+            .frame(width: CGFloat(L.board.2), height: CGFloat(L.board.2))
+            .boardRuler()
+            .placed(x: L.board.0, y: L.board.1)
+            .overlay(alignment: .top) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(Uttt.say(.watchLabel))
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .tracking(1.9)
+                        .textCase(.uppercase)
+                        .foregroundStyle(UtttInk.label)
+                    Spacer()
+                    Text(line)
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(UtttInk.ink)
+                        .accessibilityAddTraits(.isHeader)
                 }
+                .measured($box)
+                .padding(.horizontal, hpad)
+                .padding(.top, vpad)
             }
-        }
-        .overlay(alignment: .bottomTrailing) {
-            if !expanded {
-                UtttRulebookButton(side: Self.column) { rulesOpen = true }
+            .overlay(alignment: .bottomTrailing) {
+                /* Again belongs to the expanded view (UI.html 08); the
+                 * rulebook stands beside it at its height, as on the play
+                 * surface, and alone in the right column on the strip. */
+                HStack(alignment: .center, spacing: 10) {
+                    if let title = UtttDoorButton.title(door), L.door_alpha > 0 {
+                        UtttDoorButton(title: title, height: CGFloat(L.door), act: onDoor)
+                            .opacity(Double(L.door_alpha))
+                    }
+                    UtttRulebookButton(side: CGFloat(L.door)) { rulesOpen = true }
+                }
+                .padding(.trailing, hpad)
+                .padding(.bottom, vpad)
             }
-        }
-        .padding(13)
     }
 
     private var line: String { Uttt.say(.watchLine) }
@@ -248,12 +221,6 @@ public struct UtttDoorButton: View {
         self.height = height
         self.act = act
     }
-
-    /// ABOVE THIS HEIGHT THE DRAWER IS EXPANDED. Messages hands the compact
-    /// drawer 340 points at the most (323 with the keyboard up) and the
-    /// expanded one 541 at the least (an SE), so anything between is a drawer
-    /// in motion, and 440 splits it.
-    public static let expandedFrom: CGFloat = 440
 
     /// The words on a door, or nil for no door. The kernel's.
     public static func title(_ door: Uttt.Door) -> String? {
