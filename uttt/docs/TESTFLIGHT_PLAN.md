@@ -770,7 +770,52 @@ Sheets: `sheet_board_win_stage.jpg`, `sheet_game_win_stage.jpg`, `sheet_normal_s
 
 ### Open
 
-- **At Send the drawer is seen replaying.** The log shows the extension playing the post-settlement exactly once (`motion ch 6`, 350 ms, 17-20 frames) and nothing after; yet the film (`sheet_normal_send.jpg`) shows the travel, then about 2 s later the pre-Send frame (outline, wash on the old block) once more and the travel again. Messages calls `viewDidAppear` again at Send, and the send hint, hidden in the frame of the Send, stays visible through those frames, so what is on screen then is not this process's current layer tree. Cause not found; this is item 3 of the owner's round and it is not closed.
-- Memory above target (above).
-- The partial ink frame visible in the first frame after Send in the same film, same cause suspected.
+- ~~At Send the drawer is seen replaying.~~ Closed in section 13.
+- Memory above target (section 13 has the next steps).
+- ~~The partial ink frame visible in the first frame after Send~~ - the same cause, closed in section 13.
 - On the SE the strip's word column is narrow, so "Your move / Anywhere you like" and "You win / Diagonal" set small beside the board (seen in `sheet_game_win_stage.jpg`).
+
+## 13. My own move replaying after Send, and memory (2026-09-23, iPhone SE)
+
+Films, sheets and scripts are in the session scratchpad `film6/` (`take.sh`, `open.sh`, `prep.sh`, `clock.py`, `wash.py`, `sheet_send_before2.jpg`, `sheet_send_after1.jpg`).
+
+### The replay was live, and it was our own bubble coming back
+
+The hypothesis was that Messages showed a stale snapshot of the extension after Send.
+The ruler's clock says otherwise: `clock.py` reads the 14 cells in every composited frame, and through the replay the clock advances 16-17 ms a frame with no repeat and no step back, so every replayed frame was this process drawing live.
+The log gave the cause: in a drawer opened by TAPPING a bubble (bound to its session, the way the owner plays), pressing the arrow delivers the sender's own bubble through `didReceive` about a second BEFORE `didStartSending` (`select own bubble`, `receive` at +198.648 s; `send` at +199.684 s).
+`didReceive` treated it as an arrival: a new screen with the whole move played again (channel 4), and then the Send's own post-settlement (channel 6) played on top of that.
+A drawer opened through + is unbound and gets no echo, which is why the earlier scripted takes could not show it.
+
+The fix is foolish's own rule (`StagedBubbleRouting.isMine`, round 12 #11): a bubble this device staged or sent coming back is not an arrival and is dropped (`receive-dropped`).
+The echo is the send landing, so the post-settlement plays then; `settleSent` plays it once per bubble, whichever of the echo and `didStartSending` comes first, and hides the send hint in that frame.
+
+Proof (`take.sh`: tap a bubble, play a move, let the drawer collapse, press Send, 9 s at normal speed; `wash.py` tracks the highlighter's centroid and area in every compact frame and counts every frame after it first arrives where it has left again):
+
+| take | before (74d53f53^) | after (74d53f53) |
+|---|---|---|
+| 1 | 17 replay frames, from 0.5 s after landing | 0 |
+| 2 | - | 0 |
+| 3 | - | 0 |
+| 4 | - | 0 |
+| 5 | - | 0 |
+
+### Memory, one change at a time
+
+`film5/mem.sh`, idle compact on the seeded board, ruler off, 3 opens each; floor (`dev.empty`) 21 MB.
+Stage fps is `film5/bench.sh`, 5 takes, after the last step.
+
+| step | change | commit | idle footprint (peak) | what moved (vmmap dirty) |
+|---|---|---|---|---|
+| m0 | before | 74d53f53 | 31-32 MB (32.4) | UtttKit `__DATA` 1168K, CG raster 1200K, CoreAnimation 1968K, paper `Data` 689K |
+| m1 | display list on the heap, a whole board handed over (`uti_take`), no duplicate first/n/rgba, no Swift copy | 07ee192a | 30 MB (31.4) | UtttKit `__DATA` 1168K -> 32K |
+| m2 | board and paper one IOSurface each (`UtttBitmap`), paper written as BGRA by the kernel | 0e995c37 | 27 MB (28.0) | CG raster 1200K -> 112K, CoreAnimation 1968K -> 160K, paper `Data` gone; IOSurface 1856K |
+
+Stage benchmark after m2: 56.0-56.8 fps, largest gap 18-20 ms (b3 was 56.5-57.1, 18-20).
+Peak across a stage (the bubble baked and inserted): 41.5-41.7 MB.
+
+Caveats and what is left:
+- The simulator's `footprint` does not charge the two IOSurfaces (1.8 MB) to the extension; a device will. Counted, the idle drawer is about 28.8 MB, 7.9 over the floor: the target (floor + 5) is not met yet.
+- The rest of the idle gap is not ours to allocate: `__DATA` of system frameworks SwiftUI touches (+2 MB against the floor) and SwiftUI's own heap (metadata, attribute graph, +3.5 MB of Malloc Small). Getting under floor + 5 means less SwiftUI in the drawer, not smaller buffers.
+- The stage peak (+20 over the floor, target + 10) is the bubble: a 900x585 bitmap at 3x (2.1 MB), its own paper, the board's polygons, and Messages' encode of the image on insert. Next: bake at 2x, paint the bubble's paper as BGRA straight into the renderer, and measure the insert with `heap` during the stage.
+
