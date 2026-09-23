@@ -73,6 +73,13 @@ public struct UtttGameScreen: View {
                 }
             }
             .overlay { MotionRulerEdges(on: UtttRuler.on) }
+#if DEBUG
+            /* With the ruler on, every height the sheet is handed, so a
+             * filmed take can be read against what the layout was given. */
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
+                if UtttRuler.on { UtttLog.note("ruler-height", String(format: "%.1f clock %d", h, MotionRuler.clockMs)) }
+            }
+#endif
         }
         .animation(.easeInOut(duration: 0.18), value: rulesOpen)
     }

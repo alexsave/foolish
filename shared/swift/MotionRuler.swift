@@ -61,6 +61,15 @@ public enum MotionRuler {
         }
     }
 
+    /// The clock strip's left edge, past the banded strip.
+    public static let clockGap: CGFloat = 6
+
+    /// The value the clock strip shows now: milliseconds modulo 16384. A log
+    /// line that carries it can be matched to the filmed frame showing it.
+    public static var clockMs: Int {
+        Int((Date().timeIntervalSince1970 * 1000).rounded()) & ((1 << MotionRulerClock.bits) - 1)
+    }
+
     static func bandColour(_ i: Int) -> Color {
         if i == 0 { return pure(1, 0, 0) }
         if i % 10 == 0 { return pure(1, 1, 0) }
@@ -86,6 +95,9 @@ public struct MotionRulerEdges: View {
                     }
                     MotionRuler.pure(1, 0, 0)
                         .frame(width: geo.size.width, height: MotionRuler.edge)
+                    MotionRulerClock()
+                        .offset(x: MotionRuler.strip + MotionRuler.clockGap,
+                                y: MotionRuler.edge)
                     MotionRuler.pure(0, 1, 0)
                         .frame(width: geo.size.width, height: MotionRuler.edge)
                         .offset(y: geo.size.height - MotionRuler.edge)
@@ -96,6 +108,31 @@ public struct MotionRulerEdges: View {
             .allowsHitTesting(false)
             .accessibilityHidden(true)
         }
+    }
+}
+
+/// A per-frame CLOCK a parser reads off a filmed frame without OCR: 14 cells,
+/// most significant first, white 1 and black 0, milliseconds modulo 16384.
+/// `TimelineView(.animation)` re-evaluates on every display refresh, so a
+/// filmed frame whose clock repeats while geometry moved is a frame the app did
+/// not render - the host composited a stale picture of it.
+public struct MotionRulerClock: View {
+    public static let bits = 14
+    public static let cell: CGFloat = 12
+    public init() {}
+    public var body: some View {
+        TimelineView(.animation) { ctx in
+            let ms = Int((ctx.date.timeIntervalSince1970 * 1000).rounded()) & ((1 << Self.bits) - 1)
+            HStack(spacing: 0) {
+                ForEach(0..<Self.bits, id: \.self) { i in
+                    let on = (ms >> (Self.bits - 1 - i)) & 1 == 1
+                    Rectangle()
+                        .fill(on ? MotionRuler.pure(1, 1, 1) : MotionRuler.pure(0, 0, 0))
+                        .frame(width: Self.cell, height: Self.cell)
+                }
+            }
+        }
+        .allowsHitTesting(false)
     }
 }
 
