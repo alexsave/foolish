@@ -87,12 +87,16 @@ def read_clock(a, red_pt, scale):
     return v
 
 
-def frame_marks(a, strip_px, scale):
+def frame_marks(full, strip_px, scale):
+    # HALF RESOLUTION for the colour work: a 12pt square is still 18px across
+    # at 3x, and a take is several hundred 1320x2868 frames.
+    a = full[::2, ::2]
+    scale, strip_px = scale / 2, strip_px // 2
     H, W = a.shape[:2]
     h, s, v = hsv(a)
     out = {"red": bar_y(ink_mask(h, s, v, "red"), W, scale),
            "green": bar_y(ink_mask(h, s, v, "green"), W, scale)}
-    out["clock"] = read_clock(a, out["red"], scale)
+    out["clock"] = read_clock(full, out["red"], scale * 2)
     side = SIDE_PT * scale
     lo, hi = 0.35 * side * side, 1.6 * side * side
     found = {}
@@ -122,7 +126,7 @@ def main():
     ap.add_argument("--strip-pt", type=float, default=24)
     ap.add_argument("--quads", default="cyan", help="inks split by quadrant around magenta")
     a = ap.parse_args()
-    files = sorted(glob.glob(os.path.join(a.frames, "f*.png")))
+    files = sorted(glob.glob(os.path.join(a.frames, "f*.png")) + glob.glob(os.path.join(a.frames, "f*.ppm")))
     times = [float(x) for x in open(os.path.join(a.frames, "times.txt")).read().split()]
     quads = set(a.quads.split(","))
     rows = []

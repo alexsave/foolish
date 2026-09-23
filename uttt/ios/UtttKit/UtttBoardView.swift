@@ -148,7 +148,18 @@ public struct UtttBoard: View {
 
     private static func cached(stamp st: String, side: CGFloat,
                                polys make: () -> Uttt.BoardPolys) -> CGImage? {
-        if st == cacheStamp, side == cacheSide, let img = cacheImage { return img }
+        if st == cacheStamp, let img = cacheImage {
+            if side == cacheSide { return img }
+            /* THE SAME BOARD AT A NEW SIZE: the drawer is being dragged, or
+             * Messages handed a new height. The picture on hand is drawn
+             * into the new rectangle (scaled, for a few frames) and the
+             * sharp one is painted off the main thread. Painting it here
+             * cost 50-60 ms of main thread per height, and a drag hands a
+             * new height every frame - measured with the ruler, the board
+             * moved in 200 ms steps under a finger moving every 16 ms. */
+            resize(stamp: st, side: side, polys: make())
+            return img
+        }
         let scale = UIScreen.main.scale
         let polys = make()
         UtttLog.note("raster", "side \(Int(side)) plies \(Uttt.plyCount) polys \(polys.first.count)")
@@ -173,6 +184,31 @@ public struct UtttBoard: View {
             }
         }
         return nil
+    }
+
+    /// The side the newest resize asked for, and whether one is painting.
+    /// ONE PAINT AT A TIME: a drag asks every frame, and the paint that lands
+    /// is followed by one more at the latest side if the finger moved on.
+    private static var wantSide: CGFloat = 0
+    private static var resizing = false
+
+    private static func resize(stamp st: String, side: CGFloat, polys: Uttt.BoardPolys) {
+        wantSide = side
+        guard !resizing else { return }
+        resizing = true
+        let scale = UIScreen.main.scale
+        DispatchQueue.global(qos: .userInteractive).async {
+            let img = render(polys, side: side, scale: scale)
+            DispatchQueue.main.async {
+                resizing = false
+                guard cacheStamp == st else { return }
+                cacheSide = side; cacheImage = img
+                if wantSide != side {
+                    resize(stamp: st, side: wantSide, polys: polys)
+                }
+                NotificationCenter.default.post(name: rendered, object: nil)
+            }
+        }
     }
 
     /// Pure: the polygons into a new bitmap. Safe on any thread.
