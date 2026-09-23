@@ -302,6 +302,23 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// A move from the other player, which does NOT become the selection.
     override func didReceive(_ message: MSMessage, conversation: MSConversation) {
         super.didReceive(message, conversation: conversation)
+        /* MY OWN BUBBLE COMING BACK IS NOT AN ARRIVAL (foolish's round 12
+         * #11, `StagedBubbleRouting.isMine`). A drawer opened by tapping a
+         * bubble is bound to that bubble's session, and Messages hands the
+         * sender's own bubble back through here the moment the arrow is
+         * pressed - a second before didStartSending on the simulator (log
+         * 2026-09-23: `receive` at +198.648s, `send` at +199.684s), and to a
+         * second device on the same account for real. Threaded on as an
+         * arrival it rebuilt the screen and played the whole move again, and
+         * then the Send's own post-settlement played on top: the owner's
+         * "my own move replays after Send". The board already holds these
+         * exact bytes, so nothing is folded in - but this IS the send landing,
+         * so the post-settlement plays now rather than a second late. */
+        if let wire = UtttWire(url: message.url), isMine(wire) {
+            UtttLog.note("receive-dropped", "my own bubble")
+            if wire == staged { settleSent(wire, conversation) }
+            return
+        }
         UtttLog.note("receive")
         arrived = UtttWire(url: message.url)
         present(conversation, motion: .arrival)
@@ -375,15 +392,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         sendState.door = false
         doorInsert = nil
         let wasUnbound = unbound
-        /* B: THE POST-SETTLEMENT PLAYS AT SEND - the highlighter goes to the
-         * outlined block and nothing else moves. On the board already up when
-         * it is this game (the usual case); a fresh present only when it is
-         * not. */
-        if let live, let wire, wire.load(), live.seed == Uttt.seed, Uttt.messageText == wire.text {
-            live.sent()
-        } else {
-            present(conversation, motion: .settle)
-        }
+        if let wire { settleSent(wire, conversation) } else { present(conversation, motion: .settle) }
 
         /* A SEND FROM THE EXPANDED DRAWER is somebody done with it; a send
          * from the compact one keeps the strip up so the next move is one tap
@@ -396,6 +405,35 @@ final class MessagesViewController: MSMessagesAppViewController {
             UtttLog.note("dismiss", "first send from an unbound drawer")
             dismiss()
         }
+    }
+
+    /// The bubble whose post-settlement has played. The echo and
+    /// didStartSending both mean "this bubble went", in either order, and
+    /// the highlighter moves once.
+    private var settled: UtttWire?
+
+    /// B: THE POST-SETTLEMENT PLAYS AT SEND - the highlighter goes to the
+    /// outlined block and nothing else moves. On the board already up when it
+    /// is this game (the usual case); a fresh present only when it is not.
+    /// Once per bubble, whichever of the two send signals comes first.
+    private func settleSent(_ wire: UtttWire, _ conversation: MSConversation) {
+        guard settled != wire else {
+            UtttLog.note("settle", "already played for this bubble")
+            return
+        }
+        settled = wire
+        hideHintNow()
+        if let live, wire.load(), live.seed == Uttt.seed, Uttt.messageText == wire.text {
+            live.sent()
+        } else {
+            present(conversation, motion: .settle)
+        }
+    }
+
+    /// A bubble this device staged or sent - the draft in the field, or the
+    /// last one that went.
+    private func isMine(_ wire: UtttWire) -> Bool {
+        wire.url == draftURL || wire == staged || wire == sent
     }
 
     /// markSent NEVER REBASES BACKWARDS. A send whose bytes lose to what this
