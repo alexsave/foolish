@@ -267,6 +267,44 @@ Left from WP5:
 - Game-over and spectator screens were not re-shot (spectator uses the static board, no motion).
 - The ring is drawn but the probe only catches its first ~100 ms reliably (its colour fades into the paper); confirm by eye on a device.
 
+#### Verification pass (build 3) - 2026-09-23
+
+Run against 1.0(3) (HEAD `9d499dd2`) on a fresh `rig.sh newsim UtttVerify` simulator, Debug with the picker and a Release simulator build.
+Screenshots are in the session scratchpad `verify/` (`/private/tmp/claude-501/-Users-alex-Dev-foolish/ce7c4549-2c3c-4e25-aeb1-0540c12ff110/scratchpad/verify/`).
+
+What held up:
+- A whole game by taps from a cold start (`01`-`07`, `p1_*`-`p21_*`): + drawer, invitation staged and sent, joined as X with the first move, 21 plies alternated through the picker, X won down the left, the loser's end screen reads "X wins" and the winner's "You win".
+  Again staged a new invitation in a new session, the finished bubble stayed in the thread, and the second game's join and first move worked (`20`-`26`).
+- Change of mind replaces the draft, and Messages' cancel X reverts the board (`85`, `86`).
+- A tapped cell in the (moved) expanded board lands where tapped (`83`, `84`).
+- Release simulator build: + opens the invitation staged, send, tap own bubble gives Waiting from the device's own participant id (`70`-`73`); no `dev.seat`, picker text, App Group or em dash in the Release binaries.
+- The paper is the same sheet in dark and light appearance, bubble and drawer (`50`-`63`).
+- `make -C uttt/c run asan ios-smoke` green after every change.
+
+Fixed in this pass:
+- `39ec7770`, `45cffd68` - **the Again door is drawn by the pen** (owner): `uttt_draw_door` in `uttt_rule.c` is a rough outline over the rulebook square's two-fifths hachure, in points so a wider phone gets more hachure at the same gap; the label is set in the outline's ink; its height is `UtttRulebookButton.expandedSide`, the rulebook door's; its edge is 2.6 wide so the top and bottom read as a box.
+  ios-smoke asserts it fits at every width 200-430, the two inks, fill before outline, no stray point, determinism, and more hachure when wider; the shape buffers grew from 96/2400 to 256/6400 because the first run of that test went red (only 96 strokes at every width).
+  Mutations (fill ink, edge painted first, drifting seed, scale-free gap, inset outside the bar, buffers back to 96) each went red on the named assertion.
+- `7c91cc90` - **captions and screen lines end without a period** (owner); the end caption is "X won down the left in 21 moves"; a draw is "Drawn in N moves"; the end subline names the line ("Left column", "Top row", "Diagonal" for both, matching the caption's "on the diagonal").
+  `uttt_msg_test` asserts no string from any key at any ply from any seat ends in a period, the subline per line, and that caption and subline name the same line; three mutations went red.
+- `45cffd68` - **the expanded board sits high** (the WP5 gap): board top 30 points under the bar, spare height at the bottom with the doors; the you-are mark stays under its label (owner, over UI.html's centred mark). Collapsed is unchanged, still one lerp.
+- `8184b270` - **the spectator's expanded board ran its main lines off both edges of the sheet** (it took the full width); it now leaves room for the 5% reach and sits high.
+- `118361b2` - **the same on the expanded Waiting screen**, which is the first thing a creator sees on tapping their own invitation.
+- `4ff6abdc`, `581321db` - rig only (DEBUG): `rig.sh devgame 47,20,...` opens an exact game, and the seeded path routes by seat, so won, lost, drawn and spectator states can be shot.
+
+Open:
+- **App Review, one device (major, before external TestFlight or the store):** a reviewer creates a game, sends it, taps it and sees "Waiting / Nobody has taken it yet" with nothing to do.
+  There is no way to see a single move without a second Apple ID in the conversation.
+  The review notes must say so plainly and ship a screen recording of a two-phone game (the foolish pattern in `docs/APP_REVIEW_NOTES.md`); there are no uttt review notes yet.
+- **The collapsed end screen has no verdict** (minor): UI.html 08 shows "Alex takes it" above the collapsed board; the strip shows the board only (`owner_collapsed_youwin.png`). Owner is looking at it.
+- **The spectator has no rulebook door** (minor); every other screen has one.
+- **The waiting screen opens EXPANDED from a tap** and shows two lines over an empty board (WP2 asked for a request to compact); cosmetic.
+- **VoiceOver:** the board and its cells have no accessibility labels (the Again door and the rulebook now do); nice-to-have.
+- The folded line above the newest bubble shows the FIRST move's caption for the whole game ("Sent to the top-right board." stayed through 21 plies); that is Messages folding an MSSession, not our text, and was left.
+- Not re-proven here: two real phones, `$<uuid>` captions.
+
+A new build is warranted: the door, captions, subline and the expanded layouts are all user-visible changes since 1.0(3).
+
 ### WP6 - Flag guard, docs and rig hygiene
 
 - Add `shared/swift/DevFlags.swift` (`flag(_:shipping:)`, App Group as a parameter) and use it for every WP4/WP5 change that ships default-on.
