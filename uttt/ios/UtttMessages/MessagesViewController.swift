@@ -410,9 +410,14 @@ final class MessagesViewController: MSMessagesAppViewController {
             return
         }
 
-        let door = Uttt.door
-        UtttLog.note("present", "seed \(Uttt.seed) seat \(Uttt.seat) plies \(Uttt.plyCount) door \(door)")
+        UtttLog.note("present", "seed \(Uttt.seed) seat \(Uttt.seat) plies \(Uttt.plyCount) door \(Uttt.door)")
+        showSeat(motion, conversation)
+    }
 
+    /// The screen for the resident game, by this device's seat. One owner,
+    /// so the DEBUG seeded path cannot show a spectator a player's screen.
+    private func showSeat(_ motion: Uttt.Channel, _ conversation: MSConversation) {
+        let door = Uttt.door
         /* WHICH SEAT IS THIS DEVICE'S is the kernel's answer: it hashes this
          * device's participant with the game's seed and looks for the result. */
         switch Uttt.seat {
@@ -725,7 +730,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 
         /* WHERE THE GAME ACTUALLY IS, if anybody has moved. */
         if let live = UtttDev.live, Uttt.read(live), Uttt.seed == seed {
-            showBoard(mark: Uttt.myMark, door: Uttt.door, motion: motion, conversation)
+            showSeat(motion, conversation)
             return
         }
 
@@ -738,7 +743,7 @@ final class MessagesViewController: MSMessagesAppViewController {
             _ = Uttt.play(mv)
         }
         Uttt.seat(o: UtttDev.identity("a"), x: UtttDev.identity("b"))
-        showBoard(mark: Uttt.myMark, door: Uttt.door, motion: motion, conversation)
+        showSeat(motion, conversation)
     }
 #endif
 
