@@ -340,8 +340,12 @@ static float pen_w(const UtttPen *p, float x, float y, float t)
 {
     float k = p->w;
     if (p->vel)   k *= 1.f + p->vel * (.5f - sinf((float)M_PI * t));
+    /* sinf of a float pi is -8.7e-8, not 0, and powf of a negative number
+     * is NaN - so the last segment of every lifted stroke used to come out
+     * NaN and was never drawn: the four main lines lost their whole far
+     * overshoot (owner: "major grid lines aren't centered on the grid"). */
     if (p->lift)  k *= (1.f - p->lift)
-                     + p->lift * powf(sinf((float)M_PI * t), p->liftp);
+                     + p->lift * powf(fmaxf(sinf((float)M_PI * t), 0.f), p->liftp);
     if (p->press) k *= 1.f + p->press * (.5f - t);
     if (p->grain) k *= (1.f - p->grain)
                      + 2.f * p->grain * uttt_grain(x, y, p->gfx, p->gfy, 3);

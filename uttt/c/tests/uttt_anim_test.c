@@ -128,6 +128,58 @@ int main(void)
         OK(lo > -.07f && hi < 1.07f, "the drawer's lines run no more than 7% past the board");
     }
 
+    /* THE FOUR MAIN LINES ARE CENTRED ON THE GRID (owner, 2026-09-23: "major
+     * grid lines aren't centered on the grid"). Measured on the INK, not on
+     * the endpoints asked for: those were always symmetric, and the pen still
+     * ran long at the start and short at the end. For each main line, the ink
+     * within a few percent of its 1/3 or 2/3 track is that line; its overshoot
+     * past the board at each end, averaged over many games, must match, and
+     * its track must sit on the block boundary. */
+    {
+        UtttGame e; uttt_init(&e);
+        double bias[4] = { 0 }, track[4] = { 0 }, worst = 0;
+        int nan = 0;
+        const int SEEDS = 60;
+        for (int sd = 1; sd <= SEEDS; sd++) {
+            UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
+            UtttDrawOpts o = uttt_draw_opts(sd * 7919);
+            uttt_draw_board(&d, &e, &o);
+            for (int i = 0; i < d.n_pt; i++)
+                if (isnan(d.pt[i].x) || isnan(d.pt[i].y)) nan++;
+            for (int L = 0; L < 4; L++) {
+                /* 0,1 vertical at x = 1/3, 2/3; 2,3 horizontal at y = 1/3, 2/3 */
+                float at = (L % 2 + 1) / 3.f, lo = 1e9f, hi = -1e9f;
+                double sum = 0; int n = 0;
+                for (int i = 0; i < d.n_pt; i++) {
+                    float across = L < 2 ? d.pt[i].x : d.pt[i].y;
+                    float along  = L < 2 ? d.pt[i].y : d.pt[i].x;
+                    if (isnan(across) || isnan(along) || fabsf(across - at) > .03f) continue;
+                    if (along > -.005f && along < 1.005f) continue;  /* only past the board */
+                    if (along < lo) lo = along;
+                    if (along > hi) hi = along;
+                    sum += across; n++;
+                }
+                double b = (-lo) - (hi - 1.f);
+                bias[L] += b / SEEDS;
+                track[L] += (n ? sum / n - at : 1) / SEEDS;
+                if (fabs(b) > worst) worst = fabs(b);
+            }
+        }
+        printf("  main lines, start minus end overshoot: %.4f %.4f %.4f %.4f (worst game %.3f)\n",
+               bias[0], bias[1], bias[2], bias[3], worst);
+        printf("  main lines, track off 1/3 or 2/3: %.4f %.4f %.4f %.4f\n",
+               track[0], track[1], track[2], track[3]);
+        int even = 1, on = 1;
+        for (int L = 0; L < 4; L++) {
+            if (fabs(bias[L]) > .004) even = 0;
+            if (fabs(track[L]) > .003) on = 0;
+        }
+        OK(nan == 0, "no point of the board is NaN (a lifted stroke's last segment was)");
+        OK(even, "each main line overshoots the board by the same at both ends");
+        OK(on, "each main line sits on its block boundary");
+        OK(worst < .03, "no game's main line is more than 3% longer at one end");
+    }
+
     /* THE DRAWER: the layout height never steps, and a finger is followed */
     {
         UtttDrawer d = {0};
