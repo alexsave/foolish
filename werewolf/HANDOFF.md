@@ -27,6 +27,11 @@ Pick this up when there is a thread to play it in.
   owner. **Do not redesign it from scratch; it is further along than the code.**
 - `docs/check_ui_doc.py` is a structural checker for that file. Run it after any
   edit. It exists because the same scoped-CSS bug shipped three times.
+- **`docs/THREE_SIZES.html` redraws the bubble, the collapsed drawer and the
+  expanded screen with everything that survived the forty rounds** - one
+  stylesheet with no overrides, one 32-player game seen from one phone, every
+  element tagged with the edge it holds during a collapse, and a filled-in
+  channel grid. Read it after `UI.html`; it is where the three sizes are current.
 
 ## What the design settled, that the code does not know yet
 
