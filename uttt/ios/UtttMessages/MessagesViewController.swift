@@ -117,6 +117,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         view.addSubview(overlayBox)
         vc.didMove(toParent: self)
         overlay = vc
+#if DEBUG
+        devWatchForArrivals()
+#endif
     }
 
     override func willBecomeActive(with conversation: MSConversation) {
@@ -292,6 +295,53 @@ final class MessagesViewController: MSMessagesAppViewController {
         arrived = UtttWire(url: message.url)
         present(conversation, motion: .arrival)
     }
+
+#if DEBUG
+    /// Polls `dev.arrive` (UtttDev.takeArrival) every 0.4s for as long as the
+    /// extension lives. foolish's RIG_ARRIVE, for the same reason: one
+    /// simulator cannot send this drawer a move, so the rig says one arrived.
+    private var devArriveTimer: Timer?
+
+    private func devWatchForArrivals() {
+        guard devArriveTimer == nil else { return }
+        devArriveTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
+            guard let self, let arg = UtttDev.takeArrival() else { return }
+            self.devArrive(arg)
+        }
+    }
+
+    /// The other dev seat plays into the game on screen, and the result goes
+    /// through exactly the lines `didReceive` runs - so the board shows what a
+    /// second phone's bubble would have shown: channel E.
+    private func devArrive(_ arg: String) {
+        guard let conversation = activeConversation,
+              let mine = UtttDev.seat,
+              let showing = Uttt.messageText else {
+            UtttLog.fault("dev", "arrive: needs an open drawer, dev.seat and a game on screen")
+            return
+        }
+        let other = mine == "a" ? "b" : "a"
+        Uttt.me(UtttDev.identity(other))
+        defer { identify(conversation) }
+        guard Uttt.read(showing), Uttt.canMove else {
+            UtttLog.fault("dev", "arrive: it is not \(other)'s move")
+            return
+        }
+        let legal = Uttt.legal
+        let mv = Int(arg) ?? (legal.isEmpty ? -1 : Int(legal[legal.count / 2]))
+        guard Uttt.playAsMe(mv), let text = Uttt.messageText else {
+            UtttLog.fault("dev", "arrive: \(other) cannot play \(mv)")
+            _ = Uttt.read(showing)
+            return
+        }
+        UtttLog.note("dev", "arrive: \(other) plays \(mv)")
+        if UtttDev.game != nil { UtttDev.live = text }
+        /* didReceive, line for line. */
+        UtttLog.note("receive")
+        arrived = UtttWire(text: text)
+        present(conversation, motion: .arrival)
+    }
+#endif
 
     /// THE HUMAN TAPPED THE ARROW: the draft is in the thread now.
     ///

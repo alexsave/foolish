@@ -45,6 +45,25 @@ public enum UtttDev {
     /// door on a simulator, where the gate always passes.
     public static var dropInsert: Bool { MotionRuler.flag("dev.dropinsert", group: appGroup) }
 
+    /// `rig.sh arrive [MOVE]`: the other player's reply, arriving now.
+    ///
+    /// One simulator has one participant, so nothing ever ARRIVES at an open
+    /// drawer - and channel E (a move that lands while the board is up) is
+    /// unfilmable without this. The open extension polls for the file (see
+    /// `devWatchForArrivals` in MessagesViewController), deletes it, and has
+    /// the other dev seat play into the game on screen: MOVE if the file names
+    /// one (block*9+cell), otherwise the middle of the kernel's legal list, so
+    /// two runs are the same move. The bytes are the shipping kernel's own
+    /// `uti_msg_play` as that seat, handed to the same lines `didReceive` runs.
+    /// Returns the file's trimmed contents once, then nil until it is written
+    /// again.
+    public static func takeArrival() -> String? {
+        guard let u = url("dev.arrive"),
+              let raw = try? String(contentsOf: u, encoding: .utf8) else { return nil }
+        try? FileManager.default.removeItem(at: u)
+        return raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// The word the rig wrote, or nil in every ordinary run - including an
     /// ordinary DEBUG one, because the file is absent until somebody writes it.
     public static var seat: String? {
