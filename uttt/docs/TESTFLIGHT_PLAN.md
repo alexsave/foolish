@@ -237,6 +237,36 @@ Left from WP4:
 - The timings live in C next to the pen (a `uti_motion` table), Swift only asks for `t`.
 - Done when: `rig.sh film` takes of each channel are measured with the animation-measure skill and match UI.html's Motion tab timings.
 
+#### WP5 - done, first pass (2026-09-23)
+
+Evidence (films, frames, probe CSVs, screenshots) is in the session scratchpad `wp5/`; `motion_probe.py` and `score.py` there turned each film into numbers.
+
+- **The kernel owns the motion.** `uttt/c/src/uttt_anim.{h,c}`: `uttt_motion(game, channel)` plans the last move and `uttt_motion_at(plan, now_ms, &frame)` is a pure function giving the ink's progress, the highlighter's rect and alpha, the ring, `landed` and `settled`.
+  Channels: A stage, C my replay (no pulse), D their bubble, E arrival; `UTI_CH_OPEN` lets the kernel pick C or D from the seat.
+  Timings from UI.html's grid: X inks in 260 ms and O in 340 (on the page's own cubic-beziers), the wash travels AFTER the ink lands (340 ms mine, 420 theirs, smoothstep, one rect sliding and resizing, growing to the sheet when freed), and the ring opens 300 ms after the ink lands, 620 ms, twice (the page's cellpulse keyframes).
+  Undo and the settlement half at Send (B) are not animated: no undo (owner), and B is left (below).
+- **Swift runs one display link and draws** (`UtttMotionClock`, `UtttLiveBoard`); it types no duration.
+  The cache is now the board WITHOUT the last mark and without the wash (`uti_draw_under`), so a frame draws the wash rect, the cached image, the ring and the last mark (`uti_draw_last`, a few hundred polygons); `under + last == board` is a C test.
+  The clock starts on the first frame the board image is ready, so a cold open does not play its ink under a blank board.
+- **The bubble is painted off the main thread** (`UtttBubble.snapshot()` on main, `image(snapshot)` anywhere) and inserted only once the board has `settled`.
+  Before this the 14k-fill bubble paint froze the main thread for ~190 ms at every stage, and the highlighter jumped instead of travelling (take_stage1).
+  From the expanded drawer the paint and the collapse now run together; waiting for the transition after the paint had missed it and sat out the 1.2 s timeout.
+- **The main lines stop at UI.html's 5% in the drawer too** (`UTTT_REACH`, one constant for bubble and drawer), and the board's width leaves room for that overshoot (`uti_board_reach`), so the expanded lines end on the sheet as in the spec (`sheet_wp5_layout.png`).
+- **Measured at normal speed** (sim, 60-75 Hz): stage take 5: ink visible to 95% in 183 ms, wash travel 318 ms visible, worst frame gap 22 ms, max deviation from smoothstep 0.07; the kernel logged `motion done 1823 ms` for a 1800 ms plan.
+  Their bubble (D) cold open: ink 195 ms to 95%, wash 448 ms for a 420 ms plan, worst gap 50 ms, deviation 0.06, `motion done 1832 ms`.
+  Stage take 4: travel clean, then a 90 ms stall during the first ring when Messages inserted the bubble.
+- Tests: `tests/uttt_anim_test.c` in `make run` and `make asan` (32 checks); 10 mutations (wash with the ink, pulse on replay, reach 1, last mark dropped, pulse at 0, both ink curves linear, wash from the destination, settled at landing) each went red on the named assertion.
+  `make -C uttt/c run asan ios-smoke` green; Release device build clean, `strings` shows no `dev.seat`, picker text or App Group.
+- Cycle re-run on the sim: b plays and stages from compact, sends; a opens the bubble expanded (D plays), replies, the drawer collapses and the reply stages at once, sends; the older bubble folds to its caption (`sheet30.png`, `sheet33.png`).
+
+Left from WP5:
+- The settlement half at Send (B: the big mark and the win line drawn in at `didStartSending`); the kernel draws a won block's big mark at stage today.
+- A stage from EXPANDED: the collapse plus a re-raster at the compact size (60-80 ms on the main thread) leave the motion ~14 frames over 2 s; the next raster could go off-main like the first.
+- From tap to the first ink frame is one sync raster of the new position (~60 ms Debug); from ink landing to `stage` logged ~250 ms in Debug, not yet profiled.
+- Expanded layout: the board sits centred, the spec has it high (top at ~144 of 830 points) with the you-are mark centred above it; not changed.
+- Game-over and spectator screens were not re-shot (spectator uses the static board, no motion).
+- The ring is drawn but the probe only catches its first ~100 ms reliably (its colour fades into the paper); confirm by eye on a device.
+
 ### WP6 - Flag guard, docs and rig hygiene
 
 - Add `shared/swift/DevFlags.swift` (`flag(_:shipping:)`, App Group as a parameter) and use it for every WP4/WP5 change that ships default-on.

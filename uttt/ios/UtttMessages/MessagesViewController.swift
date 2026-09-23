@@ -600,12 +600,21 @@ final class MessagesViewController: MSMessagesAppViewController {
         }
         UtttLog.note("stage", "collapsing first")
         requestPresentationStyle(.compact)
+        /* THE PAINT AND THE COLLAPSE RUN TOGETHER, and the transition is
+         * waited for from NOW: waiting for it after the paint missed a
+         * collapse that had already finished and sat out the whole timeout. */
+        var image: UIImage?
+        var imageWaiter: CheckedContinuation<UIImage, Never>?
+        painted { img in
+            if let w = imageWaiter { imageWaiter = nil; w.resume(returning: img) } else { image = img }
+        }
         Task { @MainActor [weak self] in
-            let img = await withCheckedContinuation { (k: CheckedContinuation<UIImage, Never>) in
-                painted { k.resume(returning: $0) }
+            await self?.awaitTransitionSettled()
+            let img: UIImage
+            if let ready = image { img = ready } else {
+                img = await withCheckedContinuation { imageWaiter = $0 }
             }
             message.layout = UtttBubble.layout(image: img, caption: caption)
-            await self?.awaitTransitionSettled()
             guard let self, self.stageGeneration == generation else {
                 UtttLog.note("stage", "overtaken while collapsing")
                 return
