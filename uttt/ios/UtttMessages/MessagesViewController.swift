@@ -167,8 +167,22 @@ final class MessagesViewController: MSMessagesAppViewController {
         becameReady()
     }
 
+    /// THE DRAWER HAS ITS SIZE a beat before it appears: the first layout at
+    /// less than the whole window is the compact (or expanded) drawer, and
+    /// painting then saves the one black frame between Messages' grey card
+    /// and the paper that waiting for viewDidAppear left.
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        guard !appeared, !sized, let window = view.window,
+              view.bounds.height < window.bounds.height - 40 else { return }
+        UtttLog.note("sized", "\(Int(view.bounds.width))x\(Int(view.bounds.height))")
+        sized = true
+        becameReady()
+    }
+    private var sized = false
+
     private func becameReady() {
-        if appeared, let screen = pendingScreen {
+        if appeared || sized, let screen = pendingScreen {
             pendingScreen = nil
             view.backgroundColor = UtttPaper.flat
             attach(screen)
@@ -182,6 +196,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         appeared = false
+        sized = false
     }
 
     /// Run `work` once the drawer is up and the conversation is active.
@@ -687,7 +702,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     private func show<V: View>(_ screen: V) {
         UtttLog.note("show", String(String(describing: V.self).prefix(40)))
-        guard appeared else {
+        guard appeared || sized else {
             pendingScreen = AnyView(screen)
             return
         }
