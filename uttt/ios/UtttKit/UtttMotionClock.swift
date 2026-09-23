@@ -11,7 +11,22 @@ import SwiftUI
 /// will change again.
 @MainActor
 public final class UtttMotionClock: ObservableObject {
-    @Published public private(set) var frame: UtiFrame
+    @Published public private(set) var frame: UtiFrame {
+        didSet { for f in observers.values { f() } }
+    }
+
+    /// THE LAYERS THAT DRAW A FRAME ARE CALLED DIRECTLY, not through SwiftUI:
+    /// a SwiftUI view that observed `frame` re-rendered through RenderBox on
+    /// the main thread every display frame (UtttLiveBoard). Returns a token
+    /// for `unobserve`.
+    public func observe(_ f: @escaping () -> Void) -> Int {
+        nextObserver += 1
+        observers[nextObserver] = f
+        return nextObserver
+    }
+    public func unobserve(_ token: Int) { observers[token] = nil }
+    private var observers: [Int: () -> Void] = [:]
+    private var nextObserver = 0
     private var plan: UtiMotion
     private var link: CADisplayLink?
     private var origin: CFTimeInterval?

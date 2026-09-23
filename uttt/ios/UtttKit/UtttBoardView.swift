@@ -292,6 +292,7 @@ public struct UtttLiveBoard: View {
             ZStack(alignment: .topLeading) {
                 /* the highlighter first: it is under the ink */
                 UtttWashLayer(clock: clock, side: side)
+                    .frame(width: side, height: side)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
 
@@ -310,6 +311,7 @@ public struct UtttLiveBoard: View {
                         .accessibilityHidden(true)
                     /* the strokes only once the board they land on is up */
                     UtttStrokeLayer(clock: clock, side: side, pad: pad, key: positionKey)
+                        .frame(width: side, height: side)
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
@@ -325,9 +327,6 @@ public struct UtttLiveBoard: View {
                     .accessibilityHidden(true)
 
                 UtttSquares(side: side, positionKey: positionKey, onTap: onTap)
-#if DEBUG
-                if UtttRuler.on { UtttRulerMarks(clock: clock, side: side) }
-#endif
             }
         }
         .aspectRatio(1, contentMode: .fit)
@@ -347,114 +346,206 @@ public struct UtttLiveBoard: View {
     }
 }
 
-/// THE HIGHLIGHTER: one coloured rect where the kernel's frame puts it. A
-/// plain colour is a layer the compositor moves and fades - nothing is drawn
-/// when it travels.
-struct UtttWashLayer: View {
-    @ObservedObject var clock: UtttMotionClock
+/// THE HIGHLIGHTER: one coloured rect where the kernel's frame puts it, on a
+/// Core Animation layer the clock moves directly - nothing is drawn when it
+/// travels, and SwiftUI is not asked about it.
+struct UtttWashLayer: UIViewRepresentable {
+    let clock: UtttMotionClock
     let side: CGFloat
 
-    var body: some View {
-        let f = clock.frame
-        if f.wash.2 > 0 {
-            let r = UtttLiveBoard.rect(f.wash, side)
-            UtttLiveBoard.color(f.wash_rgba)
-                .frame(width: r.width, height: r.height)
-                .offset(x: r.minX, y: r.minY)
-        }
+    func makeUIView(context: Context) -> UtttMotionView { UtttMotionView(role: .wash) }
+    func updateUIView(_ v: UtttMotionView, context: Context) {
+        v.bind(clock, side: side, key: 0)
     }
 }
 
-/// THE STROKES THAT MOVE: the last mark and its settlement in one Canvas, the
-/// outline in another under its own opacity. Each Canvas is `Equatable` on
-/// the numbers it draws from, so a frame that changes none of them - the
-/// highlighter travelling, the outline fading at Send - redraws neither.
-struct UtttStrokeLayer: View {
-    @ObservedObject var clock: UtttMotionClock
+/// THE STROKES THAT MOVE: the last mark and its settlement, and the outline
+/// under its own opacity, each a bitmap of just its own ink on a layer of
+/// its own, painted again only when its own `t` moves.
+struct UtttStrokeLayer: UIViewRepresentable {
+    let clock: UtttMotionClock
     let side: CGFloat
     let pad: CGFloat
     let key: Int
 
-    var body: some View {
-        let f = clock.frame
-        ZStack(alignment: .topLeading) {
-            UtttInkCanvas(mark: f.mark_t, fall: f.fall_t, line: f.line_t,
-                          side: side, pad: pad, key: key)
-                .equatable()
-            if f.outline >= 0 {
-                UtttOutlineCanvas(block: f.outline, t: f.outline_t,
-                                  side: side, pad: pad, key: key)
-                    .equatable()
-                    .opacity(Double(f.outline_a))
-            }
-        }
+    func makeUIView(context: Context) -> UtttMotionView { UtttMotionView(role: .strokes) }
+    func updateUIView(_ v: UtttMotionView, context: Context) {
+        v.bind(clock, side: side, key: key)
     }
 }
 
-struct UtttInkCanvas: View, Equatable {
-    let mark: Float, fall: Float, line: Float
-    let side: CGFloat, pad: CGFloat
-    let key: Int
+/// WHAT DRAWS A FRAME, OFF SWIFTUI (TESTFLIGHT_PLAN.md 12).
+///
+/// Measured on the SE simulator: every Canvas or Text SwiftUI re-renders is a
+/// RenderBox pass on the main thread that then WAITS for Metal
+/// (`waitUntilScheduled`) - 336 of ~900 busy main-thread samples in one
+/// stage, and a display link that could only tick every ~90 ms. So nothing
+/// that moves is SwiftUI: this view's layers are set straight from the
+/// clock's frame (`UtttMotionClock.observe`), the wash as a layer's colour
+/// and frame and the ink as a small bitmap of only its own polygons,
+/// painted by Core Graphics on the CPU (a few hundred fills, well under a
+/// millisecond) and handed to the render server as layer contents.
+final class UtttMotionView: UIView {
+    enum Role { case wash, strokes }
+    private let role: Role
+    private weak var clock: UtttMotionClock?
+    private var token: Int?
+    private var side: CGFloat = 0
+    private var key = 0
 
-    var body: some View {
-        Canvas { ctx, _ in
-            ctx.translateBy(x: pad, y: pad)
-            UtttBoard.fill(Uttt.lastStroke(t: mark), into: ctx, side: side)
-            /* THE SETTLEMENT over it: the big mark, then the line (UI.html
-             * 04, 05) - after the ink, at stage and on an opened bubble. */
-            UtttBoard.fill(Uttt.settleStroke(fall: fall, line: line), into: ctx, side: side)
-        }
-        .frame(width: side + 2 * pad, height: side + 2 * pad)
-        .offset(x: -pad, y: -pad)
-    }
-}
-
-struct UtttOutlineCanvas: View, Equatable {
-    let block: Int32, t: Float
-    let side: CGFloat, pad: CGFloat
-    let key: Int
-
-    var body: some View {
-        Canvas { ctx, _ in
-            ctx.translateBy(x: pad, y: pad)
-            UtttBoard.fill(Uttt.outlineStroke(block: block, t: t), into: ctx, side: side)
-        }
-        .frame(width: side + 2 * pad, height: side + 2 * pad)
-        .offset(x: -pad, y: -pad)
-    }
-}
-
+    private let wash = CALayer()
+    private let ink = CALayer()
+    private let outline = CALayer()
+    private var inkDrawn: (Float, Float, Float, Int, CGFloat)?
+    private var outlineDrawn: (Int32, Float, Int, CGFloat)?
 #if DEBUG
-/// The ruler's two marks inside the board (UtttRuler): pink on the
-/// highlighter's centre, violet on the centre of the pen stroke drawn so
-/// far. Positioned in the same board space the Canvas draws in.
-struct UtttRulerMarks: View {
-    @ObservedObject var clock: UtttMotionClock
-    let side: CGFloat
+    private let pink = CALayer(), violet = CALayer()
+#endif
 
-    var body: some View {
-        let f = clock.frame
-        let dot = MotionRuler.side
-        ZStack(alignment: .topLeading) {
+    init(role: Role) {
+        self.role = role
+        super.init(frame: .zero)
+        isUserInteractionEnabled = false
+        isAccessibilityElement = false
+        backgroundColor = .clear
+        for l in [wash, ink, outline] { l.actions = Self.still; layer.addSublayer(l) }
+        ink.contentsGravity = .resize
+        outline.contentsGravity = .resize
+#if DEBUG
+        for (l, c) in [(pink, UIColor(MotionRuler.Ink.pink.color).cgColor), (violet, UIColor(MotionRuler.Ink.violet.color).cgColor)] {
+            l.actions = Self.still
+            l.backgroundColor = c
+            l.isHidden = true
+            layer.addSublayer(l)
+        }
+#endif
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// No implicit animation on any of these: the clock is the only motion.
+    private static let still: [String: CAAction] = [
+        "position": NSNull(), "bounds": NSNull(), "frame": NSNull(), "contents": NSNull(),
+        "backgroundColor": NSNull(), "opacity": NSNull(), "hidden": NSNull(),
+    ]
+
+    func bind(_ c: UtttMotionClock, side: CGFloat, key: Int) {
+        if clock !== c {
+            if let t = token { clock?.unobserve(t) }
+            clock = c
+            token = c.observe { [weak self] in self?.apply() }
+        }
+        let changed = side != self.side || key != self.key
+        self.side = side
+        self.key = key
+        if changed { inkDrawn = nil; outlineDrawn = nil }
+        apply()
+    }
+
+    deinit {
+        guard let t = token, let c = clock else { return }
+        Task { @MainActor in c.unobserve(t) }
+    }
+
+    private func apply() {
+        guard let f = clock?.frame, side > 0 else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        switch role {
+        case .wash:
             if f.wash.2 > 0 {
-                let w = UtttLiveBoard.rect(f.wash, side)
-                Color.clear.frame(width: dot, height: dot)
-                    .motionSquare(.pink, on: true)
-                    .position(x: w.midX, y: w.midY)
+                wash.isHidden = false
+                wash.frame = UtttLiveBoard.rect(f.wash, side)
+                wash.backgroundColor = Self.cg(f.wash_rgba)
+            } else {
+                wash.isHidden = true
             }
-            let pts = Uttt.lastStroke(t: f.mark_t).flatMap(\.points)
-            if let x0 = pts.map(\.x).min(), let x1 = pts.map(\.x).max(),
-               let y0 = pts.map(\.y).min(), let y1 = pts.map(\.y).max() {
-                Color.clear.frame(width: dot, height: dot)
-                    .motionSquare(.violet, on: true)
-                    .position(x: (x0 + x1) / 2 * side, y: (y0 + y1) / 2 * side)
+#if DEBUG
+            pink.isHidden = !(UtttRuler.on && f.wash.2 > 0)
+            if !pink.isHidden {
+                let w = UtttLiveBoard.rect(f.wash, side), d = MotionRuler.side
+                pink.frame = CGRect(x: w.midX - d / 2, y: w.midY - d / 2, width: d, height: d)
+            }
+#endif
+        case .strokes:
+            let want = (f.mark_t, f.fall_t, f.line_t, key, side)
+            if inkDrawn.map({ $0 != want }) ?? true {
+                inkDrawn = want
+                let polys = Uttt.lastStroke(t: f.mark_t) + Uttt.settleStroke(fall: f.fall_t, line: f.line_t)
+                Self.paint(polys, into: ink, side: side)
+#if DEBUG
+                violet.isHidden = !UtttRuler.on
+                if UtttRuler.on {
+                    let pts = Uttt.lastStroke(t: f.mark_t).flatMap(\.points)
+                    if let x0 = pts.map(\.x).min(), let x1 = pts.map(\.x).max(),
+                       let y0 = pts.map(\.y).min(), let y1 = pts.map(\.y).max() {
+                        let d = MotionRuler.side
+                        violet.frame = CGRect(x: (x0 + x1) / 2 * side - d / 2,
+                                              y: (y0 + y1) / 2 * side - d / 2, width: d, height: d)
+                    } else { violet.isHidden = true }
+                }
+#endif
+            }
+            if f.outline >= 0 {
+                let want = (f.outline, f.outline_t, key, side)
+                if outlineDrawn.map({ $0 != want }) ?? true {
+                    outlineDrawn = want
+                    Self.paint(Uttt.outlineStroke(block: f.outline, t: f.outline_t), into: outline, side: side)
+                }
+                outline.isHidden = false
+                outline.opacity = f.outline_a
+            } else {
+                outline.isHidden = true
+                outlineDrawn = nil
             }
         }
-        .frame(width: side, height: side, alignment: .topLeading)
-        .allowsHitTesting(false)
+        CATransaction.commit()
+    }
+
+    private static func cg(_ c: UInt32) -> CGColor {
+        CGColor(srgbRed: CGFloat((c >> 24) & 0xff) / 255, green: CGFloat((c >> 16) & 0xff) / 255,
+                blue: CGFloat((c >> 8) & 0xff) / 255, alpha: CGFloat(c & 0xff) / 255)
+    }
+
+    /// `polys` (the board's 0..1 square) into a bitmap of just their bounds,
+    /// at the screen's scale, as `layer`'s contents - placed in board points.
+    private static func paint(_ polys: [Uttt.Poly], into layer: CALayer, side: CGFloat) {
+        var lo = CGPoint(x: CGFloat.infinity, y: CGFloat.infinity)
+        var hi = CGPoint(x: -CGFloat.infinity, y: -CGFloat.infinity)
+        for p in polys { for q in p.points {
+            lo.x = min(lo.x, q.x); lo.y = min(lo.y, q.y)
+            hi.x = max(hi.x, q.x); hi.y = max(hi.y, q.y)
+        } }
+        guard lo.x.isFinite, hi.x > lo.x || hi.y > lo.y else {
+            layer.contents = nil
+            return
+        }
+        let r = CGRect(x: lo.x * side - 1, y: lo.y * side - 1,
+                       width: (hi.x - lo.x) * side + 2, height: (hi.y - lo.y) * side + 2)
+        let scale = UIScreen.main.scale
+        let pw = Int((r.width * scale).rounded(.up)), ph = Int((r.height * scale).rounded(.up))
+        guard pw > 0, ph > 0,
+              let cg = CGContext(data: nil, width: pw, height: ph, bitsPerComponent: 8, bytesPerRow: 0,
+                                 space: CGColorSpaceCreateDeviceRGB(),
+                                 bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+                                     | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return }
+        /* top-left origin, board points, as the kernel's coordinates mean */
+        cg.translateBy(x: 0, y: CGFloat(ph))
+        cg.scaleBy(x: scale, y: -scale)
+        cg.translateBy(x: -r.minX, y: -r.minY)
+        for p in polys {
+            guard let head = p.points.first else { continue }
+            cg.setFillColor(p.color)
+            cg.beginPath()
+            cg.move(to: CGPoint(x: head.x * side, y: head.y * side))
+            for q in p.points.dropFirst() { cg.addLine(to: CGPoint(x: q.x * side, y: q.y * side)) }
+            cg.closePath()
+            cg.fillPath()
+        }
+        layer.contents = cg.makeImage()
+        layer.frame = r
     }
 }
-#endif
 
 /// WHAT VOICEOVER FINDS ON THE BOARD: one element per square, where the
 /// square is. The rectangle and the words are both the kernel's
