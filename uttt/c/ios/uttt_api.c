@@ -126,6 +126,16 @@ int uti_draw(int active, int last, float mark_t, float meta_t)
     return publish();
 }
 
+int uti_draw_bubble(int active, int last)
+{
+    dl_fresh();
+    UtttDrawOpts o = uttt_draw_opts(S.m.seed);
+    o.active = active; o.last = last;
+    o.reach = uttt_bubble().reach;
+    S.overflow = uttt_draw_board(&S.dl, &S.m.game, &o) != 0;
+    return publish();
+}
+
 /* A display list that runs out of room does not fail - it stops appending,
  * and the board comes back with a few marks missing. Nothing on screen says
  * so, which is why it gets its own question. */
@@ -326,3 +336,12 @@ const char *uti_say(int key)
 }
 
 int uti_say_mark(void) { return uttt_say_headline_mark(&S.m.game, uti_msg_seat()); }
+
+const char *uti_say_by(int key, const char *who)
+{
+    if (uttt_say_by(key, &S.m.game, uti_msg_seat(), who, S.said, sizeof S.said) < 0)
+        S.said[0] = 0;
+    return S.said;
+}
+
+int uti_say_bubble_mark(void) { return uttt_say_bubble_mark(&S.m.game); }

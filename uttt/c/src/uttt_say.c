@@ -49,21 +49,37 @@ static int say_line(const UtttGame *g, char *out, int cap)
     return n;
 }
 
+int uttt_say_bubble_mark(const UtttGame *g)
+{
+    if (g->over == UTTT_X || g->over == UTTT_O) return g->over;
+    if (g->over || !g->n_plies) return 0;
+    return g->turn;
+}
+
 int uttt_say(int key, const UtttGame *g, int seat, char *out, int cap)
 {
+    return uttt_say_by(key, g, seat, NULL, out, cap);
+}
+
+int uttt_say_by(int key, const UtttGame *g, int seat, const char *who,
+                char *out, int cap)
+{
     if (!out || cap < 1) return -1;
+    int named = who && who[0];
     int you = utm_seat_mark(seat);
     int a = uttt_active(g);
 
     switch (key) {
     case UTTT_SAY_BUBBLE_HEADLINE:
         /* AN EMPTY BOARD IS NOT A MOVE. Nobody has a seat yet, so there is no
-         * move to be anybody's; the invitation asks the question instead. */
+         * move to be anybody's; the invitation asks the question instead.
+         * Otherwise the words follow a DRAWN mark (uttt_say_bubble_mark):
+         * "<O> to play" is true on both phones, where "Your move" - docs/UI.html
+         * option 02 - is false on the sender's own copy of the same bitmap. */
         switch (g->over) {
         case UTTT_DRAW: return put(out, cap, "A draw");
-        case UTTT_X:    return put(out, cap, "X wins");
-        case UTTT_O:    return put(out, cap, "O wins");
-        default:        return put(out, cap, g->n_plies ? "Your move" : "A game?");
+        case UTTT_X: case UTTT_O: return put(out, cap, "wins");
+        default:        return put(out, cap, g->n_plies ? "to play" : "A game?");
         }
 
     case UTTT_SAY_BUBBLE_PLACE:
@@ -77,10 +93,11 @@ int uttt_say(int key, const UtttGame *g, int seat, char *out, int cap)
         switch (g->over) {
         case UTTT_X: case UTTT_O: {
             /* docs/UI.html 05: "Alex won on the diagonal. 58 moves." The
-             * name is WP4's ($<uuid> substitution); the mark stands in. */
+             * winner made the last move, so the winner is the sender and
+             * `who` is their name; without one the mark stands in. */
             int i = uttt_won_line(g);
             return putf(cap, snprintf(out, (size_t)cap, "%s won %s. %d moves.",
-                                      g->over == UTTT_X ? "X" : "O",
+                                      named ? who : g->over == UTTT_X ? "X" : "O",
                                       i < 0 ? "" : LINE_SAID[i], g->n_plies));
         }
         case UTTT_DRAW:
@@ -88,7 +105,12 @@ int uttt_say(int key, const UtttGame *g, int seat, char *out, int cap)
                                       g->n_plies));
         default: break;
         }
-        if (!g->n_plies) return put(out, cap, "New Ultimate Tic Tac Toe game");
+        /* docs/UI.html 01: "Alex wants a game. Tap to take it." The creator
+         * sends the invitation, so the sender is the one asking. */
+        if (!g->n_plies)
+            return named ? putf(cap, snprintf(out, (size_t)cap,
+                                              "%s wants a game. Tap to take it.", who))
+                         : put(out, cap, "A game. Tap to take it.");
         if (a == 9) return put(out, cap, "Sent anywhere on the sheet.");
         return putf(cap, snprintf(out, (size_t)cap, "Sent to the %s board.",
                                        uttt_place_name(a, 1)));

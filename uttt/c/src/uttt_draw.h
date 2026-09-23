@@ -16,6 +16,10 @@ typedef struct {
     int     last;        /* block*9+cell of the move just made, -1 for none */
     float   mark_t;      /* 0..1, how far the last mark has been drawn      */
     float   meta_t;      /* 0..1, the win line                              */
+    float   reach;       /* how far the four main lines run past the board,
+                            as a fraction of the pen's own overshoot: 1 on
+                            the drawer, where the sheet is paper running out,
+                            and less in the bubble (UtttBubble.reach)       */
 } UtttDrawOpts;
 
 UtttDrawOpts uttt_draw_opts(int32_t seed);
@@ -67,6 +71,7 @@ typedef struct {
     float    headline_pt;       /* both lines are bold                      */
     float    place_pt;
     float    lead;              /* points between the two lines             */
+    float    reach;             /* UtttDrawOpts.reach for the bubble's board */
     uint32_t headline_rgba;
     uint32_t place_rgba;
 } UtttBubble;

@@ -29,6 +29,7 @@ UtttDrawOpts uttt_draw_opts(int32_t seed)
     UtttDrawOpts o;
     o.seed = seed ? seed : 1;
     o.active = -1; o.last = -1; o.mark_t = 1.f; o.meta_t = 1.f;
+    o.reach = 1.f;
     return o;
 }
 
@@ -165,9 +166,9 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
      * past the edge, which is the right answer: a line that leaves the board
      * should leave the board. */
     hash_in(d, 0, 0, S, o->seed * 7 + 3,
-            base.w / 9.f / 100.f * 1.7f, S * .135f, .9f, 3.4f);
+            base.w / 9.f / 100.f * 1.7f, S * .135f * o->reach, .9f, 3.4f);
     hash_in(d, 0, 0, S, o->seed * 19 + 5,
-            base.w / 9.f / 100.f * 1.5f, S * .118f, .72f, 3.4f);
+            base.w / 9.f / 100.f * 1.5f, S * .118f * o->reach, .72f, 3.4f);
 
     for (int b = 0; b < 9; b++) {
         int won = uttt_block(g, b) == UTTT_X || uttt_block(g, b) == UTTT_O;
@@ -283,29 +284,43 @@ int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float calm)
 }
 
 /* ------------------------------------------------------------ the bubble */
-/* Every number below is measured off the design document rather than chosen
- * here: 10 points of side padding, a 12-point gutter, and the board takes the
- * height because the height is what runs out first. 195 - 2*7 = 181, and
- * 300 - 10 - 181 - 12 - 10 = 87 for the text. Eighty-seven points is why the
- * place line is allowed to wrap and the headline is not. */
-#define BUB_W    300.f
-#define BUB_H    195.f
-#define BUB_PAD   10.f
-#define BUB_GUT   12.f
+/* docs/UI.html "Bubble 300x195", option 02: the board takes the height, two
+ * words and a place take what is left, 10 points of padding and a 12-point
+ * gutter between them.
+ *
+ * THE BOARD IS ON THE RIGHT, mirrored against option 02, and that is not a
+ * taste. Messages stamps the app's own logo into the TOP-LEFT corner of every
+ * bubble it draws, over whatever is underneath: measured in the simulator
+ * transcript it is a pill about 31 by 24 points, 6 in from the corner. A
+ * board in that corner has the badge sitting on its top-left cell - one of
+ * the 81 squares - for the whole game. The text column carries it instead:
+ * the two lines are centred well below it.
+ *
+ * AND THE LINES STOP ON THE PAPER. On the drawer the four main lines run 13.5%
+ * past the board and the sheet clips them, which reads as the pen leaving the
+ * paper. In a 195-point frame that overshoot is 24 points and every line ran
+ * into the bubble's rounded edge, which read as the board being cut off
+ * (the WP1 audit's "clipped at the right edge"). Here they run 5% - the
+ * design document's own figure - and the board is sized so the longest line
+ * still ends 4 points inside the frame on the three sides it faces. */
+#define BUB_W     300.f
+#define BUB_H     195.f
+#define BUB_PAD    10.f
+#define BUB_GUT    12.f
+#define BUB_REACH  (.05f / .135f)   /* the design's 5% over the pen's 13.5% */
+#define BUB_EDGE    4.f             /* where the longest line stops         */
 
 UtttBubble uttt_bubble(void)
 {
     UtttBubble b;
     b.w = BUB_W; b.h = BUB_H;
 
-    /* THE BOARD IS ON THE RIGHT, and that is not a taste. Messages stamps the
-     * app's own logo into the TOP-LEFT corner of every bubble it draws, over
-     * whatever is underneath - so a board in that corner has a badge sitting
-     * on its first block for the whole game. The text column can carry it:
-     * the headline starts below the badge and nothing is lost. */
-    float side = BUB_H - 2.f * 7.f;          /* 181 */
-    b.board.x = BUB_W - BUB_PAD - side;
-    b.board.y = (BUB_H - side) * .5f;
+    /* side + 2 * .05 * side + 2 * edge = height */
+    float side = (BUB_H - 2.f * BUB_EDGE) / (1.f + 2.f * .135f * BUB_REACH);
+    side = (float)(int)side;                     /* whole points: 170 */
+    float m = (BUB_H - side) * .5f;
+    b.board.x = BUB_W - m - side;
+    b.board.y = m;
     b.board.w = side;
     b.board.h = side;
 
@@ -317,6 +332,7 @@ UtttBubble uttt_bubble(void)
     b.headline_pt = 16.f;
     b.place_pt    = 16.f;
     b.lead        = 1.f;
+    b.reach       = BUB_REACH;
     b.headline_rgba = 0x1d1b16ffu;
     b.place_rgba    = INK_X;                 /* the same blue an X is drawn in */
     return b;

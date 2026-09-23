@@ -3,11 +3,13 @@
  * is a question about the game, and a second copy in a renderer is a second
  * answer that drifts. English only for now; a language is one more column.
  *
- * Nothing here names a person. A Messages extension gets a per-device UUID
- * for each participant and no name, and a BUBBLE is one bitmap and one
- * caption shown identically on every device - so the bubble's lines are
- * statements about the board, and the word "you" appears only on a screen,
- * which is drawn for one device.
+ * A BUBBLE is one bitmap and one caption shown identically on every device,
+ * so the bubble's lines are statements about the board and the word "you"
+ * appears only on a screen, which is drawn for one device. The one person a
+ * caption may name is the SENDER, and only through `who` (uttt_say_by): a
+ * Messages extension has no names, only a participant UUID, and Messages
+ * itself swaps "$<uuid>" in a caption for that person's name on every
+ * device. The kernel never sees a name; it is handed the token.
  *
  * No em dashes in any of it. */
 #ifndef UTTT_SAY_H
@@ -17,10 +19,12 @@
 
 enum {
     /* the bubble: baked into the image and its caption, same on every phone */
-    UTTT_SAY_BUBBLE_HEADLINE = 0,  /* "A game?", "Your move", "X wins"      */
+    UTTT_SAY_BUBBLE_HEADLINE = 0,  /* "A game?", "<X> to play", "<X> wins",
+                                      the mark drawn (uttt_say_bubble_mark) */
     UTTT_SAY_BUBBLE_PLACE,         /* "bottom middle", "58 moves", ""       */
     UTTT_SAY_CAPTION,              /* "Sent to the bottom-middle board.",
-                                      "X won on the diagonal. 58 moves."    */
+                                      "<who> won on the diagonal. 58 moves.",
+                                      "<who> wants a game. Tap to take it." */
 
     /* the play surface, drawn for `seat` (UTM_SEAT_*) */
     UTTT_SAY_HEADLINE_PRE,         /* words before the drawn mark           */
@@ -53,6 +57,22 @@ enum {
  * Returns its length; "" (0) is a real answer - a line with nothing to say
  * takes no room. -1 for an unknown key or a buffer too small. */
 int uttt_say(int key, const UtttGame *g, int seat, char *out, int cap);
+
+/* The same, with `who` standing for the SENDER of the bubble being written -
+ * in practice "$" and the local participant's UUID, which Messages renders as
+ * a name. Only the invitation and the win name anybody, because those are the
+ * two captions docs/UI.html writes with a name in them, and in both the
+ * person named is the one sending: the creator sends the invitation and the
+ * winner sends the winning move. NULL or "" words the same sentence without a
+ * person ("X won ...", "A game. Tap to take it."). */
+int uttt_say_by(int key, const UtttGame *g, int seat, const char *who,
+                char *out, int cap);
+
+/* The mark the BUBBLE's headline draws before its words, or 0 for "A game?"
+ * and "A draw". The bubble cannot say "Your move" - it is one bitmap, and on
+ * the sender's own phone it would be false - so it names the side to play by
+ * its mark, drawn in its own ink, the way the screen names the other side. */
+int uttt_say_bubble_mark(const UtttGame *g);
 
 /* The mark the play-surface headline draws between PRE and POST, or 0 for a
  * headline that is words only. "Waiting on <O>", "<X> wins": the other side

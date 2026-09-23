@@ -388,7 +388,11 @@ static void test_say(void)
     say(UTTT_SAY_BUBBLE_HEADLINE, &g, UTM_SEAT_WAITING, s);
     OK(!strcmp(s, "A game?"), "say: an empty board asks");
     say(UTTT_SAY_CAPTION, &g, UTM_SEAT_WAITING, s);
-    OK(!strcmp(s, "New Ultimate Tic Tac Toe game"), "say: the invitation's caption");
+    OK(!strcmp(s, "A game. Tap to take it."), "say: the invitation's caption, nobody named");
+    OK(uttt_say_by(UTTT_SAY_CAPTION, &g, UTM_SEAT_WAITING, "$ALEX", s, sizeof s) > 0
+       && !strcmp(s, "$ALEX wants a game. Tap to take it."),
+       "say: the invitation's caption names its sender (UI.html 01)");
+    OK(uttt_say_bubble_mark(&g) == 0, "say: an invitation's bubble draws no mark");
     say(UTTT_SAY_BUBBLE_PLACE, &g, UTM_SEAT_WAITING, s);
     OK(!strcmp(s, ""), "say: an invitation has no place line");
     say(UTTT_SAY_HEADLINE_PRE, &g, UTM_SEAT_OPEN, s);
@@ -401,6 +405,12 @@ static void test_say(void)
     OK(!strcmp(s, "Sent to the middle-right board."), "say: the caption names the destination");
     say(UTTT_SAY_BUBBLE_PLACE, &g, UTM_SEAT_X, s);
     OK(!strcmp(s, "middle right"), "say: the bubble's place line");
+    say(UTTT_SAY_BUBBLE_HEADLINE, &g, UTM_SEAT_X, s);
+    OK(!strcmp(s, "to play") && uttt_say_bubble_mark(&g) == UTTT_O,
+       "say: the bubble names the side to play by its mark, never \"Your move\"");
+    OK(uttt_say_by(UTTT_SAY_CAPTION, &g, UTM_SEAT_X, "$ALEX", s, sizeof s) > 0
+       && !strcmp(s, "Sent to the middle-right board."),
+       "say: a move's caption names nobody");
     say(UTTT_SAY_HEADLINE_PRE, &g, UTM_SEAT_X, s);
     OK(!strcmp(s, "Waiting on ") && uttt_say_headline_mark(&g, UTM_SEAT_X) == UTTT_O,
        "say: X waits on a drawn O");
@@ -427,7 +437,13 @@ static void test_say(void)
         char want[64];
         snprintf(want, sizeof want, "X won on the diagonal. %d moves.", g.n_plies);
         OK(!strcmp(s, want), "say: the end caption names the line and the length");
+        snprintf(want, sizeof want, "$ALEX won on the diagonal. %d moves.", g.n_plies);
+        OK(uttt_say_by(UTTT_SAY_CAPTION, &g, UTM_SEAT_X, "$ALEX", s, sizeof s) > 0
+           && !strcmp(s, want), "say: the end caption names the winner, who sent it (UI.html 05)");
     }
+    say(UTTT_SAY_BUBBLE_HEADLINE, &g, UTM_SEAT_O, s);
+    OK(!strcmp(s, "wins") && uttt_say_bubble_mark(&g) == UTTT_X,
+       "say: the finished bubble draws the winner's mark");
 
     /* play games out and read every key at every ply from every seat */
     int dashes = 0, missing = 0, lines_said = 0;

@@ -114,11 +114,33 @@ int main(void)
     uti_bubble_size(&bw, &bh);
     ok(bw == 300.f && bh == 195.f, "the bubble is 300 by 195");
     uti_bubble_board(&x, &y, &s);
-    ok(s == 181.f, "a square tops out at 181 points");
+    ok(s == 170.f, "the board is 170 points, so its lines stop on the frame");
     ok(x >= 0 && y >= 0 && x + s <= bw && y + s <= bh, "the board is inside the frame");
     uti_bubble_text(&x, &y, &tw, &th);
     ok(x >= 0 && x + tw <= bw && y + th <= bh, "the text column is inside the frame");
-    ok(tw == 87.f, "and 87 points wide, which is why the place line wraps");
+    ok(tw >= 90.f, "and at least 90 points wide, which fits \"middle right\" on two lines");
+    /* THE LINES STOP ON THE PAPER: every point of the bubble's board, drawn
+     * with its own reach, lies 3 points or more inside the frame on the three
+     * sides the board faces. The drawer's reach would run 23 points past. */
+    {
+        float bx = 0, by = 0, bs = 0;
+        uti_bubble_board(&bx, &by, &bs);
+        int np = uti_draw_bubble(4, -1);
+        const float *pt = uti_points();
+        const int *pf = uti_poly_first(), *pn = uti_poly_n();
+        float top = 1e9f, bot = -1e9f, right = -1e9f;
+        for (int i = 0; i < np; i++)
+            for (int k = 0; k < pn[i]; k++) {
+                float px = bx + pt[(pf[i] + k) * 2] * bs;
+                float py = by + pt[(pf[i] + k) * 2 + 1] * bs;
+                if (py < top) top = py;
+                if (py > bot) bot = py;
+                if (px > right) right = px;
+            }
+        printf("  bubble board ink: top %.1f bottom %.1f right %.1f\n", top, bh - bot, bw - right);
+        ok(np > 0 && top >= 3.f && bh - bot >= 3.f && bw - right >= 3.f,
+           "the bubble's lines stop 3 points inside the frame");
+    }
     /* MESSAGES STAMPS THE APP LOGO INTO THE TOP-LEFT CORNER of every bubble,
      * over whatever is under it. The board cannot live there or the badge
      * sits on its first block for the whole game, so the text column does. */
@@ -238,7 +260,9 @@ int main(void)
         ok(uti_msg_open(1726990000) == 1, "alex opens an invitation");
         ok(uti_msg_seat() == UTI_SEAT_WAITING, "and waits on it");
         ok(uti_msg_mark() == 0 && !uti_msg_can_move(), "with no mark and no move");
-        ok(!strcmp(uti_say(UTI_SAY_CAPTION), "New Ultimate Tic Tac Toe game"), "the invitation's caption");
+        ok(!strcmp(uti_say_by(UTI_SAY_CAPTION, "$A1"), "$A1 wants a game. Tap to take it."),
+           "the invitation's caption names its sender");
+        ok(uti_say_bubble_mark() == 0, "and its bubble draws no mark");
         ok(uti_msg_text(inv, sizeof inv) > 3 && !strncmp(inv, "?m=", 3), "the invitation is a bare query");
         ok(uti_msg_door() == UTI_DOOR_NONE, "an invitation has no door");
 

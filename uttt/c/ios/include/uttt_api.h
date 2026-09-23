@@ -141,6 +141,14 @@ const char *uti_say(int key);
 /* The mark drawn in the play-surface headline, or 0: "Waiting on <O>". */
 int  uti_say_mark(void);
 
+/* uti_say, with `who` standing for the SENDER of the bubble being written:
+ * "$" and the local participant's UUID, which Messages shows as a name.
+ * See uttt_say_by for the two captions that use it. */
+const char *uti_say_by(int key, const char *who);
+
+/* The mark the bubble's headline draws before its words, or 0. */
+int  uti_say_bubble_mark(void);
+
 /* ---------------------------------------------------------- the drawing */
 /* Rebuild the display list for the resident game. Returns polygon count.
  * active: block 0..8, 9 for anywhere, -1 for none.
@@ -189,6 +197,10 @@ void  uti_bubble_text(float *x, float *y, float *w, float *h);
 float uti_bubble_type(int line);
 uint32_t uti_bubble_ink(int line);      /* 0xRRGGBBAA */
 float uti_bubble_lead(void);            /* points between the two lines */
+
+/* uti_draw for the bubble's board: the main lines run short enough to stop on
+ * the 195-point frame (UtttBubble.reach in uttt_draw.h). */
+int   uti_draw_bubble(int active, int last);
 
 /* A block's name. 0..8, or 9 for "anywhere". spoken: 0 for the place line
  * ("bottom middle"), 1 for a sentence ("the bottom-middle board"). */
