@@ -198,6 +198,39 @@ Left from WP2:
 - Move every user-visible string into a C table (`uti_text(key)`), the same way foolish's i18n tables work, even if English only for now.
 - Done when: a screenshot of each UI.html screen (01-08, collapsed 340 and expanded) is taken from the rig and laid next to the spec frame, and nothing in the frame is unexplained.
 
+#### WP4 - done, first pass (2026-09-23)
+
+Spec-vs-app sheets are in the session scratchpad `wp4/` (`sheet_1.png` bubble, `sheet_2.png` collapsed, `sheet_3.png` expanded, `sheet_4.png` waiting, `sheet_5.png` screen 04), with the UI.html renders in `wp4/spec/` (headless Chrome, `UI.html#bub2`, `#coll2`, `#exp2`, `#lobby2`).
+
+- **The bubble never says "Your move".**
+  It is one bitmap on both phones, so its headline is now the side to play as a DRAWN mark in its own ink plus words: "<O> to play", "<X> wins", "A game?", "A draw" (`uttt_say_bubble_mark`, `UTTT_SAY_BUBBLE_HEADLINE`).
+  The place line stays blue under it, as in option 02.
+- **The board stays on the RIGHT, mirrored against option 02, on purpose.**
+  Messages stamps the app's logo badge (about 31x24pt, 6pt in) into the top-left corner of every template bubble, sent or staged; with the board on the left it would sit on the top-left cell of the top-left block for the whole game.
+  A staged draft also carries Messages' X in the top-right corner, but only on the sender's own draft.
+  If the owner wants the spec anyway, it is `b.board.x` and `b.text.x` in `uttt_bubble()`.
+- **"Clipped at the right edge" was the grid's 13.5% main-line overshoot running into the bubble's edge.**
+  The bubble now draws with `UtttDrawOpts.reach` = 5/13.5 (UI.html's own 5%) through `uti_draw_bubble`, and the board is 170pt (not 181) so the longest line stops 3pt or more inside the frame on the three sides it faces (asserted in `ios-smoke`).
+  The drawer keeps the full overshoot.
+- **Bubble type is 18pt**, measured off option 02 ("Your move" is 82pt wide there); it was 16.
+- **Captions name nobody yet.**
+  `$<participant uuid>` in `MSMessageTemplateLayout.caption` and `summaryText` is NOT substituted on the iOS 27 simulator: the raw `$FEACEE0B-...` showed in the draft, the sent bubble, the incoming twin and the conversation list.
+  The kernel can word both named captions (`uttt_say_by`: "<who> wants a game. Tap to take it.", "<who> won on the diagonal. 58 moves."), and Swift passes no name until two real phones show Messages substituting it.
+  The invitation caption is now "A game. Tap to take it." (was "New Ultimate Tic Tac Toe game").
+- **Compact strip**: matches "Collapsed 340" (you-are column, board centred, no headline); nothing was missing.
+  The waiting strip's words take their own width, so "Nobody has taken it yet." is one line (it broke after "taken").
+- **Expanded**: matches "Expanded" (you-are and mark top left, headline top right, rulebook door bottom right) plus the subline from Lobby 04/06/07; "Anywhere you like." verified on the join.
+  No take-back door (owner).
+- Tests: new assertions in `tests/uttt_msg_test.c` and `ios/uttt_api_smoke.c`; four mutations (reach ignored, name ignored, bubble mark forced to 0, invitation sentence cut) each went red on its named assertion.
+  `make -C uttt/c run asan ios-smoke` green; Release device build clean, and `strings` shows no `dev.seat`, picker text, App Group or `$<uuid>`.
+- Cycle re-run on a fresh sim: create as a, send, tap as b, the first move stages the sealing bubble, send, tap as a, the reply stages, send.
+
+Left from WP4:
+- Prove or drop `$<uuid>` caption substitution on two real phones.
+- The expanded board's main lines still run off the sheet's left and right edges (the kernel's deliberate 13.5% overshoot, about 55pt on a 411pt board); UI.html's frames show them stopping at the board.
+  Owner call on the pen.
+- Game-over and spectator screens were not re-shot this round (WP2 shot them, and no code on those screens changed).
+
 ### WP5 - Motion channels
 
 - Destination pulse at +300ms after the ink lands (channel A), auto-collapse once the ink lands and never during, settlement (big mark, meta line) at `didStartSending` (B), replay on reopening my own bubble without pulse (C), both halves plus pulse on their bubble (D), arrival on `didReceive` (E), and the 200ms reverse un-ink on undo.
