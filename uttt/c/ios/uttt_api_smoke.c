@@ -245,7 +245,7 @@ int main(void)
         {
             char back[160];
             ok(uti_msg_take_back() && uti_msg_seat() == UTI_SEAT_CLOSED, "alex takes it back");
-            ok(!strcmp(uti_say(UTI_SAY_BUBBLE_HEADLINE), "Taken back"), "and the bubble says so");
+            ok(!strcmp(uti_say(UTI_SAY_BUBBLE_HEADLINE), "No game"), "and the bubble says so");
             ok(uti_msg_text(back, sizeof back) > 0 && uti_msg_prefer(back, inv) < 0,
                "the take-back is a message that outranks the invitation");
             ok(uti_msg_undo() && uti_msg_seat() == UTI_SEAT_WAITING, "cancelling it gives the invitation back");

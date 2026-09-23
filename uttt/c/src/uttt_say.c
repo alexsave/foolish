@@ -57,7 +57,11 @@ int uttt_say(int key, const UtttGame *g, int seat, char *out, int cap)
 
     switch (key) {
     case UTTT_SAY_BUBBLE_HEADLINE:
-        if (seat == UTM_SEAT_CLOSED) return put(out, cap, "Taken back");
+        /* TWO WORDS OVER TWO LINES: the headline has about 87 points and
+         * "Taken back" in bold 16 does not fit it ("Taken ba..." in the
+         * transcript), so the headline says what is left and the blue line
+         * says why. */
+        if (seat == UTM_SEAT_CLOSED) return put(out, cap, "No game");
         /* AN EMPTY BOARD IS NOT A MOVE. Nobody has a seat yet, so there is no
          * move to be anybody's; the invitation asks the question instead. */
         switch (g->over) {
@@ -68,7 +72,7 @@ int uttt_say(int key, const UtttGame *g, int seat, char *out, int cap)
         }
 
     case UTTT_SAY_BUBBLE_PLACE:
-        if (seat == UTM_SEAT_CLOSED) return put(out, cap, "");
+        if (seat == UTM_SEAT_CLOSED) return put(out, cap, "taken back");
         /* A finished game has nowhere to send anybody, so the line says how
          * long it took; an invitation has nowhere either, and says nothing. */
         if (g->over) return putf(cap, snprintf(out, (size_t)cap, "%d moves", g->n_plies));

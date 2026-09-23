@@ -34,37 +34,79 @@ public struct UtttLobbyScreen: View {
 
     public var body: some View {
         UtttSheet {
-            VStack(alignment: .leading, spacing: 0) {
-                Text(headline)
-                    .font(.system(size: 21, weight: .bold))
-                    .tracking(-0.315)
-                    .foregroundStyle(UtttInk.ink)
-                    .lineLimit(1)
-                Text(subline)
-                    .font(.system(size: 14))
-                    .foregroundStyle(UtttInk.muted)
-                    .padding(.top, 3)
-                /* THE EMPTY BOARD, with no wash: nobody is on move, and a
-                 * board tinted corner to corner reads as a different piece of
-                 * paper. An unreadable bubble has no board to show. */
-                if stance != .unreadable {
-                    /* ROOM FOR THE OVERSHOOT: the grid's main lines run past
-                     * the board by about a tenth of it, and at 10 points they
-                     * ran up into the line of type above. */
-                    UtttBoard(active: -1, last: -1, positionKey: 0)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding(.vertical, 26)
-                        .allowsHitTesting(false)
+            GeometryReader { geo in
+                if geo.size.height > UtttDoorButton.expandedFrom {
+                    expanded
                 } else {
-                    Spacer(minLength: 0)
-                }
-                if let title = UtttDoorButton.title(door) {
-                    UtttDoorButton(title: title, ghost: door == .takeBack, act: onDoor)
-                        .padding(.top, 10)
+                    compact
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding(13)
+        }
+    }
+
+    /// docs/UI.html 02 as drawn: the words, the board under them, the door.
+    private var expanded: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            words
+            if stance != .unreadable {
+                /* ROOM FOR THE OVERSHOOT: the grid's main lines run past the
+                 * board by about a tenth of it, and at 10 points they ran up
+                 * into the line of type above. */
+                board.padding(.vertical, 26)
+            } else {
+                Spacer(minLength: 0)
+            }
+            doorView.padding(.top, 10)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(13)
+    }
+
+    /// THE COMPACT STRIP PUTS THE WORDS BESIDE THE BOARD, the way the play
+    /// surface puts "you are" beside it: stacked, the three things left a
+    /// 112-point board in 309 points of drawer.
+    private var compact: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 0) {
+                words
+                Spacer(minLength: 8)
+                doorView
+            }
+            .frame(width: 168, alignment: .leading)
+            if stance != .unreadable {
+                board.padding(.vertical, 14)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.horizontal, 13)
+        .padding(.vertical, 10)
+    }
+
+    private var words: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(headline)
+                .font(.system(size: 21, weight: .bold))
+                .tracking(-0.315)
+                .foregroundStyle(UtttInk.ink)
+                .lineLimit(1)
+            Text(subline)
+                .font(.system(size: 14))
+                .foregroundStyle(UtttInk.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /* THE EMPTY BOARD, with no wash: nobody is on move, and a board tinted
+     * corner to corner reads as a different piece of paper. */
+    private var board: some View {
+        UtttBoard(active: -1, last: -1, positionKey: 0)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .allowsHitTesting(false)
+    }
+
+    @ViewBuilder private var doorView: some View {
+        if let title = UtttDoorButton.title(door) {
+            UtttDoorButton(title: title, ghost: door == .takeBack, act: onDoor)
         }
     }
 

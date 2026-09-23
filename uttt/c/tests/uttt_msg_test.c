@@ -458,7 +458,9 @@ static void test_say(void)
     /* a taken-back invitation, the same on every device */
     uttt_init(&g);
     say(UTTT_SAY_BUBBLE_HEADLINE, &g, UTM_SEAT_CLOSED, s);
-    OK(!strcmp(s, "Taken back"), "say: the take-back bubble says so");
+    OK(!strcmp(s, "No game"), "say: the take-back bubble says so");
+    say(UTTT_SAY_BUBBLE_PLACE, &g, UTM_SEAT_CLOSED, s);
+    OK(!strcmp(s, "taken back"), "say: and why, on the blue line");
     say(UTTT_SAY_CAPTION, &g, UTM_SEAT_CLOSED, s);
     OK(!strcmp(s, "Game taken back."), "say: and its caption");
     say(UTTT_SAY_CLOSED_SUBLINE, &g, UTM_SEAT_CLOSED, s);
