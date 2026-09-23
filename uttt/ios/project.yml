@@ -157,6 +157,8 @@ targets:
       # The kernel binding lives in the repo's sdk/, sibling to c/ - it is the
       # boundary, not a UI file.
       - path: ../sdk/swift
+      # The product-free debug ruler (DEBUG-only; UtttRuler places it).
+      - path: ../../shared/swift/MotionRuler.swift
     dependencies:
       # STATIC (embed:false), so the linker pulls it in per object and nothing
       # unreferenced ships.

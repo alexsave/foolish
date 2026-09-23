@@ -33,6 +33,11 @@ public enum UtttDev {
     private static let gameFile = "dev.game"
     private static let liveFile = "dev.live"
     private static let pickerFile = "dev.picker"
+    private static let rulerFile = "dev.ruler"
+
+    /// `rig.sh ruler on`: paint the motion ruler (UtttRuler) over the sheet.
+    /// Read every time, like every other dev file.
+    public static var ruler: Bool { MotionRuler.flag(rulerFile, group: appGroup) }
 
     /// The word the rig wrote, or nil in every ordinary run - including an
     /// ordinary DEBUG one, because the file is absent until somebody writes it.

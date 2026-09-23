@@ -277,10 +277,34 @@ public struct UtttLiveBoard: View {
                     .accessibilityHidden(true)
 
                 UtttSquares(side: side, positionKey: positionKey, onTap: onTap)
+                if UtttRuler.on { Self.rulerMarks(f, side: side) }
             }
         }
         .aspectRatio(1, contentMode: .fit)
         .onReceive(NotificationCenter.default.publisher(for: UtttBoard.rendered)) { _ in landed &+= 1 }
+    }
+
+    /// The ruler's two marks inside the board (UtttRuler): pink on the
+    /// highlighter's centre, violet on the centre of the pen stroke drawn so
+    /// far. Positioned in the same board space the Canvas draws in.
+    @ViewBuilder
+    private static func rulerMarks(_ f: UtiFrame, side: CGFloat) -> some View {
+        let dot = MotionRuler.side
+        if f.wash.2 > 0 {
+            let w = rect(f.wash, side)
+            Color.clear.frame(width: dot, height: dot)
+                .motionSquare(.pink, on: true)
+                .position(x: w.midX, y: w.midY)
+                .allowsHitTesting(false)
+        }
+        let pts = Uttt.lastStroke(t: f.mark_t).flatMap(\.points)
+        if let x0 = pts.map(\.x).min(), let x1 = pts.map(\.x).max(),
+           let y0 = pts.map(\.y).min(), let y1 = pts.map(\.y).max() {
+            Color.clear.frame(width: dot, height: dot)
+                .motionSquare(.violet, on: true)
+                .position(x: (x0 + x1) / 2 * side, y: (y0 + y1) / 2 * side)
+                .allowsHitTesting(false)
+        }
     }
 
     private static func rect(_ r: (Float, Float, Float, Float), _ side: CGFloat) -> CGRect {

@@ -72,6 +72,7 @@ public struct UtttGameScreen: View {
                     sheet(geo.size)
                 }
             }
+            .overlay { MotionRulerEdges(on: UtttRuler.on) }
         }
         .animation(.easeInOut(duration: 0.18), value: rulesOpen)
     }
@@ -143,8 +144,14 @@ public struct UtttGameScreen: View {
         let free = max(0, avail - side)
         let lift = lerp(free / 2, min(free, Self.boardGap), t)
 
+        let r = UtttRuler.on
         return board
             .frame(width: side, height: side)
+            .motionSquare(.magenta, on: r)
+            .motionSquare(.cyan, on: r, at: .topLeading)
+            .motionSquare(.cyan, on: r, at: .topTrailing)
+            .motionSquare(.cyan, on: r, at: .bottomLeading)
+            .motionSquare(.cyan, on: r, at: .bottomTrailing)
             .padding(.top, top + lift)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .padding(.bottom, bot)
@@ -156,6 +163,7 @@ public struct UtttGameScreen: View {
             .overlay(alignment: .topTrailing) {
                 VStack(alignment: .trailing, spacing: 3) {
                     headlineView
+                        .motionSquare(.yellow, on: r)
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(Uttt.say(.headlineSpoken))
                         .accessibilityAddTraits(.isHeader)
@@ -166,6 +174,7 @@ public struct UtttGameScreen: View {
                             .font(.system(size: 14))
                             .foregroundStyle(UtttInk.muted)
                             .lineLimit(1)
+                            .motionSquare(.lime, on: r)
                     }
                 }
                 .opacity(end ? 1 : Double(t)).allowsHitTesting(t > 0.5)
@@ -175,9 +184,11 @@ public struct UtttGameScreen: View {
                 HStack(alignment: .center, spacing: 10) {
                     if let title = UtttDoorButton.title(self.door), t > 0.5 {
                         UtttDoorButton(title: title, height: door, act: onDoor)
+                            .motionSquare(.violet, on: r)
                             .opacity(Double((t - 0.5) * 2))
                     }
                     UtttRulebookButton(side: door) { rulesOpen = true }
+                        .motionSquare(.blue, on: r)
                 }
             }
             .padding(.horizontal, Self.margin)
@@ -252,6 +263,7 @@ public struct UtttGameScreen: View {
             }
             UtttMarkIcon(mark: model.you, seed: model.seed &+ 4)
                 .frame(width: icon, height: icon)
+                .motionSquare(.orange, on: UtttRuler.on)
                 .padding(.top, lead)
         }
         .accessibilityElement(children: .ignore)
