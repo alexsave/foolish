@@ -59,7 +59,11 @@ public struct UtttLobbyScreen: View {
     /// in 309 points of drawer.
     private var compact: some View {
         HStack(alignment: .top, spacing: 12) {
-            words.frame(width: 150, alignment: .leading)
+            /* THE WORDS TAKE THEIR OWN WIDTH. A fixed 150 broke "Nobody has
+             * taken it yet." after "taken", leaving "it yet." alone on a
+             * second line; UI.html 02 sets it as one line under the headline,
+             * and the board gives way instead. */
+            words.fixedSize(horizontal: true, vertical: false)
             /* The overshoot needs room on every side, or it runs into the
              * drawer's edge and the grab handle. */
             if stance != .unreadable {
