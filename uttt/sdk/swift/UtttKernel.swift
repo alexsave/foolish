@@ -138,6 +138,10 @@ public enum Uttt {
     /// seat back.
     @discardableResult
     public static func undoMine() -> Bool { uti_msg_undo() != 0 }
+    /// A CHANGE OF MIND: may I replace my staged move with `move` - another
+    /// free square where the draft was played. Pure; every other tap on a
+    /// board with a draft does nothing.
+    public static func canReplace(_ move: Int) -> Bool { uti_msg_can_replace(Int32(move)) != 0 }
 
     /// The one door a screen may offer, and whether it may offer one at all:
     /// the kernel's rule (utm_door). Today that is Again, at the end.
@@ -351,10 +355,11 @@ public enum Uttt {
     /// Which door a move came through - docs/UI.html's channel grid.
     public enum Channel: Int32 {
         case still = 0, stage = 1, replay = 2, theirs = 3, arrival = 4
-        /// B: Send. The big mark of a won block falls, then the line.
+        /// B: Send - the post-settlement: only the highlighter moves, to the
+        /// outlined block.
         case settle = 6
-        /// At rest with my last move staged and unsent: the settlement is
-        /// held for Send.
+        /// At rest with my last move staged and unsent: the stage's last
+        /// frame, outline and all.
         case draft = 7
         /// A bubble opened: my own replays at my wash's pace, theirs at theirs. The kernel
         /// decides which, from the seat.
@@ -397,6 +402,12 @@ public enum Uttt {
 
     /// The last move's settlement - the big mark of the block it won and the
     /// win line of the game it ended - drawn to the frame's `fall_t`, `line_t`.
+    /// The promise: the pen outline round `block` in the highlighter's rect
+    /// and colour, drawn round to `t`.
+    public static func outlineStroke(block: Int32, t: Float) -> [Poly] {
+        harvest(uti_draw_outline(block, t))
+    }
+
     public static func settleStroke(fall: Float, line: Float) -> [Poly] {
         harvest(uti_draw_settle(fall, line))
     }
