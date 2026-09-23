@@ -6,6 +6,7 @@
 #include "../src/uttt_msg.h"
 #include "../src/uttt_say.h"
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* The host's names for the kernel's numbers. Two lists, so the compiler
@@ -61,6 +62,13 @@ _Static_assert(UTI_MSG_TEXT_MAX >= UTM_MAX_TEXT, "the longest link fits the host
 #define MAX_PT   260000
 #define MAX_POLY  40000
 
+/* THE BUFFERS ARE ON THE HEAP, NOT IN THE IMAGE (TESTFLIGHT_PLAN.md 12,
+ * memory). A static display list is __DATA: every page a finished board ever
+ * touched stayed dirty for the life of the extension, about 1.2 MB of an idle
+ * drawer that had drawn one board. Now a draw allocates at full capacity
+ * (untouched pages cost nothing), and a whole board is TAKEN by the host
+ * (uti_take), which owns it until uti_taken_free - so the idle drawer holds
+ * only the few pages the last small stroke used. */
 static struct {
     /* THE RESIDENT MESSAGE: the roster and the game together, because a move
      * on this board is a move by somebody in a seat and the kernel is the one
@@ -71,12 +79,13 @@ static struct {
     char      said[160];
     int       overflow;
     UtttDL    dl;
-    UtttPt    pt[MAX_PT];
-    UtttPoly  poly[MAX_POLY];
-    int32_t   first[MAX_POLY];
-    int32_t   n[MAX_POLY];
-    uint32_t  rgba[MAX_POLY];
 } S;
+
+_Static_assert(sizeof(UtiPoly) == sizeof(UtttPoly)
+            && offsetof(UtiPoly, first) == offsetof(UtttPoly, first)
+            && offsetof(UtiPoly, n) == offsetof(UtttPoly, n)
+            && offsetof(UtiPoly, rgba) == offsetof(UtttPoly, rgba), "the host reads the kernel's polygons in place");
+_Static_assert(sizeof(UtttPt) == 2 * sizeof(float), "a point is two floats");
 
 void uti_new(int32_t seed)
 {
@@ -118,20 +127,45 @@ int uti_decode(const uint8_t *buf, int n, int32_t seed)
 /* EVERY DRAW STARTS FROM A FULL INIT, not a reset: a display list that was
  * never pointed at its buffers has a capacity of zero and draws nothing,
  * silently, and "was uti_new called first" is not a question a drawing entry
- * point should depend on. Six stores. */
+ * point should depend on. The buffers come back after a take; if they cannot,
+ * the capacity is zero and the overflow flag says so. */
 static void dl_fresh(void)
 {
-    uttt_dl_init(&S.dl, S.pt, MAX_PT, S.poly, MAX_POLY);
+    if (!S.dl.pt)   S.dl.pt   = malloc(sizeof(UtttPt) * MAX_PT);
+    if (!S.dl.poly) S.dl.poly = malloc(sizeof(UtttPoly) * MAX_POLY);
+    int ok = S.dl.pt && S.dl.poly;
+    uttt_dl_init(&S.dl, S.dl.pt, ok ? MAX_PT : 0, S.dl.poly, ok ? MAX_POLY : 0);
+    if (!ok) S.overflow = 1;
 }
 
-static int publish(void)
+static int publish(void) { return S.dl.n_poly; }
+
+const float   *uti_points(void)      { return (const float *)S.dl.pt; }
+int            uti_point_count(void) { return S.dl.n_pt; }
+const UtiPoly *uti_polys(void)       { return (const UtiPoly *)S.dl.poly; }
+
+/* The last draw, handed over whole and trimmed to what it used; the next
+ * draw starts on fresh buffers. */
+UtiTaken uti_take(void)
 {
-    for (int i = 0; i < S.dl.n_poly; i++) {
-        S.first[i] = S.dl.poly[i].first;
-        S.n[i]     = S.dl.poly[i].n;
-        S.rgba[i]  = S.dl.poly[i].rgba;
-    }
-    return S.dl.n_poly;
+    UtiTaken t = { 0 };
+    if (!S.dl.pt || !S.dl.poly || S.dl.n_poly <= 0) return t;
+    size_t np = (size_t)(S.dl.n_pt > 0 ? S.dl.n_pt : 1), nq = (size_t)S.dl.n_poly;
+    float   *pt = realloc(S.dl.pt, sizeof(UtttPt) * np);
+    UtiPoly *pq = realloc(S.dl.poly, sizeof(UtttPoly) * nq);
+    t.points = pt ? pt : (float *)S.dl.pt;
+    t.polys  = pq ? pq : (UtiPoly *)S.dl.poly;
+    t.n_points = S.dl.n_pt;
+    t.n_polys  = S.dl.n_poly;
+    S.dl.pt = NULL; S.dl.poly = NULL;
+    uttt_dl_init(&S.dl, NULL, 0, NULL, 0);
+    return t;
+}
+
+void uti_taken_free(UtiTaken t)
+{
+    free((void *)t.points);
+    free((void *)t.polys);
 }
 
 int uti_draw(int active, int last, float mark_t, float meta_t)
@@ -317,11 +351,6 @@ const char *uti_place_name(int block, int spoken)
     return uttt_place_name(block, spoken);
 }
 
-const float    *uti_points(void)     { return (const float *)S.dl.pt; }
-int             uti_point_count(void){ return S.dl.n_pt; }
-const int32_t  *uti_poly_first(void) { return S.first; }
-const int32_t  *uti_poly_n(void)     { return S.n; }
-const uint32_t *uti_poly_rgba(void)  { return S.rgba; }
 
 /* ---------------------------------------------------------- the message */
 static void my_tag(uint8_t out[UTM_TAG_LEN])

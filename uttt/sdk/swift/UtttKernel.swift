@@ -252,20 +252,18 @@ public enum Uttt {
     }
 
     private static func harvest(_ count: Int32) -> [Poly] {
-        guard count > 0,
-              let pts = uti_points(), let first = uti_poly_first(),
-              let ns = uti_poly_n(), let rgba = uti_poly_rgba() else { return [] }
+        guard count > 0, let pts = uti_points(), let polys = uti_polys() else { return [] }
         var out: [Poly] = []
         out.reserveCapacity(Int(count))
         for i in 0..<Int(count) {
-            let f = Int(first[i]), n = Int(ns[i])
+            let f = Int(polys[i].first), n = Int(polys[i].n)
             var p: [CGPoint] = []
             p.reserveCapacity(n)
             for k in 0..<n {
                 p.append(CGPoint(x: CGFloat(pts[(f + k) * 2]),
                                  y: CGFloat(pts[(f + k) * 2 + 1])))
             }
-            let c = rgba[i]
+            let c = polys[i].rgba
             out.append(Poly(points: p, color: CGColor(
                 red:   CGFloat((c >> 24) & 0xff) / 255,
                 green: CGFloat((c >> 16) & 0xff) / 255,
@@ -282,15 +280,16 @@ public enum Uttt {
         harvest(uti_draw(Int32(active), Int32(last), markT, metaT))
     }
 
-    /// THE WHOLE BOARD AS PLAIN VALUES: the kernel's display list copied out
-    /// in one pass, so it can be filled anywhere - including off the main
-    /// thread, which the kernel itself (one static display list) must never
-    /// be touched from. A copy of four flat buffers, not an array per polygon.
-    public struct BoardPolys: Sendable {
-        let points: [Float]          // x, y pairs, 0..1
-        let first: [Int32]
-        let count: [Int32]
-        let rgba: [UInt32]
+    /// THE WHOLE BOARD, HANDED OVER: the kernel's own buffers for one draw
+    /// (`uti_take`), owned here until the last reference goes, so it can be
+    /// filled anywhere - including off the main thread, which the kernel's
+    /// one resident display list must never be touched from. Nothing is
+    /// copied and the kernel keeps nothing resident (TESTFLIGHT_PLAN.md 12).
+    public final class BoardPolys: @unchecked Sendable {
+        let taken: UtiTaken
+        init(_ t: UtiTaken) { taken = t }
+        deinit { uti_taken_free(taken) }
+        public var count: Int { Int(taken.n_polys) }
     }
 
     public static func boardPolys(active: Int, last: Int) -> BoardPolys {
@@ -303,45 +302,38 @@ public enum Uttt {
     }
 
     private static func harvestBoard(_ count: Int32) -> BoardPolys {
-        let n = Int(count)
-        let np = Int(uti_point_count())
-        guard n > 0, np > 0, let pts = uti_points(), let first = uti_poly_first(),
-              let ns = uti_poly_n(), let rgba = uti_poly_rgba() else {
-            return BoardPolys(points: [], first: [], count: [], rgba: [])
-        }
-        return BoardPolys(points: Array(UnsafeBufferPointer(start: pts, count: np * 2)),
-                          first: Array(UnsafeBufferPointer(start: first, count: n)),
-                          count: Array(UnsafeBufferPointer(start: ns, count: n)),
-                          rgba: Array(UnsafeBufferPointer(start: rgba, count: n)))
+        _ = count
+        return BoardPolys(uti_take())
     }
 
     /// Fill `polys` into `cg` with the unit square scaled to `side`: the same
     /// polygons in the same order, one fill each, the colour set only when it
     /// changes. Pure - it reads nothing but its arguments.
     public static func fill(_ polys: BoardPolys, into cg: CGContext, side: CGFloat) {
+        let t = polys.taken
+        guard t.n_polys > 0, let pts = t.points, let q = t.polys else { return }
+        let np = Int(t.n_points)
         var colour: UInt32 = 0
         var haveColour = false
-        polys.points.withUnsafeBufferPointer { pts in
-            for i in 0..<polys.first.count {
-                let f = Int(polys.first[i]), n = Int(polys.count[i])
-                guard n > 0, (f + n) * 2 <= pts.count else { continue }
-                let c = polys.rgba[i]
-                if !haveColour || c != colour {
-                    cg.setFillColor(red: CGFloat((c >> 24) & 0xff) / 255,
-                                    green: CGFloat((c >> 16) & 0xff) / 255,
-                                    blue: CGFloat((c >> 8) & 0xff) / 255,
-                                    alpha: CGFloat(c & 0xff) / 255)
-                    colour = c; haveColour = true
-                }
-                cg.beginPath()
-                cg.move(to: CGPoint(x: CGFloat(pts[f * 2]) * side, y: CGFloat(pts[f * 2 + 1]) * side))
-                for k in 1..<max(1, n) {
-                    cg.addLine(to: CGPoint(x: CGFloat(pts[(f + k) * 2]) * side,
-                                           y: CGFloat(pts[(f + k) * 2 + 1]) * side))
-                }
-                cg.closePath()
-                cg.fillPath()
+        for i in 0..<Int(t.n_polys) {
+            let f = Int(q[i].first), n = Int(q[i].n)
+            guard n > 0, f + n <= np else { continue }
+            let c = q[i].rgba
+            if !haveColour || c != colour {
+                cg.setFillColor(red: CGFloat((c >> 24) & 0xff) / 255,
+                                green: CGFloat((c >> 16) & 0xff) / 255,
+                                blue: CGFloat((c >> 8) & 0xff) / 255,
+                                alpha: CGFloat(c & 0xff) / 255)
+                colour = c; haveColour = true
             }
+            cg.beginPath()
+            cg.move(to: CGPoint(x: CGFloat(pts[f * 2]) * side, y: CGFloat(pts[f * 2 + 1]) * side))
+            for k in 1..<max(1, n) {
+                cg.addLine(to: CGPoint(x: CGFloat(pts[(f + k) * 2]) * side,
+                                       y: CGFloat(pts[(f + k) * 2 + 1]) * side))
+            }
+            cg.closePath()
+            cg.fillPath()
         }
     }
 

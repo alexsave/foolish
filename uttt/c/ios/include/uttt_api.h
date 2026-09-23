@@ -328,11 +328,22 @@ int         uti_rules_count(void);
 const char *uti_rules_line(int i);
 const char *uti_rules_title(void);
 
-/* Parallel arrays describing the last uti_draw. Coordinates are 0..1. */
-const float    *uti_points(void);       /* 2 floats a point             */
-int             uti_point_count(void);
-const int32_t  *uti_poly_first(void);
-const int32_t  *uti_poly_n(void);
-const uint32_t *uti_poly_rgba(void);
+/* The last uti_draw, read in place. Coordinates are 0..1. A polygon is
+ * points[first*2 ..] for n points, filled in rgba (0xRRGGBBAA). */
+typedef struct { int32_t first, n; uint32_t rgba; } UtiPoly;
+const float   *uti_points(void);        /* 2 floats a point             */
+int            uti_point_count(void);
+const UtiPoly *uti_polys(void);
+
+/* A WHOLE BOARD, HANDED OVER: the last draw's buffers, trimmed to size, now
+ * the caller's - to fill on any thread - until uti_taken_free. The next draw
+ * starts on new buffers, so nothing is copied and nothing stays resident. */
+typedef struct {
+    const float   *points;
+    const UtiPoly *polys;
+    int32_t        n_points, n_polys;
+} UtiTaken;
+UtiTaken uti_take(void);
+void     uti_taken_free(UtiTaken t);
 
 #endif

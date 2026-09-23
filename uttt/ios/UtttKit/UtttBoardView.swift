@@ -161,7 +161,7 @@ public struct UtttBoard: View {
         }
         let scale = UIScreen.main.scale
         let polys = make()
-        UtttLog.note("raster", "side \(Int(side)) plies \(Uttt.plyCount) polys \(polys.first.count)")
+        UtttLog.note("raster", "side \(Int(side)) plies \(Uttt.plyCount) polys \(polys.count)")
         guard cacheImage == nil else {
             let img = render(polys, side: side, scale: scale)
             UtttLog.note("raster done")

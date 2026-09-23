@@ -106,6 +106,25 @@ int main(void)
     int b = uti_draw(-1, mv[N-1], 1.f, 1.f);
     ok(a == b && first == uti_points()[0], "the same seed draws the same board");
 
+    /* A WHOLE BOARD IS HANDED OVER, NOT COPIED: the host fills it off the
+     * main thread from the kernel's own memory, and the kernel keeps nothing
+     * of it resident (TESTFLIGHT_PLAN.md 12, memory). */
+    {
+        int npt = uti_point_count();
+        UtiTaken t = uti_take();
+        ok(t.n_polys == b && t.n_points == npt && t.points[0] == first
+           && t.polys[b - 1].first + t.polys[b - 1].n <= npt, "a taken board is the draw, whole");
+        ok(uti_point_count() == 0 && uti_points() == NULL, "and the kernel keeps none of it");
+        int c = uti_draw(-1, mv[N-1], 1.f, 1.f);
+        ok(c == b && uti_points() != t.points && uti_points()[0] == t.points[0]
+           && uti_polys()[c - 1].n == t.polys[b - 1].n, "the next draw starts on buffers of its own");
+        uti_taken_free(t);
+        UtiTaken none = uti_take();
+        uti_draw_last(0.f);
+        ok(uti_point_count() >= 0 && !uti_draw_overflow(), "a draw after a take still has room");
+        uti_taken_free(none);
+    }
+
     uti_new(77);
 
     /* ---- the bubble frame. 300x195 is somebody else's number, so the only
@@ -125,11 +144,11 @@ int main(void)
         uti_bubble_board(&bx, &by, &bs); \
         int np = uti_draw_bubble(4, -1); \
         const float *pt = uti_points(); \
-        const int *pf = uti_poly_first(), *pn = uti_poly_n(); \
+        const UtiPoly *pq = uti_polys(); \
         ink[0] = ink[1] = 1e9f; ink[2] = ink[3] = -1e9f; under_badge = 0; \
         for (int i = 0; i < np; i++) \
-            for (int k = 0; k < pn[i]; k++) { \
-                float px = bx + pt[(pf[i] + k) * 2] * bs, py = by + pt[(pf[i] + k) * 2 + 1] * bs; \
+            for (int k = 0; k < pq[i].n; k++) { \
+                float px = bx + pt[(pq[i].first + k) * 2] * bs, py = by + pt[(pq[i].first + k) * 2 + 1] * bs; \
                 if (px < ink[0]) ink[0] = px; \
                 if (py < ink[1]) ink[1] = py; \
                 if (px > ink[2]) ink[2] = px; \
@@ -209,20 +228,20 @@ int main(void)
          * a 55% page comes out at 80%. */
         int ribbons = 0;
         for (int i = 0; i < np; i++)
-            if (uti_poly_n()[i] >= 4 && uti_poly_n()[i] % 2 == 0) ribbons++;
+            if (uti_polys()[i].n >= 4 && uti_polys()[i].n % 2 == 0) ribbons++;
         ok(ribbons == np, "each one is a single ribbon polygon");
 
-        const uint32_t *c = uti_poly_rgba();
+        const UtiPoly *cq = uti_polys();
         int ink = 0, edge = 0, book = 0, other = 0;
         uint32_t ink_rgba = 0, book_rgba = 0;
         for (int i = 0; i < np; i++) {
-            uint32_t rgb = c[i] >> 8;
-            if (rgb == 0x25376bu)      { ink++;  ink_rgba = c[i]; }
+            uint32_t rgb = cq[i].rgba >> 8;
+            if (rgb == 0x25376bu)      { ink++;  ink_rgba = cq[i].rgba; }
             else if (rgb == 0x1b2a52u) {
                 /* The outline and the book are the SAME ink at different
                  * strengths, so they are told apart by alpha rather than by
                  * hue - which is the point: one pen, one colour. */
-                if ((c[i] & 0xffu) == 255) edge++; else { book++; book_rgba = c[i]; }
+                if ((cq[i].rgba & 0xffu) == 255) edge++; else { book++; book_rgba = cq[i].rgba; }
             } else other++;
         }
         ok(other == 0, "every stroke is one of the document's two inks");
@@ -240,7 +259,7 @@ int main(void)
            "the glyph is darker than the field it lies on");
 
         /* the fill is laid first so the outline lands ON it */
-        ok((c[0] >> 8) == 0x25376bu, "the first stroke down is fill, not outline");
+        ok((cq[0].rgba >> 8) == 0x25376bu, "the first stroke down is fill, not outline");
 
         const float *p = uti_points();
         int stray = 0;
@@ -288,11 +307,11 @@ int main(void)
         printf("  door: %d to %d strokes\n", lo, hi);
 
         int np = uti_draw_door(310, 46);
-        const uint32_t *c = uti_poly_rgba();
+        const UtiPoly *cq = uti_polys();
         int fill = 0, edge = 0, other = 0, last_fill = -1, first_edge = np;
         for (int i = 0; i < np; i++) {
-            if (c[i] == 0x25376b66u)      { fill++; last_fill = i; }
-            else if (c[i] == 0x1b2a52ffu) { edge++; if (i < first_edge) first_edge = i; }
+            if (cq[i].rgba == 0x25376b66u)      { fill++; last_fill = i; }
+            else if (cq[i].rgba == 0x1b2a52ffu) { edge++; if (i < first_edge) first_edge = i; }
             else other++;
         }
         ok(other == 0 && fill > 0, "the door is the rulebook's two inks, hachured");
@@ -326,23 +345,22 @@ int main(void)
         for (float w = 200; w <= 430; w += 23) {
             const float H = 46;
             int m = uti_draw_door(w, H);
-            const uint32_t *rgba = uti_poly_rgba();
-            const int32_t *f0 = uti_poly_first(), *nn = uti_poly_n();
+            const UtiPoly *q = uti_polys();
             const float *pt = uti_points();
             float lo[4] = { 1e9f, 1e9f, 1e9f, 1e9f }, hi[4] = { -1e9f, -1e9f, -1e9f, -1e9f };
             for (int i = 0; i < m; i++) {
-                if (rgba[i] != 0x1b2a52ffu) continue;
+                if (q[i].rgba != 0x1b2a52ffu) continue;
                 double cx = 0, cy = 0;
-                for (int k = 0; k < nn[i]; k++) {
-                    cx += pt[(f0[i] + k) * 2]; cy += pt[(f0[i] + k) * 2 + 1];
+                for (int k = 0; k < q[i].n; k++) {
+                    cx += pt[(q[i].first + k) * 2]; cy += pt[(q[i].first + k) * 2 + 1];
                 }
-                cx /= nn[i]; cy /= nn[i];
+                cx /= q[i].n; cy /= q[i].n;
                 /* 0 top, 1 bottom, 2 left, 3 right, by where the stroke sits */
                 double dx = fmin(cx, 1 - cx) * w, dy = fmin(cy, 1 - cy) * H;
                 int side = dy < dx ? (cy < .5 ? 0 : 1) : (cx < .5 ? 2 : 3);
-                for (int k = 0; k < nn[i]; k++) {
-                    float v = side < 2 ? pt[(f0[i] + k) * 2 + 1] * H
-                                       : pt[(f0[i] + k) * 2] * w;
+                for (int k = 0; k < q[i].n; k++) {
+                    float v = side < 2 ? pt[(q[i].first + k) * 2 + 1] * H
+                                       : pt[(q[i].first + k) * 2] * w;
                     if (side == 1) v = H - v;
                     if (side == 3) v = w - v;
                     if (v < lo[side]) lo[side] = v;
