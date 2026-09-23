@@ -289,6 +289,16 @@ int uttt_hit(float u, float v)
     return (by * 3 + bx) * 9 + (cy * 3 + cx);
 }
 
+int uttt_cell_rect(int mv, float r[4])
+{
+    if (mv < 0 || mv > 80) return 0;
+    int b = mv / 9, c = mv % 9;
+    r[0] = (b % 3) * BL + (c % 3) * CE;
+    r[1] = (b / 3) * BL + (c / 3) * CE;
+    r[2] = r[3] = CE;
+    return 1;
+}
+
 int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float calm)
 {
     UtttPen p = uttt_pen_92();

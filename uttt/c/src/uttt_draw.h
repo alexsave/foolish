@@ -47,6 +47,12 @@ int uttt_draw_cell(UtttDL *d, int mark, int mv, int32_t seed, float t);
  * cells are. Legality is not asked: that is uttt_play's question. */
 int uttt_hit(float u, float v);
 
+/* The square `mv` covers in the board's unit square, as x, y, w, h - the
+ * rectangle uttt_hit maps back to `mv`, from the same BL and CE, so the
+ * host can place one accessibility element per square without a number of
+ * its own. 0 for an `mv` off the board. */
+int uttt_cell_rect(int mv, float r[4]);
+
 /* One mark on its own, for the "you are" indicator. */
 int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float calm);
 

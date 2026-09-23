@@ -171,6 +171,18 @@ public enum Uttt {
         return mv >= 0 ? Int(mv) : nil
     }
 
+    /// The square `mv` covers in the board's 0..1 space - the rectangle
+    /// `hit` maps back to it.
+    public static func cellRect(_ mv: Int) -> CGRect {
+        var r: [Float] = [0, 0, 0, 0]
+        guard uti_cell_rect(Int32(mv), &r) != 0 else { return .zero }
+        return CGRect(x: CGFloat(r[0]), y: CGFloat(r[1]),
+                      width: CGFloat(r[2]), height: CGFloat(r[3]))
+    }
+
+    /// What VoiceOver reads on square `mv`: "Top left board, centre square, empty".
+    public static func sayCell(_ mv: Int) -> String { String(cString: uti_say_cell(Int32(mv))) }
+
     // MARK: the words
 
     /// Every sentence the app says, from the kernel's table (uttt_say.h).
@@ -191,6 +203,9 @@ public enum Uttt {
         public static let youAre1 = Say(key: UTI_SAY_YOU_ARE_1)
         public static let youAre2 = Say(key: UTI_SAY_YOU_ARE_2)
         public static let doorAgain = Say(key: UTI_SAY_DOOR_AGAIN)
+        public static let headlineSpoken = Say(key: UTI_SAY_HEADLINE_SPOKEN)
+        public static let youAreSpoken = Say(key: UTI_SAY_YOU_ARE_SPOKEN)
+        public static let doorRules = Say(key: UTI_SAY_DOOR_RULES)
     }
 
     public static func say(_ s: Say) -> String { String(cString: uti_say(s.key)) }

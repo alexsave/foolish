@@ -50,6 +50,13 @@ enum {
     /* the one door a screen may offer (utm_door) */
     UTTT_SAY_DOOR_AGAIN,
 
+    /* VOICEOVER. The screen draws a mark where the words would name a side,
+     * and a drawn mark is silent, so what VoiceOver reads is the same
+     * sentence with the mark spelled: "Waiting on O", "X wins". */
+    UTTT_SAY_HEADLINE_SPOKEN,
+    UTTT_SAY_YOU_ARE_SPOKEN,       /* "You are X", "" with no seat         */
+    UTTT_SAY_DOOR_RULES,           /* the rulebook door                     */
+
     UTTT_SAY_COUNT
 };
 
@@ -79,5 +86,11 @@ int uttt_say_bubble_mark(const UtttGame *g);
  * is named by its mark, drawn in its own ink, because a mark is the only name
  * this side has. */
 int uttt_say_headline_mark(const UtttGame *g, int seat);
+
+/* WHAT VOICEOVER READS ON SQUARE `mv` (block*9 + cell): "Top left board,
+ * centre square, empty", "... X", "... O". The square's rectangle is
+ * uttt_cell_rect's, the inverse of uttt_hit. -1 for an `mv` off the board
+ * or a buffer too small. */
+int uttt_say_cell(const UtttGame *g, int mv, char *out, int cap);
 
 #endif

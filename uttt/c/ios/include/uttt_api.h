@@ -135,6 +135,9 @@ int  uti_hit(float u, float v);
 #define UTI_SAY_YOU_ARE_1            12
 #define UTI_SAY_YOU_ARE_2            13
 #define UTI_SAY_DOOR_AGAIN           14
+#define UTI_SAY_HEADLINE_SPOKEN      15
+#define UTI_SAY_YOU_ARE_SPOKEN       16
+#define UTI_SAY_DOOR_RULES           17
 
 const char *uti_say(int key);
 
@@ -148,6 +151,12 @@ const char *uti_say_by(int key, const char *who);
 
 /* The mark the bubble's headline draws before its words, or 0. */
 int  uti_say_bubble_mark(void);
+
+/* VoiceOver's words for square `mv` of the resident game ("Top left board,
+ * centre square, empty"), and the square's rectangle in the board's 0..1
+ * space as x, y, w, h (0 for an `mv` off the board). */
+const char *uti_say_cell(int mv);
+int  uti_cell_rect(int mv, float r[4]);
 
 /* ---------------------------------------------------------- the drawing */
 /* Rebuild the display list for the resident game. Returns polygon count.

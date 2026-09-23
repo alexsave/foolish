@@ -337,6 +337,15 @@ int main(void)
         ok(uti_msg_read(reply) == 0 && uti_msg_seat() == UTI_SEAT_SPECTATOR, "cleo watches");
         ok(!uti_msg_play(0) && !uti_msg_undo(), "and cannot touch it");
         ok(!strcmp(uti_say(UTI_SAY_WATCH_LINE), "X to play"), "the spectator's line");
+        ok(!strcmp(uti_say_cell(40), "Centre board, centre square, X")
+           && !strcmp(uti_say_cell(36), "Centre board, top left square, O")
+           && !strcmp(uti_say_cell(0), "Top left board, top left square, empty"),
+           "VoiceOver reads each square by block, square and mark");
+        {
+            float r[4];
+            ok(uti_cell_rect(40, r) && uti_hit(r[0] + r[2] / 2, r[1] + r[3] / 2) == 40
+               && !uti_cell_rect(81, r), "and its rectangle is the one a tap hits");
+        }
 
         ok(uti_msg_check(join) == 0 && uti_msg_check("?v=1&s=2") < 0, "check reads without adopting");
         ok(uti_msg_seat() == UTI_SEAT_SPECTATOR && uti_n_plies() == 2, "so cleo is still on the reply");

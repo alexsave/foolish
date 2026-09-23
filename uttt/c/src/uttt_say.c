@@ -165,10 +165,35 @@ int uttt_say_by(int key, const UtttGame *g, int seat, const char *who,
 
     case UTTT_SAY_DOOR_AGAIN: return put(out, cap, "Again");
 
+    case UTTT_SAY_HEADLINE_SPOKEN: {
+        char pre[64], post[64];
+        int m = uttt_say_headline_mark(g, seat);
+        if (uttt_say(UTTT_SAY_HEADLINE_PRE, g, seat, pre, sizeof pre) < 0 ||
+            uttt_say(UTTT_SAY_HEADLINE_POST, g, seat, post, sizeof post) < 0)
+            return -1;
+        return putf(cap, snprintf(out, (size_t)cap, "%s%s%s", pre,
+                                  m == UTTT_X ? "X" : m == UTTT_O ? "O" : "", post));
+    }
+    case UTTT_SAY_YOU_ARE_SPOKEN:
+        return put(out, cap, you == UTTT_X ? "You are X" : you == UTTT_O ? "You are O" : "");
+    case UTTT_SAY_DOOR_RULES: return put(out, cap, "Rulebook");
+
     case UTTT_SAY_YOU_ARE_1: return put(out, cap, "you");
     case UTTT_SAY_YOU_ARE_2: return put(out, cap, "are");
 
     default:
         return -1;
     }
+}
+
+int uttt_say_cell(const UtttGame *g, int mv, char *out, int cap)
+{
+    if (!out || cap < 1 || mv < 0 || mv > 80) return -1;
+    int v = uttt_cell(g, mv);
+    int n = snprintf(out, (size_t)cap, "%s board, %s square, %s",
+                     uttt_place_name(mv / 9, 0), uttt_place_name(mv % 9, 0),
+                     v == UTTT_X ? "X" : v == UTTT_O ? "O" : "empty");
+    if (n < 0 || n >= cap) return -1;
+    if (out[0] >= 'a' && out[0] <= 'z') out[0] = (char)(out[0] - 'a' + 'A');
+    return n;
 }

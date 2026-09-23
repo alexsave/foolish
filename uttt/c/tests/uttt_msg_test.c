@@ -369,6 +369,18 @@ static void test_hit(void)
     OK(uttt_hit(.32f, .01f) == 2, "hit: just left of it is block 0's right column");
     OK(uttt_hit(.01f, .67f) == 54, "hit: the bottom-left block");
     OK(uttt_hit(-.01f, .5f) == -1 && uttt_hit(.5f, 1.01f) == -1, "hit: off the board is nothing");
+
+    /* the rectangle VoiceOver puts an element on is the one hit reads back */
+    int round = 1;
+    for (int mv = 0; mv < 81; mv++) {
+        float r[4];
+        if (!uttt_cell_rect(mv, r) || r[2] <= 0 || r[3] <= 0 ||
+            uttt_hit(r[0] + r[2] * .5f, r[1] + r[3] * .5f) != mv ||
+            uttt_hit(r[0] + r[2] * .05f, r[1] + r[3] * .95f) != mv) round = 0;
+    }
+    float r[4];
+    OK(round, "hit: every square's rectangle hits that square, centre and corner");
+    OK(!uttt_cell_rect(-1, r) && !uttt_cell_rect(81, r), "hit: no rectangle off the board");
 }
 
 /* ---------------------------------------------------------- the words */
@@ -424,6 +436,26 @@ static void test_say(void)
 
     say(UTTT_SAY_DOOR_AGAIN, &g, UTM_SEAT_X, s);
     OK(!strcmp(s, "Again"), "say: the end door (UI.html 06)");
+    say(UTTT_SAY_HEADLINE_SPOKEN, &g, UTM_SEAT_X, s);
+    OK(!strcmp(s, "Waiting on O"), "say: VoiceOver hears the drawn mark spelled");
+    say(UTTT_SAY_YOU_ARE_SPOKEN, &g, UTM_SEAT_O, s);
+    OK(!strcmp(s, "You are O"), "say: VoiceOver hears which side you are");
+    say(UTTT_SAY_YOU_ARE_SPOKEN, &g, UTM_SEAT_SPECTATOR, s);
+    OK(!strcmp(s, ""), "say: a spectator is no side");
+    OK(uttt_say_cell(&g, 4 * 9 + 4, s, sizeof s) > 0 && !strcmp(s, "Centre board, centre square, empty"),
+       "say: an empty square by block and cell");
+    {
+        int mv = g.move[g.n_plies - 1], ok = uttt_say_cell(&g, mv, s, sizeof s) > 0;
+        char want[80];
+        snprintf(want, sizeof want, "%s board, %s square, X",
+                 uttt_place_name(mv / 9, 0), uttt_place_name(mv % 9, 0));
+        want[0] = (char)(want[0] - 'a' + 'A');
+        OK(ok && !strcmp(s, want), "say: a marked square names its mark");
+    }
+    OK(uttt_say_cell(&g, 0, s, sizeof s) > 0 && !strncmp(s, "Top left board, top left square, ", 33),
+       "say: the first square");
+    OK(uttt_say_cell(&g, 81, s, sizeof s) == -1 && uttt_say_cell(&g, 0, s, 8) == -1,
+       "say: a square off the board or a short buffer is refused");
 
     /* THE END, docs/UI.html 05-07: X on the top-left to bottom-right diagonal */
     static const uint8_t diag[] = { 79, 63, 5, 45, 8, 76, 42, 61, 70, 71, 78, 55, 15, 58, 36, 1, 11, 24, 4, 40, 39, 31, 80, 35, 0 };
@@ -432,6 +464,10 @@ static void test_say(void)
     OK(g.over == UTTT_X && uttt_won_line(&g) == 6, "say: the end fixture is X on the diagonal");
     say(UTTT_SAY_SUBLINE, &g, UTM_SEAT_O, s);
     OK(!strcmp(s, "Diagonal"), "say: the end subline names the line");
+    say(UTTT_SAY_HEADLINE_SPOKEN, &g, UTM_SEAT_O, s);
+    OK(!strcmp(s, "X wins"), "say: the loser hears the winner's mark spelled");
+    say(UTTT_SAY_HEADLINE_SPOKEN, &g, UTM_SEAT_X, s);
+    OK(!strcmp(s, "You win"), "say: the winner hears it plainly");
     say(UTTT_SAY_CAPTION, &g, UTM_SEAT_O, s);
     {
         char want[64];

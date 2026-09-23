@@ -31,7 +31,10 @@ _Static_assert(UTI_SAY_UNREADABLE_SUBLINE == UTTT_SAY_UNREADABLE_SUBLINE, "say U
 _Static_assert(UTI_SAY_YOU_ARE_1 == UTTT_SAY_YOU_ARE_1, "say YOU_ARE_1");
 _Static_assert(UTI_SAY_YOU_ARE_2 == UTTT_SAY_YOU_ARE_2, "say YOU_ARE_2");
 _Static_assert(UTI_SAY_DOOR_AGAIN == UTTT_SAY_DOOR_AGAIN, "say DOOR_AGAIN");
-_Static_assert(UTI_SAY_DOOR_AGAIN + 1 == UTTT_SAY_COUNT, "every key has a host name");
+_Static_assert(UTI_SAY_HEADLINE_SPOKEN == UTTT_SAY_HEADLINE_SPOKEN, "say HEADLINE_SPOKEN");
+_Static_assert(UTI_SAY_YOU_ARE_SPOKEN == UTTT_SAY_YOU_ARE_SPOKEN, "say YOU_ARE_SPOKEN");
+_Static_assert(UTI_SAY_DOOR_RULES == UTTT_SAY_DOOR_RULES, "say DOOR_RULES");
+_Static_assert(UTI_SAY_DOOR_RULES + 1 == UTTT_SAY_COUNT, "every key has a host name");
 _Static_assert(UTI_CH_STILL == UTTT_CH_STILL && UTI_CH_STAGE == UTTT_CH_STAGE
             && UTI_CH_REPLAY == UTTT_CH_REPLAY && UTI_CH_THEIRS == UTTT_CH_THEIRS
             && UTI_CH_ARRIVAL == UTTT_CH_ARRIVAL, "motion channels");
@@ -392,3 +395,12 @@ const char *uti_say_by(int key, const char *who)
 }
 
 int uti_say_bubble_mark(void) { return uttt_say_bubble_mark(&S.m.game); }
+
+const char *uti_say_cell(int mv)
+{
+    if (uttt_say_cell(&S.m.game, mv, S.said, sizeof S.said) < 0)
+        S.said[0] = 0;
+    return S.said;
+}
+
+int uti_cell_rect(int mv, float r[4]) { return uttt_cell_rect(mv, r); }
