@@ -1,53 +1,31 @@
 import SwiftUI
 
-/// Everything that is not the game: the invitation, the wait, the seat that is
-/// still open, and the view from outside the roster.
+/// Everything that is not the game: the wait, and a bubble this build cannot
+/// read.
 ///
-/// THE ROSTER SEALS AT TWO. A third person in a group chat is not a problem to
-/// be handled, it is a spectator - so the shape of this file is four stances
-/// and one door, and only two of the stances have a door at all.
+/// THERE IS NO "TAKE A SEAT" SCREEN. The joiner is X and moves first, so
+/// opening somebody's invitation opens the board with the first move on it -
+/// the join IS the move. And there is no "start" screen either: opening the
+/// app through the + menu is the invitation, staged there and then.
+///
+/// Every word is the kernel's (uttt_say.h).
 public struct UtttLobbyScreen: View {
 
     public enum Stance: Equatable {
-        /// Nothing in this thread yet. The door sends the empty board, and the
-        /// moment it does is the seed.
-        case start
         /// You sent the board. Nobody has answered it.
-        case waiting(Uttt.Mark?)
-        /// The second seat is open and it would be yours.
-        case open(Uttt.Mark?)
+        case waiting
         /// A bubble this build cannot read.
         case unreadable
     }
 
     public let stance: Stance
-    /// Only used to draw the mark; there is no seed before `.start` sends one.
-    public let seed: Int32
-    public let act: () -> Void
 
-    public init(stance: Stance, seed: Int32 = 1, act: @escaping () -> Void) {
-        self.stance = stance
-        self.seed = seed
-        self.act = act
-    }
+    public init(stance: Stance) { self.stance = stance }
 
     public var body: some View {
         UtttSheet {
             VStack(spacing: 0) {
                 Spacer(minLength: 8)
-                if let m = mark {
-                    VStack(spacing: 4) {
-                        Text("you\nare")
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .tracking(1.9)
-                            .textCase(.uppercase)
-                            .multilineTextAlignment(.center)
-                            .foregroundStyle(UtttInk.label)
-                        UtttMarkIcon(mark: m, seed: seed &+ 4)
-                            .frame(width: 54, height: 54)
-                    }
-                    .padding(.bottom, 14)
-                }
                 Text(headline)
                     .font(.system(size: 23, weight: .bold))
                     .foregroundStyle(UtttInk.ink)
@@ -57,9 +35,6 @@ public struct UtttLobbyScreen: View {
                     .multilineTextAlignment(.center)
                     .padding(.top, 3)
                     .padding(.horizontal, 22)
-                if let door {
-                    UtttDoor(title: door, act: act).padding(.top, 18)
-                }
                 Spacer(minLength: 8)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -67,46 +42,19 @@ public struct UtttLobbyScreen: View {
         }
     }
 
-    private var mark: Uttt.Mark? {
-        switch stance {
-        case .waiting(let m), .open(let m): return m
-        case .start, .unreadable:           return nil
-        }
-    }
-
+    /* NO MARK ON THE WAITING SCREEN: the joiner will be X, and until somebody
+     * joins there is nobody to be anything. */
     private var headline: String {
         switch stance {
-        case .start:      return "Ultimate tic-tac-toe"
-        case .waiting:    return "Waiting"
-        case .open:       return "There is a seat"
-        case .unreadable: return "Can't read that"
+        case .waiting:    return Uttt.say(.waitingHeadline)
+        case .unreadable: return Uttt.say(.unreadableHeadline)
         }
     }
 
     private var subline: String {
         switch stance {
-        case .start:
-            /* NOT "Send an empty board" - the button under this line says
-             * that, and a subtitle that narrates the button is a line nobody
-             * reads twice. This says the one thing the button cannot. */
-            return "Whoever answers it first takes the other side."
-        case .waiting:
-            /* NO MARK, and no hint of one. Which seat is whose is not decided
-             * until both are filled, so there is nothing here to re-roll for
-             * - which is the whole security property. */
-            return "Nobody has taken the other side yet."
-        case .open:
-            return "Take it and the sides are drawn. Neither of you picks."
-        case .unreadable:
-            return "That board came from a newer version of the app."
-        }
-    }
-
-    private var door: String? {
-        switch stance {
-        case .start:                 return "Send a board"
-        case .open:                  return "Take it"
-        case .waiting, .unreadable:  return nil
+        case .waiting:    return Uttt.say(.waitingSubline)
+        case .unreadable: return Uttt.say(.unreadableSubline)
         }
     }
 }
@@ -124,7 +72,7 @@ public struct UtttWatchScreen: View {
         UtttSheet {
             VStack(spacing: 0) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("watching")
+                    Text(Uttt.say(.watchLabel))
                         .font(.system(size: 9.5, weight: .semibold))
                         .tracking(1.9)
                         .textCase(.uppercase)
@@ -143,14 +91,7 @@ public struct UtttWatchScreen: View {
         }
     }
 
-    private var line: String {
-        switch Uttt.over {
-        case .draw: return "Drawn"
-        case .x:    return "X took it"
-        case .o:    return "O took it"
-        case .none: return Uttt.turn == .o ? "O to play" : "X to play"
-        }
-    }
+    private var line: String { Uttt.say(.watchLine) }
 }
 
 // MARK: - the two pieces both screens share

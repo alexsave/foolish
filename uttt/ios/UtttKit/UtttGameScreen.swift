@@ -181,8 +181,8 @@ public struct UtttGameScreen: View {
             // Two lines, set on a 9.5-point body - line-height 1, so they read
             // as one two-line label rather than two labels.
             VStack(spacing: -2.8) {
-                line("you")
-                line("are")
+                line(Uttt.say(.youAre1))
+                line(Uttt.say(.youAre2))
             }
             UtttMarkIcon(mark: model.you, seed: model.seed &+ 4)
                 .frame(width: icon, height: icon)

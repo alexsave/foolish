@@ -75,7 +75,13 @@ int  uti_msg_open(int64_t unix_seconds);
  * game. 0 (UTM_EOK), or a negative UTM_E* and nothing changes. */
 int  uti_msg_read(const char *text);
 
-/* The resident message as the text for MSMessage.url. Length, or negative. */
+/* Whether `text` is a message this build reads, WITHOUT adopting it: 0, or
+ * the negative UTM_E* that uti_msg_read would return. */
+int  uti_msg_check(const char *text);
+
+/* The resident message as the text for MSMessage.url. Length, or negative.
+ * A buffer of UTI_MSG_TEXT_MAX always fits. */
+#define UTI_MSG_TEXT_MAX 128
 int  uti_msg_text(char *out, int cap);
 
 /* UTM_SEAT_*: 0 spectator, 1 X, 2 O, 3 waiting (my invitation), 4 open (X is

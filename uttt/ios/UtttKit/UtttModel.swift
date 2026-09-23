@@ -22,9 +22,12 @@ public final class UtttModel: ObservableObject {
     ///
     /// So there is no `solo`, no reply, and no name to put on the other side
     /// of the bar: it is whoever has the other seat, drawn as their mark.
+    /// THE POSITION IS ALREADY IN THE KERNEL when this is made - the host
+    /// read the message first - so the model does not start a game of its
+    /// own. It only remembers which seed draws the marks and which mark is
+    /// this device's.
     public init(seed: Int32, you: Uttt.Mark = .x) {
         self.seed = seed; self.you = you
-        Uttt.newGame(seed: seed)
     }
 
     public var active: Int {
@@ -46,30 +49,16 @@ public final class UtttModel: ObservableObject {
         case mark(String, Uttt.Mark, String)
     }
 
+    /// The words are the kernel's; this only says where the drawn mark goes.
     public var headline: Headline {
-        switch Uttt.over {
-        case .draw:  return .text("Drawn")
-        case .x, .o:
-            if Uttt.over == you { return .text("You win") }
-            return .mark("", Uttt.over, " wins")
-        case .none:
-            if Uttt.turn == you { return .text("Your move") }
-            return .mark("Waiting on ", Uttt.turn, "")
-        }
+        let pre = Uttt.say(.headlinePre), post = Uttt.say(.headlinePost)
+        let m = Uttt.sayMark
+        return m == .none ? .text(pre + post) : .mark(pre, m, post)
     }
 
     /// The line under it. When it is not your turn this is WHERE YOU SENT
-    /// THEM, which is the one thing worth reading on a board you cannot touch,
-    /// and it comes from the kernel because the names of the nine blocks are
-    /// not the screen's to invent.
-    public var subline: String {
-        if Uttt.over == .draw { return "Nine blocks, no line." }
-        if Uttt.over != .none { return "\(Uttt.plyCount) moves." }
-        if Uttt.turn == you { return active == 9 ? "Anywhere you like." : "" }
-        if active == 9 { return "Anywhere they like." }
-        let p = UtttBubble.placeName(spoken: false)
-        return p.isEmpty ? "" : p.prefix(1).uppercased() + p.dropFirst() + "."
-    }
+    /// THEM, which is the one thing worth reading on a board you cannot touch.
+    public var subline: String { Uttt.say(.subline) }
 
     /// The harness loads a position behind the model's back; this is how it
     /// tells the screen to look again.
@@ -83,14 +72,12 @@ public final class UtttModel: ObservableObject {
     /// True while this device's last move is staged and unsent.
     @Published public private(set) var pending = false
 
-    /// A tap in the board's own 0..1 space.
+    /// A tap in the board's own 0..1 space. WHICH SQUARE is the kernel's
+    /// answer, from the same geometry it draws the board with.
     public func tap(at p: CGPoint) {
         guard !busy, Uttt.over == .none else { return }
-        guard Uttt.turn == you || pending else { return }
-        let bx = min(2, Int(p.x * 3)), by = min(2, Int(p.y * 3))
-        let cx = min(2, Int((p.x * 3 - CGFloat(bx)) * 3))
-        let cy = min(2, Int((p.y * 3 - CGFloat(by)) * 3))
-        let mv = (by * 3 + bx) * 9 + (cy * 3 + cx)
+        guard Uttt.canMove || pending else { return }
+        guard let mv = Uttt.hit(p) else { return }
 
         if pending {
             /* THE SAME SQUARE IS NOT A CHANGE OF MIND, and re-staging the
@@ -114,18 +101,18 @@ public final class UtttModel: ObservableObject {
     /// something out.
     private func replace(with mv: Int) async {
         busy = true
-        Uttt.undo()
+        Uttt.undoMine()
         positionKey &+= 1                 // the wash is back where it was
         try? await Task.sleep(nanoseconds: 170_000_000)
         guard Uttt.legal.contains(UInt8(mv)) else {
             // Not a legal square in the position we just came back to. Put
             // the move we took back where it was and pretend nothing happened.
-            Uttt.play(lastPlayed)
+            Uttt.playAsMe(lastPlayed)
             positionKey &+= 1
             busy = false
             return
         }
-        Uttt.play(mv)
+        Uttt.playAsMe(mv)
         lastPlayed = mv
         await draw(mv)
         positionKey &+= 1
@@ -139,9 +126,11 @@ public final class UtttModel: ObservableObject {
     /// knows whether the bubble is still in the input field.
     public func setPending(_ on: Bool) { pending = on }
 
+    /// ON AN OPEN INVITATION THIS MOVE IS THE JOIN: the kernel seats this
+    /// device in X and seals the roster as part of playing it.
     private func playerMove(_ mv: Int) async {
         busy = true
-        Uttt.play(mv)
+        guard Uttt.playAsMe(mv) else { busy = false; return }
         lastPlayed = mv
         await draw(mv)
         positionKey &+= 1

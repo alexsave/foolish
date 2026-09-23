@@ -59,70 +59,19 @@ public enum UtttBubble {
 
     // MARK: what it says
 
-    /// The name of the block the next mark must go in, or "anywhere".
-    /// `spoken` is the form a sentence uses: "the bottom-middle board".
-    public static func placeName(spoken: Bool) -> String {
-        let b = uti_active()
-        guard b >= 0, let s = uti_place_name(b, spoken ? 1 : 0) else { return "" }
-        return String(cString: s)
-    }
+    /// Every line of the bubble is the kernel's (uttt_say.h). It is BAKED:
+    /// one bitmap and one caption, identical on every device in the thread,
+    /// so none of it says "you" and none of it names a person - the
+    /// transcript already says who did it, by which side the bubble sits on.
 
     /// Two words. The one thing a glance needs.
-    ///
-    /// AN EMPTY BOARD IS NOT A MOVE. This said "Your move" at ply zero, which
-    /// is wrong for everybody who can see it: the sender has not been dealt a
-    /// seat yet and the recipient has not taken one, so there is no move to be
-    /// anybody's. The invitation asks the question instead.
-    public static var headline: String {
-        switch Uttt.over {
-        case .draw: return "A draw"
-        case .x:    return "X wins"
-        case .o:    return "O wins"
-        case .none: return Uttt.plyCount == 0 ? "A game?" : "Your move"
-        }
-    }
+    public static var headline: String { Uttt.say(.bubbleHeadline) }
 
-    /// The place, in blue, under the headline. A finished game has no place to
-    /// send anybody, so it spends the line on how long it took instead.
-    public static var place: String {
-        if Uttt.over != .none { return "\(Uttt.plyCount) moves" }
-        /* AN INVITATION HAS NOWHERE TO SEND ANYBODY. "A game?" is the whole
-         * question and a second line under it was a word looking for a job. */
-        return Uttt.plyCount == 0 ? "" : placeName(spoken: false)
-    }
+    /// The place, in blue, under the headline.
+    public static var place: String { Uttt.say(.bubblePlace) }
 
-    /// One line, truncating, and it names who moved. A bubble is the same on
-    /// every device, so this is the only sentence that can be written about it.
-    /// One line, truncating, and it names NOBODY.
-    ///
-    /// There is no name to use. A Messages extension is given a
-    /// per-conversation UUID for each participant and no way to resolve one
-    /// to a person - Apple withholds it - so the only names an app can show
-    /// are ones it asked somebody to type, and this game should not have to
-    /// ask. It does not need to either: the transcript already says who did
-    /// it, by which side of the thread the bubble is on.
-    ///
-    /// So every caption is a statement about the BOARD. It reads the same to
-    /// both players, which is the other half of why it works: one bubble, one
-    /// bitmap, one sentence, identical on every device in the thread.
-    public static var caption: String {
-        switch Uttt.over {
-        case .x:    return "X wins."
-        case .o:    return "O wins."
-        case .draw: return "Nine blocks, no line."
-        case .none:
-            if Uttt.plyCount == 0 { return newGameCaption }
-            if uti_active() == 9 { return "Sent anywhere on the sheet." }
-            return "Sent to the \(placeName(spoken: true)) board."
-        }
-    }
-
-    /// What an unclaimed board says.
-    static let newGameCaption = "New Ultimate Tic Tac Toe game"
-
-    /// The moment the roster sealed: the one bubble that is neither a move
-    /// nor an invitation.
-    public static let sealedCaption = "Both seats taken."
+    /// One line, truncating, and it names nobody.
+    public static var caption: String { Uttt.say(.caption) }
 
     // MARK: the image
 

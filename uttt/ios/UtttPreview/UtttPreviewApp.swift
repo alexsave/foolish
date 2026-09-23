@@ -76,6 +76,11 @@ struct PreviewRoot: View {
             loaded = true
             Uttt.newGame(seed: 77)
             for m in Self.sample { Uttt.play(m) }
+            /* The harness plays X against nobody: seat it as X so the board
+             * takes taps the way a joiner's does. */
+            let x = Data("preview:x".utf8), o = Data("preview:o".utf8)
+            Uttt.me(x)
+            Uttt.seat(o: o, x: x)
             model.refresh()
         }
     }

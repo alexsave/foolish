@@ -63,6 +63,135 @@ public enum Uttt {
     }
 
 
+    // MARK: the message
+    //
+    // What a bubble carries and who may do what with it are the kernel's
+    // (uttt/c/src/uttt_msg.h). This side hands over an opaque string and gets
+    // one back: no byte, tag or hash crosses. The resident message IS the
+    // resident game - every accessor above reads its board.
+
+    /// Where this device sits on the resident message. The numbers are the
+    /// kernel's own macros, never retyped here.
+    public enum Seat {
+        case spectator, x, o
+        /// My invitation, and nobody has taken it.
+        case waiting
+        /// Somebody's invitation: X is mine to take, with my first move.
+        case open
+
+        init(_ v: Int32) {
+            switch v {
+            case UTI_SEAT_X:       self = .x
+            case UTI_SEAT_O:       self = .o
+            case UTI_SEAT_WAITING: self = .waiting
+            case UTI_SEAT_OPEN:    self = .open
+            default:               self = .spectator
+            }
+        }
+    }
+
+    /// Who this device is: bytes the kernel hashes into a seat tag per game.
+    public static func me(_ id: Data) {
+        id.withUnsafeBytes { raw in
+            uti_me(raw.bindMemory(to: UInt8.self).baseAddress, Int32(id.count))
+        }
+    }
+
+    /// Messages' participant identifier, as the identity bytes.
+    public static func me(participant: UUID) {
+        me(withUnsafeBytes(of: participant.uuid) { Data($0) })
+    }
+
+    /// A new invitation from me, composed now. The moment is the seed.
+    public static func openInvitation(at date: Date = Date()) {
+        uti_msg_open(Int64(date.timeIntervalSince1970))
+    }
+
+    /// Adopt a message. False if it is not one this build reads, and then
+    /// nothing changed.
+    @discardableResult
+    public static func read(_ text: String) -> Bool { uti_msg_read(text) == 0 }
+
+    /// Whether `text` is a message this build reads, without adopting it.
+    public static func readable(_ text: String) -> Bool { uti_msg_check(text) == 0 }
+
+    /// The resident message, as the text a bubble carries.
+    public static var messageText: String? {
+        var buf = [CChar](repeating: 0, count: Int(UTI_MSG_TEXT_MAX))
+        let n = buf.withUnsafeMutableBufferPointer {
+            uti_msg_text($0.baseAddress, Int32(UTI_MSG_TEXT_MAX))
+        }
+        return n > 0 ? String(cString: buf) : nil
+    }
+
+    public static var seat: Seat { Seat(uti_msg_seat()) }
+    /// The mark this device plays, or `.none`.
+    public static var myMark: Mark { Mark(rawValue: UInt8(uti_msg_mark())) ?? .none }
+    public static var seed: Int32 { uti_msg_seed() }
+    public static var canMove: Bool { uti_msg_can_move() != 0 }
+
+    /// Play as me. On an open invitation this TAKES THE SEAT with the move.
+    @discardableResult
+    public static func playAsMe(_ move: Int) -> Bool { uti_msg_play(Int32(move)) != 0 }
+
+    /// Take back my own last move. Taking back the joining move gives the
+    /// seat back.
+    @discardableResult
+    public static func undoMine() -> Bool { uti_msg_undo() != 0 }
+
+    /// Which to show: true for `mine` (the staged draft), false for `tapped`.
+    public static func prefersMine(_ mine: String, over tapped: String) -> Bool {
+        uti_msg_prefer(mine, tapped) <= 0
+    }
+
+    public static func sameGame(_ a: String, _ b: String) -> Bool {
+        uti_msg_same_game(a, b) != 0
+    }
+
+    /// Seal the resident game with these two identities in O and X. Only the
+    /// debug harness and the preview can reach a game this way.
+    @discardableResult
+    public static func seat(o: Data, x: Data) -> Bool {
+        o.withUnsafeBytes { ob in
+            x.withUnsafeBytes { xb in
+                uti_msg_seat_ids(ob.bindMemory(to: UInt8.self).baseAddress, Int32(o.count),
+                                 xb.bindMemory(to: UInt8.self).baseAddress, Int32(x.count)) != 0
+            }
+        }
+    }
+
+    /// The move under a point in the board's 0..1 space, or nil off it.
+    public static func hit(_ p: CGPoint) -> Int? {
+        let mv = uti_hit(Float(p.x), Float(p.y))
+        return mv >= 0 ? Int(mv) : nil
+    }
+
+    // MARK: the words
+
+    /// Every sentence the app says, from the kernel's table (uttt_say.h).
+    public struct Say {
+        let key: Int32
+        public static let bubbleHeadline = Say(key: UTI_SAY_BUBBLE_HEADLINE)
+        public static let bubblePlace = Say(key: UTI_SAY_BUBBLE_PLACE)
+        public static let caption = Say(key: UTI_SAY_CAPTION)
+        public static let headlinePre = Say(key: UTI_SAY_HEADLINE_PRE)
+        public static let headlinePost = Say(key: UTI_SAY_HEADLINE_POST)
+        public static let subline = Say(key: UTI_SAY_SUBLINE)
+        public static let watchLabel = Say(key: UTI_SAY_WATCH_LABEL)
+        public static let watchLine = Say(key: UTI_SAY_WATCH_LINE)
+        public static let waitingHeadline = Say(key: UTI_SAY_WAITING_HEADLINE)
+        public static let waitingSubline = Say(key: UTI_SAY_WAITING_SUBLINE)
+        public static let unreadableHeadline = Say(key: UTI_SAY_UNREADABLE_HEADLINE)
+        public static let unreadableSubline = Say(key: UTI_SAY_UNREADABLE_SUBLINE)
+        public static let youAre1 = Say(key: UTI_SAY_YOU_ARE_1)
+        public static let youAre2 = Say(key: UTI_SAY_YOU_ARE_2)
+    }
+
+    public static func say(_ s: Say) -> String { String(cString: uti_say(s.key)) }
+
+    /// The mark drawn inside the play-surface headline, or `.none`.
+    public static var sayMark: Mark { Mark(rawValue: UInt8(uti_say_mark())) ?? .none }
+
     // MARK: the drawing
 
     /// A polygon the kernel wants filled. Points are 0..1 on both axes.

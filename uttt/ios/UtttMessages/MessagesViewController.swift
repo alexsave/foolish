@@ -5,7 +5,7 @@ import UtttKit
 
 /// The extension. It owns the conversation and nothing else - every rule and
 /// every coordinate is the kernel's, the screens are UtttKit's, and what a
-/// bubble says is `UtttWire`'s.
+/// bubble carries, who sits where and what they may do is `uttt_msg.h`'s.
 ///
 /// THERE IS NO CHAIN TO WALK. An extension is handed exactly one message, the
 /// one that was tapped, and cannot enumerate the transcript - so this file
@@ -66,9 +66,12 @@ final class MessagesViewController: MSMessagesAppViewController {
         /* The X IS the undo: there is no other button, and leaving the move
          * played would put the board a ply ahead of every bubble in the
          * thread. */
-        if Uttt.plyCount > 0, Uttt.undo() {
-            staged = staged.map { UtttWire(seed: $0.seed, creator: $0.creator,
-                                           joiner: $0.joiner, code: Uttt.code) }
+        /* ONLY MY OWN MOVE COMES BACK, and taking back a joining move gives
+         * the seat back: both are the kernel's rule. An invitation has no move
+         * to take back, so cancelling it leaves nothing staged. */
+        identify(conversation)
+        if Uttt.undoMine() {
+            staged = UtttWire.resident
             reverted = true
             live?.refresh()
         } else {
@@ -119,71 +122,77 @@ final class MessagesViewController: MSMessagesAppViewController {
         }
 #endif
 
+        identify(conversation)
+
         /* OPENING THE APP IS THE INVITATION. There is no "Send a board"
          * button any more: coming in through the + menu with no bubble to
          * read is somebody saying they want a game, so the board goes into
          * the input field there and then and the drawer stays COMPACT with
          * what it has just done on it. A door that asks a second time is a
          * door in the way. */
-        guard let wire = current(UtttWire.read(conversation.selectedMessage?.url)) else {
+        let tapped = UtttWire(url: conversation.selectedMessage?.url)
+        guard let wire = current(tapped) else {
             start(in: conversation)
             return
         }
         staged = wire
 
         guard wire.load() else {
-            show(UtttLobbyScreen(stance: .unreadable, act: {}))
+            show(UtttLobbyScreen(stance: .unreadable))
             return
         }
 
-        /* WHICH SEAT IS THIS DEVICE'S. A tag only ever answers "is this me?",
-         * and the device asking is the one that wrote it - see UtttWire.tag.
-         * Everybody else in a group chat matches neither, which is how a third
-         * tap becomes a spectator instead of a third player. */
-        let me = UtttWire.tag(participant: conversation.localParticipantIdentifier,
-                              seed: wire.seed)
+        /* WHICH SEAT IS THIS DEVICE'S is the kernel's answer: it hashes this
+         * device's participant with the game's seed and looks for the result.
+         * Everybody else in a group chat matches neither tag, which is how a
+         * third tap becomes a spectator instead of a third player. */
+        switch Uttt.seat {
+        case .waiting:
+            /* You put the board down and nobody has picked it up. */
+            show(UtttLobbyScreen(stance: .waiting))
 
-        switch wire.seat(of: me) {
-        case .some(.creator) where !wire.isSealed:
-            /* You put the board down and nobody has picked it up. NO MARK ON
-             * THIS SCREEN: which seat you have is not decided until the other
-             * chair is filled, and a waiting screen that showed one would be
-             * telling you what you would get if you re-rolled. */
-            show(UtttLobbyScreen(stance: .waiting(nil), seed: wire.seed, act: {}))
+        case .open, .x, .o:
+            /* OPENING SOMEBODY'S INVITATION IS SITTING DOWN AS X, and the
+             * first move is yours. Nothing is staged yet: the join and the
+             * first move are one message, and it goes into the input field
+             * when the move is made. */
+            showBoard(mark: Uttt.myMark)
 
-        case .some(let seat):
-            guard let mark = wire.mark(of: seat) else {
-                show(UtttLobbyScreen(stance: .waiting(nil), seed: wire.seed, act: {}))
-                return
-            }
-            showBoard(wire, mark: mark, claiming: nil)
-
-        case .none where !wire.isSealed:
-            /* OPENING THE BOARD IS TAKING THE SEAT. There was a screen here
-             * that said "there is a seat" over a button that said "take it",
-             * which is a door in front of a door: you tapped the bubble, so
-             * you want the game. The roster seals, the claim goes into the
-             * input field, and the board is what you are looking at. */
-            join(wire, as: me)
-
-        case .none:
+        case .spectator:
             // THE ROSTER SEALED AT TWO. This is a group chat and you are not
             // in this game.
-            showWatching(wire)
+            showWatching()
         }
     }
 
-    /// The draft beats the transcript, but only for the same game: tapping an
-    /// older bubble, or a different game's, has to win.
-    private func current(_ selected: UtttWire?) -> UtttWire? {
-        if reverted { reverted = false; return staged }
-        guard let staged else { return selected }
-        guard let selected else { return staged }
-        guard staged.isSameGame(as: selected) else { return selected }
-        return staged.plies() >= selected.plies() ? staged : selected
+    /// WHO THIS DEVICE IS, told to the kernel before every question about a
+    /// seat. Messages' participant identifier is per device per conversation,
+    /// which is exactly the scope a seat needs.
+    private func identify(_ conversation: MSConversation) {
+#if DEBUG
+        /* THE ONE PLACE A DEVICE SAYS WHO IT IS, which is why the override is
+         * here and nowhere else. One simulator has one participant per
+         * conversation, so without this the game stops at the invitation.
+         * See UtttDev. The kernel only ever sees bytes. */
+        if let word = UtttDev.seat {
+            Uttt.me(UtttDev.identity(word))
+            return
+        }
+#endif
+        Uttt.me(participant: conversation.localParticipantIdentifier)
     }
 
-    // MARK: the three things a person can do
+    /// The draft beats the transcript, but only for the same game: tapping an
+    /// older bubble, or a different game's, has to win. The kernel decides,
+    /// including which of two joiners got the seat.
+    private func current(_ tapped: UtttWire?) -> UtttWire? {
+        if reverted { reverted = false; return staged }
+        guard let staged else { return tapped }
+        guard let tapped else { return staged }
+        return Uttt.prefersMine(staged.text, over: tapped.text) ? staged : tapped
+    }
+
+    // MARK: the things a person can do
 
     /// Put an empty board on the table. THIS MOMENT IS THE SEED, and every
     /// bubble in the game carries it from here on.
@@ -193,34 +202,9 @@ final class MessagesViewController: MSMessagesAppViewController {
          * `guard let conversation = activeConversation` here returned quietly
          * and the drawer came up empty with no bubble and no error - which
          * looks exactly like a crashed extension. */
-        let seed = UtttWire.seedNow()
-        let me = UtttWire.tag(participant: conversation.localParticipantIdentifier,
-                              seed: seed)
-        let wire = UtttWire.opening(seed: seed, creator: me)
+        Uttt.openInvitation()
+        guard let wire = UtttWire.resident else { return }
         stage(wire, in: conversation)
-    }
-
-    /// Take the second seat. THE ROSTER SEALS HERE.
-    /// THE ROSTER SEALS HERE, and only here does anybody learn a seat: the
-    /// marks come from both tags, so the second one has to exist first.
-    private func join(_ wire: UtttWire, as me: String) {
-        wire.load()
-        let sealed = wire.staging(joining: me)
-        guard let mine = sealed.mark(of: .joiner) else { return }
-
-        /* AND ONLY IF THERE IS NOTHING ELSE TO SAY. Sitting down has to be
-         * SENT - the other player cannot see a seat that was never sent - but
-         * if the draw makes you X then your move is the next thing that
-         * happens anyway, and the claim and the move belong in one bubble.
-         * Staging an empty board first would put a message in the thread
-         * whose only content is "I am here", immediately followed by the one
-         * that says it better. */
-        if Uttt.over == .none, Uttt.turn == mine {
-            showBoard(wire, mark: mine, claiming: me)
-        } else {
-            stage(sealed, andShowIt: false)
-            showBoard(wire, mark: mine, claiming: me)
-        }
     }
 
     /// Seal the position the kernel is holding into the input field.
@@ -257,22 +241,25 @@ final class MessagesViewController: MSMessagesAppViewController {
         guard let conversation = conv ?? activeConversation else { return }
         let message = MSMessage(session: sessionFor(wire, conversation))
         message.url = wire.url
-        message.layout = layout(for: wire)
+        message.layout = UtttBubble.layout()
         /* THE COLLAPSED LINE IS OURS TOO. A session folds every older bubble
          * down to one grey row, and without this Messages writes that row
          * itself - "+1 (555) 564-8583 sent Ultimate message", a phone number
          * and an app's name, in a thread where every other line is about a
          * board. */
-        message.summaryText = wire.isSealed && Uttt.plyCount == 0
-            ? UtttBubble.sealedCaption : UtttBubble.caption
+        message.summaryText = UtttBubble.caption
         staged = wire
         draftURL = message.url
         live?.setPending(true)
 #if DEBUG
         /* The seeded game's state, so the other seat finds this move. */
-        if UtttDev.game != nil { UtttDev.live = wire.url.absoluteString }
+        if UtttDev.game != nil { UtttDev.live = wire.text }
 #endif
-        conversation.insert(message) { _ in }
+        conversation.insert(message) { error in
+            /* A REFUSED INSERT USED TO VANISH, and a join that never reached
+             * the input field looked exactly like one that did. */
+            if let error { NSLog("uttt: insert failed: %@", error.localizedDescription) }
+        }
 
         /* AN EXTENSION CANNOT SEND. insert() only puts the bubble in the input
          * field; the arrow is the human's. So the surface gets out of the way
@@ -300,31 +287,28 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// bubble as cancelled, so a cancel that does not name this one is stale.
     private var draftURL: URL?
 
-    private func showBoard(_ wire: UtttWire, mark: Uttt.Mark, claiming: String?) {
-        /* ONE GAME LIVES IN THE KERNEL and UtttModel's init starts a new one
-         * on it, so the position goes in AFTER the model exists and the screen
-         * is told to look again. Any other order shows an empty board over a
-         * game in progress. */
-        let model = UtttModel(seed: wire.seed, you: mark)
-        wire.load()
+    /// The board for the message the kernel is holding, as `mark`.
+    private func showBoard(mark: Uttt.Mark) {
+        let model = UtttModel(seed: Uttt.seed, you: mark)
         model.refresh()
         live = model
 
         /* The model does not know there is a conversation and should not. It
-         * says the position changed; a position that changed is a move this
-         * device made, because the kernel will not let it move out of turn. */
+         * says the position changed; a position this device can no longer
+         * move in is a move this device just made. */
         model.$positionKey
             .dropFirst()
             .sink { [weak self] _ in
                 guard let self else { return }
                 /* A REPLACEMENT RESTAGES, it does not stage a second bubble.
-                 * Uttt.plyCount going DOWN is the undo half of a change of
-                 * mind, and there is nothing to put in the field for it - the
-                 * move that replaces it arrives a beat later and stages then.
-                 * Without this the input field briefly carries the position
-                 * the player just rejected. */
-                guard Uttt.turn != mark || Uttt.over != .none else { return }
-                self.stage(wire.staging(joining: claiming), andShowIt: false)
+                 * The undo half of a change of mind hands the move back, so
+                 * the kernel says this device can move again and there is
+                 * nothing to put in the field for it - the move that replaces
+                 * it arrives a beat later and stages then. Without this the
+                 * input field briefly carries the position the player just
+                 * rejected. */
+                guard !Uttt.canMove, let wire = UtttWire.resident else { return }
+                self.stage(wire, andShowIt: false)
             }
             .store(in: &bag)
 
@@ -332,18 +316,16 @@ final class MessagesViewController: MSMessagesAppViewController {
     }
 
 #if DEBUG
-    /// A game `plies` moves in, both seats taken, seated as `dev.seat` says.
+    /// A game `plies` moves in, both seats taken, seated as `dev.seat` says:
+    /// "a" is the creator (O), "b" the joiner (X).
     private func showSeeded(_ plies: Int) {
         let seed = UtttDev.seed
-        let a = UtttWire.tagForDev("a", seed: seed)
-        let b = UtttWire.tagForDev("b", seed: seed)
 
         /* WHERE THE GAME ACTUALLY IS, if anybody has moved. Rebuilding the
          * opening here would undo the other seat's move every time the seat
          * flipped, and the board would never leave ply `plies`. */
-        if let live = UtttDev.live, let wire = UtttWire.read(URL(string: live)),
-           wire.seed == seed, wire.load() {
-            seatSeeded(wire)
+        if let live = UtttDev.live, Uttt.read(live), Uttt.seed == seed {
+            showBoard(mark: Uttt.myMark)
             return
         }
 
@@ -357,21 +339,13 @@ final class MessagesViewController: MSMessagesAppViewController {
         for mv in opening.prefix(max(0, plies)) where Uttt.over == .none {
             _ = Uttt.play(mv)
         }
-        seatSeeded(UtttWire(seed: seed, creator: a, joiner: b, code: Uttt.code))
-    }
-
-    /// Open a seeded game from whichever chair `dev.seat` is sitting in.
-    private func seatSeeded(_ wire: UtttWire) {
-        let me = UtttWire.tag(participant: UUID(), seed: wire.seed)
-        let seat = wire.seat(of: me) ?? .creator
-        guard let mark = wire.mark(of: seat) else { return }
-        showBoard(wire, mark: mark, claiming: nil)
+        Uttt.seat(o: UtttDev.identity("a"), x: UtttDev.identity("b"))
+        showBoard(mark: Uttt.myMark)
     }
 #endif
 
-    private func showWatching(_ wire: UtttWire) {
-        let model = UtttModel(seed: wire.seed, you: .none)
-        wire.load()
+    private func showWatching() {
+        let model = UtttModel(seed: Uttt.seed, you: .none)
         model.refresh()
         show(UtttWatchScreen(model: model))
     }
@@ -389,21 +363,5 @@ final class MessagesViewController: MSMessagesAppViewController {
         view.addSubview(vc.view)
         vc.didMove(toParent: self)
         host = vc
-    }
-
-    // MARK: the bubble
-
-    /// The face of the message is `UtttBubble`'s and the kernel's. The only
-    /// thing decided here is who the sentence is about - and in this game the
-    /// only name anybody has is their mark, which is the one name that reads
-    /// the same on both phones.
-    private func layout(for wire: UtttWire) -> MSMessageLayout {
-        if wire.isSealed, Uttt.plyCount == 0 {
-            let l = MSMessageTemplateLayout()
-            l.image = UtttBubble.image()
-            l.caption = UtttBubble.sealedCaption
-            return l
-        }
-        return UtttBubble.layout()
     }
 }

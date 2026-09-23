@@ -28,6 +28,7 @@ _Static_assert(UTI_SAY_UNREADABLE_SUBLINE == UTTT_SAY_UNREADABLE_SUBLINE, "say U
 _Static_assert(UTI_SAY_YOU_ARE_1 == UTTT_SAY_YOU_ARE_1, "say YOU_ARE_1");
 _Static_assert(UTI_SAY_YOU_ARE_2 == UTTT_SAY_YOU_ARE_2, "say YOU_ARE_2");
 _Static_assert(UTI_SAY_YOU_ARE_2 + 1 == UTTT_SAY_COUNT, "every key has a host name");
+_Static_assert(UTI_MSG_TEXT_MAX >= UTM_MAX_TEXT, "the longest link fits the host buffer");
 
 /* The resident game, and the buffers the display list is built into. Sized
  * for a full board with every mark drawn, MEASURED rather than guessed:
@@ -237,6 +238,12 @@ int uti_msg_read(const char *text)
     if (r != UTM_EOK) return r;
     S.m = m;
     return UTM_EOK;
+}
+
+int uti_msg_check(const char *text)
+{
+    UtmMsg m;
+    return utm_text_decode(text, &m);
 }
 
 int uti_msg_text(char *out, int cap) { return utm_text_encode(&S.m, out, cap); }

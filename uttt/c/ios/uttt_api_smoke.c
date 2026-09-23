@@ -264,6 +264,8 @@ int main(void)
         ok(!uti_msg_play(0) && !uti_msg_undo(), "and cannot touch it");
         ok(!strcmp(uti_say(UTI_SAY_WATCH_LINE), "X to play"), "the spectator's line");
 
+        ok(uti_msg_check(join) == 0 && uti_msg_check("?v=1&s=2") < 0, "check reads without adopting");
+        ok(uti_msg_seat() == UTI_SEAT_SPECTATOR && uti_n_plies() == 2, "so cleo is still on the reply");
         ok(uti_msg_read("?v=1&s=2") < 0, "an old-format link is refused");
         ok(uti_msg_seat() == UTI_SEAT_SPECTATOR && uti_n_plies() == 2, "and changes nothing");
         ok(uti_msg_prefer("garbage", reply) > 0 && uti_msg_prefer(reply, "garbage") < 0,

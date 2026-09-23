@@ -46,6 +46,11 @@ public enum UtttDev {
         return s.isEmpty ? nil : s
     }
 
+    /// The identity bytes a device has when `dev.seat` holds `word`. The
+    /// kernel hashes them into a seat tag exactly as it hashes a real
+    /// participant, so a seeded game can name both seats without two devices.
+    public static func identity(_ word: String) -> Data { Data("dev:\(word)".utf8) }
+
     /// Ask who this device is every time a bubble is opened. Off unless the
     /// rig writes the file, and absent from a shipping build entirely.
     public static var picker: Bool {
