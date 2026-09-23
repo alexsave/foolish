@@ -87,4 +87,43 @@ uint32_t uttt_wash_rgba(float alpha);
 #define UTTT_PULSE_ALPHA .5f
 #define UTTT_PULSE_REACH (13.f / 390.f)  /* 13 points on a 390-point board   */
 
+/* THE HEIGHT THE SHEET IS LAID OUT AT, which is not the height Messages
+ * last handed it.
+ *
+ * Messages resizes the extension sparsely: an auto-collapse is ONE new
+ * height, handed about 20 ms before the drawer starts to slide, and after a
+ * manual drag is released the drawer settles on its own spring while the
+ * extension hears a new height only about every 200 ms (516, 334, 289).
+ * Laid out at the handed height, the board shrank in one frame and then in
+ * 50-90 point steps while the drawer moved smoothly beside it (measured with
+ * the ruler, uttt/docs/TESTFLIGHT_PLAN.md "Drawer motion").
+ *
+ * So the layout height is a critically damped spring on the host's own
+ * response (0.338 s, fitted to the Messages drawer in docs/COLLAPSE_MSE.md)
+ * from wherever the layout is toward the last handed height. A small change
+ * - a finger dragging the handle hands one every frame - is followed at
+ * once, because a spring would put the layout 100 points behind the finger;
+ * a large one, or any change while the spring is still running, re-aims the
+ * spring from its current position AND velocity, so there is never a step.
+ * A spring that starts from rest waits UTTT_DRAWER_LEAD_MS, the lead the
+ * height has over the slide. */
+#define UTTT_DRAWER_RESPONSE_MS 338
+#define UTTT_DRAWER_FOLLOW_PT   32.f
+#define UTTT_DRAWER_LEAD_MS     20
+
+typedef struct {
+    float   target;      /* the last height handed                        */
+    float   from;        /* layout minus target at t0                     */
+    float   vel;         /* layout velocity at t0, points per ms          */
+    int32_t t0;          /* when the running spring started               */
+    int32_t moving;      /* 1 while a spring runs                         */
+    int32_t seen;        /* 0 until the first height                      */
+} UtttDrawer;
+
+/* A new height from the host at `now_ms`. */
+void  uttt_drawer_report(UtttDrawer *d, float h, int32_t now_ms);
+/* The layout height at `now_ms`; *moving 0 once it will not change again
+ * until the next report. Pure. */
+float uttt_drawer_at(const UtttDrawer *d, int32_t now_ms, int32_t *moving);
+
 #endif

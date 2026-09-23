@@ -128,6 +128,46 @@ int main(void)
         OK(lo > -.07f && hi < 1.07f, "the drawer's lines run no more than 7% past the board");
     }
 
+    /* THE DRAWER: the layout height never steps, and a finger is followed */
+    {
+        UtttDrawer d = {0};
+        int32_t mv;
+        uttt_drawer_report(&d, 840.f, 0);
+        OK(uttt_drawer_at(&d, 5, &mv) == 840.f && !mv, "the first height is laid out as handed");
+        uttt_drawer_report(&d, 820.f, 16);
+        OK(uttt_drawer_at(&d, 16, &mv) == 820.f && !mv, "a finger's small step is followed at once");
+        /* an auto-collapse: one height, far away */
+        uttt_drawer_report(&d, 289.f, 1000);
+        OK(uttt_drawer_at(&d, 1000, &mv) == 820.f && mv, "a far height does not step the layout");
+        OK(uttt_drawer_at(&d, 1000 + UTTT_DRAWER_LEAD_MS, NULL) == 820.f, "it waits out the lead");
+        float prev = 820.f, step = 0.f;
+        int mono = 1;
+        for (int32_t t = 1000; t <= 2200; t += 4) {
+            float h = uttt_drawer_at(&d, t, NULL);
+            if (h > prev + 1e-3f || h < 289.f - 1e-3f) mono = 0;
+            if (prev - h > step) step = prev - h;
+            prev = h;
+        }
+        printf("  drawer: largest 4 ms step of a 531 pt collapse %.1f pt\n", step);
+        OK(mono, "from rest it runs one way and never overshoots");
+        /* the peak of a critically damped run is x0 w / e: 3.63 pt/ms here */
+        OK(step < 15.f, "and no 4 ms of it moves more than the spring's peak, 15 points");
+        OK(uttt_drawer_at(&d, 1000 + UTTT_DRAWER_LEAD_MS + 3 * UTTT_DRAWER_RESPONSE_MS, &mv) == 289.f && !mv,
+           "three responses in it is at rest on the target");
+        /* a release: sparse heights while it is still moving */
+        UtttDrawer e = {0};
+        uttt_drawer_report(&e, 516.f, 0);
+        uttt_drawer_report(&e, 334.f, 0);
+        float a = uttt_drawer_at(&e, 200, NULL), a0 = uttt_drawer_at(&e, 196, NULL);
+        uttt_drawer_report(&e, 289.f, 200);
+        float b = uttt_drawer_at(&e, 200, NULL), b1 = uttt_drawer_at(&e, 204, NULL);
+        OK(fabsf(a - b) < 1e-3f, "a new height mid-spring keeps the position");
+        OK(fabsf((a - a0) - (b1 - b)) < .5f, "and the velocity");
+        uttt_drawer_report(&e, 300.f, 210);
+        OK(fabsf(uttt_drawer_at(&e, 210, NULL) - uttt_drawer_at(&e, 209, NULL)) < 6.f,
+           "a small height mid-spring re-aims it rather than jumping to it");
+    }
+
     printf("uttt_anim: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

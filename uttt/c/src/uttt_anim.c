@@ -158,3 +158,61 @@ void uttt_motion_at(const UtttMotion *m, int32_t now, UtttFrame *f)
     f->settled = f->landed && (still || now >= m->wash_at + m->wash_ms);
     f->running = !still;
 }
+
+/* ---- the drawer's layout height (uttt_anim.h) ---------------------------- */
+
+/* A critically damped spring, `t` ms after it started `x0` from its target
+ * moving at `v0`: x(t) = (x0 + (v0 + w x0) t) e^(-w t). */
+static void drawer_spring(const UtttDrawer *d, int32_t now_ms, float *x, float *v)
+{
+    double t = (double)(now_ms - d->t0);
+    if (t < 0) { *x = d->from; *v = 0.f; return; }       /* the lead */
+    double w = 2.0 * 3.14159265358979 / UTTT_DRAWER_RESPONSE_MS;
+    double b = d->vel + w * d->from, e = exp(-w * t);
+    *x = (float)((d->from + b * t) * e);
+    *v = (float)((d->vel - w * b * t) * e);
+}
+
+/* The spring is over once it cannot move a hundredth of a point again:
+ * three responses in, (1 + w t) e^(-w t) is below 1e-7. */
+static int drawer_done(const UtttDrawer *d, int32_t now_ms)
+{
+    return !d->moving || now_ms - d->t0 >= 3 * UTTT_DRAWER_RESPONSE_MS;
+}
+
+void uttt_drawer_report(UtttDrawer *d, float h, int32_t now_ms)
+{
+    if (!d->seen) {
+        *d = (UtttDrawer){ .target = h, .seen = 1 };
+        return;
+    }
+    if (drawer_done(d, now_ms)) {
+        if (fabsf(h - d->target) <= UTTT_DRAWER_FOLLOW_PT) {
+            *d = (UtttDrawer){ .target = h, .seen = 1 };  /* a finger: follow */
+            return;
+        }
+        d->from = d->target - h;
+        d->vel = 0.f;
+        d->t0 = now_ms + UTTT_DRAWER_LEAD_MS;
+    } else {
+        float x, v;
+        drawer_spring(d, now_ms, &x, &v);
+        d->from = d->target + x - h;
+        d->vel = v;
+        d->t0 = now_ms;
+    }
+    d->target = h;
+    d->moving = 1;
+}
+
+float uttt_drawer_at(const UtttDrawer *d, int32_t now_ms, int32_t *moving)
+{
+    if (drawer_done(d, now_ms)) {
+        if (moving) *moving = 0;
+        return d->target;
+    }
+    float x, v;
+    drawer_spring(d, now_ms, &x, &v);
+    if (moving) *moving = 1;
+    return d->target + x;
+}

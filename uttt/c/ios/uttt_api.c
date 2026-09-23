@@ -194,6 +194,23 @@ void uti_motion_at(const UtiMotion *m, int32_t now_ms, UtiFrame *f)
     memcpy(f, &fr, sizeof *f);
 }
 
+_Static_assert(sizeof(UtiDrawer) == sizeof(UtttDrawer), "UtiDrawer mirrors UtttDrawer");
+
+void uti_drawer_report(UtiDrawer *d, float h, int32_t now_ms)
+{
+    UtttDrawer k;
+    memcpy(&k, d, sizeof k);
+    uttt_drawer_report(&k, h, now_ms);
+    memcpy(d, &k, sizeof *d);
+}
+
+float uti_drawer_at(const UtiDrawer *d, int32_t now_ms, int32_t *moving)
+{
+    UtttDrawer k;
+    memcpy(&k, d, sizeof k);
+    return uttt_drawer_at(&k, now_ms, moving);
+}
+
 int uti_draw_mark(int mark, int32_t seed)
 {
     dl_fresh();

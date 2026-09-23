@@ -201,6 +201,19 @@ typedef struct {
 UtiMotion uti_motion(int ch);
 void      uti_motion_at(const UtiMotion *m, int32_t now_ms, UtiFrame *f);
 
+/* ---- the drawer: the height the sheet is laid out at ----
+ * Not the height Messages last handed, which arrives in steps: a critically
+ * damped spring on the host's response from the layout toward it, a
+ * finger's small steps followed at once (src/uttt_anim.h UtttDrawer). The
+ * host reports every height it is handed and lays out at uti_drawer_at on
+ * each display frame while *moving is 1. */
+typedef struct {
+    float   target, from, vel;
+    int32_t t0, moving, seen;
+} UtiDrawer;
+void  uti_drawer_report(UtiDrawer *d, float h, int32_t now_ms);
+float uti_drawer_at(const UtiDrawer *d, int32_t now_ms, int32_t *moving);
+
 /* The board with the last move's mark LEFT OUT and no wash - what a host
  * caches while the motion draws the rest over it. */
 int  uti_draw_under(void);
