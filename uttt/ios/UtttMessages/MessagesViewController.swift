@@ -550,6 +550,17 @@ final class MessagesViewController: MSMessagesAppViewController {
             return
         }
 
+        /* MY OWN MOVE DOES NOT REPLAY AT ME (owner, 2026-09-23; foolish's
+         * quiet open, didStartSending + lastSentPayload): the bubble this
+         * device just sent, shown again - Messages re-presenting it, or the
+         * human tapping it - is the settled board. The board already showed
+         * that move being made; only the highlighter's post-settlement
+         * played, at Send. */
+        var motion = motion
+        if motion == .open, let mine = sent, mine.text == wire.text {
+            UtttLog.note("present", "my own bubble, just sent - quiet")
+            motion = .still
+        }
         UtttLog.note("present", "seed \(Uttt.seed) seat \(Uttt.seat) plies \(Uttt.plyCount) door \(Uttt.door)")
         showSeat(motion, conversation)
     }
