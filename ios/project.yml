@@ -28,6 +28,10 @@ settings:
     MARKETING_VERSION: "1.1"
     CURRENT_PROJECT_VERSION: "74"
     SWIFT_VERSION: "5.9"
+    # CMotionRuler, the debug ruler's palette and sizes once in C
+    # (shared/c/motion_ruler): every target, because a target that imports the
+    # Swift module compiling MotionRuler.swift must find the C module it imports.
+    SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../shared/c/motion_ruler
     # Milestone F: signing enabled. Xcode manages the certificate + provisioning
     # profiles automatically against the registered App IDs (cards.foolish.app,
     # cards.foolish.app.MessagesExtension) and App Group (group.cards.foolish).
@@ -396,9 +400,6 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.kit
-        # CMotionRuler: the debug ruler's palette, once, in C
-        # (shared/swift/MotionRuler.swift reads it).
-        SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../shared/c/motion_ruler
         DEFINES_MODULE: "YES"
         # Without this the framework ships with no Info.plist and the app's
         # embed phase refuses it ("did not contain an Info.plist"). The app

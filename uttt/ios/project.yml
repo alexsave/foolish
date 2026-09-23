@@ -33,6 +33,10 @@ settings:
     # targets) and this "1" is only what a local build says.
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
+    # CMotionRuler, the debug ruler's palette and sizes once in C
+    # (shared/c/motion_ruler): every target, because a target that imports the
+    # Swift module compiling MotionRuler.swift must find the C module it imports.
+    SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../../shared/c/motion_ruler
     # A WARNING THAT SHIPS IS A DEFECT. Swift warns when an optional is
     # interpolated into a string, and that warning scrolled past in a build
     # log while the characters `Optional("X")` went out in a caption to
@@ -177,8 +181,6 @@ targets:
         # The clang module map that lets Swift `import CUttt`, copied into
         # BUILT_PRODUCTS_DIR/include by the xcframework.
         HEADER_SEARCH_PATHS: $(inherited) $(BUILT_PRODUCTS_DIR)/include
-        # CMotionRuler: the ruler's palette, once, in C (MotionRuler.swift).
-        SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../../shared/c/motion_ruler
         TARGETED_DEVICE_FAMILY: "1"
 
 schemes:
