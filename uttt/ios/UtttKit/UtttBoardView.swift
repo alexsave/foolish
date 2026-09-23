@@ -313,13 +313,16 @@ public struct UtttLiveBoard: View {
                     .accessibilityHidden(true)
 
                 UtttSquares(side: side, positionKey: positionKey, onTap: onTap)
+#if DEBUG
                 if UtttRuler.on { Self.rulerMarks(f, side: side) }
+#endif
             }
         }
         .aspectRatio(1, contentMode: .fit)
         .onReceive(NotificationCenter.default.publisher(for: UtttBoard.rendered)) { _ in landed &+= 1 }
     }
 
+#if DEBUG
     /// The ruler's two marks inside the board (UtttRuler): pink on the
     /// highlighter's centre, violet on the centre of the pen stroke drawn so
     /// far. Positioned in the same board space the Canvas draws in.
@@ -342,6 +345,7 @@ public struct UtttLiveBoard: View {
                 .allowsHitTesting(false)
         }
     }
+#endif
 
     private static func rect(_ r: (Float, Float, Float, Float), _ side: CGFloat) -> CGRect {
         CGRect(x: CGFloat(r.0) * side, y: CGFloat(r.1) * side,
