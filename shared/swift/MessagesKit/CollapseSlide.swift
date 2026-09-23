@@ -422,7 +422,8 @@ private struct CollapseRiderHost<Content: View>: UIViewControllerRepresentable {
     }
 
     private func root(_ context: Context) -> AnyView {
-        AnyView(content.environment(\.self, context.environment))
+        AnyView(content.environment(\.self, context.environment)
+            .transaction { $0.animation = nil })
     }
 }
 
