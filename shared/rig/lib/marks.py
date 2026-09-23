@@ -98,7 +98,10 @@ def frame_marks(full, strip_px, scale):
            "green": bar_y(ink_mask(h, s, v, "green"), W, scale)}
     out["clock"] = read_clock(full, out["red"], scale * 2)
     side = SIDE_PT * scale
-    lo, hi = 0.35 * side * side, 1.6 * side * side
+    # UP TO 1.5x LARGER: a square on a rider is scaled with it, and a board
+    # that scales down through an auto-collapse starts ~1.4x its compact size
+    # (read as missing, the first frames of every slide counted as misses).
+    lo, hi = 0.35 * side * side, 2.4 * side * side
     found = {}
     for ink in SQUARE_INKS:
         m = ink_mask(h, s, v, ink)
@@ -113,7 +116,7 @@ def frame_marks(full, strip_px, scale):
             hh, ww = ys.stop - ys.start, xs.stop - xs.start
             if not (lo <= areas[i] <= hi):
                 continue
-            if max(hh, ww) > 1.5 * side or min(hh, ww) < 0.5 * side:
+            if max(hh, ww) > 1.8 * side or min(hh, ww) < 0.5 * side:
                 continue
             cy, cx = ndimage.center_of_mass(m[sl])
             found.setdefault(ink, []).append(((xs.start + cx) / scale, (ys.start + cy) / scale))

@@ -41,13 +41,18 @@ import UIKit
 /// positive), its scale about its centre, and its opacity (nil: untouched).
 public struct CollapseRidePose {
     public var dy: CGFloat
+    /// Sideways, for an element whose layout moves it across as the drawer
+    /// changes (a label centred over a mark that grows).
+    public var dx: CGFloat
     public var scale: CGFloat
     public var alpha: CGFloat?
     /// The point the scale is about, in the view's own bounds; nil for its
     /// centre.
     public var pivot: CGPoint?
-    public init(dy: CGFloat, scale: CGFloat = 1, alpha: CGFloat? = nil, pivot: CGPoint? = nil) {
+    public init(dy: CGFloat, dx: CGFloat = 0, scale: CGFloat = 1, alpha: CGFloat? = nil,
+                pivot: CGPoint? = nil) {
         self.dy = dy
+        self.dx = dx
         self.scale = scale
         self.alpha = alpha
         self.pivot = pivot
@@ -322,7 +327,7 @@ public final class CollapseSlide: ObservableObject {
             let pv = p.pivot ?? CGPoint(x: b.midX, y: b.midY)
             let cx = pv.x - (b.minX + ap.x * b.width), cy = pv.y - (b.minY + ap.y * b.height)
             return NSValue(caTransform3D: CATransform3DScale(
-                CATransform3DMakeTranslation(-(p.scale - 1) * cx,
+                CATransform3DMakeTranslation(p.dx - (p.scale - 1) * cx,
                                              p.dy - (p.scale - 1) * cy, 0),
                 p.scale, p.scale, 1))
         }

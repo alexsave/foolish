@@ -105,14 +105,13 @@ public struct UtttGameScreen: View {
                                    y: CGFloat(L.board.1) + side / 2))
             }
             .overlay(alignment: .topLeading) {
-                indicator(icon: icon, lead: CGFloat(L.icon_lead))
+                /* THE HEADER HOLDS THE TOP, and its two parts ride apart
+                 * (indicator), since the mark is a size of the drawer's
+                 * height and the label over it is not. */
+                indicator(icon: icon, lead: CGFloat(L.icon_lead), at: at, L: L)
                     .frame(width: max(CGFloat(L.col), icon + 2), alignment: .leading)
                     .padding(.leading, hpad)
                     .padding(.top, vpad + CGFloat(L.icon_top))
-                    /* THE HEADER HOLDS THE TOP. */
-                    .collapseRide { s in
-                        CollapseRidePose(dy: CGFloat(at(s).icon_top - L.icon_top))
-                    }
             }
             /* THE WORDS TWICE, in the column beside the ink and in the
              * band, each shown only where it fits (uttt_sheet) - so a drag
@@ -223,7 +222,15 @@ public struct UtttGameScreen: View {
     /// THE SIDE INDICATOR IS A DRAWN MARK, not a glyph - the same X that is
     /// about to land on the board, out of the same pen. Setting it in a font
     /// made it the only thing in the frame that did not come off the nib.
-    private func indicator(icon: CGFloat, lead: CGFloat) -> some View {
+    ///
+    /// THROUGH AN AUTO-COLLAPSE THE LABEL AND THE MARK RIDE APART
+    /// (CollapseSlide): the mark is 34 points on the strip and 46 open
+    /// (`icon`), so riding the pair as one layer made the mark jump to its
+    /// compact size in the slide's first frame (7pt, filmed). The mark scales
+    /// about its top left and moves with the header; the label, centred over
+    /// the mark, moves across by half its change of size.
+    private func indicator(icon: CGFloat, lead: CGFloat,
+                           at: @escaping (CGFloat) -> UtiSheet, L: UtiSheet) -> some View {
         VStack(spacing: 0) {
             // Two lines, set on a 9.5-point body - line-height 1, so they read
             // as one two-line label rather than two labels.
@@ -231,9 +238,21 @@ public struct UtttGameScreen: View {
                 line(Uttt.say(.youAre1))
                 line(Uttt.say(.youAre2))
             }
+            .collapseRide { s in
+                let A = at(s)
+                return CollapseRidePose(dy: CGFloat(A.icon_top - L.icon_top),
+                                        dx: CGFloat(A.icon - L.icon) / 2)
+            }
             UtttMarkIcon(mark: model.you, seed: model.seed &+ 4)
                 .frame(width: icon, height: icon)
                 .motionSquare(.orange, on: UtttRuler.on)
+                .collapseRide { s in
+                    let A = at(s)
+                    return CollapseRidePose(
+                        dy: CGFloat(A.icon_top + A.icon_lead - L.icon_top - L.icon_lead),
+                        scale: L.icon > 0 ? CGFloat(A.icon / L.icon) : 1,
+                        pivot: .zero)
+                }
                 .padding(.top, lead)
         }
         .accessibilityElement(children: .ignore)
