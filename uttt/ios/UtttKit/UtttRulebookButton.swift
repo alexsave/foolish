@@ -29,9 +29,8 @@ public struct UtttRulebookButton: View {
 
     public var body: some View {
         Button(action: action) {
-            Canvas { ctx, size in
-                UtttBoard.fill(Uttt.rulebook(w: size.width, h: size.height),
-                               into: ctx, side: min(size.width, size.height))
+            UtttInkImage(key: "rulebook", square: true) { size in
+                Uttt.rulebook(w: size.width, h: size.height)
             }
             .frame(width: side, height: side)
             .contentShape(Rectangle())

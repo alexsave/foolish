@@ -241,9 +241,8 @@ public struct UtttDoorButton: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: height)
                 .background(
-                    Canvas { ctx, size in
-                        UtttBoard.fill(Uttt.door(w: size.width, h: size.height),
-                                       into: ctx, size: size)
+                    UtttInkImage(key: "door", square: false) { size in
+                        Uttt.door(w: size.width, h: size.height)
                     }
                 )
                 .contentShape(Rectangle())

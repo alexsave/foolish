@@ -247,11 +247,71 @@ public struct UtttMarkIcon: View {
     public let seed: Int32
     public init(mark: Uttt.Mark, seed: Int32) { self.mark = mark; self.seed = seed }
     public var body: some View {
-        Canvas { ctx, size in
-            UtttBoard.fill(Uttt.mark(mark, seed: seed), into: ctx,
-                           side: min(size.width, size.height))
+        UtttInkImage(key: "mark \(mark.rawValue) \(seed)", square: true) { _ in
+            Uttt.mark(mark, seed: seed)
         }
         .aspectRatio(1, contentMode: .fit)
+    }
+}
+
+/// A DRAWN THING THAT DOES NOT MOVE - the "you are" mark, the rulebook door,
+/// the Again door - painted ONCE per size by Core Graphics into a bitmap and
+/// shown as an image, a texture the compositor keeps.
+///
+/// They were SwiftUI Canvases. A Canvas is drawn by RenderBox in this
+/// process, which on the simulator allocates its path buffers as Metal
+/// shared memory it never gives back: 689 untagged 64K regions, 10.8 MB, on
+/// an idle compact drawer that an empty extension does not have
+/// (TESTFLIGHT_PLAN.md 12). An image of the same polygons costs its pixels.
+struct UtttInkImage: View {
+    let key: String
+    /// Fill the unit square scaled to the smaller side (true) or stretched to
+    /// the whole size (false, the Again door's bar).
+    let square: Bool
+    let polys: (CGSize) -> [Uttt.Poly]
+
+    var body: some View {
+        GeometryReader { g in
+            if let img = Self.image(key, g.size, square, polys) {
+                Image(decorative: img, scale: UIScreen.main.scale)
+                    .resizable()
+                    .frame(width: g.size.width, height: g.size.height)
+            }
+        }
+    }
+
+    private static var cache: [String: CGImage] = [:]
+
+    static func image(_ key: String, _ size: CGSize, _ square: Bool,
+                      _ polys: (CGSize) -> [Uttt.Poly]) -> CGImage? {
+        guard size.width >= 1, size.height >= 1 else { return nil }
+        let k = "\(key)|\(Int(size.width * 4))x\(Int(size.height * 4))"
+        if let img = cache[k] { return img }
+        let scale = UIScreen.main.scale
+        let pw = Int((size.width * scale).rounded(.up)), ph = Int((size.height * scale).rounded(.up))
+        guard let cg = CGContext(data: nil, width: pw, height: ph, bitsPerComponent: 8, bytesPerRow: 0,
+                                 space: CGColorSpaceCreateDeviceRGB(),
+                                 bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+                                     | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return nil }
+        cg.translateBy(x: 0, y: CGFloat(ph))
+        cg.scaleBy(x: scale, y: -scale)
+        let sx = square ? min(size.width, size.height) : size.width
+        let sy = square ? min(size.width, size.height) : size.height
+        for p in polys(size) {
+            guard let head = p.points.first else { continue }
+            cg.setFillColor(p.color)
+            cg.beginPath()
+            cg.move(to: CGPoint(x: head.x * sx, y: head.y * sy))
+            for q in p.points.dropFirst() { cg.addLine(to: CGPoint(x: q.x * sx, y: q.y * sy)) }
+            cg.closePath()
+            cg.fillPath()
+        }
+        guard let img = cg.makeImage() else { return nil }
+        /* a drawer drag hands a new size every frame: keep the last few */
+        if cache.count > 24 { cache.removeAll() }
+        cache[k] = img
+        return img
     }
 }
 
