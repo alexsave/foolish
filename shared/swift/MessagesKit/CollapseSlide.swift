@@ -130,9 +130,12 @@ public final class CollapseSlide: ObservableObject {
          * a picture at least 100pt wide, in the rider's coordinates. */
         func walk(_ c: CALayer, _ depth: Int) {
             for s in c.sublayers ?? [] {
-                if s.bounds.width >= 100, s.contents != nil || s.sublayers == nil {
+                if s.bounds.width >= 100 {
                     let f = s.convert(s.bounds, to: l)
-                    out += String(format: " | d%d %@ keys=%@", depth, NSCoder.string(for: f),
+                    out += String(format: " | d%d %@ %@ fr=%@ tr=%.1f/%.3f c=%d keys=%@", depth,
+                                  String(describing: type(of: s)), NSCoder.string(for: f),
+                                  NSCoder.string(for: s.frame), s.transform.m42, s.transform.m22,
+                                  s.contents != nil ? 1 : 0,
                                   (s.animationKeys() ?? []).joined(separator: ","))
                 }
                 if depth < 8 { walk(s, depth + 1) }
