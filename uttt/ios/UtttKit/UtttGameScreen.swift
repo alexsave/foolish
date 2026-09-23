@@ -199,10 +199,8 @@ public struct UtttGameScreen: View {
     // MARK: the pieces
 
     private var board: some View {
-        UtttBoard(active: model.active, last: model.last,
-                  positionKey: model.positionKey,
-                  animating: model.animating,
-                  onTap: { model.tap(at: $0) })
+        UtttLiveBoard(clock: model.clock, positionKey: model.positionKey,
+                      onTap: { model.tap(at: $0) })
     }
 
     /// THE SIDE INDICATOR IS A DRAWN MARK, not a glyph - the same X that is

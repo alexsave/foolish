@@ -98,7 +98,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 #if DEBUG
         seatChosen = false
 #endif
-        present(conversation)
+        present(conversation, motion: .open)
         /* A DEADLINE ON THE WAIT BELOW, so a host that never sends one of the
          * two signals cannot leave the drawer blank or the invitation unstaged
          * - it is logged, and everything waiting runs anyway. */
@@ -242,7 +242,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         /* A new bubble is a new question: whose hands is it in. */
         seatChosen = false
 #endif
-        present(conversation)
+        present(conversation, motion: .open)
     }
 
     /// A move from the other player, which does NOT become the selection.
@@ -250,7 +250,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         super.didReceive(message, conversation: conversation)
         UtttLog.note("receive")
         arrived = UtttWire(url: message.url)
-        present(conversation)
+        present(conversation, motion: .arrival)
     }
 
     /// THE HUMAN TAPPED THE ARROW: the draft is in the thread now.
@@ -366,7 +366,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     // MARK: routing
 
-    private func present(_ conversation: MSConversation) {
+    private func present(_ conversation: MSConversation, motion: Uttt.Channel = .still) {
         bag.removeAll()
 
 #if DEBUG
@@ -379,7 +379,7 @@ final class MessagesViewController: MSMessagesAppViewController {
                 guard let self else { return }
                 UtttDev.setSeat(word)
                 self.seatChosen = true
-                DispatchQueue.main.async { self.present(conversation) }
+                DispatchQueue.main.async { self.present(conversation, motion: motion) }
             })
             return
         }
@@ -389,7 +389,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         identify(conversation)
         if conversation.selectedMessage == nil, staged == nil, sent == nil,
            reverted == nil, let plies = UtttDev.game {
-            showSeeded(plies, conversation)
+            showSeeded(plies, motion, conversation)
             return
         }
 #endif
@@ -424,7 +424,7 @@ final class MessagesViewController: MSMessagesAppViewController {
             /* OPENING SOMEBODY'S INVITATION IS SITTING DOWN AS X, and the
              * first move is yours: the join and the first move are one
              * message, staged when the move is made. */
-            showBoard(mark: Uttt.myMark, door: door, conversation)
+            showBoard(mark: Uttt.myMark, door: door, motion: motion, conversation)
 
         case .spectator:
             let model = UtttModel(seed: Uttt.seed, you: .none)
@@ -647,9 +647,13 @@ final class MessagesViewController: MSMessagesAppViewController {
     private weak var live: UtttModel?
 
     /// The board for the message the kernel is holding, as `mark`.
-    private func showBoard(mark: Uttt.Mark, door: Uttt.Door, _ conversation: MSConversation) {
+    private func showBoard(mark: Uttt.Mark, door: Uttt.Door, motion: Uttt.Channel = .still,
+                           _ conversation: MSConversation) {
         let model = UtttModel(seed: Uttt.seed, you: mark)
-        model.refresh()
+        /* THE LAST MOVE ARRIVES through the door it came in by (docs/UI.html
+         * "How it moves"): an opened bubble replays it, an arrival draws it
+         * in, and a send or a cancel shows the board at rest. */
+        model.show(motion)
         /* A draft on screen is a draft the player may change their mind about. */
         if let staged, Uttt.messageText == staged.text { model.setPending(true) }
         live = model
@@ -682,12 +686,12 @@ final class MessagesViewController: MSMessagesAppViewController {
 #if DEBUG
     /// A game `plies` moves in, both seats taken, seated as `dev.seat` says:
     /// "a" is the creator (O), "b" the joiner (X).
-    private func showSeeded(_ plies: Int, _ conversation: MSConversation) {
+    private func showSeeded(_ plies: Int, _ motion: Uttt.Channel, _ conversation: MSConversation) {
         let seed = UtttDev.seed
 
         /* WHERE THE GAME ACTUALLY IS, if anybody has moved. */
         if let live = UtttDev.live, Uttt.read(live), Uttt.seed == seed {
-            showBoard(mark: Uttt.myMark, door: Uttt.door, conversation)
+            showBoard(mark: Uttt.myMark, door: Uttt.door, motion: motion, conversation)
             return
         }
 
@@ -700,7 +704,7 @@ final class MessagesViewController: MSMessagesAppViewController {
             _ = Uttt.play(mv)
         }
         Uttt.seat(o: UtttDev.identity("a"), x: UtttDev.identity("b"))
-        showBoard(mark: Uttt.myMark, door: Uttt.door, conversation)
+        showBoard(mark: Uttt.myMark, door: Uttt.door, motion: motion, conversation)
     }
 #endif
 

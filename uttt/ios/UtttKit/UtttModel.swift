@@ -7,7 +7,9 @@ import SwiftUI
 @MainActor
 public final class UtttModel: ObservableObject {
     @Published public private(set) var positionKey = 0
-    @Published public private(set) var animating: (move: Int, t: Double)?
+    /// The one motion loop: what the board looks like this frame is the
+    /// kernel's answer to (plan, clock), and nothing here times anything.
+    public let clock = UtttMotionClock()
     @Published public private(set) var busy = false
 
     public private(set) var seed: Int32
@@ -62,7 +64,17 @@ public final class UtttModel: ObservableObject {
 
     /// The harness loads a position behind the model's back; this is how it
     /// tells the screen to look again.
-    public func refresh() { positionKey &+= 1 }
+    public func refresh() {
+        positionKey &+= 1
+        clock.run(.still)
+    }
+
+    /// The last move arriving through `ch` - a bubble opened (C or D) or a
+    /// move that landed while this board was up (E).
+    public func show(_ ch: Uttt.Channel) {
+        positionKey &+= 1
+        clock.run(ch)
+    }
 
     /// A MOVE THAT IS STAGED IS STILL A DRAFT. It sits in the input field
     /// with an X on it until a human taps the arrow, so until then the player
@@ -102,13 +114,13 @@ public final class UtttModel: ObservableObject {
     private func replace(with mv: Int) async {
         busy = true
         Uttt.undoMine()
-        positionKey &+= 1                 // the wash is back where it was
+        refresh()                         // the wash is back where it was
         try? await Task.sleep(nanoseconds: 170_000_000)
         guard Uttt.legal.contains(UInt8(mv)) else {
             // Not a legal square in the position we just came back to. Put
             // the move we took back where it was and pretend nothing happened.
             Uttt.playAsMe(lastPlayed)
-            positionKey &+= 1
+            refresh()
             busy = false
             return
         }
@@ -137,14 +149,14 @@ public final class UtttModel: ObservableObject {
         busy = false
     }
 
-    /// The same draw, stopped early - which is why there is no separate
-    /// animation model anywhere in this target.
+    /// THE MOVE MOVES, and the host hears about it only when the ink is
+    /// down: it stages then, which is what collapses the drawer, and UI.html
+    /// says the drawer moves once the ink lands, never during. How long that
+    /// is, is the kernel's plan.
     private func draw(_ mv: Int) async {
-        let frames = 26
-        for f in 0...frames {
-            animating = (mv, Double(f) / Double(frames))
-            try? await Task.sleep(nanoseconds: 16_000_000)
+        _ = mv
+        await withCheckedContinuation { (k: CheckedContinuation<Void, Never>) in
+            clock.run(.stage) { k.resume() }
         }
-        animating = nil
     }
 }

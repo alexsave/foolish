@@ -308,10 +308,31 @@ public enum Uttt {
         fill(boardPolys(active: active, last: last), into: cg, side: side)
     }
 
-    /// Only the stroke that is moving. This is what an animation redraws.
-    public static func stroke(move: Int, t: Float) -> [Poly] {
-        harvest(uti_draw_one(Int32(move), t))
+    // MARK: motion
+
+    /// Which door a move came through - docs/UI.html's channel grid.
+    public enum Channel: Int32 {
+        case still = 0, stage = 1, replay = 2, theirs = 3, arrival = 4
+        /// A bubble opened: my own replays quietly, theirs pulses. The kernel
+        /// decides which, from the seat.
+        case open = 5
     }
+
+    /// The kernel's plan for the resident game's last move.
+    public static func motion(_ ch: Channel) -> UtiMotion { uti_motion(ch.rawValue) }
+
+    /// The board `ms` milliseconds into `plan`. Pure.
+    public static func frame(_ plan: UtiMotion, at ms: Int32) -> UtiFrame {
+        var p = plan, f = UtiFrame()
+        uti_motion_at(&p, ms, &f)
+        return f
+    }
+
+    /// Every stroke but the last move's mark, and no wash: what is cached.
+    public static func underPolys() -> BoardPolys { harvestBoard(uti_draw_under()) }
+
+    /// The last move's heavy mark, drawn to `t`: what moves over the cache.
+    public static func lastStroke(t: Float) -> [Poly] { harvest(uti_draw_last(t)) }
 
     /// One mark, for the "you are" indicator.
     public static func mark(_ m: Mark, seed: Int32) -> [Poly] {

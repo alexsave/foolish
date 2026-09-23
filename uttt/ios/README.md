@@ -32,7 +32,7 @@ renderer, "the bubble IS the game" becomes "the bubble is a picture of it".
 
 ## Two build failures that read as something else
 
-**"cannot find uti_draw_one in scope"** is a stale xcframework, not a missing
+**"cannot find uti_draw_last in scope"** is a stale xcframework, not a missing
 symbol. The header in DerivedData moved on and the precompiled module did not.
 `rm -rf ~/Library/Developer/Xcode/DerivedData/Uttt-*` and rebuild `ios-lib`.
 

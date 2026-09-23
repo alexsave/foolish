@@ -197,10 +197,6 @@ int  uti_draw_under(void);
 /* The last move's heavy mark alone, drawn to `t`. */
 int  uti_draw_last(float t);
 
-/* JUST the mark being drawn, so an animation does not rebuild the board.
- * 14,000 polygons is fine once and not fine sixty times a second: the caller
- * caches uti_draw()'s output as an image and composites this on top. */
-int  uti_draw_one(int mv, float t);
 
 /* One mark on its own, for the side indicator. */
 int  uti_draw_mark(int mark, int32_t seed);

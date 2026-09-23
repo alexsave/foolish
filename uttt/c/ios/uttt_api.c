@@ -189,16 +189,6 @@ void uti_motion_at(const UtiMotion *m, int32_t now_ms, UtiFrame *f)
     memcpy(f, &fr, sizeof *f);
 }
 
-int uti_draw_one(int mv, float t)
-{
-    if (mv < 0 || mv > 80) return 0;
-    dl_fresh();
-    uint8_t at = uttt_cell(&S.m.game, mv);
-    uttt_draw_cell(&S.dl, at ? at : S.m.game.turn,
-                   mv, S.m.seed, t);
-    return publish();
-}
-
 int uti_draw_mark(int mark, int32_t seed)
 {
     dl_fresh();

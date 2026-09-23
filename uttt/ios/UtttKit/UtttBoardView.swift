@@ -1,3 +1,4 @@
+import CUttt
 import CoreGraphics
 import SwiftUI
 
@@ -10,15 +11,13 @@ import SwiftUI
 public struct UtttBoard: View {
     public let active: Int          // block 0..8, 9 anywhere, -1 none
     public let last: Int            // block*9+cell, or -1
-    public let animating: (move: Int, t: Double)?
     public let positionKey: Int     // changes when the board changes
     public let onTap: ((CGPoint) -> Void)?   // in the board's own 0..1 space
 
     public init(active: Int, last: Int, positionKey: Int,
-                animating: (move: Int, t: Double)? = nil,
                 onTap: ((CGPoint) -> Void)? = nil) {
         self.active = active; self.last = last
-        self.positionKey = positionKey; self.animating = animating
+        self.positionKey = positionKey
         self.onTap = onTap
     }
 
@@ -44,17 +43,12 @@ public struct UtttBoard: View {
                 Canvas { ctx, _ in
                     _ = landed
                     if let img = Self.cached(key: positionKey, active: active,
-                                             last: animating == nil ? last : -1,
+                                             last: last,
                                              side: side) {
                         ctx.draw(Image(decorative: img, scale: 1),
                                  in: CGRect(x: 0, y: 0,
                                             width: side + 2 * pad,
                                             height: side + 2 * pad))
-                    }
-                    if let a = animating {
-                        ctx.translateBy(x: pad, y: pad)
-                        Self.fill(Uttt.stroke(move: a.move, t: Float(a.t)),
-                                  into: ctx, side: side)
                     }
                 }
                 .frame(width: side + 2 * pad, height: side + 2 * pad)
@@ -126,10 +120,27 @@ public struct UtttBoard: View {
     /// image in late would flash the move out and back in.
     static func cached(key: Int, active: Int, last: Int, side: CGFloat) -> CGImage? {
         _ = key                     // SwiftUI's reason to redraw, not the cache's
-        let st = stamp(active: active, last: last)
+        return cached(stamp: stamp(active: active, last: last), side: side) {
+            Uttt.boardPolys(active: active, last: last)
+        }
+    }
+
+    /// THE BOARD UNDER THE MOTION: every stroke but the last move's mark and
+    /// no wash, so the ink, the travelling highlighter and the ring can be
+    /// drawn over it every frame without touching fourteen thousand polygons.
+    static func cachedUnder(side: CGFloat) -> CGImage? {
+        cached(stamp: stamp(active: -2, last: -2), side: side) { Uttt.underPolys() }
+    }
+
+    /// True when the image the live board needs is the one in the cache - the
+    /// motion clock does not start until the board it moves over is visible.
+    static var underReady: Bool { cacheStamp == stamp(active: -2, last: -2) && cacheImage != nil }
+
+    private static func cached(stamp st: String, side: CGFloat,
+                               polys make: () -> Uttt.BoardPolys) -> CGImage? {
         if st == cacheStamp, side == cacheSide, let img = cacheImage { return img }
         let scale = UIScreen.main.scale
-        let polys = Uttt.boardPolys(active: active, last: last)
+        let polys = make()
         UtttLog.note("raster", "side \(Int(side)) plies \(Uttt.plyCount) polys \(polys.first.count)")
         guard cacheImage == nil else {
             let img = render(polys, side: side, scale: scale)
@@ -191,5 +202,82 @@ public struct UtttMarkIcon: View {
                            side: min(size.width, size.height))
         }
         .aspectRatio(1, contentMode: .fit)
+    }
+}
+
+/// The board the player plays on: the cached board under the motion, and
+/// over it whatever the kernel's frame says - the travelling highlighter,
+/// the destination ring and the last move's ink. Draws; decides nothing.
+public struct UtttLiveBoard: View {
+    @ObservedObject var clock: UtttMotionClock
+    public let positionKey: Int
+    public let onTap: ((CGPoint) -> Void)?
+
+    public init(clock: UtttMotionClock, positionKey: Int,
+                onTap: ((CGPoint) -> Void)? = nil) {
+        self.clock = clock; self.positionKey = positionKey; self.onTap = onTap
+    }
+
+    @State private var landed = 0
+
+    public var body: some View {
+        GeometryReader { geo in
+            let side = min(geo.size.width, geo.size.height)
+            let pad  = side * UtttBoard.bleed
+            let f = clock.frame
+            ZStack(alignment: .topLeading) {
+                Canvas { ctx, _ in
+                    _ = landed; _ = positionKey
+                    ctx.translateBy(x: pad, y: pad)
+                    /* the highlighter first: it is under the ink */
+                    if f.wash.2 > 0 {
+                        ctx.fill(Path(Self.rect(f.wash, side)), with: .color(Self.color(f.wash_rgba)))
+                    }
+                    /* the ring stands out from the block's edge, under the grid */
+                    if f.pulse.2 > 0, f.pulse_rgba & 0xff > 0 {
+                        let inner = Self.rect(f.pulse, side)
+                        let outer = inner.insetBy(dx: -CGFloat(f.pulse_spread) * side,
+                                                  dy: -CGFloat(f.pulse_spread) * side)
+                        var ring = Path(outer)
+                        ring.addRect(inner)
+                        ctx.fill(ring, with: .color(Self.color(f.pulse_rgba)),
+                                 style: FillStyle(eoFill: true))
+                    }
+                    if let img = UtttBoard.cachedUnder(side: side) {
+                        ctx.draw(Image(decorative: img, scale: 1),
+                                 in: CGRect(x: -pad, y: -pad,
+                                            width: side + 2 * pad, height: side + 2 * pad))
+                        /* the last mark only once the board it lands on is up */
+                        UtttBoard.fill(Uttt.lastStroke(t: f.mark_t), into: ctx, side: side)
+                    }
+                }
+                .frame(width: side + 2 * pad, height: side + 2 * pad)
+                .offset(x: -pad, y: -pad)
+                .allowsHitTesting(false)
+
+                Color.clear.contentShape(Rectangle())
+                    .frame(width: side, height: side)
+                    .onTapGesture { p in
+                        guard let onTap else { return }
+                        let u = p.x / side, v = p.y / side
+                        guard u >= 0, u <= 1, v >= 0, v <= 1 else { return }
+                        onTap(CGPoint(x: u, y: v))
+                    }
+            }
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .onReceive(NotificationCenter.default.publisher(for: UtttBoard.rendered)) { _ in landed &+= 1 }
+    }
+
+    private static func rect(_ r: (Float, Float, Float, Float), _ side: CGFloat) -> CGRect {
+        CGRect(x: CGFloat(r.0) * side, y: CGFloat(r.1) * side,
+               width: CGFloat(r.2) * side, height: CGFloat(r.3) * side)
+    }
+
+    private static func color(_ c: UInt32) -> Color {
+        Color(.sRGB, red: Double((c >> 24) & 0xff) / 255,
+              green: Double((c >> 16) & 0xff) / 255,
+              blue: Double((c >> 8) & 0xff) / 255,
+              opacity: Double(c & 0xff) / 255)
     }
 }
