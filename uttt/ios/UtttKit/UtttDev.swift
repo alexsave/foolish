@@ -84,7 +84,20 @@ public enum UtttDev {
               let raw = try? String(contentsOf: dir.appendingPathComponent(gameFile),
                                     encoding: .utf8)
         else { return nil }
-        return Int(raw.trimmingCharacters(in: .whitespacesAndNewlines))
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.contains(",") ? -1 : Int(t)
+    }
+
+    /// `rig.sh devgame 47,20,26,...` - an exact game as block*9+index moves,
+    /// for the end states (a win, a draw) the fixed opening never reaches.
+    public static var moves: [Int]? {
+        guard let u = url(gameFile),
+              let raw = try? String(contentsOf: u, encoding: .utf8),
+              raw.contains(",")
+        else { return nil }
+        return raw.split(separator: ",").compactMap {
+            Int($0.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
     }
 
     /// THE SEEDED GAME AS IT NOW STANDS, written back after every move.

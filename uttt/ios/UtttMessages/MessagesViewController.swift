@@ -734,7 +734,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         Uttt.newGame(seed: seed)
         let opening = [34, 67, 44, 80, 76, 43, 69, 62, 79, 63, 4, 40, 39, 31,
                        37, 16, 70, 71, 72, 3, 29, 19, 17, 73, 14, 50, 45, 6]
-        for mv in opening.prefix(max(0, plies)) where Uttt.over == .none {
+        for mv in UtttDev.moves ?? Array(opening.prefix(max(0, plies))) where Uttt.over == .none {
             _ = Uttt.play(mv)
         }
         Uttt.seat(o: UtttDev.identity("a"), x: UtttDev.identity("b"))
