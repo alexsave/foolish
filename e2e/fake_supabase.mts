@@ -760,6 +760,34 @@ const SCENARIOS: Record<string, () => Scenario> = {
     }),
 
     /** A plain two-hander against a bot, for playing by hand. */
+    /**
+     * EIGHT SEATS AND FIVE BOTS, which is where the owner found the goods bug:
+     * "I only ever see one checkmark per bout." Two bots was never enough to
+     * show it - they said good three seconds apart and both checks arrived. The
+     * board is wide open (ME leads, seat 1 defends) so seats 2..7 are all
+     * eligible throw-in attackers, and cordite says good over an uncovered
+     * table, so several goods land in quick succession.
+     */
+    eight_goods: () => ({
+        gameId: 'eight8',
+        users: ['ME', 'ANNA'],
+        board: fixture().title('Eight seats, many goods').seats([
+            seat('ME'), seat('ANNA'),
+            { id: 'bot-cordite-1', name: '\u{1F916}C1', brain: 'cordite' },
+            { id: 'bot-cordite-2', name: '\u{1F916}C2', brain: 'cordite' },
+            { id: 'bot-cordite-3', name: '\u{1F916}C3', brain: 'cordite' },
+            { id: 'bot-cordite-4', name: '\u{1F916}C4', brain: 'cordite' },
+            { id: 'bot-cordite-5', name: '\u{1F916}C5', brain: 'cordite' },
+            { id: 'bot-cordite-6', name: '\u{1F916}C6', brain: 'cordite' },
+        ])
+            .status(PLAYING).deterministic().trump('Kc').deck('6h 6s 6d 6c')
+            .hand(0, '7h 8c 9c Ad').hand(1, 'Th Jh Qh Ah')
+            .hand(2, '8d 9d Td Kd').hand(3, '8s 9s Ts Ks')
+            .hand(4, '2d 3d 4d 5d').hand(5, '2s 3s 4s 5s')
+            .hand(6, '2c 3c 4c 5c').hand(7, '2h 3h 4h 5h')
+            .attacker(0).defender(1).build(),
+    }),
+
     versus_bot: () => ({
         gameId: 'bot001',
         users: ['ME'],

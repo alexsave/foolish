@@ -613,6 +613,15 @@ const three = () => fixture().title('Three of us').seats([seat(ANNA, 'Anna'), se
 const threeMeFirst = () => fixture().title('Three of us').seats([seat(ME, 'Me'), seat(ANNA, 'Anna'), seat(BORIS, 'Boris')])
     .status(PLAYING).deterministic().trump('Kc').deck('7s 8s 9s Ts');
 
+// FOUR SEATS, so that TWO other players can say good one after the other with
+// no card in between. Three is not enough: one of them has to defend and one is
+// me, which leaves a single seat that can go good, and a single good is exactly
+// the case that always worked.
+const CARL = 'u-carl-0002';
+const four = () => fixture().title('Four of us')
+    .seats([seat(ME, 'Me'), seat(ANNA, 'Anna'), seat(BORIS, 'Boris'), seat(CARL, 'Carl')])
+    .status(PLAYING).deterministic().trump('Kc').deck('7s 8s 9s Ts');
+
 // The cards in flight on the overlay: where each is drawn, its scale, and whether it is a refusal's red return.
 const flights = (host: HTMLElement) => Array.from(host.querySelectorAll<HTMLElement>('div'))
     .filter((d) => d.style.position === 'fixed' && d.style.zIndex === '10000')
@@ -937,6 +946,58 @@ test('another player\'s good is the whole stream: the badge turns on its own pus
         assert.equal(markOf(s, 2), 'check', 'the check is up - on THIS push, not on the next move to carry a card');
         await s.advance(600);
         assert.equal(markOf(s, 2), 'check', 'and it stays up');
+    });
+});
+
+test('a second good in a row is not eaten as a duplicate of the first', async () => {
+    // THE BUG THIS BRANCH EXISTS FOR, found by the owner on an eight-seat board
+    // with a mix of bots: "I only ever see one checkmark per bout. I think some
+    // good events aren't coming through."
+    //
+    // They were coming through - the server sent all six and the client received
+    // all six. `handleAnimationMessage` threw them away. It carries a duplicate
+    // guard that signs a push by the CONTENT OF ITS EVENTS as a backup to the
+    // sequence-id check, and `eventsSignature([])` is the empty string, so every
+    // goods-only push in a game signed identically.
+    //
+    // WHY IT SURVIVED EVERYTHING UNTIL NOW: the set holding those signatures is
+    // cleared at the closing beat of an animated sequence. Until a good could be
+    // broadcast on its own there was always a card sequence between any two empty
+    // signatures, clearing the set each time. A goods-only push runs no sequence
+    // and so clears nothing - which means exactly ONE good gets through after the
+    // last card settles, and every one after it is dropped in silence. Two bots
+    // three seconds apart could never show it; the first good arrives while the
+    // opening attack is still animating and that sequence's closing beat clears
+    // the set in time for the second.
+    //
+    // So this case is deliberately TWO goods with no card between them, which is
+    // the smallest shape that fails. Reverting the fix turns it red on the second.
+    const board = four().hand(0, 'Ad Qd 6d').hand(1, '9c Tc Jd').hand(2, 'Js Qs Ks').hand(3, '8d Td Kd')
+        .table('7h/9h').attacker(0).defender(1).goodTimestamp().build();
+    await play('two_goods_in_a_row', 137, 'a-two-goods', board, async (s, srv) => {
+        assert.equal(markOf(s, 2), 'sword', 'Boris is an attacker to begin with');
+        assert.equal(markOf(s, 3), 'sword', 'and so is Carl');
+
+        await s.step('Boris says good on the server', () => { srv.act(BORIS, encodeAction({ kind: 'good' })); });
+        const first = srv.take(ME);
+        assert.equal(first.bytes[3], 0, 'his push carries no events');
+        await deliver(s, 'push: Boris says good', first);
+        await s.advance(260);
+        assert.equal(markOf(s, 2), 'check', 'Boris wears his check');
+
+        // NO CARD IN BETWEEN. Nothing here runs a sequence, so nothing clears the
+        // signature set - which is precisely the state the old guard could not
+        // survive.
+        await s.step('Carl says good on the server', () => { srv.act(CARL, encodeAction({ kind: 'good' })); });
+        const second = srv.take(ME);
+        assert.equal(second.bytes[3], 0, 'his push carries no events either - the same shape as the first');
+        await deliver(s, 'push: Carl says good', second);
+        assert.equal(markOf(s, 3), 'sword', 'the old face is still up as it lands');
+        await s.advance(90);
+        assert.ok(scaleOf(s, 3) < 0.5, `Carl's coin is turning too (scaleX ${scaleOf(s, 3)})`);
+        await s.advance(180);
+        assert.equal(markOf(s, 3), 'check', 'AND CARL WEARS HIS - the second good is not eaten as a duplicate of the first');
+        assert.equal(markOf(s, 2), 'check', 'with Boris still wearing his');
     });
 });
 
