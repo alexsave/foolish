@@ -488,3 +488,52 @@ Conflicts, kept centred per the spec:
 - The waiting strip's words ("Nobody has taken it yet", about 165pt) cannot sit beside a centred board, so the board goes under them and gives up the same room at the bottom: 165pt on this simulator's 274pt strip (was 198, off-centre), about 224pt at UI.html's 340.
 - The end strip's verdict sits beside the board, which gives up 38-45pt (230/223 against 268 live).
 - The spectator's line spans the sheet, so its board is 213.
+
+## 8. The send hint, the insert watchdog and the biggest board (2026-09-23)
+
+Verified on UtttRig (iPhone 17 Pro Max, iOS 27 simulator, light and dark); shots in the session scratchpad `hint/`.
+
+### The send hint, shared with the sister product
+
+The staged-but-unsent reminder (the bobbing `arrow.up` in Messages' send blue under the Send button, its caption, the send axis and the white ring) moved out of the sister product into `shared/swift/MessagesKit/SendHint.swift` (`SendHint`, `SendHintArrow`, `SendHintRing`).
+A product supplies the caption, the fuse and the axis; the sister product keeps a small `StagedSendHint` wrapper that observes its language setting and passes its caption, so its look and behaviour are unchanged, and its Messages scheme builds for the simulator.
+`MotionRuler.swift` had stopped compiling for the sister product's iOS 16 target (`.transaction(value:)` is iOS 17); the ruler now drops every transaction's animation.
+
+In uttt it stands over every screen (`UtttSendOverlay`, its own hosting controller above the screen host), so its fuse survives a screen swap.
+It shows `UTM_SEND_HINT_MS` (3000, the sister product's number) after an insert is answered, in the compact drawer only; a send, a cancel, a new stage (the fuse restarts) or the drawer starting to grow hides it.
+The caption is `uttt_say(UTTT_SAY_SEND_HINT)`, "Send".
+Shots: `move_light_t1`/`move_dark_t1` (1.2s after the tap, no hint), `move_light_t4`/`move_dark_t4` (4.2s, hint), `inv_light_t4`, `inv_dark_t4`, `inv_dark_expanded` (none when expanded).
+
+### An unanswered insert
+
+Per `INSERT_GATING.md`, silence is the refusal.
+Each insert arms a watchdog of `UTM_INSERT_SILENCE_MS` (500); what its silence means is `utm_insert_silence(attempt, compact)`: in compact, retry up to `UTM_INSERT_ATTEMPTS` (10, about 5s); expanded, keep listening and count nothing, because the host parks an accepted insert's answer there.
+The stage generation still voids an overtaken loop, and a yes from any try (a late one included) stands every watchdog of that stage down.
+Every firing is logged (`insert attempt N got no answer; retrying`).
+After ten unanswered tries the drawer offers a pen-drawn door, "Send a board" (`UTTT_SAY_DOOR_SEND`, the Again door's `uttt_draw_door` pen), which re-inserts on a tap; it is the only part of the overlay that takes a touch.
+The error path (an insert that fails with an error) is unchanged.
+`touch dev.dropinsert` in the App Group (DEBUG only) swallows every insert unanswered, the only way to see this on a simulator: the log shows ten tries 0.52s apart, then the door (`door_dark`); removing the file and tapping it inserted at once and the hint followed (`door_tapped_hint`).
+Tests: `uttt_msg_test` "insert:" rows and `ios-smoke`, each mutation-checked.
+
+### The board as large as the sheet allows
+
+Owner: the board as large as possible on every screen at every height, centred, with the words moved around it.
+`uttt_sheet` no longer takes a measured box of words: the side is `min(width less the columns, height less the grab handle's 13pt margins and the bands)` and nothing else.
+On the strip the words go in a column beside the ink (the verdict on the right over the rulebook, the waiting words and the spectator's line on the left) and wrap between words only, a single word too wide for the column scaling down instead; from half open they sit in the header band.
+Every screen keeps its 38pt columns on the strip, or the waiting words had no room at all on a 340pt drawer on a 375 phone.
+Tests: `uttt_anim_test` "every screen's board is as large as the sheet allows, compact and expanded" (seven sheets, four screens, the expected side worked out from the sheet's own numbers) and "its words sit beside it on the strip and above it in the band", plus `ios-smoke`; three mutations (words costing 20pt, the waiting words taking 60pt of height, the column overlapping the ink) went red on the named assertion.
+
+| compact, 440x274 strip | before | after |
+|---|---|---|
+| live game | 268 (taller drawer) | 248, the height less the margins |
+| end, winner / loser | 230 / 223 | 248 |
+| spectator | 213 | 248 |
+| waiting | 165 | 248 |
+
+Expanded boards were already width-limited and are unchanged.
+Shots: `before_*` and `after_*` for play, win, lose, watch and wait, compact and expanded; `before_sheet.png` and `after_sheet.png` put all ten side by side.
+
+What is left:
+- On a 375-wide phone the strip's word column is 32pt, so the waiting words and the verdict scale down toward half size there.
+- The send door covers the lower third of the compact board while it is up.
+- The hint and the end strip's verdict share the top-right corner when a finishing move is staged.
