@@ -9,6 +9,8 @@ public enum UtttPaper {
 
     public static func image(side: Int) -> CGImage? {
         if let c = cache[side] { return c }
+        UtttLog.note("paper", "\(side)")
+        defer { UtttLog.note("paper done") }
         var px = [UInt8](repeating: 0, count: side * side * 4)
         px.withUnsafeMutableBufferPointer { uti_paper($0.baseAddress, Int32(side), Int32(side)) }
         guard let provider = CGDataProvider(data: Data(px) as CFData),

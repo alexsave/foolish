@@ -93,6 +93,8 @@ public struct UtttBoard: View {
     /// the grid's overshoot has somewhere to go.
     static func cached(key: Int, active: Int, last: Int, side: CGFloat) -> CGImage? {
         if key == cacheKey, side == cacheSide, let img = cacheImage { return img }
+        UtttLog.note("raster", "side \(Int(side))")
+        defer { UtttLog.note("raster done") }
         let scale = UIScreen.main.scale
         let pad = side * bleed
         let box = side + 2 * pad

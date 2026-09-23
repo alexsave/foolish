@@ -30,8 +30,24 @@ final class MessagesViewController: MSMessagesAppViewController {
     private var seatChosen = false
 #endif
 
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        UtttLog.note("load")
+    }
+
+    override func willTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
+        super.willTransition(to: presentationStyle)
+        UtttLog.note("will-style", presentationStyle == .compact ? "compact" : "expanded")
+    }
+
+    override func didTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
+        super.didTransition(to: presentationStyle)
+        UtttLog.note("style", presentationStyle == .compact ? "compact" : "expanded")
+    }
+
     override func willBecomeActive(with conversation: MSConversation) {
         super.willBecomeActive(with: conversation)
+        UtttLog.note("active")
 #if DEBUG
         seatChosen = false
 #endif
@@ -241,7 +257,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         guard let conversation = conv ?? activeConversation else { return }
         let message = MSMessage(session: sessionFor(wire, conversation))
         message.url = wire.url
+        UtttLog.note("bake")
         message.layout = UtttBubble.layout()
+        UtttLog.note("baked")
         /* THE COLLAPSED LINE IS OURS TOO. A session folds every older bubble
          * down to one grey row, and without this Messages writes that row
          * itself - "+1 (555) 564-8583 sent Ultimate message", a phone number
@@ -255,7 +273,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         /* The seeded game's state, so the other seat finds this move. */
         if UtttDev.game != nil { UtttDev.live = wire.text }
 #endif
+        UtttLog.note("insert")
         conversation.insert(message) { error in
+            UtttLog.note("inserted", error?.localizedDescription ?? "ok")
             /* A REFUSED INSERT USED TO VANISH, and a join that never reached
              * the input field looked exactly like one that did. */
             if let error { NSLog("uttt: insert failed: %@", error.localizedDescription) }
@@ -351,6 +371,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     }
 
     private func show<V: View>(_ screen: V) {
+        UtttLog.note("show", String(describing: V.self))
         host?.willMove(toParent: nil)
         host?.view.removeFromSuperview()
         host?.removeFromParent()
