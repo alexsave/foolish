@@ -88,6 +88,8 @@ public final class CollapseSlide: ObservableObject {
     private struct Entry {
         weak var view: UIView?
         var ride: (CGFloat) -> CollapseRidePose
+        /// The bounds the running animation was built for.
+        var built: CGRect?
     }
     private var entries: [ObjectIdentifier: Entry] = [:]
 
@@ -166,8 +168,8 @@ public final class CollapseSlide: ObservableObject {
             layer.add(a, forKey: Self.key)
         }
         entries = entries.filter { $0.value.view != nil }
-        for e in entries.values {
-            if let v = e.view { install(r, on: v.layer, ride: e.ride) }
+        for (id, e) in entries {
+            if let v = e.view { install(r, on: v.layer, ride: e.ride); entries[id]?.built = v.bounds }
         }
         let w = DispatchWorkItem { [weak self] in self?.end() }
         release = w
@@ -196,7 +198,20 @@ public final class CollapseSlide: ObservableObject {
     }
 
     func update(_ view: UIView, ride: @escaping (CGFloat) -> CollapseRidePose) {
-        entries[ObjectIdentifier(view)] = Entry(view: view, ride: ride)
+        let id = ObjectIdentifier(view)
+        entries[id] = Entry(view: view, ride: ride, built: entries[id]?.built)
+    }
+
+    /// A rider was laid out. THE FLIP IS HEARD BEFORE THE NESTED HOSTS ARE
+    /// LAID OUT AT THE COMPACT SIZE (logged: every rider still 440x840 when
+    /// the slide began), and a scale about a pivot is built from the layer's
+    /// bounds - so a rider whose bounds changed under a running slide gets
+    /// its animation rebuilt, in phase, in the same layout pass.
+    func laidOut(_ view: UIView) {
+        let id = ObjectIdentifier(view)
+        guard let run, let e = entries[id], e.built != view.bounds else { return }
+        install(run, on: view.layer, ride: e.ride)
+        entries[id]?.built = view.bounds
     }
 
     func unregister(_ view: UIView) {
@@ -225,10 +240,7 @@ public final class CollapseSlide: ObservableObject {
          * flew to the sheet's top left) - so a rider is placed inside. */
         let b = layer.bounds, ap = layer.anchorPoint
         #if DEBUG
-        NSLog("collapse-slide rider bounds %@ anchor %@ position %@ affine %@ first %@",
-              NSCoder.string(for: b), NSCoder.string(for: ap), NSCoder.string(for: layer.position),
-              NSCoder.string(for: layer.affineTransform()),
-              "\(poses.first.map { ($0.dy, $0.scale, $0.pivot as Any) } as Any)")
+        NSLog("collapse-slide rider %@ at %@", NSCoder.string(for: b), NSCoder.string(for: layer.position))
         #endif
         t.values = poses.map { p -> NSValue in
             let pv = p.pivot ?? CGPoint(x: b.midX, y: b.midY)
@@ -308,7 +320,10 @@ private struct CollapseRiderHost<Content: View>: UIViewControllerRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIViewController(context: Context) -> UIHostingController<AnyView> {
-        let h = UIHostingController(rootView: root(context))
+        let h = RiderHostingController(rootView: root(context))
+        h.onLayout = { [weak slide, weak h] in
+            if let v = h?.view { slide?.laidOut(v) }
+        }
         h.view.backgroundColor = .clear
         h.view.clipsToBounds = false
         h.view.isUserInteractionEnabled = touches
@@ -337,6 +352,15 @@ private struct CollapseRiderHost<Content: View>: UIViewControllerRepresentable {
 
     private func root(_ context: Context) -> AnyView {
         AnyView(content.environment(\.self, context.environment))
+    }
+}
+
+/// A hosting controller that says when its view was laid out.
+private final class RiderHostingController: UIHostingController<AnyView> {
+    var onLayout: (() -> Void)?
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        onLayout?()
     }
 }
 
