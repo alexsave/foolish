@@ -43,10 +43,14 @@ public struct CollapseRidePose {
     public var dy: CGFloat
     public var scale: CGFloat
     public var alpha: CGFloat?
-    public init(dy: CGFloat, scale: CGFloat = 1, alpha: CGFloat? = nil) {
+    /// The point the scale is about, in the view's own bounds; nil for its
+    /// centre.
+    public var pivot: CGPoint?
+    public init(dy: CGFloat, scale: CGFloat = 1, alpha: CGFloat? = nil, pivot: CGPoint? = nil) {
         self.dy = dy
         self.scale = scale
         self.alpha = alpha
+        self.pivot = pivot
     }
 }
 
@@ -214,9 +218,19 @@ public final class CollapseSlide: ObservableObject {
         let g = CAAnimationGroup()
         var parts: [CAAnimation] = []
         let t = CAKeyframeAnimation(keyPath: "transform")
-        t.values = poses.map {
-            NSValue(caTransform3D: CATransform3DScale(
-                CATransform3DMakeTranslation(0, $0.dy, 0), $0.scale, $0.scale, 1))
+        /* ABOUT THE PIVOT, whatever the anchor: a scale about the layer's
+         * anchor is followed by the move that puts the pivot back. A rider
+         * must not be moved by SwiftUI with an offset either - that is a
+         * transform too, and this animation replaces it (filmed: the board
+         * flew to the sheet's top left) - so a rider is placed inside. */
+        let b = layer.bounds, ap = layer.anchorPoint
+        t.values = poses.map { p -> NSValue in
+            let pv = p.pivot ?? CGPoint(x: b.midX, y: b.midY)
+            let cx = pv.x - (b.minX + ap.x * b.width), cy = pv.y - (b.minY + ap.y * b.height)
+            return NSValue(caTransform3D: CATransform3DScale(
+                CATransform3DMakeTranslation(-(p.scale - 1) * cx,
+                                             p.dy - (p.scale - 1) * cy, 0),
+                p.scale, p.scale, 1))
         }
         t.calculationMode = .linear
         parts.append(t)

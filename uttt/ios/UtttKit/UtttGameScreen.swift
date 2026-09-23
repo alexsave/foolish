@@ -90,14 +90,17 @@ public struct UtttGameScreen: View {
         return board
             .frame(width: side, height: side)
             .boardRuler()
-            /* THE BOARD HOLDS THE CENTRE AND SCALES about it. */
+            .placed(x: L.board.0, y: L.board.1)
+            /* THE BOARD HOLDS THE CENTRE AND SCALES about it - on a
+             * sheet-sized layer, placed inside it (CollapseSlide). */
             .collapseRide(touches: true) { s in
                 let A = at(s)
                 return CollapseRidePose(
                     dy: CGFloat(A.board.1 + A.board.2 / 2 - L.board.1 - L.board.2 / 2),
-                    scale: side > 0 ? CGFloat(A.board.2) / side : 1)
+                    scale: side > 0 ? CGFloat(A.board.2) / side : 1,
+                    pivot: CGPoint(x: CGFloat(L.board.0) + side / 2,
+                                   y: CGFloat(L.board.1) + side / 2))
             }
-            .placed(x: L.board.0, y: L.board.1)
             .overlay(alignment: .topLeading) {
                 indicator(icon: icon, lead: CGFloat(L.icon_lead))
                     .frame(width: max(CGFloat(L.col), icon + 2), alignment: .leading)
