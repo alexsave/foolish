@@ -138,44 +138,77 @@ public struct UtttWatchScreen: View {
         self.onDoor = onDoor
     }
 
+    /// The rules open on the same sheet, as they do on the play surface:
+    /// a spectator can read them too.
+    @State private var rulesOpen = false
+
+    /// The side columns on the strip, the play surface's: the rulebook door
+    /// stands in the right one, so the board leaves room for it.
+    private static let column: CGFloat = 38
+
     public var body: some View {
         UtttSheet {
             GeometryReader { geo in
-                VStack(spacing: 0) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(Uttt.say(.watchLabel))
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .tracking(1.9)
-                            .textCase(.uppercase)
-                            .foregroundStyle(UtttInk.label)
-                        Spacer()
-                        Text(line)
-                            .font(.system(size: 17, weight: .bold))
-                            .foregroundStyle(UtttInk.ink)
-                    }
-                    /* THE BOARD LEAVES ROOM FOR ITS OVERSHOOT, as the play
-                     * surface's does: the main lines run 5% past it, so a
-                     * board as wide as the sheet ran them off both edges.
-                     * Expanded it sits high under the header, spare height
-                     * at the bottom with the door. */
-                    let expanded = geo.size.height > UtttDoorButton.expandedFrom
-                    let doorRow = expanded && UtttDoorButton.title(door) != nil
-                        ? UtttRulebookButton.expandedSide + 6 : 0
-                    let side = max(0, min((geo.size.width - 26) / (1 + 2 * Uttt.boardReach),
-                                          geo.size.height - 26 - 30 - doorRow))
-                    Spacer(minLength: 6).frame(maxHeight: expanded ? 30 : .infinity)
-                    UtttBoard(active: model.active, last: model.last,
-                              positionKey: model.positionKey)
-                        .frame(width: side, height: side)
-                    Spacer(minLength: 6)
-                    /* Again belongs to the expanded view (UI.html 08). */
-                    if expanded, let title = UtttDoorButton.title(door) {
-                        UtttDoorButton(title: title, act: onDoor)
-                    }
+                if rulesOpen {
+                    UtttRulesSheet { rulesOpen = false }
+                        .padding(13)
+                        .transition(.opacity)
+                } else {
+                    watch(geo.size)
                 }
-                .padding(13)
             }
         }
+        .animation(.easeInOut(duration: 0.18), value: rulesOpen)
+    }
+
+    private func watch(_ size: CGSize) -> some View {
+        /* THE BOARD LEAVES ROOM FOR ITS OVERSHOOT, as the play surface's
+         * does: the main lines run 5% past it, so a board as wide as the
+         * sheet ran them off both edges. Expanded it sits high under the
+         * header, spare height at the bottom with the doors; on the strip
+         * the rulebook door takes the right column, as it does there. */
+        let expanded = size.height > UtttDoorButton.expandedFrom
+        let doorRow = expanded ? UtttRulebookButton.expandedSide + 6 : 0
+        let cols = expanded ? 0 : 2 * Self.column
+        let side = max(0, min((size.width - 26 - cols) / (1 + 2 * Uttt.boardReach),
+                              size.height - 26 - 30 - doorRow))
+        return VStack(spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(Uttt.say(.watchLabel))
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .tracking(1.9)
+                    .textCase(.uppercase)
+                    .foregroundStyle(UtttInk.label)
+                Spacer()
+                Text(line)
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(UtttInk.ink)
+                    .accessibilityAddTraits(.isHeader)
+            }
+            Spacer(minLength: 6).frame(maxHeight: expanded ? 30 : .infinity)
+            UtttBoard(active: model.active, last: model.last,
+                      positionKey: model.positionKey)
+                .frame(width: side, height: side)
+            Spacer(minLength: 6)
+            /* Again belongs to the expanded view (UI.html 08); the rulebook
+             * stands beside it at its height, as on the play surface. */
+            if expanded {
+                HStack(alignment: .center, spacing: 10) {
+                    if let title = UtttDoorButton.title(door) {
+                        UtttDoorButton(title: title, act: onDoor)
+                    } else {
+                        Spacer(minLength: 0)
+                    }
+                    UtttRulebookButton { rulesOpen = true }
+                }
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if !expanded {
+                UtttRulebookButton(side: Self.column) { rulesOpen = true }
+            }
+        }
+        .padding(13)
     }
 
     private var line: String { Uttt.say(.watchLine) }

@@ -54,6 +54,7 @@ public struct UtttBoard: View {
                 .frame(width: side + 2 * pad, height: side + 2 * pad)
                 .offset(x: -pad, y: -pad)
                 .allowsHitTesting(false)
+                .accessibilityHidden(true)
 
                 // The tap map is against the BOARD, not the bled bitmap.
                 Color.clear.contentShape(Rectangle())
@@ -64,6 +65,9 @@ public struct UtttBoard: View {
                         guard u >= 0, u <= 1, v >= 0, v <= 1 else { return }
                         onTap(CGPoint(x: u, y: v))
                     }
+                    .accessibilityHidden(true)
+
+                UtttSquares(side: side, positionKey: positionKey, onTap: onTap)
             }
         }
         .aspectRatio(1, contentMode: .fit)
@@ -260,6 +264,7 @@ public struct UtttLiveBoard: View {
                 .frame(width: side + 2 * pad, height: side + 2 * pad)
                 .offset(x: -pad, y: -pad)
                 .allowsHitTesting(false)
+                .accessibilityHidden(true)
 
                 Color.clear.contentShape(Rectangle())
                     .frame(width: side, height: side)
@@ -269,6 +274,9 @@ public struct UtttLiveBoard: View {
                         guard u >= 0, u <= 1, v >= 0, v <= 1 else { return }
                         onTap(CGPoint(x: u, y: v))
                     }
+                    .accessibilityHidden(true)
+
+                UtttSquares(side: side, positionKey: positionKey, onTap: onTap)
             }
         }
         .aspectRatio(1, contentMode: .fit)
@@ -285,5 +293,40 @@ public struct UtttLiveBoard: View {
               green: Double((c >> 16) & 0xff) / 255,
               blue: Double((c >> 8) & 0xff) / 255,
               opacity: Double(c & 0xff) / 255)
+    }
+}
+
+/// WHAT VOICEOVER FINDS ON THE BOARD: one element per square, where the
+/// square is. The rectangle and the words are both the kernel's
+/// (`uttt_cell_rect`, the inverse of the tap map, and `uttt_say_cell`), so
+/// this places and labels and decides nothing. A square the player may take
+/// is a button, and activating it is the same tap a finger makes.
+struct UtttSquares: View {
+    let side: CGFloat
+    let positionKey: Int
+    let onTap: ((CGPoint) -> Void)?
+
+    var body: some View {
+        let legal = onTap != nil && Uttt.canMove ? Set(Uttt.legal.map(Int.init)) : []
+        ZStack(alignment: .topLeading) {
+            ForEach(0..<81, id: \.self) { mv in
+                let r = Uttt.cellRect(mv)
+                Color.clear
+                    .frame(width: r.width * side, height: r.height * side)
+                    .accessibilityElement()
+                    .accessibilityLabel(Uttt.sayCell(mv))
+                    .accessibilityAction {
+                        onTap?(CGPoint(x: r.midX, y: r.midY))
+                    }
+                    /* An action makes any element a button; only a square
+                     * the player may take is one. */
+                    .accessibilityRemoveTraits(legal.contains(mv) ? [] : .isButton)
+                    .accessibilityAddTraits(legal.contains(mv) ? .isButton : [])
+                    .position(x: r.midX * side, y: r.midY * side)
+            }
+        }
+        .frame(width: side, height: side, alignment: .topLeading)
+        .allowsHitTesting(false)
+        .id(positionKey)
     }
 }

@@ -114,7 +114,13 @@ public struct UtttGameScreen: View {
          * The board is centred in what the four leave, and every number is
          * one lerp. Nothing switches, so a collapse is a resize. */
         let vpad = lerp(Self.vmargin, Self.margin, t)
-        let top  = lerp(0, Self.barHeight, t)       // the bar, when there is one
+        /* AT THE END THE STRIP CARRIES THE VERDICT (UI.html 08: "the verdict
+         * and the board"), in the place the expanded sheet puts it - the top
+         * right, over the board - so a collapse is still a resize. The board
+         * gives up the verdict's height; while the game runs the strip keeps
+         * it, because there the words say nothing the wash does not. */
+        let end  = Uttt.over != .none
+        let top  = lerp(end ? Self.verdictBar : 0, Self.barHeight, t)
         let bot  = lerp(0, Self.doorSide + 6, t)    // the row the door sits in
         let col  = lerp(Self.column, 0, t)          // the "you are" column
         let gut  = lerp(0, 3, t)
@@ -150,6 +156,9 @@ public struct UtttGameScreen: View {
             .overlay(alignment: .topTrailing) {
                 VStack(alignment: .trailing, spacing: 3) {
                     headlineView
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(Uttt.say(.headlineSpoken))
+                        .accessibilityAddTraits(.isHeader)
                     /* The line under it: where you sent them, or at the end
                      * the winning line spoken (docs/UI.html 04, 06, 07). */
                     if !model.subline.isEmpty {
@@ -159,7 +168,8 @@ public struct UtttGameScreen: View {
                             .lineLimit(1)
                     }
                 }
-                .opacity(Double(t)).allowsHitTesting(t > 0.5)
+                .opacity(end ? 1 : Double(t)).allowsHitTesting(t > 0.5)
+                .accessibilityHidden(!end && t < 0.5)
             }
             .overlay(alignment: .bottomTrailing) {
                 HStack(alignment: .center, spacing: 10) {
@@ -207,6 +217,12 @@ public struct UtttGameScreen: View {
     /// "you are" over a 46-point mark, which is 19 points of label, a 4-point
     /// lead and the mark.
     private static let barHeight: CGFloat = 72
+
+    /// The verdict's two lines on the collapsed strip - a 21-point headline,
+    /// the 3-point lead and the 14-point line - and 6 points of air before
+    /// the board's overshoot. The overshoot is inside the board's own
+    /// frame's reach, so this is the words, not a guess at the ink.
+    private static let verdictBar: CGFloat = 50
     private static let doorSide = UtttRulebookButton.expandedSide
 
     /// The air between the bar and the expanded board: 12 points plus the
@@ -238,6 +254,8 @@ public struct UtttGameScreen: View {
                 .frame(width: icon, height: icon)
                 .padding(.top, lead)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Uttt.say(.youAreSpoken))
     }
 
     private func line(_ s: String) -> some View {

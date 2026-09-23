@@ -36,6 +36,6 @@ public struct UtttRulebookButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Rulebook")
+        .accessibilityLabel(Uttt.say(.doorRules))
     }
 }
