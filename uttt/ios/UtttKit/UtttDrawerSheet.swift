@@ -38,7 +38,6 @@ struct UtttDrawerSheet<Content: View>: View {
                                                        : drawer.layout(for: geo.size.height)
             content(CGSize(width: geo.size.width, height: h), slideFrom)
                 .frame(width: geo.size.width, height: h)
-                .transaction(value: h) { $0.animation = nil }
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
             if slide?.heard(h, after: drawer.handed) == true { drawer.rest(h) }
@@ -57,6 +56,19 @@ struct UtttDrawerSheet<Content: View>: View {
                     .allowsHitTesting(false)
             }
         }
+        /* NOTHING ON THE SHEET INHERITS AN ANIMATION, whatever the
+         * transaction carries: Messages' UIKit block bridged into SwiftUI,
+         * or the slide's own `run` published inside it. Every number here is
+         * a function of the drawer height, and every motion is the drawer
+         * clock's, the slide's (on the render server) or a view's own frame
+         * clock. When only a change of `h` was stripped, the flip's second
+         * pass (`slideFrom` set, `h` unchanged) carried the bridged spring
+         * into the board's rider, and the board crawled from its expanded
+         * frame to its compact one on the main thread under a layer the
+         * render server was already scaling: 77 -> 29 -> 11 -> 4pt off the
+         * drawer's centre in steps (filmed with the ruler, logged by the
+         * slide's probe). One rule, on the whole sheet and its ruler. */
+        .transaction { $0.animation = nil }
 #if DEBUG
         /* With the ruler on, every height the sheet is handed, so a filmed
          * take can be read against what the layout was given. */
