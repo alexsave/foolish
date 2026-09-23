@@ -292,7 +292,7 @@ Fixed in this pass:
 - `118361b2` - **the same on the expanded Waiting screen**, which is the first thing a creator sees on tapping their own invitation.
 - `4ff6abdc`, `581321db` - rig only (DEBUG): `rig.sh devgame 47,20,...` opens an exact game, and the seeded path routes by seat, so won, lost, drawn and spectator states can be shot.
 
-Open:
+Open (all but the recording closed in the polish pass below):
 - **App Review, one device (major, before external TestFlight or the store):** a reviewer creates a game, sends it, taps it and sees "Waiting / Nobody has taken it yet" with nothing to do.
   There is no way to see a single move without a second Apple ID in the conversation.
   The review notes must say so plainly and ship a screen recording of a two-phone game (the foolish pattern in `docs/APP_REVIEW_NOTES.md`); there are no uttt review notes yet.
@@ -304,6 +304,26 @@ Open:
 - Not re-proven here: two real phones, `$<uuid>` captions.
 
 A new build is warranted: the door, captions, subline and the expanded layouts are all user-visible changes since 1.0(3).
+
+#### Polish pass (after build 3) - 2026-09-23
+
+Shots are in the session scratchpad `polish/` (`/private/tmp/claude-501/-Users-alex-Dev-foolish/ce7c4549-2c3c-4e25-aeb1-0540c12ff110/scratchpad/polish/`), from a fresh `rig.sh newsim UtttPolish` (iPhone 17 Pro Max, 440 wide) with `devgame` on the diagonal fixture from `uttt_msg_test.c`.
+
+Closed:
+- **The collapsed end strip carries the verdict** (UI.html 08, "the verdict and the board"): "You win" / "<X> wins" / "Drawn" with the line name under it ("Diagonal"), top right, where the expanded sheet puts it, so a collapse is still one lerp.
+  The board gives up the verdict's 50 points on the strip only when the game is over; a live game's strip is unchanged.
+  `owner_collapsed_youwin_after.png` is the owner's shot redone; `collapsed_xwins_dark.png` is the loser's, `collapsed_youwin_light.png` the light twin.
+- **The spectator has the rulebook door**: 38 points in the right column on the strip (the board now leaves the play surface's two 38-point columns), beside Again at 54 when expanded, and the rules open on the same sheet with Back (`spectator_*`).
+- **VoiceOver** reads every square ("Top left board, top middle square, O"), the headline with the drawn mark spelled ("X wins", "Waiting on O"), "You are X", and the doors ("Again", "Rulebook"); only a square the player may take is a button, and activating it is the same tap.
+  The words are `uttt_say` keys (`HEADLINE_SPOKEN`, `YOU_ARE_SPOKEN`, `DOOR_RULES`) and `uttt_say_cell`; each element's rectangle is `uttt_cell_rect`, the inverse of `uttt_hit`, so Swift places and labels and computes nothing.
+  Read back from the running app with `idb ui describe-point`.
+  `uttt_msg_test` and `ios-smoke` assert them; four mutations (X/O swapped on a square, the rectangle's row from the wrong digit, the mark left out of the spoken headline, the wrong side in "You are") each went red on the named assertion.
+- **The waiting screen opening expanded is the spec, not a defect.** UI.html 02 ("Waiting, as the one who asked") is drawn at the expanded 620-point sheet, and foolish shows its own lobby bubble expanded on a tap the same way; Messages presents a tapped bubble expanded, and asking for compact straight after would be an expand-then-collapse bounce on every tap. No code change; WP2's "request compact" line is withdrawn.
+- **Review notes**: `uttt/docs/APP_REVIEW_NOTES.md`, pasted into the live Beta App Review notes. It explains the one-device "Waiting" screen, the two-Apple-ID test, the game, no accounts/network/purchases and the missing home screen icon, and records the one-device options considered (none built; the seat picker stays DEBUG-only).
+
+Still open:
+- A screen recording of a two-phone game to attach for review (needs two real phones).
+- The folded MSSession caption line (Messages' text, left as is).
 
 ### WP6 - Flag guard, docs and rig hygiene
 
