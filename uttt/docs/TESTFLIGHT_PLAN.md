@@ -718,3 +718,59 @@ One line, measured on UtttRig: a sent bubble is 309.7pt wide with 17pt padding e
 ios-smoke: the in-play board centred, no words, its ink 3pt inside the frame on all four sides and none under the badge; the finished game's text column left of the board.
 Mutations (not centred, words always, words never, the board under the badge, the old headline, the to-play mark, no fallback, a full stop, never the line) each went red on the named assertion.
 Shots: `film4/bubble/before_after.jpg` (top: before, staged invitation, move and win; bottom: after, the invitation and win sent and the move staged, "O to play, top-left board").
+
+## 12. Choppiness, memory, the two halves of a move, the rules sheet (2026-09-23, iPhone SE)
+
+All of it on ONE simulator, `UtttSE` (iPhone SE 3rd generation, iOS 27, 375x667 points, 2x), `1AE07DDF-43F5-482C-85A0-F9C3A8CF7660`.
+Films, contact sheets, profiles and benchmark tables are in the session scratchpad `film5/` (`bench/`, `prof/`, `takes/`, `sheet_*.jpg`), with the scripts that made them (`bench.sh`, `bench_open.sh`, `mem.sh`, `take.sh`, `reopen.sh`).
+
+### The benchmark, one change at a time
+
+`bench.sh`: the seeded board (`devgame 27`, seat a, seed 77), one tap staging an O, filmed at normal speed with the ruler on, five takes; `motion pace` (new in `shared/tools/motion`, C, test mutation-checked) counts the frames in which the cell's pixels really changed (past the codec's shimmer), the largest gap between them, the largest share of the ink one frame laid, and judder on a 60 Hz grid.
+Opening a bubble is scored by the kernel clock's own log (`motion done N ms, K frames`), because the drawer's own slide moves every pixel of any box.
+
+| step | change | commit | stage: content fps | largest gap | judder | open: frames in the plan |
+|---|---|---|---|---|---|---|
+| b0 | baseline (build before this session) | fa058e8d | 5.0-9.9 | 127-327 ms | 700-1030 | 5 in 711 ms |
+| b1 | the App Group looked up once (dev files); the new motion plan | 2966f950 | 9.9-12.1 | 115-137 ms | 420-550 | - |
+| b2 | the board's per-frame SwiftUI split into small observed views | (in b3's parent) | 8.8-11.3 | 118-142 ms | 480-650 | 8 in 683 ms |
+| b3 | the wash and the moving strokes on Core Animation layers set straight from the clock | 8c90b784 | 56.5-57.1 | 18-20 ms | 124-487 | 32-35 in ~690 ms |
+
+What `sample` said at each step, heavy functions and lines:
+- b0: of ~540 busy main-thread samples in a stage, 343 were `CA::Transaction::commit` -> `RB::SharedSurfaceGroup::render_updates`, 283 of them in `-[_MTLCommandBuffer waitUntilScheduled]` - SwiftUI's RenderBox re-rendering the board's two Canvases every display frame and then waiting on the simulator's Metal. The rest: the new position's board raster on the main thread (`UtttBoard.render`, `Uttt.fill` line 339 `fillPath`, about 40 ms, with `CGColorTransformConvertColor` under it; a CG benchmark put the colour conversion at only 10-15% of the fill, so it was left), the ink Canvas's `Path` building (37), and on an open 30 samples in `UtttRuler.on` -> `containerURLForSecurityApplicationGroupIdentifier` inside a view body.
+- b2: splitting the SwiftUI views changed nothing (RenderBox 523 of ~900) - any Canvas render is the cost on this simulator, however small.
+- b3: nothing that moves is SwiftUI any more (`UtttMotionView`): the wash is a layer's colour and frame, the ink and the outline are bitmaps of only their own polygons (Core Graphics, well under a millisecond) handed to the render server. The display link now ticks every frame.
+
+Drag: an earlier `sample` of a drawer drag found the main thread idle (section 11); not re-measured.
+
+### Memory
+
+Floor: `dev.empty` (DEBUG) makes the extension show nothing - 20.9 MB footprint (21.9 peak) on this simulator, Debug.
+
+| state | before | after |
+|---|---|---|
+| idle compact, seeded board | 42.5-43 MB (peak 44-46) | 31-32 MB (peak 32.5) |
+| peak, a finished board staged (bubble baked) | not measured | 40.8 MB (peak 45.4) |
+
+The cut: 689 untagged 64K regions (10.8 MB) that the empty extension does not have were RenderBox's Metal shared buffers from SwiftUI Canvases; the pen drawings that never move (the "you are" mark, the rulebook door, Again) are now painted once into images (`UtttInkImage`), and untagged memory went to 16K.
+**Not yet at the target (floor + 5 idle, + 10 peak).** Left, measured against the floor: `__DATA` +3 MB (the bridge's static display list, `MAX_PT` 260,000 points plus a duplicate `first/n/rgba` copy of the polygons), Malloc Small +3.5 MB (the Swift copies of the whole display list the off-main raster and the bubble paint take), CoreAnimation +1.8 MB, CG raster 1.1 MB (the board image).
+
+### The two halves of a move (owner)
+
+- PRE, at stage: the small mark, then the won block's big mark, then the win line, one after another; the highlighter stays on the block the move was played in; the block the move sends the other player to is outlined by the pen in the highlighter's own rect and colour (`uttt_wash_rect`, `uttt_wash_rgba(1)`), drawn round once everything else has landed. Freed ("anywhere"): the outline is the whole sheet, the tint's own "anywhere" rect. Game over: no outline.
+- POST, at Send: only the highlighter moves, to the outlined block, and the outline fades as it lands. It plays on the board already up (`UtttModel.sent`), no screen rebuild.
+- The receiver: small mark, big mark, line, then the highlighter; no outline.
+- `uttt_motion` in `uttt_anim.c` owns all of it; `uttt_draw_outline` in `uttt_draw.c`. Tests in `uttt_anim_test.c`, 8 mutations each red on the named assertion.
+- Change of mind: one step - the old draft (and its big mark) gone at once, the new one drawn in with its own settlement and outline; nothing un-draws, the highlighter never moves.
+- A tap that is not a move does nothing: `utm_can_replace` (kernel) is the only question a tap on a board with a draft asks; exhaustively tested against the legal list, 3 mutations red; `ios-smoke` covers the bridge.
+- My own bubble, just sent, opens quiet (the settled board) - `present` compares with `sent`.
+- The rules are a sheet of their own (`rulebook`, SwiftUI `.sheet`, as foolish's `GameSurface` does); a swipe down closes the rules and leaves the game up (`sheet_rules_dismiss.jpg`).
+
+Sheets: `sheet_board_win_stage.jpg`, `sheet_game_win_stage.jpg`, `sheet_normal_stage.jpg`, `sheet_normal_send.jpg`, `sheet_change_of_mind.jpg`, `sheet_invalid_tap.jpg`, `sheet_receiver_open.jpg`, `sheet_receiver_board_win.jpg`, `sheet_rules_dismiss.jpg`, `sheet_send_post.jpg`.
+
+### Open
+
+- **At Send the drawer is seen replaying.** The log shows the extension playing the post-settlement exactly once (`motion ch 6`, 350 ms, 17-20 frames) and nothing after; yet the film (`sheet_normal_send.jpg`) shows the travel, then about 2 s later the pre-Send frame (outline, wash on the old block) once more and the travel again. Messages calls `viewDidAppear` again at Send, and the send hint, hidden in the frame of the Send, stays visible through those frames, so what is on screen then is not this process's current layer tree. Cause not found; this is item 3 of the owner's round and it is not closed.
+- Memory above target (above).
+- The partial ink frame visible in the first frame after Send in the same film, same cause suspected.
+- On the SE the strip's word column is narrow, so "Your move / Anywhere you like" and "You win / Diagonal" set small beside the board (seen in `sheet_game_win_stage.jpg`).
