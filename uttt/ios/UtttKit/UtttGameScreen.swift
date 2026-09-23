@@ -86,24 +86,11 @@ public struct UtttGameScreen: View {
         let hpad = CGFloat(L.hpad), vpad = CGFloat(L.vpad)
         let icon = CGFloat(L.icon)
 
-        let side = CGFloat(L.board.2)
 #if DEBUG
         if r { UtttLog.note("sheet-play", String(format: "h %.1f from %.1f board y %.1f side %.1f", size.height, from ?? -1, L.board.1, L.board.2)) }
 #endif
         return board
-            .frame(width: side, height: side)
-            .boardRuler()
-            .placed(x: L.board.0, y: L.board.1)
-            /* THE BOARD HOLDS THE CENTRE AND SCALES about it - on a
-             * sheet-sized layer, placed inside it (CollapseSlide). */
-            .collapseRide(touches: true) { s in
-                let A = at(s)
-                return CollapseRidePose(
-                    dy: CGFloat(A.board.1 + A.board.2 / 2 - L.board.1 - L.board.2 / 2),
-                    scale: side > 0 ? CGFloat(A.board.2) / side : 1,
-                    pivot: CGPoint(x: CGFloat(L.board.0) + side / 2,
-                                   y: CGFloat(L.board.1) + side / 2))
-            }
+            .boardRide(L, touches: true, at: at)
             .overlay(alignment: .topLeading) {
                 /* THE HEADER HOLDS THE TOP, and its two parts ride apart
                  * (indicator), since the mark is a size of the drawer's
@@ -120,16 +107,10 @@ public struct UtttGameScreen: View {
                 ZStack(alignment: .topLeading) {
                     words(column: true, r: false)
                         .inWords(L, alignment: .topTrailing)
-                        .collapseRide { s in
-                            CollapseRidePose(dy: 0, alpha: L.words_alpha > 0
-                                             ? CGFloat(at(s).words_alpha / L.words_alpha) : 1)
-                        }
+                        .wordsRide(column: true, L, from: B, at: at)
                     words(column: false, r: r)
                         .inBand(B, alignment: .topTrailing)
-                        .collapseRide { s in
-                            CollapseRidePose(dy: 0, alpha: B.band_alpha > 0
-                                             ? CGFloat(at(s).band_alpha / B.band_alpha) : 1)
-                        }
+                        .wordsRide(column: false, L, from: B, at: at)
                 }
             }
             .overlay(alignment: .bottomTrailing) {

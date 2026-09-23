@@ -41,14 +41,16 @@ public struct UtttLobbyScreen: View {
     /// the board from beside the words to under them, 198 to 377 points in
     /// one frame (measured with the ruler), and the strip's board sat 80
     /// points right of centre.
-    private func sheet(_ size: CGSize, from _: CGFloat?) -> some View {
+    private func sheet(_ size: CGSize, from: CGFloat?) -> some View {
         let L = Uttt.sheet(.wait, size: size)
+        let at = { (s: CGFloat) -> UtiSheet in
+            Uttt.sheet(.wait, size: CGSize(width: size.width, height: size.height + s))
+        }
+        let B = from.map { Uttt.sheet(.wait, size: CGSize(width: size.width, height: $0)) } ?? L
         return ZStack(alignment: .topLeading) {
             if stance != .unreadable {
                 board
-                    .frame(width: CGFloat(L.board.2), height: CGFloat(L.board.2))
-                    .boardRuler()
-                    .placed(x: L.board.0, y: L.board.1)
+                    .boardRide(L, at: at)
             } else {
                 Color.clear
             }
@@ -60,8 +62,10 @@ public struct UtttLobbyScreen: View {
              * the sheet opens, where UI.html 02 sets them. */
             words(column: true)
                 .inWords(L, alignment: .topLeading)
+                .wordsRide(column: true, L, from: B, at: at)
             words(column: false)
-                .inBand(L, alignment: .topLeading)
+                .inBand(B, alignment: .topLeading)
+                .wordsRide(column: false, L, from: B, at: at)
         }
     }
 
@@ -147,9 +151,9 @@ public struct UtttWatchScreen: View {
         let hpad = CGFloat(L.hpad), vpad = CGFloat(L.vpad)
         return UtttBoard(active: model.active, last: model.last,
                          positionKey: model.positionKey)
-            .frame(width: CGFloat(L.board.2), height: CGFloat(L.board.2))
-            .boardRuler()
-            .placed(x: L.board.0, y: L.board.1)
+            .boardRide(L) { s in
+                Uttt.sheet(.watch, size: CGSize(width: size.width, height: size.height + s))
+            }
             .overlay(alignment: .topLeading) {
                 /* On the strip the label over the line in the left column,
                  * the line wrapped; opening, the two across the top band. */

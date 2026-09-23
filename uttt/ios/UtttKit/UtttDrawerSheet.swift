@@ -80,6 +80,48 @@ struct UtttDrawerSheet<Content: View>: View {
 }
 
 extension View {
+    /// THE BOARD HOLDS THE CENTRE AND SCALES ABOUT IT, on every screen: the
+    /// board placed at the kernel's `L`, on a sheet-sized layer of its own
+    /// that rides an auto-collapse (CollapseSlide) along the path the layout
+    /// would walk - `at(s)` is the kernel's sheet for the drawer `s` points
+    /// taller than `L`'s. One owner: the waiting and spectator screens had
+    /// none, so the board after Again sat at its compact place through the
+    /// whole slide, 207pt below the drawer's centre in its first frame
+    /// (filmed with the ruler).
+    func boardRide(_ L: UtiSheet, touches: Bool = false,
+                   at: @escaping (CGFloat) -> UtiSheet) -> some View {
+        let side = CGFloat(L.board.2)
+        return frame(width: side, height: side)
+            .boardRuler()
+            .placed(x: L.board.0, y: L.board.1)
+            .collapseRide(touches: touches) { s in
+                let A = at(s)
+                return CollapseRidePose(
+                    dy: CGFloat(A.board.1 + A.board.2 / 2 - L.board.1 - L.board.2 / 2),
+                    scale: side > 0 ? CGFloat(A.board.2) / side : 1,
+                    pivot: CGPoint(x: CGFloat(L.board.0) + side / 2,
+                                   y: CGFloat(L.board.1) + side / 2))
+            }
+    }
+
+    /// The header's words, twice (the column beside the ink and the band
+    /// across the top, UtttGameScreen), riding an auto-collapse with the
+    /// top and crossfading on their layers: the column copy toward its
+    /// alpha at each height, the band copy set as the slide's first frame
+    /// had it (`B`) and fading out.
+    func wordsRide(column: Bool, _ L: UtiSheet, from B: UtiSheet,
+                   at: @escaping (CGFloat) -> UtiSheet) -> some View {
+        collapseRide { s in
+            let A = at(s)
+            if column {
+                return CollapseRidePose(dy: 0, alpha: L.words_alpha > 0
+                                        ? CGFloat(A.words_alpha / L.words_alpha) : 1)
+            }
+            return CollapseRidePose(dy: 0, alpha: B.band_alpha > 0
+                                    ? CGFloat(A.band_alpha / B.band_alpha) : 1)
+        }
+    }
+
     /// Put a view's top left at a point the kernel gave, in a sheet-sized box.
     func placed(x: Float, y: Float) -> some View {
         offset(x: CGFloat(x), y: CGFloat(y))
