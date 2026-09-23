@@ -195,6 +195,9 @@ public enum Uttt {
 
     public static func say(_ s: Say) -> String { String(cString: uti_say(s.key)) }
 
+    /// The mark the bubble's headline draws before its words, or `.none`.
+    public static var bubbleMark: Mark { Mark(rawValue: UInt8(uti_say_bubble_mark())) ?? .none }
+
     /// The mark drawn inside the play-surface headline, or `.none`.
     public static var sayMark: Mark { Mark(rawValue: UInt8(uti_say_mark())) ?? .none }
 
@@ -249,7 +252,16 @@ public enum Uttt {
     }
 
     public static func boardPolys(active: Int, last: Int) -> BoardPolys {
-        let n = Int(uti_draw(Int32(active), Int32(last), 1, 1))
+        harvestBoard(uti_draw(Int32(active), Int32(last), 1, 1))
+    }
+
+    /// The board as the bubble draws it: the main lines stop on its frame.
+    public static func bubbleBoardPolys(active: Int, last: Int) -> BoardPolys {
+        harvestBoard(uti_draw_bubble(Int32(active), Int32(last)))
+    }
+
+    private static func harvestBoard(_ count: Int32) -> BoardPolys {
+        let n = Int(count)
         let np = Int(uti_point_count())
         guard n > 0, np > 0, let pts = uti_points(), let first = uti_poly_first(),
               let ns = uti_poly_n(), let rgba = uti_poly_rgba() else {

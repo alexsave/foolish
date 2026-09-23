@@ -12,12 +12,19 @@ import UIKit
 /// lines: a headline, and the block the opponent has been sent to.
 ///
 /// AND IT IS BAKED. Every device in the thread shows the one image the sender
-/// drew and reads the one caption under it, so neither may say "you" and
-/// neither may name a person. There is no name to use anyway: a Messages
-/// extension gets a per-conversation UUID for each participant and no way to
-/// resolve one to a human. It does not need one - the transcript already says
-/// who did it, by which side of the thread the bubble sits on - so the caption
-/// is a statement about the board and nothing else.
+/// drew and reads the one caption under it, so neither may say "you": the
+/// image names the side to play by its drawn mark ("<O> to play"), because
+/// docs/UI.html's "Your move" is false on the sender's own copy.
+///
+/// AND THE CAPTION NAMES NOBODY, though UI.html 01 and 05 write "Alex". An
+/// extension has a participant UUID and no name, and the documented way to
+/// get one - "$<uuid>" in a caption, which Messages is meant to swap for the
+/// person's name - was tried on iOS 27 in the simulator (2026-09-22): the raw
+/// "$FEACEE0B-..." showed in the draft, the sent bubble, the incoming twin
+/// and the conversation list. The kernel can already word both sentences
+/// around a name (uttt_say_by); what is missing is proof on two real phones
+/// that Messages substitutes it, and until then a UUID in the transcript is
+/// far worse than no name.
 ///
 /// Nothing here computes a coordinate. The frame is split in `uttt_draw.c` and
 /// this fills in what the kernel cannot know: where a baseline falls in a font
@@ -64,13 +71,13 @@ public enum UtttBubble {
     /// so none of it says "you" and none of it names a person - the
     /// transcript already says who did it, by which side the bubble sits on.
 
-    /// Two words. The one thing a glance needs.
+    /// Two words after a drawn mark. The one thing a glance needs.
     public static var headline: String { Uttt.say(.bubbleHeadline) }
 
     /// The place, in blue, under the headline.
     public static var place: String { Uttt.say(.bubblePlace) }
 
-    /// One line, truncating, and it names nobody.
+    /// One line, truncating, and it names nobody (see the type's comment).
     public static var caption: String { Uttt.say(.caption) }
 
     // MARK: the image
@@ -113,10 +120,12 @@ public enum UtttBubble {
              * on once here rather than into ten thousand multiplications. */
             cg.saveGState()
             cg.translateBy(x: board.minX, y: board.minY)
-            Uttt.fillBoard(active: active, last: last, into: cg, side: board.width)
+            Uttt.fill(Uttt.bubbleBoardPolys(active: active, last: last),
+                      into: cg, side: board.width)
             cg.restoreGState()
 
-            draw(headline: headline, place: place, in: textBox)
+            draw(mark: Uttt.bubbleMark, headline: headline, place: place,
+                 in: textBox, into: cg)
         }
     }
 
@@ -137,7 +146,8 @@ public enum UtttBubble {
      * wrap onto two. Every block name is two short words, so it always breaks
      * cleanly and nothing ever truncates; the truncating line is the caption,
      * which is the one carrying a name it did not choose. */
-    private static func draw(headline: String, place: String, in box: CGRect) {
+    private static func draw(mark: Uttt.Mark, headline: String, place: String,
+                             in box: CGRect, into cg: CGContext) {
         let one = NSMutableParagraphStyle()
         one.lineBreakMode = .byTruncatingTail
         let wrap = NSMutableParagraphStyle()
@@ -170,13 +180,39 @@ public enum UtttBubble {
          * pictures that arrived together. */
         let lead = lead0
         var y = box.minY + (box.height - (hH + lead + pH)) / 2
+        /* THE MARK SITS ON THE CAP HEIGHT, not the line box, or it reads as
+         * a separate object hanging below the words. It is the same pen as
+         * the board's, so it is the only name either side has. */
+        let hFont = font(0)
+        var hx = box.minX
+        if mark == .x || mark == .o {
+            let side = ceil(hFont.capHeight * 1.45)
+            let base = y + hFont.ascender
+            let mid = base - hFont.capHeight / 2
+            cg.saveGState()
+            cg.translateBy(x: hx - side * 0.06, y: mid - side / 2)
+            fill(Uttt.mark(mark, seed: Uttt.seed &+ 4), into: cg, side: side)
+            cg.restoreGState()
+            hx += side * 0.94 + 4
+        }
         (headline as NSString).draw(
-            with: CGRect(x: box.minX, y: y, width: box.width, height: hH),
+            with: CGRect(x: hx, y: y, width: box.maxX - hx, height: hH),
             options: opts, attributes: hAttr, context: nil)
         y += hH + lead
         (place as NSString).draw(
             with: CGRect(x: box.minX, y: y, width: box.width, height: pH),
             options: opts, attributes: pAttr, context: nil)
+    }
+
+    private static func fill(_ polys: [Uttt.Poly], into cg: CGContext, side: CGFloat) {
+        for p in polys where p.points.count > 1 {
+            cg.setFillColor(p.color)
+            cg.beginPath()
+            cg.move(to: CGPoint(x: p.points[0].x * side, y: p.points[0].y * side))
+            for q in p.points.dropFirst() { cg.addLine(to: CGPoint(x: q.x * side, y: q.y * side)) }
+            cg.closePath()
+            cg.fillPath()
+        }
     }
 
     // MARK: the sheet
