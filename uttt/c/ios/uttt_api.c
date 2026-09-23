@@ -46,6 +46,9 @@ _Static_assert(UTI_CH_STILL == UTTT_CH_STILL && UTI_CH_STAGE == UTTT_CH_STAGE
             && UTI_CH_DRAFT == UTTT_CH_DRAFT, "motion channels");
 _Static_assert(sizeof(UtiMotion) == sizeof(UtttMotion), "motion plan layout");
 _Static_assert(sizeof(UtiFrame) == sizeof(UtttFrame), "motion frame layout");
+_Static_assert(offsetof(UtiMotion, outline_fade) == offsetof(UtttMotion, outline_fade)
+            && offsetof(UtiFrame, outline) == offsetof(UtttFrame, outline)
+            && offsetof(UtiFrame, outline_a) == offsetof(UtttFrame, outline_a), "the promise lines up");
 _Static_assert(UTI_MSG_TEXT_MAX >= UTM_MAX_TEXT, "the longest link fits the host buffer");
 
 /* The resident game, and the buffers the display list is built into. Sized
@@ -172,6 +175,13 @@ int uti_draw_settle(float fall_t, float line_t)
     dl_fresh();
     if (uttt_draw_settle(&S.dl, &S.m.game, S.m.seed, fall_t, line_t) < 0 && S.m.game.n_plies)
         S.overflow = 1;
+    return publish();
+}
+
+int uti_draw_outline(int block, float t)
+{
+    dl_fresh();
+    if (uttt_draw_outline(&S.dl, block, S.m.seed, t) < 0) S.overflow = 1;
     return publish();
 }
 

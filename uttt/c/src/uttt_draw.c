@@ -292,6 +292,43 @@ int uttt_draw_settle(UtttDL *d, const UtttGame *g, int32_t seed, float fall_t, f
     return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
 }
 
+/* THE PROMISE (uttt_anim.h): the highlighter's own rect, in its own colour
+ * at full strength, drawn round by the pen - top, right, bottom, left, one
+ * after the other, as a hand goes round a box - to `t`. The rect and the
+ * colour are uttt_wash_rect and uttt_wash_rgba, the tint's, so the outline
+ * and the tint that replaces it at Send cannot disagree by a point. The seed
+ * is the sheet's and the block's, so both phones draw the same wobble. */
+int uttt_draw_outline(UtttDL *d, int block, int32_t seed, float t)
+{
+    float r[4];
+    if (t <= 0.f || !uttt_wash_rect(block, r, NULL)) return 0;
+    if (!seed) seed = 1;
+    const float x0 = r[0], y0 = r[1], x1 = r[0] + r[2], y1 = r[1] + r[3];
+    const float side[4][4] = {
+        { x0, y0, x1, y0 }, { x1, y0, x1, y1 }, { x1, y1, x0, y1 }, { x0, y1, x0, y0 } };
+    const float len[4] = { r[2], r[3], r[2], r[3] };
+    const float per = 2.f * (r[2] + r[3]);
+    UtttPen p = uttt_pen_92();
+    p.ink = uttt_wash_rgba(1.f);
+    p.w = uttt_pen_92().w / 9.f / 100.f * GRID_MAJOR_W * 1.3f;
+    p.a = 1.f; p.vel = 0; p.lift = .2f; p.grain = .25f; p.agrain = .2f;
+    float done = 0.f, want = (t > 1.f ? 1.f : t) * per;
+    for (int k = 0; k < 4 && done < want; k++) {
+        UtttRough rg = uttt_rough_default(seed * 577 + block * 31 + k * 7);
+        rg.roughness = rough_for(len[k]);
+        rg.bowing    = bow_for(len[k]);
+        rg.max_offset = mro_for(len[k]);
+        rg.seg_line = 18;
+        UtttPt pts[1024]; int np = 0; UtttSpan sp[2];
+        int n = uttt_rough_line(&rg, side[k][0], side[k][1], side[k][2], side[k][3],
+                                pts, 1024, &np, sp, 2);
+        float part = (want - done) / len[k];
+        for (int q = 0; q < n; q++) stroke(d, pts + sp[q].first, sp[q].n, &p, part);
+        done += len[k];
+    }
+    return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
+}
+
 int uttt_draw_cell(UtttDL *d, int mark, int mv, int32_t seed, float t)
 {
     if (mv < 0 || mv > 80) return -1;

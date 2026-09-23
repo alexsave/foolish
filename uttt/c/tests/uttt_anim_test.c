@@ -58,56 +58,122 @@ int main(void)
     uttt_motion_at(&m, 0, &f);
     OK(m.ch == UTTT_CH_STILL && !f.running && f.mark_t == 1.f, "an empty board does not move");
 
-    /* X in the centre of the centre: from anywhere (9) to the centre (4) */
+    /* X in the centre of the centre: from anywhere (9) to the centre (4).
+     * PRE (stage): the ink draws, the highlighter stays on the sheet it was
+     * played in, and the centre block is outlined once the ink is down. */
     uttt_play(&g, 4 * 9 + 4);
     m = uttt_motion(&g, UTTT_CH_STAGE);
     uttt_wash_rect(4, r4, &a); uttt_wash_rect(9, r9, NULL); uttt_wash_rect(0, r0, NULL);
     OK(m.mark == UTTT_X && m.ink_ms == 260, "an X inks in 260 ms");
-    OK(m.from == 9 && m.to == 4, "the wash goes from anywhere to the block it sends to");
-    OK(m.wash_at == 260 && m.wash_ms == 340, "the wash moves after the ink lands, for 340 ms");
-    OK(m.end_ms == 260 + 340, "no ring: it rests once the wash arrives (owner: no pulse)");
+    OK(m.from == 9 && m.to == 9, "pre: the wash stays where the move was played");
+    OK(m.outline == 4 && m.outline_at == 260 && !m.outline_fade,
+       "pre: the block it sends to is outlined once the ink lands");
+    OK(m.end_ms == 260 + UTTT_MS_OUTLINE, "pre: it rests once the outline is drawn round");
 
     uttt_motion_at(&m, 0, &f);
     OK(f.mark_t == 0.f && !f.landed && f.running, "at 0 nothing is drawn yet");
     OK(same_rect(f.wash, r9), "and the wash is still where it was");
-    float prev = 0.f; int mono = 1;
-    for (int t = 0; t <= 260; t += 4) {
+    OK(f.outline_t == 0.f, "and no outline yet");
+    float prev = 0.f; int mono = 1, still_wash = 1;
+    for (int t = 0; t <= m.end_ms + 100; t += 4) {
         uttt_motion_at(&m, t, &f);
-        if (f.mark_t + 1e-6f < prev) mono = 0;
-        prev = f.mark_t;
-        if (t < 260 && !same_rect(f.wash, r9)) mono = 0;
+        if (t <= 260 && f.mark_t + 1e-6f < prev) mono = 0;
+        if (t <= 260) prev = f.mark_t;
+        if (!same_rect(f.wash, r9)) still_wash = 0;
     }
-    OK(mono, "the ink only moves forward, and the wash waits for it");
+    OK(mono, "the ink only moves forward");
+    OK(still_wash, "pre: the highlighter never moves before Send");
     uttt_motion_at(&m, 130, &f);
     OK(f.mark_t > .5f && f.mark_t < 1.f, "halfway through, the ease-out curve is past half");
     uttt_motion_at(&m, 259, &f);
-    OK(!f.landed, "not landed a millisecond early");
+    OK(!f.landed && f.outline_t == 0.f, "not landed a millisecond early, and no outline");
     uttt_motion_at(&m, 260, &f);
     OK(f.landed && f.mark_t == 1.f, "landed at 260");
-    uttt_motion_at(&m, 260 + 170, &f);
-    OK(!same_rect(f.wash, r9) && !same_rect(f.wash, r4), "mid-travel the rect is between");
-    OK(f.wash[2] < r9[2] && f.wash[2] > r4[2], "and shrinking from the sheet to the block");
-    uttt_motion_at(&m, 600, &f);
-    OK(same_rect(f.wash, r4) && f.wash_rgba == uttt_wash_rgba(a), "arrived at 600");
-    OK(f.settled, "settled once the wash arrives");
-    uttt_motion_at(&m, 599, &f);
-    OK(!f.settled && f.landed, "not settled while the wash travels");
-    uttt_motion_at(&m, m.end_ms - 1, &f);
-    OK(f.running, "still running a millisecond before the end");
+    uttt_motion_at(&m, 260 + UTTT_MS_OUTLINE / 2, &f);
+    OK(f.outline == 4 && f.outline_t > .3f && f.outline_t < 1.f && f.outline_a == 1.f,
+       "pre: the outline is drawn round after the ink");
+    OK(!f.settled && f.running, "not settled while the outline draws");
     uttt_motion_at(&m, m.end_ms, &f);
-    OK(!f.running && same_rect(f.wash, r4) && f.mark_t == 1.f,
-       "at the end: the resting board");
+    OK(!f.running && f.settled && f.outline_t == 1.f && same_rect(f.wash, r9),
+       "at the end: the mark, the wash where it was, the whole outline");
+
+    /* A DRAFT SHOWN AGAIN is that last frame, still */
+    {
+        UtttMotion md = uttt_motion(&g, UTTT_CH_DRAFT);
+        UtttFrame fd; uttt_motion_at(&md, 0, &fd);
+        OK(!fd.running && fd.mark_t == 1.f && fd.outline == 4 && fd.outline_t == 1.f
+           && fd.outline_a == 1.f && same_rect(fd.wash, r9) && !memcmp(fd.wash, f.wash, sizeof f.wash),
+           "draft: the stage's last frame, still");
+    }
+
+    /* POST (Send): only the highlighter moves, to the outlined block, and the
+     * outline fades as the tint arrives. */
+    {
+        UtttMotion mb = uttt_motion(&g, UTTT_CH_SETTLE);
+        UtttFrame fb;
+        uttt_motion_at(&mb, 0, &fb);
+        OK(fb.running && fb.mark_t == 1.f && same_rect(fb.wash, r9) && fb.outline == 4
+           && fb.outline_t == 1.f && fb.outline_a == 1.f,
+           "post: at Send the mark is down, the wash where it was, the outline whole");
+        uttt_motion_at(&mb, UTTT_MS_WASH_MINE / 2, &fb);
+        OK(!same_rect(fb.wash, r9) && !same_rect(fb.wash, r4) && fb.wash[2] < r9[2] && fb.wash[2] > r4[2],
+           "post: mid-travel the rect is between the sheet and the block");
+        OK(fb.outline_a > 0.f && fb.outline_a < 1.f && fb.mark_t == 1.f, "post: the outline fading, nothing else");
+        uttt_motion_at(&mb, mb.end_ms, &fb);
+        OK(!fb.running && same_rect(fb.wash, r4) && fb.wash_rgba == uttt_wash_rgba(a) && fb.outline < 0,
+           "post: the tint where the outline was, and the outline gone");
+        OK(mb.end_ms == UTTT_MS_WASH_MINE, "post: it lasts the wash's travel");
+    }
+
+    /* THE OUTLINE IS THE TINT'S RECT AND COLOUR, drawn round by the pen */
+    {
+        UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
+        uttt_draw_outline(&d, 4, 7, 1.f);
+        int whole = d.n_poly, ink = whole > 0;
+        float lo[2] = { 9, 9 }, hi[2] = { -9, -9 };
+        for (int i = 0; i < d.n_poly; i++)
+            if ((d.poly[i].rgba >> 8) != (uttt_wash_rgba(1.f) >> 8)) ink = 0;
+        for (int i = 0; i < d.n_pt; i++) {
+            if (d.pt[i].x < lo[0]) lo[0] = d.pt[i].x;
+            if (d.pt[i].y < lo[1]) lo[1] = d.pt[i].y;
+            if (d.pt[i].x > hi[0]) hi[0] = d.pt[i].x;
+            if (d.pt[i].y > hi[1]) hi[1] = d.pt[i].y;
+        }
+        OK(ink, "outline: every stroke is the highlighter's colour");
+        OK(fabsf(lo[0] - r4[0]) < .012f && fabsf(lo[1] - r4[1]) < .012f
+           && fabsf(hi[0] - (r4[0] + r4[2])) < .012f && fabsf(hi[1] - (r4[1] + r4[3])) < .012f,
+           "outline: it runs round the tint's own rect");
+        uttt_dl_init(&d, PT, 400000, PO, 60000);
+        uttt_draw_outline(&d, 4, 7, .5f);
+        int half = d.n_poly;
+        uttt_dl_init(&d, PT, 400000, PO, 60000);
+        uttt_draw_outline(&d, 4, 7, 0.f);
+        int none = d.n_poly;
+        uttt_dl_init(&d, PT, 400000, PO, 60000);
+        uttt_draw_outline(&d, -1, 7, 1.f);
+        OK(half > 0 && half < whole && none == 0 && d.n_poly == 0,
+           "outline: drawn round to t, nothing at 0 or for no block");
+        uttt_dl_init(&d, PT, 400000, PO, 60000);
+        uttt_draw_outline(&d, 4, 7, 1.f);
+        UtttPt p0 = d.pt[d.n_pt / 2];
+        uttt_dl_init(&d, PT, 400000, PO, 60000);
+        uttt_draw_outline(&d, 4, 7, 1.f);
+        OK(d.n_poly == whole && d.pt[d.n_pt / 2].x == p0.x && d.pt[d.n_pt / 2].y == p0.y,
+           "outline: the same seed draws the same wobble on both phones");
+    }
 
     /* O answers into the top-left: centre (4) to top-left (0) */
     uttt_play(&g, 4 * 9 + 0);
     m = uttt_motion(&g, UTTT_CH_REPLAY);
     OK(m.mark == UTTT_O && m.ink_ms == 340, "an O inks in 340 ms");
     OK(m.end_ms == 340 + 340, "my own replay rests once my wash arrives");
+    OK(m.outline < 0, "my own bubble reopened: no promise, the wash moves");
     uttt_motion_at(&m, 170, &f);
     OK(f.mark_t > .5f && f.mark_t < 1.f, "an O eases out too");
     m = uttt_motion(&g, UTTT_CH_THEIRS);
     OK(m.wash_ms == 420 && m.end_ms == 340 + 420, "their move: the wash takes longer, and nothing rings after it");
     OK(m.from == 4 && m.to == 0, "from the centre to the top left");
+    OK(m.outline < 0 && m.wash_at == 340, "their move: no outline, the wash moves after the ink");
     uttt_motion_at(&m, 340 + 420, &f);
     OK(same_rect(f.wash, r0), "and lands on it");
     m = uttt_motion(&g, UTTT_CH_ARRIVAL);
@@ -144,35 +210,39 @@ int main(void)
         UtttGame w; uttt_init(&w);
         for (unsigned i = 0; i < sizeof diag && !w.over; i++) uttt_play(&w, diag[i]);
         UtttMotion ms = uttt_motion(&w, UTTT_CH_STAGE);
-        uttt_motion_at(&ms, ms.end_ms + 5000, &f);
-        OK(ms.settle && f.fall_t == 0.f && f.line_t == 0.f && f.mark_t == 1.f,
-           "settle: at stage the big mark and the line wait for Send");
+        float rf[4]; uttt_wash_rect(ms.from, rf, NULL);
+        OK(ms.fall_at == ms.ink_ms && ms.line_at == ms.ink_ms + UTTT_MS_FALL
+           && ms.end_ms == ms.line_at + UTTT_MS_LINE,
+           "pre: the winning move draws its mark, then the big mark, then the line");
+        OK(ms.outline < 0, "pre: a game it ended sends nobody anywhere - no outline");
+        uttt_motion_at(&ms, ms.ink_ms - 1, &f);
+        OK(f.fall_t == 0.f && f.line_t == 0.f, "pre: nothing of the settlement before the ink lands");
+        uttt_motion_at(&ms, ms.fall_at + UTTT_MS_FALL / 2, &f);
+        OK(f.mark_t == 1.f && f.fall_t > .3f && f.fall_t < 1.f && f.line_t == 0.f,
+           "pre: the big mark falls after the small one");
+        uttt_motion_at(&ms, ms.line_at + UTTT_MS_LINE / 2, &f);
+        OK(f.fall_t == 1.f && f.line_t > .3f && f.line_t < 1.f, "pre: then the line");
+        OK(same_rect(f.wash, rf), "pre: the wash still on the block the move was played in");
+        uttt_motion_at(&ms, ms.end_ms, &f);
+        OK(!f.running && f.fall_t == 1.f && f.line_t == 1.f && same_rect(f.wash, rf),
+           "pre: at rest, the whole settlement and the wash unmoved");
         UtttMotion mb = uttt_motion(&w, UTTT_CH_SETTLE);
         uttt_motion_at(&mb, 0, &f);
-        OK(f.mark_t == 1.f && f.fall_t == 0.f && f.line_t == 0.f && f.running,
-           "settle: at Send the mark is down and nothing of the settlement yet");
-        uttt_motion_at(&mb, UTTT_MS_FALL / 2, &f);
-        OK(f.fall_t > .3f && f.fall_t < 1.f && f.line_t == 0.f, "settle: the big mark falls first");
-        uttt_motion_at(&mb, UTTT_MS_FALL + UTTT_MS_LINE / 2, &f);
-        OK(f.fall_t == 1.f && f.line_t > .3f && f.line_t < 1.f, "settle: then the line");
-        uttt_motion_at(&mb, mb.end_ms, &f);
-        OK(!f.running && f.fall_t == 1.f && f.line_t == 1.f, "settle: then rest");
+        OK(f.mark_t == 1.f && f.fall_t == 1.f && f.line_t == 1.f && f.running,
+           "post: at Send the whole settlement is already down");
+        uttt_motion_at(&mb, mb.end_ms / 2, &f);
+        OK(f.fall_t == 1.f && f.line_t == 1.f && same_rect(f.wash, rf)
+           && (f.wash_rgba & 0xff) < (uttt_wash_rgba(.3f) & 0xff),
+           "post: the game is over, so the wash leaves - nothing else moves");
         UtttMotion md = uttt_motion(&w, UTTT_CH_THEIRS);
         uttt_motion_at(&md, md.ink_ms - 1, &f);
         OK(f.fall_t == 0.f && md.fall_at == md.ink_ms && md.line_at == md.ink_ms + UTTT_MS_FALL
-           && md.end_ms >= md.line_at + UTTT_MS_LINE, "settle: their bubble plays both halves after the ink");
-        UtttMotion mn = uttt_motion(&g, UTTT_CH_SETTLE);
-        OK(mn.ch == UTTT_CH_STILL, "settle: a move that won nothing has nothing to settle");
-        /* A DRAFT SHOWN AGAIN AT REST (the end of the game re-presents for
-         * Again while the winning move is still unsent): the ink and no
-         * settlement, where the plain still board has all of it */
+           && md.wash_at == md.line_at + UTTT_MS_LINE && md.outline < 0,
+           "theirs: small mark, big mark, line, then the highlighter");
         UtttMotion mr = uttt_motion(&w, UTTT_CH_DRAFT);
         uttt_motion_at(&mr, 0, &f);
-        OK(!f.running && f.mark_t == 1.f && f.fall_t == 0.f && f.line_t == 0.f,
-           "draft: the winning move staged, shown again, holds the big mark and the line");
-        UtttMotion mw = uttt_motion(&w, UTTT_CH_STILL);
-        uttt_motion_at(&mw, 0, &f);
-        OK(f.fall_t == 1.f && f.line_t == 1.f, "draft: the same board at rest, sent, has both");
+        OK(!f.running && f.mark_t == 1.f && f.fall_t == 1.f && f.line_t == 1.f && same_rect(f.wash, rf),
+           "draft: the winning move staged, shown again, has its settlement and the wash unmoved");
         /* a move that took a block and did not end the game: a prefix of
          * the fixture whose last move won its block */
         int took = 0;
@@ -182,18 +252,19 @@ int main(void)
             int b = diag[k - 1] / 9;
             if (p.over || (uttt_block(&p, b) != UTTT_X && uttt_block(&p, b) != UTTT_O)) continue;
             took = 1;
+            UtttMotion mps = uttt_motion(&p, UTTT_CH_STAGE);
+            OK(mps.fall_at == mps.ink_ms && mps.line_at < 0 && mps.outline == uttt_active(&p)
+               && mps.outline_at == mps.ink_ms + UTTT_MS_FALL,
+               "pre: a block-taking move draws its big mark, then the outline");
             UtttMotion mp = uttt_motion(&p, UTTT_CH_DRAFT);
+            UtttFrame fs;
             uttt_motion_at(&mp, 0, &f);
-            UtttFrame fs; UtttMotion mps = uttt_motion(&p, UTTT_CH_STAGE);
             uttt_motion_at(&mps, mps.end_ms, &fs);
-            OK(!f.running && f.fall_t == 0.f && f.mark_t == 1.f
+            OK(!f.running && f.fall_t == 1.f && f.mark_t == 1.f && f.outline == fs.outline
                && !memcmp(f.wash, fs.wash, sizeof f.wash) && f.wash_rgba == fs.wash_rgba,
                "draft: a block-taking move staged, shown again, is the stage's last frame");
         }
         OK(took, "draft: the fixture has a block-taking move before the last");
-        UtttMotion mq = uttt_motion(&g, UTTT_CH_DRAFT);
-        uttt_motion_at(&mq, 0, &f);
-        OK(!f.running && f.mark_t == 1.f, "draft: a move that won nothing is the board at rest");
 
         UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
         UtttDrawOpts o = uttt_draw_opts(7);

@@ -196,13 +196,14 @@ int  uti_draw_overflow(void);
 #define UTI_CH_THEIRS   3   /* D: a bubble of theirs, opened                */
 #define UTI_CH_ARRIVAL  4   /* E: their move landed while I was looking     */
 #define UTI_CH_OPEN     5   /* a bubble opened: C or D, the kernel decides  */
-#define UTI_CH_SETTLE   6   /* B: Send - the big mark falls, then the line  */
-#define UTI_CH_DRAFT    7   /* at rest, my move staged: settlement held     */
+#define UTI_CH_SETTLE   6   /* B: Send - only the highlighter moves         */
+#define UTI_CH_DRAFT    7   /* at rest, my move staged: the stage's end     */
 
 typedef struct {
     int32_t ch, mv, mark, from, to;
     int32_t ink_ms, wash_at, wash_ms, end_ms;
-    int32_t fall_at, line_at, settle;
+    int32_t fall_at, line_at;
+    int32_t outline, outline_at, outline_fade;
 } UtiMotion;
 
 typedef struct {
@@ -214,6 +215,9 @@ typedef struct {
     int32_t  running;       /* 0: nothing changes again, stop the loop       */
     float    fall_t;        /* the big mark of the block the move won, 0..1  */
     float    line_t;        /* the win line, 0..1                            */
+    int32_t  outline;       /* the promised block, -1 none                   */
+    float    outline_t;     /* how far round the pen has gone, 0..1          */
+    float    outline_a;     /* its opacity: it fades at Send                 */
 } UtiFrame;
 
 /* The plan for the resident game's last move arriving through `ch`. */
@@ -224,6 +228,9 @@ int32_t   uti_motion_rest_ms(void);
 /* The last move's settlement on its own - the big mark to `fall_t`, the win
  * line to `line_t` - drawn over uti_draw_under with uti_draw_last. */
 int uti_draw_settle(float fall_t, float line_t);
+/* The promise: the pen outline round `block` in the highlighter's rect and
+ * colour, drawn round to `t` (src/uttt_draw.h uttt_draw_outline). */
+int uti_draw_outline(int block, float t);
 void      uti_motion_at(const UtiMotion *m, int32_t now_ms, UtiFrame *f);
 
 /* ---- the auto-collapse's slide (src/uttt_anim.h UTTT_COLLAPSE_*) ----

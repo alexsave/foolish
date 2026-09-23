@@ -44,6 +44,11 @@ int uttt_draw_last(UtttDL *d, const UtttGame *g, int32_t seed, float t);
  * stroke but these and the last mark. -1 on no moves. */
 int uttt_draw_settle(UtttDL *d, const UtttGame *g, int32_t seed, float fall_t, float line_t);
 
+/* THE PROMISE: the outline round `block` (0..8, 9 the sheet) in the
+ * highlighter's rect and colour, drawn round to `t`. 0, or -1 when the
+ * display list ran out; nothing for a block of -1. */
+int uttt_draw_outline(UtttDL *d, int block, int32_t seed, float t);
+
 /* One cell's mark, partially drawn - the animating stroke on its own. */
 int uttt_draw_cell(UtttDL *d, int mark, int mv, int32_t seed, float t);
 

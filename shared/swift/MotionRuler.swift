@@ -32,11 +32,26 @@ public enum MotionRuler {
     /// not a UserDefaults key: a `defaults write` from outside the sandbox lands
     /// in the wrong domain and cfprefsd caches App Group preferences.
     public static func flag(_ name: String, group: String) -> Bool {
-        guard let dir = FileManager.default
-                .containerURL(forSecurityApplicationGroupIdentifier: group)
-        else { return false }
+        guard let dir = container(group) else { return false }
         return FileManager.default.fileExists(atPath: dir.appendingPathComponent(name).path)
     }
+
+    /// THE GROUP'S DIRECTORY, looked up once per process. The FILE in it is
+    /// still read fresh every time; only where the directory is gets cached.
+    /// `containerURL(forSecurityApplicationGroupIdentifier:)` takes dyld's
+    /// loader lock and an XPC round trip, and a `sample` of an opening drawer
+    /// (TESTFLIGHT_PLAN.md 12) put 30 main-thread samples (~40 ms) in it under
+    /// ONE view body that asked whether the ruler was on. The directory of an
+    /// App Group never moves while the process lives.
+    public static func container(_ group: String) -> URL? {
+        lock.lock(); defer { lock.unlock() }
+        if let u = containers[group] { return u }
+        let u = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)
+        containers[group] = u
+        return u
+    }
+    nonisolated(unsafe) private static var containers: [String: URL] = [:]
+    private static let lock = NSLock()
 
     public static let band = CGFloat(MR_BAND_PT)
     public static let strip = CGFloat(MR_STRIP_PT)

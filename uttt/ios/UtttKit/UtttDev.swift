@@ -67,8 +67,7 @@ public enum UtttDev {
     /// The word the rig wrote, or nil in every ordinary run - including an
     /// ordinary DEBUG one, because the file is absent until somebody writes it.
     public static var seat: String? {
-        guard let dir = FileManager.default
-                .containerURL(forSecurityApplicationGroupIdentifier: appGroup),
+        guard let dir = MotionRuler.container(appGroup),
               let raw = try? String(contentsOf: dir.appendingPathComponent(seatFile),
                                     encoding: .utf8)
         else { return nil }
@@ -109,8 +108,7 @@ public enum UtttDev {
     /// filmed before-and-after is only comparable if the same one comes up
     /// every run. The bot is deterministic given the seed, so it does.
     public static var game: Int? {
-        guard let dir = FileManager.default
-                .containerURL(forSecurityApplicationGroupIdentifier: appGroup),
+        guard let dir = MotionRuler.container(appGroup),
               let raw = try? String(contentsOf: dir.appendingPathComponent(gameFile),
                                     encoding: .utf8)
         else { return nil }
@@ -155,9 +153,7 @@ public enum UtttDev {
     }
 
     private static func url(_ name: String) -> URL? {
-        FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroup)?
-            .appendingPathComponent(name)
+        MotionRuler.container(appGroup)?.appendingPathComponent(name)
     }
 
     /// The seed every seeded game uses. A constant, so two runs are the same

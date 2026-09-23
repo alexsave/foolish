@@ -21,17 +21,34 @@
 
 #include "uttt.h"
 
-/* The channels of UI.html's grid that draw something. B (at Send) and Undo
- * are not here: B is "usually nothing" and there is no undo (owner). */
+/* THE TWO HALVES OF A MOVE (owner, 2026-09-23, after foolish's pre- and
+ * post-settlement):
+ *
+ *   PRE, at stage (A) - everything the move DID, in order: the small mark
+ *   draws; if it won its block, that block's big mark draws right after; if
+ *   it won the game, the win line after that. The highlighter DOES NOT MOVE:
+ *   it stays on the block the move was played in, so it is plain which block
+ *   a re-tap can change the move within. What the move will DO to the other
+ *   player is drawn as a promise instead - a pen outline, in the
+ *   highlighter's own rect and colour, round the block they will be sent to
+ *   (the whole sheet when they are freed; none when the game is over).
+ *
+ *   POST, at Send (B) - the ONLY thing that moves is the highlighter: it
+ *   travels from the block the move was played in to the outlined one, and
+ *   the outline fades as the tint arrives to replace it.
+ *
+ * The receiver (D, E, and my own bubble reopened, C) sees the whole move in
+ * that order: small mark, big mark, win line, then the highlighter - and no
+ * outline, because for them the move is not a promise. */
 enum {
     UTTT_CH_STILL   = 0,   /* nothing moves: the resting board              */
-    UTTT_CH_STAGE   = 1,   /* A: I tapped a square                          */
+    UTTT_CH_STAGE   = 1,   /* A: I tapped a square - the pre-settlement     */
     UTTT_CH_REPLAY  = 2,   /* C: I reopened my own bubble - my wash's pace  */
     UTTT_CH_THEIRS  = 3,   /* D: I opened a bubble of theirs                */
     UTTT_CH_ARRIVAL = 4,   /* E: their move landed while I was looking     */
-    UTTT_CH_SETTLE  = 6,   /* B: I tapped Send - the settlement half only  */
+    UTTT_CH_SETTLE  = 6,   /* B: I tapped Send - the post-settlement only  */
     UTTT_CH_DRAFT   = 7,   /* at rest, my last move staged and unsent: the
-                              ink and the wash, the settlement held for B  */
+                              stage's last frame (outline and all)         */
 };
 
 /* THE TIMINGS, in milliseconds. From UI.html's grid ("the mark draws
@@ -44,19 +61,19 @@ enum {
 #define UTTT_MS_INK_O        340
 #define UTTT_MS_WASH_MINE    340
 #define UTTT_MS_WASH_THEIRS  420
-/* THE SETTLEMENT HALF (UI.html 04 "A board falls", 05 "The line"): third in
- * a line, then the big mark over the top of the block, and at the end of the
- * game the line across three blocks. It is the consequence of the move, not
- * the move, so it plays at Send (B) and when a bubble is opened or arrives
- * (C, D, E: both halves) - never at stage (A). The big mark draws over .46
- * to .92 of the page's 1.7 s demo, the line over .1 to .85 of 1.3 s. */
+/* THE SETTLEMENT (UI.html 04 "A board falls", 05 "The line"): third in a
+ * line, then the big mark over the top of the block, and at the end of the
+ * game the line across three blocks. The big mark draws over .46 to .92 of
+ * the page's 1.7 s demo, the line over .1 to .85 of 1.3 s. */
 #define UTTT_MS_FALL         780
 #define UTTT_MS_LINE         500     /* strikein .5s                         */
+/* THE PROMISE: the outline round the destination block, drawn round once by
+ * the pen after everything the move did has landed. */
+#define UTTT_MS_OUTLINE      420
 /* THE REST before the drawer moves (owner, 2026-09-23: "let it breathe"):
- * from a move whose whole plan has run - ink, highlighter - this long
- * with nothing moving, so the settled result reads, and only then the
- * auto-collapse. foolish's `stage` rests the same 500 ms after its board
- * settles. */
+ * from a move whose whole plan has run this long with nothing moving, so
+ * the result reads, and only then the auto-collapse. foolish's `stage`
+ * rests the same 500 ms after its board settles. */
 #define UTTT_MS_REST         500
 
 typedef struct {
@@ -69,19 +86,25 @@ typedef struct {
     int32_t end_ms;        /* nothing moves at or after this                 */
     int32_t fall_at;       /* the big mark of the block the move won; -1 none */
     int32_t line_at;       /* the win line; -1 none                          */
-    int32_t settle;        /* 1: the settlement is held for Send (A)         */
+    int32_t outline;       /* the promised block (0..8, 9 the sheet), -1 none */
+    int32_t outline_at;    /* it is drawn round over [at, at+UTTT_MS_OUTLINE];
+                              -1: already drawn                             */
+    int32_t outline_fade;  /* 1: it fades as the wash travels (B)            */
 } UtttMotion;
 
 typedef struct {
     float   mark_t;        /* 0..1 how far the new mark is drawn             */
     float   wash[4];       /* x, y, w, h; w == 0 for no wash                 */
     uint32_t wash_rgba;    /* the highlighter, alpha included (0xRRGGBBAA)   */
-    int32_t landed;        /* 1 once the ink is down - the drawer may move   */
-    int32_t settled;       /* 1 once the wash has arrived too - the host may
-                              insert its bubble without stalling a travel   */
+    int32_t landed;        /* 1 once the ink is down                         */
+    int32_t settled;       /* 1 once nothing will move again - the host may
+                              insert its bubble without stalling a stroke  */
     int32_t running;       /* 0 once nothing will change again               */
     float   fall_t;        /* 0..1 the big mark of the block the move won    */
     float   line_t;        /* 0..1 the win line                              */
+    int32_t outline;       /* the promised block, -1 none                    */
+    float   outline_t;     /* 0..1 how far round the pen has gone            */
+    float   outline_a;     /* 0..1 its opacity (it fades at Send)            */
 } UtttFrame;
 
 /* The plan for the LAST move of `g` arriving through `ch`. A game with no
@@ -96,7 +119,8 @@ void uttt_motion_at(const UtttMotion *m, int32_t now_ms, UtttFrame *f);
  * the travelling rect both read it. Returns 0 for no wash (-1). */
 int uttt_wash_rect(int block, float r[4], float *alpha);
 
-/* The highlighter's colour, with alpha. */
+/* The highlighter's colour, with alpha. The outline is the same colour at
+ * full strength (uttt_wash_rgba(1)) - one constant, so they cannot differ. */
 uint32_t uttt_wash_rgba(float alpha);
 
 /* THE SHEET IS LAID OUT AT THE HEIGHT MESSAGES HANDS IT, at once, always.

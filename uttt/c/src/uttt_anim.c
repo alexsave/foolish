@@ -34,6 +34,7 @@ UtttMotion uttt_motion(const UtttGame *g, int ch)
 {
     UtttMotion m = { 0 };
     m.ch = ch; m.mv = -1; m.fall_at = -1; m.line_at = -1;
+    m.outline = -1; m.outline_at = -1;
     m.to = m.from = uttt_active(g);
     if (ch == UTTT_CH_STILL || g->n_plies == 0) { m.ch = UTTT_CH_STILL; return m; }
 
@@ -49,46 +50,50 @@ UtttMotion uttt_motion(const UtttGame *g, int ch)
      * the game it ended with a line. */
     int b = m.mv / 9, fell = uttt_block(g, b) == UTTT_X || uttt_block(g, b) == UTTT_O;
     int line = fell && uttt_won_line(g) >= 0;
+    /* where the move sends the other player: the outline's block */
+    int dest = m.to;
 
-    /* A DRAFT AT REST: a screen shown again while my move sits unsent (the
-     * end of the game re-presents for its Again door ~0.3 s after the ink)
-     * is the stage's last frame, not the settled board - drawn still, the
-     * big mark and the line struck in the same frame, before Send. */
-    if (ch == UTTT_CH_DRAFT) {
-        m.ch = UTTT_CH_STILL;
-        m.settle = fell;
+    /* PRE: the ink, then the big mark, then the line - one after another,
+     * each once the one before has landed. */
+    int e = m.ink_ms;
+    if (fell) { m.fall_at = e; e += UTTT_MS_FALL; }
+    if (line) { m.line_at = e; e += UTTT_MS_LINE; }
+
+    if (ch == UTTT_CH_STAGE || ch == UTTT_CH_DRAFT) {
+        /* THE HIGHLIGHTER STAYS on the block the move was played in; the
+         * block it will go to is outlined, drawn round once all of the
+         * above has landed. */
+        m.to = m.from;
+        m.wash_at = 0; m.wash_ms = 1;
+        m.outline = dest;
+        m.outline_at = dest >= 0 ? e : -1;
+        if (dest >= 0) e += UTTT_MS_OUTLINE;
+        m.end_ms = e;
+        if (ch == UTTT_CH_DRAFT) {
+            /* A draft shown again: the stage's last frame, still. */
+            m.ch = UTTT_CH_STILL;
+            m.fall_at = m.line_at = m.outline_at = -1;
+            m.end_ms = 0;
+        }
         return m;
     }
 
     if (ch == UTTT_CH_SETTLE) {
-        /* B: the move is on the board and the wash where it goes; only the
-         * settlement draws, from the tap on the arrow. */
-        m.ink_ms = 0;
-        m.wash_at = 0; m.wash_ms = 1;
-        m.from = m.to;
-        m.fall_at = fell ? 0 : -1;
-        m.line_at = line ? UTTT_MS_FALL : -1;
-        m.end_ms = line ? UTTT_MS_FALL + UTTT_MS_LINE : fell ? UTTT_MS_FALL : 0;
-        if (!fell) m.ch = UTTT_CH_STILL;
+        /* POST: everything the move did is already on the board; the wash
+         * travels to the promised block and the outline fades as it lands.
+         * A game that ended has no destination: the wash leaves. */
+        m.ink_ms = 0; m.fall_at = m.line_at = -1;
+        m.wash_at = 0; m.wash_ms = UTTT_MS_WASH_MINE;
+        m.outline = dest; m.outline_at = -1; m.outline_fade = 1;
+        m.end_ms = UTTT_MS_WASH_MINE;
         return m;
     }
 
-    /* THE WASH MOVES AFTER THE INK LANDS, never with it: two facts - what I
-     * played, then where you go - and shown together they teach nothing. */
-    m.wash_at = m.ink_ms;
-    m.wash_ms = (ch == UTTT_CH_STAGE || ch == UTTT_CH_REPLAY)
-              ? UTTT_MS_WASH_MINE : UTTT_MS_WASH_THEIRS;
+    /* THE RECEIVER SEES THE WHOLE MOVE: the pre-settlement, then the wash
+     * travels - after everything the move did has landed, never with it. */
+    m.wash_at = e;
+    m.wash_ms = ch == UTTT_CH_REPLAY ? UTTT_MS_WASH_MINE : UTTT_MS_WASH_THEIRS;
     m.end_ms  = m.wash_at + m.wash_ms;
-
-    /* THE SETTLEMENT: held for Send on my stage, drawn once the ink lands
-     * on every other channel - the big mark, then the line. */
-    if (fell && ch == UTTT_CH_STAGE) m.settle = 1;
-    else if (fell) {
-        m.fall_at = m.ink_ms;
-        int e = m.fall_at + UTTT_MS_FALL;
-        if (line) { m.line_at = e; e += UTTT_MS_LINE; }
-        if (e > m.end_ms) m.end_ms = e;
-    }
     return m;
 }
 
@@ -165,15 +170,21 @@ void uttt_motion_at(const UtttMotion *m, int32_t now, UtttFrame *f)
         f->wash_rgba = uttt_wash_rgba(aa + (ba - aa) * p);
     }
 
-    /* the big mark on the X's own curve, the line on UI.html's strikein;
-     * held at nothing while it waits for Send */
-    f->fall_t = m->settle ? 0.f
-              : (m->fall_at < 0 || still) ? 1.f
+    /* the big mark on the X's own curve, the line on UI.html's strikein */
+    f->fall_t = (m->fall_at < 0 || still) ? 1.f
               : bezier(.32f, .72f, .4f, 1.f, (float)(now - m->fall_at) / UTTT_MS_FALL);
-    f->line_t = m->settle ? 0.f
-              : (m->line_at < 0 || still) ? 1.f
+    f->line_t = (m->line_at < 0 || still) ? 1.f
               : bezier(.4f, .8f, .4f, 1.f, (float)(now - m->line_at) / UTTT_MS_LINE);
-    f->settled = f->landed && (still || now >= m->wash_at + m->wash_ms);
+    /* the promise: drawn round on the ink's curve, faded as the wash lands */
+    f->outline = m->outline;
+    if (m->outline < 0) { f->outline_t = 0.f; f->outline_a = 0.f; }
+    else {
+        f->outline_t = (m->outline_at < 0 || still) ? 1.f
+                     : bezier(.32f, .72f, .4f, 1.f, (float)(now - m->outline_at) / UTTT_MS_OUTLINE);
+        f->outline_a = m->outline_fade ? 1.f - p : 1.f;
+        if (f->outline_a <= 0.f) f->outline = -1, f->outline_a = 0.f;
+    }
+    f->settled = still;
     f->running = !still;
 }
 
