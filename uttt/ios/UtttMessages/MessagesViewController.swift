@@ -264,6 +264,11 @@ final class MessagesViewController: MSMessagesAppViewController {
             return
         }
         reverted = back
+#if DEBUG
+        /* The seeded game's state goes back with it, or the next open of the
+         * seeded board would read the cancelled move back out of dev.live. */
+        if UtttDev.game != nil { UtttDev.live = back.text }
+#endif
         present(conversation)
     }
 
@@ -314,7 +319,7 @@ final class MessagesViewController: MSMessagesAppViewController {
          * first - the seeded board's "you are" is a seat question too. */
         identify(conversation)
         if conversation.selectedMessage == nil, staged == nil, sent == nil,
-           let plies = UtttDev.game {
+           reverted == nil, let plies = UtttDev.game {
             showSeeded(plies, conversation)
             return
         }
