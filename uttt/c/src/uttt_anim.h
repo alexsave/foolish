@@ -7,14 +7,14 @@
  * board look like at t" once a display frame and draws the answer. It never
  * schedules anything and never types a duration.
  *
- * Three things move, all on the board's own 0..1 square:
+ * Two things move, all on the board's own 0..1 square:
  *   - the new mark, drawn in (the same draw stopped early, uttt_draw.c);
  *   - the highlighter, ONE rect travelling from the block the move was
  *     played in to the block it sends the other player to (or growing to
  *     the whole sheet when they are freed) - after the ink lands, never with
- *     it;
- *   - the destination pulse, a ring that opens out from the destination
- *     block twice, 300 ms after the ink lands.
+ *     it.
+ * No ring pulses round the destination (owner, 2026-09-23: "I don't like
+ * how it looks"); the highlighter's travel is what says where you go.
  */
 #ifndef UTTT_ANIM_H
 #define UTTT_ANIM_H
@@ -26,7 +26,7 @@
 enum {
     UTTT_CH_STILL   = 0,   /* nothing moves: the resting board              */
     UTTT_CH_STAGE   = 1,   /* A: I tapped a square                          */
-    UTTT_CH_REPLAY  = 2,   /* C: I reopened my own bubble - no pulse        */
+    UTTT_CH_REPLAY  = 2,   /* C: I reopened my own bubble - my wash's pace  */
     UTTT_CH_THEIRS  = 3,   /* D: I opened a bubble of theirs                */
     UTTT_CH_ARRIVAL = 4,   /* E: their move landed while I was looking     */
     UTTT_CH_SETTLE  = 6,   /* B: I tapped Send - the settlement half only  */
@@ -35,8 +35,8 @@ enum {
 };
 
 /* THE TIMINGS, in milliseconds. From UI.html's grid ("the mark draws
- * (260/340ms), then the destination board pulses, at +300ms") and its pulse
- * keyframes (.62s ease-out, twice); the highlighter's travel is the Play
+ * (260/340ms)"); the grid's destination pulse is dropped (owner decision:
+ * no pulse). The highlighter's travel is the Play
  * nib's .34 of its one-second move, and on their move the Motion tab's
  * freed-board .42, because "the wash takes longer to move, because you did
  * not choose it". */
@@ -44,9 +44,6 @@ enum {
 #define UTTT_MS_INK_O        340
 #define UTTT_MS_WASH_MINE    340
 #define UTTT_MS_WASH_THEIRS  420
-#define UTTT_MS_PULSE_AT     300     /* after the ink lands                 */
-#define UTTT_MS_PULSE        620     /* one ring                            */
-#define UTTT_PULSES          2
 /* THE SETTLEMENT HALF (UI.html 04 "A board falls", 05 "The line"): third in
  * a line, then the big mark over the top of the block, and at the end of the
  * game the line across three blocks. It is the consequence of the move, not
@@ -56,7 +53,7 @@ enum {
 #define UTTT_MS_FALL         780
 #define UTTT_MS_LINE         500     /* strikein .5s                         */
 /* THE REST before the drawer moves (owner, 2026-09-23: "let it breathe"):
- * from a move whose whole plan has run - ink, highlighter, ring - this long
+ * from a move whose whole plan has run - ink, highlighter - this long
  * with nothing moving, so the settled result reads, and only then the
  * auto-collapse. foolish's `stage` rests the same 500 ms after its board
  * settles. */
@@ -69,7 +66,6 @@ typedef struct {
     int32_t from, to;      /* wash blocks: 0..8, 9 anywhere, -1 none         */
     int32_t ink_ms;        /* the mark is drawn over [0, ink_ms]             */
     int32_t wash_at, wash_ms;
-    int32_t pulse_at;      /* -1 for no pulse                                */
     int32_t end_ms;        /* nothing moves at or after this                 */
     int32_t fall_at;       /* the big mark of the block the move won; -1 none */
     int32_t line_at;       /* the win line; -1 none                          */
@@ -80,9 +76,6 @@ typedef struct {
     float   mark_t;        /* 0..1 how far the new mark is drawn             */
     float   wash[4];       /* x, y, w, h; w == 0 for no wash                 */
     uint32_t wash_rgba;    /* the highlighter, alpha included (0xRRGGBBAA)   */
-    float   pulse[4];      /* the destination's rect; w == 0 for no ring     */
-    float   pulse_spread;  /* how far the ring stands out, board units       */
-    uint32_t pulse_rgba;   /* the ring, alpha included                       */
     int32_t landed;        /* 1 once the ink is down - the drawer may move   */
     int32_t settled;       /* 1 once the wash has arrived too - the host may
                               insert its bubble without stalling a travel   */
@@ -103,11 +96,8 @@ void uttt_motion_at(const UtttMotion *m, int32_t now_ms, UtttFrame *f);
  * the travelling rect both read it. Returns 0 for no wash (-1). */
 int uttt_wash_rect(int block, float r[4], float *alpha);
 
-/* The highlighter's and the ring's colours, with alpha. */
+/* The highlighter's colour, with alpha. */
 uint32_t uttt_wash_rgba(float alpha);
-#define UTTT_PULSE_RGB   0xa8321f00u     /* UI.html cellpulse, rgba(168,50,31) */
-#define UTTT_PULSE_ALPHA .5f
-#define UTTT_PULSE_REACH (13.f / 390.f)  /* 13 points on a 390-point board   */
 
 /* THE SHEET IS LAID OUT AT THE HEIGHT MESSAGES HANDS IT, at once, always.
  *

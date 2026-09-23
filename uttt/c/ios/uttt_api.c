@@ -187,7 +187,7 @@ int uti_draw_last(float t)
 }
 
 /* WHICH DOOR AN OPENED BUBBLE CAME THROUGH is a seat question: my own move
- * replays quietly (C), anybody else's gets the pulse (D). */
+ * replays at my wash's pace (C), anybody else's at theirs (D). */
 UtiMotion uti_motion(int ch)
 {
     if (ch == UTI_CH_OPEN) {

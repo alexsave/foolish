@@ -192,7 +192,7 @@ int  uti_draw_overflow(void);
  * draws it, and schedules nothing. docs/UI.html, "How it moves". */
 #define UTI_CH_STILL    0   /* nothing moves                                */
 #define UTI_CH_STAGE    1   /* A: I tapped a square                         */
-#define UTI_CH_REPLAY   2   /* C: my own bubble, reopened - no pulse        */
+#define UTI_CH_REPLAY   2   /* C: my own bubble, reopened - my wash's pace  */
 #define UTI_CH_THEIRS   3   /* D: a bubble of theirs, opened                */
 #define UTI_CH_ARRIVAL  4   /* E: their move landed while I was looking     */
 #define UTI_CH_OPEN     5   /* a bubble opened: C or D, the kernel decides  */
@@ -201,7 +201,7 @@ int  uti_draw_overflow(void);
 
 typedef struct {
     int32_t ch, mv, mark, from, to;
-    int32_t ink_ms, wash_at, wash_ms, pulse_at, end_ms;
+    int32_t ink_ms, wash_at, wash_ms, end_ms;
     int32_t fall_at, line_at, settle;
 } UtiMotion;
 
@@ -209,9 +209,6 @@ typedef struct {
     float    mark_t;        /* how far the last mark is drawn, 0..1          */
     float    wash[4];       /* x, y, w, h on the board's 0..1; w 0 = none    */
     uint32_t wash_rgba;
-    float    pulse[4];      /* the ring's inner rect; w 0 = no ring          */
-    float    pulse_spread;  /* how far it stands out, board units            */
-    uint32_t pulse_rgba;
     int32_t  landed;        /* the ink is down: the drawer may move now      */
     int32_t  settled;       /* the wash has arrived: insert the bubble now   */
     int32_t  running;       /* 0: nothing changes again, stop the loop       */

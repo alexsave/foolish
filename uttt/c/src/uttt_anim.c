@@ -33,7 +33,7 @@ uint32_t uttt_wash_rgba(float a)
 UtttMotion uttt_motion(const UtttGame *g, int ch)
 {
     UtttMotion m = { 0 };
-    m.ch = ch; m.mv = -1; m.pulse_at = -1; m.fall_at = -1; m.line_at = -1;
+    m.ch = ch; m.mv = -1; m.fall_at = -1; m.line_at = -1;
     m.to = m.from = uttt_active(g);
     if (ch == UTTT_CH_STILL || g->n_plies == 0) { m.ch = UTTT_CH_STILL; return m; }
 
@@ -79,15 +79,6 @@ UtttMotion uttt_motion(const UtttGame *g, int ch)
     m.wash_ms = (ch == UTTT_CH_STAGE || ch == UTTT_CH_REPLAY)
               ? UTTT_MS_WASH_MINE : UTTT_MS_WASH_THEIRS;
     m.end_ms  = m.wash_at + m.wash_ms;
-
-    /* THE PULSE is the only thing that tells you where you have been sent,
-     * so it plays on every channel but my own replay, which "should not
-     * surprise me". It rings round the destination - nothing at game end. */
-    if (ch != UTTT_CH_REPLAY && m.to >= 0) {
-        m.pulse_at = m.ink_ms + UTTT_MS_PULSE_AT;
-        int e = m.pulse_at + UTTT_PULSES * UTTT_MS_PULSE;
-        if (e > m.end_ms) m.end_ms = e;
-    }
 
     /* THE SETTLEMENT: held for Send on my stage, drawn once the ink lands
      * on every other channel - the big mark, then the line. */
@@ -174,27 +165,6 @@ void uttt_motion_at(const UtttMotion *m, int32_t now, UtttFrame *f)
         f->wash_rgba = uttt_wash_rgba(aa + (ba - aa) * p);
     }
 
-    /* the ring: out to 13 points and gone by 70%, then back to nothing,
-     * ease-out on each leg - UI.html's cellpulse keyframes */
-    if (!still && m->pulse_at >= 0 && now >= m->pulse_at && has_to) {
-        int32_t k = now - m->pulse_at;
-        if (k < UTTT_PULSES * UTTT_MS_PULSE) {
-            float q = (float)(k % UTTT_MS_PULSE) / (float)UTTT_MS_PULSE;
-            float s, al;
-            if (q < .7f) {
-                float e = bezier(0.f, 0.f, .58f, 1.f, q / .7f);
-                s = UTTT_PULSE_REACH * e; al = UTTT_PULSE_ALPHA * (1.f - e);
-            } else {
-                float e = bezier(0.f, 0.f, .58f, 1.f, (q - .7f) / .3f);
-                s = UTTT_PULSE_REACH * (1.f - e); al = 0.f;
-            }
-            if (al > 0.f) {
-                for (int i = 0; i < 4; i++) f->pulse[i] = b[i];
-                f->pulse_spread = s;
-                f->pulse_rgba = UTTT_PULSE_RGB | (uint32_t)lroundf(al * 255.f);
-            }
-        }
-    }
     /* the big mark on the X's own curve, the line on UI.html's strikein;
      * held at nothing while it waits for Send */
     f->fall_t = m->settle ? 0.f

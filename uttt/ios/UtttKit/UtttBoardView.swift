@@ -135,7 +135,7 @@ public struct UtttBoard: View {
     }
 
     /// THE BOARD UNDER THE MOTION: every stroke but the last move's mark and
-    /// no wash, so the ink, the travelling highlighter and the ring can be
+    /// no wash, so the ink and the travelling highlighter can be
     /// drawn over it every frame without touching fourteen thousand polygons.
     static func cachedUnder(side: CGFloat) -> CGImage? {
         cached(stamp: stamp(active: -2, last: -2), side: side) { Uttt.underPolys() }
@@ -257,7 +257,7 @@ public struct UtttMarkIcon: View {
 
 /// The board the player plays on: the cached board under the motion, and
 /// over it whatever the kernel's frame says - the travelling highlighter,
-/// the destination ring and the last move's ink. Draws; decides nothing.
+/// and the last move's ink. Draws; decides nothing.
 public struct UtttLiveBoard: View {
     @ObservedObject var clock: UtttMotionClock
     public let positionKey: Int
@@ -283,16 +283,6 @@ public struct UtttLiveBoard: View {
                     /* the highlighter first: it is under the ink */
                     if f.wash.2 > 0 {
                         ctx.fill(Path(Self.rect(f.wash, side)), with: .color(Self.color(f.wash_rgba)))
-                    }
-                    /* the ring stands out from the block's edge, under the grid */
-                    if f.pulse.2 > 0, f.pulse_rgba & 0xff > 0 {
-                        let inner = Self.rect(f.pulse, side)
-                        let outer = inner.insetBy(dx: -CGFloat(f.pulse_spread) * side,
-                                                  dy: -CGFloat(f.pulse_spread) * side)
-                        var ring = Path(outer)
-                        ring.addRect(inner)
-                        ctx.fill(ring, with: .color(Self.color(f.pulse_rgba)),
-                                 style: FillStyle(eoFill: true))
                     }
                 }
                 .frame(width: side + 2 * pad, height: side + 2 * pad)

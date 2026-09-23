@@ -65,8 +65,7 @@ int main(void)
     OK(m.mark == UTTT_X && m.ink_ms == 260, "an X inks in 260 ms");
     OK(m.from == 9 && m.to == 4, "the wash goes from anywhere to the block it sends to");
     OK(m.wash_at == 260 && m.wash_ms == 340, "the wash moves after the ink lands, for 340 ms");
-    OK(m.pulse_at == 560, "the pulse is 300 ms after the ink lands");
-    OK(m.end_ms == 560 + 2 * 620, "two rings, then rest");
+    OK(m.end_ms == 260 + 340, "no ring: it rests once the wash arrives (owner: no pulse)");
 
     uttt_motion_at(&m, 0, &f);
     OK(f.mark_t == 0.f && !f.landed && f.running, "at 0 nothing is drawn yet");
@@ -93,33 +92,26 @@ int main(void)
     OK(f.settled, "settled once the wash arrives");
     uttt_motion_at(&m, 599, &f);
     OK(!f.settled && f.landed, "not settled while the wash travels");
-    uttt_motion_at(&m, 559, &f);
-    OK(f.pulse_rgba == 0, "no ring before 560");
-    uttt_motion_at(&m, 600, &f);
-    OK((f.pulse_rgba & 0xff) > 0 && f.pulse_spread > 0.f && same_rect(f.pulse, r4),
-       "a ring round the destination at 600");
-    uttt_motion_at(&m, 560 + 620 + 40, &f);
-    OK((f.pulse_rgba & 0xff) > 0, "and a second one");
     uttt_motion_at(&m, m.end_ms - 1, &f);
     OK(f.running, "still running a millisecond before the end");
     uttt_motion_at(&m, m.end_ms, &f);
-    OK(!f.running && f.pulse_rgba == 0 && same_rect(f.wash, r4) && f.mark_t == 1.f,
+    OK(!f.running && same_rect(f.wash, r4) && f.mark_t == 1.f,
        "at the end: the resting board");
 
     /* O answers into the top-left: centre (4) to top-left (0) */
     uttt_play(&g, 4 * 9 + 0);
     m = uttt_motion(&g, UTTT_CH_REPLAY);
     OK(m.mark == UTTT_O && m.ink_ms == 340, "an O inks in 340 ms");
-    OK(m.pulse_at == -1 && m.end_ms == 340 + 340, "my own replay does not pulse");
+    OK(m.end_ms == 340 + 340, "my own replay rests once my wash arrives");
     uttt_motion_at(&m, 170, &f);
     OK(f.mark_t > .5f && f.mark_t < 1.f, "an O eases out too");
     m = uttt_motion(&g, UTTT_CH_THEIRS);
-    OK(m.wash_ms == 420 && m.pulse_at == 640, "their move: the wash takes longer, and pulses");
+    OK(m.wash_ms == 420 && m.end_ms == 340 + 420, "their move: the wash takes longer, and nothing rings after it");
     OK(m.from == 4 && m.to == 0, "from the centre to the top left");
     uttt_motion_at(&m, 340 + 420, &f);
     OK(same_rect(f.wash, r0), "and lands on it");
     m = uttt_motion(&g, UTTT_CH_ARRIVAL);
-    OK(m.pulse_at == 640 && m.wash_ms == 420, "an arrival is their move too");
+    OK(m.wash_ms == 420 && m.end_ms == 340 + 420, "an arrival is their move too, with no ring");
     m = uttt_motion(&g, UTTT_CH_STILL);
     uttt_motion_at(&m, 0, &f);
     OK(!f.running && f.mark_t == 1.f && same_rect(f.wash, r0), "STILL is the resting board");

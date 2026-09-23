@@ -55,7 +55,7 @@ public final class UtttMotionClock: ObservableObject {
             land()
             return
         }
-        UtttLog.note("motion", "ch \(plan.ch) mv \(plan.mv) ink \(plan.ink_ms) wash \(plan.wash_at)+\(plan.wash_ms) pulse \(plan.pulse_at) end \(plan.end_ms)")
+        UtttLog.note("motion", "ch \(plan.ch) mv \(plan.mv) ink \(plan.ink_ms) wash \(plan.wash_at)+\(plan.wash_ms) end \(plan.end_ms)")
         if link == nil {
             let l = CADisplayLink(target: Tick(self), selector: #selector(Tick.fire(_:)))
             l.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
@@ -73,7 +73,7 @@ public final class UtttMotionClock: ObservableObject {
         w.forEach { $0() }
     }
 
-    /// Runs `f` once the whole plan has run - ink, highlighter, ring,
+    /// Runs `f` once the whole plan has run - ink, highlighter,
     /// settlement - or now if nothing is moving.
     public func whenDone(_ f: @escaping () -> Void) {
         if link == nil { f(); return }

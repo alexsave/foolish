@@ -873,7 +873,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     /// THE DRAWER MOVES ONCE THE MOVE HAS SETTLED AND RESTED (UI.html: once
     /// the ink lands, never during; owner: "let it breathe"). The whole plan
-    /// runs - ink, highlighter, ring - then the kernel's rest with nothing
+    /// runs - ink, highlighter - then the kernel's rest with nothing
     /// moving, and only then the slide is armed and compact asked for;
     /// foolish's `stage` waits for its board to settle and rests 500 ms the
     /// same way. The bubble goes in once the transition has run.

@@ -356,7 +356,7 @@ public enum Uttt {
         /// At rest with my last move staged and unsent: the settlement is
         /// held for Send.
         case draft = 7
-        /// A bubble opened: my own replays quietly, theirs pulses. The kernel
+        /// A bubble opened: my own replays at my wash's pace, theirs at theirs. The kernel
         /// decides which, from the seat.
         case open = 5
     }
