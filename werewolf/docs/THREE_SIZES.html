@@ -110,8 +110,8 @@ td b{color:var(--tx)}
   --serif:'EB Garamond','Noto Serif Thai','Hiragino Mincho ProN','Songti SC','Apple SD Gothic Neo','Geeza Pro',Georgia,serif;
   --caps:'Cinzel','Noto Serif Thai','Hiragino Mincho ProN','Yu Mincho','Songti SC','Apple SD Gothic Neo','Geeza Pro','Devanagari Sangam MN',serif;
   /* the paper and the lamp */
-  --paper-n:#332d29;   --paper-n-edge:rgba(255,232,196,.18);
-  --wall-n:#100e0d;    --hole:#0b0908;   --lamp:#f2c27a;
+  --paper-n:#0f0b09;   --paper-n-edge:rgba(255,232,196,.10);
+  --wall-n:#100e0d;    --hole:#c99548;   --lamp:#f2c27a;
   --paper-d:#dccfb3;   --wall-d:#ebe1cb;   --ink:#1c1813;
   --blood:#6a2220;     --blood-deep:#3a1210;
 }
@@ -132,15 +132,27 @@ td b{color:var(--tx)}
 /* ---- the screen, and where the lamp is --------------------------------
    Night: the lamp is behind the screen, top-left. The wall is dark paper
    and the only light is the lamp bleeding through it. Nothing else. */
-.g-night{background:
-  radial-gradient(70% 48% at 18% -6%, rgba(242,194,122,.22), transparent 66%),
-  radial-gradient(120% 90% at 50% 110%, rgba(0,0,0,.5), transparent 60%),
-  var(--wall-n)}
-/* the hall: the lamp is being lit. Same wall, a wider, warmer pool. */
+.g-night,.g-hall{background:
+  radial-gradient(95% 80% at 38% 22%, #7a5526 0%, #4e3618 42%, #2a1c0e 72%, #120c07 100%)}
+/* the wolves' room: the same lantern behind a red gel. Only wolves ever see it. */
+.g-pack{background:
+  radial-gradient(95% 80% at 38% 22%, #7a2a1e 0%, #4a1a12 42%, #260d09 72%, #100504 100%)}
+.g-pack .hdr{color:#e08a72}
+.g-pack .said{color:#d9ada0}
+.g-pack .rule::after{box-shadow:0 0 0 3px rgba(122,42,30,.9)}
+.g-pack .blood{background:#130504;box-shadow:inset 1px 1px 0 rgba(255,200,180,.10), 4px 6px 8px rgba(0,0,0,.6)}
+.g-pack .blood .pl{color:#e6c3b8}
+.g-pack .door{background:#8a2a22}
+.g-pack .chosen{background:#8a2a22}
+.g-pack .auto{color:#d9ada0;border-top-color:rgba(0,0,0,.35)}
+.g-pack .auto b{color:#ffb4a4}
+/* the hall: the lantern has only just been lit, so the pool is smaller and lower */
 .g-hall{background:
-  radial-gradient(90% 70% at 30% -10%, rgba(242,194,122,.34), transparent 66%),
-  radial-gradient(60% 40% at 90% 100%, rgba(242,194,122,.08), transparent 70%),
-  var(--wall-n)}
+  radial-gradient(80% 62% at 50% 46%, #6a4a20 0%, #3e2a12 46%, #22160b 74%, #100b06 100%)}
+/* the theatre's backdrop: the village, cut from black paper, standing on the
+   bottom of the screen. Only on screens that have no roster standing there. */
+.scene::before{content:"";position:absolute;left:-2%;right:-2%;bottom:-2px;height:96px;z-index:1;pointer-events:none;
+  background:var(--vill) 0 0/100% 100% no-repeat;opacity:.92}
 /* day: the lamp is in FRONT. The screen is cream, lit from the top, and
    everything on it throws a hard shadow down and to the right. */
 .g-day{color:#2a2620;background:
@@ -158,17 +170,18 @@ td b{color:var(--tx)}
   linear-gradient(#17141a,#2a2116 60%,#6b4a1e)}
 
 /* ---- type in the product ------------------------------------------- */
-.hdr{font:600 11px/1 var(--caps);letter-spacing:.34em;text-transform:uppercase;color:#9a8258}
-.ask{font:600 25px/1.14 var(--caps);letter-spacing:.005em;color:#f3e8d0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hdr{font:600 11px/1 var(--caps);letter-spacing:.34em;text-transform:uppercase;color:#d2a862}
+.ask{font:600 25px/1.14 var(--caps);letter-spacing:.005em;color:#fbefd6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  text-shadow:0 1px 2px rgba(0,0,0,.6)}
 .compact .ask{font-size:21px;line-height:1.1}
-.said{font:400 15.5px/1.45 var(--serif);color:#a1957e;font-style:italic}
-.said b{color:#e0553f;font-style:normal;font-weight:600}
+.said{font:400 15.5px/1.45 var(--serif);color:#d6c19a;font-style:italic}
+.said b{color:#ff8a70;font-style:normal;font-weight:600}
 .compact .said{font-size:14.5px}
 /* the rule is a cut in the paper: a hairline of light, and a lozenge */
-.rule{height:1px;position:relative;background:rgba(255,232,196,.16)}
+.rule{height:1px;position:relative;background:rgba(0,0,0,.45);box-shadow:0 1px 0 rgba(255,232,196,.12)}
 .rule::after{content:"";position:absolute;left:50%;top:50%;width:6px;height:6px;transform:translate(-50%,-50%) rotate(45deg);
-  background:var(--lamp);box-shadow:0 0 0 3px var(--wall-n), 0 0 12px rgba(242,194,122,.5)}
-.foot{font:400 12.5px/1.4 var(--serif);color:#7a6f5c;text-align:center;font-style:italic;margin-top:auto}
+  background:#0f0b09;box-shadow:0 0 0 3px rgba(122,85,38,.9)}
+.foot{font:400 12.5px/1.4 var(--serif);color:#b89f76;text-align:center;font-style:italic;margin-top:auto;position:relative;z-index:2}
 .g-day .hdr{color:#6f6249}
 .g-day .ask{color:var(--ink)}
 .g-day .said{color:#4a4238} .g-day .said b{color:#b0301e}
@@ -187,38 +200,38 @@ td b{color:var(--tx)}
   -webkit-mask:var(--heater) center/100% 100% no-repeat;mask:var(--heater) center/100% 100% no-repeat;
   display:flex;align-items:center;justify-content:center;
   background:var(--paper-n);
-  box-shadow:inset 1px 1px 0 var(--paper-n-edge), inset -1px -1px 0 rgba(0,0,0,.55)}
+  box-shadow:inset 1px 1px 0 var(--paper-n-edge)}
 /* the cast shadow: same heater, offset from the lamp, soft */
-.sh::before{content:"";position:absolute;left:4px;top:8px;width:100%;aspect-ratio:1/1.16;z-index:0;
+.sh::before{content:"";position:absolute;left:5px;top:9px;width:100%;aspect-ratio:1/1.16;z-index:0;
   -webkit-mask:var(--heater) center/100% 100% no-repeat;mask:var(--heater) center/100% 100% no-repeat;
-  background:rgba(0,0,0,.55);filter:blur(3px)}
+  background:rgba(20,10,4,.45);filter:blur(4px)}
 .sh .sig{font:700 25px/1 var(--caps);color:var(--hole);letter-spacing:.02em;position:relative;top:-5px;
   height:1em;display:flex;align-items:center;justify-content:center;
-  text-shadow:0 1px 0 rgba(255,232,196,.10)}
-.sh .nm{font:500 13px/1.2 var(--serif);color:#cdc2a9;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sh .st{font:700 10.5px/1.15 var(--caps);letter-spacing:.11em;text-transform:uppercase;color:#7a6f5c;white-space:nowrap;
+  text-shadow:0 0 6px rgba(201,149,72,.35)}
+.sh .nm{font:500 13px/1.2 var(--serif);color:#f0dfbd;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  text-shadow:0 1px 2px rgba(0,0,0,.5)}
+.sh .st{font:700 10.5px/1.15 var(--caps);letter-spacing:.11em;text-transform:uppercase;color:#b89f76;white-space:nowrap;
   display:flex;align-items:center;justify-content:center;gap:4px}
 .sh .st:empty{display:none}
 /* CHOSEN: the lamp is behind this one. The paper goes translucent amber,
    the cut-out letter fills with light, and the light spills onto the wall. */
-.sh.pick{filter:drop-shadow(0 0 9px rgba(242,194,122,.55))}
-.sh.pick .esc{background:radial-gradient(70% 70% at 50% 40%, #b98a3e, #7a5626 70%, #5a3f1c);
-  box-shadow:inset 1px 1px 0 rgba(255,240,200,.45), inset -1px -1px 0 rgba(0,0,0,.35)}
-.sh.pick::before{background:rgba(242,194,122,.10)}
-.sh.pick .sig{color:#fff1c8;text-shadow:0 0 10px rgba(255,220,150,.9), 0 0 2px #fff}
-.sh.pick .nm{color:#f7edd6}
+.sh.pick{filter:drop-shadow(0 0 8px rgba(255,214,140,.7))}
+.sh.pick .esc{background:#070504;box-shadow:inset 0 0 0 2px #ffd98a, inset 0 0 0 3px rgba(255,217,138,.35)}
+.sh.pick::before{display:none}
+.sh.pick .sig{color:#fff4d6;text-shadow:0 0 12px rgba(255,220,150,1), 0 0 3px #fff}
+.sh.pick .nm{color:#fff4d6}
 /* PACK: red paper. The letter is still a hole, so it is still dark. */
-.sh.pack .esc{background:var(--blood);box-shadow:inset 1px 1px 0 rgba(255,200,180,.22), inset -1px -1px 0 rgba(0,0,0,.5)}
-.sh.pack .sig{color:#150605;text-shadow:0 1px 0 rgba(255,200,180,.14)}
-.sh.pack .st{color:#e0553f}
+.sh.pack .esc{background:#160806;box-shadow:inset 0 0 0 1.5px rgba(224,85,63,.7)}
+.sh.pack .sig{color:#ff6a50;text-shadow:0 0 8px rgba(255,90,60,.7)}
+.sh.pack .st{color:#ff8a70}
 /* DEAD: the paper is gone. What is left is the hole where the seat was,
    a dashed cut line where the scissors went, and a name struck through. */
-.sh.dead .esc{background:#0a0908;box-shadow:inset 0 0 0 1px rgba(0,0,0,.6), inset 0 2px 6px rgba(0,0,0,.9)}
-.sh.dead .esc::after{content:"";position:absolute;inset:0;background:var(--cutline) center/100% 100% no-repeat;opacity:.45}
+.sh.dead .esc{background:rgba(0,0,0,.28);box-shadow:none}
+.sh.dead .esc::after{content:"";position:absolute;inset:0;background:var(--cutline) center/100% 100% no-repeat;opacity:.7}
 .sh.dead::before{display:none}
-.sh.dead .sig{color:#2a2522;text-shadow:none}
-.sh.dead .nm{color:#7e7568;text-decoration:line-through;text-decoration-color:#e0553f;text-decoration-thickness:1.5px}
-.sh.you .nm::after{content:" \00b7 you";color:#8a7e68;font-style:italic}
+.sh.dead .sig{color:rgba(0,0,0,.35);text-shadow:none}
+.sh.dead .nm{color:#a08c6a;text-decoration:line-through;text-decoration-color:#ff6a50;text-decoration-thickness:1.5px}
+.sh.you .nm::after{content:" \00b7 you";color:#c9ad80;font-style:italic}
 
 /* the same paper by day: cream, with ink on it, and a hard shadow under it */
 .g-day .sh .esc{background:var(--paper-d);
@@ -250,9 +263,9 @@ td b{color:var(--tx)}
 .roster.dense>.sh{flex:0 0 37.5px;padding-top:0}
 .roster.dense .sig{font-size:18px;top:-3px}
 .roster.dense .nm,.roster.dense .st{display:none}
-.roster.dense .sh .n{position:absolute;right:3px;top:2px;font:700 11px/1 var(--caps);color:#e0553f}
+.roster.dense .sh .n{position:absolute;right:3px;top:2px;font:700 11px/1 var(--caps);color:#ff8a70}
 .g-day .roster.dense .sh .n{color:#b0301e}
-.roster.dense .sh.dead .sig{text-decoration:line-through;text-decoration-color:#e0553f;text-decoration-thickness:1.5px}
+.roster.dense .sh.dead .sig{color:rgba(0,0,0,.5);text-decoration:line-through;text-decoration-color:#ff6a50;text-decoration-thickness:1.5px}
 .roster.dense .sh::before{left:3px;top:6px}
 
 /* ---- the staged line: written on a torn strip, pinned on the wall ------ */
@@ -288,7 +301,7 @@ td b{color:var(--tx)}
   box-shadow:inset 1px 1px 0 rgba(255,200,180,.22), inset -1px -1px 0 rgba(0,0,0,.5), 4px 6px 8px rgba(0,0,0,.5)}
 .chosen .who{font:600 14px/1 var(--caps);letter-spacing:.1em;color:#f6c9bc;flex:1}
 .chosen .lbl2{font:400 12.5px/1 var(--serif);color:#c98a7e;font-style:italic}
-.auto{font:400 12.5px/1.5 var(--serif);color:#8a7a68;font-style:italic;text-align:center;border-top:1px solid rgba(255,232,196,.12);padding-top:9px}
+.auto{font:400 12.5px/1.5 var(--serif);color:#c9ad80;font-style:italic;text-align:center;border-top:1px solid rgba(0,0,0,.3);padding-top:9px;position:relative;z-index:2}
 .auto b{color:#f0a894;font-style:normal}
 /* the field: a torn strip of paper, a nib for a cursor, a wax seal to press */
 .oneline{display:flex;align-items:flex-end;gap:11px;filter:drop-shadow(3px 5px 4px rgba(0,0,0,.55))}
@@ -304,10 +317,11 @@ td b{color:var(--tx)}
 
 /* ---- the sheet: a second, bigger sheet of paper, slid up over the pack -- */
 .scrim{position:absolute;inset:0;z-index:5;background:rgba(0,0,0,.6)}
-.sheet{position:absolute;left:0;right:0;bottom:0;top:56px;z-index:6;background:#1b1816;
+.sheet{position:absolute;left:0;right:0;bottom:0;top:56px;z-index:6;
+  background:radial-gradient(95% 80% at 38% 12%, #6e4c22 0%, #48311a 42%, #26190d 72%, #120c07 100%);
   box-shadow:inset 0 1px 0 rgba(255,232,196,.18), 0 -14px 40px rgba(0,0,0,.8);
   padding:12px 16px;display:flex;flex-direction:column;gap:10px;overflow:hidden}
-.sheet .grab{width:38px;height:4px;border-radius:2px;background:#5a4f44;margin:0 auto 2px}
+.sheet .grab{width:38px;height:4px;border-radius:2px;background:rgba(0,0,0,.5);margin:0 auto 2px}
 
 /* ---- the end: one statement and the roll, nothing to press ------------ */
 .end{margin:auto 0;text-align:center;display:flex;flex-direction:column;gap:16px;padding:0 6px}
@@ -372,8 +386,9 @@ td b{color:var(--tx)}
   background:var(--moon-red) 0 0/100% 100% no-repeat;box-shadow:0 0 0 10px rgba(176,26,18,.14), 0 0 54px 18px rgba(176,26,18,.75)}
 .morningstar{position:absolute;left:26%;top:22px;width:3px;height:3px;border-radius:50%;background:#f2f6ff;box-shadow:0 0 10px 3px rgba(220,232,255,.95);z-index:3}
 /* the skies: two tones each, no weather */
-.sky-hall{background:radial-gradient(80% 70% at 24% 0%, rgba(242,194,122,.42), transparent 66%),#161311}
-.sky-hall .vill,.sky-hall .hill{display:none}
+.sky-hall{background:radial-gradient(90% 90% at 50% 40%, #6e4c22 0%, #3e2a12 50%, #150e07 100%)}
+.sky-hall .hill{display:none}
+.sky-hall .cnt{color:#f0dcb0}
 .sky-night{background:linear-gradient(#111a30,#080b16)}
 .sky-dawn{background:linear-gradient(171deg,#0c1230 0%,#2a1a3c 30%,#7a2e34 62%,#d0602c 100%)}
 .sky-dawn .hill.h1{background:#1a1226} .sky-dawn .hill.h2{background:#150f20}
@@ -416,10 +431,11 @@ td b{color:var(--tx)}
   <h1>The shadow theatre:<br>paper, one lamp, and what it throws</h1>
   <p class="sub">Messages shows an extension three ways: as a bubble in the thread, as a drawer at
   keyboard height, and as the whole screen. This page takes the three sizes <code>UI.html</code>
-  settled and changes what they are made of. The stone, the grain and the tallow are gone. Every
-  seat is a piece of cut paper, there is one lamp, and the screen shows the paper and the shadow
-  it throws. At night the lamp is behind the screen; by day it is in front. The stone version is
-  kept next door as <code>THREE_SIZES_STONE.html</code>.</p>
+  settled and changes what they are made of. The stone, the grain and the tallow are gone. The
+  screen is a cloth with a lantern behind it, every seat is a puppet cut from black paper, and
+  the initial is cut out of the puppet so the lantern shows through. By day the lantern is in
+  front: the same paper, cream, with ink on it. The stone version is kept next door as
+  <code>THREE_SIZES_STONE.html</code>.</p>
   <label class="toggle" for="anchors">Show anchors on every screen</label>
 </header>
 
@@ -520,13 +536,13 @@ waits in the expanded screen, and the drawer says nothing about it.</p>
   </div>
   <div class="col">
     <div class="h4"><span class="pill n">C2</span> The refusal</div>
-    <div class="device"><div class="bar"><i></i></div><div class="scr compact g-night" style=""><div class="in"><div class="hdr" data-a="top">Not here</div><div class="ask" data-a="top">A village of two is not a village.</div><div class="said" data-a="top">Werewolf needs five. Start it in a group with at least that many and it will work.</div></div></div></div>
+    <div class="device"><div class="bar"><i></i></div><div class="scr compact g-night scene" style=""><div class="in"><div class="hdr" data-a="top">Not here</div><div class="ask" data-a="top">A village of two is not a village.</div><div class="said" data-a="top">Werewolf needs five. Start it in a group with at least that many and it will work.</div></div></div></div>
     <div class="note">A 1:1 chat. Say it once, never count toward it - a progress indicator that
     can never fill is worse than a plain no.</div>
   </div>
   <div class="col">
     <div class="h4"><span class="pill g">C3</span> A villager's night</div>
-    <div class="device"><div class="bar"><i></i></div><div class="scr compact g-night" style=""><div class="in"><div class="hdr" data-a="top">Night I</div><div class="ask" data-a="top">You are asleep.</div><div class="said" data-a="top">Nothing is asked of you until morning.</div><div class="stage " data-a="bottom"><div class="vel">In the thread: <b>Alex has slept</b></div></div></div></div></div>
+    <div class="device"><div class="bar"><i></i></div><div class="scr compact g-night scene" style=""><div class="in"><div class="hdr" data-a="top">Night I</div><div class="ask" data-a="top">You are asleep.</div><div class="said" data-a="top">Nothing is asked of you until morning.</div><div class="stage " data-a="bottom"><div class="vel">In the thread: <b>Alex has slept</b></div></div></div></div></div>
     <div class="note"><b>Opening the app is the move.</b> The line is already in the input
     field when this appears; the native arrow sends it. No roster, and no count of who has yet to
     move - at night that is a count of living wolves.</div>
@@ -537,21 +553,21 @@ waits in the expanded screen, and the drawer says nothing about it.</p>
 <div class="row">
   <div class="col">
     <div class="h4"><span class="pill">C4</span> The pack</div>
-    <div class="device"><div class="bar"><i></i></div><div class="scr compact g-night" style=""><div class="in"><div class="hdr" data-a="top">The pack &middot; night I</div><div class="blood" data-a="top"><div class="pl"><span class="who">Nia</span>: Sveta keeps counting us.</div><div class="pl"><span class="who">Lee</span>: she has to go.</div></div><div class="door pack" data-a="bottom"><span class="seal"></span><span class="lbl">Name the kill</span><span class="nt"></span><span class="chev"></span></div><div class="oneline" data-a="bottom"><div class="vellum"><span class="ph"><span class="nib"></span>say something to the pack&hellip;</span></div><div class="wax"></div></div></div></div></div>
+    <div class="device"><div class="bar"><i></i></div><div class="scr compact g-pack" style=""><div class="in"><div class="hdr" data-a="top">The pack &middot; night I</div><div class="blood" data-a="top"><div class="pl"><span class="who">Nia</span>: Sveta keeps counting us.</div><div class="pl"><span class="who">Lee</span>: she has to go.</div></div><div class="door pack" data-a="bottom"><span class="seal"></span><span class="lbl">Name the kill</span><span class="nt"></span><span class="chev"></span></div><div class="oneline" data-a="bottom"><div class="vellum"><span class="ph"><span class="nib"></span>say something to the pack&hellip;</span></div><div class="wax"></div></div></div></div></div>
     <div class="note">A wolf opens into the pack, even here. Two lines of chat, the field, and the
     kill as a door at the bottom. The door is the only thing that leaves this size: it opens the
     expanded sheet, because thirty-two shields do not fit next to a conversation.</div>
   </div>
   <div class="col">
     <div class="h4"><span class="pill g">C5</span> Back from the sheet</div>
-    <div class="device"><div class="bar"><i></i></div><div class="scr compact g-night" style=""><div class="in"><div class="hdr" data-a="top">The pack &middot; night I</div><div class="blood" data-a="top"><div class="pl"><span class="who">Nia</span>: Sveta keeps counting us.</div><div class="pl"><span class="who">Lee</span>: she has to go.</div></div><div class="chosen" data-a="bottom"><span class="who">Sveta</span><span class="lbl2">yours</span></div><div class="oneline" data-a="bottom"><div class="vellum"><span class="ph"><span class="nib"></span>say something to the pack&hellip;</span></div><div class="wax"></div></div></div></div></div>
+    <div class="device"><div class="bar"><i></i></div><div class="scr compact g-pack" style=""><div class="in"><div class="hdr" data-a="top">The pack &middot; night I</div><div class="blood" data-a="top"><div class="pl"><span class="who">Nia</span>: Sveta keeps counting us.</div><div class="pl"><span class="who">Lee</span>: she has to go.</div></div><div class="chosen" data-a="bottom"><span class="who">Sveta</span><span class="lbl2">yours</span></div><div class="oneline" data-a="bottom"><div class="vellum"><span class="ph"><span class="nib"></span>say something to the pack&hellip;</span></div><div class="wax"></div></div></div></div></div>
     <div class="note">The chosen name replaces the door, in the door's place. Ten seconds of
     silence in the field and the message writes itself - <i>Wren suggests Sveta</i> - so the floor
     and the message are the same mechanism.</div>
   </div>
   <div class="col">
     <div class="h4"><span class="pill n">C6</span> Carried</div>
-    <div class="device"><div class="bar"><i></i></div><div class="scr compact g-night" style=""><div class="in"><div class="hdr" data-a="top">Night II</div><div class="ask" data-a="top">You slept soundly.</div><div class="said" data-a="top">Hana woke in your stead.</div></div></div></div>
+    <div class="device"><div class="bar"><i></i></div><div class="scr compact g-night scene" style=""><div class="in"><div class="hdr" data-a="top">Night II</div><div class="ask" data-a="top">You slept soundly.</div><div class="said" data-a="top">Hana woke in your stead.</div></div></div></div>
     <div class="note">Nobody else sees this. You were away ten minutes past your turn, the next
     player carried you, and the screen says so and stops. A wolf gets the pack version: the chat,
     what was decided, and no field.</div>
@@ -625,19 +641,19 @@ the auto-stage note - have room.</p>
   </div>
   <div class="col">
     <div class="h4"><span class="pill g">E2</span> A villager's night</div>
-    <div class="device"><div class="bar"><i></i></div><div class="scr full g-night" style=""><div class="in"><div class="hdr" data-a="top">Night I</div><div class="ask" data-a="top">You are asleep.</div><div class="said" data-a="top">Nothing is asked of you until morning.</div><div class="rule"></div><div class="stage " data-a="bottom"><div class="vel">Your line is waiting in the thread:<br><b>Alex has slept</b></div></div></div></div></div>
+    <div class="device"><div class="bar"><i></i></div><div class="scr full g-night scene" style=""><div class="in"><div class="hdr" data-a="top">Night I</div><div class="ask" data-a="top">You are asleep.</div><div class="said" data-a="top">Nothing is asked of you until morning.</div><div class="rule"></div><div class="stage " data-a="bottom"><div class="vel">Your line is waiting in the thread:<br><b>Alex has slept</b></div></div></div></div></div>
     <div class="note">Deliberately empty at any size. The expanded version differs from the
     drawer by one hairline and a longer sentence in the staged box.</div>
   </div>
   <div class="col">
     <div class="h4"><span class="pill n">E3</span> Where a wolf lands</div>
-    <div class="device"><div class="bar"><i></i></div><div class="scr full g-night" style=""><div class="in"><div class="hdr" data-a="top">The pack &middot; night I</div><div class="ask" data-a="top">Only wolves read this.</div><div class="rule"></div><div class="blood" data-a="top"><div class="pl"><span class="who">Nia</span>: Sveta keeps counting us.</div><div class="pl"><span class="who">Lee</span>: she has to go.</div></div><div class="door pack" data-a="bottom"><span class="seal"></span><span class="lbl">Name the kill</span><span class="nt"></span><span class="chev"></span></div><div class="oneline" data-a="bottom"><div class="vellum"><span class="ph"><span class="nib"></span>say something to the pack&hellip;</span></div><div class="wax"></div></div><div class="auto" data-a="bottom">Say nothing for ten seconds and it sends itself:<br><b>Wren suggests Sveta</b></div></div></div></div>
+    <div class="device"><div class="bar"><i></i></div><div class="scr full g-pack" style=""><div class="in"><div class="hdr" data-a="top">The pack &middot; night I</div><div class="ask" data-a="top">Only wolves read this.</div><div class="rule"></div><div class="blood" data-a="top"><div class="pl"><span class="who">Nia</span>: Sveta keeps counting us.</div><div class="pl"><span class="who">Lee</span>: she has to go.</div></div><div class="door pack" data-a="bottom"><span class="seal"></span><span class="lbl">Name the kill</span><span class="nt"></span><span class="chev"></span></div><div class="oneline" data-a="bottom"><div class="vellum"><span class="ph"><span class="nib"></span>say something to the pack&hellip;</span></div><div class="wax"></div></div><div class="auto" data-a="bottom">Say nothing for ten seconds and it sends itself:<br><b>Wren suggests Sveta</b></div></div></div></div>
   </div>
 </div>
 <div class="row">
   <div class="col">
     <div class="h4"><span class="pill">E4</span> The table, pulled up</div>
-    <div class="device"><div class="bar"><i></i></div><div class="scr full g-night"><div class="in"><div class="hdr" data-a="top">The pack &middot; night I</div><div class="ask" data-a="top">Only wolves read this.</div><div class="rule"></div><div class="blood" data-a="top"><div class="pl"><span class="who">Nia</span>: Sveta keeps counting us.</div></div></div><div class="scrim"></div><div class="sheet"><div class="grab"></div><div class="hdr" data-a="top">Who falls tonight?</div><div class="roster" style="--cols:6;--cgap:7px" data-a="top" ><div class="sh"><div class="esc"><span class="sig">A</span></div><div class="nm">Alex</div><div class="st"></div></div><div class="sh pick"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st"></div></div><div class="sh pack"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">Pack</div></div><div class="sh"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">D</span></div><div class="nm">Dara</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">E</span></div><div class="nm">Ez</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">F</span></div><div class="nm">Fen</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">G</span></div><div class="nm">Gus</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">H</span></div><div class="nm">Hana</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">I</span></div><div class="nm">Ivo</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">J</span></div><div class="nm">Jo</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">K</span></div><div class="nm">Kit</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">L</span></div><div class="nm">Luz</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">M</span></div><div class="nm">Mo</div><div class="st"></div></div><div class="sh pack"><div class="esc"><span class="sig">N</span></div><div class="nm">Nia</div><div class="st">Pack</div></div><div class="sh"><div class="esc"><span class="sig">O</span></div><div class="nm">Ola</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">P</span></div><div class="nm">Pax</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">Q</span></div><div class="nm">Quin</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">R</span></div><div class="nm">Rae</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">S</span></div><div class="nm">Sol</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">T</span></div><div class="nm">Tam</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">U</span></div><div class="nm">Uma</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">V</span></div><div class="nm">Vic</div><div class="st"></div></div><div class="sh pack you"><div class="esc"><span class="sig">W</span></div><div class="nm">Wren</div><div class="st">Pack</div></div><div class="sh"><div class="esc"><span class="sig">X</span></div><div class="nm">Xan</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">Y</span></div><div class="nm">Yara</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">Z</span></div><div class="nm">Zed</div><div class="st"></div></div><div class="sh pack"><div class="esc"><span class="sig">B</span></div><div class="nm">Bram</div><div class="st">Pack</div></div><div class="sh"><div class="esc"><span class="sig">H</span></div><div class="nm">Hal</div><div class="st"></div></div></div></div></div></div>
+    <div class="device"><div class="bar"><i></i></div><div class="scr full g-pack"><div class="in"><div class="hdr" data-a="top">The pack &middot; night I</div><div class="ask" data-a="top">Only wolves read this.</div><div class="rule"></div><div class="blood" data-a="top"><div class="pl"><span class="who">Nia</span>: Sveta keeps counting us.</div></div></div><div class="scrim"></div><div class="sheet"><div class="grab"></div><div class="hdr" data-a="top">Who falls tonight?</div><div class="roster" style="--cols:6;--cgap:7px" data-a="top" ><div class="sh"><div class="esc"><span class="sig">A</span></div><div class="nm">Alex</div><div class="st"></div></div><div class="sh pick"><div class="esc"><span class="sig">S</span></div><div class="nm">Sveta</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">K</span></div><div class="nm">Kim</div><div class="st"></div></div><div class="sh pack"><div class="esc"><span class="sig">L</span></div><div class="nm">Lee</div><div class="st">Pack</div></div><div class="sh"><div class="esc"><span class="sig">A</span></div><div class="nm">Ana</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">B</span></div><div class="nm">Bo</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">C</span></div><div class="nm">Cy</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">D</span></div><div class="nm">Dara</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">E</span></div><div class="nm">Ez</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">F</span></div><div class="nm">Fen</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">G</span></div><div class="nm">Gus</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">H</span></div><div class="nm">Hana</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">I</span></div><div class="nm">Ivo</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">J</span></div><div class="nm">Jo</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">K</span></div><div class="nm">Kit</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">L</span></div><div class="nm">Luz</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">M</span></div><div class="nm">Mo</div><div class="st"></div></div><div class="sh pack"><div class="esc"><span class="sig">N</span></div><div class="nm">Nia</div><div class="st">Pack</div></div><div class="sh"><div class="esc"><span class="sig">O</span></div><div class="nm">Ola</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">P</span></div><div class="nm">Pax</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">Q</span></div><div class="nm">Quin</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">R</span></div><div class="nm">Rae</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">S</span></div><div class="nm">Sol</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">T</span></div><div class="nm">Tam</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">U</span></div><div class="nm">Uma</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">V</span></div><div class="nm">Vic</div><div class="st"></div></div><div class="sh pack you"><div class="esc"><span class="sig">W</span></div><div class="nm">Wren</div><div class="st">Pack</div></div><div class="sh"><div class="esc"><span class="sig">X</span></div><div class="nm">Xan</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">Y</span></div><div class="nm">Yara</div><div class="st"></div></div><div class="sh"><div class="esc"><span class="sig">Z</span></div><div class="nm">Zed</div><div class="st"></div></div><div class="sh pack"><div class="esc"><span class="sig">B</span></div><div class="nm">Bram</div><div class="st">Pack</div></div><div class="sh"><div class="esc"><span class="sig">H</span></div><div class="nm">Hal</div><div class="st"></div></div></div></div></div></div>
     <div class="note">A sheet over the chat with the chat still visible behind it. Tap a shield
     and it drops - you are choosing, not navigating, so there is nothing to press to leave. The
     pack is marked on the wolf's sheet only; a villager's sheet is this grid with no red on it.</div>
@@ -749,15 +765,18 @@ are this page's; the rest are already in <code>UI.html</code>.</p>
 <div class="row">
   <div class="col wide">
     <h3 style="margin-top:0">The material</h3>
-    <div class="note"><b>Paper, not iron.</b> A shield is a heater cut from one sheet, floating a
-    few points off the wall, with a cut edge that catches the lamp and a blurred copy of itself
-    for a shadow. No noise, no gradient standing in for metal.</div>
-    <div class="note"><b>The initial is a hole.</b> It is cut out of the paper, so through it you
-    see the wall. When the lamp is behind a seat - the one you chose - the hole fills with light.
-    That is the whole selection state, and it is the same mechanism as the moon behind the
-    village.</div>
-    <div class="note"><b>The dead are cut out.</b> Where a seat was there is the hole in the
-    screen and the dashed line where the scissors went. Reads at 37.5pt without a word.</div>
+    <div class="note"><b>A lit screen and black puppets.</b> The night is a cloth with a lantern
+    behind it, amber in the middle and black at the edges. A seat is a heater cut from black
+    paper, held a little off the cloth, so it throws a soft shadow. No noise, no gradient
+    standing in for metal.</div>
+    <div class="note"><b>The initial is a hole, and the lantern shows through it.</b> Every
+    letter glows amber. The seat you chose is pressed flat against the cloth: no shadow, a hard
+    rim of light, and its letter burns white. Same mechanism as the moon behind the village.</div>
+    <div class="note"><b>The wolves' room is lit red.</b> The pack screens are the same lantern
+    behind a red gel. A villager never sees it, so it can be as different as it likes.</div>
+    <div class="note"><b>The dead are cut out.</b> Where a seat was there is only the cloth, a
+    dashed line where the scissors went, and a name struck through. Reads at 37.5pt without a
+    word.</div>
     <div class="note"><b>Day is the same screen lit from the front.</b> Cream paper, ink on it,
     hard shadows down and to the right. A chosen seat lifts off the wall instead of lighting up,
     because on a lit screen nothing can outshine the lamp.</div>
