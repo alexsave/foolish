@@ -186,7 +186,7 @@ public enum UtttBubble {
         let hFont = font(0)
         var hx = box.minX
         if mark == .x || mark == .o {
-            let side = ceil(hFont.capHeight * 1.45)
+            let side = ceil(hFont.capHeight * 1.8)
             let base = y + hFont.ascender
             let mid = base - hFont.capHeight / 2
             cg.saveGState()
