@@ -33,12 +33,16 @@ public struct UtttBoard: View {
     /// rather than a box.
     static let bleed: CGFloat = 0.115
 
+    /// Bumped when an off-main render lands, so the Canvas draws again.
+    @State private var landed = 0
+
     public var body: some View {
         GeometryReader { geo in
             let side = min(geo.size.width, geo.size.height)
             let pad  = side * Self.bleed
             ZStack(alignment: .topLeading) {
                 Canvas { ctx, _ in
+                    _ = landed
                     if let img = Self.cached(key: positionKey, active: active,
                                              last: animating == nil ? last : -1,
                                              side: side) {
@@ -69,6 +73,7 @@ public struct UtttBoard: View {
             }
         }
         .aspectRatio(1, contentMode: .fit)
+        .onReceive(NotificationCenter.default.publisher(for: Self.rendered)) { _ in landed &+= 1 }
     }
 
     static func fill(_ polys: [Uttt.Poly], into ctx: GraphicsContext, side: CGFloat) {
@@ -103,15 +108,54 @@ public struct UtttBoard: View {
         return "\(Uttt.seed)|\(code)|\(active)|\(last)"
     }
 
+    /// Posted on the main thread when a board rendered off it is ready.
+    static let rendered = Notification.Name("UtttBoard.rendered")
+    private static var inflight: String?
+
     /// The board at `side`, inside a bitmap bled by `bleed` on every edge, so
     /// the grid's overshoot has somewhere to go.
+    ///
+    /// THE FIRST BOARD OF A PROCESS IS RENDERED OFF THE MAIN THREAD. A late
+    /// board is fourteen thousand fills, measured at 140-250 ms in a Debug
+    /// build (`uttt-probe`: the kernel's draw is half a millisecond, the rest
+    /// is CoreGraphics), and on a cold open that time was spent before the
+    /// drawer's first frame - so the drawer stayed Messages' grey card for it.
+    /// Now the first frame is the paper and the words, and the board lands a
+    /// few frames later, while the drawer is still settling. Only the FIRST:
+    /// after that a stale image is on screen, and swapping a finished move's
+    /// image in late would flash the move out and back in.
     static func cached(key: Int, active: Int, last: Int, side: CGFloat) -> CGImage? {
         _ = key                     // SwiftUI's reason to redraw, not the cache's
         let st = stamp(active: active, last: last)
         if st == cacheStamp, side == cacheSide, let img = cacheImage { return img }
-        UtttLog.note("raster", "side \(Int(side)) plies \(Uttt.plyCount)")
-        defer { UtttLog.note("raster done") }
         let scale = UIScreen.main.scale
+        let polys = Uttt.boardPolys(active: active, last: last)
+        UtttLog.note("raster", "side \(Int(side)) plies \(Uttt.plyCount) polys \(polys.first.count)")
+        guard cacheImage == nil else {
+            let img = render(polys, side: side, scale: scale)
+            UtttLog.note("raster done")
+            cacheStamp = st; cacheSide = side; cacheImage = img
+            return img
+        }
+        let job = "\(st)|\(side)"
+        guard inflight != job else { return nil }
+        inflight = job
+        DispatchQueue.global(qos: .userInteractive).async {
+            let img = render(polys, side: side, scale: scale)
+            DispatchQueue.main.async {
+                UtttLog.note("raster done", "off the main thread")
+                if inflight == job { inflight = nil }
+                if cacheImage == nil || (cacheStamp == st && cacheSide == side) || inflight == nil {
+                    cacheStamp = st; cacheSide = side; cacheImage = img
+                }
+                NotificationCenter.default.post(name: rendered, object: nil)
+            }
+        }
+        return nil
+    }
+
+    /// Pure: the polygons into a new bitmap. Safe on any thread.
+    private static func render(_ polys: Uttt.BoardPolys, side: CGFloat, scale: CGFloat) -> CGImage? {
         let pad = side * bleed
         let box = side + 2 * pad
         let px = Int(box * scale)
@@ -129,9 +173,8 @@ public struct UtttBoard: View {
         cg.translateBy(x: 0, y: box * scale)
         cg.scaleBy(x: scale, y: -scale)
         cg.translateBy(x: pad, y: pad)
-        Uttt.fillBoard(active: active, last: last, into: cg, side: side)
-        cacheStamp = st; cacheSide = side; cacheImage = cg.makeImage()
-        return cacheImage
+        Uttt.fill(polys, into: cg, side: side)
+        return cg.makeImage()
     }
 }
 

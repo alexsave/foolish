@@ -237,40 +237,63 @@ public enum Uttt {
         harvest(uti_draw(Int32(active), Int32(last), markT, metaT))
     }
 
-    /// THE WHOLE BOARD, FILLED STRAIGHT FROM THE KERNEL'S BUFFERS into `cg`,
-    /// with the unit square scaled to `side`.
-    ///
-    /// A finished board is thousands of polygons, and `board()` turns every
-    /// one into a Swift array of CGPoints and a CGColor before anything is
-    /// filled - measured in the log as most of a cold open's first paint.
-    /// This walks the same buffers with no copy, and sets the fill colour
-    /// only when it changes. Same polygons, same order, same pixels.
-    public static func fillBoard(active: Int, last: Int, into cg: CGContext, side: CGFloat) {
-        let count = uti_draw(Int32(active), Int32(last), 1, 1)
-        guard count > 0, let pts = uti_points(), let first = uti_poly_first(),
-              let ns = uti_poly_n(), let rgba = uti_poly_rgba() else { return }
+    /// THE WHOLE BOARD AS PLAIN VALUES: the kernel's display list copied out
+    /// in one pass, so it can be filled anywhere - including off the main
+    /// thread, which the kernel itself (one static display list) must never
+    /// be touched from. A copy of four flat buffers, not an array per polygon.
+    public struct BoardPolys: Sendable {
+        let points: [Float]          // x, y pairs, 0..1
+        let first: [Int32]
+        let count: [Int32]
+        let rgba: [UInt32]
+    }
+
+    public static func boardPolys(active: Int, last: Int) -> BoardPolys {
+        let n = Int(uti_draw(Int32(active), Int32(last), 1, 1))
+        let np = Int(uti_point_count())
+        guard n > 0, np > 0, let pts = uti_points(), let first = uti_poly_first(),
+              let ns = uti_poly_n(), let rgba = uti_poly_rgba() else {
+            return BoardPolys(points: [], first: [], count: [], rgba: [])
+        }
+        return BoardPolys(points: Array(UnsafeBufferPointer(start: pts, count: np * 2)),
+                          first: Array(UnsafeBufferPointer(start: first, count: n)),
+                          count: Array(UnsafeBufferPointer(start: ns, count: n)),
+                          rgba: Array(UnsafeBufferPointer(start: rgba, count: n)))
+    }
+
+    /// Fill `polys` into `cg` with the unit square scaled to `side`: the same
+    /// polygons in the same order, one fill each, the colour set only when it
+    /// changes. Pure - it reads nothing but its arguments.
+    public static func fill(_ polys: BoardPolys, into cg: CGContext, side: CGFloat) {
         var colour: UInt32 = 0
         var haveColour = false
-        for i in 0..<Int(count) {
-            let f = Int(first[i]), n = Int(ns[i])
-            guard n > 0 else { continue }
-            let c = rgba[i]
-            if !haveColour || c != colour {
-                cg.setFillColor(red: CGFloat((c >> 24) & 0xff) / 255,
-                                green: CGFloat((c >> 16) & 0xff) / 255,
-                                blue: CGFloat((c >> 8) & 0xff) / 255,
-                                alpha: CGFloat(c & 0xff) / 255)
-                colour = c; haveColour = true
+        polys.points.withUnsafeBufferPointer { pts in
+            for i in 0..<polys.first.count {
+                let f = Int(polys.first[i]), n = Int(polys.count[i])
+                guard n > 0, (f + n) * 2 <= pts.count else { continue }
+                let c = polys.rgba[i]
+                if !haveColour || c != colour {
+                    cg.setFillColor(red: CGFloat((c >> 24) & 0xff) / 255,
+                                    green: CGFloat((c >> 16) & 0xff) / 255,
+                                    blue: CGFloat((c >> 8) & 0xff) / 255,
+                                    alpha: CGFloat(c & 0xff) / 255)
+                    colour = c; haveColour = true
+                }
+                cg.beginPath()
+                cg.move(to: CGPoint(x: CGFloat(pts[f * 2]) * side, y: CGFloat(pts[f * 2 + 1]) * side))
+                for k in 1..<max(1, n) {
+                    cg.addLine(to: CGPoint(x: CGFloat(pts[(f + k) * 2]) * side,
+                                           y: CGFloat(pts[(f + k) * 2 + 1]) * side))
+                }
+                cg.closePath()
+                cg.fillPath()
             }
-            cg.beginPath()
-            cg.move(to: CGPoint(x: CGFloat(pts[f * 2]) * side, y: CGFloat(pts[f * 2 + 1]) * side))
-            for k in 1..<max(1, n) {
-                cg.addLine(to: CGPoint(x: CGFloat(pts[(f + k) * 2]) * side,
-                                       y: CGFloat(pts[(f + k) * 2 + 1]) * side))
-            }
-            cg.closePath()
-            cg.fillPath()
         }
+    }
+
+    /// The whole board, filled into `cg` now, on this thread.
+    public static func fillBoard(active: Int, last: Int, into cg: CGContext, side: CGFloat) {
+        fill(boardPolys(active: active, last: last), into: cg, side: side)
     }
 
     /// Only the stroke that is moving. This is what an animation redraws.
