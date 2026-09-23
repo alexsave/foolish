@@ -4,6 +4,7 @@
  *     make -C uttt/c ios-smoke
  */
 #include "include/uttt_api.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -375,6 +376,18 @@ int main(void)
         float mid = uti_drawer_at(&d, 200, &mv);
         ok(mid < 800.f && mid > 289.f && mv, "a reported one springs there");
         ok(uti_drawer_at(&d, 2000, &mv) == 289.f && !mv, "and rests on it");
+    }
+
+    {   /* one layout through the bridge: the waiting strip's board is the
+         * sheet's centre, clear of its words, and every field crosses intact */
+        UtiSheet L = uti_sheet((UtiSheetIn){ .w = 440.f, .h = 280.f, .words_w = 168.f,
+                                             .words_h = 50.f, .kind = UTI_SHEET_WAIT });
+        ok(fabsf(L.board[0] + L.board[2] / 2 - 220.f) < 1e-3f
+           && fabsf(L.board[1] + L.board[2] / 2 - 140.f) < 1e-3f, "the waiting board is centred on the strip");
+        ok(L.board[1] >= L.vpad + 50.f - 1e-3f, "and sits under its words");
+        ok(L.t == 0.f && L.words_alpha == 1.f && L.door_alpha == 0.f && L.col == 0.f,
+           "with its words shown and no door or column");
+        printf("  sheet: waiting strip 440x280 board %.1f at %.1f,%.1f\n", L.board[2], L.board[0], L.board[1]);
     }
 
     printf(fails ? "\n%d FAILED\n" : "\nbridge ok\n", fails);
