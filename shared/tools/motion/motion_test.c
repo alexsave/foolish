@@ -206,32 +206,42 @@ static void test_score(void) {
 /* PACE: a stroke laid in ten 60 Hz frames against the same stroke in three
  * frames 120 ms apart - what the owner saw as "choppy". A ruler square in
  * the box is not ink. */
-static void pace_take(int32_t steps, double dt, double *t, int32_t *inkn, uint64_t *sum, int32_t *n) {
+static uint8_t before[W * H * 3];
+static void pace_take(int32_t steps, double dt, double *t, int32_t *inkn, int32_t *chg, int32_t *n) {
     MtBox b = { 30, 30, 300, 60 };            /* pixels: 100x20 pt at 3x      */
     fill(0, 0, W / S, H / S, 240, 238, 230);  /* paper                        */
     square(MR_INK_VIOLET, 60, 20);            /* a ruler square in the box    */
     *n = 0;
     for (int32_t k = 0; k < 3; k++) {         /* the still frames before      */
-        t[*n] = k * dt; inkn[*n] = mt_box_ink(img, W, H, b, 150, &sum[*n]); (*n)++;
+        /* the codec's shimmer: one level up and down, which is not a change */
+        for (int32_t x = 40; x < 60; x++) img[3 * (40 * W + x)] = (uint8_t)(240 + (k & 1));
+        /* and a codec block edge: a few pixels jump, which is not a change */
+        for (int32_t x = 70; x < 73; x++) img[3 * (50 * W + x)] = (uint8_t)(k == 2 ? 180 : 240);
+        t[*n] = k * dt; inkn[*n] = mt_box_ink(img, W, H, b, 150);
+        chg[*n] = k > 0 && mt_box_diff(before, img, W, H, b, MT_PACE_TOL) >= MT_PACE_MIN;
+        memcpy(before, img, sizeof img); (*n)++;
     }
     for (int32_t s = 1; s <= steps; s++) {
         fill(10, 12, 10 + 100.0 * s / steps, 28, 40, 40, 60);   /* the stroke grows */
-        t[*n] = (2 + s) * dt; inkn[*n] = mt_box_ink(img, W, H, b, 150, &sum[*n]); (*n)++;
+        t[*n] = (2 + s) * dt; inkn[*n] = mt_box_ink(img, W, H, b, 150);
+        chg[*n] = mt_box_diff(before, img, W, H, b, MT_PACE_TOL) >= MT_PACE_MIN;
+        memcpy(before, img, sizeof img); (*n)++;
     }
 }
 
 static void test_pace(void) {
-    double t[64]; int32_t inkn[64]; uint64_t sum[64]; int32_t n;
+    double t[64]; int32_t inkn[64], chg[64]; int32_t n;
     MtPace smooth, choppy;
-    pace_take(10, 1.0 / 60, t, inkn, sum, &n);
+    pace_take(10, 1.0 / 60, t, inkn, chg, &n);
     CHECK(inkn[0] == 0, "pace: a ruler square is not ink (%d)", inkn[0]);
-    mt_pace(t, inkn, sum, n, &smooth);
+    CHECK(!chg[1] && !chg[2], "pace: the codec's shimmer is not a change");
+    mt_pace(t, inkn, chg, n, &smooth);
     CHECK(smooth.frames == 10, "pace: ten changed frames (%d)", smooth.frames);
     CHECK(fabs(smooth.fps - 60) < 1, "pace: 60 fps (%.2f)", smooth.fps);
     CHECK(fabs(smooth.maxgap - 1.0 / 60) < 1e-6, "pace: gap one frame (%.4f)", smooth.maxgap);
     CHECK(fabs(smooth.maxstep - .1) < .02, "pace: a tenth a frame (%.3f)", smooth.maxstep);
-    pace_take(3, .120, t, inkn, sum, &n);
-    mt_pace(t, inkn, sum, n, &choppy);
+    pace_take(3, .120, t, inkn, chg, &n);
+    mt_pace(t, inkn, chg, n, &choppy);
     CHECK(choppy.frames == 3 && fabs(choppy.fps - 1 / .120) < .1, "pace: 3 frames 120 ms apart (%d, %.2f)",
           choppy.frames, choppy.fps);
     CHECK(fabs(choppy.maxgap - .120) < 1e-6 && choppy.maxstep > .3, "pace: the gap and the step (%.3f %.3f)",

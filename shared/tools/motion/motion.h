@@ -89,9 +89,17 @@ double mt_host_progress(double t, double response);
 typedef struct { int32_t x, y, w, h; } MtBox;      /* pixels                 */
 
 /* The box's ink: pixels with luma under `lum` (0..255) that are not a ruler
- * square; and a checksum of every pixel in it. */
-int32_t mt_box_ink(const uint8_t *rgb, int32_t W, int32_t H, MtBox b, int32_t lum,
-                   uint64_t *sum);
+ * square. */
+int32_t mt_box_ink(const uint8_t *rgb, int32_t W, int32_t H, MtBox b, int32_t lum);
+
+/* How many of the box's pixels differ between two frames by more than `tol`
+ * in some channel. A recording is h264: an unchanged screen still shimmers
+ * a level or two, so a change is a count of real differences, never "any
+ * byte moved". */
+#define MT_PACE_TOL   40      /* levels: well above the codec's shimmer        */
+#define MT_PACE_MIN    6      /* pixels: a frame changed when this many did    */
+int32_t mt_box_diff(const uint8_t *a, const uint8_t *b, int32_t W, int32_t H, MtBox box,
+                    int32_t tol);
 
 typedef struct {
     int32_t frames;       /* frames in which the box changed                 */
@@ -103,8 +111,9 @@ typedef struct {
                              ink share as seen on a 60 Hz grid, x 1000       */
 } MtPace;
 
-/* From one row per recorded frame: its time, its box ink and checksum. */
-void mt_pace(const double *t, const int32_t *ink, const uint64_t *sum, int32_t n,
+/* From one row per recorded frame: its time, its box ink, and whether the
+ * box changed from the frame before (mt_box_diff >= MT_PACE_MIN). */
+void mt_pace(const double *t, const int32_t *ink, const int32_t *changed, int32_t n,
              MtPace *out);
 
 #endif

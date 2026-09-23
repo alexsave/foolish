@@ -447,31 +447,37 @@ int32_t mt_score(const MtRow *rows, int32_t n, const MtScoreOpts *o, MtScore out
 
 /* ---- pace -------------------------------------------------------------- */
 
-int32_t mt_box_ink(const uint8_t *rgb, int32_t W, int32_t H, MtBox b, int32_t lum,
-                   uint64_t *sum) {
-    uint64_t h = 1469598103934665603ull;
+int32_t mt_box_ink(const uint8_t *rgb, int32_t W, int32_t H, MtBox b, int32_t lum) {
     int32_t n = 0;
     for (int32_t y = b.y < 0 ? 0 : b.y; y < b.y + b.h && y < H; y++)
         for (int32_t x = b.x < 0 ? 0 : b.x; x < b.x + b.w && x < W; x++) {
             const uint8_t *p = rgb + ((size_t)y * (size_t)W + (size_t)x) * 3;
-            h = (h ^ p[0]) * 1099511628211ull;
-            h = (h ^ p[1]) * 1099511628211ull;
-            h = (h ^ p[2]) * 1099511628211ull;
             int32_t l = (299 * p[0] + 587 * p[1] + 114 * p[2]) / 1000;
             if (l < lum && ink_of(p[0], p[1], p[2]) < 0) n++;
         }
-    if (sum) *sum = h;
     return n;
 }
 
-void mt_pace(const double *t, const int32_t *ink, const uint64_t *sum, int32_t n,
+int32_t mt_box_diff(const uint8_t *a, const uint8_t *b, int32_t W, int32_t H, MtBox box,
+                    int32_t tol) {
+    int32_t n = 0;
+    for (int32_t y = box.y < 0 ? 0 : box.y; y < box.y + box.h && y < H; y++)
+        for (int32_t x = box.x < 0 ? 0 : box.x; x < box.x + box.w && x < W; x++) {
+            size_t o = ((size_t)y * (size_t)W + (size_t)x) * 3;
+            for (int32_t c = 0; c < 3; c++)
+                if (abs((int32_t)a[o + c] - (int32_t)b[o + c]) > tol) { n++; break; }
+        }
+    return n;
+}
+
+void mt_pace(const double *t, const int32_t *ink, const int32_t *changed, int32_t n,
              MtPace *o) {
     memset(o, 0, sizeof *o);
     if (n < 2) return;
     int32_t first = -1, last = -1;
     double prev_t = 0;
     for (int32_t i = 1; i < n; i++) {
-        if (sum[i] == sum[i - 1]) continue;
+        if (!changed[i]) continue;
         if (first < 0) first = i;
         else if (t[i] - prev_t > o->maxgap) o->maxgap = t[i] - prev_t;
         prev_t = t[i];

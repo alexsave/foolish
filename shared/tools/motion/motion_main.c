@@ -89,20 +89,23 @@ static int pace_main(int argc, char **argv) {
     int32_t cap = 1 << 16, n = 0;
     double *t = malloc(sizeof *t * cap);
     int32_t *ink = malloc(sizeof *ink * cap);
-    uint64_t *sum = malloc(sizeof *sum * cap);
+    int32_t *changed = malloc(sizeof *changed * cap);
+    uint8_t *prev = malloc(sz);
     printf("t ink changed\n");
     while (n < cap && fread(buf, 1, sz, stdin) == sz) {
         if (fscanf(tf, "%lf", &t[n]) != 1) break;
-        ink[n] = mt_box_ink(buf, W, H, b, lum, &sum[n]);
-        printf("%.6f %d %d\n", t[n], ink[n], n > 0 && sum[n] != sum[n - 1]);
+        ink[n] = mt_box_ink(buf, W, H, b, lum);
+        changed[n] = n > 0 && mt_box_diff(prev, buf, W, H, b, MT_PACE_TOL) >= MT_PACE_MIN;
+        printf("%.6f %d %d\n", t[n], ink[n], changed[n]);
+        memcpy(prev, buf, sz);
         n++;
     }
     fclose(tf);
     MtPace p;
-    mt_pace(t, ink, sum, n, &p);
+    mt_pace(t, ink, changed, n, &p);
     printf("pace frames %d fps %.1f maxgap_ms %.0f maxstep %.3f rough %.2f span_ms %.0f\n",
            p.frames, p.fps, p.maxgap * 1000, p.maxstep, p.rough, (p.t1 - p.t0) * 1000);
-    free(buf); free(t); free(ink); free(sum);
+    free(buf); free(prev); free(t); free(ink); free(changed);
     return n > 0 ? 0 : 1;
 }
 
