@@ -275,3 +275,12 @@ int utm_prefer(const UtmMsg *mine, const UtmMsg *tapped)
     int c = memcmp(ka, kb, 32);
     return c < 0 ? -1 : c > 0 ? 1 : 0;
 }
+
+int utm_can_replace(const UtmMsg *m, const uint8_t me[UTM_TAG_LEN], int mv)
+{
+    if (mv < 0 || mv > 80 || m->game.n_plies == 0) return 0;
+    if (mv == m->game.move[m->game.n_plies - 1]) return 0;
+    UtmMsg c = *m;
+    if (!utm_undo(&c, me)) return 0;
+    return utm_play(&c, me, mv);
+}

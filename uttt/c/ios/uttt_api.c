@@ -395,6 +395,13 @@ int uti_msg_undo(void)
     return utm_undo(&S.m, me);
 }
 
+int uti_msg_can_replace(int mv)
+{
+    uint8_t me[UTM_TAG_LEN];
+    my_tag(me);
+    return utm_can_replace(&S.m, me, mv);
+}
+
 int uti_msg_door(void) { return utm_door(&S.m); }
 
 int uti_send_hint_ms(void) { return UTM_SEND_HINT_MS; }

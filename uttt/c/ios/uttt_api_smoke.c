@@ -396,6 +396,10 @@ int main(void)
         uti_me(alex, 16);
         ok(uti_msg_read(join) == 0 && uti_msg_seat() == UTI_SEAT_O, "alex opens it as O");
         ok(uti_msg_can_move() && uti_msg_play(36), "and answers");
+        ok(uti_msg_can_replace(37) && !uti_msg_can_replace(36) && !uti_msg_can_replace(40)
+           && !uti_msg_can_replace(0), "a change of mind: another free square of the centre only");
+        ok(uti_draw_outline(4, 1.f) > 0 && uti_draw_outline(-1, 1.f) == 0,
+           "the promise draws round a block, and nothing for none");
         ok(uti_msg_text(reply, sizeof reply) > 0, "the reply");
         ok(uti_msg_prefer(reply, join) < 0 && uti_msg_prefer(join, reply) > 0, "the reply outranks the join");
         ok(uti_msg_same_game(reply, inv), "all one game");

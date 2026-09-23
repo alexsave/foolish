@@ -290,6 +290,29 @@ static void test_seats(void)
        "undo: O's own move comes back and the roster stays sealed");
     OK(!utm_undo(&inv, a) && !utm_undo(&inv, b), "undo: nothing to take back on an invitation");
 
+    /* A CHANGE OF MIND (utm_can_replace): a different square that is legal
+     * where my draft was played; anything else is a tap that does nothing. */
+    {
+        int x = j.game.move[0];
+        UtmMsg before = j;
+        OK(!utm_can_replace(&j, b, x), "replace: the same square is not a change of mind");
+        OK(utm_can_replace(&j, b, (x + 1) % 81), "replace: another square of the joining move");
+        OK(!utm_can_replace(&j, a, (x + 1) % 81) && !utm_can_replace(&j, c, (x + 1) % 81),
+           "replace: only my own draft");
+        OK(!utm_can_replace(&j, b, -1) && !utm_can_replace(&j, b, 81), "replace: off the board");
+        OK(!memcmp(&before, &j, sizeof j), "replace: asking changes nothing");
+        UtmMsg o = j;
+        OK(utm_play(&o, a, 36), "replace: O's draft");
+        uint8_t lg[81]; int nl = uttt_legal(&j.game, lg), every = 1;
+        for (int mv = 0; mv < 81; mv++) {
+            int legal = 0;
+            for (int k = 0; k < nl; k++) legal |= lg[k] == mv;
+            if (utm_can_replace(&o, a, mv) != (legal && mv != 36)) every = 0;
+        }
+        OK(every, "replace: exactly the legal squares of the draft's position, less the draft's own");
+        OK(!utm_can_replace(&inv, a, 40) && !utm_can_replace(&inv, b, 40), "replace: nothing on an invitation");
+    }
+
     /* THE DOOR. No take-back, by the owner's decision: only Again. */
     OK(utm_door(&inv) == UTM_DOOR_NONE, "door: an invitation has none");
     OK(utm_door(&j) == UTM_DOOR_NONE, "door: a live game has none");

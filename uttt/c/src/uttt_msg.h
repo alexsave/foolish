@@ -155,6 +155,14 @@ int  utm_play(UtmMsg *m, const uint8_t me[UTM_TAG_LEN], int mv);
  * what is left. Returns 1 if a move came back. */
 int  utm_undo(UtmMsg *m, const uint8_t me[UTM_TAG_LEN]);
 
+/* A CHANGE OF MIND: may `me` replace their staged last move with `mv` - a
+ * different square that is legal in the position the draft was played in.
+ * The one legality question a tap on a board with a draft asks; anything
+ * else (the same square, an occupied cell, a block the draft was not played
+ * in, a gap between cells, a move that is not mine to take back) is a tap
+ * that does nothing. Pure: `m` is not touched. */
+int  utm_can_replace(const UtmMsg *m, const uint8_t me[UTM_TAG_LEN], int mv);
+
 /* ------------------------------------------------------------ the doors */
 
 #define UTM_DOOR_NONE      0

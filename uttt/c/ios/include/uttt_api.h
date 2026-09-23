@@ -96,6 +96,9 @@ int  uti_msg_can_move(void);
  * played. Undo takes back my own last move only; undoing the joining move
  * gives the seat back. */
 int  uti_msg_play(int mv);
+/* A change of mind: may I replace my staged last move with `mv` (a legal,
+ * different square in the position my draft was played in). Pure. */
+int  uti_msg_can_replace(int mv);
 int  uti_msg_undo(void);
 
 /* The one door a screen may offer for the resident message (utm_door). */
