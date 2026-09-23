@@ -368,24 +368,29 @@ int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float calm)
 #define BUB_REACH  UTTT_REACH       /* the design's 5% over the pen's 13.5% */
 #define BUB_EDGE    5.f             /* where the longest line is asked to stop; its jitter takes it ~1.5pt further since its far end draws */
 
-UtttBubble uttt_bubble(void)
+UtttBubble uttt_bubble(const UtttGame *g)
 {
-    UtttBubble b;
+    UtttBubble b = { 0 };
     b.w = BUB_W; b.h = BUB_H;
+    b.words = g && g->over;
 
     /* side + 2 * .05 * side + 2 * edge = height */
     float side = (BUB_H - 2.f * BUB_EDGE) / (1.f + 2.f * .135f * BUB_REACH);
     side = (float)(int)side;                     /* whole points: 168 */
     float m = (BUB_H - side) * .5f;
-    b.board.x = BUB_W - m - side;
+    /* THE BOARD ALONE IS CENTRED: the frame is wider than tall, so the side
+     * is the height's and the badge's corner is 66 points left of it. */
+    b.board.x = b.words ? BUB_W - m - side : (BUB_W - side) * .5f;
     b.board.y = m;
     b.board.w = side;
     b.board.h = side;
 
-    b.text.x = BUB_PAD;
-    b.text.y = b.board.y;
-    b.text.w = b.board.x - BUB_GUT - BUB_PAD;
-    b.text.h = side;
+    if (b.words) {
+        b.text.x = BUB_PAD;
+        b.text.y = b.board.y;
+        b.text.w = b.board.x - BUB_GUT - BUB_PAD;
+        b.text.h = side;
+    }
 
     /* 18, measured off option 02: "Your move" there is 82 points wide in
      * bold, which is 18-point type. At 16 the two lines read as a label

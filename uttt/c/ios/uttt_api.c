@@ -146,7 +146,7 @@ int uti_draw_bubble(int active, int last)
     dl_fresh();
     UtttDrawOpts o = uttt_draw_opts(S.m.seed);
     o.active = active; o.last = last;
-    o.reach = uttt_bubble().reach;
+    o.reach = uttt_bubble(&S.m.game).reach;
     S.overflow = uttt_draw_board(&S.dl, &S.m.game, &o) != 0;
     return publish();
 }
@@ -262,14 +262,14 @@ void uti_paper(uint8_t *rgba, int w, int h) { uttt_paper(rgba, w, h); }
 /* ----------------------------------------------------------- the bubble */
 void uti_bubble_size(float *w, float *h)
 {
-    UtttBubble b = uttt_bubble();
+    UtttBubble b = uttt_bubble(&S.m.game);
     if (w) *w = b.w;
     if (h) *h = b.h;
 }
 
 void uti_bubble_board(float *x, float *y, float *side)
 {
-    UtttBubble b = uttt_bubble();
+    UtttBubble b = uttt_bubble(&S.m.game);
     if (x)    *x    = b.board.x;
     if (y)    *y    = b.board.y;
     if (side) *side = b.board.w;
@@ -277,7 +277,7 @@ void uti_bubble_board(float *x, float *y, float *side)
 
 void uti_bubble_text(float *x, float *y, float *w, float *h)
 {
-    UtttBubble b = uttt_bubble();
+    UtttBubble b = uttt_bubble(&S.m.game);
     if (x) *x = b.text.x;
     if (y) *y = b.text.y;
     if (w) *w = b.text.w;
@@ -286,17 +286,17 @@ void uti_bubble_text(float *x, float *y, float *w, float *h)
 
 float uti_bubble_type(int line)
 {
-    UtttBubble b = uttt_bubble();
+    UtttBubble b = uttt_bubble(&S.m.game);
     return line ? b.place_pt : b.headline_pt;
 }
 
 uint32_t uti_bubble_ink(int line)
 {
-    UtttBubble b = uttt_bubble();
+    UtttBubble b = uttt_bubble(&S.m.game);
     return line ? b.place_rgba : b.headline_rgba;
 }
 
-float uti_bubble_lead(void) { return uttt_bubble().lead; }
+float uti_bubble_lead(void) { return uttt_bubble(&S.m.game).lead; }
 
 int         uti_rules_count(void)      { return uttt_rules_count(); }
 const char *uti_rules_line(int i)      { return uttt_rules_line(i); }

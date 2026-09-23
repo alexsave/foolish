@@ -18,13 +18,14 @@
 #include "uttt.h"
 
 enum {
-    /* the bubble: baked into the image and its caption, same on every phone */
-    UTTT_SAY_BUBBLE_HEADLINE = 0,  /* "A game?", "<X> to play", "<X> wins",
-                                      the mark drawn (uttt_say_bubble_mark) */
-    UTTT_SAY_BUBBLE_PLACE,         /* "bottom middle", "58 moves", ""       */
-    UTTT_SAY_CAPTION,              /* "Sent to the bottom-middle board.",
-                                      "<who> won on the diagonal. 58 moves.",
-                                      "<who> wants a game. Tap to take it." */
+    /* the bubble: baked into the image and its caption, same on every phone;
+     * the image has words only once the game is over (uttt_bubble) */
+    UTTT_SAY_BUBBLE_HEADLINE = 0,  /* "<X> wins", "A draw", "" - the mark
+                                      drawn (uttt_say_bubble_mark)          */
+    UTTT_SAY_BUBBLE_PLACE,         /* "58 moves", ""                        */
+    UTTT_SAY_CAPTION,              /* "O to play, bottom-middle board",
+                                      "X won on the diagonal in 58 moves",
+                                      "New game?" - one line (uttt_caption) */
 
     /* the play surface, drawn for `seat` (UTM_SEAT_*) */
     UTTT_SAY_HEADLINE_PRE,         /* words before the drawn mark           */
@@ -80,10 +81,27 @@ int uttt_say(int key, const UtttGame *g, int seat, char *out, int cap);
 int uttt_say_by(int key, const UtttGame *g, int seat, const char *who,
                 char *out, int cap);
 
-/* The mark the BUBBLE's headline draws before its words, or 0 for "A game?"
- * and "A draw". The bubble cannot say "Your move" - it is one bitmap, and on
- * the sender's own phone it would be false - so it names the side to play by
- * its mark, drawn in its own ink, the way the screen names the other side. */
+/* THE CAPTION IS ONE LINE. Messages sets it in one row under the 300-point
+ * bubble and wraps a longer one onto a second (owner: never). Measured on
+ * UtttRig (iOS 27, TESTFLIGHT_PLAN.md 11): a sent bubble is 309.7 points
+ * wide with 17 points of padding each side, 275.7 for the words, and the
+ * captions set at 7.41-7.56 points a character ("Sent anywhere on the sheet"
+ * 196.7, "X won on the diagonal in 25 moves" 244.7) - 36 characters. The
+ * limit leaves four of them spare for wider glyphs. */
+#define UTTT_CAPTION_MAX 32
+
+/* The caption from its parts: `over` (0, X, O or draw), `turn` the side to
+ * play, `block` where they go (0..8, 9 anywhere; -1 for an empty board),
+ * `line` the won line (uttt_won_line), `n` the plies, `who` as uttt_say_by.
+ * Unnamed, every caption is at most UTTT_CAPTION_MAX characters: a win whose
+ * line would not fit is said without it ("X won in 81 moves"). */
+int uttt_caption(int over, int turn, int block, int line, int n, const char *who,
+                 char *out, int cap);
+
+/* The mark the BUBBLE's headline draws before its words - the winner's - or
+ * 0: only a finished game's bubble has words (uttt_bubble). The bubble
+ * cannot say "You win" - it is one bitmap, false on the loser's phone - so
+ * it names the winner by its mark, drawn in its own ink. */
 int uttt_say_bubble_mark(const UtttGame *g);
 
 /* The mark the play-surface headline draws between PRE and POST, or 0 for a

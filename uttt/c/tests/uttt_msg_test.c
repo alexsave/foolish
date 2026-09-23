@@ -392,13 +392,47 @@ static void say(int key, const UtttGame *g, int seat, char *out)
     if (n < 0) out[0] = 0;
 }
 
+/* EVERY CAPTION THE TABLE CAN PRODUCE IS ONE LINE (owner): every side to
+ * play into every block, every won line by either side, a draw, at every
+ * length a game can have, unnamed as the bubble sends it - at most
+ * UTTT_CAPTION_MAX characters, measured off the transcript (uttt_say.h). */
+static void test_caption_one_line(void)
+{
+    char s[160];
+    int longest = 0, n = 0, lined = 0;
+    char worst[160] = "";
+    for (int plies = 0; plies <= 81; plies++)
+        for (int over = 0; over <= 3; over++)
+            for (int turn = UTTT_X; turn <= UTTT_O; turn++)
+                for (int block = -1; block <= 9; block++)
+                    for (int line = -1; line < 8; line++) {
+                        int k = uttt_caption(over, turn, block, line, plies, NULL, s, sizeof s);
+                        OK(k >= 0 && k == (int)strlen(s), "caption: every combination answers");
+                        if (k > longest) { longest = k; strcpy(worst, s); }
+                        if (strstr(s, " the ") && strstr(s, " won ")) lined++;
+                        if (s[k ? k - 1 : 0] == '.') n++;
+                    }
+    printf("  caption: longest %d characters, \"%s\"\n", longest, worst);
+    OK(longest <= UTTT_CAPTION_MAX, "caption: every caption fits one line of the transcript");
+    OK(n == 0, "caption: no caption ends in a full stop");
+    OK(lined > 0, "caption: a win still names its line where the line fits");
+    uttt_caption(UTTT_X, UTTT_O, 0, 3, 21, NULL, s, sizeof s);
+    OK(!strcmp(s, "X won down the left in 21 moves"), "caption: the owner's example");
+    uttt_caption(0, UTTT_X, 9, -1, 4, NULL, s, sizeof s);
+    OK(!strcmp(s, "X to play, anywhere"), "caption: anywhere");
+    uttt_caption(0, UTTT_O, 0, -1, 4, NULL, s, sizeof s);
+    OK(!strcmp(s, "O to play, top-left board"), "caption: a block");
+    uttt_caption(0, UTTT_X, -1, -1, 0, NULL, s, sizeof s);
+    OK(!strcmp(s, "New game?"), "caption: the invitation");
+}
+
 static void test_say(void)
 {
     char s[160];
     UtttGame g;
     uttt_init(&g);
     say(UTTT_SAY_BUBBLE_HEADLINE, &g, UTM_SEAT_WAITING, s);
-    OK(!strcmp(s, "A game?"), "say: an empty board asks");
+    OK(!strcmp(s, ""), "say: an invitation's bubble has no words, its caption asks");
     say(UTTT_SAY_CAPTION, &g, UTM_SEAT_WAITING, s);
     OK(!strcmp(s, "New game?"), "say: the invitation's caption, nobody named");
     OK(uttt_say_by(UTTT_SAY_CAPTION, &g, UTM_SEAT_WAITING, "$ALEX", s, sizeof s) > 0
@@ -414,14 +448,14 @@ static void test_say(void)
 
     uttt_play(&g, 41);                  /* centre block, middle-right cell -> block 5 */
     say(UTTT_SAY_CAPTION, &g, UTM_SEAT_X, s);
-    OK(!strcmp(s, "Sent to the middle-right board"), "say: the caption names the destination");
+    OK(!strcmp(s, "O to play, middle-right board"), "say: the caption says whose turn and where (owner)");
     say(UTTT_SAY_BUBBLE_PLACE, &g, UTM_SEAT_X, s);
-    OK(!strcmp(s, "middle right"), "say: the bubble's place line");
+    OK(!strcmp(s, ""), "say: a move's bubble has no place line, its caption names it");
     say(UTTT_SAY_BUBBLE_HEADLINE, &g, UTM_SEAT_X, s);
-    OK(!strcmp(s, "to play") && uttt_say_bubble_mark(&g) == UTTT_O,
-       "say: the bubble names the side to play by its mark, never \"Your move\"");
+    OK(!strcmp(s, "") && uttt_say_bubble_mark(&g) == 0,
+       "say: a move's bubble has no headline and draws no mark");
     OK(uttt_say_by(UTTT_SAY_CAPTION, &g, UTM_SEAT_X, "$ALEX", s, sizeof s) > 0
-       && !strcmp(s, "Sent to the middle-right board"),
+       && !strcmp(s, "O to play, middle-right board"),
        "say: a move's caption names nobody");
     say(UTTT_SAY_HEADLINE_PRE, &g, UTM_SEAT_X, s);
     OK(!strcmp(s, "Waiting on ") && uttt_say_headline_mark(&g, UTM_SEAT_X) == UTTT_O,
@@ -472,8 +506,10 @@ static void test_say(void)
     {
         char want[64];
         snprintf(want, sizeof want, "X won on the diagonal in %d moves", g.n_plies);
-        OK(!strcmp(s, want), "say: the end caption names the line and the length");
+        if (strlen(want) > UTTT_CAPTION_MAX) snprintf(want, sizeof want, "X won in %d moves", g.n_plies);
+        OK(!strcmp(s, want), "say: the end caption names the line and the length, the line where it fits");
         snprintf(want, sizeof want, "$ALEX won on the diagonal in %d moves", g.n_plies);
+        if (strlen(want) > UTTT_CAPTION_MAX) snprintf(want, sizeof want, "$ALEX won in %d moves", g.n_plies);
         OK(uttt_say_by(UTTT_SAY_CAPTION, &g, UTM_SEAT_X, "$ALEX", s, sizeof s) > 0
            && !strcmp(s, want), "say: the end caption names the winner, who sent it (UI.html 05)");
     }
@@ -514,8 +550,8 @@ static void test_say(void)
             char cap[160];
             say(UTTT_SAY_CAPTION, &g, UTM_SEAT_X, cap);
             OK((li < 3 && strstr(cap, " across the ")) || (li >= 3 && li < 6 && strstr(cap, " down the "))
-               || (li >= 6 && strstr(cap, " on the diagonal ")),
-               "say: the caption and the subline name the same line");
+               || (li >= 6 && strstr(cap, " on the diagonal ")) || !strstr(cap, " the "),
+               "say: the caption and the subline name the same line, or the caption none");
             lines_said++;
         }
         if (game == 0) {
@@ -572,6 +608,7 @@ int main(int argc, char **argv)
     test_seats();
     test_prefer();
     test_hit();
+    test_caption_one_line();
     test_say();
     test_insert();
     printf("uttt_msg: %d checks, %d failed\n", checks, fails);

@@ -7,14 +7,16 @@ import UIKit
 ///
 /// THIS IS THE FRAME NOBODY CHOSE. `MSMessageTemplateLayout` renders its image
 /// at exactly 300 by 195 points - landscape, aspect 1.54 - and a board is
-/// square. UI.html gives it 181; the kernel gives it 170 so the grid's main
-/// lines stop on the frame (uttt_bubble), and the rest is two lines: a
-/// headline, and the block the opponent has been sent to.
+/// square. The kernel gives it 168 so the grid's main lines stop on the
+/// frame (uttt_bubble). A game in play is the board alone, centred, and the
+/// caption says whose turn and where ("O to play, top-left board", owner);
+/// only a finished game's image has words, the winner's drawn mark and
+/// "wins" over "N moves", in a column beside the board.
 ///
 /// AND IT IS BAKED. Every device in the thread shows the one image the sender
 /// drew and reads the one caption under it, so neither may say "you": the
-/// image names the side to play by its drawn mark ("<O> to play"), because
-/// docs/UI.html's "Your move" is false on the sender's own copy.
+/// winner is named by a drawn mark, because "You win" is false on the
+/// loser's copy.
 ///
 /// AND THE CAPTION NAMES NOBODY, though UI.html 01 and 05 write "Alex". An
 /// extension has a participant UUID and no name, and the documented way to
@@ -40,6 +42,8 @@ public enum UtttBubble {
         return CGSize(width: CGFloat(w), height: CGFloat(h))
     }
 
+    /// The frame for the resident game (uttt_bubble): read with the snapshot,
+    /// never while painting off the main thread.
     private static var boardBox: CGRect {
         var x: Float = 0, y: Float = 0, s: Float = 0
         uti_bubble_board(&x, &y, &s)
@@ -101,6 +105,9 @@ public enum UtttBubble {
         let headline: String
         let place: String
         let paper: CGImage?
+        let boardBox: CGRect
+        /// Zero-sized for a game in play: its image has no words.
+        let textBox: CGRect
     }
 
     public static func snapshot() -> Snapshot {
@@ -119,13 +126,14 @@ public enum UtttBubble {
                         mark: mark,
                         markPolys: (mark == .x || mark == .o) ? Uttt.mark(mark, seed: Uttt.seed &+ 4) : [],
                         headline: headline, place: place,
-                        paper: paper(width: Int(size.width), height: Int(size.height)))
+                        paper: paper(width: Int(size.width), height: Int(size.height)),
+                        boardBox: boardBox, textBox: textBox)
     }
 
     /// Pure: the snapshot painted. Safe on any thread.
     public static func image(_ snap: Snapshot) -> UIImage {
         let frame = CGRect(origin: .zero, size: size)
-        let board = boardBox
+        let board = snap.boardBox
 
         let fmt = UIGraphicsImageRendererFormat()
         fmt.scale = 3
@@ -140,16 +148,18 @@ public enum UtttBubble {
                 cg.fill(frame)
             }
 
-            /* The kernel draws in a unit square and the board is 170 points in
-             * the corner the kernel knows nothing about, so the transform goes
+            /* The kernel draws in a unit square and the board is 168 points
+             * where uttt_bubble puts it, so the transform goes
              * on once here rather than into ten thousand multiplications. */
             cg.saveGState()
             cg.translateBy(x: board.minX, y: board.minY)
             Uttt.fill(snap.board, into: cg, side: board.width)
             cg.restoreGState()
 
-            draw(mark: snap.mark, markPolys: snap.markPolys,
-                 headline: snap.headline, place: snap.place, in: textBox, into: cg)
+            if snap.textBox.width > 0 {
+                draw(mark: snap.mark, markPolys: snap.markPolys,
+                     headline: snap.headline, place: snap.place, in: snap.textBox, into: cg)
+            }
         }
     }
 

@@ -114,46 +114,68 @@ int main(void)
     float bw = 0, bh = 0, x = 0, y = 0, s = 0, tw = 0, th = 0;
     uti_bubble_size(&bw, &bh);
     ok(bw == 300.f && bh == 195.f, "the bubble is 300 by 195");
+    /* THE LINES STOP ON THE PAPER, and none runs under the badge Messages
+     * stamps into the top-left corner: every point of the bubble's board,
+     * drawn with its own reach, lies 3 points or more inside the frame and
+     * outside the badge's corner. The drawer's reach would run 23 past. */
+    float ink[4];                                   /* left top right bottom */
+    int under_badge = 0;
+    #define BUBBLE_INK() do { \
+        float bx = 0, by = 0, bs = 0; \
+        uti_bubble_board(&bx, &by, &bs); \
+        int np = uti_draw_bubble(4, -1); \
+        const float *pt = uti_points(); \
+        const int *pf = uti_poly_first(), *pn = uti_poly_n(); \
+        ink[0] = ink[1] = 1e9f; ink[2] = ink[3] = -1e9f; under_badge = 0; \
+        for (int i = 0; i < np; i++) \
+            for (int k = 0; k < pn[i]; k++) { \
+                float px = bx + pt[(pf[i] + k) * 2] * bs, py = by + pt[(pf[i] + k) * 2 + 1] * bs; \
+                if (px < ink[0]) ink[0] = px; \
+                if (py < ink[1]) ink[1] = py; \
+                if (px > ink[2]) ink[2] = px; \
+                if (py > ink[3]) ink[3] = py; \
+                if (px < 31.f && py < 24.f) under_badge = 1; \
+            } \
+        ok(np > 0, "the bubble's board draws"); \
+    } while (0)
+
+    /* a game in play: the board alone, centred, as large as the frame's
+     * height allows */
     uti_bubble_board(&x, &y, &s);
     ok(s == 168.f, "the board is 168 points, so its lines (both ends drawn) stop on the frame");
-    ok(x >= 0 && y >= 0 && x + s <= bw && y + s <= bh, "the board is inside the frame");
+    ok(fabsf(x + s / 2 - bw / 2) < .01f && fabsf(y + s / 2 - bh / 2) < .01f,
+       "a game in play: the board is centred in the frame");
     uti_bubble_text(&x, &y, &tw, &th);
-    ok(x >= 0 && x + tw <= bw && y + th <= bh, "the text column is inside the frame");
-    ok(tw >= 90.f, "and at least 90 points wide, which fits \"middle right\" on two lines");
-    /* THE LINES STOP ON THE PAPER: every point of the bubble's board, drawn
-     * with its own reach, lies 3 points or more inside the frame on the three
-     * sides the board faces. The drawer's reach would run 23 points past. */
+    ok(tw == 0.f && th == 0.f, "and has no words");
+    BUBBLE_INK();
+    printf("  bubble board ink (in play): left %.1f top %.1f right %.1f bottom %.1f\n",
+           ink[0], ink[1], bw - ink[2], bh - ink[3]);
+    ok(ink[0] >= 3.f && ink[1] >= 3.f && bw - ink[2] >= 3.f && bh - ink[3] >= 3.f,
+       "a game in play: the bubble's lines stop 3 points inside the frame");
+    ok(!under_badge, "a game in play: no line runs under Messages' badge");
+
+    /* a finished game: the words in a column left of the board */
     {
-        float bx = 0, by = 0, bs = 0;
-        uti_bubble_board(&bx, &by, &bs);
-        int np = uti_draw_bubble(4, -1);
-        const float *pt = uti_points();
-        const int *pf = uti_poly_first(), *pn = uti_poly_n();
-        float top = 1e9f, bot = -1e9f, right = -1e9f;
-        for (int i = 0; i < np; i++)
-            for (int k = 0; k < pn[i]; k++) {
-                float px = bx + pt[(pf[i] + k) * 2] * bs;
-                float py = by + pt[(pf[i] + k) * 2 + 1] * bs;
-                if (py < top) top = py;
-                if (py > bot) bot = py;
-                if (px > right) right = px;
-            }
-        printf("  bubble board ink: top %.1f bottom %.1f right %.1f\n", top, bh - bot, bw - right);
-        ok(np > 0 && top >= 3.f && bh - bot >= 3.f && bw - right >= 3.f,
-           "the bubble's lines stop 3 points inside the frame");
+        uint8_t list[81]; int guard = 0;
+        while (!uti_over() && guard++ < 81 && uti_legal(list) > 0) uti_play(list[0]);
+        ok(uti_over() != 0, "a game played out is over");
+        uti_bubble_board(&x, &y, &s);
+        float bx = x;
+        uti_bubble_text(&x, &y, &tw, &th);
+        ok(x >= 0 && x + tw <= bw && y + th <= bh, "a finished game: the text column is inside the frame");
+        ok(tw >= 90.f, "and at least 90 points wide");
+        ok(x + tw <= bx, "and left of the board");
+        BUBBLE_INK();
+        ok(ink[1] >= 3.f && bw - ink[2] >= 3.f && bh - ink[3] >= 3.f,
+           "a finished game: the bubble's lines stop 3 points inside the frame");
+        ok(!under_badge, "a finished game: no line runs under Messages' badge");
+        printf("  bubble %gx%g: board %g, text %g wide\n", bw, bh, s, tw);
     }
-    /* MESSAGES STAMPS THE APP LOGO INTO THE TOP-LEFT CORNER of every bubble,
-     * over whatever is under it. The board cannot live there or the badge
-     * sits on its first block for the whole game, so the text column does. */
-    {
-        float bx = 0, by = 0, bs = 0;
-        uti_bubble_board(&bx, &by, &bs);
-        ok(x + tw <= bx, "the text column is left of the board, clear of the badge");
-    }
-    printf("  bubble %gx%g: board %g, text %g wide\n", bw, bh, s, tw);
+    #undef BUBBLE_INK
     ok(uti_bubble_type(0) > 0 && uti_bubble_type(1) > 0, "both lines have a size");
     ok((uti_bubble_ink(0) & 0xffu) == 0xffu, "the headline ink is opaque");
     ok(uti_bubble_ink(0) != uti_bubble_ink(1), "the place is a different colour");
+    uti_new(77);
 
     /* ---- the place line. A new game is unforced, so it is "anywhere". */
     ok(uti_active() == 9, "a new game may be played anywhere");
@@ -369,7 +391,7 @@ int main(void)
         ok(uti_msg_play(mv) && uti_msg_sealed(), "her first move takes the seat");
         ok(uti_msg_seat() == UTI_SEAT_X && !uti_msg_can_move(), "she is X and it is O's turn");
         ok(uti_msg_text(join, sizeof join) > 0, "the join is one message");
-        ok(!strcmp(uti_say(UTI_SAY_CAPTION), "Sent to the centre board"), "carrying her move");
+        ok(!strcmp(uti_say(UTI_SAY_CAPTION), "O to play, centre board"), "carrying her move");
 
         uti_me(alex, 16);
         ok(uti_msg_read(join) == 0 && uti_msg_seat() == UTI_SEAT_O, "alex opens it as O");

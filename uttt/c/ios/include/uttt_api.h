@@ -293,7 +293,9 @@ void uti_paper(uint8_t *rgba, int w, int h);
  * accessors because no struct crosses this boundary.
  *
  * Coordinates are POINTS inside that frame, not 0..1: the frame is the one
- * place in the app whose size is fixed by somebody else. */
+ * place in the app whose size is fixed by somebody else. The frame is the
+ * resident game's: only a finished game has words (uti_bubble_text 0 wide
+ * otherwise), and without them the board is centred. */
 void  uti_bubble_size(float *w, float *h);
 void  uti_bubble_board(float *x, float *y, float *side);
 void  uti_bubble_text(float *x, float *y, float *w, float *h);
