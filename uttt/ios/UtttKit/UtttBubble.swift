@@ -218,7 +218,9 @@ public enum UtttBubble {
         if mark == .x || mark == .o {
             let side = ceil(hFont.capHeight * 1.8)
             let base = y + hFont.ascender
-            let mid = base - hFont.capHeight / 2
+            /* the middle of the lower-case words beside it ("wins", "to
+             * play"), so the two are centred on each other (owner) */
+            let mid = base - hFont.xHeight / 2
             cg.saveGState()
             cg.translateBy(x: hx - side * 0.06, y: mid - side / 2)
             fill(markPolys, into: cg, side: side)

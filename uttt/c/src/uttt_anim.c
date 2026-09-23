@@ -230,10 +230,13 @@ static float clampf(float x, float lo, float hi) { return x < lo ? lo : x > hi ?
  * left, the rulebook in the right); the header band is "you are" over a
  * 46-point mark. */
 #define SHEET_MARGIN     13.f
-#define SHEET_COLUMN     38.f
+/* THE RULEBOOK DOOR IS ONE SIZE (owner, 2026-09-23): it was 38 on the strip
+ * and 54 open and scaled between; now it is the midpoint at every height, and
+ * the Again door is as tall. The strip's columns are its width so the door
+ * never sits on the board's ink. */
+#define SHEET_DOOR       46.f
+#define SHEET_COLUMN     SHEET_DOOR
 #define SHEET_GUTTER      3.f
-#define SHEET_DOOR_LO    38.f
-#define SHEET_DOOR_HI    54.f     /* UtttRulebookButton.expandedSide          */
 #define SHEET_DOOR_GAP    6.f
 #define SHEET_BAR        72.f
 #define SHEET_WORDS_AIR   6.f     /* between a box of words and the ink       */
@@ -252,8 +255,8 @@ void uttt_sheet(const UtttSheetIn *in, UtttSheet *o)
      * that took the whole width would leave its words no room at all (a
      * 340 drawer on a 375 phone left the waiting words 0 points). */
     o->col  = lerpf(SHEET_COLUMN, 0.f, t);
-    o->door = lerpf(SHEET_DOOR_LO, SHEET_DOOR_HI, t);
-    o->foot = doors ? lerpf(0.f, SHEET_DOOR_HI + SHEET_DOOR_GAP, t) : 0.f;
+    o->door = SHEET_DOOR;
+    o->foot = doors ? lerpf(0.f, SHEET_DOOR + SHEET_DOOR_GAP, t) : 0.f;
     o->icon = lerpf(34.f, 46.f, t);
     o->icon_lead = lerpf(3.f, 4.f, t);
     o->icon_top  = lerpf(4.f, 0.f, t);

@@ -47,10 +47,15 @@ private extension HorizontalAlignment {
 /// that moves as one reads as a mistake rather than as emphasis.
 public struct SendHintRing<Content: View>: View {
     public var radius: CGFloat = 1.6
+    /// The ring's colour: white for the sister product's felt, black for a
+    /// product on light paper (uttt, owner 2026-09-23).
+    public var color: Color = .white
     @ViewBuilder public var content: () -> Content
 
-    public init(radius: CGFloat = 1.6, @ViewBuilder content: @escaping () -> Content) {
+    public init(radius: CGFloat = 1.6, color: Color = .white,
+                @ViewBuilder content: @escaping () -> Content) {
         self.radius = radius
+        self.color = color
         self.content = content
     }
 
@@ -58,7 +63,7 @@ public struct SendHintRing<Content: View>: View {
         ZStack {
             ForEach(0..<8, id: \.self) { i in
                 let a = CGFloat(i) * .pi / 4
-                content().foregroundColor(.white)
+                content().foregroundColor(color)
                     .offset(x: radius * cos(a), y: radius * sin(a))
             }
             content()
@@ -84,14 +89,18 @@ public struct SendHintArrow: View {
     /// the drawer is expanded): freezes the TimelineView so an invisible arrow
     /// doesn't burn frames inside a Messages extension.
     var paused = false
+    /// The outline's colour (`SendHintRing`).
+    let outline: Color
     @Environment(\.colorScheme) private var scheme
 
     public init(caption: String, font: Font = SendHint.captionFont,
-                screenAxis: CGFloat = SendHint.axisFromScreenTrailing, paused: Bool = false) {
+                screenAxis: CGFloat = SendHint.axisFromScreenTrailing, paused: Bool = false,
+                outline: Color = .white) {
         self.caption = caption
         self.font = font
         self.screenAxis = screenAxis
         self.paused = paused
+        self.outline = outline
     }
 
     /// Messages fills its Send circle with the system blue, so match it
@@ -156,9 +165,9 @@ public struct SendHintArrow: View {
                 // A WHITE stroke around the blue arrow AND the caption - see
                 // `SendHintRing`. The two ride one wave and read as one object,
                 // so an outlined arrow over bare blue text looked half-drawn.
-                SendHintRing { arrow }
+                SendHintRing(color: outline) { arrow }
                     .alignmentGuide(.sendAxis) { d in d[HorizontalAlignment.center] }
-                SendHintRing {
+                SendHintRing(color: outline) {
                     Text(caption)
                         .font(font).fontWeight(.heavy)
                         .fixedSize()
@@ -207,6 +216,7 @@ public struct SendHint: View {
     let centerFromTrailing: CGFloat
     let fuse: Double
     let restart: Int
+    let outline: Color
     @State private var shown = false
 
     /// - Parameters:
@@ -216,7 +226,8 @@ public struct SendHint: View {
                 font: Font = SendHint.captionFont,
                 screenAxis: CGFloat = SendHint.axisFromScreenTrailing,
                 centerFromTrailing: CGFloat = SendHint.axisFromScreenTrailing,
-                fuse: Double = SendHint.defaultFuse, restart: Int = 0) {
+                fuse: Double = SendHint.defaultFuse, restart: Int = 0,
+                outline: Color = .white) {
         self.staged = staged
         self.visible = visible
         self.caption = caption
@@ -225,13 +236,15 @@ public struct SendHint: View {
         self.centerFromTrailing = centerFromTrailing
         self.fuse = fuse
         self.restart = restart
+        self.outline = outline
     }
 
     private struct Fuse: Hashable { let staged: Bool; let restart: Int }
 
     public var body: some View {
         let on = shown && visible
-        SendHintArrow(caption: caption, font: font, screenAxis: screenAxis, paused: !on)
+        SendHintArrow(caption: caption, font: font, screenAxis: screenAxis, paused: !on,
+                      outline: outline)
             .alignmentGuide(.trailing) { d in
                 d[HorizontalAlignment.sendAxis] + centerFromTrailing
             }

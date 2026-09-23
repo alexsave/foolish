@@ -128,6 +128,22 @@ int main(void)
         OK(lo > -.07f && hi < 1.07f, "the drawer's lines run no more than 7% past the board");
     }
 
+    /* THE RULEBOOK DOOR IS ONE SIZE AT EVERY HEIGHT (owner, 2026-09-23): a
+     * bit bigger than it was collapsed (38), a bit smaller than expanded
+     * (54) - the midpoint, 46 - and on the strip its column is wide enough
+     * for it, so it never sits on the board's ink. */
+    {
+        int one = 1, fits = 1;
+        for (float h = 220.f; h <= 900.f; h += .25f) {
+            UtttSheet o;
+            uttt_sheet(&(UtttSheetIn){ .w = 440.f, .h = h, .kind = UTTT_SHEET_PLAY }, &o);
+            if (o.door != 46.f) one = 0;
+            if (o.t == 0.f && o.col < o.door) fits = 0;
+        }
+        OK(one, "the rulebook door is 46 points at every drawer height");
+        OK(fits, "on the strip the door's column is as wide as the door");
+    }
+
     /* THE FOUR MAIN LINES ARE CENTRED ON THE GRID (owner, 2026-09-23: "major
      * grid lines aren't centered on the grid"). Measured on the INK, not on
      * the endpoints asked for: those were always symmetric, and the pen still
@@ -288,7 +304,7 @@ int main(void)
                                        .words = K[ki].words }, &o);
             int compact = di < 4;
             float want = compact
-                ? fminf(D[di].h - 2.f * 13.f, (D[di].w - 2.f * 13.f - 2.f * 38.f) / (1.f + 2.f * reach))
+                ? fminf(D[di].h - 2.f * 13.f, (D[di].w - 2.f * 13.f - 2.f * 46.f) / (1.f + 2.f * reach))  /* columns: the 46-point door */
                 : (D[di].w - 2.f * 16.f) / (1.f + 2.f * reach);
             if (fabsf(o.board[2] - want) > 1e-2f) {
                 biggest = 0;

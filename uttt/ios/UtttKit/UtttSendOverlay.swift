@@ -44,10 +44,13 @@ public struct UtttSendOverlay: View {
         ZStack {
             // THE HINT, verbatim from the sister product (shared/swift/MessagesKit):
             // the same arrow, blue, bob, ring, fade and axis. What is ours is the
-            // caption and the fuse, both the kernel's.
+            // caption and the fuse, both the kernel's, and the ring's colour.
             SendHint(staged: state.staged && !state.door, visible: state.compact,
                      caption: Uttt.say(.sendHint),
-                     fuse: Uttt.sendHintSeconds, restart: state.restart)
+                     fuse: Uttt.sendHintSeconds, restart: state.restart,
+                     /* BLACK, not the sister product's white: this is light
+                      * paper, and a white ring vanishes into it (owner). */
+                     outline: .black)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                 .padding(.top, Self.hintTop)
 

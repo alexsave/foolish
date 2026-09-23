@@ -123,9 +123,8 @@ public struct UtttGameScreen: View {
     /// THE BAR'S LINE, with the other side drawn rather than spelled.
     ///
     /// The mark is sized to the CAP HEIGHT of the type beside it, not to the
-    /// line box, or it sits low and reads as a separate object; and it is
-    /// nudged down by a point because a drawn circle's optical centre is not
-    /// its bounding box's. `.firstTextBaseline` does the rest.
+    /// line box, or it sits low and reads as a separate object; its middle
+    /// sits on the middle of the lower-case words beside it.
     ///
     /// IN THE STRIP'S COLUMN words-only lines WRAP ("You win" over two lines
     /// rather than a board a size smaller), and a line with a drawn mark in it
@@ -142,13 +141,20 @@ public struct UtttGameScreen: View {
                 if !before.isEmpty { headlineText(before, ink) }
                 UtttMarkIcon(mark: m, seed: model.seed &* 31 &+ 7)
                     .frame(width: 21, height: 21)
-                    .alignmentGuide(.firstTextBaseline) { $0.height - 2 }
+                    /* CENTRED ON THE WORDS' X-HEIGHT (owner, 2026-09-23: the
+                     * mark and "wins" were not centred on each other). The
+                     * words beside a mark are lower case ("wins", "to play",
+                     * "Waiting on"), so their middle is half the x-height
+                     * above the baseline, not half the cap height. */
+                    .alignmentGuide(.firstTextBaseline) { $0.height / 2 + Self.xHeight / 2 }
                 if !after.isEmpty { headlineText(after, ink) }
             }
             .lineLimit(1)
             .minimumScaleFactor(0.5)
         }
     }
+
+    private static let xHeight = UIFont.systemFont(ofSize: 21, weight: .bold).xHeight
 
     private func headlineText(_ t: String, _ ink: Color) -> some View {
         Text(t)
