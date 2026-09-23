@@ -380,3 +380,47 @@ ios/Tools/rig/rig.sh devgame 12    # straight to a seeded board; rig.sh killappe
 
 Taps were done directly with `idb ui tap --udid $FOOLISH_SIM X Y` in points (a 1320x2868 screenshot pixel divided by 3).
 `rig.sh collapse` and `rig.sh back` failed on this product ("no drawer on screen", "could not open conversation '888'"); an `idb ui swipe` from the grabber down works instead.
+
+## 7. Drawer motion (ruler)
+
+Measured on 2026-09-23 on UtttRig (iPhone 17 Pro Max, iOS 27 simulator), seeded board `devgame 12`, seat b, normal speed, no slow-mo.
+
+### The instrument
+
+`touch dev.ruler` in the App Group (`rig.sh ruler on`) paints the ruler over the sheet in a DEBUG build.
+The generic half is `shared/swift/MotionRuler.swift`: the dev-file reader, the square palette, the red top and green bottom edge bars, the banded strip and a millisecond clock strip.
+`uttt/ios/UtttKit/UtttRuler.swift` lists where each square sits: magenta board centre, cyan board corners, orange you-are mark, yellow headline, lime subline, blue rulebook door, violet Again door and pen stroke, pink highlighter.
+With the ruler on, every height the sheet is handed is logged as `ruler-height <h> clock <ms>`, so a log line can be matched to the filmed frame showing that clock.
+A Release build contains none of it: `strings` on all three Release binaries finds no `dev.*` file name, no `ruler-height`, no App Group string and no em dash (only the mangled names of the no-op stubs).
+
+The readers are `shared/rig/lib/marks.py` (every square by hue, the bars, the clock, per frame, to CSV), `ride.py` (does each mark ride the drawer: snaps of its offset from the red bar above 4pt, late snaps after the drawer stopped, second-difference roughness, missing frames) and `marksplot.py` (each mark's y and its offset from the red bar over time).
+
+### What it found and what changed
+
+**Auto-collapse re-laid out after the drawer stopped.**
+Messages hands the sheet the compact height once, before the slide, inside a UIKit animation block, and the hosting controller bridged that animation into SwiftUI.
+The sheet then crept on the host's curve while the drawer slid and landed in steps at +240, +370, +530 and +650ms, three of them after the drawer had settled.
+Fix: a new height is laid out at once (`.transaction(value: height) { $0.animation = nil }` on the sheet; the ruler's own bars likewise).
+Every mark now makes one move at the start of the slide and then rides the drawer flat to the end.
+
+| auto-collapse, per mark | before (3 light takes) | after (3 light, 2 dark) |
+|---|---|---|
+| snaps after the drawer stopped | 1.0-1.3 per mark per take | 0 for every mark |
+| board centre | 3.0 snaps, largest 113pt | 1 snap (the start resize), then flat |
+| board corners | 1.7-3.0 snaps, largest 78pt | 1 snap, then flat |
+| rulebook door | reappears in 3 steps | 1 snap, then flat |
+| you-are mark | 1 snap, 6pt | 1 snap, 8pt |
+
+**A resized board was painted on the main thread.**
+Every new side cost 50-60ms of main thread (`raster side N` in the log), and a manual drag hands a new height every frame, so the board moved in ~200ms steps under a finger moving every 16ms.
+Fix: the same board at a new size draws the picture on hand scaled into the new rectangle and paints the sharp one off the main thread, one paint at a time, following the latest side.
+Manual drag collapse at 0.6s, one take each: largest snap board centre 73 -> 55pt, lower corners 100 -> 69pt, door 124 -> 90pt, roughness down 13-40% per mark.
+
+### What is left
+
+- **The start of an auto-collapse is one resize.** Messages gives one height, before it moves the drawer, so the board shrinks in a single frame, about 20ms before the slide.
+  A continuous resize needs our own spring on a virtual height (critically damped, 0.338s, the host's) with the scaled-picture path above, so the board can shrink as the drawer slides.
+- **After a manual release Messages hands heights about every 200ms** (516, 334, 289 in the log), so the layout still steps during the settle; the same virtual-height spring would bridge them.
+- Measured with one or two takes per variant, not the 6 to 20 the method wants.
+  Manual drag expand was filmed once, before the raster fix only; tap-to-expand, slow and flick drags after the fix, and the smallest phone width were not measured.
+- The top-left corner square is not found in compact takes (it sits against the you-are mark), so it is scored expanded only.
