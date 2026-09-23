@@ -69,7 +69,18 @@ public struct UtttGameScreen: View {
                         .padding(Self.margin)
                         .transition(.opacity)
                 } else {
+                    /* A NEW HEIGHT IS LAID OUT AT ONCE, never tweened by
+                     * the host's animation. Messages resizes the drawer
+                     * inside a UIKit animation block, and the hosting
+                     * controller bridges that into SwiftUI: every element
+                     * then crept on a slow curve while the drawer slid, and
+                     * landed in two steps after the drawer had stopped
+                     * (measured with the ruler: 100pt and 25pt snaps at
+                     * +0.35s and +0.5s). Every number on the sheet is
+                     * already a function of the height, so the height is
+                     * the only animation it needs. */
                     sheet(geo.size)
+                        .transaction(value: geo.size.height) { $0.animation = nil }
                 }
             }
             .overlay { MotionRulerEdges(on: UtttRuler.on) }

@@ -104,6 +104,9 @@ public struct MotionRulerEdges: View {
                 }
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                 .clipped()
+                // THE INSTRUMENT IS NEVER ANIMATED: a bar tweened by the
+                // host's animation measures the tween, not the box.
+                .transaction(value: geo.size.height) { $0.animation = nil }
             }
             .allowsHitTesting(false)
             .accessibilityHidden(true)
