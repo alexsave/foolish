@@ -51,9 +51,10 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// would route straight back at the move the human just discarded.
     private var reverted: UtttWire?
 
-    /// THE DRAFT IS A NEW GAME, so it beats the selection even though the
-    /// kernel ranks a different game's tapped bubble first. Set by Again,
-    /// whose finished game is still the selection; cleared by the next tap.
+    /// THIS DEVICE'S NEWEST IS A NEW GAME, so it beats the selection even
+    /// though the kernel ranks a different game's tapped bubble first. Set by
+    /// Again, whose finished game stays the selection through the draft AND
+    /// the send; cleared by the next tap or activation.
     private var draftIsNewGame = false
 
     /// The draft currently in the input field. Messages reports a REPLACED
@@ -410,7 +411,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         }
 
         let door = Uttt.door
-        UtttLog.note("present", "seat \(Uttt.seat) plies \(Uttt.plyCount) door \(door)")
+        UtttLog.note("present", "seed \(Uttt.seed) seat \(Uttt.seat) plies \(Uttt.plyCount) door \(door)")
 
         /* WHICH SEAT IS THIS DEVICE'S is the kernel's answer: it hashes this
          * device's participant with the game's seed and looks for the result. */
@@ -461,7 +462,10 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// tapped wins, unless the draft is a new game this device just asked for.
     private func current(_ tapped: UtttWire?) -> UtttWire? {
         if let r = reverted { reverted = nil; return r }
-        if draftIsNewGame, let staged { return staged }
+        /* Staged or already sent: after Again's invitation goes out, the
+         * finished game is still the selection, and "a different game tapped
+         * wins" would put the old board back up under the new invitation. */
+        if draftIsNewGame, let mine = staged ?? sent { return mine }
         guard let mine = staged ?? sent else { return tapped }
         guard let tapped else { return mine }
         return Uttt.prefersMine(mine.text, over: tapped.text) ? mine : tapped
