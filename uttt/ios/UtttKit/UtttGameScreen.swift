@@ -219,9 +219,11 @@ public struct UtttGameScreen: View {
     private static let doorSide: CGFloat = 54
 
     /// The row between the bar and the expanded board that the "you are"
-    /// mark is centred in: the 46-point mark and a 12-point gap, which puts
-    /// the board's top at 13 + 72 + 58 = 143 points, where UI.html has it.
-    private static let markRow: CGFloat = 58
+    /// mark is centred in: the 46-point mark and an 18-point gap - 12 of air
+    /// plus the 5% the main lines run above the board - which puts the
+    /// board's top at 13 + 72 + 64 = 149 points, where UI.html has it (~143)
+    /// give or take the overshoot. An SE has 66 points spare, so it fits.
+    private static let markRow: CGFloat = 64
 
     /// "you are", two 9.5-point lines at line-height 1.
     private static let labelHeight: CGFloat = 19
