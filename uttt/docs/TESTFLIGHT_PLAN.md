@@ -143,6 +143,42 @@ WP1-WP3 are the TestFlight critical path; WP4-WP6 are spec fidelity and can foll
 - Add `didStartSending` so the draft is known sent (the foolish `markSent` shape).
 - Done when, on a fresh `rig.sh newsim` simulator with `rig.sh picker on`: create as a, send, tap as b, see the draft in the compose field with b's first move, send, tap as a, see "Your move" as O, play, send; repeat three times; every step screenshotted.
 
+#### WP2 - done (2026-09-22)
+
+**Owner decision, over UI.html 02 and the WP2 brief: no undo and no "Take it back".**
+The only way to change a move is to tap another square, which replaces the staged draft.
+Messages' own X on a draft is system UI and still reverts the board (`utm_undo`, my own last move only).
+A take-back message (flag bit, CLOSED seat, door, sentences, screens) was built, played end to end, and then removed from C and Swift on that decision; the waiting screen has no door.
+
+- **Staging, the device bug.** TestFlight 1.0(1) on a real phone never put the invitation in the input field.
+  The old code inserted from inside `willBecomeActive`, before `didBecomeActive`, before the view had a window, into a conversation that was not yet active; foolish never inserts that early (its create runs from a tap on a drawer that is already up, and its stage takes `activeConversation`).
+  Now an insert waits for both `viewDidAppear` and `didBecomeActive` (with a logged 1.5s deadline if either never comes), goes to `activeConversation`, and from the expanded drawer asks for compact and waits for `didTransition` first (foolish round 10b).
+  Every completion is logged (`log stream --predicate 'subsystem == "cards.uttt"'`), a refused insert is retried three times, and a final failure reverts the board as a cancelled draft would.
+  A generation counter makes the newest stage win.
+  **Not yet proven on a device** - the simulator staged before this fix too.
+- **Send and cancel.** `didStartSending` records what was sent from the message Messages hands over (`markSent`, which refuses to rebase backwards onto an older bubble of the same game, by `utm_prefer`); `didCancelSending` acts only on the current draft, re-reads it, undoes my own move (a cancelled join gives the seat back), or closes the drawer when the cancelled draft was an unsent invitation.
+  The first send from a drawer opened through `+` closes it (foolish's unbound-drawer finding), a send from expanded closes it, a send from compact keeps the strip up.
+- **Tap a bubble while open.** `didSelect` of a different bubble re-presents that game (the tapped game wins over this device's own newest when they are different games), and in DEBUG re-asks the seat picker; our own insert moving the selection is ignored.
+  Tapping the bubble that is already the selection sends no callback at all (measured), so the rig closes the drawer between seats.
+- **Game over.** The end subline speaks the winning line ("Top left, centre, bottom right.", `uttt_won_line`), the caption names it ("X won on the diagonal. 17 moves."), and a finished game offers **Again** in the expanded view only (`utm_door`), to anybody.
+  Again stages a fresh invitation in a NEW MSSession, so the finished game's last bubble stays in the thread, and the proposer moves second.
+- **Cold launch.** Filmed (`rig.sh film`) and logged with process uptime.
+  Before: tap in the `+` menu to paper 4.0s, and in one take 8s with the drawer vanishing and a full-screen sheet of paper flashing for 1.3s while the insert landed.
+  Cause of the flash: the extension's view is first laid out at the whole window (440x956) and shown at that size until the compact transition; nothing is attached now until the first drawer-sized layout.
+  After: tap to paper 3.4s, no flash, and paper is the first frame our process draws (about 50ms after the drawer has a size); the first board of a process renders off the main thread (CoreGraphics fill of a 14,257-polygon board measured 140-250ms Debug, the kernel's draw 0.5ms) and lands a few frames later.
+  The rest is before `viewDidLoad`: `sample` of the launch puts 2.2s of 2.9s in `_accessibilityInit` loading accessibility bundles, which the simulator does because the rig's accessibility automation is on; with it off, `viewDidLoad` came at 1.9s.
+- **The paper** fills the drawer edge to edge in both heights (the host view and the safe area are painted; `UtttSheet` ignores the safe area and clips its content), so the black band is gone and the board's overshoot no longer runs up through the grab handle.
+  The collapsed strip no longer draws the ghost headline (the openness window now starts above 340).
+  The board image cache is keyed on the game itself, not a counter that every new model restarts at.
+- Evidence: screenshots, films and contact sheets in the session scratchpad `wp2/` (cycles `60`-`80`, the full game by taps `100`-`118` and `140`-`153`, cancel `22`, `44`, `132`, change of mind `130`-`131`, tap while open `90`-`92`, Again `119`-`120`, `153`).
+- Tests: `uttt_won_line`, `utm_door` and the new sentences in `tests/uttt_msg_test.c`, each mutation-checked red on its named assertion; `make -C uttt/c run asan ios-smoke` green; Release device build clean and its `strings` still show no `dev.` file, picker text or App Group.
+
+Left from WP2:
+- Prove the staging fix on a real phone (the one thing the simulator cannot show).
+- The first-board async render is not flag-guarded (`feedback_flag_guard_new_changes`); uttt has no `flag(_:shipping:)` yet (WP6).
+- The drawer's compact headline, subline on your own turn, bubble layout (board right, text left) and "Your move" on the sender's copy are WP4.
+- Dismissing the drawer re-lays the view at full window size once more (a 414-point raster is logged at `resign`); not seen on film, not investigated.
+
 ### WP3 - Store plumbing and the first internal TestFlight build (critical path)
 
 - Add `ITSAppUsesNonExemptEncryption = false` to `uttt/ios/UtttMessages/Info.plist`.
