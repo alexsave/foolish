@@ -224,6 +224,12 @@ public final class CollapseSlide: ObservableObject {
          * transform too, and this animation replaces it (filmed: the board
          * flew to the sheet's top left) - so a rider is placed inside. */
         let b = layer.bounds, ap = layer.anchorPoint
+        #if DEBUG
+        NSLog("collapse-slide rider bounds %@ anchor %@ position %@ affine %@ first %@",
+              NSCoder.string(for: b), NSCoder.string(for: ap), NSCoder.string(for: layer.position),
+              NSCoder.string(for: layer.affineTransform()),
+              "\(poses.first.map { ($0.dy, $0.scale, $0.pivot as Any) } as Any)")
+        #endif
         t.values = poses.map { p -> NSValue in
             let pv = p.pivot ?? CGPoint(x: b.midX, y: b.midY)
             let cx = pv.x - (b.minX + ap.x * b.width), cy = pv.y - (b.minY + ap.y * b.height)
