@@ -46,12 +46,13 @@
 #define SEG 14
 
 /* One shape's working buffers. MEASURED, like the display list's: a 54-point
- * button is 42 strokes and 1,260 samples in its biggest shape, and these hold
- * a button up to about 125 points - past that the fill runs out of strokes
- * and the call returns -1 having drawn what fit, which is the same contract
- * the board has. The door is 54 points and is not a thing that resizes. */
-#define MAX_SPAN  96
-#define MAX_SAMP  2400
+ * rulebook is 42 strokes and 1,260 samples in its biggest shape; the Again
+ * bar is the biggest shape of all, and these hold it up to the 430-point
+ * width ios-smoke asserts. Past that the fill runs out of strokes and the
+ * call returns -1 having drawn what fit, which is the same contract the
+ * board has. */
+#define MAX_SPAN  256
+#define MAX_SAMP  6400
 
 typedef struct {
     uint32_t fill, stroke;
@@ -152,4 +153,30 @@ int uttt_draw_rulebook(UtttDL *d, float w, float h)
     over |= shape(d, right, 4, w, h, &leaf_r);
 
     return over ? -1 : 0;
+}
+
+/* The other door: Again, at the foot of a finished game's expanded sheet.
+ *
+ * THE SAME PEN AS THE RULEBOOK SQUARE, because the two sit side by side on one
+ * piece of paper. docs/UI.html draws it as a CSS slab (`.udoor go`, solid
+ * #25376b with pale type), and a slab was the one printed thing left in the
+ * frame; the owner asked for every button to come off the nib. So it is the
+ * rulebook's square stretched to a bar - a rough outline in the dark ink over
+ * a two-fifths hachure - and the label is set dark on it by the caller, for
+ * the reason the book is dark: a glyph reads against a light field.
+ *
+ * IN POINTS, NOT FRACTIONS, unlike the rulebook. The rulebook shrinks with the
+ * collapsed strip and scales its pen to stay a book; this door lives in the
+ * expanded view only and only its width changes with the phone, so a width
+ * change must buy more hachure lines at the SAME gap, not fatter ones. The
+ * pen is therefore the rulebook's at its 54-point size (k = 1). */
+int uttt_draw_door(UtttDL *d, float w, float h)
+{
+    if (w < 1.f || h < 1.f) return -1;
+    const float in = 2.5f;              /* room for the edge's wobble */
+    const UtttPt bar[4] = {
+        { in, in }, { w - in, in }, { w - in, h - in }, { in, h - in }
+    };
+    const Rule door = { INK, EDGE, 4.2f, -41.f, 1.4f, 1.8f, 1.5f, 1.3f, 37 };
+    return shape(d, bar, 4, w, h, &door) ? -1 : 0;
 }

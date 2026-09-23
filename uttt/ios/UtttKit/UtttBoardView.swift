@@ -71,12 +71,18 @@ public struct UtttBoard: View {
     }
 
     static func fill(_ polys: [Uttt.Poly], into ctx: GraphicsContext, side: CGFloat) {
+        fill(polys, into: ctx, size: CGSize(width: side, height: side))
+    }
+
+    /// The same, for a drawing that is not square (the Again door).
+    static func fill(_ polys: [Uttt.Poly], into ctx: GraphicsContext, size: CGSize) {
+        let sx = size.width, sy = size.height
         for poly in polys {
             var path = Path()
             guard let head = poly.points.first else { continue }
-            path.move(to: CGPoint(x: head.x * side, y: head.y * side))
+            path.move(to: CGPoint(x: head.x * sx, y: head.y * sy))
             for p in poly.points.dropFirst() {
-                path.addLine(to: CGPoint(x: p.x * side, y: p.y * side))
+                path.addLine(to: CGPoint(x: p.x * sx, y: p.y * sy))
             }
             path.closeSubpath()
             ctx.fill(path, with: .color(Color(poly.color)))

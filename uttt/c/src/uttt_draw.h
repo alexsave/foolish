@@ -58,6 +58,11 @@ int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float calm);
  * polygons still come back in 0..1 like everything else. */
 int uttt_draw_rulebook(UtttDL *d, float w, float h);
 
+/* The Again door - a hachured bar in the rulebook's pen, IN POINTS (the
+ * width buys more hachure at the same gap). uttt_rule.c. 0, or -1 when it
+ * ran out of room; a bar up to about 430 by 60 points fits. */
+int uttt_draw_door(UtttDL *d, float w, float h);
+
 /* ------------------------------------------------------------ the bubble */
 /* MSMessageTemplateLayout bakes ONE image at insert - 300 by 195 points,
  * landscape, aspect 1.54 - and every device in the thread shows that same

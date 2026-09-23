@@ -171,13 +171,23 @@ enum UtttInk {
     static let muted = Color(red: 0.42, green: 0.40,  blue: 0.35)
     static let label = Color(red: 0.54, green: 0.52,  blue: 0.47)
     static let blue  = Color(red: 0.145, green: 0.216, blue: 0.420) // #25376b
+    /// The doors' outline ink (uttt_rule.c EDGE, #1b2a52), which the label
+    /// is set in so the word and the bar are one pen.
+    static let doorInk = Color(red: 0.106, green: 0.165, blue: 0.322)
 }
 
-/// THE ONE DOOR, as docs/UI.html draws it (`.udoor go`): a full-width blue
-/// slab with pale type at the bottom of the sheet.
+/// THE ONE DOOR: docs/UI.html's `.udoor go` (full width, bottom of the
+/// sheet, 14-point bold type at .04em), drawn by the pen rather than printed.
+/// The bar - a rough outline over a two-fifths hachure, the rulebook square's
+/// pen - is `uttt_draw_door`; this view fills its polygons at the size it
+/// has and sets the label on top in the outline's dark ink.
 public struct UtttDoorButton: View {
     let title: String
     let act: () -> Void
+
+    /// The bar's height: the spec's 13-point padding either side of a
+    /// 14-point line, plus the drawn edge.
+    static let height: CGFloat = 46
 
     /// ABOVE THIS HEIGHT THE DRAWER IS EXPANDED. Messages hands the compact
     /// drawer 340 points at the most (323 with the keyboard up) and the
@@ -198,16 +208,18 @@ public struct UtttDoorButton: View {
             Text(title)
                 .font(.system(size: 14, weight: .bold))
                 .tracking(0.56)                         // .04em
-                .foregroundStyle(Color(red: 0.957, green: 0.965, blue: 0.984))
+                .foregroundStyle(UtttInk.doorInk)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 13)
+                .frame(height: Self.height)
                 .background(
-                    RoundedRectangle(cornerRadius: 9)
-                        .fill(UtttInk.blue)
-                        .shadow(color: .black.opacity(0.28), radius: 0, x: 0, y: 2)
+                    Canvas { ctx, size in
+                        UtttBoard.fill(Uttt.door(w: size.width, h: size.height),
+                                       into: ctx, size: size)
+                    }
                 )
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(title)
     }
 }

@@ -248,6 +248,55 @@ int main(void)
         printf("  rulebook at 108 points: %d strokes\n", big);
     }
 
+    /* ---- the Again door. The bar is the rulebook square's pen stretched to
+     * the width a phone gives it, so what matters is that every width a
+     * phone can give fits the display list, that it is the rulebook's two
+     * inks with the fill under the outline, and that it is the same bar on
+     * every draw. */
+    {
+        int fits = 1, lo = 1 << 30, hi = 0;
+        for (float w = 200; w <= 430; w += 10) {
+            int np = uti_draw_door(w, 46);
+            if (uti_draw_overflow() || np <= 0) fits = 0;
+            if (np < lo) lo = np;
+            if (np > hi) hi = np;
+        }
+        ok(fits, "the door fits at every width from 200 to 430 points");
+        printf("  door: %d to %d strokes\n", lo, hi);
+
+        int np = uti_draw_door(310, 46);
+        const uint32_t *c = uti_poly_rgba();
+        int fill = 0, edge = 0, other = 0, last_fill = -1, first_edge = np;
+        for (int i = 0; i < np; i++) {
+            if (c[i] == 0x25376b66u)      { fill++; last_fill = i; }
+            else if (c[i] == 0x1b2a52ffu) { edge++; if (i < first_edge) first_edge = i; }
+            else other++;
+        }
+        ok(other == 0 && fill > 0, "the door is the rulebook's two inks, hachured");
+        ok(edge == 8, "and edged by four sides drawn twice");
+        ok(last_fill < first_edge, "the fill is laid before the outline, so the edge is on top");
+
+        const float *p = uti_points();
+        int stray = 0, pc = uti_point_count();
+        double sum = 0;
+        for (int i = 0; i < pc * 2; i++) {
+            if (p[i] < -0.05f || p[i] > 1.05f) stray++;
+            sum += p[i];
+        }
+        ok(stray == 0, "no stroke leaves the bar");
+        int again = uti_draw_door(310, 46);
+        double sum2 = 0;
+        for (int i = 0; i < uti_point_count() * 2; i++) sum2 += uti_points()[i];
+        ok(again == np && uti_point_count() == pc && sum2 == sum,
+           "the same door draws the same way twice");
+        /* THE GAP IS A LENGTH IN POINTS, so twice the bar is nearly twice
+         * the hachure (the diagonal's height share does not double, hence
+         * 1.6 rather than 2) - not the same lines spread further apart. */
+        int narrow = uti_draw_door(200, 46) - 8, wide = uti_draw_door(400, 46) - 8;
+        ok(wide * 10 >= narrow * 16,
+           "a wider door gets more hachure at the same gap, not wider hachure");
+    }
+
     /* ---- the message, end to end as the host drives it: two devices are two
      * identities, and the only thing that crosses between them is text. */
     {

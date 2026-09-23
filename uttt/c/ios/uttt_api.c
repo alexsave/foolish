@@ -205,6 +205,13 @@ int uti_draw_rulebook(float w, float h)
     return publish();
 }
 
+int uti_draw_door(float w, float h)
+{
+    dl_fresh();
+    S.overflow = uttt_draw_door(&S.dl, w, h) != 0;
+    return publish();
+}
+
 void uti_paper(uint8_t *rgba, int w, int h) { uttt_paper(rgba, w, h); }
 
 /* ----------------------------------------------------------- the bubble */

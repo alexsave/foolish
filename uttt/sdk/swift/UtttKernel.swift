@@ -349,4 +349,11 @@ public enum Uttt {
     public static func rulebook(w: CGFloat, h: CGFloat) -> [Poly] {
         harvest(uti_draw_rulebook(Float(w), Float(h)))
     }
+
+    /// The Again door: a hachured bar in the rulebook's pen, drawn at the
+    /// size it has in points. The polygons are 0..1 of the BAR - x over its
+    /// width, y over its height - so they fill a rectangle, not a square.
+    public static func door(w: CGFloat, h: CGFloat) -> [Poly] {
+        harvest(uti_draw_door(Float(w), Float(h)))
+    }
 }

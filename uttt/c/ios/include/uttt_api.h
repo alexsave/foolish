@@ -215,6 +215,11 @@ int  uti_draw_mark(int mark, int32_t seed);
  * the same way the board does. */
 int  uti_draw_rulebook(float w, float h);
 
+/* The Again door, a hachured bar in the rulebook's pen. In points like the
+ * rulebook, and the polygons come back in 0..1 of the bar - x over w and y
+ * over h, so the caller fills them into a w-by-h rectangle, not a square. */
+int  uti_draw_door(float w, float h);
+
 /* The sheet itself. Fills w*h RGBA bytes with the napkin - crossed cellulose
  * over a warm near-white. Here rather than in the renderer for the same reason
  * the marks are: both phones have to be looking at the same piece of paper. */
