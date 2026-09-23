@@ -145,7 +145,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         let activation = becameActiveAt
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
             guard let self, self.becameActiveAt == activation, !self.ready else { return }
-            UtttLog.fault("ready", "no \(self.appeared ? "" : "viewDidAppear ")\(self.conversationActive ? "" : "didBecomeActive")after 1.5s; going ahead")
+            UtttLog.fault("ready", "no \(self.appeared ? "" : "viewDidAppear ")\(self.conversationActive ? "" : "didBecomeActive")after 3s; going ahead")
             self.appeared = true
             self.conversationActive = true
             self.becameReady()
