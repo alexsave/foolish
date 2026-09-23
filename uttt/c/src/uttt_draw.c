@@ -327,13 +327,14 @@ int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float calm)
  * into the bubble's rounded edge, which read as the board being cut off
  * (the WP1 audit's "clipped at the right edge"). Here they run 5% - the
  * design document's own figure - and the board is sized so the longest line
- * still ends 4 points inside the frame on the three sides it faces. */
+ * is asked to end 5 points inside the frame on the three sides it faces, and
+ * with its jitter still ends at least 3 inside. */
 #define BUB_W     300.f
 #define BUB_H     195.f
 #define BUB_PAD    10.f
 #define BUB_GUT    12.f
 #define BUB_REACH  UTTT_REACH       /* the design's 5% over the pen's 13.5% */
-#define BUB_EDGE    4.f             /* where the longest line stops         */
+#define BUB_EDGE    5.f             /* where the longest line is asked to stop; its jitter takes it ~1.5pt further since its far end draws */
 
 UtttBubble uttt_bubble(void)
 {
@@ -342,7 +343,7 @@ UtttBubble uttt_bubble(void)
 
     /* side + 2 * .05 * side + 2 * edge = height */
     float side = (BUB_H - 2.f * BUB_EDGE) / (1.f + 2.f * .135f * BUB_REACH);
-    side = (float)(int)side;                     /* whole points: 170 */
+    side = (float)(int)side;                     /* whole points: 168 */
     float m = (BUB_H - side) * .5f;
     b.board.x = BUB_W - m - side;
     b.board.y = m;

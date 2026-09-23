@@ -115,7 +115,7 @@ int main(void)
     uti_bubble_size(&bw, &bh);
     ok(bw == 300.f && bh == 195.f, "the bubble is 300 by 195");
     uti_bubble_board(&x, &y, &s);
-    ok(s == 170.f, "the board is 170 points, so its lines stop on the frame");
+    ok(s == 168.f, "the board is 168 points, so its lines (both ends drawn) stop on the frame");
     ok(x >= 0 && y >= 0 && x + s <= bw && y + s <= bh, "the board is inside the frame");
     uti_bubble_text(&x, &y, &tw, &th);
     ok(x >= 0 && x + tw <= bw && y + th <= bh, "the text column is inside the frame");
