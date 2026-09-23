@@ -19,6 +19,9 @@ struct UtttDrawerSheet<Content: View>: View {
     @StateObject private var drawer = UtttDrawerClock()
     @Environment(\.collapseSlide) private var slide
     @State private var slideFrom: CGFloat?
+    /// The sheet was last laid out at the top of the window: the host's
+    /// first pass, before there is a drawer. See `body`.
+    @State private var atWindowTop = true
 
     var body: some View {
         GeometryReader { geo in
@@ -34,14 +37,24 @@ struct UtttDrawerSheet<Content: View>: View {
              * that first sees the drop never draws the spring's height. */
             let _ = drawer.frame
             let flips = slide?.wouldFlip(geo.size.height, after: drawer.handed) ?? false
-            let h = flips || slide?.isRunning == true ? geo.size.height
+            let h = flips || slide?.isRunning == true || atWindowTop ? geo.size.height
                                                        : drawer.layout(for: geo.size.height)
             content(CGSize(width: geo.size.width, height: h), slideFrom)
                 .frame(width: geo.size.width, height: h)
         }
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
-            if slide?.heard(h, after: drawer.handed) == true { drawer.rest(h) }
+        /* THE FIRST DRAWER HEIGHT IS TAKEN AT ONCE. Messages lays a new
+         * extension out at the whole window first (440x956, origin at the
+         * window's top), then hands the drawer's height - on a tapped bubble
+         * 840, a transient 293 and 840 again within 5 ms. Nothing on screen
+         * moved between them, but the drawer clock sprang from 956 through
+         * them, and the board slid 58pt and back while the drawer stood still
+         * (filmed with the ruler, tap-to-open). A height handed while the
+         * sheet was at the window's top rests there, no spring. */
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { f in
+            let h = f.height
+            if atWindowTop || slide?.heard(h, after: drawer.handed) == true { drawer.rest(h) }
             else { drawer.report(h) }
+            atWindowTop = f.minY <= 0.5
         }
         .onReceive(slide?.$run.eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { r in
             slideFrom = r?.from
