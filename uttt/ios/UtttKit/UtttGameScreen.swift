@@ -91,7 +91,7 @@ public struct UtttGameScreen: View {
             .frame(width: side, height: side)
             .boardRuler()
             /* THE BOARD HOLDS THE CENTRE AND SCALES about it. */
-            .collapseRide { s in
+            .collapseRide(touches: true) { s in
                 let A = at(s)
                 return CollapseRidePose(
                     dy: CGFloat(A.board.1 + A.board.2 / 2 - L.board.1 - L.board.2 / 2),

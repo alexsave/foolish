@@ -250,20 +250,25 @@ public extension EnvironmentValues {
 public extension View {
     /// Host this view on a layer of its own that rides the collapse as
     /// `ride` says, at the composite rate. Inert without a `CollapseSlide`
-    /// in the environment.
-    func collapseRide(_ ride: @escaping (CGFloat) -> CollapseRidePose) -> some View {
-        CollapseRider(ride: ride, content: self)
+    /// in the environment. `touches`: whether the view takes touches - a
+    /// nested host is a UIKit view that hit-tests on its own, and a rider
+    /// the size of the sheet (a box of words, a ruler) would swallow every
+    /// tap meant for the board under it.
+    func collapseRide(touches: Bool = false,
+                      _ ride: @escaping (CGFloat) -> CollapseRidePose) -> some View {
+        CollapseRider(ride: ride, touches: touches, content: self)
     }
 }
 
 struct CollapseRider<Content: View>: View {
     let ride: (CGFloat) -> CollapseRidePose
+    let touches: Bool
     let content: Content
     @Environment(\.collapseSlide) private var slide
 
     var body: some View {
         if let slide {
-            CollapseRiderHost(ride: ride, content: content, slide: slide)
+            CollapseRiderHost(ride: ride, touches: touches, content: content, slide: slide)
         } else {
             content
         }
@@ -272,6 +277,7 @@ struct CollapseRider<Content: View>: View {
 
 private struct CollapseRiderHost<Content: View>: UIViewControllerRepresentable {
     let ride: (CGFloat) -> CollapseRidePose
+    let touches: Bool
     let content: Content
     let slide: CollapseSlide
 
@@ -282,6 +288,7 @@ private struct CollapseRiderHost<Content: View>: UIViewControllerRepresentable {
         let h = UIHostingController(rootView: root(context))
         h.view.backgroundColor = .clear
         h.view.clipsToBounds = false
+        h.view.isUserInteractionEnabled = touches
         if #available(iOS 16.4, *) { h.safeAreaRegions = [] }
         h.sizingOptions = []
         context.coordinator.slide = slide
