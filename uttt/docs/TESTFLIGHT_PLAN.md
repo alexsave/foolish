@@ -255,7 +255,7 @@ Evidence (films, frames, probe CSVs, screenshots) is in the session scratchpad `
 - **Measured at normal speed** (sim, 60-75 Hz): stage take 5: ink visible to 95% in 183 ms, wash travel 318 ms visible, worst frame gap 22 ms, max deviation from smoothstep 0.07; the kernel logged `motion done 1823 ms` for a 1800 ms plan.
   Their bubble (D) cold open: ink 195 ms to 95%, wash 448 ms for a 420 ms plan, worst gap 50 ms, deviation 0.06, `motion done 1832 ms`.
   Stage take 4: travel clean, then a 90 ms stall during the first ring when Messages inserted the bubble.
-- Tests: `tests/uttt_anim_test.c` in `make run` and `make asan` (32 checks); 10 mutations (wash with the ink, pulse on replay, reach 1, last mark dropped, pulse at 0, both ink curves linear, wash from the destination, settled at landing) each went red on the named assertion.
+- Tests: `tests/uttt_anim_test.c` in `make run` and `make asan` (32 checks); 9 mutations (wash with the ink, pulse on replay, reach 1, last mark dropped, pulse at 0, the X and the O ink curves each linear, wash from the destination, settled at landing) each went red on the named assertion.
   `make -C uttt/c run asan ios-smoke` green; Release device build clean, `strings` shows no `dev.seat`, picker text or App Group.
 - Cycle re-run on the sim: b plays and stages from compact, sends; a opens the bubble expanded (D plays), replies, the drawer collapses and the reply stages at once, sends; the older bubble folds to its caption (`sheet30.png`, `sheet33.png`).
 
