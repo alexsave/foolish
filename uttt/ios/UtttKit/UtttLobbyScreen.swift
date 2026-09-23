@@ -146,13 +146,23 @@ public struct UtttWatchScreen: View {
                             .font(.system(size: 17, weight: .bold))
                             .foregroundStyle(UtttInk.ink)
                     }
-                    Spacer(minLength: 6)
+                    /* THE BOARD LEAVES ROOM FOR ITS OVERSHOOT, as the play
+                     * surface's does: the main lines run 5% past it, so a
+                     * board as wide as the sheet ran them off both edges.
+                     * Expanded it sits high under the header, spare height
+                     * at the bottom with the door. */
+                    let expanded = geo.size.height > UtttDoorButton.expandedFrom
+                    let doorRow = expanded && UtttDoorButton.title(door) != nil
+                        ? UtttRulebookButton.expandedSide + 6 : 0
+                    let side = max(0, min((geo.size.width - 26) / (1 + 2 * Uttt.boardReach),
+                                          geo.size.height - 26 - 30 - doorRow))
+                    Spacer(minLength: 6).frame(maxHeight: expanded ? 30 : .infinity)
                     UtttBoard(active: model.active, last: model.last,
                               positionKey: model.positionKey)
+                        .frame(width: side, height: side)
                     Spacer(minLength: 6)
                     /* Again belongs to the expanded view (UI.html 08). */
-                    if geo.size.height > UtttDoorButton.expandedFrom,
-                       let title = UtttDoorButton.title(door) {
+                    if expanded, let title = UtttDoorButton.title(door) {
                         UtttDoorButton(title: title, act: onDoor)
                     }
                 }
