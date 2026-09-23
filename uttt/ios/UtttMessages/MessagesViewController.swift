@@ -78,10 +78,8 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         UtttLog.note("load")
-        /* THE FIRST FRAME IS PAPER. Until the first screen is laid out the
-         * drawer shows whatever this view is, and a clear view is Messages'
-         * dark drawer. */
-        view.backgroundColor = UtttPaper.flat
+        /* CLEAR UNTIL IT APPEARS - see `appeared`. */
+        view.backgroundColor = .clear
     }
 
     override func willBecomeActive(with conversation: MSConversation) {
@@ -97,14 +95,47 @@ final class MessagesViewController: MSMessagesAppViewController {
         present(conversation)
     }
 
+    /// NOTHING IS DRAWN UNTIL THE DRAWER HAS A SIZE.
+    ///
+    /// Measured on a cold open (log lines `layout`, filmed alongside): the
+    /// extension's view is first laid out at the WHOLE WINDOW - 440 by 956 on
+    /// a Pro Max - and Messages puts it on screen at that size for about half
+    /// a second before the compact transition shrinks it to 309. Whatever
+    /// this view drew then covered the whole thread, status bar and all: a
+    /// full-screen sheet of paper flashing in before the drawer, and a board
+    /// rasterised at 414 points only to be thrown away for 207.
+    ///
+    /// So until viewDidAppear - by which point the drawer is its real size -
+    /// the screen is built but not attached, and the view stays clear, which
+    /// shows Messages' own drawer card. On appearing, the newest screen goes
+    /// in and paper is painted under it, and whatever was waiting for a real
+    /// drawer (the invitation's insert) runs.
+    private var appeared = false
+    private var pendingScreen: AnyView?
+    private var afterAppear: [() -> Void] = []
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         UtttLog.note("appear", "\(Int(view.bounds.width))x\(Int(view.bounds.height))")
+        appeared = true
+        view.backgroundColor = UtttPaper.flat
+        if let screen = pendingScreen {
+            pendingScreen = nil
+            attach(screen)
+        }
+        let work = afterAppear
+        afterAppear.removeAll()
+        work.forEach { $0() }
     }
 
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        UtttLog.note("layout", "\(Int(view.bounds.width))x\(Int(view.bounds.height))")
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        appeared = false
+    }
+
+    /// Run `work` once the drawer is on screen at its real size.
+    private func whenAppeared(_ work: @escaping () -> Void) {
+        if appeared { work() } else { afterAppear.append(work) }
     }
 
     override func didResignActive(with conversation: MSConversation) {
@@ -373,9 +404,11 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     /// Put an empty board on the table. THIS MOMENT IS THE SEED.
     ///
-    /// SHOWN FIRST, STAGED A BEAT LATER. Baking the bubble is the one slow
-    /// thing on this path, and on a cold open it used to run before the first
-    /// screen existed - so the drawer sat empty for the length of the bake.
+    /// SHOWN FIRST, STAGED ONCE THE DRAWER IS UP. Baking the bubble is the
+    /// one slow thing on this path, and on a cold open it used to run before
+    /// the first screen existed; and the insert used to land while Messages
+    /// was still presenting the drawer, which is when the whole-window flash
+    /// was at its longest (see `appeared`).
     private func start(in conversation: MSConversation) {
         Uttt.openInvitation()
         guard let wire = UtttWire.resident else {
@@ -385,9 +418,11 @@ final class MessagesViewController: MSMessagesAppViewController {
         UtttLog.note("start")
         staged = wire
         present(conversation)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-            guard let self, self.staged == wire else { return }
-            self.stage(wire, in: conversation)
+        whenAppeared { [weak self] in
+            DispatchQueue.main.async {
+                guard let self, self.staged == wire else { return }
+                self.stage(wire, in: conversation)
+            }
         }
     }
 
@@ -612,11 +647,19 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     private func show<V: View>(_ screen: V) {
         UtttLog.note("show", String(String(describing: V.self).prefix(40)))
+        guard appeared else {
+            pendingScreen = AnyView(screen)
+            return
+        }
+        attach(AnyView(screen))
+    }
+
+    private func attach(_ screen: AnyView) {
         host?.willMove(toParent: nil)
         host?.view.removeFromSuperview()
         host?.removeFromParent()
 
-        let vc = UIHostingController(rootView: AnyView(screen))
+        let vc = UIHostingController(rootView: screen)
         addChild(vc)
         vc.view.frame = view.bounds
         vc.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
