@@ -614,7 +614,7 @@ Fixed in this pass:
 - (d) Messages lays a new extension out at the whole window, then hands 840, a transient 293 and 840 within 5 ms; the drawer clock sprang through them and the board slid 58pt and back under a still drawer. A height handed while the sheet sat at the window's top is now taken at once (`UtttDrawerSheet`, `atWindowTop`).
 - (g) The waiting and spectator boards had no collapse ride, so after Again the board sat at its compact place through the slide. One `boardRide` and one `wordsRide` (UtttDrawerSheet.swift) now serve all three screens.
 
-Still failing:
+Still failing (all three addressed in section 11):
 - (c) Manual drags. The layout follows the drawer clock's spring, which the idb drag's ~40pt steps engage (the finger path follows at once only within 32pt): mid-drag the door sits up to ~100pt above the drawer's bottom and the board ~30pt off centre, then catches up in steps. The extension also committed only every ~70-100 ms during these takes (the machine was loaded). Needs a finger-drag rule that does not spring, and a device take.
 - (f) At stage the drawer shows the whole settlement (the big mark and the win line) in one frame about 0.3 s after the move's ink, before Send; defect 6 says the settlement waits for Send. The still board drawn after the stage motion includes it.
 - (d) A cold extension launch leaves the drawer blank for ~2-3 s on the simulator (Debug, log stream running); the first paint follows `load` by ~0.3 s.
@@ -626,3 +626,95 @@ Films, sheets and charts: session scratchpad `film3/` (`takes/`, `sheets/`, `cha
 `uttt_draw.c` `win_line`: 3x and 2.5x the major line's pen (`GRID_MAJOR_W`), was 2.7 and 2.3 (UI.html 08's note updated).
 Measured on the ribbons (area over half perimeter): 2.09x the major line's ink width, was 1.27x; `uttt_anim_test` asserts at least 2x and goes red with the old widths.
 Shots before and after, a won diagonal and a won row, staged bubble, sent bubble, expanded and compact: `film3/fixes/win_line_before_after.jpg`.
+
+## 11. Drags, the win at Send, the cold launch, no pulse, the bubble (2026-09-23)
+
+Takes, charts (motionplot.py), contact sheets and scores are in the session scratchpad `film4/` (`takes/`, `charts/`, `sheets/`, `scores/`, `table.md`, `bubble/`), with the scripts that made them (`sweep.sh`, `take.sh`, `st.sh`, `shot.sh`, `table.sh`, `cold.sh`, `bubble.sh`).
+
+### The layout is the host's height, at once - the drawer spring is gone
+
+The drawer spring (`uttt_drawer_*`, section 7) followed a height at once only within 32pt, and the simulator's drag injection steps 40-50pt, so mid-drag the layout sprang behind the finger.
+The first fix kept the spring for jumps and decided "jump" by the host's word (willTransition arms a 500 ms window), never by a distance.
+Measured, that was still wrong: at a drag's release Messages hands the final height once and animates the extension's view there itself, and a tap to expand does the same, so content laid out at the final height at once rides the host's animation.
+
+| take | spring on jumps | at once |
+|---|---|---|
+| in-game slow drag and its release, board centre / door | 34.8 / 71.3pt | 0.7 / 1.1pt |
+| tap to expand, board centre / door | 8.7 / 16.8pt | 0.5 / 0.3pt |
+
+So every height is laid out as handed: `UtttDrawer`, `uti_drawer_*`, `UtttDrawerClock` and the window-top rest are deleted, and `CollapseSlide` loses `wouldFlip` and `isRunning`.
+The auto-collapse keeps its slide (the one motion the host does not carry).
+The window-top rest (section 10 (d)) is not needed without the spring: tap-to-open measured 0.0pt in both takes.
+foolish does the same (`CollapseTween.step`: an unarmed height is `.follow`).
+
+THE SIMULATOR IS THE LIMIT ON DRAG SMOOTHNESS: idb moves the drawer only every ~140 ms, in 40-50pt steps, with `--delta 4` as with the default.
+A `sample` of the extension through a 2 s drag found its main thread idle (all samples in `mach_msg`), so the steps are the host's touch delivery, not our frame time; the layout follows each step in the frame it lands.
+cliclick cannot drag the grabber (memory), so there is no smoother injection on this Mac; a device take is the real test.
+
+### Per scenario, before (film3) -> after (film4)
+
+Largest one-frame step of any mark against its anchor, pt; FAIL above 4.
+Doors are the rulebook door against the green bar (the violet square is the pen stroke on the compact end screen, not a door).
+(b) and (d) after are fresh takes (`r_*`): `rig.sh openbubble` finds foolish's felt bubble by colour and no longer finds uttt's, so the sweep taps the bubble directly.
+
+| scenario | takes | board | corners | header | doors | after |
+|---|---|---|---|---|---|---|
+| (a) auto-collapse | 5 -> 2 | 0.7 -> 0.5 | 2.3 -> 2.5 | 1.3 -> 1.7 | 0.7 -> 0.4 | PASS |
+| (b) the join move | 3 -> 2 | 0.5 -> 0.5 | 2.5 -> 2.7 | 1.4 -> 1.7 | 0.7 -> 0.6 | PASS |
+| (c) first-open drag 1.2s | 3 -> 3 | 7.2 -> 0.7 | 7.2 -> 4.5 | - | - | corners 4.5 |
+| (c) first-open flick | 3 -> 3 | 47.7 -> 0.7 | 56.5 -> 5.2 | - | - | corners 5.2 |
+| (c) in-game drag 1.2s | 3 -> 3 | 40.0 -> 0.6 | 44.0 -> 5.0 | 2.7 -> 2.0 | 80.5 -> 1.0 | corners 5.0 |
+| (c) in-game flick | 3 -> 3 | 183.5 -> 0.5 | 210.8 -> 3.7 | 4.0 -> 4.7 | 366.7 -> 1.3 | header 4.7 |
+| (c) end drag 1.2s | 3 -> 3 | 34.9 -> 0.7 | 38.8 -> 4.5 | 1.7 -> 1.6 | 69.7 -> 0.7 | corners 4.5 |
+| (c) end flick | 3 -> 3 | 113.9 -> 0.5 | 113.8 -> 4.7 | 4.4 -> 2.4 | 228.0 -> 1.0 | corners 4.7 |
+| (x) tap to expand (new) | 0 -> 2 | 0.5 | 11.4 | 0.8 | 0.4 | corners 11.4 |
+| (d) tap a bubble to open | 3 -> 2 | 0.0 -> 0.0 | 0.0 -> 0.0 | 0.0 -> 0.0 | 0.0 -> 0.0 | PASS |
+| (e) arrival while open | 3 -> 2 | 0.0 -> 0.0 | 0.0 -> 0.0 | 0.0 -> 0.0 | 0.0 -> 0.0 | PASS |
+| (f) final move, stage + Send | 3 -> 2 | 0.6 -> 0.7 | 2.8 -> 2.5 | 1.3 -> 1.7 | 0.4 -> 0.7 | PASS |
+| (g) Again | 3 -> 2 | 0.7 -> 0.5 | 2.7 -> 2.7 | - | - | PASS |
+
+What is left:
+- The drag corners (4.5-5.2pt) are scored against the kernel's side for the bar-measured height; with the host stepping 40-50pt a frame, the residual jitters +-4pt about the model and does not grow through the drag (charts `c_*`). It needs a smooth (device) drag to tell a model offset from a real lag.
+- Tap to expand: the board takes its expanded size in the first frame while the host grows the drawer over ~0.3 s, so the corners sit up to 11pt off the drawer's scale (centre 0.5pt). The fix is an expand slide on the render server, CollapseSlide's mirror; not built.
+
+### The win shown before Send - fixed
+
+The end of the game re-presents for its Again door ~0.3 s after the ink, through the still channel, whose plan drew the won block's big mark and the win line in one frame, before Send.
+`UTTT_CH_DRAFT` (`uttt_anim.c`) is the stage's last frame at rest: ink and wash, the settlement held for Send; `showBoard` asks for it whenever the board it shows is an unsent draft.
+Tests: `uttt_anim_test` "draft:" rows (the winning move, a block-taking move, a move that won nothing), each mutation-checked.
+Filmed: `sheets/f_final_win_at_send.jpg` (the winning move: at stage the ink only, the Again door and the headline, no big mark or line; at Send the mark falls, then the line) and `sheets/k_block_at_send.jpg` (a block-taking move, move 80 of the diagonal fixture).
+
+### Cold launch - the blank is the simulator's, not ours
+
+`film4/takes/cold_menu_1`: a cold extension launched from the app strip, logged from spawn and sampled with `/usr/bin/sample UtttMessages -wait` at 1 ms.
+
+| from process start | what | whose |
+|---|---|---|
+| 0 - 0.77 s | dyld in the simulator loading the Debug build's debug dylib (526 main-thread samples) | the simulator, Debug |
+| 0.77 - 3.2 s | `UIApplication _accessibilityInit`: 1748 samples loading accessibility bundles (GeoServices, RealityKit, MapKit... .axbundle) | the simulator with idb's accessibility client on |
+| 3.4 s | Messages connects to the extension | host |
+| 3.82 s | `load` | ours: `MessagesViewController.init` ~25 ms, `viewDidLoad` ~12 ms |
+| 3.82 - 4.54 s | `active`, `willBecomeActive`, the drawer's size handed | host |
+| 4.54 - 4.77 s | paper 3 ms, the sheet, the first board at 1x (33 ms), first frame | ours, ~0.23 s |
+
+Ours is ~0.25 s of ~4.8 s.
+The accessibility init only runs because an automation client has accessibility on in the simulator; a device without VoiceOver does not load those bundles.
+Nothing was changed; a Release take on a device is the measurement that matters.
+
+### Owner decision: no pulse
+
+The ring round the destination block after the highlighter lands is gone from every channel: `UtttMotion.pulse_at`, the frame's ring fields, the `UTTT_PULSE*`/`UTTT_MS_PULSE*` timings, the bridge mirrors and the Swift Canvas ring.
+The highlighter still travels after the ink lands on the same timings, and a plan rests once the wash arrives (stage 600 ms, my replay 680, theirs and an arrival 760).
+The ruler never read the ring: its squares are the board centre and corners, the header, the doors, the highlighter and the pen stroke.
+Tests: the plan's `end_ms` on stage, theirs and arrival; a ring's tail put back (end + 300 + 2 x 620) went red on all three.
+
+### The bubble: the board alone, the turn in the caption (owner)
+
+The image of a game in play is the board alone, centred in the 300x195 frame (168pt, height-limited, 66pt clear of Messages' ~31x24pt badge); only a finished game keeps its words (the winner's mark and "wins", or "A draw", over "N moves").
+`uttt_bubble(g)` owns it; the Swift snapshot carries the frame, so the off-main paint never reads the resident game.
+The caption is `uttt_caption`: "O to play, top-left board", "X to play, anywhere", "New game?", "X won down the left in 21 moves", "Drawn in 21 moves"; a win whose line would not fit one row is "X won in N moves" (the diagonal fixture's 25-move win reads so).
+One line, measured on UtttRig: a sent bubble is 309.7pt wide with 17pt padding each side (275.7pt for words) and captions set at 7.41-7.56pt a character ("Sent anywhere on the sheet" 196.7pt, "X won on the diagonal in 25 moves" 244.7pt), about 36 characters; `UTTT_CAPTION_MAX` is 32.
+`uttt_msg_test` sweeps every caption the table can produce (every side, block, line, result and length 0-81): the longest is 32 characters.
+ios-smoke: the in-play board centred, no words, its ink 3pt inside the frame on all four sides and none under the badge; the finished game's text column left of the board.
+Mutations (not centred, words always, words never, the board under the badge, the old headline, the to-play mark, no fallback, a full stop, never the line) each went red on the named assertion.
+Shots: `film4/bubble/before_after.jpg` (top: before, staged invitation, move and win; bottom: after, the invitation and win sent and the move staged, "O to play, top-left board").
