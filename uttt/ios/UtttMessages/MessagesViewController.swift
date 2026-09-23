@@ -369,7 +369,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         sendState.door = false
         doorInsert = nil
         let wasUnbound = unbound
-        present(conversation)
+        /* B: THE SETTLEMENT PLAYS AT SEND - a block the move won gets its big
+         * mark, a game it ended its line (UI.html 04, 05). Nothing else moves. */
+        present(conversation, motion: .settle)
 
         /* A SEND FROM THE EXPANDED DRAWER is somebody done with it; a send
          * from the compact one keeps the strip up so the next move is one tap
@@ -740,12 +742,7 @@ final class MessagesViewController: MSMessagesAppViewController {
             }
             return
         }
-        UtttLog.note("stage", "collapsing first")
-        /* THE INK HAS LANDED - stage runs from the model's position change,
-         * which comes once the kernel's frame says so - so the drawer moves
-         * now, and never during (UI.html). */
-        slide.arm()
-        requestPresentationStyle(.compact)
+        UtttLog.note("stage", "collapsing after the move and the rest")
         /* THE PAINT AND THE COLLAPSE RUN TOGETHER, and the transition is
          * waited for from NOW: waiting for it after the paint missed a
          * collapse that had already finished and sat out the whole timeout. */
@@ -755,8 +752,7 @@ final class MessagesViewController: MSMessagesAppViewController {
             if let w = imageWaiter { imageWaiter = nil; w.resume(returning: img) } else { image = img }
         }
         Task { @MainActor [weak self] in
-            await self?.awaitTransitionSettled()
-            self?.slide.disarm()
+            await self?.restThenCollapse(generation)
             let img: UIImage
             if let ready = image { img = ready } else {
                 img = await withCheckedContinuation { imageWaiter = $0 }
@@ -873,6 +869,27 @@ final class MessagesViewController: MSMessagesAppViewController {
         UtttLog.note("door", "send tapped")
         doorInsert = nil
         insert(d.message, generation: d.generation, in: d.conversation, attempt: 1)
+    }
+
+    /// THE DRAWER MOVES ONCE THE MOVE HAS SETTLED AND RESTED (UI.html: once
+    /// the ink lands, never during; owner: "let it breathe"). The whole plan
+    /// runs - ink, highlighter, ring - then the kernel's rest with nothing
+    /// moving, and only then the slide is armed and compact asked for;
+    /// foolish's `stage` waits for its board to settle and rests 500 ms the
+    /// same way. The bubble goes in once the transition has run.
+    private func restThenCollapse(_ generation: Int) async {
+        if let clock = live?.clock {
+            await withCheckedContinuation { (k: CheckedContinuation<Void, Never>) in
+                clock.whenDone { k.resume() }
+            }
+        }
+        try? await Task.sleep(nanoseconds: UInt64(Uttt.restSeconds * 1_000_000_000))
+        guard stageGeneration == generation, presentationStyle != .compact else { return }
+        UtttLog.note("stage", "collapsing")
+        slide.arm()
+        requestPresentationStyle(.compact)
+        await awaitTransitionSettled()
+        slide.disarm()
     }
 
     private var transitionWaiters: [Int: CheckedContinuation<Void, Never>] = [:]

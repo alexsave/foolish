@@ -16,6 +16,7 @@ typedef struct {
     int     last;        /* block*9+cell of the move just made, -1 for none */
     float   mark_t;      /* 0..1, how far the last mark has been drawn      */
     float   meta_t;      /* 0..1, the win line                              */
+    float   fall_t;      /* 0..1, the big mark of the block `last` won      */
     float   reach;       /* how far the four main lines run past the board,
                             as a fraction of the pen's own 13.5% overshoot;
                             UTTT_REACH by default, everywhere               */
@@ -36,6 +37,12 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o);
  * `last` set and mark_t 0 is every stroke but this one, so a renderer can
  * cache that and draw only this over it while it moves. -1 on no moves. */
 int uttt_draw_last(UtttDL *d, const UtttGame *g, int32_t seed, float t);
+
+/* THE SETTLEMENT OF THE LAST MOVE ON ITS OWN: the big mark of the block it
+ * won, drawn to `fall_t`, and the win line of the game it ended, to
+ * `line_t`. A board drawn with `last` set and fall_t and meta_t 0 is every
+ * stroke but these and the last mark. -1 on no moves. */
+int uttt_draw_settle(UtttDL *d, const UtttGame *g, int32_t seed, float fall_t, float line_t);
 
 /* One cell's mark, partially drawn - the animating stroke on its own. */
 int uttt_draw_cell(UtttDL *d, int mark, int mv, int32_t seed, float t);

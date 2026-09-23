@@ -28,7 +28,7 @@ UtttDrawOpts uttt_draw_opts(int32_t seed)
 {
     UtttDrawOpts o;
     o.seed = seed ? seed : 1;
-    o.active = -1; o.last = -1; o.mark_t = 1.f; o.meta_t = 1.f;
+    o.active = -1; o.last = -1; o.mark_t = 1.f; o.meta_t = 1.f; o.fall_t = 1.f;
     o.reach = UTTT_REACH;
     return o;
 }
@@ -155,6 +155,63 @@ static void last_mark(UtttDL *d, int v, int mv, int32_t seed, float t)
     mark_in(d, v, x, y, CE * .8f, seed * 1000 + mv + 613, t, &p);
 }
 
+/* THE BIG MARK OVER A WON BLOCK, drawn to `t`: pen is purely additive, so
+ * the nine marks under it stay and only lose the glance (UI.html 04). */
+static void big_mark(UtttDL *d, const UtttGame *g, int b, int32_t seed, float t)
+{
+    UtttPen p = uttt_pen_92(); p.a = .62f; p.w = 2.2f;
+    mark_in(d, uttt_block(g, b), (b % 3) * BL + BL * .08f,
+            (b / 3) * BL + BL * .08f, BL * .84f, seed * 77 + b, t, &p);
+}
+
+static void win_line(UtttDL *d, const UtttGame *g, int32_t seed, float t)
+{
+    /* the win line: the only mark that crosses a thick line, in the winner's
+     * own ink, and drawn twice because a ball has one width */
+    if (g->over == UTTT_X || g->over == UTTT_O) {
+        static const uint8_t L[8][3] = {
+            {0,1,2},{3,4,5},{6,7,8},{0,3,6},{1,4,7},{2,5,8},{0,4,8},{2,4,6} };
+        for (int i = 0; i < 8; i++) {
+            if (uttt_block(g, L[i][0]) != g->over
+             || uttt_block(g, L[i][1]) != g->over
+             || uttt_block(g, L[i][2]) != g->over) continue;
+            int a = L[i][0], z = L[i][2];
+            float ax = ((a % 3) + .5f) * BL, ay = ((a / 3) + .5f) * BL;
+            float zx = ((z % 3) + .5f) * BL, zy = ((z / 3) + .5f) * BL;
+            /* IT RUNS PAST BOTH BLOCKS IT ENDS ON. A line drawn centre to
+             * centre stops inside the two end blocks and reads as a
+             * measurement; the one somebody actually draws goes through them
+             * and out the far side. A sixth of the run at each end - a third
+             * longer overall - which is also what the four main grid lines
+             * do, and for the same reason. */
+            {
+                float ex = (zx - ax) / 6.f, ey = (zy - ay) / 6.f;
+                ax -= ex; ay -= ey; zx += ex; zy += ey;
+            }
+            float len = sqrtf((zx-ax)*(zx-ax) + (zy-ay)*(zy-ay));
+            const float W[2] = { 2.7f, 2.3f };
+            const float A[2] = { .92f, .74f };
+            const int32_t SD[2] = { 313, 977 };
+            for (int q = 0; q < 2; q++) {
+                UtttRough r = uttt_rough_default(seed * SD[q]);
+                r.roughness = rough_for(len) * 2.2f;
+                r.bowing    = bow_for(len) * 2.2f;
+                r.max_offset = mro_for(len) * 2.2f;
+                r.seg_line = 24;
+                UtttPt pts[1024]; int np = 0; UtttSpan sp[2];
+                int n = uttt_rough_line(&r, ax, ay, zx, zy, pts, 1024, &np, sp, 2);
+                UtttPen p = uttt_pen_92();
+                p.ink = g->over == UTTT_O ? INK_O : INK_X;
+                p.w = uttt_pen_92().w / 9.f / 100.f * W[q]; p.a = A[q];
+                p.vel = 0; p.lift = .2f; p.grain = .25f; p.agrain = .2f;
+                for (int s2 = 0; s2 < n; s2++)
+                    stroke(d, pts + sp[s2].first, sp[s2].n, &p, t);
+            }
+            break;
+        }
+    }
+}
+
 int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
 {
     UtttPen base = uttt_pen_92();
@@ -197,58 +254,10 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
             mark_in(d, v, x + CE * .1f, y + CE * .1f, CE * .8f,
                     o->seed * 1000 + b * 9 + c, 1.f, &p);
         }
-        if (won) {
-            UtttPen p = base; p.a = .62f; p.w = 2.2f;
-            mark_in(d, uttt_block(g, b), (b % 3) * BL + BL * .08f,
-                    (b / 3) * BL + BL * .08f, BL * .84f,
-                    o->seed * 77 + b, 1.f, &p);
-        }
+        if (won) big_mark(d, g, b, o->seed, (o->last >= 0 && o->last / 9 == b) ? o->fall_t : 1.f);
     }
 
-    /* the win line: the only mark that crosses a thick line, in the winner's
-     * own ink, and drawn twice because a ball has one width */
-    if (g->over == UTTT_X || g->over == UTTT_O) {
-        static const uint8_t L[8][3] = {
-            {0,1,2},{3,4,5},{6,7,8},{0,3,6},{1,4,7},{2,5,8},{0,4,8},{2,4,6} };
-        for (int i = 0; i < 8; i++) {
-            if (uttt_block(g, L[i][0]) != g->over
-             || uttt_block(g, L[i][1]) != g->over
-             || uttt_block(g, L[i][2]) != g->over) continue;
-            int a = L[i][0], z = L[i][2];
-            float ax = ((a % 3) + .5f) * BL, ay = ((a / 3) + .5f) * BL;
-            float zx = ((z % 3) + .5f) * BL, zy = ((z / 3) + .5f) * BL;
-            /* IT RUNS PAST BOTH BLOCKS IT ENDS ON. A line drawn centre to
-             * centre stops inside the two end blocks and reads as a
-             * measurement; the one somebody actually draws goes through them
-             * and out the far side. A sixth of the run at each end - a third
-             * longer overall - which is also what the four main grid lines
-             * do, and for the same reason. */
-            {
-                float ex = (zx - ax) / 6.f, ey = (zy - ay) / 6.f;
-                ax -= ex; ay -= ey; zx += ex; zy += ey;
-            }
-            float len = sqrtf((zx-ax)*(zx-ax) + (zy-ay)*(zy-ay));
-            const float W[2] = { 2.7f, 2.3f };
-            const float A[2] = { .92f, .74f };
-            const int32_t SD[2] = { 313, 977 };
-            for (int q = 0; q < 2; q++) {
-                UtttRough r = uttt_rough_default(o->seed * SD[q]);
-                r.roughness = rough_for(len) * 2.2f;
-                r.bowing    = bow_for(len) * 2.2f;
-                r.max_offset = mro_for(len) * 2.2f;
-                r.seg_line = 24;
-                UtttPt pts[1024]; int np = 0; UtttSpan sp[2];
-                int n = uttt_rough_line(&r, ax, ay, zx, zy, pts, 1024, &np, sp, 2);
-                UtttPen p = uttt_pen_92();
-                p.ink = g->over == UTTT_O ? INK_O : INK_X;
-                p.w = base.w / 9.f / 100.f * W[q]; p.a = A[q];
-                p.vel = 0; p.lift = .2f; p.grain = .25f; p.agrain = .2f;
-                for (int s2 = 0; s2 < n; s2++)
-                    stroke(d, pts + sp[s2].first, sp[s2].n, &p, o->meta_t);
-            }
-            break;
-        }
-    }
+    win_line(d, g, o->seed, o->meta_t);
     return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
 }
 
@@ -257,6 +266,18 @@ int uttt_draw_last(UtttDL *d, const UtttGame *g, int32_t seed, float t)
     if (g->n_plies == 0) return -1;
     int mv = g->move[g->n_plies - 1];
     last_mark(d, uttt_cell(g, mv), mv, seed ? seed : 1, t);
+    return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
+}
+
+int uttt_draw_settle(UtttDL *d, const UtttGame *g, int32_t seed, float fall_t, float line_t)
+{
+    if (g->n_plies == 0) return -1;
+    if (!seed) seed = 1;
+    int b = g->move[g->n_plies - 1] / 9;
+    if (uttt_block(g, b) == UTTT_X || uttt_block(g, b) == UTTT_O) {
+        big_mark(d, g, b, seed, fall_t);
+        win_line(d, g, seed, line_t);
+    }
     return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
 }
 

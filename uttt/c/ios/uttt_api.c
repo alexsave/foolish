@@ -42,7 +42,7 @@ _Static_assert(UTI_INSERT_LISTEN == UTM_INSERT_LISTEN && UTI_INSERT_RETRY == UTM
                && UTI_INSERT_DOOR == UTM_INSERT_DOOR, "insert verdicts");
 _Static_assert(UTI_CH_STILL == UTTT_CH_STILL && UTI_CH_STAGE == UTTT_CH_STAGE
             && UTI_CH_REPLAY == UTTT_CH_REPLAY && UTI_CH_THEIRS == UTTT_CH_THEIRS
-            && UTI_CH_ARRIVAL == UTTT_CH_ARRIVAL, "motion channels");
+            && UTI_CH_ARRIVAL == UTTT_CH_ARRIVAL && UTI_CH_SETTLE == UTTT_CH_SETTLE, "motion channels");
 _Static_assert(sizeof(UtiMotion) == sizeof(UtttMotion), "motion plan layout");
 _Static_assert(sizeof(UtiFrame) == sizeof(UtttFrame), "motion frame layout");
 _Static_assert(UTI_MSG_TEXT_MAX >= UTM_MAX_TEXT, "the longest link fits the host buffer");
@@ -161,10 +161,20 @@ int uti_draw_under(void)
     UtttDrawOpts o = uttt_draw_opts(S.m.seed);
     o.active = -1;
     o.last = S.m.game.n_plies ? S.m.game.move[S.m.game.n_plies - 1] : -1;
-    o.mark_t = 0.f;
+    o.mark_t = 0.f; o.fall_t = 0.f; o.meta_t = 0.f;
     S.overflow = uttt_draw_board(&S.dl, &S.m.game, &o) != 0;
     return publish();
 }
+
+int uti_draw_settle(float fall_t, float line_t)
+{
+    dl_fresh();
+    if (uttt_draw_settle(&S.dl, &S.m.game, S.m.seed, fall_t, line_t) < 0 && S.m.game.n_plies)
+        S.overflow = 1;
+    return publish();
+}
+
+int32_t uti_motion_rest_ms(void) { return UTTT_MS_REST; }
 
 float uti_board_reach(void) { return .135f * UTTT_REACH; }
 

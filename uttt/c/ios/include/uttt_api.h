@@ -196,10 +196,12 @@ int  uti_draw_overflow(void);
 #define UTI_CH_THEIRS   3   /* D: a bubble of theirs, opened                */
 #define UTI_CH_ARRIVAL  4   /* E: their move landed while I was looking     */
 #define UTI_CH_OPEN     5   /* a bubble opened: C or D, the kernel decides  */
+#define UTI_CH_SETTLE   6   /* B: Send - the big mark falls, then the line  */
 
 typedef struct {
     int32_t ch, mv, mark, from, to;
     int32_t ink_ms, wash_at, wash_ms, pulse_at, end_ms;
+    int32_t fall_at, line_at, settle;
 } UtiMotion;
 
 typedef struct {
@@ -212,10 +214,18 @@ typedef struct {
     int32_t  landed;        /* the ink is down: the drawer may move now      */
     int32_t  settled;       /* the wash has arrived: insert the bubble now   */
     int32_t  running;       /* 0: nothing changes again, stop the loop       */
+    float    fall_t;        /* the big mark of the block the move won, 0..1  */
+    float    line_t;        /* the win line, 0..1                            */
 } UtiFrame;
 
 /* The plan for the resident game's last move arriving through `ch`. */
 UtiMotion uti_motion(int ch);
+/* How long nothing moves after a move's whole plan before the drawer does
+ * (src/uttt_anim.h UTTT_MS_REST). */
+int32_t   uti_motion_rest_ms(void);
+/* The last move's settlement on its own - the big mark to `fall_t`, the win
+ * line to `line_t` - drawn over uti_draw_under with uti_draw_last. */
+int uti_draw_settle(float fall_t, float line_t);
 void      uti_motion_at(const UtiMotion *m, int32_t now_ms, UtiFrame *f);
 
 /* ---- the drawer: the height the sheet is laid out at ----

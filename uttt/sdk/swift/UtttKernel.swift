@@ -351,6 +351,8 @@ public enum Uttt {
     /// Which door a move came through - docs/UI.html's channel grid.
     public enum Channel: Int32 {
         case still = 0, stage = 1, replay = 2, theirs = 3, arrival = 4
+        /// B: Send. The big mark of a won block falls, then the line.
+        case settle = 6
         /// A bubble opened: my own replays quietly, theirs pulses. The kernel
         /// decides which, from the seat.
         case open = 5
@@ -389,6 +391,16 @@ public enum Uttt {
 
     /// The last move's heavy mark, drawn to `t`: what moves over the cache.
     public static func lastStroke(t: Float) -> [Poly] { harvest(uti_draw_last(t)) }
+
+    /// The last move's settlement - the big mark of the block it won and the
+    /// win line of the game it ended - drawn to the frame's `fall_t`, `line_t`.
+    public static func settleStroke(fall: Float, line: Float) -> [Poly] {
+        harvest(uti_draw_settle(fall, line))
+    }
+
+    /// How long nothing moves after a move's whole plan before the drawer
+    /// does (UTTT_MS_REST).
+    public static var restSeconds: Double { Double(uti_motion_rest_ms()) / 1000 }
 
     /// One mark, for the "you are" indicator.
     public static func mark(_ m: Mark, seed: Int32) -> [Poly] {

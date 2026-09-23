@@ -33,7 +33,7 @@ uint32_t uttt_wash_rgba(float a)
 UtttMotion uttt_motion(const UtttGame *g, int ch)
 {
     UtttMotion m = { 0 };
-    m.ch = ch; m.mv = -1; m.pulse_at = -1;
+    m.ch = ch; m.mv = -1; m.pulse_at = -1; m.fall_at = -1; m.line_at = -1;
     m.to = m.from = uttt_active(g);
     if (ch == UTTT_CH_STILL || g->n_plies == 0) { m.ch = UTTT_CH_STILL; return m; }
 
@@ -43,6 +43,25 @@ UtttMotion uttt_motion(const UtttGame *g, int ch)
     m.mark   = uttt_cell(g, m.mv);
     m.from   = uttt_active(&before);
     m.ink_ms = m.mark == UTTT_O ? UTTT_MS_INK_O : UTTT_MS_INK_X;
+
+    /* WHAT THE MOVE SETTLED: the block it won (a won block takes no more
+     * moves, so the last move in a won block is the one that won it), and
+     * the game it ended with a line. */
+    int b = m.mv / 9, fell = uttt_block(g, b) == UTTT_X || uttt_block(g, b) == UTTT_O;
+    int line = fell && uttt_won_line(g) >= 0;
+
+    if (ch == UTTT_CH_SETTLE) {
+        /* B: the move is on the board and the wash where it goes; only the
+         * settlement draws, from the tap on the arrow. */
+        m.ink_ms = 0;
+        m.wash_at = 0; m.wash_ms = 1;
+        m.from = m.to;
+        m.fall_at = fell ? 0 : -1;
+        m.line_at = line ? UTTT_MS_FALL : -1;
+        m.end_ms = line ? UTTT_MS_FALL + UTTT_MS_LINE : fell ? UTTT_MS_FALL : 0;
+        if (!fell) m.ch = UTTT_CH_STILL;
+        return m;
+    }
 
     /* THE WASH MOVES AFTER THE INK LANDS, never with it: two facts - what I
      * played, then where you go - and shown together they teach nothing. */
@@ -57,6 +76,16 @@ UtttMotion uttt_motion(const UtttGame *g, int ch)
     if (ch != UTTT_CH_REPLAY && m.to >= 0) {
         m.pulse_at = m.ink_ms + UTTT_MS_PULSE_AT;
         int e = m.pulse_at + UTTT_PULSES * UTTT_MS_PULSE;
+        if (e > m.end_ms) m.end_ms = e;
+    }
+
+    /* THE SETTLEMENT: held for Send on my stage, drawn once the ink lands
+     * on every other channel - the big mark, then the line. */
+    if (fell && ch == UTTT_CH_STAGE) m.settle = 1;
+    else if (fell) {
+        m.fall_at = m.ink_ms;
+        int e = m.fall_at + UTTT_MS_FALL;
+        if (line) { m.line_at = e; e += UTTT_MS_LINE; }
         if (e > m.end_ms) m.end_ms = e;
     }
     return m;
@@ -156,6 +185,14 @@ void uttt_motion_at(const UtttMotion *m, int32_t now, UtttFrame *f)
             }
         }
     }
+    /* the big mark on the X's own curve, the line on UI.html's strikein;
+     * held at nothing while it waits for Send */
+    f->fall_t = m->settle ? 0.f
+              : (m->fall_at < 0 || still) ? 1.f
+              : bezier(.32f, .72f, .4f, 1.f, (float)(now - m->fall_at) / UTTT_MS_FALL);
+    f->line_t = m->settle ? 0.f
+              : (m->line_at < 0 || still) ? 1.f
+              : bezier(.4f, .8f, .4f, 1.f, (float)(now - m->line_at) / UTTT_MS_LINE);
     f->settled = f->landed && (still || now >= m->wash_at + m->wash_ms);
     f->running = !still;
 }

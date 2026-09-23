@@ -28,7 +28,8 @@ enum {
     UTTT_CH_STAGE   = 1,   /* A: I tapped a square                          */
     UTTT_CH_REPLAY  = 2,   /* C: I reopened my own bubble - no pulse        */
     UTTT_CH_THEIRS  = 3,   /* D: I opened a bubble of theirs                */
-    UTTT_CH_ARRIVAL = 4,   /* E: their move landed while I was looking      */
+    UTTT_CH_ARRIVAL = 4,   /* E: their move landed while I was looking     */
+    UTTT_CH_SETTLE  = 6,   /* B: I tapped Send - the settlement half only  */
 };
 
 /* THE TIMINGS, in milliseconds. From UI.html's grid ("the mark draws
@@ -44,6 +45,20 @@ enum {
 #define UTTT_MS_PULSE_AT     300     /* after the ink lands                 */
 #define UTTT_MS_PULSE        620     /* one ring                            */
 #define UTTT_PULSES          2
+/* THE SETTLEMENT HALF (UI.html 04 "A board falls", 05 "The line"): third in
+ * a line, then the big mark over the top of the block, and at the end of the
+ * game the line across three blocks. It is the consequence of the move, not
+ * the move, so it plays at Send (B) and when a bubble is opened or arrives
+ * (C, D, E: both halves) - never at stage (A). The big mark draws over .46
+ * to .92 of the page's 1.7 s demo, the line over .1 to .85 of 1.3 s. */
+#define UTTT_MS_FALL         780
+#define UTTT_MS_LINE         500     /* strikein .5s                         */
+/* THE REST before the drawer moves (owner, 2026-09-23: "let it breathe"):
+ * from a move whose whole plan has run - ink, highlighter, ring - this long
+ * with nothing moving, so the settled result reads, and only then the
+ * auto-collapse. foolish's `stage` rests the same 500 ms after its board
+ * settles. */
+#define UTTT_MS_REST         500
 
 typedef struct {
     int32_t ch;
@@ -54,6 +69,9 @@ typedef struct {
     int32_t wash_at, wash_ms;
     int32_t pulse_at;      /* -1 for no pulse                                */
     int32_t end_ms;        /* nothing moves at or after this                 */
+    int32_t fall_at;       /* the big mark of the block the move won; -1 none */
+    int32_t line_at;       /* the win line; -1 none                          */
+    int32_t settle;        /* 1: the settlement is held for Send (A)         */
 } UtttMotion;
 
 typedef struct {
@@ -67,6 +85,8 @@ typedef struct {
     int32_t settled;       /* 1 once the wash has arrived too - the host may
                               insert its bubble without stalling a travel   */
     int32_t running;       /* 0 once nothing will change again               */
+    float   fall_t;        /* 0..1 the big mark of the block the move won    */
+    float   line_t;        /* 0..1 the win line                              */
 } UtttFrame;
 
 /* The plan for the LAST move of `g` arriving through `ch`. A game with no

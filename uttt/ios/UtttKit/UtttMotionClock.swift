@@ -68,7 +68,18 @@ public final class UtttMotionClock: ObservableObject {
         link?.invalidate()
         link = nil
         settle()
+        let w = doneWaiters
+        doneWaiters = []
+        w.forEach { $0() }
     }
+
+    /// Runs `f` once the whole plan has run - ink, highlighter, ring,
+    /// settlement - or now if nothing is moving.
+    public func whenDone(_ f: @escaping () -> Void) {
+        if link == nil { f(); return }
+        doneWaiters.append(f)
+    }
+    private var doneWaiters: [() -> Void] = []
 
     private func land() {
         guard !landed else { return }

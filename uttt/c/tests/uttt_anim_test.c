@@ -114,6 +114,56 @@ int main(void)
         OK(under + d.n_poly == whole && d.n_poly > 0, "the cached board plus the last mark is the board");
     }
 
+    /* THE SETTLEMENT (UI.html 04, 05): the final move of the diagonal
+     * fixture wins the bottom-right block and the game. At stage only the
+     * mark draws and the big mark and the line wait for Send; at Send (B)
+     * the big mark falls, then the line; an opened or arrived bubble plays
+     * both halves after the ink; and the cache plus the stroke plus the
+     * settlement is the whole board. */
+    {
+        static const uint8_t diag[] = { 79, 63, 5, 45, 8, 76, 42, 61, 70, 71, 78, 55, 15,
+                                        58, 36, 1, 11, 24, 4, 40, 39, 31, 80, 35, 0 };
+        UtttGame w; uttt_init(&w);
+        for (unsigned i = 0; i < sizeof diag && !w.over; i++) uttt_play(&w, diag[i]);
+        UtttMotion ms = uttt_motion(&w, UTTT_CH_STAGE);
+        uttt_motion_at(&ms, ms.end_ms + 5000, &f);
+        OK(ms.settle && f.fall_t == 0.f && f.line_t == 0.f && f.mark_t == 1.f,
+           "settle: at stage the big mark and the line wait for Send");
+        UtttMotion mb = uttt_motion(&w, UTTT_CH_SETTLE);
+        uttt_motion_at(&mb, 0, &f);
+        OK(f.mark_t == 1.f && f.fall_t == 0.f && f.line_t == 0.f && f.running,
+           "settle: at Send the mark is down and nothing of the settlement yet");
+        uttt_motion_at(&mb, UTTT_MS_FALL / 2, &f);
+        OK(f.fall_t > .3f && f.fall_t < 1.f && f.line_t == 0.f, "settle: the big mark falls first");
+        uttt_motion_at(&mb, UTTT_MS_FALL + UTTT_MS_LINE / 2, &f);
+        OK(f.fall_t == 1.f && f.line_t > .3f && f.line_t < 1.f, "settle: then the line");
+        uttt_motion_at(&mb, mb.end_ms, &f);
+        OK(!f.running && f.fall_t == 1.f && f.line_t == 1.f, "settle: then rest");
+        UtttMotion md = uttt_motion(&w, UTTT_CH_THEIRS);
+        uttt_motion_at(&md, md.ink_ms - 1, &f);
+        OK(f.fall_t == 0.f && md.fall_at == md.ink_ms && md.line_at == md.ink_ms + UTTT_MS_FALL
+           && md.end_ms >= md.line_at + UTTT_MS_LINE, "settle: their bubble plays both halves after the ink");
+        UtttMotion mn = uttt_motion(&g, UTTT_CH_SETTLE);
+        OK(mn.ch == UTTT_CH_STILL, "settle: a move that won nothing has nothing to settle");
+
+        UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
+        UtttDrawOpts o = uttt_draw_opts(7);
+        o.last = w.move[w.n_plies - 1];
+        uttt_draw_board(&d, &w, &o);
+        int whole = d.n_poly;
+        uttt_dl_init(&d, PT, 400000, PO, 60000);
+        o.mark_t = 0.f; o.fall_t = 0.f; o.meta_t = 0.f;
+        uttt_draw_board(&d, &w, &o);
+        int under = d.n_poly;
+        uttt_dl_init(&d, PT, 400000, PO, 60000);
+        uttt_draw_last(&d, &w, 7, 1.f);
+        int last = d.n_poly;
+        uttt_dl_init(&d, PT, 400000, PO, 60000);
+        uttt_draw_settle(&d, &w, 7, 1.f, 1.f);
+        OK(under + last + d.n_poly == whole && d.n_poly > 0,
+           "settle: the cache, the last mark and the settlement are the whole board");
+    }
+
     /* THE MAIN LINES STOP NEAR THE BOARD, as UI.html draws them (5%) */
     {
         UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);

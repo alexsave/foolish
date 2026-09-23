@@ -114,7 +114,6 @@ public struct UtttBoard: View {
 
     /// Posted on the main thread when a board rendered off it is ready.
     static let rendered = Notification.Name("UtttBoard.rendered")
-    private static var inflight: String?
 
     /// The board at `side`, inside a bitmap bled by `bleed` on every edge, so
     /// the grid's overshoot has somewhere to go.
@@ -169,22 +168,21 @@ public struct UtttBoard: View {
             cacheStamp = st; cacheSide = side; cacheImage = img
             return img
         }
-        let job = "\(st)|\(side)"
-        guard inflight != job else { return nil }
-        inflight = job
-        DispatchQueue.global(qos: .userInteractive).async {
-            let img = render(polys, side: side, scale: scale)
-            DispatchQueue.main.async {
-                UtttLog.note("raster done", "off the main thread")
-                if inflight == job { inflight = nil }
-                if cacheImage == nil || (cacheStamp == st && cacheSide == side) || inflight == nil {
-                    cacheStamp = st; cacheSide = side; cacheImage = img
-                }
-                NotificationCenter.default.post(name: rendered, object: nil)
-            }
-        }
-        return nil
+        /* BUT THE LINES ARE IN THE FIRST FRAME (sheet 2: blank paper, then
+         * the wash with no board under it for ~0.4s). The first board is
+         * painted HERE at one pixel per point - a ninth of the pixels of a
+         * 3x screen - so the frame that shows the paper shows the grid, and
+         * the sharp one is painted off the main thread and swapped in, the
+         * same picture at a finer grain. */
+        let quick = render(polys, side: side, scale: min(scale, Self.firstScale))
+        UtttLog.note("raster done", "first, at \(min(scale, Self.firstScale))x")
+        cacheStamp = st; cacheSide = side; cacheImage = quick
+        if scale > Self.firstScale { resize(stamp: st, side: side, polys: polys) }
+        return quick
     }
+
+    /// The first board's grain: one pixel per point.
+    private static let firstScale: CGFloat = 1
 
     /// The side the newest resize asked for, and whether one is painting.
     /// ONE PAINT AT A TIME: a drag asks every frame, and the paint that lands
@@ -318,6 +316,11 @@ public struct UtttLiveBoard: View {
                     Canvas { ctx, _ in
                         ctx.translateBy(x: pad, y: pad)
                         UtttBoard.fill(Uttt.lastStroke(t: f.mark_t), into: ctx, side: side)
+                        /* THE SETTLEMENT over it: the big mark falls, then
+                         * the line (UI.html 04, 05) - at Send, or after the
+                         * ink of a move that arrived. */
+                        UtttBoard.fill(Uttt.settleStroke(fall: f.fall_t, line: f.line_t),
+                                       into: ctx, side: side)
                     }
                     .frame(width: side + 2 * pad, height: side + 2 * pad)
                     .offset(x: -pad, y: -pad)
