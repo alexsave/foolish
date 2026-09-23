@@ -138,8 +138,25 @@ export const AnimationContext = createContext<AnimationContextType | null>(null)
 // same-shaped-but-distinct sequences - e.g. two single-card refills at different
 // deck sizes - still hash differently, the way the full stringify did, at a tiny
 // fraction of the cost.
-const eventsSignature = (events: any[]): string =>
-    events
+const eventsSignature = (events: any[], game?: { version?: number; goodMask?: number }): string =>
+    // A STREAM WITH NO EVENTS HAS NO EVENT CONTENT, and mapping it produced the
+    // empty string - so every goods-only push signed identically and the second
+    // one onward was thrown away as a duplicate of the first.
+    //
+    // It survived review because the set below is cleared at the closing beat of
+    // an animated sequence, and until a good could be broadcast alone there was
+    // always one of those between two empty signatures. A goods-only push runs
+    // no sequence, so it clears nothing: after the last card settles, exactly ONE
+    // good gets through and every later one is silently dropped. The owner found
+    // it the only way it can be found - eight seats and enough bots to say good
+    // several times in a row: "I only ever see one checkmark per bout."
+    //
+    // For such a push the BOARD is the content, so it signs with the board. A
+    // genuine duplicate still carries the same version and still dedupes; the
+    // monotonic version gate above catches those first in any case.
+    events.length === 0
+        ? `empty|${game?.version ?? ''}|${game?.goodMask ?? ''}`
+        : events
         .map((e) => {
             const gs = e.game_state;
             return [
@@ -444,7 +461,7 @@ export const AnimationProvider = ({ children }: { children: React.ReactNode }) =
 
         // Also check event content as backup (compact signature, not a full
         // JSON.stringify of the events + their embedded game snapshots).
-        const eventsString = eventsSignature(message.events);
+        const eventsString = eventsSignature(message.events, message.game);
 
         if (processedEventContent.current.has(eventsString)) {
             return;
