@@ -103,6 +103,17 @@ int  uti_msg_undo(void);
 #define UTI_DOOR_AGAIN     1
 int  uti_msg_door(void);
 
+/* GETTING A STAGED BUBBLE INTO THE FIELD (uttt_msg.h has why). How long a
+ * staged bubble waits before the send hint shows, how long an insert may go
+ * unanswered, and what that silence means on try `attempt` (1-based) in the
+ * compact drawer or not. */
+#define UTI_INSERT_LISTEN  0
+#define UTI_INSERT_RETRY   1
+#define UTI_INSERT_DOOR    2
+int  uti_send_hint_ms(void);
+int  uti_insert_silence_ms(void);
+int  uti_insert_silence(int attempt, int compact);
+
 /* Which of two messages to show: <0 mine (the device's staged draft), >0 the
  * tapped one, 0 the same. An unreadable one always loses. */
 int  uti_msg_prefer(const char *mine, const char *tapped);
@@ -138,6 +149,8 @@ int  uti_hit(float u, float v);
 #define UTI_SAY_HEADLINE_SPOKEN      15
 #define UTI_SAY_YOU_ARE_SPOKEN       16
 #define UTI_SAY_DOOR_RULES           17
+#define UTI_SAY_SEND_HINT            18
+#define UTI_SAY_DOOR_SEND            19
 
 const char *uti_say(int key);
 

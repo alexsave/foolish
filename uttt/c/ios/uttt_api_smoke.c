@@ -363,6 +363,11 @@ int main(void)
         ok(!uti_msg_seat_ids(vera, 16, vera, 16), "nobody plays themselves");
         ok(uti_msg_text(other, sizeof other) > 0, "and it has a link");
         ok(uti_say(12345)[0] == '\0', "an unknown sentence is empty, never NULL");
+        ok(!strcmp(uti_say(UTI_SAY_DOOR_SEND), "Send a board"), "the send door's words cross the bridge");
+        ok(uti_insert_silence(1, 1) == UTI_INSERT_RETRY && uti_insert_silence(1, 0) == UTI_INSERT_LISTEN
+           && uti_insert_silence(uti_insert_silence_ms() / 50, 1) == UTI_INSERT_DOOR,
+           "an insert's silence crosses the bridge");
+        ok(uti_send_hint_ms() == 3000, "the send hint's fuse crosses the bridge");
     }
 
     {   /* the drawer through the bridge: a peek never draws the raw height */

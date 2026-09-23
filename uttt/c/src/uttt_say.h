@@ -57,6 +57,11 @@ enum {
     UTTT_SAY_YOU_ARE_SPOKEN,       /* "You are X", "" with no seat         */
     UTTT_SAY_DOOR_RULES,           /* the rulebook door                     */
 
+    /* getting a staged bubble out (uttt_msg.h, UTM_SEND_HINT_MS and
+     * UTM_INSERT_DOOR) */
+    UTTT_SAY_SEND_HINT,            /* under the arrow at Messages' Send     */
+    UTTT_SAY_DOOR_SEND,            /* the door when every insert went unanswered */
+
     UTTT_SAY_COUNT
 };
 

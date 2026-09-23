@@ -173,6 +173,36 @@ int  utm_undo(UtmMsg *m, const uint8_t me[UTM_TAG_LEN]);
  * draft (utm_undo). */
 int  utm_door(const UtmMsg *m);
 
+/* ------------------------------------------------ getting it into the field */
+
+/* THE SEND HINT. A staged bubble nobody has sent stalls the thread, so after
+ * this long unsent in the compact drawer an arrow bobs under Messages' own
+ * Send button (shared/swift/MessagesKit's SendHint). A new stage restarts the
+ * wait; a send, a cancel or the drawer growing hides it. The sister product's
+ * number, so the two games feel the same under a thumb. */
+#define UTM_SEND_HINT_MS       3000
+
+/* A REFUSED INSERT NEVER ANSWERS. ChatKit drops an insert that arrives before
+ * the host counts the drawer as presenting, and calls no completion at all -
+ * not with an error, not ever (docs/INSERT_GATING.md). So silence is the
+ * refusal: an insert unanswered after UTM_INSERT_SILENCE_MS is asked again,
+ * up to UTM_INSERT_ATTEMPTS in all (about five seconds), and then the human
+ * is handed a door that inserts on a tap - by which time the drawer is
+ * presenting and the gate passes. */
+#define UTM_INSERT_SILENCE_MS  500
+#define UTM_INSERT_ATTEMPTS    10
+
+#define UTM_INSERT_LISTEN      0   /* keep waiting; this silence is not a refusal */
+#define UTM_INSERT_RETRY       1   /* insert the same bubble again               */
+#define UTM_INSERT_DOOR        2   /* stop asking; offer the one-tap door        */
+
+/* What an insert that has gone UTM_INSERT_SILENCE_MS without an answer means,
+ * on its `attempt`th try (1-based). ONLY THE COMPACT DRAWER'S SILENCE COUNTS:
+ * expanded, the host deliberately parks an accepted insert's completion until
+ * later, so a watchdog there would take a yes for a no - it listens and
+ * counts nothing. */
+int  utm_insert_silence(int attempt, int compact);
+
 /* ------------------------------------------------------- two messages */
 
 /* The same game: the same invitation (seed and creator). */

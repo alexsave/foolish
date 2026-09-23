@@ -177,6 +177,8 @@ int uttt_say_by(int key, const UtttGame *g, int seat, const char *who,
     case UTTT_SAY_YOU_ARE_SPOKEN:
         return put(out, cap, you == UTTT_X ? "You are X" : you == UTTT_O ? "You are O" : "");
     case UTTT_SAY_DOOR_RULES: return put(out, cap, "Rulebook");
+    case UTTT_SAY_SEND_HINT:  return put(out, cap, "Send");
+    case UTTT_SAY_DOOR_SEND:  return put(out, cap, "Send a board");
 
     case UTTT_SAY_YOU_ARE_1: return put(out, cap, "you");
     case UTTT_SAY_YOU_ARE_2: return put(out, cap, "are");

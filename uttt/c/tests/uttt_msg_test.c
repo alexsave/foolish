@@ -533,6 +533,36 @@ static void test_say(void)
     OK(uttt_say(UTTT_SAY_UNREADABLE_SUBLINE, &g, 0, s, 8) == -1, "say: a short buffer is refused");
 }
 
+/* GETTING A BUBBLE INTO THE FIELD: a silent insert is a refusal only in the
+ * compact drawer, is asked again until the budget runs out, and then hands
+ * over the door. */
+static void test_insert(void)
+{
+    OK(utm_insert_silence(1, 1) == UTM_INSERT_RETRY, "insert: a first silence in compact retries");
+    OK(utm_insert_silence(UTM_INSERT_ATTEMPTS - 1, 1) == UTM_INSERT_RETRY,
+       "insert: the last try but one still retries");
+    OK(utm_insert_silence(UTM_INSERT_ATTEMPTS, 1) == UTM_INSERT_DOOR,
+       "insert: the last try's silence hands over the door");
+    OK(utm_insert_silence(UTM_INSERT_ATTEMPTS + 3, 1) == UTM_INSERT_DOOR,
+       "insert: past the budget it is still the door");
+    int listened = 1;
+    for (int a = 1; a <= UTM_INSERT_ATTEMPTS + 1; a++)
+        listened &= utm_insert_silence(a, 0) == UTM_INSERT_LISTEN;
+    OK(listened, "insert: expanded silence is never a refusal");
+    OK(UTM_INSERT_SILENCE_MS * UTM_INSERT_ATTEMPTS >= 4000 &&
+       UTM_INSERT_SILENCE_MS * UTM_INSERT_ATTEMPTS <= 6000,
+       "insert: the whole budget is about five seconds");
+    OK(UTM_SEND_HINT_MS == 3000, "insert: the send hint waits three seconds, as the sister app's");
+
+    UtttGame g;
+    char s[128];
+    uttt_init(&g);
+    OK(uttt_say(UTTT_SAY_SEND_HINT, &g, UTM_SEAT_WAITING, s, sizeof s) > 0 && !strcmp(s, "Send"),
+       "say: the send hint's caption");
+    OK(uttt_say(UTTT_SAY_DOOR_SEND, &g, UTM_SEAT_X, s, sizeof s) > 0 && !strcmp(s, "Send a board"),
+       "say: the door when no insert was answered");
+}
+
 int main(int argc, char **argv)
 {
     int games = argc > 1 ? atoi(argv[1]) : 10000;
@@ -543,6 +573,7 @@ int main(int argc, char **argv)
     test_prefer();
     test_hit();
     test_say();
+    test_insert();
     printf("uttt_msg: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

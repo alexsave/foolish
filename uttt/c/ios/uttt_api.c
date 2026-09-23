@@ -34,7 +34,11 @@ _Static_assert(UTI_SAY_DOOR_AGAIN == UTTT_SAY_DOOR_AGAIN, "say DOOR_AGAIN");
 _Static_assert(UTI_SAY_HEADLINE_SPOKEN == UTTT_SAY_HEADLINE_SPOKEN, "say HEADLINE_SPOKEN");
 _Static_assert(UTI_SAY_YOU_ARE_SPOKEN == UTTT_SAY_YOU_ARE_SPOKEN, "say YOU_ARE_SPOKEN");
 _Static_assert(UTI_SAY_DOOR_RULES == UTTT_SAY_DOOR_RULES, "say DOOR_RULES");
-_Static_assert(UTI_SAY_DOOR_RULES + 1 == UTTT_SAY_COUNT, "every key has a host name");
+_Static_assert(UTI_SAY_SEND_HINT == UTTT_SAY_SEND_HINT, "say SEND_HINT");
+_Static_assert(UTI_SAY_DOOR_SEND == UTTT_SAY_DOOR_SEND, "say DOOR_SEND");
+_Static_assert(UTI_SAY_DOOR_SEND + 1 == UTTT_SAY_COUNT, "every key has a host name");
+_Static_assert(UTI_INSERT_LISTEN == UTM_INSERT_LISTEN && UTI_INSERT_RETRY == UTM_INSERT_RETRY
+               && UTI_INSERT_DOOR == UTM_INSERT_DOOR, "insert verdicts");
 _Static_assert(UTI_CH_STILL == UTTT_CH_STILL && UTI_CH_STAGE == UTTT_CH_STAGE
             && UTI_CH_REPLAY == UTTT_CH_REPLAY && UTI_CH_THEIRS == UTTT_CH_THEIRS
             && UTI_CH_ARRIVAL == UTTT_CH_ARRIVAL, "motion channels");
@@ -385,6 +389,10 @@ int uti_msg_undo(void)
 }
 
 int uti_msg_door(void) { return utm_door(&S.m); }
+
+int uti_send_hint_ms(void) { return UTM_SEND_HINT_MS; }
+int uti_insert_silence_ms(void) { return UTM_INSERT_SILENCE_MS; }
+int uti_insert_silence(int attempt, int compact) { return utm_insert_silence(attempt, compact); }
 
 int uti_msg_prefer(const char *mine, const char *tapped)
 {
