@@ -97,6 +97,16 @@ final class MessagesViewController: MSMessagesAppViewController {
         present(conversation)
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        UtttLog.note("appear", "\(Int(view.bounds.width))x\(Int(view.bounds.height))")
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        UtttLog.note("layout", "\(Int(view.bounds.width))x\(Int(view.bounds.height))")
+    }
+
     override func didResignActive(with conversation: MSConversation) {
         super.didResignActive(with: conversation)
         UtttLog.note("resign")
@@ -375,7 +385,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         UtttLog.note("start")
         staged = wire
         present(conversation)
-        DispatchQueue.main.async { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
             guard let self, self.staged == wire else { return }
             self.stage(wire, in: conversation)
         }
