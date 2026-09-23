@@ -103,6 +103,9 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+#if DEBUG
+        if UtttDev.empty { UtttLog.note("load", "dev.empty - nothing"); return }
+#endif
         UtttLog.note("load")
         /* CLEAR UNTIL IT APPEARS - see `appeared`. */
         view.backgroundColor = .clear
@@ -129,6 +132,9 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func willBecomeActive(with conversation: MSConversation) {
         super.willBecomeActive(with: conversation)
+#if DEBUG
+        if UtttDev.empty { return }
+#endif
         UtttLog.note("active", "\(styleName), selected \(conversation.selectedMessage != nil)")
         becameActiveAt = Date()
         sendState.compact = presentationStyle == .compact

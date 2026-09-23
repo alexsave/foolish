@@ -39,6 +39,11 @@ public enum UtttDev {
     /// Read every time, like every other dev file.
     public static var ruler: Bool { MotionRuler.flag(rulerFile, group: appGroup) }
 
+    /// `dev.empty`: the extension shows nothing at all - no hosting
+    /// controller, no kernel call. The memory FLOOR: what Messages, UIKit and
+    /// SwiftUI cost an extension before any of ours (TESTFLIGHT_PLAN.md 12).
+    public static var empty: Bool { MotionRuler.flag("dev.empty", group: appGroup) }
+
     /// `dev.dropinsert`: every insert is swallowed without an answer, exactly
     /// as ChatKit drops one that arrives before the drawer counts as presenting
     /// (docs/INSERT_GATING.md) - the only way to film the retries and the send
