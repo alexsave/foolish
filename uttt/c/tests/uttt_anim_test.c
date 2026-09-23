@@ -7,6 +7,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static int fails, checks;
 #define OK(c, what) do { checks++; if (!(c)) { fails++; \
@@ -170,6 +171,37 @@ int main(void)
            && md.end_ms >= md.line_at + UTTT_MS_LINE, "settle: their bubble plays both halves after the ink");
         UtttMotion mn = uttt_motion(&g, UTTT_CH_SETTLE);
         OK(mn.ch == UTTT_CH_STILL, "settle: a move that won nothing has nothing to settle");
+        /* A DRAFT SHOWN AGAIN AT REST (the end of the game re-presents for
+         * Again while the winning move is still unsent): the ink and no
+         * settlement, where the plain still board has all of it */
+        UtttMotion mr = uttt_motion(&w, UTTT_CH_DRAFT);
+        uttt_motion_at(&mr, 0, &f);
+        OK(!f.running && f.mark_t == 1.f && f.fall_t == 0.f && f.line_t == 0.f,
+           "draft: the winning move staged, shown again, holds the big mark and the line");
+        UtttMotion mw = uttt_motion(&w, UTTT_CH_STILL);
+        uttt_motion_at(&mw, 0, &f);
+        OK(f.fall_t == 1.f && f.line_t == 1.f, "draft: the same board at rest, sent, has both");
+        /* a move that took a block and did not end the game: a prefix of
+         * the fixture whose last move won its block */
+        int took = 0;
+        for (unsigned k = 1; k < sizeof diag - 1 && !took; k++) {
+            UtttGame p; uttt_init(&p);
+            for (unsigned i = 0; i < k; i++) uttt_play(&p, diag[i]);
+            int b = diag[k - 1] / 9;
+            if (p.over || (uttt_block(&p, b) != UTTT_X && uttt_block(&p, b) != UTTT_O)) continue;
+            took = 1;
+            UtttMotion mp = uttt_motion(&p, UTTT_CH_DRAFT);
+            uttt_motion_at(&mp, 0, &f);
+            UtttFrame fs; UtttMotion mps = uttt_motion(&p, UTTT_CH_STAGE);
+            uttt_motion_at(&mps, mps.end_ms, &fs);
+            OK(!f.running && f.fall_t == 0.f && f.mark_t == 1.f
+               && !memcmp(f.wash, fs.wash, sizeof f.wash) && f.wash_rgba == fs.wash_rgba,
+               "draft: a block-taking move staged, shown again, is the stage's last frame");
+        }
+        OK(took, "draft: the fixture has a block-taking move before the last");
+        UtttMotion mq = uttt_motion(&g, UTTT_CH_DRAFT);
+        uttt_motion_at(&mq, 0, &f);
+        OK(!f.running && f.mark_t == 1.f, "draft: a move that won nothing is the board at rest");
 
         UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
         UtttDrawOpts o = uttt_draw_opts(7);
@@ -293,7 +325,8 @@ int main(void)
         OK(worst < .03, "no game's main line is more than 3% longer at one end");
     }
 
-    /* THE DRAWER: the layout height never steps, and a finger is followed */
+    /* THE DRAWER: a finger is followed at once, whatever its step; a jump the
+     * host announced springs and never steps */
     {
         UtttDrawer d = {0};
         int32_t mv;
@@ -301,9 +334,17 @@ int main(void)
         OK(uttt_drawer_at(&d, 5, &mv) == 840.f && !mv, "the first height is laid out as handed");
         uttt_drawer_report(&d, 820.f, 16);
         OK(uttt_drawer_at(&d, 16, &mv) == 820.f && !mv, "a finger's small step is followed at once");
-        /* an auto-collapse: one height, far away */
+        /* the simulator's drag injection steps 40-50 points a touch; a real
+         * finger on a slow frame as much: no distance makes it a jump */
+        uttt_drawer_report(&d, 770.f, 150);
+        OK(uttt_drawer_at(&d, 150, &mv) == 770.f && !mv, "a finger's 50 point step is followed at once");
+        uttt_drawer_report(&d, 289.f, 300);
+        OK(uttt_drawer_at(&d, 300, &mv) == 289.f && !mv, "any height unannounced is the layout, at once");
+        uttt_drawer_report(&d, 820.f, 400);
+        /* an announced jump: one height, far away */
+        uttt_drawer_expect_jump(&d, 990);
         uttt_drawer_report(&d, 289.f, 1000);
-        OK(uttt_drawer_at(&d, 1000, &mv) == 820.f && mv, "a far height does not step the layout");
+        OK(uttt_drawer_at(&d, 1000, &mv) == 820.f && mv, "an announced far height does not step the layout");
         OK(uttt_drawer_at(&d, 1000 + UTTT_DRAWER_LEAD_MS, NULL) == 820.f, "it waits out the lead");
         float prev = 820.f, step = 0.f;
         int mono = 1;
@@ -319,18 +360,26 @@ int main(void)
         OK(step < 15.f, "and no 4 ms of it moves more than the spring's peak, 15 points");
         OK(uttt_drawer_at(&d, 1000 + UTTT_DRAWER_LEAD_MS + 3 * UTTT_DRAWER_RESPONSE_MS, &mv) == 289.f && !mv,
            "three responses in it is at rest on the target");
-        /* a release: sparse heights while it is still moving */
+        /* the announcement lapses: the next drag is a finger again */
+        uttt_drawer_report(&d, 330.f, 990 + UTTT_DRAWER_JUMP_MS + 1);
+        OK(uttt_drawer_at(&d, 990 + UTTT_DRAWER_JUMP_MS + 1, &mv) == 330.f && !mv,
+           "a height after the jump's window is a finger again");
+        /* a release: heights while it is still moving */
         UtttDrawer e = {0};
         uttt_drawer_report(&e, 516.f, 0);
+        uttt_drawer_expect_jump(&e, 0);
         uttt_drawer_report(&e, 334.f, 0);
         float a = uttt_drawer_at(&e, 200, NULL), a0 = uttt_drawer_at(&e, 196, NULL);
         uttt_drawer_report(&e, 289.f, 200);
         float b = uttt_drawer_at(&e, 200, NULL), b1 = uttt_drawer_at(&e, 204, NULL);
-        OK(fabsf(a - b) < 1e-3f, "a new height mid-spring keeps the position");
+        OK(fabsf(a - b) < 1e-3f, "a new height mid-jump keeps the position");
         OK(fabsf((a - a0) - (b1 - b)) < .5f, "and the velocity");
         uttt_drawer_report(&e, 300.f, 210);
         OK(fabsf(uttt_drawer_at(&e, 210, NULL) - uttt_drawer_at(&e, 209, NULL)) < 6.f,
-           "a small height mid-spring re-aims it rather than jumping to it");
+           "a small height mid-jump re-aims it rather than jumping to it");
+        /* a finger grabs the drawer mid-slide, long after the announcement */
+        uttt_drawer_report(&e, 420.f, 700);
+        OK(uttt_drawer_at(&e, 700, &mv) == 420.f && !mv, "a finger mid-spring holds the layout where it is");
     }
 
     /* ONE LAYOUT, EVERY SCREEN: the board's centre is the sheet's centre at

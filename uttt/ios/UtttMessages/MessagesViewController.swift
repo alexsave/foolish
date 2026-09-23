@@ -448,6 +448,9 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func willTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.willTransition(to: presentationStyle)
         UtttLog.note("will-style", Self.name(presentationStyle))
+        /* The heights that follow are a jump the drawer slides through, not
+         * a finger it sits under (uttt_anim.h UtttDrawer). */
+        UtttDrawerClock.hostWillJump()
         /* THE HINT GOES AS THE DRAWER STARTS TO GROW, not once it has: the
          * Send button is only above a compact drawer. */
         if presentationStyle != .compact { hideHintNow() }
@@ -925,12 +928,14 @@ final class MessagesViewController: MSMessagesAppViewController {
     private func showBoard(mark: Uttt.Mark, door: Uttt.Door, motion: Uttt.Channel = .still,
                            _ conversation: MSConversation) {
         let model = UtttModel(seed: Uttt.seed, you: mark)
+        /* A draft on screen is a draft the player may change their mind about. */
+        let draft = staged.map { Uttt.messageText == $0.text } ?? false
+        if draft { model.setPending(true) }
         /* THE LAST MOVE ARRIVES through the door it came in by (docs/UI.html
          * "How it moves"): an opened bubble replays it, an arrival draws it
-         * in, and a send or a cancel shows the board at rest. */
-        model.show(motion)
-        /* A draft on screen is a draft the player may change their mind about. */
-        if let staged, Uttt.messageText == staged.text { model.setPending(true) }
+         * in, and a send or a cancel shows the board at rest - a draft's at
+         * rest with its settlement held for Send (UI.html channel B). */
+        model.show(draft && motion == .still ? .draft : motion)
         live = model
 
         /* The model does not know there is a conversation and should not. It

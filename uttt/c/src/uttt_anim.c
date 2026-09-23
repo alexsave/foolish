@@ -50,6 +50,16 @@ UtttMotion uttt_motion(const UtttGame *g, int ch)
     int b = m.mv / 9, fell = uttt_block(g, b) == UTTT_X || uttt_block(g, b) == UTTT_O;
     int line = fell && uttt_won_line(g) >= 0;
 
+    /* A DRAFT AT REST: a screen shown again while my move sits unsent (the
+     * end of the game re-presents for its Again door ~0.3 s after the ink)
+     * is the stage's last frame, not the settled board - drawn still, the
+     * big mark and the line struck in the same frame, before Send. */
+    if (ch == UTTT_CH_DRAFT) {
+        m.ch = UTTT_CH_STILL;
+        m.settle = fell;
+        return m;
+    }
+
     if (ch == UTTT_CH_SETTLE) {
         /* B: the move is on the board and the wash where it goes; only the
          * settlement draws, from the tap on the arrow. */
@@ -218,17 +228,27 @@ static int drawer_done(const UtttDrawer *d, int32_t now_ms)
     return !d->moving || now_ms - d->t0 >= 3 * UTTT_DRAWER_RESPONSE_MS;
 }
 
+void uttt_drawer_expect_jump(UtttDrawer *d, int32_t now_ms)
+{
+    d->jump_at = now_ms;
+    d->jumping = 1;
+}
+
+/* A height handed now is part of an announced jump. */
+static int drawer_in_jump(const UtttDrawer *d, int32_t now_ms)
+{
+    return d->jumping && now_ms >= d->jump_at && now_ms - d->jump_at <= UTTT_DRAWER_JUMP_MS;
+}
+
 void uttt_drawer_report(UtttDrawer *d, float h, int32_t now_ms)
 {
-    if (!d->seen) {
-        *d = (UtttDrawer){ .target = h, .seen = 1 };
+    if (!d->seen || !drawer_in_jump(d, now_ms)) {
+        /* the first height, or a finger: the layout is the host's, now */
+        int32_t jumping = d->jumping, jump_at = d->jump_at;
+        *d = (UtttDrawer){ .target = h, .seen = 1, .jumping = jumping, .jump_at = jump_at };
         return;
     }
     if (drawer_done(d, now_ms)) {
-        if (fabsf(h - d->target) <= UTTT_DRAWER_FOLLOW_PT) {
-            *d = (UtttDrawer){ .target = h, .seen = 1 };  /* a finger: follow */
-            return;
-        }
         d->from = d->target - h;
         d->vel = 0.f;
         d->t0 = now_ms + UTTT_DRAWER_LEAD_MS;
@@ -257,7 +277,7 @@ float uttt_drawer_at(const UtttDrawer *d, int32_t now_ms, int32_t *moving)
 
 void uttt_drawer_rest(UtttDrawer *d, float h)
 {
-    *d = (UtttDrawer){ .target = h, .seen = 1 };
+    *d = (UtttDrawer){ .target = h, .seen = 1, .jumping = d->jumping, .jump_at = d->jump_at };
 }
 
 float uttt_collapse_push(float travel, int32_t t_ms)

@@ -353,6 +353,9 @@ public enum Uttt {
         case still = 0, stage = 1, replay = 2, theirs = 3, arrival = 4
         /// B: Send. The big mark of a won block falls, then the line.
         case settle = 6
+        /// At rest with my last move staged and unsent: the settlement is
+        /// held for Send.
+        case draft = 7
         /// A bubble opened: my own replays quietly, theirs pulses. The kernel
         /// decides which, from the seat.
         case open = 5

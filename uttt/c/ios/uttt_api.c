@@ -42,7 +42,8 @@ _Static_assert(UTI_INSERT_LISTEN == UTM_INSERT_LISTEN && UTI_INSERT_RETRY == UTM
                && UTI_INSERT_DOOR == UTM_INSERT_DOOR, "insert verdicts");
 _Static_assert(UTI_CH_STILL == UTTT_CH_STILL && UTI_CH_STAGE == UTTT_CH_STAGE
             && UTI_CH_REPLAY == UTTT_CH_REPLAY && UTI_CH_THEIRS == UTTT_CH_THEIRS
-            && UTI_CH_ARRIVAL == UTTT_CH_ARRIVAL && UTI_CH_SETTLE == UTTT_CH_SETTLE, "motion channels");
+            && UTI_CH_ARRIVAL == UTTT_CH_ARRIVAL && UTI_CH_SETTLE == UTTT_CH_SETTLE
+            && UTI_CH_DRAFT == UTTT_CH_DRAFT, "motion channels");
 _Static_assert(sizeof(UtiMotion) == sizeof(UtttMotion), "motion plan layout");
 _Static_assert(sizeof(UtiFrame) == sizeof(UtttFrame), "motion frame layout");
 _Static_assert(UTI_MSG_TEXT_MAX >= UTM_MAX_TEXT, "the longest link fits the host buffer");
@@ -216,6 +217,14 @@ void uti_drawer_report(UtiDrawer *d, float h, int32_t now_ms)
     UtttDrawer k;
     memcpy(&k, d, sizeof k);
     uttt_drawer_report(&k, h, now_ms);
+    memcpy(d, &k, sizeof *d);
+}
+
+void uti_drawer_expect_jump(UtiDrawer *d, int32_t now_ms)
+{
+    UtttDrawer k;
+    memcpy(&k, d, sizeof k);
+    uttt_drawer_expect_jump(&k, now_ms);
     memcpy(d, &k, sizeof *d);
 }
 

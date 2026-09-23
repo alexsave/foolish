@@ -197,6 +197,7 @@ int  uti_draw_overflow(void);
 #define UTI_CH_ARRIVAL  4   /* E: their move landed while I was looking     */
 #define UTI_CH_OPEN     5   /* a bubble opened: C or D, the kernel decides  */
 #define UTI_CH_SETTLE   6   /* B: Send - the big mark falls, then the line  */
+#define UTI_CH_DRAFT    7   /* at rest, my move staged: settlement held     */
 
 typedef struct {
     int32_t ch, mv, mark, from, to;
@@ -229,15 +230,17 @@ int uti_draw_settle(float fall_t, float line_t);
 void      uti_motion_at(const UtiMotion *m, int32_t now_ms, UtiFrame *f);
 
 /* ---- the drawer: the height the sheet is laid out at ----
- * Not the height Messages last handed, which arrives in steps: a critically
- * damped spring on the host's response from the layout toward it, a
- * finger's small steps followed at once (src/uttt_anim.h UtttDrawer). The
- * host reports every height it is handed and lays out at uti_drawer_at on
- * each display frame while *moving is 1. */
+ * The height Messages last handed, at once (a finger on the handle), except
+ * through a jump the host announced at willTransition, which is a critically
+ * damped spring on the host's response toward it (src/uttt_anim.h
+ * UtttDrawer). The host reports every height it is handed, calls
+ * uti_drawer_expect_jump at every willTransition, and lays out at
+ * uti_drawer_at on each display frame while *moving is 1. */
 typedef struct {
     float   target, from, vel;
-    int32_t t0, moving, seen;
+    int32_t t0, moving, seen, jump_at, jumping;
 } UtiDrawer;
+void  uti_drawer_expect_jump(UtiDrawer *d, int32_t now_ms);
 void  uti_drawer_report(UtiDrawer *d, float h, int32_t now_ms);
 float uti_drawer_at(const UtiDrawer *d, int32_t now_ms, int32_t *moving);
 /* What uti_drawer_at would say had `h` just been reported, without

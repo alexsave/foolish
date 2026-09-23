@@ -30,6 +30,8 @@ enum {
     UTTT_CH_THEIRS  = 3,   /* D: I opened a bubble of theirs                */
     UTTT_CH_ARRIVAL = 4,   /* E: their move landed while I was looking     */
     UTTT_CH_SETTLE  = 6,   /* B: I tapped Send - the settlement half only  */
+    UTTT_CH_DRAFT   = 7,   /* at rest, my last move staged and unsent: the
+                              ink and the wash, the settlement held for B  */
 };
 
 /* THE TIMINGS, in milliseconds. From UI.html's grid ("the mark draws
@@ -107,28 +109,32 @@ uint32_t uttt_wash_rgba(float alpha);
 #define UTTT_PULSE_ALPHA .5f
 #define UTTT_PULSE_REACH (13.f / 390.f)  /* 13 points on a 390-point board   */
 
-/* THE HEIGHT THE SHEET IS LAID OUT AT, which is not the height Messages
- * last handed it.
+/* THE HEIGHT THE SHEET IS LAID OUT AT: the host's, except through a jump.
  *
- * Messages resizes the extension sparsely: an auto-collapse is ONE new
- * height, handed about 20 ms before the drawer starts to slide, and after a
- * manual drag is released the drawer settles on its own spring while the
- * extension hears a new height only about every 200 ms (516, 334, 289).
- * Laid out at the handed height, the board shrank in one frame and then in
- * 50-90 point steps while the drawer moved smoothly beside it (measured with
- * the ruler, uttt/docs/TESTFLIGHT_PLAN.md "Drawer motion").
+ * Messages hands the extension its height two ways. A FINGER ON THE HANDLE
+ * hands one for every touch it moves, and the drawer on screen is exactly
+ * there: the layout follows at once, with no spring, or the doors run 100
+ * points off the drawer's bottom mid-drag (filmed, TESTFLIGHT_PLAN.md 11).
+ * A JUMP - the release of a drag, a tap to expand, an auto-collapse - is
+ * announced by willTransition and then handed as one far height (or a
+ * transient pair within a few ms) while the drawer slides there on the
+ * host's own spring. Laid out at that height the board shrank in one frame
+ * beside a drawer that moved smoothly.
  *
- * So the layout height is a critically damped spring on the host's own
- * response (0.338 s, fitted to the Messages drawer in docs/COLLAPSE_MSE.md)
- * from wherever the layout is toward the last handed height. A small change
- * - a finger dragging the handle hands one every frame - is followed at
- * once, because a spring would put the layout 100 points behind the finger;
- * a large one, or any change while the spring is still running, re-aims the
- * spring from its current position AND velocity, so there is never a step.
- * A spring that starts from rest waits UTTT_DRAWER_LEAD_MS, the lead the
- * height has over the slide. */
+ * So which is which is the host's own word, never a distance: the host
+ * calls uttt_drawer_expect_jump at willTransition, and a height handed in
+ * the UTTT_DRAWER_JUMP_MS after it is a jump. A jump is a critically damped
+ * spring on the host's response (0.338 s, fitted to the Messages drawer in
+ * docs/COLLAPSE_MSE.md) from wherever the layout is toward the handed
+ * height; a new one mid-spring re-aims it from its position AND velocity,
+ * so there is never a step, and one from rest waits UTTT_DRAWER_LEAD_MS,
+ * the lead the height has over the slide. Any other height - a finger - is
+ * the layout at once, a running spring included (a finger that grabs the
+ * drawer mid-slide holds it where it is). willTransition comes at the
+ * release, never during a drag, and didTransition about 50 ms BEFORE the
+ * height it announces (measured), so the window is the slide's arm's. */
 #define UTTT_DRAWER_RESPONSE_MS 338
-#define UTTT_DRAWER_FOLLOW_PT   32.f
+#define UTTT_DRAWER_JUMP_MS     500
 #define UTTT_DRAWER_LEAD_MS     20
 
 typedef struct {
@@ -138,7 +144,12 @@ typedef struct {
     int32_t t0;          /* when the running spring started               */
     int32_t moving;      /* 1 while a spring runs                         */
     int32_t seen;        /* 0 until the first height                      */
+    int32_t jump_at;     /* when the host last announced a jump           */
+    int32_t jumping;     /* 1 once one was announced                      */
 } UtttDrawer;
+
+/* The host announced a jump at `now_ms` (willTransition). */
+void  uttt_drawer_expect_jump(UtttDrawer *d, int32_t now_ms);
 
 /* A new height from the host at `now_ms`. */
 void  uttt_drawer_report(UtttDrawer *d, float h, int32_t now_ms);

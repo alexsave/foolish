@@ -4,13 +4,13 @@ import SwiftUI
 
 /// THE HEIGHT THE SHEET IS LAID OUT AT, on a display link.
 ///
-/// Messages hands the extension its height in steps: one height about 20ms
-/// before an auto-collapse slides, and a new one only every ~200ms while a
-/// released drag settles. Laid out at those, the board shrank in one frame
-/// and then in 50-90 point steps beside a drawer that moved smoothly. The
-/// kernel decides the height to lay out at instead (`uti_drawer_*`, a spring
-/// on the host's own response toward the last height handed, a finger's small
-/// steps followed at once); this file owns a clock and nothing else.
+/// A finger on the handle hands a height for every touch and the drawer is
+/// exactly there, so the layout is that height at once. A jump (a released
+/// drag, a tap to expand) is announced by willTransition and handed as one
+/// far height while the drawer slides; the kernel springs the layout there
+/// on the host's response (`uti_drawer_*`). Which is which is the host's
+/// word (`hostWillJump`), never a distance. This file owns a clock and the
+/// announcement, nothing else.
 @MainActor
 public final class UtttDrawerClock: ObservableObject {
     /// Bumped once a display frame while the spring runs, so the sheet asks
@@ -22,6 +22,20 @@ public final class UtttDrawerClock: ObservableObject {
 
     public init() {}
 
+    /// THE HOST ANNOUNCED A JUMP: willTransition, on the main thread. Every
+    /// sheet's clock hears it before its next height (a screen swap makes a
+    /// new clock, so this is not one instance's).
+    private static var jumpAt: CFTimeInterval = -1
+    public static func hostWillJump() { jumpAt = CACurrentMediaTime() }
+    private var heardJump: CFTimeInterval = -1
+
+    private func hearJump() {
+        let at = Self.jumpAt
+        guard at > heardJump else { return }
+        heardJump = at
+        uti_drawer_expect_jump(&d, ms(at))
+    }
+
     private func ms(_ t: CFTimeInterval) -> Int32 {
         Int32(((t - origin) * 1000).rounded())
     }
@@ -30,6 +44,7 @@ public final class UtttDrawerClock: ObservableObject {
     /// this layout pass. Pure: a pass sees a new height before `report` does,
     /// and must not draw that frame at the raw height.
     public func layout(for handed: CGFloat) -> CGFloat {
+        hearJump()
         var moving: Int32 = 0
         return CGFloat(uti_drawer_peek(&d, Float(handed), ms(CACurrentMediaTime()), &moving))
     }
@@ -50,6 +65,7 @@ public final class UtttDrawerClock: ObservableObject {
     /// Every height Messages hands the sheet.
     public func report(_ h: CGFloat) {
         handed = h
+        hearJump()
         uti_drawer_report(&d, Float(h), ms(CACurrentMediaTime()))
         var moving: Int32 = 0
         _ = uti_drawer_at(&d, ms(CACurrentMediaTime()), &moving)
