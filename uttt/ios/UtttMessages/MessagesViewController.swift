@@ -310,7 +310,9 @@ final class MessagesViewController: MSMessagesAppViewController {
             return
         }
 
-        /* STRAIGHT TO THE BOARD with `dev.game` set: see UtttDev. */
+        /* STRAIGHT TO THE BOARD with `dev.game` set: see UtttDev. Seated
+         * first - the seeded board's "you are" is a seat question too. */
+        identify(conversation)
         if conversation.selectedMessage == nil, staged == nil, sent == nil,
            let plies = UtttDev.game {
             showSeeded(plies, conversation)
