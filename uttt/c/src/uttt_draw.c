@@ -329,8 +329,11 @@ UtttBubble uttt_bubble(void)
     b.text.w = b.board.x - BUB_GUT - BUB_PAD;
     b.text.h = side;
 
-    b.headline_pt = 16.f;
-    b.place_pt    = 16.f;
+    /* 18, measured off option 02: "Your move" there is 82 points wide in
+     * bold, which is 18-point type. At 16 the two lines read as a label
+     * beside the board rather than the thing a glance lands on. */
+    b.headline_pt = 18.f;
+    b.place_pt    = 18.f;
     b.lead        = 1.f;
     b.reach       = BUB_REACH;
     b.headline_rgba = 0x1d1b16ffu;

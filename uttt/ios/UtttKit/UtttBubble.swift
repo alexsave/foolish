@@ -7,9 +7,9 @@ import UIKit
 ///
 /// THIS IS THE FRAME NOBODY CHOSE. `MSMessageTemplateLayout` renders its image
 /// at exactly 300 by 195 points - landscape, aspect 1.54 - and a board is
-/// square, so 181 points is the largest one that fits and 119 are left over.
-/// The whole design is what those 119 points are for, and the answer is two
-/// lines: a headline, and the block the opponent has been sent to.
+/// square. UI.html gives it 181; the kernel gives it 170 so the grid's main
+/// lines stop on the frame (uttt_bubble), and the rest is two lines: a
+/// headline, and the block the opponent has been sent to.
 ///
 /// AND IT IS BAKED. Every device in the thread shows the one image the sender
 /// drew and reads the one caption under it, so neither may say "you": the
@@ -115,7 +115,7 @@ public enum UtttBubble {
                 cg.fill(frame)
             }
 
-            /* The kernel draws in a unit square and the board is 181 points in
+            /* The kernel draws in a unit square and the board is 170 points in
              * the corner the kernel knows nothing about, so the transform goes
              * on once here rather than into ten thousand multiplications. */
             cg.saveGState()
@@ -140,10 +140,10 @@ public enum UtttBubble {
 
     // MARK: the two lines
 
-    /* EIGHTY-SEVEN POINTS. That is what is left of the 300 once the board has
-     * had its 181 and the padding its gutters, and "bottom middle" in bold 16
-     * is about 106 - so the headline gets one line and the place is allowed to
-     * wrap onto two. Every block name is two short words, so it always breaks
+    /* ABOUT NINETY-FIVE POINTS. That is what is left of the 300 once the
+     * board has had its 170 and the padding its gutters, and "bottom middle"
+     * in bold 18 is well over that - so the headline gets one line and the
+     * place is allowed to wrap onto two, as it does in UI.html option 02. Every block name is two short words, so it always breaks
      * cleanly and nothing ever truncates; the truncating line is the caption,
      * which is the one carrying a name it did not choose. */
     private static func draw(mark: Uttt.Mark, headline: String, place: String,
