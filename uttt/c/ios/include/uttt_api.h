@@ -213,6 +213,10 @@ typedef struct {
 } UtiDrawer;
 void  uti_drawer_report(UtiDrawer *d, float h, int32_t now_ms);
 float uti_drawer_at(const UtiDrawer *d, int32_t now_ms, int32_t *moving);
+/* What uti_drawer_at would say had `h` just been reported, without
+ * reporting it: a layout pass sees a new height before the host's change
+ * callback does, and must not draw that one frame at the raw height. */
+float uti_drawer_peek(const UtiDrawer *d, float h, int32_t now_ms, int32_t *moving);
 
 /* The board with the last move's mark LEFT OUT and no wash - what a host
  * caches while the motion draws the rest over it. */

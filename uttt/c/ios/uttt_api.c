@@ -211,6 +211,14 @@ float uti_drawer_at(const UtiDrawer *d, int32_t now_ms, int32_t *moving)
     return uttt_drawer_at(&k, now_ms, moving);
 }
 
+float uti_drawer_peek(const UtiDrawer *d, float h, int32_t now_ms, int32_t *moving)
+{
+    UtttDrawer k;
+    memcpy(&k, d, sizeof k);
+    if (!k.seen || k.target != h) uttt_drawer_report(&k, h, now_ms);
+    return uttt_drawer_at(&k, now_ms, moving);
+}
+
 int uti_draw_mark(int mark, int32_t seed)
 {
     dl_fresh();

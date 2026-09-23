@@ -364,6 +364,19 @@ int main(void)
         ok(uti_say(12345)[0] == '\0', "an unknown sentence is empty, never NULL");
     }
 
+    {   /* the drawer through the bridge: a peek never draws the raw height */
+        UtiDrawer d = {0};
+        int32_t mv = 0;
+        uti_drawer_report(&d, 840.f, 0);
+        ok(uti_drawer_peek(&d, 289.f, 10, &mv) == 840.f && mv, "a far height, peeked, is not laid out raw");
+        ok(uti_drawer_peek(&d, 830.f, 10, &mv) == 830.f && !mv, "a finger's small one is, at once");
+        ok(uti_drawer_peek(&d, 840.f, 10, &mv) == 840.f && !mv, "and the same height is where it rests");
+        uti_drawer_report(&d, 289.f, 10);
+        float mid = uti_drawer_at(&d, 200, &mv);
+        ok(mid < 800.f && mid > 289.f && mv, "a reported one springs there");
+        ok(uti_drawer_at(&d, 2000, &mv) == 289.f && !mv, "and rests on it");
+    }
+
     printf(fails ? "\n%d FAILED\n" : "\nbridge ok\n", fails);
     return fails ? 1 : 0;
 }

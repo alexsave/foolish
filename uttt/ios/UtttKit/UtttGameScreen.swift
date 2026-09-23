@@ -61,6 +61,9 @@ public struct UtttGameScreen: View {
     /// on the napkin.
     @State private var rulesOpen = false
 
+    /// The height the sheet is laid out at (UtttDrawerClock).
+    @StateObject private var drawer = UtttDrawerClock()
+
     public var body: some View {
         UtttSheet {
             GeometryReader { geo in
@@ -79,10 +82,19 @@ public struct UtttGameScreen: View {
                      * +0.35s and +0.5s). Every number on the sheet is
                      * already a function of the height, so the height is
                      * the only animation it needs. */
-                    sheet(geo.size)
-                        .transaction(value: geo.size.height) { $0.animation = nil }
+                    /* AND NOT AT THE HEIGHT MESSAGES HANDED, which arrives
+                     * in steps (one height 20ms before an auto-collapse
+                     * slides, one every ~200ms while a released drag
+                     * settles): at the kernel's drawer height, a spring on
+                     * the host's response toward it. See UtttDrawerClock. */
+                    let _ = drawer.frame
+                    let h = drawer.layout(for: geo.size.height)
+                    sheet(CGSize(width: geo.size.width, height: h))
+                        .frame(width: geo.size.width, height: h)
+                        .transaction(value: h) { $0.animation = nil }
                 }
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { drawer.report($0) }
             .overlay { MotionRulerEdges(on: UtttRuler.on) }
 #if DEBUG
             /* With the ruler on, every height the sheet is handed, so a
