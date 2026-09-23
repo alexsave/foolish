@@ -136,13 +136,14 @@ float uttt_drawer_at(const UtttDrawer *d, int32_t now_ms, int32_t *moving);
  * (waiting, play, end, spectator), and its side is a continuous function of
  * the height: min and max of lerps on the openness, never a branch on it.
  *
- * Everything else is fitted AROUND the centred board. The words a screen
- * puts at the top (the waiting lines, the verdict, the spectator's line)
- * are a box the host measures; the board gives up only what it must so its
- * square does not run into that box - beside it when the board is narrow
- * enough, under it otherwise - and the same room at the bottom, so the
- * centre stays the centre. At the expanded end the header bar and the door
- * row are full-width bands, reserved the same way. */
+ * THE BOARD IS AS LARGE AS THE SHEET ALLOWS (owner, 2026-09-23): its side is
+ * limited by the drawer's height less the grab handle's margin, and by its
+ * width less the side columns, and by nothing else. The words never cost it
+ * a point. On the strip they go BESIDE the board, in the room its square
+ * leaves at one side, wrapped onto as many lines as that takes (`words`,
+ * `words_side`); opening, they move into the header band, which the height
+ * the expanded sheet has to spare pays for - it is the width that limits the
+ * board there. The host sets the words inside the box it is given. */
 enum {
     UTTT_SHEET_PLAY  = 0,  /* a seat: "you are" column, doors, headline     */
     UTTT_SHEET_WATCH = 1,  /* a spectator: the rulebook column, doors       */
@@ -151,10 +152,9 @@ enum {
 
 typedef struct {
     float w, h;            /* the sheet, laid out at the drawer's height     */
-    float words_w, words_h;/* the box of words the strip carries at its top
-                              (0, 0 for none); on the expanded sheet the
-                              header bar replaces it                        */
     int32_t kind;          /* UTTT_SHEET_*                                   */
+    int32_t words;         /* the strip carries words: 0 only for a live
+                              seat, whose headline waits for the band       */
 } UtttSheetIn;
 
 typedef struct {
@@ -170,6 +170,11 @@ typedef struct {
     float icon_top;        /* how far the indicator sits below the margin    */
     float words_alpha;     /* the headline: faded in with t on a live seat   */
     float door_alpha;      /* the Again door: expanded only                  */
+    float words[4];        /* x, y, w, h: the box the screen's words are set
+                              in, wrapped to its width                      */
+    int32_t words_side;    /* 1: a column beside the board (the strip), the
+                              play screen's on the right, the others' on the
+                              left; 0: the header band across the top       */
 } UtttSheet;
 
 /* The drawer heights the openness runs between: 360, above the tallest

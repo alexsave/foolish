@@ -223,13 +223,13 @@ float uttt_drawer_at(const UtttDrawer *d, int32_t now_ms, int32_t *moving)
 static float lerpf(float a, float b, float t) { return a + (b - a) * t; }
 static float clampf(float x, float lo, float hi) { return x < lo ? lo : x > hi ? hi : x; }
 
-/* The numbers the two ends are drawn with. The strip's margin is smaller
- * above and below because height is what runs out there; the columns are
- * one either side on the strip so the board sits in the middle of the SHEET
- * and not of what is left over ("you are" in the left, the rulebook in the
- * right); the header bar is "you are" over a 46-point mark. */
+/* The numbers the two ends are drawn with. The margin is the grab handle's
+ * above and below (Messages draws its handle over the top 13 points), and
+ * the sides'; the columns are one either side on the strip so the board sits
+ * in the middle of the SHEET and not of what is left over ("you are" in the
+ * left, the rulebook in the right); the header band is "you are" over a
+ * 46-point mark. */
 #define SHEET_MARGIN     13.f
-#define SHEET_VMARGIN     8.f
 #define SHEET_COLUMN     38.f
 #define SHEET_GUTTER      3.f
 #define SHEET_DOOR_LO    38.f
@@ -247,49 +247,59 @@ void uttt_sheet(const UtttSheetIn *in, UtttSheet *o)
 
     *o = (UtttSheet){ .t = t };
     o->hpad = SHEET_MARGIN;
-    o->vpad = lerpf(SHEET_VMARGIN, SHEET_MARGIN, t);
-    o->col  = doors ? lerpf(SHEET_COLUMN, 0.f, t) : 0.f;
+    o->vpad = SHEET_MARGIN;
+    /* EVERY SCREEN KEEPS ITS COLUMNS on the strip, words or doors: a board
+     * that took the whole width would leave its words no room at all (a
+     * 340 drawer on a 375 phone left the waiting words 0 points). */
+    o->col  = lerpf(SHEET_COLUMN, 0.f, t);
     o->door = lerpf(SHEET_DOOR_LO, SHEET_DOOR_HI, t);
     o->foot = doors ? lerpf(0.f, SHEET_DOOR_HI + SHEET_DOOR_GAP, t) : 0.f;
     o->icon = lerpf(34.f, 46.f, t);
     o->icon_lead = lerpf(3.f, 4.f, t);
     o->icon_top  = lerpf(4.f, 0.f, t);
     o->door_alpha = doors ? clampf((t - .5f) * 2.f, 0.f, 1.f) : 0.f;
+    /* The header band, which the door row mirrors at the bottom so the
+     * centre stays the centre: nothing on the strip, SHEET_BAR open. */
+    o->bar = lerpf(0.f, SHEET_BAR, t);
+    /* A live seat's strip says nothing - the wash says it - and its headline
+     * fades in with the band; an ended seat's verdict, the waiting words and
+     * the spectator's line are shown at every height. */
+    o->words_alpha = (seat && !in->words) ? t : 1.f;
 
-    /* THE WORDS AT THE TOP. A seat's strip carries only what it measured
-     * (the verdict at the end, nothing while the game runs, when the
-     * headline fades in with the bar); opening, the header bar - "you are"
-     * on the left, the headline on the right - spans the sheet. A spectator's
-     * line spans it at both ends. */
-    float full = in->w - 2.f * SHEET_MARGIN;
-    float ww = in->words_w, wh = in->words_h;
-    if (seat) {
-        ww = lerpf(ww, full, t);
-        wh = lerpf(wh, SHEET_BAR, t);
-    } else if (in->kind == UTTT_SHEET_WATCH && wh > 0.f) {
-        ww = full;
-    }
-    o->bar = wh;
-    o->words_alpha = (seat && in->words_h <= 0.f) ? t : 1.f;
+    /* THE SIDE: the width less the columns, leaving the main lines room to
+     * run 5% past the board; the height less the margins and the bands.
+     * Nothing else. */
+    float gut  = lerpf(0.f, SHEET_GUTTER, t);
+    float wide = (in->w - 2.f * (SHEET_MARGIN + gut) - 2.f * o->col) / (1.f + 2.f * reach);
+    float tall = in->h - 2.f * o->vpad - 2.f * fmaxf(o->bar, o->foot);
+    float side = fmaxf(fminf(wide, tall), 0.f);
 
-    /* THE SIDE. The width, less the columns, leaving the main lines room to
-     * run 5% past the board on the sheet; the height, less the margins. */
-    float gut   = lerpf(0.f, SHEET_GUTTER, t);
-    float avail = in->h - 2.f * o->vpad;
-    float side  = (in->w - 2.f * (SHEET_MARGIN + gut) - 2.f * o->col) / (1.f + 2.f * reach);
-    side = fminf(side, avail);
-    /* Clear of the words: beside them (the ink's edge short of their box by
-     * the air) or under them (the square's top below their box, which
-     * carries its own air), whichever leaves more board. The same room at
-     * the bottom, or the centre would not be the centre. */
-    if (ww > 0.f && wh > 0.f) {
-        float beside = (in->w - 2.f * SHEET_MARGIN - 2.f * ww - 2.f * SHEET_WORDS_AIR)
-                       / (1.f + 2.f * reach);
-        float under = avail - 2.f * wh;
-        side = fminf(side, fmaxf(beside, under));
+    /* THE WORDS. Beside the ink on the strip - the play screen's verdict in
+     * the right column over the rulebook, where the expanded band puts its
+     * headline; the waiting words and the spectator's line in the left - and
+     * in the band across the top once the sheet is half open. */
+    float ink_l = (in->w - side * (1.f + 2.f * reach)) * .5f;
+    float ink_r = in->w - ink_l;
+    if (t < .5f) {
+        o->words_side = 1;
+        o->words[1] = o->vpad;
+        if (seat) {
+            o->words[0] = ink_r + SHEET_WORDS_AIR;
+            o->words[2] = in->w - SHEET_MARGIN - o->words[0];
+            o->words[3] = in->h - 2.f * o->vpad - o->door - SHEET_DOOR_GAP;
+        } else {
+            o->words[0] = SHEET_MARGIN;
+            o->words[2] = ink_l - SHEET_WORDS_AIR - SHEET_MARGIN;
+            o->words[3] = in->h - 2.f * o->vpad;
+        }
+        o->words[2] = fmaxf(o->words[2], 0.f);
+    } else {
+        o->words_side = 0;
+        o->words[0] = SHEET_MARGIN;
+        o->words[1] = o->vpad;
+        o->words[2] = in->w - 2.f * SHEET_MARGIN;
+        o->words[3] = o->bar;
     }
-    side = fminf(side, avail - 2.f * o->foot);       /* the door row, the same */
-    side = fmaxf(side, 0.f);
 
     o->board[0] = (in->w - side) * .5f;
     o->board[1] = (in->h - side) * .5f;

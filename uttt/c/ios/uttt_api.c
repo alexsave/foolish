@@ -5,6 +5,7 @@
 #include "../src/uttt_anim.h"
 #include "../src/uttt_msg.h"
 #include "../src/uttt_say.h"
+#include <stddef.h>
 #include <string.h>
 
 /* The host's names for the kernel's numbers. Two lists, so the compiler
@@ -225,6 +226,9 @@ float uti_drawer_peek(const UtiDrawer *d, float h, int32_t now_ms, int32_t *movi
 
 _Static_assert(sizeof(UtiSheetIn) == sizeof(UtttSheetIn), "UtiSheetIn mirrors UtttSheetIn");
 _Static_assert(sizeof(UtiSheet) == sizeof(UtttSheet), "UtiSheet mirrors UtttSheet");
+_Static_assert(offsetof(UtiSheet, words) == offsetof(UtttSheet, words)
+               && offsetof(UtiSheet, words_side) == offsetof(UtttSheet, words_side)
+               && offsetof(UtiSheetIn, words) == offsetof(UtttSheetIn, words), "the sheet's fields line up");
 _Static_assert(UTI_SHEET_PLAY == UTTT_SHEET_PLAY && UTI_SHEET_WATCH == UTTT_SHEET_WATCH
                && UTI_SHEET_WAIT == UTTT_SHEET_WAIT, "sheet kinds");
 

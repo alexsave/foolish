@@ -36,12 +36,6 @@ public struct UtttGameScreen: View {
     /// on the napkin.
     @State private var rulesOpen = false
 
-    /// The verdict's box as set, so the kernel can fit the board around it.
-    @State private var words: CGSize = .zero
-
-    /// The air between the words and the board, below the words' own lines.
-    private static let wordsAir: CGFloat = 6
-
     public var body: some View {
         UtttSheet {
             if rulesOpen {
@@ -67,13 +61,14 @@ public struct UtttGameScreen: View {
     /// height, and everything else is placed at an edge around it.
     private func sheet(_ size: CGSize) -> some View {
         /* AT THE END THE STRIP CARRIES THE VERDICT (UI.html 08: "the verdict
-         * and the board"), top right where the expanded sheet puts it; the
-         * board keeps its centre and gives up only what it must to clear it.
-         * While the game runs the strip carries no words - the wash says it -
-         * and the headline fades in with the bar. */
+         * and the board"), in the right column beside the board, over the
+         * rulebook - the board is as large as the sheet allows and the words
+         * wrap into the room it leaves. While the game runs the strip carries
+         * no words - the wash says it - and the headline fades in with the
+         * band. */
         let end = Uttt.over != .none
-        let box = end ? CGSize(width: words.width, height: words.height + Self.wordsAir) : .zero
-        let L = Uttt.sheet(.play, size: size, words: box)
+        let L = Uttt.sheet(.play, size: size, words: end)
+        let column = L.words_side != 0
         let r = UtttRuler.on
         let hpad = CGFloat(L.hpad), vpad = CGFloat(L.vpad)
         let icon = CGFloat(L.icon)
@@ -88,9 +83,9 @@ public struct UtttGameScreen: View {
                     .padding(.leading, hpad)
                     .padding(.top, vpad + CGFloat(L.icon_top))
             }
-            .overlay(alignment: .topTrailing) {
+            .overlay(alignment: .topLeading) {
                 VStack(alignment: .trailing, spacing: 3) {
-                    headlineView
+                    headlineView(column: column)
                         .motionSquare(.yellow, on: r)
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(Uttt.say(.headlineSpoken))
@@ -101,16 +96,15 @@ public struct UtttGameScreen: View {
                         Text(model.subline)
                             .font(.system(size: 14))
                             .foregroundStyle(UtttInk.muted)
-                            .lineLimit(1)
+                            .multilineTextAlignment(.trailing)
+                            .lineLimit(column ? nil : 1)
+                            .minimumScaleFactor(0.6)
                             .motionSquare(.lime, on: r)
                     }
                 }
-                .fixedSize()
-                .measured($words)
+                .inWords(L, alignment: .topTrailing)
                 .opacity(Double(L.words_alpha)).allowsHitTesting(L.words_alpha > 0.5)
                 .accessibilityHidden(L.words_alpha < 0.5)
-                .padding(.trailing, hpad)
-                .padding(.top, vpad)
             }
             .overlay(alignment: .bottomTrailing) {
                 HStack(alignment: .center, spacing: 10) {
@@ -133,21 +127,29 @@ public struct UtttGameScreen: View {
     /// line box, or it sits low and reads as a separate object; and it is
     /// nudged down by a point because a drawn circle's optical centre is not
     /// its bounding box's. `.firstTextBaseline` does the rest.
-    @ViewBuilder private var headlineView: some View {
+    ///
+    /// IN THE STRIP'S COLUMN words-only lines WRAP ("You win" over two lines
+    /// rather than a board a size smaller), and a line with a drawn mark in it
+    /// scales down to the column instead, since a mark cannot break a line.
+    @ViewBuilder private func headlineView(column: Bool) -> some View {
         let ink = Uttt.over == .none ? Self.ink : Self.blue
-        HStack(alignment: .firstTextBaseline, spacing: 0) {
-            switch model.headline {
-            case .text(let t):
-                headlineText(t, ink)
-            case .mark(let before, let m, let after):
+        switch model.headline {
+        case .text(let t):
+            headlineText(t, ink)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(column ? 3 : 1)
+                .minimumScaleFactor(0.5)
+        case .mark(let before, let m, let after):
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
                 if !before.isEmpty { headlineText(before, ink) }
                 UtttMarkIcon(mark: m, seed: model.seed &* 31 &+ 7)
                     .frame(width: 21, height: 21)
                     .alignmentGuide(.firstTextBaseline) { $0.height - 2 }
                 if !after.isEmpty { headlineText(after, ink) }
             }
+            .lineLimit(1)
+            .minimumScaleFactor(0.5)
         }
-        .lineLimit(1)
     }
 
     private func headlineText(_ t: String, _ ink: Color) -> some View {

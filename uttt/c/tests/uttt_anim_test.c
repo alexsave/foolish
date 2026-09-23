@@ -169,23 +169,24 @@ int main(void)
     }
 
     /* ONE LAYOUT, EVERY SCREEN: the board's centre is the sheet's centre at
-     * every height, its side never steps as the drawer moves, and it stays
-     * clear of the words and on the sheet (docs/UI.html "What holds which
-     * edge": the board holds the centre and is the only thing that resizes). */
+     * every height, its side never steps as the drawer moves, it is as large
+     * as the sheet allows, and the words sit clear of it (docs/UI.html "What
+     * holds which edge": the board holds the centre and is the only thing
+     * that resizes; owner 2026-09-23: the board as large as possible). */
     {
         static const float W[] = { 375.f, 393.f, 440.f };
-        static const struct { int kind; float ww, wh; } K[] = {
-            { UTTT_SHEET_PLAY, 0, 0 },        /* a live game                  */
-            { UTTT_SHEET_PLAY, 82, 50 },      /* the end: "You win / Diagonal" */
-            { UTTT_SHEET_WATCH, 0, 28 },      /* the spectator's line         */
-            { UTTT_SHEET_WAIT, 168, 50 },     /* the waiting words            */
+        static const struct { int kind, words; } K[] = {
+            { UTTT_SHEET_PLAY, 0 },           /* a live game                  */
+            { UTTT_SHEET_PLAY, 1 },           /* the end: the verdict         */
+            { UTTT_SHEET_WATCH, 1 },          /* the spectator's line         */
+            { UTTT_SHEET_WAIT, 1 },           /* the waiting words            */
         };
         float reach = .135f * UTTT_REACH;
         int centred = 1, clear = 1, onsheet = 1, grows = 1;
         float worst = 0.f;
         for (int wi = 0; wi < 3; wi++)
         for (int ki = 0; ki < 4; ki++) {
-            UtttSheetIn in = { .w = W[wi], .words_w = K[ki].ww, .words_h = K[ki].wh, .kind = K[ki].kind };
+            UtttSheetIn in = { .w = W[wi], .kind = K[ki].kind, .words = K[ki].words };
             float prev = -1.f;
             for (float h = 220.f; h <= 900.f; h += .25f) {
                 UtttSheet o;
@@ -199,12 +200,15 @@ int main(void)
                 prev = s;
                 if (s * (1.f + 2.f * reach) > in.w - 2.f * o.hpad + 1e-3f || s > h - 2.f * o.vpad + 1e-3f)
                     onsheet = 0;
-                /* clear of the strip's words: beside them or under them */
-                if (o.t == 0.f && in.words_h > 0.f) {
-                    float bx = in.words_w > 0.f ? in.words_w : in.w - 2.f * o.hpad;
-                    int beside = o.board[0] + s * (1.f + reach) <= in.w - o.hpad - bx + 1e-3f;
-                    int under  = o.board[1] >= o.vpad + in.words_h - 1e-3f;
-                    if (!beside && !under) clear = 0;
+                /* the words' box: beside the ink on the strip, above the
+                 * square in the band, and on the sheet either way */
+                float il = (in.w - s * (1.f + 2.f * reach)) / 2, ir = in.w - il;
+                const float *b = o.words;
+                if (b[0] < o.hpad - 1e-3f || b[0] + b[2] > in.w - o.hpad + 1e-3f || b[2] < 0.f) clear = 0;
+                if (o.words_side) {
+                    if (b[0] + b[2] > il + 1e-3f && b[0] < ir - 1e-3f) clear = 0;
+                } else if (b[1] + b[3] > o.board[1] + 1e-3f) {
+                    clear = 0;
                 }
             }
         }
@@ -213,13 +217,43 @@ int main(void)
         OK(worst < .6f, "and its side never steps as the drawer moves");
         OK(grows, "on the strip a taller drawer never gives a smaller board");
         OK(onsheet, "its lines stay on the sheet");
-        OK(clear, "and it clears the strip's words, beside or under them");
+        OK(clear, "and its words sit beside it on the strip and above it in the band");
+
+        /* AS LARGE AS THE SHEET ALLOWS, on every screen, words or none: on
+         * the strip the drawer's height less the grab handle's margins (or
+         * the width less the columns, on a narrow phone), expanded the width
+         * less the margins. Worked out here from the sheet's own numbers,
+         * not from the layout's arithmetic. */
+        static const struct { float w, h; } D[] = {
+            { 440.f, 274.f }, { 440.f, 340.f }, { 393.f, 300.f }, { 375.f, 250.f },   /* compact  */
+            { 440.f, 800.f }, { 393.f, 700.f }, { 375.f, 541.f },                     /* expanded */
+        };
+        int biggest = 1, words_room = 1;
+        for (int di = 0; di < 7; di++)
+        for (int ki = 0; ki < 4; ki++) {
+            UtttSheet o;
+            uttt_sheet(&(UtttSheetIn){ .w = D[di].w, .h = D[di].h, .kind = K[ki].kind,
+                                       .words = K[ki].words }, &o);
+            int compact = di < 4;
+            float want = compact
+                ? fminf(D[di].h - 2.f * 13.f, (D[di].w - 2.f * 13.f - 2.f * 38.f) / (1.f + 2.f * reach))
+                : (D[di].w - 2.f * 16.f) / (1.f + 2.f * reach);
+            if (fabsf(o.board[2] - want) > 1e-2f) {
+                biggest = 0;
+                printf("  sheet %.0fx%.0f kind %d words %d: board %.2f, the sheet allows %.2f\n",
+                       D[di].w, D[di].h, K[ki].kind, K[ki].words, o.board[2], want);
+            }
+            if (compact && o.words[2] < 32.f - 1e-3f) words_room = 0;
+        }
+        OK(biggest, "every screen's board is as large as the sheet allows, compact and expanded");
+        OK(words_room, "and on every strip the words get a column of at least 32 points");
+
         UtttSheet c, e;
         uttt_sheet(&(UtttSheetIn){ .w = 375.f, .h = 340.f, .kind = UTTT_SHEET_PLAY }, &c);
         uttt_sheet(&(UtttSheetIn){ .w = 375.f, .h = 541.f, .kind = UTTT_SHEET_PLAY }, &e);
         printf("  sheet: SE compact board %.1f, expanded %.1f\n", c.board[2], e.board[2]);
         OK(c.t == 0.f && e.t == 1.f, "340 is the compact end and 541 the expanded one");
-        OK(c.words_alpha == 0.f && e.words_alpha == 1.f, "a live strip hides the headline, the bar shows it");
+        OK(c.words_alpha == 0.f && e.words_alpha == 1.f, "a live strip hides the headline, the band shows it");
     }
 
     printf("uttt_anim: %d checks, %d failed\n", checks, fails);

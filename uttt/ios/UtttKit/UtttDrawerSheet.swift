@@ -1,3 +1,4 @@
+import CUttt
 import SwiftUI
 
 /// THE SHEET AT THE DRAWER'S HEIGHT, for every screen.
@@ -46,8 +47,10 @@ extension View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    /// The size this view takes, reported whenever it changes.
-    func measured(_ into: Binding<CGSize>) -> some View {
-        onGeometryChange(for: CGSize.self) { $0.size } action: { into.wrappedValue = $0 }
+    /// Set in the layout's box of words: `x, y, w, h` from `UtiSheet.words`,
+    /// the content wrapped to its width and pinned to `alignment`.
+    func inWords(_ L: UtiSheet, alignment: Alignment) -> some View {
+        frame(width: CGFloat(L.words.2), height: CGFloat(L.words.3), alignment: alignment)
+            .placed(x: L.words.0, y: L.words.1)
     }
 }

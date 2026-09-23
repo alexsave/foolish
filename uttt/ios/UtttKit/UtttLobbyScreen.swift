@@ -25,8 +25,6 @@ public struct UtttLobbyScreen: View {
 
     public init(stance: Stance) { self.stance = stance }
 
-    /// The words' box as set, so the kernel can fit the board around it.
-    @State private var box: CGSize = .zero
 
     public var body: some View {
         UtttSheet {
@@ -44,8 +42,7 @@ public struct UtttLobbyScreen: View {
     /// one frame (measured with the ruler), and the strip's board sat 80
     /// points right of centre.
     private func sheet(_ size: CGSize) -> some View {
-        let L = Uttt.sheet(.wait, size: size,
-                           words: CGSize(width: box.width, height: box.height + 6))
+        let L = Uttt.sheet(.wait, size: size)
         return ZStack(alignment: .topLeading) {
             if stance != .unreadable {
                 board
@@ -57,27 +54,28 @@ public struct UtttLobbyScreen: View {
             }
         }
         .overlay(alignment: .topLeading) {
-            /* THE WORDS TAKE THEIR OWN WIDTH. A fixed 150 broke "Nobody has
-             * taken it yet." after "taken", leaving "it yet." alone on a
-             * second line; UI.html 02 sets it as one line under the headline. */
-            words.fixedSize()
-                .measured($box)
-                .padding(.leading, CGFloat(L.hpad))
-                .padding(.top, CGFloat(L.vpad))
+            /* THE WORDS GO WHERE THE BOARD LEAVES ROOM: in the column beside
+             * it on the strip, wrapped onto as many lines as that takes (the
+             * board no longer shrinks under them), and across the top once
+             * the sheet opens, where UI.html 02 sets them. */
+            words(column: L.words_side != 0)
+                .inWords(L, alignment: .topLeading)
         }
     }
 
-    private var words: some View {
+    private func words(column: Bool) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(headline)
                 .font(.system(size: 21, weight: .bold))
                 .tracking(-0.315)
                 .foregroundStyle(UtttInk.ink)
-                .lineLimit(1)
+                .lineLimit(column ? 2 : 1)
+                .minimumScaleFactor(0.6)
             Text(subline)
                 .font(.system(size: 14))
                 .foregroundStyle(UtttInk.muted)
-                .lineLimit(1)
+                .lineLimit(column ? nil : 1)
+                .minimumScaleFactor(0.6)
         }
     }
 
@@ -126,8 +124,6 @@ public struct UtttWatchScreen: View {
     /// a spectator can read them too.
     @State private var rulesOpen = false
 
-    /// The header line's box as set, so the kernel can fit the board under it.
-    @State private var box: CGSize = .zero
 
     public var body: some View {
         UtttSheet {
@@ -147,30 +143,41 @@ public struct UtttWatchScreen: View {
     /// rulebook in the right column on the strip and beside Again at the
     /// bottom when expanded. There was a switch at 440 points here too.
     private func watch(_ size: CGSize) -> some View {
-        let L = Uttt.sheet(.watch, size: size,
-                           words: CGSize(width: box.width, height: box.height + 6))
+        let L = Uttt.sheet(.watch, size: size)
         let hpad = CGFloat(L.hpad), vpad = CGFloat(L.vpad)
         return UtttBoard(active: model.active, last: model.last,
                          positionKey: model.positionKey)
             .frame(width: CGFloat(L.board.2), height: CGFloat(L.board.2))
             .boardRuler()
             .placed(x: L.board.0, y: L.board.1)
-            .overlay(alignment: .top) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(Uttt.say(.watchLabel))
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .tracking(1.9)
-                        .textCase(.uppercase)
-                        .foregroundStyle(UtttInk.label)
-                    Spacer()
-                    Text(line)
-                        .font(.system(size: 17, weight: .bold))
-                        .foregroundStyle(UtttInk.ink)
-                        .accessibilityAddTraits(.isHeader)
+            .overlay(alignment: .topLeading) {
+                /* On the strip the label over the line in the left column,
+                 * the line wrapped; opening, the two across the top band. */
+                let label = Text(Uttt.say(.watchLabel))
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .tracking(1.9)
+                    .textCase(.uppercase)
+                    .foregroundStyle(UtttInk.label)
+                let said = Text(line)
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(UtttInk.ink)
+                    .accessibilityAddTraits(.isHeader)
+                Group {
+                    if L.words_side != 0 {
+                        VStack(alignment: .leading, spacing: 3) {
+                            label.lineLimit(1).minimumScaleFactor(0.5)
+                            said.lineLimit(3).minimumScaleFactor(0.6)
+                        }
+                        .inWords(L, alignment: .topLeading)
+                    } else {
+                        HStack(alignment: .firstTextBaseline) {
+                            label
+                            Spacer()
+                            said
+                        }
+                        .inWords(L, alignment: .top)
+                    }
                 }
-                .measured($box)
-                .padding(.horizontal, hpad)
-                .padding(.top, vpad)
             }
             .overlay(alignment: .bottomTrailing) {
                 /* Again belongs to the expanded view (UI.html 08); the

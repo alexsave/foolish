@@ -233,18 +233,20 @@ float uti_drawer_peek(const UtiDrawer *d, float h, int32_t now_ms, int32_t *movi
 
 /* ---- one layout for every screen (src/uttt_anim.h UtttSheet) ----
  * The board's square centred on the sheet at every height and every screen,
- * scaled continuously with the drawer; the words, columns and doors fitted
- * around it. The host measures its box of words and places what it is told. */
+ * scaled continuously with the drawer and as large as the sheet allows; the
+ * words, columns and doors fitted around it. The host sets its words inside
+ * the box it is given (`words`, wrapped to its width). */
 #define UTI_SHEET_PLAY   0
 #define UTI_SHEET_WATCH  1
 #define UTI_SHEET_WAIT   2
 typedef struct {
-    float   w, h, words_w, words_h;
-    int32_t kind;
+    float   w, h;
+    int32_t kind, words;
 } UtiSheetIn;
 typedef struct {
     float t, board[3], hpad, vpad, col, bar, foot, door, icon, icon_lead,
-          icon_top, words_alpha, door_alpha;
+          icon_top, words_alpha, door_alpha, words[4];
+    int32_t words_side;
 } UtiSheet;
 UtiSheet uti_sheet(UtiSheetIn in);
 
