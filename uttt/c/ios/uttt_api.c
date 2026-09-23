@@ -158,6 +158,8 @@ int uti_draw_under(void)
     return publish();
 }
 
+float uti_board_reach(void) { return .135f * UTTT_REACH; }
+
 int uti_draw_last(float t)
 {
     dl_fresh();

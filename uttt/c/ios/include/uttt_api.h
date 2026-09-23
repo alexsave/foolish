@@ -195,6 +195,10 @@ void      uti_motion_at(const UtiMotion *m, int32_t now_ms, UtiFrame *f);
 /* The board with the last move's mark LEFT OUT and no wash - what a host
  * caches while the motion draws the rest over it. */
 int  uti_draw_under(void);
+/* How far the main lines run past the board on each side, as a fraction of
+ * the board (UI.html's 5%), so a layout can keep them on the sheet. */
+float uti_board_reach(void);
+
 /* The last move's heavy mark alone, drawn to `t`. */
 int  uti_draw_last(float t);
 

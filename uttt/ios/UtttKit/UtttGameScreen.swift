@@ -121,7 +121,11 @@ public struct UtttGameScreen: View {
         let door = lerp(Self.doorCollapsed, Self.doorSide, t)
         let icon = lerp(34, 46, t)
 
-        let side = max(0, min(size.width - 2 * (Self.margin + gut) - 2 * col,
+        /* THE LINES STOP ON THE SHEET: the main lines run 5% past the board
+         * (UI.html), so the width the board may take leaves room for them -
+         * on a Pro Max the tips land about 16 points in, as in the spec. */
+        let side = max(0, min((size.width - 2 * (Self.margin + gut) - 2 * col)
+                                  / (1 + 2 * Uttt.boardReach),
                               size.height - 2 * vpad - top - bot))
 
         return board

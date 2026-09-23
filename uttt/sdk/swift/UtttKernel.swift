@@ -331,6 +331,9 @@ public enum Uttt {
     /// Every stroke but the last move's mark, and no wash: what is cached.
     public static func underPolys() -> BoardPolys { harvestBoard(uti_draw_under()) }
 
+    /// How far the main lines run past the board, per side, as a fraction of it.
+    public static var boardReach: CGFloat { CGFloat(uti_board_reach()) }
+
     /// The last move's heavy mark, drawn to `t`: what moves over the cache.
     public static func lastStroke(t: Float) -> [Poly] { harvest(uti_draw_last(t)) }
 
