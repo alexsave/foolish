@@ -466,6 +466,9 @@ final class RiderController: UIViewController {
         addChild(host)
         host.view.backgroundColor = .clear
         host.view.clipsToBounds = false
+        /* No autoresizing: it would resize the content the moment this
+         * view is resized, inside whatever animation block that happens in. */
+        host.view.autoresizingMask = []
         host.view.frame = v.bounds
         v.addSubview(host.view)
         host.didMove(toParent: self)
