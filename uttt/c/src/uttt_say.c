@@ -32,21 +32,21 @@ static const char *const LINE_SAID[8] = {
     "on the diagonal", "on the diagonal",
 };
 
-/* "Top left, centre, bottom right." - the three blocks of the winning line,
- * in board order, which is the order a finger traces it. */
+/* THE WINNING LINE BY NAME, for the end subline: "Left column", "Top row",
+ * "Diagonal" (owner, over UI.html's "Top left, centre, bottom right."),
+ * numbered as uttt_line_mask and worded to agree with LINE_SAID - which says
+ * "on the diagonal" for both, so the subline does not tell them apart
+ * either. */
+static const char *const LINE_NAMED[8] = {
+    "Top row", "Middle row", "Bottom row",
+    "Left column", "Middle column", "Right column",
+    "Diagonal", "Diagonal",
+};
+
 static int say_line(const UtttGame *g, char *out, int cap)
 {
     int i = uttt_won_line(g);
-    if (i < 0) return put(out, cap, "");
-    unsigned m = uttt_line_mask(i);
-    const char *b[3];
-    int k = 0;
-    for (int blk = 0; blk < 9 && k < 3; blk++)
-        if ((m >> blk) & 1u) b[k++] = uttt_place_name(blk, 0);
-    int n = snprintf(out, (size_t)cap, "%s, %s, %s.", b[0], b[1], b[2]);
-    if (n < 0 || n >= cap) return -1;
-    if (out[0] >= 'a' && out[0] <= 'z') out[0] = (char)(out[0] - 'a' + 'A');
-    return n;
+    return put(out, cap, i < 0 ? "" : LINE_NAMED[i]);
 }
 
 int uttt_say_bubble_mark(const UtttGame *g)
@@ -92,16 +92,17 @@ int uttt_say_by(int key, const UtttGame *g, int seat, const char *who,
     case UTTT_SAY_CAPTION:
         switch (g->over) {
         case UTTT_X: case UTTT_O: {
-            /* docs/UI.html 05: "Alex won on the diagonal. 58 moves." The
-             * winner made the last move, so the winner is the sender and
-             * `who` is their name; without one the mark stands in. */
+            /* "X won on the diagonal in 58 moves" (owner, over UI.html 05's
+             * "Alex won on the diagonal. 58 moves."). The winner made the
+             * last move, so the winner is the sender and `who` is their
+             * name; without one the mark stands in. */
             int i = uttt_won_line(g);
-            return putf(cap, snprintf(out, (size_t)cap, "%s won %s. %d moves.",
+            return putf(cap, snprintf(out, (size_t)cap, "%s won %s in %d moves",
                                       named ? who : g->over == UTTT_X ? "X" : "O",
                                       i < 0 ? "" : LINE_SAID[i], g->n_plies));
         }
         case UTTT_DRAW:
-            return putf(cap, snprintf(out, (size_t)cap, "Drawn. Nine blocks, no line. %d moves.",
+            return putf(cap, snprintf(out, (size_t)cap, "Drawn in %d moves",
                                       g->n_plies));
         default: break;
         }
@@ -109,10 +110,10 @@ int uttt_say_by(int key, const UtttGame *g, int seat, const char *who,
          * sends the invitation, so the sender is the one asking. */
         if (!g->n_plies)
             return named ? putf(cap, snprintf(out, (size_t)cap,
-                                              "%s wants a game. Tap to take it.", who))
-                         : put(out, cap, "A game. Tap to take it.");
-        if (a == 9) return put(out, cap, "Sent anywhere on the sheet.");
-        return putf(cap, snprintf(out, (size_t)cap, "Sent to the %s board.",
+                                              "%s wants a game. Tap to take it", who))
+                         : put(out, cap, "A game. Tap to take it");
+        if (a == 9) return put(out, cap, "Sent anywhere on the sheet");
+        return putf(cap, snprintf(out, (size_t)cap, "Sent to the %s board",
                                        uttt_place_name(a, 1)));
 
     case UTTT_SAY_HEADLINE_PRE:
@@ -128,13 +129,13 @@ int uttt_say_by(int key, const UtttGame *g, int seat, const char *who,
     case UTTT_SAY_SUBLINE:
         /* When it is not your turn this is WHERE YOU SENT THEM, the one thing
          * worth reading on a board you cannot touch. */
-        if (g->over == UTTT_DRAW) return put(out, cap, "Nine blocks, no line.");
+        if (g->over == UTTT_DRAW) return put(out, cap, "Nine blocks, no line");
         if (g->over) return say_line(g, out, cap);
-        if (g->turn == you) return put(out, cap, a == 9 ? "Anywhere you like." : "");
-        if (a == 9) return put(out, cap, "Anywhere they like.");
+        if (g->turn == you) return put(out, cap, a == 9 ? "Anywhere you like" : "");
+        if (a == 9) return put(out, cap, "Anywhere they like");
         {
             const char *p = uttt_place_name(a, 0);
-            int n = snprintf(out, (size_t)cap, "%s.", p);
+            int n = snprintf(out, (size_t)cap, "%s", p);
             if (n < 0 || n >= cap) return -1;
             if (out[0] >= 'a' && out[0] <= 'z') out[0] = (char)(out[0] - 'a' + 'A');
             return n;
@@ -156,11 +157,11 @@ int uttt_say_by(int key, const UtttGame *g, int seat, const char *who,
     case UTTT_SAY_WAITING_SUBLINE:
         /* NO MARK, and no hint of one: the joiner will be X, and until
          * somebody joins there is nobody to be anything. docs/UI.html, 02. */
-        return put(out, cap, "Nobody has taken it yet.");
+        return put(out, cap, "Nobody has taken it yet");
     case UTTT_SAY_UNREADABLE_HEADLINE:
         return put(out, cap, "Can't read that");
     case UTTT_SAY_UNREADABLE_SUBLINE:
-        return put(out, cap, "That board came from a newer version of the app.");
+        return put(out, cap, "That board came from a newer version of the app");
 
     case UTTT_SAY_DOOR_AGAIN: return put(out, cap, "Again");
 

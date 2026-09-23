@@ -388,9 +388,9 @@ static void test_say(void)
     say(UTTT_SAY_BUBBLE_HEADLINE, &g, UTM_SEAT_WAITING, s);
     OK(!strcmp(s, "A game?"), "say: an empty board asks");
     say(UTTT_SAY_CAPTION, &g, UTM_SEAT_WAITING, s);
-    OK(!strcmp(s, "A game. Tap to take it."), "say: the invitation's caption, nobody named");
+    OK(!strcmp(s, "A game. Tap to take it"), "say: the invitation's caption, nobody named");
     OK(uttt_say_by(UTTT_SAY_CAPTION, &g, UTM_SEAT_WAITING, "$ALEX", s, sizeof s) > 0
-       && !strcmp(s, "$ALEX wants a game. Tap to take it."),
+       && !strcmp(s, "$ALEX wants a game. Tap to take it"),
        "say: the invitation's caption names its sender (UI.html 01)");
     OK(uttt_say_bubble_mark(&g) == 0, "say: an invitation's bubble draws no mark");
     say(UTTT_SAY_BUBBLE_PLACE, &g, UTM_SEAT_WAITING, s);
@@ -398,24 +398,24 @@ static void test_say(void)
     say(UTTT_SAY_HEADLINE_PRE, &g, UTM_SEAT_OPEN, s);
     OK(!strcmp(s, "Your move"), "say: the joiner is on move");
     say(UTTT_SAY_SUBLINE, &g, UTM_SEAT_OPEN, s);
-    OK(!strcmp(s, "Anywhere you like."), "say: and may go anywhere");
+    OK(!strcmp(s, "Anywhere you like"), "say: and may go anywhere");
 
     uttt_play(&g, 41);                  /* centre block, middle-right cell -> block 5 */
     say(UTTT_SAY_CAPTION, &g, UTM_SEAT_X, s);
-    OK(!strcmp(s, "Sent to the middle-right board."), "say: the caption names the destination");
+    OK(!strcmp(s, "Sent to the middle-right board"), "say: the caption names the destination");
     say(UTTT_SAY_BUBBLE_PLACE, &g, UTM_SEAT_X, s);
     OK(!strcmp(s, "middle right"), "say: the bubble's place line");
     say(UTTT_SAY_BUBBLE_HEADLINE, &g, UTM_SEAT_X, s);
     OK(!strcmp(s, "to play") && uttt_say_bubble_mark(&g) == UTTT_O,
        "say: the bubble names the side to play by its mark, never \"Your move\"");
     OK(uttt_say_by(UTTT_SAY_CAPTION, &g, UTM_SEAT_X, "$ALEX", s, sizeof s) > 0
-       && !strcmp(s, "Sent to the middle-right board."),
+       && !strcmp(s, "Sent to the middle-right board"),
        "say: a move's caption names nobody");
     say(UTTT_SAY_HEADLINE_PRE, &g, UTM_SEAT_X, s);
     OK(!strcmp(s, "Waiting on ") && uttt_say_headline_mark(&g, UTM_SEAT_X) == UTTT_O,
        "say: X waits on a drawn O");
     say(UTTT_SAY_SUBLINE, &g, UTM_SEAT_X, s);
-    OK(!strcmp(s, "Middle right."), "say: where I sent them, capitalised");
+    OK(!strcmp(s, "Middle right"), "say: where I sent them, capitalised");
     say(UTTT_SAY_HEADLINE_PRE, &g, UTM_SEAT_O, s);
     OK(!strcmp(s, "Your move") && uttt_say_headline_mark(&g, UTM_SEAT_O) == 0,
        "say: O is on move, words only");
@@ -431,13 +431,13 @@ static void test_say(void)
     for (unsigned i = 0; i < sizeof diag && !g.over; i++) uttt_play(&g, diag[i]);
     OK(g.over == UTTT_X && uttt_won_line(&g) == 6, "say: the end fixture is X on the diagonal");
     say(UTTT_SAY_SUBLINE, &g, UTM_SEAT_O, s);
-    OK(!strcmp(s, "Top left, centre, bottom right."), "say: the end subline is the line, spoken");
+    OK(!strcmp(s, "Diagonal"), "say: the end subline names the line");
     say(UTTT_SAY_CAPTION, &g, UTM_SEAT_O, s);
     {
         char want[64];
-        snprintf(want, sizeof want, "X won on the diagonal. %d moves.", g.n_plies);
+        snprintf(want, sizeof want, "X won on the diagonal in %d moves", g.n_plies);
         OK(!strcmp(s, want), "say: the end caption names the line and the length");
-        snprintf(want, sizeof want, "$ALEX won on the diagonal. %d moves.", g.n_plies);
+        snprintf(want, sizeof want, "$ALEX won on the diagonal in %d moves", g.n_plies);
         OK(uttt_say_by(UTTT_SAY_CAPTION, &g, UTM_SEAT_X, "$ALEX", s, sizeof s) > 0
            && !strcmp(s, want), "say: the end caption names the winner, who sent it (UI.html 05)");
     }
@@ -446,7 +446,7 @@ static void test_say(void)
        "say: the finished bubble draws the winner's mark");
 
     /* play games out and read every key at every ply from every seat */
-    int dashes = 0, missing = 0, lines_said = 0;
+    int dashes = 0, missing = 0, lines_said = 0, periods = 0;
     for (int game = 0; game < 200; game++) {
         uttt_init(&g);
         for (;;) {
@@ -455,6 +455,7 @@ static void test_say(void)
                     int n = uttt_say(k, &g, seat, s, sizeof s);
                     if (n < 0) missing++;
                     else if (has_em_dash(s)) dashes++;
+                    else if (n > 0 && s[n - 1] == '.') periods++;
                 }
             if (g.over) break;
             uint8_t list[81];
@@ -462,20 +463,23 @@ static void test_say(void)
             uttt_play(&g, list[rnd() % (unsigned)n]);
         }
         if ((g.over == UTTT_X || g.over == UTTT_O)) {
-            /* the spoken line names exactly the three blocks of the line */
+            /* the subline names the line the winner holds, by its shape */
+            static const char *const shape[8] = {
+                "Top row", "Middle row", "Bottom row",
+                "Left column", "Middle column", "Right column",
+                "Diagonal", "Diagonal" };
             int li = uttt_won_line(&g);
             unsigned m = li < 0 ? 0 : uttt_line_mask(li);
             unsigned held = g.bm[g.over - 1];
             say(UTTT_SAY_SUBLINE, &g, UTM_SEAT_X, s);
-            int named = 0;
-            for (int blk = 0; blk < 9; blk++) {
-                if (!((m >> blk) & 1u)) continue;
-                char nm[32];
-                snprintf(nm, sizeof nm, "%s", uttt_place_name(blk, 0));
-                if (strstr(s, nm) || (nm[0] - 'a' + 'A' == s[0] && strstr(s, nm + 1))) named++;
-            }
-            OK(li >= 0 && (held & m) == m && named == 3,
-               "say: the end subline speaks the winning line");
+            OK(li >= 0 && (held & m) == m && !strcmp(s, shape[li]),
+               "say: the end subline names the winning line");
+            /* rows are said "across", columns "down": subline and caption agree */
+            char cap[160];
+            say(UTTT_SAY_CAPTION, &g, UTM_SEAT_X, cap);
+            OK((li < 3 && strstr(cap, " across the ")) || (li >= 3 && li < 6 && strstr(cap, " down the "))
+               || (li >= 6 && strstr(cap, " on the diagonal ")),
+               "say: the caption and the subline name the same line");
             lines_said++;
         }
         if (game == 0) {
@@ -488,6 +492,7 @@ static void test_say(void)
     OK(missing == 0, "say: every key answers at every ply from every seat");
     OK(lines_said > 0, "say: some finished game was won on a line");
     OK(dashes == 0, "say: no em dash anywhere");
+    OK(periods == 0, "say: no sentence ends in a period (owner)");
     OK(uttt_say(UTTT_SAY_COUNT, &g, 0, s, sizeof s) == -1, "say: an unknown key is refused");
     OK(uttt_say(UTTT_SAY_UNREADABLE_SUBLINE, &g, 0, s, 8) == -1, "say: a short buffer is refused");
 }

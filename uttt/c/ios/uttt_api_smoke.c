@@ -309,7 +309,7 @@ int main(void)
         ok(uti_msg_open(1726990000) == 1, "alex opens an invitation");
         ok(uti_msg_seat() == UTI_SEAT_WAITING, "and waits on it");
         ok(uti_msg_mark() == 0 && !uti_msg_can_move(), "with no mark and no move");
-        ok(!strcmp(uti_say_by(UTI_SAY_CAPTION, "$A1"), "$A1 wants a game. Tap to take it."),
+        ok(!strcmp(uti_say_by(UTI_SAY_CAPTION, "$A1"), "$A1 wants a game. Tap to take it"),
            "the invitation's caption names its sender");
         ok(uti_say_bubble_mark() == 0, "and its bubble draws no mark");
         ok(uti_msg_text(inv, sizeof inv) > 3 && !strncmp(inv, "?m=", 3), "the invitation is a bare query");
@@ -324,7 +324,7 @@ int main(void)
         ok(uti_msg_play(mv) && uti_msg_sealed(), "her first move takes the seat");
         ok(uti_msg_seat() == UTI_SEAT_X && !uti_msg_can_move(), "she is X and it is O's turn");
         ok(uti_msg_text(join, sizeof join) > 0, "the join is one message");
-        ok(!strcmp(uti_say(UTI_SAY_CAPTION), "Sent to the centre board."), "carrying her move");
+        ok(!strcmp(uti_say(UTI_SAY_CAPTION), "Sent to the centre board"), "carrying her move");
 
         uti_me(alex, 16);
         ok(uti_msg_read(join) == 0 && uti_msg_seat() == UTI_SEAT_O, "alex opens it as O");
