@@ -537,3 +537,42 @@ What is left:
 - On a 375-wide phone the strip's word column is 32pt, so the waiting words and the verdict scale down toward half size there.
 - The send door covers the lower third of the compact board while it is up.
 - The hint and the end strip's verdict share the top-right corner when a finishing move is staged.
+
+## 9. Auto-collapse on the render server, and the contact-sheet defects (2026-09-23, in progress)
+
+Takes are in the session scratchpad `film2/ruler/takes/` (`before_light_1..5`, `before_dark_1..5`, `after_light_1`), with the scripts that made them (`film2/auto.sh`, `prep.sh`, `take.sh`).
+
+### The auto-collapse, ported from foolish
+
+- `shared/swift/MessagesKit/CollapseSlide.swift` is foolish's CollapseLayer idea, product-free: armed right before the app asks for compact, a drop of more than `UTTT_COLLAPSE_FLIP` is the flip, the sheet is laid out at the compact height from that frame (`uttt_drawer_rest`), the hosting view is pushed down by the travel left on a `CAKeyframeAnimation` (the host's critically damped spring, `uttt_collapse_push`, 120 keyframes over 600 ms), and each rider (`collapseRide`) takes its share back on a layer of its own.
+- Riders: the header (the "you are" mark, the band's words, which fade on their layer, the ruler's red bar) take the whole push back; the board takes half and scales about its centre from `uttt_sheet` at every height; the doors take none.
+- A rider takes no touches unless it asks (sheet-sized riders swallowed every tap on the board).
+- didTransition comes about 50 ms BEFORE the compact height is handed, so the arm outlives it by 0.5 s.
+- The drawer waits for the whole move (ink, highlighter, ring) and then `UTTT_MS_REST` (500 ms) before it collapses; the log showed the rest at ~570 ms.
+- The paper is one fixed 1600-point sheet, bottom-anchored, so its grain never stretches as the drawer moves; the sheet's clip reaches up by the travel through a slide.
+
+Measured (1 after take so far, light, relative to the drawer's top bar; per frame):
+
+| mark | before (5 light takes): snaps / largest / rough | after (1 light take) |
+|---|---|---|
+| orange you-are mark | 0 / 0 / 24853 | 0 / 0 (rides the top within ~0.5pt per frame after a 4pt first-frame step, the icon's size lerp) |
+| yellow headline | 0 / 0 / 24887 | 0 / 0 (fades on its layer) |
+| rulebook door vs the green bottom bar | moved with the layout | constant to 1pt (bottom never moves: green 919 -> 912, the host's own 7pt) |
+| magenta board centre | 4.2 / 110pt / 43599 | 3 / 48.7pt / 4442 - NOT FIXED |
+
+**Still wrong: the board.** It sits up to ~77pt below the drawer's centre early in the slide and steps back to it (77 -> 29 -> 0) as SwiftUI re-lays the nested host out; at rest it is centred (+0.2pt).
+The riders are heard before the nested hosts are laid out at the compact size (logged: every rider 440x840 at the flip), and the rebuild on relayout (`laidOut`) did not remove the steps.
+Next: log the board rider's bounds and the keyframes it was built with on each rebuild, and check whether the ride closure in use at the flip is the expanded render's.
+Not yet measured after: dark, manual drag collapse/expand (the board is now always in a nested host), the other scenarios the owner asked for (join, first-open, end, tap-to-open, arrival, final move, Again).
+
+### The defects
+
+1. The send hint hides in the frame it is sent or the drawer grows: the overlay's layer is hidden and committed at once (`hideHintNow`), and a drawer laid out taller than it rested counts as growing (a drag hands a height every frame; willTransition only comes at the release). SendHint takes `hidesAtOnce` (foolish keeps its fade).
+2. `SendHintInk.white`: white arrow and caption ringed in the send blue; foolish keeps `.blue(outline:)`.
+3. The first board of a process is painted synchronously at 1x (a ninth of the pixels) so the first frame has the lines, and sharpened off the main thread.
+4. The words are set twice, in the column beside the ink and in the band, and the kernel shows each only where it fits (`SHEET_COLUMN_NEED`, `SHEET_BAND_NEED`), crossfading - no height squeezes them.
+5. The headline and subline speak of the position one ply back until the kernel's frame says the ink has landed (`uti_say_before`).
+6. The settlement half: a won block's big mark falls (780 ms) and then the win line draws (500 ms), at Send (channel B, `UTTT_CH_SETTLE`) and after the ink on an opened or arrived bubble; never at stage. `uttt_draw_settle` + `uti_draw_under` without them.
+7. With a bubble staged the strip's right column starts under the hint (`SHEET_HINT_ROOM`).
+
+Defects 1-7 are built and unit-tested (C tests mutation-checked: the push curve, the rest, the words crossfade, the hint room, the settlement order and composition), but not yet filmed.
