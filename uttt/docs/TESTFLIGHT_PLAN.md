@@ -450,3 +450,41 @@ Charts: `pass2_*.png` beside the earlier ones in the ruler scratch folder.
 - Not measured after the fix: slow drags (1.5s) and the flick up (the takes did not register a drag), tap-to-expand, dark mode, and the smallest phone width.
 - Still one to three takes per variant, not the 6 to 20 the method wants.
 - The top-left corner square is not found in compact takes (it sits against the you-are mark), so it is scored expanded only.
+
+### One layout for every screen, the board holding the centre (2026-09-23)
+
+Owner: "the game isn't centered in the collapsed view anymore" and "in the first open screen (from +) the board DOESN'T smoothly transition when I manually drag, it jumps from small to large".
+Both measured with the ruler on UtttRig before and after, manual drags at 0.6s, normal speed; takes, charts and screenshots are in the session scratchpad `center/`.
+
+What was wrong:
+- `UtttLobbyScreen` (the waiting screen, which is what `+` opens) and `UtttWatchScreen` had two layouts and a switch at 440 points (`UtttDoorButton.expandedFrom`), and neither used the drawer clock.
+  Dragging across it jumped the waiting board from beside the words to under them: 198 to 377 points in ONE frame, while the drawer moved 21.
+  On the strip its board sat 80 points right of the sheet's centre.
+- The play surface was one lerp, but the expanded board was lifted to sit "high, just under the header" (verification pass, `45cffd68`), and the end strip pushed the board down under the verdict.
+  UI.html's "What holds which edge" says the board holds THE CENTRE ("348 to 214 is a scale, not a slide"), and its own expanded frames centre it between the bar and the doors (`margin:auto`), so the lift is withdrawn.
+
+What changed:
+- `uttt_sheet` in `uttt/c/src/uttt_anim.c` (bridged as `uti_sheet`, Swift `Uttt.sheet`) is the one owner of every screen's geometry: the board's centre is the sheet's centre at every height, its side a continuous function of the drawer height (min and max of lerps on the smoothstep openness, no branch on it), and everything else is placed at an edge around it.
+  A screen's words at the top (the waiting lines, the verdict, the spectator's line) are a box Swift measures; the board gives up only what it must to clear that box, beside it when narrow enough, under it otherwise, and the same room at the bottom so the centre stays the centre.
+- `UtttDrawerSheet` is the one container all three screens lay out in: the drawer clock's height, laid out at once, with the ruler's edge bars. No screen can lay out at the raw height or branch on it; `expandedFrom` is gone.
+- The waiting and spectator boards carry the ruler's five squares (`boardRuler()`).
+- Tests: `uttt_anim_test` sweeps heights 220-900 at a quarter point, three widths and four screens: centred to 1e-3 at every height, side step at most 0.25pt per 0.25pt of drawer, lines on the sheet, clear of the strip's words, and the live strip hides the headline; `ios-smoke` checks the bridge.
+  Seven mutations (the old top lift, an x offset, a threshold at t 0.5, words ignored, overshoot ignored, headline always shown, a top-only reserve) and one bridge mutation each went red on the named assertion.
+
+| take (0.6s drag) | largest one-frame side step, before -> after | worst board cx - screen cx | board cy - sheet cy at rest |
+|---|---|---|---|
+| first-open, expand | 167.7pt (sheet moved 21.3) -> 20.7pt (sheet 21.7) | 80.0 -> 0.3pt | -147 -> 0.0pt |
+| first-open, collapse | 167.3pt (sheet 40.7) -> 20.0pt (sheet 20.3) | 80.0 -> 0.3pt | +0.2 -> +0.2pt |
+| in game, expand | 37.7pt (sheet 93.7) -> 31.3pt (sheet 104.3) | 0.4 -> 0.4pt | -119 -> 0.0pt |
+| in game, collapse | 20.0pt (sheet 80.7) -> 27.7pt (sheet 100.3) | 0.3 -> 0.3pt | +0.2 -> +0.2pt |
+
+After the change the first-open board's side moves one-for-one with the sheet every frame.
+The in-game steps are frames where the simulator committed nothing for a while and the drawer moved 80-100pt meanwhile (the known sim frame pacing, "What is left" above); the board's step is smaller than the drawer's in every one.
+During those drags the layout trails the drawer by up to ~70pt (the drawer spring, unchanged here).
+
+Compact screenshots (UtttRig drawer 440x274-278), board centre x vs screen centre 220 and y vs sheet centre: waiting +0.0/+0.2 (board 165), live game +0.0/+0.2 (268), end as winner +0.0/+0.2 (230), end as loser +0.0/+0.2 (223), spectator +0.0/+0.2 (213); expanded, every screen -0.3/0.0 (371).
+
+Conflicts, kept centred per the spec:
+- The waiting strip's words ("Nobody has taken it yet", about 165pt) cannot sit beside a centred board, so the board goes under them and gives up the same room at the bottom: 165pt on this simulator's 274pt strip (was 198, off-centre), about 224pt at UI.html's 340.
+- The end strip's verdict sits beside the board, which gives up 38-45pt (230/223 against 268 live).
+- The spectator's line spans the sheet, so its board is 213.
