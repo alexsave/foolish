@@ -107,11 +107,12 @@ int uttt_say_by(int key, const UtttGame *g, int seat, const char *who,
         default: break;
         }
         /* docs/UI.html 01: "Alex wants a game. Tap to take it." The creator
-         * sends the invitation, so the sender is the one asking. */
+         * sends the invitation, so the sender is the one asking. Nobody
+         * named, it is "New game?" (owner, 2026-09-23). */
         if (!g->n_plies)
             return named ? putf(cap, snprintf(out, (size_t)cap,
                                               "%s wants a game. Tap to take it", who))
-                         : put(out, cap, "A game. Tap to take it");
+                         : put(out, cap, "New game?");
         if (a == 9) return put(out, cap, "Sent anywhere on the sheet");
         return putf(cap, snprintf(out, (size_t)cap, "Sent to the %s board",
                                        uttt_place_name(a, 1)));

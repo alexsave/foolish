@@ -400,7 +400,7 @@ static void test_say(void)
     say(UTTT_SAY_BUBBLE_HEADLINE, &g, UTM_SEAT_WAITING, s);
     OK(!strcmp(s, "A game?"), "say: an empty board asks");
     say(UTTT_SAY_CAPTION, &g, UTM_SEAT_WAITING, s);
-    OK(!strcmp(s, "A game. Tap to take it"), "say: the invitation's caption, nobody named");
+    OK(!strcmp(s, "New game?"), "say: the invitation's caption, nobody named");
     OK(uttt_say_by(UTTT_SAY_CAPTION, &g, UTM_SEAT_WAITING, "$ALEX", s, sizeof s) > 0
        && !strcmp(s, "$ALEX wants a game. Tap to take it"),
        "say: the invitation's caption names its sender (UI.html 01)");

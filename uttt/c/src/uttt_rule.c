@@ -58,24 +58,37 @@ typedef struct {
     uint32_t fill, stroke;
     float    gap, angle, weight, stroke_w, roughness, bowing;
     int32_t  seed;
+    /* A four-sided shape whose bottom edge is its top edge reflected, and
+     * whose right edge is its left: two independent rough lines wobble by
+     * different amounts, so opposite sides of a long bar read as different
+     * weights (owner, 2026-09-23, of the Again door). */
+    int      mirror;
 } Rule;
 
 /* One stroke, one polygon, at the flat width rough.js strokes with - not the
  * board's pen, whose velocity and lift would read at 54 points as a wobble
  * rather than as a hand, and whose overlapping quads would blend a 55% page
  * into an 80% one. */
-static void emit(UtttDL *d, const UtttPt *pts, const UtttSpan *sp, int n,
-                 float w, float h, uint32_t rgba, float width)
+/* `flip` 1 reflects the spans top to bottom, 2 left to right. */
+static void emit_flip(UtttDL *d, const UtttPt *pts, const UtttSpan *sp, int n,
+                      float w, float h, uint32_t rgba, float width, int flip)
 {
     UtttPt u[256];
     for (int i = 0; i < n; i++) {
         int m = sp[i].n > 256 ? 256 : sp[i].n;
         for (int k = 0; k < m; k++) {
-            u[k].x = pts[sp[i].first + k].x / w;
-            u[k].y = pts[sp[i].first + k].y / h;
+            float x = pts[sp[i].first + k].x, y = pts[sp[i].first + k].y;
+            u[k].x = (flip == 2 ? w - x : x) / w;
+            u[k].y = (flip == 1 ? h - y : y) / h;
         }
         uttt_ribbon(d, u, m, width / w, rgba);
     }
+}
+
+static void emit(UtttDL *d, const UtttPt *pts, const UtttSpan *sp, int n,
+                 float w, float h, uint32_t rgba, float width)
+{
+    emit_flip(d, pts, sp, n, w, h, rgba, width, 0);
 }
 
 /* One filled, outlined shape.
@@ -106,7 +119,17 @@ static int shape(UtttDL *d, const UtttPt *p, int np, float w, float h,
                                 MAX_SPAN - n_edge);
 
     emit(d, pts, sp + n_edge, n_fill, w, h, r->fill,   r->weight);
-    emit(d, pts, sp,          n_edge, w, h, r->stroke, r->stroke_w);
+    if (r->mirror && np == 4 && n_edge == 8) {
+        /* Spans 0-1 are the top edge's two passes, 6-7 the left's (the edges
+         * run p0->p1->p2->p3->p0). The right and the bottom are dropped and
+         * drawn as those two reflected, so each pair is one weight. */
+        emit_flip(d, pts, sp,     2, w, h, r->stroke, r->stroke_w, 0);
+        emit_flip(d, pts, sp,     2, w, h, r->stroke, r->stroke_w, 1);
+        emit_flip(d, pts, sp + 6, 2, w, h, r->stroke, r->stroke_w, 0);
+        emit_flip(d, pts, sp + 6, 2, w, h, r->stroke, r->stroke_w, 2);
+    } else {
+        emit(d, pts, sp, n_edge, w, h, r->stroke, r->stroke_w);
+    }
     return n >= MAX_SAMP || n_edge + n_fill >= MAX_SPAN;
 }
 
@@ -133,7 +156,7 @@ int uttt_draw_rulebook(UtttDL *d, float w, float h)
         { in, in }, { w - in, in }, { w - in, h - in }, { in, h - in }
     };
     const Rule square = { INK, EDGE, 4.2f * k, -41.f,
-                          1.4f * k, 1.8f * k, 1.5f, 1.3f, 19 };
+                          1.4f * k, 1.8f * k, 1.5f, 1.3f, 19, 0 };
     over |= shape(d, sq, 4, w, h, &square);
 
     /* The book: two leaves off one spine, each hachured the other way so the
@@ -146,9 +169,9 @@ int uttt_draw_rulebook(UtttDL *d, float w, float h)
     const UtttPt left[4]  = { { lx, ty }, { mx, sy }, { mx, by }, { lx, oy } };
     const UtttPt right[4] = { { rx, ty }, { mx, sy }, { mx, by }, { rx, oy } };
     const Rule leaf_l = { PAGE, PAGE, 2.6f * k,  38.f, .9f * k, 1.3f * k,
-                          1.3f, 1.f, 23 };
+                          1.3f, 1.f, 23, 0 };
     const Rule leaf_r = { PAGE, PAGE, 2.6f * k, -38.f, .9f * k, 1.3f * k,
-                          1.3f, 1.f, 29 };
+                          1.3f, 1.f, 29, 0 };
     over |= shape(d, left,  4, w, h, &leaf_l);
     over |= shape(d, right, 4, w, h, &leaf_r);
 
@@ -181,6 +204,6 @@ int uttt_draw_door(UtttDL *d, float w, float h)
      * rough line lays its two passes almost on top of each other, so at 1.8
      * the bar's top and bottom read as the last hachure rather than as the
      * box's edge (owner: "a hatched band with no edges"). */
-    const Rule door = { INK, EDGE, 4.2f, -41.f, 1.4f, 2.6f, 1.5f, 1.3f, 37 };
+    const Rule door = { INK, EDGE, 4.2f, -41.f, 1.4f, 2.6f, 1.5f, 1.3f, 37, 1 };
     return shape(d, bar, 4, w, h, &door) ? -1 : 0;
 }

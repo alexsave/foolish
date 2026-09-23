@@ -296,6 +296,50 @@ int main(void)
         int narrow = uti_draw_door(200, 46) - 8, wide = uti_draw_door(400, 46) - 8;
         ok(wide * 10 >= narrow * 16,
            "a wider door gets more hachure at the same gap, not wider hachure");
+
+        /* OPPOSITE EDGES ARE THE SAME WEIGHT (owner, 2026-09-23: the top and
+         * the bottom of Again read as different widths). An edge's weight is
+         * how deep its ink band is across the edge: the spread of every
+         * outline point on that side, in points, whatever the wobble did. */
+        for (float w = 200; w <= 430; w += 23) {
+            const float H = 46;
+            int m = uti_draw_door(w, H);
+            const uint32_t *rgba = uti_poly_rgba();
+            const int32_t *f0 = uti_poly_first(), *nn = uti_poly_n();
+            const float *pt = uti_points();
+            float lo[4] = { 1e9f, 1e9f, 1e9f, 1e9f }, hi[4] = { -1e9f, -1e9f, -1e9f, -1e9f };
+            for (int i = 0; i < m; i++) {
+                if (rgba[i] != 0x1b2a52ffu) continue;
+                double cx = 0, cy = 0;
+                for (int k = 0; k < nn[i]; k++) {
+                    cx += pt[(f0[i] + k) * 2]; cy += pt[(f0[i] + k) * 2 + 1];
+                }
+                cx /= nn[i]; cy /= nn[i];
+                /* 0 top, 1 bottom, 2 left, 3 right, by where the stroke sits */
+                double dx = fmin(cx, 1 - cx) * w, dy = fmin(cy, 1 - cy) * H;
+                int side = dy < dx ? (cy < .5 ? 0 : 1) : (cx < .5 ? 2 : 3);
+                for (int k = 0; k < nn[i]; k++) {
+                    float v = side < 2 ? pt[(f0[i] + k) * 2 + 1] * H
+                                       : pt[(f0[i] + k) * 2] * w;
+                    if (side == 1) v = H - v;
+                    if (side == 3) v = w - v;
+                    if (v < lo[side]) lo[side] = v;
+                    if (v > hi[side]) hi[side] = v;
+                }
+            }
+            float top = hi[0] - lo[0], bot = hi[1] - lo[1];
+            float lft = hi[2] - lo[2], rgt = hi[3] - lo[3];
+            if (w == 200)
+                printf("  door edges at %g: top %.2f bottom %.2f left %.2f right %.2f\n",
+                       w, top, bot, lft, rgt);
+            if (fabsf(top - bot) > .05f || fabsf(lft - rgt) > .05f) {
+                printf("  door %g: top %.2f bottom %.2f left %.2f right %.2f\n",
+                       w, top, bot, lft, rgt);
+                ok(0, "the door's opposite edges are the same weight");
+                break;
+            }
+            if (w + 23 > 430) ok(1, "the door's opposite edges are the same weight");
+        }
     }
 
     /* ---- the message, end to end as the host drives it: two devices are two

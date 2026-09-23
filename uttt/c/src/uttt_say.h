@@ -76,7 +76,7 @@ int uttt_say(int key, const UtttGame *g, int seat, char *out, int cap);
  * two captions docs/UI.html writes with a name in them, and in both the
  * person named is the one sending: the creator sends the invitation and the
  * winner sends the winning move. NULL or "" words the same sentence without a
- * person ("X won ...", "A game. Tap to take it."). */
+ * person ("X won ...", "New game?"). */
 int uttt_say_by(int key, const UtttGame *g, int seat, const char *who,
                 char *out, int cap);
 
