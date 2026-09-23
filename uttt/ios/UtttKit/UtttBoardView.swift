@@ -220,7 +220,13 @@ public struct UtttBoard: View {
               let cg = CGContext(data: nil, width: px, height: px,
                                  bitsPerComponent: 8, bytesPerRow: 0,
                                  space: CGColorSpaceCreateDeviceRGB(),
-                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                                 /* THE COMPOSITOR'S OWN LAYOUT, BGRA little-endian:
+                                  * an RGBA bitmap was converted channel by channel
+                                  * every time it was drawn at a new size, which is
+                                  * every frame of a drawer move (vImage permute,
+                                  * the top of the stack in a `sample` of one). */
+                                 bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+                                     | CGBitmapInfo.byteOrder32Little.rawValue)
         else { return nil }
         /* A CGBitmapContext has its ORIGIN AT THE BOTTOM LEFT and SwiftUI
          * does not, so a board drawn straight into one comes out mirrored
@@ -271,6 +277,7 @@ public struct UtttLiveBoard: View {
             let side = min(geo.size.width, geo.size.height)
             let pad  = side * UtttBoard.bleed
             let f = clock.frame
+            let _ = (landed, positionKey)   // an off-main paint landed, a move
             ZStack(alignment: .topLeading) {
                 Canvas { ctx, _ in
                     _ = landed; _ = positionKey
@@ -289,18 +296,34 @@ public struct UtttLiveBoard: View {
                         ctx.fill(ring, with: .color(Self.color(f.pulse_rgba)),
                                  style: FillStyle(eoFill: true))
                     }
-                    if let img = UtttBoard.cachedUnder(side: side) {
-                        ctx.draw(Image(decorative: img, scale: 1),
-                                 in: CGRect(x: -pad, y: -pad,
-                                            width: side + 2 * pad, height: side + 2 * pad))
-                        /* the last mark only once the board it lands on is up */
-                        UtttBoard.fill(Uttt.lastStroke(t: f.mark_t), into: ctx, side: side)
-                    }
                 }
                 .frame(width: side + 2 * pad, height: side + 2 * pad)
                 .offset(x: -pad, y: -pad)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
+
+                /* THE CACHED BOARD IS AN IMAGE VIEW, NOT A DRAW INTO THE
+                 * CANVAS: a view's picture is a texture the compositor scales,
+                 * so a drawer move that resizes the board every frame costs a
+                 * transform, where the Canvas re-rendered the whole bitmap. */
+                if let img = UtttBoard.cachedUnder(side: side) {
+                    Image(decorative: img, scale: 1)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: side + 2 * pad, height: side + 2 * pad)
+                        .offset(x: -pad, y: -pad)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                    /* the last mark only once the board it lands on is up */
+                    Canvas { ctx, _ in
+                        ctx.translateBy(x: pad, y: pad)
+                        UtttBoard.fill(Uttt.lastStroke(t: f.mark_t), into: ctx, side: side)
+                    }
+                    .frame(width: side + 2 * pad, height: side + 2 * pad)
+                    .offset(x: -pad, y: -pad)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                }
 
                 Color.clear.contentShape(Rectangle())
                     .frame(width: side, height: side)
