@@ -177,11 +177,7 @@ public struct UtttGameScreen: View {
         let r = UtttRuler.on
         return board
             .frame(width: side, height: side)
-            .motionSquare(.magenta, on: r)
-            .motionSquare(.cyan, on: r, at: .topLeading)
-            .motionSquare(.cyan, on: r, at: .topTrailing)
-            .motionSquare(.cyan, on: r, at: .bottomLeading)
-            .motionSquare(.cyan, on: r, at: .bottomTrailing)
+            .boardRuler()
             .padding(.top, top + lift)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .padding(.bottom, bot)

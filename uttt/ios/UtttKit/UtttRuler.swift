@@ -30,3 +30,18 @@ enum UtttRuler {
 #endif
     }
 }
+
+extension View {
+    /// The board's five squares - magenta at the centre, cyan at the four
+    /// corners - on whatever square frame the board has, so every screen's
+    /// board is scored the same way.
+    func boardRuler() -> some View {
+        let r = UtttRuler.on
+        return self
+            .motionSquare(.magenta, on: r)
+            .motionSquare(.cyan, on: r, at: .topLeading)
+            .motionSquare(.cyan, on: r, at: .topTrailing)
+            .motionSquare(.cyan, on: r, at: .bottomLeading)
+            .motionSquare(.cyan, on: r, at: .bottomTrailing)
+    }
+}

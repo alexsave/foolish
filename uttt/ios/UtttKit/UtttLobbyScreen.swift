@@ -34,6 +34,7 @@ public struct UtttLobbyScreen: View {
                     compact
                 }
             }
+            .overlay { MotionRulerEdges(on: UtttRuler.on) }
         }
     }
 
@@ -100,6 +101,7 @@ public struct UtttLobbyScreen: View {
      * corner to corner reads as a different piece of paper. */
     private var board: some View {
         UtttBoard(active: -1, last: -1, positionKey: 0)
+            .boardRuler()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .allowsHitTesting(false)
     }
@@ -157,6 +159,7 @@ public struct UtttWatchScreen: View {
                     watch(geo.size)
                 }
             }
+            .overlay { MotionRulerEdges(on: UtttRuler.on) }
         }
         .animation(.easeInOut(duration: 0.18), value: rulesOpen)
     }
@@ -189,6 +192,7 @@ public struct UtttWatchScreen: View {
             UtttBoard(active: model.active, last: model.last,
                       positionKey: model.positionKey)
                 .frame(width: side, height: side)
+                .boardRuler()
             Spacer(minLength: 6)
             /* Again belongs to the expanded view (UI.html 08); the rulebook
              * stands beside it at its height, as on the play surface. */
