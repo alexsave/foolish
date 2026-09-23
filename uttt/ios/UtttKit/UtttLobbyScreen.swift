@@ -29,7 +29,7 @@ public struct UtttLobbyScreen: View {
         UtttSheet {
             GeometryReader { geo in
                 if geo.size.height > UtttDoorButton.expandedFrom {
-                    expanded
+                    expanded(geo.size.width)
                 } else {
                     compact
                 }
@@ -38,14 +38,21 @@ public struct UtttLobbyScreen: View {
     }
 
     /// docs/UI.html 02 as drawn: the words and the board under them.
-    private var expanded: some View {
+    private func expanded(_ width: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             words
             if stance != .unreadable {
                 /* ROOM FOR THE OVERSHOOT: the grid's main lines run past the
-                 * board by about a tenth of it, and at 10 points they ran up
-                 * into the line of type above. */
-                board.padding(.vertical, 26)
+                 * board by 5% of it (Uttt.boardReach) on every side, so the
+                 * board is narrower than the sheet by that much, or the lines
+                 * run off its left and right edges; and at 10 points above
+                 * they ran up into the line of type. High, like the play
+                 * surface, with the spare height below. */
+                let side = (width - 26) / (1 + 2 * Uttt.boardReach)
+                board.frame(width: side, height: side)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 26)
+                Spacer(minLength: 0)
             } else {
                 Spacer(minLength: 0)
             }
