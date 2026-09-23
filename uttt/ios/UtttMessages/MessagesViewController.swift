@@ -8,6 +8,11 @@ import UtttKit
 /// bubble carries, who sits where, what they may do and which door they get
 /// is `uttt_msg.h`'s.
 ///
+/// NO UNDO AND NO TAKE-BACK (owner, 2026-09-22, over UI.html 02): the only
+/// way to change a move is to tap another square, which replaces the staged
+/// draft. Messages' own X on the draft is system UI and is honoured - the
+/// board reverts - but nothing here offers a way back of its own.
+///
 /// THERE IS NO CHAIN TO WALK. An extension is handed exactly one message, the
 /// one that was tapped, and cannot enumerate the transcript - so this file
 /// never looks for an earlier bubble. Everything it needs is in front of it.
@@ -93,6 +98,31 @@ final class MessagesViewController: MSMessagesAppViewController {
         seatChosen = false
 #endif
         present(conversation)
+        /* A DEADLINE ON THE WAIT BELOW, so a host that never sends one of the
+         * two signals cannot leave the drawer blank or the invitation unstaged
+         * - it is logged, and everything waiting runs anyway. */
+        let activation = becameActiveAt
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self, self.becameActiveAt == activation, !self.ready else { return }
+            UtttLog.fault("ready", "no \(self.appeared ? "" : "viewDidAppear ")\(self.conversationActive ? "" : "didBecomeActive")after 1.5s; going ahead")
+            self.appeared = true
+            self.conversationActive = true
+            self.becameReady()
+        }
+    }
+
+    /// THE CONVERSATION IS LIVE. The second of the two things an insert
+    /// waits for (see `ready`).
+    override func didBecomeActive(with conversation: MSConversation) {
+        super.didBecomeActive(with: conversation)
+        UtttLog.note("did-active")
+        conversationActive = true
+        becameReady()
+    }
+
+    override func willResignActive(with conversation: MSConversation) {
+        super.willResignActive(with: conversation)
+        conversationActive = false
     }
 
     /// NOTHING IS DRAWN UNTIL THE DRAWER HAS A SIZE.
@@ -108,11 +138,22 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// So until viewDidAppear - by which point the drawer is its real size -
     /// the screen is built but not attached, and the view stays clear, which
     /// shows Messages' own drawer card. On appearing, the newest screen goes
-    /// in and paper is painted under it, and whatever was waiting for a real
-    /// drawer (the invitation's insert) runs.
+    /// in and paper is painted under it.
+    ///
+    /// AND NOTHING IS INSERTED UNTIL THE DRAWER IS UP AND THE CONVERSATION IS
+    /// ACTIVE. The first TestFlight build inserted the invitation from inside
+    /// willBecomeActive - before didBecomeActive, before the view was in a
+    /// window, with `activeConversation` still nil - and on a real phone the
+    /// bubble never reached the input field (on the simulator it did). foolish
+    /// never inserts that early: its create runs from a tap on a drawer that
+    /// is already up, and its stage takes `activeConversation`. So an insert
+    /// here waits for both viewDidAppear and didBecomeActive (`ready`), with a
+    /// logged deadline in case either never comes.
     private var appeared = false
+    private var conversationActive = false
+    private var ready: Bool { appeared && conversationActive }
     private var pendingScreen: AnyView?
-    private var afterAppear: [() -> Void] = []
+    private var afterReady: [() -> Void] = []
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
@@ -123,8 +164,18 @@ final class MessagesViewController: MSMessagesAppViewController {
             pendingScreen = nil
             attach(screen)
         }
-        let work = afterAppear
-        afterAppear.removeAll()
+        becameReady()
+    }
+
+    private func becameReady() {
+        if appeared, let screen = pendingScreen {
+            pendingScreen = nil
+            view.backgroundColor = UtttPaper.flat
+            attach(screen)
+        }
+        guard ready else { return }
+        let work = afterReady
+        afterReady.removeAll()
         work.forEach { $0() }
     }
 
@@ -133,9 +184,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         appeared = false
     }
 
-    /// Run `work` once the drawer is on screen at its real size.
-    private func whenAppeared(_ work: @escaping () -> Void) {
-        if appeared { work() } else { afterAppear.append(work) }
+    /// Run `work` once the drawer is up and the conversation is active.
+    private func whenReady(_ work: @escaping () -> Void) {
+        if ready { work() } else { afterReady.append(work) }
     }
 
     override func didResignActive(with conversation: MSConversation) {
@@ -250,8 +301,10 @@ final class MessagesViewController: MSMessagesAppViewController {
         stageGeneration += 1           // a stage still waiting to insert is void
         live?.setPending(false)
 
-        /* THE X IS THE UNDO, and what comes back is the kernel's rule: only my
-         * own move (or my own take-back), and taking back a joining move
+        /* THE X IS THE UNDO - the only one there is, by the owner's decision
+         * (no undo button, no take-back door): Messages' own X on the draft
+         * cannot be removed, so the board must follow it. What comes back is
+         * the kernel's rule: only my own move, and taking back a joining move
          * gives the seat back. The draft is re-read first, because the
          * resident message is whatever was read last. */
         identify(conversation)
@@ -341,19 +394,15 @@ final class MessagesViewController: MSMessagesAppViewController {
             return
         }
 
-        let door = Uttt.door(sent: isSent(wire))
+        let door = Uttt.door
         UtttLog.note("present", "seat \(Uttt.seat) plies \(Uttt.plyCount) door \(door)")
 
         /* WHICH SEAT IS THIS DEVICE'S is the kernel's answer: it hashes this
          * device's participant with the game's seed and looks for the result. */
         switch Uttt.seat {
         case .waiting:
-            show(UtttLobbyScreen(stance: .waiting, door: door) { [weak self] in
-                self?.takeBack(wire, in: conversation)
-            })
-
-        case .closed:
-            show(UtttLobbyScreen(stance: .closed))
+            /* No door here: see UtttLobbyScreen. */
+            show(UtttLobbyScreen(stance: .waiting))
 
         case .open, .x, .o:
             /* OPENING SOMEBODY'S INVITATION IS SITTING DOWN AS X, and the
@@ -378,10 +427,6 @@ final class MessagesViewController: MSMessagesAppViewController {
         guard selected.isSameGame(as: arrival) else { return selected }
         return Uttt.prefersMine(arrival.text, over: selected.text) ? arrival : selected
     }
-
-    /// Whether `wire` is in the thread rather than a draft in the field: the
-    /// one fact the kernel's door rule needs from the host.
-    private func isSent(_ wire: UtttWire) -> Bool { wire != staged }
 
     /// WHO THIS DEVICE IS, told to the kernel before every question about a
     /// seat. Messages' participant identifier is per device per conversation,
@@ -425,27 +470,12 @@ final class MessagesViewController: MSMessagesAppViewController {
         UtttLog.note("start")
         staged = wire
         present(conversation)
-        whenAppeared { [weak self] in
+        whenReady { [weak self] in
             DispatchQueue.main.async {
                 guard let self, self.staged == wire else { return }
                 self.stage(wire, in: conversation)
             }
         }
-    }
-
-    /// TAKE IT BACK (docs/UI.html 02). Only offered on a SENT invitation -
-    /// the kernel's rule - and it is a message: the take-back goes into the
-    /// field in the invitation's own session, and on Send it replaces the
-    /// invitation in the transcript.
-    private func takeBack(_ wire: UtttWire, in conversation: MSConversation) {
-        identify(conversation)
-        guard wire.load(), Uttt.takeBack(), let back = UtttWire.resident else {
-            UtttLog.fault("take-back", "refused by the kernel")
-            return
-        }
-        UtttLog.note("take-back")
-        stage(back, in: conversation)
-        present(conversation)
     }
 
     /// AGAIN (docs/UI.html 06, 07): a fresh invitation from whoever asks, in a
@@ -546,8 +576,11 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// it never shows a move the input field does not hold.
     private func insert(_ message: MSMessage, generation: Int,
                         in conversation: MSConversation, attempt: Int) {
-        UtttLog.note("insert", "attempt \(attempt)")
-        conversation.insert(message) { [weak self] error in
+        /* THE ACTIVE CONVERSATION when there is one - foolish's stage uses
+         * nothing else - and the one we were handed only as a fallback. */
+        let target = activeConversation ?? conversation
+        UtttLog.note("insert", "attempt \(attempt)\(activeConversation == nil ? " (no active conversation)" : "")")
+        target.insert(message) { [weak self] error in
             DispatchQueue.main.async {
                 guard let self else { return }
                 guard let error else {
@@ -556,7 +589,7 @@ final class MessagesViewController: MSMessagesAppViewController {
                 }
                 UtttLog.fault("insert", "attempt \(attempt) failed: \(error.localizedDescription)")
                 guard self.stageGeneration == generation else { return }
-                if attempt < 2 {
+                if attempt < 3 {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                         guard self.stageGeneration == generation else { return }
                         self.insert(message, generation: generation, in: conversation,
@@ -635,7 +668,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 
         /* WHERE THE GAME ACTUALLY IS, if anybody has moved. */
         if let live = UtttDev.live, Uttt.read(live), Uttt.seed == seed {
-            showBoard(mark: Uttt.myMark, door: Uttt.door(sent: true), conversation)
+            showBoard(mark: Uttt.myMark, door: Uttt.door, conversation)
             return
         }
 
@@ -648,7 +681,7 @@ final class MessagesViewController: MSMessagesAppViewController {
             _ = Uttt.play(mv)
         }
         Uttt.seat(o: UtttDev.identity("a"), x: UtttDev.identity("b"))
-        showBoard(mark: Uttt.myMark, door: Uttt.door(sent: true), conversation)
+        showBoard(mark: Uttt.myMark, door: Uttt.door, conversation)
     }
 #endif
 

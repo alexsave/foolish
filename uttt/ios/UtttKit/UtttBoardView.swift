@@ -129,17 +129,7 @@ public struct UtttBoard: View {
         cg.translateBy(x: 0, y: box * scale)
         cg.scaleBy(x: scale, y: -scale)
         cg.translateBy(x: pad, y: pad)
-        for poly in Uttt.board(active: active, last: last) {
-            guard let head = poly.points.first else { continue }
-            cg.beginPath()
-            cg.move(to: CGPoint(x: head.x * side, y: head.y * side))
-            for p in poly.points.dropFirst() {
-                cg.addLine(to: CGPoint(x: p.x * side, y: p.y * side))
-            }
-            cg.closePath()
-            cg.setFillColor(poly.color)
-            cg.fillPath()
-        }
+        Uttt.fillBoard(active: active, last: last, into: cg, side: side)
         cacheStamp = st; cacheSide = side; cacheImage = cg.makeImage()
         return cacheImage
     }

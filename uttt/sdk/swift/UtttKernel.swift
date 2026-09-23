@@ -78,8 +78,6 @@ public enum Uttt {
         case waiting
         /// Somebody's invitation: X is mine to take, with my first move.
         case open
-        /// An invitation its creator took back. Nobody can sit down at it.
-        case closed
 
         init(_ v: Int32) {
             switch v {
@@ -87,7 +85,6 @@ public enum Uttt {
             case UTI_SEAT_O:       self = .o
             case UTI_SEAT_WAITING: self = .waiting
             case UTI_SEAT_OPEN:    self = .open
-            case UTI_SEAT_CLOSED:  self = .closed
             default:               self = .spectator
             }
         }
@@ -142,21 +139,10 @@ public enum Uttt {
     @discardableResult
     public static func undoMine() -> Bool { uti_msg_undo() != 0 }
 
-    /// Take back my own invitation. The resident message is then the
-    /// take-back, ready to stage. False unless it is mine and nobody took it.
-    @discardableResult
-    public static func takeBack() -> Bool { uti_msg_take_back() != 0 }
-
-    /// The one door a screen may offer, and whether it may offer one at all.
-    /// Only the host knows `sent`; the rule is the kernel's (utm_door).
-    public enum Door { case none, takeBack, again }
-    public static func door(sent: Bool) -> Door {
-        switch uti_msg_door(sent ? 1 : 0) {
-        case UTI_DOOR_TAKE_BACK: return .takeBack
-        case UTI_DOOR_AGAIN:     return .again
-        default:                 return .none
-        }
-    }
+    /// The one door a screen may offer, and whether it may offer one at all:
+    /// the kernel's rule (utm_door). Today that is Again, at the end.
+    public enum Door { case none, again }
+    public static var door: Door { uti_msg_door() == UTI_DOOR_AGAIN ? .again : .none }
 
     /// Which to show: true for `mine` (the staged draft), false for `tapped`.
     public static func prefersMine(_ mine: String, over tapped: String) -> Bool {
@@ -204,9 +190,6 @@ public enum Uttt {
         public static let unreadableSubline = Say(key: UTI_SAY_UNREADABLE_SUBLINE)
         public static let youAre1 = Say(key: UTI_SAY_YOU_ARE_1)
         public static let youAre2 = Say(key: UTI_SAY_YOU_ARE_2)
-        public static let closedHeadline = Say(key: UTI_SAY_CLOSED_HEADLINE)
-        public static let closedSubline = Say(key: UTI_SAY_CLOSED_SUBLINE)
-        public static let doorTakeBack = Say(key: UTI_SAY_DOOR_TAKE_BACK)
         public static let doorAgain = Say(key: UTI_SAY_DOOR_AGAIN)
     }
 
@@ -252,6 +235,42 @@ public enum Uttt {
     public static func board(active: Int, last: Int,
                              markT: Float = 1, metaT: Float = 1) -> [Poly] {
         harvest(uti_draw(Int32(active), Int32(last), markT, metaT))
+    }
+
+    /// THE WHOLE BOARD, FILLED STRAIGHT FROM THE KERNEL'S BUFFERS into `cg`,
+    /// with the unit square scaled to `side`.
+    ///
+    /// A finished board is thousands of polygons, and `board()` turns every
+    /// one into a Swift array of CGPoints and a CGColor before anything is
+    /// filled - measured in the log as most of a cold open's first paint.
+    /// This walks the same buffers with no copy, and sets the fill colour
+    /// only when it changes. Same polygons, same order, same pixels.
+    public static func fillBoard(active: Int, last: Int, into cg: CGContext, side: CGFloat) {
+        let count = uti_draw(Int32(active), Int32(last), 1, 1)
+        guard count > 0, let pts = uti_points(), let first = uti_poly_first(),
+              let ns = uti_poly_n(), let rgba = uti_poly_rgba() else { return }
+        var colour: UInt32 = 0
+        var haveColour = false
+        for i in 0..<Int(count) {
+            let f = Int(first[i]), n = Int(ns[i])
+            guard n > 0 else { continue }
+            let c = rgba[i]
+            if !haveColour || c != colour {
+                cg.setFillColor(red: CGFloat((c >> 24) & 0xff) / 255,
+                                green: CGFloat((c >> 16) & 0xff) / 255,
+                                blue: CGFloat((c >> 8) & 0xff) / 255,
+                                alpha: CGFloat(c & 0xff) / 255)
+                colour = c; haveColour = true
+            }
+            cg.beginPath()
+            cg.move(to: CGPoint(x: CGFloat(pts[f * 2]) * side, y: CGFloat(pts[f * 2 + 1]) * side))
+            for k in 1..<max(1, n) {
+                cg.addLine(to: CGPoint(x: CGFloat(pts[(f + k) * 2]) * side,
+                                       y: CGFloat(pts[(f + k) * 2 + 1]) * side))
+            }
+            cg.closePath()
+            cg.fillPath()
+        }
     }
 
     /// Only the stroke that is moving. This is what an animation redraws.

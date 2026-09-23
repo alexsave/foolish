@@ -43,12 +43,7 @@ enum {
     UTTT_SAY_YOU_ARE_1,
     UTTT_SAY_YOU_ARE_2,
 
-    /* an invitation its creator took back (UTM_SEAT_CLOSED) */
-    UTTT_SAY_CLOSED_HEADLINE,
-    UTTT_SAY_CLOSED_SUBLINE,
-
     /* the one door a screen may offer (utm_door) */
-    UTTT_SAY_DOOR_TAKE_BACK,
     UTTT_SAY_DOOR_AGAIN,
 
     UTTT_SAY_COUNT

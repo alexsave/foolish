@@ -50,8 +50,6 @@ void utm_open(UtmMsg *m, int32_t seed, const uint8_t me[UTM_TAG_LEN])
  * at least one. And nobody plays themselves. */
 static int roster_ok(const UtmMsg *m)
 {
-    /* Only an invitation nobody took can be taken back. */
-    if (m->taken_back && m->sealed) return 0;
     if (!m->sealed) return m->game.n_plies == 0;
     if (m->game.n_plies == 0) return 0;
     return memcmp(m->x, m->o, UTM_TAG_LEN) != 0;
@@ -77,8 +75,7 @@ int utm_encode(const UtmMsg *m, uint8_t *out, int cap)
     buf[n++] = UTM_MAGIC;
     buf[n++] = UTM_FORMAT;
     put32(buf + n, m->seed); n += 4;
-    buf[n++] = (uint8_t)((m->sealed ? UTM_FLAG_SEALED : 0) |
-                         (m->taken_back ? UTM_FLAG_TAKEN_BACK : 0));
+    buf[n++] = m->sealed ? UTM_FLAG_SEALED : 0;
     memcpy(buf + n, m->o, UTM_TAG_LEN); n += UTM_TAG_LEN;
     if (m->sealed) { memcpy(buf + n, m->x, UTM_TAG_LEN); n += UTM_TAG_LEN; }
     int head = n;
@@ -115,7 +112,6 @@ int utm_decode(const uint8_t *in, int n, UtmMsg *out)
     memset(&m, 0, sizeof m);
     m.seed = get32(in + 2);
     m.sealed = (uint8_t)sealed;
-    m.taken_back = (flags & UTM_FLAG_TAKEN_BACK) != 0;
     memcpy(m.o, in + 7, UTM_TAG_LEN);
     if (sealed) memcpy(m.x, in + 7 + UTM_TAG_LEN, UTM_TAG_LEN);
     if (m.seed == 0) return UTM_EROSTER;
@@ -174,7 +170,6 @@ static int is(const uint8_t *a, const uint8_t *b)
 
 int utm_seat(const UtmMsg *m, const uint8_t me[UTM_TAG_LEN])
 {
-    if (m->taken_back) return UTM_SEAT_CLOSED;
     if (!m->sealed) return is(me, m->o) ? UTM_SEAT_WAITING : UTM_SEAT_OPEN;
     if (is(me, m->x)) return UTM_SEAT_X;
     if (is(me, m->o)) return UTM_SEAT_O;
@@ -212,12 +207,6 @@ int utm_play(UtmMsg *m, const uint8_t me[UTM_TAG_LEN], int mv)
 
 int utm_undo(UtmMsg *m, const uint8_t me[UTM_TAG_LEN])
 {
-    /* Cancelling a take-back gives the invitation back - to its creator. */
-    if (m->taken_back) {
-        if (!is(me, m->o)) return 0;
-        m->taken_back = 0;
-        return 1;
-    }
     int np = m->game.n_plies;
     if (np == 0) return 0;
     /* X plays the even plies. Only my own move comes back: the other
@@ -232,18 +221,9 @@ int utm_undo(UtmMsg *m, const uint8_t me[UTM_TAG_LEN])
     return 1;
 }
 
-int utm_take_back(UtmMsg *m, const uint8_t me[UTM_TAG_LEN])
+int utm_door(const UtmMsg *m)
 {
-    if (utm_seat(m, me) != UTM_SEAT_WAITING) return 0;
-    m->taken_back = 1;
-    return 1;
-}
-
-int utm_door(const UtmMsg *m, const uint8_t me[UTM_TAG_LEN], int sent)
-{
-    if (m->game.over) return UTM_DOOR_AGAIN;
-    if (sent && utm_seat(m, me) == UTM_SEAT_WAITING) return UTM_DOOR_TAKE_BACK;
-    return UTM_DOOR_NONE;
+    return m->game.over ? UTM_DOOR_AGAIN : UTM_DOOR_NONE;
 }
 
 /* ------------------------------------------------------- two messages */
@@ -278,7 +258,6 @@ int utm_prefer(const UtmMsg *mine, const UtmMsg *tapped)
 {
     if (!utm_same_game(mine, tapped)) return 1;
     if (mine->sealed != tapped->sealed) return mine->sealed ? -1 : 1;
-    if (mine->taken_back != tapped->taken_back) return mine->taken_back ? -1 : 1;
     int a = mine->game.n_plies, b = tapped->game.n_plies;
     if (a != b) return a > b ? -1 : 1;
     int one_roster = !mine->sealed || is(mine->x, tapped->x);

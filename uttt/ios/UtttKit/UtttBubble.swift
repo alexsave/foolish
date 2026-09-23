@@ -94,7 +94,6 @@ public enum UtttBubble {
          * on. The design document's invitation board carries no active block
          * for exactly this reason. */
         let active = Uttt.plyCount > 0 ? Int(uti_active()) : -1
-        let polys = Uttt.board(active: active, last: last)
 
         let fmt = UIGraphicsImageRendererFormat()
         fmt.scale = 3
@@ -114,16 +113,7 @@ public enum UtttBubble {
              * on once here rather than into ten thousand multiplications. */
             cg.saveGState()
             cg.translateBy(x: board.minX, y: board.minY)
-            cg.scaleBy(x: board.width, y: board.height)
-            for poly in polys {
-                guard let head = poly.points.first else { continue }
-                cg.beginPath()
-                cg.move(to: head)
-                for p in poly.points.dropFirst() { cg.addLine(to: p) }
-                cg.closePath()
-                cg.setFillColor(poly.color)
-                cg.fillPath()
-            }
+            Uttt.fillBoard(active: active, last: last, into: cg, side: board.width)
             cg.restoreGState()
 
             draw(headline: headline, place: place, in: textBox)

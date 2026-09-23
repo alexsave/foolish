@@ -240,21 +240,7 @@ int main(void)
         ok(uti_msg_mark() == 0 && !uti_msg_can_move(), "with no mark and no move");
         ok(!strcmp(uti_say(UTI_SAY_CAPTION), "New Ultimate Tic Tac Toe game"), "the invitation's caption");
         ok(uti_msg_text(inv, sizeof inv) > 3 && !strncmp(inv, "?m=", 3), "the invitation is a bare query");
-        ok(uti_msg_door(0) == UTI_DOOR_NONE && uti_msg_door(1) == UTI_DOOR_TAKE_BACK,
-           "a draft has no door; sent, it can be taken back");
-        {
-            char back[160];
-            ok(uti_msg_take_back() && uti_msg_seat() == UTI_SEAT_CLOSED, "alex takes it back");
-            ok(!strcmp(uti_say(UTI_SAY_BUBBLE_HEADLINE), "No game"), "and the bubble says so");
-            ok(uti_msg_text(back, sizeof back) > 0 && uti_msg_prefer(back, inv) < 0,
-               "the take-back is a message that outranks the invitation");
-            ok(uti_msg_undo() && uti_msg_seat() == UTI_SEAT_WAITING, "cancelling it gives the invitation back");
-            uti_me(vera, 16);
-            ok(uti_msg_read(back) == 0 && uti_msg_seat() == UTI_SEAT_CLOSED && !uti_msg_play(40),
-               "vera cannot sit down at a taken-back board");
-            uti_me(alex, 16);
-            ok(uti_msg_read(inv) == 0, "alex is back on the invitation");
-        }
+        ok(uti_msg_door() == UTI_DOOR_NONE, "an invitation has no door");
 
         uti_me(vera, 16);
         ok(uti_msg_read(inv) == 0, "vera reads it");

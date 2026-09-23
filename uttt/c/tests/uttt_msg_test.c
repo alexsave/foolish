@@ -34,7 +34,6 @@ static void tag_of(const char *who, int32_t seed, uint8_t t[UTM_TAG_LEN])
 static int same_msg(const UtmMsg *a, const UtmMsg *b)
 {
     if (a->seed != b->seed || a->sealed != b->sealed) return 0;
-    if (a->taken_back != b->taken_back) return 0;
     if (memcmp(a->o, b->o, UTM_TAG_LEN)) return 0;
     if (a->sealed && memcmp(a->x, b->x, UTM_TAG_LEN)) return 0;
     if (a->game.n_plies != b->game.n_plies) return 0;
@@ -142,10 +141,9 @@ static int forge(uint8_t *out, int32_t seed, int sealed, const uint8_t *o,
     uint32_t u = (uint32_t)seed;
     out[n++] = (uint8_t)(u >> 24); out[n++] = (uint8_t)(u >> 16);
     out[n++] = (uint8_t)(u >> 8);  out[n++] = (uint8_t)u;
-    /* `sealed` is the flags byte: 1 sealed, 2 taken back, 3 both */
-    out[n++] = (uint8_t)sealed;
+    out[n++] = sealed ? UTM_FLAG_SEALED : 0;
     memcpy(out + n, o, UTM_TAG_LEN); n += UTM_TAG_LEN;
-    if (sealed & UTM_FLAG_SEALED) { memcpy(out + n, x, UTM_TAG_LEN); n += UTM_TAG_LEN; }
+    if (sealed) { memcpy(out + n, x, UTM_TAG_LEN); n += UTM_TAG_LEN; }
     int head = n;
     n += UTM_CHECK_LEN;
     int cn = uttt_encode(g, out + n, UTM_MAX_CODE);
@@ -209,18 +207,6 @@ static void test_refusals(void)
     OK(utm_decode(t, fn, &back) == UTM_EROSTER, "decode: a zero seed");
     fn = forge(t, 1234, 1, a, b, &g1);
     OK(utm_decode(t, fn, &back) == UTM_EOK, "decode: the forge itself is sound");
-    fn = forge(t, 1234, UTM_FLAG_SEALED | UTM_FLAG_TAKEN_BACK, a, b, &g1);
-    OK(utm_decode(t, fn, &back) == UTM_EROSTER, "decode: a sealed game cannot be taken back");
-    fn = forge(t, 1234, UTM_FLAG_TAKEN_BACK, a, b, &g0);
-    OK(utm_decode(t, fn, &back) == UTM_EOK && back.taken_back && !back.sealed,
-       "decode: a taken-back invitation reads");
-    UtmMsg tb;
-    utm_open(&tb, 1234, a);
-    OK(utm_take_back(&tb, a), "take back: fixture");
-    round_trip(&tb, "wire: a taken-back invitation encodes");
-    tb.sealed = 1;
-    OK(utm_encode(&tb, buf, sizeof buf) == UTM_EROSTER,
-       "encode: will not write a sealed take-back");
 
     UtmMsg bad = m;
     bad.sealed = 0;
@@ -304,31 +290,9 @@ static void test_seats(void)
        "undo: O's own move comes back and the roster stays sealed");
     OK(!utm_undo(&inv, a) && !utm_undo(&inv, b), "undo: nothing to take back on an invitation");
 
-    /* TAKE IT BACK: the creator's one door (docs/UI.html 02) */
-    UtmMsg t = inv;
-    OK(!utm_take_back(&t, b) && !t.taken_back, "take back: not somebody else's invitation");
-    OK(!utm_take_back(&t, a2) && !t.taken_back, "take back: not by a reinstalled creator");
-    t = j;
-    OK(!utm_take_back(&t, a) && !t.taken_back, "take back: not once somebody has joined");
-    t = inv;
-    OK(utm_take_back(&t, a) && t.taken_back, "take back: the creator withdraws it");
-    OK(utm_seat(&t, a) == UTM_SEAT_CLOSED && utm_seat(&t, b) == UTM_SEAT_CLOSED &&
-       utm_seat(&t, c) == UTM_SEAT_CLOSED, "seat: a taken-back invitation is closed to everybody");
-    OK(!utm_can_move(&t, b) && !utm_play(&t, b, 40) && !t.sealed,
-       "take back: nobody can sit down at it");
-    OK(!utm_take_back(&t, a), "take back: once");
-    OK(!utm_undo(&t, b) && t.taken_back, "undo: only the creator cancels a take-back");
-    OK(utm_undo(&t, a) && !t.taken_back && utm_seat(&t, a) == UTM_SEAT_WAITING,
-       "undo: cancelling the take-back gives the invitation back");
-
-    /* THE DOOR */
-    OK(utm_door(&inv, a, 0) == UTM_DOOR_NONE, "door: a draft invitation has none - its X is the undo");
-    OK(utm_door(&inv, a, 1) == UTM_DOOR_TAKE_BACK, "door: a sent invitation can be taken back");
-    OK(utm_door(&inv, b, 1) == UTM_DOOR_NONE, "door: only by its creator");
-    OK(utm_door(&j, a, 1) == UTM_DOOR_NONE && utm_door(&j, b, 1) == UTM_DOOR_NONE,
-       "door: a live game has none");
-    t = inv; utm_take_back(&t, a);
-    OK(utm_door(&t, a, 1) == UTM_DOOR_NONE, "door: a taken-back invitation has none");
+    /* THE DOOR. No take-back, by the owner's decision: only Again. */
+    OK(utm_door(&inv) == UTM_DOOR_NONE, "door: an invitation has none");
+    OK(utm_door(&j) == UTM_DOOR_NONE, "door: a live game has none");
     UtmMsg over = inv;
     /* X takes the top-left, centre and bottom-right blocks in 25 plies */
     static const uint8_t win[] = { 79, 63, 5, 45, 8, 76, 42, 61, 70, 71, 78, 55, 15, 58, 36, 1, 11, 24, 4, 40, 39, 31, 80, 35, 0 };
@@ -337,8 +301,7 @@ static void test_seats(void)
     for (unsigned i = 0; i < sizeof win && !over.game.over; i++)
         played &= utm_play(&over, who[i % 2], win[i]);
     OK(played && over.game.over == UTTT_X, "door: the finished fixture is won by X");
-    OK(utm_door(&over, a, 1) == UTM_DOOR_AGAIN && utm_door(&over, b, 0) == UTM_DOOR_AGAIN &&
-       utm_door(&over, c, 1) == UTM_DOOR_AGAIN, "door: a finished game offers Again to anybody");
+    OK(utm_door(&over) == UTM_DOOR_AGAIN, "door: a finished game offers Again");
 }
 
 /* ------------------------------------------------ two bubbles, one game */
@@ -361,12 +324,6 @@ static void test_prefer(void)
     OK(utm_prefer(&other, &jb) > 0, "prefer: whichever side it is on");
     OK(utm_prefer(&inv, &jb) > 0 && utm_prefer(&jb, &inv) < 0, "prefer: sealed beats its invitation");
     OK(utm_prefer(&jb2, &jb) < 0 && utm_prefer(&jb, &jb2) > 0, "prefer: more plies wins");
-    UtmMsg tb = inv;
-    utm_take_back(&tb, a);
-    OK(utm_prefer(&tb, &inv) < 0 && utm_prefer(&inv, &tb) > 0,
-       "prefer: a take-back beats the invitation it withdrew");
-    OK(utm_prefer(&tb, &jb) > 0 && utm_prefer(&jb, &tb) < 0,
-       "prefer: a join that got in beats a take-back");
 
     UtmMsg alt = jb;
     utm_undo(&alt, b);
@@ -455,18 +412,6 @@ static void test_say(void)
     say(UTTT_SAY_WATCH_LINE, &g, UTM_SEAT_SPECTATOR, s);
     OK(!strcmp(s, "O to play"), "say: the spectator's line");
 
-    /* a taken-back invitation, the same on every device */
-    uttt_init(&g);
-    say(UTTT_SAY_BUBBLE_HEADLINE, &g, UTM_SEAT_CLOSED, s);
-    OK(!strcmp(s, "No game"), "say: the take-back bubble says so");
-    say(UTTT_SAY_BUBBLE_PLACE, &g, UTM_SEAT_CLOSED, s);
-    OK(!strcmp(s, "taken back"), "say: and why, on the blue line");
-    say(UTTT_SAY_CAPTION, &g, UTM_SEAT_CLOSED, s);
-    OK(!strcmp(s, "Game taken back."), "say: and its caption");
-    say(UTTT_SAY_CLOSED_SUBLINE, &g, UTM_SEAT_CLOSED, s);
-    OK(!strcmp(s, "Nobody can take this one."), "say: the closed screen's line");
-    say(UTTT_SAY_DOOR_TAKE_BACK, &g, UTM_SEAT_WAITING, s);
-    OK(!strcmp(s, "Take it back"), "say: the waiting door (UI.html 02)");
     say(UTTT_SAY_DOOR_AGAIN, &g, UTM_SEAT_X, s);
     OK(!strcmp(s, "Again"), "say: the end door (UI.html 06)");
 
@@ -489,7 +434,7 @@ static void test_say(void)
     for (int game = 0; game < 200; game++) {
         uttt_init(&g);
         for (;;) {
-            for (int seat = 0; seat <= UTM_SEAT_CLOSED; seat++)
+            for (int seat = 0; seat <= UTM_SEAT_OPEN; seat++)
                 for (int k = 0; k < UTTT_SAY_COUNT; k++) {
                     int n = uttt_say(k, &g, seat, s, sizeof s);
                     if (n < 0) missing++;

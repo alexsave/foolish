@@ -13,9 +13,7 @@ _Static_assert(UTI_SEAT_X == UTM_SEAT_X, "seat X");
 _Static_assert(UTI_SEAT_O == UTM_SEAT_O, "seat O");
 _Static_assert(UTI_SEAT_WAITING == UTM_SEAT_WAITING, "seat WAITING");
 _Static_assert(UTI_SEAT_OPEN == UTM_SEAT_OPEN, "seat OPEN");
-_Static_assert(UTI_SEAT_CLOSED == UTM_SEAT_CLOSED, "seat CLOSED");
 _Static_assert(UTI_DOOR_NONE == UTM_DOOR_NONE, "door NONE");
-_Static_assert(UTI_DOOR_TAKE_BACK == UTM_DOOR_TAKE_BACK, "door TAKE_BACK");
 _Static_assert(UTI_DOOR_AGAIN == UTM_DOOR_AGAIN, "door AGAIN");
 _Static_assert(UTI_SAY_BUBBLE_HEADLINE == UTTT_SAY_BUBBLE_HEADLINE, "say BUBBLE_HEADLINE");
 _Static_assert(UTI_SAY_BUBBLE_PLACE == UTTT_SAY_BUBBLE_PLACE, "say BUBBLE_PLACE");
@@ -31,9 +29,6 @@ _Static_assert(UTI_SAY_UNREADABLE_HEADLINE == UTTT_SAY_UNREADABLE_HEADLINE, "say
 _Static_assert(UTI_SAY_UNREADABLE_SUBLINE == UTTT_SAY_UNREADABLE_SUBLINE, "say UNREADABLE_SUBLINE");
 _Static_assert(UTI_SAY_YOU_ARE_1 == UTTT_SAY_YOU_ARE_1, "say YOU_ARE_1");
 _Static_assert(UTI_SAY_YOU_ARE_2 == UTTT_SAY_YOU_ARE_2, "say YOU_ARE_2");
-_Static_assert(UTI_SAY_CLOSED_HEADLINE == UTTT_SAY_CLOSED_HEADLINE, "say CLOSED_HEADLINE");
-_Static_assert(UTI_SAY_CLOSED_SUBLINE == UTTT_SAY_CLOSED_SUBLINE, "say CLOSED_SUBLINE");
-_Static_assert(UTI_SAY_DOOR_TAKE_BACK == UTTT_SAY_DOOR_TAKE_BACK, "say DOOR_TAKE_BACK");
 _Static_assert(UTI_SAY_DOOR_AGAIN == UTTT_SAY_DOOR_AGAIN, "say DOOR_AGAIN");
 _Static_assert(UTI_SAY_DOOR_AGAIN + 1 == UTTT_SAY_COUNT, "every key has a host name");
 _Static_assert(UTI_MSG_TEXT_MAX >= UTM_MAX_TEXT, "the longest link fits the host buffer");
@@ -288,19 +283,7 @@ int uti_msg_undo(void)
     return utm_undo(&S.m, me);
 }
 
-int uti_msg_take_back(void)
-{
-    uint8_t me[UTM_TAG_LEN];
-    my_tag(me);
-    return utm_take_back(&S.m, me);
-}
-
-int uti_msg_door(int sent)
-{
-    uint8_t me[UTM_TAG_LEN];
-    my_tag(me);
-    return utm_door(&S.m, me, sent != 0);
-}
+int uti_msg_door(void) { return utm_door(&S.m); }
 
 int uti_msg_prefer(const char *mine, const char *tapped)
 {
@@ -329,7 +312,6 @@ int uti_msg_seat_ids(const uint8_t *o_id, int o_n, const uint8_t *x_id, int x_n)
     memcpy(S.m.o, o, UTM_TAG_LEN);
     memcpy(S.m.x, x, UTM_TAG_LEN);
     S.m.sealed = 1;
-    S.m.taken_back = 0;
     return 1;
 }
 

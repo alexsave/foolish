@@ -14,9 +14,7 @@
  *     [0]      UTM_MAGIC
  *     [1]      UTM_FORMAT (1)
  *     [2..5]   seed, int32 big-endian: the send time of the first empty board
- *     [6]      flags: bit 0 = sealed (the X seat is taken), bit 1 = taken
- *              back (the creator withdrew an invitation nobody had taken).
- *              Others reserved.
+ *     [6]      flags: bit 0 = sealed (the X seat is taken). Others reserved.
  *     [7..15]  O's seat tag - the creator's
  *     [16..24] X's seat tag - the joiner's, present only when sealed
  *     [+0..1]  check: the first two bytes of SHA-256 over every other byte
@@ -42,14 +40,6 @@
  *    least one; decode refuses anything else.
  * 3. Once X is taken the roster is sealed. A third tap in a group chat matches
  *    neither tag and is a spectator.
- *
- * AND THE ONE THING THE CREATOR CAN DO IS TAKE IT BACK (docs/UI.html, screen
- * 02, "The only thing you can do is undo"). An extension cannot unsend a
- * bubble or empty the input field, so taking back a SENT invitation is a
- * message of its own: the same invitation with the taken-back flag, in the
- * same MSSession, so it replaces the invitation in the transcript. Nobody can
- * sit down at it. A join that got there first still wins (a sealed game beats
- * its invitation in utm_prefer), so the two devices always agree.
  */
 #ifndef UTTT_MSG_H
 #define UTTT_MSG_H
@@ -62,8 +52,7 @@
 #define UTM_TAG_LEN   9
 #define UTM_CHECK_LEN 2
 #define UTM_FLAG_SEALED 0x01
-#define UTM_FLAG_TAKEN_BACK 0x02
-#define UTM_FLAGS_KNOWN (UTM_FLAG_SEALED | UTM_FLAG_TAKEN_BACK)
+#define UTM_FLAGS_KNOWN (UTM_FLAG_SEALED)
 
 #define UTM_HEAD_OPEN   (7 + UTM_TAG_LEN)
 #define UTM_HEAD_SEALED (7 + 2 * UTM_TAG_LEN)
@@ -90,7 +79,6 @@
 typedef struct {
     int32_t  seed;
     uint8_t  sealed;
-    uint8_t  taken_back;          /* withdrawn by its creator; never sealed */
     uint8_t  o[UTM_TAG_LEN];      /* the creator                          */
     uint8_t  x[UTM_TAG_LEN];      /* the joiner; meaningful iff sealed    */
     UtttGame game;
@@ -143,7 +131,6 @@ int  utm_text_decode(const char *text, UtmMsg *out);
 #define UTM_SEAT_O         2   /* == UTTT_O                                  */
 #define UTM_SEAT_WAITING   3   /* my invitation, nobody has taken it         */
 #define UTM_SEAT_OPEN      4   /* somebody's invitation: X is mine to take   */
-#define UTM_SEAT_CLOSED    5   /* an invitation its creator took back        */
 
 /* WHICH SEAT AM I, for this message. The whole answer: no cache, no sender
  * signal, no DM inference, because every device can recompute its own tag.
@@ -168,31 +155,23 @@ int  utm_play(UtmMsg *m, const uint8_t me[UTM_TAG_LEN], int mv);
  * what is left. Returns 1 if a move came back. */
 int  utm_undo(UtmMsg *m, const uint8_t me[UTM_TAG_LEN]);
 
-/* Take back `me`'s own invitation: only the creator, only while nobody has
- * taken it. Returns 1 if it was taken back; 0 leaves `m` untouched. Cancelling
- * the draft that carries it is utm_undo, which gives the invitation back. */
-int  utm_take_back(UtmMsg *m, const uint8_t me[UTM_TAG_LEN]);
-
 /* ------------------------------------------------------------ the doors */
 
 #define UTM_DOOR_NONE      0
-#define UTM_DOOR_TAKE_BACK 1   /* my invitation, sent, and nobody took it     */
-#define UTM_DOOR_AGAIN     2   /* the game is over: a fresh invitation        */
+#define UTM_DOOR_AGAIN     1   /* the game is over: a fresh invitation        */
 
-/* THE ONE DOOR A SCREEN MAY OFFER, and whether it may offer it at all.
- *
- * `sent` is the one fact only the host knows: whether this message is in the
- * thread or still a draft in the input field. A DRAFT invitation gets no
- * door, because the draft's own X is its undo and there is nothing else an
- * extension can do to it - it cannot empty the input field, and a take-back
- * bubble on top of an invitation nobody has seen is a second bubble about
- * nothing. Once it is sent, taking it back is a message (utm_take_back).
+/* THE ONE DOOR A SCREEN MAY OFFER, and whether it may offer one at all.
  *
  * AGAIN is for anybody holding a finished game, seated or watching: the next
  * thing anybody does is ask for another (docs/UI.html, 06 and 07), and the
  * person who asks proposes, so they will move second. Where on the screen a
- * door may stand (the expanded view only, for Again) is layout, not this. */
-int  utm_door(const UtmMsg *m, const uint8_t me[UTM_TAG_LEN], int sent);
+ * door may stand (the expanded view only) is layout, not this.
+ *
+ * THERE IS NO TAKE-BACK DOOR, by the owner's decision (2026-09-22), over
+ * UI.html 02: the only way to change a move is to tap another square, which
+ * replaces the staged draft, and the only undo is Messages' own X on the
+ * draft (utm_undo). */
+int  utm_door(const UtmMsg *m);
 
 /* ------------------------------------------------------- two messages */
 
@@ -205,9 +184,7 @@ int  utm_same_game(const UtmMsg *a, const UtmMsg *b);
  * same pair agree.
  *
  *   - Different games: the tapped one. Tapping an older game has to win.
- *   - A sealed game beats its own invitation, taken back or not: a join
- *     that got in is a game, whatever the creator did meanwhile.
- *   - A taken-back invitation beats the open one it withdrew.
+ *   - A sealed game beats its own invitation.
  *   - More plies wins (foolish's Rule P turn rule).
  *   - Equal plies, ONE ROSTER: `mine`. The only way two same-length siblings
  *     of one roster meet on a device is that device's own change of mind, and

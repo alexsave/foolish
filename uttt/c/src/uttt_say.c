@@ -57,11 +57,6 @@ int uttt_say(int key, const UtttGame *g, int seat, char *out, int cap)
 
     switch (key) {
     case UTTT_SAY_BUBBLE_HEADLINE:
-        /* TWO WORDS OVER TWO LINES: the headline has about 87 points and
-         * "Taken back" in bold 16 does not fit it ("Taken ba..." in the
-         * transcript), so the headline says what is left and the blue line
-         * says why. */
-        if (seat == UTM_SEAT_CLOSED) return put(out, cap, "No game");
         /* AN EMPTY BOARD IS NOT A MOVE. Nobody has a seat yet, so there is no
          * move to be anybody's; the invitation asks the question instead. */
         switch (g->over) {
@@ -72,7 +67,6 @@ int uttt_say(int key, const UtttGame *g, int seat, char *out, int cap)
         }
 
     case UTTT_SAY_BUBBLE_PLACE:
-        if (seat == UTM_SEAT_CLOSED) return put(out, cap, "taken back");
         /* A finished game has nowhere to send anybody, so the line says how
          * long it took; an invitation has nowhere either, and says nothing. */
         if (g->over) return putf(cap, snprintf(out, (size_t)cap, "%d moves", g->n_plies));
@@ -80,7 +74,6 @@ int uttt_say(int key, const UtttGame *g, int seat, char *out, int cap)
         return put(out, cap, uttt_place_name(a, 0));
 
     case UTTT_SAY_CAPTION:
-        if (seat == UTM_SEAT_CLOSED) return put(out, cap, "Game taken back.");
         switch (g->over) {
         case UTTT_X: case UTTT_O: {
             /* docs/UI.html 05: "Alex won on the diagonal. 58 moves." The
@@ -147,13 +140,7 @@ int uttt_say(int key, const UtttGame *g, int seat, char *out, int cap)
     case UTTT_SAY_UNREADABLE_SUBLINE:
         return put(out, cap, "That board came from a newer version of the app.");
 
-    case UTTT_SAY_CLOSED_HEADLINE:
-        return put(out, cap, "Taken back");
-    case UTTT_SAY_CLOSED_SUBLINE:
-        return put(out, cap, "Nobody can take this one.");
-
-    case UTTT_SAY_DOOR_TAKE_BACK: return put(out, cap, "Take it back");
-    case UTTT_SAY_DOOR_AGAIN:     return put(out, cap, "Again");
+    case UTTT_SAY_DOOR_AGAIN: return put(out, cap, "Again");
 
     case UTTT_SAY_YOU_ARE_1: return put(out, cap, "you");
     case UTTT_SAY_YOU_ARE_2: return put(out, cap, "are");

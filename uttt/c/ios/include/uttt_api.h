@@ -64,7 +64,6 @@ int  uti_decode(const uint8_t *buf, int n, int32_t seed);
 #define UTI_SEAT_O         2
 #define UTI_SEAT_WAITING   3
 #define UTI_SEAT_OPEN      4
-#define UTI_SEAT_CLOSED    5
 
 void uti_me(const uint8_t *id, int n);
 
@@ -86,7 +85,7 @@ int  uti_msg_check(const char *text);
 int  uti_msg_text(char *out, int cap);
 
 /* UTM_SEAT_*: 0 spectator, 1 X, 2 O, 3 waiting (my invitation), 4 open (X is
- * mine to take), 5 closed (an invitation its creator took back). */
+ * mine to take). */
 int  uti_msg_seat(void);
 int  uti_msg_mark(void);        /* the mark I play, or 0 */
 int  uti_msg_sealed(void);
@@ -99,16 +98,10 @@ int  uti_msg_can_move(void);
 int  uti_msg_play(int mv);
 int  uti_msg_undo(void);
 
-/* Take back my own invitation (UTM_SEAT_WAITING only). 1 if taken back; the
- * resident message is then the take-back, ready to stage. */
-int  uti_msg_take_back(void);
-
-/* The one door a screen may offer for the resident message (utm_door).
- * `sent` is whether it is in the thread rather than a draft in the field. */
+/* The one door a screen may offer for the resident message (utm_door). */
 #define UTI_DOOR_NONE      0
-#define UTI_DOOR_TAKE_BACK 1
-#define UTI_DOOR_AGAIN     2
-int  uti_msg_door(int sent);
+#define UTI_DOOR_AGAIN     1
+int  uti_msg_door(void);
 
 /* Which of two messages to show: <0 mine (the device's staged draft), >0 the
  * tapped one, 0 the same. An unreadable one always loses. */
@@ -141,10 +134,7 @@ int  uti_hit(float u, float v);
 #define UTI_SAY_UNREADABLE_SUBLINE   11
 #define UTI_SAY_YOU_ARE_1            12
 #define UTI_SAY_YOU_ARE_2            13
-#define UTI_SAY_CLOSED_HEADLINE      14
-#define UTI_SAY_CLOSED_SUBLINE       15
-#define UTI_SAY_DOOR_TAKE_BACK       16
-#define UTI_SAY_DOOR_AGAIN           17
+#define UTI_SAY_DOOR_AGAIN           14
 
 const char *uti_say(int key);
 

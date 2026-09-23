@@ -151,7 +151,7 @@ public struct UtttGameScreen: View {
             .overlay(alignment: .bottomTrailing) {
                 HStack(alignment: .center, spacing: 10) {
                     if let title = UtttDoorButton.title(self.door), t > 0.5 {
-                        UtttDoorButton(title: title, ghost: self.door == .takeBack, act: onDoor)
+                        UtttDoorButton(title: title, act: onDoor)
                             .opacity(Double((t - 0.5) * 2))
                     }
                     UtttRulebookButton(side: door) { rulesOpen = true }
