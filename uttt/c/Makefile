@@ -51,6 +51,10 @@ run: build/uttt_test build/uttt_msg_test build/uttt_anim_test
 build/uttt_anim_test: $(SRC) tests/uttt_anim_test.c | build
 	$(CC) $(CFLAGS) $(SRC) tests/uttt_anim_test.c -o $@ $(LDLIBS)
 
+# The board's side per drawer height, for the ruler's scorer (tools/uttt_side.c).
+build/uttt_side: $(SRC) tools/uttt_side.c | build
+	$(CC) $(CFLAGS) -Isrc $(SRC) tools/uttt_side.c -o $@ $(LDLIBS)
+
 arena: build/uttt_arena
 	./build/uttt_arena 200 200
 
