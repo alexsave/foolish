@@ -416,11 +416,37 @@ Every new side cost 50-60ms of main thread (`raster side N` in the log), and a m
 Fix: the same board at a new size draws the picture on hand scaled into the new rectangle and paints the sharp one off the main thread, one paint at a time, following the latest side.
 Manual drag collapse at 0.6s, one take each: largest snap board centre 73 -> 55pt, lower corners 100 -> 69pt, door 124 -> 90pt, roughness down 13-40% per mark.
 
+**The layout followed the sparse heights Messages hands, not the drawer (second pass).**
+Messages hands one height about 20ms before an auto-collapse slides, and after a released drag a new one only every ~200ms, so the board shrank in one frame and then in 50-100pt steps.
+Fix: the sheet is laid out at the kernel's drawer height (`uttt_drawer_*` in `uttt/c/src/uttt_anim.c`, bridged as `uti_drawer_*`), a critically damped spring on the host's response (0.338s, docs/COLLAPSE_MSE.md) from where the layout is toward the last height handed.
+A change within 32pt with no spring running (a finger on the handle) is followed at once; anything else re-aims the spring from its current position and velocity, and a spring from rest waits the 20ms lead.
+`UtttDrawerClock` owns only the display link; a layout pass asks `uti_drawer_peek` so the frame that first sees a new height never draws it raw.
+Tests: `uttt_anim_test` (continuity of position and velocity, no overshoot, the follow, the lead; every check mutation-checked) and `ios-smoke` (the peek).
+
+**The board was re-rendered on the main thread every frame of a resize.**
+A `sample` during an auto-collapse put 276 of 1111 main-thread samples in `RBLayer display` under the board's Canvas, with a vImage RGBA-to-BGRA permute at the top of the stack.
+Fix: the cached board is an `Image` view (a texture the compositor scales), painted in BGRA, the compositor's own layout; the Canvas keeps only the wash, the ring and the moving stroke.
+Same measurement after: 21 samples in `RBLayer display`, no permute.
+
+Per mark, largest snap of its offset from the drawer (pt), before -> after; UtttRig, light, normal speed:
+
+| mark | auto-collapse (3 -> 3 takes) | drag collapse 0.6s (2 -> 2) | drag expand 0.6s (2 -> 2) | flick collapse 0.15s (1 -> 1) |
+|---|---|---|---|---|
+| board centre | 156 -> 74 | 77 -> 58 | 64 -> 54 | 85 -> 0 |
+| lower corners | 205 -> 44 | 103 -> 0 | 83 -> 72 | 111 -> 0 |
+| upper corners | 107 -> 53 | 49 -> 48 | 53 -> 36 | 62 -> 0 |
+| rulebook door | 538 -> 34 | 129 -> 22 | 200 -> 149 | 158 -> 0 |
+| highlighter | 191 -> 61 | - | - | - |
+
+Roughness (sum of squared second differences) fell for most marks, e.g. auto-collapse board centre 87087 -> 33203, drag expand board centre 50638 -> 29710.
+Charts: `pass2_*.png` beside the earlier ones in the ruler scratch folder.
+
 ### What is left
 
-- **The start of an auto-collapse is one resize.** Messages gives one height, before it moves the drawer, so the board shrinks in a single frame, about 20ms before the slide.
-  A continuous resize needs our own spring on a virtual height (critically damped, 0.338s, the host's) with the scaled-picture path above, so the board can shrink as the drawer slides.
-- **After a manual release Messages hands heights about every 200ms** (516, 334, 289 in the log), so the layout still steps during the settle; the same virtual-height spring would bridge them.
-- Measured with one or two takes per variant, not the 6 to 20 the method wants.
-  Manual drag expand was filmed once, before the raster fix only; tap-to-expand, slow and flick drags after the fix, and the smallest phone width were not measured.
+- **The auto-collapse still moves in 2-3 steps of up to ~75pt.** The ruler clock shows the extension committing a frame only every 40-50ms during the slide on the simulator; the main thread now waits on the simulator's Metal (`waitUntilScheduled`), not on our code.
+  This needs a device take before anything else is changed.
+- **During an auto-collapse the layout lags the drawer**, so the board's lower edge and the door run below the screen for ~16-24 frames (counted as misses); the spring could start later or run faster, but only a device measurement can say which.
+- **Drag expand improved least** (door 200 -> 149pt): the first ~200ms of an upward drag also arrives as sparse ~120pt heights, which the spring now smooths but trails.
+- Not measured after the fix: slow drags (1.5s) and the flick up (the takes did not register a drag), tap-to-expand, dark mode, and the smallest phone width.
+- Still one to three takes per variant, not the 6 to 20 the method wants.
 - The top-left corner square is not found in compact takes (it sits against the you-are mark), so it is scored expanded only.
