@@ -733,7 +733,7 @@ Opening a bubble is scored by the kernel clock's own log (`motion done N ms, K f
 |---|---|---|---|---|---|---|
 | b0 | baseline (build before this session) | fa058e8d | 5.0-9.9 | 127-327 ms | 700-1030 | 5 in 711 ms |
 | b1 | the App Group looked up once (dev files); the new motion plan | 2966f950 | 9.9-12.1 | 115-137 ms | 420-550 | - |
-| b2 | the board's per-frame SwiftUI split into small observed views | (in b3's parent) | 8.8-11.3 | 118-142 ms | 480-650 | 8 in 683 ms |
+| b2 | the board's per-frame SwiftUI split into small observed views | d985b242 | 8.8-11.3 | 118-142 ms | 480-650 | 8 in 683 ms |
 | b3 | the wash and the moving strokes on Core Animation layers set straight from the clock | 8c90b784 | 56.5-57.1 | 18-20 ms | 124-487 | 32-35 in ~690 ms |
 
 What `sample` said at each step, heavy functions and lines:
