@@ -395,99 +395,60 @@ private struct CollapseRiderHost<Content: View>: UIViewControllerRepresentable {
     final class Coordinator { weak var slide: CollapseSlide? }
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    func makeUIViewController(context: Context) -> RiderController {
-        let c = RiderController(root(context), touches: touches)
-        c.onLayout = { [weak slide, weak c] in
-            if let v = c?.view { slide?.laidOut(v) }
+    func makeUIViewController(context: Context) -> UIHostingController<AnyView> {
+        let h = RiderHostingController(rootView: root(context))
+        h.onLayout = { [weak slide, weak h] in
+            if let v = h?.view { slide?.laidOut(v) }
         }
+        h.view.backgroundColor = .clear
+        h.view.clipsToBounds = false
+        h.view.isUserInteractionEnabled = touches
+        if #available(iOS 16.4, *) { h.safeAreaRegions = [] }
+        h.sizingOptions = []
         context.coordinator.slide = slide
-        slide.register(c.view, ride: ride)
-        return c
+        slide.register(h.view, ride: ride)
+        return h
     }
 
-    func updateUIViewController(_ c: RiderController, context: Context) {
-        c.set(root(context))
-        slide.update(c.view, ride: ride)
+    func updateUIViewController(_ h: UIHostingController<AnyView>, context: Context) {
+        h.rootView = root(context)
+        slide.update(h.view, ride: ride)
     }
 
-    static func dismantleUIViewController(_ c: RiderController,
+    static func dismantleUIViewController(_ h: UIHostingController<AnyView>,
                                           coordinator: Coordinator) {
-        coordinator.slide?.unregister(c.view)
+        coordinator.slide?.unregister(h.view)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize,
-                      uiViewController c: RiderController,
+                      uiViewController h: UIHostingController<AnyView>,
                       context: Context) -> CGSize? {
-        c.host.sizeThatFits(in: proposal.replacingUnspecifiedDimensions())
+        h.sizeThatFits(in: proposal.replacingUnspecifiedDimensions())
     }
 
+    /// A RIDER'S CONTENT NEVER ANIMATES FROM OUTSIDE. Its only motion
+    /// through a slide is the slide's, on the render server; an animation it
+    /// inherits plays on the main thread, at the main thread's rate, under a
+    /// layer the render server is already moving. Messages resizes the
+    /// extension inside a UIKit animation block, and this nested host bridged
+    /// it into its content: the slide's probe logged the board's picture
+    /// crawling from its expanded frame to its compact one over ~400 ms, in
+    /// ~70 ms steps (77 -> 29 -> 11 -> 4pt off the drawer's centre, filmed),
+    /// while its layer was already scaled for the compact frame. Laying the
+    /// host out at once and without UIKit animation changed nothing; only
+    /// this did (both measured). A rider's own motion (a pen stroke, a
+    /// crossfade) runs on its own clock, not on a transaction.
     private func root(_ context: Context) -> AnyView {
         AnyView(content.environment(\.self, context.environment)
             .transaction { $0.animation = nil })
     }
 }
 
-/// THE RIDER'S LAYER, and the SwiftUI content inside it.
-///
-/// A RIDER'S CONTENT NEVER ANIMATES FROM OUTSIDE. Its only motion through a
-/// slide is the slide's, on the render server; anything else plays on the
-/// main thread at its rate, under a layer the render server is already
-/// moving. Messages resizes the extension inside a UIKit animation block, and
-/// a hosting view resized inside one bridges that animation into its content
-/// (logged by the slide's probe: the board's picture crawled from its
-/// expanded frame to its compact one over ~400 ms in ~70 ms steps, 77 -> 29
-/// -> 11 -> 4pt off the drawer's centre, while its layer was scaled for the
-/// compact frame from the flip). So the content's hosting view sits inside
-/// this plain view and is sized, and laid out, with animations off and AT
-/// ONCE - in the same pass as the slide rebuilds the ride for the new bounds,
-/// so the first composited frame of the slide has the compact content under
-/// the compact ride. The root is handed over the same way.
-final class RiderController: UIViewController {
-    let host: UIHostingController<AnyView>
+/// A hosting controller that says when its view was laid out.
+private final class RiderHostingController: UIHostingController<AnyView> {
     var onLayout: (() -> Void)?
-    private let touches: Bool
-
-    init(_ root: AnyView, touches: Bool) {
-        host = UIHostingController(rootView: root)
-        self.touches = touches
-        super.init(nibName: nil, bundle: nil)
-        if #available(iOS 16.4, *) { host.safeAreaRegions = [] }
-        host.sizingOptions = []
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func loadView() {
-        let v = UIView()
-        v.backgroundColor = .clear
-        v.clipsToBounds = false
-        v.isUserInteractionEnabled = touches
-        view = v
-        addChild(host)
-        host.view.backgroundColor = .clear
-        host.view.clipsToBounds = false
-        /* No autoresizing: it would resize the content the moment this
-         * view is resized, inside whatever animation block that happens in. */
-        host.view.autoresizingMask = []
-        host.view.frame = v.bounds
-        v.addSubview(host.view)
-        host.didMove(toParent: self)
-    }
-
-    func set(_ root: AnyView) {
-        var t = Transaction()
-        t.disablesAnimations = true
-        withTransaction(t) { host.rootView = root }
-    }
-
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        let b = view.bounds
-        UIView.performWithoutAnimation {
-            if host.view.frame != b { host.view.frame = b }
-            host.view.layoutIfNeeded()
-        }
         onLayout?()
     }
 }
