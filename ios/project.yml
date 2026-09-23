@@ -396,6 +396,9 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: cards.foolish.kit
+        # CMotionRuler: the debug ruler's palette, once, in C
+        # (shared/swift/MotionRuler.swift reads it).
+        SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../shared/c/motion_ruler
         DEFINES_MODULE: "YES"
         # Without this the framework ships with no Info.plist and the app's
         # embed phase refuses it ("did not contain an Info.plist"). The app

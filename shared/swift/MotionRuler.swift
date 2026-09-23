@@ -11,15 +11,19 @@
 //     so a snapshot scaled on its way to the screen reads as a wrong pitch,
 //   - a 12pt fully saturated SQUARE on every element that moves or resizes.
 //
-// WHY SATURATED PRIMARIES, AS LITERAL sRGB. They survive h264 4:2:0 chroma
-// subsampling, nothing on a paper or felt surface is that colour, and literal
-// values do not shift between light and dark the way the system colours do.
+// WHY SATURATED PRIMARIES, AS LITERAL sRGB: see shared/c/motion_ruler/
+// motion_ruler.h, which owns every colour and size here (the CMotionRuler
+// module) and which the finder (shared/tools/motion) reads too, so what is
+// drawn and what is looked for cannot drift apart.
 //
 // WHAT A PRODUCT SUPPLIES: the App Group its dev files live in, and where the
 // squares go. Everything here is product-free. DEBUG only - the release branch
 // compiles to no-ops so call sites stay unconditional.
 
 import SwiftUI
+#if DEBUG
+import CMotionRuler
+#endif
 
 #if DEBUG
 
@@ -34,35 +38,42 @@ public enum MotionRuler {
         return FileManager.default.fileExists(atPath: dir.appendingPathComponent(name).path)
     }
 
-    public static let band: CGFloat = 10
-    public static let strip: CGFloat = 18
-    public static let edge: CGFloat = 4
-    public static let side: CGFloat = 12
+    public static let band = CGFloat(MR_BAND_PT)
+    public static let strip = CGFloat(MR_STRIP_PT)
+    public static let edge = CGFloat(MR_EDGE_PT)
+    public static let side = CGFloat(MR_SIDE_PT)
 
     public static func pure(_ r: Double, _ g: Double, _ b: Double) -> Color {
         Color(.sRGB, red: r, green: g, blue: b, opacity: 1)
+    }
+
+    /// An ink of the palette, by its C index (MR_INK_*).
+    static func ink(_ i: Int) -> Color {
+        let k = Int32(i)
+        return pure(mr_ink_unit(k, 0), mr_ink_unit(k, 1), mr_ink_unit(k, 2))
     }
 
     /// The square palette. Red and green are the edge bars' and never a square.
     /// Squares of one colour are told apart by position by the reader.
     public enum Ink: CaseIterable {
         case magenta, cyan, yellow, orange, blue, violet, lime, pink
-        public var color: Color {
+        var index: Int {
             switch self {
-            case .magenta: return pure(1, 0, 1)
-            case .cyan:    return pure(0, 1, 1)
-            case .yellow:  return pure(1, 1, 0)
-            case .orange:  return pure(1, 0.5, 0)
-            case .blue:    return pure(0, 0, 1)
-            case .violet:  return pure(0.5, 0, 1)
-            case .lime:    return pure(0.5, 1, 0)
-            case .pink:    return pure(1, 0, 0.5)
+            case .magenta: return MR_INK_MAGENTA
+            case .cyan:    return MR_INK_CYAN
+            case .yellow:  return MR_INK_YELLOW
+            case .orange:  return MR_INK_ORANGE
+            case .blue:    return MR_INK_BLUE
+            case .violet:  return MR_INK_VIOLET
+            case .lime:    return MR_INK_LIME
+            case .pink:    return MR_INK_PINK
             }
         }
+        public var color: Color { MotionRuler.ink(index) }
     }
 
     /// The clock strip's left edge, past the banded strip.
-    public static let clockGap: CGFloat = 6
+    public static let clockGap = CGFloat(MR_CLOCK_GAP_PT)
 
     /// The value the clock strip shows now: milliseconds modulo 16384. A log
     /// line that carries it can be matched to the filmed frame showing it.
@@ -70,11 +81,7 @@ public enum MotionRuler {
         Int((Date().timeIntervalSince1970 * 1000).rounded()) & ((1 << MotionRulerClock.bits) - 1)
     }
 
-    static func bandColour(_ i: Int) -> Color {
-        if i == 0 { return pure(1, 0, 0) }
-        if i % 10 == 0 { return pure(1, 1, 0) }
-        return i % 2 == 0 ? pure(0, 1, 1) : pure(1, 0, 1)
-    }
+    static func bandColour(_ i: Int) -> Color { ink(Int(mr_band_ink(Int32(i)))) }
 }
 
 /// The edge bars and the banded strip, filling whatever box it is laid on.
@@ -103,14 +110,14 @@ public struct MotionRulerEdges: View {
                                 .frame(width: MotionRuler.strip, height: MotionRuler.band)
                                 .offset(y: CGFloat(i) * MotionRuler.band)
                         }
-                        MotionRuler.pure(1, 0, 0)
+                        MotionRuler.ink(MR_INK_RED)
                             .frame(width: geo.size.width, height: MotionRuler.edge)
                         MotionRulerClock()
                             .offset(x: MotionRuler.strip + MotionRuler.clockGap,
                                     y: MotionRuler.edge)
                     }
                     if bottom {
-                        MotionRuler.pure(0, 1, 0)
+                        MotionRuler.ink(MR_INK_GREEN)
                             .frame(width: geo.size.width, height: MotionRuler.edge)
                             .offset(y: geo.size.height - MotionRuler.edge)
                     }
@@ -136,8 +143,8 @@ public struct MotionRulerEdges: View {
 /// filmed frame whose clock repeats while geometry moved is a frame the app did
 /// not render - the host composited a stale picture of it.
 public struct MotionRulerClock: View {
-    public static let bits = 14
-    public static let cell: CGFloat = 12
+    public static let bits = Int(MR_CLOCK_BITS)
+    public static let cell = CGFloat(MR_CLOCK_CELL_PT)
     public init() {}
     public var body: some View {
         TimelineView(.animation) { ctx in

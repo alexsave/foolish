@@ -177,6 +177,8 @@ targets:
         # The clang module map that lets Swift `import CUttt`, copied into
         # BUILT_PRODUCTS_DIR/include by the xcframework.
         HEADER_SEARCH_PATHS: $(inherited) $(BUILT_PRODUCTS_DIR)/include
+        # CMotionRuler: the ruler's palette, once, in C (MotionRuler.swift).
+        SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../../shared/c/motion_ruler
         TARGETED_DEVICE_FAMILY: "1"
 
 schemes:
