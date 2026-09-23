@@ -889,7 +889,12 @@ final class MessagesViewController: MSMessagesAppViewController {
         slide.arm()
         requestPresentationStyle(.compact)
         await awaitTransitionSettled()
-        slide.disarm()
+        /* didTransition comes BEFORE the compact height is handed (measured:
+         * 50 ms before), so the arm outlives it by a beat; an arm no height
+         * ever answered stands down then. */
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.slide.disarm()
+        }
     }
 
     private var transitionWaiters: [Int: CheckedContinuation<Void, Never>] = [:]

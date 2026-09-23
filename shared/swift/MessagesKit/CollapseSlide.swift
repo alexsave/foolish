@@ -131,6 +131,9 @@ public final class CollapseSlide: ObservableObject {
         }
         guard armed, previous - height > flip else { return false }
         armed = false
+        #if DEBUG
+        NSLog("collapse-slide begin %.1f -> %.1f", previous, height)
+        #endif
         begin(from: previous, to: height)
         return true
     }
