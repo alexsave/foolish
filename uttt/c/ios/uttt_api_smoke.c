@@ -226,6 +226,59 @@ int main(void)
         printf("  rulebook at 108 points: %d strokes\n", big);
     }
 
+    /* ---- the message, end to end as the host drives it: two devices are two
+     * identities, and the only thing that crosses between them is text. */
+    {
+        static const uint8_t alex[16] = { 0xa1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+        static const uint8_t vera[16] = { 0xb2, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+        static const uint8_t cleo[16] = { 0xc3, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+        char inv[160], join[160], reply[160], other[160];
+
+        uti_me(alex, 16);
+        ok(uti_msg_open(1726990000) == 1, "alex opens an invitation");
+        ok(uti_msg_seat() == UTI_SEAT_WAITING, "and waits on it");
+        ok(uti_msg_mark() == 0 && !uti_msg_can_move(), "with no mark and no move");
+        ok(!strcmp(uti_say(UTI_SAY_CAPTION), "New Ultimate Tic Tac Toe game"), "the invitation's caption");
+        ok(uti_msg_text(inv, sizeof inv) > 3 && !strncmp(inv, "?m=", 3), "the invitation is a bare query");
+
+        uti_me(vera, 16);
+        ok(uti_msg_read(inv) == 0, "vera reads it");
+        ok(uti_msg_seat() == UTI_SEAT_OPEN && uti_msg_mark() == 1, "the seat is hers, as X");
+        ok(!strcmp(uti_say(UTI_SAY_HEADLINE_PRE), "Your move"), "and the first move is hers");
+        int mv = uti_hit(.5f, .5f);
+        ok(mv == 40, "a tap in the middle is the centre of the centre");
+        ok(uti_msg_play(mv) && uti_msg_sealed(), "her first move takes the seat");
+        ok(uti_msg_seat() == UTI_SEAT_X && !uti_msg_can_move(), "she is X and it is O's turn");
+        ok(uti_msg_text(join, sizeof join) > 0, "the join is one message");
+        ok(!strcmp(uti_say(UTI_SAY_CAPTION), "Sent to the centre board."), "carrying her move");
+
+        uti_me(alex, 16);
+        ok(uti_msg_read(join) == 0 && uti_msg_seat() == UTI_SEAT_O, "alex opens it as O");
+        ok(uti_msg_can_move() && uti_msg_play(36), "and answers");
+        ok(uti_msg_text(reply, sizeof reply) > 0, "the reply");
+        ok(uti_msg_prefer(reply, join) < 0 && uti_msg_prefer(join, reply) > 0, "the reply outranks the join");
+        ok(uti_msg_same_game(reply, inv), "all one game");
+
+        uti_me(cleo, 16);
+        ok(uti_msg_read(reply) == 0 && uti_msg_seat() == UTI_SEAT_SPECTATOR, "cleo watches");
+        ok(!uti_msg_play(0) && !uti_msg_undo(), "and cannot touch it");
+        ok(!strcmp(uti_say(UTI_SAY_WATCH_LINE), "X to play"), "the spectator's line");
+
+        ok(uti_msg_read("?v=1&s=2") < 0, "an old-format link is refused");
+        ok(uti_msg_seat() == UTI_SEAT_SPECTATOR && uti_n_plies() == 2, "and changes nothing");
+        ok(uti_msg_prefer("garbage", reply) > 0 && uti_msg_prefer(reply, "garbage") < 0,
+           "an unreadable bubble always loses");
+
+        uti_me(alex, 16);
+        uti_new(99);
+        ok(uti_play(4) && uti_play(40), "a seeded position");
+        ok(uti_msg_seat_ids(vera, 16, alex, 16), "seated from two identities");
+        ok(uti_msg_seat() == UTI_SEAT_X && uti_msg_can_move(), "alex is X and on move");
+        ok(!uti_msg_seat_ids(vera, 16, vera, 16), "nobody plays themselves");
+        ok(uti_msg_text(other, sizeof other) > 0, "and it has a link");
+        ok(uti_say(12345)[0] == '\0', "an unknown sentence is empty, never NULL");
+    }
+
     printf(fails ? "\n%d FAILED\n" : "\nbridge ok\n", fails);
     return fails ? 1 : 0;
 }

@@ -165,3 +165,11 @@ int uttt_play(UtttGame *g, uint8_t mv)
     g->turn   = (uint8_t)(g->turn == UTTT_X ? UTTT_O : UTTT_X);
     return 1;
 }
+
+int uttt_active(const UtttGame *g)
+{
+    if (g->over) return -1;
+    if (g->forced != UTTT_ANY && uttt_block(g, g->forced) == UTTT_OPEN)
+        return g->forced;
+    return 9;
+}

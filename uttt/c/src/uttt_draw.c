@@ -256,6 +256,23 @@ int uttt_draw_cell(UtttDL *d, int mark, int mv, int32_t seed, float t)
     return 0;
 }
 
+/* The inverse of the placement above, from the same BL and CE: a point in the
+ * board's unit square to the move under it. The far edge (exactly 1) belongs
+ * to the last cell rather than to nothing; anything off the board is -1. */
+int uttt_hit(float u, float v)
+{
+    if (!(u >= 0.f && u <= S && v >= 0.f && v <= S)) return -1;
+    int bx = (int)(u / BL), by = (int)(v / BL);
+    if (bx > 2) bx = 2;
+    if (by > 2) by = 2;
+    int cx = (int)((u - bx * BL) / CE), cy = (int)((v - by * BL) / CE);
+    if (cx > 2) cx = 2;
+    if (cy > 2) cy = 2;
+    if (cx < 0) cx = 0;
+    if (cy < 0) cy = 0;
+    return (by * 3 + bx) * 9 + (cy * 3 + cx);
+}
+
 int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float calm)
 {
     UtttPen p = uttt_pen_92();

@@ -26,6 +26,13 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o);
 /* One cell's mark, partially drawn - the animating stroke on its own. */
 int uttt_draw_cell(UtttDL *d, int mark, int mv, int32_t seed, float t);
 
+/* WHICH SQUARE A TOUCH LANDED ON: (u, v) in the board's 0..1 space, the one
+ * uttt_draw_board draws in, to block*9+cell - or -1 off the board. Here
+ * beside the drawing because it is the drawing's geometry read backwards; a
+ * renderer that divided by three itself would be a second copy of where the
+ * cells are. Legality is not asked: that is uttt_play's question. */
+int uttt_hit(float u, float v);
+
 /* One mark on its own, for the "you are" indicator. */
 int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float calm);
 

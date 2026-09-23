@@ -50,6 +50,85 @@ int  uti_decode(const uint8_t *buf, int n, int32_t seed);
  * interest is the opposite of that. The bots are research; they do not ship.
  */
 
+/* --------------------------------------------------------- the message */
+/* What a bubble carries and who may do what with it - uttt_msg.h has the
+ * layout and the rules. The host hands over an opaque string and gets one
+ * back; it never sees a byte, a tag or a hash. The resident message IS the
+ * resident game: every uti_* game accessor above reads its board.
+ *
+ * THIS DEVICE'S IDENTITY is whatever bytes the host says it is - Messages'
+ * localParticipantIdentifier, 16 bytes. It is hashed with each message's
+ * seed into a seat tag here and never leaves the kernel. */
+#define UTI_SEAT_SPECTATOR 0
+#define UTI_SEAT_X         1
+#define UTI_SEAT_O         2
+#define UTI_SEAT_WAITING   3
+#define UTI_SEAT_OPEN      4
+
+void uti_me(const uint8_t *id, int n);
+
+/* A new invitation from me, now: the empty board, me in the O seat, the seed
+ * the send time. The joiner will be X and moves first. */
+int  uti_msg_open(int64_t unix_seconds);
+
+/* Adopt the message in `text` (a whole URL string is fine) - roster and
+ * game. 0 (UTM_EOK), or a negative UTM_E* and nothing changes. */
+int  uti_msg_read(const char *text);
+
+/* The resident message as the text for MSMessage.url. Length, or negative. */
+int  uti_msg_text(char *out, int cap);
+
+/* UTM_SEAT_*: 0 spectator, 1 X, 2 O, 3 waiting (my invitation), 4 open (X is
+ * mine to take). */
+int  uti_msg_seat(void);
+int  uti_msg_mark(void);        /* the mark I play, or 0 */
+int  uti_msg_sealed(void);
+int32_t uti_msg_seed(void);
+int  uti_msg_can_move(void);
+
+/* Play as me - on an open invitation, TAKE THE SEAT with this move. 1 if
+ * played. Undo takes back my own last move only; undoing the joining move
+ * gives the seat back. */
+int  uti_msg_play(int mv);
+int  uti_msg_undo(void);
+
+/* Which of two messages to show: <0 mine (the device's staged draft), >0 the
+ * tapped one, 0 the same. An unreadable one always loses. */
+int  uti_msg_prefer(const char *mine, const char *tapped);
+int  uti_msg_same_game(const char *a, const char *b);
+
+/* Seal the resident game with these two identities in the O and X seats.
+ * A game one device could never reach by itself - the DEBUG harness's
+ * door, and the preview's. 0 if the two are the same person. */
+int  uti_msg_seat_ids(const uint8_t *o_id, int o_n, const uint8_t *x_id, int x_n);
+
+/* A touch at (u, v) in the board's 0..1 square, to block*9+cell, or -1. */
+int  uti_hit(float u, float v);
+
+/* ----------------------------------------------------------- the words */
+/* Every sentence on a screen or a bubble, for the resident message as this
+ * device sees it (uttt_say.h has the keys: UTTT_SAY_*). The pointer is
+ * valid until the next call - copy it out at once. Never NULL. */
+#define UTI_SAY_BUBBLE_HEADLINE      0
+#define UTI_SAY_BUBBLE_PLACE         1
+#define UTI_SAY_CAPTION              2
+#define UTI_SAY_HEADLINE_PRE         3
+#define UTI_SAY_HEADLINE_POST        4
+#define UTI_SAY_SUBLINE              5
+#define UTI_SAY_WATCH_LABEL          6
+#define UTI_SAY_WATCH_LINE           7
+#define UTI_SAY_WAITING_HEADLINE     8
+#define UTI_SAY_WAITING_SUBLINE      9
+#define UTI_SAY_UNREADABLE_HEADLINE  10
+#define UTI_SAY_UNREADABLE_SUBLINE   11
+#define UTI_SAY_YOU_ARE_1            12
+#define UTI_SAY_YOU_ARE_2            13
+
+const char *uti_say(int key);
+
+/* The mark drawn in the play-surface headline, or 0: "Waiting on <O>". */
+int  uti_say_mark(void);
+
 /* ---------------------------------------------------------- the drawing */
 /* Rebuild the display list for the resident game. Returns polygon count.
  * active: block 0..8, 9 for anywhere, -1 for none.
