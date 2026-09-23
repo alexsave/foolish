@@ -448,9 +448,6 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func willTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.willTransition(to: presentationStyle)
         UtttLog.note("will-style", Self.name(presentationStyle))
-        /* The heights that follow are a jump the drawer slides through, not
-         * a finger it sits under (uttt_anim.h UtttDrawer). */
-        UtttDrawerClock.hostWillJump()
         /* THE HINT GOES AS THE DRAWER STARTS TO GROW, not once it has: the
          * Send button is only above a compact drawer. */
         if presentationStyle != .compact { hideHintNow() }

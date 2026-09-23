@@ -414,20 +414,6 @@ int main(void)
         ok(uti_send_hint_ms() == 3000, "the send hint's fuse crosses the bridge");
     }
 
-    {   /* the drawer through the bridge: a peek never draws the raw height */
-        UtiDrawer d = {0};
-        int32_t mv = 0;
-        uti_drawer_report(&d, 840.f, 0);
-        ok(uti_drawer_peek(&d, 289.f, 10, &mv) == 289.f && !mv, "a finger's height, peeked, is laid out at once");
-        uti_drawer_expect_jump(&d, 5);
-        ok(uti_drawer_peek(&d, 289.f, 10, &mv) == 840.f && mv, "an announced far height, peeked, is not laid out raw");
-        ok(uti_drawer_peek(&d, 840.f, 10, &mv) == 840.f && !mv, "and the same height is where it rests");
-        uti_drawer_report(&d, 289.f, 10);
-        float mid = uti_drawer_at(&d, 200, &mv);
-        ok(mid < 800.f && mid > 289.f && mv, "a reported one springs there");
-        ok(uti_drawer_at(&d, 2000, &mv) == 289.f && !mv, "and rests on it");
-    }
-
     {   /* one layout through the bridge: the waiting strip's board is the
          * sheet's centre, as tall as the strip allows, its words beside it,
          * and every field crosses intact */

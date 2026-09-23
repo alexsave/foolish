@@ -229,27 +229,9 @@ int32_t   uti_motion_rest_ms(void);
 int uti_draw_settle(float fall_t, float line_t);
 void      uti_motion_at(const UtiMotion *m, int32_t now_ms, UtiFrame *f);
 
-/* ---- the drawer: the height the sheet is laid out at ----
- * The height Messages last handed, at once (a finger on the handle), except
- * through a jump the host announced at willTransition, which is a critically
- * damped spring on the host's response toward it (src/uttt_anim.h
- * UtttDrawer). The host reports every height it is handed, calls
- * uti_drawer_expect_jump at every willTransition, and lays out at
- * uti_drawer_at on each display frame while *moving is 1. */
-typedef struct {
-    float   target, from, vel;
-    int32_t t0, moving, seen, jump_at, jumping;
-} UtiDrawer;
-void  uti_drawer_expect_jump(UtiDrawer *d, int32_t now_ms);
-void  uti_drawer_report(UtiDrawer *d, float h, int32_t now_ms);
-float uti_drawer_at(const UtiDrawer *d, int32_t now_ms, int32_t *moving);
-/* What uti_drawer_at would say had `h` just been reported, without
- * reporting it: a layout pass sees a new height before the host's change
- * callback does, and must not draw that one frame at the raw height. */
-float uti_drawer_peek(const UtiDrawer *d, float h, int32_t now_ms, int32_t *moving);
-/* The layout at rest at `h` at once (the auto-collapse's slide), and the
- * slide's push `t_ms` into a travel (src/uttt_anim.h UTTT_COLLAPSE_*). */
-void  uti_drawer_rest(UtiDrawer *d, float h);
+/* ---- the auto-collapse's slide (src/uttt_anim.h UTTT_COLLAPSE_*) ----
+ * The sheet is laid out at the height Messages hands, at once; the push is
+ * how far the compact sheet sits below its place `t_ms` into a slide. */
 float uti_collapse_push(float travel, int32_t t_ms);
 int32_t uti_collapse_ms(void);
 int32_t uti_collapse_steps(void);

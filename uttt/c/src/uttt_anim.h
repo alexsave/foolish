@@ -109,57 +109,22 @@ uint32_t uttt_wash_rgba(float alpha);
 #define UTTT_PULSE_ALPHA .5f
 #define UTTT_PULSE_REACH (13.f / 390.f)  /* 13 points on a 390-point board   */
 
-/* THE HEIGHT THE SHEET IS LAID OUT AT: the host's, except through a jump.
+/* THE SHEET IS LAID OUT AT THE HEIGHT MESSAGES HANDS IT, at once, always.
  *
- * Messages hands the extension its height two ways. A FINGER ON THE HANDLE
- * hands one for every touch it moves, and the drawer on screen is exactly
- * there: the layout follows at once, with no spring, or the doors run 100
- * points off the drawer's bottom mid-drag (filmed, TESTFLIGHT_PLAN.md 11).
- * A JUMP - the release of a drag, a tap to expand, an auto-collapse - is
- * announced by willTransition and then handed as one far height (or a
- * transient pair within a few ms) while the drawer slides there on the
- * host's own spring. Laid out at that height the board shrank in one frame
- * beside a drawer that moved smoothly.
- *
- * So which is which is the host's own word, never a distance: the host
- * calls uttt_drawer_expect_jump at willTransition, and a height handed in
- * the UTTT_DRAWER_JUMP_MS after it is a jump. A jump is a critically damped
- * spring on the host's response (0.338 s, fitted to the Messages drawer in
- * docs/COLLAPSE_MSE.md) from wherever the layout is toward the handed
- * height; a new one mid-spring re-aims it from its position AND velocity,
- * so there is never a step, and one from rest waits UTTT_DRAWER_LEAD_MS,
- * the lead the height has over the slide. Any other height - a finger - is
- * the layout at once, a running spring included (a finger that grabs the
- * drawer mid-slide holds it where it is). willTransition comes at the
- * release, never during a drag, and didTransition about 50 ms BEFORE the
- * height it announces (measured), so the window is the slide's arm's. */
-#define UTTT_DRAWER_RESPONSE_MS 338
-#define UTTT_DRAWER_JUMP_MS     500
-#define UTTT_DRAWER_LEAD_MS     20
+ * A finger on the handle hands a height for every touch the host takes, and
+ * the drawer on screen is exactly there. A release, a tap to expand and a
+ * bubble opened hand the final height once and the host animates the
+ * extension's view there itself, so content laid out at the final height at
+ * once rides it. Measured with the ruler (TESTFLIGHT_PLAN.md 11): a spring
+ * on the layout toward the handed height (it stood here until 2026-09-23)
+ * put the board 35pt off the drawer's centre at a drag's release and the
+ * door 17pt off its bottom on a tap to expand; at once, 0.7 and 1.1pt. The
+ * one motion the host does not carry is the auto-collapse, which is ours
+ * (below). The simulator's drag injection moves the drawer in 40-50 point
+ * steps every ~140 ms; the extension's main thread is idle through them
+ * (sampled), and the layout follows each step in the frame it lands. */
+#define UTTT_DRAWER_RESPONSE_MS 338   /* the host's spring, docs/COLLAPSE_MSE.md */
 
-typedef struct {
-    float   target;      /* the last height handed                        */
-    float   from;        /* layout minus target at t0                     */
-    float   vel;         /* layout velocity at t0, points per ms          */
-    int32_t t0;          /* when the running spring started               */
-    int32_t moving;      /* 1 while a spring runs                         */
-    int32_t seen;        /* 0 until the first height                      */
-    int32_t jump_at;     /* when the host last announced a jump           */
-    int32_t jumping;     /* 1 once one was announced                      */
-} UtttDrawer;
-
-/* The host announced a jump at `now_ms` (willTransition). */
-void  uttt_drawer_expect_jump(UtttDrawer *d, int32_t now_ms);
-
-/* A new height from the host at `now_ms`. */
-void  uttt_drawer_report(UtttDrawer *d, float h, int32_t now_ms);
-/* The layout height at `now_ms`; *moving 0 once it will not change again
- * until the next report. Pure. */
-float uttt_drawer_at(const UtttDrawer *d, int32_t now_ms, int32_t *moving);
-
-/* Put the layout at rest at `h` now, no spring: the auto-collapse's slide
- * lays out at the compact height from its first frame (below). */
-void  uttt_drawer_rest(UtttDrawer *d, float h);
 
 /* THE AUTO-COLLAPSE IS A SLIDE ON THE COMPOSITOR, not a layout per frame.
  *

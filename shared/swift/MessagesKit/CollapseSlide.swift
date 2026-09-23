@@ -212,14 +212,6 @@ public final class CollapseSlide: ObservableObject {
         return true
     }
 
-    public var isRunning: Bool { run != nil }
-
-    /// Whether `heard` would call this height the flip. Pure, for a layout
-    /// pass that sees the drop before the change callback does.
-    public func wouldFlip(_ height: CGFloat, after previous: CGFloat) -> Bool {
-        run == nil && armed && previous - height > flip
-    }
-
     private func begin(from: CGFloat, to: CGFloat) {
         let r = Run(from: from, to: to, began: CACurrentMediaTime())
         run = r

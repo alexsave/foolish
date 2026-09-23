@@ -4,10 +4,11 @@ import SwiftUI
 
 /// THE SHEET AT THE DRAWER'S HEIGHT, for every screen.
 ///
-/// Every screen lays out at the kernel's drawer height (`UtttDrawerClock`, a
-/// spring on the host's response toward the height Messages last handed),
-/// laid out at once and never tweened by the host's animation, with the
-/// ruler's edge bars over it. One container, so no screen can lay out at the
+/// Every screen lays out at the height Messages hands it, at once, and never
+/// tweened by the host's animation block (src/uttt_anim.h: a finger's
+/// heights are where the drawer is, and a release or a tap to expand is the
+/// host animating our view to the height it handed), with the ruler's edge
+/// bars over it. One container, so no screen can lay out at the
 /// raw height or branch on it: the content is handed a size and asks
 /// `Uttt.sheet` where everything goes.
 struct UtttDrawerSheet<Content: View>: View {
@@ -16,12 +17,10 @@ struct UtttDrawerSheet<Content: View>: View {
     /// it (see UtttGameScreen's words).
     @ViewBuilder let content: (CGSize, CGFloat?) -> Content
 
-    @StateObject private var drawer = UtttDrawerClock()
+    /// The last height Messages handed, so a drop can be judged against it.
+    @State private var handed: CGFloat = 0
     @Environment(\.collapseSlide) private var slide
     @State private var slideFrom: CGFloat?
-    /// The sheet was last laid out at the top of the window: the host's
-    /// first pass, before there is a drawer. See `body`.
-    @State private var atWindowTop = true
 
     var body: some View {
         GeometryReader { geo in
@@ -35,26 +34,15 @@ struct UtttDrawerSheet<Content: View>: View {
              * AN AUTO-COLLAPSE IS LAID OUT AT THE COMPACT HEIGHT FROM ITS
              * FIRST FRAME, and pushed by the slide (CollapseSlide): the frame
              * that first sees the drop never draws the spring's height. */
-            let _ = drawer.frame
-            let flips = slide?.wouldFlip(geo.size.height, after: drawer.handed) ?? false
-            let h = flips || slide?.isRunning == true || atWindowTop ? geo.size.height
-                                                       : drawer.layout(for: geo.size.height)
+            let h = geo.size.height
             content(CGSize(width: geo.size.width, height: h), slideFrom)
                 .frame(width: geo.size.width, height: h)
         }
-        /* THE FIRST DRAWER HEIGHT IS TAKEN AT ONCE. Messages lays a new
-         * extension out at the whole window first (440x956, origin at the
-         * window's top), then hands the drawer's height - on a tapped bubble
-         * 840, a transient 293 and 840 again within 5 ms. Nothing on screen
-         * moved between them, but the drawer clock sprang from 956 through
-         * them, and the board slid 58pt and back while the drawer stood still
-         * (filmed with the ruler, tap-to-open). A height handed while the
-         * sheet was at the window's top rests there, no spring. */
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { f in
-            let h = f.height
-            if atWindowTop || slide?.heard(h, after: drawer.handed) == true { drawer.rest(h) }
-            else { drawer.report(h) }
-            atWindowTop = f.minY <= 0.5
+        /* A DROP WHILE AN AUTO-COLLAPSE IS ARMED IS THE FLIP (CollapseSlide),
+         * judged against the height before it. */
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
+            _ = slide?.heard(h, after: handed)
+            handed = h
         }
         .onReceive(slide?.$run.eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { r in
             slideFrom = r?.from
@@ -173,5 +161,21 @@ extension View {
         opacity(Double(alpha))
             .allowsHitTesting(alpha > 0.5)
             .accessibilityHidden(alpha < 0.5)
+    }
+}
+
+public extension CollapseSlide {
+    /// The auto-collapse's slide, on the kernel's curve and numbers
+    /// (uttt_anim.h UTTT_COLLAPSE_*): the host's spring, pushed from the
+    /// whole travel to nothing.
+    static func uttt() -> CollapseSlide {
+#if DEBUG
+        if UtttRuler.on { CollapseSlide.probe = { UtttLog.note("slide", $0) } }
+#endif
+        return CollapseSlide(duration: Double(uti_collapse_ms()) / 1000,
+                      steps: Int(uti_collapse_steps()),
+                      flip: CGFloat(uti_collapse_flip())) { travel, t in
+            CGFloat(uti_collapse_push(Float(travel), Int32((t * 1000).rounded())))
+        }
     }
 }
