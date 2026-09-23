@@ -28,12 +28,12 @@ Pick this up when there is a thread to play it in.
 - `docs/check_ui_doc.py` is a structural checker for that file. Run it after any
   edit. It exists because the same scoped-CSS bug shipped three times.
 - **`docs/THREE_SIZES.html` redraws the bubble, the collapsed drawer and the
-  expanded screen as a shadow theatre** - cut paper, one lamp, and the shadows
-  it throws; no grain, no stone. One stylesheet, one 32-player game seen from
-  one phone, every element tagged with the edge it holds during a collapse, and
-  a filled-in channel grid. `docs/THREE_SIZES_STONE.html` is the same page in
-  the stone-and-tallow materials of `UI.html`, kept as the backup. Read both
-  after `UI.html`; they are where the three sizes are current.
+  expanded screen with everything that survived the forty rounds** - one
+  stylesheet with no overrides, one 32-player game seen from one phone, every
+  element tagged with the edge it holds during a collapse, and a filled-in
+  channel grid. Read it after `UI.html`; it is where the three sizes are current.
+  A "shadow theatre" re-skin (black paper puppets on a lantern-lit cloth) was
+  tried and turned down; it is in git history at 37e9190c if the idea comes back.
 
 ## What the design settled, that the code does not know yet
 
