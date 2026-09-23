@@ -81,4 +81,30 @@ int32_t mt_score(const MtRow *rows, int32_t n, const MtScoreOpts *o, MtScore out
 /* The host spring's progress t seconds in (critically damped). */
 double mt_host_progress(double t, double response);
 
+/* ---- pace: how often the content actually changes -------------------- */
+/* A screen recording keeps a frame only when the screen changed, so the
+ * frames in which a box's pixels change ARE the frames our content was
+ * drawn in, and the ink laid down in the box says how far a pen stroke got
+ * in each of them. The benchmark for an animation's real frame rate. */
+typedef struct { int32_t x, y, w, h; } MtBox;      /* pixels                 */
+
+/* The box's ink: pixels with luma under `lum` (0..255) that are not a ruler
+ * square; and a checksum of every pixel in it. */
+int32_t mt_box_ink(const uint8_t *rgb, int32_t W, int32_t H, MtBox b, int32_t lum,
+                   uint64_t *sum);
+
+typedef struct {
+    int32_t frames;       /* frames in which the box changed                 */
+    double  t0, t1;       /* the first and the last change, s                */
+    double  fps;          /* changes per second over [t0, t1]                */
+    double  maxgap;       /* the longest wait between two changes, s         */
+    double  maxstep;      /* the largest share of the final ink one frame laid */
+    double  rough;        /* judder: sum of squared second differences of the
+                             ink share as seen on a 60 Hz grid, x 1000       */
+} MtPace;
+
+/* From one row per recorded frame: its time, its box ink and checksum. */
+void mt_pace(const double *t, const int32_t *ink, const uint64_t *sum, int32_t n,
+             MtPace *out);
+
 #endif

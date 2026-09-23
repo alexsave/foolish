@@ -12,6 +12,13 @@
  *       product's board side for a drawer height, so a board mark off the
  *       centre is scored against the board's scale (motion.h).
  *
+ *   motion pace --size WxH --times FILE --box X,Y,W,H [--lum L] < frames.rgb
+ *       How often the box's pixels change (a recording keeps a frame only
+ *       when the screen changed, so these are the frames our content drew)
+ *       and how much ink each one laid: a "t ink changed" row per frame,
+ *       then a "pace" line - frames, fps, the largest gap (ms), the largest
+ *       one-frame share of the ink, and judder (motion.h MtPace).
+ *
  * maxstep is the largest change of a mark's offset from its anchor in one
  * frame, maxsnap the largest of those above --snap (ride.py's). Output is
  * fixed-layout text. motion_take.sh films the pipe for a movie. */
@@ -24,7 +31,8 @@
 static int usage(void) {
     fprintf(stderr, "usage: motion find --size WxH --times FILE [--scale S] < rgb\n"
                     "       motion score [--name N] [--span S] [--snap P] [--whole] [--side FILE]"
-                    " [--anchor MARK=red|green|mid|none] take.tbl...\n");
+                    " [--anchor MARK=red|green|mid|none] take.tbl...\n"
+                    "       motion pace --size WxH --times FILE --box X,Y,W,H [--lum L] < rgb\n");
     return 2;
 }
 
@@ -58,6 +66,43 @@ static int find_main(int argc, char **argv) {
     fclose(tf);
     free(buf);
     fprintf(stderr, "motion: %d frames\n", n);
+    return n > 0 ? 0 : 1;
+}
+
+static int pace_main(int argc, char **argv) {
+    int32_t W = 0, H = 0, lum = 150;
+    MtBox b = {0, 0, 0, 0};
+    const char *times = NULL;
+    for (int i = 0; i < argc; i++) {
+        if (!strcmp(argv[i], "--size") && i + 1 < argc) sscanf(argv[++i], "%dx%d", &W, &H);
+        else if (!strcmp(argv[i], "--times") && i + 1 < argc) times = argv[++i];
+        else if (!strcmp(argv[i], "--box") && i + 1 < argc)
+            sscanf(argv[++i], "%d,%d,%d,%d", &b.x, &b.y, &b.w, &b.h);
+        else if (!strcmp(argv[i], "--lum") && i + 1 < argc) lum = atoi(argv[++i]);
+        else return usage();
+    }
+    if (W <= 0 || H <= 0 || !times || b.w <= 0 || b.h <= 0) return usage();
+    FILE *tf = fopen(times, "r");
+    if (!tf) { perror(times); return 1; }
+    size_t sz = (size_t)W * (size_t)H * 3;
+    uint8_t *buf = malloc(sz);
+    int32_t cap = 1 << 16, n = 0;
+    double *t = malloc(sizeof *t * cap);
+    int32_t *ink = malloc(sizeof *ink * cap);
+    uint64_t *sum = malloc(sizeof *sum * cap);
+    printf("t ink changed\n");
+    while (n < cap && fread(buf, 1, sz, stdin) == sz) {
+        if (fscanf(tf, "%lf", &t[n]) != 1) break;
+        ink[n] = mt_box_ink(buf, W, H, b, lum, &sum[n]);
+        printf("%.6f %d %d\n", t[n], ink[n], n > 0 && sum[n] != sum[n - 1]);
+        n++;
+    }
+    fclose(tf);
+    MtPace p;
+    mt_pace(t, ink, sum, n, &p);
+    printf("pace frames %d fps %.1f maxgap_ms %.0f maxstep %.3f rough %.2f span_ms %.0f\n",
+           p.frames, p.fps, p.maxgap * 1000, p.maxstep, p.rough, (p.t1 - p.t0) * 1000);
+    free(buf); free(t); free(ink); free(sum);
     return n > 0 ? 0 : 1;
 }
 
@@ -153,5 +198,6 @@ int main(int argc, char **argv) {
     if (argc < 2) return usage();
     if (!strcmp(argv[1], "find")) return find_main(argc - 2, argv + 2);
     if (!strcmp(argv[1], "score")) return score_main(argc - 2, argv + 2);
+    if (!strcmp(argv[1], "pace")) return pace_main(argc - 2, argv + 2);
     return usage();
 }

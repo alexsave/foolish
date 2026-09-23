@@ -444,3 +444,59 @@ int32_t mt_score(const MtRow *rows, int32_t n, const MtScoreOpts *o, MtScore out
     free(A); free(Y); free(E); free(HH);
     return 1;
 }
+
+/* ---- pace -------------------------------------------------------------- */
+
+int32_t mt_box_ink(const uint8_t *rgb, int32_t W, int32_t H, MtBox b, int32_t lum,
+                   uint64_t *sum) {
+    uint64_t h = 1469598103934665603ull;
+    int32_t n = 0;
+    for (int32_t y = b.y < 0 ? 0 : b.y; y < b.y + b.h && y < H; y++)
+        for (int32_t x = b.x < 0 ? 0 : b.x; x < b.x + b.w && x < W; x++) {
+            const uint8_t *p = rgb + ((size_t)y * (size_t)W + (size_t)x) * 3;
+            h = (h ^ p[0]) * 1099511628211ull;
+            h = (h ^ p[1]) * 1099511628211ull;
+            h = (h ^ p[2]) * 1099511628211ull;
+            int32_t l = (299 * p[0] + 587 * p[1] + 114 * p[2]) / 1000;
+            if (l < lum && ink_of(p[0], p[1], p[2]) < 0) n++;
+        }
+    if (sum) *sum = h;
+    return n;
+}
+
+void mt_pace(const double *t, const int32_t *ink, const uint64_t *sum, int32_t n,
+             MtPace *o) {
+    memset(o, 0, sizeof *o);
+    if (n < 2) return;
+    int32_t first = -1, last = -1;
+    double prev_t = 0;
+    for (int32_t i = 1; i < n; i++) {
+        if (sum[i] == sum[i - 1]) continue;
+        if (first < 0) first = i;
+        else if (t[i] - prev_t > o->maxgap) o->maxgap = t[i] - prev_t;
+        prev_t = t[i];
+        last = i;
+        o->frames++;
+    }
+    if (first < 0) return;
+    o->t0 = t[first]; o->t1 = t[last];
+    o->fps = o->t1 > o->t0 ? (o->frames - 1) / (o->t1 - o->t0) : 0;
+    /* the ink's share: from what the box held before the first change to
+     * what it holds at the end */
+    double i0 = ink[first - 1], i1 = ink[n - 1], span = i1 - i0;
+    if (span <= 0) return;
+    for (int32_t i = first; i <= last; i++) {
+        double step = (ink[i] - ink[i - 1]) / span;
+        if (step > o->maxstep) o->maxstep = step;
+    }
+    /* as the eye sees it: each frame held until the next, on a 60 Hz grid */
+    double a = 0, b = 0, r = 0;
+    int32_t k = first - 1, m = 0;
+    for (double g = o->t0 - 1.0 / 60; g <= o->t1 + 1.0 / 60; g += 1.0 / 60, m++) {
+        while (k + 1 < n && t[k + 1] <= g + 1e-9) k++;
+        double v = (ink[k] - i0) / span;
+        if (m >= 2) { double d = v - 2 * b + a; r += d * d; }
+        a = b; b = v;
+    }
+    o->rough = r * 1000;
+}
