@@ -560,10 +560,14 @@ Measured (1 after take so far, light, relative to the drawer's top bar; per fram
 | rulebook door vs the green bottom bar | moved with the layout | constant to 1pt (bottom never moves: green 919 -> 912, the host's own 7pt) |
 | magenta board centre | 4.2 / 110pt / 43599 | 3 / 48.7pt / 4442 - NOT FIXED |
 
-**Still wrong: the board.** It sits up to ~77pt below the drawer's centre early in the slide and steps back to it (77 -> 29 -> 0) as SwiftUI re-lays the nested host out; at rest it is centred (+0.2pt).
-The riders are heard before the nested hosts are laid out at the compact size (logged: every rider 440x840 at the flip), and the rebuild on relayout (`laidOut`) did not remove the steps.
-Next: log the board rider's bounds and the keyframes it was built with on each rebuild, and check whether the ride closure in use at the flip is the expanded render's.
-Not yet measured after: dark, manual drag collapse/expand (the board is now always in a nested host), the other scenarios the owner asked for (join, first-open, end, tap-to-open, arrival, final move, Again).
+**The board jump - found and fixed (2026-09-23, second pass).**
+The cause was not the slide starting early: the board's content crawled on the main thread.
+The slide's DEBUG probe (`CollapseSlide.probe`, every install, rider layout and each rider's layers per display frame, logged under the ruler) showed the board rider's layer transform exactly on the render server's curve, while the board's picture layer INSIDE the rider moved its model frame from the expanded rect to the compact one over ~400 ms in ~70 ms steps, with no CA animation on it.
+Messages resizes the extension inside a UIKit animation block and the rider's nested hosting controller bridged that into an implicit SwiftUI animation of its content, rendered at the main thread's rate under a layer already scaled for the compact frame: 77 -> 29 -> 11 -> 4 -> 1pt off the drawer's centre.
+Fix: a rider's root strips every inherited animation (`CollapseRiderHost.root`, `.transaction { $0.animation = nil }`); the sheet itself does the same for its own graph (`UtttDrawerSheet`, unconditional, replacing the `h`-scoped one that missed the flip's second pass).
+Laying the nested host out synchronously inside `performWithoutAnimation` was tried first and changed nothing (measured), so it is not there.
+Board centre against the drawer's centre, auto-collapse: largest one-frame jump 45.7pt (3 snaps) -> 0.7pt (0 snaps), 5 light + 5 dark takes.
+The you-are mark then showed a 7pt first-frame step (the mark is 34pt compact and 46pt open and rode as one layer with its label); it and its label now ride apart, the mark scaling about its top left: 7.3 -> 1.3pt.
 
 ### The defects
 
@@ -576,3 +580,49 @@ Not yet measured after: dark, manual drag collapse/expand (the board is now alwa
 7. With a bubble staged the strip's right column starts under the hint (`SHEET_HINT_ROOM`).
 
 Defects 1-7 are built and unit-tested (C tests mutation-checked: the push curve, the rest, the words crossfade, the hint room, the settlement order and composition), but not yet filmed.
+
+## 10. The full drawer sweep, the C ruler reader, the win line (2026-09-23)
+
+### The measuring tool is C now
+
+`shared/tools/motion` (product-free): `motion_take.sh MOVIE OUT.tbl` pipes every composited frame from ffmpeg as raw RGB into `motion find`, which classifies every pixel by hue once and labels the whole ink map in one pass, and writes a fixed-layout text table (bars, clock, every square, quadrant-split when an ink repeats).
+`motion score` scores takes against each mark's own anchor (the header the red bar, the doors the green bar, the board the drawer's centre; `--anchor` overrides), with ride.py's snaps/late/miss/rough and bars.py's jerk, host-spring floor (0.338 s), stray and travel; `--side FILE` scores off-centre board marks against the board's own scale (uttt writes that table with `make -C uttt/c build/uttt_side`).
+It agrees with marks.py and ride.py to the digit on two takes (every column, every frame) and runs ~6x faster.
+`make -C shared/tools/motion test`: 40 checks on synthetic frames and takes, each of 12 mutations went red on its named assertion.
+marks.py, ride.py and marksplot.py are deleted; `shared/rig/lib/motionplot.py` charts the C table (y and x over time, offset from anchor) and holds no scoring.
+The rest of `shared/rig/lib` (squares.py, bars.py, mse.py, window.sh...) still serves foolish's CollapseRuler pipeline and is not ported yet.
+The palette and sizes are defined once in `shared/c/motion_ruler/motion_ruler.h` (module `CMotionRuler`, on SWIFT_INCLUDE_PATHS in both project.yml files); `MotionRuler.swift` has no colour literals left. foolish's own `CollapseRuler.swift` still carries its own palette.
+
+### Per scenario (UtttRig, light unless named, normal speed, ruler on)
+
+Largest one-frame jump of any mark against its anchor, pt; FAIL above 4.
+
+| scenario | takes | board | corners | header | doors | verdict |
+|---|---|---|---|---|---|---|
+| (a) auto-collapse, before (e9d96ece) | 1 | 45.7 (centre) | 37.6 | 4.0 | 0.3 | FAIL |
+| (a) auto-collapse light / dark | 5 / 5 | 1.3 / 1.4 | 2.3 | 1.3 | 0.7 | PASS |
+| (b) the join move | 3 | 0.5 | 2.5 | 1.4 | 0.7 | PASS |
+| (c) first-open drag 1.2s / flick | 3 / 3 | 7.2 / 47.7 | 7.2 / 56.5 | - | - | FAIL |
+| (c) in-game drag 1.2s / flick | 3 / 3 | 40.0 / 183.5 | 44 / 211 | 2.7 / 32.7 | 80.5 / 366.7 | FAIL |
+| (c) end drag 1.2s / flick | 3 / 3 | 34.9 / 113.9 | 38.8 / 113.8 | 1.7 / 4.4 | 69.7 / 228 | FAIL |
+| (d) tap a bubble to open, before -> after | 3 -> 3 | 58.0 -> 0.0 | 58 -> 0 | 0 | 78.7 -> 0 | PASS |
+| (e) arrival while open | 3 | 0 | 0 | 0 | 0 | PASS |
+| (f) final move, block falls, win line | 3 | 1.9 | 2.8 | 1.3 | 0.4 | PASS (motion) |
+| (g) Again, before -> after | 3 -> 3 | 207.2 -> 0.7 | 259 -> 2.7 | - | - | PASS |
+
+Fixed in this pass:
+- (d) Messages lays a new extension out at the whole window, then hands 840, a transient 293 and 840 within 5 ms; the drawer clock sprang through them and the board slid 58pt and back under a still drawer. A height handed while the sheet sat at the window's top is now taken at once (`UtttDrawerSheet`, `atWindowTop`).
+- (g) The waiting and spectator boards had no collapse ride, so after Again the board sat at its compact place through the slide. One `boardRide` and one `wordsRide` (UtttDrawerSheet.swift) now serve all three screens.
+
+Still failing:
+- (c) Manual drags. The layout follows the drawer clock's spring, which the idb drag's ~40pt steps engage (the finger path follows at once only within 32pt): mid-drag the door sits up to ~100pt above the drawer's bottom and the board ~30pt off centre, then catches up in steps. The extension also committed only every ~70-100 ms during these takes (the machine was loaded). Needs a finger-drag rule that does not spring, and a device take.
+- (f) At stage the drawer shows the whole settlement (the big mark and the win line) in one frame about 0.3 s after the move's ink, before Send; defect 6 says the settlement waits for Send. The still board drawn after the stage motion includes it.
+- (d) A cold extension launch leaves the drawer blank for ~2-3 s on the simulator (Debug, log stream running); the first paint follows `load` by ~0.3 s.
+
+Films, sheets and charts: session scratchpad `film3/` (`takes/`, `sheets/`, `charts/`, `scores/`, `score_table.png`, `fixes/`).
+
+### The win line is twice the major grid line (owner)
+
+`uttt_draw.c` `win_line`: 3x and 2.5x the major line's pen (`GRID_MAJOR_W`), was 2.7 and 2.3 (UI.html 08's note updated).
+Measured on the ribbons (area over half perimeter): 2.09x the major line's ink width, was 1.27x; `uttt_anim_test` asserts at least 2x and goes red with the old widths.
+Shots before and after, a won diagonal and a won row, staged bubble, sent bubble, expanded and compact: `film3/fixes/win_line_before_after.jpg`.
