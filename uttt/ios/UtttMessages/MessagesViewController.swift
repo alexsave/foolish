@@ -560,10 +560,16 @@ final class MessagesViewController: MSMessagesAppViewController {
         }
         let message = MSMessage(session: sessionFor(wire, conversation))
         message.url = wire.url
-        message.layout = UtttBubble.layout()
+        /* THE PICTURE IS PAINTED OFF THE MAIN THREAD. Everything it needs is
+         * read from the kernel here, in a millisecond; the fourteen thousand
+         * fills at 3x took a fifth of a second on the main thread at every
+         * stage, which is exactly when the board's highlighter is travelling
+         * (docs/UI.html: the drawer and the bubble move once the ink lands). */
+        let snap = UtttBubble.snapshot()
+        let caption = UtttBubble.caption
         /* THE COLLAPSED LINE IS OURS TOO, or Messages writes "<phone number>
          * sent Ultimate message" into a thread about a board. */
-        message.summaryText = UtttBubble.caption
+        message.summaryText = caption
         freshSession = false
 
         staged = wire
@@ -573,13 +579,32 @@ final class MessagesViewController: MSMessagesAppViewController {
         if UtttDev.game != nil { UtttDev.live = wire.text }
 #endif
 
+        /* Painted off the main thread, and handed over only once the board
+         * has settled - see UtttMotionClock.whenSettled. */
+        let painted: (@escaping (UIImage) -> Void) -> Void = { [weak self] done in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let img = UtttBubble.image(snap)
+                DispatchQueue.main.async {
+                    if let clock = self?.live?.clock { clock.whenSettled { done(img) } }
+                    else { done(img) }
+                }
+            }
+        }
         if presentationStyle == .compact {
-            insert(message, generation: generation, in: conversation, attempt: 1)
+            painted { [weak self] img in
+                guard let self, self.stageGeneration == generation else { return }
+                message.layout = UtttBubble.layout(image: img, caption: caption)
+                self.insert(message, generation: generation, in: conversation, attempt: 1)
+            }
             return
         }
         UtttLog.note("stage", "collapsing first")
         requestPresentationStyle(.compact)
         Task { @MainActor [weak self] in
+            let img = await withCheckedContinuation { (k: CheckedContinuation<UIImage, Never>) in
+                painted { k.resume(returning: $0) }
+            }
+            message.layout = UtttBubble.layout(image: img, caption: caption)
             await self?.awaitTransitionSettled()
             guard let self, self.stageGeneration == generation else {
                 UtttLog.note("stage", "overtaken while collapsing")

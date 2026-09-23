@@ -64,6 +64,8 @@ typedef struct {
     float   pulse_spread;  /* how far the ring stands out, board units       */
     uint32_t pulse_rgba;   /* the ring, alpha included                       */
     int32_t landed;        /* 1 once the ink is down - the drawer may move   */
+    int32_t settled;       /* 1 once the wash has arrived too - the host may
+                              insert its bubble without stalling a travel   */
     int32_t running;       /* 0 once nothing will change again               */
 } UtttFrame;
 

@@ -64,6 +64,9 @@ int main(void)
     OK(f.wash[2] < r9[2] && f.wash[2] > r4[2], "and shrinking from the sheet to the block");
     uttt_motion_at(&m, 600, &f);
     OK(same_rect(f.wash, r4) && f.wash_rgba == uttt_wash_rgba(a), "arrived at 600");
+    OK(f.settled, "settled once the wash arrives");
+    uttt_motion_at(&m, 599, &f);
+    OK(!f.settled && f.landed, "not settled while the wash travels");
     uttt_motion_at(&m, 559, &f);
     OK(f.pulse_rgba == 0, "no ring before 560");
     uttt_motion_at(&m, 600, &f);

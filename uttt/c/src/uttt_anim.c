@@ -155,5 +155,6 @@ void uttt_motion_at(const UtttMotion *m, int32_t now, UtttFrame *f)
             }
         }
     }
+    f->settled = f->landed && (still || now >= m->wash_at + m->wash_ms);
     f->running = !still;
 }

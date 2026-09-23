@@ -18,6 +18,22 @@ public final class UtttMotionClock: ObservableObject {
     private var landed = false
     private var onLanded: (() -> Void)?
     private var ticks = 0
+    private var settledWaiters: [() -> Void] = []
+
+    /// Runs `f` once the kernel says the board has settled (the ink is down
+    /// and the wash has arrived), or now if it already has. The host inserts
+    /// its bubble here: an insert stalls the whole screen for a few frames,
+    /// and it must not land on the highlighter mid-travel.
+    public func whenSettled(_ f: @escaping () -> Void) {
+        if frame.settled != 0 || link == nil { f(); return }
+        settledWaiters.append(f)
+    }
+
+    private func settle() {
+        let w = settledWaiters
+        settledWaiters = []
+        w.forEach { $0() }
+    }
 
     public init() {
         plan = Uttt.motion(.still)
@@ -51,6 +67,7 @@ public final class UtttMotionClock: ObservableObject {
     public func stop() {
         link?.invalidate()
         link = nil
+        settle()
     }
 
     private func land() {
@@ -73,6 +90,7 @@ public final class UtttMotionClock: ObservableObject {
         frame = Uttt.frame(plan, at: ms)
         ticks += 1
         if frame.landed != 0 { land() }
+        if frame.settled != 0 { settle() }
         if frame.running == 0 {
             UtttLog.note("motion done", "\(ms) ms, \(ticks) frames")
             stop()

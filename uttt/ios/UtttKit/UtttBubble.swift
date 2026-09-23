@@ -88,9 +88,22 @@ public enum UtttBubble {
     /// every other device in the thread gets that bitmap, so rendering at the
     /// sender's own scale would hand a 2x phone's bubble to a 3x one and the
     /// ink would be soft for the rest of the game.
-    public static func image() -> UIImage {
-        let frame = CGRect(origin: .zero, size: size)
-        let board = boardBox
+    public static func image() -> UIImage { image(snapshot()) }
+
+    /// EVERYTHING THE BUBBLE NEEDS FROM THE KERNEL, read on the main thread
+    /// in about a millisecond, so the picture - fourteen thousand fills at 3x,
+    /// which blocked the main thread for a fifth of a second at every stage and
+    /// froze the board's highlighter mid-travel - can be painted anywhere.
+    public struct Snapshot: @unchecked Sendable {
+        let board: Uttt.BoardPolys
+        let mark: Uttt.Mark
+        let markPolys: [Uttt.Poly]
+        let headline: String
+        let place: String
+        let paper: CGImage?
+    }
+
+    public static func snapshot() -> Snapshot {
         let last = Uttt.plyCount > 0 ? Uttt.move(at: Uttt.plyCount - 1) : -1
         /* AN EMPTY BOARD GETS NO WASH. `uti_active()` says 9 - anywhere - and
          * mid-game that is right, so the whole sheet goes yellow and the
@@ -101,6 +114,18 @@ public enum UtttBubble {
          * on. The design document's invitation board carries no active block
          * for exactly this reason. */
         let active = Uttt.plyCount > 0 ? Int(uti_active()) : -1
+        let mark = Uttt.bubbleMark
+        return Snapshot(board: Uttt.bubbleBoardPolys(active: active, last: last),
+                        mark: mark,
+                        markPolys: (mark == .x || mark == .o) ? Uttt.mark(mark, seed: Uttt.seed &+ 4) : [],
+                        headline: headline, place: place,
+                        paper: paper(width: Int(size.width), height: Int(size.height)))
+    }
+
+    /// Pure: the snapshot painted. Safe on any thread.
+    public static func image(_ snap: Snapshot) -> UIImage {
+        let frame = CGRect(origin: .zero, size: size)
+        let board = boardBox
 
         let fmt = UIGraphicsImageRendererFormat()
         fmt.scale = 3
@@ -108,7 +133,7 @@ public enum UtttBubble {
         return UIGraphicsImageRenderer(size: frame.size, format: fmt).image { rc in
             let cg = rc.cgContext
 
-            if let sheet = paper(width: Int(frame.width), height: Int(frame.height)) {
+            if let sheet = snap.paper {
                 UIImage(cgImage: sheet).draw(in: frame)
             } else {
                 UIColor(red: 0.969, green: 0.965, blue: 0.949, alpha: 1).setFill()
@@ -120,20 +145,25 @@ public enum UtttBubble {
              * on once here rather than into ten thousand multiplications. */
             cg.saveGState()
             cg.translateBy(x: board.minX, y: board.minY)
-            Uttt.fill(Uttt.bubbleBoardPolys(active: active, last: last),
-                      into: cg, side: board.width)
+            Uttt.fill(snap.board, into: cg, side: board.width)
             cg.restoreGState()
 
-            draw(mark: Uttt.bubbleMark, headline: headline, place: place,
-                 in: textBox, into: cg)
+            draw(mark: snap.mark, markPolys: snap.markPolys,
+                 headline: snap.headline, place: snap.place, in: textBox, into: cg)
         }
     }
 
     /// The layout Messages inserts. The caption is the only text outside the
     /// image, and it is the only text that can name a person.
     public static func layout() -> MSMessageTemplateLayout {
+        layout(image: image(), caption: caption)
+    }
+
+    /// The layout around an image painted from a snapshot, with the caption
+    /// read at the same moment.
+    public static func layout(image: UIImage, caption: String) -> MSMessageTemplateLayout {
         let l = MSMessageTemplateLayout()
-        l.image = image()
+        l.image = image
         l.caption = caption
         return l
     }
@@ -146,7 +176,7 @@ public enum UtttBubble {
      * place is allowed to wrap onto two, as it does in UI.html option 02. Every block name is two short words, so it always breaks
      * cleanly and nothing ever truncates; the truncating line is the caption,
      * which is the one carrying a name it did not choose. */
-    private static func draw(mark: Uttt.Mark, headline: String, place: String,
+    private static func draw(mark: Uttt.Mark, markPolys: [Uttt.Poly], headline: String, place: String,
                              in box: CGRect, into cg: CGContext) {
         let one = NSMutableParagraphStyle()
         one.lineBreakMode = .byTruncatingTail
@@ -191,7 +221,7 @@ public enum UtttBubble {
             let mid = base - hFont.capHeight / 2
             cg.saveGState()
             cg.translateBy(x: hx - side * 0.06, y: mid - side / 2)
-            fill(Uttt.mark(mark, seed: Uttt.seed &+ 4), into: cg, side: side)
+            fill(markPolys, into: cg, side: side)
             cg.restoreGState()
             hx += side * 0.94 + 4
         }

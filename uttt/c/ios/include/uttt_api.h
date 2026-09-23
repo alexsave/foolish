@@ -184,6 +184,7 @@ typedef struct {
     float    pulse_spread;  /* how far it stands out, board units            */
     uint32_t pulse_rgba;
     int32_t  landed;        /* the ink is down: the drawer may move now      */
+    int32_t  settled;       /* the wash has arrived: insert the bubble now   */
     int32_t  running;       /* 0: nothing changes again, stop the loop       */
 } UtiFrame;
 
