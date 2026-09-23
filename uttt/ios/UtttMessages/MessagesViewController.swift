@@ -375,9 +375,15 @@ final class MessagesViewController: MSMessagesAppViewController {
         sendState.door = false
         doorInsert = nil
         let wasUnbound = unbound
-        /* B: THE SETTLEMENT PLAYS AT SEND - a block the move won gets its big
-         * mark, a game it ended its line (UI.html 04, 05). Nothing else moves. */
-        present(conversation, motion: .settle)
+        /* B: THE POST-SETTLEMENT PLAYS AT SEND - the highlighter goes to the
+         * outlined block and nothing else moves. On the board already up when
+         * it is this game (the usual case); a fresh present only when it is
+         * not. */
+        if let live, let wire, wire.load(), live.seed == Uttt.seed, Uttt.messageText == wire.text {
+            live.sent()
+        } else {
+            present(conversation, motion: .settle)
+        }
 
         /* A SEND FROM THE EXPANDED DRAWER is somebody done with it; a send
          * from the compact one keeps the strip up so the next move is one tap

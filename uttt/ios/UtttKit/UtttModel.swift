@@ -96,6 +96,16 @@ public final class UtttModel: ObservableObject {
         clock.run(.still)
     }
 
+    /// THE POST-SETTLEMENT, on the board already up: the draft was sent, so
+    /// the highlighter goes to the outlined block. Nothing else about the
+    /// board changes, so the host is not told the position moved and the
+    /// screen is not rebuilt - a new screen at the moment of Send was a
+    /// re-render the drawer could be seen replaying.
+    public func sent() {
+        pending = false
+        run(.settle)
+    }
+
     /// The last move arriving through `ch` - a bubble opened (C or D) or a
     /// move that landed while this board was up (E).
     public func show(_ ch: Uttt.Channel) {
