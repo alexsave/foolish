@@ -183,6 +183,16 @@ static void big_mark(UtttDL *d, const UtttGame *g, int b, int32_t seed, float t)
  * of the pen: the unit the win line's weight is stated in. */
 #define GRID_MAJOR_W 1.7f
 
+#ifndef WIN_ROUGH
+#define WIN_ROUGH 1.5f
+#endif
+#ifndef WIN_MO
+#define WIN_MO 1.5f
+#endif
+#ifndef WIN_BOW
+#define WIN_BOW 2.f
+#endif
+
 static void win_line(UtttDL *d, const UtttGame *g, int32_t seed, float t)
 {
     /* the win line: the only mark that crosses a thick line, in the winner's
@@ -207,7 +217,6 @@ static void win_line(UtttDL *d, const UtttGame *g, int32_t seed, float t)
                 float ex = (zx - ax) / 6.f, ey = (zy - ay) / 6.f;
                 ax -= ex; ay -= ey; zx += ex; zy += ey;
             }
-            float len = sqrtf((zx-ax)*(zx-ax) + (zy-ay)*(zy-ay));
             /* TWICE THE MAJOR LINE AND MORE (owner, 2026-09-23: "winning
              * diagonal needs to be thicker"). It was 2.7 and 2.3, half again
              * the major lines' 1.7 (UI.html 08), and read as one more line
@@ -219,13 +228,26 @@ static void win_line(UtttDL *d, const UtttGame *g, int32_t seed, float t)
             const float A[2] = { .92f, .74f };
             const int32_t SD[2] = { 313, 977 };
             for (int q = 0; q < 2; q++) {
+                /* DRAWN IN A HUNDRED-UNIT BOARD, like a mark in its own
+                 * hundred-unit square, and the points scaled back once.
+                 * rough.js's bow is bowing x maxRandomnessOffset x length /
+                 * 200 - an absolute offset times a length - so with both
+                 * converted to the unit board it came out squared-small: at
+                 * rough_for(len) x 2.2 the bow was a millionth of the board
+                 * and the line was ruled (owner, TestFlight 1.0(6): "the
+                 * winning line still appears quite straight"). Here rough.js
+                 * gets its own units and its own offset of 2, and the line
+                 * wanders and bows by a percent or two of the board, as one
+                 * drawn in one stroke across a sheet does. */
                 UtttRough r = uttt_rough_default(seed * SD[q]);
-                r.roughness = rough_for(len) * 2.2f;
-                r.bowing    = bow_for(len) * 2.2f;
-                r.max_offset = mro_for(len) * 2.2f;
+                r.roughness = WIN_ROUGH;
+                r.bowing    = WIN_BOW;
+                r.max_offset = WIN_MO;
                 r.seg_line = 24;
                 UtttPt pts[1024]; int np = 0; UtttSpan sp[2];
-                int n = uttt_rough_line(&r, ax, ay, zx, zy, pts, 1024, &np, sp, 2);
+                int n = uttt_rough_line(&r, ax * 100.f, ay * 100.f, zx * 100.f, zy * 100.f,
+                                        pts, 1024, &np, sp, 2);
+                for (int i = 0; i < np; i++) { pts[i].x /= 100.f; pts[i].y /= 100.f; }
                 UtttPen p = uttt_pen_92();
                 p.ink = g->over == UTTT_O ? INK_O : INK_X;
                 p.w = uttt_pen_92().w / 9.f / 100.f * W[q]; p.a = A[q];

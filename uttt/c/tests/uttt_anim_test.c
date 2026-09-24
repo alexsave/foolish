@@ -672,6 +672,65 @@ int main(void)
         }
     }
 
+    /* THE WIN LINE IS DRAWN, NOT RULED (owner, TestFlight 1.0(6): "the
+     * winning line still appears quite straight"). Off the display list: the
+     * line alone (uttt_draw_settle with the big mark at 0), every quad's two
+     * ends a sample, and how far the samples stray either side of the line
+     * through the whole stroke's ends - the ink's own wander, as a share of
+     * the board. Over 300 won games; each must wander at least half a percent
+     * (1.6 points on a 320-point board) and none more than six, so it stays
+     * one line and legible. */
+    {
+        uint64_t r = 88172645463325252ull;
+        int games = 0, rough = 1, tame = 1;
+        float least = 1e9f, most = 0.f, sum = 0.f;
+        while (games < 300) {
+            UtttGame g; uttt_init(&g);
+            uint8_t mv[81];
+            while (!g.over) {
+                int n = uttt_legal(&g, mv);
+                r ^= r << 13; r ^= r >> 7; r ^= r << 17;
+                uttt_play(&g, mv[r % (uint64_t)n]);
+            }
+            if (g.over != UTTT_X && g.over != UTTT_O) continue;
+            /* the settle draws the last block's big mark and the line only
+             * when the last move won a block, which a finished win always did */
+            UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
+            int32_t seed = (int32_t)(r & 0x7fffffff) | 1;
+            if (uttt_draw_settle(&d, &g, seed, 0.f, 1.f) != 0 || d.n_poly == 0) continue;
+            games++;
+            float ax = 0, ay = 0, zx = 0, zy = 0; int first = 1;
+            /* the line's direction: its two farthest samples */
+            float px[4000], py[4000]; int n = 0;
+            for (int i = 0; i < d.n_poly && n + 2 <= 4000; i++) {
+                if (d.poly[i].n != 4) continue;
+                const UtttPt *q = &d.pt[d.poly[i].first];
+                px[n] = (q[0].x + q[1].x) * .5f; py[n] = (q[0].y + q[1].y) * .5f; n++;
+                px[n] = (q[2].x + q[3].x) * .5f; py[n] = (q[2].y + q[3].y) * .5f; n++;
+            }
+            float far = -1.f;
+            for (int i = 0; i < n; i += 7)
+                for (int j = i + 1; j < n; j += 7) {
+                    float dd = (px[i] - px[j]) * (px[i] - px[j]) + (py[i] - py[j]) * (py[i] - py[j]);
+                    if (dd > far) { far = dd; ax = px[i]; ay = py[i]; zx = px[j]; zy = py[j]; first = 0; }
+                }
+            if (first) { rough = 0; continue; }
+            float L = sqrtf(far), lo = 1e9f, hi = -1e9f;
+            for (int i = 0; i < n; i++) {
+                float c = ((px[i] - ax) * (zy - ay) - (py[i] - ay) * (zx - ax)) / L;
+                lo = fminf(lo, c); hi = fmaxf(hi, c);
+            }
+            float wander = hi - lo;
+            least = fminf(least, wander); most = fmaxf(most, wander); sum += wander;
+            if (wander < .01f) rough = 0;
+            if (wander > .08f) tame = 0;
+        }
+        printf("  win line wander: least %.4f mean %.4f most %.4f of the board\n",
+               least, sum / games, most);
+        OK(rough, "the win line wanders at least a percent of the board, in every won game");
+        OK(tame, "and never more than eight, so it stays one legible line");
+    }
+
     printf("uttt_anim: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }
