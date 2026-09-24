@@ -211,6 +211,23 @@ int  utm_door(const UtmMsg *m);
  * counts nothing. */
 int  utm_insert_silence(int attempt, int compact);
 
+/* IS THE DRAWER UP - may an insert go now (docs/INSERT_GATING.md)?
+ * `window_h` is the window's height, `view_h` the extension view's at
+ * viewDidAppear, `expanded` whether Messages says the style is expanded.
+ *
+ * On a phone the + drawer's FIRST appearance is the whole window (430x932 in
+ * a 932 window, device log 2026-09-23, b270e078), a second before the compact
+ * drawer is up, and an insert issued then is dropped without an answer. That
+ * appearance never counts: a view as tall as its window is not a drawer.
+ *
+ * An EXPANDED drawer is a drawer at any height short of the window: on the SE
+ * a tapped bubble opens it at 647 in a 667 window - the status bar is all it
+ * leaves - which the old "40 points short" test read as window-sized, so the
+ * 3 s deadline faulted on every such open. A compact drawer has to be well
+ * short of the window (UTM_DRAWER_MARGIN), as it always is (309-343). */
+#define UTM_DRAWER_MARGIN      40
+int  utm_drawer_up(float window_h, float view_h, int expanded);
+
 /* ------------------------------------------------------- two messages */
 
 /* The same game: the same invitation (seed and creator). */

@@ -479,6 +479,8 @@ int main(void)
            && uti_insert_silence(uti_insert_silence_ms() / 50, 1) == UTI_INSERT_DOOR,
            "an insert's silence crosses the bridge");
         ok(uti_send_hint_ms() == 3000, "the send hint's fuse crosses the bridge");
+        ok(uti_drawer_up(667, 647, 1) && !uti_drawer_up(932, 932, 0) && !uti_drawer_up(667, 647, 0),
+           "whether the drawer is up crosses the bridge");
     }
 
     {   /* one layout through the bridge: the waiting strip's board is the

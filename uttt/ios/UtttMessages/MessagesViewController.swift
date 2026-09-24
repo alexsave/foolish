@@ -191,15 +191,17 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        UtttLog.note("appear", "\(Int(view.bounds.width))x\(Int(view.bounds.height))")
+        UtttLog.note("appear", "\(Int(view.bounds.width))x\(Int(view.bounds.height)) \(styleName)")
         /* ON A PHONE THE FIRST viewDidAppear IS AT THE WHOLE WINDOW (430x932),
          * a second before the drawer is up (430x343), and an insert issued in
          * between is dropped by Messages with no completion at all - device
-         * log 2026-09-23. Only a drawer-sized appearance counts as up. */
-        if let window = view.window, view.bounds.height >= window.bounds.height - 40 {
-            UtttLog.note("appear", "window-sized; not up yet")
-        } else {
+         * log 2026-09-23. Only a drawer counts as up, and which appearance is
+         * one is the kernel's (utm_drawer_up): never the window itself, an
+         * expanded drawer at any height short of it (the SE's 647 of 667). */
+        if drawerUp {
             appeared = true
+        } else {
+            UtttLog.note("appear", "window-sized (\(styleName)); not up yet")
         }
         view.backgroundColor = UtttPaper.flat
         if let screen = pendingScreen {
@@ -215,13 +217,19 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// and the paper that waiting for viewDidAppear left.
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        guard !appeared, !sized, let window = view.window,
-              view.bounds.height < window.bounds.height - 40 else { return }
+        guard !appeared, !sized, drawerUp else { return }
         UtttLog.note("sized", "\(Int(view.bounds.width))x\(Int(view.bounds.height))")
         sized = true
         becameReady()
     }
     private var sized = false
+
+    /// The view is a drawer, not the window it was first laid out at.
+    private var drawerUp: Bool {
+        guard let window = view.window else { return false }
+        return Uttt.drawerUp(window: window.bounds.height, view: view.bounds.height,
+                             expanded: presentationStyle == .expanded)
+    }
 
     private func becameReady() {
         if appeared || sized, let screen = pendingScreen {

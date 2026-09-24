@@ -260,6 +260,14 @@ int utm_insert_silence(int attempt, int compact)
     return attempt < UTM_INSERT_ATTEMPTS ? UTM_INSERT_RETRY : UTM_INSERT_DOOR;
 }
 
+int utm_drawer_up(float window_h, float view_h, int expanded)
+{
+    if (!(view_h > 0) || !(window_h > 0)) return 0;
+    if (view_h >= window_h - 0.5f) return 0;
+    if (expanded) return 1;
+    return view_h < window_h - UTM_DRAWER_MARGIN;
+}
+
 int utm_prefer(const UtmMsg *mine, const UtmMsg *tapped)
 {
     if (!utm_same_game(mine, tapped)) return 1;

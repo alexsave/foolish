@@ -233,6 +233,13 @@ public enum Uttt {
         }
     }
 
+    /// Is the drawer up - may an insert go (utm_drawer_up)? The + drawer's
+    /// window-sized first appearance is not; an expanded drawer short of the
+    /// window is.
+    public static func drawerUp(window: Double, view: Double, expanded: Bool) -> Bool {
+        uti_drawer_up(Float(window), Float(view), expanded ? 1 : 0) != 0
+    }
+
     /// The mark the bubble's headline draws before its words, or `.none`.
     public static var bubbleMark: Mark { Mark(rawValue: UInt8(uti_say_bubble_mark())) ?? .none }
 

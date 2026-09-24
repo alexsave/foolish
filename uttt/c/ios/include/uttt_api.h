@@ -116,6 +116,7 @@ int  uti_msg_door(void);
 int  uti_send_hint_ms(void);
 int  uti_insert_silence_ms(void);
 int  uti_insert_silence(int attempt, int compact);
+int  uti_drawer_up(float window_h, float view_h, int expanded); /* utm_drawer_up */
 
 /* Which of two messages to show: <0 mine (the device's staged draft), >0 the
  * tapped one, 0 the same. An unreadable one always loses. */
@@ -267,6 +268,7 @@ typedef struct {
     int32_t words_side;
     float band[4], band_alpha;
     float rulebook[4], again[4];    /* x, y, w, h: the two doors */
+    float sub_alpha;                /* the column's second line (UtttSheet) */
 } UtiSheet;
 UtiSheet uti_sheet(UtiSheetIn in);
 /* Where the send hint's container starts below the drawer's top (UTTT_SHEET_HINT_TOP). */

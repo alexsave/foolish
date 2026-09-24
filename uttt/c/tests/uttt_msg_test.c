@@ -614,6 +614,19 @@ static void test_insert(void)
        "insert: the whole budget is about five seconds");
     OK(UTM_SEND_HINT_MS == 3000, "insert: the send hint waits three seconds, as the sister app's");
 
+    /* THE DRAWER IS UP: the + drawer's window-sized first appearance never
+     * counts (b270e078), an expanded drawer short of the window always does
+     * (the SE's 647 in 667), and a compact one must be well short. */
+    OK(!utm_drawer_up(932, 932, 0), "drawer: the + drawer's first, window-sized appear is not up");
+    OK(!utm_drawer_up(932, 932, 1), "drawer: window-sized is not up even when expanded");
+    OK(!utm_drawer_up(667, 667, 1), "drawer: the SE window itself is not up");
+    OK(utm_drawer_up(667, 647, 1), "drawer: the SE's tapped, expanded drawer (647 of 667) is up");
+    OK(utm_drawer_up(956, 897, 1), "drawer: a Pro Max expanded drawer is up");
+    OK(utm_drawer_up(932, 343, 0), "drawer: the phone's compact drawer is up");
+    OK(utm_drawer_up(667, 309, 0), "drawer: the SE's compact drawer is up");
+    OK(!utm_drawer_up(667, 647, 0), "drawer: compact but nearly the window is not up yet");
+    OK(!utm_drawer_up(667, 0, 1) && !utm_drawer_up(0, 300, 0), "drawer: no size is not up");
+
     UtttGame g;
     char s[128];
     uttt_init(&g);

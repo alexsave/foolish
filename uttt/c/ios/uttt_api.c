@@ -268,6 +268,7 @@ _Static_assert(offsetof(UtiSheet, words) == offsetof(UtttSheet, words)
                && offsetof(UtiSheet, words_side) == offsetof(UtttSheet, words_side)
                && offsetof(UtiSheet, band_alpha) == offsetof(UtttSheet, band_alpha)
                && offsetof(UtiSheet, again) == offsetof(UtttSheet, again)
+               && offsetof(UtiSheet, sub_alpha) == offsetof(UtttSheet, sub_alpha)
                && offsetof(UtiSheetIn, hint) == offsetof(UtttSheetIn, hint)
                && offsetof(UtiSheetIn, words) == offsetof(UtttSheetIn, words), "the sheet's fields line up");
 _Static_assert(UTI_SHEET_PLAY == UTTT_SHEET_PLAY && UTI_SHEET_WATCH == UTTT_SHEET_WATCH
@@ -464,6 +465,7 @@ int uti_msg_door(void) { return utm_door(&S.m); }
 int uti_send_hint_ms(void) { return UTM_SEND_HINT_MS; }
 int uti_insert_silence_ms(void) { return UTM_INSERT_SILENCE_MS; }
 int uti_insert_silence(int attempt, int compact) { return utm_insert_silence(attempt, compact); }
+int uti_drawer_up(float window_h, float view_h, int expanded) { return utm_drawer_up(window_h, view_h, expanded); }
 
 int uti_msg_prefer(const char *mine, const char *tapped)
 {
