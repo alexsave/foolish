@@ -819,3 +819,60 @@ Caveats and what is left:
 - The rest of the idle gap is not ours to allocate: `__DATA` of system frameworks SwiftUI touches (+2 MB against the floor) and SwiftUI's own heap (metadata, attribute graph, +3.5 MB of Malloc Small). Getting under floor + 5 means less SwiftUI in the drawer, not smaller buffers.
 - The stage peak (+20 over the floor, target + 10) is the bubble: a 900x585 bitmap at 3x (2.1 MB), its own paper, the board's polygons, and Messages' encode of the image on insert. Next: bake at 2x, paint the bubble's paper as BGRA straight into the renderer, and measure the insert with `heap` during the stage.
 
+
+## 14. The bubble's memory, no SwiftUI, the expand slide, the outline (2026-09-23, iPhone SE)
+
+Films, contact sheets, charts and scripts are in the session scratchpad `film7/` (`peak.sh`, `stagelog.sh`, `ref.sh`, `take.sh`, `st.sh`, `regress.sh`, `sc.sh`, `fillgreen.py`, `xsheet.py`, `takes/`, `charts/`, `outline/`).
+Stage fps is `film5/bench.sh` (5 takes unless noted); memory is `film7/peak.sh` (3 opens: idle compact on the seeded board, then the peak across one stage with the bubble baked and inserted).
+Floor (`dev.empty`): 21 MB.
+
+| step | commit | stage fps | largest gap | idle MB | stage peak MB |
+|---|---|---|---|---|---|
+| s0 before this session | 839e2105 | 56.5-57.1 | 18-20 ms | 27 | 40.2-41.4 |
+| s1 the bubble at 2x, one 8-bit opaque context | 0da7d7a6 | 56.5-57.1 | 18-20 ms | 27 | 32.7-32.9 |
+| s2 no SwiftUI in the extension | be981b68 | 57.1-57.5 (3 takes) | 18-20 ms | 22-23 | 26.5-26.6 |
+| s3 the expand slide | 763c5d46 | 56.5-58.3 | 18-22 ms | 22 (one open 25) | 26.5 (one 29.6) |
+| s4 the rougher outline | 8b8b64eb | 56.5-57.5 | 18-20 ms | 22 | 26.5-26.6 |
+
+### s1: the stage peak was the bubble's paint
+
+`UtttLog.mem` (DEBUG) logs the footprint and its peak at each point of a stage (`film7/stagelog.sh`).
+Before: stage 28.8, painted 30.8 with the peak at 42.8, inserted 32.7.
+`UIGraphicsImageRenderer` chose an extended-range format and the paper went through a `UIImage`; the paint alone was 12 MB over idle.
+Now one `CGContext`, sRGB, 8 bits a channel, no alpha (`noneSkipFirst`), handed over by `makeImage` copy-on-write: painted peak 30.0, and the paint takes 25 ms instead of 90.
+2x against 3x on the SE's transcript: the 300-point bubble is shown at 252 points (504 pixels), and the two sent bubbles differ by a mean 2.4/255 (the grain's resampling), so the bake is 2x (`film7/bubble_2x_vs_3x.png`).
+Open question for a device: a 3x phone shows the bubble at up to ~300 points, 900 pixels, so a 2x bake is upscaled 1.5x there.
+What is left of the peak is the new position's board raster during the ink (+1.5 MB, the old surface still on screen) and Messages' encode at insert (+1 MB, gone a second later).
+
+### s2: the extension has no SwiftUI
+
+Every screen is a `UtttSheetView` (UIKit): the paper layer, the content masked to the sheet, one kernel layout (`uttt_sheet`) per height set as frames inside `performWithoutAnimation`, and each rider registered with `CollapseSlide`.
+Words are `UILabel`s (wrapped at spaces in the column, one line in the band, scaled to half at most), the doors and marks are layers of the kernel's polygons (`UtttInkView`), the board is `UtttBoardView` (one `UITapGestureRecognizer` asking `Uttt.hit`, 81 `UIAccessibilityElement`s from `uttt_cell_rect` and `uttt_say_cell`), the rules are a page sheet `UIViewController` (a swipe down closes the rules only), and the DEBUG seat picker is UIKit.
+`UtttModel` and `UtttMotionClock` are plain classes with callbacks; Combine is gone too.
+Neither the extension binary nor UtttKit links SwiftUI or Combine (otool, Release); only the UtttPreview harness keeps SwiftUI.
+shared/: `CollapseSlide` lost its SwiftUI adapter (nothing used it) and publishes its run to observers; `MotionRuler` is layers and a display-link clock; `SendHintView` is the send hint on Core Animation (the bob a repeating keyframe animation, the ink one bitmap); `SendHintMetrics` holds the numbers foolish's SwiftUI `SendHint` now reads too. foolish builds.
+One regression found and fixed on the way: the board was bound before the model restarted its clock, and one frame showed the new move's whole mark before the ink began (bench: largest gap 45 ms, 52-55 fps); the board is now bound in the layout pass.
+Screens before and after, light and dark: `film7/before_light_sheet.jpg`, `film7/sheet_uikit_light.jpg`, `film7/sheet_uikit_dark.jpg`; the pixel difference against the SwiftUI screens is 0.3-1.1 of 255 on the game screens (the "you are" label is two labels 2.8 points closer, as the VStack was).
+
+### s3: the expand rides the host's spring
+
+A tap to expand hands the tall height once and the host animates the view's bounds itself: read off the layer, a `CASpringAnimation` on `bounds.size` (and `position`), additive, mass 1, stiffness 333.3, damping 36.5 (critically damped), no initial velocity, 0.506 s, from 387 points shorter.
+Content laid out at the tall height sat anchored to the drawer's top while the drawer was still short.
+Now `UtttSheetView` reads that animation and `CollapseSlide.grew` carries every rider along the layout for the drawer's height at each moment (`uttt_spring_left`, C, beside `uttt_collapse_push`: any damping and an initial velocity), begun by the host's own commit; nothing is pushed.
+The doors and the ruler's green bar ride the drawer's bottom (`dy = s`, which is also "none of it" for a collapse).
+On the SE the drawer's bottom bar runs below the screen through an unridden expand, so the before takes are scored with it filled in (`fillgreen.py`, linear between the frames that see it).
+
+| tap to expand (SE, `motion score --whole`, largest one-frame step) | takes | board centre | corners | header | door |
+|---|---|---|---|---|---|
+| before (763c5d46 with the ride off) | 3 | 33.2 | 24.9 | 2.5 | 6.4 |
+| after | 4 | 1.0 | 1.8 | 1.5 | 1.0 |
+
+Charts: `film7/charts/x_before_1.png`, `x_after_1.png`; contact sheet `film7/sheet_tap_expand_before_after.jpg`.
+The rest, after, 2 takes each (largest one-frame step, pt): auto-collapse board 0.8, corners 3.5, header 1.5, doors 1.0; slow drag 1.1 / 3.2 / 1.5 / 1.0; flick 1.0 / 2.5 / 1.5 / 1.7; tap a bubble to open 0.1 / 0.0 / 0.0 / 0.0; arrival 0.0 / 0.0 / - / 0.0; Again 1.0 / 3.5. All pass (4 pt).
+
+### s4: the outline is a rough.js rectangle (owner: "not rough enough")
+
+`uttt_draw_outline` took the long grid lines' length falloff (offset .0074 on a block) and a thinned pen; now rough.js's defaults at the pen's 1.5 (what a mark gets), whose end jitter crosses the sides at the corners, and the marks' pen.
+Tests (`uttt_anim_test`): the top side strays more than the tamed worst over five seeds, every box has a side past a corner, the bounds are the tint's rect within a hand's overshoot, the same seed draws the same wobble; four mutations each red on the named assertion.
+An explicit seeded corner overshoot was tried first and dropped: rough.js's own end jitter at this offset already crosses the corners, and a mutation removing the extra overshoot changed no measurement.
+Shots: `film7/outline/outline_before_after.jpg` (SE, light and dark).
