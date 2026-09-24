@@ -110,7 +110,13 @@ final class MessagesViewController: MSMessagesAppViewController {
 
         overlay.frame = view.bounds
         overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        overlay.onGrow = { [weak self] in self?.hideHintNow() }
+        /* NO FLUSH HERE: onGrow runs inside the layout pass that lays the
+         * sheet out at the taller height. A flush there committed the half-
+         * done pass - the view already taller, the sheet still at compact -
+         * so every expand from compact showed one frame of the board riding
+         * the drawer's top before it re-laid out (TESTFLIGHT_PLAN 18). The
+         * pass's own commit takes the hint down in the same frame. */
+        overlay.onGrow = { [weak self] in self?.hideHintNow(flush: false) }
         view.addSubview(overlay)
 #if DEBUG
         devWatchForArrivals()
@@ -512,7 +518,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         overlay.layer.opacity = 1
     }
 
-    private func hideHintNow() {
+    /// `flush` pushes it to the render server now - right outside a layout
+    /// pass (a send, a style change), never inside one (see `onGrow`).
+    private func hideHintNow(flush: Bool = true) {
         guard overlay.hintLayerShown else { return }
         overlay.hintLayerShown = false
         overlay.compact = false
@@ -520,7 +528,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         CATransaction.setDisableActions(true)
         overlay.layer.opacity = 0
         CATransaction.commit()
-        CATransaction.flush()
+        if flush { CATransaction.flush() }
     }
 
     override func didTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
