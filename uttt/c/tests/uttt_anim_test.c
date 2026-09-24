@@ -420,7 +420,8 @@ int main(void)
      * holds which edge": the board holds the centre and is the only thing
      * that resizes; owner 2026-09-23: the board as large as possible). */
     {
-        static const float W[] = { 375.f, 393.f, 440.f };
+        /* the SE, a 6.1", the owner's 15 Pro Max and the 17 Pro Max */
+        static const float W[] = { 375.f, 393.f, 430.f, 440.f };
         static const struct { int kind, words; } K[] = {
             { UTTT_SHEET_PLAY, 0 },           /* a live game                  */
             { UTTT_SHEET_PLAY, 1 },           /* the end: the verdict         */
@@ -431,7 +432,7 @@ int main(void)
         int centred = 1, clear = 1, onsheet = 1, grows = 1, squeezed = 0, jumps = 0;
         int sub_cramped = 0, sub_jumps = 0;
         float worst = 0.f;
-        for (int wi = 0; wi < 3; wi++)
+        for (int wi = 0; wi < 4; wi++)
         for (int ki = 0; ki < 4; ki++) {
             UtttSheetIn in = { .w = W[wi], .kind = K[ki].kind, .words = K[ki].words };
             float prev = -1.f, pa = -1.f, pb = -1.f, ps = -1.f;
@@ -443,7 +444,10 @@ int main(void)
                 if (fabsf(o.board[0] + s / 2 - in.w / 2) > 1e-3f
                     || fabsf(o.board[1] + s / 2 - h / 2) > 1e-3f) centred = 0;
                 if (prev >= 0.f && fabsf(s - prev) > worst) worst = fabsf(s - prev);
-                if (prev >= 0.f && s < prev - 1e-3f && o.t == 0.f) grows = 0;
+                /* AT EVERY HEIGHT, not only on the strip: a board that
+                 * shrank while the drawer grew reversed its size mid-drag
+                 * (462-485 points on a Pro Max, TESTFLIGHT_PLAN 17) */
+                if (prev >= 0.f && s < prev - 1e-3f) grows = 0;
                 prev = s;
                 if (s * (1.f + 2.f * reach) > in.w - 2.f * o.hpad + 1e-3f || s > h - 2.f * o.vpad + 1e-3f)
                     onsheet = 0;
@@ -471,7 +475,7 @@ int main(void)
         printf("  sheet: largest side step per quarter point of drawer %.3f pt\n", worst);
         OK(centred, "every screen's board is centred on the sheet at every height");
         OK(worst < .6f, "and its side never steps as the drawer moves");
-        OK(grows, "on the strip a taller drawer never gives a smaller board");
+        OK(grows, "a taller drawer never gives a smaller board, at any height");
         OK(onsheet, "its lines stay on the sheet");
         OK(clear, "and its words sit beside it on the strip and above it in the band");
         OK(!squeezed, "a copy of the words shows only in a box with the room it needs");

@@ -272,6 +272,36 @@ static float clampf(float x, float lo, float hi) { return x < lo ? lo : x > hi ?
  * than behind it. Its lowest ink is 66 points down; the column starts at 69. */
 #define SHEET_HINT_ROOM  56.f
 
+/* THE HEIGHT THE BOARD MAY TAKE: the drawer less the margins and the two
+ * bands (the header, and the door row that mirrors it). The bands grow on
+ * the smoothstep, 2 x SHEET_BAR over UTTT_SHEET_LO..HI, and at its steepest
+ * that is more band than drawer (144 x 1.5 / 170 = 1.27 points a point), so
+ * the raw limit FELL while the drawer grew: a drag up through 462-485 points
+ * shrank a height-limited board 4 points and a drag down grew it (filmed on
+ * the Pro Max, TESTFLIGHT_PLAN 17). The limit is the largest that never
+ * falls as the drawer grows and never passes the raw one (the board must
+ * clear the bands): below x_b, where the bands stop outgrowing the drawer,
+ * it is at most the raw limit there - so the board holds still across the
+ * dip while the bands grow into the air around it. */
+static float sheet_tall_raw(float h)
+{
+    float x = clampf((h - UTTT_SHEET_LO) / (UTTT_SHEET_HI - UTTT_SHEET_LO), 0.f, 1.f);
+    float t = x * x * (3.f - 2.f * x);
+    return h - 2.f * SHEET_MARGIN - 2.f * SHEET_BAR * t;
+}
+
+static float sheet_tall(float h)
+{
+    float raw = sheet_tall_raw(h);
+    /* slope 1 - k x (1 - x), k = 2 BAR x 6 / (HI - LO): negative between
+     * the roots of x (1 - x) = 1 / k; the raw limit's low point is x_b */
+    const float k = 2.f * SHEET_BAR * 6.f / (UTTT_SHEET_HI - UTTT_SHEET_LO);
+    if (k <= 4.f) return raw;
+    float xb = .5f * (1.f + sqrtf(1.f - 4.f / k));
+    float hb = UTTT_SHEET_LO + xb * (UTTT_SHEET_HI - UTTT_SHEET_LO);
+    return h < hb ? fminf(raw, sheet_tall_raw(hb)) : raw;
+}
+
 void uttt_sheet(const UtttSheetIn *in, UtttSheet *o)
 {
     float x = clampf((in->h - UTTT_SHEET_LO) / (UTTT_SHEET_HI - UTTT_SHEET_LO), 0.f, 1.f);
@@ -304,7 +334,9 @@ void uttt_sheet(const UtttSheetIn *in, UtttSheet *o)
      * Nothing else. */
     float gut  = lerpf(0.f, SHEET_GUTTER, t);
     float wide = (in->w - 2.f * (SHEET_MARGIN + gut) - 2.f * o->col) / (1.f + 2.f * reach);
-    float tall = in->h - 2.f * o->vpad - 2.f * fmaxf(o->bar, o->foot);
+    /* the bands: the header and the door row, the larger of the two (the
+     * header, SHEET_BAR, on every screen), never giving height back */
+    float tall = sheet_tall(in->h);
     float side = fmaxf(fminf(wide, tall), 0.f);
 
     /* THE WORDS, in two copies (SHEET_COLUMN_NEED): beside the ink - the
