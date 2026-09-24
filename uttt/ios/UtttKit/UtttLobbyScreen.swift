@@ -156,27 +156,31 @@ public final class UtttWatchScreen: UtttSheetView {
     /// bottom when expanded.
     override func lay(_ size: CGSize, from: CGFloat?) {
         let L = Uttt.sheet(.watch, size: size)
+        let at = { (s: CGFloat) -> UtiSheet in
+            Uttt.sheet(.watch, size: CGSize(width: size.width, height: size.height + s))
+        }
+        let B = from.map { Uttt.sheet(.watch, size: CGSize(width: size.width, height: $0)) } ?? L
         board.active = model.active
         board.last = model.last
         board.positionKey = model.positionKey
-        placeBoard(board, L) { s in
-            Uttt.sheet(.watch, size: CGSize(width: size.width, height: size.height + s))
-        }
+        placeBoard(board, L, at: at)
+        /* each copy of the words at the layout it shows through a ride
+         * (wordsLayouts), crossfading on its layer (placeWords) */
+        let (LC, LB) = wordsLayouts(L, B)
         let label = Uttt.say(.watchLabel), said = Uttt.say(.watchLine)
         let saidType = UtttType(size: 17, weight: .bold, color: UtttInk.ink)
         /* On the strip the label over the line in the left column, the line
          * wrapped; opening, the two across the top band. */
-        column.frame = CGRect(x: CGFloat(L.words.0), y: CGFloat(L.words.1),
-                              width: CGFloat(L.words.2), height: CGFloat(L.words.3))
+        column.frame = CGRect(x: CGFloat(LC.words.0), y: CGFloat(LC.words.1),
+                              width: CGFloat(LC.words.2), height: CGFloat(LC.words.3))
         let w = column.bounds.width
         let ls = colLabel.set(label, .small, width: w, column: false, align: .left)
         colLabel.frame = CGRect(origin: .zero, size: ls)
         let ss = colSaid.set(said, saidType, width: w, column: true, align: .left)
         colSaid.frame = CGRect(x: 0, y: ls.height + 3, width: ss.width, height: ss.height)
-        shown(column, L.words_alpha)
 
-        band.frame = CGRect(x: CGFloat(L.band.0), y: CGFloat(L.band.1),
-                            width: CGFloat(L.band.2), height: CGFloat(L.band.3))
+        band.frame = CGRect(x: CGFloat(LB.band.0), y: CGFloat(LB.band.1),
+                            width: CGFloat(LB.band.2), height: CGFloat(LB.band.3))
         let bw = band.bounds.width
         let bs = bandSaid.set(said, saidType, width: bw, column: false, align: .right)
         let bl = bandLabel.set(label, .small, width: max(0, bw - bs.width - 8), column: false, align: .left)
@@ -185,7 +189,7 @@ public final class UtttWatchScreen: UtttSheetView {
         bandSaid.frame = CGRect(x: bw - bs.width, y: 0, width: bs.width, height: bs.height)
         bandLabel.frame = CGRect(x: 0, y: saidFont.ascender - labelFont.ascender,
                                  width: bl.width, height: bl.height)
-        shown(band, L.band_alpha)
+        placeWords(column: column, band: band, L, B, at: at)
 
         /* Again belongs to the expanded view (UI.html 08); the rulebook
          * stands beside it at its height, and alone in the right column on
