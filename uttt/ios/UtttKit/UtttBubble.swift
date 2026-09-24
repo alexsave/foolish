@@ -86,12 +86,10 @@ public enum UtttBubble {
 
     // MARK: the image
 
-    /// The resident game, drawn into the 300x195 frame.
-    ///
-    /// Baked at ONE FIXED SCALE (`bakeScale`), never the sender's: the sender's
-    /// device renders it once and every other device in the thread gets that
-    /// bitmap.
-    public static func image() -> UIImage { image(snapshot()) }
+    /// The resident game, drawn into the 300x195 frame at the sender's scale
+    /// (`uttt_bubble_scale`): the sender's device renders it once and every
+    /// other device in the thread gets that bitmap.
+    public static func image(display: CGFloat) -> UIImage { image(snapshot(display: display)) }
 
     /// EVERYTHING THE BUBBLE NEEDS FROM THE KERNEL, read on the main thread
     /// in about a millisecond, so the picture - fourteen thousand fills at 3x,
@@ -107,9 +105,13 @@ public enum UtttBubble {
         let boardBox: CGRect
         /// Zero-sized for a game in play: its image has no words.
         let textBox: CGRect
+        /// Pixels a point in the bake (`uttt_bubble_scale`).
+        let scale: CGFloat
     }
 
-    public static func snapshot() -> Snapshot {
+    /// `display` is the sender's screen scale (`traitCollection.displayScale`),
+    /// read on the main thread with everything else.
+    public static func snapshot(display: CGFloat) -> Snapshot {
         let last = Uttt.plyCount > 0 ? Uttt.move(at: Uttt.plyCount - 1) : -1
         /* AN EMPTY BOARD GETS NO WASH. `uti_active()` says 9 - anywhere - and
          * mid-game that is right, so the whole sheet goes yellow and the
@@ -126,15 +128,16 @@ public enum UtttBubble {
                         markPolys: (mark == .x || mark == .o) ? Uttt.mark(mark, seed: Uttt.seed &+ 4) : [],
                         headline: headline, place: place,
                         paper: paper(width: Int(size.width), height: Int(size.height)),
-                        boardBox: boardBox, textBox: textBox)
+                        boardBox: boardBox, textBox: textBox,
+                        scale: CGFloat(uti_bubble_scale(Float(display))))
     }
 
-    /// THE SCALE THE BUBBLE IS BAKED AT: two (TESTFLIGHT_PLAN 14). The SE's
-    /// transcript shows the 300-point frame at 252 points, 504 pixels, and a
-    /// 2x and a 3x bake sent there are the same picture (mean difference 2.4
-    /// of 255, the grain's resampling); the 2x bitmap is 1 MB, not 2.1, and
-    /// Messages encodes a picture less than half the size at insert.
-    public static let bakeScale: CGFloat = 2
+    /* THE SCALE THE BUBBLE IS BAKED AT is the sender's own screen, 2 to 3
+     * (`uttt_bubble_scale`, owner: crispness). It was a fixed 2 (TESTFLIGHT_PLAN
+     * 14): on the SE's transcript a 2x and a 3x bake are the same picture, but
+     * a 3x phone shows the frame at up to 300 points, 900 pixels, and a 2x
+     * bake is upscaled 1.5x there. The 3x bitmap is 2.1 MB, not 1; the stage's
+     * peak on a 3x phone pays about that, and it was judged worth it. */
 
     /// Pure: the snapshot painted. Safe on any thread.
     ///
@@ -148,7 +151,7 @@ public enum UtttBubble {
     public static func image(_ snap: Snapshot) -> UIImage {
         let frame = CGRect(origin: .zero, size: size)
         let board = snap.boardBox
-        let scale = bakeScale
+        let scale = snap.scale
         let pw = Int((frame.width * scale).rounded()), ph = Int((frame.height * scale).rounded())
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
               let cg = CGContext(data: nil, width: pw, height: ph, bitsPerComponent: 8,
@@ -194,8 +197,8 @@ public enum UtttBubble {
 
     /// The layout Messages inserts. The caption is the only text outside the
     /// image, and it is the only text that can name a person.
-    public static func layout() -> MSMessageTemplateLayout {
-        layout(image: image(), caption: caption)
+    public static func layout(display: CGFloat) -> MSMessageTemplateLayout {
+        layout(image: image(display: display), caption: caption)
     }
 
     /// The layout around an image painted from a snapshot, with the caption

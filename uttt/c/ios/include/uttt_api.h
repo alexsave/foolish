@@ -321,6 +321,8 @@ void  uti_bubble_text(float *x, float *y, float *w, float *h);
 float uti_bubble_type(int line);
 uint32_t uti_bubble_ink(int line);      /* 0xRRGGBBAA */
 float uti_bubble_lead(void);            /* points between the two lines */
+/* The bake's pixels a point for a device of `display` scale (uttt_bubble_scale). */
+float uti_bubble_scale(float display);
 
 /* uti_draw for the bubble's board: the main lines run short enough to stop on
  * the 195-point frame (UtttBubble.reach in uttt_draw.h). */

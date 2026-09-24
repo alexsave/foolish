@@ -11,6 +11,7 @@
 #include "../src/uttt_code.h"
 #include "../../../shared/c/b32.h"
 #include "../../../shared/c/sha256.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -622,6 +623,18 @@ static void test_insert(void)
        "say: the door when no insert was answered");
 }
 
+/* THE BUBBLE'S BAKE SCALE: the sender's own, between 2 and 3. */
+static void test_bubble_scale(void)
+{
+    OK(uttt_bubble_scale(2.f) == 2.f, "bubble scale: a 2x phone bakes at 2");
+    OK(uttt_bubble_scale(3.f) == 3.f, "bubble scale: a 3x phone bakes at 3");
+    OK(uttt_bubble_scale(2.5f) == 2.5f, "bubble scale: between the two, its own");
+    OK(uttt_bubble_scale(1.f) == 2.f && uttt_bubble_scale(0.f) == 2.f,
+       "bubble scale: under 2 (or unknown) bakes at 2");
+    OK(uttt_bubble_scale(NAN) == 2.f, "bubble scale: NaN bakes at 2");
+    OK(uttt_bubble_scale(4.f) == 3.f, "bubble scale: over 3 bakes at 3");
+}
+
 int main(int argc, char **argv)
 {
     int games = argc > 1 ? atoi(argv[1]) : 10000;
@@ -634,6 +647,7 @@ int main(int argc, char **argv)
     test_caption_one_line();
     test_say();
     test_insert();
+    test_bubble_scale();
     printf("uttt_msg: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

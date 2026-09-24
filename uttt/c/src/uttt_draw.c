@@ -455,6 +455,12 @@ UtttBubble uttt_bubble(const UtttGame *g)
     return b;
 }
 
+float uttt_bubble_scale(float display)
+{
+    if (!(display >= 2.f)) return 2.f;           /* NaN lands here too */
+    return display > 3.f ? 3.f : display;
+}
+
 static const char *const PLACE[10] = {
     "top left",    "top middle",    "top right",
     "middle left", "centre",        "middle right",

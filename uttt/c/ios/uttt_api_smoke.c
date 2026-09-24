@@ -154,6 +154,8 @@ int main(void)
     float bw = 0, bh = 0, x = 0, y = 0, s = 0, tw = 0, th = 0;
     uti_bubble_size(&bw, &bh);
     ok(bw == 300.f && bh == 195.f, "the bubble is 300 by 195");
+    ok(uti_bubble_scale(2.f) == 2.f && uti_bubble_scale(3.f) == 3.f && uti_bubble_scale(1.f) == 2.f,
+       "the bubble bakes at the sender's scale, 2 to 3");
     /* THE LINES STOP ON THE PAPER, and none runs under the badge Messages
      * stamps into the top-left corner: every point of the bubble's board,
      * drawn with its own reach, lies 3 points or more inside the frame and

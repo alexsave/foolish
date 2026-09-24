@@ -124,6 +124,13 @@ typedef struct {
 /* The frame for the bubble of `g`: words only when it is over. */
 UtttBubble uttt_bubble(const UtttGame *g);
 
+/* THE SCALE THE BUBBLE IS BAKED AT: the sender's own display scale, clamped
+ * to 2..3 (owner: crispness first; a 3x bake on a 3x phone is +1.6 MB at the
+ * stage's peak, accepted). Under 2 - an unknown or 1x screen, NaN - bakes at
+ * 2, because every other phone in the thread is shown the same bitmap and
+ * none of them is below 2x; over 3 is pixels no phone shows. */
+float uttt_bubble_scale(float display);
+
 /* The nine blocks, named, plus 9 for "anywhere". `spoken` picks the form a
  * sentence uses - the caption says "the bottom-middle board" where the place
  * line says "bottom middle". Never NULL. */

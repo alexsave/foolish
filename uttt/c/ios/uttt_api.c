@@ -365,6 +365,7 @@ uint32_t uti_bubble_ink(int line)
 }
 
 float uti_bubble_lead(void) { return uttt_bubble(&S.m.game).lead; }
+float uti_bubble_scale(float display) { return uttt_bubble_scale(display); }
 
 int         uti_rules_count(void)      { return uttt_rules_count(); }
 const char *uti_rules_line(int i)      { return uttt_rules_line(i); }

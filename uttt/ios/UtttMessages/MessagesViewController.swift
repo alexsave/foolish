@@ -760,7 +760,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 #if DEBUG
         UtttLog.mem("stage")
 #endif
-        let snap = UtttBubble.snapshot()
+        let snap = UtttBubble.snapshot(display: traitCollection.displayScale)
 #if DEBUG
         UtttLog.mem("snapshot")
 #endif
