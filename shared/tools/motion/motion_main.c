@@ -6,12 +6,13 @@
  *       frame (ffprobe). S: pixels per point (default 3 if H >= 2000 else 2).
  *
  *   motion score [--name N] [--span S] [--snap P] [--whole] [--side FILE]
- *                [--anchor MARK=red|green|mid|none] [--bottom Y]... take.tbl...
+ *                [--anchor MARK=red|green|mid|none] [--bottom Y[:HC]]... take.tbl...
  *       Every mark against its anchor, averaged over the takes (the largest
  *       snap is the largest of any take). --side FILE: "h side" lines, the
  *       product's board side for a drawer height, so a board mark off the
- *       centre is scored against the board's scale (motion.h). --bottom Y:
- *       the drawer's bottom is the screen's, Y points (mt_fix_bottom).
+ *       centre is scored against the board's scale (motion.h). --bottom Y[:HC]:
+ *       the drawer's bottom is the screen's, Y points, and below the compact
+ *       height HC it is the top plus HC (mt_fix_bottom).
  *
  *   motion pace --size WxH --times FILE --box X,Y,W,H [--lum L] < frames.rgb
  *       How often the box's pixels change (a recording keeps a frame only
@@ -38,7 +39,7 @@
 static int usage(void) {
     fprintf(stderr, "usage: motion find --size WxH --times FILE [--scale S] < rgb\n"
                     "       motion score [--name N] [--span S] [--snap P] [--whole] [--side FILE]"
-                    " [--anchor MARK=red|green|mid|none] [--bottom Y] take.tbl...\n"
+                    " [--anchor MARK=red|green|mid|none] [--bottom Y[:HC]] take.tbl...\n"
                     "       motion pace --size WxH --times FILE --box X,Y,W,H [--lum L] < rgb\n"
                     "       motion grid --size WxH --times FILE [--scale S] [--from T] [--to T] < rgb\n");
     return 2;
@@ -180,7 +181,7 @@ static int score_main(int argc, char **argv) {
     MtScoreOpts o;
     mt_default_opts(&o);
     const char *name = "take", *side = NULL;
-    double bottom = 0;
+    double bottom = 0, compact = 0;
     const char *files[512];
     int32_t nf = 0;
     for (int i = 0; i < argc; i++) {
@@ -189,7 +190,11 @@ static int score_main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--whole")) o.whole = 1;
         else if (!strcmp(argv[i], "--name") && i + 1 < argc) name = argv[++i];
         else if (!strcmp(argv[i], "--side") && i + 1 < argc) side = argv[++i];
-        else if (!strcmp(argv[i], "--bottom") && i + 1 < argc) bottom = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--bottom") && i + 1 < argc) {
+            const char *v = argv[++i], *c = strchr(v, ':');
+            bottom = atof(v);
+            if (c) compact = atof(c + 1);
+        }
         else if (!strcmp(argv[i], "--anchor") && i + 1 < argc) {
             char nm[32], an[16];
             if (sscanf(argv[++i], "%31[^=]=%15s", nm, an) != 2) return usage();
@@ -237,7 +242,7 @@ static int score_main(int argc, char **argv) {
     for (int32_t f = 0; f < nf; f++) {
         int32_t n = mt_read_table(files[f], rows, 20000);
         if (n < 0) { perror(files[f]); return 1; }
-        if (bottom > 0) mt_fix_bottom(rows, n, bottom);
+        if (bottom > 0) mt_fix_bottom(rows, n, bottom, compact);
         if (!mt_score(rows, n, &o, s)) { fprintf(stderr, "motion: %s: nothing moved\n", files[f]); continue; }
         used++;
         MtBoard bd;

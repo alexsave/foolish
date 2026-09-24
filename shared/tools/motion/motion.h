@@ -116,8 +116,11 @@ void mt_default_opts(MtScoreOpts *o);
  * moves (only its top does), but the green bar is painted by the content,
  * so content that jumps takes the bar with it and then scores as riding it.
  * This puts every row's green at `y` points (where the drawer's bottom is at
- * rest) wherever the red bar is seen, so the bottom anchor is the real one. */
-void mt_fix_bottom(MtRow *rows, int32_t n, double y);
+ * rest) wherever the red bar is seen, so the bottom anchor is the real one.
+ * BELOW THE COMPACT HEIGHT the host slides a rigid card down (a drag past
+ * compact, a flick to the minimised drawer): the bottom is then the top plus
+ * the compact drawer's bars' distance `hc` (0: no such zone). */
+void mt_fix_bottom(MtRow *rows, int32_t n, double y, double hc);
 /* Score one take; returns 0 when nothing moved and `whole` is off. */
 int32_t mt_score(const MtRow *rows, int32_t n, const MtScoreOpts *o, MtScore out[MT_MARKS]);
 /* The host spring's progress t seconds in (critically damped). */

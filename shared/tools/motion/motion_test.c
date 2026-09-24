@@ -278,11 +278,24 @@ static void test_board(void) {
     mt_score(rows, N, &o, s);
     CHECK(s[M("blue")].maxstep < 1e-9, "riding the painted bar looks still");
     for (int32_t i = 45; i < N; i++) { rows[i].green += 300; rows[i].y[M("blue")] += 300; }  /* back at 0.75s */
-    mt_fix_bottom(rows, N, 920);
+    mt_fix_bottom(rows, N, 920, 0);
     CHECK(rows[10].green == 920 && rows[60].green == 920, "the bottom is the screen's");
     mt_score(rows, N, &o, s);
     CHECK(fabs(s[M("blue")].maxsnap - 300) < 1e-6, "a door that jumped 300pt, against the real bottom (%.2f)",
           s[M("blue")].maxsnap);
+    /* PAST COMPACT the card slides whole: its top 100pt below where a
+     * 290pt drawer's is, the door riding the card - not off the drawer */
+    take(rows, N, 99, 0);
+    for (int32_t i = 60; i < 70; i++) { rows[i].red += 100; rows[i].y[M("blue")] += 100; rows[i].green += 100; }
+    mt_fix_bottom(rows, N, 920, 0);
+    mt_score(rows, N, &o, s);
+    CHECK(s[M("blue")].off == 10, "without the compact height the sliding card looks off (%d)", s[M("blue")].off);
+    take(rows, N, 99, 0);
+    for (int32_t i = 60; i < 70; i++) { rows[i].red += 100; rows[i].y[M("blue")] += 100; rows[i].green += 100; }
+    mt_fix_bottom(rows, N, 920, 290);
+    CHECK(fabs(rows[65].green - (rows[65].red + 290)) < 1e-9 && rows[20].green == 920, "the card's bottom past compact");
+    mt_score(rows, N, &o, s);
+    CHECK(s[M("blue")].off == 0, "the door rides the sliding card (%d off)", s[M("blue")].off);
 }
 
 /* GRID: a device frame with no ruler - a dark wallpaper above the drawer, the

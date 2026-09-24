@@ -291,8 +291,11 @@ void mt_default_opts(MtScoreOpts *o) {
         o->scaled[m] = o->anchor[m] == MT_ANCHOR_MID && m != mt_mark(0, MT_Q_ONE);
 }
 
-void mt_fix_bottom(MtRow *rows, int32_t n, double y) {
-    for (int32_t i = 0; i < n; i++) if (rows[i].red != MT_NONE) rows[i].green = y;
+void mt_fix_bottom(MtRow *rows, int32_t n, double y, double hc) {
+    for (int32_t i = 0; i < n; i++) {
+        if (rows[i].red == MT_NONE) continue;
+        rows[i].green = hc > 0 && rows[i].red + hc > y ? rows[i].red + hc : y;
+    }
 }
 
 double mt_host_progress(double t, double response) {
