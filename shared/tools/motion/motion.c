@@ -112,12 +112,14 @@ void mt_find(const uint8_t *rgb, int32_t W, int32_t H, double scale, MtRow *row)
                 rhi[b] = y;
             }
     }
-    /* A BAR CUT BY THE FRAME'S EDGE IS NOT READ: the rows left in the frame
+    /* A BAR CUT BY THE FRAME'S EDGE IS NOT READ (one at the edge with all
+     * its rows in the frame is whole - an SE's expanded green bar sits on
+     * the screen's last row): the rows left in the frame
      * put its centre up to half a bar short of where it is (a drawer sliding
      * off the bottom read its green bar 1.7pt high and scored the board's
      * centre 1.5pt off, TESTFLIGHT_PLAN 18). */
     for (int32_t b = 0; b < 2; b++)
-        if (rcnt[b] && (rlo[b] == 0 || rhi[b] == h - 1)) rcnt[b] = 0;
+        if (rcnt[b] && (rlo[b] == 0 || rhi[b] == h - 1) && rcnt[b] < MR_EDGE_PT * s - 0.5) rcnt[b] = 0;
     row->red = rcnt[0] ? rsum[0] / rcnt[0] / s : MT_NONE;
     row->green = rcnt[1] ? rsum[1] / rcnt[1] / s : MT_NONE;
     row->clock = read_clock(rgb, W, H, row->red, scale);

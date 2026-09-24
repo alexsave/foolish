@@ -116,6 +116,11 @@ static void test_find(void) {
     mt_find(img, W, H, S, &r);
     CHECK(r.red == MT_NONE, "a red bar cut by the top edge (%.2f)", r.red);
     CHECK(r.green != MT_NONE, "a whole green bar just inside the bottom edge reads");
+    memset(img, 0xf0, sizeof img);
+    ink(MR_INK_GREEN, 0, H / S - MR_EDGE_PT, 220, H / S);
+    mt_find(img, W, H, S, &r);
+    CHECK(r.green != MT_NONE && fabs(r.green - (H / S - MR_EDGE_PT / 2)) < 0.4,
+          "a whole green bar on the last row reads (%.2f)", r.green);
 }
 
 /* A synthetic take: the drawer collapses from 840 to 290 on the host spring,
