@@ -1,24 +1,31 @@
-import Combine
-import SwiftUI
+import CoreGraphics
 
 /// What the screen is allowed to know. Every answer comes from the kernel;
 /// this only remembers which of them is on screen and how far a stroke has
 /// been drawn.
 @MainActor
-public final class UtttModel: ObservableObject {
+public final class UtttModel {
     /// The position changed and this device can no longer move in it: the
-    /// host stages on this. Bumped once a move's ink is down.
-    @Published public private(set) var positionKey = 0
+    /// host stages on this. Bumped once a move's ink is down, and every bump
+    /// after the first is told to `onPosition`.
+    public private(set) var positionKey = 0 {
+        didSet { if positionKey != oldValue { onPosition?() } }
+    }
+    /// The host's ear for `positionKey`.
+    public var onPosition: (() -> Void)?
+    /// The screen's ear: something it draws changed (the board's position,
+    /// the words, the draft).
+    public var onChange: (() -> Void)?
     /// EVERY POSITION THE BOARD SHOWS, bumped the moment the kernel's game
     /// changes - before a move's ink starts, not after it lands - so the
     /// cached board under the ink is always the one the ink belongs to. The
     /// board is keyed on this and not on the clock, so it is not rebuilt
     /// every display frame (UtttLiveBoard).
-    @Published public private(set) var boardKey = 0
+    public private(set) var boardKey = 0 { didSet { onChange?() } }
     /// The one motion loop: what the board looks like this frame is the
     /// kernel's answer to (plan, clock), and nothing here times anything.
     public let clock = UtttMotionClock()
-    @Published public private(set) var busy = false
+    public private(set) var busy = false
 
     public private(set) var seed: Int32
     public private(set) var you: Uttt.Mark
@@ -63,7 +70,7 @@ public final class UtttModel: ObservableObject {
     /// landed, not before it is drawn - sheet 5). False from the moment a
     /// move starts to draw until the kernel's frame says it has landed; the
     /// words meanwhile are the position one ply back.
-    @Published public private(set) var inked = true
+    public private(set) var inked = true { didSet { if inked != oldValue { onChange?() } } }
 
     /// The words are the kernel's; this only says where the drawn mark goes.
     public var headline: Headline {
@@ -119,7 +126,7 @@ public final class UtttModel: ObservableObject {
     /// tapping a different square, not by hunting for Apple's little X.
     ///
     /// True while this device's last move is staged and unsent.
-    @Published public private(set) var pending = false
+    public private(set) var pending = false { didSet { if pending != oldValue { onChange?() } } }
 
     /// A tap in the board's own 0..1 space. WHICH SQUARE is the kernel's
     /// answer, from the same geometry it draws the board with, and so is

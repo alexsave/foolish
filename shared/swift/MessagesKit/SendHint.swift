@@ -58,13 +58,13 @@ public enum SendHintInk: Equatable {
 /// hint's arrow and its caption - two different outline weights on one object
 /// that moves as one reads as a mistake rather than as emphasis.
 public struct SendHintRing<Content: View>: View {
-    public var radius: CGFloat = 1.6
+    public var radius: CGFloat = SendHintMetrics.ringRadius
     /// The ring's colour: white for the sister product's felt, black for a
     /// product on light paper (uttt, owner 2026-09-23).
     public var color: Color = .white
     @ViewBuilder public var content: () -> Content
 
-    public init(radius: CGFloat = 1.6, color: Color = .white,
+    public init(radius: CGFloat = SendHintMetrics.ringRadius, color: Color = .white,
                 @ViewBuilder content: @escaping () -> Content) {
         self.radius = radius
         self.color = color
@@ -152,12 +152,12 @@ public struct SendHintArrow: View {
     // size is one - the glyph is deliberately stretched ~20% taller than the
     // symbol's own proportions, which also makes it read as an arrow POINTING
     // somewhere rather than as a button you press.
-    public static let arrowSize = CGSize(width: 21, height: 29)
+    public static let arrowSize = SendHintMetrics.arrowSize
     /// Peak-to-trough travel: the whole point is that the eye follows it UP,
     /// off this view and onto Messages' own Send button.
-    public static let bobTravel: CGFloat = 14
+    public static let bobTravel = SendHintMetrics.bobTravel
     /// Seconds per bob. 1.5 read as decoration.
-    public static let bobPeriod: Double = 0.85
+    public static let bobPeriod = SendHintMetrics.bobPeriod
     /// Where the hint RESTS, measured down from the top of the container it is
     /// laid into. NEGATIVE: the whole hint is lifted out of the board and into
     /// the drawer's top margin.
@@ -171,7 +171,7 @@ public struct SendHintArrow: View {
     /// hint hugs the trailing edge, so there is nothing up there to collide
     /// with; the drawer's rounded corner is the real ceiling and the crest still
     /// clears it (measured on device: the tip stops ~8pt short of the edge).
-    public static let crestRoom: CGFloat = -9
+    public static let crestRoom = SendHintMetrics.crestRoom
 
     public var body: some View {
         // The bob is a TimelineView-driven pure sine of wall-clock time, not a
@@ -232,12 +232,12 @@ public struct SendHint: View {
     /// the drawer chrome inset around it, its centre ~42pt from the screen
     /// edge (measured off a real device screenshot; a first guess of ~24 read
     /// the field as nearly full-bleed).
-    public static let axisFromScreenTrailing: CGFloat = 42
+    public static let axisFromScreenTrailing = SendHintMetrics.axisFromScreenTrailing
     /// How long a staged bubble sits unsent before the hint appears.
-    public static let defaultFuse: Double = 3
+    public static let defaultFuse = SendHintMetrics.defaultFuse
     /// The caption's face: the system's 15pt semibold, made heavy on top - the
     /// action buttons' own text treatment ("larger and bolder").
-    public static let captionFont: Font = .system(size: 15, weight: .semibold, design: .default)
+    public static let captionFont: Font = .system(size: SendHintMetrics.captionSize, weight: .semibold, design: .default)
 
     let staged: Bool
     let visible: Bool

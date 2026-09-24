@@ -1,12 +1,11 @@
 import CoreGraphics
 import IOSurface
 import QuartzCore
-import SwiftUI
 import UIKit
 
 /// ONE BITMAP, SHARED WITH THE COMPOSITOR (TESTFLIGHT_PLAN.md 12, memory).
 ///
-/// The board and the paper were CGImages shown by SwiftUI `Image`s, and a
+/// The board and the paper were CGImages shown as images, and a
 /// CGImage handed to Core Animation is COPIED into the render server's
 /// shared memory: vmmap of an idle drawer had the board twice (CG raster
 /// 1,085 KB and a CoreAnimation region of 1,088 KB) and the paper twice
@@ -65,31 +64,12 @@ public final class UtttBitmap: @unchecked Sendable {
     }
 }
 
-/// A bitmap on screen, stretched to whatever frame SwiftUI gives it: a plain
-/// layer whose contents is the surface, so a resize is a transform the
-/// compositor does and nothing is drawn.
-struct UtttSurface: UIViewRepresentable {
-    let bitmap: UtttBitmap?
-
-    final class View: UIView {
-        override init(frame: CGRect) {
-            super.init(frame: frame)
-            isUserInteractionEnabled = false
-            isAccessibilityElement = false
-            layer.contentsGravity = .resize
-        }
-        required init?(coder: NSCoder) { fatalError() }
-        var shown: UtttBitmap?
-    }
-
-    func makeUIView(context: Context) -> View { View() }
-
-    func updateUIView(_ v: View, context: Context) {
-        guard v.shown !== bitmap else { return }
-        v.shown = bitmap
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        v.layer.contents = bitmap?.surface
-        CATransaction.commit()
+/// A layer showing a bitmap, stretched to its frame: a resize is a transform
+/// the compositor does and nothing is drawn.
+extension CALayer {
+    func show(_ bitmap: UtttBitmap?) {
+        let s: IOSurface? = bitmap?.surface
+        if (contents as AnyObject?) === s { return }
+        contents = s
     }
 }

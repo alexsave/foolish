@@ -1,6 +1,5 @@
 import CUttt
 import QuartzCore
-import SwiftUI
 
 /// THE ONE LOOP. A display link that asks the kernel what the board looks
 /// like at this frame's presentation time and publishes the answer.
@@ -10,15 +9,15 @@ import SwiftUI
 /// a clock and when to stop asking, which is when the kernel says nothing
 /// will change again.
 @MainActor
-public final class UtttMotionClock: ObservableObject {
-    @Published public private(set) var frame: UtiFrame {
+public final class UtttMotionClock {
+    public private(set) var frame: UtiFrame {
         didSet { for f in observers.values { f() } }
     }
 
-    /// THE LAYERS THAT DRAW A FRAME ARE CALLED DIRECTLY, not through SwiftUI:
-    /// a SwiftUI view that observed `frame` re-rendered through RenderBox on
-    /// the main thread every display frame (UtttLiveBoard). Returns a token
-    /// for `unobserve`.
+    /// THE LAYERS THAT DRAW A FRAME ARE CALLED DIRECTLY (UtttMotionView):
+    /// a SwiftUI view that observed `frame` once re-rendered through
+    /// RenderBox on the main thread every display frame. Returns a token for
+    /// `unobserve`.
     public func observe(_ f: @escaping () -> Void) -> Int {
         nextObserver += 1
         observers[nextObserver] = f

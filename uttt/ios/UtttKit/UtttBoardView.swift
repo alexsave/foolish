@@ -1,26 +1,12 @@
 import CUttt
 import CoreGraphics
-import SwiftUI
+import UIKit
 
-/// Fills what the kernel hands over, and decides nothing.
-///
-/// THE BOARD IS CACHED AS AN IMAGE. A finished position is fourteen thousand
+/// THE BOARD'S PICTURE, CACHED. A finished position is fourteen thousand
 /// polygons, which is fine to fill once and hopeless to fill sixty times a
 /// second - so the position is rasterised when it changes and the animating
 /// stroke, a few dozen polygons, is composited on top of it.
-public struct UtttBoard: View {
-    public let active: Int          // block 0..8, 9 anywhere, -1 none
-    public let last: Int            // block*9+cell, or -1
-    public let positionKey: Int     // changes when the board changes
-    public let onTap: ((CGPoint) -> Void)?   // in the board's own 0..1 space
-
-    public init(active: Int, last: Int, positionKey: Int,
-                onTap: ((CGPoint) -> Void)? = nil) {
-        self.active = active; self.last = last
-        self.positionKey = positionKey
-        self.onTap = onTap
-    }
-
+enum UtttBoard {
     /// HOW FAR THE PEN IS ALLOWED PAST THE BOARD, as a fraction of it.
     ///
     /// The four main lines overshoot the grid by design - nobody ruling a
@@ -31,59 +17,6 @@ public struct UtttBoard: View {
     /// still runs past is clipped by the SHEET, which is paper running out
     /// rather than a box.
     static let bleed: CGFloat = 0.115
-
-    /// Bumped when an off-main render lands, so the Canvas draws again.
-    @State private var landed = 0
-
-    public var body: some View {
-        GeometryReader { geo in
-            let side = min(geo.size.width, geo.size.height)
-            let pad  = side * Self.bleed
-            ZStack(alignment: .topLeading) {
-                let _ = landed
-                UtttSurface(bitmap: Self.cached(key: positionKey, active: active,
-                                                last: last, side: side))
-                .frame(width: side + 2 * pad, height: side + 2 * pad)
-                .offset(x: -pad, y: -pad)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-
-                // The tap map is against the BOARD, not the bled bitmap.
-                Color.clear.contentShape(Rectangle())
-                    .frame(width: side, height: side)
-                    .onTapGesture { p in
-                        guard let onTap else { return }
-                        let u = p.x / side, v = p.y / side
-                        guard u >= 0, u <= 1, v >= 0, v <= 1 else { return }
-                        onTap(CGPoint(x: u, y: v))
-                    }
-                    .accessibilityHidden(true)
-
-                UtttSquares(side: side, positionKey: positionKey, onTap: onTap)
-            }
-        }
-        .aspectRatio(1, contentMode: .fit)
-        .onReceive(NotificationCenter.default.publisher(for: Self.rendered)) { _ in landed &+= 1 }
-    }
-
-    static func fill(_ polys: [Uttt.Poly], into ctx: GraphicsContext, side: CGFloat) {
-        fill(polys, into: ctx, size: CGSize(width: side, height: side))
-    }
-
-    /// The same, for a drawing that is not square (the Again door).
-    static func fill(_ polys: [Uttt.Poly], into ctx: GraphicsContext, size: CGSize) {
-        let sx = size.width, sy = size.height
-        for poly in polys {
-            var path = Path()
-            guard let head = poly.points.first else { continue }
-            path.move(to: CGPoint(x: head.x * sx, y: head.y * sy))
-            for p in poly.points.dropFirst() {
-                path.addLine(to: CGPoint(x: p.x * sx, y: p.y * sy))
-            }
-            path.closeSubpath()
-            ctx.fill(path, with: .color(Color(poly.color)))
-        }
-    }
 
     // MARK: the one-entry cache
 
@@ -120,7 +53,7 @@ public struct UtttBoard: View {
     /// after that a stale image is on screen, and swapping a finished move's
     /// image in late would flash the move out and back in.
     static func cached(key: Int, active: Int, last: Int, side: CGFloat) -> UtttBitmap? {
-        _ = key                     // SwiftUI's reason to redraw, not the cache's
+        _ = key                     // the view's reason to redraw, not the cache's
         return cached(stamp: stamp(active: active, last: last), side: side) {
             Uttt.boardPolys(active: active, last: last)
         }
@@ -211,7 +144,7 @@ public struct UtttBoard: View {
          * time it was drawn at a new size, and a CGImage was copied whole into
          * the render server. */
         return UtttBitmap(width: px, height: px) { cg in
-            /* A CGBitmapContext has its ORIGIN AT THE BOTTOM LEFT and SwiftUI
+            /* A CGBitmapContext has its ORIGIN AT THE BOTTOM LEFT and UIKit
              * does not, so a board drawn straight into one comes out mirrored
              * top to bottom - which reads as the game having been played upside
              * down rather than as a coordinate bug. Flip once, here, so the
@@ -224,206 +157,164 @@ public struct UtttBoard: View {
     }
 }
 
-/// The side indicator - the same X that is about to land on the board, drawn
-/// by the same code, because a glyph from a font would be the only thing in
-/// the frame that did not come out of the pen.
-public struct UtttMarkIcon: View {
-    public let mark: Uttt.Mark
-    public let seed: Int32
-    public init(mark: Uttt.Mark, seed: Int32) { self.mark = mark; self.seed = seed }
-    public var body: some View {
-        UtttInkImage(key: "mark \(mark.rawValue) \(seed)", square: true) { _ in
-            Uttt.mark(mark, seed: seed)
-        }
-        .aspectRatio(1, contentMode: .fit)
-    }
-}
 
-/// A DRAWN THING THAT DOES NOT MOVE - the "you are" mark, the rulebook door,
-/// the Again door - painted ONCE per size by Core Graphics into a bitmap and
-/// shown as an image, a texture the compositor keeps.
+/// The board on a sheet: the cached picture, and - when it is the live board
+/// - the highlighter under it and the moving strokes over it, all layers
+/// the clock sets directly (UtttMotionView). Draws; decides nothing.
 ///
-/// They were SwiftUI Canvases. A Canvas is drawn by RenderBox in this
-/// process, which on the simulator allocates its path buffers as Metal
-/// shared memory it never gives back: 689 untagged 64K regions, 10.8 MB, on
-/// an idle compact drawer that an empty extension does not have
-/// (TESTFLIGHT_PLAN.md 12). An image of the same polygons costs its pixels.
-struct UtttInkImage: View {
-    let key: String
-    /// Fill the unit square scaled to the smaller side (true) or stretched to
-    /// the whole size (false, the Again door's bar).
-    let square: Bool
-    let polys: (CGSize) -> [Uttt.Poly]
+/// Its frame IS the board's square; the picture is bled past it on every
+/// side (`UtttBoard.bleed`) for the grid's overshoot.
+///
+/// A TAP is one recognizer asking the kernel which square (`Uttt.hit`, in the
+/// board's own 0..1 space). VOICEOVER finds one element per square, where the
+/// square is: the rectangle and the words are both the kernel's
+/// (`uttt_cell_rect`, `uttt_say_cell`), and a square the player may take is a
+/// button whose activation is the same tap a finger makes.
+final class UtttBoardView: UIView {
+    /// The live board's clock, or nil for a still board of the resident game.
+    private let clock: UtttMotionClock?
+    /// A still board's wash and last move: block 0..8, 9 anywhere, -1 none.
+    var active = -1
+    var last = -1
+    /// Bumped when the position changes; the picture and VoiceOver's squares
+    /// are fetched again.
+    var positionKey = 0 { didSet { if positionKey != oldValue { refresh() } } }
+    var onTap: ((CGPoint) -> Void)?
 
-    var body: some View {
-        GeometryReader { g in
-            if let img = Self.image(key, g.size, square, polys) {
-                Image(decorative: img, scale: UIScreen.main.scale)
-                    .resizable()
-                    .frame(width: g.size.width, height: g.size.height)
+    private let wash: UtttMotionView?
+    private let picture = CALayer()
+    private let strokes: UtttMotionView?
+    private var side: CGFloat = 0
+    private var squaresKey = -1
+#if DEBUG
+    private var ruler: [CALayer] = []
+#endif
+
+    init(clock: UtttMotionClock?) {
+        self.clock = clock
+        wash = clock.map { _ in UtttMotionView(role: .wash) }
+        strokes = clock.map { _ in UtttMotionView(role: .strokes) }
+        super.init(frame: .zero)
+        clipsToBounds = false
+        layer.actions = UtttLayers.still
+        picture.actions = UtttLayers.still
+        picture.contentsGravity = .resize
+        if let wash { addSubview(wash) }
+        layer.addSublayer(picture)
+        if let strokes { addSubview(strokes) }
+        let tap = UITapGestureRecognizer(target: self, action: #selector(tapped(_:)))
+        addGestureRecognizer(tap)
+#if DEBUG
+        if UtttRuler.on {
+            ruler = [MotionRuler.square(.magenta)] + (0..<4).map { _ in MotionRuler.square(.cyan) }
+            ruler.forEach { layer.addSublayer($0) }
+        }
+#endif
+        NotificationCenter.default.addObserver(self, selector: #selector(landed),
+                                               name: UtttBoard.rendered, object: nil)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func landed() { refresh() }
+
+    @objc private func tapped(_ g: UITapGestureRecognizer) {
+        guard let onTap, side > 0 else { return }
+        let p = g.location(in: self)
+        let u = p.x / side, v = p.y / side
+        guard u >= 0, u <= 1, v >= 0, v <= 1 else { return }
+        onTap(CGPoint(x: u, y: v))
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let s = min(bounds.width, bounds.height)
+        guard s > 0 else { return }
+        let changed = s != side
+        side = s
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let pad = s * UtttBoard.bleed
+        picture.frame = CGRect(x: -pad, y: -pad, width: s + 2 * pad, height: s + 2 * pad)
+        wash?.frame = CGRect(x: 0, y: 0, width: s, height: s)
+        strokes?.frame = CGRect(x: 0, y: 0, width: s, height: s)
+#if DEBUG
+        if !ruler.isEmpty {
+            let r = CGRect(x: 0, y: 0, width: s, height: s)
+            MotionRuler.place(ruler[0], in: r)
+            for (i, u) in [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0), CGPoint(x: 0, y: 1), CGPoint(x: 1, y: 1)].enumerated() {
+                MotionRuler.place(ruler[i + 1], in: r, at: u)
             }
         }
+#endif
+        CATransaction.commit()
+        if changed { refresh() }
     }
 
-    private static var cache: [String: CGImage] = [:]
-
-    static func image(_ key: String, _ size: CGSize, _ square: Bool,
-                      _ polys: (CGSize) -> [Uttt.Poly]) -> CGImage? {
-        guard size.width >= 1, size.height >= 1 else { return nil }
-        let k = "\(key)|\(Int(size.width * 4))x\(Int(size.height * 4))"
-        if let img = cache[k] { return img }
-        let scale = UIScreen.main.scale
-        let pw = Int((size.width * scale).rounded(.up)), ph = Int((size.height * scale).rounded(.up))
-        guard let cg = CGContext(data: nil, width: pw, height: ph, bitsPerComponent: 8, bytesPerRow: 0,
-                                 space: CGColorSpaceCreateDeviceRGB(),
-                                 bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
-                                     | CGBitmapInfo.byteOrder32Little.rawValue)
-        else { return nil }
-        cg.translateBy(x: 0, y: CGFloat(ph))
-        cg.scaleBy(x: scale, y: -scale)
-        let sx = square ? min(size.width, size.height) : size.width
-        let sy = square ? min(size.width, size.height) : size.height
-        for p in polys(size) {
-            guard let head = p.points.first else { continue }
-            cg.setFillColor(p.color)
-            cg.beginPath()
-            cg.move(to: CGPoint(x: head.x * sx, y: head.y * sy))
-            for q in p.points.dropFirst() { cg.addLine(to: CGPoint(x: q.x * sx, y: q.y * sy)) }
-            cg.closePath()
-            cg.fillPath()
+    /// The picture for this position at this size, and the strokes bound to
+    /// it; VoiceOver's squares when the position moved.
+    private func refresh() {
+        guard side > 0 else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if let clock {
+            wash?.bind(clock, side: side, key: 0)
+            let img = UtttBoard.cachedUnder(side: side)
+            picture.show(img)
+            /* the strokes only once the board they land on is up */
+            strokes?.isHidden = img == nil
+            strokes?.bind(clock, side: side, key: positionKey)
+        } else {
+            picture.show(UtttBoard.cached(key: positionKey, active: active, last: last, side: side))
         }
-        guard let img = cg.makeImage() else { return nil }
-        /* a drawer drag hands a new size every frame: keep the last few */
-        if cache.count > 24 { cache.removeAll() }
-        cache[k] = img
-        return img
-    }
-}
-
-/// The board the player plays on: the cached board under the motion, and
-/// over it whatever the kernel's frame says - the highlighter, the last
-/// move's ink, its settlement and the outline of the block it sends to.
-/// Draws; decides nothing.
-///
-/// NOTHING HERE RE-RENDERS A DRAWING PER FRAME THAT HAS NOT CHANGED
-/// (TESTFLIGHT_PLAN.md 12). This view used to observe the clock itself, so
-/// every display frame re-ran its whole body - the 81 VoiceOver squares, the
-/// cache's stamp - and re-rendered two board-sized Canvases through
-/// RenderBox on the main thread, the wash's included. A `sample` of a stage on
-/// the SE simulator put 283 of 543 busy main-thread samples in RenderBox
-/// waiting on Metal (`waitUntilScheduled`), and the ink's 740 ms plan drew 6
-/// frames. Now the clock is observed only by three small layers: the wash is
-/// a coloured rect (a layer the compositor moves, no drawing), and the ink
-/// and the outline are Canvases that redraw only when their own `t` changes
-/// - so the highlighter's travel, the whole of the post-settlement, draws
-/// nothing at all.
-public struct UtttLiveBoard: View {
-    let clock: UtttMotionClock
-    public let positionKey: Int
-    public let onTap: ((CGPoint) -> Void)?
-
-    public init(clock: UtttMotionClock, positionKey: Int,
-                onTap: ((CGPoint) -> Void)? = nil) {
-        self.clock = clock; self.positionKey = positionKey; self.onTap = onTap
+        CATransaction.commit()
+        if squaresKey != positionKey || accessibilityElements == nil { buildSquares() }
+        else { placeSquares() }
     }
 
-    @State private var landed = 0
+    private var squares: [UIAccessibilityElement] = []
 
-    public var body: some View {
-        GeometryReader { geo in
-            let side = min(geo.size.width, geo.size.height)
-            let pad  = side * UtttBoard.bleed
-            let _ = (landed, positionKey)   // an off-main paint landed, a move
-            ZStack(alignment: .topLeading) {
-                /* the highlighter first: it is under the ink */
-                UtttWashLayer(clock: clock, side: side)
-                    .frame(width: side, height: side)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-
-                /* THE CACHED BOARD IS AN IMAGE VIEW, NOT A DRAW INTO A
-                 * CANVAS: a view's picture is a texture the compositor scales,
-                 * so a drawer move that resizes the board every frame costs a
-                 * transform. It is fetched for every new position (the model's
-                 * `positionKey`, which every run of the clock bumps). */
-                if let img = UtttBoard.cachedUnder(side: side) {
-                    UtttSurface(bitmap: img)
-                        .frame(width: side + 2 * pad, height: side + 2 * pad)
-                        .offset(x: -pad, y: -pad)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                    /* the strokes only once the board they land on is up */
-                    UtttStrokeLayer(clock: clock, side: side, pad: pad, key: positionKey)
-                        .frame(width: side, height: side)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                }
-
-                Color.clear.contentShape(Rectangle())
-                    .frame(width: side, height: side)
-                    .onTapGesture { p in
-                        guard let onTap else { return }
-                        let u = p.x / side, v = p.y / side
-                        guard u >= 0, u <= 1, v >= 0, v <= 1 else { return }
-                        onTap(CGPoint(x: u, y: v))
-                    }
-                    .accessibilityHidden(true)
-
-                UtttSquares(side: side, positionKey: positionKey, onTap: onTap)
-            }
+    private func buildSquares() {
+        squaresKey = positionKey
+        let legal = onTap != nil && Uttt.canMove ? Set(Uttt.legal.map(Int.init)) : []
+        squares = (0..<81).map { mv in
+            let e = UtttSquare(accessibilityContainer: self)
+            e.accessibilityLabel = Uttt.sayCell(mv)
+            e.accessibilityTraits = legal.contains(mv) ? .button : .none
+            let r = Uttt.cellRect(mv)
+            e.activate = { [weak self] in self?.onTap?(CGPoint(x: r.midX, y: r.midY)); return true }
+            return e
         }
-        .aspectRatio(1, contentMode: .fit)
-        .onReceive(NotificationCenter.default.publisher(for: UtttBoard.rendered)) { _ in landed &+= 1 }
+        placeSquares()
+        accessibilityElements = squares
+    }
+
+    private func placeSquares() {
+        for (mv, e) in squares.enumerated() {
+            let r = Uttt.cellRect(mv)
+            e.accessibilityFrameInContainerSpace = CGRect(x: r.minX * side, y: r.minY * side,
+                                                         width: r.width * side, height: r.height * side)
+        }
     }
 
     static func rect(_ r: (Float, Float, Float, Float), _ side: CGFloat) -> CGRect {
         CGRect(x: CGFloat(r.0) * side, y: CGFloat(r.1) * side,
                width: CGFloat(r.2) * side, height: CGFloat(r.3) * side)
     }
-
-    static func color(_ c: UInt32) -> Color {
-        Color(.sRGB, red: Double((c >> 24) & 0xff) / 255,
-              green: Double((c >> 16) & 0xff) / 255,
-              blue: Double((c >> 8) & 0xff) / 255,
-              opacity: Double(c & 0xff) / 255)
-    }
 }
 
-/// THE HIGHLIGHTER: one coloured rect where the kernel's frame puts it, on a
-/// Core Animation layer the clock moves directly - nothing is drawn when it
-/// travels, and SwiftUI is not asked about it.
-struct UtttWashLayer: UIViewRepresentable {
-    let clock: UtttMotionClock
-    let side: CGFloat
-
-    func makeUIView(context: Context) -> UtttMotionView { UtttMotionView(role: .wash) }
-    func updateUIView(_ v: UtttMotionView, context: Context) {
-        v.bind(clock, side: side, key: 0)
-    }
+/// One square for VoiceOver, whose activation is the tap.
+private final class UtttSquare: UIAccessibilityElement {
+    var activate: (() -> Bool)?
+    override func accessibilityActivate() -> Bool { activate?() ?? false }
 }
 
-/// THE STROKES THAT MOVE: the last mark and its settlement, and the outline
-/// under its own opacity, each a bitmap of just its own ink on a layer of
-/// its own, painted again only when its own `t` moves.
-struct UtttStrokeLayer: UIViewRepresentable {
-    let clock: UtttMotionClock
-    let side: CGFloat
-    let pad: CGFloat
-    let key: Int
-
-    func makeUIView(context: Context) -> UtttMotionView { UtttMotionView(role: .strokes) }
-    func updateUIView(_ v: UtttMotionView, context: Context) {
-        v.bind(clock, side: side, key: key)
-    }
-}
-
-/// WHAT DRAWS A FRAME, OFF SWIFTUI (TESTFLIGHT_PLAN.md 12).
+/// WHAT DRAWS A FRAME (TESTFLIGHT_PLAN.md 12).
 ///
-/// Measured on the SE simulator: every Canvas or Text SwiftUI re-renders is a
-/// RenderBox pass on the main thread that then WAITS for Metal
+/// Measured on the SE simulator: every Canvas or Text SwiftUI re-rendered was
+/// a RenderBox pass on the main thread that then WAITED for Metal
 /// (`waitUntilScheduled`) - 336 of ~900 busy main-thread samples in one
-/// stage, and a display link that could only tick every ~90 ms. So nothing
-/// that moves is SwiftUI: this view's layers are set straight from the
+/// stage, and a display link that could only tick every ~90 ms. So this
+/// view's layers are set straight from the
 /// clock's frame (`UtttMotionClock.observe`), the wash as a layer's colour
 /// and frame and the ink as a small bitmap of only its own polygons,
 /// painted by Core Graphics on the CPU (a few hundred fills, well under a
@@ -455,7 +346,7 @@ final class UtttMotionView: UIView {
         ink.contentsGravity = .resize
         outline.contentsGravity = .resize
 #if DEBUG
-        for (l, c) in [(pink, UIColor(MotionRuler.Ink.pink.color).cgColor), (violet, UIColor(MotionRuler.Ink.violet.color).cgColor)] {
+        for (l, c) in [(pink, MotionRuler.Ink.pink.color), (violet, MotionRuler.Ink.violet.color)] {
             l.actions = Self.still
             l.backgroundColor = c
             l.isHidden = true
@@ -497,7 +388,7 @@ final class UtttMotionView: UIView {
         case .wash:
             if f.wash.2 > 0 {
                 wash.isHidden = false
-                wash.frame = UtttLiveBoard.rect(f.wash, side)
+                wash.frame = UtttBoardView.rect(f.wash, side)
                 wash.backgroundColor = Self.cg(f.wash_rgba)
             } else {
                 wash.isHidden = true
@@ -505,7 +396,7 @@ final class UtttMotionView: UIView {
 #if DEBUG
             pink.isHidden = !(UtttRuler.on && f.wash.2 > 0)
             if !pink.isHidden {
-                let w = UtttLiveBoard.rect(f.wash, side), d = MotionRuler.side
+                let w = UtttBoardView.rect(f.wash, side), d = MotionRuler.side
                 pink.frame = CGRect(x: w.midX - d / 2, y: w.midY - d / 2, width: d, height: d)
             }
 #endif
@@ -590,37 +481,3 @@ final class UtttMotionView: UIView {
     }
 }
 
-/// WHAT VOICEOVER FINDS ON THE BOARD: one element per square, where the
-/// square is. The rectangle and the words are both the kernel's
-/// (`uttt_cell_rect`, the inverse of the tap map, and `uttt_say_cell`), so
-/// this places and labels and decides nothing. A square the player may take
-/// is a button, and activating it is the same tap a finger makes.
-struct UtttSquares: View {
-    let side: CGFloat
-    let positionKey: Int
-    let onTap: ((CGPoint) -> Void)?
-
-    var body: some View {
-        let legal = onTap != nil && Uttt.canMove ? Set(Uttt.legal.map(Int.init)) : []
-        ZStack(alignment: .topLeading) {
-            ForEach(0..<81, id: \.self) { mv in
-                let r = Uttt.cellRect(mv)
-                Color.clear
-                    .frame(width: r.width * side, height: r.height * side)
-                    .accessibilityElement()
-                    .accessibilityLabel(Uttt.sayCell(mv))
-                    .accessibilityAction {
-                        onTap?(CGPoint(x: r.midX, y: r.midY))
-                    }
-                    /* An action makes any element a button; only a square
-                     * the player may take is one. */
-                    .accessibilityRemoveTraits(legal.contains(mv) ? [] : .isButton)
-                    .accessibilityAddTraits(legal.contains(mv) ? .isButton : [])
-                    .position(x: r.midX * side, y: r.midY * side)
-            }
-        }
-        .frame(width: side, height: side, alignment: .topLeading)
-        .allowsHitTesting(false)
-        .id(positionKey)
-    }
-}

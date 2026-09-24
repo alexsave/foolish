@@ -1,6 +1,5 @@
-import Combine
 import Messages
-import SwiftUI
+import UIKit
 import UtttKit
 
 /// The extension. It owns the conversation and nothing else - every rule and
@@ -25,19 +24,18 @@ import UtttKit
 /// is everybody else's. Which of them the screen shows is one kernel call.
 final class MessagesViewController: MSMessagesAppViewController {
 
-    private var host: UIHostingController<AnyView>?
+    /// The screen up, a UIKit view (TESTFLIGHT_PLAN 14: no SwiftUI in this
+    /// process).
+    private var host: UIView?
 
     /// THE AUTO-COLLAPSE, on the render server (CollapseSlide): armed right
     /// before this controller asks for compact, and every screen rides it.
     private let slide = CollapseSlide.uttt()
-    private var bag = Set<AnyCancellable>()
 
     /// THE SEND HINT AND THE SEND DOOR, over whatever screen is up (see
-    /// UtttSendOverlay for why over and not in). Its own host, above every
-    /// screen `attach` puts in, and never swapped.
-    private let sendState = UtttSendState()
-    private var overlay: UIHostingController<UtttSendOverlay>?
-    private let overlayBox = UtttSendOverlayBox()
+    /// UtttSendOverlay for why over and not in), above every screen `attach`
+    /// puts in, and never swapped.
+    private lazy var overlay = UtttSendOverlay { [weak self] in self?.sendDoorTapped() }
 
     /// The insert the send door re-issues: the bubble, and the stage it
     /// belongs to - a newer stage or a cancel makes it void.
@@ -110,21 +108,10 @@ final class MessagesViewController: MSMessagesAppViewController {
         /* CLEAR UNTIL IT APPEARS - see `appeared`. */
         view.backgroundColor = .clear
 
-        let vc = UIHostingController(rootView: UtttSendOverlay(state: sendState) { [weak self] in
-            self?.sendDoorTapped()
-        })
-        addChild(vc)
-        vc.view.backgroundColor = .clear
-        overlayBox.frame = view.bounds
-        overlayBox.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        vc.view.frame = overlayBox.bounds
-        vc.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        overlayBox.addSubview(vc.view)
-        overlayBox.state = sendState
-        overlayBox.onGrow = { [weak self] in self?.hideHintNow() }
-        view.addSubview(overlayBox)
-        vc.didMove(toParent: self)
-        overlay = vc
+        overlay.frame = view.bounds
+        overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        overlay.onGrow = { [weak self] in self?.hideHintNow() }
+        view.addSubview(overlay)
 #if DEBUG
         devWatchForArrivals()
 #endif
@@ -137,7 +124,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 #endif
         UtttLog.note("active", "\(styleName), selected \(conversation.selectedMessage != nil)")
         becameActiveAt = Date()
-        sendState.compact = presentationStyle == .compact
+        overlay.compact = presentationStyle == .compact
         arrived = nil
         draftIsNewGame = false
         unbound = conversation.selectedMessage == nil
@@ -199,7 +186,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     private var appeared = false
     private var conversationActive = false
     private var ready: Bool { appeared && conversationActive }
-    private var pendingScreen: AnyView?
+    private var pendingScreen: UIView?
     private var afterReady: [() -> Void] = []
 
     override func viewDidAppear(_ animated: Bool) {
@@ -388,8 +375,8 @@ final class MessagesViewController: MSMessagesAppViewController {
         freshSession = false
         live?.setPending(false)
         hideHintNow()
-        sendState.staged = false
-        sendState.door = false
+        overlay.staged = false
+        overlay.door = false
         doorInsert = nil
         let wasUnbound = unbound
         if let wire { settleSent(wire, conversation) } else { present(conversation, motion: .settle) }
@@ -467,8 +454,8 @@ final class MessagesViewController: MSMessagesAppViewController {
         staged = nil
         stageGeneration += 1           // a stage still waiting to insert is void
         live?.setPending(false)
-        sendState.staged = false
-        sendState.door = false
+        overlay.staged = false
+        overlay.door = false
         doorInsert = nil
 
         /* THE X IS THE UNDO - the only one there is, by the owner's decision
@@ -501,29 +488,29 @@ final class MessagesViewController: MSMessagesAppViewController {
         /* THE HINT GOES AS THE DRAWER STARTS TO GROW, not once it has: the
          * Send button is only above a compact drawer. */
         if presentationStyle != .compact { hideHintNow() }
-        sendState.compact = presentationStyle == .compact
+        overlay.compact = presentationStyle == .compact
     }
 
     /// THE HINT DOWN IN THIS FRAME. A send, or a drawer that has started to
-    /// grow: SwiftUI would take it down at its next render, and a send is the
+    /// grow: a fade would take it down over its duration, and a send is the
     /// moment this process is busiest (the re-present) - filmed lingering
     /// 0.8-2s after the arrow and ~1s into a drag. The overlay's layer is
     /// hidden and committed now; it comes back when the drawer is compact
     /// and a bubble is staged again (`showHintLayer`).
     private func showHintLayer() {
-        overlayBox.hintLayerShown = true
-        overlayBox.rest = overlayBox.bounds.height
-        sendState.compact = true
-        overlay?.view.layer.opacity = 1
+        overlay.hintLayerShown = true
+        overlay.rest = overlay.bounds.height
+        overlay.compact = true
+        overlay.layer.opacity = 1
     }
 
     private func hideHintNow() {
-        guard overlayBox.hintLayerShown else { return }
-        overlayBox.hintLayerShown = false
-        sendState.compact = false
+        guard overlay.hintLayerShown else { return }
+        overlay.hintLayerShown = false
+        overlay.compact = false
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        overlay?.view.layer.opacity = 0
+        overlay.layer.opacity = 0
         CATransaction.commit()
         CATransaction.flush()
     }
@@ -531,7 +518,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func didTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.didTransition(to: presentationStyle)
         UtttLog.note("style", Self.name(presentationStyle))
-        sendState.compact = presentationStyle == .compact
+        overlay.compact = presentationStyle == .compact
         if presentationStyle == .compact { showHintLayer() }
         let waiters = transitionWaiters
         transitionWaiters.removeAll()
@@ -551,7 +538,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     // MARK: routing
 
     private func present(_ conversation: MSConversation, motion: Uttt.Channel = .still) {
-        bag.removeAll()
+        live?.onPosition = nil
 
 #if DEBUG
         /* ASKED ONCE PER OPENED BUBBLE, and then never seen again. One phone
@@ -590,7 +577,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 
         guard wire.load() else {
             UtttLog.fault("read", "unreadable bubble")
-            show(UtttLobbyScreen(stance: .unreadable))
+            show(UtttLobbyScreen(stance: .unreadable, slide: slide))
             return
         }
 
@@ -618,7 +605,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         switch Uttt.seat {
         case .waiting:
             /* No door here: see UtttLobbyScreen. */
-            show(UtttLobbyScreen(stance: .waiting))
+            show(UtttLobbyScreen(stance: .waiting, slide: slide))
 
         case .open, .x, .o:
             /* OPENING SOMEBODY'S INVITATION IS SITTING DOWN AS X, and the
@@ -629,9 +616,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         case .spectator:
             let model = UtttModel(seed: Uttt.seed, you: .none)
             model.refresh()
-            show(UtttWatchScreen(model: model, door: door) { [weak self] in
-                self?.again(in: conversation)
-            })
+            show(UtttWatchScreen(model: model, door: door, slide: slide,
+                                 onDoor: { [weak self] in self?.again(in: conversation) },
+                                 onRules: { [weak self] in self?.openRules() }))
         }
     }
 
@@ -753,8 +740,8 @@ final class MessagesViewController: MSMessagesAppViewController {
         let generation = stageGeneration
         /* A NEW STAGE STARTS THE HINT'S WAIT AGAIN, and takes down a door left
          * by the stage it replaces. The hint comes back once this one lands. */
-        sendState.staged = false
-        sendState.door = false
+        overlay.staged = false
+        overlay.door = false
         doorInsert = nil
 
         /* BAKED NOW, from the message being staged, before anything can load
@@ -860,7 +847,7 @@ final class MessagesViewController: MSMessagesAppViewController {
          * nothing else - and the one we were handed only as a fallback. */
         let target = activeConversation ?? conversation
         UtttLog.note("insert", "attempt \(attempt)\(activeConversation == nil ? " (no active conversation)" : "")")
-        sendState.door = false
+        overlay.door = false
         var answered = false
         watchSilence(of: message, generation: generation, in: conversation,
                      attempt: attempt) { answered }
@@ -880,9 +867,9 @@ final class MessagesViewController: MSMessagesAppViewController {
                      * and the hint's wait starts now. */
                     self.landedGeneration = generation
                     self.doorInsert = nil
-                    self.sendState.door = false
-                    self.sendState.restart += 1
-                    self.sendState.staged = true
+                    self.overlay.door = false
+                    self.overlay.staged = true
+                    self.overlay.restart()
                     if self.presentationStyle == .compact { self.showHintLayer() }
                     return
                 }
@@ -935,7 +922,7 @@ final class MessagesViewController: MSMessagesAppViewController {
             case .door:
                 UtttLog.fault("insert", "attempt \(attempt) got no answer; \(attempt) unanswered, offering the send door")
                 self.doorInsert = (message, generation, conversation)
-                self.sendState.door = true
+                self.overlay.door = true
                 if compact { self.showHintLayer() }
             }
         }
@@ -946,7 +933,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     private func sendDoorTapped() {
         guard let d = doorInsert, d.generation == stageGeneration else {
             UtttLog.note("door", "send tapped for a stage that is gone")
-            sendState.door = false
+            overlay.door = false
             return
         }
         UtttLog.note("door", "send tapped")
@@ -1021,30 +1008,27 @@ final class MessagesViewController: MSMessagesAppViewController {
         /* The model does not know there is a conversation and should not. It
          * says the position changed; a position this device can no longer
          * move in is a move this device just made. */
-        model.$positionKey
-            .dropFirst()
-            .sink { [weak self] _ in
-                guard let self else { return }
-                /* A REPLACEMENT RESTAGES, it does not stage a second bubble:
-                 * the undo half of a change of mind hands the move back, and
-                 * the move that replaces it arrives a beat later. */
-                guard !Uttt.canMove, let wire = UtttWire.resident, wire != self.staged else { return }
-                self.stage(wire, in: conversation)
-                /* THE END OF THE GAME re-presents, for the door the playing
-                 * screen did not have: Again. */
-                if Uttt.over != .none {
-                    /* Not in the middle of the slide: a new screen there
-                     * lands on a host with no push. */
-                    DispatchQueue.main.async {
-                        self.slide.whenStill { self.present(conversation) }
-                    }
+        model.onPosition = { [weak self] in
+            guard let self else { return }
+            /* A REPLACEMENT RESTAGES, it does not stage a second bubble:
+             * the undo half of a change of mind hands the move back, and
+             * the move that replaces it arrives a beat later. */
+            guard !Uttt.canMove, let wire = UtttWire.resident, wire != self.staged else { return }
+            self.stage(wire, in: conversation)
+            /* THE END OF THE GAME re-presents, for the door the playing
+             * screen did not have: Again. */
+            if Uttt.over != .none {
+                /* Not in the middle of the slide: a new screen there
+                 * lands on a host with no push. */
+                DispatchQueue.main.async {
+                    self.slide.whenStill { self.present(conversation) }
                 }
             }
-            .store(in: &bag)
+        }
 
-        show(UtttGameScreen(model: model, door: door) { [weak self] in
-            self?.again(in: conversation)
-        })
+        show(UtttGameScreen(model: model, door: door, slide: slide,
+                            onDoor: { [weak self] in self?.again(in: conversation) },
+                            onRules: { [weak self] in self?.openRules() }))
     }
 
 #if DEBUG
@@ -1072,59 +1056,32 @@ final class MessagesViewController: MSMessagesAppViewController {
     }
 #endif
 
-    private func show<V: View>(_ screen: V) {
-        UtttLog.note("show", String(String(describing: V.self).prefix(40)))
+    private func show(_ screen: UIView) {
+        UtttLog.note("show", String(String(describing: type(of: screen)).prefix(40)))
         guard appeared || sized else {
-            pendingScreen = AnyView(screen)
+            pendingScreen = screen
             return
         }
-        attach(AnyView(screen))
+        attach(screen)
     }
 
-    private func attach(_ screen: AnyView) {
-        host?.willMove(toParent: nil)
-        host?.view.removeFromSuperview()
-        host?.removeFromParent()
-
+    private func attach(_ screen: UIView) {
+        host?.removeFromSuperview()
         slide.end()
-        let vc = UIHostingController(rootView: AnyView(screen.environment(\.collapseSlide, slide)))
-        addChild(vc)
-        vc.view.frame = view.bounds
-        vc.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        /* PAPER, NOT CLEAR, for the frame between a swap and the first layout
-         * of the new screen - a clear host is the dark drawer showing through. */
-        vc.view.backgroundColor = UtttPaper.flat
-        /* UNDER THE SEND OVERLAY, which stays on top of every screen. */
-        view.insertSubview(vc.view, belowSubview: overlayBox)
-        vc.didMove(toParent: self)
-        host = vc
-        slide.host = vc.view
-    }
-}
-
-/// The send overlay's container: it lets every touch through to the screen
-/// under it except one on the send door, which is the only thing in the
-/// overlay that is a control.
-final class UtttSendOverlayBox: UIView {
-    weak var state: UtttSendState?
-
-    /// Whether the overlay's layer is up (see `hideHintNow`).
-    var hintLayerShown = true
-    /// Called the frame the drawer is laid out taller than it rested: a drag
-    /// on the handle hands a new height every frame, and willTransition only
-    /// comes at the release.
-    var onGrow: (() -> Void)?
-    var rest: CGFloat = 0
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        let h = bounds.height
-        if rest == 0 || state?.compact == true && h < rest { rest = h }
-        if h > rest + 4 { onGrow?() } else if state?.compact == true { rest = h }
+        screen.frame = view.bounds
+        screen.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        /* UNDER THE SEND OVERLAY, which stays on top of every screen, and
+         * laid out before it is seen: the first frame has the lines. */
+        view.insertSubview(screen, belowSubview: overlay)
+        screen.layoutIfNeeded()
+        host = screen
+        slide.host = screen
     }
 
-    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        guard state?.door == true, point.y >= bounds.height - UtttSendOverlay.doorStrip else { return nil }
-        return super.hitTest(point, with: event)
+    /// THE RULES, a sheet of their own over the drawer: a swipe down closes
+    /// the rules and leaves the game up.
+    private func openRules() {
+        guard presentedViewController == nil else { return }
+        present(UtttRulesSheet(), animated: true)
     }
 }

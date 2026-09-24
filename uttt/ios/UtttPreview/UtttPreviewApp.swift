@@ -7,7 +7,7 @@ import UtttKit
 /// This is a DEVELOPMENT HARNESS and ships in nothing. It exists because the
 /// only other way to see a screen is to drive the real Messages app, and a
 /// design that can only be inspected by playing a game is a design nobody
-/// inspects.
+/// inspects. (SwiftUI here is the harness's own; the screens are UIKit.)
 @main
 struct UtttPreviewApp: App {
     var body: some Scene {
@@ -44,8 +44,6 @@ struct PreviewRoot: View {
     }
 
     @State private var size: Size = Size.launched
-    @State private var model = UtttModel(seed: 77, you: .x)
-    @State private var loaded = false
 
     /// Twelve moves of the game in the design document, so the harness shows
     /// marks and a live wash rather than an empty grid.
@@ -56,7 +54,7 @@ struct PreviewRoot: View {
             ZStack(alignment: .bottom) {
                 Color(white: 0.07)
                 // Anchored to the bottom, which is where Messages puts it.
-                UtttGameScreen(model: model)
+                GameScreen()
                     .frame(width: geo.size.width,
                            height: size.height(screen: geo.size))
                 VStack {
@@ -71,17 +69,22 @@ struct PreviewRoot: View {
             }
         }
         .ignoresSafeArea()
-        .onAppear {
-            guard !loaded else { return }
-            loaded = true
+    }
+
+    struct GameScreen: UIViewRepresentable {
+        func makeUIView(context: Context) -> UtttGameScreen {
             Uttt.newGame(seed: 77)
-            for m in Self.sample { Uttt.play(m) }
+            for m in PreviewRoot.sample { Uttt.play(m) }
             /* The harness plays X against nobody: seat it as X so the board
              * takes taps the way a joiner's does. */
             let x = Data("preview:x".utf8), o = Data("preview:o".utf8)
             Uttt.me(x)
             Uttt.seat(o: o, x: x)
+            let model = UtttModel(seed: 77, you: .x)
+            let v = UtttGameScreen(model: model, slide: nil)
             model.refresh()
+            return v
         }
+        func updateUIView(_ v: UtttGameScreen, context: Context) {}
     }
 }

@@ -19,8 +19,12 @@
 // WHAT A PRODUCT SUPPLIES: the App Group its dev files live in, and where the
 // squares go. Everything here is product-free. DEBUG only - the release branch
 // compiles to no-ops so call sites stay unconditional.
+//
+// UIKIT AND CORE ANIMATION ONLY: the bars, the strip and the squares are
+// plain layers, the clock a row of layers a display link recolours, so a
+// product with no SwiftUI in its process can carry the ruler.
 
-import SwiftUI
+import UIKit
 #if DEBUG
 import CMotionRuler
 #endif
@@ -58,12 +62,12 @@ public enum MotionRuler {
     public static let edge = CGFloat(MR_EDGE_PT)
     public static let side = CGFloat(MR_SIDE_PT)
 
-    public static func pure(_ r: Double, _ g: Double, _ b: Double) -> Color {
-        Color(.sRGB, red: r, green: g, blue: b, opacity: 1)
+    public static func pure(_ r: Double, _ g: Double, _ b: Double) -> CGColor {
+        CGColor(srgbRed: r, green: g, blue: b, alpha: 1)
     }
 
     /// An ink of the palette, by its C index (MR_INK_*).
-    static func ink(_ i: Int) -> Color {
+    static func ink(_ i: Int) -> CGColor {
         let k = Int32(i)
         return pure(mr_ink_unit(k, 0), mr_ink_unit(k, 1), mr_ink_unit(k, 2))
     }
@@ -84,7 +88,7 @@ public enum MotionRuler {
             case .pink:    return MR_INK_PINK
             }
         }
-        public var color: Color { MotionRuler.ink(index) }
+        public var color: CGColor { MotionRuler.ink(index) }
     }
 
     /// The clock strip's left edge, past the banded strip.
@@ -96,104 +100,147 @@ public enum MotionRuler {
         Int((Date().timeIntervalSince1970 * 1000).rounded()) & ((1 << MotionRulerClock.bits) - 1)
     }
 
-    static func bandColour(_ i: Int) -> Color { ink(Int(mr_band_ink(Int32(i)))) }
+    static func bandColour(_ i: Int) -> CGColor { ink(Int(mr_band_ink(Int32(i)))) }
+
+    /// No implicit animation on any instrument layer: a bar tweened by the
+    /// host's animation measures the tween, not the box.
+    static let still: [String: CAAction] = [
+        "position": NSNull(), "bounds": NSNull(), "frame": NSNull(),
+        "backgroundColor": NSNull(), "hidden": NSNull(), "opacity": NSNull(),
+    ]
+
+    /// A 12pt square of `ink`, a layer of its own: the caller places it
+    /// (`place`) where the element's alignment point is.
+    public static func square(_ ink: Ink) -> CALayer {
+        let l = CALayer()
+        l.actions = still
+        l.backgroundColor = ink.color
+        l.zPosition = 1_000
+        l.bounds = CGRect(x: 0, y: 0, width: side, height: side)
+        return l
+    }
+
+    /// Where a square sits on a box: its centre (`at` .5,.5) or inside a
+    /// corner (`at` 0 or 1 on an axis puts its edge on the box's).
+    public static func place(_ l: CALayer, in r: CGRect, at u: CGPoint = CGPoint(x: 0.5, y: 0.5)) {
+        l.frame = CGRect(x: r.minX + (r.width - side) * u.x, y: r.minY + (r.height - side) * u.y,
+                         width: side, height: side)
+    }
 }
 
 /// The edge bars and the banded strip, filling whatever box it is laid on.
 /// Attach it to the container that RESIZES, so it measures that box.
-public struct MotionRulerEdges: View {
-    let on: Bool
+public final class MotionRulerEdges: UIView {
     /// The red top bar with the band strip and the clock, and the green
     /// bottom bar. Both by default; a product whose top and bottom ride
     /// different layers through a collapse draws each half on its own.
-    let top: Bool
-    let bottom: Bool
-    public init(on: Bool, top: Bool = true, bottom: Bool = true) {
-        self.on = on
+    private let top: Bool
+    private let bottom: Bool
+    private let red = CALayer(), green = CALayer()
+    private var bands: [CALayer] = []
+    private let clock = MotionRulerClock()
+
+    public init(top: Bool = true, bottom: Bool = true) {
         self.top = top
         self.bottom = bottom
+        super.init(frame: .zero)
+        isUserInteractionEnabled = false
+        isAccessibilityElement = false
+        accessibilityElementsHidden = true
+        clipsToBounds = true
+        layer.actions = MotionRuler.still
+        red.actions = MotionRuler.still
+        green.actions = MotionRuler.still
+        red.backgroundColor = MotionRuler.ink(MR_INK_RED)
+        green.backgroundColor = MotionRuler.ink(MR_INK_GREEN)
+        if top { layer.addSublayer(red); addSubview(clock) }
+        if bottom { layer.addSublayer(green) }
     }
+    required init?(coder: NSCoder) { fatalError() }
 
-    public var body: some View {
-        if on {
-            GeometryReader { geo in
-                let n = max(1, Int((geo.size.height / MotionRuler.band).rounded(.up)))
-                ZStack(alignment: .topLeading) {
-                    if top {
-                        ForEach(0..<n, id: \.self) { i in
-                            MotionRuler.bandColour(i)
-                                .frame(width: MotionRuler.strip, height: MotionRuler.band)
-                                .offset(y: CGFloat(i) * MotionRuler.band)
-                        }
-                        MotionRuler.ink(MR_INK_RED)
-                            .frame(width: geo.size.width, height: MotionRuler.edge)
-                        MotionRulerClock()
-                            .offset(x: MotionRuler.strip + MotionRuler.clockGap,
-                                    y: MotionRuler.edge)
-                    }
-                    if bottom {
-                        MotionRuler.ink(MR_INK_GREEN)
-                            .frame(width: geo.size.width, height: MotionRuler.edge)
-                            .offset(y: geo.size.height - MotionRuler.edge)
-                    }
-                }
-                .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
-                .clipped()
-                // THE INSTRUMENT IS NEVER ANIMATED: a bar tweened by the
-                // host's animation measures the tween, not the box. Every
-                // transaction, not just a height change's: nothing in here is
-                // ever meant to tween, and the value-scoped form is iOS 17
-                // while a product that compiles this file still targets 16.
-                .transaction { $0.animation = nil }
+    public override func layoutSubviews() {
+        super.layoutSubviews()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let w = bounds.width, h = bounds.height
+        if top {
+            let n = max(1, Int((h / MotionRuler.band).rounded(.up)))
+            while bands.count < n {
+                let b = CALayer()
+                b.actions = MotionRuler.still
+                b.backgroundColor = MotionRuler.bandColour(bands.count)
+                layer.insertSublayer(b, below: red)
+                bands.append(b)
             }
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
+            for (i, b) in bands.enumerated() {
+                b.isHidden = i >= n
+                b.frame = CGRect(x: 0, y: CGFloat(i) * MotionRuler.band,
+                                 width: MotionRuler.strip, height: MotionRuler.band)
+            }
+            red.frame = CGRect(x: 0, y: 0, width: w, height: MotionRuler.edge)
+            clock.frame = CGRect(x: MotionRuler.strip + MotionRuler.clockGap, y: MotionRuler.edge,
+                                 width: MotionRulerClock.cell * CGFloat(MotionRulerClock.bits),
+                                 height: MotionRulerClock.cell)
         }
+        if bottom {
+            green.frame = CGRect(x: 0, y: h - MotionRuler.edge, width: w, height: MotionRuler.edge)
+        }
+        CATransaction.commit()
     }
 }
 
 /// A per-frame CLOCK a parser reads off a filmed frame without OCR: 14 cells,
 /// most significant first, white 1 and black 0, milliseconds modulo 16384.
-/// `TimelineView(.animation)` re-evaluates on every display refresh, so a
-/// filmed frame whose clock repeats while geometry moved is a frame the app did
-/// not render - the host composited a stale picture of it.
-public struct MotionRulerClock: View {
+/// A display link recolours the cells every display refresh, so a filmed
+/// frame whose clock repeats while geometry moved is a frame the app did not
+/// render - the host composited a stale picture of it.
+public final class MotionRulerClock: UIView {
     public static let bits = Int(MR_CLOCK_BITS)
     public static let cell = CGFloat(MR_CLOCK_CELL_PT)
-    public init() {}
-    public var body: some View {
-        TimelineView(.animation) { ctx in
-            let ms = Int((ctx.date.timeIntervalSince1970 * 1000).rounded()) & ((1 << Self.bits) - 1)
-            HStack(spacing: 0) {
-                ForEach(0..<Self.bits, id: \.self) { i in
-                    let on = (ms >> (Self.bits - 1 - i)) & 1 == 1
-                    Rectangle()
-                        .fill(on ? MotionRuler.pure(1, 1, 1) : MotionRuler.pure(0, 0, 0))
-                        .frame(width: Self.cell, height: Self.cell)
-                }
-            }
-        }
-        .allowsHitTesting(false)
-    }
-}
+    private var cells: [CALayer] = []
+    private var link: CADisplayLink?
 
-public extension View {
-    /// A square at this view's `alignment` point, above everything in it.
-    /// An overlay and not a preference: a preference lands a layout pass late,
-    /// which would measure the plumbing rather than the element.
-    @ViewBuilder
-    func motionSquare(_ ink: MotionRuler.Ink, on: Bool,
-                      at alignment: Alignment = .center) -> some View {
-        if on {
-            overlay(alignment: alignment) {
-                ink.color
-                    .frame(width: MotionRuler.side, height: MotionRuler.side)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-            }
-            .zIndex(1_000)
-        } else {
-            self
+    public init() {
+        super.init(frame: .zero)
+        isUserInteractionEnabled = false
+        for i in 0..<Self.bits {
+            let c = CALayer()
+            c.actions = MotionRuler.still
+            c.frame = CGRect(x: CGFloat(i) * Self.cell, y: 0, width: Self.cell, height: Self.cell)
+            layer.addSublayer(c)
+            cells.append(c)
+        }
+        tick()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    public override func didMoveToWindow() {
+        super.didMoveToWindow()
+        link?.invalidate()
+        link = nil
+        guard window != nil else { return }
+        let l = CADisplayLink(target: Tick(self), selector: #selector(Tick.fire(_:)))
+        l.add(to: .main, forMode: .common)
+        link = l
+    }
+
+    fileprivate func tick() {
+        let ms = MotionRuler.clockMs
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (i, c) in cells.enumerated() {
+            let on = (ms >> (Self.bits - 1 - i)) & 1 == 1
+            c.backgroundColor = on ? MotionRuler.pure(1, 1, 1) : MotionRuler.pure(0, 0, 0)
+        }
+        CATransaction.commit()
+    }
+
+    private final class Tick: NSObject {
+        weak var clock: MotionRulerClock?
+        init(_ c: MotionRulerClock) { clock = c }
+        @objc func fire(_ l: CADisplayLink) {
+            guard let clock else { l.invalidate(); return }
+            MainActor.assumeIsolated { clock.tick() }
         }
     }
 }
@@ -203,16 +250,6 @@ public extension View {
 public enum MotionRuler {
     public static func flag(_ name: String, group: String) -> Bool { false }
     public enum Ink: CaseIterable { case magenta, cyan, yellow, orange, blue, violet, lime, pink }
-}
-
-public struct MotionRulerEdges: View {
-    public init(on: Bool, top: Bool = true, bottom: Bool = true) {}
-    public var body: some View { EmptyView() }
-}
-
-public extension View {
-    func motionSquare(_ ink: MotionRuler.Ink, on: Bool,
-                      at alignment: Alignment = .center) -> some View { self }
 }
 
 #endif

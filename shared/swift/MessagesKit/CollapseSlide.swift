@@ -31,8 +31,6 @@
 // its own and knows no game - uttt's all come from its kernel (uttt_anim.h,
 // UTTT_COLLAPSE_*), because when and how the sheet moves is a decision.
 
-import SwiftUI
-
 #if canImport(UIKit)
 import UIKit
 
@@ -60,8 +58,12 @@ public struct CollapseRidePose {
 }
 
 /// The run and every layer riding it, for one extension.
+///
+/// UIKIT AND CORE ANIMATION ONLY: a product registers each rider view
+/// (`register`), refreshes its ride at every layout (`update`), says when it
+/// was laid out (`laidOut`), and hears the run start and end (`observe`).
 @MainActor
-public final class CollapseSlide: ObservableObject {
+public final class CollapseSlide {
     /// A slide in progress: pushed down by `travel` at its start, over
     /// `duration`, from the drawer height `from` to `to`.
     public struct Run: Equatable {
@@ -77,10 +79,24 @@ public final class CollapseSlide: ObservableObject {
     public let steps: Int
     public let flip: CGFloat
 
-    /// The slide, while it runs. Published so a sheet can lay its riders out
-    /// at the start height's pose where it needs to (an element hidden at the
-    /// compact height fades out on its layer instead).
-    @Published public private(set) var run: Run?
+    /// The slide, while it runs. Observed (`observe`) so a sheet can lay its
+    /// riders out at the start height's pose where it needs to (an element
+    /// hidden at the compact height fades out on its layer instead).
+    public private(set) var run: Run? {
+        didSet { if run != oldValue { for f in observers.values { f(run) } } }
+    }
+
+    /// Called with the run as it starts and with nil as it ends. Returns a
+    /// token for `unobserve`.
+    @discardableResult
+    public func observe(_ f: @escaping (Run?) -> Void) -> Int {
+        nextObserver += 1
+        observers[nextObserver] = f
+        return nextObserver
+    }
+    public func unobserve(_ token: Int) { observers[token] = nil }
+    private var observers: [Int: (Run?) -> Void] = [:]
+    private var nextObserver = 0
 
     /// The layer the whole sheet is pushed on: the extension's hosting view.
     public weak var host: UIView?
@@ -131,7 +147,7 @@ public final class CollapseSlide: ObservableObject {
                          NSCoder.string(for: l.bounds), NSCoder.string(for: l.position),
                          NSCoder.string(for: p?.position ?? .zero), pt.m42, pt.m22,
                          (l.animationKeys() ?? []).joined(separator: ","))
-        /* The content SwiftUI drew inside the rider: every layer of it with
+        /* The content drawn inside the rider: every layer of it with
          * a picture at least 100pt wide, in the rider's coordinates. */
         func walk(_ c: CALayer, _ depth: Int) {
             for s in c.sublayers ?? [] {
@@ -255,25 +271,28 @@ public final class CollapseSlide: ObservableObject {
         drain()
     }
 
-    func register(_ view: UIView, ride: @escaping (CGFloat) -> CollapseRidePose) {
+    public func register(_ view: UIView, ride: @escaping (CGFloat) -> CollapseRidePose) {
         entries[ObjectIdentifier(view)] = Entry(view: view, ride: ride)
         if let run { install(run, on: view.layer, ride: ride) }
     }
 
-    func update(_ view: UIView, ride: @escaping (CGFloat) -> CollapseRidePose) {
+    public func update(_ view: UIView, ride: @escaping (CGFloat) -> CollapseRidePose) {
         let id = ObjectIdentifier(view)
         #if DEBUG
         if run != nil { note("update " + Self.describe(view.layer)) }
         #endif
-        entries[id] = Entry(view: view, ride: ride, built: entries[id]?.built)
+        /* A RIDE REFRESHED UNDER A RUNNING SLIDE IS REBUILT at the next
+         * `laidOut`, in phase: the flip is heard before the sheet is laid
+         * out at the compact height, so the rides the run was installed with
+         * were the tall layout's. */
+        entries[id] = Entry(view: view, ride: ride, built: run != nil ? nil : entries[id]?.built)
     }
 
-    /// A rider was laid out. THE FLIP IS HEARD BEFORE THE NESTED HOSTS ARE
-    /// LAID OUT AT THE COMPACT SIZE (logged: every rider still 440x840 when
-    /// the slide began), and a scale about a pivot is built from the layer's
-    /// bounds - so a rider whose bounds changed under a running slide gets
+    /// A rider was laid out. A scale about a pivot is built from the layer's
+    /// bounds, and a rider can be laid out at the compact size after the flip
+    /// was heard - so a rider whose bounds changed under a running slide gets
     /// its animation rebuilt, in phase, in the same layout pass.
-    func laidOut(_ view: UIView) {
+    public func laidOut(_ view: UIView) {
         let id = ObjectIdentifier(view)
         #if DEBUG
         if run != nil { note("laidOut " + Self.describe(view.layer)) }
@@ -283,7 +302,7 @@ public final class CollapseSlide: ObservableObject {
         entries[id]?.built = view.bounds
     }
 
-    func unregister(_ view: UIView) {
+    public func unregister(_ view: UIView) {
         entries.removeValue(forKey: ObjectIdentifier(view))
     }
 
@@ -304,9 +323,9 @@ public final class CollapseSlide: ObservableObject {
         let t = CAKeyframeAnimation(keyPath: "transform")
         /* ABOUT THE PIVOT, whatever the anchor: a scale about the layer's
          * anchor is followed by the move that puts the pivot back. A rider
-         * must not be moved by SwiftUI with an offset either - that is a
-         * transform too, and this animation replaces it (filmed: the board
-         * flew to the sheet's top left) - so a rider is placed inside. */
+         * is placed by its frame, never by a transform of its own - this
+         * animation replaces the transform (filmed once: the board flew to
+         * the sheet's top left). */
         let b = layer.bounds, ap = layer.anchorPoint
         #if DEBUG
         note(String(format: "install %p b=%@ pos=%@ pose0 dy=%.1f sc=%.3f poseEnd dy=%.1f sc=%.3f",
@@ -339,114 +358,6 @@ public final class CollapseSlide: ObservableObject {
         g.fillMode = .both
         g.isRemovedOnCompletion = false
         layer.add(g, forKey: Self.key)
-    }
-}
-
-public struct CollapseSlideKey: EnvironmentKey {
-    public static let defaultValue: CollapseSlide? = nil
-}
-
-public extension EnvironmentValues {
-    /// The slide an element rides, or nil: then `collapseRide` renders its
-    /// content in place.
-    var collapseSlide: CollapseSlide? {
-        get { self[CollapseSlideKey.self] }
-        set { self[CollapseSlideKey.self] = newValue }
-    }
-}
-
-public extension View {
-    /// Host this view on a layer of its own that rides the collapse as
-    /// `ride` says, at the composite rate. Inert without a `CollapseSlide`
-    /// in the environment. `touches`: whether the view takes touches - a
-    /// nested host is a UIKit view that hit-tests on its own, and a rider
-    /// the size of the sheet (a box of words, a ruler) would swallow every
-    /// tap meant for the board under it.
-    func collapseRide(touches: Bool = false,
-                      _ ride: @escaping (CGFloat) -> CollapseRidePose) -> some View {
-        CollapseRider(ride: ride, touches: touches, content: self)
-    }
-}
-
-struct CollapseRider<Content: View>: View {
-    let ride: (CGFloat) -> CollapseRidePose
-    let touches: Bool
-    let content: Content
-    @Environment(\.collapseSlide) private var slide
-
-    var body: some View {
-        if let slide {
-            CollapseRiderHost(ride: ride, touches: touches, content: content, slide: slide)
-        } else {
-            content
-        }
-    }
-}
-
-private struct CollapseRiderHost<Content: View>: UIViewControllerRepresentable {
-    let ride: (CGFloat) -> CollapseRidePose
-    let touches: Bool
-    let content: Content
-    let slide: CollapseSlide
-
-    final class Coordinator { weak var slide: CollapseSlide? }
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    func makeUIViewController(context: Context) -> UIHostingController<AnyView> {
-        let h = RiderHostingController(rootView: root(context))
-        h.onLayout = { [weak slide, weak h] in
-            if let v = h?.view { slide?.laidOut(v) }
-        }
-        h.view.backgroundColor = .clear
-        h.view.clipsToBounds = false
-        h.view.isUserInteractionEnabled = touches
-        if #available(iOS 16.4, *) { h.safeAreaRegions = [] }
-        h.sizingOptions = []
-        context.coordinator.slide = slide
-        slide.register(h.view, ride: ride)
-        return h
-    }
-
-    func updateUIViewController(_ h: UIHostingController<AnyView>, context: Context) {
-        h.rootView = root(context)
-        slide.update(h.view, ride: ride)
-    }
-
-    static func dismantleUIViewController(_ h: UIHostingController<AnyView>,
-                                          coordinator: Coordinator) {
-        coordinator.slide?.unregister(h.view)
-    }
-
-    func sizeThatFits(_ proposal: ProposedViewSize,
-                      uiViewController h: UIHostingController<AnyView>,
-                      context: Context) -> CGSize? {
-        h.sizeThatFits(in: proposal.replacingUnspecifiedDimensions())
-    }
-
-    /// A RIDER'S CONTENT NEVER ANIMATES FROM OUTSIDE. Its only motion
-    /// through a slide is the slide's, on the render server; an animation it
-    /// inherits plays on the main thread, at the main thread's rate, under a
-    /// layer the render server is already moving. Messages resizes the
-    /// extension inside a UIKit animation block, and this nested host bridged
-    /// it into its content: the slide's probe logged the board's picture
-    /// crawling from its expanded frame to its compact one over ~400 ms, in
-    /// ~70 ms steps (77 -> 29 -> 11 -> 4pt off the drawer's centre, filmed),
-    /// while its layer was already scaled for the compact frame. Laying the
-    /// host out at once and without UIKit animation changed nothing; only
-    /// this did (both measured). A rider's own motion (a pen stroke, a
-    /// crossfade) runs on its own clock, not on a transaction.
-    private func root(_ context: Context) -> AnyView {
-        AnyView(content.environment(\.self, context.environment)
-            .transaction { $0.animation = nil })
-    }
-}
-
-/// A hosting controller that says when its view was laid out.
-private final class RiderHostingController: UIHostingController<AnyView> {
-    var onLayout: (() -> Void)?
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        onLayout?()
     }
 }
 

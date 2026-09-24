@@ -164,8 +164,12 @@ targets:
       # The product-free debug ruler (DEBUG-only; UtttRuler places it).
       - path: ../../shared/swift/MotionRuler.swift
       # The staged-but-unsent reminder at Messages' Send button, shared with
-      # the sister product; the caption and the fuse are the kernel's.
-      - path: ../../shared/swift/MessagesKit/SendHint.swift
+      # the sister product, on UIKit and Core Animation (SendHintView; the
+      # sister product's SwiftUI SendHint reads the same numbers); the caption
+      # and the fuse are the kernel's. NO SWIFTUI IN THIS FRAMEWORK: the
+      # extension's process does not load it (TESTFLIGHT_PLAN 14).
+      - path: ../../shared/swift/MessagesKit/SendHintMetrics.swift
+      - path: ../../shared/swift/MessagesKit/SendHintView.swift
       # The auto-collapse on Core Animation layers, ported from the sister
       # product's CollapseLayer; the curve and every number are the kernel's.
       - path: ../../shared/swift/MessagesKit/CollapseSlide.swift
