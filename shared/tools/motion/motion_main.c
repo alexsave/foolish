@@ -11,8 +11,9 @@
  *       snap is the largest of any take). --side FILE: "h side" lines, the
  *       product's board side for a drawer height, so a board mark off the
  *       centre is scored against the board's scale (motion.h). --bottom Y[:HC]:
- *       the drawer's bottom is the screen's, Y points, and below the compact
- *       height HC it is the top plus HC (mt_fix_bottom).
+ *       the drawer's bottom is the screen's, Y points ("first": each take's
+ *       own first reading), and below the compact height HC it is the top
+ *       plus HC (mt_fix_bottom).
  *
  *   motion pace --size WxH --times FILE --box X,Y,W,H [--lum L] < frames.rgb
  *       How often the box's pixels change (a recording keeps a frame only
@@ -192,7 +193,7 @@ static int score_main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--side") && i + 1 < argc) side = argv[++i];
         else if (!strcmp(argv[i], "--bottom") && i + 1 < argc) {
             const char *v = argv[++i], *c = strchr(v, ':');
-            bottom = atof(v);
+            bottom = !strncmp(v, "first", 5) ? -1 : atof(v);
             if (c) compact = atof(c + 1);
         }
         else if (!strcmp(argv[i], "--anchor") && i + 1 < argc) {
@@ -242,7 +243,12 @@ static int score_main(int argc, char **argv) {
     for (int32_t f = 0; f < nf; f++) {
         int32_t n = mt_read_table(files[f], rows, 20000);
         if (n < 0) { perror(files[f]); return 1; }
-        if (bottom > 0) mt_fix_bottom(rows, n, bottom, compact);
+        if (bottom < 0) {
+            /* "first": where this take's drawer bottom is before it moves */
+            double b0 = 0;
+            for (int32_t k = 0; k < n && b0 == 0; k++) if (rows[k].green != MT_NONE) b0 = rows[k].green;
+            if (b0 > 0) mt_fix_bottom(rows, n, b0, compact);
+        } else if (bottom > 0) mt_fix_bottom(rows, n, bottom, compact);
         if (!mt_score(rows, n, &o, s)) { fprintf(stderr, "motion: %s: nothing moved\n", files[f]); continue; }
         used++;
         MtBoard bd;
