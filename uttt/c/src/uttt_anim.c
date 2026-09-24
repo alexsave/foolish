@@ -201,6 +201,29 @@ float uttt_collapse_push(float travel, int32_t t_ms)
     return (float)(travel * (left - tail * t / UTTT_COLLAPSE_MS));
 }
 
+float uttt_spring_left(float travel, float mass, float stiffness, float damping,
+                       float v0, int32_t t_ms)
+{
+    if (t_ms <= 0) return travel;
+    if (mass <= 0.f || stiffness <= 0.f) return 0.f;
+    double t = t_ms / 1000.0;
+    double w0 = sqrt((double)stiffness / mass);
+    double zeta = damping / (2.0 * sqrt((double)stiffness * mass));
+    double x;                       /* 1 at t = 0, x'(0) = -v0, toward 0 */
+    if (fabs(zeta - 1.0) < 1e-6) {
+        x = (1.0 + (w0 - v0) * t) * exp(-w0 * t);
+    } else if (zeta < 1.0) {
+        double wd = w0 * sqrt(1.0 - zeta * zeta);
+        x = exp(-zeta * w0 * t) * (cos(wd * t) + (zeta * w0 - v0) / wd * sin(wd * t));
+    } else {
+        double r = w0 * sqrt(zeta * zeta - 1.0);
+        double r1 = -zeta * w0 + r, r2 = -zeta * w0 - r;
+        double a = (-v0 - r2) / (r1 - r2);
+        x = a * exp(r1 * t) + (1.0 - a) * exp(r2 * t);
+    }
+    return (float)(travel * x);
+}
+
 /* ---- one layout for every screen (uttt_anim.h UtttSheet) ---------------- */
 
 static float lerpf(float a, float b, float t) { return a + (b - a) * t; }

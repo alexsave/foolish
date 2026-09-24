@@ -34,9 +34,12 @@
 #if canImport(UIKit)
 import UIKit
 
-/// Where an element sits as the drawer is `s` points taller than the compact
-/// height it is laid out at: its offset from its compact place (points, down
-/// positive), its scale about its centre, and its opacity (nil: untouched).
+/// Where an element sits as the drawer is `s` points taller than the height
+/// the sheet is laid out at (a collapse: laid out compact, `s` > 0; an
+/// expand: laid out tall, `s` < 0): its offset from its laid-out place,
+/// measured from the drawer's top (points, down positive), its scale about
+/// its centre (or `pivot`), and its opacity (nil: untouched). An element
+/// that rides the drawer's BOTTOM has `dy == s`.
 public struct CollapseRidePose {
     public var dy: CGFloat
     /// Sideways, for an element whose layout moves it across as the drawer
@@ -70,8 +73,19 @@ public final class CollapseSlide {
         public let from: CGFloat
         public let to: CGFloat
         public let began: CFTimeInterval
-        public var travel: CGFloat { from - to }
+        /// The collapse: this slide pushes the hosting view itself. An
+        /// expand is the host's motion, and the riders only follow it.
+        public var pushes: Bool { to < from }
+        /// How far the drawer goes, either way.
+        public var travel: CGFloat { abs(from - to) }
     }
+
+    /// The push `s` (the drawer is the laid-out height plus `s`) `t` seconds
+    /// into the run, over how long, and - for an expand - when the host's
+    /// own animation began (0 until its transaction commits).
+    private var curve: (Double) -> CGFloat = { _ in 0 }
+    private var runDuration: Double = 0
+    private var hostBegin: (() -> CFTimeInterval)?
 
     /// The product's curve: the push `t` seconds in, for a travel.
     public let push: (CGFloat, Double) -> CGFloat
@@ -229,9 +243,13 @@ public final class CollapseSlide {
     }
 
     private func begin(from: CGFloat, to: CGFloat) {
+        let travel = from - to
+        curve = { [push] t in push(travel, t) }
+        runDuration = duration
+        hostBegin = nil
         let r = Run(from: from, to: to, began: CACurrentMediaTime())
         run = r
-        let pushes = samples(r.travel)
+        let pushes = samples()
         if let layer = host?.layer {
             let a = CAKeyframeAnimation(keyPath: "transform.translation.y")
             a.values = pushes
@@ -243,6 +261,39 @@ public final class CollapseSlide {
             a.isRemovedOnCompletion = false
             layer.add(a, forKey: Self.key)
         }
+        entries = entries.filter { $0.value.view != nil }
+        for (id, e) in entries {
+            if let v = e.view { install(r, on: v.layer, ride: e.ride); entries[id]?.built = v.bounds }
+        }
+        let w = DispatchWorkItem { [weak self] in self?.end() }
+        release = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: w)
+    }
+
+    /// THE EXPAND: the host handed a taller height and is animating the
+    /// extension's view there itself, on its own spring (TESTFLIGHT_PLAN 14).
+    /// The sheet is laid out at the new height from the first frame; every
+    /// rider is carried on the render server by where the layout for the
+    /// drawer's height at that moment would put it - `left(t)`, the points
+    /// the host still has to grow `t` seconds in, read off its own animation
+    /// and evaluated by the product - over the host's `duration`, from the
+    /// host's own begin time (`begin`, 0 while its transaction is open), so
+    /// the two run on the same composited frames. Nothing is pushed.
+    public func grew(from: CGFloat, to: CGFloat, duration: Double,
+                     begin: @escaping () -> CFTimeInterval,
+                     left: @escaping (Double) -> CGFloat) {
+        if run != nil { end() }
+        armed = false
+        curve = { t in -left(t) }
+        runDuration = duration
+        hostBegin = begin
+        let r = Run(from: from, to: to, began: CACurrentMediaTime())
+        run = r
+        #if DEBUG
+        NSLog("collapse-slide grew %.1f -> %.1f", from, to)
+        note("grew \(from) -> \(to)")
+        startProbe()
+        #endif
         entries = entries.filter { $0.value.view != nil }
         for (id, e) in entries {
             if let v = e.view { install(r, on: v.layer, ride: e.ride); entries[id]?.built = v.bounds }
@@ -306,16 +357,16 @@ public final class CollapseSlide {
         entries.removeValue(forKey: ObjectIdentifier(view))
     }
 
-    private func samples(_ travel: CGFloat) -> [CGFloat] {
-        (0...steps).map { push(travel, duration * Double($0) / Double(steps)) }
+    private func samples() -> [CGFloat] {
+        (0...steps).map { curve(runDuration * Double($0) / Double(steps)) }
     }
 
     private func install(_ r: Run, on layer: CALayer,
                          ride: (CGFloat) -> CollapseRidePose) {
         layer.removeAnimation(forKey: Self.key)
-        let poses = samples(r.travel).map { s -> CollapseRidePose in
+        let poses = samples().map { s -> CollapseRidePose in
             var p = ride(s)
-            p.dy -= s                    // the push it is already getting
+            if r.pushes { p.dy -= s }    // the push it is already getting
             return p
         }
         let g = CAAnimationGroup()
@@ -351,10 +402,17 @@ public final class CollapseSlide {
             parts.append(o)
         }
         g.animations = parts
-        g.duration = duration
+        g.duration = runDuration
         /* IN PHASE WITH THE RUN, not with this call: a layer that joins
-         * late starts wherever the hosting layer already is. */
-        g.beginTime = layer.convertTime(r.began, from: nil)
+         * late starts wherever the hosting layer already is. An expand is
+         * in phase with the HOST's animation: its begin time once committed,
+         * and until then none, so both are stamped by the same commit. */
+        if let hostBegin {
+            let b = hostBegin()
+            if b > 0 { g.beginTime = b }
+        } else {
+            g.beginTime = layer.convertTime(r.began, from: nil)
+        }
         g.fillMode = .both
         g.isRemovedOnCompletion = false
         layer.add(g, forKey: Self.key)

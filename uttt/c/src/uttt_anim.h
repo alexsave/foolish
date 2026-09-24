@@ -167,6 +167,26 @@ uint32_t uttt_wash_rgba(float alpha);
  * points: travel at 0, falling on the host's curve, 0 at UTTT_COLLAPSE_MS. */
 float uttt_collapse_push(float travel, int32_t t_ms);
 
+/* THE EXPAND IS THE HOST'S, AND THE SHEET RIDES IT ON THE COMPOSITOR TOO.
+ *
+ * A tap to expand (or a drag's release upward) hands the tall height once,
+ * and the host animates the extension's bounds from the height it had to the
+ * new one on a spring of its own - read off the layer on the SE simulator
+ * (TESTFLIGHT_PLAN 14): CASpringAnimation, mass 1, stiffness 333.3, damping
+ * 36.5 (critically damped), no initial velocity, additive, 0.506 s. Content
+ * laid out at the tall height from the first frame sat anchored to the
+ * drawer's top while the drawer was still short: the board's corners 11.4
+ * points off the drawer's scale. So the sheet is laid out at the final height
+ * and every rider is carried, on the render server, by where the layout would
+ * have put it for the drawer's height at each moment of the host's spring.
+ *
+ * How much of `travel` the host's spring still has to go `t_ms` in: travel at
+ * 0, falling to (nearly) 0; any damping - under, critical or over - and an
+ * initial velocity `v0` in the host's units (progress per second). The host
+ * passes its own animation's numbers, so the curve is the one on screen. */
+float uttt_spring_left(float travel, float mass, float stiffness, float damping,
+                       float v0, int32_t t_ms);
+
 /* ONE LAYOUT FOR EVERY SCREEN, a pure function of the drawer's height.
  *
  * docs/UI.html, "What holds which edge": the header line holds the top, the

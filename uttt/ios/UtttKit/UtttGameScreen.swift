@@ -128,10 +128,11 @@ public final class UtttGameScreen: UtttSheetView {
          * shown only where it fits (uttt_sheet) - so a drag crossfades them
          * and never squeezes them to "Wai...". */
         let ink = end ? UtttInk.blue : UtttInk.ink
-        column.frame = rect(L.words)
+        let (LC, LB) = wordsLayouts(L, B)
+        column.frame = rect(LC.words)
         column.set(model.headline, ink: ink, seed: model.seed &* 31 &+ 7,
                    subline: model.subline, column: true)
-        band.frame = rect(B.band)
+        band.frame = rect(LB.band)
         band.set(model.headline, ink: ink, seed: model.seed &* 31 &+ 7,
                  subline: model.subline, column: false)
         placeWords(column: column, band: band, L, B, at: at)
@@ -146,7 +147,9 @@ public final class UtttGameScreen: UtttSheetView {
             again.frame = CGRect(x: 0, y: y, width: max(0, size.width - hpad - d - 10), height: d)
             again.alpha = CGFloat(L.door_alpha)
             again.isHidden = L.door_alpha <= 0
+            rideBottom(again)
         }
+        rideBottom(rulebook)
 #if DEBUG
         MotionRuler.place(blue, in: rulebook.bounds)
         if let again { MotionRuler.place(violet, in: again.bounds) }

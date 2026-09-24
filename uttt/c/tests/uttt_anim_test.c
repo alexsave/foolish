@@ -514,6 +514,44 @@ int main(void)
         OK(host, "and rides the host's spring to within a point and a half");
     }
 
+    /* THE EXPAND RIDES THE HOST'S SPRING (uttt_spring_left), with the
+     * numbers read off the host's own CASpringAnimation. Critically damped:
+     * the closed form, never back past the target, a step's worth left at
+     * the host's 0.506 s. Under and over damped against a numerical
+     * integration of m x'' + c x' + k x = 0, one of them with a velocity. */
+    {
+        const float m = 1.f, k = 333.3333f, c = 36.51484f;
+        int closed = 1, mono = 1;
+        float prev = 1e9f;
+        for (int t = 0; t <= 506; t++) {
+            float p = uttt_spring_left(387.f, m, k, c, 0.f, t);
+            double w = sqrt(k / m), want = 387.0 * (1.0 + w * t / 1000.0) * exp(-w * t / 1000.0);
+            if (fabs(p - want) > .05) closed = 0;
+            if (p > prev + 1e-4f || p < -1e-4f) mono = 0;
+            prev = p;
+        }
+        OK(uttt_spring_left(387.f, m, k, c, 0.f, 0) == 387.f, "the expand starts with the whole travel left");
+        OK(closed, "and falls on the host's critically damped spring");
+        OK(mono, "never overshooting the drawer's height");
+        OK(uttt_spring_left(387.f, m, k, c, 0.f, 506) < 1.f && uttt_spring_left(387.f, m, k, c, 0.f, 506) > 0.f,
+           "and has under a point left when the host's animation ends");
+        const float cases[3][3] = { {1.f, 200.f, 10.f}, {1.f, 300.f, 60.f}, {2.f, 500.f, 20.f} };
+        const float v0s[3] = { 0.f, 4.f, -2.f };
+        int ode = 1;
+        for (int i = 0; i < 3; i++) {
+            double x = 1.0, v = -v0s[i], dt = 1e-5;
+            for (int step = 1; step <= 60000; step++) {        /* 0.6 s */
+                double a = (-cases[i][2] * v - cases[i][1] * x) / cases[i][0];
+                v += a * dt; x += v * dt;
+                if (step % 1000 == 0) {
+                    float p = uttt_spring_left(1.f, cases[i][0], cases[i][1], cases[i][2], v0s[i], step / 100);
+                    if (fabs(p - x) > 2e-3) ode = 0;
+                }
+            }
+        }
+        OK(ode, "and under, over or with a velocity, it is the spring's own motion");
+    }
+
     printf("uttt_anim: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

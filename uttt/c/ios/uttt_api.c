@@ -258,6 +258,9 @@ float   uti_collapse_push(float travel, int32_t t_ms) { return uttt_collapse_pus
 int32_t uti_collapse_ms(void)    { return UTTT_COLLAPSE_MS; }
 int32_t uti_collapse_steps(void) { return UTTT_COLLAPSE_STEPS; }
 float   uti_collapse_flip(void)  { return UTTT_COLLAPSE_FLIP; }
+float   uti_spring_left(float travel, float mass, float stiffness, float damping,
+                        float v0, int32_t t_ms)
+{ return uttt_spring_left(travel, mass, stiffness, damping, v0, t_ms); }
 
 _Static_assert(sizeof(UtiSheetIn) == sizeof(UtttSheetIn), "UtiSheetIn mirrors UtttSheetIn");
 _Static_assert(sizeof(UtiSheet) == sizeof(UtttSheet), "UtiSheet mirrors UtttSheet");

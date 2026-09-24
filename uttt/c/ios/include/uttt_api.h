@@ -243,6 +243,11 @@ float uti_collapse_push(float travel, int32_t t_ms);
 int32_t uti_collapse_ms(void);
 int32_t uti_collapse_steps(void);
 float uti_collapse_flip(void);
+/* How much of `travel` the host's spring (its own mass, stiffness, damping and
+ * initial velocity) has left `t_ms` in (src/uttt_anim.h uttt_spring_left):
+ * what the expand slide carries the sheet's riders on. */
+float uti_spring_left(float travel, float mass, float stiffness, float damping,
+                      float v0, int32_t t_ms);
 
 /* ---- one layout for every screen (src/uttt_anim.h UtttSheet) ----
  * The board's square centred on the sheet at every height and every screen,

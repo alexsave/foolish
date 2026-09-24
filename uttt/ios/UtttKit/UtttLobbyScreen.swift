@@ -72,11 +72,12 @@ public final class UtttLobbyScreen: UtttSheetView {
         /* THE WORDS GO WHERE THE BOARD LEAVES ROOM: in the column beside it
          * on the strip, wrapped onto as many lines as that takes, and across
          * the top once the sheet opens, where UI.html 02 sets them. */
-        column.frame = CGRect(x: CGFloat(L.words.0), y: CGFloat(L.words.1),
-                              width: CGFloat(L.words.2), height: CGFloat(L.words.3))
+        let (LC, LB) = wordsLayouts(L, B)
+        column.frame = CGRect(x: CGFloat(LC.words.0), y: CGFloat(LC.words.1),
+                              width: CGFloat(LC.words.2), height: CGFloat(LC.words.3))
         column.set(headline, subline, column: true)
-        band.frame = CGRect(x: CGFloat(B.band.0), y: CGFloat(B.band.1),
-                            width: CGFloat(B.band.2), height: CGFloat(B.band.3))
+        band.frame = CGRect(x: CGFloat(LB.band.0), y: CGFloat(LB.band.1),
+                            width: CGFloat(LB.band.2), height: CGFloat(LB.band.3))
         band.set(headline, subline, column: false)
         placeWords(column: column, band: band, L, B, at: at)
     }
@@ -192,6 +193,8 @@ public final class UtttWatchScreen: UtttSheetView {
             again.frame = CGRect(x: 0, y: y, width: max(0, size.width - hpad - d - 10), height: d)
             again.alpha = CGFloat(L.door_alpha)
             again.isHidden = L.door_alpha <= 0
+            rideBottom(again)
         }
+        rideBottom(rulebook)
     }
 }

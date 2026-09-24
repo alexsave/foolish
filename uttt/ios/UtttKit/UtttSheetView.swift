@@ -30,6 +30,8 @@ public class UtttSheetView: UIView {
     private var handed: CGFloat = 0
     private var from: CGFloat?
     private var travel: CGFloat = 0
+    /// The run is an expand (the host's growth), not the auto-collapse.
+    private(set) var grows = false
     private var token: Int?
 #if DEBUG
     private var rulerTop: MotionRulerEdges?
@@ -65,7 +67,8 @@ public class UtttSheetView: UIView {
         token = slide?.observe { [weak self] run in
             guard let self else { return }
             self.from = run?.from
-            self.travel = run?.travel ?? 0
+            self.grows = run.map { !$0.pushes } ?? false
+            self.travel = run.map { $0.pushes ? $0.travel : 0 } ?? 0
             self.setNeedsLayout()
         }
     }
@@ -103,6 +106,7 @@ public class UtttSheetView: UIView {
             if UtttRuler.on { UtttLog.note("ruler-height", String(format: "%.1f clock %d", h, MotionRuler.clockMs)) }
 #endif
             _ = slide?.heard(h, after: before)
+            if before > 0, h > before + 1, slide?.run == nil { rideHostGrowth(to: h) }
         }
         UIView.performWithoutAnimation {
             CATransaction.begin()
@@ -115,9 +119,39 @@ public class UtttSheetView: UIView {
             rulerBottom?.frame = content.bounds
             rulerTop?.frame = content.bounds
             if let t = rulerTop { ride(t) { _ in CollapseRidePose(dy: 0) } }
+            if let b = rulerBottom { ride(b) { s in CollapseRidePose(dy: s) } }
 #endif
             lay(inner.size, from: from)
             CATransaction.commit()
+        }
+    }
+
+    /// THE HOST IS GROWING THE DRAWER ON ITS OWN SPRING (a tap to expand, a
+    /// drag released upward): the height it handed is the final one, and its
+    /// animation on this view's bounds says how it gets there - read off the
+    /// layer (mass, stiffness, damping, velocity, duration, the height it
+    /// started from), and handed to the slide with the kernel's curve for
+    /// it (`uti_spring_left`), so every rider follows the drawer's edge on
+    /// the same composited frames. A height handed with no animation (a
+    /// finger on the handle) is followed by the layout alone.
+    private func rideHostGrowth(to h: CGFloat) {
+        guard let slide else { return }
+        for key in layer.animationKeys() ?? [] {
+            guard let a = layer.animation(forKey: key) as? CASpringAnimation,
+                  a.keyPath == "bounds.size", a.isAdditive,
+                  let from = (a.fromValue as? NSValue)?.cgSizeValue, from.height < -1
+            else { continue }
+            let travel = -from.height
+            let m = Float(a.mass), k = Float(a.stiffness), c = Float(a.damping)
+            let v0 = Float(a.initialVelocity)
+            UtttLog.note("expand", String(format: "%.1f -> %.1f over %.3fs (m %.2f k %.1f c %.2f v0 %.2f)",
+                                          h - travel, h, a.duration, m, k, c, v0))
+            slide.grew(from: h - travel, to: h, duration: a.duration,
+                       begin: { [weak self] in self?.layer.animation(forKey: key)?.beginTime ?? 0 },
+                       left: { t in
+                           CGFloat(uti_spring_left(Float(travel), m, k, c, v0, Int32((t * 1000).rounded())))
+                       })
+            return
         }
     }
 
@@ -160,13 +194,26 @@ public class UtttSheetView: UIView {
     /// auto-collapse with the top and crossfading on their layers: the column
     /// copy toward its alpha at each height, the band copy (laid out as the
     /// slide's first frame had it, `B`) fading out.
+    ///
+    /// THE COPY SHOWING AS A SLIDE STARTS IS SET AT THE START'S LAYOUT (`B`):
+    /// the band through a collapse, the column through an expand - the other
+    /// at the end's (`L`). `wordsBox` says which box each copy takes.
     func placeWords(column: UIView, band: UIView, _ L: UtiSheet, _ B: UtiSheet,
                     at: @escaping (CGFloat) -> UtiSheet) {
-        shown(column, L.words_alpha)
-        shown(band, from != nil ? B.band_alpha : L.band_alpha)
+        shown(column, grows ? B.words_alpha : L.words_alpha)
+        shown(band, from != nil && !grows ? B.band_alpha : L.band_alpha)
         ride(column) { s in CollapseRidePose(dy: 0, alpha: CGFloat(at(s).words_alpha)) }
         ride(band) { s in CollapseRidePose(dy: 0, alpha: CGFloat(at(s).band_alpha)) }
     }
+
+    /// The layouts the two copies of the words are set at (see `placeWords`).
+    func wordsLayouts(_ L: UtiSheet, _ B: UtiSheet) -> (column: UtiSheet, band: UtiSheet) {
+        grows ? (B, L) : (L, B)
+    }
+
+    /// Rides the drawer's bottom edge (the doors): none of a collapse's push,
+    /// all of an expand's growth.
+    func rideBottom(_ v: UIView) { ride(v) { s in CollapseRidePose(dy: s) } }
 
     /// Faded to `alpha`; out of VoiceOver and the touch path once it is
     /// mostly gone, so the one copy that shows is the one that is read.
