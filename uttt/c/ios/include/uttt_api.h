@@ -269,6 +269,8 @@ typedef struct {
     float rulebook[4], again[4];    /* x, y, w, h: the two doors */
 } UtiSheet;
 UtiSheet uti_sheet(UtiSheetIn in);
+/* Where the send hint's container starts below the drawer's top (UTTT_SHEET_HINT_TOP). */
+float uti_sheet_hint_top(void);
 
 /* The board with the last move's mark LEFT OUT and no wash - what a host
  * caches while the motion draws the rest over it. */

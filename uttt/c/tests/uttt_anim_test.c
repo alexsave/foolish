@@ -533,7 +533,9 @@ int main(void)
         UtttSheet hn, h0;
         uttt_sheet(&(UtttSheetIn){ .w = 440.f, .h = 274.f, .kind = UTTT_SHEET_PLAY, .words = 1, .hint = 1 }, &hn);
         uttt_sheet(&(UtttSheetIn){ .w = 440.f, .h = 274.f, .kind = UTTT_SHEET_PLAY, .words = 1 }, &h0);
-        OK(hn.words[1] >= 14.f + 29.f + 3.f + 9.f && h0.words[1] == h0.vpad
+        OK(UTTT_SHEET_HINT_TOP - UTTT_HINT_LIFT - UTTT_HINT_BOB >= 2.f,
+           "the send hint's crest stays inside the drawer, which Messages clips");
+        OK(hn.words[1] >= UTTT_SHEET_HINT_TOP - UTTT_HINT_LIFT + 29.f + 3.f + 15.f + 2.6f && h0.words[1] == h0.vpad
            && fabsf(hn.words[1] + hn.words[3] - h0.words[1] - h0.words[3]) < 1e-3f && hn.words_alpha == 1.f,
            "a staged bubble's hint never stands over the strip's verdict");
     }

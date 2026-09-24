@@ -1,3 +1,4 @@
+import CUttt
 import UIKit
 
 /// WHAT STANDS OVER EVERY SCREEN while a bubble is on its way out: the send
@@ -29,10 +30,11 @@ public final class UtttSendOverlay: UIView {
     public var onGrow: (() -> Void)?
     public var rest: CGFloat = 0
 
-    /// The hint's container starts this far below the drawer's top, the
-    /// sister product's board inset: the arrow rests in the top margin and
-    /// its crest reaches up toward Messages' Send button.
-    static let hintTop: CGFloat = 14
+    /// The hint's container starts this far below the drawer's top
+    /// (UTTT_SHEET_HINT_TOP): the arrow rests in the top margin and its crest
+    /// reaches up toward Messages' Send button without leaving the drawer,
+    /// which Messages clips.
+    static let hintTop = CGFloat(uti_sheet_hint_top())
 
     /// The band at the drawer's bottom the send door stands in: the door and
     /// the paper around it. The only part of the overlay that takes a touch.

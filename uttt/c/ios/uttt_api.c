@@ -273,6 +273,8 @@ _Static_assert(offsetof(UtiSheet, words) == offsetof(UtttSheet, words)
 _Static_assert(UTI_SHEET_PLAY == UTTT_SHEET_PLAY && UTI_SHEET_WATCH == UTTT_SHEET_WATCH
                && UTI_SHEET_WAIT == UTTT_SHEET_WAIT, "sheet kinds");
 
+float uti_sheet_hint_top(void) { return UTTT_SHEET_HINT_TOP; }
+
 UtiSheet uti_sheet(UtiSheetIn in)
 {
     UtttSheetIn k;

@@ -258,9 +258,10 @@ static float clampf(float x, float lo, float hi) { return x < lo ? lo : x > hi ?
 #define SHEET_WORDS_RAMP  14.f    /* over which each copy fades               */
 /* THE SEND HINT'S CORNER. Messages' Send button is above the drawer's top
  * right, and the hint (shared/swift/MessagesKit/SendHint.swift: a 29-point
- * arrow lifted 9 into the margin, 3 of air and a 15-point caption, from 14
- * under the top) stands in that corner while a bubble waits in the field -
- * so the strip's right column starts under it rather than behind it. */
+ * arrow lifted 9 into the margin, 3 of air and a 15-point caption, from
+ * UTTT_SHEET_HINT_TOP under the top) stands in that corner while a bubble
+ * waits in the field - so the strip's right column starts under it rather
+ * than behind it. Its lowest ink is 66 points down; the column starts at 69. */
 #define SHEET_HINT_ROOM  56.f
 
 void uttt_sheet(const UtttSheetIn *in, UtttSheet *o)

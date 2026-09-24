@@ -255,4 +255,16 @@ typedef struct {
 
 void uttt_sheet(const UtttSheetIn *in, UtttSheet *out);
 
+/* WHERE THE SEND HINT'S CONTAINER STARTS, down from the drawer's top. The
+ * hint (shared/swift/MessagesKit/SendHintMetrics) rests its arrow's ink 11.6
+ * points above its container's top - lifted 9 into the margin, 1.6 of ring
+ * and 1 of air - and its bob lifts it 14 more at the crest. At 14 the crest
+ * ran 11.6 points above the drawer, which Messages clips: the arrowhead was
+ * cut flat at every bob (the release pass, 2026-09-23). 28 puts the crest's
+ * ink 2.4 points under the edge - where the rest used to be - so the arrow's
+ * highest point is the old rest and nothing of it is ever cut. */
+#define UTTT_SHEET_HINT_TOP   28.f
+#define UTTT_HINT_LIFT        11.6f   /* the arrow's ink above its container  */
+#define UTTT_HINT_BOB         14.f    /* SendHintMetrics.bobTravel             */
+
 #endif
