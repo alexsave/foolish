@@ -131,7 +131,7 @@ public final class UtttGameScreen: UtttSheetView {
         let (LC, LB) = wordsLayouts(L, B)
         column.frame = rect(LC.words)
         column.set(model.headline, ink: ink, seed: model.seed &* 31 &+ 7,
-                   subline: model.subline, column: true)
+                   subline: model.subline, column: true, sub: CGFloat(LC.sub_alpha))
         band.frame = rect(LB.band)
         band.set(model.headline, ink: ink, seed: model.seed &* 31 &+ 7,
                  subline: model.subline, column: false)
@@ -222,12 +222,16 @@ final class UtttWordsView: UIView {
     /// The words, set to this view's width: the headline, then - 3 points
     /// under it - the line under it (where you sent them, or at the end the
     /// winning line spoken; docs/UI.html 04, 06, 07).
-    func set(_ h: UtttModel.Headline, ink: UIColor, seed: Int32, subline text: String, column: Bool) {
+    /// `sub` is the second line's alpha (uttt_sheet's `sub_alpha`): a
+    /// column too narrow for it carries the headline alone.
+    func set(_ h: UtttModel.Headline, ink: UIColor, seed: Int32, subline text: String, column: Bool,
+             sub: CGFloat = 1) {
         let w = bounds.width
         let hs = headline.set(h, ink: ink, seed: seed, width: w, column: column, align: align)
         headline.accessibilityLabel = Uttt.say(.headlineSpoken)
         headline.frame = CGRect(x: align == .right ? w - hs.width : 0, y: 0, width: hs.width, height: hs.height)
-        subline.isHidden = text.isEmpty
+        subline.isHidden = text.isEmpty || sub <= 0
+        subline.alpha = sub
         var ss = CGSize.zero
         if !text.isEmpty {
             ss = subline.set(text, .subline, width: w, column: column, align: align)

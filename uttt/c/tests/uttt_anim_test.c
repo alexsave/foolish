@@ -429,11 +429,12 @@ int main(void)
         };
         float reach = .135f * UTTT_REACH;
         int centred = 1, clear = 1, onsheet = 1, grows = 1, squeezed = 0, jumps = 0;
+        int sub_cramped = 0, sub_jumps = 0;
         float worst = 0.f;
         for (int wi = 0; wi < 3; wi++)
         for (int ki = 0; ki < 4; ki++) {
             UtttSheetIn in = { .w = W[wi], .kind = K[ki].kind, .words = K[ki].words };
-            float prev = -1.f, pa = -1.f, pb = -1.f;
+            float prev = -1.f, pa = -1.f, pb = -1.f, ps = -1.f;
             for (float h = 220.f; h <= 900.f; h += .25f) {
                 UtttSheet o;
                 in.h = h;
@@ -460,6 +461,11 @@ int main(void)
                 if (pa >= 0.f && (fabsf(o.words_alpha - pa) > .02f || fabsf(o.band_alpha - pb) > .02f))
                     jumps = 1;
                 pa = o.words_alpha; pb = o.band_alpha;
+                /* THE COLUMN'S SECOND LINE shows only where two short words
+                 * fit on a line of it, and fades in rather than appears */
+                if (o.sub_alpha > 0.f && o.words[2] < 60.f) sub_cramped = 1;
+                if (ps >= 0.f && fabsf(o.sub_alpha - ps) > .02f) sub_jumps = 1;
+                ps = o.sub_alpha;
             }
         }
         printf("  sheet: largest side step per quarter point of drawer %.3f pt\n", worst);
@@ -470,6 +476,21 @@ int main(void)
         OK(clear, "and its words sit beside it on the strip and above it in the band");
         OK(!squeezed, "a copy of the words shows only in a box with the room it needs");
         OK(!jumps, "and the words crossfade between column and band, never switch in a step");
+        OK(!sub_cramped, "the column's second line shows only in a column it will not break a word a line");
+        OK(!sub_jumps, "and fades rather than switches as the drawer moves");
+        {   /* the release pass's strips: an SE's (375 x 260) and a Pro Max's
+             * (440 x 343) column is 40 points - the headline alone - and a
+             * short, wide strip's (440 x 260) is 72, room for both lines */
+            UtttSheet a, b, c;
+            uttt_sheet(&(UtttSheetIn){ .w = 375.f, .h = 260.f, .kind = UTTT_SHEET_WAIT, .words = 1 }, &a);
+            uttt_sheet(&(UtttSheetIn){ .w = 440.f, .h = 343.f, .kind = UTTT_SHEET_PLAY, .words = 1 }, &b);
+            uttt_sheet(&(UtttSheetIn){ .w = 440.f, .h = 260.f, .kind = UTTT_SHEET_WAIT, .words = 1 }, &c);
+            OK(a.words_alpha > 0.f && a.sub_alpha == 0.f && b.words_alpha > 0.f && b.sub_alpha == 0.f,
+               "the SE's and Pro Max's strip columns carry the headline without its second line");
+            OK(c.sub_alpha > .5f, "a column wide enough carries the second line too");
+            printf("  sheet: column 375x260 %.1f (line two %.2f), 440x343 %.1f (%.2f), 440x260 %.1f (%.2f)\n",
+                   a.words[2], a.sub_alpha, b.words[2], b.sub_alpha, c.words[2], c.sub_alpha);
+        }
 
         /* AS LARGE AS THE SHEET ALLOWS, on every screen, words or none: on
          * the strip the drawer's height less the grab handle's margins (or

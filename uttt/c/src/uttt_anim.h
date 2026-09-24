@@ -245,6 +245,14 @@ typedef struct {
                               left margin to SHEET_AGAIN_GAP short of the
                               rulebook - never flush with the sheet's edge,
                               which a phone's rounded corner cuts           */
+    float sub_alpha;       /* the column's SECOND line (the waiting "Nobody
+                              has taken it yet", the verdict's line): shown
+                              only in a column wide enough to set it a few
+                              words a line. Beside a width-limited board -
+                              40 points on an SE's and a Pro Max's strip -
+                              it went one word a line, so there the column
+                              carries the headline alone and the band, once
+                              open, carries both                            */
 } UtttSheet;
 
 /* The drawer heights the openness runs between: 360, above the tallest

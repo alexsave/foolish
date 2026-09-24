@@ -75,7 +75,7 @@ public final class UtttLobbyScreen: UtttSheetView {
         let (LC, LB) = wordsLayouts(L, B)
         column.frame = CGRect(x: CGFloat(LC.words.0), y: CGFloat(LC.words.1),
                               width: CGFloat(LC.words.2), height: CGFloat(LC.words.3))
-        column.set(headline, subline, column: true)
+        column.set(headline, subline, column: true, sub: CGFloat(LC.sub_alpha))
         band.frame = CGRect(x: CGFloat(LB.band.0), y: CGFloat(LB.band.1),
                             width: CGFloat(LB.band.2), height: CGFloat(LB.band.3))
         band.set(headline, subline, column: false)
@@ -97,12 +97,16 @@ final class UtttLobbyWords: UIView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func set(_ h: String, _ s: String, column: Bool) {
+    /// `sub` is the second line's alpha (uttt_sheet's `sub_alpha`): a
+    /// column too narrow for it carries the headline alone.
+    func set(_ h: String, _ s: String, column: Bool, sub: CGFloat = 1) {
         let w = bounds.width
         let hs = headline.set(h, .headline, width: w, column: column, align: .left)
         headline.frame = CGRect(origin: .zero, size: hs)
         let ss = subline.set(s, .subline, width: w, column: column, align: .left)
         subline.frame = CGRect(x: 0, y: hs.height + 3, width: ss.width, height: ss.height)
+        subline.alpha = sub
+        subline.isHidden = sub <= 0
     }
 }
 

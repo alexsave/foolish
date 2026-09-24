@@ -256,6 +256,13 @@ static float clampf(float x, float lo, float hi) { return x < lo ? lo : x > hi ?
 #define SHEET_COLUMN_NEED 30.f    /* a column narrower than this shows nothing */
 #define SHEET_BAND_NEED   38.f    /* the headline and its line need this band */
 #define SHEET_WORDS_RAMP  14.f    /* over which each copy fades               */
+/* THE COLUMN'S SECOND LINE needs this much width, or it breaks one word a
+ * line ("Nobody / has / taken it / yet", the release pass): at 14 points
+ * two short words take about 50. It fades in over SHEET_WORDS_RAMP past it,
+ * so no drag switches it in one frame. The board never pays for it - on a
+ * strip where the board is width-limited there is no band above or below it
+ * either (a 260-point SE drawer leaves only the grab handle's margins). */
+#define SHEET_SUB_NEED   60.f
 /* THE SEND HINT'S CORNER. Messages' Send button is above the drawer's top
  * right, and the hint (shared/swift/MessagesKit/SendHint.swift: a 29-point
  * arrow lifted 9 into the margin, 3 of air and a 15-point caption, from
@@ -330,6 +337,7 @@ void uttt_sheet(const UtttSheetIn *in, UtttSheet *o)
     float col  = clampf((o->words[2] - SHEET_COLUMN_NEED) / SHEET_WORDS_RAMP, 0.f, 1.f);
     o->band_alpha  = band;
     o->words_alpha = strip ? col * (1.f - band) : 0.f;
+    o->sub_alpha   = clampf((o->words[2] - SHEET_SUB_NEED) / SHEET_WORDS_RAMP, 0.f, 1.f);
 
     o->board[0] = (in->w - side) * .5f;
     o->board[1] = (in->h - side) * .5f;
