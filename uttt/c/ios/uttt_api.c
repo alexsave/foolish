@@ -267,6 +267,7 @@ _Static_assert(sizeof(UtiSheet) == sizeof(UtttSheet), "UtiSheet mirrors UtttShee
 _Static_assert(offsetof(UtiSheet, words) == offsetof(UtttSheet, words)
                && offsetof(UtiSheet, words_side) == offsetof(UtttSheet, words_side)
                && offsetof(UtiSheet, band_alpha) == offsetof(UtttSheet, band_alpha)
+               && offsetof(UtiSheet, again) == offsetof(UtttSheet, again)
                && offsetof(UtiSheetIn, hint) == offsetof(UtttSheetIn, hint)
                && offsetof(UtiSheetIn, words) == offsetof(UtttSheetIn, words), "the sheet's fields line up");
 _Static_assert(UTI_SHEET_PLAY == UTTT_SHEET_PLAY && UTI_SHEET_WATCH == UTTT_SHEET_WATCH

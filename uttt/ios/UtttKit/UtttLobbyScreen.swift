@@ -186,11 +186,9 @@ public final class UtttWatchScreen: UtttSheetView {
         /* Again belongs to the expanded view (UI.html 08); the rulebook
          * stands beside it at its height, and alone in the right column on
          * the strip. */
-        let d = CGFloat(L.door), hpad = CGFloat(L.hpad), vpad = CGFloat(L.vpad)
-        let y = size.height - vpad - d
-        rulebook.frame = CGRect(x: size.width - hpad - d, y: y, width: d, height: d)
+        rulebook.frame = rect(L.rulebook)
         if let again {
-            again.frame = CGRect(x: 0, y: y, width: max(0, size.width - hpad - d - 10), height: d)
+            again.frame = rect(L.again)
             again.alpha = CGFloat(L.door_alpha)
             again.isHidden = L.door_alpha <= 0
             rideBottom(again)

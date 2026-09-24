@@ -244,6 +244,7 @@ static float clampf(float x, float lo, float hi) { return x < lo ? lo : x > hi ?
 #define SHEET_COLUMN     SHEET_DOOR
 #define SHEET_GUTTER      3.f
 #define SHEET_DOOR_GAP    6.f
+#define SHEET_AGAIN_GAP  10.f     /* between the Again door and the rulebook  */
 #define SHEET_BAR        72.f
 #define SHEET_WORDS_AIR   6.f     /* between a box of words and the ink       */
 /* WORDS NEVER SQUEEZE (owner, sheet 7: "Wai..." mid-drag). There are two
@@ -332,4 +333,18 @@ void uttt_sheet(const UtttSheetIn *in, UtttSheet *o)
     o->board[0] = (in->w - side) * .5f;
     o->board[1] = (in->h - side) * .5f;
     o->board[2] = side;
+
+    /* THE DOORS HOLD THE BOTTOM: the rulebook in the right corner, inside
+     * the margins; Again beside it at its height, from the LEFT MARGIN - it
+     * began at the sheet's edge, 13 points further left than every other
+     * thing on the sheet, and ran under an SE's corner and into a Pro Max's
+     * rounded display (the release pass, 2026-09-23). */
+    o->rulebook[0] = in->w - SHEET_MARGIN - SHEET_DOOR;
+    o->rulebook[1] = in->h - o->vpad - SHEET_DOOR;
+    o->rulebook[2] = SHEET_DOOR;
+    o->rulebook[3] = SHEET_DOOR;
+    o->again[0] = SHEET_MARGIN;
+    o->again[1] = o->rulebook[1];
+    o->again[2] = fmaxf(o->rulebook[0] - SHEET_AGAIN_GAP - SHEET_MARGIN, 0.f);
+    o->again[3] = SHEET_DOOR;
 }

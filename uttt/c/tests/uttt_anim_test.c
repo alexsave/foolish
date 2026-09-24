@@ -498,6 +498,25 @@ int main(void)
             if (compact && o.words[2] < 32.f - 1e-3f) words_room = 0;
         }
         OK(biggest, "every screen's board is as large as the sheet allows, compact and expanded");
+
+        /* THE DOORS SIT INSIDE THE MARGINS: Again began at the sheet's edge
+         * (x 0) while the rulebook kept 13 points, and a phone's rounded
+         * corner cut it. Both doors on every sheet: inside the left, right
+         * and bottom margins, one height, apart by the gap, not overlapping. */
+        int doors_in = 1;
+        for (int di = 0; di < 7; di++) {
+            UtttSheet o;
+            uttt_sheet(&(UtttSheetIn){ .w = D[di].w, .h = D[di].h, .kind = UTTT_SHEET_PLAY, .words = 1 }, &o);
+            const float *r = o.rulebook, *a = o.again;
+            if (!(a[0] >= o.hpad - 1e-3f && r[0] + r[2] <= D[di].w - o.hpad + 1e-3f
+                  && r[1] + r[3] <= D[di].h - o.vpad + 1e-3f && a[1] == r[1] && a[3] == r[3]
+                  && a[2] > 0.f && a[0] + a[2] + 8.f <= r[0] && r[2] == o.door)) {
+                doors_in = 0;
+                printf("  doors %.0fx%.0f: again %.1f+%.1f rulebook %.1f+%.1f\n",
+                       D[di].w, D[di].h, a[0], a[2], r[0], r[2]);
+            }
+        }
+        OK(doors_in, "both doors sit inside the sheet's margins, Again short of the rulebook");
         OK(words_room, "and on every strip the words get a column of at least 32 points");
 
         UtttSheet c, e;

@@ -240,6 +240,11 @@ typedef struct {
     float band[4];         /* x, y, w, h: the header band's copy of them    */
     float band_alpha;      /* its alpha. A copy shows only where it fits, so
                               a drag crossfades the two, never squeezes one */
+    float rulebook[4];     /* x, y, w, h: the rulebook door, bottom right    */
+    float again[4];        /* x, y, w, h: the Again door beside it, from the
+                              left margin to SHEET_AGAIN_GAP short of the
+                              rulebook - never flush with the sheet's edge,
+                              which a phone's rounded corner cuts           */
 } UtttSheet;
 
 /* The drawer heights the openness runs between: 360, above the tallest

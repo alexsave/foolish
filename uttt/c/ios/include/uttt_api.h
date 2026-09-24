@@ -266,6 +266,7 @@ typedef struct {
           icon_top, words_alpha, door_alpha, words[4];
     int32_t words_side;
     float band[4], band_alpha;
+    float rulebook[4], again[4];    /* x, y, w, h: the two doors */
 } UtiSheet;
 UtiSheet uti_sheet(UtiSheetIn in);
 

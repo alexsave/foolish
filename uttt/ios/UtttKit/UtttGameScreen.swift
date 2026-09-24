@@ -138,13 +138,11 @@ public final class UtttGameScreen: UtttSheetView {
         placeWords(column: column, band: band, L, B, at: at)
 
         /* THE DOORS HOLD THE BOTTOM: the rulebook in the corner, Again
-         * beside it at its height (owner), the whole row the width less the
-         * trailing pad. */
-        let d = CGFloat(L.door), hpad = CGFloat(L.hpad), vpad = CGFloat(L.vpad)
-        let y = size.height - vpad - d
-        rulebook.frame = CGRect(x: size.width - hpad - d, y: y, width: d, height: d)
+         * beside it at its height (owner), both inside the margins
+         * (uttt_sheet). */
+        rulebook.frame = rect(L.rulebook)
         if let again {
-            again.frame = CGRect(x: 0, y: y, width: max(0, size.width - hpad - d - 10), height: d)
+            again.frame = rect(L.again)
             again.alpha = CGFloat(L.door_alpha)
             again.isHidden = L.door_alpha <= 0
             rideBottom(again)
@@ -154,10 +152,6 @@ public final class UtttGameScreen: UtttSheetView {
         MotionRuler.place(blue, in: rulebook.bounds)
         if let again { MotionRuler.place(violet, in: again.bounds) }
 #endif
-    }
-
-    private func rect(_ r: (Float, Float, Float, Float)) -> CGRect {
-        CGRect(x: CGFloat(r.0), y: CGFloat(r.1), width: CGFloat(r.2), height: CGFloat(r.3))
     }
 
     /// THE HEADER HOLDS THE TOP: two lines of label centred over the drawn

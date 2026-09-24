@@ -178,6 +178,11 @@ public class UtttSheetView: UIView {
     /// board's square at the kernel's `L`, riding an auto-collapse along the
     /// path the layout would walk - `at(s)` is the kernel's sheet for the
     /// drawer `s` points taller.
+    /// A kernel box (x, y, w, h in sheet points) as a frame.
+    func rect(_ r: (Float, Float, Float, Float)) -> CGRect {
+        CGRect(x: CGFloat(r.0), y: CGFloat(r.1), width: CGFloat(r.2), height: CGFloat(r.3))
+    }
+
     func placeBoard(_ board: UIView, _ L: UtiSheet, at: @escaping (CGFloat) -> UtiSheet) {
         let side = CGFloat(L.board.2)
         board.frame = CGRect(x: CGFloat(L.board.0), y: CGFloat(L.board.1), width: side, height: side)
