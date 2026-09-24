@@ -403,6 +403,91 @@ int main(void)
             }
             if (w + 23 > 430) ok(1, "the door's opposite edges are the same weight");
         }
+
+        /* ALL FOUR EDGES ARE ONE THICKNESS AS DRAWN (owner, four times, last
+         * on TestFlight 1.0(6): "horizontal borders appear less thick than
+         * vertical"). The host stretches the door's 0..1 to w by H, so this
+         * takes the edge ribbons into POINTS the same way and cuts each side
+         * straight across at nine places along it: the ink there is the
+         * union of its two passes' spans on the cut. Every side's mean must
+         * be within half a pixel at 3x of every other's - measured off the
+         * geometry, never off a constant, so a width that is right in one
+         * coordinate system and squashed in the other cannot pass. */
+        {
+            int even = 1;
+            float worst = 0.f, worst_w = 0.f;
+            for (float w = 100; w <= 430; w += 3.5f) {
+                const float H = 46;
+                int m = uti_draw_door(w, H);
+                const UtiPoly *q = uti_polys();
+                const float *pt = uti_points();
+                int rib[4][2], nr[4] = { 0 };
+                for (int i = 0; i < m; i++) {
+                    if (q[i].rgba != 0x1b2a52ffu) continue;
+                    double cx = 0, cy = 0;
+                    for (int k = 0; k < q[i].n; k++) {
+                        cx += pt[(q[i].first + k) * 2]; cy += pt[(q[i].first + k) * 2 + 1];
+                    }
+                    cx /= q[i].n; cy /= q[i].n;
+                    double dx = fmin(cx, 1 - cx) * w, dy = fmin(cy, 1 - cy) * H;
+                    int side = dy < dx ? (cy < .5 ? 0 : 1) : (cx < .5 ? 2 : 3);
+                    if (nr[side] < 2) rib[side][nr[side]++] = i;
+                }
+                float mean[4];
+                for (int sd = 0; sd < 4; sd++) {
+                    float tot = 0.f;
+                    int horiz = sd < 2;
+                    for (int c = 1; c <= 9; c++) {
+                        float at = (horiz ? w : H) * c / 10.f;
+                        float iv[64][2]; int ni = 0;
+                        for (int r = 0; r < nr[sd]; r++) {
+                            const UtiPoly *P = &q[rib[sd][r]];
+                            float xs[256]; int nx = 0;
+                            for (int k = 0, j = P->n - 1; k < P->n; j = k++) {
+                                /* a = along the side, b = across it, in points */
+                                float ak = horiz ? pt[(P->first + k) * 2] * w : pt[(P->first + k) * 2 + 1] * H;
+                                float bk = horiz ? pt[(P->first + k) * 2 + 1] * H : pt[(P->first + k) * 2] * w;
+                                float aj = horiz ? pt[(P->first + j) * 2] * w : pt[(P->first + j) * 2 + 1] * H;
+                                float bj = horiz ? pt[(P->first + j) * 2 + 1] * H : pt[(P->first + j) * 2] * w;
+                                if ((ak > at) == (aj > at) || nx >= 256) continue;
+                                xs[nx++] = bk + (bj - bk) * (at - ak) / (aj - ak);
+                            }
+                            for (int a = 1; a < nx; a++)
+                                for (int b = a; b > 0 && xs[b - 1] > xs[b]; b--) {
+                                    float t = xs[b]; xs[b] = xs[b - 1]; xs[b - 1] = t;
+                                }
+                            for (int a = 0; a + 1 < nx && ni < 64; a += 2) {
+                                iv[ni][0] = xs[a]; iv[ni][1] = xs[a + 1]; ni++;
+                            }
+                        }
+                        for (int a = 1; a < ni; a++)                 /* union */
+                            for (int b = a; b > 0 && iv[b - 1][0] > iv[b][0]; b--) {
+                                float t0 = iv[b][0], t1 = iv[b][1];
+                                iv[b][0] = iv[b - 1][0]; iv[b][1] = iv[b - 1][1];
+                                iv[b - 1][0] = t0; iv[b - 1][1] = t1;
+                            }
+                        float len = 0.f, lo = -1e9f, hi = -1e9f;
+                        for (int a = 0; a < ni; a++) {
+                            if (iv[a][0] > hi) { if (hi > lo) len += hi - lo; lo = iv[a][0]; hi = iv[a][1]; }
+                            else if (iv[a][1] > hi) hi = iv[a][1];
+                        }
+                        if (hi > lo) len += hi - lo;
+                        tot += len;
+                    }
+                    mean[sd] = tot / 9.f;
+                }
+                float mn = fminf(fminf(mean[0], mean[1]), fminf(mean[2], mean[3]));
+                float mx = fmaxf(fmaxf(mean[0], mean[1]), fmaxf(mean[2], mean[3]));
+                if ((mx - mn) * 3.f > worst) { worst = (mx - mn) * 3.f; worst_w = w; }
+                if ((mx - mn) * 3.f > .5f || mn < 2.f) {
+                    if (even) printf("  door %g: top %.2f bottom %.2f left %.2f right %.2f pt\n",
+                                     w, mean[0], mean[1], mean[2], mean[3]);
+                    even = 0;
+                }
+            }
+            printf("  door edges: widest spread %.2f px at 3x (door %g)\n", worst, worst_w);
+            ok(even, "all four door edges are one thickness, within half a pixel at 3x, at every width");
+        }
     }
 
     /* ---- the message, end to end as the host drives it: two devices are two

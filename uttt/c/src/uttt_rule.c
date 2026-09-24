@@ -69,7 +69,19 @@ typedef struct {
  * board's pen, whose velocity and lift would read at 54 points as a wobble
  * rather than as a hand, and whose overlapping quads would blend a 55% page
  * into an 80% one. */
-/* `flip` 1 reflects the spans top to bottom, 2 left to right. */
+/* `flip` 1 reflects the spans top to bottom, 2 left to right.
+ *
+ * THE RIBBON IS BUILT IN POINTS AND ONLY THEN DIVIDED BY THE SIZE. A door is
+ * handed back in 0..1 of ITS OWN width and height, and the host stretches
+ * that square to the bar (UtttInkImage, `square: false`) - x by w, y by h.
+ * The ribbon used to be built in those unit coordinates with its width as a
+ * fraction of w, so a stroke's thickness along y came back multiplied by h/w:
+ * on a 141 x 46 door the top and bottom edges measured 2.5 pixels at 2x and
+ * the left and right 6.4 (tools/uttt_look `door`), the "horizontal borders
+ * look thinner" the owner reported four times. Mirroring the edges made the
+ * two horizontals match each other and could not make them match the
+ * verticals. Offsetting the sides in points, where the width is a width in
+ * every direction, and transforming the POINTS afterwards is the one rule. */
 static void emit_flip(UtttDL *d, const UtttPt *pts, const UtttSpan *sp, int n,
                       float w, float h, uint32_t rgba, float width, int flip)
 {
@@ -78,10 +90,12 @@ static void emit_flip(UtttDL *d, const UtttPt *pts, const UtttSpan *sp, int n,
         int m = sp[i].n > 256 ? 256 : sp[i].n;
         for (int k = 0; k < m; k++) {
             float x = pts[sp[i].first + k].x, y = pts[sp[i].first + k].y;
-            u[k].x = (flip == 2 ? w - x : x) / w;
-            u[k].y = (flip == 1 ? h - y : y) / h;
+            u[k].x = flip == 2 ? w - x : x;
+            u[k].y = flip == 1 ? h - y : y;
         }
-        uttt_ribbon(d, u, m, width / w, rgba);
+        int first = d->n_pt;
+        uttt_ribbon(d, u, m, width, rgba);
+        for (int k = first; k < d->n_pt; k++) { d->pt[k].x /= w; d->pt[k].y /= h; }
     }
 }
 
@@ -89,6 +103,64 @@ static void emit(UtttDL *d, const UtttPt *pts, const UtttSpan *sp, int n,
                  float w, float h, uint32_t rgba, float width)
 {
     emit_flip(d, pts, sp, n, w, h, rgba, width, 0);
+}
+
+/* HOW MUCH INK AN EDGE PUTS ACROSS ITSELF. rough.js draws every line twice,
+ * and the two passes lie a seeded distance apart: where they overlap the
+ * edge is one stroke wide, where they part it is the stroke plus the gap up
+ * to two strokes. So two edges drawn with ONE pen width do not look one
+ * weight - on the door the short vertical edges' passes part further than
+ * the long horizontal ones' and they read heavier (owner, four times: "the
+ * horizontal borders appear less thick"). This is the ink a pair of passes
+ * of width `wd` lays across the edge, averaged over the middle 80% of it
+ * (the corners, where edges cross, belong to neither): wd + min(gap, wd). */
+static float edge_ink(const UtttPt *pts, const UtttSpan *two, float wd)
+{
+    const UtttSpan a = two[0], b = two[1];
+    float sum = 0.f; int n = 0;
+    for (int k = a.n / 10; k <= a.n - 1 - a.n / 10; k++) {
+        UtttPt p = pts[a.first + k];
+        float best = 1e30f;
+        for (int j = 0; j + 1 < b.n; j++) {        /* nearest point of pass B */
+            UtttPt q0 = pts[b.first + j], q1 = pts[b.first + j + 1];
+            float dx = q1.x - q0.x, dy = q1.y - q0.y, L2 = dx * dx + dy * dy;
+            float t = L2 > 0.f ? ((p.x - q0.x) * dx + (p.y - q0.y) * dy) / L2 : 0.f;
+            t = t < 0.f ? 0.f : t > 1.f ? 1.f : t;
+            float ex = q0.x + t * dx - p.x, ey = q0.y + t * dy - p.y;
+            float d2 = ex * ex + ey * ey;
+            if (d2 < best) best = d2;
+        }
+        float gap = sqrtf(best);
+        sum += wd + (gap < wd ? gap : wd);
+        n++;
+    }
+    return n ? sum / n : wd;
+}
+
+/* The width that makes a pair of passes lay `want` across: edge_ink rises
+ * with the width (by one to two per unit), so a bisection finds it. */
+static float width_for(const UtttPt *pts, const UtttSpan *two, float want)
+{
+    float lo = want * .25f, hi = want;
+    for (int i = 0; i < 40; i++) {
+        float mid = .5f * (lo + hi);
+        if (edge_ink(pts, two, mid) < want) lo = mid; else hi = mid;
+    }
+    return .5f * (lo + hi);
+}
+
+/* THE FOUR EDGES OF A DOOR ARE ONE WEIGHT. The ink the pen would lay at its
+ * own width is taken for the top pair and the left pair, their mean is the
+ * weight, and each pair gets the width that lays exactly that - so what is
+ * equal is the thickness the eye reads, not a constant typed twice. Measured
+ * in pixels by tools/uttt_look `door`, and held from the display list by
+ * uttt_test. */
+static void even_edges(const UtttPt *pts, const UtttSpan *top, const UtttSpan *left,
+                       float wd, float *w_top, float *w_left)
+{
+    float want = .5f * (edge_ink(pts, top, wd) + edge_ink(pts, left, wd));
+    *w_top  = width_for(pts, top, want);
+    *w_left = width_for(pts, left, want);
 }
 
 /* One filled, outlined shape.
@@ -123,10 +195,12 @@ static int shape(UtttDL *d, const UtttPt *p, int np, float w, float h,
         /* Spans 0-1 are the top edge's two passes, 6-7 the left's (the edges
          * run p0->p1->p2->p3->p0). The right and the bottom are dropped and
          * drawn as those two reflected, so each pair is one weight. */
-        emit_flip(d, pts, sp,     2, w, h, r->stroke, r->stroke_w, 0);
-        emit_flip(d, pts, sp,     2, w, h, r->stroke, r->stroke_w, 1);
-        emit_flip(d, pts, sp + 6, 2, w, h, r->stroke, r->stroke_w, 0);
-        emit_flip(d, pts, sp + 6, 2, w, h, r->stroke, r->stroke_w, 2);
+        float wt = r->stroke_w, wl = r->stroke_w;
+        even_edges(pts, sp, sp + 6, r->stroke_w, &wt, &wl);
+        emit_flip(d, pts, sp,     2, w, h, r->stroke, wt, 0);
+        emit_flip(d, pts, sp,     2, w, h, r->stroke, wt, 1);
+        emit_flip(d, pts, sp + 6, 2, w, h, r->stroke, wl, 0);
+        emit_flip(d, pts, sp + 6, 2, w, h, r->stroke, wl, 2);
     } else {
         emit(d, pts, sp, n_edge, w, h, r->stroke, r->stroke_w);
     }

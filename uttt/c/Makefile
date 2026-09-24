@@ -100,6 +100,13 @@ render: build/uttt_render
 	  && echo "build/board.png"
 
 
+build/uttt_look: $(SRC) tools/uttt_look.c | build
+	$(CC) $(CFLAGS) $(SRC) tools/uttt_look.c -o $@ $(LDLIBS)
+
+# The pieces the owner reviews, at a phone's scale, with numbers where a
+# number settles it (the door's edge thickness). See tools/uttt_look.c.
+look: build/uttt_look
+
 # The pen against the pen it was copied from. Needs node; not in `all`.
 rough-diff: build/uttt_render
 	node tests/rough_diff.mjs
@@ -118,7 +125,7 @@ asan: $(SRC) tests/uttt_test.c | build
 clean:
 	rm -rf build
 
-.PHONY: all run arena play render rough-diff asan clean
+.PHONY: all run arena play render look rough-diff asan clean
 
 # ---- the iOS bridge -----------------------------------------------------
 # `make ios-smoke` exercises the identical bridge with the host compiler, so
