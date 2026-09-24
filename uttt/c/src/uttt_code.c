@@ -1,4 +1,5 @@
 #include "uttt_code.h"
+#include "../../../shared/c/b32.h"
 #include <math.h>
 #include <string.h>
 
@@ -113,4 +114,42 @@ double uttt_ideal_bits(const UtttGame *g)
     double b = 0;
     for (int p = 0; p < np; p++) b += log2((double)alpha[p]);
     return b;
+}
+
+/* ---------------------------------------------------------- the link */
+
+int uttt_replay_url(const UtttGame *g, char *out, int cap)
+{
+    static const char pre[] = UTTT_REPLAY_PREFIX;
+    const int np = (int)sizeof pre - 1;
+    if (!g || g->n_plies == 0 || cap <= np) return -1;
+    uint8_t b[64];
+    int n = uttt_encode(g, b, sizeof b);
+    if (n <= 0) return -1;
+    memcpy(out, pre, (size_t)np);
+    int w = b32_encode(b, n, out + np, cap - np);
+    return w < 0 ? -1 : np + w;
+}
+
+int uttt_replay_read(const char *url, UtttGame *out)
+{
+    static const char pre[] = UTTT_REPLAY_PREFIX;
+    const size_t np = sizeof pre - 1;
+    if (!url) return 0;
+    if (strncmp(url, pre, np) == 0) url += np;
+    /* the code alone: b32_decode skips what is not in its alphabet, so a
+     * trailing "/", "?x=1" or "#..." would be read as more code - cut it */
+    char code[128];
+    size_t k = 0;
+    while (url[k] && url[k] != '/' && url[k] != '?' && url[k] != '#') {
+        if (k + 1 >= sizeof code) return 0;
+        code[k] = url[k];
+        k++;
+    }
+    code[k] = 0;
+    if (k == 0) return 0;
+    uint8_t b[80];
+    int n = b32_decode(code, b, sizeof b);
+    if (n <= 0) return 0;
+    return uttt_decode(out, b, (size_t)n);
 }

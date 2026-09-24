@@ -32,6 +32,11 @@ public final class UtttGameScreen: UtttSheetView {
     private let band = UtttWordsView(align: .right)
     private let rulebook: UtttRulebookButton
     private var again: UtttDoorButton?
+    /// THE REPLAY LINK at the end, beside Again: the kernel's URL for the
+    /// finished game onto the pasteboard (an iMessage extension can open
+    /// only its own container's scheme - foolish's replay row), and the door
+    /// then reads as its own receipt.
+    private var copy: UtttDoorButton?
 
     /// `door` is the kernel's answer for this board (utm_door) - at the end of
     /// a game, Again. It stands in the expanded view only (docs/UI.html 08:
@@ -66,6 +71,18 @@ public final class UtttGameScreen: UtttSheetView {
             let a = UtttDoorButton(title: title, act: onDoor)
             content.addSubview(a)
             again = a
+            /* READ NOW, while the resident game is this screen's: the
+             * kernel's one slot can hold another game by the time of a tap. */
+            let url = Uttt.replayURL
+            var c: UtttDoorButton?
+            c = url.map { url in
+                UtttDoorButton(title: Uttt.say(.doorCopy)) {
+                    UIPasteboard.general.string = url
+                    c?.title = Uttt.say(.doorCopied)
+                }
+            }
+            if let c { content.addSubview(c) }
+            copy = c
         }
         content.addSubview(rulebook)
 #if DEBUG
@@ -104,19 +121,20 @@ public final class UtttGameScreen: UtttSheetView {
          * wash says it - and the headline fades in with the band. */
         let end = Uttt.over != .none
         let hint = model.pending
-        let L = Uttt.sheet(.play, size: size, words: end, hint: hint)
+        let hasCopy = copy != nil
+        let L = Uttt.sheet(.play, size: size, words: end, hint: hint, copy: hasCopy)
         /* THROUGH AN AUTO-COLLAPSE (CollapseSlide) the sheet is laid out at
          * the compact height and pushed; each rider walks the path the layout
          * would have walked, as a function of the push `s` - the drawer is
          * `size.height + s` tall - from the kernel's own layout. */
         let at = { (s: CGFloat) -> UtiSheet in
             Uttt.sheet(.play, size: CGSize(width: size.width, height: size.height + s),
-                       words: end, hint: hint)
+                       words: end, hint: hint, copy: hasCopy)
         }
         /* The band's words are hidden on the strip, so through a slide they
          * are set as the slide's first frame had them and fade on their layer. */
         let B = from.map { Uttt.sheet(.play, size: CGSize(width: size.width, height: $0),
-                                      words: end, hint: hint) } ?? L
+                                      words: end, hint: hint, copy: hasCopy) } ?? L
 #if DEBUG
         if UtttRuler.on { UtttLog.note("sheet-play", String(format: "h %.1f from %.1f board y %.1f side %.1f", size.height, from ?? -1, L.board.1, L.board.2)) }
 #endif
@@ -146,6 +164,12 @@ public final class UtttGameScreen: UtttSheetView {
             again.alpha = CGFloat(L.door_alpha)
             again.isHidden = L.door_alpha <= 0
             rideBottom(again)
+        }
+        if let copy {
+            copy.frame = rect(L.copy)
+            copy.alpha = CGFloat(L.door_alpha)
+            copy.isHidden = L.door_alpha <= 0
+            rideBottom(copy)
         }
         rideBottom(rulebook)
 #if DEBUG

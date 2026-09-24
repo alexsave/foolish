@@ -212,6 +212,8 @@ public enum Uttt {
         public static let doorRules = Say(key: UTI_SAY_DOOR_RULES)
         public static let sendHint = Say(key: UTI_SAY_SEND_HINT)
         public static let doorSend = Say(key: UTI_SAY_DOOR_SEND)
+        public static let doorCopy = Say(key: UTI_SAY_DOOR_COPY)
+        public static let doorCopied = Say(key: UTI_SAY_DOOR_COPIED)
     }
 
     public static func say(_ s: Say) -> String { String(cString: uti_say(s.key)) }
@@ -391,9 +393,18 @@ public enum Uttt {
     /// `hint`: a bubble waits in the field, so the send hint may stand in
     /// the top right corner and the right column starts under it.
     public static func sheet(_ kind: SheetKind, size: CGSize, words: Bool = true,
-                             hint: Bool = false) -> UtiSheet {
+                             hint: Bool = false, copy: Bool = false) -> UtiSheet {
         uti_sheet(UtiSheetIn(w: Float(size.width), h: Float(size.height),
-                             kind: kind.rawValue, words: words ? 1 : 0, hint: hint ? 1 : 0))
+                             kind: kind.rawValue, words: words ? 1 : 0, hint: hint ? 1 : 0,
+                             copy: copy ? 1 : 0))
+    }
+
+    /// The resident game's replay link, the kernel's whole string
+    /// (uttt_replay_url), or nil for a game with no plies.
+    public static var replayURL: String? {
+        var b = [CChar](repeating: 0, count: 160)
+        guard uti_replay_url(&b, Int32(b.count)) > 0 else { return nil }
+        return String(cString: b)
     }
 
     /// The last move's heavy mark, drawn to `t`: what moves over the cache.

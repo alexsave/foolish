@@ -62,6 +62,10 @@ enum {
      * UTM_INSERT_DOOR) */
     UTTT_SAY_SEND_HINT,            /* under the arrow at Messages' Send     */
     UTTT_SAY_DOOR_SEND,            /* the door when every insert went unanswered */
+    /* the end screen's replay link (uttt_replay_url), and the receipt the
+     * same door shows once the link is on the pasteboard */
+    UTTT_SAY_DOOR_COPY,
+    UTTT_SAY_DOOR_COPIED,
 
     UTTT_SAY_COUNT
 };

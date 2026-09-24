@@ -167,14 +167,27 @@ public final class UtttDoorButton: UIControl {
     private let label = UILabel()
     private let act: () -> Void
 
-    public init(title: String, act: @escaping () -> Void) {
-        self.act = act
-        super.init(frame: .zero)
-        addSubview(bar)
-        label.attributedText = NSAttributedString(string: title, attributes: [
+    /// The words on the door; set again for a receipt ("Copied").
+    public var title: String {
+        didSet {
+            label.attributedText = Self.words(title)
+            accessibilityLabel = title
+        }
+    }
+
+    private static func words(_ s: String) -> NSAttributedString {
+        NSAttributedString(string: s, attributes: [
             .font: UIFont.systemFont(ofSize: 14, weight: .bold), .kern: 0.56,
             .foregroundColor: UtttInk.doorInk,
         ])
+    }
+
+    public init(title: String, act: @escaping () -> Void) {
+        self.act = act
+        self.title = title
+        super.init(frame: .zero)
+        addSubview(bar)
+        label.attributedText = Self.words(title)
         label.textAlignment = .center
         addSubview(label)
         isAccessibilityElement = true

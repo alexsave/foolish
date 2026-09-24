@@ -116,6 +116,9 @@ int  uti_msg_door(void);
 int  uti_send_hint_ms(void);
 int  uti_insert_silence_ms(void);
 int  uti_insert_silence(int attempt, int compact);
+/* The resident game's replay link (uttt_replay_url) into out; its length,
+ * or -1 for a game with no plies. */
+int  uti_replay_url(char *out, int cap);
 int  uti_drawer_up(float window_h, float view_h, int expanded); /* utm_drawer_up */
 
 /* Which of two messages to show: <0 mine (the device's staged draft), >0 the
@@ -155,6 +158,8 @@ int  uti_hit(float u, float v);
 #define UTI_SAY_DOOR_RULES           17
 #define UTI_SAY_SEND_HINT            18
 #define UTI_SAY_DOOR_SEND            19
+#define UTI_SAY_DOOR_COPY            20
+#define UTI_SAY_DOOR_COPIED          21
 
 const char *uti_say(int key);
 
@@ -260,7 +265,7 @@ float uti_spring_left(float travel, float mass, float stiffness, float damping,
 #define UTI_SHEET_WAIT   2
 typedef struct {
     float   w, h;
-    int32_t kind, words, hint;
+    int32_t kind, words, hint, copy;
 } UtiSheetIn;
 typedef struct {
     float t, board[3], hpad, vpad, col, bar, foot, door, icon, icon_lead,
@@ -269,6 +274,7 @@ typedef struct {
     float band[4], band_alpha;
     float rulebook[4], again[4];    /* x, y, w, h: the two doors */
     float sub_alpha;                /* the column's second line (UtttSheet) */
+    float copy[4];                  /* the end screen's replay door, or zero */
 } UtiSheet;
 UtiSheet uti_sheet(UtiSheetIn in);
 /* Where the send hint's container starts below the drawer's top (UTTT_SHEET_HINT_TOP). */

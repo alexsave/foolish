@@ -218,6 +218,8 @@ typedef struct {
                               seat, whose headline waits for the band       */
     int32_t hint;          /* a bubble waits in the field: the send hint may
                               stand in the top right corner                 */
+    int32_t copy;          /* the finished game's "Copy code" door stands in
+                              the door row beside Again                      */
 } UtttSheetIn;
 
 typedef struct {
@@ -253,6 +255,11 @@ typedef struct {
                               it went one word a line, so there the column
                               carries the headline alone and the band, once
                               open, carries both                            */
+    float copy[4];         /* x, y, w, h: the "Copy code" door, between Again
+                              and the rulebook at their height, when asked
+                              (`copy`); it shows with Again (door_alpha) -
+                              the strip's 46-point column has no room for
+                              a word, and the board is never shrunk for one */
 } UtttSheet;
 
 /* The drawer heights the openness runs between: 360, above the tallest

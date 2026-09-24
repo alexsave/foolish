@@ -38,7 +38,9 @@ _Static_assert(UTI_SAY_YOU_ARE_SPOKEN == UTTT_SAY_YOU_ARE_SPOKEN, "say YOU_ARE_S
 _Static_assert(UTI_SAY_DOOR_RULES == UTTT_SAY_DOOR_RULES, "say DOOR_RULES");
 _Static_assert(UTI_SAY_SEND_HINT == UTTT_SAY_SEND_HINT, "say SEND_HINT");
 _Static_assert(UTI_SAY_DOOR_SEND == UTTT_SAY_DOOR_SEND, "say DOOR_SEND");
-_Static_assert(UTI_SAY_DOOR_SEND + 1 == UTTT_SAY_COUNT, "every key has a host name");
+_Static_assert(UTI_SAY_DOOR_COPY == UTTT_SAY_DOOR_COPY && UTI_SAY_DOOR_COPIED == UTTT_SAY_DOOR_COPIED,
+               "say DOOR_COPY, DOOR_COPIED");
+_Static_assert(UTI_SAY_DOOR_COPIED + 1 == UTTT_SAY_COUNT, "every key has a host name");
 _Static_assert(UTI_INSERT_LISTEN == UTM_INSERT_LISTEN && UTI_INSERT_RETRY == UTM_INSERT_RETRY
                && UTI_INSERT_DOOR == UTM_INSERT_DOOR, "insert verdicts");
 _Static_assert(UTI_CH_STILL == UTTT_CH_STILL && UTI_CH_STAGE == UTTT_CH_STAGE
@@ -269,6 +271,8 @@ _Static_assert(offsetof(UtiSheet, words) == offsetof(UtttSheet, words)
                && offsetof(UtiSheet, band_alpha) == offsetof(UtttSheet, band_alpha)
                && offsetof(UtiSheet, again) == offsetof(UtttSheet, again)
                && offsetof(UtiSheet, sub_alpha) == offsetof(UtttSheet, sub_alpha)
+               && offsetof(UtiSheet, copy) == offsetof(UtttSheet, copy)
+               && offsetof(UtiSheetIn, copy) == offsetof(UtttSheetIn, copy)
                && offsetof(UtiSheetIn, hint) == offsetof(UtttSheetIn, hint)
                && offsetof(UtiSheetIn, words) == offsetof(UtttSheetIn, words), "the sheet's fields line up");
 _Static_assert(UTI_SHEET_PLAY == UTTT_SHEET_PLAY && UTI_SHEET_WATCH == UTTT_SHEET_WATCH
@@ -465,6 +469,7 @@ int uti_msg_door(void) { return utm_door(&S.m); }
 int uti_send_hint_ms(void) { return UTM_SEND_HINT_MS; }
 int uti_insert_silence_ms(void) { return UTM_INSERT_SILENCE_MS; }
 int uti_insert_silence(int attempt, int compact) { return utm_insert_silence(attempt, compact); }
+int uti_replay_url(char *out, int cap) { return uttt_replay_url(&S.m.game, out, cap); }
 int uti_drawer_up(float window_h, float view_h, int expanded) { return utm_drawer_up(window_h, view_h, expanded); }
 
 int uti_msg_prefer(const char *mine, const char *tapped)

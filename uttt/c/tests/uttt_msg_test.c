@@ -634,6 +634,10 @@ static void test_insert(void)
        "say: the send hint's caption");
     OK(uttt_say(UTTT_SAY_DOOR_SEND, &g, UTM_SEAT_X, s, sizeof s) > 0 && !strcmp(s, "Send a board"),
        "say: the door when no insert was answered");
+    OK(uttt_say(UTTT_SAY_DOOR_COPY, &g, UTM_SEAT_X, s, sizeof s) > 0 && !strcmp(s, "Copy code"),
+       "say: the end screen's replay door");
+    OK(uttt_say(UTTT_SAY_DOOR_COPIED, &g, UTM_SEAT_X, s, sizeof s) > 0 && !strcmp(s, "Copied"),
+       "say: and its receipt");
 }
 
 /* THE BUBBLE'S BAKE SCALE: the sender's own, between 2 and 3. */

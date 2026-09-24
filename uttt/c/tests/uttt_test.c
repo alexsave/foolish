@@ -250,6 +250,59 @@ int main(int argc, char **argv)
     printf("round trip: %d games encoded and decoded, %d mismatches\n",
            checked, fails - partial_fail);
 
+    /* THE REPLAY LINK, round trip: every finished game -> URL -> code ->
+     * decode is the same game, every ply; the URL is the prefix and base32
+     * only; a link read in lower case, or with a query after it, is the same
+     * game; and no plies is no link. */
+    {
+        static const char pre[] = UTTT_REPLAY_PREFIX;
+        int link_games = 0, link_fail = 0, longest = 0;
+        for (int t3 = 0; t3 < games; t3++) {
+            UtttGame g; uttt_init(&g);
+            uint8_t list[81];
+            RS = 0xD1B54A32D192ED03ull ^ ((uint64_t)t3 * 104729u);
+            for (;;) {
+                int n = uttt_legal(&g, list);
+                if (n <= 0) break;
+                uttt_play(&g, pick(&g, list, n, t3 % 3));
+            }
+            char url[160];
+            int len = uttt_replay_url(&g, url, sizeof url);
+            UtttGame back;
+            /* the owner's address, spelled out rather than taken from the
+             * macro, so a typo in the macro cannot pass its own test */
+            int ok = len > (int)sizeof pre - 1 && (int)strlen(url) == len
+                  && strncmp(url, "https://www.foolish.cards/uttt/", 31) == 0
+                  && strncmp(url, pre, sizeof pre - 1) == 0;
+            for (int c = (int)sizeof pre - 1; ok && c < len; c++)
+                ok = (url[c] >= 'A' && url[c] <= 'Z') || (url[c] >= '2' && url[c] <= '7');
+            ok = ok && uttt_replay_read(url, &back)
+                 && back.n_plies == g.n_plies && back.over == g.over
+                 && memcmp(back.move, g.move, (size_t)g.n_plies) == 0;
+            char low[200];
+            snprintf(low, sizeof low, "%s?from=imessage", url);
+            for (int c = (int)sizeof pre - 1; c < len; c++)
+                if (low[c] >= 'A' && low[c] <= 'Z') low[c] = (char)(low[c] - 'A' + 'a');
+            UtttGame back2;
+            ok = ok && uttt_replay_read(low, &back2) && back2.n_plies == g.n_plies
+                 && memcmp(back2.move, g.move, (size_t)g.n_plies) == 0;
+            ok = ok && uttt_replay_read(url + sizeof pre - 1, &back2) && back2.n_plies == g.n_plies;
+            if (len > longest) longest = len;
+            link_games++;
+            if (!ok) { if (link_fail < 3) printf("  LINK FAIL %s\n", url); link_fail++; }
+        }
+        UtttGame empty; uttt_init(&empty);
+        char u[160];
+        int none = uttt_replay_url(&empty, u, sizeof u) == -1;
+        UtttGame junk;
+        int bad = !uttt_replay_read(UTTT_REPLAY_PREFIX, &junk) && !uttt_replay_read("", &junk);
+        printf("replay link: %d games through URL and back, %d mismatches, longest %d chars\n",
+               link_games, link_fail, longest);
+        if (!none) { printf("  FAIL: a game with no plies got a link\n"); fails++; }
+        if (!bad)  { printf("  FAIL: an empty link read as a game\n"); fails++; }
+        fails += link_fail;
+    }
+
     /* UNDO, WALKED ALL THE WAY BACK. A staged bubble is a draft, so a player
      * who taps the wrong square takes the move back and plays another - and
      * the position they land on has to be the one they were on, not one that

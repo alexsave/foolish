@@ -538,6 +538,25 @@ int main(void)
             }
         }
         OK(doors_in, "both doors sit inside the sheet's margins, Again short of the rulebook");
+
+        /* THE REPLAY DOOR (`copy`): in the door row between Again and the
+         * rulebook, their height, a gap from each, narrower than Again and
+         * wide enough for its words; absent when not asked for. */
+        int copy_in = 1;
+        for (int di = 0; di < 7; di++) {
+            UtttSheet o, n;
+            uttt_sheet(&(UtttSheetIn){ .w = D[di].w, .h = D[di].h, .kind = UTTT_SHEET_PLAY, .words = 1, .copy = 1 }, &o);
+            uttt_sheet(&(UtttSheetIn){ .w = D[di].w, .h = D[di].h, .kind = UTTT_SHEET_PLAY, .words = 1 }, &n);
+            const float *r = o.rulebook, *a = o.again, *c = o.copy;
+            if (!(a[0] >= o.hpad - 1e-3f && a[0] + a[2] + 8.f <= c[0] && c[0] + c[2] + 8.f <= r[0]
+                  && c[1] == r[1] && c[3] == r[3] && a[3] == r[3] && c[2] >= 100.f && c[2] < a[2]
+                  && n.copy[2] == 0.f && n.again[2] > a[2])) {
+                copy_in = 0;
+                printf("  copy %.0fx%.0f: again %.1f+%.1f copy %.1f+%.1f rulebook %.1f\n",
+                       D[di].w, D[di].h, a[0], a[2], c[0], c[2], r[0]);
+            }
+        }
+        OK(copy_in, "the replay door sits between Again and the rulebook, at their height, only when asked");
         OK(words_room, "and on every strip the words get a column of at least 32 points");
 
         UtttSheet c, e;

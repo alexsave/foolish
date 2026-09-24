@@ -42,4 +42,24 @@ int uttt_decode(UtttGame *out, const uint8_t *buf, size_t n);
  * land within a byte of this; the gap is everything it wastes. */
 double uttt_ideal_bits(const UtttGame *g);
 
+/* THE REPLAY LINK: the finished game as a URL somebody can paste, the end
+ * screen's "Copy code" (an iMessage extension can open only its own
+ * container's scheme, so the link is copied rather than opened - foolish's
+ * replay row, FGameOverList.replayLink). It is UTTT_REPLAY_PREFIX followed by
+ * uttt_encode's bytes in base32 (shared/c/b32: letters and digits, the same
+ * read back in either case, nothing a URL has to escape). The kernel writes
+ * the whole string; a host only puts it on the pasteboard.
+ *
+ * The web route (/uttt/<code>) does not exist yet (TESTFLIGHT_PLAN 16). */
+#define UTTT_REPLAY_PREFIX "https://www.foolish.cards/uttt/"
+
+/* Write g's link into out (NUL-terminated). Returns its length, or -1 if g
+ * has no plies or cap is too small. */
+int uttt_replay_url(const UtttGame *g, char *out, int cap);
+
+/* Read a link back (the prefix is optional; anything after the code - a
+ * query, a fragment, a slash - is ignored). Returns 1 and the game on
+ * success, 0 for a link that is not a game. */
+int uttt_replay_read(const char *url, UtttGame *out);
+
 #endif
