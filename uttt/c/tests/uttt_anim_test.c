@@ -641,6 +641,19 @@ int main(void)
             }
         }
         OK(ode, "and under, over or with a velocity, it is the spring's own motion");
+        /* how far past: nothing for the critically damped tap; for the
+         * flick's under-damped release, the least left anywhere on it */
+        OK(uttt_spring_past(387.f, m, k, c, 0.f) == 0.f, "a critically damped expand never goes past");
+        {
+            const float fm = 1.f, fk = 333.3333f, fc = 29.21f, fv = 4.68f, ft = 384.f;
+            float least = 0.f;
+            for (int t = 0; t <= 3000; t++) {
+                float p = uttt_spring_left(ft, fm, fk, fc, fv, t);
+                if (p < least) least = p;
+            }
+            float past = uttt_spring_past(ft, fm, fk, fc, fv);
+            OK(past > 1.f && past == -least, "a flick's release goes past its target, by the spring's own least");
+        }
     }
 
     printf("uttt_anim: %d checks, %d failed\n", checks, fails);

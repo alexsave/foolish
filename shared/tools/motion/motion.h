@@ -101,7 +101,16 @@ typedef struct {
      * (what the size did that the drawer did not ask for), and its largest
      * absolute value */
     double w_res_step, h_res_step, w_res_max, h_res_max;
+    /* THE SQUARE FRAMES ONLY: the product lays the board out square, so a
+     * frame where it is not square by more than MT_SQUARE_TOL is the host
+     * stretching the layer it last committed (a card narrowed while it is
+     * grabbed and a height a frame ahead of the one handed: filmed 9pt
+     * taller than wide, TESTFLIGHT_PLAN 18) - no layout of ours. The size
+     * ((width + height) / 2) and the drawer's reversals over those frames
+     * alone, and how many frames were left out. */
+    int32_t sq_rev, sq_drawer_rev, sq_skipped;
 } MtBoard;
+#define MT_SQUARE_TOL 1.5   /* pt: |width - height| a square frame may show */
 
 /* The board's size in one frame (MT_NONE when no pair is seen). */
 double mt_board_w(const MtRow *r);

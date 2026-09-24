@@ -595,6 +595,18 @@ int32_t mt_board(const MtRow *rows, int32_t n, const MtScoreOpts *o, MtBoard *ou
         }
         free(e);
     }
+    {
+        double *q = malloc(sizeof(double) * (size_t)L), *dq = malloc(sizeof(double) * (size_t)L);
+        for (int32_t k = 0; k < L; k++) {
+            int32_t sq = w[k] != MT_NONE && h[k] != MT_NONE && fabs(w[k] - h[k]) <= MT_SQUARE_TOL;
+            if (!sq && (w[k] != MT_NONE || h[k] != MT_NONE)) out->sq_skipped++;
+            q[k] = sq ? (w[k] + h[k]) / 2 : MT_NONE;
+            dq[k] = sq ? d[k] : MT_NONE;
+        }
+        out->sq_rev = mt_reversals(q, L, MT_REV_TOL);
+        out->sq_drawer_rev = mt_reversals(dq, L, MT_REV_TOL);
+        free(q); free(dq);
+    }
     out->w_rev = mt_reversals(w, L, MT_REV_TOL);
     out->h_rev = mt_reversals(h, L, MT_REV_TOL);
     out->drawer_rev = mt_reversals(d, L, MT_REV_TOL);

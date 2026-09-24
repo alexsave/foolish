@@ -254,6 +254,9 @@ float uti_collapse_flip(void);
  * what the expand slide carries the sheet's riders on. */
 float uti_spring_left(float travel, float mass, float stiffness, float damping,
                       float v0, int32_t t_ms);
+/* How far that spring carries the drawer past its target, points (0 if it
+ * never does; src/uttt_anim.h uttt_spring_past): the sheet's clip reaches it. */
+float uti_spring_past(float travel, float mass, float stiffness, float damping, float v0);
 
 /* ---- one layout for every screen (src/uttt_anim.h UtttSheet) ----
  * The board's square centred on the sheet at every height and every screen,

@@ -224,6 +224,16 @@ float uttt_spring_left(float travel, float mass, float stiffness, float damping,
     return (float)(travel * x);
 }
 
+float uttt_spring_past(float travel, float mass, float stiffness, float damping, float v0)
+{
+    float least = 0.f;
+    for (int32_t t = 0; t <= 3000; t++) {
+        float p = uttt_spring_left(travel, mass, stiffness, damping, v0, t);
+        if (p < least) least = p;
+    }
+    return -least;
+}
+
 /* ---- one layout for every screen (uttt_anim.h UtttSheet) ---------------- */
 
 static float lerpf(float a, float b, float t) { return a + (b - a) * t; }

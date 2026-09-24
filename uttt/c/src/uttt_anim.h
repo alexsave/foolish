@@ -187,6 +187,17 @@ float uttt_collapse_push(float travel, int32_t t_ms);
 float uttt_spring_left(float travel, float mass, float stiffness, float damping,
                        float v0, int32_t t_ms);
 
+/* HOW FAR THE HOST'S SPRING GOES PAST ITS TARGET, in points (0 when it never
+ * does): an under-damped release (a flick expand hands damping 29 against
+ * the 36.5 of a critically damped tap, and the finger's velocity) carries
+ * the drawer taller than the height it handed before it settles. The sheet
+ * is laid out at the handed height, so its clip reaches this far past the
+ * sheet's bottom through the ride, or the riders following the drawer's
+ * bottom (the doors, the ruler's bar) are cut off while it overshoots
+ * (filmed on the Pro Max, TESTFLIGHT_PLAN 18). Sampled every millisecond
+ * over the spring's first three seconds. */
+float uttt_spring_past(float travel, float mass, float stiffness, float damping, float v0);
+
 /* ONE LAYOUT FOR EVERY SCREEN, a pure function of the drawer's height.
  *
  * docs/UI.html, "What holds which edge": the header line holds the top, the

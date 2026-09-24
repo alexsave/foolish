@@ -278,6 +278,23 @@ static void test_board(void) {
     mt_board(rows, N, &o, &b);
     CHECK(b.w_rev == 2 && b.h_rev == 2 && b.drawer_rev == 0, "a wobble reverses twice (%d %d %d)",
           b.w_rev, b.h_rev, b.drawer_rev);
+    CHECK(b.sq_rev == 2 && b.sq_drawer_rev == 0 && b.sq_skipped == 0,
+          "a square wobble is ours: two on the square frames (%d %d, %d left out)",
+          b.sq_rev, b.sq_drawer_rev, b.sq_skipped);
+    /* THE HOST STRETCHING the layer it holds: three frames 3pt narrower and
+     * 3pt taller, a square laid out - its width reverses twice, but no
+     * square frame does */
+    board_take(rows, N, 99, 0, 99);
+    for (int32_t i = 30; i < 33; i++) {
+        rows[i].x[M("cyan_tl")] += 1.5; rows[i].x[M("cyan_bl")] += 1.5;
+        rows[i].x[M("cyan_tr")] -= 1.5; rows[i].x[M("cyan_br")] -= 1.5;
+        rows[i].y[M("cyan_tl")] -= 1.5; rows[i].y[M("cyan_tr")] -= 1.5;
+        rows[i].y[M("cyan_bl")] += 1.5; rows[i].y[M("cyan_br")] += 1.5;
+    }
+    mt_board(rows, N, &o, &b);
+    CHECK(b.h_rev == 2 && b.w_rev >= 1, "the stretch reverses the height and the width (%d %d)", b.h_rev, b.w_rev);
+    CHECK(b.sq_rev == 0 && b.sq_skipped == 3, "no square frame reverses (%d), three left out (%d)",
+          b.sq_rev, b.sq_skipped);
     o.side = NULL;
 
     /* OFF THE DRAWER: a mark below the green bar for five frames */

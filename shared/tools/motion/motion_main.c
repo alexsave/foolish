@@ -237,7 +237,7 @@ static int score_main(int argc, char **argv) {
     int32_t takes[MT_MARKS] = {0};
     double jf[MT_MARKS] = {0};
     memset(acc, 0, sizeof acc);
-    int32_t used = 0, btakes = 0, bexcess = 0;
+    int32_t used = 0, btakes = 0, bexcess = 0, sqexcess = 0, sqskipped = 0;
     MtBoard bacc;
     memset(&bacc, 0, sizeof bacc);
     for (int32_t f = 0; f < nf; f++) {
@@ -266,6 +266,9 @@ static int score_main(int argc, char **argv) {
             /* a reversal of the size the drawer did not make */
             int32_t xw = bd.w_rev - bd.drawer_rev, xh = bd.h_rev - bd.drawer_rev;
             bexcess += (xw > 0 ? xw : 0) + (xh > 0 ? xh : 0);
+            int32_t xq = bd.sq_rev - bd.sq_drawer_rev;
+            sqexcess += xq > 0 ? xq : 0;
+            sqskipped += bd.sq_skipped;
         }
         for (int32_t m = 0; m < MT_MARKS; m++) {
             if (!s[m].seen) continue;
@@ -300,15 +303,16 @@ static int score_main(int argc, char **argv) {
      * take, and the largest |width - height|. */
     if (btakes) {
         double k = btakes;
-        printf("%-10s %5s %8s %8s %6s %6s %6s %6s %9s %9s %7s %8s %8s %8s %8s\n", "size", "takes", "w_step",
+        printf("%-10s %5s %8s %8s %6s %6s %6s %6s %9s %9s %7s %8s %8s %8s %8s %9s %7s\n", "size", "takes", "w_step",
                "h_step", "w_rev", "h_rev", "d_rev", "excess", "w_rough", "h_rough", "skew", "w_rstep", "h_rstep",
-               "w_rmax", "h_rmax");
+               "w_rmax", "h_rmax", "sq_excess", "sq_skip");
         printf("%-10s %5d %8.1f %8.1f %6.1f %6.1f %6.1f %6d %9.0f %9.0f %7.1f", "board", btakes,
                bacc.w_maxstep, bacc.h_maxstep, bacc.w_rev / k, bacc.h_rev / k, bacc.drawer_rev / k, bexcess,
                bacc.w_rough / k, bacc.h_rough / k, bacc.maxskew);
-        if (side) printf(" %8.1f %8.1f %8.1f %8.1f\n", bacc.w_res_step, bacc.h_res_step, bacc.w_res_max,
+        if (side) printf(" %8.1f %8.1f %8.1f %8.1f", bacc.w_res_step, bacc.h_res_step, bacc.w_res_max,
                          bacc.h_res_max);
-        else printf(" %8s %8s %8s %8s\n", "-", "-", "-", "-");
+        else printf(" %8s %8s %8s %8s", "-", "-", "-", "-");
+        printf(" %9d %7d\n", sqexcess, sqskipped);
     }
     return used ? 0 : 1;
 }

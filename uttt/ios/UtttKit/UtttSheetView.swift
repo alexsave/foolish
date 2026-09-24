@@ -35,6 +35,11 @@ public class UtttSheetView: UIView {
     /// doors ride, is below the sheet laid out short).
     private var reachUp: CGFloat = 0
     private var reachDown: CGFloat = 0
+    /// How far the host's spring carries a followed growth past the handed
+    /// height (`uti_spring_past`): the drawer's bottom, where the doors and
+    /// the ruler's bar ride, is below the sheet laid out at that height
+    /// while it overshoots - cut off there, filmed (TESTFLIGHT_PLAN 18).
+    private var past: CGFloat = 0
     /// The drawer is growing toward the laid-out height (an expand), not
     /// shrinking toward it.
     private(set) var grows = false
@@ -75,7 +80,7 @@ public class UtttSheetView: UIView {
             self.from = run?.from
             self.grows = run.map { !$0.shrinks } ?? false
             self.reachUp = run.map { $0.pushes ? $0.travel : 0 } ?? 0
-            self.reachDown = run.map { !$0.pushes && $0.shrinks ? $0.travel : 0 } ?? 0
+            self.reachDown = run.map { $0.pushes ? 0 : $0.shrinks ? $0.travel : self.past } ?? 0
             self.setNeedsLayout()
         }
     }
@@ -161,8 +166,9 @@ public class UtttSheetView: UIView {
             let travel = abs(from.height)
             let m = Float(a.mass), k = Float(a.stiffness), c = Float(a.damping)
             let v0 = Float(a.initialVelocity)
-            UtttLog.note("host-move", String(format: "%.1f -> %.1f over %.3fs (m %.2f k %.1f c %.2f v0 %.2f)",
-                                             h + from.height, h, a.duration, m, k, c, v0))
+            past = CGFloat(uti_spring_past(Float(travel), m, k, c, v0))
+            UtttLog.note("host-move", String(format: "%.1f -> %.1f over %.3fs (m %.2f k %.1f c %.2f v0 %.2f) past %.1f",
+                                             h + from.height, h, a.duration, m, k, c, v0, past))
             slide.follow(from: h + from.height, to: h, duration: a.duration,
                          begin: { [weak self] in self?.layer.animation(forKey: key)?.beginTime ?? 0 },
                          left: { t in
