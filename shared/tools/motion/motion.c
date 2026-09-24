@@ -93,7 +93,7 @@ void mt_find(const uint8_t *rgb, int32_t W, int32_t H, double scale, MtRow *row)
     int32_t cap = 1 << 16, n = 0;
     int32_t *par = malloc(sizeof(int32_t) * (size_t)cap);
     double rsum[2] = {0, 0};
-    int32_t rcnt[2] = {0, 0};
+    int32_t rcnt[2] = {0, 0}, rlo[2] = {-1, -1}, rhi[2] = {-1, -1};
     for (int32_t y = 0; y < h; y++) {
         int32_t cover[2] = {0, 0};
         const uint8_t *src = rgb + (size_t)(2 * y) * (size_t)W * 3;
@@ -106,8 +106,18 @@ void mt_find(const uint8_t *rgb, int32_t W, int32_t H, double scale, MtRow *row)
             ink[(size_t)y * w + x] = (int8_t)(x < skip ? -1 : k);
         }
         for (int32_t b = 0; b < 2; b++)
-            if (cover[b] > MR_BAR_COVER * w) { rsum[b] += y; rcnt[b]++; }
+            if (cover[b] > MR_BAR_COVER * w) {
+                rsum[b] += y; rcnt[b]++;
+                if (rlo[b] < 0) rlo[b] = y;
+                rhi[b] = y;
+            }
     }
+    /* A BAR CUT BY THE FRAME'S EDGE IS NOT READ: the rows left in the frame
+     * put its centre up to half a bar short of where it is (a drawer sliding
+     * off the bottom read its green bar 1.7pt high and scored the board's
+     * centre 1.5pt off, TESTFLIGHT_PLAN 18). */
+    for (int32_t b = 0; b < 2; b++)
+        if (rcnt[b] && (rlo[b] == 0 || rhi[b] == h - 1)) rcnt[b] = 0;
     row->red = rcnt[0] ? rsum[0] / rcnt[0] / s : MT_NONE;
     row->green = rcnt[1] ? rsum[1] / rcnt[1] / s : MT_NONE;
     row->clock = read_clock(rgb, W, H, row->red, scale);
