@@ -110,7 +110,11 @@ public class UtttSheetView: UIView {
             let before = handed
             handed = h
 #if DEBUG
-            if UtttRuler.on { UtttLog.note("ruler-height", String(format: "%.1f clock %d", h, MotionRuler.clockMs)) }
+            if UtttRuler.on {
+                UtttLog.note("ruler-height", String(format: "%.1f clock %d inset %.1f %.1f bounds %.1f", h,
+                                                    MotionRuler.clockMs, safeAreaInsets.top, safeAreaInsets.bottom,
+                                                    bounds.height))
+            }
 #endif
             _ = slide?.heard(h, after: before)
             if before > 0, abs(h - before) > 1, slide?.run == nil { rideHost(to: h, jump: abs(h - before) > 60) }

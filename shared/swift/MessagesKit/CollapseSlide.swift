@@ -231,8 +231,11 @@ public final class CollapseSlide {
     public func heard(_ height: CGFloat, after previous: CGFloat) -> Bool {
         if let r = run {
             /* A new height under a run the host drives is a new gesture or
-             * a new animation of the host's: this one is over. */
-            if !r.pushes || height > previous + 1 { end() }
+             * a new animation of the host's: this one is over. The same
+             * height handed again is not (the host re-hands 289.0 as
+             * 289.00000000000006 20 ms into a release, which ended the ride
+             * and snapped every rider - filmed, TESTFLIGHT_PLAN 17). */
+            if abs(height - previous) > 1 && (!r.pushes || height > previous) { end() }
             return false
         }
         guard armed, previous - height > flip else { return false }

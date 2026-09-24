@@ -115,12 +115,17 @@ void mt_default_opts(MtScoreOpts *o);
 /* THE DRAWER'S BOTTOM IS THE SCREEN'S: a Messages drawer's lower edge never
  * moves (only its top does), but the green bar is painted by the content,
  * so content that jumps takes the bar with it and then scores as riding it.
- * This puts every row's green at `y` points (where the drawer's bottom is at
- * rest) wherever the red bar is seen, so the bottom anchor is the real one.
+ * This puts a row's green at `y` points (where the drawer's bottom is at
+ * rest) wherever the red bar is seen and the painted bar is further than
+ * MT_CARD_SHIFT from it. Within that the painted bar is the drawer's: the
+ * host moves its whole card that far when the drawer changes style (compact
+ * 913 against expanded 919.67 on a 956-point phone, the card's top keeping
+ * its place over the content), and the content moves with it.
  * BELOW THE COMPACT HEIGHT the host slides a rigid card down (a drag past
  * compact, a flick to the minimised drawer): the bottom is then the top plus
  * the compact drawer's bars' distance `hc` (0: no such zone). */
 void mt_fix_bottom(MtRow *rows, int32_t n, double y, double hc);
+#define MT_CARD_SHIFT 8.0
 /* Score one take; returns 0 when nothing moved and `whole` is off. */
 int32_t mt_score(const MtRow *rows, int32_t n, const MtScoreOpts *o, MtScore out[MT_MARKS]);
 /* The host spring's progress t seconds in (critically damped). */
