@@ -770,7 +770,13 @@ final class MessagesViewController: MSMessagesAppViewController {
          * fills at 3x took a fifth of a second on the main thread at every
          * stage, which is exactly when the board's highlighter is travelling
          * (docs/UI.html: the drawer and the bubble move once the ink lands). */
+#if DEBUG
+        UtttLog.mem("stage")
+#endif
         let snap = UtttBubble.snapshot()
+#if DEBUG
+        UtttLog.mem("snapshot")
+#endif
         let caption = UtttBubble.caption
         /* THE COLLAPSED LINE IS OURS TOO, or Messages writes "<phone number>
          * sent Ultimate message" into a thread about a board. */
@@ -790,6 +796,9 @@ final class MessagesViewController: MSMessagesAppViewController {
             DispatchQueue.global(qos: .userInitiated).async {
                 let img = UtttBubble.image(snap)
                 DispatchQueue.main.async {
+#if DEBUG
+                    UtttLog.mem("painted")
+#endif
                     if let clock = self?.live?.clock { clock.whenSettled { done(img) } }
                     else { done(img) }
                 }
@@ -798,7 +807,13 @@ final class MessagesViewController: MSMessagesAppViewController {
         if presentationStyle == .compact {
             painted { [weak self] img in
                 guard let self, self.stageGeneration == generation else { return }
+#if DEBUG
+                UtttLog.mem("settled")
+#endif
                 message.layout = UtttBubble.layout(image: img, caption: caption)
+#if DEBUG
+                UtttLog.mem("layout")
+#endif
                 self.insert(message, generation: generation, in: conversation, attempt: 1)
             }
             return
@@ -856,6 +871,10 @@ final class MessagesViewController: MSMessagesAppViewController {
                 guard let self else { return }
                 guard let error else {
                     UtttLog.note("inserted")
+#if DEBUG
+                    UtttLog.mem("inserted")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { UtttLog.mem("inserted+1s") }
+#endif
                     guard self.stageGeneration == generation else { return }
                     /* IN THE FIELD: every watchdog of this stage stands down,
                      * and the hint's wait starts now. */
@@ -887,6 +906,9 @@ final class MessagesViewController: MSMessagesAppViewController {
             UtttLog.note("insert", "dev.dropinsert - swallowed")
             return
         }
+#endif
+#if DEBUG
+        UtttLog.mem("insert")
 #endif
         target.insert(message, completionHandler: answer)
     }

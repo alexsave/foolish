@@ -88,10 +88,9 @@ public enum UtttBubble {
 
     /// The resident game, drawn into the 300x195 frame.
     ///
-    /// Baked at THREE TIMES, always. The sender's device renders it once and
-    /// every other device in the thread gets that bitmap, so rendering at the
-    /// sender's own scale would hand a 2x phone's bubble to a 3x one and the
-    /// ink would be soft for the rest of the game.
+    /// Baked at ONE FIXED SCALE (`bakeScale`), never the sender's: the sender's
+    /// device renders it once and every other device in the thread gets that
+    /// bitmap.
     public static func image() -> UIImage { image(snapshot()) }
 
     /// EVERYTHING THE BUBBLE NEEDS FROM THE KERNEL, read on the main thread
@@ -130,37 +129,67 @@ public enum UtttBubble {
                         boardBox: boardBox, textBox: textBox)
     }
 
+    /// THE SCALE THE BUBBLE IS BAKED AT: two (TESTFLIGHT_PLAN 14). The SE's
+    /// transcript shows the 300-point frame at 252 points, 504 pixels, and a
+    /// 2x and a 3x bake sent there are the same picture (mean difference 2.4
+    /// of 255, the grain's resampling); the 2x bitmap is 1 MB, not 2.1, and
+    /// Messages encodes a picture less than half the size at insert.
+    public static let bakeScale: CGFloat = 2
+
     /// Pure: the snapshot painted. Safe on any thread.
+    ///
+    /// ONE BITMAP, EIGHT BITS A CHANNEL, NO ALPHA, NO COPIES (TESTFLIGHT_PLAN
+    /// 14). This was a UIGraphicsImageRenderer, which on a wide-colour screen
+    /// picks an extended-range format (16 bits a channel) and whose image was
+    /// then drawn through a UIImage of the paper: the paint put the stage's
+    /// memory peak 12 MB over the drawer's idle (log `mem painted`). A plain
+    /// sRGB context with no alpha is the bytes the image needs and no more,
+    /// and `makeImage` hands the same pixels over copy-on-write.
     public static func image(_ snap: Snapshot) -> UIImage {
         let frame = CGRect(origin: .zero, size: size)
         let board = snap.boardBox
+        let scale = bakeScale
+        let pw = Int((frame.width * scale).rounded()), ph = Int((frame.height * scale).rounded())
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let cg = CGContext(data: nil, width: pw, height: ph, bitsPerComponent: 8,
+                                 bytesPerRow: 0, space: space,
+                                 bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
+                                     | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return UIImage() }
+        /* TOP-LEFT ORIGIN, POINTS: the kernel's coordinates and UIKit's text
+         * drawing both mean this. */
+        cg.translateBy(x: 0, y: CGFloat(ph))
+        cg.scaleBy(x: scale, y: -scale)
 
-        let fmt = UIGraphicsImageRendererFormat()
-        fmt.scale = 3
-        fmt.opaque = true
-        return UIGraphicsImageRenderer(size: frame.size, format: fmt).image { rc in
-            let cg = rc.cgContext
-
-            if let sheet = snap.paper {
-                UIImage(cgImage: sheet).draw(in: frame)
-            } else {
-                UIColor(red: 0.969, green: 0.965, blue: 0.949, alpha: 1).setFill()
-                cg.fill(frame)
-            }
-
-            /* The kernel draws in a unit square and the board is 168 points
-             * where uttt_bubble puts it, so the transform goes
-             * on once here rather than into ten thousand multiplications. */
+        if let sheet = snap.paper {
+            /* A CGImage draws bottom-up: flipped back for this one draw. */
             cg.saveGState()
-            cg.translateBy(x: board.minX, y: board.minY)
-            Uttt.fill(snap.board, into: cg, side: board.width)
+            cg.translateBy(x: 0, y: frame.height)
+            cg.scaleBy(x: 1, y: -1)
+            cg.interpolationQuality = .high
+            cg.draw(sheet, in: frame)
             cg.restoreGState()
-
-            if snap.textBox.width > 0 {
-                draw(mark: snap.mark, markPolys: snap.markPolys,
-                     headline: snap.headline, place: snap.place, in: snap.textBox, into: cg)
-            }
+        } else {
+            cg.setFillColor(UIColor(red: 0.969, green: 0.965, blue: 0.949, alpha: 1).cgColor)
+            cg.fill(frame)
         }
+
+        /* The kernel draws in a unit square and the board is 168 points
+         * where uttt_bubble puts it, so the transform goes
+         * on once here rather than into ten thousand multiplications. */
+        cg.saveGState()
+        cg.translateBy(x: board.minX, y: board.minY)
+        Uttt.fill(snap.board, into: cg, side: board.width)
+        cg.restoreGState()
+
+        if snap.textBox.width > 0 {
+            UIGraphicsPushContext(cg)
+            draw(mark: snap.mark, markPolys: snap.markPolys,
+                 headline: snap.headline, place: snap.place, in: snap.textBox, into: cg)
+            UIGraphicsPopContext()
+        }
+        guard let img = cg.makeImage() else { return UIImage() }
+        return UIImage(cgImage: img, scale: scale, orientation: .up)
     }
 
     /// The layout Messages inserts. The caption is the only text outside the
