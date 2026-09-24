@@ -15,6 +15,12 @@
  * whole BOARD, which is nine cells - so the same ball that is 2.7 units wide
  * on a mark is 2.7/9 here. Derived, never typed: getting this wrong by hand is
  * what made the first grid a thicket. */
+/* The O, in its hundred-unit square: lopsided by the same .3 as the X */
+#define O_CX (50.f + .3f * 4.f)
+#define O_CY (50.f - .3f * 3.f)
+#define O_W  (78.f - .3f * 10.f)
+#define O_H  (76.f + .3f * 8.f)
+
 #define REF   (8.9f / 100.f * CE * 9.f)   /* a normal mark, in board units */
 
 static float rough_for(float L) { return 1.5f * powf(REF / (L > 1e-4f ? L : 1e-4f), .75f); }
@@ -61,19 +67,16 @@ static void stroke(UtttDL *d, const UtttPt *pts, int n, const UtttPen *p, float 
  * of 2, its ellipse offsets of 1 and 1.5 - has to be converted at the call
  * site, and the ellipse ones were not, so every O wandered across the whole
  * sheet. Convert the POINTS once instead of the constants everywhere. */
-static void mark_in(UtttDL *d, int kind, float x, float y, float s,
-                    int32_t seed, float t, const UtttPen *base)
+/* The mark's strokes in its own hundred-unit square, before placing: `k`
+ * spans for the first (or only) stroke and `k2` for an X's second. */
+static int mark_geom(int kind, float s, int32_t seed, UtttPt *pts, int cap,
+                     UtttSpan *sp, int *k2)
 {
-    UtttPt pts[1400]; int np = 0;
-    UtttSpan sp[4];
+    int np = 0;
     const float s100 = s * 100.f;          /* the mark's size, board-100 */
     UtttRough r = uttt_rough_default(seed * 97 + 3);
     r.roughness = 1.5f * powf(8.9f / s100, .75f) * (s100 / 8.9f);
     r.bowing    = 1.0f * powf(8.9f / s100, .85f);
-
-    UtttPen p = *base;
-    p.ink = kind == UTTT_O ? INK_O : INK_X;
-    p.w   = base->w * s / 100.f;           /* stroke lives in board units */
 
     /* LOPSIDED. Nobody draws an X whose two strokes cross in the middle with
      * equal arms; the hand starts the second one a bit off and overshoots.
@@ -82,16 +85,28 @@ static void mark_in(UtttDL *d, int kind, float x, float y, float s,
      * makes a small mark read as drawn rather than stamped. It was dropped in
      * the port and the board's X's came out ruled. */
     const float L = .3f;
-    int k = 0, k2 = 0;
+    int k = 0;
+    *k2 = 0;
     if (kind == UTTT_X) {
-        k  = uttt_rough_line(&r, 10 - L*4, 11, 94 + L*3, 92 - L*6,
-                             pts, 1400, &np, sp, 2);
-        k2 = uttt_rough_line(&r, 92 + L*4, 12, 13 - L*5, 90 + L*5,
-                             pts, 1400, &np, sp + k, 2);
+        k   = uttt_rough_line(&r, 10 - L*4, 11, 94 + L*3, 92 - L*6, pts, cap, &np, sp, 2);
+        *k2 = uttt_rough_line(&r, 92 + L*4, 12, 13 - L*5, 90 + L*5, pts, cap, &np, sp + k, 2);
     } else {
-        k  = uttt_rough_ellipse(&r, 50 + L*4, 50 - L*3, 78 - L*10, 76 + L*8,
-                                pts, 1400, &np, sp, 2);
+        k   = uttt_rough_ellipse(&r, O_CX, O_CY, O_W, O_H, pts, cap, &np, sp, 2);
     }
+    return k;
+}
+
+static void mark_in(UtttDL *d, int kind, float x, float y, float s,
+                    int32_t seed, float t, const UtttPen *base)
+{
+    UtttPt pts[1400];
+    UtttSpan sp[4];
+    UtttPen p = *base;
+    p.ink = kind == UTTT_O ? INK_O : INK_X;
+    p.w   = base->w * s / 100.f;           /* stroke lives in board units */
+
+    int k2, k = mark_geom(kind, s, seed, pts, 1400, sp, &k2);
+    int np = sp[k + k2 - 1].first + sp[k + k2 - 1].n;
     for (int i = 0; i < np; i++) {
         pts[i].x = x + pts[i].x * s / 100.f;
         pts[i].y = y + pts[i].y * s / 100.f;
@@ -382,11 +397,59 @@ int uttt_cell_rect(int mv, float r[4])
     return 1;
 }
 
+/* THE O STAYS A RING. rough.js closes an ellipse by running past its start
+ * by a seeded overlap and curving in to 98% and then 90% of the radius, and
+ * at the "you are" mark's size its roughness is 2.66 - so for some seeds the
+ * tail sweeps up to two thirds of a turn further on a handful of points, and
+ * the curve through them cuts a CHORD across the inside of the circle (owner,
+ * TestFlight 1.0(6): "the drawn O sometimes draws lines right through the
+ * circle"). This asks whether every sample of both passes lies in the ring
+ * [1 - UTTT_O_RING, 1 + UTTT_O_RING] of the O's own size - its median
+ * distance from the centre, in the ellipse's own proportions, so an O that
+ * came out small or large is judged against itself. */
+int uttt_o_in_ring(int32_t seed, float s)
+{
+    UtttPt pts[1400];
+    UtttSpan sp[4];
+    int k2, k = mark_geom(UTTT_O, s, seed, pts, 1400, sp, &k2);
+    int np = sp[k - 1].first + sp[k - 1].n;
+    if (np < 8) return 0;
+    float rho[1400], sorted[1400];
+    for (int i = 0; i < np; i++) {
+        float dx = (pts[i].x - O_CX) / (O_W * .5f), dy = (pts[i].y - O_CY) / (O_H * .5f);
+        rho[i] = sorted[i] = sqrtf(dx * dx + dy * dy);
+    }
+    for (int i = 1; i < np; i++)                        /* median: insertion */
+        for (int j = i; j > 0 && sorted[j - 1] > sorted[j]; j--) {
+            float t = sorted[j]; sorted[j] = sorted[j - 1]; sorted[j - 1] = t;
+        }
+    float med = sorted[np / 2];
+    for (int i = 0; i < np; i++)
+        if (fabsf(rho[i] / med - 1.f) > UTTT_O_RING) return 0;
+    return 1;
+}
+
+/* THE SEED THE "YOU ARE" MARK IS DRAWN WITH: the game's own for an X, and
+ * for an O the first of a fixed walk from it whose O stays a ring - a pure
+ * function of the seed, so both phones pick the same one. Around half of all
+ * seeds pass, so the walk is a try or two; 64 without one (never seen in a
+ * million) keeps the game's own. */
+int32_t uttt_mark_seed(int mark, int32_t seed)
+{
+    if (mark != UTTT_O) return seed;
+    for (int i = 0; i < 64; i++) {
+        int32_t s = (int32_t)((uint32_t)seed + (uint32_t)i * 7919u);
+        if (s && uttt_o_in_ring(s, UTTT_MARK_SIDE)) return s;
+    }
+    return seed;
+}
+
 int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float calm)
 {
+    seed = uttt_mark_seed(mark, seed);
     UtttPen p = uttt_pen_92();
     p.w = uttt_pen_92().w * 1.15f;
-    mark_in(d, mark, .06f, .06f, .88f, seed, 1.f, &p);
+    mark_in(d, mark, .06f, .06f, UTTT_MARK_SIDE, seed, 1.f, &p);
     (void)calm;
     return 0;
 }

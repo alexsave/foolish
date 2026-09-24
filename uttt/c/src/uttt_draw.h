@@ -65,8 +65,22 @@ int uttt_hit(float u, float v);
  * its own. 0 for an `mv` off the board. */
 int uttt_cell_rect(int mv, float r[4]);
 
-/* One mark on its own, for the "you are" indicator. */
+/* One mark on its own, for the "you are" indicator: UTTT_MARK_SIDE of the
+ * unit square, drawn with uttt_mark_seed(mark, seed). */
 int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float calm);
+
+#define UTTT_MARK_SIDE .88f
+/* How far off its own median radius an O's ink may stray, as a fraction. */
+#define UTTT_O_RING    .15f
+
+/* 1 when the O drawn with `seed` at side `s` (of the unit square) keeps every
+ * sample of its ink within UTTT_O_RING of its own radius - no tail cutting a
+ * chord across it. */
+int uttt_o_in_ring(int32_t seed, float s);
+
+/* The seed uttt_draw_mark actually draws `mark` with: `seed` for an X; for
+ * an O the first of a fixed walk from `seed` that stays a ring. */
+int32_t uttt_mark_seed(int mark, int32_t seed);
 
 /* The rulebook door - a hachured square with a book on it. Lives in
  * uttt_rule.c. Returns 0, or -1 if it ran out of room.

@@ -232,6 +232,49 @@ int main(void)
     for (int b = 0; b <= 9; b++)
         ok(uti_place_name(b, 0)[0] && uti_place_name(b, 1)[0], "every block is named");
 
+    /* ---- THE "YOU ARE" O STAYS A RING (owner, TestFlight 1.0(6): "the drawn
+     * O sometimes draws lines right through the circle"). Off the display
+     * list the host fills: every quad's two ends are samples of the stroke,
+     * and each must sit within 20% of the O's own mean distance from its
+     * centre - a tail cutting a chord across the inside lands at half of it.
+     * Over 20,000 game seeds, as the host draws them (model.seed &+ 4). */
+    {
+        int ring = 1, worst_seed = 0;
+        float worst = 0.f;
+        const float cx = .06f + (50.f + .3f * 4.f) * .0088f, cy = .06f + (50.f - .3f * 3.f) * .0088f;
+        const float rx = (78.f - .3f * 10.f) * .0044f, ry = (76.f + .3f * 8.f) * .0044f;
+        for (int32_t g = 1; g <= 20000; g++) {
+            int m = uti_draw_mark(2, g + 4);
+            const UtiPoly *q = uti_polys();
+            const float *pt = uti_points();
+            static float rho[4000];
+            int n = 0;
+            for (int i = 0; i < m && n + 2 <= 4000; i++) {
+                if (q[i].n != 4) continue;                       /* the quads */
+                const float *a = &pt[q[i].first * 2];
+                float sx[2] = { (a[0] + a[2]) * .5f, (a[4] + a[6]) * .5f };
+                float sy[2] = { (a[1] + a[3]) * .5f, (a[5] + a[7]) * .5f };
+                for (int e = 0; e < 2; e++) {
+                    float dx = (sx[e] - cx) / rx, dy = (sy[e] - cy) / ry;
+                    rho[n++] = sqrtf(dx * dx + dy * dy);
+                }
+            }
+            float lo = 1e9f, hi = 0.f, sum = 0.f;
+            for (int i = 0; i < n; i++) { lo = fminf(lo, rho[i]); hi = fmaxf(hi, rho[i]); sum += rho[i]; }
+            float mid = n ? sum / n : 1.f;
+            float off = fmaxf(1.f - lo / mid, hi / mid - 1.f);
+            if (off > worst) { worst = off; worst_seed = g; }
+            if (n < 20 || off > .20f) ring = 0;
+        }
+        printf("  you-are O: worst stray %.3f of its radius (game seed %d)\n", worst, worst_seed);
+        ok(ring, "the you-are O never cuts across itself, over 20,000 game seeds");
+        int a = uti_draw_mark(2, 12345);
+        double s1 = 0; for (int i = 0; i < uti_point_count() * 2; i++) s1 += uti_points()[i];
+        int b = uti_draw_mark(2, 12345);
+        double s2 = 0; for (int i = 0; i < uti_point_count() * 2; i++) s2 += uti_points()[i];
+        ok(a == b && s1 == s2, "and one seed draws one O, every time");
+    }
+
     /* ---- the rulebook door. Its shape is rough.js's and its numbers are
      * docs/UI.html's, so what is worth asserting is the handful of things a
      * renderer would silently get wrong if the geometry ever came back to
