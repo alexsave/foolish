@@ -283,13 +283,6 @@ static void test_board(void) {
     mt_score(rows, N, &o, s);
     CHECK(fabs(s[M("blue")].maxsnap - 300) < 1e-6, "a door that jumped 300pt, against the real bottom (%.2f)",
           s[M("blue")].maxsnap);
-    /* THE HOST'S CARD SHIFT is followed: the bottom 6.7pt lower from 0.5s */
-    take(rows, N, 99, 0);
-    for (int32_t i = 30; i < N; i++) { rows[i].green += 6.7; rows[i].y[M("blue")] += 6.7; }
-    mt_fix_bottom(rows, N, 920, 0);
-    CHECK(fabs(rows[40].green - 926.7) < 1e-9, "the card's own shift is the drawer's (%.2f)", rows[40].green);
-    mt_score(rows, N, &o, s);
-    CHECK(s[M("blue")].maxstep < 1e-9, "a door riding the card does not step (%.2f)", s[M("blue")].maxstep);
     /* PAST COMPACT the card slides whole: its top 100pt below where a
      * 290pt drawer's is, the door riding the card - not off the drawer */
     take(rows, N, 99, 0);

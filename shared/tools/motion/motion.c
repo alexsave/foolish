@@ -294,8 +294,7 @@ void mt_default_opts(MtScoreOpts *o) {
 void mt_fix_bottom(MtRow *rows, int32_t n, double y, double hc) {
     for (int32_t i = 0; i < n; i++) {
         if (rows[i].red == MT_NONE) continue;
-        if (hc > 0 && rows[i].red + hc > y) rows[i].green = rows[i].red + hc;
-        else if (rows[i].green == MT_NONE || fabs(rows[i].green - y) > MT_CARD_SHIFT) rows[i].green = y;
+        rows[i].green = hc > 0 && rows[i].red + hc > y ? rows[i].red + hc : y;
     }
 }
 

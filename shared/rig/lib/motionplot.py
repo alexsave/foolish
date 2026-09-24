@@ -53,12 +53,7 @@ if BOT > 0:
         R = num(r["red"])
         if R is not None:
             r["painted_green"] = r["green"]
-            G = num(r["green"])
-            # motion.c mt_fix_bottom: past compact the card; within MT_CARD_SHIFT (8pt) the painted bar
-            if HC > 0 and R + HC > BOT:
-                r["green"] = "%.2f" % (R + HC)
-            elif G is None or abs(G - BOT) > 8.0:
-                r["green"] = "%.2f" % BOT
+            r["green"] = "%.2f" % (R + HC if HC > 0 and R + HC > BOT else BOT)
 t = [float(r["t"]) for r in rows]
 
 
