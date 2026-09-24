@@ -12,8 +12,8 @@ anchors `motion score` uses - and the board's width and height from its four
 corner squares beside the drawer's height (motion.c mt_board_w/h: the mean of
 the pairs seen). A mark that rides its anchor is a flat line in the third
 panel and every step in it is a snap; a board that follows the drawer changes
-size only where the drawer does. --bottom Y: the drawer's bottom is the
-screen's (`motion score --bottom`), not the painted green bar.
+size only where the drawer does. --bottom Y[:HC]: the drawer's bottom is
+the screen's (`motion score --bottom`), not the painted green bar.
 
 Plotting only: the numbers come from the C tool, and this reads its fixed-layout
 table. No scoring lives here.
@@ -36,7 +36,7 @@ ap.add_argument("--span", type=float, default=1.2)
 ap.add_argument("--lead", type=float, default=0.15)
 ap.add_argument("--whole", action="store_true")
 ap.add_argument("--anchor", action="append", default=[])
-ap.add_argument("--bottom", type=float, default=0)
+ap.add_argument("--bottom", default="0")
 a = ap.parse_args()
 for s in a.anchor:
     k, v = s.split("="); ANCHOR[k] = v
@@ -44,11 +44,13 @@ for s in a.anchor:
 lines = [l.split() for l in open(a.tbl) if not l.startswith("#")]
 head, rows = lines[0], [dict(zip(lines[0], r)) for r in lines[1:]]
 num = lambda s: None if s in ("-", None) else float(s)
-if a.bottom > 0:
+BOT, HC = (float(v) for v in (a.bottom.split(":") + ["0"])[:2])
+if BOT > 0:
     for r in rows:
-        if num(r["red"]) is not None:
+        R = num(r["red"])
+        if R is not None:
             r["painted_green"] = r["green"]
-            r["green"] = "%.2f" % a.bottom
+            r["green"] = "%.2f" % (R + HC if HC > 0 and R + HC > BOT else BOT)
 t = [float(r["t"]) for r in rows]
 
 
