@@ -291,6 +291,10 @@ void mt_default_opts(MtScoreOpts *o) {
         o->scaled[m] = o->anchor[m] == MT_ANCHOR_MID && m != mt_mark(0, MT_Q_ONE);
 }
 
+void mt_fix_bottom(MtRow *rows, int32_t n, double y) {
+    for (int32_t i = 0; i < n; i++) if (rows[i].red != MT_NONE) rows[i].green = y;
+}
+
 double mt_host_progress(double t, double response) {
     double w = 2 * M_PI / response;
     return t > 0 ? 1 - (1 + w * t) * exp(-w * t) : 0.0;
@@ -322,10 +326,12 @@ static int cmpd(const void *a, const void *b) {
     return x < y ? -1 : x > y;
 }
 
-int32_t mt_score(const MtRow *rows, int32_t n, const MtScoreOpts *o, MtScore out[MT_MARKS]) {
-    memset(out, 0, sizeof(MtScore) * MT_MARKS);
+/* THE WINDOW a take is scored over: from three frames before the first move
+ * of either bar (more than 1pt from its first reading) to `span` after it, or
+ * the whole take. Returns 0 when nothing moved and `whole` is off. */
+static int32_t window(const MtRow *rows, int32_t n, const MtScoreOpts *o,
+                      int32_t *a_out, int32_t *z_out, double *t0_out) {
     if (n < 4) return 0;
-    /* THE FIRST MOVE of either bar (more than 1pt from its first reading) */
     int32_t i0 = -1;
     for (int32_t b = 0; b < 2; b++) {
         double v0 = MT_NONE;
@@ -342,6 +348,15 @@ int32_t mt_score(const MtRow *rows, int32_t n, const MtScoreOpts *o, MtScore out
     double t0 = rows[i0].t;
     int32_t a = i0 - 3 < 0 ? 0 : i0 - 3, z = a;
     while (z < n && rows[z].t <= t0 + span) z++;
+    *a_out = a; *z_out = z; *t0_out = t0;
+    return 1;
+}
+
+int32_t mt_score(const MtRow *rows, int32_t n, const MtScoreOpts *o, MtScore out[MT_MARKS]) {
+    memset(out, 0, sizeof(MtScore) * MT_MARKS);
+    int32_t a, z;
+    double t0;
+    if (!window(rows, n, o, &a, &z, &t0)) return 0;
     int32_t L = z - a;
     double *A = malloc(sizeof(double) * (size_t)L), *Y = malloc(sizeof(double) * (size_t)L);
     double *E = malloc(sizeof(double) * (size_t)L), *HH = malloc(sizeof(double) * (size_t)L);
@@ -389,6 +404,11 @@ int32_t mt_score(const MtRow *rows, int32_t n, const MtScoreOpts *o, MtScore out
         for (int32_t k = 1; k < L; k++)
             if (A[k] != MT_NONE && A[k - 1] != MT_NONE && fabs(A[k] - A[k - 1]) > 0.5) last = k;
         for (int32_t k = fs; k <= ls; k++) if (Y[k] == MT_NONE) s->miss++;
+        for (int32_t k = 0; k < L; k++) {
+            const MtRow *r = &rows[a + k];
+            if (Y[k] == MT_NONE || r->red == MT_NONE || r->green == MT_NONE) continue;
+            if (Y[k] < r->red - MT_OFF_TOL || Y[k] > r->green + MT_OFF_TOL) s->off++;
+        }
         for (int32_t k = 1; k < L; k++) {
             if (Y[k] == MT_NONE || Y[k - 1] == MT_NONE || A[k] == MT_NONE || A[k - 1] == MT_NONE) continue;
             double d = (Y[k] - A[k]) - (Y[k - 1] - A[k - 1]);
@@ -443,6 +463,130 @@ int32_t mt_score(const MtRow *rows, int32_t n, const MtScoreOpts *o, MtScore out
     }
     free(A); free(Y); free(E); free(HH);
     return 1;
+}
+
+/* ---- the board's size --------------------------------------------------- */
+
+static double pair_mean(double a0, double a1, double b0, double b1) {
+    int32_t k = 0;
+    double sum = 0;
+    if (a0 != MT_NONE && a1 != MT_NONE) { sum += a1 - a0; k++; }
+    if (b0 != MT_NONE && b1 != MT_NONE) { sum += b1 - b0; k++; }
+    return k ? sum / k : MT_NONE;
+}
+
+/* the board's corner marks: the cyan squares, split by quadrant */
+static void corners(int32_t *tl, int32_t *tr, int32_t *bl, int32_t *br) {
+    static int32_t c[4] = {-1, -1, -1, -1};
+    if (c[0] < 0) {
+        c[0] = mt_mark_by_name("cyan_tl"); c[1] = mt_mark_by_name("cyan_tr");
+        c[2] = mt_mark_by_name("cyan_bl"); c[3] = mt_mark_by_name("cyan_br");
+    }
+    *tl = c[0]; *tr = c[1]; *bl = c[2]; *br = c[3];
+}
+
+double mt_board_w(const MtRow *r) {
+    int32_t tl, tr, bl, br;
+    corners(&tl, &tr, &bl, &br);
+    return pair_mean(r->x[tl], r->x[tr], r->x[bl], r->x[br]);
+}
+
+double mt_board_h(const MtRow *r) {
+    int32_t tl, tr, bl, br;
+    corners(&tl, &tr, &bl, &br);
+    return pair_mean(r->y[tl], r->y[bl], r->y[tr], r->y[br]);
+}
+
+int32_t mt_reversals(const double *v, int32_t n, double tol) {
+    int32_t dir = 0, revs = 0;
+    double ext = MT_NONE, start = MT_NONE;
+    for (int32_t i = 0; i < n; i++) {
+        if (v[i] == MT_NONE) continue;
+        if (start == MT_NONE) { start = ext = v[i]; continue; }
+        if (dir == 0) {
+            if (fabs(v[i] - start) > tol) { dir = v[i] > start ? 1 : -1; ext = v[i]; }
+        } else if ((v[i] - ext) * dir > 0) {
+            ext = v[i];
+        } else if ((ext - v[i]) * dir > tol) {
+            revs++; dir = -dir; ext = v[i];
+        }
+    }
+    return revs;
+}
+
+static void series(const double *v, int32_t n, double *maxstep, double *rough, double *first, double *last) {
+    *maxstep = 0; *rough = 0; *first = *last = MT_NONE;
+    for (int32_t k = 0; k < n; k++) {
+        if (v[k] == MT_NONE) continue;
+        if (*first == MT_NONE) *first = v[k];
+        *last = v[k];
+        if (k >= 1 && v[k - 1] != MT_NONE && fabs(v[k] - v[k - 1]) > *maxstep) *maxstep = fabs(v[k] - v[k - 1]);
+        if (k >= 2 && v[k - 1] != MT_NONE && v[k - 2] != MT_NONE) {
+            double d2 = v[k] - 2 * v[k - 1] + v[k - 2];
+            *rough += d2 * d2;
+        }
+    }
+}
+
+int32_t mt_board(const MtRow *rows, int32_t n, const MtScoreOpts *o, MtBoard *out) {
+    memset(out, 0, sizeof *out);
+    int32_t a, z;
+    double t0;
+    if (!window(rows, n, o, &a, &z, &t0)) return 0;
+    int32_t L = z - a;
+    if (L < 2) return 0;
+    double *w = malloc(sizeof(double) * (size_t)L), *h = malloc(sizeof(double) * (size_t)L);
+    double *d = malloc(sizeof(double) * (size_t)L);
+    for (int32_t k = 0; k < L; k++) {
+        const MtRow *r = &rows[a + k];
+        w[k] = mt_board_w(r);
+        h[k] = mt_board_h(r);
+        d[k] = r->red == MT_NONE || r->green == MT_NONE ? MT_NONE : r->green - r->red;
+        if (w[k] != MT_NONE || h[k] != MT_NONE) out->seen++;
+        if (w[k] != MT_NONE && h[k] != MT_NONE && fabs(w[k] - h[k]) > out->maxskew)
+            out->maxskew = fabs(w[k] - h[k]);
+    }
+    series(w, L, &out->w_maxstep, &out->w_rough, &out->w_first, &out->w_last);
+    series(h, L, &out->h_maxstep, &out->h_rough, &out->h_first, &out->h_last);
+    if (o->side) {
+        /* the bars' distance plus a constant is the drawer's height the side
+         * table is keyed by; the constant is fitted 0..24pt as mt_score does */
+        double *e = malloc(sizeof(double) * (size_t)L);
+        for (int32_t pass = 0; pass < 2; pass++) {
+            double *v = pass ? h : w;
+            int32_t k0 = -1;
+            for (int32_t k = 0; k < L; k++) if (v[k] != MT_NONE && d[k] != MT_NONE) { k0 = k; break; }
+            if (k0 < 0) continue;
+            double best = 1e300; int32_t bc = 0;
+            for (int32_t c = 0; c <= 24; c++) {
+                double cost = 0, prev = MT_NONE;
+                for (int32_t k = 0; k < L; k++) {
+                    if (v[k] == MT_NONE || d[k] == MT_NONE) continue;
+                    double r = v[k] - v[k0] - side_at(o, d[k] + c) + side_at(o, d[k0] + c);
+                    if (prev != MT_NONE) cost += (r - prev) * (r - prev);
+                    prev = r;
+                }
+                if (cost < best) { best = cost; bc = c; }
+            }
+            double mstep = 0, mabs = 0, prev = MT_NONE;
+            for (int32_t k = 0; k < L; k++) {
+                e[k] = MT_NONE;
+                if (v[k] == MT_NONE || d[k] == MT_NONE) { prev = MT_NONE; continue; }
+                e[k] = v[k] - v[k0] - side_at(o, d[k] + bc) + side_at(o, d[k0] + bc);
+                if (fabs(e[k]) > mabs) mabs = fabs(e[k]);
+                if (prev != MT_NONE && fabs(e[k] - prev) > mstep) mstep = fabs(e[k] - prev);
+                prev = e[k];
+            }
+            if (pass) { out->h_res_step = mstep; out->h_res_max = mabs; }
+            else { out->w_res_step = mstep; out->w_res_max = mabs; }
+        }
+        free(e);
+    }
+    out->w_rev = mt_reversals(w, L, MT_REV_TOL);
+    out->h_rev = mt_reversals(h, L, MT_REV_TOL);
+    out->drawer_rev = mt_reversals(d, L, MT_REV_TOL);
+    free(w); free(h); free(d);
+    return out->seen > 0;
 }
 
 /* ---- pace -------------------------------------------------------------- */

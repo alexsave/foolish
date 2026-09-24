@@ -73,9 +73,51 @@ typedef struct {
     double maxstep;       /* the largest change of the offset, snap or not   */
     /* bars.py, on the mark's y */
     double jerk, floor, stray, travel;
+    /* frames the mark sits outside the visible drawer (above the red bar or
+     * below the green, by more than MT_OFF_TOL): it has left the drawer */
+    int32_t off;
 } MtScore;
+#define MT_OFF_TOL 2.0
+
+/* THE BOARD'S SIZE, from the four corner squares (cyan_tl/tr/bl/br): its
+ * width (the top pair's and the bottom pair's x distance, averaged over the
+ * pairs seen) and its height (the left and right pairs' y distance), per
+ * frame, over the same window as mt_score. A size that follows the drawer
+ * changes direction only where the drawer does, so a reversal the drawer
+ * does not make is a wobble; a step is the largest one-frame change. */
+#define MT_REV_TOL 1.0      /* pt: a turn smaller than this is not a reversal */
+typedef struct {
+    int32_t seen;           /* frames with a width or a height                 */
+    double w_maxstep, h_maxstep;
+    int32_t w_rev, h_rev;   /* reversals of the width and of the height        */
+    int32_t drawer_rev;     /* reversals of the drawer's height (green - red)  */
+    double w_rough, h_rough;   /* sum of squared second differences         */
+    double w_first, w_last, h_first, h_last;
+    double maxskew;         /* the largest |width - height| seen               */
+    /* with a side table (MtScoreOpts.side): the size against the product's
+     * side for the drawer's height at that frame, the two agreeing at the
+     * take's first frame (the corner squares sit a constant inside the
+     * board, so the size is the side less a constant) - the largest one-frame step of the residual
+     * (what the size did that the drawer did not ask for), and its largest
+     * absolute value */
+    double w_res_step, h_res_step, w_res_max, h_res_max;
+} MtBoard;
+
+/* The board's size in one frame (MT_NONE when no pair is seen). */
+double mt_board_w(const MtRow *r);
+double mt_board_h(const MtRow *r);
+/* Score the size over a take; returns 0 when the window is empty. */
+int32_t mt_board(const MtRow *rows, int32_t n, const MtScoreOpts *o, MtBoard *out);
+/* Reversals of a series with hysteresis `tol` (MT_NONE entries skipped). */
+int32_t mt_reversals(const double *v, int32_t n, double tol);
 
 void mt_default_opts(MtScoreOpts *o);
+/* THE DRAWER'S BOTTOM IS THE SCREEN'S: a Messages drawer's lower edge never
+ * moves (only its top does), but the green bar is painted by the content,
+ * so content that jumps takes the bar with it and then scores as riding it.
+ * This puts every row's green at `y` points (where the drawer's bottom is at
+ * rest) wherever the red bar is seen, so the bottom anchor is the real one. */
+void mt_fix_bottom(MtRow *rows, int32_t n, double y);
 /* Score one take; returns 0 when nothing moved and `whole` is off. */
 int32_t mt_score(const MtRow *rows, int32_t n, const MtScoreOpts *o, MtScore out[MT_MARKS]);
 /* The host spring's progress t seconds in (critically damped). */

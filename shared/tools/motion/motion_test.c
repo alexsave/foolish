@@ -203,6 +203,88 @@ static void test_score(void) {
           && fabs(back[37].y[M("orange")] - rows[37].y[M("orange")]) < 0.006, "a row reads back");
 }
 
+/* THE BOARD'S SIZE: four corner squares on a board whose side is half the
+ * drawer (side(h) = h / 2), centred on the drawer, the squares 6pt inside. */
+static void board_take(MtRow *rows, int32_t n, double jump_at, double jump, double wobble_at) {
+    take(rows, n, 99, 0);
+    for (int32_t i = 0; i < n; i++) {
+        MtRow *r = &rows[i];
+        double h = r->green - r->red, side = h / 2 + (r->t >= jump_at ? jump : 0);
+        if (r->t >= wobble_at && r->t < wobble_at + 0.05) side += 3;     /* grows back 3pt for 3 frames */
+        double cx = 110, cy = (r->red + r->green) / 2, e = side / 2 - 6;
+        r->x[M("cyan_tl")] = cx - e; r->y[M("cyan_tl")] = cy - e;
+        r->x[M("cyan_tr")] = cx + e; r->y[M("cyan_tr")] = cy - e;
+        r->x[M("cyan_bl")] = cx - e; r->y[M("cyan_bl")] = cy + e;
+        r->x[M("cyan_br")] = cx + e; r->y[M("cyan_br")] = cy + e;
+    }
+}
+
+static void test_board(void) {
+    enum { N = 90 };
+    static MtRow rows[N];
+    static double side[1001];
+    for (int32_t h2 = 0; h2 <= 1000; h2++) side[h2] = h2 / 2.0;
+    MtScoreOpts o;
+    mt_default_opts(&o);
+    MtBoard b;
+
+    /* reversals, with the hysteresis */
+    double v1[] = {0, 5, 10, 9.5, 12}, v2[] = {0, 5, 10, 8, 12}, v3[] = {0, MT_NONE, 5, 3, MT_NONE, 1};
+    CHECK(mt_reversals(v1, 5, MT_REV_TOL) == 0, "a half-point dip is not a reversal");
+    CHECK(mt_reversals(v2, 5, MT_REV_TOL) == 2, "down 2 and up again is two (%d)", mt_reversals(v2, 5, MT_REV_TOL));
+    CHECK(mt_reversals(v3, 6, MT_REV_TOL) == 1, "gaps are skipped (%d)", mt_reversals(v3, 6, MT_REV_TOL));
+
+    /* the size follows the drawer: it shrinks the whole way, once */
+    board_take(rows, N, 99, 0, 99);
+    CHECK(fabs(mt_board_w(&rows[0]) - (rows[0].green - rows[0].red) / 2 + 12) < 1e-9, "width from the corners %.3f",
+          mt_board_w(&rows[0]));
+    CHECK(fabs(mt_board_h(&rows[50]) - mt_board_w(&rows[50])) < 1e-9, "a square board");
+    rows[30].x[M("cyan_tl")] = rows[30].y[M("cyan_tl")] = MT_NONE;   /* one corner hidden: the other pair */
+    CHECK(fabs(mt_board_w(&rows[30]) - (rows[30].x[M("cyan_br")] - rows[30].x[M("cyan_bl")])) < 1e-9,
+          "one pair is enough");
+    CHECK(mt_board(rows, N, &o, &b), "a take with a board scores");
+    CHECK(b.w_rev == 0 && b.h_rev == 0 && b.drawer_rev == 0, "no reversals (%d %d %d)", b.w_rev, b.h_rev, b.drawer_rev);
+    double follow = b.w_maxstep;
+    CHECK(follow > 4 && follow < 40, "a spring's step is the drawer's half (%.2f)", follow);
+    o.side = side; o.side_h0 = 0; o.side_h1 = 1000;
+    mt_board(rows, N, &o, &b);
+    CHECK(b.w_res_step < 0.01 && b.h_res_step < 0.01 && b.w_res_max < 0.01,
+          "against the side it follows (%.3f %.3f)", b.w_res_step, b.w_res_max);
+
+    /* a 10pt jump of the size while the drawer moves: a step the side did
+     * not ask for */
+    board_take(rows, N, 0.3, 10, 99);
+    mt_board(rows, N, &o, &b);
+    CHECK(fabs(b.w_res_step - 10) < 0.5 && fabs(b.h_res_step - 10) < 0.5, "a 10pt jump (%.3f %.3f)",
+          b.w_res_step, b.h_res_step);
+
+    /* a wobble: the size grows back 3pt for three frames as the drawer
+     * settles, while it only shrinks - two reversals the drawer did not make */
+    board_take(rows, N, 99, 0, 1.0);
+    mt_board(rows, N, &o, &b);
+    CHECK(b.w_rev == 2 && b.h_rev == 2 && b.drawer_rev == 0, "a wobble reverses twice (%d %d %d)",
+          b.w_rev, b.h_rev, b.drawer_rev);
+    o.side = NULL;
+
+    /* OFF THE DRAWER: a mark below the green bar for five frames */
+    MtScore s[MT_MARKS];
+    take(rows, N, 99, 0);
+    for (int32_t i = 40; i < 45; i++) rows[i].y[M("blue")] = rows[i].green + 10;
+    mt_score(rows, N, &o, s);
+    CHECK(s[M("blue")].off == 5 && s[M("orange")].off == 0, "five frames off (%d)", s[M("blue")].off);
+    /* the bottom that the content painted is not the drawer's */
+    take(rows, N, 99, 0);
+    for (int32_t i = 0; i < N; i++) { rows[i].green -= 300; rows[i].y[M("blue")] -= 300; }   /* all jumped up */
+    mt_score(rows, N, &o, s);
+    CHECK(s[M("blue")].maxstep < 1e-9, "riding the painted bar looks still");
+    for (int32_t i = 45; i < N; i++) { rows[i].green += 300; rows[i].y[M("blue")] += 300; }  /* back at 0.75s */
+    mt_fix_bottom(rows, N, 920);
+    CHECK(rows[10].green == 920 && rows[60].green == 920, "the bottom is the screen's");
+    mt_score(rows, N, &o, s);
+    CHECK(fabs(s[M("blue")].maxsnap - 300) < 1e-6, "a door that jumped 300pt, against the real bottom (%.2f)",
+          s[M("blue")].maxsnap);
+}
+
 /* PACE: a stroke laid in ten 60 Hz frames against the same stroke in three
  * frames 120 ms apart - what the owner saw as "choppy". A ruler square in
  * the box is not ink. */
@@ -253,6 +335,7 @@ static void test_pace(void) {
 int main(void) {
     test_find();
     test_score();
+    test_board();
     test_pace();
     printf("motion: %d checks, %d failed\n", checks, fails);
     return fails != 0;
