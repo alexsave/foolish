@@ -237,7 +237,7 @@ static int marks(int argc, char **argv)
  * shipped changes for this): uttt_ink's quads run A,B at the segment's start
  * and C,E at its end, so a quad whose start is the previous quad's end
  * continues the stroke, and each 9-point disc belongs to the quad before it. */
-typedef struct { int first, n; uint32_t rgb; float a; } Stroke;
+typedef struct { int first, n; uint32_t rgb; float a; int ribbon; } Stroke;
 
 static int strokes(const UtttDL *d, Stroke *out, int cap)
 {
@@ -246,20 +246,30 @@ static int strokes(const UtttDL *d, Stroke *out, int cap)
     for (int i = 0; i < d->n_poly; i++) {
         const UtttPoly *p = &d->poly[i];
         const UtttPt *q = &d->pt[p->first];
+        if (p->n != 4 && p->n != 9) {
+            /* a flat ribbon (uttt_ribbon: the doors) is one polygon already */
+            if (ns < cap) {
+                out[ns].first = i; out[ns].n = 1; out[ns].rgb = p->rgba & 0xffffff00u;
+                out[ns].a = chan(p->rgba, 3); out[ns].ribbon = 1; ns++;
+            }
+            ex = ey = 1e9f;
+            continue;
+        }
         if (p->n == 4) {
             float sx = (q[0].x + q[1].x) * .5f, sy = (q[0].y + q[1].y) * .5f;
             int cont = ns && fabsf(sx - ex) < 1e-5f && fabsf(sy - ey) < 1e-5f
                        && (out[ns - 1].rgb == (p->rgba & 0xffffff00u));
             if (!cont && ns < cap) {
                 out[ns].first = i; out[ns].n = 0;
-                out[ns].rgb = p->rgba & 0xffffff00u; out[ns].a = 0.f; ns++;
+                out[ns].rgb = p->rgba & 0xffffff00u; out[ns].a = 0.f; out[ns].ribbon = 0; ns++;
             }
             ex = (q[2].x + q[3].x) * .5f; ey = (q[2].y + q[3].y) * .5f;
             out[ns - 1].a += chan(p->rgba, 3);
         }
-        if (ns) out[ns - 1].n = i + 1 - out[ns - 1].first;
+        if (ns && !out[ns - 1].ribbon) out[ns - 1].n = i + 1 - out[ns - 1].first;
     }
     for (int k = 0; k < ns; k++) {                     /* mean quad alpha */
+        if (out[k].ribbon) continue;
         int nq = 0;
         for (int i = out[k].first; i < out[k].first + out[k].n; i++) nq += d->poly[i].n == 4;
         out[k].a = nq ? out[k].a / nq : 1.f;
@@ -320,14 +330,20 @@ static int outline(const UtttDL *d, const Stroke *s, UtttPt *o, int cap)
  *   e  one outline polygon per stroke, at the stroke's alpha
  *   f  one layer for the whole sheet, alpha by MAX across strokes: nothing
  *      darkens, not even two strokes crossing */
-static int composite(Img *m, const UtttDL *d, float ox, float oy, float sz, const char *mode)
+static int composite(Img *m, const UtttDL *d, float ox, float oy, float sx, float sy, const char *mode)
 {
     const int W = m->w, H = m->h;
     char k = mode[0];
-    if (!strchr("abcdef", k) || mode[1]) return 1;
+    if (!strchr("abcdef", k)) return 1;
+    /* "b.9": the ink's alpha raised from the pen's .8 to .9 - EVERY stroke's
+     * alpha multiplied by .9/.8 and capped at 1, so a faded mark (.8 x .34),
+     * a minor grid line (.5) and a big mark (.62) rise in proportion and keep
+     * their weights relative to a mark; only what would pass 1 (the major
+     * lines' .9 pass, the win line's .92) stops at opaque. */
+    float gain = mode[1] ? (float)atof(mode + 1) / .8f : 1.f;
     static Stroke st[20000];
     int ns = strokes(d, st, 20000);
-    fprintf(stderr, "strokes %d\n", ns);
+    for (int s = 0; s < ns; s++) st[s].a = fminf(1.f, st[s].a * gain);
     float *cov = malloc((size_t)W * H * sizeof(float));
     float *lay = calloc((size_t)W * H, sizeof(float));
     float *lrgb = k == 'f' ? calloc((size_t)W * H * 3, sizeof(float)) : NULL;
@@ -343,15 +359,16 @@ static int composite(Img *m, const UtttDL *d, float ox, float oy, float sz, cons
         while (s < ns && st[s].first + st[s].n <= i) s++;
         if (s < ns && i >= st[s].first) continue;
         UtttDL one = *d; one.poly = (UtttPoly *)&d->poly[i]; one.n_poly = 1;
-        fill_cg(m, &one, ox, oy, sz, sz, 0);
+        fill_cg(m, &one, ox, oy, sx, sy, 0);
     }
 
     for (int s = 0; s < ns; s++) {
         float col[3] = { chan(st[s].rgb, 0), chan(st[s].rgb, 1), chan(st[s].rgb, 2) };
         Box bb = { W, H, 0, 0 };
         if (k == 'e') {
-            int n = outline(d, &st[s], q, 2048);
-            for (int j = 0; j < n; j++) { q[j].x = ox + q[j].x * sz; q[j].y = oy + q[j].y * sz; }
+            int n = st[s].ribbon ? map_poly(d, st[s].first, q, 2048, 0, 0, 1, 1)
+                                 : outline(d, &st[s], q, 2048);
+            for (int j = 0; j < n; j++) { q[j].x = ox + q[j].x * sx; q[j].y = oy + q[j].y * sy; }
             Box b = coverage(q, n, cov, W, H);
             for (int y = b.y0; y < b.y1; y++)
                 for (int x = b.x0; x < b.x1; x++) {
@@ -362,9 +379,9 @@ static int composite(Img *m, const UtttDL *d, float ox, float oy, float sz, cons
             continue;
         }
         for (int i = st[s].first; i < st[s].first + st[s].n; i++) {
-            int n = map_poly(d, i, q, 2048, ox, oy, sz, sz);
+            int n = map_poly(d, i, q, 2048, ox, oy, sx, sy);
             Box b = coverage(q, n, cov, W, H);
-            float a = chan(d->poly[i].rgba, 3);
+            float a = fminf(1.f, chan(d->poly[i].rgba, 3) * gain);
             for (int y = b.y0; y < b.y1; y++)
                 for (int x = b.x0; x < b.x1; x++) {
                     float cv = cov[y * W + x];
@@ -435,7 +452,7 @@ static int board(int argc, char **argv)
     fprintf(stderr, "seed %d plies %d over %d polys %d%s\n", seed, g.n_plies, g.over, d.n_poly,
             rc ? " OVERFLOW" : "");
     if (!strcmp(mode, "cg")) fill_cg(&m, &d, pad, pad, side * sc, side * sc, 0);
-    else if (composite(&m, &d, pad, pad, side * sc, mode)) {
+    else if (composite(&m, &d, pad, pad, side * sc, side * sc, mode)) {
         fprintf(stderr, "unknown mode %s\n", mode); return 2;
     }
     img_write(&m, argv[6]);
@@ -454,8 +471,31 @@ static int moves(int argc, char **argv)
     return 0;
 }
 
+/* `look piece mark|door MODE SCALE OUT`: the you-are O (46 points, the
+ * owner's game's seed) or an SE Copy-code door (141.5 x 46), composited by
+ * MODE like `board`. */
+static int piece(int argc, char **argv)
+{
+    if (argc < 6) return 2;
+    int door = !strcmp(argv[2], "door");
+    const char *mode = argv[3];
+    float sc = (float)atof(argv[4]);
+    float w = door ? 141.5f : 46.f, h = 46.f;
+    int pad = (int)(6 * sc);
+    Img m = img_new((int)ceilf(w * sc) + 2 * pad, (int)ceilf(h * sc) + 2 * pad);
+    img_paper(&m);
+    UtttDL d; uttt_dl_init(&d, pool, 600000, polys, 160000);
+    if (door) uttt_draw_door(&d, w, h);
+    else uttt_draw_mark(&d, UTTT_O, 1790219291 + 4, 0.f);
+    if (!strcmp(mode, "cg")) fill_cg(&m, &d, pad, pad, w * sc, h * sc, 0);
+    else if (composite(&m, &d, pad, pad, w * sc, h * sc, mode)) return 2;
+    img_write(&m, argv[5]);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
+    if (argc > 1 && !strcmp(argv[1], "piece")) return piece(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "moves")) return moves(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "door"))  return door(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "marks")) return marks(argc, argv);
