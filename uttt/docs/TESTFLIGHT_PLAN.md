@@ -923,3 +923,33 @@ All as settled (sections 12-14): join, a normal move (pre: the mark and the outl
 - One Pro Max process that opened the finished game expanded, then the rules, then Again, logged a lifetime peak of 47.4 MB (the SE's equivalent 31.1); an in-play expanded open plus the rules peaks at 24.6. Not attributed.
 - The strip's word column is narrow on both sizes: "Nobody / has / taken it / yet" and "You / win" wrap a word a line (section 12's open item).
 - The rules sheet's "Back" is a plain text button, not a pen-drawn door.
+
+## 16. Closing the release-candidate items (2026-09-23/24, iPhone SE and Pro Max)
+
+Screens, logs and scripts are in the session scratchpad `film9/` (the items) and `film10/` (the first motion take).
+
+### The send hint after Send from a + drawer (not fixed - no earlier signal exists)
+
+Probed on the SE with every notification the extension process receives (a nil-name observer) and a per-frame poll of the selection, the active conversation, the view and window sizes, key-window state and the presentation style.
+From a + drawer the human never touched (the Release path: + opens it and the invitation auto-stages), NOTHING reaches the process between the tap on Send and `didStartSending`, about 1.1 s later on the simulator; `willResignActive`, the drawer's dismissal and the keyboard all come after it.
+When the human HAS touched the drawer first (the DEBUG seat picker), a private keyboard-focus notification (`_UISceneDidResignTargetOrAncestorOfKeyboardEventDeferringEnvironmentNotification`) fires about 0.17 s after the tap, but it also fires on a tap into the compose field and never on the Release path, so it is not used.
+foolish has no earlier signal either (its hint follows the same send state).
+The hint stays hidden at `didStartSending`, the earliest reliable signal; a bound (tapped) drawer still hides it at the echo. Worth re-measuring on a device, where the host's send latency may differ.
+
+### Done
+
+- The ready test is the kernel's (`utm_drawer_up`: window height, view height, expanded): a view as tall as its window never counts (the + drawer's first appear, b270e078), an expanded drawer short of it always does (the SE's tapped drawer, 647 of 667), a compact one must be 40 points short. SE log: `appear 375x667 expanded` rejected, `375x647 expanded` counted, no ready fault. Tests in `uttt_msg_test` and `ios-smoke`, three mutations red.
+- The rules sheet has no Back (owner): a swipe down closes the rules only (checked on both sizes), and VoiceOver's escape closes it too.
+- The strip's word column: a width-limited board leaves 40 points beside it on the SE (375x260) and Pro Max (440x343) strips and no band above or below it, so the column carries the headline alone; its second line fades in past 60 points (`uttt_sheet` `sub_alpha`). "Waiting" now stands alone on the SE strip instead of "Nobody / has / taken it / yet"; the band carries both lines once open. "You / win" stays two lines (a two-word stamp). Four mutations red.
+- "Copy code" on the end screen (owner): `uttt_replay_url` writes `https://www.foolish.cards/uttt/<base32 of uttt_encode>` and `uttt_replay_read` reads it back (lower case and a trailing query too); `uttt_test` round-trips every finished test game through the URL, four mutations red (including the address spelled out, so a typo in the macro fails). `uttt_sheet` places the door (`copy`) between Again and the rulebook at their height, expanded only (the strip's 46-point column has no room for words and the board is never shrunk); it reads "Copied" once the link is on the pasteboard. Checked on the Pro Max: the pasteboard held `https://www.foolish.cards/uttt/NSA7JGY2RPATFLZNH2ETBDNTUICA`.
+- **The `/uttt/[code]` web route does not exist yet**: it must be built before the copied link resolves. The code carries the moves only (not the seed), which is enough to replay the game but not to redraw the phone's exact pen strokes.
+
+### Memory
+
+The 47.4 MB Pro Max peak did not reproduce.
+The same sequence (the finished game opened expanded by tapping it, the rules, a swipe down, Again) peaks at 25.5 MB on the SE and 28.5 MB on the Pro Max in a fresh process; with the first drawer dragged open, the rules opened there, collapsed, sent, and the bubble tapped within 1.5 s so ONE process hosts both drawers (the 47.4 run's shape), 32.4 MB on the Pro Max, the extra 4 MB from the 3x board repainted as the drag hands new heights.
+Both are inside floor + 10.
+
+### Open
+
+- The owner's flick-collapse jumps (build 1.0(5) on an iPhone 15 Pro Max). One simulator take (`film10/takes/pm_end_fcol_1`, the end screen): a hard flick takes the drawer past compact to the minimised grab bar; the board's centre rides the drawer's centre to 0.3 pt, and the corners step 10-15 pt a frame only because the board's side follows the host's height (32-68 pt a frame). The simulator does not show the jumps yet; the full sweep (every gesture, every screen, both sizes, width and height as metrics in the C tool) and a device capture tool are still to do.
