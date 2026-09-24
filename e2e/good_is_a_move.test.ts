@@ -16,7 +16,7 @@
  * that same TypeScript test, so the kernel was mirroring a mirror.
  *
  * WHAT THIS FILE HOLDS, on a board built so that a bot's ONLY legal move is a
- * good that leaves the bout open:
+ * good that leaves the bout open, over a fully covered table:
  *
  *   - the kernel reports the move it has no event for: TableCommit.goods_changed
  *     is true while n_events is 0, which is the whole of the fix's wire;
@@ -31,7 +31,13 @@
  *   - and the negative controls: a cycle that moves no goods says so, and a good
  *     that DOES close the bout nets the mask back to where it started (set by
  *     handle_good, cleared by the round transition, one operation) and is
- *     broadcast by its sweep's events, as it always was.
+ *     broadcast by its sweep's events, as it always was;
+ *   - and THE SILENT GOOD, which all of the above is about only when the table
+ *     is FULLY COVERED. A bot's good over an uncovered attack is a bot declining
+ *     to throw in - no human can say it - and the owner's rule is "I don't want
+ *     to see any sword->checkbox rotation animations unless all cards are
+ *     covered": it bundles, costs no beat, is never pushed, and the cover or
+ *     pickup that follows it carries no check on any of its boards.
  *
  * The last test is the TypeScript-ism itself. Both server gates and the browser
  * harness that mirrors them are read as source and held to asking goods_changed,
@@ -45,6 +51,7 @@ import { readFileSync } from 'node:fs';
 import * as L from '../sdk/ts/gen/game_layout.bots.ts';
 import { clientTable } from '../sdk/ts/table/client_table.ts';
 import { animRolesGoodsOpening } from '../sdk/ts/wasm/bots.ts';
+import { encodeAction } from '../sdk/ts/wire/awire.ts';
 import { pushToSequence } from '../src/state/pushSequence.ts';
 import { fixture, fixtureTable, PLAYING, type TableFixture } from './helpers/table_fixture.ts';
 
@@ -171,6 +178,80 @@ test('a cycle that moves no goods says so, and a good that closes the bout is an
     // Which is the point of the gate being an OR: this push goes out on its
     // events, that one on its goods, and no broadcast site has to know which.
     assert.ok(closed.products.nEvents > 0 || closed.products.goodsChanged, 'it is broadcast either way');
+});
+
+/**
+ * THE SILENT GOOD. Seat 0 (human) has attacked 7c and it is still UNCOVERED;
+ * seat 1 (human) defends; seats 2 and 3 are bots holding no seven, so `good` is
+ * each one's whole menu. Over an uncovered table that good is a bot declining to
+ * throw in - no human can say it (play_can_say_good) - and the owner's rule is
+ * "I don't want to see any sword->checkbox rotation animations unless all cards
+ * are covered". So it must not be a push, a beat, or a badge.
+ */
+const uncoveredBout = (): TableFixture => fixture()
+    .seats([{ id: 'a', name: 'Ann' }, { id: 'b', name: 'Bea' },
+        { id: 'c', name: 'Cid', brain: 'cordite' }, { id: 'd', name: 'Dot', brain: 'cordite' }])
+    .status(PLAYING)
+    .attacker(0).defender(1)
+    .hand(0, '6h 7h').hand(1, 'Qs 9c').hand(2, 'Kd').hand(3, 'Ks')
+    .table('7c')
+    .deck('Ts Jd').trump('As')
+    .build();
+
+test('a good over an uncovered table is silent: bundled, unpaced, and never pushed', () => {
+    const { drive, delay, products } = cycle(uncoveredBout());
+
+    assert.equal(drive.n, 2, 'BOTH bots said good in ONE cycle: silent goods bundle again');
+    assert.deepEqual([...drive.seats].sort(), [2, 3], 'the two bots whose only move is a good');
+    assert.equal(drive.stop, L.BOT_STOP_NO_ELIGIBLE, 'and the cycle ran out of bots rather than stopping on a visible move');
+    assert.equal(delay, 0, 'no beat is paid for a move nobody is shown');
+    assert.equal(products.nEvents, 0, 'no card moved');
+    assert.equal(products.goodsChanged, false, 'and the SHOWN goods did not change, so the adapter\'s gate sends nothing');
+    assert.equal(products.status, L.GAME_STATUS_PLAYING, 'the bout is still open');
+});
+
+test('the cover that follows silent goods turns no badge: its first board carries no checks', () => {
+    const { products } = cycle(uncoveredBout());
+    const t = fixtureTable();
+    assert.equal(t.load(products.state, products.roster), L.TABLE_OK, 'the committed row reloads');
+    assert.equal(t.setDealSeed(SEED), L.TABLE_OK);
+    const rc = t.act('b', encodeAction({ kind: 'cover', cards: [{ suit: 0, value: 11 }], attack_cards: [{ suit: 2, value: 6 }] }), null, 0);
+    assert.ok(rc >= 0 && rc !== L.TABLE_REJECTED, `Bea covers 7c with Qs (${rc}, reject ${t.reject()})`);
+    const cover = t.commit(GID, 3, NOW);
+    assert.ok(typeof cover !== 'number', `commit products (${cover})`);
+    assert.ok(cover.nEvents > 0, 'the cover flies a card, so it is pushed');
+
+    const bytes = t.push(GID, 0);
+    assert.ok(bytes instanceof Uint8Array, `the human seat's push is built (${bytes})`);
+    const read = clientTable().readPush(bytes as Uint8Array, { as3: true, gameId: GID, version: 3 });
+    assert.ok(read && read.steps.length > 0, 'a client reads the cover as a stream of steps');
+    // anim_goods_opening reads the FIRST step's mask. handle_cover used to clear
+    // the goods only after its snapshot, so this step wore both silent checks and
+    // the opening beat flipped both badges the moment the cover landed.
+    assert.equal(read.steps[0].view.goodMask, 0, 'the cover step\'s own board wears no check');
+    const opening = animRolesGoodsOpening({ defender: 1, firstAttacker: 0, goodMask: 0 }, read.steps[0].view.goodMask);
+    assert.equal(opening, null, 'so the kernel\'s opening beat has no badge to turn');
+    assert.equal(read.final.goodMask, 0, 'nor does the board it settles on');
+});
+
+test('a pickup that follows silent goods turns no badge either', () => {
+    // The same ordering, in handle_pickup: its snapshot is taken with the table
+    // already swept into the defender's hand, and it used to still carry the
+    // silent goods - the first board of the stream, so the opening beat's.
+    const { products } = cycle(uncoveredBout());
+    const t = fixtureTable();
+    assert.equal(t.load(products.state, products.roster), L.TABLE_OK, 'the committed row reloads');
+    assert.equal(t.setDealSeed(SEED), L.TABLE_OK);
+    const rc = t.act('b', encodeAction({ kind: 'pickup' }), null, 0);
+    assert.ok(rc >= 0 && rc !== L.TABLE_REJECTED, `Bea picks up (${rc}, reject ${t.reject()})`);
+    const pickup = t.commit(GID, 3, NOW);
+    assert.ok(typeof pickup !== 'number', `commit products (${pickup})`);
+    const bytes = t.push(GID, 0);
+    assert.ok(bytes instanceof Uint8Array, `the human seat's push is built (${bytes})`);
+    const read = clientTable().readPush(bytes as Uint8Array, { as3: true, gameId: GID, version: 3 });
+    assert.ok(read && read.steps.length > 0, 'a client reads the pickup as a stream of steps');
+    assert.equal(read.steps[0].view.goodMask, 0, 'the pickup step\'s own board wears no check');
+    for (const step of read.steps) assert.equal(step.view.goodMask, 0, 'nor does any later step');
 });
 
 test('every broadcast site asks goods_changed, not nEvents alone', () => {

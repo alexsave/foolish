@@ -98,7 +98,7 @@ test('packed pipeline: legal awire moves apply, bump the version, rewrite the bl
         pickup: 'pickup',
     };
 
-    let applied = 0, broadcasted = 0, plainGoods = 0;
+    let applied = 0, broadcasted = 0, plainGoods = 0, silentGoods = 0;
     for (let step = 0; step < 14; step++) {
         const prev = await mustReadTable(gameId);
         if (prev.status !== L.GAME_STATUS_PLAYING) break;
@@ -121,16 +121,27 @@ test('packed pipeline: legal awire moves apply, bump the version, rewrite the bl
         assert.ok(chk.ok, `card conservation after packed ${pm.kind} at step ${step}: ${chk.detail}`);
 
         const fresh = animations(logStart);
-        {
-            // EVERY APPLIED MOVE IS BROADCAST, and a plain good is the one that
+        // A SILENT GOOD: said while an attack is still uncovered. No human can
+        // say one (play_human_menu offers good only over a fully covered table),
+        // but this walk picks from the kernel's raw menu, which offers it - that
+        // is how a bot declines to throw in. It shows nobody anything, so it is
+        // broadcast to nobody: TableCommit.goods_changed compares
+        // game_shown_good_mask, which is 0 while an attack is uncovered, and the
+        // owner's rule is no badge flip "unless all cards are covered".
+        const coveredBefore = prev.battles.length > 0 && prev.battles.every((b) => b.defense !== null);
+        if (pm.kind === 'good' && !coveredBefore) {
+            assert.equal(fresh.length, 0, `a silent good broadcasts nothing (step ${step})`);
+            silentGoods++;
+        } else {
+            // EVERY OTHER APPLIED MOVE IS BROADCAST, and a plain good is the one that
             // used not to be. This branch used to open with its opposite - "a
             // move producing zero events broadcasts nothing - only a plain good"
             // - which was the adapter's `nEvents > 0` gate written down as an
             // expectation. A good flies no card and so emits no event, and that
             // gate threw its push away; TableCommit.goods_changed sends it now,
             // and what goes out is a push whose stream is EMPTY and whose
-            // trailer board carries the mask. There is no move left that a
-            // client is told nothing about.
+            // trailer board carries the mask. The one move a client is told
+            // nothing about is the silent good above, which it could not see.
             broadcasted++;
             assert.equal(fresh.length, seats.length + 1,
                 `one payload per human + one spectator payload (step ${step} ${pm.kind})`);
@@ -190,7 +201,7 @@ test('packed pipeline: legal awire moves apply, bump the version, rewrite the bl
     }
     assert.ok(applied >= 6, `exercised enough packed moves (${applied}, seed=${rng.seed})`);
     assert.ok(broadcasted >= 3, `enough eventful broadcasts (${broadcasted}, seed=${rng.seed})`);
-    console.error(`[packed_action] ${applied} moves applied, ${broadcasted} broadcast, ${plainGoods} of them a plain good's empty stream`);
+    console.error(`[packed_action] ${applied} moves applied, ${broadcasted} broadcast, ${plainGoods} of them a plain good's empty stream, ${silentGoods} silent good(s) broadcast to nobody`);
 });
 
 test('packed pipeline: an illegal move is REJECTED with a reject code - no version bump, no blob write, no broadcast', async () => {
