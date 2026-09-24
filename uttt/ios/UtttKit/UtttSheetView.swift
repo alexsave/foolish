@@ -29,8 +29,14 @@ public class UtttSheetView: UIView {
     private let clip = CALayer()
     private var handed: CGFloat = 0
     private var from: CGFloat?
-    private var travel: CGFloat = 0
-    /// The run is an expand (the host's growth), not the auto-collapse.
+    /// How far the clip reaches past the sheet through a run: up by the
+    /// auto-collapse's push (the drawer's top is above the pushed sheet),
+    /// down by a followed shrink's travel (the drawer's bottom, where the
+    /// doors ride, is below the sheet laid out short).
+    private var reachUp: CGFloat = 0
+    private var reachDown: CGFloat = 0
+    /// The drawer is growing toward the laid-out height (an expand), not
+    /// shrinking toward it.
     private(set) var grows = false
     private var token: Int?
 #if DEBUG
@@ -67,8 +73,9 @@ public class UtttSheetView: UIView {
         token = slide?.observe { [weak self] run in
             guard let self else { return }
             self.from = run?.from
-            self.grows = run.map { !$0.pushes } ?? false
-            self.travel = run.map { $0.pushes ? $0.travel : 0 } ?? 0
+            self.grows = run.map { !$0.shrinks } ?? false
+            self.reachUp = run.map { $0.pushes ? $0.travel : 0 } ?? 0
+            self.reachDown = run.map { !$0.pushes && $0.shrinks ? $0.travel : 0 } ?? 0
             self.setNeedsLayout()
         }
     }
@@ -106,7 +113,7 @@ public class UtttSheetView: UIView {
             if UtttRuler.on { UtttLog.note("ruler-height", String(format: "%.1f clock %d", h, MotionRuler.clockMs)) }
 #endif
             _ = slide?.heard(h, after: before)
-            if before > 0, h > before + 1, slide?.run == nil { rideHostGrowth(to: h) }
+            if before > 0, abs(h - before) > 1, slide?.run == nil { rideHost(to: h, jump: abs(h - before) > 60) }
         }
         UIView.performWithoutAnimation {
             CATransaction.begin()
@@ -114,7 +121,7 @@ public class UtttSheetView: UIView {
             let ph = max(Self.paperHeight, bounds.height)
             paper.frame = CGRect(x: 0, y: bounds.height - ph, width: bounds.width, height: ph)
             content.frame = inner
-            clip.frame = CGRect(x: 0, y: -travel, width: inner.width, height: inner.height + travel)
+            clip.frame = CGRect(x: 0, y: -reachUp, width: inner.width, height: inner.height + reachUp + reachDown)
 #if DEBUG
             rulerBottom?.frame = content.bounds
             rulerTop?.frame = content.bounds
@@ -126,33 +133,46 @@ public class UtttSheetView: UIView {
         }
     }
 
-    /// THE HOST IS GROWING THE DRAWER ON ITS OWN SPRING (a tap to expand, a
-    /// drag released upward): the height it handed is the final one, and its
-    /// animation on this view's bounds says how it gets there - read off the
-    /// layer (mass, stiffness, damping, velocity, duration, the height it
-    /// started from), and handed to the slide with the kernel's curve for
-    /// it (`uti_spring_left`), so every rider follows the drawer's edge on
-    /// the same composited frames. A height handed with no animation (a
-    /// finger on the handle) is followed by the layout alone.
-    private func rideHostGrowth(to h: CGFloat) {
+    /// THE HOST IS MOVING THE DRAWER ON ITS OWN SPRING, either way: a tap to
+    /// expand, a drag released upward, or a drag released DOWNWARD - a
+    /// flick lets go mid-drawer, Messages hands the final height once and
+    /// animates the rest itself (TESTFLIGHT_PLAN 17: laid out short at once,
+    /// the board shrank in one frame and the doors jumped to mid-drawer).
+    /// The height it handed is the final one, and its animation on this
+    /// view's bounds says how it gets there - read off the layer (mass,
+    /// stiffness, damping, velocity, duration, the height it started from),
+    /// and handed to the slide with the kernel's curve for it
+    /// (`uti_spring_left`), so every rider follows the drawer's edges on the
+    /// same composited frames. A height handed with no animation (a finger
+    /// on the handle) is followed by the layout alone.
+    private func rideHost(to h: CGFloat, jump: Bool) {
         guard let slide else { return }
         for key in layer.animationKeys() ?? [] {
             guard let a = layer.animation(forKey: key) as? CASpringAnimation,
                   a.keyPath == "bounds.size", a.isAdditive,
-                  let from = (a.fromValue as? NSValue)?.cgSizeValue, from.height < -1
+                  let from = (a.fromValue as? NSValue)?.cgSizeValue, abs(from.height) > 1
             else { continue }
-            let travel = -from.height
+            /* additive: the presentation is the model plus `from` easing
+             * to zero, so the drawer started `from.height` off the new one */
+            let travel = abs(from.height)
             let m = Float(a.mass), k = Float(a.stiffness), c = Float(a.damping)
             let v0 = Float(a.initialVelocity)
-            UtttLog.note("expand", String(format: "%.1f -> %.1f over %.3fs (m %.2f k %.1f c %.2f v0 %.2f)",
-                                          h - travel, h, a.duration, m, k, c, v0))
-            slide.grew(from: h - travel, to: h, duration: a.duration,
-                       begin: { [weak self] in self?.layer.animation(forKey: key)?.beginTime ?? 0 },
-                       left: { t in
-                           CGFloat(uti_spring_left(Float(travel), m, k, c, v0, Int32((t * 1000).rounded())))
-                       })
+            UtttLog.note("host-move", String(format: "%.1f -> %.1f over %.3fs (m %.2f k %.1f c %.2f v0 %.2f)",
+                                             h + from.height, h, a.duration, m, k, c, v0))
+            slide.follow(from: h + from.height, to: h, duration: a.duration,
+                         begin: { [weak self] in self?.layer.animation(forKey: key)?.beginTime ?? 0 },
+                         left: { t in
+                             CGFloat(uti_spring_left(Float(travel), m, k, c, v0, Int32((t * 1000).rounded())))
+                         })
             return
         }
+#if DEBUG
+        let keys = (layer.animationKeys() ?? []).map { k -> String in
+            let a = layer.animation(forKey: k)
+            return "\(k):\(type(of: a as Any)):\((a as? CAPropertyAnimation)?.keyPath ?? "-")"
+        }
+        if jump { UtttLog.note("host-still", String(format: "%.1f, animations %@", h, keys.joined(separator: " "))) }
+#endif
     }
 
     /// The screen: lay everything out for `size` (the drawer less its safe

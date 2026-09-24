@@ -73,9 +73,13 @@ public final class CollapseSlide {
         public let from: CGFloat
         public let to: CGFloat
         public let began: CFTimeInterval
-        /// The collapse: this slide pushes the hosting view itself. An
-        /// expand is the host's motion, and the riders only follow it.
-        public var pushes: Bool { to < from }
+        /// The auto-collapse: this slide pushes the hosting view itself.
+        /// A run that FOLLOWS the host's own animation (a tap to expand, a
+        /// drag released either way) pushes nothing; the riders only follow.
+        public let pushes: Bool
+        /// The drawer is getting shorter (the riders take the collapse's
+        /// poses, `s` > 0), whoever moves it.
+        public var shrinks: Bool { to < from }
         /// How far the drawer goes, either way.
         public var travel: CGFloat { abs(from - to) }
     }
@@ -225,8 +229,10 @@ public final class CollapseSlide {
     /// compact height and the push land in one transaction. A height that
     /// grows while a slide runs (a finger caught the drawer) ends it.
     public func heard(_ height: CGFloat, after previous: CGFloat) -> Bool {
-        if run != nil {
-            if height > previous + 1 { end() }
+        if let r = run {
+            /* A new height under a run the host drives is a new gesture or
+             * a new animation of the host's: this one is over. */
+            if !r.pushes || height > previous + 1 { end() }
             return false
         }
         guard armed, previous - height > flip else { return false }
@@ -247,7 +253,7 @@ public final class CollapseSlide {
         curve = { [push] t in push(travel, t) }
         runDuration = duration
         hostBegin = nil
-        let r = Run(from: from, to: to, began: CACurrentMediaTime())
+        let r = Run(from: from, to: to, began: CACurrentMediaTime(), pushes: true)
         run = r
         let pushes = samples()
         if let layer = host?.layer {
@@ -270,28 +276,34 @@ public final class CollapseSlide {
         DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: w)
     }
 
-    /// THE EXPAND: the host handed a taller height and is animating the
-    /// extension's view there itself, on its own spring (TESTFLIGHT_PLAN 14).
-    /// The sheet is laid out at the new height from the first frame; every
-    /// rider is carried on the render server by where the layout for the
-    /// drawer's height at that moment would put it - `left(t)`, the points
-    /// the host still has to grow `t` seconds in, read off its own animation
-    /// and evaluated by the product - over the host's `duration`, from the
-    /// host's own begin time (`begin`, 0 while its transaction is open), so
-    /// the two run on the same composited frames. Nothing is pushed.
-    public func grew(from: CGFloat, to: CGFloat, duration: Double,
-                     begin: @escaping () -> CFTimeInterval,
-                     left: @escaping (Double) -> CGFloat) {
+    /// THE HOST'S OWN MOVE, either way: the host handed a new height and is
+    /// animating the extension's view there itself, on its own spring - a
+    /// tap to expand, or a drag released up or down (a flick: the finger
+    /// lets go mid-drawer and the host carries the rest; TESTFLIGHT_PLAN 14,
+    /// 17). The sheet is laid out at the new height from the first frame;
+    /// every rider is carried on the render server by where the layout for
+    /// the drawer's height at that moment would put it - `left(t)`, the
+    /// points the host still has to go `t` seconds in (positive, toward
+    /// `to`), read off its own animation and evaluated by the product - over
+    /// the host's `duration`, from the host's own begin time (`begin`, 0
+    /// while its transaction is open), so the two run on the same composited
+    /// frames. Nothing is pushed.
+    public func follow(from: CGFloat, to: CGFloat, duration: Double,
+                       begin: @escaping () -> CFTimeInterval,
+                       left: @escaping (Double) -> CGFloat) {
         if run != nil { end() }
         armed = false
-        curve = { t in -left(t) }
+        /* s: the drawer less the laid-out height - positive while a shrink
+         * has yet to land, negative while a growth has. */
+        let sign: CGFloat = to < from ? 1 : -1
+        curve = { t in sign * left(t) }
         runDuration = duration
         hostBegin = begin
-        let r = Run(from: from, to: to, began: CACurrentMediaTime())
+        let r = Run(from: from, to: to, began: CACurrentMediaTime(), pushes: false)
         run = r
         #if DEBUG
-        NSLog("collapse-slide grew %.1f -> %.1f", from, to)
-        note("grew \(from) -> \(to)")
+        NSLog("collapse-slide follow %.1f -> %.1f", from, to)
+        note("follow \(from) -> \(to)")
         startProbe()
         #endif
         entries = entries.filter { $0.value.view != nil }
