@@ -1,7 +1,7 @@
 // CollapseSlide - a Messages app's auto-collapse, run by the render server.
 //
-// THE PROBLEM (the sister product measured it first: ios/FoolishKit/Messages/
-// CollapseLayer.swift, docs/COLLAPSE_MSE.md). When the app asks Messages for
+// THE PROBLEM (measured first by the older sibling product's collapse layer;
+// see docs/COLLAPSE_MSE.md). When the app asks Messages for
 // the compact drawer, Messages hands the extension its new height once, about
 // 20ms before the drawer slides, and then moves the extension's view at the
 // composite rate (~90Hz on the simulator). The extension renders at ~60Hz.
