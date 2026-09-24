@@ -273,7 +273,6 @@ static float clampf(float x, float lo, float hi) { return x < lo ? lo : x > hi ?
  * strip where the board is width-limited there is no band above or below it
  * either (a 260-point SE drawer leaves only the grab handle's margins). */
 #define SHEET_SUB_NEED   60.f
-#define SHEET_COPY_SHARE .45f     /* the replay door's part of the door row   */
 /* THE SEND HINT'S CORNER. Messages' Send button is above the drawer's top
  * right, and the hint (shared/swift/MessagesKit/SendHint.swift: a 29-point
  * arrow lifted 9 into the margin, 3 of air and a 15-point caption, from
@@ -399,14 +398,16 @@ void uttt_sheet(const UtttSheetIn *in, UtttSheet *o)
     o->again[1] = o->rulebook[1];
     o->again[2] = fmaxf(o->rulebook[0] - SHEET_AGAIN_GAP - SHEET_MARGIN, 0.f);
     o->again[3] = SHEET_DOOR;
-    /* THE REPLAY DOOR takes SHEET_COPY_SHARE of the row Again had, on the
-     * rulebook's side, one SHEET_AGAIN_GAP from each: Again stays the wider,
-     * first door (it is the one most people want), and both keep the
-     * rulebook's height. */
+    /* THE REPLAY DOOR AND AGAIN ARE ONE WIDTH (owner, TestFlight 1.0(6):
+     * "again and copy code buttons are not same width, they should be").
+     * The row Again had, less one SHEET_AGAIN_GAP between them, is halved,
+     * and both doors take that one number - so there is no second width for
+     * them to disagree by. Copy code sits on the rulebook's side, one gap
+     * from each, and both keep the rulebook's height. */
     if (in->copy) {
         float row = o->again[2];
-        float cw  = fmaxf((row - SHEET_AGAIN_GAP) * SHEET_COPY_SHARE, 0.f);
-        o->again[2] = fmaxf(row - SHEET_AGAIN_GAP - cw, 0.f);
+        float cw  = fmaxf((row - SHEET_AGAIN_GAP) * .5f, 0.f);
+        o->again[2] = cw;
         o->copy[0] = o->again[0] + o->again[2] + SHEET_AGAIN_GAP;
         o->copy[1] = o->rulebook[1];
         o->copy[2] = cw;

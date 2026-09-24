@@ -553,7 +553,7 @@ int main(void)
             uttt_sheet(&(UtttSheetIn){ .w = D[di].w, .h = D[di].h, .kind = UTTT_SHEET_PLAY, .words = 1 }, &n);
             const float *r = o.rulebook, *a = o.again, *c = o.copy;
             if (!(a[0] >= o.hpad - 1e-3f && a[0] + a[2] + 8.f <= c[0] && c[0] + c[2] + 8.f <= r[0]
-                  && c[1] == r[1] && c[3] == r[3] && a[3] == r[3] && c[2] >= 100.f && c[2] < a[2]
+                  && c[1] == r[1] && c[3] == r[3] && a[3] == r[3] && c[2] >= 100.f
                   && n.copy[2] == 0.f && n.again[2] > a[2])) {
                 copy_in = 0;
                 printf("  copy %.0fx%.0f: again %.1f+%.1f copy %.1f+%.1f rulebook %.1f\n",
@@ -561,6 +561,22 @@ int main(void)
             }
         }
         OK(copy_in, "the replay door sits between Again and the rulebook, at their height, only when asked");
+
+        /* AGAIN AND COPY CODE ARE ONE WIDTH (owner, TestFlight 1.0(6)), at
+         * every drawer height on every phone width - compact, expanded and
+         * every frame of a drag between, not just the seven sheets above. */
+        int same_w = 1;
+        for (float w = 320.f; w <= 440.f && same_w; w += 1.f)
+            for (float h = 240.f; h <= 900.f; h += 1.f) {
+                UtttSheet o;
+                uttt_sheet(&(UtttSheetIn){ .w = w, .h = h, .kind = UTTT_SHEET_PLAY, .words = 1, .copy = 1 }, &o);
+                if (o.again[2] != o.copy[2] || o.again[2] <= 0.f) {
+                    same_w = 0;
+                    printf("  %.0fx%.0f: again %.2f copy %.2f\n", w, h, o.again[2], o.copy[2]);
+                    break;
+                }
+            }
+        OK(same_w, "Again and Copy code are the same width at every drawer height and phone width");
         OK(words_room, "and on every strip the words get a column of at least 32 points");
 
         UtttSheet c, e;
