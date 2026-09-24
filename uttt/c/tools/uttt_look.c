@@ -442,8 +442,21 @@ static int board(int argc, char **argv)
     return 0;
 }
 
+/* `look moves CODE`: the seed and the moves, for the preview harness's
+ * --seed and --moves (so a screenshot can show any finished game). */
+static int moves(int argc, char **argv)
+{
+    UtttGame g; int32_t seed = 0;
+    if (argc < 3 || !uttt_replay_read(argv[2], &g, &seed)) return 1;
+    printf("%d ", seed);
+    for (int i = 0; i < g.n_plies; i++) printf(i ? ",%d" : "%d", g.move[i]);
+    printf("\n");
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
+    if (argc > 1 && !strcmp(argv[1], "moves")) return moves(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "door"))  return door(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "marks")) return marks(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "board")) return board(argc, argv);
