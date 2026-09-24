@@ -140,9 +140,35 @@ int main(void)
             if (d.pt[i].y > hi[1]) hi[1] = d.pt[i].y;
         }
         OK(ink, "outline: every stroke is the highlighter's colour");
-        OK(fabsf(lo[0] - r4[0]) < .012f && fabsf(lo[1] - r4[1]) < .012f
-           && fabsf(hi[0] - (r4[0] + r4[2])) < .012f && fabsf(hi[1] - (r4[1] + r4[3])) < .012f,
-           "outline: it runs round the tint's own rect");
+        /* ROUND THE TINT'S OWN RECT, within a hand's overshoot: a side's ends
+         * and middle stray by the short strokes' rough.js offset (.02 x 1.5),
+         * plus the pen */
+        OK(fabsf(lo[0] - r4[0]) < .05f && fabsf(lo[1] - r4[1]) < .05f
+           && fabsf(hi[0] - (r4[0] + r4[2])) < .05f && fabsf(hi[1] - (r4[1] + r4[3])) < .05f,
+           "outline: it runs round the tint's own rect, within a hand's overshoot");
+        /* A HAND-DRAWN ROUGH.JS RECTANGLE, not a ruled one (owner): over five
+         * seeds, the top side strays from its line by more than the tamed
+         * outline's worst (.0069), and every box has a side past a corner
+         * by more than the tamed one's worst (.0075). */
+        {
+            float dev = 0.f; int crossed = 1;
+            for (int sd = 1; sd <= 5; sd++) {
+                uttt_dl_init(&d, PT, 400000, PO, 60000);
+                uttt_draw_outline(&d, 4, sd, 1.f);
+                float over = 0.f, top = 0.f;
+                for (int i = 0; i < d.n_pt; i++) {
+                    float x = d.pt[i].x, y = d.pt[i].y;
+                    float o[4] = { r4[0] - x, r4[1] - y, x - r4[0] - r4[2], y - r4[1] - r4[3] };
+                    for (int q = 0; q < 4; q++) if (o[q] > over) over = o[q];
+                    if (x > r4[0] + r4[2] * .2f && x < r4[0] + r4[2] * .8f && y < r4[1] + r4[3] * .25f
+                        && fabsf(y - r4[1]) > top) top = fabsf(y - r4[1]);
+                }
+                dev += top / 5.f;
+                if (over < .012f) crossed = 0;
+            }
+            OK(dev > .009f, "outline: its sides wobble like a short stroke's, not a long grid line's");
+            OK(crossed, "outline: every box has a side run past its corner");
+        }
         uttt_dl_init(&d, PT, 400000, PO, 60000);
         uttt_draw_outline(&d, 4, 7, .5f);
         int half = d.n_poly;

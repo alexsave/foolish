@@ -297,7 +297,21 @@ int uttt_draw_settle(UtttDL *d, const UtttGame *g, int32_t seed, float fall_t, f
  * after the other, as a hand goes round a box - to `t`. The rect and the
  * colour are uttt_wash_rect and uttt_wash_rgba, the tint's, so the outline
  * and the tint that replaces it at Send cannot disagree by a point. The seed
- * is the sheet's and the block's, so both phones draw the same wobble. */
+ * is the sheet's and the block's, so both phones draw the same wobble.
+ *
+ * A HAND-DRAWN ROUGH.JS RECTANGLE (owner, 2026-09-23: "the gold outline is
+ * not rough enough"). It was tamed three ways, and each is undone:
+ *   - its roughness, bowing and offset fell with the side's length, the way
+ *     the long grid lines' do; now it takes what a short stroke gets (a mark
+ *     or a door: rough.js's own defaults at the pen's 1.5), so a block-sized
+ *     box wobbles like one drawn with the same hand;
+ *   - its four sides met at the corners; at that offset every end of every
+ *     side now lands its own seeded distance off its corner (rough.js jitters
+ *     a line's ENDS by the same offset it bows the middle with), so the
+ *     separately drawn sides cross or stop short there, as a rough.js
+ *     rectangle's do - no second mechanism on top of rough.js's own;
+ *   - its pen was thinned (lift .2, grain .25, agrain .2, no velocity); now it
+ *     is the marks' pen, landing arc and grain and all. */
 int uttt_draw_outline(UtttDL *d, int block, int32_t seed, float t)
 {
     float r[4];
@@ -311,13 +325,13 @@ int uttt_draw_outline(UtttDL *d, int block, int32_t seed, float t)
     UtttPen p = uttt_pen_92();
     p.ink = uttt_wash_rgba(1.f);
     p.w = uttt_pen_92().w / 9.f / 100.f * GRID_MAJOR_W * 1.3f;
-    p.a = 1.f; p.vel = 0; p.lift = .2f; p.grain = .25f; p.agrain = .2f;
+    p.a = 1.f;
     float done = 0.f, want = (t > 1.f ? 1.f : t) * per;
     for (int k = 0; k < 4 && done < want; k++) {
         UtttRough rg = uttt_rough_default(seed * 577 + block * 31 + k * 7);
-        rg.roughness = rough_for(len[k]);
-        rg.bowing    = bow_for(len[k]);
-        rg.max_offset = mro_for(len[k]);
+        rg.roughness = rough_for(REF);
+        rg.bowing    = bow_for(REF);
+        rg.max_offset = mro_for(REF);
         rg.seg_line = 18;
         UtttPt pts[1024]; int np = 0; UtttSpan sp[2];
         int n = uttt_rough_line(&rg, side[k][0], side[k][1], side[k][2], side[k][3],
