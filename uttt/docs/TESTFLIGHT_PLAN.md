@@ -942,7 +942,7 @@ The hint stays hidden at `didStartSending`, the earliest reliable signal; a boun
 - The rules sheet has no Back (owner): a swipe down closes the rules only (checked on both sizes), and VoiceOver's escape closes it too.
 - The strip's word column: a width-limited board leaves 40 points beside it on the SE (375x260) and Pro Max (440x343) strips and no band above or below it, so the column carries the headline alone; its second line fades in past 60 points (`uttt_sheet` `sub_alpha`). "Waiting" now stands alone on the SE strip instead of "Nobody / has / taken it / yet"; the band carries both lines once open. "You / win" stays two lines (a two-word stamp). Four mutations red.
 - "Copy code" on the end screen (owner): `uttt_replay_url` writes `https://www.foolish.cards/uttt/<base32 of uttt_encode>` and `uttt_replay_read` reads it back (lower case and a trailing query too); `uttt_test` round-trips every finished test game through the URL, four mutations red (including the address spelled out, so a typo in the macro fails). `uttt_sheet` places the door (`copy`) between Again and the rulebook at their height, expanded only (the strip's 46-point column has no room for words and the board is never shrunk); it reads "Copied" once the link is on the pasteboard. Checked on the Pro Max: the pasteboard held `https://www.foolish.cards/uttt/NSA7JGY2RPATFLZNH2ETBDNTUICA`.
-- **The `/uttt/[code]` web route does not exist yet**: it must be built before the copied link resolves. The code carries the moves only (not the seed), which is enough to replay the game but not to redraw the phone's exact pen strokes.
+- **The `/uttt/[code]` web route does not exist yet**: it must be built before the copied link resolves. Since section 17 the code carries the drawing seed too.
 
 ### Memory
 
@@ -952,4 +952,131 @@ Both are inside floor + 10.
 
 ### Open
 
-- The owner's flick-collapse jumps (build 1.0(5) on an iPhone 15 Pro Max). One simulator take (`film10/takes/pm_end_fcol_1`, the end screen): a hard flick takes the drawer past compact to the minimised grab bar; the board's centre rides the drawer's centre to 0.3 pt, and the corners step 10-15 pt a frame only because the board's side follows the host's height (32-68 pt a frame). The simulator does not show the jumps yet; the full sweep (every gesture, every screen, both sizes, width and height as metrics in the C tool) and a device capture tool are still to do.
+- ~~The owner's flick-collapse jumps~~ - found and fixed in section 17. One simulator take (`film10/takes/pm_end_fcol_1`, the end screen): a hard flick takes the drawer past compact to the minimised grab bar; the board's centre rides the drawer's centre to 0.3 pt, and the corners step 10-15 pt a frame only because the board's side follows the host's height (32-68 pt a frame). The simulator does not show the jumps yet; the full sweep (every gesture, every screen, both sizes, width and height as metrics in the C tool) and a device capture tool are still to do.
+
+## 17. Every drawer transition, measured, and the flick collapse fixed (2026-09-24, Pro Max and SE)
+
+Takes, charts, scores, tables and scripts are in the session scratchpad `film10/` (`takes/`, `charts/` one per take, `scores/`, `table_pm_final.md`, `table_se.md`, `worst_takes.jpg`, `sweep.sh`, `st.sh`, `table.sh`, `strip.py`, `dev/` the owner's video through `motion grid`).
+
+### What the owner saw, and why the simulator never showed it
+
+A FLICK lets go mid-drawer: Messages hands the extension the final height ONCE and animates the view's bounds there itself, a `CASpringAnimation` on `bounds.size`, additive (k 333, c 29, the finger's velocity).
+The sheet laid out at the handed height at once, and nothing rode that animation: in the release frame the board shrank to its compact size at the card's top, Again vanished, the doors jumped to mid-drawer, and blank paper filled the card below while it slid down.
+The expand already rode the host's spring (section 14, `rideHostGrowth`); a release downward did not.
+The earlier simulator "flick" (idb 72 to 720 in 0.15 s) dragged the drawer the whole way by finger, so there was no release left to animate; a short fast flick (0.1 s, 185 points) reproduces the device exactly (`probe_fcol`, `worst_takes.jpg` top row).
+
+The owner's 1.0(5) recording, measured with `motion grid` (no ruler in a TestFlight build: the drawer's top and the board's four heavy grid lines):
+
+| owner's video | board centre vs the drawer's middle | board side |
+|---|---|---|
+| expanded, at rest | -7.9 pt | 361.6 |
+| flick collapse, the release frame (3.783 s) | -229.5 pt, a 221.6 pt step | 261.2, a 100.3 pt step |
+| a finger drag down (19.29-19.44 s) | -7.9 to -9.9 pt, at most 0.5 pt a frame | 361.4 to 343.8 (width-limited, then shrinking) |
+| its release frame (19.455 s) | -104.2 pt, a 94.3 pt step | 256.7, an 87.1 pt step |
+
+So on the device a finger drag re-lays out every frame and follows the drawer; the jump is the release.
+
+### The fixes
+
+- `CollapseSlide.follow` (was `grew`): the host's own animation either way. `UtttSheetView.rideHost` reads the spring off the layer for a taller OR a shorter height, and every rider follows the drawer's edges on the render server (`uti_spring_left`); the clip reaches down through a followed shrink. The run carries `pushes` (only the auto-collapse pushes) and `shrinks`.
+- A re-handed height does not end a followed ride: the host hands 289.0 and then 289.00000000000006 20 ms into a release, and "a new height ends the run" snapped every rider (a hard flick to the minimised drawer, corners and doors 10.4 pt). A change must be over 1 pt.
+- `placeDoor` (one owner for Again and Copy code): both were hidden in the first frame of any collapse ride (`door_alpha` 0 at the compact layout) and popped in on an expand; now they fade on their ride with the kernel's `door_alpha` at the drawer's height.
+- The spectator screen had no ride for its words and no `at` (it did not build after the door change); it now lays out like the others.
+- `uttt_sheet`: a taller drawer never gives a smaller board, at ANY height. The bands grow 2 x 72 points on the smoothstep over 360-530, 1.27 points of band per point of drawer at the steepest, so on a 430 or 440 wide phone a height-limited board SHRANK 4 points while the drawer grew through 462-485 - a size reversal in every drag through it. The limit is now the largest that never falls and never passes the raw one. The test checked monotony only on the strip; it now sweeps every height and the 430 width; the clamp removed goes red.
+
+- The replay link carries the drawing seed: the code is `[0..3]` the seed, int32 big-endian (the wire message's seed), then `uttt_encode`'s moves, so a web replay draws the same napkin. `uttt_replay_url(g, seed, ...)`, `uttt_replay_read(url, g, &seed)`; `uttt_test` round-trips 1000 games with seeds across the int32 range; a seed not written or read in the wrong byte order goes red.
+
+### The measuring tool (shared/tools/motion)
+
+- `mt_board`: the board's width and height from its four corner squares, per frame; the largest one-frame step, reversals beside the drawer's own (1 pt hysteresis), and with `--side` the residual against the kernel's side for the drawer's height. `motionplot.py` charts width, height and the drawer's height in a fourth panel.
+- `off`: frames a mark sits outside the drawer.
+- `--bottom first[:HC]`: THE PAINTED GREEN BAR IS CONTENT. Content that jumps takes its bar with it and scores as riding it: the owner's bug scored 0.7 pt against the painted bar and 160 pt against the drawer's resting bottom. Past compact (`HC`, the compact bars' distance) the drawer is a sliding card. The resting bottom has its own blind spot: the host moves its whole card 6.7 points when the style changes (913 compact, 919.67 expanded, the card's top keeping its place over the content), so every table below gives both.
+- `motion grid` / `motion_grid.sh`: a recording with no ruler.
+- 33 new checks (75 in all); each new assertion mutation-checked (12 mutations, each red on its named assertion; three that first failed to compile were rewritten to compile).
+
+### Per scenario, Pro Max (UtttRig, light), before (97f38e70) -> after
+
+Largest one-frame step of any mark in the group against its anchor, pt, over 3 takes each; the first four columns against the painted bars, then the board centre and the doors against the drawer's resting bottom (the column that sees the owner's jump; it includes the host's 6.7 pt style shift).
+Gestures: `dexp`/`dcol` drag 1.2 s, `fexp`/`fcol` flick (0.1 s, released mid-drawer), `hcol` hard flick to the minimised drawer, `auto` the auto-collapse (a move; the final move on the end screen; Again for first-open).
+Thresholds: centre 1 pt, corners, header and doors 4 pt, 0 off, no size reversal the drawer did not make.
+
+| scenario | takes | board centre | corners | header | doors | centre / doors vs resting bottom | off | size step | size vs side | extra size reversals | verdict |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| first dexp | 3 -> 3 | 0.7 -> 0.7 | 4.7 -> 4.3 | - -> - | - -> - | 4.3 / - -> 4.3 / - | 0 -> 0 | 16.0 -> 8.7 | 8.7 -> 8.0 | 2 -> 2 | FAIL corners,reversal |
+| game dexp | 3 -> 3 | 0.7 -> 0.7 | 4.3 -> 4.3 | 1.3 -> 1.7 | 1.3 -> 1.0 | 3.0 / 6.7 -> 3.0 / 6.3 | 0 -> 0 | 8.3 -> 8.7 | 8.7 -> 8.3 | 3 -> 0 | FAIL corners |
+| end dexp | 3 -> 3 | 0.7 -> 0.7 | 4.2 -> 4.3 | 1.3 -> 1.3 | 1.4 -> 1.0 | 3.0 / 6.7 -> 3.0 / 6.3 | 0 -> 0 | 12.7 -> 14.7 | 8.0 -> 8.3 | 11 -> 0 | FAIL corners |
+| first dcol | 3 -> 3 | 1.0 -> 0.8 | 1.9 -> 1.6 | - -> - | - -> - | 3.5 / - -> 3.5 / - | 0 -> 0 | 14.3 -> 14.3 | 2.0 -> 1.7 | 8 -> 0 | PASS |
+| game dcol | 3 -> 3 | 0.8 -> 0.8 | 1.6 -> 1.6 | 0.7 -> 0.7 | 1.7 -> 1.7 | 3.5 / 6.7 -> 3.2 / 6.7 | 0 -> 0 | 8.3 -> 8.6 | 2.2 -> 1.7 | 12 -> 0 | PASS |
+| end dcol | 3 -> 3 | 1.5 -> 1.5 | 2.0 -> 2.0 | 0.7 -> 0.7 | 2.0 -> 2.0 | 1.2 / 2.7 -> 1.2 / 2.7 | 0 -> 0 | 14.3 -> 8.3 | 2.2 -> 1.7 | 12 -> 0 | FAIL centre |
+| first fcol | 3 -> 3 | 0.7 -> 0.8 | 1.0 -> 2.8 | - -> - | - -> - | 132.3 / - -> 2.0 / - | 0 -> 0 | 102.7 -> 30.7 | 1.7 -> 5.7 | 0 -> 0 | PASS |
+| game fcol | 3 -> 3 | 0.7 -> 0.5 | 1.0 -> 2.8 | 3.3 -> 1.3 | 0.7 -> 0.7 | 117.7 / 235.7 -> 1.7 / 4.0 | 0 -> 0 | 107.0 -> 29.3 | 1.7 -> 5.0 | 0 -> 0 | PASS |
+| end fcol | 3 -> 3 | 0.7 -> 0.5 | 1.0 -> 3.0 | 3.3 -> 1.7 | 0.7 -> 0.7 | 159.8 / 319.0 -> 1.8 / 3.3 | 0 -> 0 | 107.0 -> 30.7 | 1.7 -> 5.7 | 0 -> 0 | PASS |
+| first auto | 3 -> 3 | 0.7 -> 0.7 | 2.7 -> 3.0 | - -> - | - -> - | 1.3 / - -> 1.7 / - | 0 -> 0 | 28.7 -> 22.7 | 5.3 -> 5.3 | 0 -> 0 | PASS |
+| game auto | 3 -> 3 | 0.7 -> 0.7 | 3.0 -> 2.7 | 1.7 -> 1.3 | 0.7 -> 0.7 | 1.7 / 2.7 -> 1.7 / 3.0 | 0 -> 0 | 27.2 -> 26.0 | 5.3 -> 5.3 | 0 -> 0 | PASS |
+| end auto | 3 -> 3 | 0.7 -> 0.7 | 3.0 -> 3.0 | 1.7 -> 1.7 | 0.7 -> 0.7 | 2.0 / 3.3 -> 2.0 / 3.3 | 0 -> 0 | 26.7 -> 25.0 | 5.7 -> 5.7 | 0 -> 0 | PASS |
+| first fexp | 3 -> 3 | 0.8 -> 1.2 | 3.0 -> 3.2 | - -> - | - -> - | 26.7 / - -> 26.7 / - | 0 -> 0 | 29.0 -> 29.7 | 7.4 -> 7.7 | 6 -> 6 | FAIL centre,reversal |
+| game fexp | 3 -> 3 | 1.2 -> 1.2 | 3.3 -> 2.7 | 1.3 -> 2.3 | 1.3 -> 1.3 | 1.7 / 4.7 -> 2.0 / 4.0 | 0 -> 0 | 26.7 -> 36.0 | 7.4 -> 5.7 | 4 -> 8 | FAIL centre,reversal |
+| end fexp | 3 -> 3 | 1.2 -> 0.7 | 3.6 -> 2.7 | 1.3 -> 2.0 | 1.7 -> 1.0 | 1.3 / 2.7 -> 1.3 / 2.0 | 0 -> 0 | 28.0 -> 29.0 | 5.7 -> 3.5 | 6 -> 5 | FAIL reversal |
+| first hcol | 3 -> 3 | 0.7 -> 0.6 | 1.9 -> 2.1 | - -> - | - -> - | 1.2 / - -> 5.2 / - | 0 -> 0 | 34.3 -> 30.7 | 2.3 -> 1.3 | 0 -> 0 | PASS |
+| game hcol | 3 -> 3 | 1.0 -> 0.7 | 1.6 -> 1.3 | 1.7 -> 1.3 | 1.3 -> 0.7 | 2.0 / 3.0 -> 3.5 / 6.7 | 0 -> 0 | 28.3 -> 25.0 | 1.8 -> 2.0 | 0 -> 0 | PASS |
+| end hcol | 3 -> 3 | 1.2 -> 0.7 | 2.7 -> 1.6 | 3.3 -> 2.3 | 1.0 -> 0.7 | 2.3 / 4.7 -> 3.5 / 7.4 | 0 -> 0 | 81.0 -> 30.0 | 2.8 -> 3.3 | 0 -> 0 | PASS |
+
+### SE (UtttSE, light), after
+
+| scenario | takes | board centre | corners | header | doors | centre / doors vs resting bottom | off | size step | size vs side | extra size reversals | verdict |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| first dexp | 3 | 1.1 | 3.2 | - | - | 4.0 / - | 0 | 7.0 | 6.0 | 0 | FAIL centre |
+| game dexp | 3 | 1.0 | 3.5 | 1.0 | 1.0 | 2.0 / 4.5 | 0 | 5.5 | 6.5 | 0 | PASS |
+| end dexp | 3 | 1.0 | 3.5 | 1.5 | 1.2 | 3.5 / 7.5 | 0 | 8.0 | 7.0 | 0 | PASS |
+| first dcol | 3 | 0.8 | 1.0 | - | - | 4.0 / - | 0 | 8.0 | 1.4 | 0 | PASS |
+| game dcol | 3 | 0.8 | 1.0 | 1.0 | 1.0 | 4.0 / 7.5 | 0 | 8.0 | 1.5 | 0 | PASS |
+| end dcol | 3 | 0.8 | 1.1 | 1.0 | 1.0 | 4.0 / 7.5 | 0 | 8.0 | 1.4 | 0 | PASS |
+| first fexp | 3 | 1.5 | 2.0 | - | - | 13.0 / - | 0 | 27.0 | 3.6 | 0 | FAIL centre |
+| game fexp | 3 | 1.5 | 2.2 | 2.0 | 1.0 | 13.0 / 25.5 | 0 | 24.0 | 4.2 | 0 | FAIL centre,jump |
+| end fexp | 3 | 1.0 | 2.5 | 1.5 | 1.0 | 13.0 / 25.5 | 0 | 26.5 | 4.0 | 0 | FAIL jump |
+| first fcol | 3 | not reproduced: see below |||||||||||
+| game fcol | 3 | not reproduced: see below |||||||||||
+| end fcol | 3 | not reproduced: see below |||||||||||
+| first hcol | 3 | not reproduced: see below |||||||||||
+| game hcol | 3 | not reproduced: see below |||||||||||
+| end hcol | 3 | not reproduced: see below |||||||||||
+| first auto | 3 | 1.1 | 3.5 | - | - | 1.5 / - | 0 | 18.0 | 6.0 | 0 | FAIL centre |
+| game auto | 3 | 1.0 | 3.5 | 2.0 | 1.0 | 1.2 / 2.0 | 0 | 26.5 | 6.0 | 0 | PASS |
+| end auto | 3 | 1.0 | 3.5 | 1.5 | 1.0 | 1.5 / 2.5 | 0 | 23.5 | 5.5 | 0 | PASS |
+| end dcol, dark | 1 | 0.8 | 1.0 | 1.0 | 1.0 | - | 0 | 8.0 | - | 0 | PASS |
+| end auto, dark | 1 | 1.0 | 3.0 | 2.0 | 1.0 | - | 0 | 25.0 | - | 0 | PASS |
+
+The SE's drags start inside the header (`GYOFF=12`): its expanded drawer reaches under the status bar, and a drag from the grab handle there pulled the system down instead.
+No simulator flick lands on the SE's compact detent (a release mid-drawer springs back to expanded or goes on to minimised), and in the release takes the finder loses the board and doors for half a second while a partly covered red bar misreads, so the flick-collapse and hard-flick rows are not scored.
+The flick expand's 13 / 25.5 pt against the resting bottom is the host's card: on the SE it lifts the whole card about 25 points while a finger drags up from compact and drops it at the release; the doors keep their 32.5 points above the card's bottom throughout.
+Stage benchmark after (`film5/bench.sh`, 3 takes): 55.8 fps, largest gap 20 ms.
+Release (device, not signed): no `dev.` strings, no ruler or host-move log strings, no em dashes in the app, the extension or UtttKit; foolish's Messages scheme builds.
+
+### What is left
+
+- Finger drags on the simulator: the corners step 4.2-4.7 pt and the centre 3-4 pt against the resting bottom in the frame of idb's first 40-54 pt step, the layout landing one frame after the host moved the drawer. The owner's device drag shows no such lag (the centre moves at most 0.5 pt a frame), so this is the simulator's touch injection; a device take will say.
+- Flick expand: 4-8 extra size reversals of about 2 pt, while the finger holds and no new height is handed - the host shifting its card as the style changes. Not ours to lay out; worth a device take.
+- `end dcol` centre 1.5 pt, first-open flick expand 1.2 pt: the same first-step lag.
+- On the SE no flick lands on compact in the simulator (a release mid-drawer springs back to expanded or goes on to minimised), so its "flick collapse" row is the release that springs back.
+
+### Filming the phone next time (devcap)
+
+`shared/tools/devcap`: an iPhone's screen is offered to AVFoundation only in a process that set CoreMediaIO's `kCMIOHardwarePropertyAllowScreenCaptureDevices` itself.
+The opt-in is per process, so ffmpeg's avfoundation input never sees the phone and QuickTime is a GUI; `devcap` (Objective-C only where AVFoundation needs it) sets it, lists devices and records.
+Verified here: it builds (`make -C shared/tools/devcap`) and `devcap list` enumerates capture devices (the Mac's camera; no phone was connected).
+A full record could not be proven from this session: macOS asks once for camera access for the terminal that runs it, and that prompt needs the owner.
+
+When the phone is plugged in (unlocked, "Trust This Computer" answered):
+
+```bash
+cd /Users/alex/Dev/foolish-uttt
+shared/tools/devcap/devcap.sh devices            # the phone in devicectl and in AVFoundation ("ios-screen")
+shared/tools/devcap/devcap.sh install            # a DEBUG build (ruler compiled in) via devicectl, development signing
+shared/tools/devcap/devcap.sh ruler on           # touches dev.ruler in the App Group container on the phone
+shared/tools/devcap/devcap.sh film end_flick_1   # records until ^C; play the gesture, then ^C
+```
+
+`film` writes `~/devcap/<name>/take.mov`, tracks it (`motion_take.sh`), scores it (`motion score --bottom first`) and charts it (`motionplot.py`).
+The first `film` may stop at the camera prompt: System Settings > Privacy & Security > Camera, allow the terminal app, run again.
+A TestFlight or Release build has no ruler; `motion grid` still measures it (the drawer's top and the board's heavy grid lines):
+`shared/tools/motion/motion_grid.sh take.mov out.grid [FROM TO]`.
