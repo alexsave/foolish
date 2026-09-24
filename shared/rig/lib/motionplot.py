@@ -44,7 +44,10 @@ for s in a.anchor:
 lines = [l.split() for l in open(a.tbl) if not l.startswith("#")]
 head, rows = lines[0], [dict(zip(lines[0], r)) for r in lines[1:]]
 num = lambda s: None if s in ("-", None) else float(s)
-BOT, HC = (float(v) for v in (a.bottom.split(":") + ["0"])[:2])
+_b = (a.bottom.split(":") + ["0"])[:2]
+HC = float(_b[1])
+# "first": this take's own resting bottom (motion score --bottom first)
+BOT = next((num(r["green"]) for r in rows if num(r["green"]) is not None), 0) if _b[0] == "first" else float(_b[0])
 if BOT > 0:
     for r in rows:
         R = num(r["red"])
