@@ -68,7 +68,9 @@ case "${1:-}" in
     bash "$MOTION/motion_take.sh" "$d/take.mov" "$d/take.tbl"
     # the drawer's bottom is the screen's: its green bar where the take starts
     B="$(awk '!/^#/ && $4 != "-" && NR > 2 {print $4; exit}' "$d/take.tbl")"
-    "$MOTION/build/motion" score --span 1.5 ${B:+--bottom $B} "$d/take.tbl" | tee "$d/score.txt"
-    python3 "$REPO/shared/rig/lib/motionplot.py" "$d/take.tbl" "$d/chart.png" --span 1.5 ${B:+--bottom $B} --title "$NAME" ;;
+    "$MOTION/build/motion" score --span 1.5 --bottom first "$d/take.tbl" | tee "$d/score.txt"
+    python3 "$REPO/shared/rig/lib/motionplot.py" "$d/take.tbl" "$d/chart.png" --span 1.5 ${B:+--bottom $B} --title "$NAME"
+    # with no ruler in the build (TestFlight), the board's own grid lines
+    bash "$MOTION/motion_grid.sh" "$d/take.mov" "$d/take.grid" || true ;;
   *) sed -n 2,12p "$0"; exit 2 ;;
 esac
