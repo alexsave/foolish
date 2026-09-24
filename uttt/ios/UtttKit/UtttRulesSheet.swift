@@ -13,13 +13,16 @@ import UIKit
 /// 2026-09-23). Presented as its own page sheet it carries its own drag to
 /// dismiss, and the swipe closes the RULES - foolish presents its rulebook
 /// the same way.
+///
+/// NO BACK BUTTON (owner, 2026-09-23): the sheet is dismissed by swiping it
+/// down, and the platform's grabber says so. A printed "Back" broke the
+/// napkin, and a pen-drawn one was one more door than the page needs.
 public final class UtttRulesSheet: UIViewController {
     /// The margin round the rules, the same on every edge.
     static let margin: CGFloat = 13
 
     private let paper = CALayer()
     private let titleLabel = UILabel()
-    private let back = UIButton(type: .custom)
     private let scroll = UIScrollView()
     private var rows: [(UILabel, UILabel)] = []
 
@@ -44,15 +47,6 @@ public final class UtttRulesSheet: UIViewController {
         titleLabel.accessibilityTraits = .header
         view.addSubview(titleLabel)
 
-        var c = UIButton.Configuration.plain()
-        c.attributedTitle = AttributedString(NSAttributedString(string: "Back", attributes: [
-            .font: UIFont.systemFont(ofSize: 15, weight: .semibold), .foregroundColor: UtttInk.blue,
-        ]))
-        c.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 10, bottom: 6, trailing: 10)
-        back.configuration = c
-        back.addTarget(self, action: #selector(close), for: .touchUpInside)
-        view.addSubview(back)
-
         scroll.showsVerticalScrollIndicator = false
         view.addSubview(scroll)
         let tally = UtttType(size: 11, weight: .bold, kern: 1.2, color: UtttInk.label)
@@ -72,7 +66,12 @@ public final class UtttRulesSheet: UIViewController {
         }
     }
 
-    @objc private func close() { dismiss(animated: true) }
+    /// VoiceOver's escape (the two-finger scrub) closes the rules, which is
+    /// the swipe down's job for a reader who cannot see the grabber.
+    public override func accessibilityPerformEscape() -> Bool {
+        dismiss(animated: true)
+        return true
+    }
 
     public override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
@@ -82,15 +81,9 @@ public final class UtttRulesSheet: UIViewController {
         CATransaction.commit()
         let m = Self.margin
         let inner = view.bounds.inset(by: view.safeAreaInsets).insetBy(dx: m, dy: m)
-        let bs = back.sizeThatFits(.zero)
         let ts = titleLabel.sizeThatFits(.zero)
-        /* the title and Back on one first baseline */
-        let headH = max(ts.height, bs.height)
-        titleLabel.frame = CGRect(x: inner.minX, y: inner.minY, width: min(ts.width, inner.width - bs.width - 12), height: ts.height)
-        let titleBase = inner.minY + UtttType.headline.font().ascender
-        let backFont = UIFont.systemFont(ofSize: 15, weight: .semibold)
-        back.frame = CGRect(x: inner.maxX - bs.width, y: titleBase - 6 - backFont.ascender,
-                            width: bs.width, height: bs.height)
+        let headH = ts.height
+        titleLabel.frame = CGRect(x: inner.minX, y: inner.minY, width: min(ts.width, inner.width), height: ts.height)
         let top = inner.minY + headH + 14
         scroll.frame = CGRect(x: inner.minX, y: top, width: inner.width, height: inner.maxY - top)
         var y: CGFloat = 0
