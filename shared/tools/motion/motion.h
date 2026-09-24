@@ -123,6 +123,27 @@ int32_t mt_score(const MtRow *rows, int32_t n, const MtScoreOpts *o, MtScore out
 /* The host spring's progress t seconds in (critically damped). */
 double mt_host_progress(double t, double response);
 
+/* ---- grid: a take with no ruler (a device recording) --------------------
+ * The drawer's top edge and the board's four heavy grid lines, found in a
+ * frame of a real screen recording, so a take filmed without the ruler (the
+ * owner's phone) still says where the board is and how big. Paper is light
+ * and neutral; the heavy grid lines are dark and neutral (the marks, the win
+ * line and the doors are coloured ink, which this skips); anything above the
+ * drawer's top (a dark chat wallpaper) is not looked at. */
+typedef struct {
+    double t;
+    double top;              /* the drawer's top edge, pt, or MT_NONE       */
+    double h1, h2, v1, v2;   /* the heavy lines: two rows, two columns, pt  */
+} MtGrid;
+#define MT_GRID_PAPER_MIN   225   /* every channel at least this: paper      */
+#define MT_GRID_PAPER_SPREAD 20   /* and this neutral                        */
+#define MT_GRID_INK_MAX     110   /* every channel under this: grid ink      */
+#define MT_GRID_INK_SPREAD   45   /* and this neutral                        */
+void mt_grid(const uint8_t *rgb, int32_t w, int32_t h, double scale, MtGrid *g);
+/* The board's centre and side from a frame's lines (the heavy lines cut the
+ * board in thirds): 0 when the lines were not all found. */
+int32_t mt_grid_board(const MtGrid *g, double *cx, double *cy, double *side);
+
 /* ---- pace: how often the content actually changes -------------------- */
 /* A screen recording keeps a frame only when the screen changed, so the
  * frames in which a box's pixels change ARE the frames our content was

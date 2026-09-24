@@ -285,6 +285,37 @@ static void test_board(void) {
           s[M("blue")].maxsnap);
 }
 
+/* GRID: a device frame with no ruler - a dark wallpaper above the drawer, the
+ * paper from 100pt, the four heavy lines, a coloured stroke as long as a line
+ * (a win line) and the recording's dark last rows, which are not the board. */
+static void test_grid(void) {
+    fill(0, 0, W / S, H / S, 30, 32, 40);                  /* wallpaper       */
+    fill(0, 100, W / S, H / S, 244, 241, 238);             /* the drawer      */
+    fill(0, H / S - 4, W / S, H / S, 0, 0, 0);             /* the last rows   */
+    /* a board of side 150 centred at (110, 260): lines at 1/3 and 2/3 */
+    double x0 = 35, y0 = 185, sd = 150;
+    for (int32_t k = 1; k <= 2; k++) {
+        fill(x0, y0 + sd * k / 3 - 1, x0 + sd, y0 + sd * k / 3 + 1, 40, 40, 44);
+        fill(x0 + sd * k / 3 - 1, y0, x0 + sd * k / 3 + 1, y0 + sd, 40, 40, 44);
+    }
+    fill(x0, y0 + 20, x0 + sd, y0 + 24, 180, 50, 40);      /* a red win line  */
+    fill(x0, y0 + 120, x0 + sd, y0 + 123, 30, 40, 100);    /* a navy stroke, dark and as long: only its colour tells */
+    MtGrid g;
+    mt_grid(img, W, H, S, &g);
+    CHECK(fabs(g.top - 100) < 0.5, "grid: the drawer's top (%.2f)", g.top);
+    CHECK(fabs(g.h1 - (y0 + sd / 3)) < 0.5 && fabs(g.h2 - (y0 + 2 * sd / 3)) < 0.5, "grid: the heavy rows (%.2f %.2f)",
+          g.h1, g.h2);
+    CHECK(fabs(g.v1 - (x0 + sd / 3)) < 0.5 && fabs(g.v2 - (x0 + 2 * sd / 3)) < 0.5, "grid: the heavy columns (%.2f %.2f)",
+          g.v1, g.v2);
+    double cx, cy, side;
+    CHECK(mt_grid_board(&g, &cx, &cy, &side) && fabs(cx - 110) < 0.5 && fabs(cy - 260) < 0.5 && fabs(side - sd) < 1,
+          "grid: the board (%.2f %.2f %.2f)", cx, cy, side);
+    /* a thin white highlight across the wallpaper is not the drawer's top */
+    fill(0, 60, W / S, 62, 250, 250, 250);
+    mt_grid(img, W, H, S, &g);
+    CHECK(fabs(g.top - 100) < 0.5, "grid: a highlight is not the drawer (%.2f)", g.top);
+}
+
 /* PACE: a stroke laid in ten 60 Hz frames against the same stroke in three
  * frames 120 ms apart - what the owner saw as "choppy". A ruler square in
  * the box is not ink. */
@@ -336,6 +367,7 @@ int main(void) {
     test_find();
     test_score();
     test_board();
+    test_grid();
     test_pace();
     printf("motion: %d checks, %d failed\n", checks, fails);
     return fails != 0;

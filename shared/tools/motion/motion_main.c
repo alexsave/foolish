@@ -20,11 +20,17 @@
  *       then a "pace" line - frames, fps, the largest gap (ms), the largest
  *       one-frame share of the ink, and judder (motion.h MtPace).
  *
+ *   motion grid --size WxH --times FILE [--scale S] [--from T] [--to T] < rgb
+ *       A recording with no ruler (a device's): per frame the drawer's top,
+ *       the board's heavy grid lines, its centre and side, and the centre's
+ *       offset from the drawer's middle; then the largest one-frame steps.
+ *
  * maxstep is the largest change of a mark's offset from its anchor in one
  * frame, maxsnap the largest of those above --snap (ride.py's). Output is
  * fixed-layout text. motion_take.sh films the pipe for a movie. */
 #include "motion.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,7 +39,8 @@ static int usage(void) {
     fprintf(stderr, "usage: motion find --size WxH --times FILE [--scale S] < rgb\n"
                     "       motion score [--name N] [--span S] [--snap P] [--whole] [--side FILE]"
                     " [--anchor MARK=red|green|mid|none] [--bottom Y] take.tbl...\n"
-                    "       motion pace --size WxH --times FILE --box X,Y,W,H [--lum L] < rgb\n");
+                    "       motion pace --size WxH --times FILE --box X,Y,W,H [--lum L] < rgb\n"
+                    "       motion grid --size WxH --times FILE [--scale S] [--from T] [--to T] < rgb\n");
     return 2;
 }
 
@@ -108,6 +115,63 @@ static int pace_main(int argc, char **argv) {
            p.frames, p.fps, p.maxgap * 1000, p.maxstep, p.rough, (p.t1 - p.t0) * 1000);
     free(buf); free(prev); free(t); free(ink); free(changed);
     return n > 0 ? 0 : 1;
+}
+
+/* motion grid: a recording with no ruler, frame by frame - the drawer's top,
+ * the board's centre and side (mt_grid) - then where the board sits against
+ * the drawer: its centre against the drawer's middle (the drawer's bottom is
+ * the screen's), and the largest one-frame step of each. */
+static int grid_main(int argc, char **argv) {
+    int32_t W = 0, H = 0;
+    double scale = 0, t0 = -1, t1 = 1e9;
+    const char *times = NULL;
+    for (int i = 0; i < argc; i++) {
+        if (!strcmp(argv[i], "--size") && i + 1 < argc) sscanf(argv[++i], "%dx%d", &W, &H);
+        else if (!strcmp(argv[i], "--times") && i + 1 < argc) times = argv[++i];
+        else if (!strcmp(argv[i], "--scale") && i + 1 < argc) scale = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--from") && i + 1 < argc) t0 = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--to") && i + 1 < argc) t1 = atof(argv[++i]);
+        else return usage();
+    }
+    if (W <= 0 || H <= 0 || !times) return usage();
+    if (scale <= 0) scale = H >= 2000 ? 3.0 : 2.0;
+    FILE *tf = fopen(times, "r");
+    if (!tf) { perror(times); return 1; }
+    size_t sz = (size_t)W * (size_t)H * 3;
+    uint8_t *buf = malloc(sz);
+    double bottom = H / scale, pt = 0, poff = MT_NONE, pside = MT_NONE, ptop = MT_NONE;
+    double off_step = 0, side_step = 0, top_step = 0, off_max = 0;
+    int32_t n = 0, seen = 0;
+    printf("# motion grid v1: t top h1 h2 v1 v2 cx cy side off (pt; off = board centre - drawer middle)\n");
+    while (fread(buf, 1, sz, stdin) == sz) {
+        if (fscanf(tf, "%lf", &pt) != 1) break;
+        n++;
+        if (pt < t0 || pt > t1) continue;
+        MtGrid g;
+        mt_grid(buf, W, H, scale, &g);
+        double cx, cy, side;
+        if (g.top == MT_NONE || !mt_grid_board(&g, &cx, &cy, &side)) {
+            printf("%.6f - - - - - - - - -\n", pt);
+            poff = pside = ptop = MT_NONE;
+            continue;
+        }
+        double off = cy - (g.top + bottom) / 2;
+        printf("%.6f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f\n", pt, g.top, g.h1, g.h2, g.v1, g.v2,
+               cx, cy, side, off);
+        seen++;
+        if (poff != MT_NONE) {
+            if (fabs(off - poff) > off_step) off_step = fabs(off - poff);
+            if (fabs(side - pside) > side_step) side_step = fabs(side - pside);
+            if (fabs(g.top - ptop) > top_step) top_step = fabs(g.top - ptop);
+        }
+        if (fabs(off) > off_max) off_max = fabs(off);
+        poff = off; pside = side; ptop = g.top;
+    }
+    fclose(tf);
+    free(buf);
+    printf("# grid %d frames, %d with a board: centre-vs-middle step %.1f max %.1f, side step %.1f, top step %.1f\n",
+           n, seen, off_step, off_max, side_step, top_step);
+    return seen ? 0 : 1;
 }
 
 static const char *ANAME[] = {"red", "green", "mid", "none"};
@@ -243,5 +307,6 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[1], "find")) return find_main(argc - 2, argv + 2);
     if (!strcmp(argv[1], "score")) return score_main(argc - 2, argv + 2);
     if (!strcmp(argv[1], "pace")) return pace_main(argc - 2, argv + 2);
+    if (!strcmp(argv[1], "grid")) return grid_main(argc - 2, argv + 2);
     return usage();
 }

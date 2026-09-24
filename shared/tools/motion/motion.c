@@ -650,3 +650,97 @@ void mt_pace(const double *t, const int32_t *ink, const int32_t *changed, int32_
     }
     o->rough = r * 1000;
 }
+
+/* ---- grid --------------------------------------------------------------- */
+
+static int32_t paper_px(const uint8_t *p) {
+    int32_t mn = p[0] < p[1] ? p[0] : p[1]; mn = mn < p[2] ? mn : p[2];
+    int32_t mx = p[0] > p[1] ? p[0] : p[1]; mx = mx > p[2] ? mx : p[2];
+    return mn >= MT_GRID_PAPER_MIN && mx - mn <= MT_GRID_PAPER_SPREAD;
+}
+
+static int32_t ink_px(const uint8_t *p) {
+    int32_t mn = p[0] < p[1] ? p[0] : p[1]; mn = mn < p[2] ? mn : p[2];
+    int32_t mx = p[0] > p[1] ? p[0] : p[1]; mx = mx > p[2] ? mx : p[2];
+    return mx < MT_GRID_INK_MAX && mx - mn <= MT_GRID_INK_SPREAD;
+}
+
+/* The two heaviest runs of a profile over `thr`: consecutive entries (gaps up
+ * to `gap`) are one line, placed at its weighted centre. */
+static int32_t two_lines(const int32_t *prof, int32_t n, int32_t thr, int32_t gap, double *a, double *b) {
+    double best[2] = {0, 0}, at[2] = {0, 0};
+    int32_t i = 0;
+    while (i < n) {
+        if (prof[i] <= thr) { i++; continue; }
+        double sw = 0, sx = 0;
+        int32_t j = i, last = i;
+        while (j < n && j - last <= gap) {
+            if (prof[j] > thr) { sw += prof[j]; sx += (double)prof[j] * j; last = j; }
+            j++;
+        }
+        double c = sx / sw;
+        if (sw > best[0]) { best[1] = best[0]; at[1] = at[0]; best[0] = sw; at[0] = c; }
+        else if (sw > best[1]) { best[1] = sw; at[1] = c; }
+        i = last + 1;
+    }
+    if (best[1] <= 0) return 0;
+    *a = at[0] < at[1] ? at[0] : at[1];
+    *b = at[0] < at[1] ? at[1] : at[0];
+    return 1;
+}
+
+void mt_grid(const uint8_t *rgb, int32_t w, int32_t h, double scale, MtGrid *g) {
+    g->top = g->h1 = g->h2 = g->v1 = g->v2 = MT_NONE;
+    /* THE DRAWER'S TOP: the first row below the status bar that is mostly
+     * paper across the middle of the screen, and stays so for a few rows (a
+     * white bubble is narrower than the drawer) */
+    int32_t x0 = w / 20, x1 = w - w / 20, top = -1;
+    for (int32_t y = (int32_t)(40 * scale); y + 12 < h && top < 0; y++) {
+        int32_t ok = 1;
+        for (int32_t dy = 0; dy <= 12 && ok; dy += 6) {
+            int32_t c = 0, k = 0;
+            for (int32_t x = x0; x < x1; x += 4, k++) c += paper_px(rgb + ((size_t)(y + dy) * w + x) * 3);
+            ok = c * 100 >= k * 85;
+        }
+        if (ok) top = y;
+    }
+    if (top < 0) return;
+    g->top = top / scale;
+    /* THE HEAVY ROWS: dark neutral ink across a third of the screen, inside
+     * the drawer - not the screen's own dark edges (a recording's last rows,
+     * the wallpaper past the drawer's rounded corners) */
+    int32_t edge = (int32_t)(12 * scale), yend = h - edge;
+    int32_t *prof = calloc((size_t)(h > w ? h : w), sizeof(int32_t));
+    for (int32_t y = top + (int32_t)(4 * scale); y < yend; y++) {
+        int32_t c = 0;
+        for (int32_t x = edge; x < w - edge; x += 2) c += ink_px(rgb + ((size_t)y * w + x) * 3);
+        prof[y] = c;
+    }
+    double a, b;
+    if (two_lines(prof, h, w / 2 / 3, (int32_t)(2 * scale), &a, &b) && b - a > 20 * scale) {
+        g->h1 = a / scale; g->h2 = b / scale;
+        /* THE HEAVY COLUMNS, over the board's span (a third either side) */
+        double s = b - a;
+        int32_t ya = (int32_t)(a - s), yb = (int32_t)(b + s);
+        if (ya < top) ya = top;
+        if (yb > yend) yb = yend;
+        memset(prof, 0, sizeof(int32_t) * (size_t)w);
+        for (int32_t x = edge; x < w - edge; x++) {
+            int32_t c = 0;
+            for (int32_t y = ya; y < yb; y += 2) c += ink_px(rgb + ((size_t)y * w + x) * 3);
+            prof[x] = c;
+        }
+        if (two_lines(prof, w, (int32_t)(s / 2 * 1.2), (int32_t)(2 * scale), &a, &b)) {
+            g->v1 = a / scale; g->v2 = b / scale;
+        }
+    }
+    free(prof);
+}
+
+int32_t mt_grid_board(const MtGrid *g, double *cx, double *cy, double *side) {
+    if (g->h1 == MT_NONE || g->v1 == MT_NONE) return 0;
+    *cx = (g->v1 + g->v2) / 2;
+    *cy = (g->h1 + g->h2) / 2;
+    *side = 1.5 * ((g->v2 - g->v1) + (g->h2 - g->h1));
+    return 1;
+}

@@ -192,10 +192,7 @@ public final class UtttWatchScreen: UtttSheetView {
          * the strip. */
         rulebook.frame = rect(L.rulebook)
         if let again {
-            again.frame = rect(L.again)
-            again.alpha = CGFloat(L.door_alpha)
-            again.isHidden = L.door_alpha <= 0
-            rideBottom(again)
+            placeDoor(again, L.again, L, at: at)
         }
         rideBottom(rulebook)
     }

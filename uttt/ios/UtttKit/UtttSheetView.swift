@@ -240,6 +240,21 @@ public class UtttSheetView: UIView {
     /// all of an expand's growth.
     func rideBottom(_ v: UIView) { ride(v) { s in CollapseRidePose(dy: s) } }
 
+    /// A DOOR THAT BELONGS TO THE EXPANDED VIEW (Again, Copy code): at its
+    /// box, faded to the kernel's `door_alpha`, riding the bottom - and
+    /// through a run its opacity rides too, from the start height's to the
+    /// end's, so a collapse fades it out with the drawer and an expand fades
+    /// it in (it was hidden in the collapse's first frame: filmed on a
+    /// device, TESTFLIGHT_PLAN 17). Hidden only when no run needs it.
+    func placeDoor(_ v: UIView, _ box: (Float, Float, Float, Float), _ L: UtiSheet,
+                   at: @escaping (CGFloat) -> UtiSheet) {
+        v.frame = rect(box)
+        v.alpha = CGFloat(L.door_alpha)
+        v.isHidden = L.door_alpha <= 0 && from == nil
+        v.isUserInteractionEnabled = L.door_alpha > 0.5
+        ride(v) { s in CollapseRidePose(dy: s, alpha: CGFloat(at(s).door_alpha)) }
+    }
+
     /// Faded to `alpha`; out of VoiceOver and the touch path once it is
     /// mostly gone, so the one copy that shows is the one that is read.
     func shown(_ v: UIView, _ alpha: Float) {

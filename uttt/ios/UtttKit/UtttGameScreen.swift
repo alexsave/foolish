@@ -160,16 +160,10 @@ public final class UtttGameScreen: UtttSheetView {
          * (uttt_sheet). */
         rulebook.frame = rect(L.rulebook)
         if let again {
-            again.frame = rect(L.again)
-            again.alpha = CGFloat(L.door_alpha)
-            again.isHidden = L.door_alpha <= 0
-            rideBottom(again)
+            placeDoor(again, L.again, L, at: at)
         }
         if let copy {
-            copy.frame = rect(L.copy)
-            copy.alpha = CGFloat(L.door_alpha)
-            copy.isHidden = L.door_alpha <= 0
-            rideBottom(copy)
+            placeDoor(copy, L.copy, L, at: at)
         }
         rideBottom(rulebook)
 #if DEBUG
