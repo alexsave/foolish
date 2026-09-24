@@ -876,3 +876,50 @@ The rest, after, 2 takes each (largest one-frame step, pt): auto-collapse board 
 Tests (`uttt_anim_test`): the top side strays more than the tamed worst over five seeds, every box has a side past a corner, the bounds are the tint's rect within a hand's overshoot, the same seed draws the same wobble; four mutations each red on the named assertion.
 An explicit seeded corner overshoot was tried first and dropped: rough.js's own end jitter at this offset already crosses the corners, and a mutation removing the extra overshoot changed no measurement.
 Shots: `film7/outline/outline_before_after.jpg` (SE, light and dark).
+
+## 15. Release-candidate regression pass (2026-09-23, iPhone SE and Pro Max)
+
+Two simulators, one booted at a time: `UtttSE` (375x667, 2x) and `UtttRig` (440x956, 3x).
+Screens, contact sheets and scripts are in the session scratchpad `film8/` (`sheet_se_release.jpg`, `sheet_se_debug_flow.jpg`, `sheet_se_debug_win.jpg`, `sheet_pm_release.jpg`, `sheet_pm_debug.jpg`; `bench_pm.sh`, `peak_pm.sh`, `reopen_pm.sh`, `cell.sh`, `sheet.py`).
+
+### The bubble at the sender's own scale
+
+`uttt_bubble_scale` (C) takes the display scale and clamps it to 2..3; the snapshot reads `traitCollection.displayScale` on the main thread and the off-main paint bakes at it (cb2cdeac).
+The context is unchanged: sRGB, 8 bits a channel, no alpha.
+
+### Numbers
+
+Stage fps is `film5/bench.sh` (SE) and `film8/bench_pm.sh` (Pro Max, the same seeded board and a cell of the top-left block), 3 takes; memory is `film7/peak.sh` / `film8/peak_pm.sh`, 3 opens (idle compact on the seeded board, then the peak across one stage with the bubble baked and inserted).
+
+| size | bake | stage fps | largest gap | idle MB (peak) | stage peak MB |
+|---|---|---|---|---|---|
+| SE, 2x | 2x | 56.5-57.1 | 18 ms | 22 (23.3-23.4) | 26.4-26.5 |
+| Pro Max, 3x | 3x | 57.4-63.8 | 18 ms | 23-25 (24.4-25.3) | 34.5-36.0 |
+
+The SE's stage peak is where it was (26.5, section 14), well under 31.
+The Pro Max figures are the first on that size; there is no 2x-bake baseline there to subtract.
+Pace counts over 60 fps are the counter's rounding over a 157 ms span, not frames the display does not have.
+
+### Release build on the simulator
+
+UtttMessagesApp Release, simulator slice, installed on both sizes.
+On both: + opens the drawer and the invitation auto-stages (`insert attempt 1` then `inserted` 150-175 ms later), the send hint appears after 3 s, Send lands the bubble, tapping the invitation opens the creator's own "Waiting" screen, a drag collapses and expands, dark mode leaves the paper light and the hint legible.
+The rules sheet cannot be reached in Release on one simulator (one participant cannot join its own invitation); the path is not `#if DEBUG` and was checked in the DEBUG pass.
+Release binaries: no `dev.` strings, no em dashes, no SwiftUI or Combine linked (`otool -L`, the app, the extension and UtttKit).
+
+### DEBUG two-seat flows, both sizes
+
+All as settled (sections 12-14): join, a normal move (pre: the mark and the outline, the tint stays; post: only the tint moves), change of mind (the old draft gone at once, nothing un-draws), illegal taps (no log line, no pixel change but the hint's bob), a block-taking move (small mark, then the big mark, at stage), the winning move (the line at stage, "You win" / "X wins", the Again door, the caption "X won in 25 moves" on one line), an arrival while open, my own bubble tapped after Send (nothing plays), Again stages a new invitation.
+
+### Defects found and fixed
+
+- The Again door started at x 0 while the rulebook kept the 13-point margin: on the SE it ran to the screen edge, and on a rounded display under the corner. `uttt_sheet` now owns both door rects; a test holds both inside the margins on every sheet (fafb4396).
+- The send hint's bob crest ran 11.6 points above the drawer, which Messages clips, so the arrowhead was cut flat at every bob on both sizes. The hint's container now starts at `UTTT_SHEET_HINT_TOP` (28, was 14), so the crest's ink is where the rest used to be; tests hold the crest inside the drawer and the verdict column under the hint (85f1157f).
+
+### Open
+
+- From a drawer opened with + (unbound), the send hint stays up for up to a second after Send, until `didStartSending` arrives; a tapped (bound) drawer hides it at the echo. Seen on both sizes (`34_win_send_mid`).
+- On the SE, a drawer opened by tapping a bubble is 375x647, within 40 points of the window, so `viewDidAppear` reads it as window-sized and the 3 s "ready" deadline logs a fault on every such open. Only an invitation's insert waits on it; nothing visible breaks.
+- One Pro Max process that opened the finished game expanded, then the rules, then Again, logged a lifetime peak of 47.4 MB (the SE's equivalent 31.1); an in-play expanded open plus the rules peaks at 24.6. Not attributed.
+- The strip's word column is narrow on both sizes: "Nobody / has / taken it / yet" and "You / win" wrap a word a line (section 12's open item).
+- The rules sheet's "Back" is a plain text button, not a pen-drawn door.
