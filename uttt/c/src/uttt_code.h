@@ -46,20 +46,27 @@ double uttt_ideal_bits(const UtttGame *g);
  * screen's "Copy code" (an iMessage extension can open only its own
  * container's scheme, so the link is copied rather than opened - foolish's
  * replay row, FGameOverList.replayLink). It is UTTT_REPLAY_PREFIX followed by
- * uttt_encode's bytes in base32 (shared/c/b32: letters and digits, the same
- * read back in either case, nothing a URL has to escape). The kernel writes
- * the whole string; a host only puts it on the pasteboard.
+ * the code in base32 (shared/c/b32: letters and digits, the same read back
+ * in either case, nothing a URL has to escape). The code is a fixed layout:
+ *
+ *     [0..3]  the drawing seed, int32 big-endian (the wire message's seed,
+ *             uttt_msg.h), so a replay draws the same napkin - every pen
+ *             stroke's wobble is seeded from it
+ *     [4..]   uttt_encode's bytes (the moves)
+ *
+ * The kernel writes the whole string; a host only puts it on the pasteboard.
  *
  * The web route (/uttt/<code>) does not exist yet (TESTFLIGHT_PLAN 16). */
 #define UTTT_REPLAY_PREFIX "https://www.foolish.cards/uttt/"
 
-/* Write g's link into out (NUL-terminated). Returns its length, or -1 if g
- * has no plies or cap is too small. */
-int uttt_replay_url(const UtttGame *g, char *out, int cap);
+/* Write g's link, drawn with `seed`, into out (NUL-terminated). Returns its
+ * length, or -1 if g has no plies or cap is too small. */
+int uttt_replay_url(const UtttGame *g, int32_t seed, char *out, int cap);
 
 /* Read a link back (the prefix is optional; anything after the code - a
- * query, a fragment, a slash - is ignored). Returns 1 and the game on
- * success, 0 for a link that is not a game. */
-int uttt_replay_read(const char *url, UtttGame *out);
+ * query, a fragment, a slash - is ignored). Returns 1, the game and its
+ * drawing seed (`seed` may be NULL) on success, 0 for a link that is not a
+ * game. */
+int uttt_replay_read(const char *url, UtttGame *out, int32_t *seed);
 
 #endif

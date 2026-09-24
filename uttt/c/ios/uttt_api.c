@@ -469,7 +469,7 @@ int uti_msg_door(void) { return utm_door(&S.m); }
 int uti_send_hint_ms(void) { return UTM_SEND_HINT_MS; }
 int uti_insert_silence_ms(void) { return UTM_INSERT_SILENCE_MS; }
 int uti_insert_silence(int attempt, int compact) { return utm_insert_silence(attempt, compact); }
-int uti_replay_url(char *out, int cap) { return uttt_replay_url(&S.m.game, out, cap); }
+int uti_replay_url(char *out, int cap) { return uttt_replay_url(&S.m.game, S.m.seed, out, cap); }
 int uti_drawer_up(float window_h, float view_h, int expanded) { return utm_drawer_up(window_h, view_h, expanded); }
 
 int uti_msg_prefer(const char *mine, const char *tapped)
