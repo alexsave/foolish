@@ -1173,3 +1173,55 @@ Release (simulator, not signed): no `dev.ruler`, `host-move` or em dash in the a
 
 - Drag expand corners 4.0-4.3 at the release frame: the host's grab stretch letting go. A device take (devcap, section 17) with the ruler would say whether the phone stretches the same way.
 - SE hard flick: needs a start point that iOS's top-edge gesture does not claim before the board can be scored.
+
+## 19. TestFlight 1.0(6) feedback: doors, the you-are O, the win line, the beads (2026-09-24)
+
+Images are in the session scratchpad `b6/`; `make -C uttt/c look` builds `tools/uttt_look`, which draws the pieces at a phone's scale the way Core Graphics fills them and prints numbers.
+
+### Again and Copy code are one width
+
+`uttt_sheet` gave Copy code 45% of the door row and Again the rest.
+The row less one gap is now halved and both doors take that one number.
+`uttt_anim_test` walks every drawer height 240-900 on every width 320-440 and asserts equal widths (mutation-checked).
+
+### The door's horizontal borders were thinner: one constant, two coordinate systems again
+
+The door comes back in 0..1 of its own width AND height and the host stretches it to w x h, but `emit_flip` built each ribbon in those unit coordinates with its width as a fraction of w.
+So every stroke's thickness along y came back multiplied by h/w: measured on a 141.5 x 46 door (an SE with Copy code), top and bottom 3.6 px at 3x, left and right 9.8 px.
+The earlier mirroring made top match bottom and left match right, and could not make the pairs match each other.
+Ribbons are now built in points and only their points divided by the size.
+What was left (top 8.97 / left 9.83 px at 3x) is rough.js's two passes parting further on the short sides; `even_edges` gives each side pair the width that lays one shared amount of ink across it.
+After: 141.5 x 46 at 3x top 9.46 / left 9.35 px, at 2x 6.38 / 6.27 px; on the simulator's own Core Graphics render (SE, 2x) Again and Copy code both measure top 5.89 / bottom 5.89 / left 5.88 / right 5.88 px.
+`ios-smoke` cuts each edge across in points at nine places on doors 100-430 points wide and holds all four within 0.5 px at 3x (worst 0.30); both halves of the fix mutation-checked red.
+Side effect: the hachure lines were squashed the same way and are now their true 1.4 points in every direction, so the fill reads a little denser, matching the rulebook square.
+
+### The you-are O no longer cuts across itself
+
+At its 88-unit size the O's roughness is 2.66, and rough.js's closing overlap then sweeps up to two thirds of a turn on a few points: for about one seed in five the curve cut a chord through the circle.
+`uttt_o_in_ring` asks whether every sample lies within 15% of the O's own median radius; `uttt_mark_seed` walks a fixed sequence from the game seed to the first O that does (31% pass, at most 26 tries in 200,000 seeds), a pure function of the seed so both phones agree.
+`ios-smoke` checks 20,000 game seeds off the display list (worst stray 0.161 of the radius; 0.779 without the walk).
+
+### The win line was ruled
+
+rough.js bows a line by bowing x maxRandomnessOffset x length / 200, and the win line converted both the offset and the length to the unit board, so the bow came out squared-small.
+Over 300 won games its centreline wandered 0.12% of the board in the straightest game and 0.63% on average.
+It is now drawn in a hundred-unit board (roughness 1.5, bowing 2, offset 1.5) and scaled back once: least 1.6%, mean 3.7%, most 6.9%.
+`uttt_anim_test` requires 1-8% in every game; the old line fails it.
+The grid lines use the same `mro_for` x length arithmetic and so have no bow either; not changed here (their wander is endpoint jitter).
+
+### The beads: options, nothing shipped
+
+`uttt_ink` lays a quad per segment and a disc per sample, all at the stroke's alpha, so at every sample three translucent shapes overlap: 1-(1-a)^3 instead of a (.8 becomes .99; a minor line's .5 becomes .875).
+rough.js's second pass adds a broad overlap on top.
+Rendered from the owner's game (`NK2JIG6A6YIFDLRPPZ6Z5QGXZASJCBSINMIQ`, 320 points at 3x) with `uttt_look board CODE 320 3 MODE`, strokes recovered from the quad chain (256 strokes, 25,360 polygons): `b6/item5_options_sheet.png` and `b6/opts/crop_*_4x.png`.
+
+- a) opacity 1: no beads, but every mark goes solid and the won-block fade, the grid's .5 and the hierarchy of weights go with it. Free.
+- b) each stroke opaque into a transparency layer, the layer at the stroke's alpha: no beads; pass-over-pass and stroke crossings still darken like ink over ink. Loses the per-segment alpha grain (the stroke takes its mean). About 256 `CGContextBeginTransparencyLayer`s per board, each a bbox-sized offscreen: several times the fill cost of today, and every per-stroke Core Animation layer would need group opacity (`allowsGroupOpacity`, offscreen pass per layer).
+- c) darken blend, colour pre-mixed over the paper: no beads, but a pre-mix against a flat paper loses the paper grain through the ink, and every mark comes out paler. Cheap in Core Graphics (`.darken`), awkward for the bubble bake and wrong on a textured sheet.
+- d) per-stroke coverage by MAX: like b and keeps the alpha grain, but Core Graphics has no MAX-coverage mode, so it means the kernel rasterising itself.
+- e) one outline polygon per stroke (the centreline and per-sample half-widths, bisector normals, round caps), filled once at the stroke's mean alpha: no beads, crossings still darken, about 256 polygons instead of 25,360, identical on both phones because it is geometry from C, no change to Core Animation or the bake. Loses the per-segment alpha grain; keeps the width modulation.
+- f) one layer for the whole sheet with MAX alpha: nothing darkens, not even two strokes crossing, which reads as printed rather than drawn.
+
+Recommendation: e).
+It fixes the cause (the pen overlapping itself) in the one place geometry lives, makes the board a hundredth of the polygons (cheaper to fill, to cache and to animate), and keeps the ink-over-ink crossings that make it read as a pen.
+If the alpha grain is missed, it can come back as a width-only grain or as a paper-side texture; b) is the fallback if the grain matters more than the cost.
