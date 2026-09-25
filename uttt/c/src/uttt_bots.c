@@ -891,11 +891,23 @@ typedef struct {
  * biased estimate more finely; it cannot make the estimate better. Anyone
  * wanting a stronger quill should start there and not here. */
 #define TREE_POOL 250000
-static TreeNode tree_pool_a[TREE_POOL], tree_pool_b[TREE_POOL];
-static TreeNode *tree_pool = tree_pool_a;
-static uint8_t  tree_cache_move[UTTT_MAX_PLIES];
-static int      tree_cache_plies = -1;     /* the history the pool was built at */
-static uint32_t tree_cache_used;
+/* ONE KEPT TREE PER SIDE, and the ladder is what found out why.
+ *
+ * There was one kept tree, and whoever searched last owned it. In a game
+ * between two quills the one at ten rollouts re-rooted the tree the one at
+ * four thousand had just built, added its ten, and played the big tree's
+ * most visited move: quill@10 against quill@4000 was a game between two
+ * copies of the same search, and the ladder read it as "quill saturates".
+ * Keyed by the side to move, each side only ever re-roots its own last
+ * search. The third pool is scratch: re-rooting copies a side's subtree
+ * into it and the two trade places, and a search that keeps nothing (the
+ * proof, the analyser) works there without disturbing either side. */
+static TreeNode tree_pool_a[TREE_POOL], tree_pool_b[TREE_POOL], tree_pool_c[TREE_POOL];
+static TreeNode *tree_side[2] = { tree_pool_a, tree_pool_b };
+static TreeNode *tree_spare = tree_pool_c;
+static TreeNode *tree_pool = tree_pool_c;
+static uint8_t  tree_cache_move[2][UTTT_MAX_PLIES];
+static int      tree_cache_plies[2] = { -1, -1 };  /* history each side's tree was built at */
 
 static float tree_prior(const UtttGame *g, uint8_t mv)
 {
@@ -1011,25 +1023,27 @@ static void tree_copy(TreeNode *dst, uint32_t *dused, const TreeNode *src,
  * count, or 0 when there is nothing to keep. */
 static uint32_t tree_reroot(const UtttGame *g)
 {
-    int k = g->n_plies - tree_cache_plies;
-    if (tree_cache_plies < 0 || k <= 0 ||
-        memcmp(g->move, tree_cache_move, (size_t)tree_cache_plies) != 0)
+    const int side = g->turn - 1;
+    const int cp = tree_cache_plies[side];
+    int k = g->n_plies - cp;
+    if (cp < 0 || k <= 0 || memcmp(g->move, tree_cache_move[side], (size_t)cp) != 0)
         return 0;
+    const TreeNode *pool = tree_side[side];
     uint32_t node = 0;
     for (int i = 0; i < k; i++) {
-        const TreeNode *nd = &tree_pool[node];
+        const TreeNode *nd = &pool[node];
         uint32_t next = 0;
         for (int c = 0; c < nd->nchild; c++)
-            if (tree_pool[nd->first + c].mv == g->move[tree_cache_plies + i])
+            if (pool[nd->first + c].mv == g->move[cp + i])
                 next = nd->first + (uint32_t)c;
         if (!next) return 0;
         node = next;
     }
-    if (!tree_pool[node].nchild) return 0;
-    TreeNode *other = tree_pool == tree_pool_a ? tree_pool_b : tree_pool_a;
+    if (!pool[node].nchild) return 0;
     uint32_t used = 1;
-    tree_copy(other, &used, tree_pool, node, 0);
-    tree_pool = other;
+    tree_copy(tree_spare, &used, pool, node, 0);
+    tree_side[side] = tree_spare;
+    tree_spare = (TreeNode *)pool;
     return used;
 }
 
@@ -1037,6 +1051,7 @@ static void tree_search(const UtttGame *g, long playouts, uint64_t *rs,
                         int keep)
 {
     uint32_t used = keep ? tree_reroot(g) : 0;
+    tree_pool = keep ? tree_side[g->turn - 1] : tree_spare;
     if (!used) {
         used = 1;
         memset(&tree_pool[0], 0, sizeof tree_pool[0]);
@@ -1096,9 +1111,10 @@ static void tree_search(const UtttGame *g, long playouts, uint64_t *rs,
     *rs += 0x9E3779B97F4A7C15ull;
 
     /* Remember what this tree is a tree OF, for next time. */
-    tree_cache_plies = keep ? g->n_plies : -1;
-    memcpy(tree_cache_move, g->move, (size_t)g->n_plies);
-    tree_cache_used = used;
+    if (keep) {
+        tree_cache_plies[g->turn - 1] = g->n_plies;
+        memcpy(tree_cache_move[g->turn - 1], g->move, (size_t)g->n_plies);
+    }
 }
 
 /* What the tree can PROVE about the side to move from `g`, after
@@ -1241,5 +1257,5 @@ double uttt_quill_value(const UtttGame *g, long playouts, uint64_t *rs,
 void uttt_bots_forget(void)
 {
     if (tt) memset(tt, 0, TT_SIZE * sizeof *tt);
-    tree_cache_plies = -1;
+    tree_cache_plies[0] = tree_cache_plies[1] = -1;
 }
