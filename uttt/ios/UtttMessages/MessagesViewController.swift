@@ -619,7 +619,9 @@ final class MessagesViewController: MSMessagesAppViewController {
             UtttLog.note("present", "my own bubble, just sent - quiet")
             motion = .still
         }
-        UtttLog.note("present", "seed \(Uttt.seed) seat \(Uttt.seat) by \(Uttt.seatBy) plies \(Uttt.plyCount) door \(Uttt.door)")
+        /* The witness first: asking for the seat records it, and then every
+         * later answer is "by record". */
+        UtttLog.note("present", "seed \(Uttt.seed) by \(Uttt.seatBy) seat \(Uttt.seat) plies \(Uttt.plyCount) door \(Uttt.door)")
         showSeat(motion, conversation)
         UtttSeats.flush()
     }

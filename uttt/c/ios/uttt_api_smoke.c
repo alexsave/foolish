@@ -625,11 +625,18 @@ int main(void)
             ok(uti_msg_seat() == UTI_SEAT_SPECTATOR, "a fact about another message says nothing");
             ok(!uti_seats_dirty(), "and nothing was recorded");
             uti_msg_sender(join, 1, 0);
-            ok(uti_msg_seat_by() == UTI_BY_SENDER && uti_msg_seat() == UTI_SEAT_O,
-               "a DM, vera's bubble, O to move: he is O by the sender");
+            ok(uti_msg_seat() == UTI_SEAT_O && uti_msg_seat_by() == UTI_BY_SENDER,
+               "a DM, vera's bubble, O to move: he is O by the sender - asked twice");
             ok(uti_seats_dirty() && uti_msg_record() == UTI_SEAT_O, "and it is recorded");
-            ok(uti_msg_play(37) && uti_msg_seat() == UTI_SEAT_O && uti_msg_seat_by() == UTI_BY_RECORD,
-               "after his move the sender fact is stale, and the record holds");
+            ok(uti_msg_play(37) && uti_msg_seat() == UTI_SEAT_O && uti_msg_seat_by() == UTI_BY_SENDER,
+               "after his move the sender fact is stale, and the record holds - still the sender's");
+            {
+                uint8_t keep[UTI_SEATS_BYTES];
+                int kn = uti_seats_save(keep, UTI_SEATS_BYTES);
+                uti_seats_load(keep, kn);           /* the next session */
+                ok(uti_msg_seat() == UTI_SEAT_O && uti_msg_seat_by() == UTI_BY_RECORD,
+                   "next session the same record answers as the record");
+            }
             {
                 uint8_t out[UTI_SEATS_BYTES];
                 ok(uti_seats_save(out, UTI_SEATS_BYTES) == 9 && !uti_seats_dirty()

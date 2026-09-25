@@ -93,6 +93,12 @@ static struct {
     uint8_t   sent_msg[UTM_MAX_BYTES];
     int       sent_n;
     int       sent_dm, sent_mine;
+    /* THE WITNESS THAT WROTE THE RECORD, for the game in wrote_seed/wrote_o:
+     * once a seat is recorded every later question is answered "by record",
+     * and the diagnostics would never show what actually seated me. */
+    int       wrote_by;
+    int32_t   wrote_seed;
+    uint8_t   wrote_o[UTM_TAG_LEN];
     char      why[200];
     char      said[160];
     int       overflow;
@@ -432,11 +438,17 @@ static int resolve(uint8_t tag[UTM_TAG_LEN], int *by)
     int rec = utm_rec_find(S.rec, S.rec_n, &S.m);
     int sent = sent_fact(&dm);
     int seat = utm_resolve(&S.m, rec, utm_seat(&S.m, h), dm, sent, &b);
-    if (by) *by = b;
     if (b != UTM_BY_RECORD && (seat == UTM_SEAT_X || seat == UTM_SEAT_O || seat == UTM_SEAT_WAITING)) {
         S.rec_n = utm_rec_put(S.rec, S.rec_n, &S.m, seat);
         S.rec_dirty = 1;
+        S.wrote_by = b;
+        S.wrote_seed = S.m.seed;
+        memcpy(S.wrote_o, S.m.o, UTM_TAG_LEN);
+    } else if (b == UTM_BY_RECORD && S.wrote_by && S.wrote_seed == S.m.seed
+               && !memcmp(S.wrote_o, S.m.o, UTM_TAG_LEN)) {
+        b = S.wrote_by;                 /* this session's record: its witness */
     }
+    if (by) *by = b;
     if (tag) {
         switch (seat) {
         case UTM_SEAT_X:                       memcpy(tag, S.m.x, UTM_TAG_LEN); break;
@@ -457,6 +469,7 @@ void uti_seats_load(const uint8_t *bytes, int n)
     if (n) memcpy(S.rec, bytes, (size_t)n);
     S.rec_n = n;
     S.rec_dirty = 0;
+    S.wrote_by = 0;
 }
 
 int uti_seats_dirty(void) { return S.rec_dirty; }
@@ -489,6 +502,7 @@ int uti_msg_claim(int seat)
     if (utm_rec_find(S.rec, n, &S.m) != (seat == UTI_SEAT_WAITING ? UTI_SEAT_O : seat)) return 0;
     S.rec_n = n;
     S.rec_dirty = 1;
+    S.wrote_by = 0;
     return 1;
 }
 
@@ -496,6 +510,7 @@ void uti_msg_forget(void)
 {
     S.rec_n = utm_rec_forget(S.rec, S.rec_n, &S.m);
     S.rec_dirty = 1;
+    S.wrote_by = 0;
 }
 
 int uti_msg_seat_by(void)

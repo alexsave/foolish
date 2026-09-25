@@ -151,7 +151,9 @@ void uti_msg_sender(const char *text, int is_dm, int i_sent);
 
 /* The record for the resident game: UTI_SEAT_X, UTI_SEAT_O, or 0. */
 int  uti_msg_record(void);
-/* Which witness seated me: UTI_BY_*. */
+/* Which witness seated me: UTI_BY_*. A record this session wrote reports
+ * the witness that wrote it, so the diagnostics show what really decided;
+ * a record from an earlier session is UTI_BY_RECORD. */
 #define UTI_BY_NONE     0
 #define UTI_BY_RECORD   1
 #define UTI_BY_TAG      2
