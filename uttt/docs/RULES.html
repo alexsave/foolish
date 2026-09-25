@@ -125,7 +125,7 @@ const RULES = [
   "The board is divided up into 9 3x3 subgrids, themselves arranged in a 3x3 grid of squares.",
   "The goal is to win three subgrids in a row, a column, or diagonally.",
   "You can win a subgrid by making your mark in three squares in a row, just like regular tic-tac-toe.",
-  "The catch is that whatever square you choose in the subgrid corresponds to which subgrid on the board your opponent will move in on their next turn.",
+  "Whatever square you choose in the subgrid corresponds to which subgrid on the board your opponent will move in on their next turn.",
   "If you choose a square that would send your opponent to a completed subgrid, they will be able to move anywhere on the board on their next turn.",
   "The yellow outline will show you where your opponent will move on the next round.",
   "If you haven't sent the move yet, and want to change your move, tap again in the yellow tinted area.",
@@ -160,16 +160,16 @@ function pen(svg, seed) {
       return add(el('rect', { x, y, width: w, height: h, fill: 'none', stroke: c, 'stroke-width': sw }));
     },
     path(d, w, c) {
-      if (rc) return add(rc.path(d, o({ stroke: c, strokeWidth: w, roughness: .5 })));
+      if (rc) return add(rc.path(d, o({ stroke: c, strokeWidth: w, roughness: .08, bowing: .2, disableMultiStroke: true })));
       return add(el('path', { d, fill: 'none', stroke: c, 'stroke-width': w, 'stroke-linecap': 'round' }));
     },
-    mark(kind, cx, cy, r, w, alpha) {
+    mark(kind, cx, cy, r, w, alpha, ro) {
       const g = el('g', { opacity: alpha == null ? 1 : alpha }); svg.appendChild(g);
       const saved = svg.appendChild.bind(svg);
       const into = (n) => { g.appendChild(n); };
       if (kind === 'x') {
-        const a = rc ? rc.line(cx - r, cy - r, cx + r, cy + r, o({ stroke: C.x, strokeWidth: w })) : el('line', { x1: cx - r, y1: cy - r, x2: cx + r, y2: cy + r, stroke: C.x, 'stroke-width': w, 'stroke-linecap': 'round' });
-        const b = rc ? rc.line(cx + r, cy - r, cx - r, cy + r, o({ stroke: C.x, strokeWidth: w })) : el('line', { x1: cx + r, y1: cy - r, x2: cx - r, y2: cy + r, stroke: C.x, 'stroke-width': w, 'stroke-linecap': 'round' });
+        const a = rc ? rc.line(cx - r, cy - r, cx + r, cy + r, o(Object.assign({ stroke: C.x, strokeWidth: w }, ro))) : el('line', { x1: cx - r, y1: cy - r, x2: cx + r, y2: cy + r, stroke: C.x, 'stroke-width': w, 'stroke-linecap': 'round' });
+        const b = rc ? rc.line(cx + r * .92, cy - r * 1.06, cx - r * 1.04, cy + r * .9, o(Object.assign({ stroke: C.x, strokeWidth: w }, ro))) : el('line', { x1: cx + r, y1: cy - r, x2: cx - r, y2: cy + r, stroke: C.x, 'stroke-width': w, 'stroke-linecap': 'round' });
         into(a); into(b);
       } else {
         into(rc ? rc.circle(cx, cy, r * 2.1, o({ stroke: C.o, strokeWidth: w })) : el('circle', { cx, cy, r: r * 1.05, fill: 'none', stroke: C.o, 'stroke-width': w }));
@@ -226,7 +226,7 @@ const DIAGRAMS = [
   (s) => board(s, { wash: 'all', won: { 2: 'o' }, marks: [[4, 2, 'x']] }, 41),
   (s) => board(s, { wash: 4, outline: 2, marks: [[4, 2, 'x']] }, 51),
   (s) => board(s, { wash: 4, marks: [[4, 2, 'x', .35]], tap: [4, 6] }, 61),
-  (s) => { s.setAttribute('viewBox', '0 0 90 90'); pen(s, 71).mark('x', 45, 45, 24, 4); }
+  (s) => { s.setAttribute('viewBox', '0 0 90 90'); pen(s, 71).mark('x', 45, 45, 24, 3.6, 1, { roughness: 2.6, bowing: 3.5 }); }
 ];
 const ill = document.getElementById('ill');
 RULES.forEach((line, i) => {
