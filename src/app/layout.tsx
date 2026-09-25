@@ -8,6 +8,10 @@ export const metadata: Metadata = {
   title: 'Foolish',
   description: 'Foolish - The ultimate дурак experience',
   manifest: '/manifest.json',
+  // Safari's Smart App Banner: the "Foolish Cards - Messages" iMessage app on
+  // the App Store (id6792255464). Next writes it as
+  // <meta name="apple-itunes-app" content="app-id=6792255464">.
+  itunes: { appId: '6792255464' },
   appleWebApp: {
     capable: true,
     title: 'Foolish',
