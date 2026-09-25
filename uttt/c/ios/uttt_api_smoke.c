@@ -264,7 +264,7 @@ int main(void)
         const float cx = .06f + (50.f + .3f * 4.f) * .0088f, cy = .06f + (50.f - .3f * 3.f) * .0088f;
         const float rx = (78.f - .3f * 10.f) * .0044f, ry = (76.f + .3f * 8.f) * .0044f;
         for (int32_t g = 1; g <= 20000; g++) {
-            int m = uti_draw_mark(2, g + 4);
+            int m = uti_draw_mark(2, g + 4, 0);
             const UtiPoly *q = uti_polys();
             const float *pt = uti_points();
             static float rho[4000];
@@ -284,9 +284,9 @@ int main(void)
         }
         printf("  you-are O: worst stray %.3f of its radius (game seed %d)\n", worst, worst_seed);
         ok(ring, "the you-are O never cuts across itself, over 20,000 game seeds");
-        int a = uti_draw_mark(2, 12345);
+        int a = uti_draw_mark(2, 12345, 0);
         double s1 = 0; for (int i = 0; i < uti_point_count() * 2; i++) s1 += uti_points()[i];
-        int b = uti_draw_mark(2, 12345);
+        int b = uti_draw_mark(2, 12345, 0);
         double s2 = 0; for (int i = 0; i < uti_point_count() * 2; i++) s2 += uti_points()[i];
         ok(a == b && s1 == s2, "and one seed draws one O, every time");
     }

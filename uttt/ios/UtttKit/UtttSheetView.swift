@@ -250,6 +250,12 @@ public class UtttSheetView: UIView {
     /// all of an expand's growth.
     func rideBottom(_ v: UIView) { ride(v) { s in CollapseRidePose(dy: s) } }
 
+    /// THE RULEBOOK rides the bottom and slides across with the kernel's
+    /// x: centred in the strip's right column, in the corner open.
+    func rideRulebook(_ v: UIView, _ L: UtiSheet, at: @escaping (CGFloat) -> UtiSheet) {
+        ride(v) { s in CollapseRidePose(dy: s, dx: CGFloat(at(s).rulebook.0 - L.rulebook.0)) }
+    }
+
     /// A DOOR THAT BELONGS TO THE EXPANDED VIEW (Again, Copy code): at its
     /// box, faded to the kernel's `door_alpha`, riding the bottom - and
     /// through a run its opacity rides too, from the start height's to the

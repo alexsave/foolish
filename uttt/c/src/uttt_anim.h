@@ -271,6 +271,11 @@ typedef struct {
                               (`copy`); it shows with Again (door_alpha) -
                               the strip's 46-point column has no room for
                               a word, and the board is never shrunk for one */
+    float you[2];          /* the "you are" indicator's anchor: the x it is
+                              set at, and the fraction of its width left of
+                              that x. On the strip it is centred in the left
+                              column (the sheet's edge to the board); open,
+                              it sits at the left pad, as it always did     */
 } UtttSheet;
 
 /* The drawer heights the openness runs between: 360, above the tallest

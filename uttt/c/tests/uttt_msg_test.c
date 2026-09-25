@@ -610,7 +610,7 @@ static void test_say(void)
     OK(!strcmp(s, "Waiting on ") && uttt_say_headline_mark(&g, UTM_SEAT_X) == UTTT_O,
        "say: X waits on a drawn O");
     say(UTTT_SAY_SUBLINE, &g, UTM_SEAT_X, s);
-    OK(!strcmp(s, "Middle right"), "say: where I sent them, capitalised");
+    OK(!strcmp(s, ""), "say: waiting on them has no line under it (owner)");
     say(UTTT_SAY_HEADLINE_PRE, &g, UTM_SEAT_O, s);
     OK(!strcmp(s, "Your move") && uttt_say_headline_mark(&g, UTM_SEAT_O) == 0,
        "say: O is on move, words only");

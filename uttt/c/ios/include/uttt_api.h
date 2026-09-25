@@ -332,6 +332,8 @@ typedef struct {
     float rulebook[4], again[4];    /* x, y, w, h: the two doors */
     float sub_alpha;                /* the column's second line (UtttSheet) */
     float copy[4];                  /* the end screen's replay door, or zero */
+    float you[2];                   /* the "you are" anchor x, and the share
+                                       of its width left of it (UtttSheet) */
 } UtiSheet;
 UtiSheet uti_sheet(UtiSheetIn in);
 /* Where the send hint's container starts below the drawer's top (UTTT_SHEET_HINT_TOP). */
@@ -348,8 +350,10 @@ float uti_board_reach(void);
 int  uti_draw_last(float t);
 
 
-/* One mark on its own, for the side indicator. */
-int  uti_draw_mark(int mark, int32_t seed);
+/* One mark on its own: `board` 0 for the side indicator; for the headline's
+ * mark the board's side over the mark's frame, in points, and it is drawn
+ * at the last move's stroke width (uttt_draw_mark). */
+int  uti_draw_mark(int mark, int32_t seed, float board);
 
 /* The rulebook door - the one button on the expanded sheet, a hachured square
  * with a book on it. Takes the size the button HAS, IN POINTS, because

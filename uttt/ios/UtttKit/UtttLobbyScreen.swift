@@ -210,6 +210,6 @@ public final class UtttWatchScreen: UtttSheetView {
         if let again {
             placeDoor(again, L.again, L, at: at)
         }
-        rideBottom(rulebook)
+        rideRulebook(rulebook, L, at: at)
     }
 }

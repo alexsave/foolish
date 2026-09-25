@@ -296,6 +296,7 @@ _Static_assert(offsetof(UtiSheet, words) == offsetof(UtttSheet, words)
                && offsetof(UtiSheet, again) == offsetof(UtttSheet, again)
                && offsetof(UtiSheet, sub_alpha) == offsetof(UtttSheet, sub_alpha)
                && offsetof(UtiSheet, copy) == offsetof(UtttSheet, copy)
+               && offsetof(UtiSheet, you) == offsetof(UtttSheet, you)
                && offsetof(UtiSheetIn, copy) == offsetof(UtttSheetIn, copy)
                && offsetof(UtiSheetIn, hint) == offsetof(UtttSheetIn, hint)
                && offsetof(UtiSheetIn, words) == offsetof(UtttSheetIn, words), "the sheet's fields line up");
@@ -315,10 +316,10 @@ UtiSheet uti_sheet(UtiSheetIn in)
     return r;
 }
 
-int uti_draw_mark(int mark, int32_t seed)
+int uti_draw_mark(int mark, int32_t seed, float board)
 {
     dl_fresh();
-    uttt_draw_mark(&S.dl, mark, seed ? seed : 1, 0.f);
+    uttt_draw_mark(&S.dl, mark, seed ? seed : 1, board);
     return publish();
 }
 

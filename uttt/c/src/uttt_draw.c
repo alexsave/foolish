@@ -161,18 +161,25 @@ static void hash_in(UtttDL *d, float x, float y, float sz, int32_t seed,
 }
 
 /* THE LAST MARK IS HEAVIER: gone over twice rather than boxed, so it says
- * "this one" without adding a shape the game does not otherwise have. */
+ * "this one" without adding a shape the game does not otherwise have. The
+ * headline's mark ("Waiting on O") is drawn with the same two passes. */
+static void heavy_mark(UtttDL *d, int v, float x, float y, float s,
+                       int32_t seed1, int32_t seed2, float t, float k)
+{
+    UtttPen p = uttt_pen_92();
+    const float w = p.w * k;
+    p.w = w * 2.2f; p.a = 1.f; p.grain = .22f;
+    mark_in(d, v, x, y, s, seed1, t, &p);
+    p.w = w * 1.9f; p.a = .85f;
+    mark_in(d, v, x, y, s, seed2, t, &p);
+}
+
 static void last_mark(UtttDL *d, int v, int mv, int32_t seed, float t)
 {
     int b = mv / 9, c = mv % 9;
     float x = (b % 3) * BL + (c % 3) * CE + CE * .1f;
     float y = (b / 3) * BL + (c / 3) * CE + CE * .1f;
-    UtttPen p = uttt_pen_92();
-    const float w = p.w;
-    p.w = w * 2.2f; p.a = 1.f; p.grain = .22f;
-    mark_in(d, v, x, y, CE * .8f, sd(seed, 1000, mv), t, &p);
-    p.w = w * 1.9f; p.a = .85f;
-    mark_in(d, v, x, y, CE * .8f, sd(seed, 1000, mv + 613), t, &p);
+    heavy_mark(d, v, x, y, CE * .8f, sd(seed, 1000, mv), sd(seed, 1000, mv + 613), t, 1.f);
 }
 
 /* THE BIG MARK OVER A WON BLOCK, drawn to `t`: pen is purely additive, so
@@ -471,13 +478,21 @@ int32_t uttt_mark_seed(int mark, int32_t seed)
     return seed;
 }
 
-int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float calm)
+int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float board)
 {
-    seed = uttt_mark_seed(mark, seed);
+    int32_t s1 = uttt_mark_seed(mark, seed);
+    if (board > 0.f) {
+        /* a stroke's width is a share of its mark's side, so the board's
+         * CE .8 mark at `board` times this one's frame lays down the same
+         * points of ink when its pen is scaled by this */
+        float k = CE * .8f * board / UTTT_MARK_SIDE;
+        heavy_mark(d, mark, .06f, .06f, UTTT_MARK_SIDE, s1,
+                   uttt_mark_seed(mark, (int32_t)((uint32_t)seed + 613u)), 1.f, k);
+        return 0;
+    }
     UtttPen p = uttt_pen_92();
     p.w = uttt_pen_92().w * 1.15f;
-    mark_in(d, mark, .06f, .06f, UTTT_MARK_SIDE, seed, 1.f, &p);
-    (void)calm;
+    mark_in(d, mark, .06f, .06f, UTTT_MARK_SIDE, s1, 1.f, &p);
     return 0;
 }
 

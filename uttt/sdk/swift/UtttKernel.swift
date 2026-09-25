@@ -493,9 +493,11 @@ public enum Uttt {
     /// does (UTTT_MS_REST).
     public static var restSeconds: Double { Double(uti_motion_rest_ms()) / 1000 }
 
-    /// One mark, for the "you are" indicator.
-    public static func mark(_ m: Mark, seed: Int32) -> [Poly] {
-        harvest(uti_draw_mark(Int32(m.rawValue), seed))
+    /// One mark: plain for the "you are" indicator; for the headline's,
+    /// `board` is the board's side over the mark's, in points, and the
+    /// kernel draws it at the last move's stroke width.
+    public static func mark(_ m: Mark, seed: Int32, board: CGFloat = 0) -> [Poly] {
+        harvest(uti_draw_mark(Int32(m.rawValue), seed, Float(board)))
     }
 
     /// The rulebook door. It takes the size the button HAS, in points, because
