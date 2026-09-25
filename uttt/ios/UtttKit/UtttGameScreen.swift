@@ -1,200 +1,328 @@
-import SwiftUI
+import CUttt
+import UIKit
 
-/// The play surface, at the two sizes Messages gives it.
+/// The play surface, at every height Messages gives it.
 ///
 /// MESSAGES CHOOSES THE SIZE AND THIS FILE ONLY RECOGNISES IT. Collapsed is
 /// 340 points tall - 323 while the compose field holds the first responder -
 /// and the width is the phone's. Expanded is the screen less about 126 points
 /// of Messages chrome: 541 on an SE, 726 on a 16, 748 on a 16 Pro, 830 on a
-/// Pro Max. Nothing here asks to be any size; it is handed one and lays out
-/// inside it, which is why the only number this file computes is the board's.
-public struct UtttGameScreen: View {
-    @StateObject private var model: UtttModel
-    public init(model: UtttModel) { _model = StateObject(wrappedValue: model) }
+/// Pro Max. Nothing here asks to be any size; it is handed one and every
+/// number on it is the kernel's (`Uttt.sheet`, uttt_anim.c).
+///
+/// docs/UI.html, "What holds which edge": the header holds the top, the doors
+/// the bottom, and the board THE CENTRE - "348 to 214 is a scale, not a
+/// slide". So the board's centre is the sheet's at every height, and
+/// everything else is placed at an edge around it.
+public final class UtttGameScreen: UtttSheetView {
+    private let model: UtttModel
+    private let door: Uttt.Door
+    private let onDoor: () -> Void
+    /// THE RULES ARE A SHEET OF THEIR OWN over the game, so a swipe down on
+    /// them closes the rules, not the Messages drawer. The host presents it.
+    private let onRules: () -> Void
 
-    /// The sheet's margin, the same on every edge at both sizes.
-    private static let margin: CGFloat = 13
+    private let board: UtttBoardView
+    private let indicator = UIView()
+    private let youAre = UIView()
+    private let you1 = UILabel()
+    private let you2 = UILabel()
+    private let youMark: UtttInkView
+    private let column = UtttWordsView(align: .right)
+    private let band = UtttWordsView(align: .right)
+    private let rulebook: UtttRulebookButton
+    private var again: UtttDoorButton?
+    /// THE REPLAY LINK at the end, beside Again: the kernel's URL for the
+    /// finished game onto the pasteboard (an iMessage extension can open
+    /// only its own container's scheme - foolish's replay row), and the door
+    /// then reads as its own receipt.
+    private var copy: UtttDoorButton?
 
-    /// EXCEPT ABOVE AND BELOW THE COLLAPSED STRIP, where height is what runs
-    /// out. Messages gives an iPhone SE about 231 points of drawer, not the
-    /// 340 the design document measured on a taller phone, so on the smallest
-    /// device the board is limited by the height and every point of vertical
-    /// margin comes straight off it.
-    private static let vmargin: CGFloat = 8
-
-    /// TWO COLUMNS, ONE EITHER SIDE, in the collapsed strip. The left one
-    /// carries "you are" and the right one carries nothing - it exists so the
-    /// board sits in the middle of the SHEET rather than in the middle of what
-    /// is left over, which are different places and the eye knows it.
-    ///
-    /// 38, not 46: the mark inside is 34 and the two stacked words are about
-    /// 30, so the extra twelve points were air on both sides and the board is
-    /// what wanted them.
-    private static let column: CGFloat = 38
-
-    /// The height the drawer is halfway open at - the middle of the handover,
-    /// not a threshold any more. Nothing switches at it.
-    private static let collapsedCeiling: CGFloat = 400
-
-    /// The rules door, at each end. It stays on the collapsed strip because
-    /// it is the only way to the rules.
-    private static let doorCollapsed: CGFloat = 38
-
-    private static let label = Color(red: 0.541, green: 0.522, blue: 0.467) // #8a8577
-    private static let ink   = Color(red: 0.114, green: 0.106, blue: 0.086) // #1d1b16
-    private static let blue  = Color(red: 0.145, green: 0.216, blue: 0.420) // #25376b
-
-    /// THE DOOR OPENS ON THE SAME SHEET. Not a modal over a dimmed board:
-    /// the drawer is already a piece of paper in a small box, and a card
-    /// floating over it would be the only thing in the app that is not drawn
-    /// on the napkin.
-    @State private var rulesOpen = false
-
-    public var body: some View {
-        UtttSheet {
-            GeometryReader { geo in
-                if rulesOpen {
-                    UtttRulesSheet { rulesOpen = false }
-                        .padding(Self.margin)
-                        .transition(.opacity)
-                } else {
-                    sheet(geo.size)
+    /// `door` is the kernel's answer for this board (utm_door) - at the end of
+    /// a game, Again. It stands in the expanded view only (docs/UI.html 08:
+    /// "starting a game from the strip you land on by accident is how you
+    /// start a game by accident").
+    public init(model: UtttModel, door: Uttt.Door = .none, slide: CollapseSlide?,
+                onDoor: @escaping () -> Void = {}, onRules: @escaping () -> Void = {}) {
+        self.model = model
+        self.door = door
+        self.onDoor = onDoor
+        self.onRules = onRules
+        board = UtttBoardView(clock: model.clock)
+        youMark = UtttInkView.mark(model.you, seed: model.seed &+ 4)
+        rulebook = UtttRulebookButton(act: onRules)
+        super.init(slide: slide)
+        board.onTap = { [weak model] p in model?.tap(at: p) }
+        content.addSubview(board)
+        /* THE SIDE INDICATOR IS A DRAWN MARK, not a glyph, under two lines
+         * of label set on a 9.5-point body - one element to VoiceOver. */
+        youAre.addSubview(you1)
+        youAre.addSubview(you2)
+        you1.attributedText = UtttType.small.text(Uttt.say(.youAre1))
+        you2.attributedText = UtttType.small.text(Uttt.say(.youAre2))
+        indicator.addSubview(youAre)
+        indicator.addSubview(youMark)
+        indicator.isAccessibilityElement = true
+        indicator.accessibilityLabel = Uttt.say(.youAreSpoken)
+        content.addSubview(indicator)
+        content.addSubview(column)
+        content.addSubview(band)
+        if let title = UtttDoorButton.title(door) {
+            let a = UtttDoorButton(title: title, act: onDoor)
+            content.addSubview(a)
+            again = a
+            /* READ NOW, while the resident game is this screen's: the
+             * kernel's one slot can hold another game by the time of a tap. */
+            let url = Uttt.replayURL
+            var c: UtttDoorButton?
+            c = url.map { url in
+                UtttDoorButton(title: Uttt.say(.doorCopy)) {
+                    UIPasteboard.general.string = url
+                    c?.title = Uttt.say(.doorCopied)
                 }
             }
+            if let c { content.addSubview(c) }
+            copy = c
         }
-        .animation(.easeInOut(duration: 0.18), value: rulesOpen)
-    }
-
-    // MARK: one layout, two ends of it
-
-    /// HOW FAR OPEN THE DRAWER IS, 0 to 1, from the height and nothing else.
-    ///
-    /// There were two layouts here and a threshold between them, so a collapse
-    /// was a SWAP: the board jumped from one size to another while the drawer
-    /// was still moving, and the whole sheet re-laid out underneath it. The
-    /// host app's note on this is the one worth reading - a board laid out
-    /// from the `style` prop cannot follow a resize, and re-presenting at the
-    /// start of the transition is the "display rearranges right before the
-    /// collapse" jump. Its answer is a continuous fraction of the HEIGHT, and
-    /// this is the same answer with a tenth of the machinery, because this
-    /// game has exactly one thing on the sheet that moves.
-    ///
-    /// Everything below is `lerp(collapsed, expanded, t)`. Nothing switches.
-    private func openness(_ h: CGFloat) -> CGFloat {
-        let lo = Self.collapsedCeiling - 130, hi = Self.collapsedCeiling + 130
-        let x = min(1, max(0, (h - lo) / (hi - lo)))
-        return x * x * (3 - 2 * x)          // smoothstep, so the ends settle
-    }
-
-    private func lerp(_ a: CGFloat, _ b: CGFloat, _ t: CGFloat) -> CGFloat {
-        a + (b - a) * t
-    }
-
-    private func sheet(_ size: CGSize) -> some View {
-        let t = openness(size.height)
-
-        /* THE COLLAPSED STRIP PUTS THINGS BESIDE THE BOARD AND THE EXPANDED
-         * SHEET PUTS THEM ABOVE AND BELOW IT, so the two ends are the same
-         * four things in a different arrangement rather than two layouts.
-         * The board is centred in what the four leave, and every number is
-         * one lerp. Nothing switches, so a collapse is a resize. */
-        let vpad = lerp(Self.vmargin, Self.margin, t)
-        let top  = lerp(0, Self.barHeight, t)       // the bar, when there is one
-        let bot  = lerp(0, Self.doorSide + 6, t)    // the row the door sits in
-        let col  = lerp(Self.column, 0, t)          // the "you are" column
-        let gut  = lerp(0, 3, t)
-        let door = lerp(Self.doorCollapsed, Self.doorSide, t)
-        let icon = lerp(34, 46, t)
-
-        let side = max(0, min(size.width - 2 * (Self.margin + gut) - 2 * col,
-                              size.height - 2 * vpad - top - bot))
-
-        return board
-            .frame(width: side, height: side)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.top, top)
-            .padding(.bottom, bot)
-            .overlay(alignment: .topLeading) {
-                indicator(icon: icon, lead: lerp(3, 4, t))
-                    .frame(width: max(col, icon + 2), alignment: .leading)
-                    .padding(.top, lerp(4, 0, t))
-            }
-            .overlay(alignment: .topTrailing) {
-                headlineView.opacity(Double(t)).allowsHitTesting(t > 0.5)
-            }
-            .overlay(alignment: .bottomTrailing) {
-                UtttRulebookButton(side: door) { rulesOpen = true }
-            }
-            .padding(.horizontal, Self.margin)
-            .padding(.vertical, vpad)
-    }
-
-    /// THE BAR'S LINE, with the other side drawn rather than spelled.
-    ///
-    /// The mark is sized to the CAP HEIGHT of the type beside it, not to the
-    /// line box, or it sits low and reads as a separate object; and it is
-    /// nudged down by a point because a drawn circle's optical centre is not
-    /// its bounding box's. `.firstTextBaseline` does the rest.
-    @ViewBuilder private var headlineView: some View {
-        let ink = Uttt.over == .none ? Self.ink : Self.blue
-        HStack(alignment: .firstTextBaseline, spacing: 0) {
-            switch model.headline {
-            case .text(let t):
-                headlineText(t, ink)
-            case .mark(let before, let m, let after):
-                if !before.isEmpty { headlineText(before, ink) }
-                UtttMarkIcon(mark: m, seed: model.seed &* 31 &+ 7)
-                    .frame(width: 21, height: 21)
-                    .alignmentGuide(.firstTextBaseline) { $0.height - 2 }
-                if !after.isEmpty { headlineText(after, ink) }
-            }
+        content.addSubview(rulebook)
+#if DEBUG
+        if UtttRuler.on {
+            band.ruler = true
+            youMark.layer.addSublayer(orange)
+            rulebook.layer.addSublayer(blue)
+            again?.layer.addSublayer(violet)
         }
-        .lineLimit(1)
+#endif
+        model.onChange = { [weak self] in self?.changed() }
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+#if DEBUG
+    private let orange = MotionRuler.square(.orange)
+    private let blue = MotionRuler.square(.blue)
+    private let violet = MotionRuler.square(.violet)
+#endif
+
+    /// Something drawn changed: laid out again before this turn's commit.
+    /// NOT the board at once - the model bumps `boardKey` before it starts
+    /// the clock on the new plan, and a board bound then paints the new
+    /// move's whole mark from the old plan's last frame (filmed: one frame
+    /// of the finished mark before the ink began).
+    private func changed() {
+        setNeedsLayout()
     }
 
-    private func headlineText(_ t: String, _ ink: Color) -> some View {
-        Text(t)
-            .font(.system(size: 21, weight: .bold))
-            .tracking(-0.315)              // -.015em
-            .foregroundStyle(ink)
+    // MARK: one layout, from compact to expanded
+
+    override func lay(_ size: CGSize, from: CGFloat?) {
+        /* AT THE END THE STRIP CARRIES THE VERDICT (UI.html 08: "the verdict
+         * and the board"), in the right column beside the board, over the
+         * rulebook. While the game runs the strip carries no words - the
+         * wash says it - and the headline fades in with the band. */
+        let end = Uttt.over != .none
+        let hint = model.pending
+        let hasCopy = copy != nil
+        let L = Uttt.sheet(.play, size: size, words: end, hint: hint, copy: hasCopy)
+        /* THROUGH AN AUTO-COLLAPSE (CollapseSlide) the sheet is laid out at
+         * the compact height and pushed; each rider walks the path the layout
+         * would have walked, as a function of the push `s` - the drawer is
+         * `size.height + s` tall - from the kernel's own layout. */
+        let at = { (s: CGFloat) -> UtiSheet in
+            Uttt.sheet(.play, size: CGSize(width: size.width, height: size.height + s),
+                       words: end, hint: hint, copy: hasCopy)
+        }
+        /* The band's words are hidden on the strip, so through a slide they
+         * are set as the slide's first frame had them and fade on their layer. */
+        let B = from.map { Uttt.sheet(.play, size: CGSize(width: size.width, height: $0),
+                                      words: end, hint: hint, copy: hasCopy) } ?? L
+#if DEBUG
+        if UtttRuler.on { UtttLog.note("sheet-play", String(format: "h %.1f from %.1f board y %.1f side %.1f", size.height, from ?? -1, L.board.1, L.board.2)) }
+#endif
+        board.positionKey = model.boardKey
+        placeBoard(board, L, at: at)
+        layIndicator(L, at: at)
+
+        /* THE WORDS TWICE, in the column beside the ink and in the band, each
+         * shown only where it fits (uttt_sheet) - so a drag crossfades them
+         * and never squeezes them to "Wai...". */
+        let ink = end ? UtttInk.blue : UtttInk.ink
+        let (LC, LB) = wordsLayouts(L, B)
+        column.frame = rect(LC.words)
+        column.set(model.headline, ink: ink, seed: model.seed &* 31 &+ 7,
+                   subline: model.subline, column: true, sub: CGFloat(LC.sub_alpha))
+        band.frame = rect(LB.band)
+        band.set(model.headline, ink: ink, seed: model.seed &* 31 &+ 7,
+                 subline: model.subline, column: false)
+        placeWords(column: column, band: band, L, B, at: at)
+
+        /* THE DOORS HOLD THE BOTTOM: the rulebook in the corner, Again
+         * beside it at its height (owner), both inside the margins
+         * (uttt_sheet). */
+        rulebook.frame = rect(L.rulebook)
+        if let again {
+            placeDoor(again, L.again, L, at: at)
+        }
+        if let copy {
+            placeDoor(copy, L.copy, L, at: at)
+        }
+        rideBottom(rulebook)
+#if DEBUG
+        MotionRuler.place(blue, in: rulebook.bounds)
+        if let again { MotionRuler.place(violet, in: again.bounds) }
+#endif
     }
 
-    /// "you are" over a 46-point mark, which is 19 points of label, a 4-point
-    /// lead and the mark.
-    private static let barHeight: CGFloat = 72
-    private static let doorSide: CGFloat = 54
-
-    // MARK: the pieces
-
-    private var board: some View {
-        UtttBoard(active: model.active, last: model.last,
-                  positionKey: model.positionKey,
-                  animating: model.animating,
-                  onTap: { model.tap(at: $0) })
-    }
-
-    /// THE SIDE INDICATOR IS A DRAWN MARK, not a glyph - the same X that is
-    /// about to land on the board, out of the same pen. Setting it in a font
-    /// made it the only thing in the frame that did not come off the nib.
-    private func indicator(icon: CGFloat, lead: CGFloat) -> some View {
-        VStack(spacing: 0) {
-            // Two lines, set on a 9.5-point body - line-height 1, so they read
-            // as one two-line label rather than two labels.
-            VStack(spacing: -2.8) {
-                line("you")
-                line("are")
-            }
-            UtttMarkIcon(mark: model.you, seed: model.seed &+ 4)
-                .frame(width: icon, height: icon)
-                .padding(.top, lead)
+    /// THE HEADER HOLDS THE TOP: two lines of label centred over the drawn
+    /// mark, at the left pad. THROUGH AN AUTO-COLLAPSE THE LABEL AND THE MARK
+    /// RIDE APART: the mark is 34 points on the strip and 46 open (`icon`),
+    /// so riding the pair as one layer made the mark jump to its compact
+    /// size in the slide's first frame (7pt, filmed). The mark scales about
+    /// its top left and moves with the header; the label, centred over the
+    /// mark, moves across by half its change of size.
+    private func layIndicator(_ L: UtiSheet, at: @escaping (CGFloat) -> UtiSheet) {
+        let icon = CGFloat(L.icon)
+        /* two lines on a 9.5-point body, 2.8 points closer than their line
+         * height: they read as one two-line label rather than two labels */
+        let a = you1.sizeThatFits(.zero), b = you2.sizeThatFits(.zero)
+        let ls = CGSize(width: max(a.width, b.width), height: a.height + b.height - 2.8)
+        you1.frame = CGRect(x: (ls.width - a.width) / 2, y: 0, width: a.width, height: a.height)
+        you2.frame = CGRect(x: (ls.width - b.width) / 2, y: a.height - 2.8, width: b.width, height: b.height)
+        let stack = max(ls.width, icon)
+        let x0 = CGFloat(L.hpad), y0 = CGFloat(L.vpad + L.icon_top)
+        indicator.frame = CGRect(x: x0, y: y0, width: stack,
+                                 height: ls.height + CGFloat(L.icon_lead) + icon)
+        youAre.frame = CGRect(x: (stack - ls.width) / 2, y: 0, width: ls.width, height: ls.height)
+        youMark.frame = CGRect(x: (stack - icon) / 2, y: ls.height + CGFloat(L.icon_lead),
+                               width: icon, height: icon)
+#if DEBUG
+        MotionRuler.place(orange, in: youMark.bounds)
+#endif
+        ride(youAre) { s in
+            let A = at(s)
+            return CollapseRidePose(dy: CGFloat(A.icon_top - L.icon_top),
+                                    dx: CGFloat(A.icon - L.icon) / 2)
+        }
+        ride(youMark) { s in
+            let A = at(s)
+            return CollapseRidePose(
+                dy: CGFloat(A.icon_top + A.icon_lead - L.icon_top - L.icon_lead),
+                scale: L.icon > 0 ? CGFloat(A.icon / L.icon) : 1,
+                pivot: .zero)
         }
     }
+}
 
-    private func line(_ s: String) -> some View {
-        Text(s)
-            .font(.system(size: 9.5, weight: .semibold))
-            .tracking(1.9)                     // .2em
-            .textCase(.uppercase)
-            .foregroundStyle(Self.label)
+/// THE HEADLINE AND THE LINE UNDER IT, in one of the two places (the column
+/// beside the ink, wrapped; the band across the top, one line), aligned to
+/// one edge of the box it is framed to.
+final class UtttWordsView: UIView {
+    let align: NSTextAlignment
+    private let headline = UtttHeadlineView()
+    private let subline = UILabel()
+    /// DEBUG: the ruler's yellow and lime squares on this copy.
+    var ruler = false
+#if DEBUG
+    private let yellow = MotionRuler.square(.yellow)
+    private let lime = MotionRuler.square(.lime)
+#endif
+
+    init(align: NSTextAlignment) {
+        self.align = align
+        super.init(frame: .zero)
+        layer.actions = UtttLayers.still
+        addSubview(headline)
+        addSubview(subline)
+        headline.isAccessibilityElement = true
+        headline.accessibilityTraits = .header
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// The words, set to this view's width: the headline, then - 3 points
+    /// under it - the line under it (where you sent them, or at the end the
+    /// winning line spoken; docs/UI.html 04, 06, 07).
+    /// `sub` is the second line's alpha (uttt_sheet's `sub_alpha`): a
+    /// column too narrow for it carries the headline alone.
+    func set(_ h: UtttModel.Headline, ink: UIColor, seed: Int32, subline text: String, column: Bool,
+             sub: CGFloat = 1) {
+        let w = bounds.width
+        let hs = headline.set(h, ink: ink, seed: seed, width: w, column: column, align: align)
+        headline.accessibilityLabel = Uttt.say(.headlineSpoken)
+        headline.frame = CGRect(x: align == .right ? w - hs.width : 0, y: 0, width: hs.width, height: hs.height)
+        subline.isHidden = text.isEmpty || sub <= 0
+        subline.alpha = sub
+        var ss = CGSize.zero
+        if !text.isEmpty {
+            ss = subline.set(text, .subline, width: w, column: column, align: align)
+            subline.frame = CGRect(x: align == .right ? w - ss.width : 0, y: hs.height + 3,
+                                   width: ss.width, height: ss.height)
+        }
+#if DEBUG
+        if ruler {
+            if yellow.superlayer == nil { layer.addSublayer(yellow); layer.addSublayer(lime) }
+            MotionRuler.place(yellow, in: headline.frame)
+            lime.isHidden = text.isEmpty
+            MotionRuler.place(lime, in: subline.frame)
+        }
+#endif
+    }
+}
+
+/// THE BAR'S LINE, with the other side drawn rather than spelled: words, a
+/// drawn mark, words ("Waiting on <O>", "<X> wins").
+///
+/// The mark's middle sits on the middle of the lower-case words beside it -
+/// half their x-height above the baseline (owner, 2026-09-23: the mark and
+/// "wins" were not centred on each other). IN THE STRIP'S COLUMN words-only
+/// lines WRAP ("You win" over two lines rather than a board a size
+/// smaller), and a line with a drawn mark in it scales down to the column
+/// instead, since a mark cannot break a line.
+final class UtttHeadlineView: UIView {
+    private let text = UILabel()
+    private let before = UILabel()
+    private let after = UILabel()
+    private let mark = UtttInkView(key: "", square: true) { _ in [] }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        for v in [text, before, after] as [UIView] { addSubview(v) }
+        addSubview(mark)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// The headline at `width`; returns the size it takes.
+    func set(_ h: UtttModel.Headline, ink: UIColor, seed: Int32, width: CGFloat,
+             column: Bool, align: NSTextAlignment) -> CGSize {
+        switch h {
+        case .text(let t):
+            before.isHidden = true; after.isHidden = true; mark.isHidden = true
+            text.isHidden = false
+            let s = text.set(t, .headline, width: width, column: column, align: align, color: ink)
+            text.frame = CGRect(origin: .zero, size: s)
+            return s
+        case .mark(let b, let m, let a):
+            text.isHidden = true
+            before.isHidden = b.isEmpty; after.isHidden = a.isEmpty; mark.isHidden = false
+            let side: CGFloat = 21
+            let natural = UtttType.headline.width(b) + side + UtttType.headline.width(a)
+            let k = natural > width ? max(0.5, width / natural) : 1
+            let f = UtttType.headline.font(k)
+            before.attributedText = UtttType.headline.text(b, scale: k, color: ink)
+            after.attributedText = UtttType.headline.text(a, scale: k, color: ink)
+            let bs = b.isEmpty ? .zero : before.sizeThatFits(.zero)
+            let as_ = a.isEmpty ? .zero : after.sizeThatFits(.zero)
+            let ms = side * k
+            let lineH = ceil(f.lineHeight)
+            /* the mark centred on the words' x-height, on the first baseline */
+            let base = f.ascender
+            let my = base - f.xHeight / 2 - ms / 2
+            let top = min(0, my)
+            before.frame = CGRect(x: 0, y: -top, width: bs.width, height: lineH)
+            mark.key = "mark \(m.rawValue) \(seed)"
+            mark.polys = { _ in Uttt.mark(m, seed: seed) }
+            mark.frame = CGRect(x: bs.width, y: my - top, width: ms, height: ms)
+            after.frame = CGRect(x: bs.width + ms, y: -top, width: as_.width, height: lineH)
+            let w = min(width, bs.width + ms + as_.width)
+            return CGSize(width: w, height: max(lineH - top, my - top + ms))
+        }
     }
 }

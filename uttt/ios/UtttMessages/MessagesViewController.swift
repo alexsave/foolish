@@ -1,19 +1,50 @@
-import Combine
 import Messages
-import SwiftUI
+import UIKit
 import UtttKit
 
 /// The extension. It owns the conversation and nothing else - every rule and
 /// every coordinate is the kernel's, the screens are UtttKit's, and what a
-/// bubble says is `UtttWire`'s.
+/// bubble carries, who sits where, what they may do and which door they get
+/// is `uttt_msg.h`'s.
+///
+/// NO UNDO AND NO TAKE-BACK (owner, 2026-09-22, over UI.html 02): the only
+/// way to change a move is to tap another square, which replaces the staged
+/// draft. Messages' own X on the draft is system UI and is honoured - the
+/// board reverts - but nothing here offers a way back of its own.
 ///
 /// THERE IS NO CHAIN TO WALK. An extension is handed exactly one message, the
 /// one that was tapped, and cannot enumerate the transcript - so this file
 /// never looks for an earlier bubble. Everything it needs is in front of it.
+///
+/// THE MESSAGES IT HOLDS, and the kernel ranks them (utm_prefer):
+///   - the tapped one: what Messages says is selected, or what just arrived;
+///   - `staged`: the draft in the input field, which nobody has sent;
+///   - `sent`: the last bubble this device sent.
+/// The draft and the sent bubble are this device's own newest; the tapped one
+/// is everybody else's. Which of them the screen shows is one kernel call.
 final class MessagesViewController: MSMessagesAppViewController {
 
-    private var host: UIHostingController<AnyView>?
-    private var bag = Set<AnyCancellable>()
+    /// The screen up, a UIKit view (TESTFLIGHT_PLAN 14: no SwiftUI in this
+    /// process).
+    private var host: UIView?
+
+    /// THE AUTO-COLLAPSE, on the render server (CollapseSlide): armed right
+    /// before this controller asks for compact, and every screen rides it.
+    private let slide = CollapseSlide.uttt()
+
+    /// THE SEND HINT AND THE SEND DOOR, over whatever screen is up (see
+    /// UtttSendOverlay for why over and not in), above every screen `attach`
+    /// puts in, and never swapped.
+    private lazy var overlay = UtttSendOverlay { [weak self] in self?.sendDoorTapped() }
+
+    /// The insert the send door re-issues: the bubble, and the stage it
+    /// belongs to - a newer stage or a cancel makes it void.
+    private var doorInsert: (message: MSMessage, generation: Int, conversation: MSConversation)?
+
+    /// The stage whose insert Messages answered with a yes. Every watchdog of
+    /// that stage stands down at once, including one armed by an earlier try
+    /// whose answer arrived late.
+    private var landedGeneration = -1
 
     /// The bubble sitting in the input field, which nobody has sent yet.
     ///
@@ -23,32 +54,408 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// backwards under a move they have already made.
     private var staged: UtttWire?
 
+    /// The last bubble this device SENT (didStartSending). After the arrow the
+    /// draft is gone from the field, but the board must not go back to the
+    /// bubble that was tapped before it - which can still be the selection.
+    /// foolish's `markSent`, with its rule: it never rebases backwards.
+    private var sent: UtttWire?
+
+    /// A bubble that ARRIVED while we were up (didReceive). It is not the
+    /// selection, so without this the next present would read the old one.
+    private var arrived: UtttWire?
+
+    /// One present only: the position a cancelled draft reverted to. The
+    /// cancelled bubble can still be the selection, and "more plies wins"
+    /// would route straight back at the move the human just discarded.
+    private var reverted: UtttWire?
+
+    /// THIS DEVICE'S NEWEST IS A NEW GAME, so it beats the selection even
+    /// though the kernel ranks a different game's tapped bubble first. Set by
+    /// Again, whose finished game stays the selection through the draft AND
+    /// the send; cleared by the next tap or activation.
+    private var draftIsNewGame = false
+
+    /// The draft currently in the input field. Messages reports a REPLACED
+    /// bubble as cancelled, so a cancel that does not name this one is stale.
+    private var draftURL: URL?
+
+    /// A fresh MSSession for the next stage: Again starts a new game, and a
+    /// new game must never fold the finished game's last bubble into itself.
+    private var freshSession = false
+
+    /// A drawer opened from the + menu is bound to no message at all, and the
+    /// host delivers nothing to it - no didReceive, no didSelect - until a
+    /// bubble is tapped. foolish established this from the host binaries (see
+    /// its didStartSending); the answer is the same here: the first send from
+    /// an unbound drawer closes it, so the next thing the human does - tap
+    /// the bubble - binds it.
+    private var unbound = true
+
     // MARK: the conversation
 
 #if DEBUG
-    /// Cleared on every activation, so each opened bubble asks again.
+    /// Cleared on every activation and every bubble tapped while up, so each
+    /// opened bubble asks again.
     private var seatChosen = false
 #endif
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+#if DEBUG
+        if UtttDev.empty { UtttLog.note("load", "dev.empty - nothing"); return }
+#endif
+        UtttLog.note("load")
+        /* CLEAR UNTIL IT APPEARS - see `appeared`. */
+        view.backgroundColor = .clear
+
+        overlay.frame = view.bounds
+        overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        /* NO FLUSH HERE: onGrow runs inside the layout pass that lays the
+         * sheet out at the taller height. A flush there committed the half-
+         * done pass - the view already taller, the sheet still at compact -
+         * so every expand from compact showed one frame of the board riding
+         * the drawer's top before it re-laid out (TESTFLIGHT_PLAN 18). The
+         * pass's own commit takes the hint down in the same frame. */
+        overlay.onGrow = { [weak self] in self?.hideHintNow(flush: false) }
+        view.addSubview(overlay)
+#if DEBUG
+        devWatchForArrivals()
+#endif
+    }
 
     override func willBecomeActive(with conversation: MSConversation) {
         super.willBecomeActive(with: conversation)
 #if DEBUG
+        if UtttDev.empty { return }
+#endif
+        UtttLog.note("active", "\(styleName), selected \(conversation.selectedMessage != nil)")
+        becameActiveAt = Date()
+        overlay.compact = presentationStyle == .compact
+        arrived = nil
+        draftIsNewGame = false
+        unbound = conversation.selectedMessage == nil
+#if DEBUG
         seatChosen = false
 #endif
-        present(conversation)
+        present(conversation, motion: .open)
+        /* A DEADLINE ON THE WAIT BELOW, so a host that never sends one of the
+         * two signals cannot leave the drawer blank or the invitation unstaged
+         * - it is logged, and everything waiting runs anyway. */
+        let activation = becameActiveAt
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            guard let self, self.becameActiveAt == activation, !self.ready else { return }
+            UtttLog.fault("ready", "no \(self.appeared ? "" : "viewDidAppear ")\(self.conversationActive ? "" : "didBecomeActive")after 3s; going ahead")
+            self.appeared = true
+            self.conversationActive = true
+            self.becameReady()
+        }
     }
 
-    /// A DIFFERENT BUBBLE WAS TAPPED while we were already up. The cold case
-    /// arrives through `willBecomeActive` instead, with the same URL on the
-    /// conversation, so both ends route through `present` and there is only
-    /// one adoption path.
+    /// THE CONVERSATION IS LIVE. The second of the two things an insert
+    /// waits for (see `ready`).
+    override func didBecomeActive(with conversation: MSConversation) {
+        super.didBecomeActive(with: conversation)
+        UtttLog.note("did-active")
+        conversationActive = true
+        becameReady()
+    }
+
+    override func willResignActive(with conversation: MSConversation) {
+        super.willResignActive(with: conversation)
+        conversationActive = false
+    }
+
+    /// NOTHING IS DRAWN UNTIL THE DRAWER HAS A SIZE.
+    ///
+    /// Measured on a cold open (log lines `layout`, filmed alongside): the
+    /// extension's view is first laid out at the WHOLE WINDOW - 440 by 956 on
+    /// a Pro Max - and Messages puts it on screen at that size for about half
+    /// a second before the compact transition shrinks it to 309. Whatever
+    /// this view drew then covered the whole thread, status bar and all: a
+    /// full-screen sheet of paper flashing in before the drawer, and a board
+    /// rasterised at 414 points only to be thrown away for 207.
+    ///
+    /// So until viewDidAppear - by which point the drawer is its real size -
+    /// the screen is built but not attached, and the view stays clear, which
+    /// shows Messages' own drawer card. On appearing, the newest screen goes
+    /// in and paper is painted under it.
+    ///
+    /// AND NOTHING IS INSERTED UNTIL THE DRAWER IS UP AND THE CONVERSATION IS
+    /// ACTIVE. The first TestFlight build inserted the invitation from inside
+    /// willBecomeActive - before didBecomeActive, before the view was in a
+    /// window, with `activeConversation` still nil - and on a real phone the
+    /// bubble never reached the input field (on the simulator it did). foolish
+    /// never inserts that early: its create runs from a tap on a drawer that
+    /// is already up, and its stage takes `activeConversation`. So an insert
+    /// here waits for both viewDidAppear and didBecomeActive (`ready`), with a
+    /// logged deadline in case either never comes.
+    private var appeared = false
+    private var conversationActive = false
+    private var ready: Bool { appeared && conversationActive }
+    private var pendingScreen: UIView?
+    private var afterReady: [() -> Void] = []
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        UtttLog.note("appear", "\(Int(view.bounds.width))x\(Int(view.bounds.height)) \(styleName)")
+        /* ON A PHONE THE FIRST viewDidAppear IS AT THE WHOLE WINDOW (430x932),
+         * a second before the drawer is up (430x343), and an insert issued in
+         * between is dropped by Messages with no completion at all - device
+         * log 2026-09-23. Only a drawer counts as up, and which appearance is
+         * one is shared (ms_drawer_up, InsertStaging): never the window itself, an
+         * expanded drawer at any height short of it (the SE's 647 of 667). */
+        if drawerUp {
+            appeared = true
+        } else {
+            UtttLog.note("appear", "window-sized (\(styleName)); not up yet")
+        }
+        view.backgroundColor = UtttPaper.flat
+        if let screen = pendingScreen {
+            pendingScreen = nil
+            attach(screen)
+        }
+        becameReady()
+    }
+
+    /// THE DRAWER HAS ITS SIZE a beat before it appears: the first layout at
+    /// less than the whole window is the compact (or expanded) drawer, and
+    /// painting then saves the one black frame between Messages' grey card
+    /// and the paper that waiting for viewDidAppear left.
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        guard !appeared, !sized, drawerUp else { return }
+        UtttLog.note("sized", "\(Int(view.bounds.width))x\(Int(view.bounds.height))")
+        sized = true
+        becameReady()
+    }
+    private var sized = false
+
+    /// The view is a drawer, not the window it was first laid out at.
+    private var drawerUp: Bool {
+        guard let window = view.window else { return false }
+        return InsertStaging.drawerUp(window: window.bounds.height, view: view.bounds.height,
+                                      expanded: presentationStyle == .expanded)
+    }
+
+    private func becameReady() {
+        if appeared || sized, let screen = pendingScreen {
+            pendingScreen = nil
+            view.backgroundColor = UtttPaper.flat
+            attach(screen)
+        }
+        guard ready else { return }
+        let work = afterReady
+        afterReady.removeAll()
+        work.forEach { $0() }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        appeared = false
+        sized = false
+    }
+
+    /// Run `work` once the drawer is up and the conversation is active.
+    private func whenReady(_ work: @escaping () -> Void) {
+        if ready { work() } else { afterReady.append(work) }
+    }
+
+    override func didResignActive(with conversation: MSConversation) {
+        super.didResignActive(with: conversation)
+        UtttLog.note("resign")
+    }
+
+    /// When this activation began. A tap that launches or re-activates the
+    /// extension brings its own selection WITH it, and willBecomeActive
+    /// handles that; a selection that moves while we are already up is a
+    /// different bubble tapped (or our own insert).
+    private var becameActiveAt: Date?
+    private var freshlyActive: Bool {
+        guard let t = becameActiveAt else { return false }
+        return Date().timeIntervalSince(t) < 1
+    }
+
+    /// A DIFFERENT BUBBLE WAS TAPPED while we were already up.
     override func didSelect(_ message: MSMessage, conversation: MSConversation) {
-        present(conversation)
+        super.didSelect(message, conversation: conversation)
+        /* OUR OWN INSERT MOVES THE SELECTION TOO. That is not a tap, and
+         * re-asking the seat picker over it would ask the person who just
+         * moved who they are. */
+        if let u = message.url, u == draftURL || u == sent?.url {
+            UtttLog.note("select", "own bubble")
+            return
+        }
+        if freshlyActive {
+            UtttLog.note("select", "on a fresh activation - willBecomeActive has it")
+            return
+        }
+        UtttLog.note("select", "a bubble tapped while open")
+        unbound = false
+        arrived = nil
+        draftIsNewGame = false
+#if DEBUG
+        /* A new bubble is a new question: whose hands is it in. */
+        seatChosen = false
+#endif
+        present(conversation, motion: .open)
     }
 
     /// A move from the other player, which does NOT become the selection.
     override func didReceive(_ message: MSMessage, conversation: MSConversation) {
-        present(conversation)
+        super.didReceive(message, conversation: conversation)
+        /* MY OWN BUBBLE COMING BACK IS NOT AN ARRIVAL (foolish's round 12
+         * #11, `StagedBubbleRouting.isMine`). A drawer opened by tapping a
+         * bubble is bound to that bubble's session, and Messages hands the
+         * sender's own bubble back through here the moment the arrow is
+         * pressed - a second before didStartSending on the simulator (log
+         * 2026-09-23: `receive` at +198.648s, `send` at +199.684s), and to a
+         * second device on the same account for real. Threaded on as an
+         * arrival it rebuilt the screen and played the whole move again, and
+         * then the Send's own post-settlement played on top: the owner's
+         * "my own move replays after Send". The board already holds these
+         * exact bytes, so nothing is folded in - but this IS the send landing,
+         * so the post-settlement plays now rather than a second late. */
+        if let wire = UtttWire(url: message.url) {
+            switch InsertStaging.receive(mine: isMine(wire), staged: wire == staged) {
+            case .arrival: break
+            case .echo:
+                UtttLog.note("receive-dropped", "my own bubble")
+                return
+            case .echoOfStaged:
+                UtttLog.note("receive-dropped", "my own bubble")
+                settleSent(wire, conversation)
+                return
+            }
+        }
+        UtttLog.note("receive")
+        arrived = UtttWire(url: message.url)
+        present(conversation, motion: .arrival)
+    }
+
+#if DEBUG
+    /// Polls `dev.arrive` (UtttDev.takeArrival) every 0.4s for as long as the
+    /// extension lives. foolish's RIG_ARRIVE, for the same reason: one
+    /// simulator cannot send this drawer a move, so the rig says one arrived.
+    private var devArriveTimer: Timer?
+
+    private func devWatchForArrivals() {
+        guard devArriveTimer == nil else { return }
+        devArriveTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
+            guard let self, let arg = UtttDev.takeArrival() else { return }
+            self.devArrive(arg)
+        }
+    }
+
+    /// The other dev seat plays into the game on screen, and the result goes
+    /// through exactly the lines `didReceive` runs - so the board shows what a
+    /// second phone's bubble would have shown: channel E.
+    private func devArrive(_ arg: String) {
+        guard let conversation = activeConversation,
+              let mine = UtttDev.seat,
+              let showing = Uttt.messageText else {
+            UtttLog.fault("dev", "arrive: needs an open drawer, dev.seat and a game on screen")
+            return
+        }
+        let other = mine == "a" ? "b" : "a"
+        Uttt.me(UtttDev.identity(other))
+        defer { identify(conversation) }
+        guard Uttt.read(showing), Uttt.canMove else {
+            UtttLog.fault("dev", "arrive: it is not \(other)'s move")
+            return
+        }
+        let legal = Uttt.legal
+        let mv = Int(arg) ?? (legal.isEmpty ? -1 : Int(legal[legal.count / 2]))
+        guard Uttt.playAsMe(mv), let text = Uttt.messageText else {
+            UtttLog.fault("dev", "arrive: \(other) cannot play \(mv)")
+            _ = Uttt.read(showing)
+            return
+        }
+        UtttLog.note("dev", "arrive: \(other) plays \(mv)")
+        if UtttDev.game != nil { UtttDev.live = text }
+        /* didReceive, line for line. */
+        UtttLog.note("receive")
+        arrived = UtttWire(text: text)
+        present(conversation, motion: .arrival)
+    }
+#endif
+
+    /// THE HUMAN TAPPED THE ARROW: the draft is in the thread now.
+    ///
+    /// The message Messages hands over is the authority - the bytes that
+    /// actually went out - not our own bookkeeping, which a replaced draft or
+    /// a torn-down extension can have lost.
+    override func didStartSending(_ message: MSMessage, conversation: MSConversation) {
+        super.didStartSending(message, conversation: conversation)
+        let wire = UtttWire(url: message.url) ?? staged
+        UtttLog.note("send", wire.map { "\($0.text.count) chars" } ?? "NO PAYLOAD")
+        markSent(wire)
+        if message.url == draftURL {
+            draftURL = nil
+            staged = nil
+        }
+        freshSession = false
+        live?.setPending(false)
+        hideHintNow()
+        overlay.staged = false
+        overlay.door = false
+        doorInsert = nil
+        let wasUnbound = unbound
+        if let wire { settleSent(wire, conversation) } else { present(conversation, motion: .settle) }
+
+        /* A SEND FROM THE EXPANDED DRAWER is somebody done with it; a send
+         * from the compact one keeps the strip up so the next move is one tap
+         * away - foolish's round-16 rule. Except the first bubble of an
+         * unbound drawer: nothing will ever arrive at it (see `unbound`). */
+        if presentationStyle != .compact {
+            UtttLog.note("dismiss", "sent from expanded")
+            dismiss()
+        } else if wasUnbound {
+            UtttLog.note("dismiss", "first send from an unbound drawer")
+            dismiss()
+        }
+    }
+
+    /// The bubble whose post-settlement has played. The echo and
+    /// didStartSending both mean "this bubble went", in either order, and
+    /// the highlighter moves once.
+    private var settled: UtttWire?
+
+    /// B: THE POST-SETTLEMENT PLAYS AT SEND - the highlighter goes to the
+    /// outlined block and nothing else moves. On the board already up when it
+    /// is this game (the usual case); a fresh present only when it is not.
+    /// Once per bubble, whichever of the two send signals comes first.
+    private func settleSent(_ wire: UtttWire, _ conversation: MSConversation) {
+        guard settled != wire else {
+            UtttLog.note("settle", "already played for this bubble")
+            return
+        }
+        settled = wire
+        hideHintNow()
+        if let live, wire.load(), live.seed == Uttt.seed, Uttt.messageText == wire.text {
+            live.sent()
+        } else {
+            present(conversation, motion: .settle)
+        }
+    }
+
+    /// A bubble this device staged or sent - the draft in the field, or the
+    /// last one that went.
+    private func isMine(_ wire: UtttWire) -> Bool {
+        wire.url == draftURL || wire == staged || wire == sent
+    }
+
+    /// markSent NEVER REBASES BACKWARDS. A send whose bytes lose to what this
+    /// device already sent in the same game (a stale report, a replaced
+    /// draft reported late) changes nothing - adopting it would walk the
+    /// board back under a move that is already in the thread.
+    private func markSent(_ wire: UtttWire?) {
+        guard let wire else { return }
+        if let old = sent, old.isSameGame(as: wire),
+           !Uttt.prefersMine(wire.text, over: old.text) {
+            UtttLog.fault("send", "refused: older than what was already sent")
+            return
+        }
+        sent = wire
     }
 
     /// The draft was deleted, so the board it held never existed.
@@ -56,354 +463,648 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// ONLY IF THIS IS THE DRAFT. Staging a replacement - which is what
     /// tapping a different square does - REPLACES the bubble in the input
     /// field, and Messages reports the replaced one as cancelled, after the
-    /// successor has already been recorded. A handler that believed every
-    /// cancel would take back the move the player had just decided on. The
-    /// host app hit this too and its note is the one worth reading.
+    /// successor has already been recorded.
     override func didCancelSending(_ message: MSMessage, conversation: MSConversation) {
-        guard message.url == draftURL else { return }
-        draftURL = nil
-        live?.setPending(false)
-        /* The X IS the undo: there is no other button, and leaving the move
-         * played would put the board a ply ahead of every bubble in the
-         * thread. */
-        if Uttt.plyCount > 0, Uttt.undo() {
-            staged = staged.map { UtttWire(seed: $0.seed, creator: $0.creator,
-                                           joiner: $0.joiner, code: Uttt.code) }
-            reverted = true
-            live?.refresh()
-        } else {
-            staged = nil
+        super.didCancelSending(message, conversation: conversation)
+        guard message.url == draftURL, let draft = staged else {
+            UtttLog.note("cancel", "a replaced draft - ignored")
+            return
         }
+        UtttLog.note("cancel", "the draft")
+        draftURL = nil
+        staged = nil
+        stageGeneration += 1           // a stage still waiting to insert is void
+        live?.setPending(false)
+        overlay.staged = false
+        overlay.door = false
+        doorInsert = nil
+
+        /* THE X IS THE UNDO - the only one there is, by the owner's decision
+         * (no undo button, no take-back door): Messages' own X on the draft
+         * cannot be removed, so the board must follow it. What comes back is
+         * the kernel's rule: only my own move, and taking back a joining move
+         * gives the seat back. The draft is re-read first, because the
+         * resident message is whatever was read last. */
+        identify(conversation)
+        guard draft.load(), Uttt.undoMine(), let back = UtttWire.resident else {
+            /* AN INVITATION NOBODY SENT, taken out of the field: there is no
+             * game left to show, and staying up would stage a new one at once.
+             * Close, and the human is back at their keyboard. */
+            UtttLog.note("dismiss", "the invitation draft was cancelled")
+            dismiss()
+            return
+        }
+        reverted = back
+#if DEBUG
+        /* The seeded game's state goes back with it, or the next open of the
+         * seeded board would read the cancelled move back out of dev.live. */
+        if UtttDev.game != nil { UtttDev.live = back.text }
+#endif
         present(conversation)
     }
 
-    /// A REVERT BEATS THE SELECTION FOR ONE PRESENT. `insert()` made the
-    /// staged bubble the selection and a cancel does not always take that
-    /// back, so the ordinary "more plies wins" rule would route the surface
-    /// straight back at the bubble the human just discarded - the opposite of
-    /// an undo.
-    private var reverted = false
+    override func willTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
+        super.willTransition(to: presentationStyle)
+        UtttLog.note("will-style", Self.name(presentationStyle))
+        /* THE HINT GOES AS THE DRAWER STARTS TO GROW, not once it has: the
+         * Send button is only above a compact drawer. */
+        if presentationStyle != .compact { hideHintNow() }
+        overlay.compact = presentationStyle == .compact
+    }
 
-    private func present(_ conversation: MSConversation) {
-        bag.removeAll()
+    /// THE HINT DOWN IN THIS FRAME. A send, or a drawer that has started to
+    /// grow: a fade would take it down over its duration, and a send is the
+    /// moment this process is busiest (the re-present) - filmed lingering
+    /// 0.8-2s after the arrow and ~1s into a drag. The overlay's layer is
+    /// hidden and committed now; it comes back when the drawer is compact
+    /// and a bubble is staged again (`showHintLayer`).
+    private func showHintLayer() {
+        overlay.hintLayerShown = true
+        overlay.rest = overlay.bounds.height
+        overlay.compact = true
+        overlay.layer.opacity = 1
+    }
+
+    /// `flush` pushes it to the render server now - right outside a layout
+    /// pass (a send, a style change), never inside one (see `onGrow`).
+    private func hideHintNow(flush: Bool = true) {
+        guard overlay.hintLayerShown else { return }
+        overlay.hintLayerShown = false
+        overlay.compact = false
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        overlay.layer.opacity = 0
+        CATransaction.commit()
+        if flush { CATransaction.flush() }
+    }
+
+    override func didTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
+        super.didTransition(to: presentationStyle)
+        UtttLog.note("style", Self.name(presentationStyle))
+        overlay.compact = presentationStyle == .compact
+        if presentationStyle == .compact { showHintLayer() }
+        let waiters = transitionWaiters
+        transitionWaiters.removeAll()
+        for seq in waiters.keys.sorted() { waiters[seq]?.resume() }
+    }
+
+    private static func name(_ s: MSMessagesAppPresentationStyle) -> String {
+        switch s {
+        case .compact:    return "compact"
+        case .expanded:   return "expanded"
+        case .transcript: return "transcript"
+        @unknown default: return "other"
+        }
+    }
+    private var styleName: String { Self.name(presentationStyle) }
+
+    // MARK: routing
+
+    private func present(_ conversation: MSConversation, motion: Uttt.Channel = .still) {
+        live?.onPosition = nil
 
 #if DEBUG
-        /* ASKED ONCE PER OPENING, and then never seen again. One phone cannot
-         * hold two participants, so with `dev.picker` set the first thing an
-         * opened bubble does is ask which of the two people is holding it -
-         * and after that the game plays exactly as it would on two phones,
-         * with no debug anything on any screen. */
+        /* ASKED ONCE PER OPENED BUBBLE, and then never seen again. One phone
+         * cannot hold two participants, so with `dev.picker` set the first
+         * thing an opened bubble does is ask which of the two people is
+         * holding it. */
         if UtttDev.picker, !seatChosen {
             show(UtttSeatChoice { [weak self] word in
                 guard let self else { return }
                 UtttDev.setSeat(word)
                 self.seatChosen = true
-                if let c = self.activeConversation ?? self.staged.map({ _ in conversation }) {
-                    DispatchQueue.main.async { self.present(c) }
-                }
+                DispatchQueue.main.async { self.present(conversation, motion: motion) }
             })
             return
         }
-#endif
 
-#if DEBUG
-        /* STRAIGHT TO THE BOARD. One simulator cannot play a two-handed game
-         * in a transcript - see UtttDev - so with `dev.game` set the lobby,
-         * the invitation and the tap on a bubble are all skipped and the
-         * position is built here. Absent in every ordinary run, including an
-         * ordinary DEBUG one, and gone entirely from a shipping build. */
-        if conversation.selectedMessage == nil, staged == nil,
-           let plies = UtttDev.game {
-            showSeeded(plies)
+        /* STRAIGHT TO THE BOARD with `dev.game` set: see UtttDev. Seated
+         * first - the seeded board's "you are" is a seat question too. */
+        identify(conversation)
+        if conversation.selectedMessage == nil, staged == nil, sent == nil,
+           reverted == nil, let plies = UtttDev.game {
+            showSeeded(plies, motion, conversation)
             return
         }
 #endif
 
-        /* OPENING THE APP IS THE INVITATION. There is no "Send a board"
-         * button any more: coming in through the + menu with no bubble to
-         * read is somebody saying they want a game, so the board goes into
-         * the input field there and then and the drawer stays COMPACT with
-         * what it has just done on it. A door that asks a second time is a
-         * door in the way. */
-        guard let wire = current(UtttWire.read(conversation.selectedMessage?.url)) else {
+        identify(conversation)
+
+        let tapped = newest(UtttWire(url: conversation.selectedMessage?.url), arrived)
+        guard let wire = current(tapped) else {
+            /* OPENING THE APP IS THE INVITATION. Coming in through the + menu
+             * with no bubble to read is somebody saying they want a game. */
             start(in: conversation)
             return
         }
-        staged = wire
 
         guard wire.load() else {
-            show(UtttLobbyScreen(stance: .unreadable, act: {}))
+            UtttLog.fault("read", "unreadable bubble")
+            show(UtttLobbyScreen(stance: .unreadable, slide: slide))
             return
         }
 
-        /* WHICH SEAT IS THIS DEVICE'S. A tag only ever answers "is this me?",
-         * and the device asking is the one that wrote it - see UtttWire.tag.
-         * Everybody else in a group chat matches neither, which is how a third
-         * tap becomes a spectator instead of a third player. */
-        let me = UtttWire.tag(participant: conversation.localParticipantIdentifier,
-                              seed: wire.seed)
+        /* MY OWN MOVE DOES NOT REPLAY AT ME (owner, 2026-09-23; foolish's
+         * quiet open, didStartSending + lastSentPayload): the bubble this
+         * device just sent, shown again - Messages re-presenting it, or the
+         * human tapping it - is the settled board. The board already showed
+         * that move being made; only the highlighter's post-settlement
+         * played, at Send. */
+        var motion = motion
+        if motion == .open, let mine = sent, mine.text == wire.text {
+            UtttLog.note("present", "my own bubble, just sent - quiet")
+            motion = .still
+        }
+        UtttLog.note("present", "seed \(Uttt.seed) seat \(Uttt.seat) plies \(Uttt.plyCount) door \(Uttt.door)")
+        showSeat(motion, conversation)
+    }
 
-        switch wire.seat(of: me) {
-        case .some(.creator) where !wire.isSealed:
-            /* You put the board down and nobody has picked it up. NO MARK ON
-             * THIS SCREEN: which seat you have is not decided until the other
-             * chair is filled, and a waiting screen that showed one would be
-             * telling you what you would get if you re-rolled. */
-            show(UtttLobbyScreen(stance: .waiting(nil), seed: wire.seed, act: {}))
+    /// The screen for the resident game, by this device's seat. One owner,
+    /// so the DEBUG seeded path cannot show a spectator a player's screen.
+    private func showSeat(_ motion: Uttt.Channel, _ conversation: MSConversation) {
+        let door = Uttt.door
+        /* WHICH SEAT IS THIS DEVICE'S is the kernel's answer: it hashes this
+         * device's participant with the game's seed and looks for the result. */
+        switch Uttt.seat {
+        case .waiting:
+            /* No door here: see UtttLobbyScreen. */
+            show(UtttLobbyScreen(stance: .waiting, slide: slide))
 
-        case .some(let seat):
-            guard let mark = wire.mark(of: seat) else {
-                show(UtttLobbyScreen(stance: .waiting(nil), seed: wire.seed, act: {}))
-                return
-            }
-            showBoard(wire, mark: mark, claiming: nil)
+        case .open, .x, .o:
+            /* OPENING SOMEBODY'S INVITATION IS SITTING DOWN AS X, and the
+             * first move is yours: the join and the first move are one
+             * message, staged when the move is made. */
+            showBoard(mark: Uttt.myMark, door: door, motion: motion, conversation)
 
-        case .none where !wire.isSealed:
-            /* OPENING THE BOARD IS TAKING THE SEAT. There was a screen here
-             * that said "there is a seat" over a button that said "take it",
-             * which is a door in front of a door: you tapped the bubble, so
-             * you want the game. The roster seals, the claim goes into the
-             * input field, and the board is what you are looking at. */
-            join(wire, as: me)
-
-        case .none:
-            // THE ROSTER SEALED AT TWO. This is a group chat and you are not
-            // in this game.
-            showWatching(wire)
+        case .spectator:
+            let model = UtttModel(seed: Uttt.seed, you: .none)
+            model.refresh()
+            show(UtttWatchScreen(model: model, door: door, slide: slide,
+                                 onDoor: { [weak self] in self?.again(in: conversation) },
+                                 onRules: { [weak self] in self?.openRules() }))
         }
     }
 
-    /// The draft beats the transcript, but only for the same game: tapping an
-    /// older bubble, or a different game's, has to win.
-    private func current(_ selected: UtttWire?) -> UtttWire? {
-        if reverted { reverted = false; return staged }
-        guard let staged else { return selected }
-        guard let selected else { return staged }
-        guard staged.isSameGame(as: selected) else { return selected }
-        return staged.plies() >= selected.plies() ? staged : selected
+    /// Of the selection and an arrival, the one the kernel ranks higher - but
+    /// an arrival from a DIFFERENT game never overrides what was tapped.
+    private func newest(_ selected: UtttWire?, _ arrival: UtttWire?) -> UtttWire? {
+        guard let arrival else { return selected }
+        guard let selected else { return arrival }
+        guard selected.isSameGame(as: arrival) else { return selected }
+        return Uttt.prefersMine(arrival.text, over: selected.text) ? arrival : selected
     }
 
-    // MARK: the three things a person can do
+    /// WHO THIS DEVICE IS, told to the kernel before every question about a
+    /// seat. Messages' participant identifier is per device per conversation,
+    /// which is exactly the scope a seat needs.
+    private func identify(_ conversation: MSConversation) {
+#if DEBUG
+        if let word = UtttDev.seat {
+            Uttt.me(UtttDev.identity(word))
+            return
+        }
+#endif
+        Uttt.me(participant: conversation.localParticipantIdentifier)
+    }
 
-    /// Put an empty board on the table. THIS MOMENT IS THE SEED, and every
-    /// bubble in the game carries it from here on.
+    /// This device's newest against what Messages handed over. The kernel
+    /// decides, including which of two joiners got the seat; a different game
+    /// tapped wins, unless the draft is a new game this device just asked for.
+    private func current(_ tapped: UtttWire?) -> UtttWire? {
+        if let r = reverted { reverted = nil; return r }
+        /* Staged or already sent: after Again's invitation goes out, the
+         * finished game is still the selection, and "a different game tapped
+         * wins" would put the old board back up under the new invitation. */
+        if draftIsNewGame, let mine = staged ?? sent { return mine }
+        guard let mine = staged ?? sent else { return tapped }
+        guard let tapped else { return mine }
+        return Uttt.prefersMine(mine.text, over: tapped.text) ? mine : tapped
+    }
+
+    // MARK: the things a person can do
+
+    /// Put an empty board on the table. THIS MOMENT IS THE SEED.
+    ///
+    /// SHOWN FIRST, STAGED ONCE THE DRAWER IS UP. Baking the bubble is the
+    /// one slow thing on this path, and on a cold open it used to run before
+    /// the first screen existed; and the insert used to land while Messages
+    /// was still presenting the drawer, which is when the whole-window flash
+    /// was at its longest (see `appeared`).
     private func start(in conversation: MSConversation) {
-        /* THE CONVERSATION IS THE ARGUMENT, not `activeConversation`. Inside
-         * `willBecomeActive(with:)` the property is not set yet, so a
-         * `guard let conversation = activeConversation` here returned quietly
-         * and the drawer came up empty with no bubble and no error - which
-         * looks exactly like a crashed extension. */
-        let seed = UtttWire.seedNow()
-        let me = UtttWire.tag(participant: conversation.localParticipantIdentifier,
-                              seed: seed)
-        let wire = UtttWire.opening(seed: seed, creator: me)
-        stage(wire, in: conversation)
-    }
-
-    /// Take the second seat. THE ROSTER SEALS HERE.
-    /// THE ROSTER SEALS HERE, and only here does anybody learn a seat: the
-    /// marks come from both tags, so the second one has to exist first.
-    private func join(_ wire: UtttWire, as me: String) {
-        wire.load()
-        let sealed = wire.staging(joining: me)
-        guard let mine = sealed.mark(of: .joiner) else { return }
-
-        /* AND ONLY IF THERE IS NOTHING ELSE TO SAY. Sitting down has to be
-         * SENT - the other player cannot see a seat that was never sent - but
-         * if the draw makes you X then your move is the next thing that
-         * happens anyway, and the claim and the move belong in one bubble.
-         * Staging an empty board first would put a message in the thread
-         * whose only content is "I am here", immediately followed by the one
-         * that says it better. */
-        if Uttt.over == .none, Uttt.turn == mine {
-            showBoard(wire, mark: mine, claiming: me)
-        } else {
-            stage(sealed, andShowIt: false)
-            showBoard(wire, mark: mine, claiming: me)
+        Uttt.openInvitation()
+        guard let wire = UtttWire.resident else {
+            UtttLog.fault("start", "the kernel wrote no invitation")
+            return
+        }
+        UtttLog.note("start")
+        staged = wire
+        present(conversation)
+        whenReady { [weak self] in
+            DispatchQueue.main.async {
+                guard let self, self.staged == wire else { return }
+                self.stage(wire, in: conversation)
+            }
         }
     }
 
-    /// Seal the position the kernel is holding into the input field.
-    ///
-    /// `andShowIt` is false for a move, which was made on a board that is
-    /// already showing the result of it, and true for everything else - where
-    /// the screen that was tapped is not the screen that should follow.
-    /// ONE MSSession PER GAME, which is two things at once.
-    ///
-    /// Messages collapses every older bubble of a session down to its caption
-    /// and keeps only the newest interactive, so a twenty-six move game is
-    /// one live board in the transcript instead of twenty-six - which is what
-    /// the thread wants anyway.
-    ///
-    /// And a message in a session is a message Messages will hand back:
-    /// without one, tapping our own sent bubble opened the extension EXPANDED
-    /// (so the tap was routed as a bubble open) with `selectedMessage` nil,
-    /// and the app had no way to know which game had been tapped. The host
-    /// app has always set one; this is the same answer.
+    /// AGAIN (docs/UI.html 06, 07): a fresh invitation from whoever asks, in a
+    /// NEW session, so the finished game's last bubble stays in the thread.
+    /// Whoever proposes moves second - the lobby rule - which is also what
+    /// swaps the players for a rematch.
+    private func again(in conversation: MSConversation) {
+        UtttLog.note("again")
+        identify(conversation)
+        freshSession = true
+        draftIsNewGame = true
+        sent = nil
+        arrived = nil
+        start(in: conversation)
+    }
+
+    // MARK: staging
+
+    /// ONE MSSession PER GAME. Messages collapses every older bubble of a
+    /// session down to its caption and keeps only the newest interactive, and
+    /// a message in a session is one Messages will hand back when tapped.
     private var session: MSSession?
     private var sessionGame: UtttWire?
 
     private func sessionFor(_ wire: UtttWire, _ conversation: MSConversation) -> MSSession {
-        if let s = session, let g = sessionGame, g.isSameGame(as: wire) { return s }
-        // A bubble we are continuing carries its own; a brand new game gets a
-        // brand new one, or the last game's final board folds into it.
-        let s = conversation.selectedMessage?.session ?? MSSession()
+        if !freshSession, let s = session, let g = sessionGame, g.isSameGame(as: wire) { return s }
+        let selected = conversation.selectedMessage
+        let s: MSSession
+        if !freshSession, let sel = selected?.session,
+           let w = UtttWire(url: selected?.url), w.isSameGame(as: wire) {
+            s = sel
+        } else {
+            s = MSSession()
+        }
         session = s; sessionGame = wire
         return s
     }
 
-    private func stage(_ wire: UtttWire, andShowIt: Bool = true,
-                       in conv: MSConversation? = nil) {
-        guard let conversation = conv ?? activeConversation else { return }
+    /// Which stage owns the input field. NEWEST STAGE WINS: a stage that has
+    /// to wait for the drawer to collapse can be overtaken by a change of
+    /// mind, and the older one must then neither record itself nor insert.
+    private var stageGeneration = 0
+
+    /// Put `wire` into the input field.
+    ///
+    /// COLLAPSE FIRST, INSERT AFTER. From the expanded drawer, inserting while
+    /// the drawer is still big makes Messages fly the new bubble's preview in
+    /// over a drawer that is shrinking under it, and an insert issued in the
+    /// middle of a presentation change is the prime suspect for a bubble that
+    /// never reached the field. So an expanded stage asks for compact, waits
+    /// for didTransition (or a timeout: never hang on a transition Messages
+    /// decided not to run), and only then inserts. From compact it inserts at
+    /// once. foolish's MessagesViewController.stage, round 10b.
+    private func stage(_ wire: UtttWire, in conversation: MSConversation) {
+        stageGeneration += 1
+        let generation = stageGeneration
+        /* A NEW STAGE STARTS THE HINT'S WAIT AGAIN, and takes down a door left
+         * by the stage it replaces. The hint comes back once this one lands. */
+        overlay.staged = false
+        overlay.door = false
+        doorInsert = nil
+
+        /* BAKED NOW, from the message being staged, before anything can load
+         * a different one into the kernel's one resident slot. */
+        guard wire.load() else {
+            UtttLog.fault("stage", "the kernel cannot read what it wrote")
+            return
+        }
         let message = MSMessage(session: sessionFor(wire, conversation))
         message.url = wire.url
-        message.layout = layout(for: wire)
-        /* THE COLLAPSED LINE IS OURS TOO. A session folds every older bubble
-         * down to one grey row, and without this Messages writes that row
-         * itself - "+1 (555) 564-8583 sent Ultimate message", a phone number
-         * and an app's name, in a thread where every other line is about a
-         * board. */
-        message.summaryText = wire.isSealed && Uttt.plyCount == 0
-            ? UtttBubble.sealedCaption : UtttBubble.caption
+        /* THE PICTURE IS PAINTED OFF THE MAIN THREAD. Everything it needs is
+         * read from the kernel here, in a millisecond; the fourteen thousand
+         * fills at 3x took a fifth of a second on the main thread at every
+         * stage, which is exactly when the board's highlighter is travelling
+         * (docs/UI.html: the drawer and the bubble move once the ink lands). */
+#if DEBUG
+        UtttLog.mem("stage")
+#endif
+        let snap = UtttBubble.snapshot(display: traitCollection.displayScale)
+#if DEBUG
+        UtttLog.mem("snapshot")
+#endif
+        let caption = UtttBubble.caption
+        /* THE COLLAPSED LINE IS OURS TOO, or Messages writes "<phone number>
+         * sent Ultimate message" into a thread about a board. */
+        message.summaryText = caption
+        freshSession = false
+
         staged = wire
         draftURL = message.url
         live?.setPending(true)
 #if DEBUG
-        /* The seeded game's state, so the other seat finds this move. */
-        if UtttDev.game != nil { UtttDev.live = wire.url.absoluteString }
+        if UtttDev.game != nil { UtttDev.live = wire.text }
 #endif
-        conversation.insert(message) { _ in }
 
-        /* AN EXTENSION CANNOT SEND. insert() only puts the bubble in the input
-         * field; the arrow is the human's. So the surface gets out of the way
-         * of the thing it has just asked them to tap. */
+        /* Painted off the main thread, and handed over only once the board
+         * has settled - see UtttMotionClock.whenSettled. */
+        let painted: (@escaping (UIImage) -> Void) -> Void = { [weak self] done in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let img = UtttBubble.image(snap)
+                DispatchQueue.main.async {
+#if DEBUG
+                    UtttLog.mem("painted")
+#endif
+                    if let clock = self?.live?.clock { clock.whenSettled { done(img) } }
+                    else { done(img) }
+                }
+            }
+        }
+        if presentationStyle == .compact {
+            painted { [weak self] img in
+                guard let self, self.stageGeneration == generation else { return }
+#if DEBUG
+                UtttLog.mem("settled")
+#endif
+                message.layout = UtttBubble.layout(image: img, caption: caption)
+#if DEBUG
+                UtttLog.mem("layout")
+#endif
+                self.insert(message, generation: generation, in: conversation, attempt: 1)
+            }
+            return
+        }
+        UtttLog.note("stage", "collapsing after the move and the rest")
+        /* THE PAINT AND THE COLLAPSE RUN TOGETHER, and the transition is
+         * waited for from NOW: waiting for it after the paint missed a
+         * collapse that had already finished and sat out the whole timeout. */
+        var image: UIImage?
+        var imageWaiter: CheckedContinuation<UIImage, Never>?
+        painted { img in
+            if let w = imageWaiter { imageWaiter = nil; w.resume(returning: img) } else { image = img }
+        }
+        Task { @MainActor [weak self] in
+            await self?.restThenCollapse(generation)
+            let img: UIImage
+            if let ready = image { img = ready } else {
+                img = await withCheckedContinuation { imageWaiter = $0 }
+            }
+            message.layout = UtttBubble.layout(image: img, caption: caption)
+            guard let self, self.stageGeneration == generation else {
+                UtttLog.note("stage", "overtaken while collapsing")
+                return
+            }
+            self.insert(message, generation: generation, in: conversation, attempt: 1)
+        }
+    }
+
+    /// NOTHING IS DROPPED SILENTLY. A refused insert is logged with Messages'
+    /// own error and tried once more a beat later; if that fails too the
+    /// draft is treated exactly as a cancelled one - the board goes back, so
+    /// it never shows a move the input field does not hold.
+    ///
+    /// AND A SILENT ONE IS A REFUSAL TOO. ChatKit drops an insert that arrives
+    /// before the host counts the drawer as presenting and never calls back
+    /// (shared/c/msg_stage/INSERT_GATING.md), so every try arms a watchdog, and
+    /// what its silence means is shared (ms_insert_silence): in the compact
+    /// drawer, try again every half second up to ten times; expanded, where
+    /// the host parks an accepted insert's answer on purpose, keep listening
+    /// and count nothing; out of tries, hand the human the send door.
+    private func insert(_ message: MSMessage, generation: Int,
+                        in conversation: MSConversation, attempt: Int) {
+        /* THE ACTIVE CONVERSATION when there is one - foolish's stage uses
+         * nothing else - and the one we were handed only as a fallback. */
+        let target = activeConversation ?? conversation
+        UtttLog.note("insert", "attempt \(attempt)\(activeConversation == nil ? " (no active conversation)" : "")")
+        overlay.door = false
+        var answered = false
+        watchSilence(of: message, generation: generation, in: conversation,
+                     attempt: attempt) { answered }
+        let answer: (Error?) -> Void = { [weak self] error in
+            DispatchQueue.main.async {
+                if answered { UtttLog.note("insert", "late answer for attempt \(attempt)") }
+                answered = true
+                guard let self else { return }
+                guard let error else {
+                    UtttLog.note("inserted")
+#if DEBUG
+                    UtttLog.mem("inserted")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { UtttLog.mem("inserted+1s") }
+#endif
+                    guard self.stageGeneration == generation else { return }
+                    /* IN THE FIELD: every watchdog of this stage stands down,
+                     * and the hint's wait starts now. */
+                    self.landedGeneration = generation
+                    self.doorInsert = nil
+                    self.overlay.door = false
+                    self.overlay.staged = true
+                    self.overlay.restart()
+                    if self.presentationStyle == .compact { self.showHintLayer() }
+                    return
+                }
+                UtttLog.fault("insert", "attempt \(attempt) failed: \(error.localizedDescription)")
+                guard self.stageGeneration == generation else { return }
+                if attempt < 3 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        guard self.stageGeneration == generation else { return }
+                        self.insert(message, generation: generation, in: conversation,
+                                    attempt: attempt + 1)
+                    }
+                    return
+                }
+                UtttLog.fault("insert", "gave up; the draft is reverted")
+                self.didCancelSending(message, conversation: conversation)
+            }
+        }
+#if DEBUG
+        /* `dev.dropinsert`: swallowed with no answer, as ChatKit's gate does. */
+        if UtttDev.dropInsert {
+            UtttLog.note("insert", "dev.dropinsert - swallowed")
+            return
+        }
+#endif
+#if DEBUG
+        UtttLog.mem("insert")
+#endif
+        target.insert(message, completionHandler: answer)
+    }
+
+    /// One try's watchdog: after the kernel's silence, if nobody answered and
+    /// the stage is still current and not landed, ask the kernel what the
+    /// silence means. Every firing is logged, so a device log shows how many
+    /// tries the host needed.
+    private func watchSilence(of message: MSMessage, generation: Int,
+                              in conversation: MSConversation, attempt: Int,
+                              answered: @escaping () -> Bool) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + InsertStaging.silenceSeconds) { [weak self] in
+            guard let self, !answered(), self.stageGeneration == generation,
+                  self.landedGeneration != generation else { return }
+            let compact = self.presentationStyle == .compact
+            switch InsertStaging.silence(attempt: attempt, compact: compact) {
+            case .listen:
+                UtttLog.note("insert", "attempt \(attempt) unanswered while \(self.styleName); listening")
+                self.watchSilence(of: message, generation: generation, in: conversation,
+                                  attempt: attempt, answered: answered)
+            case .retry:
+                UtttLog.fault("insert", "attempt \(attempt) got no answer; retrying")
+                self.insert(message, generation: generation, in: conversation, attempt: attempt + 1)
+            case .door:
+                UtttLog.fault("insert", "attempt \(attempt) got no answer; \(attempt) unanswered, offering the send door")
+                self.doorInsert = (message, generation, conversation)
+                self.overlay.door = true
+                if compact { self.showHintLayer() }
+            }
+        }
+    }
+
+    /// THE SEND DOOR, tapped: the same bubble, inserted again from a drawer
+    /// that is by now certainly presenting. Its tries count from one.
+    private func sendDoorTapped() {
+        guard let d = doorInsert, d.generation == stageGeneration else {
+            UtttLog.note("door", "send tapped for a stage that is gone")
+            overlay.door = false
+            return
+        }
+        UtttLog.note("door", "send tapped")
+        doorInsert = nil
+        insert(d.message, generation: d.generation, in: d.conversation, attempt: 1)
+    }
+
+    /// THE DRAWER MOVES ONCE THE MOVE HAS SETTLED AND RESTED (UI.html: once
+    /// the ink lands, never during; owner: "let it breathe"). The whole plan
+    /// runs - ink, highlighter - then the kernel's rest with nothing
+    /// moving, and only then the slide is armed and compact asked for;
+    /// foolish's `stage` waits for its board to settle and rests 500 ms the
+    /// same way. The bubble goes in once the transition has run.
+    private func restThenCollapse(_ generation: Int) async {
+        if let clock = live?.clock {
+            await withCheckedContinuation { (k: CheckedContinuation<Void, Never>) in
+                clock.whenDone { k.resume() }
+            }
+        }
+        try? await Task.sleep(nanoseconds: UInt64(Uttt.restSeconds * 1_000_000_000))
+        guard stageGeneration == generation, presentationStyle != .compact else { return }
+        UtttLog.note("stage", "collapsing")
+        slide.arm()
         requestPresentationStyle(.compact)
+        await awaitTransitionSettled()
+        /* didTransition comes BEFORE the compact height is handed (measured:
+         * 50 ms before), so the arm outlives it by a beat; an arm no height
+         * ever answered stands down then. */
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.slide.disarm()
+        }
+    }
 
-        /* And it says what it now is. Messages does not re-present an already
-         * compact extension, so without this the door that has just been used
-         * is still standing there offering to do the same thing again.
-         *
-         * NEXT TURN OF THE RUNLOOP, because the thing being replaced is the
-         * view whose button is still in the middle of calling this - tearing
-         * it down under itself leaves an empty drawer. */
-        if andShowIt {
-            DispatchQueue.main.async { [weak self] in self?.present(conversation) }
+    private var transitionWaiters: [Int: CheckedContinuation<Void, Never>] = [:]
+    private var transitionWaiterSeq = 0
+
+    @MainActor
+    private func awaitTransitionSettled(timeoutNs: UInt64 = 1_200_000_000) async {
+        transitionWaiterSeq += 1
+        let id = transitionWaiterSeq
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            transitionWaiters[id] = c
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: timeoutNs)
+                if let waiter = self?.transitionWaiters.removeValue(forKey: id) {
+                    UtttLog.note("stage", "no transition came; inserting anyway")
+                    waiter.resume()
+                }
+            }
         }
     }
 
     // MARK: the screens
 
-    /// The board on screen, so a cancel can tell it the draft is gone.
+    /// The board on screen, so a send or a cancel can tell it about the draft.
     private weak var live: UtttModel?
 
-    /// The draft currently in the input field. Messages reports a REPLACED
-    /// bubble as cancelled, so a cancel that does not name this one is stale.
-    private var draftURL: URL?
-
-    private func showBoard(_ wire: UtttWire, mark: Uttt.Mark, claiming: String?) {
-        /* ONE GAME LIVES IN THE KERNEL and UtttModel's init starts a new one
-         * on it, so the position goes in AFTER the model exists and the screen
-         * is told to look again. Any other order shows an empty board over a
-         * game in progress. */
-        let model = UtttModel(seed: wire.seed, you: mark)
-        wire.load()
-        model.refresh()
+    /// The board for the message the kernel is holding, as `mark`.
+    private func showBoard(mark: Uttt.Mark, door: Uttt.Door, motion: Uttt.Channel = .still,
+                           _ conversation: MSConversation) {
+        let model = UtttModel(seed: Uttt.seed, you: mark)
+        /* A draft on screen is a draft the player may change their mind about. */
+        let draft = staged.map { Uttt.messageText == $0.text } ?? false
+        if draft { model.setPending(true) }
+        /* THE LAST MOVE ARRIVES through the door it came in by (docs/UI.html
+         * "How it moves"): an opened bubble replays it, an arrival draws it
+         * in, and a send or a cancel shows the board at rest - a draft's at
+         * rest with its settlement held for Send (UI.html channel B). */
+        model.show(draft && motion == .still ? .draft : motion)
         live = model
 
         /* The model does not know there is a conversation and should not. It
-         * says the position changed; a position that changed is a move this
-         * device made, because the kernel will not let it move out of turn. */
-        model.$positionKey
-            .dropFirst()
-            .sink { [weak self] _ in
-                guard let self else { return }
-                /* A REPLACEMENT RESTAGES, it does not stage a second bubble.
-                 * Uttt.plyCount going DOWN is the undo half of a change of
-                 * mind, and there is nothing to put in the field for it - the
-                 * move that replaces it arrives a beat later and stages then.
-                 * Without this the input field briefly carries the position
-                 * the player just rejected. */
-                guard Uttt.turn != mark || Uttt.over != .none else { return }
-                self.stage(wire.staging(joining: claiming), andShowIt: false)
+         * says the position changed; a position this device can no longer
+         * move in is a move this device just made. */
+        model.onPosition = { [weak self] in
+            guard let self else { return }
+            /* A REPLACEMENT RESTAGES, it does not stage a second bubble:
+             * the undo half of a change of mind hands the move back, and
+             * the move that replaces it arrives a beat later. */
+            guard !Uttt.canMove, let wire = UtttWire.resident, wire != self.staged else { return }
+            self.stage(wire, in: conversation)
+            /* THE END OF THE GAME re-presents, for the door the playing
+             * screen did not have: Again. */
+            if Uttt.over != .none {
+                /* Not in the middle of the slide: a new screen there
+                 * lands on a host with no push. */
+                DispatchQueue.main.async {
+                    self.slide.whenStill { self.present(conversation) }
+                }
             }
-            .store(in: &bag)
+        }
 
-        show(UtttGameScreen(model: model))
+        show(UtttGameScreen(model: model, door: door, slide: slide,
+                            onDoor: { [weak self] in self?.again(in: conversation) },
+                            onRules: { [weak self] in self?.openRules() }))
     }
 
 #if DEBUG
-    /// A game `plies` moves in, both seats taken, seated as `dev.seat` says.
-    private func showSeeded(_ plies: Int) {
+    /// A game `plies` moves in, both seats taken, seated as `dev.seat` says:
+    /// "a" is the creator (O), "b" the joiner (X).
+    private func showSeeded(_ plies: Int, _ motion: Uttt.Channel, _ conversation: MSConversation) {
         let seed = UtttDev.seed
-        let a = UtttWire.tagForDev("a", seed: seed)
-        let b = UtttWire.tagForDev("b", seed: seed)
 
-        /* WHERE THE GAME ACTUALLY IS, if anybody has moved. Rebuilding the
-         * opening here would undo the other seat's move every time the seat
-         * flipped, and the board would never leave ply `plies`. */
-        if let live = UtttDev.live, let wire = UtttWire.read(URL(string: live)),
-           wire.seed == seed, wire.load() {
-            seatSeeded(wire)
+        /* WHERE THE GAME ACTUALLY IS, if anybody has moved. */
+        if let live = UtttDev.live, Uttt.read(live), Uttt.seed == seed {
+            showSeat(motion, conversation)
             return
         }
 
-        /* A CONSTANT, NOT A SEARCH - and not the bot, which is research and
-         * has no business inside the app. These are the first moves of the
-         * game the render harness draws, so a seeded screenshot here and a
-         * PPM from `make render` are the same board. */
+        /* A CONSTANT, NOT A SEARCH: the first moves of the game the render
+         * harness draws, so a seeded screenshot and a PPM are the same board. */
         Uttt.newGame(seed: seed)
         let opening = [34, 67, 44, 80, 76, 43, 69, 62, 79, 63, 4, 40, 39, 31,
                        37, 16, 70, 71, 72, 3, 29, 19, 17, 73, 14, 50, 45, 6]
-        for mv in opening.prefix(max(0, plies)) where Uttt.over == .none {
+        for mv in UtttDev.moves ?? Array(opening.prefix(max(0, plies))) where Uttt.over == .none {
             _ = Uttt.play(mv)
         }
-        seatSeeded(UtttWire(seed: seed, creator: a, joiner: b, code: Uttt.code))
-    }
-
-    /// Open a seeded game from whichever chair `dev.seat` is sitting in.
-    private func seatSeeded(_ wire: UtttWire) {
-        let me = UtttWire.tag(participant: UUID(), seed: wire.seed)
-        let seat = wire.seat(of: me) ?? .creator
-        guard let mark = wire.mark(of: seat) else { return }
-        showBoard(wire, mark: mark, claiming: nil)
+        Uttt.seat(o: UtttDev.identity("a"), x: UtttDev.identity("b"))
+        showSeat(motion, conversation)
     }
 #endif
 
-    private func showWatching(_ wire: UtttWire) {
-        let model = UtttModel(seed: wire.seed, you: .none)
-        wire.load()
-        model.refresh()
-        show(UtttWatchScreen(model: model))
-    }
-
-    private func show<V: View>(_ screen: V) {
-        host?.willMove(toParent: nil)
-        host?.view.removeFromSuperview()
-        host?.removeFromParent()
-
-        let vc = UIHostingController(rootView: AnyView(screen))
-        addChild(vc)
-        vc.view.frame = view.bounds
-        vc.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        vc.view.backgroundColor = .clear
-        view.addSubview(vc.view)
-        vc.didMove(toParent: self)
-        host = vc
-    }
-
-    // MARK: the bubble
-
-    /// The face of the message is `UtttBubble`'s and the kernel's. The only
-    /// thing decided here is who the sentence is about - and in this game the
-    /// only name anybody has is their mark, which is the one name that reads
-    /// the same on both phones.
-    private func layout(for wire: UtttWire) -> MSMessageLayout {
-        if wire.isSealed, Uttt.plyCount == 0 {
-            let l = MSMessageTemplateLayout()
-            l.image = UtttBubble.image()
-            l.caption = UtttBubble.sealedCaption
-            return l
+    private func show(_ screen: UIView) {
+        UtttLog.note("show", String(String(describing: type(of: screen)).prefix(40)))
+        guard appeared || sized else {
+            pendingScreen = screen
+            return
         }
-        return UtttBubble.layout()
+        attach(screen)
+    }
+
+    private func attach(_ screen: UIView) {
+        host?.removeFromSuperview()
+        slide.end()
+        screen.frame = view.bounds
+        screen.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        /* UNDER THE SEND OVERLAY, which stays on top of every screen, and
+         * laid out before it is seen: the first frame has the lines. */
+        view.insertSubview(screen, belowSubview: overlay)
+        screen.layoutIfNeeded()
+        host = screen
+        slide.host = screen
+    }
+
+    /// THE RULES, a sheet of their own over the drawer: a swipe down closes
+    /// the rules and leaves the game up.
+    private func openRules() {
+        guard presentedViewController == nil else { return }
+        present(UtttRulesSheet(), animated: true)
     }
 }

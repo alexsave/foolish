@@ -27,9 +27,18 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.1"
+    MARKETING_VERSION: "1.0"
+    # Every upload needs a unique build number, so Tools/ship.sh passes
+    # CURRENT_PROJECT_VERSION on the archive command line (one value for all
+    # targets) and this "1" is only what a local build says.
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
+    # CMotionRuler, the debug ruler's palette and sizes once in C
+    # (shared/c/motion_ruler): every target, because a target that imports the
+    # Swift module compiling MotionRuler.swift must find the C module it imports.
+    # CMsgStage (shared/c/msg_stage), the insert-staging decisions, the same way
+    # for MessagesKit/InsertStaging.swift.
+    SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../../shared/c/motion_ruler $(SRCROOT)/../../shared/c/msg_stage
     # A WARNING THAT SHIPS IS A DEFECT. Swift warns when an optional is
     # interpolated into a string, and that warning scrolled past in a build
     # log while the characters `Optional("X")` went out in a caption to
@@ -37,7 +46,6 @@ settings:
     SWIFT_TREAT_WARNINGS_AS_ERRORS: "YES"
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: 8N2Z544SB4
-    ITSAppUsesNonExemptEncryption: "NO"
 
 configs:
   Debug: debug
@@ -47,18 +55,6 @@ targets:
   UtttMessagesApp:
     type: application.messages
     platform: iOS
-    # AN APP WITH NO ENTITLEMENTS DOES NOT REGISTER. installd says "Install
-    # successful", LaunchServices then refuses to bind it, and every later
-    # simctl command answers "No such file or directory" about an app that is
-    # sitting in the bundle container. The log line that gives it away is
-    # `Executable for cards.uttt.msg ... had no entitlements`. xcodegen writes
-    # these from the properties below, so there is no committed file for
-    # `xcodegen generate` to blank.
-    entitlements:
-      path: UtttMessagesApp/UtttMessagesApp.entitlements
-      properties:
-        com.apple.security.application-groups:
-          - group.cards.uttt.msg
     sources:
       - path: UtttMessagesApp
     dependencies:
@@ -87,17 +83,35 @@ targets:
         # dictionary the appex needs survives.
         GENERATE_INFOPLIST_FILE: "YES"
         TARGETED_DEVICE_FAMILY: "1"
+      configs:
+        # AN APP WITH NO ENTITLEMENTS DOES NOT REGISTER on a simulator.
+        # installd says "Install successful", LaunchServices then refuses to
+        # bind it, and every later simctl command answers "No such file or
+        # directory" about an app that is sitting in the bundle container. The
+        # log line that gives it away is `Executable for cards.uttt.msg ...
+        # had no entitlements`.
+        #
+        # ONLY DEBUG ASKS FOR THE APP GROUP. The group exists for the rig's
+        # dev.* files, and every reader of it is inside `#if DEBUG`
+        # (UtttKit/UtttDev.swift). Assigning a group to a bundle id is
+        # portal-only - the API cannot - so the store profiles carry an EMPTY
+        # application-groups list, and a Release archive that asked for the
+        # group would fail export against them. A device build needs no file:
+        # signing takes application-identifier and the team from the profile.
+        # The day a shipping feature needs the group: assign it to both bundle
+        # ids in the portal, regenerate both store profiles, and move this
+        # setting to `base`.
+        #
+        # A COMMITTED FILE, set by hand here rather than through xcodegen's
+        # `entitlements:` key, because that key forces CODE_SIGN_ENTITLEMENTS
+        # into every config and silently ignores a per-config override.
+        # xcodegen does not know the file exists, so it has nothing to blank.
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: DebugAppGroup.entitlements
 
   UtttMessages:
     type: app-extension.messages
     platform: iOS
-    # The SAME group as its container - this is where the rig's dev.* files
-    # land and where anything the two halves share would live.
-    entitlements:
-      path: UtttMessages/UtttMessages.entitlements
-      properties:
-        com.apple.security.application-groups:
-          - group.cards.uttt.msg
     sources:
       - path: UtttMessages
     dependencies:
@@ -116,6 +130,11 @@ targets:
         # `+` drawer takes its row from here.
         ASSETCATALOG_COMPILER_APPICON_NAME: "iMessage App Icon"
         TARGETED_DEVICE_FAMILY: "1"
+      configs:
+        # The SAME group as its container - where the rig's dev.* files land.
+        # Debug only; see the container target above.
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: DebugAppGroup.entitlements
 
   # ---- A development harness, shipped in nothing -------------------------
   # The only other way to look at a screen is to drive the real Messages app,
@@ -144,6 +163,24 @@ targets:
       # The kernel binding lives in the repo's sdk/, sibling to c/ - it is the
       # boundary, not a UI file.
       - path: ../sdk/swift
+      # The product-free debug ruler (DEBUG-only; UtttRuler places it).
+      - path: ../../shared/swift/MotionRuler.swift
+      # The DEBUG dev-file reader (App Group lookup once, dev.* files read
+      # fresh); UtttDev keeps the keys. Compiles to nothing in Release.
+      - path: ../../shared/swift/MessagesKit/DevFlags.swift
+      # When an insert may go, what a silent one means, and whether a bubble
+      # handed to didReceive is my own echo (shared/c/msg_stage, CMsgStage).
+      - path: ../../shared/swift/MessagesKit/InsertStaging.swift
+      # The staged-but-unsent reminder at Messages' Send button, shared with
+      # the sister product, on UIKit and Core Animation (SendHintView; the
+      # sister product's SwiftUI SendHint reads the same numbers); the caption
+      # and the fuse are the kernel's. NO SWIFTUI IN THIS FRAMEWORK: the
+      # extension's process does not load it (TESTFLIGHT_PLAN 14).
+      - path: ../../shared/swift/MessagesKit/SendHintMetrics.swift
+      - path: ../../shared/swift/MessagesKit/SendHintView.swift
+      # The auto-collapse on Core Animation layers, ported from the sister
+      # product's CollapseLayer; the curve and every number are the kernel's.
+      - path: ../../shared/swift/MessagesKit/CollapseSlide.swift
     dependencies:
       # STATIC (embed:false), so the linker pulls it in per object and nothing
       # unreferenced ships.

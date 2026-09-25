@@ -103,6 +103,12 @@ unsigned uttt_open_cells(const UtttGame *g, int b);
  * list, so encoder and decoder must walk it identically. Ascending, always. */
 int  uttt_legal(const UtttGame *g, uint8_t *out);
 
+/* Where the next mark must go: block 0..8, 9 for anywhere, -1 when the game
+ * is over. `forced` is the raw rule and says nothing about a block that has
+ * already been decided; the board's wash, the bubble's place line and every
+ * sentence about "where" ask this instead. */
+int  uttt_active(const UtttGame *g);
+
 /* Apply a move. Returns 1 if it was legal and was played, 0 otherwise. */
 int  uttt_play(UtttGame *g, uint8_t mv);
 
@@ -136,5 +142,12 @@ unsigned uttt_mask_wins(unsigned mask);
 
 /* The i-th of the eight lines, as a nine-bit mask. */
 unsigned uttt_line_mask(int i);
+
+/* WHICH LINE OF BLOCKS WON the game: 0..7 as uttt_line_mask numbers them (the
+ * three rows, the three columns, then the diagonal from the top left and the
+ * one from the top right), or -1 when the game is not won. A win can complete
+ * two lines at once; the lower number is the answer, so every device says the
+ * same one. */
+int  uttt_won_line(const UtttGame *g);
 
 #endif

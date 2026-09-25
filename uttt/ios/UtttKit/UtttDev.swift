@@ -28,41 +28,60 @@
 import Foundation
 
 public enum UtttDev {
-    private static let appGroup = "group.cards.uttt.msg"
+    /// Every dev file lives here (shared/swift/MessagesKit/DevFlags.swift
+    /// does the finding, reading and writing; the keys below are uttt's).
+    private static let dev = DevFlags(group: "group.cards.uttt.msg")
     private static let seatFile = "dev.seat"
     private static let gameFile = "dev.game"
     private static let liveFile = "dev.live"
     private static let pickerFile = "dev.picker"
+    private static let rulerFile = "dev.ruler"
+
+    /// `rig.sh ruler on`: paint the motion ruler (UtttRuler) over the sheet.
+    /// Read every time, like every other dev file.
+    public static var ruler: Bool { dev.exists(rulerFile) }
+
+    /// `dev.empty`: the extension shows nothing at all - no hosting
+    /// controller, no kernel call. The memory FLOOR: what Messages, UIKit and
+    /// SwiftUI cost an extension before any of ours (TESTFLIGHT_PLAN.md 12).
+    public static var empty: Bool { dev.exists("dev.empty") }
+
+    /// `dev.dropinsert`: every insert is swallowed without an answer, exactly
+    /// as ChatKit drops one that arrives before the drawer counts as presenting
+    /// (shared/c/msg_stage/INSERT_GATING.md) - the only way to film the retries and the send
+    /// door on a simulator, where the gate always passes.
+    public static var dropInsert: Bool { dev.exists("dev.dropinsert") }
+
+    /// `rig.sh arrive [MOVE]`: the other player's reply, arriving now.
+    ///
+    /// One simulator has one participant, so nothing ever ARRIVES at an open
+    /// drawer - and channel E (a move that lands while the board is up) is
+    /// unfilmable without this. The open extension polls for the file (see
+    /// `devWatchForArrivals` in MessagesViewController), deletes it, and has
+    /// the other dev seat play into the game on screen: MOVE if the file names
+    /// one (block*9+cell), otherwise the middle of the kernel's legal list, so
+    /// two runs are the same move. The bytes are the shipping kernel's own
+    /// `uti_msg_play` as that seat, handed to the same lines `didReceive` runs.
+    /// Returns the file's trimmed contents once, then nil until it is written
+    /// again.
+    public static func takeArrival() -> String? { dev.take("dev.arrive") }
 
     /// The word the rig wrote, or nil in every ordinary run - including an
     /// ordinary DEBUG one, because the file is absent until somebody writes it.
-    public static var seat: String? {
-        guard let dir = FileManager.default
-                .containerURL(forSecurityApplicationGroupIdentifier: appGroup),
-              let raw = try? String(contentsOf: dir.appendingPathComponent(seatFile),
-                                    encoding: .utf8)
-        else { return nil }
-        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        return s.isEmpty ? nil : s
-    }
+    public static var seat: String? { dev.string(seatFile) }
+
+    /// The identity bytes a device has when `dev.seat` holds `word`. The
+    /// kernel hashes them into a seat tag exactly as it hashes a real
+    /// participant, so a seeded game can name both seats without two devices.
+    public static func identity(_ word: String) -> Data { Data("dev:\(word)".utf8) }
 
     /// Ask who this device is every time a bubble is opened. Off unless the
     /// rig writes the file, and absent from a shipping build entirely.
-    public static var picker: Bool {
-        guard let u = url(pickerFile) else { return false }
-        return FileManager.default.fileExists(atPath: u.path)
-    }
+    public static var picker: Bool { dev.exists(pickerFile) }
 
     /// Set the seat from inside the app, which is what the on-screen picker
     /// does. The rig writes the same file from outside.
-    public static func setSeat(_ word: String?) {
-        guard let u = url(seatFile) else { return }
-        if let word, !word.isEmpty {
-            try? word.write(to: u, atomically: true, encoding: .utf8)
-        } else {
-            try? FileManager.default.removeItem(at: u)
-        }
-    }
+    public static func setSeat(_ word: String?) { dev.write(word, to: seatFile) }
 
     /// How many moves into a game to open, or nil for the ordinary flow.
     ///
@@ -74,12 +93,17 @@ public enum UtttDev {
     /// filmed before-and-after is only comparable if the same one comes up
     /// every run. The bot is deterministic given the seed, so it does.
     public static var game: Int? {
-        guard let dir = FileManager.default
-                .containerURL(forSecurityApplicationGroupIdentifier: appGroup),
-              let raw = try? String(contentsOf: dir.appendingPathComponent(gameFile),
-                                    encoding: .utf8)
-        else { return nil }
-        return Int(raw.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard let t = dev.raw(gameFile) else { return nil }
+        return t.contains(",") ? -1 : Int(t)
+    }
+
+    /// `rig.sh devgame 47,20,26,...` - an exact game as block*9+index moves,
+    /// for the end states (a win, a draw) the fixed opening never reaches.
+    public static var moves: [Int]? {
+        guard let raw = dev.raw(gameFile), raw.contains(",") else { return nil }
+        return raw.split(separator: ",").compactMap {
+            Int($0.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
     }
 
     /// THE SEEDED GAME AS IT NOW STANDS, written back after every move.
@@ -92,24 +116,8 @@ public enum UtttDev {
     /// game at all. The host app writes `dev.claimed` and `dev.staged` back
     /// the same way.
     public static var live: String? {
-        get {
-            guard let u = url(liveFile),
-                  let raw = try? String(contentsOf: u, encoding: .utf8)
-            else { return nil }
-            let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            return s.isEmpty ? nil : s
-        }
-        set {
-            guard let u = url(liveFile) else { return }
-            if let newValue { try? newValue.write(to: u, atomically: true, encoding: .utf8) }
-            else { try? FileManager.default.removeItem(at: u) }
-        }
-    }
-
-    private static func url(_ name: String) -> URL? {
-        FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroup)?
-            .appendingPathComponent(name)
+        get { dev.string(liveFile) }
+        set { dev.write(newValue, to: liveFile) }
     }
 
     /// The seed every seeded game uses. A constant, so two runs are the same

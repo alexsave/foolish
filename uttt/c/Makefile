@@ -22,10 +22,12 @@ CC      ?= cc
 # how that stops being true, quietly, on one compiler and not another.
 CFLAGS  ?= -O3 -flto -Wall -Wextra -Werror -std=c11
 LDLIBS  := -lm
-SRC     := src/uttt.c src/uttt_code.c src/uttt_bots.c \
-           src/uttt_pen.c src/uttt_draw.c src/uttt_rule.c
+SHARED  := ../../shared/c
+SRC     := src/uttt.c src/uttt_code.c src/uttt_bots.c src/uttt_msg.c src/uttt_say.c \
+           src/uttt_pen.c src/uttt_draw.c src/uttt_anim.c src/uttt_rule.c \
+           $(SHARED)/sha256.c $(SHARED)/b32.c
 
-all: build/uttt_test build/uttt_arena build/uttt_render build/uttt_mate
+all: build/uttt_test build/uttt_msg_test build/uttt_arena build/uttt_render build/uttt_mate
 
 build:
 	@mkdir -p build
@@ -36,8 +38,38 @@ build/uttt_test: $(SRC) tests/uttt_test.c | build
 build/uttt_arena: $(SRC) tests/uttt_arena.c | build
 	$(CC) $(CFLAGS) $(SRC) tests/uttt_arena.c -o $@ $(LDLIBS)
 
-run: build/uttt_test
+build/uttt_msg_test: $(SRC) tests/uttt_msg_test.c | build
+	$(CC) $(CFLAGS) $(SRC) tests/uttt_msg_test.c -o $@ $(LDLIBS)
+
+# The shared insert-staging decisions (shared/c/msg_stage), header-only, so
+# its test is the only thing to build.
+MSG_STAGE := ../../shared/c/msg_stage
+build/msg_stage_test: $(MSG_STAGE)/msg_stage_test.c $(MSG_STAGE)/msg_stage.h | build
+	$(CC) $(CFLAGS) $(MSG_STAGE)/msg_stage_test.c -o $@
+
+# The message: every ply of 10,000 games through bytes and text, the seat
+# truth table, two joiners, the tap map and every sentence.
+run: build/uttt_test build/uttt_msg_test build/uttt_anim_test build/msg_stage_test build/uttt_bots_test build/uttt_ink_test
 	./build/uttt_test 1000
+	./build/uttt_bots_test 10
+	./build/uttt_msg_test 10000
+	./build/msg_stage_test
+	./build/uttt_anim_test
+	./build/uttt_ink_test
+
+# The ink: one polygon per stroke, the pen's shape with no hole, the alpha.
+build/uttt_ink_test: $(SRC) tests/uttt_ink_test.c | build
+	$(CC) $(CFLAGS) $(SRC) tests/uttt_ink_test.c -o $@ $(LDLIBS)
+
+build/uttt_bots_test: $(SRC) tests/uttt_bots_test.c | build
+	$(CC) $(CFLAGS) $(SRC) tests/uttt_bots_test.c -o $@ $(LDLIBS)
+
+build/uttt_anim_test: $(SRC) tests/uttt_anim_test.c | build
+	$(CC) $(CFLAGS) $(SRC) tests/uttt_anim_test.c -o $@ $(LDLIBS)
+
+# The board's side per drawer height, for the ruler's scorer (tools/uttt_side.c).
+build/uttt_side: $(SRC) tools/uttt_side.c | build
+	$(CC) $(CFLAGS) -Isrc $(SRC) tools/uttt_side.c -o $@ $(LDLIBS)
 
 arena: build/uttt_arena
 	./build/uttt_arena 200 200
@@ -84,6 +116,30 @@ render: build/uttt_render
 	  && echo "build/board.png"
 
 
+build/uttt_look: $(SRC) tools/uttt_look.c | build
+	$(CC) $(CFLAGS) $(SRC) tools/uttt_look.c -o $@ $(LDLIBS)
+
+# The pieces the owner reviews, at a phone's scale, with numbers where a
+# number settles it (the door's edge thickness). See tools/uttt_look.c.
+look: build/uttt_look
+
+# THE POST-GAME ANALYSER, not part of the app: every ply of a replay code
+# held against quill. `make analyse CODE=<code or link> PLAYOUTS=20000`.
+ANALYSE_SRC := src/uttt_analyse.c
+build/uttt_analyse: $(SRC) $(ANALYSE_SRC) src/uttt_analyse.h tools/uttt_analyse.c | build
+	$(CC) $(CFLAGS) $(SRC) $(ANALYSE_SRC) tools/uttt_analyse.c -o $@ $(LDLIBS)
+
+build/uttt_analyse_test: $(SRC) $(ANALYSE_SRC) src/uttt_analyse.h tests/uttt_analyse_test.c | build
+	$(CC) $(CFLAGS) $(SRC) $(ANALYSE_SRC) tests/uttt_analyse_test.c -o $@ $(LDLIBS)
+
+PLAYOUTS ?= 20000
+analyse: build/uttt_analyse
+	@if [ -n "$(CODE)" ]; then ./build/uttt_analyse "$(CODE)" $(PLAYOUTS); fi
+
+# A blunder that throws a forced win is called one, and two runs agree.
+analyse-test: build/uttt_analyse_test
+	./build/uttt_analyse_test
+
 # The pen against the pen it was copied from. Needs node; not in `all`.
 rough-diff: build/uttt_render
 	node tests/rough_diff.mjs
@@ -92,11 +148,23 @@ asan: $(SRC) tests/uttt_test.c | build
 	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
 	  $(SRC) tests/uttt_test.c -o build/uttt_asan $(LDLIBS)
 	./build/uttt_asan 400
+	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
+	  $(SRC) tests/uttt_msg_test.c -o build/uttt_msg_asan $(LDLIBS)
+	./build/uttt_msg_asan 1000
+	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
+	  $(SRC) tests/uttt_anim_test.c -o build/uttt_anim_asan $(LDLIBS)
+	./build/uttt_anim_asan
+	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
+	  $(SRC) tests/uttt_bots_test.c -o build/uttt_bots_asan $(LDLIBS)
+	./build/uttt_bots_asan 3
+	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
+	  $(SRC) tests/uttt_ink_test.c -o build/uttt_ink_asan $(LDLIBS)
+	./build/uttt_ink_asan
 
 clean:
 	rm -rf build
 
-.PHONY: all run arena play render rough-diff asan clean
+.PHONY: all run arena play render look analyse analyse-test rough-diff asan clean
 
 # ---- the iOS bridge -----------------------------------------------------
 # `make ios-smoke` exercises the identical bridge with the host compiler, so
@@ -146,3 +214,8 @@ ios-smoke: build/ios_smoke
 	./build/ios_smoke
 
 .PHONY: ios-smoke ios-lib
+
+build/uttt_ladder: $(SRC) tests/uttt_ladder.c | build
+	$(CC) $(CFLAGS) $(SRC) tests/uttt_ladder.c -o $@ $(LDLIBS)
+ladder: build/uttt_ladder
+	./build/uttt_ladder 40 8

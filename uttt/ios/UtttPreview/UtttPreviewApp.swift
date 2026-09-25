@@ -7,7 +7,7 @@ import UtttKit
 /// This is a DEVELOPMENT HARNESS and ships in nothing. It exists because the
 /// only other way to see a screen is to drive the real Messages app, and a
 /// design that can only be inspected by playing a game is a design nobody
-/// inspects.
+/// inspects. (SwiftUI here is the harness's own; the screens are UIKit.)
 @main
 struct UtttPreviewApp: App {
     var body: some Scene {
@@ -44,8 +44,6 @@ struct PreviewRoot: View {
     }
 
     @State private var size: Size = Size.launched
-    @State private var model = UtttModel(seed: 77, you: .x)
-    @State private var loaded = false
 
     /// Twelve moves of the game in the design document, so the harness shows
     /// marks and a live wash rather than an empty grid.
@@ -56,7 +54,7 @@ struct PreviewRoot: View {
             ZStack(alignment: .bottom) {
                 Color(white: 0.07)
                 // Anchored to the bottom, which is where Messages puts it.
-                UtttGameScreen(model: model)
+                GameScreen()
                     .frame(width: geo.size.width,
                            height: size.height(screen: geo.size))
                 VStack {
@@ -71,12 +69,35 @@ struct PreviewRoot: View {
             }
         }
         .ignoresSafeArea()
-        .onAppear {
-            guard !loaded else { return }
-            loaded = true
-            Uttt.newGame(seed: 77)
-            for m in Self.sample { Uttt.play(m) }
+    }
+
+    struct GameScreen: UIViewRepresentable {
+        func makeUIView(context: Context) -> UtttGameScreen {
+            /* `--seed S --moves a,b,c --you o` shows any game (tools/uttt_look
+             * `moves CODE` prints them for a replay code), so a screenshot
+             * can show a finished one: the win line, both doors. */
+            let a = ProcessInfo.processInfo.arguments
+            func arg(_ k: String) -> String? {
+                guard let i = a.firstIndex(of: k), i + 1 < a.count else { return nil }
+                return a[i + 1]
+            }
+            let seed = arg("--seed").flatMap { Int32($0) } ?? 77
+            let moves = arg("--moves").map { $0.split(separator: ",").compactMap { Int($0) } }
+                ?? PreviewRoot.sample
+            let asO = arg("--you") == "o"
+            Uttt.newGame(seed: seed)
+            for m in moves { Uttt.play(m) }
+            /* The harness plays one seat against nobody: X by default, so the
+             * board takes taps the way a joiner's does. */
+            let x = Data("preview:x".utf8), o = Data("preview:o".utf8)
+            Uttt.me(asO ? o : x)
+            Uttt.seat(o: o, x: x)
+            let model = UtttModel(seed: seed, you: asO ? .o : .x)
+            /* a finished game stands its doors, as the end screen does */
+            let v = UtttGameScreen(model: model, door: Uttt.over == .none ? .none : .again, slide: nil)
             model.refresh()
+            return v
         }
+        func updateUIView(_ v: UtttGameScreen, context: Context) {}
     }
 }

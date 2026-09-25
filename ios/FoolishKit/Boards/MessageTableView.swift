@@ -1432,8 +1432,35 @@ public struct MessageTableView: View {
     /// drawer chrome inset around it, its centre ~42pt from the screen edge
     /// (the first guess of ~24 read the field as nearly full-bleed - the owner:
     /// "the arrow should be bumped a bit to the left").
-    static let sendHintCenterFromScreenTrailing: CGFloat = 42
+    static let sendHintCenterFromScreenTrailing: CGFloat = SendHint.axisFromScreenTrailing
     /// The same axis measured from the BOARD's trailing edge - the board is
     /// inset 8 from the screen (`.padding(.horizontal, 8)` on the root).
     static let sendHintCenterFromTrailing: CGFloat = sendHintCenterFromScreenTrailing - 8
+}
+
+/// Round-8 #3 / round-9: the staged-but-unsent reminder, as this product shows
+/// it. The view, the bob, the fuse and the fade are shared/swift/MessagesKit's
+/// `SendHint`; what is ours is the caption, and re-supplying it when the
+/// language changes.
+///
+/// THE BUG THE OBSERVATION FIXES (owner, Eva's test pass): "send hint text did
+/// not change back to english when I changed to chinese then to english.
+/// switched back after some time though." `FStrings.t` is a plain function
+/// call, so the caption is only re-resolved when SwiftUI re-evaluates this
+/// body - and nothing else here changes when the language does. Observing the
+/// settings object is what puts the language back into this view's inputs,
+/// and the new caption reaches the shared view as a changed argument.
+struct StagedSendHint: View {
+    @ObservedObject private var prefs = FPrefs.shared
+    let staged: Bool
+    let visible: Bool
+    var centerFromTrailing: CGFloat = MessageTableView.sendHintCenterFromScreenTrailing
+
+    var body: some View {
+        SendHint(staged: staged, visible: visible,
+                 caption: FStrings.t("ios.msg.sendhint"),
+                 font: FType.title(15),
+                 screenAxis: MessageTableView.sendHintCenterFromScreenTrailing,
+                 centerFromTrailing: centerFromTrailing)
+    }
 }

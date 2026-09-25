@@ -1,4 +1,5 @@
 #include "uttt_draw.h"
+#include "uttt_anim.h"
 #include <math.h>
 #include <string.h>
 
@@ -9,12 +10,22 @@
 #define INK_X   0x25376bffu
 #define INK_O   0xa8321fffu
 #define INK_GR  0x2f2b26ffu
-#define WASH    0xd6a836ffu
 
 /* One pen at two scales. A mark is drawn inside a CELL and the grid across the
  * whole BOARD, which is nine cells - so the same ball that is 2.7 units wide
  * on a mark is 2.7/9 here. Derived, never typed: getting this wrong by hand is
  * what made the first grid a thicket. */
+/* The O, in its hundred-unit square: lopsided by the same .3 as the X */
+#define O_CX (50.f + .3f * 4.f)
+#define O_CY (50.f - .3f * 3.f)
+#define O_W  (78.f - .3f * 10.f)
+#define O_H  (76.f + .3f * 8.f)
+
+/* A seed derived from another: s x k + a, wrapped as the hardware wraps it.
+ * Signed overflow is undefined in C (the asan lane's UBSan flags it), so the
+ * sum is taken unsigned and converted back - the same bits as before. */
+static int32_t sd(int32_t s, uint32_t k, int32_t a) { return (int32_t)((uint32_t)s * k + (uint32_t)a); }
+
 #define REF   (8.9f / 100.f * CE * 9.f)   /* a normal mark, in board units */
 
 static float rough_for(float L) { return 1.5f * powf(REF / (L > 1e-4f ? L : 1e-4f), .75f); }
@@ -28,7 +39,8 @@ UtttDrawOpts uttt_draw_opts(int32_t seed)
 {
     UtttDrawOpts o;
     o.seed = seed ? seed : 1;
-    o.active = -1; o.last = -1; o.mark_t = 1.f; o.meta_t = 1.f;
+    o.active = -1; o.last = -1; o.mark_t = 1.f; o.meta_t = 1.f; o.fall_t = 1.f;
+    o.reach = UTTT_REACH;
     return o;
 }
 
@@ -51,7 +63,7 @@ static void stroke(UtttDL *d, const UtttPt *pts, int n, const UtttPen *p, float 
     int m = (int)ceilf((n - 1) * (t > 1.f ? 1.f : t)) + 1;
     if (m > n) m = n;
     if (m < 2) return;
-    uttt_ink(d, pts, m, p);
+    uttt_ink_part(d, pts, n, m, p);
 }
 
 /* A MARK IS DRAWN IN ITS OWN HUNDRED-UNIT SQUARE and then transformed into
@@ -60,19 +72,16 @@ static void stroke(UtttDL *d, const UtttPt *pts, int n, const UtttPen *p, float 
  * of 2, its ellipse offsets of 1 and 1.5 - has to be converted at the call
  * site, and the ellipse ones were not, so every O wandered across the whole
  * sheet. Convert the POINTS once instead of the constants everywhere. */
-static void mark_in(UtttDL *d, int kind, float x, float y, float s,
-                    int32_t seed, float t, const UtttPen *base)
+/* The mark's strokes in its own hundred-unit square, before placing: `k`
+ * spans for the first (or only) stroke and `k2` for an X's second. */
+static int mark_geom(int kind, float s, int32_t seed, UtttPt *pts, int cap,
+                     UtttSpan *sp, int *k2)
 {
-    UtttPt pts[1400]; int np = 0;
-    UtttSpan sp[4];
+    int np = 0;
     const float s100 = s * 100.f;          /* the mark's size, board-100 */
-    UtttRough r = uttt_rough_default(seed * 97 + 3);
+    UtttRough r = uttt_rough_default(sd(seed, 97, 3));
     r.roughness = 1.5f * powf(8.9f / s100, .75f) * (s100 / 8.9f);
     r.bowing    = 1.0f * powf(8.9f / s100, .85f);
-
-    UtttPen p = *base;
-    p.ink = kind == UTTT_O ? INK_O : INK_X;
-    p.w   = base->w * s / 100.f;           /* stroke lives in board units */
 
     /* LOPSIDED. Nobody draws an X whose two strokes cross in the middle with
      * equal arms; the hand starts the second one a bit off and overshoots.
@@ -81,16 +90,28 @@ static void mark_in(UtttDL *d, int kind, float x, float y, float s,
      * makes a small mark read as drawn rather than stamped. It was dropped in
      * the port and the board's X's came out ruled. */
     const float L = .3f;
-    int k = 0, k2 = 0;
+    int k = 0;
+    *k2 = 0;
     if (kind == UTTT_X) {
-        k  = uttt_rough_line(&r, 10 - L*4, 11, 94 + L*3, 92 - L*6,
-                             pts, 1400, &np, sp, 2);
-        k2 = uttt_rough_line(&r, 92 + L*4, 12, 13 - L*5, 90 + L*5,
-                             pts, 1400, &np, sp + k, 2);
+        k   = uttt_rough_line(&r, 10 - L*4, 11, 94 + L*3, 92 - L*6, pts, cap, &np, sp, 2);
+        *k2 = uttt_rough_line(&r, 92 + L*4, 12, 13 - L*5, 90 + L*5, pts, cap, &np, sp + k, 2);
     } else {
-        k  = uttt_rough_ellipse(&r, 50 + L*4, 50 - L*3, 78 - L*10, 76 + L*8,
-                                pts, 1400, &np, sp, 2);
+        k   = uttt_rough_ellipse(&r, O_CX, O_CY, O_W, O_H, pts, cap, &np, sp, 2);
     }
+    return k;
+}
+
+static void mark_in(UtttDL *d, int kind, float x, float y, float s,
+                    int32_t seed, float t, const UtttPen *base)
+{
+    UtttPt pts[1400];
+    UtttSpan sp[4];
+    UtttPen p = *base;
+    p.ink = kind == UTTT_O ? INK_O : INK_X;
+    p.w   = base->w * s / 100.f;           /* stroke lives in board units */
+
+    int k2, k = mark_geom(kind, s, seed, pts, 1400, sp, &k2);
+    int np = sp[k + k2 - 1].first + sp[k + k2 - 1].n;
     for (int i = 0; i < np; i++) {
         pts[i].x = x + pts[i].x * s / 100.f;
         pts[i].y = y + pts[i].y * s / 100.f;
@@ -139,64 +160,46 @@ static void hash_in(UtttDL *d, float x, float y, float sz, int32_t seed,
     }
 }
 
-int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
+/* THE LAST MARK IS HEAVIER: gone over twice rather than boxed, so it says
+ * "this one" without adding a shape the game does not otherwise have. */
+static void last_mark(UtttDL *d, int v, int mv, int32_t seed, float t)
 {
-    UtttPen base = uttt_pen_92();
+    int b = mv / 9, c = mv % 9;
+    float x = (b % 3) * BL + (c % 3) * CE + CE * .1f;
+    float y = (b / 3) * BL + (c / 3) * CE + CE * .1f;
+    UtttPen p = uttt_pen_92();
+    const float w = p.w;
+    p.w = w * 2.2f; p.a = 1.f; p.grain = .22f;
+    mark_in(d, v, x, y, CE * .8f, sd(seed, 1000, mv), t, &p);
+    p.w = w * 1.9f; p.a = .85f;
+    mark_in(d, v, x, y, CE * .8f, sd(seed, 1000, mv + 613), t, &p);
+}
 
-    /* the block you are sent to, in highlighter - ink cannot say "here"
-     * without also saying something it can never take back */
-    if (o->active == 9) {
-        rect(d, .01f, .01f, S - .02f, S - .02f, (WASH & 0xffffff00u) | 43u);
-    } else if (o->active >= 0 && o->active < 9) {
-        rect(d, (o->active % 3) * BL + .012f,
-                (o->active / 3) * BL + .012f, BL - .024f, BL - .024f,
-             (WASH & 0xffffff00u) | 77u);
-    }
+/* THE BIG MARK OVER A WON BLOCK, drawn to `t`: pen is purely additive, so
+ * the nine marks under it stay and only lose the glance (UI.html 04). */
+static void big_mark(UtttDL *d, const UtttGame *g, int b, int32_t seed, float t)
+{
+    UtttPen p = uttt_pen_92(); p.a = .62f; p.w = 2.2f;
+    mark_in(d, uttt_block(g, b), (b % 3) * BL + BL * .08f,
+            (b / 3) * BL + BL * .08f, BL * .84f, sd(seed, 77, b), t, &p);
+}
 
-    for (int b = 0; b < 9; b++)
-        hash_in(d, (b % 3) * BL, (b / 3) * BL, BL,
-                o->seed * 131 + b * 17,
-                base.w / 9.f / 100.f * .62f, BL * .03f, .5f, 1.5f);
-    /* THE FOUR MAIN LINES RUN LONG. Nobody ruling a board stops the pen
-     * neatly at the last cell - the line goes where the arm goes, past the
-     * corner and sometimes off the paper. A short overshoot reads as a
-     * cautious drawing; a long one reads as somebody who drew it in four
-     * strokes without looking. The renderer's own frame clips whatever runs
-     * past the edge, which is the right answer: a line that leaves the board
-     * should leave the board. */
-    hash_in(d, 0, 0, S, o->seed * 7 + 3,
-            base.w / 9.f / 100.f * 1.7f, S * .135f, .9f, 3.4f);
-    hash_in(d, 0, 0, S, o->seed * 19 + 5,
-            base.w / 9.f / 100.f * 1.5f, S * .118f, .72f, 3.4f);
+/* The four major grid lines' first (heavier) pass, in hundredths of a ninth
+ * of the pen: the unit the win line's weight is stated in. */
+#define GRID_MAJOR_W 1.7f
 
-    for (int b = 0; b < 9; b++) {
-        int won = uttt_block(g, b) == UTTT_X || uttt_block(g, b) == UTTT_O;
-        for (int c = 0; c < 9; c++) {
-            int v = uttt_cell(g, b * 9 + c);
-            if (!v) continue;
-            float x = (b % 3) * BL + (c % 3) * CE;
-            float y = (b / 3) * BL + (c / 3) * CE;
-            int is_last = (b * 9 + c) == o->last;
-            UtttPen p = base;
-            if (won && !is_last) p.a = base.a * .34f;
-            if (is_last) { p.w = base.w * 2.2f; p.a = 1.f; p.grain = .22f; }
-            mark_in(d, v, x + CE * .1f, y + CE * .1f, CE * .8f,
-                    o->seed * 1000 + b * 9 + c,
-                    is_last ? o->mark_t : 1.f, &p);
-            if (is_last) {
-                p.w = base.w * 1.9f; p.a = .85f;
-                mark_in(d, v, x + CE * .1f, y + CE * .1f, CE * .8f,
-                        o->seed * 1000 + b * 9 + c + 613, o->mark_t, &p);
-            }
-        }
-        if (won) {
-            UtttPen p = base; p.a = .62f; p.w = 2.2f;
-            mark_in(d, uttt_block(g, b), (b % 3) * BL + BL * .08f,
-                    (b / 3) * BL + BL * .08f, BL * .84f,
-                    o->seed * 77 + b, 1.f, &p);
-        }
-    }
+#ifndef WIN_ROUGH
+#define WIN_ROUGH 1.5f
+#endif
+#ifndef WIN_MO
+#define WIN_MO 1.5f
+#endif
+#ifndef WIN_BOW
+#define WIN_BOW 2.f
+#endif
 
+static void win_line(UtttDL *d, const UtttGame *g, int32_t seed, float t)
+{
     /* the win line: the only mark that crosses a thick line, in the winner's
      * own ink, and drawn twice because a ball has one width */
     if (g->over == UTTT_X || g->over == UTTT_O) {
@@ -219,27 +222,165 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
                 float ex = (zx - ax) / 6.f, ey = (zy - ay) / 6.f;
                 ax -= ex; ay -= ey; zx += ex; zy += ey;
             }
-            float len = sqrtf((zx-ax)*(zx-ax) + (zy-ay)*(zy-ay));
-            const float W[2] = { 2.7f, 2.3f };
+            /* TWICE THE MAJOR LINE AND MORE (owner, 2026-09-23: "winning
+             * diagonal needs to be thicker"). It was 2.7 and 2.3, half again
+             * the major lines' 1.7 (UI.html 08), and read as one more line
+             * among the ones it crosses. Now 3x and 2.5x the major pen (measured
+             * on the ribbons: twice the major line's ink width), so
+             * the stroke that ends the game is the heaviest ink on the sheet
+             * by a clear margin - a width only, the same points. */
+            const float W[2] = { GRID_MAJOR_W * 3.0f, GRID_MAJOR_W * 2.5f };
             const float A[2] = { .92f, .74f };
             const int32_t SD[2] = { 313, 977 };
             for (int q = 0; q < 2; q++) {
-                UtttRough r = uttt_rough_default(o->seed * SD[q]);
-                r.roughness = rough_for(len) * 2.2f;
-                r.bowing    = bow_for(len) * 2.2f;
-                r.max_offset = mro_for(len) * 2.2f;
+                /* DRAWN IN A HUNDRED-UNIT BOARD, like a mark in its own
+                 * hundred-unit square, and the points scaled back once.
+                 * rough.js's bow is bowing x maxRandomnessOffset x length /
+                 * 200 - an absolute offset times a length - so with both
+                 * converted to the unit board it came out squared-small: at
+                 * rough_for(len) x 2.2 the bow was a millionth of the board
+                 * and the line was ruled (owner, TestFlight 1.0(6): "the
+                 * winning line still appears quite straight"). Here rough.js
+                 * gets its own units and its own offset of 2, and the line
+                 * wanders and bows by a percent or two of the board, as one
+                 * drawn in one stroke across a sheet does. */
+                UtttRough r = uttt_rough_default(sd(seed, (uint32_t)SD[q], 0));
+                r.roughness = WIN_ROUGH;
+                r.bowing    = WIN_BOW;
+                r.max_offset = WIN_MO;
                 r.seg_line = 24;
                 UtttPt pts[1024]; int np = 0; UtttSpan sp[2];
-                int n = uttt_rough_line(&r, ax, ay, zx, zy, pts, 1024, &np, sp, 2);
+                int n = uttt_rough_line(&r, ax * 100.f, ay * 100.f, zx * 100.f, zy * 100.f,
+                                        pts, 1024, &np, sp, 2);
+                for (int i = 0; i < np; i++) { pts[i].x /= 100.f; pts[i].y /= 100.f; }
                 UtttPen p = uttt_pen_92();
                 p.ink = g->over == UTTT_O ? INK_O : INK_X;
-                p.w = base.w / 9.f / 100.f * W[q]; p.a = A[q];
+                p.w = uttt_pen_92().w / 9.f / 100.f * W[q]; p.a = A[q];
                 p.vel = 0; p.lift = .2f; p.grain = .25f; p.agrain = .2f;
                 for (int s2 = 0; s2 < n; s2++)
-                    stroke(d, pts + sp[s2].first, sp[s2].n, &p, o->meta_t);
+                    stroke(d, pts + sp[s2].first, sp[s2].n, &p, t);
             }
             break;
         }
+    }
+}
+
+int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
+{
+    UtttPen base = uttt_pen_92();
+
+    /* the block you are sent to, in highlighter - ink cannot say "here"
+     * without also saying something it can never take back */
+    {
+        float r[4], a;
+        if (uttt_wash_rect(o->active, r, &a))
+            rect(d, r[0], r[1], r[2], r[3], uttt_wash_rgba(a));
+    }
+
+    for (int b = 0; b < 9; b++)
+        hash_in(d, (b % 3) * BL, (b / 3) * BL, BL,
+                sd(o->seed, 131, b * 17),
+                base.w / 9.f / 100.f * .62f, BL * .03f, .5f, 1.5f);
+    /* THE FOUR MAIN LINES RUN LONG. Nobody ruling a board stops the pen
+     * neatly at the last cell - the line goes where the arm goes, past the
+     * corner and sometimes off the paper. A short overshoot reads as a
+     * cautious drawing; a long one reads as somebody who drew it in four
+     * strokes without looking. The renderer's own frame clips whatever runs
+     * past the edge, which is the right answer: a line that leaves the board
+     * should leave the board. */
+    hash_in(d, 0, 0, S, sd(o->seed, 7, 3),
+            base.w / 9.f / 100.f * GRID_MAJOR_W, S * .135f * o->reach, .9f, 3.4f);
+    hash_in(d, 0, 0, S, sd(o->seed, 19, 5),
+            base.w / 9.f / 100.f * 1.5f, S * .118f * o->reach, .72f, 3.4f);
+
+    for (int b = 0; b < 9; b++) {
+        int won = uttt_block(g, b) == UTTT_X || uttt_block(g, b) == UTTT_O;
+        for (int c = 0; c < 9; c++) {
+            int v = uttt_cell(g, b * 9 + c);
+            if (!v) continue;
+            float x = (b % 3) * BL + (c % 3) * CE;
+            float y = (b / 3) * BL + (c / 3) * CE;
+            int is_last = (b * 9 + c) == o->last;
+            if (is_last) { last_mark(d, v, b * 9 + c, o->seed, o->mark_t); continue; }
+            UtttPen p = base;
+            if (won) p.a = base.a * .34f;
+            mark_in(d, v, x + CE * .1f, y + CE * .1f, CE * .8f,
+                    sd(o->seed, 1000, b * 9 + c), 1.f, &p);
+        }
+        if (won) big_mark(d, g, b, o->seed, (o->last >= 0 && o->last / 9 == b) ? o->fall_t : 1.f);
+    }
+
+    win_line(d, g, o->seed, o->meta_t);
+    return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
+}
+
+int uttt_draw_last(UtttDL *d, const UtttGame *g, int32_t seed, float t)
+{
+    if (g->n_plies == 0) return -1;
+    int mv = g->move[g->n_plies - 1];
+    last_mark(d, uttt_cell(g, mv), mv, seed ? seed : 1, t);
+    return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
+}
+
+int uttt_draw_settle(UtttDL *d, const UtttGame *g, int32_t seed, float fall_t, float line_t)
+{
+    if (g->n_plies == 0) return -1;
+    if (!seed) seed = 1;
+    int b = g->move[g->n_plies - 1] / 9;
+    if (uttt_block(g, b) == UTTT_X || uttt_block(g, b) == UTTT_O) {
+        big_mark(d, g, b, seed, fall_t);
+        win_line(d, g, seed, line_t);
+    }
+    return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
+}
+
+/* THE PROMISE (uttt_anim.h): the highlighter's own rect, in its own colour
+ * at full strength, drawn round by the pen - top, right, bottom, left, one
+ * after the other, as a hand goes round a box - to `t`. The rect and the
+ * colour are uttt_wash_rect and uttt_wash_rgba, the tint's, so the outline
+ * and the tint that replaces it at Send cannot disagree by a point. The seed
+ * is the sheet's and the block's, so both phones draw the same wobble.
+ *
+ * A HAND-DRAWN ROUGH.JS RECTANGLE, CALMED (owner, 2026-09-23: "the gold
+ * outline is not rough enough"; then, TestFlight 1.0(7): "still hand drawn
+ * but not so crazy"). Each side is its own seeded rough.js line on the
+ * marks' pen, at HALF what a mark's stroke gets - roughness, bowing and the
+ * end offset - so a block-sized box still wobbles by hand, but by half as
+ * much. Every side runs a small fixed overshoot past both its corners, so
+ * the four sides cross there as a quick pen box's do, rather than meeting
+ * exactly or stopping short. */
+#define OUTLINE_CALM      .5f                 /* of a mark's roughness */
+#define OUTLINE_OVERSHOOT (BL * .025f)        /* past each corner */
+
+int uttt_draw_outline(UtttDL *d, int block, int32_t seed, float t)
+{
+    float r[4];
+    if (t <= 0.f || !uttt_wash_rect(block, r, NULL)) return 0;
+    if (!seed) seed = 1;
+    const float x0 = r[0], y0 = r[1], x1 = r[0] + r[2], y1 = r[1] + r[3];
+    const float o = OUTLINE_OVERSHOOT;
+    const float side[4][4] = {
+        { x0 - o, y0, x1 + o, y0 }, { x1, y0 - o, x1, y1 + o },
+        { x1 + o, y1, x0 - o, y1 }, { x0, y1 + o, x0, y0 - o } };
+    const float len[4] = { r[2] + 2 * o, r[3] + 2 * o, r[2] + 2 * o, r[3] + 2 * o };
+    const float per = len[0] + len[1] + len[2] + len[3];
+    UtttPen p = uttt_pen_92();
+    p.ink = uttt_wash_rgba(1.f);
+    p.w = uttt_pen_92().w / 9.f / 100.f * GRID_MAJOR_W * 1.3f;
+    p.a = 1.f;
+    float done = 0.f, want = (t > 1.f ? 1.f : t) * per;
+    for (int k = 0; k < 4 && done < want; k++) {
+        UtttRough rg = uttt_rough_default(sd(seed, 577, block * 31 + k * 7));
+        rg.roughness  = rough_for(REF) * OUTLINE_CALM;
+        rg.bowing     = bow_for(REF) * OUTLINE_CALM;
+        rg.max_offset = mro_for(REF) * OUTLINE_CALM;
+        rg.seg_line = 18;
+        UtttPt pts[1024]; int np = 0; UtttSpan sp[2];
+        int n = uttt_rough_line(&rg, side[k][0], side[k][1], side[k][2], side[k][3],
+                                pts, 1024, &np, sp, 2);
+        float part = (want - done) / len[k];
+        for (int q = 0; q < n; q++) stroke(d, pts + sp[q].first, sp[q].n, &p, part);
+        done += len[k];
     }
     return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
 }
@@ -252,57 +393,162 @@ int uttt_draw_cell(UtttDL *d, int mark, int mv, int32_t seed, float t)
     float y = (b / 3) * BL + (c / 3) * CE;
     UtttPen p = uttt_pen_92();
     mark_in(d, mark, x + CE * .1f, y + CE * .1f, CE * .8f,
-            seed * 1000 + b * 9 + c, t, &p);
+            sd(seed, 1000, b * 9 + c), t, &p);
     return 0;
+}
+
+/* The inverse of the placement above, from the same BL and CE: a point in the
+ * board's unit square to the move under it. The far edge (exactly 1) belongs
+ * to the last cell rather than to nothing; anything off the board is -1. */
+int uttt_hit(float u, float v)
+{
+    if (!(u >= 0.f && u <= S && v >= 0.f && v <= S)) return -1;
+    int bx = (int)(u / BL), by = (int)(v / BL);
+    if (bx > 2) bx = 2;
+    if (by > 2) by = 2;
+    int cx = (int)((u - bx * BL) / CE), cy = (int)((v - by * BL) / CE);
+    if (cx > 2) cx = 2;
+    if (cy > 2) cy = 2;
+    if (cx < 0) cx = 0;
+    if (cy < 0) cy = 0;
+    return (by * 3 + bx) * 9 + (cy * 3 + cx);
+}
+
+int uttt_cell_rect(int mv, float r[4])
+{
+    if (mv < 0 || mv > 80) return 0;
+    int b = mv / 9, c = mv % 9;
+    r[0] = (b % 3) * BL + (c % 3) * CE;
+    r[1] = (b / 3) * BL + (c / 3) * CE;
+    r[2] = r[3] = CE;
+    return 1;
+}
+
+/* THE O STAYS A RING. rough.js closes an ellipse by running past its start
+ * by a seeded overlap and curving in to 98% and then 90% of the radius, and
+ * at the "you are" mark's size its roughness is 2.66 - so for some seeds the
+ * tail sweeps up to two thirds of a turn further on a handful of points, and
+ * the curve through them cuts a CHORD across the inside of the circle (owner,
+ * TestFlight 1.0(6): "the drawn O sometimes draws lines right through the
+ * circle"). This asks whether every sample of both passes lies in the ring
+ * [1 - UTTT_O_RING, 1 + UTTT_O_RING] of the O's own size - its median
+ * distance from the centre, in the ellipse's own proportions, so an O that
+ * came out small or large is judged against itself. */
+int uttt_o_in_ring(int32_t seed, float s)
+{
+    UtttPt pts[1400];
+    UtttSpan sp[4];
+    int k2, k = mark_geom(UTTT_O, s, seed, pts, 1400, sp, &k2);
+    int np = sp[k - 1].first + sp[k - 1].n;
+    if (np < 8) return 0;
+    float rho[1400], sorted[1400];
+    for (int i = 0; i < np; i++) {
+        float dx = (pts[i].x - O_CX) / (O_W * .5f), dy = (pts[i].y - O_CY) / (O_H * .5f);
+        rho[i] = sorted[i] = sqrtf(dx * dx + dy * dy);
+    }
+    for (int i = 1; i < np; i++)                        /* median: insertion */
+        for (int j = i; j > 0 && sorted[j - 1] > sorted[j]; j--) {
+            float t = sorted[j]; sorted[j] = sorted[j - 1]; sorted[j - 1] = t;
+        }
+    float med = sorted[np / 2];
+    for (int i = 0; i < np; i++)
+        if (fabsf(rho[i] / med - 1.f) > UTTT_O_RING) return 0;
+    return 1;
+}
+
+/* THE SEED THE "YOU ARE" MARK IS DRAWN WITH: the game's own for an X, and
+ * for an O the first of a fixed walk from it whose O stays a ring - a pure
+ * function of the seed, so both phones pick the same one. Around half of all
+ * seeds pass, so the walk is a try or two; 64 without one (never seen in a
+ * million) keeps the game's own. */
+int32_t uttt_mark_seed(int mark, int32_t seed)
+{
+    if (mark != UTTT_O) return seed;
+    for (int i = 0; i < 64; i++) {
+        int32_t s = (int32_t)((uint32_t)seed + (uint32_t)i * 7919u);
+        if (s && uttt_o_in_ring(s, UTTT_MARK_SIDE)) return s;
+    }
+    return seed;
 }
 
 int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float calm)
 {
+    seed = uttt_mark_seed(mark, seed);
     UtttPen p = uttt_pen_92();
     p.w = uttt_pen_92().w * 1.15f;
-    mark_in(d, mark, .06f, .06f, .88f, seed, 1.f, &p);
+    mark_in(d, mark, .06f, .06f, UTTT_MARK_SIDE, seed, 1.f, &p);
     (void)calm;
     return 0;
 }
 
 /* ------------------------------------------------------------ the bubble */
-/* Every number below is measured off the design document rather than chosen
- * here: 10 points of side padding, a 12-point gutter, and the board takes the
- * height because the height is what runs out first. 195 - 2*7 = 181, and
- * 300 - 10 - 181 - 12 - 10 = 87 for the text. Eighty-seven points is why the
- * place line is allowed to wrap and the headline is not. */
-#define BUB_W    300.f
-#define BUB_H    195.f
-#define BUB_PAD   10.f
-#define BUB_GUT   12.f
+/* docs/UI.html "Bubble 300x195", option 02: the board takes the height, two
+ * words and a place take what is left, 10 points of padding and a 12-point
+ * gutter between them.
+ *
+ * THE BOARD IS ON THE RIGHT, mirrored against option 02, and that is not a
+ * taste. Messages stamps the app's own logo into the TOP-LEFT corner of every
+ * bubble it draws, over whatever is underneath: measured in the simulator
+ * transcript it is a pill about 31 by 24 points, 6 in from the corner. A
+ * board in that corner has the badge sitting on its top-left cell - one of
+ * the 81 squares - for the whole game. The text column carries it instead:
+ * the two lines are centred well below it.
+ *
+ * AND THE LINES STOP ON THE PAPER. On the drawer the four main lines run 13.5%
+ * past the board and the sheet clips them, which reads as the pen leaving the
+ * paper. In a 195-point frame that overshoot is 24 points and every line ran
+ * into the bubble's rounded edge, which read as the board being cut off
+ * (the WP1 audit's "clipped at the right edge"). Here they run 5% - the
+ * design document's own figure - and the board is sized so the longest line
+ * is asked to end 5 points inside the frame on the three sides it faces, and
+ * with its jitter still ends at least 3 inside. */
+#define BUB_W     300.f
+#define BUB_H     195.f
+#define BUB_PAD    10.f
+#define BUB_GUT    12.f
+#define BUB_REACH  UTTT_REACH       /* the design's 5% over the pen's 13.5% */
+#define BUB_EDGE    5.f             /* where the longest line is asked to stop; its jitter takes it ~1.5pt further since its far end draws */
 
-UtttBubble uttt_bubble(void)
+UtttBubble uttt_bubble(const UtttGame *g)
 {
-    UtttBubble b;
+    UtttBubble b = { 0 };
     b.w = BUB_W; b.h = BUB_H;
+    b.words = g && g->over;
 
-    /* THE BOARD IS ON THE RIGHT, and that is not a taste. Messages stamps the
-     * app's own logo into the TOP-LEFT corner of every bubble it draws, over
-     * whatever is underneath - so a board in that corner has a badge sitting
-     * on its first block for the whole game. The text column can carry it:
-     * the headline starts below the badge and nothing is lost. */
-    float side = BUB_H - 2.f * 7.f;          /* 181 */
-    b.board.x = BUB_W - BUB_PAD - side;
-    b.board.y = (BUB_H - side) * .5f;
+    /* side + 2 * .05 * side + 2 * edge = height */
+    float side = (BUB_H - 2.f * BUB_EDGE) / (1.f + 2.f * .135f * BUB_REACH);
+    side = (float)(int)side;                     /* whole points: 168 */
+    float m = (BUB_H - side) * .5f;
+    /* THE BOARD ALONE IS CENTRED: the frame is wider than tall, so the side
+     * is the height's and the badge's corner is 66 points left of it. */
+    b.board.x = b.words ? BUB_W - m - side : (BUB_W - side) * .5f;
+    b.board.y = m;
     b.board.w = side;
     b.board.h = side;
 
-    b.text.x = BUB_PAD;
-    b.text.y = b.board.y;
-    b.text.w = b.board.x - BUB_GUT - BUB_PAD;
-    b.text.h = side;
+    if (b.words) {
+        b.text.x = BUB_PAD;
+        b.text.y = b.board.y;
+        b.text.w = b.board.x - BUB_GUT - BUB_PAD;
+        b.text.h = side;
+    }
 
-    b.headline_pt = 16.f;
-    b.place_pt    = 16.f;
+    /* 18, measured off option 02: "Your move" there is 82 points wide in
+     * bold, which is 18-point type. At 16 the two lines read as a label
+     * beside the board rather than the thing a glance lands on. */
+    b.headline_pt = 18.f;
+    b.place_pt    = 18.f;
     b.lead        = 1.f;
+    b.reach       = BUB_REACH;
     b.headline_rgba = 0x1d1b16ffu;
     b.place_rgba    = INK_X;                 /* the same blue an X is drawn in */
     return b;
+}
+
+float uttt_bubble_scale(float display)
+{
+    if (!(display >= 2.f)) return 2.f;           /* NaN lands here too */
+    return display > 3.f ? 3.f : display;
 }
 
 static const char *const PLACE[10] = {
@@ -349,7 +595,7 @@ int uttt_draw_icon(UtttDL *d, float w, float h)
      * so the circle passes OVER the first stroke and UNDER the second, and
      * the two marks are threaded through one another rather than stacked.
      * That is the whole idea and it only exists because this pen is a ribbon
-     * of quads laid down in order - a renderer that stacked two finished
+     * of strokes laid down in order - a renderer that stacked two finished
      * images could not do it, and neither could an icon drawn by hand once.
      *
      * Drawn in a UNIT SQUARE and mapped into the frame afterwards: Apple's

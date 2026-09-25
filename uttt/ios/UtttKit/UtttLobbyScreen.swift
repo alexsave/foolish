@@ -1,113 +1,112 @@
-import SwiftUI
+import CUttt
+import UIKit
 
-/// Everything that is not the game: the invitation, the wait, the seat that is
-/// still open, and the view from outside the roster.
+/// Everything that is not the game: the wait, and a bubble this build cannot
+/// read.
 ///
-/// THE ROSTER SEALS AT TWO. A third person in a group chat is not a problem to
-/// be handled, it is a spectator - so the shape of this file is four stances
-/// and one door, and only two of the stances have a door at all.
-public struct UtttLobbyScreen: View {
+/// THERE IS NO "TAKE A SEAT" SCREEN. The joiner is X and moves first, so
+/// opening somebody's invitation opens the board with the first move on it -
+/// the join IS the move. And there is no "start" screen either: opening the
+/// app through the + menu is the invitation, staged there and then.
+///
+/// docs/UI.html, "Lobby and end", 02: a headline, a line under it and the
+/// empty board. WITHOUT the spec's "Take it back" door: the owner decided
+/// (2026-09-22) there is no undo and no take-back - the draft's own X is the
+/// only way back. Every word is the kernel's (uttt_say.h).
+///
+/// ONE LAYOUT AT EVERY HEIGHT, the play surface's (`Uttt.sheet`): the board's
+/// centre is the sheet's centre and it scales with the drawer, with the words
+/// at the top left and the board clear of them - beside them when it is small
+/// enough, under them otherwise.
+public final class UtttLobbyScreen: UtttSheetView {
 
     public enum Stance: Equatable {
-        /// Nothing in this thread yet. The door sends the empty board, and the
-        /// moment it does is the seed.
-        case start
         /// You sent the board. Nobody has answered it.
-        case waiting(Uttt.Mark?)
-        /// The second seat is open and it would be yours.
-        case open(Uttt.Mark?)
+        case waiting
         /// A bubble this build cannot read.
         case unreadable
     }
 
     public let stance: Stance
-    /// Only used to draw the mark; there is no seed before `.start` sends one.
-    public let seed: Int32
-    public let act: () -> Void
+    /* THE EMPTY BOARD, with no wash: nobody is on move, and a board tinted
+     * corner to corner reads as a different piece of paper. */
+    private let board = UtttBoardView(clock: nil)
+    private let column = UtttLobbyWords()
+    private let band = UtttLobbyWords()
 
-    public init(stance: Stance, seed: Int32 = 1, act: @escaping () -> Void) {
+    public init(stance: Stance, slide: CollapseSlide?) {
         self.stance = stance
-        self.seed = seed
-        self.act = act
+        super.init(slide: slide)
+        board.isUserInteractionEnabled = false
+        board.accessibilityElementsHidden = true
+        board.isHidden = stance == .unreadable
+        content.addSubview(board)
+        content.addSubview(column)
+        content.addSubview(band)
     }
+    required init?(coder: NSCoder) { fatalError() }
 
-    public var body: some View {
-        UtttSheet {
-            VStack(spacing: 0) {
-                Spacer(minLength: 8)
-                if let m = mark {
-                    VStack(spacing: 4) {
-                        Text("you\nare")
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .tracking(1.9)
-                            .textCase(.uppercase)
-                            .multilineTextAlignment(.center)
-                            .foregroundStyle(UtttInk.label)
-                        UtttMarkIcon(mark: m, seed: seed &+ 4)
-                            .frame(width: 54, height: 54)
-                    }
-                    .padding(.bottom, 14)
-                }
-                Text(headline)
-                    .font(.system(size: 23, weight: .bold))
-                    .foregroundStyle(UtttInk.ink)
-                Text(subline)
-                    .font(.system(size: 14))
-                    .foregroundStyle(UtttInk.muted)
-                    .multilineTextAlignment(.center)
-                    .padding(.top, 3)
-                    .padding(.horizontal, 22)
-                if let door {
-                    UtttDoor(title: door, act: act).padding(.top, 18)
-                }
-                Spacer(minLength: 8)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(13)
-        }
-    }
-
-    private var mark: Uttt.Mark? {
-        switch stance {
-        case .waiting(let m), .open(let m): return m
-        case .start, .unreadable:           return nil
-        }
-    }
-
+    /* NO MARK ON THE WAITING SCREEN: the joiner will be X, and until somebody
+     * joins there is nobody to be anything. */
     private var headline: String {
         switch stance {
-        case .start:      return "Ultimate tic-tac-toe"
-        case .waiting:    return "Waiting"
-        case .open:       return "There is a seat"
-        case .unreadable: return "Can't read that"
+        case .waiting:    return Uttt.say(.waitingHeadline)
+        case .unreadable: return Uttt.say(.unreadableHeadline)
         }
     }
 
     private var subline: String {
         switch stance {
-        case .start:
-            /* NOT "Send an empty board" - the button under this line says
-             * that, and a subtitle that narrates the button is a line nobody
-             * reads twice. This says the one thing the button cannot. */
-            return "Whoever answers it first takes the other side."
-        case .waiting:
-            /* NO MARK, and no hint of one. Which seat is whose is not decided
-             * until both are filled, so there is nothing here to re-roll for
-             * - which is the whole security property. */
-            return "Nobody has taken the other side yet."
-        case .open:
-            return "Take it and the sides are drawn. Neither of you picks."
-        case .unreadable:
-            return "That board came from a newer version of the app."
+        case .waiting:    return Uttt.say(.waitingSubline)
+        case .unreadable: return Uttt.say(.unreadableSubline)
         }
     }
 
-    private var door: String? {
-        switch stance {
-        case .start:                 return "Send a board"
-        case .open:                  return "Take it"
-        case .waiting, .unreadable:  return nil
+    override func lay(_ size: CGSize, from: CGFloat?) {
+        let L = Uttt.sheet(.wait, size: size)
+        let at = { (s: CGFloat) -> UtiSheet in
+            Uttt.sheet(.wait, size: CGSize(width: size.width, height: size.height + s))
         }
+        let B = from.map { Uttt.sheet(.wait, size: CGSize(width: size.width, height: $0)) } ?? L
+        placeBoard(board, L, at: at)
+        /* THE WORDS GO WHERE THE BOARD LEAVES ROOM: in the column beside it
+         * on the strip, wrapped onto as many lines as that takes, and across
+         * the top once the sheet opens, where UI.html 02 sets them. */
+        let (LC, LB) = wordsLayouts(L, B)
+        column.frame = CGRect(x: CGFloat(LC.words.0), y: CGFloat(LC.words.1),
+                              width: CGFloat(LC.words.2), height: CGFloat(LC.words.3))
+        column.set(headline, subline, column: true, sub: CGFloat(LC.sub_alpha))
+        band.frame = CGRect(x: CGFloat(LB.band.0), y: CGFloat(LB.band.1),
+                            width: CGFloat(LB.band.2), height: CGFloat(LB.band.3))
+        band.set(headline, subline, column: false)
+        placeWords(column: column, band: band, L, B, at: at)
+    }
+}
+
+/// The lobby's headline and the line under it, from the top left.
+final class UtttLobbyWords: UIView {
+    private let headline = UILabel()
+    private let subline = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        layer.actions = UtttLayers.still
+        addSubview(headline)
+        addSubview(subline)
+        headline.accessibilityTraits = .header
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// `sub` is the second line's alpha (uttt_sheet's `sub_alpha`): a
+    /// column too narrow for it carries the headline alone.
+    func set(_ h: String, _ s: String, column: Bool, sub: CGFloat = 1) {
+        let w = bounds.width
+        let hs = headline.set(h, .headline, width: w, column: column, align: .left)
+        headline.frame = CGRect(origin: .zero, size: hs)
+        let ss = subline.set(s, .subline, width: w, column: column, align: .left)
+        subline.frame = CGRect(x: 0, y: hs.height + 3, width: ss.width, height: ss.height)
+        subline.alpha = sub
+        subline.isHidden = sub <= 0
     }
 }
 
@@ -115,70 +114,90 @@ public struct UtttLobbyScreen: View {
 ///
 /// A spectator gets the game and no way to touch it, which is the whole
 /// difference - so this is the play surface with the door taken off rather
-/// than a screen of its own.
-public struct UtttWatchScreen: View {
-    @ObservedObject private var model: UtttModel
-    public init(model: UtttModel) { self.model = model }
+/// than a screen of its own. At the end it does get the one door everybody
+/// gets: Again. The rules open as they do on the play surface.
+public final class UtttWatchScreen: UtttSheetView {
+    private let model: UtttModel
+    private let board = UtttBoardView(clock: nil)
+    private let column = UIView()
+    private let colLabel = UILabel()
+    private let colSaid = UILabel()
+    private let band = UIView()
+    private let bandLabel = UILabel()
+    private let bandSaid = UILabel()
+    private let rulebook: UtttRulebookButton
+    private var again: UtttDoorButton?
 
-    public var body: some View {
-        UtttSheet {
-            VStack(spacing: 0) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("watching")
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .tracking(1.9)
-                        .textCase(.uppercase)
-                        .foregroundStyle(UtttInk.label)
-                    Spacer()
-                    Text(line)
-                        .font(.system(size: 17, weight: .bold))
-                        .foregroundStyle(UtttInk.ink)
-                }
-                Spacer(minLength: 6)
-                UtttBoard(active: model.active, last: model.last,
-                          positionKey: model.positionKey)
-                Spacer(minLength: 6)
-            }
-            .padding(13)
+    public init(model: UtttModel, door: Uttt.Door = .none, slide: CollapseSlide?,
+                onDoor: @escaping () -> Void = {}, onRules: @escaping () -> Void = {}) {
+        self.model = model
+        rulebook = UtttRulebookButton(act: onRules)
+        super.init(slide: slide)
+        content.addSubview(board)
+        for (v, a, b) in [(column, colLabel, colSaid), (band, bandLabel, bandSaid)] {
+            v.addSubview(a)
+            v.addSubview(b)
+            b.accessibilityTraits = .header
+            content.addSubview(v)
         }
+        if let title = UtttDoorButton.title(door) {
+            let a = UtttDoorButton(title: title, act: onDoor)
+            content.addSubview(a)
+            again = a
+        }
+        content.addSubview(rulebook)
+        model.onChange = { [weak self] in self?.setNeedsLayout() }
     }
+    required init?(coder: NSCoder) { fatalError() }
 
-    private var line: String {
-        switch Uttt.over {
-        case .draw: return "Drawn"
-        case .x:    return "X took it"
-        case .o:    return "O took it"
-        case .none: return Uttt.turn == .o ? "O to play" : "X to play"
+    /// The play surface's one layout (`Uttt.sheet`), with the header line in
+    /// place of the bar: the board centred and scaled with the drawer, the
+    /// rulebook in the right column on the strip and beside Again at the
+    /// bottom when expanded.
+    override func lay(_ size: CGSize, from: CGFloat?) {
+        let L = Uttt.sheet(.watch, size: size)
+        let at = { (s: CGFloat) -> UtiSheet in
+            Uttt.sheet(.watch, size: CGSize(width: size.width, height: size.height + s))
         }
-    }
-}
+        let B = from.map { Uttt.sheet(.watch, size: CGSize(width: size.width, height: $0)) } ?? L
+        board.active = model.active
+        board.last = model.last
+        board.positionKey = model.positionKey
+        placeBoard(board, L, at: at)
+        /* each copy of the words at the layout it shows through a ride
+         * (wordsLayouts), crossfading on its layer (placeWords) */
+        let (LC, LB) = wordsLayouts(L, B)
+        let label = Uttt.say(.watchLabel), said = Uttt.say(.watchLine)
+        let saidType = UtttType(size: 17, weight: .bold, color: UtttInk.ink)
+        /* On the strip the label over the line in the left column, the line
+         * wrapped; opening, the two across the top band. */
+        column.frame = CGRect(x: CGFloat(LC.words.0), y: CGFloat(LC.words.1),
+                              width: CGFloat(LC.words.2), height: CGFloat(LC.words.3))
+        let w = column.bounds.width
+        let ls = colLabel.set(label, .small, width: w, column: false, align: .left)
+        colLabel.frame = CGRect(origin: .zero, size: ls)
+        let ss = colSaid.set(said, saidType, width: w, column: true, align: .left)
+        colSaid.frame = CGRect(x: 0, y: ls.height + 3, width: ss.width, height: ss.height)
 
-// MARK: - the two pieces both screens share
+        band.frame = CGRect(x: CGFloat(LB.band.0), y: CGFloat(LB.band.1),
+                            width: CGFloat(LB.band.2), height: CGFloat(LB.band.3))
+        let bw = band.bounds.width
+        let bs = bandSaid.set(said, saidType, width: bw, column: false, align: .right)
+        let bl = bandLabel.set(label, .small, width: max(0, bw - bs.width - 8), column: false, align: .left)
+        /* on one first baseline, the label at the left, the line at the right */
+        let saidFont = saidType.font(), labelFont = UtttType.small.font()
+        bandSaid.frame = CGRect(x: bw - bs.width, y: 0, width: bs.width, height: bs.height)
+        bandLabel.frame = CGRect(x: 0, y: saidFont.ascender - labelFont.ascender,
+                                 width: bl.width, height: bl.height)
+        placeWords(column: column, band: band, L, B, at: at)
 
-enum UtttInk {
-    static let ink   = Color(red: 0.11, green: 0.106, blue: 0.087)
-    static let muted = Color(red: 0.42, green: 0.40,  blue: 0.35)
-    static let label = Color(red: 0.54, green: 0.52,  blue: 0.47)
-}
-
-/// The one door. Drawn rather than tinted, so it sits on the paper instead of
-/// on top of it.
-struct UtttDoor: View {
-    let title: String
-    let act: () -> Void
-
-    var body: some View {
-        Button(action: act) {
-            Text(title)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(UtttInk.ink)
-                .padding(.horizontal, 26)
-                .padding(.vertical, 11)
-                .background(
-                    Capsule().fill(Color.white.opacity(0.55))
-                        .overlay(Capsule().strokeBorder(UtttInk.ink.opacity(0.55), lineWidth: 1.4))
-                )
+        /* Again belongs to the expanded view (UI.html 08); the rulebook
+         * stands beside it at its height, and alone in the right column on
+         * the strip. */
+        rulebook.frame = rect(L.rulebook)
+        if let again {
+            placeDoor(again, L.again, L, at: at)
         }
-        .buttonStyle(.plain)
+        rideBottom(rulebook)
     }
 }

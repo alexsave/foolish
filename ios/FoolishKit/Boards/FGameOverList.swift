@@ -27,7 +27,7 @@ struct FinishRow: Identifiable {
 /// is a colored number (brass for 1st, red for the fool) with a "Fool" tag.
 struct FGameOverList: View {
     /// Re-render on a settings change (see FPrefs), the same reason
-    /// `SendHintReminder` grew one: "Fool", "You", "New game" and the game-over
+    /// `StagedSendHint` grew one: "Fool", "You", "New game" and the game-over
     /// heading are all resolved by `FStrings.t` at body-eval time, and nothing
     /// else about this view changes when the language does. The end screen is
     /// also the one place a player is likely to sit and read, so a caption
