@@ -628,6 +628,30 @@ static void test_bubble_scale(void)
     OK(uttt_bubble_scale(4.f) == 3.f, "bubble scale: over 3 bakes at 3");
 }
 
+/* A GAME IN THE THREAD OUTLIVES THE BUILD THAT WROTE IT. These bytes were
+ * written by the 1.0(6) kernel (d2332dd0): alex's invitation, vera's centre
+ * move. Every later build must read them and seat alex as O by the same
+ * participant bytes - a changed salt, seed or tag length would lock every
+ * creator out of every game already in a thread (1.0(8), 2026-09-25: the
+ * owner's own game opened as a spectator, and this pin ruled the kernel
+ * out: same bytes in, same seat out). */
+static void test_tag_pinned(void)
+{
+    static const uint8_t alex[16] = {0xa1,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15};
+    static const uint8_t vera[16] = {0xb2,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15};
+    static const char b6[] = "?m=W4AWRU5B4AARYPV2425R7OXV4TGCHFTAD6Y5SYEIPIJMGJQ";
+    static const uint8_t o6[UTM_TAG_LEN] = {0x1c,0x3e,0xba,0xe6,0xbb,0x1f,0xba,0xf5,0xe4};
+    UtmMsg m;
+    uint8_t a[UTM_TAG_LEN], v[UTM_TAG_LEN];
+    OK(utm_text_decode(b6, &m) == UTM_EOK, "pinned: a 1.0(6) game still reads");
+    utm_tag(m.seed, alex, 16, a);
+    utm_tag(m.seed, vera, 16, v);
+    OK(!memcmp(a, o6, UTM_TAG_LEN) && !memcmp(m.o, o6, UTM_TAG_LEN),
+       "pinned: the creator's tag is the 1.0(6) tag");
+    OK(utm_seat(&m, a) == UTM_SEAT_O && utm_seat(&m, v) == UTM_SEAT_X,
+       "pinned: its creator is O and its joiner X");
+}
+
 int main(int argc, char **argv)
 {
     int games = argc > 1 ? atoi(argv[1]) : 10000;
@@ -635,6 +659,7 @@ int main(int argc, char **argv)
     test_games(games);
     test_refusals();
     test_seats();
+    test_tag_pinned();
     test_prefer();
     test_hit();
     test_caption_one_line();
