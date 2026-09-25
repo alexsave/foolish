@@ -4,7 +4,7 @@
 #include <stdlib.h>
 
 const char *UTTT_BOT_NAME[BOT_COUNT] =
-    { "random", "biro", "roller", "crn", "bias", "nib", "sniper", "quill" };
+    { "random", "biro", "roller", "crn", "bias", "nib", "sniper", "quill", "fountain" };
 
 static uint32_t rnd(uint64_t *s, uint32_t n)
 {
@@ -1134,29 +1134,12 @@ int uttt_tree_proof(const UtttGame *g, long playouts, uint64_t *rs)
     }
 }
 
-static uint8_t tree_move(const UtttGame *g, int budget, uint64_t *rs)
+/* THE ANSWER, from whichever tree just searched `g`. A proved win if the
+ * tree found one; otherwise the most visited child that is not a proved
+ * loss, and on equal visits the better score, and on equal score the
+ * heuristic - the same tie-break as the flat search, for the same reason. */
+static uint8_t tree_answer(const UtttGame *g)
 {
-    uint8_t list[81];
-    int n = uttt_legal(g, list);
-    if (n <= 0) return 0;
-    n = root_dedupe(g, list, n);
-    if (n == 1) return list[0];
-
-    /* THE SNIPER'S ROOT, unchanged. */
-    uint8_t mv = 0;
-    if (uttt_mate_in(g, 2000L, &mv)) return mv;
-    {
-        uint8_t sm = 0;
-        if (solve_root(g, list, n, &sm)) return sm;
-    }
-
-    /* THE SAME ALLOWANCE AS THE FLAT SEARCH: `budget` a legal move. */
-    tree_search(g, (long)budget * n, rs, 1);
-
-    /* THE ANSWER. A proved win if the tree found one; otherwise the most
-     * visited child that is not a proved loss, and on equal visits the
-     * better score, and on equal score the heuristic - the same tie-break
-     * as the flat search, for the same reason. */
     const TreeNode *root = &tree_pool[0];
     uint32_t bi = root->first;
     int b_alive = -1; long b_v = -1; double b_s = -1; int b_h = 0;
@@ -1175,6 +1158,287 @@ static uint8_t tree_move(const UtttGame *g, int budget, uint64_t *rs)
         }
     }
     return tree_pool[bi].mv;
+}
+
+/* THE SNIPER'S ROOT: a single move, a proved forced win, or an exact
+ * endgame. Returns 1 and fills `out` when it settled the move; otherwise
+ * `list` and `*n` are the deduplicated moves the tree is to search. */
+static int tree_root(const UtttGame *g, uint8_t *list, int *n, uint8_t *out)
+{
+    *n = uttt_legal(g, list);
+    if (*n <= 0) { *out = 0; return 1; }
+    *n = root_dedupe(g, list, *n);
+    if (*n == 1) { *out = list[0]; return 1; }
+    if (uttt_mate_in(g, 2000L, out)) return 1;
+    return solve_root(g, list, *n, out);
+}
+
+static uint8_t tree_move(const UtttGame *g, int budget, uint64_t *rs)
+{
+    uint8_t list[81], mv = 0;
+    int n;
+    if (tree_root(g, list, &n, &mv)) return mv;
+
+    /* THE SAME ALLOWANCE AS THE FLAT SEARCH: `budget` a legal move. */
+    tree_search(g, (long)budget * n, rs, 1);
+    return tree_answer(g);
+}
+
+/* ----------------------------------------------------------------- fountain
+ * QUILL'S TREE, QUILL'S ROOT, AND A DIFFERENT IDEA OF WHAT A LOOK IS.
+ *
+ * Same pools, same expansion, same proofs, same kept tree per side, same
+ * answer. What changed is the leaf and the price of everything around it;
+ * the measurements are in uttt_bots.h and the log in uttt/c/README.md. */
+#define FOUNTAIN_C    0.5f    /* exploration                                  */
+#define FOUNTAIN_PB   3.0f    /* prior weight at zero visits - twice quill's  */
+#define FOUNTAIN_FPU  0.55f
+#define FOUNTAIN_GIFT_TRIES 4 /* re-draws spent avoiding a game-losing gift   */
+
+/* The kernel's tables, copied once so the playout pays no lazy-init test,
+ * and the k-th set bit of every nine-bit mask. */
+static uint8_t  f_line[512];      /* the nine bits hold a line               */
+static uint16_t f_wins[512];      /* the empty squares that would make one    */
+static uint8_t  f_sel[512][9];    /* the k-th set bit                         */
+
+static void f_tables(void)
+{
+    if (f_sel[2][0]) return;      /* mask 2's first bit is 1: built */
+    for (unsigned m = 0; m < 512; m++) {
+        f_line[m] = (uint8_t)uttt_mask_line(m);
+        f_wins[m] = (uint16_t)uttt_mask_wins(m);
+        int k = 0;
+        for (int b = 0; b < 9; b++) if ((m >> b) & 1u) f_sel[m][k++] = (uint8_t)b;
+    }
+}
+
+/* No divide: the top of a 32-bit draw scaled by n (Lemire). */
+static inline uint32_t f_rnd(uint64_t *s, uint32_t n)
+{
+    uint64_t x = *s;
+    x ^= x >> 12; x ^= x << 25; x ^= x >> 27; *s = x;
+    uint32_t v = (uint32_t)((x * 2685821657736338717ull) >> 32);
+    return (uint32_t)(((uint64_t)v * n) >> 32);
+}
+
+/* LAST GOOD REPLY, WITH FORGETTING: per side, the reply to each move that
+ * last won a playout. The winner's replies are learned, a loser's reply is
+ * forgotten if it was the one stored. Emptied at the start of every search,
+ * so a move depends on its position and its seed and on nothing earlier. */
+static uint8_t f_lgr[2][81];
+
+/* THE PLAYOUT, played to the end, in registers rather than in a UtttGame.
+ *
+ * Uniform, with three exceptions, in order: a move that wins the game is
+ * always played; the last good reply to the previous move is played when
+ * it is legal; and a random move that sends the opponent where they could
+ * win the game is re-drawn, up to FOUNTAIN_GIFT_TRIES times.
+ *
+ * threat[s] is the live blocks side s could take in one move, kept per
+ * move for the one block that changed, so both questions are one AND. */
+static int f_rollout(const UtttGame *g, uint64_t *rs, uint8_t me)
+{
+    uint16_t c[2][9];
+    memcpy(c, g->cm, sizeof c);
+    unsigned bm[2] = { g->bm[0], g->bm[1] };
+    unsigned live = g->live, forced = g->forced;
+    int t = g->turn - 1;
+    uint8_t seq[UTTT_MAX_PLIES + 1];
+    int ns = 0;
+    seq[ns++] = g->n_plies ? g->move[g->n_plies - 1] : 0xff;
+
+    unsigned threat[2] = { 0, 0 };
+    for (unsigned lv = live; lv; lv &= lv - 1) {
+        int b = __builtin_ctz(lv);
+        unsigned o = ~(unsigned)(c[0][b] | c[1][b]) & 0x1ffu;
+        if (f_wins[c[0][b]] & o) threat[0] |= 1u << b;
+        if (f_wins[c[1][b]] & o) threat[1] |= 1u << b;
+    }
+
+    int winner = -1;
+    for (;;) {
+        unsigned blocks = (forced < 9 && ((live >> forced) & 1u)) ? 1u << forced : live;
+        int mv = -1;
+        for (unsigned bb = blocks & threat[t] & f_wins[bm[t]]; bb; bb = 0) {
+            int b = __builtin_ctz(bb);
+            unsigned w = f_wins[c[t][b]] & ~(unsigned)(c[0][b] | c[1][b]) & 0x1ffu;
+            mv = b * 9 + __builtin_ctz(w);
+        }
+        const uint8_t last = seq[ns - 1];
+        if (mv < 0 && last < 81) {
+            int r = f_lgr[t][last];
+            if (r != 0xff && ((blocks >> (r / 9)) & 1u)
+                && !(((c[0][r / 9] | c[1][r / 9]) >> (r % 9)) & 1u)) mv = r;
+        }
+        if (mv < 0) {
+            const unsigned gift = threat[1 - t] & f_wins[bm[1 - t]];
+            for (int tr = 0; ; tr++) {
+                if (!(blocks & (blocks - 1))) {
+                    int b = __builtin_ctz(blocks);
+                    unsigned o = ~(unsigned)(c[0][b] | c[1][b]) & 0x1ffu;
+                    mv = b * 9 + f_sel[o][f_rnd(rs, (uint32_t)__builtin_popcount(o))];
+                } else {
+                    unsigned om[9]; int n = 0;
+                    for (unsigned bb = blocks; bb; bb &= bb - 1) {
+                        int b = __builtin_ctz(bb);
+                        om[b] = ~(unsigned)(c[0][b] | c[1][b]) & 0x1ffu;
+                        n += __builtin_popcount(om[b]);
+                    }
+                    int k = (int)f_rnd(rs, (uint32_t)n);
+                    for (unsigned bb = blocks; bb; bb &= bb - 1) {
+                        int b = __builtin_ctz(bb);
+                        int cnt = __builtin_popcount(om[b]);
+                        if (k >= cnt) { k -= cnt; continue; }
+                        mv = b * 9 + f_sel[om[b]][k];
+                        break;
+                    }
+                }
+                if (!gift || tr >= FOUNTAIN_GIFT_TRIES) break;
+                /* a closed target is a free choice, which reaches the gift */
+                const int to = mv % 9;
+                if (((live >> to) & 1u) && !((gift >> to) & 1u)) break;
+            }
+        }
+
+        const int b = mv / 9, cell = mv % 9;
+        const unsigned bit = 1u << b;
+        c[t][b] |= (uint16_t)(1u << cell);
+        seq[ns++] = (uint8_t)mv;
+        if (f_line[c[t][b]]) {
+            bm[t] |= bit; live &= ~bit;
+            if (f_line[bm[t]]) { winner = t; break; }
+            threat[0] &= ~bit; threat[1] &= ~bit;
+        } else if ((c[0][b] | c[1][b]) == 0x1ffu) {
+            live &= ~bit;
+            threat[0] &= ~bit; threat[1] &= ~bit;
+        } else {
+            unsigned o = ~(unsigned)(c[0][b] | c[1][b]) & 0x1ffu;
+            threat[0] = (threat[0] & ~bit) | ((f_wins[c[0][b]] & o) ? bit : 0);
+            threat[1] = (threat[1] & ~bit) | ((f_wins[c[1][b]] & o) ? bit : 0);
+        }
+        if (!live) break;                               /* drawn */
+        forced = (unsigned)cell; t ^= 1;
+    }
+    if (winner < 0) return 100;
+
+    /* seq[i] was played by the side to move at g, then alternately */
+    const int t0 = g->turn - 1;
+    for (int i = 1; i < ns; i++) {
+        if (seq[i - 1] >= 81) continue;
+        int side = t0 ^ ((i - 1) & 1);
+        if (side == winner) f_lgr[side][seq[i - 1]] = seq[i];
+        else if (f_lgr[side][seq[i - 1]] == seq[i]) f_lgr[side][seq[i - 1]] = 0xff;
+    }
+    return winner == me - 1 ? 200 : 0;
+}
+
+/* QUILL'S SELECTION IN SINGLE PRECISION, with the two reciprocals it asks
+ * for every child looked up instead of divided. */
+#define F_TAB 8192
+static float f_inv[F_TAB], f_isq[F_TAB];   /* 1/(v+1) and 1/sqrt(v+1) */
+
+static uint32_t f_select(uint32_t node, uint64_t *rs)
+{
+    const TreeNode *nd = &tree_pool[node];
+    if (f_inv[0] == 0)
+        for (int v = 0; v < F_TAB; v++) {
+            f_inv[v] = 1.0f / (float)(v + 1);
+            f_isq[v] = 1.0f / sqrtf((float)(v + 1));
+        }
+    const float cl = FOUNTAIN_C * sqrtf(logf((float)nd->visits + 1.0f));
+    float best = -1e9f; uint32_t bi = nd->first; int nb = 0;
+    const TreeNode *c = &tree_pool[nd->first];
+    for (int i = 0; i < nd->nchild; i++, c++) {
+        if (c->pv == PV_WIN) continue;                   /* we lose there */
+        const uint32_t v = c->visits;
+        float inv, isq;
+        if (v < F_TAB) { inv = f_inv[v]; isq = f_isq[v]; }
+        else { inv = 1.0f / (float)(v + 1); isq = sqrtf(inv); }
+        float u;
+        if (c->pv == PV_DRAW) u = 0.5f + cl * isq;
+        else {
+            float mean = v ? (float)c->score * (1.0f / 200.0f) / (float)v : FOUNTAIN_FPU;
+            u = mean + cl * isq + FOUNTAIN_PB * c->prior * inv;
+        }
+        if (u > best) { best = u; bi = nd->first + (uint32_t)i; nb = 1; }
+        else if (u == best && rnd(rs, (uint32_t)++nb) == 0)
+            bi = nd->first + (uint32_t)i;
+    }
+    return bi;
+}
+
+static void fountain_search(const UtttGame *g, long playouts, uint64_t *rs)
+{
+    uint32_t used = tree_reroot(g);
+    tree_pool = tree_side[g->turn - 1];
+    if (!used) {
+        used = 1;
+        memset(&tree_pool[0], 0, sizeof tree_pool[0]);
+        tree_expand(0, g, &used);
+    }
+    f_tables();
+    memset(f_lgr, 0xff, sizeof f_lgr);
+
+    uint32_t path[UTTT_MAX_PLIES + 1];
+    for (long r = 0; r < playouts && tree_pool[0].pv == PV_UNKNOWN; r++) {
+        UtttGame t = *g;
+        int depth = 0;
+        uint32_t node = 0;
+        path[depth++] = node;
+        for (;;) {
+            TreeNode *nd = &tree_pool[node];
+            if (nd->pv != PV_UNKNOWN) break;
+            if (nd->nchild == 0) {
+                if (nd->visits == 0 || !tree_expand(node, &t, &used)) break;
+                tree_prove(node);
+                if (nd->pv != PV_UNKNOWN) break;
+            }
+            node = f_select(node, rs);
+            uttt_play(&t, tree_pool[node].mv);
+            path[depth++] = node;
+            if (tree_pool[node].visits == 0) break;
+        }
+
+        /* 0..200 for the side to move at the ROOT */
+        const TreeNode *leaf = &tree_pool[node];
+        int val;
+        if (leaf->pv == PV_WIN)       val = 200;
+        else if (leaf->pv == PV_LOSS) val = 0;
+        else if (leaf->pv == PV_DRAW) val = 100;
+        else {
+            uint64_t s = (*rs += 0x9E3779B97F4A7C15ull);
+            val = f_rollout(&t, &s, t.turn);
+        }
+        if (t.turn != g->turn) val = 200 - val;
+
+        /* A node's score belongs to whoever moved into it: the root's side
+         * at odd depths. */
+        for (int d = 0; d < depth; d++) {
+            TreeNode *nd = &tree_pool[path[d]];
+            nd->visits++;
+            if (d) nd->score += (uint32_t)((d & 1) ? val : 200 - val);
+        }
+        /* A PROOF ONLY MOVES UP WHILE IT CHANGES SOMETHING: a parent can
+         * only become proved when a child just did. */
+        int changed = leaf->pv != PV_UNKNOWN;
+        for (int d = depth - 2; d >= 0 && changed; d--) {
+            uint8_t was = tree_pool[path[d]].pv;
+            tree_prove(path[d]);
+            changed = tree_pool[path[d]].pv != was;
+        }
+    }
+    *rs += 0x9E3779B97F4A7C15ull;
+    tree_cache_plies[g->turn - 1] = g->n_plies;
+    memcpy(tree_cache_move[g->turn - 1], g->move, (size_t)g->n_plies);
+}
+
+static uint8_t fountain_move(const UtttGame *g, int budget, uint64_t *rs)
+{
+    uint8_t list[81], mv = 0;
+    int n;
+    if (tree_root(g, list, &n, &mv)) return mv;
+    fountain_search(g, (long)budget * n, rs);
+    return tree_answer(g);
 }
 
 uint8_t uttt_bot_move(UtttBot bot, const UtttGame *g, int budget, uint64_t *rs)
@@ -1201,6 +1465,7 @@ uint8_t uttt_bot_move(UtttBot bot, const UtttGame *g, int budget, uint64_t *rs)
     case BOT_NIB:    return mc_move(g, budget, rs, 1, 1, 1, 0);
     case BOT_SNIPER: return mc_move(g, budget, rs, 1, 1, 1, 1);
     case BOT_QUILL:  return tree_move(g, budget, rs);
+    case BOT_FOUNTAIN: return fountain_move(g, budget, rs);
     default:         return list[0];
     }
 }
@@ -1259,3 +1524,4 @@ void uttt_bots_forget(void)
     if (tt) memset(tt, 0, TT_SIZE * sizeof *tt);
     tree_cache_plies[0] = tree_cache_plies[1] = -1;
 }
+

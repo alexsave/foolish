@@ -25,13 +25,13 @@
  * to get a tier between random and any bot that looks ahead at all. */
 typedef struct { UtttBot bot; int budget; int noise; const char *label; } Entrant;
 static const Entrant E0[] = {   /* the shipped-name ladder, docs/BOT_NAMES.md */
-    { BOT_RANDOM, 1,    0,  "random"      },
-    { BOT_BIRO,   1,    60, "biro~60"     },
-    { BOT_BIRO,   1,    0,  "biro"        },
-    { BOT_ROLLER, 25,   0,  "roller@25"   },
-    { BOT_ROLLER, 200,  0,  "roller@200"  },
-    { BOT_QUILL,  10,   0,  "quill@10"    },
-    { BOT_QUILL,  4000, 0,  "quill@4000"  },
+    { BOT_RANDOM, 1,    0,  "random"       },
+    { BOT_BIRO,   1,    60, "biro~60"      },
+    { BOT_BIRO,   1,    0,  "biro"         },
+    { BOT_ROLLER, 25,   0,  "roller@25"    },
+    { BOT_ROLLER, 200,  0,  "roller@200"   },
+    { BOT_QUILL,  10,   0,  "quill@10"     },
+    { BOT_QUILL,  4000, 0,  "quill@4000"   },
 };
 #define N0 ((int)(sizeof E0 / sizeof E0[0]))
 #define NMAX 16
@@ -62,9 +62,11 @@ static double now_cpu(void)
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
+static uint64_t salt;   /* LADDER_SEED=n: a fresh stream, for confirming a tuned result */
+
 static uint64_t seed_of(int a, int b, int g)
 {
-    return 0x9E3779B97F4A7C15ull ^ ((uint64_t)a << 40) ^ ((uint64_t)b << 24)
+    return (salt * 0xD1B54A32D192ED03ull) ^ 0x9E3779B97F4A7C15ull ^ ((uint64_t)a << 40) ^ ((uint64_t)b << 24)
          ^ ((uint64_t)g * 1000003ull);
 }
 
@@ -72,6 +74,7 @@ static uint8_t duel(const Entrant *x, const Entrant *o, uint64_t seed)
 {
     UtttGame g; uttt_init(&g);
     uint64_t rs = seed | 1;
+    uttt_bots_forget();            /* a game depends on its seed, not on the last one */
     for (;;) {
         uint8_t list[81];
         if (uttt_legal(&g, list) <= 0) break;
@@ -96,6 +99,7 @@ int main(int argc, char **argv)
     int games = argc > 1 ? atoi(argv[1]) : 40;
     int nw = argc > 2 ? atoi(argv[2]) : 8;
     if (nw < 1) nw = 1; if (nw > 64) nw = 64;
+    if (getenv("LADDER_SEED")) salt = strtoull(getenv("LADDER_SEED"), NULL, 10);
     if (argc > 3) {
         for (int i = 3; i < argc && N < NMAX; i++)
             if (!parse(argv[i], &E[N++])) { fprintf(stderr, "no engine: %s\n", argv[i]); return 1; }

@@ -61,6 +61,7 @@ typedef enum {
     BOT_NIB,          /* CRN + biased playouts + exact endgame             */
     BOT_SNIPER,       /* ...and a proved forced win, shortest, first       */
     BOT_QUILL,        /* sniper's root, then a UCT tree instead of flat MC */
+    BOT_FOUNTAIN,     /* quill's root, a stronger tree                     */
     BOT_COUNT
 } UtttBot;
 
