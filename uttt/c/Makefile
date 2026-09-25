@@ -114,6 +114,23 @@ build/uttt_look: $(SRC) tools/uttt_look.c | build
 # number settles it (the door's edge thickness). See tools/uttt_look.c.
 look: build/uttt_look
 
+# THE POST-GAME ANALYSER, not part of the app: every ply of a replay code
+# held against quill. `make analyse CODE=<code or link> PLAYOUTS=20000`.
+ANALYSE_SRC := src/uttt_analyse.c
+build/uttt_analyse: $(SRC) $(ANALYSE_SRC) src/uttt_analyse.h tools/uttt_analyse.c | build
+	$(CC) $(CFLAGS) $(SRC) $(ANALYSE_SRC) tools/uttt_analyse.c -o $@ $(LDLIBS)
+
+build/uttt_analyse_test: $(SRC) $(ANALYSE_SRC) src/uttt_analyse.h tests/uttt_analyse_test.c | build
+	$(CC) $(CFLAGS) $(SRC) $(ANALYSE_SRC) tests/uttt_analyse_test.c -o $@ $(LDLIBS)
+
+PLAYOUTS ?= 20000
+analyse: build/uttt_analyse
+	@if [ -n "$(CODE)" ]; then ./build/uttt_analyse "$(CODE)" $(PLAYOUTS); fi
+
+# A blunder that throws a forced win is called one, and two runs agree.
+analyse-test: build/uttt_analyse_test
+	./build/uttt_analyse_test
+
 # The pen against the pen it was copied from. Needs node; not in `all`.
 rough-diff: build/uttt_render
 	node tests/rough_diff.mjs
@@ -132,7 +149,7 @@ asan: $(SRC) tests/uttt_test.c | build
 clean:
 	rm -rf build
 
-.PHONY: all run arena play render look rough-diff asan clean
+.PHONY: all run arena play render look analyse analyse-test rough-diff asan clean
 
 # ---- the iOS bridge -----------------------------------------------------
 # `make ios-smoke` exercises the identical bridge with the host compiler, so

@@ -358,6 +358,17 @@ void uttt_solve_budget(long nodes);
 /* Whether the root drops moves that a symmetry makes duplicates of others. */
 void uttt_root_symmetry(int on);
 
+/* WHAT QUILL THINKS OF A POSITION: the expected score of the side to move,
+ * 0..1 with a draw worth half, from a fresh tree of `playouts` playouts.
+ * `proof` is +1 / 0 / -1 when the tree proved a win / draw / loss, 2 when
+ * the number is an estimate. For the post-game analyser. */
+double uttt_quill_value(const UtttGame *g, long playouts, uint64_t *rs,
+                        int *proof);
+
+/* Forget every cached proof and the kept tree, so what follows depends on
+ * its arguments alone. The analyser calls it before each position. */
+void uttt_bots_forget(void);
+
 /* Pick a move. `budget` is rollouts per candidate for the searching bots and
  * is ignored by the others. `rs` is the caller's RNG state, advanced. */
 uint8_t uttt_bot_move(UtttBot bot, const UtttGame *g, int budget, uint64_t *rs);

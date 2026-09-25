@@ -9,6 +9,7 @@ make -C uttt/c render     the board, to build/board.png, without Xcode
 ./uttt/c/build/uttt_render rulebook 54   just the door, blown up
 make -C uttt/c rough-diff the pen, held against rough.js itself (needs node)
 make -C uttt/c ios-smoke  every entry point Swift calls, without a Mac
+make -C uttt/c analyse CODE=<code or link>   every ply held against quill
 ```
 
 `uttt.c` is the rules and nothing else. `uttt_code.c` turns a

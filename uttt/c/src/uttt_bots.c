@@ -1203,3 +1203,43 @@ void uttt_solve_budget(long nodes) { solve_nodes = nodes; }
 void uttt_root_symmetry(int on) { use_root_sym = on; }
 
 
+
+/* ------------------------------------------------------------ the analyser
+ * What quill THINKS of a position rather than what it would play, for the
+ * post-game analyser (src/uttt_analyse.c). The same tree, the same
+ * playouts, built fresh so the answer depends on the position and the
+ * stream and on nothing that was searched before it. */
+double uttt_quill_value(const UtttGame *g, long playouts, uint64_t *rs,
+                        int *proof)
+{
+    *proof = 2;
+    if (g->over) {
+        *proof = g->over == UTTT_DRAW ? 0 : (g->over == g->turn ? 1 : -1);
+        return g->over == UTTT_DRAW ? 0.5 : (g->over == g->turn ? 1.0 : 0.0);
+    }
+    tree_search(g, playouts, rs, 0);
+    const TreeNode *root = &tree_pool[0];
+    switch (root->pv) {
+    case PV_WIN:  *proof = 1;  return 1.0;
+    case PV_LOSS: *proof = -1; return 0.0;
+    case PV_DRAW: *proof = 0;  return 0.5;
+    default: break;
+    }
+    /* THE MOST VISITED REPLY, which is the move the tree believes in; its
+     * mean is the position's value. A proved loss for us is never it. */
+    const TreeNode *best = NULL;
+    for (int i = 0; i < root->nchild; i++) {
+        const TreeNode *c = &tree_pool[root->first + i];
+        if (c->pv == PV_WIN) continue;
+        if (!best || c->visits > best->visits) best = c;
+    }
+    if (!best || !best->visits) return 0.5;
+    if (best->pv == PV_DRAW) return 0.5;
+    return (double)best->score / (200.0 * best->visits);
+}
+
+void uttt_bots_forget(void)
+{
+    if (tt) memset(tt, 0, TT_SIZE * sizeof *tt);
+    tree_cache_plies = -1;
+}
