@@ -3,7 +3,7 @@
 
 Under `dev.ruler` the live board draws 12pt squares (CollapseRuler.swift):
 
-    cyan / yellow / green   the centre of each table pair, by pair index mod 3
+    cyan / yellow / lime    the centre of each table pair, by pair index mod 3
     magenta                 the centre of the first opponent's card view
     orange                  the centre of every FLYING card (the overlay's ghost)
     blue                    the centre of every card in MY HAND, dragged ones included
@@ -27,7 +27,9 @@ STRIDE_PT = 10.0          # 30px at 3x: under the square's 36px, so every square
 # The ruler's band strip down the left edge is cyan/magenta/yellow cells of
 # about a square's size; nothing on the board is marked that close to the edge.
 STRIP_PX = 80
-TABLE = ("cyan", "yellow", "green")
+# Inks of shared/c/motion_ruler/motion_ruler.h. Green is the bottom bar's and
+# never a square, so the third pair is lime (0.5, 1, 0).
+TABLE = ("cyan", "yellow", "lime")
 OPPONENT = "magenta"
 FLIGHT = "orange"
 HAND = "blue"
@@ -40,8 +42,8 @@ def mask(win, name):
         return (g > hi) & (b > hi) & (r < lo)
     if name == "yellow":
         return (r > hi) & (g > hi) & (b < lo)
-    if name == "green":
-        return (g > hi) & (r < lo) & (b < lo)
+    if name == "lime":
+        return (g > hi) & (r > lo) & (r < 170) & (b < lo)
     if name == "blue":
         return (b > 200) & (r < 60) & (g < 60)
     if name == "orange":

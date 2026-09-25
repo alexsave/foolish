@@ -60,7 +60,7 @@ static int32_t read_clock(const uint8_t *rgb, int32_t w, int32_t h, double red_p
     const uint8_t *row = rgb + (size_t)y * (size_t)w * 3;
     int32_t v = 0;
     for (int32_t i = 0; i < MR_CLOCK_BITS; i++) {
-        int32_t x = (int32_t)round_even((24.0 + MR_CLOCK_CELL_PT * (i + 0.5)) * scale);
+        int32_t x = (int32_t)round_even((MR_STRIP_PT + MR_CLOCK_GAP_PT + MR_CLOCK_CELL_PT * (i + 0.5)) * scale);
         double lo = 1e9, hi = -1e9;
         for (int32_t k = x - 3; k < x + 4; k++) {
             if (k < 0 || k >= w) return -1;

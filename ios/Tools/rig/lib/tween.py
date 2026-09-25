@@ -42,6 +42,9 @@ sys.path.insert(0, SHLIB)
 import squares as sq
 
 BAND, CELL, BITS, EDGE = 10.0, 12.0, 14, 4.0
+# The clock's left edge: past the 18pt band strip and a 6pt gap
+# (shared/c/motion_ruler/motion_ruler.h, MR_STRIP_PT + MR_CLOCK_GAP_PT).
+CLOCK_X = 24.0
 
 
 def rows_of(mask, w, frac=0.55):
@@ -167,12 +170,12 @@ def read_array(a):
     cyan = ((sg > 130) & (sb > 130) & (sr < 90)).mean(axis=1) > 0.5
     ys = sorted(int(np.mean(x)) for x in runs(np.nonzero(cyan)[0]))
     out["pitch_pt"] = round(float(np.median(np.diff(ys))) / s, 2) if len(ys) > 2 else None
-    # The clock: 14 cells under the top bar, from the box's leading edge.
+    # The clock: 14 cells under the top bar, CLOCK_X from the box's leading edge.
     cyr = top + int((EDGE + CELL / 2) * s)
     if 0 <= cyr < h:
         bits = ""
         for i in range(BITS):
-            cx = bx + int((i + 0.5) * CELL * s)
+            cx = bx + int((CLOCK_X + (i + 0.5) * CELL) * s)
             if cx >= w:
                 bits = ""; break
             bits += "1" if a[cyr, max(0, cx - 2):cx + 3].mean() > 128 else "0"

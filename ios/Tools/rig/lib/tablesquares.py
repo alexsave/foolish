@@ -4,7 +4,7 @@
     tablesquares.py <take-dir | movie.mp4> [--marks marks.txt] [--csv out.csv] [--jump PT]
 
 The live table draws a coloured square at the centre of each pair's slot when
-`dev.ruler` is on (`View.tableSquare`, CollapseRuler.swift): cyan, yellow, green,
+`dev.ruler` is on (`View.tableSquare`, CollapseRuler.swift): cyan, yellow, lime,
 repeating; `lib/squares.py` finds them. The horizontal ruler bars cannot see a throw-in - it re-centres the
 row SIDEWAYS, and a bar through the table's centre does not move while both
 pairs slide 36pt left. These squares move exactly when the layout does.
