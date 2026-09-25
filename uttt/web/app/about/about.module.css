@@ -1,0 +1,74 @@
+/* The about page: the rules sheet's paper, ink and type (docs/RULES.html),
+   laid out for reading. The napkin is /napkin.png - the kernel's own paper,
+   drawn at build - stretched over the page as the app stretches it over the
+   rules sheet. */
+.sheet {
+  min-height: 100dvh;
+  background: var(--paper) url('/napkin.png') 0 0 / 100% 100% no-repeat fixed;
+  padding: max(28px, env(safe-area-inset-top)) 16px max(36px, env(safe-area-inset-bottom));
+}
+
+.col {
+  max-width: 560px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+.label {
+  font: 600 9.5px/1 var(--sys);
+  letter-spacing: 1.9px;
+  text-transform: uppercase;
+  color: var(--label);
+}
+
+.title {
+  font: 700 28px/1.15 var(--sys);
+  letter-spacing: -0.02em;
+  margin: 8px 0 0;
+  text-wrap: balance;
+}
+
+.lede {
+  font: 400 17px/1.45 var(--sys);
+  margin: 12px 0 0;
+  max-width: 44ch;
+}
+
+.section { display: flex; flex-direction: column; gap: 10px; }
+
+.h2 {
+  font: 700 19px/1.25 var(--sys);
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.p { font: 400 15px/1.5 var(--sys); margin: 0; max-width: 60ch; }
+
+.list {
+  font: 400 15px/1.5 var(--sys);
+  margin: 0;
+  padding-left: 1.3em;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 60ch;
+}
+
+/* the highlighter, the only colour the sheet has besides the two inks */
+.hl { background: rgba(214, 168, 54, 0.34); padding: 0 3px; }
+
+.x { color: #25376b; font-weight: 700; }
+.o { color: #a8321f; font-weight: 700; }
+
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  font: 400 13px/1.4 var(--sys);
+  color: var(--label);
+  border-top: 1px solid rgba(138, 133, 119, 0.35);
+  padding-top: 14px;
+}
+.foot a { color: var(--ink); }

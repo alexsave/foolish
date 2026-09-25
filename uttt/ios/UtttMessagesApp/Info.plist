@@ -6,6 +6,10 @@
 	<string>Ultimate</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- A Messages-only app: no Home Screen icon, found in the Messages apps
+	     row. The same key foolish's container ships with. -->
+	<key>LSApplicationLaunchProhibited</key>
+	<true/>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>

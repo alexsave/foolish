@@ -143,3 +143,9 @@ EXPORT(uw_paper) uint8_t *uw_paper(int side)
     uttt_paper(paper, side, side);
     return paper;
 }
+
+/* THE RULES, the kernel's own table (uttt_draw.c) - the lines the app's rules
+ * sheet sets - so uttt.live's about page says what the app says. */
+EXPORT(uw_rules_count) int         uw_rules_count(void)     { return uttt_rules_count(); }
+EXPORT(uw_rules_line)  const char *uw_rules_line(int i)     { return uttt_rules_line(i); }
+EXPORT(uw_rules_title) const char *uw_rules_title(void)     { return uttt_rules_title(); }
