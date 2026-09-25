@@ -1070,10 +1070,10 @@ When the phone is plugged in (unlocked, "Trust This Computer" answered):
 
 ```bash
 cd /Users/alex/Dev/foolish-uttt
-shared/tools/devcap/devcap.sh devices            # the phone in devicectl and in AVFoundation ("ios-screen")
-shared/tools/devcap/devcap.sh install            # a DEBUG build (ruler compiled in) via devicectl, development signing
-shared/tools/devcap/devcap.sh ruler on           # touches dev.ruler in the App Group container on the phone
-shared/tools/devcap/devcap.sh film end_flick_1   # records until ^C; play the gesture, then ^C
+shared/tools/devcap/devcap.sh uttt/ios/Tools/ship.env devices            # the phone in devicectl and in AVFoundation ("ios-screen")
+shared/tools/devcap/devcap.sh uttt/ios/Tools/ship.env install            # a DEBUG build (ruler compiled in) via devicectl, development signing
+shared/tools/devcap/devcap.sh uttt/ios/Tools/ship.env ruler on           # touches dev.ruler in the App Group container on the phone
+shared/tools/devcap/devcap.sh uttt/ios/Tools/ship.env film end_flick_1   # records until ^C; play the gesture, then ^C
 ```
 
 `film` writes `~/devcap/<name>/take.mov`, tracks it (`motion_take.sh`), scores it (`motion score --bottom first`) and charts it (`motionplot.py`).

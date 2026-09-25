@@ -1,22 +1,29 @@
 #!/bin/bash
 # devcap.sh - film a USB iPhone for the motion tool, one command per step.
 #
-#   devcap.sh devices                 the phone as devicectl and AVFoundation see it
-#   devcap.sh install                 a DEBUG build of the product (ruler compiled in) onto the phone
-#   devcap.sh ruler on|off            the ruler's dev file in the phone's App Group
-#   devcap.sh film NAME [SECONDS]     record (until ^C, or SECONDS), then track, score and chart
+#   devcap.sh <product.env> devices              the phone as devicectl and AVFoundation see it
+#   devcap.sh <product.env> install              a DEBUG build of the product (ruler compiled in) onto the phone
+#   devcap.sh <product.env> ruler on|off         the ruler's dev file in the phone's App Group
+#   devcap.sh <product.env> film NAME [SECONDS]  record (until ^C, or SECONDS), then track, score and chart
 #
-# Product settings (uttt's defaults): DEVCAP_XCPROJ, DEVCAP_SCHEME, DEVCAP_APP,
-# DEVCAP_GROUP, DEVCAP_TEAM, DEVCAP_OUT. DEVCAP_UDID picks a phone when more than
-# one is connected. Takes land in $DEVCAP_OUT/NAME/{take.mov,take.tbl,score.txt,chart.png}.
+# The product is its ship.env (see shared/tools/ship/ship.sh): SHIP_XCPROJ,
+# SHIP_SCHEME, SHIP_APP, SHIP_KERNEL_DIR, SHIP_IOS_DIR, SHIP_TEAM and
+# DEV_APP_GROUP (the DEBUG build's App Group, where dev files live). DEVCAP_UDID
+# picks a phone when more than one is connected. Takes land in
+# $DEVCAP_OUT (default ~/devcap)/NAME/{take.mov,take.tbl,score.txt,chart.png}.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
-XCPROJ="${DEVCAP_XCPROJ:-$REPO/uttt/ios/Uttt.xcodeproj}"
-SCHEME="${DEVCAP_SCHEME:-UtttMessagesApp}"
-APP="${DEVCAP_APP:-UtttMessagesApp.app}"
-GROUP="${DEVCAP_GROUP:-group.cards.uttt.msg}"
-TEAM="${DEVCAP_TEAM:-8N2Z544SB4}"
+ENV_FILE="${1:-}"
+[ -f "$ENV_FILE" ] || { sed -n 2,13p "$0"; exit 2; }
+shift
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+XCPROJ="$REPO/${SHIP_XCPROJ:?$ENV_FILE sets no SHIP_XCPROJ}"
+SCHEME="${SHIP_SCHEME:?}"
+APP="${SHIP_APP:?}"
+GROUP="${DEV_APP_GROUP:?$ENV_FILE sets no DEV_APP_GROUP}"
+TEAM="${SHIP_TEAM:?}"
 OUT="${DEVCAP_OUT:-$HOME/devcap}"
 DD="${DEVCAP_DD:-$REPO/build/devcap-dd}"
 BIN="$HERE/build/devcap"
@@ -43,8 +50,8 @@ case "${1:-}" in
     "$BIN" list --wait 3 ;;
   install)
     need_phone
-    make -C "$REPO/uttt/c" ios-lib >/dev/null
-    (cd "$(dirname "$XCPROJ")" && xcodegen generate >/dev/null)
+    make -C "$REPO/${SHIP_KERNEL_DIR:?}" ios-lib >/dev/null
+    (cd "$REPO/${SHIP_IOS_DIR:?}" && xcodegen generate >/dev/null)
     (cd "$REPO" && git checkout -- $(git ls-files -- '*.entitlements'))   # xcodegen blanks them
     xcodebuild -project "$XCPROJ" -scheme "$SCHEME" -configuration Debug -destination "id=$U" \
       -allowProvisioningUpdates CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM="$TEAM" \
@@ -72,5 +79,5 @@ case "${1:-}" in
     python3 "$REPO/shared/rig/lib/motionplot.py" "$d/take.tbl" "$d/chart.png" --span 1.5 ${B:+--bottom $B} --title "$NAME"
     # with no ruler in the build (TestFlight), the board's own grid lines
     bash "$MOTION/motion_grid.sh" "$d/take.mov" "$d/take.grid" || true ;;
-  *) sed -n 2,12p "$0"; exit 2 ;;
+  *) sed -n 2,13p "$0"; exit 2 ;;
 esac
