@@ -176,6 +176,16 @@ int utm_seat(const UtmMsg *m, const uint8_t me[UTM_TAG_LEN])
     return UTM_SEAT_SPECTATOR;
 }
 
+const char *utm_seat_why(const UtmMsg *m, const uint8_t me[UTM_TAG_LEN])
+{
+    if (!m->sealed)
+        return is(me, m->o) ? "waiting: open invitation, my tag is O's (I made it)"
+                            : "open: somebody's invitation, my tag is not O's, X is mine to take";
+    if (is(me, m->x)) return "X: sealed, my tag is X's";
+    if (is(me, m->o)) return "O: sealed, my tag is O's";
+    return "spectator: sealed, my tag is neither O's nor X's";
+}
+
 int utm_seat_mark(int seat)
 {
     switch (seat) {

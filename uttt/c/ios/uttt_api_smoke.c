@@ -577,7 +577,32 @@ int main(void)
         uti_me(cleo, 16);
         ok(uti_msg_read(reply) == 0 && uti_msg_seat() == UTI_SEAT_SPECTATOR, "cleo watches");
         ok(!uti_msg_play(0) && !uti_msg_undo(), "and cannot touch it");
-        ok(!strcmp(uti_say(UTI_SAY_WATCH_LINE), "X to play"), "the spectator's line");
+        ok(!strcmp(uti_say(UTI_SAY_WATCH_LINE), " to play") && uti_say_watch_mark() == 1 /* X */
+           && !strcmp(uti_say(UTI_SAY_WATCH_SPOKEN), "X to play"),
+           "the spectator's line: a drawn X, then the words");
+        /* THE TEMPORARY CLAIM (1.0(9)): a creator locked out of her own game
+         * takes O's tag for that one seed, and only that seed. */
+        {
+            uint8_t o[UTI_TAG_LEN], x[UTI_TAG_LEN], me[UTI_TAG_LEN], h[UTI_TAG_LEN];
+            ok(uti_msg_tag(UTI_TAG_O, o) && uti_msg_tag(UTI_TAG_X, x) && memcmp(o, x, UTI_TAG_LEN)
+               && !uti_msg_claimed(), "the diagnostics read both seats' tags, and nothing is claimed");
+            ok(!strncmp(uti_msg_seat_why(), "spectator", 9), "and say why cleo watches");
+            ok(uti_claim(uti_msg_seed(), o) && uti_msg_claimed() && uti_msg_seat() == UTI_SEAT_O,
+               "cleo claims O on this game and is O");
+            ok(uti_msg_tag(UTI_TAG_ME, me) && !memcmp(me, o, UTI_TAG_LEN)
+               && uti_msg_tag(UTI_TAG_HASHED, h) && memcmp(h, o, UTI_TAG_LEN),
+               "her seat tag is the claim; her own hash is unchanged");
+            ok(uti_claim(uti_msg_seed(), x) && uti_msg_seat() == UTI_SEAT_X,
+               "a second claim on the same seed replaces the first");
+            char mine[160];
+            ok(uti_msg_text(mine, sizeof mine) > 0 && uti_msg_open(1726990777) == 1
+               && uti_msg_seat() == UTI_SEAT_WAITING && !uti_msg_claimed()
+               && uti_msg_tag(UTI_TAG_O, o) && uti_msg_tag(UTI_TAG_HASHED, h) && !memcmp(o, h, UTI_TAG_LEN),
+               "a new invitation is her own hash, not a claim");
+            ok(uti_msg_read(mine) == 0 && uti_msg_seat() == UTI_SEAT_X, "the claimed game is still hers");
+            uti_claims_clear();
+            ok(uti_msg_seat() == UTI_SEAT_SPECTATOR, "cleared, she watches again");
+        }
         ok(!strcmp(uti_say_cell(40), "Centre board, centre square, X")
            && !strcmp(uti_say_cell(36), "Centre board, top left square, O")
            && !strcmp(uti_say_cell(0), "Top left board, top left square, empty"),

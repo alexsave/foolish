@@ -641,7 +641,8 @@ final class MessagesViewController: MSMessagesAppViewController {
             model.refresh()
             show(UtttWatchScreen(model: model, door: door, slide: slide,
                                  onDoor: { [weak self] in self?.again(in: conversation) },
-                                 onRules: { [weak self] in self?.openRules() }))
+                                 onRules: { [weak self] in self?.openRules() },
+                                 onDiagnostics: { [weak self] in self?.openDiagnostics(conversation) }))
         }
     }
 
@@ -658,6 +659,9 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// seat. Messages' participant identifier is per device per conversation,
     /// which is exactly the scope a seat needs.
     private func identify(_ conversation: MSConversation) {
+        /* TEMPORARY (1.0(9)): the seats this device claimed from the
+         * diagnostics panel, each for one game's seed (UtttClaims). */
+        Uttt.claims(UtttClaims.all)
 #if DEBUG
         if let word = UtttDev.seat {
             Uttt.me(UtttDev.identity(word))
@@ -1051,7 +1055,8 @@ final class MessagesViewController: MSMessagesAppViewController {
 
         show(UtttGameScreen(model: model, door: door, slide: slide,
                             onDoor: { [weak self] in self?.again(in: conversation) },
-                            onRules: { [weak self] in self?.openRules() }))
+                            onRules: { [weak self] in self?.openRules() },
+                            onDiagnostics: { [weak self] in self?.openDiagnostics(conversation) }))
     }
 
 #if DEBUG
@@ -1106,5 +1111,88 @@ final class MessagesViewController: MSMessagesAppViewController {
     private func openRules() {
         guard presentedViewController == nil else { return }
         present(UtttRulesSheet(), animated: true)
+    }
+
+    // MARK: diagnostics (hold the rulebook) - 1.0(9)
+
+    /// Every input to the seat verdict, and the TEMPORARY claim.
+    private func openDiagnostics(_ conversation: MSConversation) {
+        guard presentedViewController == nil else { return }
+        identify(conversation)
+        let seed = Uttt.seed
+        let o = Uttt.tag(.o), x = Uttt.tag(.x)
+        let sheet = UtttDiagnosticsSheet(
+            text: { [weak self] in self?.diagnostics(conversation) ?? "" },
+            canClaimX: Uttt.sealed, hasClaim: UtttClaims.all[seed] != nil
+        ) { [weak self] action in
+            guard let self else { return }
+            switch action {
+            case .claimO:     UtttClaims.set(o, seed: seed)
+            case .claimX:     UtttClaims.set(x, seed: seed)
+            case .clearClaim: UtttClaims.set(nil, seed: seed)
+            }
+            UtttLog.note("claim", "\(action) seed \(seed)")
+            self.present(conversation, motion: .still)
+        }
+        present(sheet, animated: true)
+    }
+
+    private func diagnostics(_ conversation: MSConversation) -> String {
+        identify(conversation)
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = info["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info["CFBundleVersion"] as? String ?? "?"
+        let local = conversation.localParticipantIdentifier
+        let uuidBytes = withUnsafeBytes(of: local.uuid) { Data($0) }
+        let o = Uttt.tag(.o), x = Uttt.tag(.x)
+        let hashed = Uttt.tag(.hashed), me = Uttt.tag(.me)
+        func who(_ t: Data) -> String {
+            var hits: [String] = []
+            if t == hashed { hits.append("my participant") }
+            if t == Uttt.tag(of: Data(local.uuidString.utf8)) { hits.append("my uuidString") }
+            if t == Uttt.tag(of: Data()) { hits.append("EMPTY identity") }
+            for w in ["a", "b"] where t == Uttt.tag(of: Data("dev:\(w)".utf8)) { hits.append("dev:\(w)") }
+            for r in conversation.remoteParticipantIdentifiers
+            where t == Uttt.tag(of: withUnsafeBytes(of: r.uuid) { Data($0) }) {
+                hits.append("remote \(r.uuidString.prefix(8))")
+            }
+            return hits.isEmpty ? "nobody known" : hits.joined(separator: ", ")
+        }
+        var debug = "no"
+#if DEBUG
+        debug = "yes, dev.seat=\(UtttDev.seat ?? "none") dev.picker=\(UtttDev.picker)"
+#endif
+        let sel = conversation.selectedMessage
+        var lines = [
+            "app \(version) (\(build))  DEBUG \(debug)",
+            "",
+            "== me",
+            "local participant \(local.uuidString)",
+            "  bytes \(uuidBytes.hex)",
+            "remote participants \(conversation.remoteParticipantIdentifiers.map(\.uuidString).joined(separator: " "))",
+            "",
+            "== game",
+            "seed \(Uttt.seed)  plies \(Uttt.plyCount)  sealed \(Uttt.sealed)  turn \(Uttt.turn)  over \(Uttt.over)",
+            "O tag \(o.hex)  = \(who(o))",
+            "X tag \(x.hex)  = \(Uttt.sealed ? who(x) : "(open)")",
+            "my hashed tag \(hashed.hex)",
+            "my seat tag   \(me.hex)",
+            "claim active \(Uttt.claimed)  (claims held: \(UtttClaims.all.count))",
+            "seat \(Uttt.seat)  mark \(Uttt.myMark)  canMove \(Uttt.canMove)",
+            "why: \(Uttt.seatWhy)",
+            "",
+            "== messages",
+            "selected sender \(sel?.senderParticipantIdentifier.uuidString ?? "none")"
+                + (sel.map { $0.senderParticipantIdentifier == local ? " (me)" : "" } ?? ""),
+            "selected url \(sel?.url?.absoluteString ?? "none")",
+            "resident \(Uttt.messageText ?? "none")",
+            "staged \(staged?.text ?? "none")",
+            "sent \(sent?.text ?? "none")",
+            "arrived \(arrived?.text ?? "none")",
+            "draftURL \(draftURL?.absoluteString ?? "none")",
+            "unbound \(unbound)  draftIsNewGame \(draftIsNewGame)  style \(styleName)",
+        ]
+        if let r = Uttt.replayURL { lines.append("replay \(r)") }
+        return lines.joined(separator: "\n")
     }
 }

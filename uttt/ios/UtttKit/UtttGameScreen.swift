@@ -43,14 +43,15 @@ public final class UtttGameScreen: UtttSheetView {
     /// "starting a game from the strip you land on by accident is how you
     /// start a game by accident").
     public init(model: UtttModel, door: Uttt.Door = .none, slide: CollapseSlide?,
-                onDoor: @escaping () -> Void = {}, onRules: @escaping () -> Void = {}) {
+                onDoor: @escaping () -> Void = {}, onRules: @escaping () -> Void = {},
+                onDiagnostics: (() -> Void)? = nil) {
         self.model = model
         self.door = door
         self.onDoor = onDoor
         self.onRules = onRules
         board = UtttBoardView(clock: model.clock)
         youMark = UtttInkView.mark(model.you, seed: model.seed &+ 4)
-        rulebook = UtttRulebookButton(act: onRules)
+        rulebook = UtttRulebookButton(act: onRules, onHold: onDiagnostics)
         super.init(slide: slide)
         board.onTap = { [weak model] p in model?.tap(at: p) }
         content.addSubview(board)
@@ -290,24 +291,27 @@ final class UtttHeadlineView: UIView {
     required init?(coder: NSCoder) { fatalError() }
 
     /// The headline at `width`; returns the size it takes.
+    /// `type` is the headline's own unless a screen sets a smaller line
+    /// the same way (the spectator's "<O> to play"); the mark is as tall as
+    /// the type is big.
     func set(_ h: UtttModel.Headline, ink: UIColor, seed: Int32, width: CGFloat,
-             column: Bool, align: NSTextAlignment) -> CGSize {
+             column: Bool, align: NSTextAlignment, type: UtttType = .headline) -> CGSize {
         switch h {
         case .text(let t):
             before.isHidden = true; after.isHidden = true; mark.isHidden = true
             text.isHidden = false
-            let s = text.set(t, .headline, width: width, column: column, align: align, color: ink)
+            let s = text.set(t, type, width: width, column: column, align: align, color: ink)
             text.frame = CGRect(origin: .zero, size: s)
             return s
         case .mark(let b, let m, let a):
             text.isHidden = true
             before.isHidden = b.isEmpty; after.isHidden = a.isEmpty; mark.isHidden = false
-            let side: CGFloat = 21
-            let natural = UtttType.headline.width(b) + side + UtttType.headline.width(a)
+            let side: CGFloat = type.size
+            let natural = type.width(b) + side + type.width(a)
             let k = natural > width ? max(0.5, width / natural) : 1
-            let f = UtttType.headline.font(k)
-            before.attributedText = UtttType.headline.text(b, scale: k, color: ink)
-            after.attributedText = UtttType.headline.text(a, scale: k, color: ink)
+            let f = type.font(k)
+            before.attributedText = type.text(b, scale: k, color: ink)
+            after.attributedText = type.text(a, scale: k, color: ink)
             let bs = b.isEmpty ? .zero : before.sizeThatFits(.zero)
             let as_ = a.isEmpty ? .zero : after.sizeThatFits(.zero)
             let ms = side * k

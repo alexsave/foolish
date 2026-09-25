@@ -123,6 +123,40 @@ int  uti_msg_same_game(const char *a, const char *b);
  * door, and the preview's. 0 if the two are the same person. */
 int  uti_msg_seat_ids(const uint8_t *o_id, int o_n, const uint8_t *x_id, int x_n);
 
+/* ------------------------------------------------ diagnostics and claims
+ *
+ * TEMPORARY (1.0(9), 2026-09-25): a game its creator opened as a spectator.
+ * The diagnostics panel prints the tags so the cause can be read off a
+ * screenshot, and a CLAIM lets the owner keep playing meanwhile.
+ *
+ * A claim says "on the game with this seed, I am this tag" - the seat's own
+ * tag, copied from the game. It applies to that one seed only: every other
+ * game, and every new invitation, is still the hash of the identity bytes.
+ * The host holds claims across launches and hands them all back after every
+ * uti_me; uti_claims_clear drops the kernel's copy first. At most
+ * UTI_CLAIMS_MAX; a claim for a seed already held replaces it. */
+#define UTI_TAG_LEN     9
+#define UTI_CLAIMS_MAX  16
+void uti_claims_clear(void);
+int  uti_claim(int32_t seed, const uint8_t tag[UTI_TAG_LEN]);
+/* 1 if a claim is deciding my seat on the resident game. */
+int  uti_msg_claimed(void);
+
+/* The resident game's tags: UTI_TAG_ME the one my seat is decided by (the
+ * claim, else the hash), UTI_TAG_HASHED the hash of my identity bytes with
+ * this seed, UTI_TAG_O and UTI_TAG_X the seats' (X is zeros until sealed).
+ * 1, or 0 for an unknown `which`. */
+#define UTI_TAG_ME      0
+#define UTI_TAG_HASHED  1
+#define UTI_TAG_O       2
+#define UTI_TAG_X       3
+int  uti_msg_tag(int which, uint8_t out[UTI_TAG_LEN]);
+/* The tag `id` would have on the resident game - to test a guess about
+ * who created it (a DEBUG build's "dev:a", say). */
+void uti_msg_tag_of(const uint8_t *id, int n, uint8_t out[UTI_TAG_LEN]);
+/* Why my seat is what it is, in one line (utm_seat_why). */
+const char *uti_msg_seat_why(void);
+
 /* A touch at (u, v) in the board's 0..1 square, to block*9+cell, or -1. */
 int  uti_hit(float u, float v);
 
@@ -152,11 +186,14 @@ int  uti_hit(float u, float v);
 #define UTI_SAY_DOOR_SEND            19
 #define UTI_SAY_DOOR_COPY            20
 #define UTI_SAY_DOOR_COPIED          21
+#define UTI_SAY_WATCH_SPOKEN         22
 
 const char *uti_say(int key);
 
 /* The mark drawn in the play-surface headline, or 0: "Waiting on <O>". */
 int  uti_say_mark(void);
+/* The mark the spectator's line draws before UTI_SAY_WATCH_LINE, or 0. */
+int  uti_say_watch_mark(void);
 /* The same two, of the position one ply back: what a screen says until the
  * last move's ink has landed. */
 const char *uti_say_before(int key);

@@ -157,6 +157,42 @@ public enum Uttt {
         uti_msg_same_game(a, b) != 0
     }
 
+    // MARK: diagnostics and the TEMPORARY claim (1.0(9); uttt_api.h)
+
+    public enum Tag: Int32 {
+        case me = 0, hashed = 1, o = 2, x = 3
+    }
+
+    /// One of the resident game's seat tags (UTI_TAG_*).
+    public static func tag(_ t: Tag) -> Data {
+        var b = [UInt8](repeating: 0, count: Int(UTI_TAG_LEN))
+        _ = uti_msg_tag(t.rawValue, &b)
+        return Data(b)
+    }
+
+    /// The tag `id` would have on the resident game.
+    public static func tag(of id: Data) -> Data {
+        var b = [UInt8](repeating: 0, count: Int(UTI_TAG_LEN))
+        id.withUnsafeBytes { raw in
+            uti_msg_tag_of(raw.bindMemory(to: UInt8.self).baseAddress, Int32(id.count), &b)
+        }
+        return Data(b)
+    }
+
+    public static var seatWhy: String { String(cString: uti_msg_seat_why()) }
+    public static var sealed: Bool { uti_msg_sealed() != 0 }
+    public static var claimed: Bool { uti_msg_claimed() != 0 }
+
+    /// Hand the kernel every held claim (seed -> tag), replacing its copy.
+    public static func claims(_ all: [Int32: Data]) {
+        uti_claims_clear()
+        for (seed, tag) in all where tag.count == Int(UTI_TAG_LEN) {
+            tag.withUnsafeBytes { raw in
+                _ = uti_claim(seed, raw.bindMemory(to: UInt8.self).baseAddress)
+            }
+        }
+    }
+
     /// Seal the resident game with these two identities in O and X. Only the
     /// debug harness and the preview can reach a game this way.
     @discardableResult
@@ -214,6 +250,7 @@ public enum Uttt {
         public static let doorSend = Say(key: UTI_SAY_DOOR_SEND)
         public static let doorCopy = Say(key: UTI_SAY_DOOR_COPY)
         public static let doorCopied = Say(key: UTI_SAY_DOOR_COPIED)
+        public static let watchSpoken = Say(key: UTI_SAY_WATCH_SPOKEN)
     }
 
     public static func say(_ s: Say) -> String { String(cString: uti_say(s.key)) }
@@ -230,6 +267,8 @@ public enum Uttt {
 
     /// The mark drawn inside the play-surface headline, or `.none`.
     public static var sayMark: Mark { Mark(rawValue: UInt8(uti_say_mark())) ?? .none }
+    /// The mark the spectator's line draws before `watchLine`, or `.none`.
+    public static var watchMark: Mark { Mark(rawValue: UInt8(uti_say_watch_mark())) ?? .none }
     /// `say` and `sayMark` of the position one ply back: what a screen says
     /// until the last move's ink has landed.
     public static func sayBefore(_ s: Say) -> String { String(cString: uti_say_before(s.key)) }

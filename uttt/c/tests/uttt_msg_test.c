@@ -490,7 +490,10 @@ static void test_say(void)
     OK(!strcmp(s, "Your move") && uttt_say_headline_mark(&g, UTM_SEAT_O) == 0,
        "say: O is on move, words only");
     say(UTTT_SAY_WATCH_LINE, &g, UTM_SEAT_SPECTATOR, s);
-    OK(!strcmp(s, "O to play"), "say: the spectator's line");
+    OK(!strcmp(s, " to play") && uttt_say_watch_mark(&g) == UTTT_O,
+       "say: the spectator's line follows a drawn O, never a typed one");
+    say(UTTT_SAY_WATCH_SPOKEN, &g, UTM_SEAT_SPECTATOR, s);
+    OK(!strcmp(s, "O to play"), "say: VoiceOver hears the spectator's mark spelled");
 
     say(UTTT_SAY_DOOR_AGAIN, &g, UTM_SEAT_X, s);
     OK(!strcmp(s, "Again"), "say: the end door (UI.html 06)");

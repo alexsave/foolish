@@ -221,15 +221,32 @@ public final class UtttDoorButton: UIControl {
 public final class UtttRulebookButton: UIControl {
     private let ink = UtttInkView(key: "rulebook", square: true) { s in Uttt.rulebook(w: s.width, h: s.height) }
     private let act: () -> Void
+    private let onHold: (() -> Void)?
+    /// A hold that fired swallows the release that ends it (foolish's
+    /// FSquareButton `holdFired`): the recogniser cancels the touch, and
+    /// this is the belt to that - a hold never also opens the rules.
+    private var holdFired = false
+
+    /// How long a hold on the rulebook is before it opens the diagnostics.
+    public static let holdSeconds: TimeInterval = 1.5
 
     /// The door's size - one size at every drawer height, the kernel's
     /// (`uttt_sheet`'s door) - and the Again bar's height, which stands
     /// beside it and must match it (owner).
     public static let expandedSide = CGFloat(Uttt.sheet(.play, size: CGSize(width: 440, height: 800)).door)
 
-    public init(act: @escaping () -> Void) {
+    /// `onHold`, when given, is a SECOND action on the same door, reached by
+    /// holding it for `holdSeconds`: the diagnostics panel. Unlabelled on
+    /// purpose, for the owner rather than players, and in every build.
+    public init(act: @escaping () -> Void, onHold: (() -> Void)? = nil) {
         self.act = act
+        self.onHold = onHold
         super.init(frame: .zero)
+        if onHold != nil {
+            let hold = UILongPressGestureRecognizer(target: self, action: #selector(held(_:)))
+            hold.minimumPressDuration = Self.holdSeconds
+            addGestureRecognizer(hold)
+        }
         addSubview(ink)
         isAccessibilityElement = true
         accessibilityLabel = Uttt.say(.doorRules)
@@ -238,7 +255,19 @@ public final class UtttRulebookButton: UIControl {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    @objc private func fire() { act() }
+    @objc private func fire() {
+        if holdFired { holdFired = false; return }
+        act()
+    }
+
+    @objc private func held(_ g: UILongPressGestureRecognizer) {
+        guard g.state == .began else { return }
+        holdFired = true
+        onHold?()
+        /* the release may never arrive as a touchUpInside (the recogniser
+         * cancels it); clear the latch once this hold is over either way */
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.holdFired = false }
+    }
 
     public override func layoutSubviews() {
         super.layoutSubviews()

@@ -121,22 +121,24 @@ public final class UtttWatchScreen: UtttSheetView {
     private let board = UtttBoardView(clock: nil)
     private let column = UIView()
     private let colLabel = UILabel()
-    private let colSaid = UILabel()
+    private let colSaid = UtttHeadlineView()
     private let band = UIView()
     private let bandLabel = UILabel()
-    private let bandSaid = UILabel()
+    private let bandSaid = UtttHeadlineView()
     private let rulebook: UtttRulebookButton
     private var again: UtttDoorButton?
 
     public init(model: UtttModel, door: Uttt.Door = .none, slide: CollapseSlide?,
-                onDoor: @escaping () -> Void = {}, onRules: @escaping () -> Void = {}) {
+                onDoor: @escaping () -> Void = {}, onRules: @escaping () -> Void = {},
+                onDiagnostics: (() -> Void)? = nil) {
         self.model = model
-        rulebook = UtttRulebookButton(act: onRules)
+        rulebook = UtttRulebookButton(act: onRules, onHold: onDiagnostics)
         super.init(slide: slide)
         content.addSubview(board)
         for (v, a, b) in [(column, colLabel, colSaid), (band, bandLabel, bandSaid)] {
             v.addSubview(a)
             v.addSubview(b)
+            b.isAccessibilityElement = true
             b.accessibilityTraits = .header
             content.addSubview(v)
         }
@@ -167,8 +169,14 @@ public final class UtttWatchScreen: UtttSheetView {
         /* each copy of the words at the layout it shows through a ride
          * (wordsLayouts), crossfading on its layer (placeWords) */
         let (LC, LB) = wordsLayouts(L, B)
-        let label = Uttt.say(.watchLabel), said = Uttt.say(.watchLine)
+        /* "<O> to play": the side DRAWN, as on every other screen - the
+         * kernel's words after the kernel's mark (uttt_say_watch_mark). */
+        let label = Uttt.say(.watchLabel)
+        let words = Uttt.say(.watchLine), m = Uttt.watchMark
+        let said: UtttModel.Headline = m == .none ? .text(words) : .mark("", m, words)
+        let spoken = Uttt.say(.watchSpoken)
         let saidType = UtttType(size: 17, weight: .bold, color: UtttInk.ink)
+        let seed = model.seed &* 31 &+ 7
         /* On the strip the label over the line in the left column, the line
          * wrapped; opening, the two across the top band. */
         column.frame = CGRect(x: CGFloat(LC.words.0), y: CGFloat(LC.words.1),
@@ -176,13 +184,17 @@ public final class UtttWatchScreen: UtttSheetView {
         let w = column.bounds.width
         let ls = colLabel.set(label, .small, width: w, column: false, align: .left)
         colLabel.frame = CGRect(origin: .zero, size: ls)
-        let ss = colSaid.set(said, saidType, width: w, column: true, align: .left)
+        let ss = colSaid.set(said, ink: UtttInk.ink, seed: seed, width: w, column: true,
+                             align: .left, type: saidType)
+        colSaid.accessibilityLabel = spoken
         colSaid.frame = CGRect(x: 0, y: ls.height + 3, width: ss.width, height: ss.height)
 
         band.frame = CGRect(x: CGFloat(LB.band.0), y: CGFloat(LB.band.1),
                             width: CGFloat(LB.band.2), height: CGFloat(LB.band.3))
         let bw = band.bounds.width
-        let bs = bandSaid.set(said, saidType, width: bw, column: false, align: .right)
+        let bs = bandSaid.set(said, ink: UtttInk.ink, seed: seed, width: bw, column: false,
+                              align: .right, type: saidType)
+        bandSaid.accessibilityLabel = spoken
         let bl = bandLabel.set(label, .small, width: max(0, bw - bs.width - 8), column: false, align: .left)
         /* on one first baseline, the label at the left, the line at the right */
         let saidFont = saidType.font(), labelFont = UtttType.small.font()

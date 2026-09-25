@@ -137,6 +137,9 @@ int  utm_text_decode(const char *text, UtmMsg *out);
  * A reinstalled creator on an open invitation resolves OPEN - with no tag to
  * match it is indistinguishable from anybody else in the thread. */
 int  utm_seat(const UtmMsg *m, const uint8_t me[UTM_TAG_LEN]);
+/* utm_seat's answer with its reason, one line for the diagnostics panel:
+ * "sealed; my tag is O's", "sealed; my tag is neither O's nor X's". */
+const char *utm_seat_why(const UtmMsg *m, const uint8_t me[UTM_TAG_LEN]);
 
 /* The mark a seat plays, or 0. OPEN plays X: taking the seat is the first
  * move. */

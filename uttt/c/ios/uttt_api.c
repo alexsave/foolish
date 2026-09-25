@@ -40,7 +40,9 @@ _Static_assert(UTI_SAY_SEND_HINT == UTTT_SAY_SEND_HINT, "say SEND_HINT");
 _Static_assert(UTI_SAY_DOOR_SEND == UTTT_SAY_DOOR_SEND, "say DOOR_SEND");
 _Static_assert(UTI_SAY_DOOR_COPY == UTTT_SAY_DOOR_COPY && UTI_SAY_DOOR_COPIED == UTTT_SAY_DOOR_COPIED,
                "say DOOR_COPY, DOOR_COPIED");
-_Static_assert(UTI_SAY_DOOR_COPIED + 1 == UTTT_SAY_COUNT, "every key has a host name");
+_Static_assert(UTI_SAY_WATCH_SPOKEN == UTTT_SAY_WATCH_SPOKEN, "say WATCH_SPOKEN");
+_Static_assert(UTI_SAY_WATCH_SPOKEN + 1 == UTTT_SAY_COUNT, "every key has a host name");
+_Static_assert(UTI_TAG_LEN == UTM_TAG_LEN, "tag length");
 _Static_assert(UTI_CH_STILL == UTTT_CH_STILL && UTI_CH_STAGE == UTTT_CH_STAGE
             && UTI_CH_REPLAY == UTTT_CH_REPLAY && UTI_CH_THEIRS == UTTT_CH_THEIRS
             && UTI_CH_ARRIVAL == UTTT_CH_ARRIVAL && UTI_CH_SETTLE == UTTT_CH_SETTLE
@@ -78,6 +80,9 @@ static struct {
     UtmMsg    m;
     uint8_t   me[UTM_MAX_ID];       /* this device's identity bytes */
     int       me_n;
+    /* TEMPORARY claims (uti_claim): on game `seed`, my tag is `tag`. */
+    struct { int32_t seed; uint8_t tag[UTM_TAG_LEN]; } claim[UTI_CLAIMS_MAX];
+    int       n_claims;
     char      said[160];
     int       overflow;
     UtttDL    dl;
@@ -388,9 +393,65 @@ const char *uti_place_name(int block, int spoken)
 
 
 /* ---------------------------------------------------------- the message */
+static int claimed(uint8_t out[UTM_TAG_LEN])
+{
+    for (int i = 0; i < S.n_claims; i++)
+        if (S.claim[i].seed == S.m.seed) {
+            if (out) memcpy(out, S.claim[i].tag, UTM_TAG_LEN);
+            return 1;
+        }
+    return 0;
+}
+
+/* MY TAG ON THE RESIDENT GAME: a claim for its seed, else the hash of my
+ * identity bytes with its seed. Every seat question goes through here. */
 static void my_tag(uint8_t out[UTM_TAG_LEN])
 {
+    if (claimed(out)) return;
     utm_tag(S.m.seed, S.me, S.me_n, out);
+}
+
+void uti_claims_clear(void) { S.n_claims = 0; }
+
+int uti_claim(int32_t seed, const uint8_t tag[UTI_TAG_LEN])
+{
+    if (!tag || !seed) return 0;
+    int i = 0;
+    while (i < S.n_claims && S.claim[i].seed != seed) i++;
+    if (i == S.n_claims) {
+        if (S.n_claims == UTI_CLAIMS_MAX) return 0;
+        S.n_claims++;
+    }
+    S.claim[i].seed = seed;
+    memcpy(S.claim[i].tag, tag, UTM_TAG_LEN);
+    return 1;
+}
+
+int uti_msg_claimed(void) { return claimed(NULL); }
+
+int uti_msg_tag(int which, uint8_t out[UTI_TAG_LEN])
+{
+    switch (which) {
+    case UTI_TAG_ME:     my_tag(out); return 1;
+    case UTI_TAG_HASHED: utm_tag(S.m.seed, S.me, S.me_n, out); return 1;
+    case UTI_TAG_O:      memcpy(out, S.m.o, UTM_TAG_LEN); return 1;
+    case UTI_TAG_X:      memcpy(out, S.m.x, UTM_TAG_LEN); return 1;
+    default:             return 0;
+    }
+}
+
+void uti_msg_tag_of(const uint8_t *id, int n, uint8_t out[UTI_TAG_LEN])
+{
+    if (!id || n < 0) n = 0;
+    if (n > UTM_MAX_ID) n = UTM_MAX_ID;
+    utm_tag(S.m.seed, id, n, out);
+}
+
+const char *uti_msg_seat_why(void)
+{
+    uint8_t me[UTM_TAG_LEN];
+    my_tag(me);
+    return utm_seat_why(&S.m, me);
 }
 
 void uti_me(const uint8_t *id, int n)
@@ -512,6 +573,7 @@ const char *uti_say(int key)
 }
 
 int uti_say_mark(void) { return uttt_say_headline_mark(&S.m.game, uti_msg_seat()); }
+int uti_say_watch_mark(void) { return uttt_say_watch_mark(&S.m.game); }
 
 /* THE WORDS WAIT FOR THE INK (UI.html: the headline turns when the mark has
  * landed). Until the motion's frame says `landed`, a screen speaks of the

@@ -36,7 +36,9 @@ enum {
 
     /* the spectator's one line */
     UTTT_SAY_WATCH_LABEL,          /* "watching"                            */
-    UTTT_SAY_WATCH_LINE,           /* "X to play", "O took it"              */
+    UTTT_SAY_WATCH_LINE,           /* the words after the drawn mark
+                                      (uttt_say_watch_mark): " to play",
+                                      " took it"; "Drawn" with no mark       */
 
     /* the lobby, and a bubble that cannot be read */
     UTTT_SAY_WAITING_HEADLINE,
@@ -66,6 +68,10 @@ enum {
      * same door shows once the link is on the pasteboard */
     UTTT_SAY_DOOR_COPY,
     UTTT_SAY_DOOR_COPIED,
+
+    /* the spectator's line with the mark spelled, for VoiceOver:
+     * "O to play", "X took it", "Drawn" */
+    UTTT_SAY_WATCH_SPOKEN,
 
     UTTT_SAY_COUNT
 };
@@ -113,6 +119,11 @@ int uttt_say_bubble_mark(const UtttGame *g);
  * is named by its mark, drawn in its own ink, because a mark is the only name
  * this side has. */
 int uttt_say_headline_mark(const UtttGame *g, int seat);
+
+/* The mark the spectator's line draws before its words (WATCH_LINE), or 0:
+ * the side to play, the side that took it, nothing for a draw. Drawn in
+ * its own ink like every other mark on the sheet, never a letter. */
+int uttt_say_watch_mark(const UtttGame *g);
 
 /* WHAT VOICEOVER READS ON SQUARE `mv` (block*9 + cell): "Top left board,
  * centre square, empty", "... X", "... O". The square's rectangle is
