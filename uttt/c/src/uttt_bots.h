@@ -1,4 +1,4 @@
-/* Eight bots, and a ladder to sort them.
+/* Nine bots, and a ladder to sort them.
  *
  * Borrowed wholesale from foolish, which learned all of it the hard way:
  *
@@ -61,7 +61,7 @@ typedef enum {
     BOT_NIB,          /* CRN + biased playouts + exact endgame             */
     BOT_SNIPER,       /* ...and a proved forced win, shortest, first       */
     BOT_QUILL,        /* sniper's root, then a UCT tree instead of flat MC */
-    BOT_FOUNTAIN,     /* quill's root, a stronger tree                     */
+    BOT_FOUNTAIN,     /* quill's tree, light playouts played to the end    */
     BOT_COUNT
 } UtttBot;
 
@@ -229,6 +229,53 @@ extern const char *UTTT_BOT_NAME[BOT_COUNT];
  * in 300. The tree steers into positions it has proved drawn rather than
  * ones the playouts merely like, and against a greedy opponent the flat
  * search's optimism was the better bet. */
+
+/* AND `fountain` IS QUILL'S TREE, WITH THE LEAF QUILL GAVE UP.
+ *
+ * Same root (mate search, exact endgame), same pools, same expansion and
+ * proofs, same kept tree per side, same answer. Two things differ:
+ *
+ *   THE PLAYOUT RUNS TO THE END, AND IT IS LIGHT. Uniform, except that a
+ *   move that wins the game is always played, the last good reply to the
+ *   previous move is replayed (LGRF-1: learned from each playout's winner,
+ *   forgotten on a loss), and a random move that hands the opponent a
+ *   game-winning block is re-drawn up to four times. quill's twelve-ply
+ *   biased playout and `leaf_eval` won at forty rollouts because the tree
+ *   was shallow; at four thousand the tree is deep and the leaf's bias is
+ *   what is left, while an honest result is not biased at all.
+ *
+ *   IT IS CHEAP. The playout runs in registers with incremental threat
+ *   masks (which blocks each side can take in one move), so both the win
+ *   test and the gift test are one AND; selection is single precision with
+ *   table reciprocals; a proof only walks up while it changes something.
+ *   Together about 1.4x the iterations of the first version per second.
+ *
+ * WHY SPEED WAS THE LEVER: at a fixed recipe, doubling fountain's budget
+ * was worth about +75 Elo against quill@4000 (60% -> 70% -> 79% at 4000,
+ * 8000, 16000), while every change of knowledge - implicit minimax, a
+ * tournament policy, block-win preference, small-block gift avoidance,
+ * contempt, FPU from the parent, prior decay, C and the prior weight - read
+ * level within noise or lost to its own cost. The full log is in
+ * uttt/c/README.md.
+ *
+ * AND IT SPENDS ITS TIME ON NARROW MOVES. quill's allowance is budget x
+ * legal moves, so a free choice of sixty squares gets twenty times what a
+ * forced block of three gets. fountain counts at least eighteen moves,
+ * which moves time onto the forced blocks where the game is usually
+ * decided: at equal time over 400 games, 72% against 68% for the plain
+ * product.
+ *
+ * AT EQUAL TIME, fountain@2500 thinks about as long a move as quill@4000
+ * (the ladder prints both). The readings, each on a stream of its own:
+ *
+ *     plain product, fountain@5400, 400 games    66%   +112 Elo
+ *     plain product, fountain@5800, 300 games    68%   +127
+ *     plain product, fountain@5800, 400 games    68%   +135
+ *     eighteen-move floor, @2600, 400 games      72%   +160
+ *     eighteen-move floor, @2500, 400 games      69%   +137   49.1 ms each
+ *
+ * Pooled over the two floor streams, 800 games: about 70.5%, +150 Elo.
+ * `budget` is playouts a legal move, like quill's, with the floor. */
 
 /* THE HEURISTIC'S NUMBERS, so a tournament can play them against each other.
  *
