@@ -14,15 +14,17 @@
 #include <string.h>
 #include <unistd.h>
 
-typedef struct { UtttBot bot; int budget; const char *label; } Entrant;
-static const Entrant E[] = {
-    { BOT_RANDOM, 1,    "random"      },
-    { BOT_BIRO,   1,    "biro"        },
-    { BOT_ROLLER, 200,  "roller@200"  },
-    { BOT_NIB,    200,  "nib@200"     },
-    { BOT_QUILL,  200,  "quill@200"   },
-    { BOT_QUILL,  1000, "quill@1000"  },
-    { BOT_QUILL,  4000, "quill@4000"  },
+/* noise: percent of moves played uniformly at random instead - the only way
+ * to get a tier between random and any bot that looks ahead at all. */
+typedef struct { UtttBot bot; int budget; int noise; const char *label; } Entrant;
+static const Entrant E[] = {   /* the shipped-name ladder, docs/BOT_NAMES.md */
+    { BOT_RANDOM, 1,    0,  "random"      },
+    { BOT_BIRO,   1,    60, "biro~60"     },
+    { BOT_BIRO,   1,    0,  "biro"        },
+    { BOT_ROLLER, 25,   0,  "roller@25"   },
+    { BOT_ROLLER, 200,  0,  "roller@200"  },
+    { BOT_QUILL,  10,   0,  "quill@10"    },
+    { BOT_QUILL,  4000, 0,  "quill@4000"  },
 };
 #define N ((int)(sizeof E / sizeof E[0]))
 
@@ -40,7 +42,13 @@ static uint8_t duel(const Entrant *x, const Entrant *o, uint64_t seed)
         uint8_t list[81];
         if (uttt_legal(&g, list) <= 0) break;
         const Entrant *m = g.turn == UTTT_X ? x : o;
-        uttt_play(&g, uttt_bot_move(m->bot, &g, m->budget, &rs));
+        rs ^= rs << 13; rs ^= rs >> 7; rs ^= rs << 17;
+        if (m->noise && (int)(rs % 100) < m->noise) {
+            int n = uttt_legal(&g, list);
+            rs ^= rs << 13; rs ^= rs >> 7; rs ^= rs << 17;
+            uttt_play(&g, list[rs % (uint64_t)n]);
+        } else
+            uttt_play(&g, uttt_bot_move(m->bot, &g, m->budget, &rs));
     }
     return g.over;
 }
@@ -95,7 +103,7 @@ int main(int argc, char **argv)
         for (int i = 0; i < N; i++) s[i] = ns[i] / ns[0];
     }
     printf("%d games a pairing, %d entrants\n\n%-12s", games, N, "");
-    for (int j = 0; j < N; j++) printf(" %6.6s", E[j].label);
+    for (int j = 0; j < N; j++) printf(" %6.6s", E[j].label + (strlen(E[j].label) > 6 ? strlen(E[j].label) - 6 : 0));
     printf("   elo\n");
     for (int i = 0; i < N; i++) {
         printf("%-12s", E[i].label);
