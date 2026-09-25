@@ -18,7 +18,7 @@ Nothing below was checked against the live App Store Connect record or a running
 | Review notes | Done, with a one-device path (a replay link) | `uttt/docs/APP_REVIEW_NOTES.md` |
 | Store listing copy | Drafted below (section 3) | here |
 | Privacy label, age rating | Answers drafted below (sections 4, 5) | here |
-| **Diagnostics sheet and seat claim** | **BLOCKER, owner call** (section 6) | `UtttDiagnostics.swift` |
+| Diagnostics sheet and seat claim | Done: the claim buttons are DEBUG only; the read-only dump stays, as foolish ships (section 6) | `UtttDiagnostics.swift` |
 | **Screenshots** | **Owner** (section 7) | the rig |
 | **Two-phone screen recording** for review | **Owner**, needs two real phones | App Store Connect |
 | **Store name** | **Owner**, availability is only known in App Store Connect | section 2 |
@@ -94,7 +94,7 @@ Every content question: **None**. Every capability question (unrestricted web ac
 Unlike foolish, there is no nickname or any other free text a player can type, so the user-generated-content row that cost foolish its 4+ does not arise.
 Expected band: **4+**.
 
-## 6. BLOCKER: the diagnostics sheet and the seat claim ship in Release
+## 6. The diagnostics sheet and the seat claim (fixed for 1.0)
 
 1.0(9) added a 1.5-second hold on the rulebook that opens a Diagnostics sheet, and on it **Claim O / Claim X / Clear claim** buttons. They compile into Release on purpose, to diagnose a seat bug on TestFlight (`UtttDiagnostics.swift`: "THE CLAIM IS TEMPORARY. Delete the buttons and uti_msg_claim together once 1.0(9) has shown the record and the sender fallback seat the owner by themselves").
 
@@ -103,7 +103,7 @@ For the store this is a problem twice over:
 - **Integrity.** Anyone who finds the hold can claim the other player's seat in any game and move for them.
 - **Guideline 2.3.1 (hidden features).** A reviewer who finds an undocumented gesture that opens a debug panel can reject for it.
 
-The fix is the one the file already plans: delete the claim buttons and `uti_msg_claim`, and either delete the Diagnostics sheet or put it behind `#if DEBUG`. It was left alone here because it is Swift that could not be built or run from this session, and because it is the owner's call whether 1.0(9) has told us what it was shipped to learn.
+The fix: the Claim O, Claim X and Forget seat buttons compile only under `#if DEBUG`, so a Release archive has none. The hold still opens a read-only dump with Copy and Close, the pattern foolish ships and passed review with. `uti_msg_claim` stays in the kernel for its smoke test and DEBUG builds; delete it with the buttons once the seat bug is settled.
 
 ## 7. Screenshots
 

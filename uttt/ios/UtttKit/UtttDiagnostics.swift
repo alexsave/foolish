@@ -12,6 +12,8 @@
 // shipped, over the game rather than instead of it. Nothing here is secret:
 // a tic-tac-toe board has no hidden information.
 //
+// THE CLAIM IS DEBUG ONLY (the store build, 1.0 release): the buttons compile
+// out of Release, and the read-only dump and Copy stay, as foolish ships.
 // THE CLAIM IS TEMPORARY. It writes this device's seat record for the game
 // (UtttSeats, the kernel's utm_rec_*) - the same record a create, a join or
 // a sender-resolved seat writes - so it needs no machinery of its own.
@@ -20,7 +22,7 @@
 
 import UIKit
 
-/// The panel: scrollable monospaced text, Copy, and the claim buttons.
+/// The panel: scrollable monospaced text, Copy, and (DEBUG) the claim buttons.
 public final class UtttDiagnosticsSheet: UIViewController {
     public enum Action { case claimO, claimX, clearClaim }
 
@@ -64,18 +66,25 @@ public final class UtttDiagnosticsSheet: UIViewController {
             },
             button("Close") { [weak self] _ in self?.dismiss(animated: true) },
         ])
+        var rows: [UIView] = [title, row1]
+        row1.axis = .horizontal; row1.spacing = 8; row1.distribution = .fillEqually
+        #if DEBUG
+        /* The claim is DEBUG only: in a store build anyone who found the hold
+         * could take the other player's seat and move for them. */
         var claims = [button("Claim O") { [weak self] _ in self?.finish(.claimO) }]
         if canClaimX { claims.append(button("Claim X") { [weak self] _ in self?.finish(.claimX) }) }
         if hasClaim { claims.append(button("Forget seat") { [weak self] _ in self?.finish(.clearClaim) }) }
         let row2 = UIStackView(arrangedSubviews: claims)
+        row2.axis = .horizontal; row2.spacing = 8; row2.distribution = .fillEqually
         let note = UILabel()
         note.text = "Claim writes this device's seat record for this game only; Forget drops it."
         note.font = .systemFont(ofSize: 11)
         note.textColor = .secondaryLabel
         note.numberOfLines = 0
-
-        for r in [row1, row2] { r.axis = .horizontal; r.spacing = 8; r.distribution = .fillEqually }
-        let stack = UIStackView(arrangedSubviews: [title, row1, row2, note, body])
+        rows += [row2, note]
+        #endif
+        rows.append(body)
+        let stack = UIStackView(arrangedSubviews: rows)
         stack.axis = .vertical
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
