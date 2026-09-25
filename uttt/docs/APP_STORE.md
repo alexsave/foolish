@@ -9,8 +9,8 @@ Nothing below was checked against the live App Store Connect record or a running
 | Item | State | Where |
 |---|---|---|
 | Privacy Policy URL | Done: `https://uttt.live/privacy-msg`, plain HTML, no script, scoped to the iMessage app | `uttt/web/public/privacy-msg.html` |
-| Support URL | Done: `https://uttt.live/about#support` | `uttt/web/app/about/page.tsx` |
-| Marketing URL (optional) | Done: `https://uttt.live/about` | the same page |
+| Support URL | Done: `https://uttt.live/support-msg`, plain HTML: how to play, contact, privacy | `uttt/web/public/support-msg.html` |
+| Marketing URL (optional) | Done: `https://uttt.live/about`, shaped like foolish's About | `uttt/web/app/about/page.tsx` |
 | Privacy manifests | Done: container, extension, and UtttKit (`UserDefaults`, reason CA92.1) | `uttt/ios/*/PrivacyInfo.xcprivacy` |
 | Export compliance | Done: `ITSAppUsesNonExemptEncryption = NO` in the container and, new, in the extension | both `Info.plist` |
 | No Home Screen icon | Done: `LSApplicationLaunchProhibited` on the container, as foolish ships | `UtttMessagesApp/Info.plist` |
@@ -36,7 +36,7 @@ Nothing below was checked against the live App Store Connect record or a running
 | Primary language | English (U.S.) | The app ships English only (no `CFBundleLocalizations`). |
 | Copyright | `2026 <legal name>` | Owner. |
 | Privacy Policy URL | `https://uttt.live/privacy-msg` | The iMessage app's own policy, and only the app's. |
-| Support URL | `https://uttt.live/about#support` | Has the contact address; reads without JavaScript. |
+| Support URL | `https://uttt.live/support-msg` | The iMessage app's support page: how to play and the contact address. Plain HTML. |
 | Marketing URL | `https://uttt.live/about` | Optional. |
 
 ## 3. Version information (the listing)
@@ -132,5 +132,5 @@ The fix is the one the file already plans: delete the claim buttons and `uti_msg
 
 ## 11. After approval
 
-- The rules sheet's new wording (the illustrated mockup, `uttt/docs/RULES.html`) is not in the kernel yet; the app and uttt.live both show the kernel's current six lines, so they agree today. When the kernel table changes, the about page follows on its next build.
+- The rules sheet's new wording (the illustrated mockup, `uttt/docs/RULES.html`) is not in the kernel yet; the app shows the kernel's current six lines.
 - Keep `uttt.live/privacy-msg` in step with any change to what a message carries.

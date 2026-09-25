@@ -21,10 +21,6 @@ export interface UtttExports {
     uw_points(): number;
     uw_point_count(): number;
     uw_caption(): number;
-    // the rules sheet
-    uw_rules_count(): number;
-    uw_rules_line(i: number): number;
-    uw_rules_title(): number;
     // the napkin
     uw_paper(side: number): number;
 }

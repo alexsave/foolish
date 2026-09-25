@@ -1,71 +1,31 @@
-/* The about page: the rules sheet's paper, ink and type (docs/RULES.html),
-   laid out for reading, on the napkin every page has (app/globals.css). */
-.sheet {
+/* The about page, shaped like foolish's (a centred title over a block of
+   paragraphs, src/components/About.tsx) on this game's napkin (globals.css),
+   in the rules sheet's ink and type. */
+.page {
   min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
   padding: max(28px, env(safe-area-inset-top)) 16px max(36px, env(safe-area-inset-bottom));
 }
 
-.col {
-  max-width: 560px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 26px;
-}
-
-.label {
-  font: 600 9.5px/1 var(--sys);
-  letter-spacing: 1.9px;
-  text-transform: uppercase;
-  color: var(--label);
-}
-
 .title {
-  font: 700 28px/1.15 var(--sys);
+  font: 700 26px/1.2 var(--sys);
   letter-spacing: -0.02em;
-  margin: 8px 0 0;
+  margin: 0;
+  text-align: center;
   text-wrap: balance;
+  max-width: 560px;
 }
 
-.lede {
-  font: 400 17px/1.45 var(--sys);
-  margin: 12px 0 0;
-  max-width: 44ch;
-}
-
-.section { display: flex; flex-direction: column; gap: 10px; }
-
-.h2 {
-  font: 700 19px/1.25 var(--sys);
-  letter-spacing: -0.01em;
-  margin: 0;
-}
-
-.p { font: 400 15px/1.5 var(--sys); margin: 0; max-width: 60ch; }
-
-.list {
-  font: 400 15px/1.5 var(--sys);
-  margin: 0;
-  padding-left: 1.3em;
+.content {
+  max-width: 560px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-width: 60ch;
+  gap: 14px;
+  font: 400 16px/1.55 var(--sys);
 }
-
-/* the highlighter, the only colour the sheet has besides the two inks */
-.hl { background: rgba(214, 168, 54, 0.34); padding: 0 3px; }
-
-.x { color: #25376b; font-weight: 700; }
-.o { color: #a8321f; font-weight: 700; }
-
-.foot {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 18px;
-  font: 400 13px/1.4 var(--sys);
-  color: var(--label);
-  border-top: 1px solid rgba(138, 133, 119, 0.35);
-  padding-top: 14px;
-}
-.foot a { color: var(--ink); }
+.content p { margin: 0; }
+.content a { color: var(--ink); }

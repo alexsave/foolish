@@ -1,8 +1,6 @@
 // The uttt kernel at BUILD time, in Node: the same wasm the replay page runs
-// in the browser (public/uttt.wasm), opened from disk so that pages which are
-// only read - the about page, the napkin they sit on - are prerendered HTML
-// and a static PNG. A page a reviewer opens should not need JavaScript, or the
-// kernel loading in their browser, to show its words.
+// in the browser (public/uttt.wasm), opened from disk to draw the napkin once,
+// as a static PNG, for every page to sit on.
 //
 // Like lib/kernel.ts it knows function names and nothing else
 // (lib/kernel-exports.ts). This is the ONLY place the napkin becomes an image:
@@ -11,8 +9,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
-import { cString, type UtttExports } from './kernel-exports';
-
+import type { UtttExports } from './kernel-exports';
 
 let kernel: UtttExports | null = null;
 
@@ -36,14 +33,6 @@ function open(): UtttExports {
     return kernel;
 }
 
-
-/** The rules sheet: its title and its lines, as the app shows them. */
-export function rules(): { title: string; lines: string[] } {
-    const w = open();
-    const lines: string[] = [];
-    for (let i = 0, n = w.uw_rules_count(); i < n; i++) lines.push(cString(w.memory, w.uw_rules_line(i)));
-    return { title: cString(w.memory, w.uw_rules_title()), lines };
-}
 
 /** The napkin (uttt_paper) at side x side, as a PNG. */
 export function napkinPng(side: number): Buffer {
