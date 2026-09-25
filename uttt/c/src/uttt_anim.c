@@ -385,12 +385,25 @@ void uttt_sheet(const UtttSheetIn *in, UtttSheet *o)
     o->board[1] = (in->h - side) * .5f;
     o->board[2] = side;
 
+    /* THE STRIP'S SIDE COLUMNS ARE THE SHEET'S EDGE TO THE BOARD, one each
+     * side, and what stands in them stands in their middle (owner,
+     * 2026-09-25): "you are" across the left, the rulebook across the right,
+     * at the heights they had. Opening, each slides on the openness to where
+     * the expanded sheet has always had it - "you are" at the left pad, the
+     * rulebook in the corner - so a drag moves them with no step. */
+    float colc = o->board[0] * .5f;                 /* each column's centre, from its edge */
+    float corner = in->w - SHEET_MARGIN - SHEET_DOOR;
+    o->you[0] = lerpf(colc, SHEET_MARGIN, t);
+    o->you[1] = lerpf(.5f, 0.f, t);
+
     /* THE DOORS HOLD THE BOTTOM: the rulebook in the right corner, inside
      * the margins; Again beside it at its height, from the LEFT MARGIN - it
      * began at the sheet's edge, 13 points further left than every other
      * thing on the sheet, and ran under an SE's corner and into a Pro Max's
-     * rounded display (the release pass, 2026-09-23). */
-    o->rulebook[0] = in->w - SHEET_MARGIN - SHEET_DOOR;
+     * rounded display (the release pass, 2026-09-23). Again's row ends a gap
+     * short of the rulebook wherever it is, so no frame of a drag overlaps
+     * them (on the strip Again is not shown). */
+    o->rulebook[0] = lerpf(in->w - colc - SHEET_DOOR * .5f, corner, t);
     o->rulebook[1] = in->h - o->vpad - SHEET_DOOR;
     o->rulebook[2] = SHEET_DOOR;
     o->rulebook[3] = SHEET_DOOR;

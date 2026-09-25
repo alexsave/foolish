@@ -43,14 +43,15 @@ public final class UtttGameScreen: UtttSheetView {
     /// "starting a game from the strip you land on by accident is how you
     /// start a game by accident").
     public init(model: UtttModel, door: Uttt.Door = .none, slide: CollapseSlide?,
-                onDoor: @escaping () -> Void = {}, onRules: @escaping () -> Void = {}) {
+                onDoor: @escaping () -> Void = {}, onRules: @escaping () -> Void = {},
+                onDiagnostics: (() -> Void)? = nil) {
         self.model = model
         self.door = door
         self.onDoor = onDoor
         self.onRules = onRules
         board = UtttBoardView(clock: model.clock)
         youMark = UtttInkView.mark(model.you, seed: model.seed &+ 4)
-        rulebook = UtttRulebookButton(act: onRules)
+        rulebook = UtttRulebookButton(act: onRules, onHold: onDiagnostics)
         super.init(slide: slide)
         board.onTap = { [weak model] p in model?.tap(at: p) }
         content.addSubview(board)
@@ -149,10 +150,11 @@ public final class UtttGameScreen: UtttSheetView {
         let (LC, LB) = wordsLayouts(L, B)
         column.frame = rect(LC.words)
         column.set(model.headline, ink: ink, seed: model.seed &* 31 &+ 7,
-                   subline: model.subline, column: true, sub: CGFloat(LC.sub_alpha))
+                   subline: model.subline, column: true, sub: CGFloat(LC.sub_alpha),
+                   board: CGFloat(L.board.2))
         band.frame = rect(LB.band)
         band.set(model.headline, ink: ink, seed: model.seed &* 31 &+ 7,
-                 subline: model.subline, column: false)
+                 subline: model.subline, column: false, board: CGFloat(L.board.2))
         placeWords(column: column, band: band, L, B, at: at)
 
         /* THE DOORS HOLD THE BOTTOM: the rulebook in the corner, Again
@@ -165,7 +167,7 @@ public final class UtttGameScreen: UtttSheetView {
         if let copy {
             placeDoor(copy, L.copy, L, at: at)
         }
-        rideBottom(rulebook)
+        rideRulebook(rulebook, L, at: at)
 #if DEBUG
         MotionRuler.place(blue, in: rulebook.bounds)
         if let again { MotionRuler.place(violet, in: again.bounds) }
@@ -173,7 +175,8 @@ public final class UtttGameScreen: UtttSheetView {
     }
 
     /// THE HEADER HOLDS THE TOP: two lines of label centred over the drawn
-    /// mark, at the left pad. THROUGH AN AUTO-COLLAPSE THE LABEL AND THE MARK
+    /// mark, at the kernel's anchor (`you`: centred in the strip's left
+    /// column, at the left pad open). THROUGH AN AUTO-COLLAPSE THE LABEL AND THE MARK
     /// RIDE APART: the mark is 34 points on the strip and 46 open (`icon`),
     /// so riding the pair as one layer made the mark jump to its compact
     /// size in the slide's first frame (7pt, filmed). The mark scales about
@@ -187,8 +190,16 @@ public final class UtttGameScreen: UtttSheetView {
         let ls = CGSize(width: max(a.width, b.width), height: a.height + b.height - 2.8)
         you1.frame = CGRect(x: (ls.width - a.width) / 2, y: 0, width: a.width, height: a.height)
         you2.frame = CGRect(x: (ls.width - b.width) / 2, y: a.height - 2.8, width: b.width, height: b.height)
+        /* the indicator's left edge at a layout: its anchor less the share
+         * of its width the kernel puts left of it */
+        func left(_ S: UtiSheet) -> CGFloat {
+            CGFloat(S.you.0) - CGFloat(S.you.1) * max(ls.width, CGFloat(S.icon))
+        }
+        func markLeft(_ S: UtiSheet) -> CGFloat {
+            left(S) + (max(ls.width, CGFloat(S.icon)) - CGFloat(S.icon)) / 2
+        }
         let stack = max(ls.width, icon)
-        let x0 = CGFloat(L.hpad), y0 = CGFloat(L.vpad + L.icon_top)
+        let x0 = left(L), y0 = CGFloat(L.vpad + L.icon_top)
         indicator.frame = CGRect(x: x0, y: y0, width: stack,
                                  height: ls.height + CGFloat(L.icon_lead) + icon)
         youAre.frame = CGRect(x: (stack - ls.width) / 2, y: 0, width: ls.width, height: ls.height)
@@ -199,13 +210,15 @@ public final class UtttGameScreen: UtttSheetView {
 #endif
         ride(youAre) { s in
             let A = at(s)
+            /* the label stays centred over the mark wherever it is */
             return CollapseRidePose(dy: CGFloat(A.icon_top - L.icon_top),
-                                    dx: CGFloat(A.icon - L.icon) / 2)
+                                    dx: markLeft(A) + CGFloat(A.icon) / 2 - markLeft(L) - CGFloat(L.icon) / 2)
         }
         ride(youMark) { s in
             let A = at(s)
             return CollapseRidePose(
                 dy: CGFloat(A.icon_top + A.icon_lead - L.icon_top - L.icon_lead),
+                dx: markLeft(A) - markLeft(L),
                 scale: L.icon > 0 ? CGFloat(A.icon / L.icon) : 1,
                 pivot: .zero)
         }
@@ -243,9 +256,10 @@ final class UtttWordsView: UIView {
     /// `sub` is the second line's alpha (uttt_sheet's `sub_alpha`): a
     /// column too narrow for it carries the headline alone.
     func set(_ h: UtttModel.Headline, ink: UIColor, seed: Int32, subline text: String, column: Bool,
-             sub: CGFloat = 1) {
+             sub: CGFloat = 1, board: CGFloat = 0) {
         let w = bounds.width
-        let hs = headline.set(h, ink: ink, seed: seed, width: w, column: column, align: align)
+        let hs = headline.set(h, ink: ink, seed: seed, width: w, column: column, align: align,
+                              board: board)
         headline.accessibilityLabel = Uttt.say(.headlineSpoken)
         headline.frame = CGRect(x: align == .right ? w - hs.width : 0, y: 0, width: hs.width, height: hs.height)
         subline.isHidden = text.isEmpty || sub <= 0
@@ -290,24 +304,28 @@ final class UtttHeadlineView: UIView {
     required init?(coder: NSCoder) { fatalError() }
 
     /// The headline at `width`; returns the size it takes.
+    /// `type` is the headline's own unless a screen sets a smaller line
+    /// the same way (the spectator's "<O> to play"); the mark is as tall as
+    /// the type is big.
     func set(_ h: UtttModel.Headline, ink: UIColor, seed: Int32, width: CGFloat,
-             column: Bool, align: NSTextAlignment) -> CGSize {
+             column: Bool, align: NSTextAlignment, type: UtttType = .headline,
+             board: CGFloat = 0) -> CGSize {
         switch h {
         case .text(let t):
             before.isHidden = true; after.isHidden = true; mark.isHidden = true
             text.isHidden = false
-            let s = text.set(t, .headline, width: width, column: column, align: align, color: ink)
+            let s = text.set(t, type, width: width, column: column, align: align, color: ink)
             text.frame = CGRect(origin: .zero, size: s)
             return s
         case .mark(let b, let m, let a):
             text.isHidden = true
             before.isHidden = b.isEmpty; after.isHidden = a.isEmpty; mark.isHidden = false
-            let side: CGFloat = 21
-            let natural = UtttType.headline.width(b) + side + UtttType.headline.width(a)
+            let side: CGFloat = type.size
+            let natural = type.width(b) + side + type.width(a)
             let k = natural > width ? max(0.5, width / natural) : 1
-            let f = UtttType.headline.font(k)
-            before.attributedText = UtttType.headline.text(b, scale: k, color: ink)
-            after.attributedText = UtttType.headline.text(a, scale: k, color: ink)
+            let f = type.font(k)
+            before.attributedText = type.text(b, scale: k, color: ink)
+            after.attributedText = type.text(a, scale: k, color: ink)
             let bs = b.isEmpty ? .zero : before.sizeThatFits(.zero)
             let as_ = a.isEmpty ? .zero : after.sizeThatFits(.zero)
             let ms = side * k
@@ -317,8 +335,11 @@ final class UtttHeadlineView: UIView {
             let my = base - f.xHeight / 2 - ms / 2
             let top = min(0, my)
             before.frame = CGRect(x: 0, y: -top, width: bs.width, height: lineH)
-            mark.key = "mark \(m.rawValue) \(seed)"
-            mark.polys = { _ in Uttt.mark(m, seed: seed) }
+            /* `board`: the board's side, so the kernel draws this mark's
+             * strokes as wide as the last move's (0: its own lighter pen) */
+            let ratio = board > 0 && ms > 0 ? (board / ms * 100).rounded() / 100 : 0
+            mark.key = "mark \(m.rawValue) \(seed) \(ratio)"
+            mark.polys = { _ in Uttt.mark(m, seed: seed, board: ratio) }
             mark.frame = CGRect(x: bs.width, y: my - top, width: ms, height: ms)
             after.frame = CGRect(x: bs.width + ms, y: -top, width: as_.width, height: lineH)
             let w = min(width, bs.width + ms + as_.width)

@@ -22,6 +22,23 @@ static int same_rect(const float *a, const float *b)
 static UtttPt PT[400000];
 static UtttPoly PO[60000];
 
+/* Summed polygon area of a display list: how much ink it lays down. */
+static float ink_area(const UtttDL *d)
+{
+    double a = 0;
+    for (int i = 0; i < d->n_poly; i++) {
+        const UtttPt *q = d->pt + d->poly[i].first;
+        int n = d->poly[i].n;
+        double s = 0;
+        for (int k = 0; k < n; k++) {
+            const UtttPt *u = &q[k], *v = &q[(k + 1) % n];
+            s += (double)u->x * v->y - (double)v->x * u->y;
+        }
+        a += fabs(s) * .5;
+    }
+    return (float)a;
+}
+
 /* A display list's ribbon width: each polygon's area over half its perimeter,
  * weighted by area, over the polygons at or above the `top` share of the
  * widest (0: all of them) - the heavy strokes of a sheet. */
@@ -228,6 +245,41 @@ int main(void)
         uttt_dl_init(&d, PT, 400000, PO, 60000);
         uttt_draw_last(&d, &g, 7, 1.f);
         OK(under + d.n_poly == whole && d.n_poly > 0, "the cached board plus the last mark is the board");
+    }
+
+    /* THE HEADLINE'S MARK IS THE LAST MARK'S WEIGHT (owner, 2026-09-25):
+     * "Waiting on O" draws its strokes as many points wide as the board's
+     * newest mark. Drawn the same size as it (`board` 9.9), its ink per
+     * square of side is the last mark's within a fifth, for X and O; drawn
+     * at half that size its strokes keep their points, so twice the ink per
+     * square of side; the "you are" mark keeps its lighter pen. */
+    {
+        int heavy_ok = 1, plain_light = 1;
+        for (int m = UTTT_X; m <= UTTT_O; m++) {
+            UtttGame h; uttt_init(&h);
+            uttt_play(&h, 40);
+            if (m == UTTT_O) uttt_play(&h, 36);
+            int mv = m == UTTT_X ? 40 : 36;
+            UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
+            uttt_draw_last(&d, &h, 7, 1.f);
+            float s = 1.f / 9.f * .8f, last = ink_area(&d) / (s * s);
+            uttt_dl_init(&d, PT, 400000, PO, 60000);
+            float same = UTTT_MARK_SIDE / s;       /* the board mark's size */
+            uttt_draw_mark(&d, m, 11, same);
+            float heavy = ink_area(&d) / (UTTT_MARK_SIDE * UTTT_MARK_SIDE);
+            uttt_dl_init(&d, PT, 400000, PO, 60000);
+            uttt_draw_mark(&d, m, 11, 2.f * same);
+            float small = ink_area(&d) / (UTTT_MARK_SIDE * UTTT_MARK_SIDE);
+            uttt_dl_init(&d, PT, 400000, PO, 60000);
+            uttt_draw_mark(&d, m, 11, 0.f);
+            float plain = ink_area(&d) / (UTTT_MARK_SIDE * UTTT_MARK_SIDE);
+            printf("  mark %d: ink per side^2 last %.4f heavy %.4f half-size %.4f plain %.4f (last at %d)\n",
+                   m, last, heavy, small, plain, mv);
+            if (fabsf(heavy / last - 1.f) > .2f || small < 1.6f * heavy) heavy_ok = 0;
+            if (plain > .75f * last) plain_light = 0;
+        }
+        OK(heavy_ok, "the headline's mark is drawn at the last move's weight");
+        OK(plain_light, "and the \"you are\" mark keeps its lighter pen");
     }
 
     /* THE SETTLEMENT (UI.html 04, 05): the final move of the diagonal
@@ -539,7 +591,8 @@ int main(void)
             UtttSheet o;
             uttt_sheet(&(UtttSheetIn){ .w = D[di].w, .h = D[di].h, .kind = UTTT_SHEET_PLAY, .words = 1 }, &o);
             const float *r = o.rulebook, *a = o.again;
-            if (!(a[0] >= o.hpad - 1e-3f && r[0] + r[2] <= D[di].w - o.hpad + 1e-3f
+            /* the strip's rulebook is centred in its column (below) */
+            if (!(a[0] >= o.hpad - 1e-3f && (o.t < 1.f || r[0] + r[2] <= D[di].w - o.hpad + 1e-3f)
                   && r[1] + r[3] <= D[di].h - o.vpad + 1e-3f && a[1] == r[1] && a[3] == r[3]
                   && a[2] > 0.f && a[0] + a[2] + 8.f <= r[0] && r[2] == o.door)) {
                 doors_in = 0;
@@ -567,6 +620,47 @@ int main(void)
             }
         }
         OK(copy_in, "the replay door sits between Again and the rulebook, at their height, only when asked");
+
+        /* THE STRIP'S COLUMNS CENTRE WHAT STANDS IN THEM (owner, 2026-09-25):
+         * each column runs from the sheet's edge to the board; the rulebook's
+         * centre is the right one's, "you are"'s the left one's, for any
+         * width of the indicator, at every compact drawer on every phone -
+         * at the heights they always had. Open, both are where they were:
+         * the rulebook in the corner, "you are" at the left pad. And a drag
+         * moves them without a step. */
+        {
+            static const float CH[] = { 250.f, 260.f, 274.f, 300.f, 323.f, 340.f };
+            int door_c = 1, you_c = 1, same_y = 1, open_same = 1, smooth = 1;
+            for (float w = 320.f; w <= 440.f; w += 1.f)
+                for (int kind = 0; kind < 3; kind++) {
+                    for (int hi = 0; hi < 6; hi++) {
+                        UtttSheet o;
+                        float h = CH[hi];
+                        uttt_sheet(&(UtttSheetIn){ .w = w, .h = h, .kind = kind, .words = 1 }, &o);
+                        float lc = o.board[0] * .5f, rc = (o.board[0] + o.board[2] + w) * .5f;
+                        if (fabsf(o.rulebook[0] + o.rulebook[2] * .5f - rc) > 1e-3f) door_c = 0;
+                        for (float sw = 30.f; sw <= 60.f; sw += 5.f)
+                            if (fabsf(o.you[0] - o.you[1] * sw + sw * .5f - lc) > 1e-3f) you_c = 0;
+                        if (o.rulebook[1] != h - 13.f - 46.f || o.vpad + o.icon_top != 17.f) same_y = 0;
+                    }
+                    UtttSheet p = { 0 }, o;
+                    for (float h = 250.f; h <= 800.f; h += 1.f) {
+                        uttt_sheet(&(UtttSheetIn){ .w = w, .h = h, .kind = kind, .words = 1 }, &o);
+                        if (h > 250.f && (fabsf(o.rulebook[0] - p.rulebook[0]) > .5f
+                                          || fabsf(o.you[0] - p.you[0]) > .5f
+                                          || fabsf(o.you[1] - p.you[1]) > .02f)) smooth = 0;
+                        if (h >= UTTT_SHEET_HI && (o.rulebook[0] != w - 13.f - 46.f
+                                                   || o.you[0] != 13.f || o.you[1] != 0.f))
+                            open_same = 0;
+                        p = o;
+                    }
+                }
+            OK(door_c, "on the strip the rulebook is centred in the right column, 320-440 wide");
+            OK(you_c, "on the strip \"you are\" is centred in the left column, 320-440 wide");
+            OK(same_y, "and neither moves up or down for it");
+            OK(open_same, "open, the rulebook keeps its corner and \"you are\" the left pad");
+            OK(smooth, "a drag slides both across with no step");
+        }
 
         /* AGAIN AND COPY CODE ARE ONE WIDTH (owner, TestFlight 1.0(6)), at
          * every drawer height on every phone width - compact, expanded and

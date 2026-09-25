@@ -42,6 +42,131 @@ static int same_msg(const UtmMsg *a, const UtmMsg *b)
     return a->game.over == b->game.over && a->game.turn == b->game.turn;
 }
 
+/* ------------------------------------------------ the seat, resolved */
+
+/* THE OWNER'S CASE (1.0(8), 2026-09-25): Messages rotated this device's
+ * participant id, so neither sealed tag is mine any more. Every witness of
+ * utm_resolve, one row each, and the records that feed witness (a). */
+static void test_resolve(void)
+{
+    const int32_t seed = 1790284811;
+    uint8_t a[UTM_TAG_LEN], b[UTM_TAG_LEN], c[UTM_TAG_LEN], a2[UTM_TAG_LEN], b2[UTM_TAG_LEN];
+    tag_of("alex", seed, a);
+    tag_of("vera", seed, b);
+    tag_of("cleo", seed, c);
+    tag_of("alex-rotated", seed, a2);
+    tag_of("vera-rotated", seed, b2);
+
+    UtmMsg inv, g;
+    utm_open(&inv, seed, a);
+    g = inv;
+    OK(utm_play(&g, b, 40), "resolve: vera joins");        /* 1 ply: O to move */
+    int by = -9;
+
+    /* (a) the record, whatever the tag says */
+    OK(utm_resolve(&g, UTM_SEAT_O, UTM_SEAT_SPECTATOR, 0, UTM_SENT_UNKNOWN, &by) == UTM_SEAT_O
+       && by == UTM_BY_RECORD, "resolve: an O record seats a rotated creator in a group");
+    OK(utm_resolve(&g, UTM_SEAT_X, UTM_SEAT_SPECTATOR, 0, UTM_SENT_UNKNOWN, &by) == UTM_SEAT_X
+       && by == UTM_BY_RECORD, "resolve: an X record seats a rotated joiner");
+    OK(utm_resolve(&g, UTM_SEAT_O, UTM_SEAT_SPECTATOR, 1, 1, &by) == UTM_SEAT_O
+       && by == UTM_BY_RECORD, "resolve: the record outranks the sender");
+    OK(utm_resolve(&inv, UTM_SEAT_O, UTM_SEAT_OPEN, 0, UTM_SENT_UNKNOWN, &by) == UTM_SEAT_WAITING
+       && by == UTM_BY_RECORD, "resolve: an O record on my own invitation is waiting");
+    OK(utm_resolve(&inv, UTM_SEAT_X, UTM_SEAT_OPEN, 0, UTM_SENT_UNKNOWN, &by) == UTM_SEAT_OPEN
+       && by == UTM_BY_NONE, "resolve: an X record cannot seat anybody on an open invitation");
+
+    /* (b) the tag, while the id stands */
+    OK(utm_resolve(&g, 0, utm_seat(&g, a), 1, 0, &by) == UTM_SEAT_O && by == UTM_BY_TAG,
+       "resolve: the tag seats O, and outranks the sender");
+    OK(utm_resolve(&g, 0, utm_seat(&g, b), 0, UTM_SENT_UNKNOWN, &by) == UTM_SEAT_X && by == UTM_BY_TAG,
+       "resolve: the tag seats X");
+    OK(utm_resolve(&inv, 0, utm_seat(&inv, a), 0, UTM_SENT_UNKNOWN, &by) == UTM_SEAT_WAITING
+       && by == UTM_BY_TAG, "resolve: the tag says my invitation is waiting");
+
+    /* (c) the sender, in a DM, with both tags unknown */
+    OK(utm_seat(&g, a2) == UTM_SEAT_SPECTATOR && utm_seat(&g, b2) == UTM_SEAT_SPECTATOR,
+       "resolve: after the rotation neither tag is either of us");
+    OK(g.game.turn == UTTT_O && utm_resolve(&g, 0, utm_seat(&g, a2), 1, 0, &by) == UTM_SEAT_O
+       && by == UTM_BY_SENDER,
+       "resolve: THE OWNER'S CASE - a DM, the bubble from the other side, O to move: I am O");
+    OK(utm_resolve(&g, 0, utm_seat(&g, b2), 1, 1, &by) == UTM_SEAT_X && by == UTM_BY_SENDER,
+       "resolve: a DM, my own bubble, X moved last: I am X");
+    UtmMsg g2 = g;
+    OK(utm_play(&g2, a, 36), "resolve: alex answers");     /* 2 plies: X to move */
+    OK(utm_resolve(&g2, 0, UTM_SEAT_SPECTATOR, 1, 1, &by) == UTM_SEAT_O && by == UTM_BY_SENDER,
+       "resolve: my own bubble, O moved last: I am O");
+    OK(utm_resolve(&g2, 0, UTM_SEAT_SPECTATOR, 1, 0, &by) == UTM_SEAT_X && by == UTM_BY_SENDER,
+       "resolve: their bubble, O moved last: I am X");
+    OK(utm_resolve(&inv, 0, utm_seat(&inv, a2), 1, 1, &by) == UTM_SEAT_WAITING && by == UTM_BY_SENDER,
+       "resolve: my own invitation, sent by me, is waiting");
+    OK(utm_resolve(&inv, 0, utm_seat(&inv, b2), 1, 0, &by) == UTM_SEAT_OPEN && by == UTM_BY_SENDER,
+       "resolve: their invitation in a DM is mine to take");
+
+    /* (d) nothing */
+    OK(utm_resolve(&g, 0, utm_seat(&g, c), 0, 0, &by) == UTM_SEAT_SPECTATOR && by == UTM_BY_NONE,
+       "resolve: a group chat never infers - cleo watches");
+    OK(utm_resolve(&g, 0, UTM_SEAT_SPECTATOR, 0, 1, &by) == UTM_SEAT_SPECTATOR && by == UTM_BY_NONE,
+       "resolve: not even from my own bubble in a group");
+    OK(utm_resolve(&g, 0, UTM_SEAT_SPECTATOR, 1, UTM_SENT_UNKNOWN, &by) == UTM_SEAT_SPECTATOR
+       && by == UTM_BY_NONE, "resolve: a DM with no sender to read watches");
+    OK(utm_resolve(&inv, 0, UTM_SEAT_OPEN, 0, UTM_SENT_UNKNOWN, &by) == UTM_SEAT_OPEN
+       && by == UTM_BY_NONE, "resolve: nobody's witness on an invitation leaves it open");
+
+    /* THE RECORDS */
+    static uint8_t r[UTM_REC_BYTES];
+    int n = 0;
+    OK(utm_rec_find(r, n, &g) == 0, "rec: empty finds nothing");
+    n = utm_rec_put(r, n, &inv, UTM_SEAT_WAITING);
+    OK(n == UTM_REC_LEN && utm_rec_find(r, n, &inv) == UTM_SEAT_O && utm_rec_find(r, n, &g) == UTM_SEAT_O,
+       "rec: the creator's record is the game's, before and after the join");
+    OK(utm_rec_put(r, n, &inv, UTM_SEAT_X) == n, "rec: no X record on an open invitation");
+    OK(utm_rec_put(r, n, &g, UTM_SEAT_SPECTATOR) == n, "rec: watching is not recorded");
+    UtmMsg other = inv;
+    other.seed++;
+    OK(utm_rec_find(r, n, &other) == 0, "rec: another game finds nothing");
+
+    /* two joiners in a group: vera's X record is her fork's alone */
+    UtmMsg gc = inv;
+    OK(utm_play(&gc, c, 41), "rec: cleo joins the same invitation");
+    static uint8_t rv[UTM_REC_BYTES];
+    int nv = utm_rec_put(rv, 0, &g, UTM_SEAT_X);
+    OK(utm_rec_find(rv, nv, &g) == UTM_SEAT_X && utm_rec_find(rv, nv, &g2) == UTM_SEAT_X,
+       "rec: the joiner's record holds for every later bubble of her fork");
+    OK(utm_rec_find(rv, nv, &gc) == 0, "rec: and seats nobody in the other fork");
+    OK(utm_rec_find(rv, nv, &inv) == 0, "rec: nor on the invitation");
+
+    /* one record per game: a new seat replaces the old, and forget drops it */
+    n = utm_rec_put(r, n, &g, UTM_SEAT_X);
+    OK(n == UTM_REC_LEN && utm_rec_find(r, n, &g) == UTM_SEAT_X, "rec: a new seat replaces the old");
+    n = utm_rec_forget(r, n, &g);
+    OK(n == 0 && utm_rec_find(r, n, &g) == 0, "rec: forgotten");
+
+    /* bounded, newest first; a ragged tail is ignored */
+    UtmMsg k = inv;
+    for (int i = 0; i < UTM_REC_MAX + 5; i++) {
+        k.seed = seed + i;
+        n = utm_rec_put(r, n, &k, UTM_SEAT_O);
+    }
+    k.seed = seed + UTM_REC_MAX + 4;
+    OK(n == UTM_REC_BYTES && utm_rec_find(r, n, &k) == UTM_SEAT_O, "rec: full, and the newest is there");
+    k.seed = seed + 5;
+    OK(utm_rec_find(r, n, &k) == UTM_SEAT_O, "rec: the oldest kept is there");
+    k.seed = seed + 4;
+    OK(utm_rec_find(r, n, &k) == 0, "rec: past the bound the oldest fell off");
+    k.seed = seed + UTM_REC_MAX + 4;
+    OK(utm_rec_find(r, UTM_REC_LEN + 3, &k) == UTM_SEAT_O && utm_rec_find(r, 3, &k) == 0,
+       "rec: a ragged tail is ignored");
+    k.seed = seed + 5;
+    n = utm_rec_put(r, n, &k, UTM_SEAT_O);
+    OK(n == UTM_REC_BYTES && r[UTM_REC_LEN - 1] == UTM_SEAT_O && utm_rec_find(r, UTM_REC_LEN, &k) == UTM_SEAT_O,
+       "rec: re-recording a game moves it to the front, not a second copy");
+
+    /* THE KEY IS FROZEN: a changed salt orphans every record on every phone. */
+    static const uint8_t golden[UTM_REC_LEN - 1] = { 0x50, 0x04, 0xa4, 0x97, 0xe2, 0xef, 0xae, 0x39 };
+    n = utm_rec_put(r, 0, &inv, UTM_SEAT_O);
+    OK(!memcmp(r, golden, UTM_REC_LEN - 1), "rec: the key format is frozen");
+}
+
 /* ------------------------------------------------------------- base32 */
 static void test_b32(void)
 {
@@ -485,12 +610,15 @@ static void test_say(void)
     OK(!strcmp(s, "Waiting on ") && uttt_say_headline_mark(&g, UTM_SEAT_X) == UTTT_O,
        "say: X waits on a drawn O");
     say(UTTT_SAY_SUBLINE, &g, UTM_SEAT_X, s);
-    OK(!strcmp(s, "Middle right"), "say: where I sent them, capitalised");
+    OK(!strcmp(s, ""), "say: waiting on them has no line under it (owner)");
     say(UTTT_SAY_HEADLINE_PRE, &g, UTM_SEAT_O, s);
     OK(!strcmp(s, "Your move") && uttt_say_headline_mark(&g, UTM_SEAT_O) == 0,
        "say: O is on move, words only");
     say(UTTT_SAY_WATCH_LINE, &g, UTM_SEAT_SPECTATOR, s);
-    OK(!strcmp(s, "O to play"), "say: the spectator's line");
+    OK(!strcmp(s, " to play") && uttt_say_watch_mark(&g) == UTTT_O,
+       "say: the spectator's line follows a drawn O, never a typed one");
+    say(UTTT_SAY_WATCH_SPOKEN, &g, UTM_SEAT_SPECTATOR, s);
+    OK(!strcmp(s, "O to play"), "say: VoiceOver hears the spectator's mark spelled");
 
     say(UTTT_SAY_DOOR_AGAIN, &g, UTM_SEAT_X, s);
     OK(!strcmp(s, "Again"), "say: the end door (UI.html 06)");
@@ -625,6 +753,30 @@ static void test_bubble_scale(void)
     OK(uttt_bubble_scale(4.f) == 3.f, "bubble scale: over 3 bakes at 3");
 }
 
+/* A GAME IN THE THREAD OUTLIVES THE BUILD THAT WROTE IT. These bytes were
+ * written by the 1.0(6) kernel (d2332dd0): alex's invitation, vera's centre
+ * move. Every later build must read them and seat alex as O by the same
+ * participant bytes - a changed salt, seed or tag length would lock every
+ * creator out of every game already in a thread (1.0(8), 2026-09-25: the
+ * owner's own game opened as a spectator, and this pin ruled the kernel
+ * out: same bytes in, same seat out). */
+static void test_tag_pinned(void)
+{
+    static const uint8_t alex[16] = {0xa1,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15};
+    static const uint8_t vera[16] = {0xb2,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15};
+    static const char b6[] = "?m=W4AWRU5B4AARYPV2425R7OXV4TGCHFTAD6Y5SYEIPIJMGJQ";
+    static const uint8_t o6[UTM_TAG_LEN] = {0x1c,0x3e,0xba,0xe6,0xbb,0x1f,0xba,0xf5,0xe4};
+    UtmMsg m;
+    uint8_t a[UTM_TAG_LEN], v[UTM_TAG_LEN];
+    OK(utm_text_decode(b6, &m) == UTM_EOK, "pinned: a 1.0(6) game still reads");
+    utm_tag(m.seed, alex, 16, a);
+    utm_tag(m.seed, vera, 16, v);
+    OK(!memcmp(a, o6, UTM_TAG_LEN) && !memcmp(m.o, o6, UTM_TAG_LEN),
+       "pinned: the creator's tag is the 1.0(6) tag");
+    OK(utm_seat(&m, a) == UTM_SEAT_O && utm_seat(&m, v) == UTM_SEAT_X,
+       "pinned: its creator is O and its joiner X");
+}
+
 int main(int argc, char **argv)
 {
     int games = argc > 1 ? atoi(argv[1]) : 10000;
@@ -632,6 +784,8 @@ int main(int argc, char **argv)
     test_games(games);
     test_refusals();
     test_seats();
+    test_resolve();
+    test_tag_pinned();
     test_prefer();
     test_hit();
     test_caption_one_line();

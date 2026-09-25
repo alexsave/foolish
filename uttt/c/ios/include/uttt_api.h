@@ -123,6 +123,65 @@ int  uti_msg_same_game(const char *a, const char *b);
  * door, and the preview's. 0 if the two are the same person. */
 int  uti_msg_seat_ids(const uint8_t *o_id, int o_n, const uint8_t *x_id, int x_n);
 
+/* ------------------------------------------------ the seat and its witnesses
+ *
+ * WHICH SEAT IS MINE is decided by three witnesses in order (uttt_msg.h,
+ * utm_resolve): this device's RECORD of the game, the TAG my identity
+ * hashes to, and in a two-person chat the SENDER of the message being read.
+ * Messages' participant id is not stable across a reinstall or a
+ * TestFlight <-> development swap, so the tag alone stranded creators.
+ *
+ * THE RECORDS are fixed-layout bytes the host keeps (the extension's own
+ * defaults, nobody else reads them): load them once per identity, and write
+ * them back whenever uti_seats_dirty. The kernel records a game when I
+ * create it (O), join it (X), or am seated any other way. At most
+ * UTI_SEATS_BYTES. */
+#define UTI_SEATS_BYTES (9 * 256)
+void uti_seats_load(const uint8_t *bytes, int n);
+int  uti_seats_dirty(void);
+/* The records into out; their length, or -1 if cap is short. Clears dirty. */
+int  uti_seats_save(uint8_t *out, int cap);
+
+/* THE SENDER FACT: the message in `text` (the tapped bubble) was sent by
+ * this device (i_sent 1) or not (0), in a conversation with exactly one
+ * other participant (is_dm). Holds only while that exact message is the
+ * resident one; any other message has no sender fact. Compared live by the
+ * host from Messages' ids and never stored. NULL, or i_sent -1, clears it. */
+void uti_msg_sender(const char *text, int is_dm, int i_sent);
+
+/* The record for the resident game: UTI_SEAT_X, UTI_SEAT_O, or 0. */
+int  uti_msg_record(void);
+/* Which witness seated me: UTI_BY_*. A record this session wrote reports
+ * the witness that wrote it, so the diagnostics show what really decided;
+ * a record from an earlier session is UTI_BY_RECORD. */
+#define UTI_BY_NONE     0
+#define UTI_BY_RECORD   1
+#define UTI_BY_TAG      2
+#define UTI_BY_SENDER   3
+int  uti_msg_seat_by(void);
+/* TEMPORARY (1.0(9)) - the diagnostics panel's Claim: record `seat`
+ * (UTI_SEAT_O or UTI_SEAT_X; X only when sealed) for the resident game. 1
+ * if recorded. Forget drops the game's record. */
+int  uti_msg_claim(int seat);
+void uti_msg_forget(void);
+
+#define UTI_TAG_LEN     9
+/* The resident game's tags: UTI_TAG_ME the one I play with (my resolved
+ * seat's own tag, else the hash), UTI_TAG_HASHED the hash of my identity bytes with
+ * this seed, UTI_TAG_O and UTI_TAG_X the seats' (X is zeros until sealed).
+ * 1, or 0 for an unknown `which`. */
+#define UTI_TAG_ME      0
+#define UTI_TAG_HASHED  1
+#define UTI_TAG_O       2
+#define UTI_TAG_X       3
+int  uti_msg_tag(int which, uint8_t out[UTI_TAG_LEN]);
+/* The tag `id` would have on the resident game - to test a guess about
+ * who created it (a DEBUG build's "dev:a", say). */
+void uti_msg_tag_of(const uint8_t *id, int n, uint8_t out[UTI_TAG_LEN]);
+/* Why my seat is what it is, in one line: the seat, the witness, and what
+ * the tag alone would say (utm_seat_why). */
+const char *uti_msg_seat_why(void);
+
 /* A touch at (u, v) in the board's 0..1 square, to block*9+cell, or -1. */
 int  uti_hit(float u, float v);
 
@@ -152,11 +211,14 @@ int  uti_hit(float u, float v);
 #define UTI_SAY_DOOR_SEND            19
 #define UTI_SAY_DOOR_COPY            20
 #define UTI_SAY_DOOR_COPIED          21
+#define UTI_SAY_WATCH_SPOKEN         22
 
 const char *uti_say(int key);
 
 /* The mark drawn in the play-surface headline, or 0: "Waiting on <O>". */
 int  uti_say_mark(void);
+/* The mark the spectator's line draws before UTI_SAY_WATCH_LINE, or 0. */
+int  uti_say_watch_mark(void);
 /* The same two, of the position one ply back: what a screen says until the
  * last move's ink has landed. */
 const char *uti_say_before(int key);
@@ -270,6 +332,8 @@ typedef struct {
     float rulebook[4], again[4];    /* x, y, w, h: the two doors */
     float sub_alpha;                /* the column's second line (UtttSheet) */
     float copy[4];                  /* the end screen's replay door, or zero */
+    float you[2];                   /* the "you are" anchor x, and the share
+                                       of its width left of it (UtttSheet) */
 } UtiSheet;
 UtiSheet uti_sheet(UtiSheetIn in);
 /* Where the send hint's container starts below the drawer's top (UTTT_SHEET_HINT_TOP). */
@@ -286,8 +350,10 @@ float uti_board_reach(void);
 int  uti_draw_last(float t);
 
 
-/* One mark on its own, for the side indicator. */
-int  uti_draw_mark(int mark, int32_t seed);
+/* One mark on its own: `board` 0 for the side indicator; for the headline's
+ * mark the board's side over the mark's frame, in points, and it is drawn
+ * at the last move's stroke width (uttt_draw_mark). */
+int  uti_draw_mark(int mark, int32_t seed, float board);
 
 /* The rulebook door - the one button on the expanded sheet, a hachured square
  * with a book on it. Takes the size the button HAS, IN POINTS, because

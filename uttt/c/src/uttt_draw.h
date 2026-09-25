@@ -65,9 +65,13 @@ int uttt_hit(float u, float v);
  * its own. 0 for an `mv` off the board. */
 int uttt_cell_rect(int mv, float r[4]);
 
-/* One mark on its own, for the "you are" indicator: UTTT_MARK_SIDE of the
- * unit square, drawn with uttt_mark_seed(mark, seed). */
-int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float calm);
+/* One mark on its own: UTTT_MARK_SIDE of the unit square, drawn with
+ * uttt_mark_seed(mark, seed). `board` 0 for the "you are" indicator's pen.
+ * For the headline's mark ("Waiting on O") it is the board's side over this
+ * mark's frame, both in points, and the mark is gone over twice with
+ * strokes as many points wide as the board's last mark's (owner,
+ * 2026-09-25). */
+int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float board);
 
 #define UTTT_MARK_SIDE .88f
 /* How far off its own median radius an O's ink may stray, as a fraction. */

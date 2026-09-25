@@ -176,6 +176,16 @@ int utm_seat(const UtmMsg *m, const uint8_t me[UTM_TAG_LEN])
     return UTM_SEAT_SPECTATOR;
 }
 
+const char *utm_seat_why(const UtmMsg *m, const uint8_t me[UTM_TAG_LEN])
+{
+    if (!m->sealed)
+        return is(me, m->o) ? "waiting: open invitation, my tag is O's (I made it)"
+                            : "open: somebody's invitation, my tag is not O's, X is mine to take";
+    if (is(me, m->x)) return "X: sealed, my tag is X's";
+    if (is(me, m->o)) return "O: sealed, my tag is O's";
+    return "spectator: sealed, my tag is neither O's nor X's";
+}
+
 int utm_seat_mark(int seat)
 {
     switch (seat) {
@@ -183,6 +193,108 @@ int utm_seat_mark(int seat)
     case UTM_SEAT_O:                     return UTTT_O;
     default:                             return 0;
     }
+}
+
+/* ----------------------------------------------- the seat, resolved */
+
+/* The seat a mark sits in: sealed, X or O; unsealed, O is the waiting
+ * creator and X is the open seat. */
+static int seat_of_mark(const UtmMsg *m, int mark)
+{
+    if (m->sealed) return mark == UTTT_X ? UTM_SEAT_X : UTM_SEAT_O;
+    return mark == UTTT_X ? UTM_SEAT_OPEN : UTM_SEAT_WAITING;
+}
+
+int utm_resolve(const UtmMsg *m, int record, int tag_seat, int is_dm, int i_sent, int *by)
+{
+    int b = UTM_BY_NONE, seat;
+    if (record == UTM_SEAT_O || (record == UTM_SEAT_X && m->sealed)) {
+        b = UTM_BY_RECORD;
+        seat = seat_of_mark(m, record == UTM_SEAT_X ? UTTT_X : UTTT_O);
+    } else if (tag_seat != UTM_SEAT_SPECTATOR && tag_seat != UTM_SEAT_OPEN) {
+        b = UTM_BY_TAG;
+        seat = tag_seat;
+    } else if (is_dm && (i_sent == 0 || i_sent == 1)) {
+        /* X plays the odd plies; an invitation (no plies) is O's doing. */
+        int last = m->game.n_plies % 2 ? UTTT_X : UTTT_O;
+        int other = last == UTTT_X ? UTTT_O : UTTT_X;
+        b = UTM_BY_SENDER;
+        seat = seat_of_mark(m, i_sent ? last : other);
+    } else {
+        seat = m->sealed ? UTM_SEAT_SPECTATOR : UTM_SEAT_OPEN;
+    }
+    if (by) *by = b;
+    return seat;
+}
+
+/* The record key: the game, and for X the fork. */
+static void rec_key(const UtmMsg *m, int x, uint8_t out[UTM_REC_LEN - 1])
+{
+    static const char salt[] = "uttt.rec.1|";
+    uint8_t s[4], d[SHA256_DIGEST_LEN];
+    put32(s, m->seed);
+    Sha256 c;
+    sha256_init(&c);
+    sha256_update(&c, salt, sizeof salt - 1);
+    sha256_update(&c, s, 4);
+    sha256_update(&c, m->o, UTM_TAG_LEN);
+    if (x) sha256_update(&c, m->x, UTM_TAG_LEN);
+    sha256_final(&c, d);
+    memcpy(out, d, UTM_REC_LEN - 1);
+}
+
+static int rec_n(int n)
+{
+    if (n < 0) return 0;
+    if (n > UTM_REC_BYTES) n = UTM_REC_BYTES;
+    return n - n % UTM_REC_LEN;
+}
+
+int utm_rec_find(const uint8_t *recs, int n, const UtmMsg *m)
+{
+    uint8_t ko[UTM_REC_LEN - 1], kx[UTM_REC_LEN - 1];
+    rec_key(m, 0, ko);
+    rec_key(m, 1, kx);
+    n = recs ? rec_n(n) : 0;
+    for (int i = 0; i < n; i += UTM_REC_LEN) {
+        const uint8_t *r = recs + i;
+        int seat = r[UTM_REC_LEN - 1];
+        if (seat == UTM_SEAT_O && !memcmp(r, ko, UTM_REC_LEN - 1)) return UTM_SEAT_O;
+        if (seat == UTM_SEAT_X && m->sealed && !memcmp(r, kx, UTM_REC_LEN - 1)) return UTM_SEAT_X;
+    }
+    return 0;
+}
+
+int utm_rec_forget(uint8_t *recs, int n, const UtmMsg *m)
+{
+    uint8_t ko[UTM_REC_LEN - 1], kx[UTM_REC_LEN - 1];
+    rec_key(m, 0, ko);
+    rec_key(m, 1, kx);
+    n = rec_n(n);
+    int w = 0;
+    for (int i = 0; i < n; i += UTM_REC_LEN) {
+        const uint8_t *r = recs + i;
+        int seat = r[UTM_REC_LEN - 1];
+        int mine = (seat == UTM_SEAT_O && !memcmp(r, ko, UTM_REC_LEN - 1)) ||
+                   (seat == UTM_SEAT_X && m->sealed && !memcmp(r, kx, UTM_REC_LEN - 1));
+        if (mine) continue;
+        if (w != i) memmove(recs + w, r, UTM_REC_LEN);
+        w += UTM_REC_LEN;
+    }
+    return w;
+}
+
+int utm_rec_put(uint8_t *recs, int n, const UtmMsg *m, int seat)
+{
+    if (seat == UTM_SEAT_WAITING) seat = UTM_SEAT_O;
+    n = rec_n(n);
+    if (seat != UTM_SEAT_O && !(seat == UTM_SEAT_X && m->sealed)) return n;
+    n = utm_rec_forget(recs, n, m);
+    if (n == UTM_REC_BYTES) n -= UTM_REC_LEN;          /* the oldest falls off */
+    memmove(recs + UTM_REC_LEN, recs, (size_t)n);
+    rec_key(m, seat == UTM_SEAT_X, recs);
+    recs[UTM_REC_LEN - 1] = (uint8_t)seat;
+    return n + UTM_REC_LEN;
 }
 
 int utm_can_move(const UtmMsg *m, const uint8_t me[UTM_TAG_LEN])

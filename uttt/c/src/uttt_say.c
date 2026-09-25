@@ -87,6 +87,12 @@ static int say_line(const UtttGame *g, char *out, int cap)
     return put(out, cap, i < 0 ? "" : LINE_NAMED[i]);
 }
 
+int uttt_say_watch_mark(const UtttGame *g)
+{
+    if (g->over == UTTT_DRAW) return 0;
+    return g->over ? g->over : g->turn;
+}
+
 int uttt_say_bubble_mark(const UtttGame *g)
 {
     return g->over == UTTT_X || g->over == UTTT_O ? g->over : 0;
@@ -135,30 +141,30 @@ int uttt_say_by(int key, const UtttGame *g, int seat, const char *who,
         return put(out, cap, "");
 
     case UTTT_SAY_SUBLINE:
-        /* When it is not your turn this is WHERE YOU SENT THEM, the one thing
-         * worth reading on a board you cannot touch. */
+        /* WAITING ON THEM SAYS NOTHING UNDER IT (owner, 2026-09-25): it
+         * named where you sent them ("Middle left"), which the board's
+         * highlighter already shows. */
         if (g->over == UTTT_DRAW) return put(out, cap, "Nine blocks, no line");
         if (g->over) return say_line(g, out, cap);
         if (g->turn == you) return put(out, cap, a == 9 ? "Anywhere you like" : "");
-        if (a == 9) return put(out, cap, "Anywhere they like");
-        {
-            const char *p = uttt_place_name(a, 0);
-            int n = snprintf(out, (size_t)cap, "%s", p);
-            if (n < 0 || n >= cap) return -1;
-            if (out[0] >= 'a' && out[0] <= 'z') out[0] = (char)(out[0] - 'a' + 'A');
-            return n;
-        }
+        return put(out, cap, "");
 
     case UTTT_SAY_WATCH_LABEL:
         return put(out, cap, "watching");
 
     case UTTT_SAY_WATCH_LINE:
-        switch (g->over) {
-        case UTTT_DRAW: return put(out, cap, "Drawn");
-        case UTTT_X:    return put(out, cap, "X took it");
-        case UTTT_O:    return put(out, cap, "O took it");
-        default:        return put(out, cap, g->turn == UTTT_O ? "O to play" : "X to play");
-        }
+        /* After the drawn mark (uttt_say_watch_mark): a letter here was the
+         * one place on the sheet a side was TYPED rather than drawn. */
+        if (g->over == UTTT_DRAW) return put(out, cap, "Drawn");
+        return put(out, cap, g->over ? " took it" : " to play");
+
+    case UTTT_SAY_WATCH_SPOKEN: {
+        int m = uttt_say_watch_mark(g);
+        char line[32];
+        if (uttt_say(UTTT_SAY_WATCH_LINE, g, seat, line, sizeof line) < 0) return -1;
+        return putf(cap, snprintf(out, (size_t)cap, "%s%s",
+                                  m == UTTT_X ? "X" : m == UTTT_O ? "O" : "", line));
+    }
 
     case UTTT_SAY_WAITING_HEADLINE:
         return put(out, cap, "Waiting");
