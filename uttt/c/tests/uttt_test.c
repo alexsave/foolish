@@ -276,7 +276,7 @@ int main(int argc, char **argv)
             /* the owner's address, spelled out rather than taken from the
              * macro, so a typo in the macro cannot pass its own test */
             int ok = len > (int)sizeof pre - 1 && (int)strlen(url) == len
-                  && strncmp(url, "https://www.foolish.cards/uttt/", 31) == 0
+                  && strncmp(url, "https://uttt.live/", 18) == 0
                   && strncmp(url, pre, sizeof pre - 1) == 0;
             for (int c = (int)sizeof pre - 1; ok && c < len; c++)
                 ok = (url[c] >= 'A' && url[c] <= 'Z') || (url[c] >= '2' && url[c] <= '7');
@@ -291,6 +291,11 @@ int main(int argc, char **argv)
             ok = ok && uttt_replay_read(low, &back2, &sback2) && back2.n_plies == g.n_plies && sback2 == seed
                  && memcmp(back2.move, g.move, (size_t)g.n_plies) == 0;
             ok = ok && uttt_replay_read(url + sizeof pre - 1, &back2, NULL) && back2.n_plies == g.n_plies;
+            /* a link copied before uttt.live, on the old address */
+            char was[200];
+            snprintf(was, sizeof was, "https://www.foolish.cards/uttt/%s", url + sizeof pre - 1);
+            ok = ok && uttt_replay_read(was, &back2, &sback2) && back2.n_plies == g.n_plies && sback2 == seed
+                 && memcmp(back2.move, g.move, (size_t)g.n_plies) == 0;
             if (len > longest) longest = len;
             link_games++;
             if (!ok) { if (link_fail < 3) printf("  LINK FAIL %s\n", url); link_fail++; }

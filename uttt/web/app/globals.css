@@ -1,0 +1,19 @@
+:root {
+  color-scheme: light;
+  --paper: #f7f6f2;            /* UtttPaper.flat, under the napkin until it is drawn */
+  --ink: #1d1b16;              /* UtttInk.ink */
+  --label: #8a8577;            /* UtttInk.label */
+  --highlighter: #d6a836;      /* the wash, at full strength */
+  --sys: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background-color: var(--paper);
+  background-size: 100% 100%;
+  background-attachment: fixed;
+  color: var(--ink);
+  font-family: var(--sys);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; }
