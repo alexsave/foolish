@@ -1,13 +1,14 @@
-/* Freestanding math for the wasm32 web build (no libc; uttt_web.c).
+/* Freestanding math.h for a wasm32 kernel built -nostdlib -ffreestanding.
  *
- * Only what the drawing kernel calls. The easy half are single wasm
- * instructions (sqrt, abs, floor, ceil, min, max) and go straight to clang's
- * builtins; the rest - the trig, exp, log and pow the pen and the motion
- * curves use - are implemented in uttt_web.c. They are close to a libm, not
- * bit-identical to Apple's, which a replay on a web page can afford: the
- * shapes are the same shapes, a hair apart. */
-#ifndef UTTT_WASM_MATH_H
-#define UTTT_WASM_MATH_H
+ * The easy half are single wasm instructions (sqrt, abs, floor, ceil) and go
+ * straight to clang's builtins. The rest - trig, exp, log, pow - are defined
+ * in ../libm.c as ordinary range-reduced series: close to a platform libm,
+ * not bit-identical to one, so a drawing made with them matches its native
+ * build to within a hair rather than to the bit. fminf/fmaxf are functions,
+ * not builtins: wasm's f32.min propagates a NaN where libm's returns the
+ * number. */
+#ifndef WASM_LIBC_MATH_H
+#define WASM_LIBC_MATH_H
 
 #define M_PI 3.14159265358979323846
 

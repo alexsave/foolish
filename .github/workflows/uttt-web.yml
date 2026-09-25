@@ -21,6 +21,7 @@ on:
       - 'uttt/c/**'
       - 'uttt/web/**'
       - 'shared/c/b32.*'
+      - 'shared/c/wasm/**'
       - 'scripts/ci_llvm.sh'
       - '.github/workflows/uttt-web.yml'
   pull_request:
@@ -29,6 +30,7 @@ on:
       - 'uttt/c/**'
       - 'uttt/web/**'
       - 'shared/c/b32.*'
+      - 'shared/c/wasm/**'
       - 'scripts/ci_llvm.sh'
       - '.github/workflows/uttt-web.yml'
   workflow_dispatch: {}
