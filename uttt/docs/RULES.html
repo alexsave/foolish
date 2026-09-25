@@ -37,8 +37,12 @@ h1{font:700 clamp(30px,5vw,40px)/1.08 var(--ui);letter-spacing:-.022em;margin:0 
 code{font:500 .88em/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:#d9dae0;
   background:#1c1d22;padding:2px 5px;border-radius:4px}
 
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));
-  gap:44px 30px;margin-top:40px;align-items:start}
+.grid{display:grid;grid-template-columns:minmax(0,372px) minmax(0,1fr);gap:40px 48px;margin-top:36px;align-items:start}
+@media (max-width:760px){.grid{grid-template-columns:minmax(0,1fr)}}
+.notes{display:flex;flex-direction:column;gap:14px;max-width:560px}
+.notes h2{font:650 20px/1.25 var(--ui);margin:0;padding-left:12px;border-left:4px solid var(--acc)}
+.notes ol{margin:0;padding-left:22px;color:var(--soft);font-size:14.5px;display:flex;flex-direction:column;gap:8px}
+.notes li b{color:var(--tx);font-weight:600}
 .variant{display:flex;flex-direction:column;gap:12px;min-width:0}
 .h4{font:620 15.5px/1.3 var(--ui);margin:0;display:flex;align-items:baseline;gap:9px}
 .pill{font:700 10.5px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.1em;
@@ -68,28 +72,11 @@ button.copy:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 .sheet h3{font:700 21px/1.2 var(--sys);letter-spacing:-.015em;margin:0 0 14px;color:var(--ink)}
 .sheet p{margin:0}
 
-/* A: plain paragraphs */
-.listA{display:flex;flex-direction:column;gap:11px}
-.listA .gap{height:6px}
-
-/* B: two labelled parts */
-.part{display:flex;flex-direction:column;gap:11px}
-.part + .part{margin-top:22px;padding-top:18px;border-top:1px solid rgba(138,133,119,.35)}
-.lab{font:600 9.5px/1 var(--sys);letter-spacing:1.9px;text-transform:uppercase;color:var(--label)}
-.stamp{margin-top:24px;display:flex;align-items:center;gap:10px;font:700 26px/1 var(--hand);color:var(--xink)}
-.stamp svg{flex:none}
-
 /* C: illustrated */
 .ill{display:flex;flex-direction:column;gap:14px}
 .ill .r{display:grid;grid-template-columns:62px 1fr;gap:12px;align-items:center}
 .ill svg{width:62px;height:62px;display:block}
 
-/* D: the one line that matters */
-.plain{display:flex;flex-direction:column;gap:11px}
-.catch{margin:6px -4px;padding:12px 12px 12px 12px;border-radius:3px;
-  background:linear-gradient(100deg,rgba(214,168,54,.30),rgba(214,168,54,.40) 40%,rgba(214,168,54,.28));
-  font-size:16px;line-height:1.42}
-.catch .lab{display:block;margin-bottom:6px;color:#7a6326}
 /* the two yellows, as the board draws them: the promise is a pen outline
    round the block, the wash is a flat tint over it */
 .yo{position:relative;display:inline-block;white-space:nowrap;padding:0 5px;margin:0 1px}
@@ -97,123 +84,40 @@ button.copy:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 .yo.flat{box-shadow:inset 0 0 0 2px #d6a836}
 .yt{background:rgba(214,168,54,.38);padding:1px 4px;-webkit-box-decoration-break:clone;box-decoration-break:clone}
 
-/* E: tightened copy */
-.edit{display:flex;flex-direction:column;gap:11px}
-.edit p{padding-left:12px;border-left:2px solid transparent}
-.edit p.ch{border-left-color:rgba(37,55,107,.35)}
-.legend{font:400 12.5px/1.4 var(--sys);color:var(--muted);margin-top:18px;display:flex;gap:8px;align-items:center}
-.legend i{width:2px;height:14px;background:rgba(37,55,107,.35);display:block}
-
-.src{margin-top:60px;padding-top:26px;border-top:1px solid var(--ln);max-width:720px}
-.src h2{font:650 20px/1.25 var(--ui);margin:0 0 10px;padding-left:12px;border-left:4px solid var(--acc)}
-.src ol{margin:10px 0 0;padding-left:22px;color:var(--soft);font-size:14.5px}
-.src li{margin:0 0 6px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head><body>
 
 <div class="wrap">
-  <p class="kicker">uttt &middot; the rules sheet</p>
-  <h1>The rules sheet, rewritten</h1>
-  <p class="lede">Your new wording, laid out five ways on the sheet the rules door opens. Every sheet is the
-    same paper, type sizes and 13pt margin as <code>UtttRulesSheet.swift</code>, with the ink and highlighter
-    colours from <code>uttt_draw.c</code>.</p>
-  <p class="lede"><b>A, B and D are text changes only.</b> The lines move into the <code>RULES[]</code> table in
-    <code>uttt_draw.c</code> and the sheet lays them out. C needs the kernel to draw seven small boards.
-    E is optional copy edits for you to accept or ignore.</p>
+  <p class="kicker">uttt &middot; rules sheet mockup</p>
+  <h1>The rules sheet, illustrated</h1>
+  <p class="lede">Each line of the rules has a small drawing of what it describes, in the board's
+    own ink, on the same paper, type sizes and 13pt margin as <code>UtttRulesSheet.swift</code>.</p>
 
   <div class="grid">
 
-    <!-- A ------------------------------------------------------------ -->
-    <article class="variant" data-v="A">
-      <div class="h4"><span class="pill">A</span>As written</div>
-      <p class="why">Your lines as plain paragraphs, with a small gap between your two groups. <b>The smallest change:</b> swap the six strings in the kernel table for eight, and teach the sheet the two yellow phrases.</p>
-      <div class="device"><div class="grab"><i></i></div><div class="sheet">
-        <h3>Ultimate Tic-Tac-Toe Rules</h3>
-        <div class="listA" id="listA"></div>
-      </div></div>
-      <div class="tools"><button class="copy" type="button" id="copyA">Copy as C strings</button><span class="copied" aria-live="polite"></span></div>
-    </article>
 
-    <!-- B ------------------------------------------------------------ -->
-    <article class="variant" data-v="B">
-      <div class="h4"><span class="pill">B</span>Two parts, pen X to close</div>
-      <p class="why">A thin rule separates how the game works from how to play it here, with no labels. &ldquo;X moves first&rdquo; closes the page as a pen X.</p>
-      <div class="device"><div class="grab"><i></i></div><div class="sheet">
-        <h3>Ultimate Tic-Tac-Toe Rules</h3>
-        <div class="part">
-          <p>The board is divided up into 9 3x3 subgrids, themselves arranged in a 3x3 grid of squares.</p>
-          <p>The goal is to win three subgrids in a row, a column, or diagonally.</p>
-          <p>You can win a subgrid by making your mark in three squares in a row, just like regular tic-tac-toe.</p>
-          <p>The catch is that whatever square you choose in the subgrid corresponds to which subgrid on the board your opponent will move in on their next turn.</p>
-          <p>If you choose a square that would send your opponent to a completed subgrid, they will be able to move anywhere on the board on their next turn.</p>
-        </div>
-        <div class="part">
-          <p data-y>The yellow outline will show you where your opponent will move on the next round.</p>
-          <p data-y>If you haven't sent the move yet, and want to change your move, tap again in the yellow tinted area.</p>
-        </div>
-        <div class="stamp"><svg width="30" height="30" viewBox="0 0 30 30" data-mark="x" aria-hidden="true"></svg>moves first.</div>
-      </div></div>
-      <div class="tools"><button class="copy" type="button" id="copyB">Copy as C strings</button><span class="copied" aria-live="polite"></span></div>
-    </article>
 
-    <!-- C ------------------------------------------------------------ -->
+    
     <article class="variant" data-v="C">
-      <div class="h4"><span class="pill g">C</span>Illustrated</div>
-      <p class="why">Each line gets a small drawing of what it describes, in the board's own ink.
-        <b>This one costs the most:</b> the drawings come from the kernel, like every other drawn thing on the
-        sheet, so it means seven new little boards in <code>uttt_draw.c</code>.</p>
-      <div class="device"><div class="grab"><i></i></div><div class="sheet">
+            <div class="device"><div class="grab"><i></i></div><div class="sheet">
         <h3>Ultimate Tic-Tac-Toe Rules</h3>
         <div class="ill" id="ill"></div>
       </div></div>
       <div class="tools"><button class="copy" type="button" id="copyC">Copy as C strings</button><span class="copied" aria-live="polite"></span></div>
     </article>
+    <aside class="notes">
+      <h2>The drawings</h2>
+      <ol id="notes"></ol>
+      <p class="why"><b>What it costs to build:</b> the drawings come from the kernel, like everything else drawn on
+        the sheet, so this means seven small boards in <code>uttt_draw.c</code>, plus the sheet finding
+        &ldquo;yellow outline&rdquo; and &ldquo;yellow tinted area&rdquo; and drawing round them.</p>
+    </aside>
 
-    <!-- D ------------------------------------------------------------ -->
-    <article class="variant" data-v="D">
-      <div class="h4"><span class="pill">D</span>The catch, highlighted</div>
-      <p class="why">The kernel's own note says the line about where your opponent plays next is the only one
-        anybody needs. Here it sits in a block of the highlighter yellow.</p>
-      <div class="device"><div class="grab"><i></i></div><div class="sheet">
-        <h3>Ultimate Tic-Tac-Toe Rules</h3>
-        <div class="plain">
-          <p>The board is divided up into 9 3x3 subgrids, themselves arranged in a 3x3 grid of squares.</p>
-          <p>The goal is to win three subgrids in a row, a column, or diagonally.</p>
-          <p>You can win a subgrid by making your mark in three squares in a row, just like regular tic-tac-toe.</p>
-          <div class="catch"><span class="lab">The catch</span>Whatever square you choose in the subgrid corresponds to which subgrid on the board your opponent will move in on their next turn.</div>
-          <p>If you choose a square that would send your opponent to a completed subgrid, they will be able to move anywhere on the board on their next turn.</p>
-          <p data-y style="margin-top:8px">The yellow outline will show you where your opponent will move on the next round.</p>
-          <p data-y>If you haven't sent the move yet, and want to change your move, tap again in the yellow tinted area.</p>
-          <p style="margin-top:8px;font-weight:600">X moves first.</p>
-        </div>
-      </div></div>
-      <div class="tools"><button class="copy" type="button" id="copyD">Copy as C strings</button><span class="copied" aria-live="polite"></span></div>
-    </article>
 
-    <!-- E ------------------------------------------------------------ -->
-    <article class="variant" data-v="E">
-      <div class="h4"><span class="pill">E</span>Tightened copy (optional)</div>
-      <p class="why">Same order and meaning, with shorter sentences and the same word for things throughout.
-        Lines with a blue rule are edited. It includes an example of the catch, since that's the rule new
-        players miss. Pair it with any layout above.</p>
-      <div class="device"><div class="grab"><i></i></div><div class="sheet">
-        <h3>Ultimate Tic-Tac-Toe Rules</h3>
-        <div class="edit" id="editE"></div>
-        <div class="legend"><i></i>edited from your wording</div>
-      </div></div>
-      <div class="tools"><button class="copy" type="button" id="copyE">Copy as C strings</button><span class="copied" aria-live="polite"></span></div>
-    </article>
 
   </div>
 
-  <section class="src">
-    <h2>Your wording, for reference</h2>
-    <ol id="srcList"></ol>
-    <p class="lede" style="margin-top:14px;font-size:14px">The copy buttons give a <code>RULES[]</code> table ready to
-      paste over the one in <code>uttt/c/src/uttt_draw.c</code>. The strings keep the table's rules: straight quotes,
-      no em dashes. The C strings are plain text, so the sheet has to find the phrases &ldquo;yellow outline&rdquo; and &ldquo;yellow tinted area&rdquo; itself and draw the outline and tint round them.</p>
-  </section>
 </div>
 
 <script>
@@ -227,27 +131,8 @@ const RULES = [
   "If you haven't sent the move yet, and want to change your move, tap again in the yellow tinted area.",
   "X moves first."
 ];
-const EDITED = [
-  ["The board is nine subgrids, set out in a 3x3 grid. Each subgrid is a small tic-tac-toe board.", true],
-  ["Win three subgrids in a row, a column, or a diagonal to win the game.", true],
-  ["Win a subgrid the usual way: three of your marks in a line.", true],
-  ["The catch: the square you pick decides which subgrid your opponent plays in next. Pick the top-right square, and they have to play in the top-right subgrid.", true],
-  ["If that subgrid is already finished, they can play anywhere.", true],
-  ["The yellow outline shows where your opponent will play next.", true],
-  ["Changed your mind before sending? Tap again in the yellow tinted area.", true],
-  ["X moves first.", false]
-];
 
 /* ---------- text builders ---------- */
-const listA = document.getElementById('listA');
-RULES.forEach((line, i) => {
-  if (i === 5) { const g = document.createElement('div'); g.className = 'gap'; listA.append(g); }
-  const p = document.createElement('p'); p.textContent = line; p.dataset.y = ''; listA.append(p);
-});
-const edit = document.getElementById('editE');
-EDITED.forEach(([line, ch]) => { const p = document.createElement('p'); p.textContent = line; p.dataset.y = ''; if (ch) p.className = 'ch'; edit.append(p); });
-const src = document.getElementById('srcList');
-RULES.forEach(l => { const li = document.createElement('li'); li.textContent = l; src.append(li); });
 
 /* ---------- a tiny pen, rough.js when it loaded, plain lines when not ---------- */
 const NS = 'http://www.w3.org/2000/svg';
@@ -351,7 +236,6 @@ RULES.forEach((line, i) => {
   r.append(svg, p); ill.append(r);
   DIAGRAMS[i](svg);
 });
-document.querySelectorAll('svg[data-mark="x"]').forEach(s => { s.setAttribute('viewBox', '0 0 30 30'); pen(s, 91).mark('x', 15, 15, 9, 2.6); });
 
 /* ---------- the two yellows in the text ---------- */
 document.querySelectorAll('[data-y]').forEach(p => {
@@ -378,10 +262,19 @@ if (document.fonts && document.fonts.ready) document.fonts.ready.then(drawOutlin
 const cTable = (lines, title) =>
   `const char *uttt_rules_title(void) { return "${title}"; }\n\nstatic const char *const RULES[] = {\n` +
   lines.map(l => `    "${l.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}",`).join('\n') + '\n};\n';
-const TABLES = {
-  A: cTable(RULES, 'Ultimate Tic-Tac-Toe Rules'), B: cTable(RULES, 'Ultimate Tic-Tac-Toe Rules'), C: cTable(RULES, 'Ultimate Tic-Tac-Toe Rules'),
-  D: cTable(RULES, 'Ultimate Tic-Tac-Toe Rules'), E: cTable(EDITED.map(e => e[0]), 'Ultimate Tic-Tac-Toe Rules')
-};
+const TABLES = { C: cTable(RULES, 'Ultimate Tic-Tac-Toe Rules') };
+const NOTES = [
+  ['The board', 'nine empty subgrids in their 3x3.'],
+  ['Winning the game', 'three subgrids won by X on a diagonal, struck through, with one O subgrid for contrast.'],
+  ['Winning a subgrid', 'one subgrid on its own, three X on a diagonal and struck through.'],
+  ['The catch', 'an X in the top-right square of the centre subgrid, with a red arrow to the top-right subgrid.'],
+  ['Play anywhere', 'the same X, but the top-right subgrid is already won by O, so the whole board takes the faint wash.'],
+  ['The yellow outline', 'the centre subgrid tinted as the one being played, the top-right subgrid outlined as where the opponent goes.'],
+  ['Changing your move', 'the unsent X faded, and a dashed ring where the new tap lands, inside the tinted subgrid.'],
+  ['X moves first', 'one large pen X.']
+];
+const notes = document.getElementById('notes');
+NOTES.forEach(([h, t]) => { const li = document.createElement('li'); li.innerHTML = '<b>' + h + ':</b> ' + t; notes.append(li); });
 for (const v in TABLES) {
   const btn = document.getElementById('copy' + v), note = btn.nextElementSibling;
   btn.addEventListener('click', () => {
