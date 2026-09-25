@@ -97,9 +97,9 @@ typedef struct {
  * with the seed so one device has a different tag in every game and a tag
  * cannot follow a person from thread to thread.
  *
- * THE COST IS A REINSTALL: a new UUID matches neither seat, and its owner
- * becomes a spectator in their own sealed game (foolish's answer too:
- * exact or spectator, never a guess). */
+ * THE ID IS NOT STABLE: Messages mints a new one after a reinstall or a
+ * build-channel swap, and then this tag matches nothing. That is why it is
+ * one witness of three - see utm_resolve. */
 void utm_tag(int32_t seed, const uint8_t *id, int id_len, uint8_t out[UTM_TAG_LEN]);
 
 /* THE SEED IS THE SEND TIME OF THE FIRST EMPTY BOARD and nothing else - not
@@ -132,14 +132,77 @@ int  utm_text_decode(const char *text, UtmMsg *out);
 #define UTM_SEAT_WAITING   3   /* my invitation, nobody has taken it         */
 #define UTM_SEAT_OPEN      4   /* somebody's invitation: X is mine to take   */
 
-/* WHICH SEAT AM I, for this message. The whole answer: no cache, no sender
- * signal, no DM inference, because every device can recompute its own tag.
- * A reinstalled creator on an open invitation resolves OPEN - with no tag to
- * match it is indistinguishable from anybody else in the thread. */
+/* WHICH SEAT DOES THIS TAG HOLD, for this message: witness (b) of
+ * utm_resolve below, and the whole answer once the caller has turned the
+ * resolved seat back into that seat's tag. A tag that matches nothing on an
+ * open invitation is OPEN. */
 int  utm_seat(const UtmMsg *m, const uint8_t me[UTM_TAG_LEN]);
 /* utm_seat's answer with its reason, one line for the diagnostics panel:
  * "sealed; my tag is O's", "sealed; my tag is neither O's nor X's". */
 const char *utm_seat_why(const UtmMsg *m, const uint8_t me[UTM_TAG_LEN]);
+
+/* ----------------------------------------------- the seat, resolved
+ *
+ * A TAG MATCH IS NOT ENOUGH ON ITS OWN (1.0(8), 2026-09-25). Messages' local
+ * participant id is a random UUID it keeps per (device, extension) and
+ * DELETES when the extension drops out of LaunchServices for about a second -
+ * an uninstall, or a TestFlight <-> development install swap. The next id is
+ * new, so every game this device sealed stops matching and its owner watches
+ * their own game. So the tag is the second of three witnesses:
+ *
+ *   (a) THE RECORD - this device's own note, written when it created (O) or
+ *       joined (X) a game and whenever a seat is resolved any other way. Its
+ *       key is the game, never an identity, so a new id cannot miss it.
+ *   (b) THE TAG - utm_seat, exactly as before; right while the id stands.
+ *   (c) THE SENDER - in a two-person conversation, whether the bubble being
+ *       read was sent by this device. Messages computes both ids from the
+ *       same table at the same moment, so the comparison survives a
+ *       rotation; it is made live and never stored. I sent it: I am the seat
+ *       that made its newest move. I did not: I am the other seat.
+ *   (d) nothing: a sealed game is watched, an open one is X's to take.
+ *
+ * foolish's order for foolish's reason: its seat cache is keyed by game id,
+ * then S1 + DM inference, and no participant id is ever the proof. */
+
+#define UTM_BY_NONE     0
+#define UTM_BY_RECORD   1
+#define UTM_BY_TAG      2
+#define UTM_BY_SENDER   3
+
+#define UTM_SENT_UNKNOWN (-1)   /* no bubble, or not the message being read */
+
+/* WHICH SEAT AM I, from the facts. `record` is utm_rec_find's answer (0, or
+ * UTM_SEAT_X / UTM_SEAT_O); `tag_seat` is utm_seat's; `is_dm` is exactly one
+ * other participant; `i_sent` is 1, 0 or UTM_SENT_UNKNOWN for the message
+ * `m` itself. Whose move the newest was is read off `m` (X plays the odd
+ * plies; an invitation is O's). A UTM_SEAT_*, and the witness that decided
+ * in *by (may be NULL). */
+int  utm_resolve(const UtmMsg *m, int record, int tag_seat, int is_dm, int i_sent, int *by);
+
+/* THE RECORDS: this device's seats, newest first, UTM_REC_LEN bytes each -
+ * an 8-byte key and the seat (UTM_SEAT_X or UTM_SEAT_O). A fixed layout, so
+ * the host stores the bytes as they are.
+ *
+ * THE KEY IS THE GAME, and for X the fork of it: the first 8 bytes of
+ * SHA-256("uttt.rec.1|" || seed || O's tag), plus X's tag for an X record.
+ * O is the same person in every fork, so one O record serves them all; two
+ * people can take X at once in a group chat (utm_prefer), and the loser's X
+ * record must not seat them in the winner's fork. Neither key holds this
+ * device's identity. */
+#define UTM_REC_LEN   9
+#define UTM_REC_MAX   256
+#define UTM_REC_BYTES (UTM_REC_LEN * UTM_REC_MAX)
+
+/* The seat recorded for this game (UTM_SEAT_X / UTM_SEAT_O), or 0. `n` is
+ * the byte count; a ragged tail is ignored. */
+int  utm_rec_find(const uint8_t *recs, int n, const UtmMsg *m);
+/* Record `seat` (UTM_SEAT_X; UTM_SEAT_O or UTM_SEAT_WAITING for O) for this
+ * game in place of any record of it, at the front; the oldest fall off past
+ * UTM_REC_MAX. `recs` holds UTM_REC_BYTES. Returns the new byte count; any
+ * other seat, or X on an unsealed game, records nothing. */
+int  utm_rec_put(uint8_t *recs, int n, const UtmMsg *m, int seat);
+/* Drop this game's records. The new byte count. */
+int  utm_rec_forget(uint8_t *recs, int n, const UtmMsg *m);
 
 /* The mark a seat plays, or 0. OPEN plays X: taking the seat is the first
  * move. */

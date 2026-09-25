@@ -123,27 +123,49 @@ int  uti_msg_same_game(const char *a, const char *b);
  * door, and the preview's. 0 if the two are the same person. */
 int  uti_msg_seat_ids(const uint8_t *o_id, int o_n, const uint8_t *x_id, int x_n);
 
-/* ------------------------------------------------ diagnostics and claims
+/* ------------------------------------------------ the seat and its witnesses
  *
- * TEMPORARY (1.0(9), 2026-09-25): a game its creator opened as a spectator.
- * The diagnostics panel prints the tags so the cause can be read off a
- * screenshot, and a CLAIM lets the owner keep playing meanwhile.
+ * WHICH SEAT IS MINE is decided by three witnesses in order (uttt_msg.h,
+ * utm_resolve): this device's RECORD of the game, the TAG my identity
+ * hashes to, and in a two-person chat the SENDER of the message being read.
+ * Messages' participant id is not stable across a reinstall or a
+ * TestFlight <-> development swap, so the tag alone stranded creators.
  *
- * A claim says "on the game with this seed, I am this tag" - the seat's own
- * tag, copied from the game. It applies to that one seed only: every other
- * game, and every new invitation, is still the hash of the identity bytes.
- * The host holds claims across launches and hands them all back after every
- * uti_me; uti_claims_clear drops the kernel's copy first. At most
- * UTI_CLAIMS_MAX; a claim for a seed already held replaces it. */
-#define UTI_TAG_LEN     9
-#define UTI_CLAIMS_MAX  16
-void uti_claims_clear(void);
-int  uti_claim(int32_t seed, const uint8_t tag[UTI_TAG_LEN]);
-/* 1 if a claim is deciding my seat on the resident game. */
-int  uti_msg_claimed(void);
+ * THE RECORDS are fixed-layout bytes the host keeps (the extension's own
+ * defaults, nobody else reads them): load them once per identity, and write
+ * them back whenever uti_seats_dirty. The kernel records a game when I
+ * create it (O), join it (X), or am seated any other way. At most
+ * UTI_SEATS_BYTES. */
+#define UTI_SEATS_BYTES (9 * 256)
+void uti_seats_load(const uint8_t *bytes, int n);
+int  uti_seats_dirty(void);
+/* The records into out; their length, or -1 if cap is short. Clears dirty. */
+int  uti_seats_save(uint8_t *out, int cap);
 
-/* The resident game's tags: UTI_TAG_ME the one my seat is decided by (the
- * claim, else the hash), UTI_TAG_HASHED the hash of my identity bytes with
+/* THE SENDER FACT: the message in `text` (the tapped bubble) was sent by
+ * this device (i_sent 1) or not (0), in a conversation with exactly one
+ * other participant (is_dm). Holds only while that exact message is the
+ * resident one; any other message has no sender fact. Compared live by the
+ * host from Messages' ids and never stored. NULL, or i_sent -1, clears it. */
+void uti_msg_sender(const char *text, int is_dm, int i_sent);
+
+/* The record for the resident game: UTI_SEAT_X, UTI_SEAT_O, or 0. */
+int  uti_msg_record(void);
+/* Which witness seated me: UTI_BY_*. */
+#define UTI_BY_NONE     0
+#define UTI_BY_RECORD   1
+#define UTI_BY_TAG      2
+#define UTI_BY_SENDER   3
+int  uti_msg_seat_by(void);
+/* TEMPORARY (1.0(9)) - the diagnostics panel's Claim: record `seat`
+ * (UTI_SEAT_O or UTI_SEAT_X; X only when sealed) for the resident game. 1
+ * if recorded. Forget drops the game's record. */
+int  uti_msg_claim(int seat);
+void uti_msg_forget(void);
+
+#define UTI_TAG_LEN     9
+/* The resident game's tags: UTI_TAG_ME the one I play with (my resolved
+ * seat's own tag, else the hash), UTI_TAG_HASHED the hash of my identity bytes with
  * this seed, UTI_TAG_O and UTI_TAG_X the seats' (X is zeros until sealed).
  * 1, or 0 for an unknown `which`. */
 #define UTI_TAG_ME      0
@@ -154,7 +176,8 @@ int  uti_msg_tag(int which, uint8_t out[UTI_TAG_LEN]);
 /* The tag `id` would have on the resident game - to test a guess about
  * who created it (a DEBUG build's "dev:a", say). */
 void uti_msg_tag_of(const uint8_t *id, int n, uint8_t out[UTI_TAG_LEN]);
-/* Why my seat is what it is, in one line (utm_seat_why). */
+/* Why my seat is what it is, in one line: the seat, the witness, and what
+ * the tag alone would say (utm_seat_why). */
 const char *uti_msg_seat_why(void);
 
 /* A touch at (u, v) in the board's 0..1 square, to block*9+cell, or -1. */

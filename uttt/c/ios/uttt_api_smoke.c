@@ -14,6 +14,21 @@ static void ok(int cond, const char *what)
     if (!cond) { printf("  FAIL %s\n", what); fails++; }
 }
 
+/* ONE KERNEL, SEVERAL PHONES: each person's seat records are their own
+ * device's, so switching person swaps them - and drops the sender fact,
+ * which was about the other phone's screen. */
+static uint8_t recs[5][UTI_SEATS_BYTES];
+static int     recn[5];
+static int     who = -1;
+static void be(int i, const uint8_t id[16])
+{
+    if (who >= 0) recn[who] = uti_seats_save(recs[who], UTI_SEATS_BYTES);
+    uti_seats_load(recs[i], recn[i]);
+    uti_msg_sender(NULL, 0, -1);
+    uti_me(id, 16);
+    who = i;
+}
+
 int main(void)
 {
     uti_new(77);
@@ -542,8 +557,9 @@ int main(void)
         static const uint8_t cleo[16] = { 0xc3, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
         char inv[160], join[160], reply[160], other[160];
 
-        uti_me(alex, 16);
+        be(0, alex);
         ok(uti_msg_open(1726990000) == 1, "alex opens an invitation");
+        ok(uti_msg_record() == UTI_SEAT_O && uti_seats_dirty(), "and records it as his, before anybody asks");
         ok(uti_msg_seat() == UTI_SEAT_WAITING, "and waits on it");
         ok(uti_msg_mark() == 0 && !uti_msg_can_move(), "with no mark and no move");
         ok(!strcmp(uti_say_by(UTI_SAY_CAPTION, "$A1"), "$A1 wants a game. Tap to take it"),
@@ -552,18 +568,19 @@ int main(void)
         ok(uti_msg_text(inv, sizeof inv) > 3 && !strncmp(inv, "?m=", 3), "the invitation is a bare query");
         ok(uti_msg_door() == UTI_DOOR_NONE, "an invitation has no door");
 
-        uti_me(vera, 16);
+        be(1, vera);
         ok(uti_msg_read(inv) == 0, "vera reads it");
         ok(uti_msg_seat() == UTI_SEAT_OPEN && uti_msg_mark() == 1, "the seat is hers, as X");
         ok(!strcmp(uti_say(UTI_SAY_HEADLINE_PRE), "Your move"), "and the first move is hers");
         int mv = uti_hit(.5f, .5f);
         ok(mv == 40, "a tap in the middle is the centre of the centre");
         ok(uti_msg_play(mv) && uti_msg_sealed(), "her first move takes the seat");
+        ok(uti_msg_record() == UTI_SEAT_X, "and records it, before anybody asks");
         ok(uti_msg_seat() == UTI_SEAT_X && !uti_msg_can_move(), "she is X and it is O's turn");
         ok(uti_msg_text(join, sizeof join) > 0, "the join is one message");
         ok(!strcmp(uti_say(UTI_SAY_CAPTION), "O to play, centre board"), "carrying her move");
 
-        uti_me(alex, 16);
+        be(0, alex);
         ok(uti_msg_read(join) == 0 && uti_msg_seat() == UTI_SEAT_O, "alex opens it as O");
         ok(uti_msg_can_move() && uti_msg_play(36), "and answers");
         ok(uti_msg_can_replace(37) && !uti_msg_can_replace(36) && !uti_msg_can_replace(40)
@@ -574,34 +591,68 @@ int main(void)
         ok(uti_msg_prefer(reply, join) < 0 && uti_msg_prefer(join, reply) > 0, "the reply outranks the join");
         ok(uti_msg_same_game(reply, inv), "all one game");
 
-        uti_me(cleo, 16);
+        be(2, cleo);
         ok(uti_msg_read(reply) == 0 && uti_msg_seat() == UTI_SEAT_SPECTATOR, "cleo watches");
         ok(!uti_msg_play(0) && !uti_msg_undo(), "and cannot touch it");
         ok(!strcmp(uti_say(UTI_SAY_WATCH_LINE), " to play") && uti_say_watch_mark() == 1 /* X */
            && !strcmp(uti_say(UTI_SAY_WATCH_SPOKEN), "X to play"),
            "the spectator's line: a drawn X, then the words");
-        /* THE TEMPORARY CLAIM (1.0(9)): a creator locked out of her own game
-         * takes O's tag for that one seed, and only that seed. */
+        /* THE SEAT, RESOLVED (1.0(9)): Messages rotated alex's participant
+         * id, so neither sealed tag is his. His record seats him; without
+         * it, the sender of the bubble does, in a DM only. */
         {
+            static const uint8_t alex2[16] = { 0xa2, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
             uint8_t o[UTI_TAG_LEN], x[UTI_TAG_LEN], me[UTI_TAG_LEN], h[UTI_TAG_LEN];
-            ok(uti_msg_tag(UTI_TAG_O, o) && uti_msg_tag(UTI_TAG_X, x) && memcmp(o, x, UTI_TAG_LEN)
-               && !uti_msg_claimed(), "the diagnostics read both seats' tags, and nothing is claimed");
-            ok(!strncmp(uti_msg_seat_why(), "spectator", 9), "and say why cleo watches");
-            ok(uti_claim(uti_msg_seed(), o) && uti_msg_claimed() && uti_msg_seat() == UTI_SEAT_O,
-               "cleo claims O on this game and is O");
-            ok(uti_msg_tag(UTI_TAG_ME, me) && !memcmp(me, o, UTI_TAG_LEN)
+            ok(uti_msg_seat_by() == UTI_BY_NONE && uti_msg_record() == 0
+               && !strncmp(uti_msg_seat_why(), "spectator by nothing", 20),
+               "cleo watches, and nothing seated her");
+
+            be(0, alex2);                       /* his phone, his records, a new id */
+            ok(uti_msg_read(join) == 0 && uti_msg_seat() == UTI_SEAT_O
+               && uti_msg_seat_by() == UTI_BY_RECORD, "rotated alex is O by the record he wrote at creation");
+            ok(uti_msg_tag(UTI_TAG_ME, me) && uti_msg_tag(UTI_TAG_O, o) && !memcmp(me, o, UTI_TAG_LEN)
                && uti_msg_tag(UTI_TAG_HASHED, h) && memcmp(h, o, UTI_TAG_LEN),
-               "her seat tag is the claim; her own hash is unchanged");
-            ok(uti_claim(uti_msg_seed(), x) && uti_msg_seat() == UTI_SEAT_X,
-               "a second claim on the same seed replaces the first");
+               "he plays with O's tag; his own hash is not it");
+            ok(uti_msg_can_move() && uti_msg_play(37), "and he can answer");
+            ok(uti_msg_seat() == UTI_SEAT_O && uti_msg_undo() && uti_msg_seat() == UTI_SEAT_O,
+               "and take it back");
+
+            be(3, alex2);                       /* a new id AND no records: the owner's phone */
+            ok(uti_msg_read(join) == 0 && uti_msg_seat() == UTI_SEAT_SPECTATOR, "with no witness he watches");
+            uti_msg_sender(join, 0, 0);
+            ok(uti_msg_seat() == UTI_SEAT_SPECTATOR, "a group chat infers nothing");
+            uti_msg_sender(reply, 1, 0);
+            ok(uti_msg_seat() == UTI_SEAT_SPECTATOR, "a fact about another message says nothing");
+            ok(!uti_seats_dirty(), "and nothing was recorded");
+            uti_msg_sender(join, 1, 0);
+            ok(uti_msg_seat_by() == UTI_BY_SENDER && uti_msg_seat() == UTI_SEAT_O,
+               "a DM, vera's bubble, O to move: he is O by the sender");
+            ok(uti_seats_dirty() && uti_msg_record() == UTI_SEAT_O, "and it is recorded");
+            ok(uti_msg_play(37) && uti_msg_seat() == UTI_SEAT_O && uti_msg_seat_by() == UTI_BY_RECORD,
+               "after his move the sender fact is stale, and the record holds");
+            {
+                uint8_t out[UTI_SEATS_BYTES];
+                ok(uti_seats_save(out, UTI_SEATS_BYTES) == 9 && !uti_seats_dirty()
+                   && uti_seats_save(out, 3) == -1, "the records save, and a short buffer is refused");
+            }
+
+            be(2, cleo);
+            ok(uti_msg_read(reply) == 0 && uti_msg_seat() == UTI_SEAT_SPECTATOR, "cleo is still watching");
+            ok(uti_msg_tag(UTI_TAG_O, o) && uti_msg_tag(UTI_TAG_X, x) && memcmp(o, x, UTI_TAG_LEN),
+               "the diagnostics read both seats' tags");
+            ok(uti_msg_claim(UTI_SEAT_X) && uti_msg_seat() == UTI_SEAT_X
+               && uti_msg_seat_by() == UTI_BY_RECORD, "a claim is a record: cleo claims X and is X");
+            ok(uti_msg_claim(UTI_SEAT_O) && uti_msg_seat() == UTI_SEAT_O && uti_msg_record() == UTI_SEAT_O,
+               "a second claim replaces the first");
             char mine[160];
             ok(uti_msg_text(mine, sizeof mine) > 0 && uti_msg_open(1726990777) == 1
-               && uti_msg_seat() == UTI_SEAT_WAITING && !uti_msg_claimed()
+               && uti_msg_seat() == UTI_SEAT_WAITING && uti_msg_seat_by() == UTI_BY_RECORD
                && uti_msg_tag(UTI_TAG_O, o) && uti_msg_tag(UTI_TAG_HASHED, h) && !memcmp(o, h, UTI_TAG_LEN),
-               "a new invitation is her own hash, not a claim");
-            ok(uti_msg_read(mine) == 0 && uti_msg_seat() == UTI_SEAT_X, "the claimed game is still hers");
-            uti_claims_clear();
-            ok(uti_msg_seat() == UTI_SEAT_SPECTATOR, "cleared, she watches again");
+               "her own new invitation is her hash, and recorded");
+            ok(!uti_msg_claim(UTI_SEAT_X), "nobody claims X on an open invitation");
+            ok(uti_msg_read(mine) == 0 && uti_msg_seat() == UTI_SEAT_O, "the claimed game is still hers");
+            uti_msg_forget();
+            ok(uti_msg_seat() == UTI_SEAT_SPECTATOR && uti_msg_record() == 0, "forgotten, she watches again");
         }
         ok(!strcmp(uti_say_cell(40), "Centre board, centre square, X")
            && !strcmp(uti_say_cell(36), "Centre board, top left square, O")

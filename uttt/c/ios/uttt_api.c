@@ -6,6 +6,7 @@
 #include "../src/uttt_msg.h"
 #include "../src/uttt_say.h"
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -43,6 +44,9 @@ _Static_assert(UTI_SAY_DOOR_COPY == UTTT_SAY_DOOR_COPY && UTI_SAY_DOOR_COPIED ==
 _Static_assert(UTI_SAY_WATCH_SPOKEN == UTTT_SAY_WATCH_SPOKEN, "say WATCH_SPOKEN");
 _Static_assert(UTI_SAY_WATCH_SPOKEN + 1 == UTTT_SAY_COUNT, "every key has a host name");
 _Static_assert(UTI_TAG_LEN == UTM_TAG_LEN, "tag length");
+_Static_assert(UTI_SEATS_BYTES == UTM_REC_BYTES, "seat records");
+_Static_assert(UTI_BY_NONE == UTM_BY_NONE && UTI_BY_RECORD == UTM_BY_RECORD
+            && UTI_BY_TAG == UTM_BY_TAG && UTI_BY_SENDER == UTM_BY_SENDER, "witnesses");
 _Static_assert(UTI_CH_STILL == UTTT_CH_STILL && UTI_CH_STAGE == UTTT_CH_STAGE
             && UTI_CH_REPLAY == UTTT_CH_REPLAY && UTI_CH_THEIRS == UTTT_CH_THEIRS
             && UTI_CH_ARRIVAL == UTTT_CH_ARRIVAL && UTI_CH_SETTLE == UTTT_CH_SETTLE
@@ -80,9 +84,16 @@ static struct {
     UtmMsg    m;
     uint8_t   me[UTM_MAX_ID];       /* this device's identity bytes */
     int       me_n;
-    /* TEMPORARY claims (uti_claim): on game `seed`, my tag is `tag`. */
-    struct { int32_t seed; uint8_t tag[UTM_TAG_LEN]; } claim[UTI_CLAIMS_MAX];
-    int       n_claims;
+    /* THIS DEVICE'S SEAT RECORDS (utm_rec_*), the host's bytes: loaded
+     * with uti_seats_load, written back when uti_seats_dirty. */
+    uint8_t   rec[UTM_REC_BYTES];
+    int       rec_n;
+    int       rec_dirty;
+    /* THE SENDER FACT (uti_msg_sender): about this one message only. */
+    uint8_t   sent_msg[UTM_MAX_BYTES];
+    int       sent_n;
+    int       sent_dm, sent_mine;
+    char      why[200];
     char      said[160];
     int       overflow;
     UtttDL    dl;
@@ -393,41 +404,106 @@ const char *uti_place_name(int block, int spoken)
 
 
 /* ---------------------------------------------------------- the message */
-static int claimed(uint8_t out[UTM_TAG_LEN])
+
+/* The sender fact, if it is about the resident message: 1, 0, or
+ * UTM_SENT_UNKNOWN. Bound to the exact bytes, because the resident is often
+ * not the bubble that was tapped (a staged draft outranks it, a move lands
+ * on it) and a fact about one message is a lie about any other. */
+static int sent_fact(int *dm)
 {
-    for (int i = 0; i < S.n_claims; i++)
-        if (S.claim[i].seed == S.m.seed) {
-            if (out) memcpy(out, S.claim[i].tag, UTM_TAG_LEN);
-            return 1;
-        }
-    return 0;
+    uint8_t b[UTM_MAX_BYTES];
+    int n = S.sent_n ? utm_encode(&S.m, b, sizeof b) : -1;
+    int same = n > 0 && n == S.sent_n && !memcmp(b, S.sent_msg, (size_t)n);
+    *dm = same && S.sent_dm;
+    return same ? S.sent_mine : UTM_SENT_UNKNOWN;
 }
 
-/* MY TAG ON THE RESIDENT GAME: a claim for its seed, else the hash of my
- * identity bytes with its seed. Every seat question goes through here. */
-static void my_tag(uint8_t out[UTM_TAG_LEN])
+/* MY SEAT ON THE RESIDENT GAME, by utm_resolve's witnesses, and the tag
+ * that plays it: a seat's own tag once I am in it, else the hash of my
+ * identity (the open seat takes it; a spectator matches nothing). A seat
+ * found any way but the record is recorded, so the next question - after a
+ * move, when the sender fact no longer describes the board - asks (a).
+ * Every seat question goes through here. */
+static int resolve(uint8_t tag[UTM_TAG_LEN], int *by)
 {
-    if (claimed(out)) return;
-    utm_tag(S.m.seed, S.me, S.me_n, out);
-}
-
-void uti_claims_clear(void) { S.n_claims = 0; }
-
-int uti_claim(int32_t seed, const uint8_t tag[UTI_TAG_LEN])
-{
-    if (!tag || !seed) return 0;
-    int i = 0;
-    while (i < S.n_claims && S.claim[i].seed != seed) i++;
-    if (i == S.n_claims) {
-        if (S.n_claims == UTI_CLAIMS_MAX) return 0;
-        S.n_claims++;
+    uint8_t h[UTM_TAG_LEN];
+    int dm, b;
+    utm_tag(S.m.seed, S.me, S.me_n, h);
+    int rec = utm_rec_find(S.rec, S.rec_n, &S.m);
+    int sent = sent_fact(&dm);
+    int seat = utm_resolve(&S.m, rec, utm_seat(&S.m, h), dm, sent, &b);
+    if (by) *by = b;
+    if (b != UTM_BY_RECORD && (seat == UTM_SEAT_X || seat == UTM_SEAT_O || seat == UTM_SEAT_WAITING)) {
+        S.rec_n = utm_rec_put(S.rec, S.rec_n, &S.m, seat);
+        S.rec_dirty = 1;
     }
-    S.claim[i].seed = seed;
-    memcpy(S.claim[i].tag, tag, UTM_TAG_LEN);
+    if (tag) {
+        switch (seat) {
+        case UTM_SEAT_X:                       memcpy(tag, S.m.x, UTM_TAG_LEN); break;
+        case UTM_SEAT_O: case UTM_SEAT_WAITING: memcpy(tag, S.m.o, UTM_TAG_LEN); break;
+        default:                               memcpy(tag, h, UTM_TAG_LEN); break;
+        }
+    }
+    return seat;
+}
+
+static void my_tag(uint8_t out[UTM_TAG_LEN]) { resolve(out, NULL); }
+
+void uti_seats_load(const uint8_t *bytes, int n)
+{
+    if (!bytes || n < 0) n = 0;
+    if (n > UTM_REC_BYTES) n = UTM_REC_BYTES;
+    n -= n % UTM_REC_LEN;
+    if (n) memcpy(S.rec, bytes, (size_t)n);
+    S.rec_n = n;
+    S.rec_dirty = 0;
+}
+
+int uti_seats_dirty(void) { return S.rec_dirty; }
+
+int uti_seats_save(uint8_t *out, int cap)
+{
+    if (!out || cap < S.rec_n) return -1;
+    memcpy(out, S.rec, (size_t)S.rec_n);
+    S.rec_dirty = 0;
+    return S.rec_n;
+}
+
+void uti_msg_sender(const char *text, int is_dm, int i_sent)
+{
+    UtmMsg m;
+    S.sent_n = 0;
+    if (!text || (i_sent != 0 && i_sent != 1) || utm_text_decode(text, &m) != UTM_EOK) return;
+    int n = utm_encode(&m, S.sent_msg, sizeof S.sent_msg);
+    if (n <= 0) return;
+    S.sent_n = n;
+    S.sent_dm = is_dm != 0;
+    S.sent_mine = i_sent;
+}
+
+int uti_msg_record(void) { return utm_rec_find(S.rec, S.rec_n, &S.m); }
+
+int uti_msg_claim(int seat)
+{
+    int n = utm_rec_put(S.rec, S.rec_n, &S.m, seat);
+    if (utm_rec_find(S.rec, n, &S.m) != (seat == UTI_SEAT_WAITING ? UTI_SEAT_O : seat)) return 0;
+    S.rec_n = n;
+    S.rec_dirty = 1;
     return 1;
 }
 
-int uti_msg_claimed(void) { return claimed(NULL); }
+void uti_msg_forget(void)
+{
+    S.rec_n = utm_rec_forget(S.rec, S.rec_n, &S.m);
+    S.rec_dirty = 1;
+}
+
+int uti_msg_seat_by(void)
+{
+    int by;
+    resolve(NULL, &by);
+    return by;
+}
 
 int uti_msg_tag(int which, uint8_t out[UTI_TAG_LEN])
 {
@@ -449,9 +525,15 @@ void uti_msg_tag_of(const uint8_t *id, int n, uint8_t out[UTI_TAG_LEN])
 
 const char *uti_msg_seat_why(void)
 {
-    uint8_t me[UTM_TAG_LEN];
-    my_tag(me);
-    return utm_seat_why(&S.m, me);
+    static const char *const by_name[] = { "nothing", "the record", "the tag", "the sender" };
+    static const char *const seat_name[] = { "spectator", "X", "O", "waiting", "open" };
+    uint8_t h[UTM_TAG_LEN];
+    int by;
+    int seat = resolve(NULL, &by);
+    utm_tag(S.m.seed, S.me, S.me_n, h);
+    snprintf(S.why, sizeof S.why, "%s by %s; tag alone: %s",
+             seat_name[seat], by_name[by], utm_seat_why(&S.m, h));
+    return S.why;
 }
 
 void uti_me(const uint8_t *id, int n)
@@ -468,6 +550,8 @@ int uti_msg_open(int64_t unix_seconds)
     int32_t seed = utm_seed_at(unix_seconds);
     utm_tag(seed, S.me, S.me_n, me);
     utm_open(&S.m, seed, me);
+    S.rec_n = utm_rec_put(S.rec, S.rec_n, &S.m, UTM_SEAT_O);   /* I created it */
+    S.rec_dirty = 1;
     return 1;
 }
 
@@ -510,7 +594,13 @@ int uti_msg_play(int mv)
 {
     uint8_t me[UTM_TAG_LEN];
     my_tag(me);
-    return utm_play(&S.m, me, mv);
+    int joining = !S.m.sealed;
+    if (!utm_play(&S.m, me, mv)) return 0;
+    if (joining) {                                      /* I took X */
+        S.rec_n = utm_rec_put(S.rec, S.rec_n, &S.m, UTM_SEAT_X);
+        S.rec_dirty = 1;
+    }
+    return 1;
 }
 
 int uti_msg_undo(void)
