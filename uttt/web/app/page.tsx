@@ -14,7 +14,7 @@ export default function Home() {
             </p>
             <nav className={styles.links} aria-label="About this site">
                 <a href="/about">About</a>
-                <a href="/privacy">Privacy</a>
+                <a href="/privacy-msg">iMessage app privacy</a>
             </nav>
         </main>
     );

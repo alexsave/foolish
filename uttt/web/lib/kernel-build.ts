@@ -4,21 +4,17 @@
 // and a static PNG. A page a reviewer opens should not need JavaScript, or the
 // kernel loading in their browser, to show its words.
 //
-// Like lib/kernel.ts it knows function names and nothing else.
+// Like lib/kernel.ts it knows function names and nothing else
+// (lib/kernel-exports.ts). This is the ONLY place the napkin becomes an image:
+// every page shows /napkin.png (app/globals.css).
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
+import { cString, type UtttExports } from './kernel-exports';
 
-interface Exports {
-    memory: WebAssembly.Memory;
-    uw_rules_count(): number;
-    uw_rules_line(i: number): number;
-    uw_rules_title(): number;
-    uw_paper(side: number): number;
-}
 
-let kernel: Exports | null = null;
+let kernel: UtttExports | null = null;
 
 /** PNG's CRC-32, table-driven (node:zlib only has one from Node 20.15/22.2). */
 const CRC = Array.from({ length: 256 }, (_, n) => {
@@ -32,27 +28,21 @@ function crc32(b: Uint8Array): number {
     return (c ^ 0xffffffff) >>> 0;
 }
 
-function open(): Exports {
+function open(): UtttExports {
     if (kernel) return kernel;
     const bytes = readFileSync(join(process.cwd(), 'public', 'uttt.wasm'));
     const instance = new WebAssembly.Instance(new WebAssembly.Module(bytes), {});
-    kernel = instance.exports as unknown as Exports;
+    kernel = instance.exports as unknown as UtttExports;
     return kernel;
 }
 
-function text(w: Exports, p: number): string {
-    const all = new Uint8Array(w.memory.buffer);
-    let e = p;
-    while (all[e]) e++;
-    return new TextDecoder().decode(all.subarray(p, e));
-}
 
 /** The rules sheet: its title and its lines, as the app shows them. */
 export function rules(): { title: string; lines: string[] } {
     const w = open();
     const lines: string[] = [];
-    for (let i = 0, n = w.uw_rules_count(); i < n; i++) lines.push(text(w, w.uw_rules_line(i)));
-    return { title: text(w, w.uw_rules_title()), lines };
+    for (let i = 0, n = w.uw_rules_count(); i < n; i++) lines.push(cString(w.memory, w.uw_rules_line(i)));
+    return { title: cString(w.memory, w.uw_rules_title()), lines };
 }
 
 /** The napkin (uttt_paper) at side x side, as a PNG. */

@@ -8,7 +8,7 @@ Nothing below was checked against the live App Store Connect record or a running
 
 | Item | State | Where |
 |---|---|---|
-| Privacy Policy URL | Done: `https://uttt.live/privacy`, plain HTML, no script | `uttt/web/public/privacy.html` |
+| Privacy Policy URL | Done: `https://uttt.live/privacy-msg`, plain HTML, no script, scoped to the iMessage app | `uttt/web/public/privacy-msg.html` |
 | Support URL | Done: `https://uttt.live/about#support` | `uttt/web/app/about/page.tsx` |
 | Marketing URL (optional) | Done: `https://uttt.live/about` | the same page |
 | Privacy manifests | Done: container, extension, and UtttKit (`UserDefaults`, reason CA92.1) | `uttt/ios/*/PrivacyInfo.xcprivacy` |
@@ -35,7 +35,7 @@ Nothing below was checked against the live App Store Connect record or a running
 | Bundle ID | `cards.uttt.msg` | Extension `cards.uttt.msg.MessagesExtension`. |
 | Primary language | English (U.S.) | The app ships English only (no `CFBundleLocalizations`). |
 | Copyright | `2026 <legal name>` | Owner. |
-| Privacy Policy URL | `https://uttt.live/privacy` | |
+| Privacy Policy URL | `https://uttt.live/privacy-msg` | The iMessage app's own policy, and only the app's. |
 | Support URL | `https://uttt.live/about#support` | Has the contact address; reads without JavaScript. |
 | Marketing URL | `https://uttt.live/about` | Optional. |
 
@@ -84,9 +84,9 @@ Apple counts data as collected when it leaves the device in a way the developer 
 - What a message carries: the moves, the time the game started (the drawing seed), and two 9-byte seat tags, each a hash of the anonymous participant identifier Messages hands the app (`uttt/c/src/uttt_msg.h`). The developer never receives any of it.
 - On the device: which side is mine in the newest 256 games (`UtttSeats.swift`, `UserDefaults`). It never leaves the device.
 - No names, no free text, no contacts, no analytics, no ads, no SDKs, no purchases.
-- uttt.live keeps nothing; its host's standard server logs are the host's, and the policy says so.
+- The policy covers the app only. uttt.live, where a copied replay link opens, is a separate website and keeps nothing of its own.
 
-This matches `uttt.live/privacy` word for word in substance. Keep the two in step: foolish's lesson was that a reviewer found a contradiction between its label and its own policy without playing a game.
+This matches `uttt.live/privacy-msg` word for word in substance. Keep the two in step: foolish's lesson was that a reviewer found a contradiction between its label and its own policy without playing a game.
 
 ## 5. Age rating
 
@@ -133,4 +133,4 @@ The fix is the one the file already plans: delete the claim buttons and `uti_msg
 ## 11. After approval
 
 - The rules sheet's new wording (the illustrated mockup, `uttt/docs/RULES.html`) is not in the kernel yet; the app and uttt.live both show the kernel's current six lines, so they agree today. When the kernel table changes, the about page follows on its next build.
-- Keep `uttt.live/privacy` in step with any change to what a message carries.
+- Keep `uttt.live/privacy-msg` in step with any change to what a message carries.

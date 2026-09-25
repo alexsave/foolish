@@ -77,14 +77,14 @@ export default function About() {
                         which iPhone and iOS version you are on.
                     </p>
                     <p className={styles.p}>
-                        No accounts, no ads, no tracking, no purchases. The game collects nothing; see the{' '}
-                        <a href="/privacy">privacy policy</a>.
+                        No accounts, no ads, no tracking, no purchases. The iMessage app collects nothing; see
+                        its <a href="/privacy-msg">privacy policy</a>.
                     </p>
                 </section>
 
                 <footer className={styles.foot}>
                     <a href="/">uttt.live</a>
-                    <a href="/privacy">Privacy</a>
+                    <a href="/privacy-msg">iMessage app privacy</a>
                     <a href={`mailto:${CONTACT}`}>Contact</a>
                 </footer>
             </main>

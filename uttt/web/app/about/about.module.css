@@ -1,10 +1,7 @@
 /* The about page: the rules sheet's paper, ink and type (docs/RULES.html),
-   laid out for reading. The napkin is /napkin.png - the kernel's own paper,
-   drawn at build - stretched over the page as the app stretches it over the
-   rules sheet. */
+   laid out for reading, on the napkin every page has (app/globals.css). */
 .sheet {
   min-height: 100dvh;
-  background: var(--paper) url('/napkin.png') 0 0 / 100% 100% no-repeat fixed;
   padding: max(28px, env(safe-area-inset-top)) 16px max(36px, env(safe-area-inset-bottom));
 }
 
