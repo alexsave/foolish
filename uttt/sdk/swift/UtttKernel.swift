@@ -157,7 +157,63 @@ public enum Uttt {
         uti_msg_same_game(a, b) != 0
     }
 
-    // MARK: diagnostics and the TEMPORARY claim (1.0(9); uttt_api.h)
+    // MARK: the seat's witnesses (uttt_api.h, uttt_msg.h utm_resolve)
+
+    /// Hand the kernel this device's seat records - bytes it wrote, stored
+    /// as they are (UtttSeats).
+    public static func loadSeats(_ d: Data) {
+        d.withUnsafeBytes { raw in
+            uti_seats_load(raw.bindMemory(to: UInt8.self).baseAddress, Int32(d.count))
+        }
+    }
+
+    /// True when the kernel recorded a seat since the last save.
+    public static var seatsDirty: Bool { uti_seats_dirty() != 0 }
+
+    /// The records to store, and dirty is cleared. Nil only on a kernel bug.
+    public static func saveSeats() -> Data? {
+        var b = [UInt8](repeating: 0, count: Int(UTI_SEATS_BYTES))
+        let n = uti_seats_save(&b, Int32(b.count))
+        return n >= 0 ? Data(b.prefix(Int(n))) : nil
+    }
+
+    /// THE SENDER FACT about the message in `text`: whether this device sent
+    /// it, in a chat with exactly one other person. The kernel applies it only
+    /// while that exact message is the resident one. Nil clears it.
+    public static func sender(of text: String?, isDM: Bool = false, iSent: Bool = false) {
+        guard let text else { uti_msg_sender(nil, 0, -1); return }
+        uti_msg_sender(text, isDM ? 1 : 0, iSent ? 1 : 0)
+    }
+
+    /// This device's record for the resident game: .x, .o, or nil.
+    public static var record: Seat? {
+        let r = uti_msg_record()
+        return r == 0 ? nil : Seat(r)
+    }
+
+    /// Which witness seated me on the resident game.
+    public enum Witness: Int32, CustomStringConvertible {
+        case none = 0, record = 1, tag = 2, sender = 3
+        public var description: String {
+            switch self {
+            case .none: return "nothing"
+            case .record: return "record"
+            case .tag: return "tag"
+            case .sender: return "sender"
+            }
+        }
+    }
+    public static var seatBy: Witness { Witness(rawValue: uti_msg_seat_by()) ?? .none }
+
+    /// TEMPORARY (1.0(9)): the diagnostics panel's claim, which writes this
+    /// device's record for the resident game. X only once it is sealed.
+    @discardableResult
+    public static func claim(_ seat: Seat) -> Bool {
+        uti_msg_claim(seat == .x ? UTI_SEAT_X : UTI_SEAT_O) != 0
+    }
+    /// Drop this device's record of the resident game.
+    public static func forgetSeat() { uti_msg_forget() }
+
 
     public enum Tag: Int32 {
         case me = 0, hashed = 1, o = 2, x = 3
@@ -181,17 +237,6 @@ public enum Uttt {
 
     public static var seatWhy: String { String(cString: uti_msg_seat_why()) }
     public static var sealed: Bool { uti_msg_sealed() != 0 }
-    public static var claimed: Bool { uti_msg_claimed() != 0 }
-
-    /// Hand the kernel every held claim (seed -> tag), replacing its copy.
-    public static func claims(_ all: [Int32: Data]) {
-        uti_claims_clear()
-        for (seed, tag) in all where tag.count == Int(UTI_TAG_LEN) {
-            tag.withUnsafeBytes { raw in
-                _ = uti_claim(seed, raw.bindMemory(to: UInt8.self).baseAddress)
-            }
-        }
-    }
 
     /// Seal the resident game with these two identities in O and X. Only the
     /// debug harness and the preview can reach a game this way.

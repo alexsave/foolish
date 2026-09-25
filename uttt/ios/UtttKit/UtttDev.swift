@@ -75,6 +75,19 @@ public enum UtttDev {
     /// participant, so a seeded game can name both seats without two devices.
     public static func identity(_ word: String) -> Data { Data("dev:\(word)".utf8) }
 
+    /// `dev.rotate`: THE ID MESSAGES ROTATED. While the file exists every
+    /// identity this device hands the kernel - a dev seat's or the real
+    /// participant's - gets a suffix, so no tag it sealed matches any more:
+    /// exactly what a reinstall or a TestFlight <-> development swap does to
+    /// a real phone (PR #233). The seat must then come from the record or
+    /// the sender. The records are untouched: they are keyed by the game.
+    public static var rotated: Bool { dev.exists("dev.rotate") }
+
+    /// `id`, rotated when `dev.rotate` says so.
+    public static func rotate(_ id: Data) -> Data {
+        rotated ? id + Data("|rotated".utf8) : id
+    }
+
     /// Ask who this device is every time a bubble is opened. Off unless the
     /// rig writes the file, and absent from a shipping build entirely.
     public static var picker: Bool { dev.exists(pickerFile) }

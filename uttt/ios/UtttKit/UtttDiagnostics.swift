@@ -12,30 +12,13 @@
 // shipped, over the game rather than instead of it. Nothing here is secret:
 // a tic-tac-toe board has no hidden information.
 //
-// THE CLAIM IS TEMPORARY. It exists until the cause is fixed; delete this
-// file's `UtttClaims`, the kernel's uti_claim* and the buttons together.
+// THE CLAIM IS TEMPORARY. It writes this device's seat record for the game
+// (UtttSeats, the kernel's utm_rec_*) - the same record a create, a join or
+// a sender-resolved seat writes - so it needs no machinery of its own.
+// Delete the buttons and uti_msg_claim together once 1.0(9) has shown the
+// record and the sender fallback seat the owner by themselves.
 
 import UIKit
-
-/// Claims this device holds, seed -> the seat tag it claims on that game.
-/// The extension's own defaults (Release has no App Group); a claim for one
-/// game never touches another (the kernel checks the seed).
-public enum UtttClaims {
-    private static let key = "uttt.claims.v1"
-
-    public static var all: [Int32: Data] {
-        guard let d = UserDefaults.standard.dictionary(forKey: key) as? [String: Data] else { return [:] }
-        var out: [Int32: Data] = [:]
-        for (k, v) in d { if let s = Int32(k) { out[s] = v } }
-        return out
-    }
-
-    public static func set(_ tag: Data?, seed: Int32) {
-        var d = (UserDefaults.standard.dictionary(forKey: key) as? [String: Data]) ?? [:]
-        d[String(seed)] = tag
-        UserDefaults.standard.set(d, forKey: key)
-    }
-}
 
 /// The panel: scrollable monospaced text, Copy, and the claim buttons.
 public final class UtttDiagnosticsSheet: UIViewController {
@@ -83,10 +66,10 @@ public final class UtttDiagnosticsSheet: UIViewController {
         ])
         var claims = [button("Claim O") { [weak self] _ in self?.finish(.claimO) }]
         if canClaimX { claims.append(button("Claim X") { [weak self] _ in self?.finish(.claimX) }) }
-        if hasClaim { claims.append(button("Clear claim") { [weak self] _ in self?.finish(.clearClaim) }) }
+        if hasClaim { claims.append(button("Forget seat") { [weak self] _ in self?.finish(.clearClaim) }) }
         let row2 = UIStackView(arrangedSubviews: claims)
         let note = UILabel()
-        note.text = "Claim is temporary: it makes this device that seat on this game only."
+        note.text = "Claim writes this device's seat record for this game only; Forget drops it."
         note.font = .systemFont(ofSize: 11)
         note.textColor = .secondaryLabel
         note.numberOfLines = 0

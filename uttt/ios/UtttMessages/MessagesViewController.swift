@@ -162,6 +162,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func willResignActive(with conversation: MSConversation) {
         super.willResignActive(with: conversation)
+        UtttSeats.flush()
         conversationActive = false
     }
 
@@ -357,7 +358,9 @@ final class MessagesViewController: MSMessagesAppViewController {
             return
         }
         let other = mine == "a" ? "b" : "a"
-        Uttt.me(UtttDev.identity(other))
+        UtttSeats.use(other)                   /* the other phone's records */
+        Uttt.me(UtttDev.rotate(UtttDev.identity(other)))
+        Uttt.sender(of: nil)
         defer { identify(conversation) }
         guard Uttt.read(showing), Uttt.canMove else {
             UtttLog.fault("dev", "arrive: it is not \(other)'s move")
@@ -386,6 +389,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// a torn-down extension can have lost.
     override func didStartSending(_ message: MSMessage, conversation: MSConversation) {
         super.didStartSending(message, conversation: conversation)
+        UtttSeats.flush()                      /* a join records X as it is played */
         let wire = UtttWire(url: message.url) ?? staged
         UtttLog.note("send", wire.map { "\($0.text.count) chars" } ?? "NO PAYLOAD")
         markSent(wire)
@@ -615,16 +619,18 @@ final class MessagesViewController: MSMessagesAppViewController {
             UtttLog.note("present", "my own bubble, just sent - quiet")
             motion = .still
         }
-        UtttLog.note("present", "seed \(Uttt.seed) seat \(Uttt.seat) plies \(Uttt.plyCount) door \(Uttt.door)")
+        UtttLog.note("present", "seed \(Uttt.seed) seat \(Uttt.seat) by \(Uttt.seatBy) plies \(Uttt.plyCount) door \(Uttt.door)")
         showSeat(motion, conversation)
+        UtttSeats.flush()
     }
 
     /// The screen for the resident game, by this device's seat. One owner,
     /// so the DEBUG seeded path cannot show a spectator a player's screen.
     private func showSeat(_ motion: Uttt.Channel, _ conversation: MSConversation) {
         let door = Uttt.door
-        /* WHICH SEAT IS THIS DEVICE'S is the kernel's answer: it hashes this
-         * device's participant with the game's seed and looks for the result. */
+        /* WHICH SEAT IS THIS DEVICE'S is the kernel's answer: its record of
+         * the game, else the tag of this device's participant, else - in a
+         * DM - who sent the bubble (utm_resolve). */
         switch Uttt.seat {
         case .waiting:
             /* No door here: see UtttLobbyScreen. */
@@ -656,19 +662,45 @@ final class MessagesViewController: MSMessagesAppViewController {
     }
 
     /// WHO THIS DEVICE IS, told to the kernel before every question about a
-    /// seat. Messages' participant identifier is per device per conversation,
-    /// which is exactly the scope a seat needs.
+    /// seat: its identity, its seat records, and who sent the tapped bubble.
+    ///
+    /// THE IDENTITY IS NOT STABLE. Messages' participant id is a random UUID
+    /// it deletes with the extension (a reinstall, a TestFlight <->
+    /// development swap), so the kernel asks this device's own record of the
+    /// game first and the tag second (UtttSeats, utm_resolve).
     private func identify(_ conversation: MSConversation) {
-        /* TEMPORARY (1.0(9)): the seats this device claimed from the
-         * diagnostics panel, each for one game's seed (UtttClaims). */
-        Uttt.claims(UtttClaims.all)
 #if DEBUG
         if let word = UtttDev.seat {
-            Uttt.me(UtttDev.identity(word))
+            UtttSeats.use(word)
+            Uttt.me(UtttDev.rotate(UtttDev.identity(word)))
+            /* Both dev seats are this one participant, so who sent a bubble
+             * says nothing about which of them is holding it. */
+            Uttt.sender(of: nil)
             return
         }
 #endif
-        Uttt.me(participant: conversation.localParticipantIdentifier)
+        UtttSeats.use("")
+        var id = withUnsafeBytes(of: conversation.localParticipantIdentifier.uuid) { Data($0) }
+#if DEBUG
+        id = UtttDev.rotate(id)
+#endif
+        Uttt.me(id)
+        tellSender(conversation)
+    }
+
+    /// THE SENDER WITNESS: did this device send the tapped bubble, in a chat
+    /// with exactly one other person. Both ids come from Messages' table at
+    /// this moment, so the comparison holds after the ids rotate; it is made
+    /// here, live, and never stored. The kernel applies it only while that
+    /// exact message is the one on the board.
+    private func tellSender(_ conversation: MSConversation) {
+        guard let sel = conversation.selectedMessage, let text = sel.url?.absoluteString else {
+            Uttt.sender(of: nil)
+            return
+        }
+        Uttt.sender(of: text,
+                    isDM: conversation.remoteParticipantIdentifiers.count == 1,
+                    iSent: sel.senderParticipantIdentifier == conversation.localParticipantIdentifier)
     }
 
     /// This device's newest against what Messages handed over. The kernel
@@ -1120,17 +1152,22 @@ final class MessagesViewController: MSMessagesAppViewController {
         guard presentedViewController == nil else { return }
         identify(conversation)
         let seed = Uttt.seed
-        let o = Uttt.tag(.o), x = Uttt.tag(.x)
+        /* The resident message when the panel opened: the claim is about
+         * that game, whatever is resident by the time a button is tapped. */
+        let game = Uttt.messageText
         let sheet = UtttDiagnosticsSheet(
             text: { [weak self] in self?.diagnostics(conversation) ?? "" },
-            canClaimX: Uttt.sealed, hasClaim: UtttClaims.all[seed] != nil
+            canClaimX: Uttt.sealed, hasClaim: Uttt.record != nil
         ) { [weak self] action in
             guard let self else { return }
+            self.identify(conversation)
+            if let game { Uttt.read(game) }
             switch action {
-            case .claimO:     UtttClaims.set(o, seed: seed)
-            case .claimX:     UtttClaims.set(x, seed: seed)
-            case .clearClaim: UtttClaims.set(nil, seed: seed)
+            case .claimO:     Uttt.claim(.o)
+            case .claimX:     Uttt.claim(.x)
+            case .clearClaim: Uttt.forgetSeat()
             }
+            UtttSeats.flush()
             UtttLog.note("claim", "\(action) seed \(seed)")
             self.present(conversation, motion: .still)
         }
@@ -1158,8 +1195,9 @@ final class MessagesViewController: MSMessagesAppViewController {
             }
             return hits.isEmpty ? "nobody known" : hits.joined(separator: ", ")
         }
-        var debug = "no"
+        var debug = "no", rotated = "no"
 #if DEBUG
+        rotated = UtttDev.rotated ? "yes (dev.rotate)" : "no"
         debug = "yes, dev.seat=\(UtttDev.seat ?? "none") dev.picker=\(UtttDev.picker)"
 #endif
         let sel = conversation.selectedMessage
@@ -1177,8 +1215,9 @@ final class MessagesViewController: MSMessagesAppViewController {
             "X tag \(x.hex)  = \(Uttt.sealed ? who(x) : "(open)")",
             "my hashed tag \(hashed.hex)",
             "my seat tag   \(me.hex)",
-            "claim active \(Uttt.claimed)  (claims held: \(UtttClaims.all.count))",
-            "seat \(Uttt.seat)  mark \(Uttt.myMark)  canMove \(Uttt.canMove)",
+            "record \(Uttt.record.map { "\($0)" } ?? "none")  (this device's, for this game)",
+            "seat \(Uttt.seat)  by \(Uttt.seatBy)  mark \(Uttt.myMark)  canMove \(Uttt.canMove)",
+            "DM \(conversation.remoteParticipantIdentifiers.count == 1)  rotated \(rotated)",
             "why: \(Uttt.seatWhy)",
             "",
             "== messages",
