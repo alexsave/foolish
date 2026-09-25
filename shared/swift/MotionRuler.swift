@@ -16,9 +16,10 @@
 // module) and which the finder (shared/tools/motion) reads too, so what is
 // drawn and what is looked for cannot drift apart.
 //
-// WHAT A PRODUCT SUPPLIES: the App Group its dev files live in, and where the
-// squares go. Everything here is product-free. DEBUG only - the release branch
-// compiles to no-ops so call sites stay unconditional.
+// WHAT A PRODUCT SUPPLIES: where the squares go, and whether the ruler is on
+// (a dev file it reads through MessagesKit/DevFlags.swift). Everything here
+// is product-free. DEBUG only - the release branch compiles to no-ops so call
+// sites stay unconditional.
 //
 // UIKIT AND CORE ANIMATION ONLY: the bars, the strip and the squares are
 // plain layers, the clock a row of layers a display link recolours, so a
@@ -32,31 +33,6 @@ import CMotionRuler
 #if DEBUG
 
 public enum MotionRuler {
-    /// A dev flag is a FILE in the App Group, read fresh every time. A file and
-    /// not a UserDefaults key: a `defaults write` from outside the sandbox lands
-    /// in the wrong domain and cfprefsd caches App Group preferences.
-    public static func flag(_ name: String, group: String) -> Bool {
-        guard let dir = container(group) else { return false }
-        return FileManager.default.fileExists(atPath: dir.appendingPathComponent(name).path)
-    }
-
-    /// THE GROUP'S DIRECTORY, looked up once per process. The FILE in it is
-    /// still read fresh every time; only where the directory is gets cached.
-    /// `containerURL(forSecurityApplicationGroupIdentifier:)` takes dyld's
-    /// loader lock and an XPC round trip, and a `sample` of an opening drawer
-    /// (TESTFLIGHT_PLAN.md 12) put 30 main-thread samples (~40 ms) in it under
-    /// ONE view body that asked whether the ruler was on. The directory of an
-    /// App Group never moves while the process lives.
-    public static func container(_ group: String) -> URL? {
-        lock.lock(); defer { lock.unlock() }
-        if let u = containers[group] { return u }
-        let u = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)
-        containers[group] = u
-        return u
-    }
-    nonisolated(unsafe) private static var containers: [String: URL] = [:]
-    private static let lock = NSLock()
-
     public static let band = CGFloat(MR_BAND_PT)
     public static let strip = CGFloat(MR_STRIP_PT)
     public static let edge = CGFloat(MR_EDGE_PT)
@@ -248,7 +224,6 @@ public final class MotionRulerClock: UIView {
 #else
 
 public enum MotionRuler {
-    public static func flag(_ name: String, group: String) -> Bool { false }
     public enum Ink: CaseIterable { case magenta, cyan, yellow, orange, blue, violet, lime, pink }
 }
 

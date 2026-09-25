@@ -163,6 +163,9 @@ targets:
       - path: ../sdk/swift
       # The product-free debug ruler (DEBUG-only; UtttRuler places it).
       - path: ../../shared/swift/MotionRuler.swift
+      # The DEBUG dev-file reader (App Group lookup once, dev.* files read
+      # fresh); UtttDev keeps the keys. Compiles to nothing in Release.
+      - path: ../../shared/swift/MessagesKit/DevFlags.swift
       # The staged-but-unsent reminder at Messages' Send button, shared with
       # the sister product, on UIKit and Core Animation (SendHintView; the
       # sister product's SwiftUI SendHint reads the same numbers); the caption

@@ -1912,11 +1912,7 @@ struct GameSurface: View {
         // 2 players. A file, not a UserDefaults key: `defaults write` from
         // outside lands in the wrong domain and cfprefsd caches group prefs
         // until a reboot. Compiled out of every Release build.
-        if let dir = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: "group.cards.foolish.msg"),
-           let raw = try? String(contentsOf: dir.appendingPathComponent("dev.seed"),
-                                 encoding: .utf8),
-           let n = UInt8(raw.trimmingCharacters(in: .whitespacesAndNewlines)) {
+        if let n = MessageDevBoard.genesisSeed {
             seed = Data(repeating: n, count: 32)
         }
         #endif
