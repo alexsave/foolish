@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rules Sheet Rewrites</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/roughjs@4.6.6/bundled/rough.js"></script>
+<style>
+/* One look on purpose: the page is the same dark bench as uttt/docs/UI.html,
+   and each sheet is the app's own napkin paper sitting on it. */
+:root{
+  color-scheme: dark;
+  --pg:#0d0e11; --pg2:#141519; --ln:#23252b; --tx:#e7e6e2; --mut:#8d8f97; --soft:#b9bac0;
+  --acc:#d8734a;
+  --ink:#1d1b16; --label:#8a8577; --muted:#6b6659;
+  --xink:#25376b; --oink:#a8321f; --grid:#2f2b26;
+  --wash:rgba(214,168,54,.34); --washline:#d6a836;
+  --ui:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --sys:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  --hand:'Caveat','Segoe Print','Bradley Hand',cursive;
+  --nz:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='560' height='560'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='560' height='560' filter='url(%23f)' opacity='0.5'/></svg>");
+  --nzc:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='900' height='900'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.014' numOctaves='3' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='900' height='900' filter='url(%23f)' opacity='0.55'/></svg>");
+}
+*{box-sizing:border-box}
+body{background:var(--pg);color:var(--tx);font:400 15.5px/1.62 var(--ui);
+  -webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto;padding-inline:16px;padding-block:34px 90px}
+@media (min-width:700px){.wrap{padding-inline:30px}}
+
+.kicker{font:700 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--acc);margin:0 0 15px}
+h1{font:700 clamp(30px,5vw,40px)/1.08 var(--ui);letter-spacing:-.022em;margin:0 0 14px;
+  max-width:19ch;text-wrap:balance}
+.lede{color:var(--soft);max-width:68ch;margin:0 0 8px}
+.lede b{color:var(--tx);font-weight:600}
+code{font:500 .88em/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:#d9dae0;
+  background:#1c1d22;padding:2px 5px;border-radius:4px}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));
+  gap:44px 30px;margin-top:40px;align-items:start}
+.variant{display:flex;flex-direction:column;gap:12px;min-width:0}
+.h4{font:620 15.5px/1.3 var(--ui);margin:0;display:flex;align-items:baseline;gap:9px}
+.pill{font:700 10.5px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.1em;
+  background:#2a2c33;color:#c9cbd2;padding:4px 7px;border-radius:4px}
+.pill.g{background:var(--washline);color:#241c06}
+.why{color:#9fa1a8;font-size:13.6px;line-height:1.56;margin:0;max-width:52ch}
+.why b{color:var(--tx);font-weight:600}
+.tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+button.copy{font:600 12.5px/1 var(--ui);color:var(--tx);background:var(--pg2);
+  border:1px solid var(--ln);border-radius:6px;padding:8px 11px;cursor:pointer}
+button.copy:hover{border-color:#3a3d45}
+button.copy:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.copied{font-size:12.5px;color:var(--mut)}
+
+/* ---- the device and the sheet (UtttRulesSheet.swift, 13pt margin) ---- */
+.device{width:100%;max-width:372px;background:#050507;border:1px solid #191a20;
+  border-radius:14px 14px 5px 5px;overflow:hidden;box-shadow:0 18px 44px rgba(0,0,0,.5)}
+.grab{height:22px;display:flex;align-items:center;justify-content:center;
+  background-image:var(--nz),linear-gradient(#f7f3e9,#f7f3e9);background-blend-mode:soft-light,normal}
+.grab i{width:36px;height:5px;background:#c9c3b5;border-radius:3px;display:block}
+.sheet{background-image:var(--nz),var(--nzc),
+  radial-gradient(120% 70% at 50% -8%, rgba(255,255,255,.55), transparent 60%),
+  linear-gradient(172deg,#f7f3e9,#efe8d9 60%,#e6ddca);
+  background-size:560px 560px,900px 900px,auto,auto;
+  background-blend-mode:soft-light,multiply,screen,normal;
+  padding:6px 16px 26px;color:var(--ink);font:400 15px/1.42 var(--sys);min-height:560px}
+.sheet h3{font:700 21px/1.2 var(--sys);letter-spacing:-.015em;margin:0 0 14px;color:var(--ink)}
+.sheet p{margin:0}
+
+/* A: tally rows, as shipped */
+.tally{display:grid;grid-template-columns:44px 1fr;column-gap:9px;row-gap:13px}
+.tally .t{font:700 11px/1 var(--sys);letter-spacing:1.2px;color:var(--label);
+  padding-top:3px;white-space:nowrap;overflow:hidden}
+.tally .gap{grid-column:1/-1;height:6px}
+
+/* B: two labelled parts */
+.part{display:flex;flex-direction:column;gap:11px}
+.part + .part{margin-top:22px;padding-top:18px;border-top:1px solid rgba(138,133,119,.35)}
+.lab{font:600 9.5px/1 var(--sys);letter-spacing:1.9px;text-transform:uppercase;color:var(--label)}
+.stamp{margin-top:24px;display:flex;align-items:center;gap:10px;font:700 26px/1 var(--hand);color:var(--xink)}
+.stamp svg{flex:none}
+
+/* C: illustrated */
+.ill{display:flex;flex-direction:column;gap:14px}
+.ill .r{display:grid;grid-template-columns:62px 1fr;gap:12px;align-items:center}
+.ill svg{width:62px;height:62px;display:block}
+
+/* D: the one line that matters */
+.plain{display:flex;flex-direction:column;gap:11px}
+.catch{margin:6px -4px;padding:12px 12px 12px 12px;border-radius:3px;
+  background:linear-gradient(100deg,rgba(214,168,54,.30),rgba(214,168,54,.40) 40%,rgba(214,168,54,.28));
+  font-size:16px;line-height:1.42}
+.catch .lab{display:block;margin-bottom:6px;color:#7a6326}
+.hl{background:linear-gradient(transparent 12%,rgba(214,168,54,.45) 12%,rgba(214,168,54,.45) 88%,transparent 88%);
+  -webkit-box-decoration-break:clone;box-decoration-break:clone;padding:0 2px}
+
+/* E: tightened copy */
+.edit{display:flex;flex-direction:column;gap:11px}
+.edit p{padding-left:12px;border-left:2px solid transparent}
+.edit p.ch{border-left-color:rgba(37,55,107,.35)}
+.legend{font:400 12.5px/1.4 var(--sys);color:var(--muted);margin-top:18px;display:flex;gap:8px;align-items:center}
+.legend i{width:2px;height:14px;background:rgba(37,55,107,.35);display:block}
+
+.src{margin-top:60px;padding-top:26px;border-top:1px solid var(--ln);max-width:720px}
+.src h2{font:650 20px/1.25 var(--ui);margin:0 0 10px;padding-left:12px;border-left:4px solid var(--acc)}
+.src ol{margin:10px 0 0;padding-left:22px;color:var(--soft);font-size:14.5px}
+.src li{margin:0 0 6px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head><body>
+
+<div class="wrap">
+  <p class="kicker">uttt &middot; the rules sheet</p>
+  <h1>How it goes, rewritten</h1>
+  <p class="lede">Your new wording, laid out five ways on the sheet the rules door opens. Every sheet is the
+    same paper, type sizes and 13pt margin as <code>UtttRulesSheet.swift</code>, with the ink and highlighter
+    colours from <code>uttt_draw.c</code>.</p>
+  <p class="lede"><b>A, B and D are text changes only.</b> The lines move into the <code>RULES[]</code> table in
+    <code>uttt_draw.c</code> and the sheet lays them out. C needs the kernel to draw seven small boards.
+    E is optional copy edits for you to accept or ignore.</p>
+
+  <div class="grid">
+
+    <!-- A ------------------------------------------------------------ -->
+    <article class="variant" data-v="A">
+      <div class="h4"><span class="pill">A</span>As written, tally rows</div>
+      <p class="why">The layout that ships today: a pen tally beside each line. Your two paragraphs keep a
+        small gap between them. <b>The smallest change:</b> swap the six strings for eight.</p>
+      <div class="device"><div class="grab"><i></i></div><div class="sheet">
+        <h3>How it goes</h3>
+        <div class="tally" id="tallyA"></div>
+      </div></div>
+      <div class="tools"><button class="copy" type="button" id="copyA">Copy as C strings</button><span class="copied" aria-live="polite"></span></div>
+    </article>
+
+    <!-- B ------------------------------------------------------------ -->
+    <article class="variant" data-v="B">
+      <div class="h4"><span class="pill">B</span>Two parts</div>
+      <p class="why">Your text already splits into how the game works and how to play it in Messages, so
+        each part gets a small label. &ldquo;X moves first&rdquo; closes the page as a pen X.</p>
+      <div class="device"><div class="grab"><i></i></div><div class="sheet">
+        <h3>How it goes</h3>
+        <div class="part">
+          <span class="lab">The game</span>
+          <p>The board is divided up into 9 3x3 subgrids, themselves arranged in a 3x3 grid of squares.</p>
+          <p>The goal is to win three subgrids in a row, a column, or diagonally.</p>
+          <p>You can win a subgrid by making your mark in three squares in a row, just like regular tic-tac-toe.</p>
+          <p>The catch is that whatever square you choose in the subgrid corresponds to which subgrid on the board your opponent will move in on their next turn.</p>
+          <p>If you choose a square that would send your opponent to a completed subgrid, they will be able to move anywhere on the board on their next turn.</p>
+        </div>
+        <div class="part">
+          <span class="lab">In Messages</span>
+          <p>The yellow outline will show you where your opponent will move on the next round.</p>
+          <p>If you haven't sent the move yet, and want to change your move, tap again in the yellow tinted area.</p>
+        </div>
+        <div class="stamp"><svg width="30" height="30" viewBox="0 0 30 30" data-mark="x" aria-hidden="true"></svg>moves first.</div>
+      </div></div>
+      <div class="tools"><button class="copy" type="button" id="copyB">Copy as C strings</button><span class="copied" aria-live="polite"></span></div>
+    </article>
+
+    <!-- C ------------------------------------------------------------ -->
+    <article class="variant" data-v="C">
+      <div class="h4"><span class="pill g">C</span>Illustrated</div>
+      <p class="why">Each line gets a small drawing of what it describes, in the board's own ink.
+        <b>This one costs the most:</b> the drawings come from the kernel, like every other drawn thing on the
+        sheet, so it means seven new little boards in <code>uttt_draw.c</code>.</p>
+      <div class="device"><div class="grab"><i></i></div><div class="sheet">
+        <h3>How it goes</h3>
+        <div class="ill" id="ill"></div>
+      </div></div>
+      <div class="tools"><button class="copy" type="button" id="copyC">Copy as C strings</button><span class="copied" aria-live="polite"></span></div>
+    </article>
+
+    <!-- D ------------------------------------------------------------ -->
+    <article class="variant" data-v="D">
+      <div class="h4"><span class="pill">D</span>The catch, highlighted</div>
+      <p class="why">The kernel's own note says the line about where your opponent plays next is the only one
+        anybody needs. Here it gets the highlighter, and the two yellow things the sheet mentions are marked
+        in the same yellow they appear in on the board.</p>
+      <div class="device"><div class="grab"><i></i></div><div class="sheet">
+        <h3>How it goes</h3>
+        <div class="plain">
+          <p>The board is divided up into 9 3x3 subgrids, themselves arranged in a 3x3 grid of squares.</p>
+          <p>The goal is to win three subgrids in a row, a column, or diagonally.</p>
+          <p>You can win a subgrid by making your mark in three squares in a row, just like regular tic-tac-toe.</p>
+          <div class="catch"><span class="lab">The catch</span>Whatever square you choose in the subgrid corresponds to which subgrid on the board your opponent will move in on their next turn.</div>
+          <p>If you choose a square that would send your opponent to a completed subgrid, they will be able to move anywhere on the board on their next turn.</p>
+          <p style="margin-top:8px">The <span class="hl">yellow outline</span> will show you where your opponent will move on the next round.</p>
+          <p>If you haven't sent the move yet, and want to change your move, tap again in the <span class="hl">yellow tinted area</span>.</p>
+          <p style="margin-top:8px;font-weight:600">X moves first.</p>
+        </div>
+      </div></div>
+      <div class="tools"><button class="copy" type="button" id="copyD">Copy as C strings</button><span class="copied" aria-live="polite"></span></div>
+    </article>
+
+    <!-- E ------------------------------------------------------------ -->
+    <article class="variant" data-v="E">
+      <div class="h4"><span class="pill">E</span>Tightened copy (optional)</div>
+      <p class="why">Same order and meaning, with shorter sentences and the same word for things throughout.
+        Lines with a blue rule are edited. It includes an example of the catch, since that's the rule new
+        players miss. Pair it with any layout above.</p>
+      <div class="device"><div class="grab"><i></i></div><div class="sheet">
+        <h3>How it goes</h3>
+        <div class="edit" id="editE"></div>
+        <div class="legend"><i></i>edited from your wording</div>
+      </div></div>
+      <div class="tools"><button class="copy" type="button" id="copyE">Copy as C strings</button><span class="copied" aria-live="polite"></span></div>
+    </article>
+
+  </div>
+
+  <section class="src">
+    <h2>Your wording, for reference</h2>
+    <ol id="srcList"></ol>
+    <p class="lede" style="margin-top:14px;font-size:14px">The copy buttons give a <code>RULES[]</code> table ready to
+      paste over the one in <code>uttt/c/src/uttt_draw.c</code>. The strings keep the table's rules: straight quotes,
+      no em dashes. The sheet adds its own gap between your two paragraphs only in A. The others show the split
+      with their own layout.</p>
+  </section>
+</div>
+
+<script>
+const RULES = [
+  "The board is divided up into 9 3x3 subgrids, themselves arranged in a 3x3 grid of squares.",
+  "The goal is to win three subgrids in a row, a column, or diagonally.",
+  "You can win a subgrid by making your mark in three squares in a row, just like regular tic-tac-toe.",
+  "The catch is that whatever square you choose in the subgrid corresponds to which subgrid on the board your opponent will move in on their next turn.",
+  "If you choose a square that would send your opponent to a completed subgrid, they will be able to move anywhere on the board on their next turn.",
+  "The yellow outline will show you where your opponent will move on the next round.",
+  "If you haven't sent the move yet, and want to change your move, tap again in the yellow tinted area.",
+  "X moves first."
+];
+const EDITED = [
+  ["The board is nine subgrids, set out in a 3x3 grid. Each subgrid is a small tic-tac-toe board.", true],
+  ["Win three subgrids in a row, a column, or a diagonal to win the game.", true],
+  ["Win a subgrid the usual way: three of your marks in a line.", true],
+  ["The catch: the square you pick decides which subgrid your opponent plays in next. Pick the top-right square, and they have to play in the top-right subgrid.", true],
+  ["If that subgrid is already finished, they can play anywhere.", true],
+  ["The yellow outline shows where your opponent will play next.", true],
+  ["Changed your mind before sending? Tap again in the yellow area.", true],
+  ["X moves first.", false]
+];
+
+/* ---------- text builders ---------- */
+const tally = document.getElementById('tallyA');
+RULES.forEach((line, i) => {
+  if (i === 5) { const g = document.createElement('div'); g.className = 'gap'; tally.append(g); }
+  const t = document.createElement('div'); t.className = 't'; t.setAttribute('aria-hidden', 'true');
+  t.textContent = '|'.repeat(i + 1);
+  const p = document.createElement('p'); p.textContent = line;
+  tally.append(t, p);
+});
+const edit = document.getElementById('editE');
+EDITED.forEach(([line, ch]) => { const p = document.createElement('p'); p.textContent = line; if (ch) p.className = 'ch'; edit.append(p); });
+const src = document.getElementById('srcList');
+RULES.forEach(l => { const li = document.createElement('li'); li.textContent = l; src.append(li); });
+
+/* ---------- a tiny pen, rough.js when it loaded, plain lines when not ---------- */
+const NS = 'http://www.w3.org/2000/svg';
+const C = { x:'#25376b', o:'#a8321f', grid:'#2f2b26', wash:'rgba(214,168,54,.38)', washAll:'rgba(214,168,54,.2)', line:'#d6a836' };
+function pen(svg, seed) {
+  const rc = window.rough ? rough.svg(svg) : null;
+  let s = seed || 1;
+  const o = (x) => Object.assign({ roughness: .9, bowing: 1.2, seed: s++ }, x);
+  const add = (n) => { svg.appendChild(n); return n; };
+  const el = (tag, attrs) => { const n = document.createElementNS(NS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); return n; };
+  return {
+    line(x1, y1, x2, y2, w, c) {
+      if (rc) return add(rc.line(x1, y1, x2, y2, o({ stroke: c, strokeWidth: w })));
+      return add(el('line', { x1, y1, x2, y2, stroke: c, 'stroke-width': w, 'stroke-linecap': 'round' }));
+    },
+    circle(cx, cy, d, w, c, extra) {
+      if (rc) return add(rc.circle(cx, cy, d, o(Object.assign({ stroke: c, strokeWidth: w }, extra || {}))));
+      const n = el('circle', { cx, cy, r: d / 2, fill: 'none', stroke: c, 'stroke-width': w });
+      if (extra && extra.strokeLineDash) n.setAttribute('stroke-dasharray', extra.strokeLineDash.join(' '));
+      return add(n);
+    },
+    fill(x, y, w, h, c) { return add(el('rect', { x, y, width: w, height: h, fill: c })); },
+    rect(x, y, w, h, sw, c) {
+      if (rc) return add(rc.rectangle(x, y, w, h, o({ stroke: c, strokeWidth: sw, roughness: .6 })));
+      return add(el('rect', { x, y, width: w, height: h, fill: 'none', stroke: c, 'stroke-width': sw }));
+    },
+    path(d, w, c) {
+      if (rc) return add(rc.path(d, o({ stroke: c, strokeWidth: w, roughness: .5 })));
+      return add(el('path', { d, fill: 'none', stroke: c, 'stroke-width': w, 'stroke-linecap': 'round' }));
+    },
+    mark(kind, cx, cy, r, w, alpha) {
+      const g = el('g', { opacity: alpha == null ? 1 : alpha }); svg.appendChild(g);
+      const saved = svg.appendChild.bind(svg);
+      const into = (n) => { g.appendChild(n); };
+      if (kind === 'x') {
+        const a = rc ? rc.line(cx - r, cy - r, cx + r, cy + r, o({ stroke: C.x, strokeWidth: w })) : el('line', { x1: cx - r, y1: cy - r, x2: cx + r, y2: cy + r, stroke: C.x, 'stroke-width': w, 'stroke-linecap': 'round' });
+        const b = rc ? rc.line(cx + r, cy - r, cx - r, cy + r, o({ stroke: C.x, strokeWidth: w })) : el('line', { x1: cx + r, y1: cy - r, x2: cx - r, y2: cy + r, stroke: C.x, 'stroke-width': w, 'stroke-linecap': 'round' });
+        into(a); into(b);
+      } else {
+        into(rc ? rc.circle(cx, cy, r * 2.1, o({ stroke: C.o, strokeWidth: w })) : el('circle', { cx, cy, r: r * 1.05, fill: 'none', stroke: C.o, 'stroke-width': w }));
+      }
+      return g;
+    }
+  };
+}
+
+/* A 3x3 of 3x3 in a 90-unit square. opts: wash (block|'all'), outline (block),
+   marks [[block,cell,'x'|'o',alpha]], won {block:'x'|'o'}, arrow [from,to], strike [x1,y1,x2,y2] */
+function board(svg, opts, seed) {
+  svg.setAttribute('viewBox', '-4 -4 98 98');
+  const p = pen(svg, seed);
+  const B = 30, Cc = 10;
+  const bx = (b) => (b % 3) * B, by = (b) => Math.floor(b / 3) * B;
+  if (opts.wash === 'all') p.fill(0, 0, 90, 90, C.washAll);
+  else if (opts.wash != null) p.fill(bx(opts.wash) + 1, by(opts.wash) + 1, B - 2, B - 2, C.wash);
+  for (let b = 0; b < 9; b++) {
+    const x = bx(b) + 3, y = by(b) + 3, s = B - 6;
+    for (let k = 1; k < 3; k++) {
+      p.line(x + s * k / 3, y, x + s * k / 3, y + s, .6, C.grid);
+      p.line(x, y + s * k / 3, x + s, y + s * k / 3, .6, C.grid);
+    }
+  }
+  for (let k = 1; k < 3; k++) { p.line(k * B, -2, k * B, 92, 1.6, C.grid); p.line(-2, k * B, 92, k * B, 1.6, C.grid); }
+  const cellC = (b, c) => { const s = B - 6; return [bx(b) + 3 + s * ((c % 3) + .5) / 3, by(b) + 3 + s * (Math.floor(c / 3) + .5) / 3]; };
+  (opts.marks || []).forEach(([b, c, k, a]) => { const [cx, cy] = cellC(b, c); p.mark(k, cx, cy, 2.4, 1.1, opts.won && opts.won[b] ? .3 : a); });
+  if (opts.won) for (const b in opts.won) p.mark(opts.won[b], bx(+b) + 15, by(+b) + 15, 10, 2.4);
+  if (opts.outline != null) p.rect(bx(opts.outline) + 1, by(opts.outline) + 1, B - 2, B - 2, 1.8, C.line);
+  if (opts.strike) p.line(...opts.strike, 1.8, C.grid);
+  if (opts.arrow) {
+    const [fb, fc, tb] = opts.arrow; const [x1, y1] = cellC(fb, fc); const x2 = bx(tb) + 15, y2 = by(tb) + 15;
+    const mx = (x1 + x2) / 2 + 10, my = (y1 + y2) / 2 + 4;
+    p.path(`M${x1 + 3} ${y1 - 3} Q${mx} ${my} ${x2 - 3} ${y2 + 5}`, 1.2, C.o);
+    p.path(`M${x2 - 3} ${y2 + 5} l-1 5 M${x2 - 3} ${y2 + 5} l-5 1`, 1.2, C.o);
+  }
+  if (opts.tap) { const [cx, cy] = cellC(...opts.tap); p.circle(cx, cy, 11, .9, C.x, { strokeLineDash: [2, 2] }); }
+}
+/* one subgrid on its own */
+function single(svg, seed) {
+  svg.setAttribute('viewBox', '-4 -4 98 98');
+  const p = pen(svg, seed);
+  for (let k = 1; k < 3; k++) { p.line(k * 30, 4, k * 30, 86, 1.4, C.grid); p.line(4, k * 30, 86, k * 30, 1.4, C.grid); }
+  [[0, 'x'], [4, 'x'], [8, 'x'], [1, 'o'], [5, 'o']].forEach(([c, k]) => p.mark(k, (c % 3) * 30 + 15, Math.floor(c / 3) * 30 + 15, 8, 2.2));
+  p.line(6, 6, 84, 84, 2.2, C.grid);
+}
+
+const DIAGRAMS = [
+  (s) => board(s, {}, 3),
+  (s) => board(s, { won: { 2: 'x', 4: 'x', 6: 'x', 0: 'o' }, marks: [[1, 4, 'o'], [3, 0, 'x'], [8, 2, 'o']], strike: [84, 6, 6, 84] }, 11),
+  (s) => single(s, 21),
+  (s) => board(s, { marks: [[4, 2, 'x']], arrow: [4, 2, 2] }, 31),
+  (s) => board(s, { wash: 'all', won: { 2: 'o' }, marks: [[4, 2, 'x']] }, 41),
+  (s) => board(s, { wash: 4, outline: 2, marks: [[4, 2, 'x']] }, 51),
+  (s) => board(s, { wash: 4, marks: [[4, 2, 'x', .35]], tap: [4, 6] }, 61),
+  (s) => { s.setAttribute('viewBox', '0 0 90 90'); pen(s, 71).mark('x', 45, 45, 24, 4); }
+];
+const ill = document.getElementById('ill');
+RULES.forEach((line, i) => {
+  const r = document.createElement('div'); r.className = 'r';
+  const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('aria-hidden', 'true');
+  const p = document.createElement('p'); p.textContent = line;
+  r.append(svg, p); ill.append(r);
+  DIAGRAMS[i](svg);
+});
+document.querySelectorAll('svg[data-mark="x"]').forEach(s => { s.setAttribute('viewBox', '0 0 30 30'); pen(s, 91).mark('x', 15, 15, 9, 2.6); });
+
+/* ---------- copy as the kernel's table ---------- */
+const cTable = (lines, title) =>
+  `const char *uttt_rules_title(void) { return "${title}"; }\n\nstatic const char *const RULES[] = {\n` +
+  lines.map(l => `    "${l.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}",`).join('\n') + '\n};\n';
+const TABLES = {
+  A: cTable(RULES, 'How it goes'), B: cTable(RULES, 'How it goes'), C: cTable(RULES, 'How it goes'),
+  D: cTable(RULES, 'How it goes'), E: cTable(EDITED.map(e => e[0]), 'How it goes')
+};
+for (const v in TABLES) {
+  const btn = document.getElementById('copy' + v), note = btn.nextElementSibling;
+  btn.addEventListener('click', () => {
+    const done = (msg) => { note.textContent = msg; setTimeout(() => { note.textContent = ''; }, 2200); };
+    try {
+      navigator.clipboard.writeText(TABLES[v]).then(() => done('Copied'), () => fallback());
+    } catch (e) { fallback(); }
+    function fallback() {
+      const ta = document.createElement('textarea'); ta.value = TABLES[v]; ta.rows = 6;
+      ta.style.cssText = 'width:100%;font:12px ui-monospace,monospace;background:#141519;color:#e7e6e2;border:1px solid #23252b;border-radius:6px;padding:8px';
+      btn.parentElement.after(ta); ta.select(); done('Select and copy the text below');
+    }
+  });
+}
+</script>
+</body></html>
