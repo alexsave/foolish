@@ -370,36 +370,14 @@ void uttt_dl_init(UtttDL *d, UtttPt *pt, int cap_pt,
 }
 void uttt_dl_reset(UtttDL *d) { d->n_pt = 0; d->n_poly = 0; }
 
-static void quad(UtttDL *d, UtttPt a, UtttPt b, UtttPt c, UtttPt e, uint32_t rgba)
-{
-    if (d->n_poly >= d->cap_poly || d->n_pt + 4 > d->cap_pt) return;
-    UtttPoly *p = &d->poly[d->n_poly++];
-    p->first = d->n_pt; p->n = 4; p->rgba = rgba;
-    d->pt[d->n_pt++] = a; d->pt[d->n_pt++] = b;
-    d->pt[d->n_pt++] = c; d->pt[d->n_pt++] = e;
-}
-static void disc(UtttDL *d, float x, float y, float r, uint32_t rgba)
-{
-    enum { SEG = 9 };
-    if (d->n_poly >= d->cap_poly || d->n_pt + SEG > d->cap_pt) return;
-    UtttPoly *p = &d->poly[d->n_poly++];
-    p->first = d->n_pt; p->n = SEG; p->rgba = rgba;
-    for (int i = 0; i < SEG; i++) {
-        float a = 2.f * (float)M_PI * i / SEG;
-        d->pt[d->n_pt].x = x + cosf(a) * r;
-        d->pt[d->n_pt].y = y + sinf(a) * r;
-        d->n_pt++;
-    }
-}
-
 /* A flat stroke, as ONE polygon.
  *
- * uttt_ink cannot do this: a mark's width and alpha change ALONG it, so it
- * lays a quad and a round join per sample and lets them overlap. That is
- * right for a mark and wrong for a rough.js fill line, where the overlaps
- * show up twice over - as beads at every sample, and as a translucent colour
- * blended onto itself until it is not the colour that was asked for. A canvas
- * strokes a line once, with butt ends, and so does this. */
+ * uttt_ink outlines a stroke whose width changes ALONG it, with round ends;
+ * a rough.js fill line is one width with butt ends, as a canvas strokes it.
+ * Both are one polygon, filled once, for the same reason: a stroke made of
+ * overlapping pieces shows its overlaps - beads at every sample, and a
+ * translucent colour blended onto itself until it is not the colour that
+ * was asked for. The alpha is raised by UTTT_INK_GAIN like every stroke's. */
 void uttt_ribbon(UtttDL *d, const UtttPt *pts, int n, float w, uint32_t rgba)
 {
     if (n < 2 || d->n_poly >= d->cap_poly) return;
@@ -408,7 +386,7 @@ void uttt_ribbon(UtttDL *d, const UtttPt *pts, int n, float w, uint32_t rgba)
     float h = w / 2.f;
     UtttPoly *poly = &d->poly[d->n_poly++];
     poly->first = d->n_pt;
-    poly->rgba  = rgba;
+    poly->rgba  = uttt_ink_rgba(rgba);
 
     /* down one side and back the other, so the two halves meet at the ends */
     for (int side = 0; side < 2; side++)
@@ -448,25 +426,172 @@ void uttt_ribbon(UtttDL *d, const UtttPt *pts, int n, float w, uint32_t rgba)
     poly->n = d->n_pt - poly->first;
 }
 
+uint32_t uttt_ink_rgba(uint32_t rgba)
+{
+    float a = (float)(rgba & 0xffu) / 255.f * UTTT_INK_GAIN;
+    uint32_t b = a >= 1.f ? 255u : (uint32_t)(a * 255.f + .5f);
+    return (rgba & 0xffffff00u) | b;
+}
+
+float uttt_pen_width(const UtttPen *p, float x, float y, float t) { return pen_w(p, x, y, t); }
+float uttt_pen_alpha(const UtttPen *p, float x, float y)          { return pen_a(p, x, y); }
+
+/* One join of the outline, on side `s` (+1 the left of the direction of
+ * travel, -1 the right), at sample `c` of half-width `h`, between the segment
+ * coming in (direction ua, length la) and the one going out (ub, lb). Written
+ * to `o` in the direction of travel; returns how many points.
+ *
+ * A GENTLE BEND IS ONE POINT on the bisector of the two normals - what the
+ * look tool rendered for the owner - as long as that point cannot slide past
+ * a neighbour's: it moves along the segment by h sin(theta/2), held under
+ * .45 of either segment, so two neighbours together stay under one segment
+ * and the band between them never twists.
+ *
+ * ANYTHING SHARPER (a rough.js end hooking back on itself, the tight curl of
+ * an O's closing overlap) is two points, one on each segment's own normal,
+ * joined round the OUTSIDE by an arc and through the CENTRE on the inside.
+ * That is a stroker's round join, and it is what makes the outline exactly
+ * the union of its pieces: every segment's own band and every outside wedge
+ * is wound the same way, so no point of ink ever sums to a winding of zero -
+ * no hole where the pen turned - and a nonzero fill paints each point once
+ * however many pieces cover it. The bisector point alone would twist the
+ * band at a hairpin and cut a hole in it. */
+static int join(UtttPt *o, UtttPt c, float h, float s,
+                float uax, float uay, float la, float ubx, float uby, float lb)
+{
+    float ax = -uay * s, ay = uax * s;              /* this side's normals */
+    float bx = -uby * s, by = ubx * s;
+    float cs = uax * ubx + uay * uby;
+    if (cs > 1.f) cs = 1.f;
+    if (cs < -1.f) cs = -1.f;
+    float half = sqrtf((1.f - cs) * .5f);           /* sin(theta / 2) */
+    float lmin = la < lb ? la : lb;
+    if (cs > .866f && h * half < .45f * lmin) {
+        float nx = ax + bx, ny = ay + by, L = sqrtf(nx * nx + ny * ny);
+        o[0].x = c.x + nx / L * h; o[0].y = c.y + ny / L * h;
+        return 1;
+    }
+    int k = 0;
+    o[k].x = c.x + ax * h; o[k].y = c.y + ay * h; k++;
+    if (ax * ubx + ay * uby > 0.f) {                /* turning towards this side */
+        o[k++] = c;
+    } else {                                        /* the outside: an arc */
+        float th = acosf(cs);
+        int steps = (int)ceilf(th / ((float)M_PI / 6.f));
+        float cr = ax * by - ay * bx;
+        /* which way round: the short way, and at a hairpin (the two normals
+         * opposite, no short way) round the tip, the way the pen was going */
+        float sg = cr > 1e-6f ? 1.f : cr < -1e-6f ? -1.f : -s;
+        for (int j = 1; j < steps; j++) {
+            float f = th * j / steps, co = cosf(f), si = sinf(f) * sg;
+            o[k].x = c.x + (ax * co - ay * si) * h;
+            o[k].y = c.y + (ax * si + ay * co) * h;
+            k++;
+        }
+    }
+    o[k].x = c.x + bx * h; o[k].y = c.y + by * h; k++;
+    return k;
+}
+
+/* LAY A STROKE DOWN AS ONE POLYGON: its outline, width per sample.
+ *
+ * It was a quad per segment and a disc per sample, every one at the stroke's
+ * alpha, and they overlapped at every sample: three translucent shapes, ink
+ * 1-(1-a)^3 where it should be a, a bead every sample down every line (owner,
+ * TestFlight 1.0(6): "little circles in the middle of the lines";
+ * TESTFLIGHT_PLAN.md 19-20). Now the pen's path is outlined - down its left
+ * side with a join at each sample, a round cap, back up its right side, a
+ * round cap - and filled once. Nothing in a stroke covers itself, while two
+ * strokes crossing (and rough.js's two passes) still lay ink over ink.
+ *
+ * THE WIDTH still changes along it, sample by sample, from the same pen; the
+ * ALPHA is the stroke's own, one number: the mean of what the pen gave each
+ * segment over the WHOLE stroke (`n` points) - so a stroke drawn in to `m`
+ * of them is the same colour at every frame of its drawing and the finished
+ * frame is the board's. The geometry is the first `m` points only: a stroke
+ * drawn in is the outline of what has been drawn, capped round where the pen
+ * is, not a finished shape revealed; its widths are the finished stroke's
+ * (t along all `n`), so what is drawn never changes as more is drawn. */
+void uttt_ink_part(UtttDL *d, const UtttPt *pts, int n, int m, const UtttPen *p)
+{
+    enum { MAXS = 512, CAP = 6 };
+    if (n < 2) return;
+    if (m > n) m = n;
+    if (m < 2) return;
+
+    float asum = 0.f; int na = 0;
+    for (int i = 0; i + 1 < n; i++) {
+        float dx = pts[i + 1].x - pts[i].x, dy = pts[i + 1].y - pts[i].y;
+        if (sqrtf(dx * dx + dy * dy) < 1e-5f) continue;
+        asum += (pen_a(p, pts[i].x, pts[i].y) + pen_a(p, pts[i + 1].x, pts[i + 1].y)) * .5f;
+        na++;
+    }
+    if (!na) return;
+    float a = asum / (float)na * UTTT_INK_GAIN;
+    uint32_t ab = a >= 1.f ? 255u : (uint32_t)(a * 255.f + .5f);
+
+    /* the samples drawn so far, repeats dropped (a segment of no length has
+     * no direction), each with its half-width */
+    UtttPt c[MAXS]; float hw[MAXS];
+    int k = 0;
+    for (int i = 0; i < m && k < MAXS; i++) {
+        if (k) {
+            float dx = pts[i].x - c[k - 1].x, dy = pts[i].y - c[k - 1].y;
+            if (sqrtf(dx * dx + dy * dy) < 1e-5f) continue;
+        }
+        c[k] = pts[i];
+        hw[k] = pen_w(p, pts[i].x, pts[i].y, (float)i / (float)(n - 1)) * .5f;
+        k++;
+    }
+    if (k < 2) return;
+    float ux[MAXS], uy[MAXS], ul[MAXS];
+    for (int j = 0; j + 1 < k; j++) {
+        float dx = c[j + 1].x - c[j].x, dy = c[j + 1].y - c[j].y, L = sqrtf(dx * dx + dy * dy);
+        ux[j] = dx / L; uy[j] = dy / L; ul[j] = L;
+    }
+
+    if (d->n_poly >= d->cap_poly) return;
+    const int first = d->n_pt;
+    #define PUT(X, Y) do { if (d->n_pt >= d->cap_pt) { d->n_pt = d->cap_pt; return; } \
+        d->pt[d->n_pt].x = (X); d->pt[d->n_pt].y = (Y); d->n_pt++; } while (0)
+    UtttPt o[8];
+
+    /* down the left side */
+    PUT(c[0].x - uy[0] * hw[0], c[0].y + ux[0] * hw[0]);
+    for (int i = 1; i + 1 < k; i++) {
+        int q = join(o, c[i], hw[i], 1.f, ux[i-1], uy[i-1], ul[i-1], ux[i], uy[i], ul[i]);
+        for (int j = 0; j < q; j++) PUT(o[j].x, o[j].y);
+    }
+    int e = k - 1, s = k - 2;
+    PUT(c[e].x - uy[s] * hw[e], c[e].y + ux[s] * hw[e]);
+    /* round the far end, through the way the pen was going */
+    for (int j = 1; j < CAP; j++) {
+        float t = (float)M_PI * j / CAP, co = cosf(t), si = sinf(t);
+        PUT(c[e].x + (-uy[s] * co + ux[s] * si) * hw[e],
+            c[e].y + ( ux[s] * co + uy[s] * si) * hw[e]);
+    }
+    /* back up the right side */
+    PUT(c[e].x + uy[s] * hw[e], c[e].y - ux[s] * hw[e]);
+    for (int i = k - 2; i >= 1; i--) {
+        int q = join(o, c[i], hw[i], -1.f, ux[i-1], uy[i-1], ul[i-1], ux[i], uy[i], ul[i]);
+        for (int j = q - 1; j >= 0; j--) PUT(o[j].x, o[j].y);
+    }
+    PUT(c[0].x + uy[0] * hw[0], c[0].y - ux[0] * hw[0]);
+    /* round the near end, through the way the pen came from */
+    for (int j = 1; j < CAP; j++) {
+        float t = (float)M_PI * j / CAP, co = cosf(t), si = sinf(t);
+        PUT(c[0].x + ( uy[0] * co - ux[0] * si) * hw[0],
+            c[0].y + (-ux[0] * co - uy[0] * si) * hw[0]);
+    }
+    #undef PUT
+
+    UtttPoly *poly = &d->poly[d->n_poly++];
+    poly->first = first;
+    poly->n     = d->n_pt - first;
+    poly->rgba  = (p->ink & 0xffffff00u) | ab;
+}
+
 void uttt_ink(UtttDL *d, const UtttPt *pts, int n, const UtttPen *p)
 {
-    if (n < 2) return;
-    for (int i = 0; i < n - 1; i++) {
-        float t0 = (float)i / (n - 1), t1 = (float)(i + 1) / (n - 1);
-        const UtttPt *q0 = &pts[i], *q1 = &pts[i + 1];
-        float dx = q1->x - q0->x, dy = q1->y - q0->y;
-        float L = sqrtf(dx*dx + dy*dy);
-        if (L < 1e-5f) continue;
-        dx /= L; dy /= L;
-        float w0 = pen_w(p, q0->x, q0->y, t0) / 2.f;
-        float w1 = pen_w(p, q1->x, q1->y, t1) / 2.f;
-        float a  = (pen_a(p, q0->x, q0->y) + pen_a(p, q1->x, q1->y)) / 2.f;
-        uint32_t rgba = (p->ink & 0xffffff00u) | (uint32_t)(a * 255.f);
-        UtttPt A = { q0->x - dy*w0, q0->y + dx*w0 };
-        UtttPt B = { q0->x + dy*w0, q0->y - dx*w0 };
-        UtttPt C = { q1->x + dy*w1, q1->y - dx*w1 };
-        UtttPt E = { q1->x - dy*w1, q1->y + dx*w1 };
-        quad(d, A, B, C, E, rgba);
-        disc(d, q1->x, q1->y, w1, rgba);
-    }
+    uttt_ink_part(d, pts, n, n, p);
 }

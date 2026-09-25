@@ -65,7 +65,10 @@ int main(void)
     ok(uti_active() == -1, "a finished game sends nobody anywhere");
 
     int np = uti_draw(-1, mv[N-1], 1.f, 1.f);
-    ok(np > 1000, "a finished board is thousands of polygons");
+    /* ONE POLYGON PER STROKE (TESTFLIGHT_PLAN.md 20): 88 grid strokes and a
+     * few per mark - a few hundred, where a quad and a disc per sample made
+     * it tens of thousands. uttt_anim_test counts them exactly. */
+    ok(np > 100 && np < 600, "a finished board is a few hundred polygons, one per stroke");
     ok(uti_point_count() > np, "with more points than polygons");
     ok(!uti_draw_overflow(), "and it fits in the buffer");
     printf("  %d polygons, %d points\n", np, uti_point_count());
@@ -234,10 +237,12 @@ int main(void)
 
     /* ---- THE "YOU ARE" O STAYS A RING (owner, TestFlight 1.0(6): "the drawn
      * O sometimes draws lines right through the circle"). Off the display
-     * list the host fills: every quad's two ends are samples of the stroke,
-     * and each must sit within 20% of the O's own mean distance from its
-     * centre - a tail cutting a chord across the inside lands at half of it.
-     * Over 20,000 game seeds, as the host draws them (model.seed &+ 4). */
+     * list the host fills: each pass of the O is one outline polygon, its
+     * points the ink's two edges, and every one must sit within 20% of the
+     * O's own mean distance from its centre, plus the pen's half-width (8%
+     * of the radius at the widest the pen goes) - a tail cutting a chord
+     * across the inside lands at half of it. Over 20,000 game seeds, as the
+     * host draws them (model.seed &+ 4). */
     {
         int ring = 1, worst_seed = 0;
         float worst = 0.f;
@@ -249,22 +254,18 @@ int main(void)
             const float *pt = uti_points();
             static float rho[4000];
             int n = 0;
-            for (int i = 0; i < m && n + 2 <= 4000; i++) {
-                if (q[i].n != 4) continue;                       /* the quads */
-                const float *a = &pt[q[i].first * 2];
-                float sx[2] = { (a[0] + a[2]) * .5f, (a[4] + a[6]) * .5f };
-                float sy[2] = { (a[1] + a[3]) * .5f, (a[5] + a[7]) * .5f };
-                for (int e = 0; e < 2; e++) {
-                    float dx = (sx[e] - cx) / rx, dy = (sy[e] - cy) / ry;
+            for (int i = 0; i < m; i++)
+                for (int k = 0; k < q[i].n && n < 4000; k++) {
+                    const float *a = &pt[(q[i].first + k) * 2];
+                    float dx = (a[0] - cx) / rx, dy = (a[1] - cy) / ry;
                     rho[n++] = sqrtf(dx * dx + dy * dy);
                 }
-            }
             float lo = 1e9f, hi = 0.f, sum = 0.f;
             for (int i = 0; i < n; i++) { lo = fminf(lo, rho[i]); hi = fmaxf(hi, rho[i]); sum += rho[i]; }
             float mid = n ? sum / n : 1.f;
             float off = fmaxf(1.f - lo / mid, hi / mid - 1.f);
             if (off > worst) { worst = off; worst_seed = g; }
-            if (n < 20 || off > .20f) ring = 0;
+            if (m != 2 || n < 40 || off > .28f) ring = 0;
         }
         printf("  you-are O: worst stray %.3f of its radius (game seed %d)\n", worst, worst_seed);
         ok(ring, "the you-are O never cuts across itself, over 20,000 game seeds");
@@ -376,7 +377,7 @@ int main(void)
         const UtiPoly *cq = uti_polys();
         int fill = 0, edge = 0, other = 0, last_fill = -1, first_edge = np;
         for (int i = 0; i < np; i++) {
-            if (cq[i].rgba == 0x25376b66u)      { fill++; last_fill = i; }
+            if (cq[i].rgba == 0x25376b73u)      { fill++; last_fill = i; }   /* .40 x .90/.80 */
             else if (cq[i].rgba == 0x1b2a52ffu) { edge++; if (i < first_edge) first_edge = i; }
             else other++;
         }
