@@ -37,7 +37,6 @@ SKIP='^docs/
 ^foolyard/
 ^offlinefun/
 ^cnitro/
-^uttt/
 ^e2e/
 ^tests/
 ^\.github/workflows/'

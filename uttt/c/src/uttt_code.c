@@ -140,9 +140,7 @@ int uttt_replay_read(const char *url, UtttGame *out, int32_t *seed)
     static const char pre[] = UTTT_REPLAY_PREFIX;
     const size_t np = sizeof pre - 1;
     if (!url) return 0;
-    static const char old[] = UTTT_REPLAY_PREFIX_OLD;
     if (strncmp(url, pre, np) == 0) url += np;
-    else if (strncmp(url, old, sizeof old - 1) == 0) url += sizeof old - 1;
     /* the code alone: b32_decode skips what is not in its alphabet, so a
      * trailing "/", "?x=1" or "#..." would be read as more code - cut it */
     char code[128];

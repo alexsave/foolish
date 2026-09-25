@@ -291,11 +291,6 @@ int main(int argc, char **argv)
             ok = ok && uttt_replay_read(low, &back2, &sback2) && back2.n_plies == g.n_plies && sback2 == seed
                  && memcmp(back2.move, g.move, (size_t)g.n_plies) == 0;
             ok = ok && uttt_replay_read(url + sizeof pre - 1, &back2, NULL) && back2.n_plies == g.n_plies;
-            /* a link copied before uttt.live, on the old address */
-            char was[200];
-            snprintf(was, sizeof was, "https://www.foolish.cards/uttt/%s", url + sizeof pre - 1);
-            ok = ok && uttt_replay_read(was, &back2, &sback2) && back2.n_plies == g.n_plies && sback2 == seed
-                 && memcmp(back2.move, g.move, (size_t)g.n_plies) == 0;
             if (len > longest) longest = len;
             link_games++;
             if (!ok) { if (link_fail < 3) printf("  LINK FAIL %s\n", url); link_fail++; }

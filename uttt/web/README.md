@@ -23,9 +23,6 @@ open http://localhost:3000/AAA6ER7HDME5QRDFPW6GBSAGZCB22ST4AQ
 with the repo's pinned clang (`.github/workflows/uttt-web.yml`) and deploys
 the site to its own Vercel project on every push to `main` that touches it.
 
-Links copied before this site existed read `www.foolish.cards/uttt/<code>`;
-the foolish site redirects them here (`next.config.mjs`).
-
 ## One-time setup (the owner)
 
 1. **Create the Vercel project**, from a checkout, not from the dashboard's

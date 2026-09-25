@@ -57,17 +57,14 @@ double uttt_ideal_bits(const UtttGame *g);
  * The kernel writes the whole string; a host only puts it on the pasteboard.
  *
  * uttt.live is the game's own site: uttt/web opens the code and replays the
- * game, drawn by this kernel (wasm/uttt_web.c). Links copied before it
- * existed carry UTTT_REPLAY_PREFIX_OLD, which foolish.cards redirects here
- * and uttt_replay_read still reads. */
-#define UTTT_REPLAY_PREFIX     "https://uttt.live/"
-#define UTTT_REPLAY_PREFIX_OLD "https://www.foolish.cards/uttt/"
+ * game, drawn by this kernel (wasm/uttt_web.c). */
+#define UTTT_REPLAY_PREFIX "https://uttt.live/"
 
 /* Write g's link, drawn with `seed`, into out (NUL-terminated). Returns its
  * length, or -1 if g has no plies or cap is too small. */
 int uttt_replay_url(const UtttGame *g, int32_t seed, char *out, int cap);
 
-/* Read a link back (the prefix, new or old, is optional; anything after the code - a
+/* Read a link back (the prefix is optional; anything after the code - a
  * query, a fragment, a slash - is ignored). Returns 1, the game and its
  * drawing seed (`seed` may be NULL) on success, 0 for a link that is not a
  * game. */

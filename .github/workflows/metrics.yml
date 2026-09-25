@@ -13,6 +13,9 @@ name: metrics
 on:
   pull_request:
     branches: [main]
+    paths-ignore:
+      - 'uttt/**'
+      - '.github/workflows/uttt-web.yml'
 
 # Least privilege: read the code, write the one sticky PR comment.
 permissions:

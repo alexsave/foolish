@@ -35,14 +35,6 @@ const CROSS_ORIGIN_ISOLATED = process.env.FOOLISH_CROSS_ORIGIN_ISOLATION === '1'
 // the local next.config.js aside rather than doubting this file.
 const nextConfig = {
   reactStrictMode: true,
-  // Ultimate Tic-Tac-Toe's replay links were copied as foolish.cards/uttt/<code>
-  // before the game had a site of its own (uttt/web, uttt.live). The code is
-  // the same code; only the address moved.
-  async redirects() {
-    return [
-      { source: '/uttt/:code', destination: 'https://uttt.live/:code', permanent: true },
-    ];
-  },
   async rewrites() {
     return [
       // The iMessage app's App Store privacy policy URL. A static file rather
