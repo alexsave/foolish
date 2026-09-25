@@ -199,3 +199,8 @@ ios-smoke: build/ios_smoke
 	./build/ios_smoke
 
 .PHONY: ios-smoke ios-lib
+
+build/uttt_ladder: $(SRC) tests/uttt_ladder.c | build
+	$(CC) $(CFLAGS) $(SRC) tests/uttt_ladder.c -o $@ $(LDLIBS)
+ladder: build/uttt_ladder
+	./build/uttt_ladder 40 8
