@@ -58,7 +58,7 @@ static void stroke(UtttDL *d, const UtttPt *pts, int n, const UtttPen *p, float 
     int m = (int)ceilf((n - 1) * (t > 1.f ? 1.f : t)) + 1;
     if (m > n) m = n;
     if (m < 2) return;
-    uttt_ink(d, pts, m, p);
+    uttt_ink_part(d, pts, n, m, p);
 }
 
 /* A MARK IS DRAWN IN ITS OWN HUNDRED-UNIT SQUARE and then transformed into
@@ -336,29 +336,29 @@ int uttt_draw_settle(UtttDL *d, const UtttGame *g, int32_t seed, float fall_t, f
  * and the tint that replaces it at Send cannot disagree by a point. The seed
  * is the sheet's and the block's, so both phones draw the same wobble.
  *
- * A HAND-DRAWN ROUGH.JS RECTANGLE (owner, 2026-09-23: "the gold outline is
- * not rough enough"). It was tamed three ways, and each is undone:
- *   - its roughness, bowing and offset fell with the side's length, the way
- *     the long grid lines' do; now it takes what a short stroke gets (a mark
- *     or a door: rough.js's own defaults at the pen's 1.5), so a block-sized
- *     box wobbles like one drawn with the same hand;
- *   - its four sides met at the corners; at that offset every end of every
- *     side now lands its own seeded distance off its corner (rough.js jitters
- *     a line's ENDS by the same offset it bows the middle with), so the
- *     separately drawn sides cross or stop short there, as a rough.js
- *     rectangle's do - no second mechanism on top of rough.js's own;
- *   - its pen was thinned (lift .2, grain .25, agrain .2, no velocity); now it
- *     is the marks' pen, landing arc and grain and all. */
+ * A HAND-DRAWN ROUGH.JS RECTANGLE, CALMED (owner, 2026-09-23: "the gold
+ * outline is not rough enough"; then, TestFlight 1.0(7): "still hand drawn
+ * but not so crazy"). Each side is its own seeded rough.js line on the
+ * marks' pen, at HALF what a mark's stroke gets - roughness, bowing and the
+ * end offset - so a block-sized box still wobbles by hand, but by half as
+ * much. Every side runs a small fixed overshoot past both its corners, so
+ * the four sides cross there as a quick pen box's do, rather than meeting
+ * exactly or stopping short. */
+#define OUTLINE_CALM      .5f                 /* of a mark's roughness */
+#define OUTLINE_OVERSHOOT (BL * .025f)        /* past each corner */
+
 int uttt_draw_outline(UtttDL *d, int block, int32_t seed, float t)
 {
     float r[4];
     if (t <= 0.f || !uttt_wash_rect(block, r, NULL)) return 0;
     if (!seed) seed = 1;
     const float x0 = r[0], y0 = r[1], x1 = r[0] + r[2], y1 = r[1] + r[3];
+    const float o = OUTLINE_OVERSHOOT;
     const float side[4][4] = {
-        { x0, y0, x1, y0 }, { x1, y0, x1, y1 }, { x1, y1, x0, y1 }, { x0, y1, x0, y0 } };
-    const float len[4] = { r[2], r[3], r[2], r[3] };
-    const float per = 2.f * (r[2] + r[3]);
+        { x0 - o, y0, x1 + o, y0 }, { x1, y0 - o, x1, y1 + o },
+        { x1 + o, y1, x0 - o, y1 }, { x0, y1 + o, x0, y0 - o } };
+    const float len[4] = { r[2] + 2 * o, r[3] + 2 * o, r[2] + 2 * o, r[3] + 2 * o };
+    const float per = len[0] + len[1] + len[2] + len[3];
     UtttPen p = uttt_pen_92();
     p.ink = uttt_wash_rgba(1.f);
     p.w = uttt_pen_92().w / 9.f / 100.f * GRID_MAJOR_W * 1.3f;
@@ -366,9 +366,9 @@ int uttt_draw_outline(UtttDL *d, int block, int32_t seed, float t)
     float done = 0.f, want = (t > 1.f ? 1.f : t) * per;
     for (int k = 0; k < 4 && done < want; k++) {
         UtttRough rg = uttt_rough_default(seed * 577 + block * 31 + k * 7);
-        rg.roughness = rough_for(REF);
-        rg.bowing    = bow_for(REF);
-        rg.max_offset = mro_for(REF);
+        rg.roughness  = rough_for(REF) * OUTLINE_CALM;
+        rg.bowing     = bow_for(REF) * OUTLINE_CALM;
+        rg.max_offset = mro_for(REF) * OUTLINE_CALM;
         rg.seg_line = 18;
         UtttPt pts[1024]; int np = 0; UtttSpan sp[2];
         int n = uttt_rough_line(&rg, side[k][0], side[k][1], side[k][2], side[k][3],
@@ -590,7 +590,7 @@ int uttt_draw_icon(UtttDL *d, float w, float h)
      * so the circle passes OVER the first stroke and UNDER the second, and
      * the two marks are threaded through one another rather than stacked.
      * That is the whole idea and it only exists because this pen is a ribbon
-     * of quads laid down in order - a renderer that stacked two finished
+     * of strokes laid down in order - a renderer that stacked two finished
      * images could not do it, and neither could an icon drawn by hand once.
      *
      * Drawn in a UNIT SQUARE and mapped into the frame afterwards: Apple's

@@ -53,14 +53,16 @@ _Static_assert(offsetof(UtiMotion, outline_fade) == offsetof(UtttMotion, outline
 _Static_assert(UTI_MSG_TEXT_MAX >= UTM_MAX_TEXT, "the longest link fits the host buffer");
 
 /* The resident game, and the buffers the display list is built into. Sized
- * for a full board with every mark drawn, MEASURED rather than guessed:
- * `./build/uttt_render 81` prints the worst case, which today is 25,624
- * polygons from 166,556 points. Measure it again after touching the pen -
- * raising the flattening from 6 segments a curve to the document's 14 grew
- * this by three quarters, and a display list that runs out does not fail, it
- * quietly stops drawing. Everything below is the measurement plus half. */
-#define MAX_PT   260000
-#define MAX_POLY  40000
+ * for a full board with every mark drawn, MEASURED rather than guessed: over
+ * 20,000 random finished games (the last mark doubled) the worst was 354
+ * polygons from 42,812 points - one polygon per stroke since the pen outlines
+ * each stroke once (TESTFLIGHT_PLAN.md 20); it was 37,664 from 244,816 when a
+ * stroke was a quad and a disc per sample. `ios-smoke` fills a board and
+ * asserts no overflow; measure again after touching the pen - a display list
+ * that runs out does not fail, it quietly stops drawing. Everything below is
+ * the measurement plus half. */
+#define MAX_PT    65000
+#define MAX_POLY    600
 
 /* THE BUFFERS ARE ON THE HEAP, NOT IN THE IMAGE (TESTFLIGHT_PLAN.md 12,
  * memory). A static display list is __DATA: every page a finished board ever

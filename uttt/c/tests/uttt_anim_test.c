@@ -146,12 +146,14 @@ int main(void)
         OK(fabsf(lo[0] - r4[0]) < .05f && fabsf(lo[1] - r4[1]) < .05f
            && fabsf(hi[0] - (r4[0] + r4[2])) < .05f && fabsf(hi[1] - (r4[1] + r4[3])) < .05f,
            "outline: it runs round the tint's own rect, within a hand's overshoot");
-        /* A HAND-DRAWN ROUGH.JS RECTANGLE, not a ruled one (owner): over five
-         * seeds, the top side strays from its line by more than the tamed
-         * outline's worst (.0069), and every box has a side past a corner
-         * by more than the tamed one's worst (.0075). */
+        /* A HAND-DRAWN ROUGH.JS RECTANGLE, CALMED (owner, 1.0(7): "still
+         * hand drawn but not so crazy"). Over five seeds the top side strays
+         * from its line by more than a ruled box's (.0033, no roughness) and
+         * by less than a box at the marks' full roughness (.0169): half of it
+         * lands at .0067. Every box has a side past a corner (the fixed
+         * overshoot), and none by more than a small one. */
         {
-            float dev = 0.f; int crossed = 1;
+            float dev = 0.f, most = 0.f; int crossed = 1;
             for (int sd = 1; sd <= 5; sd++) {
                 uttt_dl_init(&d, PT, 400000, PO, 60000);
                 uttt_draw_outline(&d, 4, sd, 1.f);
@@ -165,9 +167,13 @@ int main(void)
                 }
                 dev += top / 5.f;
                 if (over < .012f) crossed = 0;
+                if (over > most) most = over;
             }
-            OK(dev > .009f, "outline: its sides wobble like a short stroke's, not a long grid line's");
+            printf("  outline: top-side wobble %.4f, worst corner overshoot %.4f\n", dev, most);
+            OK(dev > .005f, "outline: its sides still wobble by hand, not ruled");
+            OK(dev < .011f, "outline: calmer than a mark's full roughness");
             OK(crossed, "outline: every box has a side run past its corner");
+            OK(most < .025f, "outline: and only a little past it");
         }
         uttt_dl_init(&d, PT, 400000, PO, 60000);
         uttt_draw_outline(&d, 4, 7, .5f);
@@ -674,8 +680,8 @@ int main(void)
 
     /* THE WIN LINE IS DRAWN, NOT RULED (owner, TestFlight 1.0(6): "the
      * winning line still appears quite straight"). Off the display list: the
-     * line alone (uttt_draw_settle with the big mark at 0), every quad's two
-     * ends a sample, and how far the samples stray either side of the line
+     * line alone (uttt_draw_settle with the big mark at 0), each stroke's
+     * centre along it, and how far the centres stray either side of the line
      * through the whole stroke's ends - the ink's own wander, as a share of
      * the board. Over 300 won games; each must wander at least half a percent
      * (1.6 points on a 320-point board) and none more than six, so it stays
@@ -700,25 +706,37 @@ int main(void)
             if (uttt_draw_settle(&d, &g, seed, 0.f, 1.f) != 0 || d.n_poly == 0) continue;
             games++;
             float ax = 0, ay = 0, zx = 0, zy = 0; int first = 1;
-            /* the line's direction: its two farthest samples */
-            float px[4000], py[4000]; int n = 0;
-            for (int i = 0; i < d.n_poly && n + 2 <= 4000; i++) {
-                if (d.poly[i].n != 4) continue;
-                const UtttPt *q = &d.pt[d.poly[i].first];
-                px[n] = (q[0].x + q[1].x) * .5f; py[n] = (q[0].y + q[1].y) * .5f; n++;
-                px[n] = (q[2].x + q[3].x) * .5f; py[n] = (q[2].y + q[3].y) * .5f; n++;
-            }
+            /* the line's direction: its two farthest points of ink */
             float far = -1.f;
-            for (int i = 0; i < n; i += 7)
-                for (int j = i + 1; j < n; j += 7) {
-                    float dd = (px[i] - px[j]) * (px[i] - px[j]) + (py[i] - py[j]) * (py[i] - py[j]);
-                    if (dd > far) { far = dd; ax = px[i]; ay = py[i]; zx = px[j]; zy = py[j]; first = 0; }
+            for (int i = 0; i < d.n_pt; i += 3)
+                for (int j = i + 1; j < d.n_pt; j += 3) {
+                    float dx = d.pt[i].x - d.pt[j].x, dy = d.pt[i].y - d.pt[j].y, dd = dx * dx + dy * dy;
+                    if (dd > far) { far = dd; ax = d.pt[i].x; ay = d.pt[i].y;
+                                    zx = d.pt[j].x; zy = d.pt[j].y; first = 0; }
                 }
             if (first) { rough = 0; continue; }
+            /* EACH STROKE IS ONE OUTLINE, so its centre along the line is the
+             * middle of its two sides: in twenty stretches along the line
+             * (the samples are ~24), the midpoint of the ink's extremes
+             * across it, the two end stretches (the round caps) left out */
+            enum { BINS = 20 };
             float L = sqrtf(far), lo = 1e9f, hi = -1e9f;
-            for (int i = 0; i < n; i++) {
-                float c = ((px[i] - ax) * (zy - ay) - (py[i] - ay) * (zx - ax)) / L;
-                lo = fminf(lo, c); hi = fmaxf(hi, c);
+            for (int i = 0; i < d.n_poly; i++) {
+                float blo[BINS], bhi[BINS];
+                for (int k = 0; k < BINS; k++) { blo[k] = 1e9f; bhi[k] = -1e9f; }
+                for (int k = 0; k < d.poly[i].n; k++) {
+                    const UtttPt *q = &d.pt[d.poly[i].first + k];
+                    float al = ((q->x - ax) * (zx - ax) + (q->y - ay) * (zy - ay)) / L / L;
+                    float c = ((q->x - ax) * (zy - ay) - (q->y - ay) * (zx - ax)) / L;
+                    int bin = (int)(al * BINS);
+                    if (bin < 1 || bin >= BINS - 1) continue;
+                    blo[bin] = fminf(blo[bin], c); bhi[bin] = fmaxf(bhi[bin], c);
+                }
+                for (int k = 1; k < BINS - 1; k++) {
+                    if (bhi[k] < blo[k]) continue;
+                    float mid = (blo[k] + bhi[k]) * .5f;
+                    lo = fminf(lo, mid); hi = fmaxf(hi, mid);
+                }
             }
             float wander = hi - lo;
             least = fminf(least, wander); most = fmaxf(most, wander); sum += wander;

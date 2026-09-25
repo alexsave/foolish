@@ -50,7 +50,7 @@ typedef struct {
     int   single;           /* disableMultiStroke                 */
     int32_t seed;
     /* How finely a cubic is flattened. NOT a rough.js number - rough.js hands
-     * a renderer cubics and stops. But this pen lays a quad per SAMPLE, so the
+     * a renderer cubics and stops. But this pen sets a width per SAMPLE, so the
      * sample count is what the grain and the width modulation are carried on,
      * and the design document picked one per shape: 22 for a mark's lines, 18
      * for a grid line, 24 for the winning line, 14 around an ellipse. Get it
@@ -101,13 +101,36 @@ typedef struct {
 
 UtttPen uttt_pen_92(void);      /* the locked one: 9.2 */
 
-/* Lay a stroke down as a ribbon of quads, width and alpha per sample. */
+/* THE INK'S STRENGTH, raised once for every stroke (owner, TestFlight 1.0(6),
+ * option e at .90: TESTFLIGHT_PLAN.md 20). The pen's own alpha is .8 and every
+ * stroke's alpha - a mark's .8, a faded mark's .27, a minor grid line's .5, a
+ * big mark's .62, a door's hachure .4 - is multiplied by .90/.80 and capped at
+ * one, so their weights keep their proportions and only what would pass one
+ * (the major lines' .9, the win line's .92, the last mark's 1) stays opaque.
+ * Applied where a stroke gets its colour - uttt_ink and uttt_ribbon - and
+ * nowhere else: the highlighter's wash is not ink. */
+#define UTTT_INK_GAIN (.90f / .80f)
+
+/* `rgba` with its alpha raised by UTTT_INK_GAIN, capped at 255. */
+uint32_t uttt_ink_rgba(uint32_t rgba);
+
+/* Lay a stroke down as ONE polygon - its outline, width per sample, round
+ * ends, alpha the stroke's mean x UTTT_INK_GAIN - so nothing in a stroke
+ * overlaps itself (uttt_pen.c says why). */
 void uttt_ink(UtttDL *d, const UtttPt *pts, int n, const UtttPen *p);
 
+/* The same stroke drawn in to its first `m` of `n` points: the outline of
+ * what has been drawn, in the colour of the whole (so a stroke does not
+ * change colour as it draws). m == n is uttt_ink. */
+void uttt_ink_part(UtttDL *d, const UtttPt *pts, int n, int m, const UtttPen *p);
+
+/* What the pen gives a sample: its width (t is 0..1 along the stroke) and
+ * its alpha before the gain. For tests that rebuild a stroke's pieces. */
+float uttt_pen_width(const UtttPen *p, float x, float y, float t);
+float uttt_pen_alpha(const UtttPen *p, float x, float y);
+
 /* Lay a stroke down as ONE polygon of constant width - what a canvas does
- * when it strokes a path, and what a translucent line needs, because a stroke
- * made of overlapping quads blends with itself and comes out darker than the
- * colour it was given. */
+ * when it strokes a path. Its alpha is raised by UTTT_INK_GAIN too. */
 void uttt_ribbon(UtttDL *d, const UtttPt *pts, int n, float w, uint32_t rgba);
 
 /* The sheet's grain, shared by the pen and by anything else that wants it. */

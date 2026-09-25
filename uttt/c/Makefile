@@ -49,11 +49,16 @@ build/msg_stage_test: $(MSG_STAGE)/msg_stage_test.c $(MSG_STAGE)/msg_stage.h | b
 
 # The message: every ply of 10,000 games through bytes and text, the seat
 # truth table, two joiners, the tap map and every sentence.
-run: build/uttt_test build/uttt_msg_test build/uttt_anim_test build/msg_stage_test
+run: build/uttt_test build/uttt_msg_test build/uttt_anim_test build/msg_stage_test build/uttt_ink_test
 	./build/uttt_test 1000
 	./build/uttt_msg_test 10000
 	./build/msg_stage_test
 	./build/uttt_anim_test
+	./build/uttt_ink_test
+
+# The ink: one polygon per stroke, the pen's shape with no hole, the alpha.
+build/uttt_ink_test: $(SRC) tests/uttt_ink_test.c | build
+	$(CC) $(CFLAGS) $(SRC) tests/uttt_ink_test.c -o $@ $(LDLIBS)
 
 build/uttt_anim_test: $(SRC) tests/uttt_anim_test.c | build
 	$(CC) $(CFLAGS) $(SRC) tests/uttt_anim_test.c -o $@ $(LDLIBS)
@@ -145,6 +150,9 @@ asan: $(SRC) tests/uttt_test.c | build
 	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
 	  $(SRC) tests/uttt_anim_test.c -o build/uttt_anim_asan $(LDLIBS)
 	./build/uttt_anim_asan
+	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
+	  $(SRC) tests/uttt_ink_test.c -o build/uttt_ink_asan $(LDLIBS)
+	./build/uttt_ink_asan
 
 clean:
 	rm -rf build
