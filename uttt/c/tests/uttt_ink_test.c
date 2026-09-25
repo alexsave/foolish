@@ -117,7 +117,7 @@ static int check_stroke(const UtttPt *pts, int n, int m, const UtttPen *p)
 static int mark_pts(int kind, float s100, int32_t seed, UtttPt *pts, int cap, UtttSpan *sp)
 {
     int np = 0;
-    UtttRough r = uttt_rough_default(seed * 97 + 3);
+    UtttRough r = uttt_rough_default((int32_t)((uint32_t)seed * 97u + 3u));
     r.roughness = 1.5f * powf(8.9f / s100, .75f) * (s100 / 8.9f);
     r.bowing    = 1.0f * powf(8.9f / s100, .85f);
     const float L = .3f;
@@ -186,8 +186,21 @@ int main(void)
                && d.poly[1].rgba == d.poly[0].rgba,
                "a stroke's alpha is its pen's x .90/.80, the same drawn in part");
         }
-        UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 4000);
+        /* with the sheet's grain on, the pen's alpha changes along the line,
+         * and a stroke drawn in part is still the whole stroke's colour */
+        UtttDL d;
         p = uttt_pen_92();
+        int same = 1, varies = 0;
+        for (int m = 2; m < 23; m++) {
+            uttt_dl_init(&d, PT, 400000, PO, 4000);
+            uttt_ink(&d, line, 23, &p);
+            uttt_ink_part(&d, line, 23, m, &p);
+            if (d.n_poly != 2 || d.poly[1].rgba != d.poly[0].rgba) same = 0;
+            float a0 = uttt_pen_alpha(&p, line[0].x, line[0].y);
+            if (fabsf(uttt_pen_alpha(&p, line[m].x, line[m].y) - a0) > .01f) varies = 1;
+        }
+        OK(varies && same, "a stroke drawn in part is the whole stroke's colour at every length");
+        uttt_dl_init(&d, PT, 400000, PO, 4000);
         uttt_ribbon(&d, line, 23, 1.f, 0x25376b66u);
         OK(d.n_poly == 1 && d.poly[0].rgba == 0x25376b73u, "a ribbon's alpha is raised the same");
     }

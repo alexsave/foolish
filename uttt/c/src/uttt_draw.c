@@ -21,6 +21,11 @@
 #define O_W  (78.f - .3f * 10.f)
 #define O_H  (76.f + .3f * 8.f)
 
+/* A seed derived from another: s x k + a, wrapped as the hardware wraps it.
+ * Signed overflow is undefined in C (the asan lane's UBSan flags it), so the
+ * sum is taken unsigned and converted back - the same bits as before. */
+static int32_t sd(int32_t s, uint32_t k, int32_t a) { return (int32_t)((uint32_t)s * k + (uint32_t)a); }
+
 #define REF   (8.9f / 100.f * CE * 9.f)   /* a normal mark, in board units */
 
 static float rough_for(float L) { return 1.5f * powf(REF / (L > 1e-4f ? L : 1e-4f), .75f); }
@@ -74,7 +79,7 @@ static int mark_geom(int kind, float s, int32_t seed, UtttPt *pts, int cap,
 {
     int np = 0;
     const float s100 = s * 100.f;          /* the mark's size, board-100 */
-    UtttRough r = uttt_rough_default(seed * 97 + 3);
+    UtttRough r = uttt_rough_default(sd(seed, 97, 3));
     r.roughness = 1.5f * powf(8.9f / s100, .75f) * (s100 / 8.9f);
     r.bowing    = 1.0f * powf(8.9f / s100, .85f);
 
@@ -165,9 +170,9 @@ static void last_mark(UtttDL *d, int v, int mv, int32_t seed, float t)
     UtttPen p = uttt_pen_92();
     const float w = p.w;
     p.w = w * 2.2f; p.a = 1.f; p.grain = .22f;
-    mark_in(d, v, x, y, CE * .8f, seed * 1000 + mv, t, &p);
+    mark_in(d, v, x, y, CE * .8f, sd(seed, 1000, mv), t, &p);
     p.w = w * 1.9f; p.a = .85f;
-    mark_in(d, v, x, y, CE * .8f, seed * 1000 + mv + 613, t, &p);
+    mark_in(d, v, x, y, CE * .8f, sd(seed, 1000, mv + 613), t, &p);
 }
 
 /* THE BIG MARK OVER A WON BLOCK, drawn to `t`: pen is purely additive, so
@@ -176,7 +181,7 @@ static void big_mark(UtttDL *d, const UtttGame *g, int b, int32_t seed, float t)
 {
     UtttPen p = uttt_pen_92(); p.a = .62f; p.w = 2.2f;
     mark_in(d, uttt_block(g, b), (b % 3) * BL + BL * .08f,
-            (b / 3) * BL + BL * .08f, BL * .84f, seed * 77 + b, t, &p);
+            (b / 3) * BL + BL * .08f, BL * .84f, sd(seed, 77, b), t, &p);
 }
 
 /* The four major grid lines' first (heavier) pass, in hundredths of a ninth
@@ -239,7 +244,7 @@ static void win_line(UtttDL *d, const UtttGame *g, int32_t seed, float t)
                  * gets its own units and its own offset of 2, and the line
                  * wanders and bows by a percent or two of the board, as one
                  * drawn in one stroke across a sheet does. */
-                UtttRough r = uttt_rough_default(seed * SD[q]);
+                UtttRough r = uttt_rough_default(sd(seed, (uint32_t)SD[q], 0));
                 r.roughness = WIN_ROUGH;
                 r.bowing    = WIN_BOW;
                 r.max_offset = WIN_MO;
@@ -274,7 +279,7 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
 
     for (int b = 0; b < 9; b++)
         hash_in(d, (b % 3) * BL, (b / 3) * BL, BL,
-                o->seed * 131 + b * 17,
+                sd(o->seed, 131, b * 17),
                 base.w / 9.f / 100.f * .62f, BL * .03f, .5f, 1.5f);
     /* THE FOUR MAIN LINES RUN LONG. Nobody ruling a board stops the pen
      * neatly at the last cell - the line goes where the arm goes, past the
@@ -283,9 +288,9 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
      * strokes without looking. The renderer's own frame clips whatever runs
      * past the edge, which is the right answer: a line that leaves the board
      * should leave the board. */
-    hash_in(d, 0, 0, S, o->seed * 7 + 3,
+    hash_in(d, 0, 0, S, sd(o->seed, 7, 3),
             base.w / 9.f / 100.f * GRID_MAJOR_W, S * .135f * o->reach, .9f, 3.4f);
-    hash_in(d, 0, 0, S, o->seed * 19 + 5,
+    hash_in(d, 0, 0, S, sd(o->seed, 19, 5),
             base.w / 9.f / 100.f * 1.5f, S * .118f * o->reach, .72f, 3.4f);
 
     for (int b = 0; b < 9; b++) {
@@ -300,7 +305,7 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
             UtttPen p = base;
             if (won) p.a = base.a * .34f;
             mark_in(d, v, x + CE * .1f, y + CE * .1f, CE * .8f,
-                    o->seed * 1000 + b * 9 + c, 1.f, &p);
+                    sd(o->seed, 1000, b * 9 + c), 1.f, &p);
         }
         if (won) big_mark(d, g, b, o->seed, (o->last >= 0 && o->last / 9 == b) ? o->fall_t : 1.f);
     }
@@ -365,7 +370,7 @@ int uttt_draw_outline(UtttDL *d, int block, int32_t seed, float t)
     p.a = 1.f;
     float done = 0.f, want = (t > 1.f ? 1.f : t) * per;
     for (int k = 0; k < 4 && done < want; k++) {
-        UtttRough rg = uttt_rough_default(seed * 577 + block * 31 + k * 7);
+        UtttRough rg = uttt_rough_default(sd(seed, 577, block * 31 + k * 7));
         rg.roughness  = rough_for(REF) * OUTLINE_CALM;
         rg.bowing     = bow_for(REF) * OUTLINE_CALM;
         rg.max_offset = mro_for(REF) * OUTLINE_CALM;
@@ -388,7 +393,7 @@ int uttt_draw_cell(UtttDL *d, int mark, int mv, int32_t seed, float t)
     float y = (b / 3) * BL + (c / 3) * CE;
     UtttPen p = uttt_pen_92();
     mark_in(d, mark, x + CE * .1f, y + CE * .1f, CE * .8f,
-            seed * 1000 + b * 9 + c, t, &p);
+            sd(seed, 1000, b * 9 + c), t, &p);
     return 0;
 }
 
