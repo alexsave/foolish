@@ -593,39 +593,12 @@ static void test_say(void)
     OK(uttt_say(UTTT_SAY_UNREADABLE_SUBLINE, &g, 0, s, 8) == -1, "say: a short buffer is refused");
 }
 
-/* GETTING A BUBBLE INTO THE FIELD: a silent insert is a refusal only in the
- * compact drawer, is asked again until the budget runs out, and then hands
- * over the door. */
+/* GETTING A BUBBLE INTO THE FIELD: the words and the send hint's fuse. When
+ * an insert may go and what its silence means are shared/c/msg_stage's, and
+ * tested there (msg_stage_test.c, run by `make run`). */
 static void test_insert(void)
 {
-    OK(utm_insert_silence(1, 1) == UTM_INSERT_RETRY, "insert: a first silence in compact retries");
-    OK(utm_insert_silence(UTM_INSERT_ATTEMPTS - 1, 1) == UTM_INSERT_RETRY,
-       "insert: the last try but one still retries");
-    OK(utm_insert_silence(UTM_INSERT_ATTEMPTS, 1) == UTM_INSERT_DOOR,
-       "insert: the last try's silence hands over the door");
-    OK(utm_insert_silence(UTM_INSERT_ATTEMPTS + 3, 1) == UTM_INSERT_DOOR,
-       "insert: past the budget it is still the door");
-    int listened = 1;
-    for (int a = 1; a <= UTM_INSERT_ATTEMPTS + 1; a++)
-        listened &= utm_insert_silence(a, 0) == UTM_INSERT_LISTEN;
-    OK(listened, "insert: expanded silence is never a refusal");
-    OK(UTM_INSERT_SILENCE_MS * UTM_INSERT_ATTEMPTS >= 4000 &&
-       UTM_INSERT_SILENCE_MS * UTM_INSERT_ATTEMPTS <= 6000,
-       "insert: the whole budget is about five seconds");
     OK(UTM_SEND_HINT_MS == 3000, "insert: the send hint waits three seconds, as the sister app's");
-
-    /* THE DRAWER IS UP: the + drawer's window-sized first appearance never
-     * counts (b270e078), an expanded drawer short of the window always does
-     * (the SE's 647 in 667), and a compact one must be well short. */
-    OK(!utm_drawer_up(932, 932, 0), "drawer: the + drawer's first, window-sized appear is not up");
-    OK(!utm_drawer_up(932, 932, 1), "drawer: window-sized is not up even when expanded");
-    OK(!utm_drawer_up(667, 667, 1), "drawer: the SE window itself is not up");
-    OK(utm_drawer_up(667, 647, 1), "drawer: the SE's tapped, expanded drawer (647 of 667) is up");
-    OK(utm_drawer_up(956, 897, 1), "drawer: a Pro Max expanded drawer is up");
-    OK(utm_drawer_up(932, 343, 0), "drawer: the phone's compact drawer is up");
-    OK(utm_drawer_up(667, 309, 0), "drawer: the SE's compact drawer is up");
-    OK(!utm_drawer_up(667, 647, 0), "drawer: compact but nearly the window is not up yet");
-    OK(!utm_drawer_up(667, 0, 1) && !utm_drawer_up(0, 300, 0), "drawer: no size is not up");
 
     UtttGame g;
     char s[128];

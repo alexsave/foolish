@@ -36,7 +36,9 @@ settings:
     # CMotionRuler, the debug ruler's palette and sizes once in C
     # (shared/c/motion_ruler): every target, because a target that imports the
     # Swift module compiling MotionRuler.swift must find the C module it imports.
-    SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../../shared/c/motion_ruler
+    # CMsgStage (shared/c/msg_stage), the insert-staging decisions, the same way
+    # for MessagesKit/InsertStaging.swift.
+    SWIFT_INCLUDE_PATHS: $(inherited) $(SRCROOT)/../../shared/c/motion_ruler $(SRCROOT)/../../shared/c/msg_stage
     # A WARNING THAT SHIPS IS A DEFECT. Swift warns when an optional is
     # interpolated into a string, and that warning scrolled past in a build
     # log while the characters `Optional("X")` went out in a caption to
@@ -166,6 +168,9 @@ targets:
       # The DEBUG dev-file reader (App Group lookup once, dev.* files read
       # fresh); UtttDev keeps the keys. Compiles to nothing in Release.
       - path: ../../shared/swift/MessagesKit/DevFlags.swift
+      # When an insert may go, what a silent one means, and whether a bubble
+      # handed to didReceive is my own echo (shared/c/msg_stage, CMsgStage).
+      - path: ../../shared/swift/MessagesKit/InsertStaging.swift
       # The staged-but-unsent reminder at Messages' Send button, shared with
       # the sister product, on UIKit and Core Animation (SendHintView; the
       # sister product's SwiftUI SendHint reads the same numbers); the caption

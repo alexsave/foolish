@@ -222,25 +222,8 @@ public enum Uttt {
 
     /// How long a staged bubble sits unsent before the send hint shows.
     public static var sendHintSeconds: Double { Double(uti_send_hint_ms()) / 1000 }
-    /// How long an insert may go unanswered before its silence means something.
-    public static var insertSilenceSeconds: Double { Double(uti_insert_silence_ms()) / 1000 }
-
-    /// What an insert's silence means on try `attempt` (1-based).
-    public enum InsertSilence { case listen, retry, door }
-    public static func insertSilence(attempt: Int, compact: Bool) -> InsertSilence {
-        switch uti_insert_silence(Int32(attempt), compact ? 1 : 0) {
-        case UTI_INSERT_RETRY: return .retry
-        case UTI_INSERT_DOOR:  return .door
-        default:               return .listen
-        }
-    }
-
-    /// Is the drawer up - may an insert go (utm_drawer_up)? The + drawer's
-    /// window-sized first appearance is not; an expanded drawer short of the
-    /// window is.
-    public static func drawerUp(window: Double, view: Double, expanded: Bool) -> Bool {
-        uti_drawer_up(Float(window), Float(view), expanded ? 1 : 0) != 0
-    }
+    // When an insert may go and what its silence means are shared with the
+    // sister product: InsertStaging (shared/c/msg_stage).
 
     /// The mark the bubble's headline draws before its words, or `.none`.
     public static var bubbleMark: Mark { Mark(rawValue: UInt8(uti_say_bubble_mark())) ?? .none }

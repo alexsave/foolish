@@ -190,43 +190,10 @@ int  utm_door(const UtmMsg *m);
  * number, so the two games feel the same under a thumb. */
 #define UTM_SEND_HINT_MS       3000
 
-/* A REFUSED INSERT NEVER ANSWERS. ChatKit drops an insert that arrives before
- * the host counts the drawer as presenting, and calls no completion at all -
- * not with an error, not ever (docs/INSERT_GATING.md). So silence is the
- * refusal: an insert unanswered after UTM_INSERT_SILENCE_MS is asked again,
- * up to UTM_INSERT_ATTEMPTS in all (about five seconds), and then the human
- * is handed a door that inserts on a tap - by which time the drawer is
- * presenting and the gate passes. */
-#define UTM_INSERT_SILENCE_MS  500
-#define UTM_INSERT_ATTEMPTS    10
-
-#define UTM_INSERT_LISTEN      0   /* keep waiting; this silence is not a refusal */
-#define UTM_INSERT_RETRY       1   /* insert the same bubble again               */
-#define UTM_INSERT_DOOR        2   /* stop asking; offer the one-tap door        */
-
-/* What an insert that has gone UTM_INSERT_SILENCE_MS without an answer means,
- * on its `attempt`th try (1-based). ONLY THE COMPACT DRAWER'S SILENCE COUNTS:
- * expanded, the host deliberately parks an accepted insert's completion until
- * later, so a watchdog there would take a yes for a no - it listens and
- * counts nothing. */
-int  utm_insert_silence(int attempt, int compact);
-
-/* IS THE DRAWER UP - may an insert go now (docs/INSERT_GATING.md)?
- * `window_h` is the window's height, `view_h` the extension view's at
- * viewDidAppear, `expanded` whether Messages says the style is expanded.
- *
- * On a phone the + drawer's FIRST appearance is the whole window (430x932 in
- * a 932 window, device log 2026-09-23, b270e078), a second before the compact
- * drawer is up, and an insert issued then is dropped without an answer. That
- * appearance never counts: a view as tall as its window is not a drawer.
- *
- * An EXPANDED drawer is a drawer at any height short of the window: on the SE
- * a tapped bubble opens it at 647 in a 667 window - the status bar is all it
- * leaves - which the old "40 points short" test read as window-sized, so the
- * 3 s deadline faulted on every such open. A compact drawer has to be well
- * short of the window (UTM_DRAWER_MARGIN), as it always is (309-343). */
-#define UTM_DRAWER_MARGIN      40
-int  utm_drawer_up(float window_h, float view_h, int expanded);
+/* GETTING THE BUBBLE INTO THE FIELD - is the drawer up, what a silent insert
+ * means, and whether a bubble handed to didReceive is my own coming back - is
+ * shared with the sister product: shared/c/msg_stage/msg_stage.h, read from
+ * Swift as CMsgStage (MessagesKit/InsertStaging.swift). */
 
 /* ------------------------------------------------------- two messages */
 

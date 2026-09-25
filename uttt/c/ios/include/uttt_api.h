@@ -106,20 +106,12 @@ int  uti_msg_undo(void);
 #define UTI_DOOR_AGAIN     1
 int  uti_msg_door(void);
 
-/* GETTING A STAGED BUBBLE INTO THE FIELD (uttt_msg.h has why). How long a
- * staged bubble waits before the send hint shows, how long an insert may go
- * unanswered, and what that silence means on try `attempt` (1-based) in the
- * compact drawer or not. */
-#define UTI_INSERT_LISTEN  0
-#define UTI_INSERT_RETRY   1
-#define UTI_INSERT_DOOR    2
+/* How long a staged bubble waits before the send hint shows. When an insert
+ * may go and what its silence means are shared/c/msg_stage (CMsgStage). */
 int  uti_send_hint_ms(void);
-int  uti_insert_silence_ms(void);
-int  uti_insert_silence(int attempt, int compact);
 /* The resident game's replay link (uttt_replay_url) into out; its length,
  * or -1 for a game with no plies. */
 int  uti_replay_url(char *out, int cap);
-int  uti_drawer_up(float window_h, float view_h, int expanded); /* utm_drawer_up */
 
 /* Which of two messages to show: <0 mine (the device's staged draft), >0 the
  * tapped one, 0 the same. An unreadable one always loses. */

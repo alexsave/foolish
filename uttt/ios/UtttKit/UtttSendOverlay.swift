@@ -63,7 +63,7 @@ public final class UtttSendOverlay: UIView {
         /* THE SEND DOOR: every insert went unanswered, so the bubble never
          * reached the field. A tap inserts it again - by then the drawer is
          * presenting and Messages' gate lets it through
-         * (docs/INSERT_GATING.md). The Again door's pen and type, on a strip
+         * (shared/c/msg_stage/INSERT_GATING.md). The Again door's pen and type, on a strip
          * of paper so it reads over whatever board is under it. */
         strip.backgroundColor = UtttPaper.flat
         strip.addSubview(doorButton)

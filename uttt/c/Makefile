@@ -41,11 +41,18 @@ build/uttt_arena: $(SRC) tests/uttt_arena.c | build
 build/uttt_msg_test: $(SRC) tests/uttt_msg_test.c | build
 	$(CC) $(CFLAGS) $(SRC) tests/uttt_msg_test.c -o $@ $(LDLIBS)
 
+# The shared insert-staging decisions (shared/c/msg_stage), header-only, so
+# its test is the only thing to build.
+MSG_STAGE := ../../shared/c/msg_stage
+build/msg_stage_test: $(MSG_STAGE)/msg_stage_test.c $(MSG_STAGE)/msg_stage.h | build
+	$(CC) $(CFLAGS) $(MSG_STAGE)/msg_stage_test.c -o $@
+
 # The message: every ply of 10,000 games through bytes and text, the seat
 # truth table, two joiners, the tap map and every sentence.
-run: build/uttt_test build/uttt_msg_test build/uttt_anim_test
+run: build/uttt_test build/uttt_msg_test build/uttt_anim_test build/msg_stage_test
 	./build/uttt_test 1000
 	./build/uttt_msg_test 10000
+	./build/msg_stage_test
 	./build/uttt_anim_test
 
 build/uttt_anim_test: $(SRC) tests/uttt_anim_test.c | build

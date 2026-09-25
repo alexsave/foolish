@@ -202,7 +202,7 @@ final class MessagesViewController: MSMessagesAppViewController {
          * a second before the drawer is up (430x343), and an insert issued in
          * between is dropped by Messages with no completion at all - device
          * log 2026-09-23. Only a drawer counts as up, and which appearance is
-         * one is the kernel's (utm_drawer_up): never the window itself, an
+         * one is shared (ms_drawer_up, InsertStaging): never the window itself, an
          * expanded drawer at any height short of it (the SE's 647 of 667). */
         if drawerUp {
             appeared = true
@@ -233,8 +233,8 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// The view is a drawer, not the window it was first laid out at.
     private var drawerUp: Bool {
         guard let window = view.window else { return false }
-        return Uttt.drawerUp(window: window.bounds.height, view: view.bounds.height,
-                             expanded: presentationStyle == .expanded)
+        return InsertStaging.drawerUp(window: window.bounds.height, view: view.bounds.height,
+                                      expanded: presentationStyle == .expanded)
     }
 
     private func becameReady() {
@@ -315,10 +315,17 @@ final class MessagesViewController: MSMessagesAppViewController {
          * "my own move replays after Send". The board already holds these
          * exact bytes, so nothing is folded in - but this IS the send landing,
          * so the post-settlement plays now rather than a second late. */
-        if let wire = UtttWire(url: message.url), isMine(wire) {
-            UtttLog.note("receive-dropped", "my own bubble")
-            if wire == staged { settleSent(wire, conversation) }
-            return
+        if let wire = UtttWire(url: message.url) {
+            switch InsertStaging.receive(mine: isMine(wire), staged: wire == staged) {
+            case .arrival: break
+            case .echo:
+                UtttLog.note("receive-dropped", "my own bubble")
+                return
+            case .echoOfStaged:
+                UtttLog.note("receive-dropped", "my own bubble")
+                settleSent(wire, conversation)
+                return
+            }
         }
         UtttLog.note("receive")
         arrived = UtttWire(url: message.url)
@@ -852,8 +859,8 @@ final class MessagesViewController: MSMessagesAppViewController {
     ///
     /// AND A SILENT ONE IS A REFUSAL TOO. ChatKit drops an insert that arrives
     /// before the host counts the drawer as presenting and never calls back
-    /// (docs/INSERT_GATING.md), so every try arms a watchdog, and what its
-    /// silence means is the kernel's (utm_insert_silence): in the compact
+    /// (shared/c/msg_stage/INSERT_GATING.md), so every try arms a watchdog, and
+    /// what its silence means is shared (ms_insert_silence): in the compact
     /// drawer, try again every half second up to ten times; expanded, where
     /// the host parks an accepted insert's answer on purpose, keep listening
     /// and count nothing; out of tries, hand the human the send door.
@@ -923,11 +930,11 @@ final class MessagesViewController: MSMessagesAppViewController {
     private func watchSilence(of message: MSMessage, generation: Int,
                               in conversation: MSConversation, attempt: Int,
                               answered: @escaping () -> Bool) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + Uttt.insertSilenceSeconds) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + InsertStaging.silenceSeconds) { [weak self] in
             guard let self, !answered(), self.stageGeneration == generation,
                   self.landedGeneration != generation else { return }
             let compact = self.presentationStyle == .compact
-            switch Uttt.insertSilence(attempt: attempt, compact: compact) {
+            switch InsertStaging.silence(attempt: attempt, compact: compact) {
             case .listen:
                 UtttLog.note("insert", "attempt \(attempt) unanswered while \(self.styleName); listening")
                 self.watchSilence(of: message, generation: generation, in: conversation,

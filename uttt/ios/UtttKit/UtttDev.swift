@@ -48,7 +48,7 @@ public enum UtttDev {
 
     /// `dev.dropinsert`: every insert is swallowed without an answer, exactly
     /// as ChatKit drops one that arrives before the drawer counts as presenting
-    /// (docs/INSERT_GATING.md) - the only way to film the retries and the send
+    /// (shared/c/msg_stage/INSERT_GATING.md) - the only way to film the retries and the send
     /// door on a simulator, where the gate always passes.
     public static var dropInsert: Bool { dev.exists("dev.dropinsert") }
 

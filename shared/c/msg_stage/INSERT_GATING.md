@@ -1,5 +1,8 @@
 # Why an auto-insert on open never reaches the input field
 
+The evidence behind `msg_stage.h` beside this file: `ms_drawer_up`, `ms_insert_silence` and the silent-insert retry budget.
+The device log that found the window-sized first appearance is summarised in the header.
+
 Reverse-engineered on 2026-09-23 from Apple binaries on the build Mac, no simulator booted.
 
 ## Sources
@@ -54,29 +57,30 @@ When the gate says YES, the completion is called at once with `nil` (or, if `_sh
 The actual staging then runs 100 ms later (`dispatch_after(0x5f5e100 ns)`) through `startEditingPayload:` -> `_startEditingPayload:` -> `compositionWithShelfPluginPayload:completionHandler:`.
 That downstream path can still refuse (Send Later unsupported plugin, replace-composition alert), but those are unrelated to opening.
 
-## What this means for uttt
+## What this means for a product
 
 The one condition an extension can violate by acting on its own is timing: an insert that arrives before the host counts the app card as presenting (`isPresentingCard`, or `presentationBegan`) or before `browserPlugin` is our plugin is silently discarded.
 ChatKit also has "Remote app card controller %s timed out during delayed presentation", i.e. the card waits for the remote view before presenting, so the extension's `willBecomeActive`, `didBecomeActive` and even `viewDidAppear` can run before the card counts as presenting.
 Simulator and device run the same code; the difference is only how long that window lasts, which is why the simulator stages and the phone does not.
-foolish never hits it because its insert follows a tap on a drawer that is already on screen, by which point `isPresentingCard` is true.
+A product whose insert follows a tap on a drawer that is already on screen never hits it, because by then `isPresentingCard` is true.
+An insert issued on open, before any tap, does.
 There is no user-gesture requirement for insert, no rate limit, and no device-only branch (no `TARGET_OS_SIMULATOR` or internal-install test on this path).
 
-uttt's current `insert` only retries on an error, and this refusal never produces one, so the retry never runs.
+An `insert` that only retries on an error never retries this refusal, because it never produces one.
 Prediction for the device log: `insert attempt 1` followed by neither `inserted` nor `insert ... failed`.
 If `Denying action for plugin ... (the current plugin is ...)` also appears, it is the plugin-identity branch; if not, it is the presentation-state branch.
 
 ## Confidence
 
 High that insert has no touch gate and that a denied insert never calls its completion: read directly from the device 26.5.2 ChatKit and the 26.3 plugin, and identical in the sim ChatKit.
-Medium on which of the two checks refuses uttt, and on exactly when `presentationBegan` flips, which is a Swift stored property set through vtable dispatch that was not traced.
+Medium on which of the two checks refuses an insert on open, and on exactly when `presentationBegan` flips, which is a Swift stored property set through vtable dispatch that was not traced.
 
 ## Recommended pattern
 
 Treat "no completion" as a refusal.
 Insert, then arm a watchdog of about 500 ms; if the completion has not fired, insert the same message again, up to roughly 8 to 10 tries across about 5 s, and stop at the first completion.
 The first accepted try calls back with `nil` at once in compact mode, so a refused try leaves nothing behind and a retry cannot double-stage.
-Only retry like this in compact mode, because in expanded mode an accepted completion is deferred and a watchdog would mistake it for a refusal (uttt already collapses before inserting).
+Only retry like this in compact mode, because in expanded mode an accepted completion is deferred and a watchdog would mistake it for a refusal (collapse before inserting).
 Keep the generation check so a newer stage cancels the loop.
-If every try goes unanswered, fall back to a one-tap door (a "Send invitation" button); a tap is not required by the gate, but by the time the user can tap, the card is presented and the gate passes, which is why foolish works.
+If every try goes unanswered, fall back to a one-tap door (a "Send invitation" button); a tap is not required by the gate, but by the time the user can tap, the card is presented and the gate passes, which is why tap-driven inserts work.
 Log each watchdog firing so a device log shows how many tries the host needed.
