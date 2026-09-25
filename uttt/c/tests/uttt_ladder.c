@@ -30,7 +30,7 @@ static const Entrant E0[] = {   /* the shipped-name ladder, docs/BOT_NAMES.md */
     { BOT_BIRO,     1,    0,  "biro"          },
     { BOT_ROLLER,   25,   0,  "roller@25"     },
     { BOT_ROLLER,   200,  0,  "roller@200"    },
-    { BOT_QUILL,    60,   0,  "quill@60"      },
+    { BOT_QUILL,    200,  0,  "quill@200"     },
     { BOT_FOUNTAIN, 2500, 0,  "fountain@2500" },
 };
 #define N0 ((int)(sizeof E0 / sizeof E0[0]))
