@@ -71,7 +71,8 @@ button.copy:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 .sheet p{margin:0}
 
 /* C: illustrated */
-.ill{display:flex;flex-direction:column;gap:14px}
+/* every row the height of the tallest, so the eight drawings sit on an even beat */
+.ill{display:grid;grid-auto-rows:1fr;gap:14px}
 .ill .r{display:grid;grid-template-columns:62px 1fr;gap:12px;align-items:center}
 .ill svg{width:62px;height:62px;display:block}
 
