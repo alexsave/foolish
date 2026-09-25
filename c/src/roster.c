@@ -47,8 +47,8 @@ static int utf8_valid(const char *str, int n) {
     return 1;
 }
 
-// A byte walk, not memcmp: the wasm builds have no libc and ship only
-// memcpy/memset (c/wasm/include/string.h).
+// A byte walk, not memcmp: the wasm builds have no libc, only the small one in
+// shared/c/wasm, and a byte walk needs nothing from it.
 // From the end: ids that differ tend to differ last (a UUID's variant and node,
 // a bot id's counter), so two seats' ids part company in the first byte looked at.
 static int bytes_eq(const char *a, const char *b, int n) {
