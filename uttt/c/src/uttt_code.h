@@ -56,8 +56,9 @@ double uttt_ideal_bits(const UtttGame *g);
  *
  * The kernel writes the whole string; a host only puts it on the pasteboard.
  *
- * The web route (/uttt/<code>) does not exist yet (TESTFLIGHT_PLAN 16). */
-#define UTTT_REPLAY_PREFIX "https://www.foolish.cards/uttt/"
+ * uttt.live is the game's own site: uttt/web opens the code and replays the
+ * game, drawn by this kernel (wasm/uttt_web.c). */
+#define UTTT_REPLAY_PREFIX "https://uttt.live/"
 
 /* Write g's link, drawn with `seed`, into out (NUL-terminated). Returns its
  * length, or -1 if g has no plies or cap is too small. */

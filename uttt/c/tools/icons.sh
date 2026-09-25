@@ -39,3 +39,8 @@ draw 1024  768 1 "$EXT/msg-1024x768.png"
 APP="$IOS/UtttMessagesApp/Assets.xcassets/AppIcon.appiconset"
 echo "the container's app icon:"
 draw 1024 1024 1 "$APP/AppIcon-1024.png"
+
+WEB=../web/app
+echo "uttt.live's favicon and home-screen icon (Next picks them up by name):"
+draw   64   64 2 "$WEB/icon.png"
+draw  180  180 3 "$WEB/apple-icon.png"

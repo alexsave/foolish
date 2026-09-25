@@ -1,0 +1,113 @@
+name: uttt-web
+
+# uttt.live - Ultimate Tic-Tac-Toe's replay site (uttt/web). Built HERE and
+# uploaded, like the foolish site (web.yml) and for the same reason: the page
+# runs the uttt kernel as wasm (uttt/c `make wasm-web`), a build output that is
+# never committed, and Vercel's build image has no clang to make it.
+#
+#   build    on every pull request and push that touches the site or the
+#            kernel: the wasm, a typecheck and `next build`. No secrets.
+#   deploy   production, on a push to main only. Previews are not deployed:
+#            Vercel's free plan's 100 deployments a day are shared with the
+#            foolish site (web.yml's scope job has the story).
+#
+# The secrets: VERCEL_TOKEN and VERCEL_ORG_ID are the ones web.yml already
+# uses; UTTT_VERCEL_PROJECT_ID is the uttt project's own id (uttt/web/README.md).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'uttt/c/**'
+      - 'uttt/web/**'
+      - 'shared/c/b32.*'
+      - 'scripts/ci_llvm.sh'
+      - '.github/workflows/uttt-web.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'uttt/c/**'
+      - 'uttt/web/**'
+      - 'shared/c/b32.*'
+      - 'scripts/ci_llvm.sh'
+      - '.github/workflows/uttt-web.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: uttt-web-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: uttt/web
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: uttt/web/package-lock.json
+      - name: Toolchain (the repo's pinned clang, for the wasm)
+        working-directory: .
+        run: bash scripts/ci_llvm.sh
+      - run: npm ci
+      - name: The kernel, as wasm
+        run: npm run wasm
+      - run: npm run typecheck
+      - run: npm run build
+
+  deploy:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.UTTT_VERCEL_PROJECT_ID }}
+    steps:
+      - name: Are the deploy credentials present?
+        id: creds
+        working-directory: .
+        run: |
+          missing=""
+          [ -n "$VERCEL_TOKEN" ]      || missing="$missing VERCEL_TOKEN"
+          [ -n "$VERCEL_ORG_ID" ]     || missing="$missing VERCEL_ORG_ID"
+          [ -n "$VERCEL_PROJECT_ID" ] || missing="$missing UTTT_VERCEL_PROJECT_ID"
+          if [ -n "$missing" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::uttt.live did not deploy - missing secrets:$missing (see uttt/web/README.md)"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.creds.outputs.ready == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.creds.outputs.ready == 'true'
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: uttt/web/package-lock.json
+      - name: Toolchain
+        if: steps.creds.outputs.ready == 'true'
+        working-directory: .
+        run: bash scripts/ci_llvm.sh
+      - if: steps.creds.outputs.ready == 'true'
+        run: npm ci
+      - name: Install the Vercel CLI
+        if: steps.creds.outputs.ready == 'true'
+        run: npm install --global vercel@59.23.1
+      - name: Vercel build
+        if: steps.creds.outputs.ready == 'true'
+        run: |
+          vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+          vercel build --prod --token="$VERCEL_TOKEN"
+      - name: Vercel deploy
+        if: steps.creds.outputs.ready == 'true'
+        run: |
+          url=$(vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN")
+          echo "deployed: $url"
+          { echo "### uttt.live deployed"; echo; echo "$url"; } >> "$GITHUB_STEP_SUMMARY"

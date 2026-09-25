@@ -219,3 +219,29 @@ build/uttt_ladder: $(SRC) tests/uttt_ladder.c | build
 	$(CC) $(CFLAGS) $(SRC) tests/uttt_ladder.c -o $@ $(LDLIBS)
 ladder: build/uttt_ladder
 	./build/uttt_ladder 40 8
+
+# ---- the replay page (uttt.live) ------------------------------------------
+# The drawing kernel for the browser: uttt/web's replay fills the same display
+# list the app does (wasm/uttt_web.c). Freestanding - no libc, the few libc
+# and libm calls live in uttt_web.c - and only the files a replay draws with.
+# A BUILD OUTPUT, never committed (uttt/web/.gitignore): the uttt-web workflow
+# builds it before it builds the site.
+# scripts/ci_llvm.sh exports WASM_CC, the repo's pinned clang; locally any
+# clang with the wasm32 target and wasm-ld will do.
+WEB_WASM_CC  ?= $(if $(WASM_CC),$(WASM_CC),clang)
+WEB_WASM_SRC := src/uttt.c src/uttt_code.c src/uttt_pen.c src/uttt_draw.c \
+                src/uttt_anim.c src/uttt_rule.c src/uttt_say.c ../../shared/c/b32.c wasm/uttt_web.c
+WEB_WASM_OUT := ../web/public/uttt.wasm
+
+$(WEB_WASM_OUT): $(WEB_WASM_SRC) $(wildcard src/*.h wasm/include/*.h) Makefile
+	@mkdir -p $(dir $@)
+	$(WEB_WASM_CC) --target=wasm32 -Oz -nostdlib -ffreestanding -mbulk-memory \
+	  -mno-nontrapping-fptoint -std=c11 -Wall -Wextra -Werror \
+	  -isystem wasm/include -Isrc \
+	  -Wl,--no-entry -Wl,--export-memory -Wl,-z,stack-size=131072 -Wl,--strip-all \
+	  $(WEB_WASM_SRC) -o $@
+	@echo "built $@ ($$(wc -c < $@) B, $$(gzip -9 -c $@ | wc -c) B gz)"
+
+wasm-web: $(WEB_WASM_OUT)
+
+.PHONY: wasm-web

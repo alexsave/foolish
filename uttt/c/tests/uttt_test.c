@@ -276,7 +276,7 @@ int main(int argc, char **argv)
             /* the owner's address, spelled out rather than taken from the
              * macro, so a typo in the macro cannot pass its own test */
             int ok = len > (int)sizeof pre - 1 && (int)strlen(url) == len
-                  && strncmp(url, "https://www.foolish.cards/uttt/", 31) == 0
+                  && strncmp(url, "https://uttt.live/", 18) == 0
                   && strncmp(url, pre, sizeof pre - 1) == 0;
             for (int c = (int)sizeof pre - 1; ok && c < len; c++)
                 ok = (url[c] >= 'A' && url[c] <= 'Z') || (url[c] >= '2' && url[c] <= '7');
