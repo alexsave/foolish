@@ -72,7 +72,7 @@ struct PreviewRoot: View {
     }
 
     struct GameScreen: UIViewRepresentable {
-        func makeUIView(context: Context) -> UtttGameScreen {
+        func makeUIView(context: Context) -> UIView {
             /* `--seed S --moves a,b,c --you o` shows any game (tools/uttt_look
              * `moves CODE` prints them for a replay code), so a screenshot
              * can show a finished one: the win line, both doors. */
@@ -85,19 +85,27 @@ struct PreviewRoot: View {
             let moves = arg("--moves").map { $0.split(separator: ",").compactMap { Int($0) } }
                 ?? PreviewRoot.sample
             let asO = arg("--you") == "o"
+            /* `--you watch`: somebody else's game, the spectator's screen. */
+            let watch = arg("--you") == "watch"
             Uttt.newGame(seed: seed)
             for m in moves { Uttt.play(m) }
             /* The harness plays one seat against nobody: X by default, so the
              * board takes taps the way a joiner's does. */
             let x = Data("preview:x".utf8), o = Data("preview:o".utf8)
-            Uttt.me(asO ? o : x)
+            Uttt.me(watch ? Data("preview:w".utf8) : asO ? o : x)
             Uttt.seat(o: o, x: x)
+            if watch {
+                let model = UtttModel(seed: seed, you: .none)
+                let v = UtttWatchScreen(model: model, door: Uttt.over == .none ? .none : .again, slide: nil)
+                model.refresh()
+                return v
+            }
             let model = UtttModel(seed: seed, you: asO ? .o : .x)
             /* a finished game stands its doors, as the end screen does */
             let v = UtttGameScreen(model: model, door: Uttt.over == .none ? .none : .again, slide: nil)
             model.refresh()
             return v
         }
-        func updateUIView(_ v: UtttGameScreen, context: Context) {}
+        func updateUIView(_ v: UIView, context: Context) {}
     }
 }
