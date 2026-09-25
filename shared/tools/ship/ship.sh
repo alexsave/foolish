@@ -7,7 +7,7 @@
 #   --build N     the CFBundleVersion to ship. Default: one above the highest
 #                 build App Store Connect has for the app. A number can be
 #                 uploaded ONCE, ever, even if its processing fails.
-#   --no-upload   stop after the export and the .ipa checks.
+#   --no-upload   stop after the export and the .ipa checks (release strings included).
 #   --dry-run     print the resolved product and every command that would run,
 #                 touch nothing. Needs no credentials when --build is given.
 #
@@ -254,7 +254,7 @@ IPA=$(ls "$EXP"/*.ipa 2>/dev/null | head -1 || true)
 step "ipa checks"
 if [ "$DRY" = 1 ]; then
   echo "  Info.plist ITSAppUsesNonExemptEncryption=NO; $SHIP_TEAM.$SHIP_BUNDLE* signatures by Apple Distribution;"
-  echo "  app group ${SHIP_APP_GROUP:-none}; release_strings.sh${SHIP_FORBID_FRAMEWORKS:+ forbidding $SHIP_FORBID_FRAMEWORKS}"
+  echo "  app group ${SHIP_APP_GROUP:-none}"
 else
   pb() { /usr/libexec/PlistBuddy -c "Print :$1" "$2"; }
   UNZ="$OUT/ipa"; rm -rf "$UNZ"; mkdir -p "$UNZ"; unzip -q "$IPA" -d "$UNZ"
@@ -275,6 +275,14 @@ else
     grep -q "Authority=Apple Distribution" <<<"$SIG" || { echo "$b is not signed with Apple Distribution" >&2; exit 1; }
   done
   echo "ipa ok: $IPA ($(du -h "$IPA" | cut -f1))"
+fi
+
+# ---- release strings: no dev files, no em dashes, no forbidden frameworks ---
+step "release strings"
+RS_ARGS=()
+for fw in $SHIP_FORBID_FRAMEWORKS; do RS_ARGS+=(--forbid-framework "$fw"); done
+if [ "$DRY" = 1 ]; then run "$ROOT/shared/tools/release_strings.sh" "$EXP/<name>.ipa" ${RS_ARGS[@]+"${RS_ARGS[@]}"}
+else "$ROOT/shared/tools/release_strings.sh" "$IPA" ${RS_ARGS[@]+"${RS_ARGS[@]}"} || exit 1
 fi
 
 if [ "$UPLOAD" = 0 ] || [ "$DRY" = 1 ]; then
