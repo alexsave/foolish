@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  Privacy manifest for the UtttKit framework - the LOAD-BEARING one: Apple
+  checks required-reason APIs against the binary that owns the call, and every
+  such call in this app is here.
+
+    * UserDefaults.standard - UtttSeats.swift, this device's seat records
+      (which side is mine in the newest 256 games), read and written only by
+      the extension itself                                             -> CA92.1
+
+  CA92.1 = user defaults used to read and write data accessible only to the
+  app itself. There is no App Group in a Release build (project.yml), so the
+  shared-container reason (1C8F.1) foolish declares does not apply here.
+  Nothing is tracked or collected.
+-->
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

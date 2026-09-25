@@ -8,10 +8,11 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
+/* The napkin under every page: /napkin.png, the kernel's own paper drawn once
+   at build (app/napkin.png/route.ts), stretched as the app stretches it over
+   its sheet. The flat colour shows until it loads. */
 body {
-  background-color: var(--paper);
-  background-size: 100% 100%;
-  background-attachment: fixed;
+  background: var(--paper) url('/napkin.png') 0 0 / 100% 100% no-repeat fixed;
   color: var(--ink);
   font-family: var(--sys);
   -webkit-font-smoothing: antialiased;

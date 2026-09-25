@@ -2,27 +2,10 @@
 // nothing more: every answer about the game, the drawing, the motion and the
 // words is the kernel's, and this file knows only its function names. It holds
 // no layout - a polygon is three questions (where its points start, how many,
-// its ink), and the points are one span of floats.
+// its ink), and the points are one span of floats. The napkin under the page
+// is /napkin.png, drawn by the same kernel at build (app/napkin.png).
 
-interface Exports {
-    memory: WebAssembly.Memory;
-    uw_code_ptr(): number;
-    uw_code_cap(): number;
-    uw_load(): number;
-    uw_seek(k: number): number;
-    uw_plies(): number;
-    uw_motion(animate: number): void;
-    uw_rest_ms(): number;
-    uw_frame(nowMs: number): number;
-    uw_poly_count(): number;
-    uw_poly_first(i: number): number;
-    uw_poly_len(i: number): number;
-    uw_poly_ink(i: number): number;
-    uw_points(): number;
-    uw_point_count(): number;
-    uw_caption(): number;
-    uw_paper(side: number): number;
-}
+import { cString, type UtttExports } from './kernel-exports';
 
 export interface Frame {
     /** Still animating: ask again next display frame. */
@@ -44,8 +27,6 @@ export interface Replay {
     caption(): string;
     /** How long a settled move rests before the next one may start. */
     restMs: number;
-    /** The napkin, as an image the page can put under everything. */
-    paper(side: number): ImageData;
 }
 
 let module: Promise<WebAssembly.Module> | null = null;
@@ -62,7 +43,7 @@ const hex = (rgba: number) => '#' + (rgba >>> 0).toString(16).padStart(8, '0');
 export async function openReplay(code: string): Promise<Replay | null> {
     module ??= compile();
     const instance = await WebAssembly.instantiate(await module, {});
-    const w = instance.exports as unknown as Exports;
+    const w = instance.exports as unknown as UtttExports;
 
     const bytes = new TextEncoder().encode(code);
     if (bytes.length + 1 > w.uw_code_cap()) return null;
@@ -71,13 +52,6 @@ export async function openReplay(code: string): Promise<Replay | null> {
     mem[bytes.length] = 0;
     const plies = w.uw_load();
     if (!plies) return null;
-
-    const text = (p: number) => {
-        const all = new Uint8Array(w.memory.buffer);
-        let e = p;
-        while (all[e]) e++;
-        return new TextDecoder().decode(all.subarray(p, e));
-    };
 
     return {
         plies,
@@ -92,11 +66,6 @@ export async function openReplay(code: string): Promise<Replay | null> {
                 polys.push({ first: w.uw_poly_first(i), n: w.uw_poly_len(i), fill: hex(w.uw_poly_ink(i)) });
             return { running, points, polys };
         },
-        caption: () => text(w.uw_caption()),
-        paper(side) {
-            const p = w.uw_paper(side);
-            const px = new Uint8ClampedArray(w.memory.buffer, p, side * side * 4).slice();
-            return new ImageData(px, side, side);
-        },
+        caption: () => cString(w.memory, w.uw_caption()),
     };
 }

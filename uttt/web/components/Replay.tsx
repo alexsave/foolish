@@ -55,7 +55,6 @@ export function Replay({ code }: { code: string }) {
                 if (!kr) return setStatus('bad');
                 kernel.current = kr;
                 setPlies(kr.plies);
-                paintPaper(kr);
                 goTo(0, false);
                 setStatus('ready');
                 setPlaying(true);
@@ -190,15 +189,6 @@ function draw(cv: HTMLCanvasElement, f: ReturnType<Kernel['frame']>) {
     }
 }
 
-/** The kernel's napkin under the whole page, stretched as the app stretches
- *  it over its sheet. */
-function paintPaper(kr: Kernel) {
-    const side = 420;
-    const c = document.createElement('canvas');
-    c.width = c.height = side;
-    c.getContext('2d')?.putImageData(kr.paper(side), 0, 0);
-    document.body.style.backgroundImage = `url(${c.toDataURL('image/png')})`;
-}
 
 const Svg = ({ children }: { children: ReactNode }) => (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
