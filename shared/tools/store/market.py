@@ -4,8 +4,8 @@ Layout copied from the reference the owner sent - a top iMessage app: a big
 two-line title across the top, the screenshot below it in a phone body, and a
 single flat brand colour behind both.
 
-SHARED BY EVERY PRODUCT. Nothing here is Durak's except the defaults: the
-grounds below and the CLI's automatic title size are foolish's, so its seven
+SHARED BY EVERY PRODUCT. Nothing here is ROOT's (the card game at the repo root) except the defaults: the
+grounds below and the CLI's automatic title size are ROOT's, so its seven
 listing frames (docs/appstore/screenshots) rebuild byte for byte. Another
 product passes its own `grounds` and `size` to `frame()` - see
 uttt/ios/Tools/store_frames.py.
@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 W, H = 1320, 2868
 
-# FOOLISH'S PALETTE, the default. A PALETTE, NOT ONE COLOUR. The reference sets vary the ground card to card -
+# ROOT'S PALETTE, the default. A PALETTE, NOT ONE COLOUR. The reference sets vary the ground card to card -
 # it keeps a row of ten from reading as one long block - so these alternate
 # across the set. Every colour is either the owner's swatch or sampled from the
 # product itself, so the set looks like the app rather than like a template.
@@ -122,7 +122,7 @@ def wrap(draw, text, font, maxw):
 
 def frame(shot_path, title, out_path, ground="red", size=None, grounds=None):
     """One frame. `grounds` maps a name to (top, bottom, title) RGB; it
-    defaults to foolish's GROUNDS."""
+    defaults to ROOT's GROUNDS."""
     c_top, c_bot, c_text = (grounds or GROUNDS)[ground]
     bg = Image.new("RGB", (W, H), c_top)
     # A gentle vertical shade so a flat fill does not read as a print error.
@@ -212,7 +212,7 @@ def fit_size(titles, start=160, floor=48):
     return size
 
 if __name__ == "__main__":
-    # foolish's listing: a JSON list of [shot, title, ground], its grounds.
+    # ROOT's listing: a JSON list of [shot, title, ground], its grounds.
     import json
     spec = json.load(open(sys.argv[1]))
     outdir = sys.argv[2]
