@@ -320,7 +320,7 @@ int main(void)
         UtttGame w; uttt_init(&w);
         for (unsigned i = 0; i < sizeof diag && !w.over; i++) uttt_play(&w, diag[i]);
         UtttMotion ms = uttt_motion(&w, UTTT_CH_STAGE);
-        float rf[4]; uttt_wash_rect(ms.from, rf, NULL);
+        float rf[4], fa = 0.f; uttt_wash_rect(ms.from, rf, &fa);
         OK(ms.fall_at == ms.ink_ms && ms.line_at == ms.ink_ms + UTTT_MS_FALL
            && ms.end_ms == ms.line_at + UTTT_MS_LINE,
            "pre: the winning move draws its mark, then the big mark, then the line");
@@ -332,18 +332,24 @@ int main(void)
            "pre: the big mark falls after the small one");
         uttt_motion_at(&ms, ms.line_at + UTTT_MS_LINE / 2, &f);
         OK(f.fall_t == 1.f && f.line_t > .3f && f.line_t < 1.f, "pre: then the line");
-        OK(same_rect(f.wash, rf), "pre: the wash still on the block the move was played in");
+        OK(f.wash[2] == 0.f && (f.wash_rgba & 0xff) == 0,
+           "pre: a finished game has no live board - the wash is gone once the ink lands");
+        uttt_motion_at(&ms, ms.ink_ms / 2, &f);
+        OK(same_rect(f.wash, rf) && (f.wash_rgba & 0xff) > 0
+           && (f.wash_rgba & 0xff) < (uttt_wash_rgba(fa) & 0xff),
+           "pre: the winning move's wash leaves with its ink, where it was");
         uttt_motion_at(&ms, ms.end_ms, &f);
-        OK(!f.running && f.fall_t == 1.f && f.line_t == 1.f && same_rect(f.wash, rf),
-           "pre: at rest, the whole settlement and the wash unmoved");
+        OK(!f.running && f.fall_t == 1.f && f.line_t == 1.f && f.wash[2] == 0.f,
+           "pre: at rest, the whole settlement and no tint");
         UtttMotion mb = uttt_motion(&w, UTTT_CH_SETTLE);
         uttt_motion_at(&mb, 0, &f);
         OK(f.mark_t == 1.f && f.fall_t == 1.f && f.line_t == 1.f && f.running,
            "post: at Send the whole settlement is already down");
+        uttt_motion_at(&mb, 0, &f);
+        int none = f.wash[2] == 0.f;
         uttt_motion_at(&mb, mb.end_ms / 2, &f);
-        OK(f.fall_t == 1.f && f.line_t == 1.f && same_rect(f.wash, rf)
-           && (f.wash_rgba & 0xff) < (uttt_wash_rgba(.3f) & 0xff),
-           "post: the game is over, so the wash leaves - nothing else moves");
+        OK(none && f.fall_t == 1.f && f.line_t == 1.f && f.wash[2] == 0.f,
+           "post: the game is over and the stage took the wash - Send brings none back");
         UtttMotion md = uttt_motion(&w, UTTT_CH_THEIRS);
         uttt_motion_at(&md, md.ink_ms - 1, &f);
         OK(f.fall_t == 0.f && md.fall_at == md.ink_ms && md.line_at == md.ink_ms + UTTT_MS_FALL
@@ -351,8 +357,8 @@ int main(void)
            "theirs: small mark, big mark, line, then the highlighter");
         UtttMotion mr = uttt_motion(&w, UTTT_CH_DRAFT);
         uttt_motion_at(&mr, 0, &f);
-        OK(!f.running && f.mark_t == 1.f && f.fall_t == 1.f && f.line_t == 1.f && same_rect(f.wash, rf),
-           "draft: the winning move staged, shown again, has its settlement and the wash unmoved");
+        OK(!f.running && f.mark_t == 1.f && f.fall_t == 1.f && f.line_t == 1.f && f.wash[2] == 0.f,
+           "draft: the winning move staged, shown again, has its settlement and no tint");
         /* a move that took a block and did not end the game: a prefix of
          * the fixture whose last move won its block */
         int took = 0;

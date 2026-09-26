@@ -30,9 +30,9 @@ enum {
     /* the play surface, drawn for `seat` (UTM_SEAT_*) */
     UTTT_SAY_HEADLINE_PRE,         /* words before the drawn mark           */
     UTTT_SAY_HEADLINE_POST,        /* words after it (UTTT_SAY_HEADLINE_MARK) */
-    UTTT_SAY_SUBLINE,              /* "Anywhere you like.", "Top left.",
-                                      at the end the winning line spoken:
-                                      "Top left, centre, bottom right."     */
+    UTTT_SAY_SUBLINE,              /* nothing while the game runs (the
+                                      yellow tint says where); at the end
+                                      the winning line: "Diagonal"          */
 
     /* the spectator's one line */
     UTTT_SAY_WATCH_LABEL,          /* "watching"                            */
@@ -107,6 +107,11 @@ int uttt_say_by(int key, const UtttGame *g, int seat, const char *who,
  * line would not fit is said without it ("X won in 81 moves"). */
 int uttt_caption(int over, int turn, int block, int line, int n, const char *who,
                  char *out, int cap);
+
+/* THE INK THE PLAY SURFACE SETS ITS HEADLINE IN, 0xRRGGBBAA: the page's ink
+ * while the game runs, the winner's own mark ink once somebody has won, X
+ * blue for a draw. */
+uint32_t uttt_say_headline_ink(const UtttGame *g);
 
 /* The mark the BUBBLE's headline draws before its words - the winner's - or
  * 0: only a finished game's bubble has words (uttt_bubble). The bubble

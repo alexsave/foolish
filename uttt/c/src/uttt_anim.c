@@ -65,6 +65,13 @@ UtttMotion uttt_motion(const UtttGame *g, int ch)
          * above has landed. */
         m.to = m.from;
         m.wash_at = 0; m.wash_ms = 1;
+        if (dest < 0) {
+            /* A MOVE THAT ENDS THE GAME leaves no live board, so nothing is
+             * tinted (owner, 2026-09-26: the staged win lit the whole sheet
+             * as "play anywhere"). The wash leaves with the ink. */
+            m.to = -1;
+            m.wash_ms = m.ink_ms;
+        }
         m.outline = dest;
         m.outline_at = dest >= 0 ? e : -1;
         if (dest >= 0) e += UTTT_MS_OUTLINE;
@@ -86,6 +93,8 @@ UtttMotion uttt_motion(const UtttGame *g, int ch)
         m.wash_at = 0; m.wash_ms = UTTT_MS_WASH_MINE;
         m.outline = dest; m.outline_at = -1; m.outline_fade = 1;
         m.end_ms = UTTT_MS_WASH_MINE;
+        /* the stage already took the wash away from a finished game */
+        if (dest < 0) m.from = -1;
         return m;
     }
 

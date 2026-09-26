@@ -10,10 +10,15 @@ enum UtttInk {
     static let ink   = UIColor(red: 0.114, green: 0.106, blue: 0.087, alpha: 1)   // #1d1b16
     static let muted = UIColor(red: 0.42, green: 0.40, blue: 0.35, alpha: 1)
     static let label = UIColor(red: 0.541, green: 0.522, blue: 0.467, alpha: 1)   // #8a8577
-    static let blue  = UIColor(red: 0.145, green: 0.216, blue: 0.420, alpha: 1)   // #25376b
     /// The doors' outline ink (uttt_rule.c EDGE, #1b2a52), which the label
     /// is set in so the word and the bar are one pen.
     static let doorInk = UIColor(red: 0.106, green: 0.165, blue: 0.322, alpha: 1)
+
+    /// A kernel colour, 0xRRGGBBAA.
+    static func rgba(_ c: UInt32) -> UIColor {
+        UIColor(red: CGFloat((c >> 24) & 0xff) / 255, green: CGFloat((c >> 16) & 0xff) / 255,
+                blue: CGFloat((c >> 8) & 0xff) / 255, alpha: CGFloat(c & 0xff) / 255)
+    }
 }
 
 /// One face of type: size, weight, tracking, colour, and whether it is set

@@ -232,6 +232,11 @@ const char *uti_say_by(int key, const char *who);
 /* The mark the bubble's headline draws before its words, or 0. */
 int  uti_say_bubble_mark(void);
 
+/* The ink the play surface sets its headline in, 0xRRGGBBAA: the page's
+ * ink while the game runs, the winner's mark ink at the end
+ * (uttt_say_headline_ink). */
+uint32_t uti_say_headline_ink(void);
+
 /* VoiceOver's words for square `mv` of the resident game ("Top left board,
  * centre square, empty"), and the square's rectangle in the board's 0..1
  * space as x, y, w, h (0 for an `mv` off the board). */

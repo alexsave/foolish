@@ -57,11 +57,7 @@ public enum UtttBubble {
     }
 
     private static func ink(_ line: Int32) -> UIColor {
-        let c = uti_bubble_ink(line)
-        return UIColor(red:   CGFloat((c >> 24) & 0xff) / 255,
-                       green: CGFloat((c >> 16) & 0xff) / 255,
-                       blue:  CGFloat((c >>  8) & 0xff) / 255,
-                       alpha: CGFloat( c        & 0xff) / 255)
+        UtttInk.rgba(uti_bubble_ink(line))
     }
 
     private static func font(_ line: Int32) -> UIFont {

@@ -146,7 +146,8 @@ public final class UtttGameScreen: UtttSheetView {
         /* THE WORDS TWICE, in the column beside the ink and in the band, each
          * shown only where it fits (uttt_sheet) - so a drag crossfades them
          * and never squeezes them to "Wai...". */
-        let ink = end ? UtttInk.blue : UtttInk.ink
+        /* the kernel's: the winner's own ink at the end, O red for O */
+        let ink = UtttInk.rgba(Uttt.headlineInk)
         let (LC, LB) = wordsLayouts(L, B)
         column.frame = rect(LC.words)
         column.set(model.headline, ink: ink, seed: model.seed &* 31 &+ 7,

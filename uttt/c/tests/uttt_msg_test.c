@@ -593,7 +593,7 @@ static void test_say(void)
     say(UTTT_SAY_HEADLINE_PRE, &g, UTM_SEAT_OPEN, s);
     OK(!strcmp(s, "Your move"), "say: the joiner is on move");
     say(UTTT_SAY_SUBLINE, &g, UTM_SEAT_OPEN, s);
-    OK(!strcmp(s, "Anywhere you like"), "say: and may go anywhere");
+    OK(!strcmp(s, ""), "say: a live game has no line under the headline, the tint says where");
 
     uttt_play(&g, 41);                  /* centre block, middle-right cell -> block 5 */
     say(UTTT_SAY_CAPTION, &g, UTM_SEAT_X, s);
@@ -668,6 +668,21 @@ static void test_say(void)
     say(UTTT_SAY_BUBBLE_HEADLINE, &g, UTM_SEAT_O, s);
     OK(!strcmp(s, "wins") && uttt_say_bubble_mark(&g) == UTTT_X,
        "say: the finished bubble draws the winner's mark");
+    OK(uttt_say_headline_ink(&g) == 0x25376bffu && uttt_bubble(&g).place_rgba == 0x25376bffu,
+       "say: X's win is set in X blue, drawer and bubble");
+
+    /* O WINS (docs/STORE_SHOTS.md's store game): its verdict is O red */
+    {
+        static const uint8_t ow[] = { 34,67,44,80,76,43,69,62,79,63,4,40,39,31,37,16,70,71,73,15,60,59,47,24,57,
+                                      30,33,56,23,46,11,21,32,48,29,20,18,3,35,38,19,10,17,42,14,50,45,5,49,22 };
+        UtttGame w; uttt_init(&w);
+        for (unsigned i = 0; i < sizeof ow; i++) uttt_play(&w, ow[i]);
+        OK(w.over == UTTT_O, "say: the O fixture is O's win");
+        OK(uttt_say_headline_ink(&w) == 0xa8321fffu, "say: O's \"You win\" is set in O red");
+        OK(uttt_bubble(&w).place_rgba == 0xa8321fffu, "say: O's bubble counts the moves in O red");
+        uttt_init(&w);
+        OK(uttt_say_headline_ink(&w) == UTTT_INK, "say: a live headline is the page's ink");
+    }
 
     /* play games out and read every key at every ply from every seat */
     int dashes = 0, missing = 0, lines_said = 0, periods = 0;

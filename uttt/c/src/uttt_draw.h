@@ -30,6 +30,13 @@ typedef struct {
 
 UtttDrawOpts uttt_draw_opts(int32_t seed);
 
+/* The ink a mark is drawn in, 0xRRGGBBAA: O red for UTTT_O, X blue for
+ * anything else. The one owner of the two colours outside the pen. */
+uint32_t uttt_mark_ink(int mark);
+
+/* The page's ink, #1d1b16: type that is not a side's. */
+#define UTTT_INK 0x1d1b16ffu
+
 /* Build the board. Returns 0, or -1 if it ran out of room. */
 int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o);
 

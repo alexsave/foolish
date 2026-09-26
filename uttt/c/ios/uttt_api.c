@@ -712,6 +712,7 @@ const char *uti_say_by(int key, const char *who)
 }
 
 int uti_say_bubble_mark(void) { return uttt_say_bubble_mark(&S.m.game); }
+uint32_t uti_say_headline_ink(void) { return uttt_say_headline_ink(&S.m.game); }
 
 const char *uti_say_cell(int mv)
 {

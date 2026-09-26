@@ -94,6 +94,15 @@ int uttt_say_watch_mark(const UtttGame *g)
     return g->over ? g->over : g->turn;
 }
 
+uint32_t uttt_say_headline_ink(const UtttGame *g)
+{
+    /* THE VERDICT IS SET IN THE WINNER'S INK: "You win" and "<O> wins" in
+     * O red when O won (owner, 2026-09-26: O's win was set in X blue). A draw
+     * keeps the X blue the end has always been set in; a live game is ink. */
+    if (g->over == UTTT_X || g->over == UTTT_O) return uttt_mark_ink(g->over);
+    return g->over == UTTT_DRAW ? uttt_mark_ink(UTTT_X) : UTTT_INK;
+}
+
 int uttt_say_bubble_mark(const UtttGame *g)
 {
     return g->over == UTTT_X || g->over == UTTT_O ? g->over : 0;
@@ -147,7 +156,9 @@ int uttt_say_by(int key, const UtttGame *g, int seat, const char *who,
          * highlighter already shows. */
         if (g->over == UTTT_DRAW) return put(out, cap, "Nine blocks, no line");
         if (g->over) return say_line(g, out, cap);
-        if (g->turn == you) return put(out, cap, a == 9 ? "Anywhere you like" : "");
+        /* A LIVE GAME SAYS NOTHING UNDER THE HEADLINE (owner, 2026-09-26):
+         * "Anywhere you like" repeated the yellow tint over the whole sheet,
+         * as "Middle left" repeated it over one block before it went. */
         return put(out, cap, "");
 
     case UTTT_SAY_WATCH_LABEL:

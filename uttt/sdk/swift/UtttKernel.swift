@@ -307,6 +307,10 @@ public enum Uttt {
     // When an insert may go and what its silence means are shared with the
     // sister product: InsertStaging (shared/c/msg_stage).
 
+    /// The ink the play surface's headline is set in, 0xRRGGBBAA: the
+    /// winner's own at the end.
+    public static var headlineInk: UInt32 { uti_say_headline_ink() }
+
     /// The mark the bubble's headline draws before its words, or `.none`.
     public static var bubbleMark: Mark { Mark(rawValue: UInt8(uti_say_bubble_mark())) ?? .none }
 

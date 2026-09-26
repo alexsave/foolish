@@ -35,6 +35,8 @@ static float bow_for  (float L) { return 1.0f * powf(REF / (L > 1e-4f ? L : 1e-4
  * once, here, instead of at four call sites that would each forget. */
 static float mro_for  (float L) { return .02f * powf(REF / (L > 1e-4f ? L : 1e-4f), .75f); }
 
+uint32_t uttt_mark_ink(int mark) { return mark == UTTT_O ? INK_O : INK_X; }
+
 UtttDrawOpts uttt_draw_opts(int32_t seed)
 {
     UtttDrawOpts o;
@@ -555,8 +557,10 @@ UtttBubble uttt_bubble(const UtttGame *g)
     b.place_pt    = 18.f;
     b.lead        = 1.f;
     b.reach       = BUB_REACH;
-    b.headline_rgba = 0x1d1b16ffu;
-    b.place_rgba    = INK_X;                 /* the same blue an X is drawn in */
+    b.headline_rgba = UTTT_INK;
+    /* the winner's own ink, as the win line is drawn in it (owner,
+     * 2026-09-26: O's "50 moves" was X blue); a draw keeps X blue */
+    b.place_rgba    = uttt_mark_ink(g && g->over == UTTT_O ? UTTT_O : UTTT_X);
     return b;
 }
 
