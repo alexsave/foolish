@@ -25,6 +25,16 @@ rig.sh devgame 34,67,44,80,76,43,69,62,79,63,4,40,39,31,37,16,70,71,73,15,60,59,
 
 and the plies after the prefix are played on the simulator, each as a real message from alternating threads.
 
+| Frames | `devgame` prefix | Played on the simulator |
+|---|---|---|
+| 01, 04 | 32 plies | 33-36 as real messages, then 37 sent (01) or, after a re-sent copy of 36, staged (04) |
+| 03, 06 | 41 plies | 42 by O from the + menu; X opens it |
+| 05 | 46 plies | 47-50, X from the other thread, O from the photographed one |
+| 02 | none | O's invitation from the + menu with `dev.invite`; X opens it |
+
+Ply 37 and not the more dramatic 39 for the Send frames: 39 wins X the middle-left board and sends O to a won board, so the whole napkin lights up as "play anywhere" and buries the marks.
+The collapsed drawer's height follows the last keyboard the simulator showed, so it is not a constant: every tap on the collapsed board is placed from the board's own main lines in a fresh screenshot, and each dark / light pair is shot by the same script so its drawer sits at the same height.
+
 ## Frames
 
 Six scenes, each shot in BOTH appearances, so a frame can move to any slot and take that slot's theme.
@@ -33,10 +43,10 @@ One title size across the set, 124 px Futura Bold, every title two lines with a 
 
 | # | Title | Scene | Ply shown | Seat | Listing theme | Ground |
 |---|---|---|---|---|---|---|
-| 01 | "Play Ultimate / Tic-Tac-Toe" | The transcript with our SENT move on the right, the collapsed drawer under it | 39 (X wins the middle-left board), sent | X | dark | O red |
+| 01 | "Play Ultimate / Tic-Tac-Toe" | The transcript with our SENT move on the right, the collapsed drawer under it | 37 (X, top-right board, top-left square), sent | X | dark | O red |
 | 02 | "Nine boards, / one big game" | The empty napkin: O's invitation opened by X, expanded | 0 | X | light | X blue |
 | 03 | "Your move picks / their board" | Expanded board, X to play in the top-middle board O's square sent them to | 42 (O) received | X | dark | coal |
-| 04 | "Send your moves / to the chat" | The staged draft in the compose field, collapsed drawer | 39 (X), staged and not sent | X | light | napkin |
+| 04 | "Send your moves / to the chat" | The staged draft in the compose field, collapsed drawer | 37 (X), staged and not sent; O is sent to the top-left board | X | light | napkin |
 | 05 | "Win three boards / in a row" | The transcript with O's winning move sent, the drawer reading "You win" | 50 (O wins the anti-diagonal), sent | O | dark | O red |
 | 06 | "Learn the rules / in a minute" | The rules page, opened from the rulebook and not scrolled | over ply 42 | X | light | X blue |
 
@@ -50,13 +60,13 @@ The grounds are the napkin's own colours, taken from the kernel's draw code (`ut
 | napkin | (249,248,244) | (242,241,237) | X blue | `uttt_paper`, .976 at the top to .948 at the bottom |
 
 They cycle O red / X blue / coal / napkin, a four-cycle against the two-cycle of the theme, which also puts O's win on O's red.
-`uttt/ios/Tools/store_frames.py` composes the set with `shared/tools/store/market.py`.
+`python3 uttt/ios/Tools/store_frames.py` composes the set, and a contact sheet, with `shared/tools/store/market.py`.
 
 ## Transcript frames on the simulator
 
 The simulator draws each superseded line of a session with a neighbour's summary (rig README, iOS 26 and 27 notes): a collapsed line shows the summary of the NEXT message in the session.
 Each move after the first is therefore staged with the DEBUG-only `dev.caption` set to the line the move BEFORE it has to read; the bubble's own caption stays the kernel's.
-The "Send" frame also re-sends ply 38's board unchanged (`dev.restage`) to carry the last line, then stages ply 39 in the same session; that extra copy is scrolled behind the draft, leaving texts, then our line, then theirs.
+The "Send" frame also re-sends ply 36's board unchanged (`dev.restage`) to carry the last line, then stages ply 37 in the same session; that extra copy is scrolled behind the draft, leaving texts, then our line, then theirs.
 The empty frame's invitation is a real one from the + menu, opened with the store game's seed by `dev.invite`.
 
 ## Plies

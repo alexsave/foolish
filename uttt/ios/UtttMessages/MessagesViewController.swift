@@ -739,7 +739,16 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// was still presenting the drawer, which is when the whole-window flash
     /// was at its longest (see `appeared`).
     private func start(in conversation: MSConversation) {
+#if DEBUG
+        /* `dev.invite` (store frames only): see UtttDev.takeSeededInvite. */
+        if UtttDev.takeSeededInvite() {
+            Uttt.openInvitation(at: Date(timeIntervalSince1970: TimeInterval(UtttDev.seed)))
+        } else {
+            Uttt.openInvitation()
+        }
+#else
         Uttt.openInvitation()
+#endif
         guard let wire = UtttWire.resident else {
             UtttLog.fault("start", "the kernel wrote no invitation")
             return

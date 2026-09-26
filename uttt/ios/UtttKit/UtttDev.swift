@@ -84,6 +84,15 @@ public enum UtttDev {
     /// True once, then false until the file is written again.
     public static func takeRestage() -> Bool { dev.take("dev.restage") != nil }
 
+    /// `dev.invite`: the next invitation opens with the seeded game's seed.
+    ///
+    /// Store frames only. An invitation's seed is the moment it is composed
+    /// (utm_seed_at), so an ordinary one draws a different napkin from the
+    /// store game's; the empty-board frame opens a real invitation through
+    /// the + menu with this set, and it is the same game as every other frame.
+    /// True once, then false until the file is written again.
+    public static func takeSeededInvite() -> Bool { dev.take("dev.invite") != nil }
+
     /// The word the rig wrote, or nil in every ordinary run - including an
     /// ordinary DEBUG one, because the file is absent until somebody writes it.
     public static var seat: String? { dev.string(seatFile) }
