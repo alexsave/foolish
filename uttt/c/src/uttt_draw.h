@@ -167,12 +167,44 @@ const char *uttt_place_name(int block, int spoken);
  * tools/icons.sh, which writes the PNGs the asset catalogues carry. */
 int uttt_draw_icon(UtttDL *d, float w, float h);
 
-/* THE RULES, in the kernel, for the same reason the nine block names are: it
- * is the one thing that knows what they are, and a second copy in a renderer
- * is a second rulebook. Six lines and a title; never NULL. */
-int         uttt_rules_count(void);
-const char *uttt_rules_line(int i);
-const char *uttt_rules_title(void);
+/* ------------------------------------------------------------ the rules */
+/* THE RULES SHEET, ILLUSTRATED (docs/RULES.html, owner-approved): eight
+ * lines (uttt_say.h, uttt_rules_line), each beside a small drawing of what it
+ * says, out of this pen - the same hashes, marks, big marks, win line, wash
+ * and promise the board draws.
+ *
+ * Drawing `i` (0..7) in a unit square; seeded by its index, so every phone
+ * draws the same eight. 0, or -1 for an `i` off the list or a list that ran
+ * out of room. */
+int uttt_draw_rule(UtttDL *d, int i);
+
+/* THE YELLOW OUTLINE ROUND A PHRASE ("yellow outline" in rule 6), a pen box
+ * drawn in POINTS round a `w` by `h` frame and handed back in 0..1 of it, as
+ * the doors are. The phrase's box is the frame less UTTT_RULES_LOOK's
+ * box_pad on every side. */
+int uttt_draw_rule_box(UtttDL *d, float w, float h);
+
+/* WHERE EVERYTHING ON THE RULES SHEET GOES, in points, docs/RULES.html's
+ * numbers. The text engine measures the lines; every other number is here. */
+typedef struct {
+    float margin_x;      /* the sheet's side margin                           */
+    float top;           /* the title's top under the grabber's area          */
+    float bottom;        /* room under the last row                           */
+    float title_pt;      /* the title, bold                                   */
+    float title_gap;     /* title to the first row                            */
+    float art;           /* each drawing's side                               */
+    float art_gap;       /* drawing to its text                               */
+    float row_gap;       /* between rows; every row is as tall as the tallest */
+    float body_pt;       /* the rules' type                                   */
+    float body_lead;     /* line height over type size                        */
+    float box_pad;       /* the outline's frame past the phrase, each side    */
+    float word_room;     /* extra space either side of a marked phrase        */
+    float tint_pad_x, tint_pad_y;   /* the tint past the phrase               */
+    uint32_t ink;        /* the text                                          */
+    uint32_t tint;       /* the "yellow tinted area" behind its phrase        */
+} UtttRulesLook;
+
+UtttRulesLook uttt_rules_look(void);
 
 /* The sheet everything is drawn on: w*h pixels of RGBA, opaque. Here rather
  * than in a renderer because two phones have to be looking at the same piece

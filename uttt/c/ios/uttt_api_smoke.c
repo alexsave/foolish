@@ -705,6 +705,20 @@ int main(void)
                L.board[2], L.board[0], L.board[1], L.words[2]);
     }
 
+    /* THE RULES SHEET through the bridge: eight lines, eight drawings, the
+     * two marked phrases, and the look the host lays them out with. */
+    {
+        int all = uti_rules_count() == 8, at = -1, len = -1;
+        for (int i = 0; i < 8; i++) if (uti_draw_rule(i) < 4 || uti_draw_overflow()) all = 0;
+        ok(all, "the rules: eight lines, each with its drawing");
+        ok(uti_rules_yellow(5, &at, &len) == 1 && at == 4 && len == 14
+           && uti_rules_yellow(6, &at, &len) == 2 && uti_rules_yellow(0, &at, &len) == 0,
+           "the rules: the outlined and the tinted phrase");
+        ok(uti_draw_rule_box(120, 26) > 0 && !uti_draw_overflow(), "the rules: the phrase's pen box");
+        UtiRulesLook L = uti_rules_look();
+        ok(L.art == 62.f && L.body_pt == 15.f && L.ink == 0x1d1b16ffu, "the rules: the look crosses whole");
+    }
+
     printf(fails ? "\n%d FAILED\n" : "\nbridge ok\n", fails);
     return fails ? 1 : 0;
 }

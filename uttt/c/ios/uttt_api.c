@@ -407,6 +407,33 @@ float uti_bubble_scale(float display) { return uttt_bubble_scale(display); }
 int         uti_rules_count(void)      { return uttt_rules_count(); }
 const char *uti_rules_line(int i)      { return uttt_rules_line(i); }
 const char *uti_rules_title(void)      { return uttt_rules_title(); }
+int uti_rules_yellow(int i, int *at, int *len) { return uttt_rules_yellow(i, at, len); }
+
+_Static_assert(sizeof(UtiRulesLook) == sizeof(UtttRulesLook)
+            && offsetof(UtiRulesLook, tint) == offsetof(UtttRulesLook, tint)
+            && offsetof(UtiRulesLook, word_room) == offsetof(UtttRulesLook, word_room),
+               "the rules sheet's look lines up");
+UtiRulesLook uti_rules_look(void)
+{
+    UtttRulesLook L = uttt_rules_look();
+    UtiRulesLook o;
+    memcpy(&o, &L, sizeof o);
+    return o;
+}
+
+int uti_draw_rule(int i)
+{
+    dl_fresh();
+    S.overflow = uttt_draw_rule(&S.dl, i) != 0;
+    return publish();
+}
+
+int uti_draw_rule_box(float w, float h)
+{
+    dl_fresh();
+    S.overflow = uttt_draw_rule_box(&S.dl, w, h) != 0;
+    return publish();
+}
 
 const char *uti_place_name(int block, int spoken)
 {

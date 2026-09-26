@@ -136,4 +136,17 @@ int uttt_say_watch_mark(const UtttGame *g);
  * or a buffer too small. */
 int uttt_say_cell(const UtttGame *g, int mv, char *out, int cap);
 
+/* THE RULES: eight lines and a title, docs/RULES.html word for word; never
+ * NULL. Each line has its drawing (uttt_draw.h, uttt_draw_rule). */
+int         uttt_rules_count(void);
+const char *uttt_rules_line(int i);
+const char *uttt_rules_title(void);
+
+/* WHICH PHRASE OF LINE `i` IS MARKED, and how: UTTT_RULES_OUTLINE for "yellow
+ * outline" (a pen box round it, uttt_draw_rule_box), UTTT_RULES_TINT for
+ * "yellow tinted area" (the wash behind it), UTTT_RULES_PLAIN for neither.
+ * `at` and `len` are byte offsets into uttt_rules_line(i), which is ASCII. */
+enum { UTTT_RULES_PLAIN = 0, UTTT_RULES_OUTLINE = 1, UTTT_RULES_TINT = 2 };
+int uttt_rules_yellow(int i, int *at, int *len);
+
 #endif

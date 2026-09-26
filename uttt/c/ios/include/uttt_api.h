@@ -417,10 +417,31 @@ int   uti_draw_bubble(int active, int last);
  * ("bottom middle"), 1 for a sentence ("the bottom-middle board"). */
 const char *uti_place_name(int block, int spoken);
 
-/* The rulebook's text. Six lines and a title - see uttt_draw.h. */
+/* THE RULES SHEET (docs/RULES.html): eight lines and a title (uttt_say.h),
+ * each line beside its drawing (uttt_draw_rule), everything placed by
+ * uti_rules_look. */
 int         uti_rules_count(void);
 const char *uti_rules_line(int i);
 const char *uti_rules_title(void);
+
+/* Which phrase of line `i` is marked: 1 "yellow outline" (a pen box round
+ * it, uti_draw_rule_box), 2 "yellow tinted area" (the tint behind it), 0
+ * none. `at`, `len`: character offsets (the lines are ASCII). */
+int uti_rules_yellow(int i, int *at, int *len);
+
+/* Drawing `i` in a unit square, filled like the board. */
+int uti_draw_rule(int i);
+/* The yellow outline round a phrase's frame, `w` by `h` POINTS, back in
+ * 0..1 of the frame; the phrase sits box_pad inside it. */
+int uti_draw_rule_box(float w, float h);
+
+/* uttt_draw.h UtttRulesLook, field for field. */
+typedef struct {
+    float margin_x, top, bottom, title_pt, title_gap, art, art_gap, row_gap;
+    float body_pt, body_lead, box_pad, word_room, tint_pad_x, tint_pad_y;
+    uint32_t ink, tint;
+} UtiRulesLook;
+UtiRulesLook uti_rules_look(void);
 
 /* The last uti_draw, read in place. Coordinates are 0..1. A polygon is
  * points[first*2 ..] for n points, filled in rgba (0xRRGGBBAA). */

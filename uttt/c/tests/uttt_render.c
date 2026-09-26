@@ -152,9 +152,38 @@ static int rulebook(int argc, char **argv)
     return 0;
 }
 
+/* `./build/uttt_render rules [px]`: the rules sheet's eight drawings
+ * (uttt_draw_rule) in two rows of four, each `px` pixels square - 186 is the
+ * 62 points they ship at on a 3x phone - to hold against docs/RULES.html. */
+static int rules(int argc, char **argv)
+{
+    int px = argc > 2 ? atoi(argv[2]) : 180;
+    if (px < 16 || px * 4 > W || px * 2 > H) px = 180;
+    paper();
+    static UtttPt tmp[40000];
+    for (int i = 0; i < 8; i++) {
+        UtttDL d; uttt_dl_init(&d, pool, 400000, polys, 120000);
+        int rc = uttt_draw_rule(&d, i);
+        fprintf(stderr, "rule %d: polys %d points %d overflow %s\n", i, d.n_poly, d.n_pt, rc ? "YES" : "no");
+        float ox = (float)((i % 4) * (W / 4) + (W / 4 - px) / 2), oy = (float)((i / 4) * (px + 20) + 10);
+        for (int k = 0; k < d.n_poly; k++) {
+            int n = d.poly[k].n > 40000 ? 40000 : d.poly[k].n;
+            for (int q = 0; q < n; q++) {
+                tmp[q].x = ox + d.pt[d.poly[k].first + q].x * px;
+                tmp[q].y = oy + d.pt[d.poly[k].first + q].y * px;
+            }
+            fill_poly(tmp, n, d.poly[k].rgba);
+        }
+    }
+    write_ppm();
+    fprintf(stderr, "wrote build/board.ppm\n");
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1 && !strcmp(argv[1], "rulebook")) return rulebook(argc, argv);
+    if (argc > 1 && !strcmp(argv[1], "rules")) return rules(argc, argv);
 
     UtttGame g; uttt_init(&g);
     int moves[] = { 34,67,44,80,76,43,69,62,79,63,4,40,39,31,37,16,70,71,72,3,

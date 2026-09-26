@@ -4,6 +4,7 @@
 #include "../src/uttt.h"
 #include "../src/uttt_anim.h"
 #include "../src/uttt_draw.h"
+#include "../src/uttt_say.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -873,6 +874,72 @@ int main(void)
                least, sum / games, most);
         OK(rough, "the win line wanders at least a percent of the board, in every won game");
         OK(tame, "and never more than eight, so it stays one legible line");
+    }
+
+    /* THE RULES SHEET (docs/RULES.html): eight lines, each with a drawing
+     * out of the board's pen, and the two yellows found in the text. */
+    {
+        OK(uttt_rules_count() == 8 && !strcmp(uttt_rules_title(), "Ultimate Tic-Tac-Toe Rules")
+           && !strcmp(uttt_rules_line(7), "X moves first.") && !strcmp(uttt_rules_line(8), ""),
+           "rules: RULES.html's eight lines and title");
+        int ascii = 1;
+        for (int i = 0; i < uttt_rules_count(); i++)
+            for (const char *c = uttt_rules_line(i); *c; c++) if ((unsigned char)*c > 126) ascii = 0;
+        OK(ascii, "rules: ASCII, so a byte offset is a character offset (no em dash either)");
+        int at, len, where[8];
+        for (int i = 0; i < 8; i++) where[i] = uttt_rules_yellow(i, &at, &len);
+        OK(where[5] == UTTT_RULES_OUTLINE && uttt_rules_yellow(5, &at, &len) && at == 4 && len == 14,
+           "rules: line 6 marks \"yellow outline\" with the promise's box");
+        OK(where[6] == UTTT_RULES_TINT && uttt_rules_yellow(6, &at, &len)
+           && !strncmp(uttt_rules_line(6) + at, "yellow tinted area", (size_t)len) && len == 18,
+           "rules: line 7 marks \"yellow tinted area\" with the wash");
+        int plain = 1;
+        for (int i = 0; i < 8; i++) if (i != 5 && i != 6 && where[i] != UTTT_RULES_PLAIN) plain = 0;
+        OK(plain, "rules: no other line is marked");
+
+        /* the drawings: each fits its square, and says what its line says */
+        int fit = 1, drawn = 1, wash[8] = { 0 }, promise[8] = { 0 }, xink[8] = { 0 }, oink[8] = { 0 };
+        float wash_w[8] = { 0 };
+        for (int i = 0; i < 8; i++) {
+            UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
+            if (uttt_draw_rule(&d, i) != 0 || d.n_poly < 4) drawn = 0;
+            for (int k = 0; k < d.n_pt; k++)
+                if (d.pt[k].x < -.02f || d.pt[k].x > 1.02f || d.pt[k].y < -.02f || d.pt[k].y > 1.02f) fit = 0;
+            for (int k = 0; k < d.n_poly; k++) {
+                uint32_t c = d.poly[k].rgba >> 8;
+                if (c == (uttt_wash_rgba(1.f) >> 8)) {
+                    if (d.poly[k].n == 4) {
+                        wash[i]++;
+                        float w = d.pt[d.poly[k].first + 1].x - d.pt[d.poly[k].first].x;
+                        if (w > wash_w[i]) wash_w[i] = w;
+                    } else promise[i]++;
+                }
+                if (c == (uttt_mark_ink(UTTT_X) >> 8)) xink[i]++;
+                if (c == (uttt_mark_ink(UTTT_O) >> 8)) oink[i]++;
+            }
+        }
+        UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
+        OK(drawn && uttt_draw_rule(&d, 8) == -1 && uttt_draw_rule(&d, -1) == -1,
+           "rules: eight drawings, and no ninth");
+        OK(fit, "rules: every drawing stays in its square");
+        OK(!xink[0] && !oink[0] && !wash[0], "rules 1: the board alone");
+        OK(xink[1] && oink[1], "rules 2: X's won line, with an O block for contrast");
+        OK(oink[2] && xink[2] && !wash[2], "rules 3: one subgrid, won by O");
+        OK(oink[3] && xink[3] && !wash[3], "rules 4: an X, and the red arrow to where it sends them");
+        OK(wash[4] == 1 && wash_w[4] > .9f, "rules 5: sent to a won block, the whole board is tinted");
+        OK(wash[5] == 1 && wash_w[5] < .4f && promise[5] > 0, "rules 6: one block tinted, the promise round another");
+        OK(wash[6] == 1 && !promise[6] && xink[6], "rules 7: the tinted block and the new tap in it");
+        OK(xink[7] && !oink[7] && !wash[7], "rules 8: one X");
+
+        uttt_dl_init(&d, PT, 400000, PO, 60000);
+        int box = uttt_draw_rule_box(&d, 120.f, 26.f) == 0 && d.n_poly > 0, inside = 1;
+        for (int k = 0; k < d.n_pt; k++)
+            if (d.pt[k].x < -.05f || d.pt[k].x > 1.05f || d.pt[k].y < -.2f || d.pt[k].y > 1.2f) inside = 0;
+        OK(box && inside && (d.poly[0].rgba >> 8) == (uttt_wash_rgba(1.f) >> 8),
+           "rules: the phrase's outline is the promise's yellow, round its frame");
+        UtttRulesLook L = uttt_rules_look();
+        OK(L.art == 62.f && L.row_gap == 14.f && L.body_pt == 15.f && L.tint == uttt_wash_rgba(.38f),
+           "rules: RULES.html's sizes");
     }
 
     printf("uttt_anim: %d checks, %d failed\n", checks, fails);

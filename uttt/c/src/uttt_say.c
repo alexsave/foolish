@@ -227,3 +227,51 @@ int uttt_say_cell(const UtttGame *g, int mv, char *out, int cap)
     if (out[0] >= 'a' && out[0] <= 'z') out[0] = (char)(out[0] - 'a' + 'A');
     return n;
 }
+
+/* ---------------------------------------------------------------- the rules */
+/* THE RULES, in the kernel with every other sentence: it is the one thing
+ * that knows what they are, and a second copy in a renderer is a second
+ * rulebook that drifts. Word for word docs/RULES.html (owner-approved,
+ * 2026-09-26), in its order; each line has its drawing (uttt_draw_rule).
+ *
+ * ASCII only - the host turns a byte offset (uttt_rules_yellow) into a
+ * character offset one for one. No em dashes, no curly quotes. */
+static const char *const RULES[] = {
+    "The board is divided up into 9 3x3 subgrids, themselves arranged in a 3x3 grid of squares.",
+    "The goal is to win three subgrids in a row, a column, or diagonally.",
+    "You can win a subgrid by making your mark in three squares in a row, just like regular tic-tac-toe.",
+    "The square you mark in the subgrid chooses which subgrid your opponent will move in on their next turn.",
+    "If that square is completed, they will be able to move anywhere on the board.",
+    "The yellow outline will show you where your opponent will move on the next round.",
+    "If you haven't sent the move yet, and want to change your move, tap again in the yellow tinted area.",
+    "X moves first.",
+};
+
+int uttt_rules_count(void) { return (int)(sizeof RULES / sizeof *RULES); }
+
+const char *uttt_rules_line(int i)
+{
+    if (i < 0 || i >= uttt_rules_count()) return "";
+    return RULES[i];
+}
+
+const char *uttt_rules_title(void) { return "Ultimate Tic-Tac-Toe Rules"; }
+
+/* THE TWO YELLOWS, named in the text and drawn round it as the board draws
+ * them: the promise's pen outline, the wash's flat tint. */
+static const char *const YELLOW[2] = { "yellow outline", "yellow tinted area" };
+
+int uttt_rules_yellow(int i, int *at, int *len)
+{
+    const char *line = uttt_rules_line(i);
+    for (int k = 0; k < 2; k++) {
+        const char *p = strstr(line, YELLOW[k]);
+        if (!p) continue;
+        if (at) *at = (int)(p - line);
+        if (len) *len = (int)strlen(YELLOW[k]);
+        return k + 1;
+    }
+    if (at) *at = 0;
+    if (len) *len = 0;
+    return UTTT_RULES_PLAIN;
+}
