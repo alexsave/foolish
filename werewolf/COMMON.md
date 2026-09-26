@@ -39,7 +39,8 @@ inherited C that compiles into this product.
   **unmodified**, and exports `FOOLISH_SIM` rather than editing it, precisely so
   the file stays byte-identical for the day these products share a core.
 - `ios/Tools/rig/rig.sh`, `ios/Tools/rig/shots/**`, `ios/Tools/IconGen/**`,
-  `ios/Tools/store/market.py`, the texture generators.
+  the texture generators. (The store frame generator already moved:
+  `shared/tools/store/market.py`.)
 
 ### Documents that are architecture rather than Durak
 

@@ -1,15 +1,21 @@
-"""App Store marketing frames: deep red ground, white title, device mockup.
+"""App Store marketing frames: a flat ground, a big title, a device mockup.
 
 Layout copied from the reference the owner sent - a top iMessage app: a big
 two-line title across the top, the screenshot below it in a phone body, and a
 single flat brand colour behind both.
+
+SHARED BY EVERY PRODUCT. Nothing here is Durak's except the defaults: the
+grounds below and the CLI's automatic title size are foolish's, so its seven
+listing frames (docs/appstore/screenshots) rebuild byte for byte. Another
+product passes its own `grounds` and `size` to `frame()` - see
+uttt/ios/Tools/store_frames.py.
 """
 import os, sys
 from PIL import Image, ImageDraw, ImageFont
 
 W, H = 1320, 2868
 
-# A PALETTE, NOT ONE COLOUR. The reference sets vary the ground card to card -
+# FOOLISH'S PALETTE, the default. A PALETTE, NOT ONE COLOUR. The reference sets vary the ground card to card -
 # it keeps a row of ten from reading as one long block - so these alternate
 # across the set. Every colour is either the owner's swatch or sampled from the
 # product itself, so the set looks like the app rather than like a template.
@@ -43,7 +49,8 @@ def body_box(frame_img):
     """The opaque bounding box of the phone inside its transparent PNG."""
     return frame_img.split()[3].getbbox()
 
-FRAME = os.path.expanduser("~/Downloads/foolish-store-MARKETING/_assets/iphone16promax.png")
+# Beside this file, so a checkout alone can rebuild every frame.
+FRAME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "iphone16promax.png")
 SCREEN_XY = (100, 100)
 
 def screen_mask(frame_img):
@@ -113,8 +120,10 @@ def wrap(draw, text, font, maxw):
     return best[1] if best else lines
 
 
-def frame(shot_path, title, out_path, ground="red", size=None):
-    c_top, c_bot, c_text = GROUNDS[ground]
+def frame(shot_path, title, out_path, ground="red", size=None, grounds=None):
+    """One frame. `grounds` maps a name to (top, bottom, title) RGB; it
+    defaults to foolish's GROUNDS."""
+    c_top, c_bot, c_text = (grounds or GROUNDS)[ground]
     bg = Image.new("RGB", (W, H), c_top)
     # A gentle vertical shade so a flat fill does not read as a print error.
     top = Image.new("RGB", (W, H), c_bot)
@@ -177,25 +186,21 @@ def frame(shot_path, title, out_path, ground="red", size=None):
     bg.save(out_path, "PNG")
     return out_path
 
-if __name__ == "__main__":
-    import json
-    spec = json.load(open(sys.argv[1]))
-    outdir = sys.argv[2]
-    os.makedirs(outdir, exist_ok=True)
-    # The largest size at which EVERY title fits in at most two rows.
+def fit_size(titles, start=160, floor=48):
+    """The largest size at which EVERY title fits in at most two rows."""
     probe = ImageDraw.Draw(Image.new("RGB", (10, 10)))
     _fr = Image.open(FRAME).convert("RGBA")
     _s = DEVICE_W / _fr.width
     _b = body_box(_fr)
     sky = H - VISIBLE_BOTTOM - (_b[3] - _b[1]) * _s
-    size = 160
-    while size > 48:
+    size = start
+    while size > floor:
         f = title_font(size)
         # Rows are counted PER TITLE, not per paragraph - a title with an
         # explicit newline is two rows even though each half is one line.
         wrapped = [sum((wrap(probe, p, f, W - 2 * SIDE_MARGIN)
                         for p in t.split("\n")), [])
-                   for _, t, _ in spec]
+                   for t in titles]
         rows = max(len(w) for w in wrapped)
         fits_w = all(probe.textlength(l, font=f) <= W - 2 * SIDE_MARGIN
                      for w in wrapped for l in w)
@@ -204,6 +209,15 @@ if __name__ == "__main__":
         if rows <= 2 and fits_w and rows * int(size * 1.18) <= sky * 0.72:
             break
         size -= 2
+    return size
+
+if __name__ == "__main__":
+    # foolish's listing: a JSON list of [shot, title, ground], its grounds.
+    import json
+    spec = json.load(open(sys.argv[1]))
+    outdir = sys.argv[2]
+    os.makedirs(outdir, exist_ok=True)
+    size = fit_size([t for _, t, _ in spec])
     print(f"title size {size} (fits every line)")
     for i, (shot, title, ground) in enumerate(spec, 1):
         p = os.path.join(outdir, f"{i:02d}.png")

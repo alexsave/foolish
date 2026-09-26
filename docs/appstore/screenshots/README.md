@@ -29,6 +29,8 @@ any one frame:
 Frames 08-10 of the built set ("Real Дурак rules", "Everyone plays in the
 chat", "Attack, cover, pick up, or pass") exist and were cut from the listing.
 
-The frames are composed by `ios/Tools/store/market.py`; the screenshots inside
-them come from `ios/Tools/rig`. Do not retouch a frame by hand - change the
+The frames are composed by `shared/tools/store/market.py` (its defaults - the
+red / felt / coal grounds and the automatic title size - are this set's, so
+`python3 shared/tools/store/market.py spec.json out/` rebuilds it); the
+screenshots inside them come from `ios/Tools/rig`. Do not retouch a frame by hand - change the
 generator or re-shoot, so the next set is reproducible.
