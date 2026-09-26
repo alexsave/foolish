@@ -1245,3 +1245,13 @@ Why (from the code, not yet from a log): the insert watchdog outlives the send. 
 Fix: in `didStartSending`, void every in-flight stage, as the cancel does: `stageGeneration += 1` (and `doorInsert = nil`, which it already does). Every watchdog, retry and door checks the generation, so all of them stand down.
 
 To confirm from a device: the Diagnostics log should show `send` followed by `insert attempt N got no answer; retrying` and a further `insert attempt`.
+
+### Changing your move: already right, and Send must match it
+
+The rule (owner): tapping a new square cancels the old move's bubble, stages the new one, and the old one is never retried.
+
+That holds today. Every tap goes through `stage()`, whose first line bumps `stageGeneration`. Everything that could put the old move back checks it and stands down: the silence watchdog (`watchSilence`), the 0.35 s retry after an insert error, the wait for the paint and the collapse, and the send door. Messages replaces the old bubble in the field and reports it cancelled, and `didCancelSending` ignores that report because it is not the current draft.
+
+Send is the one step that does not bump the generation, which is the bug above. After the fix a Send voids the old stage exactly as a new square does: once a move is sent or replaced, nothing of it is retried.
+
+Not ruled out from the code: an insert Messages has already accepted but not yet applied cannot be recalled. If the host ever applied an old insert after a newer one, the old move would be left in the field. Nothing seen so far shows it; the Diagnostics log would, as the old move's `inserted` after the new one's.
