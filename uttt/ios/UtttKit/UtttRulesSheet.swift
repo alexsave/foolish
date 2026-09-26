@@ -205,9 +205,10 @@ public final class UtttRulesSheet: UIViewController {
                 }
             case .outline:
                 if let r = rects.first {
-                    /* the phrase plus the room, and the pen's pad round that */
-                    let f = r.insetBy(dx: -(CGFloat(L.word_room) - 1 + CGFloat(L.box_pad)),
-                                      dy: -CGFloat(L.box_pad))
+                    /* the phrase plus the room, the pen's pad round that,
+                     * and the box_room the whole pen is drawn inside */
+                    let f = r.insetBy(dx: -(CGFloat(L.word_room) - 1 + CGFloat(L.box_pad) + CGFloat(L.box_room)),
+                                      dy: -(CGFloat(L.box_pad) + CGFloat(L.box_room)))
                     row.box.isHidden = false
                     row.box.frame = f
                     row.box.key = "rule box \(Int(f.width * 4))x\(Int(f.height * 4))"

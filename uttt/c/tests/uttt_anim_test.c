@@ -949,28 +949,33 @@ int main(void)
         OK(wash[6] == 1 && !promise[6] && xink[6], "rules 7: the tinted block and the new tap in it");
         OK(xink[7] && !oink[7] && !wash[7], "rules 8: one X");
 
-        uttt_dl_init(&d, PT, 400000, PO, 60000);
-        int box = uttt_draw_rule_box(&d, 120.f, 26.f) == 0 && d.n_poly > 0, inside = 1;
-        for (int k = 0; k < d.n_pt; k++)
-            /* below, the frame plus the drop and growth (uttt_rules_look) */
-            if (d.pt[k].x < -.05f || d.pt[k].x > 1.05f || d.pt[k].y < -.2f || d.pt[k].y > 1.3f) inside = 0;
-        OK(box && inside && (d.poly[0].rgba >> 8) == (uttt_wash_rgba(1.f) >> 8),
-           "rules: the phrase's outline is the promise's yellow, round its frame");
+        /* A PHRASE 104 BY 18 POINTS, in the frame the sheet gives it: its
+         * box plus box_pad + box_room on every side. The pen is rasterised
+         * into that frame, so NOTHING may leave it: the dropped box's bottom
+         * stroke was cropped (owner, 2026-09-26). */
         UtttRulesLook L = uttt_rules_look();
-        /* THE PEN CLEARS THE DESCENDERS: drawn ON the phrase's box (the
-         * frame less box_pad), the bottom stroke covered the y of "yellow".
-         * Its middle now runs a point or more under that box (the rough
-         * line bows about a point inward, so not the full box_grow +
-         * box_drop), and the top stroke's middle box_grow - box_drop over it. */
+        const float e = L.box_pad + L.box_room, fw = 104.f + 2.f * e, fh = 18.f + 2.f * e;
+        uttt_dl_init(&d, PT, 400000, PO, 60000);
+        int box = uttt_draw_rule_box(&d, fw, fh) == 0 && d.n_poly > 0, inside = 1;
+        for (int k = 0; k < d.n_pt; k++)
+            if (d.pt[k].x < 0.f || d.pt[k].x > 1.f || d.pt[k].y < 0.f || d.pt[k].y > 1.f) inside = 0;
+        OK(box && (d.poly[0].rgba >> 8) == (uttt_wash_rgba(1.f) >> 8),
+           "rules: the phrase's outline is the promise's yellow");
+        OK(inside, "rules: the whole outline, roughness included, stays inside its frame");
+        /* THE PEN CLEARS THE DESCENDERS: drawn ON the phrase's box, the
+         * bottom stroke covered the y of "yellow". Its middle now runs a
+         * point or more under that box (the rough line bows about a point
+         * inward, so not the full box_grow + box_drop), and the top stroke's
+         * middle box_grow - box_drop over it. */
         double top = 0, bot = 0; int nt = 0, nb = 0;
         for (int k = 0; k < d.n_pt; k++) {
             if (d.pt[k].x < .1f || d.pt[k].x > .9f) continue;   /* the sides */
-            float y = d.pt[k].y * 26.f;
-            if (y > 13.f) { bot += y; nb++; } else { top += y; nt++; }
+            float y = d.pt[k].y * fh;
+            if (y > fh / 2.f) { bot += y; nb++; } else { top += y; nt++; }
         }
         bot = nb ? bot / nb : 0; top = nt ? top / nt : 99;
-        OK(bot >= 26.f - L.box_pad + 1.f
-           && fabs(top - (L.box_pad - L.box_grow + L.box_drop)) < .6
+        OK(bot >= fh - e + 1.f
+           && fabs(top - (e - L.box_grow + L.box_drop)) < .6
            && L.box_grow > 0.f && L.box_drop > 0.f,
            "rules: the outline is grown and dropped off the phrase, clear of its descenders");
         OK(L.row_h == 4.f * roundf(L.body_pt * L.body_lead) && L.row_h >= L.art,

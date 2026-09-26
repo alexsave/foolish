@@ -181,7 +181,7 @@ int uttt_draw_rule(UtttDL *d, int i);
 /* THE YELLOW OUTLINE ROUND A PHRASE ("yellow outline" in rule 6), a pen box
  * drawn in POINTS round a `w` by `h` frame and handed back in 0..1 of it, as
  * the doors are. The phrase's box is the frame less UTTT_RULES_LOOK's
- * box_pad on every side. Across, the pen runs ON that box; up and down it
+ * box_pad + box_room on every side, and the whole pen stays in the frame. Across, the pen runs ON that box; up and down it
  * runs box_grow further out and the whole box sits box_drop lower, so the
  * pen never covers a descender (the y of "yellow" lost its tail under it). */
 int uttt_draw_rule_box(UtttDL *d, float w, float h);
@@ -219,6 +219,10 @@ typedef struct {
      * The box stays inside the line gap: it never reaches the next line's
      * capitals. */
     float box_drop, box_grow;
+    /* Room in the outline's frame round the pen, past box_pad, every side:
+     * the pen is rasterised into that frame, and the grown, dropped box
+     * with its thickness and wobble must not be cropped by it. */
+    float box_room;
 } UtttRulesLook;
 
 UtttRulesLook uttt_rules_look(void);

@@ -938,7 +938,7 @@ UtttRulesLook uttt_rules_look(void)
     L.ink = UTTT_INK;
     L.tint = uttt_wash_rgba(.38f);
     L.row_h = 4.f * roundf(L.body_pt * L.body_lead);
-    L.box_drop = 2.f; L.box_grow = 1.5f;
+    L.box_drop = 2.f; L.box_grow = 1.5f; L.box_room = 8.f;
     return L;
 }
 
@@ -948,7 +948,7 @@ int uttt_draw_rule_box(UtttDL *d, float w, float h)
     const int first = d->n_pt;
     const float k = 1.f / RULES_BOARD_PT;              /* points -> board units */
     const UtttRulesLook L = uttt_rules_look();
-    const float p = L.box_pad, g = L.box_grow;
+    const float p = L.box_pad + L.box_room, g = L.box_grow;
     /* across on the phrase's box; up and down box_grow further out, and
      * the whole box box_drop lower */
     const float r[4] = { p * k, (p - g + L.box_drop) * k,
