@@ -128,7 +128,7 @@ say() { printf '\n\033[1m== %s\033[0m\n' "$1"; }
 # this week's headers and this week's strings.
 #
 # That is not hypothetical. It was measured on exactly this script: a language's
-# name was changed in c/i18n/languages.h, the suite was run, and the test that
+# name was changed in shared/c/i18n/languages.h, the suite was run, and the test that
 # exists to catch that PASSED - because the Swift it compiled still held the old
 # value. A mutation that does not reach the artifact looks identical to a test
 # that cannot fail.

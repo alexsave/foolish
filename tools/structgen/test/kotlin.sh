@@ -183,7 +183,7 @@ i18n="$out/i18n"; mkdir -p "$i18n"
 dg() { "$DG" --cwd "$root/c/i18n" "$@"; }
 dg --header keys.h --table FS_KEY_NAME --require-complete --name FoolishStringKeys \
    --kotlin "$i18n/FoolishStringKeys.kt" --kotlin-package cards.foolish.i18n
-dg --header languages.h --table FS_LANGUAGES --require-complete --name FoolishLanguages \
+"$DG" --cwd "$root/shared/c/i18n" --header languages.h --table FS_LANGUAGES --require-complete --name FoolishLanguages \
    --kotlin "$i18n/FoolishLanguages.kt" --kotlin-package cards.foolish.i18n
 nkeys="$(grep -c '^    "' "$i18n/FoolishStringKeys.kt")"
 [ "$nkeys" -gt 100 ]; ok $? "the key list came back with $nkeys keys"

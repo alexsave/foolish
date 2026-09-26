@@ -351,7 +351,7 @@ public enum FStrings {
         }
     }
 
-    /// Every language c/i18n/languages.h declares, with the name it calls
+    /// Every language shared/c/i18n/languages.h declares, with the name it calls
     /// itself and which way it is written. Generated from the same registry
     /// tools/structgen/gen.sh reads to decide what to generate, so this cannot
     /// disagree with what exists.

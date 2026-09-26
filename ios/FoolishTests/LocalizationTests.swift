@@ -374,10 +374,10 @@ final class LocalizationTests: XCTestCase {
     /// picker names a language the table cannot serve.
     func testAppLanguageMatchesTheRegistry() {
         XCTAssertEqual(AppLanguage.allCases.map(\.rawValue), FStrings.languages.map(\.code),
-                       "AppLanguage and c/i18n/languages.h list different languages, or list them in a different order")
+                       "AppLanguage and shared/c/i18n/languages.h list different languages, or list them in a different order")
         for row in FStrings.languages {
             XCTAssertEqual(AppLanguage(rawValue: row.code)?.display, row.display,
-                           "\(row.code) calls itself something different in AppLanguage.display than in c/i18n/languages.h")
+                           "\(row.code) calls itself something different in AppLanguage.display than in shared/c/i18n/languages.h")
         }
         for row in FStrings.languages {
             XCTAssertEqual(AppLanguage(rawValue: row.code)?.isRTL, row.rtl != 0,
