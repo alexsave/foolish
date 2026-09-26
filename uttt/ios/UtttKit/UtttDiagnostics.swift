@@ -12,8 +12,10 @@
 // shipped, over the game rather than instead of it. Nothing here is secret:
 // a tic-tac-toe board has no hidden information.
 //
-// THE CLAIM IS DEBUG ONLY (the store build, 1.0 release): the buttons compile
-// out of Release, and the read-only dump and Copy stay, as foolish ships.
+// THE WHOLE PANEL IS DEBUG ONLY (owner, 2026-09-26): this file compiles out
+// of Release, and so does the rulebook's hold that opens it
+// (UtttRulebookButton) and the claim it calls (Uttt.claim). A store build
+// has a rulebook that is a plain tap and nothing behind it.
 // THE CLAIM IS TEMPORARY. It writes this device's seat record for the game
 // (UtttSeats, the kernel's utm_rec_*) - the same record a create, a join or
 // a sender-resolved seat writes - so it needs no machinery of its own.
@@ -22,28 +24,24 @@
 
 import UIKit
 
-/// The panel: scrollable monospaced text, Copy, and (DEBUG) the claim buttons.
+#if DEBUG
+
+/// The panel: scrollable monospaced text, Copy, and the claim buttons.
 public final class UtttDiagnosticsSheet: UIViewController {
     public enum Action { case claimO, claimX, clearClaim }
 
     private let text: () -> String
     private let body = UITextView()
-    #if DEBUG
     private let act: (Action) -> Void
     private let canClaimX: Bool
     private let hasClaim: Bool
-    #endif
 
-    /// One signature in both builds, so the caller has no #if of its own; in
-    /// Release the claim arguments are dropped and `act` is never called.
     public init(text: @escaping () -> String, canClaimX: Bool, hasClaim: Bool,
                 act: @escaping (Action) -> Void) {
         self.text = text
-        #if DEBUG
         self.act = act
         self.canClaimX = canClaimX
         self.hasClaim = hasClaim
-        #endif
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .pageSheet
     }
@@ -74,7 +72,6 @@ public final class UtttDiagnosticsSheet: UIViewController {
         ])
         var rows: [UIView] = [title, row1]
         row1.axis = .horizontal; row1.spacing = 8; row1.distribution = .fillEqually
-        #if DEBUG
         /* The claim is DEBUG only: in a store build anyone who found the hold
          * could take the other player's seat and move for them. */
         var claims = [button("Claim O") { [weak self] _ in self?.finish(.claimO) }]
@@ -88,7 +85,6 @@ public final class UtttDiagnosticsSheet: UIViewController {
         note.textColor = .secondaryLabel
         note.numberOfLines = 0
         rows += [row2, note]
-        #endif
         rows.append(body)
         let stack = UIStackView(arrangedSubviews: rows)
         stack.axis = .vertical
@@ -104,11 +100,9 @@ public final class UtttDiagnosticsSheet: UIViewController {
         ])
     }
 
-    #if DEBUG
     private func finish(_ a: Action) {
         dismiss(animated: true) { [act] in act(a) }
     }
-    #endif
 
     private func button(_ title: String, _ tap: @escaping (UIButton) -> Void) -> UIButton {
         var c = UIButton.Configuration.bordered()
@@ -123,3 +117,4 @@ public extension Data {
     /// Lower-case hex, for the diagnostics dump.
     var hex: String { map { String(format: "%02x", $0) }.joined() }
 }
+#endif

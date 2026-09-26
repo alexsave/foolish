@@ -161,9 +161,18 @@ int  uti_msg_record(void);
 int  uti_msg_seat_by(void);
 /* TEMPORARY (1.0(9)) - the diagnostics panel's Claim: record `seat`
  * (UTI_SEAT_O or UTI_SEAT_X; X only when sealed) for the resident game. 1
- * if recorded. Forget drops the game's record. */
-int  uti_msg_claim(int seat);
-void uti_msg_forget(void);
+ * if recorded. Forget drops the game's record.
+ *
+ * DEBUG ONLY, and this is what makes it so. The panel and its Swift callers
+ * (Uttt.claim, Uttt.forgetSeat) compile only under DEBUG, but one libuttt.a
+ * serves both configurations and UtttKit is a dynamic framework, which
+ * exports every global it links - so an unreferenced claim would still ship
+ * as an exported symbol. Hidden, it is never exported: the image that links
+ * it can call it (DEBUG UtttKit, the smoke), and in Release, where nothing
+ * calls it, -dead_strip removes it outright. */
+#define UTI_UNEXPORTED __attribute__((visibility("hidden")))
+UTI_UNEXPORTED int  uti_msg_claim(int seat);
+UTI_UNEXPORTED void uti_msg_forget(void);
 
 #define UTI_TAG_LEN     9
 /* The resident game's tags: UTI_TAG_ME the one I play with (my resolved

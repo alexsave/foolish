@@ -1257,6 +1257,24 @@ To confirm from a device: the Diagnostics log should show `send` followed by `in
 Every re-insert path checks it: the silence watchdog, the 0.35 s retry after an error, the paint wait in compact, the rest-and-collapse wait, and the send door.
 Device check: send a move and the field must be empty afterwards; after any Send, the Diagnostics log must show no `insert attempt` for that move.
 
+### The insert loop's two budgets, and the expanded drawer's silence
+
+Read from the code (the flow page's suspects 1 and 2), reproduced in C, not yet seen on a device.
+
+Bug 1: the retry after an insert error ran only while `attempt < 3`, and a silent (watchdog) retry advanced the same `attempt`.
+So after two unanswered tries a single insert error gave up at once and reverted the draft as if it had been cancelled, although the error budget had not been spent.
+Bug 2: an insert that went out while the drawer was still expanded (the collapse's 1.2 s timeout) had `ms_insert_silence` answer LISTEN on every firing, so the watchdog re-armed every 500 ms for as long as the drawer stayed expanded, with no bound, no retry and no send door.
+
+**Fixed (2026-09-26, compiled, not yet seen on a device).**
+The whole insert loop is one state machine in C now, `ms_stage` in `shared/c/msg_stage/msg_stage.h`, and the controller only inserts, runs the two timers and reports the drawer and the door (`InsertStaging.Loop`, `MessagesViewController.act`).
+Silences and errors have separate budgets: ten compact silences (`MS_INSERT_ATTEMPTS`) reach the door, three errors (`MS_INSERT_ERRORS`, a beat of `MS_INSERT_ERROR_MS` between them) revert the draft, and neither spends the other.
+A silence while the drawer is not compact parks the loop with no timer; `didTransition` to compact arms the same try's watchdog once more, and from there the loop runs to the door as it would have.
+Every timer and every answer carries its try number, so an overtaken try's silence or error is moot while its late yes still lands; `landedGeneration` and `doorInsert` are gone, the machine's state replaces both.
+The 1.2 s transition timeout stays, and the comment in `restThenCollapse` says which vector it covers and which the park covers.
+Tests: `msg_stage_test.c` went red on `error: two silences do not spend the error budget` and `expanded: a silence parks the stage and counts nothing` against a port of the old rules, then green; 18 mutations of the machine each fail on a named assertion (the loop must compile each mutant afresh, since `make` reuses a binary built in the same second).
+Device check: `touch dev.dropinsert` from the expanded drawer, make a move and leave the drawer up; the log must show one `try 1 unanswered while expanded; parked until compact` and nothing more until the drawer is collapsed by hand, then `try 1's watchdog armed again`, ten retries 0.5 s apart and the door.
+Device check: with the file removed, Diagnostics after a normal move must show `try 1` then `inserted`, and never `gave up`.
+
 ### Changing your move: already right, and Send must match it
 
 The rule (owner): tapping a new square cancels the old move's bubble, stages the new one, and the old one is never retried.
@@ -1275,6 +1293,24 @@ The claim state and `finish` in `UtttDiagnosticsSheet` are DEBUG only too, so Re
 Release (generic iOS) and Debug (simulator) both build with no Swift warnings.
 The Release UtttKit binary has no "Claim writes" note and no `finish` symbol; the Debug one has both.
 The button titles are Swift small strings (under 16 bytes, stored in the instructions), so `strings` cannot see them either way; the note, from the same `#if` block, is the proof.
+
+### The whole diagnostics panel is DEBUG only
+
+Owner, 2026-09-26: gate the diagnostics feature behind DEBUG, do not delete it.
+In a Release build the rulebook is a plain tap: no hold, no Diagnostics sheet, no seat claim.
+- `UtttRulebookButton` adds its `UILongPressGestureRecognizer` and the hold latch only under `#if DEBUG`; `onHold` keeps one signature and Release drops it unread, so the lobby and game screens pass it through with no `#if`.
+- `MessagesViewController.diagnosticsHold` returns the hold in DEBUG and nil in Release; `openDiagnostics` and the dump are DEBUG only.
+- `UtttDiagnostics.swift` is whole-file `#if DEBUG`.
+- `Uttt.claim` and `Uttt.forgetSeat` are DEBUG only, so nothing in Release calls `uti_msg_claim` or `uti_msg_forget`.
+- Not calling them was not enough: UtttKit is a dynamic framework and exported both from the one `libuttt.a` both configurations link, so the first Release build still had `T _uti_msg_claim`.
+  `uttt_api.h` now declares both `UTI_UNEXPORTED` (hidden visibility): DEBUG UtttKit and the smoke still call them, no image exports them, and Release's `-dead_strip` removes them. The C stays, for the smoke test and DEBUG builds.
+
+Proved on a Release and a Debug `generic/platform=iOS` build (`CODE_SIGNING_ALLOWED=NO`), every Mach-O in the app:
+Release has no `uti_msg_claim` or `uti_msg_forget` symbol, no `UILongPressGestureRecognizer` in `nm` or `strings`, no `UtttDiagnosticsSheet`, `openDiagnostics` or `holdSeconds` symbol, and none of the dump's strings ("Claim writes", "my hashed tag", "local participant"); `shared/tools/release_strings.sh` is clean.
+Debug UtttKit has the claim and forget (as non-external), the recogniser and the sheet; the Debug extension has the dump.
+
+To reach the diagnostics now you need a DEBUG build (Xcode Run, or the rig): hold the rulebook for 1.5 s. TestFlight and App Store builds are Release and have no way in.
+The "Diagnostics log" lines elsewhere in this file are `UtttLog`, read from the device log (`log collect`), which Release keeps.
 
 ### The receiver's headline during their move
 

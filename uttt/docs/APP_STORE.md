@@ -18,7 +18,7 @@ Nothing below was checked against the live App Store Connect record or a running
 | Review notes | Done, with a one-device path (a replay link) | `uttt/docs/APP_REVIEW_NOTES.md` |
 | Store listing copy | Drafted below (section 3) | here |
 | Privacy label, age rating | Answers drafted below (sections 4, 5) | here |
-| Diagnostics sheet and seat claim | Done: the claim buttons are DEBUG only; the read-only dump stays, as foolish ships (section 6) | `UtttDiagnostics.swift` |
+| Diagnostics sheet and seat claim | Done: the whole panel, the rulebook hold and the claim are DEBUG only (section 6) | `UtttDiagnostics.swift` |
 | **Screenshots** | **Owner** (section 7) | the rig |
 | **Two-phone screen recording** for review | **Owner**, needs two real phones | App Store Connect |
 | **Store name** | **Owner**, availability is only known in App Store Connect | section 2 |
@@ -103,7 +103,12 @@ For the store this is a problem twice over:
 - **Integrity.** Anyone who finds the hold can claim the other player's seat in any game and move for them.
 - **Guideline 2.3.1 (hidden features).** A reviewer who finds an undocumented gesture that opens a debug panel can reject for it.
 
-The fix: the Claim O, Claim X and Forget seat buttons compile only under `#if DEBUG`, so a Release archive has none. The hold still opens a read-only dump with Copy and Close, the pattern foolish ships and passed review with. `uti_msg_claim` stays in the kernel for its smoke test and DEBUG builds; delete it with the buttons once the seat bug is settled.
+The fix, in two steps.
+First the Claim O, Claim X and Forget seat buttons went under `#if DEBUG`.
+Then (owner, 2026-09-26) the whole feature did: the rulebook's hold, the Diagnostics sheet and `Uttt.claim`.
+A Release archive has a rulebook that is a plain tap and nothing behind it, so there is no hidden gesture for a reviewer to find.
+Diagnostics are reachable only in a DEBUG build, by holding the rulebook for 1.5 s.
+`uti_msg_claim` stays in the kernel for its smoke test and DEBUG builds; it is declared hidden and no Release code calls it, so the Release linker drops it; delete it with the buttons once the seat bug is settled.
 
 ## 7. Screenshots
 

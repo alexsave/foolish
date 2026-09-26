@@ -67,7 +67,7 @@ enum {
     UTTT_SAY_DOOR_RULES,           /* the rulebook door                     */
 
     /* getting a staged bubble out (uttt_msg.h UTM_SEND_HINT_MS, and
-     * shared/c/msg_stage's MS_INSERT_DOOR) */
+     * shared/c/msg_stage's MS_ACT_DOOR) */
     UTTT_SAY_SEND_HINT,            /* under the arrow at Messages' Send     */
     UTTT_SAY_DOOR_SEND,            /* the door when every insert went unanswered */
     /* the end screen's replay link (uttt_replay_url), and the receipt the
