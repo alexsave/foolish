@@ -29,7 +29,7 @@ and the plies after the prefix are played on the simulator, each as a real messa
 |---|---|---|
 | 01, 04 | 32 plies | 33-36 as real messages, then 37 sent (01) or, after a re-sent copy of 36, staged (04) |
 | 03, 06 | 41 plies | 42 by O from the + menu; X opens it |
-| 05 | 46 plies | 47-50, X from the other thread, O from the photographed one |
+| 05 | 49 plies | 50, O from the + menu in the photographed thread; the sent bubble is then tapped and the drawer collapsed. Round four: with 47-49 as lines the texts sat half under the Messages header |
 | 02 | none | O's invitation from the + menu with `dev.invite`; X opens it |
 
 Ply 37 and not the more dramatic 39 for the Send frames: 39 wins X the middle-left board and sends O to a won board, so the whole napkin lights up as "play anywhere" and buries the marks.
@@ -46,7 +46,7 @@ One title size across the set, 124 px Futura Bold, every title two lines with a 
 | 02 | "Nine boards, / one big game" | The empty napkin: O's invitation opened by X, expanded | 0 | X | O red |
 | 03 | "Your move picks / their board" | Expanded board, X to play in the top-middle board O's square sent them to | 42 (O) received | X | X blue |
 | 04 | "Send your moves / to the chat" | The staged draft in the compose field, collapsed drawer | 37 (X), staged and not sent; O is sent to the top-left board. The Send hint bobs, so the frame is a 16-shot burst; the owner picked b08 | X | coal |
-| 05 | "Win three boards / in a row" | The transcript with O's winning move sent, the drawer reading "You win" | 50 (O wins the anti-diagonal), sent | O | O red |
+| 05 | "Win three boards / in a row" | The transcript: the two texts, then O's winning move sent, the drawer reading "You win" | 50 (O wins the anti-diagonal), sent | O | O red |
 | 06 | "Learn the rules / in a minute" | The rules page, opened from the rulebook and not scrolled | over ply 42 | X | X blue |
 
 The grounds are the napkin's two inks, taken from the kernel's draw code (`uttt/c/src/uttt_draw.c`), and foolish's coal; napkin white was dropped (owner, 2026-09-26):
