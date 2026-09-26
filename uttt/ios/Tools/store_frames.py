@@ -5,7 +5,9 @@
 RAW_DIR holds one simulator screenshot per scene, named NN_scene_dark.png
 (default ~/Downloads/uttt-store/raw): the set is DARK MODE ONLY (owner,
 2026-09-26). Every frame is written to OUT_DIR under the same name (default
-~/Downloads/uttt-store), plus a contact sheet. The scenes, their plies and how each was shot are in
+~/Downloads/uttt-store), plus a contact sheet. 04_send_dark.png is a copy of
+the burst frame the owner picked (burst_send_dark/b08.png): the Send hint
+bobs, so that frame is shot as a 16-shot burst. The scenes, their plies and how each was shot are in
 uttt/docs/STORE_SHOTS.md.
 """
 import os

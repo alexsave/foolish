@@ -45,7 +45,7 @@ One title size across the set, 124 px Futura Bold, every title two lines with a 
 | 01 | "Play Ultimate / Tic-Tac-Toe" | The transcript with our SENT move on the right, the collapsed drawer under it | 37 (X, top-right board, top-left square), sent | X | coal |
 | 02 | "Nine boards, / one big game" | The empty napkin: O's invitation opened by X, expanded | 0 | X | O red |
 | 03 | "Your move picks / their board" | Expanded board, X to play in the top-middle board O's square sent them to | 42 (O) received | X | X blue |
-| 04 | "Send your moves / to the chat" | The staged draft in the compose field, collapsed drawer | 37 (X), staged and not sent; O is sent to the top-left board | X | coal |
+| 04 | "Send your moves / to the chat" | The staged draft in the compose field, collapsed drawer | 37 (X), staged and not sent; O is sent to the top-left board. The Send hint bobs, so the frame is a 16-shot burst; the owner picked b08 | X | coal |
 | 05 | "Win three boards / in a row" | The transcript with O's winning move sent, the drawer reading "You win" | 50 (O wins the anti-diagonal), sent | O | O red |
 | 06 | "Learn the rules / in a minute" | The rules page, opened from the rulebook and not scrolled | over ply 42 | X | X blue |
 
