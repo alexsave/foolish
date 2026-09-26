@@ -30,18 +30,6 @@ static int say_moves(int n, char *out, int cap)
     return uttt_fill(out, cap, uttt_text(UT_K_MOVES_ONE + uttt_plural(uttt_lang(), n)), kv);
 }
 
-/* HOW A WINNING LINE IS SAID in a caption, numbered as uttt_line_mask: both
- * diagonals are "on the diagonal". */
-static const char *line_said(int line)
-{
-    static const int KEY[8] = {
-        UT_K_LINE_ROW_TOP, UT_K_LINE_ROW_MIDDLE, UT_K_LINE_ROW_BOTTOM,
-        UT_K_LINE_COL_LEFT, UT_K_LINE_COL_MIDDLE, UT_K_LINE_COL_RIGHT,
-        UT_K_LINE_DIAGONAL, UT_K_LINE_DIAGONAL,
-    };
-    return line < 0 || line > 7 ? 0 : uttt_text(KEY[line]);
-}
-
 int uttt_caption(int over, int turn, int block, int line, int n, const char *who,
                  char *out, int cap)
 {
@@ -53,18 +41,15 @@ int uttt_caption(int over, int turn, int block, int line, int n, const char *who
     if (say_moves(n, moves, sizeof moves) < 0) return -1;
     switch (over) {
     case UTTT_X: case UTTT_O: {
-        /* "X won down the left in 21 moves" (owner, over UI.html 05's "Alex
-         * won on the diagonal. 58 moves."). The winner made the last move,
-         * so the winner is the sender and `who` is their name; without one
-         * the mark stands in. The line only where the whole fits one row,
-         * measured in columns (uttt_text_cols), so a language whose line
-         * does not fit says the win without it. */
+        /* "X won in 21 moves" and nothing about where: the bubble's image
+         * shows the winning line, and naming it fit one transcript row in
+         * too few languages (owner, 2026-09-26). The winner made the last
+         * move, so the winner is the sender and `who` is their name; without
+         * one the mark stands in. */
+        (void)line;
         const char *by = named ? who : mark_name(over);
-        const char *said = line_said(line);
-        const char *kv[] = { "who", by, "line", said, "moves", moves, "n", num, 0 };
-        int k = said ? uttt_fill(out, cap, T(CAP_WON_LINE), kv) : -1;
-        if (k < 0 || uttt_text_cols(out) > UTTT_CAPTION_MAX)
-            k = uttt_fill(out, cap, T(CAP_WON), kv);
+        const char *kv[] = { "who", by, "moves", moves, "n", num, 0 };
+        int k = uttt_fill(out, cap, T(CAP_WON), kv);
         return k;
     }
     case UTTT_DRAW: {

@@ -132,35 +132,8 @@ static void test_captions(int l)
 {
     char s[256];
     const char *code = uttt_lang_code(l);
-    int longest = 0, bad = 0, unfilled = 0, rule = 0, fit58 = 0;
+    int longest = 0, bad = 0, unfilled = 0;
     char worst[256] = "";
-    /* THE LINE IS NAMED EXACTLY WHEN IT FITS: the win with its line where
-     * that composes within UTTT_CAPTION_MAX, the win without it otherwise -
-     * rebuilt here from the table, so a kernel that dropped a line that fits
-     * (or kept one that does not) is caught in every language. */
-    static const int LINE_KEY[8] = {
-        UT_K_LINE_ROW_TOP, UT_K_LINE_ROW_MIDDLE, UT_K_LINE_ROW_BOTTOM,
-        UT_K_LINE_COL_LEFT, UT_K_LINE_COL_MIDDLE, UT_K_LINE_COL_RIGHT,
-        UT_K_LINE_DIAGONAL, UT_K_LINE_DIAGONAL };
-    for (int plies = 0; plies <= 81; plies++)
-        for (int line = 0; line < 8; line++) {
-            char num[8], moves[64], with[256], without[256];
-            snprintf(num, sizeof num, "%d", plies);
-            const char *nk[] = { "n", num, 0 };
-            uttt_fill(moves, sizeof moves, uttt_text(UT_K_MOVES_ONE + uttt_plural(l, plies)), nk);
-            const char *kv[] = { "who", "O", "line", uttt_text(LINE_KEY[line]), "moves", moves, "n", num, 0 };
-            uttt_fill(with, sizeof with, uttt_text(UT_K_CAP_WON_LINE), kv);
-            uttt_fill(without, sizeof without, uttt_text(UT_K_CAP_WON), kv);
-            int fits = uttt_text_cols(with) <= UTTT_CAPTION_MAX;
-            uttt_caption(UTTT_O, UTTT_X, 3, line, plies, NULL, s, sizeof s);
-            if (strcmp(s, fits ? with : without)) {
-                rule++;
-                if (rule < 3) printf("    %s %d plies line %d: \"%s\", want \"%s\"\n", code, plies, line, s, fits ? with : without);
-            }
-            if (plies == 58 && fits) fit58++;
-        }
-    printf("  %s: at 58 moves %d of the 8 lines fit the caption\n", code, fit58);
-    OK(rule == 0, "%s: a win names its line exactly when the line fits", code);
     for (int plies = 0; plies <= 81; plies++)
         for (int over = 0; over <= 3; over++)
             for (int turn = UTTT_X; turn <= UTTT_O; turn++)

@@ -27,7 +27,7 @@
  * (every caption against UTTT_CAPTION_MAX).
  *
  * PLACEHOLDERS: {who} the sender ("X", "O" or Messages' "$<uuid>" name
- * token), {mark} a side ("X" or "O"), {line} one of the LINE_ phrases,
+ * token), {mark} a side ("X" or "O"),
  * {moves} a MOVES_ phrase, {n} the number of moves, {board} {cell} PLACE_
  * phrases, {state} "X", "O" or CELL_EMPTY. A template may use {n} in place of
  * {moves} where its grammar needs a case the MOVES_ forms are not in (German
@@ -56,7 +56,6 @@
     X(CAP_NEW_GAME,       0, 0)  /* "New game?"                              */ \
     X(CAP_INVITE,         0, 0)  /* "{who} wants a game. Tap to take it"     */ \
     X(CAP_TO_PLAY,        0, 0)  /* "{mark} to play"                         */ \
-    X(CAP_WON_LINE,       0, 0)  /* "{who} won {line} in {moves}"            */ \
     X(CAP_WON,            0, 0)  /* "{who} won in {moves}"                   */ \
     X(CAP_DRAWN,          0, 0)  /* "Drawn in {moves}"                       */ \
     /* how many moves, by the language's plural category (uttt_plural); a     \
@@ -66,13 +65,6 @@
     X(MOVES_MANY,         0, 0)                                                 \
     X(MOVES_OTHER,        0, 0)  /* "{n} moves"                              */ \
     /* how a won line is said in a caption, numbered as uttt_line_mask */      \
-    X(LINE_ROW_TOP,       0, 0)  /* "across the top"                         */ \
-    X(LINE_ROW_MIDDLE,    0, 0)                                                 \
-    X(LINE_ROW_BOTTOM,    0, 0)                                                 \
-    X(LINE_COL_LEFT,      0, 0)  /* "down the left"                          */ \
-    X(LINE_COL_MIDDLE,    0, 0)                                                 \
-    X(LINE_COL_RIGHT,     0, 0)                                                 \
-    X(LINE_DIAGONAL,      0, 0)  /* "on the diagonal", both of them          */ \
     /* THE END'S SUBLINE, under the verdict: the won line by its shape, or   \
      * a draw's none, numbered as the LINE_ keys and worded to agree */        \
     X(END_ROW_TOP,       24, 0)  /* "Top row"                                */ \
