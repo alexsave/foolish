@@ -27,17 +27,23 @@ public final class UtttDiagnosticsSheet: UIViewController {
     public enum Action { case claimO, claimX, clearClaim }
 
     private let text: () -> String
-    private let act: (Action) -> Void
     private let body = UITextView()
+    #if DEBUG
+    private let act: (Action) -> Void
     private let canClaimX: Bool
     private let hasClaim: Bool
+    #endif
 
+    /// One signature in both builds, so the caller has no #if of its own; in
+    /// Release the claim arguments are dropped and `act` is never called.
     public init(text: @escaping () -> String, canClaimX: Bool, hasClaim: Bool,
                 act: @escaping (Action) -> Void) {
         self.text = text
+        #if DEBUG
         self.act = act
         self.canClaimX = canClaimX
         self.hasClaim = hasClaim
+        #endif
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .pageSheet
     }
@@ -98,9 +104,11 @@ public final class UtttDiagnosticsSheet: UIViewController {
         ])
     }
 
+    #if DEBUG
     private func finish(_ a: Action) {
         dismiss(animated: true) { [act] in act(a) }
     }
+    #endif
 
     private func button(_ title: String, _ tap: @escaping (UIButton) -> Void) -> UIButton {
         var c = UIButton.Configuration.bordered()

@@ -79,10 +79,6 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// bubble as cancelled, so a cancel that does not name this one is stale.
     private var draftURL: URL?
 
-    /// A fresh MSSession for the next stage: Again starts a new game, and a
-    /// new game must never fold the finished game's last bubble into itself.
-    private var freshSession = false
-
     /// A drawer opened from the + menu is bound to no message at all, and the
     /// host delivers nothing to it - no didReceive, no didSelect - until a
     /// bubble is tapped. foolish established this from the host binaries (see
@@ -389,6 +385,11 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// a torn-down extension can have lost.
     override func didStartSending(_ message: MSMessage, conversation: MSConversation) {
         super.didStartSending(message, conversation: conversation)
+        /* A SENT STAGE IS FINISHED: no watchdog, retry, paint/collapse wait or
+         * send door may re-insert it. Each of them checks the generation, so
+         * bumping it here stands them all down, exactly as a cancel does; a
+         * late-answered insert otherwise put the sent move back in the field. */
+        stageGeneration += 1
         UtttSeats.flush()                      /* a join records X as it is played */
         let wire = UtttWire(url: message.url) ?? staged
         UtttLog.note("send", wire.map { "\($0.text.count) chars" } ?? "NO PAYLOAD")
@@ -397,7 +398,6 @@ final class MessagesViewController: MSMessagesAppViewController {
             draftURL = nil
             staged = nil
         }
-        freshSession = false
         live?.setPending(false)
         hideHintNow()
         overlay.staged = false
@@ -745,14 +745,16 @@ final class MessagesViewController: MSMessagesAppViewController {
         }
     }
 
-    /// AGAIN (docs/UI.html 06, 07): a fresh invitation from whoever asks, in a
-    /// NEW session, so the finished game's last bubble stays in the thread.
+    /// AGAIN (docs/UI.html 06, 07): a fresh invitation from whoever asks, in
+    /// the FINISHED GAME'S session (sessionFor). The open drawer is bound to
+    /// that session and the host delivers didReceive only for it, so a new
+    /// session left the reply unheard; the cost is that Messages collapses
+    /// the finished game's last bubble to its caption.
     /// Whoever proposes moves second - the lobby rule - which is also what
     /// swaps the players for a rematch.
     private func again(in conversation: MSConversation) {
         UtttLog.note("again")
         identify(conversation)
-        freshSession = true
         draftIsNewGame = true
         sent = nil
         arrived = nil
@@ -764,16 +766,18 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// ONE MSSession PER GAME. Messages collapses every older bubble of a
     /// session down to its caption and keeps only the newest interactive, and
     /// a message in a session is one Messages will hand back when tapped.
+    /// The one exception is Again: its new game stays in the tapped finished
+    /// game's session, because an open drawer hears only its own session.
     private var session: MSSession?
     private var sessionGame: UtttWire?
 
     private func sessionFor(_ wire: UtttWire, _ conversation: MSConversation) -> MSSession {
-        if !freshSession, let s = session, let g = sessionGame, g.isSameGame(as: wire) { return s }
+        if let s = session, let g = sessionGame, g.isSameGame(as: wire) { return s }
         let selected = conversation.selectedMessage
         let s: MSSession
-        if !freshSession, let sel = selected?.session,
-           let w = UtttWire(url: selected?.url), w.isSameGame(as: wire) {
-            s = sel
+        if let sel = selected?.session,
+           draftIsNewGame || UtttWire(url: selected?.url)?.isSameGame(as: wire) == true {
+            s = sel        // Again stays in the finished game's session, so replies reach this drawer
         } else {
             s = MSSession()
         }
@@ -829,7 +833,6 @@ final class MessagesViewController: MSMessagesAppViewController {
         /* THE COLLAPSED LINE IS OURS TOO, or Messages writes "<phone number>
          * sent Ultimate message" into a thread about a board. */
         message.summaryText = caption
-        freshSession = false
 
         staged = wire
         draftURL = message.url
