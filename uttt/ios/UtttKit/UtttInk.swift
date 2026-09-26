@@ -237,6 +237,7 @@ public final class UtttDoorButton: UIControl {
 public final class UtttRulebookButton: UIControl {
     private let ink = UtttInkView(key: "rulebook", square: true) { s in Uttt.rulebook(w: s.width, h: s.height) }
     private let act: () -> Void
+    #if DEBUG
     private let onHold: (() -> Void)?
     /// A hold that fired swallows the release that ends it (foolish's
     /// FSquareButton `holdFired`): the recogniser cancels the touch, and
@@ -245,6 +246,7 @@ public final class UtttRulebookButton: UIControl {
 
     /// How long a hold on the rulebook is before it opens the diagnostics.
     public static let holdSeconds: TimeInterval = 1.5
+    #endif
 
     /// The door's size - one size at every drawer height, the kernel's
     /// (`uttt_sheet`'s door) - and the Again bar's height, which stands
@@ -253,16 +255,24 @@ public final class UtttRulebookButton: UIControl {
 
     /// `onHold`, when given, is a SECOND action on the same door, reached by
     /// holding it for `holdSeconds`: the diagnostics panel. Unlabelled on
-    /// purpose, for the owner rather than players, and in every build.
+    /// purpose, for the owner rather than players.
+    ///
+    /// DEBUG ONLY. In Release the door is a plain tap: no recogniser, no
+    /// latch, and `onHold` is dropped unread. One signature in both builds,
+    /// so the screens that pass it through carry no #if of their own.
     public init(act: @escaping () -> Void, onHold: (() -> Void)? = nil) {
         self.act = act
+        #if DEBUG
         self.onHold = onHold
+        #endif
         super.init(frame: .zero)
+        #if DEBUG
         if onHold != nil {
             let hold = UILongPressGestureRecognizer(target: self, action: #selector(held(_:)))
             hold.minimumPressDuration = Self.holdSeconds
             addGestureRecognizer(hold)
         }
+        #endif
         addSubview(ink)
         isAccessibilityElement = true
         accessibilityLabel = Uttt.say(.doorRules)
@@ -272,10 +282,13 @@ public final class UtttRulebookButton: UIControl {
     required init?(coder: NSCoder) { fatalError() }
 
     @objc private func fire() {
+        #if DEBUG
         if holdFired { holdFired = false; return }
+        #endif
         act()
     }
 
+    #if DEBUG
     @objc private func held(_ g: UILongPressGestureRecognizer) {
         guard g.state == .began else { return }
         holdFired = true
@@ -284,6 +297,7 @@ public final class UtttRulebookButton: UIControl {
          * cancels it); clear the latch once this hold is over either way */
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.holdFired = false }
     }
+    #endif
 
     public override func layoutSubviews() {
         super.layoutSubviews()

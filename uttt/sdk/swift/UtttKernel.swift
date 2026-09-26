@@ -243,14 +243,19 @@ public enum Uttt {
     }
     public static var seatBy: Witness { Witness(rawValue: uti_msg_seat_by()) ?? .none }
 
+    #if DEBUG
     /// TEMPORARY (1.0(9)): the diagnostics panel's claim, which writes this
     /// device's record for the resident game. X only once it is sealed.
+    /// DEBUG only, like the panel: nothing in a Release binary names
+    /// uti_msg_claim or uti_msg_forget, so the linker's dead-strip drops them
+    /// from the one static library both configurations link.
     @discardableResult
     public static func claim(_ seat: Seat) -> Bool {
         uti_msg_claim(seat == .x ? UTI_SEAT_X : UTI_SEAT_O) != 0
     }
     /// Drop this device's record of the resident game.
     public static func forgetSeat() { uti_msg_forget() }
+    #endif
 
 
     public enum Tag: Int32 {

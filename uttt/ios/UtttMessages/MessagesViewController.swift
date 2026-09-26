@@ -672,7 +672,7 @@ final class MessagesViewController: MSMessagesAppViewController {
             show(UtttWatchScreen(model: model, door: door, slide: slide,
                                  onDoor: { [weak self] in self?.again(in: conversation) },
                                  onRules: { [weak self] in self?.openRules() },
-                                 onDiagnostics: { [weak self] in self?.openDiagnostics(conversation) }))
+                                 onDiagnostics: diagnosticsHold(conversation)))
         }
     }
 
@@ -1149,7 +1149,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         show(UtttGameScreen(model: model, door: door, slide: slide,
                             onDoor: { [weak self] in self?.again(in: conversation) },
                             onRules: { [weak self] in self?.openRules() },
-                            onDiagnostics: { [weak self] in self?.openDiagnostics(conversation) }))
+                            onDiagnostics: diagnosticsHold(conversation)))
     }
 
 #if DEBUG
@@ -1206,8 +1206,19 @@ final class MessagesViewController: MSMessagesAppViewController {
         present(UtttRulesSheet(), animated: true)
     }
 
-    // MARK: diagnostics (hold the rulebook) - 1.0(9)
+    // MARK: diagnostics (hold the rulebook) - 1.0(9), DEBUG only
 
+    /// What a hold on the rulebook does: open the diagnostics in DEBUG, and
+    /// nothing in Release - nil, so the rulebook adds no hold at all.
+    private func diagnosticsHold(_ conversation: MSConversation) -> (() -> Void)? {
+        #if DEBUG
+        return { [weak self] in self?.openDiagnostics(conversation) }
+        #else
+        return nil
+        #endif
+    }
+
+    #if DEBUG
     /// Every input to the seat verdict, and the TEMPORARY claim.
     private func openDiagnostics(_ conversation: MSConversation) {
         guard presentedViewController == nil else { return }
@@ -1256,11 +1267,8 @@ final class MessagesViewController: MSMessagesAppViewController {
             }
             return hits.isEmpty ? "nobody known" : hits.joined(separator: ", ")
         }
-        var debug = "no", rotated = "no"
-#if DEBUG
-        rotated = UtttDev.rotated ? "yes (dev.rotate)" : "no"
-        debug = "yes, dev.seat=\(UtttDev.seat ?? "none") dev.picker=\(UtttDev.picker)"
-#endif
+        let rotated = UtttDev.rotated ? "yes (dev.rotate)" : "no"
+        let debug = "yes, dev.seat=\(UtttDev.seat ?? "none") dev.picker=\(UtttDev.picker)"
         let sel = conversation.selectedMessage
         var lines = [
             "app \(version) (\(build))  DEBUG \(debug)",
@@ -1295,4 +1303,5 @@ final class MessagesViewController: MSMessagesAppViewController {
         if let r = Uttt.replayURL { lines.append("replay \(r)") }
         return lines.joined(separator: "\n")
     }
+    #endif
 }

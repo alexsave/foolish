@@ -36,6 +36,7 @@ Nothing was submitted for review, no build was attached, and no screenshot was u
 - [ ] Build: none attached, and 1.0(11) must not be the one.
   1.0(11) was uploaded 2026-09-25 15:11 UTC, before the privacy manifests (`d07c2ec1`, 18:47 UTC) and before the seat claim became DEBUG only (`798bf109`, 23:31 UTC).
   So 1.0(11) ships the Claim O / Claim X buttons in Release, a hidden seat takeover and a Guideline 2.3.1 risk.
+  Since 2026-09-26 the whole diagnostics feature (the rulebook hold, the sheet, the claim) is DEBUG only, so a Release build has no hold on the rulebook at all; diagnostics are for DEBUG builds only.
 - [ ] Two open device defects from `TESTFLIGHT_PLAN.md` section 9 are not fixed at HEAD, and a reviewer following the notes can hit both.
   `didStartSending` still does not bump `stageGeneration`, so a sent move can come back as a staged one.
   `again()` still sets `freshSession = true` (`MessagesViewController.swift:755`), so the open drawer never hears the reply to an Again invitation; the review notes' step 6 sends the reviewer to Again.

@@ -1294,6 +1294,24 @@ Release (generic iOS) and Debug (simulator) both build with no Swift warnings.
 The Release UtttKit binary has no "Claim writes" note and no `finish` symbol; the Debug one has both.
 The button titles are Swift small strings (under 16 bytes, stored in the instructions), so `strings` cannot see them either way; the note, from the same `#if` block, is the proof.
 
+### The whole diagnostics panel is DEBUG only
+
+Owner, 2026-09-26: gate the diagnostics feature behind DEBUG, do not delete it.
+In a Release build the rulebook is a plain tap: no hold, no Diagnostics sheet, no seat claim.
+- `UtttRulebookButton` adds its `UILongPressGestureRecognizer` and the hold latch only under `#if DEBUG`; `onHold` keeps one signature and Release drops it unread, so the lobby and game screens pass it through with no `#if`.
+- `MessagesViewController.diagnosticsHold` returns the hold in DEBUG and nil in Release; `openDiagnostics` and the dump are DEBUG only.
+- `UtttDiagnostics.swift` is whole-file `#if DEBUG`.
+- `Uttt.claim` and `Uttt.forgetSeat` are DEBUG only, so nothing in Release calls `uti_msg_claim` or `uti_msg_forget`.
+- Not calling them was not enough: UtttKit is a dynamic framework and exported both from the one `libuttt.a` both configurations link, so the first Release build still had `T _uti_msg_claim`.
+  `uttt_api.h` now declares both `UTI_UNEXPORTED` (hidden visibility): DEBUG UtttKit and the smoke still call them, no image exports them, and Release's `-dead_strip` removes them. The C stays, for the smoke test and DEBUG builds.
+
+Proved on a Release and a Debug `generic/platform=iOS` build (`CODE_SIGNING_ALLOWED=NO`), every Mach-O in the app:
+Release has no `uti_msg_claim` or `uti_msg_forget` symbol, no `UILongPressGestureRecognizer` in `nm` or `strings`, no `UtttDiagnosticsSheet`, `openDiagnostics` or `holdSeconds` symbol, and none of the dump's strings ("Claim writes", "my hashed tag", "local participant"); `shared/tools/release_strings.sh` is clean.
+Debug UtttKit has the claim and forget (as non-external), the recogniser and the sheet; the Debug extension has the dump.
+
+To reach the diagnostics now you need a DEBUG build (Xcode Run, or the rig): hold the rulebook for 1.5 s. TestFlight and App Store builds are Release and have no way in.
+The "Diagnostics log" lines elsewhere in this file are `UtttLog`, read from the device log (`log collect`), which Release keeps.
+
 ### The receiver's headline during their move
 
 Seen: the receiving seat opens and shows "Waiting on X" while X's move is still drawing, then "Your move" about 2 s later.

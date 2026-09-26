@@ -58,6 +58,7 @@ These were considered:
 
 - **A computer opponent.** The bots exist in `uttt/c/src/uttt_bots.c`, but the product decision is that nobody plays a bot here (`UtttModel.swift`); a "solo" mode just for review would be a feature the store build does not otherwise have.
 - **The DEBUG seat picker** (`UtttSeatChoice.swift`, `dev.seat`) plays both chairs on one phone. It is whole-file `#if DEBUG` and must not ship; a review-only door into it would be cheating.
+- **The diagnostics panel** (hold the rulebook, `UtttDiagnostics.swift`) is DEBUG only: in the build under review the rulebook is a plain tap with no hold, so there is no hidden gesture to mention.
 - **Two devices, one Apple ID.** Not reliable: the seat is a hash of the per-device Messages participant, but both devices would be the same person in the same conversation, and it is not a test we have run.
 - **The replay link (added 2026-09-25).** `https://uttt.live/NK3JVACJ2ZRHDRWDEOL3WSCDAWHKKBSD` is a whole game, X winning down the right in 39 moves, played by two `quill` bots (`uttt_bot_move(BOT_QUILL, g, 40, &rs)` from `rs = 5`, seed 1790352000) and checked to round-trip through `uttt_replay_read` and to play to its end on uttt.live. It is the closest thing to watching a game on one device, and it is the shipping replay path, not a review-only mode.
 - **The honest one-device path that exists today** is the invitation itself, the Waiting screen and, on the board screens, the rulebook.
