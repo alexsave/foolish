@@ -107,6 +107,15 @@ ROLLOUTS ?= 400
 play: build/uttt_play
 	./build/uttt_play $(ROLLOUTS)
 
+# THE STORE GAME: the one real game every App Store frame is a phase of
+# (docs/STORE_SHOTS.md). Plays its fixed opening through the rules, finishes
+# it with fountain and prints the ply list and the replay link.
+build/uttt_store_game: $(SRC) tools/uttt_store_game.c | build
+	$(CC) $(CFLAGS) $(SRC) tools/uttt_store_game.c -o $@ $(LDLIBS)
+
+store-game: build/uttt_store_game
+	./build/uttt_store_game 1 2000
+
 build/uttt_render: $(SRC) tests/uttt_render.c | build
 	$(CC) $(CFLAGS) $(SRC) tests/uttt_render.c -o $@ $(LDLIBS)
 
