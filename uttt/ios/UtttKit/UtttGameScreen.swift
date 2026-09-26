@@ -314,7 +314,10 @@ final class UtttHeadlineView: UIView {
         case .text(let t):
             before.isHidden = true; after.isHidden = true; mark.isHidden = true
             text.isHidden = false
-            let s = text.set(t, type, width: width, column: column, align: align, color: ink)
+            var s = text.set(t, type, width: width, column: column, align: align, color: ink)
+            /* AN EMPTY HEADLINE (their move drawing in, UTI_WORDS_HUSH) KEEPS
+             * ITS LINE, so the line under it does not jump up and back. */
+            if t.isEmpty { s = CGSize(width: 0, height: ceil(type.font(1).lineHeight)) }
             text.frame = CGRect(origin: .zero, size: s)
             return s
         case .mark(let b, let m, let a):

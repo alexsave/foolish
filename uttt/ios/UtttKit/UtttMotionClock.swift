@@ -31,6 +31,8 @@ public final class UtttMotionClock {
     private var origin: CFTimeInterval?
     private var landed = false
     private var onLanded: (() -> Void)?
+    private var onWords: ((Int32) -> Void)?
+    private var words: Int32 = UTI_WORDS_NOW
     private var ticks = 0
     private var settledWaiters: [() -> Void] = []
 
@@ -57,13 +59,19 @@ public final class UtttMotionClock {
     /// Play the resident game's last move through `ch`. `onLanded` runs once,
     /// on the first frame the ink is down (UI.html: the drawer auto-collapses
     /// once the ink lands, never during), or at once if nothing moves.
-    public func run(_ ch: Uttt.Channel, onLanded: (() -> Void)? = nil) {
+    /// `onWords` hears the kernel's UTI_WORDS_* - which words the headline
+    /// says - on this frame and on every frame it changes.
+    public func run(_ ch: Uttt.Channel, onWords: ((Int32) -> Void)? = nil,
+                    onLanded: (() -> Void)? = nil) {
         plan = Uttt.motion(ch)
         origin = nil
         landed = false
         ticks = 0
         self.onLanded = onLanded
+        self.onWords = onWords
         frame = Uttt.frame(plan, at: 0)
+        words = frame.words
+        onWords?(words)
         guard frame.running != 0 else {
             stop()
             land()
@@ -114,6 +122,10 @@ public final class UtttMotionClock {
         let ms = Int32(((now - (origin ?? now)) * 1000).rounded())
         frame = Uttt.frame(plan, at: ms)
         ticks += 1
+        if frame.words != words {
+            words = frame.words
+            onWords?(words)
+        }
         if frame.landed != 0 { land() }
         if frame.settled != 0 { settle() }
         if frame.running == 0 {

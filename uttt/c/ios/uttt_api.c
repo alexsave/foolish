@@ -56,6 +56,10 @@ _Static_assert(sizeof(UtiFrame) == sizeof(UtttFrame), "motion frame layout");
 _Static_assert(offsetof(UtiMotion, outline_fade) == offsetof(UtttMotion, outline_fade)
             && offsetof(UtiFrame, outline) == offsetof(UtttFrame, outline)
             && offsetof(UtiFrame, outline_a) == offsetof(UtttFrame, outline_a), "the promise lines up");
+_Static_assert(offsetof(UtiMotion, hush) == offsetof(UtttMotion, hush)
+            && offsetof(UtiFrame, words) == offsetof(UtttFrame, words), "the words line up");
+_Static_assert(UTI_WORDS_BEFORE == UTTT_WORDS_BEFORE && UTI_WORDS_HUSH == UTTT_WORDS_HUSH
+            && UTI_WORDS_NOW == UTTT_WORDS_NOW, "the words' names");
 _Static_assert(UTI_MSG_TEXT_MAX >= UTM_MAX_TEXT, "the longest link fits the host buffer");
 
 /* The resident game, and the buffers the display list is built into. Sized

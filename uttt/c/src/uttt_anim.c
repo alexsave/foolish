@@ -94,6 +94,8 @@ UtttMotion uttt_motion(const UtttGame *g, int ch)
     m.wash_at = e;
     m.wash_ms = ch == UTTT_CH_REPLAY ? UTTT_MS_WASH_MINE : UTTT_MS_WASH_THEIRS;
     m.end_ms  = m.wash_at + m.wash_ms;
+    /* THEIR MOVE ENDS A WAIT: the headline goes quiet while it draws */
+    m.hush = ch == UTTT_CH_THEIRS || ch == UTTT_CH_ARRIVAL;
     return m;
 }
 
@@ -147,6 +149,8 @@ void uttt_motion_at(const UtttMotion *m, int32_t now, UtttFrame *f)
                                       : bezier(.32f, .72f, .4f, 1.f, x);
     }
     f->landed = f->mark_t >= 1.f;
+    f->words = f->landed ? UTTT_WORDS_NOW
+             : m->hush && now > 0 ? UTTT_WORDS_HUSH : UTTT_WORDS_BEFORE;
 
     /* ONE RECT, TRAVELLING. From block to block it slides and resizes; to
      * "anywhere" the same interpolation grows it to the sheet, so being

@@ -227,6 +227,32 @@ int main(void)
     OK(same_rect(f.wash, r0), "and lands on it");
     m = uttt_motion(&g, UTTT_CH_ARRIVAL);
     OK(m.wash_ms == 420 && m.end_ms == 340 + 420, "an arrival is their move too, with no ring");
+
+    /* THE HEADLINE ON THEIR MOVE: "Waiting on <O>" until the ink starts,
+     * nothing while it draws, "Your move" once it has landed (owner,
+     * 2026-09-26). D and E both; my own replay (C) never goes quiet. */
+    for (int k = 0; k < 2; k++) {
+        m = uttt_motion(&g, k ? UTTT_CH_ARRIVAL : UTTT_CH_THEIRS);
+        uttt_motion_at(&m, 0, &f);
+        OK(f.words == UTTT_WORDS_BEFORE, "their move: the old words until the ink starts");
+        int quiet = 1;
+        for (int t = 1; t < 340; t++) {
+            uttt_motion_at(&m, t, &f);
+            if (f.words != UTTT_WORDS_HUSH) quiet = 0;
+        }
+        OK(quiet, "their move: no headline while the ink draws");
+        uttt_motion_at(&m, 340, &f);
+        OK(f.words == UTTT_WORDS_NOW, "their move: the new words once it has landed");
+    }
+    m = uttt_motion(&g, UTTT_CH_REPLAY);
+    uttt_motion_at(&m, 170, &f);
+    OK(f.words == UTTT_WORDS_BEFORE, "my own replay: the old words while the ink draws");
+    m = uttt_motion(&g, UTTT_CH_STAGE);
+    uttt_motion_at(&m, 170, &f);
+    OK(f.words == UTTT_WORDS_BEFORE, "my own stage: the old words while the ink draws");
+    uttt_motion_at(&m, 340, &f);
+    OK(f.words == UTTT_WORDS_NOW, "my own stage: the new words once it has landed");
+
     m = uttt_motion(&g, UTTT_CH_STILL);
     uttt_motion_at(&m, 0, &f);
     OK(!f.running && f.mark_t == 1.f && same_rect(f.wash, r0), "STILL is the resting board");

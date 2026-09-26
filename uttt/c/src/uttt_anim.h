@@ -90,7 +90,20 @@ typedef struct {
     int32_t outline_at;    /* it is drawn round over [at, at+UTTT_MS_OUTLINE];
                               -1: already drawn                             */
     int32_t outline_fade;  /* 1: it fades as the wash travels (B)            */
+    int32_t hush;          /* 1: the headline is empty while the ink draws   */
 } UtttMotion;
+
+/* WHAT THE HEADLINE SAYS, frame by frame (owner, 2026-09-26). The words wait
+ * for the ink (UI.html sheet 5): before a move starts to draw a screen
+ * speaks of the position one ply back, and once it has landed of the
+ * position now. On THEIR move (D, E) the headline says NOTHING while the
+ * ink is drawing: "Waiting on <X>", then empty, then "Your move" - never
+ * "Waiting on" over the mark that ends the wait. */
+enum {
+    UTTT_WORDS_BEFORE = 0, /* the position one ply back                     */
+    UTTT_WORDS_HUSH   = 1, /* no headline                                   */
+    UTTT_WORDS_NOW    = 2, /* the position now                              */
+};
 
 typedef struct {
     float   mark_t;        /* 0..1 how far the new mark is drawn             */
@@ -105,6 +118,7 @@ typedef struct {
     int32_t outline;       /* the promised block, -1 none                    */
     float   outline_t;     /* 0..1 how far round the pen has gone            */
     float   outline_a;     /* 0..1 its opacity (it fades at Send)            */
+    int32_t words;         /* UTTT_WORDS_*: which words the headline says    */
 } UtttFrame;
 
 /* The plan for the LAST move of `g` arriving through `ch`. A game with no

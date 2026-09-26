@@ -1,3 +1,4 @@
+import CUttt
 import CoreGraphics
 
 /// What the screen is allowed to know. Every answer comes from the kernel;
@@ -67,13 +68,17 @@ public final class UtttModel {
     }
 
     /// THE WORDS WAIT FOR THE INK (UI.html: "Your move" once their mark has
-    /// landed, not before it is drawn - sheet 5). False from the moment a
-    /// move starts to draw until the kernel's frame says it has landed; the
-    /// words meanwhile are the position one ply back.
-    public private(set) var inked = true { didSet { if inked != oldValue { onChange?() } } }
+    /// landed, not before it is drawn - sheet 5). The kernel's frame says
+    /// which words (UTI_WORDS_*): the position one ply back until the ink
+    /// has landed, and on their move no headline at all while it draws.
+    public private(set) var words: Int32 = UTI_WORDS_NOW {
+        didSet { if words != oldValue { onChange?() } }
+    }
+    private var inked: Bool { words == UTI_WORDS_NOW }
 
     /// The words are the kernel's; this only says where the drawn mark goes.
     public var headline: Headline {
+        if words == UTI_WORDS_HUSH { return .text("") }
         let pre = inked ? Uttt.say(.headlinePre) : Uttt.sayBefore(.headlinePre)
         let post = inked ? Uttt.say(.headlinePost) : Uttt.sayBefore(.headlinePost)
         let m = inked ? Uttt.sayMark : Uttt.sayMarkBefore
@@ -87,11 +92,7 @@ public final class UtttModel {
     /// Run the clock through `ch` with the words held until the ink lands.
     private func run(_ ch: Uttt.Channel, then: (() -> Void)? = nil) {
         boardKey &+= 1
-        inked = false
-        clock.run(ch) { [weak self] in
-            self?.inked = true
-            then?()
-        }
+        clock.run(ch, onWords: { [weak self] in self?.words = $0 }) { then?() }
     }
 
     /// The harness loads a position behind the model's back; this is how it
@@ -99,7 +100,7 @@ public final class UtttModel {
     public func refresh() {
         positionKey &+= 1
         boardKey &+= 1
-        inked = true
+        words = UTI_WORDS_NOW
         clock.run(.still)
     }
 

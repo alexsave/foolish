@@ -267,7 +267,14 @@ typedef struct {
     int32_t ink_ms, wash_at, wash_ms, end_ms;
     int32_t fall_at, line_at;
     int32_t outline, outline_at, outline_fade;
+    int32_t hush;          /* the headline is empty while the ink draws     */
 } UtiMotion;
+
+/* Which words a frame's headline says (src/uttt_anim.h UTTT_WORDS_*):
+ * uti_say_before, none, or uti_say. */
+#define UTI_WORDS_BEFORE 0
+#define UTI_WORDS_HUSH   1
+#define UTI_WORDS_NOW    2
 
 typedef struct {
     float    mark_t;        /* how far the last mark is drawn, 0..1          */
@@ -281,6 +288,7 @@ typedef struct {
     int32_t  outline;       /* the promised block, -1 none                   */
     float    outline_t;     /* how far round the pen has gone, 0..1          */
     float    outline_a;     /* its opacity: it fades at Send                 */
+    int32_t  words;         /* UTI_WORDS_*: which words the headline says    */
 } UtiFrame;
 
 /* The plan for the resident game's last move arriving through `ch`. */
