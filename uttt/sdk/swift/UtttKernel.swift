@@ -19,11 +19,33 @@ public enum Uttt {
     @discardableResult
     public static func play(_ move: Int) -> Bool { uti_play(Int32(move)) != 0 }
 
-    /// The rulebook's text, straight from the kernel: a title and six lines.
-    /// The renderer lays them out and writes none of them.
+    /// The rules sheet's text, straight from the kernel: a title and eight
+    /// lines (docs/RULES.html). The renderer lays them out and writes none.
     public static var rulesTitle: String { String(cString: uti_rules_title()) }
     public static var rules: [String] {
         (0..<Int(uti_rules_count())).map { String(cString: uti_rules_line(Int32($0))) }
+    }
+
+    /// Which phrase of rule `i` is marked, and how: the promise's pen box
+    /// round it or the wash behind it. Character offsets (the lines are ASCII).
+    public enum RulesYellow { case none, outline(NSRange), tint(NSRange) }
+    public static func rulesYellow(_ i: Int) -> RulesYellow {
+        var at: Int32 = 0, len: Int32 = 0
+        let k = uti_rules_yellow(Int32(i), &at, &len)
+        let r = NSRange(location: Int(at), length: Int(len))
+        return k == 1 ? .outline(r) : k == 2 ? .tint(r) : .none
+    }
+
+    /// Every size on the rules sheet (uttt_rules_look).
+    public static var rulesLook: UtiRulesLook { uti_rules_look() }
+
+    /// Rule `i`'s drawing, in a unit square.
+    public static func rule(_ i: Int) -> [Poly] { harvest(uti_draw_rule(Int32(i))) }
+
+    /// The pen box round a marked phrase, drawn at its frame's size in
+    /// points and handed back in 0..1 of that frame.
+    public static func ruleBox(w: CGFloat, h: CGFloat) -> [Poly] {
+        harvest(uti_draw_rule_box(Float(w), Float(h)))
     }
 
     /// Take back the last move. False when there was none.

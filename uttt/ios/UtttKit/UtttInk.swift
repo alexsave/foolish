@@ -64,6 +64,17 @@ extension UILabel {
         let words = s.split(separator: " ").map(String.init)
         let natural = column ? (words.map { type.width($0) }.max() ?? 0) : type.width(s)
         var scale = natural > width && natural > 0 ? max(0.5, width / natural) : 1
+        /* MEASURED AGAIN AT THE SIZE IT IS SET IN: type does not scale in
+         * proportion - the system face swaps its display cut for the wider
+         * text cut under 20 points - so a 21-point "Waiting" scaled to a
+         * narrow column came out wider than the column and lost its g
+         * (store shoot, 2026-09-26). */
+        for _ in 0..<4 where scale < 1 {
+            let at = column ? (words.map { type.width($0, scale: scale) }.max() ?? 0)
+                            : type.width(s, scale: scale)
+            if at <= width || scale <= 0.5 { break }
+            scale = max(0.5, scale * width / at)
+        }
         numberOfLines = column ? max(1, words.count) : 1
         lineBreakMode = column ? .byWordWrapping : .byTruncatingTail
         var size = CGSize.zero
