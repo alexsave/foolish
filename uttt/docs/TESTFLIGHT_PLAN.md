@@ -1236,6 +1236,12 @@ Why: an open drawer is bound to the datasource of the bubble that opened it, and
 
 Decision (owner): **do not set `freshSession = true` in `again()`.** The invitation stays in the finished game's session, so the reply reaches the open drawer. The cost is that Messages collapses the finished game's last bubble to its caption; the replay link still holds the game. Check what else reads `freshSession` and `draftIsNewGame` (the `newest`/`current` routing that ranks a new game over the tapped one) before removing it.
 
+**Fixed (2026-09-26, compiled, not yet seen on a device).**
+`freshSession` is gone.
+`sessionFor` hands Again's invitation the tapped bubble's session: it reuses the selected message's session when `draftIsNewGame` is set or the selection is the same game.
+`draftIsNewGame` stays, since `newest`/`current` still rank the new game above the tapped finished one.
+Device check: at a game's end tap the end bubble, tap Again, send from the compact drawer, leave it up, and have the other phone reply; the reply must land in the open drawer.
+
 ### A sent move comes back as a staged one
 
 Seen: send a move, and a move is still staged in the field; sending that one "overwrote" the first.
@@ -1246,6 +1252,11 @@ Fix: in `didStartSending`, void every in-flight stage, as the cancel does: `stag
 
 To confirm from a device: the Diagnostics log should show `send` followed by `insert attempt N got no answer; retrying` and a further `insert attempt`.
 
+**Fixed (2026-09-26, compiled, not yet seen on a device).**
+`didStartSending` bumps `stageGeneration` right after `super`.
+Every re-insert path checks it: the silence watchdog, the 0.35 s retry after an error, the paint wait in compact, the rest-and-collapse wait, and the send door.
+Device check: send a move and the field must be empty afterwards; after any Send, the Diagnostics log must show no `insert attempt` for that move.
+
 ### Changing your move: already right, and Send must match it
 
 The rule (owner): tapping a new square cancels the old move's bubble, stages the new one, and the old one is never retried.
@@ -1255,3 +1266,23 @@ That holds today. Every tap goes through `stage()`, whose first line bumps `stag
 Send is the one step that does not bump the generation, which is the bug above. After the fix a Send voids the old stage exactly as a new square does: once a move is sent or replaced, nothing of it is retried.
 
 Not ruled out from the code: an insert Messages has already accepted but not yet applied cannot be recalled. If the host ever applied an old insert after a newer one, the old move would be left in the field. Nothing seen so far shows it; the Diagnostics log would, as the old move's `inserted` after the new one's.
+
+### The claim buttons in Release: compiled out, and proved
+
+798bf109 wrapped the Claim row in `#if DEBUG` but never built Release.
+**Fixed (2026-09-26).**
+The claim state and `finish` in `UtttDiagnosticsSheet` are DEBUG only too, so Release carries nothing of the claim but the enum the caller switches on.
+Release (generic iOS) and Debug (simulator) both build with no Swift warnings.
+The Release UtttKit binary has no "Claim writes" note and no `finish` symbol; the Debug one has both.
+The button titles are Swift small strings (under 16 bytes, stored in the instructions), so `strings` cannot see them either way; the note, from the same `#if` block, is the proof.
+
+### The receiver's headline during their move
+
+Seen: the receiving seat opens and shows "Waiting on X" while X's move is still drawing, then "Your move" about 2 s later.
+Rule (owner): "Waiting on X", then no headline while their move draws, then "Your move" once it has landed.
+**Fixed (2026-09-26, compiled, not yet seen on a device).**
+The motion plan decides it: `UtttFrame.words` is `UTTT_WORDS_BEFORE` until the ink starts, `UTTT_WORDS_HUSH` while it draws on their move (D, E), and `UTTT_WORDS_NOW` once it has landed.
+My own stage and replay never go quiet.
+The clock hands the model each change of `words`; an empty headline keeps its line, so the subline does not jump.
+`uttt_anim_test` covers it and was mutation-checked.
+Device check: open a bubble of theirs and receive a move with the drawer up; the headline must go blank as the mark draws and read "Your move" as it lands.
