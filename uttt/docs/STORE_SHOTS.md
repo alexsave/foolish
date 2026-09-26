@@ -33,33 +33,31 @@ and the plies after the prefix are played on the simulator, each as a real messa
 | 02 | none | O's invitation from the + menu with `dev.invite`; X opens it |
 
 Ply 37 and not the more dramatic 39 for the Send frames: 39 wins X the middle-left board and sends O to a won board, so the whole napkin lights up as "play anywhere" and buries the marks.
-The collapsed drawer's height follows the last keyboard the simulator showed, so it is not a constant: every tap on the collapsed board is placed from the board's own main lines in a fresh screenshot, and each dark / light pair is shot by the same script so its drawer sits at the same height.
+The collapsed drawer's height follows the last keyboard the simulator showed, so it is not a constant: every tap on the collapsed board is placed from the board's own main lines in a fresh screenshot, and every transcript frame is shot in one session of the same state, so the drawers sit at the same height.
 
 ## Frames
 
-Six scenes, each shot in BOTH appearances, so a frame can move to any slot and take that slot's theme.
-The listing alternates like foolish's (docs/appstore/screenshots/README.md): odd slots dark, even slots light.
+Six scenes, DARK MODE ONLY (owner, 2026-09-26: no light variants).
 One title size across the set, 124 px Futura Bold, every title two lines with a manual break.
 
-| # | Title | Scene | Ply shown | Seat | Listing theme | Ground |
-|---|---|---|---|---|---|---|
-| 01 | "Play Ultimate / Tic-Tac-Toe" | The transcript with our SENT move on the right, the collapsed drawer under it | 37 (X, top-right board, top-left square), sent | X | dark | O red |
-| 02 | "Nine boards, / one big game" | The empty napkin: O's invitation opened by X, expanded | 0 | X | light | X blue |
-| 03 | "Your move picks / their board" | Expanded board, X to play in the top-middle board O's square sent them to | 42 (O) received | X | dark | coal |
-| 04 | "Send your moves / to the chat" | The staged draft in the compose field, collapsed drawer | 37 (X), staged and not sent; O is sent to the top-left board | X | light | napkin |
-| 05 | "Win three boards / in a row" | The transcript with O's winning move sent, the drawer reading "You win" | 50 (O wins the anti-diagonal), sent | O | dark | O red |
-| 06 | "Learn the rules / in a minute" | The rules page, opened from the rulebook and not scrolled | over ply 42 | X | light | X blue |
+| # | Title | Scene | Ply shown | Seat | Ground |
+|---|---|---|---|---|---|
+| 01 | "Play Ultimate / Tic-Tac-Toe" | The transcript with our SENT move on the right, the collapsed drawer under it | 37 (X, top-right board, top-left square), sent | X | coal |
+| 02 | "Nine boards, / one big game" | The empty napkin: O's invitation opened by X, expanded | 0 | X | O red |
+| 03 | "Your move picks / their board" | Expanded board, X to play in the top-middle board O's square sent them to | 42 (O) received | X | X blue |
+| 04 | "Send your moves / to the chat" | The staged draft in the compose field, collapsed drawer | 37 (X), staged and not sent; O is sent to the top-left board | X | coal |
+| 05 | "Win three boards / in a row" | The transcript with O's winning move sent, the drawer reading "You win" | 50 (O wins the anti-diagonal), sent | O | O red |
+| 06 | "Learn the rules / in a minute" | The rules page, opened from the rulebook and not scrolled | over ply 42 | X | X blue |
 
-The grounds are the napkin's own colours, taken from the kernel's draw code (`uttt/c/src/uttt_draw.c`), plus foolish's coal:
+The grounds are the napkin's two inks, taken from the kernel's draw code (`uttt/c/src/uttt_draw.c`), and foolish's coal; napkin white was dropped (owner, 2026-09-26):
 
 | Ground | Top | Bottom | Title | From |
 |---|---|---|---|---|
+| coal | (24,20,19) | (12,10,9) | white | foolish's `coal` |
 | O red | (168,50,31) | (112,33,20) | white | `INK_O` 0xa8321f |
 | X blue | (37,55,107) | (22,33,66) | white | `INK_X` 0x25376b |
-| coal | (24,20,19) | (12,10,9) | white | foolish's `coal` |
-| napkin | (249,248,244) | (242,241,237) | X blue | `uttt_paper`, .976 at the top to .948 at the bottom |
 
-They cycle O red / X blue / coal / napkin, a four-cycle against the two-cycle of the theme, which also puts O's win on O's red.
+They cycle coal / O red / X blue, so no two neighbours match and O's win lands on O red.
 `python3 uttt/ios/Tools/store_frames.py` composes the set, and a contact sheet, with `shared/tools/store/market.py`.
 
 ## Transcript frames on the simulator
