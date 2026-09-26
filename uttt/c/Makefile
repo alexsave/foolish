@@ -114,7 +114,7 @@ build/uttt_store_game: $(SRC) tools/uttt_store_game.c | build
 	$(CC) $(CFLAGS) $(SRC) tools/uttt_store_game.c -o $@ $(LDLIBS)
 
 store-game: build/uttt_store_game
-	./build/uttt_store_game 1 2000
+	./build/uttt_store_game 44 5 2000
 
 build/uttt_render: $(SRC) tests/uttt_render.c | build
 	$(CC) $(CFLAGS) $(SRC) tests/uttt_render.c -o $@ $(LDLIBS)
