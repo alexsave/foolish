@@ -49,10 +49,11 @@ int uttt_caption(int over, int turn, int block, int line, int n, const char *who
         return named ? putf(cap, snprintf(out, (size_t)cap,
                                           "%s wants a game. Tap to take it", who))
                      : put(out, cap, "New game?");
-    /* WHOSE TURN AND WHERE, the bubble's image has no words (owner) */
-    if (block == 9) return putf(cap, snprintf(out, (size_t)cap, "%s to play, anywhere", mark));
-    return putf(cap, snprintf(out, (size_t)cap, "%s to play, %s board",
-                              mark, uttt_place_name(block, 1)));
+    /* WHOSE TURN, and not where: the yellow tint on the bubble's image
+     * already shows which board is live, so a "centre board" or "anywhere"
+     * suffix only repeated it (owner, 2026-09-26). */
+    (void)block;
+    return putf(cap, snprintf(out, (size_t)cap, "%s to play", mark));
 }
 
 int uttt_say_headline_mark(const UtttGame *g, int seat)

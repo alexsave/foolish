@@ -23,7 +23,7 @@ enum {
     UTTT_SAY_BUBBLE_HEADLINE = 0,  /* "<X> wins", "A draw", "" - the mark
                                       drawn (uttt_say_bubble_mark)          */
     UTTT_SAY_BUBBLE_PLACE,         /* "58 moves", ""                        */
-    UTTT_SAY_CAPTION,              /* "O to play, bottom-middle board",
+    UTTT_SAY_CAPTION,              /* "O to play",
                                       "X won on the diagonal in 58 moves",
                                       "New game?" - one line (uttt_caption) */
 

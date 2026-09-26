@@ -9,7 +9,7 @@ import UIKit
 /// at exactly 300 by 195 points - landscape, aspect 1.54 - and a board is
 /// square. The kernel gives it 168 so the grid's main lines stop on the
 /// frame (uttt_bubble). A game in play is the board alone, centred, and the
-/// caption says whose turn and where ("O to play, top-left board", owner);
+/// caption says whose turn ("O to play", owner; the tint shows where);
 /// only a finished game's image has words, the winner's drawn mark and
 /// "wins" over "N moves", in a column beside the board.
 ///

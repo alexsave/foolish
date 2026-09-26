@@ -578,7 +578,7 @@ int main(void)
         ok(uti_msg_record() == UTI_SEAT_X, "and records it, before anybody asks");
         ok(uti_msg_seat() == UTI_SEAT_X && !uti_msg_can_move(), "she is X and it is O's turn");
         ok(uti_msg_text(join, sizeof join) > 0, "the join is one message");
-        ok(!strcmp(uti_say(UTI_SAY_CAPTION), "O to play, centre board"), "carrying her move");
+        ok(!strcmp(uti_say(UTI_SAY_CAPTION), "O to play"), "carrying her move");
 
         be(0, alex);
         ok(uti_msg_read(join) == 0 && uti_msg_seat() == UTI_SEAT_O, "alex opens it as O");

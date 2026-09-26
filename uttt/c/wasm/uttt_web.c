@@ -121,8 +121,8 @@ EXPORT(uw_points)      float  *uw_points(void)      { return (float *)pt; }
 EXPORT(uw_point_count) int     uw_point_count(void) { return dl.n_pt; }
 
 /* THE LINE UNDER THE BOARD, in the kernel's words (uttt_caption, the
- * bubble's own line): "O to play, bottom-middle board", "X to play,
- * anywhere", "X won on the diagonal in 41 moves". Nobody is named - a replay
+ * bubble's own line): "O to play",
+ * "X won on the diagonal in 41 moves". Nobody is named - a replay
  * has marks, not people. */
 static char caption[128];
 EXPORT(uw_caption) const char *uw_caption(void)

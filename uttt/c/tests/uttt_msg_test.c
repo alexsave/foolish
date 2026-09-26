@@ -568,9 +568,9 @@ static void test_caption_one_line(void)
     uttt_caption(UTTT_X, UTTT_O, 0, 3, 21, NULL, s, sizeof s);
     OK(!strcmp(s, "X won down the left in 21 moves"), "caption: the owner's example");
     uttt_caption(0, UTTT_X, 9, -1, 4, NULL, s, sizeof s);
-    OK(!strcmp(s, "X to play, anywhere"), "caption: anywhere");
+    OK(!strcmp(s, "X to play"), "caption: no suffix when free");
     uttt_caption(0, UTTT_O, 0, -1, 4, NULL, s, sizeof s);
-    OK(!strcmp(s, "O to play, top-left board"), "caption: a block");
+    OK(!strcmp(s, "O to play"), "caption: no board suffix (the tint shows it)");
     uttt_caption(0, UTTT_X, -1, -1, 0, NULL, s, sizeof s);
     OK(!strcmp(s, "New game?"), "caption: the invitation");
 }
@@ -597,14 +597,14 @@ static void test_say(void)
 
     uttt_play(&g, 41);                  /* centre block, middle-right cell -> block 5 */
     say(UTTT_SAY_CAPTION, &g, UTM_SEAT_X, s);
-    OK(!strcmp(s, "O to play, middle-right board"), "say: the caption says whose turn and where (owner)");
+    OK(!strcmp(s, "O to play"), "say: the caption says whose turn (owner)");
     say(UTTT_SAY_BUBBLE_PLACE, &g, UTM_SEAT_X, s);
     OK(!strcmp(s, ""), "say: a move's bubble has no place line, its caption names it");
     say(UTTT_SAY_BUBBLE_HEADLINE, &g, UTM_SEAT_X, s);
     OK(!strcmp(s, "") && uttt_say_bubble_mark(&g) == 0,
        "say: a move's bubble has no headline and draws no mark");
     OK(uttt_say_by(UTTT_SAY_CAPTION, &g, UTM_SEAT_X, "$ALEX", s, sizeof s) > 0
-       && !strcmp(s, "O to play, middle-right board"),
+       && !strcmp(s, "O to play"),
        "say: a move's caption names nobody");
     say(UTTT_SAY_HEADLINE_PRE, &g, UTM_SEAT_X, s);
     OK(!strcmp(s, "Waiting on ") && uttt_say_headline_mark(&g, UTM_SEAT_X) == UTTT_O,
