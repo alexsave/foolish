@@ -689,6 +689,16 @@ int main(void)
         ok(uti_play(4) && uti_play(40), "a seeded position");
         ok(uti_msg_seat_ids(vera, 16, alex, 16), "seated from two identities");
         ok(uti_msg_seat() == UTI_SEAT_X && uti_msg_can_move(), "alex is X and on move");
+        /* SEATING BY FIAT IS A NEW GAME (the rig's `devgame`): the seeded
+         * game is a constant seed and two constant tags, so every seeding is
+         * the same record key, and a record from an earlier one - a claim a
+         * stray tap made - seated the dev player on the wrong side forever. */
+        ok(uti_msg_claim(UTI_SEAT_O) && uti_msg_seat() == UTI_SEAT_O, "a stale claim: alex says O");
+        uti_new(99);
+        ok(uti_play(4) && uti_play(40) && uti_msg_seat_ids(vera, 16, alex, 16), "the same game seeded again");
+        ok(uti_msg_record() == 0 && uti_seats_dirty(), "the reseating dropped the stale record");
+        ok(uti_msg_seat() == UTI_SEAT_X && uti_msg_seat_by() == UTI_BY_TAG,
+           "and alex is X again, by his tag");
         ok(!uti_msg_seat_ids(vera, 16, vera, 16), "nobody plays themselves");
         ok(uti_msg_text(other, sizeof other) > 0, "and it has a link");
         ok(uti_say(12345)[0] == '\0', "an unknown sentence is empty, never NULL");

@@ -1172,7 +1172,15 @@ final class MessagesViewController: MSMessagesAppViewController {
         for mv in UtttDev.moves ?? Array(opening.prefix(max(0, plies))) where Uttt.over == .none {
             _ = Uttt.play(mv)
         }
-        Uttt.seat(o: UtttDev.identity("a"), x: UtttDev.identity("b"))
+        /* SEATED ON BOTH DEV PHONES: seating drops that phone's record of
+         * the game (uti_msg_seat_ids), and every seeding is the same record
+         * key, so a stale one on either side would outrank the tags. */
+        for phone in ["a", "b"] {
+            UtttSeats.use(phone)
+            Uttt.seat(o: UtttDev.identity("a"), x: UtttDev.identity("b"))
+            UtttSeats.flush()
+        }
+        identify(conversation)
         showSeat(motion, conversation)
     }
 #endif

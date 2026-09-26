@@ -697,6 +697,17 @@ int uti_msg_seat_ids(const uint8_t *o_id, int o_n, const uint8_t *x_id, int x_n)
     memcpy(S.m.o, o, UTM_TAG_LEN);
     memcpy(S.m.x, x, UTM_TAG_LEN);
     S.m.sealed = 1;
+    /* SEATED BY FIAT IS A NEW GAME: a record key is the seed and the two
+     * tags, which a seeding repeats exactly, so any record this device holds
+     * for it is from an earlier seeding (a claim, a stray tap) and would
+     * outrank the tags just set. The tags seat it; the record is rewritten
+     * from them the first time the seat is asked. */
+    int n = utm_rec_forget(S.rec, S.rec_n, &S.m);
+    if (n != S.rec_n) {
+        S.rec_n = n;
+        S.rec_dirty = 1;
+    }
+    S.wrote_by = 0;
     return 1;
 }
 

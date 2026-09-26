@@ -120,7 +120,8 @@ int  uti_msg_same_game(const char *a, const char *b);
 
 /* Seal the resident game with these two identities in the O and X seats.
  * A game one device could never reach by itself - the DEBUG harness's
- * door, and the preview's. 0 if the two are the same person. */
+ * door, and the preview's. 0 if the two are the same person. A new game:
+ * this device's record of it is dropped, so the tags alone seat it. */
 int  uti_msg_seat_ids(const uint8_t *o_id, int o_n, const uint8_t *x_id, int x_n);
 
 /* ------------------------------------------------ the seat and its witnesses
