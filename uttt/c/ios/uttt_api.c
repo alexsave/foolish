@@ -5,6 +5,7 @@
 #include "../src/uttt_anim.h"
 #include "../src/uttt_msg.h"
 #include "../src/uttt_say.h"
+#include "../src/uttt_lang.h"
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -436,6 +437,8 @@ int uti_draw_rule_box(float w, float h)
 }
 
 const char *uti_place_name(int block) { return uttt_place_name(block); }
+
+const char *uti_lang_prefer(const char *tags) { return uttt_lang_code(uttt_lang_prefer(tags)); }
 
 
 /* ---------------------------------------------------------- the message */

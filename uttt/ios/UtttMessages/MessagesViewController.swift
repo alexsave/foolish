@@ -100,7 +100,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 #if DEBUG
         if UtttDev.empty { UtttLog.note("load", "dev.empty - nothing"); return }
 #endif
-        UtttLog.note("load")
+        UtttLog.note("load", "speaks \(UtttLanguage.apply())")
         /* CLEAR UNTIL IT APPEARS - see `appeared`. */
         view.backgroundColor = .clear
 
@@ -124,6 +124,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 #if DEBUG
         if UtttDev.empty { return }
 #endif
+        UtttLanguage.apply()
         UtttLog.note("active", "\(styleName), selected \(conversation.selectedMessage != nil)")
         becameActiveAt = Date()
         overlay.compact = presentationStyle == .compact

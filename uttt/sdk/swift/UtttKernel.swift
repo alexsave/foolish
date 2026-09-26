@@ -19,6 +19,16 @@ public enum Uttt {
     @discardableResult
     public static func play(_ move: Int) -> Bool { uti_play(Int32(move)) != 0 }
 
+    /// THE KERNEL'S LANGUAGE, from the phone's own ordered preference list
+    /// (`Locale.preferredLanguages`): the first language the tables carry
+    /// wins, English is the floor. Returns the code it chose. Every word the
+    /// kernel says after this is in it, the bubble's included - so a bubble
+    /// reads in its sender's language on every phone (uttt_lang.h).
+    @discardableResult
+    public static func speak(_ preferred: [String]) -> String {
+        String(cString: uti_lang_prefer(preferred.joined(separator: ",")))
+    }
+
     /// The rules sheet's text, straight from the kernel: a title and eight
     /// lines (docs/RULES.html). The renderer lays them out and writes none.
     public static var rulesTitle: String { String(cString: uti_rules_title()) }

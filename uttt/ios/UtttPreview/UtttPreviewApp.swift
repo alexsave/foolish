@@ -10,6 +10,9 @@ import UtttKit
 /// inspects. (SwiftUI here is the harness's own; the screens are UIKit.)
 @main
 struct UtttPreviewApp: App {
+    /* the phone's language, as the extension takes it (UtttLanguage) */
+    init() { UtttLanguage.apply() }
+
     var body: some Scene {
         WindowGroup { PreviewRoot() }
     }

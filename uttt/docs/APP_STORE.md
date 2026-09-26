@@ -33,7 +33,7 @@ Nothing below was checked against the live App Store Connect record or a running
 | Primary category | Games | |
 | Game sub-categories | Board, Strategy | |
 | Bundle ID | `cards.uttt.msg` | Extension `cards.uttt.msg.MessagesExtension`. |
-| Primary language | English (U.S.) | The app ships English only (no `CFBundleLocalizations`). |
+| Primary language | English (U.S.) | The app speaks 25 languages (`CFBundleLocalizations`, the kernel's `uttt/c/i18n`); the listing's own copy is English until it is localized in App Store Connect. |
 | Copyright | `2026 <legal name>` | Owner. |
 | Privacy Policy URL | `https://uttt.live/privacy-msg` | The iMessage app's own policy, and only the app's. |
 | Support URL | `https://uttt.live/support-msg` | The iMessage app's support page: how to play and the contact address. Plain HTML. |

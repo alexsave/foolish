@@ -249,6 +249,13 @@ int main(void)
     for (int b = 0; b <= 9; b++)
         ok(uti_place_name(b)[0] != '\0', "every block is named");
 
+    /* ---- THE LANGUAGE CROSSES THE BRIDGE: the phone's list in, the code
+     * out, and the words after it in that language */
+    ok(!strcmp(uti_lang_prefer("ca-ES,fr-CA,en-US"), "fr"), "the first carried language wins");
+    ok(!strcmp(uti_place_name(4), "au centre"), "and the kernel speaks it");
+    ok(!strcmp(uti_lang_prefer("xx"), "en") && !strcmp(uti_place_name(4), "centre"),
+       "a list of nothing carried is English");
+
     /* ---- THE "YOU ARE" O STAYS A RING (owner, TestFlight 1.0(6): "the drawn
      * O sometimes draws lines right through the circle"). Off the display
      * list the host fills: each pass of the O is one outline polygon, its
