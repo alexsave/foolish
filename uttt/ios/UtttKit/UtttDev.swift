@@ -76,6 +76,14 @@ public enum UtttDev {
     /// kernel's. Returns the file's trimmed contents once, then nil.
     public static func takeCaption() -> String? { dev.take("dev.caption") }
 
+    /// `dev.restage`: the next opened bubble puts its own board, unchanged,
+    /// back into the input field in the same session - a message that is not
+    /// a move. Store frames only: on the simulator the last collapsed line of
+    /// a session repeats the line above it, so the shoot sends one extra copy
+    /// of a board to carry that repeat, and the owner scrolls it out of frame.
+    /// True once, then false until the file is written again.
+    public static func takeRestage() -> Bool { dev.take("dev.restage") != nil }
+
     /// The word the rig wrote, or nil in every ordinary run - including an
     /// ordinary DEBUG one, because the file is absent until somebody writes it.
     public static var seat: String? { dev.string(seatFile) }

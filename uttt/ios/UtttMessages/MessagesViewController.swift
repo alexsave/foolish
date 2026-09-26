@@ -624,6 +624,16 @@ final class MessagesViewController: MSMessagesAppViewController {
         UtttLog.note("present", "seed \(Uttt.seed) by \(Uttt.seatBy) seat \(Uttt.seat) plies \(Uttt.plyCount) door \(Uttt.door)")
         showSeat(motion, conversation)
         UtttSeats.flush()
+#if DEBUG
+        /* `dev.restage` (store frames only): put the tapped board, unchanged,
+         * back into the field in this session - see UtttDev.takeRestage. */
+        if UtttDev.takeRestage(), let same = UtttWire.resident {
+            UtttLog.note("present", "dev.restage: the tapped board, unchanged")
+            whenReady { [weak self] in
+                DispatchQueue.main.async { self?.stage(same, in: conversation) }
+            }
+        }
+#endif
     }
 
     /// The screen for the resident game, by this device's seat. One owner,
