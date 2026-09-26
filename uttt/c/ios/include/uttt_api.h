@@ -215,6 +215,14 @@ int  uti_hit(float u, float v);
 
 const char *uti_say(int key);
 
+/* WHICH LANGUAGE THE KERNEL SPEAKS (uttt_lang.h): `tags` is the phone's
+ * ordered preference list, comma separated (Locale.preferredLanguages
+ * joined); the first language the tables carry wins and English is the
+ * floor. Returns its code ("de"), never NULL. Every word from then on is in
+ * it - a bubble's caption and image words included, which is why a bubble
+ * reads in its SENDER's language on every phone. */
+const char *uti_lang_prefer(const char *tags);
+
 /* The mark drawn in the play-surface headline, or 0: "Waiting on <O>". */
 int  uti_say_mark(void);
 /* The mark the spectator's line draws before UTI_SAY_WATCH_LINE, or 0. */
@@ -413,9 +421,8 @@ float uti_bubble_scale(float display);
  * the 195-point frame (UtttBubble.reach in uttt_draw.h). */
 int   uti_draw_bubble(int active, int last);
 
-/* A block's name. 0..8, or 9 for "anywhere". spoken: 0 for the place line
- * ("bottom middle"), 1 for a sentence ("the bottom-middle board"). */
-const char *uti_place_name(int block, int spoken);
+/* A block's name. 0..8, or 9 for "anywhere", in the kernel's language. */
+const char *uti_place_name(int block);
 
 /* THE RULES SHEET (docs/RULES.html): eight lines and a title (uttt_say.h),
  * each line beside its drawing (uttt_draw_rule), everything placed by

@@ -37,6 +37,11 @@ public enum UtttDev {
     private static let pickerFile = "dev.picker"
     private static let rulerFile = "dev.ruler"
 
+    /// `dev.lang`: the language the kernel speaks, in place of the phone's
+    /// ("ja", "ar-SA"), read at every activation - so the rig can film every
+    /// language on one simulator without changing its region.
+    public static var language: String? { dev.string("dev.lang") }
+
     /// `rig.sh ruler on`: paint the motion ruler (UtttRuler) over the sheet.
     /// Read every time, like every other dev file.
     public static var ruler: Bool { dev.exists(rulerFile) }

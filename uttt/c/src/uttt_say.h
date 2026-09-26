@@ -1,7 +1,13 @@
 /* EVERY SENTENCE THE APP SAYS, in one table, for the same reason the nine
  * block names and the rulebook are here: which words go with which position
  * is a question about the game, and a second copy in a renderer is a second
- * answer that drifts. English only for now; a language is one more column.
+ * answer that drifts. The words themselves are uttt/c/i18n's, in every
+ * language the game carries (uttt_lang.h); this file picks which ones.
+ *
+ * A BUBBLE READS IN ITS SENDER'S LANGUAGE. Its caption and image words are
+ * composed on the phone that stages it, in that phone's language, and every
+ * phone in the thread is shown that one message - the sister product's rule
+ * for its captions too. A screen is drawn for one phone, in its own.
  *
  * A BUBBLE is one bitmap and one caption shown identically on every device,
  * so the bubble's lines are statements about the board and the word "you"

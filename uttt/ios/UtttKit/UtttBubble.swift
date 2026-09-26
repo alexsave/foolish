@@ -220,6 +220,13 @@ public enum UtttBubble {
         one.lineBreakMode = .byTruncatingTail
         let wrap = NSMutableParagraphStyle()
         wrap.lineBreakMode = .byWordWrapping
+        /* LEFT, NOT NATURAL: the frame is composed left to right - board,
+         * mark, words - in every language. Natural would set Hebrew or
+         * Arabic words against the frame's right edge, a gap away from the
+         * mark they follow (uttt/c/i18n/keys.h: the words after a mark are
+         * right of it on the screen whichever way they read). */
+        one.alignment = .left
+        wrap.alignment = .left
 
         let hAttr: [NSAttributedString.Key: Any] = [
             .font: font(0), .foregroundColor: ink(0), .paragraphStyle: one,

@@ -1,6 +1,13 @@
-// The languages the app carries, and everything about a language that is not a
+// The languages the apps carry, and everything about a language that is not a
 // translation: its code, the name it calls itself, and whether it is written
 // right to left.
+//
+// SHARED BECAUSE BOTH PRODUCTS SPEAK THESE LANGUAGES, and a second list is a
+// list that falls behind. ROOT's generator reads this table to decide which
+// string modules to write (tools/structgen/gen.sh); UTTT compiles it into its
+// kernel and indexes its own per-language tables by FsLang (uttt/c/i18n), so a
+// row added here is a build of UTTT that refuses to pass its test until that
+// language is translated there too.
 //
 // THE CODE IS THE MATCH. Each entry's code is the ISO 639-1 subtag a speaker's
 // locale begins with, which is what lets the phone app resolve a language out of
@@ -12,8 +19,8 @@
 // NO REGIONAL VARIANTS, deliberately. One `pt` serves Brazil and Portugal, one
 // `zh` is Simplified and a Traditional reader lands somewhere they can read
 // rather than in English.
-#ifndef FOOLISH_I18N_LANGUAGES_H
-#define FOOLISH_I18N_LANGUAGES_H
+#ifndef SHARED_I18N_LANGUAGES_H
+#define SHARED_I18N_LANGUAGES_H
 
 typedef enum {
     FS_L_EN,
@@ -44,8 +51,8 @@ typedef enum {
     FS_L_COUNT
 } FsLang;
 
-// One row per language file under c/i18n, and that is the registry: adding a
-// language is adding its strings_<code>.c and its row here. tools/structgen/gen.sh
+// One row per language, and that is the registry: adding a language is adding
+// its row here and a strings_<code>.c in each product's i18n directory. tools/structgen/gen.sh
 // READS THIS TABLE to find out what to generate, so no build script, no CI lane
 // and no host keeps a list of languages that could fall behind this one.
 //

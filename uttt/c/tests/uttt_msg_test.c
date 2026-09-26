@@ -558,15 +558,15 @@ static void test_caption_one_line(void)
                         int k = uttt_caption(over, turn, block, line, plies, NULL, s, sizeof s);
                         OK(k >= 0 && k == (int)strlen(s), "caption: every combination answers");
                         if (k > longest) { longest = k; strcpy(worst, s); }
-                        if (strstr(s, " the ") && strstr(s, " won ")) lined++;
+                        if (strstr(s, " won ") && (strstr(s, " the ") || strstr(s, " down ") || strstr(s, " across "))) lined++;
                         if (s[k ? k - 1 : 0] == '.') n++;
                     }
     printf("  caption: longest %d characters, \"%s\"\n", longest, worst);
     OK(longest <= UTTT_CAPTION_MAX, "caption: every caption fits one line of the transcript");
     OK(n == 0, "caption: no caption ends in a full stop");
-    OK(lined > 0, "caption: a win still names its line where the line fits");
+    OK(lined == 0, "caption: a win never names its line (the image shows it)");
     uttt_caption(UTTT_X, UTTT_O, 0, 3, 21, NULL, s, sizeof s);
-    OK(!strcmp(s, "X won down the left in 21 moves"), "caption: the owner's example");
+    OK(!strcmp(s, "X won in 21 moves"), "caption: the owner's example, no position");
     uttt_caption(0, UTTT_X, 9, -1, 4, NULL, s, sizeof s);
     OK(!strcmp(s, "X to play"), "caption: no suffix when free");
     uttt_caption(0, UTTT_O, 0, -1, 4, NULL, s, sizeof s);
@@ -634,7 +634,7 @@ static void test_say(void)
         int mv = g.move[g.n_plies - 1], ok = uttt_say_cell(&g, mv, s, sizeof s) > 0;
         char want[80];
         snprintf(want, sizeof want, "%s board, %s square, X",
-                 uttt_place_name(mv / 9, 0), uttt_place_name(mv % 9, 0));
+                 uttt_place_name(mv / 9), uttt_place_name(mv % 9));
         want[0] = (char)(want[0] - 'a' + 'A');
         OK(ok && !strcmp(s, want), "say: a marked square names its mark");
     }
@@ -657,11 +657,9 @@ static void test_say(void)
     say(UTTT_SAY_CAPTION, &g, UTM_SEAT_O, s);
     {
         char want[64];
-        snprintf(want, sizeof want, "X won on the diagonal in %d moves", g.n_plies);
-        if (strlen(want) > UTTT_CAPTION_MAX) snprintf(want, sizeof want, "X won in %d moves", g.n_plies);
-        OK(!strcmp(s, want), "say: the end caption names the line and the length, the line where it fits");
-        snprintf(want, sizeof want, "$ALEX won on the diagonal in %d moves", g.n_plies);
-        if (strlen(want) > UTTT_CAPTION_MAX) snprintf(want, sizeof want, "$ALEX won in %d moves", g.n_plies);
+        snprintf(want, sizeof want, "X won in %d moves", g.n_plies);
+        OK(!strcmp(s, want), "say: the end caption is the winner and the length");
+        snprintf(want, sizeof want, "$ALEX won in %d moves", g.n_plies);
         OK(uttt_say_by(UTTT_SAY_CAPTION, &g, UTM_SEAT_X, "$ALEX", s, sizeof s) > 0
            && !strcmp(s, want), "say: the end caption names the winner, who sent it (UI.html 05)");
     }
@@ -713,12 +711,6 @@ static void test_say(void)
             say(UTTT_SAY_SUBLINE, &g, UTM_SEAT_X, s);
             OK(li >= 0 && (held & m) == m && !strcmp(s, shape[li]),
                "say: the end subline names the winning line");
-            /* rows are said "across", columns "down": subline and caption agree */
-            char cap[160];
-            say(UTTT_SAY_CAPTION, &g, UTM_SEAT_X, cap);
-            OK((li < 3 && strstr(cap, " across the ")) || (li >= 3 && li < 6 && strstr(cap, " down the "))
-               || (li >= 6 && strstr(cap, " on the diagonal ")) || !strstr(cap, " the "),
-               "say: the caption and the subline name the same line, or the caption none");
             lines_said++;
         }
         if (game == 0) {

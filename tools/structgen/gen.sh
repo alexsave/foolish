@@ -209,11 +209,14 @@ DG="$root/shared/tools/datagen/build/datagen"
 i18n_ts="$prod/i18n"; i18n_swift="$swift/i18n"; i18n_kotlin="$kotlin/i18n"
 mkdir -p "$i18n_ts" "$i18n_swift" "$i18n_kotlin"
 dg() { "$DG" --cwd "$root/c/i18n" "$@"; }
+# The registry is shared/c/i18n/languages.h: uttt/ compiles the same language
+# set into its kernel, so the list of languages is one file for both products.
+dgl() { "$DG" --cwd "$root/shared/c/i18n" "$@"; }
 
 # The registry first: what languages there are, what each calls itself, and
 # which way it is written. A table of structs, so datagen reads its columns by
 # field name - the case that proves this tool is not string-table-shaped.
-dg --header languages.h --table FS_LANGUAGES --require-complete --name FoolishLanguages \
+dgl --header languages.h --table FS_LANGUAGES --require-complete --name FoolishLanguages \
    --ts "$i18n_ts/languages.ts" --swift "$i18n_swift/FoolishLanguages.swift" \
    --kotlin "$i18n_kotlin/FoolishLanguages.kt" --kotlin-package cards.foolish.i18n
 # Every key that exists, in one list. --ts-const so TypeScript keeps them as
@@ -227,10 +230,10 @@ dg --header keys.h --table FS_KEY_NAME --require-complete --name FoolishStringKe
 # …and one module per language. THE LIST COMES FROM THE REGISTRY, read back out
 # of the C, so adding a language is adding its file and its row and nothing
 # else. A row whose strings_<code>.c is missing fails here, by name.
-dg --header languages.h --table FS_LANGUAGES --json "$i18n_ts/.languages.json"
+dgl --header languages.h --table FS_LANGUAGES --json "$i18n_ts/.languages.json"
 codes="$(sed -n 's/.*"code": "\([a-z][a-z]*\)".*/\1/p' "$i18n_ts/.languages.json")"
 rm -f "$i18n_ts/.languages.json"
-[ -n "$codes" ] || { echo "gen: the language registry (c/i18n/languages.h) read back empty" >&2; exit 1; }
+[ -n "$codes" ] || { echo "gen: the language registry (shared/c/i18n/languages.h) read back empty" >&2; exit 1; }
 for code in $codes; do
   up="$(printf '%s' "$code" | tr '[:lower:]' '[:upper:]')"
   cap="$(printf '%s%s' "$(printf '%s' "${code%"${code#?}"}" | tr '[:lower:]' '[:upper:]')" "${code#?}")"

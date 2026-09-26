@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocalization, Language } from '../contexts/LocalizationContext';
 
-// The language picker. THE LIST COMES FROM THE C (c/i18n/languages.h, through
+// The language picker. THE LIST COMES FROM THE C (shared/c/i18n/languages.h, through
 // the generated registry) - it is not written here any more.
 //
 // It used to be three hard-coded rows, `{ code, flag, label }` for en/ru/ko,

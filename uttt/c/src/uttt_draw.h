@@ -156,10 +156,9 @@ UtttBubble uttt_bubble(const UtttGame *g);
  * none of them is below 2x; over 3 is pixels no phone shows. */
 float uttt_bubble_scale(float display);
 
-/* The nine blocks, named, plus 9 for "anywhere". `spoken` picks the form a
- * sentence uses - the caption says "the bottom-middle board" where the place
- * line says "bottom middle". Never NULL. */
-const char *uttt_place_name(int block, int spoken);
+/* The nine blocks, named, plus 9 for "anywhere", in the kernel's language
+ * (uttt_lang.h). Never NULL. */
+const char *uttt_place_name(int block);
 
 /* The app's own face - one hash, an X and an O - drawn with the app's own
  * pen and centred in a `w` by `h` frame in POINTS. Polygons come back in
