@@ -34,7 +34,7 @@ static void tag_of(const char *who, int32_t seed, uint8_t t[UTM_TAG_LEN])
 
 static int same_msg(const UtmMsg *a, const UtmMsg *b)
 {
-    if (a->seed != b->seed || a->sealed != b->sealed) return 0;
+    if (a->seed != b->seed || a->look != b->look || a->sealed != b->sealed) return 0;
     if (memcmp(a->o, b->o, UTM_TAG_LEN)) return 0;
     if (a->sealed && memcmp(a->x, b->x, UTM_TAG_LEN)) return 0;
     if (a->game.n_plies != b->game.n_plies) return 0;
@@ -58,7 +58,7 @@ static void test_resolve(void)
     tag_of("vera-rotated", seed, b2);
 
     UtmMsg inv, g;
-    utm_open(&inv, seed, a);
+    utm_open(&inv, seed, 9, a);
     g = inv;
     OK(utm_play(&g, b, 40), "resolve: vera joins");        /* 1 ply: O to move */
     int by = -9;
@@ -232,7 +232,7 @@ static void test_games(int games)
         tag_of("creator", seed, a);
         tag_of("joiner", seed, b);
         UtmMsg m;
-        utm_open(&m, seed, a);
+        utm_open(&m, seed, (uint8_t)rnd(), a);
         round_trip(&m, "wire: an invitation encodes");
         while (!m.game.over) {
             uint8_t list[81];
@@ -258,16 +258,19 @@ static void test_games(int games)
 }
 
 /* Bytes with a correct check over whatever header the test wants - the only
- * way to reach decode's roster rules, since encode refuses to write them. */
-static int forge(uint8_t *out, int32_t seed, int sealed, const uint8_t *o,
-                 const uint8_t *x, const UtttGame *g)
+ * way to reach decode's roster rules, since encode refuses to write them,
+ * and the only way to write FORMAT 1 (no look byte), which nothing writes
+ * any more and every build must still read. */
+static int forge(uint8_t *out, int fmt, int32_t seed, uint8_t look, int sealed,
+                 const uint8_t *o, const uint8_t *x, const UtttGame *g)
 {
     int n = 0;
-    out[n++] = UTM_MAGIC; out[n++] = UTM_FORMAT;
+    out[n++] = UTM_MAGIC; out[n++] = (uint8_t)fmt;
     uint32_t u = (uint32_t)seed;
     out[n++] = (uint8_t)(u >> 24); out[n++] = (uint8_t)(u >> 16);
     out[n++] = (uint8_t)(u >> 8);  out[n++] = (uint8_t)u;
     out[n++] = sealed ? UTM_FLAG_SEALED : 0;
+    if (fmt != UTM_FORMAT_1) out[n++] = look;
     memcpy(out + n, o, UTM_TAG_LEN); n += UTM_TAG_LEN;
     if (sealed) { memcpy(out + n, x, UTM_TAG_LEN); n += UTM_TAG_LEN; }
     int head = n;
@@ -289,10 +292,11 @@ static void test_refusals(void)
     tag_of("creator", 1234, a);
     tag_of("joiner", 1234, b);
     UtmMsg m, back;
-    utm_open(&m, 1234, a);
+    utm_open(&m, 1234, 88, a);
     OK(utm_play(&m, b, 40) && utm_play(&m, a, 36), "refusal fixture plays");
     uint8_t buf[UTM_MAX_BYTES];
     int n = utm_encode(&m, buf, sizeof buf);
+    OK(buf[1] == UTM_FORMAT && buf[7] == 88, "encode: format 2, the look at byte 7");
 
     OK(utm_decode(buf, 1, &back) == UTM_ESHORT, "decode: one byte is short");
     uint8_t t[UTM_MAX_BYTES];
@@ -300,8 +304,38 @@ static void test_refusals(void)
     OK(utm_decode(t, n, &back) == UTM_EMAGIC, "decode: wrong magic");
     memcpy(t, buf, (size_t)n); t[1] = UTM_FORMAT + 1;
     OK(utm_decode(t, n, &back) == UTM_EFORMAT, "decode: a newer format is refused");
+    memcpy(t, buf, (size_t)n); t[1] = 0;
+    OK(utm_decode(t, n, &back) == UTM_EFORMAT, "decode: format 0 is refused");
     memcpy(t, buf, (size_t)n); t[6] |= 0x80;
     OK(utm_decode(t, n, &back) == UTM_EFLAGS, "decode: a reserved flag is refused");
+
+    /* FORMAT 1, as 1.0(6)-1.0(8) wrote it: no look byte, the tags a byte
+     * earlier, and the look derived from the seed - the same message
+     * otherwise, and a re-encode is format 2 carrying that look. Both
+     * rosters, since the sealed head is where the shift shows. */
+    {
+        UtmMsg one;
+        int f1 = forge(t, UTM_FORMAT_1, 1234, 0, 1, a, b, &m.game);
+        OK(f1 == n - 1 && utm_decode(t, f1, &one) == UTM_EOK, "decode: a format-1 message reads");
+        OK(one.look == uttt_look_of_seed(1234) && one.look == (uint8_t)1234,
+           "decode: a format-1 message's look is its seed's low byte");
+        m.look = one.look;
+        OK(same_msg(&one, &m), "decode: and the rest of it is the message");
+        round_trip(&one, "wire: a format-1 message re-encodes");
+        uint8_t re[UTM_MAX_BYTES];
+        int rn = utm_encode(&one, re, sizeof re);
+        OK(rn == n && re[1] == UTM_FORMAT && re[7] == one.look, "wire: as format 2, with the derived look");
+        UtttGame g0; uttt_init(&g0);
+        UtmMsg inv1;
+        f1 = forge(t, UTM_FORMAT_1, 1234, 0, 0, a, b, &g0);
+        OK(utm_decode(t, f1, &inv1) == UTM_EOK && !inv1.sealed && inv1.look == (uint8_t)1234
+           && !memcmp(inv1.o, a, UTM_TAG_LEN), "decode: a format-1 invitation reads");
+        int misread = 0;
+        f1 = forge(t, UTM_FORMAT_1, 1234, 0, 1, a, b, &m.game);
+        for (int k = 1; k < f1; k++) if (utm_decode(t, k, &one) == UTM_EOK) misread++;
+        OK(misread == 0, "decode: every truncation of a format-1 message is refused");
+        m.look = 88;
+    }
 
     /* EVERY single-byte change past the format is refused, never misread:
      * a mixed-radix code has no redundancy of its own. */
@@ -323,16 +357,16 @@ static void test_refusals(void)
     uttt_init(&g0);
     uttt_init(&g1);
     uttt_play(&g1, 40);
-    int fn = forge(t, 1234, 0, a, b, &g1);
+    int fn = forge(t, UTM_FORMAT, 1234, 88, 0, a, b, &g1);
     OK(utm_decode(t, fn, &back) == UTM_EROSTER, "decode: an open seat with a move on the board");
-    fn = forge(t, 1234, 1, a, b, &g0);
+    fn = forge(t, UTM_FORMAT, 1234, 88, 1, a, b, &g0);
     OK(utm_decode(t, fn, &back) == UTM_EROSTER, "decode: a sealed roster with no first move");
-    fn = forge(t, 1234, 1, a, a, &g1);
+    fn = forge(t, UTM_FORMAT, 1234, 88, 1, a, a, &g1);
     OK(utm_decode(t, fn, &back) == UTM_EROSTER, "decode: X and O the same person");
-    fn = forge(t, 0, 0, a, b, &g0);
+    fn = forge(t, UTM_FORMAT, 0, 88, 0, a, b, &g0);
     OK(utm_decode(t, fn, &back) == UTM_EROSTER, "decode: a zero seed");
-    fn = forge(t, 1234, 1, a, b, &g1);
-    OK(utm_decode(t, fn, &back) == UTM_EOK, "decode: the forge itself is sound");
+    fn = forge(t, UTM_FORMAT, 1234, 88, 1, a, b, &g1);
+    OK(utm_decode(t, fn, &back) == UTM_EOK && back.look == 88, "decode: the forge itself is sound");
 
     UtmMsg bad = m;
     bad.sealed = 0;
@@ -379,7 +413,7 @@ static void test_seats(void)
     OK(!memcmp(a, golden, UTM_TAG_LEN), "tag: the format is frozen");
 
     UtmMsg inv;
-    utm_open(&inv, seed, a);
+    utm_open(&inv, seed, 5, a);
     /* the invitation */
     OK(utm_seat(&inv, a) == UTM_SEAT_WAITING, "seat: the creator waits on their own invitation");
     OK(utm_seat(&inv, b) == UTM_SEAT_OPEN, "seat: anybody else may take it");
@@ -462,11 +496,11 @@ static void test_prefer(void)
     tag_of("vera", seed, b);
     tag_of("cleo", seed, c);
     UtmMsg inv, jb, jc, jb2, other;
-    utm_open(&inv, seed, a);
+    utm_open(&inv, seed, 5, a);
     jb = inv; utm_play(&jb, b, 40);
     jc = inv; utm_play(&jc, c, 40);   /* the same square: only the joiner differs */
     jb2 = jb; utm_play(&jb2, a, 36);
-    utm_open(&other, seed + 1, a);
+    utm_open(&other, seed + 1, 5, a);
 
     OK(utm_prefer(&inv, &inv) == 0, "prefer: identical is identical");
     OK(utm_prefer(&jb, &other) > 0, "prefer: a different game is the tapped one");
@@ -782,6 +816,190 @@ static void test_tag_pinned(void)
        "pinned: the creator's tag is the 1.0(6) tag");
     OK(utm_seat(&m, a) == UTM_SEAT_O && utm_seat(&m, v) == UTM_SEAT_X,
        "pinned: its creator is O and its joiner X");
+    OK(m.look == uttt_look_of_seed(m.seed) && m.look == (uint8_t)m.seed,
+       "pinned: a 1.0(6) game draws on its seed's low byte");
+}
+
+
+/* ------------------------------------------------------------- the look */
+/* THE SHEET IS DRAWN FROM THE LOOK AND NOTHING ELSE (uttt_draw.h): the
+ * game seed is identity, never a drawing input. Two display lists side by
+ * side, as the phone and uttt.live would build them. */
+static UtttPt   PT1[65000], PT2[65000];
+static UtttPoly PO1[600], PO2[600];
+
+static int same_dl(const UtttDL *a, const UtttDL *b)
+{
+    return a->n_pt == b->n_pt && a->n_poly == b->n_poly
+        && !memcmp(a->pt, b->pt, sizeof(UtttPt) * (size_t)a->n_pt)
+        && !memcmp(a->poly, b->poly, sizeof(UtttPoly) * (size_t)a->n_poly);
+}
+
+static void board(UtttDL *d, UtttPt *pt, UtttPoly *po, const UtttGame *g, uint8_t look, int last)
+{
+    uttt_dl_init(d, pt, 65000, po, 600);
+    UtttDrawOpts o = uttt_draw_opts(look);
+    o.last = last;
+    uttt_draw_board(d, g, &o);
+}
+
+/* The polygons of square `mv`'s mark - every one lying wholly inside the
+ * square grown by .3 of a cell (a neighbour's mark starts 1.1 cells over) -
+ * summed, as one number to compare. */
+static double cell_ink(const UtttDL *d, int mv, int *count)
+{
+    float r[4];
+    uttt_cell_rect(mv, r);
+    const float m = r[2] * .3f;
+    double sum = 0;
+    *count = 0;
+    for (int i = 0; i < d->n_poly; i++) {
+        const UtttPt *q = &d->pt[d->poly[i].first];
+        int in = 1;
+        for (int k = 0; k < d->poly[i].n; k++)
+            if (q[k].x < r[0] - m || q[k].x > r[0] + r[2] + m || q[k].y < r[1] - m || q[k].y > r[1] + r[3] + m) in = 0;
+        if (!in) continue;
+        (*count)++;
+        for (int k = 0; k < d->poly[i].n; k++) sum += q[k].x * 3.1 + q[k].y * 7.3;
+    }
+    return sum;
+}
+
+/* WHERE A STROKE STARTS, off its ribbon (uttt_ink_part): the first point is
+ * the start pushed to one side by half the pen, and the point six from the
+ * end (before the round cap) the same start pushed the other way - so their
+ * mean is the start itself, whatever the pen's width. */
+static UtttPt stroke_start(const UtttDL *d, int i)
+{
+    const UtttPt *q = &d->pt[d->poly[i].first];
+    int n = d->poly[i].n;
+    return (UtttPt){ (q[0].x + q[n - 6].x) * .5f, (q[0].y + q[n - 6].y) * .5f };
+}
+
+static void test_look(void)
+{
+    /* the one derivation: never 0, every look its own */
+    {
+        int32_t seen[256];
+        int zero = 0, dup = 0;
+        for (int l = 0; l < 256; l++) {
+            seen[l] = uttt_look_seed((uint8_t)l);
+            if (!seen[l]) zero++;
+            for (int k = 0; k < l; k++) if (seen[k] == seen[l]) dup++;
+        }
+        OK(!zero && !dup, "look: every look is its own nonzero pen seed");
+    }
+
+    uint8_t a[UTM_TAG_LEN], b[UTM_TAG_LEN];
+    UtmMsg m1, m2;
+    UtttDL d1, d2;
+    tag_of("alex", 1726990000, a);
+    tag_of("alex", 1790000000, b);
+    utm_open(&m1, 1726990000, 200, a);
+    utm_open(&m2, 1790000000, 200, b);
+    board(&d1, PT1, PO1, &m1.game, m1.look, -1);
+    board(&d2, PT2, PO2, &m2.game, m2.look, -1);
+    OK(d1.n_poly > 0 && same_dl(&d1, &d2), "look: two games with one look draw one board, whatever their seeds");
+    utm_open(&m2, 1790000000, 201, b);
+    board(&d2, PT2, PO2, &m2.game, m2.look, -1);
+    OK(!same_dl(&d1, &d2), "look: a different look is a different board");
+
+    /* THE SAME SQUARE AT TWO PLIES is two marks; at one ply, one mark */
+    UtttGame g1, g2, g3;
+    uttt_init(&g1); uttt_init(&g2); uttt_init(&g3);
+    OK(uttt_play(&g1, 40), "look fixture: X takes the centre square at ply 0");
+    OK(uttt_play(&g2, 41) && uttt_play(&g2, 49) && uttt_play(&g2, 40), "look fixture: X takes it at ply 2");
+    OK(uttt_play(&g3, 40), "look fixture: and at ply 0 again");
+    int c1, c2, c3;
+    board(&d1, PT1, PO1, &g1, 200, -1);
+    board(&d2, PT2, PO2, &g2, 200, -1);
+    double i1 = cell_ink(&d1, 40, &c1), i2 = cell_ink(&d2, 40, &c2);
+    OK(c1 == 4 && c2 == 4 && i1 != i2, "look: the same square at another ply is another mark");
+    board(&d2, PT2, PO2, &g3, 200, -1);
+    double i3 = cell_ink(&d2, 40, &c3);
+    OK(c3 == 4 && i1 == i3, "look: the same square, ply and look is the same mark");
+    uttt_dl_init(&d1, PT1, 65000, PO1, 600);
+    uttt_dl_init(&d2, PT2, 65000, PO2, 600);
+    uttt_draw_last(&d1, &g1, 200, 1.f);
+    uttt_draw_last(&d2, &g2, 200, 1.f);
+    OK(d1.n_poly == 8 && !same_dl(&d1, &d2), "look: and so is its heavy mark");
+    uttt_dl_init(&d2, PT2, 65000, PO2, 600);
+    uttt_draw_last(&d2, &g1, 201, 1.f);
+    OK(!same_dl(&d1, &d2), "look: the heavy mark is the look's too");
+
+    /* THE HEAVY MARK SETTLES INTO ITSELF: its first pass is the stroke the
+     * board draws for that square once the next move has landed - the same
+     * points under a lighter pen, so nothing jumps. */
+    {
+        UtttGame g4 = g1;
+        OK(uttt_play(&g4, 36), "look fixture: O answers in the centre block");
+        board(&d2, PT2, PO2, &g4, 200, 36);
+        int first = -1;
+        float r[4];
+        uttt_cell_rect(40, r);
+        for (int i = 0; i < d2.n_poly && first < 0; i++) {
+            const UtttPt *q = &d2.pt[d2.poly[i].first];
+            if (q[0].x > r[0] && q[0].x < r[0] + r[2] && q[0].y > r[1] && q[0].y < r[1] + r[3]) first = i;
+        }
+        int settled = 1;
+        float worst = 0.f;
+        for (int k = 0; k < 4; k++) {
+            UtttPt h = stroke_start(&d1, k), s = stroke_start(&d2, first + k);
+            float dx = fabsf(h.x - s.x), dy = fabsf(h.y - s.y);
+            if (dx > worst) worst = dx;
+            if (dy > worst) worst = dy;
+            if (dx > 1e-5f || dy > 1e-5f) settled = 0;
+        }
+        printf("  look: heavy pass 1 and the settled stroke start within %.2g of the board\n", worst);
+        OK(first >= 0 && settled, "look: the heavy mark's first pass starts where the settled stroke starts");
+        UtttPt h = stroke_start(&d1, 4), s = stroke_start(&d2, first);
+        OK(fabsf(h.x - s.x) > 1e-4f || fabsf(h.y - s.y) > 1e-4f,
+           "look: its second pass is its own stroke");
+    }
+
+    /* AGAIN keeps the look and takes a fresh seed; a live game has no Again */
+    {
+        UtmMsg over, next, live;
+        uint8_t v[UTM_TAG_LEN], a2[UTM_TAG_LEN];
+        tag_of("vera", 1726990000, v);
+        tag_of("alex", 1726999999, a2);
+        utm_open(&over, 1726990000, 123, a);
+        static const uint8_t win[] = { 79, 63, 5, 45, 8, 76, 42, 61, 70, 71, 78, 55, 15, 58, 36, 1, 11, 24, 4, 40, 39, 31, 80, 35, 0 };
+        const uint8_t *who[2] = { v, a };
+        for (unsigned i = 0; i < sizeof win && !over.game.over; i++) utm_play(&over, who[i % 2], win[i]);
+        live = over;
+        utm_undo(&live, v);
+        OK(over.game.over == UTTT_X && !live.game.over, "again fixture: a finished game and its last live position");
+        memset(&next, 0x5a, sizeof next);
+        OK(!utm_again(&next, &live, 1726999999, a2) && next.look == 0x5a, "again: refused on a live game, nothing written");
+        OK(utm_again(&next, &over, 1726999999, a2), "again: offered on a finished game");
+        OK(next.look == 123 && next.look == over.look, "again: the rematch keeps the finished game's look");
+        OK(next.seed == 1726999999 && next.seed != over.seed, "again: on a fresh seed");
+        OK(!next.sealed && next.game.n_plies == 0 && !memcmp(next.o, a2, UTM_TAG_LEN)
+           && !utm_same_game(&next, &over), "again: an invitation from me, a new game");
+        UtmMsg third;
+        OK(utm_again(&third, &next, 1727000001, a) == 0, "again: not from an invitation");
+        round_trip(&next, "again: the rematch encodes");
+    }
+
+    /* IDENTITY IS THE SEED, NOT THE LOOK: the tag, the record and "same
+     * game" read the full seed and never the look */
+    {
+        UtmMsg s1, s2, l2;
+        static uint8_t r[UTM_REC_BYTES];
+        utm_open(&s1, 1726990000, 10, a);
+        utm_open(&s2, 1726990000, 11, a);      /* one seed, two looks */
+        utm_open(&l2, 1726990001, 10, a);      /* one look, two seeds */
+        int n = utm_rec_put(r, 0, &s1, UTM_SEAT_O);
+        OK(utm_same_game(&s1, &s2) && utm_rec_find(r, n, &s2) == UTM_SEAT_O,
+           "identity: one seed is one game and one record, whatever the look");
+        OK(!utm_same_game(&s1, &l2) && utm_rec_find(r, n, &l2) == 0,
+           "identity: one look is not one game");
+        uint8_t t1[UTM_TAG_LEN], t2[UTM_TAG_LEN];
+        utm_tag(1726990000, (const uint8_t *)"alex", 4, t1);
+        utm_tag(1726990001, (const uint8_t *)"alex", 4, t2);
+        OK(memcmp(t1, t2, UTM_TAG_LEN) != 0, "identity: the tag is salted with the whole seed");
+    }
 }
 
 int main(int argc, char **argv)
@@ -799,6 +1017,7 @@ int main(int argc, char **argv)
     test_say();
     test_insert();
     test_bubble_scale();
+    test_look();
     printf("uttt_msg: %d checks, %d failed\n", checks, fails);
     return fails ? 1 : 0;
 }

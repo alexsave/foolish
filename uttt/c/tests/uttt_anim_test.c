@@ -174,7 +174,7 @@ int main(void)
             float dev = 0.f, most = 0.f; int crossed = 1;
             for (int sd = 1; sd <= 5; sd++) {
                 uttt_dl_init(&d, PT, 400000, PO, 60000);
-                uttt_draw_outline(&d, 4, sd, 1.f);
+                uttt_draw_outline(&d, 4, (uint8_t)sd, 1.f);
                 float over = 0.f, top = 0.f;
                 for (int i = 0; i < d.n_pt; i++) {
                     float x = d.pt[i].x, y = d.pt[i].y;
@@ -467,7 +467,7 @@ int main(void)
         const int SEEDS = 60;
         for (int sd = 1; sd <= SEEDS; sd++) {
             UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
-            UtttDrawOpts o = uttt_draw_opts(sd * 7919);
+            UtttDrawOpts o = uttt_draw_opts((uint8_t)(sd * 4 + 1));
             uttt_draw_board(&d, &e, &o);
             for (int i = 0; i < d.n_pt; i++)
                 if (isnan(d.pt[i].x) || isnan(d.pt[i].y)) nan++;
@@ -829,8 +829,8 @@ int main(void)
             /* the settle draws the last block's big mark and the line only
              * when the last move won a block, which a finished win always did */
             UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
-            int32_t seed = (int32_t)(r & 0x7fffffff) | 1;
-            if (uttt_draw_settle(&d, &g, seed, 0.f, 1.f) != 0 || d.n_poly == 0) continue;
+            uint8_t look = (uint8_t)r;
+            if (uttt_draw_settle(&d, &g, look, 0.f, 1.f) != 0 || d.n_poly == 0) continue;
             games++;
             float ax = 0, ay = 0, zx = 0, zy = 0; int first = 1;
             /* the line's direction: its two farthest points of ink */

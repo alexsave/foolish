@@ -1,6 +1,7 @@
 import CUttt
 import CoreGraphics
 import Foundation
+import Security
 
 /// The kernel, and nothing else.
 ///
@@ -140,9 +141,38 @@ public enum Uttt {
         me(withUnsafeBytes(of: participant.uuid) { Data($0) })
     }
 
-    /// A new invitation from me, composed now. The moment is the seed.
+    /// A new invitation from me, composed now. The moment is the seed; the
+    /// LOOK - the one byte every stroke on its napkin is drawn from - is
+    /// drawn here from the system's secure random and handed to the kernel,
+    /// which carries it in every bubble of the game.
     public static func openInvitation(at date: Date = Date()) {
-        uti_msg_open(Int64(date.timeIntervalSince1970))
+        uti_msg_open(Int64(date.timeIntervalSince1970), Int32(randomLook()))
+    }
+
+    /// AGAIN: the invitation that follows the resident finished game, on
+    /// the same napkin - the kernel copies the look (uti_msg_open_again);
+    /// nothing here chooses one. False, and nothing changed, if the
+    /// resident game is not over.
+    @discardableResult
+    public static func openRematch(at date: Date = Date()) -> Bool {
+        uti_msg_open_again(Int64(date.timeIntervalSince1970)) != 0
+    }
+
+#if DEBUG
+    /// The store frames' invitation (`dev.invite`): on the seeded game's
+    /// napkin, which the kernel derives from the seed as it does for a
+    /// seeded game. DEBUG only, like the kernel entry.
+    public static func openInvitationSeeded(at date: Date) {
+        uti_msg_open_seeded(Int64(date.timeIntervalSince1970))
+    }
+#endif
+
+    /// One byte of secure random: SecRandomCopyBytes, and the system
+    /// generator (arc4random) should it ever refuse.
+    private static func randomLook() -> UInt8 {
+        var b: UInt8 = 0
+        let ok = withUnsafeMutableBytes(of: &b) { SecRandomCopyBytes(kSecRandomDefault, 1, $0.baseAddress!) }
+        return ok == errSecSuccess ? b : UInt8.random(in: .min ... .max)
     }
 
     /// Adopt a message. False if it is not one this build reads, and then
@@ -166,6 +196,8 @@ public enum Uttt {
     /// The mark this device plays, or `.none`.
     public static var myMark: Mark { Mark(rawValue: UInt8(uti_msg_mark())) ?? .none }
     public static var seed: Int32 { uti_msg_seed() }
+    /// The resident game's look: the byte its napkin is drawn from.
+    public static var look: UInt8 { UInt8(truncatingIfNeeded: uti_msg_look()) }
     public static var canMove: Bool { uti_msg_can_move() != 0 }
 
     /// Play as me. On an open invitation this TAKES THE SEAT with the move.
@@ -540,11 +572,12 @@ public enum Uttt {
     /// does (UTTT_MS_REST).
     public static var restSeconds: Double { Double(uti_motion_rest_ms()) / 1000 }
 
-    /// One mark: plain for the "you are" indicator; for the headline's,
-    /// `board` is the board's side over the mark's, in points, and the
-    /// kernel draws it at the last move's stroke width.
-    public static func mark(_ m: Mark, seed: Int32, board: CGFloat = 0) -> [Poly] {
-        harvest(uti_draw_mark(Int32(m.rawValue), seed, Float(board)))
+    /// One mark on the resident game's napkin: plain for the "you are"
+    /// indicator; for the headline's, `board` is the board's side over the
+    /// mark's, in points, and the kernel draws it at the last move's stroke
+    /// width.
+    public static func mark(_ m: Mark, board: CGFloat = 0) -> [Poly] {
+        harvest(uti_draw_mark(Int32(m.rawValue), Float(board)))
     }
 
     /// The rulebook door. It takes the size the button HAS, in points, because

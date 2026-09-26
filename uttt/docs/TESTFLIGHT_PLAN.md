@@ -1322,3 +1322,23 @@ My own stage and replay never go quiet.
 The clock hands the model each change of `words`; an empty headline keeps its line, so the subline does not jump.
 `uttt_anim_test` covers it and was mutation-checked.
 Device check: open a bubble of theirs and receive a move with the drawer up; the headline must go blank as the mark draws and read "Your move" as it lands.
+
+### The drawing byte, and the ply in the pen (2026-09-26)
+
+Owner-approved: a game's napkin is drawn from one random byte, its LOOK, and a rematch keeps it; a square's mark also depends on the ply it was played at.
+The game seed stays what it was: raw unix seconds, the game's identity (`utm_tag`, the seat records, `utm_same_game`), and no longer a drawing input.
+- Wire format 2 (`uttt_msg.h`): magic, format, seed, flags, LOOK at byte 7, then the tags, the check and the game; `UTM_MAX_BYTES` grew by one and the longest link is unchanged at 87 characters.
+  Format 1 (1.0(6)-1.0(8)) is still read by one branch at the decode point: no look byte, the tags one byte earlier, and the look derived as `uttt_look_of_seed(seed)`, the seed's low byte; nothing writes format 1 any more.
+- The look is chosen when an invitation is made: `Uttt.openInvitation` draws one byte from `SecRandomCopyBytes` and hands it to `uti_msg_open(unix_seconds, look)`.
+  Again goes through `uti_msg_open_again(unix_seconds)`, which copies the finished game's look inside the kernel (`utm_again`, refused unless the game offers the Again door), so Swift cannot choose one; a chain of rematches is one napkin and a fresh game a fresh one.
+  A seeded game (`uti_new`, the rig's `devgame`, the preview) and the store frames' `dev.invite` (`uti_msg_open_seeded`, DEBUG only) draw on the seed's low byte, so seed 77 is look 77.
+- The pen (`uttt_draw.h`) takes the look and nothing else random; `uttt_look_seed` is the one place it becomes a pen seed.
+  The grid, the big marks, the win line, the promise and the lone marks are keyed on the look alone; the "you are" and headline marks' seeds moved from Swift (`seed &+ 4`, `seed &* 31 &+ 7`) into `uttt_draw_mark`, and Swift now passes no seed to any drawing entry.
+  A square's mark is seeded by (square, ply, pass) under one multiplier (`mark_seed`), so the same square at another ply is another mark; the heavy last mark's first pass is the settled stroke, so nothing jumps when the next move lands.
+- The replay link (`uttt_code.h`) is `https://uttt.live/2/<base32 of the look and the moves>`; a link with no `2/` segment is a 1.0(8) link (four bytes of seed, no segment) and reads with the derived look.
+  The segment holds the format because a format-1 code is base32 only and cannot contain a slash; the web route is a catch-all (`app/[...code]`) and hands the kernel the path as it came.
+- Swift caches are keyed on `Uttt.look` (the board bitmap, the ink views' marks); `UtttModel` reads its seed and look from the kernel at init.
+- Tests (`uttt_msg_test` test_look, `uttt_test`, `ios-smoke`): two games with different seeds and one look draw a byte-identical empty board; another look draws another board; the same square at another ply is another mark, at the same ply the same; the heavy mark's first pass starts where the settled stroke starts and its second pass is its own; Again keeps the look on a fresh seed and is refused on a live game; identity reads the whole seed and never the look; a format-1 message and the pinned 1.0(6) bytes decode with the derived look; 10,000 games round-trip the look at every ply; 1,000 format-2 and 1,000 format-1 links read back; the "you are" O stays a ring over every look there is (256, exhaustively, where it was 20,000 seeds).
+  25 mutations, each red on its named assertion: the pen seed zero or constant, the ply ignored in the mark seed or never read, the heavy passes swapped or the ply dropped, Again forgetting the look, ignoring the door or keeping the seed, encode dropping the look, the format-1 look not derived, the tags misplaced or format 1 refused, same-game or the record key reading the look, the link dropping the look, the old link's look not derived or the old link refused, the derivation not the low byte, and on the bridge Again picking its own look or ignoring the door, a seeded look not derived, the lone mark ignoring the look or drawn off the seed, and an invitation on a fixed look.
+- The store game (`docs/STORE_SHOTS.md`) is the same fifty plies on a new link; its old format-1 link reads to the same look and renders the identical board.
+- `shared/c/wasm/libm.c` gained `roundf` (half away from zero over `f32.trunc`), which the rules sheet's row height needed and the wasm lane did not have.

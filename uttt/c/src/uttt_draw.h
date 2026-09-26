@@ -10,8 +10,19 @@
 #include "uttt.h"
 #include "uttt_pen.h"
 
+/* THE SHEET IS DRAWN FROM ONE BYTE, the game's LOOK (uttt_msg.h): chosen at
+ * random when a game is made, copied by its rematches, carried in every
+ * bubble and every replay link. Every entry below takes it and nothing else
+ * random - not the game seed, which is the game's identity and never a
+ * drawing input - and uttt_look_seed is the ONE place it becomes a pen seed,
+ * so two phones, a bubble and uttt.live lay the same strokes.
+ *
+ * A SMALL MARK'S STROKES ALSO DEPEND ON THE PLY IT WAS PLAYED AT (uttt_draw.c
+ * mark_seed): the same square taken at a different move draws differently,
+ * and the heavy last mark's first pass IS the stroke it settles to. */
+
 typedef struct {
-    int32_t seed;        /* the sheet's, from the first message's timestamp */
+    uint8_t look;        /* the sheet's drawing byte                        */
     int     active;      /* block to wash, -1 for none, 9 for "anywhere"    */
     int     last;        /* block*9+cell of the move just made, -1 for none */
     float   mark_t;      /* 0..1, how far the last mark has been drawn      */
@@ -28,7 +39,11 @@ typedef struct {
  * sides of the sheet; the design stops them just past the board. */
 #define UTTT_REACH (.05f / .135f)
 
-UtttDrawOpts uttt_draw_opts(int32_t seed);
+UtttDrawOpts uttt_draw_opts(uint8_t look);
+
+/* THE ONE DERIVATION: a look to the pen seed everything on its sheet is
+ * drawn from. Never 0 (the pen reads 0 as 1), and every look its own. */
+int32_t uttt_look_seed(uint8_t look);
 
 /* The ink a mark is drawn in, 0xRRGGBBAA: O red for UTTT_O, X blue for
  * anything else. The one owner of the two colours outside the pen. */
@@ -43,21 +58,18 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o);
 /* THE LAST MOVE'S HEAVY MARK ON ITS OWN, drawn to `t`. A board drawn with
  * `last` set and mark_t 0 is every stroke but this one, so a renderer can
  * cache that and draw only this over it while it moves. -1 on no moves. */
-int uttt_draw_last(UtttDL *d, const UtttGame *g, int32_t seed, float t);
+int uttt_draw_last(UtttDL *d, const UtttGame *g, uint8_t look, float t);
 
 /* THE SETTLEMENT OF THE LAST MOVE ON ITS OWN: the big mark of the block it
  * won, drawn to `fall_t`, and the win line of the game it ended, to
  * `line_t`. A board drawn with `last` set and fall_t and meta_t 0 is every
  * stroke but these and the last mark. -1 on no moves. */
-int uttt_draw_settle(UtttDL *d, const UtttGame *g, int32_t seed, float fall_t, float line_t);
+int uttt_draw_settle(UtttDL *d, const UtttGame *g, uint8_t look, float fall_t, float line_t);
 
 /* THE PROMISE: the outline round `block` (0..8, 9 the sheet) in the
  * highlighter's rect and colour, drawn round to `t`. 0, or -1 when the
  * display list ran out; nothing for a block of -1. */
-int uttt_draw_outline(UtttDL *d, int block, int32_t seed, float t);
-
-/* One cell's mark, partially drawn - the animating stroke on its own. */
-int uttt_draw_cell(UtttDL *d, int mark, int mv, int32_t seed, float t);
+int uttt_draw_outline(UtttDL *d, int block, uint8_t look, float t);
 
 /* WHICH SQUARE A TOUCH LANDED ON: (u, v) in the board's 0..1 space, the one
  * uttt_draw_board draws in, to block*9+cell - or -1 off the board. Here
@@ -72,26 +84,27 @@ int uttt_hit(float u, float v);
  * its own. 0 for an `mv` off the board. */
 int uttt_cell_rect(int mv, float r[4]);
 
-/* One mark on its own: UTTT_MARK_SIDE of the unit square, drawn with
- * uttt_mark_seed(mark, seed). `board` 0 for the "you are" indicator's pen.
- * For the headline's mark ("Waiting on O") it is the board's side over this
- * mark's frame, both in points, and the mark is gone over twice with
+/* One mark on its own: UTTT_MARK_SIDE of the unit square, on the look's
+ * sheet. `board` 0 for the "you are" indicator's pen (its own seed off the
+ * look, an O walked to a ring - uttt_mark_seed). For the headline's mark
+ * ("Waiting on O") it is the board's side over this mark's frame, both in
+ * points, and the mark is gone over twice, on a second seed of its own, with
  * strokes as many points wide as the board's last mark's (owner,
  * 2026-09-25). */
-int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float board);
+int uttt_draw_mark(UtttDL *d, int mark, uint8_t look, float board);
 
 #define UTTT_MARK_SIDE .88f
 /* How far off its own median radius an O's ink may stray, as a fraction. */
 #define UTTT_O_RING    .15f
 
-/* 1 when the O drawn with `seed` at side `s` (of the unit square) keeps every
- * sample of its ink within UTTT_O_RING of its own radius - no tail cutting a
- * chord across it. */
+/* 1 when the O drawn with pen seed `seed` at side `s` (of the unit square)
+ * keeps every sample of its ink within UTTT_O_RING of its own radius - no
+ * tail cutting a chord across it. */
 int uttt_o_in_ring(int32_t seed, float s);
 
-/* The seed uttt_draw_mark actually draws `mark` with: `seed` for an X; for
- * an O the first of a fixed walk from `seed` that stays a ring. */
-int32_t uttt_mark_seed(int mark, int32_t seed);
+/* The pen seed uttt_draw_mark draws the "you are" `mark` with: the look's
+ * for an X; for an O the first of a fixed walk from it that stays a ring. */
+int32_t uttt_mark_seed(int mark, uint8_t look);
 
 /* The rulebook door - a hachured square with a book on it. Lives in
  * uttt_rule.c. Returns 0, or -1 if it ran out of room.

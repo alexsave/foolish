@@ -196,7 +196,7 @@ int main(int argc, char **argv)
 
     UtttDL d; uttt_dl_init(&d, pool, 400000, polys, 120000);
 
-    UtttDrawOpts o = uttt_draw_opts(77);
+    UtttDrawOpts o = uttt_draw_opts(77);   /* the DEBUG seeded game's look */
     o.last = upto ? moves[upto - 1] : -1;
     if (!g.over) {
         int f = g.forced;

@@ -667,7 +667,7 @@ final class MessagesViewController: MSMessagesAppViewController {
             showBoard(mark: Uttt.myMark, door: door, motion: motion, conversation)
 
         case .spectator:
-            let model = UtttModel(seed: Uttt.seed, you: .none)
+            let model = UtttModel(you: .none)
             model.refresh()
             show(UtttWatchScreen(model: model, door: door, slide: slide,
                                  onDoor: { [weak self] in self?.again(in: conversation) },
@@ -743,24 +743,35 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     // MARK: the things a person can do
 
-    /// Put an empty board on the table. THIS MOMENT IS THE SEED.
+    /// Put an empty board on the table. THIS MOMENT IS THE SEED, and the
+    /// napkin's look is a random byte (Uttt.openInvitation) - or, for
+    /// Again, the finished game's, copied by the kernel (`rematch`).
     ///
     /// SHOWN FIRST, STAGED ONCE THE DRAWER IS UP. Baking the bubble is the
     /// one slow thing on this path, and on a cold open it used to run before
     /// the first screen existed; and the insert used to land while Messages
     /// was still presenting the drawer, which is when the whole-window flash
     /// was at its longest (see `appeared`).
-    private func start(in conversation: MSConversation) {
-#if DEBUG
-        /* `dev.invite` (store frames only): see UtttDev.takeSeededInvite. */
-        if UtttDev.takeSeededInvite() {
-            Uttt.openInvitation(at: Date(timeIntervalSince1970: TimeInterval(UtttDev.seed)))
+    private func start(in conversation: MSConversation, rematch: Bool = false) {
+        if rematch {
+            /* the resident game is the finished one the door was on; the
+             * kernel refuses anything else, and then there is no draft */
+            guard Uttt.openRematch() else {
+                UtttLog.fault("start", "Again on a game that is not over")
+                return
+            }
         } else {
-            Uttt.openInvitation()
-        }
+#if DEBUG
+            /* `dev.invite` (store frames only): see UtttDev.takeSeededInvite. */
+            if UtttDev.takeSeededInvite() {
+                Uttt.openInvitationSeeded(at: Date(timeIntervalSince1970: TimeInterval(UtttDev.seed)))
+            } else {
+                Uttt.openInvitation()
+            }
 #else
-        Uttt.openInvitation()
+            Uttt.openInvitation()
 #endif
+        }
         guard let wire = UtttWire.resident else {
             UtttLog.fault("start", "the kernel wrote no invitation")
             return
@@ -782,14 +793,15 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// session left the reply unheard; the cost is that Messages collapses
     /// the finished game's last bubble to its caption.
     /// Whoever proposes moves second - the lobby rule - which is also what
-    /// swaps the players for a rematch.
+    /// swaps the players for a rematch. The rematch is played on the
+    /// finished game's napkin: the kernel copies its look (uti_msg_open_again).
     private func again(in conversation: MSConversation) {
         UtttLog.note("again")
         identify(conversation)
         draftIsNewGame = true
         sent = nil
         arrived = nil
-        start(in: conversation)
+        start(in: conversation, rematch: true)
     }
 
     // MARK: staging
@@ -1114,7 +1126,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// The board for the message the kernel is holding, as `mark`.
     private func showBoard(mark: Uttt.Mark, door: Uttt.Door, motion: Uttt.Channel = .still,
                            _ conversation: MSConversation) {
-        let model = UtttModel(seed: Uttt.seed, you: mark)
+        let model = UtttModel(you: mark)
         /* A draft on screen is a draft the player may change their mind about. */
         let draft = staged.map { Uttt.messageText == $0.text } ?? false
         if draft { model.setPending(true) }

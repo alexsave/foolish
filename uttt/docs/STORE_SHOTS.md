@@ -3,9 +3,10 @@
 Every App Store frame for Ultimate Tic-Tac-Toe shows a phase of ONE real, reachable game (owner, 2026-09-26).
 A frame shows the board after one ply of this game, and nothing else.
 
-- Replay code: `AAAAATPW4GYDOIS33TKXTB7YI5CJZHMJ3GBISAI`
-- Link: <https://uttt.live/AAAAATPW4GYDOIS33TKXTB7YI5CJZHMJ3GBISAI>
-- Drawing seed 77, the DEBUG seeded game's (`UtttDev.seed`), so the replay draws the same napkin as the frames.
+- Replay code: `2/JX3ODMBXEJN5ZVLZQ74EORE4TWE5TAUJAE`
+- Link: <https://uttt.live/2/JX3ODMBXEJN5ZVLZQ74EORE4TWE5TAUJAE>
+- Look 77: the DEBUG seeded game's seed is 77 (`UtttDev.seed`) and a seeded game's look is its seed's low byte (`uttt_look_of_seed`), so the replay draws the same napkin as the frames.
+- The link before the drawing byte (2026-09-26) was `AAAAATPW4GYDOIS33TKXTB7YI5CJZHMJ3GBISAI`, a format-1 code carrying seed 77; it still reads, to the same look.
 - Result: O wins in 50 plies, on the big board's anti-diagonal (top-right, centre, bottom-left boards). The owner asked for O's diagonal ("composes better").
 - We are X in every frame but the win, which is shot from O's seat so it reads "You win"; the seat whose frame it is has its messages on the right and sits in the drawer.
 

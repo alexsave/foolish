@@ -118,29 +118,34 @@ double uttt_ideal_bits(const UtttGame *g)
 
 /* ---------------------------------------------------------- the link */
 
-#define SEED_BYTES 4
+#define SEED_BYTES 4                   /* a format-1 code's head: the game seed */
 
-int uttt_replay_url(const UtttGame *g, int32_t seed, char *out, int cap)
+int uttt_replay_url(const UtttGame *g, uint8_t look, char *out, int cap)
 {
-    static const char pre[] = UTTT_REPLAY_PREFIX;
+    static const char pre[] = UTTT_REPLAY_PREFIX UTTT_REPLAY_FORMAT;
     const int np = (int)sizeof pre - 1;
     if (!g || g->n_plies == 0 || cap <= np) return -1;
-    uint8_t b[SEED_BYTES + 64];
-    uint32_t u = (uint32_t)seed;
-    b[0] = (uint8_t)(u >> 24); b[1] = (uint8_t)(u >> 16); b[2] = (uint8_t)(u >> 8); b[3] = (uint8_t)u;
-    int n = uttt_encode(g, b + SEED_BYTES, sizeof b - SEED_BYTES);
+    uint8_t b[1 + 64];
+    b[0] = look;
+    int n = uttt_encode(g, b + 1, sizeof b - 1);
     if (n <= 0) return -1;
     memcpy(out, pre, (size_t)np);
-    int w = b32_encode(b, SEED_BYTES + n, out + np, cap - np);
+    int w = b32_encode(b, 1 + n, out + np, cap - np);
     return w < 0 ? -1 : np + w;
 }
 
-int uttt_replay_read(const char *url, UtttGame *out, int32_t *seed)
+int uttt_replay_read(const char *url, UtttGame *out, uint8_t *look)
 {
-    static const char pre[] = UTTT_REPLAY_PREFIX;
-    const size_t np = sizeof pre - 1;
+    static const char pre[] = UTTT_REPLAY_PREFIX, fmt[] = UTTT_REPLAY_FORMAT;
+    const size_t np = sizeof pre - 1, nf = sizeof fmt - 1;
     if (!url) return 0;
     if (strncmp(url, pre, np) == 0) url += np;
+    /* THE ONE BRANCH: a format segment means the look is the first byte;
+     * none means a format-1 code, whose head is the game seed and whose
+     * look is derived from it below. */
+    int old = strncmp(url, fmt, nf) != 0;
+    if (!old) url += nf;
+    const int head = old ? SEED_BYTES : 1;
     /* the code alone: b32_decode skips what is not in its alphabet, so a
      * trailing "/", "?x=1" or "#..." would be read as more code - cut it */
     char code[128];
@@ -154,11 +159,13 @@ int uttt_replay_read(const char *url, UtttGame *out, int32_t *seed)
     if (k == 0) return 0;
     uint8_t b[80];
     int n = b32_decode(code, b, sizeof b);
-    /* shorter than the seed is not a link; the seed with nothing after it
+    /* shorter than the head is not a link; the head with nothing after it
      * is refused by uttt_decode (no bytes), which the test holds */
-    if (n < SEED_BYTES) return 0;
-    if (!uttt_decode(out, b + SEED_BYTES, (size_t)(n - SEED_BYTES))) return 0;
-    if (seed)
-        *seed = (int32_t)((uint32_t)b[0] << 24 | (uint32_t)b[1] << 16 | (uint32_t)b[2] << 8 | b[3]);
+    if (n < head) return 0;
+    if (!uttt_decode(out, b + head, (size_t)(n - head))) return 0;
+    if (look)
+        *look = old ? uttt_look_of_seed((int32_t)((uint32_t)b[0] << 24 | (uint32_t)b[1] << 16
+                                                  | (uint32_t)b[2] << 8 | b[3]))
+                    : b[0];
     return 1;
 }

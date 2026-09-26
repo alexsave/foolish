@@ -4,8 +4,8 @@
  * fountain for both seats, X on a small budget and O on a large one, because
  * the listing's win is O's, on a big-board DIAGONAL (owner, 2026-09-26). Every
  * ply goes through uttt_play, the whole list is replayed from scratch through
- * the rules again, and the replay link (drawing seed 77, the DEBUG seeded
- * game's) is read back and compared. See docs/STORE_SHOTS.md.
+ * the rules again, and the replay link (look 77: the DEBUG seeded game's,
+ * uttt_look_of_seed of its seed 77) is read back and compared. See docs/STORE_SHOTS.md.
  *
  *   make store-game          (seed 44, X 5 rollouts, O 2000 - the recorded game)
  *
@@ -33,9 +33,9 @@ int main(int argc, char **argv) {
     /* verify: replay the whole list from scratch through the rules */
     UtttGame v; uttt_init(&v);
     for (int i = 0; i < g.n_plies; i++) if (!uttt_play(&v, g.move[i])) { printf("REPLAY FAIL %d\n", i); return 1; }
-    char url[256]; uttt_replay_url(&g, 77, url, sizeof url);
-    UtttGame back; int32_t s2 = 0;
-    int ok = uttt_replay_read(url, &back, &s2) && back.n_plies == g.n_plies && s2 == 77;
+    char url[256]; uttt_replay_url(&g, uttt_look_of_seed(77), url, sizeof url);
+    UtttGame back; uint8_t l2 = 0;
+    int ok = uttt_replay_read(url, &back, &l2) && back.n_plies == g.n_plies && l2 == uttt_look_of_seed(77);
     for (int i = 0; ok && i < g.n_plies; i++) ok = back.move[i] == g.move[i];
     printf("seed=%llu over=%s plies=%d line=%d roundtrip=%s\n%s\n", (unsigned long long)seed,
            g.over == UTTT_X ? "X" : g.over == UTTT_O ? "O" : "draw", g.n_plies, uttt_won_line(&g),

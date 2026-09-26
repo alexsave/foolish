@@ -121,7 +121,7 @@ public enum UtttBubble {
         let mark = Uttt.bubbleMark
         return Snapshot(board: Uttt.bubbleBoardPolys(active: active, last: last),
                         mark: mark,
-                        markPolys: (mark == .x || mark == .o) ? Uttt.mark(mark, seed: Uttt.seed &+ 4) : [],
+                        markPolys: (mark == .x || mark == .o) ? Uttt.mark(mark) : [],
                         headline: headline, place: place,
                         paper: paper(width: Int(size.width), height: Int(size.height)),
                         boardBox: boardBox, textBox: textBox,

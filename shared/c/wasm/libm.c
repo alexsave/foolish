@@ -109,3 +109,11 @@ float fminf(float a, float b) { return a != a ? b : b != b ? a : a < b ? a : b; 
 float fmaxf(float a, float b) { return a != a ? b : b != b ? a : a > b ? a : b; }
 
 long lroundf(float x) { return (long)(x < 0 ? x - .5f : x + .5f); }
+
+/* Half away from zero, as libm's is; wasm's own f32.nearest rounds half to
+ * even, so this is spelled out over f32.trunc rather than mapped to it. */
+float roundf(float x)
+{
+    float t = __builtin_truncf(x), d = x - t;
+    return d >= .5f ? t + 1.f : d <= -.5f ? t - 1.f : t;
+}

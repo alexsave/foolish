@@ -28,7 +28,12 @@ public final class UtttModel {
     public let clock = UtttMotionClock()
     public private(set) var busy = false
 
-    public private(set) var seed: Int32
+    /// Which game this is (`Uttt.seed` when this was made): identity, and
+    /// nothing a stroke is drawn from.
+    public let seed: Int32
+    /// The napkin's look (`Uttt.look` when this was made): what a cached
+    /// mark of this game is keyed on.
+    public let look: UInt8
     public private(set) var you: Uttt.Mark
 
     /// NOBODY PLAYS A BOT HERE. The bots exist - `random` through `nib`, in
@@ -42,10 +47,10 @@ public final class UtttModel {
     /// of the bar: it is whoever has the other seat, drawn as their mark.
     /// THE POSITION IS ALREADY IN THE KERNEL when this is made - the host
     /// read the message first - so the model does not start a game of its
-    /// own. It only remembers which seed draws the marks and which mark is
-    /// this device's.
-    public init(seed: Int32, you: Uttt.Mark = .x) {
-        self.seed = seed; self.you = you
+    /// own. It only remembers which game it is, which look draws the marks
+    /// and which mark is this device's.
+    public init(you: Uttt.Mark = .x) {
+        seed = Uttt.seed; look = Uttt.look; self.you = you
     }
 
     public var active: Int {

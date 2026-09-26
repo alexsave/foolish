@@ -16,6 +16,8 @@
 #include <stdint.h>
 
 /* ------------------------------------------------------------ the game */
+/* A game with no message - the rig's and the preview's. Its look is derived
+ * from the seed (uttt_look_of_seed), as a format-1 bubble's is. */
 void uti_new(int32_t seed);
 int  uti_play(int mv);                  /* 1 if legal and played        */
 int  uti_legal(uint8_t *out);           /* out needs 81; returns count  */
@@ -68,8 +70,18 @@ int  uti_decode(const uint8_t *buf, int n, int32_t seed);
 void uti_me(const uint8_t *id, int n);
 
 /* A new invitation from me, now: the empty board, me in the O seat, the seed
- * the send time. The joiner will be X and moves first. */
-int  uti_msg_open(int64_t unix_seconds);
+ * the send time, the sheet drawn from `look` - ONE BYTE FROM THE HOST'S
+ * SECURE RANDOM (SecRandomCopyBytes), never the clock. The joiner will be X
+ * and moves first. */
+int  uti_msg_open(int64_t unix_seconds, int look);
+/* AGAIN: the invitation that follows the resident game, which must be over
+ * (uti_msg_door says AGAIN) - a fresh seed at the send time, ON THE SAME
+ * NAPKIN: the look is the finished game's, copied here (utm_again) so the
+ * host cannot choose one. 1, or 0 and nothing changes when the resident game
+ * is not over. */
+int  uti_msg_open_again(int64_t unix_seconds);
+/* The resident game's look, 0..255. */
+int  uti_msg_look(void);
 
 /* Adopt the message in `text` (a whole URL string is fine) - roster and
  * game. 0 (UTM_EOK), or a negative UTM_E* and nothing changes. */
@@ -174,6 +186,10 @@ int  uti_msg_seat_by(void);
 #define UTI_UNEXPORTED __attribute__((visibility("hidden")))
 UTI_UNEXPORTED int  uti_msg_claim(int seat);
 UTI_UNEXPORTED void uti_msg_forget(void);
+/* DEBUG ONLY, the same way: uti_msg_open with the look a seeded game has -
+ * derived from the seed (uttt_look_of_seed), as uti_new derives it - so the
+ * store frames' invitation (`dev.invite`) sits on the seeded game's napkin. */
+UTI_UNEXPORTED int  uti_msg_open_seeded(int64_t unix_seconds);
 
 #define UTI_TAG_LEN     9
 /* The resident game's tags: UTI_TAG_ME the one I play with (my resolved
@@ -381,10 +397,11 @@ float uti_board_reach(void);
 int  uti_draw_last(float t);
 
 
-/* One mark on its own: `board` 0 for the side indicator; for the headline's
- * mark the board's side over the mark's frame, in points, and it is drawn
- * at the last move's stroke width (uttt_draw_mark). */
-int  uti_draw_mark(int mark, int32_t seed, float board);
+/* One mark on its own, on the resident game's napkin: `board` 0 for the side
+ * indicator; for the headline's mark the board's side over the mark's
+ * frame, in points, and it is drawn at the last move's stroke width
+ * (uttt_draw_mark). */
+int  uti_draw_mark(int mark, float board);
 
 /* The rulebook door - the one button on the expanded sheet, a hachured square
  * with a book on it. Takes the size the button HAS, IN POINTS, because

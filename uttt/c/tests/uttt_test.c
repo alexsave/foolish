@@ -4,6 +4,7 @@
  *     make -C uttt/c run
  */
 #include "../src/uttt_code.h"
+#include "../../../shared/c/b32.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -251,12 +252,14 @@ int main(int argc, char **argv)
            checked, fails - partial_fail);
 
     /* THE REPLAY LINK, round trip: every finished game -> URL -> code ->
-     * decode is the same game, every ply; the URL is the prefix and base32
-     * only; a link read in lower case, or with a query after it, is the same
-     * game; and no plies is no link. */
+     * decode is the same game, every ply, with its look; the URL is the
+     * prefix, the format segment and base32 only; a link read in lower
+     * case, or with a query after it, is the same game; a FORMAT-1 link
+     * (four bytes of seed, no segment) reads with the seed's low byte as
+     * its look; and no plies is no link. */
     {
-        static const char pre[] = UTTT_REPLAY_PREFIX;
-        int link_games = 0, link_fail = 0, longest = 0;
+        static const char pre[] = UTTT_REPLAY_PREFIX UTTT_REPLAY_FORMAT;
+        int link_games = 0, link_fail = 0, longest = 0, old_fail = 0;
         for (int t3 = 0; t3 < games; t3++) {
             UtttGame g; uttt_init(&g);
             uint8_t list[81];
@@ -267,20 +270,19 @@ int main(int argc, char **argv)
                 uttt_play(&g, pick(&g, list, n, t3 % 3));
             }
             char url[160];
-            /* seeds across the range: the sign bit, both ends, and 1 */
-            int32_t seed = t3 % 4 == 0 ? INT32_MIN : t3 % 4 == 1 ? INT32_MAX : t3 % 4 == 2 ? 1
-                         : (int32_t)(uint32_t)(RS >> 13);
-            int len = uttt_replay_url(&g, seed, url, sizeof url);
+            /* looks across the byte: both ends, 1, and random */
+            uint8_t look = t3 % 4 == 0 ? 0 : t3 % 4 == 1 ? 255 : t3 % 4 == 2 ? 1 : (uint8_t)(RS >> 13);
+            int len = uttt_replay_url(&g, look, url, sizeof url);
             UtttGame back;
-            int32_t sback = 0, sback2 = 0;
+            uint8_t lback = 0, lback2 = 0;
             /* the owner's address, spelled out rather than taken from the
              * macro, so a typo in the macro cannot pass its own test */
             int ok = len > (int)sizeof pre - 1 && (int)strlen(url) == len
-                  && strncmp(url, "https://uttt.live/", 18) == 0
+                  && strncmp(url, "https://uttt.live/2/", 20) == 0
                   && strncmp(url, pre, sizeof pre - 1) == 0;
             for (int c = (int)sizeof pre - 1; ok && c < len; c++)
                 ok = (url[c] >= 'A' && url[c] <= 'Z') || (url[c] >= '2' && url[c] <= '7');
-            ok = ok && uttt_replay_read(url, &back, &sback) && sback == seed
+            ok = ok && uttt_replay_read(url, &back, &lback) && lback == look
                  && back.n_plies == g.n_plies && back.over == g.over
                  && memcmp(back.move, g.move, (size_t)g.n_plies) == 0;
             char low[200];
@@ -288,25 +290,47 @@ int main(int argc, char **argv)
             for (int c = (int)sizeof pre - 1; c < len; c++)
                 if (low[c] >= 'A' && low[c] <= 'Z') low[c] = (char)(low[c] - 'A' + 'a');
             UtttGame back2;
-            ok = ok && uttt_replay_read(low, &back2, &sback2) && back2.n_plies == g.n_plies && sback2 == seed
+            ok = ok && uttt_replay_read(low, &back2, &lback2) && back2.n_plies == g.n_plies && lback2 == look
                  && memcmp(back2.move, g.move, (size_t)g.n_plies) == 0;
-            ok = ok && uttt_replay_read(url + sizeof pre - 1, &back2, NULL) && back2.n_plies == g.n_plies;
+            ok = ok && uttt_replay_read(url + sizeof UTTT_REPLAY_PREFIX - 1, &back2, NULL) && back2.n_plies == g.n_plies;
             if (len > longest) longest = len;
             link_games++;
             if (!ok) { if (link_fail < 3) printf("  LINK FAIL %s\n", url); link_fail++; }
+
+            /* THE SAME GAME AS 1.0(8) WROTE IT: the seed, big-endian, then
+             * the moves, no segment - across the seed's range */
+            int32_t seed = t3 % 4 == 0 ? INT32_MIN : t3 % 4 == 1 ? INT32_MAX : t3 % 4 == 2 ? 1
+                         : (int32_t)(uint32_t)(RS >> 7);
+            uint8_t b[80];
+            uint32_t u = (uint32_t)seed;
+            b[0] = (uint8_t)(u >> 24); b[1] = (uint8_t)(u >> 16); b[2] = (uint8_t)(u >> 8); b[3] = (uint8_t)u;
+            int bn = uttt_encode(&g, b + 4, sizeof b - 4);
+            char old[200];
+            memcpy(old, UTTT_REPLAY_PREFIX, sizeof UTTT_REPLAY_PREFIX - 1);
+            int on = b32_encode(b, 4 + bn, old + sizeof UTTT_REPLAY_PREFIX - 1, (int)sizeof old - 20);
+            UtttGame back3;
+            uint8_t lback3 = 77;
+            int old_ok = bn > 0 && on > 0
+                      && uttt_replay_read(old, &back3, &lback3) && lback3 == uttt_look_of_seed(seed)
+                      && lback3 == (uint8_t)(uint32_t)seed
+                      && back3.n_plies == g.n_plies && memcmp(back3.move, g.move, (size_t)g.n_plies) == 0;
+            if (!old_ok) { if (old_fail < 3) printf("  OLD LINK FAIL %s\n", old); old_fail++; }
         }
         UtttGame empty; uttt_init(&empty);
         char u[160];
         int none = uttt_replay_url(&empty, 7, u, sizeof u) == -1;
         UtttGame junk;
-        /* the prefix alone, nothing, and a seed with no game after it */
+        /* the prefix alone, nothing, a format-1 seed with no game after
+         * it, and a look with no game after it */
         int bad = !uttt_replay_read(UTTT_REPLAY_PREFIX, &junk, NULL) && !uttt_replay_read("", &junk, NULL)
-               && !uttt_replay_read(UTTT_REPLAY_PREFIX "AAAAAAA", &junk, NULL);
-        printf("replay link: %d games through URL and back, %d mismatches, longest %d chars\n",
-               link_games, link_fail, longest);
+               && !uttt_replay_read(UTTT_REPLAY_PREFIX "AAAAAAA", &junk, NULL)
+               && !uttt_replay_read(UTTT_REPLAY_PREFIX UTTT_REPLAY_FORMAT, &junk, NULL)
+               && !uttt_replay_read(UTTT_REPLAY_PREFIX UTTT_REPLAY_FORMAT "AA", &junk, NULL);
+        printf("replay link: %d games through URL and back, %d mismatches, longest %d chars; %d format-1 mismatches\n",
+               link_games, link_fail, longest, old_fail);
         if (!none) { printf("  FAIL: a game with no plies got a link\n"); fails++; }
-        if (!bad)  { printf("  FAIL: an empty link, or a seed alone, read as a game\n"); fails++; }
-        fails += link_fail;
+        if (!bad)  { printf("  FAIL: an empty link, or a head alone, read as a game\n"); fails++; }
+        fails += link_fail + old_fail;
     }
 
     /* UNDO, WALKED ALL THE WAY BACK. A staged bubble is a draft, so a player

@@ -50,7 +50,7 @@ public final class UtttGameScreen: UtttSheetView {
         self.onDoor = onDoor
         self.onRules = onRules
         board = UtttBoardView(clock: model.clock)
-        youMark = UtttInkView.mark(model.you, seed: model.seed &+ 4)
+        youMark = UtttInkView.mark(model.you, look: model.look)
         rulebook = UtttRulebookButton(act: onRules, onHold: onDiagnostics)
         super.init(slide: slide)
         board.onTap = { [weak model] p in model?.tap(at: p) }
@@ -150,11 +150,11 @@ public final class UtttGameScreen: UtttSheetView {
         let ink = UtttInk.rgba(Uttt.headlineInk)
         let (LC, LB) = wordsLayouts(L, B)
         column.frame = rect(LC.words)
-        column.set(model.headline, ink: ink, seed: model.seed &* 31 &+ 7,
+        column.set(model.headline, ink: ink, look: model.look,
                    subline: model.subline, column: true, sub: CGFloat(LC.sub_alpha),
                    board: CGFloat(L.board.2))
         band.frame = rect(LB.band)
-        band.set(model.headline, ink: ink, seed: model.seed &* 31 &+ 7,
+        band.set(model.headline, ink: ink, look: model.look,
                  subline: model.subline, column: false, board: CGFloat(L.board.2))
         placeWords(column: column, band: band, L, B, at: at)
 
@@ -259,10 +259,10 @@ final class UtttWordsView: UIView {
     /// winning line spoken; docs/UI.html 04, 06, 07).
     /// `sub` is the second line's alpha (uttt_sheet's `sub_alpha`): a
     /// column too narrow for it carries the headline alone.
-    func set(_ h: UtttModel.Headline, ink: UIColor, seed: Int32, subline text: String, column: Bool,
+    func set(_ h: UtttModel.Headline, ink: UIColor, look: UInt8, subline text: String, column: Bool,
              sub: CGFloat = 1, board: CGFloat = 0) {
         let w = bounds.width
-        let hs = headline.set(h, ink: ink, seed: seed, width: w, column: column, align: align,
+        let hs = headline.set(h, ink: ink, look: look, width: w, column: column, align: align,
                               board: board)
         headline.accessibilityLabel = Uttt.say(.headlineSpoken)
         headline.frame = CGRect(x: align == .right ? w - hs.width : 0, y: 0, width: hs.width, height: hs.height)
@@ -311,7 +311,7 @@ final class UtttHeadlineView: UIView {
     /// `type` is the headline's own unless a screen sets a smaller line
     /// the same way (the spectator's "<O> to play"); the mark is as tall as
     /// the type is big.
-    func set(_ h: UtttModel.Headline, ink: UIColor, seed: Int32, width: CGFloat,
+    func set(_ h: UtttModel.Headline, ink: UIColor, look: UInt8, width: CGFloat,
              column: Bool, align: NSTextAlignment, type: UtttType = .headline,
              board: CGFloat = 0) -> CGSize {
         switch h {
@@ -345,8 +345,9 @@ final class UtttHeadlineView: UIView {
             /* `board`: the board's side, so the kernel draws this mark's
              * strokes as wide as the last move's (0: its own lighter pen) */
             let ratio = board > 0 && ms > 0 ? (board / ms * 100).rounded() / 100 : 0
-            mark.key = "mark \(m.rawValue) \(seed) \(ratio)"
-            mark.polys = { _ in Uttt.mark(m, seed: seed, board: ratio) }
+            /* keyed on the look: the kernel draws it off the resident game */
+            mark.key = "mark \(m.rawValue) look \(look) \(ratio)"
+            mark.polys = { _ in Uttt.mark(m, board: ratio) }
             mark.frame = CGRect(x: bs.width, y: my - top, width: ms, height: ms)
             after.frame = CGRect(x: bs.width + ms, y: -top, width: as_.width, height: lineH)
             let w = min(width, bs.width + ms + as_.width)

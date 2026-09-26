@@ -183,8 +183,8 @@ final class UtttInkView: UIView {
     /// The side indicator: the same X that is about to land on the board,
     /// out of the same pen, because a glyph from a font would be the only
     /// thing in the frame that did not come off the nib.
-    static func mark(_ m: Uttt.Mark, seed: Int32) -> UtttInkView {
-        UtttInkView(key: "mark \(m.rawValue) \(seed)", square: true) { _ in Uttt.mark(m, seed: seed) }
+    static func mark(_ m: Uttt.Mark, look: UInt8) -> UtttInkView {
+        UtttInkView(key: "mark \(m.rawValue) look \(look)", square: true) { _ in Uttt.mark(m) }
     }
 }
 

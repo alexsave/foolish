@@ -262,15 +262,18 @@ int main(void)
      * points the ink's two edges, and every one must sit within 20% of the
      * O's own mean distance from its centre, plus the pen's half-width (8%
      * of the radius at the widest the pen goes) - a tail cutting a chord
-     * across the inside lands at half of it. Over 20,000 game seeds, as the
-     * host draws them (model.seed &+ 4). */
+     * across the inside lands at half of it. Over EVERY LOOK THERE IS: the
+     * sheet is drawn from one byte, so 256 games are all the games. A
+     * seeded game's look is its seed's low byte, so uti_new(look) is the
+     * game with that look. */
     {
         int ring = 1, worst_seed = 0;
         float worst = 0.f;
         const float cx = .06f + (50.f + .3f * 4.f) * .0088f, cy = .06f + (50.f - .3f * 3.f) * .0088f;
         const float rx = (78.f - .3f * 10.f) * .0044f, ry = (76.f + .3f * 8.f) * .0044f;
-        for (int32_t g = 1; g <= 20000; g++) {
-            int m = uti_draw_mark(2, g + 4, 0);
+        for (int32_t g = 0; g < 256; g++) {
+            uti_new(g);
+            int m = uti_draw_mark(2, 0);
             const UtiPoly *q = uti_polys();
             const float *pt = uti_points();
             static float rho[4000];
@@ -288,13 +291,23 @@ int main(void)
             if (off > worst) { worst = off; worst_seed = g; }
             if (m != 2 || n < 40 || off > .28f) ring = 0;
         }
-        printf("  you-are O: worst stray %.3f of its radius (game seed %d)\n", worst, worst_seed);
-        ok(ring, "the you-are O never cuts across itself, over 20,000 game seeds");
-        int a = uti_draw_mark(2, 12345, 0);
+        printf("  you-are O: worst stray %.3f of its radius (look %d)\n", worst, worst_seed);
+        ok(ring, "the you-are O never cuts across itself, over every look");
+        uti_new(12345);
+        ok(uti_msg_look() == (12345 & 0xff), "a seeded game's look is its seed's low byte");
+        int a = uti_draw_mark(2, 0);
         double s1 = 0; for (int i = 0; i < uti_point_count() * 2; i++) s1 += uti_points()[i];
-        int b = uti_draw_mark(2, 12345, 0);
+        int b = uti_draw_mark(2, 0);
         double s2 = 0; for (int i = 0; i < uti_point_count() * 2; i++) s2 += uti_points()[i];
-        ok(a == b && s1 == s2, "and one seed draws one O, every time");
+        ok(a == b && s1 == s2, "and one look draws one O, every time");
+        uti_new(12345 + 256);
+        int c = uti_draw_mark(2, 0);
+        double s3 = 0; for (int i = 0; i < uti_point_count() * 2; i++) s3 += uti_points()[i];
+        ok(c == a && s3 == s1, "another seed with that look draws the same O");
+        uti_new(12346);
+        int e = uti_draw_mark(2, 0);
+        double s4 = 0; for (int i = 0; i < uti_point_count() * 2; i++) s4 += uti_points()[i];
+        ok(e == a && s4 != s1, "and another look draws another O");
     }
 
     /* ---- the rulebook door. Its shape is rough.js's and its numbers are
@@ -564,7 +577,8 @@ int main(void)
         char inv[160], join[160], reply[160], other[160];
 
         be(0, alex);
-        ok(uti_msg_open(1726990000) == 1, "alex opens an invitation");
+        ok(uti_msg_open(1726990000, 77) == 1, "alex opens an invitation");
+        ok(uti_msg_look() == 77 && uti_msg_seed() == 1726990000, "on the look the host drew, at the send time");
         ok(uti_msg_record() == UTI_SEAT_O && uti_seats_dirty(), "and records it as his, before anybody asks");
         ok(uti_msg_seat() == UTI_SEAT_WAITING, "and waits on it");
         ok(uti_msg_mark() == 0 && !uti_msg_can_move(), "with no mark and no move");
@@ -658,7 +672,7 @@ int main(void)
             ok(uti_msg_claim(UTI_SEAT_O) && uti_msg_seat() == UTI_SEAT_O && uti_msg_record() == UTI_SEAT_O,
                "a second claim replaces the first");
             char mine[160];
-            ok(uti_msg_text(mine, sizeof mine) > 0 && uti_msg_open(1726990777) == 1
+            ok(uti_msg_text(mine, sizeof mine) > 0 && uti_msg_open(1726990777, 3) == 1
                && uti_msg_seat() == UTI_SEAT_WAITING && uti_msg_seat_by() == UTI_BY_RECORD
                && uti_msg_tag(UTI_TAG_O, o) && uti_msg_tag(UTI_TAG_HASHED, h) && !memcmp(o, h, UTI_TAG_LEN),
                "her own new invitation is her hash, and recorded");
@@ -701,6 +715,36 @@ int main(void)
            "and alex is X again, by his tag");
         ok(!uti_msg_seat_ids(vera, 16, vera, 16), "nobody plays themselves");
         ok(uti_msg_text(other, sizeof other) > 0, "and it has a link");
+
+        /* AGAIN THROUGH THE BRIDGE: refused while the game runs; on a
+         * finished game a fresh invitation from me, recorded, on the
+         * finished game's look. The seeded invitation (the store frames')
+         * draws on the seed's low byte, as the seeded game does. */
+        ok(!uti_msg_open_again(1727000000) && uti_n_plies() == 2, "Again is refused on a live game, nothing changes");
+        {
+            static const uint8_t win[] = { 79, 63, 5, 45, 8, 76, 42, 61, 70, 71, 78, 55, 15, 58, 36, 1, 11, 24, 4, 40, 39, 31, 80, 35, 0 };
+            be(1, vera);
+            ok(uti_msg_open(1726995000, 211) == 1, "vera opens a game on look 211");
+            char fin[160];
+            ok(uti_msg_text(fin, sizeof fin) > 0, "and it has a link");
+            be(0, alex);
+            ok(uti_msg_read(fin) == 0 && uti_msg_seat() == UTI_SEAT_OPEN, "alex takes it");
+            int played = 1;
+            for (unsigned i = 0; i < sizeof win && !uti_over(); i++) {
+                if (i % 2) be(1, vera); else be(0, alex);
+                played &= uti_msg_play(win[i]);
+            }
+            ok(played && uti_over() == 1 && uti_msg_door() == UTI_DOOR_AGAIN, "played to X's win: the Again door");
+            be(1, vera);
+            int32_t was = uti_msg_seed();
+            ok(uti_msg_open_again(1727000000) == 1, "vera asks for another");
+            ok(uti_msg_look() == 211 && uti_msg_seed() == 1727000000 && uti_msg_seed() != was,
+               "the rematch keeps the look and takes the send time as its seed");
+            ok(uti_msg_seat() == UTI_SEAT_WAITING && uti_msg_record() == UTI_SEAT_O && uti_n_plies() == 0,
+               "an invitation from her, recorded as hers");
+            ok(uti_msg_open_seeded(77) == 1 && uti_msg_look() == 77 && uti_msg_seed() == 77,
+               "the seeded invitation draws on the seed's low byte");
+        }
         ok(uti_say(12345)[0] == '\0', "an unknown sentence is empty, never NULL");
         ok(!strcmp(uti_say(UTI_SAY_DOOR_SEND), "Send a board"), "the send door's words cross the bridge");
         ok(uti_send_hint_ms() == 3000, "the send hint's fuse crosses the bridge");

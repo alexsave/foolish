@@ -176,7 +176,7 @@ public final class UtttWatchScreen: UtttSheetView {
         let said: UtttModel.Headline = m == .none ? .text(words) : .mark("", m, words)
         let spoken = Uttt.say(.watchSpoken)
         let saidType = UtttType(size: 17, weight: .bold, color: UtttInk.ink)
-        let seed = model.seed &* 31 &+ 7
+        let look = model.look
         /* On the strip the label over the line in the left column, the line
          * wrapped; opening, the two across the top band. */
         column.frame = CGRect(x: CGFloat(LC.words.0), y: CGFloat(LC.words.1),
@@ -184,7 +184,7 @@ public final class UtttWatchScreen: UtttSheetView {
         let w = column.bounds.width
         let ls = colLabel.set(label, .small, width: w, column: false, align: .left)
         colLabel.frame = CGRect(origin: .zero, size: ls)
-        let ss = colSaid.set(said, ink: UtttInk.ink, seed: seed, width: w, column: true,
+        let ss = colSaid.set(said, ink: UtttInk.ink, look: look, width: w, column: true,
                              align: .left, type: saidType)
         colSaid.accessibilityLabel = spoken
         colSaid.frame = CGRect(x: 0, y: ls.height + 3, width: ss.width, height: ss.height)
@@ -192,7 +192,7 @@ public final class UtttWatchScreen: UtttSheetView {
         band.frame = CGRect(x: CGFloat(LB.band.0), y: CGFloat(LB.band.1),
                             width: CGFloat(LB.band.2), height: CGFloat(LB.band.3))
         let bw = band.bounds.width
-        let bs = bandSaid.set(said, ink: UtttInk.ink, seed: seed, width: bw, column: false,
+        let bs = bandSaid.set(said, ink: UtttInk.ink, look: look, width: bw, column: false,
                               align: .right, type: saidType)
         bandSaid.accessibilityLabel = spoken
         let bl = bandLabel.set(label, .small, width: max(0, bw - bs.width - 8), column: false, align: .left)

@@ -1,9 +1,10 @@
 /* The replay page's kernel: uttt.live/<code>, in a browser.
  *
  * THE SAME DRAWING AS THE PHONE. The board on the web page is the display
- * list uttt_draw_board builds for the app - the same polygons, the same seed,
- * so the same napkin and the same wobble in every stroke - and the page only
- * fills them. A second renderer in JavaScript would be a second hand, and the
+ * list uttt_draw_board builds for the app - the same polygons, the same look
+ * (the link carries the game's drawing byte, uttt_code.h), so the same
+ * napkin and the same wobble in every stroke - and the page only fills
+ * them. A second renderer in JavaScript would be a second hand, and the
  * replay would stop looking like the game it replays.
  *
  * ONE GAME AT A TIME, in statics: the page loads a code, seeks to a ply and
@@ -27,7 +28,7 @@
 #define PAPER_MAX   512
 
 static UtttGame full, cur;
-static int32_t  seed;
+static uint8_t  look;           /* the game's drawing byte, off the link */
 static UtttPt   pt[MAX_PT];
 static UtttPoly poly[MAX_POLY];
 static UtttDL   dl;
@@ -44,7 +45,7 @@ EXPORT(uw_code_cap) int   uw_code_cap(void) { return (int)sizeof code_in; }
 EXPORT(uw_load) int uw_load(void)
 {
     code_in[sizeof code_in - 1] = 0;
-    if (!uttt_replay_read(code_in, &full, &seed) || full.n_plies == 0) return 0;
+    if (!uttt_replay_read(code_in, &full, &look) || full.n_plies == 0) return 0;
     uttt_init(&cur);
     motion = uttt_motion(&cur, UTTT_CH_STILL);
     return full.n_plies;
@@ -101,12 +102,12 @@ EXPORT(uw_frame) int uw_frame(int now_ms)
         dl.pt[dl.n_pt++] = (UtttPt){ x + w, y + h };
         dl.pt[dl.n_pt++] = (UtttPt){ x, y + h };
     }
-    UtttDrawOpts o = uttt_draw_opts(seed);
+    UtttDrawOpts o = uttt_draw_opts(look);
     o.active = -1;
     o.last   = cur.n_plies ? cur.move[cur.n_plies - 1] : -1;
     o.mark_t = f.mark_t; o.fall_t = f.fall_t; o.meta_t = f.line_t;
     uttt_draw_board(&dl, &cur, &o);
-    if (f.outline >= 0 && f.outline_a > 0) uttt_draw_outline(&dl, f.outline, seed, f.outline_t);
+    if (f.outline >= 0 && f.outline_a > 0) uttt_draw_outline(&dl, f.outline, look, f.outline_t);
     return f.running;
 }
 

@@ -38,13 +38,46 @@ static float mro_for  (float L) { return .02f * powf(REF / (L > 1e-4f ? L : 1e-4
 
 uint32_t uttt_mark_ink(int mark) { return mark == UTTT_O ? INK_O : INK_X; }
 
-UtttDrawOpts uttt_draw_opts(int32_t seed)
+/* THE ONE DERIVATION. A look is a byte and the pen wants an int32 whose
+ * derived seeds (sd above) land far apart for neighbouring looks, so the
+ * byte is spread by Knuth's multiplier: (look + 1) is 1..256 and the
+ * multiplier is odd, so the product is never 0 mod 2^32. */
+int32_t uttt_look_seed(uint8_t look)
+{
+    return (int32_t)(((uint32_t)look + 1u) * 2654435761u);
+}
+
+UtttDrawOpts uttt_draw_opts(uint8_t look)
 {
     UtttDrawOpts o;
-    o.seed = seed ? seed : 1;
+    o.look = look;
     o.active = -1; o.last = -1; o.mark_t = 1.f; o.meta_t = 1.f; o.fall_t = 1.f;
     o.reach = UTTT_REACH;
     return o;
+}
+
+/* A SQUARE'S MARK IS SEEDED BY THE SQUARE AND THE PLY IT WAS PLAYED AT, so
+ * the same square taken at a different move is a different mark; `pass` 1
+ * is the heavy last mark's second going-over. Every (square, ply, pass) has
+ * its own slot under one multiplier, so no two collide on one sheet: 81
+ * squares by 82 plies (81, and one past the history for a square that has
+ * no ply) by two passes. THE FIRST PASS IS THE SETTLED STROKE: a board that
+ * no longer marks this move heavy draws pass 0 alone, the same points under
+ * a lighter pen, so nothing jumps when the next move lands. */
+#define MARK_SLOTS (81 * 82)
+static int32_t mark_seed(int32_t seed, int mv, int ply, int pass)
+{
+    if (ply < 0 || ply > 80) ply = 81;
+    return sd(seed, 2u * MARK_SLOTS, mv + 81 * ply + pass * MARK_SLOTS);
+}
+
+/* Which ply each square was played at, -1 for none: the history read once
+ * a draw rather than searched once a square. */
+static void plies_of(const UtttGame *g, int8_t ply[81])
+{
+    memset(ply, -1, 81);
+    for (int i = 0; i < g->n_plies && i < UTTT_MAX_PLIES; i++)
+        if (g->move[i] < 81) ply[g->move[i]] = (int8_t)i;
 }
 
 static void rect(UtttDL *d, float x, float y, float w, float h, uint32_t rgba)
@@ -177,12 +210,12 @@ static void heavy_mark(UtttDL *d, int v, float x, float y, float s,
     mark_in(d, v, x, y, s, seed2, t, &p);
 }
 
-static void last_mark(UtttDL *d, int v, int mv, int32_t seed, float t)
+static void last_mark(UtttDL *d, int v, int mv, int ply, int32_t seed, float t)
 {
     int b = mv / 9, c = mv % 9;
     float x = (b % 3) * BL + (c % 3) * CE + CE * .1f;
     float y = (b / 3) * BL + (c / 3) * CE + CE * .1f;
-    heavy_mark(d, v, x, y, CE * .8f, sd(seed, 1000, mv), sd(seed, 1000, mv + 613), t, 1.f);
+    heavy_mark(d, v, x, y, CE * .8f, mark_seed(seed, mv, ply, 0), mark_seed(seed, mv, ply, 1), t, 1.f);
 }
 
 /* THE BIG MARK OVER A WON BLOCK, drawn to `t`: pen is purely additive, so
@@ -293,6 +326,9 @@ static void win_stroke(UtttDL *d, float ax, float ay, float zx, float zy,
 int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
 {
     UtttPen base = uttt_pen_92();
+    const int32_t seed = uttt_look_seed(o->look);
+    int8_t ply[81];
+    plies_of(g, ply);
 
     /* the block you are sent to, in highlighter - ink cannot say "here"
      * without also saying something it can never take back */
@@ -304,7 +340,7 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
 
     for (int b = 0; b < 9; b++)
         hash_in(d, (b % 3) * BL, (b / 3) * BL, BL,
-                sd(o->seed, 131, b * 17),
+                sd(seed, 131, b * 17),
                 base.w / 9.f / 100.f * .62f, BL * .03f, .5f, 1.5f);
     /* THE FOUR MAIN LINES RUN LONG. Nobody ruling a board stops the pen
      * neatly at the last cell - the line goes where the arm goes, past the
@@ -313,44 +349,44 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
      * strokes without looking. The renderer's own frame clips whatever runs
      * past the edge, which is the right answer: a line that leaves the board
      * should leave the board. */
-    hash_in(d, 0, 0, S, sd(o->seed, 7, 3),
+    hash_in(d, 0, 0, S, sd(seed, 7, 3),
             base.w / 9.f / 100.f * GRID_MAJOR_W, S * .135f * o->reach, .9f, 3.4f);
-    hash_in(d, 0, 0, S, sd(o->seed, 19, 5),
+    hash_in(d, 0, 0, S, sd(seed, 19, 5),
             base.w / 9.f / 100.f * 1.5f, S * .118f * o->reach, .72f, 3.4f);
 
     for (int b = 0; b < 9; b++) {
         int won = uttt_block(g, b) == UTTT_X || uttt_block(g, b) == UTTT_O;
         for (int c = 0; c < 9; c++) {
-            int v = uttt_cell(g, b * 9 + c);
+            int mv = b * 9 + c;
+            int v = uttt_cell(g, mv);
             if (!v) continue;
             float x = (b % 3) * BL + (c % 3) * CE;
             float y = (b / 3) * BL + (c / 3) * CE;
-            int is_last = (b * 9 + c) == o->last;
-            if (is_last) { last_mark(d, v, b * 9 + c, o->seed, o->mark_t); continue; }
+            if (mv == o->last) { last_mark(d, v, mv, ply[mv], seed, o->mark_t); continue; }
             UtttPen p = base;
             if (won) p.a = base.a * .34f;
             mark_in(d, v, x + CE * .1f, y + CE * .1f, CE * .8f,
-                    sd(o->seed, 1000, b * 9 + c), 1.f, &p);
+                    mark_seed(seed, mv, ply[mv], 0), 1.f, &p);
         }
-        if (won) big_mark(d, g, b, o->seed, (o->last >= 0 && o->last / 9 == b) ? o->fall_t : 1.f);
+        if (won) big_mark(d, g, b, seed, (o->last >= 0 && o->last / 9 == b) ? o->fall_t : 1.f);
     }
 
-    win_line(d, g, o->seed, o->meta_t);
+    win_line(d, g, seed, o->meta_t);
     return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
 }
 
-int uttt_draw_last(UtttDL *d, const UtttGame *g, int32_t seed, float t)
+int uttt_draw_last(UtttDL *d, const UtttGame *g, uint8_t look, float t)
 {
     if (g->n_plies == 0) return -1;
-    int mv = g->move[g->n_plies - 1];
-    last_mark(d, uttt_cell(g, mv), mv, seed ? seed : 1, t);
+    int ply = g->n_plies - 1, mv = g->move[ply];
+    last_mark(d, uttt_cell(g, mv), mv, ply, uttt_look_seed(look), t);
     return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
 }
 
-int uttt_draw_settle(UtttDL *d, const UtttGame *g, int32_t seed, float fall_t, float line_t)
+int uttt_draw_settle(UtttDL *d, const UtttGame *g, uint8_t look, float fall_t, float line_t)
 {
     if (g->n_plies == 0) return -1;
-    if (!seed) seed = 1;
+    const int32_t seed = uttt_look_seed(look);
     int b = g->move[g->n_plies - 1] / 9;
     if (uttt_block(g, b) == UTTT_X || uttt_block(g, b) == UTTT_O) {
         big_mark(d, g, b, seed, fall_t);
@@ -408,26 +444,13 @@ static void promise_box(UtttDL *d, const float r[4], float o, float w,
     }
 }
 
-int uttt_draw_outline(UtttDL *d, int block, int32_t seed, float t)
+int uttt_draw_outline(UtttDL *d, int block, uint8_t look, float t)
 {
     float r[4];
     if (t <= 0.f || !uttt_wash_rect(block, r, NULL)) return 0;
-    if (!seed) seed = 1;
     promise_box(d, r, OUTLINE_OVERSHOOT, uttt_pen_92().w / 9.f / 100.f * GRID_MAJOR_W * 1.3f,
-                seed, block * 31, t);
+                uttt_look_seed(look), block * 31, t);
     return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
-}
-
-int uttt_draw_cell(UtttDL *d, int mark, int mv, int32_t seed, float t)
-{
-    if (mv < 0 || mv > 80) return -1;
-    int b = mv / 9, c = mv % 9;
-    float x = (b % 3) * BL + (c % 3) * CE;
-    float y = (b / 3) * BL + (c / 3) * CE;
-    UtttPen p = uttt_pen_92();
-    mark_in(d, mark, x + CE * .1f, y + CE * .1f, CE * .8f,
-            sd(seed, 1000, b * 9 + c), t, &p);
-    return 0;
 }
 
 /* The inverse of the placement above, from the same BL and CE: a point in the
@@ -489,12 +512,12 @@ int uttt_o_in_ring(int32_t seed, float s)
     return 1;
 }
 
-/* THE SEED THE "YOU ARE" MARK IS DRAWN WITH: the game's own for an X, and
- * for an O the first of a fixed walk from it whose O stays a ring - a pure
- * function of the seed, so both phones pick the same one. Around half of all
- * seeds pass, so the walk is a try or two; 64 without one (never seen in a
- * million) keeps the game's own. */
-int32_t uttt_mark_seed(int mark, int32_t seed)
+/* THE SEED A LONE MARK IS DRAWN WITH: `seed` for an X, and for an O the
+ * first of a fixed walk from it whose O stays a ring - a pure function of
+ * the seed, so both phones pick the same one. Around half of all seeds
+ * pass, so the walk is a try or two; 64 without one (never seen in a
+ * million) keeps `seed`. */
+static int32_t ring_seed(int mark, int32_t seed)
 {
     if (mark != UTTT_O) return seed;
     for (int i = 0; i < 64; i++) {
@@ -504,21 +527,30 @@ int32_t uttt_mark_seed(int mark, int32_t seed)
     return seed;
 }
 
-int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float board)
+/* The lone marks' own seeds off the look's: the "you are" indicator's
+ * (it was the game seed + 4, in the host) and the headline's (seed x 31 +
+ * 7, in the host) - here now, so a host supplies the look and nothing
+ * else. Both apart from every square's mark_seed. */
+int32_t uttt_mark_seed(int mark, uint8_t look)
 {
-    int32_t s1 = uttt_mark_seed(mark, seed);
+    return ring_seed(mark, sd(uttt_look_seed(look), 1, 4));
+}
+
+int uttt_draw_mark(UtttDL *d, int mark, uint8_t look, float board)
+{
     if (board > 0.f) {
         /* a stroke's width is a share of its mark's side, so the board's
          * CE .8 mark at `board` times this one's frame lays down the same
          * points of ink when its pen is scaled by this */
         float k = CE * .8f * board / UTTT_MARK_SIDE;
-        heavy_mark(d, mark, .06f, .06f, UTTT_MARK_SIDE, s1,
-                   uttt_mark_seed(mark, (int32_t)((uint32_t)seed + 613u)), 1.f, k);
+        int32_t h = sd(uttt_look_seed(look), 31, 7);
+        heavy_mark(d, mark, .06f, .06f, UTTT_MARK_SIDE, ring_seed(mark, h),
+                   ring_seed(mark, sd(h, 1, 613)), 1.f, k);
         return 0;
     }
     UtttPen p = uttt_pen_92();
     p.w = uttt_pen_92().w * 1.15f;
-    mark_in(d, mark, .06f, .06f, UTTT_MARK_SIDE, s1, 1.f, &p);
+    mark_in(d, mark, .06f, .06f, UTTT_MARK_SIDE, uttt_mark_seed(mark, look), 1.f, &p);
     return 0;
 }
 

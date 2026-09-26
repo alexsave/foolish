@@ -120,6 +120,7 @@ void uti_new(int32_t seed)
 {
     memset(&S.m, 0, sizeof S.m);
     S.m.seed = seed ? seed : 1;
+    S.m.look = uttt_look_of_seed(S.m.seed);
     uttt_init(&S.m.game);
 }
 
@@ -149,6 +150,7 @@ int uti_decode(const uint8_t *buf, int n, int32_t seed)
     memset(&S.m, 0, sizeof S.m);
     S.m.game = tmp;
     S.m.seed = seed ? seed : 1;
+    S.m.look = uttt_look_of_seed(S.m.seed);
     return 1;
 }
 
@@ -200,7 +202,7 @@ void uti_taken_free(UtiTaken t)
 int uti_draw(int active, int last, float mark_t, float meta_t)
 {
     dl_fresh();
-    UtttDrawOpts o = uttt_draw_opts(S.m.seed);
+    UtttDrawOpts o = uttt_draw_opts(S.m.look);
     o.active = active; o.last = last;
     o.mark_t = mark_t; o.meta_t = meta_t;
     S.overflow = uttt_draw_board(&S.dl, &S.m.game, &o) != 0;
@@ -210,7 +212,7 @@ int uti_draw(int active, int last, float mark_t, float meta_t)
 int uti_draw_bubble(int active, int last)
 {
     dl_fresh();
-    UtttDrawOpts o = uttt_draw_opts(S.m.seed);
+    UtttDrawOpts o = uttt_draw_opts(S.m.look);
     o.active = active; o.last = last;
     o.reach = uttt_bubble(&S.m.game).reach;
     S.overflow = uttt_draw_board(&S.dl, &S.m.game, &o) != 0;
@@ -225,7 +227,7 @@ int uti_draw_overflow(void) { return S.overflow; }
 int uti_draw_under(void)
 {
     dl_fresh();
-    UtttDrawOpts o = uttt_draw_opts(S.m.seed);
+    UtttDrawOpts o = uttt_draw_opts(S.m.look);
     o.active = -1;
     o.last = S.m.game.n_plies ? S.m.game.move[S.m.game.n_plies - 1] : -1;
     o.mark_t = 0.f; o.fall_t = 0.f; o.meta_t = 0.f;
@@ -236,7 +238,7 @@ int uti_draw_under(void)
 int uti_draw_settle(float fall_t, float line_t)
 {
     dl_fresh();
-    if (uttt_draw_settle(&S.dl, &S.m.game, S.m.seed, fall_t, line_t) < 0 && S.m.game.n_plies)
+    if (uttt_draw_settle(&S.dl, &S.m.game, S.m.look, fall_t, line_t) < 0 && S.m.game.n_plies)
         S.overflow = 1;
     return publish();
 }
@@ -244,7 +246,7 @@ int uti_draw_settle(float fall_t, float line_t)
 int uti_draw_outline(int block, float t)
 {
     dl_fresh();
-    if (uttt_draw_outline(&S.dl, block, S.m.seed, t) < 0) S.overflow = 1;
+    if (uttt_draw_outline(&S.dl, block, S.m.look, t) < 0) S.overflow = 1;
     return publish();
 }
 
@@ -255,7 +257,7 @@ float uti_board_reach(void) { return .135f * UTTT_REACH; }
 int uti_draw_last(float t)
 {
     dl_fresh();
-    if (uttt_draw_last(&S.dl, &S.m.game, S.m.seed, t) < 0 && S.m.game.n_plies) S.overflow = 1;
+    if (uttt_draw_last(&S.dl, &S.m.game, S.m.look, t) < 0 && S.m.game.n_plies) S.overflow = 1;
     return publish();
 }
 
@@ -321,10 +323,10 @@ UtiSheet uti_sheet(UtiSheetIn in)
     return r;
 }
 
-int uti_draw_mark(int mark, int32_t seed, float board)
+int uti_draw_mark(int mark, float board)
 {
     dl_fresh();
-    uttt_draw_mark(&S.dl, mark, seed ? seed : 1, board);
+    uttt_draw_mark(&S.dl, mark, S.m.look, board);
     return publish();
 }
 
@@ -592,16 +594,37 @@ void uti_me(const uint8_t *id, int n)
     S.me_n = n;
 }
 
-int uti_msg_open(int64_t unix_seconds)
+/* An invitation with `look`, recorded as mine: every way of opening one
+ * ends here. */
+static int open_with(int64_t unix_seconds, uint8_t look)
 {
     uint8_t me[UTM_TAG_LEN];
     int32_t seed = utm_seed_at(unix_seconds);
     utm_tag(seed, S.me, S.me_n, me);
-    utm_open(&S.m, seed, me);
+    utm_open(&S.m, seed, look, me);
     S.rec_n = utm_rec_put(S.rec, S.rec_n, &S.m, UTM_SEAT_O);   /* I created it */
     S.rec_dirty = 1;
     return 1;
 }
+
+int uti_msg_open(int64_t unix_seconds, int look) { return open_with(unix_seconds, (uint8_t)look); }
+
+int uti_msg_open_again(int64_t unix_seconds)
+{
+    uint8_t me[UTM_TAG_LEN];
+    int32_t seed = utm_seed_at(unix_seconds);
+    UtmMsg next;
+    utm_tag(seed, S.me, S.me_n, me);
+    if (!utm_again(&next, &S.m, seed, me)) return 0;
+    return open_with(unix_seconds, next.look);
+}
+
+int uti_msg_open_seeded(int64_t unix_seconds)
+{
+    return open_with(unix_seconds, uttt_look_of_seed(utm_seed_at(unix_seconds)));
+}
+
+int uti_msg_look(void) { return S.m.look; }
 
 int uti_msg_read(const char *text)
 {
@@ -668,7 +691,7 @@ int uti_msg_can_replace(int mv)
 int uti_msg_door(void) { return utm_door(&S.m); }
 
 int uti_send_hint_ms(void) { return UTM_SEND_HINT_MS; }
-int uti_replay_url(char *out, int cap) { return uttt_replay_url(&S.m.game, S.m.seed, out, cap); }
+int uti_replay_url(char *out, int cap) { return uttt_replay_url(&S.m.game, S.m.look, out, cap); }
 
 int uti_msg_prefer(const char *mine, const char *tapped)
 {
