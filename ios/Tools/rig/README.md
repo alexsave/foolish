@@ -410,3 +410,4 @@ or a hand big enough to wrap two rows).
 On the iOS 27 runtime a message sent from a thread lands on the RIGHT of that thread and on the LEFT of the other stub thread, the reverse of what `chain` assumes.
 Incoming game messages show only a caption pill, never their image.
 Check the direction on each new runtime with one test send before a shoot.
+A one-session chain in the photographed thread shows a single caption line with the wrong text, and staging a reply hides the opponent's newest line, so transcript frames are shot on the iOS 26 runtime.
