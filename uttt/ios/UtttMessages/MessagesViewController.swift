@@ -833,6 +833,12 @@ final class MessagesViewController: MSMessagesAppViewController {
         /* THE COLLAPSED LINE IS OURS TOO, or Messages writes "<phone number>
          * sent Ultimate message" into a thread about a board. */
         message.summaryText = caption
+#if DEBUG
+        if let forced = UtttDev.takeCaption(), !forced.isEmpty {
+            UtttLog.note("stage", "dev.caption: summary '\(forced)' for '\(caption)'")
+            message.summaryText = forced
+        }
+#endif
 
         staged = wire
         draftURL = message.url

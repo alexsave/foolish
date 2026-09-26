@@ -66,6 +66,16 @@ public enum UtttDev {
     /// again.
     public static func takeArrival() -> String? { dev.take("dev.arrive") }
 
+    /// `dev.caption`: the collapsed line of the NEXT staged message, once.
+    ///
+    /// Store frames only. On the simulator Messages draws each superseded
+    /// message of a session with a neighbour's summary (rig README, the iOS 26
+    /// and 27 notes), so a transcript of real moves shows wrong lines. The
+    /// shoot writes the text each line has to read; the stage that takes it
+    /// sets it as `summaryText` only - the bubble's own caption stays the
+    /// kernel's. Returns the file's trimmed contents once, then nil.
+    public static func takeCaption() -> String? { dev.take("dev.caption") }
+
     /// The word the rig wrote, or nil in every ordinary run - including an
     /// ordinary DEBUG one, because the file is absent until somebody writes it.
     public static var seat: String? { dev.string(seatFile) }
