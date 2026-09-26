@@ -15,10 +15,7 @@ Nothing was submitted for review, no build was attached, and no screenshot was u
 - [x] Privacy Policy URL: `https://uttt.live/privacy-msg` (live, 200, plain HTML, says the app collects no data).
 - [x] Age rating: every content question None, every capability question No, computed rating 4+ (Korea ALL, Brazil L).
 - [x] **set 2026-09-26** Content rights: "does not use third-party content", as foolish's iMessage app files it (no bundled fonts, audio or art from others).
-- [ ] App Privacy (nutrition label) - portal only, the API has no endpoint for it.
-  In App Store Connect: Apps > Ultimate Tic-Tac-Toe Messages > App Privacy > Get Started.
-  Answer "No, we do not collect data from this app", Save, then Publish.
-  The reasons are in `APP_STORE.md` section 4 and match `uttt.live/privacy-msg`.
+- [x] App Privacy (nutrition label): "Data Not Collected", published by the owner 2026-09-26.
 
 ## Version 1.0 (appStoreVersion 31311df3-71e8-4d94-9273-fb5405294875)
 
