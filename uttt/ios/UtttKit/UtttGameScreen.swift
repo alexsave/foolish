@@ -188,9 +188,12 @@ public final class UtttGameScreen: UtttSheetView {
         /* two lines on a 9.5-point body, 2.8 points closer than their line
          * height: they read as one two-line label rather than two labels */
         let a = you1.sizeThatFits(.zero), b = you2.sizeThatFits(.zero)
-        let ls = CGSize(width: max(a.width, b.width), height: a.height + b.height - 2.8)
+        /* the two words set tight, into the room over the second word's
+         * capitals - unless an accent stands in that room ("VOCÊ / É") */
+        let tuck: CGFloat = UtttType.hasMarkAbove(Uttt.say(.youAre2)) ? 0 : 2.8
+        let ls = CGSize(width: max(a.width, b.width), height: a.height + b.height - tuck)
         you1.frame = CGRect(x: (ls.width - a.width) / 2, y: 0, width: a.width, height: a.height)
-        you2.frame = CGRect(x: (ls.width - b.width) / 2, y: a.height - 2.8, width: b.width, height: b.height)
+        you2.frame = CGRect(x: (ls.width - b.width) / 2, y: a.height - tuck, width: b.width, height: b.height)
         /* the indicator's left edge at a layout: its anchor less the share
          * of its width the kernel puts left of it */
         func left(_ S: UtiSheet) -> CGFloat {
@@ -326,7 +329,7 @@ final class UtttHeadlineView: UIView {
             before.isHidden = b.isEmpty; after.isHidden = a.isEmpty; mark.isHidden = false
             let side: CGFloat = type.size
             let natural = type.width(b) + side + type.width(a)
-            let k = natural > width ? max(0.5, width / natural) : 1
+            let k = natural > width ? max(UtttType.minScale, width / natural) : 1
             let f = type.font(k)
             before.attributedText = type.text(b, scale: k, color: ink)
             after.attributedText = type.text(a, scale: k, color: ink)

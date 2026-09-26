@@ -1,3 +1,4 @@
+import CoreText
 import CUttt
 import UIKit
 
@@ -35,7 +36,32 @@ struct UtttType {
     /// The 9.5-point label ("YOU ARE", "WATCHING"): .2em, capitals.
     static let small    = UtttType(size: 9.5, weight: .semibold, kern: 1.9, color: UtttInk.label, upper: true)
 
-    func font(_ scale: CGFloat = 1) -> UIFont { .systemFont(ofSize: size * scale, weight: weight) }
+    /// ONE CUT AT EVERY SIZE: the headline's. The system face switches from
+    /// its display cut to its wider text cut under 20 points, so the
+    /// 9.5-point "YOU ARE" and a scaled-down headline read as a different
+    /// font from the 21-point headline beside them (owner, 2026-09-26). The
+    /// optical size is pinned to the headline's, so every UTTT label is the
+    /// same design and type scales in proportion.
+    func font(_ scale: CGFloat = 1) -> UIFont {
+        let base = UIFont.systemFont(ofSize: size * scale, weight: weight)
+        let d = base.fontDescriptor.addingAttributes([
+            UIFontDescriptor.AttributeName(rawValue: kCTFontOpticalSizeAttribute as String): UtttType.headline.size,
+        ])
+        return UIFont(descriptor: d, size: size * scale)
+    }
+
+    /// Whether `s` in capitals carries a mark over a letter (an accent, a
+    /// breve): such a line needs the room over the capitals it would
+    /// otherwise lend to the line above.
+    static func hasMarkAbove(_ s: String) -> Bool {
+        s.uppercased().decomposedStringWithCanonicalMapping.unicodeScalars.contains {
+            $0.properties.canonicalCombiningClass == .above
+        }
+    }
+
+    /// The smallest a line is scaled to fit its box. Below half size a word
+    /// is small, but a clipped word ("Ai câștiga") is wrong in any language.
+    static let minScale: CGFloat = 0.3
 
     func text(_ s: String, scale: CGFloat = 1, align: NSTextAlignment = .natural,
               color: UIColor? = nil) -> NSAttributedString {
@@ -57,23 +83,21 @@ extension UILabel {
     /// SET IN A BOX OF `width`: in a COLUMN wrapped at spaces only, as many
     /// lines as the words, a word wider than the column scaling the type down
     /// to it (never "Diagona / l"); on one line otherwise, scaled to fit.
-    /// Down to half size, as the sheet always allowed. Returns its size.
+    /// Measured at the size it is set in, and scaled until it FITS, down to
+    /// UtttType.minScale: a translation's long word shrinks, it is never cut.
+    /// Returns its size.
     @discardableResult
     func set(_ s: String, _ type: UtttType, width: CGFloat, column: Bool,
              align: NSTextAlignment, color: UIColor? = nil, maxHeight: CGFloat = .infinity) -> CGSize {
         let words = s.split(separator: " ").map(String.init)
+        let floor = UtttType.minScale
         let natural = column ? (words.map { type.width($0) }.max() ?? 0) : type.width(s)
-        var scale = natural > width && natural > 0 ? max(0.5, width / natural) : 1
-        /* MEASURED AGAIN AT THE SIZE IT IS SET IN: type does not scale in
-         * proportion - the system face swaps its display cut for the wider
-         * text cut under 20 points - so a 21-point "Waiting" scaled to a
-         * narrow column came out wider than the column and lost its g
-         * (store shoot, 2026-09-26). */
-        for _ in 0..<4 where scale < 1 {
+        var scale = natural > width && natural > 0 ? max(floor, width / natural) : 1
+        for _ in 0..<6 where scale < 1 {
             let at = column ? (words.map { type.width($0, scale: scale) }.max() ?? 0)
                             : type.width(s, scale: scale)
-            if at <= width || scale <= 0.5 { break }
-            scale = max(0.5, scale * width / at)
+            if at <= width || scale <= floor { break }
+            scale = max(floor, scale * width / at)
         }
         numberOfLines = column ? max(1, words.count) : 1
         lineBreakMode = column ? .byWordWrapping : .byTruncatingTail
@@ -81,8 +105,8 @@ extension UILabel {
         for _ in 0..<6 {
             attributedText = type.text(s, scale: scale, align: align, color: color)
             size = sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
-            if size.height <= maxHeight || scale <= 0.5 { break }
-            scale = max(0.5, scale * 0.9)
+            if size.height <= maxHeight || scale <= floor { break }
+            scale = max(floor, scale * 0.9)
         }
         return CGSize(width: min(width, ceil(size.width)), height: ceil(size.height))
     }

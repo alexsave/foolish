@@ -42,7 +42,7 @@ One title size across the set, 124 px Futura Bold, every title two lines with a 
 
 | # | Title | Scene | Ply shown | Seat | Ground |
 |---|---|---|---|---|---|
-| 01 | "Play Ultimate / Tic-Tac-Toe" | The transcript with our SENT move on the right, the collapsed drawer under it | 37 (X, top-right board, top-left square), sent | X | coal |
+| 01 | "Play Ultimate / Tic-Tac-Toe" | The transcript with our SENT move on the right, the collapsed drawer under it | 37 (X, top-right board, top-left square), sent. The shot is round two's: on the round-three build the drawer sat higher and pushed the texts under the header; the bubble is identical pixel for pixel | X | coal |
 | 02 | "Nine boards, / one big game" | The empty napkin: O's invitation opened by X, expanded | 0 | X | O red |
 | 03 | "Your move picks / their board" | Expanded board, X to play in the top-middle board O's square sent them to | 42 (O) received | X | X blue |
 | 04 | "Send your moves / to the chat" | The staged draft in the compose field, collapsed drawer | 37 (X), staged and not sent; O is sent to the top-left board. The Send hint bobs, so the frame is a 16-shot burst; the owner picked b08 | X | coal |
