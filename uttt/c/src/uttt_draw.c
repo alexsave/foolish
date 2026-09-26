@@ -1,5 +1,6 @@
 #include "uttt_draw.h"
 #include "uttt_anim.h"
+#include "uttt_lang.h"
 #include <math.h>
 #include <string.h>
 
@@ -593,23 +594,12 @@ float uttt_bubble_scale(float display)
     return display > 3.f ? 3.f : display;
 }
 
-static const char *const PLACE[10] = {
-    "top left",    "top middle",    "top right",
-    "middle left", "centre",        "middle right",
-    "bottom left", "bottom middle", "bottom right",
-    "anywhere"
-};
-static const char *const PLACE_SPOKEN[10] = {
-    "top-left",    "top-middle",    "top-right",
-    "middle-left", "centre",        "middle-right",
-    "bottom-left", "bottom-middle", "bottom-right",
-    "anywhere"
-};
-
-const char *uttt_place_name(int block, int spoken)
+/* THE NINE BLOCKS BY NAME, and "anywhere": the table's (uttt/c/i18n),
+ * in the kernel's language. */
+const char *uttt_place_name(int block)
 {
     if (block < 0 || block > 9) return "";
-    return spoken ? PLACE_SPOKEN[block] : PLACE[block];
+    return uttt_text(UT_K_PLACE_TOP_LEFT + block);
 }
 
 /* ---------------------------------------------------------------- the icon */

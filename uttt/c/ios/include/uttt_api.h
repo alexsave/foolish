@@ -413,9 +413,8 @@ float uti_bubble_scale(float display);
  * the 195-point frame (UtttBubble.reach in uttt_draw.h). */
 int   uti_draw_bubble(int active, int last);
 
-/* A block's name. 0..8, or 9 for "anywhere". spoken: 0 for the place line
- * ("bottom middle"), 1 for a sentence ("the bottom-middle board"). */
-const char *uti_place_name(int block, int spoken);
+/* A block's name. 0..8, or 9 for "anywhere", in the kernel's language. */
+const char *uti_place_name(int block);
 
 /* THE RULES SHEET (docs/RULES.html): eight lines and a title (uttt_say.h),
  * each line beside its drawing (uttt_draw_rule), everything placed by

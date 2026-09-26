@@ -78,9 +78,11 @@ public final class UtttRulesSheet: UIViewController {
             guard let r, r.length > 0, r.location + r.length <= s.length else { return s }
             if case .outline = y {
                 let ns = s.string as NSString
-                ns.substring(with: r).enumerated().forEach { k, c in
-                    if c == " " { s.replaceCharacters(in: NSRange(location: r.location + k, length: 1),
-                                                     with: "\u{00A0}") }
+                /* by UTF-16 unit, the NSRange's own count: a Character can
+                 * be several (a Thai vowel over its consonant) */
+                ns.substring(with: r).utf16.enumerated().forEach { k, u in
+                    if u == 0x20 { s.replaceCharacters(in: NSRange(location: r.location + k, length: 1),
+                                                       with: "\u{00A0}") }
                 }
             }
             /* the room: after the character before the phrase and after its

@@ -27,12 +27,18 @@ public enum Uttt {
     }
 
     /// Which phrase of rule `i` is marked, and how: the promise's pen box
-    /// round it or the wash behind it. Character offsets (the lines are ASCII).
+    /// round it or the wash behind it. The kernel counts UTF-8 bytes and an
+    /// NSRange counts UTF-16 units, which agree only for ASCII - so the
+    /// bytes are decoded up to each end rather than taken as they are.
     public enum RulesYellow { case none, outline(NSRange), tint(NSRange) }
     public static func rulesYellow(_ i: Int) -> RulesYellow {
         var at: Int32 = 0, len: Int32 = 0
         let k = uti_rules_yellow(Int32(i), &at, &len)
-        let r = NSRange(location: Int(at), length: Int(len))
+        let bytes = Array(String(cString: uti_rules_line(Int32(i))).utf8)
+        let a = Int(at), e = Int(at) + Int(len)
+        guard k != 0, a >= 0, e <= bytes.count else { return .none }
+        func units(_ n: Int) -> Int { String(decoding: bytes[0..<n], as: UTF8.self).utf16.count }
+        let r = NSRange(location: units(a), length: units(e) - units(a))
         return k == 1 ? .outline(r) : k == 2 ? .tint(r) : .none
     }
 

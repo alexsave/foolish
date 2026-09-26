@@ -239,16 +239,15 @@ int main(void)
 
     /* ---- the place line. A new game is unforced, so it is "anywhere". */
     ok(uti_active() == 9, "a new game may be played anywhere");
-    ok(!strcmp(uti_place_name(uti_active(), 0), "anywhere"), "and it is named so");
+    ok(!strcmp(uti_place_name(uti_active()), "anywhere"), "and it is named so");
     ok(uti_play(40), "a move in the centre of the centre");
     ok(uti_active() == 4, "sends the reply to the centre block");
-    ok(!strcmp(uti_place_name(4, 0), "centre"), "the place line says centre");
-    ok(!strcmp(uti_place_name(7, 0), "bottom middle"), "block 7 is bottom middle");
-    ok(!strcmp(uti_place_name(7, 1), "bottom-middle"), "and bottom-middle in a sentence");
-    ok(uti_place_name(-1, 0)[0] == '\0' && uti_place_name(10, 0)[0] == '\0',
+    ok(!strcmp(uti_place_name(4), "centre"), "the place line says centre");
+    ok(!strcmp(uti_place_name(7), "bottom middle"), "block 7 is bottom middle");
+    ok(uti_place_name(-1)[0] == '\0' && uti_place_name(10)[0] == '\0',
        "an impossible block names nothing");
     for (int b = 0; b <= 9; b++)
-        ok(uti_place_name(b, 0)[0] && uti_place_name(b, 1)[0], "every block is named");
+        ok(uti_place_name(b)[0] != '\0', "every block is named");
 
     /* ---- THE "YOU ARE" O STAYS A RING (owner, TestFlight 1.0(6): "the drawn
      * O sometimes draws lines right through the circle"). Off the display

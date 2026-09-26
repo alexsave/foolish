@@ -634,7 +634,7 @@ static void test_say(void)
         int mv = g.move[g.n_plies - 1], ok = uttt_say_cell(&g, mv, s, sizeof s) > 0;
         char want[80];
         snprintf(want, sizeof want, "%s board, %s square, X",
-                 uttt_place_name(mv / 9, 0), uttt_place_name(mv % 9, 0));
+                 uttt_place_name(mv / 9), uttt_place_name(mv % 9));
         want[0] = (char)(want[0] - 'a' + 'A');
         OK(ok && !strcmp(s, want), "say: a marked square names its mark");
     }

@@ -435,10 +435,7 @@ int uti_draw_rule_box(float w, float h)
     return publish();
 }
 
-const char *uti_place_name(int block, int spoken)
-{
-    return uttt_place_name(block, spoken);
-}
+const char *uti_place_name(int block) { return uttt_place_name(block); }
 
 
 /* ---------------------------------------------------------- the message */
