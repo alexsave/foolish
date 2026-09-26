@@ -55,29 +55,27 @@ static inline uint8_t uttt_look_of_seed(int32_t seed) { return (uint8_t)(uint32_
  * screen's "Copy code" (an iMessage extension can open only its own
  * container's scheme, so the link is copied rather than opened - foolish's
  * replay row, FGameOverList.replayLink). It is UTTT_REPLAY_PREFIX followed by
- * the code: a FORMAT SEGMENT, then base32 (shared/c/b32: letters and digits,
- * the same read back in either case, nothing a URL has to escape):
+ * the code in base32 (shared/c/b32: letters and digits, the same read back
+ * in either case, nothing a URL has to escape) of a fixed layout:
  *
- *     2/<base32 of>   [0]     the look (uttt_look_seed draws everything from it)
- *                     [1..]   uttt_encode's bytes (the moves)
+ *     [0]     UTTT_REPLAY_VERSION (2), FIRST, so the layout can change
+ *             again without a guessing game: a reader refuses any other
+ *             version, and the page shows its error
+ *     [1]     the look (uttt_look_seed draws everything from it)
+ *     [2..]   uttt_encode's bytes (the moves)
  *
- * A link with no format segment is FORMAT 1, written by 1.0(6)-1.0(8):
- *
- *        <base32 of>  [0..3]  the game seed, int32 big-endian
- *                     [4..]   the moves
- *
- * and its look is uttt_look_of_seed of that seed - the one branch on the way
- * in; the moves and the drawing go the same way after it. The segment holds
- * the format because base32 is A-Z and 2-7 and a format-1 code cannot have a
- * "/" in it, so the two cannot be confused; a byte inside the code could
- * be, since a format-1 code begins with whatever byte the clock gave.
+ * THE LINKS 1.0(6)-1.0(8) WROTE ARE DEAD (owner, 2026-09-26): they were
+ * base32 of the game seed and the moves with no version, so nothing could
+ * tell one from a new code by rule, and they are refused with everything
+ * else that does not begin with the version. The bubble's own message
+ * (uttt_msg.h) is a different thing and still reads its format 1.
  *
  * The kernel writes the whole string; a host only puts it on the pasteboard.
  *
  * uttt.live is the game's own site: uttt/web opens the code and replays the
  * game, drawn by this kernel (wasm/uttt_web.c). */
 #define UTTT_REPLAY_PREFIX "https://uttt.live/"
-#define UTTT_REPLAY_FORMAT "2/"
+#define UTTT_REPLAY_VERSION 2
 
 /* Write g's link, drawn with `look`, into out (NUL-terminated). Returns its
  * length, or -1 if g has no plies or cap is too small. */

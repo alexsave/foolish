@@ -4,8 +4,9 @@ Ultimate Tic-Tac-Toe's replay site. The end screen's **Copy code** puts
 `https://uttt.live/<code>` on the pasteboard (`uttt_replay_url`,
 `uttt/c/src/uttt_code.h`), and this site plays that game back: back a move,
 play or pause, forward a move. No accounts and no database: the whole game,
-and the look its napkin was drawn with, is in the code (`2/` and base32; a
-link with no `2/` is one 1.0(8) wrote, and reads too).
+and the look its napkin was drawn with, is in the code: base32 of a version
+byte (2), the look and the moves. A link 1.0(8) wrote (no version) is dead
+and shows the error page.
 
 **The page draws nothing itself.** The board, the motion and the line under
 it are the uttt kernel compiled to wasm (`uttt/c/wasm/uttt_web.c`,
@@ -17,7 +18,7 @@ owns the clock, the canvas and three buttons.
 cd uttt/web
 npm install
 npm run dev        # builds public/uttt.wasm first (needs clang with wasm32 + wasm-ld)
-open http://localhost:3000/2/JX3ODMBXEJN5ZVLZQ74EORE4TWE5TAUJAE
+open http://localhost:3000/AJG7NYNQG4RFXXGVPGD7QR2ETSOYTWMCREAQ
 ```
 
 `public/uttt.wasm` is a build output and is never committed. CI builds it

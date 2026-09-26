@@ -118,34 +118,29 @@ double uttt_ideal_bits(const UtttGame *g)
 
 /* ---------------------------------------------------------- the link */
 
-#define SEED_BYTES 4                   /* a format-1 code's head: the game seed */
+#define HEAD 2                          /* the version and the look */
 
 int uttt_replay_url(const UtttGame *g, uint8_t look, char *out, int cap)
 {
-    static const char pre[] = UTTT_REPLAY_PREFIX UTTT_REPLAY_FORMAT;
+    static const char pre[] = UTTT_REPLAY_PREFIX;
     const int np = (int)sizeof pre - 1;
     if (!g || g->n_plies == 0 || cap <= np) return -1;
-    uint8_t b[1 + 64];
-    b[0] = look;
-    int n = uttt_encode(g, b + 1, sizeof b - 1);
+    uint8_t b[HEAD + 64];
+    b[0] = UTTT_REPLAY_VERSION;
+    b[1] = look;
+    int n = uttt_encode(g, b + HEAD, sizeof b - HEAD);
     if (n <= 0) return -1;
     memcpy(out, pre, (size_t)np);
-    int w = b32_encode(b, 1 + n, out + np, cap - np);
+    int w = b32_encode(b, HEAD + n, out + np, cap - np);
     return w < 0 ? -1 : np + w;
 }
 
 int uttt_replay_read(const char *url, UtttGame *out, uint8_t *look)
 {
-    static const char pre[] = UTTT_REPLAY_PREFIX, fmt[] = UTTT_REPLAY_FORMAT;
-    const size_t np = sizeof pre - 1, nf = sizeof fmt - 1;
+    static const char pre[] = UTTT_REPLAY_PREFIX;
+    const size_t np = sizeof pre - 1;
     if (!url) return 0;
     if (strncmp(url, pre, np) == 0) url += np;
-    /* THE ONE BRANCH: a format segment means the look is the first byte;
-     * none means a format-1 code, whose head is the game seed and whose
-     * look is derived from it below. */
-    int old = strncmp(url, fmt, nf) != 0;
-    if (!old) url += nf;
-    const int head = old ? SEED_BYTES : 1;
     /* the code alone: b32_decode skips what is not in its alphabet, so a
      * trailing "/", "?x=1" or "#..." would be read as more code - cut it */
     char code[128];
@@ -159,13 +154,11 @@ int uttt_replay_read(const char *url, UtttGame *out, uint8_t *look)
     if (k == 0) return 0;
     uint8_t b[80];
     int n = b32_decode(code, b, sizeof b);
-    /* shorter than the head is not a link; the head with nothing after it
-     * is refused by uttt_decode (no bytes), which the test holds */
-    if (n < head) return 0;
-    if (!uttt_decode(out, b + head, (size_t)(n - head))) return 0;
-    if (look)
-        *look = old ? uttt_look_of_seed((int32_t)((uint32_t)b[0] << 24 | (uint32_t)b[1] << 16
-                                                  | (uint32_t)b[2] << 8 | b[3]))
-                    : b[0];
+    /* shorter than the head is not a link; any other version is not this
+     * link; the head with nothing after it is refused by uttt_decode (no
+     * bytes), which the test holds */
+    if (n < HEAD || b[0] != UTTT_REPLAY_VERSION) return 0;
+    if (!uttt_decode(out, b + HEAD, (size_t)(n - HEAD))) return 0;
+    if (look) *look = b[1];
     return 1;
 }
