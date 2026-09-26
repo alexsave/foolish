@@ -1225,3 +1225,23 @@ Rendered from the owner's game (`NK2JIG6A6YIFDLRPPZ6Z5QGXZASJCBSINMIQ`, 320 poin
 Recommendation: e).
 It fixes the cause (the pen overlapping itself) in the one place geometry lives, makes the board a hundredth of the polygons (cheaper to fill, to cache and to animate), and keeps the ink-over-ink crossings that make it read as a pen.
 If the alpha grain is missed, it can come back as a width-only grain or as a paper-side texture; b) is the fallback if the grain matters more than the cost.
+
+## 9. Device findings, 2026-09-25 (for the next session)
+
+### Again: no live arrival after the invitation
+
+Seen: at a game's end, tap the end bubble, tap Again, send the invitation from the compact drawer and leave it up. The opponent's reply shows in the thread, and the open drawer never hears of it.
+
+Why: an open drawer is bound to the datasource of the bubble that opened it, and the host delivers `didReceive` only for a message in that bubble's MSSession (foolish's host-binary notes, `ios/FoolishMessages/MessagesViewController.swift`, in `didStartSending`). Again sets `freshSession = true`, so the invitation goes out in a new `MSSession()` (`sessionFor`), and the drawer stays bound to the finished game's session. The reply lands in the new session and there is nobody to tell. The `wasUnbound` dismiss does not fire, because the drawer is bound, only to the wrong game.
+
+Decision (owner): **do not set `freshSession = true` in `again()`.** The invitation stays in the finished game's session, so the reply reaches the open drawer. The cost is that Messages collapses the finished game's last bubble to its caption; the replay link still holds the game. Check what else reads `freshSession` and `draftIsNewGame` (the `newest`/`current` routing that ranks a new game over the tapped one) before removing it.
+
+### A sent move comes back as a staged one
+
+Seen: send a move, and a move is still staged in the field; sending that one "overwrote" the first.
+
+Why (from the code, not yet from a log): the insert watchdog outlives the send. Every insert arms `watchSilence`; if the host has not answered within 500 ms (`MS_INSERT_SILENCE_MS`) in compact, it inserts the same `MSMessage` again, up to 10 times. The only guards are `stageGeneration == generation` and `landedGeneration != generation`. `didCancelSending` bumps `stageGeneration` (line ~480); **`didStartSending` does not**. So when ChatKit puts the bubble in the field but answers late or never (the case the `late answer` log line exists for), and the human presses Send inside that window, the next watchdog tick finds its stage still current and not landed, and re-inserts the bubble that was just sent. It is the same message in the same session, so sending it again makes Messages collapse the first copy to its caption: the "overwrite". The 0.35 s retry after an insert error, and the send door, hang off the same generation and fail the same way.
+
+Fix: in `didStartSending`, void every in-flight stage, as the cancel does: `stageGeneration += 1` (and `doorInsert = nil`, which it already does). Every watchdog, retry and door checks the generation, so all of them stand down.
+
+To confirm from a device: the Diagnostics log should show `send` followed by `insert attempt N got no answer; retrying` and a further `insert attempt`.
