@@ -923,7 +923,25 @@ int main(void)
            "rules: eight drawings, and no ninth");
         OK(fit, "rules: every drawing stays in its square");
         OK(!xink[0] && !oink[0] && !wash[0], "rules 1: the board alone");
-        OK(xink[1] && oink[1], "rules 2: X's won line, with an O block for contrast");
+        /* the win line is the one stroke that crosses the whole board */
+        uint32_t line_ink = 0; float span = 0.f;
+        {
+            UtttDL l; uttt_dl_init(&l, PT, 400000, PO, 60000);
+            uttt_draw_rule(&l, 1);
+            for (int k = 0; k < l.n_poly; k++) {
+                float x0 = 9, x1 = -9, y0 = 9, y1 = -9;
+                for (int q = 0; q < l.poly[k].n; q++) {
+                    UtttPt p = l.pt[l.poly[k].first + q];
+                    if (p.x < x0) x0 = p.x;
+                    if (p.x > x1) x1 = p.x;
+                    if (p.y < y0) y0 = p.y;
+                    if (p.y > y1) y1 = p.y;
+                }
+                if ((x1 - x0) + (y1 - y0) > span) { span = (x1 - x0) + (y1 - y0); line_ink = l.poly[k].rgba >> 8; }
+            }
+        }
+        OK(xink[1] && oink[1] && span > 1.6f && line_ink == (uttt_mark_ink(UTTT_O) >> 8),
+           "rules 2: O's won line across the board, with an X block for contrast");
         OK(oink[2] && xink[2] && !wash[2], "rules 3: one subgrid, won by O");
         OK(oink[3] && xink[3] && !wash[3], "rules 4: an X, and the red arrow to where it sends them");
         OK(wash[4] == 1 && wash_w[4] > .9f, "rules 5: sent to a won block, the whole board is tinted");
@@ -934,10 +952,29 @@ int main(void)
         uttt_dl_init(&d, PT, 400000, PO, 60000);
         int box = uttt_draw_rule_box(&d, 120.f, 26.f) == 0 && d.n_poly > 0, inside = 1;
         for (int k = 0; k < d.n_pt; k++)
-            if (d.pt[k].x < -.05f || d.pt[k].x > 1.05f || d.pt[k].y < -.2f || d.pt[k].y > 1.2f) inside = 0;
+            /* below, the frame plus the drop and growth (uttt_rules_look) */
+            if (d.pt[k].x < -.05f || d.pt[k].x > 1.05f || d.pt[k].y < -.2f || d.pt[k].y > 1.3f) inside = 0;
         OK(box && inside && (d.poly[0].rgba >> 8) == (uttt_wash_rgba(1.f) >> 8),
            "rules: the phrase's outline is the promise's yellow, round its frame");
         UtttRulesLook L = uttt_rules_look();
+        /* THE PEN CLEARS THE DESCENDERS: drawn ON the phrase's box (the
+         * frame less box_pad), the bottom stroke covered the y of "yellow".
+         * Its middle now runs a point or more under that box (the rough
+         * line bows about a point inward, so not the full box_grow +
+         * box_drop), and the top stroke's middle box_grow - box_drop over it. */
+        double top = 0, bot = 0; int nt = 0, nb = 0;
+        for (int k = 0; k < d.n_pt; k++) {
+            if (d.pt[k].x < .1f || d.pt[k].x > .9f) continue;   /* the sides */
+            float y = d.pt[k].y * 26.f;
+            if (y > 13.f) { bot += y; nb++; } else { top += y; nt++; }
+        }
+        bot = nb ? bot / nb : 0; top = nt ? top / nt : 99;
+        OK(bot >= 26.f - L.box_pad + 1.f
+           && fabs(top - (L.box_pad - L.box_grow + L.box_drop)) < .6
+           && L.box_grow > 0.f && L.box_drop > 0.f,
+           "rules: the outline is grown and dropped off the phrase, clear of its descenders");
+        OK(L.row_h == 4.f * roundf(L.body_pt * L.body_lead) && L.row_h >= L.art,
+           "rules: every row one fixed height, four body lines, never shorter than a drawing");
         OK(L.art == 62.f && L.row_gap == 14.f && L.body_pt == 15.f && L.tint == uttt_wash_rgba(.38f),
            "rules: RULES.html's sizes");
     }

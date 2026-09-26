@@ -181,7 +181,9 @@ int uttt_draw_rule(UtttDL *d, int i);
 /* THE YELLOW OUTLINE ROUND A PHRASE ("yellow outline" in rule 6), a pen box
  * drawn in POINTS round a `w` by `h` frame and handed back in 0..1 of it, as
  * the doors are. The phrase's box is the frame less UTTT_RULES_LOOK's
- * box_pad on every side. */
+ * box_pad on every side. Across, the pen runs ON that box; up and down it
+ * runs box_grow further out and the whole box sits box_drop lower, so the
+ * pen never covers a descender (the y of "yellow" lost its tail under it). */
 int uttt_draw_rule_box(UtttDL *d, float w, float h);
 
 /* WHERE EVERYTHING ON THE RULES SHEET GOES, in points, docs/RULES.html's
@@ -194,7 +196,7 @@ typedef struct {
     float title_gap;     /* title to the first row                            */
     float art;           /* each drawing's side                               */
     float art_gap;       /* drawing to its text                               */
-    float row_gap;       /* between rows; every row is as tall as the tallest */
+    float row_gap;       /* between rows, each row_h tall                     */
     float body_pt;       /* the rules' type                                   */
     float body_lead;     /* line height over type size                        */
     float box_pad;       /* the outline's frame past the phrase, each side    */
@@ -202,6 +204,21 @@ typedef struct {
     float tint_pad_x, tint_pad_y;   /* the tint past the phrase               */
     uint32_t ink;        /* the text                                          */
     uint32_t tint;       /* the "yellow tinted area" behind its phrase        */
+    /* EVERY ROW THE SAME HEIGHT, whatever its text (owner, 2026-09-26: "some
+     * can be 2 lines, some 3, but the row containing them should be fixed
+     * height"). Four body lines: the longest rule is three in English on an
+     * iPhone 17 Pro Max, and a translation or a narrower phone gets a fourth. */
+    float row_h;
+    /* The outline's shift down and its growth up and down. The text engine's
+     * box for a phrase runs from the font's ascender to its descender, and
+     * the ascender carries empty room over the tallest letters that the
+     * descender does not, so a box centred on it sits high on the words; and
+     * a pen drawn ON it (it is about 4 points thick, wobble included) covers
+     * the descenders. Grown and dropped, the words sit centred inside the
+     * pen with the same air over the tallest letter and under the y's tail.
+     * The box stays inside the line gap: it never reaches the next line's
+     * capitals. */
+    float box_drop, box_grow;
 } UtttRulesLook;
 
 UtttRulesLook uttt_rules_look(void);

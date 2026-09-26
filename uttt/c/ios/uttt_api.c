@@ -411,7 +411,8 @@ int uti_rules_yellow(int i, int *at, int *len) { return uttt_rules_yellow(i, at,
 
 _Static_assert(sizeof(UtiRulesLook) == sizeof(UtttRulesLook)
             && offsetof(UtiRulesLook, tint) == offsetof(UtttRulesLook, tint)
-            && offsetof(UtiRulesLook, word_room) == offsetof(UtttRulesLook, word_room),
+            && offsetof(UtiRulesLook, word_room) == offsetof(UtttRulesLook, word_room)
+            && offsetof(UtiRulesLook, box_drop) == offsetof(UtttRulesLook, box_drop),
                "the rules sheet's look lines up");
 UtiRulesLook uti_rules_look(void)
 {

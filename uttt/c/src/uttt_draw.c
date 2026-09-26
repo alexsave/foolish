@@ -823,21 +823,23 @@ int uttt_draw_rule(UtttDL *d, int i)
     case 0:                              /* the board */
         r_grid(d, seed);
         break;
-    case 1: {                            /* three won on a diagonal, and the line */
+    case 1: {                            /* three won on a diagonal by O, and the line */
+        /* O's, not X's (owner, 2026-09-26): the store game is O's diagonal,
+         * so the rule shows the same win; one X block for contrast */
         r_grid(d, seed);
-        r_cell(1, 4, &cx, &cy); r_mark(d, B, UTTT_O, cx, cy, 2.4f, 1.1f, 1.f, sd(seed, 1000, 13));
-        r_cell(3, 0, &cx, &cy); r_mark(d, B, UTTT_X, cx, cy, 2.4f, 1.1f, 1.f, sd(seed, 1000, 27));
-        r_cell(8, 2, &cx, &cy); r_mark(d, B, UTTT_O, cx, cy, 2.4f, 1.1f, 1.f, sd(seed, 1000, 74));
-        r_won(d, B, 0, UTTT_O, 2.f, seed);
-        r_won(d, B, 2, UTTT_X, 2.f, seed);
-        r_won(d, B, 4, UTTT_X, 2.f, seed);
-        r_won(d, B, 6, UTTT_X, 2.f, seed);
+        r_cell(1, 4, &cx, &cy); r_mark(d, B, UTTT_X, cx, cy, 2.4f, 1.1f, 1.f, sd(seed, 1000, 13));
+        r_cell(3, 0, &cx, &cy); r_mark(d, B, UTTT_O, cx, cy, 2.4f, 1.1f, 1.f, sd(seed, 1000, 27));
+        r_cell(8, 2, &cx, &cy); r_mark(d, B, UTTT_X, cx, cy, 2.4f, 1.1f, 1.f, sd(seed, 1000, 74));
+        r_won(d, B, 0, UTTT_X, 2.f, seed);
+        r_won(d, B, 2, UTTT_O, 2.f, seed);
+        r_won(d, B, 4, UTTT_O, 2.f, seed);
+        r_won(d, B, 6, UTTT_O, 2.f, seed);
         /* the board's win line through blocks 2, 4 and 6, a sixth of the
          * run past both ends as win_line runs it, in the mockup's width */
         const float ax = 5.f / 6.f + 1.f / 9.f, ay = 1.f / 6.f - 1.f / 9.f;
         const float zx = 1.f / 6.f - 1.f / 9.f, zy = 5.f / 6.f + 1.f / 9.f;
         win_stroke(d, rf(B, ax * 90.f), rf(B, ay * 90.f), rf(B, zx * 90.f), rf(B, zy * 90.f),
-                   INK_X, seed, 1.f, 2.8f * B.k / (uttt_pen_92().w / 9.f / 100.f * GRID_MAJOR_W * 3.f));
+                   INK_O, seed, 1.f, 2.8f * B.k / (uttt_pen_92().w / 9.f / 100.f * GRID_MAJOR_W * 3.f));
         break;
     }
     case 2: {                            /* one subgrid won: its marks fade, a big O over it */
@@ -935,6 +937,8 @@ UtttRulesLook uttt_rules_look(void)
     L.tint_pad_x = 4.f; L.tint_pad_y = 1.f;
     L.ink = UTTT_INK;
     L.tint = uttt_wash_rgba(.38f);
+    L.row_h = 4.f * roundf(L.body_pt * L.body_lead);
+    L.box_drop = 2.f; L.box_grow = 1.5f;
     return L;
 }
 
@@ -943,8 +947,12 @@ int uttt_draw_rule_box(UtttDL *d, float w, float h)
     if (!(w > 0.f && h > 0.f)) return -1;
     const int first = d->n_pt;
     const float k = 1.f / RULES_BOARD_PT;              /* points -> board units */
-    const float p = uttt_rules_look().box_pad;
-    const float r[4] = { p * k, p * k, (w - 2.f * p) * k, (h - 2.f * p) * k };
+    const UtttRulesLook L = uttt_rules_look();
+    const float p = L.box_pad, g = L.box_grow;
+    /* across on the phrase's box; up and down box_grow further out, and
+     * the whole box box_drop lower */
+    const float r[4] = { p * k, (p - g + L.box_drop) * k,
+                         (w - 2.f * p) * k, (h - 2.f * p + 2.f * g) * k };
     promise_box(d, r, 1.5f * k, 2.f * k, 7, 0, 1.f);
     for (int i = first; i < d->n_pt; i++) {
         d->pt[i].x = d->pt[i].x / k / w;

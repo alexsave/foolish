@@ -218,7 +218,7 @@ function single(svg, seed) {
 
 const DIAGRAMS = [
   (s) => board(s, {}, 3),
-  (s) => board(s, { won: { 2: 'x', 4: 'x', 6: 'x', 0: 'o' }, marks: [[1, 4, 'o'], [3, 0, 'x'], [8, 2, 'o']], strike: [84, 6, 6, 84] }, 11),
+  (s) => board(s, { won: { 2: 'o', 4: 'o', 6: 'o', 0: 'x' }, marks: [[1, 4, 'x'], [3, 0, 'o'], [8, 2, 'x']], strike: [84, 6, 6, 84], strikeInk: C.o }, 11),
   (s) => single(s, 21),
   (s) => board(s, { marks: [[4, 2, 'x']], arrow: [4, 2, 2] }, 31),
   (s) => board(s, { wash: 'all', won: { 2: 'o' }, marks: [[4, 2, 'x']] }, 41),
@@ -263,7 +263,7 @@ const cTable = (lines, title) =>
 const TABLES = { C: cTable(RULES, 'Ultimate Tic-Tac-Toe Rules') };
 const NOTES = [
   ['The board', 'nine empty subgrids in their 3x3.'],
-  ['Winning the game', 'three subgrids won by X on a diagonal, each under a big X, with the blue line that wins the game through them. One O subgrid for contrast.'],
+  ['Winning the game', 'three subgrids won by O on a diagonal, each under a big O, with the red line that wins the game through them. One X subgrid for contrast.'],
   ['Winning a subgrid', 'one subgrid on its own, three O on a diagonal. The small marks fade and a big red circle goes over the subgrid, as the game draws it.'],
   ['The catch', 'an X in the top-right square of the centre subgrid, with a red arrow to the top-right subgrid.'],
   ['Play anywhere', 'the same X, but the top-right subgrid is already won by O, so the whole board takes the faint wash.'],

@@ -178,11 +178,12 @@ public final class UtttRulesSheet: UIViewController {
         let top = titleLabel.frame.maxY + CGFloat(L.title_gap)
         scroll.frame = CGRect(x: x0, y: top, width: width, height: view.bounds.height - top)
 
-        /* EVERY ROW AS TALL AS THE TALLEST, so the eight drawings sit on an
-         * even beat (RULES.html), each drawing and its text centred in it */
+        /* EVERY ROW THE KERNEL'S HEIGHT, whatever its text, so the eight
+         * drawings sit on an even beat; each drawing and its two or three
+         * lines are centred in it */
         let art = CGFloat(L.art), textX = art + CGFloat(L.art_gap), textW = width - textX
         let sizes = rows.map { $0.text.sizeThatFits(CGSize(width: textW, height: .greatestFiniteMagnitude)) }
-        let rowH = max(art, sizes.map { ceil($0.height) }.max() ?? 0)
+        let rowH = CGFloat(L.row_h)
         var y: CGFloat = 0
         for (row, s) in zip(rows, sizes) {
             row.art.frame = CGRect(x: 0, y: y + (rowH - art) / 2, width: art, height: art)

@@ -440,6 +440,7 @@ typedef struct {
     float margin_x, top, bottom, title_pt, title_gap, art, art_gap, row_gap;
     float body_pt, body_lead, box_pad, word_room, tint_pad_x, tint_pad_y;
     uint32_t ink, tint;
+    float row_h, box_drop, box_grow;
 } UtiRulesLook;
 UtiRulesLook uti_rules_look(void);
 
