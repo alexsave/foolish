@@ -123,6 +123,11 @@ public final class UtttRulesSheet: UIViewController {
         if let s = sheetPresentationController {
             s.detents = [.large()]
             s.prefersGrabberVisible = true
+            /* THE PAPER IS ONE COLOUR IN BOTH APPEARANCES, so the grabber
+             * is the light appearance's: the dark one's pale pill vanished
+             * into the napkin. The sheet's container draws it, so the
+             * override goes on the presentation, not on this controller. */
+            s.traitOverrides.userInterfaceStyle = .light
         }
     }
     required init?(coder: NSCoder) { fatalError() }
