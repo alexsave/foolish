@@ -896,7 +896,7 @@ Masking: a `DEAL` or `DRAW` card is `PK_CARD_HIDDEN` unless `viewer == seat`; ev
 | `RESHUFFLE_GATHER` | same as the draw it serves | - | - | - | n = cards | the stack (all but the top) slides to the deck well |
 | `RESHUFFLE_SHUFFLE` | same | - | - | - | n = cards, i = reshuffle number r | the comic beat; a host may vary the gag by r |
 | `RESHUFFLE_DONE` | same | - | - | - | n = new deck count | the deck is a deck again |
-| `PLAY` | action | the player | - | the card | i = hand position | hand to stack, 420ms, lands crooked (`UI.html` Motion) |
+| `PLAY` | action | the player | - | the card | i = hand position | hand to stack, 500ms, lands crooked (`UI.html` Motion) |
 | `WILD_SUIT` | action | the player | - | the wild | - | `suit` is the chosen suit; the halo changes |
 | `SKIP` | settle | the skipped | the player | - | - | dim, then slash (`UI.html` Motion, "Skipped") |
 | `REVERSE` | settle | - | the player | - | - | `dir` is the new direction; the word turns |

@@ -46,3 +46,9 @@ DECISION O5: the name stays `Pick 'Em Up` as a working title, threaded through o
 
 - The final game name: `Pick 'Em Up` collides with two same-genre titles (README); the USPTO search and the choice are the owner's, before any store listing.
 - App Store Connect record, signing and upload: the owner does these by hand; nothing in this pass touches them.
+
+## Found on the way (not pickemup's to fix in this pass)
+
+- `werewolf/docs/UI.html` fails `shared/tools/check_ui_doc.py` because of a literal template tag inside a script comment.
+  The fix is one line; it is werewolf's file and out of this branch's scope, so it is reported here for the owner.
+- `REUSE_AUDIT.md` section 8 lists four defects in foolish and uttt (rig.sh restores entitlements with `git checkout`, the drawer-collapse numbers exist three times, flight timing is typed twice, foolish compiles the shared insert gating but never calls it).
