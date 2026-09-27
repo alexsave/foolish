@@ -63,7 +63,7 @@ The whole scheme could not be run there: `ActionCardCornerTests` and `RenderTest
 ## The review, O6 and O9 tests (the B2 simulator worker, 2026-09-27)
 
 Run on a fresh iPhone 17e, `pk-b2` (iOS 27.0), created for this pass and deleted after it.
-The unmutated scheme is 37 tests, 0 failures, before and after every row below.
+The unmutated scheme is 37 tests, 0 failures, before and after every row below, and 38 once `AnchorTests` joined it.
 Each Swift mutant was applied alone by `mutation_check.sh` with `-only-testing:` on the class it aims at (the source restored and checked byte for byte); the C mutant rebuilt the xcframework before and after.
 Until this pass none of these had run: they were compiled only (ORCHESTRATION B2, B3).
 
@@ -96,6 +96,7 @@ Three planned mutants did not go red as first written, and each exposed a test t
 | ArrangeTests.testAPlayAfterAReorderPlaysTheRightCard | `TableModel.arrange` passes `pos` as the from slot | "the card at that slot plays" (82 against 65), "the pile's top is the dragged card"; also "a drag to where it already is moves nothing" |
 | ArrangeTests.testADrawAfterAReorderLandsOnTheRight | (C) `pk_arr_sync` puts a new card at the left (`insert_at(a, 0, ...)`), library rebuilt | "the drawn card lands on the right" (14 against 93); the deal also goes through the sync, so every ArrangeTests test is red on its acquisition order |
 | ArrangeTests.testTheDropIsTheKernels | `PkLayout.drop` maps `PK_DROP_HAND` to `.pile` | "a release in the row rearranges" |
+| AnchorTests.testTheAnchorsAreWhereTheViewsAre (added for I42) | `TableScreen` moves the stack anchor with `.offset` again (the pre-I42 code) | "the pile's anchor is the pile" (41 against 187, 57.5 against 317.5), "the deck sits left of the pile (U3)", "on its line" |
 
 The two rows under BeatPlayerTests above that mutated `PickemupHost.adopt`, and the `tapFan never un-calls` row under TableModelTests, mutated Swift that is now the kernel's (`pk_api_adopt`, `pk_api_tap_fan`, I29 and I30); they are replaced by the adopt and `PK_API_FAN_UNCALLED` rows in this table, which mutate the code as it is now.
 

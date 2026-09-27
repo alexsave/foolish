@@ -220,3 +220,16 @@ Alternative: move both checks into an XCUITest target, which runs with automatio
 Why: the owner's rule is that no other seat's count reaches the tree, so the test must read the tree itself; a UI test target needs a host app this product does not have (the container is codeless), and a private symbol in a test bundle never ships.
 If the symbol ever disappears, both tests fail on "is on the tree"; they can never pass on an empty walk.
 Confidence: high.
+
+DECISION I41: a Debug build reads a `dev.persona` file ("1 Bo") from the App Group, and an appex process that finds it sits down as another person: its participant id's last byte XORed with the number, its own seat records and nickname (`pickemup.seats.v1.p1`, `pickemup.nickname.p1`).
+The simulator's Messages gives this extension ONE `localParticipantIdentifier` in every thread, so the rig's two-thread trick (a bubble sent in one stub thread arrives in the other) seated the same person twice and Bo's tap on Alex's invitation showed "1. Alex (You)".
+It is read once per process (`static let`), and the rig ends the process between the two threads (`rig.sh leave`, `killappex`), so a flipped file never splits one process's identity.
+Alternative: two simulators, one per person; there is no way to carry a bubble from one simulator's Messages to another's.
+Why: it is the only way to play a two-seat game inside Messages on one host, and every reader of it is inside `#if DEBUG` beside the other dev files (`PickemupDev.swift`), so Release has none of it.
+Confidence: high.
+
+DECISION I42: an anchor a flight aims at is laid out where it is (`.position`, a frame), never moved there with `.offset`.
+The pile's anchor was a clear 82 x 115 frame in an overlay, `.offset` to the pile's centre; an offset is a render transform, the anchor's GeometryReader measured the un-offset frame at the board's origin, and on the simulator every play, start card, bury and reshuffle gather flew to the top-left corner and snapped onto the pile when its ghost ended (`shots/motion/deal_bury_before_fix_sheet.png`).
+`BeatPlayerTests` could not see it: they hand the player synthetic anchors. `AnchorTests` hosts a real `TableScreen` and checks the pile's anchor is the pile, the deck is beside it on its line, and every anchor is on the board.
+Alternative: measure the pile's anchor on `PileView` itself; its frame carries the halo and the stack's lean, not one card.
+Confidence: high.
