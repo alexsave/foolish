@@ -1485,7 +1485,7 @@ Items 1 to 14 are all applied in `UI.html` (see "Appendix A of RULES_AND_KERNEL.
 13. **The "One fork worth settling now" box** proposes "until the next bubble seals"; D4 settles it as "until the next completed turn", with the reason.
 14. **The channel grid** needs rows for draws (one flight per card, staggered like "Drawing two"), the reshuffle (gather, comic shuffle, done), the deal (round-robin, one card at a time), buried start cards, a catch (declared at stage, outcome only at Send) and the end reveal.
     Section 5 lists them.
-15. **Open: the "draw" view's lede still says the hand is in acquisition order and "nobody rearranges" (D24).** (applied at the same time as this note)
+15. **Applied (commit 20531ef1): the "draw" view now says the player may rearrange their own hand (O9, D54-D57); the old lede said "nobody rearranges" (D24).**
     O9 and D54 to D57 supersede that: a player may rearrange their own hand, and a drawn card still arrives on the right.
 
 Already consistent and kept: the 7-card deal ("Shed seven cards"), ranks 1-9, the deck count ("27 left", D22), the LAST stamp slot under the badge, the modal centred suit picker that does not travel, "the move is not a move until the suit exists", new cards arriving on the right (still true under O9: an arrival goes on the right of the arrangement), the halo as the live suit, "direction is a word", skip as two pause bars and reverse as opposed solid triangles (LEGAL).
