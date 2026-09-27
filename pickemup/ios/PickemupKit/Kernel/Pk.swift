@@ -71,7 +71,15 @@ public enum Pk {
     public static func newGame(dm: Bool) -> Bool {
         var seed = [UInt8](repeating: 0, count: 32)
         guard SecRandomCopyBytes(kSecRandomDefault, seed.count, &seed) == errSecSuccess else { return false }
-        return pk_api_new(&seed, dm ? 1 : 0) == Int32(PK_EOK)
+        return newGame(dm: dm, seed: seed)
+    }
+
+    /// The same from a given seed: the tests' and the rig's reproducible deal.
+    @discardableResult
+    public static func newGame(dm: Bool, seed: [UInt8]) -> Bool {
+        guard seed.count == 32 else { return false }
+        var s = seed
+        return pk_api_new(&s, dm ? 1 : 0) == Int32(PK_EOK)
     }
 
     /// ADOPT `text`. 0 or a negative PK_E*, and nothing changes on a refusal.
