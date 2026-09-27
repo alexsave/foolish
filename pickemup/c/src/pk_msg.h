@@ -216,6 +216,11 @@ int pk_common_bubbles(const PkMsg *a, const PkMsg *b);
  *       seats: the other seat.
  *   (d) THE NAME - my App Group nickname, if exactly one row carries it.
  *
+ * A RECORD THAT FINDS NO ROW (PK_REC_GONE) IS A WITNESS TOO: this device sat
+ * in this game under a tag no row carries, so it is not seated here, and
+ * neither the sender nor the name may say otherwise (D51). Only the tag, a
+ * direct witness, still counts.
+ *
  * THE LOBBY GATE (foolish msg_seat_resolve_in_lobby): in a WAITING bubble a
  * seat found by the sender witness counts only if the row carries my name
  * when I have one, because a lobby seat is claimed by a named join and an
@@ -234,7 +239,8 @@ int pk_msg_seat_of_tag(const PkMsg *m, const uint8_t tag[PK_TAG_LEN]);
 /* The seat that sent this bubble, or -1 (a leave: the sender has no seat). */
 int pk_msg_sender(const PkMsg *m);
 
-/* `record` and `tag_seat` are seats (-1 for none). The seat, or -1 for "not
+/* `record` is pk_rec_find's answer (a seat, -1 or PK_REC_GONE) and
+ * `tag_seat` a seat or -1. The seat, or -1 for "not
  * seated here" (a spectator, or a lobby I may join); the deciding witness in
  * *by (may be NULL). */
 int pk_msg_resolve(const PkMsg *m, int record, int tag_seat, int is_dm, int i_sent,
@@ -247,7 +253,10 @@ int pk_msg_resolve(const PkMsg *m, int record, int tag_seat, int is_dm, int i_se
 #define PK_REC_MAX   256
 #define PK_REC_BYTES (PK_REC_LEN * PK_REC_MAX)
 
-/* The seat my recorded tag holds in this roster, or -1. */
+/* The seat my recorded tag holds in this roster; -1 when this device has no
+ * record of this game; PK_REC_GONE when it has one and no row carries its
+ * tag - I sat and I left, or this bubble is from before I joined (D51). */
+#define PK_REC_GONE  (-2)
 int pk_rec_find(const uint8_t *recs, int n, const PkMsg *m);
 /* Record `seat`'s tag for this game at the front, replacing any record of
  * it; the oldest fall off. `recs` holds PK_REC_BYTES. The new byte count. */

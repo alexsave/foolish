@@ -519,7 +519,10 @@ int pk_msg_resolve(const PkMsg *m, int record, int tag_seat, int is_dm, int i_se
     } else if (tag_seat >= 0 && tag_seat < n) {
         b = PK_BY_TAG;
         seat = tag_seat;
-    } else {
+    } else if (record != PK_REC_GONE) {
+        /* THE INFERENCES, only for a device with no word on this game: a
+         * record whose tag has no row says "not me" (D51), and a namesake who
+         * took the freed name, or the next joiner's bubble, cannot overrule it */
         int s = -1, snd = pk_msg_sender(m);
         if (i_sent == 1) s = snd;
         else if (i_sent == 0 && is_dm && n == 2 && snd >= 0) s = 1 - snd;
@@ -551,12 +554,14 @@ int pk_rec_find(const uint8_t *recs, int n, const PkMsg *m)
     uint8_t id[8];
     pk_game_id(m->seed, id);
     n = recs ? rec_n(n) : 0;
+    int gone = 0;
     for (int i = 0; i < n; i += PK_REC_LEN)
         if (!memcmp(recs + i, id, 8)) {
             int s = pk_msg_seat_of_tag(m, recs + i + 8);
             if (s >= 0) return s;
+            gone = 1;
         }
-    return -1;
+    return gone ? PK_REC_GONE : -1;
 }
 
 int pk_rec_forget(uint8_t *recs, int n, const PkMsg *m)
