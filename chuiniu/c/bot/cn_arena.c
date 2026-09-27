@@ -18,12 +18,12 @@
  *   fitbeta  each seat's temperature fitted from its revealed hands
  *
  * Prints, per policy: seat-games, win rate with its 95% Wilson interval, and
- * mean dice lost per game with a 95% normal interval. --fast is a smoke run
+ * mean dice lost per game with a 95% normal interval on the Bessel-corrected
+ * standard error (shared/c/stats). --fast is a smoke run
  * (few games, few worlds). */
 #include "cn_bot.h"
 #include "../../../shared/c/stats/seed_hash.h"
 #include "../../../shared/c/stats/stats.h"
-#include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -164,8 +164,8 @@ int main(int argc, char **argv)
         if (!seats[p]) continue;
         double lo, hi;
         stat_wilson(wins[p], seats[p], STAT_Z95, &lo, &hi);
-        double mu = lost[p] / seats[p], var = lost2[p] / seats[p] - mu * mu;
-        double se = sqrt(var > 0 ? var / seats[p] : 0);
+        StatSums d = { seats[p], lost[p], lost2[p] };
+        double mu = stat_mean(&d), se = stat_stderr(&d);
         printf("%-8s %8.0f %8.0f %7.3f  [%.3f, %.3f]    %9.3f  [%.3f, %.3f]\n", P_NAME[p], seats[p], wins[p], wins[p] / seats[p],
                lo, hi, mu, mu - 1.96 * se, mu + 1.96 * se);
     }

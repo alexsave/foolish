@@ -16,7 +16,7 @@ Run on 2026-09-27 on an 8-core Mac, about ten minutes of wall clock for the whol
 - A line-up is two agents seated alternately, A B A B, and every deal is played twice, once each way round.
   So each agent holds half the seats, and 50% is an even match at every table size.
 - 2,000 games a line-up at each of 2, 4 and 8 players, from fixed seeds: a run is reproducible to the game.
-- The 95% interval is the normal one, p plus or minus 1.96 times the square root of p(1-p)/n, over the 2,000 games.
+- The 95% interval in these tables is the normal one, p plus or minus 1.96 times the square root of p(1-p)/n, over the 2,000 games; the arena has printed Wilson's since D66, which moves no conclusion here.
 - "cards" is the mean number of cards an agent's seats still hold when the game ends.
 - Every move of every game went through `pk_apply`, and none was refused.
 - No game ended stuck (1.10) or at the long-game stop (1.11).

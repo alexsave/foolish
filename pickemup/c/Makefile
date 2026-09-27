@@ -274,8 +274,8 @@ ios-lib: build/layout/ios.hash datagen
 # ARENA_GAMES games a line-up across ARENA_JOBS worker processes.
 ARENA_GAMES ?= 2000
 ARENA_JOBS  ?= 8
-build/pk_arena: tools/pk_arena.c $(SRC) $(BOT_SRC) $(HDR) | build
-	$(CC) $(CFLAGS) $(SRC) $(BOT_SRC) tools/pk_arena.c -lm -o $@
+build/pk_arena: tools/pk_arena.c $(SRC) $(BOT_SRC) $(HDR) $(SHARED)/stats/stats.c $(SHARED)/stats/stats.h | build
+	$(CC) $(CFLAGS) $(SRC) $(BOT_SRC) $(SHARED)/stats/stats.c tools/pk_arena.c -lm -o $@
 arena: build/pk_arena
 	./build/pk_arena $(ARENA_GAMES) $(ARENA_JOBS)
 

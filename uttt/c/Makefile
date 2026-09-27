@@ -41,8 +41,8 @@ build:
 build/uttt_test: $(SRC) tests/uttt_test.c | build
 	$(CC) $(CFLAGS) $(SRC) tests/uttt_test.c -o $@ $(LDLIBS)
 
-build/uttt_arena: $(SRC) tests/uttt_arena.c | build
-	$(CC) $(CFLAGS) $(SRC) tests/uttt_arena.c -o $@ $(LDLIBS)
+build/uttt_arena: $(SRC) tests/uttt_arena.c $(SHARED)/stats/stats.c $(SHARED)/stats/stats.h | build
+	$(CC) $(CFLAGS) $(SRC) $(SHARED)/stats/stats.c tests/uttt_arena.c -o $@ $(LDLIBS)
 
 build/uttt_msg_test: $(SRC) tests/uttt_msg_test.c | build
 	$(CC) $(CFLAGS) $(SRC) tests/uttt_msg_test.c -o $@ $(LDLIBS)

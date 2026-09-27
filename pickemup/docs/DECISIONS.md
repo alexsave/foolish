@@ -8,7 +8,7 @@ Each full entry names the alternative it rejected, the reason for the choice and
 A SUPERSEDED row names the decision that overrode it, and the ones the workers themselves flagged as ones the owner may want to veto are marked **VETO?** in the last column and listed just below.
 If this index and a full entry ever disagree, the full entry is the truth; fix this file.
 
-Counts: 61 rules decisions (D1 to D58, plus D5b, D5c and D5d, of which D24 and D53 are superseded), 25 visual (U1 to U25), 41 iOS (I1 to I41, of which I10 and I16 are superseded), 20 animation (A1 to A20) and 9 orchestration (O1 to O9), 156 in all.
+Counts: 62 rules decisions (D1 to D58 and D66, plus D5b, D5c and D5d, of which D24 and D53 are superseded; D59 to D65, the bot's, are in RULES_AND_KERNEL.md only), 25 visual (U1 to U25), 41 iOS (I1 to I41, of which I10 and I16 are superseded), 20 animation (A1 to A20) and 9 orchestration (O1 to O9), 157 in all.
 
 ## Flagged for a possible veto
 
@@ -87,6 +87,7 @@ Counts: 61 rules decisions (D1 to D58, plus D5b, D5c and D5d, of which D24 and D
 | D56 | the arrangement is folded in before each of my actions and wherever the hand is read | also on every adopt | RULES_AND_KERNEL.md | |
 | D57 | the arrangements ride the seat records' bytes; a bad block reads as acquisition order | a separate store key | RULES_AND_KERNEL.md | |
 | D58 | every build takes `-Wpedantic -Wshadow -Wconversion` too, proven clean under Linux gcc 13 | keeping them a review-time check | RULES_AND_KERNEL.md | |
+| D66 | the arena's 95% win-share interval is Wilson's, from `shared/c/stats` | the normal approximation clamped to [0, 1] | RULES_AND_KERNEL.md | |
 
 ## Visual (U), full entries in `UI_DECISIONS.md`
 

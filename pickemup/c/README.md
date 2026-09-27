@@ -61,7 +61,7 @@ The struct is fixed-size plain integers with no pointers and no bitfields, there
 | `src/pk_belief.h`, `src/pk_belief.c` | the bot's belief: what one seat can deduce from the public events, and a sampler of consistent worlds |
 | `src/pk_bot.h`, `src/pk_bot.c` | the bots: random, greedy and Monte Carlo (octogen's shape), the knobs, and the table driver |
 | `tests/pk_bot_test.c` | the bots: legality everywhere, the belief against the truth, hand-built histories, determinism, the wild's suit, MC against random |
-| `tools/pk_arena.c` | `make arena`: line-ups of the bots, both seat orders, a 95% interval on each side's win share |
+| `tools/pk_arena.c` | `make arena`: line-ups of the bots, both seat orders, a 95% Wilson interval on each side's win share |
 | `tests/MUTATIONS.md` | the mutation each test was seen to fail on |
 
 The envelope reaches the game only through `pk__new`, `pk_legal_turn`, `pk_is_legal`, `pk_apply`, `pk_seal` and the read-only fields; its lobby verdicts are `pk_lobby.h`'s.
