@@ -253,3 +253,20 @@ $(WEB_WASM_OUT): $(WEB_WASM_SRC) $(wildcard src/*.h i18n/*.h ../../shared/c/wasm
 wasm-web: $(WEB_WASM_OUT)
 
 .PHONY: wasm-web
+
+# ---- shared/c's own tests ---------------------------------------------------
+# The tests beside the shared C this kernel links, run as part of `make run`.
+# Self-contained: each test file includes what it covers by relative path, so
+# no SRC list changes.
+SHARED_C := ../../shared/c
+SHARED_TESTS := build/libc_test
+
+build/libc_test: $(SHARED_C)/wasm/libc_test.c $(SHARED_C)/wasm/libc.c $(SHARED_C)/test/check.h | build
+	$(CC) $(CFLAGS) $(SHARED_C)/wasm/libc_test.c -o $@
+
+shared-tests: $(SHARED_TESTS)
+	@for t in $(SHARED_TESTS); do ./$$t || exit 1; done
+
+run: shared-tests
+
+.PHONY: shared-tests

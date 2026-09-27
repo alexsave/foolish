@@ -16,7 +16,7 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 | `c/deal_rng.{c,h}` | the deal's RNG | CARDS, THIRD, SHED, LIAR, BONES |
 | `c/b32.{c,h}` | base32 codes | UTTT, SHED, LIAR, BONES |
 | `c/mixrad.{c,h}` | mixed-radix arithmetic on a byte bignum, the history-as-code body under the game coders | UTTT, SHED, LIAR, BONES |
-| `c/wasm/` | the freestanding libc and libm a wasm32 build compiles against | CARDS, UTTT (both link `libc.c` and `libm.c`), SHED (its objects, and `libc.c` in its native-vs-wasm cross-check link), LIAR, BONES (headers only: their wasm build is objects only) |
+| `c/wasm/` | the freestanding libc and libm a wasm32 build compiles against; `libc_test.c` runs `libc.c` natively against the host C library (UTTT runs it) | CARDS, UTTT (both link `libc.c` and `libm.c`), SHED (its objects, and `libc.c` in its native-vs-wasm cross-check link), LIAR, BONES (headers only: their wasm build is objects only) |
 | `c/i18n/languages.h` | the language registry: every language's code, endonym and direction, one row each | CARDS (the string generator reads it), UTTT (compiled into its kernel, which indexes its tables by it) |
 | `c/motion_ruler/` | the debug ruler's palette and geometry (`CMotionRuler`), painted by both products and read by `tools/motion` | CARDS, UTTT |
 | `c/msg_stage/` | when a Messages insert may go, what a silent one means, and whether a received bubble is my own echo (`CMsgStage`); `INSERT_GATING.md` is the evidence, `msg_stage_test.c` the test | UTTT, SHED, LIAR, BONES (CARDS compiles the Swift face, its stage path does not call it) |
