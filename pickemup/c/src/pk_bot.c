@@ -4,9 +4,6 @@
 #include "pk_bot.h"
 #include "pk_belief.h"
 #include <string.h>
-#ifdef PK_BOT_TRACE
-#include <stdio.h>
-#endif
 
 const char *const PK_BOT_NAME[PK_BOT_COUNT] = { "random", "greedy", "mc" };
 
@@ -37,12 +34,12 @@ static uint64_t mix64(uint64_t z)
 void pk_bot_knobs_default(PkBotKnobs *k)
 {
     memset(k, 0, sizeof *k);
-    k->w1 = 16;
-    k->w2 = 24;
-    k->w3 = 24;
-    k->depth = 0;
+    k->w1 = 48;
+    k->w2 = 64;
+    k->w3 = 64;
+    k->depth = 12;
     k->wild_keep = 20;
-    k->draw_keep = 20;
+    k->draw_keep = 100;
     k->soft_mod = 4;
     k->flags = 0;
     k->seed = 0x5eed;
@@ -257,11 +254,6 @@ static int mc_pick(const PkGame *g, int seat, const PkAct *m, int n,
         double v = score[i] / (double)nsim[i] - tax[i];
         if (v > bv) { bv = v; best = i; }
     }
-#ifdef PK_BOT_TRACE
-    for (int i = 0; i < nc; i++)
-        fprintf(stderr, "  cand k%d a%d b%d  n=%d v=%.3f%s\n", m[cand[i]].kind, m[cand[i]].a, m[cand[i]].b,
-                nsim[i], nsim[i] ? score[i] / nsim[i] : 0, i == best ? " *" : "");
-#endif
     return best >= 0 ? cand[best] : gpick;
 }
 
