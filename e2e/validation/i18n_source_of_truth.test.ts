@@ -73,7 +73,7 @@ test('every language in the registry has a C file and a generated module', async
         if (!existsSync(join(C_I18N, `strings_${code}.c`))) missing.push(`c/i18n/strings_${code}.c`);
         if (!existsSync(join(GEN, `strings.${code}.ts`))) missing.push(`sdk/ts/gen/i18n/strings.${code}.ts`);
     }
-    assert.deepEqual(missing, [], `the registry (c/i18n/languages.h) names languages with no table:\n  ${missing.join('\n  ')}`);
+    assert.deepEqual(missing, [], `the registry (shared/c/i18n/languages.h) names languages with no table:\n  ${missing.join('\n  ')}`);
 });
 
 test('no C language file is missing from the registry', async () => {
@@ -82,7 +82,7 @@ test('no C language file is missing from the registry', async () => {
         .map((f) => /^strings_([a-z]+)\.c$/.exec(f)?.[1])
         .filter((c): c is string => !!c && !codes.has(c));
     assert.deepEqual(orphans, [],
-        'these language files exist but no row in c/i18n/languages.h names them, so nothing generates them:\n'
+        'these language files exist but no row in shared/c/i18n/languages.h names them, so nothing generates them:\n'
         + `  ${orphans.join('\n  ')}\n`);
 });
 

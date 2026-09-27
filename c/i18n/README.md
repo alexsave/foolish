@@ -22,7 +22,7 @@ Both are generated, from this.
 | file | what it is |
 | --- | --- |
 | `keys.h` | every key that exists, as an enum, plus `FS_KEY_NAME[]` - the name each slot answers to |
-| `languages.h` | the registry: one row per language, with the name it calls itself and whether it is written right to left |
+| `../../shared/c/i18n/languages.h` | the registry: one row per language, with the name it calls itself and whether it is written right to left. It lives in `shared/` because `uttt/` carries the same languages and compiles the same registry into its kernel (`uttt/c/i18n`) |
 | `strings_<code>.c` | one language's table, `[FS_K_...] = "..."` |
 
 One file per language, not one grid, and that is a bundle decision.
@@ -31,7 +31,7 @@ A dynamic import keeps every export of its target alive in the web bundle whatev
 so the module the site imports for a language has to *be* one language.
 Twenty-five in one module would ship all of them to every visitor.
 
-It also makes adding a language additive: a `strings_<code>.c` and a row in `languages.h`.
+It also makes adding a language additive: a `strings_<code>.c` and a row in `languages.h`, which also obliges `uttt/c/i18n` to carry the new language (its test fails until it does).
 `tools/structgen/gen.sh` reads the registry to decide what to generate, so no build script and no CI lane keeps a list that can fall behind.
 
 ## The thing that keeps twenty-five files honest

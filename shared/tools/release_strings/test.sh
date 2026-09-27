@@ -31,6 +31,9 @@ expect em-dash-binary-plist 1 "Info.plist: em-dash .*tap — to play" "$T/dash.a
 mk swiftlit 'Good \xe2\x80\x94 your turn\0'
 expect em-dash-literal 1 "em-dash" "$T/swiftlit.app"
 
+mk zhdash 'x\0\xe4\xbd\xa0\xe2\x80\x94\xe2\x80\x94\xe5\xa5\xbd\0'
+expect chinese-dash-pair-ok 0 "release strings clean" "$T/zhdash.app"
+
 mk fw 'x\0'; mkdir -p "$T/fw.app/Frameworks/Bad.framework"
 expect forbidden-framework 1 "forbidden framework embedded: Frameworks/Bad.framework" "$T/fw.app" --forbid-framework Bad
 expect other-framework-ok 0 "release strings clean" "$T/fw.app" --forbid-framework Good

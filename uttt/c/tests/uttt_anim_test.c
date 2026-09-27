@@ -4,6 +4,7 @@
 #include "../src/uttt.h"
 #include "../src/uttt_anim.h"
 #include "../src/uttt_draw.h"
+#include "../src/uttt_say.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -173,7 +174,7 @@ int main(void)
             float dev = 0.f, most = 0.f; int crossed = 1;
             for (int sd = 1; sd <= 5; sd++) {
                 uttt_dl_init(&d, PT, 400000, PO, 60000);
-                uttt_draw_outline(&d, 4, sd, 1.f);
+                uttt_draw_outline(&d, 4, (uint8_t)sd, 1.f);
                 float over = 0.f, top = 0.f;
                 for (int i = 0; i < d.n_pt; i++) {
                     float x = d.pt[i].x, y = d.pt[i].y;
@@ -227,6 +228,32 @@ int main(void)
     OK(same_rect(f.wash, r0), "and lands on it");
     m = uttt_motion(&g, UTTT_CH_ARRIVAL);
     OK(m.wash_ms == 420 && m.end_ms == 340 + 420, "an arrival is their move too, with no ring");
+
+    /* THE HEADLINE ON THEIR MOVE: "Waiting on <O>" until the ink starts,
+     * nothing while it draws, "Your move" once it has landed (owner,
+     * 2026-09-26). D and E both; my own replay (C) never goes quiet. */
+    for (int k = 0; k < 2; k++) {
+        m = uttt_motion(&g, k ? UTTT_CH_ARRIVAL : UTTT_CH_THEIRS);
+        uttt_motion_at(&m, 0, &f);
+        OK(f.words == UTTT_WORDS_BEFORE, "their move: the old words until the ink starts");
+        int quiet = 1;
+        for (int t = 1; t < 340; t++) {
+            uttt_motion_at(&m, t, &f);
+            if (f.words != UTTT_WORDS_HUSH) quiet = 0;
+        }
+        OK(quiet, "their move: no headline while the ink draws");
+        uttt_motion_at(&m, 340, &f);
+        OK(f.words == UTTT_WORDS_NOW, "their move: the new words once it has landed");
+    }
+    m = uttt_motion(&g, UTTT_CH_REPLAY);
+    uttt_motion_at(&m, 170, &f);
+    OK(f.words == UTTT_WORDS_BEFORE, "my own replay: the old words while the ink draws");
+    m = uttt_motion(&g, UTTT_CH_STAGE);
+    uttt_motion_at(&m, 170, &f);
+    OK(f.words == UTTT_WORDS_BEFORE, "my own stage: the old words while the ink draws");
+    uttt_motion_at(&m, 340, &f);
+    OK(f.words == UTTT_WORDS_NOW, "my own stage: the new words once it has landed");
+
     m = uttt_motion(&g, UTTT_CH_STILL);
     uttt_motion_at(&m, 0, &f);
     OK(!f.running && f.mark_t == 1.f && same_rect(f.wash, r0), "STILL is the resting board");
@@ -294,7 +321,7 @@ int main(void)
         UtttGame w; uttt_init(&w);
         for (unsigned i = 0; i < sizeof diag && !w.over; i++) uttt_play(&w, diag[i]);
         UtttMotion ms = uttt_motion(&w, UTTT_CH_STAGE);
-        float rf[4]; uttt_wash_rect(ms.from, rf, NULL);
+        float rf[4], fa = 0.f; uttt_wash_rect(ms.from, rf, &fa);
         OK(ms.fall_at == ms.ink_ms && ms.line_at == ms.ink_ms + UTTT_MS_FALL
            && ms.end_ms == ms.line_at + UTTT_MS_LINE,
            "pre: the winning move draws its mark, then the big mark, then the line");
@@ -306,18 +333,24 @@ int main(void)
            "pre: the big mark falls after the small one");
         uttt_motion_at(&ms, ms.line_at + UTTT_MS_LINE / 2, &f);
         OK(f.fall_t == 1.f && f.line_t > .3f && f.line_t < 1.f, "pre: then the line");
-        OK(same_rect(f.wash, rf), "pre: the wash still on the block the move was played in");
+        OK(f.wash[2] == 0.f && (f.wash_rgba & 0xff) == 0,
+           "pre: a finished game has no live board - the wash is gone once the ink lands");
+        uttt_motion_at(&ms, ms.ink_ms / 2, &f);
+        OK(same_rect(f.wash, rf) && (f.wash_rgba & 0xff) > 0
+           && (f.wash_rgba & 0xff) < (uttt_wash_rgba(fa) & 0xff),
+           "pre: the winning move's wash leaves with its ink, where it was");
         uttt_motion_at(&ms, ms.end_ms, &f);
-        OK(!f.running && f.fall_t == 1.f && f.line_t == 1.f && same_rect(f.wash, rf),
-           "pre: at rest, the whole settlement and the wash unmoved");
+        OK(!f.running && f.fall_t == 1.f && f.line_t == 1.f && f.wash[2] == 0.f,
+           "pre: at rest, the whole settlement and no tint");
         UtttMotion mb = uttt_motion(&w, UTTT_CH_SETTLE);
         uttt_motion_at(&mb, 0, &f);
         OK(f.mark_t == 1.f && f.fall_t == 1.f && f.line_t == 1.f && f.running,
            "post: at Send the whole settlement is already down");
+        uttt_motion_at(&mb, 0, &f);
+        int none = f.wash[2] == 0.f;
         uttt_motion_at(&mb, mb.end_ms / 2, &f);
-        OK(f.fall_t == 1.f && f.line_t == 1.f && same_rect(f.wash, rf)
-           && (f.wash_rgba & 0xff) < (uttt_wash_rgba(.3f) & 0xff),
-           "post: the game is over, so the wash leaves - nothing else moves");
+        OK(none && f.fall_t == 1.f && f.line_t == 1.f && f.wash[2] == 0.f,
+           "post: the game is over and the stage took the wash - Send brings none back");
         UtttMotion md = uttt_motion(&w, UTTT_CH_THEIRS);
         uttt_motion_at(&md, md.ink_ms - 1, &f);
         OK(f.fall_t == 0.f && md.fall_at == md.ink_ms && md.line_at == md.ink_ms + UTTT_MS_FALL
@@ -325,8 +358,8 @@ int main(void)
            "theirs: small mark, big mark, line, then the highlighter");
         UtttMotion mr = uttt_motion(&w, UTTT_CH_DRAFT);
         uttt_motion_at(&mr, 0, &f);
-        OK(!f.running && f.mark_t == 1.f && f.fall_t == 1.f && f.line_t == 1.f && same_rect(f.wash, rf),
-           "draft: the winning move staged, shown again, has its settlement and the wash unmoved");
+        OK(!f.running && f.mark_t == 1.f && f.fall_t == 1.f && f.line_t == 1.f && f.wash[2] == 0.f,
+           "draft: the winning move staged, shown again, has its settlement and no tint");
         /* a move that took a block and did not end the game: a prefix of
          * the fixture whose last move won its block */
         int took = 0;
@@ -434,7 +467,7 @@ int main(void)
         const int SEEDS = 60;
         for (int sd = 1; sd <= SEEDS; sd++) {
             UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
-            UtttDrawOpts o = uttt_draw_opts(sd * 7919);
+            UtttDrawOpts o = uttt_draw_opts((uint8_t)(sd * 4 + 1));
             uttt_draw_board(&d, &e, &o);
             for (int i = 0; i < d.n_pt; i++)
                 if (isnan(d.pt[i].x) || isnan(d.pt[i].y)) nan++;
@@ -796,8 +829,8 @@ int main(void)
             /* the settle draws the last block's big mark and the line only
              * when the last move won a block, which a finished win always did */
             UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
-            int32_t seed = (int32_t)(r & 0x7fffffff) | 1;
-            if (uttt_draw_settle(&d, &g, seed, 0.f, 1.f) != 0 || d.n_poly == 0) continue;
+            uint8_t look = (uint8_t)r;
+            if (uttt_draw_settle(&d, &g, look, 0.f, 1.f) != 0 || d.n_poly == 0) continue;
             games++;
             float ax = 0, ay = 0, zx = 0, zy = 0; int first = 1;
             /* the line's direction: its two farthest points of ink */
@@ -841,6 +874,114 @@ int main(void)
                least, sum / games, most);
         OK(rough, "the win line wanders at least a percent of the board, in every won game");
         OK(tame, "and never more than eight, so it stays one legible line");
+    }
+
+    /* THE RULES SHEET (docs/RULES.html): eight lines, each with a drawing
+     * out of the board's pen, and the two yellows found in the text. */
+    {
+        OK(uttt_rules_count() == 8 && !strcmp(uttt_rules_title(), "Ultimate Tic-Tac-Toe Rules")
+           && !strcmp(uttt_rules_line(7), "X moves first.") && !strcmp(uttt_rules_line(8), ""),
+           "rules: RULES.html's eight lines and title");
+        int ascii = 1;
+        for (int i = 0; i < uttt_rules_count(); i++)
+            for (const char *c = uttt_rules_line(i); *c; c++) if ((unsigned char)*c > 126) ascii = 0;
+        OK(ascii, "rules: ASCII, so a byte offset is a character offset (no em dash either)");
+        int at, len, where[8];
+        for (int i = 0; i < 8; i++) where[i] = uttt_rules_yellow(i, &at, &len);
+        OK(where[5] == UTTT_RULES_OUTLINE && uttt_rules_yellow(5, &at, &len) && at == 4 && len == 14,
+           "rules: line 6 marks \"yellow outline\" with the promise's box");
+        OK(where[6] == UTTT_RULES_TINT && uttt_rules_yellow(6, &at, &len)
+           && !strncmp(uttt_rules_line(6) + at, "yellow tinted area", (size_t)len) && len == 18,
+           "rules: line 7 marks \"yellow tinted area\" with the wash");
+        int plain = 1;
+        for (int i = 0; i < 8; i++) if (i != 5 && i != 6 && where[i] != UTTT_RULES_PLAIN) plain = 0;
+        OK(plain, "rules: no other line is marked");
+
+        /* the drawings: each fits its square, and says what its line says */
+        int fit = 1, drawn = 1, wash[8] = { 0 }, promise[8] = { 0 }, xink[8] = { 0 }, oink[8] = { 0 };
+        float wash_w[8] = { 0 };
+        for (int i = 0; i < 8; i++) {
+            UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
+            if (uttt_draw_rule(&d, i) != 0 || d.n_poly < 4) drawn = 0;
+            for (int k = 0; k < d.n_pt; k++)
+                if (d.pt[k].x < -.02f || d.pt[k].x > 1.02f || d.pt[k].y < -.02f || d.pt[k].y > 1.02f) fit = 0;
+            for (int k = 0; k < d.n_poly; k++) {
+                uint32_t c = d.poly[k].rgba >> 8;
+                if (c == (uttt_wash_rgba(1.f) >> 8)) {
+                    if (d.poly[k].n == 4) {
+                        wash[i]++;
+                        float w = d.pt[d.poly[k].first + 1].x - d.pt[d.poly[k].first].x;
+                        if (w > wash_w[i]) wash_w[i] = w;
+                    } else promise[i]++;
+                }
+                if (c == (uttt_mark_ink(UTTT_X) >> 8)) xink[i]++;
+                if (c == (uttt_mark_ink(UTTT_O) >> 8)) oink[i]++;
+            }
+        }
+        UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 60000);
+        OK(drawn && uttt_draw_rule(&d, 8) == -1 && uttt_draw_rule(&d, -1) == -1,
+           "rules: eight drawings, and no ninth");
+        OK(fit, "rules: every drawing stays in its square");
+        OK(!xink[0] && !oink[0] && !wash[0], "rules 1: the board alone");
+        /* the win line is the one stroke that crosses the whole board */
+        uint32_t line_ink = 0; float span = 0.f;
+        {
+            UtttDL l; uttt_dl_init(&l, PT, 400000, PO, 60000);
+            uttt_draw_rule(&l, 1);
+            for (int k = 0; k < l.n_poly; k++) {
+                float x0 = 9, x1 = -9, y0 = 9, y1 = -9;
+                for (int q = 0; q < l.poly[k].n; q++) {
+                    UtttPt p = l.pt[l.poly[k].first + q];
+                    if (p.x < x0) x0 = p.x;
+                    if (p.x > x1) x1 = p.x;
+                    if (p.y < y0) y0 = p.y;
+                    if (p.y > y1) y1 = p.y;
+                }
+                if ((x1 - x0) + (y1 - y0) > span) { span = (x1 - x0) + (y1 - y0); line_ink = l.poly[k].rgba >> 8; }
+            }
+        }
+        OK(xink[1] && oink[1] && span > 1.6f && line_ink == (uttt_mark_ink(UTTT_O) >> 8),
+           "rules 2: O's won line across the board, with an X block for contrast");
+        OK(oink[2] && xink[2] && !wash[2], "rules 3: one subgrid, won by O");
+        OK(oink[3] && xink[3] && !wash[3], "rules 4: an X, and the red arrow to where it sends them");
+        OK(wash[4] == 1 && wash_w[4] > .9f, "rules 5: sent to a won block, the whole board is tinted");
+        OK(wash[5] == 1 && wash_w[5] < .4f && promise[5] > 0, "rules 6: one block tinted, the promise round another");
+        OK(wash[6] == 1 && !promise[6] && xink[6], "rules 7: the tinted block and the new tap in it");
+        OK(xink[7] && !oink[7] && !wash[7], "rules 8: one X");
+
+        /* A PHRASE 104 BY 18 POINTS, in the frame the sheet gives it: its
+         * box plus box_pad + box_room on every side. The pen is rasterised
+         * into that frame, so NOTHING may leave it: the dropped box's bottom
+         * stroke was cropped (owner, 2026-09-26). */
+        UtttRulesLook L = uttt_rules_look();
+        const float e = L.box_pad + L.box_room, fw = 104.f + 2.f * e, fh = 18.f + 2.f * e;
+        uttt_dl_init(&d, PT, 400000, PO, 60000);
+        int box = uttt_draw_rule_box(&d, fw, fh) == 0 && d.n_poly > 0, inside = 1;
+        for (int k = 0; k < d.n_pt; k++)
+            if (d.pt[k].x < 0.f || d.pt[k].x > 1.f || d.pt[k].y < 0.f || d.pt[k].y > 1.f) inside = 0;
+        OK(box && (d.poly[0].rgba >> 8) == (uttt_wash_rgba(1.f) >> 8),
+           "rules: the phrase's outline is the promise's yellow");
+        OK(inside, "rules: the whole outline, roughness included, stays inside its frame");
+        /* THE PEN CLEARS THE DESCENDERS: drawn ON the phrase's box, the
+         * bottom stroke covered the y of "yellow". Its middle now runs a
+         * point or more under that box (the rough line bows about a point
+         * inward, so not the full box_grow + box_drop), and the top stroke's
+         * middle box_grow - box_drop over it. */
+        double top = 0, bot = 0; int nt = 0, nb = 0;
+        for (int k = 0; k < d.n_pt; k++) {
+            if (d.pt[k].x < .1f || d.pt[k].x > .9f) continue;   /* the sides */
+            float y = d.pt[k].y * fh;
+            if (y > fh / 2.f) { bot += y; nb++; } else { top += y; nt++; }
+        }
+        bot = nb ? bot / nb : 0; top = nt ? top / nt : 99;
+        OK(bot >= fh - e + 1.f
+           && fabs(top - (e - L.box_grow + L.box_drop)) < .6
+           && L.box_grow > 0.f && L.box_drop > 0.f,
+           "rules: the outline is grown and dropped off the phrase, clear of its descenders");
+        OK(L.row_h == 4.f * roundf(L.body_pt * L.body_lead) && L.row_h >= L.art,
+           "rules: every row one fixed height, four body lines, never shorter than a drawing");
+        OK(L.art == 62.f && L.row_gap == 14.f && L.body_pt == 15.f && L.tint == uttt_wash_rgba(.38f),
+           "rules: RULES.html's sizes");
     }
 
     printf("uttt_anim: %d checks, %d failed\n", checks, fails);

@@ -1,7 +1,13 @@
 /* EVERY SENTENCE THE APP SAYS, in one table, for the same reason the nine
  * block names and the rulebook are here: which words go with which position
  * is a question about the game, and a second copy in a renderer is a second
- * answer that drifts. English only for now; a language is one more column.
+ * answer that drifts. The words themselves are uttt/c/i18n's, in every
+ * language the game carries (uttt_lang.h); this file picks which ones.
+ *
+ * A BUBBLE READS IN ITS SENDER'S LANGUAGE. Its caption and image words are
+ * composed on the phone that stages it, in that phone's language, and every
+ * phone in the thread is shown that one message - the sister product's rule
+ * for its captions too. A screen is drawn for one phone, in its own.
  *
  * A BUBBLE is one bitmap and one caption shown identically on every device,
  * so the bubble's lines are statements about the board and the word "you"
@@ -23,16 +29,16 @@ enum {
     UTTT_SAY_BUBBLE_HEADLINE = 0,  /* "<X> wins", "A draw", "" - the mark
                                       drawn (uttt_say_bubble_mark)          */
     UTTT_SAY_BUBBLE_PLACE,         /* "58 moves", ""                        */
-    UTTT_SAY_CAPTION,              /* "O to play, bottom-middle board",
+    UTTT_SAY_CAPTION,              /* "O to play",
                                       "X won on the diagonal in 58 moves",
                                       "New game?" - one line (uttt_caption) */
 
     /* the play surface, drawn for `seat` (UTM_SEAT_*) */
     UTTT_SAY_HEADLINE_PRE,         /* words before the drawn mark           */
     UTTT_SAY_HEADLINE_POST,        /* words after it (UTTT_SAY_HEADLINE_MARK) */
-    UTTT_SAY_SUBLINE,              /* "Anywhere you like.", "Top left.",
-                                      at the end the winning line spoken:
-                                      "Top left, centre, bottom right."     */
+    UTTT_SAY_SUBLINE,              /* nothing while the game runs (the
+                                      yellow tint says where); at the end
+                                      the winning line: "Diagonal"          */
 
     /* the spectator's one line */
     UTTT_SAY_WATCH_LABEL,          /* "watching"                            */
@@ -61,7 +67,7 @@ enum {
     UTTT_SAY_DOOR_RULES,           /* the rulebook door                     */
 
     /* getting a staged bubble out (uttt_msg.h UTM_SEND_HINT_MS, and
-     * shared/c/msg_stage's MS_INSERT_DOOR) */
+     * shared/c/msg_stage's MS_ACT_DOOR) */
     UTTT_SAY_SEND_HINT,            /* under the arrow at Messages' Send     */
     UTTT_SAY_DOOR_SEND,            /* the door when every insert went unanswered */
     /* the end screen's replay link (uttt_replay_url), and the receipt the
@@ -108,6 +114,11 @@ int uttt_say_by(int key, const UtttGame *g, int seat, const char *who,
 int uttt_caption(int over, int turn, int block, int line, int n, const char *who,
                  char *out, int cap);
 
+/* THE INK THE PLAY SURFACE SETS ITS HEADLINE IN, 0xRRGGBBAA: the page's ink
+ * while the game runs, the winner's own mark ink once somebody has won, X
+ * blue for a draw. */
+uint32_t uttt_say_headline_ink(const UtttGame *g);
+
 /* The mark the BUBBLE's headline draws before its words - the winner's - or
  * 0: only a finished game's bubble has words (uttt_bubble). The bubble
  * cannot say "You win" - it is one bitmap, false on the loser's phone - so
@@ -130,5 +141,18 @@ int uttt_say_watch_mark(const UtttGame *g);
  * uttt_cell_rect's, the inverse of uttt_hit. -1 for an `mv` off the board
  * or a buffer too small. */
 int uttt_say_cell(const UtttGame *g, int mv, char *out, int cap);
+
+/* THE RULES: eight lines and a title, docs/RULES.html word for word; never
+ * NULL. Each line has its drawing (uttt_draw.h, uttt_draw_rule). */
+int         uttt_rules_count(void);
+const char *uttt_rules_line(int i);
+const char *uttt_rules_title(void);
+
+/* WHICH PHRASE OF LINE `i` IS MARKED, and how: UTTT_RULES_OUTLINE for "yellow
+ * outline" (a pen box round it, uttt_draw_rule_box), UTTT_RULES_TINT for
+ * "yellow tinted area" (the wash behind it), UTTT_RULES_PLAIN for neither.
+ * `at` and `len` are byte offsets into uttt_rules_line(i), which is ASCII. */
+enum { UTTT_RULES_PLAIN = 0, UTTT_RULES_OUTLINE = 1, UTTT_RULES_TINT = 2 };
+int uttt_rules_yellow(int i, int *at, int *len);
 
 #endif

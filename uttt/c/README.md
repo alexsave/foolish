@@ -27,6 +27,16 @@ rough.js the design document is drawn with and compares it sample by sample
 with what the C emits, which is the only check that can see a drift that still
 looks like a drawing.
 
+The WORDS are the kernel's too, in 25 languages. `uttt_say.c` decides which
+sentence a position says; `i18n/strings_<code>.c` holds each language's
+words, keyed and width-limited by `i18n/keys.h`, for the languages
+`shared/c/i18n/languages.h` lists; `uttt_lang.c` picks one from the phone's
+preference list. A bubble is composed on its sender's phone, so it reads in
+the sender's language everywhere. `uttt_lang_test.c` holds every language to
+every key, English's placeholders, each key's width and a one-line caption.
+Changing a word is editing its language file; adding a key is a line in
+`keys.h` and one in all 25 files, or the test fails.
+
 ## The answer to "how long can it get"
 
 **81 plies, and it fits in 22 bytes.** That is every cell on the board filled,

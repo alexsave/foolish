@@ -12,18 +12,29 @@
  * ---------------------------------------------------------------- the layout
  *
  *     [0]      UTM_MAGIC
- *     [1]      UTM_FORMAT (1)
+ *     [1]      UTM_FORMAT (2)
  *     [2..5]   seed, int32 big-endian: the send time of the first empty board
  *     [6]      flags: bit 0 = sealed (the X seat is taken). Others reserved.
- *     [7..15]  O's seat tag - the creator's
- *     [16..24] X's seat tag - the joiner's, present only when sealed
+ *     [7]      look: the drawing byte (below)
+ *     [8..16]  O's seat tag - the creator's
+ *     [17..25] X's seat tag - the joiner's, present only when sealed
  *     [+0..1]  check: the first two bytes of SHA-256 over every other byte
  *     [..end]  the game, as uttt_encode codes it (runs to the end)
  *
  * A SHIPPED BUBBLE LIVES FOREVER in somebody's transcript, so the format is
  * the second byte read and a reader that meets one it does not know refuses
- * rather than misreads. Nothing has shipped at format 1 yet; after TestFlight
- * it is frozen and a change is format 2.
+ * rather than misreads. FORMAT 1 shipped in TestFlight 1.0(6)-1.0(8) and is
+ * still read: it is this layout without byte [7] (the tags start at 7), and
+ * its look is uttt_look_of_seed of its seed - one branch on the way in, and
+ * the same message from there on. Nothing writes format 1 any more.
+ *
+ * THE LOOK is the byte every stroke on the sheet is drawn from - the grid,
+ * the marks, the big marks, the win line - and nothing else is (uttt_draw.h,
+ * uttt_look_seed). A phone picks it at random when it makes an invitation,
+ * and a rematch (Again, utm_again) COPIES the finished game's, so a chain of
+ * rematches is played on one napkin while a fresh game gets a fresh one. It
+ * is not identity: the seed is (utm_tag, the records, utm_same_game), and
+ * two games with one look are two games.
  *
  * The check is there because the game code is a mixed-radix number with no
  * redundancy: a link cut short does not fail to decode, it decodes into a
@@ -48,14 +59,16 @@
 #include <stdint.h>
 
 #define UTM_MAGIC     0xB7
-#define UTM_FORMAT    1
+#define UTM_FORMAT    2
+#define UTM_FORMAT_1  1                     /* read, never written */
 #define UTM_TAG_LEN   9
 #define UTM_CHECK_LEN 2
 #define UTM_FLAG_SEALED 0x01
 #define UTM_FLAGS_KNOWN (UTM_FLAG_SEALED)
 
-#define UTM_HEAD_OPEN   (7 + UTM_TAG_LEN)
-#define UTM_HEAD_SEALED (7 + 2 * UTM_TAG_LEN)
+#define UTM_TAGS_AT     8                   /* where O's tag starts (7 in format 1) */
+#define UTM_HEAD_OPEN   (UTM_TAGS_AT + UTM_TAG_LEN)
+#define UTM_HEAD_SEALED (UTM_TAGS_AT + 2 * UTM_TAG_LEN)
 #define UTM_MAX_CODE    48                  /* uttt_code.c's CAP */
 #define UTM_MAX_BYTES   (UTM_HEAD_SEALED + UTM_CHECK_LEN + UTM_MAX_CODE)
 /* "?m=" + base32 + NUL */
@@ -78,6 +91,7 @@
 
 typedef struct {
     int32_t  seed;
+    uint8_t  look;                /* the drawing byte                     */
     uint8_t  sealed;
     uint8_t  o[UTM_TAG_LEN];      /* the creator                          */
     uint8_t  x[UTM_TAG_LEN];      /* the joiner; meaningful iff sealed    */
@@ -109,8 +123,16 @@ int32_t utm_seed_at(int64_t unix_seconds);
 
 /* ----------------------------------------------------------- the bytes */
 
-/* An invitation: the empty board, `me` in the O seat, X open. */
-void utm_open(UtmMsg *m, int32_t seed, const uint8_t me[UTM_TAG_LEN]);
+/* An invitation: the empty board, `me` in the O seat, X open, drawn with
+ * `look` - a byte from the host's secure random for a fresh game. */
+void utm_open(UtmMsg *m, int32_t seed, uint8_t look, const uint8_t me[UTM_TAG_LEN]);
+
+/* AGAIN: the invitation that follows `finished`, from `me`, at `seed` (a
+ * fresh send time), ON THE SAME NAPKIN - it takes the finished game's look,
+ * and that is the whole rule, kept here so no host can forget it. Returns 1;
+ * 0 and nothing written unless the finished game offers the Again door
+ * (utm_door). */
+int  utm_again(UtmMsg *next, const UtmMsg *finished, int32_t seed, const uint8_t me[UTM_TAG_LEN]);
 
 /* Bytes written, or a negative UTM_E*. Refuses to write what decode would
  * refuse to read. */

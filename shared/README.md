@@ -14,6 +14,7 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 | `c/sha256.{c,h}` | SHA-256 | ROOT, UTTT, THIRD |
 | `c/deal_rng.{c,h}` | the deal's RNG | ROOT, THIRD |
 | `c/b32.{c,h}` | base32 codes | UTTT |
+| `c/i18n/languages.h` | the language registry: every language's code, endonym and direction, one row each | ROOT (the string generator reads it), UTTT (compiled into its kernel, which indexes its tables by it) |
 | `c/motion_ruler/` | the debug ruler's palette and geometry (`CMotionRuler`), painted by both products and read by `tools/motion` | ROOT, UTTT |
 | `c/msg_stage/` | when a Messages insert may go, what a silent one means, and whether a received bubble is my own echo (`CMsgStage`); `INSERT_GATING.md` is the evidence, `msg_stage_test.c` the test | UTTT (ROOT compiles the Swift face, its stage path does not call it) |
 

@@ -1,3 +1,4 @@
+import CoreText
 import CUttt
 import UIKit
 
@@ -10,10 +11,15 @@ enum UtttInk {
     static let ink   = UIColor(red: 0.114, green: 0.106, blue: 0.087, alpha: 1)   // #1d1b16
     static let muted = UIColor(red: 0.42, green: 0.40, blue: 0.35, alpha: 1)
     static let label = UIColor(red: 0.541, green: 0.522, blue: 0.467, alpha: 1)   // #8a8577
-    static let blue  = UIColor(red: 0.145, green: 0.216, blue: 0.420, alpha: 1)   // #25376b
     /// The doors' outline ink (uttt_rule.c EDGE, #1b2a52), which the label
     /// is set in so the word and the bar are one pen.
     static let doorInk = UIColor(red: 0.106, green: 0.165, blue: 0.322, alpha: 1)
+
+    /// A kernel colour, 0xRRGGBBAA.
+    static func rgba(_ c: UInt32) -> UIColor {
+        UIColor(red: CGFloat((c >> 24) & 0xff) / 255, green: CGFloat((c >> 16) & 0xff) / 255,
+                blue: CGFloat((c >> 8) & 0xff) / 255, alpha: CGFloat(c & 0xff) / 255)
+    }
 }
 
 /// One face of type: size, weight, tracking, colour, and whether it is set
@@ -30,7 +36,32 @@ struct UtttType {
     /// The 9.5-point label ("YOU ARE", "WATCHING"): .2em, capitals.
     static let small    = UtttType(size: 9.5, weight: .semibold, kern: 1.9, color: UtttInk.label, upper: true)
 
-    func font(_ scale: CGFloat = 1) -> UIFont { .systemFont(ofSize: size * scale, weight: weight) }
+    /// ONE CUT AT EVERY SIZE: the headline's. The system face switches from
+    /// its display cut to its wider text cut under 20 points, so the
+    /// 9.5-point "YOU ARE" and a scaled-down headline read as a different
+    /// font from the 21-point headline beside them (owner, 2026-09-26). The
+    /// optical size is pinned to the headline's, so every UTTT label is the
+    /// same design and type scales in proportion.
+    func font(_ scale: CGFloat = 1) -> UIFont {
+        let base = UIFont.systemFont(ofSize: size * scale, weight: weight)
+        let d = base.fontDescriptor.addingAttributes([
+            UIFontDescriptor.AttributeName(rawValue: kCTFontOpticalSizeAttribute as String): UtttType.headline.size,
+        ])
+        return UIFont(descriptor: d, size: size * scale)
+    }
+
+    /// Whether `s` in capitals carries a mark over a letter (an accent, a
+    /// breve): such a line needs the room over the capitals it would
+    /// otherwise lend to the line above.
+    static func hasMarkAbove(_ s: String) -> Bool {
+        s.uppercased().decomposedStringWithCanonicalMapping.unicodeScalars.contains {
+            $0.properties.canonicalCombiningClass == .above
+        }
+    }
+
+    /// The smallest a line is scaled to fit its box. Below half size a word
+    /// is small, but a clipped word ("Ai câștiga") is wrong in any language.
+    static let minScale: CGFloat = 0.3
 
     func text(_ s: String, scale: CGFloat = 1, align: NSTextAlignment = .natural,
               color: UIColor? = nil) -> NSAttributedString {
@@ -52,21 +83,30 @@ extension UILabel {
     /// SET IN A BOX OF `width`: in a COLUMN wrapped at spaces only, as many
     /// lines as the words, a word wider than the column scaling the type down
     /// to it (never "Diagona / l"); on one line otherwise, scaled to fit.
-    /// Down to half size, as the sheet always allowed. Returns its size.
+    /// Measured at the size it is set in, and scaled until it FITS, down to
+    /// UtttType.minScale: a translation's long word shrinks, it is never cut.
+    /// Returns its size.
     @discardableResult
     func set(_ s: String, _ type: UtttType, width: CGFloat, column: Bool,
              align: NSTextAlignment, color: UIColor? = nil, maxHeight: CGFloat = .infinity) -> CGSize {
         let words = s.split(separator: " ").map(String.init)
+        let floor = UtttType.minScale
         let natural = column ? (words.map { type.width($0) }.max() ?? 0) : type.width(s)
-        var scale = natural > width && natural > 0 ? max(0.5, width / natural) : 1
+        var scale = natural > width && natural > 0 ? max(floor, width / natural) : 1
+        for _ in 0..<6 where scale < 1 {
+            let at = column ? (words.map { type.width($0, scale: scale) }.max() ?? 0)
+                            : type.width(s, scale: scale)
+            if at <= width || scale <= floor { break }
+            scale = max(floor, scale * width / at)
+        }
         numberOfLines = column ? max(1, words.count) : 1
         lineBreakMode = column ? .byWordWrapping : .byTruncatingTail
         var size = CGSize.zero
         for _ in 0..<6 {
             attributedText = type.text(s, scale: scale, align: align, color: color)
             size = sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
-            if size.height <= maxHeight || scale <= 0.5 { break }
-            scale = max(0.5, scale * 0.9)
+            if size.height <= maxHeight || scale <= floor { break }
+            scale = max(floor, scale * 0.9)
         }
         return CGSize(width: min(width, ceil(size.width)), height: ceil(size.height))
     }
@@ -143,8 +183,8 @@ final class UtttInkView: UIView {
     /// The side indicator: the same X that is about to land on the board,
     /// out of the same pen, because a glyph from a font would be the only
     /// thing in the frame that did not come off the nib.
-    static func mark(_ m: Uttt.Mark, seed: Int32) -> UtttInkView {
-        UtttInkView(key: "mark \(m.rawValue) \(seed)", square: true) { _ in Uttt.mark(m, seed: seed) }
+    static func mark(_ m: Uttt.Mark, look: UInt8) -> UtttInkView {
+        UtttInkView(key: "mark \(m.rawValue) look \(look)", square: true) { _ in Uttt.mark(m) }
     }
 }
 
@@ -221,6 +261,7 @@ public final class UtttDoorButton: UIControl {
 public final class UtttRulebookButton: UIControl {
     private let ink = UtttInkView(key: "rulebook", square: true) { s in Uttt.rulebook(w: s.width, h: s.height) }
     private let act: () -> Void
+    #if DEBUG
     private let onHold: (() -> Void)?
     /// A hold that fired swallows the release that ends it (foolish's
     /// FSquareButton `holdFired`): the recogniser cancels the touch, and
@@ -229,6 +270,7 @@ public final class UtttRulebookButton: UIControl {
 
     /// How long a hold on the rulebook is before it opens the diagnostics.
     public static let holdSeconds: TimeInterval = 1.5
+    #endif
 
     /// The door's size - one size at every drawer height, the kernel's
     /// (`uttt_sheet`'s door) - and the Again bar's height, which stands
@@ -237,16 +279,24 @@ public final class UtttRulebookButton: UIControl {
 
     /// `onHold`, when given, is a SECOND action on the same door, reached by
     /// holding it for `holdSeconds`: the diagnostics panel. Unlabelled on
-    /// purpose, for the owner rather than players, and in every build.
+    /// purpose, for the owner rather than players.
+    ///
+    /// DEBUG ONLY. In Release the door is a plain tap: no recogniser, no
+    /// latch, and `onHold` is dropped unread. One signature in both builds,
+    /// so the screens that pass it through carry no #if of their own.
     public init(act: @escaping () -> Void, onHold: (() -> Void)? = nil) {
         self.act = act
+        #if DEBUG
         self.onHold = onHold
+        #endif
         super.init(frame: .zero)
+        #if DEBUG
         if onHold != nil {
             let hold = UILongPressGestureRecognizer(target: self, action: #selector(held(_:)))
             hold.minimumPressDuration = Self.holdSeconds
             addGestureRecognizer(hold)
         }
+        #endif
         addSubview(ink)
         isAccessibilityElement = true
         accessibilityLabel = Uttt.say(.doorRules)
@@ -256,10 +306,13 @@ public final class UtttRulebookButton: UIControl {
     required init?(coder: NSCoder) { fatalError() }
 
     @objc private func fire() {
+        #if DEBUG
         if holdFired { holdFired = false; return }
+        #endif
         act()
     }
 
+    #if DEBUG
     @objc private func held(_ g: UILongPressGestureRecognizer) {
         guard g.state == .began else { return }
         holdFired = true
@@ -268,6 +321,7 @@ public final class UtttRulebookButton: UIControl {
          * cancels it); clear the latch once this hold is over either way */
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.holdFired = false }
     }
+    #endif
 
     public override func layoutSubviews() {
         super.layoutSubviews()

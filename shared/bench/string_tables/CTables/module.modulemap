@@ -1,0 +1,4 @@
+module CTables {
+ header "tables.h"
+ export *
+}

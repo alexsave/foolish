@@ -37,14 +37,20 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// puts in, and never swapped.
     private lazy var overlay = UtttSendOverlay { [weak self] in self?.sendDoorTapped() }
 
-    /// The insert the send door re-issues: the bubble, and the stage it
-    /// belongs to - a newer stage or a cancel makes it void.
-    private var doorInsert: (message: MSMessage, generation: Int, conversation: MSConversation)?
+    /// THE INSERT LOOP of the current stage (shared/c/msg_stage's ms_stage):
+    /// what silence, an error, the drawer going compact and a tap on the door
+    /// mean, with the budgets for each. This controller only inserts, runs the
+    /// timers and reports; every decision is the machine's. TWO GUARDS, TWO
+    /// VECTORS: `stageGeneration` says which STAGE is current (a newer stage,
+    /// a send or a cancel voids every waiter of the old one before it can
+    /// reach the machine, which knows one stage at a time), and the machine's
+    /// try numbers say which TRY of that stage a timer or an answer belongs
+    /// to (an overtaken try's silence or error is moot; its yes still lands).
+    private var loop = InsertStaging.Loop()
 
-    /// The stage whose insert Messages answered with a yes. Every watchdog of
-    /// that stage stands down at once, including one armed by an earlier try
-    /// whose answer arrived late.
-    private var landedGeneration = -1
+    /// The bubble the loop is putting in the field, and the stage it belongs
+    /// to: what a retry, the door and a collapse's wake-up insert again.
+    private var stageInsert: (message: MSMessage, generation: Int, conversation: MSConversation)?
 
     /// The bubble sitting in the input field, which nobody has sent yet.
     ///
@@ -79,10 +85,6 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// bubble as cancelled, so a cancel that does not name this one is stale.
     private var draftURL: URL?
 
-    /// A fresh MSSession for the next stage: Again starts a new game, and a
-    /// new game must never fold the finished game's last bubble into itself.
-    private var freshSession = false
-
     /// A drawer opened from the + menu is bound to no message at all, and the
     /// host delivers nothing to it - no didReceive, no didSelect - until a
     /// bubble is tapped. foolish established this from the host binaries (see
@@ -104,7 +106,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 #if DEBUG
         if UtttDev.empty { UtttLog.note("load", "dev.empty - nothing"); return }
 #endif
-        UtttLog.note("load")
+        UtttLog.note("load", "speaks \(UtttLanguage.apply())")
         /* CLEAR UNTIL IT APPEARS - see `appeared`. */
         view.backgroundColor = .clear
 
@@ -128,6 +130,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 #if DEBUG
         if UtttDev.empty { return }
 #endif
+        UtttLanguage.apply()
         UtttLog.note("active", "\(styleName), selected \(conversation.selectedMessage != nil)")
         becameActiveAt = Date()
         overlay.compact = presentationStyle == .compact
@@ -389,6 +392,13 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// a torn-down extension can have lost.
     override func didStartSending(_ message: MSMessage, conversation: MSConversation) {
         super.didStartSending(message, conversation: conversation)
+        /* A SENT STAGE IS FINISHED: no watchdog, retry, paint/collapse wait or
+         * send door may re-insert it. Each of them checks the generation, so
+         * bumping it here stands them all down, exactly as a cancel does; a
+         * late-answered insert otherwise put the sent move back in the field. */
+        stageGeneration += 1
+        loop.reset()
+        stageInsert = nil
         UtttSeats.flush()                      /* a join records X as it is played */
         let wire = UtttWire(url: message.url) ?? staged
         UtttLog.note("send", wire.map { "\($0.text.count) chars" } ?? "NO PAYLOAD")
@@ -397,12 +407,10 @@ final class MessagesViewController: MSMessagesAppViewController {
             draftURL = nil
             staged = nil
         }
-        freshSession = false
         live?.setPending(false)
         hideHintNow()
         overlay.staged = false
         overlay.door = false
-        doorInsert = nil
         let wasUnbound = unbound
         if let wire { settleSent(wire, conversation) } else { present(conversation, motion: .settle) }
 
@@ -478,10 +486,11 @@ final class MessagesViewController: MSMessagesAppViewController {
         draftURL = nil
         staged = nil
         stageGeneration += 1           // a stage still waiting to insert is void
+        loop.reset()
+        stageInsert = nil
         live?.setPending(false)
         overlay.staged = false
         overlay.door = false
-        doorInsert = nil
 
         /* THE X IS THE UNDO - the only one there is, by the owner's decision
          * (no undo button, no take-back door): Messages' own X on the draft
@@ -550,6 +559,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         let waiters = transitionWaiters
         transitionWaiters.removeAll()
         for seq in waiters.keys.sorted() { waiters[seq]?.resume() }
+        /* A PARKED INSERT LOOP WAKES HERE: the drawer is compact, so a parked
+         * yes is released about now and a dropped try can be told apart. */
+        if presentationStyle == .compact { act(loop.compact()) }
     }
 
     private static func name(_ s: MSMessagesAppPresentationStyle) -> String {
@@ -624,6 +636,16 @@ final class MessagesViewController: MSMessagesAppViewController {
         UtttLog.note("present", "seed \(Uttt.seed) by \(Uttt.seatBy) seat \(Uttt.seat) plies \(Uttt.plyCount) door \(Uttt.door)")
         showSeat(motion, conversation)
         UtttSeats.flush()
+#if DEBUG
+        /* `dev.restage` (store frames only): put the tapped board, unchanged,
+         * back into the field in this session - see UtttDev.takeRestage. */
+        if UtttDev.takeRestage(), let same = UtttWire.resident {
+            UtttLog.note("present", "dev.restage: the tapped board, unchanged")
+            whenReady { [weak self] in
+                DispatchQueue.main.async { self?.stage(same, in: conversation) }
+            }
+        }
+#endif
     }
 
     /// The screen for the resident game, by this device's seat. One owner,
@@ -645,12 +667,12 @@ final class MessagesViewController: MSMessagesAppViewController {
             showBoard(mark: Uttt.myMark, door: door, motion: motion, conversation)
 
         case .spectator:
-            let model = UtttModel(seed: Uttt.seed, you: .none)
+            let model = UtttModel(you: .none)
             model.refresh()
             show(UtttWatchScreen(model: model, door: door, slide: slide,
                                  onDoor: { [weak self] in self?.again(in: conversation) },
                                  onRules: { [weak self] in self?.openRules() },
-                                 onDiagnostics: { [weak self] in self?.openDiagnostics(conversation) }))
+                                 onDiagnostics: diagnosticsHold(conversation)))
         }
     }
 
@@ -721,15 +743,35 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     // MARK: the things a person can do
 
-    /// Put an empty board on the table. THIS MOMENT IS THE SEED.
+    /// Put an empty board on the table. THIS MOMENT IS THE SEED, and the
+    /// napkin's look is a random byte (Uttt.openInvitation) - or, for
+    /// Again, the finished game's, copied by the kernel (`rematch`).
     ///
     /// SHOWN FIRST, STAGED ONCE THE DRAWER IS UP. Baking the bubble is the
     /// one slow thing on this path, and on a cold open it used to run before
     /// the first screen existed; and the insert used to land while Messages
     /// was still presenting the drawer, which is when the whole-window flash
     /// was at its longest (see `appeared`).
-    private func start(in conversation: MSConversation) {
-        Uttt.openInvitation()
+    private func start(in conversation: MSConversation, rematch: Bool = false) {
+        if rematch {
+            /* the resident game is the finished one the door was on; the
+             * kernel refuses anything else, and then there is no draft */
+            guard Uttt.openRematch() else {
+                UtttLog.fault("start", "Again on a game that is not over")
+                return
+            }
+        } else {
+#if DEBUG
+            /* `dev.invite` (store frames only): see UtttDev.takeSeededInvite. */
+            if UtttDev.takeSeededInvite() {
+                Uttt.openInvitationSeeded(at: Date(timeIntervalSince1970: TimeInterval(UtttDev.seed)))
+            } else {
+                Uttt.openInvitation()
+            }
+#else
+            Uttt.openInvitation()
+#endif
+        }
         guard let wire = UtttWire.resident else {
             UtttLog.fault("start", "the kernel wrote no invitation")
             return
@@ -745,18 +787,21 @@ final class MessagesViewController: MSMessagesAppViewController {
         }
     }
 
-    /// AGAIN (docs/UI.html 06, 07): a fresh invitation from whoever asks, in a
-    /// NEW session, so the finished game's last bubble stays in the thread.
+    /// AGAIN (docs/UI.html 06, 07): a fresh invitation from whoever asks, in
+    /// the FINISHED GAME'S session (sessionFor). The open drawer is bound to
+    /// that session and the host delivers didReceive only for it, so a new
+    /// session left the reply unheard; the cost is that Messages collapses
+    /// the finished game's last bubble to its caption.
     /// Whoever proposes moves second - the lobby rule - which is also what
-    /// swaps the players for a rematch.
+    /// swaps the players for a rematch. The rematch is played on the
+    /// finished game's napkin: the kernel copies its look (uti_msg_open_again).
     private func again(in conversation: MSConversation) {
         UtttLog.note("again")
         identify(conversation)
-        freshSession = true
         draftIsNewGame = true
         sent = nil
         arrived = nil
-        start(in: conversation)
+        start(in: conversation, rematch: true)
     }
 
     // MARK: staging
@@ -764,16 +809,18 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// ONE MSSession PER GAME. Messages collapses every older bubble of a
     /// session down to its caption and keeps only the newest interactive, and
     /// a message in a session is one Messages will hand back when tapped.
+    /// The one exception is Again: its new game stays in the tapped finished
+    /// game's session, because an open drawer hears only its own session.
     private var session: MSSession?
     private var sessionGame: UtttWire?
 
     private func sessionFor(_ wire: UtttWire, _ conversation: MSConversation) -> MSSession {
-        if !freshSession, let s = session, let g = sessionGame, g.isSameGame(as: wire) { return s }
+        if let s = session, let g = sessionGame, g.isSameGame(as: wire) { return s }
         let selected = conversation.selectedMessage
         let s: MSSession
-        if !freshSession, let sel = selected?.session,
-           let w = UtttWire(url: selected?.url), w.isSameGame(as: wire) {
-            s = sel
+        if let sel = selected?.session,
+           draftIsNewGame || UtttWire(url: selected?.url)?.isSameGame(as: wire) == true {
+            s = sel        // Again stays in the finished game's session, so replies reach this drawer
         } else {
             s = MSSession()
         }
@@ -803,7 +850,8 @@ final class MessagesViewController: MSMessagesAppViewController {
          * by the stage it replaces. The hint comes back once this one lands. */
         overlay.staged = false
         overlay.door = false
-        doorInsert = nil
+        loop.reset()
+        stageInsert = nil
 
         /* BAKED NOW, from the message being staged, before anything can load
          * a different one into the kernel's one resident slot. */
@@ -829,7 +877,12 @@ final class MessagesViewController: MSMessagesAppViewController {
         /* THE COLLAPSED LINE IS OURS TOO, or Messages writes "<phone number>
          * sent Ultimate message" into a thread about a board. */
         message.summaryText = caption
-        freshSession = false
+#if DEBUG
+        if let forced = UtttDev.takeCaption(), !forced.isEmpty {
+            UtttLog.note("stage", "dev.caption: summary '\(forced)' for '\(caption)'")
+            message.summaryText = forced
+        }
+#endif
 
         staged = wire
         draftURL = message.url
@@ -862,7 +915,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 #if DEBUG
                 UtttLog.mem("layout")
 #endif
-                self.insert(message, generation: generation, in: conversation, attempt: 1)
+                self.insert(message, generation: generation, in: conversation)
             }
             return
         }
@@ -886,66 +939,90 @@ final class MessagesViewController: MSMessagesAppViewController {
                 UtttLog.note("stage", "overtaken while collapsing")
                 return
             }
-            self.insert(message, generation: generation, in: conversation, attempt: 1)
+            self.insert(message, generation: generation, in: conversation)
         }
     }
 
-    /// NOTHING IS DROPPED SILENTLY. A refused insert is logged with Messages'
-    /// own error and tried once more a beat later; if that fails too the
-    /// draft is treated exactly as a cancelled one - the board goes back, so
-    /// it never shows a move the input field does not hold.
-    ///
-    /// AND A SILENT ONE IS A REFUSAL TOO. ChatKit drops an insert that arrives
-    /// before the host counts the drawer as presenting and never calls back
-    /// (shared/c/msg_stage/INSERT_GATING.md), so every try arms a watchdog, and
-    /// what its silence means is shared (ms_insert_silence): in the compact
-    /// drawer, try again every half second up to ten times; expanded, where
-    /// the host parks an accepted insert's answer on purpose, keep listening
-    /// and count nothing; out of tries, hand the human the send door.
-    private func insert(_ message: MSMessage, generation: Int,
-                        in conversation: MSConversation, attempt: Int) {
+    /// NOTHING IS DROPPED SILENTLY, and what each outcome means is the shared
+    /// insert loop's (shared/c/msg_stage/msg_stage.h, INSERT_GATING.md):
+    /// - a try answered with a nil error has landed;
+    /// - a try answered with an error is asked again a beat later, and the
+    ///   third error reverts the draft, exactly as a cancel would, so the
+    ///   board never shows a move the input field does not hold;
+    /// - a try unanswered for half a second in the compact drawer was dropped
+    ///   by ChatKit's gate and is asked again, ten tries in all, and then the
+    ///   human is handed the send door;
+    /// - a try unanswered while the drawer is not compact parks the loop,
+    ///   with no timer, until didTransition says compact: the host defers an
+    ///   accepted insert's answer there, and the human has to collapse the
+    ///   drawer before they can send anyway.
+    /// This is the first try; everything after it comes back through `act`.
+    private func insert(_ message: MSMessage, generation: Int, in conversation: MSConversation) {
+        stageInsert = (message, generation, conversation)
+        act(loop.first())
+    }
+
+    /// DO WHAT THE LOOP SAYS. Every timer and every answer checks the stage's
+    /// generation before it feeds the machine, and this runs only for the
+    /// stage the machine is serving.
+    private func act(_ action: InsertStaging.Loop.Action) {
+        guard let s = stageInsert, s.generation == stageGeneration else { return }
+        let t = loop.tryNumber
+        switch action {
+        case .none:
+            return
+        case .insert:
+            issue(try: t, s)
+        case .insertLater:
+            UtttLog.fault("insert", "try \(t) failed; asking again after a beat")
+            DispatchQueue.main.asyncAfter(deadline: .now() + InsertStaging.errorBeatSeconds) { [weak self] in
+                guard let self, self.stageGeneration == s.generation else { return }
+                self.act(self.loop.due(try: t))
+            }
+        case .park:
+            UtttLog.note("insert", "try \(t) unanswered while \(styleName); parked until compact")
+        case .arm:
+            UtttLog.note("insert", "compact; try \(t)'s watchdog armed again")
+            watchSilence(try: t, s)
+        case .door:
+            UtttLog.fault("insert", "try \(t) got no answer; \(t) unanswered, offering the send door")
+            overlay.door = true
+            if presentationStyle == .compact { showHintLayer() }
+        case .landed:
+            /* IN THE FIELD: every watchdog of this stage stands down (the
+             * machine answers nothing more for them), and the hint's wait
+             * starts now. */
+            overlay.door = false
+            overlay.staged = true
+            overlay.restart()
+            if presentationStyle == .compact { showHintLayer() }
+        case .revert:
+            UtttLog.fault("insert", "gave up; the draft is reverted")
+            didCancelSending(s.message, conversation: s.conversation)
+        }
+    }
+
+    /// One try: the insert itself, with its watchdog armed first.
+    private func issue(try t: Int, _ s: (message: MSMessage, generation: Int, conversation: MSConversation)) {
         /* THE ACTIVE CONVERSATION when there is one - foolish's stage uses
          * nothing else - and the one we were handed only as a fallback. */
-        let target = activeConversation ?? conversation
-        UtttLog.note("insert", "attempt \(attempt)\(activeConversation == nil ? " (no active conversation)" : "")")
+        let target = activeConversation ?? s.conversation
+        UtttLog.note("insert", "try \(t)\(activeConversation == nil ? " (no active conversation)" : "")")
         overlay.door = false
-        var answered = false
-        watchSilence(of: message, generation: generation, in: conversation,
-                     attempt: attempt) { answered }
+        watchSilence(try: t, s)
         let answer: (Error?) -> Void = { [weak self] error in
             DispatchQueue.main.async {
-                if answered { UtttLog.note("insert", "late answer for attempt \(attempt)") }
-                answered = true
-                guard let self else { return }
-                guard let error else {
-                    UtttLog.note("inserted")
+                guard let self, self.stageGeneration == s.generation else { return }
+                if let error {
+                    UtttLog.fault("insert", "try \(t) failed: \(error.localizedDescription)")
+                } else {
+                    UtttLog.note("inserted", t == self.loop.tryNumber ? "" : "late, try \(t)")
 #if DEBUG
                     UtttLog.mem("inserted")
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1) { UtttLog.mem("inserted+1s") }
 #endif
-                    guard self.stageGeneration == generation else { return }
-                    /* IN THE FIELD: every watchdog of this stage stands down,
-                     * and the hint's wait starts now. */
-                    self.landedGeneration = generation
-                    self.doorInsert = nil
-                    self.overlay.door = false
-                    self.overlay.staged = true
-                    self.overlay.restart()
-                    if self.presentationStyle == .compact { self.showHintLayer() }
-                    return
                 }
-                UtttLog.fault("insert", "attempt \(attempt) failed: \(error.localizedDescription)")
-                guard self.stageGeneration == generation else { return }
-                if attempt < 3 {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                        guard self.stageGeneration == generation else { return }
-                        self.insert(message, generation: generation, in: conversation,
-                                    attempt: attempt + 1)
-                    }
-                    return
-                }
-                UtttLog.fault("insert", "gave up; the draft is reverted")
-                self.didCancelSending(message, conversation: conversation)
+                self.act(self.loop.answer(try: t, ok: error == nil))
             }
         }
 #if DEBUG
@@ -958,48 +1035,32 @@ final class MessagesViewController: MSMessagesAppViewController {
 #if DEBUG
         UtttLog.mem("insert")
 #endif
-        target.insert(message, completionHandler: answer)
+        target.insert(s.message, completionHandler: answer)
     }
 
-    /// One try's watchdog: after the kernel's silence, if nobody answered and
-    /// the stage is still current and not landed, ask the kernel what the
-    /// silence means. Every firing is logged, so a device log shows how many
-    /// tries the host needed.
-    private func watchSilence(of message: MSMessage, generation: Int,
-                              in conversation: MSConversation, attempt: Int,
-                              answered: @escaping () -> Bool) {
+    /// One try's watchdog: after the shared silence, tell the machine, with
+    /// the drawer as it is NOW. Every firing is logged, so a device log shows
+    /// how many tries the host needed.
+    private func watchSilence(try t: Int, _ s: (message: MSMessage, generation: Int, conversation: MSConversation)) {
         DispatchQueue.main.asyncAfter(deadline: .now() + InsertStaging.silenceSeconds) { [weak self] in
-            guard let self, !answered(), self.stageGeneration == generation,
-                  self.landedGeneration != generation else { return }
+            guard let self, self.stageGeneration == s.generation else { return }
             let compact = self.presentationStyle == .compact
-            switch InsertStaging.silence(attempt: attempt, compact: compact) {
-            case .listen:
-                UtttLog.note("insert", "attempt \(attempt) unanswered while \(self.styleName); listening")
-                self.watchSilence(of: message, generation: generation, in: conversation,
-                                  attempt: attempt, answered: answered)
-            case .retry:
-                UtttLog.fault("insert", "attempt \(attempt) got no answer; retrying")
-                self.insert(message, generation: generation, in: conversation, attempt: attempt + 1)
-            case .door:
-                UtttLog.fault("insert", "attempt \(attempt) got no answer; \(attempt) unanswered, offering the send door")
-                self.doorInsert = (message, generation, conversation)
-                self.overlay.door = true
-                if compact { self.showHintLayer() }
-            }
+            let action = self.loop.silence(try: t, compact: compact)
+            if action == .insert { UtttLog.fault("insert", "try \(t) got no answer; retrying") }
+            self.act(action)
         }
     }
 
     /// THE SEND DOOR, tapped: the same bubble, inserted again from a drawer
-    /// that is by now certainly presenting. Its tries count from one.
+    /// that is by now certainly presenting, with both budgets whole.
     private func sendDoorTapped() {
-        guard let d = doorInsert, d.generation == stageGeneration else {
+        guard let s = stageInsert, s.generation == stageGeneration, loop.atDoor else {
             UtttLog.note("door", "send tapped for a stage that is gone")
             overlay.door = false
             return
         }
         UtttLog.note("door", "send tapped")
-        doorInsert = nil
-        insert(d.message, generation: d.generation, in: d.conversation, attempt: 1)
+        act(loop.doorTapped())
     }
 
     /// THE DRAWER MOVES ONCE THE MOVE HAS SETTLED AND RESTED (UI.html: once
@@ -1019,6 +1080,16 @@ final class MessagesViewController: MSMessagesAppViewController {
         UtttLog.note("stage", "collapsing")
         slide.arm()
         requestPresentationStyle(.compact)
+        /* TWO WAITS, TWO VECTORS. This one is bounded (1.2 s) because Messages
+         * may decide not to run the transition at all, and a stage must not
+         * hang on it: the bubble then goes out into the expanded drawer, where
+         * an accepted insert is staged under the drawer with its answer
+         * deferred. The insert loop's PARK (msg_stage.h) is the other wait:
+         * a try unanswered while not compact sleeps with no timer until
+         * didTransition says compact, which releases a deferred yes or shows
+         * the drop. Neither covers the other: without the timeout no insert
+         * would go until the human collapsed by hand; without the park the
+         * expanded watchdog polled forever and never reached the door. */
         await awaitTransitionSettled()
         /* didTransition comes BEFORE the compact height is handed (measured:
          * 50 ms before), so the arm outlives it by a beat; an arm no height
@@ -1055,7 +1126,7 @@ final class MessagesViewController: MSMessagesAppViewController {
     /// The board for the message the kernel is holding, as `mark`.
     private func showBoard(mark: Uttt.Mark, door: Uttt.Door, motion: Uttt.Channel = .still,
                            _ conversation: MSConversation) {
-        let model = UtttModel(seed: Uttt.seed, you: mark)
+        let model = UtttModel(you: mark)
         /* A draft on screen is a draft the player may change their mind about. */
         let draft = staged.map { Uttt.messageText == $0.text } ?? false
         if draft { model.setPending(true) }
@@ -1090,7 +1161,7 @@ final class MessagesViewController: MSMessagesAppViewController {
         show(UtttGameScreen(model: model, door: door, slide: slide,
                             onDoor: { [weak self] in self?.again(in: conversation) },
                             onRules: { [weak self] in self?.openRules() },
-                            onDiagnostics: { [weak self] in self?.openDiagnostics(conversation) }))
+                            onDiagnostics: diagnosticsHold(conversation)))
     }
 
 #if DEBUG
@@ -1113,7 +1184,15 @@ final class MessagesViewController: MSMessagesAppViewController {
         for mv in UtttDev.moves ?? Array(opening.prefix(max(0, plies))) where Uttt.over == .none {
             _ = Uttt.play(mv)
         }
-        Uttt.seat(o: UtttDev.identity("a"), x: UtttDev.identity("b"))
+        /* SEATED ON BOTH DEV PHONES: seating drops that phone's record of
+         * the game (uti_msg_seat_ids), and every seeding is the same record
+         * key, so a stale one on either side would outrank the tags. */
+        for phone in ["a", "b"] {
+            UtttSeats.use(phone)
+            Uttt.seat(o: UtttDev.identity("a"), x: UtttDev.identity("b"))
+            UtttSeats.flush()
+        }
+        identify(conversation)
         showSeat(motion, conversation)
     }
 #endif
@@ -1147,8 +1226,19 @@ final class MessagesViewController: MSMessagesAppViewController {
         present(UtttRulesSheet(), animated: true)
     }
 
-    // MARK: diagnostics (hold the rulebook) - 1.0(9)
+    // MARK: diagnostics (hold the rulebook) - 1.0(9), DEBUG only
 
+    /// What a hold on the rulebook does: open the diagnostics in DEBUG, and
+    /// nothing in Release - nil, so the rulebook adds no hold at all.
+    private func diagnosticsHold(_ conversation: MSConversation) -> (() -> Void)? {
+        #if DEBUG
+        return { [weak self] in self?.openDiagnostics(conversation) }
+        #else
+        return nil
+        #endif
+    }
+
+    #if DEBUG
     /// Every input to the seat verdict, and the TEMPORARY claim.
     private func openDiagnostics(_ conversation: MSConversation) {
         guard presentedViewController == nil else { return }
@@ -1197,11 +1287,8 @@ final class MessagesViewController: MSMessagesAppViewController {
             }
             return hits.isEmpty ? "nobody known" : hits.joined(separator: ", ")
         }
-        var debug = "no", rotated = "no"
-#if DEBUG
-        rotated = UtttDev.rotated ? "yes (dev.rotate)" : "no"
-        debug = "yes, dev.seat=\(UtttDev.seat ?? "none") dev.picker=\(UtttDev.picker)"
-#endif
+        let rotated = UtttDev.rotated ? "yes (dev.rotate)" : "no"
+        let debug = "yes, dev.seat=\(UtttDev.seat ?? "none") dev.picker=\(UtttDev.picker)"
         let sel = conversation.selectedMessage
         var lines = [
             "app \(version) (\(build))  DEBUG \(debug)",
@@ -1236,4 +1323,5 @@ final class MessagesViewController: MSMessagesAppViewController {
         if let r = Uttt.replayURL { lines.append("replay \(r)") }
         return lines.joined(separator: "\n")
     }
+    #endif
 }

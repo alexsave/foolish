@@ -42,32 +42,48 @@ int uttt_decode(UtttGame *out, const uint8_t *buf, size_t n);
  * land within a byte of this; the gap is everything it wastes. */
 double uttt_ideal_bits(const UtttGame *g);
 
+/* THE LOOK OF A GAME THAT HAS NO DRAWING BYTE. A game's sheet is drawn from
+ * one byte, its LOOK (uttt_msg.h: chosen at random when a game is made and
+ * inherited by its rematches). Three things carry a game seed and no look -
+ * a format-1 message, a format-1 replay link and a seeded debug game (the
+ * rig's, the preview's) - and they all draw with THIS byte of the seed. One
+ * owner, so the same old bubble draws the same on every phone and the same
+ * again on uttt.live. */
+static inline uint8_t uttt_look_of_seed(int32_t seed) { return (uint8_t)(uint32_t)seed; }
+
 /* THE REPLAY LINK: the finished game as a URL somebody can paste, the end
  * screen's "Copy code" (an iMessage extension can open only its own
  * container's scheme, so the link is copied rather than opened - foolish's
  * replay row, FGameOverList.replayLink). It is UTTT_REPLAY_PREFIX followed by
  * the code in base32 (shared/c/b32: letters and digits, the same read back
- * in either case, nothing a URL has to escape). The code is a fixed layout:
+ * in either case, nothing a URL has to escape) of a fixed layout:
  *
- *     [0..3]  the drawing seed, int32 big-endian (the wire message's seed,
- *             uttt_msg.h), so a replay draws the same napkin - every pen
- *             stroke's wobble is seeded from it
- *     [4..]   uttt_encode's bytes (the moves)
+ *     [0]     UTTT_REPLAY_VERSION (2), FIRST, so the layout can change
+ *             again without a guessing game: a reader refuses any other
+ *             version, and the page shows its error
+ *     [1]     the look (uttt_look_seed draws everything from it)
+ *     [2..]   uttt_encode's bytes (the moves)
+ *
+ * THE LINKS 1.0(6)-1.0(8) WROTE ARE DEAD (owner, 2026-09-26): they were
+ * base32 of the game seed and the moves with no version, so nothing could
+ * tell one from a new code by rule, and they are refused with everything
+ * else that does not begin with the version. The bubble's own message
+ * (uttt_msg.h) is a different thing and still reads its format 1.
  *
  * The kernel writes the whole string; a host only puts it on the pasteboard.
  *
  * uttt.live is the game's own site: uttt/web opens the code and replays the
  * game, drawn by this kernel (wasm/uttt_web.c). */
 #define UTTT_REPLAY_PREFIX "https://uttt.live/"
+#define UTTT_REPLAY_VERSION 2
 
-/* Write g's link, drawn with `seed`, into out (NUL-terminated). Returns its
+/* Write g's link, drawn with `look`, into out (NUL-terminated). Returns its
  * length, or -1 if g has no plies or cap is too small. */
-int uttt_replay_url(const UtttGame *g, int32_t seed, char *out, int cap);
+int uttt_replay_url(const UtttGame *g, uint8_t look, char *out, int cap);
 
 /* Read a link back (the prefix is optional; anything after the code - a
  * query, a fragment, a slash - is ignored). Returns 1, the game and its
- * drawing seed (`seed` may be NULL) on success, 0 for a link that is not a
- * game. */
-int uttt_replay_read(const char *url, UtttGame *out, int32_t *seed);
+ * look (`look` may be NULL) on success, 0 for a link that is not a game. */
+int uttt_replay_read(const char *url, UtttGame *out, uint8_t *look);
 
 #endif

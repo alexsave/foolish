@@ -66,6 +66,12 @@ static int scan(const char *path) {
             }
         }
         if (b[i] == 0xE2 && b[i + 1] == 0x80 && b[i + 2] == 0x94) {
+            /* A PAIR is the Chinese dash "——", correct punctuation in the zh
+             * strings (owner, 2026-09-26); only a lone em dash is English. */
+            if (i + 5 < n && b[i + 3] == 0xE2 && b[i + 4] == 0x80 && b[i + 5] == 0x94) {
+                i += 5;
+                continue;
+            }
             size_t lo = i, hi = i + 3;
             while (lo > 0 && i - lo < MAX_CTX && is_text(b[lo - 1])) lo--;
             while (hi < n && hi - (i + 3) < MAX_CTX && is_text(b[hi])) hi++;

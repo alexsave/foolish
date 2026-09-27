@@ -37,6 +37,11 @@ public enum UtttDev {
     private static let pickerFile = "dev.picker"
     private static let rulerFile = "dev.ruler"
 
+    /// `dev.lang`: the language the kernel speaks, in place of the phone's
+    /// ("ja", "ar-SA"), read at every activation - so the rig can film every
+    /// language on one simulator without changing its region.
+    public static var language: String? { dev.string("dev.lang") }
+
     /// `rig.sh ruler on`: paint the motion ruler (UtttRuler) over the sheet.
     /// Read every time, like every other dev file.
     public static var ruler: Bool { dev.exists(rulerFile) }
@@ -65,6 +70,33 @@ public enum UtttDev {
     /// Returns the file's trimmed contents once, then nil until it is written
     /// again.
     public static func takeArrival() -> String? { dev.take("dev.arrive") }
+
+    /// `dev.caption`: the collapsed line of the NEXT staged message, once.
+    ///
+    /// Store frames only. On the simulator Messages draws each superseded
+    /// message of a session with a neighbour's summary (rig README, the iOS 26
+    /// and 27 notes), so a transcript of real moves shows wrong lines. The
+    /// shoot writes the text each line has to read; the stage that takes it
+    /// sets it as `summaryText` only - the bubble's own caption stays the
+    /// kernel's. Returns the file's trimmed contents once, then nil.
+    public static func takeCaption() -> String? { dev.take("dev.caption") }
+
+    /// `dev.restage`: the next opened bubble puts its own board, unchanged,
+    /// back into the input field in the same session - a message that is not
+    /// a move. Store frames only: on the simulator the last collapsed line of
+    /// a session repeats the line above it, so the shoot sends one extra copy
+    /// of a board to carry that repeat, and the owner scrolls it out of frame.
+    /// True once, then false until the file is written again.
+    public static func takeRestage() -> Bool { dev.take("dev.restage") != nil }
+
+    /// `dev.invite`: the next invitation opens with the seeded game's seed.
+    ///
+    /// Store frames only. An invitation's seed is the moment it is composed
+    /// (utm_seed_at), so an ordinary one draws a different napkin from the
+    /// store game's; the empty-board frame opens a real invitation through
+    /// the + menu with this set, and it is the same game as every other frame.
+    /// True once, then false until the file is written again.
+    public static func takeSeededInvite() -> Bool { dev.take("dev.invite") != nil }
 
     /// The word the rig wrote, or nil in every ordinary run - including an
     /// ordinary DEBUG one, because the file is absent until somebody writes it.

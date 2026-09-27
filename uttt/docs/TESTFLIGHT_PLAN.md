@@ -1225,3 +1225,122 @@ Rendered from the owner's game (`NK2JIG6A6YIFDLRPPZ6Z5QGXZASJCBSINMIQ`, 320 poin
 Recommendation: e).
 It fixes the cause (the pen overlapping itself) in the one place geometry lives, makes the board a hundredth of the polygons (cheaper to fill, to cache and to animate), and keeps the ink-over-ink crossings that make it read as a pen.
 If the alpha grain is missed, it can come back as a width-only grain or as a paper-side texture; b) is the fallback if the grain matters more than the cost.
+
+## 9. Device findings, 2026-09-25 (for the next session)
+
+### Again: no live arrival after the invitation
+
+Seen: at a game's end, tap the end bubble, tap Again, send the invitation from the compact drawer and leave it up. The opponent's reply shows in the thread, and the open drawer never hears of it.
+
+Why: an open drawer is bound to the datasource of the bubble that opened it, and the host delivers `didReceive` only for a message in that bubble's MSSession (foolish's host-binary notes, `ios/FoolishMessages/MessagesViewController.swift`, in `didStartSending`). Again sets `freshSession = true`, so the invitation goes out in a new `MSSession()` (`sessionFor`), and the drawer stays bound to the finished game's session. The reply lands in the new session and there is nobody to tell. The `wasUnbound` dismiss does not fire, because the drawer is bound, only to the wrong game.
+
+Decision (owner): **do not set `freshSession = true` in `again()`.** The invitation stays in the finished game's session, so the reply reaches the open drawer. The cost is that Messages collapses the finished game's last bubble to its caption; the replay link still holds the game. Check what else reads `freshSession` and `draftIsNewGame` (the `newest`/`current` routing that ranks a new game over the tapped one) before removing it.
+
+**Fixed (2026-09-26, compiled, not yet seen on a device).**
+`freshSession` is gone.
+`sessionFor` hands Again's invitation the tapped bubble's session: it reuses the selected message's session when `draftIsNewGame` is set or the selection is the same game.
+`draftIsNewGame` stays, since `newest`/`current` still rank the new game above the tapped finished one.
+Device check: at a game's end tap the end bubble, tap Again, send from the compact drawer, leave it up, and have the other phone reply; the reply must land in the open drawer.
+
+### A sent move comes back as a staged one
+
+Seen: send a move, and a move is still staged in the field; sending that one "overwrote" the first.
+
+Why (from the code, not yet from a log): the insert watchdog outlives the send. Every insert arms `watchSilence`; if the host has not answered within 500 ms (`MS_INSERT_SILENCE_MS`) in compact, it inserts the same `MSMessage` again, up to 10 times. The only guards are `stageGeneration == generation` and `landedGeneration != generation`. `didCancelSending` bumps `stageGeneration` (line ~480); **`didStartSending` does not**. So when ChatKit puts the bubble in the field but answers late or never (the case the `late answer` log line exists for), and the human presses Send inside that window, the next watchdog tick finds its stage still current and not landed, and re-inserts the bubble that was just sent. It is the same message in the same session, so sending it again makes Messages collapse the first copy to its caption: the "overwrite". The 0.35 s retry after an insert error, and the send door, hang off the same generation and fail the same way.
+
+Fix: in `didStartSending`, void every in-flight stage, as the cancel does: `stageGeneration += 1` (and `doorInsert = nil`, which it already does). Every watchdog, retry and door checks the generation, so all of them stand down.
+
+To confirm from a device: the Diagnostics log should show `send` followed by `insert attempt N got no answer; retrying` and a further `insert attempt`.
+
+**Fixed (2026-09-26, compiled, not yet seen on a device).**
+`didStartSending` bumps `stageGeneration` right after `super`.
+Every re-insert path checks it: the silence watchdog, the 0.35 s retry after an error, the paint wait in compact, the rest-and-collapse wait, and the send door.
+Device check: send a move and the field must be empty afterwards; after any Send, the Diagnostics log must show no `insert attempt` for that move.
+
+### The insert loop's two budgets, and the expanded drawer's silence
+
+Read from the code (the flow page's suspects 1 and 2), reproduced in C, not yet seen on a device.
+
+Bug 1: the retry after an insert error ran only while `attempt < 3`, and a silent (watchdog) retry advanced the same `attempt`.
+So after two unanswered tries a single insert error gave up at once and reverted the draft as if it had been cancelled, although the error budget had not been spent.
+Bug 2: an insert that went out while the drawer was still expanded (the collapse's 1.2 s timeout) had `ms_insert_silence` answer LISTEN on every firing, so the watchdog re-armed every 500 ms for as long as the drawer stayed expanded, with no bound, no retry and no send door.
+
+**Fixed (2026-09-26, compiled, not yet seen on a device).**
+The whole insert loop is one state machine in C now, `ms_stage` in `shared/c/msg_stage/msg_stage.h`, and the controller only inserts, runs the two timers and reports the drawer and the door (`InsertStaging.Loop`, `MessagesViewController.act`).
+Silences and errors have separate budgets: ten compact silences (`MS_INSERT_ATTEMPTS`) reach the door, three errors (`MS_INSERT_ERRORS`, a beat of `MS_INSERT_ERROR_MS` between them) revert the draft, and neither spends the other.
+A silence while the drawer is not compact parks the loop with no timer; `didTransition` to compact arms the same try's watchdog once more, and from there the loop runs to the door as it would have.
+Every timer and every answer carries its try number, so an overtaken try's silence or error is moot while its late yes still lands; `landedGeneration` and `doorInsert` are gone, the machine's state replaces both.
+The 1.2 s transition timeout stays, and the comment in `restThenCollapse` says which vector it covers and which the park covers.
+Tests: `msg_stage_test.c` went red on `error: two silences do not spend the error budget` and `expanded: a silence parks the stage and counts nothing` against a port of the old rules, then green; 18 mutations of the machine each fail on a named assertion (the loop must compile each mutant afresh, since `make` reuses a binary built in the same second).
+Device check: `touch dev.dropinsert` from the expanded drawer, make a move and leave the drawer up; the log must show one `try 1 unanswered while expanded; parked until compact` and nothing more until the drawer is collapsed by hand, then `try 1's watchdog armed again`, ten retries 0.5 s apart and the door.
+Device check: with the file removed, Diagnostics after a normal move must show `try 1` then `inserted`, and never `gave up`.
+
+### Changing your move: already right, and Send must match it
+
+The rule (owner): tapping a new square cancels the old move's bubble, stages the new one, and the old one is never retried.
+
+That holds today. Every tap goes through `stage()`, whose first line bumps `stageGeneration`. Everything that could put the old move back checks it and stands down: the silence watchdog (`watchSilence`), the 0.35 s retry after an insert error, the wait for the paint and the collapse, and the send door. Messages replaces the old bubble in the field and reports it cancelled, and `didCancelSending` ignores that report because it is not the current draft.
+
+Send is the one step that does not bump the generation, which is the bug above. After the fix a Send voids the old stage exactly as a new square does: once a move is sent or replaced, nothing of it is retried.
+
+Not ruled out from the code: an insert Messages has already accepted but not yet applied cannot be recalled. If the host ever applied an old insert after a newer one, the old move would be left in the field. Nothing seen so far shows it; the Diagnostics log would, as the old move's `inserted` after the new one's.
+
+### The claim buttons in Release: compiled out, and proved
+
+798bf109 wrapped the Claim row in `#if DEBUG` but never built Release.
+**Fixed (2026-09-26).**
+The claim state and `finish` in `UtttDiagnosticsSheet` are DEBUG only too, so Release carries nothing of the claim but the enum the caller switches on.
+Release (generic iOS) and Debug (simulator) both build with no Swift warnings.
+The Release UtttKit binary has no "Claim writes" note and no `finish` symbol; the Debug one has both.
+The button titles are Swift small strings (under 16 bytes, stored in the instructions), so `strings` cannot see them either way; the note, from the same `#if` block, is the proof.
+
+### The whole diagnostics panel is DEBUG only
+
+Owner, 2026-09-26: gate the diagnostics feature behind DEBUG, do not delete it.
+In a Release build the rulebook is a plain tap: no hold, no Diagnostics sheet, no seat claim.
+- `UtttRulebookButton` adds its `UILongPressGestureRecognizer` and the hold latch only under `#if DEBUG`; `onHold` keeps one signature and Release drops it unread, so the lobby and game screens pass it through with no `#if`.
+- `MessagesViewController.diagnosticsHold` returns the hold in DEBUG and nil in Release; `openDiagnostics` and the dump are DEBUG only.
+- `UtttDiagnostics.swift` is whole-file `#if DEBUG`.
+- `Uttt.claim` and `Uttt.forgetSeat` are DEBUG only, so nothing in Release calls `uti_msg_claim` or `uti_msg_forget`.
+- Not calling them was not enough: UtttKit is a dynamic framework and exported both from the one `libuttt.a` both configurations link, so the first Release build still had `T _uti_msg_claim`.
+  `uttt_api.h` now declares both `UTI_UNEXPORTED` (hidden visibility): DEBUG UtttKit and the smoke still call them, no image exports them, and Release's `-dead_strip` removes them. The C stays, for the smoke test and DEBUG builds.
+
+Proved on a Release and a Debug `generic/platform=iOS` build (`CODE_SIGNING_ALLOWED=NO`), every Mach-O in the app:
+Release has no `uti_msg_claim` or `uti_msg_forget` symbol, no `UILongPressGestureRecognizer` in `nm` or `strings`, no `UtttDiagnosticsSheet`, `openDiagnostics` or `holdSeconds` symbol, and none of the dump's strings ("Claim writes", "my hashed tag", "local participant"); `shared/tools/release_strings.sh` is clean.
+Debug UtttKit has the claim and forget (as non-external), the recogniser and the sheet; the Debug extension has the dump.
+
+To reach the diagnostics now you need a DEBUG build (Xcode Run, or the rig): hold the rulebook for 1.5 s. TestFlight and App Store builds are Release and have no way in.
+The "Diagnostics log" lines elsewhere in this file are `UtttLog`, read from the device log (`log collect`), which Release keeps.
+
+### The receiver's headline during their move
+
+Seen: the receiving seat opens and shows "Waiting on X" while X's move is still drawing, then "Your move" about 2 s later.
+Rule (owner): "Waiting on X", then no headline while their move draws, then "Your move" once it has landed.
+**Fixed (2026-09-26, compiled, not yet seen on a device).**
+The motion plan decides it: `UtttFrame.words` is `UTTT_WORDS_BEFORE` until the ink starts, `UTTT_WORDS_HUSH` while it draws on their move (D, E), and `UTTT_WORDS_NOW` once it has landed.
+My own stage and replay never go quiet.
+The clock hands the model each change of `words`; an empty headline keeps its line, so the subline does not jump.
+`uttt_anim_test` covers it and was mutation-checked.
+Device check: open a bubble of theirs and receive a move with the drawer up; the headline must go blank as the mark draws and read "Your move" as it lands.
+
+### The drawing byte, and the ply in the pen (2026-09-26)
+
+Owner-approved: a game's napkin is drawn from one random byte, its LOOK, and a rematch keeps it; a square's mark also depends on the ply it was played at.
+The game seed stays what it was: raw unix seconds, the game's identity (`utm_tag`, the seat records, `utm_same_game`), and no longer a drawing input.
+- Wire format 2 (`uttt_msg.h`): magic, format, seed, flags, LOOK at byte 7, then the tags, the check and the game; `UTM_MAX_BYTES` grew by one and the longest link is unchanged at 87 characters.
+  Format 1 (1.0(6)-1.0(8)) is still read by one branch at the decode point: no look byte, the tags one byte earlier, and the look derived as `uttt_look_of_seed(seed)`, the seed's low byte; nothing writes format 1 any more.
+- The look is chosen when an invitation is made: `Uttt.openInvitation` draws one byte from `SecRandomCopyBytes` and hands it to `uti_msg_open(unix_seconds, look)`.
+  Again goes through `uti_msg_open_again(unix_seconds)`, which copies the finished game's look inside the kernel (`utm_again`, refused unless the game offers the Again door), so Swift cannot choose one; a chain of rematches is one napkin and a fresh game a fresh one.
+  A seeded game (`uti_new`, the rig's `devgame`, the preview) and the store frames' `dev.invite` (`uti_msg_open_seeded`, DEBUG only) draw on the seed's low byte, so seed 77 is look 77.
+- The pen (`uttt_draw.h`) takes the look and nothing else random; `uttt_look_seed` is the one place it becomes a pen seed.
+  The grid, the big marks, the win line, the promise and the lone marks are keyed on the look alone; the "you are" and headline marks' seeds moved from Swift (`seed &+ 4`, `seed &* 31 &+ 7`) into `uttt_draw_mark`, and Swift now passes no seed to any drawing entry.
+  A square's mark is seeded by (square, ply, pass) under one multiplier (`mark_seed`), so the same square at another ply is another mark; the heavy last mark's first pass is the settled stroke, so nothing jumps when the next move lands.
+- The replay link (`uttt_code.h`) is `https://uttt.live/<base32 of [version 2][look][moves]>`: the version byte comes first so the layout can change again, and a reader refuses any other version.
+  THE 1.0(6)-1.0(8) LINKS ARE DEAD (owner, 2026-09-26): they were the seed and the moves with no version, nothing could tell them from a versioned code by rule, and uttt.live now shows its error page for them; the old-link decode and its tests are deleted.
+  `uttt_test` round-trips 1,000 links, checks the version sits first and the look second, refuses each of the other 255 versions on every game and the 1.0(8) form of the same game, and the store game's old link; mutations (the writer on another version, the look written first, the reader ignoring the version, taking any version but 1, or reading a 1.0(8) code) each go red.
+  The bubble's own message keeps its format-1 read: that branch is four lines in `utm_decode` (the format test, `old`, the tag offset, the look) plus the `UTM_FORMAT_1` define.
+- Swift caches are keyed on `Uttt.look` (the board bitmap, the ink views' marks); `UtttModel` reads its seed and look from the kernel at init.
+- Tests (`uttt_msg_test` test_look, `uttt_test`, `ios-smoke`): two games with different seeds and one look draw a byte-identical empty board; another look draws another board; the same square at another ply is another mark, at the same ply the same; the heavy mark's first pass starts where the settled stroke starts and its second pass is its own; Again keeps the look on a fresh seed and is refused on a live game; identity reads the whole seed and never the look; a format-1 message and the pinned 1.0(6) bytes decode with the derived look; 10,000 games round-trip the look at every ply; 1,000 format-2 and 1,000 format-1 links read back; the "you are" O stays a ring over every look there is (256, exhaustively, where it was 20,000 seeds).
+  25 mutations, each red on its named assertion: the pen seed zero or constant, the ply ignored in the mark seed or never read, the heavy passes swapped or the ply dropped, Again forgetting the look, ignoring the door or keeping the seed, encode dropping the look, the format-1 look not derived, the tags misplaced or format 1 refused, same-game or the record key reading the look, the link dropping the look, the old link's look not derived or the old link refused, the derivation not the low byte, and on the bridge Again picking its own look or ignoring the door, a seeded look not derived, the lone mark ignoring the look or drawn off the seed, and an invitation on a fixed look.
+- The store game (`docs/STORE_SHOTS.md`) is the same fifty plies on a new link; its old format-1 link reads to the same look and renders the identical board.
+- `shared/c/wasm/libm.c` gained `roundf` (half away from zero over `f32.trunc`), which the rules sheet's row height needed and the wasm lane did not have.

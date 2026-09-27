@@ -3,6 +3,39 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key><string>Ultimate</string>
+	<!-- THE LANGUAGES THE KERNEL SPEAKS (uttt/c/i18n, one per row of
+	     shared/c/i18n/languages.h). iOS offers an app only the languages it
+	     declares here, and the App Store product page lists them. The
+	     kernel matches on the PRIMARY SUBTAG, so zh-Hans is "zh" and nb is
+	     Norwegian, as the sister product's list does. -->
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>ru</string>
+		<string>ko</string>
+		<string>zh-Hans</string>
+		<string>vi</string>
+		<string>es</string>
+		<string>pt</string>
+		<string>fr</string>
+		<string>de</string>
+		<string>it</string>
+		<string>ja</string>
+		<string>pl</string>
+		<string>uk</string>
+		<string>tr</string>
+		<string>id</string>
+		<string>th</string>
+		<string>nl</string>
+		<string>sv</string>
+		<string>da</string>
+		<string>nb</string>
+		<string>fi</string>
+		<string>cs</string>
+		<string>ro</string>
+		<string>he</string>
+		<string>ar</string>
+	</array>
 	<!-- The .appex needs its own export-compliance key: it does not inherit
 	     the container's. No network code at all, so nothing to declare. -->
 	<key>ITSAppUsesNonExemptEncryption</key>

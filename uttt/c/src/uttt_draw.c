@@ -1,5 +1,6 @@
 #include "uttt_draw.h"
 #include "uttt_anim.h"
+#include "uttt_lang.h"
 #include <math.h>
 #include <string.h>
 
@@ -35,13 +36,48 @@ static float bow_for  (float L) { return 1.0f * powf(REF / (L > 1e-4f ? L : 1e-4
  * once, here, instead of at four call sites that would each forget. */
 static float mro_for  (float L) { return .02f * powf(REF / (L > 1e-4f ? L : 1e-4f), .75f); }
 
-UtttDrawOpts uttt_draw_opts(int32_t seed)
+uint32_t uttt_mark_ink(int mark) { return mark == UTTT_O ? INK_O : INK_X; }
+
+/* THE ONE DERIVATION. A look is a byte and the pen wants an int32 whose
+ * derived seeds (sd above) land far apart for neighbouring looks, so the
+ * byte is spread by Knuth's multiplier: (look + 1) is 1..256 and the
+ * multiplier is odd, so the product is never 0 mod 2^32. */
+int32_t uttt_look_seed(uint8_t look)
+{
+    return (int32_t)(((uint32_t)look + 1u) * 2654435761u);
+}
+
+UtttDrawOpts uttt_draw_opts(uint8_t look)
 {
     UtttDrawOpts o;
-    o.seed = seed ? seed : 1;
+    o.look = look;
     o.active = -1; o.last = -1; o.mark_t = 1.f; o.meta_t = 1.f; o.fall_t = 1.f;
     o.reach = UTTT_REACH;
     return o;
+}
+
+/* A SQUARE'S MARK IS SEEDED BY THE SQUARE AND THE PLY IT WAS PLAYED AT, so
+ * the same square taken at a different move is a different mark; `pass` 1
+ * is the heavy last mark's second going-over. Every (square, ply, pass) has
+ * its own slot under one multiplier, so no two collide on one sheet: 81
+ * squares by 82 plies (81, and one past the history for a square that has
+ * no ply) by two passes. THE FIRST PASS IS THE SETTLED STROKE: a board that
+ * no longer marks this move heavy draws pass 0 alone, the same points under
+ * a lighter pen, so nothing jumps when the next move lands. */
+#define MARK_SLOTS (81 * 82)
+static int32_t mark_seed(int32_t seed, int mv, int ply, int pass)
+{
+    if (ply < 0 || ply > 80) ply = 81;
+    return sd(seed, 2u * MARK_SLOTS, mv + 81 * ply + pass * MARK_SLOTS);
+}
+
+/* Which ply each square was played at, -1 for none: the history read once
+ * a draw rather than searched once a square. */
+static void plies_of(const UtttGame *g, int8_t ply[81])
+{
+    memset(ply, -1, 81);
+    for (int i = 0; i < g->n_plies && i < UTTT_MAX_PLIES; i++)
+        if (g->move[i] < 81) ply[g->move[i]] = (int8_t)i;
 }
 
 static void rect(UtttDL *d, float x, float y, float w, float h, uint32_t rgba)
@@ -174,12 +210,12 @@ static void heavy_mark(UtttDL *d, int v, float x, float y, float s,
     mark_in(d, v, x, y, s, seed2, t, &p);
 }
 
-static void last_mark(UtttDL *d, int v, int mv, int32_t seed, float t)
+static void last_mark(UtttDL *d, int v, int mv, int ply, int32_t seed, float t)
 {
     int b = mv / 9, c = mv % 9;
     float x = (b % 3) * BL + (c % 3) * CE + CE * .1f;
     float y = (b / 3) * BL + (c / 3) * CE + CE * .1f;
-    heavy_mark(d, v, x, y, CE * .8f, sd(seed, 1000, mv), sd(seed, 1000, mv + 613), t, 1.f);
+    heavy_mark(d, v, x, y, CE * .8f, mark_seed(seed, mv, ply, 0), mark_seed(seed, mv, ply, 1), t, 1.f);
 }
 
 /* THE BIG MARK OVER A WON BLOCK, drawn to `t`: pen is purely additive, so
@@ -204,6 +240,9 @@ static void big_mark(UtttDL *d, const UtttGame *g, int b, int32_t seed, float t)
 #ifndef WIN_BOW
 #define WIN_BOW 2.f
 #endif
+
+static void win_stroke(UtttDL *d, float ax, float ay, float zx, float zy,
+                       uint32_t ink, int32_t seed, float t, float wk);
 
 static void win_line(UtttDL *d, const UtttGame *g, int32_t seed, float t)
 {
@@ -236,6 +275,19 @@ static void win_line(UtttDL *d, const UtttGame *g, int32_t seed, float t)
              * on the ribbons: twice the major line's ink width), so
              * the stroke that ends the game is the heaviest ink on the sheet
              * by a clear margin - a width only, the same points. */
+            win_stroke(d, ax, ay, zx, zy, g->over == UTTT_O ? INK_O : INK_X, seed, t, 1.f);
+            break;
+        }
+    }
+}
+
+/* The win line's two passes from (ax, ay) to (zx, zy), in board units, in
+ * `ink`, its widths times `wk` (1 on the board). */
+static void win_stroke(UtttDL *d, float ax, float ay, float zx, float zy,
+                       uint32_t ink, int32_t seed, float t, float wk)
+{
+    {
+        {
             const float W[2] = { GRID_MAJOR_W * 3.0f, GRID_MAJOR_W * 2.5f };
             const float A[2] = { .92f, .74f };
             const int32_t SD[2] = { 313, 977 };
@@ -261,13 +313,12 @@ static void win_line(UtttDL *d, const UtttGame *g, int32_t seed, float t)
                                         pts, 1024, &np, sp, 2);
                 for (int i = 0; i < np; i++) { pts[i].x /= 100.f; pts[i].y /= 100.f; }
                 UtttPen p = uttt_pen_92();
-                p.ink = g->over == UTTT_O ? INK_O : INK_X;
-                p.w = uttt_pen_92().w / 9.f / 100.f * W[q]; p.a = A[q];
+                p.ink = ink;
+                p.w = uttt_pen_92().w / 9.f / 100.f * W[q] * wk; p.a = A[q];
                 p.vel = 0; p.lift = .2f; p.grain = .25f; p.agrain = .2f;
                 for (int s2 = 0; s2 < n; s2++)
                     stroke(d, pts + sp[s2].first, sp[s2].n, &p, t);
             }
-            break;
         }
     }
 }
@@ -275,6 +326,9 @@ static void win_line(UtttDL *d, const UtttGame *g, int32_t seed, float t)
 int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
 {
     UtttPen base = uttt_pen_92();
+    const int32_t seed = uttt_look_seed(o->look);
+    int8_t ply[81];
+    plies_of(g, ply);
 
     /* the block you are sent to, in highlighter - ink cannot say "here"
      * without also saying something it can never take back */
@@ -286,7 +340,7 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
 
     for (int b = 0; b < 9; b++)
         hash_in(d, (b % 3) * BL, (b / 3) * BL, BL,
-                sd(o->seed, 131, b * 17),
+                sd(seed, 131, b * 17),
                 base.w / 9.f / 100.f * .62f, BL * .03f, .5f, 1.5f);
     /* THE FOUR MAIN LINES RUN LONG. Nobody ruling a board stops the pen
      * neatly at the last cell - the line goes where the arm goes, past the
@@ -295,44 +349,44 @@ int uttt_draw_board(UtttDL *d, const UtttGame *g, const UtttDrawOpts *o)
      * strokes without looking. The renderer's own frame clips whatever runs
      * past the edge, which is the right answer: a line that leaves the board
      * should leave the board. */
-    hash_in(d, 0, 0, S, sd(o->seed, 7, 3),
+    hash_in(d, 0, 0, S, sd(seed, 7, 3),
             base.w / 9.f / 100.f * GRID_MAJOR_W, S * .135f * o->reach, .9f, 3.4f);
-    hash_in(d, 0, 0, S, sd(o->seed, 19, 5),
+    hash_in(d, 0, 0, S, sd(seed, 19, 5),
             base.w / 9.f / 100.f * 1.5f, S * .118f * o->reach, .72f, 3.4f);
 
     for (int b = 0; b < 9; b++) {
         int won = uttt_block(g, b) == UTTT_X || uttt_block(g, b) == UTTT_O;
         for (int c = 0; c < 9; c++) {
-            int v = uttt_cell(g, b * 9 + c);
+            int mv = b * 9 + c;
+            int v = uttt_cell(g, mv);
             if (!v) continue;
             float x = (b % 3) * BL + (c % 3) * CE;
             float y = (b / 3) * BL + (c / 3) * CE;
-            int is_last = (b * 9 + c) == o->last;
-            if (is_last) { last_mark(d, v, b * 9 + c, o->seed, o->mark_t); continue; }
+            if (mv == o->last) { last_mark(d, v, mv, ply[mv], seed, o->mark_t); continue; }
             UtttPen p = base;
             if (won) p.a = base.a * .34f;
             mark_in(d, v, x + CE * .1f, y + CE * .1f, CE * .8f,
-                    sd(o->seed, 1000, b * 9 + c), 1.f, &p);
+                    mark_seed(seed, mv, ply[mv], 0), 1.f, &p);
         }
-        if (won) big_mark(d, g, b, o->seed, (o->last >= 0 && o->last / 9 == b) ? o->fall_t : 1.f);
+        if (won) big_mark(d, g, b, seed, (o->last >= 0 && o->last / 9 == b) ? o->fall_t : 1.f);
     }
 
-    win_line(d, g, o->seed, o->meta_t);
+    win_line(d, g, seed, o->meta_t);
     return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
 }
 
-int uttt_draw_last(UtttDL *d, const UtttGame *g, int32_t seed, float t)
+int uttt_draw_last(UtttDL *d, const UtttGame *g, uint8_t look, float t)
 {
     if (g->n_plies == 0) return -1;
-    int mv = g->move[g->n_plies - 1];
-    last_mark(d, uttt_cell(g, mv), mv, seed ? seed : 1, t);
+    int ply = g->n_plies - 1, mv = g->move[ply];
+    last_mark(d, uttt_cell(g, mv), mv, ply, uttt_look_seed(look), t);
     return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
 }
 
-int uttt_draw_settle(UtttDL *d, const UtttGame *g, int32_t seed, float fall_t, float line_t)
+int uttt_draw_settle(UtttDL *d, const UtttGame *g, uint8_t look, float fall_t, float line_t)
 {
     if (g->n_plies == 0) return -1;
-    if (!seed) seed = 1;
+    const int32_t seed = uttt_look_seed(look);
     int b = g->move[g->n_plies - 1] / 9;
     if (uttt_block(g, b) == UTTT_X || uttt_block(g, b) == UTTT_O) {
         big_mark(d, g, b, seed, fall_t);
@@ -359,13 +413,12 @@ int uttt_draw_settle(UtttDL *d, const UtttGame *g, int32_t seed, float fall_t, f
 #define OUTLINE_CALM      .5f                 /* of a mark's roughness */
 #define OUTLINE_OVERSHOOT (BL * .025f)        /* past each corner */
 
-int uttt_draw_outline(UtttDL *d, int block, int32_t seed, float t)
+/* The promise's pen box round r (x, y, w, h), its stroke `w` wide, sides
+ * seeded from `seed` and `salt`, drawn round to `t`. */
+static void promise_box(UtttDL *d, const float r[4], float o, float w,
+                        int32_t seed, int salt, float t)
 {
-    float r[4];
-    if (t <= 0.f || !uttt_wash_rect(block, r, NULL)) return 0;
-    if (!seed) seed = 1;
     const float x0 = r[0], y0 = r[1], x1 = r[0] + r[2], y1 = r[1] + r[3];
-    const float o = OUTLINE_OVERSHOOT;
     const float side[4][4] = {
         { x0 - o, y0, x1 + o, y0 }, { x1, y0 - o, x1, y1 + o },
         { x1 + o, y1, x0 - o, y1 }, { x0, y1 + o, x0, y0 - o } };
@@ -373,11 +426,11 @@ int uttt_draw_outline(UtttDL *d, int block, int32_t seed, float t)
     const float per = len[0] + len[1] + len[2] + len[3];
     UtttPen p = uttt_pen_92();
     p.ink = uttt_wash_rgba(1.f);
-    p.w = uttt_pen_92().w / 9.f / 100.f * GRID_MAJOR_W * 1.3f;
+    p.w = w;
     p.a = 1.f;
     float done = 0.f, want = (t > 1.f ? 1.f : t) * per;
     for (int k = 0; k < 4 && done < want; k++) {
-        UtttRough rg = uttt_rough_default(sd(seed, 577, block * 31 + k * 7));
+        UtttRough rg = uttt_rough_default(sd(seed, 577, salt + k * 7));
         rg.roughness  = rough_for(REF) * OUTLINE_CALM;
         rg.bowing     = bow_for(REF) * OUTLINE_CALM;
         rg.max_offset = mro_for(REF) * OUTLINE_CALM;
@@ -389,19 +442,15 @@ int uttt_draw_outline(UtttDL *d, int block, int32_t seed, float t)
         for (int q = 0; q < n; q++) stroke(d, pts + sp[q].first, sp[q].n, &p, part);
         done += len[k];
     }
-    return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
 }
 
-int uttt_draw_cell(UtttDL *d, int mark, int mv, int32_t seed, float t)
+int uttt_draw_outline(UtttDL *d, int block, uint8_t look, float t)
 {
-    if (mv < 0 || mv > 80) return -1;
-    int b = mv / 9, c = mv % 9;
-    float x = (b % 3) * BL + (c % 3) * CE;
-    float y = (b / 3) * BL + (c / 3) * CE;
-    UtttPen p = uttt_pen_92();
-    mark_in(d, mark, x + CE * .1f, y + CE * .1f, CE * .8f,
-            sd(seed, 1000, b * 9 + c), t, &p);
-    return 0;
+    float r[4];
+    if (t <= 0.f || !uttt_wash_rect(block, r, NULL)) return 0;
+    promise_box(d, r, OUTLINE_OVERSHOOT, uttt_pen_92().w / 9.f / 100.f * GRID_MAJOR_W * 1.3f,
+                uttt_look_seed(look), block * 31, t);
+    return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
 }
 
 /* The inverse of the placement above, from the same BL and CE: a point in the
@@ -463,12 +512,12 @@ int uttt_o_in_ring(int32_t seed, float s)
     return 1;
 }
 
-/* THE SEED THE "YOU ARE" MARK IS DRAWN WITH: the game's own for an X, and
- * for an O the first of a fixed walk from it whose O stays a ring - a pure
- * function of the seed, so both phones pick the same one. Around half of all
- * seeds pass, so the walk is a try or two; 64 without one (never seen in a
- * million) keeps the game's own. */
-int32_t uttt_mark_seed(int mark, int32_t seed)
+/* THE SEED A LONE MARK IS DRAWN WITH: `seed` for an X, and for an O the
+ * first of a fixed walk from it whose O stays a ring - a pure function of
+ * the seed, so both phones pick the same one. Around half of all seeds
+ * pass, so the walk is a try or two; 64 without one (never seen in a
+ * million) keeps `seed`. */
+static int32_t ring_seed(int mark, int32_t seed)
 {
     if (mark != UTTT_O) return seed;
     for (int i = 0; i < 64; i++) {
@@ -478,21 +527,30 @@ int32_t uttt_mark_seed(int mark, int32_t seed)
     return seed;
 }
 
-int uttt_draw_mark(UtttDL *d, int mark, int32_t seed, float board)
+/* The lone marks' own seeds off the look's: the "you are" indicator's
+ * (it was the game seed + 4, in the host) and the headline's (seed x 31 +
+ * 7, in the host) - here now, so a host supplies the look and nothing
+ * else. Both apart from every square's mark_seed. */
+int32_t uttt_mark_seed(int mark, uint8_t look)
 {
-    int32_t s1 = uttt_mark_seed(mark, seed);
+    return ring_seed(mark, sd(uttt_look_seed(look), 1, 4));
+}
+
+int uttt_draw_mark(UtttDL *d, int mark, uint8_t look, float board)
+{
     if (board > 0.f) {
         /* a stroke's width is a share of its mark's side, so the board's
          * CE .8 mark at `board` times this one's frame lays down the same
          * points of ink when its pen is scaled by this */
         float k = CE * .8f * board / UTTT_MARK_SIDE;
-        heavy_mark(d, mark, .06f, .06f, UTTT_MARK_SIDE, s1,
-                   uttt_mark_seed(mark, (int32_t)((uint32_t)seed + 613u)), 1.f, k);
+        int32_t h = sd(uttt_look_seed(look), 31, 7);
+        heavy_mark(d, mark, .06f, .06f, UTTT_MARK_SIDE, ring_seed(mark, h),
+                   ring_seed(mark, sd(h, 1, 613)), 1.f, k);
         return 0;
     }
     UtttPen p = uttt_pen_92();
     p.w = uttt_pen_92().w * 1.15f;
-    mark_in(d, mark, .06f, .06f, UTTT_MARK_SIDE, s1, 1.f, &p);
+    mark_in(d, mark, .06f, .06f, UTTT_MARK_SIDE, uttt_mark_seed(mark, look), 1.f, &p);
     return 0;
 }
 
@@ -555,8 +613,10 @@ UtttBubble uttt_bubble(const UtttGame *g)
     b.place_pt    = 18.f;
     b.lead        = 1.f;
     b.reach       = BUB_REACH;
-    b.headline_rgba = 0x1d1b16ffu;
-    b.place_rgba    = INK_X;                 /* the same blue an X is drawn in */
+    b.headline_rgba = UTTT_INK;
+    /* the winner's own ink, as the win line is drawn in it (owner,
+     * 2026-09-26: O's "50 moves" was X blue); a draw keeps X blue */
+    b.place_rgba    = uttt_mark_ink(g && g->over == UTTT_O ? UTTT_O : UTTT_X);
     return b;
 }
 
@@ -566,23 +626,12 @@ float uttt_bubble_scale(float display)
     return display > 3.f ? 3.f : display;
 }
 
-static const char *const PLACE[10] = {
-    "top left",    "top middle",    "top right",
-    "middle left", "centre",        "middle right",
-    "bottom left", "bottom middle", "bottom right",
-    "anywhere"
-};
-static const char *const PLACE_SPOKEN[10] = {
-    "top-left",    "top-middle",    "top-right",
-    "middle-left", "centre",        "middle-right",
-    "bottom-left", "bottom-middle", "bottom-right",
-    "anywhere"
-};
-
-const char *uttt_place_name(int block, int spoken)
+/* THE NINE BLOCKS BY NAME, and "anywhere": the table's (uttt/c/i18n),
+ * in the kernel's language. */
+const char *uttt_place_name(int block)
 {
     if (block < 0 || block > 9) return "";
-    return spoken ? PLACE_SPOKEN[block] : PLACE[block];
+    return uttt_text(UT_K_PLACE_TOP_LEFT + block);
 }
 
 /* ---------------------------------------------------------------- the icon */
@@ -695,37 +744,241 @@ void uttt_paper(uint8_t *rgba, int w, int h)
         }
 }
 
+
 /* ---------------------------------------------------------------- the rules */
-/* THE WHOLE GAME, IN SIX LINES, and they live here for the same reason the
- * nine block names do: the kernel is the one thing that knows what the rules
- * ARE, and a second copy of them in a renderer is a second rulebook that
- * drifts. The host app keeps every user-facing string in a C table too.
+/* THE EIGHT DRAWINGS OF THE RULES SHEET (docs/RULES.html, owner-approved),
+ * out of this pen: the board's hashes, marks, big marks, win line, wash and
+ * promise, each drawn by the function the board draws it with.
  *
- * Six, not ten. Ultimate tic-tac-toe is a small idea wearing a complicated
- * board, and the only line anybody actually needs is the fourth - the square
- * you play in is the board they must play in. The rest is scaffolding for it.
- *
- * AND NOTHING IS SHOUTED. The fourth line carried two words in capitals to
- * carry that distinction, which is a typographer doing the writer's job: if
- * the sentence needs shouting it is the wrong sentence.
- *
- * No em dashes, no curly quotes: these are rendered by a text engine that is
- * handed exactly these bytes. */
-static const char *const RULES[] = {
-    "Nine little boards make one big one.",
-    "Win a little board the usual way: three of yours in a line.",
-    "Win the game by taking three little boards in a line.",
-    "The square you play in is the board they have to play in next. Play bottom-left of any board, and they are sent to the bottom-left one.",
-    "If that board is already won or full, they may play anywhere.",
-    "A board that is won or full stays that way. Nobody plays in it again.",
-};
+ * THE MOCKUP'S OWN UNITS. RULES.html draws a 90-unit board in a 98-unit
+ * square (viewBox -4 -4 98 98): a block is 30 units, its hash inset 3, a
+ * mark's arm `r` from its square's middle, every width in those units. The
+ * numbers below are its numbers, and a frame puts them in the unit square
+ * the display list is in: v -> o + v k. */
+typedef struct { float o, k; } RFrame;
+static const RFrame R_BOARD = { 4.f / 98.f, 1.f / 98.f };
+static const RFrame R_WHOLE = { 0.f, 1.f / 90.f };      /* rule 8's lone X */
 
-int uttt_rules_count(void) { return (int)(sizeof RULES / sizeof *RULES); }
+#define R_BLOCK 30.f
+/* A big mark's strength: .62 on the paper, as the mockup's group opacity,
+ * through the pen's .8 and the ink gain (UTTT_INK_GAIN). */
+#define R_BIG_A (.62f / (.8f * UTTT_INK_GAIN))
+#define R_CELL  (24.f / 3.f)             /* a square: the hash is 24 of 30  */
 
-const char *uttt_rules_line(int i)
+static float rf(RFrame f, float v) { return f.o + v * f.k; }
+
+/* The middle of square `c` of block `b`, in the mockup's units. */
+static void r_cell(int b, int c, float *x, float *y)
 {
-    if (i < 0 || i >= uttt_rules_count()) return "";
-    return RULES[i];
+    *x = (b % 3) * R_BLOCK + 3.f + R_CELL * ((c % 3) + .5f);
+    *y = (b / 3) * R_BLOCK + 3.f + R_CELL * ((c / 3) + .5f);
 }
 
-const char *uttt_rules_title(void) { return "How it goes"; }
+/* THE BOARD: nine small hashes inset in their blocks, and the four main
+ * lines two units past it in the board's own two passes. */
+static void r_grid(UtttDL *d, int32_t seed)
+{
+    const RFrame f = R_BOARD;
+    for (int b = 0; b < 9; b++)
+        hash_in(d, rf(f, (b % 3) * R_BLOCK + 3.f), rf(f, (b / 3) * R_BLOCK + 3.f), 24.f * f.k,
+                sd(seed, 131, b * 17), .75f * f.k, .4f * f.k, .62f, 1.5f);
+    hash_in(d, rf(f, 0), rf(f, 0), 90.f * f.k, sd(seed, 7, 3), 1.35f * f.k, 2.f * f.k, .9f, 3.4f);
+    hash_in(d, rf(f, 0), rf(f, 0), 90.f * f.k, sd(seed, 19, 5), 1.1f * f.k, 1.6f * f.k, .72f, 3.4f);
+}
+
+/* A MARK where the mockup puts it - an X's arms `r` from (cx, cy), an O
+ * 2.1 r across - drawn by mark_in, its stroke `w` wide, at `alpha` of the
+ * board's ink. mark_in draws an X from 10 to 94 of its side and an O O_W
+ * across about (O_CX, O_CY), so this finds the side that spans it. */
+static void r_mark(UtttDL *d, RFrame f, int kind, float cx, float cy, float r,
+                   float w, float alpha, int32_t seed)
+{
+    float s, x, y;
+    if (kind == UTTT_X) { s = 2.f * r / .84f; x = cx - s * .52f; y = cy - s * .515f; }
+    else {
+        s = 2.1f * r / (O_W / 100.f);
+        x = cx - s * O_CX / 100.f; y = cy - s * O_CY / 100.f;
+    }
+    UtttPen p = uttt_pen_92();
+    p.a *= alpha;
+    p.w = w * 100.f / s;                 /* mark_in: stroke = p.w * side / 100 */
+    mark_in(d, kind, rf(f, x), rf(f, y), s * f.k, seed, 1.f, &p);
+}
+
+/* A BLOCK WON: the winner's big mark over it at the board's big-mark
+ * strength (.62), the mockup's size - an X's arms 12.6 from the block's
+ * middle, an O 25.2 across - `w` wide. */
+static void r_won(UtttDL *d, RFrame f, int b, int kind, float w, int32_t seed)
+{
+    r_mark(d, f, kind, (b % 3) * R_BLOCK + 15.f, (b / 3) * R_BLOCK + 15.f,
+           kind == UTTT_O ? 12.f : 12.6f, w, R_BIG_A, sd(seed, 77, b));
+}
+
+/* The wash over block `b` (9: the sheet), the board's own rect and alpha. */
+static void r_wash(UtttDL *d, int b)
+{
+    float r[4], a;
+    if (!uttt_wash_rect(b, r, &a)) return;
+    rect(d, rf(R_BOARD, r[0] * 90.f), rf(R_BOARD, r[1] * 90.f), r[2] * 90.f * R_BOARD.k,
+         r[3] * 90.f * R_BOARD.k, uttt_wash_rgba(a));
+}
+
+/* A smooth pen line through `n` points in the mockup's units: the arrow. */
+static void r_line(UtttDL *d, const UtttPt *pts, int n, float w, uint32_t ink)
+{
+    UtttPt q[64];
+    if (n > 64) n = 64;
+    for (int i = 0; i < n; i++) q[i] = (UtttPt){ rf(R_BOARD, pts[i].x), rf(R_BOARD, pts[i].y) };
+    UtttPen p = uttt_pen_92();
+    p.ink = ink; p.w = w * R_BOARD.k; p.a = 1.f; p.vel = 0; p.lift = .2f;
+    p.grain = .2f; p.agrain = .15f;
+    stroke(d, q, n, &p, 1.f);
+}
+
+int uttt_draw_rule(UtttDL *d, int i)
+{
+    if (i < 0 || i > 7) return -1;
+    const RFrame B = R_BOARD;
+    const int32_t seed = 3 + i * 10;     /* the mockup's: 3, 11 .. 71 */
+    float cx, cy;
+    switch (i) {
+    case 0:                              /* the board */
+        r_grid(d, seed);
+        break;
+    case 1: {                            /* three won on a diagonal by O, and the line */
+        /* O's, not X's (owner, 2026-09-26): the store game is O's diagonal,
+         * so the rule shows the same win; one X block for contrast */
+        r_grid(d, seed);
+        r_cell(1, 4, &cx, &cy); r_mark(d, B, UTTT_X, cx, cy, 2.4f, 1.1f, 1.f, sd(seed, 1000, 13));
+        r_cell(3, 0, &cx, &cy); r_mark(d, B, UTTT_O, cx, cy, 2.4f, 1.1f, 1.f, sd(seed, 1000, 27));
+        r_cell(8, 2, &cx, &cy); r_mark(d, B, UTTT_X, cx, cy, 2.4f, 1.1f, 1.f, sd(seed, 1000, 74));
+        r_won(d, B, 0, UTTT_X, 2.f, seed);
+        r_won(d, B, 2, UTTT_O, 2.f, seed);
+        r_won(d, B, 4, UTTT_O, 2.f, seed);
+        r_won(d, B, 6, UTTT_O, 2.f, seed);
+        /* the board's win line through blocks 2, 4 and 6, a sixth of the
+         * run past both ends as win_line runs it, in the mockup's width */
+        const float ax = 5.f / 6.f + 1.f / 9.f, ay = 1.f / 6.f - 1.f / 9.f;
+        const float zx = 1.f / 6.f - 1.f / 9.f, zy = 5.f / 6.f + 1.f / 9.f;
+        win_stroke(d, rf(B, ax * 90.f), rf(B, ay * 90.f), rf(B, zx * 90.f), rf(B, zy * 90.f),
+                   INK_O, seed, 1.f, 2.8f * B.k / (uttt_pen_92().w / 9.f / 100.f * GRID_MAJOR_W * 3.f));
+        break;
+    }
+    case 2: {                            /* one subgrid won: its marks fade, a big O over it */
+        const RFrame W = R_BOARD;
+        /* one hash across the whole drawing, its lines stopping 4 short */
+        hash_in(d, rf(W, 0), rf(W, 0), 90.f * W.k, sd(seed, 7, 3), 1.4f * W.k, -4.f * W.k, .9f, 3.4f);
+        static const int8_t C[5][2] = { { 0, UTTT_O }, { 4, UTTT_O }, { 8, UTTT_O },
+                                        { 1, UTTT_X }, { 5, UTTT_X } };
+        for (int k = 0; k < 5; k++)
+            r_mark(d, W, C[k][1], (C[k][0] % 3) * 30.f + 15.f, (C[k][0] / 3) * 30.f + 15.f,
+                   8.f, 2.2f, .34f, sd(seed, 1000, C[k][0]));
+        /* the big O over it, 75.6 across, at the big mark's strength */
+        r_mark(d, W, UTTT_O, 45.f, 45.f, 36.f, 2.4f, R_BIG_A, sd(seed, 77, 0));
+        break;
+    }
+    case 3: {                            /* the square you mark sends them */
+        r_grid(d, seed);
+        r_cell(4, 2, &cx, &cy);
+        r_mark(d, B, UTTT_X, cx, cy, 2.4f, 1.1f, 1.f, sd(seed, 1000, 38));
+        /* a red arrow from that square to the block it names: the
+         * mockup's quadratic, sampled, and its two-stroke head */
+        const float x2 = 2 * R_BLOCK + 15.f, y2 = 15.f;
+        const float x1 = cx + 3.f, y1 = cy - 3.f, ex = x2 - 3.f, ey = y2 + 5.f;
+        const float mx = (cx + x2) / 2.f + 10.f, my = (cy + y2) / 2.f + 4.f;
+        UtttPt a[24];
+        for (int k = 0; k < 24; k++) {
+            float t = k / 23.f, u = 1.f - t;
+            a[k] = (UtttPt){ u * u * x1 + 2 * u * t * mx + t * t * ex,
+                             u * u * y1 + 2 * u * t * my + t * t * ey };
+        }
+        r_line(d, a, 24, 1.2f, INK_O);
+        UtttPt h1[2] = { { ex, ey }, { ex - 1.f, ey + 5.f } };
+        UtttPt h2[2] = { { ex, ey }, { ex - 5.f, ey + 1.f } };
+        r_line(d, h1, 2, 1.2f, INK_O);
+        r_line(d, h2, 2, 1.2f, INK_O);
+        break;
+    }
+    case 4:                              /* sent to a won block: anywhere */
+        r_wash(d, 9);
+        r_grid(d, seed);
+        r_cell(4, 2, &cx, &cy);
+        r_mark(d, B, UTTT_X, cx, cy, 2.4f, 1.1f, 1.f, sd(seed, 1000, 38));
+        r_won(d, B, 2, UTTT_O, 2.f, seed);
+        break;
+    case 5: {                            /* the promise round where they go */
+        r_wash(d, 4);
+        r_grid(d, seed);
+        r_cell(4, 2, &cx, &cy);
+        r_mark(d, B, UTTT_X, cx, cy, 2.4f, 1.1f, 1.f, sd(seed, 1000, 38));
+        float r[4];
+        uttt_wash_rect(2, r, NULL);
+        for (int k = 0; k < 4; k++) r[k] = (k < 2 ? rf(B, r[k] * 90.f) : r[k] * 90.f * B.k);
+        promise_box(d, r, OUTLINE_OVERSHOOT * 90.f * B.k, 1.8f * B.k, seed, 2 * 31, 1.f);
+        break;
+    }
+    case 6: {                            /* the draft faded, a new tap in the tint */
+        r_wash(d, 4);
+        r_grid(d, seed);
+        r_cell(4, 2, &cx, &cy);
+        r_mark(d, B, UTTT_X, cx, cy, 2.4f, 1.1f, .35f, sd(seed, 1000, 38));
+        /* a dashed ring where the finger lands: 11 across, dashes of two */
+        r_cell(4, 6, &cx, &cy);
+        const float rr = 5.5f, dash = 2.f;
+        const int n = (int)(2.f * 3.14159265f * rr / (2.f * dash));
+        for (int k = 0; k < n; k++) {
+            UtttPt q[6];
+            float a0 = (float)k / n * 6.2831853f;
+            for (int j = 0; j < 6; j++) {
+                float a = a0 + dash / rr * j / 5.f;
+                q[j] = (UtttPt){ cx + rr * cosf(a), cy + rr * sinf(a) };
+            }
+            r_line(d, q, 6, .9f, INK_X);
+        }
+        break;
+    }
+    case 7:                              /* X moves first: one large X */
+        r_mark(d, R_WHOLE, UTTT_X, 45.f, 45.f, 24.f, 5.f, 1.f / .8f, sd(seed, 1000, 0));
+        break;
+    }
+    return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
+}
+
+/* The drawer's board side the promise's pen is sized for: the phrase's box
+ * is drawn as the promise is drawn round a block at this size. */
+#define RULES_BOARD_PT 370.f
+
+UtttRulesLook uttt_rules_look(void)
+{
+    UtttRulesLook L;
+    L.margin_x = 16.f; L.top = 28.f; L.bottom = 26.f;
+    L.title_pt = 21.f; L.title_gap = 14.f;
+    L.art = 62.f; L.art_gap = 12.f; L.row_gap = 14.f;
+    L.body_pt = 15.f; L.body_lead = 1.42f;
+    L.box_pad = 2.f; L.word_room = 6.f;
+    L.tint_pad_x = 4.f; L.tint_pad_y = 1.f;
+    L.ink = UTTT_INK;
+    L.tint = uttt_wash_rgba(.38f);
+    L.row_h = 4.f * roundf(L.body_pt * L.body_lead);
+    L.box_drop = 2.f; L.box_grow = 1.5f; L.box_room = 8.f;
+    return L;
+}
+
+int uttt_draw_rule_box(UtttDL *d, float w, float h)
+{
+    if (!(w > 0.f && h > 0.f)) return -1;
+    const int first = d->n_pt;
+    const float k = 1.f / RULES_BOARD_PT;              /* points -> board units */
+    const UtttRulesLook L = uttt_rules_look();
+    const float p = L.box_pad + L.box_room, g = L.box_grow;
+    /* across on the phrase's box; up and down box_grow further out, and
+     * the whole box box_drop lower */
+    const float r[4] = { p * k, (p - g + L.box_drop) * k,
+                         (w - 2.f * p) * k, (h - 2.f * p + 2.f * g) * k };
+    promise_box(d, r, 1.5f * k, 2.f * k, 7, 0, 1.f);
+    for (int i = first; i < d->n_pt; i++) {
+        d->pt[i].x = d->pt[i].x / k / w;
+        d->pt[i].y = d->pt[i].y / k / h;
+    }
+    return (d->n_poly < d->cap_poly && d->n_pt < d->cap_pt) ? 0 : -1;
+}

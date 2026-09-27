@@ -8,14 +8,14 @@
   first-party required-reason call in the whole app lives in THIS binary, so its
   reasons must be declared here (Apple analyzes the binary that owns the symbol).
 
-    * UserDefaults.standard          — FStrings.swift (language override)     -> CA92.1
-    * UserDefaults(suiteName: group) — MessageGameStore.swift (App Group cache) -> 1C8F.1
+    * UserDefaults.standard          - FStrings.swift (language override)     -> CA92.1
+    * UserDefaults(suiteName: group) - MessageGameStore.swift (App Group cache) -> 1C8F.1
 
   CA92.1 = user defaults used to read/write data accessible only to the app itself.
   1C8F.1 = user defaults used to read/write data shared across the App Group.
 
   The app- and extension-level manifests (FoolishApp/, FoolishMessages/) stay
-  lean: those binaries call no required-reason API directly — they go through
+  lean: those binaries call no required-reason API directly - they go through
   this framework, which carries the reasons.
 -->
 <dict>

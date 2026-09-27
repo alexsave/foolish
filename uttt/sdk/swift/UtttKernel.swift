@@ -1,6 +1,7 @@
 import CUttt
 import CoreGraphics
 import Foundation
+import Security
 
 /// The kernel, and nothing else.
 ///
@@ -19,11 +20,49 @@ public enum Uttt {
     @discardableResult
     public static func play(_ move: Int) -> Bool { uti_play(Int32(move)) != 0 }
 
-    /// The rulebook's text, straight from the kernel: a title and six lines.
-    /// The renderer lays them out and writes none of them.
+    /// THE KERNEL'S LANGUAGE, from the phone's own ordered preference list
+    /// (`Locale.preferredLanguages`): the first language the tables carry
+    /// wins, English is the floor. Returns the code it chose. Every word the
+    /// kernel says after this is in it, the bubble's included - so a bubble
+    /// reads in its sender's language on every phone (uttt_lang.h).
+    @discardableResult
+    public static func speak(_ preferred: [String]) -> String {
+        String(cString: uti_lang_prefer(preferred.joined(separator: ",")))
+    }
+
+    /// The rules sheet's text, straight from the kernel: a title and eight
+    /// lines (docs/RULES.html). The renderer lays them out and writes none.
     public static var rulesTitle: String { String(cString: uti_rules_title()) }
     public static var rules: [String] {
         (0..<Int(uti_rules_count())).map { String(cString: uti_rules_line(Int32($0))) }
+    }
+
+    /// Which phrase of rule `i` is marked, and how: the promise's pen box
+    /// round it or the wash behind it. The kernel counts UTF-8 bytes and an
+    /// NSRange counts UTF-16 units, which agree only for ASCII - so the
+    /// bytes are decoded up to each end rather than taken as they are.
+    public enum RulesYellow { case none, outline(NSRange), tint(NSRange) }
+    public static func rulesYellow(_ i: Int) -> RulesYellow {
+        var at: Int32 = 0, len: Int32 = 0
+        let k = uti_rules_yellow(Int32(i), &at, &len)
+        let bytes = Array(String(cString: uti_rules_line(Int32(i))).utf8)
+        let a = Int(at), e = Int(at) + Int(len)
+        guard k != 0, a >= 0, e <= bytes.count else { return .none }
+        func units(_ n: Int) -> Int { String(decoding: bytes[0..<n], as: UTF8.self).utf16.count }
+        let r = NSRange(location: units(a), length: units(e) - units(a))
+        return k == 1 ? .outline(r) : k == 2 ? .tint(r) : .none
+    }
+
+    /// Every size on the rules sheet (uttt_rules_look).
+    public static var rulesLook: UtiRulesLook { uti_rules_look() }
+
+    /// Rule `i`'s drawing, in a unit square.
+    public static func rule(_ i: Int) -> [Poly] { harvest(uti_draw_rule(Int32(i))) }
+
+    /// The pen box round a marked phrase, drawn at its frame's size in
+    /// points and handed back in 0..1 of that frame.
+    public static func ruleBox(w: CGFloat, h: CGFloat) -> [Poly] {
+        harvest(uti_draw_rule_box(Float(w), Float(h)))
     }
 
     /// Take back the last move. False when there was none.
@@ -102,9 +141,38 @@ public enum Uttt {
         me(withUnsafeBytes(of: participant.uuid) { Data($0) })
     }
 
-    /// A new invitation from me, composed now. The moment is the seed.
+    /// A new invitation from me, composed now. The moment is the seed; the
+    /// LOOK - the one byte every stroke on its napkin is drawn from - is
+    /// drawn here from the system's secure random and handed to the kernel,
+    /// which carries it in every bubble of the game.
     public static func openInvitation(at date: Date = Date()) {
-        uti_msg_open(Int64(date.timeIntervalSince1970))
+        uti_msg_open(Int64(date.timeIntervalSince1970), Int32(randomLook()))
+    }
+
+    /// AGAIN: the invitation that follows the resident finished game, on
+    /// the same napkin - the kernel copies the look (uti_msg_open_again);
+    /// nothing here chooses one. False, and nothing changed, if the
+    /// resident game is not over.
+    @discardableResult
+    public static func openRematch(at date: Date = Date()) -> Bool {
+        uti_msg_open_again(Int64(date.timeIntervalSince1970)) != 0
+    }
+
+#if DEBUG
+    /// The store frames' invitation (`dev.invite`): on the seeded game's
+    /// napkin, which the kernel derives from the seed as it does for a
+    /// seeded game. DEBUG only, like the kernel entry.
+    public static func openInvitationSeeded(at date: Date) {
+        uti_msg_open_seeded(Int64(date.timeIntervalSince1970))
+    }
+#endif
+
+    /// One byte of secure random: SecRandomCopyBytes, and the system
+    /// generator (arc4random) should it ever refuse.
+    private static func randomLook() -> UInt8 {
+        var b: UInt8 = 0
+        let ok = withUnsafeMutableBytes(of: &b) { SecRandomCopyBytes(kSecRandomDefault, 1, $0.baseAddress!) }
+        return ok == errSecSuccess ? b : UInt8.random(in: .min ... .max)
     }
 
     /// Adopt a message. False if it is not one this build reads, and then
@@ -128,6 +196,8 @@ public enum Uttt {
     /// The mark this device plays, or `.none`.
     public static var myMark: Mark { Mark(rawValue: UInt8(uti_msg_mark())) ?? .none }
     public static var seed: Int32 { uti_msg_seed() }
+    /// The resident game's look: the byte its napkin is drawn from.
+    public static var look: UInt8 { UInt8(truncatingIfNeeded: uti_msg_look()) }
     public static var canMove: Bool { uti_msg_can_move() != 0 }
 
     /// Play as me. On an open invitation this TAKES THE SEAT with the move.
@@ -205,14 +275,19 @@ public enum Uttt {
     }
     public static var seatBy: Witness { Witness(rawValue: uti_msg_seat_by()) ?? .none }
 
+    #if DEBUG
     /// TEMPORARY (1.0(9)): the diagnostics panel's claim, which writes this
     /// device's record for the resident game. X only once it is sealed.
+    /// DEBUG only, like the panel: nothing in a Release binary names
+    /// uti_msg_claim or uti_msg_forget, so the linker's dead-strip drops them
+    /// from the one static library both configurations link.
     @discardableResult
     public static func claim(_ seat: Seat) -> Bool {
         uti_msg_claim(seat == .x ? UTI_SEAT_X : UTI_SEAT_O) != 0
     }
     /// Drop this device's record of the resident game.
     public static func forgetSeat() { uti_msg_forget() }
+    #endif
 
 
     public enum Tag: Int32 {
@@ -306,6 +381,10 @@ public enum Uttt {
     public static var sendHintSeconds: Double { Double(uti_send_hint_ms()) / 1000 }
     // When an insert may go and what its silence means are shared with the
     // sister product: InsertStaging (shared/c/msg_stage).
+
+    /// The ink the play surface's headline is set in, 0xRRGGBBAA: the
+    /// winner's own at the end.
+    public static var headlineInk: UInt32 { uti_say_headline_ink() }
 
     /// The mark the bubble's headline draws before its words, or `.none`.
     public static var bubbleMark: Mark { Mark(rawValue: UInt8(uti_say_bubble_mark())) ?? .none }
@@ -493,11 +572,12 @@ public enum Uttt {
     /// does (UTTT_MS_REST).
     public static var restSeconds: Double { Double(uti_motion_rest_ms()) / 1000 }
 
-    /// One mark: plain for the "you are" indicator; for the headline's,
-    /// `board` is the board's side over the mark's, in points, and the
-    /// kernel draws it at the last move's stroke width.
-    public static func mark(_ m: Mark, seed: Int32, board: CGFloat = 0) -> [Poly] {
-        harvest(uti_draw_mark(Int32(m.rawValue), seed, Float(board)))
+    /// One mark on the resident game's napkin: plain for the "you are"
+    /// indicator; for the headline's, `board` is the board's side over the
+    /// mark's, in points, and the kernel draws it at the last move's stroke
+    /// width.
+    public static func mark(_ m: Mark, board: CGFloat = 0) -> [Poly] {
+        harvest(uti_draw_mark(Int32(m.rawValue), Float(board)))
     }
 
     /// The rulebook door. It takes the size the button HAS, in points, because

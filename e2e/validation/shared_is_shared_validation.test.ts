@@ -107,6 +107,7 @@ test('shared/ holds the files both products actually build', () => {
         'shared/tools/structgen/structgen.c',
         'shared/tools/structgen/Makefile',
         'shared/tools/datagen/datagen.c',
+        'shared/c/i18n/languages.h',
         'shared/swift/PackedBytes.swift',
         // The rig's measurement half: MSE, bar charts, square detection, the
         // frame-window extractor and the accessibility driver. Zero product
@@ -134,6 +135,8 @@ test('the product does not keep its own copy of a shared file', () => {
         'tools/llvm.mk',
         'tools/sgcommon',
         'tools/datagen',
+        'c/i18n/languages.h',
+        'uttt/c/i18n/languages.h',
         'tools/structgen/structgen.c',
         'werewolf/c/src/sha256.c',
         'werewolf/c/src/deal_rng.c',

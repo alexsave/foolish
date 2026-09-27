@@ -263,7 +263,7 @@ int main(void)
                 uttt_play(&g, mv[r % (uint64_t)n]);
             }
             UtttDL d; uttt_dl_init(&d, PT, 400000, PO, 4000);
-            UtttDrawOpts o = uttt_draw_opts((int32_t)(r & 0x7fffffff) | 1);
+            UtttDrawOpts o = uttt_draw_opts((uint8_t)r);
             o.last = g.move[g.n_plies - 1];
             if (uttt_draw_board(&d, &g, &o) != 0) { exact = 0; break; }
             if (d.n_poly != strokes_for(&g, o.last)) exact = 0;

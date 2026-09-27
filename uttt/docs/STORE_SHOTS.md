@@ -1,0 +1,138 @@
+# Store shots: one game
+
+Every App Store frame for Ultimate Tic-Tac-Toe shows a phase of ONE real, reachable game (owner, 2026-09-26).
+A frame shows the board after one ply of this game, and nothing else.
+
+- Replay code: `AJG7NYNQG4RFXXGVPGD7QR2ETSOYTWMCREAQ`
+- Link: <https://uttt.live/AJG7NYNQG4RFXXGVPGD7QR2ETSOYTWMCREAQ>
+- Look 77: the DEBUG seeded game's seed is 77 (`UtttDev.seed`) and a seeded game's look is its seed's low byte (`uttt_look_of_seed`), so the replay draws the same napkin as the frames.
+- The link before the drawing byte (2026-09-26) was `AAAAATPW4GYDOIS33TKXTB7YI5CJZHMJ3GBISAI`, base32 of seed 77 and the moves with no version; such links are dead by the owner's decision and uttt.live shows its error page for them.
+- Result: O wins in 50 plies, on the big board's anti-diagonal (top-right, centre, bottom-left boards). The owner asked for O's diagonal ("composes better").
+- We are X in every frame but the win, which is shot from O's seat so it reads "You win"; the seat whose frame it is has its messages on the right and sits in the drawer.
+
+## How it was made, and how to check it
+
+`make -C uttt/c store-game` (`tools/uttt_store_game.c`) plays the rig's 18-ply `devgame` opening, then fountain for both seats: X on 5 rollouts, O on 2000, seed 44.
+It puts every ply through `uttt_play`, replays the whole list from scratch through the rules again, reads the link back with `uttt_replay_read` to compare, and exits 1 unless O wins on a diagonal.
+It prints the result, the link and the ply list below.
+
+An earlier store game (X winning the main diagonal at ply 49) could not be bent into an O diagonal: X took the centre board at its ply 25, and both diagonals run through the centre.
+
+On the simulator a frame's history is the rig's `devgame` with a prefix of the ply list, for example the first 34 plies:
+
+```
+rig.sh devgame 34,67,44,80,76,43,69,62,79,63,4,40,39,31,37,16,70,71,73,15,60,59,47,24,57,30,33,56,23,46,11,21,32,48
+```
+
+and the plies after the prefix are played on the simulator, each as a real message from alternating threads.
+
+| Frames | `devgame` prefix | Played on the simulator |
+|---|---|---|
+| 01, 03 | 32 plies | 33-36 as real messages, then 37 sent (01) or, after a re-sent copy of 36, staged (03) |
+| 02, 05 | 41 plies | 42 by O from the + menu; X opens it |
+| 04 | 49 plies | 50, O from the + menu in the photographed thread; the thread is left and re-entered, the sent bubble tapped open and the drawer dragged back down |
+| 06 | none | O's invitation from the + menu with `dev.invite`; X opens it |
+
+Ply 37 and not the more dramatic 39 for the Send frames: 39 wins X the middle-left board and sends O to a won board, so the whole napkin lights up as "play anywhere" and buries the marks.
+The collapsed drawer's height follows the last keyboard the simulator showed, so it is not a constant: every tap on the collapsed board is placed from the board's own main lines in a fresh screenshot, and every transcript frame is shot in one session of the same state, so the drawers sit at the same height.
+
+## Frames
+
+Six scenes, DARK MODE ONLY (owner, 2026-09-26: no light variants).
+One title size across the set, 114 px Futura Bold (the largest at which "Ultimate Tic-Tac-Toe" fits one line), every title two lines with a manual break.
+Round four (owner, 2026-09-26): new titles for the hero, the rules and the empty board, the empty board moved to last, and the hero and the win reshot with no text messages in the thread, only the game.
+Round three's set is kept in `~/Downloads/uttt-store/round3/`.
+
+| # | Title | Scene | Ply shown | Seat | Ground |
+|---|---|---|---|---|---|
+| 01 | "Ultimate Tic-Tac-Toe / in Messages" | The transcript, only the game: three caption lines, our SENT move on the right, the collapsed drawer under it | 37 (X, top-right board, top-left square), sent | X | O red |
+| 02 | "Your move picks / their board" | Expanded board, X to play in the top-middle board O's square sent them to | 42 (O) received | X | X blue |
+| 03 | "Send your moves / to the chat" | The two texts, then the staged draft in the compose field, collapsed drawer | 37 (X), staged and not sent; O is sent to the top-left board. The Send hint bobs, so the frame is a 16-shot burst; the owner picked b08 (round three's shot, not retaken) | X | coal |
+| 04 | "Win three boards / in a row" | The transcript, only the game: O's winning move sent, the drawer reading "You win" | 50 (O wins the anti-diagonal), sent | O | O red |
+| 05 | "Learn the rules / to a fun game" | The rules page, opened from the rulebook and not scrolled | over ply 42 | X | X blue |
+| 06 | "Nine times / the fun" | The empty napkin: O's invitation opened by X, expanded | 0 | X | coal |
+
+The grounds are the napkin's two inks, taken from the kernel's draw code (`uttt/c/src/uttt_draw.c`), and foolish's coal; napkin white was dropped (owner, 2026-09-26):
+
+| Ground | Top | Bottom | Title | From |
+|---|---|---|---|---|
+| coal | (24,20,19) | (12,10,9) | white | foolish's `coal` |
+| O red | (168,50,31) | (112,33,20) | white | `INK_O` 0xa8321f |
+| X blue | (37,55,107) | (22,33,66) | white | `INK_X` 0x25376b |
+
+They cycle O red / X blue / coal, so no two neighbours match and O's win (04) lands on O red.
+`python3 uttt/ios/Tools/store_frames.py` composes the set, and a contact sheet, with `shared/tools/store/market.py`.
+
+## Transcript frames on the simulator
+
+Straight after a send, the thread's "iMessage / Today" stamp sits half under the header's phone-number pill once three caption lines and a bubble are above the drawer.
+For 01 the sent bubble is tapped open and the drawer dragged back down by its grabber (a swipe from y 82 to 560 points); that settles the transcript at its top, so the stamp clears the pill.
+The compose field keeps focus through that and its cursor blinks, so the frame is taken on an off phase of the blink (no blue in the field).
+For 04 the thread is left and re-entered first, which drops the focus.
+At the collapsed height these frames land on (387 points), the drawer's "You win" is mid-crossfade (uttt_sheet's column words) and reads paler than the expanded sheet's; round three's win, at 338 points, had it at full ink.
+
+The simulator draws each superseded line of a session with a neighbour's summary (rig README, iOS 26 and 27 notes): a collapsed line shows the summary of the NEXT message in the session.
+Each move after the first is therefore staged with the DEBUG-only `dev.caption` set to the line the move BEFORE it has to read; the bubble's own caption stays the kernel's.
+The "Send" frame also re-sends ply 36's board unchanged (`dev.restage`) to carry the last line, then stages ply 37 in the same session; that extra copy is scrolled behind the draft, leaving texts, then our line, then theirs.
+The empty frame's invitation is a real one from the + menu, opened with the store game's seed by `dev.invite`.
+
+## Plies
+
+Moves are `block*9 + square`, both numbered row by row from the top left.
+
+```
+34,67,44,80,76,43,69,62,79,63,4,40,39,31,37,16,70,71,73,15,60,59,47,24,57,30,33,56,23,46,11,21,32,48,29,20,18,3,35,38,19,10,17,42,14,50,45,5,49,22
+```
+
+| Ply | Mark | Move | Board | Square |
+|---|---|---|---|---|
+| 1 | X | 34 | middle-left | bottom-middle |
+| 2 | O | 67 | bottom-middle | centre |
+| 3 | X | 44 | centre | bottom-right |
+| 4 | O | 80 | bottom-right | bottom-right |
+| 5 | X | 76 | bottom-right | centre |
+| 6 | O | 43 | centre | bottom-middle |
+| 7 | X | 69 | bottom-middle | bottom-left |
+| 8 | O | 62 | bottom-left | bottom-right |
+| 9 | X | 79 | bottom-right | bottom-middle |
+| 10 | O | 63 | bottom-middle | top-left |
+| 11 | X | 4 | top-left | centre |
+| 12 | O | 40 | centre | centre |
+| 13 | X | 39 | centre | middle-left |
+| 14 | O | 31 | middle-left | centre |
+| 15 | X | 37 | centre | top-middle |
+| 16 | O | 16 | top-middle | bottom-middle |
+| 17 | X | 70 | bottom-middle | bottom-middle |
+| 18 | O | 71 | bottom-middle | bottom-right |
+| 19 | X | 73 | bottom-right | top-middle |
+| 20 | O | 15 | top-middle | bottom-left |
+| 21 | X | 60 | bottom-left | bottom-left |
+| 22 | O | 59 | bottom-left | middle-right |
+| 23 | X | 47 | middle-right | top-right |
+| 24 | O | 24 | top-right | bottom-left |
+| 25 | X | 57 | bottom-left | middle-left |
+| 26 | O | 30 | middle-left | middle-left |
+| 27 | X | 33 | middle-left | bottom-left |
+| 28 | O | 56 | bottom-left | top-right |
+| 29 | X | 23 | top-right | middle-right |
+| 30 | O | 46 | middle-right | top-middle |
+| 31 | X | 11 | top-middle | top-right |
+| 32 | O | 21 | top-right | middle-left |
+| 33 | X | 32 | middle-left | middle-right |
+| 34 | O | 48 | middle-right | middle-left |
+| 35 | X | 29 | middle-left | top-right |
+| 36 | O | 20 | top-right | top-right |
+| 37 | X | 18 | top-right | top-left |
+| 38 | O | 3 | top-left | middle-left |
+| 39 | X | 35 | middle-left | bottom-right |
+| 40 | O | 38 | centre | top-right |
+| 41 | X | 19 | top-right | top-middle |
+| 42 | O | 10 | top-middle | top-middle |
+| 43 | X | 17 | top-middle | bottom-right |
+| 44 | O | 42 | centre | bottom-left |
+| 45 | X | 14 | top-middle | middle-right |
+| 46 | O | 50 | middle-right | middle-right |
+| 47 | X | 45 | middle-right | top-left |
+| 48 | O | 5 | top-left | middle-right |
+| 49 | X | 49 | middle-right | centre |
+| 50 | O | 22 | top-right | centre |

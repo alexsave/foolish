@@ -10,6 +10,9 @@ import UtttKit
 /// inspects. (SwiftUI here is the harness's own; the screens are UIKit.)
 @main
 struct UtttPreviewApp: App {
+    /* the phone's language, as the extension takes it (UtttLanguage) */
+    init() { UtttLanguage.apply() }
+
     var body: some Scene {
         WindowGroup { PreviewRoot() }
     }
@@ -95,12 +98,12 @@ struct PreviewRoot: View {
             Uttt.me(watch ? Data("preview:w".utf8) : asO ? o : x)
             Uttt.seat(o: o, x: x)
             if watch {
-                let model = UtttModel(seed: seed, you: .none)
+                let model = UtttModel(you: .none)
                 let v = UtttWatchScreen(model: model, door: Uttt.over == .none ? .none : .again, slide: nil)
                 model.refresh()
                 return v
             }
-            let model = UtttModel(seed: seed, you: asO ? .o : .x)
+            let model = UtttModel(you: asO ? .o : .x)
             /* a finished game stands its doors, as the end screen does */
             let v = UtttGameScreen(model: model, door: Uttt.over == .none ? .none : .again, slide: nil)
             model.refresh()

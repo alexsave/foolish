@@ -65,6 +65,13 @@ UtttMotion uttt_motion(const UtttGame *g, int ch)
          * above has landed. */
         m.to = m.from;
         m.wash_at = 0; m.wash_ms = 1;
+        if (dest < 0) {
+            /* A MOVE THAT ENDS THE GAME leaves no live board, so nothing is
+             * tinted (owner, 2026-09-26: the staged win lit the whole sheet
+             * as "play anywhere"). The wash leaves with the ink. */
+            m.to = -1;
+            m.wash_ms = m.ink_ms;
+        }
         m.outline = dest;
         m.outline_at = dest >= 0 ? e : -1;
         if (dest >= 0) e += UTTT_MS_OUTLINE;
@@ -86,6 +93,8 @@ UtttMotion uttt_motion(const UtttGame *g, int ch)
         m.wash_at = 0; m.wash_ms = UTTT_MS_WASH_MINE;
         m.outline = dest; m.outline_at = -1; m.outline_fade = 1;
         m.end_ms = UTTT_MS_WASH_MINE;
+        /* the stage already took the wash away from a finished game */
+        if (dest < 0) m.from = -1;
         return m;
     }
 
@@ -94,6 +103,8 @@ UtttMotion uttt_motion(const UtttGame *g, int ch)
     m.wash_at = e;
     m.wash_ms = ch == UTTT_CH_REPLAY ? UTTT_MS_WASH_MINE : UTTT_MS_WASH_THEIRS;
     m.end_ms  = m.wash_at + m.wash_ms;
+    /* THEIR MOVE ENDS A WAIT: the headline goes quiet while it draws */
+    m.hush = ch == UTTT_CH_THEIRS || ch == UTTT_CH_ARRIVAL;
     return m;
 }
 
@@ -147,6 +158,8 @@ void uttt_motion_at(const UtttMotion *m, int32_t now, UtttFrame *f)
                                       : bezier(.32f, .72f, .4f, 1.f, x);
     }
     f->landed = f->mark_t >= 1.f;
+    f->words = f->landed ? UTTT_WORDS_NOW
+             : m->hush && now > 0 ? UTTT_WORDS_HUSH : UTTT_WORDS_BEFORE;
 
     /* ONE RECT, TRAVELLING. From block to block it slides and resizes; to
      * "anywhere" the same interpolation grows it to the sheet, so being

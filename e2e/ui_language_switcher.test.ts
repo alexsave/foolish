@@ -123,7 +123,7 @@ test('the right-to-left languages are marked right to left, and only those', asy
         .filter((r) => r.dir === 'rtl')
         .map((r) => r.code);
     assert.deepEqual(rtl, ['he', 'ar'],
-        'the panel marks a different set of languages right-to-left than c/i18n/languages.h does');
+        'the panel marks a different set of languages right-to-left than shared/c/i18n/languages.h does');
 });
 
 test('choosing a language closes the panel and moves the button to it', async () => {

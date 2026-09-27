@@ -1,6 +1,6 @@
 # Why an auto-insert on open never reaches the input field
 
-The evidence behind `msg_stage.h` beside this file: `ms_drawer_up`, `ms_insert_silence` and the silent-insert retry budget.
+The evidence behind `msg_stage.h` beside this file: `ms_drawer_up`, the `ms_stage_*` insert loop and its silent-insert and error budgets.
 The device log that found the window-sized first appearance is summarised in the header.
 
 Reverse-engineered on 2026-09-23 from Apple binaries on the build Mac, no simulator booted.
@@ -81,6 +81,8 @@ Treat "no completion" as a refusal.
 Insert, then arm a watchdog of about 500 ms; if the completion has not fired, insert the same message again, up to roughly 8 to 10 tries across about 5 s, and stop at the first completion.
 The first accepted try calls back with `nil` at once in compact mode, so a refused try leaves nothing behind and a retry cannot double-stage.
 Only retry like this in compact mode, because in expanded mode an accepted completion is deferred and a watchdog would mistake it for a refusal (collapse before inserting).
-Keep the generation check so a newer stage cancels the loop.
+A silence while the drawer is not compact parks the loop with no timer until the host reports the drawer compact, which is the moment a deferred completion is released and the only way the human can reach Send; then the same try's watchdog is armed once more.
+An insert answered with an error is a different vector (the gate passed and something downstream refused) with a budget of its own: ask again after a beat, and revert the draft on the third error, never counting a silence against it or an error against the silences.
+Keep the generation check so a newer stage cancels the loop, and key each timer to its try so an overtaken try's silence or error changes nothing while its late yes still counts as landed.
 If every try goes unanswered, fall back to a one-tap door (a "Send invitation" button); a tap is not required by the gate, but by the time the user can tap, the card is presented and the gate passes, which is why tap-driven inserts work.
 Log each watchdog firing so a device log shows how many tries the host needed.

@@ -9,7 +9,7 @@ import UIKit
 /// at exactly 300 by 195 points - landscape, aspect 1.54 - and a board is
 /// square. The kernel gives it 168 so the grid's main lines stop on the
 /// frame (uttt_bubble). A game in play is the board alone, centred, and the
-/// caption says whose turn and where ("O to play, top-left board", owner);
+/// caption says whose turn ("O to play", owner; the tint shows where);
 /// only a finished game's image has words, the winner's drawn mark and
 /// "wins" over "N moves", in a column beside the board.
 ///
@@ -57,11 +57,7 @@ public enum UtttBubble {
     }
 
     private static func ink(_ line: Int32) -> UIColor {
-        let c = uti_bubble_ink(line)
-        return UIColor(red:   CGFloat((c >> 24) & 0xff) / 255,
-                       green: CGFloat((c >> 16) & 0xff) / 255,
-                       blue:  CGFloat((c >>  8) & 0xff) / 255,
-                       alpha: CGFloat( c        & 0xff) / 255)
+        UtttInk.rgba(uti_bubble_ink(line))
     }
 
     private static func font(_ line: Int32) -> UIFont {
@@ -125,7 +121,7 @@ public enum UtttBubble {
         let mark = Uttt.bubbleMark
         return Snapshot(board: Uttt.bubbleBoardPolys(active: active, last: last),
                         mark: mark,
-                        markPolys: (mark == .x || mark == .o) ? Uttt.mark(mark, seed: Uttt.seed &+ 4) : [],
+                        markPolys: (mark == .x || mark == .o) ? Uttt.mark(mark) : [],
                         headline: headline, place: place,
                         paper: paper(width: Int(size.width), height: Int(size.height)),
                         boardBox: boardBox, textBox: textBox,
@@ -224,6 +220,13 @@ public enum UtttBubble {
         one.lineBreakMode = .byTruncatingTail
         let wrap = NSMutableParagraphStyle()
         wrap.lineBreakMode = .byWordWrapping
+        /* LEFT, NOT NATURAL: the frame is composed left to right - board,
+         * mark, words - in every language. Natural would set Hebrew or
+         * Arabic words against the frame's right edge, a gap away from the
+         * mark they follow (uttt/c/i18n/keys.h: the words after a mark are
+         * right of it on the screen whichever way they read). */
+        one.alignment = .left
+        wrap.alignment = .left
 
         let hAttr: [NSAttributedString.Key: Any] = [
             .font: font(0), .foregroundColor: ink(0), .paragraphStyle: one,

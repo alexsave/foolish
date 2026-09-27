@@ -4,6 +4,7 @@
  *     make -C uttt/c run
  */
 #include "../src/uttt_code.h"
+#include "../../../shared/c/b32.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -251,12 +252,14 @@ int main(int argc, char **argv)
            checked, fails - partial_fail);
 
     /* THE REPLAY LINK, round trip: every finished game -> URL -> code ->
-     * decode is the same game, every ply; the URL is the prefix and base32
-     * only; a link read in lower case, or with a query after it, is the same
-     * game; and no plies is no link. */
+     * decode is the same game, every ply, with its look; the URL is the
+     * prefix and base32 only, and the code begins with the version; a link
+     * read in lower case, or with a query after it, is the same game; a
+     * code of ANY OTHER VERSION is refused - a 1.0(8) code (the seed and
+     * the moves, no version) among them; and no plies is no link. */
     {
         static const char pre[] = UTTT_REPLAY_PREFIX;
-        int link_games = 0, link_fail = 0, longest = 0;
+        int link_games = 0, link_fail = 0, longest = 0, version_fail = 0;
         for (int t3 = 0; t3 < games; t3++) {
             UtttGame g; uttt_init(&g);
             uint8_t list[81];
@@ -267,12 +270,11 @@ int main(int argc, char **argv)
                 uttt_play(&g, pick(&g, list, n, t3 % 3));
             }
             char url[160];
-            /* seeds across the range: the sign bit, both ends, and 1 */
-            int32_t seed = t3 % 4 == 0 ? INT32_MIN : t3 % 4 == 1 ? INT32_MAX : t3 % 4 == 2 ? 1
-                         : (int32_t)(uint32_t)(RS >> 13);
-            int len = uttt_replay_url(&g, seed, url, sizeof url);
+            /* looks across the byte: both ends, 1, and random */
+            uint8_t look = t3 % 4 == 0 ? 0 : t3 % 4 == 1 ? 255 : t3 % 4 == 2 ? 1 : (uint8_t)(RS >> 13);
+            int len = uttt_replay_url(&g, look, url, sizeof url);
             UtttGame back;
-            int32_t sback = 0, sback2 = 0;
+            uint8_t lback = 0, lback2 = 0, raw[80];
             /* the owner's address, spelled out rather than taken from the
              * macro, so a typo in the macro cannot pass its own test */
             int ok = len > (int)sizeof pre - 1 && (int)strlen(url) == len
@@ -280,7 +282,9 @@ int main(int argc, char **argv)
                   && strncmp(url, pre, sizeof pre - 1) == 0;
             for (int c = (int)sizeof pre - 1; ok && c < len; c++)
                 ok = (url[c] >= 'A' && url[c] <= 'Z') || (url[c] >= '2' && url[c] <= '7');
-            ok = ok && uttt_replay_read(url, &back, &sback) && sback == seed
+            int rn = b32_decode(url + sizeof pre - 1, raw, sizeof raw);
+            ok = ok && rn > 2 && raw[0] == 2 && raw[1] == look;      /* the version first, then the look */
+            ok = ok && uttt_replay_read(url, &back, &lback) && lback == look
                  && back.n_plies == g.n_plies && back.over == g.over
                  && memcmp(back.move, g.move, (size_t)g.n_plies) == 0;
             char low[200];
@@ -288,25 +292,62 @@ int main(int argc, char **argv)
             for (int c = (int)sizeof pre - 1; c < len; c++)
                 if (low[c] >= 'A' && low[c] <= 'Z') low[c] = (char)(low[c] - 'A' + 'a');
             UtttGame back2;
-            ok = ok && uttt_replay_read(low, &back2, &sback2) && back2.n_plies == g.n_plies && sback2 == seed
+            ok = ok && uttt_replay_read(low, &back2, &lback2) && back2.n_plies == g.n_plies && lback2 == look
                  && memcmp(back2.move, g.move, (size_t)g.n_plies) == 0;
             ok = ok && uttt_replay_read(url + sizeof pre - 1, &back2, NULL) && back2.n_plies == g.n_plies;
             if (len > longest) longest = len;
             link_games++;
             if (!ok) { if (link_fail < 3) printf("  LINK FAIL %s\n", url); link_fail++; }
+
+            /* THE VERSION IS CHECKED: the same code under every other
+             * version byte is refused, and so is the code 1.0(8) wrote -
+             * the seed, big-endian, then the moves, no version - whatever
+             * seed it carried (its first byte runs the whole range, which
+             * is why it could never be told from a versioned code). */
+            uint8_t other[80];
+            char bad[200];
+            int v_ok = rn > 2;
+            for (int v = 0; v < 256 && v_ok; v++) {
+                if (v == 2) continue;
+                memcpy(other, raw, (size_t)rn);
+                other[0] = (uint8_t)v;
+                memcpy(bad, pre, sizeof pre - 1);
+                if (b32_encode(other, rn, bad + sizeof pre - 1, (int)sizeof bad - 20) < 0) v_ok = 0;
+                if (uttt_replay_read(bad, &back, NULL)) v_ok = 0;
+            }
+            int32_t seed = t3 % 4 == 0 ? INT32_MIN : t3 % 4 == 1 ? INT32_MAX : t3 % 4 == 2 ? 1
+                         : (int32_t)(uint32_t)(RS >> 7);
+            uint32_t u = (uint32_t)seed;
+            other[0] = (uint8_t)(u >> 24); other[1] = (uint8_t)(u >> 16);
+            other[2] = (uint8_t)(u >> 8);  other[3] = (uint8_t)u;
+            int bn = uttt_encode(&g, other + 4, sizeof other - 4);
+            memcpy(bad, pre, sizeof pre - 1);
+            if (bn <= 0 || b32_encode(other, 4 + bn, bad + sizeof pre - 1, (int)sizeof bad - 20) < 0) v_ok = 0;
+            /* a 2038 seed begins with 2 and is refused all the same: the
+             * moves do not start where a versioned code's do */
+            if (other[0] != 2 && uttt_replay_read(bad, &back, NULL)) v_ok = 0;
+            other[0] = 2;
+            memcpy(bad, pre, sizeof pre - 1);
+            b32_encode(other, 4 + bn, bad + sizeof pre - 1, (int)sizeof bad - 20);
+            if (uttt_replay_read(bad, &back, &lback) && back.n_plies == g.n_plies
+                && memcmp(back.move, g.move, (size_t)g.n_plies) == 0 && lback == (uint8_t)(u >> 16)) v_ok = 0;
+            if (!v_ok) { if (version_fail < 3) printf("  VERSION FAIL %s\n", url); version_fail++; }
         }
         UtttGame empty; uttt_init(&empty);
         char u[160];
         int none = uttt_replay_url(&empty, 7, u, sizeof u) == -1;
         UtttGame junk;
-        /* the prefix alone, nothing, and a seed with no game after it */
+        /* the prefix alone, nothing, a version alone, a version and a look
+         * with no game after them, and the store game's own 1.0(8) link */
         int bad = !uttt_replay_read(UTTT_REPLAY_PREFIX, &junk, NULL) && !uttt_replay_read("", &junk, NULL)
-               && !uttt_replay_read(UTTT_REPLAY_PREFIX "AAAAAAA", &junk, NULL);
-        printf("replay link: %d games through URL and back, %d mismatches, longest %d chars\n",
-               link_games, link_fail, longest);
+               && !uttt_replay_read(UTTT_REPLAY_PREFIX "AI", &junk, NULL)
+               && !uttt_replay_read(UTTT_REPLAY_PREFIX "AJTQ", &junk, NULL)
+               && !uttt_replay_read(UTTT_REPLAY_PREFIX "AAAAATPW4GYDOIS33TKXTB7YI5CJZHMJ3GBISAI", &junk, NULL);
+        printf("replay link: %d games through URL and back, %d mismatches, longest %d chars; %d version leaks\n",
+               link_games, link_fail, longest, version_fail);
         if (!none) { printf("  FAIL: a game with no plies got a link\n"); fails++; }
-        if (!bad)  { printf("  FAIL: an empty link, or a seed alone, read as a game\n"); fails++; }
-        fails += link_fail;
+        if (!bad)  { printf("  FAIL: an empty link, a head alone, or a 1.0(8) link read as a game\n"); fails++; }
+        fails += link_fail + version_fail;
     }
 
     /* UNDO, WALKED ALL THE WAY BACK. A staged bubble is a draft, so a player

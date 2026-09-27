@@ -10,7 +10,7 @@
  *                                      thickness of each of its four edges in
  *                                      pixels, across the edge, at several
  *                                      places along it
- *   look marks FIRST COUNT SCALE OUT   the "you are" O for COUNT game seeds
+ *   look marks FIRST COUNT SCALE OUT   the "you are" O for COUNT looks from FIRST
  *   look board CODE SIDE SCALE OUT     a replay code's finished board, SIDE
  *                                      points square at SCALE
  *
@@ -220,7 +220,7 @@ static int marks(int argc, char **argv)
     img_paper(&m);
     for (int i = 0; i < count; i++) {
         UtttDL d; uttt_dl_init(&d, pool, 600000, polys, 160000);
-        uttt_draw_mark(&d, UTTT_O, (first + i) + 4, 0.f);   /* model.seed &+ 4 */
+        uttt_draw_mark(&d, UTTT_O, (uint8_t)(first + i), 0.f);
         fill_cg(&m, &d, (i % cols) * cell + 4, (i / cols) * cell + 4, side * sc, side * sc, 0);
     }
     img_write(&m, argv[5]);
@@ -231,30 +231,32 @@ static int marks(int argc, char **argv)
 static int board(int argc, char **argv)
 {
     if (argc < 6) return 2;
-    UtttGame g; int32_t seed = 0;
-    if (!uttt_replay_read(argv[2], &g, &seed)) { fprintf(stderr, "not a game: %s\n", argv[2]); return 1; }
+    UtttGame g; uint8_t look = 0;
+    if (!uttt_replay_read(argv[2], &g, &look)) { fprintf(stderr, "not a game: %s\n", argv[2]); return 1; }
     float side = (float)atof(argv[3]), sc = (float)atof(argv[4]);
     int pad = (int)(side * sc * .06f);
     int W = (int)(side * sc) + 2 * pad;
     Img m = img_new(W, W);
     img_paper(&m);
     UtttDL d; uttt_dl_init(&d, pool, 600000, polys, 160000);
-    UtttDrawOpts o = uttt_draw_opts(seed);
+    UtttDrawOpts o = uttt_draw_opts(look);
     int rc = uttt_draw_board(&d, &g, &o);
-    fprintf(stderr, "seed %d plies %d over %d polys %d%s\n", seed, g.n_plies, g.over, d.n_poly,
+    fprintf(stderr, "look %d plies %d over %d polys %d%s\n", look, g.n_plies, g.over, d.n_poly,
             rc ? " OVERFLOW" : "");
     fill_cg(&m, &d, pad, pad, side * sc, side * sc, 0);
     img_write(&m, argv[5]);
     return 0;
 }
 
-/* `look moves CODE`: the seed and the moves, for the preview harness's
- * --seed and --moves (so a screenshot can show any finished game). */
+/* `look moves CODE`: the look and the moves, for the preview harness's
+ * --seed and --moves (so a screenshot can show any finished game). The look
+ * is printed AS the seed: a seeded game's look is its seed's low byte
+ * (uttt_look_of_seed), and a seed under 256 is its own low byte. */
 static int moves(int argc, char **argv)
 {
-    UtttGame g; int32_t seed = 0;
-    if (argc < 3 || !uttt_replay_read(argv[2], &g, &seed)) return 1;
-    printf("%d ", seed);
+    UtttGame g; uint8_t look = 0;
+    if (argc < 3 || !uttt_replay_read(argv[2], &g, &look)) return 1;
+    printf("%d ", look);
     for (int i = 0; i < g.n_plies; i++) printf(i ? ",%d" : "%d", g.move[i]);
     printf("\n");
     return 0;
@@ -273,7 +275,7 @@ static int piece(int argc, char **argv)
     img_paper(&m);
     UtttDL d; uttt_dl_init(&d, pool, 600000, polys, 160000);
     if (door) uttt_draw_door(&d, w, h);
-    else uttt_draw_mark(&d, UTTT_O, 1790219291 + 4, 0.f);
+    else uttt_draw_mark(&d, UTTT_O, uttt_look_of_seed(1790219291), 0.f);
     fill_cg(&m, &d, pad, pad, w * sc, h * sc, 0);
     img_write(&m, argv[4]);
     return 0;

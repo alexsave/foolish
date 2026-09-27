@@ -37,12 +37,20 @@ int32_t utm_seed_at(int64_t unix_seconds)
     return s ? s : 1;
 }
 
-void utm_open(UtmMsg *m, int32_t seed, const uint8_t me[UTM_TAG_LEN])
+void utm_open(UtmMsg *m, int32_t seed, uint8_t look, const uint8_t me[UTM_TAG_LEN])
 {
     memset(m, 0, sizeof *m);
     m->seed = seed ? seed : 1;
+    m->look = look;
     memcpy(m->o, me, UTM_TAG_LEN);
     uttt_init(&m->game);
+}
+
+int utm_again(UtmMsg *next, const UtmMsg *finished, int32_t seed, const uint8_t me[UTM_TAG_LEN])
+{
+    if (utm_door(finished) != UTM_DOOR_AGAIN) return 0;
+    utm_open(next, seed, finished->look, me);
+    return 1;
 }
 
 /* The roster and the game have to tell the same story: the joiner's first
@@ -76,6 +84,7 @@ int utm_encode(const UtmMsg *m, uint8_t *out, int cap)
     buf[n++] = UTM_FORMAT;
     put32(buf + n, m->seed); n += 4;
     buf[n++] = m->sealed ? UTM_FLAG_SEALED : 0;
+    buf[n++] = m->look;
     memcpy(buf + n, m->o, UTM_TAG_LEN); n += UTM_TAG_LEN;
     if (m->sealed) { memcpy(buf + n, m->x, UTM_TAG_LEN); n += UTM_TAG_LEN; }
     int head = n;
@@ -93,12 +102,16 @@ int utm_decode(const uint8_t *in, int n, UtmMsg *out)
 {
     if (!in || n < 2) return UTM_ESHORT;
     if (in[0] != UTM_MAGIC) return UTM_EMAGIC;
-    if (in[1] != UTM_FORMAT) return UTM_EFORMAT;
-    if (n < UTM_HEAD_OPEN) return UTM_ESHORT;
+    if (in[1] != UTM_FORMAT && in[1] != UTM_FORMAT_1) return UTM_EFORMAT;
+    /* THE ONE BRANCH: format 1 has no look byte, so its tags sit one byte
+     * earlier and its look is derived from its seed; the rest is one path. */
+    const int old = in[1] == UTM_FORMAT_1;
+    const int tags = old ? UTM_TAGS_AT - 1 : UTM_TAGS_AT;
+    if (n < tags + UTM_TAG_LEN) return UTM_ESHORT;
     uint8_t flags = in[6];
     if (flags & ~UTM_FLAGS_KNOWN) return UTM_EFLAGS;
     int sealed = (flags & UTM_FLAG_SEALED) != 0;
-    int head = sealed ? UTM_HEAD_SEALED : UTM_HEAD_OPEN;
+    int head = tags + (sealed ? 2 : 1) * UTM_TAG_LEN;
     /* the check and at least one byte of game */
     if (n < head + UTM_CHECK_LEN + 1) return UTM_ESHORT;
 
@@ -111,9 +124,10 @@ int utm_decode(const uint8_t *in, int n, UtmMsg *out)
     UtmMsg m;
     memset(&m, 0, sizeof m);
     m.seed = get32(in + 2);
+    m.look = old ? uttt_look_of_seed(m.seed) : in[7];
     m.sealed = (uint8_t)sealed;
-    memcpy(m.o, in + 7, UTM_TAG_LEN);
-    if (sealed) memcpy(m.x, in + 7 + UTM_TAG_LEN, UTM_TAG_LEN);
+    memcpy(m.o, in + tags, UTM_TAG_LEN);
+    if (sealed) memcpy(m.x, in + tags + UTM_TAG_LEN, UTM_TAG_LEN);
     if (m.seed == 0) return UTM_EROSTER;
     if (!uttt_decode(&m.game, code, (size_t)cn)) return UTM_EGAME;
     if (!roster_ok(&m)) return UTM_EROSTER;

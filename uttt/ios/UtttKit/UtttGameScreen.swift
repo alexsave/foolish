@@ -50,7 +50,7 @@ public final class UtttGameScreen: UtttSheetView {
         self.onDoor = onDoor
         self.onRules = onRules
         board = UtttBoardView(clock: model.clock)
-        youMark = UtttInkView.mark(model.you, seed: model.seed &+ 4)
+        youMark = UtttInkView.mark(model.you, look: model.look)
         rulebook = UtttRulebookButton(act: onRules, onHold: onDiagnostics)
         super.init(slide: slide)
         board.onTap = { [weak model] p in model?.tap(at: p) }
@@ -146,14 +146,15 @@ public final class UtttGameScreen: UtttSheetView {
         /* THE WORDS TWICE, in the column beside the ink and in the band, each
          * shown only where it fits (uttt_sheet) - so a drag crossfades them
          * and never squeezes them to "Wai...". */
-        let ink = end ? UtttInk.blue : UtttInk.ink
+        /* the kernel's: the winner's own ink at the end, O red for O */
+        let ink = UtttInk.rgba(Uttt.headlineInk)
         let (LC, LB) = wordsLayouts(L, B)
         column.frame = rect(LC.words)
-        column.set(model.headline, ink: ink, seed: model.seed &* 31 &+ 7,
+        column.set(model.headline, ink: ink, look: model.look,
                    subline: model.subline, column: true, sub: CGFloat(LC.sub_alpha),
                    board: CGFloat(L.board.2))
         band.frame = rect(LB.band)
-        band.set(model.headline, ink: ink, seed: model.seed &* 31 &+ 7,
+        band.set(model.headline, ink: ink, look: model.look,
                  subline: model.subline, column: false, board: CGFloat(L.board.2))
         placeWords(column: column, band: band, L, B, at: at)
 
@@ -187,9 +188,12 @@ public final class UtttGameScreen: UtttSheetView {
         /* two lines on a 9.5-point body, 2.8 points closer than their line
          * height: they read as one two-line label rather than two labels */
         let a = you1.sizeThatFits(.zero), b = you2.sizeThatFits(.zero)
-        let ls = CGSize(width: max(a.width, b.width), height: a.height + b.height - 2.8)
+        /* the two words set tight, into the room over the second word's
+         * capitals - unless an accent stands in that room ("VOCÊ / É") */
+        let tuck: CGFloat = UtttType.hasMarkAbove(Uttt.say(.youAre2)) ? 0 : 2.8
+        let ls = CGSize(width: max(a.width, b.width), height: a.height + b.height - tuck)
         you1.frame = CGRect(x: (ls.width - a.width) / 2, y: 0, width: a.width, height: a.height)
-        you2.frame = CGRect(x: (ls.width - b.width) / 2, y: a.height - 2.8, width: b.width, height: b.height)
+        you2.frame = CGRect(x: (ls.width - b.width) / 2, y: a.height - tuck, width: b.width, height: b.height)
         /* the indicator's left edge at a layout: its anchor less the share
          * of its width the kernel puts left of it */
         func left(_ S: UtiSheet) -> CGFloat {
@@ -255,10 +259,10 @@ final class UtttWordsView: UIView {
     /// winning line spoken; docs/UI.html 04, 06, 07).
     /// `sub` is the second line's alpha (uttt_sheet's `sub_alpha`): a
     /// column too narrow for it carries the headline alone.
-    func set(_ h: UtttModel.Headline, ink: UIColor, seed: Int32, subline text: String, column: Bool,
+    func set(_ h: UtttModel.Headline, ink: UIColor, look: UInt8, subline text: String, column: Bool,
              sub: CGFloat = 1, board: CGFloat = 0) {
         let w = bounds.width
-        let hs = headline.set(h, ink: ink, seed: seed, width: w, column: column, align: align,
+        let hs = headline.set(h, ink: ink, look: look, width: w, column: column, align: align,
                               board: board)
         headline.accessibilityLabel = Uttt.say(.headlineSpoken)
         headline.frame = CGRect(x: align == .right ? w - hs.width : 0, y: 0, width: hs.width, height: hs.height)
@@ -307,14 +311,17 @@ final class UtttHeadlineView: UIView {
     /// `type` is the headline's own unless a screen sets a smaller line
     /// the same way (the spectator's "<O> to play"); the mark is as tall as
     /// the type is big.
-    func set(_ h: UtttModel.Headline, ink: UIColor, seed: Int32, width: CGFloat,
+    func set(_ h: UtttModel.Headline, ink: UIColor, look: UInt8, width: CGFloat,
              column: Bool, align: NSTextAlignment, type: UtttType = .headline,
              board: CGFloat = 0) -> CGSize {
         switch h {
         case .text(let t):
             before.isHidden = true; after.isHidden = true; mark.isHidden = true
             text.isHidden = false
-            let s = text.set(t, type, width: width, column: column, align: align, color: ink)
+            var s = text.set(t, type, width: width, column: column, align: align, color: ink)
+            /* AN EMPTY HEADLINE (their move drawing in, UTI_WORDS_HUSH) KEEPS
+             * ITS LINE, so the line under it does not jump up and back. */
+            if t.isEmpty { s = CGSize(width: 0, height: ceil(type.font(1).lineHeight)) }
             text.frame = CGRect(origin: .zero, size: s)
             return s
         case .mark(let b, let m, let a):
@@ -322,7 +329,7 @@ final class UtttHeadlineView: UIView {
             before.isHidden = b.isEmpty; after.isHidden = a.isEmpty; mark.isHidden = false
             let side: CGFloat = type.size
             let natural = type.width(b) + side + type.width(a)
-            let k = natural > width ? max(0.5, width / natural) : 1
+            let k = natural > width ? max(UtttType.minScale, width / natural) : 1
             let f = type.font(k)
             before.attributedText = type.text(b, scale: k, color: ink)
             after.attributedText = type.text(a, scale: k, color: ink)
@@ -338,8 +345,9 @@ final class UtttHeadlineView: UIView {
             /* `board`: the board's side, so the kernel draws this mark's
              * strokes as wide as the last move's (0: its own lighter pen) */
             let ratio = board > 0 && ms > 0 ? (board / ms * 100).rounded() / 100 : 0
-            mark.key = "mark \(m.rawValue) \(seed) \(ratio)"
-            mark.polys = { _ in Uttt.mark(m, seed: seed, board: ratio) }
+            /* keyed on the look: the kernel draws it off the resident game */
+            mark.key = "mark \(m.rawValue) look \(look) \(ratio)"
+            mark.polys = { _ in Uttt.mark(m, board: ratio) }
             mark.frame = CGRect(x: bs.width, y: my - top, width: ms, height: ms)
             after.frame = CGRect(x: bs.width + ms, y: -top, width: as_.width, height: lineH)
             let w = min(width, bs.width + ms + as_.width)

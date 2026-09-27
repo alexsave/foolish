@@ -25,16 +25,17 @@ enum UtttBoard {
     /// It was keyed on `positionKey` alone, which every new model starts at
     /// the same small number - so opening a second game while the extension
     /// stayed up (a bubble tapped with the drawer open, Again, a take-back)
-    /// could be handed the PREVIOUS game's picture at the same size. The seed,
-    /// the game's own bytes, the wash and the heavy mark are everything the
-    /// kernel draws from, so they are the key.
+    /// could be handed the PREVIOUS game's picture at the same size. The look
+    /// (the napkin's byte - not the seed, which is identity and draws
+    /// nothing), the game's own bytes, the wash and the heavy mark are
+    /// everything the kernel draws from, so they are the key.
     private static var cacheStamp = ""
     private static var cacheSide: CGFloat = 0
     private static var cacheImage: UtttBitmap?
 
     private static func stamp(active: Int, last: Int) -> String {
         let code = Uttt.code.map { String(format: "%02x", $0) }.joined()
-        return "\(Uttt.seed)|\(code)|\(active)|\(last)"
+        return "look \(Uttt.look)|\(code)|\(active)|\(last)"
     }
 
     /// Posted on the main thread when a board rendered off it is ready.
