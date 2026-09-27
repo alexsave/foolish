@@ -21,10 +21,10 @@
 --root PkBeats --root PkBeatFrame --root PkBeatSample
 --snapshot PkBeats --snapshot PkBeatFrame --snapshot PkBeatSample
 --count PkBeats.beat=n
---count PkBeatFrame.my_hand=my_n --count PkBeatFrame.my_unseen=my_n
+--count PkBeatFrame.my_hand=my_n --count PkBeatFrame.my_unseen=my_n --count PkBeatFrame.my_slot=my_n
 --count PkApiTable.seat=n_seats --count PkApiName.name=name_len
 --count PkApiEvents.ev=n
---count PkView.my_hand=my_n --count PkView.my_playable=my_n
+--count PkView.my_hand=my_n --count PkView.my_playable=my_n --count PkView.my_slot=my_n
 --count PkView.reveal=n --count PkRevealRow.card=n
 #
 # The constants: event kinds and halves, penalties, the lobby's controls, the

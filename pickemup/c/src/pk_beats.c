@@ -97,6 +97,7 @@ void pk_beats_frame_of(const PkView *v, int n_seats, PkBeatFrame *out)
     out->stack_n = v->stack_n;
     out->my_n = v->my_n;
     memcpy(out->my_hand, v->my_hand, v->my_n);
+    for (int i = 0; i < v->my_n; i++) out->my_slot[i] = (uint8_t)i;
 }
 
 int pk_beats_pre(const PkGame *g, int viewer, int from, PkBeatFrame *out)
@@ -1100,6 +1101,8 @@ void pk_beats_frame(const PkBeats *bs, uint32_t now, PkBeatFrame *out)
     out->now_ms = now;
     out->next_ms = next;
     out->done = (uint8_t)done;
+    memset(out->my_slot, 0, sizeof out->my_slot);
+    for (int i = 0; i < out->my_n; i++) out->my_slot[i] = (uint8_t)i;
 }
 
 static float lerp(float a, float b, float t) { return a + (b - a) * t; }

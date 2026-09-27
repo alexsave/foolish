@@ -40,8 +40,10 @@ void pk_view(const PkGame *g, int viewer, PkView *v)
         }
         v->my_n = g->hand_n[seat];
         memcpy(v->my_hand, g->hand[seat], g->hand_n[seat]);
-        for (int p = 0; p < g->hand_n[seat]; p++)
+        for (int p = 0; p < g->hand_n[seat]; p++) {
             v->my_playable[p] = (uint8_t)pk_can_play(g, seat, p);
+            v->my_slot[p] = (uint8_t)p;
+        }
     }
 
     if (g->over || viewer == PK_VIEW_ALL)

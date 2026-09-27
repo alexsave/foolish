@@ -40,8 +40,12 @@ void pk_api_nickname(const uint8_t *name, int n);
 int  pk_api_name_verdict(const uint8_t *name, int n);
 
 /* THIS DEVICE'S SEAT RECORDS: fixed-layout bytes the host keeps and hands
- * back unread. Load once, save whenever dirty. At most PK_API_REC_BYTES. */
-#define PK_API_REC_BYTES (17 * 256)
+ * back unread. Load once, save whenever dirty. At most PK_API_REC_BYTES: the
+ * seat records (17 bytes each, the newest 256 games), then this phone's own
+ * arrangement of its hand in its newest 8 games (PK_API_ARR_BYTES, O9; the
+ * block is left off while there is none, and bytes without it still load). */
+#define PK_API_ARR_BYTES (8 + 8 * (10 + 3 * 104) + 4)
+#define PK_API_REC_BYTES (17 * 256 + PK_API_ARR_BYTES)
 void pk_api_seats_load(const uint8_t *bytes, int n);
 int  pk_api_seats_dirty(void);
 int  pk_api_seats_save(uint8_t *out, int cap);    /* length, or -1; clears dirty */
@@ -333,5 +337,35 @@ int  pk_api_tap_fan(int seat);
 enum { PK_ZONE_DRAW_BAND = 0, PK_ZONE_PILE_DROP, PK_ZONE_PILLS, PK_ZONE_TOAST, PK_ZONE_DIR, PK_ZONE_N };
 int   pk_lay_zone(int zone, float board_w, float board_h, float collapse, float hand_box_h,
                   float *x, float *y, float *w, float *h);
+
+/* ---- my own arrangement of my hand (ORCHESTRATION O9, IOS_DECISIONS I38) ---------
+ *
+ * PkView.my_hand stays ACQUISITION order, the order every event, anchor
+ * (hand.i) and PLAY uses; PkView.my_slot and PkBeatFrame.my_slot say where
+ * each position is DRAWN. The arrangement is this phone's alone: it is kept
+ * in the seat records' bytes and never goes on the wire. A card drawn goes on
+ * the right, a card that leaves closes the gap, an undo or a lost race puts a
+ * card back in its slot, and a received bubble moves nothing (pk_arrange.h). */
+
+/* Move the card drawn at slot `from` to slot `to` of my hand. 1 moved, 0
+ * refused (no live seat of mine, a slot off the hand, from == to). */
+int  pk_api_arrange_move(int from, int to);
+/* The hand position drawn at `slot`, or -1. */
+int  pk_api_arranged_pos(int slot);
+/* pk_api_play of the card drawn at `slot`. */
+int  pk_api_play_slot(int slot, int suit);
+
+/* The slot a dragged card asks for (FHandFan.slotIndex): the one of a hand of
+ * `n` in `width` (pk_lay_hand) whose centre is nearest the card's centre
+ * (cx, cy) in the hand's box, ties to the lower slot. -1 for an empty hand. */
+int   pk_lay_hand_nearest(int n, float width, int max_rows, float cx, float cy);
+
+/* What a dragged hand card let go at (x, y) in the board does. INSIDE THE
+ * HAND ROW it is a rearrange and never a play, whatever else is there
+ * (foolish's boardPoint rule, FHandFan round 40); else on the pile's drop zone
+ * it plays; else nothing. The hand row is PK_LAY_HAND_PAD in from either side
+ * of the board and hand_box_h tall at its bottom. */
+enum { PK_DROP_NONE = 0, PK_DROP_HAND, PK_DROP_PILE };
+int   pk_lay_drop(float board_w, float board_h, float collapse, float hand_box_h, float x, float y);
 
 #endif

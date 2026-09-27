@@ -7,13 +7,19 @@
 #include "../src/pk_say.h"
 #include "../src/pk_view.h"
 #include "../src/pk_beats.h"
+#include "../src/pk_arrange.h"
 #include "../i18n/keys.h"
 #include <stddef.h>
 #include <string.h>
 
 /* The host's numbers against the kernel's, held together by the compiler. */
 _Static_assert(PK_API_TEXT_MAX >= PK_MSG_MAX_TEXT, "the longest link fits the host buffer");
-_Static_assert(PK_API_REC_BYTES == PK_REC_BYTES, "seat records");
+/* The arrangements' block: magic, count, 3 pad, the games, then an FNV-1a. */
+#define ARR_GAMES 8
+#define ARR_HEAD  8
+#define ARR_BYTES (ARR_HEAD + ARR_GAMES * PK_ARR_LEN + 4)
+_Static_assert(PK_API_ARR_BYTES == ARR_BYTES, "the arrangements' block");
+_Static_assert(PK_API_REC_BYTES == PK_REC_BYTES + ARR_BYTES, "seat records, then the arrangements");
 _Static_assert(PK_API_SPECTATOR == PK_VIEW_SPECTATOR && PK_API_ALL == PK_VIEW_ALL, "viewers");
 _Static_assert(PK_API_ME != PK_VIEW_SPECTATOR && PK_API_ME != PK_VIEW_ALL && PK_API_ME < 0, "PK_API_ME is its own viewer");
 
@@ -35,6 +41,10 @@ static struct {
     uint8_t  rec[PK_REC_BYTES];
     int      rec_n;
     int      rec_dirty;
+    /* this phone's arrangement of its hand in its newest games, newest first
+     * (O9); saved with the seat records, never on the wire */
+    PkArr    arr[ARR_GAMES];
+    int      arr_n;
     /* THE SENDER FACT, about one message only */
     char     sent_text[PK_MSG_MAX_TEXT];
     int      sent_dm, sent_mine, sent_set;
@@ -85,9 +95,41 @@ void pk_api_nickname(const uint8_t *name, int n)
 
 int pk_api_name_verdict(const uint8_t *name, int n) { return pk_name_verdict(name, n); }
 
+static const uint8_t ARR_MAGIC[4] = { 'P', 'K', 'A', '1' };
+
+static uint32_t fnv32(const uint8_t *p, int n)
+{
+    uint32_t h = 2166136261u;
+    for (int i = 0; i < n; i++) { h ^= p[i]; h *= 16777619u; }
+    return h;
+}
+
+/* THE BLOCK IS KNOWN BY ITS LENGTH: seat records come in whole 17-byte rows
+ * and the block is not a whole number of them, so bytes with a block and
+ * bytes without one (a phone from before O9) never look alike. The block's
+ * magic and checksum then decide whether its content is trusted; a block that
+ * fails them, and any game in it that is not a valid arrangement, is dropped
+ * and that hand reads in acquisition order (D57). The seat records in front
+ * of it load either way. Returns the block's length, 0 for none. */
+_Static_assert(ARR_BYTES % PK_REC_LEN != 0, "a block is never a whole number of seat records");
+static int arr_load(const uint8_t *bytes, int n)
+{
+    S.arr_n = 0;
+    if (n < ARR_BYTES || (n - ARR_BYTES) % PK_REC_LEN || n - ARR_BYTES > PK_REC_BYTES) return 0;
+    const uint8_t *b = bytes + n - ARR_BYTES;
+    uint32_t sum = (uint32_t)b[ARR_BYTES - 4] | (uint32_t)b[ARR_BYTES - 3] << 8
+                 | (uint32_t)b[ARR_BYTES - 2] << 16 | (uint32_t)b[ARR_BYTES - 1] << 24;
+    if (memcmp(b, ARR_MAGIC, 4) != 0 || sum != fnv32(b, ARR_BYTES - 4) || b[4] > ARR_GAMES) return ARR_BYTES;
+    for (int i = 0; i < b[4]; i++)
+        if (pk_arr_get(&S.arr[S.arr_n], b + ARR_HEAD + i * PK_ARR_LEN) && S.arr[S.arr_n].seat != PK_SEAT_NONE)
+            S.arr_n++;
+    return ARR_BYTES;
+}
+
 void pk_api_seats_load(const uint8_t *bytes, int n)
 {
     if (!bytes || n < 0) n = 0;
+    n -= arr_load(bytes, n);
     if (n > PK_REC_BYTES) n = PK_REC_BYTES;
     n -= n % PK_REC_LEN;
     if (n) memcpy(S.rec, bytes, (size_t)n);
@@ -99,10 +141,20 @@ int pk_api_seats_dirty(void) { return S.rec_dirty; }
 
 int pk_api_seats_save(uint8_t *out, int cap)
 {
-    if (!out || cap < S.rec_n) return -1;
+    const int total = S.rec_n + (S.arr_n ? ARR_BYTES : 0);
+    if (!out || cap < total) return -1;
     memcpy(out, S.rec, (size_t)S.rec_n);
+    if (S.arr_n) {
+        uint8_t *b = out + S.rec_n;
+        memset(b, 0, ARR_BYTES);
+        memcpy(b, ARR_MAGIC, 4);
+        b[4] = (uint8_t)S.arr_n;
+        for (int i = 0; i < S.arr_n; i++) pk_arr_put(&S.arr[i], b + ARR_HEAD + i * PK_ARR_LEN);
+        uint32_t sum = fnv32(b, ARR_BYTES - 4);
+        for (int i = 0; i < 4; i++) b[ARR_BYTES - 4 + i] = (uint8_t)(sum >> (8 * i));
+    }
     S.rec_dirty = 0;
-    return S.rec_n;
+    return total;
 }
 
 /* ---- the resident ----------------------------------------------------------- */
@@ -272,10 +324,59 @@ static PkGame *live(void)
     return &S.m.game;
 }
 
+/* ---- my arrangement (O9) ------------------------------------------------------ */
+
+/* The resident game's arrangement for my seat, brought to the front of the
+ * newest-first list; with `create`, a new empty one (the oldest falls off). */
+static PkArr *my_arr(int create)
+{
+    if (!S.have || S.m.phase == PK_PHASE_WAITING || S.me < 0) return 0;
+    uint8_t id[8];
+    pk_game_id(S.m.seed, id);
+    int i = 0;
+    while (i < S.arr_n && (S.arr[i].seat != S.me || memcmp(S.arr[i].id, id, 8) != 0)) i++;
+    if (i == S.arr_n && !create) return 0;
+    if (i == 0 && S.arr_n > 0) return &S.arr[0];        /* already the newest */
+    PkArr a;
+    if (i == S.arr_n) {
+        pk_arr_reset(&a, id, S.me);
+        if (S.arr_n < ARR_GAMES) S.arr_n++;
+        i = S.arr_n - 1;
+    } else {
+        a = S.arr[i];
+    }
+    memmove(&S.arr[1], &S.arr[0], (size_t)i * sizeof S.arr[0]);
+    S.arr[0] = a;
+    S.rec_dirty = 1;
+    return &S.arr[0];
+}
+
+/* Fold my hand as it is now into the arrangement. Done wherever the hand is
+ * read (the view, a move, a slot's position) and BEFORE EVERY ACTION OF MINE:
+ * a card can only leave by my own play, so folding in just before it means a
+ * card that leaves always has its entry, and an undo or a lost race finds its
+ * place even for a card the host never drew between its draw and its play.
+ * A card that arrives needs nothing: unknown cards read on the right, in
+ * acquisition order, which is where the next fold puts them. */
+static PkArr *arr_sync(void)
+{
+    PkArr *a = my_arr(1);
+    if (a && pk_arr_sync(a, &S.m.game, S.me) > 0) S.rec_dirty = 1;
+    return a;
+}
+
+/* Lay the arrangement over a frame of my hand. */
+static void arr_frame(PkBeatFrame *f, int viewer)
+{
+    const PkArr *a = viewer >= 0 && viewer == S.me ? my_arr(0) : 0;
+    if (a) pk_arr_slots(a, f->my_hand, f->my_n, f->my_slot);
+}
+
 static int act(int kind, int a, int b)
 {
     PkGame *g = live();
     if (!g || a < 0 || a > 255 || b < 0 || b > 255) return 0;
+    arr_sync();
     PkAct x = { (uint8_t)kind, (uint8_t)a, (uint8_t)b, 0 };
     return pk_apply(g, S.me, x);
 }
@@ -384,6 +485,10 @@ const void *pk_api_view(int viewer)
     int v = viewer_of(viewer);
     if (!S.have || S.m.phase == PK_PHASE_WAITING || !valid_viewer(v)) return &S.view;
     pk_view(&S.m.game, v, &S.view);
+    if (v >= 0 && v == S.me) {
+        const PkArr *a = arr_sync();
+        if (a) pk_arr_slots(a, S.view.my_hand, S.view.my_n, S.view.my_slot);
+    }
     return &S.view;
 }
 
@@ -448,6 +553,7 @@ static const void *built(int n)
     S.beats_ok = n >= 0;
     if (n < 0) { memset(&S.beats, 0, sizeof S.beats); return 0; }
     S.beats.serial = ++S.beats_serial;
+    arr_frame(&S.beats.start, S.beats.viewer);
     return &S.beats;
 }
 
@@ -535,6 +641,7 @@ const void *pk_api_beats_conflict(int card, int pos, int from, int to)
 const void *pk_api_beats_frame(uint32_t now_ms)
 {
     pk_beats_frame(&S.beats, now_ms, &S.frame);
+    arr_frame(&S.frame, S.beats.viewer);
     return &S.frame;
 }
 
@@ -789,4 +896,28 @@ int pk_api_tap_fan(int seat)
     if (!pk_uncall(&S.other.game) || !pk_apply(&S.other.game, S.me, x)) return PK_API_FAN_REFUSED;
     S.m = S.other;
     return PK_API_FAN_MOVED;
+}
+
+/* ---- my own arrangement of my hand (O9, I38) ---------------------------------------- */
+
+int pk_api_arrange_move(int from, int to)
+{
+    PkGame *g = live();
+    PkArr *a = g ? arr_sync() : 0;
+    if (!a || !pk_arr_move(a, g->hand[S.me], g->hand_n[S.me], from, to)) return 0;
+    S.rec_dirty = 1;
+    return 1;
+}
+
+int pk_api_arranged_pos(int slot)
+{
+    PkGame *g = live();
+    const PkArr *a = g ? arr_sync() : 0;
+    return a ? pk_arr_pos(a, g->hand[S.me], g->hand_n[S.me], slot) : -1;
+}
+
+int pk_api_play_slot(int slot, int suit)
+{
+    int pos = pk_api_arranged_pos(slot);
+    return pos >= 0 ? pk_api_play(pos, suit) : 0;
 }

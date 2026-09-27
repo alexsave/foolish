@@ -223,6 +223,9 @@ typedef struct {
     uint8_t  my_unseen[PK_HAND_CAP];     /* 1: that card's slot is open, the card is in the air */
     uint32_t now_ms;
     uint32_t next_ms;                    /* the next moment the frame changes, or PK_BEAT_NEVER */
+    /* where my_hand[i] is drawn (PkView.my_slot): the identity here, the
+     * phone's arrangement once the bridge has laid it over (pk_arrange.h) */
+    uint8_t  my_slot[PK_HAND_CAP];
 } PkBeatFrame;
 
 #define PK_BEAT_NEVER 0xFFFFFFFFu

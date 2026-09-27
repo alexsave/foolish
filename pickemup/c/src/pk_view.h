@@ -53,6 +53,12 @@ typedef struct {
     uint8_t my_playable[PK_HAND_CAP]; /* 1 per position that PLAY accepts          */
     /* only when over (or PK_VIEW_ALL): every hand, face up */
     PkRevealRow reveal[PK_MAX_SEATS];
+    /* where the viewer's own position i is DRAWN: slot my_slot[i] of the hand
+     * row. my_hand stays acquisition order, because every event, anchor
+     * (hand.i) and PLAY names a card by that position; the phone's own
+     * arrangement (pk_arrange.h, O9) is only this permutation. pk_view writes
+     * the identity; the bridge lays the phone's arrangement over it. */
+    uint8_t my_slot[PK_HAND_CAP];
 } PkView;
 
 /* `viewer`: a seat, PK_VIEW_SPECTATOR or PK_VIEW_ALL. Every byte of `out` is

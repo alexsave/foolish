@@ -254,6 +254,81 @@ static void adopt_and_fan(void)
     OK(pk_api_tap_fan(9) == PK_API_FAN_REFUSED, "a seat off the table");
 }
 
+/* ---- my own arrangement of my hand (O9, I38): the entry points and the drag's layout ---- */
+static void arrange(void)
+{
+    /* the slot a dragged card asks for */
+    float w = 343, x, y, cw;
+    int n = 7;
+    pk_lay_hand(n, w, 2, &cw, 0, 0, 0, 0, 0);
+    int ok = 1;
+    for (int i = 0; i < n; i++) {
+        pk_lay_hand_slot(n, w, 2, i, &x, &y);
+        ok &= pk_lay_hand_nearest(n, w, 2, x + cw / 2, y + PK_LAY_CARD_H / 2) == i;
+        ok &= pk_lay_hand_nearest(n, w, 2, x + cw / 2 + cw * 0.4f, y + 10) == i;
+    }
+    OK(ok, "a card over a slot asks for that slot");
+    float x0, x1;
+    pk_lay_hand_slot(n, w, 2, 2, &x0, &y);
+    pk_lay_hand_slot(n, w, 2, 3, &x1, &y);
+    OK(pk_lay_hand_nearest(n, w, 2, (x0 + x1) / 2 + cw / 2, y + PK_LAY_CARD_H / 2) == 2, "a tie goes to the lower slot");
+    OK(pk_lay_hand_nearest(0, w, 2, 10, 10) == -1, "no slot in an empty hand");
+    OK(pk_lay_hand_nearest(n, w, 2, -500, 40) == 0 && pk_lay_hand_nearest(n, w, 2, 900, 40) == n - 1,
+       "past either end: the end slot");
+    pk_lay_hand(20, w, 2, &cw, 0, 0, 0, 0, 0);
+    float xb, yb;
+    pk_lay_hand_slot(20, w, 2, 15, &xb, &yb);
+    OK(pk_lay_hand_nearest(20, w, 2, xb + cw / 2, yb + PK_LAY_CARD_H / 2) == 15, "the other row's slots are reachable");
+
+    /* where a release lands: the row first */
+    float bw = 360, bh = 420, box, px, py, pw, ph;
+    pk_lay_hand(7, bw - 2 * PK_LAY_HAND_PAD, 2, 0, 0, 0, 0, 0, &box);
+    pk_lay_zone(PK_ZONE_PILE_DROP, bw, bh, 0, box, &px, &py, &pw, &ph);
+    OK(pk_lay_drop(bw, bh, 0, box, bw / 2, bh - box / 2) == PK_DROP_HAND, "a release in the row rearranges");
+    OK(pk_lay_drop(bw, bh, 0, box, px + pw / 2, py + ph / 2) == PK_DROP_PILE, "a release on the pile plays");
+    OK(pk_lay_drop(bw, bh, 0, box, 4, 40) == PK_DROP_NONE, "a release on the felt does nothing");
+    OK(pk_lay_drop(bw, bh, 0, box, bw / 2, bh - box - 1) != PK_DROP_HAND, "just above the row is not the row");
+    OK(pk_lay_drop(bw, bh, 0, box, PK_LAY_HAND_PAD - 1, bh - 2) != PK_DROP_HAND, "the side padding is not the row");
+    float tall = bh - (py + ph) + 20;       /* a row that reaches up into the pile's zone */
+    OK(pk_lay_drop(bw, bh, 0, tall, px + pw / 2, py + ph - 5) == PK_DROP_HAND,
+       "a release on the cards never plays, even inside the pile's zone");
+
+    /* the bridge: a drag, the view, a play by slot, the record */
+    static char l[3][PK_API_TEXT_MAX];
+    uint8_t seed[32];
+    for (int i = 0; i < 32; i++) seed[i] = (uint8_t)(i * 29 + 3);
+    be(0);
+    pk_api_new(seed, 1);
+    OK(pk_api_arrange_move(0, 1) == 0 && pk_api_arranged_pos(0) == -1, "a lobby has no hand to arrange");
+    pk_api_text(l[0], PK_API_TEXT_MAX);
+    open_as(1, l[0], 1, 0);
+    pk_api_join_start();
+    pk_api_text(l[1], PK_API_TEXT_MAX);
+    pk_api_commit();
+    open_as(0, l[1], 1, 0);
+    const PkView *v = me_view();
+    uint8_t first = v->my_hand[0];
+    OK(v->my_slot[0] == 0 && v->my_slot[6] == 6, "the deal reads in acquisition order");
+    OK(pk_api_arrange_move(0, 6) == 1, "a drag of slot 0 to slot 6");
+    v = me_view();
+    OK(v->my_hand[0] == first && v->my_slot[0] == 6 && v->my_slot[1] == 0, "the view: the same hand, drawn in the new order");
+    OK(pk_api_arranged_pos(6) == 0 && pk_api_arranged_pos(0) == 1 && pk_api_arranged_pos(7) == -1,
+       "the position drawn at a slot");
+    OK(pk_api_arrange_move(2, 2) == 0 && pk_api_arrange_move(0, 7) == 0, "no move to itself or off the hand");
+    OK(pk_api_play_slot(-1, 4) == 0, "no play off the hand");
+    OK(pk_api_seats_dirty(), "a drag is saved with the seat records");
+    int rn = pk_api_seats_save((uint8_t *)l[2], PK_API_REC_BYTES);
+    OK(rn > PK_API_ARR_BYTES && (rn - PK_API_ARR_BYTES) % 17 == 0, "the records, then the arrangements' block");
+    pk_api_seats_load(0, 0);
+    OK(pk_api_read(l[1]) == 0 && me_view()->my_slot[0] == 0, "a phone without the record: acquisition order");
+    pk_api_seats_load((const uint8_t *)l[2], rn);
+    OK(pk_api_read(l[1]) == 0 && me_view()->my_slot[0] == 6, "the record back: the drag is back");
+    const PkBeatFrame *f = (const PkBeatFrame *)pk_api_beats_frame(0);
+    OK(pk_api_beats_host(PK_HM_REFUSED, 0, 6) && (f = (const PkBeatFrame *)pk_api_beats_frame(0)) != 0
+       && f->my_slot[0] == 6 && f->my_slot[1] == 0, "a plan's frame is drawn by the arrangement too");
+    who = -1;
+}
+
 int main(void)
 {
     setvbuf(stdout, 0, _IONBF, 0);       /* a crash still shows what went red */
@@ -555,6 +630,7 @@ int main(void)
     }
 
     adopt_and_fan();
+    arrange();
 
     /* ---- the corner index and the strip's count (I33) ---- */
     OK(pk_api_words(PK_API_W_INDEX, 0, line, sizeof line) > 0 && !strcmp(line, "1"), "a number's index");

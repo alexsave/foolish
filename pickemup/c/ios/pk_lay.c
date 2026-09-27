@@ -250,3 +250,37 @@ int pk_lay_zone(int zone, float board_w, float board_h, float collapse, float ha
     if (h) *h = rh < 0 ? 0 : rh;
     return 0;
 }
+
+/* ---- a dragged hand card (O9, IOS_DECISIONS I38) ----------------------------- */
+
+int pk_lay_hand_nearest(int n, float width, int max_rows, float cx, float cy)
+{
+    float cw = 0;
+    pk_lay_hand(n, width, max_rows, &cw, NULL, NULL, NULL, NULL, NULL);
+    int best = -1;
+    float best_d = 0;
+    for (int i = 0; i < n; i++) {
+        float x, y;
+        pk_lay_hand_slot(n, width, max_rows, i, &x, &y);
+        float dx = cx - (x + cw / 2), dy = cy - (y + PK_LAY_CARD_H / 2);
+        float d = dx * dx + dy * dy;
+        if (best < 0 || d < best_d) { best = i; best_d = d; }   /* strict: a tie keeps the lower */
+    }
+    return best;
+}
+
+/* A rect's inside as CGRect.contains has it: the far edges are outside. */
+static int inside(float x, float y, float rx, float ry, float rw, float rh)
+{
+    return x >= rx && x < rx + rw && y >= ry && y < ry + rh;
+}
+
+int pk_lay_drop(float board_w, float board_h, float collapse, float hand_box_h, float x, float y)
+{
+    /* the hand row first: a release still on the cards is a rearrange */
+    if (inside(x, y, PK_LAY_HAND_PAD, board_h - hand_box_h, board_w - 2 * PK_LAY_HAND_PAD, hand_box_h))
+        return PK_DROP_HAND;
+    float rx, ry, rw, rh;
+    pk_lay_zone(PK_ZONE_PILE_DROP, board_w, board_h, collapse, hand_box_h, &rx, &ry, &rw, &rh);
+    return inside(x, y, rx, ry, rw, rh) ? PK_DROP_PILE : PK_DROP_NONE;
+}
