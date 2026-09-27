@@ -60,6 +60,7 @@ __pycache__/
 uttt/ios/vendor/
 uttt/ios/*.xcodeproj
 uttt/c/build/
+pickemup/c/build/
 uttt/ios/*/*.entitlements
 
 # The shared toolchain's own build outputs - the generator and datagen binaries,
