@@ -335,6 +335,8 @@ P8 after the lift never reached a test: from 23:06 on, every simulator on this M
 In its place: `xcodebuild -scheme Foolish -destination 'generic/platform=iOS Simulator' build-for-testing` succeeds, and the built `FoolishKit` exports 426 symbols of the four texture types and none named `renderCGImage`, so the generator half stays out of the shipping framework.
 Werewolf keeps its own copy in `werewolf/ios/Tools/` (werewolf is paused); its scripts still compile its own sources under `-D FOOLISH_TEXTURE_BAKE`.
 Found on the way: `mac_tests.sh` regenerates the project only when `project.yml` is newer than the `.pbxproj`, so a checkout that already has a generated project needs `--regen` after this move, or it builds against the old paths.
+P8 after the lift, second attempt (2026-09-27 01:11-02:05, all lifts in the tree): the build of every scheme succeeded, but no test ran, because the simulator hang came back on iPhone 17e `6E0A730D`: xcodebuild stalled at the test launch three times, and after a fresh boot `simctl launch` of both the harness app and `com.apple.Preferences` never returned.
+So the P8 after-run for S1 is still open; every other proof passed, see "Proof run after all lifts" at the end of this section.
 
 **S2 - design tokens and the square button to `shared/swift/DesignKit/`.**
 - `git mv` `Tokens.swift` and `FSquareButton.swift`.
@@ -489,6 +491,38 @@ Mark every copied file with a first line `// COPIED from <path> at a3dbd05c - re
 - S0, so that no pickemup name leaks into `shared/`.
 - S3, so that pickemup has CI.
 - S1 and S2, so that the copies do not drift.
+
+### Proof run after all lifts
+
+Run on 2026-09-27 from `foolish/` on branch `pickemup` at `bf37d297`, with S0, S1 and the mixrad lift (`shared/c/mixrad.{c,h}`, linked by uttt) in the tree, and `WASM_CC=/opt/homebrew/opt/llvm/bin/clang`.
+
+| Proof | Command | Result |
+| --- | --- | --- |
+| P1 | `make -C c tests` | pass: 7385 passed, 0 failed |
+| P1 | `make -C c tests-asan` | FAIL, pre-existing: UBSan aborts at `src/replay.c:1836:24` (left shift of 33636718 by 8 cannot be represented in `int`, in `replay_b32_encode`) |
+| P2 | `make -C c difftests` | pass: replay v6 316992 checks, 0 failed, 1 skipped; analyse 83 passed; `msg_flow_sim` 0 failures at every size |
+| P3 | `make -C c ios-smoke` | pass: SMOKE OK |
+| P4 | `make -C c ios-goldens && git status --short -- ios/Fixtures` | pass: the status printed nothing |
+| P5 | `bash ios/scripts/lint_architecture.sh` | FAIL, pre-existing: `ios/FoolishTests/TableWireTests.swift` imports `CFoolish` outside `sdk/swift/` |
+| P6 | `bash tools/structgen/gen.sh --check` | pass: two runs wrote the same bytes |
+| P7 | `npm run test:validate` (its pre-hook builds the wasm) | pass: 150 tests, 128 pass, 12 fail and 10 cancelled, all 22 the Postgres suites (ECONNREFUSED on :5432), the same count as the S0 and S1 baselines |
+| P8 | `mac_tests.sh --no-lib --regen`, then per scheme | BLOCKED: `FoolishMessagesApp` builds; `Foolish` and `FoolishHarness` build but never start a test (simulator hang, see S1) |
+| P9 | `git status --short -- ios/FoolishKit/Resources` | pass: printed nothing |
+| P10 | `make -C uttt/c run`, `asan`, `ios-smoke` | pass: every uttt suite 0 failed (uttt_msg 3062830 checks), bridge ok |
+| P11 | `make -C werewolf/c tests tests-asan` | pass: 2390 passed, 0 failed |
+
+The two failures are not caused by any lift.
+`tests-asan` fails the same way on a `git archive` of `661b23b2`, the commit before S0, and `replay.c` has not changed since the monorepo move.
+The lint fails the same way on that same pre-lift export.
+Both are open defects of foolish on main, and P1 and P5 cannot go green on any lift until they are fixed.
+
+`npx vitest run e2e/validation/` is not a way to run P7: the gates use `node:test`, so vitest reports "No test suite found" for all 27 files and runs nothing.
+
+P8 detail: `--regen` blanked `ios/FoolishApp/Foolish.entitlements` and the script restored it; afterwards `git status --short -- '*.entitlements'` printed nothing and all three files were byte-identical to a `cp -p` backup taken before the run.
+The device booted in 20 seconds, but the `Foolish` scheme stalled for 35 minutes at the test launch; after a shutdown and boot, the `Foolish` scheme alone and the `FoolishHarness` scheme alone each stalled the same way (the session log ends at the launch request with `wait_for_debugger`), and `simctl launch` of `com.apple.Preferences` did not return in 45 seconds.
+`simctl install` hung once for 90 seconds and succeeded in 13 seconds after a reboot, so the hang sits in app launch, not in the build.
+No test counts exist for this run, so there is nothing to compare with the 853-executed baseline yet; that comparison, HarnessTests included, still needs a simulator that launches apps.
+The simulator was shut down afterwards.
 
 ---
 
