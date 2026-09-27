@@ -88,9 +88,10 @@ public struct Scorecard: View {
             }
         }
         .padding(Self.padding)
-        .background(RoundedRectangle(cornerRadius: 8).fill(FColor.card))
+        // the shadow on the paper alone: on the stack it would blur every row's ink
+        .background(RoundedRectangle(cornerRadius: 8).fill(FColor.card)
+            .shadow(color: .black.opacity(0.4), radius: 6, y: 3))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.black.opacity(0.25), lineWidth: 1))
-        .shadow(color: .black.opacity(0.4), radius: 6, y: 3)
         .tbAnchor("card")
     }
 

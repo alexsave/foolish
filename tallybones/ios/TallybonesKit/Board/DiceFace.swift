@@ -18,8 +18,8 @@ public struct DiceFace: View {
     /// Corner radius, pip diameter and ring, as fractions of the side (T12).
     public static let cornerFraction: CGFloat = 0.2
     public static let pipFraction: CGFloat = 0.18
-    public static let ringWidth: CGFloat = 3
-    public static let ringGap: CGFloat = 3
+    public static let ringWidth: CGFloat = 2.5
+    public static let ringGap: CGFloat = 1.5
 
     public init(value: Int, kept: Bool = false, side: CGFloat = DiceFace.side) {
         self.value = value
