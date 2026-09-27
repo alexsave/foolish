@@ -1,0 +1,4 @@
+module CChuiniu {
+    header "cn_api.h"
+    export *
+}
