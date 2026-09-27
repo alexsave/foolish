@@ -113,7 +113,15 @@ build/%.o: $(SHARED)/%.c $(wildcard src/*.h) $(wildcard $(SHARED)/*.h)
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c $< -o $@
 
-build/cnitro_eval: $(CORE_OBJ) build/main_eval.o
+# The arena statistics (mean and standard error of the paired delta) live in
+# shared/c/stats, in their own directory so the builds that wildcard
+# shared/c/*.c do not pick up its test.
+build/stats.o: $(SHARED)/stats/stats.c $(SHARED)/stats/stats.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/main_eval.o: $(SHARED)/stats/stats.h
+build/cnitro_eval: $(CORE_OBJ) build/main_eval.o build/stats.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 build/cnitro_elo: $(CORE_OBJ) build/main_elo.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)

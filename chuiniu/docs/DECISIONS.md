@@ -138,3 +138,5 @@ B3: the claim question "is this bid true right now" is answered in closed form, 
 
 B4: the only baseline is uniform over the legal options (the owner's call); the bot's own ablations, each one switch away from it, are what measure the opponent model.
 Design, constants and the measured numbers: `chuiniu/docs/BOT.md`.
+
+B5: the arena's dice-lost standard error takes the Bessel correction (divide by n - 1), from `shared/c/stats`, the same estimator every other arena uses; before it divided by n, which reads the interval a hair narrow (at 20 games, prior's [2.058, 3.742] becomes [2.036, 3.764]; at 400 games nothing prints differently).

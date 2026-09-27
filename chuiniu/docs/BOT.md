@@ -151,7 +151,7 @@ All in `cn_bot_cfg_default` and the two `#define`s above it in `cn_bot.c`:
 ## Evaluation
 
 Every run: `--seed=1`, 96 worlds, 8 threads (a run is identical at any thread count), seats rotated so each policy sits in every position equally often.
-Win rates carry a 95% Wilson interval; dice lost is per seat per game, with a 95% normal interval.
+Win rates carry a 95% Wilson interval; dice lost is per seat per game, with a 95% normal interval on the Bessel-corrected standard error (B5).
 
 ### The baseline: uniform over the legal options
 

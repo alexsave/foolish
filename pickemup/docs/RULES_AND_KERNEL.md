@@ -627,6 +627,12 @@ blackpowder and cordite were read for comparison; octogen carries both of their 
 What octogen has that this does not, and why, is in section "Bot".
 Recommendation confidence: high.
 
+**DECISION D66: the arena's 95% interval on a side's win share is the Wilson score interval, from `shared/c/stats` (`stat_wilson`).**
+Alternative: the normal approximation, p plus or minus 1.96 sqrt(p(1-p)/n), clamped to [0, 1].
+Why: near 0% and 100%, where the lopsided line-ups sit, the normal interval collapses toward a point and needs the clamp; Wilson stays inside [0, 1] and keeps its coverage there, and it is the interval the other arenas print.
+At 200 games "mc vs random" at 2 players reads 98.0% [95.0, 99.2] where it read [96.1, 99.9]; every "clear of 50%" star is unchanged.
+Recommendation confidence: high.
+
 ---
 
 ## 3. Kernel design

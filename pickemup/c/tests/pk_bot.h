@@ -7,6 +7,7 @@
 #define PK_BOT_H
 
 #include "../src/pk.h"
+#include "../../../shared/c/stats/seed_hash.h"
 #include <string.h>
 
 /* xorshift64*, the tests' own randomness (never the game's) */
@@ -18,17 +19,10 @@ static inline uint32_t rnd(uint32_t n)
 }
 
 /* Many different deals (pk_check.h's seed_of has only 256): all 32 bytes
- * from splitmix64 of k. */
+ * from splitmix64 of k (shared/c/stats/seed_hash.h). */
 static inline void seed_wide(uint8_t seed[32], uint32_t k)
 {
-    uint64_t x = 0x9e3779b97f4a7c15ull * ((uint64_t)k + 1);
-    for (int i = 0; i < 32; i += 8) {
-        uint64_t z = (x += 0x9e3779b97f4a7c15ull);
-        z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
-        z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
-        z ^= z >> 31;
-        for (int j = 0; j < 8; j++) seed[i + j] = (uint8_t)(z >> (8 * j));
-    }
+    seed_hash32(k, seed);
 }
 
 /* THE BOT the random tests drive: a legal action for a plausible seat,

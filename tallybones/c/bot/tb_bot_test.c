@@ -9,6 +9,7 @@
  * they share no combinatorics with tb_bot.c. */
 #include "tb_bot.h"
 #include "../src/tb_code.h"
+#include "../../../shared/c/stats/stats.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -326,8 +327,8 @@ static void test_simulation(uint64_t games)
     memcpy(seed, "tallybones bot simulation seed..", 32);
     static TbBotSim sim, one, many;
     CHECK(tb_bot_simulate(B, seed, games, 8, &sim), "a simulated game went wrong");
-    double n = (double)sim.n, mean = sim.sum / n;
-    double se = sqrt((sim.sumsq - n * mean * mean) / (n - 1) / n);
+    StatSums st = { (double)sim.n, (double)sim.sum, (double)sim.sumsq };
+    double mean = stat_mean(&st), se = stat_stderr(&st);
     double z = (mean - EV) / se;
     CHECK(sim.n == games, "played %llu", (unsigned long long)sim.n);
     CHECK(fabs(z) < 4, "simulated mean %.4f vs exact %.4f: %.2f standard errors", mean, EV, z);

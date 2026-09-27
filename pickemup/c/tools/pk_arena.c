@@ -12,7 +12,7 @@
  * played twice, once each way round (B A B A ...), so seat 1's first move and
  * a lucky deal cannot favour either side. With half the seats each, an
  * agent's share of the wins is 50% when the two are equally good, at every
- * table size; the 95% interval is the normal one over the games played.
+ * table size; the 95% interval is Wilson's over the games played (D66).
  * "cards" is the mean number of cards an agent's seats still hold at the end.
  *
  * Seeds are fixed: game i of line-up L at n players is deal (n, L, i / 2),
@@ -24,7 +24,8 @@
  * A game the kernel refused a bot's move in is counted and printed; the
  * arena exits 1 if there is one, so `make arena` is also a legality check. */
 #include "../src/pk_bot.h"
-#include <math.h>
+#include "../../../shared/c/stats/seed_hash.h"
+#include "../../../shared/c/stats/stats.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -73,15 +74,7 @@ typedef struct {
 
 static void seed_of(uint8_t seed[32], int n, int l, int i)
 {
-    uint64_t x = 0x9e3779b97f4a7c15ull * ((uint64_t)n * 1000003ull + (uint64_t)l * 7919ull
-                                          + (uint64_t)i * 104729ull + 1);
-    for (int k = 0; k < 32; k += 8) {
-        uint64_t z = (x += 0x9e3779b97f4a7c15ull);
-        z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
-        z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
-        z ^= z >> 31;
-        for (int j = 0; j < 8; j++) seed[k + j] = (uint8_t)(z >> (8 * j));
-    }
+    seed_hash32((uint64_t)n * 1000003ull + (uint64_t)l * 7919ull + (uint64_t)i * 104729ull, seed);
 }
 
 /* The knobs every MC seat plays with: the defaults, or a research override
@@ -152,15 +145,6 @@ static void run_worker(int games, int k, int nw, int nl, int lmask, int size_mas
             }
     }
 }
-
-/* The normal interval, as p and its half-width; the printer clamps it to [0, 1]. */
-static void ci(double won, double n, double *p, double *h)
-{
-    *p = n > 0 ? won / n : 0;
-    *h = n > 0 ? 1.96 * sqrt(*p * (1 - *p) / n) : 0;
-}
-static double lo(double p, double h) { return p - h < 0 ? 0 : p - h; }
-static double hi(double p, double h) { return p + h > 1 ? 1 : p + h; }
 
 int main(int argc, char **argv)
 {
@@ -234,15 +218,16 @@ int main(int argc, char **argv)
                "A wins [95% CI]", "cards", "B wins [95% CI]", "cards", "stuck", "long", "cpu s");
         for (int l = 0; l < nl; l++) {
             if (!(lmask >> l & 1)) continue;
-            double n = all.games[si][l], pa, ha, pb, hb;
-            ci(all.wins[si][l][0], n, &pa, &ha);
-            ci(all.wins[si][l][1], n, &pb, &hb);
+            double n = all.games[si][l], pa = n > 0 ? all.wins[si][l][0] / n : 0, pb = n > 0 ? all.wins[si][l][1] / n : 0;
+            double loa, hia, lob, hib;
+            stat_wilson(all.wins[si][l][0], n, STAT_Z95, &loa, &hia);
+            stat_wilson(all.wins[si][l][1], n, STAT_Z95, &lob, &hib);
             char name[40];
             snprintf(name, sizeof name, "%s vs %s", AGENT[LINEUP[l].a].name, AGENT[LINEUP[l].b].name);
             printf("  %-18s %6.0f  %5.1f%% [%5.1f, %5.1f] %s %6.2f  %5.1f%% [%5.1f, %5.1f]   %6.2f %6.0f %6.0f %8.1f\n",
-                   name, n, 100 * pa, 100 * lo(pa, ha), 100 * hi(pa, ha),
-                   (pa - ha > 0.5 || pa + ha < 0.5) ? "*" : " ",
-                   n > 0 ? all.cards[si][l][0] / n : 0, 100 * pb, 100 * lo(pb, hb), 100 * hi(pb, hb),
+                   name, n, 100 * pa, 100 * loa, 100 * hia,
+                   (loa > 0.5 || hia < 0.5) ? "*" : " ",
+                   n > 0 ? all.cards[si][l][0] / n : 0, 100 * pb, 100 * lob, 100 * hib,
                    n > 0 ? all.cards[si][l][1] / n : 0, all.stuck[si][l], all.longs[si][l], all.secs[si][l]);
         }
         /* head to head: row's share of the wins against column */

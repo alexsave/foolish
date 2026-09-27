@@ -22,7 +22,7 @@ SRC     := src/cn.c src/cn_dice.c src/cn_plan.c src/cn_view.c src/cn_lobby.c src
 HDR     := $(wildcard src/*.h) i18n/keys.h tests/cn_check.h \
            $(SHARED)/deal_rng.h $(SHARED)/sha256.h $(SHARED)/b32.h $(SHARED)/mixrad.h \
            $(SHARED)/test/check.h $(SHARED)/test/twophone.h $(SHARED)/text_util/text_util.h \
-           $(SHARED)/wire_check/wire_check.h
+           $(SHARED)/wire_check/wire_check.h $(SHARED)/stats/seed_hash.h
 
 # One binary per test file; each takes an optional scale argument.
 TESTS   := cn_test cn_dice_test cn_plan_test cn_say_test cn_fuzz cn_msg_test cn_twophone_test
@@ -59,10 +59,18 @@ WIRE_CHECK := $(WIRE_CHECK_SRC) $(SHARED)/wire_check/wire_check.h $(SHARED)/sha2
 build/wire_check_test: $(WIRE_CHECK) | build
 	$(CC) $(CFLAGS) $(WIRE_CHECK_SRC) -o $@
 
-run: $(addprefix build/,$(TESTS)) build/check_test build/text_util_test build/wire_check_test build/ios_smoke
+# The shared arena statistics' own test (shared/c/stats): mean and standard
+# error, the Wilson interval, and the per-game seed hash bot/cn_arena.c seeds with.
+STATS_SRC := $(SHARED)/stats/stats.c $(SHARED)/stats/stats_test.c
+STATS := $(STATS_SRC) $(SHARED)/stats/stats.h $(SHARED)/stats/seed_hash.h
+build/stats_test: $(STATS) | build
+	$(CC) $(CFLAGS) $(STATS_SRC) -lm -o $@
+
+run: $(addprefix build/,$(TESTS)) build/check_test build/text_util_test build/wire_check_test build/stats_test build/ios_smoke
 	./build/check_test
 	./build/text_util_test
 	./build/wire_check_test
+	./build/stats_test
 	./build/cn_test
 	./build/cn_dice_test
 	./build/cn_plan_test
@@ -86,10 +94,14 @@ build/asan_text_util_test: $(TEXT_UTIL) | build
 build/asan_wire_check_test: $(WIRE_CHECK) | build
 	$(CC) $(ASAN_FLAGS) $(WIRE_CHECK_SRC) -o $@
 
-asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_text_util_test build/asan_wire_check_test build/asan_ios_smoke
+build/asan_stats_test: $(STATS) | build
+	$(CC) $(ASAN_FLAGS) $(STATS_SRC) -lm -o $@
+
+asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_text_util_test build/asan_wire_check_test build/asan_stats_test build/asan_ios_smoke
 	./build/asan_check_test
 	./build/asan_text_util_test
 	./build/asan_wire_check_test
+	./build/asan_stats_test
 	./build/asan_cn_test
 	./build/asan_cn_dice_test
 	./build/asan_cn_plan_test

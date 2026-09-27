@@ -23,7 +23,7 @@ SRC     := src/tb.c src/tb_code.c src/tb_plan.c src/tb_view.c src/tb_lobby.c src
 HDR     := $(wildcard src/*.h) i18n/keys.h tests/tb_check.h \
            $(SHARED)/deal_rng.h $(SHARED)/sha256.h $(SHARED)/b32.h $(SHARED)/mixrad.h \
            $(SHARED)/test/check.h $(SHARED)/test/twophone.h $(SHARED)/text_util/text_util.h \
-           $(SHARED)/wire_check/wire_check.h
+           $(SHARED)/wire_check/wire_check.h $(SHARED)/stats/seed_hash.h
 
 # One binary per test file; each takes an optional scale argument.
 TESTS   := tb_test tb_msg_test tb_fuzz tb_say_test tb_beats_test tb_twophone_test
