@@ -50,7 +50,7 @@ struct StagedStrip: View {
     var body: some View {
         HStack(spacing: 4) {
             if strip.draws > 0 {
-                PkCard(card: nil, size: CGSize(width: 12, height: 17))
+                PkCard(card: nil, size: CGSize(width: 12, height: 17), chip: true)
                 Text("\u{00D7}\(strip.draws)").font(.system(size: 11, weight: .heavy)).foregroundColor(Color(hex: 0xFFF1C9))
             }
             if strip.reshuffled {
@@ -61,7 +61,7 @@ struct StagedStrip: View {
                 if strip.draws > 0 || strip.reshuffled {
                     Text("\u{00B7}").font(.system(size: 11.5, weight: .bold)).foregroundColor(Color(hex: 0x9C8B5E))
                 }
-                PkCard(card: card, size: CGSize(width: 12, height: 17), chosen: strip.chosen)
+                PkCard(card: card, size: CGSize(width: 12, height: 17), chosen: strip.chosen, chip: true)
             }
             if strip.said {
                 Text(Pk.string("CALL_WORD"))
