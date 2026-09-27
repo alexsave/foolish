@@ -332,6 +332,30 @@ static void t_drawout_bare_pass(void)
         int same = w.hand_n[0] == 7;
         for (int i = 0; i < 7; i++) same &= pos_of(&g, 0, w.hand[0][i]) >= 0;
         CHECK(same, "and deals seat 0 its true hand");
+
+        /* play on (greedy): each card seat 0 plays that the void does not
+         * forbid may have been a bound one, so k falls by one; a card it
+         * forbids must be a later draw, so it spends the draw instead */
+        int plays = 0, forbidden = 0;
+        for (int guard = 0; guard < 200 && !g.over && plays < 3; guard++) {
+            int t = g.turn;
+            int nt = pk_legal_turn(&g, t, m, PK_BOT_MENU_CAP);
+            if (nt <= 0) break;
+            PkAct a = m[pk_bot_greedy(&g, t, m, nt)];
+            if (t == 0 && a.kind == PK_A_PLAY) {
+                uint8_t c = g.hand[0][a.a];
+                plays++;
+                forbidden += (c < 96 && (v.suits >> pk_suit(c) & 1u)) || (v.ranks >> pk_rank(c) & 1u);
+            }
+            pk_apply(&g, t, a);
+            if (a.kind != PK_A_DRAW) pk_seal(&g);
+        }
+        pk_belief_build(&b1, &g, 1);
+        int want_k = 7 - (plays - forbidden);
+        CHECK(plays > 0, "seat 0 played on");
+        CHECK(b1.hard_n[0] >= 1 && b1.hard[0][0].k == (want_k < 0 ? 0 : want_k) && b1.hard[0][0].hits == forbidden,
+              "after %d plays (%d forbidden) the void binds %d, got k %d hits %d", plays, forbidden, want_k,
+              b1.hard[0][0].k, b1.hard[0][0].hits);
     }
     CHECK(found, "a deal with one buried card and a stuck seat 0");
 }
@@ -621,7 +645,7 @@ static int hits(const PkGame *g, int seat, PkAct a)
 static void t_mc_beats_random(void)
 {
     TEST("MC beats random at a forced choice");
-    int positions = 0, mc_wins = 0, rnd_wins = 0, mc_hit = 0;
+    int positions = 0, mc_wins = 0, rnd_wins = 0, mc_hit = 0, greedy_hit = 0;
     double rnd_hit = 0;
     int want = 25 * SCALE;
     uint64_t rs = 99;
@@ -657,6 +681,7 @@ static void t_mc_beats_random(void)
                     pk_apply(&b, t, x);
                     if (x.kind != PK_A_DRAW && pk_can_seal(&b)) pk_seal(&b);
                     mc_hit += hits(&g, t, mv.act);
+                    greedy_hit += hits(&g, t, m[pk_bot_greedy(&g, t, m, nt)]);
                     rnd_hit += (double)hit / nt;
                     mc_wins += finish_greedy(&a, t);
                     rnd_wins += finish_greedy(&b, t);
@@ -667,9 +692,10 @@ static void t_mc_beats_random(void)
         }
     }
     CHECK(positions == want, "positions: %d", positions);
-    printf("  MC vs random at %d forced choices: MC hit the one-card seat %d times, random would %.1f; "
-           "the moves went on to win %d and %d\n", positions, mc_hit, rnd_hit, mc_wins, rnd_wins);
+    printf("  MC vs random at %d forced choices: MC hit the one-card seat %d times, greedy %d, random would %.1f; "
+           "the moves went on to win %d and %d\n", positions, mc_hit, greedy_hit, rnd_hit, mc_wins, rnd_wins);
     CHECK(mc_hit >= positions * 3 / 4, "MC hits the one-card seat: %d of %d", mc_hit, positions);
+    CHECK(greedy_hit >= positions * 3 / 4, "greedy hits the one-card seat: %d of %d", greedy_hit, positions);
     CHECK(mc_hit >= 2 * rnd_hit, "MC hits %d, random %.1f: want twice", mc_hit, rnd_hit);
 
     /* and whole games, two players, each seed both ways round */

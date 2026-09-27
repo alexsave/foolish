@@ -14,6 +14,7 @@ make -C pickemup/c datagen      the Swift strings   -> pickemup/ios/Generated/i1
 make -C pickemup/c ios-lib      pickemup/ios/vendor/Pickemup.xcframework (Xcode; runs both above)
 make -C pickemup/c swift-smoke  the bridge driven from Swift through the generated readers (a Mac)
 make -C pickemup/c beats-dump   the timeline of two takes as Markdown tables (docs/MOTION_REPORT.md)
+make -C pickemup/c arena        the bots against each other, 2,000 games a line-up at 2, 4 and 8 players
 ./pickemup/c/build/pk_fuzz 50000 7        more games, another stream
 ./pickemup/c/build/pk_msg_test 10000      7.4.1's 10,000 games a size through the wire
 ```
@@ -57,6 +58,10 @@ The struct is fixed-size plain integers with no pointers and no bitfields, there
 | `ios/pk_api_layout.h` | the structs the bridge hands Swift (`PkApiTable`, `PkApiEvents`) |
 | `ios/layout.args` | what structgen generates Swift for: those, `PkView`, `PkSince`, and the constants |
 | `ios/pk_api_smoke.c`, `pk_api_smoke.swift` | the bridge driven phone to phone, from C and from Swift |
+| `src/pk_belief.h`, `src/pk_belief.c` | the bot's belief: what one seat can deduce from the public events, and a sampler of consistent worlds |
+| `src/pk_bot.h`, `src/pk_bot.c` | the bots: random, greedy and Monte Carlo (octogen's shape), the knobs, and the table driver |
+| `tests/pk_bot_test.c` | the bots: legality everywhere, the belief against the truth, hand-built histories, determinism, the wild's suit, MC against random |
+| `tools/pk_arena.c` | `make arena`: line-ups of the bots, both seat orders, a 95% interval on each side's win share |
 | `tests/MUTATIONS.md` | the mutation each test was seen to fail on |
 
 The envelope reaches the game only through `pk__new`, `pk_legal_turn`, `pk_is_legal`, `pk_apply`, `pk_seal` and the read-only fields; its lobby verdicts are `pk_lobby.h`'s.
@@ -99,6 +104,31 @@ Which seat is mine is the record (the tag this device sat with, keyed by the gam
 `pk_api.h` returns `const void *` into the kernel's storage, and Swift reads it through `read*` functions structgen writes from the kernel's headers; the library is stamped with that layout's hash (`pk_api_layout_hash`) and the module carries it as `SG_LAYOUT_HASH` (D46).
 Both are build outputs, never committed.
 The resident message is one slot: `pk_api_read` adopts, nothing seals or reads across an await, and `pk_api_text` seals a copy of the draft so the staged bubble can still be undone.
+
+## The bots
+
+An offline capability for simulation and evaluation, not in the app (DECISION D63): `BOT_SRC` is linked only into `pk_bot_test` and `pk_arena`, never into `SRC`, the wasm objects or the xcframework.
+The reference is foolish's octogen, and `docs/RULES_AND_KERNEL.md` section "Bot" says piece by piece what was imitated and what was not.
+
+- `PK_BOT_RANDOM` is uniform over the whole turn menu (D64), the baseline.
+- `PK_BOT_GREEDY` plays if anything plays (staying in the suit held most, shedding action cards, hitting a seat on two cards or fewer, keeping wilds), else draws once, then passes; it is also MC's rollout policy.
+- `PK_BOT_MC` builds a belief from the public events (`pk_belief.h`: exact hand sizes, buried cards, a hard void from a bare pass, soft voids from draws), samples worlds from it, rolls every candidate out with greedy in the same worlds, and keeps the best through three stages; the knobs are `PkBotKnobs`.
+- `pk_bot_choose` returns one entry of the kernel's own menu (or a seal it allows), so a bot cannot make an illegal move; "Last card!" and "Caught you!" are one shared rule (D60).
+- `pk_bot_round` is the table driver the arena and the tests use (D61).
+
+```
+make -C pickemup/c arena                       ARENA_GAMES=2000 ARENA_JOBS=8 by default
+./pickemup/c/build/pk_arena 400 8 24 x          400 games, 2 and 4 players, every line-up
+PK_DEPTH=0 PK_W1=96 ./pickemup/c/build/pk_arena 400 8 2 1    a knob override, MC vs greedy only
+```
+
+Measured on 2026-09-27, 2,000 games a line-up (`docs/BOT_REPORT.md` has every row):
+
+| Players | MC vs random | MC vs greedy | MC vs MC with a random wild suit |
+|---|---|---|---|
+| 2 | 98.4% [97.8, 98.9] | 55.5% [53.3, 57.7] | 55.5% [53.4, 57.7] |
+| 4 | 97.9% [97.3, 98.5] | 54.5% [52.4, 56.7] | 49.4% [47.2, 51.5] |
+| 8 | 97.1% [96.4, 97.8] | 51.7% [49.5, 53.9] | 50.4% [48.3, 52.6] |
 
 ## Measured
 

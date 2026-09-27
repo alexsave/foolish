@@ -260,8 +260,8 @@ int main(int argc, char **argv)
                 for (int l = 0; l < nl && !found; l++) {
                     double n = all.games[si][l];
                     if (n <= 0) continue;
-                    if (LINEUP[l].a == a && LINEUP[l].b == b) { printf("%8.1f%%", 100 * all.wins[si][l][0] / n); found = 1; }
-                    else if (LINEUP[l].b == a && LINEUP[l].a == b) { printf("%8.1f%%", 100 * all.wins[si][l][1] / n); found = 1; }
+                    if (LINEUP[l].a == a && LINEUP[l].b == b) { printf("%8.1f%%", 100 * (all.wins[si][l][0] / n)); found = 1; }
+                    else if (LINEUP[l].b == a && LINEUP[l].a == b) { printf("%8.1f%%", 100 * (all.wins[si][l][1] / n)); found = 1; }
                 }
                 if (!found) printf("%9s", "-");
             }
