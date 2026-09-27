@@ -15,8 +15,12 @@
 #ifndef SHARED_B32_H
 #define SHARED_B32_H
 
-// The text length b32_encode writes for `n` bytes, not counting the NUL.
-#define B32_LEN(n) (((n) * 8 + 4) / 5)
+#include <stddef.h>
+
+// The text length b32_encode writes for `n` bytes, not counting the NUL. The
+// arithmetic is in size_t, so `n * 8` cannot overflow int (it did from
+// n = 268,435,456); the result is an int like every length this API takes.
+#define B32_LEN(n) ((int)(((size_t)(n) * 8 + 4) / 5))
 
 int b32_encode(const unsigned char *in, int n, char *out, int cap);
 int b32_decode(const char *s, unsigned char *out, int cap);

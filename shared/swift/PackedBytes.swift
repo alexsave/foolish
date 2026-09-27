@@ -11,6 +11,9 @@
 // record" and "nothing" - never half a record read as a whole one. That is the
 // same discipline evwire.h states for the kernel's own readers, and the reason
 // the on-disk stores can treat an unreadable container as "no rows" cleanly.
+// A read that returns nil leaves the cursor where it was, prefix and all, so a
+// caller that treats nil as "field absent" and reads on stays aligned; a start
+// outside the buffer (negative, or past the end) reads as the end.
 //
 // Two length prefixes, deliberately: `text8`/`blob8` for a field the KERNEL
 // already length-prefixes with a byte (a roster name, MSG_MAX_NAME 64), and
@@ -64,8 +67,11 @@ public struct PackedWriter {
 public struct PackedReader {
     private let b: [UInt8]
     public private(set) var at: Int
-    public init(_ d: Data, at: Int = 0) { self.b = [UInt8](d); self.at = at }
-    public init(_ b: [UInt8], at: Int = 0) { self.b = b; self.at = at }
+    public init(_ d: Data, at: Int = 0) { self.init([UInt8](d), at: at) }
+    public init(_ b: [UInt8], at: Int = 0) {
+        self.b = b
+        self.at = (0...b.count).contains(at) ? at : b.count
+    }
 
     public var isAtEnd: Bool { at >= b.count }
 
@@ -94,20 +100,22 @@ public struct PackedReader {
         return Double(bitPattern: v)
     }
     public mutating func u8s(_ n: Int) -> [UInt8]? {
-        guard n >= 0, at + n <= b.count else { return nil }
+        guard n >= 0, n <= b.count - at else { return nil }   // never `at + n`: n may be Int.max
         defer { at += n }
         return Array(b[at..<at + n])
     }
     public mutating func blob() -> [UInt8]? {
-        guard let n = u16() else { return nil }
-        return u8s(n)
+        let start = at
+        guard let n = u16(), let v = u8s(n) else { at = start; return nil }
+        return v
     }
     public mutating func text() -> String? {
         guard let v = blob() else { return nil }
         return String(decoding: v, as: UTF8.self)
     }
     public mutating func blob8() -> [UInt8]? {
-        guard let n = u8() else { return nil }
-        return u8s(n)
+        let start = at
+        guard let n = u8(), let v = u8s(n) else { at = start; return nil }
+        return v
     }
 }

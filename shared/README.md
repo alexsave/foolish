@@ -12,11 +12,11 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 
 | Path | What | Used by |
 | --- | --- | --- |
-| `c/sha256.{c,h}` | SHA-256 | CARDS, UTTT, THIRD, SHED, LIAR, BONES |
-| `c/deal_rng.{c,h}` | the deal's RNG | CARDS, THIRD, SHED, LIAR, BONES |
-| `c/b32.{c,h}` | base32 codes | UTTT, SHED, LIAR, BONES |
-| `c/mixrad.{c,h}` | mixed-radix arithmetic on a byte bignum, the history-as-code body under the game coders | UTTT, SHED, LIAR, BONES |
-| `c/wasm/` | the freestanding libc and libm a wasm32 build compiles against | CARDS, UTTT (both link `libc.c` and `libm.c`), SHED (its objects, and `libc.c` in its native-vs-wasm cross-check link), LIAR, BONES (headers only: their wasm build is objects only) |
+| `c/sha256.{c,h}` | SHA-256; `sha256_test.c` the NIST vectors (UTTT runs it) | CARDS, UTTT, THIRD, SHED, LIAR, BONES |
+| `c/deal_rng.{c,h}` | the deal's RNG; `deal_rng_test.c` the RFC 8439 vectors (UTTT runs it) | CARDS, THIRD, SHED, LIAR, BONES |
+| `c/b32.{c,h}` | base32 codes; `b32_test.c` (UTTT runs it) | UTTT, SHED, LIAR, BONES |
+| `c/mixrad.{c,h}` | mixed-radix arithmetic on a byte bignum, the history-as-code body under the game coders; `mixrad_test.c` (UTTT runs it) | UTTT, SHED, LIAR, BONES |
+| `c/wasm/` | the freestanding libc and libm a wasm32 build compiles against; `libc_test.c` runs `libc.c` natively against the host C library (UTTT runs it) | CARDS, UTTT (both link `libc.c` and `libm.c`), SHED (its objects, and `libc.c` in its native-vs-wasm cross-check link), LIAR, BONES (headers only: their wasm build is objects only) |
 | `c/text_util/` | the text under a say layer, every write into a fixed buffer with no `snprintf`: UTF-8 stepping (`text_next_cp`), the column table a string limit is checked against (`text_cp_cols`, `text_cols`), `text_itoa`, `text_put` and the `{placeholder}` filler `text_fill`; `text_util_test.c` the test | UTTT (the stepping, the copy and the filler; it keeps its own column table), SHED, LIAR, BONES |
 | `c/wire_check/` | the envelope's wire check (`wire_check`): the first few bytes of SHA-256 over the head and the body, the bytes an envelope carries between the two; each product keeps its own length; `wire_check_test.c` the test | UTTT, SHED, LIAR, BONES |
 | `c/i18n/languages.h` | the language registry: every language's code, endonym and direction, one row each | CARDS (the string generator reads it), UTTT (compiled into its kernel, which indexes its tables by it) |
@@ -41,7 +41,7 @@ Swift reaches a header-only C module through its `module.modulemap` on `SWIFT_IN
 | Path | What | Used by |
 | --- | --- | --- |
 | `tools/ship/ship.sh` | archive, export, check and upload an iMessage app to TestFlight; the product is its `ship.env` | CARDS (`ios/Tools/ship.env`), UTTT (`uttt/ios/Tools/ship.sh`) |
-| `tools/release_strings.sh` | fail a Release `.app`/`.ipa` on `dev.*` names, em dashes and forbidden frameworks (C scanner in `release_strings/`); `ship.sh` runs it | CARDS, UTTT |
+| `tools/release_strings.sh` | fail a Release `.app`/`.ipa` on DevFlags compiled in, `dev.*` names, em dashes (UTF-8, UTF-16 and Swift small strings rebuilt from arm64 code, asset catalogs included) and forbidden frameworks (C scanner in `release_strings/`, fixtures in its `test.sh`); `ship.sh` runs it | CARDS, UTTT |
 | `tools/asc/testflight.py` | TestFlight status, release to the external group; the product is its `asc.env` | CARDS (`ios/Tools/asc.env`), UTTT (`uttt/ios/Tools/asc.env`) |
 | `tools/devlogs.sh` | Release dev-install on a phone, the `log collect` line, and a subsystem filter | CARDS, UTTT (via `ship.env`) |
 | `tools/devcap/` | film a USB iPhone for the motion tool | CARDS, UTTT (via `ship.env`) |

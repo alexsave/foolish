@@ -276,3 +276,24 @@ $(WEB_WASM_OUT): $(WEB_WASM_SRC) $(wildcard src/*.h i18n/*.h ../../shared/c/wasm
 wasm-web: $(WEB_WASM_OUT)
 
 .PHONY: wasm-web
+
+# ---- shared/c's own tests ---------------------------------------------------
+# The tests beside shared/c's primitives, run as part of `make run` (this
+# kernel links b32, mixrad and the wasm libc; sha256 and deal_rng have no
+# other home that runs every shared test in one place). Self-contained: each
+# test builds from its own file and the one it covers, so no SRC list changes.
+SHARED_C := ../../shared/c
+SHARED_TESTS := build/libc_test build/b32_test build/mixrad_test build/sha256_test build/deal_rng_test
+
+build/libc_test: $(SHARED_C)/wasm/libc_test.c $(SHARED_C)/wasm/libc.c $(SHARED_C)/test/check.h | build
+	$(CC) $(CFLAGS) $(SHARED_C)/wasm/libc_test.c -o $@
+
+build/%_test: $(SHARED_C)/%_test.c $(SHARED_C)/%.c $(SHARED_C)/%.h $(SHARED_C)/test/check.h | build
+	$(CC) $(CFLAGS) $(SHARED_C)/$*_test.c $(SHARED_C)/$*.c -o $@
+
+shared-tests: $(SHARED_TESTS)
+	@for t in $(SHARED_TESTS); do ./$$t || exit 1; done
+
+run: shared-tests
+
+.PHONY: shared-tests

@@ -3,6 +3,7 @@
 
 int mixrad_mul_add(uint8_t *v, int *len, int cap, uint32_t base, uint32_t digit)
 {
+    if (base == 0 || base >= MIXRAD_BASE_LIMIT || *len < 0 || *len > cap) return 0;
     uint32_t carry = digit;
     for (int i = 0; i < *len; i++) {
         uint32_t t = (uint32_t)v[i] * base + carry;
@@ -19,6 +20,7 @@ int mixrad_mul_add(uint8_t *v, int *len, int cap, uint32_t base, uint32_t digit)
 
 uint32_t mixrad_div_mod(uint8_t *v, int *len, uint32_t base)
 {
+    if (base == 0 || base >= MIXRAD_BASE_LIMIT || *len < 0) return MIXRAD_REFUSED;
     uint32_t rem = 0;
     for (int i = *len - 1; i >= 0; i--) {
         uint32_t cur = (rem << 8) | v[i];

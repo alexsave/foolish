@@ -60,12 +60,64 @@
 #
 # Idempotent: safe to run again in a job that has already run it, and safe to
 # run after scripts/ci_bots_test_wasm.sh.
+#
+# EVERY DOWNLOAD IS PINNED BY SHA-256, because what this script fetches runs as
+# root in the job that builds the shipped wasm. llvm.sh comes from an immutable
+# commit of its source repository (apt.llvm.org serves the same script from
+# there, and its copy changes without notice); the packages it then installs
+# are GPG-verified by apt. The binaryen tarballs are checked against the
+# hashes the release publishes. Raising a pin is: fetch, hash, edit below.
+#
+#   ci_llvm.sh --verify-downloads   fetch and verify every pinned download
+#                                   into a temporary directory, install
+#                                   nothing (runs on a Mac too)
 set -euo pipefail
 
 LLVM_VERSION="${LLVM_VERSION:-22}"
 BINARYEN_VERSION="${BINARYEN_VERSION:-130}"
 LLVM="/usr/lib/llvm-$LLVM_VERSION"
 BINARYEN="/opt/binaryen-version_$BINARYEN_VERSION"
+
+LLVM_SH_URL="https://raw.githubusercontent.com/opencollab/llvm-jenkins.debian.net/076c86e05ebae0ab66edeecd2f0f438ae15de0bb/llvm.sh"
+LLVM_SH_SHA256="da89c676166fd38eebc669b6355c7da27eb3971437059580e86161256d603dc5"
+binaryen_url() { echo "https://github.com/WebAssembly/binaryen/releases/download/version_$1/binaryen-version_$1-$2-linux.tar.gz"; }
+binaryen_sha256() {  # binaryen_sha256 VERSION ARCH
+  case "$1-$2" in
+    130-aarch64) echo e6ae6e09ac40f4e14bc5be6f687c58e2995c84170013975fa641809dd3b480a0 ;;
+    130-x86_64)  echo 0a18362361ad05465118cd8eeb72edaeec89de6894bc283576ef4e07aa3babcc ;;
+    *) echo "::error::no pinned SHA-256 for binaryen $1 on $2; add one to ${BASH_SOURCE[0]}" >&2; return 1 ;;
+  esac
+}
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+  else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+# fetch_verified URL SHA256 DEST - download as the invoking user, then refuse
+# anything whose hash is not the pinned one.
+fetch_verified() {
+  if command -v curl >/dev/null 2>&1; then curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$3" "$1"
+  else wget -qO "$3" "$1"; fi
+  local got; got="$(sha256_of "$3")"
+  if [ "$got" != "$2" ]; then
+    echo "::error::$1 has SHA-256 $got, pinned $2 - refusing to use it" >&2
+    rm -f "$3"; return 1
+  fi
+}
+
+# Only when run, never when sourced (several workflows `. ci_llvm.sh`, and a
+# sourced $1 is the caller's).
+if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "${1:-}" = "--verify-downloads" ]; then
+  D="$(mktemp -d)"; trap 'rm -rf "$D"' EXIT
+  fetch_verified "$LLVM_SH_URL" "$LLVM_SH_SHA256" "$D/llvm.sh" || exit 1
+  echo "ok llvm.sh $LLVM_SH_SHA256"
+  for ba in aarch64 x86_64; do
+    sha="$(binaryen_sha256 "$BINARYEN_VERSION" "$ba")" || exit 1
+    fetch_verified "$(binaryen_url "$BINARYEN_VERSION" "$ba")" "$sha" "$D/binaryen-$ba.tar.gz" || exit 1
+    echo "ok binaryen $BINARYEN_VERSION $ba $sha"
+  done
+  exit 0
+fi
 
 if [ ! -f "$LLVM/include/clang-c/Index.h" ] || [ ! -x "$LLVM/bin/wasm-ld" ]; then
   SUDO="$(command -v sudo || true)"
@@ -78,8 +130,10 @@ if [ ! -f "$LLVM/include/clang-c/Index.h" ] || [ ! -x "$LLVM/bin/wasm-ld" ]; the
   # needs.
   $SUDO apt-get install -y --no-install-recommends \
       make gcc gzip wget gnupg lsb-release software-properties-common ca-certificates
-  $SUDO wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
-  $SUDO bash /tmp/llvm.sh "$LLVM_VERSION"
+  LLVM_SH="$(mktemp)"
+  fetch_verified "$LLVM_SH_URL" "$LLVM_SH_SHA256" "$LLVM_SH"
+  $SUDO bash "$LLVM_SH" "$LLVM_VERSION"
+  rm -f "$LLVM_SH"
   $SUDO apt-get install -y --no-install-recommends \
       "clang-$LLVM_VERSION" "lld-$LLVM_VERSION" "libclang-$LLVM_VERSION-dev"
 fi
@@ -95,10 +149,11 @@ if [ ! -x "$BINARYEN/bin/wasm-opt" ]; then
     *) echo "::error::no binaryen $BINARYEN_VERSION release for $(uname -m)" >&2; exit 1 ;;
   esac
   SUDO="$(command -v sudo || true)"
-  wget -qO /tmp/binaryen.tar.gz \
-    "https://github.com/WebAssembly/binaryen/releases/download/version_$BINARYEN_VERSION/binaryen-version_$BINARYEN_VERSION-$ba-linux.tar.gz"
-  $SUDO tar -xzf /tmp/binaryen.tar.gz -C /opt
-  rm -f /tmp/binaryen.tar.gz
+  BINARYEN_SHA256="$(binaryen_sha256 "$BINARYEN_VERSION" "$ba")"
+  TARBALL="$(mktemp)"
+  fetch_verified "$(binaryen_url "$BINARYEN_VERSION" "$ba")" "$BINARYEN_SHA256" "$TARBALL"
+  $SUDO tar -xzf "$TARBALL" -C /opt
+  rm -f "$TARBALL"
 fi
 
 # binaryen FIRST, so its wasm-opt beats any the distro left on PATH.
