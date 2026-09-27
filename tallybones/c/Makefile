@@ -19,10 +19,11 @@ SHARED  := ../../shared/c
 SRC     := src/tb.c src/tb_code.c src/tb_plan.c src/tb_view.c src/tb_lobby.c src/tb_msg.c \
            src/tb_say.c src/tb_beats.c i18n/strings_en.c \
            $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c \
-           $(SHARED)/text_util/text_util.c
+           $(SHARED)/text_util/text_util.c $(SHARED)/wire_check/wire_check.c
 HDR     := $(wildcard src/*.h) i18n/keys.h tests/tb_check.h \
            $(SHARED)/deal_rng.h $(SHARED)/sha256.h $(SHARED)/b32.h $(SHARED)/mixrad.h \
-           $(SHARED)/test/check.h $(SHARED)/test/twophone.h $(SHARED)/text_util/text_util.h
+           $(SHARED)/test/check.h $(SHARED)/test/twophone.h $(SHARED)/text_util/text_util.h \
+           $(SHARED)/wire_check/wire_check.h
 
 # One binary per test file; each takes an optional scale argument.
 TESTS   := tb_test tb_msg_test tb_fuzz tb_say_test tb_beats_test tb_twophone_test
@@ -51,9 +52,17 @@ TEXT_UTIL := $(SHARED)/text_util/text_util.c $(SHARED)/text_util/text_util_test.
 build/text_util_test: $(TEXT_UTIL) | build
 	$(CC) $(CFLAGS) $(SHARED)/text_util/text_util.c $(SHARED)/text_util/text_util_test.c -o $@
 
-run: $(addprefix build/,$(TESTS)) build/check_test build/text_util_test build/ios_smoke
+# The shared wire check's own test (shared/c/wire_check): the envelope's
+# truncated SHA-256 over head and body, which tb_msg.c carries TB_CHECK_LEN bytes of.
+WIRE_CHECK_SRC := $(SHARED)/sha256.c $(SHARED)/wire_check/wire_check.c $(SHARED)/wire_check/wire_check_test.c
+WIRE_CHECK := $(WIRE_CHECK_SRC) $(SHARED)/wire_check/wire_check.h $(SHARED)/sha256.h
+build/wire_check_test: $(WIRE_CHECK) | build
+	$(CC) $(CFLAGS) $(WIRE_CHECK_SRC) -o $@
+
+run: $(addprefix build/,$(TESTS)) build/check_test build/text_util_test build/wire_check_test build/ios_smoke
 	./build/check_test
 	./build/text_util_test
+	./build/wire_check_test
 	./build/tb_test
 	./build/tb_msg_test $(WIRE_GAMES)
 	./build/tb_fuzz $(FUZZ_GAMES)
@@ -73,9 +82,13 @@ build/asan_check_test: $(CHECK_TEST) | build
 build/asan_text_util_test: $(TEXT_UTIL) | build
 	$(CC) $(ASAN_FLAGS) $(SHARED)/text_util/text_util.c $(SHARED)/text_util/text_util_test.c -o $@
 
-asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_text_util_test build/asan_ios_smoke
+build/asan_wire_check_test: $(WIRE_CHECK) | build
+	$(CC) $(ASAN_FLAGS) $(WIRE_CHECK_SRC) -o $@
+
+asan: $(addprefix build/asan_,$(TESTS)) build/asan_check_test build/asan_text_util_test build/asan_wire_check_test build/asan_ios_smoke
 	./build/asan_check_test
 	./build/asan_text_util_test
+	./build/asan_wire_check_test
 	./build/asan_tb_test
 	./build/asan_tb_msg_test 2
 	./build/asan_tb_fuzz 140

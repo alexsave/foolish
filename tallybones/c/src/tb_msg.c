@@ -1,6 +1,7 @@
 /* Tallybones - the envelope. See tb_msg.h. */
 #include "tb_msg.h"
 #include "../../../shared/c/sha256.h"
+#include "../../../shared/c/wire_check/wire_check.h"
 #include "../../../shared/c/b32.h"
 #include <string.h>
 
@@ -261,17 +262,6 @@ int tb_msg_plan_lobby(const TbMsg *before, const TbMsg *after, TbEvent *out, int
 
 /* ---- the bytes ------------------------------------------------------------------- */
 
-static void check_of(const uint8_t *head, int hn, const uint8_t *body, int bn, uint8_t out[TB_CHECK_LEN])
-{
-    uint8_t d[SHA256_DIGEST_LEN];
-    Sha256 c;
-    sha256_init(&c);
-    sha256_update(&c, head, (size_t)hn);
-    if (bn > 0) sha256_update(&c, body, (size_t)bn);
-    sha256_final(&c, d);
-    memcpy(out, d, TB_CHECK_LEN);
-}
-
 /* The same message, by everything that is not derived (the phase within a
  * started game, the dice): what the encoder is asked to write against what
  * it reads back without deriving. */
@@ -327,7 +317,7 @@ int tb_msg_encode(const TbMsg *m, uint8_t *out, int cap)
         bn = tb_code_encode(g, buf + n, TB_CODE_MAX);
         if (bn < 0) return TB_EGAME;
     }
-    check_of(buf, head, buf + n, bn, buf + head);
+    wire_check(buf, (size_t)head, buf + n, (size_t)bn, buf + head, TB_CHECK_LEN);
     n += bn;
 
     /* WHAT WAS WRITTEN IS READ BACK: a payload this build would refuse, or one
@@ -383,7 +373,7 @@ static int decode(const uint8_t *in, int n, TbMsg *out, int derive)
     const uint8_t *body = in + at + TB_CHECK_LEN;
     int bn = n - at - TB_CHECK_LEN;
     uint8_t want[TB_CHECK_LEN];
-    check_of(in, at, body, bn, want);
+    wire_check(in, (size_t)at, body, (size_t)bn, want, TB_CHECK_LEN);
     if (memcmp(want, in + at, TB_CHECK_LEN)) return TB_ECHECK;
 
     if (!roster_ok(&m) || !lobby_rev_ok(&m)) return TB_EROSTER;

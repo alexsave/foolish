@@ -209,6 +209,29 @@ static void w_sweeps(void)
 
 static int max_chars[9];
 
+/* THE CHECK, FROM OUTSIDE: the TB_CHECK_LEN bytes after the roster rows are
+ * the leading bytes of SHA-256(everything before them || everything after
+ * them), worked out here from the bytes alone. Encode and decode share one
+ * check function, so a check over the wrong span still round-trips against
+ * itself; only an oracle that is not that function sees the wire move. */
+static int check_from_outside(const uint8_t *b, int n)
+{
+    int at = TB_HEAD_LEN;
+    for (int s = 0; s < b[TB_HEAD_LEN - 2]; s++) {
+        if (at + TB_TAG_LEN + 1 > n) return 0;
+        at += TB_TAG_LEN;
+        at += 1 + b[at];
+    }
+    if (at + TB_CHECK_LEN > n) return 0;
+    uint8_t d[SHA256_DIGEST_LEN];
+    Sha256 c;
+    sha256_init(&c);
+    sha256_update(&c, b, (size_t)at);
+    sha256_update(&c, b + at + TB_CHECK_LEN, (size_t)(n - at - TB_CHECK_LEN));
+    sha256_final(&c, d);
+    return memcmp(d, b + at, TB_CHECK_LEN) == 0;
+}
+
 static void w_games(int games)
 {
     TEST("wire games");
@@ -224,6 +247,10 @@ static void w_games(int games)
                 if (len > max_chars[n]) max_chars[n] = len;
                 CHECK(tb_msg_text_decode(text, &back) == TB_EOK && tb_hash(&back.game) == tb_hash(&m.game),
                       "%d seats game %d bubble %d reads back", n, k, m.game.hist_n);
+                static uint8_t bytes[TB_MSG_MAX_BYTES];
+                int bn = tb_msg_encode(&m, bytes, sizeof bytes);
+                CHECK(bn > 0 && check_from_outside(bytes, bn),
+                      "%d seats game %d bubble %d: the check is SHA-256 of head and body", n, k, m.game.hist_n);
             }
         }
     for (int n = 2; n <= 8; n++) printf("  %d seats: longest link %d characters\n", n, max_chars[n]);

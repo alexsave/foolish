@@ -1,6 +1,7 @@
 /* Pick 'Em Up - the envelope. See pk_msg.h. */
 #include "pk_msg.h"
 #include "../../../shared/c/sha256.h"
+#include "../../../shared/c/wire_check/wire_check.h"
 #include "../../../shared/c/b32.h"
 #include <string.h>
 
@@ -247,17 +248,6 @@ int pk_msg_plan_lobby(const PkMsg *before, const PkMsg *after, PkEvent *out, int
 
 /* ---- the bytes ------------------------------------------------------------------- */
 
-static void check_of(const uint8_t *head, int hn, const uint8_t *body, int bn, uint8_t out[PK_CHECK_LEN])
-{
-    uint8_t d[SHA256_DIGEST_LEN];
-    Sha256 c;
-    sha256_init(&c);
-    sha256_update(&c, head, (size_t)hn);
-    if (bn > 0) sha256_update(&c, body, (size_t)bn);
-    sha256_final(&c, d);
-    memcpy(out, d, PK_CHECK_LEN);
-}
-
 /* The same message, by everything that is not derived (phase within a
  * started game, TIP_SAID): what the encoder is asked to write against what
  * it reads back. */
@@ -313,7 +303,7 @@ int pk_msg_encode(const PkMsg *m, uint8_t *out, int cap)
         bn = pk_code_encode(g, buf + n, PK_CODE_MAX);
         if (bn < 0) return PK_EGAME;
     }
-    check_of(buf, head, buf + n, bn, buf + head);
+    wire_check(buf, (size_t)head, buf + n, (size_t)bn, buf + head, PK_CHECK_LEN);
     n += bn;
 
     /* WHAT WAS WRITTEN IS READ BACK: a payload this build would refuse, or one
@@ -371,7 +361,7 @@ int pk_msg_decode(const uint8_t *in, int n, PkMsg *out)
     const uint8_t *body = in + at + PK_CHECK_LEN;
     int bn = n - at - PK_CHECK_LEN;
     uint8_t want[PK_CHECK_LEN];
-    check_of(in, at, body, bn, want);
+    wire_check(in, (size_t)at, body, (size_t)bn, want, PK_CHECK_LEN);
     if (memcmp(want, in + at, PK_CHECK_LEN)) return PK_ECHECK;
 
     if (!roster_ok(&m) || !lobby_rev_ok(&m)) return PK_EROSTER;
