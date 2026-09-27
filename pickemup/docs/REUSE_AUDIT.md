@@ -298,6 +298,15 @@ That means rewording `shared/README.md:5` and every `uttt/` path in the README i
 - Proof: P7.
 - Risk: none.
 
+DONE (S0).
+The code name is SHED.
+`PRODUCT` gained `/pickemup/i` and `/pick ?'?em ?up/i`.
+A second hit the guard found: `shared/tools/check_ui_doc.py` defaulted to `pickemup/docs/UI.html` when run with no argument, so it now prints its usage line instead (both READMEs that call it pass a path).
+Mutation check: a file under `shared/` holding `pickemup`, then one holding `Pick 'Em Up`, each turned the guard red on the first test naming that line; removing it turned it green.
+P7: 150 tests, 128 pass before and after with the same set of names; the 22 that fail or cancel are the Postgres suites (ECONNREFUSED on :5432, Docker was not running), identical before and after.
+`\buttt\b` was NOT added: the code name UTTT is the product name, so the guard would first need a new code name for uttt and a reword of 32 lines, including comments in `shared/swift/MessagesKit` and `shared/c/i18n/languages.h`, and the path `uttt/ios/Tools/store_frames.py` in `shared/tools/store/market.py`.
+That is its own step.
+
 **S1 - texture bakers to `shared/swift/Textures/` and `shared/tools/textures/`.**
 - `git mv` `FeltTexture.swift`, `WoolTexture.swift`, `WoodTexture.swift` and `FernCardBack.swift` from `foolish/ios/FoolishKit/DesignSystem/` into `shared/swift/Textures/`.
 FoolishKit still compiles them through `project.yml:346`.

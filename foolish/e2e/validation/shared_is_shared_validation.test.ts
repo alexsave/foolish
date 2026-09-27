@@ -58,6 +58,10 @@ const PRODUCT = [
     /foolish/i,
     /werewolf/i,
     /\bwolf\b/i,
+    // The shedding game, in the folder name and in the title's spellings
+    // ("Pick 'Em Up", "Pick Em Up", "pickemup").
+    /pickemup/i,
+    /pick ?'?em ?up/i,
     // Bundle ids, App Groups and the reverse-DNS they are built from.
     /cards\.foolish/i,
     /group\.cards/i,
