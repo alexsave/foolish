@@ -64,6 +64,11 @@ const PRODUCT = [
     /pick ?'?em ?up/i,
     // Liar's Dice, in the folder name and the title ("Chui Niu", "chuiniu").
     /chui ?niu/i,
+    // The dice solitaire, in the folder name and the title's spellings
+    // ("Tally Bones", "TallyBones", "tallybones"); unanchored, so its targets
+    // (TallybonesKit, TallybonesMessages) are hits too. A bare "tally" is not:
+    // it is an ordinary word a shared counter may well use.
+    /tally ?bones/i,
     // Bundle ids, App Groups and the reverse-DNS they are built from.
     /cards\.foolish/i,
     /group\.cards/i,
@@ -111,6 +116,7 @@ test('shared/ holds the files both products actually build', () => {
         'shared/c/sha256.c', 'shared/c/sha256.h',
         'shared/c/deal_rng.c', 'shared/c/deal_rng.h',
         'shared/c/mixrad.c', 'shared/c/mixrad.h',   // the mixed-radix arithmetic under two game coders
+        'shared/c/b32.c', 'shared/c/b32.h',         // the base32 code alphabet over it
         'shared/tools/llvm.mk',
         'shared/scripts/ci_llvm.sh',   // the pinned toolchain, for every product's lanes
         'shared/tools/sgcommon/sgc.c',
@@ -134,6 +140,40 @@ test('shared/ holds the files both products actually build', () => {
     assert.deepEqual(missing, [], `these are meant to be shared but are not there:\n  ${missing.join('\n  ')}`);
 });
 
+/**
+ * Every file in shared/c, at every place a product keeps its C, under every
+ * product. Spelled out as a cross product rather than by hand so a sixth
+ * product, or a fifth shared module, is one word here and not twenty lines.
+ */
+function productCopies(): string[] {
+    const products = ['foolish', 'uttt', 'pickemup', 'chuiniu', 'tallybones', 'werewolf'];
+    // The flat modules: a source and its header, wherever a product's C lives.
+    const flat = ['sha256', 'deal_rng', 'b32', 'mixrad'].flatMap((m) => [`${m}.c`, `${m}.h`]);
+    const flatDirs = ['c', 'c/src', 'c/tests', 'c/bot'];
+    // The header-only modules and the registry, where a copy would most likely land.
+    const headers = [
+        'c/src/msg_stage.h', 'c/msg_stage/msg_stage.h',
+        'c/src/motion_ruler.h', 'c/motion_ruler/motion_ruler.h',
+        'c/src/languages.h', 'c/i18n/languages.h',
+    ];
+    // The freestanding libc and libm. NOT wasm/include/stdio.h: shared/c/wasm's
+    // own stdio.h says a build that needs a different stdio keeps its own, and
+    // the card kernel does (c/wasm/include/stdio.h, fprintf for research builds).
+    const wasm = ['c/wasm/libc.c', 'c/wasm/libm.c', 'c/wasm/include/string.h', 'c/wasm/include/math.h'];
+    // THE ONE KNOWN COPY, left out by name so it is not a silent hole. The third
+    // product forked before the registry moved to shared/ and still reads its
+    // own (its i18n_source_of_truth test and its datagen are rooted at it). It
+    // is paused and out of this gate's reach; retiring it is its own change,
+    // and deleting this line is how that change proves itself.
+    const known = new Set(['werewolf/c/i18n/languages.h']);
+    const out: string[] = [];
+    for (const p of products) {
+        for (const d of flatDirs) for (const f of flat) out.push(`${p}/${d}/${f}`);
+        for (const h of [...headers, ...wasm]) out.push(`${p}/${h}`);
+    }
+    return out.filter((p) => !known.has(p));
+}
+
 test('the product does not keep its own copy of a shared file', () => {
     // The failure this move was made to end: two byte-identical copies, one of
     // which gets the next fix. A copy that comes BACK is the same bug, and it
@@ -153,6 +193,7 @@ test('the product does not keep its own copy of a shared file', () => {
         'werewolf/c/src/sha256.c',
         'werewolf/c/src/deal_rng.c',
         'werewolf/tools',
+        ...productCopies(),
     ];
     const back: string[] = [];
     for (const p of shadowed) {
