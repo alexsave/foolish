@@ -136,6 +136,14 @@ Run 2026-09-26 with `./build/pk_msg_test 5 100` (the ASan rows with `./build/asa
 | 7.8.7 seat resolve | the tag trusted over the record | `pk_msg_test.c:593` "the record outranks the tag, the sender and the name" |
 | 7.8.7 seat resolve | the lobby gate removed | `pk_msg_test.c:632` "a lobby row under another name is not mine, whoever sent the bubble" |
 | lobby: rows, verdicts and the wire | a leave does not set LEFT | `pk_msg_test.c:705` "after a leave Bo, alone, is offered the invite" |
+| the corruption sweep: several bytes at once | the check comparison skipped | `pk_msg_test.c:459` "envelope 0 trial 1 (5 bytes, raw) reads as a different writing", `:460` "accepted with a failing check" |
+| the header's boundaries | the seat cap ignores DM (always 8) | `pk_msg_test.c:582` "DM with three seats", `:662` "a DM of three" |
+| the header's boundaries | a started game's starter not range-checked | `pk_msg_test.c:594` "starter = n_seats", `:596` "no starter on a started game" |
+| the header's boundaries | a body with a zero top byte accepted | `pk_msg_test.c:604` "a trailing zero byte: a second spelling (D48)" |
+| the header's boundaries | a started game's lobby_rev unchecked (the decoder before D52) | `pk_msg_test.c:621` "a started roster with fewer joins than seats", `:623` "a started lobby_rev of the wrong parity" |
+| the header's boundaries | the replay agreement accepts a phase that is neither LIVE nor FINISHED (the one judge of the phase, once its whitelist was removed as a second guard) | `pk_msg_test.c:573` "phase 1 on a live body is refused (0)" and phases 4 to 7 |
+
+Run 2026-09-27 with `./build/pk_msg_test 1 10`, by the same restore-from-copy script as `pk_rules_test.c`'s rows.
 
 The rules doc's 7.4.2 mutation ("allow the empty-bubble option in the C digit") does not apply: D40 makes every digit a menu of non-empty bubbles, so an empty bubble is not an option to allow, and a coder that offered one would still round-trip (the decoder's seal refuses it).
 The sentinel mutation above is the one that breaks canonicality.

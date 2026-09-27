@@ -513,6 +513,12 @@ The tag witness still counts, because it is direct; a rejoin writes a new record
 `pk_rec_find` returns `PK_REC_GONE` for it.
 Recommendation confidence: high.
 
+**DECISION D52: a started header's `lobby_rev` must be one its roster could have started from, the same arithmetic as a lobby's (amends 4.2).**
+Alternative: leave it unchecked once started, since only Rule P clause 6 reads it and two honest siblings share it.
+Why: a start is not a roster change, so a started game keeps the `lobby_rev` of the lobby it came from, which had at least one join per seat past the creator and a join for every leave; a header that says otherwise describes a game that cannot exist, and a decoder that accepts one has two rules for one field.
+The phase byte likewise has one judge: any value but WAITING reads as started and must then equal what the replay says (LIVE or FINISHED), so the decoder's separate whitelist of phases went.
+Recommendation confidence: high.
+
 ---
 
 ## 3. Kernel design
