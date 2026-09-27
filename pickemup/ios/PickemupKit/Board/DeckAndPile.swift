@@ -101,6 +101,7 @@ struct PileView: View {
             }
             if let card = pending ?? top {
                 PkCard(card: card, size: size, fullFace: true, chosen: pending == nil ? chosen : nil)
+                    .slidingBand("band")
                     .rotationEffect(.degrees(-3))
             }
             if hot {

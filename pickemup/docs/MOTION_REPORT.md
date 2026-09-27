@@ -4,7 +4,7 @@ What the motion layer plays, measured where it can be.
 
 ## Filmed and measured (2026-09-27, iPhone 17e simulator, iOS 27.0)
 
-Filmed inside Messages at normal speed with `xcrun simctl io <udid> recordVideo` (stopped with SIGINT, never slowed), two seats played through the Debug persona (IOS_DECISIONS I41), frames extracted 1:1 with their real times by `animation-measure`'s `extract_frames.sh`.
+Filmed inside Messages at normal speed with `xcrun simctl io <udid> recordVideo` (stopped with SIGINT, never slowed), two seats played through the Debug persona (IOS_DECISIONS I43), frames extracted 1:1 with their real times by `animation-measure`'s `extract_frames.sh`.
 Times are milliseconds from the tap that starts the take (the recorder's first changed frame, which is the touch going down, so a plan that starts on the touch going up starts a little after it).
 A region's "activity" is a frame-to-frame mean pixel difference above 1.5 inside that region; a landmark is a colour box tracked by `track_landmark.py` and scored by `motion_metrics.py` (jerk against a critically damped spring's floor at the same frame times, roughness as the sum of squared second differences).
 
@@ -13,7 +13,7 @@ What could not be filmed on one simulator: a LIVE arrival (the receiving thread 
 ### FOUND and FIXED: every flight to or from the pile went to the top-left corner
 
 The first takes showed the start card rise from the deck to the board's top-left corner, turn over there and snap onto the pile; a rejected (Reverse) start card snap back to the corner and fly down into the deck; and an opened play fly from the fan to the corner and snap onto the pile (`shots/motion/deal_bury_before_fix_sheet.png`, frames 236 to 350).
-The pile's anchor was moved into place with `.offset`, which its GeometryReader does not see, so it reported (0, 0, 82, 115) (IOS_DECISIONS I42).
+The pile's anchor was moved into place with `.offset`, which its GeometryReader does not see, so it reported (0, 0, 82, 115) (IOS_DECISIONS I44).
 After the fix every take below lands on the pile from where it left, and `AnchorTests` pins the anchor.
 
 ### Take A: the deal, two seats, the joiner's phone (the Join that starts the game), after the fix
@@ -44,7 +44,7 @@ The same white second shows on every first open of a new appex process (about 3.
 
 ### Take C: the reshuffle, before the fix (stage channel, Alex's own draw)
 
-86 draws emptied the deck and the 87th reshuffled (`shots/reshuffle_state.png`: the strip x87 with the riffle arrows, the pile down to its top card, "1 left"). Its gather flight leaves from the pile's anchor, which was the broken one then, so this take is not scored; re-filming it after I42 is owed.
+86 draws emptied the deck and the 87th reshuffled (`shots/reshuffle_state.png`: the strip x87 with the riffle arrows, the pile down to its top card, "1 left"). Its gather flight leaves from the pile's anchor, which was the broken one then, so this take is not scored; re-filming it after I44 is owed.
 
 ## How to read the tables
 

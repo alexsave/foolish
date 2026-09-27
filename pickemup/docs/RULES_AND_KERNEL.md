@@ -1,7 +1,9 @@
 # Pick 'Em Up - rules and kernel design
 
-Status: the kernel of sections 1, 3, 5 and 6, the wire of section 4, the iOS bridge and the CI lane are built in `pickemup/c/` (see its README).
-Where building or reviewing it forced a change, the change is a DECISION from D29 on, and the sketches in sections 3 to 5 are amended by them (each names what it amends).
+Status (2026-09-27): the kernel of sections 1, 3, 5 and 6, the wire of section 4, the iOS bridge and the CI lane are built in `pickemup/c/` (see its README), and the Messages extension that drives them is built in `pickemup/ios/`.
+The extension compiles and its unit tests have run on a simulator, but it has not yet been seen inside Messages (ORCHESTRATION B1, B2).
+Where building or reviewing the kernel forced a change, the change is a DECISION from D29 on, and the sketches in sections 3 to 5 are amended by them (each names what it amends).
+Section 1 is kept current with every later DECISION that changed a rule, and cites it; D24 (no rearranging) is superseded by ORCHESTRATION O9 and D54 to D57.
 Written 2026-09-26 against `pickemup/README.md`, `pickemup/LEGAL.md` and `pickemup/docs/UI.html` (the surface study of 20 September 2026).
 Every rule in this file is a kernel rule: it lives in C, in `pickemup/c/`, and every host (the iMessage extension, a replay page) asks the kernel instead of re-deciding it.
 
@@ -64,6 +66,9 @@ Play starts clockwise.
   You draw from it.
 - There is no other pile.
   Cards leave play only by being played onto the stack, and come back only through a reshuffle (1.9).
+- Your **hand** is the order you got your cards in: a new card goes on the right, and a played card leaves a gap that closes.
+  You may rearrange your hand on your own phone; the arrangement is yours alone, never sent, and the game itself, every message and every other phone keep the order the cards arrived in (ORCHESTRATION O9, DECISION D54 to D57, superseding D24).
+- There is no hand limit: a hand holds as many cards as you draw (DECISION D23, and ORCHESTRATION O4 for how a long hand is shown).
 
 ### 1.4 The deal
 
@@ -129,6 +134,7 @@ The call-out word is **"Last card!"** (DECISION D2).
 - They may **not** say "Last card!" in the same message as that play.
   They must send the play first; the others then get a chance to notice (DECISION D3).
 - From the moment that message is sent, the exposed player may say "Last card!" in any message they send, including a message that contains nothing else, sent when it is not their turn.
+  They must still be exposed both when their message begins and when they say it, so a draw earlier in the same message takes the chance away (DECISION D33).
   Once said, they are safe: their seat shows the LAST stamp for as long as they hold that one card.
 - While a player is exposed, **any other player** may catch them by tapping that player's card fan, which puts "Caught you!" into the message they are composing, in or out of turn (DECISION D5).
 - **The window** closes at the end of the next message that completes a turn (anyone's turn, including the exposed player's own).
@@ -136,7 +142,7 @@ The call-out word is **"Last card!"** (DECISION D2).
   An exposed player nobody caught before the window closed got away with it and is safe (DECISION D4).
 - **Caught.** If the player called was exposed when the catcher's message began, they draw **two** cards.
   If they were not exposed (they had said it, or they did not hold exactly one card), the catcher called wrong and draws **one** card (DECISION D5b).
-- One message may catch at most one player, and nobody may catch a player showing the LAST stamp (DECISION D5c).
+- One message may catch at most one player, and nobody may catch a player who showed the LAST stamp when the catcher's message began; such a catch is refused, not judged a wrong call (DECISION D5c, D32, D34).
 - A player who draws, for any reason, stops being exposed and loses the LAST stamp, because they no longer hold one card.
 
 Card counts are never shown on anyone's hand (DECISION D22).
@@ -171,7 +177,8 @@ A message has one sender and holds, in this order:
    A play that leaves the sender holding one card ends the message.
 
 A message must hold at least one of the three.
-A message that holds turn actions ends with a play or a pass; nobody sends half a turn.
+A message that holds turn actions ends with a play or a pass; nobody sends half a turn, and a draw on its own is never sent (ORCHESTRATION O7).
+A draw cannot be taken back, but a play can, even one whose penalty made the deck reshuffle (DECISION D8, D50); taking back everything a message holds leaves no message (DECISION D39).
 
 ---
 
@@ -494,7 +501,7 @@ Alternative: run `make -C c wasm` there too.
 Why: `foolish/e2e/validation/ci_toolchain_validation.test.ts` reads any `make ... wasm` line in any workflow as a build of foolish's test module and requires foolish's prebuild script before it, so the lane would turn foolish's validation red; the wasm objects stay a local target until that gate knows whose wasm it sees (ORCHESTRATION.md, found on the way).
 Recommendation confidence: medium.
 
-### Decisions the conformance review forced (D50 onwards)
+### Decisions the conformance review forced (D50 to D53)
 
 Taken while checking `pickemup/c/` rule by rule against this file (2026-09-27); each names the section it amends.
 The edge tests are `pickemup/c/tests/pk_rules_test.c`.
@@ -525,6 +532,11 @@ Alternative: add all three to `CFLAGS` now.
 Why: with Apple clang every source and test is clean under all three (the one `-Wsign-conversion` hit, in a test, is fixed), but the CI lane is Linux gcc, whose `-Wconversion` warns on narrowing that clang does not (compound assignment to `uint8_t`, for one), and a flag no gcc has compiled under would turn that lane red on the next push.
 The review that adds them is one Linux gcc run of `make run CFLAGS="-O2 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -std=c11"`.
 Recommendation confidence: medium.
+SUPERSEDED by D58: that gcc run was made, and the flags are in the build.
+
+### Decisions O9 forced (D54 onwards)
+
+Taken while restoring drag-to-reorder in the kernel (ORCHESTRATION O9, 2026-09-27); they supersede D24.
 
 **DECISION D54: the phone's own arrangement is a permutation laid over acquisition order, never a second hand order (O9, `src/pk_arrange.h`).**
 `PkGame.hand`, the wire, every event and a PLAY's position stay acquisition order; `PkView.my_slot` and `PkBeatFrame.my_slot` (appended, field order kept) say where each position is drawn, and `pk_api_arrange_move`, `pk_api_arranged_pos` and `pk_api_play_slot` go through the arrangement in C.
@@ -551,6 +563,17 @@ An arrangement whose receipts match nothing in the hand matches nothing, so a re
 Alternative: a separate store key for the arrangements.
 Why: the host already persists these bytes whenever they are dirty, unread (I24), so the arrangement rides the one path that exists; no JSON, no second store.
 Recommendation confidence: medium.
+
+### Decisions of the open-items pass (D58 onwards)
+
+Taken while closing what the earlier workers left open (`docs/OPEN_ITEMS.md`, 2026-09-27).
+
+**DECISION D58: every build takes `-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -std=c11`, one `WARN` list in the Makefile for `run`, `asan`, `wasm`, `cross` and the bridge (supersedes D53).**
+The run D53 asked for was made on 2026-09-27 under gcc 13.5 (the `gcc:13` image, Linux, as the CI lane compiles) and under Apple clang 21 and Homebrew clang 22 for wasm32.
+gcc named four things clang does not: three narrowing conversions in `tests/pk_beats_test.c` and an unused harness variable in `tests/pk_beats_dump.c` (`-Wunused-variable`, not one of the three); the kernel's own sources were clean.
+Alternative: keep the three as a review-time check.
+Why: a check that is not in the build is not run; with gcc proven clean the reason D53 gave for waiting is gone.
+Recommendation confidence: high.
 
 ---
 
@@ -1362,6 +1385,8 @@ All run under `make -C pickemup/c run` and `make asan`, with no Mac.
    Mutation: include the top in the reshuffle (red).
 7. **Cross-engine.** The native build and the wasm replay build (if one exists by then) agree on 100 golden games' final states.
    Mutation: none needed beyond any single change to 7.3.2.
+   DONE as `make cross` (`tests/pk_cross.c`, `tests/pk_cross.mjs`): 100 of the fuzz harness's deals, played by the random tests' bot (`tests/pk_bot.h`, freestanding), natively and in a wasm32 build that node runs; one value a game, the final state's `pk_hash` folded with every event of the game's plan, compared by `cmp`.
+   It needs a wasm clang with wasm-ld and node, so it is not in `run` or the CI lane (D49); its mutation rows are in `tests/MUTATIONS.md`.
 
 ### 7.4 Wire round trip and size
 
@@ -1441,8 +1466,7 @@ All run under `make -C pickemup/c run` and `make asan`, with no Mac.
 ## 8. Open questions for the owner
 
 1. **The name.** `Pick 'Em Up` is a placeholder with a same-genre collision (README); every caption uses `GAME_NAME`, so changing it is one string, but it has to be decided before a store listing.
-2. **Hands past thirteen cards.** Free drawing (D6) with no hand cap (D23) means a hand can reach 102 cards; `UI.html` stops at thirteen, where the thin-face rule already fires.
-   The kernel is fine either way; the surface needs a design (a scrolling hand, a second compression, or a cap after all) before D23 can stand.
+2. **Hands past thirteen cards.** Answered by ORCHESTRATION O4 (overlap to a 16pt strip, then scroll, no cap), narrowed for the drawer by U7 and I12, so D23 stands; both are flagged for a possible veto in `DECISIONS.md`.
 
 Everything else is decided above and can be vetoed line by line.
 
@@ -1450,7 +1474,8 @@ Everything else is decided above and can be vetoed line by line.
 
 ## Appendix A. What `UI.html` needs to change
 
-The surface study predates these rules; each item names the view and what this document makes wrong in it.
+The surface study predates these rules; each item names the view and what this document made wrong in it.
+Items 1 to 14 are all applied in `UI.html` (see "Appendix A of RULES_AND_KERNEL.md, as applied" in `UI_DECISIONS.md`); item 15 is open.
 
 1. **Seat badges show card counts** ("4 cards", "7 cards") in every bubble, expanded and collapsed view, and the note under bubble 01 argues for them.
    D22 removes them: a seat shows its name and a constant card fan whatever the count, and the fan is the tap target for "Caught you!".
@@ -1474,8 +1499,10 @@ The surface study predates these rules; each item names the view and what this d
 13. **The "One fork worth settling now" box** proposes "until the next bubble seals"; D4 settles it as "until the next completed turn", with the reason.
 14. **The channel grid** needs rows for draws (one flight per card, staggered like "Drawing two"), the reshuffle (gather, comic shuffle, done), the deal (round-robin, one card at a time), buried start cards, a catch (declared at stage, outcome only at Send) and the end reveal.
     Section 5 lists them.
+15. **Applied (commit 20531ef1): the "draw" view now says the player may rearrange their own hand (O9, D54-D57); the old lede said "nobody rearranges" (D24).**
+    O9 and D54 to D57 supersede that: a player may rearrange their own hand, and a drawn card still arrives on the right.
 
-Already consistent and kept: the 7-card deal ("Shed seven cards"), ranks 1-9, the deck count ("27 left", D22), the LAST stamp slot under the badge, the modal centred suit picker that does not travel, "the move is not a move until the suit exists", new cards arriving on the right, the halo as the live suit, "direction is a word", skip as two pause bars and reverse as opposed solid triangles (LEGAL).
+Already consistent and kept: the 7-card deal ("Shed seven cards"), ranks 1-9, the deck count ("27 left", D22), the LAST stamp slot under the badge, the modal centred suit picker that does not travel, "the move is not a move until the suit exists", new cards arriving on the right (still true under O9: an arrival goes on the right of the arrangement), the halo as the live suit, "direction is a word", skip as two pause bars and reverse as opposed solid triangles (LEGAL).
 
 ## Appendix B. Files this design relied on
 

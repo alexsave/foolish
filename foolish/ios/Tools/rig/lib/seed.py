@@ -32,7 +32,9 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", "..", ".."))
 TOOL = os.environ.get("FOOLISH_TOOL", os.path.join(REPO, "c", "build", "msg_wire_test"))
-GROUP_ID = "group.cards.foolish.msg"
+# The App Group the seed is written into: rig.sh hands its product block's
+# APP_GROUP on as RIG_APP_GROUP, and the default is Durak's.
+GROUP_ID = os.environ.get("RIG_APP_GROUP") or "group.cards.foolish.msg"
 
 # Alex first: the local player is always swapped into whatever seat we sit in,
 # and the rest keep this order so the same faces recur across every frame.
@@ -84,9 +86,9 @@ def payload_and_notes(out: str, err: str):
 def main():
     if len(sys.argv) < 2:
         sys.exit("usage: seed.py <fatboard|endgame|lastdefense|twocover|lastmove> [args...]")
-    sim = os.environ.get("FOOLISH_SIM")
+    sim = os.environ.get("RIG_SIM") or os.environ.get("FOOLISH_SIM")
     if not sim:
-        sys.exit("set FOOLISH_SIM")
+        sys.exit("set RIG_SIM or FOOLISH_SIM")
     mode, rest = sys.argv[1], sys.argv[2:]
     args = ["--" + mode] + rest
 

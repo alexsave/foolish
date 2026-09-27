@@ -366,7 +366,8 @@ Today no workflow runs uttt's C tests (`uttt-web.yml` only builds the site), so 
 
 DONE (S3), in `2a02e1e2`, with two changes from the plan.
 `.github/workflows/pickemup.yml` runs `make -C c run` and `asan` (pickemup kept uttt's target names, ORCHESTRATION O2) and a second job for `structgen` and `datagen`; it does not run `wasm` (D49).
-`.github/workflows/uttt-c.yml` runs uttt's `make -C c run` and `asan`; it does not run uttt's `ios-smoke`, which the plan listed (recorded as a gap, not fixed: uttt's lane is outside this pass).
+`.github/workflows/uttt-c.yml` runs uttt's `make -C c run`, `asan` and, since the open-items pass, `ios-smoke`, which the plan listed.
+The lane cannot go green on Linux gcc until `uttt/c/src/uttt_pen.c` stops relying on `M_PI` under `-std=c11` (DECISIONS.md, "Found on the way").
 Both files parse as YAML (the final check in `ORCHESTRATION.md`); the red-then-green run on GitHub is not recorded here.
 
 **S4 - the shared xcframework recipe, `shared/tools/ios_xcframework.mk`.**
@@ -382,6 +383,33 @@ It calls the macro twice (core and bots) and keeps `SG_LAYOUT_HASH` and `archive
   - P8 without `--no-lib`.
 - Risk: low for S4, medium for S4b.
 
+DONE (S4) for uttt and pickemup; S4b (foolish) is DONE too, see below.
+`shared/tools/ios_xcframework.mk` holds `IOS_XCFRAMEWORK(name, sources, cflags, headers dir, min iOS, xcframework path)` and its one-slice helper `IOS_XCF_SLICE`, lifted from uttt's `ios-lib`.
+Both products `include ../../shared/tools/ios_xcframework.mk` and their `ios-lib` is one `$(call ...)`; pickemup keeps its `SG_LAYOUT_HASH` target flag and prerequisites around the call and prints the layout on a line of its own.
+A `$$(cat build/layout/ios.hash)` in the flags reaches the shell unexpanded through the call, and `make -n ios-lib` prints the same compile lines as before.
+Proof, with `make -C <product>/c ios-lib` before and after, then `xcrun nm -g | sort` and `lipo -info` on every `.a` in the xcframework:
+- uttt: `ios-arm64/libuttt.a` (arm64, 540 lines) and `ios-arm64_x86_64-simulator/libuttt.a` (x86_64 arm64, 537 lines); the diff of the nm outputs is empty, the lipo lines are identical, and so is the file list.
+- pickemup: `ios-arm64/libpickemup.a` (arm64, 394 lines) and `ios-arm64_x86_64-simulator/libpickemup.a` (x86_64 arm64, 392 lines); the diff of the nm outputs is empty, the lipo lines are identical, and so is the file list.
+- pickemup's `build/layout/ios.hash` is `0x177c2c55` before and after (`cmp`).
+- `Info.plist` holds the same lines, but the order of its two `AvailableLibraries` entries differs: that is `xcodebuild -create-xcframework` itself, which wrote the simulator entry first twice and the device entry first once in three runs of the same recipe.
+- `make -C uttt/c ios-smoke run` passes; `make -C pickemup/c ios-lib swift-smoke run` passes (`swift bridge: 25 checks, 0 failed`, `bridge: 1269 checks, 0 failed`).
+- P7: 150 tests, 128 pass; the 22 others are the Postgres suites (ECONNREFUSED on :5432).
+Note: the PATH on this Mac finds Homebrew's binutils `nm` first, which cannot read Mach-O; use `xcrun nm`.
+
+DONE (S4b).
+`foolish/c/Makefile` drops its own `IOS_BUILD_SLICE` and `IOS_BUILD_BOTH`, gains `include ../../shared/tools/ios_xcframework.mk`, and its `ios-lib` is two calls, `foolish` over `IOS_CORE_SRC` with `ios/include` and `foolishbots` over `IOS_BOTS_SRC` with `ios/include-bots`, both at `IOS_MIN_VERSION` (15.0).
+The `SG_LAYOUT_HASH` target flag, the `build/layout/ios.hash` prerequisite and the closing `./ios/archive_check.sh` line are unchanged around the calls; the one comment that named the old slice macro now names `IOS_XCF_SLICE`.
+One difference in the recipe itself: both libraries of a slice now share one `obj/` directory, emptied at the start of each call, where they had `obj-foolish/` and `obj-foolishbots/`; the archives are built from the same objects either way.
+Proof, `make -C foolish/c ios-lib` before and after:
+- `make -n ios-lib`: the six distinct `clang -target` compile lines (three slices, the same flags for both libraries) are identical, `-DSG_LAYOUT_HASH=$(cat build/layout/ios.hash)` included.
+- `xcrun nm -g | sort` of all four archives (`Foolish.xcframework/ios-arm64` 697 lines, `ios-arm64_x86_64-simulator` 694; `FoolishBots.xcframework/ios-arm64` 698, simulator 692): the diff is empty; `lipo -info` is `arm64` and `x86_64 arm64` before and after; the file lists of both xcframeworks are identical.
+- Stronger than the nm diff: all 159 object members of the six per-slice archives in `build/ios/{device,sim-arm64,sim-x86_64}` have the same md5 before and after.
+- `build/layout/ios.hash` is `0xf2291573`; `archive_check.sh` prints `core: 0 ladder symbols; bots: 2 octogen symbols` both times.
+- `make -C foolish/c ios-smoke ios-archives`: SMOKE OK, ios archives ok, one resident game ok.
+- The iOS suite on a fresh `pk-s5` (iPhone 17e, iOS 27.0, booted in 43 seconds, named by id), without `--no-lib` so the tested xcframework is the one this recipe wrote: `mac_tests.sh --regen` recorded the 7 snapshot references of a fresh worktree (853 executed, 1 skipped, 8 failed: the 7 records and the known `MemoryProfileTests` flake at 14.3 MB); then `mac_tests.sh unit` gave 853 executed, 1 skipped, 0 failed (the flake passed this time), and `mac_tests.sh --no-lib harness app` gave HarnessTests 29 executed, 0 failed, and `FoolishMessagesApp` BUILD SUCCEEDED.
+That is the "P8 after all lifts" baseline.
+- `--regen` blanked `ios/FoolishApp/Foolish.entitlements` and the script restored it; `git status --short -- '*.entitlements'` printed nothing and all seven tracked entitlements files matched a `cp -p` backup in bytes and mtime.
+
 **S5 - the shared Mac test driver, `shared/scripts/ios_mac_tests.sh`.**
 - Move the generic body of `foolish/ios/scripts/mac_tests.sh` into a script driven by a product env:
   - the entitlements backup and `cp -p` restore;
@@ -394,6 +422,26 @@ Keep the long comment next to the code it explains, which means in the shared fi
 - Proof: P8 before and after, with identical counts and `git status --short -- '*.entitlements'` empty; run `--regen` once to exercise the restore.
 - Risk: low.
 
+DONE (S5).
+`shared/scripts/ios_mac_tests.sh` holds the body: `PRE_CMD`, `LIB_CMD` (or, under `--no-lib`, a check that every path in `XCFRAMEWORK` exists), xcodegen with the `cp -p` backup and restore of every tracked `*.entitlements` under the working directory (restored on an xcodegen failure too, through the EXIT trap), the regeneration trigger on `project.yml`'s mtime plus an optional `REGEN_WATCH` of source folders, `run_scheme` with `unpoison_derived_data`, and a refusal of a green test run that executed zero tests.
+The schemes are `TEST_SCHEMES` and `BUILD_SCHEMES`, each a list of `word=Scheme`, where the word is the command-line selector; with no selector every scheme runs, tests first.
+The long comments on the entitlements restore and the stale build description moved with the code, reworded so that no product is named; the product-specific reasons stay in each product's script.
+Each product's `ios/scripts/mac_tests.sh` keeps its usage text, `cd`s to its own folder, exports its env and `exec`s the shared script:
+- foolish: `unit=Foolish harness=FoolishHarness`, `app=FoolishMessagesApp`, `make -C c ios-lib`, `PRE_CMD` `tools/structgen/gen.sh` with its comment beside it; its diff is only this file.
+- pickemup: `unit=PickemupKitTests`, `app=PickemupMessagesApp`, and it now runs from `pickemup/` (the same files, relative paths shorter).
+- uttt, new: no test target, so `preview=UtttPreview app=UtttMessagesApp` are both builds.
+The only behaviour foolish's run gains is the zero-tests refusal, which pickemup's copy already had; foolish's schemes execute 853 and 29, so it cannot trip there.
+Proof:
+- `bash -n` passes on all four scripts; `--help` prints foolish's usage block; an unknown argument exits 2 as before.
+- foolish, new path, `DEST=... bash ios/scripts/mac_tests.sh --no-lib --regen` on the xcframework S4b wrote: FoolishTests 853 executed, 1 skipped, 0 failed; HarnessTests 29 executed, 0 failed; `FoolishMessagesApp` BUILD SUCCEEDED; the same counts as S4b and the "P8 after all lifts" baseline.
+- That `--regen` blanked `ios/FoolishApp/Foolish.entitlements` and the shared script restored it; `git status --short -- '*.entitlements'` printed nothing and all seven tracked entitlements files matched a `cp -p` backup in bytes and mtime.
+- uttt, `bash uttt/ios/scripts/mac_tests.sh` (lib built, project generated, "entitlements untouched"): `UtttPreview` and `UtttMessagesApp` BUILD SUCCEEDED.
+- pickemup, `bash pickemup/ios/scripts/mac_tests.sh`: `PickemupKitTests` 37 executed, 2 failed (`ActionCardCornerTests.testAnActionCardExposesItsSuitShape`, an `XCTUnwrap` at `LayoutTests.swift:101`, and `NoCountLeakTests.testNoOtherSeatsLabelCarriesADigit`, 0 other seats on the accessibility tree at `ReviewTests.swift:35`); the committed pre-S5 copy of the script, run with `--no-lib unit` on the same simulator, gave the same 37 executed and the same 2 failures, so they are not the script's (recorded under B2 in `ORCHESTRATION.md`); `--no-lib app` then built `PickemupMessagesApp`.
+- Mutation check, against a copy of the shared script driven by stub `xcodegen` (blanks the entitlements, optionally fails) and stub `xcodebuild` in a throwaway git repo: the unmutated script passed all eight checks (bytes and mtime restored after `--regen` and after a failing xcodegen, the restore reported, test-then-build order, the zero-tests refusal, a selector running only its scheme, an unknown argument, `--no-lib` with a missing `XCFRAMEWORK`); `cp` without `-p` in the restore, the EXIT trap removed, the zero-tests refusal removed, the `--no-lib` existence check removed and the test selector ignored each turned the matching check red.
+- P7: 150 tests, 128 pass, the 22 others the Postgres suites (ECONNREFUSED on :5432); `shared_is_shared` passes with the new script and the new `shared/README.md` row.
+
+Commits: S4b `18da9316`; S5 is the commit that adds this note.
+
 **S6 - rig parameterisation, in place.**
 - In `foolish/ios/Tools/rig/rig.sh`, rename `FOOLISH_SIM` / `_IDB` / `_OUT` / `_DD` / `_WORK` to `RIG_*`, keeping the old names as fallbacks.
 - In `lib/seed.py`, read `GROUP_ID` from `RIG_APP_GROUP`.
@@ -405,6 +453,25 @@ The current line both poisons Xcode's build description and throws away uncommit
 - foolish change: none outside the rig.
 - Proof: `python3 foolish/ios/Tools/rig/lib/test_rig.py`, then `rig.sh doctor` for foolish and for uttt on ONE simulator, shut down afterwards.
 - Risk: medium.
+
+DONE (S6).
+`rig.sh` reads `RIG_SIM`, `RIG_IDB`, `RIG_OUT`, `RIG_DD` and `RIG_WORK` first and the `FOOLISH_*` spelling of each as the fallback, with the old defaults when neither is set.
+It hands whichever was set on to its children under both names, because `lib/ui.py`, `seed.py`, `transcript.py` and `shots/` read `FOOLISH_*` and `shared/rig/lib/ax.py` reads `RIG_*`; an unset scratch path is not exported, so each child keeps its own default.
+`seed.py` takes `GROUP_ID` from `RIG_APP_GROUP` (default `group.cards.foolish.msg`), and `cmd_seed` passes the product block's `APP_GROUP` on as that.
+`probe` and the "no bubble" message use `MENU_NAME` (default `Foolish`), so a bare `Foolish` below the block now fails `test_rig.py`.
+D1 is fixed: `cmd_build` calls `xcodegen_keeping_entitlements`, which `cp -p`s every tracked `*.entitlements` under `IOS_DIR` aside, runs xcodegen, and `cp -p`s them back even when xcodegen fails.
+The old line also listed `$REPO`'s entitlements, not `IOS_DIR`'s, so a second product's were never restored.
+`uttt/ios/Tools/rig.env` derives its paths from its own location, as pickemup's already did; both were sourced from `/tmp` under bash and zsh and named this worktree.
+foolish's diff is the rig only (`rig.sh`, `README.md`, `lib/seed.py`, `lib/test_rig.py`).
+Proof:
+- `python3 foolish/ios/Tools/rig/lib/test_rig.py`: 22 tests OK before, 31 OK after.
+- The nine new tests: `rig.sh doctor` with a stub `xcrun` for the old spelling, the new one, and the new one winning; `seed.GROUP_ID` with and without `RIG_APP_GROUP`; `cmd_seed` handing the group on; the lifted function against a stub xcodegen that blanks the file, bytes and nanosecond mtime restored on success and on failure (exit code kept); no `git checkout` in rig.sh.
+- Mutation check: ten mutations (the precedence flipped, each spelling dropped, the seed default and override, `cp` without `-p`, the `|| rc=$?` removed, `Foolish` back in `probe`, the group not handed on, a `git checkout` added) each turned the named test red, and restoring turned it green.
+- `bash -n rig.sh` passes.
+- `rig.sh doctor` on a throwaway iPhone 17 Pro Max (iOS 27.0) created, booted under a 90-second watchdog (booted in about 32 s) and deleted afterwards (one other simulator was booted): for foolish with `FOOLISH_SIM` and with `RIG_SIM` it names the simulator booted and asks for the seeder and the app; for pickemup through its `rig.env` it names the simulator at 440x956 pt and asks only for the app.
+The first foolish run printed an empty screen size (`booted,  pt`) and the next two read 440 956: the accessibility read seems to answer nothing on the first call just after boot, and `screen` does not cache an empty answer, so it recovers on the next call; this was not caused by S6.
+
+Commits: S4 `2d7cb43d`; S6 is the commit that adds this note.
 
 **S7 - one source for the drawer-collapse numbers (defect D2).**
 - Move uttt's C port (`uttt_collapse_push`, `uttt_spring_left` / `_past`, `UTTT_COLLAPSE_MS`, `UTTT_DRAWER_RESPONSE_MS` in `uttt/c/src/uttt_anim.{c,h}`) into `shared/c/collapse/` with a module map, the way `motion_ruler` is done.
@@ -560,6 +627,29 @@ The test now takes the bare-cover byte from the SDK's own no-cover pair (`TableW
 Main still has the Xcode 27 compile problem in that file, and it goes away when this branch lands.
 No CI lane runs foolish's `tests-asan` (only uttt, werewolf and pickemup run an asan target), so main was never red on it.
 
+#### P8 after all lifts
+
+Run on 2026-09-27 from `foolish/` on branch `pickemup` at `e2a00158`, with S1 (textures in `shared/swift/Textures`), the `replay.c` fix (O8), the `TableWireTests` lint fix and S6 (rig) in the tree.
+The two commits that landed during the run (`a410d915`, `aed5005c`) touch nothing under `foolish/` or `shared/`.
+The simulator was a fresh `pk-p8` (iPhone 17e, iOS 27.0), which booted in 32 seconds, and every run named it by id: `DEST='platform=iOS Simulator,id=<udid>'`.
+
+A first `mac_tests.sh --no-lib --regen` stopped at the build: the script's stale-kernel guard found `c/src/replay.c` newer than `ios/vendor/Foolish.xcframework`, which is git-ignored and had not been rebuilt since O8.
+So the real run dropped `--no-lib` and rebuilt the xcframework, which is what section 2 asks for any change to C anyway.
+
+| Scheme | Command | Result |
+| --- | --- | --- |
+| `Foolish` (FoolishTests) | `DEST=... bash ios/scripts/mac_tests.sh --regen` | 853 executed, 1 skipped, 1 failed: `MemoryProfileTests.testMemoryProfileOfEverythingTheExtensionHolds` |
+| `FoolishHarness` (HarnessTests) | `DEST=... bash ios/scripts/mac_tests.sh --no-lib harness` | 29 executed, 0 failed, TEST SUCCEEDED |
+| `FoolishMessagesApp` | `DEST=... bash ios/scripts/mac_tests.sh --no-lib app` | BUILD SUCCEEDED |
+| P3 | `make -C c ios-smoke` | pass: SMOKE OK |
+
+This matches the S1 baseline: the same 853 executed, the same 1 skipped, and the same single flaky failure.
+The memory test failed at `MemoryProfileTests.swift:224` with 17.3 MB over 20 bubble renders against the 2 MB budget, where the baseline run measured 8.6 MB; it is the same assertion and the same known flake, and it does not touch textures, `replay.c` or the rig.
+HarnessTests had never run before, so its 29 (not the 24 the script header states) is the first recorded count and the baseline for later lifts.
+The script stops at the first failing scheme, which is why `harness` and `app` ran as their own invocations after the full run.
+`--regen` left the entitlements alone: `git status --short -- '*.entitlements'` printed nothing, and all three files matched a `cp -p` backup in bytes and mtime.
+The simulator was shut down and deleted afterwards.
+
 ---
 
 ## 6. Gaps: what neither foolish nor uttt has
@@ -625,7 +715,7 @@ Either way, S11 and S12 put the geometry in C, so the geometry does not depend o
 
 **D1 - `rig.sh` restores entitlements with `git checkout`** (`foolish/ios/Tools/rig/rig.sh:483`).
 This is the mtime poisoning `mac_tests.sh` exists to avoid, and it also discards uncommitted entitlements edits.
-S6 fixes it.
+Fixed in S6.
 
 **D2 - the drawer-collapse numbers exist three times:**
 

@@ -39,7 +39,7 @@ foolish/ios/Tools/rig/rig.sh build
 ```
 
 `rig.env` derives every path from its own location, so a worktree drives its own tree.
-A Debug build reads three dev files from the App Group (`PickemupKit/Kernel/PickemupDev.swift`): `dev.empty` draws nothing, `dev.nick` is the nickname a fresh simulator sits down under, and `dev.persona` ("1 Bo") makes the next appex process another person with its own seat records, so one simulator's two stub threads can seat two players (IOS_DECISIONS I41; leave the thread before flipping it).
+A Debug build reads five dev files from the App Group (`PickemupKit/Kernel/PickemupDev.swift`): `dev.empty` draws nothing, `dev.nick` is the nickname a fresh simulator sits down under, `dev.slide` turns on the auto-collapse slide (A14), `dev.sendhint` the Send reminder (A15), and `dev.persona` ("1 Bo") makes the next appex process another person with its own seat records, so one simulator's two stub threads can seat two players (IOS_DECISIONS I43; leave the thread before flipping it).
 
 ## What is where
 
@@ -51,6 +51,8 @@ A Debug build reads three dev files from the App Group (`PickemupKit/Kernel/Pick
 | `PickemupKit/Board/TableModel.swift` | what the table shows and what a touch does, each touch one kernel call |
 | `PickemupKit/Board/TableScreen.swift` | the table: ring, status corner, direction box, pile, deck, pills, hand, picker, end reveal |
 | `PickemupKit/Board/Anchors.swift` | every element's frame under UI.html's anchor name, for the flight layer |
+| `PickemupKit/Board/BeatPlayer.swift` | the kernel's timeline played: the board as of now, each beat's transform, the cards in the air |
+| `PickemupKit/Kernel/PkCollapse.swift` | the shared CollapseSlide on the kernel's push (A14, `dev.slide`) |
 | `PickemupKit/Screens/` | lobby and name gate, the unreadable screen, the rules, the bubble picture, the root |
 | `PickemupKit/Design/` | foolish's tokens, felt, wood, buttons and card frame, with this game's faces |
 | `PickemupMessages/MessagesViewController.swift` | the conversation: adopt, stage through the shared insert loop, send, cancel |
@@ -61,4 +63,5 @@ Every file copied from foolish or uttt starts with `// COPIED from <path> at <co
 
 It decides no rule, derives no layout number and composes no sentence.
 Legality, the masked view, captions, screen lines, the pill slots, the hand overflow, the ring and the results order are all one call into C.
-The board is static: a new state snaps in, and the motion grid's flights are the next layer, flown between the named anchors.
+It holds no duration, curve or order either: every motion is the kernel's timeline (`pk_beats.h`), which `Board/BeatPlayer.swift` samples each frame and flies between the named anchors (ANIMATION_DECISIONS A1).
+Two pieces are compiled in but off until Messages has judged them, each switched on in a Debug build by a dev file in the App Group: `dev.slide`, the auto-collapse on the render server (A14), and `dev.sendhint`, the Send reminder (A15).

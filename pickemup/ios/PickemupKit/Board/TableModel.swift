@@ -23,7 +23,7 @@ public final class TableModel: ObservableObject {
     public struct Stage: Equatable {
         public let caption: String
         /// The drawer collapses by itself once the move has rested (foolish's
-        /// 250ms + settle + 500ms): a play, a pass, a lone Last card!.
+        /// 250ms + settle + 500ms): the kernel's pk_api_collapses (I37).
         public let collapse: Bool
         /// When it may: the kernel's settle for the plan the move started
         /// (PkBeats.settle_ms), in milliseconds from the stage.
@@ -42,8 +42,6 @@ public final class TableModel: ObservableObject {
     @Published public private(set) var view: PkViewSnap?
     /// My open bubble's own events (channel A), for the staged-turn strip.
     @Published public private(set) var draft: [PkEventSnap] = []
-    /// What the newest sealed bubble did (the Caught you! / Wrong call stamps).
-    @Published public private(set) var newest: PkSinceSnap?
     @Published public private(set) var names: [String] = []
     @Published public private(set) var buried: [Int] = []
 
@@ -71,8 +69,6 @@ public final class TableModel: ObservableObject {
         let live = (t?.phase ?? PK_PHASE_WAITING) != PK_PHASE_WAITING
         view = live ? Pk.view() : nil
         draft = live && (t?.draft ?? 0) != 0 ? Pk.draftPlan() : []
-        let bubbles = t?.bubbles ?? 0
-        newest = live && bubbles > 0 ? Pk.since(from: bubbles - 1, to: bubbles) : nil
         names = (0..<(t?.seat.count ?? 0)).map { Pk.words(PK_API_W_SEAT, $0) }
         buried = live ? Pk.buried() : []
         if let s = selected, s >= (view?.myHand.count ?? 0) { selected = nil }
@@ -211,21 +207,23 @@ public final class TableModel: ObservableObject {
 
     // MARK: stamps under a badge (U12): speech and verdicts only
 
-    public enum Stamp: Equatable { case last, caught, wrong, out }
-
-    public func stamp(_ seat: Int) -> Stamp? { Self.stamp(seat, view: view, newest: newest) }
-
-    /// OUT once it is over; else the newest bubble's verdict on this seat
-    /// (Caught you! on the caught, Wrong call on the caller); else LAST while
-    /// the seat has said it and holds that one card (the kernel's `said`).
-    public static func stamp(_ seat: Int, view: PkViewSnap?, newest: PkSinceSnap?) -> Stamp? {
-        guard let v = view else { return nil }
-        if v.over != 0 { return v.winner == seat ? .out : nil }
-        if let n = newest, n.caught == seat { return .caught }
-        if let n = newest, n.wrong == seat { return .wrong }
-        if v.said & (1 << seat) != 0 { return .last }
-        return nil
+    public enum Stamp: Equatable {
+        case last, caught, wrong, out
+        /// The kernel's PK_STAMP_*; nil for none.
+        public init?(kernel k: Int) {
+            switch k {
+            case PK_STAMP_LAST:   self = .last
+            case PK_STAMP_CAUGHT: self = .caught
+            case PK_STAMP_WRONG:  self = .wrong
+            case PK_STAMP_OUT:    self = .out
+            default: return nil
+            }
+        }
     }
+
+    /// Which stamp a seat shows, and which wins when several could, is the
+    /// kernel's (pk_api_stamp, IOS_DECISIONS I37).
+    public func stamp(_ seat: Int) -> Stamp? { Stamp(kernel: Pk.stamp(seat)) }
 
     public func mayCall(_ seat: Int) -> Bool { (view?.canCall ?? 0) & (1 << seat) != 0 }
     public func calling(_ seat: Int) -> Bool {
@@ -244,7 +242,7 @@ public final class TableModel: ObservableObject {
         drawnStay = false
         refresh()
         player.play(Pk.beatsStage())
-        stageIfSendable(collapse: false)
+        stageIfSendable(after: .draw)
     }
 
     /// A tap only selects (UI.html "Two ways to throw"); again, or another
@@ -279,7 +277,7 @@ public final class TableModel: ObservableObject {
         Haptics.fire(.drop)
         refresh()
         player.play(Pk.beatsStage())
-        stageIfSendable(collapse: true)
+        stageIfSendable(after: .play)
     }
 
     public func playSelected() {
@@ -295,7 +293,7 @@ public final class TableModel: ObservableObject {
         Haptics.fire(.drop)
         refresh()
         player.play(Pk.beatsStage(wildPlaced: true, picked: suit))
-        stageIfSendable(collapse: true)
+        stageIfSendable(after: .play)
     }
 
     /// The x or the scrim: the card goes home and nothing was staged.
@@ -309,7 +307,7 @@ public final class TableModel: ObservableObject {
         guard Pk.pass() else { Haptics.fire(.reject); return }
         refresh()
         player.play(Pk.beatsStage())
-        stageIfSendable(collapse: true)
+        stageIfSendable(after: .pass)
     }
 
     /// The Undo pill. Drawn cards never come back (D8): the kernel refuses
@@ -326,7 +324,7 @@ public final class TableModel: ObservableObject {
             player.clear()
             Pk.beatsMark()
         }
-        stageIfSendable(collapse: false)
+        stageIfSendable(after: .undo)
     }
 
     /// My staged play, if the draft has one: the card and where it came from.
@@ -339,8 +337,7 @@ public final class TableModel: ObservableObject {
         guard Pk.sayIt() else { Haptics.fire(.reject); return }
         refresh()
         player.play(Pk.beatsStage())
-        let alone = strip.played == nil && strip.draws == 0 && strip.called == nil
-        stageIfSendable(collapse: alone)
+        stageIfSendable(after: .say)
     }
 
     /// The strip's "You say" chip: un-say while the bubble is open.
@@ -348,7 +345,7 @@ public final class TableModel: ObservableObject {
         guard Pk.unsay() else { return }
         refresh()
         Pk.beatsMark()                         // un-say moves nothing (grid "Un-say")
-        stageIfSendable(collapse: false)
+        stageIfSendable(after: .unsay)
     }
 
     /// Tap a fan (U13): stage Caught you! on that seat, tap it again to
@@ -366,12 +363,13 @@ public final class TableModel: ObservableObject {
             // grid "Un-call": the ring and the tip fade off; a staged turn's
             // held settle keeps holding
             player.play((player.plan?.held ?? 0) > 0 ? Pk.beatsStage() : Pk.beatsHost(PK_HM_UNCALL, seat))
+            stageIfSendable(after: .uncall)
         case .called, .moved:
             Haptics.fire(.pickUp)
             refresh()
             player.play(Pk.beatsStage())
+            stageIfSendable(after: .call)
         }
-        stageIfSendable(collapse: false)
     }
 
     /// Messages' own X on the staged bubble: back to the floor, not the
@@ -397,7 +395,7 @@ public final class TableModel: ObservableObject {
         refresh()
         onStage?(Stage(caption: fills ? Pk.words(PK_API_W_STAGED_CAPTION) : Pk.words(PK_API_W_JOINED, seat),
                        collapse: false))
-        if fills { onDealt?() }
+        if fills { onDealt?() } else { player.play(Pk.beatsLobby()) }    // grid "Join" (A13)
     }
 
     /// My tap started the game (Start, or the Join that filled the table):
@@ -409,6 +407,7 @@ public final class TableModel: ObservableObject {
         let caption = Pk.words(PK_API_W_LEFT, me)       // captioned while the row is still there
         guard Pk.leave() == PK_EOK else { Haptics.fire(.reject); return }
         refresh()
+        player.play(Pk.beatsLobby())                    // grid "Leave" (A13)
         onStage?(Stage(caption: caption, collapse: false))
     }
 
@@ -429,10 +428,13 @@ public final class TableModel: ObservableObject {
 
     // MARK: -
 
-    private func stageIfSendable(collapse: Bool) {
+    /// Stage the draft if it can be sent; whether the drawer then collapses
+    /// is the kernel's answer for this touch (pk_api_collapses, I37).
+    private func stageIfSendable(after touch: Pk.Touch) {
         guard (table?.canSend ?? 0) != 0 else { return }
         let settle = player.plan?.settleMs ?? PK_T_COLLAPSE_WAIT + PK_T_COLLAPSE_REST
-        onStage?(Stage(caption: Pk.words(PK_API_W_STAGED_CAPTION), collapse: collapse, settleMs: settle))
+        onStage?(Stage(caption: Pk.words(PK_API_W_STAGED_CAPTION), collapse: Pk.collapses(after: touch),
+                       settleMs: settle))
     }
 
     /// My staged bubble went out and was sealed (channel B): what staging

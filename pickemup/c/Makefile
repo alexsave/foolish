@@ -11,12 +11,16 @@
 #   make -C pickemup/c swift-smoke the bridge driven from Swift through the readers (a Mac)
 #   make -C pickemup/c clean
 CC      ?= cc
-CFLAGS  ?= -O2 -Wall -Wextra -Werror -std=c11
+# THE WARNINGS ARE ONE LIST for every build below (DECISION D58): proven clean
+# under Apple clang and under Linux gcc 13 (the CI lane's compiler), whose
+# -Wconversion warns on narrowing that clang does not.
+WARN    := -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -std=c11
+CFLAGS  ?= -O2 $(WARN)
 SHARED  := ../../shared/c
 SRC     := src/pk.c src/pk_deck.c src/pk_plan.c src/pk_view.c src/pk_lobby.c src/pk_say.c \
            src/pk_code.c src/pk_msg.c src/pk_beats.c src/pk_arrange.c i18n/strings_en.c \
            $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/b32.c $(SHARED)/mixrad.c
-HDR     := $(wildcard src/*.h) i18n/keys.h tests/pk_check.h \
+HDR     := $(wildcard src/*.h) i18n/keys.h tests/pk_check.h tests/pk_bot.h \
            $(SHARED)/deal_rng.h $(SHARED)/sha256.h $(SHARED)/b32.h $(SHARED)/mixrad.h
 
 # One binary per test file; each takes an optional scale argument.
@@ -49,8 +53,7 @@ run: $(addprefix build/,$(TESTS)) build/ios_smoke
 	./build/pk_arrange_test
 	./build/ios_smoke
 
-ASAN_FLAGS := -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined \
-              -Wall -Wextra -Werror -std=c11
+ASAN_FLAGS := -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined $(WARN)
 
 build/asan_%: tests/%.c $(SRC) $(HDR) | build
 	$(CC) $(ASAN_FLAGS) $(SRC) $< -o $@
@@ -77,10 +80,30 @@ wasm: | build
 	@mkdir -p build/wasm
 	@for s in $(WASM_SRC); do \
 	  o=build/wasm/$$(basename $$s .c).o; \
-	  $(WASM_CC) --target=wasm32 -Oz -nostdlib -ffreestanding -std=c11 -Wall -Wextra -Werror \
+	  $(WASM_CC) --target=wasm32 -Oz -nostdlib -ffreestanding $(WARN) \
 	    -isystem $(SHARED)/wasm/include -c $$s -o $$o || exit 1; \
 	done
 	@echo "wasm32 objects in build/wasm/"
+
+# 7.3.7, NATIVE AGAINST WASM (tests/pk_cross.c): the same games played by
+# this build of the kernel and by a wasm32 build of it, run in node, must
+# end in the same states. Needs a wasm clang with wasm-ld (WASM_CC) and node,
+# so it is not in `run`; `make cross WASM_CC=/opt/homebrew/opt/llvm/bin/clang`
+# on a Mac. CROSS_GAMES games (the rules doc's 100 by default).
+CROSS_GAMES ?= 100
+CROSS_WASM_SRC := $(SRC) $(SHARED)/wasm/libc.c tests/pk_cross.c
+build/pk_cross: tests/pk_cross.c $(SRC) $(HDR) | build
+	$(CC) $(CFLAGS) $(SRC) tests/pk_cross.c -o $@
+build/pk_cross.wasm: $(CROSS_WASM_SRC) $(HDR) | build
+	$(WASM_CC) --target=wasm32 -O2 -nostdlib -ffreestanding -mbulk-memory $(WARN) -DPK_CROSS_WASM \
+	  -isystem $(SHARED)/wasm/include \
+	  -Wl,--no-entry -Wl,--export=pk_cross_run -Wl,--export=pk_cross_hashes -Wl,--export-memory \
+	  -Wl,-z,stack-size=1048576 $(CROSS_WASM_SRC) -o $@
+cross: build/pk_cross build/pk_cross.wasm
+	./build/pk_cross $(CROSS_GAMES) > build/cross_native.txt
+	node tests/pk_cross.mjs build/pk_cross.wasm $(CROSS_GAMES) > build/cross_wasm.txt
+	@cmp build/cross_native.txt build/cross_wasm.txt \
+	  && echo "cross: $$(wc -l < build/cross_native.txt | tr -d ' ') games, native and wasm32 end alike"
 
 # ---- the iOS bridge -----------------------------------------------------------
 # ios-smoke runs the identical bridge with the host compiler, so every
@@ -90,7 +113,7 @@ wasm: | build
 IOS_MIN_VERSION := 17.0
 IOS_SRC    := $(SRC) ios/pk_api.c ios/pk_lay.c
 IOS_HDR    := $(HDR) ios/include/pk_api.h ios/pk_api_layout.h
-IOS_CFLAGS := -O2 -Isrc -Iios -Iios/include -Wall -Wextra -Werror -std=c11
+IOS_CFLAGS := -O2 -Isrc -Iios -Iios/include $(WARN)
 
 build/ios_smoke: $(IOS_SRC) $(IOS_HDR) ios/pk_api_smoke.c | build
 	$(CC) $(CFLAGS) -Iios/include $(IOS_SRC) ios/pk_api_smoke.c -lm -o $@
@@ -174,40 +197,16 @@ swift-smoke: $(STRUCTGEN) datagen | build
 	  $(GEN)/i18n/*.swift ios/pk_api_smoke.swift build/swift/obj/*.o -o build/swift/smoke
 	./build/swift/smoke
 
-# $(1)=target-triple  $(2)=sdk  $(3)=out dir
-define IOS_SLICE
-	@rm -rf $(3)/obj
-	@mkdir -p $(3)/obj
-	@for s in $(IOS_SRC); do \
-	  o=$(3)/obj/$$(basename $$s .c).o; \
-	  echo "  CC[$(2)] $$s"; \
-	  xcrun -sdk $(2) clang -target $(1) $(IOS_CFLAGS) -c $$s -o $$o || exit 1; \
-	done
-	libtool -static -o $(3)/libpickemup.a $(3)/obj/*.o
-endef
+# The device slice, both simulator slices, the lipo and the xcframework are
+# the shared recipe (lifted from uttt, REUSE_AUDIT S4).
+include ../../shared/tools/ios_xcframework.mk
 
 # THE LIBRARY CARRIES THE LAYOUT IT WAS COMPILED FOR, and the readers are
 # written beside it in the same run, so the pair cannot come apart.
 ios-lib: IOS_CFLAGS += -DSG_LAYOUT_HASH=$$(cat build/layout/ios.hash)
 ios-lib: build/layout/ios.hash datagen
-	@echo "== device slice (arm64) =="
-	$(call IOS_SLICE,arm64-apple-ios$(IOS_MIN_VERSION),iphoneos,build/ios/device)
-	@echo "== simulator slices (arm64 + x86_64) =="
-	# BOTH, because `-destination 'generic/platform=iOS Simulator'` builds both
-	# and a one-arch library fails the link with "found architecture arm64,
-	# required architecture x86_64" (uttt/c/Makefile).
-	$(call IOS_SLICE,arm64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-arm64)
-	$(call IOS_SLICE,x86_64-apple-ios$(IOS_MIN_VERSION)-simulator,iphonesimulator,build/ios/sim-x86_64)
-	@mkdir -p build/ios/sim
-	lipo -create build/ios/sim-arm64/libpickemup.a build/ios/sim-x86_64/libpickemup.a \
-	     -output build/ios/sim/libpickemup.a
-	@rm -rf ../ios/vendor/Pickemup.xcframework
-	@mkdir -p ../ios/vendor
-	xcodebuild -create-xcframework \
-	  -library build/ios/device/libpickemup.a -headers ios/include \
-	  -library build/ios/sim/libpickemup.a    -headers ios/include \
-	  -output ../ios/vendor/Pickemup.xcframework
-	@echo "wrote ../ios/vendor/Pickemup.xcframework (layout $$(cat build/layout/ios.hash))"
+	$(call IOS_XCFRAMEWORK,pickemup,$(IOS_SRC),$(IOS_CFLAGS),ios/include,$(IOS_MIN_VERSION),../ios/vendor/Pickemup.xcframework)
+	@echo "layout $$(cat build/layout/ios.hash)"
 
 # The timeline of two takes as Markdown tables (docs/MOTION_REPORT.md).
 beats-dump: build/pk_beats_dump
@@ -216,6 +215,6 @@ beats-dump: build/pk_beats_dump
 clean:
 	rm -rf build
 
-.PHONY: all run asan wasm ios-smoke beats-dump swift-smoke structgen datagen ios-lib clean FORCE
+.PHONY: all run asan wasm cross ios-smoke beats-dump swift-smoke structgen datagen ios-lib clean FORCE
 FORCE:
 .SECONDARY:

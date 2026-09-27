@@ -1,11 +1,14 @@
 # Pick 'Em Up - every decision taken on the owner's behalf
 
-One index of every decision the team took without the owner, one line each: its id, the choice, the alternative it rejected, and the file that holds the full entry with its reasons and confidence.
-Every decision can be vetoed on its own.
-The ones the workers themselves flagged as ones the owner may want to veto are marked **VETO?** in the last column.
+## How to read this
+
+Every decision the team took without the owner has one row here: its id, the choice, the alternative it rejected, and the file that holds the full entry.
+The owner vetoes by id, each one on its own, and never has to accept or reject a whole file.
+Each full entry names the alternative it rejected, the reason for the choice and a confidence, so a veto can be weighed without reading anything else.
+A SUPERSEDED row names the decision that overrode it, and the ones the workers themselves flagged as ones the owner may want to veto are marked **VETO?** in the last column and listed just below.
 If this index and a full entry ever disagree, the full entry is the truth; fix this file.
 
-Counts: 56 rules decisions (D1 to D53, plus D5b, D5c and D5d), 25 visual (U1 to U25), 28 iOS (I1 to I28, of which I16 is superseded), 17 animation (A1 to A17) and 8 orchestration (O1 to O8), 134 in all.
+Counts: 61 rules decisions (D1 to D58, plus D5b, D5c and D5d, of which D24 and D53 are superseded), 25 visual (U1 to U25), 41 iOS (I1 to I41, of which I10 and I16 are superseded), 20 animation (A1 to A20) and 9 orchestration (O1 to O9), 156 in all.
 
 ## Flagged for a possible veto
 
@@ -78,11 +81,12 @@ Counts: 56 rules decisions (D1 to D53, plus D5b, D5c and D5d), 25 visual (U1 to 
 | D50 | a play whose penalty reshuffled the deck stays undoable | moving the floor at every penalty draw | RULES_AND_KERNEL.md | |
 | D51 | a seat record with no row means "not seated" and overrules the other witnesses | forgetting the record on a leave | RULES_AND_KERNEL.md | |
 | D52 | a started header's `lobby_rev` must be one its roster could have started from | leaving it unchecked once started | RULES_AND_KERNEL.md | |
-| D53 | the build flags stay `-Wall -Wextra -Werror`, with the stricter three a review-time check | adding all three to `CFLAGS` now | RULES_AND_KERNEL.md | |
+| D53 | SUPERSEDED by D58: the build flags stay `-Wall -Wextra -Werror`, with the stricter three a review-time check | adding all three to `CFLAGS` now | RULES_AND_KERNEL.md | |
 | D54 | the phone's arrangement is `my_slot`, a permutation over acquisition order; the wire is unchanged | making `my_hand` the arranged order | RULES_AND_KERNEL.md | |
 | D55 | an arrangement entry is (card, receipt), so arrivals go right and an undo finds its slot | keying by card id, or pruning cards that left | RULES_AND_KERNEL.md | |
 | D56 | the arrangement is folded in before each of my actions and wherever the hand is read | also on every adopt | RULES_AND_KERNEL.md | |
 | D57 | the arrangements ride the seat records' bytes; a bad block reads as acquisition order | a separate store key | RULES_AND_KERNEL.md | |
+| D58 | every build takes `-Wpedantic -Wshadow -Wconversion` too, proven clean under Linux gcc 13 | keeping them a review-time check | RULES_AND_KERNEL.md | |
 
 ## Visual (U), full entries in `UI_DECISIONS.md`
 
@@ -137,8 +141,8 @@ Counts: 56 rules decisions (D1 to D53, plus D5b, D5c and D5d), 25 visual (U1 to 
 | I17 | catch verdict stamps show for the newest bubble only | until that seat's next move | IOS_DECISIONS.md | |
 | I18 | the end reveal is every hand face up on the ring and a plank with the results and Again | (none named) | IOS_DECISIONS.md | |
 | I19 | the picker tile positions were Swift numbers, since moved to `pk_lay_picker` (A9) | a `pk_lay_picker` entry point at the time | IOS_DECISIONS.md | |
-| I20 | no render-server collapse ride; the board relays out as the drawer moves | porting uttt's `CollapseSlide` | IOS_DECISIONS.md | |
-| I21 | the shared Send reminder is not compiled yet | compiling it with a new caption key | IOS_DECISIONS.md | |
+| I20 | no render-server collapse ride unless `dev.slide` (A14, A20); the board relays out as the drawer moves | porting uttt's `CollapseSlide` | IOS_DECISIONS.md | |
+| I21 | the shared Send reminder shows only under `dev.sendhint` (A15, A20); the status line says the bubble is staged | compiling it with a new caption key | IOS_DECISIONS.md | |
 | I22 | a layout hash mismatch shows the unreadable screen and reads nothing | (none named) | IOS_DECISIONS.md | |
 | I23 | the `cards.pickemup` bundle ids and a Debug-only App Group set per config | (none named) | IOS_DECISIONS.md | |
 | I24 | the nickname and seat records live in the extension's own defaults | foolish's App Group nickname | IOS_DECISIONS.md | |
@@ -146,8 +150,19 @@ Counts: 56 rules decisions (D1 to D53, plus D5b, D5c and D5d), 25 visual (U1 to 
 | I26 | placeholder icons from a throwaway script | (none named) | IOS_DECISIONS.md | |
 | I27 | O6 drawn as the study's corner column in two corners, and said through the kernel | the shape top-left only | IOS_DECISIONS.md | |
 | I28 | the strip's chips are the glyph alone, as UI.html draws them | a thin face with a rank | IOS_DECISIONS.md | |
+| I29 | which events an adopted bubble plays is the kernel's (`pk_api_adopt`, `pk_api_beats_now`) | keeping the Swift branch that only called kernel functions | IOS_DECISIONS.md | |
+| I30 | a tap on a fan is one kernel call, and a refused new call keeps the old one | un-calling then calling in Swift | IOS_DECISIONS.md | |
+| I31 | the board's zones, insets, hand padding, tap slop and pill height are C; a component's inside is its view's | (none named) | IOS_DECISIONS.md | |
+| I32 | the toast and "drawn cards stay" times are timeline constants, and a showing carries a generation | (none named) | IOS_DECISIONS.md | |
+| I33 | no string literal a player sees is left in a view | (none named) | IOS_DECISIONS.md | |
+| I34 | a layout mismatch is two vectors with two owners, `Pk.snap` and `PickemupHost.readable` | (none named) | IOS_DECISIONS.md | |
+| I35 | adopting a bubble that is not my staged draft voids any stage still resting before its insert | (none named) | IOS_DECISIONS.md | |
+| I36 | the deck's drag is owned by one recognizer in this process; the drawer's swipe stays a phone proof | (none named) | IOS_DECISIONS.md | |
+| I37 | uttt's readiness fallback stays Swift on purpose; the collapse flag and the stamp order were LIFTED by I40 | (none named) | IOS_DECISIONS.md | |
 | I38 | foolish's drag-to-reorder in the hand row; the row beats the pile on release; none while it scrolls | a long press to lift out of the scroll | IOS_DECISIONS.md | |
 | I39 | Swift names a card by its acquisition position; the slot is geometry, mapped only by the kernel | working in slots through `pk_api_play_slot` | IOS_DECISIONS.md | |
+| I40 | whether a stage collapses the drawer, and which stamp a badge shows, are kernel entry points | keeping both in Swift (I37) | IOS_DECISIONS.md | |
+| I41 | the Send reminder's state is the controller's: staged when the bubble lands, shown while compact | stage state in `TableModel` | IOS_DECISIONS.md | |
 
 ## Animation (A), full entries in `ANIMATION_DECISIONS.md`
 
@@ -164,12 +179,15 @@ Counts: 56 rules decisions (D1 to D53, plus D5b, D5c and D5d), 25 visual (U1 to 
 | A9 | the suit tiles pop where they stand, 30ms apart, as the demo does | popping out of the card to the compass points | ANIMATION_DECISIONS.md | VETO? |
 | A10 | a picked suit's ring and the tiles' collapse lead the wild's stage plan | (none named) | ANIMATION_DECISIONS.md | |
 | A11 | motion with no anchor on this phone keeps its time and draws nothing | (none named) | ANIMATION_DECISIONS.md | |
-| A12 | the wild's band snaps with the card for now | a band overlay the beat slides | ANIMATION_DECISIONS.md | |
-| A13 | the lobby's join and leave beats are laid out but not played | (deferred) | ANIMATION_DECISIONS.md | |
-| A14 | uttt's `CollapseSlide` is still not compiled; the collapse waits the kernel's `settle_ms` | (deferred until Messages can run) | ANIMATION_DECISIONS.md | |
-| A15 | the shared Send reminder is still not compiled | (deferred until Messages can run) | ANIMATION_DECISIONS.md | |
+| A12 | the wild's band slides up on the kernel's BAND beat (closed by A18) | snapping with the card | ANIMATION_DECISIONS.md | |
+| A13 | the lobby's join and leave rows play the kernel's beats (closed by A19) | laying them out unplayed | ANIMATION_DECISIONS.md | |
+| A14 | uttt's `CollapseSlide` is compiled on the kernel's curve, on only under `dev.slide` | (the judgement is owed in Messages) | ANIMATION_DECISIONS.md | |
+| A15 | the shared Send reminder is compiled on the kernel's word and fuse, on only under `dev.sendhint` | (the judgement is owed in Messages) | ANIMATION_DECISIONS.md | |
 | A16 | U21's budget is held by the synthetic turn and the eight-player p99 | (none named) | ANIMATION_DECISIONS.md | |
 | A17 | the starter's own Start plays the deal at once, as channel A of bubble 0 | waiting for Send | ANIMATION_DECISIONS.md | |
+| A18 | the BAND beat is a slide applied before its start, not a fade | the sampler's fade | ANIMATION_DECISIONS.md | |
+| A19 | the bridge remembers the lobby before a roster change; a leave's row fades where it stood and the rows below close up | the host passing the old link | ANIMATION_DECISIONS.md | |
+| A20 | the pieces only Messages can judge are compiled in and switched on by a Debug dev file | compiling them only once judged | ANIMATION_DECISIONS.md | |
 
 ## Orchestration (O), full entries in `ORCHESTRATION.md`
 
@@ -187,40 +205,13 @@ Counts: 56 rules decisions (D1 to D53, plus D5b, D5c and D5d), 25 visual (U1 to 
 
 ## BLOCKED
 
-Copied from `ORCHESTRATION.md` on 2026-09-27; that file is the one kept current.
+The current state of every blocked item lives in `ORCHESTRATION.md` under BLOCKED; this is a pointer only.
 
-- The final game name: `Pick 'Em Up` collides with two same-genre titles (README); the USPTO search and the choice are the owner's, before any store listing.
-- App Store Connect record, signing and upload: the owner does these by hand; nothing in this pass touches them.
-
-BLOCKED B1: the P8 after-run for lift S1 (and any later Swift lift).
-From 2026-09-26 23:06 every iOS simulator on this Mac hangs: test launches die with `Mach error -308 (ipc/mig) server died`, `simctl install` never returns, and a fresh device and the iOS 26.3 device both stop at boot in `com.apple.addressbook.migrator`.
-Restarting CoreSimulatorService did not clear it; a Mac reboot is the likely fix, and only the owner can do that.
-BLOCKED B1, confirmed by the orchestrator at 2026-09-27 04:55: after killing CoreSimulatorService and erasing a second iPhone 17e, the erased device still stops at boot in `com.apple.addressbook.migrator` (Migration Elapsed over a minute, `simctl launch` never returns).
-The host needs a reboot before any simulator test, screenshot or rig run can happen; everything below that needs a simulator is verified by compile only until then.
-B1 cleared on its own at about 05:10 on 2026-09-27 without a reboot: a health probe booted the first iPhone 17e and launched an app in under two minutes, so the after-run for S1 and the simulator proofs resumed then.
-Once it is clear, run `DEST='platform=iOS Simulator,name=iPhone 17e,OS=27.0' bash ios/scripts/mac_tests.sh --no-lib --regen` from `foolish/` on the S1 commit and compare with the baseline in `REUSE_AUDIT.md` under S1 (853 executed, 1 skipped, only the flaky `MemoryProfileTests` failing).
-
-BLOCKED B2: the Pick 'Em Up extension has not yet been seen inside Messages.
-On 2026-09-27 at about 06:12 UTC, on iPhone 17e `FC7586CF`, `PickemupKitTests` ran green (17 tests) and every test was mutation-checked there (`pickemup/ios/TESTS_MUTATED.md`), and the app installed and registered with LaunchServices, but `simctl launch com.apple.MobileSMS` (the rig's `stage`) hung for over five minutes, the B1 symptom again, so no screenshot of the lobby, table, drag, picker or catch exists yet.
-The device was shut down.
-Next: on a healthy simulator, `source pickemup/ios/Tools/rig.env`, then the rig's `stage`, `open` and screenshots of each screen; and on a real phone, prove that dragging a card DOWN off the deck (U24, IOS_DECISIONS I9) never collapses the drawer.
-B2, second worker, 2026-09-27 06:29 to 06:56 UTC: the same iPhone 17e `FC7586CF` (iOS 26.3) never finished booting, so Messages, the rig and the fallback host were all out of reach.
-Three boots (06:28, 06:37 after a shutdown and a 10 second wait, and 06:53) each stopped on the black data-migration spinner with `simctl bootstatus` at "Waiting on System App" for 90 seconds and more (the first was watched for 7 minutes).
-Inside the device SpringBoard, backboardd and the data migrator were all running, and the migrator logged "System build version unchanged from 23D8133. Migration not necessary", so this is not a migration plugin; `log` itself answered `getpwuid_r did not find a match for uid 501`, which points at the host's user session under CoreSimulator, the B1 family.
-The device was shut down each time and is shut down now.
-What landed without a simulator, compile-checked (`PickemupKitTests` build-for-testing and the `PickemupMessagesApp` build both succeed): O6 (IOS_DECISIONS I27) with its test `ActionCardCornerTests`, the strip chips (I28), and the UI.html fixes listed in `SIM_VERIFICATION.md`.
-Still owed on a healthy simulator, in this order: `PickemupKitTests` green, the O6 test's red run (its MUTATE line), `mac_tests.sh` counts, then the full two-seat game and the eleven screenshots `SIM_VERIFICATION.md` lists; the host most likely needs the reboot B1 asked for.
-
-BLOCKED B2 confirmed by the orchestrator at 2026-09-27 07:40: a freshly created iPhone 17 on iOS 27.0 also never finished booting within 100 seconds, so the hang is host-wide and not tied to a device's state (an erased iPhone 17e hung the same way earlier).
-The `getpwuid_r did not find a match for uid 501` line the previous worker saw points at the host's directory services, which only a reboot resets.
-Every simulator proof in this pass (foolish's P8 after the lifts, the pickemup Messages run and screenshots, `pickemup/ios/scripts/mac_tests.sh` counts, the red run of `ActionCardCornerTests`, the filmed animation take) is therefore owed and listed in `pickemup/docs/SIM_VERIFICATION.md`, ready to run after the reboot.
-
-BLOCKED B3: the filmed and measured animation take.
-On 2026-09-27 at about 03:35 local, the second iPhone 17e `6E0A730D` did boot within the 90-second watchdog, and `BeatPlayerTests` (7 then, 8 once A17's `testTheJoinThatStartsTheGamePlaysTheDeal` landed) and `TableModelTests` (10) ran green on it, and every `BeatPlayerTests` test was seen red there (`pickemup/ios/TESTS_MUTATED.md`).
-But any test that puts a window or a renderer on screen hung on it for ten minutes and was killed: `ActionCardCornerTests.testAnActionCardExposesItsSuitShape` (a card hosted in a `UIWindow`) and `RenderTests.testTheBubbleRendersAt300By195`, and `xcodebuild` itself hung after every finished run until killed.
-A filmed take is a window on screen, so it was not attempted; `pickemup/docs/MOTION_REPORT.md` gives both takes as the kernel's timeline instead (`make -C pickemup/c beats-dump`).
-Next, after the reboot: film a live arrival with three draws, a reshuffle and a play, and a deal, at normal speed, measure them with the `animation-measure` skill, put the contact sheets in `pickemup/docs/shots/motion/` and the scores in `MOTION_REPORT.md`; and run the whole `PickemupKitTests` scheme, which this worker could only run in part.
-
+- B1: iOS simulators on this Mac hang host-wide; the owner reboots the Mac.
+- B2: the extension has not yet been seen inside Messages; owed after B1.
+- B3: the filmed and measured animation take; owed after B1.
+- The final game name: the USPTO search and the choice are the owner's (O5).
+- App Store Connect, signing and upload: the owner's, by hand.
 
 ## Found on the way
 
@@ -228,17 +219,20 @@ Open, and not pickemup's to fix in this pass:
 
 - `werewolf/docs/UI.html` fails `shared/tools/check_ui_doc.py` ("a `<template>` is never closed"), a literal template tag inside a script comment; still failing on 2026-09-27.
 - `foolish/e2e/validation/ci_toolchain_validation.test.ts` reads every `make ... wasm` line in every workflow as a build of foolish's test module, so no other product's lane can build its own wasm (D49).
-- `.github/workflows/uttt-c.yml` runs uttt's `run` and `asan` but not its `ios-smoke`, which REUSE_AUDIT S3 planned.
-- The repository `.gitignore` (line 45, on main before this branch) holds an em dash and names the agent tool in a comment.
 - `REUSE_AUDIT.md` section 8: `rig.sh` restores entitlements with `git checkout` (D1), the drawer-collapse numbers exist three times (D2), flight timing is typed twice (D3), foolish compiles the shared insert gating but never calls it (D4), uttt's iOS README is stale (D6), and two XCTest counts disagree (D7).
 - `pickemup/c/tests/pk_check.h`'s `seed_of` deals only 256 different games; the fuzz and wire tests use `seed_wide`, and `seed_of` stays for the committed 7.3 goldens.
 
 Found and fixed on this branch:
 
+- `.github/workflows/uttt-c.yml` could not go green on Linux gcc: under `-std=c11` glibc hides `M_PI`, and `uttt/c/src/uttt_pen.c` used it, so `make -C c run` stopped at the first compile (seen in the `gcc:13` image on 2026-09-27).
+  Fixed in the commit "uttt pen: a file-local pi, so the Linux lane compiles" with a file-local `UTTT_PI`, not `_DEFAULT_SOURCE`, so `-std=c11` stays strict; the constant is the same double, so `uttt_pen.o` is byte-identical and `rough-diff` and the rendered board are unchanged.
+- `.github/workflows/uttt-c.yml` ran uttt's `run` and `asan` but not its `ios-smoke`, which REUSE_AUDIT S3 planned; it runs it now (the open-items pass).
+- The repository `.gitignore` held an em dash and named the agent tool in a comment; it is plain words now.
+- `tests/pk_beats_dump.c` did not build under gcc (`-Wunused-variable` on the harness's test name), so `make beats-dump` would fail on Linux; fixed with D58.
 - foolish's `replay_b32_encode` shifted a signed accumulator into overflow under UBSan, and `TableWireTests.swift` broke the architecture lint under Xcode 27 (O8, commits `b5c35900` and `b78c5788`).
 - `.github/workflows/uttt-web.yml` did not rebuild uttt.live when `shared/c/mixrad.*` changed (`d0ca1c99`).
 - `shared/tools/check_ui_doc.py` defaulted to this product's UI.html, which named a product under `shared/` (S0).
 - U20's "between 3.2s and 4.2s" did not hold at two or three players; the sentence now says "under 4.2s" (ANIMATION_DECISIONS, the FOUND under A16).
-- UI.html still said a draw re-stages the bubble, which I4 and O7 overrule; its draw and undo rows and two notes now say a draw stages nothing (the drawing in the "turn" view still shows a staged field after two draws).
+- UI.html still said a draw re-stages the bubble, which I4 and O7 overrule; its draw and undo rows and two notes now say a draw stages nothing, and the "turn" view's first frame (two draws in) shows an empty compose field (the open-items pass).
 - The kernel README's size table and fuzz numbers, and RULES_AND_KERNEL 4.5's measured paragraph, were from an earlier build; both now carry the 2026-09-27 `make run` numbers.
 - `shared/README.md` did not list `c/mixrad` or `c/wasm`, or SHED against the shared code it builds.

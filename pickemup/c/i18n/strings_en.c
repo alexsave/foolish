@@ -91,6 +91,7 @@ const char *const PK_STRINGS_EN[PK_K_COUNT] = {
     [PK_K_BTN_RULES          ] = "Rules",
     [PK_K_BTN_CANCEL         ] = "Cancel",
     [PK_K_STRIP_DRAWS        ] = "×{n}",
+    [PK_K_SEND_HINT          ] = "Send",
     [PK_K_SPOKEN_FAN         ] = "{who}'s cards. Tap to catch them on one",
     [PK_K_SPOKEN_CARD        ] = "{card}, {state}",
     [PK_K_SPOKEN_PLAYABLE    ] = "playable",

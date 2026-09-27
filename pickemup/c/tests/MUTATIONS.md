@@ -183,14 +183,50 @@ The sentinel mutation above is the one that breaks canonicality.
 | ios-smoke zones (I31) | the draw band's `BAND_DOWN` 24 becomes 0 | `pk_api_smoke.c:157` "U24: the hand band, 64 up and 24 down" |
 | ios-smoke words (I33) | `W_INDEX` gives a Wild +4 the `RANK_PLUS2` index | `pk_api_smoke.c:562` "a Wild +4's index" |
 | ios-smoke words (I33) | `W_STRIP_DRAWS` accepts a count of 0 | `pk_api_smoke.c:567` "no draws, no chip" |
+| collapse (I37) | a pass does not collapse | `pk_api_smoke.c:515` "a play or a pass collapses; a draw, an undo, an un-say, an un-call do not" |
+| collapse (I37) | a play does not collapse | twophone `[S4 three draws then a play]` "the play ends the turn: the drawer collapses once it rests", `pk_api_smoke.c:515` |
+| collapse (I37) | a call in the draft does not stop a Last card! from being the whole bubble | twophone `[S9 Last card! in a later bubble]` "beside a call it is not the whole bubble; un-called, it is" |
+| collapse (I37) | a draw, play or pass in the draft does not stop it either | twophone `[S4 three draws then a play]` "the bubble is not a lone Last card!" |
+| collapse (I37) | no guard on an open draft of mine | `pk_api_smoke.c:526` "no draft open: nothing to collapse for" |
+| collapse (I37) | every other touch collapses (`default: return 1`) | twophone `[S4 ...]` "a draw does not collapse the drawer", `[S8c Caught you! staged]` "a call alone does not collapse the drawer", `pk_api_smoke.c:503` "a call does not collapse the drawer" |
+| stamp (I37) | OUT for every seat once it is over | twophone `[S12 the win]` "OUT under the winner and nothing else once it is over" |
+| stamp (I37) | no Caught you! | twophone `[S8d Caught you! after Send]` "Caught you! under the caught, nothing under the catcher" |
+| stamp (I37) | no Wrong call | `pk_api_smoke.c:525` "Wrong call under the caller, nothing caught on the other" |
+| stamp (I37) | no LAST | twophone `[S9 Last card! in a later bubble]` "the kernel's stamp: LAST under the sayer" |
+| stamp (I37) | the order: the newest verdict before OUT (the `over` test moved below it) | `pk_api_smoke.c:532` "once it is over OUT outranks the newest bubble's verdict" (the winning bubble also carries a wrong call) |
+| lobby rows (A13) | `pk_api_join` remembers no lobby | `pk_api_smoke.c:590` "Join: Cleo's row fades up, 220ms after a 16ms beat", `:592` "Join: the row is unseen before its fade" |
+| lobby rows (A13) | `pk_api_leave` remembers no lobby | `pk_api_smoke.c:612` "Leave: Bo's row fades out, 220ms after a 16ms beat", `:615` "...close up, 320ms on the card spring", `:617` "the row that went, as it read to Bo" |
+| lobby rows (A13) | `pk_api_adopt` lays a lobby over its lobby out as nothing | `pk_api_smoke.c:627` "an arrival: the same two beats", `:629` "as it read to Cleo", `:631` "opened: the 100ms lead" |
+| lobby rows (A13) | `pk_api_adopt` lays out a lobby over another game's lobby | `pk_api_smoke.c:637` "another game's lobby, cold: nothing moves", `:638` "a read is no lobby action of mine" |
+| lobby rows (A13) | `pk_api_read` keeps the remembered lobby action | `pk_api_smoke.c:621` "a read forgets my lobby action" |
+| lobby rows (A13) | `pk_api_new` keeps it | `pk_api_smoke.c:636` "a new lobby is no roster change" |
+| lobby rows (A13) | `W_LOBBY_GONE` reads the current roster's names | `pk_api_smoke.c:617` "as it read to Bo", `:629` "as it read to Cleo" |
+| lobby rows (A13) | `W_LOBBY_GONE` never says "(You)" | `pk_api_smoke.c:617` "the row that went, as it read to Bo" |
+| lobby rows (A13) | a change that moved no row is a plan (`n < 0`) | `pk_api_smoke.c:632` "the same lobby again moves nothing" |
+| lobby rows (A13) | an opened lobby takes the arrival's 16ms lead | `pk_api_smoke.c:631` "opened: the 100ms lead" |
+| collapse slide (A14) | the push keeps the spring's tail (no linear fade to zero) | `pk_api_smoke.c:186` "nothing left at 600ms, and no step to it" |
+| collapse slide (A14) | the drawer's response 300ms, not 338 | `pk_api_smoke.c:184` "the host's spring at half its response", `:188` "uttt's numbers" |
+| collapse slide (A14) | a linear push | `pk_api_smoke.c:184` "the host's spring at half its response", `:186` "nothing left at 600ms" |
+| collapse slide (A14) | nothing pushed at the flip (`t == 0` answers 0) | `pk_api_smoke.c:182` "the whole travel at the flip", `:183` "the push only ever falls" |
+| send hint (A15) | `PK_T_SEND_HINT` 2000 | `[vocabulary]` "the Send reminder waits three seconds" |
+| send hint (A15) | `SEND_HINT` empty | `[6 the table]` "SEND_HINT: empty", `[6.3 screen lines]` "the Send reminder's word, under the arrow" |
 
 Putting the winner first by name (rather than by fewest cards) survived its mutation: the winner of an OUT game holds none and the winner of a STUCK or LONG game is the one with the fewest, so the two orders differ only on a tie the kernel breaks the same way. It stays for the reader, not for a test.
 
 Each layout and words row was run alone with `build/ios_smoke` deleted first, because `cp -p` puts the restored file's old mtime back and make then keeps the mutated binary (the same-second trap).
 
-## Not in this kernel
+## Native against wasm (tests/pk_cross.c, 7.3.7)
 
-7.3.7 (native against wasm replay) waits for a wasm replay build; `make wasm` proves the kernel compiles freestanding for wasm32 and reaches only `memcpy`, `memset`, `memcmp`, `strlen` and `strncmp`.
+`make cross WASM_CC=/opt/homebrew/opt/llvm/bin/clang` plays 100 of the fuzz harness's deals with the random tests' bot (`tests/pk_bot.h`) natively and in a wasm32 build run by node, and compares one value a game: the kernel's hash of the final state folded with every event of the whole game's plan.
+Each row was applied alone, both builds deleted and rebuilt, `make cross` run, and the file restored byte for byte; `make cross` was green again after the last.
+Run 2026-09-27 with Homebrew clang 22 and node 26.
+
+| Test | Mutation | What went red |
+|---|---|---|
+| cross | wasm32 alone swaps the first two cards of every reshuffle (`#ifdef __wasm__` in `pk_shuffle`) | `cmp`: "build/cross_native.txt build/cross_wasm.txt differ: char 3, line 1" |
+| cross | wasm32 alone plans every TURN_TO with `i = 1` (`#ifdef __wasm__` in `emit`), the state untouched | `cmp`: "differ: char 3, line 1" (the plan's fold is what catches it) |
+| cross | the node host reads the values one on (`at + 8`) | `cmp`: "differ: char 3, line 1" |
+
 7.4 (the wire), 7.7.4 (Rule P races) and 7.8.7 (seat resolve) are in `pk_msg_test.c` above.
 
 ## The timeline (tests/pk_beats_test.c, and the bridge's motion checks)
@@ -241,6 +277,10 @@ Run 2026-09-27; every mutant went red, and every test in the file is named at le
 | ios-smoke motion | the bridge does not remember the draft after a build | `pk_api_smoke.c:224` "asked again with nothing new: nothing moves" |
 | ios-smoke motion | `pk_api_beats` refuses `from == to` | `pk_api_smoke.c:215` "from == to: no motion, a new plan" |
 | ios-smoke motion | `pk_api_beats_send` lays the bubble out as an open | `pk_api_smoke.c:248` "channel B: what staging held" |
+| play a wild (A12) | the BAND beat is not applied before its start (no fill backwards) | `[play a wild: the band slides up]` "hidden under the card's edge before it starts" |
+| play a wild (A12) | the BAND beat eases linearly | `[play a wild: the band slides up]` "E.out", "ease-out: past halfway at half time (0.500000)" |
+| play a wild (A12) | the BAND sample fades (`opacity = p`) as it did before A12 | `[play a wild: the band slides up]` "it slides, it does not fade" |
+| play a wild (A12) | a seat's wild gets a BAND beat too (`if (1)`) | `[play a wild: the band slides up]` "a seat's wild arrives with its band on", `[play a +2 / +4]` "arrival: the band is already on the card" |
 
 ## pk_twophone_test.c
 
@@ -264,3 +304,56 @@ Run 2026-09-27.
 | twophone say-it timing | "Last card!" legal in the bubble that exposed the player (`ref = g->exposed`) | `[S8b down to one]` "not in the bubble that exposed me (D3)" |
 | twophone undo | a draw is not the draft's floor (`b_floor` not moved) | `[S4 three draws then a play]` "a draw does not come back (D8)", `[S4b undo a staged play]` "the card is on the pile" |
 | twophone seat resolver | `pk_api_seats_load` keeps no records | `[S4 ...]` and every bubble after: "the receiver resolves to its own seat by its record (me 0 by 2)" |
+
+## pk_arrange_test.c and the bridge smoke's arrangement section (O9)
+
+This phone's own arrangement of its hand: `src/pk_arrange.c`, the O9 entry points of `ios/pk_api.c`, and the drag layout in `ios/pk_lay.c`.
+Each row was applied alone, `build/pk_arrange_test` and `build/ios_smoke` deleted and rebuilt (a build that failed counted as no run), both run, and the file restored byte for byte; both were green again after each.
+`pk_arrange_test` prints at most five reds per `TEST`, so a row names the first ones.
+Line numbers are the test files' as of this commit; a smoke `OK` that spans lines reports its last line.
+The IDs are the ones `RULES_AND_KERNEL.md` cites (D55 cites M2 and M3, D56 cites M9).
+A row marked "added" stayed green at first: the assertion it names was written for it and then seen red.
+Run 2026-09-27.
+
+| Test | Mutation | Assertion that went red |
+|---|---|---|
+| arrange M1 | a card that arrives goes in on the left once the deal is folded (`insert_at(a, a->n >= 7 ? 0 : a->n, ...)`) | `pk_arrange_test.c:245` "game 0 step 4: the hand reads as O9 says (arrivals right, gaps closed)", `:487` "the drawn card is on the right, the rest as dragged", `:488` "the right end is the newest card" |
+| arrange M1 | the cruder form, every arrival on the left (`insert_at(a, 0, ...)`), which reverses the deal too | `pk_arrange_test.c:126` "folded in: still acquisition order", `ios/pk_api_smoke.c:312` "the deal reads in acquisition order", `:317` "the position drawn at a slot", `:328` "a phone without the record: acquisition order" |
+| arrange M2 | an entry keyed by card id alone (`if (e >= 0) continue;`), so a card back after a reshuffle takes its old slot | `pk_arrange_test.c:245` "the hand reads as O9 says" (the random games' returning cards), `:186` "the fold replaces every entry", `:190` "receipts that match nothing: the hand reads in acquisition order", `:623` "a card back as a new acquisition is at the right end" |
+| arrange M3 | the fold prunes the entry of every card that left the hand | `pk_arrange_test.c:261` "an undo puts the played card back in its slot", `:515` "the card is back in slot 1, every other card where it was", `:420` "the card is back at position 3" |
+| arrange M4 | `pk_arr_move` inserts one past the destination (`find(a, hand[rest[to]]) + 1`) | `pk_arrange_test.c:139` "after move 2 -> 4 the hand reads as the drag put it", `:142` "pk_arr_pos is the inverse of the slots", `ios/pk_api_smoke.c:320` "a drag to a middle slot lands in that slot" (added to the smoke: its only drag was to the last slot, the other branch) |
+| arrange M5 | `act()` skips the fold before my action | `pk_arrange_test.c:420` "the card is back at position 3, the hand in acquisition order" (added), `:555` "no drags: acquisition order, the card back at position 1" |
+| arrange M5b | `pk_api_arranged_pos`, so `pk_api_play_slot`, reads the arrangement without folding (`my_arr(0)`) | `pk_arrange_test.c:623` "a card back as a new acquisition is at the right end, for a play by slot too (at 0)" (added: every test read the view first, and the view folds) |
+| arrange M6 | the block's checksum is not checked | `pk_arrange_test.c:588` "a checksum that fails: acquisition order" |
+| arrange M6 | `pk_arr_get` accepts bytes that are not an arrangement | `pk_arrange_test.c:171` "a card twice is not an arrangement", `:174`, `:177` "receipt 0", `:180` "a card off the deck" |
+| arrange M6 | `pk_arr_sync` folds into an invalid arrangement instead of emptying it | `pk_arrange_test.c:193` "a corrupt arrangement is emptied and refolded", `:197` |
+| arrange M6 | the two rows above at once (in the bridge each alone is covered by the other) | `pk_arrange_test.c:601` "an arrangement that is not one: acquisition order" |
+| arrange M7 | `pk_api_seats_save` writes the seat records and drops the block | `pk_arrange_test.c:456` "Alex's record carries the block (17 bytes)", `:576` "with the record: the arrangement as it was", `ios/pk_api_smoke.c:326` "the records, then the arrangements' block", `:330` "the record back: the drag is back" |
+| arrange M7 | `pk_api_seats_load` loads the block and then forgets it (`S.arr_n = 0`) | `pk_arrange_test.c:472` "Alex's order is as dragged, anything new on the right", `:576`, `ios/pk_api_smoke.c:330` |
+| arrange M7 | `pk_api_seats_load(0, 0)` keeps the arrangements it had (`if (n) n -= arr_load(...)`) | `pk_arrange_test.c:572` "without the record: acquisition order", `ios/pk_api_smoke.c:328` "a phone without the record: acquisition order" |
+| arrange M8 | `PkView.my_slot` all zero (`pk_view` fills 0 and the bridge lays nothing over it) | `pk_arrange_test.c:429` "no drag yet: slot i is position i", `:438` "the view reads the drag", `ios/pk_api_smoke.c:312`, `:315` "the view: the same hand, drawn in the new order" |
+| arrange M8 | `pk_view` alone fills 0 (the bridge's view overwrites it, so no bridge test saw it) | `pk_arrange_test.c:114` "the kernel's own view: slot i is position i (D54)" (added: `make -i run` was green without it) |
+| arrange M8 | a plan's frames get no arrangement (`arr_frame` does nothing) | `pk_arrange_test.c:634` "the frame's hand is drawn as the view's", `ios/pk_api_smoke.c:333` "a plan's frame is drawn by the arrangement too" |
+| arrange M9 | the fold moves from before my action to `pk_api_read`, D56's alternative | `pk_arrange_test.c:420` "the card is back at position 3, the hand in acquisition order" (added: Bo's hand comes from Bo's own deal, never a read; `:555` stayed green, as its hand was read) |
+| arrange receipts | the deal counts receipts from 0 (`f->k++`) | `pk_arrange_test.c:106` "the deal is receipts 1..7 in hand order", `:162` "an arrangement survives its bytes" |
+| arrange receipts | a penalty card is not a receipt | `pk_arrange_test.c:240` "game G step S: the fold replays" |
+| arrange fold | `pk_arr_sync` always answers changed | `pk_arrange_test.c:122` "a second fold changes nothing" |
+| arrange slots | a card the arrangement does not hold sorts before the held ones | `pk_arrange_test.c:154` "held cards first, then the rest in order" |
+| arrange bytes | `pk_arr_get` drops a receipt's high byte | `pk_arrange_test.c:166` "a receipt past 255 survives its bytes (44)" (added: every receipt in the tests fitted a byte), `:623` |
+| arrange move | `pk_arr_move` answers 1 for `from == to` | `pk_arrange_test.c:134` "move 3 -> 3 answers 1", `:444` "no move to itself or off the hand", `ios/pk_api_smoke.c:318` |
+| arrange move | `pk_api_arrange_move` moves and answers 0 | `pk_arrange_test.c:435` "slot 0 to slot 6, out of turn", `ios/pk_api_smoke.c:313` "a drag of slot 0 to slot 6" |
+| arrange move | `pk_api_arrange_move` answers 1 in a lobby | `ios/pk_api_smoke.c:303` "a lobby has no hand to arrange" |
+| arrange move | a drag leaves the record clean (`S.rec_dirty = 0`) | `ios/pk_api_smoke.c:324` "a drag is saved with the seat records" |
+| arrange pos | `pk_arr_pos` answers 0 for a slot past the hand | `pk_arrange_test.c:146` "no position off the hand", `ios/pk_api_smoke.c:317` "the position drawn at a slot" |
+| arrange pos | `pk_api_play_slot` answers 1 for a slot off the hand | `ios/pk_api_smoke.c:323` "no play off the hand" |
+| drag layout | the nearest slot keeps the later of a tie (`<=`) | `ios/pk_api_smoke.c:275` "a tie goes to the lower slot" |
+| drag layout | the nearest slot ignores y | `ios/pk_api_smoke.c:282` "the other row's slots are reachable" |
+| drag layout | the nearest slot measures from a card's right edge, not its centre | `ios/pk_api_smoke.c:271` "a card over a slot asks for that slot" (added: the left-of-centre probe; the right-of-centre one stayed green) |
+| drag layout | an empty hand's nearest slot is 0 | `ios/pk_api_smoke.c:276` "no slot in an empty hand" |
+| drag layout | the last slot is never nearest | `ios/pk_api_smoke.c:278` "past either end: the end slot", `:271` |
+| drag layout | the pile's zone is checked before the hand row | `ios/pk_api_smoke.c:295` "a release on the cards never plays, even inside the pile's zone" |
+| drag layout | the hand row takes in the side padding | `ios/pk_api_smoke.c:292` "the side padding is not the row" |
+| drag layout | the hand row starts one point higher | `ios/pk_api_smoke.c:291` "just above the row is not the row" |
+| drag layout | a release in the hand row is no drop | `ios/pk_api_smoke.c:288` "a release in the row rearranges" |
+| drag layout | a release on the pile is no drop | `ios/pk_api_smoke.c:289` "a release on the pile plays" |
+| drag layout | a release on the felt plays | `ios/pk_api_smoke.c:290` "a release on the felt does nothing" |

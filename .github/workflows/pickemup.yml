@@ -25,19 +25,18 @@ on:
     branches: [main]
     paths:
       - 'pickemup/**'
-      # What pickemup compiles out of shared/ (deal_rng, sha256, b32, mixrad)
-      # and the generators its Swift comes from, and this file.
-      - 'shared/c/**'
-      - 'shared/tools/**'
-      - 'shared/scripts/ci_llvm.sh'
+      # All of shared/, not only what pickemup compiles today (deal_rng,
+      # sha256, b32, mixrad in shared/c, the structgen and datagen generators
+      # in shared/tools, and shared/scripts/ci_llvm.sh): a narrower list goes
+      # stale the first time pickemup starts using another shared file, and a
+      # spare run costs less than a missed one. And this file.
+      - 'shared/**'
       - '.github/workflows/pickemup.yml'
   pull_request:
     branches: [main]
     paths:
       - 'pickemup/**'
-      - 'shared/c/**'
-      - 'shared/tools/**'
-      - 'shared/scripts/ci_llvm.sh'
+      - 'shared/**'
       - '.github/workflows/pickemup.yml'
   workflow_dispatch: {}
 

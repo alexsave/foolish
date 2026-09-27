@@ -38,7 +38,8 @@ final class TableModelTests: XCTestCase {
         XCTAssertEqual(m.pills.leading, .pass, "and Pass stands beside it (D10)")
     }
 
-    // MUTATE: TableModel.play stages with collapse: false -> "a play collapses".
+    // MUTATE: TableModel.play stages after `.draw` (the kernel then answers no
+    // collapse) -> "a play collapses".
     // MUTATE: stageIfSendable passes Pk.words(PK_API_W_HEADLINE) as the
     // caption -> "the caption is the kernel's staged caption".
     func testPlayStagesWithTheKernelsCaption() throws {
@@ -123,6 +124,8 @@ final class TableModelTests: XCTestCase {
         XCTAssertNil(m.strip.played)
     }
 
+    // MUTATE: TableModel.tapFan stages a call after `.play` -> "a call alone
+    // does not collapse the drawer".
     // MUTATE: Pk.tapFan maps PK_API_FAN_UNCALLED to `.refused` -> "the
     // un-call plays its own motion". (Both branches refresh, so "a second tap
     // un-calls" reads the kernel either way; before I30 the mutant was
@@ -134,6 +137,7 @@ final class TableModelTests: XCTestCase {
         m.tapFan(0)
         XCTAssertTrue(m.calling(0), "the call is staged on Alex's fan")
         XCTAssertEqual(m.strip.called, 0)
+        XCTAssertEqual(stages.last?.collapse, false, "a call alone does not collapse the drawer (I37)")
         let callPlan = m.player.plan?.serial
         m.tapFan(0)
         XCTAssertFalse(m.calling(0), "a second tap un-calls")

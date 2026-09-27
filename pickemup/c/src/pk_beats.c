@@ -694,6 +694,7 @@ static void on_event(B *b, const PkEvent *e)
         s = c->land >= 0 ? (uint32_t)c->land : step_start(b);
         if (me(b, e->seat)) {
             PkBeat band = mk(b, PK_BK_BAND, s, PK_T_FADE);
+            band.ease = PK_EASE_EASE_OUT;             /* DEMO.wild: E.out */
             band.from = band.to = PK_ANC_STACK;
             band.suit = e->suit;
             add(b, band);
@@ -1135,7 +1136,8 @@ void pk_beat_sample(const PkBeat *b, uint32_t now, int part, PkBeatSample *out)
     if (b->part_ms == 0) u = now >= s ? 1 : 0;
     const float p = pk_ease(b->ease, u);
     out->p = p;
-    const int brings_in = b->kind == PK_BK_POP || b->kind == PK_BK_STAMP || (b->kind == PK_BK_FADE && b->sub);
+    const int brings_in = b->kind == PK_BK_POP || b->kind == PK_BK_STAMP || b->kind == PK_BK_BAND ||
+                          (b->kind == PK_BK_FADE && b->sub);
     const int takes_out = b->kind == PK_BK_COLLAPSE || (b->kind == PK_BK_FADE && !b->sub);
     out->apply = (uint8_t)(out->state == PK_BS_ACTIVE || (out->state == PK_BS_PENDING && brings_in) ||
                            (out->state == PK_BS_DONE && takes_out));
@@ -1170,7 +1172,8 @@ void pk_beat_sample(const PkBeat *b, uint32_t now, int part, PkBeatSample *out)
     case PK_BK_HALO:
         out->opacity = lerp(.2f, 1, p);
         break;
-    case PK_BK_BAND:
+    case PK_BK_BAND:                               /* p is the slide: translateY(100%) -> 0 */
+        break;
     case PK_BK_TURN_BAR:
         out->opacity = p;
         break;

@@ -19,28 +19,64 @@ public struct LobbyScreen: View {
     @ObservedObject var model: TableModel
     @State private var name = PickemupSeats.nickname
     @FocusState private var nameFocused: Bool
+    /// THE ROWS' MOTION IS THE KERNEL'S (grid "Join" and "Leave", A13): the
+    /// plan a Join, a Leave or an adopted lobby bubble laid out, sampled as
+    /// the table samples its own (BeatPlayer).
+    @ObservedObject private var player: BeatPlayer
+    @State private var anchors: [String: CGRect] = [:]
+    private static let rowGap: CGFloat = 6
 
-    public init(model: TableModel) { self.model = model }
+    public init(model: TableModel) {
+        self.model = model
+        self.player = model.player
+    }
 
     private var offered: Int { model.table?.offered ?? 0 }
     private var needsName: Bool { PickemupSeats.nickname.isEmpty && offered == PK_LOBBY_JOIN }
     private var nameOK: Bool { Pk.nameVerdict(name) == PK_NAME_OK }
 
     public var body: some View {
+        TimelineView(.animation(paused: !player.animating)) { _ in
+            let fx = player.effects(player.ms(), anchors: anchors)
+            content(fx)
+                .environment(\.pkFX, fx)
+                .coordinateSpace(name: boardSpace)
+                .onPreferenceChange(PkAnchorKey.self) { anchors = $0 }
+        }
+    }
+
+    /// One row's pitch: its own height and the gap under it.
+    private var pitch: CGFloat { (anchors["roster.0"]?.height ?? 0) + Self.rowGap }
+
+    private func row(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 15, weight: .heavy))
+            .onFeltText()
+            .lineLimit(1)
+    }
+
+    private func content(_ fx: [String: PkFX]) -> some View {
         VStack(spacing: 12) {
             Text(Pk.string("LOBBY_TITLE"))
                 .font(.system(size: 17, weight: .heavy))
                 .onFeltText()
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: Self.rowGap) {
                 ForEach(0..<model.seatCount, id: \.self) { seat in
-                    Text(Pk.words(PK_API_W_LOBBY_ROW, seat))
-                        .font(.system(size: 15, weight: .heavy))
-                        .onFeltText()
-                        .lineLimit(1)
+                    row(Pk.words(PK_API_W_LOBBY_ROW, seat))
                         .pkAnchor("roster.\(seat)")
+                        .offset(y: (fx["roster.\(seat)"]?.close ?? 0) * pitch)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .overlay(alignment: .topLeading) {
+                // the row that left, where it stood, as it read (A13)
+                if let g = fx["roster.gone"], let k = g.gone {
+                    row(Pk.words(PK_API_W_LOBBY_GONE, k))
+                        .opacity(g.opacity)
+                        .offset(y: CGFloat(k) * pitch)
+                        .allowsHitTesting(false)
+                }
+            }
             .padding(.horizontal, 14)
             if model.seatCount > 0 {
                 Text(Pk.words(PK_API_W_LOBBY_DEALER))

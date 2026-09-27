@@ -65,54 +65,74 @@ Confidence: high.
 
 ## BLOCKED
 
-- The final game name: `Pick 'Em Up` collides with two same-genre titles (README); the USPTO search and the choice are the owner's, before any store listing.
-- App Store Connect record, signing and upload: the owner does these by hand; nothing in this pass touches them.
+Each item is one block: what is blocked now, what the owner (or the next worker) does, and a short dated history.
+Every simulator proof owed below is also listed, ready to run, in `pickemup/docs/SIM_VERIFICATION.md`.
 
-BLOCKED B1: the P8 after-run for lift S1 (and any later Swift lift).
-From 2026-09-26 23:06 every iOS simulator on this Mac hangs: test launches die with `Mach error -308 (ipc/mig) server died`, `simctl install` never returns, and a fresh device and the iOS 26.3 device both stop at boot in `com.apple.addressbook.migrator`.
-Restarting CoreSimulatorService did not clear it; a Mac reboot is the likely fix, and only the owner can do that.
-BLOCKED B1, confirmed by the orchestrator at 2026-09-27 04:55: after killing CoreSimulatorService and erasing a second iPhone 17e, the erased device still stops at boot in `com.apple.addressbook.migrator` (Migration Elapsed over a minute, `simctl launch` never returns).
-The host needs a reboot before any simulator test, screenshot or rig run can happen; everything below that needs a simulator is verified by compile only until then.
-B1 cleared on its own at about 05:10 on 2026-09-27 without a reboot: a health probe booted the first iPhone 17e and launched an app in under two minutes, so the after-run for S1 and the simulator proofs resumed then.
-Once it is clear, run `DEST='platform=iOS Simulator,name=iPhone 17e,OS=27.0' bash ios/scripts/mac_tests.sh --no-lib --regen` from `foolish/` on the S1 commit and compare with the baseline in `REUSE_AUDIT.md` under S1 (853 executed, 1 skipped, only the flaky `MemoryProfileTests` failing).
-B1 stayed clear on the afternoon of 2026-09-27: a fresh iPhone 17e `pk-b2` (iOS 27.0) booted in 43 seconds under the 90-second watchdog and ran every simulator job of the B2/B3 worker; it was shut down and deleted afterwards.
-One residue of the family remains: `xcodebuild test` on this host can hang AFTER the suite has printed its summary (seen once in four whole-scheme runs, and on every run in B3's morning); the B2/B3 worker ran every test under a watchdog that kills it 10 seconds after the summary.
+### B1: iOS simulators on this Mac hang host-wide
 
-BLOCKED B2: the Pick 'Em Up extension has not yet been seen inside Messages.
-On 2026-09-27 at about 06:12 UTC, on iPhone 17e `FC7586CF`, `PickemupKitTests` ran green (17 tests) and every test was mutation-checked there (`pickemup/ios/TESTS_MUTATED.md`), and the app installed and registered with LaunchServices, but `simctl launch com.apple.MobileSMS` (the rig's `stage`) hung for over five minutes, the B1 symptom again, so no screenshot of the lobby, table, drag, picker or catch exists yet.
-The device was shut down.
-Next: on a healthy simulator, `source pickemup/ios/Tools/rig.env`, then the rig's `stage`, `open` and screenshots of each screen; and on a real phone, prove that dragging a card DOWN off the deck (U24, IOS_DECISIONS I9) never collapses the drawer.
-B2, second worker, 2026-09-27 06:29 to 06:56 UTC: the same iPhone 17e `FC7586CF` (iOS 26.3) never finished booting, so Messages, the rig and the fallback host were all out of reach.
-Three boots (06:28, 06:37 after a shutdown and a 10 second wait, and 06:53) each stopped on the black data-migration spinner with `simctl bootstatus` at "Waiting on System App" for 90 seconds and more (the first was watched for 7 minutes).
-Inside the device SpringBoard, backboardd and the data migrator were all running, and the migrator logged "System build version unchanged from 23D8133. Migration not necessary", so this is not a migration plugin; `log` itself answered `getpwuid_r did not find a match for uid 501`, which points at the host's user session under CoreSimulator, the B1 family.
-The device was shut down each time and is shut down now.
-What landed without a simulator, compile-checked (`PickemupKitTests` build-for-testing and the `PickemupMessagesApp` build both succeed): O6 (IOS_DECISIONS I27) with its test `ActionCardCornerTests`, the strip chips (I28), and the UI.html fixes listed in `SIM_VERIFICATION.md`.
-Still owed on a healthy simulator, in this order: `PickemupKitTests` green, the O6 test's red run (its MUTATE line), `mac_tests.sh` counts, then the full two-seat game and the eleven screenshots `SIM_VERIFICATION.md` lists; the host most likely needs the reboot B1 asked for.
+Now: clear since 2026-09-27 afternoon (a fresh iPhone 17e booted in 43 seconds and ran every B2/B3 job); the history below is why a watchdog stays on every boot and launch.
+The hang cleared once on its own and came back, and a fresh device on iOS 27.0 hangs too, so it is host-wide and not tied to one device's state.
+The `getpwuid_r did not find a match for uid 501` line seen inside a device points at the host's directory services under CoreSimulator, which only a reboot resets.
+Blocked by it: the P8 after-run for lift S1 (and any later Swift lift), plus B2 and B3 below.
+Owner action: none now; if it comes back, reboot the Mac.
+Then, from `foolish/` on the S1 commit, run `DEST='platform=iOS Simulator,name=iPhone 17e,OS=27.0' bash ios/scripts/mac_tests.sh --no-lib --regen` and compare with the baseline in `REUSE_AUDIT.md` under S1 (853 executed, 1 skipped, only the flaky `MemoryProfileTests` failing).
+History:
+- 2026-09-26 23:06: every simulator hangs: test launches die with `Mach error -308 (ipc/mig) server died`, `simctl install` never returns, and a fresh device and the iOS 26.3 device both stop at boot in `com.apple.addressbook.migrator`; restarting CoreSimulatorService did not clear it.
+- 2026-09-27 04:55: the orchestrator killed CoreSimulatorService and erased a second iPhone 17e; the erased device still stopped at boot in `com.apple.addressbook.migrator` (Migration Elapsed over a minute, `simctl launch` never returned).
+- 2026-09-27 about 05:10: cleared on its own without a reboot; a health probe booted the first iPhone 17e and launched an app in under two minutes, and the S1 after-run and the simulator proofs resumed.
+- 2026-09-27 06:12 to 07:40: back (see B2), and a freshly created iPhone 17 on iOS 27.0 also never finished booting within 100 seconds.
+- 2026-09-27 afternoon: clear without a reboot; `pk-b2` (iPhone 17e, iOS 27.0) booted in 43 seconds under a 90-second watchdog and Messages launched in about a second.
 
-BLOCKED B2 confirmed by the orchestrator at 2026-09-27 07:40: a freshly created iPhone 17 on iOS 27.0 also never finished booting within 100 seconds, so the hang is host-wide and not tied to a device's state (an erased iPhone 17e hung the same way earlier).
-The `getpwuid_r did not find a match for uid 501` line the previous worker saw points at the host's directory services, which only a reboot resets.
-Every simulator proof in this pass (foolish's P8 after the lifts, the pickemup Messages run and screenshots, `pickemup/ios/scripts/mac_tests.sh` counts, the red run of `ActionCardCornerTests`, the filmed animation take) is therefore owed and listed in `pickemup/docs/SIM_VERIFICATION.md`, ready to run after the reboot.
+### B2: the extension inside Messages
 
-B2 mostly CLEARED by the B2/B3 simulator worker, 2026-09-27 afternoon, on a fresh iPhone 17e `pk-b2` (iOS 27.0).
-`PickemupKitTests`: the two red tests were a test-harness gap, not a regression (SwiftUI builds no accessibility tree until automation is on; IOS_DECISIONS I40); every test is now seen red (`pickemup/ios/TESTS_MUTATED.md`), 38 tests, 0 failures.
-`simctl launch com.apple.MobileSMS` returned in about a second on the first watchdogged try, the extension opened from the + menu, and a two-seat game was played inside Messages through a Debug persona (I41); 17 screenshots are in `pickemup/docs/shots/`, each step's "Seen" line is in `SIM_VERIFICATION.md`.
-Fixed on the way: every flight to or from the pile flew to the board's top-left corner (I42, `AnchorTests`); and a Release-only compile error the persona would have caused (a `var` never mutated under warnings-as-errors) was restructured before commit. The Release configuration itself was not built in this pass (the build command was not permitted here); the Debug app and the test scheme were.
-Still owed: the catch, Last card! and the win inside Messages (no hand got near one card), anything with three or more seats (the simulator can only make a group thread as SMS, which offers no apps), the +2 and the Reverse, and on a real phone I9, I35 and I36 as before.
-OPEN, for the owner: the compact drawer on an iPhone 17e is about 299pt of board, and U2's lift was sized for 340. With the drawer compact, the pill row's inner pill (Undo or Pass beside Draw) is drawn over the pile, the deck's layers cover the status corner's sub-line while the staged strip is up, and the pile touches the top seat's fan (`shots/compact_collision.png`, `shots/skip_staged.png`, `shots/chips_after_draws.png`).
-Options: (a) the pile and the deck shrink in a drawer shorter than 340pt, to the band between the top fan and the pill row (a kernel scale beside `pk_lay_pile`, the views reading it); (b) in a short drawer the pill row keeps its pills clear of the pile's column (the inner pill moves to the leading side, beside Rules); (c) the status corner drops its sub-line while compact.
-Recommendation: (a) with (c), since (b) alone leaves the deck on the sub-line and the pile on the fan, and the 3-seat ring puts a side seat's fan in the deck's column at the same height. A first attempt that only lowered the pile to clear the status corner made the pill overlap worse and was reverted; it is not in the tree.
+Now: mostly cleared (2026-09-27 afternoon, the B2/B3 simulator worker, a fresh iPhone 17e `pk-b2` on iOS 27.0); what is left is below under "Still owed" and "OPEN".
+The game was played inside Messages: `simctl launch com.apple.MobileSMS` returned in about a second on the first watchdogged try, the extension opened from the + menu, and a two-seat game ran through a Debug persona (IOS_DECISIONS I43); 17 screenshots are in `pickemup/docs/shots/`, and each step's "Seen" line is in `SIM_VERIFICATION.md`.
+`PickemupKitTests`: 38 tests, 0 failures, every test seen red (`pickemup/ios/TESTS_MUTATED.md`); the two red tests were a test-harness gap, not a regression (I42).
+Fixed on the way: every flight to or from the pile flew to the board's top-left corner (I44, `AnchorTests`).
+The Release configuration was not built in this pass (the command was not permitted here); a Release-only warnings-as-errors failure the persona would have caused was found by reading and restructured before commit. Build Release once before trusting it.
+Still owed: the catch, Last card! and the win inside Messages (no hand got near one card); anything with three or more seats (the simulator can only make a group thread as SMS, which offers no apps); the +2 and the Reverse; undo and reopen after a reorder; and on a real phone I9, I35 and I36 as below.
+OPEN, for the owner: the compact drawer on an iPhone 17e is about 299pt of board, and U2's lift was sized for 340. Compact, the pill row's inner pill (Undo or Pass beside Draw) is drawn over the pile, the deck's layers cover the status corner's sub-line while the staged strip is up, and the pile touches the top seat's fan (`shots/compact_collision.png`, `shots/skip_staged.png`, `shots/chips_after_draws.png`).
+Options: (a) in a drawer shorter than 340pt the pile and the deck shrink to the band between the top fan and the pill row (a kernel scale beside `pk_lay_pile`, the views reading it); (b) the pill row keeps its pills out of the pile's column there (the inner pill to the leading side, beside Rules); (c) the status corner drops its sub-line while compact.
+Recommendation: (a) with (c); (b) alone leaves the deck on the sub-line and the pile on the fan, and the 3-seat ring puts a side seat's fan in the deck's column at the same height. A first attempt that only lowered the pile to clear the status corner made the pill overlap worse and was reverted; it is not in the tree.
+Earlier, proven without Messages: `PickemupKitTests` ran green (17 tests) on iPhone 17e `FC7586CF` with every test mutation-checked there (`pickemup/ios/TESTS_MUTATED.md`), and the app installed and registered with LaunchServices.
+Compile-checked only (`PickemupKitTests` build-for-testing, the `PickemupMessagesApp` build and `make -C pickemup/c run asan`): O6 (IOS_DECISIONS I27) with its test `ActionCardCornerTests`, the strip chips (I28), the UI.html fixes listed in `SIM_VERIFICATION.md`, and the architecture review's fixes (I29 to I37).
+Owed after the reboot, in this order: `PickemupKitTests` green, the red run of `ActionCardCornerTests` (its MUTATE line), the eight red runs listed under "The architecture review" in `pickemup/ios/TESTS_MUTATED.md`, the `pickemup/ios/scripts/mac_tests.sh` counts, then `source pickemup/ios/Tools/rig.env`, the rig's `stage` and `open`, the full two-seat game and the eleven screenshots `SIM_VERIFICATION.md` lists (lobby, table, drag, picker, catch and the rest).
+Owed on a real phone: dragging a card DOWN off the deck never collapses the drawer (U24, IOS_DECISIONS I9 and I36), and a superseded stage never inserts (I35).
+History:
+- 2026-09-27 about 06:12 UTC: on `FC7586CF` the tests above ran green, but `simctl launch com.apple.MobileSMS` (the rig's `stage`) hung for over five minutes; the device was shut down.
+- 2026-09-27 06:29 to 06:56 UTC: a second worker booted the same device three times (06:28, 06:37 after a shutdown and a 10 second wait, and 06:53); each stopped on the black data-migration spinner with `simctl bootstatus` at "Waiting on System App" for 90 seconds and more (the first was watched for 7 minutes).
+  SpringBoard, backboardd and the data migrator were all running, and the migrator logged "System build version unchanged from 23D8133. Migration not necessary", so it is not a migration plugin; `log` answered `getpwuid_r did not find a match for uid 501`.
+  The device was shut down each time and is shut down now.
+- 2026-09-27 07:40: the orchestrator confirmed the hang is host-wide (B1).
+- 2026-09-27, later: the architecture review worker attempted no simulator.
+- 2026-09-27 about 12:00 local: the S5 worker ran the whole `PickemupKitTests` scheme on a fresh iPhone 17e (iOS 27.0) through `pickemup/ios/scripts/mac_tests.sh`: 37 executed, 2 failed, with no hang.
+  The failures: `ActionCardCornerTests.testAnActionCardExposesItsSuitShape` (`XCTUnwrap` nil at `LayoutTests.swift:101`) and `NoCountLeakTests.testNoOtherSeatsLabelCarriesADigit` (no other seat on the accessibility tree, `ReviewTests.swift:35`).
+  The pre-S5 script gave the same two, so they are the tests or the code, not the driver; they are owed a fix before "`PickemupKitTests` green" above can be ticked.
+- 2026-09-27 afternoon: the B2/B3 simulator worker found both were the tests: SwiftUI builds no accessibility elements until an assistive client switches automation on, so both walks read an empty tree (I42); fixed in the tests, every test mutation-checked, then Messages opened and the game was played (above).
 
-BLOCKED B3: the filmed and measured animation take.
-On 2026-09-27 at about 03:35 local, the second iPhone 17e `6E0A730D` did boot within the 90-second watchdog, and `BeatPlayerTests` (7 then, 8 once A17's `testTheJoinThatStartsTheGamePlaysTheDeal` landed) and `TableModelTests` (10) ran green on it, and every `BeatPlayerTests` test was seen red there (`pickemup/ios/TESTS_MUTATED.md`).
-But any test that puts a window or a renderer on screen hung on it for ten minutes and was killed: `ActionCardCornerTests.testAnActionCardExposesItsSuitShape` (a card hosted in a `UIWindow`) and `RenderTests.testTheBubbleRendersAt300By195`, and `xcodebuild` itself hung after every finished run until killed.
-A filmed take is a window on screen, so it was not attempted; `pickemup/docs/MOTION_REPORT.md` gives both takes as the kernel's timeline instead (`make -C pickemup/c beats-dump`).
-B2 and B3, the architecture review worker, 2026-09-27: no simulator was attempted; the review's fixes (IOS_DECISIONS I29 to I37) are verified by `build-for-testing` of `PickemupKitTests`, the `PickemupMessagesApp` build and `make -C pickemup/c run asan` only.
-Owed with the rest after the reboot: the eight red runs listed under "The architecture review" in `pickemup/ios/TESTS_MUTATED.md`, and on a phone, I35 (a superseded stage never inserts) beside I9 and I36 (the deck's drag never collapses the drawer).
-Next, after the reboot: film a live arrival with three draws, a reshuffle and a play, and a deal, at normal speed, measure them with the `animation-measure` skill, put the contact sheets in `pickemup/docs/shots/motion/` and the scores in `MOTION_REPORT.md`; and run the whole `PickemupKitTests` scheme, which this worker could only run in part.
-B3 partly CLEARED by the B2/B3 simulator worker, 2026-09-27 afternoon: `ActionCardCornerTests` and `RenderTests` ran in seconds on `pk-b2`, and the whole scheme ran (38 tests).
-Filmed at normal speed with `simctl io recordVideo` (stopped with SIGINT) and measured with `animation-measure`: a two-seat deal (the join that starts the game) before and after I42, and an opened bubble with three draws and a play after I42; the numbers are in `MOTION_REPORT.md` and the sheets in `shots/motion/`.
-Not filmed: a LIVE arrival (on one simulator the receiving thread is never on screen while the other sends, so every take is an opened bubble, 100ms lead instead of 16), a three-player deal (no group iMessage thread on the simulator), and a reshuffle after I42 (the one reshuffle take predates the fix, and its gather flight left from the broken pile anchor).
-Found and OPEN: an opened bubble's plan starts while the drawer is still white, so its first draws are already in the air when the board appears (MOTION_REPORT).
+### B3: the filmed and measured animation take
+
+Now: partly cleared (2026-09-27 afternoon, the B2/B3 simulator worker on `pk-b2`): `ActionCardCornerTests` and `RenderTests` run in seconds, the whole scheme ran, and three takes were filmed at normal speed and measured (`MOTION_REPORT.md`, sheets in `shots/motion/`): a two-seat deal before and after I44, and an opened bubble with three draws and a play after I44.
+Still owed: a LIVE arrival (on one simulator the receiving thread is never on screen while the other sends, so every take is an opened bubble), a three-player deal (no group iMessage thread on the simulator), and the reshuffle after I44 (the one reshuffle take predates the fix).
+OPEN: an opened bubble's plan starts while the drawer is still white, so its first draws are already in the air when the board appears (MOTION_REPORT, Take B).
+Also seen: `xcodebuild test` on this host can still hang AFTER the suite prints its summary (once in four whole-scheme runs); run it under a watchdog.
+Originally owed: film a live arrival with three draws, a reshuffle and a play, and a deal, at normal speed; measure them with the `animation-measure` skill; put the contact sheets in `pickemup/docs/shots/motion/` and the scores in `MOTION_REPORT.md`; and run the whole `PickemupKitTests` scheme, which was only ever run in part.
+History:
+- 2026-09-27 about 03:35 local: the second iPhone 17e `6E0A730D` booted within the 90-second watchdog, and `BeatPlayerTests` (7 then, 8 once A17's `testTheJoinThatStartsTheGamePlaysTheDeal` landed) and `TableModelTests` (10) ran green on it, with every `BeatPlayerTests` test seen red there (`pickemup/ios/TESTS_MUTATED.md`).
+  Any test that puts a window or a renderer on screen hung for ten minutes and was killed (`ActionCardCornerTests.testAnActionCardExposesItsSuitShape`, a card hosted in a `UIWindow`, and `RenderTests.testTheBubbleRendersAt300By195`), and `xcodebuild` itself hung after every finished run until killed.
+  A filmed take is a window on screen, so it was not attempted.
+- 2026-09-27 afternoon: a fresh iPhone 17e `pk-b2` booted in 43 seconds, nothing hung, and the takes above were filmed; the device was shut down and deleted afterwards.
+
+### The final game name
+
+Now: open, the owner's call.
+`Pick 'Em Up` collides with two same-genre titles (README); it stays the working title behind one `GAME_NAME` string (O5).
+Owner action: the USPTO search and the choice, before any store listing.
+
+### App Store Connect, signing and upload
+
+Now: not started, by design.
+Owner action: the owner does the App Store Connect record, signing and upload by hand; nothing in this pass touches them.
 
 ## Found on the way (not pickemup's to fix in this pass)
 
@@ -122,6 +142,8 @@ Found and OPEN: an opened bubble's plan starts while the drawer is still white, 
   Fixed on this branch in `d0ca1c99`: both its `push` and `pull_request` paths now list `'shared/c/mixrad.*'` beside `'shared/c/b32.*'`.
 - `foolish/e2e/validation/ci_toolchain_validation.test.ts` treats every `make ... wasm` line in every workflow as a build of foolish's test module and requires foolish's `scripts/ci_bots_test_wasm.sh` before it.
   So no other product's lane can build its own wasm without paying for foolish's (D49); the gate should look for foolish's targets, not the word.
+- `.github/workflows/uttt-c.yml` could not go green on Linux gcc: glibc hides `M_PI` under `-std=c11`, and `uttt/c/src/uttt_pen.c` used it, so `make -C c run` stopped at the first compile (seen in the `gcc:13` image on 2026-09-27).
+  FIXED in the commit "uttt pen: a file-local pi, so the Linux lane compiles": `UTTT_PI`, the same double, so `uttt_pen.o` is byte-identical on the Mac and `rough-diff` and the rendered board are unchanged; `run`, `asan` and `ios-smoke` pass in `gcc:13`.
 - `pickemup/c/tests/pk_check.h`'s `seed_of` deals only 256 different games (every byte is a byte-valued function of k plus 7i).
   The fuzz and the wire tests now use `seed_wide`; `seed_of` stays for the committed 7.3 goldens.
 - `REUSE_AUDIT.md` section 8 lists four defects in foolish and uttt (rig.sh restores entitlements with `git checkout`, the drawer-collapse numbers exist three times, flight timing is typed twice, foolish compiles the shared insert gating but never calls it).

@@ -70,7 +70,7 @@ Until this pass none of these had run: they were compiled only (ORCHESTRATION B2
 The first run found two of them red, and neither was a product regression.
 `ActionCardCornerTests` and `NoCountLeakTests` read labels off a hosted SwiftUI view, and SwiftUI builds its accessibility elements only once an assistive client (VoiceOver, an XCUITest runner) has switched accessibility automation on; a plain unit-test process never has, so both walks found an EMPTY tree ("both other seats are on the tree: []", "XCTUnwrap failed").
 The views were right all along: every seat label is the kernel's `PK_API_W_SPOKEN_FAN` word and the fan carries no count.
-The fix is in the tests, `PickemupKitTests/AXTree.swift`: it switches automation on once per process, as a client would, and is the one tree walker both tests use (IOS_DECISIONS I40).
+The fix is in the tests, `PickemupKitTests/AXTree.swift`: it switches automation on once per process, as a client would, and is the one tree walker both tests use (IOS_DECISIONS I42).
 The first row below is that cause, proven: with the switch turned off again, both tests fail exactly as they first did.
 `NoCountLeakTests` was also narrowed to what it guards: it now walks each other seat's badge and fan elements, label and value, and asserts both are on the tree, where it used to read every label that merely contained a name (a future caption such as "Bo played 9 of squares" would have tripped it without being a count).
 
@@ -96,9 +96,30 @@ Three planned mutants did not go red as first written, and each exposed a test t
 | ArrangeTests.testAPlayAfterAReorderPlaysTheRightCard | `TableModel.arrange` passes `pos` as the from slot | "the card at that slot plays" (82 against 65), "the pile's top is the dragged card"; also "a drag to where it already is moves nothing" |
 | ArrangeTests.testADrawAfterAReorderLandsOnTheRight | (C) `pk_arr_sync` puts a new card at the left (`insert_at(a, 0, ...)`), library rebuilt | "the drawn card lands on the right" (14 against 93); the deal also goes through the sync, so every ArrangeTests test is red on its acquisition order |
 | ArrangeTests.testTheDropIsTheKernels | `PkLayout.drop` maps `PK_DROP_HAND` to `.pile` | "a release in the row rearranges" |
-| AnchorTests.testTheAnchorsAreWhereTheViewsAre (added for I42) | `TableScreen` moves the stack anchor with `.offset` again (the pre-I42 code) | "the pile's anchor is the pile" (41 against 187, 57.5 against 317.5), "the deck sits left of the pile (U3)", "on its line" |
+| AnchorTests.testTheAnchorsAreWhereTheViewsAre (added for I44) | `TableScreen` moves the stack anchor with `.offset` again (the pre-I44 code) | "the pile's anchor is the pile" (41 against 187, 57.5 against 317.5), "the deck sits left of the pile (U3)", "on its line" |
 
 The two rows under BeatPlayerTests above that mutated `PickemupHost.adopt`, and the `tapFan never un-calls` row under TableModelTests, mutated Swift that is now the kernel's (`pk_api_adopt`, `pk_api_tap_fan`, I29 and I30); they are replaced by the adopt and `PK_API_FAN_UNCALLED` rows in this table, which mutate the code as it is now.
 
-Every test in `PickemupKitTests` now has a row above; nothing is left unmutated.
+### The open-items pass (`docs/OPEN_ITEMS.md`), compiled, NOT run
+
+Added or changed 2026-09-27 with no simulator (another worker held the only free one): `build-for-testing` of `PickemupKitTests` and the `PickemupMessagesApp` build succeed, nothing more.
+The C behind each was seen red on `build/pk_beats_test`, `build/pk_twophone_test` or `build/ios_smoke` (`pickemup/c/tests/MUTATIONS.md`, the rows marked A12, A13, A14, A15 and I37).
+Each Swift mutant below is planned, one at a time; until its red run exists the test proves nothing.
+
+| Test | Planned mutation | Must go red on |
+|---|---|---|
+| BeatPlayerTests.testAPickedWildSlidesItsBandUp | `BeatPlayer.effects` skips `PK_BK_BAND` (its `case` arm removed) | "hidden under the foot until it starts", "the band is part way up" |
+| TableModelTests.testPlayStagesWithTheKernelsCaption | `TableModel.play` stages `after: .draw` | "a play collapses" |
+| TableModelTests.testATapOnAFanStagesTheCatchAndASecondTakesItBack | `TableModel.tapFan` stages a call `after: .play` | "a call alone does not collapse the drawer (I37)" |
+| BeatPlayerTests.testTheLobbyRowsFadeInAndOutOnTheKernelsBeats | `TableModel.join` plays nothing when the join does not start the game | "a join fades its row up" |
+| BeatPlayerTests.testTheLobbyRowsFadeInAndOutOnTheKernelsBeats | `BeatPlayer.effects` drops the leave's `roster.gone` edit | "the row that left fades where it stood" |
+| BeatPlayerTests.testTheLobbyRowsFadeInAndOutOnTheKernelsBeats | `BeatPlayer.effects` answers `open` 0 while the close-up is pending | "the rows below stand one lower" |
+| DevFlaggedTests.testTheCollapseSlideRunsOnTheKernelsPush | `CollapseSlide.pickemup` hands the kernel seconds, not milliseconds | "the whole travel at the flip, nothing at the end" (at 0.169s the push is the kernel's at 0ms) and "the host's spring, as the kernel has it" |
+| DevFlaggedTests.testTheCollapseSlideRunsOnTheKernelsPush | `CollapseSlide.pickemup` takes its steps from `PK_LAY_COLLAPSE_MS` | "the kernel's keyframes" |
+| DevFlaggedTests.testTheSendReminderSaysTheKernelsWordAfterItsFuse | the `SEND_HINT` key renamed in `keys.h` (the generated key list follows it) | "the reminder's word is the kernel's" |
+
+What no unit test reaches in this pass: `BandSlide` drawing the band where PkFX says, `LobbyScreen` drawing the gone row and the lowered rows, the slide on a real drawer and the reminder's place under Messages' Send button.
+Each is a screenshot or a filmed take owed on a simulator (the band, the rows) or a phone in Messages (the slide, the reminder), with `dev.slide` and `dev.sendhint` in the App Group.
+
+Every other test in `PickemupKitTests` has a row above.
 What these tests do not reach is the conversation itself (`PickemupMessages/MessagesViewController.swift`: staging through the insert loop, send, cancel, receive); it has no test target, as uttt's has none, and what was seen of it inside Messages is in `pickemup/docs/SIM_VERIFICATION.md`.

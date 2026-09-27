@@ -23,7 +23,7 @@ public enum PickemupDev {
     /// 255), its own seat records and its own nickname. A simulator's
     /// Messages gives this extension one participant id in every thread, so
     /// without it the rig's two-thread trick seats the same person twice
-    /// (IOS_DECISIONS I41). Read once per process: leaving the thread ends
+    /// (IOS_DECISIONS I43). Read once per process: leaving the thread ends
     /// the process, and that is when the rig flips the file.
     public static let persona: (n: UInt8, name: String)? = {
         guard let s = files.string("dev.persona") else { return nil }
@@ -31,5 +31,14 @@ public enum PickemupDev {
         guard parts.count == 2, let n = UInt8(parts[0]), n > 0, !parts[1].isEmpty else { return nil }
         return (n, parts[1])
     }()
+
+    /// `dev.slide`: the auto-collapse rides the shared CollapseSlide on the
+    /// kernel's push (ANIMATION_DECISIONS A14). Read once per process.
+    public static let slide = files.exists("dev.slide")
+
+    /// `dev.sendhint`: the shared Send reminder under Messages' Send button,
+    /// on the kernel's word and fuse (A15). Read once per process: a view
+    /// body asks for it every frame.
+    public static let sendHint = files.exists("dev.sendhint")
 }
 #endif

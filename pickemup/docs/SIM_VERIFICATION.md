@@ -5,14 +5,14 @@ The record of playing Pick 'Em Up inside Messages on a simulator, step by step, 
 ## Status on 2026-09-27, afternoon: played inside Messages
 
 A fresh iPhone 17e `pk-b2` (iOS 27.0) booted in 43 seconds, `simctl launch com.apple.MobileSMS` returned in about a second, and the extension opened from the + menu in the stub thread; B2's hang did not come back.
-One simulator gives the extension ONE participant id in every thread, so the rig's two-thread trick seated Alex twice; a Debug-only dev file, `dev.persona` ("1 Bo"), now makes an appex process another person (IOS_DECISIONS I41).
+One simulator gives the extension ONE participant id in every thread, so the rig's two-thread trick seated Alex twice; a Debug-only dev file, `dev.persona` ("1 Bo"), now makes an appex process another person (IOS_DECISIONS I43).
 Alex plays in John Appleseed's thread and Bo in Kate Bell's: a bubble sent in one arrives in the other, and the rig's `leave` between them ends the appex so the persona file is read fresh.
 The screenshots are in `shots/` (585 x 1266, or 468 x 1013 where the full size passed 400KB); `table_start.png` was saved with a 256-colour palette before that rule, so its ink is slightly off.
 What one simulator cannot reach: a group thread (the simulator can only make a group as SMS, where the + menu offers no app), so nothing with three or more seats; and the catch, Last card! and the win, which need a hand played down to one card, many round trips away (Alex held 88 cards after the reshuffle test).
 Those steps stay proven by the bridge and owed on a phone or a longer session.
 
 Two defects were found and one is fixed:
-- FIXED (I42): every flight to or from the pile (a play, the start card, a bury, a reshuffle's gather) flew to the board's top-left corner and snapped onto the pile at its end; the pile's anchor was moved into place with `.offset`, which its GeometryReader does not see, so it reported (0, 0). `AnchorTests` hosts a real `TableScreen` and was seen red on exactly that frame (41, 57.5 against 187, 317.5).
+- FIXED (I44): every flight to or from the pile (a play, the start card, a bury, a reshuffle's gather) flew to the board's top-left corner and snapped onto the pile at its end; the pile's anchor was moved into place with `.offset`, which its GeometryReader does not see, so it reported (0, 0). `AnchorTests` hosts a real `TableScreen` and was seen red on exactly that frame (41, 57.5 against 187, 317.5).
 - OPEN, needs the owner (ORCHESTRATION B2): the compact drawer on an iPhone 17e is too short for the table as laid out. The pill row's inner pill (Undo or Pass beside Draw) is drawn over the pile, the deck's layers cover the status corner's sub-line when the staged strip is up, and the pile touches the top seat's fan (`compact_collision.png`, `skip_staged.png`). U2's 24pt lift was sized for a 340pt drawer; this board is about 299pt. See the B2 entry for the options.
 - OPEN (MOTION_REPORT): an opened bubble's plan starts while the drawer is still white, so its first few hundred milliseconds play unseen.
 

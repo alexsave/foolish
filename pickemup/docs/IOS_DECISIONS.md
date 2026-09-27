@@ -109,11 +109,13 @@ DECISION I20: no auto-collapse ride on render-server layers (uttt's `CollapseSli
 Alternative: port `CollapseSlide` with a set of collapse numbers in the kernel.
 Why: this kernel has no collapse curve yet, and the flight worker owns motion; the `collapse` anchors are in place.
 Confidence: medium.
+Amended by ANIMATION_DECISIONS A14 and A20: the kernel now has the curve (`pk_lay_collapse_push`), and the slide is compiled in behind `dev.slide`; without the file this decision is what runs.
 
 DECISION I21: the shared Send reminder (`SendHint`) is not compiled in yet; the status corner's HEAD_STAGED line says the bubble is staged.
 Alternative: compile it with a new caption key.
 Why: it is motion and chrome the next worker places together with the flights.
 Confidence: medium.
+Amended by ANIMATION_DECISIONS A15 and A20: it is compiled in, on the kernel's word and fuse, behind `dev.sendhint` (I41).
 
 DECISION I22: a layout mismatch between the library and the generated readers (`Pk.layoutMatches`) shows the unreadable screen with the newer-version line, and reads nothing.
 Confidence: high.
@@ -195,6 +197,7 @@ Confidence: medium.
 
 DECISION I37: what the review left in Swift, on purpose.
 The collapse flag a touch stages with (a play and a pass collapse, a lone Last card! collapses, a draw or a call does not) is drawer policy read off the kernel's own draft events, and the stamp's display order (OUT, then the newest verdict, then LAST) orders kernel verdicts without deciding one; both are candidates for the next lift, not rules.
+Both LIFTED by I40.
 The 3 second readiness fallback and the silence and error beats are uttt's shared lifecycle (`InsertStaging`), kept whole.
 Found clean: no JSON or `Codable` anywhere (the seat records are the kernel's fixed-layout bytes, the nickname a string); no byte layout outside `Generated/` (the only `withUnsafeBytes` calls pass the participant id, the nickname and the seat records to C as bytes); no force unwrap on a kernel return; and no path from another seat's card count to a view, an accessibility label or an overlay (the fan is `PK_FAN_BACKS`, the reveal rows exist only once the game is over, and `NoCountLeakTests` walks a three-seat table's accessibility tree for digits).
 Confidence: high.
@@ -213,7 +216,28 @@ Alternative: have the row and the model work in slots and map every touch throug
 Why: every event, anchor and wire position is an acquisition position, so working in slots would need a map at every one of them; `pk_api_play_slot` stays for a host that addresses the hand by slot and is pinned by the C tests.
 Confidence: medium.
 
-DECISION I40: a test that reads the accessibility tree of a hosted SwiftUI view first switches accessibility automation on (`PickemupKitTests/AXTree.swift`), and walks the tree through that one helper.
+## The open-items pass (2026-09-27)
+
+No simulator was used (another worker held the only free one); every change below is verified by `make -C pickemup/c run asan`, `make -C pickemup/c ios-lib swift-smoke`, `build-for-testing` of `PickemupKitTests` and the `PickemupMessagesApp` build, with its planned Swift mutants under "Not mutated" in `pickemup/ios/TESTS_MUTATED.md`.
+
+DECISION I40: whether a stage collapses the drawer, and which stamp a badge shows, are the kernel's (`pk_api_collapses(touch)`, `pk_api_stamp(seat)`), lifting what I37 left in Swift.
+The collapse answer takes the touch that staged and reads the draft as it now stands: a play or a pass collapses; a Last card! collapses when it is the whole bubble, which the kernel reads as no draw, play or pass of mine and no call in the draft (the Swift rule had not counted a pass); a draw, a call, an undo, an un-say or an un-call does not.
+The stamp is OUT for the winner and nothing else once it is over, else the newest sealed bubble's verdict (Caught you! on the caught, Wrong call on the caller), else LAST while the seat has said it.
+`TableModel` and the bubble picture ask the kernel, and the published newest-bubble summary the Swift rule read is gone.
+Alternative: keep both in Swift, as I37 did, because neither decides a rule.
+Why: each is one function of the kernel's state with an order in it, and an order is exactly what a second copy gets wrong; in C each branch has a mutation row.
+Confidence: high.
+
+DECISION I41: the Send reminder's state is the controller's, which is where the conversation is: `hintStaged` goes up when the insert loop says the bubble landed in the field (and `hintRestart` counts each one, restarting the fuse), and down at a send or a cancel; `hintVisible` is whether the drawer is compact.
+Alternative: stage state in `TableModel`.
+Why: the model does not know there is a conversation (its header says so), and only the controller hears Messages land, send and cancel.
+Confidence: medium, until it is seen inside Messages.
+
+## The B2/B3 simulator pass (2026-09-27, afternoon)
+
+Run on a fresh iPhone 17e simulator (iOS 27.0), inside Messages; see `SIM_VERIFICATION.md` and `MOTION_REPORT.md`.
+
+DECISION I42: a test that reads the accessibility tree of a hosted SwiftUI view first switches accessibility automation on (`PickemupKitTests/AXTree.swift`), and walks the tree through that one helper.
 SwiftUI builds its accessibility elements only once an assistive client has asked, and a unit-test process is not one, so the first simulator run of `ActionCardCornerTests` and `NoCountLeakTests` found an empty tree and went red on nothing; the views were right.
 `AXTree.enable` calls libAccessibility's `_AXSSetAutomationEnabled(1)` once per process, which is what VoiceOver and an XCUITest runner switch on before they read.
 Alternative: move both checks into an XCUITest target, which runs with automation on; or test the label strings as functions and not the tree.
@@ -221,14 +245,14 @@ Why: the owner's rule is that no other seat's count reaches the tree, so the tes
 If the symbol ever disappears, both tests fail on "is on the tree"; they can never pass on an empty walk.
 Confidence: high.
 
-DECISION I41: a Debug build reads a `dev.persona` file ("1 Bo") from the App Group, and an appex process that finds it sits down as another person: its participant id's last byte XORed with the number, its own seat records and nickname (`pickemup.seats.v1.p1`, `pickemup.nickname.p1`).
+DECISION I43: a Debug build reads a `dev.persona` file ("1 Bo") from the App Group, and an appex process that finds it sits down as another person: its participant id's last byte XORed with the number, its own seat records and nickname (`pickemup.seats.v1.p1`, `pickemup.nickname.p1`).
 The simulator's Messages gives this extension ONE `localParticipantIdentifier` in every thread, so the rig's two-thread trick (a bubble sent in one stub thread arrives in the other) seated the same person twice and Bo's tap on Alex's invitation showed "1. Alex (You)".
 It is read once per process (`static let`), and the rig ends the process between the two threads (`rig.sh leave`, `killappex`), so a flipped file never splits one process's identity.
 Alternative: two simulators, one per person; there is no way to carry a bubble from one simulator's Messages to another's.
 Why: it is the only way to play a two-seat game inside Messages on one host, and every reader of it is inside `#if DEBUG` beside the other dev files (`PickemupDev.swift`), so Release has none of it.
 Confidence: high.
 
-DECISION I42: an anchor a flight aims at is laid out where it is (`.position`, a frame), never moved there with `.offset`.
+DECISION I44: an anchor a flight aims at is laid out where it is (`.position`, a frame), never moved there with `.offset`.
 The pile's anchor was a clear 82 x 115 frame in an overlay, `.offset` to the pile's centre; an offset is a render transform, the anchor's GeometryReader measured the un-offset frame at the board's origin, and on the simulator every play, start card, bury and reshuffle gather flew to the top-left corner and snapped onto the pile when its ghost ended (`shots/motion/deal_bury_before_fix_sheet.png`).
 `BeatPlayerTests` could not see it: they hand the player synthetic anchors. `AnchorTests` hosts a real `TableScreen` and checks the pile's anchor is the pile, the deck is beside it on its line, and every anchor is on the board.
 Alternative: measure the pile's anchor on `PileView` itself; its frame carries the halo and the stack's lean, not one card.

@@ -113,10 +113,16 @@ targets:
       - path: Generated
       # The shared Messages plumbing, named one file at a time as uttt does
       # (REUSE_AUDIT.md 1): when an insert may go and what its silence means,
-      # and the DEBUG dev-file reader. The Send reminder (SendHint) is not
-      # compiled yet: see docs/IOS_DECISIONS.md I11.
+      # the DEBUG dev-file reader, and the two pieces a Debug build switches
+      # on with a dev file so Messages can judge them before they ship: the
+      # auto-collapse slide on the render server (CollapseSlide, `dev.slide`,
+      # docs/ANIMATION_DECISIONS.md A14) and the Send reminder (SendHint,
+      # `dev.sendhint`, A15).
       - path: ../../shared/swift/MessagesKit/InsertStaging.swift
       - path: ../../shared/swift/MessagesKit/DevFlags.swift
+      - path: ../../shared/swift/MessagesKit/CollapseSlide.swift
+      - path: ../../shared/swift/MessagesKit/SendHint.swift
+      - path: ../../shared/swift/MessagesKit/SendHintMetrics.swift
       # The texture palettes (lift S1). The images themselves are baked by
       # shared/tools/textures into PickemupKit/Resources; nothing renders a
       # texture at run time.
