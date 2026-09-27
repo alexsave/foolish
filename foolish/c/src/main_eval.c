@@ -19,13 +19,13 @@
 #include "../src/strategy.h"
 #include "../src/cli_util.h"
 #include "../src/cordite_sim.h"
+#include "../../../shared/c/stats/stats.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <time.h>
-#include <math.h>
 
 static double wall_secs(void) {
     struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -506,9 +506,9 @@ int main(int argc, char **argv) {
                         n, valid, dt, valid / (dt > 0 ? dt : 1.0));
             }
             if (!valid) continue;
-            double mean_d = dsum / valid;
-            double var_d  = (dsum2 - dsum * dsum / valid) / (valid > 1 ? valid - 1 : 1);
-            double se_d   = sqrt(var_d / valid);
+            StatSums d = { valid, dsum, dsum2 };
+            double mean_d = stat_mean(&d);
+            double se_d   = stat_stderr(&d);
             printf("  %2d  %9.3f  %9.3f  %+.3f+-%.3f  %7.1f%%  %7.1f%%  %ld/%ld/%ld\n",
                    n, (double)hero_sum / valid, (double)ctrl_sum / valid,
                    mean_d, se_d,

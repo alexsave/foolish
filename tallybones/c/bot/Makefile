@@ -16,8 +16,8 @@ SHARED  := ../../../shared/c
 KERNEL  := ../src/tb.c ../src/tb_code.c ../src/tb_plan.c \
            $(SHARED)/deal_rng.c $(SHARED)/sha256.c $(SHARED)/mixrad.c
 KHDR    := $(wildcard ../src/*.h) $(SHARED)/deal_rng.h $(SHARED)/sha256.h $(SHARED)/mixrad.h
-BOT     := tb_bot.c
-HDR     := tb_bot.h $(KHDR)
+BOT     := tb_bot.c $(SHARED)/stats/stats.c
+HDR     := tb_bot.h $(KHDR) $(SHARED)/stats/stats.h
 
 all: build/tb_solve build/tb_bot_test
 

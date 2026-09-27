@@ -66,9 +66,16 @@ WIRE_CHECK_SRC := $(SHARED)/sha256.c $(WIRE_CHECK)/wire_check.c $(WIRE_CHECK)/wi
 build/wire_check_test: $(WIRE_CHECK_SRC) $(WIRE_CHECK)/wire_check.h $(SHARED)/sha256.h | build
 	$(CC) $(CFLAGS) $(WIRE_CHECK_SRC) -o $@
 
+# The shared arena statistics (shared/c/stats): mean and standard error, the
+# Wilson interval, and the per-game seed hash.
+STATS := $(SHARED)/stats
+STATS_SRC := $(STATS)/stats.c $(STATS)/stats_test.c
+build/stats_test: $(STATS_SRC) $(STATS)/stats.h $(STATS)/seed_hash.h | build
+	$(CC) $(CFLAGS) $(STATS_SRC) -o $@ -lm
+
 # The message: every ply of 10,000 games through bytes and text, the seat
 # truth table, two joiners, the tap map and every sentence.
-run: build/uttt_test build/uttt_msg_test build/uttt_anim_test build/msg_stage_test build/text_util_test build/wire_check_test build/uttt_bots_test build/uttt_ink_test build/uttt_lang_test build/uttt_lang_en_test
+run: build/uttt_test build/uttt_msg_test build/uttt_anim_test build/msg_stage_test build/text_util_test build/wire_check_test build/stats_test build/uttt_bots_test build/uttt_ink_test build/uttt_lang_test build/uttt_lang_en_test
 	./build/uttt_test 1000
 	./build/uttt_lang_test
 	./build/uttt_lang_en_test
@@ -77,6 +84,7 @@ run: build/uttt_test build/uttt_msg_test build/uttt_anim_test build/msg_stage_te
 	./build/msg_stage_test
 	./build/text_util_test
 	./build/wire_check_test
+	./build/stats_test
 	./build/uttt_anim_test
 	./build/uttt_ink_test
 
@@ -211,6 +219,9 @@ asan: $(SRC) tests/uttt_test.c | build
 	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
 	  $(WIRE_CHECK_SRC) -o build/wire_check_asan
 	./build/wire_check_asan
+	$(CC) -O1 -g -fsanitize=address,undefined -Wall -Wextra -Werror -std=c11 \
+	  $(STATS_SRC) -o build/stats_asan -lm
+	./build/stats_asan
 
 clean:
 	rm -rf build

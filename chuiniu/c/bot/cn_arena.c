@@ -21,6 +21,8 @@
  * mean dice lost per game with a 95% normal interval. --fast is a smoke run
  * (few games, few worlds). */
 #include "cn_bot.h"
+#include "../../../shared/c/stats/seed_hash.h"
+#include "../../../shared/c/stats/stats.h"
 #include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -51,10 +53,7 @@ static void play(int gi, CnSeen *seen)
 {
     uint64_t x = A_seed * 0x100000001B3ull + (uint64_t)gi;
     uint8_t seed[32];
-    for (int i = 0; i < 4; i++) {
-        uint64_t v = cn_splitmix(&x);
-        memcpy(seed + 8 * i, &v, 8);
-    }
+    seed_hash32_from(&x, seed);
     static _Thread_local CnGame g;
     cn_new(&g, seed, A_seats);
     Result *r = &A_res[gi];
@@ -91,15 +90,6 @@ static void *worker(void *arg)
     }
     free(seen);
     return 0;
-}
-
-static void wilson(double k, double n, double *lo, double *hi)
-{
-    const double z = 1.959964;
-    double p = k / n, d = 1 + z * z / n;
-    double c = (p + z * z / (2 * n)) / d, h = z * sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d;
-    *lo = c - h;
-    *hi = c + h;
 }
 
 int main(int argc, char **argv)
@@ -173,7 +163,7 @@ int main(int argc, char **argv)
     for (int p = 0; p < P_N; p++) {
         if (!seats[p]) continue;
         double lo, hi;
-        wilson(wins[p], seats[p], &lo, &hi);
+        stat_wilson(wins[p], seats[p], STAT_Z95, &lo, &hi);
         double mu = lost[p] / seats[p], var = lost2[p] / seats[p] - mu * mu;
         double se = sqrt(var > 0 ? var / seats[p] : 0);
         printf("%-8s %8.0f %8.0f %7.3f  [%.3f, %.3f]    %9.3f  [%.3f, %.3f]\n", P_NAME[p], seats[p], wins[p], wins[p] / seats[p],

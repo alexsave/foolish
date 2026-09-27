@@ -24,6 +24,7 @@
  * A game the kernel refused a bot's move in is counted and printed; the
  * arena exits 1 if there is one, so `make arena` is also a legality check. */
 #include "../src/pk_bot.h"
+#include "../../../shared/c/stats/seed_hash.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -73,15 +74,7 @@ typedef struct {
 
 static void seed_of(uint8_t seed[32], int n, int l, int i)
 {
-    uint64_t x = 0x9e3779b97f4a7c15ull * ((uint64_t)n * 1000003ull + (uint64_t)l * 7919ull
-                                          + (uint64_t)i * 104729ull + 1);
-    for (int k = 0; k < 32; k += 8) {
-        uint64_t z = (x += 0x9e3779b97f4a7c15ull);
-        z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
-        z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
-        z ^= z >> 31;
-        for (int j = 0; j < 8; j++) seed[k + j] = (uint8_t)(z >> (8 * j));
-    }
+    seed_hash32((uint64_t)n * 1000003ull + (uint64_t)l * 7919ull + (uint64_t)i * 104729ull, seed);
 }
 
 /* The knobs every MC seat plays with: the defaults, or a research override

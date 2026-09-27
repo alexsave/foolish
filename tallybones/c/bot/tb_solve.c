@@ -10,6 +10,7 @@
  *   -t THREADS                  workers (default: every core)
  */
 #include "tb_bot.h"
+#include "../../../shared/c/stats/stats.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,9 +53,8 @@ int main(int argc, char **argv)
         for (int i = 0; i < 8; i++) seed[16 + i] = (uint8_t)(seedv >> (8 * i));
         static TbBotSim sim;
         if (!tb_bot_simulate(b, seed, games, threads, &sim)) { fprintf(stderr, "tb_solve: bad game\n"); return 1; }
-        double n = (double)sim.n, mean = sim.sum / n;
-        double var = (sim.sumsq - n * mean * mean) / (n - 1);
-        double se = sqrt(var / n);
+        StatSums st = { (double)sim.n, (double)sim.sum, (double)sim.sumsq };
+        double n = st.n, mean = stat_mean(&st), var = stat_variance(&st), se = stat_stderr(&st);
         printf("played %llu games in %.2f s: mean %.4f, sd %.4f, standard error %.4f, exact - mean = %+.4f (%.2f SE)\n",
                (unsigned long long)sim.n, now() - t1, mean, sqrt(var), se, ev - mean, (ev - mean) / se);
         int lo = TB_BOT_MAX_SCORE, hi = 0;

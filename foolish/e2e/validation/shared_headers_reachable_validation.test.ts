@@ -68,9 +68,14 @@ const REPO = resolve(PRODUCT, '..');
  *   wire_check.h           shared/c/wire_check, the envelope's truncated SHA-256
  *                          over head and body under four products' message
  *                          coders; in its own directory for the same reason
+ *   stats.h, seed_hash.h   shared/c/stats, the mean / standard error / Wilson
+ *                          interval and the per-game seed hash under the bot
+ *                          arenas and the test helpers that seed games; dev
+ *                          tools only, so no kernel build list names stats.c
+ *                          and the per-build check below does not list it
  */
 const SHARED_HEADERS = ['sha256.h', 'deal_rng.h', 'b32.h', 'mixrad.h', 'languages.h', 'msg_stage.h', 'motion_ruler.h',
-    'check.h', 'twophone.h', 'text_util.h', 'wire_check.h'];
+    'check.h', 'twophone.h', 'text_util.h', 'wire_check.h', 'stats.h', 'seed_hash.h'];
 
 /** Every C source and header in the repo, both products, excluding build output. */
 function kernelSources(): string[] {
@@ -141,7 +146,10 @@ test('the shared sources compile with no -I whatsoever', () => {
         'shared/c/mixrad.c',
         'shared/c/text_util/text_util.c',
         'shared/c/wire_check/wire_check.c',
+        'shared/c/stats/stats.c',
+        'shared/c/stats/stats_test.c',  // stats.h, seed_hash.h
         'foolish/c/src/game.c',
+        'foolish/c/src/main_eval.c',    // stats/stats.h
         'werewolf/c/src/ww_game.c',
         // One TU per newer product, chosen for the shared headers it includes.
         'uttt/c/src/uttt_code.c',       // b32.h, mixrad.h
@@ -162,6 +170,11 @@ test('the shared sources compile with no -I whatsoever', () => {
         // The test harness, reached only from tests.
         'chuiniu/c/tests/cn_test.c',            // test/check.h, through cn_check.h
         'tallybones/c/tests/tb_twophone_test.c', // test/twophone.h
+        // The arenas and the seeding test helpers, reached only from dev tools.
+        'pickemup/c/tools/pk_arena.c',          // stats/seed_hash.h
+        'chuiniu/c/bot/cn_arena.c',             // stats/stats.h, stats/seed_hash.h
+        'tallybones/c/bot/tb_solve.c',          // stats/stats.h
+        'tallybones/c/tests/tb_test.c',         // stats/seed_hash.h, through tb_check.h
     ];
     const probes = expectedProbes.filter((p) => existsSync(join(REPO, p)));
     assert.equal(probes.length, expectedProbes.length,
