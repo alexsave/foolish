@@ -369,3 +369,32 @@ Run 2026-09-27.
 | drag layout | a release in the hand row is no drop | `ios/pk_api_smoke.c:288` "a release in the row rearranges" |
 | drag layout | a release on the pile is no drop | `ios/pk_api_smoke.c:289` "a release on the pile plays" |
 | drag layout | a release on the felt plays | `ios/pk_api_smoke.c:290` "a release on the felt does nothing" |
+
+## pk_bot_test.c
+
+The bots and their belief (`src/pk_bot.c`, `src/pk_belief.c`), run 2026-09-27.
+Each row is one mutation of those two files, applied alone by a driver that copied the file first, rebuilt `build/pk_bot_test`, ran it at its default scale (4; the first call-out row at scale 1, since calling every seat drives every game to the long-game stop), and copied the file back, checking it byte for byte; the suite was green again after the last row.
+Every test function has at least one row; the assertion is named by its test and its message.
+
+| Test | Mutation | Assertion that went red |
+|---|---|---|
+| every chosen move is legal | `pk_bot_choose` names no suit for a wild (`act.b = PK_NO_SUIT` on every play) | "legal: kind 2 a 4 b 4", "on the menu", "the kernel applied it"; also "pk_bot_round never refuses a move": "refused games: 54" |
+| D60 say, call only the proven | the call-out rule drops the proof (`(proven >> t & 1) \|\| 1`) | "a call names an exposed seat: 1"; also "seat 2 calls seat 1" and "after the say, seat 0 has nothing to send out of turn" (the run was stopped once the rows had gone red: every game went to the long-game stop) |
+| D60 say, call only the proven | "Last card!" is never said first (`if (0 && ...SAY_IT)`) | "an exposed seat is called by the others and says it itself": "seat 1 says it" |
+| belief: counts, pins, pool, hard voids | a play does not lower the count | "seat 0 count 10, truth 7", "pool 93 = unknown 10 + deck 86 - known 0", "a world keeps the counts, the stack and my hand" |
+| belief: counts, pins, pool, hard voids | a bury appends to the known bottom instead of pushing it up | "the known bottom card 0" |
+| belief: counts, pins, pool, hard voids | the sampler ignores constraints (a constrained slot takes the first card left) | "seat 0: every constrained slot holds a card its voids allow"; also the soft-void test's "worlds keep the live suit out of the 7 bound slots (61)" |
+| belief: reads no hidden card | the build copies the next seat's first card into `top` | "the belief moved when hidden cards did (n 2, hist 0)" |
+| draw-out: buried card, bare pass | a buried card drawn is not pinned | "seat 0 knows seat 1 holds it" |
+| draw-out: buried card, bare pass | the hard void is recorded on a pass after drawing (`e->n != 0`), the soft one on a bare pass | "one hard void on seat 0, got 0", "a bare pass is no soft void"; also the sweep's "hard void 0 of seat 0: k 6" |
+| draw-out: buried card, bare pass | a play the hard void allows does not lower its k | "after 3 plays (0 forbidden) the void binds 4" (added: the sweep never played past a hard void and stayed green) |
+| soft void and distrust | one forbidden play past one draw already breaks the void (`hits >= gained`) | "one forbidden play may be the drawn card" |
+| soft void and distrust | the first draw of a turn records nothing (`e->i == 99`) | "a soft void on the live suit over the 7 cards held", "two forbidden plays past one draw: the void was wrong" |
+| determinism | MC folds a static counter into its world seed | "n 2: two runs, one game", "one position, one move" |
+| wild suit: the suit held most | MC keeps the worst candidate (`v < bv`) | "MC names the suit held most: 0 of 14"; also the forced choice's "MC hits the one-card seat: 44 of 100" and whole games' "MC won 15 of 40" |
+| wild suit: the suit held most | greedy's `best_suit` takes the suit held least | "greedy names the suit held most: 0 of 14" |
+| wild suit: toward the next seat's void | MC's worlds never obey soft voids (`use_soft = 0`) | "with the belief 91, blind 91: want 33 more" |
+| wild suit: toward the next seat's void | a play never lowers the belief's count | "with the belief 116, blind 107: want 33 more" |
+| MC beats random at a forced choice | a rollout scores a loss as a win | "MC hits the one-card seat: 7 of 100", "MC hits 7, random 39.2: want twice"; also whole games' "MC won 15 of 40" |
+| MC beats random at a forced choice | greedy's bonus for hitting a seat on two cards becomes a penalty | "greedy hits the one-card seat: 2 of 100" (added: MC's own hits stayed high, so only a greedy check could see it) |
+| MC beats random over whole games | the wild-suit mutation of the first row | "MC won 0 of 40, want 80%" |

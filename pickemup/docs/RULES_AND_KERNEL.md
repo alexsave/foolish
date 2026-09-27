@@ -575,6 +575,58 @@ Alternative: keep the three as a review-time check.
 Why: a check that is not in the build is not run; with gcc proven clean the reason D53 gave for waiting is gone.
 Recommendation confidence: high.
 
+### Decisions the bot forced (D59 onwards)
+
+Taken while building the offline bot (`pickemup/c/src/pk_bot.c`, section "Bot" below, `docs/BOT_REPORT.md`), 2026-09-27.
+
+**DECISION D59: the bot's belief deduces exactly four things from the public events: every hand size, where a buried card is and who drew it, a hard void from a bare pass, and soft voids from a first draw and from a pass after drawing.**
+Hand sizes are seven, plus every draw and penalty card, less every play, all of them public events, so the count is exact even though no screen shows it (D22).
+A non-number flipped at the start goes face up to the bottom of the deck (D14), so its position is known until it is drawn, and then its holder is.
+A pass with no draw this turn is legal only with nothing to draw and nothing playable (D10), so at that moment the passer held no wild, no card of the live suit and none of the top card's rank: every sampled world obeys that.
+A draw proves nothing, because a player may draw holding a playable card (D6); but most players draw only when stuck, so the first draw of a turn and a pass after drawing record the same shape as a soft void, obeyed in three of every four sampled worlds and dropped for good for a seat whose later plays contradict it.
+A void binds only the cards held when it was seen, so each carries the number of cards it still binds.
+The belief never reads the game's seed: it decides every real reshuffle, so a world gets a seed of its own.
+Alternative: count cards only (no voids), or treat a draw as a hard void.
+Why: the first is what the ablation `mc-nb` measures; the second is false under D6 and would make the bot certain of things a human who fishes on purpose (D6's "comic fishing turn") makes untrue.
+Recommendation confidence: high.
+
+**DECISION D60: "Last card!" and "Caught you!" are one rule for every strategy: say it at the first legal chance, and call out a seat only when the counting proves it exposed.**
+Saying costs nothing and saves two cards.
+A call is judged against `exposed` at the bubble's open (D5d), and `exposed` is a function of the public history alone (the counts, the says, the windows), so a bot that counts can call only the calls that hit.
+The strategies differ only in the turn: draw, which card, which suit, pass.
+Alternative: let each strategy decide, and let random call at random.
+Why: a random bot calling every unstamped seat pays a card a call and would measure nothing about playing; one rule keeps the arena about the turn.
+Recommendation confidence: high.
+
+**DECISION D61: the arena's table order: after each bubble, every seat but the turn seat may send an out-of-turn bubble, the last bubble's sender first, then the turn seat sends its turn.**
+The sender of the last bubble is the only seat that can have just been exposed, and a player who has just played to one card is the one ready to say it; with every other seat first, every exposure would be caught, and nobody could ever go out, since a play to one card ends the bubble (D7) and the catch lands before the next turn.
+Alternative: the other seats first (the fastest catcher wins every race).
+Why: the kernel does not order out-of-turn bubbles (D5) and real phones race; the arena has to pick one order, and this one lets games end.
+Recommendation confidence: medium.
+
+**DECISION D62: the Monte Carlo bot rolls out with the greedy policy at every seat for 12 turn actions, and scores a cut-off by its share of the reciprocals of the hand sizes.**
+A full rollout (to the end) measured no stronger and is slower, and at a 4-action horizon the wild's suit is judged by the next turn alone; 12 is the measured middle (`docs/BOT_REPORT.md`).
+A win is 1, a loss 0, and at the cut-off the fewest cards is the likeliest winner, so 1/cards over the sum of every seat's 1/cards is the estimate.
+Alternative: rollouts to the end (octogen's 600-ply cap) or a plain card margin.
+Why: this game's endings are so luck-heavy that a full rollout's variance swamps the difference one decision makes; the knob stays (`depth = 0` is to the end).
+Recommendation confidence: medium.
+
+**DECISION D63: the bot is not in the app: its sources are the Makefile's `BOT_SRC`, linked only into `tests/pk_bot_test.c` and `tools/pk_arena.c`, never into `SRC`, the wasm objects, the bridge or the xcframework.**
+Alternative: a `pk_api_bot_move` bridge entry for a Swift host.
+Why: the owner's call: the bot is an offline capability for simulation and evaluation, as foolish's arena and ladder are.
+Recommendation confidence: high.
+
+**DECISION D64: the random baseline is uniform over the whole turn menu, draw and pass included, exactly as `pk_legal_turn` lists it.**
+So it draws with a playable card whenever the draw comes up, which is why every other bot beats it about 98 times in 100.
+Alternative: random among the plays, drawing only when nothing plays.
+Why: the owner asked for "uniform over legal moves", and a baseline that has had a rule of play added is no longer the baseline.
+Recommendation confidence: high.
+
+**DECISION D65: the reference bot is foolish's octogen, as the owner named it, and the imitation follows its source structure: belief pass, world sampler, candidates ranked cheapest first, common random numbers, three-stage successive halving, selection taxes and the tie-break inversion.**
+blackpowder and cordite were read for comparison; octogen carries both of their contracts (public information only, belief-constrained worlds) plus the pieces named above, so there was nothing to take from them that octogen does not already have.
+What octogen has that this does not, and why, is in section "Bot".
+Recommendation confidence: high.
+
 ---
 
 ## 3. Kernel design
@@ -1471,6 +1523,56 @@ All run under `make -C pickemup/c run` and `make asan`, with no Mac.
 Everything else is decided above and can be vetoed line by line.
 
 ---
+
+## Bot
+
+An offline bot for simulation and evaluation, entirely in C under `pickemup/c/`, and not in the app (D63).
+The numbers are in `docs/BOT_REPORT.md`.
+
+### The reference: foolish's octogen
+
+The owner named octogen (`foolish/c/src/octogen_strategy.c`, its roster row in `foolish/c/src/bot_roster.c` with `OG_TRUMP_KEEP=40`), so it is the reference (D65).
+It is a belief-constrained Monte Carlo player: it tracks only public information, samples hidden hands consistent with it, rolls every candidate out in the same worlds, and picks the best.
+blackpowder and cordite, which it descends from, were read for comparison; everything the imitation takes from them octogen already has.
+
+What was imitated, piece by piece:
+
+| octogen | here |
+|---|---|
+| `og_build_belief`: one chronological pass over the public log; an unseen pool, cards publicly located in a hand ("pinned"), void constraints cleared as evidence expires, per-seat distrust when a seat's plays contradict them | `pk_belief_build`: one pass over the kernel's event stream masked for the deciding seat (`pk_plan_each`); the pool, buried cards pinned to whoever drew them, hard voids from bare passes, soft voids from draws, each binding k cards, and a distrust bit per seat |
+| `og_sample_world`: shuffle the pool, deal the deck and each unknown slot, repair a constrained slot by swapping, degrade rather than fail | `pk_belief_sample`: shuffle the pool, deal constrained slots first, a slot nothing fits takes any card (and is counted), buried cards at their deck positions |
+| void world-mixture `OG_VOID_MOD`: voids obeyed in 3 of 4 worlds | `soft_mod = 4`: soft voids in 3 of 4 worlds; hard voids in every world |
+| `og_pick_candidates`: moves ranked cheapest first, duplicates merged | the turn menu, copies of one card merged, greedy's choice first, then plays by greedy's points, then draw, then pass |
+| common random numbers: `game_rng_set(sim_rng)` for every candidate in a world | every candidate is rolled out from one copy of the same world; the rollout policy is deterministic, so the pairing is exact |
+| three stages, `W1` worlds for all, `W2` for the best third, `W3` for the final two | the same: `w1`, `w2`, `w3` = 48, 64, 64 |
+| `OG_TRUMP_KEEP`: a tax at selection only, in milli-units | `wild_keep` = 20 on a wild while a suited play exists, `draw_keep` = 100 on a draw while a play exists |
+| the tie-break inversion: among tied worst drop the LAST, so the cheaper candidate survives | the same `<=` scan, and a strict `>` at the final pick, so ties go to greedy's choice |
+| knobs from the roster spec, env as a research override (`bot_knobs.h`) | `PkBotKnobs`, a fixed struct; the arena reads `PK_W1` and friends from the environment as research overrides |
+| the rollout policy: the handwritten heuristic for every seat | `pk_bot_greedy` for every seat, 12 turn actions or to the end (D62) |
+| measured in foolish's ELO arena and the uttt round robin | `tools/pk_arena.c`, uttt's round-robin shape: fixed seeds, both seat orders, forked workers |
+
+What octogen has that this does not: the exact endgame solver and loss-avoiding root solve, exact leaf endgames inside rollouts, rank floors and per-seat behaviour profiles, the reply tournament and the compact bitboard rollout.
+Each exists in octogen because Durak's endgame is a perfect-information puzzle once the deck is gone; this game's deck never really ends (the stack reshuffles, 1.9), so none of them has an obvious analogue, and the owner asked for a basic bot.
+
+### What the bot may know (owner's note, 2026-09-27)
+
+It is legal for the bot to know the composition of the whole deck (1.1: 104 cards, fixed forever), and to subtract from it the cards in its own hand and every card it has seen thrown onto the stack, so that what is left is exactly the set the other players and the draw deck must hold between them.
+That remainder is the "unseen pool" of `pk_belief_build` above, and every hidden hand the bot samples is dealt from it; the buried start cards and each seat's hand size narrow it further.
+This is public information in the sense of D22: any player at the table who paid attention could keep the same count, so the bot gains nothing a careful human could not.
+What the bot may never read is a hidden hand itself or the deck's order: `pk_belief_build` consumes the event stream masked for the deciding seat, and the test that scrambles every hidden card and checks the belief is unmoved pins that.
+
+### What the bot decides, and what it does not
+
+The strategies choose the turn: draw, which card and a wild's suit, pass (D60).
+"Last card!" is said at the first legal chance, and "Caught you!" names only a seat the counting proves exposed, one rule for every strategy.
+Every move is an entry of `pk_legal` or a seal `pk_can_seal` allows; the bot never builds an action of its own.
+
+### How it was verified
+
+- `tests/pk_bot_test.c` (in `make run` and `make asan`): every move the bots chose over some 15,000 moves in 84 games at 2..8 players was on the kernel's menu and applied; the belief against the truth at every fifth round (counts, pinned cards, the pool, the deck's known bottom, hard voids never contradicted by the hand they bind, sampled worlds obeying every void); the belief unmoved when every hidden card is scrambled; a draw-out that pins a buried card and ends in a bare pass; a two-player Skip chain that breaks a soft void; the say and call rule; determinism; the wild's suit (the suit held most, and toward the next seat's void, against MC blind to voids); MC against random at forced choices and over whole games.
+- Every test was seen red: `tests/MUTATIONS.md`, section `pk_bot_test.c`.
+- `make arena`: 2,000 games a line-up at 2, 4 and 8 players, a 95% interval on each side's win share, every move applied by the kernel.
+  MC beats random 98.4% at two players and 97.9% at four, both intervals far clear of 50%.
 
 ## Appendix A. What `UI.html` needs to change
 
